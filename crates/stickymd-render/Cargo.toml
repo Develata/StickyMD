@@ -1,0 +1,8 @@
+[package]
+name = "stickymd-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "StickyMD rendering projection: owned Markdown AST, render tree, layout, math integration"
+
+[dependencies]

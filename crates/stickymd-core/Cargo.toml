@@ -1,0 +1,9 @@
+[package]
+name = "stickymd-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "StickyMD platform-independent core: document model, persistence contracts, state model"
+
+[dependencies]
+thiserror.workspace = true

@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/stickymd-core",
+    "crates/stickymd-render",
+    "apps/stickymd-win",
+]
+
+# 注意：experiments/phase-01/* 是独立的技术验证 crate（各自声明空 [workspace]），
+# 不属于生产 workspace；删除 experiments/ 不影响本 workspace 构建。
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+thiserror = "2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

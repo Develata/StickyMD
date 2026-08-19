@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows x64 (workspace)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: rustup show
+      - name: fmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace --locked
+      - name: release build
+        run: cargo build --workspace --release --locked
+
+  portable-core:
+    name: Linux portable-core build (core + render only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: rustup show
+      # Purpose: prove platform-independent crates stay Win32-free.
+      # This job must never grow to build the Windows app.
+      - name: build core + render
+        run: cargo build -p stickymd-core -p stickymd-render --locked
+      - name: test core + render
+        run: cargo test -p stickymd-core -p stickymd-render --locked

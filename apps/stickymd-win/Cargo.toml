@@ -1,0 +1,8 @@
+[package]
+name = "stickymd-win"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "StickyMD Windows executable: Interaction Shell + Windows platform adapters"
+
+[dependencies]
