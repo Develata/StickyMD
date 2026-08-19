@@ -1,0 +1,24 @@
+# 仓库文本规范统一使用 LF。
+# 注意：这与运行时 note/note.md 默认使用 CRLF 是两个互不影响的问题。
+* text=auto
+
+*.md text eol=lf
+*.toml text eol=lf
+*.rs text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# 二进制资源不做文本转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
