@@ -12,6 +12,8 @@ pub enum EditError {
     NotCharBoundary,
     #[error("edit range is out of bounds")]
     OutOfBounds,
+    #[error("edit range start is greater than its end")]
+    InvalidRange,
 }
 
 /// Errors produced by persistence operations.
@@ -28,6 +30,16 @@ pub enum PersistError {
     InvalidUtf8,
     #[error("atomic replace failed and no safe fallback applied")]
     ReplaceFailed,
+}
+
+/// Errors produced when acknowledging a completed persist.
+///
+/// `saved_generation` must never exceed the generation actually persisted
+/// (core invariant #7), so an ack referencing an unknown generation is rejected.
+#[derive(Debug, thiserror::Error)]
+pub enum PersistAckError {
+    #[error("acknowledged generation is ahead of the current document generation")]
+    AheadOfDocument,
 }
 
 #[cfg(test)]
