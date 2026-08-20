@@ -66,6 +66,8 @@ window state, and managed-image side effects.
 
 ## Verification
 
+- 稳定入口：`tools/smoke/phase-02.ps1`；`-Performance` 显式运行 String model baseline。
+- 当前状态：`docs/acceptance-cases/phase-02.md`。
 - 30 core unit tests and 5 integration/property tests pass.
 - Release baseline covers append, middle insert/delete, snapshot, undo, and redo at 20 KiB,
   100 KiB, and 1 MiB.

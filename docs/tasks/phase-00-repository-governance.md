@@ -39,6 +39,8 @@
 - Phase 0 自检清单（术语一致、无 Rust 代码、无依赖、无禁止方向、
   单一架构真相源）通过。
 - 架构 review 15 问通过（见本文 Completion State）。
+- `tools/smoke/phase-00.ps1` 通过 Rust CLI 重验治理文件、AC 序列、矩阵、plan_ref、
+  本地链接与禁止依赖；当前人工判断项见 `docs/acceptance-cases/phase-00.md`。
 
 ## Out of Scope
 

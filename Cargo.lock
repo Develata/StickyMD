@@ -1514,6 +1514,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "stickymd-smoke"
+version = "0.1.0"
+
+[[package]]
 name = "stickymd-win"
 version = "0.1.0"
 dependencies = [

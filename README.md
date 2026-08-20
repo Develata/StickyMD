@@ -38,6 +38,7 @@ external reload/conflict 与 config v1 已接入开发构建。Preview、RaTeX �
 | [架构概览](docs/overview/architecture.md) | 可读版架构投影 |
 | [覆盖矩阵](docs/coverage-matrix.md) | plan ↔ feature ↔ acceptance ↔ 未来代码 |
 | [阶段输入归档](docs/phases/README.md) | USER 提供的阶段 prompt 原文（非架构权威） |
+| [逐阶段验证](docs/acceptance-cases/phase-00.md) | Phase 0–4 自动化与人工状态；入口位于 `tools/smoke/` |
 
 ---
 

@@ -335,3 +335,15 @@ bridges are separate modules.
 The persistence architecture and automated correctness gates are suitable for the next independent
 Markdown/Owned-AST phase. The conditions above remain release/acceptance debt and must not be relabeled
 as PASS or silently inherited into a v1 readiness claim.
+
+## Verification Harness Resolution — 2026-08-20
+
+The earlier copied-EXE terminal receipt is no longer the only reproduction path. The checked-in
+`tools/smoke/phase-04.ps1 -Runtime` entry delegates to the std-only `stickymd-smoke` CLI, which builds
+and copies the Release executable into unique temporary Program Directories, verifies same-directory
+secondary exit without durable-file mutation and different-directory coexistence, then removes only
+its validated temporary root.
+
+The `Acceptance` table above records the Phase 4 implementation slice, not complete v1 AC closure.
+The current strict status projection is `docs/acceptance-cases/phase-04.md`; all listed manual
+conditions remain `NOT TESTED`.

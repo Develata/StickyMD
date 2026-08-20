@@ -94,6 +94,9 @@ path.
 
 ## Verification
 
+- 稳定入口：`tools/smoke/phase-03.ps1`；`-Performance` 与 `-Runtime` 分别显式运行
+  环境敏感性能和 copied-Release 启动 smoke。
+- 当前自动/人工状态：`docs/acceptance-cases/phase-03.md`。
 - Automated workspace tests: 30 core unit + 5 core integration + 18 render + 20 app = 73 pass;
   one Release-only performance test ignored by ordinary runs and separately passes.
 - Incremental projection tests cover local line update, later-line offset adjustment, newline

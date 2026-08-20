@@ -6,14 +6,13 @@
 - `Status`: Approved Contract
 - `Version`: 0.1.0
 - `Last Review`: 2026-08-20
-- `Scope`: v1 测试类别合同与发布形态合同；Phase 0 只定义契约，不实现测试与 workflow
+- `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
 
 ## Purpose
 
-定义 StickyMD v1 的验证体系与发布形态。本阶段只建立 contract；
-测试实现与 CI workflow 在后续阶段逐步落地。
+定义 StickyMD v1 的验证体系、逐阶段可重复 smoke、验收证据状态与发布形态。
 
 ## Boundary
 
@@ -115,6 +114,58 @@ fuzz_text_delta
   sanitizer/Miri 平台无关核心、许可证报告。
 - 失败日志与 math/preview diff 作为 artifact 上传。
 
+<a id="phase-verification-harness"></a>
+## 逐阶段验证入口合同
+
+每个 Phase 从创建时起必须同时拥有：
+
+```text
+tools/smoke/phase-XX.ps1
+docs/acceptance-cases/phase-XX.md
+```
+
+缺少任一文件，该 Phase 不得标记 `Completed`。历史 Phase 也必须回填，不因已有一次性
+报告或终端输出而豁免。
+
+### 自动化入口
+
+- `tools/smoke/phase-XX.ps1` 只能是薄入口；断言、任务规划、去重、进程退出码传播与
+  收据输出由 std-only Rust CLI `stickymd-smoke` 持有。
+- PowerShell 脚本不得复制测试判断或产品业务逻辑。
+- Rust CLI 属于开发验证面，不是 StickyMD runtime dependency，不进入 portable 发布包。
+- `all --ci` 合并 Phase 的无界面任务图并按 task identity 去重；CI 不应为了逐 Phase
+  显示而重复运行相同 workspace 测试。
+- `all --ci` 还必须执行全部无界面的 Release 性能入口；稳定硬阈值可以作为失败门，
+  机器相关测量值只作诊断，不得冒充跨机器承诺。
+- 本地 `--performance` 是同一组性能入口的显式复跑方式；`--runtime` 会创建原生窗口，
+  只允许显式本地运行，不得偷偷进入 headless CI。
+
+### 验收矩阵
+
+每个 `phase-XX.md` 必须逐项列出：稳定 ID、映射的 plan/AC、验证模式、仓库内入口、
+当前状态与剩余证据。矩阵是 `docs/plan` 与全局 AC 的验证投影，不得发明或放宽需求。
+
+状态词固定为：
+
+```text
+AUTOMATED PASS   当前提交上的仓库内可重复入口已经通过
+MANUAL PASS      当前提交上的正式人工矩阵已执行，并引用完整环境/步骤/结果收据
+NOT TESTED       人工项尚未完成，或只有一次性/不可重复记录
+BLOCKED          自动化或人工验证已知失败，或环境阻止执行
+```
+
+禁止使用模糊的 `PASS`、`CONDITIONAL` 或模块存在来代替验收证据。一次性终端命令、
+未提交脚本、主观观察、旧 commit 收据均不能把人工项从 `NOT TESTED` 提升为 PASS。
+
+### CI 与完成门
+
+- Windows CI 必须调用 Rust CLI 的 `all --ci`，覆盖所有能够无界面执行的 Phase 任务。
+- Phase 专用 PowerShell 入口保留给本地定位与独立复核；CI 使用合并任务图避免重复工作。
+- 人工项保持 `NOT TESTED` 不会使 headless CI 失败，但会阻止对应 Phase / release gate
+  被描述为完整通过。
+- smoke 只证明其任务清单；它不能替代性能测量、真实 IME、视觉、多显示器或故障现场
+  等明确的人工验收。
+
 ---
 
 ## Release 合同
@@ -167,6 +218,8 @@ SBOM.spdx.json
 - release gate 未过（测试/内存/体积）：不发布。
 - 依赖 advisory：按 scheduled 报告处理，不静默忽略。
 - 手工验收未完成的 draft release：不得公开。
+- Phase smoke 入口缺失、矩阵缺失或矩阵声称无可重复证据的 PASS：阶段 gate 失败。
+- Rust CLI 中途失败：立即返回非零退出码；后续任务不伪造 PASS。
 
 ## Configuration
 
@@ -174,19 +227,26 @@ Not applicable。
 
 ## Lifecycle
 
-契约在 Phase 0 建立；实现在后续阶段；release 以 Definition of Done 全过为准。
+Phase 建立时先创建 smoke 入口与矩阵；实施中持续更新自动化映射；收尾时在当前提交上
+执行入口并更新状态。后续 Phase 不删除早期入口。release 以 Definition of Done 全过为准。
 
 ## Extension / Replacement Points
 
-fuzz 引擎、golden 容差策略。
+Rust smoke CLI 的 task 实现、fuzz 引擎、golden 容差策略。CLI 可整体替换，但稳定的
+`tools/smoke/phase-XX.ps1` 与矩阵路径不变。
 
 ## Performance Critical Paths
 
-Not applicable（由 `10` 持有）。
+合并 smoke 任务必须按 identity 去重；不得因 Phase 数量增加而重复执行相同 workspace
+测试。产品性能目标仍由 `10` 持有。
 
 ## Verification
 
-本章节自身的验证 = 后续阶段逐项落实并回写完成状态。
+- `tools/smoke/phase-00.ps1` 验证治理文件、阶段矩阵、入口结构、AC 编号、plan_ref、
+  本地文档链接与禁止依赖。
+- `tools/smoke/all.ps1 -Ci` 等价调用 Rust CLI 的合并 headless 任务图，并包含 Release
+  性能入口但不包含窗口 runtime smoke。
+- CI Windows job 必须执行该合并入口。
 
 ## Non-Goals
 

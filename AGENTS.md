@@ -72,8 +72,11 @@ code generation、refactor，必须依次执行：
 9. 只有 contract 清晰后才开始实现。
 10. 实现后运行 targeted tests。
 11. review boundary drift（是否越层、是否引入平级权威）。
-12. 最后运行适用 baseline（fmt / clippy / tests / 相关 benchmark）。
-13. 不得 push remote，除非 USER 明确要求。
+12. 每个 Phase 必须维护 `tools/smoke/phase-XX.ps1` 与
+    `docs/acceptance-cases/phase-XX.md`；自动化由 Rust CLI 持有，人工未验收项保持
+    `NOT TESTED`。
+13. 最后运行适用 baseline（fmt / clippy / tests / 相关 benchmark）。
+14. 不得 push remote，除非 USER 明确要求。
 
 ---
 
@@ -183,4 +186,6 @@ docs/report/               ← 分析证据（有时间属性）
 docs/tasks/                ← 阶段实施计划
 docs/reference/            ← 外部技术参考
 docs/coverage-matrix.md    ← plan ↔ feature ↔ acceptance ↔ code 对照
+tools/stickymd-smoke/      ← std-only 阶段验证 CLI（不进入产品 runtime）
+tools/smoke/               ← 稳定的逐 Phase PowerShell 薄入口
 ```

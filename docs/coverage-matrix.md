@@ -13,7 +13,7 @@
 | `08_assets_and_export.md` | 图片粘贴、managed GC、导出 | AC-010、AC-011、AC-012、AC-017、AC-018 | future asset subsystem | contract only |
 | `09_windows_shell.md` | dock、托盘、置顶、透明度、主题、多显示器 | AC-019..029 | Phase 4 dev shell + Windows adapters; future product shell | second-instance wake and persistence safety UI implemented；DPI/dock/tray/opacity remain out of Phase 4 |
 | `10_performance_reliability.md` | 质量属性 | AC-022、空闲/内存观察 | core benchmark + Phase 1/3 baselines | Source shell WS median 31.57 MiB；1 MiB ordinary command worst p95 1.567 ms，newline 1.534 ms；exceptional full resync p95 53.227 ms；real IME NOT TESTED |
-| `11_testing_and_release.md` | 发布形态 | release 验收清单 | CI / future release tools | not implemented |
+| `11_testing_and_release.md` | 逐阶段验证、发布形态 | `phase-00.md`..`phase-04.md`、release 验收清单 | `stickymd-smoke`; `tools/smoke/*.ps1`; Windows CI | Rust 合并任务图 + 稳定逐 Phase 入口已实现；人工门见各 Phase 矩阵 |
 
 ---
 
@@ -29,3 +29,5 @@
 1. 新增 plan 章节 → 必须补充对应 Feature 段落与 Acceptance 案例（或写明不适用理由）。
 2. Acceptance 案例失效 → 标记 Deprecated，编号不复用。
 3. Code Area 或验证状态变化 → 同步更新本表；部分实现不得标记完整 AC PASS。
+4. 每个 Phase 新建时同步创建 `tools/smoke/phase-XX.ps1` 与
+   `docs/acceptance-cases/phase-XX.md`；CI 只自动执行其中可无界面运行的部分。

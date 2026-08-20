@@ -4,10 +4,12 @@ members = [
     "crates/stickymd-core",
     "crates/stickymd-render",
     "apps/stickymd-win",
+    "tools/stickymd-smoke",
 ]
 
 # 注意：experiments/phase-01/* 是独立的技术验证 crate（各自声明空 [workspace]），
 # 不属于生产 workspace；删除 experiments/ 不影响本 workspace 构建。
+# tools/stickymd-smoke 是 std-only 开发验证 CLI，不是产品 runtime，也不进入发布包。
 
 [workspace.package]
 version = "0.1.0"

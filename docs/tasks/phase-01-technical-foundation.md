@@ -30,6 +30,9 @@ persistence 的高风险事实；窗口/IME 由当前 production dev shell 复�
 
 ## Verification
 
+- 稳定入口：`tools/smoke/phase-01.ps1`；`-Performance` 显式运行环境敏感 Release 测量。
+- 当前自动/人工状态：`docs/acceptance-cases/phase-01.md`。
+
 - 两个实验的 fmt/clippy/test/Release run。
 - production workspace baseline and `cargo deny check` with the Windows-target policy。
 - Windows-target forbidden dependency scan。

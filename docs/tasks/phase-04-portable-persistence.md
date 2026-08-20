@@ -119,6 +119,9 @@ component evidence is not relabeled as complete manual end-to-end acceptance.
 
 ## Verification
 
+- 稳定入口：`tools/smoke/phase-04.ps1`；`-Performance` 与 `-Runtime` 分别运行
+  persistence baseline 和 copied-Release portable lifecycle。
+- 当前自动/人工状态：`docs/acceptance-cases/phase-04.md`。
 - Workspace fmt/clippy/test/release build and package-specific Release tests.
 - Forbidden-dependency, unsafe-boundary, plan-anchor and diff checks.
 - Release persistence stage benchmark and copied standalone EXE portable smoke.
