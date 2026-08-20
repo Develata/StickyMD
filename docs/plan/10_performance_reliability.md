@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-20
 - `Scope`: 性能约束的性质定义（Target / Measurement Method / Hard Failure Condition / Future Benchmark Entry）与可靠性底线
 
 ---
@@ -22,6 +22,24 @@
 
 - 量化实现与基准测试在技术验证阶段建立；本章只定义结构与底线。
 - 文件安全 > 性能；IME 正确性 > 内存（宪法 1.4 优先级）。
+
+---
+
+## Owned Objects
+
+Not applicable。性能报告只测量对象，不拥有运行时 authority。
+
+## Inputs
+
+Release artifact、固定 fixture、Windows 11 环境信息与可复现测量步骤。
+
+## Outputs
+
+带 median/p95/max 和环境元数据的证据；未测项必须标记 NOT TESTED。
+
+## State Changes
+
+Not applicable。测量不得修改产品 authority；缓存清理/隐藏等被测行为仍由其 coordinator 拥有。
 
 ---
 
@@ -43,6 +61,7 @@
 
 ---
 
+<a id="initial-engineering-targets"></a>
 ## Initial Engineering Targets（未验证，不得宣传）
 
 ### 测量口径（Measurement Method）

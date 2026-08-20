@@ -5,7 +5,7 @@
 - `Layer`: Architecture
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-20
 - `Scope`: 运行时状态结构、所有权与修改权、authority 划分、generation 语义、核心 invariant
 
 ---
@@ -31,6 +31,23 @@ runtime authority 与 durable projection 的关系，以及 generation 语义。
 `doc::text`、`doc::generation`、`preview::owned_ast`、`preview::render_tree`、
 `math::display_list`、`asset::managed_image`、`asset::trash_entry`、
 `config::runtime`、`window::placement`（权威与投影见下表）。
+
+---
+
+## Inputs
+
+经 Instruction Interface 验证的 typed intent、启动载入/外部 reconcile 输入、带 generation
+的后台 capability result。
+
+## Outputs
+
+原子提交后的 state delta、immutable snapshot、保存/预览/资产调度所需的 generation token，
+以及 typed failure。
+
+## State Changes
+
+每类状态只能由所有权矩阵指定的 coordinator 或领域 mutation gateway 修改；失败必须保持
+相关 authority 原子不变。后台结果在提交前必须经过 generation 或事务状态校验。
 
 ---
 
@@ -73,6 +90,7 @@ struct AppState {
 
 ---
 
+<a id="documentstate"></a>
 ## DocumentState
 
 ```rust
@@ -81,7 +99,7 @@ struct DocumentState {
     generation: u64,
     saved_generation: u64,
     base_disk_hash: Option<Hash32>,
-    dirty: bool,
+    dirty: bool,                        // derived: generation != saved_generation；非独立权威
     line_ending: LineEnding,            // CRLF | LF（保存时转换）
     undo: UndoManager,                  // max 256 entries 或 4 MiB
     managed_ref_counts: Map<ManagedAssetName, usize>,
@@ -98,6 +116,19 @@ trait TextStore {
 - `TextDelta.range` 必须落在 UTF-8 char boundary。
 - 一次 IME commit / 一次图片粘贴 = 一个 delta。
 - v1 使用 String 存储；若 1 MiB 性能 gate 不达标，可在不改上层 API 的前提下替换为 rope。**禁止在基准测试前提前引入 rope。**
+
+### Mutation gateway
+
+- UI 只能提交 expected generation、range、inserted text 与 cursor/edit metadata；
+  `deleted` 必须由 DocumentState 从 canonical text 派生。
+- 不公开 mutable text 引用；edit / undo / redo / reconcile / recovery replacement 是唯一 mutation gateway。
+- stale expected generation、range 错误与 history apply 错误均 fail closed，且不产生部分 mutation。
+
+<a id="document-snapshot"></a>
+### Document Snapshot
+
+`doc::snapshot` 是 `Arc<str> + generation + line ending` 的 immutable projection，供 worker
+使用；它不是 authority，也不得持有 `&mut DocumentState`。
 
 ### Runtime authority
 
@@ -239,16 +270,21 @@ struct ConfigState {
 
 ---
 
+<a id="generation"></a>
 ## Generation Semantics（统一规则）
 
-1. 每次 DocumentState 文本修改 → `generation += 1`，`dirty = true`。
-2. 所有后台任务（preview、保存、资产扫描）接收带 generation 的快照。
-3. 任务结果携带来源 generation；提交前必须校验 `result.generation == 当前 generation`
+1. 每次 canonical 文本修改（edit / undo / redo / external reload / recovery replacement）
+   使用 checked increment；溢出 fail closed，不允许 wrapping。
+2. selection/caret、IME preedit、预览刷新、主题、窗口变化与 persisted acknowledgement
+   不递增 generation。
+3. 所有后台任务（preview、保存、资产扫描）接收带 generation 的快照。
+4. 任务结果携带来源 generation；提交前必须校验 `result.generation == 当前 generation`
    （保存例外：允许合并保存最新 generation，但 saved_generation 只推进到实际落盘版本）。
-4. 不匹配 → 结果直接丢弃，不产生任何副作用。
+5. 不匹配 → 结果直接丢弃，不产生任何副作用。
 
 ---
 
+<a id="core-invariants"></a>
 ## 核心 Invariant
 
 以下不变量在任何实现中必须恒成立：

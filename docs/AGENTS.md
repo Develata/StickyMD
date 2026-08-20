@@ -31,6 +31,10 @@ docs/tasks/
     phase implementation plans
     （阶段实施计划与完成状态记录）
 
+docs/phases/
+    USER prompt archive, non-authoritative against current plan
+    （USER 阶段提示词输入证据；用于追溯，不与当前 plan 建立平级权威）
+
 docs/reference/
     external technical references, never overrides plan
     （外部技术参考；永远不得覆盖 plan）
@@ -38,7 +42,7 @@ docs/reference/
 
 ```text
 docs/coverage-matrix.md
-    plan ↔ feature ↔ acceptance ↔ future code 对照表
+    plan ↔ feature ↔ acceptance ↔ code/evidence 对照表
 ```
 
 ---

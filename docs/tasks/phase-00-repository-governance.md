@@ -49,7 +49,11 @@
 
 ## Completion State
 
-`Completed`（2026-08-19）
+`Revalidated`（2026-08-20）
 
 说明：本阶段仅完成治理与契约文档。
 **任何运行时能力均未实现，也不得据本文声称已具备。**
+
+2026-08-20 takeover review 保留了完整工程宪法与治理树，并修复了 contract heading、
+显式 stable anchor、DocumentState mutation authority、generation fail-closed 语义与原子替换
+条件。逐项证据见 `docs/report/phase-00-governance-revalidation.md`。

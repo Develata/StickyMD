@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-20
 - `Scope`: Source 编辑器职责、IME preedit/commit 语义、字体 run、undo 分组、RichEdit fallback 治理
 
 ---
@@ -25,6 +25,7 @@
 
 ---
 
+<a id="source-editor"></a>
 ## Source 编辑器职责
 
 - cosmic-text 布局 + 自绘 caret / selection / preedit。
@@ -37,6 +38,7 @@
 - 默认字号建议 16 DIP，行高建议 1.55（固定值，不提供排版设置）。
 - caret、selection、IME preedit 必须明显可见。
 
+<a id="font-runs"></a>
 ## 字体 Run 规则
 
 | 内容 | 首选 | fallback |
@@ -52,6 +54,7 @@
 
 ---
 
+<a id="ime-semantics"></a>
 ## IME 语义
 
 ### preedit vs commit
@@ -88,6 +91,7 @@
 
 ---
 
+<a id="undo-grouping"></a>
 ## Undo 分组
 
 ### 范围与限制
@@ -140,10 +144,26 @@ DocumentState、Undo/Redo 外层事务、Markdown、数学、Preview、文件系
 
 ---
 
-## Inputs / Outputs
+<a id="selection-caret"></a>
+## Selection / Caret
 
-- Inputs：键盘/IME/鼠标事件、DocumentState、主题与 DPI。
-- Outputs：EditText/Undo/Redo intent、dirty 事件、caret 坐标（供 IME 候选框）。
+selection/caret 是 Editor Session 的非权威 byte-position projection；移动它们不递增
+Document generation。grapheme/visual navigation 在 editor 层计算，DocumentState 只校验
+最终 mutation range 的 UTF-8 char boundary。
+
+## Inputs
+
+键盘/IME/鼠标事件、DocumentState read projection、主题与 DPI。
+
+## Outputs
+
+EditText/Undo/Redo typed intent、dirty 调度结果、caret 坐标（供 IME 候选框）；不得输出
+UI 自称的 deleted text 或 mutable document buffer。
+
+## State Changes
+
+preedit 只改变 ImeState；commit 通过单一 mutation gateway 产生一个 TextDelta。selection/
+caret 变化只改变 Editor Session；成功 canonical edit 才推进 generation 和 dirty 状态。
 
 ## Failure Paths
 

@@ -1,40 +1,34 @@
 //! Release-profile baseline for the Phase 2 document model.
 //!
-//! plan_ref: docs/plan/10_performance_reliability.md
-//!
-//! Measured during Phase 3 preflight (see
-//! `docs/report/phase-02-core-document-model.md` § Phase 3 Preflight Release
-//! Baseline). Fixtures are deterministic; warm-up and setup are excluded from
-//! operation timing.
+//! plan_ref: docs/plan/10_performance_reliability.md#initial-engineering-targets
 
 use std::time::{Duration, Instant};
 
-use stickymd_core::{CursorSnapshot, DocumentState, Generation, InputKind, LineEnding, TextDelta};
+use stickymd_core::{CursorSnapshot, DocumentState, EditKind, EditMeta, EditRequest, LineEnding};
 
 const CHARS: &[char] = &[
     'a', 'b', 'c', '中', '文', 'x', '测', '试', 'd', 'e', '📝', 'f', '字', 'g',
 ];
 
 fn fixture(bytes: usize) -> String {
-    let mut s = String::with_capacity(bytes + 8);
-    let mut i = 0usize;
-    while s.len() < bytes {
-        s.push(CHARS[i % CHARS.len()]);
-        i += 1;
+    let mut text = String::with_capacity(bytes + 8);
+    let mut index = 0;
+    while text.len() < bytes {
+        text.push(CHARS[index % CHARS.len()]);
+        index += 1;
     }
-    while s.len() > bytes {
-        s.pop();
+    while text.len() > bytes {
+        text.pop();
     }
-    s
+    text
 }
 
-/// Find the nearest char boundary at or below `pos`.
-fn boundary_floor(text: &str, pos: usize) -> usize {
-    let mut p = pos.min(text.len());
-    while !text.is_char_boundary(p) {
-        p -= 1;
+fn boundary_floor(text: &str, position: usize) -> usize {
+    let mut position = position.min(text.len());
+    while !text.is_char_boundary(position) {
+        position -= 1;
     }
-    p
+    position
 }
 
 struct Stats {
@@ -44,139 +38,122 @@ struct Stats {
 }
 
 fn stats(samples: &mut [Duration]) -> Stats {
-    samples.sort();
-    let n = samples.len();
+    samples.sort_unstable();
+    let len = samples.len();
     Stats {
-        median: samples[n / 2],
-        p95: samples[((n as f64) * 0.95).ceil() as usize - 1],
-        max: samples[n - 1],
+        median: samples[len / 2],
+        p95: samples[((len as f64) * 0.95).ceil() as usize - 1],
+        max: samples[len - 1],
     }
 }
 
-fn fmt(d: Duration) -> String {
-    let ns = d.as_nanos();
-    if ns >= 1_000_000 {
-        format!("{:.2} ms", ns as f64 / 1_000_000.0)
-    } else if ns >= 1_000 {
-        format!("{:.2} µs", ns as f64 / 1_000.0)
+fn format_duration(duration: Duration) -> String {
+    let nanos = duration.as_nanos();
+    if nanos >= 1_000_000 {
+        format!("{:.2} ms", nanos as f64 / 1_000_000.0)
+    } else if nanos >= 1_000 {
+        format!("{:.2} µs", nanos as f64 / 1_000.0)
     } else {
-        format!("{ns} ns")
+        format!("{nanos} ns")
     }
 }
 
 fn measure<F: FnMut(&mut DocumentState)>(
     doc: &mut DocumentState,
     warmup: usize,
-    iters: usize,
-    mut op: F,
+    iterations: usize,
+    mut operation: F,
 ) -> Stats {
     for _ in 0..warmup {
-        op(doc);
+        operation(doc);
     }
-    let mut samples = Vec::with_capacity(iters);
-    for _ in 0..iters {
-        let t = Instant::now();
-        op(doc);
-        samples.push(t.elapsed());
+    let mut samples = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let started = Instant::now();
+        operation(doc);
+        samples.push(started.elapsed());
     }
     stats(&mut samples)
 }
 
-fn caret(offset: usize, g: Generation) -> CursorSnapshot {
-    CursorSnapshot::caret(offset, g)
+fn apply_edit(
+    doc: &mut DocumentState,
+    range: std::ops::Range<usize>,
+    inserted: &str,
+    kind: EditKind,
+    timestamp_ms: u64,
+) {
+    let before = CursorSnapshot::caret(range.start);
+    let after = CursorSnapshot::caret(range.start + inserted.len());
+    let request = EditRequest::new(
+        doc.generation(),
+        range,
+        inserted,
+        before,
+        after,
+        EditMeta::new(kind, timestamp_ms),
+    );
+    doc.edit(request).expect("benchmark edit must be valid");
+}
+
+fn print_stats(label: &str, stats: Stats) {
+    println!(
+        "  {label:<13} median={:>10} p95={:>10} max={:>10}",
+        format_duration(stats.median),
+        format_duration(stats.p95),
+        format_duration(stats.max)
+    );
 }
 
 fn bench_size(label: &str, bytes: usize) {
     let mut doc = DocumentState::loaded(&fixture(bytes), LineEnding::Lf, None);
-    // Time advances 1 s per edit so undo entries never merge (each op is its
-    // own entry), matching worst-case single-keystroke undo cost.
-    let mut now_ms: u64 = 0;
+    let mut timestamp_ms = 0u64;
 
-    let mut edit = |doc: &mut DocumentState, delta: TextDelta, kind: InputKind| {
-        now_ms = now_ms.wrapping_add(1000);
-        let g = doc.generation();
-        let before = caret(delta.range.start, g);
-        let after = caret(delta.caret_after(), g.next());
-        doc.apply_delta(&delta, kind, now_ms, before, after)
-            .expect("fixture deltas are valid");
-    };
-
-    let append: Stats = measure(&mut doc, 100, 1000, |d| {
-        let pos = d.text().len();
-        let delta = TextDelta::insert(pos, "字");
-        edit(d, delta, InputKind::Typing);
-    });
-
-    let middle_insert: Stats = measure(&mut doc, 100, 1000, |d| {
-        let pos = boundary_floor(d.text(), d.text().len() / 2);
-        edit(d, TextDelta::insert(pos, "x"), InputKind::Typing);
-    });
-
-    let middle_delete: Stats = measure(&mut doc, 100, 1000, |d| {
-        let len = d.text().len();
-        let start = boundary_floor(d.text(), len / 2);
-        let mut end = start + 1;
-        while end < len && !d.text().is_char_boundary(end) {
-            end += 1;
-        }
-        edit(d, TextDelta::new(start..end, ""), InputKind::Backspace);
-    });
-
-    let snapshot: Stats = measure(&mut doc, 50, 200, |d| {
-        std::hint::black_box(d.snapshot());
-    });
-
-    let undo: Stats = measure(&mut doc, 20, 200, |d| {
-        assert!(
-            d.undo().expect("valid undo").is_some(),
-            "undo stack is populated"
+    let append = measure(&mut doc, 100, 1_000, |doc| {
+        timestamp_ms += 1_000;
+        let position = doc.text().len();
+        apply_edit(
+            doc,
+            position..position,
+            "字",
+            EditKind::Typing,
+            timestamp_ms,
         );
     });
 
-    let redo: Stats = measure(&mut doc, 20, 200, |d| {
-        assert!(
-            d.redo().expect("valid redo").is_some(),
-            "redo stack is populated"
-        );
+    let middle_insert = measure(&mut doc, 100, 1_000, |doc| {
+        timestamp_ms += 1_000;
+        let position = boundary_floor(doc.text(), doc.text().len() / 2);
+        apply_edit(doc, position..position, "x", EditKind::Typing, timestamp_ms);
+    });
+
+    let middle_delete = measure(&mut doc, 100, 1_000, |doc| {
+        timestamp_ms += 1_000;
+        let start = boundary_floor(doc.text(), doc.text().len() / 2);
+        let end = doc.text()[start..]
+            .char_indices()
+            .nth(1)
+            .map_or(doc.text().len(), |(offset, _)| start + offset);
+        apply_edit(doc, start..end, "", EditKind::Backspace, timestamp_ms);
+    });
+
+    let snapshot = measure(&mut doc, 50, 200, |doc| {
+        std::hint::black_box(doc.snapshot());
+    });
+    let undo = measure(&mut doc, 20, 200, |doc| {
+        std::hint::black_box(doc.undo().expect("undo history must be populated"));
+    });
+    let redo = measure(&mut doc, 20, 200, |doc| {
+        std::hint::black_box(doc.redo().expect("redo history must be populated"));
     });
 
     println!("{label}: bytes={}", doc.text().len());
-    println!(
-        "  append        median={:>10} p95={:>10} max={:>10}",
-        fmt(append.median),
-        fmt(append.p95),
-        fmt(append.max)
-    );
-    println!(
-        "  middle_insert median={:>10} p95={:>10} max={:>10}",
-        fmt(middle_insert.median),
-        fmt(middle_insert.p95),
-        fmt(middle_insert.max)
-    );
-    println!(
-        "  middle_delete median={:>10} p95={:>10} max={:>10}",
-        fmt(middle_delete.median),
-        fmt(middle_delete.p95),
-        fmt(middle_delete.max)
-    );
-    println!(
-        "  snapshot      median={:>10} p95={:>10} max={:>10}",
-        fmt(snapshot.median),
-        fmt(snapshot.p95),
-        fmt(snapshot.max)
-    );
-    println!(
-        "  undo          median={:>10} p95={:>10} max={:>10}",
-        fmt(undo.median),
-        fmt(undo.p95),
-        fmt(undo.max)
-    );
-    println!(
-        "  redo          median={:>10} p95={:>10} max={:>10}",
-        fmt(redo.median),
-        fmt(redo.p95),
-        fmt(redo.max)
-    );
+    print_stats("append", append);
+    print_stats("middle_insert", middle_insert);
+    print_stats("middle_delete", middle_delete);
+    print_stats("snapshot", snapshot);
+    print_stats("undo", undo);
+    print_stats("redo", redo);
 }
 
 fn main() {

@@ -10,11 +10,12 @@ StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown �
 ## Current status
 
 ```text
-阶段：architecture / governance initialization（Phase 0）
+阶段：Phase 3 source editor implementation complete; manual IME verification pending
 ```
 
-**当前仓库尚未进入正式功能实现阶段。**
-仓库中只有治理文档与架构契约，没有可运行程序，也没有任何 crate 依赖。
+仓库已有平台无关文档核心和一个 Windows 源码编辑器开发壳。该开发壳明确标记
+`NOT PERSISTED`：它只用于验证 Source/IME/渲染链路，尚不具备自动保存、Preview、
+托盘、Docking 或可发布产品能力。微软拼音与微信输入法的真实人工矩阵仍未完成。
 
 - 目标平台：Windows 11 x64
 - 实现主体：Rust（winit / cosmic-text / tiny-skia / softbuffer / Comrak / RaTeX 为已批准架构方向）
@@ -35,6 +36,7 @@ StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown �
 | [验收合同](docs/acceptance-cases/00_v1_acceptance.md) | v1 可验证案例 |
 | [架构概览](docs/overview/architecture.md) | 可读版架构投影 |
 | [覆盖矩阵](docs/coverage-matrix.md) | plan ↔ feature ↔ acceptance ↔ 未来代码 |
+| [阶段输入归档](docs/phases/README.md) | USER 提供的阶段 prompt 原文（非架构权威） |
 
 ---
 

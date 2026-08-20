@@ -2,8 +2,13 @@
 # 注意：这与运行时 note/note.md 默认使用 CRLF 是两个互不影响的问题。
 * text=auto
 
+.gitattributes text eol=lf
 *.md text eol=lf
+# USER prompt archives preserve their source Markdown verbatim, including
+# significant two-space hard breaks. Other Markdown keeps normal whitespace checks.
+docs/phases/*.md text eol=lf -whitespace
 *.toml text eol=lf
+Cargo.lock text eol=lf
 *.rs text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf

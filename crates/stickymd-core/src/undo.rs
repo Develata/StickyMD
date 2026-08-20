@@ -1,359 +1,374 @@
-//! Bounded undo/redo with input grouping.
+//! Bounded, deterministic undo/redo history.
 //!
-//! plan_ref: docs/plan/07_editor_and_ime.md#undo-分组
-//!
-//! Rules implemented here:
-//! - In-memory only; restart clears it; never written to disk.
-//! - At most 256 entries or 4 MiB of undo text, whichever comes first; the oldest
-//!   entry is evicted beyond the limit.
-//! - Consecutive same-kind, adjacent edits within 750 ms merge into one entry.
-//! - IME commit, paste, image paste, newline and selection replacement are always
-//!   independent entries.
-//!
-//! Entries are stored differentially (`removed` / `inserted`) rather than as full
-//! snapshots so the 4 MiB budget holds on large documents.
+//! plan_ref: docs/plan/07_editor_and_ime.md#undo-grouping
 
 use std::collections::VecDeque;
 
-use crate::cursor::CursorSnapshot;
-use crate::text_delta::{InputKind, TextDelta};
+use crate::{EditKind, TextDelta};
 
-/// Merge window for grouping consecutive edits (milliseconds).
 pub const MERGE_WINDOW_MS: u64 = 750;
-/// Maximum number of undo entries.
 pub const MAX_UNDO_ENTRIES: usize = 256;
-/// Maximum total bytes of undo text (removed + inserted across entries).
 pub const MAX_UNDO_BYTES: usize = 4 * 1024 * 1024;
 
-/// A single (possibly merged) undoable edit.
-///
-/// Applying this entry produced: replace `[start, start + removed.len())` in the
-/// *pre-edit* text with `inserted`. Undoing reverses it; redoing re-applies it.
 #[derive(Debug, Clone)]
-pub struct UndoEntry {
-    /// Byte offset where the edit begins.
-    pub start: usize,
-    /// Text that was removed by the edit.
-    pub removed: String,
-    /// Text that was inserted by the edit.
-    pub inserted: String,
-    /// The input kind that produced the edit.
-    pub kind: InputKind,
-    /// Caret/selection before the edit.
-    pub cursor_before: CursorSnapshot,
-    /// Caret/selection after the edit.
-    pub cursor_after: CursorSnapshot,
-    /// Monotonic edit timestamp (ms) used for the merge window.
-    pub time_ms: u64,
+pub(crate) struct UndoEntry {
+    pub(crate) delta: TextDelta,
+    kind: EditKind,
+    timestamp_ms: u64,
 }
 
 impl UndoEntry {
-    /// Build an entry from an applied delta plus the text it removed.
-    pub fn from_delta(
-        delta: &TextDelta,
-        removed: impl Into<String>,
-        kind: InputKind,
-        cursor_before: CursorSnapshot,
-        cursor_after: CursorSnapshot,
-        time_ms: u64,
-    ) -> Self {
+    pub(crate) fn new(delta: TextDelta, kind: EditKind, timestamp_ms: u64) -> Self {
         Self {
-            start: delta.range.start,
-            removed: removed.into(),
-            inserted: delta.replacement.clone(),
+            delta,
             kind,
-            cursor_before,
-            cursor_after,
-            time_ms,
+            timestamp_ms,
         }
     }
 
-    /// The delta that undoes this entry, valid against the *post-edit* text.
-    pub fn inverse_delta(&self) -> TextDelta {
-        TextDelta::new(
-            self.start..self.start + self.inserted.len(),
-            self.removed.clone(),
-        )
+    fn approx_bytes(&self) -> usize {
+        self.delta.approx_bytes()
     }
 
-    /// The delta that re-applies this entry, valid against the *pre-edit* text.
-    pub fn forward_delta(&self) -> TextDelta {
-        TextDelta::new(
-            self.start..self.start + self.removed.len(),
-            self.inserted.clone(),
-        )
-    }
-
-    /// Byte cost of this entry for the 4 MiB budget.
-    pub fn byte_size(&self) -> usize {
-        self.removed.len() + self.inserted.len()
-    }
-
-    /// Try to fold a newer, same-kind adjacent edit into `self`. Returns true on
-    /// success, leaving `self` representing the combined edit.
-    fn try_absorb(&mut self, newer: &UndoEntry) -> bool {
-        if self.kind != newer.kind {
+    fn try_absorb(&mut self, newer: &Self) -> bool {
+        if self.kind != newer.kind
+            || !self.kind.is_groupable()
+            || newer.timestamp_ms < self.timestamp_ms
+            || newer.timestamp_ms - self.timestamp_ms > MERGE_WINDOW_MS
+            || self.delta.cursor_after != newer.delta.cursor_before
+        {
             return false;
         }
+
         match self.kind {
-            InputKind::Typing => {
-                if self.removed.is_empty()
-                    && newer.removed.is_empty()
-                    && newer.start == self.start + self.inserted.len()
-                {
-                    self.inserted.push_str(&newer.inserted);
-                    self.cursor_after = newer.cursor_after.clone();
-                    self.time_ms = newer.time_ms;
-                    return true;
-                }
-            }
-            InputKind::Backspace => {
-                if self.inserted.is_empty()
-                    && newer.inserted.is_empty()
-                    && newer.start + newer.removed.len() == self.start
-                {
-                    let mut removed = newer.removed.clone();
-                    removed.push_str(&self.removed);
-                    self.removed = removed;
-                    self.start = newer.start;
-                    self.cursor_before = newer.cursor_before.clone();
-                    self.time_ms = newer.time_ms;
-                    return true;
-                }
-            }
-            InputKind::Delete
-                if self.inserted.is_empty()
-                    && newer.inserted.is_empty()
-                    && newer.start == self.start =>
-            {
-                self.removed.push_str(&newer.removed);
-                self.cursor_after = newer.cursor_after.clone();
-                self.time_ms = newer.time_ms;
-                return true;
-            }
-            _ => {}
+            EditKind::Typing => self.absorb_typing(newer),
+            EditKind::Backspace => self.absorb_backspace(newer),
+            EditKind::DeleteForward => self.absorb_delete_forward(newer),
+            _ => false,
         }
-        false
+    }
+
+    fn absorb_typing(&mut self, newer: &Self) -> bool {
+        if !self.delta.deleted.is_empty()
+            || !newer.delta.deleted.is_empty()
+            || self.delta.inserted.contains('\n')
+            || newer.delta.inserted.contains('\n')
+            || newer.delta.range.start != self.delta.range.start + self.delta.inserted.len()
+            || !self.delta.cursor_before.selection.is_collapsed()
+            || !newer.delta.cursor_before.selection.is_collapsed()
+        {
+            return false;
+        }
+
+        let mut inserted =
+            String::with_capacity(self.delta.inserted.len() + newer.delta.inserted.len());
+        inserted.push_str(&self.delta.inserted);
+        inserted.push_str(&newer.delta.inserted);
+        self.delta.inserted = inserted.into();
+        self.delta.range.end = self.delta.range.start;
+        self.delta.cursor_after = newer.delta.cursor_after;
+        self.timestamp_ms = newer.timestamp_ms;
+        true
+    }
+
+    fn absorb_backspace(&mut self, newer: &Self) -> bool {
+        if !self.delta.inserted.is_empty()
+            || !newer.delta.inserted.is_empty()
+            || newer.delta.range.end != self.delta.range.start
+            || !self.delta.cursor_before.selection.is_collapsed()
+            || !newer.delta.cursor_before.selection.is_collapsed()
+        {
+            return false;
+        }
+
+        let mut deleted =
+            String::with_capacity(newer.delta.deleted.len() + self.delta.deleted.len());
+        deleted.push_str(&newer.delta.deleted);
+        deleted.push_str(&self.delta.deleted);
+        self.delta.deleted = deleted.into();
+        self.delta.range.start = newer.delta.range.start;
+        self.delta.cursor_after = newer.delta.cursor_after;
+        self.timestamp_ms = newer.timestamp_ms;
+        true
+    }
+
+    fn absorb_delete_forward(&mut self, newer: &Self) -> bool {
+        if !self.delta.inserted.is_empty()
+            || !newer.delta.inserted.is_empty()
+            || newer.delta.range.start != self.delta.range.start
+            || !self.delta.cursor_before.selection.is_collapsed()
+            || !newer.delta.cursor_before.selection.is_collapsed()
+        {
+            return false;
+        }
+
+        let mut deleted =
+            String::with_capacity(self.delta.deleted.len() + newer.delta.deleted.len());
+        deleted.push_str(&self.delta.deleted);
+        deleted.push_str(&newer.delta.deleted);
+        self.delta.deleted = deleted.into();
+        self.delta.range.end += newer.delta.deleted.len();
+        self.delta.cursor_after = newer.delta.cursor_after;
+        self.timestamp_ms = newer.timestamp_ms;
+        true
     }
 }
 
-/// Bounded undo/redo stack with grouping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RecordOutcome {
+    pub(crate) recorded: bool,
+    pub(crate) grouped: bool,
+}
+
+/// Combined undo and redo history. Entries move between stacks without being
+/// double-counted; the shared payload budget never exceeds 4 MiB.
 #[derive(Debug, Default)]
-pub struct UndoManager {
+pub(crate) struct UndoManager {
     undo: VecDeque<UndoEntry>,
     redo: Vec<UndoEntry>,
-    undo_bytes: usize,
+    history_bytes: usize,
 }
 
 impl UndoManager {
-    /// An empty undo manager.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    /// Record a newly applied edit, merging it into the top entry when allowed.
-    /// Any pending redo history is discarded (a new edit invalidates it).
-    pub fn record(&mut self, entry: UndoEntry) {
-        self.redo.clear();
-        let mergeable = entry.kind.is_mergeable();
-        let in_window = self
-            .undo
-            .back()
-            .is_some_and(|top| entry.time_ms.saturating_sub(top.time_ms) < MERGE_WINDOW_MS);
+    pub(crate) fn record(&mut self, entry: UndoEntry) -> RecordOutcome {
+        self.clear_redo();
 
-        if mergeable
-            && in_window
-            && let Some(top) = self.undo.back_mut()
-            && top.try_absorb(&entry)
-        {
-            self.undo_bytes += entry.byte_size();
-            self.enforce_bounds();
-            return;
+        if entry.approx_bytes() > MAX_UNDO_BYTES {
+            self.clear();
+            return RecordOutcome {
+                recorded: false,
+                grouped: false,
+            };
         }
-        self.undo_bytes += entry.byte_size();
+
+        if let Some(top) = self.undo.back() {
+            let mut merged = top.clone();
+            if merged.try_absorb(&entry) {
+                let old_bytes = top.approx_bytes();
+                let new_bytes = merged.approx_bytes();
+                if new_bytes > MAX_UNDO_BYTES {
+                    self.clear();
+                    return RecordOutcome {
+                        recorded: false,
+                        grouped: false,
+                    };
+                }
+                if let Some(top) = self.undo.back_mut() {
+                    *top = merged;
+                }
+                self.history_bytes = self.history_bytes - old_bytes + new_bytes;
+                self.enforce_bounds();
+                return RecordOutcome {
+                    recorded: true,
+                    grouped: true,
+                };
+            }
+        }
+
+        self.history_bytes += entry.approx_bytes();
         self.undo.push_back(entry);
         self.enforce_bounds();
+        RecordOutcome {
+            recorded: true,
+            grouped: false,
+        }
     }
 
-    /// Pop the most recent edit to undo, if any.
-    pub fn pop_undo(&mut self) -> Option<UndoEntry> {
-        let entry = self.undo.pop_back()?;
-        self.undo_bytes -= entry.byte_size();
-        self.redo.push(entry.clone());
-        Some(entry)
+    pub(crate) fn peek_undo(&self) -> Option<&UndoEntry> {
+        self.undo.back()
     }
 
-    /// Pop the most recent undone edit to redo, if any.
-    pub fn pop_redo(&mut self) -> Option<UndoEntry> {
-        let entry = self.redo.pop()?;
-        self.undo_bytes += entry.byte_size();
-        self.undo.push_back(entry.clone());
-        Some(entry)
+    pub(crate) fn commit_undo(&mut self) {
+        if let Some(entry) = self.undo.pop_back() {
+            self.redo.push(entry);
+        }
     }
 
-    pub fn can_undo(&self) -> bool {
+    pub(crate) fn peek_redo(&self) -> Option<&UndoEntry> {
+        self.redo.last()
+    }
+
+    pub(crate) fn commit_redo(&mut self) {
+        if let Some(entry) = self.redo.pop() {
+            self.undo.push_back(entry);
+        }
+    }
+
+    pub(crate) fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
 
-    pub fn can_redo(&self) -> bool {
+    pub(crate) fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
 
-    pub fn undo_len(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn undo_len(&self) -> usize {
         self.undo.len()
     }
 
-    pub fn redo_len(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn redo_len(&self) -> usize {
         self.redo.len()
     }
 
-    pub fn undo_bytes(&self) -> usize {
-        self.undo_bytes
+    #[cfg(test)]
+    pub(crate) fn history_bytes(&self) -> usize {
+        self.history_bytes
     }
 
-    /// Clear all history (external reload / recovery).
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.undo.clear();
         self.redo.clear();
-        self.undo_bytes = 0;
+        self.history_bytes = 0;
+    }
+
+    fn clear_redo(&mut self) {
+        for entry in self.redo.drain(..) {
+            self.history_bytes -= entry.approx_bytes();
+        }
     }
 
     fn enforce_bounds(&mut self) {
-        // Never evict below one entry, so the newest edit keeps its undo even if a
-        // single oversized edit exceeds the byte budget on its own.
-        while self.undo.len() > 1
-            && (self.undo.len() > MAX_UNDO_ENTRIES || self.undo_bytes > MAX_UNDO_BYTES)
-        {
+        while self.undo.len() > MAX_UNDO_ENTRIES || self.history_bytes > MAX_UNDO_BYTES {
             let Some(oldest) = self.undo.pop_front() else {
                 break;
             };
-            self.undo_bytes -= oldest.byte_size();
+            self.history_bytes -= oldest.approx_bytes();
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::generation::Generation;
+    use crate::{CursorSnapshot, Selection, TextDelta};
 
-    fn caret(offset: usize) -> CursorSnapshot {
-        CursorSnapshot::caret(offset, Generation::initial())
+    fn delta(
+        range: std::ops::Range<usize>,
+        deleted: &str,
+        inserted: &str,
+        before: usize,
+        after: usize,
+    ) -> TextDelta {
+        TextDelta::new(
+            range,
+            Arc::from(deleted),
+            Arc::from(inserted),
+            CursorSnapshot::caret(before),
+            CursorSnapshot::caret(after),
+        )
     }
 
-    fn typing_insert(start: usize, s: &str, t: u64) -> UndoEntry {
-        UndoEntry {
-            start,
-            removed: String::new(),
-            inserted: s.to_string(),
-            kind: InputKind::Typing,
-            cursor_before: caret(start),
-            cursor_after: caret(start + s.len()),
-            time_ms: t,
+    #[test]
+    fn typing_within_window_groups_and_preserves_initial_cursor() {
+        let mut history = UndoManager::new();
+        for (index, ch) in ["a", "b", "c"].into_iter().enumerate() {
+            history.record(UndoEntry::new(
+                delta(index..index, "", ch, index, index + 1),
+                EditKind::Typing,
+                index as u64 * 100,
+            ));
         }
+        let entry = history.peek_undo().unwrap();
+        assert_eq!(entry.delta.inserted(), "abc");
+        assert_eq!(entry.delta.cursor_before(), CursorSnapshot::caret(0));
+        assert_eq!(entry.delta.cursor_after(), CursorSnapshot::caret(3));
     }
 
     #[test]
-    fn consecutive_typing_merges() {
-        let mut m = UndoManager::new();
-        m.record(typing_insert(0, "a", 0));
-        m.record(typing_insert(1, "b", 100));
-        m.record(typing_insert(2, "c", 200));
-        assert_eq!(m.undo_len(), 1);
-        let top = m.undo.back().unwrap();
-        assert_eq!(top.inserted, "abc");
-        assert_eq!(top.start, 0);
-    }
-
-    #[test]
-    fn typing_beyond_window_is_separate() {
-        let mut m = UndoManager::new();
-        m.record(typing_insert(0, "a", 0));
-        m.record(typing_insert(1, "b", MERGE_WINDOW_MS + 1));
-        assert_eq!(m.undo_len(), 2);
-    }
-
-    #[test]
-    fn non_adjacent_typing_is_separate() {
-        let mut m = UndoManager::new();
-        m.record(typing_insert(0, "a", 0));
-        m.record(typing_insert(5, "b", 10));
-        assert_eq!(m.undo_len(), 2);
-    }
-
-    #[test]
-    fn ime_commit_never_merges() {
-        let mut m = UndoManager::new();
-        m.record(typing_insert(0, "a", 0));
-        let mut commit = typing_insert(1, "你", 10);
-        commit.kind = InputKind::ImeCommit;
-        m.record(commit);
-        assert_eq!(m.undo_len(), 2);
-    }
-
-    #[test]
-    fn backspace_run_merges_leftward() {
-        let mut m = UndoManager::new();
-        // delete 'c' at [2,3), then 'b' at [1,2), then 'a' at [0,1)
-        let mk = |start: usize, ch: &str, t: u64| UndoEntry {
-            start,
-            removed: ch.to_string(),
-            inserted: String::new(),
-            kind: InputKind::Backspace,
-            cursor_before: caret(start + ch.len()),
-            cursor_after: caret(start),
-            time_ms: t,
-        };
-        m.record(mk(2, "c", 0));
-        m.record(mk(1, "b", 10));
-        m.record(mk(0, "a", 20));
-        assert_eq!(m.undo_len(), 1);
-        let top = m.undo.back().unwrap();
-        assert_eq!(top.removed, "abc");
-        assert_eq!(top.start, 0);
-    }
-
-    #[test]
-    fn entry_limit_evicts_oldest() {
-        let mut m = UndoManager::new();
-        for i in 0..(MAX_UNDO_ENTRIES + 10) {
-            let mut e = typing_insert(0, "x", (i as u64) * 10_000); // far apart -> no merge
-            e.kind = InputKind::Paste;
-            m.record(e);
+    fn backspace_group_preserves_original_cursor_and_deleted_order() {
+        let mut history = UndoManager::new();
+        for (range, ch, before, after, time) in [
+            (3..4, "d", 4, 3, 0),
+            (2..3, "c", 3, 2, 100),
+            (1..2, "b", 2, 1, 200),
+        ] {
+            history.record(UndoEntry::new(
+                delta(range, ch, "", before, after),
+                EditKind::Backspace,
+                time,
+            ));
         }
-        assert_eq!(m.undo_len(), MAX_UNDO_ENTRIES);
+        let entry = history.peek_undo().unwrap();
+        assert_eq!(entry.delta.deleted(), "bcd");
+        assert_eq!(entry.delta.range(), 1..4);
+        assert_eq!(entry.delta.cursor_before(), CursorSnapshot::caret(4));
+        assert_eq!(entry.delta.cursor_after(), CursorSnapshot::caret(1));
     }
 
     #[test]
-    fn byte_limit_evicts_oldest() {
-        let mut m = UndoManager::new();
-        let chunk = "x".repeat(1024 * 1024); // 1 MiB each
-        for i in 0..6 {
-            let mut e = typing_insert(0, &chunk, (i as u64) * 10_000);
-            e.kind = InputKind::Paste;
-            m.record(e);
+    fn delete_forward_group_preserves_deleted_order() {
+        let mut history = UndoManager::new();
+        for (ch, end, time) in [("b", 2, 0), ("c", 2, 100), ("d", 2, 200)] {
+            history.record(UndoEntry::new(
+                delta(1..end, ch, "", 1, 1),
+                EditKind::DeleteForward,
+                time,
+            ));
         }
-        assert!(m.undo_bytes() <= MAX_UNDO_BYTES);
-        assert!(m.undo_len() <= 4);
+        let entry = history.peek_undo().unwrap();
+        assert_eq!(entry.delta.deleted(), "bcd");
+        assert_eq!(entry.delta.range(), 1..4);
     }
 
     #[test]
-    fn new_edit_clears_redo() {
-        let mut m = UndoManager::new();
-        m.record(typing_insert(0, "a", 0));
-        m.pop_undo();
-        assert!(m.can_redo());
-        m.record(typing_insert(0, "z", 5000));
-        assert!(!m.can_redo());
+    fn reverse_selection_never_groups_as_plain_typing() {
+        let mut history = UndoManager::new();
+        let first = TextDelta::new(
+            0..2,
+            Arc::from("ab"),
+            Arc::from("x"),
+            CursorSnapshot::new(Selection::new(2, 0)),
+            CursorSnapshot::caret(1),
+        );
+        history.record(UndoEntry::new(first, EditKind::Typing, 0));
+        history.record(UndoEntry::new(
+            delta(1..1, "", "y", 1, 2),
+            EditKind::Typing,
+            100,
+        ));
+        assert_eq!(history.undo_len(), 2);
     }
 
     #[test]
-    fn clear_resets_all() {
-        let mut m = UndoManager::new();
-        m.record(typing_insert(0, "a", 0));
-        m.clear();
-        assert!(!m.can_undo());
-        assert!(!m.can_redo());
-        assert_eq!(m.undo_bytes(), 0);
+    fn oversized_entry_clears_history_and_is_not_recorded() {
+        let mut history = UndoManager::new();
+        history.record(UndoEntry::new(
+            delta(0..0, "", "a", 0, 1),
+            EditKind::Paste,
+            0,
+        ));
+        let huge = "x".repeat(MAX_UNDO_BYTES);
+        let result = history.record(UndoEntry::new(
+            delta(0..0, "", &huge, 0, huge.len()),
+            EditKind::Paste,
+            1,
+        ));
+        assert!(!result.recorded);
+        assert_eq!(history.undo_len(), 0);
+        assert_eq!(history.redo_len(), 0);
+        assert_eq!(history.history_bytes(), 0);
+    }
+
+    #[test]
+    fn combined_undo_redo_payload_is_counted_once() {
+        let mut history = UndoManager::new();
+        history.record(UndoEntry::new(
+            delta(0..0, "", "abc", 0, 3),
+            EditKind::Paste,
+            0,
+        ));
+        let bytes = history.history_bytes();
+        history.commit_undo();
+        assert_eq!(history.history_bytes(), bytes);
+        history.commit_redo();
+        assert_eq!(history.history_bytes(), bytes);
     }
 }

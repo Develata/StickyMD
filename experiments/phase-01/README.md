@@ -1,35 +1,27 @@
-# experiments/phase-01 — Phase 1 Technical Risk Spikes
+# Phase 1 Retrospective Verification
 
-本目录是 **experimental** 技术验证代码，不是正式骨架实现（宪法 9.3）。
+本目录只保留仍有独立验证价值、且不会与生产代码形成第二套实现的技术实验。
 
-规则：
+2026-08-20 重审后，原 Phase 1 spike 被整体移除：
 
-- 每个子目录是**独立 crate**（自带空 `[workspace]`），不属于生产 workspace。
-- 删除整个 `experiments/phase-01` 后，生产 workspace 必须仍可构建。
-- Spike 代码不得演化为产品；正式化决定只能在 Phase 1 结论之后做出。
-- Spike 与生产代码之间不允许出现反向依赖：production crates 不依赖 experiments。
+- `text/` 是 774 行单文件、快照式 undo、每次输入全量重建 projection，且真实微软拼音/
+  微信输入法均未测试；当前 Source/IME 验证入口已由生产开发壳和
+  [`docs/report/phase-03-manual-ime-checklist.md`](../../docs/report/phase-03-manual-ime-checklist.md)
+  取代。
+- `window/` 的代码路径已经由当前 `stickymd-win` 开发壳覆盖；旧结果只测试 100% DPI，
+  没有 150%/200% 或多显示器收据，因此不再保留重复窗口程序。
+- 旧 `markdown/` 只有演示输出，没有自动化 contract tests，并包含不必要的全局 allocator。
+- 旧 `persistence/` 忽略 recovery mtime，且在任意 `ReplaceFileW` 错误后无条件 fallback。
 
-## 子目录
+当前独立实验：
 
-| Spike | 验证目标 | 结果 |
-| --- | --- | --- |
-| `window/` | winit + softbuffer + tiny-skia、idle 行为、DPI、opacity、圆角 | [RESULTS](window/RESULTS.md) |
-| `ime/` | cosmic-text 编辑 + winit IME + 字体 run | [RESULTS](ime/RESULTS.md) |
-| `markdown-math/` | Comrak owned AST + RaTeX 管线 + benchmark | [RESULTS](markdown-math/RESULTS.md) |
-| `persistence/` | canonical dir、单实例、atomic save、recovery、冲突模型 | [RESULTS](persistence/RESULTS.md) |
+- [`markdown-math/`](markdown-math/)：Comrak Arena → owned projection、四种 delimiter、
+  raw HTML literal、RaTeX parse/layout/PNG spike 与可重复基准。
+- [`persistence/`](persistence/)：mtime-aware recovery、故障注入、保守原子替换、目录身份、
+  named mutex/event。
 
-## 运行方式
+窗口与 IME 的当前证据直接来自 production dev shell；真实人工输入法矩阵仍是阶段门，
+不得因自动化测试通过而写成 PASS。
 
-每个 spike 是独立 crate：
-
-```powershell
-cd experiments/phase-01/<spike>
-cargo run --release
-```
-
-## 汇总
-
-- 总报告：`docs/report/phase-01-technical-spike-report.md`
-- 依赖基线：`docs/report/phase-01-dependency-baseline.md`
-- Windows API 基线：`docs/report/phase-01-windows-api-baseline.md`
-- 性能基线：`docs/report/phase-01-performance-baseline.md`
+两个 crate 均声明空 `[workspace]`。删除整个 `experiments/phase-01/` 不影响 production
+workspace 构建。

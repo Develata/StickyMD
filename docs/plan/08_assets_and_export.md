@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-20
 - `Scope`: managed/user 资产边界、命名、编码保留、引用追踪、.trash、undo/redo 副作用、启动 reconcile、安全 GC、remote 图片、导出
 
 ---
@@ -88,7 +88,7 @@ images/stickymd-7c9a0d7f8139e921a3f4.png
 
 ### Markdown 插入
 
-- 单张：`` `![](images/stickymd-<hash>.<ext>)` ``。
+- 单张：`![](images/stickymd-<hash>.<ext>)`。
 - 多张：每张一个独立图片段落（空行分隔）。
 - **图片写入成功后才插入 Markdown**；写入失败则不插入、显示错误、剪贴板文本不受影响。
 - 图片写入与文本插入必须是同一个 UndoEntry。
@@ -179,7 +179,7 @@ D:\Export\my-note-assets\
 ```
 
 - 只复制实际引用的本地图片；remote URL 保留原样。
-- 导出副本中的本地图片引用重写为：`` `![](my-note-assets/stickymd-a.png)` ``。
+- 导出副本中的本地图片引用重写为：`![](my-note-assets/stickymd-a.png)`。
 - 文件名冲突用内容 hash 解决。
 - raw HTML 原样保留在 Markdown。
 - 不导出：配置、`.trash`、未引用 managed 图片。
@@ -187,10 +187,20 @@ D:\Export\my-note-assets\
 
 ---
 
-## Inputs / Outputs
+## Inputs
 
-- Inputs：PasteClipboard intent、DocumentState 文本、undo/redo 事件、启动扫描。
-- Outputs：images/ 文件写入、`.trash` 移动/删除、文本 delta 请求、导出目录。
+PasteClipboard intent、authoritative DocumentState snapshot、undo/redo 事件、启动扫描与
+images/.trash 存储事实。
+
+## Outputs
+
+managed 文件、TextDelta+AssetEffect 协调结果、`.trash` 事务、预览位图、导出目录或
+typed failure。
+
+## State Changes
+
+资产写入成功后才允许提交 Markdown 引用；引用从 1→0 只产生受约束的 managed trash
+事务。undo/redo 通过同一事务顺序恢复/重放，最终文件状态必须与最新 DocumentState 引用一致。
 
 ## Failure Paths
 

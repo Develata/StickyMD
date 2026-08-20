@@ -5,7 +5,7 @@
 - `Layer`: Foundation
 - `Status`: Governing Rule
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-20
 - `Scope`: 固定 StickyMD 核心术语的定义、权威来源、等价性边界与生命周期；全仓库文档与代码命名必须使用本表术语
 
 每个术语包含四个字段：
@@ -67,14 +67,14 @@
 
 ### Generation
 
-- **Definition**：DocumentState 的单调递增版本号。每次文本修改递增。所有后台任务结果必须携带来源 generation。
+- **Definition**：DocumentState 的单调递增版本号。每次 canonical mutation（edit、undo、redo、external reload、recovery replacement）递增；caret/selection/preedit 不递增。所有后台任务结果必须携带来源 generation。
 - **Authority**：DocumentState。
 - **Not equivalent to**：时间戳；generation 只表达文档版本顺序。
 - **Lifetime**：进程生命周期；重启后重新计数（与磁盘 hash 联合识别状态）。
 
 ### Dirty
 
-- **Definition**：DocumentState 当前内容与其 saved generation 对应内容不一致的状态。
+- **Definition**：`generation != saved_generation` 的保守状态，表示当前 canonical generation 尚未收到落盘确认；即使 undo 后文本字节碰巧与磁盘相同，也仍可保持 dirty，直到该 generation 被保存确认。
 - **Authority**：DocumentState（generation 与 saved_generation 的比较）。
 - **Not equivalent to**：Preview dirty（预览刷新标志是独立概念）。
 - **Lifetime**：从一次修改开始，到该 generation 成功落盘结束。

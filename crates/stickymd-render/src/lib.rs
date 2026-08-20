@@ -1,22 +1,11 @@
-//! StickyMD rendering projection crate.
+//! Platform-independent rendering projections for StickyMD.
 //!
-//! plan_ref: docs/plan/06_markdown_math_rendering.md#owned-ast-投影
+//! plan_ref: docs/plan/06_markdown_math_rendering.md#owned-ast-projection
+//! plan_ref: docs/plan/07_editor_and_ime.md#source-editor
 //!
-//! Phase 1 status: package skeleton only. Future responsibility:
-//!
-//! - Markdown projection (Comrak Arena -> owned AST conversion happens here)
-//! - Owned AST (`preview::owned_ast`)
-//! - RenderTree (`preview::render_tree`)
-//! - Block/inline layout
-//! - Math integration (RaTeX `math::display_list` stays a projection; RaTeX
-//!   types must never leak into `stickymd-core`)
-//! - Preview selection mapping
-//!
-//! Constraints carried over from the contracts:
-//!
-//! - Comrak defines Markdown semantics; RaTeX defines math semantics.
-//!   StickyMD owns only projection/layout integration.
-//! - The Comrak Arena must never be stored long-term or cross-thread;
-//!   it is converted to the owned tree and dropped.
-//! - This crate must stay platform-independent (Linux CI builds it).
+//! `SourceProjection` may duplicate text inside a `cosmic_text::Buffer`, but the
+//! duplicate is generation-tagged, replaceable, never persisted, and can never
+//! mutate the canonical `DocumentState`.
 #![forbid(unsafe_code)]
+
+pub mod source;

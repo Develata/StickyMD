@@ -1,0 +1,14 @@
+[package]
+name = "spike-markdown-math"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[dependencies]
+comrak = { version = "=0.54.0", default-features = false }
+ratex-layout = "=0.1.14"
+ratex-parser = "=0.1.14"
+ratex-render = { version = "=0.1.14", features = ["embed-fonts"] }

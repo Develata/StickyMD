@@ -1,0 +1,563 @@
+//! Generation-tagged `cosmic-text` source projection.
+//!
+//! plan_ref: docs/plan/07_editor_and_ime.md#source-editor
+//!
+//! The internal `Buffer` is a disposable layout copy. It never becomes a save,
+//! clipboard, or edit source and cannot write back into `DocumentState`.
+
+use cosmic_text::{
+    Align, Attrs, AttrsList, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, Wrap,
+};
+use std::ops::Range;
+use stickymd_core::{DocumentSnapshot, Generation, Selection, TextDelta};
+use thiserror::Error;
+
+use super::fonts::{FontSelection, segment_script_runs};
+
+const FONT_SIZE_DIP: f32 = 16.0;
+const LINE_HEIGHT_DIP: f32 = 24.8;
+pub(super) const PADDING_DIP: f32 = 24.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EditorRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreeditVisual {
+    pub text: String,
+    pub cursor: Option<Range<usize>>,
+    pub replacement: Selection,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum SourceProjectionError {
+    #[error("projection generation {projected} is newer than canonical generation {canonical}")]
+    FutureGeneration {
+        projected: Generation,
+        canonical: Generation,
+    },
+    #[error("selection or cursor is not a valid canonical UTF-8 position")]
+    InvalidPosition,
+    #[error("incremental projection delta did not match the projected source")]
+    DeltaMismatch,
+    #[error("projection requires an explicit canonical snapshot resynchronization")]
+    ResyncRequired,
+}
+
+pub struct SourceProjection {
+    pub(super) font_system: FontSystem,
+    pub(super) swash_cache: SwashCache,
+    pub(super) buffer: Buffer,
+    pub(super) fonts: FontSelection,
+    pub(super) canonical: String,
+    pub(super) generation: Generation,
+    pub(super) line_starts: Vec<usize>,
+    pub(super) width_px: u32,
+    pub(super) height_px: u32,
+    pub(super) scale_factor: f32,
+    pub(super) preedit: Option<PreeditVisual>,
+}
+
+impl SourceProjection {
+    pub fn new(snapshot: &DocumentSnapshot, width_px: u32, height_px: u32, scale: f32) -> Self {
+        let mut font_system = FontSystem::new();
+        let fonts = FontSelection::resolve(&mut font_system);
+        let metrics = scaled_metrics(scale);
+        let mut buffer = Buffer::new(&mut font_system, metrics);
+        buffer.set_wrap(Wrap::WordOrGlyph);
+        let mut projection = Self {
+            font_system,
+            swash_cache: SwashCache::new(),
+            buffer,
+            fonts,
+            canonical: String::new(),
+            generation: Generation::initial(),
+            line_starts: vec![0],
+            width_px,
+            height_px,
+            scale_factor: scale.max(0.5),
+            preedit: None,
+        };
+        projection.configure_buffer();
+        projection.rebuild(snapshot);
+        projection
+    }
+
+    pub const fn projected_generation(&self) -> Generation {
+        self.generation
+    }
+
+    pub fn projected_text(&self) -> &str {
+        &self.canonical
+    }
+
+    pub const fn fonts(&self) -> &FontSelection {
+        &self.fonts
+    }
+
+    pub fn resync(&mut self, snapshot: &DocumentSnapshot) -> Result<(), SourceProjectionError> {
+        if self.generation > snapshot.generation {
+            return Err(SourceProjectionError::FutureGeneration {
+                projected: self.generation,
+                canonical: snapshot.generation,
+            });
+        }
+        let scroll = self.buffer.scroll();
+        self.rebuild(snapshot);
+        self.buffer.set_scroll(scroll);
+        self.buffer.shape_until_scroll(&mut self.font_system, false);
+        Ok(())
+    }
+
+    /// Apply a single-line canonical delta without re-segmenting the whole document.
+    ///
+    /// Newlines, missed generations, or other non-local changes conservatively use
+    /// the full snapshot rebuild path. A mismatch never writes back to canonical state.
+    pub fn apply_delta(
+        &mut self,
+        generation: Generation,
+        delta: &TextDelta,
+    ) -> Result<(), SourceProjectionError> {
+        if self.generation.checked_next() != Some(generation)
+            || delta.inserted().contains('\n')
+            || delta.deleted().contains('\n')
+        {
+            return Err(SourceProjectionError::ResyncRequired);
+        }
+
+        let range = delta.range();
+        if range.end > self.canonical.len()
+            || !self.canonical.is_char_boundary(range.start)
+            || !self.canonical.is_char_boundary(range.end)
+            || &self.canonical[range.clone()] != delta.deleted()
+        {
+            return Err(SourceProjectionError::DeltaMismatch);
+        }
+
+        let Some(_expected_len) = self
+            .canonical
+            .len()
+            .checked_sub(range.len())
+            .and_then(|length| length.checked_add(delta.inserted().len()))
+        else {
+            return Err(SourceProjectionError::DeltaMismatch);
+        };
+
+        let line = self
+            .line_starts
+            .partition_point(|start| *start <= range.start)
+            - 1;
+        let line_start = self.line_starts[line];
+        let line_end = self
+            .line_starts
+            .get(line + 1)
+            .map_or(self.canonical.len(), |next| next.saturating_sub(1));
+        if range.end > line_end {
+            return Err(SourceProjectionError::ResyncRequired);
+        }
+
+        let Some(buffer_line) = self.buffer.lines.get(line) else {
+            // cosmic-text may omit a synthetic empty line after a trailing
+            // newline. The canonical delta is still valid, but it cannot be
+            // applied to a line that has no current layout representation.
+            return Err(SourceProjectionError::ResyncRequired);
+        };
+        let local_range = (range.start - line_start)..(range.end - line_start);
+        if local_range.end > buffer_line.text().len() {
+            return Err(SourceProjectionError::DeltaMismatch);
+        }
+        let mut updated_line = String::with_capacity(
+            buffer_line.text().len() - local_range.len() + delta.inserted().len(),
+        );
+        updated_line.push_str(&buffer_line.text()[..local_range.start]);
+        updated_line.push_str(delta.inserted());
+        updated_line.push_str(&buffer_line.text()[local_range.end..]);
+        let attrs = attrs_for_line(&updated_line, &self.fonts);
+        let ending = buffer_line.ending();
+
+        // Validate every fallible offset calculation before mutating either
+        // the shaped projection or its canonical mirror.
+        if delta.inserted().len() >= delta.deleted().len() {
+            let added = delta.inserted().len() - delta.deleted().len();
+            if self
+                .line_starts
+                .last()
+                .and_then(|start| start.checked_add(added))
+                .is_none()
+            {
+                return Err(SourceProjectionError::DeltaMismatch);
+            }
+        } else {
+            let removed = delta.deleted().len() - delta.inserted().len();
+            if self.line_starts[line + 1..]
+                .first()
+                .is_some_and(|start| *start < removed)
+            {
+                return Err(SourceProjectionError::DeltaMismatch);
+            }
+        }
+
+        let Some(buffer_line) = self.buffer.lines.get_mut(line) else {
+            return Err(SourceProjectionError::DeltaMismatch);
+        };
+        buffer_line.set_text(updated_line, ending, attrs);
+        buffer_line.set_align(Some(Align::Left));
+        self.buffer.set_redraw(true);
+        self.buffer.line_layout(&mut self.font_system, line);
+
+        if delta.inserted().len() >= delta.deleted().len() {
+            let added = delta.inserted().len() - delta.deleted().len();
+            for start in &mut self.line_starts[line + 1..] {
+                *start += added;
+            }
+        } else {
+            let removed = delta.deleted().len() - delta.inserted().len();
+            for start in &mut self.line_starts[line + 1..] {
+                *start -= removed;
+            }
+        }
+        self.canonical.replace_range(range, delta.inserted());
+        self.generation = generation;
+        Ok(())
+    }
+
+    pub fn set_viewport(&mut self, width_px: u32, height_px: u32, scale: f32) {
+        self.width_px = width_px;
+        self.height_px = height_px;
+        self.scale_factor = scale.max(0.5);
+        self.buffer.set_metrics_and_size(
+            scaled_metrics(self.scale_factor),
+            Some(self.content_width()),
+            Some(self.content_height()),
+        );
+        self.buffer.shape_until_scroll(&mut self.font_system, false);
+    }
+
+    pub fn set_preedit(&mut self, preedit: Option<PreeditVisual>) {
+        self.preedit = preedit;
+    }
+
+    pub fn preedit(&self) -> Option<&PreeditVisual> {
+        self.preedit.as_ref()
+    }
+
+    fn rebuild(&mut self, snapshot: &DocumentSnapshot) {
+        self.canonical.clear();
+        self.canonical.push_str(&snapshot.text);
+        self.generation = snapshot.generation;
+        self.line_starts = line_starts(&self.canonical);
+        self.configure_buffer();
+
+        let default = Attrs::new().family(Family::Serif);
+        let runs = segment_script_runs(&self.canonical);
+        if runs.is_empty() {
+            self.buffer.set_text(
+                &self.canonical,
+                &default,
+                Shaping::Advanced,
+                Some(Align::Left),
+            );
+        } else {
+            let spans: Vec<(&str, Attrs<'_>)> = runs
+                .iter()
+                .map(|run| {
+                    let attrs = Attrs::new().family(Family::Name(self.fonts.family_for(run.class)));
+                    (&self.canonical[run.range.clone()], attrs)
+                })
+                .collect();
+            self.buffer
+                .set_rich_text(spans, &default, Shaping::Advanced, Some(Align::Left));
+        }
+        self.buffer.shape_until_scroll(&mut self.font_system, false);
+    }
+
+    fn configure_buffer(&mut self) {
+        self.buffer.set_metrics_and_size(
+            scaled_metrics(self.scale_factor),
+            Some(self.content_width()),
+            Some(self.content_height()),
+        );
+        self.buffer.set_wrap(Wrap::WordOrGlyph);
+    }
+}
+
+pub(super) fn scaled_metrics(scale: f32) -> Metrics {
+    Metrics::new(
+        FONT_SIZE_DIP * scale.max(0.5),
+        LINE_HEIGHT_DIP * scale.max(0.5),
+    )
+}
+
+fn line_starts(text: &str) -> Vec<usize> {
+    std::iter::once(0)
+        .chain(text.match_indices('\n').map(|(index, _)| index + 1))
+        .collect()
+}
+
+pub(super) fn selection_valid(text: &str, selection: Selection) -> bool {
+    selection.anchor.byte <= text.len()
+        && selection.active.byte <= text.len()
+        && text.is_char_boundary(selection.anchor.byte)
+        && text.is_char_boundary(selection.active.byte)
+}
+
+fn attrs_for_line(text: &str, fonts: &FontSelection) -> AttrsList {
+    let default = Attrs::new().family(Family::Serif);
+    let mut attrs = AttrsList::new(&default);
+    for run in segment_script_runs(text) {
+        let run_attrs = Attrs::new().family(Family::Name(fonts.family_for(run.class)));
+        attrs.add_span(run.range, &run_attrs);
+    }
+    attrs
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use stickymd_core::{
+        CursorSnapshot, DocumentState, EditKind, EditMeta, EditRequest, LineEnding,
+    };
+    use tiny_skia::Pixmap;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    fn snapshot(text: &str) -> DocumentSnapshot {
+        DocumentSnapshot {
+            text: Arc::from(text),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        }
+    }
+
+    #[test]
+    fn projection_is_generation_tagged_and_resyncs_from_snapshot() {
+        let first = snapshot("这是 Rust 测试");
+        let mut projection = SourceProjection::new(&first, 600, 400, 1.0);
+        assert_eq!(projection.projected_text(), &*first.text);
+        assert_eq!(projection.projected_generation(), first.generation);
+
+        let second = DocumentSnapshot {
+            text: Arc::from("new"),
+            generation: first.generation.checked_next().unwrap(),
+            line_ending: LineEnding::Lf,
+        };
+        projection.resync(&second).unwrap();
+        assert_eq!(projection.projected_text(), "new");
+        assert_eq!(projection.projected_generation(), second.generation);
+    }
+
+    #[test]
+    fn hit_test_returns_grapheme_boundary_for_mixed_text() {
+        let text = "中e\u{301}👨‍👩‍👧‍👦 Latin";
+        let projection = SourceProjection::new(&snapshot(text), 800, 400, 1.0);
+        for x in (0..800).step_by(7) {
+            let byte = projection.hit_test(x as f32, 30.0);
+            assert!(text.is_char_boundary(byte));
+            assert!(
+                byte == text.len()
+                    || text
+                        .grapheme_indices(true)
+                        .any(|(boundary, _)| boundary == byte)
+            );
+        }
+    }
+
+    #[test]
+    fn hit_test_roundtrips_line_edges_mixed_fonts_and_wrapped_lines() {
+        let text = "中文 Rust mixed boundary end\nwrap 中文 Latin ".repeat(8);
+        let mut projection = SourceProjection::new(&snapshot(&text), 260, 600, 1.0);
+        let probes = [
+            0,
+            "中文 ".len(),
+            text.find("Rust").unwrap() + 2,
+            text.find('\n').unwrap(),
+            text.len() / 2,
+        ];
+        for mut byte in probes {
+            while !text.is_char_boundary(byte) {
+                byte -= 1;
+            }
+            projection.ensure_caret_visible(byte).unwrap();
+            let caret = projection.caret_rect(byte).unwrap();
+            assert_eq!(
+                projection.hit_test(caret.x, caret.y + caret.height * 0.5),
+                byte
+            );
+        }
+    }
+
+    #[test]
+    fn resize_does_not_change_projected_generation_or_text() {
+        let source = snapshot("wrapped line wrapped line wrapped line");
+        let mut projection = SourceProjection::new(&source, 200, 200, 1.0);
+        projection.set_viewport(800, 600, 2.0);
+        assert_eq!(projection.projected_generation(), source.generation);
+        assert_eq!(projection.projected_text(), &*source.text);
+    }
+
+    #[test]
+    fn paint_rejects_invalid_selection_without_panicking() {
+        let source = snapshot("中");
+        let mut projection = SourceProjection::new(&source, 400, 300, 1.0);
+        let mut pixmap = Pixmap::new(400, 300).unwrap();
+        assert_eq!(
+            projection.paint(&mut pixmap, Selection::new(0, 1), true, true, None),
+            Err(SourceProjectionError::InvalidPosition)
+        );
+    }
+
+    #[test]
+    fn older_snapshot_cannot_overwrite_newer_projection() {
+        let first = DocumentSnapshot {
+            text: Arc::from("newer"),
+            generation: Generation::initial().checked_next().unwrap(),
+            line_ending: LineEnding::Lf,
+        };
+        let older = snapshot("older");
+        let mut projection = SourceProjection::new(&first, 400, 300, 1.0);
+        assert!(matches!(
+            projection.resync(&older),
+            Err(SourceProjectionError::FutureGeneration { .. })
+        ));
+        assert_eq!(projection.projected_text(), "newer");
+    }
+
+    #[test]
+    fn preedit_paints_without_changing_projected_text_or_generation() {
+        let source = snapshot("ABC 中文");
+        let mut projection = SourceProjection::new(&source, 500, 300, 1.0);
+        projection.set_preedit(Some(PreeditVisual {
+            text: "你好".to_owned(),
+            cursor: Some(6..6),
+            replacement: Selection::new(0, 3),
+        }));
+        let mut pixmap = Pixmap::new(500, 300).unwrap();
+        projection
+            .paint(&mut pixmap, Selection::new(0, 3), true, true, None)
+            .unwrap();
+        assert_eq!(projection.projected_text(), "ABC 中文");
+        assert_eq!(projection.projected_generation(), source.generation);
+    }
+
+    #[test]
+    fn ime_candidate_rect_follows_cursor_inside_preedit() {
+        let source = snapshot("");
+        let mut projection = SourceProjection::new(&source, 500, 300, 1.0);
+        projection.set_preedit(Some(PreeditVisual {
+            text: "abc".to_owned(),
+            cursor: Some(0..0),
+            replacement: Selection::caret(0),
+        }));
+        let at_start = projection.ime_caret_rect(0).unwrap();
+        projection.set_preedit(Some(PreeditVisual {
+            text: "abc".to_owned(),
+            cursor: Some(3..3),
+            replacement: Selection::caret(0),
+        }));
+        let at_end = projection.ime_caret_rect(0).unwrap();
+        assert!(at_end.x > at_start.x);
+    }
+
+    #[test]
+    fn document_resync_preserves_source_scroll() {
+        let text = (0..200)
+            .map(|line| format!("line {line} 中文\n"))
+            .collect::<String>();
+        let source = snapshot(&text);
+        let mut projection = SourceProjection::new(&source, 500, 200, 1.0);
+        let before = projection.scroll_by(2_000.0);
+        assert!(before.line > 0 || before.vertical > 0.0);
+
+        let next = DocumentSnapshot {
+            text: Arc::from(format!("{text}tail")),
+            generation: source.generation.checked_next().unwrap(),
+            line_ending: LineEnding::Lf,
+        };
+        projection.resync(&next).unwrap();
+        assert_eq!(projection.scroll(), before);
+    }
+
+    #[test]
+    fn single_line_delta_updates_only_the_affected_projection_line() {
+        let mut document = DocumentState::loaded("first\nsecond line\nthird", LineEnding::Lf, None);
+        let initial = document.snapshot();
+        let mut projection = SourceProjection::new(&initial, 600, 400, 1.0);
+        let start = document.text().find("line").unwrap();
+        let request = EditRequest::new(
+            document.generation(),
+            start..start + "line".len(),
+            "行",
+            CursorSnapshot::caret(start),
+            CursorSnapshot::caret(start + "行".len()),
+            EditMeta::new(EditKind::ImeCommit, 10),
+        );
+        let outcome = document.edit(request).unwrap();
+        projection
+            .apply_delta(document.generation(), outcome.delta.as_ref().unwrap())
+            .unwrap();
+
+        assert_eq!(projection.projected_text(), "first\nsecond 行\nthird");
+        assert_eq!(projection.projected_generation(), document.generation());
+        assert_eq!(projection.buffer.lines[1].text(), "second 行");
+        let third_start = document.text().find("third").unwrap();
+        let cursor = projection.cursor_for_global(third_start).unwrap();
+        assert_eq!((cursor.line, cursor.index), (2, 0));
+    }
+
+    #[test]
+    fn newline_delta_conservatively_rebuilds_the_projection() {
+        let mut document = DocumentState::loaded("first\nthird", LineEnding::Lf, None);
+        let initial = document.snapshot();
+        let mut projection = SourceProjection::new(&initial, 600, 400, 1.0);
+        let start = "first\n".len();
+        let request = EditRequest::new(
+            document.generation(),
+            start..start,
+            "second\n",
+            CursorSnapshot::caret(start),
+            CursorSnapshot::caret(start + "second\n".len()),
+            EditMeta::new(EditKind::Paste, 10),
+        );
+        let outcome = document.edit(request).unwrap();
+        let snapshot = document.snapshot();
+
+        assert_eq!(
+            projection.apply_delta(document.generation(), outcome.delta.as_ref().unwrap()),
+            Err(SourceProjectionError::ResyncRequired)
+        );
+        projection.resync(&snapshot).unwrap();
+
+        assert_eq!(projection.projected_text(), "first\nsecond\nthird");
+        assert_eq!(projection.buffer.lines.len(), 3);
+        let cursor = projection.cursor_for_global(document.text().len()).unwrap();
+        assert_eq!((cursor.line, cursor.index), (2, "third".len()));
+    }
+
+    #[test]
+    fn mismatched_incremental_delta_is_rejected_without_projection_mutation() {
+        let initial = snapshot("abc");
+        let mut projection = SourceProjection::new(&initial, 600, 400, 1.0);
+        let mut document = DocumentState::loaded("adc", LineEnding::Lf, None);
+        let request = EditRequest::new(
+            document.generation(),
+            1..2,
+            "x",
+            CursorSnapshot::caret(1),
+            CursorSnapshot::caret(2),
+            EditMeta::new(EditKind::Typing, 10),
+        );
+        let outcome = document.edit(request).unwrap();
+
+        assert_eq!(
+            projection.apply_delta(document.generation(), outcome.delta.as_ref().unwrap()),
+            Err(SourceProjectionError::DeltaMismatch)
+        );
+        assert_eq!(projection.projected_text(), "abc");
+        assert_eq!(projection.projected_generation(), initial.generation);
+    }
+}

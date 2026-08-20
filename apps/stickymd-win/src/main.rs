@@ -1,20 +1,41 @@
-//! StickyMD Windows application skeleton.
+//! StickyMD Windows development entry point.
 //!
-//! plan_ref: docs/plan/09_windows_shell.md#purpose
-//!
-//! Phase 1 status: placeholder binary only. The real Interaction Shell and
-//! the thin Windows adapters will live here in later phases:
-//!
-//! - `editor/` future source editor backends (cosmic-text first)
-//! - `ui/` future shell controls (translation + presentation only)
-//! - `workers/` future preview and I/O workers
-//! - `platform/windows/` the ONLY allowed location for Win32 calls
-//!
-//! Business authority never lives in this crate: DocumentState (core) is
-//! the runtime document authority; this shell only translates and presents.
+//! plan_ref: docs/plan/09_windows_shell.md#windows-shell-purpose
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(windows)]
+mod app;
+#[cfg(windows)]
+mod flow;
+#[cfg(windows)]
+mod instruction;
+#[cfg(windows)]
+mod interaction;
+#[cfg(windows)]
+mod platform;
+#[cfg(windows)]
+mod surface;
+
+#[cfg(windows)]
 fn main() {
-    println!("StickyMD production shell skeleton (Phase 1 placeholder).");
-    println!("No runtime feature is implemented yet. See docs/plan/.");
+    use app::StickyApp;
+    use winit::event_loop::EventLoop;
+
+    let event_loop = match EventLoop::new() {
+        Ok(event_loop) => event_loop,
+        Err(error) => {
+            eprintln!("event loop creation failed: {error}");
+            std::process::exit(1);
+        }
+    };
+    let mut app = StickyApp::new();
+    if let Err(error) = event_loop.run_app(&mut app) {
+        eprintln!("application event loop failed: {error}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("StickyMD v1 targets Windows 11 x64 only.");
 }

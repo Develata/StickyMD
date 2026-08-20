@@ -1,40 +1,29 @@
-//! The runtime document authority.
+//! Runtime authority for canonical document text.
 //!
 //! plan_ref: docs/plan/04_runtime_state_model.md#documentstate
 //!
-//! `DocumentState` is the **sole runtime authority** for document content. The disk
-//! `note.md` is only its durable projection; external disk changes are External File
-//! Facts that may enter *only* through [`DocumentState::load_external`] (the
-//! reconciliation gate). UI, Preview and background tasks only ever receive immutable
-//! [`DocumentSnapshot`]s — never a mutable reference (core invariant #9).
+//! Invariants:
+//! 1. canonical text is valid UTF-8 and changes only through this module;
+//! 2. edit ranges and cursor positions are validated before mutation;
+//! 3. generation advances monotonically and exhaustion fails closed;
+//! 4. stale edit requests are rejected;
+//! 5. new edits clear redo, while no-op edits change no history;
+//! 6. failed edit/undo/redo operations leave text, history, and generation unchanged;
+//! 7. snapshots are immutable projections and cannot mutate this state;
+//! 8. persisted acknowledgements cannot refer to future generations.
 
+use std::ops::Range;
 use std::sync::Arc;
 
-use crate::cursor::CursorSnapshot;
-use crate::error::{EditError, PersistAckError};
-use crate::generation::Generation;
-use crate::hash::Hash32;
-use crate::line_ending::LineEnding;
-use crate::text_delta::{InputKind, TextDelta};
-use crate::text_store::{StringTextStore, TextStore};
+use crate::edit::{EditOutcome, RedoOutcome, TextDelta, UndoOutcome};
+use crate::selection::position_is_valid;
+use crate::text_store::{StringTextStore, TextStore, validate_range};
 use crate::undo::{UndoEntry, UndoManager};
+use crate::{
+    CursorSnapshot, DocumentError, DocumentSnapshot, EditRequest, Generation, Hash32, LineEnding,
+};
 
-/// Read-only snapshot of the document at a given generation.
-///
-/// plan_ref: docs/plan/04_runtime_state_model.md#previewstate
-///
-/// Carries the generation it was derived from; consumers must drop a result whose
-/// generation no longer matches the current document (invariant #4). Snapshots are
-/// immutable and never written back.
-#[derive(Debug, Clone)]
-pub struct DocumentSnapshot {
-    /// The document text at snapshot time.
-    pub text: Arc<str>,
-    /// The generation this snapshot was derived from.
-    pub generation: Generation,
-}
-
-/// The runtime authoritative document state.
+/// Sole runtime authority for the working Markdown text.
 #[derive(Debug)]
 pub struct DocumentState {
     store: StringTextStore,
@@ -46,10 +35,7 @@ pub struct DocumentState {
 }
 
 impl DocumentState {
-    /// Create a document from already-loaded disk content.
-    ///
-    /// `text` is normalized to the internal `\n` form. A freshly loaded document is
-    /// clean: its current generation equals its saved generation.
+    /// Create a clean document from durable content.
     pub fn loaded(text: &str, line_ending: LineEnding, disk_hash: Option<Hash32>) -> Self {
         Self {
             store: StringTextStore::new(LineEnding::to_internal(text)),
@@ -61,15 +47,16 @@ impl DocumentState {
         }
     }
 
-    /// Create an empty document with a chosen line ending.
     pub fn empty(line_ending: LineEnding) -> Self {
         Self::loaded("", line_ending, None)
     }
 
-    // ---- read accessors ----
-
     pub fn text(&self) -> &str {
         self.store.as_str()
+    }
+
+    pub fn len_bytes(&self) -> usize {
+        self.store.len_bytes()
     }
 
     pub fn generation(&self) -> Generation {
@@ -88,7 +75,6 @@ impl DocumentState {
         self.base_disk_hash
     }
 
-    /// Dirty when the current generation differs from the saved generation.
     pub fn is_dirty(&self) -> bool {
         self.generation != self.saved_generation
     }
@@ -101,270 +87,563 @@ impl DocumentState {
         self.undo.can_redo()
     }
 
-    /// Produce an immutable snapshot for background tasks / preview.
+    /// Explicit O(n) immutable snapshot for workers and render projections.
     pub fn snapshot(&self) -> DocumentSnapshot {
         DocumentSnapshot {
             text: Arc::from(self.store.as_str()),
             generation: self.generation,
+            line_ending: self.line_ending,
         }
     }
 
-    /// The document text converted to its on-disk line ending style.
     pub fn text_for_disk(&self) -> String {
         self.line_ending.apply(self.store.as_str())
     }
 
-    // ---- mutation ----
-
-    /// Apply a text delta as a single edit.
+    /// Apply one typed edit request.
     ///
-    /// Validates char boundaries, records an undo entry (with grouping), bumps the
-    /// generation and marks the document dirty. On any validation failure the store
-    /// is left untouched. Returns the new generation.
-    pub fn apply_delta(
-        &mut self,
-        delta: &TextDelta,
-        kind: InputKind,
-        now_ms: u64,
-        cursor_before: CursorSnapshot,
-        cursor_after: CursorSnapshot,
-    ) -> Result<Generation, EditError> {
-        let removed = delta.validate(self.store.as_str())?.to_string();
-        if !cursor_before.is_valid_for(self.store.as_str()) {
-            return Err(EditError::OutOfBounds);
+    /// All fallible validation, including generation overflow, finishes before the
+    /// canonical string or history is mutated.
+    pub fn edit(&mut self, request: EditRequest) -> Result<EditOutcome, DocumentError> {
+        if request.expected_generation != self.generation {
+            return Err(DocumentError::StaleEdit {
+                expected: request.expected_generation,
+                current: self.generation,
+            });
         }
-        self.store.apply(delta)?;
-        if !cursor_after.is_valid_for(self.store.as_str()) {
-            // Roll back to keep the store consistent with a rejected edit.
-            let inverse = TextDelta::new(
-                delta.range.start..delta.range.start + delta.replacement.len(),
-                removed.clone(),
-            );
-            let _ = self.store.apply(&inverse);
-            return Err(EditError::OutOfBounds);
+
+        let text = self.store.as_str();
+        validate_range(text, &request.range)?;
+        if !request.cursor_before.is_valid_for(text) {
+            return Err(DocumentError::InvalidTextPosition);
         }
-        let entry =
-            UndoEntry::from_delta(delta, removed, kind, cursor_before, cursor_after, now_ms);
-        self.undo.record(entry);
-        self.bump();
-        Ok(self.generation)
+        if !cursor_is_valid_after_replace(
+            text,
+            &request.range,
+            &request.inserted,
+            request.cursor_after,
+        ) {
+            return Err(DocumentError::InvalidTextPosition);
+        }
+
+        let deleted = &text[request.range.clone()];
+        if deleted == request.inserted {
+            return Ok(EditOutcome {
+                generation: self.generation,
+                dirty: self.is_dirty(),
+                undo_recorded: false,
+                grouped: false,
+                delta: None,
+            });
+        }
+
+        let next_generation = self
+            .generation
+            .checked_next()
+            .ok_or(DocumentError::GenerationExhausted)?;
+        let delta = TextDelta::new(
+            request.range.clone(),
+            Arc::from(deleted),
+            Arc::from(request.inserted),
+            request.cursor_before,
+            request.cursor_after,
+        );
+
+        self.store.replace(delta.range.clone(), &delta.inserted)?;
+        let record = self.undo.record(UndoEntry::new(
+            delta.clone(),
+            request.meta.kind,
+            request.meta.timestamp_ms,
+        ));
+        self.generation = next_generation;
+
+        Ok(EditOutcome {
+            generation: self.generation,
+            dirty: self.is_dirty(),
+            undo_recorded: record.recorded,
+            grouped: record.grouped,
+            delta: Some(delta),
+        })
     }
 
-    /// Undo the most recent edit group. Returns the caret to restore, if any.
-    pub fn undo(&mut self) -> Result<Option<CursorSnapshot>, EditError> {
-        let Some(entry) = self.undo.pop_undo() else {
-            return Ok(None);
-        };
-        let inverse = entry.inverse_delta();
-        inverse.validate(self.store.as_str())?;
-        self.store.apply(&inverse)?;
-        self.bump();
-        Ok(Some(entry.cursor_before))
+    /// Undo one logical history entry transactionally.
+    pub fn undo(&mut self) -> Result<UndoOutcome, DocumentError> {
+        let entry = self
+            .undo
+            .peek_undo()
+            .cloned()
+            .ok_or(DocumentError::UndoUnavailable)?;
+        let inverse = entry.delta.inverse();
+        self.validate_recorded_delta(&inverse)?;
+        if !cursor_is_valid_after_replace(
+            self.store.as_str(),
+            &inverse.range,
+            &inverse.inserted,
+            inverse.cursor_after,
+        ) {
+            return Err(DocumentError::InvalidTextPosition);
+        }
+        let next_generation = self
+            .generation
+            .checked_next()
+            .ok_or(DocumentError::GenerationExhausted)?;
+
+        self.store
+            .replace(inverse.range.clone(), &inverse.inserted)?;
+        self.undo.commit_undo();
+        self.generation = next_generation;
+        Ok(UndoOutcome {
+            generation: self.generation,
+            cursor: inverse.cursor_after,
+            delta: inverse,
+        })
     }
 
-    /// Redo the most recently undone edit group. Returns the caret to restore.
-    pub fn redo(&mut self) -> Result<Option<CursorSnapshot>, EditError> {
-        let Some(entry) = self.undo.pop_redo() else {
-            return Ok(None);
-        };
-        let forward = entry.forward_delta();
-        forward.validate(self.store.as_str())?;
-        self.store.apply(&forward)?;
-        self.bump();
-        Ok(Some(entry.cursor_after))
+    /// Redo one logical history entry transactionally.
+    pub fn redo(&mut self) -> Result<RedoOutcome, DocumentError> {
+        let entry = self
+            .undo
+            .peek_redo()
+            .cloned()
+            .ok_or(DocumentError::RedoUnavailable)?;
+        let forward = entry.delta.clone();
+        self.validate_recorded_delta(&forward)?;
+        if !cursor_is_valid_after_replace(
+            self.store.as_str(),
+            &forward.range,
+            &forward.inserted,
+            forward.cursor_after,
+        ) {
+            return Err(DocumentError::InvalidTextPosition);
+        }
+        let next_generation = self
+            .generation
+            .checked_next()
+            .ok_or(DocumentError::GenerationExhausted)?;
+
+        self.store
+            .replace(forward.range.clone(), &forward.inserted)?;
+        self.undo.commit_redo();
+        self.generation = next_generation;
+        Ok(RedoOutcome {
+            generation: self.generation,
+            cursor: forward.cursor_after,
+            delta: forward,
+        })
     }
 
-    // ---- persistence / reconciliation ----
-
-    /// Acknowledge that `persisted` was atomically written to disk.
-    ///
-    /// Enforces invariant #7: `saved_generation` only advances to a generation that
-    /// actually exists and was persisted. A stale ack (≤ saved) is a harmless no-op;
-    /// an ack ahead of the current generation is rejected.
+    /// Accept a receipt from a persistence worker without clearing newer dirtiness.
     pub fn acknowledge_persisted(
         &mut self,
         persisted: Generation,
         hash: Hash32,
-    ) -> Result<(), PersistAckError> {
+    ) -> Result<(), DocumentError> {
         if persisted > self.generation {
-            return Err(PersistAckError::AheadOfDocument);
+            return Err(DocumentError::InvalidPersistedGeneration);
         }
         if persisted > self.saved_generation {
             self.saved_generation = persisted;
+            self.base_disk_hash = Some(hash);
+        } else if persisted == self.saved_generation && self.base_disk_hash.is_none() {
+            // A newly-created empty note can be persisted at generation zero.
+            // Its first durable receipt still establishes the external base hash.
             self.base_disk_hash = Some(hash);
         }
         Ok(())
     }
 
-    /// Reconciliation gate: load externally observed content into the authority.
-    ///
-    /// This is the *only* path by which an External File Fact enters DocumentState
-    /// (invariant #2). It replaces the text, bumps the generation, clears undo (an
-    /// external reload is not undoable) and marks the document clean at the new
-    /// generation with the given disk hash.
-    pub fn load_external(&mut self, text: &str, line_ending: LineEnding, hash: Hash32) {
+    /// Reconciliation gate for external reload or accepted recovery content.
+    pub fn replace_from_reconciliation(
+        &mut self,
+        text: &str,
+        line_ending: LineEnding,
+        hash: Hash32,
+    ) -> Result<Generation, DocumentError> {
+        let next_generation = self
+            .generation
+            .checked_next()
+            .ok_or(DocumentError::GenerationExhausted)?;
         self.store.replace_all(LineEnding::to_internal(text));
         self.line_ending = line_ending;
         self.undo.clear();
-        self.generation = self.generation.next();
-        self.saved_generation = self.generation;
+        self.generation = next_generation;
+        self.saved_generation = next_generation;
         self.base_disk_hash = Some(hash);
+        Ok(next_generation)
     }
 
-    fn bump(&mut self) {
-        self.generation = self.generation.next();
+    fn validate_recorded_delta(&self, delta: &TextDelta) -> Result<(), DocumentError> {
+        validate_range(self.store.as_str(), &delta.range)?;
+        if &self.store.as_str()[delta.range.clone()] != delta.deleted.as_ref() {
+            return Err(DocumentError::DeletedTextMismatch);
+        }
+        Ok(())
     }
+
+    #[cfg(test)]
+    fn set_generation_for_test(&mut self, generation: Generation) {
+        self.generation = generation;
+    }
+}
+
+fn cursor_is_valid_after_replace(
+    text: &str,
+    range: &Range<usize>,
+    inserted: &str,
+    cursor: CursorSnapshot,
+) -> bool {
+    position_is_valid_after_replace(text, range, inserted, cursor.selection.anchor.byte)
+        && position_is_valid_after_replace(text, range, inserted, cursor.selection.active.byte)
+}
+
+fn position_is_valid_after_replace(
+    text: &str,
+    range: &Range<usize>,
+    inserted: &str,
+    byte: usize,
+) -> bool {
+    let Some(inserted_end) = range.start.checked_add(inserted.len()) else {
+        return false;
+    };
+    let Some(after_len) = text
+        .len()
+        .checked_sub(range.end.saturating_sub(range.start))
+        .and_then(|length| length.checked_add(inserted.len()))
+    else {
+        return false;
+    };
+    if byte > after_len {
+        return false;
+    }
+    if byte <= range.start {
+        return position_is_valid(text, byte);
+    }
+    if byte <= inserted_end {
+        return inserted.is_char_boundary(byte - range.start);
+    }
+    range
+        .end
+        .checked_add(byte - inserted_end)
+        .is_some_and(|original| position_is_valid(text, original))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::undo::{MAX_UNDO_BYTES, MAX_UNDO_ENTRIES};
+    use crate::{EditKind, EditMeta, Selection};
 
-    fn hash(b: u8) -> Hash32 {
-        Hash32::new([b; 32])
+    fn hash(byte: u8) -> Hash32 {
+        Hash32::new([byte; 32])
     }
 
-    fn caret(offset: usize) -> CursorSnapshot {
-        CursorSnapshot::caret(offset, Generation::initial())
-    }
-
-    #[test]
-    fn loaded_document_starts_clean() {
-        let d = DocumentState::loaded("a\r\nb", LineEnding::Crlf, Some(hash(1)));
-        assert_eq!(d.text(), "a\nb");
-        assert!(!d.is_dirty());
-        assert_eq!(d.generation(), Generation::initial());
-        assert_eq!(d.text_for_disk(), "a\r\nb");
-    }
-
-    #[test]
-    fn apply_delta_bumps_generation_and_marks_dirty() {
-        let mut d = DocumentState::empty(LineEnding::Crlf);
-        let g0 = d.generation();
-        let delta = TextDelta::insert(0, "hi");
-        d.apply_delta(&delta, InputKind::Typing, 0, caret(0), caret(2))
-            .unwrap();
-        assert_eq!(d.text(), "hi");
-        assert!(d.generation() > g0);
-        assert!(d.is_dirty());
+    fn request(
+        doc: &DocumentState,
+        range: Range<usize>,
+        inserted: impl Into<String>,
+        before: CursorSnapshot,
+        after: CursorSnapshot,
+        kind: EditKind,
+        time: u64,
+    ) -> EditRequest {
+        EditRequest::new(
+            doc.generation(),
+            range,
+            inserted,
+            before,
+            after,
+            EditMeta::new(kind, time),
+        )
     }
 
     #[test]
-    fn apply_delta_rejects_non_boundary_and_leaves_text() {
-        let mut d = DocumentState::loaded("héllo", LineEnding::Lf, None);
-        let before = d.text().to_string();
-        let bad = TextDelta::new(1..2, "x");
-        assert!(
-            d.apply_delta(&bad, InputKind::Typing, 0, caret(1), caret(2))
-                .is_err()
+    fn edit_rejects_stale_generation_without_state_change() {
+        let mut doc = DocumentState::empty(LineEnding::Lf);
+        let stale = EditRequest::new(
+            Generation::for_test(9),
+            0..0,
+            "x",
+            CursorSnapshot::caret(0),
+            CursorSnapshot::caret(1),
+            EditMeta::new(EditKind::Typing, 0),
         );
-        assert_eq!(d.text(), before);
-        assert!(!d.is_dirty());
+        let before = doc.snapshot();
+        assert!(matches!(
+            doc.edit(stale),
+            Err(DocumentError::StaleEdit { .. })
+        ));
+        assert_eq!(doc.snapshot(), before);
+        assert!(!doc.can_undo());
     }
 
     #[test]
-    fn undo_restores_original_and_redo_reapplies() {
-        let mut d = DocumentState::loaded("abc", LineEnding::Lf, None);
-        let delta = TextDelta::insert(3, "def");
-        d.apply_delta(&delta, InputKind::Typing, 0, caret(3), caret(6))
-            .unwrap();
-        assert_eq!(d.text(), "abcdef");
-        let c = d.undo().unwrap();
-        assert_eq!(d.text(), "abc");
-        assert!(c.is_some());
-        let c = d.redo().unwrap();
-        assert_eq!(d.text(), "abcdef");
-        assert!(c.is_some());
-    }
-
-    #[test]
-    fn ime_commit_is_one_undo_step() {
-        let mut d = DocumentState::empty(LineEnding::Crlf);
-        let commit = TextDelta::insert(0, "你好世界");
-        d.apply_delta(&commit, InputKind::ImeCommit, 0, caret(0), caret(12))
-            .unwrap();
-        assert_eq!(d.text(), "你好世界");
-        d.undo().unwrap();
-        assert_eq!(d.text(), "");
-    }
-
-    #[test]
-    fn persist_ack_advances_saved_generation() {
-        let mut d = DocumentState::empty(LineEnding::Crlf);
-        let delta = TextDelta::insert(0, "x");
-        let g = d
-            .apply_delta(&delta, InputKind::Typing, 0, caret(0), caret(1))
-            .unwrap();
-        assert!(d.is_dirty());
-        d.acknowledge_persisted(g, hash(9)).unwrap();
-        assert!(!d.is_dirty());
-        assert_eq!(d.saved_generation(), g);
-        assert_eq!(d.base_disk_hash(), Some(hash(9)));
-    }
-
-    #[test]
-    fn persist_ack_never_exceeds_generation() {
-        let mut d = DocumentState::empty(LineEnding::Crlf);
-        let future = Generation::initial().next().next();
-        assert!(d.acknowledge_persisted(future, hash(1)).is_err());
-        assert_eq!(d.saved_generation(), Generation::initial());
-    }
-
-    #[test]
-    fn stale_persist_ack_is_noop() {
-        let mut d = DocumentState::empty(LineEnding::Crlf);
-        let g = d
-            .apply_delta(
-                &TextDelta::insert(0, "a"),
-                InputKind::Typing,
-                0,
-                caret(0),
-                caret(1),
-            )
-            .unwrap();
-        d.acknowledge_persisted(g, hash(1)).unwrap();
-        // Acknowledging an older generation again changes nothing.
-        d.acknowledge_persisted(Generation::initial(), hash(2))
-            .unwrap();
-        assert_eq!(d.saved_generation(), g);
-        assert_eq!(d.base_disk_hash(), Some(hash(1)));
-    }
-
-    #[test]
-    fn load_external_clears_undo_and_marks_clean() {
-        let mut d = DocumentState::loaded("local edits", LineEnding::Lf, None);
-        d.apply_delta(
-            &TextDelta::insert(0, "X"),
-            InputKind::Typing,
+    fn no_op_changes_nothing_and_preserves_redo() {
+        let mut doc = DocumentState::loaded("a", LineEnding::Lf, None);
+        let insert = request(
+            &doc,
+            1..1,
+            "b",
+            CursorSnapshot::caret(1),
+            CursorSnapshot::caret(2),
+            EditKind::Typing,
             0,
-            caret(0),
-            caret(1),
-        )
-        .unwrap();
-        assert!(d.can_undo());
-        assert!(d.is_dirty());
-        d.load_external("external content", LineEnding::Lf, hash(7));
-        assert_eq!(d.text(), "external content");
-        assert!(!d.can_undo());
-        assert!(!d.is_dirty());
-        assert_eq!(d.base_disk_hash(), Some(hash(7)));
+        );
+        doc.edit(insert).unwrap();
+        doc.undo().unwrap();
+        let generation = doc.generation();
+        let noop = request(
+            &doc,
+            0..1,
+            "a",
+            CursorSnapshot::caret(1),
+            CursorSnapshot::caret(1),
+            EditKind::Other,
+            1,
+        );
+        let outcome = doc.edit(noop).unwrap();
+        assert!(outcome.delta.is_none());
+        assert_eq!(doc.generation(), generation);
+        assert!(doc.can_redo());
     }
 
     #[test]
-    fn snapshot_carries_generation_and_is_immutable_text() {
-        let mut d = DocumentState::loaded("snap", LineEnding::Lf, None);
-        let s1 = d.snapshot();
-        d.apply_delta(
-            &TextDelta::insert(4, "!"),
-            InputKind::Typing,
+    fn reverse_selection_is_valid_for_replacement() {
+        let mut doc = DocumentState::loaded("hello world", LineEnding::Lf, None);
+        let before = CursorSnapshot::new(Selection::new(11, 6));
+        let after = CursorSnapshot::caret(12);
+        let edit = request(
+            &doc,
+            6..11,
+            "世界",
+            before,
+            after,
+            EditKind::SelectionReplace,
             0,
-            caret(4),
-            caret(5),
-        )
-        .unwrap();
-        let s2 = d.snapshot();
-        assert_eq!(&*s1.text, "snap");
-        assert_eq!(&*s2.text, "snap!");
-        assert!(s2.generation > s1.generation);
+        );
+        doc.edit(edit).unwrap();
+        assert_eq!(doc.text(), "hello 世界");
+        assert_eq!(doc.undo().unwrap().cursor, before);
+        assert_eq!(doc.text(), "hello world");
+    }
+
+    #[test]
+    fn generation_exhaustion_fails_before_mutation() {
+        let mut doc = DocumentState::empty(LineEnding::Lf);
+        doc.set_generation_for_test(Generation::for_test(u64::MAX));
+        let edit = request(
+            &doc,
+            0..0,
+            "x",
+            CursorSnapshot::caret(0),
+            CursorSnapshot::caret(1),
+            EditKind::Typing,
+            0,
+        );
+        assert_eq!(doc.edit(edit), Err(DocumentError::GenerationExhausted));
+        assert_eq!(doc.text(), "");
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn invalid_cursor_after_is_failure_atomic() {
+        let mut doc = DocumentState::loaded("中", LineEnding::Lf, None);
+        let edit = request(
+            &doc,
+            0..0,
+            "a",
+            CursorSnapshot::caret(0),
+            CursorSnapshot::caret(2),
+            EditKind::Typing,
+            0,
+        );
+        let before = doc.snapshot();
+        assert_eq!(doc.edit(edit), Err(DocumentError::InvalidTextPosition));
+        assert_eq!(doc.snapshot(), before);
+    }
+
+    #[test]
+    fn undo_and_redo_advance_generation_and_restore_cursor() {
+        let mut doc = DocumentState::loaded("abc", LineEnding::Lf, None);
+        let edit = request(
+            &doc,
+            3..3,
+            "def",
+            CursorSnapshot::caret(3),
+            CursorSnapshot::caret(6),
+            EditKind::Paste,
+            0,
+        );
+        let edited = doc.edit(edit).unwrap().generation;
+        let undone = doc.undo().unwrap();
+        assert_eq!(doc.text(), "abc");
+        assert_eq!(undone.cursor, CursorSnapshot::caret(3));
+        assert!(undone.generation > edited);
+        let redone = doc.redo().unwrap();
+        assert_eq!(doc.text(), "abcdef");
+        assert_eq!(redone.cursor, CursorSnapshot::caret(6));
+        assert!(redone.generation > undone.generation);
+    }
+
+    #[test]
+    fn undo_failure_keeps_history_and_generation_unchanged() {
+        let mut doc = DocumentState::empty(LineEnding::Lf);
+        let edit = request(
+            &doc,
+            0..0,
+            "abc",
+            CursorSnapshot::caret(0),
+            CursorSnapshot::caret(3),
+            EditKind::Paste,
+            0,
+        );
+        doc.edit(edit).unwrap();
+        doc.store.replace_all("different".to_owned());
+        let generation = doc.generation();
+        let undo_len = doc.undo.undo_len();
+        let redo_len = doc.undo.redo_len();
+        assert_eq!(doc.undo(), Err(DocumentError::DeletedTextMismatch));
+        assert_eq!(doc.generation(), generation);
+        assert_eq!(doc.undo.undo_len(), undo_len);
+        assert_eq!(doc.undo.redo_len(), redo_len);
+        assert_eq!(doc.text(), "different");
+    }
+
+    #[test]
+    fn oversized_edit_succeeds_without_recording_history() {
+        let mut doc = DocumentState::empty(LineEnding::Lf);
+        let huge = "x".repeat(MAX_UNDO_BYTES);
+        let edit = request(
+            &doc,
+            0..0,
+            huge.clone(),
+            CursorSnapshot::caret(0),
+            CursorSnapshot::caret(huge.len()),
+            EditKind::Paste,
+            0,
+        );
+        let outcome = doc.edit(edit).unwrap();
+        assert_eq!(doc.len_bytes(), huge.len());
+        assert!(!outcome.undo_recorded);
+        assert!(!doc.can_undo());
+        assert_eq!(doc.undo.history_bytes(), 0);
+    }
+
+    #[test]
+    fn history_entry_limit_evicts_oldest() {
+        let mut doc = DocumentState::empty(LineEnding::Lf);
+        for index in 0..MAX_UNDO_ENTRIES + 5 {
+            let offset = doc.len_bytes();
+            let edit = request(
+                &doc,
+                offset..offset,
+                "x",
+                CursorSnapshot::caret(offset),
+                CursorSnapshot::caret(offset + 1),
+                EditKind::Paste,
+                index as u64,
+            );
+            doc.edit(edit).unwrap();
+        }
+        assert_eq!(doc.undo.undo_len(), MAX_UNDO_ENTRIES);
+        assert!(doc.undo.history_bytes() <= MAX_UNDO_BYTES);
+    }
+
+    #[test]
+    fn empty_history_returns_typed_errors() {
+        let mut doc = DocumentState::empty(LineEnding::Lf);
+        assert_eq!(doc.undo(), Err(DocumentError::UndoUnavailable));
+        assert_eq!(doc.redo(), Err(DocumentError::RedoUnavailable));
+    }
+
+    #[test]
+    fn persisted_acknowledgement_never_marks_newer_edits_clean() {
+        let mut doc = DocumentState::empty(LineEnding::Lf);
+        let first = request(
+            &doc,
+            0..0,
+            "a",
+            CursorSnapshot::caret(0),
+            CursorSnapshot::caret(1),
+            EditKind::Typing,
+            0,
+        );
+        let saved = doc.edit(first).unwrap().generation;
+        let second = request(
+            &doc,
+            1..1,
+            "b",
+            CursorSnapshot::caret(1),
+            CursorSnapshot::caret(2),
+            EditKind::Typing,
+            1_000,
+        );
+        doc.edit(second).unwrap();
+        doc.acknowledge_persisted(saved, hash(1)).unwrap();
+        assert!(doc.is_dirty());
+        assert_eq!(doc.saved_generation(), saved);
+        let future = doc.generation().checked_next().unwrap();
+        assert_eq!(
+            doc.acknowledge_persisted(future, hash(2)),
+            Err(DocumentError::InvalidPersistedGeneration)
+        );
+    }
+
+    #[test]
+    fn first_generation_zero_persist_establishes_base_hash() {
+        let mut doc = DocumentState::empty(LineEnding::Lf);
+        let durable_hash = hash(7);
+        doc.acknowledge_persisted(Generation::initial(), durable_hash)
+            .unwrap();
+        assert_eq!(doc.base_disk_hash(), Some(durable_hash));
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn snapshot_includes_line_ending_and_remains_immutable() {
+        let mut doc = DocumentState::loaded("a\r\nb", LineEnding::Crlf, None);
+        let snapshot = doc.snapshot();
+        let edit = request(
+            &doc,
+            3..3,
+            "!",
+            CursorSnapshot::caret(3),
+            CursorSnapshot::caret(4),
+            EditKind::Typing,
+            0,
+        );
+        doc.edit(edit).unwrap();
+        assert_eq!(&*snapshot.text, "a\nb");
+        assert_eq!(snapshot.line_ending, LineEnding::Crlf);
+        assert_eq!(doc.text(), "a\nb!");
+    }
+
+    #[test]
+    fn reconciliation_is_the_only_external_replacement_gate() {
+        let mut doc = DocumentState::loaded("local", LineEnding::Lf, None);
+        let generation = doc
+            .replace_from_reconciliation("external\r\ntext", LineEnding::Crlf, hash(7))
+            .unwrap();
+        assert_eq!(doc.text(), "external\ntext");
+        assert_eq!(doc.generation(), generation);
+        assert_eq!(doc.saved_generation(), generation);
+        assert!(!doc.is_dirty());
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn unicode_is_not_normalized() {
+        let mut doc = DocumentState::empty(LineEnding::Lf);
+        let decomposed = "e\u{301}";
+        let edit = request(
+            &doc,
+            0..0,
+            decomposed,
+            CursorSnapshot::caret(0),
+            CursorSnapshot::caret(decomposed.len()),
+            EditKind::ImeCommit,
+            0,
+        );
+        doc.edit(edit).unwrap();
+        assert_eq!(doc.text().as_bytes(), decomposed.as_bytes());
     }
 }

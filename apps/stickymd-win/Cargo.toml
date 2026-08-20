@@ -6,3 +6,14 @@ license.workspace = true
 description = "StickyMD Windows executable: Interaction Shell + Windows platform adapters"
 
 [dependencies]
+stickymd-core = { path = "../../crates/stickymd-core", version = "0.1.0" }
+stickymd-render = { path = "../../crates/stickymd-render", version = "0.1.0" }
+thiserror.workspace = true
+tiny-skia.workspace = true
+unicode-segmentation.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+arboard.workspace = true
+raw-window-handle.workspace = true
+softbuffer.workspace = true
+winit.workspace = true

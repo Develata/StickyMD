@@ -5,7 +5,7 @@
 - `Layer`: Architecture
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-20
 - `Scope`: StickyMD 主骨架：四层调用架构 + Object Plane、层间规则、coordinator 清单、核心调用链
 
 ---
@@ -29,6 +29,25 @@
 
 ---
 
+## Owned Objects
+
+本章不拥有具体运行时对象；它规定各层对 Object Plane 对象的访问路径与修改权限。
+
+## Inputs
+
+USER action、平台事件、timer、后台结果与 immutable object snapshot。
+
+## Outputs
+
+typed intent、协调后的 capability request、经校验的 state delta，以及供 Shell 呈现的结果。
+
+## State Changes
+
+只有 Instruction Interface 接受的 intent 才能进入 Flow Coordination；协调层调用领域能力
+完成并校验 mutation 后，才能提交状态变化。Shell、adapter 与后台 worker 均不得绕过该入口。
+
+---
+
 ## 总体结构
 
 ```text
@@ -47,6 +66,7 @@ Object Plane             （对象层：最小数据元对象，不是第五调�
 
 ---
 
+<a id="interaction-shell"></a>
 ## 第一层：Interaction Shell
 
 ### 职责
@@ -75,6 +95,7 @@ Object Plane             （对象层：最小数据元对象，不是第五调�
 
 ---
 
+<a id="instruction-interface"></a>
 ## 第二层：Instruction Interface
 
 ### 职责
@@ -113,6 +134,7 @@ PasteClipboard
 
 ---
 
+<a id="flow-coordination"></a>
 ## 第三层：Flow Coordination
 
 ### Coordinator 清单
@@ -168,6 +190,7 @@ Config serialization（TOML）
 
 ---
 
+<a id="object-plane"></a>
 ## Object Plane
 
 对象层定义系统实际操作的最小数据元对象（宪法 5.6）。它不是第五调用层。
@@ -209,15 +232,16 @@ file::config_toml        磁盘上的 config.toml（durable projection）
 ```text
 keyboard/IME commit
 → Shell: winit 输入事件
-→ Instruction Interface: EditText intent（range + inserted/deleted）
-→ Flow Coordination: edit 处理（char boundary 校验、undo grouping、managed 引用扫描调度）
-→ Execution Domain: document capability（apply delta）
+→ Instruction Interface: EditText intent（expected generation + range + inserted + cursor/meta）
+→ Flow Coordination: 调用 document capability；成功后调度保存/预览/managed 引用扫描
+→ Execution Domain: DocumentState 从 canonical text 派生 deleted text，校验并原子 apply delta
 → Object Plane: doc::text 更新，doc::generation +1
 ```
 
 - **Input**：IME commit 文本或键盘编辑动作。
 - **State change**：DocumentState 文本与 generation；SaveState → Dirty/Scheduled；PreviewState → Dirty；undo entry 追加。
-- **Failure**：range 不在 char boundary → 拒绝该 delta 并保持状态不变；undo 超限 → 淘汰最老 entry（不失败）。
+- **Failure**：stale generation、越界或非 char boundary → 拒绝并保持 document/history/generation
+  全部不变；undo 超限 → 按有界策略淘汰或不记录超大 entry，但 canonical edit 仍成功。
 - **Authority**：DocumentState 是文本权威；IME preedit 不是文档内容。
 - **Output**：重绘请求（dirty 区域）；保存/预览调度被触发。
 
@@ -269,7 +293,7 @@ clipboard 粘贴动作
 - **State change**：images/ 新增 managed 文件；doc::text 插入引用；单一 UndoEntry 同时包含文本与 AssetEffect。
 - **Failure**：写入失败 → 不插入引用，显示错误，剪贴板文本不受影响；格式不可解码/超限 → 显示占位符提示，不写文件。
 - **Authority**：引用状态的真相来自 DocumentState；文件是否存在只是存储事实。
-- **Output**：文档中出现 `` `![](images/stickymd-<hash>.<ext>)` ``。
+- **Output**：文档中出现 `![](images/stickymd-<hash>.<ext>)`。
 
 ### 5. Dock 隐藏（失焦收起）
 
@@ -290,7 +314,7 @@ focus state 变化 / 计时器到期
 
 ---
 
-## Failure Paths（通用）
+## Failure Paths
 
 - 任何后台结果：generation 不匹配即丢弃，不得覆盖新状态。
 - 任何文件操作失败：错误必须上行到用户可见层，不得静默吞掉。

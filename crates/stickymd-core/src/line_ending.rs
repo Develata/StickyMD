@@ -1,6 +1,6 @@
 //! Line-ending style recorded for a document on disk.
 //!
-//! plan_ref: docs/plan/05_document_persistence.md#文本编码与换行
+//! plan_ref: docs/plan/05_document_persistence.md#text-encoding-newlines
 //!
 //! Internal text is always UTF-8 + `\n`; conversion to the recorded style
 //! happens only at save time. Detection follows the persistence contract:

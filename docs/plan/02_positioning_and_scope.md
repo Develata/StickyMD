@@ -5,7 +5,7 @@
 - `Layer`: Foundation
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-20
 - `Scope`: StickyMD 的存在理由、本体、便签模型、平台与 v1 范围、Non-Goals、优先级与功能拒绝标准
 
 ---
@@ -19,6 +19,47 @@ StickyMD 的存在理由只有一个：
 
 它服务于“临时性的、单张的、以文字和数学公式为主的思考草稿”，
 不服务于知识沉淀、文档组织或长期内容管理。
+
+---
+
+## Boundary
+
+本章只固定产品本体、平台、v1 能力边界、优先级与拒绝规则；不选择具体库、不定义
+运行时状态字段、不规定 UI 控件实现。后续章节只能细化这些事实，不能扩大本章 scope。
+
+## Owned Objects
+
+本章定义 Note、Document Text、Preview、Managed Image Asset、Runtime Config、
+Window Placement、Editor Session 的本体边界，但不拥有任何运行时实例。
+
+## Inputs
+
+USER 冻结的 v1 产品事实与工程宪法。
+
+## Outputs
+
+供后续 plan、feature、acceptance 与实现使用的产品边界和取舍顺序。
+
+## State Changes
+
+Not applicable。产品定位章节不执行运行时状态变化。
+
+## Configuration
+
+Not applicable。本章不定义可配置项；冻结默认值由对应能力章节持有。
+
+## Lifecycle
+
+本合同在整个 v1 生命周期内有效；骨架级修改必须经过 USER 批准。
+
+## Extension / Replacement Points
+
+Not applicable。新能力只有通过本章的本体必要性、同域延伸性与异质侵入性审查后，
+才可能进入后续 plan。
+
+## Performance Critical Paths
+
+Not applicable。本章只规定性能不得压过正确性、IME 与数据安全。
 
 ---
 
@@ -175,7 +216,7 @@ Initial Engineering Targets，未经实测不得对外宣传。
 
 ---
 
-## Failure Paths（本章适用部分）
+## Failure Paths
 
 - 程序目录不可写：明确提示后退出（不静默 fallback）。
 - 功能请求落在 Non-Goals：默认拒绝 PR，引用本章。

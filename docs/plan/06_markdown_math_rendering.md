@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-20
 - `Scope`: Markdown 语义权威、数学语义权威、Owned AST、Preview 调度与 generation、渲染桥接、缓存与资源限制
 
 ---
@@ -116,6 +116,7 @@ TeX tokenizer、数学 AST、分数/根号/矩阵布局、可伸缩括号、上�
 
 ---
 
+<a id="owned-ast-projection"></a>
 ## Owned AST 投影
 
 ### 流程
@@ -219,10 +220,19 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
 
 ---
 
-## Inputs / Outputs
+## Inputs
 
-- Inputs：doc::snapshot（带 generation）、主题与 DPI 上下文。
-- Outputs：LaidOutDocument（原子替换）、错误提示事件。
+`doc::snapshot`（带 generation）、主题与 DPI 上下文。
+
+## Outputs
+
+LaidOutDocument（带 generation，原子替换）、错误提示事件与选择映射；所有输出均是
+projection，不得反写 source。
+
+## State Changes
+
+PreviewState 只按 `Dirty → Scheduled → Rendering → Clean/Failed` 推进；结果 generation
+不等于当前 DocumentState generation 时直接丢弃，不改变当前预览或文档。
 
 ## Failure Paths
 

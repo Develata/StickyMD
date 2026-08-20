@@ -1,0 +1,43 @@
+# Dependency policy for the Windows 11 x64 v1 graph.
+
+[graph]
+targets = ["x86_64-pc-windows-msvc"]
+all-features = true
+
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser 0.25.1 is a transitive cosmic-text/fontdb dependency with no safe upgrade; tracked in docs/report/RISK-ttf-parser-unmaintained.md" },
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "simplest-path"
+deny = [
+    "async-std",
+    "egui",
+    "iced",
+    "slint",
+    "tauri",
+    "tokio",
+    "wgpu",
+    "wry",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

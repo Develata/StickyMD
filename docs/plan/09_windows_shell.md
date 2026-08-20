@@ -5,17 +5,19 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-20
 - `Scope`: 窗口生命周期、托盘、置顶、透明度、主题、dock 状态机、多显示器、DPI、单实例唤醒；Windows 实现细节与核心行为契约分离
 
 ---
 
+<a id="windows-shell-purpose"></a>
 ## Purpose
 
 定义 StickyMD 与 Windows 11 桌面环境的交互契约，并把
 **Windows 实现细节**与**核心行为契约**严格分离：
 核心契约在本章与 `04`；具体 Win32 手段只允许存在于平台 adapter。
 
+<a id="platform-adapter-boundary"></a>
 ## Boundary
 
 - 业务层不得直接调用 Win32；一切平台能力经 adapter。
@@ -112,6 +114,7 @@ floating_x_ratio、floating_y_ratio
 
 ---
 
+<a id="windows-adapter-mapping"></a>
 ## Windows 实现映射（adapter 内细节，可替换）
 
 | 契约能力 | 参考实现手段（非契约） |
@@ -131,10 +134,19 @@ floating_x_ratio、floating_y_ratio
 
 ---
 
-## Inputs / Outputs
+## Inputs
 
-- Inputs：窗口/键鼠/焦点/显示器事件、托盘菜单动作、Set* intent。
-- Outputs：window::placement 变化、VisibilityState 变化、配置提交、第二实例唤醒信号。
+窗口/键鼠/焦点/显示器事件、托盘菜单动作、Set* intent 与 coordinator capability request。
+
+## Outputs
+
+平台事实/回执、window::placement/VisibilityState 的协调结果、配置提交请求与第二实例唤醒
+信号；adapter 自身不得决定业务状态。
+
+## State Changes
+
+WindowDockCoordinator/LifecycleCoordinator 是窗口业务状态的 mutation owner；Shell 只提交
+事件并呈现结果，Windows adapter 只执行已批准的窗口/IPC/monitor 操作并返回结果。
 
 ## Failure Paths
 

@@ -1,35 +1,44 @@
-//! Monotonic document version.
+//! Monotonic document generation used to reject stale work.
 //!
-//! plan_ref: docs/plan/04_runtime_state_model.md#generation-semantics统一规则
-//!
-//! Every text mutation increments the generation. Background results carry the
-//! generation they were computed from; stale results must be dropped without
-//! side effects.
+//! plan_ref: docs/plan/04_runtime_state_model.md#generation
 
-/// Monotonic, process-local document version number.
+use core::fmt;
+
+/// Monotonic version of the canonical document state.
 ///
-/// A `Generation` only expresses document version ordering; it is **not** a
-/// timestamp and restarts from [`Generation::initial`] on each process launch
-/// (paired with the disk hash to identify state across restarts).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// A generation is an ordering token, not a historical snapshot id. Undo and redo
+/// therefore advance it just like ordinary edits.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Generation(u64);
 
 impl Generation {
-    /// The generation of a freshly loaded/created document.
+    /// Generation of a freshly loaded or created document.
     pub const fn initial() -> Self {
         Self(0)
     }
 
-    /// The generation that follows `self`. Saturates at `u64::MAX` so a
-    /// pathological long session can never wrap and break ordering.
-    #[must_use]
-    pub fn next(self) -> Self {
-        Self(self.0.saturating_add(1))
+    /// Return the next generation, or `None` rather than wrapping or saturating.
+    pub const fn checked_next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
     }
 
-    /// Raw numeric value (for diagnostics and ordering only).
+    /// Raw value for diagnostics and ordering only.
     pub const fn value(self) -> u64 {
         self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn for_test(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for Generation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -38,16 +47,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generation_is_monotonic() {
-        let g = Generation::initial();
-        assert_eq!(g.value(), 0);
-        assert_eq!(g.next().value(), 1);
-        assert!(g.next() > g);
-    }
-
-    #[test]
-    fn generation_next_saturates() {
-        let max = Generation(u64::MAX);
-        assert_eq!(max.next(), max);
+    fn checked_next_advances_without_wrapping() {
+        assert_eq!(
+            Generation::initial().checked_next().map(Generation::value),
+            Some(1)
+        );
+        assert_eq!(Generation::for_test(u64::MAX).checked_next(), None);
     }
 }

@@ -44,12 +44,33 @@ Object Plane             doc::text、preview::render_tree、asset::managed_image
 - 无网络：远程图片不下载；raw HTML 不执行。
 - 预览是只读投影，永远不会反写文档。
 
-## 技术方向（已批准，版本待技术验证阶段锁定）
+## 当前实现切片
+
+Phase 2 已建立 `DocumentState`、checked generation、UTF-8 TextDelta、不可变 snapshot
+和有界 Undo/Redo。Phase 3 开发壳实现的实际调用链为：
+
+```text
+winit event
+  → typed AppIntent
+  → EditorCoordinator（唯一 DocumentState mutation gateway）
+  → AppEffect + generation-tagged TextDelta
+  → cosmic-text SourceProjection
+  → tiny-skia / softbuffer
+```
+
+IME preedit 只存在于 editor session 和视觉投影，commit 才产生一次 canonical delta。
+当前开发壳不持久化，真实微软拼音/微信输入法人工验收仍为 NOT TESTED。
+
+## 技术方向（已批准；按已实现切片分别验证）
 
 ```text
 Rust · winit · cosmic-text · tiny-skia · softbuffer · Comrak · RaTeX · 少量 Win32 adapter
 禁止：WebView / Electron / Tauri / JS / 通用 async runtime / 数据库 / 网络
 ```
+
+当前生产切片使用前五项中的 Source/窗口链路；Comrak/RaTeX 仍只处于独立 spike。
+`arrayref` yanked 风险已由刷新后的 registry index 与 fresh-lock 复核证伪；RaTeX 的
+剩余条件风险是正式热路径 painter/API 尚未验证，不得把 PNG spike 等同于生产集成。
 
 ## 文档导航
 

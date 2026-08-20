@@ -7,27 +7,28 @@
 //! runtime document authority (`DocumentState`). It must never depend on Windows
 //! APIs, windowing, rendering or any UI crate, and it contains no `unsafe`.
 //!
-//! Layering rule: UI and background tasks only ever see immutable
-//! [`DocumentSnapshot`]s; the only mutable authority is [`DocumentState`], reached
+//! Layering rule: the UI may receive a short-lived immutable borrow through its
+//! coordinator, while workers and full projection resyncs receive immutable
+//! [`DocumentSnapshot`]s. The only mutable authority is [`DocumentState`], reached
 //! through typed intents (see `docs/plan/04`).
 #![forbid(unsafe_code)]
 
-pub mod cursor;
-pub mod document;
-pub mod error;
-pub mod generation;
-pub mod hash;
-pub mod line_ending;
-pub mod text_delta;
-pub mod text_store;
-pub mod undo;
+mod document;
+mod edit;
+mod error;
+mod generation;
+mod hash;
+mod line_ending;
+mod selection;
+mod snapshot;
+mod text_store;
+mod undo;
 
-pub use cursor::CursorSnapshot;
-pub use document::{DocumentSnapshot, DocumentState};
-pub use error::{EditError, PersistAckError, PersistError};
+pub use document::DocumentState;
+pub use edit::{EditKind, EditMeta, EditOutcome, EditRequest, RedoOutcome, TextDelta, UndoOutcome};
+pub use error::DocumentError;
 pub use generation::Generation;
 pub use hash::Hash32;
 pub use line_ending::LineEnding;
-pub use text_delta::{InputKind, TextDelta};
-pub use text_store::{StringTextStore, TextStore};
-pub use undo::{UndoEntry, UndoManager};
+pub use selection::{CursorSnapshot, Selection, TextPosition};
+pub use snapshot::DocumentSnapshot;

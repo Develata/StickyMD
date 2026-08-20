@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-20
 - `Scope`: v1 测试类别合同与发布形态合同；Phase 0 只定义契约，不实现测试与 workflow
 
 ---
@@ -19,6 +19,25 @@
 
 - 验收案例的具体内容在 `docs/acceptance-cases/`；本章定义类别与规则。
 - 性能目标的性质定义在 `10_performance_reliability.md`。
+
+---
+
+## Owned Objects
+
+测试 fixture、golden baseline、验证收据与 release artifact manifest；这些是验证证据，
+不是产品运行时 authority。
+
+## Inputs
+
+冻结 plan/feature/acceptance contract、候选 commit、锁定依赖、测试环境与 fixture。
+
+## Outputs
+
+PASS/FAIL/NOT TESTED 收据、差异 artifact、checksums、SBOM 与 portable ZIP 候选。
+
+## State Changes
+
+验证只推进阶段/发布 gate 状态，不得通过修改产品数据或放宽 contract 来制造 PASS。
 
 ---
 
@@ -40,6 +59,7 @@
   move to trash、undo restore、redo re-trash、启动恢复、启动清理、路径穿越、
   remote 不下载、超限占位符。
 
+<a id="property-tests"></a>
 ### Property（property-based）
 
 - 任意 Unicode TextDelta 不破坏 UTF-8。

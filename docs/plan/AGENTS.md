@@ -46,7 +46,7 @@ docs/plan → projection docs → code
 - `Scope`: ...
 ```
 
-每章必须回答以下各项（与该章节适用者）：
+除工程宪法原文（`00`）与术语表（`01`）外，每章必须用同名二级标题回答以下各项：
 
 ```text
 Purpose            目的
@@ -64,7 +64,9 @@ Verification       验证方式
 Non-Goals          明确不做的事
 ```
 
-若某项不适用，必须显式写：
+`00` 只能在 USER 宪法原文之前增加 Metadata；`01` 按每个术语的
+Definition / Authority / Not equivalent to / Lifetime 固定格式组织。其余章节若某项不适用，
+必须显式写：
 
 ```text
 Not applicable
@@ -76,11 +78,15 @@ Not applicable
 
 ## Stable Anchors
 
-`plan_ref` 指向章节内 stable anchor。anchor 使用小节标题的 slug：
+`plan_ref` 指向章节内 stable anchor。所有被代码引用的 anchor 必须使用显式、纯 ASCII ID，
+不能依赖 Markdown renderer 对中文、标点或大小写的自动 slug 规则：
 
-```text
-docs/plan/05_document_persistence.md#atomic-save
+```markdown
+<a id="atomic-save"></a>
+## Atomic Save
 ```
+
+引用写作 `docs/plan/05_document_persistence.md#atomic-save`。
 
 重命名或删除已被 `plan_ref` 引用的 anchor，视为契约变更，需要走审批流程。
 

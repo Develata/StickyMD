@@ -1,0 +1,299 @@
+//! Window input translation for the Phase 3 interaction shell.
+//!
+//! plan_ref: docs/plan/07_editor_and_ime.md#source-editor
+
+use stickymd_core::{EditKind, Selection};
+use winit::dpi::PhysicalPosition;
+use winit::event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta};
+use winit::keyboard::{KeyCode, PhysicalKey};
+
+use super::StickyApp;
+use crate::instruction::AppIntent;
+use crate::interaction::ImeSignal;
+
+impl StickyApp {
+    pub(super) fn handle_ime(&mut self, event: Ime) {
+        #[cfg(debug_assertions)]
+        match &event {
+            Ime::Enabled => eprintln!("IME Enabled"),
+            Ime::Disabled => eprintln!("IME Disabled"),
+            Ime::Preedit(text, cursor) => {
+                eprintln!("IME Preedit len={} cursor={cursor:?}", text.len());
+            }
+            Ime::Commit(text) => eprintln!(
+                "IME Commit len={} generation={}",
+                text.len(),
+                self.coordinator.view().generation.value()
+            ),
+        }
+        let signal = match event {
+            Ime::Enabled => ImeSignal::Enabled,
+            Ime::Disabled => ImeSignal::Disabled,
+            Ime::Preedit(text, cursor) => ImeSignal::Preedit {
+                text,
+                cursor: cursor.map(|(start, end)| start..end),
+            },
+            Ime::Commit(text) => ImeSignal::Commit(text),
+        };
+        let generation = self.coordinator.view().generation;
+        let intent = self
+            .session
+            .handle_ime(signal, generation, self.timestamp_ms());
+        self.sync_preedit();
+        if let Some(intent) = intent {
+            self.dispatch(intent);
+        } else {
+            self.after_presentation_change();
+        }
+    }
+
+    pub(super) fn handle_key(&mut self, event: KeyEvent) {
+        if event.state != ElementState::Pressed {
+            return;
+        }
+        let (generation, text_len) = {
+            let view = self.coordinator.view();
+            (view.generation, view.text.len())
+        };
+        let timestamp_ms = self.timestamp_ms();
+        let shift = self.modifiers.shift_key();
+        let shortcut = self.modifiers.control_key() && !self.modifiers.alt_key();
+        let code = match event.physical_key {
+            PhysicalKey::Code(code) => Some(code),
+            PhysicalKey::Unidentified(_) => None,
+        };
+
+        if shortcut && self.handle_shortcut(code, generation, text_len, timestamp_ms, shift) {
+            return;
+        }
+
+        match code {
+            Some(KeyCode::Backspace) => {
+                let intent =
+                    self.session
+                        .backspace(self.coordinator.view().text, generation, timestamp_ms);
+                if let Some(intent) = intent {
+                    self.dispatch(intent);
+                }
+                return;
+            }
+            Some(KeyCode::Delete) => {
+                let intent = self.session.delete_forward(
+                    self.coordinator.view().text,
+                    generation,
+                    timestamp_ms,
+                );
+                if let Some(intent) = intent {
+                    self.dispatch(intent);
+                }
+                return;
+            }
+            Some(KeyCode::ArrowLeft) | Some(KeyCode::ArrowRight) => {
+                let direction = if code == Some(KeyCode::ArrowLeft) {
+                    -1
+                } else {
+                    1
+                };
+                self.session
+                    .move_horizontal(self.coordinator.view().text, direction, shift);
+                self.after_presentation_change();
+                return;
+            }
+            Some(KeyCode::ArrowUp) | Some(KeyCode::ArrowDown) => {
+                let direction = if code == Some(KeyCode::ArrowUp) {
+                    -1
+                } else {
+                    1
+                };
+                self.move_vertical(direction, shift);
+                return;
+            }
+            Some(KeyCode::Home) | Some(KeyCode::End) => {
+                self.session.move_line_boundary(
+                    self.coordinator.view().text,
+                    code == Some(KeyCode::End),
+                    shift,
+                );
+                self.after_presentation_change();
+                return;
+            }
+            Some(KeyCode::Enter) | Some(KeyCode::NumpadEnter) => {
+                if !self.session.is_composing() {
+                    self.dispatch(self.session.insert(
+                        generation,
+                        "\n",
+                        EditKind::Newline,
+                        timestamp_ms,
+                    ));
+                }
+                return;
+            }
+            Some(KeyCode::Tab) => {
+                if !self.session.is_composing() {
+                    self.dispatch(self.session.insert(
+                        generation,
+                        "    ",
+                        EditKind::Typing,
+                        timestamp_ms,
+                    ));
+                }
+                return;
+            }
+            Some(KeyCode::Escape) if self.session.is_composing() => {
+                self.session.cancel_preedit();
+                self.after_presentation_change();
+                return;
+            }
+            _ => {}
+        }
+
+        if !shortcut
+            && !self.modifiers.super_key()
+            && let Some(text) = event.text
+            && !text.chars().any(char::is_control)
+            && let Some(intent) = self
+                .session
+                .handle_keyboard_text(&text, generation, timestamp_ms)
+        {
+            self.dispatch(intent);
+        }
+    }
+
+    fn handle_shortcut(
+        &mut self,
+        code: Option<KeyCode>,
+        generation: stickymd_core::Generation,
+        text_len: usize,
+        timestamp_ms: u64,
+        shift: bool,
+    ) -> bool {
+        match code {
+            Some(KeyCode::KeyA) => {
+                self.session.selection = Selection::new(0, text_len);
+                self.after_presentation_change();
+            }
+            Some(KeyCode::KeyC) => self.dispatch(AppIntent::CopySelection {
+                expected_generation: generation,
+                selection: self.session.selection,
+            }),
+            Some(KeyCode::KeyX) => {
+                self.session.cancel_preedit();
+                self.dispatch(AppIntent::CutSelection {
+                    expected_generation: generation,
+                    selection: self.session.selection,
+                    timestamp_ms,
+                });
+            }
+            Some(KeyCode::KeyV) => {
+                self.session.cancel_preedit();
+                self.dispatch(AppIntent::PasteText {
+                    expected_generation: generation,
+                    selection: self.session.selection,
+                    timestamp_ms,
+                });
+            }
+            Some(KeyCode::KeyZ) => self.undo_or_cancel(true),
+            Some(KeyCode::KeyY) => self.undo_or_cancel(false),
+            Some(KeyCode::KeyS) => {
+                self.diagnostic = Some("Save is not implemented — NOT PERSISTED".to_owned());
+                self.request_redraw();
+            }
+            Some(KeyCode::Home) | Some(KeyCode::End) => {
+                self.session
+                    .move_document_boundary(text_len, code == Some(KeyCode::End), shift);
+                self.after_presentation_change();
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn undo_or_cancel(&mut self, undo: bool) {
+        if self.session.is_composing() {
+            self.session.cancel_preedit();
+            self.after_presentation_change();
+        } else {
+            self.dispatch(if undo {
+                AppIntent::Undo
+            } else {
+                AppIntent::Redo
+            });
+        }
+    }
+
+    fn move_vertical(&mut self, direction: i32, extend: bool) {
+        if self.session.is_composing() {
+            return;
+        }
+        let Some(projection) = &self.projection else {
+            return;
+        };
+        let active = self.session.selection.active.byte;
+        let preferred_x = self
+            .session
+            .preferred_x
+            .or_else(|| projection.caret_rect(active).map(|rect| rect.x))
+            .unwrap_or(0.0);
+        let target = projection.vertical_neighbor(active, direction, preferred_x);
+        self.session.selection = if extend {
+            Selection::new(self.session.selection.anchor.byte, target)
+        } else {
+            Selection::caret(target)
+        };
+        self.session.preferred_x = Some(preferred_x);
+        self.after_presentation_change();
+    }
+
+    pub(super) fn handle_mouse_button(&mut self, state: ElementState, button: MouseButton) {
+        if button != MouseButton::Left {
+            return;
+        }
+        match state {
+            ElementState::Pressed => {
+                self.session.cancel_preedit();
+                let Some(projection) = &self.projection else {
+                    return;
+                };
+                let hit = projection
+                    .hit_test(self.cursor_position.x as f32, self.cursor_position.y as f32);
+                self.session.selection = if self.modifiers.shift_key() {
+                    Selection::new(self.session.selection.anchor.byte, hit)
+                } else {
+                    Selection::caret(hit)
+                };
+                self.session.dragging_selection = true;
+                self.after_presentation_change();
+            }
+            ElementState::Released => self.session.dragging_selection = false,
+        }
+    }
+
+    pub(super) fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
+        self.cursor_position = position;
+        if !self.session.dragging_selection {
+            return;
+        }
+        let Some(projection) = &self.projection else {
+            return;
+        };
+        let active = projection.hit_test(position.x as f32, position.y as f32);
+        self.session.selection = Selection::new(self.session.selection.anchor.byte, active);
+        self.after_presentation_change();
+    }
+
+    pub(super) fn handle_scroll(&mut self, delta: MouseScrollDelta) {
+        let Some(projection) = &mut self.projection else {
+            return;
+        };
+        let pixels = match delta {
+            MouseScrollDelta::LineDelta(_, lines) => -lines * 48.0,
+            MouseScrollDelta::PixelDelta(position) => -position.y as f32,
+        };
+        let scroll = projection.scroll_by(pixels);
+        self.session.scroll.line = scroll.line;
+        self.session.scroll.vertical_px = scroll.vertical;
+        self.session.scroll.horizontal_px = scroll.horizontal;
+        self.update_ime_area();
+        self.request_redraw();
+    }
+}

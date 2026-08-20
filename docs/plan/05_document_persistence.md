@@ -5,7 +5,7 @@
 - `Layer`: Runtime
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-20
 - `Scope`: note.md 与 config.toml 的编码、换行、原子保存、崩溃恢复、外部修改处理、可写性与单实例身份
 
 ---
@@ -58,6 +58,7 @@
 
 ---
 
+<a id="text-encoding-newlines"></a>
 ## 文本编码与换行
 
 | 项 | 规则 |
@@ -72,7 +73,8 @@
 
 ---
 
-## Atomic Save（#atomic-save）
+<a id="atomic-save"></a>
+## Atomic Save
 
 ### 调度
 
@@ -88,9 +90,18 @@
 3. flush 用户态 buffer。
 4. 调用 `FlushFileBuffers`。
 5. `ReplaceFileW` 原子替换。
-6. 替换失败时在安全条件下使用 `MoveFileExW`（`REPLACE_EXISTING | WRITE_THROUGH`）。
+6. 只有 adapter 将失败分类为“目标不存在”或“ReplaceFileW 不适用于该目标、且 temp 与
+   target 已确认仍位于同一目录”时，才允许使用 `MoveFileExW`
+   （`REPLACE_EXISTING | WRITE_THROUGH`）。权限、共享冲突、路径身份变化或未知错误不得
+   无条件降级，必须保留原文件并上报 typed error。
 7. 更新磁盘 hash 与 saved_generation。
 8. 删除残留 temp。
+
+### 首次创建（目标不存在）
+
+写入并完整 flush 同目录 temp 后，直接使用同目录、write-through 的原子 rename/move 建立
+target；不得先创建空 target，也不得经过 truncate + in-place write。竞争中若 target 突然
+出现，adapter 必须重新分类，不能静默覆盖未知外部内容。
 
 ### 禁止
 
@@ -173,7 +184,7 @@ config.toml.tmp → flush → atomic replace
 
 ---
 
-## Failure Paths（一级内容汇总）
+## Failure Paths
 
 | 场景 | 行为 |
 | --- | --- |
@@ -189,10 +200,20 @@ config.toml.tmp → flush → atomic replace
 
 ---
 
-## Inputs / Outputs
+## Inputs
 
-- Inputs：DocumentState 快照（带 generation）、外部文件事件、启动扫描。
-- Outputs：磁盘 `note.md` / `config.toml` 原子更新、保存回执、冲突/恢复事件。
+DocumentState immutable snapshot（带 generation）、外部文件事件、启动扫描与用户的冲突/
+恢复决策。
+
+## Outputs
+
+磁盘 `note.md` / `config.toml` 原子更新、带实际 persisted generation/hash 的保存回执、
+冲突/恢复事件或 typed failure。
+
+## State Changes
+
+保存回执只推进其实际落盘 generation；若当前文档已继续编辑则仍保持 dirty。外部事实必须
+先进入 reload/conflict/recovery 协调流程，不能由 watcher 或 adapter 直接改写 DocumentState。
 
 ## Configuration
 
