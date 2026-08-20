@@ -12,7 +12,7 @@
 | `07_editor_and_ime.md` | 源码输入、中文输入法、Undo/Redo | AC-002、AC-003、AC-004、AC-009、AC-022 | `stickymd-render/src/source/*`; `stickymd-win/{instruction,flow,interaction}` | automated pipeline PASS；AC-003/004 real IME NOT TESTED |
 | `08_assets_and_export.md` | 图片粘贴、managed GC、导出 | AC-010、AC-011、AC-012、AC-017、AC-018 | future asset subsystem | contract only |
 | `09_windows_shell.md` | dock、托盘、置顶、透明度、主题、多显示器 | AC-019..029 | future product shell; Phase 3 dev shell | five-run Source shell idle/memory sample；DPI/dock/tray/opacity not implemented |
-| `10_performance_reliability.md` | 质量属性 | AC-022、空闲/内存观察 | core benchmark + Phase 1/3 baselines | Source shell WS median 31.57 MiB；1 MiB ordinary edit worst p95 2.028 ms；exceptional full resync p95 52.710 ms；real IME NOT TESTED |
+| `10_performance_reliability.md` | 质量属性 | AC-022、空闲/内存观察 | core benchmark + Phase 1/3 baselines | Source shell WS median 31.57 MiB；1 MiB ordinary command worst p95 1.567 ms，newline 1.534 ms；exceptional full resync p95 53.227 ms；real IME NOT TESTED |
 | `11_testing_and_release.md` | 发布形态 | release 验收清单 | CI / future release tools | not implemented |
 
 ---

@@ -58,31 +58,31 @@ Command:
 
 | Size | End typing p50 / p95 / max | Start typing p95 | Middle IME p95 |
 | --- | --- | ---: | ---: |
-| 20 KiB | 0.343 / 0.382 / 0.398 ms | 0.499 ms | 0.789 ms |
-| 100 KiB | 0.378 / 0.444 / 0.483 ms | 0.585 ms | 0.460 ms |
-| 1 MiB | 0.810 / 0.922 / 0.961 ms | 1.184 ms | 1.076 ms |
+| 20 KiB | 0.340 / 0.362 / 0.368 ms | 0.822 ms | 0.738 ms |
+| 100 KiB | 0.386 / 0.504 / 0.671 ms | 0.621 ms | 0.443 ms |
+| 1 MiB | 0.666 / 0.795 / 0.888 ms | 1.123 ms | 1.118 ms |
 
-The 1 MiB worst ordinary insertion position remains 42× below the 50 ms hard gate. Start/middle cases are now
+The 1 MiB worst ordinary insertion position remains 44× below the 50 ms hard gate. Start/middle cases are now
 included so the benchmark exercises String movement and later-line offset maintenance rather than
 only the cheap append path.
 
-| Size | Backspace p95 | Delete p95 | Selection replace p95 | Undo p95 | Redo p95 | Full resync p95 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 20 KiB | 0.387 ms | 0.446 ms | 0.401 ms | 1.121 ms | 0.416 ms | 6.815 ms |
-| 100 KiB | 0.747 ms | 0.615 ms | 0.487 ms | 1.113 ms | 0.553 ms | 10.983 ms |
-| 1 MiB | 1.665 ms | 1.371 ms | 1.399 ms | 2.028 ms | 1.278 ms | 52.710 ms |
+| Size | Backspace p95 | Delete p95 | Selection replace p95 | Newline p95 | Undo p95 | Redo p95 | Full resync p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 20 KiB | 0.410 ms | 0.464 ms | 0.421 ms | 0.550 ms | 1.068 ms | 0.403 ms | 7.066 ms |
+| 100 KiB | 0.606 ms | 0.556 ms | 0.442 ms | 0.569 ms | 1.112 ms | 0.567 ms | 11.108 ms |
+| 1 MiB | 1.235 ms | 1.065 ms | 1.192 ms | 1.534 ms | 1.567 ms | 0.939 ms | 53.227 ms |
 
 Full resync deliberately includes snapshot construction, complete shaping, caret placement and
-paint. It is the recovery/newline fallback rather than the ordinary key path; measuring it prevents
+paint. It is a recovery fallback rather than the ordinary key or newline path; measuring it prevents
 that exceptional O(n) work from being hidden by the fast incremental results.
 
 ### Corrected Bottleneck
 
 The first full-rebuild implementation measured about 107 ms p95 at 1 MiB, with about 105 ms in
 projection reconstruction. This was an implementation defect, not a String model limit. A local
-single-line delta update removed that failure. A later audit then removed the remaining two full
-document snapshots from every key: effects now carry only generation + delta, and newline/non-local
-edits request one explicit canonical snapshot for safe resync.
+affected-line delta update removed that failure. A later audit then removed the remaining two full
+document snapshots from every key. Effects now carry only generation + delta; line splits and
+merges rebuild only affected lines, and only true desynchronization requests a canonical snapshot.
 
 ## Dependency and Unsafe Result
 

@@ -14,8 +14,8 @@ The retained implementation now has a clean architectural backbone for its imple
 - Core/render remain platform-independent and forbid unsafe code.
 - The ordinary key path carries a generation-tagged `TextDelta`; it does not clone the complete
   document before and after every key.
-- Source projection updates one logical line when safe and fails closed to an explicit snapshot
-  resync for newline, missed generation, trailing-empty-line, or non-local cases.
+- Source projection rebuilds only the affected logical lines, including line splits/merges and
+  terminal empty lines, and fails closed to an explicit snapshot resync on desynchronization.
 - Production responsibilities that crossed the repository's cohesion threshold were separated.
 
 Phase 0 and Phase 2 automated contracts pass. The retained parts of Phase 1 and the automated part
@@ -52,8 +52,8 @@ limits, not permission to substitute another architecture.
    slicing and panicking; cursor arithmetic and framebuffer sizing fail closed on overflow.
 6. **IME visual position.** Candidate placement follows the cursor inside preedit text, including a
    selected preedit range, without making preedit canonical.
-7. **Trailing empty line projection.** A valid insertion after a terminal newline is explicitly
-   routed to safe resync when cosmic-text has no synthetic empty-line object.
+7. **Line-structure projection.** Newline insertion/deletion and a terminal synthetic empty line
+   now splice only affected cosmic-text lines while preserving later scroll identity.
 8. **Evidence drift.** The stale direct `arrayref` constraint and yanked-package claim were removed
    after a refreshed registry index and isolated fresh-lock verification disproved them.
 9. **Missing dependency policy.** `deny.toml` now limits the graph to the v1 Windows target, permits
@@ -65,17 +65,18 @@ limits, not permission to substitute another architecture.
 | Area | Algorithm / complexity | Decision |
 | --- | --- | --- |
 | canonical text | `String`, O(n) worst-case middle move | retain: measured common 1 MiB core edit p95 12.1 µs; abstraction permits later replacement |
-| ordinary projection | validate generation/content, reshape one logical line | retain: 1 MiB ordinary pipeline worst p95 2.028 ms including undo |
+| ordinary projection | validate generation/content, reshape affected logical lines | retain: 1 MiB ordinary command worst p95 1.567 ms; newline p95 1.534 ms |
 | line offsets | adjust suffix starts after single-line byte-length change, O(lines after edit) | retain: start/middle 1 MiB measurements remain far below the 50 ms gate |
-| fallback resync | explicit O(n) snapshot + full reshape | retain as exceptional path; 1 MiB p95 52.710 ms is recorded, not hidden |
+| line splits/merges | rebuild changed block and splice line objects, O(changed text + following line offsets) | added: avoids O(document) Enter path without a rope/tree abstraction |
+| fallback resync | explicit O(n) snapshot + full reshape | retain only for recovery; 1 MiB p95 53.227 ms is recorded, not hidden |
 | script runs | initial explicit-script discovery + one pass, O(n) | corrected from O(n²) neutral lookahead |
 | mouse hit test | cosmic-text hit plus grapheme search on the hit logical line | corrected from document-wide grapheme scan |
 | undo/redo | bounded deques, deterministic 256-entry / 4 MiB combined budget | retain; no unbounded history or generic transaction framework |
 
 A rope, Fenwick tree, piece table, async runtime, or generic event bus would add material complexity
 without current evidence of user-visible benefit. The present measured paths justify keeping the
-smaller design. The full-resync number should be revisited only if newline-heavy editing or future
-Preview integration makes it a frequent path.
+smaller design. The full-resync number should be revisited if recovery becomes frequent or future
+Preview integration exposes a comparable whole-document hot path.
 
 ## Cohesion and Coupling Review
 
@@ -90,9 +91,9 @@ Preview integration makes it a frequent path.
 
 ## Verification Evidence
 
-- Workspace ordinary tests: 70 passed, 0 failed, 1 Release-only benchmark ignored.
-- Release Source pipeline: 1 passed; ordinary 1 MiB edit p95 at most 2.028 ms, exceptional full
-  resync p95 52.710 ms.
+- Workspace ordinary tests: 73 passed, 0 failed, 1 Release-only benchmark ignored.
+- Release Source pipeline: 1 passed; ordinary 1 MiB command p95 at most 1.567 ms, newline p95
+  1.534 ms, and exceptional full resync p95 53.227 ms.
 - Fixed-seed randomized Source test keeps text, generation, selection boundaries, and projection
   synchronized after every operation.
 - Unicode coverage includes CJK, combining marks, emoji and ZWJ grapheme clusters.

@@ -64,8 +64,9 @@ ordering or candidate placement for actual input methods.
 ## Performance
 
 The initial implementation rebuilt the entire cosmic-text projection on every key and failed at
-1 MiB (p95 about 107 ms). It was replaced by a generation-checked single-line delta path; newline,
-missed generation, and non-local edits conservatively rebuild.
+1 MiB (p95 about 107 ms). It was replaced by a generation-checked affected-line delta path;
+ordinary line edits and line splits/merges update locally, while missed generations or inconsistent
+deltas conservatively request an explicit resync.
 
 The original incremental path still cloned the complete canonical document before and after every
 key. `EditorCoordinator` now returns only `generation + TextDelta`; a full immutable snapshot is
@@ -75,27 +76,28 @@ Final Release p95, including mutation, projection, caret layout, and paint:
 
 | Size | End typing | Start typing | Middle IME commit |
 | --- | ---: | ---: | ---: |
-| 20 KiB | 0.382 ms | 0.499 ms | 0.789 ms |
-| 100 KiB | 0.444 ms | 0.585 ms | 0.460 ms |
-| 1 MiB | 0.922 ms | 1.184 ms | 1.076 ms |
+| 20 KiB | 0.362 ms | 0.822 ms | 0.738 ms |
+| 100 KiB | 0.504 ms | 0.621 ms | 0.443 ms |
+| 1 MiB | 0.795 ms | 1.123 ms | 1.118 ms |
 
 The same run also measured p95 for editing commands and the conservative full-resync path:
 
-| Size | Backspace | Delete | Selection replace | Undo | Redo | Full resync |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 20 KiB | 0.387 ms | 0.446 ms | 0.401 ms | 1.121 ms | 0.416 ms | 6.815 ms |
-| 100 KiB | 0.747 ms | 0.615 ms | 0.487 ms | 1.113 ms | 0.553 ms | 10.983 ms |
-| 1 MiB | 1.665 ms | 1.371 ms | 1.399 ms | 2.028 ms | 1.278 ms | 52.710 ms |
+| Size | Backspace | Delete | Selection replace | Newline | Undo | Redo | Full resync |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 20 KiB | 0.410 ms | 0.464 ms | 0.421 ms | 0.550 ms | 1.068 ms | 0.403 ms | 7.066 ms |
+| 100 KiB | 0.606 ms | 0.556 ms | 0.442 ms | 0.569 ms | 1.112 ms | 0.567 ms | 11.108 ms |
+| 1 MiB | 1.235 ms | 1.065 ms | 1.192 ms | 1.534 ms | 1.567 ms | 0.939 ms | 53.227 ms |
 
-The 1 MiB full resync is an exceptional recovery/newline path, not the ordinary input path. Its
-cost is now measured explicitly so future work can optimize it only if real workloads justify it.
+The 1 MiB full resync is an exceptional recovery path, not the ordinary input or newline path. Its
+cost remains measured explicitly so a future regression cannot hide O(n) recovery work in the hot
+path.
 
 ## Verification
 
-- Automated workspace tests: 30 core unit + 5 core integration + 15 render + 20 app = 70 pass;
+- Automated workspace tests: 30 core unit + 5 core integration + 18 render + 20 app = 73 pass;
   one Release-only performance test ignored by ordinary runs and separately passes.
 - Incremental projection tests cover local line update, later-line offset adjustment, newline
-  resync (including a trailing empty line), stale generation, inconsistent delta rejection,
+  split/merge, trailing empty lines, scroll identity, stale generation, inconsistent delta rejection,
   mixed/wrapped hit-test roundtrips, and internal preedit cursor placement.
 - A fixed-seed randomized editor/projection test checks canonical text, generation and valid Unicode
   selections after every edit, deletion, replacement, undo, redo, and presentation-only movement.

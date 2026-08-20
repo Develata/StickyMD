@@ -497,6 +497,7 @@ mod tests {
         backspace: Stats,
         delete_forward: Stats,
         selection_replace: Stats,
+        newline: Stats,
         undo: Stats,
         redo: Stats,
         full_resync: Stats,
@@ -654,6 +655,7 @@ mod tests {
         let mut backspace = Vec::with_capacity(20);
         let mut delete_forward = Vec::with_capacity(20);
         let mut selection_replace = Vec::with_capacity(20);
+        let mut newline = Vec::with_capacity(20);
         let mut undo = Vec::with_capacity(20);
         let mut redo = Vec::with_capacity(20);
         let mut full_resync = Vec::with_capacity(20);
@@ -738,6 +740,28 @@ mod tests {
                 AppIntent::Undo,
             );
 
+            let view = coordinator.view();
+            let position = middle_grapheme_range(view.text).start;
+            let generation = view.generation;
+            let newline_elapsed = apply_timed_effect(
+                &mut coordinator,
+                &mut projection,
+                &mut pixmap,
+                AppIntent::Edit {
+                    expected_generation: generation,
+                    selection: Selection::caret(position),
+                    inserted: "\n".to_owned(),
+                    kind: EditKind::Newline,
+                    timestamp_ms: timestamp_ms + 3_000,
+                },
+            );
+            apply_timed_effect(
+                &mut coordinator,
+                &mut projection,
+                &mut pixmap,
+                AppIntent::Undo,
+            );
+
             let rebuild_started = Instant::now();
             projection.resync(&coordinator.snapshot()).unwrap();
             projection
@@ -749,6 +773,7 @@ mod tests {
                 backspace.push(backspace_elapsed);
                 delete_forward.push(delete_elapsed);
                 selection_replace.push(replace_elapsed);
+                newline.push(newline_elapsed);
                 undo.push(undo_elapsed);
                 redo.push(redo_elapsed);
                 full_resync.push(rebuild_elapsed);
@@ -759,6 +784,7 @@ mod tests {
             backspace: stats(backspace),
             delete_forward: stats(delete_forward),
             selection_replace: stats(selection_replace),
+            newline: stats(newline),
             undo: stats(undo),
             redo: stats(redo),
             full_resync: stats(full_resync),
@@ -804,10 +830,11 @@ mod tests {
                 duration_ms(ime_middle.paint.p95),
             );
             eprintln!(
-                "{label}: backspace={:.3}ms delete={:.3}ms selection-replace={:.3}ms undo={:.3}ms redo={:.3}ms full-resync={:.3}ms p95",
+                "{label}: backspace={:.3}ms delete={:.3}ms selection-replace={:.3}ms newline={:.3}ms undo={:.3}ms redo={:.3}ms full-resync={:.3}ms p95",
                 duration_ms(operations.backspace.p95),
                 duration_ms(operations.delete_forward.p95),
                 duration_ms(operations.selection_replace.p95),
+                duration_ms(operations.newline.p95),
                 duration_ms(operations.undo.p95),
                 duration_ms(operations.redo.p95),
                 duration_ms(operations.full_resync.p95),
@@ -833,6 +860,7 @@ mod tests {
                 ("backspace", operations.backspace.p95),
                 ("delete", operations.delete_forward.p95),
                 ("selection replace", operations.selection_replace.p95),
+                ("newline", operations.newline.p95),
                 ("undo", operations.undo.p95),
                 ("redo", operations.redo.p95),
             ] {

@@ -6,7 +6,8 @@
 //! clipboard, or edit source and cannot write back into `DocumentState`.
 
 use cosmic_text::{
-    Align, Attrs, AttrsList, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, Wrap,
+    Align, Attrs, AttrsList, Buffer, BufferLine, Family, FontSystem,
+    LineEnding as BufferLineEnding, Metrics, Scroll, Shaping, SwashCache, Wrap,
 };
 use std::ops::Range;
 use stickymd_core::{DocumentSnapshot, Generation, Selection, TextDelta};
@@ -113,19 +114,16 @@ impl SourceProjection {
         Ok(())
     }
 
-    /// Apply a single-line canonical delta without re-segmenting the whole document.
+    /// Apply a canonical delta by rebuilding only the affected logical lines.
     ///
-    /// Newlines, missed generations, or other non-local changes conservatively use
-    /// the full snapshot rebuild path. A mismatch never writes back to canonical state.
+    /// Missed generations or inconsistent deltas require an explicit canonical
+    /// snapshot resync. A mismatch never writes back to canonical state.
     pub fn apply_delta(
         &mut self,
         generation: Generation,
         delta: &TextDelta,
     ) -> Result<(), SourceProjectionError> {
-        if self.generation.checked_next() != Some(generation)
-            || delta.inserted().contains('\n')
-            || delta.deleted().contains('\n')
-        {
+        if self.generation.checked_next() != Some(generation) {
             return Err(SourceProjectionError::ResyncRequired);
         }
 
@@ -136,6 +134,9 @@ impl SourceProjection {
             || &self.canonical[range.clone()] != delta.deleted()
         {
             return Err(SourceProjectionError::DeltaMismatch);
+        }
+        if delta.inserted().contains('\n') || delta.deleted().contains('\n') {
+            return self.apply_line_structure_delta(generation, delta);
         }
 
         let Some(_expected_len) = self
@@ -151,6 +152,9 @@ impl SourceProjection {
             .line_starts
             .partition_point(|start| *start <= range.start)
             - 1;
+        if line >= self.buffer.lines.len() {
+            return self.apply_line_structure_delta(generation, delta);
+        }
         let line_start = self.line_starts[line];
         let line_end = self
             .line_starts
@@ -221,6 +225,173 @@ impl SourceProjection {
             }
         }
         self.canonical.replace_range(range, delta.inserted());
+        self.generation = generation;
+        Ok(())
+    }
+
+    fn apply_line_structure_delta(
+        &mut self,
+        generation: Generation,
+        delta: &TextDelta,
+    ) -> Result<(), SourceProjectionError> {
+        let range = delta.range();
+        let start_line = self
+            .line_starts
+            .partition_point(|start| *start <= range.start)
+            - 1;
+        // The endpoint line participates when deleting a newline because its
+        // suffix must merge into the first affected line.
+        let end_line = self
+            .line_starts
+            .partition_point(|start| *start <= range.end)
+            - 1;
+        let affected_start = self.line_starts[start_line];
+        let affected_end = self
+            .line_starts
+            .get(end_line + 1)
+            .map_or(self.canonical.len(), |next| next.saturating_sub(1));
+        if range.start < affected_start || range.end > affected_end {
+            return Err(SourceProjectionError::DeltaMismatch);
+        }
+
+        let Some(updated_canonical_len) = self
+            .canonical
+            .len()
+            .checked_sub(range.len())
+            .and_then(|length| length.checked_add(delta.inserted().len()))
+        else {
+            return Err(SourceProjectionError::DeltaMismatch);
+        };
+        let Some(capacity) = range
+            .start
+            .checked_sub(affected_start)
+            .and_then(|prefix| prefix.checked_add(delta.inserted().len()))
+            .and_then(|length| length.checked_add(affected_end - range.end))
+        else {
+            return Err(SourceProjectionError::DeltaMismatch);
+        };
+        let mut updated_block = String::with_capacity(capacity);
+        updated_block.push_str(&self.canonical[affected_start..range.start]);
+        updated_block.push_str(delta.inserted());
+        updated_block.push_str(&self.canonical[range.end..affected_end]);
+
+        let parts = updated_block.split('\n').collect::<Vec<_>>();
+        let new_line_count = parts.len();
+        let old_logical_count = end_line - start_line + 1;
+        let mut replacement_starts = Vec::with_capacity(new_line_count);
+        replacement_starts.push(affected_start);
+        for (offset, byte) in updated_block.bytes().enumerate() {
+            if byte == b'\n' {
+                let start = affected_start
+                    .checked_add(offset + 1)
+                    .filter(|start| *start <= updated_canonical_len)
+                    .ok_or(SourceProjectionError::DeltaMismatch)?;
+                replacement_starts.push(start);
+            }
+        }
+        if replacement_starts.len() != new_line_count {
+            return Err(SourceProjectionError::DeltaMismatch);
+        }
+
+        let suffix_start = end_line + 1;
+        if delta.inserted().len() >= delta.deleted().len() {
+            let added = delta.inserted().len() - delta.deleted().len();
+            if self.line_starts[suffix_start..]
+                .last()
+                .and_then(|start| start.checked_add(added))
+                .is_none()
+                && !self.line_starts[suffix_start..].is_empty()
+            {
+                return Err(SourceProjectionError::DeltaMismatch);
+            }
+        } else {
+            let removed = delta.deleted().len() - delta.inserted().len();
+            if self.line_starts[suffix_start..]
+                .first()
+                .is_some_and(|start| *start < removed)
+            {
+                return Err(SourceProjectionError::DeltaMismatch);
+            }
+        }
+
+        let remove_end = (end_line + 1).min(self.buffer.lines.len());
+        if start_line > remove_end {
+            return Err(SourceProjectionError::ResyncRequired);
+        }
+        let resulting_line_count = self
+            .buffer
+            .lines
+            .len()
+            .checked_sub(remove_end - start_line)
+            .and_then(|count| count.checked_add(new_line_count))
+            .ok_or(SourceProjectionError::DeltaMismatch)?;
+        if resulting_line_count == 0 {
+            return Err(SourceProjectionError::DeltaMismatch);
+        }
+
+        let scroll = self.buffer.scroll();
+        let scroll_line = if scroll.line > end_line {
+            if new_line_count >= old_logical_count {
+                scroll
+                    .line
+                    .checked_add(new_line_count - old_logical_count)
+                    .ok_or(SourceProjectionError::DeltaMismatch)?
+            } else {
+                scroll
+                    .line
+                    .checked_sub(old_logical_count - new_line_count)
+                    .ok_or(SourceProjectionError::DeltaMismatch)?
+            }
+        } else if scroll.line >= start_line {
+            start_line
+        } else {
+            scroll.line
+        }
+        .min(resulting_line_count - 1);
+
+        let final_ending = if self.line_starts.get(end_line + 1).is_some() {
+            BufferLineEnding::Lf
+        } else {
+            BufferLineEnding::None
+        };
+        let last = new_line_count - 1;
+        let replacement_lines = parts.into_iter().enumerate().map(|(index, text)| {
+            let ending = if index == last {
+                final_ending
+            } else {
+                BufferLineEnding::Lf
+            };
+            let mut line = BufferLine::new(
+                text,
+                ending,
+                attrs_for_line(text, &self.fonts),
+                Shaping::Advanced,
+            );
+            line.set_align(Some(Align::Left));
+            line
+        });
+
+        self.buffer
+            .lines
+            .splice(start_line..remove_end, replacement_lines);
+        self.buffer
+            .set_scroll(Scroll::new(scroll_line, scroll.vertical, scroll.horizontal));
+        self.buffer.set_redraw(true);
+        self.canonical.replace_range(range, delta.inserted());
+        self.line_starts
+            .splice(start_line..=end_line, replacement_starts);
+        let adjusted_suffix = start_line + new_line_count;
+        if delta.inserted().len() >= delta.deleted().len() {
+            let added = delta.inserted().len() - delta.deleted().len();
+            for start in &mut self.line_starts[adjusted_suffix..] {
+                *start += added;
+            }
+        } else {
+            let removed = delta.deleted().len() - delta.inserted().len();
+            for start in &mut self.line_starts[adjusted_suffix..] {
+                *start -= removed;
+            }
+        }
         self.generation = generation;
         Ok(())
     }
@@ -510,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn newline_delta_conservatively_rebuilds_the_projection() {
+    fn newline_delta_splits_only_the_affected_projection_line() {
         let mut document = DocumentState::loaded("first\nthird", LineEnding::Lf, None);
         let initial = document.snapshot();
         let mut projection = SourceProjection::new(&initial, 600, 400, 1.0);
@@ -524,18 +695,92 @@ mod tests {
             EditMeta::new(EditKind::Paste, 10),
         );
         let outcome = document.edit(request).unwrap();
-        let snapshot = document.snapshot();
-
-        assert_eq!(
-            projection.apply_delta(document.generation(), outcome.delta.as_ref().unwrap()),
-            Err(SourceProjectionError::ResyncRequired)
-        );
-        projection.resync(&snapshot).unwrap();
+        projection
+            .apply_delta(document.generation(), outcome.delta.as_ref().unwrap())
+            .unwrap();
 
         assert_eq!(projection.projected_text(), "first\nsecond\nthird");
         assert_eq!(projection.buffer.lines.len(), 3);
+        assert_eq!(projection.buffer.lines[1].text(), "second");
         let cursor = projection.cursor_for_global(document.text().len()).unwrap();
         assert_eq!((cursor.line, cursor.index), (2, "third".len()));
+    }
+
+    #[test]
+    fn deleting_newline_merges_adjacent_projection_lines() {
+        let mut document = DocumentState::loaded("first\nsecond\nthird", LineEnding::Lf, None);
+        let mut projection = SourceProjection::new(&document.snapshot(), 600, 400, 1.0);
+        let newline = document.text().find('\n').unwrap();
+        let request = EditRequest::new(
+            document.generation(),
+            newline..newline + 1,
+            "",
+            CursorSnapshot::caret(newline + 1),
+            CursorSnapshot::caret(newline),
+            EditMeta::new(EditKind::Backspace, 10),
+        );
+        let outcome = document.edit(request).unwrap();
+
+        projection
+            .apply_delta(document.generation(), outcome.delta.as_ref().unwrap())
+            .unwrap();
+
+        assert_eq!(projection.projected_text(), "firstsecond\nthird");
+        assert_eq!(projection.buffer.lines.len(), 2);
+        assert_eq!(projection.buffer.lines[0].text(), "firstsecond");
+    }
+
+    #[test]
+    fn line_structure_delta_keeps_the_same_scrolled_content_visible() {
+        let text = (0..200)
+            .map(|line| format!("line {line} 中文\n"))
+            .collect::<String>();
+        let mut document = DocumentState::loaded(&text, LineEnding::Lf, None);
+        let mut projection = SourceProjection::new(&document.snapshot(), 500, 200, 1.0);
+        let before = projection.scroll_by(2_000.0);
+        assert!(before.line > 0);
+        let request = EditRequest::new(
+            document.generation(),
+            0..0,
+            "\n",
+            CursorSnapshot::caret(0),
+            CursorSnapshot::caret(1),
+            EditMeta::new(EditKind::Newline, 10),
+        );
+        let outcome = document.edit(request).unwrap();
+
+        projection
+            .apply_delta(document.generation(), outcome.delta.as_ref().unwrap())
+            .unwrap();
+
+        let after = projection.scroll();
+        assert_eq!(after.line, before.line + 1);
+        assert_eq!(after.vertical, before.vertical);
+        assert_eq!(after.horizontal, before.horizontal);
+    }
+
+    #[test]
+    fn insertion_after_trailing_newline_materializes_empty_projection_line() {
+        let mut document = DocumentState::loaded("first\n", LineEnding::Lf, None);
+        let mut projection = SourceProjection::new(&document.snapshot(), 600, 400, 1.0);
+        let end = document.text().len();
+        let request = EditRequest::new(
+            document.generation(),
+            end..end,
+            "tail",
+            CursorSnapshot::caret(end),
+            CursorSnapshot::caret(end + "tail".len()),
+            EditMeta::new(EditKind::Typing, 10),
+        );
+        let outcome = document.edit(request).unwrap();
+
+        projection
+            .apply_delta(document.generation(), outcome.delta.as_ref().unwrap())
+            .unwrap();
+
+        assert_eq!(projection.projected_text(), "first\ntail");
+        assert_eq!(projection.buffer.lines.len(), 2);
+        assert_eq!(projection.buffer.lines[1].text(), "tail");
     }
 
     #[test]
