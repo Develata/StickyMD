@@ -18,4 +18,6 @@
 | [`phase-03-dependency-delta.md`](phase-03-dependency-delta.md) | Phase 3 依赖审计 | audited |
 | [`phase-03-source-editor-ime.md`](phase-03-source-editor-ime.md) | Phase 3 实现与测量 | automated PASS；manual gate open |
 | [`phase-03-manual-ime-checklist.md`](phase-03-manual-ime-checklist.md) | 真实输入法验收表 | NOT TESTED |
+| [`phase-04-dependency-delta.md`](phase-04-dependency-delta.md) | Phase 4 依赖增量审计 | audited |
+| [`phase-04-portable-persistence.md`](phase-04-portable-persistence.md) | Phase 4 portable persistence 结果与收据 | automated/portable PASS；manual conditions open |
 | [`RISK-ttf-parser-unmaintained.md`](RISK-ttf-parser-unmaintained.md) | 字体解析依赖维护风险 | exact advisory temporarily acknowledged |

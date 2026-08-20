@@ -4,7 +4,7 @@
 
 use stickymd_core::{
     CursorSnapshot, DocumentError, DocumentSnapshot, DocumentState, EditKind, EditMeta,
-    EditRequest, Generation, LineEnding, Selection, TextDelta,
+    EditRequest, ExternalFileFact, Generation, Hash32, Selection, TextDelta,
 };
 use thiserror::Error;
 
@@ -30,6 +30,8 @@ pub enum AppEffect {
 pub struct EditorDocumentView<'a> {
     pub text: &'a str,
     pub generation: Generation,
+    pub dirty: bool,
+    pub base_disk_hash: Option<Hash32>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -53,8 +55,12 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
         }
     }
 
+    #[cfg(test)]
     pub fn empty(clipboard: C) -> Self {
-        Self::new(DocumentState::empty(LineEnding::Crlf), clipboard)
+        Self::new(
+            DocumentState::empty(stickymd_core::LineEnding::Crlf),
+            clipboard,
+        )
     }
 
     pub fn snapshot(&self) -> DocumentSnapshot {
@@ -65,7 +71,44 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
         EditorDocumentView {
             text: self.document.text(),
             generation: self.document.generation(),
+            dirty: self.document.is_dirty(),
+            base_disk_hash: self.document.base_disk_hash(),
         }
+    }
+
+    pub fn acknowledge_persisted(
+        &mut self,
+        generation: Generation,
+        fingerprint: Hash32,
+    ) -> Result<(), EditorFlowError> {
+        self.document
+            .acknowledge_persisted(generation, fingerprint)
+            .map_err(Into::into)
+    }
+
+    pub fn reconcile_external(
+        &mut self,
+        fact: &ExternalFileFact,
+    ) -> Result<Generation, EditorFlowError> {
+        self.document
+            .replace_from_reconciliation(&fact.text, fact.line_ending, fact.fingerprint)
+            .map_err(Into::into)
+    }
+
+    pub fn load_unpersisted_recovery(
+        &mut self,
+        text: &str,
+        line_ending: stickymd_core::LineEnding,
+    ) -> Result<Generation, EditorFlowError> {
+        self.document
+            .replace_from_unpersisted_recovery(text, line_ending)
+            .map_err(Into::into)
+    }
+
+    pub fn reset_to_missing_document(&mut self) -> Result<Generation, EditorFlowError> {
+        self.document
+            .reset_to_missing_document()
+            .map_err(Into::into)
     }
 
     pub fn dispatch(&mut self, intent: AppIntent) -> Result<AppEffect, EditorFlowError> {

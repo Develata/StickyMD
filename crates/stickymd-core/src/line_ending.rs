@@ -51,20 +51,42 @@ impl LineEnding {
         }
     }
 
-    /// Normalize `text` to the internal `\n` form (CRLF and stray CR → LF).
+    /// Normalize CRLF to the internal `\n` form while preserving isolated CR.
+    ///
+    /// Isolated carriage returns are user content, not line-ending evidence.
     pub fn to_internal(text: &str) -> String {
-        text.replace("\r\n", "\n").replace('\r', "\n")
+        text.replace("\r\n", "\n")
     }
 
     /// Convert internal `\n`-normalized text to this line ending style.
     pub fn apply(self, normalized: &str) -> String {
-        match self {
-            LineEnding::Lf => normalized.replace("\r\n", "\n"),
-            LineEnding::Crlf => {
-                let without_cr = normalized.replace("\r\n", "\n");
-                without_cr.replace('\n', "\r\n")
-            }
+        let replacement = self.as_str();
+        let bytes = normalized.as_bytes();
+        let extra = if self == LineEnding::Crlf {
+            bytes.iter().filter(|byte| **byte == b'\n').count()
+        } else {
+            0
+        };
+        let mut output = String::with_capacity(normalized.len() + extra);
+        let mut segment = 0usize;
+        let mut index = 0usize;
+        while index < bytes.len() {
+            let (break_start, next) =
+                if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
+                    (index, index + 2)
+                } else if bytes[index] == b'\n' {
+                    (index, index + 1)
+                } else {
+                    index += 1;
+                    continue;
+                };
+            output.push_str(&normalized[segment..break_start]);
+            output.push_str(replacement);
+            segment = next;
+            index = next;
         }
+        output.push_str(&normalized[segment..]);
+        output
     }
 }
 
@@ -100,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn to_internal_normalizes_all_cr_forms() {
-        assert_eq!(LineEnding::to_internal("a\r\nb\rc\n"), "a\nb\nc\n");
+    fn to_internal_preserves_isolated_carriage_return() {
+        assert_eq!(LineEnding::to_internal("a\r\nb\rc\n"), "a\nb\rc\n");
     }
 }

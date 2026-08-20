@@ -30,3 +30,19 @@ pub enum AppIntent {
         timestamp_ms: u64,
     },
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveReason {
+    Manual,
+    FocusLoss,
+}
+
+/// Non-editor instructions emitted by the shell. Persistence and lifecycle
+/// coordination consume these before any execution-domain request is made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistenceIntent {
+    SaveNow(SaveReason),
+    ResolvePrimary,
+    ResolveSecondary,
+    RequestQuit,
+}

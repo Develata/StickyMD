@@ -167,11 +167,11 @@ impl SourceProjection {
         Ok(())
     }
 
-    fn paint_diagnostic(&self, pixmap: &mut Pixmap, message: &str) {
+    fn paint_diagnostic(&mut self, pixmap: &mut Pixmap, message: &str) {
         if message.is_empty() {
             return;
         }
-        let height = 24.0 * self.scale_factor;
+        let height = 34.0 * self.scale_factor;
         rect(
             pixmap,
             0.0,
@@ -179,6 +179,50 @@ impl SourceProjection {
             self.width_px as f32,
             height,
             (246, 224, 184, 245),
+        );
+        if message.contains("[F7") {
+            let action_start = self.width_px as f32 * 0.58;
+            let action_width = (self.width_px as f32 - action_start) * 0.5;
+            rect(
+                pixmap,
+                action_start,
+                self.height_px as f32 - height + self.scale_factor,
+                action_width - self.scale_factor,
+                height - 2.0 * self.scale_factor,
+                (232, 201, 145, 245),
+            );
+            rect(
+                pixmap,
+                action_start + action_width,
+                self.height_px as f32 - height + self.scale_factor,
+                action_width - self.scale_factor,
+                height - 2.0 * self.scale_factor,
+                (239, 211, 163, 245),
+            );
+        }
+        if self.diagnostic_text != message {
+            self.diagnostic_text.clear();
+            self.diagnostic_text.push_str(message);
+            let attrs =
+                cosmic_text::Attrs::new().family(cosmic_text::Family::Name(self.fonts.cjk_family));
+            self.diagnostic_buffer.set_text(
+                &self.diagnostic_text,
+                &attrs,
+                cosmic_text::Shaping::Advanced,
+                Some(cosmic_text::Align::Left),
+            );
+        }
+        self.diagnostic_buffer
+            .shape_until_scroll(&mut self.font_system, false);
+        let x_offset = (12.0 * self.scale_factor) as i32;
+        let y_offset = (self.height_px as f32 - height + 7.0 * self.scale_factor) as i32;
+        self.diagnostic_buffer.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            Color::rgb(72, 52, 20),
+            |x, y, width, height, color| {
+                blend_glyph_rect(pixmap, x + x_offset, y + y_offset, width, height, color);
+            },
         );
     }
 }

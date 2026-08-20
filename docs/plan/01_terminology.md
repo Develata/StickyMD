@@ -86,10 +86,17 @@
 - **Not equivalent to**：最近一次提交的保存请求。
 - **Lifetime**：随每次成功保存推进。
 
+### Durable Fingerprint
+
+- **Definition**：`note.md` 某次已观察 durable bytes（含实际 BOM/换行字节）的 SHA-256。
+- **Authority**：Execution Domain 对真实磁盘 bytes 的读取，或成功 atomic publish 的确切输出 bytes。
+- **Not equivalent to**：规范化后的 DocumentState 文本 hash、mtime、watcher event 或 generation。
+- **Lifetime**：启动 load、成功 save 或 external reconciliation 时更新；冲突未解决时不更新。
+
 ### External File Fact
 
 - **Definition**：程序自身保存之外，`note.md` 在磁盘上发生的变化（外部编辑器修改、删除等）。
-- **Authority**：文件系统观测（watcher + hash 比对），但必须先与 `last_saved_hash` / write token 对比以排除自身写入。
+- **Authority**：重新读取的文件系统 bytes 与 Durable Fingerprint 比对；watcher 只提供检查 hint。
 - **Not equivalent to**：程序自己的原子替换事件（必须被识别并忽略）。
 - **Lifetime**：从被观测到，到经 reconcile 流程进入 DocumentState 或被判定为自身写入而忽略。
 

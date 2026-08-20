@@ -6,33 +6,86 @@
 #[cfg(windows)]
 mod app;
 #[cfg(windows)]
+mod config;
+#[cfg(windows)]
 mod flow;
 #[cfg(windows)]
 mod instruction;
 #[cfg(windows)]
 mod interaction;
 #[cfg(windows)]
+mod persistence;
+#[cfg(windows)]
 mod platform;
+#[cfg(windows)]
+mod startup;
 #[cfg(windows)]
 mod surface;
 
 #[cfg(windows)]
 fn main() {
-    use app::StickyApp;
+    use app::{AppEvent, StickyApp};
+    use persistence::{IoCompletion, PersistenceWorker};
+    use platform::windows::program_dir::RuntimePaths;
+    use platform::windows::single_instance::{InstanceDisposition, SingleInstanceGuard};
+    use startup::bootstrap;
     use winit::event_loop::EventLoop;
 
-    let event_loop = match EventLoop::new() {
+    let paths = match RuntimePaths::resolve_current() {
+        Ok(paths) => paths,
+        Err(error) => fatal_startup(&format!("无法确定程序目录：{error}")),
+    };
+    let mut instance = match SingleInstanceGuard::acquire(&paths.program_dir) {
+        Ok(InstanceDisposition::Primary(instance)) => instance,
+        Ok(InstanceDisposition::SecondarySignaled) => return,
+        Err(error) => fatal_startup(&format!("无法建立单实例保护：{error}")),
+    };
+    if let Err(error) = paths.verify_program_directory_writable() {
+        fatal_startup(&format!(
+            "当前目录不可写，请将程序移动到有写权限的文件夹。\n\n{error}"
+        ));
+    }
+    if let Err(error) = paths.ensure_layout() {
+        fatal_startup(&format!("无法创建便签目录：{error}"));
+    }
+    let bootstrap = match bootstrap(&paths) {
+        Ok(bootstrap) => bootstrap,
+        Err(error) => fatal_startup(&format!("StickyMD 无法安全启动：{error}")),
+    };
+
+    let event_loop = match EventLoop::<AppEvent>::with_user_event().build() {
         Ok(event_loop) => event_loop,
         Err(error) => {
             eprintln!("event loop creation failed: {error}");
             std::process::exit(1);
         }
     };
-    let mut app = StickyApp::new();
+    let proxy = event_loop.create_proxy();
+    let wake_proxy = proxy.clone();
+    if let Err(error) = instance.start_listener(move || {
+        let _ = wake_proxy.send_event(AppEvent::ShowRequested);
+    }) {
+        fatal_startup(&format!("无法监听第二实例唤醒请求：{error}"));
+    }
+    let io_proxy = proxy.clone();
+    let worker = match PersistenceWorker::start(move |completion: IoCompletion| {
+        let _ = io_proxy.send_event(AppEvent::Io(completion));
+    }) {
+        Ok(worker) => worker,
+        Err(error) => fatal_startup(&format!("无法启动持久化工作线程：{error}")),
+    };
+    let mut app = StickyApp::new(paths, bootstrap, instance, worker, proxy);
     if let Err(error) = event_loop.run_app(&mut app) {
         eprintln!("application event loop failed: {error}");
         std::process::exit(1);
     }
+}
+
+#[cfg(windows)]
+fn fatal_startup(message: &str) -> ! {
+    eprintln!("{message}");
+    platform::windows::message_box::show_error("StickyMD", message);
+    std::process::exit(1);
 }
 
 #[cfg(not(windows))]

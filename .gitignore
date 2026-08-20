@@ -13,7 +13,11 @@ target/
 # Build outputs
 *.exe
 
-# Runtime transient files (note/ itself is NOT ignored; see docs/plan/05)
+# A development launch writes beside target/debug or a copied executable. Ignore
+# only a repository-root portable runtime, without hiding fixture directories.
+/note/
+
+# Runtime transient files
 *.tmp
 
 # OS / editor noise

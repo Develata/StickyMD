@@ -53,6 +53,8 @@ pub struct SourceProjection {
     pub(super) font_system: FontSystem,
     pub(super) swash_cache: SwashCache,
     pub(super) buffer: Buffer,
+    pub(super) diagnostic_buffer: Buffer,
+    pub(super) diagnostic_text: String,
     pub(super) fonts: FontSelection,
     pub(super) canonical: String,
     pub(super) generation: Generation,
@@ -69,11 +71,18 @@ impl SourceProjection {
         let fonts = FontSelection::resolve(&mut font_system);
         let metrics = scaled_metrics(scale);
         let mut buffer = Buffer::new(&mut font_system, metrics);
+        let mut diagnostic_buffer = Buffer::new(
+            &mut font_system,
+            Metrics::new(13.0 * scale.max(0.5), 20.0 * scale.max(0.5)),
+        );
+        diagnostic_buffer.set_wrap(Wrap::None);
         buffer.set_wrap(Wrap::WordOrGlyph);
         let mut projection = Self {
             font_system,
             swash_cache: SwashCache::new(),
             buffer,
+            diagnostic_buffer,
+            diagnostic_text: String::new(),
             fonts,
             canonical: String::new(),
             generation: Generation::initial(),
@@ -405,6 +414,11 @@ impl SourceProjection {
             Some(self.content_width()),
             Some(self.content_height()),
         );
+        self.diagnostic_buffer.set_metrics_and_size(
+            Metrics::new(13.0 * self.scale_factor, 20.0 * self.scale_factor),
+            Some((self.width_px as f32 - 24.0 * self.scale_factor).max(1.0)),
+            Some(24.0 * self.scale_factor),
+        );
         self.buffer.shape_until_scroll(&mut self.font_system, false);
     }
 
@@ -414,6 +428,20 @@ impl SourceProjection {
 
     pub fn preedit(&self) -> Option<&PreeditVisual> {
         self.preedit.as_ref()
+    }
+
+    /// Hit-test the generic two-action diagnostic banner.
+    /// `true` is the primary (F6) action and `false` the secondary (F7) action.
+    pub fn diagnostic_action_at(&self, x: f32, y: f32) -> Option<bool> {
+        let height = 34.0 * self.scale_factor;
+        let action_start = self.width_px as f32 * 0.58;
+        if !self.diagnostic_text.contains("[F7")
+            || y < self.height_px as f32 - height
+            || x < action_start
+        {
+            return None;
+        }
+        Some(x < action_start + (self.width_px as f32 - action_start) * 0.5)
     }
 
     fn rebuild(&mut self, snapshot: &DocumentSnapshot) {
@@ -453,6 +481,11 @@ impl SourceProjection {
             Some(self.content_height()),
         );
         self.buffer.set_wrap(Wrap::WordOrGlyph);
+        self.diagnostic_buffer.set_metrics_and_size(
+            Metrics::new(13.0 * self.scale_factor, 20.0 * self.scale_factor),
+            Some((self.width_px as f32 - 24.0 * self.scale_factor).max(1.0)),
+            Some(24.0 * self.scale_factor),
+        );
     }
 }
 

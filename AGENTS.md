@@ -18,8 +18,8 @@ StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown �
 - 纯 portable：解压即用，无安装器，不写 AppData / Registry。
 - 核心本体对象只有：Note、Document Text、Preview、Managed Image Asset、Runtime Config、Window Placement、Editor Session。
 
-当前仓库状态：**Phase 2 核心文档模型已重建，Phase 3 Source/IME 开发壳已实现；
-真实微软拼音/微信输入法人工门仍未关闭**。开发壳明确不持久化，不得据此声称产品可用。
+当前仓库状态：**Phase 4 portable persistence 开发切片已实现并等待 USER 审核；
+真实微软拼音/微信输入法人工门仍未关闭**。当前构建仍不是完整 v1，不得据此声称产品可用。
 任何未写入 `docs/plan` 契约的产品功能，默认禁止实现。
 
 ---

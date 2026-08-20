@@ -3,10 +3,8 @@
 //! plan_ref: docs/plan/04_runtime_state_model.md#documentstate
 //!
 //! `Hash32` is the digest size used for the on-disk content hash (`base_disk_hash`)
-//! and for identifying our own writes vs. external file facts. The core crate does
-//! **not** compute hashes; it only stores and compares them. The digest is produced
-//! by the Execution Domain persistence adapter (see `docs/plan/05`), keeping this
-//! crate free of crypto dependencies and platform code.
+//! and for identifying our own writes vs. external file facts. Hashing is a pure
+//! byte operation; opening and reading files remains an Execution Domain concern.
 
 /// A fixed-size 32-byte content digest (SHA-256 width).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,11 +36,13 @@ impl Hash32 {
 
     /// Lowercase hex representation (for diagnostics and logging).
     pub fn to_hex(&self) -> String {
-        let mut s = String::with_capacity(64);
-        for b in self.0 {
-            s.push_str(&format!("{b:02x}"));
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut output = [0_u8; 64];
+        for (index, byte) in self.0.into_iter().enumerate() {
+            output[index * 2] = HEX[(byte >> 4) as usize];
+            output[index * 2 + 1] = HEX[(byte & 0x0f) as usize];
         }
-        s
+        String::from_utf8(output.to_vec()).unwrap_or_default()
     }
 }
 

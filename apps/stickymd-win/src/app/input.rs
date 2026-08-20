@@ -8,11 +8,16 @@ use winit::event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 use super::StickyApp;
-use crate::instruction::AppIntent;
+use crate::instruction::{AppIntent, PersistenceIntent, SaveReason};
 use crate::interaction::ImeSignal;
 
 impl StickyApp {
     pub(super) fn handle_ime(&mut self, event: Ime) {
+        if !ime_event_allowed(self.recovery.is_pending()) {
+            self.session.cancel_preedit();
+            self.sync_preedit();
+            return;
+        }
         #[cfg(debug_assertions)]
         match &event {
             Ime::Enabled => eprintln!("IME Enabled"),
@@ -62,6 +67,20 @@ impl StickyApp {
             PhysicalKey::Code(code) => Some(code),
             PhysicalKey::Unidentified(_) => None,
         };
+
+        if code == Some(KeyCode::F6)
+            && self.dispatch_persistence_intent(None, PersistenceIntent::ResolvePrimary)
+        {
+            return;
+        }
+        if code == Some(KeyCode::F7)
+            && self.dispatch_persistence_intent(None, PersistenceIntent::ResolveSecondary)
+        {
+            return;
+        }
+        if self.recovery.is_pending() {
+            return;
+        }
 
         if shortcut && self.handle_shortcut(code, generation, text_len, timestamp_ms, shift) {
             return;
@@ -195,8 +214,10 @@ impl StickyApp {
             Some(KeyCode::KeyZ) => self.undo_or_cancel(true),
             Some(KeyCode::KeyY) => self.undo_or_cancel(false),
             Some(KeyCode::KeyS) => {
-                self.diagnostic = Some("Save is not implemented — NOT PERSISTED".to_owned());
-                self.request_redraw();
+                self.dispatch_persistence_intent(
+                    None,
+                    PersistenceIntent::SaveNow(SaveReason::Manual),
+                );
             }
             Some(KeyCode::Home) | Some(KeyCode::End) => {
                 self.session
@@ -251,6 +272,24 @@ impl StickyApp {
         match state {
             ElementState::Pressed => {
                 self.session.cancel_preedit();
+                let diagnostic_action = self.projection.as_ref().and_then(|projection| {
+                    projection.diagnostic_action_at(
+                        self.cursor_position.x as f32,
+                        self.cursor_position.y as f32,
+                    )
+                });
+                if let Some(primary) = diagnostic_action
+                    && self.dispatch_persistence_intent(
+                        None,
+                        if primary {
+                            PersistenceIntent::ResolvePrimary
+                        } else {
+                            PersistenceIntent::ResolveSecondary
+                        },
+                    )
+                {
+                    return;
+                }
                 let Some(projection) = &self.projection else {
                     return;
                 };
@@ -295,5 +334,20 @@ impl StickyApp {
         self.session.scroll.horizontal_px = scroll.horizontal;
         self.update_ime_area();
         self.request_redraw();
+    }
+}
+
+fn ime_event_allowed(recovery_pending: bool) -> bool {
+    !recovery_pending
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::ime_event_allowed;
+
+    #[test]
+    fn recovery_pending_rejects_ime_commits_and_preedit() {
+        assert!(!ime_event_allowed(true));
+        assert!(ime_event_allowed(false));
     }
 }

@@ -59,7 +59,9 @@ winit event
 ```
 
 IME preedit 只存在于 editor session 和视觉投影，commit 才产生一次 canonical delta。
-当前开发壳不持久化，真实微软拼音/微信输入法人工验收仍为 NOT TESTED。
+Phase 4 已把该调用链接入有界 I/O worker、650 ms autosave、guarded atomic publish、
+recovery 与外部文件 reconciliation；磁盘仍只是 durable representation，不能绕过
+`DocumentState` 成为运行时文本权威。真实微软拼音/微信输入法人工验收仍为 NOT TESTED。
 
 ## 技术方向（已批准；按已实现切片分别验证）
 

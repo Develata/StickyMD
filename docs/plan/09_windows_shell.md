@@ -74,6 +74,7 @@
   → 释放 mutex → 清理已确认无用的临时文件。
 - 退出保存失败：显示明确错误、保持运行、不静默退出、不丢内存文本。
 
+<a id="single-instance"></a>
 ### 单实例唤醒
 
 同一 canonical 目录第二个实例：通知第一实例显示并激活，自己立即退出。
@@ -123,7 +124,7 @@ floating_x_ratio、floating_y_ratio
 | 窗口圆角 | DWM 窗口属性 |
 | 显示器身份 | `QueryDisplayConfig` + `DisplayConfigGetDeviceInfo` 设备路径稳定哈希 |
 | 单实例 | 本地命名 mutex / event：`Local\StickyMD.Mutex.<dir-hash>`、`Local\StickyMD.Show.<dir-hash>` |
-| 原子替换 | `ReplaceFileW`，回退 `MoveFileExW`；`FlushFileBuffers` |
+| 原子替换 | existing target：temp `FlushFileBuffers` 后 `ReplaceFileW(flags=0)`；new target：`MoveFileExW(WRITE_THROUGH)`；1175/1176/1177 fail closed，不做 blanket fallback |
 | 文件剪贴板 | `CF_HDROP` |
 | 链接打开 | Windows Shell |
 | 系统主题变化 | 主题变化事件/注册表监听 |
@@ -164,7 +165,8 @@ WindowDockCoordinator/LifecycleCoordinator 是窗口业务状态的 mutation own
 
 ## Lifecycle
 
-启动：Writable check → 单实例 → 载入 config → 载入 note → reconcile → 窗口+托盘。
+启动：解析 canonical Program Directory → 单实例 → Writable check → 载入 config →
+恢复检查/载入 note → reconcile → 窗口+托盘。第二实例在任何 durable bootstrap 前退出。
 运行：Close→HiddenToTray；Tray Show→恢复；Tray Quit→清理退出。
 
 ## Extension / Replacement Points

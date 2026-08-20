@@ -4,4 +4,4 @@
 
 mod intent;
 
-pub use intent::AppIntent;
+pub use intent::{AppIntent, PersistenceIntent, SaveReason};

@@ -244,9 +244,10 @@ impl DocumentState {
         if persisted > self.saved_generation {
             self.saved_generation = persisted;
             self.base_disk_hash = Some(hash);
-        } else if persisted == self.saved_generation && self.base_disk_hash.is_none() {
-            // A newly-created empty note can be persisted at generation zero.
-            // Its first durable receipt still establishes the external base hash.
+        } else if persisted == self.saved_generation {
+            // A same-generation rewrite can legitimately change durable bytes
+            // (for example BOM removal during recovery). Its receipt must refresh
+            // the OCC base even though canonical text generation did not change.
             self.base_disk_hash = Some(hash);
         }
         Ok(())
@@ -269,6 +270,42 @@ impl DocumentState {
         self.generation = next_generation;
         self.saved_generation = next_generation;
         self.base_disk_hash = Some(hash);
+        Ok(next_generation)
+    }
+
+    /// Replace canonical runtime text with recovery evidence that has not yet
+    /// been published. The previous durable fingerprint remains the guarded
+    /// save base and the new generation is deliberately dirty.
+    pub fn replace_from_unpersisted_recovery(
+        &mut self,
+        text: &str,
+        line_ending: LineEnding,
+    ) -> Result<Generation, DocumentError> {
+        let next_generation = self
+            .generation
+            .checked_next()
+            .ok_or(DocumentError::GenerationExhausted)?;
+        self.store.replace_all(LineEnding::to_internal(text));
+        self.line_ending = line_ending;
+        self.undo.clear();
+        self.generation = next_generation;
+        Ok(next_generation)
+    }
+
+    /// Restore the startup meaning of a missing canonical note after the user
+    /// discards temporary recovery evidence. The coordinator will subsequently
+    /// publish the empty note through the normal guarded create path.
+    pub fn reset_to_missing_document(&mut self) -> Result<Generation, DocumentError> {
+        let next_generation = self
+            .generation
+            .checked_next()
+            .ok_or(DocumentError::GenerationExhausted)?;
+        self.store.replace_all(String::new());
+        self.line_ending = LineEnding::Crlf;
+        self.undo.clear();
+        self.generation = next_generation;
+        self.saved_generation = next_generation;
+        self.base_disk_hash = None;
         Ok(next_generation)
     }
 
@@ -596,6 +633,46 @@ mod tests {
             .unwrap();
         assert_eq!(doc.base_disk_hash(), Some(durable_hash));
         assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn same_generation_rewrite_refreshes_durable_base_hash() {
+        let original = hash(3);
+        let rewritten = hash(4);
+        let mut doc = DocumentState::loaded("same", LineEnding::Crlf, Some(original));
+        doc.acknowledge_persisted(Generation::initial(), rewritten)
+            .unwrap();
+        assert_eq!(doc.base_disk_hash(), Some(rewritten));
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn recovery_evidence_is_dirty_until_a_real_persist_receipt() {
+        let durable = hash(8);
+        let mut doc = DocumentState::loaded("disk", LineEnding::Lf, Some(durable));
+        let generation = doc
+            .replace_from_unpersisted_recovery("temporary", LineEnding::Crlf)
+            .unwrap();
+        assert_eq!(doc.text(), "temporary");
+        assert!(doc.is_dirty());
+        assert_eq!(doc.base_disk_hash(), Some(durable));
+
+        let published = hash(9);
+        doc.acknowledge_persisted(generation, published).unwrap();
+        assert!(!doc.is_dirty());
+        assert_eq!(doc.base_disk_hash(), Some(published));
+    }
+
+    #[test]
+    fn discarding_recovery_for_missing_note_restores_empty_clean_state() {
+        let mut doc = DocumentState::empty(LineEnding::Crlf);
+        doc.replace_from_unpersisted_recovery("temporary", LineEnding::Lf)
+            .unwrap();
+        doc.reset_to_missing_document().unwrap();
+        assert_eq!(doc.text(), "");
+        assert!(!doc.is_dirty());
+        assert_eq!(doc.base_disk_hash(), None);
+        assert_eq!(doc.line_ending(), LineEnding::Crlf);
     }
 
     #[test]

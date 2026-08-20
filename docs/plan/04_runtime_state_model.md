@@ -317,7 +317,8 @@ struct ConfigState {
 
 ## Lifecycle
 
-- 启动：Writable check → 单实例 → 载入 config → 载入 note.md / recovery → asset reconciliation → 窗口与托盘。
+- 启动：解析 canonical Program Directory → 单实例 → Writable check → 载入 config →
+  载入 note.md / recovery → asset reconciliation → 窗口与托盘。第二实例在 durable bootstrap 前退出。
 - 退出：立即保存 → 等待资产事务 → 安全 GC → 保存配置 → 释放 mutex → 清理临时文件。
 
 ## Extension / Replacement Points

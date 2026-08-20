@@ -19,6 +19,7 @@ mod error;
 mod generation;
 mod hash;
 mod line_ending;
+mod persistence;
 mod selection;
 mod snapshot;
 mod text_store;
@@ -30,5 +31,10 @@ pub use error::DocumentError;
 pub use generation::Generation;
 pub use hash::Hash32;
 pub use line_ending::LineEnding;
+pub use persistence::{
+    DiskFingerprint, ExternalFileFact, ExternalFileState, FileConflict, LoadedDocument,
+    NoteDecodeError, RecoveryCandidate, RecoveryDisposition, RecoveryInspection, hash_bytes,
+    inspect_recovery,
+};
 pub use selection::{CursorSnapshot, Selection, TextPosition};
 pub use snapshot::DocumentSnapshot;

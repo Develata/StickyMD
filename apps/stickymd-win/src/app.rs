@@ -1,4 +1,4 @@
-//! Windows Phase 3 development shell.
+//! Windows native shell with Phase 4 persistence coordination.
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#interaction-shell
 //! plan_ref: docs/plan/07_editor_and_ime.md#ime-semantics
@@ -10,28 +10,56 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use stickymd_render::source::SourceProjection;
-use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::dpi::PhysicalPosition;
+use winit::event_loop::EventLoopProxy;
 use winit::keyboard::ModifiersState;
-use winit::window::{Window, WindowAttributes, WindowId};
+use winit::window::Window;
 
-use crate::flow::{AppEffect, EditorCoordinator};
+use crate::config::RuntimeConfig;
+use crate::flow::{AppEffect, EditorCoordinator, PersistenceCoordinator, RecoveryCoordinator};
 use crate::instruction::AppIntent;
 use crate::interaction::EditorSession;
+use crate::persistence::{IoCompletion, PersistenceWorker};
 use crate::platform::windows::ArboardClipboard;
+use crate::platform::windows::file_watch::NoteDirectoryWatcher;
+use crate::platform::windows::program_dir::RuntimePaths;
+use crate::platform::windows::single_instance::SingleInstanceGuard;
+use crate::startup::BootstrapOutcome;
 use crate::surface::SoftwareSurface;
 
 mod input;
+mod lifecycle;
+mod persistence_runtime;
+mod presentation;
+mod reconciliation_runtime;
+mod recovery_runtime;
 
 const CARET_BLINK: Duration = Duration::from_millis(550);
+
+#[derive(Debug)]
+pub enum AppEvent {
+    Io(IoCompletion),
+    NoteFsHint,
+    WatchFailed(String),
+    ShowRequested,
+}
 
 pub struct StickyApp {
     window: Option<Arc<Window>>,
     surface: Option<SoftwareSurface>,
     projection: Option<SourceProjection>,
     coordinator: EditorCoordinator<ArboardClipboard>,
+    persistence: PersistenceCoordinator,
+    paths: RuntimePaths,
+    config: RuntimeConfig,
+    config_persistence_allowed: bool,
+    recovery: RecoveryCoordinator,
+    worker: PersistenceWorker,
+    watcher: Option<NoteDirectoryWatcher>,
+    proxy: EventLoopProxy<AppEvent>,
+    _instance: SingleInstanceGuard,
+    resolving_keep_local: bool,
+    quit_pending: bool,
     session: EditorSession,
     modifiers: ModifiersState,
     cursor_position: PhysicalPosition<f64>,
@@ -41,35 +69,48 @@ pub struct StickyApp {
 }
 
 impl StickyApp {
-    pub fn new() -> Self {
+    pub fn new(
+        paths: RuntimePaths,
+        bootstrap: BootstrapOutcome,
+        instance: SingleInstanceGuard,
+        worker: PersistenceWorker,
+        proxy: EventLoopProxy<AppEvent>,
+    ) -> Self {
         let now = Instant::now();
-        Self {
+        let mut app = Self {
             window: None,
             surface: None,
             projection: None,
-            coordinator: EditorCoordinator::empty(ArboardClipboard::new()),
+            coordinator: EditorCoordinator::new(bootstrap.document, ArboardClipboard::new()),
+            persistence: PersistenceCoordinator::default(),
+            paths,
+            config: bootstrap.config,
+            config_persistence_allowed: bootstrap.config_persistence_allowed,
+            recovery: RecoveryCoordinator::new(
+                bootstrap.recovery,
+                bootstrap.recovery_canonical_requires_preserve,
+            ),
+            worker,
+            watcher: None,
+            proxy,
+            _instance: instance,
+            resolving_keep_local: false,
+            quit_pending: false,
             session: EditorSession::default(),
             modifiers: ModifiersState::default(),
             cursor_position: PhysicalPosition::new(0.0, 0.0),
             started: now,
             next_blink: now + CARET_BLINK,
-            diagnostic: Some("Development build: text is NOT PERSISTED".to_owned()),
+            diagnostic: bootstrap.warnings.last().cloned(),
+        };
+        if app.recovery.is_pending() {
+            app.persistence.set_recovery_pending(true);
+            app.diagnostic =
+                Some("发现未完成保存的内容  |  [F6 恢复临时内容]  [F7 使用当前文件]".into());
+        } else {
+            app.start_watcher();
         }
-    }
-
-    fn timestamp_ms(&self) -> u64 {
-        self.started.elapsed().as_millis().min(u64::MAX as u128) as u64
-    }
-
-    fn request_redraw(&self) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
-    }
-
-    fn reset_caret_blink(&mut self) {
-        self.session.caret_visible = true;
-        self.next_blink = Instant::now() + CARET_BLINK;
+        app
     }
 
     fn dispatch(&mut self, intent: AppIntent) {
@@ -89,6 +130,8 @@ impl StickyApp {
                 selection,
                 delta,
             } => {
+                self.persistence
+                    .on_document_changed(self.timestamp_ms(), generation);
                 self.session.accept_document_selection(selection);
                 if let Some(projection) = &mut self.projection
                     && let Err(error) = projection.apply_delta(generation, &delta)
@@ -106,185 +149,13 @@ impl StickyApp {
                     }
                 }
                 self.after_presentation_change();
+                self.update_window_title();
             }
             AppEffect::ClipboardWritten => {
                 self.diagnostic = Some("Clipboard updated".to_owned());
                 self.request_redraw();
             }
             AppEffect::NoOp => {}
-        }
-    }
-
-    fn sync_preedit(&mut self) {
-        if let Some(projection) = &mut self.projection {
-            projection.set_preedit(self.session.preedit_visual());
-        }
-    }
-
-    fn update_ime_area(&mut self) {
-        let Some(window) = self.window.as_ref().cloned() else {
-            return;
-        };
-        let Some(projection) = &mut self.projection else {
-            return;
-        };
-        if let Some(caret) = projection.ime_caret_rect(self.session.selection.active.byte) {
-            window.set_ime_cursor_area(
-                PhysicalPosition::new(caret.x.round() as i32, caret.y.round() as i32),
-                PhysicalSize::new(
-                    caret.width.max(1.0).round() as u32,
-                    caret.height.max(1.0).round() as u32,
-                ),
-            );
-        }
-    }
-
-    fn after_presentation_change(&mut self) {
-        if let Some(projection) = &mut self.projection {
-            let _ = projection.ensure_caret_visible(self.session.selection.active.byte);
-            let scroll = projection.scroll();
-            self.session.scroll.line = scroll.line;
-            self.session.scroll.vertical_px = scroll.vertical;
-            self.session.scroll.horizontal_px = scroll.horizontal;
-        }
-        self.sync_preedit();
-        self.reset_caret_blink();
-        self.update_ime_area();
-        self.request_redraw();
-    }
-
-    fn resize(&mut self, size: PhysicalSize<u32>) {
-        if size.width == 0 || size.height == 0 {
-            return;
-        }
-        if let Some(surface) = &mut self.surface
-            && let Err(error) = surface.resize(size.width, size.height)
-        {
-            self.diagnostic = Some(error.to_string());
-        }
-        if let (Some(window), Some(projection)) = (&self.window, &mut self.projection) {
-            projection.set_viewport(size.width, size.height, window.scale_factor() as f32);
-        }
-        self.update_ime_area();
-        self.request_redraw();
-    }
-
-    fn render(&mut self) {
-        let (Some(surface), Some(projection)) = (&mut self.surface, &mut self.projection) else {
-            return;
-        };
-        if let Err(error) = projection.paint(
-            surface.pixmap_mut(),
-            self.session.selection,
-            self.session.focused,
-            self.session.caret_visible,
-            self.diagnostic.as_deref(),
-        ) {
-            self.diagnostic = Some(error.to_string());
-            return;
-        }
-        if let Err(error) = surface.present() {
-            self.diagnostic = Some(error.to_string());
-        }
-        self.update_ime_area();
-    }
-}
-
-impl Default for StickyApp {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ApplicationHandler for StickyApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_blink));
-        if self.window.is_some() {
-            return;
-        }
-        let attributes = WindowAttributes::default()
-            .with_title("StickyMD Phase 3 — SOURCE EDITOR — NOT PERSISTED")
-            .with_inner_size(LogicalSize::new(520.0, 680.0))
-            .with_min_inner_size(LogicalSize::new(360.0, 240.0));
-        let window = match event_loop.create_window(attributes) {
-            Ok(window) => Arc::new(window),
-            Err(error) => {
-                eprintln!("window creation failed: {error}");
-                event_loop.exit();
-                return;
-            }
-        };
-        window.set_ime_allowed(true);
-        let size = window.inner_size();
-        let surface = match SoftwareSurface::new(Arc::clone(&window)) {
-            Ok(surface) => surface,
-            Err(error) => {
-                eprintln!("surface creation failed: {error}");
-                event_loop.exit();
-                return;
-            }
-        };
-        let initial_snapshot = self.coordinator.snapshot();
-        let projection = SourceProjection::new(
-            &initial_snapshot,
-            size.width,
-            size.height,
-            window.scale_factor() as f32,
-        );
-        let fonts = projection.fonts();
-        eprintln!(
-            "font selection: CJK={} found={} Latin={} found={}",
-            fonts.cjk_family, fonts.cjk_found, fonts.latin_family, fonts.latin_found
-        );
-        self.window = Some(window);
-        self.surface = Some(surface);
-        self.projection = Some(projection);
-        self.request_redraw();
-    }
-
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => self.resize(size),
-            WindowEvent::ScaleFactorChanged { .. } => {
-                if let Some(window) = &self.window {
-                    self.resize(window.inner_size());
-                }
-            }
-            WindowEvent::Focused(focused) => {
-                self.session.focused = focused;
-                if !focused {
-                    self.session.cancel_preedit();
-                }
-                if let Some(window) = &self.window {
-                    window.set_ime_allowed(focused);
-                }
-                self.after_presentation_change();
-            }
-            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
-            WindowEvent::KeyboardInput { event, .. } => self.handle_key(event),
-            WindowEvent::Ime(event) => self.handle_ime(event),
-            WindowEvent::CursorMoved { position, .. } => self.handle_cursor_moved(position),
-            WindowEvent::MouseInput { state, button, .. } => {
-                self.handle_mouse_button(state, button);
-            }
-            WindowEvent::MouseWheel { delta, .. } => self.handle_scroll(delta),
-            WindowEvent::RedrawRequested => self.render(),
-            _ => {}
-        }
-    }
-
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.session.focused && !self.session.is_composing() {
-            let now = Instant::now();
-            if now >= self.next_blink {
-                self.session.caret_visible = !self.session.caret_visible;
-                self.next_blink = now + CARET_BLINK;
-                self.request_redraw();
-            }
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_blink));
-        } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
         }
     }
 }
