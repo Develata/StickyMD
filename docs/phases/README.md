@@ -12,3 +12,7 @@
   - 内容：StickyMD v1 主规格以及 Phase 0、1、2、3 的完整 Agent 提示词。
   - 来源 SHA-256：`AC8CA0003409FB61E0C2D72A2642CECC207D0E94B21EBDD1DE1173A40F90153B`
   - 导入方式：逐字节归档；未对正文做规范化或改写。
+- [`2026-08-20-phase-06-ratex-native-math.md`](2026-08-20-phase-06-ratex-native-math.md)
+  - 内容：Phase 6 RaTeX native math layout、rendering、cache、smoke 与验收任务原文。
+  - 来源 SHA-256：`F61ACD5D059A77DE25F865F3EB87F88BB056B5052718B55732A105046A5138F0`
+  - 导入方式：逐行原文归档；仅由 `apply_patch` 统一为仓库换行格式，未改写正文。

@@ -102,6 +102,13 @@ impl StickyApp {
             }
         }
         self.config.view_mode = mode;
+        if mode == ViewMode::Source {
+            self.preview_frame = None;
+            self.preview_flow.release_projection();
+            if let Some(worker) = &self.preview_worker {
+                worker.release_math_rasters();
+            }
+        }
         self.preview_focused = mode == ViewMode::Preview;
         self.preview_selection = PreviewSelection::default();
         self.sync_preedit();

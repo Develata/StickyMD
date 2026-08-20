@@ -23,10 +23,15 @@ enum TaskId {
     Phase4Performance,
     Phase5PreviewTests,
     Phase5Performance,
+    Phase6MathTests,
+    Phase6Performance,
     ReleaseBuild,
     RuntimeLaunch,
     RuntimePortable,
     RuntimePreview,
+    RuntimeMath,
+    RuntimeResources,
+    RuntimeMathResources,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,6 +53,9 @@ pub(crate) enum RuntimeScenario {
     Launch,
     Portable,
     Preview,
+    Math,
+    Resources,
+    MathResources,
 }
 
 impl Task {
@@ -96,6 +104,18 @@ fn task_label(task: &Task) -> &'static str {
             scenario: RuntimeScenario::Preview,
             ..
         } => "copied Release Preview/Split lifecycle",
+        Task::Runtime {
+            scenario: RuntimeScenario::Math,
+            ..
+        } => "copied Release RaTeX Preview/Split lifecycle",
+        Task::Runtime {
+            scenario: RuntimeScenario::Resources,
+            ..
+        } => "copied Release Source/Preview/Split resource measurement",
+        Task::Runtime {
+            scenario: RuntimeScenario::MathResources,
+            ..
+        } => "copied Release Phase 6 math resource matrix",
     }
 }
 
@@ -131,6 +151,18 @@ fn run_runtime(_root: &Path, _scenario: RuntimeScenario) -> Result<(), String> {
 fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
     let mut tasks = Vec::new();
     push_unique(&mut tasks, governance());
+    if options.resources {
+        push_unique(&mut tasks, release_build());
+        if matches!(
+            options.selection,
+            Selection::Phase(Phase::P06) | Selection::All
+        ) {
+            push_unique(&mut tasks, runtime_math_resources());
+        } else {
+            push_unique(&mut tasks, runtime_resources());
+        }
+        return Ok(tasks);
+    }
     match options.selection {
         Selection::All => {
             push_unique(&mut tasks, phase1_markdown_tests());
@@ -147,6 +179,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         Selection::Phase(Phase::P03) => push_unique(&mut tasks, render_win_tests()),
         Selection::Phase(Phase::P04) => push_unique(&mut tasks, core_win_tests()),
         Selection::Phase(Phase::P05) => push_unique(&mut tasks, phase5_preview_tests()),
+        Selection::Phase(Phase::P06) => push_unique(&mut tasks, phase6_math_tests()),
     }
 
     // CI owns every headless task. `--performance` remains the explicit local
@@ -164,6 +197,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 Phase::P03 => push_unique(&mut tasks, phase3_performance()),
                 Phase::P04 => push_unique(&mut tasks, phase4_performance()),
                 Phase::P05 => push_unique(&mut tasks, phase5_performance()),
+                Phase::P06 => push_unique(&mut tasks, phase6_performance()),
             }
         }
     }
@@ -174,9 +208,11 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             Selection::Phase(Phase::P03) => push_unique(&mut tasks, runtime_launch()),
             Selection::Phase(Phase::P04) => push_unique(&mut tasks, runtime_portable()),
             Selection::Phase(Phase::P05) => push_unique(&mut tasks, runtime_preview()),
+            Selection::Phase(Phase::P06) => push_unique(&mut tasks, runtime_math()),
             Selection::All => {
                 push_unique(&mut tasks, runtime_portable());
                 push_unique(&mut tasks, runtime_preview());
+                push_unique(&mut tasks, runtime_math());
             }
             Selection::Phase(Phase::P00 | Phase::P01 | Phase::P02) => {
                 return Err("selected phase has no runtime smoke".to_owned());
@@ -306,6 +342,21 @@ fn phase5_preview_tests() -> Task {
     )
 }
 
+fn phase6_math_tests() -> Task {
+    cargo(
+        TaskId::Phase6MathTests,
+        "Phase 6 RaTeX/native-math tests",
+        &[
+            "test",
+            "-p",
+            "stickymd-render",
+            "-p",
+            "stickymd-win",
+            "--locked",
+        ],
+    )
+}
+
 fn phase1_markdown_performance() -> Task {
     cargo(
         TaskId::Phase1MarkdownMathPerformance,
@@ -403,6 +454,23 @@ fn phase5_performance() -> Task {
     )
 }
 
+fn phase6_performance() -> Task {
+    cargo(
+        TaskId::Phase6Performance,
+        "Phase 6 native-math Release baseline",
+        &[
+            "test",
+            "--workspace",
+            "--release",
+            "--locked",
+            "phase6_",
+            "--",
+            "--ignored",
+            "--nocapture",
+        ],
+    )
+}
+
 fn release_build() -> Task {
     cargo(
         TaskId::ReleaseBuild,
@@ -432,6 +500,27 @@ const fn runtime_preview() -> Task {
     }
 }
 
+const fn runtime_math() -> Task {
+    Task::Runtime {
+        id: TaskId::RuntimeMath,
+        scenario: RuntimeScenario::Math,
+    }
+}
+
+const fn runtime_resources() -> Task {
+    Task::Runtime {
+        id: TaskId::RuntimeResources,
+        scenario: RuntimeScenario::Resources,
+    }
+}
+
+const fn runtime_math_resources() -> Task {
+    Task::Runtime {
+        id: TaskId::RuntimeMathResources,
+        scenario: RuntimeScenario::MathResources,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{TaskId, build_plan};
@@ -444,6 +533,7 @@ mod tests {
             ci: true,
             performance: false,
             runtime: false,
+            resources: false,
         })
         .expect("valid all plan");
         let ids: Vec<_> = tasks.iter().map(super::Task::id).collect();
@@ -465,6 +555,7 @@ mod tests {
             ci: false,
             performance: true,
             runtime: false,
+            resources: false,
         })
         .expect("valid performance plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
@@ -473,6 +564,7 @@ mod tests {
         assert!(ids.contains(&TaskId::Phase3Performance));
         assert!(ids.contains(&TaskId::Phase4Performance));
         assert!(ids.contains(&TaskId::Phase5Performance));
+        assert!(ids.contains(&TaskId::Phase6Performance));
     }
 
     #[test]
@@ -482,6 +574,7 @@ mod tests {
             ci: true,
             performance: false,
             runtime: false,
+            resources: false,
         })
         .expect("valid CI plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
@@ -492,12 +585,31 @@ mod tests {
             TaskId::Phase3Performance,
             TaskId::Phase4Performance,
             TaskId::Phase5Performance,
+            TaskId::Phase6Performance,
         ] {
             assert!(ids.contains(&expected));
         }
         assert!(!ids.contains(&TaskId::RuntimeLaunch));
         assert!(!ids.contains(&TaskId::RuntimePortable));
         assert!(!ids.contains(&TaskId::RuntimePreview));
+        assert!(!ids.contains(&TaskId::RuntimeMath));
+        assert!(!ids.contains(&TaskId::RuntimeResources));
+        assert!(!ids.contains(&TaskId::RuntimeMathResources));
+    }
+
+    #[test]
+    fn phase6_resources_select_the_math_matrix() {
+        let tasks = build_plan(&Options {
+            selection: Selection::Phase(crate::cli::Phase::P06),
+            ci: false,
+            performance: false,
+            runtime: false,
+            resources: true,
+        })
+        .expect("valid Phase 6 resource plan");
+        let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
+        assert!(ids.contains(&TaskId::RuntimeMathResources));
+        assert!(!ids.contains(&TaskId::RuntimeResources));
     }
 
     use std::collections::BTreeSet;

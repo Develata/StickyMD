@@ -8,16 +8,18 @@ pub(crate) enum Phase {
     P03,
     P04,
     P05,
+    P06,
 }
 
 impl Phase {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::P00,
         Self::P01,
         Self::P02,
         Self::P03,
         Self::P04,
         Self::P05,
+        Self::P06,
     ];
 
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
@@ -28,7 +30,8 @@ impl Phase {
             "3" | "03" | "phase-03" => Ok(Self::P03),
             "4" | "04" | "phase-04" => Ok(Self::P04),
             "5" | "05" | "phase-05" => Ok(Self::P05),
-            _ => Err(format!("unknown phase `{value}`; expected 00..05")),
+            "6" | "06" | "phase-06" => Ok(Self::P06),
+            _ => Err(format!("unknown phase `{value}`; expected 00..06")),
         }
     }
 
@@ -40,6 +43,7 @@ impl Phase {
             Self::P03 => "03",
             Self::P04 => "04",
             Self::P05 => "05",
+            Self::P06 => "06",
         }
     }
 }
@@ -56,6 +60,7 @@ pub(crate) struct Options {
     pub(crate) ci: bool,
     pub(crate) performance: bool,
     pub(crate) runtime: bool,
+    pub(crate) resources: bool,
 }
 
 impl Options {
@@ -68,7 +73,7 @@ impl Options {
             Some("phase") => {
                 let phase = args
                     .next()
-                    .ok_or_else(|| "`phase` requires a number (00..05)".to_owned())?;
+                    .ok_or_else(|| "`phase` requires a number (00..06)".to_owned())?;
                 Selection::Phase(Phase::parse(&phase)?)
             }
             Some("all") => Selection::All,
@@ -82,17 +87,22 @@ impl Options {
             ci: false,
             performance: false,
             runtime: false,
+            resources: false,
         };
         for argument in args {
             match argument.as_str() {
                 "--ci" => options.ci = true,
                 "--performance" => options.performance = true,
                 "--runtime" => options.runtime = true,
+                "--resources" => options.resources = true,
                 _ => return Err(format!("unknown option `{argument}`\n{}", Self::usage())),
             }
         }
-        if options.ci && (options.performance || options.runtime) {
-            return Err("`--ci` cannot be combined with environment-sensitive `--performance` or `--runtime`".to_owned());
+        if options.ci && (options.performance || options.runtime || options.resources) {
+            return Err("`--ci` cannot be combined with environment-sensitive `--performance`, `--runtime`, or `--resources`".to_owned());
+        }
+        if options.resources && (options.performance || options.runtime) {
+            return Err("`--resources` must run alone so the measured process is not contaminated by other smoke tasks".to_owned());
         }
         if options.runtime
             && matches!(
@@ -105,11 +115,21 @@ impl Options {
                     .to_owned(),
             );
         }
+        if options.resources
+            && !matches!(
+                selection,
+                Selection::Phase(Phase::P05 | Phase::P06) | Selection::All
+            )
+        {
+            return Err(
+                "resource measurement is defined only for Phase 05, Phase 06, or `all`".to_owned(),
+            );
+        }
         Ok(options)
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..05> [--performance] [--runtime]\n       stickymd-smoke all [--ci] [--performance] [--runtime]"
+        "usage: stickymd-smoke phase <00..06> [--performance] [--runtime] [--resources]\n       stickymd-smoke all [--ci] [--performance] [--runtime] [--resources]"
     }
 }
 
@@ -128,6 +148,7 @@ mod tests {
         assert_eq!(options.selection, Selection::Phase(Phase::P03));
         assert!(options.performance);
         assert!(options.runtime);
+        assert!(!options.resources);
     }
 
     #[test]

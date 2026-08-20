@@ -3,13 +3,14 @@
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#native-preview-layout
 
 use std::ops::Range;
+use std::sync::Arc;
 
+use crate::math::{MathEngine, MathRaster};
+use crate::source::{FontSelection, ScriptClass, segment_script_runs};
 use cosmic_text::{
     Align, Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, UnderlineStyle, Weight, Wrap,
 };
 use stickymd_core::Generation;
-
-use crate::source::{FontSelection, ScriptClass, segment_script_runs};
 
 use super::{
     PreviewRect, PreviewTextBox, PreviewTextIndex, RenderBlock, RenderBlockKind, RenderSpan,
@@ -30,6 +31,8 @@ pub(super) struct LaidOutDocument {
     pub height_px: f32,
     pub blocks: Vec<LaidOutBlock>,
     pub index: std::sync::Arc<PreviewTextIndex>,
+    pub scale: f32,
+    pub theme: super::PreviewTheme,
 }
 
 pub(super) struct LaidOutBlock {
@@ -40,9 +43,14 @@ pub(super) struct LaidOutBlock {
 }
 
 pub(super) struct LayoutChunk {
-    pub buffer: Buffer,
+    pub content: LayoutContent,
     pub x: f32,
     pub y: f32,
+}
+
+pub(super) enum LayoutContent {
+    Text(Buffer),
+    Math(Arc<MathRaster>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +58,7 @@ pub(super) enum DecorationRole {
     QuoteBar,
     CodeBackground,
     MathBackground,
+    MathError,
     Rule,
     TableCell,
     TableHeader,
@@ -70,17 +79,20 @@ struct Segment {
 }
 
 pub(super) struct ChunkBuild {
-    pub chunk: LayoutChunk,
+    pub chunks: Vec<LayoutChunk>,
     pub height: f32,
     pub boxes: Vec<PreviewTextBox>,
+    pub decorations: Vec<LayoutDecoration>,
 }
 
 pub(super) fn layout_document(
     font_system: &mut FontSystem,
     fonts: &FontSelection,
+    math_engine: &mut MathEngine,
     tree: &RenderTree,
     width_px: u32,
     scale: f32,
+    theme: super::PreviewTheme,
 ) -> LaidOutDocument {
     let scale = scale.max(0.5);
     let padding = PADDING_DIP * scale;
@@ -90,6 +102,9 @@ pub(super) fn layout_document(
     let mut blocks = Vec::with_capacity(tree.blocks.len());
     let mut selection_text = String::new();
     let mut boxes = Vec::new();
+    let mut formula_count = 0usize;
+    let foreground = math_foreground(theme);
+    math_engine.prepare_projection(scale, foreground);
 
     for (block_index, block) in tree.blocks.iter().enumerate() {
         let top = y;
@@ -97,6 +112,7 @@ pub(super) fn layout_document(
             RenderBlockKind::Table(table) => super::table_layout::layout_table(
                 font_system,
                 fonts,
+                math_engine,
                 block,
                 table,
                 padding,
@@ -104,6 +120,8 @@ pub(super) fn layout_document(
                 content_width,
                 scale,
                 &mut selection_text,
+                &mut formula_count,
+                theme,
             ),
             RenderBlockKind::ThematicBreak => {
                 let height = 13.0 * scale;
@@ -125,12 +143,15 @@ pub(super) fn layout_document(
             _ => layout_text_block(
                 font_system,
                 fonts,
+                math_engine,
                 block,
                 padding,
                 y,
                 content_width,
                 scale,
                 &mut selection_text,
+                &mut formula_count,
+                theme,
             ),
         };
         boxes.append(&mut laid_out.boxes);
@@ -158,6 +179,8 @@ pub(super) fn layout_document(
             selection_text,
             boxes,
         )),
+        scale,
+        theme,
     }
 }
 
@@ -172,12 +195,15 @@ pub(super) struct BlockBuild {
 fn layout_text_block(
     font_system: &mut FontSystem,
     fonts: &FontSelection,
+    math_engine: &mut MathEngine,
     block: &RenderBlock,
     padding: f32,
     y: f32,
     content_width: f32,
     scale: f32,
     selection_text: &mut String,
+    formula_count: &mut usize,
+    theme: super::PreviewTheme,
 ) -> BlockBuild {
     let indent = block.indent as f32 * INDENT_DIP * scale;
     let quote_extra = matches!(block.kind, RenderBlockKind::Quote)
@@ -190,6 +216,7 @@ fn layout_text_block(
     let built = make_chunk(
         font_system,
         fonts,
+        math_engine,
         &block.spans,
         x,
         y,
@@ -197,6 +224,8 @@ fn layout_text_block(
         metrics,
         align.unwrap_or(Align::Left),
         selection_text,
+        formula_count,
+        theme,
     );
     let height = built.height.max(metrics.line_height);
     let mut decorations = Vec::new();
@@ -234,8 +263,11 @@ fn layout_text_block(
     }
     BlockBuild {
         height,
-        chunks: vec![built.chunk],
-        decorations,
+        chunks: built.chunks,
+        decorations: {
+            decorations.extend(built.decorations);
+            decorations
+        },
         boxes: built.boxes,
     }
 }
@@ -244,12 +276,58 @@ fn layout_text_block(
 pub(super) fn make_chunk(
     font_system: &mut FontSystem,
     fonts: &FontSelection,
+    math_engine: &mut MathEngine,
     spans: &[RenderSpan],
     x: f32,
     y: f32,
     width: f32,
     metrics: Metrics,
     align: Align,
+    selection_text: &mut String,
+    formula_count: &mut usize,
+    theme: super::PreviewTheme,
+) -> ChunkBuild {
+    if spans.iter().all(|span| span.math.is_none()) {
+        return make_text_chunk(
+            font_system,
+            fonts,
+            spans,
+            x,
+            y,
+            width,
+            metrics,
+            align,
+            Wrap::WordOrGlyph,
+            selection_text,
+        );
+    }
+    super::math_layout::make_mixed_chunk(
+        font_system,
+        fonts,
+        math_engine,
+        spans,
+        x,
+        y,
+        width,
+        metrics,
+        align,
+        selection_text,
+        formula_count,
+        theme,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn make_text_chunk(
+    font_system: &mut FontSystem,
+    fonts: &FontSelection,
+    spans: &[RenderSpan],
+    x: f32,
+    y: f32,
+    width: f32,
+    metrics: Metrics,
+    align: Align,
+    wrap: Wrap,
     selection_text: &mut String,
 ) -> ChunkBuild {
     let mut visual = String::new();
@@ -285,7 +363,7 @@ pub(super) fn make_chunk(
 
     let mut buffer = Buffer::new(font_system, metrics);
     buffer.set_size(Some(width), None);
-    buffer.set_wrap(Wrap::WordOrGlyph);
+    buffer.set_wrap(wrap);
     let default = Attrs::new().family(Family::Serif).metrics(metrics);
     buffer.set_rich_text(
         attributed
@@ -302,9 +380,21 @@ pub(super) fn make_chunk(
         .fold(metrics.line_height, f32::max);
     let boxes = boxes_for_buffer(&buffer, &segments, x, y);
     ChunkBuild {
-        chunk: LayoutChunk { buffer, x, y },
+        chunks: vec![LayoutChunk {
+            content: LayoutContent::Text(buffer),
+            x,
+            y,
+        }],
         height,
         boxes,
+        decorations: Vec::new(),
+    }
+}
+
+pub(super) fn math_foreground(theme: super::PreviewTheme) -> [u8; 4] {
+    match theme {
+        super::PreviewTheme::Light => [40, 38, 34, 255],
+        super::PreviewTheme::Dark => [226, 223, 214, 255],
     }
 }
 
@@ -417,6 +507,8 @@ fn boxes_for_buffer(buffer: &Buffer, segments: &[Segment], x: f32, y: f32) -> Ve
                     height: run.line_height,
                 },
                 action: segment.action.clone(),
+                tooltip: None,
+                atomic: false,
             });
         }
     }
@@ -472,7 +564,15 @@ mod tests {
         let tree = RenderTreeBuilder.build(&owned);
         let mut font_system = FontSystem::new();
         let fonts = FontSelection::resolve(&mut font_system);
-        layout_document(&mut font_system, &fonts, &tree, width, 1.0)
+        layout_document(
+            &mut font_system,
+            &fonts,
+            &mut MathEngine::new(),
+            &tree,
+            width,
+            1.0,
+            crate::preview::PreviewTheme::Light,
+        )
     }
 
     #[test]

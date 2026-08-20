@@ -68,6 +68,10 @@ pub struct PreviewTextBox {
     pub source_range: Option<SourceRange>,
     pub rect: PreviewRect,
     pub action: Option<SpanAction>,
+    /// Short diagnostic exposed only while hovering a failed visual object.
+    pub tooltip: Option<Arc<str>>,
+    /// Atomic objects such as formulas select as one visual rectangle.
+    pub atomic: bool,
 }
 
 /// Immutable, renderer-owned mapping used by the shell for selection and links.
@@ -143,13 +147,21 @@ impl PreviewTextIndex {
         let Some(item) = candidate else {
             return 0;
         };
-        proportional_boundary(
-            &self.text,
-            item.selection_range.clone(),
-            x,
-            item.rect.x,
-            item.rect.width,
-        )
+        if item.atomic {
+            if x < item.rect.x + item.rect.width * 0.5 {
+                item.selection_range.start
+            } else {
+                item.selection_range.end
+            }
+        } else {
+            proportional_boundary(
+                &self.text,
+                item.selection_range.clone(),
+                x,
+                item.rect.x,
+                item.rect.width,
+            )
+        }
     }
 
     pub fn action_at(&self, x: f32, y: f32) -> Option<&SpanAction> {
@@ -157,6 +169,13 @@ impl PreviewTextIndex {
             .iter()
             .find(|item| item.rect.contains(x, y))
             .and_then(|item| item.action.as_ref())
+    }
+
+    pub fn tooltip_at(&self, x: f32, y: f32) -> Option<&str> {
+        self.boxes_at_y(y)
+            .iter()
+            .find(|item| item.rect.contains(x, y))
+            .and_then(|item| item.tooltip.as_deref())
     }
 
     pub fn selection_rects(&self, selection: PreviewSelection) -> Vec<PreviewRect> {
@@ -249,6 +268,9 @@ fn clipped_selection_rect(item: &PreviewTextBox, selected: &Range<usize>) -> Opt
     if start >= end || item.selection_range.is_empty() {
         return None;
     }
+    if item.atomic {
+        return Some(item.rect);
+    }
     let length = item.selection_range.len() as f32;
     let left_ratio = (start - item.selection_range.start) as f32 / length;
     let right_ratio = (end - item.selection_range.start) as f32 / length;
@@ -298,6 +320,8 @@ mod tests {
                     height: 20.0,
                 },
                 action: None,
+                tooltip: None,
+                atomic: false,
             }],
         )
     }
@@ -344,10 +368,43 @@ mod tests {
                     height: 18.0,
                 },
                 action: None,
+                tooltip: None,
+                atomic: false,
             })
             .collect();
         let index = PreviewTextIndex::new(Generation::initial(), "x".into(), boxes);
         assert_eq!(index.boxes_at_y(1234.0 * 20.0 + 4.0).len(), 1);
         assert_eq!(index.hit_test(50.0, 1234.0 * 20.0 + 4.0), 1);
+    }
+
+    #[test]
+    fn atomic_formula_hit_selection_and_tooltip_use_the_whole_object() {
+        let index = PreviewTextIndex::new(
+            Generation::initial(),
+            "$x^2$".into(),
+            vec![PreviewTextBox {
+                selection_range: 0..5,
+                source_range: None,
+                rect: PreviewRect {
+                    x: 10.0,
+                    y: 10.0,
+                    width: 80.0,
+                    height: 24.0,
+                },
+                action: None,
+                tooltip: Some(Arc::from("formula parse failed")),
+                atomic: true,
+            }],
+        );
+        assert_eq!(index.hit_test(20.0, 20.0), 0);
+        assert_eq!(index.hit_test(80.0, 20.0), 5);
+        assert_eq!(
+            index.selection_rects(PreviewSelection {
+                anchor: 1,
+                active: 2,
+            }),
+            vec![index.boxes()[0].rect]
+        );
+        assert_eq!(index.tooltip_at(20.0, 20.0), Some("formula parse failed"));
     }
 }

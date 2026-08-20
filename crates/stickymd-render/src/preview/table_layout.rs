@@ -4,6 +4,7 @@
 
 use cosmic_text::{Align, FontSystem, Metrics};
 
+use crate::math::MathEngine;
 use crate::source::FontSelection;
 
 use super::layout::{BlockBuild, DecorationRole, LayoutDecoration, make_chunk};
@@ -18,6 +19,7 @@ const TABLE_CELL_PAD_DIP: f32 = 8.0;
 pub(super) fn layout_table(
     font_system: &mut FontSystem,
     fonts: &FontSelection,
+    math_engine: &mut MathEngine,
     block: &RenderBlock,
     table: &RenderTable,
     padding: f32,
@@ -25,6 +27,8 @@ pub(super) fn layout_table(
     content_width: f32,
     scale: f32,
     selection_text: &mut String,
+    formula_count: &mut usize,
+    theme: super::PreviewTheme,
 ) -> BlockBuild {
     let columns = table
         .rows
@@ -47,6 +51,7 @@ pub(super) fn layout_table(
 
     for (row_index, row) in table.rows.iter().enumerate() {
         let mut row_chunks = Vec::new();
+        let mut row_decorations = Vec::new();
         let mut row_height = metrics.line_height + cell_padding * 2.0;
         for column in 0..columns {
             let cell_x = table_x + column as f32 * column_width;
@@ -64,6 +69,7 @@ pub(super) fn layout_table(
             let built = make_chunk(
                 font_system,
                 fonts,
+                math_engine,
                 spans,
                 cell_x + cell_padding,
                 row_y + cell_padding,
@@ -71,10 +77,13 @@ pub(super) fn layout_table(
                 metrics,
                 align,
                 selection_text,
+                formula_count,
+                theme,
             );
             row_height = row_height.max(built.height + cell_padding * 2.0);
             boxes.extend(built.boxes);
-            row_chunks.push(built.chunk);
+            row_chunks.extend(built.chunks);
+            row_decorations.extend(built.decorations);
             if column + 1 < columns {
                 selection_text.push('\t');
             }
@@ -95,6 +104,7 @@ pub(super) fn layout_table(
             });
         }
         chunks.extend(row_chunks);
+        decorations.extend(row_decorations);
         if row_index + 1 < table.rows.len() {
             selection_text.push('\n');
         }

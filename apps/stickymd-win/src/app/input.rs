@@ -352,6 +352,19 @@ impl StickyApp {
         if let Some(window) = &self.window {
             window.set_cursor(cursor);
         }
+        let math_tooltip = self.preview_at_cursor().and_then(|(x, y)| {
+            self.preview_frame.as_ref().and_then(|frame| {
+                frame
+                    .index()
+                    .tooltip_at(x, y + frame.scroll_y())
+                    .map(str::to_owned)
+            })
+        });
+        if let (Some(window), Some(detail)) = (&self.window, math_tooltip) {
+            window.set_title(&format!("StickyMD — 公式错误：{detail}"));
+        } else {
+            self.update_window_title();
+        }
         if self.preview_dragging {
             if let Some(start) = self.preview_press_position {
                 let scale = self

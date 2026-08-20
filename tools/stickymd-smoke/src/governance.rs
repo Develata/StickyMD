@@ -11,6 +11,7 @@ const REQUIRED_FILES: &[&str] = &[
     "Cargo.toml",
     "Cargo.lock",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     ".github/workflows/ci.yml",
     "docs/AGENTS.md",
     "docs/coverage-matrix.md",
@@ -29,6 +30,8 @@ const REQUIRED_FILES: &[&str] = &[
     "docs/plan/10_performance_reliability.md",
     "docs/plan/11_testing_and_release.md",
     "tools/stickymd-smoke/Cargo.toml",
+    "assets/licenses/SIL-OFL-1.1.txt",
+    "assets/licenses/KaTeX-fonts-NOTICE.txt",
 ];
 
 const FORBIDDEN_PACKAGES: &[&str] = &[
@@ -43,6 +46,13 @@ const FORBIDDEN_PACKAGES: &[&str] = &[
     "onig",
     "onig_sys",
     "reqwest",
+    "ratex-cairo",
+    "ratex-ffi",
+    "ratex-gtk4",
+    "ratex-pdf",
+    "ratex-render",
+    "ratex-svg",
+    "ratex-wasm",
     "rusqlite",
     "slint",
     "syntect",

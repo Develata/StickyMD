@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use cosmic_text::{Color, FontSystem, SwashCache};
-use tiny_skia::{Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
+use tiny_skia::{Paint, PathBuilder, Pixmap, PixmapPaint, PixmapRef, Rect, Stroke, Transform};
 
-use super::layout::{DecorationRole, LaidOutDocument, LayoutDecoration};
+use super::layout::{DecorationRole, LaidOutDocument, LayoutContent, LayoutDecoration};
 use super::{PreviewSelection, PreviewTextIndex};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -138,21 +138,37 @@ pub(super) fn paint_document(
         for chunk in &mut block.chunks {
             let origin_x = chunk.x.round() as i32;
             let origin_y = (chunk.y - scroll_y).round() as i32;
-            chunk.buffer.draw(
-                font_system,
-                swash_cache,
-                palette.text,
-                |x, y, width, height, color| {
-                    blend_glyph_rect(
-                        &mut pixmap,
-                        x + origin_x,
-                        y + origin_y,
-                        width,
-                        height,
-                        color,
-                    );
-                },
-            );
+            match &mut chunk.content {
+                LayoutContent::Text(buffer) => buffer.draw(
+                    font_system,
+                    swash_cache,
+                    palette.text,
+                    |x, y, width, height, color| {
+                        blend_glyph_rect(
+                            &mut pixmap,
+                            x + origin_x,
+                            y + origin_y,
+                            width,
+                            height,
+                            color,
+                        );
+                    },
+                ),
+                LayoutContent::Math(raster) => {
+                    if let Some(source) =
+                        PixmapRef::from_bytes(&raster.pixels, raster.width, raster.height)
+                    {
+                        pixmap.draw_pixmap(
+                            origin_x,
+                            origin_y,
+                            source,
+                            &PixmapPaint::default(),
+                            Transform::identity(),
+                            None,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -180,6 +196,7 @@ struct Palette {
     table: tiny_skia::Color,
     table_header: tiny_skia::Color,
     table_border: tiny_skia::Color,
+    math_error: tiny_skia::Color,
 }
 
 impl Palette {
@@ -196,6 +213,7 @@ impl Palette {
                 table: rgba(248, 246, 239, 255),
                 table_header: rgba(235, 232, 222, 255),
                 table_border: rgba(186, 181, 168, 255),
+                math_error: rgba(190, 73, 55, 255),
             },
             PreviewTheme::Dark => Self {
                 background: rgba(35, 35, 33, 255),
@@ -208,6 +226,7 @@ impl Palette {
                 table: rgba(35, 35, 33, 255),
                 table_header: rgba(49, 49, 46, 255),
                 table_border: rgba(87, 86, 80, 255),
+                math_error: rgba(232, 120, 102, 255),
             },
         }
     }
@@ -230,6 +249,26 @@ fn paint_decoration(
         }
         DecorationRole::MathBackground => {
             fill_rect(pixmap, rect.x, y, rect.width, rect.height, palette.math)
+        }
+        DecorationRole::MathError => {
+            stroke_rect(
+                pixmap,
+                rect.x,
+                y,
+                rect.width,
+                rect.height,
+                palette.math_error,
+            );
+            // Keep a compact error marker visible even when a long formula
+            // literal makes the subtle border easy to miss.
+            fill_rect(
+                pixmap,
+                rect.right() - 5.0,
+                y + 1.0,
+                4.0,
+                4.0,
+                palette.math_error,
+            );
         }
         DecorationRole::Rule => fill_rect(pixmap, rect.x, y, rect.width, rect.height, palette.rule),
         DecorationRole::TableCell | DecorationRole::TableHeader => {
@@ -349,7 +388,15 @@ mod tests {
         let tree = RenderTreeBuilder.build(&owned);
         let mut font_system = FontSystem::new();
         let fonts = FontSelection::resolve(&mut font_system);
-        let layout = layout_document(&mut font_system, &fonts, &tree, 520, 1.0);
+        let layout = layout_document(
+            &mut font_system,
+            &fonts,
+            &mut crate::math::MathEngine::new(),
+            &tree,
+            520,
+            1.0,
+            PreviewTheme::Light,
+        );
         (font_system, layout)
     }
 

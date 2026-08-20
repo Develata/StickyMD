@@ -60,11 +60,13 @@ pub struct PreviewWorkerMetrics {
     pub started: u64,
     pub completed: u64,
     pub coalesced: u64,
+    pub raster_releases: u64,
 }
 
 #[derive(Default)]
 struct Mailbox {
     pending: Option<PreviewJob>,
+    release_math_rasters: bool,
     shutdown: bool,
     metrics: PreviewWorkerMetrics,
 }
@@ -114,6 +116,15 @@ impl PreviewWorker {
         }
     }
 
+    pub fn release_math_rasters(&self) {
+        let (lock, ready) = &*self.shared;
+        if let Ok(mut mailbox) = lock.lock() {
+            mailbox.pending = None;
+            mailbox.release_math_rasters = true;
+            ready.notify_one();
+        }
+    }
+
     #[cfg(test)]
     fn metrics(&self) -> Option<PreviewWorkerMetrics> {
         self.shared.0.lock().ok().map(|mailbox| mailbox.metrics)
@@ -146,7 +157,7 @@ where
                 Ok(mailbox) => mailbox,
                 Err(_) => return,
             };
-            while mailbox.pending.is_none() && !mailbox.shutdown {
+            while mailbox.pending.is_none() && !mailbox.release_math_rasters && !mailbox.shutdown {
                 mailbox = match ready.wait(mailbox) {
                     Ok(mailbox) => mailbox,
                     Err(_) => return,
@@ -155,11 +166,18 @@ where
             if mailbox.shutdown {
                 return;
             }
-            mailbox.metrics.started = mailbox.metrics.started.saturating_add(1);
-            match mailbox.pending.take() {
-                Some(job) => job,
-                None => continue,
+            if mailbox.release_math_rasters {
+                mailbox.release_math_rasters = false;
+                mailbox.metrics.raster_releases = mailbox.metrics.raster_releases.saturating_add(1);
+                None
+            } else {
+                mailbox.metrics.started = mailbox.metrics.started.saturating_add(1);
+                mailbox.pending.take()
             }
+        };
+        let Some(job) = job else {
+            pipeline.release_math_rasters();
+            continue;
         };
         let generation = job.generation();
         let result = execute(&mut pipeline, job);
@@ -271,9 +289,12 @@ fn coalesce(pending: PreviewJob, incoming: PreviewJob) -> PreviewJob {
 mod tests {
     use std::sync::Arc;
     use std::sync::mpsc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
-    use stickymd_core::{DocumentSnapshot, Generation, LineEnding};
+    use stickymd_core::{
+        CursorSnapshot, DocumentSnapshot, DocumentState, EditKind, EditMeta, EditRequest,
+        Generation, LineEnding,
+    };
 
     use super::*;
 
@@ -348,5 +369,84 @@ mod tests {
         assert_eq!(metrics.submitted, 1);
         assert_eq!(metrics.started, 1);
         assert_eq!(metrics.completed, 1);
+    }
+
+    #[test]
+    fn raster_release_precedes_the_next_pending_relayout() {
+        let (sender, receiver) = mpsc::sync_channel(2);
+        let worker = PreviewWorker::start(move |completion| {
+            let _ = sender.send(completion);
+        })
+        .unwrap();
+        let generation = Generation::initial();
+        worker.submit(build(generation, "$x^2$"));
+        let first = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(first.result.is_ok());
+
+        worker.release_math_rasters();
+        worker.submit(PreviewJob::Relayout {
+            generation,
+            viewport: viewport(600),
+        });
+        let after_release = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(after_release.result.is_ok());
+        let metrics = worker.metrics().unwrap();
+        assert_eq!(metrics.raster_releases, 1);
+    }
+
+    #[test]
+    #[ignore = "Release-only Phase 6 source latency while math worker is busy"]
+    fn phase6_source_edit_during_math_build_release_baseline() {
+        let mut source = String::with_capacity(1024 * 1024 + 256);
+        for index in 0..500 {
+            source.push_str(&format!(
+                "Formula {index}: $\\frac{{x_{index}^2}}{{1+y_{index}}}$\n\n"
+            ));
+        }
+        while source.len() < 1024 * 1024 {
+            source.push_str("中文 source latency while the math worker owns preview work.\n\n");
+        }
+        let mut document = DocumentState::loaded(&source, LineEnding::Lf, None);
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let worker = PreviewWorker::start(move |completion| {
+            let _ = sender.try_send(completion);
+        })
+        .unwrap();
+        worker.submit(PreviewJob::Build {
+            snapshot: document.snapshot(),
+            viewport: viewport(900),
+        });
+
+        let start_deadline = Instant::now() + Duration::from_secs(2);
+        while worker.metrics().is_none_or(|metrics| metrics.started == 0) {
+            assert!(Instant::now() < start_deadline, "math worker did not start");
+            std::thread::yield_now();
+        }
+
+        let mut samples = Vec::with_capacity(100);
+        for timestamp_ms in 0..100 {
+            let position = document.len_bytes();
+            let started = Instant::now();
+            document
+                .edit(EditRequest::new(
+                    document.generation(),
+                    position..position,
+                    "x",
+                    CursorSnapshot::caret(position),
+                    CursorSnapshot::caret(position + 1),
+                    EditMeta::new(EditKind::Typing, timestamp_ms * 1_000),
+                ))
+                .unwrap();
+            samples.push(started.elapsed());
+        }
+        samples.sort_unstable();
+        let p95 = samples[94];
+        let max = *samples.last().unwrap();
+        println!("phase6 source_during_math_build edits=100 p95={p95:?} max={max:?}");
+        assert!(p95 < Duration::from_millis(50));
+        let completion = receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("representative math build completes in the background");
+        assert!(completion.result.is_ok());
     }
 }

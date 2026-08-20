@@ -35,7 +35,7 @@
 | P05-M04 | AC-014 math placeholder presentation | Manual | Current-commit four-delimiter visual receipt required | NOT TESTED |
 | P05-M05 | AC-016 HTML literal visual safety | Manual | Current-commit literal-style visual receipt required | NOT TESTED |
 | P05-M06 | AC-017 remote-image zero-network behavior | Manual | Current-commit network-observation receipt required | NOT TESTED |
-| P05-M07 | 10 Preview/Split memory and idle CPU | Manual | Five-run Private Working Set/Commit and 60 s CPU receipt required | NOT TESTED |
+| P05-M07 | 10 Source/Preview/Split memory and idle CPU | Automated | Five-run Private Working Set/Private Bytes and 60 s CPU through [`phase-05.ps1 -Resources`](../../tools/smoke/phase-05.ps1), with current-commit receipt in the Phase 5 report | AUTOMATED PASS |
 | P05-M08 | inherited Phase 3 real IME gate | Manual | [`phase-03 manual IME checklist`](../report/phase-03-manual-ime-checklist.md) | NOT TESTED |
 | P05-M09 | inherited Phase 4 external/recovery/platform conditions | Manual | [`phase-04 matrix`](phase-04.md) | NOT TESTED |
 
@@ -43,4 +43,5 @@
 
 Phase 5's checked-in automated surface passes through the Rust smoke task graph. Manual rows are
 intentionally not inferred from unit tests, runtime process survival or a single developer
-observation and therefore remain `NOT TESTED`.
+observation and therefore remain `NOT TESTED`. P05-M07 is the exception because a checked-in Rust
+measurement runner now owns the complete five-run/60-second protocol and its durable receipt.

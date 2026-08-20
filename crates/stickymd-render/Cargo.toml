@@ -10,6 +10,13 @@ stickymd-core = { path = "../stickymd-core", version = "0.1.0" }
 comrak.workspace = true
 cosmic-text.workspace = true
 tiny-skia.workspace = true
+ab_glyph.workspace = true
+ratex-parser.workspace = true
+ratex-layout.workspace = true
+ratex-types.workspace = true
+ratex-font.workspace = true
+ratex-font-loader.workspace = true
+ratex-unicode-font.workspace = true
 unicode-script.workspace = true
 unicode-segmentation.workspace = true
 thiserror.workspace = true

@@ -22,7 +22,7 @@
 | Worker bounds | **PASS** | one lazy worker; one in-flight + one latest pending; typed completion |
 | Resource/robustness | **PASS** | 5 MiB/depth/node limits and 10,000 deterministic malformed cases |
 | Preview performance | **PASS** | 20 KiB/100 KiB/1 MiB p95 below 100/400/2000 ms hard gates |
-| Memory | **CONDITIONAL — NOT TESTED** | five-run Source/Preview/Split Windows measurement contract remains open |
+| Memory / idle CPU | **PASS (automated local)** | five-run Source/Preview/Split Windows receipt plus 60-second CPU interval recorded below |
 | Visual/OS interaction | **CONDITIONAL — NOT TESTED** | formal current-commit manual matrix is still required |
 
 Phase 5 establishes a native Preview foundation, not completed v1 rendering. Formula nodes are
@@ -190,20 +190,46 @@ cross-machine performance promise.
 | Measurement | Phase 4 | Phase 5 | Delta / status |
 | --- | --- | --- | --- |
 | Stripped Release EXE | 2,963,968 bytes | 3,495,424 bytes | +531,456 bytes (+0.507 MiB) |
-| Source Private Working Set / Commit | prior evidence not current-commit comparable | NOT TESTED | formal five-run receipt open |
-| Preview 20 KiB Private Working Set / Commit | not comparable | NOT TESTED | formal five-run receipt open |
-| Split 20 KiB Private Working Set / Commit | not comparable | NOT TESTED | formal five-run receipt open |
+| Source Private Working Set / Commit | prior evidence not current-commit comparable | 7,692,288 B / 8,572,928 B median | automated local receipt below |
+| Preview 20 KiB Private Working Set / Commit | not comparable | 17,145,856 B / 18,382,848 B median | automated local receipt below |
+| Split 20 KiB Private Working Set / Commit | not comparable | 18,120,704 B / 19,316,736 B median | automated local receipt below |
 | Preview 100 KiB Private Working Set / Commit | not comparable | NOT TESTED | formal five-run receipt open |
 | Preview 1 MiB Private Working Set / Commit | not comparable | NOT TESTED | formal five-run receipt open |
 
 | 60-second idle CPU mode | Status |
 | --- | --- |
-| Source | NOT TESTED on current Phase 5 commit |
-| Preview | NOT TESTED |
-| Split | NOT TESTED |
+| Source | PASS — 0.000000% |
+| Preview | PASS — 0.000000% |
+| Split | PASS — 0.000000% |
 
-The copied-EXE Rust runtime smoke is an automated lifecycle check only; it does not close visual,
-memory or idle-CPU acceptance.
+The copied-EXE lifecycle smoke does not close visual acceptance. The separate resource runner below
+owns memory and idle-CPU acceptance as repeatable automated local evidence.
+
+## Phase 6 Preflight Runtime Baseline
+
+Measured during Phase 6 preflight, before any RaTeX production dependency or product-code change.
+The checked-in Rust smoke entry copied the stripped Release executable into a distinct portable
+directory for every run, seeded the same 20 KiB document with exactly 20 Comrak math nodes, waited
+30 seconds without a debugger, and sampled each mode five times. Idle CPU is process kernel+user
+time over 60 seconds divided by wall time and 20 logical processors. `Private Bytes` is the process
+commit charge and `Private Working Set` comes from `PROCESS_MEMORY_COUNTERS_EX2`.
+
+- Product commit under measurement: `c527c4a2e20cde29a33cb8dfcb0eabf0e7c58c68`.
+- Windows 11 Home Chinese build 26200; Intel Core i7-12700H; 20 logical processors;
+  15.8 GiB visible RAM; 2560×1440 at 96 DPI; Defender real-time protection was not running.
+- Stable repeatable entry: `tools/smoke/phase-05.ps1 -Resources`.
+
+| Mode | Private Working Set median | Private Working Set max | Private Bytes median | Private Bytes max | 60 s idle CPU |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Source | 7,692,288 B (7.336 MiB) | 26,009,600 B (24.805 MiB) | 8,572,928 B (8.176 MiB) | 28,581,888 B (27.258 MiB) | 0.000000% |
+| Preview | 17,145,856 B (16.352 MiB) | 17,240,064 B (16.441 MiB) | 18,382,848 B (17.531 MiB) | 18,460,672 B (17.605 MiB) | 0.000000% |
+| Split | 18,120,704 B (17.281 MiB) | 18,161,664 B (17.320 MiB) | 19,316,736 B (18.422 MiB) | 19,333,120 B (18.438 MiB) | 0.000000% |
+
+The Source samples had substantial OS working-set variability, so both median and maximum are kept
+instead of selecting a favorable run. Preview and Split were stable. All maxima remain below their
+exploratory hard limits; no CPU-time increase, persistent redraw, or monotonic memory growth was
+observed. The Phase 6 preflight gate therefore passes. These are local-machine measurements, not
+cross-machine product claims and not a substitute for visual or IME acceptance.
 
 ## Dependencies and Unsafe
 
@@ -266,7 +292,6 @@ replaced by a typed intent/effect boundary before this report.
 
 - Windows 11 visual fidelity, mouse selection/copy, actual Shell activation, Light/Dark and DPI
   screenshots remain `NOT TESTED`.
-- Five-run Preview/Split memory and 60-second idle CPU receipts remain `NOT TESTED`.
 - Phase 3 Microsoft Pinyin/WeChat IME and Phase 4 manual platform conditions remain inherited.
 - RaTeX and decoded local images are intentionally outside Phase 5 and are not reported as defects
   in this foundation.

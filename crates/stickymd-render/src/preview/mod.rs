@@ -6,6 +6,7 @@
 //! No preview type exposes a source mutation or persistence API.
 
 mod layout;
+mod math_layout;
 mod model;
 mod paint;
 mod parser;
@@ -24,7 +25,9 @@ pub use parser::{
     MAX_OWNED_NODES, MAX_PARSE_DEPTH, MAX_PREVIEW_SOURCE_BYTES, PreviewParseError,
     PreviewParseMetrics, PreviewParser,
 };
-pub use pipeline::{PreviewPipeline, PreviewPipelineCounters, PreviewPipelineError};
+pub use pipeline::{
+    PreviewMathCounters, PreviewPipeline, PreviewPipelineCounters, PreviewPipelineError,
+};
 pub use render_tree::{
     RenderBlock, RenderBlockKind, RenderSpan, RenderStyle, RenderTable, RenderTableRow, RenderTree,
     RenderTreeBuilder, SpanAction,

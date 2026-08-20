@@ -72,8 +72,22 @@ DocumentSnapshot
 ```
 
 预览选择是只读 clipboard projection；链接必须经 typed intent 与 coordinator 校验后才到
-Windows Shell adapter。真实 Preview 视觉/内存以及微软拼音/微信输入法人工验收仍为
-NOT TESTED。
+Windows Shell adapter。Preview/公式资源矩阵已由 Rust smoke CLI 自动化；真实 Preview
+视觉、同进程首次公式内存增量以及微软拼音/微信输入法人工验收仍为 NOT TESTED。
+
+Phase 6 在同一个单线程 Preview worker 内加入：
+
+```text
+Comrak math node（delimiter authority）
+  → delimiter-free literal
+  → RaTeX parse + layout + DisplayList
+  → bounded layout/raster/outline caches
+  → thin native tiny-skia painter
+  → atomic selectable formula object
+```
+
+公式 raster 是可释放 projection；`DocumentState` 与原始 delimiter 文本仍是唯一复制/保存
+来源。错误公式显示原文与错误装饰，不修改 source，也不阻断同文档其他 block。
 
 ## 技术方向（已批准；按已实现切片分别验证）
 
@@ -82,10 +96,11 @@ Rust · winit · cosmic-text · tiny-skia · softbuffer · Comrak · RaTeX · �
 禁止：WebView / Electron / Tauri / JS / 通用 async runtime / 数据库 / 网络
 ```
 
-当前生产切片已使用 Comrak 建立 owned semantic/native Preview foundation；RaTeX 仍只处于
-独立 spike，Phase 5 公式只保留 Comrak 语义与原文 placeholder，不冒充正式公式排版。
-`arrayref` yanked 风险已由刷新后的 registry index 与 fresh-lock 复核证伪；RaTeX 的
-剩余条件风险是正式热路径 painter/API 尚未验证，不得把 PNG spike 等同于生产集成。
+当前生产切片已使用 Comrak 建立 owned semantic/native Preview，并使用 RaTeX 0.1.14
+parser/layout/font crates完成 native math projection。项目采用审计过的薄 DisplayList painter；
+`ratex-render`/PNG renderer 不进入生产依赖图。确定性 raster golden 与六场景资源矩阵已
+自动化；真实 DPI/主题视觉与同进程首次公式内存增量仍是人工 `NOT TESTED` 条件，不能从
+headless 测试推断完成。
 
 ## 文档导航
 

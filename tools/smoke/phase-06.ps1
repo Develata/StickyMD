@@ -1,14 +1,12 @@
 [CmdletBinding()]
 param(
-    [switch]$Ci,
     [switch]$Performance,
     [switch]$Runtime,
     [switch]$Resources
 )
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
-$smokeArguments = @('run', '-p', 'stickymd-smoke', '--locked', '--', 'all')
-if ($Ci) { $smokeArguments += '--ci' }
+$smokeArguments = @('run', '-p', 'stickymd-smoke', '--locked', '--', 'phase', '06')
 if ($Performance) { $smokeArguments += '--performance' }
 if ($Runtime) { $smokeArguments += '--runtime' }
 if ($Resources) { $smokeArguments += '--resources' }

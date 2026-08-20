@@ -76,6 +76,7 @@ Preview 呈现：
 
 ---
 
+<a id="ratex-native-math"></a>
 ## 数学权威：RaTeX
 
 ### 支持范围
@@ -90,6 +91,10 @@ Preview 呈现：
 - 使用 RaTeX 的 parser / layout / types / font crates；纯 Rust，无 JS/DOM/WebView。
 - 数学字体使用 RaTeX 配套的 KaTeX-compatible 字体（OFL 1.1），不强制 Cambria Math。
 - Release 必须包含第三方字体声明与 OFL 文本。
+- Comrak 独占 delimiter 识别；RaTeX 只接收 delimiter 内部的数学 literal。
+- Phase 6 采用方案 B：render 层内的薄 DisplayList → tiny-skia painter，覆盖
+  `GlyphPath`、`Line`、`Rect`、`Path`，生产热路径不经过 PNG 编解码。
+- painter 只解释 RaTeX 已完成的 DisplayList，不实现任何 TeX tokenizer、AST 或数学布局。
 
 ### 不得自行实现
 
@@ -153,8 +158,8 @@ Arc<str> snapshot
 | Owned AST 深度 | 256 | 丢弃该 generation 的 Preview 结果 |
 | Owned AST 节点 | 200,000 | 丢弃该 generation 的 Preview 结果 |
 
-Phase 5 foundation 在 RaTeX 正式接入前只把 Comrak 已识别的四类公式节点保留为原文
-placeholder；这不是公式渲染完成状态，也不得另写 delimiter 识别器。图片解码同理留给
+Phase 5 foundation 曾在 RaTeX 正式接入前把 Comrak 已识别的四类公式节点保留为原文
+placeholder；Phase 6 已用 RaTeX native projection 替代该数学 placeholder。图片解码仍留给
 Assets Phase，当前 foundation 只显示安全 placeholder、alt 与路径/远程链接。
 
 ---
@@ -230,10 +235,12 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
   超长行横向滚动或限宽截断，不得影响窗口布局。
 - 表格：GFM alignment、单元格换行、基本边框、行背景轻微交替、宽度不足区域横向滚动；
   不支持列宽拖动与单元格编辑；task checkbox 只读。
-- MathLayoutCache：source + display_mode → DisplayList。
-- MathRasterCache：display_list_hash + font_size + dpi + theme → raster；预算 ≤ 8 MiB。
+- MathLayoutCache：source + display_mode + foreground → DisplayList；最多 512 entries。
+- MathRasterCache：layout key + effective font size（已折入 DPI）+ theme foreground → raster；
+  严格预算 ≤ 8 MiB。
+- painter 的复用 glyph outline 采用独立 ≤ 4 MiB bounded cache；不使用上游无界 outline cache。
 - DecodedImageCache：只缓存 viewport 附近图片；≤ 16 MiB；LRU 淘汰。
-- 隐藏（tray/dock collapsed）一段时间后：清理解码图片与公式 raster，
+- 进入纯 Source 或隐藏（tray/dock collapsed）一段时间后：清理解码图片与公式 raster，
   保留小型 layout cache、文档与字体数据库，不保留无必要 framebuffer 副本。
 
 ---

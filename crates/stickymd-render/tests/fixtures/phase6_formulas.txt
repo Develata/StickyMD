@@ -1,0 +1,60 @@
+x^2+y^2=z^2
+\frac{a}{b}
+\dfrac{1}{1+x}
+\sqrt{x}
+\sqrt[3]{x+y}
+x_i^2
+\sum_{n=1}^{\infty}\frac{1}{n^2}
+\prod_{k=1}^{n}k
+\int_0^1 x^2\,dx
+\iint_D f(x,y)\,dA
+\lim_{x\to 0}\frac{\sin x}{x}
+\left(\frac{x}{y}\right)
+\left[\sum_i x_i\right]
+\left\{x\in\mathbb{R}:x>0\right\}
+\begin{matrix}a&b\\c&d\end{matrix}
+\begin{pmatrix}a&b\\c&d\end{pmatrix}
+\begin{bmatrix}1&0\\0&1\end{bmatrix}
+\begin{vmatrix}a&b\\c&d\end{vmatrix}
+\begin{cases}x,&x>0\\-x,&x<0\end{cases}
+\begin{aligned}a&=b+c\\d&=e-f\end{aligned}
+\alpha+\beta+\gamma+\delta
+\Gamma+\Delta+\Theta+\Lambda
+\mathbb{R}\subset\mathbb{C}
+\mathbf{x}+\boldsymbol{y}
+\mathcal{F}+\mathfrak{g}
+\mathrm{d}x+\mathit{v}
+\operatorname{rank}(A)
+\text{speed}=\frac{\text{distance}}{\text{time}}
+\text{中文}+x
+\hat{x}+\widehat{xyz}
+\bar{x}+\overline{AB}
+\vec{v}+\overrightarrow{AB}
+\underline{x}+\overbrace{a+b}^{n}
+a\ne b\le c\ge d
+x\approx y\sim z\equiv w
+A\subset B\subseteq C
+x\in A\notin B
+A\cup B\cap C\setminus D
+\emptyset,\forall x\exists y
+a\to b\rightarrow c\Rightarrow d
+a\leftarrow b\leftrightarrow c
+\uparrow\downarrow\mapsto
+a\,b\;c\quad d\qquad e
+\frac{1}{1+\frac{1}{x}}
+\binom{n}{k}
+{n\choose k}
+\color{red}{x^2}+y
+\color{#336699}{a+b}
+\boxed{x+y}
+\cancel{x}+y
+\overset{!}{=}\underset{n\to\infty}{\longrightarrow}
+\log x+\ln y+\exp z
+\sin^2 x+\cos^2 x=1
+\min_{x\in X}f(x)
+\max\{a,b,c\}
+\gcd(a,b)\mid n
+\left\langle x,y\right\rangle
+\left\lfloor x\right\rfloor+\left\lceil y\right\rceil
+\partial_x f+\nabla\cdot v
+\hbar\omega=E

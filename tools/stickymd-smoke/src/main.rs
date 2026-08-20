@@ -1,8 +1,10 @@
 //! StickyMD checked-in phase verification CLI.
-#![forbid(unsafe_code)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 mod cli;
 mod governance;
+#[cfg(windows)]
+mod process_metrics;
 mod runner;
 #[cfg(windows)]
 mod runtime;

@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use stickymd_core::Generation;
 
+use crate::math::MathKind;
+
 use super::{
     BlockNode, ImageKind, InlineNode, LinkKind, ListNode, OwnedDocumentTree, SourceRange,
     TableAlignment, TableNode,
@@ -41,6 +43,13 @@ pub struct RenderSpan {
     pub source_range: Option<SourceRange>,
     pub style: RenderStyle,
     pub action: Option<SpanAction>,
+    pub(crate) math: Option<RenderMath>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RenderMath {
+    pub source: String,
+    pub kind: MathKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +168,7 @@ impl RenderTreeBuilder {
                             ..RenderStyle::default()
                         },
                         action: None,
+                        math: None,
                     }],
                     indent,
                     source_range: code.source_range,
@@ -190,6 +200,7 @@ impl RenderTreeBuilder {
                             ..RenderStyle::default()
                         },
                         action: None,
+                        math: None,
                     }],
                     indent,
                     source_range: *source_range,
@@ -205,6 +216,10 @@ impl RenderTreeBuilder {
                             ..RenderStyle::default()
                         },
                         action: None,
+                        math: Some(RenderMath {
+                            source: math.literal.clone(),
+                            kind: MathKind::Display,
+                        }),
                     }],
                     indent,
                     source_range: math.source_range,
@@ -239,6 +254,7 @@ impl RenderTreeBuilder {
                         source_range: None,
                         style: RenderStyle::default(),
                         action: None,
+                        math: None,
                     },
                 );
             } else {
@@ -250,6 +266,7 @@ impl RenderTreeBuilder {
                         source_range: None,
                         style: RenderStyle::default(),
                         action: None,
+                        math: None,
                     }],
                     indent: indent.saturating_add(1),
                     source_range: item.source_range,
@@ -380,16 +397,20 @@ fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mu
                     }),
                 ));
             }
-            InlineNode::InlineMath(math) => output.push(span(
-                &math.source_literal,
-                &math.source_literal,
-                math.source_range,
-                RenderStyle {
+            InlineNode::InlineMath(math) => output.push(RenderSpan {
+                text: math.source_literal.clone(),
+                copy_text: math.source_literal.clone(),
+                source_range: math.source_range,
+                style: RenderStyle {
                     math_placeholder: true,
                     ..inherited
                 },
-                None,
-            )),
+                action: None,
+                math: Some(RenderMath {
+                    source: math.literal.clone(),
+                    kind: MathKind::Inline,
+                }),
+            }),
             InlineNode::SoftBreak { source_range } => {
                 output.push(span(" ", " ", *source_range, inherited, None));
             }
@@ -427,6 +448,7 @@ fn span(
         source_range,
         style,
         action,
+        math: None,
     }
 }
 

@@ -138,6 +138,11 @@ impl PreviewCoordinator {
     pub fn applied_generation(&self) -> Option<Generation> {
         self.applied_generation
     }
+
+    pub fn release_projection(&mut self) {
+        self.applied_generation = None;
+        self.scheduled = None;
+    }
 }
 
 #[cfg(test)]
@@ -216,6 +221,26 @@ mod tests {
         let mut flow = PreviewCoordinator::default();
         let generation = next(Generation::initial());
         flow.on_document_changed(0, generation, PreviewVisibility::Hidden);
+        assert_eq!(
+            flow.show(generation, PreviewVisibility::Preview),
+            Some(PreviewAction::Build(generation))
+        );
+    }
+
+    #[test]
+    fn releasing_projection_drops_applied_and_scheduled_state_but_keeps_dirty_work() {
+        let mut flow = PreviewCoordinator::default();
+        let generation = next(Generation::initial());
+        flow.on_document_changed(0, generation, PreviewVisibility::Split);
+        assert!(flow.deadline().is_some());
+        assert_eq!(
+            flow.admit_completion(generation, generation),
+            PreviewAdmission::Apply
+        );
+        flow.on_document_changed(1, generation, PreviewVisibility::Split);
+        flow.release_projection();
+        assert_eq!(flow.applied_generation(), None);
+        assert_eq!(flow.deadline(), None);
         assert_eq!(
             flow.show(generation, PreviewVisibility::Preview),
             Some(PreviewAction::Build(generation))
