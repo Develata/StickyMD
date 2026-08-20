@@ -33,6 +33,7 @@ StickyMD 不自行实现 Markdown parser，不自行实现 TeX parser/layout。
 
 ---
 
+<a id="markdown-semantics"></a>
 ## Markdown 权威：Comrak
 
 ### 方言
@@ -142,8 +143,23 @@ Arc<str> snapshot
 - 旧 preview 在新结果完成前保持可用；generation 不匹配的结果立即释放。
 - 这是用 debounce 换取架构简单与稳定性的明确决策。
 
+### Preview 保护性上限
+
+这些上限只阻止异常输入耗尽资源，不改变或截断 canonical source：
+
+| 项目 | 上限 | 超限行为 |
+| --- | --- | --- |
+| Preview source snapshot | 5 MiB | 保留 Source 编辑，Preview 返回可见错误 |
+| Owned AST 深度 | 256 | 丢弃该 generation 的 Preview 结果 |
+| Owned AST 节点 | 200,000 | 丢弃该 generation 的 Preview 结果 |
+
+Phase 5 foundation 在 RaTeX 正式接入前只把 Comrak 已识别的四类公式节点保留为原文
+placeholder；这不是公式渲染完成状态，也不得另写 delimiter 识别器。图片解码同理留给
+Assets Phase，当前 foundation 只显示安全 placeholder、alt 与路径/远程链接。
+
 ---
 
+<a id="preview-scheduling"></a>
 ## Preview 调度与 Generation
 
 ```text
@@ -163,6 +179,7 @@ Preview 只读，但必须支持：鼠标选择文字、Ctrl+C、滚动、点击
 
 ---
 
+<a id="preview-link-safety"></a>
 ## 链接安全
 
 - 允许点击并交给系统 Shell：`http`、`https`、`mailto`、`file`。
@@ -206,6 +223,7 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
 
 ---
 
+<a id="native-preview-layout"></a>
 ## 渲染与缓存
 
 - 代码块：Consolas，不做语法高亮；fenced info string 可作顶部小标签；

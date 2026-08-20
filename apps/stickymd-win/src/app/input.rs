@@ -8,12 +8,13 @@ use winit::event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 use super::StickyApp;
-use crate::instruction::{AppIntent, PersistenceIntent, SaveReason};
+use crate::config::ViewMode;
+use crate::instruction::{AppIntent, PersistenceIntent, PreviewIntent, SaveReason};
 use crate::interaction::ImeSignal;
 
 impl StickyApp {
     pub(super) fn handle_ime(&mut self, event: Ime) {
-        if !ime_event_allowed(self.recovery.is_pending()) {
+        if !ime_event_allowed(self.recovery.is_pending(), self.preview_focused) {
             self.session.cancel_preedit();
             self.sync_preedit();
             return;
@@ -79,6 +80,24 @@ impl StickyApp {
             return;
         }
         if self.recovery.is_pending() {
+            return;
+        }
+
+        if shortcut {
+            let mode = match code {
+                Some(KeyCode::Digit1) => Some(ViewMode::Source),
+                Some(KeyCode::Digit2) => Some(ViewMode::Split),
+                Some(KeyCode::Digit3) => Some(ViewMode::Preview),
+                _ => None,
+            };
+            if let Some(mode) = mode {
+                self.dispatch_preview_intent(PreviewIntent::SetViewMode(mode));
+                return;
+            }
+        }
+
+        if self.preview_focused {
+            self.handle_preview_key(code, shortcut);
             return;
         }
 
@@ -271,12 +290,28 @@ impl StickyApp {
         }
         match state {
             ElementState::Pressed => {
+                if let Some(mode) = self.toolbar_mode_at_cursor() {
+                    self.dispatch_preview_intent(PreviewIntent::SetViewMode(mode));
+                    return;
+                }
+                if self.preview_at_cursor().is_some() {
+                    self.preview_focused = true;
+                    if let Some(window) = &self.window {
+                        window.set_ime_allowed(false);
+                    }
+                    self.press_preview_selection();
+                    return;
+                }
+                self.preview_focused = false;
+                if let Some(window) = &self.window {
+                    window.set_ime_allowed(self.session.focused);
+                }
                 self.session.cancel_preedit();
+                let Some(source_position) = self.source_local_cursor() else {
+                    return;
+                };
                 let diagnostic_action = self.projection.as_ref().and_then(|projection| {
-                    projection.diagnostic_action_at(
-                        self.cursor_position.x as f32,
-                        self.cursor_position.y as f32,
-                    )
+                    projection.diagnostic_action_at(source_position.0, source_position.1)
                 });
                 if let Some(primary) = diagnostic_action
                     && self.dispatch_persistence_intent(
@@ -293,8 +328,7 @@ impl StickyApp {
                 let Some(projection) = &self.projection else {
                     return;
                 };
-                let hit = projection
-                    .hit_test(self.cursor_position.x as f32, self.cursor_position.y as f32);
+                let hit = projection.hit_test(source_position.0, source_position.1);
                 self.session.selection = if self.modifiers.shift_key() {
                     Selection::new(self.session.selection.anchor.byte, hit)
                 } else {
@@ -303,30 +337,59 @@ impl StickyApp {
                 self.session.dragging_selection = true;
                 self.after_presentation_change();
             }
-            ElementState::Released => self.session.dragging_selection = false,
+            ElementState::Released => {
+                if self.preview_dragging {
+                    self.release_preview_selection();
+                }
+                self.session.dragging_selection = false;
+            }
         }
     }
 
     pub(super) fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
         self.cursor_position = position;
+        let cursor = self.cursor_icon_for_position(position);
+        if let Some(window) = &self.window {
+            window.set_cursor(cursor);
+        }
+        if self.preview_dragging {
+            if let Some(start) = self.preview_press_position {
+                let scale = self
+                    .window
+                    .as_ref()
+                    .map_or(1.0, |window| window.scale_factor());
+                self.preview_drag_moved |=
+                    super::preview_input::meaningful_preview_drag(start, position, scale);
+            }
+            self.extend_preview_selection(position);
+            return;
+        }
         if !self.session.dragging_selection {
             return;
         }
         let Some(projection) = &self.projection else {
             return;
         };
-        let active = projection.hit_test(position.x as f32, position.y as f32);
+        let Some(source_position) = self.source_local_position(position) else {
+            return;
+        };
+        let active = projection.hit_test(source_position.0, source_position.1);
         self.session.selection = Selection::new(self.session.selection.anchor.byte, active);
         self.after_presentation_change();
     }
 
     pub(super) fn handle_scroll(&mut self, delta: MouseScrollDelta) {
-        let Some(projection) = &mut self.projection else {
-            return;
-        };
         let pixels = match delta {
             MouseScrollDelta::LineDelta(_, lines) => -lines * 48.0,
             MouseScrollDelta::PixelDelta(position) => -position.y as f32,
+        };
+        if self.preview_at_cursor().is_some() {
+            self.preview_scroll_y = (self.preview_scroll_y + pixels).max(0.0);
+            self.request_preview_paint();
+            return;
+        }
+        let Some(projection) = &mut self.projection else {
+            return;
         };
         let scroll = projection.scroll_by(pixels);
         self.session.scroll.line = scroll.line;
@@ -335,10 +398,22 @@ impl StickyApp {
         self.update_ime_area();
         self.request_redraw();
     }
+
+    fn source_local_cursor(&self) -> Option<(f32, f32)> {
+        self.source_local_position(self.cursor_position)
+    }
+
+    fn source_local_position(&self, position: PhysicalPosition<f64>) -> Option<(f32, f32)> {
+        let pane = self.view_geometry()?.source?;
+        let x = position.x as f32;
+        let y = position.y as f32;
+        pane.contains(x, y)
+            .then_some((x - pane.x as f32, y - pane.y as f32))
+    }
 }
 
-fn ime_event_allowed(recovery_pending: bool) -> bool {
-    !recovery_pending
+fn ime_event_allowed(recovery_pending: bool, preview_only: bool) -> bool {
+    !recovery_pending && !preview_only
 }
 
 #[cfg(test)]
@@ -347,7 +422,8 @@ mod recovery_tests {
 
     #[test]
     fn recovery_pending_rejects_ime_commits_and_preedit() {
-        assert!(!ime_event_allowed(true));
-        assert!(ime_event_allowed(false));
+        assert!(!ime_event_allowed(true, false));
+        assert!(!ime_event_allowed(false, true));
+        assert!(ime_event_allowed(false, false));
     }
 }

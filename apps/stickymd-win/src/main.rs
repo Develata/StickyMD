@@ -18,6 +18,8 @@ mod persistence;
 #[cfg(windows)]
 mod platform;
 #[cfg(windows)]
+mod preview;
+#[cfg(windows)]
 mod startup;
 #[cfg(windows)]
 mod surface;

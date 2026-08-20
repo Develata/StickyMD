@@ -67,6 +67,7 @@ impl StickyApp {
         if let Some(projection) = &mut self.projection {
             let _ = projection.resync(&snapshot);
         }
+        self.on_preview_document_changed(snapshot.generation);
         self.after_presentation_change();
     }
 

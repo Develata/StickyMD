@@ -1,4 +1,4 @@
-//! Windows native shell with Phase 4 persistence coordination.
+//! Windows native shell with persistence and read-only Preview coordination.
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#interaction-shell
 //! plan_ref: docs/plan/07_editor_and_ime.md#ime-semantics
@@ -9,14 +9,18 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use stickymd_render::preview::{PreviewFrame, PreviewSelection, SpanAction};
 use stickymd_render::source::SourceProjection;
+use tiny_skia::Pixmap;
 use winit::dpi::PhysicalPosition;
 use winit::event_loop::EventLoopProxy;
 use winit::keyboard::ModifiersState;
 use winit::window::Window;
 
-use crate::config::RuntimeConfig;
-use crate::flow::{AppEffect, EditorCoordinator, PersistenceCoordinator, RecoveryCoordinator};
+use crate::config::{RuntimeConfig, ViewMode};
+use crate::flow::{
+    AppEffect, EditorCoordinator, PersistenceCoordinator, PreviewCoordinator, RecoveryCoordinator,
+};
 use crate::instruction::AppIntent;
 use crate::interaction::EditorSession;
 use crate::persistence::{IoCompletion, PersistenceWorker};
@@ -24,6 +28,7 @@ use crate::platform::windows::ArboardClipboard;
 use crate::platform::windows::file_watch::NoteDirectoryWatcher;
 use crate::platform::windows::program_dir::RuntimePaths;
 use crate::platform::windows::single_instance::SingleInstanceGuard;
+use crate::preview::{PreviewCompletion, PreviewWorker};
 use crate::startup::BootstrapOutcome;
 use crate::surface::SoftwareSurface;
 
@@ -31,6 +36,8 @@ mod input;
 mod lifecycle;
 mod persistence_runtime;
 mod presentation;
+mod preview_input;
+mod preview_runtime;
 mod reconciliation_runtime;
 mod recovery_runtime;
 
@@ -42,12 +49,25 @@ pub enum AppEvent {
     NoteFsHint,
     WatchFailed(String),
     ShowRequested,
+    Preview(PreviewCompletion),
 }
 
 pub struct StickyApp {
     window: Option<Arc<Window>>,
     surface: Option<SoftwareSurface>,
     projection: Option<SourceProjection>,
+    source_frame: Option<Pixmap>,
+    preview_frame: Option<PreviewFrame>,
+    preview_worker: Option<PreviewWorker>,
+    preview_flow: PreviewCoordinator,
+    preview_selection: PreviewSelection,
+    preview_scroll_y: f32,
+    preview_focused: bool,
+    preview_dragging: bool,
+    preview_drag_moved: bool,
+    preview_press_position: Option<PhysicalPosition<f64>>,
+    preview_press_action: Option<SpanAction>,
+    pre_split_width_dip: Option<u32>,
     coordinator: EditorCoordinator<ArboardClipboard>,
     persistence: PersistenceCoordinator,
     paths: RuntimePaths,
@@ -77,10 +97,23 @@ impl StickyApp {
         proxy: EventLoopProxy<AppEvent>,
     ) -> Self {
         let now = Instant::now();
+        let preview_focused = bootstrap.config.view_mode == ViewMode::Preview;
         let mut app = Self {
             window: None,
             surface: None,
             projection: None,
+            source_frame: None,
+            preview_frame: None,
+            preview_worker: None,
+            preview_flow: PreviewCoordinator::default(),
+            preview_selection: PreviewSelection::default(),
+            preview_scroll_y: 0.0,
+            preview_focused,
+            preview_dragging: false,
+            preview_drag_moved: false,
+            preview_press_position: None,
+            preview_press_action: None,
+            pre_split_width_dip: None,
             coordinator: EditorCoordinator::new(bootstrap.document, ArboardClipboard::new()),
             persistence: PersistenceCoordinator::default(),
             paths,
@@ -132,6 +165,7 @@ impl StickyApp {
             } => {
                 self.persistence
                     .on_document_changed(self.timestamp_ms(), generation);
+                self.on_preview_document_changed(generation);
                 self.session.accept_document_selection(selection);
                 if let Some(projection) = &mut self.projection
                     && let Err(error) = projection.apply_delta(generation, &delta)

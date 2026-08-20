@@ -1,8 +1,11 @@
-//! Minimal Phase 3 editor intents.
+//! Typed editor, persistence and read-only Preview instructions.
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#instruction-interface
 
 use stickymd_core::{EditKind, Generation, Selection};
+use stickymd_render::preview::SpanAction;
+
+use crate::config::ViewMode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppIntent {
@@ -29,6 +32,11 @@ pub enum AppIntent {
         selection: Selection,
         timestamp_ms: u64,
     },
+    /// Clipboard-only projection effect. It never reads or mutates canonical
+    /// document text and is used by read-only Preview selection.
+    WriteClipboard {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,4 +53,14 @@ pub enum PersistenceIntent {
     ResolvePrimary,
     ResolveSecondary,
     RequestQuit,
+}
+
+/// Read-only Preview instructions emitted by the interaction shell.
+///
+/// Preview instructions never mutate canonical Markdown text. Link targets
+/// still pass through Flow Coordination before the Windows adapter is called.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreviewIntent {
+    SetViewMode(ViewMode),
+    Activate(SpanAction),
 }

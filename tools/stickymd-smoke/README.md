@@ -13,6 +13,7 @@ release package.
 ./tools/smoke/phase-02.ps1 -Performance
 ./tools/smoke/phase-03.ps1 -Performance -Runtime
 ./tools/smoke/phase-04.ps1 -Performance -Runtime
+./tools/smoke/phase-05.ps1 -Performance -Runtime
 ./tools/smoke/all.ps1 -Ci
 ```
 

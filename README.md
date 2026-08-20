@@ -10,13 +10,14 @@ StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown �
 ## Current status
 
 ```text
-阶段：Phase 4 portable persistence implemented in the development build; acceptance review pending
+阶段：Phase 5 native Markdown Preview foundation implemented; USER review pending
 ```
 
 仓库已有平台无关文档核心、Windows 源码编辑器和 portable `note/note.md` 持久化闭环：
 650 ms autosave、Ctrl+S、失焦/退出保存、同目录单实例、atomic replace、启动恢复、
-external reload/conflict 与 config v1 已接入开发构建。Preview、RaTeX 正式渲染、图片事务、
-托盘和 Docking 尚未实现；微软拼音与微信输入法的真实人工矩阵仍未完成，不能据此声称 v1 ready。
+external reload/conflict、config v1，以及 Source/Preview/Split 原生只读预览基础已经接入。
+RaTeX 正式公式排版、图片解码/事务、托盘和 Docking 尚未实现；Preview 视觉/内存门与
+微软拼音、微信输入法真实人工矩阵仍未完成，不能据此声称 v1 ready。
 
 - 目标平台：Windows 11 x64
 - 实现主体：Rust（winit / cosmic-text / tiny-skia / softbuffer / Comrak / RaTeX 为已批准架构方向）
@@ -38,7 +39,7 @@ external reload/conflict 与 config v1 已接入开发构建。Preview、RaTeX �
 | [架构概览](docs/overview/architecture.md) | 可读版架构投影 |
 | [覆盖矩阵](docs/coverage-matrix.md) | plan ↔ feature ↔ acceptance ↔ 未来代码 |
 | [阶段输入归档](docs/phases/README.md) | USER 提供的阶段 prompt 原文（非架构权威） |
-| [逐阶段验证](docs/acceptance-cases/phase-00.md) | Phase 0–4 自动化与人工状态；入口位于 `tools/smoke/` |
+| [逐阶段验证](docs/acceptance-cases/phase-00.md) | Phase 0–5 自动化与人工状态；入口位于 `tools/smoke/` |
 
 ---
 

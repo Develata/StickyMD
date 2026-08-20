@@ -13,6 +13,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{WindowAttributes, WindowId};
 
 use super::{AppEvent, CARET_BLINK, StickyApp};
+use crate::config::ViewMode;
 use crate::instruction::{PersistenceIntent, SaveReason};
 use crate::platform::windows::file_watch::{FileWatchSignal, NoteDirectoryWatcher};
 use crate::surface::SoftwareSurface;
@@ -65,7 +66,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 return;
             }
         };
-        window.set_ime_allowed(true);
+        window.set_ime_allowed(self.config.view_mode != ViewMode::Preview);
         let size = window.inner_size();
         let surface = match SoftwareSurface::new(Arc::clone(&window)) {
             Ok(surface) => surface,
@@ -90,6 +91,14 @@ impl ApplicationHandler<AppEvent> for StickyApp {
         self.window = Some(window);
         self.surface = Some(surface);
         self.projection = Some(projection);
+        self.configure_viewports();
+        let generation = self.coordinator.view().generation;
+        if let Some(action) = self
+            .preview_flow
+            .show(generation, self.preview_visibility())
+        {
+            self.submit_preview_action(action);
+        }
         self.update_window_title();
         self.request_redraw();
     }
@@ -117,7 +126,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                     }
                 }
                 if let Some(window) = &self.window {
-                    window.set_ime_allowed(focused);
+                    window.set_ime_allowed(focused && !self.preview_focused);
                 }
                 self.after_presentation_change();
             }
@@ -142,12 +151,14 @@ impl ApplicationHandler<AppEvent> for StickyApp {
         if self.persistence.take_external_check(now_ms) {
             self.worker.inspect_external(self.paths.note_file.clone());
         }
+        self.tick_preview(now_ms);
 
         let now = Instant::now();
         let mut next_wake = None;
         for deadline in [
             self.persistence.autosave_deadline(),
             self.persistence.external_deadline(),
+            self.preview_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -155,7 +166,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             let wake = self.started + Duration::from_millis(deadline);
             next_wake = Some(next_wake.map_or(wake, |current: Instant| current.min(wake)));
         }
-        if self.session.focused && !self.session.is_composing() {
+        if self.session.focused && !self.preview_focused && !self.session.is_composing() {
             if now >= self.next_blink {
                 self.session.caret_visible = !self.session.caret_visible;
                 self.next_blink = now + CARET_BLINK;
@@ -195,6 +206,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                     window.request_redraw();
                 }
             }
+            AppEvent::Preview(completion) => self.handle_preview_completion(completion),
         }
     }
 }

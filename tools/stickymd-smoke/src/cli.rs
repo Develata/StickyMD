@@ -7,10 +7,18 @@ pub(crate) enum Phase {
     P02,
     P03,
     P04,
+    P05,
 }
 
 impl Phase {
-    pub(crate) const ALL: [Self; 5] = [Self::P00, Self::P01, Self::P02, Self::P03, Self::P04];
+    pub(crate) const ALL: [Self; 6] = [
+        Self::P00,
+        Self::P01,
+        Self::P02,
+        Self::P03,
+        Self::P04,
+        Self::P05,
+    ];
 
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
         match value.to_ascii_lowercase().as_str() {
@@ -19,7 +27,8 @@ impl Phase {
             "2" | "02" | "phase-02" => Ok(Self::P02),
             "3" | "03" | "phase-03" => Ok(Self::P03),
             "4" | "04" | "phase-04" => Ok(Self::P04),
-            _ => Err(format!("unknown phase `{value}`; expected 00..04")),
+            "5" | "05" | "phase-05" => Ok(Self::P05),
+            _ => Err(format!("unknown phase `{value}`; expected 00..05")),
         }
     }
 
@@ -30,6 +39,7 @@ impl Phase {
             Self::P02 => "02",
             Self::P03 => "03",
             Self::P04 => "04",
+            Self::P05 => "05",
         }
     }
 }
@@ -58,7 +68,7 @@ impl Options {
             Some("phase") => {
                 let phase = args
                     .next()
-                    .ok_or_else(|| "`phase` requires a number (00..04)".to_owned())?;
+                    .ok_or_else(|| "`phase` requires a number (00..05)".to_owned())?;
                 Selection::Phase(Phase::parse(&phase)?)
             }
             Some("all") => Selection::All,
@@ -91,14 +101,15 @@ impl Options {
             )
         {
             return Err(
-                "runtime smoke is defined only for Phase 03, Phase 04, or `all`".to_owned(),
+                "runtime smoke is defined only for Phase 03, Phase 04, Phase 05, or `all`"
+                    .to_owned(),
             );
         }
         Ok(options)
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..04> [--performance] [--runtime]\n       stickymd-smoke all [--ci] [--performance] [--runtime]"
+        "usage: stickymd-smoke phase <00..05> [--performance] [--runtime]\n       stickymd-smoke all [--ci] [--performance] [--runtime]"
     }
 }
 

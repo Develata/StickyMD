@@ -21,9 +21,12 @@ enum TaskId {
     Phase2Performance,
     Phase3Performance,
     Phase4Performance,
+    Phase5PreviewTests,
+    Phase5Performance,
     ReleaseBuild,
     RuntimeLaunch,
     RuntimePortable,
+    RuntimePreview,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,8 +39,15 @@ enum Task {
     },
     Runtime {
         id: TaskId,
-        portable: bool,
+        scenario: RuntimeScenario,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RuntimeScenario {
+    Launch,
+    Portable,
+    Preview,
 }
 
 impl Task {
@@ -75,9 +85,17 @@ fn task_label(task: &Task) -> &'static str {
         Task::Governance => "governance contracts",
         Task::Cargo { label, .. } => label,
         Task::Runtime {
-            portable: false, ..
+            scenario: RuntimeScenario::Launch,
+            ..
         } => "copied Release native-shell launch",
-        Task::Runtime { portable: true, .. } => "copied Release portable instance lifecycle",
+        Task::Runtime {
+            scenario: RuntimeScenario::Portable,
+            ..
+        } => "copied Release portable instance lifecycle",
+        Task::Runtime {
+            scenario: RuntimeScenario::Preview,
+            ..
+        } => "copied Release Preview/Split lifecycle",
     }
 }
 
@@ -96,17 +114,17 @@ fn run_task(root: &Path, task: &Task) -> Result<(), String> {
                 Err(format!("`{label}` failed with {status}"))
             }
         }
-        Task::Runtime { portable, .. } => run_runtime(root, *portable),
+        Task::Runtime { scenario, .. } => run_runtime(root, *scenario),
     }
 }
 
 #[cfg(windows)]
-fn run_runtime(root: &Path, portable: bool) -> Result<(), String> {
-    crate::runtime::run(root, portable)
+fn run_runtime(root: &Path, scenario: RuntimeScenario) -> Result<(), String> {
+    crate::runtime::run(root, scenario)
 }
 
 #[cfg(not(windows))]
-fn run_runtime(_root: &Path, _portable: bool) -> Result<(), String> {
+fn run_runtime(_root: &Path, _scenario: RuntimeScenario) -> Result<(), String> {
     Err("runtime smoke requires Windows".to_owned())
 }
 
@@ -128,6 +146,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         Selection::Phase(Phase::P02) => push_unique(&mut tasks, core_tests()),
         Selection::Phase(Phase::P03) => push_unique(&mut tasks, render_win_tests()),
         Selection::Phase(Phase::P04) => push_unique(&mut tasks, core_win_tests()),
+        Selection::Phase(Phase::P05) => push_unique(&mut tasks, phase5_preview_tests()),
     }
 
     // CI owns every headless task. `--performance` remains the explicit local
@@ -144,6 +163,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 Phase::P02 => push_unique(&mut tasks, phase2_performance()),
                 Phase::P03 => push_unique(&mut tasks, phase3_performance()),
                 Phase::P04 => push_unique(&mut tasks, phase4_performance()),
+                Phase::P05 => push_unique(&mut tasks, phase5_performance()),
             }
         }
     }
@@ -152,8 +172,11 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         push_unique(&mut tasks, release_build());
         match options.selection {
             Selection::Phase(Phase::P03) => push_unique(&mut tasks, runtime_launch()),
-            Selection::Phase(Phase::P04) | Selection::All => {
-                push_unique(&mut tasks, runtime_portable())
+            Selection::Phase(Phase::P04) => push_unique(&mut tasks, runtime_portable()),
+            Selection::Phase(Phase::P05) => push_unique(&mut tasks, runtime_preview()),
+            Selection::All => {
+                push_unique(&mut tasks, runtime_portable());
+                push_unique(&mut tasks, runtime_preview());
             }
             Selection::Phase(Phase::P00 | Phase::P01 | Phase::P02) => {
                 return Err("selected phase has no runtime smoke".to_owned());
@@ -268,6 +291,21 @@ fn core_win_tests() -> Task {
     )
 }
 
+fn phase5_preview_tests() -> Task {
+    cargo(
+        TaskId::Phase5PreviewTests,
+        "Phase 5 semantic/native-preview tests",
+        &[
+            "test",
+            "-p",
+            "stickymd-render",
+            "-p",
+            "stickymd-win",
+            "--locked",
+        ],
+    )
+}
+
 fn phase1_markdown_performance() -> Task {
     cargo(
         TaskId::Phase1MarkdownMathPerformance,
@@ -347,6 +385,24 @@ fn phase4_performance() -> Task {
     )
 }
 
+fn phase5_performance() -> Task {
+    cargo(
+        TaskId::Phase5Performance,
+        "Phase 5 native-preview Release baseline",
+        &[
+            "test",
+            "-p",
+            "stickymd-render",
+            "--release",
+            "--locked",
+            "phase5_preview_release_baseline",
+            "--",
+            "--ignored",
+            "--nocapture",
+        ],
+    )
+}
+
 fn release_build() -> Task {
     cargo(
         TaskId::ReleaseBuild,
@@ -358,14 +414,21 @@ fn release_build() -> Task {
 const fn runtime_launch() -> Task {
     Task::Runtime {
         id: TaskId::RuntimeLaunch,
-        portable: false,
+        scenario: RuntimeScenario::Launch,
     }
 }
 
 const fn runtime_portable() -> Task {
     Task::Runtime {
         id: TaskId::RuntimePortable,
-        portable: true,
+        scenario: RuntimeScenario::Portable,
+    }
+}
+
+const fn runtime_preview() -> Task {
+    Task::Runtime {
+        id: TaskId::RuntimePreview,
+        scenario: RuntimeScenario::Preview,
     }
 }
 
@@ -409,6 +472,7 @@ mod tests {
         assert!(ids.contains(&TaskId::Phase2Performance));
         assert!(ids.contains(&TaskId::Phase3Performance));
         assert!(ids.contains(&TaskId::Phase4Performance));
+        assert!(ids.contains(&TaskId::Phase5Performance));
     }
 
     #[test]
@@ -427,11 +491,13 @@ mod tests {
             TaskId::Phase2Performance,
             TaskId::Phase3Performance,
             TaskId::Phase4Performance,
+            TaskId::Phase5Performance,
         ] {
             assert!(ids.contains(&expected));
         }
         assert!(!ids.contains(&TaskId::RuntimeLaunch));
         assert!(!ids.contains(&TaskId::RuntimePortable));
+        assert!(!ids.contains(&TaskId::RuntimePreview));
     }
 
     use std::collections::BTreeSet;

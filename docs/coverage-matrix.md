@@ -8,12 +8,12 @@
 | `02_positioning_and_scope.md` | 产品定位、便签模型 | AC-001、AC-026、AC-027 | `stickymd-win/{startup,platform/windows/program_dir.rs,platform/windows/single_instance.rs}` | copied Release EXE portable bootstrap + same/different-directory instance smoke PASS；full manual matrix pending |
 | `04_runtime_state_model.md` | 内部 authority | AC-009、AC-013 | `stickymd-core/src/{document,edit,selection,generation,snapshot}.rs` | core contract automated PASS；end-to-end pending |
 | `05_document_persistence.md` | 自动保存、外部修改冲突、崩溃恢复 | AC-001、AC-005..008、AC-026、AC-027、AC-030 | `stickymd-core/src/persistence.rs`; `stickymd-win/{startup,config,persistence,flow/{persistence,reconciliation,recovery,save}.rs,app/{persistence,reconciliation,recovery}_runtime.rs,platform/windows/{atomic_file,file_identity,file_watch,program_dir,single_instance}.rs}` | automated invariants + Release stage benchmark + copied portable smoke PASS；AC-030 deterministic kill-during-publish remains conditional in Phase 4 report |
-| `06_markdown_math_rendering.md` | 预览、数学、raw HTML、remote 图片 | AC-013..017 | future `stickymd-render` preview modules | rebuilt spike: 6 semantic/math tests PASS；production RaTeX painter path conditional；no production preview |
+| `06_markdown_math_rendering.md` | 预览、数学、raw HTML、remote 图片 | AC-013..017 | `stickymd-render/src/preview/*`; `stickymd-win/{preview,flow/preview.rs,app/{preview_runtime,preview_input}.rs,platform/windows/shell.rs}` | Phase 5 owned AST/native Preview automated + Release performance PASS；visual/memory manual NOT TESTED；RaTeX/image decode deferred |
 | `07_editor_and_ime.md` | 源码输入、中文输入法、Undo/Redo | AC-002、AC-003、AC-004、AC-009、AC-022 | `stickymd-render/src/source/*`; `stickymd-win/{instruction,flow,interaction}` | automated pipeline PASS；AC-003/004 real IME NOT TESTED |
 | `08_assets_and_export.md` | 图片粘贴、managed GC、导出 | AC-010、AC-011、AC-012、AC-017、AC-018 | future asset subsystem | contract only |
 | `09_windows_shell.md` | dock、托盘、置顶、透明度、主题、多显示器 | AC-019..029 | Phase 4 dev shell + Windows adapters; future product shell | second-instance wake and persistence safety UI implemented；DPI/dock/tray/opacity remain out of Phase 4 |
-| `10_performance_reliability.md` | 质量属性 | AC-022、空闲/内存观察 | core benchmark + Phase 1/3 baselines | Source shell WS median 31.57 MiB；1 MiB ordinary command worst p95 1.567 ms，newline 1.534 ms；exceptional full resync p95 53.227 ms；real IME NOT TESTED |
-| `11_testing_and_release.md` | 逐阶段验证、发布形态 | `phase-00.md`..`phase-04.md`、release 验收清单 | `stickymd-smoke`; `tools/smoke/*.ps1`; Windows CI | Rust 合并任务图 + 稳定逐 Phase 入口已实现；人工门见各 Phase 矩阵 |
+| `10_performance_reliability.md` | 质量属性 | AC-022、空闲/内存观察 | core/source/preview Release baselines | Preview warm total p95: 20 KiB 13.240 ms、100 KiB 87.570 ms、1 MiB 824.282 ms；Preview/Split memory and idle CPU NOT TESTED |
+| `11_testing_and_release.md` | 逐阶段验证、发布形态 | `phase-00.md`..`phase-05.md`、release 验收清单 | `stickymd-smoke`; `tools/smoke/*.ps1`; Windows CI | Rust 合并任务图 + Phase 0–5 稳定入口已实现；人工门见各 Phase 矩阵 |
 
 ---
 

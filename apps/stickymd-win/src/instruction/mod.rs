@@ -4,4 +4,4 @@
 
 mod intent;
 
-pub use intent::{AppIntent, PersistenceIntent, SaveReason};
+pub use intent::{AppIntent, PersistenceIntent, PreviewIntent, SaveReason};

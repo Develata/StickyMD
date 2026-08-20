@@ -7,6 +7,7 @@ description = "StickyMD rendering projection: owned Markdown AST, render tree, l
 
 [dependencies]
 stickymd-core = { path = "../stickymd-core", version = "0.1.0" }
+comrak.workspace = true
 cosmic-text.workspace = true
 tiny-skia.workspace = true
 unicode-script.workspace = true

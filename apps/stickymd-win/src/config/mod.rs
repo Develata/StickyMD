@@ -4,4 +4,6 @@
 
 mod runtime;
 
-pub use runtime::{ConfigStorageError, ConfigWarning, RuntimeConfig, load_config, save_config};
+pub use runtime::{
+    ConfigStorageError, ConfigWarning, RuntimeConfig, ThemeMode, ViewMode, load_config, save_config,
+};

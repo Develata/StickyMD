@@ -6,13 +6,15 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::runner::RuntimeScenario;
+
 const START_TIMEOUT: Duration = Duration::from_secs(10);
 const EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub(crate) fn run(repository: &Path, portable: bool) -> Result<(), String> {
+pub(crate) fn run(repository: &Path, scenario: RuntimeScenario) -> Result<(), String> {
     let root = create_smoke_root()?;
     let mut children = Vec::new();
-    let result = run_inner(repository, &root, portable, &mut children);
+    let result = run_inner(repository, &root, scenario, &mut children);
     stop_children(&mut children);
     let cleanup = cleanup_root(&root);
     match (result, cleanup) {
@@ -25,7 +27,7 @@ pub(crate) fn run(repository: &Path, portable: bool) -> Result<(), String> {
 fn run_inner(
     repository: &Path,
     root: &Path,
-    portable: bool,
+    scenario: RuntimeScenario,
     children: &mut Vec<Child>,
 ) -> Result<(), String> {
     let source = repository.join("target/release/stickymd-win.exe");
@@ -37,11 +39,26 @@ fn run_inner(
     }
     let first_dir = root.join("first");
     let first_exe = copy_executable(&source, &first_dir)?;
+    if scenario == RuntimeScenario::Preview {
+        prepare_preview_layout(&first_dir, "preview")?;
+    }
     children.push(start(&first_exe)?);
     wait_for_layout(&first_dir)?;
     ensure_alive(&mut children[0], "first portable instance")?;
 
-    if !portable {
+    if scenario == RuntimeScenario::Launch {
+        return Ok(());
+    }
+
+    if scenario == RuntimeScenario::Preview {
+        let second_dir = root.join("split");
+        let second_exe = copy_executable(&source, &second_dir)?;
+        prepare_preview_layout(&second_dir, "split")?;
+        children.push(start(&second_exe)?);
+        wait_for_layout(&second_dir)?;
+        thread::sleep(Duration::from_millis(500));
+        ensure_alive(&mut children[0], "Preview-mode portable instance")?;
+        ensure_alive(&mut children[1], "Split-mode portable instance")?;
         return Ok(());
     }
 
@@ -67,6 +84,34 @@ fn run_inner(
     wait_for_layout(&second_dir)?;
     ensure_alive(&mut children[0], "first portable instance")?;
     ensure_alive(&mut children[1], "different-directory portable instance")?;
+    Ok(())
+}
+
+fn prepare_preview_layout(program_directory: &Path, view_mode: &str) -> Result<(), String> {
+    let note_directory = program_directory.join("note");
+    fs::create_dir(&note_directory).map_err(|error| {
+        format!(
+            "cannot create preview smoke note directory {}: {error}",
+            note_directory.display()
+        )
+    })?;
+    let fixture = concat!(
+        "# StickyMD Preview Smoke\n\n",
+        "中文 **粗体** and *italic* with [safe link](https://example.com).\n\n",
+        "> quote\n\n- [x] task\n\n",
+        "| left | right |\n| :--- | ---: |\n| A | B |\n\n",
+        "`inline` and $x^2$\n\n",
+        "![remote placeholder](https://example.invalid/no-fetch.png)\n\n",
+        "<script>throw new Error('must remain literal')</script>\n\n",
+        "<iframe src=\"https://example.invalid/must-not-load\"></iframe>\n"
+    );
+    fs::write(note_directory.join("note.md"), fixture)
+        .map_err(|error| format!("cannot seed preview smoke note: {error}"))?;
+    fs::write(
+        note_directory.join("config.toml"),
+        format!("version = 1\nview_mode = \"{view_mode}\"\n"),
+    )
+    .map_err(|error| format!("cannot seed preview smoke config: {error}"))?;
     Ok(())
 }
 

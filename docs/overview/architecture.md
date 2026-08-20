@@ -61,7 +61,19 @@ winit event
 IME preedit 只存在于 editor session 和视觉投影，commit 才产生一次 canonical delta。
 Phase 4 已把该调用链接入有界 I/O worker、650 ms autosave、guarded atomic publish、
 recovery 与外部文件 reconciliation；磁盘仍只是 durable representation，不能绕过
-`DocumentState` 成为运行时文本权威。真实微软拼音/微信输入法人工验收仍为 NOT TESTED。
+`DocumentState` 成为运行时文本权威。Phase 5 新增的预览链为：
+
+```text
+DocumentSnapshot
+  → lazy bounded Preview worker
+  → transient Comrak Arena
+  → OwnedDocumentTree → RenderTree
+  → cosmic-text layout → tiny-skia viewport frame
+```
+
+预览选择是只读 clipboard projection；链接必须经 typed intent 与 coordinator 校验后才到
+Windows Shell adapter。真实 Preview 视觉/内存以及微软拼音/微信输入法人工验收仍为
+NOT TESTED。
 
 ## 技术方向（已批准；按已实现切片分别验证）
 
@@ -70,7 +82,8 @@ Rust · winit · cosmic-text · tiny-skia · softbuffer · Comrak · RaTeX · �
 禁止：WebView / Electron / Tauri / JS / 通用 async runtime / 数据库 / 网络
 ```
 
-当前生产切片使用前五项中的 Source/窗口链路；Comrak/RaTeX 仍只处于独立 spike。
+当前生产切片已使用 Comrak 建立 owned semantic/native Preview foundation；RaTeX 仍只处于
+独立 spike，Phase 5 公式只保留 Comrak 语义与原文 placeholder，不冒充正式公式排版。
 `arrayref` yanked 风险已由刷新后的 registry index 与 fresh-lock 复核证伪；RaTeX 的
 剩余条件风险是正式热路径 painter/API 尚未验证，不得把 PNG spike 等同于生产集成。
 

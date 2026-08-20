@@ -150,6 +150,14 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
                 selection,
                 timestamp_ms,
             } => self.paste(expected_generation, selection, timestamp_ms),
+            AppIntent::WriteClipboard { text } => {
+                if text.is_empty() {
+                    Ok(AppEffect::NoOp)
+                } else {
+                    self.clipboard.write_text(&text)?;
+                    Ok(AppEffect::ClipboardWritten)
+                }
+            }
         }
     }
 

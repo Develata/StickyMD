@@ -19,6 +19,8 @@ allow = [
     "CC0-1.0",
     "MIT",
     "Unicode-3.0",
+    # finl_unicode bundles Unicode data under this OSI-approved data/software license.
+    "Unicode-DFS-2016",
     "Zlib",
 ]
 confidence-threshold = 0.8

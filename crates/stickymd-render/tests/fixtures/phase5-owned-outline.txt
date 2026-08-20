@@ -1,0 +1,8 @@
+heading:1[text]
+paragraph[text,strong[text],text,emphasis[text],text,strike[text],text,code,text,link:https[text],text,image:local-relative,text,math:inline,text]
+quote[paragraph[text]]
+list:unordered[checked[paragraph[text]],unchecked[paragraph[text]]]
+table:2x2
+code:rust
+math:display
+html:block
