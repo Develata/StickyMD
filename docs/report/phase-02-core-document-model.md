@@ -95,3 +95,33 @@ roundtrip；非 boundary delta 恒被拒绝且状态不变。
 Phase 2 目标全部完成：核心文档模型已按 plan 04/05/07 契约实现并通过
 43 个测试与 fmt/clippy 门禁。建议下一步进入 Phase 3（Execution Domain
 持久化接入 / Flow Coordination 骨架，由 USER 指定）。
+
+---
+
+## Phase 3 Preflight Release Baseline
+
+Measured during Phase 3 preflight（`cargo bench -p stickymd-core
+--bench release_baseline`，release/bench profile，Phase 2 commit `4018a83`
+之上；确定性 fixture，warm-up 与 setup 不计入，edit 类 n=1000、
+snapshot/undo/redo n=200，机器：本机 Windows 11 x64）。
+
+| 操作 | 20 KiB (23 779 B) median / p95 / max | 100 KiB (105 698 B) | 1 MiB (1 051 873 B) |
+| --- | --- | --- | --- |
+| append | 100 ns / 200 ns / 18.8 µs | 100 ns / 200 ns / 2.2 µs | 100 ns / 200 ns / 30.9 µs |
+| middle insert | 300 ns / 300 ns / 400 ns | 1.2 µs / 1.3 µs / 8.2 µs | 10.5 µs / 12.8 µs / 161.4 µs |
+| middle delete | 200 ns / 300 ns / 10.4 µs | 1.1 µs / 1.2 µs / 8.2 µs | 11.0 µs / 11.7 µs / 30.7 µs |
+| snapshot | 500 ns / 500 ns / 10.8 µs | 2.7 µs / 2.9 µs / 52.6 µs | 441.6 µs / 591.3 µs / 795.7 µs |
+| undo | 300 ns / 400 ns / 2.5 µs | 1.1 µs / 1.2 µs / 10.2 µs | 12.4 µs / 15.8 µs / 39.9 µs |
+| redo | 200 ns / 300 ns / 300 ns | 1.0 µs / 1.1 µs / 9.3 µs | 11.9 µs / 12.8 µs / 46.5 µs |
+
+### StringTextStore Gate
+
+要求：1 MiB common edit（append / middle insert / middle delete）p95 < 50 ms。
+实测最差 p95 = 12.8 µs，约 4 个数量级的裕量。
+
+```text
+StringTextStore Phase 3 Gate: PASS
+```
+
+说明：snapshot 为全文 `Arc<str>` 复制（1 MiB p95 ≈ 0.59 ms），属预期成本；
+本节仅补 Release 基线，不改变上文 debug 数字与既有结论。

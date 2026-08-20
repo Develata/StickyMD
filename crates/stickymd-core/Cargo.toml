@@ -7,3 +7,7 @@ description = "StickyMD platform-independent core: document model, persistence c
 
 [dependencies]
 thiserror.workspace = true
+
+[[bench]]
+name = "release_baseline"
+harness = false
