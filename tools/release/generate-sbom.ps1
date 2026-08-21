@@ -13,6 +13,10 @@ $SyftVersion = '1.50.0'
 $SyftArchiveSha256 = '815ee6973ec5dff6a671d7f41b0e78835a8c45b91d5a39f4743ea1cee833d3be'
 $SyftChecksumsSha256 = 'bb8824a06c27c625fc103db5d7e9d7131ba2cc6e7c7a79318ee71686ede3c3f0'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+$workspaceManifest = Get-Content -LiteralPath (Join-Path $repoRoot 'Cargo.toml') -Raw
+$versionMatch = [regex]::Match($workspaceManifest, '(?m)^version\s*=\s*"([^"]+)"\s*$')
+if (-not $versionMatch.Success) { throw 'Cannot read workspace version from Cargo.toml' }
+$workspaceVersion = $versionMatch.Groups[1].Value
 if (-not $PackageDirectory) { $PackageDirectory = Join-Path $repoRoot 'dist' }
 $PackageDirectory = [IO.Path]::GetFullPath($PackageDirectory)
 if (-not $ZipPath) {
@@ -59,7 +63,7 @@ try {
     try {
         $env:SYFT_FILE_METADATA_SELECTION = 'all'
         $env:SYFT_CHECK_FOR_APP_UPDATE = 'false'
-        & $SyftPath "dir:$context" '--output' "spdx-json=$OutputPath"
+        & $SyftPath "dir:$context" '--source-name' 'StickyMD' '--source-version' $workspaceVersion '--output' "spdx-json=$OutputPath"
         if ($LASTEXITCODE -ne 0) { throw "Syft $SyftVersion failed with exit code $LASTEXITCODE" }
     } finally {
         $env:SYFT_FILE_METADATA_SELECTION = $previousFileSelection
