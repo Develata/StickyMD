@@ -123,6 +123,29 @@ pub(crate) fn prepare_temporary(
     flush_windows_handle(&file).map_err(AtomicPublishError::TempFlush)
 }
 
+/// Create, write and flush a caller-selected temporary path only if it does
+/// not already exist. This gives export cleanup a proof that the path belongs
+/// to the current invocation; canonical note recovery deliberately continues
+/// to use the fixed truncate-capable temporary above.
+pub(crate) fn prepare_temporary_exclusive(
+    target: &Path,
+    temporary: &Path,
+    bytes: &[u8],
+) -> Result<(), AtomicPublishError> {
+    if target.parent() != temporary.parent() {
+        return Err(AtomicPublishError::DifferentDirectories);
+    }
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(temporary)
+        .map_err(AtomicPublishError::TempCreate)?;
+    file.write_all(bytes)
+        .map_err(AtomicPublishError::TempWrite)?;
+    file.flush().map_err(AtomicPublishError::TempFlush)?;
+    flush_windows_handle(&file).map_err(AtomicPublishError::TempFlush)
+}
+
 /// Publish a previously flushed temporary file without any fallback retry.
 pub(crate) fn publish_prepared(target: &Path, temporary: &Path) -> Result<(), AtomicPublishError> {
     if target
@@ -320,6 +343,20 @@ mod tests {
         assert!(publish_prepared_new(&target, &temporary).is_err());
         assert_eq!(fs::read(&target).unwrap(), b"external");
         assert_eq!(fs::read(&temporary).unwrap(), b"local");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exclusive_export_temporary_never_truncates_a_preexisting_file() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let target = root.join("copy.md");
+        let temporary = root.join(".stickymd-export-existing.tmp");
+        fs::write(&temporary, b"user evidence").unwrap();
+        let result = prepare_temporary_exclusive(&target, &temporary, b"new export");
+        assert!(matches!(result, Err(AtomicPublishError::TempCreate(_))));
+        assert_eq!(fs::read(&temporary).unwrap(), b"user evidence");
+        assert!(!target.exists());
         fs::remove_dir_all(root).unwrap();
     }
 

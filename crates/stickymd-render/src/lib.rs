@@ -8,6 +8,7 @@
 //! mutate the canonical `DocumentState`.
 #![forbid(unsafe_code)]
 
+pub mod image;
 mod math;
 pub mod preview;
 pub mod source;

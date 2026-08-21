@@ -32,6 +32,7 @@ StickyMD must never automatically delete a file that it cannot prove it owns.
 
 ---
 
+<a id="managed-vs-user-asset"></a>
 ## Managed vs User Asset
 
 ### Managed asset（程序可自动移动/删除）
@@ -39,10 +40,17 @@ StickyMD must never automatically delete a file that it cannot prove it owns.
 文件名匹配：
 
 ```text
-stickymd-<20-hex>.<supported-ext>
+stickymd-<20|32|64-lowercase-hex>.<png|jpg|webp|gif>
 ```
 
-且位于 `./note/images/` 或 `./note/.trash/`。两者同时满足才是 managed。
+并且必须同时满足：
+
+1. 文件位于 canonical `./note/images/` 或 `./note/.trash/` 直属目录；
+2. 目录与文件均不是 reparse point，文件是普通文件；
+3. 对文件实际 bytes 计算的完整 SHA-256 以前述文件名 hash 部分开头。
+
+四项共同构成 managed ownership proof。名称相似、位置相同但内容 hash 不匹配的
+文件一律视为用户/不可信文件，StickyMD 不得自动移动或删除。
 
 ### User asset（用户手工放入）
 
@@ -60,6 +68,7 @@ stickymd-<20-hex>.<supported-ext>
 
 ---
 
+<a id="paste"></a>
 ## 粘贴
 
 ### 剪贴板检测优先级（Windows）
@@ -78,13 +87,15 @@ stickymd-<20-hex>.<supported-ext>
 
 ### 命名与去重
 
-对最终写盘 bytes 计算 SHA-256，取前 20 个 hex：
+对最终写盘 bytes 计算 SHA-256，优先取前 20 个 hex：
 
 ```text
 images/stickymd-7c9a0d7f8139e921a3f4.png
 ```
 
-相同 bytes 不重复写文件；复用现有文件；同名文件在 `.trash` 时先恢复。
+相同 bytes 不重复写文件；复用现有文件；同名且 ownership proof 成立的文件在
+`.trash` 时先恢复。若 20 hex 名称已被不同内容占用，依次扩展为 32、64 hex；
+不得覆盖碰撞文件。
 
 ### Markdown 插入
 
@@ -105,6 +116,8 @@ images/stickymd-7c9a0d7f8139e921a3f4.png
 - literal 存在即视为引用（即使在 code block 中，宁可暂时保留）。
 - 不允许因 parser 边界判断错误而误删图片。
 - 完整 AST 只用于 preview 与 export。
+- 每次文本 delta 只重扫编辑点两侧一个最大 managed 名称长度的窗口，更新
+  DocumentState 内的保守计数；不在每次按键全量扫描文档。
 
 ### 逻辑删除
 
@@ -127,9 +140,23 @@ note/images/stickymd-x.png → note/.trash/stickymd-x.png
 undo 在实际 move 前发生：可取消未执行的 move，或按队列顺序先 move 后 restore；
 **最终状态必须与最新 DocumentState 一致**。
 
+资产操作与物理删除必须再满足以下时序约束：
+
+- 后台 request 使用独立单调 `request_id`；`generation` 只表达文档版本，不能代替
+  request identity。旧回执不得满足同 generation 的新退出/清理请求。
+- 运行期 reconcile 只允许 active/trash 之间的可逆移动，不永久删除。
+- 启动完成前与正常退出时才形成 destructive safe boundary。此时必须持有 canonical
+  `note.md` 的稳定只读句柄，验证实际 durable bytes 指纹仍等于协调层给出的 base
+  fingerprint，并以 durable 文本与最新 runtime 文本引用集合的并集执行保守 GC。
+- 指纹未知、不匹配、文件被替换或不能取得稳定句柄时，物理删除必须降级为 deferred；
+  只做非破坏性 reconcile，不得把不确定性解释为“无引用”。
+- 一个较新的普通 runtime reconcile 会使尚未执行的旧 safe-boundary 请求失效；只有
+  最新显式 safe-boundary request 可以物理删除。
+
 ### 正常退出清理
 
-等待所有资产操作 → 重扫最新内存文本 → 只删除确认无引用的 managed trash →
+等待所有粘贴与资产操作 → 保存并确认最新文档 durable fingerprint → 在上述 safe boundary
+重扫 durable 与最新内存文本 → 只删除确认无引用的 managed trash →
 被引用的 managed 文件恢复到 `images/` → 用户文件永不删除。
 
 ### 异常退出后的启动清理
@@ -144,13 +171,29 @@ undo 在实际 move 前发生：可取消未执行的 move，或按队列顺序�
 6. `images/` 中未引用的 managed 文件 → 移入 `.trash`，再按安全策略清理。
 7. 用户文件不动。
 
+目录根与每个 managed source 必须分别证明：`note/`、`images/`、`.trash/` 是 canonical
+note 下的普通目录且不是 reparse point；源文件通过打开的普通文件句柄校验 bytes 与完整
+SHA-256，并由该句柄执行受约束 rename/delete。目标根在操作期间保持稳定句柄，任何 root
+替换、reparse 或 full-digest 不一致都 fail closed。相同 hash prefix 但完整 digest 不同的
+active/trash 文件不得互相覆盖或删除。
+
 ---
+
+<a id="local-image-read-boundary"></a>
+## 本地图片只读边界
+
+Preview 与 Export 只通过 app execution-domain resolver 解释 Comrak 给出的 local image
+destination。相对路径以 `note/` 为基准；绝对路径、`../`、percent-encoded 路径及 `file:`
+路径只用于显式读取，绝不因此获得 managed ownership 或写入权限。Preview 的全局布局阶段
+只打开 seekable reader 读取格式与尺寸元数据；只有图片进入 viewport 上下 300 DIP 邻域后，
+才读取完整 bounded encoded bytes、计算内容哈希并解码缩放 raster。
 
 ## Remote 图片
 
 HTTP/HTTPS 图片：不发起网络请求、不下载、不缓存；Preview 显示 alt text + 可点击链接；
 导出保留原 URL。程序默认无网络依赖。
 
+<a id="image-safety-limits"></a>
 ## 图片安全限制
 
 | 限制 | 值 |
@@ -163,8 +206,18 @@ HTTP/HTTPS 图片：不发起网络请求、不下载、不缓存；Preview 显�
 
 导出可复制超限原文件，但预览不解码。
 
+所有尺寸乘法必须 checked；解码前先检查 encoded size 与 metadata dimensions。
+解码 cache 只保存 viewport 及上下 300 DIP 邻域需要的缩放 raster，按实际 RGBA
+bytes + 保守固定 entry metadata 估值计费，并以 16 MiB LRU 与 512-entry 双重上限
+约束内存。被当前 layout chunk 引用的 raster 仍属于 live cache bytes：LRU 不能只移除
+map entry 后让外部 `Arc` 逃逸预算；预算不足时后续图片保持 placeholder，直到旧 layout
+释放并允许淘汰。替换 layout 前先释放旧 raster leases。
+远程图片只产生占位符与安全链接，
+任何 Preview 路径均不得发起网络请求。
+
 ---
 
+<a id="export"></a>
 ## 导出（Ctrl+Shift+S）
 
 - UI 名称：**导出**（不是“另存为”）。
@@ -184,6 +237,13 @@ D:\Export\my-note-assets\
 - raw HTML 原样保留在 Markdown。
 - 不导出：配置、`.trash`、未引用 managed 图片。
 - 不生成 HTML/PDF。
+- 导出引用集合只来自 Comrak/Owned AST 的真实 Image 节点；code/raw HTML 中的
+  类似文本不算图片引用。Markdown 不做整篇重新序列化，只对 Image 节点 source
+  range 做互不重叠、逆序应用的局部替换。reference-style 图片 occurrence 可以
+  规范化为 inline image，但共享 reference definition 与普通链接不得被改写。
+- 先在 StickyMD 独占 staging 目录构建并验证 assets，再发布 assets 目录，最后
+  原子发布 Markdown；清理只限本次拥有的 staging。若目标 assets 目录已存在，
+  选择 `-2` 等不冲突名称，不覆盖用户目录。
 
 ---
 
@@ -197,6 +257,7 @@ images/.trash 存储事实。
 managed 文件、TextDelta+AssetEffect 协调结果、`.trash` 事务、预览位图、导出目录或
 typed failure。
 
+<a id="state-changes"></a>
 ## State Changes
 
 资产写入成功后才允许提交 Markdown 引用；引用从 1→0 只产生受约束的 managed trash

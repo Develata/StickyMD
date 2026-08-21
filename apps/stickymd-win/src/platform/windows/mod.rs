@@ -4,8 +4,10 @@
 
 pub(crate) mod atomic_file;
 mod clipboard;
+pub(crate) mod export_dialog;
 pub(crate) mod file_identity;
 pub(crate) mod file_watch;
+pub(crate) mod managed_file;
 pub(crate) mod message_box;
 pub(crate) mod program_dir;
 pub(crate) mod shell;

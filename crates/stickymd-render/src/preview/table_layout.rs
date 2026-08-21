@@ -4,6 +4,7 @@
 
 use cosmic_text::{Align, FontSystem, Metrics};
 
+use crate::image::{DecodedImageCache, PreviewImageSource};
 use crate::math::MathEngine;
 use crate::source::FontSelection;
 
@@ -29,6 +30,9 @@ pub(super) fn layout_table(
     selection_text: &mut String,
     formula_count: &mut usize,
     theme: super::PreviewTheme,
+    image_source: Option<&dyn PreviewImageSource>,
+    image_cache: &mut DecodedImageCache,
+    image_band: (f32, f32),
 ) -> BlockBuild {
     let columns = table
         .rows
@@ -79,6 +83,9 @@ pub(super) fn layout_table(
                 selection_text,
                 formula_count,
                 theme,
+                image_source,
+                image_cache,
+                image_band,
             );
             row_height = row_height.max(built.height + cell_padding * 2.0);
             boxes.extend(built.boxes);

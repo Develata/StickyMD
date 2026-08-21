@@ -5,6 +5,8 @@
 //! Every value in this module is derived from an immutable `DocumentSnapshot`.
 //! No preview type exposes a source mutation or persistence API.
 
+mod export;
+mod image_layout;
 mod layout;
 mod math_layout;
 mod model;
@@ -15,7 +17,12 @@ mod render_tree;
 mod selection;
 mod source_map;
 mod table_layout;
+mod text_layout;
 
+pub use export::{
+    ExportProjectionError, ImageOccurrence, ImageRewrite, collect_image_occurrences,
+    rewrite_image_occurrences,
+};
 pub use model::{
     BlockNode, CodeBlockNode, ImageKind, InlineNode, LinkKind, ListItem, ListNode, MathNode,
     OwnedDocumentTree, SourceRange, TableAlignment, TableCell, TableNode, TableRow,

@@ -13,6 +13,7 @@
 //! through typed intents (see `docs/plan/04`).
 #![forbid(unsafe_code)]
 
+mod assets;
 mod document;
 mod edit;
 mod error;
@@ -25,6 +26,10 @@ mod snapshot;
 mod text_store;
 mod undo;
 
+pub use assets::{
+    AssetEffect, MAX_MANAGED_ASSET_NAME_BYTES, ManagedAssetExtension, ManagedAssetLocation,
+    ManagedAssetName, scan_managed_asset_references,
+};
 pub use document::DocumentState;
 pub use edit::{EditKind, EditMeta, EditOutcome, EditRequest, RedoOutcome, TextDelta, UndoOutcome};
 pub use error::DocumentError;

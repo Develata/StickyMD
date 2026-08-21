@@ -22,5 +22,10 @@
 | [`phase-04-portable-persistence.md`](phase-04-portable-persistence.md) | Phase 4 portable persistence 结果与收据 | automated/portable PASS；manual conditions open |
 | [`phase-05-dependency-delta.md`](phase-05-dependency-delta.md) | Phase 5 Comrak 依赖增量审计 | audited |
 | [`phase-05-markdown-native-preview.md`](phase-05-markdown-native-preview.md) | Phase 5 Markdown/native Preview 结果与收据 | automated PASS；manual conditions open |
+| [`phase-06-dependency-delta.md`](phase-06-dependency-delta.md) | Phase 6 RaTeX 依赖增量审计 | exact-pinned and audited |
+| [`phase-06-ratex-native-math.md`](phase-06-ratex-native-math.md) | Phase 6 native math 结果与收据 | automated PASS；manual conditions open |
+| [`phase-07-dependency-delta.md`](phase-07-dependency-delta.md) | Phase 7 image/clipboard 依赖增量审计 | minimal codec graph audited |
+| [`phase-07-windows-clipboard-formats.md`](phase-07-windows-clipboard-formats.md) | Phase 7 Windows clipboard 格式审计 | adapter automated；real sources NOT TESTED |
+| [`phase-07-managed-images-export.md`](phase-07-managed-images-export.md) | Phase 7 managed image/export 结果与收据 | automated PASS；manual conditions open |
 | [`phase-verification-harness-architecture.md`](phase-verification-harness-architecture.md) | 逐阶段 smoke 与矩阵治理决策 | USER approved；落实到 plan 11 |
 | [`RISK-ttf-parser-unmaintained.md`](RISK-ttf-parser-unmaintained.md) | 字体解析依赖维护风险 | exact advisory temporarily acknowledged |

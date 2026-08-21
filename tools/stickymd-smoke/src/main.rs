@@ -8,6 +8,8 @@ mod process_metrics;
 mod runner;
 #[cfg(windows)]
 mod runtime;
+#[cfg(windows)]
+mod window_control;
 
 fn main() {
     if let Err(error) = run() {

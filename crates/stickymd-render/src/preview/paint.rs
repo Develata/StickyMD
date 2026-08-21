@@ -168,6 +168,28 @@ pub(super) fn paint_document(
                         );
                     }
                 }
+                LayoutContent::Image(raster) => {
+                    if let Some(source) =
+                        PixmapRef::from_bytes(&raster.rgba, raster.width, raster.height)
+                    {
+                        pixmap.draw_pixmap(
+                            origin_x,
+                            origin_y,
+                            source,
+                            &PixmapPaint::default(),
+                            Transform::identity(),
+                            None,
+                        );
+                    }
+                }
+                LayoutContent::ImagePlaceholder { width, height } => fill_rect(
+                    &mut pixmap,
+                    origin_x as f32,
+                    origin_y as f32,
+                    *width as f32,
+                    *height as f32,
+                    palette.code,
+                ),
             }
         }
     }
@@ -374,7 +396,7 @@ mod tests {
     use stickymd_core::{DocumentSnapshot, Generation, LineEnding};
 
     use super::*;
-    use crate::preview::layout::layout_document;
+    use crate::preview::layout::{LayoutResources, layout_document};
     use crate::preview::{PreviewParser, RenderTreeBuilder};
     use crate::source::FontSelection;
 
@@ -389,9 +411,14 @@ mod tests {
         let mut font_system = FontSystem::new();
         let fonts = FontSelection::resolve(&mut font_system);
         let layout = layout_document(
-            &mut font_system,
-            &fonts,
-            &mut crate::math::MathEngine::new(),
+            LayoutResources {
+                font_system: &mut font_system,
+                fonts: &fonts,
+                math_engine: &mut crate::math::MathEngine::new(),
+                image_source: None,
+                image_cache: &mut crate::image::DecodedImageCache::default(),
+                image_band: (0.0, f32::MAX),
+            },
             &tree,
             520,
             1.0,

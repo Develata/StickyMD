@@ -20,3 +20,4 @@ ratex-unicode-font.workspace = true
 unicode-script.workspace = true
 unicode-segmentation.workspace = true
 thiserror.workspace = true
+image.workspace = true

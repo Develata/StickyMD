@@ -1,0 +1,222 @@
+//! Attributed paragraph shaping and selection-box projection.
+//!
+//! plan_ref: docs/plan/06_markdown_math_rendering.md#native-preview-layout
+
+use std::ops::Range;
+
+use cosmic_text::{
+    Align, Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, UnderlineStyle, Weight, Wrap,
+};
+
+use crate::source::{FontSelection, ScriptClass, segment_script_runs};
+
+use super::layout::{ChunkBuild, LayoutChunk, LayoutContent};
+use super::{PreviewRect, PreviewTextBox, RenderSpan, RenderStyle, SpanAction};
+
+#[derive(Debug, Clone)]
+struct Segment {
+    visual_range: Range<usize>,
+    selection_range: Range<usize>,
+    source_range: Option<super::SourceRange>,
+    action: Option<SpanAction>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn make_text_chunk(
+    font_system: &mut FontSystem,
+    fonts: &FontSelection,
+    spans: &[RenderSpan],
+    x: f32,
+    y: f32,
+    width: f32,
+    metrics: Metrics,
+    align: Align,
+    wrap: Wrap,
+    selection_text: &mut String,
+) -> ChunkBuild {
+    let mut visual = String::new();
+    let mut attributed = Vec::new();
+    let mut segments = Vec::with_capacity(spans.len());
+    for (index, span) in spans.iter().enumerate() {
+        let visual_start = visual.len();
+        visual.push_str(&span.text);
+        let visual_end = visual.len();
+        let selection_start = selection_text.len();
+        selection_text.push_str(&span.copy_text);
+        let selection_end = selection_text.len();
+        segments.push(Segment {
+            visual_range: visual_start..visual_end,
+            selection_range: selection_start..selection_end,
+            source_range: span.source_range,
+            action: span.action.clone(),
+        });
+        append_attributed_runs(
+            &visual,
+            visual_start..visual_end,
+            index + 1,
+            span.style,
+            metrics,
+            fonts,
+            &mut attributed,
+        );
+    }
+    if visual.is_empty() {
+        visual.push(' ');
+        attributed.push((0..1, Attrs::new().metrics(metrics)));
+    }
+
+    let mut buffer = Buffer::new(font_system, metrics);
+    buffer.set_size(Some(width), None);
+    buffer.set_wrap(wrap);
+    let default = Attrs::new().family(Family::Serif).metrics(metrics);
+    buffer.set_rich_text(
+        attributed
+            .iter()
+            .map(|(range, attrs)| (&visual[range.clone()], attrs.clone())),
+        &default,
+        Shaping::Advanced,
+        Some(align),
+    );
+    buffer.shape_until_scroll(font_system, false);
+    let height = buffer
+        .layout_runs()
+        .map(|run| run.line_top + run.line_height)
+        .fold(metrics.line_height, f32::max);
+    let boxes = boxes_for_buffer(&buffer, &segments, x, y);
+    ChunkBuild {
+        chunks: vec![LayoutChunk {
+            content: LayoutContent::Text(buffer),
+            x,
+            y,
+        }],
+        height,
+        boxes,
+        decorations: Vec::new(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_attributed_runs(
+    visual: &str,
+    range: Range<usize>,
+    metadata: usize,
+    style: RenderStyle,
+    metrics: Metrics,
+    fonts: &FontSelection,
+    output: &mut Vec<(Range<usize>, Attrs<'static>)>,
+) {
+    let text = &visual[range.clone()];
+    if text.is_empty() {
+        return;
+    }
+    if style.code || style.math_placeholder || style.html_literal {
+        output.push((
+            range,
+            styled_attrs(Family::Monospace, metadata, style, metrics),
+        ));
+        return;
+    }
+    for run in segment_script_runs(text) {
+        let family = match run.class {
+            ScriptClass::Cjk => Family::Name(fonts.cjk_family),
+            ScriptClass::Latin => Family::Name(fonts.latin_family),
+        };
+        output.push((
+            (range.start + run.range.start)..(range.start + run.range.end),
+            styled_attrs(family, metadata, style, metrics),
+        ));
+    }
+}
+
+fn styled_attrs(
+    family: Family<'static>,
+    metadata: usize,
+    style: RenderStyle,
+    metrics: Metrics,
+) -> Attrs<'static> {
+    let mut attrs = Attrs::new()
+        .family(family)
+        .metadata(metadata)
+        .metrics(metrics);
+    if style.strong {
+        attrs = attrs.weight(Weight::BOLD);
+    }
+    if style.emphasis {
+        attrs = attrs.style(Style::Italic);
+    }
+    if style.strikethrough {
+        attrs = attrs.strikethrough();
+    }
+    if style.link {
+        attrs = attrs.underline(UnderlineStyle::Single);
+    }
+    attrs
+}
+
+fn boxes_for_buffer(buffer: &Buffer, segments: &[Segment], x: f32, y: f32) -> Vec<PreviewTextBox> {
+    let mut boxes = Vec::new();
+    for run in buffer.layout_runs() {
+        let mut extents = vec![None::<(f32, f32, usize, usize)>; segments.len()];
+        for glyph in run.glyphs {
+            let Some(index) = glyph.metadata.checked_sub(1) else {
+                continue;
+            };
+            let Some(extent) = extents.get_mut(index) else {
+                continue;
+            };
+            let left = glyph.x.min(glyph.x + glyph.w);
+            let right = glyph.x.max(glyph.x + glyph.w);
+            let visual_start = glyph.start.max(segments[index].visual_range.start);
+            let visual_end = glyph.end.min(segments[index].visual_range.end);
+            if visual_start >= visual_end {
+                continue;
+            }
+            *extent = Some(extent.map_or(
+                (left, right, visual_start, visual_end),
+                |(current_left, current_right, current_start, current_end)| {
+                    (
+                        current_left.min(left),
+                        current_right.max(right),
+                        current_start.min(visual_start),
+                        current_end.max(visual_end),
+                    )
+                },
+            ));
+        }
+        for (index, extent) in extents.into_iter().enumerate() {
+            let (left, right, visual_start, visual_end) = match extent {
+                Some(extent) => extent,
+                None => continue,
+            };
+            let segment = &segments[index];
+            let selection_range =
+                selection_range_for_visual_line(segment, visual_start..visual_end);
+            if selection_range.is_empty() {
+                continue;
+            }
+            boxes.push(PreviewTextBox {
+                selection_range,
+                source_range: segment.source_range,
+                rect: PreviewRect {
+                    x: x + left,
+                    y: y + run.line_top,
+                    width: (right - left).max(1.0),
+                    height: run.line_height,
+                },
+                action: segment.action.clone(),
+                tooltip: None,
+                atomic: false,
+            });
+        }
+    }
+    boxes
+}
+
+fn selection_range_for_visual_line(segment: &Segment, visual: Range<usize>) -> Range<usize> {
+    if segment.visual_range.len() != segment.selection_range.len() {
+        return segment.selection_range.clone();
+    }
+    let start = visual.start.saturating_sub(segment.visual_range.start);
+    let end = visual.end.saturating_sub(segment.visual_range.start);
+    (segment.selection_range.start + start)..(segment.selection_range.start + end)
+}

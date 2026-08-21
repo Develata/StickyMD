@@ -89,6 +89,30 @@ Comrak math node（delimiter authority）
 公式 raster 是可释放 projection；`DocumentState` 与原始 delimiter 文本仍是唯一复制/保存
 来源。错误公式显示原文与错误装饰，不修改 source，也不阻断同文档其他 block。
 
+Phase 7 在同一个 authority 模型下增加两条受限链路：
+
+```text
+Clipboard
+  → Asset paste intent
+  → single I/O worker preparation
+  → content-addressed Managed Asset Store
+  → generation-checked DocumentState reference
+  → Preview local-image resolver
+
+DocumentState canonical text
+  → conservative Asset Reference Tracker
+  → desired images/.trash state
+  → ownership-proven I/O reconciliation
+```
+
+自动 move/delete 必须同时证明 canonical managed 目录、严格文件名、普通非 reparse 文件与
+实际内容 SHA-256 前缀。物理删除还要求 durable note 指纹与稳定句柄匹配，并以 durable 与
+runtime 引用并集建立 safe boundary；否则只做可逆整理并延后删除。Preview/cache 不参与
+GC authority。图片 cache 把 layout 仍持有的 raster 计入 16 MiB live budget，不能通过移除
+map entry 隐藏 `Arc` 像素内存。远程图片仍只显示 placeholder，
+不会发起网络请求。导出从当前 immutable snapshot 出发，只重写 Comrak 识别的 image node
+source range，复制本地资源后最后原子发布 Markdown；它永远不切换工作文档。
+
 ## 技术方向（已批准；按已实现切片分别验证）
 
 ```text
@@ -96,11 +120,14 @@ Rust · winit · cosmic-text · tiny-skia · softbuffer · Comrak · RaTeX · �
 禁止：WebView / Electron / Tauri / JS / 通用 async runtime / 数据库 / 网络
 ```
 
-当前生产切片已使用 Comrak 建立 owned semantic/native Preview，并使用 RaTeX 0.1.14
+当前生产切片已使用 Comrak 建立 owned semantic/native Preview，使用 RaTeX 0.1.14
 parser/layout/font crates完成 native math projection。项目采用审计过的薄 DisplayList painter；
 `ratex-render`/PNG renderer 不进入生产依赖图。确定性 raster golden 与六场景资源矩阵已
 自动化；真实 DPI/主题视觉与同进程首次公式内存增量仍是人工 `NOT TESTED` 条件，不能从
-headless 测试推断完成。
+headless 测试推断完成。Phase 7 的 managed image、bounded decode/cache 和 portable export
+同样由 Rust smoke CLI 持有；无图片/懒加载/4K/饱和 cache 的进程资源矩阵也由 CLI 运行。
+真实 Windows 图片来源、视觉和 native dialog 仍明确
+`NOT TESTED`。
 
 ## 文档导航
 

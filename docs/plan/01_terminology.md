@@ -120,14 +120,19 @@
 
 ### Managed Asset
 
-- **Definition**：文件名匹配 `stickymd-<20-hex>.<supported-ext>` 且位于 `note/images/` 或 `note/.trash/` 的图片文件。由 StickyMD 创建并可被自动移动/删除。
-- **Authority**：文件名模式 + 位置（可证明的所有权）；“是否需要存在”的真相来自 DocumentState 中的引用状态。
+- **Definition**：位于 `note/images/` 或 `note/.trash/`、文件名严格匹配
+  `stickymd-<20|32|64-lowercase-hex>.<png|jpg|webp|gif>`，且文件实际
+  SHA-256 与文件名 hash 前缀一致的普通图片文件。
+- **Authority**：受控 canonical 目录 + 严格文件名语法 + 内容 hash 前缀一致 +
+  非 reparse 普通文件共同构成所有权证明；仅有名称或位置绝不授权自动移动/删除。
+  “是否需要存在”的真相来自 DocumentState 中的保守引用计数。
 - **Not equivalent to**：User Asset；文件系统里存在 ≠ 应该存在。
 - **Lifetime**：粘贴写入时创建；引用归零进入 trash；确认无引用后被物理删除。
 
 ### User Asset
 
-- **Definition**：用户手工放入 `note/images/` 的非 managed 文件。
+- **Definition**：用户手工放入 `note/images/` 的文件，以及任何虽然外观像 managed
+  名称、但无法通过完整所有权证明的文件。
 - **Authority**：用户。程序只能显示与导出复制，永不自动删除、移动或重命名。
 - **Not equivalent to**：Managed Asset；即使扩展名相同。
 - **Lifetime**：由用户决定。
@@ -138,6 +143,38 @@
 - **Authority**：AssetCoordinator 的事务状态；启动时以最新 DocumentState 引用为准决定去留。
 - **Not equivalent to**：已物理删除；trash 中的文件可被 undo 恢复。
 - **Lifetime**：从 move-to-trash 到确认无引用后的物理删除，或被恢复到 `images/`。
+
+### Ownership Proof
+
+- **Definition**：允许 StickyMD 自动移动/删除某个文件前必须同时成立的 canonical
+  managed 目录、严格名称、非 reparse 普通文件和实际 SHA-256 前缀一致证明。
+- **Authority**：Execution Domain 的 managed storage adapter；证明失败即视为用户/不可信文件。
+- **Not equivalent to**：文件名匹配、路径字符串匹配或 Preview 成功解码。
+- **Lifetime**：每次 destructive operation 前重新建立，不作为永久授权缓存。
+
+### Asset Reference
+
+- **Definition**：canonical DocumentState 文本中出现的严格 managed basename 字面量及其计数。
+- **Authority**：DocumentState 的保守 reference tracker；宁可 false positive 保留，禁止 false negative 删除。
+- **Not equivalent to**：Preview AST Image node；code/raw 中的字面量也会保守计数。
+- **Lifetime**：随每个 canonical edit、Undo/Redo 或外部 reload 同步更新。
+
+### Asset Reconciliation
+
+- **Definition**：从最新 canonical reference set 推导并收敛 managed 文件在 `images/`、
+  `.trash/` 或物理删除状态的过程。
+- **Authority**：AssetCoordinator 决策 + 单 I/O worker 执行 + 每次操作 Ownership Proof。
+- **Not equivalent to**：目录清空或通用 GC；用户/不可信文件永不参与 destructive path。
+- **Lifetime**：运行时只做逻辑 move；startup 与成功 normal exit 只有在 durable note
+  指纹匹配、稳定 note 句柄仍有效且 durable/runtime 引用并集确认无引用的 safe boundary
+  才允许 proof-gated 删除。不确定状态一律延后物理删除。
+
+### Export Snapshot
+
+- **Definition**：用户触发导出时从当前 DocumentState 捕获的 immutable text/generation/line-ending projection。
+- **Authority**：只定义该次导出的输入，不成为新的工作文档 authority。
+- **Not equivalent to**：最近落盘 note、Preview tree 或“另存为”后的 active document。
+- **Lifetime**：一次 export job，完成或失败后释放。
 
 ---
 

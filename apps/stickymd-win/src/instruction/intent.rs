@@ -27,7 +27,7 @@ pub enum AppIntent {
         selection: Selection,
         timestamp_ms: u64,
     },
-    PasteText {
+    PasteClipboard {
         expected_generation: Generation,
         selection: Selection,
         timestamp_ms: u64,
@@ -50,6 +50,7 @@ pub enum SaveReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PersistenceIntent {
     SaveNow(SaveReason),
+    Export,
     ResolvePrimary,
     ResolveSecondary,
     RequestQuit,

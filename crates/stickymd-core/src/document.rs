@@ -12,9 +12,13 @@
 //! 7. snapshots are immutable projections and cannot mutate this state;
 //! 8. persisted acknowledgements cannot refer to future generations.
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+use crate::assets::{
+    apply_reference_count_changes, reference_changes_after_replace, scan_managed_asset_references,
+};
 use crate::edit::{EditOutcome, RedoOutcome, TextDelta, UndoOutcome};
 use crate::selection::position_is_valid;
 use crate::text_store::{StringTextStore, TextStore, validate_range};
@@ -32,13 +36,16 @@ pub struct DocumentState {
     base_disk_hash: Option<Hash32>,
     line_ending: LineEnding,
     undo: UndoManager,
+    managed_ref_counts: HashMap<crate::ManagedAssetName, usize>,
 }
 
 impl DocumentState {
     /// Create a clean document from durable content.
     pub fn loaded(text: &str, line_ending: LineEnding, disk_hash: Option<Hash32>) -> Self {
+        let internal = LineEnding::to_internal(text);
         Self {
-            store: StringTextStore::new(LineEnding::to_internal(text)),
+            managed_ref_counts: scan_managed_asset_references(&internal),
+            store: StringTextStore::new(internal),
             generation: Generation::initial(),
             saved_generation: Generation::initial(),
             base_disk_hash: disk_hash,
@@ -85,6 +92,12 @@ impl DocumentState {
 
     pub fn can_redo(&self) -> bool {
         self.undo.can_redo()
+    }
+
+    /// Conservative managed-image literal counts owned by the canonical
+    /// document state. Callers may observe but cannot mutate them.
+    pub fn managed_ref_counts(&self) -> &HashMap<crate::ManagedAssetName, usize> {
+        &self.managed_ref_counts
     }
 
     /// Explicit O(n) immutable snapshot for workers and render projections.
@@ -134,6 +147,7 @@ impl DocumentState {
                 undo_recorded: false,
                 grouped: false,
                 delta: None,
+                asset_effects: Vec::new(),
             });
         }
 
@@ -148,13 +162,21 @@ impl DocumentState {
             request.cursor_before,
             request.cursor_after,
         );
+        let (asset_count_changes, asset_effects) = reference_changes_after_replace(
+            self.store.as_str(),
+            &delta.range,
+            &delta.inserted,
+            &self.managed_ref_counts,
+        );
 
         self.store.replace(delta.range.clone(), &delta.inserted)?;
         let record = self.undo.record(UndoEntry::new(
             delta.clone(),
             request.meta.kind,
             request.meta.timestamp_ms,
+            asset_effects.clone(),
         ));
+        apply_reference_count_changes(&mut self.managed_ref_counts, asset_count_changes);
         self.generation = next_generation;
 
         Ok(EditOutcome {
@@ -163,6 +185,7 @@ impl DocumentState {
             undo_recorded: record.recorded,
             grouped: record.grouped,
             delta: Some(delta),
+            asset_effects,
         })
     }
 
@@ -187,15 +210,28 @@ impl DocumentState {
             .generation
             .checked_next()
             .ok_or(DocumentError::GenerationExhausted)?;
+        let (asset_count_changes, _) = reference_changes_after_replace(
+            self.store.as_str(),
+            &inverse.range,
+            &inverse.inserted,
+            &self.managed_ref_counts,
+        );
 
         self.store
             .replace(inverse.range.clone(), &inverse.inserted)?;
         self.undo.commit_undo();
+        apply_reference_count_changes(&mut self.managed_ref_counts, asset_count_changes);
         self.generation = next_generation;
         Ok(UndoOutcome {
             generation: self.generation,
             cursor: inverse.cursor_after,
             delta: inverse,
+            asset_effects: entry
+                .asset_effects
+                .iter()
+                .rev()
+                .map(crate::AssetEffect::reversed)
+                .collect(),
         })
     }
 
@@ -220,15 +256,23 @@ impl DocumentState {
             .generation
             .checked_next()
             .ok_or(DocumentError::GenerationExhausted)?;
+        let (asset_count_changes, _) = reference_changes_after_replace(
+            self.store.as_str(),
+            &forward.range,
+            &forward.inserted,
+            &self.managed_ref_counts,
+        );
 
         self.store
             .replace(forward.range.clone(), &forward.inserted)?;
         self.undo.commit_redo();
+        apply_reference_count_changes(&mut self.managed_ref_counts, asset_count_changes);
         self.generation = next_generation;
         Ok(RedoOutcome {
             generation: self.generation,
             cursor: forward.cursor_after,
             delta: forward,
+            asset_effects: entry.asset_effects,
         })
     }
 
@@ -265,6 +309,7 @@ impl DocumentState {
             .checked_next()
             .ok_or(DocumentError::GenerationExhausted)?;
         self.store.replace_all(LineEnding::to_internal(text));
+        self.managed_ref_counts = scan_managed_asset_references(self.store.as_str());
         self.line_ending = line_ending;
         self.undo.clear();
         self.generation = next_generation;
@@ -286,6 +331,7 @@ impl DocumentState {
             .checked_next()
             .ok_or(DocumentError::GenerationExhausted)?;
         self.store.replace_all(LineEnding::to_internal(text));
+        self.managed_ref_counts = scan_managed_asset_references(self.store.as_str());
         self.line_ending = line_ending;
         self.undo.clear();
         self.generation = next_generation;
@@ -301,6 +347,7 @@ impl DocumentState {
             .checked_next()
             .ok_or(DocumentError::GenerationExhausted)?;
         self.store.replace_all(String::new());
+        self.managed_ref_counts.clear();
         self.line_ending = LineEnding::Crlf;
         self.undo.clear();
         self.generation = next_generation;
@@ -368,7 +415,7 @@ fn position_is_valid_after_replace(
 mod tests {
     use super::*;
     use crate::undo::{MAX_UNDO_BYTES, MAX_UNDO_ENTRIES};
-    use crate::{EditKind, EditMeta, Selection};
+    use crate::{EditKind, EditMeta, ManagedAssetLocation, Selection};
 
     fn hash(byte: u8) -> Hash32 {
         Hash32::new([byte; 32])
@@ -593,6 +640,83 @@ mod tests {
     }
 
     #[test]
+    fn managed_reference_transitions_are_coupled_to_undo_and_redo() {
+        let name = "stickymd-0123456789abcdef0123.png";
+        let markdown = format!("![](images/{name})");
+        let mut doc = DocumentState::empty(LineEnding::Lf);
+        let insert = request(
+            &doc,
+            0..0,
+            markdown.clone(),
+            CursorSnapshot::caret(0),
+            CursorSnapshot::caret(markdown.len()),
+            EditKind::Paste,
+            0,
+        );
+        let inserted = doc.edit(insert).unwrap();
+        assert_eq!(inserted.asset_effects.len(), 1);
+        assert_eq!(
+            inserted.asset_effects[0].to,
+            crate::ManagedAssetLocation::Images
+        );
+        assert_eq!(doc.managed_ref_counts().values().copied().sum::<usize>(), 1);
+
+        let undone = doc.undo().unwrap();
+        assert_eq!(undone.asset_effects.len(), 1);
+        assert_eq!(
+            undone.asset_effects[0].to,
+            crate::ManagedAssetLocation::Trash
+        );
+        assert!(doc.managed_ref_counts().is_empty());
+
+        let redone = doc.redo().unwrap();
+        assert_eq!(
+            redone.asset_effects[0].to,
+            crate::ManagedAssetLocation::Images
+        );
+        assert_eq!(doc.managed_ref_counts().values().copied().sum::<usize>(), 1);
+    }
+
+    #[test]
+    fn grouped_undo_reverses_asset_effects_in_transaction_order() {
+        let original = "stickymd-0123456789abcdef0123x.png";
+        let mut doc = DocumentState::loaded(original, LineEnding::Lf, None);
+        let suffix = original.find(".png").unwrap();
+
+        let first = request(
+            &doc,
+            suffix - 1..suffix,
+            "",
+            CursorSnapshot::caret(suffix),
+            CursorSnapshot::caret(suffix - 1),
+            EditKind::Backspace,
+            0,
+        );
+        let first = doc.edit(first).unwrap();
+        assert_eq!(first.asset_effects.len(), 1);
+        assert_eq!(first.asset_effects[0].to, ManagedAssetLocation::Images);
+
+        let second = request(
+            &doc,
+            suffix - 2..suffix - 1,
+            "",
+            CursorSnapshot::caret(suffix - 1),
+            CursorSnapshot::caret(suffix - 2),
+            EditKind::Backspace,
+            1,
+        );
+        let second = doc.edit(second).unwrap();
+        assert!(second.grouped);
+        assert_eq!(second.asset_effects[0].to, ManagedAssetLocation::Trash);
+
+        let undone = doc.undo().unwrap();
+        assert_eq!(doc.text(), original);
+        assert_eq!(undone.asset_effects.len(), 2);
+        assert_eq!(undone.asset_effects[0].to, ManagedAssetLocation::Images);
+        assert_eq!(undone.asset_effects[1].to, ManagedAssetLocation::Trash);
+    }
+
+    #[test]
     fn persisted_acknowledgement_never_marks_newer_edits_clean() {
         let mut doc = DocumentState::empty(LineEnding::Lf);
         let first = request(
@@ -722,5 +846,32 @@ mod tests {
         );
         doc.edit(edit).unwrap();
         assert_eq!(doc.text().as_bytes(), decomposed.as_bytes());
+    }
+
+    #[test]
+    fn deleting_only_one_of_multiple_managed_references_does_not_trash() {
+        let name = "stickymd-0123456789abcdef0123.png";
+        let text = format!("![](images/{name})\n\n![](images/{name})");
+        let mut document = DocumentState::loaded(&text, LineEnding::Lf, None);
+        let first_end = text.find("\n\n").unwrap();
+        let outcome = document
+            .edit(EditRequest {
+                expected_generation: document.generation(),
+                range: 0..first_end,
+                inserted: String::new(),
+                cursor_before: CursorSnapshot::caret(first_end),
+                cursor_after: CursorSnapshot::caret(0),
+                meta: EditMeta::new(EditKind::SelectionReplace, 1),
+            })
+            .unwrap();
+        assert!(outcome.asset_effects.is_empty());
+        assert_eq!(
+            document
+                .managed_ref_counts()
+                .values()
+                .copied()
+                .sum::<usize>(),
+            1
+        );
     }
 }

@@ -5,8 +5,11 @@
 
 #[cfg(windows)]
 mod app;
+mod assets;
 #[cfg(windows)]
 mod config;
+#[cfg(windows)]
+mod export;
 #[cfg(windows)]
 mod flow;
 #[cfg(windows)]
@@ -50,10 +53,35 @@ fn main() {
     if let Err(error) = paths.ensure_layout() {
         fatal_startup(&format!("无法创建便签目录：{error}"));
     }
-    let bootstrap = match bootstrap(&paths) {
+    let mut bootstrap = match bootstrap(&paths) {
         Ok(bootstrap) => bootstrap,
         Err(error) => fatal_startup(&format!("StickyMD 无法安全启动：{error}")),
     };
+    // A normal startup is a quiescent destructive-GC boundary: no editor or
+    // worker exists yet, so the reference snapshot cannot become stale while
+    // reconciliation is deleting proven unreferenced trash. Recovery choices
+    // perform the same barrier before re-enabling input.
+    if bootstrap.recovery.is_none() {
+        match assets::AssetStorage::open(&paths.images_dir, &paths.trash_dir).and_then(|storage| {
+            assets::reconcile_safe_boundary(
+                &storage,
+                &paths.note_file,
+                bootstrap.document.base_disk_hash(),
+                bootstrap.document.managed_ref_counts(),
+            )
+        }) {
+            Ok(report) if !report.missing_references.is_empty() => {
+                bootstrap.warnings.push(format!(
+                    "有 {} 个受管图片引用缺少文件；Markdown 未修改。",
+                    report.missing_references.len()
+                ))
+            }
+            Ok(_) => {}
+            Err(error) => bootstrap.warnings.push(format!(
+                "启动图片整理未完成；用户文件与文档均未删除：{error}"
+            )),
+        }
+    }
 
     let event_loop = match EventLoop::<AppEvent>::with_user_event().build() {
         Ok(event_loop) => event_loop,

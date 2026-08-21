@@ -2,13 +2,21 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-scheduling
 
+use std::fs::File;
+use std::io::{BufReader, Read};
+use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
 use stickymd_core::{DocumentSnapshot, Generation};
+use stickymd_render::image::{
+    ImageMetadata, MAX_ENCODED_IMAGE_BYTES, PreviewImageSource, inspect_image_reader,
+};
 use stickymd_render::preview::{
     PreviewFrame, PreviewPipeline, PreviewPipelineError, PreviewSelection, PreviewTheme,
 };
+
+use crate::assets::resolve_local_image;
 
 #[derive(Debug)]
 pub enum PreviewJob {
@@ -66,7 +74,7 @@ pub struct PreviewWorkerMetrics {
 #[derive(Default)]
 struct Mailbox {
     pending: Option<PreviewJob>,
-    release_math_rasters: bool,
+    release_raster_caches: bool,
     shutdown: bool,
     metrics: PreviewWorkerMetrics,
 }
@@ -91,7 +99,25 @@ pub struct PreviewWorker {
 }
 
 impl PreviewWorker {
+    #[cfg(test)]
     pub fn start<F>(on_completion: F) -> Result<Self, std::io::Error>
+    where
+        F: Fn(PreviewCompletion) + Send + Sync + 'static,
+    {
+        Self::start_inner(None, on_completion)
+    }
+
+    pub fn start_with_image_base<F>(
+        image_base: PathBuf,
+        on_completion: F,
+    ) -> Result<Self, std::io::Error>
+    where
+        F: Fn(PreviewCompletion) + Send + Sync + 'static,
+    {
+        Self::start_inner(Some(image_base), on_completion)
+    }
+
+    fn start_inner<F>(image_base: Option<PathBuf>, on_completion: F) -> Result<Self, std::io::Error>
     where
         F: Fn(PreviewCompletion) + Send + Sync + 'static,
     {
@@ -101,7 +127,7 @@ impl PreviewWorker {
         let thread = thread::Builder::new()
             .name("stickymd-preview".into())
             .stack_size(512 * 1024)
-            .spawn(move || run_worker(worker_shared, on_completion))?;
+            .spawn(move || run_worker(worker_shared, on_completion, image_base))?;
         Ok(Self {
             shared,
             thread: Some(thread),
@@ -116,11 +142,11 @@ impl PreviewWorker {
         }
     }
 
-    pub fn release_math_rasters(&self) {
+    pub fn release_raster_caches(&self) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
             mailbox.pending = None;
-            mailbox.release_math_rasters = true;
+            mailbox.release_raster_caches = true;
             ready.notify_one();
         }
     }
@@ -145,11 +171,15 @@ impl Drop for PreviewWorker {
     }
 }
 
-fn run_worker<F>(shared: Arc<(Mutex<Mailbox>, Condvar)>, on_completion: Arc<F>)
-where
+fn run_worker<F>(
+    shared: Arc<(Mutex<Mailbox>, Condvar)>,
+    on_completion: Arc<F>,
+    image_base: Option<PathBuf>,
+) where
     F: Fn(PreviewCompletion),
 {
     let mut pipeline = PreviewPipeline::new();
+    let image_source = image_base.map(LocalImageSource::new);
     loop {
         let job = {
             let (lock, ready) = &*shared;
@@ -157,7 +187,7 @@ where
                 Ok(mailbox) => mailbox,
                 Err(_) => return,
             };
-            while mailbox.pending.is_none() && !mailbox.release_math_rasters && !mailbox.shutdown {
+            while mailbox.pending.is_none() && !mailbox.release_raster_caches && !mailbox.shutdown {
                 mailbox = match ready.wait(mailbox) {
                     Ok(mailbox) => mailbox,
                     Err(_) => return,
@@ -166,8 +196,8 @@ where
             if mailbox.shutdown {
                 return;
             }
-            if mailbox.release_math_rasters {
-                mailbox.release_math_rasters = false;
+            if mailbox.release_raster_caches {
+                mailbox.release_raster_caches = false;
                 mailbox.metrics.raster_releases = mailbox.metrics.raster_releases.saturating_add(1);
                 None
             } else {
@@ -176,11 +206,11 @@ where
             }
         };
         let Some(job) = job else {
-            pipeline.release_math_rasters();
+            pipeline.release_raster_caches();
             continue;
         };
         let generation = job.generation();
-        let result = execute(&mut pipeline, job);
+        let result = execute(&mut pipeline, job, image_source.as_ref());
         if let Ok(mut mailbox) = shared.0.lock() {
             mailbox.metrics.completed = mailbox.metrics.completed.saturating_add(1);
         }
@@ -191,9 +221,10 @@ where
 fn execute(
     pipeline: &mut PreviewPipeline,
     job: PreviewJob,
+    image_source: Option<&LocalImageSource>,
 ) -> Result<PreviewFrame, stickymd_render::preview::PreviewPipelineError> {
     match job {
-        PreviewJob::Build { snapshot, viewport } => pipeline.build(
+        PreviewJob::Build { snapshot, viewport } => pipeline.build_with_image_source(
             &snapshot,
             viewport.width_px,
             viewport.height_px,
@@ -201,11 +232,12 @@ fn execute(
             viewport.scroll_y,
             viewport.selection,
             viewport.theme,
+            image_source.map(|source| source as &dyn PreviewImageSource),
         ),
         PreviewJob::Relayout {
             generation,
             viewport,
-        } => pipeline.relayout(
+        } => pipeline.relayout_with_image_source(
             generation,
             viewport.width_px,
             viewport.height_px,
@@ -213,6 +245,7 @@ fn execute(
             viewport.scroll_y,
             viewport.selection,
             viewport.theme,
+            image_source.map(|source| source as &dyn PreviewImageSource),
         ),
         PreviewJob::Paint {
             generation,
@@ -220,7 +253,66 @@ fn execute(
             scroll_y,
             selection,
             theme,
-        } => pipeline.paint(generation, height_px, scroll_y, selection, theme),
+        } => pipeline.paint_with_image_source(
+            generation,
+            height_px,
+            scroll_y,
+            selection,
+            theme,
+            image_source.map(|source| source as &dyn PreviewImageSource),
+        ),
+    }
+}
+
+struct LocalImageSource {
+    base: PathBuf,
+}
+
+impl LocalImageSource {
+    fn new(base: PathBuf) -> Self {
+        Self { base }
+    }
+}
+
+impl PreviewImageSource for LocalImageSource {
+    fn inspect(&self, destination: &str) -> Result<Option<ImageMetadata>, String> {
+        let path =
+            resolve_local_image(&self.base, destination).map_err(|error| error.to_string())?;
+        let file = match File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        inspect_image_reader(BufReader::new(file))
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+
+    fn load(&self, destination: &str) -> Result<Option<Vec<u8>>, String> {
+        if destination
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
+            || destination
+                .get(..8)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
+        {
+            return Ok(None);
+        }
+        let path =
+            resolve_local_image(&self.base, destination).map_err(|error| error.to_string())?;
+        let file = match File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        let mut bytes = Vec::new();
+        file.take((MAX_ENCODED_IMAGE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if bytes.len() > MAX_ENCODED_IMAGE_BYTES {
+            return Err("local image exceeds the 64 MiB preview limit".into());
+        }
+        Ok(Some(bytes))
     }
 }
 
@@ -383,7 +475,7 @@ mod tests {
         let first = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(first.result.is_ok());
 
-        worker.release_math_rasters();
+        worker.release_raster_caches();
         worker.submit(PreviewJob::Relayout {
             generation,
             viewport: viewport(600),

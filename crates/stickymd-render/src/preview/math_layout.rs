@@ -7,13 +7,18 @@ use std::sync::Arc;
 use cosmic_text::{Align, FontSystem, Metrics, Wrap};
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::image::{
+    DecodedImageCache, ImageCacheKey, PreviewImageSource, decode_scaled_image,
+    inspect_encoded_image,
+};
 use crate::math::{MAX_DOCUMENT_FORMULAS, MathEngine, MathError, MathRaster};
 use crate::source::FontSelection;
 
+use super::image_layout::image_target;
 use super::layout::{
-    ChunkBuild, DecorationRole, LayoutChunk, LayoutContent, LayoutDecoration, make_text_chunk,
-    math_foreground,
+    ChunkBuild, DecorationRole, LayoutChunk, LayoutContent, LayoutDecoration, math_foreground,
 };
+use super::text_layout::make_text_chunk;
 use super::{PreviewRect, PreviewTextBox, RenderSpan};
 
 struct InlinePiece {
@@ -39,6 +44,9 @@ pub(super) fn make_mixed_chunk(
     selection_text: &mut String,
     formula_count: &mut usize,
     theme: super::PreviewTheme,
+    image_source: Option<&dyn PreviewImageSource>,
+    image_cache: &mut DecodedImageCache,
+    image_band: (f32, f32),
 ) -> ChunkBuild {
     let mut pieces = Vec::new();
     for span in spans {
@@ -63,6 +71,21 @@ pub(super) fn make_mixed_chunk(
             });
             continue;
         }
+        if span.image.is_some()
+            && let Some(piece) = image_piece(
+                span,
+                width,
+                y,
+                metrics,
+                selection_text,
+                image_source,
+                image_cache,
+                image_band,
+            )
+        {
+            pieces.push(piece);
+            continue;
+        }
         // Short text adjacent to a formula is one shaped run. Building a
         // cosmic-text buffer per word is measurably expensive and provides no
         // wrapping benefit while the run itself comfortably fits a line.
@@ -79,6 +102,7 @@ pub(super) fn make_mixed_chunk(
                     style: span.style,
                     action: span.action.clone(),
                     math: None,
+                    image: None,
                 };
                 pieces.push(text_piece(
                     font_system,
@@ -141,6 +165,84 @@ pub(super) fn make_mixed_chunk(
     output
 }
 
+#[allow(clippy::too_many_arguments)]
+fn image_piece(
+    span: &RenderSpan,
+    available_width: f32,
+    block_y: f32,
+    metrics: Metrics,
+    selection_text: &mut String,
+    image_source: Option<&dyn PreviewImageSource>,
+    image_cache: &mut DecodedImageCache,
+    image_band: (f32, f32),
+) -> Option<InlinePiece> {
+    let image = span.image.as_ref()?;
+    if !matches!(
+        image.kind,
+        super::ImageKind::LocalRelative | super::ImageKind::LocalAbsolute
+    ) {
+        return None;
+    }
+    let image_source = image_source?;
+    let metadata = image_source.inspect(&image.destination).ok().flatten()?;
+    let max_width = available_width.floor().max(1.0) as u32;
+    // An inline image participates in line layout. Cap it to four body lines;
+    // standalone image paragraphs retain the larger viewport-oriented cap.
+    let max_height = (metrics.line_height * 4.0).floor().max(1.0) as u32;
+    let (mut target_width, mut target_height) = image_target(&metadata, max_width, max_height);
+    let in_decode_band = block_y + target_height as f32 >= image_band.0 && block_y <= image_band.1;
+    let content = if in_decode_band {
+        let bytes = image_source.load(&image.destination).ok().flatten()?;
+        let current_metadata = inspect_encoded_image(&bytes).ok()?;
+        (target_width, target_height) = image_target(&current_metadata, max_width, max_height);
+        let key = ImageCacheKey {
+            source_hash: stickymd_core::hash_bytes(&bytes),
+            width: target_width,
+            height: target_height,
+        };
+        let raster = image_cache.get(&key).or_else(|| {
+            decode_scaled_image(&bytes, target_width, target_height)
+                .ok()
+                .and_then(|raster| image_cache.insert(key, raster))
+        })?;
+        LayoutContent::Image(raster)
+    } else {
+        LayoutContent::ImagePlaceholder {
+            width: target_width,
+            height: target_height,
+        }
+    };
+    let selection_start = selection_text.len();
+    selection_text.push_str(&span.copy_text);
+    let selection_end = selection_text.len();
+    let width = target_width as f32;
+    let height = target_height as f32;
+    Some(InlinePiece {
+        chunk: LayoutChunk {
+            content,
+            x: 0.0,
+            y: 0.0,
+        },
+        boxes: vec![PreviewTextBox {
+            selection_range: selection_start..selection_end,
+            source_range: span.source_range,
+            rect: PreviewRect {
+                x: 0.0,
+                y: 0.0,
+                width,
+                height,
+            },
+            action: span.action.clone(),
+            tooltip: None,
+            atomic: true,
+        }],
+        decorations: Vec::new(),
+        width,
+        height,
+        baseline: height,
+    })
+}
+
 fn text_piece(
     font_system: &mut FontSystem,
     fonts: &FontSelection,
@@ -170,6 +272,8 @@ fn text_piece(
             (width, baseline)
         }
         LayoutContent::Math(_) => (1.0, metrics.font_size),
+        LayoutContent::Image(raster) => (raster.width as f32, raster.height as f32),
+        LayoutContent::ImagePlaceholder { width, height } => (*width as f32, *height as f32),
     };
     chunk.x = 0.0;
     chunk.y = 0.0;

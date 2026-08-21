@@ -5,10 +5,13 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use stickymd_core::hash_bytes;
 use thiserror::Error;
+
+const FILE_ATTRIBUTE_REPARSE_POINT_VALUE: u32 = 0x400;
 
 #[derive(Debug, Clone)]
 pub struct ProgramDirectory {
@@ -138,16 +141,31 @@ impl RuntimePaths {
 }
 
 fn ensure_directory(path: &Path) -> Result<(), RuntimePathsError> {
-    if path.exists() {
-        if path.is_dir() {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT_VALUE != 0 {
+                return Err(RuntimePathsError::RuntimeDirectoryIsReparsePoint(
+                    path.to_path_buf(),
+                ));
+            }
+            if !metadata.file_type().is_dir() {
+                return Err(RuntimePathsError::PathIsNotDirectory(path.to_path_buf()));
+            }
             return Ok(());
         }
-        return Err(RuntimePathsError::PathIsNotDirectory(path.to_path_buf()));
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(RuntimePathsError::InspectDirectory {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
     }
     fs::create_dir(path).map_err(|source| RuntimePathsError::CreateDirectory {
         path: path.to_path_buf(),
         source,
-    })
+    })?;
+    ensure_directory(path)
 }
 
 #[derive(Debug, Error)]
@@ -168,6 +186,13 @@ pub enum RuntimePathsError {
     WritableProbeCleanup(std::io::Error),
     #[error("runtime path is not a directory: {path}", path = .0.display())]
     PathIsNotDirectory(PathBuf),
+    #[error("runtime directory must not be a junction or symbolic link: {}", .0.display())]
+    RuntimeDirectoryIsReparsePoint(PathBuf),
+    #[error("cannot inspect runtime directory {path}: {source}")]
+    InspectDirectory {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("cannot create runtime directory {path}: {source}")]
     CreateDirectory {
         path: PathBuf,
@@ -248,5 +273,37 @@ mod tests {
         }
         assert_eq!(identities.len(), 100);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runtime_layout_rejects_a_note_directory_reparse_point() {
+        use std::os::windows::fs::symlink_dir;
+
+        let root = unique_dir("reparse-root");
+        let external = unique_dir("reparse-target");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&external).unwrap();
+        fs::write(root.join("StickyMD.exe"), b"").unwrap();
+        let note = root.join("note");
+        if let Err(error) = symlink_dir(&external, &note) {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                fs::remove_dir_all(root).unwrap();
+                fs::remove_dir_all(external).unwrap();
+                return;
+            }
+            panic!("cannot create reparse fixture: {error}");
+        }
+        let paths = RuntimePaths::from_executable(&root.join("StickyMD.exe")).unwrap();
+        let result = paths.ensure_layout();
+        assert!(
+            matches!(
+                &result,
+                Err(RuntimePathsError::RuntimeDirectoryIsReparsePoint(_))
+            ),
+            "unexpected layout result: {result:?}"
+        );
+        fs::remove_dir(&note).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(external).unwrap();
     }
 }

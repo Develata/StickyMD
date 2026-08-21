@@ -1,6 +1,7 @@
 //! Opt-in Windows runtime smoke using copied Release executables.
 
 use std::fs;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -35,10 +36,13 @@ fn run_inner(
     children: &mut Vec<Child>,
 ) -> Result<(), String> {
     if scenario == RuntimeScenario::Resources {
-        return run_resource_measurement(repository, root, false);
+        return run_resource_measurement(repository, root, false, false);
     }
     if scenario == RuntimeScenario::MathResources {
-        return run_resource_measurement(repository, root, true);
+        return run_resource_measurement(repository, root, true, false);
+    }
+    if scenario == RuntimeScenario::ImageResources {
+        return run_resource_measurement(repository, root, false, true);
     }
     let source = repository.join("target/release/stickymd-win.exe");
     if !source.is_file() {
@@ -53,12 +57,19 @@ fn run_inner(
         prepare_preview_layout(&first_dir, "preview")?;
     } else if scenario == RuntimeScenario::Math {
         prepare_math_layout(&first_dir, "preview")?;
+    } else if scenario == RuntimeScenario::Assets {
+        prepare_asset_layout(&first_dir, "preview", 12)?;
     }
     children.push(start(&first_exe)?);
     wait_for_layout(&first_dir)?;
     ensure_alive(&mut children[0], "first portable instance")?;
 
     if scenario == RuntimeScenario::Launch {
+        return Ok(());
+    }
+
+    if scenario == RuntimeScenario::Assets {
+        assert_asset_source_unchanged(&first_dir)?;
         return Ok(());
     }
 
@@ -111,13 +122,23 @@ struct ResourceCase {
     label: &'static str,
     view_mode: &'static str,
     formula_count: usize,
+    image_count: usize,
+    image_fixture: ImageResourceFixture,
     measure_cpu: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageResourceFixture {
+    None,
+    FourK,
+    SaturatedCache,
 }
 
 fn run_resource_measurement(
     repository: &Path,
     root: &Path,
     math_matrix: bool,
+    image_matrix: bool,
 ) -> Result<(), String> {
     let source = repository.join("target/release/stickymd-win.exe");
     if !source.is_file() {
@@ -133,42 +154,137 @@ fn run_resource_measurement(
         RESOURCE_REPETITIONS,
         CPU_INTERVAL.as_secs(),
     );
-    let cases = if math_matrix {
+    let mut cases = if image_matrix {
+        vec![
+            ResourceCase {
+                label: "source-no-images",
+                view_mode: "source",
+                formula_count: 0,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::None,
+                measure_cpu: false,
+            },
+            ResourceCase {
+                label: "source-12-images-lazy",
+                view_mode: "source",
+                formula_count: 0,
+                image_count: 12,
+                image_fixture: ImageResourceFixture::None,
+                measure_cpu: true,
+            },
+            ResourceCase {
+                label: "preview-no-images",
+                view_mode: "preview",
+                formula_count: 0,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::None,
+                measure_cpu: false,
+            },
+            ResourceCase {
+                label: "preview-1-image",
+                view_mode: "preview",
+                formula_count: 0,
+                image_count: 1,
+                image_fixture: ImageResourceFixture::None,
+                measure_cpu: false,
+            },
+            ResourceCase {
+                label: "preview-12-images",
+                view_mode: "preview",
+                formula_count: 0,
+                image_count: 12,
+                image_fixture: ImageResourceFixture::None,
+                measure_cpu: true,
+            },
+            ResourceCase {
+                label: "split-12-images",
+                view_mode: "split",
+                formula_count: 0,
+                image_count: 12,
+                image_fixture: ImageResourceFixture::None,
+                measure_cpu: true,
+            },
+            ResourceCase {
+                label: "preview-4k-image",
+                view_mode: "preview",
+                formula_count: 0,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::FourK,
+                measure_cpu: false,
+            },
+            ResourceCase {
+                label: "preview-image-cache-saturated",
+                view_mode: "preview",
+                formula_count: 0,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::SaturatedCache,
+                measure_cpu: true,
+            },
+            ResourceCase {
+                label: "split-image-cache-saturated",
+                view_mode: "split",
+                formula_count: 0,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::SaturatedCache,
+                measure_cpu: true,
+            },
+            ResourceCase {
+                label: "source-after-preview-cache-release",
+                view_mode: "preview",
+                formula_count: 0,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::SaturatedCache,
+                measure_cpu: true,
+            },
+        ]
+    } else if math_matrix {
         vec![
             ResourceCase {
                 label: "source-20-math-lazy",
                 view_mode: "source",
                 formula_count: 20,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::None,
                 measure_cpu: true,
             },
             ResourceCase {
                 label: "preview-no-math",
                 view_mode: "preview",
                 formula_count: 0,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::None,
                 measure_cpu: false,
             },
             ResourceCase {
                 label: "preview-1-math",
                 view_mode: "preview",
                 formula_count: 1,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::None,
                 measure_cpu: false,
             },
             ResourceCase {
                 label: "preview-20-math",
                 view_mode: "preview",
                 formula_count: 20,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::None,
                 measure_cpu: true,
             },
             ResourceCase {
                 label: "split-20-math",
                 view_mode: "split",
                 formula_count: 20,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::None,
                 measure_cpu: true,
             },
             ResourceCase {
                 label: "preview-200-unique",
                 view_mode: "preview",
                 formula_count: 200,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::None,
                 measure_cpu: false,
             },
         ]
@@ -178,22 +294,37 @@ fn run_resource_measurement(
                 label: "source",
                 view_mode: "source",
                 formula_count: 20,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::None,
                 measure_cpu: true,
             },
             ResourceCase {
                 label: "preview",
                 view_mode: "preview",
                 formula_count: 20,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::None,
                 measure_cpu: true,
             },
             ResourceCase {
                 label: "split",
                 view_mode: "split",
                 formula_count: 20,
+                image_count: 0,
+                image_fixture: ImageResourceFixture::None,
                 measure_cpu: true,
             },
         ]
     };
+    if let Ok(filter) = std::env::var("STICKYMD_SMOKE_RESOURCE_CASE")
+        && !filter.is_empty()
+    {
+        cases.retain(|case| case.label == filter);
+        if cases.len() != 1 {
+            return Err(format!("unknown resource case filter `{filter}`"));
+        }
+        println!("resource development filter: {filter}");
+    }
     for case in cases {
         let mode = case.label;
         let mut memory_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
@@ -201,17 +332,32 @@ fn run_resource_measurement(
         for repetition in 0..RESOURCE_REPETITIONS {
             let directory = root.join(format!("{mode}-{repetition}"));
             let executable = copy_executable(&source, &directory)?;
-            prepare_resource_layout(&directory, case.view_mode, case.formula_count)?;
+            prepare_resource_layout(
+                &directory,
+                case.view_mode,
+                case.formula_count,
+                case.image_count,
+                case.image_fixture,
+            )?;
             let mut child = start(&executable)?;
             wait_for_layout(&directory)?;
             thread::sleep(RESOURCE_WARMUP);
             ensure_alive(&mut child, "resource measurement instance")?;
+            if mode == "source-after-preview-cache-release" {
+                crate::window_control::switch_to_source(child.id())?;
+                wait_for_view_mode(&directory, "source")?;
+                thread::sleep(Duration::from_secs(5));
+                ensure_alive(&mut child, "Source-after-Preview resource instance")?;
+            }
             let sample = process_metrics::memory(&child)?;
             println!(
-                "resource sample mode={mode} run={} private_working_set_bytes={} private_bytes={}",
+                "resource sample mode={mode} run={} private_working_set_bytes={} private_bytes={} \
+                 peak_working_set_bytes={} peak_private_bytes={}",
                 repetition + 1,
                 sample.private_working_set_bytes,
-                sample.private_bytes
+                sample.private_bytes,
+                sample.peak_working_set_bytes,
+                sample.peak_private_bytes,
             );
             memory_samples.push(sample);
             if repetition == 0 && case.measure_cpu {
@@ -238,10 +384,28 @@ fn run_resource_measurement(
     Ok(())
 }
 
+fn wait_for_view_mode(program_directory: &Path, expected: &str) -> Result<(), String> {
+    let config = program_directory.join("note/config.toml");
+    let deadline = Instant::now() + START_TIMEOUT;
+    let needle = format!("view_mode = \"{expected}\"");
+    while Instant::now() < deadline {
+        if fs::read_to_string(&config).is_ok_and(|content| content.contains(&needle)) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    Err(format!(
+        "StickyMD did not acknowledge view mode `{expected}` in {}",
+        config.display()
+    ))
+}
+
 fn prepare_resource_layout(
     program_directory: &Path,
     view_mode: &str,
     formula_count: usize,
+    image_count: usize,
+    image_fixture: ImageResourceFixture,
 ) -> Result<(), String> {
     let note_directory = program_directory.join("note");
     fs::create_dir(&note_directory)
@@ -251,6 +415,28 @@ fn prepare_resource_layout(
         fixture.push_str(&format!(
             "Formula {index}: $x_{index}^2+y_{index}^2=1$.\n\n"
         ));
+    }
+    if image_count > 0 {
+        write_tiny_png(&note_directory.join("images/local.png"))?;
+        for index in 0..image_count {
+            fixture.push_str(&format!("Image {index}:\n\n![local](images/local.png)\n\n"));
+        }
+    }
+    if image_fixture == ImageResourceFixture::FourK {
+        write_4k_bmp(&note_directory.join("images/large.bmp"))?;
+        fixture.push_str("4K image:\n\n![large](images/large.bmp)\n\n");
+    }
+    if image_fixture == ImageResourceFixture::SaturatedCache {
+        const IMAGE_COUNT: usize = 420;
+        fs::create_dir_all(note_directory.join("images"))
+            .map_err(|error| format!("cannot create saturated-cache fixture directory: {error}"))?;
+        fixture.push_str("Cache saturation: ");
+        for index in 0..IMAGE_COUNT {
+            let leaf = format!("cache-{index}.bmp");
+            write_bmp(&note_directory.join("images").join(&leaf), 128, 128, index)?;
+            fixture.push_str(&format!("![cache-{index}](images/{leaf})"));
+        }
+        fixture.push_str("\n\n");
     }
     const PLAIN: &str = "中文 baseline text with Latin words and stable native preview layout.\n\n";
     while fixture.len() < 20 * 1024 {
@@ -263,6 +449,105 @@ fn prepare_resource_layout(
         format!("version = 1\nview_mode = \"{view_mode}\"\n"),
     )
     .map_err(|error| format!("cannot seed resource config: {error}"))?;
+    Ok(())
+}
+
+fn write_4k_bmp(path: &Path) -> Result<(), String> {
+    write_bmp(path, 3_840, 2_160, 0)
+}
+
+fn write_bmp(path: &Path, width: u32, height: u32, seed: usize) -> Result<(), String> {
+    const HEADER_BYTES: u32 = 54;
+    let pixel_bytes = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "4K BMP fixture size overflowed".to_owned())?;
+    let file_bytes = HEADER_BYTES
+        .checked_add(pixel_bytes)
+        .ok_or_else(|| "4K BMP file size overflowed".to_owned())?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "4K BMP fixture path has no parent".to_owned())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("cannot create 4K image fixture directory: {error}"))?;
+    let file =
+        fs::File::create(path).map_err(|error| format!("cannot create 4K BMP fixture: {error}"))?;
+    let mut output = BufWriter::new(file);
+    let mut header = [0_u8; HEADER_BYTES as usize];
+    header[0..2].copy_from_slice(b"BM");
+    header[2..6].copy_from_slice(&file_bytes.to_le_bytes());
+    header[10..14].copy_from_slice(&HEADER_BYTES.to_le_bytes());
+    header[14..18].copy_from_slice(&40_u32.to_le_bytes());
+    header[18..22].copy_from_slice(&(width as i32).to_le_bytes());
+    header[22..26].copy_from_slice(&(height as i32).to_le_bytes());
+    header[26..28].copy_from_slice(&1_u16.to_le_bytes());
+    header[28..30].copy_from_slice(&32_u16.to_le_bytes());
+    header[34..38].copy_from_slice(&pixel_bytes.to_le_bytes());
+    output
+        .write_all(&header)
+        .map_err(|error| format!("cannot write 4K BMP header: {error}"))?;
+    let mut row = vec![0_u8; (width * 4) as usize];
+    for (index, pixel) in row.chunks_exact_mut(4).enumerate() {
+        let value = ((index + seed) % 256) as u8;
+        pixel.copy_from_slice(&[value, seed as u8, 192, 255]);
+    }
+    for _ in 0..height {
+        output
+            .write_all(&row)
+            .map_err(|error| format!("cannot write 4K BMP pixels: {error}"))?;
+    }
+    output
+        .flush()
+        .map_err(|error| format!("cannot flush 4K BMP fixture: {error}"))
+}
+
+fn prepare_asset_layout(
+    program_directory: &Path,
+    view_mode: &str,
+    image_count: usize,
+) -> Result<(), String> {
+    let note_directory = program_directory.join("note");
+    fs::create_dir(&note_directory)
+        .map_err(|error| format!("cannot create asset smoke note directory: {error}"))?;
+    write_tiny_png(&note_directory.join("images/local.png"))?;
+    let mut fixture = String::from("# StickyMD Asset Smoke\n\n");
+    for index in 0..image_count {
+        fixture.push_str(&format!("![local-{index}](images/local.png)\n\n"));
+    }
+    fixture.push_str("![remote](https://example.invalid/no-fetch.png)\n");
+    fs::write(note_directory.join("note.md"), fixture)
+        .map_err(|error| format!("cannot seed asset smoke note: {error}"))?;
+    fs::write(
+        note_directory.join("config.toml"),
+        format!("version = 1\nview_mode = \"{view_mode}\"\n"),
+    )
+    .map_err(|error| format!("cannot seed asset smoke config: {error}"))
+}
+
+fn write_tiny_png(path: &Path) -> Result<(), String> {
+    const PNG: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4,
+        0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 100, 248, 15, 0, 1, 5,
+        1, 1, 39, 24, 227, 102, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    let parent = path
+        .parent()
+        .ok_or_else(|| "asset fixture path has no parent".to_owned())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("cannot create asset fixture directory: {error}"))?;
+    fs::write(path, PNG).map_err(|error| format!("cannot seed tiny PNG: {error}"))
+}
+
+fn assert_asset_source_unchanged(program_directory: &Path) -> Result<(), String> {
+    let note = program_directory.join("note/note.md");
+    let content = fs::read_to_string(&note)
+        .map_err(|error| format!("cannot inspect asset smoke source: {error}"))?;
+    if !content.contains("images/local.png") || !content.contains("https://example.invalid") {
+        return Err("asset Preview runtime changed canonical Markdown source".to_owned());
+    }
+    if !program_directory.join("note/images/local.png").is_file() {
+        return Err("asset Preview runtime removed user-supplied local image".to_owned());
+    }
     Ok(())
 }
 
@@ -279,15 +564,32 @@ fn print_resource_summary(
         .map(|sample| sample.private_working_set_bytes)
         .collect();
     let mut private_bytes: Vec<_> = samples.iter().map(|sample| sample.private_bytes).collect();
+    let mut peak_working_set: Vec<_> = samples
+        .iter()
+        .map(|sample| sample.peak_working_set_bytes)
+        .collect();
+    let mut peak_private_bytes: Vec<_> = samples
+        .iter()
+        .map(|sample| sample.peak_private_bytes)
+        .collect();
     private_working_set.sort_unstable();
     private_bytes.sort_unstable();
+    peak_working_set.sort_unstable();
+    peak_private_bytes.sort_unstable();
     let middle = samples.len() / 2;
     println!(
-        "resource summary mode={mode} private_working_set_median_bytes={} private_working_set_max_bytes={} private_bytes_median={} private_bytes_max={} idle_cpu_average_percent={}",
+        "resource summary mode={mode} private_working_set_median_bytes={} private_working_set_max_bytes={} \
+         private_bytes_median={} private_bytes_max={} peak_working_set_median_bytes={} \
+         peak_working_set_max_bytes={} peak_private_bytes_median={} peak_private_bytes_max={} \
+         idle_cpu_average_percent={}",
         private_working_set[middle],
         private_working_set[samples.len() - 1],
         private_bytes[middle],
         private_bytes[samples.len() - 1],
+        peak_working_set[middle],
+        peak_working_set[samples.len() - 1],
+        peak_private_bytes[middle],
+        peak_private_bytes[samples.len() - 1],
         cpu_percent.map_or_else(|| "not-measured".to_owned(), |value| format!("{value:.6}"))
     );
     Ok(())

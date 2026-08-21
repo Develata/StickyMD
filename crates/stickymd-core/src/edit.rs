@@ -5,7 +5,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::{CursorSnapshot, Generation};
+use crate::{AssetEffect, CursorSnapshot, Generation};
 
 /// Input class used only for deterministic undo grouping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -142,6 +142,7 @@ pub struct EditOutcome {
     pub undo_recorded: bool,
     pub grouped: bool,
     pub delta: Option<TextDelta>,
+    pub asset_effects: Vec<AssetEffect>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +150,7 @@ pub struct UndoOutcome {
     pub generation: Generation,
     pub cursor: CursorSnapshot,
     pub delta: TextDelta,
+    pub asset_effects: Vec<AssetEffect>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,4 +158,5 @@ pub struct RedoOutcome {
     pub generation: Generation,
     pub cursor: CursorSnapshot,
     pub delta: TextDelta,
+    pub asset_effects: Vec<AssetEffect>,
 }

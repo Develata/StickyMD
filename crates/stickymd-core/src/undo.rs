@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-use crate::{EditKind, TextDelta};
+use crate::{AssetEffect, EditKind, TextDelta};
 
 pub const MERGE_WINDOW_MS: u64 = 750;
 pub const MAX_UNDO_ENTRIES: usize = 256;
@@ -15,19 +15,30 @@ pub(crate) struct UndoEntry {
     pub(crate) delta: TextDelta,
     kind: EditKind,
     timestamp_ms: u64,
+    pub(crate) asset_effects: Vec<AssetEffect>,
 }
 
 impl UndoEntry {
-    pub(crate) fn new(delta: TextDelta, kind: EditKind, timestamp_ms: u64) -> Self {
+    pub(crate) fn new(
+        delta: TextDelta,
+        kind: EditKind,
+        timestamp_ms: u64,
+        asset_effects: Vec<AssetEffect>,
+    ) -> Self {
         Self {
             delta,
             kind,
             timestamp_ms,
+            asset_effects,
         }
     }
 
     fn approx_bytes(&self) -> usize {
-        self.delta.approx_bytes()
+        self.asset_effects
+            .iter()
+            .fold(self.delta.approx_bytes(), |total, effect| {
+                total.saturating_add(effect.approx_bytes())
+            })
     }
 
     fn try_absorb(&mut self, newer: &Self) -> bool {
@@ -68,6 +79,8 @@ impl UndoEntry {
         self.delta.range.end = self.delta.range.start;
         self.delta.cursor_after = newer.delta.cursor_after;
         self.timestamp_ms = newer.timestamp_ms;
+        self.asset_effects
+            .extend(newer.asset_effects.iter().cloned());
         true
     }
 
@@ -89,6 +102,8 @@ impl UndoEntry {
         self.delta.range.start = newer.delta.range.start;
         self.delta.cursor_after = newer.delta.cursor_after;
         self.timestamp_ms = newer.timestamp_ms;
+        self.asset_effects
+            .extend(newer.asset_effects.iter().cloned());
         true
     }
 
@@ -110,6 +125,8 @@ impl UndoEntry {
         self.delta.range.end += newer.delta.deleted.len();
         self.delta.cursor_after = newer.delta.cursor_after;
         self.timestamp_ms = newer.timestamp_ms;
+        self.asset_effects
+            .extend(newer.asset_effects.iter().cloned());
         true
     }
 }
@@ -274,6 +291,7 @@ mod tests {
                 delta(index..index, "", ch, index, index + 1),
                 EditKind::Typing,
                 index as u64 * 100,
+                Vec::new(),
             ));
         }
         let entry = history.peek_undo().unwrap();
@@ -294,6 +312,7 @@ mod tests {
                 delta(range, ch, "", before, after),
                 EditKind::Backspace,
                 time,
+                Vec::new(),
             ));
         }
         let entry = history.peek_undo().unwrap();
@@ -311,6 +330,7 @@ mod tests {
                 delta(1..end, ch, "", 1, 1),
                 EditKind::DeleteForward,
                 time,
+                Vec::new(),
             ));
         }
         let entry = history.peek_undo().unwrap();
@@ -328,11 +348,12 @@ mod tests {
             CursorSnapshot::new(Selection::new(2, 0)),
             CursorSnapshot::caret(1),
         );
-        history.record(UndoEntry::new(first, EditKind::Typing, 0));
+        history.record(UndoEntry::new(first, EditKind::Typing, 0, Vec::new()));
         history.record(UndoEntry::new(
             delta(1..1, "", "y", 1, 2),
             EditKind::Typing,
             100,
+            Vec::new(),
         ));
         assert_eq!(history.undo_len(), 2);
     }
@@ -344,12 +365,14 @@ mod tests {
             delta(0..0, "", "a", 0, 1),
             EditKind::Paste,
             0,
+            Vec::new(),
         ));
         let huge = "x".repeat(MAX_UNDO_BYTES);
         let result = history.record(UndoEntry::new(
             delta(0..0, "", &huge, 0, huge.len()),
             EditKind::Paste,
             1,
+            Vec::new(),
         ));
         assert!(!result.recorded);
         assert_eq!(history.undo_len(), 0);
@@ -364,6 +387,7 @@ mod tests {
             delta(0..0, "", "abc", 0, 3),
             EditKind::Paste,
             0,
+            Vec::new(),
         ));
         let bytes = history.history_bytes();
         history.commit_undo();

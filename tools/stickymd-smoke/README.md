@@ -17,8 +17,14 @@ release package.
 ./tools/smoke/phase-05.ps1 -Resources
 ./tools/smoke/phase-06.ps1 -Performance -Runtime
 ./tools/smoke/phase-06.ps1 -Resources
+./tools/smoke/phase-07.ps1 -Performance -Runtime
+./tools/smoke/phase-07.ps1 -Resources
 ./tools/smoke/all.ps1 -Ci
 ```
+
+For a local diagnosis of one opt-in resource case, set
+`STICKYMD_SMOKE_RESOURCE_CASE` to the exact case label before invoking the owning phase script.
+This development filter is never set by CI or by the durable full-matrix receipts.
 
 `-Ci` runs every headless check, including the Release performance entry
 points. Stable hard thresholds may fail CI; machine-specific measurements are

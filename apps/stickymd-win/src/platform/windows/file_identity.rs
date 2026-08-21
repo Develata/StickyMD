@@ -15,6 +15,15 @@ pub struct OpenFileObservation {
     last_write: u64,
 }
 
+impl OpenFileObservation {
+    /// Stable object identity only. Directory contents legitimately change
+    /// last-write metadata, so root replacement checks must not compare the
+    /// complete observation payload.
+    pub const fn same_identity(self, other: Self) -> bool {
+        self.volume_serial == other.volume_serial && self.file_index == other.file_index
+    }
+}
+
 pub fn observe_open_file(file: &std::fs::File) -> std::io::Result<OpenFileObservation> {
     let mut information = BY_HANDLE_FILE_INFORMATION::default();
     let handle = HANDLE(file.as_raw_handle());
@@ -31,4 +40,17 @@ pub fn observe_open_file(file: &std::fs::File) -> std::io::Result<OpenFileObserv
         last_write: u64::from(information.ftLastWriteTime.dwHighDateTime) << 32
             | u64::from(information.ftLastWriteTime.dwLowDateTime),
     })
+}
+
+/// Compare two existing pathnames by their Windows volume/file identity. This
+/// detects hard links, symlinks and case aliases that lexical comparison misses.
+pub fn same_existing_file(
+    left: &std::path::Path,
+    right: &std::path::Path,
+) -> std::io::Result<bool> {
+    let left = std::fs::File::open(left)?;
+    let right = std::fs::File::open(right)?;
+    let left = observe_open_file(&left)?;
+    let right = observe_open_file(&right)?;
+    Ok(left.same_identity(right))
 }

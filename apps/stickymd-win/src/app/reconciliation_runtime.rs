@@ -41,11 +41,11 @@ impl StickyApp {
                 return;
             }
             ReconciliationAction::ReloadClean(fact) => {
-                match self.coordinator.reconcile_external(&fact) {
-                    Ok(_) => {
+                match self.coordinator.reconcile_external_for_runtime(&fact) {
+                    Ok(effect) => {
                         self.persistence.confirm_durable_present();
                         self.persistence.clear_conflict();
-                        self.full_projection_resync();
+                        self.apply_effect(effect);
                         self.diagnostic = Some("已载入外部修改。".into());
                         self.update_window_title();
                         self.request_redraw();
@@ -80,10 +80,10 @@ impl StickyApp {
             return;
         };
         let fact = fact.clone();
-        match self.coordinator.reconcile_external(&fact) {
-            Ok(_) => {
+        match self.coordinator.reconcile_external_for_runtime(&fact) {
+            Ok(effect) => {
                 self.persistence.clear_conflict();
-                self.full_projection_resync();
+                self.apply_effect(effect);
                 self.worker.remove_temporary(
                     self.paths.note_tmp.clone(),
                     TemporaryCleanup::ConflictDiscarded,

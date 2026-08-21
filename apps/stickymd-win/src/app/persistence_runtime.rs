@@ -81,6 +81,10 @@ impl StickyApp {
                 self.request_immediate_save(trigger);
                 true
             }
+            PersistenceIntent::Export => {
+                self.request_export();
+                true
+            }
             PersistenceIntent::ResolvePrimary => self.handle_resolution_key(true),
             PersistenceIntent::ResolveSecondary => self.handle_resolution_key(false),
             PersistenceIntent::RequestQuit => {
@@ -93,7 +97,13 @@ impl StickyApp {
         }
     }
 
-    fn request_quit(&mut self, event_loop: &ActiveEventLoop) {
+    pub(super) fn request_quit(&mut self, _event_loop: &ActiveEventLoop) {
+        if self.asset_paste_pending {
+            self.quit_pending = true;
+            self.diagnostic = Some("图片粘贴事务正在完成；完成并保存后再退出。".into());
+            self.request_redraw();
+            return;
+        }
         if self.config_persistence_allowed {
             self.worker.submit_config(
                 self.paths.config_file.clone(),
@@ -129,7 +139,10 @@ impl StickyApp {
                 self.quit_pending = true;
                 self.request_immediate_save(SaveTrigger::Shutdown);
             }
-            QuitAction::Exit => event_loop.exit(),
+            QuitAction::Exit => {
+                self.quit_pending = true;
+                self.sync_assets(true);
+            }
         }
     }
 
@@ -191,7 +204,7 @@ impl StickyApp {
                     && self.persistence.conflict().is_none()
                     && !self.coordinator.view().dirty
                 {
-                    event_loop.exit();
+                    self.sync_assets(true);
                 }
             }
             IoCompletion::External(Err(error)) => {
@@ -233,6 +246,17 @@ impl StickyApp {
                 self.recovery.fail_operation();
                 self.request_redraw();
             }
+            IoCompletion::AssetPaste(result) => {
+                self.handle_asset_paste_completion(event_loop, result)
+            }
+            IoCompletion::AssetSync {
+                request_id,
+                generation,
+                result,
+            } => self.handle_asset_sync_completion(event_loop, request_id, generation, result),
+            IoCompletion::Export { generation, result } => {
+                self.handle_export_completion(generation, result)
+            }
             IoCompletion::WorkerStopped => {
                 self.diagnostic = Some("持久化工作线程已停止；不会假装自动保存仍可用。".into());
                 self.request_redraw();
@@ -242,7 +266,7 @@ impl StickyApp {
 
     fn handle_note_saved(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        _event_loop: &ActiveEventLoop,
         generation: stickymd_core::Generation,
         fingerprint: stickymd_core::Hash32,
     ) {
@@ -286,7 +310,7 @@ impl StickyApp {
             // path before deciding whether a second write is still needed.
             self.worker.inspect_external(self.paths.note_file.clone());
         } else if self.quit_pending && !self.persistence.has_required_write() {
-            event_loop.exit();
+            self.sync_assets(true);
         }
         self.update_window_title();
         self.request_redraw();

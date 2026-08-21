@@ -32,6 +32,8 @@ use crate::preview::{PreviewCompletion, PreviewWorker};
 use crate::startup::BootstrapOutcome;
 use crate::surface::SoftwareSurface;
 
+mod assets_runtime;
+mod export_runtime;
 mod input;
 mod lifecycle;
 mod persistence_runtime;
@@ -42,6 +44,23 @@ mod reconciliation_runtime;
 mod recovery_runtime;
 
 const CARET_BLINK: Duration = Duration::from_millis(550);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExternalReconcileFollowUp {
+    FullProjectionResync,
+    RuntimeAssetConvergence,
+}
+
+fn external_reconcile_followups(
+    reconciled: stickymd_core::Generation,
+    current: stickymd_core::Generation,
+) -> [ExternalReconcileFollowUp; 2] {
+    debug_assert_eq!(reconciled, current);
+    [
+        ExternalReconcileFollowUp::FullProjectionResync,
+        ExternalReconcileFollowUp::RuntimeAssetConvergence,
+    ]
+}
 
 #[derive(Debug)]
 pub enum AppEvent {
@@ -80,6 +99,13 @@ pub struct StickyApp {
     _instance: SingleInstanceGuard,
     resolving_keep_local: bool,
     quit_pending: bool,
+    asset_paste_pending: bool,
+    asset_sync_in_flight: bool,
+    asset_sync_sequence: u64,
+    asset_sync_request_id: Option<u64>,
+    asset_reconcile_pending: bool,
+    exit_gc_pending: bool,
+    export_in_flight: bool,
     session: EditorSession,
     modifiers: ModifiersState,
     cursor_position: PhysicalPosition<f64>,
@@ -129,6 +155,13 @@ impl StickyApp {
             _instance: instance,
             resolving_keep_local: false,
             quit_pending: false,
+            asset_paste_pending: false,
+            asset_sync_in_flight: false,
+            asset_sync_sequence: 0,
+            asset_sync_request_id: None,
+            asset_reconcile_pending: false,
+            exit_gc_pending: false,
+            export_in_flight: false,
             session: EditorSession::default(),
             modifiers: ModifiersState::default(),
             cursor_position: PhysicalPosition::new(0.0, 0.0),
@@ -162,6 +195,7 @@ impl StickyApp {
                 generation,
                 selection,
                 delta,
+                asset_effects,
             } => {
                 self.persistence
                     .on_document_changed(self.timestamp_ms(), generation);
@@ -184,6 +218,24 @@ impl StickyApp {
                 }
                 self.after_presentation_change();
                 self.update_window_title();
+                if !asset_effects.is_empty() {
+                    self.submit_asset_sync(generation, asset_effects, None, false);
+                }
+            }
+            AppEffect::AssetPasteRequested(request) => self.submit_asset_paste(request),
+            AppEffect::ExternalDocumentReconciled { generation } => {
+                for followup in
+                    external_reconcile_followups(generation, self.coordinator.view().generation)
+                {
+                    match followup {
+                        ExternalReconcileFollowUp::FullProjectionResync => {
+                            self.full_projection_resync()
+                        }
+                        ExternalReconcileFollowUp::RuntimeAssetConvergence => {
+                            self.sync_assets(false)
+                        }
+                    }
+                }
             }
             AppEffect::ClipboardWritten => {
                 self.diagnostic = Some("Clipboard updated".to_owned());
@@ -205,6 +257,18 @@ mod tests {
     use super::*;
     use crate::flow::{ClipboardError, ClipboardPort};
     use crate::interaction::ImeSignal;
+
+    #[test]
+    fn external_reconcile_handler_requires_projection_resync_and_asset_convergence() {
+        let generation = stickymd_core::Generation::initial();
+        assert_eq!(
+            external_reconcile_followups(generation, generation),
+            [
+                ExternalReconcileFollowUp::FullProjectionResync,
+                ExternalReconcileFollowUp::RuntimeAssetConvergence,
+            ]
+        );
+    }
 
     #[derive(Default)]
     struct MemoryClipboard;
@@ -361,6 +425,7 @@ mod tests {
                     generation,
                     selection,
                     delta,
+                    ..
                 } = effect
             {
                 session.accept_document_selection(selection);
@@ -480,6 +545,7 @@ mod tests {
                 generation,
                 selection,
                 delta,
+                ..
             } = coordinator.dispatch(intent).unwrap()
             else {
                 panic!("benchmark edit unexpectedly produced no document change");
@@ -536,6 +602,7 @@ mod tests {
             generation,
             selection,
             delta,
+            ..
         } = coordinator.dispatch(intent).unwrap()
         else {
             panic!("benchmark operation unexpectedly produced no document change");

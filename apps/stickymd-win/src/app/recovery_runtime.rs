@@ -105,14 +105,8 @@ impl StickyApp {
     pub(super) fn finish_recovery_cleanup(&mut self) {
         self.recovery.finish();
         self.persistence.set_recovery_pending(false);
-        self.start_watcher();
-        self.diagnostic = Some("恢复选择已完成。".into());
-        if self.coordinator.view().base_disk_hash.is_none() {
-            self.submit_save(
-                SaveTrigger::RecreateMissing,
-                Some(PersistMode::Guarded { expected: None }),
-            );
-        }
+        self.sync_assets_after_recovery();
+        self.diagnostic = Some("恢复选择已完成；正在核对受管图片后启用编辑。".into());
         self.update_window_title();
         self.request_redraw();
     }

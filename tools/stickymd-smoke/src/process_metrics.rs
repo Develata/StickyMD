@@ -35,6 +35,8 @@ struct FileTime {
 pub(crate) struct MemorySample {
     pub(crate) private_working_set_bytes: u64,
     pub(crate) private_bytes: u64,
+    pub(crate) peak_working_set_bytes: u64,
+    pub(crate) peak_private_bytes: u64,
 }
 
 unsafe extern "system" {
@@ -71,6 +73,8 @@ pub(crate) fn memory(child: &Child) -> Result<MemorySample, String> {
     Ok(MemorySample {
         private_working_set_bytes: counters.private_working_set_size as u64,
         private_bytes: counters.private_usage as u64,
+        peak_working_set_bytes: counters.peak_working_set_size as u64,
+        peak_private_bytes: counters.peak_pagefile_usage as u64,
     })
 }
 

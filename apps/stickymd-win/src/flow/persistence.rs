@@ -30,6 +30,13 @@ pub enum QuitAction {
     Exit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitGcAction {
+    CancelQuit,
+    ResumeQuit,
+    Exit,
+}
+
 #[derive(Debug, Default)]
 pub struct PersistenceCoordinator {
     autosave: AutosaveScheduler,
@@ -198,6 +205,28 @@ impl PersistenceCoordinator {
         }
     }
 
+    /// Revalidate the whole exit precondition after a destructive asset pass.
+    /// A GC receipt is never sufficient by itself: a paste, edit, required
+    /// recreate or conflict may have appeared while the worker was running.
+    pub fn decide_exit_gc_completion(
+        &self,
+        succeeded: bool,
+        asset_paste_pending: bool,
+        document_dirty: bool,
+    ) -> ExitGcAction {
+        if !succeeded {
+            ExitGcAction::CancelQuit
+        } else if asset_paste_pending
+            || document_dirty
+            || self.has_required_write()
+            || self.conflict.is_some()
+        {
+            ExitGcAction::ResumeQuit
+        } else {
+            ExitGcAction::Exit
+        }
+    }
+
     /// A fresh inspection found the expected durable file. This discharges a
     /// conservative recreate obligation left behind by an overlapping save.
     pub fn confirm_durable_present(&mut self) {
@@ -324,5 +353,33 @@ mod tests {
         );
         flow.note_save_finished(false);
         assert_eq!(flow.decide_quit(false, false), QuitAction::RecreateMissing);
+    }
+
+    #[test]
+    fn paste_in_flight_quit_waits_for_latest_save_and_safe_gc() {
+        let mut flow = PersistenceCoordinator::default();
+
+        assert_eq!(
+            flow.decide_exit_gc_completion(true, true, false),
+            ExitGcAction::ResumeQuit
+        );
+        assert_eq!(flow.decide_quit(false, true), QuitAction::SaveDirty);
+
+        flow.note_save_submitted(SaveTrigger::Shutdown);
+        assert_eq!(
+            flow.decide_quit(false, true),
+            QuitAction::WaitForInFlightSave
+        );
+        assert!(!flow.note_save_finished(true));
+
+        assert_eq!(flow.decide_quit(false, false), QuitAction::Exit);
+        assert_eq!(
+            flow.decide_exit_gc_completion(true, false, false),
+            ExitGcAction::Exit
+        );
+        assert_eq!(
+            flow.decide_exit_gc_completion(false, false, false),
+            ExitGcAction::CancelQuit
+        );
     }
 }

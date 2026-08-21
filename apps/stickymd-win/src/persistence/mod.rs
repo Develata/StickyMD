@@ -5,11 +5,10 @@
 mod storage;
 mod worker;
 
-#[cfg(test)]
-pub use storage::MAX_NOTE_LOAD;
-pub(crate) use storage::inspect_note_state_with_retry;
+pub(crate) use storage::{MAX_NOTE_LOAD, inspect_note_state_with_retry};
 pub use storage::{
     NoteObservation, NoteStorageError, PersistMode, PersistRequest, PersistResult, inspect_note,
     persist_note, preserve_canonical, quarantine_temporary, remove_temporary,
 };
+pub(crate) use worker::AssetSyncRequest;
 pub use worker::{IoCompletion, PersistenceWorker, TemporaryCleanup};

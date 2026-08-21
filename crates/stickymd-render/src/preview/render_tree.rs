@@ -44,12 +44,19 @@ pub struct RenderSpan {
     pub style: RenderStyle,
     pub action: Option<SpanAction>,
     pub(crate) math: Option<RenderMath>,
+    pub(crate) image: Option<RenderImage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RenderMath {
     pub source: String,
     pub kind: MathKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RenderImage {
+    pub destination: String,
+    pub kind: ImageKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +176,7 @@ impl RenderTreeBuilder {
                         },
                         action: None,
                         math: None,
+                        image: None,
                     }],
                     indent,
                     source_range: code.source_range,
@@ -201,6 +209,7 @@ impl RenderTreeBuilder {
                         },
                         action: None,
                         math: None,
+                        image: None,
                     }],
                     indent,
                     source_range: *source_range,
@@ -220,6 +229,7 @@ impl RenderTreeBuilder {
                             source: math.literal.clone(),
                             kind: MathKind::Display,
                         }),
+                        image: None,
                     }],
                     indent,
                     source_range: math.source_range,
@@ -255,6 +265,7 @@ impl RenderTreeBuilder {
                         style: RenderStyle::default(),
                         action: None,
                         math: None,
+                        image: None,
                     },
                 );
             } else {
@@ -267,6 +278,7 @@ impl RenderTreeBuilder {
                         style: RenderStyle::default(),
                         action: None,
                         math: None,
+                        image: None,
                     }],
                     indent: indent.saturating_add(1),
                     source_range: item.source_range,
@@ -375,7 +387,7 @@ fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mu
                 ..
             } => {
                 let label = if alt.is_empty() { "image" } else { alt };
-                output.push(span(
+                let mut image_span = span(
                     &format!("[image: {label}] {destination}"),
                     alt,
                     *source_range,
@@ -395,7 +407,12 @@ fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mu
                             LinkKind::Https
                         },
                     }),
-                ));
+                );
+                image_span.image = Some(RenderImage {
+                    destination: destination.clone(),
+                    kind: *kind,
+                });
+                output.push(image_span);
             }
             InlineNode::InlineMath(math) => output.push(RenderSpan {
                 text: math.source_literal.clone(),
@@ -410,6 +427,7 @@ fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mu
                     source: math.literal.clone(),
                     kind: MathKind::Inline,
                 }),
+                image: None,
             }),
             InlineNode::SoftBreak { source_range } => {
                 output.push(span(" ", " ", *source_range, inherited, None));
@@ -449,6 +467,7 @@ fn span(
         style,
         action,
         math: None,
+        image: None,
     }
 }
 

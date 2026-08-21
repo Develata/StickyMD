@@ -106,7 +106,7 @@ impl StickyApp {
             self.preview_frame = None;
             self.preview_flow.release_projection();
             if let Some(worker) = &self.preview_worker {
-                worker.release_math_rasters();
+                worker.release_raster_caches();
             }
         }
         self.preview_focused = mode == ViewMode::Preview;
@@ -276,7 +276,7 @@ impl StickyApp {
             return;
         }
         let proxy = self.proxy.clone();
-        match PreviewWorker::start(move |completion| {
+        match PreviewWorker::start_with_image_base(self.paths.note_dir.clone(), move |completion| {
             let _ = proxy.send_event(AppEvent::Preview(completion));
         }) {
             Ok(worker) => self.preview_worker = Some(worker),

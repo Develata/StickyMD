@@ -10,9 +10,9 @@ mod reconciliation;
 mod recovery;
 mod save;
 
-pub use clipboard::{ClipboardError, ClipboardPort};
+pub use clipboard::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
 pub use editor::{AppEffect, EditorCoordinator};
-pub use persistence::{PersistenceCoordinator, QuitAction, ReconciliationAction};
+pub use persistence::{ExitGcAction, PersistenceCoordinator, QuitAction, ReconciliationAction};
 pub use preview::{
     PreviewAction, PreviewAdmission, PreviewCoordinator, PreviewEffect, PreviewVisibility,
 };

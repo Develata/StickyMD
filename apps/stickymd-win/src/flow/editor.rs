@@ -3,12 +3,12 @@
 //! plan_ref: docs/plan/03_system_architecture.md#flow-coordination
 
 use stickymd_core::{
-    CursorSnapshot, DocumentError, DocumentSnapshot, DocumentState, EditKind, EditMeta,
-    EditRequest, ExternalFileFact, Generation, Hash32, Selection, TextDelta,
+    AssetEffect, CursorSnapshot, DocumentError, DocumentSnapshot, DocumentState, EditKind,
+    EditMeta, EditRequest, ExternalFileFact, Generation, Hash32, Selection, TextDelta,
 };
 use thiserror::Error;
 
-use super::{ClipboardError, ClipboardPort};
+use super::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
 use crate::instruction::AppIntent;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +17,14 @@ pub enum AppEffect {
         generation: Generation,
         selection: Selection,
         delta: TextDelta,
+        asset_effects: Vec<AssetEffect>,
+    },
+    AssetPasteRequested(PendingAssetPaste),
+    /// A durable external fact replaced canonical text. The shell must fully
+    /// resync disposable projections and request runtime asset convergence;
+    /// neither follow-up is optional at this boundary.
+    ExternalDocumentReconciled {
+        generation: Generation,
     },
     ClipboardWritten,
     NoOp,
@@ -67,6 +75,12 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
         self.document.snapshot()
     }
 
+    pub fn managed_ref_counts(
+        &self,
+    ) -> std::collections::HashMap<stickymd_core::ManagedAssetName, usize> {
+        self.document.managed_ref_counts().clone()
+    }
+
     pub fn view(&self) -> EditorDocumentView<'_> {
         EditorDocumentView {
             text: self.document.text(),
@@ -93,6 +107,14 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
         self.document
             .replace_from_reconciliation(&fact.text, fact.line_ending, fact.fingerprint)
             .map_err(Into::into)
+    }
+
+    pub fn reconcile_external_for_runtime(
+        &mut self,
+        fact: &ExternalFileFact,
+    ) -> Result<AppEffect, EditorFlowError> {
+        let generation = self.reconcile_external(fact)?;
+        Ok(AppEffect::ExternalDocumentReconciled { generation })
     }
 
     pub fn load_unpersisted_recovery(
@@ -126,6 +148,7 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
                     generation: outcome.generation,
                     selection: outcome.cursor.selection,
                     delta: outcome.delta,
+                    asset_effects: outcome.asset_effects,
                 })
             }
             AppIntent::Redo => {
@@ -134,6 +157,7 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
                     generation: outcome.generation,
                     selection: outcome.cursor.selection,
                     delta: outcome.delta,
+                    asset_effects: outcome.asset_effects,
                 })
             }
             AppIntent::CopySelection {
@@ -145,11 +169,11 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
                 selection,
                 timestamp_ms,
             } => self.cut(expected_generation, selection, timestamp_ms),
-            AppIntent::PasteText {
+            AppIntent::PasteClipboard {
                 expected_generation,
                 selection,
                 timestamp_ms,
-            } => self.paste(expected_generation, selection, timestamp_ms),
+            } => self.paste_clipboard(expected_generation, selection, timestamp_ms),
             AppIntent::WriteClipboard { text } => {
                 if text.is_empty() {
                     Ok(AppEffect::NoOp)
@@ -159,6 +183,22 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
                 }
             }
         }
+    }
+
+    pub fn commit_prepared_paste(
+        &mut self,
+        expected_generation: Generation,
+        selection: Selection,
+        markdown: String,
+        timestamp_ms: u64,
+    ) -> Result<AppEffect, EditorFlowError> {
+        self.replace(
+            expected_generation,
+            selection,
+            markdown,
+            EditKind::Paste,
+            timestamp_ms,
+        )
     }
 
     fn replace(
@@ -197,6 +237,7 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
             generation: outcome.generation,
             selection: cursor_after.selection,
             delta,
+            asset_effects: outcome.asset_effects,
         })
     }
 
@@ -240,26 +281,37 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
         )
     }
 
-    fn paste(
+    fn paste_clipboard(
         &mut self,
         expected_generation: Generation,
         selection: Selection,
         timestamp_ms: u64,
     ) -> Result<AppEffect, EditorFlowError> {
         self.require_generation(expected_generation)?;
-        let Some(text) = self.clipboard.read_text()? else {
+        let Some(payload) = self.clipboard.read_paste()? else {
             return Ok(AppEffect::NoOp);
         };
-        if text.is_empty() {
-            return Ok(AppEffect::NoOp);
+        match payload {
+            ClipboardPaste::Text(text) => {
+                if text.is_empty() {
+                    Ok(AppEffect::NoOp)
+                } else {
+                    self.replace(
+                        expected_generation,
+                        selection,
+                        text,
+                        EditKind::Paste,
+                        timestamp_ms,
+                    )
+                }
+            }
+            payload => Ok(AppEffect::AssetPasteRequested(PendingAssetPaste {
+                expected_generation,
+                selection,
+                timestamp_ms,
+                payload,
+            })),
         }
-        self.replace(
-            expected_generation,
-            selection,
-            text,
-            EditKind::Paste,
-            timestamp_ms,
-        )
     }
 
     fn selected_text(
@@ -302,6 +354,7 @@ mod tests {
     #[derive(Default)]
     struct MockClipboard {
         text: Option<String>,
+        paste: Option<ClipboardPaste>,
         fail_read: bool,
         fail_write: bool,
     }
@@ -321,6 +374,16 @@ mod tests {
             } else {
                 self.text = Some(text.to_owned());
                 Ok(())
+            }
+        }
+
+        fn read_paste(&mut self) -> Result<Option<ClipboardPaste>, ClipboardError> {
+            if self.fail_read {
+                Err(ClipboardError::Unavailable("read failed".to_owned()))
+            } else if self.paste.is_some() {
+                Ok(self.paste.clone())
+            } else {
+                Ok(self.text.clone().map(ClipboardPaste::Text))
             }
         }
     }
@@ -396,7 +459,7 @@ mod tests {
         let generation = coordinator.view().generation;
         assert_eq!(
             coordinator
-                .dispatch(AppIntent::PasteText {
+                .dispatch(AppIntent::PasteClipboard {
                     expected_generation: generation,
                     selection: Selection::caret(0),
                     timestamp_ms: 1,
@@ -406,7 +469,7 @@ mod tests {
         );
         coordinator.clipboard.text = Some("中国".to_owned());
         coordinator
-            .dispatch(AppIntent::PasteText {
+            .dispatch(AppIntent::PasteClipboard {
                 expected_generation: generation,
                 selection: Selection::new(6, 11),
                 timestamp_ms: 2,
@@ -460,7 +523,7 @@ mod tests {
         let mut coordinator = EditorCoordinator::empty(clipboard);
         edit(&mut coordinator, "keep");
         let before = coordinator.snapshot();
-        let result = coordinator.dispatch(AppIntent::PasteText {
+        let result = coordinator.dispatch(AppIntent::PasteClipboard {
             expected_generation: before.generation,
             selection: Selection::new(0, 4),
             timestamp_ms: 1,
@@ -483,5 +546,66 @@ mod tests {
             Err(EditorFlowError::Document(DocumentError::StaleEdit { .. }))
         ));
         assert!(coordinator.clipboard.text.is_none());
+    }
+
+    #[test]
+    fn phase7_image_paste_is_deferred_and_stale_commit_is_rejected() {
+        let clipboard = MockClipboard {
+            paste: Some(ClipboardPaste::EncodedImage(vec![1, 2, 3])),
+            ..MockClipboard::default()
+        };
+        let mut coordinator = EditorCoordinator::empty(clipboard);
+        let captured = coordinator.view().generation;
+        let effect = coordinator
+            .dispatch(AppIntent::PasteClipboard {
+                expected_generation: captured,
+                selection: Selection::caret(0),
+                timestamp_ms: 1,
+            })
+            .unwrap();
+        assert!(matches!(effect, AppEffect::AssetPasteRequested(_)));
+        edit(&mut coordinator, "newer");
+        let before = coordinator.snapshot();
+        let result = coordinator.commit_prepared_paste(
+            captured,
+            Selection::caret(0),
+            "![](images/stickymd-0123456789abcdef0123.png)".into(),
+            2,
+        );
+        assert!(matches!(
+            result,
+            Err(EditorFlowError::Document(DocumentError::StaleEdit { .. }))
+        ));
+        assert_eq!(coordinator.snapshot(), before);
+    }
+
+    #[test]
+    fn external_runtime_reload_emits_projection_and_asset_reconcile_effect() {
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        edit(&mut coordinator, "local dirty text");
+        let external = "![](images/stickymd-0123456789abcdef0123.png)";
+        let fact = ExternalFileFact {
+            fingerprint: stickymd_core::hash_bytes(external.as_bytes()),
+            text: external.into(),
+            line_ending: stickymd_core::LineEnding::Lf,
+            durable_len: external.len(),
+        };
+
+        let effect = coordinator.reconcile_external_for_runtime(&fact).unwrap();
+        assert_eq!(
+            effect,
+            AppEffect::ExternalDocumentReconciled {
+                generation: coordinator.view().generation,
+            }
+        );
+        assert_eq!(
+            coordinator
+                .managed_ref_counts()
+                .values()
+                .copied()
+                .sum::<usize>(),
+            1
+        );
+        assert!(!coordinator.view().dirty);
     }
 }

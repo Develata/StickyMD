@@ -14,7 +14,12 @@ use crate::interaction::ImeSignal;
 
 impl StickyApp {
     pub(super) fn handle_ime(&mut self, event: Ime) {
-        if !ime_event_allowed(self.recovery.is_pending(), self.preview_focused) {
+        if !mutation_input_allowed(
+            self.recovery.is_pending(),
+            self.preview_focused,
+            self.quit_pending,
+            self.asset_reconcile_pending,
+        ) {
             self.session.cancel_preedit();
             self.sync_preedit();
             return;
@@ -79,7 +84,12 @@ impl StickyApp {
         {
             return;
         }
-        if self.recovery.is_pending() {
+        if !mutation_input_allowed(
+            self.recovery.is_pending(),
+            false,
+            self.quit_pending,
+            self.asset_reconcile_pending,
+        ) {
             return;
         }
 
@@ -224,7 +234,7 @@ impl StickyApp {
             }
             Some(KeyCode::KeyV) => {
                 self.session.cancel_preedit();
-                self.dispatch(AppIntent::PasteText {
+                self.dispatch(AppIntent::PasteClipboard {
                     expected_generation: generation,
                     selection: self.session.selection,
                     timestamp_ms,
@@ -235,7 +245,11 @@ impl StickyApp {
             Some(KeyCode::KeyS) => {
                 self.dispatch_persistence_intent(
                     None,
-                    PersistenceIntent::SaveNow(SaveReason::Manual),
+                    if shift {
+                        PersistenceIntent::Export
+                    } else {
+                        PersistenceIntent::SaveNow(SaveReason::Manual)
+                    },
                 );
             }
             Some(KeyCode::Home) | Some(KeyCode::End) => {
@@ -425,18 +439,29 @@ impl StickyApp {
     }
 }
 
-fn ime_event_allowed(recovery_pending: bool, preview_only: bool) -> bool {
-    !recovery_pending && !preview_only
+fn mutation_input_allowed(
+    recovery_pending: bool,
+    preview_only: bool,
+    quit_pending: bool,
+    asset_reconcile_pending: bool,
+) -> bool {
+    !recovery_pending && !preview_only && !quit_pending && !asset_reconcile_pending
 }
 
 #[cfg(test)]
 mod recovery_tests {
-    use super::ime_event_allowed;
+    use super::mutation_input_allowed;
 
     #[test]
     fn recovery_pending_rejects_ime_commits_and_preedit() {
-        assert!(!ime_event_allowed(true, false));
-        assert!(!ime_event_allowed(false, true));
-        assert!(ime_event_allowed(false, false));
+        assert!(!mutation_input_allowed(true, false, false, false));
+        assert!(!mutation_input_allowed(false, true, false, false));
+        assert!(mutation_input_allowed(false, false, false, false));
+    }
+
+    #[test]
+    fn quit_and_asset_reconcile_freeze_keyboard_and_ime_mutations() {
+        assert!(!mutation_input_allowed(false, false, true, false));
+        assert!(!mutation_input_allowed(false, false, false, true));
     }
 }
