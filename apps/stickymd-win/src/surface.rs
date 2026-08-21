@@ -41,6 +41,25 @@ pub enum SurfaceError {
     Present(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DamageRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl DamageRect {
+    pub const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+}
+
 pub struct SoftwareSurface {
     _context: Context<WindowHandleSource>,
     surface: Surface<WindowHandleSource, WindowHandleSource>,
@@ -96,11 +115,114 @@ impl SoftwareSurface {
         if buffer.len().checked_mul(4) != Some(self.pixmap.data().len()) {
             return Err(SurfaceError::LengthMismatch);
         }
-        for (destination, rgba) in buffer.iter_mut().zip(self.pixmap.data().chunks_exact(4)) {
-            *destination = ((rgba[0] as u32) << 16) | ((rgba[1] as u32) << 8) | rgba[2] as u32;
-        }
+        copy_rgba_full(self.pixmap.data(), &mut buffer);
         buffer
             .present()
             .map_err(|error| SurfaceError::Present(error.to_string()))
+    }
+
+    /// Converts and presents only a stable framebuffer rectangle.
+    ///
+    /// Win32 softbuffer keeps a single persistent DIB (`age == 1`), so caret
+    /// blinking can update a few dozen pixels instead of converting and
+    /// copying the entire window. A newly allocated buffer has unspecified
+    /// contents and is therefore populated in full before its first present.
+    pub fn present_damage(&mut self, damage: DamageRect) -> Result<(), SurfaceError> {
+        let mut buffer = self
+            .surface
+            .buffer_mut()
+            .map_err(|error| SurfaceError::Surface(error.to_string()))?;
+        if buffer.len().checked_mul(4) != Some(self.pixmap.data().len()) {
+            return Err(SurfaceError::LengthMismatch);
+        }
+        if buffer.age() == 0 {
+            copy_rgba_full(self.pixmap.data(), &mut buffer);
+            return buffer
+                .present()
+                .map_err(|error| SurfaceError::Present(error.to_string()));
+        }
+        let Some(damage) = clamp_damage(damage, self.pixmap.width(), self.pixmap.height()) else {
+            return Ok(());
+        };
+        copy_rgba_damage(
+            self.pixmap.data(),
+            &mut buffer,
+            self.pixmap.width(),
+            self.pixmap.height(),
+            damage,
+        )?;
+        let width = NonZeroU32::new(damage.width).ok_or(SurfaceError::ZeroSize)?;
+        let height = NonZeroU32::new(damage.height).ok_or(SurfaceError::ZeroSize)?;
+        buffer
+            .present_with_damage(&[softbuffer::Rect {
+                x: damage.x,
+                y: damage.y,
+                width,
+                height,
+            }])
+            .map_err(|error| SurfaceError::Present(error.to_string()))
+    }
+}
+
+fn copy_rgba_full(rgba: &[u8], native: &mut [u32]) {
+    for (destination, rgba) in native.iter_mut().zip(rgba.chunks_exact(4)) {
+        *destination = ((rgba[0] as u32) << 16) | ((rgba[1] as u32) << 8) | rgba[2] as u32;
+    }
+}
+
+fn copy_rgba_damage(
+    rgba: &[u8],
+    native: &mut [u32],
+    width: u32,
+    height: u32,
+    damage: DamageRect,
+) -> Result<(), SurfaceError> {
+    if native.len() != width as usize * height as usize
+        || rgba.len() != native.len().saturating_mul(4)
+    {
+        return Err(SurfaceError::LengthMismatch);
+    }
+    let Some(damage) = clamp_damage(damage, width, height) else {
+        return Ok(());
+    };
+    let stride = width as usize;
+    let start_x = damage.x as usize;
+    let end_x = start_x + damage.width as usize;
+    for y in damage.y as usize..(damage.y + damage.height) as usize {
+        let row = y * stride;
+        for x in start_x..end_x {
+            let pixel = row + x;
+            let source = pixel * 4;
+            native[pixel] = ((rgba[source] as u32) << 16)
+                | ((rgba[source + 1] as u32) << 8)
+                | rgba[source + 2] as u32;
+        }
+    }
+    Ok(())
+}
+
+fn clamp_damage(damage: DamageRect, width: u32, height: u32) -> Option<DamageRect> {
+    let x = damage.x.min(width);
+    let y = damage.y.min(height);
+    let right = damage.x.saturating_add(damage.width).min(width);
+    let bottom = damage.y.saturating_add(damage.height).min(height);
+    let width = right.saturating_sub(x);
+    let height = bottom.saturating_sub(y);
+    (width != 0 && height != 0).then_some(DamageRect::new(x, y, width, height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DamageRect, copy_rgba_damage};
+
+    #[test]
+    fn phase9_caret_damage_conversion_does_not_touch_other_pixels() {
+        let rgba = [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255];
+        let mut native = [u32::MAX; 4];
+
+        copy_rgba_damage(&rgba, &mut native, 2, 2, DamageRect::new(1, 0, 1, 2))
+            .expect("valid damage rectangle");
+
+        assert_eq!(native, [u32::MAX, 0x0004_0506, u32::MAX, 0x000a_0b0c]);
     }
 }

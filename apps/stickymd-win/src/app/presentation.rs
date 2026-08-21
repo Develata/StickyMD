@@ -12,6 +12,13 @@ use super::toolbar_paint::{ToolbarVisual, paint_toolbar};
 use super::{CARET_BLINK, StickyApp};
 use crate::config::ViewMode;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PendingRedraw {
+    None,
+    CaretOnly,
+    Full,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SourcePaintKey {
     generation: stickymd_core::Generation,
@@ -28,7 +35,8 @@ pub(super) struct SourcePaintKey {
 }
 
 impl StickyApp {
-    pub(super) fn request_redraw(&self) {
+    pub(super) fn request_redraw(&mut self) {
+        self.pending_redraw = PendingRedraw::Full;
         if let Some(window) = &self.window {
             window.request_redraw();
         }
@@ -117,6 +125,7 @@ impl StickyApp {
     }
 
     pub(super) fn render(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let pending = std::mem::replace(&mut self.pending_redraw, PendingRedraw::None);
         let Some(geometry) = self.view_geometry() else {
             return;
         };
@@ -129,6 +138,9 @@ impl StickyApp {
         } else {
             stickymd_render::source::SourceTheme::Light
         };
+        if pending == PendingRedraw::CaretOnly && self.render_caret_damage(geometry, source_theme) {
+            return;
+        }
         let preedit = self.session.preedit_visual();
         if let (Some(_pane), Some(projection), Some(source_frame)) = (
             geometry.source,
@@ -193,7 +205,8 @@ impl StickyApp {
         if let (Some(pane), Some(source_frame)) = (geometry.source, &self.source_frame) {
             blit_pixmap(source_frame, surface.pixmap_mut(), pane.x, pane.y);
         }
-        if caret_animation_active
+        if self.native_caret_failed
+            && caret_animation_active
             && self.session.caret_visible
             && let (Some(pane), Some(projection)) = (geometry.source, &self.projection)
             && let Err(error) = projection.paint_caret_overlay(
@@ -222,13 +235,25 @@ impl StickyApp {
         };
         let layout = ControlLayout::new(surface_size, scale);
         paint_toolbar(surface.pixmap_mut(), geometry, &layout, toolbar_visual);
-        if let Err(error) = surface.present() {
+        let presented = if let Err(error) = surface.present() {
             self.diagnostic = Some(error.to_string());
+            false
         } else {
             match self.startup_diagnostics.editor_ready() {
                 Ok(true) => event_loop.exit(),
                 Ok(false) => {}
                 Err(error) => eprintln!("startup diagnostics failed: {error}"),
+            }
+            true
+        };
+        if presented {
+            self.native_caret_drawn = false;
+            if !self.native_caret_failed
+                && let Err(error) = self.sync_native_caret_overlay()
+            {
+                self.native_caret_failed = true;
+                self.diagnostic = Some(format!("caret overlay unavailable: {error}"));
+                self.request_redraw();
             }
         }
         self.update_ime_area();

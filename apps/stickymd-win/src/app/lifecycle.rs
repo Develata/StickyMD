@@ -246,9 +246,8 @@ impl ApplicationHandler<AppEvent> for StickyApp {
         }
         if self.caret_animation_active() {
             if now >= self.next_blink {
-                self.session.caret_visible = !self.session.caret_visible;
                 self.next_blink = now + CARET_BLINK;
-                self.request_redraw();
+                self.advance_caret_blink();
             }
             next_wake =
                 Some(next_wake.map_or(self.next_blink, |current| current.min(self.next_blink)));

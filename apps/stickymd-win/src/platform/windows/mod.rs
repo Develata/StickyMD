@@ -3,6 +3,7 @@
 //! plan_ref: docs/plan/09_windows_shell.md#windows-adapter-mapping
 
 pub(crate) mod atomic_file;
+pub(crate) mod caret_overlay;
 mod clipboard;
 pub(crate) mod diagnostic_event;
 pub(crate) mod export_dialog;

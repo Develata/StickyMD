@@ -37,6 +37,7 @@ use crate::startup::StartupDiagnostics;
 use crate::surface::SoftwareSurface;
 
 mod assets_runtime;
+mod caret_runtime;
 mod controls;
 mod export_runtime;
 mod input;
@@ -88,6 +89,7 @@ pub struct StickyApp {
     projection: Option<SourceProjection>,
     source_frame: Option<Pixmap>,
     source_paint_key: Option<presentation::SourcePaintKey>,
+    pending_redraw: presentation::PendingRedraw,
     preview_frame: Option<PreviewFrame>,
     preview_worker: Option<PreviewWorker>,
     preview_flow: PreviewCoordinator,
@@ -122,6 +124,8 @@ pub struct StickyApp {
     pointer_inside_window: bool,
     started: Instant,
     next_blink: Instant,
+    native_caret_drawn: bool,
+    native_caret_failed: bool,
     diagnostic: Option<String>,
     system_theme: Theme,
     controls: controls::ControlState,
@@ -150,6 +154,7 @@ impl StickyApp {
             projection: None,
             source_frame: None,
             source_paint_key: None,
+            pending_redraw: presentation::PendingRedraw::None,
             preview_frame: None,
             preview_worker: None,
             preview_flow: PreviewCoordinator::default(),
@@ -187,6 +192,8 @@ impl StickyApp {
             pointer_inside_window: false,
             started: now,
             next_blink: now + CARET_BLINK,
+            native_caret_drawn: false,
+            native_caret_failed: false,
             diagnostic: bootstrap.warnings.last().cloned(),
             system_theme: Theme::Light,
             controls: controls::ControlState::new(opacity),
