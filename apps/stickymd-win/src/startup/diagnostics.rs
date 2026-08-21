@@ -9,6 +9,7 @@ use std::time::Instant;
 
 const READY_EVENT_ENV: &str = "STICKYMD_DIAGNOSTIC_READY_EVENT";
 const TRACE_PATH_ENV: &str = "STICKYMD_DIAGNOSTIC_STARTUP_TRACE";
+const EXIT_AFTER_READY_ENV: &str = "STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY";
 
 /// Disabled by default; records only monotonic durations and fixed milestone names.
 /// It never records note text, paths, clipboard data, or other user content.
@@ -16,6 +17,7 @@ pub struct StartupDiagnostics {
     started: Instant,
     ready_event: Option<String>,
     trace_path: Option<PathBuf>,
+    exit_after_ready: bool,
     milestones: Vec<(&'static str, u128)>,
     finished: bool,
 }
@@ -33,6 +35,8 @@ impl StartupDiagnostics {
             started: Instant::now(),
             ready_event,
             trace_path,
+            exit_after_ready: enabled
+                && env::var(EXIT_AFTER_READY_ENV).is_ok_and(|value| value == "1"),
             milestones: if enabled {
                 Vec::with_capacity(16)
             } else {
@@ -60,9 +64,9 @@ impl StartupDiagnostics {
     /// Completes the startup measurement after the first successful present.
     /// The event is signalled before the optional trace write, so the external
     /// duration excludes diagnostic file I/O.
-    pub fn editor_ready(&mut self) -> Result<(), String> {
+    pub fn editor_ready(&mut self) -> Result<bool, String> {
         if self.finished {
-            return Ok(());
+            return Ok(false);
         }
         self.record("editor_ready");
         self.finished = true;
@@ -81,7 +85,7 @@ impl StartupDiagnostics {
             )
             .map_err(|error| format!("cannot write startup trace: {error}"))?;
         }
-        Ok(())
+        Ok(self.exit_after_ready)
     }
 }
 

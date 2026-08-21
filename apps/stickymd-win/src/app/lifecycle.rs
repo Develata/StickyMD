@@ -211,7 +211,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             }
             WindowEvent::Moved(_) => {}
             WindowEvent::MouseWheel { delta, .. } => self.handle_scroll(delta),
-            WindowEvent::RedrawRequested => self.render(),
+            WindowEvent::RedrawRequested => self.render(event_loop),
             _ => {}
         }
     }

@@ -223,6 +223,7 @@ fn measure_editor_ready(
         .current_dir(directory)
         .env("STICKYMD_DIAGNOSTIC_READY_EVENT", ready.name())
         .env("STICKYMD_DIAGNOSTIC_STARTUP_TRACE", &trace)
+        .env("STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -234,6 +235,12 @@ fn measure_editor_ready(
         ensure_alive(&mut child, "startup measurement instance")?;
         let milestones_us = wait_for_startup_trace(&trace)?;
         validate_startup_milestones(&milestones_us)?;
+        let status = wait_for_exit(&mut child, EXIT_TIMEOUT)?;
+        if !status.success() {
+            return Err(format!(
+                "diagnostic startup instance exited unsuccessfully: {status}"
+            ));
+        }
         Ok(StartupSample {
             external,
             milestones_us,
