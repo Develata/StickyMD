@@ -6,7 +6,7 @@
 - Advisory policy: **PASS** (`cargo deny 0.20.2`; no unresolved security advisory).
 - Licenses and sources: **PASS**.
 - Runtime network/database/async-framework boundary: **PASS**.
-- SPDX generation pipeline: **PASS on dirty-tree validation artifact; final exact-commit artifact pending**.
+- SPDX generation pipeline: implemented; replacement exact-package run pending.
 
 ## Frozen inputs
 
@@ -26,6 +26,12 @@ The checked-in script pins Syft 1.50.0 and the Windows amd64 archive SHA-256 `81
 
 The scan context contains the exact `Cargo.lock` plus the extracted portable staging tree. `SYFT_FILE_METADATA_SELECTION=all` ensures the generated SPDX 2.3 document covers the packaged EXE, third-party notice and both font-license files instead of relying on stripped-binary Rust detection alone. Syft itself is not shipped.
 
-## Validation snapshot
+## Exact Local RC Evidence
 
-The development-tree validation generated SPDX 2.3 with 337 packages and 12 file records, then verified ZIP and SBOM hashes. This is script validation only. Final hashes belong in the exact-commit release-readiness report and must not be copied from this dirty-tree run.
+The previous `d02f8a6` SBOM/package evidence is superseded because the runtime notice boundary and
+package verifier changed. The replacement SPDX package/file counts, size and checksum are recorded
+after the exact clean-source package run. The verifier requires both the SBOM and ZIP as the only
+two entries in `SHA256SUMS.txt`.
+
+`Cargo.lock` SHA-256 is
+`0c44aa6811f0ef0226a3cc41bddcdebc497a2de7ea13b032f43134f28fabfa25`.

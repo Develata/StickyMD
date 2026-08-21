@@ -2,8 +2,8 @@
 
 ## Status
 
-Automated convergence completed on 2026-08-21 against the Phase 9 working tree based on
-`318037fe9be4ddbb41785eb723e6ebea9b40c390`. The final RC commit will rerun the same suite.
+Automated convergence was rerun on 2026-08-21 against the measured Phase 9 convergence tree. The
+exact clean package commit is recorded only after the implementation tree is committed and rebuilt.
 Real permission-policy, hard-kill and GUI observations remain in the manual acceptance report and
 are not upgraded by this report.
 
@@ -24,12 +24,12 @@ are not upgraded by this report.
 | `ReplaceFileW` 1175/1176/1177 classification | PASS | `rare_replace_failures_are_not_collapsed`; no blanket fallback exists |
 | recovery evidence | PASS | bootstrap invalid/same/newer/missing/oversize temporary tests |
 | OCC external write race | PASS | `guarded_save_detects_external_change_and_never_writes`, `first_publish_race_after_guard_is_reported_as_conflict_without_overwrite` |
-| watcher unavailable | PASS | guarded storage tests call the final OCC gate directly without any watcher |
+| watcher unavailable | PARTIAL | guarded storage tests prove the correctness fallback; watcher-factory/runtime degraded-mode coordination is not injected end to end |
 | corrupt/newer config | PASS | config preservation/default/persistence-eligibility tests |
 | invalid UTF-8 note | PASS | core durable decode plus startup canonical rejection tests |
 | read-only note | PASS | `phase9_read_only_note_save_failure_preserves_dirty_document_authority` |
 | unwritable program directory | PASS (fault seam) | `phase9_writable_probe_failure_is_typed_and_preserves_existing_file`; real ACL case remains manual |
-| `note/` deleted during runtime | PASS | `phase9_external_note_directory_delete_recreates_only_the_note_parent` |
+| `note/` deleted during runtime | PARTIAL | storage repair is covered; the full watcher hint to coordinator to durable acknowledgement chain is not injected end to end |
 | `note/` replaced by file | PASS | `phase9_note_directory_replaced_by_file_fails_closed` |
 | disk full | PASS (fault injection) | Win32 error 112 is injected before temporary write; canonical bytes remain unchanged |
 | save failure + Quit | PASS | `note_save_failure_cancels_quit_and_reenables_input` |
@@ -65,24 +65,26 @@ Targeted copied-Release `preview-4k-image` resource smoke, five runs:
 
 | Metric | Phase 7 maximum | Phase 9 maximum | Delta |
 | --- | ---: | ---: | ---: |
-| Peak working set | 93.93 MiB | 79.85 MiB | -14.08 MiB |
-| Peak private bytes | 79.93 MiB | 63.94 MiB | -15.99 MiB |
-| Steady working set | 16.78 MiB | 16.87 MiB | +0.09 MiB |
-| Steady private bytes | 17.84 MiB | 17.86 MiB | +0.02 MiB |
+| Peak working set | 93.93 MiB | 83.46 MiB | -10.47 MiB |
+| Peak private bytes | 79.93 MiB | 65.33 MiB | -14.60 MiB |
+| Steady working set | 16.78 MiB | 19.35 MiB | +2.57 MiB |
+| Steady private bytes | 17.84 MiB | 20.92 MiB | +3.08 MiB |
 
 The change removes a large overlapping allocation while leaving steady state and cache ownership
-unchanged. The final Phase 9 resource matrix will remeasure the current RC artifact.
+unchanged. The stable increase is retained as measured evidence; it remains far below the normal
+Preview hard gate and the transient is bounded.
 
 ## Fresh Verification
 
-`cargo test --workspace --locked`:
+Latest full Phase 9 performance invocation included `cargo test --workspace --locked`:
 
-- 348 passed;
+- 357 passed at the final review tree;
 - 0 failed;
 - 12 ignored Release-only performance tests;
 - ignored tests are executed by the explicit performance smoke route.
 
-`cargo test -p stickymd-win --locked phase9_ -- --nocapture`: 6 passed, 0 failed.
+Fresh final baseline results are recorded after the review fixes; the exact package remains blocked
+until those commands are rerun.
 
 ## Remaining Manual Evidence
 

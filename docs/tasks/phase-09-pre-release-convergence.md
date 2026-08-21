@@ -2,7 +2,7 @@
 
 ## Completion State
 
-In Progress.
+Implementation Complete — release validation incomplete.
 
 ## Goal
 
@@ -57,4 +57,11 @@ In Progress.
 
 ## Result
 
-尚未完成。最终只有在自动化、报告、package 与 release 基础设施收口后才能改为 `Completed`；若人工门仍未关闭，发布建议必须保持 `NOT RC READY` 或列出 USER waiver。
+Phase 9 implementation and the automated convergence pass are complete. Independent review findings
+were applied: diagnostic traces now publish atomically without overwrite, exact runtime notices are
+generated from the locked Windows graph, idle CPU uses five independent 60-second samples, and leak
+stress covers persistence, conflict and image lifecycles. Cold startup p95 is 268.595 ms and passes
+the original 300 ms gate, so the USER-authorized 400 ms fallback was not used. Warm startup p95 is
+267.094 ms and remains above its unchanged 180 ms gate; all real-environment manual rows remain
+`NOT TESTED`. The release recommendation is therefore `NOT RC READY`, and no tag, push or GitHub
+Release was created.

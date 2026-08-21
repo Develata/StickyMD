@@ -19,12 +19,12 @@ failure-timing observation.
 | Display facts | two WMI monitor parameter records; physical topology and per-monitor DPI not manually verified |
 | Language profiles | en-GB and zh-Hans-CN; two Chinese TIP identifiers present |
 | Input method versions | not identified or manually exercised |
-| Source baseline | starting commit `318037fe9be4ddbb41785eb723e6ebea9b40c390` plus uncommitted Phase 9 work |
-| Candidate EXE | current local Release build, not a frozen RC iteration |
-| Candidate EXE SHA-256 | `A01C9FA76F0FB6B514A6880276B121099BF8079FE28AA4FA3A1302C01367D764` |
+| Source baseline | no frozen Phase 9 convergence RC yet |
+| Candidate EXE | pending exact clean-source package; not published |
+| Candidate EXE SHA-256 | pending |
 
-The EXE above was used for automated startup measurements only. It is not accepted as the common
-manual RC artifact because Phase 9 code and release packaging are still changing.
+The previous `d02f8a6` candidate was superseded without any manual execution. No manual row can
+advance until the replacement exact candidate identity is frozen and a checked-in receipt exists.
 
 ## Manual Matrix
 
@@ -60,4 +60,3 @@ Microsoft Pinyin, WeChat IME, preview/math/image visual quality, real tray/docki
 clipboard sources, crash timing, and Clean VM coverage are explicit release blockers. Environment
 availability is not evidence of execution. They remain open unless a later frozen-RC receipt records
 `MANUAL PASS`, or the USER explicitly waives the individual gate.
-

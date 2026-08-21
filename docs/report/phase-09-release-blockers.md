@@ -2,24 +2,29 @@
 
 ## Status
 
-Initial inventory. Update every row from current-commit evidence; do not close a row from an older report.
+Automated inventory for the measured Phase 9 convergence tree. Exact clean-source package evidence
+is recorded after the implementation tree is committed. Manual rows remain open unless a checked-in
+current-artifact receipt exists.
 
 | ID | Priority | Blocker | Evidence / next action | State |
 | --- | --- | --- | --- | --- |
-| RB-001 | P0 | Startup gates are not stable | Two 20+20 copied-Release cohorts exist. Cold p95 was 377.212 ms then 441.025 ms; warm p95 was 286.065 ms then 359.971 ms. The original 300 ms cold gate is USER-waived, but 400 ms cold and 180 ms warm remain open; see startup reports. | OPEN |
+| RB-001 | P0 | Warm startup exceeds its hard gate | Final graceful-exit cohort: cold p95 268.595 ms PASS at the original 300 ms gate; warm p95 267.094 ms FAIL at 180 ms. No warm waiver exists. | OPEN |
 | RB-002 | P0 | Real Microsoft Pinyin and WeChat IME acceptance absent | execute current RC matrix or retain NOT TESTED / obtain USER waiver | OPEN |
 | RB-003 | P0 | Native Preview/math/image visual acceptance absent | execute Light/Dark/DPI matrix or retain NOT TESTED / obtain USER waiver | OPEN |
 | RB-004 | P0 | Real tray/dock/theme/opacity/multi-monitor acceptance absent | execute physical Windows matrix or retain NOT TESTED / obtain USER waiver | OPEN |
 | RB-005 | P0 | Clipboard/export/crash/reparse/ACL/Clean-VM evidence absent | execute environment matrix or retain NOT TESTED / obtain USER waiver | OPEN |
-| RB-006 | P0 | Phase 9 release package, checksum, SBOM and verifier not yet implemented | implement one allowlisted package path and verify copied artifact | OPEN |
-| RB-007 | P0 | Release workflow and action/tool supply-chain pins not yet implemented | verify current official releases, pin full SHAs/checksums, static review | OPEN |
-| RB-008 | P1 | Final current-commit memory/CPU/latency/leak evidence absent | run Phase 9 Release resource/performance suites | OPEN |
-| RB-009 | P1 | `ttf-parser 0.25.1` unmaintained advisory is explicitly ignored | re-evaluate severity/upstream status; no blind dependency churn | OPEN |
-| RB-010 | P1 | Release-facing README, security, contribution, changelog and checklist incomplete | finalize only implemented behavior; do not claim stable v1 | OPEN |
+| RB-006 | P0 | Full user-asset and managed-looking-fake safety chains absent | execute the current-RC restart/edit/undo/redo/GC/export/quit receipts; low-level tests do not close this gate | OPEN |
+| RB-007 | P0 | Phase 9 package/SBOM/license pipeline | runtime-graph notice generation and stricter verifier implemented; exact clean-source package must be regenerated | OPEN |
+| RB-008 | P0 | Release workflow and supply-chain pins | cargo-deny action download replaced by Cargo checksum-verified installation; static and remote evidence must be rerun | OPEN |
+| RB-009 | P1 | Final memory/CPU/latency/leak evidence | five 60-second samples per mode and the full 1000-window/100-persistence/100-conflict/100-image stress contract pass | CLOSED |
+| RB-010 | P1 | `ttf-parser 0.25.1` unmaintained advisory is explicitly ignored | no vulnerability is reported and no compatible safe convergence exists; tracked in dedicated risk report | MONITORED |
+| RB-011 | P1 | Release-facing documentation | README, Chinese README, security, contribution, changelog and release checklist completed without v1-ready claims | CLOSED |
 
 ## Ignored Tests Audit
 
-Twelve ignored Rust tests were found. All are explicit Release-only performance baselines for Phases 3–8; no ignored correctness test was found in the initial scan. Phase 9 must execute every applicable ignored performance route explicitly and record the final count.
+Twelve ignored Rust tests were found. All are explicit Release-only performance baselines for Phases
+3--8; no ignored correctness test exists. Every applicable ignored route was explicitly executed in
+Release mode and recorded in `phase-09-performance-final.md`.
 
 ## Source Marker Audit
 

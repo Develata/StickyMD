@@ -21,7 +21,8 @@
 ## USER decisions
 
 - [ ] Approve the release version; do not infer `1.0.0` from the v1 product name.
-- [ ] Approve any cold-start waiver above the 300 ms optimization target; values above 400 ms remain blocking.
+- [x] Cold startup p95 268.595 ms passes the original 300 ms gate; the authorized 400 ms fallback is unused.
+- [ ] Resolve or explicitly waive the unchanged warm-start p95 180 ms gate (currently 267.094 ms).
 - [ ] Approve every remaining manual waiver individually.
 - [ ] Decide whether the unsigned-build policy is acceptable or provide a real code-signing certificate.
 - [ ] Approve pushing the exact commit and tag.
