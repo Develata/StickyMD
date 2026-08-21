@@ -14,7 +14,10 @@
 | actions/upload-artifact | 7.0.1 | `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` |
 | actions/download-artifact | 8.0.1 | `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c` |
 | actions/attest | 4.2.2 | `1e69f48acb82d1966a394da916b4c1698aa569d6` |
-| EmbarkStudios/cargo-deny-action | 2.1.1 | `3c6349835b2b7b196a839186cb8b78e02f7b5f25` |
+
+`cargo-deny 0.20.2` is installed with `cargo install --version 0.20.2 --locked`; Cargo verifies
+registry package checksums. The previous cargo-deny action was removed because its pinned action
+revision still downloaded an unchecked prebuilt cargo-deny archive at runtime.
 
 Versions and tag commits were rechecked against the official repositories on 2026-08-21. `actions/attest` 4.2.2 now requires `artifact-metadata: write` in addition to `id-token: write` and `attestations: write`; this current upstream requirement is granted only to the tag-only attestation/draft job. No package, actions or security-events write permission is granted.
 
@@ -24,6 +27,6 @@ The global workflow permission is `contents: read`. `workflow_dispatch` can buil
 
 Checkout credentials are not persisted. Actions use full immutable SHAs. Syft is downloaded at an exact release URL and verified by pinned upstream checksums. The workflow contains no `pull_request_target`, installer pipe, cache-derived release binary or automatic dependency update.
 
-The Windows job runs the checked-in smoke and release scripts; YAML does not reproduce package rules. The tag job attests `SHA256SUMS.txt` subjects, attaches the SPDX SBOM to the portable ZIP, and creates or refreshes a **draft** release. It never publishes stable automatically.
+The Windows job runs the checked-in smoke and release scripts; YAML does not reproduce package rules. The tag job attests `SHA256SUMS.txt` subjects, attaches the SPDX SBOM to the portable ZIP, and creates or refreshes a **draft** release. A rerun may refresh an existing draft, but fails closed if the matching release is already published. It never publishes stable automatically.
 
 The scheduled workflow has read-only permissions, runs policy checks, reports dependency drift with `cargo update --dry-run`, and executes deterministic platform-independent stress tests. It does not modify the lockfile, open a PR or merge an update.

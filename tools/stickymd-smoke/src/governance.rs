@@ -39,8 +39,14 @@ const REQUIRED_FILES: &[&str] = &[
     "tools/stickymd-smoke/Cargo.toml",
     "assets/licenses/SIL-OFL-1.1.txt",
     "assets/licenses/KaTeX-fonts-NOTICE.txt",
+    "assets/licenses/Boost-1.0.txt",
+    "assets/licenses/HarfRust-MIT.txt",
+    "assets/licenses/RaTeX-MIT.txt",
     "docs/release-checklist.md",
+    "docs/report/phase-09-performance-final.md",
+    "docs/report/phase-09-release-readiness.md",
     "tools/release/package.ps1",
+    "tools/release/generate-third-party-notices.ps1",
     "tools/release/generate-sbom.ps1",
     "tools/release/verify-package.ps1",
 ];
@@ -237,6 +243,21 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     let package = read_text(&root.join("tools/release/package.ps1"))?;
     if package.contains("cargo build") {
         return Err("package.ps1 must not build the application".to_owned());
+    }
+    if !package.contains("generate-third-party-notices.ps1") {
+        return Err("package.ps1 must generate notices from the frozen runtime graph".to_owned());
+    }
+    let notices = read_text(&root.join("tools/release/generate-third-party-notices.ps1"))?;
+    for required in [
+        "cargo metadata --format-version 1 --locked --filter-platform x86_64-pc-windows-msvc",
+        "Runtime package",
+        "Cargo.lock SHA-256",
+    ] {
+        if !notices.contains(required) {
+            return Err(format!(
+                "third-party notice generator lacks required contract token `{required}`"
+            ));
+        }
     }
     let sbom = read_text(&root.join("tools/release/generate-sbom.ps1"))?;
     for required in [

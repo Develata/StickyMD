@@ -19,10 +19,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Install checksum-verified cargo-deny 0.20.2
+        run: cargo install cargo-deny --version 0.20.2 --locked
       - name: Advisory, license, source, and ban policy
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          rust-version: "1.97.1"
+        run: cargo deny check
       - name: Report dependency drift without changing Cargo.lock
         run: cargo update --dry-run
       - name: Deterministic platform-independent stress suite

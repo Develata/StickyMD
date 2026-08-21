@@ -2,12 +2,16 @@
 //!
 //! plan_ref: docs/plan/10_performance_reliability.md#initial-engineering-targets
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
 use windows::core::HSTRING;
+
+use super::atomic_file::{AtomicPublishError, prepare_temporary_exclusive, publish_prepared_new};
 
 #[derive(Debug, Error)]
 pub enum DiagnosticEventError {
@@ -15,10 +19,12 @@ pub enum DiagnosticEventError {
     Open(windows::core::Error),
     #[error("cannot signal readiness event: {0}")]
     Signal(windows::core::Error),
-    #[error("cannot write diagnostic trace {}: {source}", path.display())]
-    TraceWrite {
+    #[error("diagnostic startup trace path has no file name: {0}")]
+    InvalidTracePath(PathBuf),
+    #[error("cannot atomically publish diagnostic startup trace {}: {source}", path.display())]
+    TracePublish {
         path: Box<Path>,
-        source: std::io::Error,
+        source: AtomicPublishError,
     },
 }
 
@@ -40,8 +46,83 @@ fn close_handle(handle: HANDLE) {
 }
 
 pub fn write_startup_trace(path: &Path, bytes: &[u8]) -> Result<(), DiagnosticEventError> {
-    std::fs::write(path, bytes).map_err(|source| DiagnosticEventError::TraceWrite {
-        path: path.into(),
-        source,
-    })
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| DiagnosticEventError::InvalidTracePath(path.to_path_buf()))?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let mut temporary_name = OsString::from(".");
+    temporary_name.push(file_name);
+    temporary_name.push(format!(".{}-{nonce}.tmp", std::process::id()));
+    let temporary = path.with_file_name(temporary_name);
+
+    if let Err(source) = prepare_temporary_exclusive(path, &temporary, bytes) {
+        if !matches!(source, AtomicPublishError::TempCreate(_)) {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        return Err(DiagnosticEventError::TracePublish {
+            path: path.into(),
+            source,
+        });
+    }
+    if let Err(source) = publish_prepared_new(path, &temporary) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(DiagnosticEventError::TracePublish {
+            path: path.into(),
+            source,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_startup_trace;
+    use std::fs::{self, OpenOptions};
+    use std::io::Write as _;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_trace_path(label: &str) -> std::path::PathBuf {
+        let sequence = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        std::env::temp_dir().join(format!(
+            "stickymd-{label}-{}-{sequence}.trace",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn startup_trace_is_created_exclusively() {
+        let path = unique_trace_path("create");
+        write_startup_trace(&path, b"ready=1\n").expect("create diagnostic trace");
+        assert_eq!(
+            fs::read(&path).expect("read diagnostic trace"),
+            b"ready=1\n"
+        );
+        fs::remove_file(path).expect("remove diagnostic trace");
+    }
+
+    #[test]
+    fn startup_trace_never_overwrites_an_existing_file() {
+        let path = unique_trace_path("preserve");
+        let mut existing = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("create protected target");
+        existing
+            .write_all(b"user-data")
+            .expect("seed protected target");
+        existing.sync_all().expect("flush protected target");
+        drop(existing);
+
+        assert!(write_startup_trace(&path, b"diagnostic-data").is_err());
+        assert_eq!(
+            fs::read(&path).expect("read protected target"),
+            b"user-data"
+        );
+        fs::remove_file(path).expect("remove protected target");
+    }
 }

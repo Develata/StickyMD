@@ -21,5 +21,8 @@ the KaTeX project and are licensed under the SIL Open Font License 1.1.
 - Full OFL 1.1 text: [`assets/licenses/SIL-OFL-1.1.txt`](assets/licenses/SIL-OFL-1.1.txt)
 - Upstream: <https://github.com/KaTeX/KaTeX>
 
-Rust dependency licenses remain governed by `Cargo.lock` and `deny.toml`; release packaging must
-include this notice and the two font-license files above.
+Rust dependency licenses remain governed by `Cargo.lock` and `deny.toml`. Release packaging runs
+`tools/release/generate-third-party-notices.ps1`, which appends the exact Windows runtime dependency
+inventory and the license/notice files from Cargo's checksum-verified registry sources. Packages
+whose published crate omits a license file use the reviewed fallback texts under `assets/licenses/`.
+The package must also include the two font-license files above.

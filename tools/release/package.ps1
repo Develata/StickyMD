@@ -58,20 +58,25 @@ New-Item -ItemType Directory -Path (Join-Path $packageRoot 'licenses') -Force | 
 try {
     Copy-Item -LiteralPath $ExePath -Destination (Join-Path $packageRoot 'StickyMD.exe')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $packageRoot 'LICENSE.txt')
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination (Join-Path $packageRoot 'THIRD_PARTY_NOTICES.txt')
+    & (Join-Path $repoRoot 'tools\release\generate-third-party-notices.ps1') -DestinationPath (Join-Path $packageRoot 'THIRD_PARTY_NOTICES.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Runtime dependency notice generation failed' }
     Copy-Item -LiteralPath (Join-Path $repoRoot 'assets\licenses\SIL-OFL-1.1.txt') -Destination (Join-Path $packageRoot 'licenses\SIL-OFL-1.1.txt')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'assets\licenses\KaTeX-fonts-NOTICE.txt') -Destination (Join-Path $packageRoot 'licenses\KaTeX-fonts-NOTICE.txt')
 
     $readme = @(
-        'StickyMD portable local release candidate'
+        'StickyMD portable release candidate for Windows 11 x64'
         "Version: $Version"
         "Source commit: $($CommitSha.ToLowerInvariant())"
         ''
         'Run StickyMD.exe from a writable directory. The program creates its only working note under .\note\note.md.'
         'Do not place the executable under Program Files or another directory that requires administrator rights.'
+        'Closing the paper hides StickyMD to the notification area; use the tray menu Exit command to quit.'
+        'Markdown Preview is native and supports the documented CommonMark/GFM profile plus RaTeX math.'
+        'Remote images are never downloaded; their alt text and link remain available.'
         ''
         'This build is unsigned. Windows reputation warnings may appear; verify the SHA-256 checksum before running it.'
-        'License: MIT. Third-party notices and the KaTeX font license are included in this package.'
+        'License: MIT. Complete Rust dependency notices and the KaTeX font license are included in this package.'
+        'Project: https://github.com/Develata/StickyMD'
     ) -join "`r`n"
     [IO.File]::WriteAllText((Join-Path $packageRoot 'README.txt'), $readme + "`r`n", [Text.UTF8Encoding]::new($false))
 

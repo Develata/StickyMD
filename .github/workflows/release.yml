@@ -20,10 +20,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Install checksum-verified cargo-deny 0.20.2
+        run: cargo install cargo-deny --version 0.20.2 --locked
       - name: Licenses, advisories, bans, and sources
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          rust-version: "1.97.1"
+        run: cargo deny check
 
   build-package:
     name: Build and verify Windows x64 package
@@ -119,6 +119,11 @@ jobs:
             "Review the manual acceptance matrix and verify SHA256SUMS plus attestations before publishing." \
             > "$notes"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            existing_draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)"
+            if [[ "$existing_draft" != "true" ]]; then
+              printf 'Refusing to modify already-published release %s\n' "$GITHUB_REF_NAME" >&2
+              exit 1
+            fi
             gh release edit "$GITHUB_REF_NAME" --draft --title "StickyMD $GITHUB_REF_NAME" --notes-file "$notes"
             gh release upload "$GITHUB_REF_NAME" --clobber \
               dist/StickyMD-*-windows-x64-portable.zip \
