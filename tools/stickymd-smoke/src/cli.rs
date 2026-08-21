@@ -11,10 +11,11 @@ pub(crate) enum Phase {
     P06,
     P07,
     P08,
+    P09,
 }
 
 impl Phase {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 10] = [
         Self::P00,
         Self::P01,
         Self::P02,
@@ -24,6 +25,7 @@ impl Phase {
         Self::P06,
         Self::P07,
         Self::P08,
+        Self::P09,
     ];
 
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
@@ -37,7 +39,8 @@ impl Phase {
             "6" | "06" | "phase-06" => Ok(Self::P06),
             "7" | "07" | "phase-07" => Ok(Self::P07),
             "8" | "08" | "phase-08" => Ok(Self::P08),
-            _ => Err(format!("unknown phase `{value}`; expected 00..08")),
+            "9" | "09" | "phase-09" => Ok(Self::P09),
+            _ => Err(format!("unknown phase `{value}`; expected 00..09")),
         }
     }
 
@@ -52,6 +55,7 @@ impl Phase {
             Self::P06 => "06",
             Self::P07 => "07",
             Self::P08 => "08",
+            Self::P09 => "09",
         }
     }
 }
@@ -69,6 +73,8 @@ pub(crate) struct Options {
     pub(crate) performance: bool,
     pub(crate) runtime: bool,
     pub(crate) resources: bool,
+    pub(crate) release: bool,
+    pub(crate) package: bool,
 }
 
 impl Options {
@@ -81,7 +87,7 @@ impl Options {
             Some("phase") => {
                 let phase = args
                     .next()
-                    .ok_or_else(|| "`phase` requires a number (00..08)".to_owned())?;
+                    .ok_or_else(|| "`phase` requires a number (00..09)".to_owned())?;
                 Selection::Phase(Phase::parse(&phase)?)
             }
             Some("all") => Selection::All,
@@ -96,6 +102,8 @@ impl Options {
             performance: false,
             runtime: false,
             resources: false,
+            release: false,
+            package: false,
         };
         for argument in args {
             match argument.as_str() {
@@ -103,14 +111,30 @@ impl Options {
                 "--performance" => options.performance = true,
                 "--runtime" => options.runtime = true,
                 "--resources" => options.resources = true,
+                "--release" => options.release = true,
+                "--package" => options.package = true,
                 _ => return Err(format!("unknown option `{argument}`\n{}", Self::usage())),
             }
         }
-        if options.ci && (options.performance || options.runtime || options.resources) {
-            return Err("`--ci` cannot be combined with environment-sensitive `--performance`, `--runtime`, or `--resources`".to_owned());
+        if options.ci
+            && (options.performance
+                || options.runtime
+                || options.resources
+                || options.release
+                || options.package)
+        {
+            return Err("`--ci` cannot be combined with explicit local performance, runtime, resource, release, or package modes".to_owned());
         }
         if options.resources && (options.performance || options.runtime) {
             return Err("`--resources` must run alone so the measured process is not contaminated by other smoke tasks".to_owned());
+        }
+        if (options.release || options.package)
+            && (options.performance
+                || options.runtime
+                || options.resources
+                || (options.release && options.package))
+        {
+            return Err("release and package modes must run separately from every other explicit mode so artifacts are attributable".to_owned());
         }
         if options.runtime
             && matches!(
@@ -119,26 +143,33 @@ impl Options {
             )
         {
             return Err(
-                "runtime smoke is defined only for Phase 03 through Phase 08, or `all`".to_owned(),
+                "runtime smoke is defined only for Phase 03 through Phase 09, or `all`".to_owned(),
             );
         }
         if options.resources
             && !matches!(
                 selection,
-                Selection::Phase(Phase::P05 | Phase::P06 | Phase::P07 | Phase::P08)
+                Selection::Phase(Phase::P05 | Phase::P06 | Phase::P07 | Phase::P08 | Phase::P09)
                     | Selection::All
             )
         {
             return Err(
-                "resource measurement is defined only for Phase 05 through Phase 08, or `all`"
+                "resource measurement is defined only for Phase 05 through Phase 09, or `all`"
                     .to_owned(),
+            );
+        }
+        if (options.release || options.package)
+            && !matches!(selection, Selection::Phase(Phase::P09) | Selection::All)
+        {
+            return Err(
+                "release and package modes are defined only for Phase 09 or `all`".to_owned(),
             );
         }
         Ok(options)
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..08> [--performance] [--runtime] [--resources]\n       stickymd-smoke all [--ci] [--performance] [--runtime] [--resources]"
+        "usage: stickymd-smoke phase <00..09> [--performance|--runtime|--resources|--release|--package]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package]"
     }
 }
 
@@ -158,6 +189,8 @@ mod tests {
         assert!(options.performance);
         assert!(options.runtime);
         assert!(!options.resources);
+        assert!(!options.release);
+        assert!(!options.package);
     }
 
     #[test]
@@ -171,6 +204,22 @@ mod tests {
             .expect("Phase 8 resource mode");
         assert_eq!(resources.selection, Selection::Phase(Phase::P08));
         assert!(resources.resources);
+    }
+
+    #[test]
+    fn phase9_accepts_release_and_package_as_separate_modes() {
+        let release =
+            Options::parse(args(&["phase", "09", "--release"])).expect("Phase 9 release mode");
+        assert_eq!(release.selection, Selection::Phase(Phase::P09));
+        assert!(release.release);
+
+        let package = Options::parse(args(&["phase", "phase-09", "--package"]))
+            .expect("Phase 9 package mode");
+        assert!(package.package);
+
+        let error = Options::parse(args(&["phase", "09", "--release", "--package"]))
+            .expect_err("artifact-producing modes must not overlap");
+        assert!(error.contains("must run separately"));
     }
 
     #[test]

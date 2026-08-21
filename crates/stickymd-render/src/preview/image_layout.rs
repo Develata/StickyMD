@@ -3,7 +3,7 @@
 //! plan_ref: docs/plan/08_assets_and_export.md#local-image-read-boundary
 
 use crate::image::{
-    DecodedImageCache, ImageCacheKey, PreviewImageSource, decode_scaled_image,
+    DecodedImageCache, ImageCacheKey, PreviewImageSource, decode_scaled_image_owned,
     inspect_encoded_image,
 };
 
@@ -47,11 +47,13 @@ pub(super) fn layout_image_block(
             width: target_width,
             height: target_height,
         };
-        let raster = image_cache.get(&key).or_else(|| {
-            decode_scaled_image(&bytes, target_width, target_height)
+        let raster = if let Some(raster) = image_cache.get(&key) {
+            raster
+        } else {
+            decode_scaled_image_owned(bytes, target_width, target_height)
                 .ok()
-                .and_then(|raster| image_cache.insert(key, raster))
-        })?;
+                .and_then(|raster| image_cache.insert(key, raster))?
+        };
         LayoutContent::Image(raster)
     } else {
         LayoutContent::ImagePlaceholder {

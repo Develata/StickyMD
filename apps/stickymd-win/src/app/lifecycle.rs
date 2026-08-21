@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use stickymd_render::source::SourceProjection;
+use stickymd_render::source::{SourceInitializationMilestone, SourceProjection};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
@@ -78,6 +78,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 return;
             }
         };
+        self.startup_diagnostics.record("window_created");
         window.set_ime_allowed(self.config.current().view_mode != ViewMode::Preview);
         self.system_theme = window.theme().unwrap_or(Theme::Light);
         let size = window.inner_size();
@@ -89,12 +90,26 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 return;
             }
         };
+        self.startup_diagnostics.record("surface_ready");
         let initial_snapshot = self.coordinator.snapshot();
-        let projection = SourceProjection::new(
+        self.startup_diagnostics.record("font_system_begin");
+        let diagnostics = &mut self.startup_diagnostics;
+        let projection = SourceProjection::new_observed(
             &initial_snapshot,
             size.width,
             size.height,
             window.scale_factor() as f32,
+            |milestone| match milestone {
+                SourceInitializationMilestone::FontSystemReady => {
+                    diagnostics.record("font_system_end")
+                }
+                SourceInitializationMilestone::SourceBufferReady => {
+                    diagnostics.record("source_buffer_ready")
+                }
+                SourceInitializationMilestone::SourceShaped => {
+                    diagnostics.record("source_projection_ready")
+                }
+            },
         );
         let fonts = projection.fonts();
         eprintln!(

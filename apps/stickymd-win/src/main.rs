@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#windows-shell-purpose
 #![deny(unsafe_op_in_unsafe_fn)]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(windows)]
 mod app;
@@ -33,20 +34,25 @@ fn main() {
     use persistence::{IoCompletion, PersistenceWorker};
     use platform::windows::program_dir::RuntimePaths;
     use platform::windows::single_instance::{InstanceDisposition, SingleInstanceGuard};
+    use startup::StartupDiagnostics;
     use startup::bootstrap;
     use std::sync::{Arc, Mutex};
     use winit::event_loop::{EventLoop, EventLoopProxy};
     use winit::platform::windows::EventLoopBuilderExtWindows;
 
+    let mut startup_diagnostics = StartupDiagnostics::from_environment();
+    startup_diagnostics.record("main_enter");
     let paths = match RuntimePaths::resolve_current() {
         Ok(paths) => paths,
         Err(error) => fatal_startup(&format!("无法确定程序目录：{error}")),
     };
+    startup_diagnostics.record("program_dir_ready");
     let mut instance = match SingleInstanceGuard::acquire(&paths.program_dir) {
         Ok(InstanceDisposition::Primary(instance)) => instance,
         Ok(InstanceDisposition::SecondarySignaled) => return,
         Err(error) => fatal_startup(&format!("无法建立单实例保护：{error}")),
     };
+    startup_diagnostics.record("single_instance_ready");
     if let Err(error) = paths.verify_program_directory_writable() {
         fatal_startup(&format!(
             "当前目录不可写，请将程序移动到有写权限的文件夹。\n\n{error}"
@@ -55,10 +61,12 @@ fn main() {
     if let Err(error) = paths.ensure_layout() {
         fatal_startup(&format!("无法创建便签目录：{error}"));
     }
+    startup_diagnostics.record("persistence_ready");
     let mut bootstrap = match bootstrap(&paths) {
         Ok(bootstrap) => bootstrap,
         Err(error) => fatal_startup(&format!("StickyMD 无法安全启动：{error}")),
     };
+    startup_diagnostics.record("document_ready");
     // A normal startup is a quiescent destructive-GC boundary: no editor or
     // worker exists yet, so the reference snapshot cannot become stale while
     // reconciliation is deleting proven unreferenced trash. Recovery choices
@@ -104,6 +112,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    startup_diagnostics.record("event_loop_ready");
     let proxy = event_loop.create_proxy();
     if let Ok(mut slot) = native_proxy.lock() {
         *slot = Some(proxy.clone());
@@ -121,7 +130,14 @@ fn main() {
         Ok(worker) => worker,
         Err(error) => fatal_startup(&format!("无法启动持久化工作线程：{error}")),
     };
-    let mut app = StickyApp::new(paths, bootstrap, instance, worker, proxy);
+    let mut app = StickyApp::new(
+        paths,
+        bootstrap,
+        instance,
+        worker,
+        proxy,
+        startup_diagnostics,
+    );
     if let Err(error) = event_loop.run_app(&mut app) {
         eprintln!("application event loop failed: {error}");
         std::process::exit(1);

@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::io::Read;
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use stickymd_core::{
@@ -18,6 +19,7 @@ use crate::platform::windows::atomic_file::{
 use crate::platform::windows::file_identity::{OpenFileObservation, observe_open_file};
 
 pub const MAX_NOTE_LOAD: u64 = 16 * 1024 * 1024;
+const FILE_ATTRIBUTE_REPARSE_POINT_VALUE: u32 = 0x400;
 
 #[derive(Debug, Clone)]
 pub struct NoteObservation {
@@ -223,6 +225,7 @@ fn persist_note_with_before_publish<F>(
 where
     F: FnOnce(bool),
 {
+    ensure_note_directory_for_save(target, temporary)?;
     let bytes = LoadedDocument::encode_runtime(&request.text, request.line_ending);
     let fingerprint = hash_bytes(&bytes);
     prepare_temporary(target, temporary, &bytes).map_err(NoteStorageError::Publish)?;
@@ -280,6 +283,41 @@ where
     })
 }
 
+/// Restore an externally removed `note/` directory while refusing files and
+/// reparse points. This is intentionally note-specific: atomic publication
+/// itself must not grow a generic, policy-bearing directory bootstrap.
+fn ensure_note_directory_for_save(target: &Path, temporary: &Path) -> Result<(), NoteStorageError> {
+    let parent = target
+        .parent()
+        .filter(|parent| Some(*parent) == temporary.parent())
+        .ok_or(NoteStorageError::InvalidNoteLayout)?;
+    match fs::symlink_metadata(parent) {
+        Ok(metadata) => validate_note_directory(parent, &metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(parent).map_err(|source| NoteStorageError::CreateNoteDirectory {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+            let metadata = fs::symlink_metadata(parent).map_err(NoteStorageError::Metadata)?;
+            validate_note_directory(parent, &metadata)
+        }
+        Err(error) => Err(NoteStorageError::Metadata(error)),
+    }
+}
+
+fn validate_note_directory(
+    path: &Path,
+    metadata: &std::fs::Metadata,
+) -> Result<(), NoteStorageError> {
+    if metadata.file_type().is_dir()
+        && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT_VALUE == 0
+    {
+        Ok(())
+    } else {
+        Err(NoteStorageError::UnsafeNoteDirectory(path.to_path_buf()))
+    }
+}
+
 pub(crate) fn inspect_note_state_with_retry(
     path: &Path,
 ) -> Result<ExternalFileState, NoteStorageError> {
@@ -301,6 +339,15 @@ pub(crate) fn inspect_note_state_with_retry(
 
 #[derive(Debug, Error)]
 pub enum NoteStorageError {
+    #[error("note target and temporary paths must share a parent directory")]
+    InvalidNoteLayout,
+    #[error("note directory is not a plain directory: {}", .0.display())]
+    UnsafeNoteDirectory(PathBuf),
+    #[error("cannot recreate note directory {path}: {source}")]
+    CreateNoteDirectory {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("cannot inspect note metadata: {0}")]
     Metadata(std::io::Error),
     #[error("cannot read note: {0}")]
@@ -325,7 +372,9 @@ mod tests {
     use crate::platform::windows::atomic_file::{prepare_temporary, publish_prepared};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use stickymd_core::{LineEnding, hash_bytes};
+    use stickymd_core::{
+        CursorSnapshot, DocumentState, EditKind, EditMeta, EditRequest, LineEnding, hash_bytes,
+    };
 
     fn unique_dir() -> PathBuf {
         let nonce = SystemTime::now()
@@ -424,6 +473,107 @@ mod tests {
     }
 
     #[test]
+    fn phase9_external_note_directory_delete_recreates_only_the_note_parent() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let note = root.join("note");
+        let target = note.join("note.md");
+        let temporary = note.join("note.md.tmp");
+
+        let result = persist_note(
+            &target,
+            &temporary,
+            &request("memory survives", None, false),
+        )
+        .unwrap();
+
+        assert!(matches!(result, PersistResult::Saved { .. }));
+        assert_eq!(fs::read(&target).unwrap(), b"memory survives");
+        assert!(!temporary.exists());
+        assert_eq!(fs::read_dir(&note).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn phase9_note_directory_replaced_by_file_fails_closed() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let note = root.join("note");
+        fs::write(&note, b"external evidence").unwrap();
+        let target = note.join("note.md");
+        let temporary = note.join("note.md.tmp");
+
+        let result = persist_note(&target, &temporary, &request("local", None, false));
+
+        assert!(matches!(
+            result,
+            Err(NoteStorageError::UnsafeNoteDirectory(path)) if path == note
+        ));
+        assert_eq!(fs::read(&note).unwrap(), b"external evidence");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn phase9_read_only_note_save_failure_preserves_dirty_document_authority() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let target = root.join("note.md");
+        let temporary = root.join("note.md.tmp");
+        fs::write(&target, b"old").unwrap();
+        let base = hash_bytes(b"old");
+        let mut document = DocumentState::loaded("old", LineEnding::Lf, Some(base));
+        document
+            .edit(EditRequest::new(
+                document.generation(),
+                0..3,
+                "local dirty",
+                CursorSnapshot::caret(3),
+                CursorSnapshot::caret(11),
+                EditMeta::new(EditKind::SelectionReplace, 0),
+            ))
+            .unwrap();
+        let before = (
+            document.text().to_owned(),
+            document.generation(),
+            document.saved_generation(),
+            document.can_undo(),
+        );
+        let original_permissions = fs::metadata(&target).unwrap().permissions();
+        let mut permissions = original_permissions.clone();
+        permissions.set_readonly(true);
+        fs::set_permissions(&target, permissions).unwrap();
+
+        let snapshot = document.snapshot();
+        let result = persist_note(
+            &target,
+            &temporary,
+            &PersistRequest {
+                generation: snapshot.generation,
+                text: snapshot.text,
+                line_ending: snapshot.line_ending,
+                mode: PersistMode::Guarded {
+                    expected: Some(base),
+                },
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"old");
+        assert_eq!(
+            (
+                document.text().to_owned(),
+                document.generation(),
+                document.saved_generation(),
+                document.can_undo(),
+            ),
+            before
+        );
+        assert!(document.is_dirty());
+        fs::set_permissions(&target, original_permissions).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn temporary_cleanup_is_idempotent_after_successful_publish() {
         let root = unique_dir();
         fs::create_dir(&root).unwrap();
@@ -445,7 +595,14 @@ mod tests {
             let target = root.join("note.md");
             let temporary = root.join("note.md.tmp");
             fs::write(&target, b"initial").unwrap();
-            let text = "line\n".repeat(size / 5);
+            let seed = include_str!("../../../../tests/fixtures/performance/typical-note-seed.md");
+            let mut text = String::with_capacity(size + seed.len());
+            while text.len() < size {
+                text.push_str(seed);
+            }
+            while text.len() > size {
+                text.pop();
+            }
             let document = stickymd_core::DocumentState::loaded(
                 &text,
                 LineEnding::Crlf,

@@ -33,6 +33,7 @@ use crate::platform::windows::single_instance::SingleInstanceGuard;
 use crate::platform::windows::tray::{TrayController, TrayPlatformEvent};
 use crate::preview::{PreviewCompletion, PreviewWorker};
 use crate::startup::BootstrapOutcome;
+use crate::startup::StartupDiagnostics;
 use crate::surface::SoftwareSurface;
 
 mod assets_runtime;
@@ -128,6 +129,7 @@ pub struct StickyApp {
     tray: Option<TrayController>,
     shell_input_enabled: bool,
     move_resize_active: bool,
+    startup_diagnostics: StartupDiagnostics,
 }
 
 impl StickyApp {
@@ -137,6 +139,7 @@ impl StickyApp {
         instance: SingleInstanceGuard,
         worker: PersistenceWorker,
         proxy: EventLoopProxy<AppEvent>,
+        startup_diagnostics: StartupDiagnostics,
     ) -> Self {
         let now = Instant::now();
         let preview_focused = bootstrap.config.view_mode == ViewMode::Preview;
@@ -191,6 +194,7 @@ impl StickyApp {
             tray: None,
             shell_input_enabled: true,
             move_resize_active: false,
+            startup_diagnostics,
         };
         if app.recovery.is_pending() {
             app.persistence.set_recovery_pending(true);
@@ -526,7 +530,7 @@ mod tests {
     }
 
     fn fixture(bytes: usize) -> String {
-        let source = "这是 Rust source editor 性能基线 e\u{301} 🙂。\n";
+        let source = include_str!("../../../tests/fixtures/performance/typical-note-seed.md");
         let mut text = String::with_capacity(bytes + source.len());
         while text.len() < bytes {
             text.push_str(source);

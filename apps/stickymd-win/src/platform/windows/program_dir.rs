@@ -306,4 +306,23 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(external).unwrap();
     }
+
+    #[test]
+    fn phase9_writable_probe_failure_is_typed_and_preserves_existing_file() {
+        let root = unique_dir("probe-blocked");
+        fs::create_dir_all(&root).unwrap();
+        let executable = root.join("StickyMD.exe");
+        fs::write(&executable, b"").unwrap();
+        let paths = RuntimePaths::from_executable(&executable).unwrap();
+        let blocker = root.join(format!(".stickymd-write-test-{}", std::process::id()));
+        fs::write(&blocker, b"external blocker").unwrap();
+
+        assert!(matches!(
+            paths.verify_program_directory_writable(),
+            Err(RuntimePathsError::WritableProbeCreate(_))
+        ));
+        assert_eq!(fs::read(&blocker).unwrap(), b"external blocker");
+        assert!(!paths.note_dir.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
 }

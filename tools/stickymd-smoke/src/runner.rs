@@ -29,7 +29,14 @@ enum TaskId {
     Phase7Performance,
     Phase8WindowTests,
     Phase8Performance,
+    Phase9ConvergenceTests,
+    FormatCheck,
+    ClippyCheck,
+    DependencyPolicy,
     ReleaseBuild,
+    PackageArtifact,
+    GenerateSbom,
+    VerifyPackage,
     RuntimeLaunch,
     RuntimePortable,
     RuntimePreview,
@@ -40,6 +47,7 @@ enum TaskId {
     RuntimeImageResources,
     RuntimeWindowShell,
     RuntimeWindowResources,
+    RuntimeStartup,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,6 +56,12 @@ enum Task {
     Cargo {
         id: TaskId,
         label: &'static str,
+        args: Vec<&'static str>,
+    },
+    PowerShell {
+        id: TaskId,
+        label: &'static str,
+        script: &'static str,
         args: Vec<&'static str>,
     },
     Runtime {
@@ -68,13 +82,14 @@ pub(crate) enum RuntimeScenario {
     ImageResources,
     WindowShell,
     WindowResources,
+    Startup,
 }
 
 impl Task {
     const fn id(&self) -> TaskId {
         match self {
             Self::Governance => TaskId::Governance,
-            Self::Cargo { id, .. } | Self::Runtime { id, .. } => *id,
+            Self::Cargo { id, .. } | Self::PowerShell { id, .. } | Self::Runtime { id, .. } => *id,
         }
     }
 }
@@ -104,6 +119,7 @@ fn task_label(task: &Task) -> &'static str {
     match task {
         Task::Governance => "governance contracts",
         Task::Cargo { label, .. } => label,
+        Task::PowerShell { label, .. } => label,
         Task::Runtime {
             scenario: RuntimeScenario::Launch,
             ..
@@ -144,6 +160,10 @@ fn task_label(task: &Task) -> &'static str {
             scenario: RuntimeScenario::WindowResources,
             ..
         } => "copied Release Phase 8 hidden-window resource matrix",
+        Task::Runtime {
+            scenario: RuntimeScenario::Startup,
+            ..
+        } => "copied Release Phase 9 editor-ready cold/warm startup matrix",
     }
 }
 
@@ -152,6 +172,25 @@ fn run_task(root: &Path, task: &Task) -> Result<(), String> {
         Task::Governance => governance::verify(root),
         Task::Cargo { label, args, .. } => {
             let status = Command::new("cargo")
+                .args(args)
+                .current_dir(root)
+                .status()
+                .map_err(|error| format!("cannot start `{label}`: {error}"))?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("`{label}` failed with {status}"))
+            }
+        }
+        Task::PowerShell {
+            label,
+            script,
+            args,
+            ..
+        } => {
+            let status = Command::new("pwsh")
+                .args(["-NoProfile", "-File"])
+                .arg(root.join(script))
                 .args(args)
                 .current_dir(root)
                 .status()
@@ -194,6 +233,24 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         }
         return Ok(tasks);
     }
+    if options.package {
+        push_unique(&mut tasks, release_build());
+        push_unique(&mut tasks, package_artifact());
+        push_unique(&mut tasks, generate_sbom());
+        push_unique(&mut tasks, verify_package());
+        return Ok(tasks);
+    }
+    if options.release {
+        push_unique(&mut tasks, format_check());
+        push_unique(&mut tasks, clippy_check());
+        push_unique(&mut tasks, workspace_tests());
+        push_unique(&mut tasks, dependency_policy());
+        push_unique(&mut tasks, release_build());
+        push_unique(&mut tasks, package_artifact());
+        push_unique(&mut tasks, generate_sbom());
+        push_unique(&mut tasks, verify_package());
+        return Ok(tasks);
+    }
     match options.selection {
         Selection::All => {
             push_unique(&mut tasks, phase1_markdown_tests());
@@ -213,6 +270,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         Selection::Phase(Phase::P06) => push_unique(&mut tasks, phase6_math_tests()),
         Selection::Phase(Phase::P07) => push_unique(&mut tasks, phase7_asset_tests()),
         Selection::Phase(Phase::P08) => push_unique(&mut tasks, phase8_window_tests()),
+        Selection::Phase(Phase::P09) => push_unique(&mut tasks, phase9_convergence_tests()),
     }
 
     // CI owns every headless task. `--performance` remains the explicit local
@@ -233,8 +291,26 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 Phase::P06 => push_unique(&mut tasks, phase6_performance()),
                 Phase::P07 => push_unique(&mut tasks, phase7_performance()),
                 Phase::P08 => push_unique(&mut tasks, phase8_performance()),
+                Phase::P09 => {
+                    if options.performance {
+                        push_unique(&mut tasks, phase1_markdown_performance());
+                        push_unique(&mut tasks, phase1_persistence_performance());
+                        push_unique(&mut tasks, phase2_performance());
+                        push_unique(&mut tasks, phase3_performance());
+                        push_unique(&mut tasks, phase4_performance());
+                        push_unique(&mut tasks, phase5_performance());
+                        push_unique(&mut tasks, phase6_performance());
+                        push_unique(&mut tasks, phase7_performance());
+                        push_unique(&mut tasks, phase8_performance());
+                    }
+                }
             }
         }
+    }
+
+    if options.performance && selected_phases(options.selection).contains(&Phase::P09) {
+        push_unique(&mut tasks, release_build());
+        push_unique(&mut tasks, runtime_startup());
     }
 
     if options.runtime {
@@ -246,6 +322,9 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             Selection::Phase(Phase::P06) => push_unique(&mut tasks, runtime_math()),
             Selection::Phase(Phase::P07) => push_unique(&mut tasks, runtime_assets()),
             Selection::Phase(Phase::P08) => push_unique(&mut tasks, runtime_window_shell()),
+            Selection::Phase(Phase::P09) => {
+                push_unique(&mut tasks, runtime_startup());
+            }
             Selection::All => {
                 push_unique(&mut tasks, runtime_portable());
                 push_unique(&mut tasks, runtime_preview());
@@ -284,6 +363,78 @@ fn cargo(id: TaskId, label: &'static str, args: &[&'static str]) -> Task {
         label,
         args: args.to_vec(),
     }
+}
+
+fn powershell(
+    id: TaskId,
+    label: &'static str,
+    script: &'static str,
+    args: &[&'static str],
+) -> Task {
+    Task::PowerShell {
+        id,
+        label,
+        script,
+        args: args.to_vec(),
+    }
+}
+
+fn format_check() -> Task {
+    cargo(
+        TaskId::FormatCheck,
+        "workspace formatting",
+        &["fmt", "--check"],
+    )
+}
+
+fn clippy_check() -> Task {
+    cargo(
+        TaskId::ClippyCheck,
+        "workspace strict clippy",
+        &[
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
+    )
+}
+
+fn dependency_policy() -> Task {
+    cargo(
+        TaskId::DependencyPolicy,
+        "dependency policy",
+        &["deny", "check"],
+    )
+}
+
+fn package_artifact() -> Task {
+    powershell(
+        TaskId::PackageArtifact,
+        "portable package creation",
+        "tools/release/package.ps1",
+        &[],
+    )
+}
+
+fn generate_sbom() -> Task {
+    powershell(
+        TaskId::GenerateSbom,
+        "SPDX SBOM generation",
+        "tools/release/generate-sbom.ps1",
+        &[],
+    )
+}
+
+fn verify_package() -> Task {
+    powershell(
+        TaskId::VerifyPackage,
+        "portable package verification",
+        "tools/release/verify-package.ps1",
+        &["-Runtime"],
+    )
 }
 
 fn workspace_check() -> Task {
@@ -409,6 +560,14 @@ fn phase8_window_tests() -> Task {
         TaskId::Phase8WindowTests,
         "Phase 8 native-window state/geometry/lifecycle tests",
         &["test", "-p", "stickymd-win", "--locked", "phase8_"],
+    )
+}
+
+fn phase9_convergence_tests() -> Task {
+    cargo(
+        TaskId::Phase9ConvergenceTests,
+        "Phase 9 full workspace convergence tests",
+        &["test", "--workspace", "--locked"],
     )
 }
 
@@ -639,6 +798,13 @@ const fn runtime_window_resources() -> Task {
     }
 }
 
+const fn runtime_startup() -> Task {
+    Task::Runtime {
+        id: TaskId::RuntimeStartup,
+        scenario: RuntimeScenario::Startup,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{TaskId, build_plan};
@@ -652,6 +818,8 @@ mod tests {
             performance: false,
             runtime: false,
             resources: false,
+            release: false,
+            package: false,
         })
         .expect("valid all plan");
         let ids: Vec<_> = tasks.iter().map(super::Task::id).collect();
@@ -674,6 +842,8 @@ mod tests {
             performance: true,
             runtime: false,
             resources: false,
+            release: false,
+            package: false,
         })
         .expect("valid performance plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
@@ -695,6 +865,8 @@ mod tests {
             performance: false,
             runtime: false,
             resources: false,
+            release: false,
+            package: false,
         })
         .expect("valid CI plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
@@ -721,6 +893,7 @@ mod tests {
         assert!(!ids.contains(&TaskId::RuntimeImageResources));
         assert!(!ids.contains(&TaskId::RuntimeWindowShell));
         assert!(!ids.contains(&TaskId::RuntimeWindowResources));
+        assert!(!ids.contains(&TaskId::RuntimeStartup));
     }
 
     #[test]
@@ -731,6 +904,8 @@ mod tests {
             performance: false,
             runtime: false,
             resources: true,
+            release: false,
+            package: false,
         })
         .expect("valid Phase 6 resource plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
@@ -746,6 +921,8 @@ mod tests {
             performance: false,
             runtime: false,
             resources: true,
+            release: false,
+            package: false,
         })
         .expect("valid Phase 7 resource plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
@@ -761,6 +938,8 @@ mod tests {
             performance: false,
             runtime: false,
             resources: false,
+            release: false,
+            package: false,
         })
         .expect("valid Phase 8 headless plan");
         assert!(
@@ -775,6 +954,8 @@ mod tests {
             performance: false,
             runtime: true,
             resources: false,
+            release: false,
+            package: false,
         })
         .expect("valid Phase 8 runtime plan");
         assert!(
@@ -789,6 +970,8 @@ mod tests {
             performance: false,
             runtime: false,
             resources: true,
+            release: false,
+            package: false,
         })
         .expect("valid Phase 8 resource plan");
         assert!(
@@ -802,6 +985,98 @@ mod tests {
                 TaskId::RuntimeResources
                     | TaskId::RuntimeMathResources
                     | TaskId::RuntimeImageResources
+            )
+        }));
+    }
+
+    #[test]
+    fn phase9_performance_runs_existing_baselines_once_then_startup_runtime() {
+        let tasks = build_plan(&Options {
+            selection: Selection::Phase(crate::cli::Phase::P09),
+            ci: false,
+            performance: true,
+            runtime: false,
+            resources: false,
+            release: false,
+            package: false,
+        })
+        .expect("valid Phase 9 performance plan");
+        let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
+        assert_eq!(ids.len(), tasks.len());
+        for expected in [
+            TaskId::Phase2Performance,
+            TaskId::Phase3Performance,
+            TaskId::Phase4Performance,
+            TaskId::Phase5Performance,
+            TaskId::Phase6Performance,
+            TaskId::Phase7Performance,
+            TaskId::Phase8Performance,
+            TaskId::ReleaseBuild,
+            TaskId::RuntimeStartup,
+        ] {
+            assert!(ids.contains(&expected));
+        }
+    }
+
+    #[test]
+    fn phase9_package_mode_uses_the_checked_in_release_pipeline_once() {
+        let tasks = build_plan(&Options {
+            selection: Selection::Phase(crate::cli::Phase::P09),
+            ci: false,
+            performance: false,
+            runtime: false,
+            resources: false,
+            release: false,
+            package: true,
+        })
+        .expect("valid Phase 9 package plan");
+        let ids: Vec<_> = tasks.iter().map(super::Task::id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                TaskId::Governance,
+                TaskId::ReleaseBuild,
+                TaskId::PackageArtifact,
+                TaskId::GenerateSbom,
+                TaskId::VerifyPackage,
+            ]
+        );
+    }
+
+    #[test]
+    fn phase9_release_mode_adds_quality_gates_without_runtime_or_manual_work() {
+        let tasks = build_plan(&Options {
+            selection: Selection::Phase(crate::cli::Phase::P09),
+            ci: false,
+            performance: false,
+            runtime: false,
+            resources: false,
+            release: true,
+            package: false,
+        })
+        .expect("valid Phase 9 release plan");
+        let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
+        for expected in [
+            TaskId::FormatCheck,
+            TaskId::ClippyCheck,
+            TaskId::WorkspaceTests,
+            TaskId::DependencyPolicy,
+            TaskId::ReleaseBuild,
+            TaskId::PackageArtifact,
+            TaskId::GenerateSbom,
+            TaskId::VerifyPackage,
+        ] {
+            assert!(ids.contains(&expected));
+        }
+        assert!(!ids.iter().any(|id| {
+            matches!(
+                id,
+                TaskId::RuntimeLaunch
+                    | TaskId::RuntimePortable
+                    | TaskId::RuntimePreview
+                    | TaskId::RuntimeMath
+                    | TaskId::RuntimeAssets
+                    | TaskId::RuntimeStartup
             )
         }));
     }

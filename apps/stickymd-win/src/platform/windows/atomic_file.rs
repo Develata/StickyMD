@@ -30,6 +30,7 @@ pub enum ReplaceFailureKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AtomicStage {
     BeforeTempCreate,
+    BeforeTempWrite,
     AfterTempWrite,
     AfterTempFlush,
     BeforeReplace,
@@ -79,6 +80,10 @@ where
         .write(true)
         .open(temporary)
         .map_err(AtomicPublishError::TempCreate)?;
+    observe(AtomicStage::BeforeTempWrite).map_err(|source| AtomicPublishError::Injected {
+        stage: AtomicStage::BeforeTempWrite,
+        source,
+    })?;
     file.write_all(bytes)
         .map_err(AtomicPublishError::TempWrite)?;
     observe(AtomicStage::AfterTempWrite).map_err(|source| AtomicPublishError::Injected {
@@ -364,6 +369,7 @@ mod tests {
     fn failure_stages_never_truncate_the_canonical_note() {
         for stage in [
             AtomicStage::BeforeTempCreate,
+            AtomicStage::BeforeTempWrite,
             AtomicStage::AfterTempWrite,
             AtomicStage::AfterTempFlush,
             AtomicStage::BeforeReplace,
@@ -383,10 +389,46 @@ mod tests {
                 });
             assert!(matches!(result, Err(AtomicPublishError::Injected { .. })));
             assert_eq!(fs::read(&target).unwrap(), b"old complete");
-            if stage != AtomicStage::BeforeTempCreate {
+            if !matches!(
+                stage,
+                AtomicStage::BeforeTempCreate | AtomicStage::BeforeTempWrite
+            ) {
                 assert_eq!(fs::read(&temporary).unwrap(), b"new complete");
             }
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    #[test]
+    fn phase9_disk_full_injection_before_write_preserves_canonical_note() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let target = root.join("note.md");
+        let temporary = root.join("note.md.tmp");
+        fs::write(&target, b"durable old bytes").unwrap();
+
+        let result = atomic_publish_with_observer(
+            &target,
+            &temporary,
+            b"new bytes that must not publish",
+            |stage| {
+                if stage == AtomicStage::BeforeTempWrite {
+                    Err(std::io::Error::from_raw_os_error(112))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(AtomicPublishError::Injected {
+                stage: AtomicStage::BeforeTempWrite,
+                ..
+            })
+        ));
+        assert_eq!(fs::read(&target).unwrap(), b"durable old bytes");
+        assert_eq!(fs::metadata(&temporary).unwrap().len(), 0);
+        fs::remove_dir_all(root).unwrap();
     }
 }

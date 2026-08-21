@@ -224,6 +224,8 @@ impl StickyApp {
         paint_toolbar(surface.pixmap_mut(), geometry, &layout, toolbar_visual);
         if let Err(error) = surface.present() {
             self.diagnostic = Some(error.to_string());
+        } else if let Err(error) = self.startup_diagnostics.editor_ready() {
+            eprintln!("startup diagnostics failed: {error}");
         }
         self.update_ime_area();
     }

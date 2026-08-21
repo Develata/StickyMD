@@ -6,16 +6,13 @@ use std::time::{Duration, Instant};
 
 use stickymd_core::{CursorSnapshot, DocumentState, EditKind, EditMeta, EditRequest, LineEnding};
 
-const CHARS: &[char] = &[
-    'a', 'b', 'c', '中', '文', 'x', '测', '试', 'd', 'e', '📝', 'f', '字', 'g',
-];
+const TYPICAL_NOTE_SEED: &str =
+    include_str!("../../../tests/fixtures/performance/typical-note-seed.md");
 
 fn fixture(bytes: usize) -> String {
     let mut text = String::with_capacity(bytes + 8);
-    let mut index = 0;
     while text.len() < bytes {
-        text.push(CHARS[index % CHARS.len()]);
-        index += 1;
+        text.push_str(TYPICAL_NOTE_SEED);
     }
     while text.len() > bytes {
         text.pop();

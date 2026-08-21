@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "StickyMD Windows executable: Interaction Shell + Windows platform adapters"
 
+[package.metadata.winresource]
+ProductName = "StickyMD"
+FileDescription = "StickyMD portable Markdown scratchpad"
+OriginalFilename = "StickyMD.exe"
+LegalCopyright = "Copyright (c) 2026 Develata"
+
 [dependencies]
 stickymd-core = { path = "../../crates/stickymd-core", version = "0.1.0" }
 stickymd-render = { path = "../../crates/stickymd-render", version = "0.1.0" }
@@ -24,3 +30,6 @@ notify.workspace = true
 tray-icon.workspace = true
 crossbeam-channel.workspace = true
 windows.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = { version = "=0.1.31", default-features = false }

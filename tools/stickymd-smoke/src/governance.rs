@@ -12,7 +12,14 @@ const REQUIRED_FILES: &[&str] = &[
     "Cargo.lock",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
     ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/scheduled.yml",
     "docs/AGENTS.md",
     "docs/coverage-matrix.md",
     "docs/features/00_v1_product_behavior.md",
@@ -32,6 +39,10 @@ const REQUIRED_FILES: &[&str] = &[
     "tools/stickymd-smoke/Cargo.toml",
     "assets/licenses/SIL-OFL-1.1.txt",
     "assets/licenses/KaTeX-fonts-NOTICE.txt",
+    "docs/release-checklist.md",
+    "tools/release/package.ps1",
+    "tools/release/generate-sbom.ps1",
+    "tools/release/verify-package.ps1",
 ];
 
 const FORBIDDEN_PACKAGES: &[&str] = &[
@@ -89,9 +100,156 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_phase_artifacts(root)?;
     verify_phase8_frozen_trace(root)?;
     verify_phase8_shell_artifacts(root)?;
+    verify_phase9_frozen_trace(root)?;
+    verify_release_infrastructure(root)?;
     verify_plan_refs(root)?;
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
+    Ok(())
+}
+
+fn verify_phase9_frozen_trace(root: &Path) -> Result<(), String> {
+    const LAST_ROW: u16 = 125;
+    const FIRST_MANUAL_ROW: u16 = 12;
+    const LAST_MANUAL_ROW: u16 = 41;
+    for relative in [
+        "docs/phases/2026-08-21-phase-09-pre-release-convergence.md",
+        "docs/tasks/phase-09-pre-release-convergence.md",
+        "docs/report/phase-09-inherited-conditions.md",
+        "docs/report/phase-09-release-blockers.md",
+        "docs/report/phase-09-supply-chain.md",
+        "docs/report/phase-09-release-workflow.md",
+        "docs/report/phase-09-portable-package.md",
+    ] {
+        if !root.join(relative).is_file() {
+            return Err(format!("required Phase 9 artifact is missing: {relative}"));
+        }
+    }
+
+    let path = root.join("docs/acceptance-cases/phase-09.md");
+    let content = read_text(&path)?;
+    let observed = frozen_trace_ids(&content, "P09-D")?;
+    let expected: Vec<u16> = (1..=LAST_ROW).collect();
+    if observed != expected {
+        return Err(format!(
+            "{} frozen DoD IDs must be exactly P09-D001..P09-D{LAST_ROW:03}; observed {observed:?}",
+            path.display()
+        ));
+    }
+    let rows = read_matrix_rows(&path)?;
+    let frozen_rows = rows
+        .iter()
+        .filter(|row| {
+            content
+                .lines()
+                .nth(row.line - 1)
+                .is_some_and(|line| line.trim_start().starts_with("| P09-D"))
+        })
+        .collect::<Vec<_>>();
+    if frozen_rows.len() != LAST_ROW as usize {
+        return Err(format!(
+            "{} does not expose all frozen Phase 9 rows to matrix validation",
+            path.display()
+        ));
+    }
+    for (index, row) in frozen_rows.iter().enumerate() {
+        let id = index as u16 + 1;
+        if (FIRST_MANUAL_ROW..=LAST_MANUAL_ROW).contains(&id)
+            && (row.mode != "Manual" || row.status != "NOT TESTED")
+        {
+            return Err(format!(
+                "{}:{} Phase 9 real-environment row P09-D{id:03} must remain Manual / NOT TESTED until a receipt is checked in",
+                path.display(),
+                row.line
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
+    for relative in [
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml",
+        ".github/workflows/scheduled.yml",
+    ] {
+        let path = root.join(relative);
+        let content = read_text(&path)?;
+        for (index, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            let Some(action) = trimmed.strip_prefix("uses:") else {
+                continue;
+            };
+            let action = action
+                .split_once('#')
+                .map_or(action, |(value, _)| value)
+                .trim();
+            let Some((_, revision)) = action.rsplit_once('@') else {
+                return Err(format!(
+                    "{}:{} action is not pinned: {action}",
+                    path.display(),
+                    index + 1
+                ));
+            };
+            if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(format!(
+                    "{}:{} action must use a full immutable commit SHA: {action}",
+                    path.display(),
+                    index + 1
+                ));
+            }
+        }
+        for forbidden in [
+            "pull_request_target",
+            "packages: write",
+            "actions: write",
+            "security-events: write",
+            "curl | sh",
+            "curl|sh",
+        ] {
+            if content.contains(forbidden) {
+                return Err(format!(
+                    "{} contains forbidden release-workflow token `{forbidden}`",
+                    path.display()
+                ));
+            }
+        }
+    }
+
+    let release = read_text(&root.join(".github/workflows/release.yml"))?;
+    for required in [
+        "permissions:\n  contents: read",
+        "persist-credentials: false",
+        "tools/release/package.ps1",
+        "tools/release/generate-sbom.ps1",
+        "tools/release/verify-package.ps1",
+        "subject-checksums: dist/SHA256SUMS.txt",
+        "sbom-path: dist/SBOM.spdx.json",
+        "gh release create",
+        "--draft",
+    ] {
+        if !release.contains(required) {
+            return Err(format!(
+                "release workflow lacks required security token `{required}`"
+            ));
+        }
+    }
+    let package = read_text(&root.join("tools/release/package.ps1"))?;
+    if package.contains("cargo build") {
+        return Err("package.ps1 must not build the application".to_owned());
+    }
+    let sbom = read_text(&root.join("tools/release/generate-sbom.ps1"))?;
+    for required in [
+        "1.50.0",
+        "815ee6973ec5dff6a671d7f41b0e78835a8c45b91d5a39f4743ea1cee833d3be",
+        "bb8824a06c27c625fc103db5d7e9d7131ba2cc6e7c7a79318ee71686ede3c3f0",
+    ] {
+        if !sbom.contains(required) {
+            return Err(format!(
+                "SBOM script lacks pinned supply-chain token `{required}`"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -121,7 +279,12 @@ fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
 
     let build_path = root.join("apps/stickymd-win/build.rs");
     let build = read_text(&build_path)?;
-    for marker in ["/MANIFEST:EMBED", "/MANIFESTINPUT:", ">PerMonitorV2<"] {
+    for marker in [
+        "set_manifest_file",
+        "set_icon",
+        "ProductName",
+        ">PerMonitorV2<",
+    ] {
         if !build.contains(marker) {
             return Err(format!(
                 "{} must enforce embedded PerMonitorV2 manifest marker `{marker}`",

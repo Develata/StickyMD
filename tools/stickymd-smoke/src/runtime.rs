@@ -8,6 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::process_metrics::{self, MemorySample};
+use crate::ready_event::ReadyEvent;
 use crate::runner::RuntimeScenario;
 
 const START_TIMEOUT: Duration = Duration::from_secs(10);
@@ -17,6 +18,12 @@ const CPU_INTERVAL: Duration = Duration::from_secs(60);
 const RESOURCE_REPETITIONS: usize = 5;
 const HIDDEN_PRIVATE_WORKING_SET_LIMIT: u64 = 36 * 1024 * 1024;
 const IDLE_CPU_PERCENT_LIMIT: f64 = 0.1;
+const STARTUP_SAMPLE_COUNT: usize = 20;
+const COLD_START_IDLE: Duration = Duration::from_secs(10);
+const WARM_START_IDLE: Duration = Duration::from_millis(250);
+const ORIGINAL_COLD_START_LIMIT: Duration = Duration::from_millis(300);
+const USER_APPROVED_COLD_START_LIMIT: Duration = Duration::from_millis(400);
+const WARM_START_LIMIT: Duration = Duration::from_millis(180);
 
 pub(crate) fn run(repository: &Path, scenario: RuntimeScenario) -> Result<(), String> {
     let root = create_smoke_root()?;
@@ -48,6 +55,9 @@ fn run_inner(
     }
     if scenario == RuntimeScenario::WindowResources {
         return run_window_resource_measurement(repository, root);
+    }
+    if scenario == RuntimeScenario::Startup {
+        return run_startup_measurement(repository, root);
     }
     let source = repository.join("target/release/stickymd-win.exe");
     if !source.is_file() {
@@ -125,6 +135,265 @@ fn run_inner(
     ensure_alive(&mut children[0], "first portable instance")?;
     ensure_alive(&mut children[1], "different-directory portable instance")?;
     Ok(())
+}
+
+#[derive(Debug)]
+struct StartupSample {
+    external: Duration,
+    milestones_us: Vec<(String, u128)>,
+}
+
+fn run_startup_measurement(repository: &Path, root: &Path) -> Result<(), String> {
+    let source = repository.join("target/release/stickymd-win.exe");
+    if !source.is_file() {
+        return Err(format!(
+            "Release executable is missing: {}",
+            source.display()
+        ));
+    }
+    let directory = root.join("phase9-startup");
+    let executable = copy_executable(&source, &directory)?;
+    prepare_resource_layout(&directory, "source", 0, 0, ImageResourceFixture::None)?;
+    println!(
+        "startup contract: fixture_bytes={} cold_samples={} cold_idle_seconds={} warm_samples={} warm_idle_ms={} original_cold_limit_ms={} user_approved_cold_limit_ms={} warm_limit_ms={}",
+        fs::metadata(directory.join("note/note.md"))
+            .map_err(|error| format!("cannot inspect startup fixture: {error}"))?
+            .len(),
+        STARTUP_SAMPLE_COUNT,
+        COLD_START_IDLE.as_secs(),
+        STARTUP_SAMPLE_COUNT,
+        WARM_START_IDLE.as_millis(),
+        ORIGINAL_COLD_START_LIMIT.as_millis(),
+        USER_APPROVED_COLD_START_LIMIT.as_millis(),
+        WARM_START_LIMIT.as_millis(),
+    );
+
+    let mut sequence = 0_u64;
+    let mut cold = Vec::with_capacity(STARTUP_SAMPLE_COUNT);
+    for run in 0..STARTUP_SAMPLE_COUNT {
+        thread::sleep(COLD_START_IDLE);
+        sequence = sequence.saturating_add(1);
+        let sample = measure_editor_ready(&executable, &directory, sequence)?;
+        print_startup_sample("cold", run + 1, &sample);
+        cold.push(sample);
+    }
+    let mut warm = Vec::with_capacity(STARTUP_SAMPLE_COUNT);
+    for run in 0..STARTUP_SAMPLE_COUNT {
+        thread::sleep(WARM_START_IDLE);
+        sequence = sequence.saturating_add(1);
+        let sample = measure_editor_ready(&executable, &directory, sequence)?;
+        print_startup_sample("warm", run + 1, &sample);
+        warm.push(sample);
+    }
+
+    let cold_p95 = print_startup_summary("cold", &cold)?;
+    let warm_p95 = print_startup_summary("warm", &warm)?;
+    if cold_p95 > USER_APPROVED_COLD_START_LIMIT {
+        return Err(format!(
+            "cold editor-ready p95 {:.3} ms exceeds USER-approved 400 ms hard gate",
+            cold_p95.as_secs_f64() * 1_000.0
+        ));
+    }
+    println!(
+        "startup gate original_300ms={} relaxed_400ms=PASS",
+        if cold_p95 <= ORIGINAL_COLD_START_LIMIT {
+            "PASS"
+        } else {
+            "FAIL_USER_WAIVER_REQUIRED"
+        }
+    );
+    if warm_p95 > WARM_START_LIMIT {
+        return Err(format!(
+            "warm editor-ready p95 {:.3} ms exceeds 180 ms hard gate",
+            warm_p95.as_secs_f64() * 1_000.0
+        ));
+    }
+    Ok(())
+}
+
+fn measure_editor_ready(
+    executable: &Path,
+    directory: &Path,
+    sequence: u64,
+) -> Result<StartupSample, String> {
+    let ready = ReadyEvent::create(sequence)?;
+    let trace = directory.join(format!("startup-trace-{sequence}.txt"));
+    let started = Instant::now();
+    let mut child = Command::new(executable)
+        .current_dir(directory)
+        .env("STICKYMD_DIAGNOSTIC_READY_EVENT", ready.name())
+        .env("STICKYMD_DIAGNOSTIC_STARTUP_TRACE", &trace)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("cannot start {}: {error}", executable.display()))?;
+    let result = (|| {
+        ready.wait(START_TIMEOUT)?;
+        let external = started.elapsed();
+        ensure_alive(&mut child, "startup measurement instance")?;
+        let milestones_us = wait_for_startup_trace(&trace)?;
+        validate_startup_milestones(&milestones_us)?;
+        Ok(StartupSample {
+            external,
+            milestones_us,
+        })
+    })();
+    stop_child(&mut child);
+    result
+}
+
+fn wait_for_startup_trace(path: &Path) -> Result<Vec<(String, u128)>, String> {
+    let deadline = Instant::now() + START_TIMEOUT;
+    loop {
+        match fs::read_to_string(path) {
+            Ok(content) => {
+                let mut milestones = Vec::new();
+                for line in content.lines().skip(1) {
+                    let (name, value) = line
+                        .split_once('=')
+                        .ok_or_else(|| format!("invalid startup trace line `{line}`"))?;
+                    milestones.push((
+                        name.to_owned(),
+                        value.parse::<u128>().map_err(|error| {
+                            format!("invalid startup duration `{line}`: {error}")
+                        })?,
+                    ));
+                }
+                return Ok(milestones);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "cannot read startup trace {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("startup trace was not written: {}", path.display()));
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn validate_startup_milestones(milestones: &[(String, u128)]) -> Result<(), String> {
+    const EXPECTED: &[&str] = &[
+        "main_enter",
+        "program_dir_ready",
+        "single_instance_ready",
+        "persistence_ready",
+        "document_ready",
+        "event_loop_ready",
+        "window_created",
+        "surface_ready",
+        "font_system_begin",
+        "font_system_end",
+        "source_buffer_ready",
+        "source_projection_ready",
+        "monitor_ready",
+        "tray_ready",
+        "window_visible",
+        "shell_ready",
+        "editor_ready",
+    ];
+    let names = milestones
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    if names != EXPECTED {
+        return Err(format!("startup milestone order mismatch: {names:?}"));
+    }
+    if milestones.windows(2).any(|pair| pair[0].1 > pair[1].1) {
+        return Err("startup milestone durations are not monotonic".to_owned());
+    }
+    Ok(())
+}
+
+fn print_startup_sample(kind: &str, run: usize, sample: &StartupSample) {
+    let internal = sample
+        .milestones_us
+        .last()
+        .map_or(0.0, |(_, value)| *value as f64 / 1_000.0);
+    let font_begin = milestone_us(sample, "font_system_begin");
+    let font_end = milestone_us(sample, "font_system_end");
+    println!(
+        "startup sample kind={kind} run={run} external_ms={:.3} internal_ms={internal:.3} process_overhead_ms={:.3} font_system_ms={:.3}",
+        sample.external.as_secs_f64() * 1_000.0,
+        (sample.external.as_secs_f64() * 1_000.0 - internal).max(0.0),
+        font_end.saturating_sub(font_begin) as f64 / 1_000.0,
+    );
+}
+
+fn milestone_us(sample: &StartupSample, name: &str) -> u128 {
+    sample
+        .milestones_us
+        .iter()
+        .find_map(|(observed, value)| (observed == name).then_some(*value))
+        .unwrap_or_default()
+}
+
+fn print_startup_summary(kind: &str, samples: &[StartupSample]) -> Result<Duration, String> {
+    if samples.len() != STARTUP_SAMPLE_COUNT {
+        return Err(format!("{kind} startup produced {} samples", samples.len()));
+    }
+    let mut external = samples
+        .iter()
+        .map(|sample| sample.external)
+        .collect::<Vec<_>>();
+    external.sort_unstable();
+    let p50 = nearest_rank(&external, 50)?;
+    let p95 = nearest_rank(&external, 95)?;
+    let max = *external
+        .last()
+        .ok_or_else(|| "startup samples are empty".to_owned())?;
+    println!(
+        "startup summary kind={kind} samples={} p50_ms={:.3} p95_ms={:.3} max_ms={:.3}",
+        external.len(),
+        p50.as_secs_f64() * 1_000.0,
+        p95.as_secs_f64() * 1_000.0,
+        max.as_secs_f64() * 1_000.0,
+    );
+    for name in [
+        "program_dir_ready",
+        "single_instance_ready",
+        "persistence_ready",
+        "document_ready",
+        "event_loop_ready",
+        "window_created",
+        "surface_ready",
+        "font_system_end",
+        "source_buffer_ready",
+        "source_projection_ready",
+        "monitor_ready",
+        "tray_ready",
+        "window_visible",
+        "shell_ready",
+        "editor_ready",
+    ] {
+        let mut values = samples
+            .iter()
+            .map(|sample| Duration::from_micros(milestone_us(sample, name) as u64))
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        println!(
+            "startup milestone kind={kind} name={name} p50_ms={:.3} p95_ms={:.3}",
+            nearest_rank(&values, 50)?.as_secs_f64() * 1_000.0,
+            nearest_rank(&values, 95)?.as_secs_f64() * 1_000.0,
+        );
+    }
+    Ok(p95)
+}
+
+fn nearest_rank(samples: &[Duration], percentile: usize) -> Result<Duration, String> {
+    if samples.is_empty() || !(1..=100).contains(&percentile) {
+        return Err("nearest-rank percentile requires samples and 1..=100".to_owned());
+    }
+    let rank = samples.len().saturating_mul(percentile).div_ceil(100);
+    samples
+        .get(rank.saturating_sub(1))
+        .copied()
+        .ok_or_else(|| "percentile rank is outside startup samples".to_owned())
 }
 
 fn run_window_shell_lifecycle(
@@ -954,9 +1223,15 @@ fn prepare_resource_layout(
         }
         fixture.push_str("\n\n");
     }
-    const PLAIN: &str = "中文 baseline text with Latin words and stable native preview layout.\n\n";
-    while fixture.len() < 20 * 1024 {
-        fixture.push_str(PLAIN);
+    const TYPICAL_NOTE_SEED: &str =
+        include_str!("../../../tests/fixtures/performance/typical-note-seed.md");
+    if fixture.len() < 20 * 1024 {
+        while fixture.len() < 20 * 1024 {
+            fixture.push_str(TYPICAL_NOTE_SEED);
+        }
+        while fixture.len() > 20 * 1024 {
+            fixture.pop();
+        }
     }
     fs::write(note_directory.join("note.md"), fixture)
         .map_err(|error| format!("cannot seed resource note: {error}"))?;

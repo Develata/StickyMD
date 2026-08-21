@@ -1,53 +1,54 @@
 # StickyMD
 
-StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown 临时草稿纸：
-打开即写，自动保存，公式可靠，贴边即隐，需要时迅速出现。
+StickyMD is a native, portable Windows 11 Markdown scratchpad: launch it, write, and let it save the single note beside the executable. It is deliberately not a general-purpose editor or knowledge-management system.
 
-它不是 Obsidian，不是 Typora，不是知识管理工具，也不是通用 Markdown 编辑器。
+> Pre-release status: Phase 9 convergence is in progress. Automated reliability and packaging evidence does not replace the still-open manual IME, visual, tray, DPI, multi-monitor, recovery, and clean-VM acceptance rows. No stable release is claimed.
 
----
+## What it does
 
-## Current status
+- Edits exactly `<program-dir>/note/note.md`.
+- Uses a native Rust UI with no WebView, Electron, Tauri, JavaScript runtime, database, telemetry, updater, or runtime network client.
+- Autosaves through guarded, same-directory atomic replacement and detects external edits.
+- Renders CommonMark/GFM through Comrak and native RaTeX-compatible mathematics.
+- Supports managed local-image paste/export, source/preview/split views, tray lifecycle, left/right/top docking, themes, topmost, and whole-window opacity.
 
-```text
-阶段：Phase 8 Windows desktop shell development slice implemented; USER review pending
+## Portable use
+
+1. Extract the package to a writable directory owned by the current user.
+2. Run `StickyMD.exe` without administrator privileges.
+3. Keep the generated `note/` directory with the executable when moving or copying the note.
+
+One directory is one note identity. A second process from the same canonical directory wakes the existing instance; copies in different directories are independent. Do not install StickyMD under `Program Files`.
+
+The current builds are unsigned. Windows may display a reputation warning. Verify `SHA256SUMS.txt` before running a release artifact; advanced users can also verify GitHub artifact attestations with `gh attestation verify`.
+
+## Build from source
+
+Requirements: Windows 11 x64, the MSVC C++/Windows SDK build tools, and the toolchain pinned by `rust-toolchain.toml`.
+
+```powershell
+cargo build --workspace --release --locked
 ```
 
-仓库已有平台无关文档核心、Windows 源码编辑器和 portable `note/note.md` 持久化闭环：
-650 ms autosave、Ctrl+S、失焦/退出保存、同目录单实例、atomic replace、启动恢复、
-external reload/conflict、config v1，以及 Source/Preview/Split 原生只读预览、RaTeX
-公式排版、managed image paste、local-image projection、portable Markdown+assets 导出，
-以及原生三项托盘、左/右/上 Dock、自动隐藏、主题、整窗透明度、置顶和多显示器恢复骨架已经
-接入。公式生产热路径直接绘制 RaTeX DisplayList，不经过 PNG/WebView；remote 图片仍零网络。
-真实托盘/多显示器/DPI/视觉门与微软拼音、微信输入法真实人工矩阵仍未完成，不能据此声称
-v1 ready。
+Run the CI-safe automated matrix with:
 
-- 目标平台：Windows 11 x64
-- 实现主体：Rust（winit / cosmic-text / tiny-skia / softbuffer / Comrak / RaTeX 为已批准架构方向）
-- 交付形式：单 EXE portable，解压即用，一个程序目录就是一张便签
-- License：MIT
+```powershell
+./tools/smoke/all.ps1 -Ci
+```
 
----
+Machine-dependent GUI, IME, display-topology, resource and visual checks are intentionally separate and remain `NOT TESTED` until a current-artifact receipt exists.
 
 ## Documentation
 
-| 文档 | 说明 |
-| --- | --- |
-| [AGENTS.md](AGENTS.md) | Agent 工作总入口与强制工作流 |
-| [工程宪法](docs/plan/00_engineering_constitution.md) | 系统设计与演化的最高约束 |
-| [架构契约](docs/plan/) | 唯一架构权威文档树 |
-| [术语表](docs/plan/01_terminology.md) | 核心术语固定定义 |
-| [产品行为投影](docs/features/00_v1_product_behavior.md) | v1 用户可见行为 |
-| [验收合同](docs/acceptance-cases/00_v1_acceptance.md) | v1 可验证案例 |
-| [架构概览](docs/overview/architecture.md) | 可读版架构投影 |
-| [覆盖矩阵](docs/coverage-matrix.md) | plan ↔ feature ↔ acceptance ↔ 未来代码 |
-| [阶段输入归档](docs/phases/README.md) | USER 提供的阶段 prompt 原文（非架构权威） |
-| [逐阶段验证](docs/acceptance-cases/phase-00.md) | Phase 0–8 自动化与人工状态；入口位于 `tools/smoke/` |
-
----
+- [中文说明](README.zh-CN.md)
+- [Architecture contract](docs/plan/)
+- [Acceptance contract](docs/acceptance-cases/00_v1_acceptance.md)
+- [Phase 9 matrix](docs/acceptance-cases/phase-09.md)
+- [Release checklist](docs/release-checklist.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## License
 
-MIT — 见 [LICENSE](LICENSE)。
-
-第三方组件与嵌入字体声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+StickyMD is MIT licensed. Embedded KaTeX-compatible font files retain the SIL Open Font License 1.1; see the packaged notices.

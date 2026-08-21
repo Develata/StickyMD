@@ -114,6 +114,7 @@ impl StickyApp {
             self.diagnostic = Some("Windows 未提供可用显示器；无法安全放置窗口。".into());
             return false;
         };
+        self.startup_diagnostics.record("monitor_ready");
         let configured = &self.config.current().window;
         let placement = WindowPlacement::new(
             configured.width_dip as f64,
@@ -159,6 +160,7 @@ impl StickyApp {
             apply_frame(&window, frame);
         }
         self.tray = tray;
+        self.startup_diagnostics.record("tray_ready");
         self.dispatch_window_intent(
             Some(event_loop),
             WindowIntent::SplitModeChanged {
@@ -166,6 +168,7 @@ impl StickyApp {
             },
         );
         window.set_visible(true);
+        self.startup_diagnostics.record("window_visible");
         // Winit may refresh native extended styles while making the window
         // visible. Apply layered alpha and z-order after that transition so
         // the configured projection is the final native fact.
@@ -187,6 +190,7 @@ impl StickyApp {
         }
         window.focus_window();
         self.refresh_window_guards(None);
+        self.startup_diagnostics.record("shell_ready");
         true
     }
 

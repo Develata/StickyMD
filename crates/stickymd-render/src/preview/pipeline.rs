@@ -1123,21 +1123,10 @@ mod tests {
     }
 
     fn fixture(bytes: usize) -> String {
-        let rich = concat!(
-            "## Heading\n\n",
-            "中文 English **bold** *italic* [link](https://example.com) and $x^2$.\n\n",
-            "- [x] task item\n- ordinary item\n\n",
-            "| left | right |\n| :--- | ---: |\n| value | 42 |\n\n",
-        );
-        let paragraph = format!(
-            "{}\n\n",
-            "This is a representative long Markdown paragraph with 中文 text and numbers 12345. "
-                .repeat(12)
-        );
-        let mut source = String::with_capacity(bytes + paragraph.len());
-        source.push_str(rich);
+        let seed = include_str!("../../../../tests/fixtures/performance/typical-note-seed.md");
+        let mut source = String::with_capacity(bytes + seed.len());
         while source.len() < bytes {
-            source.push_str(&paragraph);
+            source.push_str(seed);
         }
         let mut boundary = bytes;
         while !source.is_char_boundary(boundary) {

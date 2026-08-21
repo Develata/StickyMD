@@ -203,7 +203,27 @@ pub fn decode_scaled_image(
     max_width: u32,
     max_height: u32,
 ) -> Result<DecodedImageRaster, ImageAssetError> {
-    let image = decode_encoded(bytes)?;
+    resize_decoded_image(decode_encoded(bytes)?, max_width, max_height)
+}
+
+/// Decode owned source bytes and release them before allocating the scaled
+/// raster. Preview file reads already transfer ownership, so this avoids
+/// retaining a large encoded BMP alongside both decoded image buffers.
+pub fn decode_scaled_image_owned(
+    bytes: Vec<u8>,
+    max_width: u32,
+    max_height: u32,
+) -> Result<DecodedImageRaster, ImageAssetError> {
+    let image = decode_encoded(&bytes)?;
+    drop(bytes);
+    resize_decoded_image(image, max_width, max_height)
+}
+
+fn resize_decoded_image(
+    image: DynamicImage,
+    max_width: u32,
+    max_height: u32,
+) -> Result<DecodedImageRaster, ImageAssetError> {
     let target = fit_without_upscale(
         image.width(),
         image.height(),
@@ -461,6 +481,15 @@ mod tests {
         assert_eq!((small.width, small.height), (20, 10));
         let same = decode_scaled_image(&prepared.bytes, 200, 200).unwrap();
         assert_eq!((same.width, same.height), (100, 50));
+    }
+
+    #[test]
+    fn phase9_owned_decode_matches_borrowed_decode() {
+        let prepared = prepare_rgba_image(100, 50, rgba(100, 50, [2, 4, 8, 128])).unwrap();
+        let borrowed = decode_scaled_image(&prepared.bytes, 20, 20).unwrap();
+        let owned = decode_scaled_image_owned(prepared.bytes().to_vec(), 20, 20).unwrap();
+
+        assert_eq!(owned, borrowed);
     }
     #[test]
     fn orientation_metadata_matches_post_decode_dimensions() {

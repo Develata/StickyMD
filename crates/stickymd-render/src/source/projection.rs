@@ -49,6 +49,13 @@ pub enum SourceProjectionError {
     ResyncRequired,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceInitializationMilestone {
+    FontSystemReady,
+    SourceBufferReady,
+    SourceShaped,
+}
+
 pub struct SourceProjection {
     pub(super) font_system: FontSystem,
     pub(super) swash_cache: SwashCache,
@@ -67,8 +74,19 @@ pub struct SourceProjection {
 
 impl SourceProjection {
     pub fn new(snapshot: &DocumentSnapshot, width_px: u32, height_px: u32, scale: f32) -> Self {
+        Self::new_observed(snapshot, width_px, height_px, scale, |_| {})
+    }
+
+    pub fn new_observed(
+        snapshot: &DocumentSnapshot,
+        width_px: u32,
+        height_px: u32,
+        scale: f32,
+        mut observe: impl FnMut(SourceInitializationMilestone),
+    ) -> Self {
         let mut font_system = FontSystem::new();
         let fonts = FontSelection::resolve(&mut font_system);
+        observe(SourceInitializationMilestone::FontSystemReady);
         let metrics = scaled_metrics(scale);
         let mut buffer = Buffer::new(&mut font_system, metrics);
         let mut diagnostic_buffer = Buffer::new(
@@ -92,8 +110,12 @@ impl SourceProjection {
             scale_factor: scale.max(0.5),
             preedit: None,
         };
-        projection.configure_buffer();
-        projection.rebuild(snapshot);
+        projection.rebuild_buffer(snapshot);
+        observe(SourceInitializationMilestone::SourceBufferReady);
+        projection
+            .buffer
+            .shape_until_scroll(&mut projection.font_system, false);
+        observe(SourceInitializationMilestone::SourceShaped);
         projection
     }
 
@@ -117,7 +139,7 @@ impl SourceProjection {
             });
         }
         let scroll = self.buffer.scroll();
-        self.rebuild(snapshot);
+        self.rebuild_buffer(snapshot);
         self.buffer.set_scroll(scroll);
         self.buffer.shape_until_scroll(&mut self.font_system, false);
         Ok(())
@@ -444,34 +466,15 @@ impl SourceProjection {
         Some(x < action_start + (self.width_px as f32 - action_start) * 0.5)
     }
 
-    fn rebuild(&mut self, snapshot: &DocumentSnapshot) {
+    fn rebuild_buffer(&mut self, snapshot: &DocumentSnapshot) {
         self.canonical.clear();
         self.canonical.push_str(&snapshot.text);
         self.generation = snapshot.generation;
         self.line_starts = line_starts(&self.canonical);
         self.configure_buffer();
 
-        let default = Attrs::new().family(Family::Serif);
-        let runs = segment_script_runs(&self.canonical);
-        if runs.is_empty() {
-            self.buffer.set_text(
-                &self.canonical,
-                &default,
-                Shaping::Advanced,
-                Some(Align::Left),
-            );
-        } else {
-            let spans: Vec<(&str, Attrs<'_>)> = runs
-                .iter()
-                .map(|run| {
-                    let attrs = Attrs::new().family(Family::Name(self.fonts.family_for(run.class)));
-                    (&self.canonical[run.range.clone()], attrs)
-                })
-                .collect();
-            self.buffer
-                .set_rich_text(spans, &default, Shaping::Advanced, Some(Align::Left));
-        }
-        self.buffer.shape_until_scroll(&mut self.font_system, false);
+        self.buffer.lines = source_buffer_lines(&self.canonical, &self.fonts);
+        self.buffer.set_redraw(true);
     }
 
     fn configure_buffer(&mut self) {
@@ -517,6 +520,27 @@ fn attrs_for_line(text: &str, fonts: &FontSelection) -> AttrsList {
         attrs.add_span(run.range, &run_attrs);
     }
     attrs
+}
+
+fn source_buffer_lines(text: &str, fonts: &FontSelection) -> Vec<BufferLine> {
+    let mut source = text.split('\n').peekable();
+    let mut lines = Vec::with_capacity(text.bytes().filter(|byte| *byte == b'\n').count() + 1);
+    while let Some(line_text) = source.next() {
+        let ending = if source.peek().is_some() {
+            BufferLineEnding::Lf
+        } else {
+            BufferLineEnding::None
+        };
+        let mut line = BufferLine::new(
+            line_text,
+            ending,
+            attrs_for_line(line_text, fonts),
+            Shaping::Advanced,
+        );
+        line.set_align(Some(Align::Left));
+        lines.push(line);
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -867,6 +891,41 @@ mod tests {
         assert_eq!(projection.projected_text(), "first\ntail");
         assert_eq!(projection.buffer.lines.len(), 2);
         assert_eq!(projection.buffer.lines[1].text(), "tail");
+    }
+
+    #[test]
+    fn phase9_source_initialization_preserves_logical_line_endings() {
+        let source = snapshot("first\n中文\n");
+        let projection = SourceProjection::new(&source, 600, 400, 1.0);
+
+        assert_eq!(projection.buffer.lines.len(), 3);
+        assert_eq!(projection.buffer.lines[0].text(), "first");
+        assert_eq!(projection.buffer.lines[0].ending(), BufferLineEnding::Lf);
+        assert_eq!(projection.buffer.lines[1].text(), "中文");
+        assert_eq!(projection.buffer.lines[1].ending(), BufferLineEnding::Lf);
+        assert_eq!(projection.buffer.lines[2].text(), "");
+        assert_eq!(projection.buffer.lines[2].ending(), BufferLineEnding::None);
+        assert_eq!(projection.projected_text(), source.text.as_ref());
+    }
+
+    #[test]
+    fn phase9_source_initialization_reports_ordered_milestones() {
+        let source = snapshot("English 中文");
+        let mut milestones = Vec::new();
+
+        let projection = SourceProjection::new_observed(&source, 600, 400, 1.0, |milestone| {
+            milestones.push(milestone);
+        });
+
+        assert_eq!(
+            milestones,
+            [
+                SourceInitializationMilestone::FontSystemReady,
+                SourceInitializationMilestone::SourceBufferReady,
+                SourceInitializationMilestone::SourceShaped,
+            ]
+        );
+        assert_eq!(projection.projected_text(), source.text.as_ref());
     }
 
     #[test]

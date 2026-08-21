@@ -814,6 +814,23 @@ mod phase8_window_tests {
     }
 
     #[test]
+    fn phase9_conflict_blocks_tray_quit_before_any_destructive_barrier() {
+        let mut coordinator = coordinator(StableVisibility::Floating);
+        let effects = coordinator.dispatch(WindowIntent::TrayQuitRequested {
+            guards: WindowGuardSnapshot {
+                conflict_or_recovery: true,
+                note_save_required: true,
+                ..Default::default()
+            },
+        });
+
+        assert_eq!(effects, vec![WindowEffect::QuitBlocked]);
+        assert_eq!(coordinator.state().lifecycle(), LifecycleState::Running);
+        assert!(!effects.contains(&WindowEffect::RequestSafeAssetGc));
+        assert!(!effects.contains(&WindowEffect::ExitProcess));
+    }
+
+    #[test]
     fn asset_gc_failure_warns_but_continues_to_config_barrier() {
         let mut coordinator = coordinator(StableVisibility::Floating);
         coordinator.dispatch(WindowIntent::TrayQuitRequested {

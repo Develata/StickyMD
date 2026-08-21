@@ -24,3 +24,10 @@
   - 内容：Phase 7 managed images、clipboard、asset transaction/GC、native image Preview、export、smoke 与验收任务原文。
   - 来源 SHA-256：`F75B051E220F4E3C73FE0B202D870B0F745E8D74B336AFF4D58028C9CF9B22AA`
   - 导入方式：逐行原文归档；仅由 `apply_patch` 统一为仓库换行格式，未改写正文。
+- [`2026-08-21-phase-08-windows-desktop-shell.md`](2026-08-21-phase-08-windows-desktop-shell.md)
+  - 内容：Phase 8 Windows desktop shell、docking、tray、theme、opacity、多显示器、smoke 与验收任务原文。
+  - 导入方式：逐行原文归档；仅由 `apply_patch` 统一为仓库换行格式，未改写正文。
+- [`2026-08-21-phase-09-pre-release-convergence.md`](2026-08-21-phase-09-pre-release-convergence.md)
+  - 内容：Phase 9 pre-release convergence、人工验收、性能加固、供应链与本地 RC 任务原文。
+  - 来源 SHA-256：`DEB122277086F6F9323454C454ABF1FF1969CB8FBD9E840945597F72CD52ADD8`
+  - 导入方式：逐行原文归档；仅由 `apply_patch` 统一为仓库换行格式，未改写正文。

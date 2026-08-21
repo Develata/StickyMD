@@ -5,6 +5,8 @@ mod cli;
 mod governance;
 #[cfg(windows)]
 mod process_metrics;
+#[cfg(windows)]
+mod ready_event;
 mod runner;
 #[cfg(windows)]
 mod runtime;
