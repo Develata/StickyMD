@@ -129,6 +129,22 @@ headless 测试推断完成。Phase 7 的 managed image、bounded decode/cache �
 真实 Windows 图片来源、视觉和 native dialog 仍明确
 `NOT TESTED`。
 
+Phase 8 将桌面窗口行为收口为一个平台无关 reducer：
+
+```text
+Window intent + monotonic time + platform facts
+  → WindowShellState（visibility / dock / guards / lifecycle）
+  → typed WindowEffect
+  → winit / thin Win32 / tray adapters
+```
+
+`WindowShellState` 是运行时窗口与 Dock 生命周期权威；`ConfigCoordinator` 是已提交偏好的
+唯一 mutable authority，并用 monotonic revision 合并写入。窗口、托盘和 Win32 只执行 effect，
+不能读写 `DocumentState`。Close 在 dirty 时先冻结输入并保存最新 generation，再隐藏；Tray Quit
+依次等待资产事务、最新 note save、安全 GC 与 config acknowledgement。PerMonitorV2 manifest、
+CCD stable display identity、signed `rcWork` geometry 和 70–100 整窗 alpha 已接入。真实托盘菜单、
+物理多屏拓扑、混合 DPI、IME 与视觉品质仍以 Phase 8 人工矩阵中的 `NOT TESTED` 为准。
+
 ## 文档导航
 
 | 想了解 | 看这里 |

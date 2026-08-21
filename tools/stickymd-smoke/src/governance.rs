@@ -87,9 +87,191 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_required_files(root)?;
     verify_global_acceptance_sequence(root)?;
     verify_phase_artifacts(root)?;
+    verify_phase8_frozen_trace(root)?;
+    verify_phase8_shell_artifacts(root)?;
     verify_plan_refs(root)?;
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
+    Ok(())
+}
+
+fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
+    for relative in [
+        "apps/stickymd-win/StickyMD.manifest",
+        "apps/stickymd-win/build.rs",
+        "docs/phases/2026-08-21-phase-08-windows-desktop-shell.md",
+        "docs/tasks/phase-08-windows-desktop-shell.md",
+        "docs/report/phase-08-windows-desktop-shell.md",
+    ] {
+        if !root.join(relative).is_file() {
+            return Err(format!("required Phase 8 artifact is missing: {relative}"));
+        }
+    }
+
+    let manifest_path = root.join("apps/stickymd-win/StickyMD.manifest");
+    let manifest = read_text(&manifest_path)?;
+    for marker in ["PerMonitorV2", "level=\"asInvoker\"", "uiAccess=\"false\""] {
+        if !manifest.contains(marker) {
+            return Err(format!(
+                "{} must contain `{marker}`",
+                manifest_path.display()
+            ));
+        }
+    }
+
+    let build_path = root.join("apps/stickymd-win/build.rs");
+    let build = read_text(&build_path)?;
+    for marker in ["/MANIFEST:EMBED", "/MANIFESTINPUT:", ">PerMonitorV2<"] {
+        if !build.contains(marker) {
+            return Err(format!(
+                "{} must enforce embedded PerMonitorV2 manifest marker `{marker}`",
+                build_path.display()
+            ));
+        }
+    }
+
+    for relative in [
+        "crates/stickymd-core/src/lib.rs",
+        "crates/stickymd-render/src/lib.rs",
+    ] {
+        let path = root.join(relative);
+        if !read_text(&path)?.contains("#![forbid(unsafe_code)]") {
+            return Err(format!(
+                "{} must retain #![forbid(unsafe_code)]",
+                path.display()
+            ));
+        }
+    }
+
+    let workspace_manifest = read_text(&root.join("Cargo.toml"))?;
+    if workspace_manifest.contains("Win32_System_Registry") {
+        return Err("Phase 8 must not introduce registry or auto-start capability".to_owned());
+    }
+
+    let lifecycle_path = root.join("apps/stickymd-win/src/app/lifecycle.rs");
+    let lifecycle = read_text(&lifecycle_path)?;
+    for marker in [
+        ".with_decorations(false)",
+        ".with_undecorated_shadow(true)",
+        "CornerPreference::RoundSmall",
+        "ControlFlow::Wait",
+    ] {
+        if !lifecycle.contains(marker) {
+            return Err(format!(
+                "{} is missing native shell marker `{marker}`",
+                lifecycle_path.display()
+            ));
+        }
+    }
+
+    let window_projection_path = root.join("apps/stickymd-win/src/app/window_geometry_runtime.rs");
+    let window_projection = read_text(&window_projection_path)?;
+    if window_projection
+        .matches("enumerate_active_displays()")
+        .count()
+        != 1
+    {
+        return Err(format!(
+            "{} must enumerate CCD facts exactly once per monitor snapshot",
+            window_projection_path.display()
+        ));
+    }
+    for forbidden in ["DocumentState", "std::fs", "File::"] {
+        if window_projection.contains(forbidden) {
+            return Err(format!(
+                "{} crosses the window projection boundary through `{forbidden}`",
+                window_projection_path.display()
+            ));
+        }
+    }
+
+    let monitor_path = root.join("apps/stickymd-win/src/platform/windows/monitor.rs");
+    if !read_text(&monitor_path)?.contains("info.rcWork") {
+        return Err(format!(
+            "{} must project the taskbar-excluded rcWork rectangle",
+            monitor_path.display()
+        ));
+    }
+
+    let tray_path = root.join("apps/stickymd-win/src/platform/windows/tray.rs");
+    let tray = read_text(&tray_path)?;
+    for marker in ["select_biased!", "recv(menu_events)", "recv(tray_events)"] {
+        if !tray.contains(marker) {
+            return Err(format!(
+                "{} must retain event-driven tray marker `{marker}`",
+                tray_path.display()
+            ));
+        }
+    }
+    for forbidden in ["thread::sleep", "recv_timeout", "try_recv"] {
+        if tray.contains(forbidden) {
+            return Err(format!(
+                "{} must not poll tray events through `{forbidden}`",
+                tray_path.display()
+            ));
+        }
+    }
+
+    let flow_directory = root.join("apps/stickymd-win/src/flow/window");
+    let mut flow_rust = Vec::new();
+    collect_files(&flow_directory, "rs", &mut flow_rust)?;
+    for path in flow_rust {
+        let content = read_text(&path)?;
+        for forbidden in ["winit::", "windows::", "HWND", "HMONITOR"] {
+            if content.contains(forbidden) {
+                return Err(format!(
+                    "{} leaks platform type `{forbidden}` into the pure window domain",
+                    path.display()
+                ));
+            }
+        }
+    }
+
+    let mut production_rust = Vec::new();
+    collect_files(&root.join("apps"), "rs", &mut production_rust)?;
+    collect_files(&root.join("crates"), "rs", &mut production_rust)?;
+    for path in production_rust {
+        let content = read_text(&path)?;
+        let lowercase = content.to_ascii_lowercase();
+        for forbidden in ["acrylic", "mica"] {
+            if lowercase
+                .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                .any(|token| token == forbidden)
+            {
+                return Err(format!(
+                    "{} introduces forbidden Phase 8 visual `{forbidden}`",
+                    path.display()
+                ));
+            }
+        }
+    }
+
+    let mut windows_rust = Vec::new();
+    collect_files(
+        &root.join("apps/stickymd-win/src/platform/windows"),
+        "rs",
+        &mut windows_rust,
+    )?;
+    for path in windows_rust {
+        let content = read_text(&path)?;
+        let lines = content.lines().collect::<Vec<_>>();
+        for (index, line) in lines.iter().enumerate() {
+            if !line.contains("unsafe {") {
+                continue;
+            }
+            let context_start = index.saturating_sub(6);
+            if !lines[context_start..=index]
+                .iter()
+                .any(|candidate| candidate.contains("SAFETY:"))
+            {
+                return Err(format!(
+                    "{}:{} unsafe block has no adjacent SAFETY invariant",
+                    path.display(),
+                    index + 1
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -183,6 +365,73 @@ fn verify_phase_artifacts(root: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn verify_phase8_frozen_trace(root: &Path) -> Result<(), String> {
+    const LAST_IMPLEMENTATION_ROW: u16 = 116;
+    const LAST_MANUAL_ROW: u16 = 139;
+    let path = root.join("docs/acceptance-cases/phase-08.md");
+    let content = read_text(&path)?;
+    let observed = frozen_trace_ids(&content, "P08-D")?;
+    let expected: Vec<u16> = (1..=LAST_MANUAL_ROW).collect();
+    if observed != expected {
+        return Err(format!(
+            "{} frozen DoD IDs must be exactly P08-D001..P08-D{LAST_MANUAL_ROW:03}; observed {observed:?}",
+            path.display()
+        ));
+    }
+    let rows = read_matrix_rows(&path)?;
+    let frozen_rows = rows
+        .iter()
+        .filter(|row| row.line > 0)
+        .skip_while(|row| {
+            content
+                .lines()
+                .nth(row.line - 1)
+                .is_none_or(|line| !line.trim_start().starts_with("| P08-D"))
+        })
+        .take(LAST_MANUAL_ROW as usize)
+        .collect::<Vec<_>>();
+    if frozen_rows.len() != LAST_MANUAL_ROW as usize {
+        return Err(format!(
+            "{} does not expose all frozen Phase 8 rows to matrix validation",
+            path.display()
+        ));
+    }
+    for (index, row) in frozen_rows.iter().enumerate() {
+        let id = index as u16 + 1;
+        if id > LAST_IMPLEMENTATION_ROW && (row.mode != "Manual" || row.status != "NOT TESTED") {
+            return Err(format!(
+                "{}:{} frozen real-environment row P08-D{id:03} must remain Manual / NOT TESTED until a receipt is checked in",
+                path.display(),
+                row.line
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn frozen_trace_ids(content: &str, prefix: &str) -> Result<Vec<u16>, String> {
+    let mut ids = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed
+            .strip_prefix("| ")
+            .and_then(|line| line.strip_prefix(prefix))
+        else {
+            continue;
+        };
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        if digits.is_empty() {
+            continue;
+        }
+        ids.push(
+            digits
+                .parse::<u16>()
+                .map_err(|error| format!("invalid frozen trace row `{line}`: {error}"))?,
+        );
+    }
+    Ok(ids)
 }
 
 fn matrix_path(root: &Path, phase: Phase) -> PathBuf {
@@ -416,7 +665,7 @@ fn read_text(path: &Path) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::markdown_links;
+    use super::{frozen_trace_ids, markdown_links};
 
     #[test]
     fn markdown_link_parser_ignores_images() {
@@ -428,5 +677,15 @@ mod tests {
     fn markdown_link_parser_reports_line_numbers() {
         let links = markdown_links("first\n[second](b.md)\n");
         assert_eq!(links, vec![(2, "b.md".to_owned())]);
+    }
+
+    #[test]
+    fn frozen_trace_parser_keeps_order_and_ignores_other_rows() {
+        let source = concat!(
+            "| P08-A00 | route | Automated | evidence | AUTOMATED PASS |\n",
+            "| P08-D001 | first | Automated | evidence | BLOCKED |\n",
+            "| P08-D002 | second | Manual | evidence | NOT TESTED |\n",
+        );
+        assert_eq!(frozen_trace_ids(source, "P08-D").unwrap(), vec![1, 2]);
     }
 }

@@ -5,14 +5,17 @@
 mod clipboard;
 mod editor;
 mod persistence;
+mod preferences;
 mod preview;
 mod reconciliation;
 mod recovery;
 mod save;
+pub mod window;
 
 pub use clipboard::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
 pub use editor::{AppEffect, EditorCoordinator};
-pub use persistence::{ExitGcAction, PersistenceCoordinator, QuitAction, ReconciliationAction};
+pub use persistence::{PersistenceCoordinator, ReconciliationAction};
+pub use preferences::{WindowPreferenceEffect, coordinate_window_preference};
 pub use preview::{
     PreviewAction, PreviewAdmission, PreviewCoordinator, PreviewEffect, PreviewVisibility,
 };

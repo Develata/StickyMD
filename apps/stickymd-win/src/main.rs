@@ -34,7 +34,9 @@ fn main() {
     use platform::windows::program_dir::RuntimePaths;
     use platform::windows::single_instance::{InstanceDisposition, SingleInstanceGuard};
     use startup::bootstrap;
-    use winit::event_loop::EventLoop;
+    use std::sync::{Arc, Mutex};
+    use winit::event_loop::{EventLoop, EventLoopProxy};
+    use winit::platform::windows::EventLoopBuilderExtWindows;
 
     let paths = match RuntimePaths::resolve_current() {
         Ok(paths) => paths,
@@ -83,7 +85,19 @@ fn main() {
         }
     }
 
-    let event_loop = match EventLoop::<AppEvent>::with_user_event().build() {
+    let native_proxy: Arc<Mutex<Option<EventLoopProxy<AppEvent>>>> = Arc::new(Mutex::new(None));
+    let native_proxy_for_hook = Arc::clone(&native_proxy);
+    let mut event_loop_builder = EventLoop::<AppEvent>::with_user_event();
+    event_loop_builder.with_msg_hook(move |message| {
+        if let Some(signal) = platform::windows::native_message::translate_message(message)
+            && let Ok(proxy) = native_proxy_for_hook.lock()
+            && let Some(proxy) = proxy.as_ref()
+        {
+            let _ = proxy.send_event(AppEvent::Native(signal));
+        }
+        false
+    });
+    let event_loop = match event_loop_builder.build() {
         Ok(event_loop) => event_loop,
         Err(error) => {
             eprintln!("event loop creation failed: {error}");
@@ -91,6 +105,9 @@ fn main() {
         }
     };
     let proxy = event_loop.create_proxy();
+    if let Ok(mut slot) = native_proxy.lock() {
+        *slot = Some(proxy.clone());
+    }
     let wake_proxy = proxy.clone();
     if let Err(error) = instance.start_listener(move || {
         let _ = wake_proxy.send_event(AppEvent::ShowRequested);

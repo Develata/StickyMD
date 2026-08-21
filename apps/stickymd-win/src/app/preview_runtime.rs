@@ -6,17 +6,16 @@
 use stickymd_core::Generation;
 use stickymd_render::preview::{PreviewSelection, PreviewTheme};
 use tiny_skia::Pixmap;
-use winit::dpi::{LogicalSize, PhysicalSize};
+use winit::dpi::PhysicalSize;
 
 use super::{AppEvent, StickyApp};
-use crate::config::{ThemeMode, ViewMode};
+use crate::config::ViewMode;
 use crate::flow::{PreviewAction, PreviewAdmission, PreviewEffect, PreviewVisibility};
 use crate::instruction::PreviewIntent;
 use crate::preview::{PreviewCompletion, PreviewJob, PreviewViewport, PreviewWorker};
 
 pub(super) const TOOLBAR_HEIGHT_DIP: f32 = 34.0;
 const SPLIT_DIVIDER_DIP: f32 = 1.0;
-const MIN_SPLIT_PANE_DIP: f64 = 240.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct PaneRect {
@@ -48,11 +47,11 @@ impl StickyApp {
         let window = self.window.as_ref()?;
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;
-        Some(geometry(self.config.view_mode, size, scale))
+        Some(geometry(self.config.current().view_mode, size, scale))
     }
 
     pub(super) fn preview_visibility(&self) -> PreviewVisibility {
-        match self.config.view_mode {
+        match self.config.current().view_mode {
             ViewMode::Source => PreviewVisibility::Hidden,
             ViewMode::Split => PreviewVisibility::Split,
             ViewMode::Preview => PreviewVisibility::Preview,
@@ -80,28 +79,20 @@ impl StickyApp {
     }
 
     fn apply_view_mode(&mut self, mode: ViewMode) {
-        if self.config.view_mode == mode {
+        if self.config.current().view_mode == mode {
             return;
         }
-        let previous = self.config.view_mode;
         self.session.cancel_preedit();
-        if let Some(window) = &self.window {
-            let logical_width = window.inner_size().width as f64 / window.scale_factor();
-            if mode == ViewMode::Split && previous != ViewMode::Split {
-                self.pre_split_width_dip = Some(logical_width.round().max(1.0) as u32);
-                let minimum = MIN_SPLIT_PANE_DIP * 2.0 + SPLIT_DIVIDER_DIP as f64;
-                if logical_width < minimum {
-                    let logical_height = window.inner_size().height as f64 / window.scale_factor();
-                    let _ = window.request_inner_size(LogicalSize::new(minimum, logical_height));
-                }
-            } else if previous == ViewMode::Split
-                && let Some(width) = self.pre_split_width_dip.take()
-            {
-                let logical_height = window.inner_size().height as f64 / window.scale_factor();
-                let _ = window.request_inner_size(LogicalSize::new(width as f64, logical_height));
-            }
+        self.dispatch_window_intent(
+            None,
+            crate::flow::window::state::WindowIntent::SplitModeChanged {
+                split: mode == ViewMode::Split,
+            },
+        );
+        if let Err(error) = self.config.update(|config| config.view_mode = mode) {
+            self.diagnostic = Some(error.to_string());
+            return;
         }
-        self.config.view_mode = mode;
         if mode == ViewMode::Source {
             self.preview_frame = None;
             self.preview_flow.release_projection();
@@ -123,13 +114,7 @@ impl StickyApp {
         if let Some(window) = &self.window {
             window.set_ime_allowed(mode != ViewMode::Preview && self.session.focused);
         }
-        if self.config_persistence_allowed {
-            self.worker.submit_config(
-                self.paths.config_file.clone(),
-                self.paths.config_tmp.clone(),
-                self.config.clone(),
-            );
-        }
+        self.submit_config_if_needed();
         self.request_redraw();
     }
 
@@ -244,6 +229,7 @@ impl StickyApp {
                 frame.width() != source.width || frame.height() != source.height
             }) {
                 self.source_frame = Pixmap::new(source.width.max(1), source.height.max(1));
+                self.source_paint_key = None;
             }
         }
     }
@@ -293,9 +279,10 @@ impl StickyApp {
             scale,
             scroll_y: self.preview_scroll_y,
             selection: self.preview_selection,
-            theme: match self.config.theme {
-                ThemeMode::Dark => PreviewTheme::Dark,
-                ThemeMode::Light | ThemeMode::System => PreviewTheme::Light,
+            theme: if self.resolved_dark_theme() {
+                PreviewTheme::Dark
+            } else {
+                PreviewTheme::Light
             },
         })
     }

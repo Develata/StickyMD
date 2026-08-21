@@ -11,6 +11,7 @@ pub enum SaveTrigger {
     Debounce,
     Manual,
     FocusLoss,
+    HideToTray,
     Shutdown,
     RecreateMissing,
     KeepLocal,

@@ -20,23 +20,6 @@ pub enum ReconciliationAction {
     ConflictChanged,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuitAction {
-    BlockedByRecovery,
-    BlockedByConflict,
-    WaitForInFlightSave,
-    RecreateMissing,
-    SaveDirty,
-    Exit,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExitGcAction {
-    CancelQuit,
-    ResumeQuit,
-    Exit,
-}
-
 #[derive(Debug, Default)]
 pub struct PersistenceCoordinator {
     autosave: AutosaveScheduler,
@@ -185,46 +168,8 @@ impl PersistenceCoordinator {
         self.durability_required
     }
 
-    pub fn has_required_write(&self) -> bool {
-        self.note_save_in_flight || self.durability_required
-    }
-
-    pub fn decide_quit(&self, recovery_pending: bool, document_dirty: bool) -> QuitAction {
-        if recovery_pending {
-            QuitAction::BlockedByRecovery
-        } else if self.conflict.is_some() {
-            QuitAction::BlockedByConflict
-        } else if self.note_save_in_flight {
-            QuitAction::WaitForInFlightSave
-        } else if self.durability_required {
-            QuitAction::RecreateMissing
-        } else if document_dirty {
-            QuitAction::SaveDirty
-        } else {
-            QuitAction::Exit
-        }
-    }
-
-    /// Revalidate the whole exit precondition after a destructive asset pass.
-    /// A GC receipt is never sufficient by itself: a paste, edit, required
-    /// recreate or conflict may have appeared while the worker was running.
-    pub fn decide_exit_gc_completion(
-        &self,
-        succeeded: bool,
-        asset_paste_pending: bool,
-        document_dirty: bool,
-    ) -> ExitGcAction {
-        if !succeeded {
-            ExitGcAction::CancelQuit
-        } else if asset_paste_pending
-            || document_dirty
-            || self.has_required_write()
-            || self.conflict.is_some()
-        {
-            ExitGcAction::ResumeQuit
-        } else {
-            ExitGcAction::Exit
-        }
+    pub const fn note_save_in_flight(&self) -> bool {
+        self.note_save_in_flight
     }
 
     /// A fresh inspection found the expected durable file. This discharges a
@@ -262,7 +207,8 @@ mod tests {
 
         flow.note_save_submitted(SaveTrigger::RecreateMissing);
         assert!(flow.note_save_finished(true));
-        assert!(!flow.has_required_write());
+        assert!(!flow.durability_required());
+        assert!(!flow.note_save_in_flight());
     }
 
     #[test]
@@ -328,58 +274,5 @@ mod tests {
             ReconciliationAction::RecreateMissing
         );
         assert!(flow.conflict().is_none());
-    }
-
-    #[test]
-    fn quit_never_bypasses_clean_conflict_or_required_write() {
-        let mut flow = PersistenceCoordinator::default();
-        let hash = hash_bytes(b"disk");
-        flow.enter_conflict(FileConflict {
-            external: ExternalFileState::InvalidUtf8 {
-                fingerprint: hash_bytes(&[0xff]),
-            },
-            detected_at_generation: Generation::initial(),
-            previous_disk_fingerprint: Some(hash),
-        });
-        assert_eq!(
-            flow.decide_quit(false, false),
-            QuitAction::BlockedByConflict
-        );
-        flow.clear_conflict();
-        flow.note_save_submitted(SaveTrigger::RecreateMissing);
-        assert_eq!(
-            flow.decide_quit(false, false),
-            QuitAction::WaitForInFlightSave
-        );
-        flow.note_save_finished(false);
-        assert_eq!(flow.decide_quit(false, false), QuitAction::RecreateMissing);
-    }
-
-    #[test]
-    fn paste_in_flight_quit_waits_for_latest_save_and_safe_gc() {
-        let mut flow = PersistenceCoordinator::default();
-
-        assert_eq!(
-            flow.decide_exit_gc_completion(true, true, false),
-            ExitGcAction::ResumeQuit
-        );
-        assert_eq!(flow.decide_quit(false, true), QuitAction::SaveDirty);
-
-        flow.note_save_submitted(SaveTrigger::Shutdown);
-        assert_eq!(
-            flow.decide_quit(false, true),
-            QuitAction::WaitForInFlightSave
-        );
-        assert!(!flow.note_save_finished(true));
-
-        assert_eq!(flow.decide_quit(false, false), QuitAction::Exit);
-        assert_eq!(
-            flow.decide_exit_gc_completion(true, false, false),
-            ExitGcAction::Exit
-        );
-        assert_eq!(
-            flow.decide_exit_gc_completion(false, false, false),
-            ExitGcAction::CancelQuit
-        );
     }
 }

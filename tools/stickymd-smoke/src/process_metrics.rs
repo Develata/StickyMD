@@ -39,6 +39,13 @@ pub(crate) struct MemorySample {
     pub(crate) peak_private_bytes: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ObjectSample {
+    pub(crate) handles: u32,
+    pub(crate) gdi_objects: u32,
+    pub(crate) user_objects: u32,
+}
+
 unsafe extern "system" {
     fn K32GetProcessMemoryInfo(
         process: *mut c_void,
@@ -52,6 +59,33 @@ unsafe extern "system" {
         kernel: *mut FileTime,
         user: *mut FileTime,
     ) -> i32;
+    fn GetProcessHandleCount(process: *mut c_void, count: *mut u32) -> i32;
+    fn GetGuiResources(process: *mut c_void, flags: u32) -> u32;
+}
+
+pub(crate) fn objects(child: &Child) -> Result<ObjectSample, String> {
+    const GR_GDIOBJECTS: u32 = 0;
+    const GR_USEROBJECTS: u32 = 1;
+    let handle = child.as_raw_handle();
+    let mut handles = 0_u32;
+    // SAFETY: `Child` owns the process handle and `handles` is valid writable
+    // storage for the copied count. No handle ownership is transferred.
+    if unsafe { GetProcessHandleCount(handle.cast(), &raw mut handles) } == 0 {
+        return Err(format!(
+            "GetProcessHandleCount failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: both calls inspect the live target process handle and return
+    // scalar resource counts without retaining pointers or ownership.
+    let gdi_objects = unsafe { GetGuiResources(handle.cast(), GR_GDIOBJECTS) };
+    // SAFETY: same contract as the adjacent GDI-object query.
+    let user_objects = unsafe { GetGuiResources(handle.cast(), GR_USEROBJECTS) };
+    Ok(ObjectSample {
+        handles,
+        gdi_objects,
+        user_objects,
+    })
 }
 
 pub(crate) fn memory(child: &Child) -> Result<MemorySample, String> {

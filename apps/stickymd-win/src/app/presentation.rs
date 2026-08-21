@@ -7,8 +7,25 @@ use std::time::Instant;
 use tiny_skia::{Paint, Pixmap, Rect, Transform};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 
+use super::controls::ControlLayout;
+use super::toolbar_paint::{ToolbarVisual, paint_toolbar};
 use super::{CARET_BLINK, StickyApp};
 use crate::config::ViewMode;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SourcePaintKey {
+    generation: stickymd_core::Generation,
+    selection: stickymd_core::Selection,
+    preedit: Option<stickymd_render::source::PreeditVisual>,
+    diagnostic: Option<String>,
+    theme: stickymd_render::source::SourceTheme,
+    width: u32,
+    height: u32,
+    scale_bits: u64,
+    scroll_line: usize,
+    scroll_vertical_bits: u32,
+    scroll_horizontal_bits: u32,
+}
 
 impl StickyApp {
     pub(super) fn request_redraw(&self) {
@@ -20,6 +37,19 @@ impl StickyApp {
     fn reset_caret_blink(&mut self) {
         self.session.caret_visible = true;
         self.next_blink = Instant::now() + CARET_BLINK;
+    }
+
+    /// Whether the source caret is both meaningful and visible enough to
+    /// justify a periodic redraw. A collapsed edge sensor may retain native
+    /// keyboard focus, but it is not an editable source surface.
+    pub(super) fn caret_animation_active(&self) -> bool {
+        self.session.focused
+            && !self.preview_focused
+            && !self.session.is_composing()
+            && self
+                .window_flow
+                .as_ref()
+                .is_some_and(|flow| flow.state().accepts_editor_mutation())
     }
 
     pub(super) fn sync_preedit(&mut self) {
@@ -54,7 +84,7 @@ impl StickyApp {
     }
 
     pub(super) fn after_presentation_change(&mut self) {
-        if self.config.view_mode != ViewMode::Preview
+        if self.config.current().view_mode != ViewMode::Preview
             && let Some(projection) = &mut self.projection
         {
             let _ = projection.ensure_caret_visible(self.session.selection.active.byte);
@@ -78,13 +108,8 @@ impl StickyApp {
         {
             self.diagnostic = Some(error.to_string());
         }
-        if let Some(window) = &self.window {
-            self.config.window.width_dip =
-                (size.width as f64 / window.scale_factor()).round().max(1.0) as u32;
-            self.config.window.height_dip = (size.height as f64 / window.scale_factor())
-                .round()
-                .max(1.0) as u32;
-        }
+        // Resize events are projection facts. Phase 8 commits durable geometry
+        // once at the stable user move/resize boundary, never once per frame.
         self.configure_viewports();
         self.request_preview_relayout();
         self.update_ime_area();
@@ -95,28 +120,91 @@ impl StickyApp {
         let Some(geometry) = self.view_geometry() else {
             return;
         };
+        let scale = self
+            .window
+            .as_ref()
+            .map_or(1.0, |window| window.scale_factor());
+        let source_theme = if self.resolved_dark_theme() {
+            stickymd_render::source::SourceTheme::Dark
+        } else {
+            stickymd_render::source::SourceTheme::Light
+        };
+        let preedit = self.session.preedit_visual();
         if let (Some(_pane), Some(projection), Some(source_frame)) = (
             geometry.source,
             &mut self.projection,
             &mut self.source_frame,
-        ) && let Err(error) = projection.paint(
-            source_frame,
-            self.session.selection,
-            self.session.focused,
-            self.session.caret_visible,
-            self.diagnostic.as_deref(),
         ) {
-            self.diagnostic = Some(error.to_string());
+            let scroll = projection.scroll();
+            let paint_key = SourcePaintKey {
+                generation: projection.projected_generation(),
+                selection: self.session.selection,
+                preedit,
+                diagnostic: self.diagnostic.clone(),
+                theme: source_theme,
+                width: source_frame.width(),
+                height: source_frame.height(),
+                scale_bits: scale.to_bits(),
+                scroll_line: scroll.line,
+                scroll_vertical_bits: scroll.vertical.to_bits(),
+                scroll_horizontal_bits: scroll.horizontal.to_bits(),
+            };
+            if self.source_paint_key.as_ref() != Some(&paint_key) {
+                match projection.paint(
+                    source_frame,
+                    self.session.selection,
+                    self.session.focused,
+                    false,
+                    self.diagnostic.as_deref(),
+                    source_theme,
+                ) {
+                    Ok(()) => self.source_paint_key = Some(paint_key),
+                    Err(error) => {
+                        self.source_paint_key = None;
+                        self.diagnostic = Some(error.to_string());
+                    }
+                }
+            }
         }
 
+        let dark = self.resolved_dark_theme();
+        let toolbar_visual = ToolbarVisual {
+            mode: self.config.current().view_mode,
+            topmost: self.config.current().always_on_top,
+            dark,
+            system_theme: self.config.current().theme == crate::config::ThemeMode::System,
+            diagnostic: self.diagnostic.is_some(),
+            emphasized: self.session.focused
+                || self.pointer_inside_window
+                || self.controls.opacity_popup_open,
+            opacity_popup: self.controls.opacity_popup_open,
+            opacity: self.controls.opacity_preview,
+        };
+        let caret_animation_active = self.caret_animation_active();
         let Some(surface) = &mut self.surface else {
             return;
         };
-        surface
-            .pixmap_mut()
-            .fill(tiny_skia::Color::from_rgba8(248, 246, 239, 255));
+        surface.pixmap_mut().fill(tiny_skia::Color::from_rgba8(
+            if dark { 31 } else { 248 },
+            if dark { 31 } else { 246 },
+            if dark { 29 } else { 239 },
+            255,
+        ));
         if let (Some(pane), Some(source_frame)) = (geometry.source, &self.source_frame) {
             blit_pixmap(source_frame, surface.pixmap_mut(), pane.x, pane.y);
+        }
+        if caret_animation_active
+            && self.session.caret_visible
+            && let (Some(pane), Some(projection)) = (geometry.source, &self.projection)
+            && let Err(error) = projection.paint_caret_overlay(
+                surface.pixmap_mut(),
+                self.session.selection.active.byte,
+                pane.x as f32,
+                pane.y as f32,
+                source_theme,
+            )
+        {
+            self.diagnostic = Some(error.to_string());
         }
         if let Some(pane) = geometry.preview {
             if let Some(frame) = &self.preview_frame
@@ -125,15 +213,15 @@ impl StickyApp {
             {
                 frame.blit_to(surface.pixmap_mut(), pane.x, pane.y);
             } else {
-                paint_preview_pending(surface.pixmap_mut(), pane);
+                paint_preview_pending(surface.pixmap_mut(), pane, dark);
             }
         }
-        paint_toolbar(
-            surface.pixmap_mut(),
-            geometry,
-            self.config.view_mode,
-            self.diagnostic.is_some(),
-        );
+        let surface_size = {
+            let pixmap = surface.pixmap_mut();
+            PhysicalSize::new(pixmap.width(), pixmap.height())
+        };
+        let layout = ControlLayout::new(surface_size, scale);
+        paint_toolbar(surface.pixmap_mut(), geometry, &layout, toolbar_visual);
         if let Err(error) = surface.present() {
             self.diagnostic = Some(error.to_string());
         }
@@ -157,109 +245,18 @@ fn blit_pixmap(source: &Pixmap, target: &mut Pixmap, origin_x: u32, origin_y: u3
     }
 }
 
-fn paint_toolbar(
-    pixmap: &mut Pixmap,
-    geometry: super::preview_runtime::ViewGeometry,
-    mode: ViewMode,
-    diagnostic: bool,
-) {
-    fill_rect(
-        pixmap,
-        0.0,
-        0.0,
-        pixmap.width() as f32,
-        geometry.toolbar_height as f32,
-        (238, 235, 226, 255),
-    );
-    let scale = (geometry.toolbar_height as f32 / 34.0).max(0.5);
-    for (index, candidate) in [ViewMode::Source, ViewMode::Split, ViewMode::Preview]
-        .into_iter()
-        .enumerate()
-    {
-        let x = 7.0 * scale + index as f32 * 38.0 * scale;
-        if mode == candidate {
-            fill_rect(
-                pixmap,
-                x,
-                4.0 * scale,
-                32.0 * scale,
-                26.0 * scale,
-                (210, 215, 218, 255),
-            );
-        }
-        paint_mode_icon(pixmap, candidate, x + 7.0 * scale, 9.0 * scale, scale);
-    }
-    if diagnostic {
-        fill_rect(
-            pixmap,
-            (pixmap.width() as f32 - 10.0 * scale).max(0.0),
-            7.0 * scale,
-            4.0 * scale,
-            20.0 * scale,
-            (190, 116, 35, 255),
-        );
-    }
-    if let Some(divider_x) = geometry.divider_x {
-        fill_rect(
-            pixmap,
-            divider_x as f32,
-            geometry.toolbar_height as f32,
-            1.0f32.max(scale),
-            (pixmap.height().saturating_sub(geometry.toolbar_height)) as f32,
-            (190, 186, 175, 255),
-        );
-    }
-}
-
-fn paint_mode_icon(pixmap: &mut Pixmap, mode: ViewMode, x: f32, y: f32, scale: f32) {
-    let ink = (64, 63, 59, 255);
-    match mode {
-        ViewMode::Source => {
-            for row in 0..3 {
-                fill_rect(
-                    pixmap,
-                    x,
-                    y + row as f32 * 5.0 * scale,
-                    (18.0 - row as f32 * 2.0) * scale,
-                    1.5 * scale,
-                    ink,
-                );
-            }
-        }
-        ViewMode::Split => {
-            fill_rect(pixmap, x, y, 8.0 * scale, 13.0 * scale, ink);
-            fill_rect(pixmap, x + 10.0 * scale, y, 8.0 * scale, 13.0 * scale, ink);
-        }
-        ViewMode::Preview => {
-            fill_rect(pixmap, x, y, 18.0 * scale, 2.0 * scale, ink);
-            fill_rect(
-                pixmap,
-                x + 3.0 * scale,
-                y + 5.0 * scale,
-                12.0 * scale,
-                1.5 * scale,
-                ink,
-            );
-            fill_rect(
-                pixmap,
-                x + 3.0 * scale,
-                y + 10.0 * scale,
-                10.0 * scale,
-                1.5 * scale,
-                ink,
-            );
-        }
-    }
-}
-
-fn paint_preview_pending(pixmap: &mut Pixmap, pane: super::preview_runtime::PaneRect) {
+fn paint_preview_pending(pixmap: &mut Pixmap, pane: super::preview_runtime::PaneRect, dark: bool) {
     fill_rect(
         pixmap,
         pane.x as f32,
         pane.y as f32,
         pane.width as f32,
         pane.height as f32,
-        (248, 246, 239, 255),
+        if dark {
+            (31, 31, 29, 255)
+        } else {
+            (248, 246, 239, 255)
+        },
     );
     for row in 0..3 {
         fill_rect(
@@ -268,7 +265,11 @@ fn paint_preview_pending(pixmap: &mut Pixmap, pane: super::preview_runtime::Pane
             pane.y as f32 + 28.0 + row as f32 * 18.0,
             (pane.width as f32 * (0.55 - row as f32 * 0.08)).max(16.0),
             3.0,
-            (220, 216, 205, 255),
+            if dark {
+                (75, 74, 70, 255)
+            } else {
+                (220, 216, 205, 255)
+            },
         );
     }
 }

@@ -524,6 +524,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::source::SourceTheme;
     use stickymd_core::{
         CursorSnapshot, DocumentState, EditKind, EditMeta, EditRequest, LineEnding,
     };
@@ -610,7 +611,52 @@ mod tests {
         let mut projection = SourceProjection::new(&source, 400, 300, 1.0);
         let mut pixmap = Pixmap::new(400, 300).unwrap();
         assert_eq!(
-            projection.paint(&mut pixmap, Selection::new(0, 1), true, true, None),
+            projection.paint(
+                &mut pixmap,
+                Selection::new(0, 1),
+                true,
+                true,
+                None,
+                SourceTheme::Light,
+            ),
+            Err(SourceProjectionError::InvalidPosition)
+        );
+    }
+
+    #[test]
+    fn caret_overlay_changes_only_the_cached_frame_projection() {
+        let source = snapshot("caret");
+        let mut projection = SourceProjection::new(&source, 400, 300, 1.0);
+        let mut pixmap = Pixmap::new(400, 300).unwrap();
+        projection
+            .paint(
+                &mut pixmap,
+                Selection::caret(0),
+                true,
+                false,
+                None,
+                SourceTheme::Light,
+            )
+            .unwrap();
+        let without_caret = pixmap.data().to_vec();
+
+        projection
+            .paint_caret_overlay(&mut pixmap, 0, 0.0, 0.0, SourceTheme::Light)
+            .unwrap();
+
+        assert_ne!(pixmap.data(), without_caret);
+        assert_eq!(projection.projected_text(), "caret");
+        assert_eq!(projection.projected_generation(), source.generation);
+    }
+
+    #[test]
+    fn caret_overlay_rejects_non_utf8_boundary() {
+        let source = snapshot("中");
+        let projection = SourceProjection::new(&source, 400, 300, 1.0);
+        let mut pixmap = Pixmap::new(400, 300).unwrap();
+
+        assert_eq!(
+            projection.paint_caret_overlay(&mut pixmap, 1, 0.0, 0.0, SourceTheme::Dark),
             Err(SourceProjectionError::InvalidPosition)
         );
     }
@@ -642,7 +688,14 @@ mod tests {
         }));
         let mut pixmap = Pixmap::new(500, 300).unwrap();
         projection
-            .paint(&mut pixmap, Selection::new(0, 3), true, true, None)
+            .paint(
+                &mut pixmap,
+                Selection::new(0, 3),
+                true,
+                true,
+                None,
+                SourceTheme::Dark,
+            )
             .unwrap();
         assert_eq!(projection.projected_text(), "ABC 中文");
         assert_eq!(projection.projected_generation(), source.generation);

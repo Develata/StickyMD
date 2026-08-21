@@ -10,7 +10,8 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::window::{WindowAttributes, WindowId};
+use winit::platform::windows::{CornerPreference, WindowAttributesExtWindows};
+use winit::window::{Theme, WindowAttributes, WindowId};
 
 use super::{AppEvent, CARET_BLINK, StickyApp};
 use crate::config::ViewMode;
@@ -51,11 +52,22 @@ impl ApplicationHandler<AppEvent> for StickyApp {
         if self.window.is_some() {
             return;
         }
+        let configured_theme = match self.config.current().theme {
+            crate::config::ThemeMode::Light => Some(Theme::Light),
+            crate::config::ThemeMode::Dark => Some(Theme::Dark),
+            crate::config::ThemeMode::System => None,
+        };
         let attributes = WindowAttributes::default()
             .with_title("StickyMD")
+            .with_theme(configured_theme)
+            .with_decorations(false)
+            .with_resizable(true)
+            .with_visible(false)
+            .with_undecorated_shadow(true)
+            .with_corner_preference(CornerPreference::RoundSmall)
             .with_inner_size(LogicalSize::new(
-                self.config.window.width_dip as f64,
-                self.config.window.height_dip as f64,
+                self.config.current().window.width_dip as f64,
+                self.config.current().window.height_dip as f64,
             ))
             .with_min_inner_size(LogicalSize::new(360.0, 240.0));
         let window = match event_loop.create_window(attributes) {
@@ -66,7 +78,8 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 return;
             }
         };
-        window.set_ime_allowed(self.config.view_mode != ViewMode::Preview);
+        window.set_ime_allowed(self.config.current().view_mode != ViewMode::Preview);
+        self.system_theme = window.theme().unwrap_or(Theme::Light);
         let size = window.inner_size();
         let surface = match SoftwareSurface::new(Arc::clone(&window)) {
             Ok(surface) => surface,
@@ -91,6 +104,10 @@ impl ApplicationHandler<AppEvent> for StickyApp {
         self.window = Some(window);
         self.surface = Some(surface);
         self.projection = Some(projection);
+        if !self.initialize_window_shell(event_loop) {
+            event_loop.exit();
+            return;
+        }
         self.configure_viewports();
         let generation = self.coordinator.view().generation;
         if let Some(action) = self
@@ -106,12 +123,26 @@ impl ApplicationHandler<AppEvent> for StickyApp {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
-                self.dispatch_persistence_intent(Some(event_loop), PersistenceIntent::RequestQuit);
+                self.dispatch_window_intent(
+                    Some(event_loop),
+                    crate::flow::window::state::WindowIntent::CloseRequested {
+                        now_ms: self.timestamp_ms(),
+                        guards: self.window_guards(),
+                    },
+                );
             }
             WindowEvent::Resized(size) => self.resize(size),
             WindowEvent::ScaleFactorChanged { .. } => {
                 if let Some(window) = &self.window {
                     self.resize(window.inner_size());
+                }
+                self.recover_display_topology();
+            }
+            WindowEvent::ThemeChanged(theme) => {
+                self.system_theme = theme;
+                if self.config.current().theme == crate::config::ThemeMode::System {
+                    self.request_preview_relayout();
+                    self.request_redraw();
                 }
             }
             WindowEvent::Focused(focused) => {
@@ -126,17 +157,44 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                     }
                 }
                 if let Some(window) = &self.window {
-                    window.set_ime_allowed(focused && !self.preview_focused);
+                    window.set_ime_allowed(
+                        focused && !self.preview_focused && self.shell_input_enabled,
+                    );
                 }
+                self.refresh_window_guards(Some(event_loop));
                 self.after_presentation_change();
             }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::KeyboardInput { event, .. } => self.handle_key(event),
-            WindowEvent::Ime(event) => self.handle_ime(event),
+            WindowEvent::Ime(event) => {
+                self.handle_ime(event);
+                self.refresh_window_guards(Some(event_loop));
+            }
             WindowEvent::CursorMoved { position, .. } => self.handle_cursor_moved(position),
+            WindowEvent::CursorEntered { .. } => {
+                self.pointer_inside_window = true;
+                self.dispatch_window_intent(
+                    Some(event_loop),
+                    crate::flow::window::state::WindowIntent::SensorEntered {
+                        now_ms: self.timestamp_ms(),
+                    },
+                );
+                self.request_redraw();
+            }
+            WindowEvent::CursorLeft { .. } => {
+                self.pointer_inside_window = false;
+                self.dispatch_window_intent(
+                    Some(event_loop),
+                    crate::flow::window::state::WindowIntent::PointerLeft {
+                        now_ms: self.timestamp_ms(),
+                    },
+                );
+                self.request_redraw();
+            }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.handle_mouse_button(state, button);
             }
+            WindowEvent::Moved(_) => {}
             WindowEvent::MouseWheel { delta, .. } => self.handle_scroll(delta),
             WindowEvent::RedrawRequested => self.render(),
             _ => {}
@@ -152,6 +210,10 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             self.worker.inspect_external(self.paths.note_file.clone());
         }
         self.tick_preview(now_ms);
+        self.dispatch_window_intent(
+            Some(event_loop),
+            crate::flow::window::state::WindowIntent::Tick { now_ms },
+        );
 
         let now = Instant::now();
         let mut next_wake = None;
@@ -159,6 +221,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             self.persistence.autosave_deadline(),
             self.persistence.external_deadline(),
             self.preview_deadline(),
+            self.window_next_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -166,7 +229,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             let wake = self.started + Duration::from_millis(deadline);
             next_wake = Some(next_wake.map_or(wake, |current: Instant| current.min(wake)));
         }
-        if self.session.focused && !self.preview_focused && !self.session.is_composing() {
+        if self.caret_animation_active() {
             if now >= self.next_blink {
                 self.session.caret_visible = !self.session.caret_visible;
                 self.next_blink = now + CARET_BLINK;
@@ -199,13 +262,27 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 self.request_redraw();
             }
             AppEvent::ShowRequested => {
-                if let Some(window) = &self.window {
-                    window.set_visible(true);
-                    window.set_minimized(false);
-                    window.focus_window();
-                    window.request_redraw();
-                }
+                self.dispatch_window_intent(
+                    Some(event_loop),
+                    crate::flow::window::state::WindowIntent::ShowRequested {
+                        reason: crate::flow::window::state::ShowReason::SecondInstance,
+                        now_ms: self.timestamp_ms(),
+                    },
+                );
             }
+            AppEvent::Tray(event) => self.handle_tray_event(event_loop, event),
+            AppEvent::Native(signal) => match signal {
+                crate::platform::windows::native_message::NativeWindowSignal::MoveSizeStarted => {
+                    self.move_resize_active = true;
+                    self.refresh_window_guards(Some(event_loop));
+                }
+                crate::platform::windows::native_message::NativeWindowSignal::MoveSizeFinished => {
+                    self.complete_window_drag();
+                }
+                crate::platform::windows::native_message::NativeWindowSignal::DisplayTopologyChanged => {
+                    self.recover_display_topology();
+                }
+            },
             AppEvent::Preview(completion) => self.handle_preview_completion(completion),
         }
     }

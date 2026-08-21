@@ -4,4 +4,7 @@
 
 mod intent;
 
-pub use intent::{AppIntent, PersistenceIntent, PreviewIntent, SaveReason};
+pub use intent::{
+    AppIntent, PersistenceIntent, PreviewIntent, SaveReason, WindowPlatformIntent,
+    WindowPreferenceIntent, WindowResizeEdge,
+};

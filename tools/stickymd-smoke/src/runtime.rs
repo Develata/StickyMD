@@ -15,6 +15,8 @@ const EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 const RESOURCE_WARMUP: Duration = Duration::from_secs(30);
 const CPU_INTERVAL: Duration = Duration::from_secs(60);
 const RESOURCE_REPETITIONS: usize = 5;
+const HIDDEN_PRIVATE_WORKING_SET_LIMIT: u64 = 36 * 1024 * 1024;
+const IDLE_CPU_PERCENT_LIMIT: f64 = 0.1;
 
 pub(crate) fn run(repository: &Path, scenario: RuntimeScenario) -> Result<(), String> {
     let root = create_smoke_root()?;
@@ -44,6 +46,9 @@ fn run_inner(
     if scenario == RuntimeScenario::ImageResources {
         return run_resource_measurement(repository, root, false, true);
     }
+    if scenario == RuntimeScenario::WindowResources {
+        return run_window_resource_measurement(repository, root);
+    }
     let source = repository.join("target/release/stickymd-win.exe");
     if !source.is_file() {
         return Err(format!(
@@ -63,6 +68,10 @@ fn run_inner(
     children.push(start(&first_exe)?);
     wait_for_layout(&first_dir)?;
     ensure_alive(&mut children[0], "first portable instance")?;
+
+    if scenario == RuntimeScenario::WindowShell {
+        return run_window_shell_lifecycle(&first_dir, &first_exe, &mut children[0]);
+    }
 
     if scenario == RuntimeScenario::Launch {
         return Ok(());
@@ -116,6 +125,193 @@ fn run_inner(
     ensure_alive(&mut children[0], "first portable instance")?;
     ensure_alive(&mut children[1], "different-directory portable instance")?;
     Ok(())
+}
+
+fn run_window_shell_lifecycle(
+    program_directory: &Path,
+    executable: &Path,
+    primary: &mut Child,
+) -> Result<(), String> {
+    let window = crate::window_control::visible_window(primary.id())?;
+    println!(
+        "Phase 8 runtime paper rect={:?}",
+        crate::window_control::window_rect(window)?
+    );
+    // The HWND becomes observable immediately after `ShowWindow`, while the
+    // UI thread applies its configured layered alpha in the following native
+    // projection step. Poll the native fact instead of racing those two calls.
+    wait_for_layered_alpha(window, Some(245))?;
+
+    // Drive one real native move-loop cycle through the copied executable.
+    // Pure reducer tests cover every edge and exact DIP boundary; this receipt
+    // proves the Win32/winit bridge can dock, collapse, reveal, and detach a
+    // real HWND without a product-only test command channel.
+    crate::window_control::move_to_primary_left_edge(window)?;
+    wait_for_config_field(program_directory, "dock_edge = \"left\"")?;
+    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Collapse)?;
+    wait_for_primary_left_state(window, true)?;
+    reveal_primary_left_and_wait(window)?;
+    crate::window_control::move_to_primary_inset(window, 32)?;
+    wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
+
+    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Topmost)?;
+    wait_for_config_field(program_directory, "always_on_top = true")?;
+    if !crate::window_control::is_topmost(window)? {
+        return Err("configured topmost did not reach the real HWND".to_owned());
+    }
+    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Topmost)?;
+    wait_for_config_field(program_directory, "always_on_top = false")?;
+    if crate::window_control::is_topmost(window)? {
+        return Err("cleared configured topmost remained on the real HWND".to_owned());
+    }
+
+    for theme in ["system", "dark", "light"] {
+        crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Theme)?;
+        wait_for_config_field(program_directory, &format!("theme = \"{theme}\""))?;
+    }
+
+    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Opacity)?;
+    crate::window_control::commit_opacity_slider(window, 70)?;
+    wait_for_config_field(program_directory, "opacity = 70")?;
+    wait_for_layered_alpha(window, Some(179))?;
+    crate::window_control::commit_opacity_slider(window, 100)?;
+    wait_for_config_field(program_directory, "opacity = 100")?;
+    wait_for_layered_alpha(window, None)?;
+
+    crate::window_control::request_close(window)?;
+    if let Err(error) = wait_for_window_visibility(window, false) {
+        let process_state = match primary
+            .try_wait()
+            .map_err(|inspect| format!("cannot inspect close-to-tray process: {inspect}"))?
+        {
+            Some(status) => format!("exited with {status}"),
+            None => "still running".to_owned(),
+        };
+        return Err(format!("{error}; primary process is {process_state}"));
+    }
+    ensure_alive(primary, "close-to-tray primary instance")?;
+
+    // Let the primary finish any close-triggered save before isolating the
+    // secondary-instance wake effect.
+    thread::sleep(Duration::from_millis(300));
+    let note = program_directory.join("note/note.md");
+    let config = program_directory.join("note/config.toml");
+    let before = (file_state(&note)?, file_state(&config)?);
+    let mut secondary = start(executable)?;
+    let secondary_status = wait_for_exit(&mut secondary, EXIT_TIMEOUT)?;
+    if !secondary_status.success() {
+        return Err(format!(
+            "same-directory wake instance exited unsuccessfully: {secondary_status}"
+        ));
+    }
+    wait_for_window_visibility(window, true)?;
+    ensure_alive(primary, "woken primary instance")?;
+    let after = (file_state(&note)?, file_state(&config)?);
+    if before != after {
+        return Err("secondary-instance wake modified durable files".to_owned());
+    }
+
+    let smoke_root = program_directory
+        .parent()
+        .ok_or_else(|| "Phase 8 program directory has no smoke root".to_owned())?;
+    let isolated_directory = smoke_root.join("phase8-independent");
+    let isolated_executable = copy_executable(executable, &isolated_directory)?;
+    prepare_isolation_layout(&isolated_directory)?;
+    let mut isolated = start(&isolated_executable)?;
+    let isolated_result = (|| {
+        wait_for_layout(&isolated_directory)?;
+        let isolated_window = crate::window_control::visible_window(isolated.id())?;
+        if isolated_window == window {
+            return Err("different-directory instance reused the first HWND".to_owned());
+        }
+        ensure_alive(primary, "first portable instance during isolation smoke")?;
+        ensure_alive(&mut isolated, "different-directory portable instance")?;
+        let first_note = fs::read(program_directory.join("note/note.md"))
+            .map_err(|error| format!("cannot read first isolated note: {error}"))?;
+        let second_note = fs::read(isolated_directory.join("note/note.md"))
+            .map_err(|error| format!("cannot read second isolated note: {error}"))?;
+        if first_note == second_note {
+            return Err("different-directory notes were not independently seeded".to_owned());
+        }
+        Ok(())
+    })();
+    stop_child(&mut isolated);
+    isolated_result?;
+    Ok(())
+}
+
+fn wait_for_config_field(program_directory: &Path, expected: &str) -> Result<(), String> {
+    let path = program_directory.join("note/config.toml");
+    let deadline = Instant::now() + START_TIMEOUT;
+    while Instant::now() < deadline {
+        if fs::read_to_string(&path).is_ok_and(|source| source.contains(expected)) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    Err(format!(
+        "config did not contain `{expected}` within {} seconds: {}",
+        START_TIMEOUT.as_secs(),
+        path.display()
+    ))
+}
+
+fn prepare_isolation_layout(program_directory: &Path) -> Result<(), String> {
+    let note_directory = program_directory.join("note");
+    fs::create_dir(&note_directory)
+        .map_err(|error| format!("cannot create isolated note directory: {error}"))?;
+    fs::write(
+        note_directory.join("note.md"),
+        "# Independent Phase 8 portable instance\n",
+    )
+    .map_err(|error| format!("cannot seed isolated note: {error}"))?;
+    fs::write(
+        note_directory.join("config.toml"),
+        "version = 1\nview_mode = \"source\"\n",
+    )
+    .map_err(|error| format!("cannot seed isolated config: {error}"))
+}
+
+fn wait_for_window_visibility(
+    window: crate::window_control::WindowHandle,
+    expected: bool,
+) -> Result<(), String> {
+    let deadline = Instant::now() + START_TIMEOUT;
+    while Instant::now() < deadline {
+        if crate::window_control::is_visible(window)? == expected {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    Err(format!(
+        "StickyMD window did not become {} within {} seconds",
+        if expected { "visible" } else { "hidden" },
+        START_TIMEOUT.as_secs()
+    ))
+}
+
+fn wait_for_layered_alpha(
+    window: crate::window_control::WindowHandle,
+    expected: Option<u8>,
+) -> Result<(), String> {
+    let deadline = Instant::now() + START_TIMEOUT;
+    let mut observed = None;
+    while Instant::now() < deadline {
+        let alpha = crate::window_control::layered_alpha(window)?;
+        observed = Some(alpha);
+        let matches = match expected {
+            Some(value) => alpha.layered && alpha.alpha == Some(value),
+            None => !alpha.layered && alpha.alpha.is_none(),
+        };
+        if matches {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Err(format!(
+        "whole-window alpha did not become {expected:?} within {} seconds; last observation={observed:?}",
+        START_TIMEOUT.as_secs()
+    ))
 }
 
 struct ResourceCase {
@@ -381,6 +577,326 @@ fn run_resource_measurement(
         }
         print_resource_summary(mode, &memory_samples, cpu_percent)?;
     }
+    Ok(())
+}
+
+fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(), String> {
+    let source = repository.join("target/release/stickymd-win.exe");
+    if !source.is_file() {
+        return Err(format!(
+            "Release executable is missing: {}",
+            source.display()
+        ));
+    }
+    let logical_processors = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    println!(
+        "Phase 8 window resource contract: warmup={}s repetitions={} cpu_interval={}s logical_processors={logical_processors}",
+        RESOURCE_WARMUP.as_secs(),
+        RESOURCE_REPETITIONS,
+        CPU_INTERVAL.as_secs(),
+    );
+    let mut visible_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
+    let mut collapsed_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
+    let mut hidden_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
+    let mut startup_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
+    let mut visible_cpu = None;
+    let mut collapsed_cpu = None;
+    let mut hidden_cpu = None;
+    for repetition in 0..RESOURCE_REPETITIONS {
+        let directory = root.join(format!("window-resource-{repetition}"));
+        let executable = copy_executable(&source, &directory)?;
+        prepare_resource_layout(&directory, "source", 0, 0, ImageResourceFixture::None)?;
+        let startup_started = Instant::now();
+        let mut child = start(&executable)?;
+        let result = (|| {
+            wait_for_layout(&directory)?;
+            let window = crate::window_control::visible_window(child.id())?;
+            let startup = startup_started.elapsed();
+            println!(
+                "window startup run={} elapsed_ms={:.3}",
+                repetition + 1,
+                startup.as_secs_f64() * 1_000.0
+            );
+            thread::sleep(RESOURCE_WARMUP);
+            ensure_alive(&mut child, "visible window resource instance")?;
+            let visible = process_metrics::memory(&child)?;
+            println!(
+                "resource sample mode=visible-source run={} private_working_set_bytes={} private_bytes={} peak_working_set_bytes={} peak_private_bytes={}",
+                repetition + 1,
+                visible.private_working_set_bytes,
+                visible.private_bytes,
+                visible.peak_working_set_bytes,
+                visible.peak_private_bytes,
+            );
+            if repetition == 0 {
+                visible_cpu = Some(measure_idle_cpu(
+                    &mut child,
+                    "visible-source",
+                    logical_processors,
+                )?);
+            }
+            crate::window_control::move_to_primary_left_edge(window)?;
+            wait_for_config_field(&directory, "dock_edge = \"left\"")?;
+            crate::window_control::park_cursor_at_primary_right(window)?;
+            crate::window_control::click_toolbar(
+                window,
+                crate::window_control::ToolbarControl::Collapse,
+            )?;
+            wait_for_primary_left_state(window, true)?;
+            thread::sleep(RESOURCE_WARMUP);
+            ensure_alive(&mut child, "collapsed window resource instance")?;
+            let collapsed = process_metrics::memory(&child)?;
+            println!(
+                "resource sample mode=docked-collapsed run={} private_working_set_bytes={} private_bytes={} peak_working_set_bytes={} peak_private_bytes={}",
+                repetition + 1,
+                collapsed.private_working_set_bytes,
+                collapsed.private_bytes,
+                collapsed.peak_working_set_bytes,
+                collapsed.peak_private_bytes,
+            );
+            if repetition == 0 {
+                collapsed_cpu = Some(measure_idle_cpu(
+                    &mut child,
+                    "docked-collapsed",
+                    logical_processors,
+                )?);
+                run_window_leak_cycles(&directory, &executable, &mut child, window)?;
+            }
+            crate::window_control::request_close(window)?;
+            wait_for_window_visibility(window, false)?;
+            thread::sleep(RESOURCE_WARMUP);
+            ensure_alive(&mut child, "hidden-to-tray resource instance")?;
+            let hidden = process_metrics::memory(&child)?;
+            println!(
+                "resource sample mode=hidden-to-tray run={} private_working_set_bytes={} private_bytes={} peak_working_set_bytes={} peak_private_bytes={}",
+                repetition + 1,
+                hidden.private_working_set_bytes,
+                hidden.private_bytes,
+                hidden.peak_working_set_bytes,
+                hidden.peak_private_bytes,
+            );
+            if repetition == 0 {
+                hidden_cpu = Some(measure_idle_cpu(
+                    &mut child,
+                    "hidden-to-tray",
+                    logical_processors,
+                )?);
+            }
+            Ok::<_, String>((startup, visible, collapsed, hidden))
+        })();
+        stop_child(&mut child);
+        let (startup, visible, collapsed, hidden) = result?;
+        startup_samples.push(startup);
+        visible_samples.push(visible);
+        collapsed_samples.push(collapsed);
+        hidden_samples.push(hidden);
+    }
+    print_duration_summary("startup-to-paper", &mut startup_samples)?;
+    print_resource_summary("visible-source", &visible_samples, visible_cpu)?;
+    print_resource_summary("docked-collapsed", &collapsed_samples, collapsed_cpu)?;
+    print_resource_summary("hidden-to-tray", &hidden_samples, hidden_cpu)?;
+    let observed_max = hidden_samples
+        .iter()
+        .map(|sample| sample.private_working_set_bytes)
+        .max()
+        .unwrap_or_default();
+    if observed_max > HIDDEN_PRIVATE_WORKING_SET_LIMIT {
+        return Err(format!(
+            "hidden-to-tray private working set max {observed_max} exceeds {} bytes",
+            HIDDEN_PRIVATE_WORKING_SET_LIMIT
+        ));
+    }
+    for (mode, cpu) in [
+        ("visible-source", visible_cpu),
+        ("docked-collapsed", collapsed_cpu),
+        ("hidden-to-tray", hidden_cpu),
+    ] {
+        if cpu.is_some_and(|value| value > IDLE_CPU_PERCENT_LIMIT) {
+            return Err(format!(
+                "{mode} idle CPU {:.6}% exceeds {:.3}%",
+                cpu.unwrap_or_default(),
+                IDLE_CPU_PERCENT_LIMIT
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn measure_idle_cpu(
+    child: &mut Child,
+    mode: &str,
+    logical_processors: usize,
+) -> Result<f64, String> {
+    let before = process_metrics::cpu_time(child)?;
+    let wall_started = Instant::now();
+    thread::sleep(CPU_INTERVAL);
+    ensure_alive(child, &format!("{mode} idle CPU instance"))?;
+    let elapsed = wall_started.elapsed();
+    let after = process_metrics::cpu_time(child)?;
+    let cpu = after.saturating_sub(before).as_secs_f64()
+        / elapsed.as_secs_f64()
+        / logical_processors as f64
+        * 100.0;
+    println!(
+        "resource cpu mode={mode} interval_seconds={:.3} average_percent={cpu:.6}",
+        elapsed.as_secs_f64()
+    );
+    Ok(cpu)
+}
+
+fn wait_for_primary_left_state(
+    window: crate::window_control::WindowHandle,
+    collapsed: bool,
+) -> Result<(), String> {
+    wait_for_primary_left_state_with_timeout(window, collapsed, START_TIMEOUT)
+}
+
+fn wait_for_primary_left_state_with_timeout(
+    window: crate::window_control::WindowHandle,
+    collapsed: bool,
+    timeout: Duration,
+) -> Result<(), String> {
+    let work = crate::window_control::primary_work_area()?;
+    let deadline = Instant::now() + timeout;
+    let mut last_rect = None;
+    while Instant::now() < deadline {
+        let rect = crate::window_control::window_rect(window)?;
+        last_rect = Some(rect);
+        let sensor_right = i64::from(rect.x) + i64::from(rect.width) - i64::from(work.x);
+        let observed_collapsed = rect.x < work.x && (1..=16).contains(&sensor_right);
+        let observed_expanded = (rect.x - work.x).abs() <= 1;
+        if (collapsed && observed_collapsed) || (!collapsed && observed_expanded) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Err(format!(
+        "StickyMD did not become primary-left {} within {:.3} seconds; work={work:?} last_rect={last_rect:?}",
+        if collapsed { "collapsed" } else { "expanded" },
+        timeout.as_secs_f64()
+    ))
+}
+
+fn reveal_primary_left_and_wait(window: crate::window_control::WindowHandle) -> Result<(), String> {
+    const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(1);
+    let deadline = Instant::now() + START_TIMEOUT;
+    let mut last_error = None;
+    while Instant::now() < deadline {
+        crate::window_control::reveal_primary_left_sensor(window)?;
+        match wait_for_primary_left_state_with_timeout(window, false, ATTEMPT_TIMEOUT) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "StickyMD sensor reveal produced no observation".into()))
+}
+
+fn run_window_leak_cycles(
+    program_directory: &Path,
+    executable: &Path,
+    child: &mut Child,
+    window: crate::window_control::WindowHandle,
+) -> Result<(), String> {
+    const ANIMATION_CYCLES: usize = 1_000;
+    const TRAY_CYCLES: usize = 100;
+    const CONTROL_CYCLES: usize = 100;
+    reveal_primary_left_and_wait(window)?;
+    let before_memory = process_metrics::memory(child)?;
+    let before_objects = process_metrics::objects(child)?;
+    let before_cpu = process_metrics::cpu_time(child)?;
+    let cycle_started = Instant::now();
+    for cycle in 0..ANIMATION_CYCLES {
+        crate::window_control::park_cursor_at_primary_right(window)?;
+        crate::window_control::click_toolbar(
+            window,
+            crate::window_control::ToolbarControl::Collapse,
+        )?;
+        wait_for_primary_left_state(window, true)?;
+        reveal_primary_left_and_wait(window)?;
+        if cycle % 250 == 249 {
+            let checkpoint = process_metrics::memory(child)?;
+            println!(
+                "window cycle checkpoint expand_collapse={} private_bytes={}",
+                cycle + 1,
+                checkpoint.private_bytes
+            );
+        }
+    }
+    let cycle_elapsed = cycle_started.elapsed();
+    let after_cpu = process_metrics::cpu_time(child)?;
+    let animation_cpu =
+        after_cpu.saturating_sub(before_cpu).as_secs_f64() / cycle_elapsed.as_secs_f64() * 100.0;
+    println!(
+        "window animation cycles={} elapsed_seconds={:.3} single_core_cpu_percent={animation_cpu:.3}",
+        ANIMATION_CYCLES,
+        cycle_elapsed.as_secs_f64()
+    );
+
+    for _ in 0..TRAY_CYCLES {
+        crate::window_control::request_close(window)?;
+        wait_for_window_visibility(window, false)?;
+        let mut secondary = start(executable)?;
+        let status = wait_for_exit(&mut secondary, EXIT_TIMEOUT)?;
+        if !status.success() {
+            return Err(format!("tray-cycle wake instance failed: {status}"));
+        }
+        wait_for_window_visibility(window, true)?;
+    }
+
+    for _ in 0..CONTROL_CYCLES {
+        crate::window_control::click_toolbar(
+            window,
+            crate::window_control::ToolbarControl::Topmost,
+        )?;
+    }
+    for _ in 0..102 {
+        crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Theme)?;
+    }
+    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Opacity)?;
+    for cycle in 0..CONTROL_CYCLES {
+        crate::window_control::commit_opacity_slider(
+            window,
+            if cycle % 2 == 0 { 70 } else { 100 },
+        )?;
+    }
+    wait_for_config_field(program_directory, "opacity = 100")?;
+    thread::sleep(Duration::from_secs(2));
+    ensure_alive(child, "post-cycle Phase 8 resource instance")?;
+    let after_memory = process_metrics::memory(child)?;
+    let after_objects = process_metrics::objects(child)?;
+    println!(
+        "window cycle resources before_private_bytes={} after_private_bytes={} before_objects={before_objects:?} after_objects={after_objects:?}",
+        before_memory.private_bytes, after_memory.private_bytes
+    );
+    const PRIVATE_GROWTH_LIMIT: u64 = 8 * 1024 * 1024;
+    if after_memory.private_bytes
+        > before_memory
+            .private_bytes
+            .saturating_add(PRIVATE_GROWTH_LIMIT)
+    {
+        return Err("Phase 8 repeated shell cycles grew private bytes by more than 8 MiB".into());
+    }
+    if after_objects.handles > before_objects.handles.saturating_add(16)
+        || after_objects.gdi_objects > before_objects.gdi_objects.saturating_add(8)
+        || after_objects.user_objects > before_objects.user_objects.saturating_add(8)
+    {
+        return Err(format!(
+            "Phase 8 repeated shell cycles leaked observable objects: before={before_objects:?} after={after_objects:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn print_duration_summary(mode: &str, samples: &mut [Duration]) -> Result<(), String> {
+    if samples.len() != RESOURCE_REPETITIONS {
+        return Err(format!("{mode} produced {} timing samples", samples.len()));
+    }
+    samples.sort_unstable();
+    println!(
+        "timing summary mode={mode} median_ms={:.3} max_ms={:.3}",
+        samples[samples.len() / 2].as_secs_f64() * 1_000.0,
+        samples[samples.len() - 1].as_secs_f64() * 1_000.0
+    );
     Ok(())
 }
 

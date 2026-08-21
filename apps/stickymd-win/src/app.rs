@@ -15,9 +15,10 @@ use tiny_skia::Pixmap;
 use winit::dpi::PhysicalPosition;
 use winit::event_loop::EventLoopProxy;
 use winit::keyboard::ModifiersState;
-use winit::window::Window;
+use winit::window::{Theme, Window};
 
-use crate::config::{RuntimeConfig, ViewMode};
+use crate::config::{ConfigCoordinator, ViewMode};
+use crate::flow::window::reducer::WindowShellCoordinator;
 use crate::flow::{
     AppEffect, EditorCoordinator, PersistenceCoordinator, PreviewCoordinator, RecoveryCoordinator,
 };
@@ -26,13 +27,16 @@ use crate::interaction::EditorSession;
 use crate::persistence::{IoCompletion, PersistenceWorker};
 use crate::platform::windows::ArboardClipboard;
 use crate::platform::windows::file_watch::NoteDirectoryWatcher;
+use crate::platform::windows::native_message::NativeWindowSignal;
 use crate::platform::windows::program_dir::RuntimePaths;
 use crate::platform::windows::single_instance::SingleInstanceGuard;
+use crate::platform::windows::tray::{TrayController, TrayPlatformEvent};
 use crate::preview::{PreviewCompletion, PreviewWorker};
 use crate::startup::BootstrapOutcome;
 use crate::surface::SoftwareSurface;
 
 mod assets_runtime;
+mod controls;
 mod export_runtime;
 mod input;
 mod lifecycle;
@@ -42,6 +46,10 @@ mod preview_input;
 mod preview_runtime;
 mod reconciliation_runtime;
 mod recovery_runtime;
+mod toolbar_paint;
+mod window_geometry_runtime;
+mod window_interaction;
+mod window_runtime;
 
 const CARET_BLINK: Duration = Duration::from_millis(550);
 
@@ -68,6 +76,8 @@ pub enum AppEvent {
     NoteFsHint,
     WatchFailed(String),
     ShowRequested,
+    Tray(TrayPlatformEvent),
+    Native(NativeWindowSignal),
     Preview(PreviewCompletion),
 }
 
@@ -76,6 +86,7 @@ pub struct StickyApp {
     surface: Option<SoftwareSurface>,
     projection: Option<SourceProjection>,
     source_frame: Option<Pixmap>,
+    source_paint_key: Option<presentation::SourcePaintKey>,
     preview_frame: Option<PreviewFrame>,
     preview_worker: Option<PreviewWorker>,
     preview_flow: PreviewCoordinator,
@@ -86,11 +97,10 @@ pub struct StickyApp {
     preview_drag_moved: bool,
     preview_press_position: Option<PhysicalPosition<f64>>,
     preview_press_action: Option<SpanAction>,
-    pre_split_width_dip: Option<u32>,
     coordinator: EditorCoordinator<ArboardClipboard>,
     persistence: PersistenceCoordinator,
     paths: RuntimePaths,
-    config: RuntimeConfig,
+    config: ConfigCoordinator,
     config_persistence_allowed: bool,
     recovery: RecoveryCoordinator,
     worker: PersistenceWorker,
@@ -98,20 +108,26 @@ pub struct StickyApp {
     proxy: EventLoopProxy<AppEvent>,
     _instance: SingleInstanceGuard,
     resolving_keep_local: bool,
-    quit_pending: bool,
     asset_paste_pending: bool,
     asset_sync_in_flight: bool,
     asset_sync_sequence: u64,
     asset_sync_request_id: Option<u64>,
+    quit_asset_sync_request_id: Option<u64>,
     asset_reconcile_pending: bool,
-    exit_gc_pending: bool,
     export_in_flight: bool,
     session: EditorSession,
     modifiers: ModifiersState,
     cursor_position: PhysicalPosition<f64>,
+    pointer_inside_window: bool,
     started: Instant,
     next_blink: Instant,
     diagnostic: Option<String>,
+    system_theme: Theme,
+    controls: controls::ControlState,
+    window_flow: Option<WindowShellCoordinator>,
+    tray: Option<TrayController>,
+    shell_input_enabled: bool,
+    move_resize_active: bool,
 }
 
 impl StickyApp {
@@ -124,11 +140,13 @@ impl StickyApp {
     ) -> Self {
         let now = Instant::now();
         let preview_focused = bootstrap.config.view_mode == ViewMode::Preview;
+        let opacity = bootstrap.config.opacity;
         let mut app = Self {
             window: None,
             surface: None,
             projection: None,
             source_frame: None,
+            source_paint_key: None,
             preview_frame: None,
             preview_worker: None,
             preview_flow: PreviewCoordinator::default(),
@@ -139,11 +157,10 @@ impl StickyApp {
             preview_drag_moved: false,
             preview_press_position: None,
             preview_press_action: None,
-            pre_split_width_dip: None,
             coordinator: EditorCoordinator::new(bootstrap.document, ArboardClipboard::new()),
             persistence: PersistenceCoordinator::default(),
             paths,
-            config: bootstrap.config,
+            config: ConfigCoordinator::loaded(bootstrap.config),
             config_persistence_allowed: bootstrap.config_persistence_allowed,
             recovery: RecoveryCoordinator::new(
                 bootstrap.recovery,
@@ -154,20 +171,26 @@ impl StickyApp {
             proxy,
             _instance: instance,
             resolving_keep_local: false,
-            quit_pending: false,
             asset_paste_pending: false,
             asset_sync_in_flight: false,
             asset_sync_sequence: 0,
             asset_sync_request_id: None,
+            quit_asset_sync_request_id: None,
             asset_reconcile_pending: false,
-            exit_gc_pending: false,
             export_in_flight: false,
             session: EditorSession::default(),
             modifiers: ModifiersState::default(),
             cursor_position: PhysicalPosition::new(0.0, 0.0),
+            pointer_inside_window: false,
             started: now,
             next_blink: now + CARET_BLINK,
             diagnostic: bootstrap.warnings.last().cloned(),
+            system_theme: Theme::Light,
+            controls: controls::ControlState::new(opacity),
+            window_flow: None,
+            tray: None,
+            shell_input_enabled: true,
+            move_resize_active: false,
         };
         if app.recovery.is_pending() {
             app.persistence.set_recovery_pending(true);
@@ -177,6 +200,14 @@ impl StickyApp {
             app.start_watcher();
         }
         app
+    }
+
+    fn resolved_dark_theme(&self) -> bool {
+        match self.config.current().theme {
+            crate::config::ThemeMode::Light => false,
+            crate::config::ThemeMode::Dark => true,
+            crate::config::ThemeMode::System => self.system_theme == Theme::Dark,
+        }
     }
 
     fn dispatch(&mut self, intent: AppIntent) {
@@ -231,9 +262,13 @@ impl StickyApp {
                         ExternalReconcileFollowUp::FullProjectionResync => {
                             self.full_projection_resync()
                         }
-                        ExternalReconcileFollowUp::RuntimeAssetConvergence => {
-                            self.sync_assets(false)
-                        }
+                        ExternalReconcileFollowUp::RuntimeAssetConvergence => self
+                            .submit_asset_sync(
+                                self.coordinator.view().generation,
+                                Vec::new(),
+                                Some(crate::assets::AssetReconcileMode::Runtime),
+                                false,
+                            ),
                     }
                 }
             }
@@ -561,7 +596,14 @@ mod tests {
             let caret = caret_started.elapsed();
             let paint_started = Instant::now();
             projection
-                .paint(&mut pixmap, selection, true, true, None)
+                .paint(
+                    &mut pixmap,
+                    selection,
+                    true,
+                    true,
+                    None,
+                    stickymd_render::source::SourceTheme::Light,
+                )
                 .unwrap();
             let paint = paint_started.elapsed();
             if iteration >= 5 {
@@ -614,7 +656,14 @@ mod tests {
             .ensure_caret_visible(selection.active.byte)
             .unwrap();
         projection
-            .paint(pixmap, selection, true, true, None)
+            .paint(
+                pixmap,
+                selection,
+                true,
+                true,
+                None,
+                stickymd_render::source::SourceTheme::Light,
+            )
             .unwrap();
         started.elapsed()
     }
@@ -737,7 +786,14 @@ mod tests {
             let rebuild_started = Instant::now();
             projection.resync(&coordinator.snapshot()).unwrap();
             projection
-                .paint(&mut pixmap, Selection::caret(0), true, true, None)
+                .paint(
+                    &mut pixmap,
+                    Selection::caret(0),
+                    true,
+                    true,
+                    None,
+                    stickymd_render::source::SourceTheme::Light,
+                )
                 .unwrap();
             let rebuild_elapsed = rebuild_started.elapsed();
 

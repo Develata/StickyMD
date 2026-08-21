@@ -7,7 +7,8 @@ use winit::event_loop::ActiveEventLoop;
 
 use super::StickyApp;
 use crate::assets::{AssetPasteCompletion, AssetPasteRequest, AssetReconcileMode};
-use crate::flow::{ExitGcAction, PendingAssetPaste, SaveTrigger};
+use crate::flow::window::state::{QuitBarrier, WindowIntent};
+use crate::flow::{PendingAssetPaste, SaveTrigger};
 
 impl StickyApp {
     pub(super) fn submit_asset_paste(&mut self, pending: PendingAssetPaste) {
@@ -60,7 +61,7 @@ impl StickyApp {
                     failure.error
                 ));
                 self.request_redraw();
-                self.resume_pending_quit(event_loop);
+                self.notify_window_paste_settled(event_loop);
                 return;
             }
         };
@@ -82,7 +83,7 @@ impl StickyApp {
             self.diagnostic =
                 Some("图片准备期间文档已变化；未插入引用，资产正按最新引用状态收敛。".into());
             self.request_redraw();
-            self.resume_pending_quit(event_loop);
+            self.notify_window_paste_settled(event_loop);
             return;
         }
         match self.coordinator.commit_prepared_paste(
@@ -106,7 +107,7 @@ impl StickyApp {
                 self.request_redraw();
             }
         }
-        self.resume_pending_quit(event_loop);
+        self.notify_window_paste_settled(event_loop);
     }
 
     pub(super) fn submit_asset_sync(
@@ -114,7 +115,7 @@ impl StickyApp {
         generation: Generation,
         effects: Vec<AssetEffect>,
         reconcile: Option<AssetReconcileMode>,
-        for_exit: bool,
+        for_quit: bool,
     ) {
         let Some(request_id) = self.asset_sync_sequence.checked_add(1) else {
             self.diagnostic = Some("图片事务序号已耗尽；已停止自动整理。".into());
@@ -124,7 +125,9 @@ impl StickyApp {
         self.asset_sync_sequence = request_id;
         self.asset_sync_in_flight = true;
         self.asset_sync_request_id = Some(request_id);
-        self.exit_gc_pending |= for_exit;
+        if for_quit {
+            self.quit_asset_sync_request_id = Some(request_id);
+        }
         self.worker
             .submit_asset_sync(crate::persistence::AssetSyncRequest {
                 images: self.paths.images_dir.clone(),
@@ -141,19 +144,6 @@ impl StickyApp {
                     )
                 }),
             });
-    }
-
-    pub(super) fn sync_assets(&mut self, for_exit: bool) {
-        self.submit_asset_sync(
-            self.coordinator.view().generation,
-            Vec::new(),
-            Some(if for_exit {
-                AssetReconcileMode::SafeBoundary
-            } else {
-                AssetReconcileMode::Runtime
-            }),
-            for_exit,
-        );
     }
 
     pub(super) fn sync_assets_after_recovery(&mut self) {
@@ -173,9 +163,14 @@ impl StickyApp {
         _generation: Generation,
         result: Result<crate::assets::AssetReconcileReport, crate::assets::AssetStorageError>,
     ) {
-        if self.asset_sync_request_id == Some(request_id) {
+        let matched_request = self.asset_sync_request_id == Some(request_id);
+        let quit_request = self.quit_asset_sync_request_id == Some(request_id);
+        if matched_request {
             self.asset_sync_in_flight = false;
             self.asset_sync_request_id = None;
+        }
+        if quit_request {
+            self.quit_asset_sync_request_id = None;
         }
         let succeeded = result.is_ok();
         match result {
@@ -205,27 +200,32 @@ impl StickyApp {
                 );
             }
         }
-        if self.exit_gc_pending && !self.asset_sync_in_flight {
-            self.exit_gc_pending = false;
-            match self.persistence.decide_exit_gc_completion(
-                succeeded,
-                self.asset_paste_pending,
-                self.coordinator.view().dirty,
-            ) {
-                ExitGcAction::CancelQuit => self.quit_pending = false,
-                ExitGcAction::ResumeQuit => self.resume_pending_quit(event_loop),
-                ExitGcAction::Exit => {
-                    event_loop.exit();
-                    return;
-                }
-            }
+        if quit_request {
+            self.dispatch_window_intent(
+                Some(event_loop),
+                WindowIntent::QuitBarrierCompleted {
+                    barrier: QuitBarrier::AssetGc,
+                    succeeded,
+                    guards: self.window_guards(),
+                },
+            );
+        } else if matched_request {
+            self.dispatch_window_intent(
+                Some(event_loop),
+                WindowIntent::PasteSettled {
+                    guards: self.window_guards(),
+                },
+            );
         }
         self.request_redraw();
     }
 
-    fn resume_pending_quit(&mut self, event_loop: &ActiveEventLoop) {
-        if self.quit_pending && !self.asset_paste_pending {
-            self.request_quit(event_loop);
-        }
+    fn notify_window_paste_settled(&mut self, event_loop: &ActiveEventLoop) {
+        self.dispatch_window_intent(
+            Some(event_loop),
+            WindowIntent::PasteSettled {
+                guards: self.window_guards(),
+            },
+        );
     }
 }

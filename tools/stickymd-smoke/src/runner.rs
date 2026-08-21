@@ -27,6 +27,8 @@ enum TaskId {
     Phase6Performance,
     Phase7AssetTests,
     Phase7Performance,
+    Phase8WindowTests,
+    Phase8Performance,
     ReleaseBuild,
     RuntimeLaunch,
     RuntimePortable,
@@ -36,6 +38,8 @@ enum TaskId {
     RuntimeResources,
     RuntimeMathResources,
     RuntimeImageResources,
+    RuntimeWindowShell,
+    RuntimeWindowResources,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,6 +66,8 @@ pub(crate) enum RuntimeScenario {
     Resources,
     MathResources,
     ImageResources,
+    WindowShell,
+    WindowResources,
 }
 
 impl Task {
@@ -130,6 +136,14 @@ fn task_label(task: &Task) -> &'static str {
             scenario: RuntimeScenario::ImageResources,
             ..
         } => "copied Release Phase 7 image resource matrix",
+        Task::Runtime {
+            scenario: RuntimeScenario::WindowShell,
+            ..
+        } => "copied Release Phase 8 close-to-tray/show lifecycle",
+        Task::Runtime {
+            scenario: RuntimeScenario::WindowResources,
+            ..
+        } => "copied Release Phase 8 hidden-window resource matrix",
     }
 }
 
@@ -170,9 +184,11 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         match options.selection {
             Selection::Phase(Phase::P06) => push_unique(&mut tasks, runtime_math_resources()),
             Selection::Phase(Phase::P07) => push_unique(&mut tasks, runtime_image_resources()),
+            Selection::Phase(Phase::P08) => push_unique(&mut tasks, runtime_window_resources()),
             Selection::All => {
                 push_unique(&mut tasks, runtime_math_resources());
                 push_unique(&mut tasks, runtime_image_resources());
+                push_unique(&mut tasks, runtime_window_resources());
             }
             _ => push_unique(&mut tasks, runtime_resources()),
         }
@@ -196,6 +212,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         Selection::Phase(Phase::P05) => push_unique(&mut tasks, phase5_preview_tests()),
         Selection::Phase(Phase::P06) => push_unique(&mut tasks, phase6_math_tests()),
         Selection::Phase(Phase::P07) => push_unique(&mut tasks, phase7_asset_tests()),
+        Selection::Phase(Phase::P08) => push_unique(&mut tasks, phase8_window_tests()),
     }
 
     // CI owns every headless task. `--performance` remains the explicit local
@@ -215,6 +232,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 Phase::P05 => push_unique(&mut tasks, phase5_performance()),
                 Phase::P06 => push_unique(&mut tasks, phase6_performance()),
                 Phase::P07 => push_unique(&mut tasks, phase7_performance()),
+                Phase::P08 => push_unique(&mut tasks, phase8_performance()),
             }
         }
     }
@@ -227,11 +245,13 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             Selection::Phase(Phase::P05) => push_unique(&mut tasks, runtime_preview()),
             Selection::Phase(Phase::P06) => push_unique(&mut tasks, runtime_math()),
             Selection::Phase(Phase::P07) => push_unique(&mut tasks, runtime_assets()),
+            Selection::Phase(Phase::P08) => push_unique(&mut tasks, runtime_window_shell()),
             Selection::All => {
                 push_unique(&mut tasks, runtime_portable());
                 push_unique(&mut tasks, runtime_preview());
                 push_unique(&mut tasks, runtime_math());
                 push_unique(&mut tasks, runtime_assets());
+                push_unique(&mut tasks, runtime_window_shell());
             }
             Selection::Phase(Phase::P00 | Phase::P01 | Phase::P02) => {
                 return Err("selected phase has no runtime smoke".to_owned());
@@ -384,6 +404,14 @@ fn phase7_asset_tests() -> Task {
     )
 }
 
+fn phase8_window_tests() -> Task {
+    cargo(
+        TaskId::Phase8WindowTests,
+        "Phase 8 native-window state/geometry/lifecycle tests",
+        &["test", "-p", "stickymd-win", "--locked", "phase8_"],
+    )
+}
+
 fn phase1_markdown_performance() -> Task {
     cargo(
         TaskId::Phase1MarkdownMathPerformance,
@@ -515,6 +543,24 @@ fn phase7_performance() -> Task {
     )
 }
 
+fn phase8_performance() -> Task {
+    cargo(
+        TaskId::Phase8Performance,
+        "Phase 8 native-window Release baseline",
+        &[
+            "test",
+            "-p",
+            "stickymd-win",
+            "--release",
+            "--locked",
+            "phase8_",
+            "--",
+            "--ignored",
+            "--nocapture",
+        ],
+    )
+}
+
 fn release_build() -> Task {
     cargo(
         TaskId::ReleaseBuild,
@@ -579,6 +625,20 @@ const fn runtime_image_resources() -> Task {
     }
 }
 
+const fn runtime_window_shell() -> Task {
+    Task::Runtime {
+        id: TaskId::RuntimeWindowShell,
+        scenario: RuntimeScenario::WindowShell,
+    }
+}
+
+const fn runtime_window_resources() -> Task {
+    Task::Runtime {
+        id: TaskId::RuntimeWindowResources,
+        scenario: RuntimeScenario::WindowResources,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{TaskId, build_plan};
@@ -624,6 +684,7 @@ mod tests {
         assert!(ids.contains(&TaskId::Phase5Performance));
         assert!(ids.contains(&TaskId::Phase6Performance));
         assert!(ids.contains(&TaskId::Phase7Performance));
+        assert!(ids.contains(&TaskId::Phase8Performance));
     }
 
     #[test]
@@ -646,6 +707,7 @@ mod tests {
             TaskId::Phase5Performance,
             TaskId::Phase6Performance,
             TaskId::Phase7Performance,
+            TaskId::Phase8Performance,
         ] {
             assert!(ids.contains(&expected));
         }
@@ -657,6 +719,8 @@ mod tests {
         assert!(!ids.contains(&TaskId::RuntimeResources));
         assert!(!ids.contains(&TaskId::RuntimeMathResources));
         assert!(!ids.contains(&TaskId::RuntimeImageResources));
+        assert!(!ids.contains(&TaskId::RuntimeWindowShell));
+        assert!(!ids.contains(&TaskId::RuntimeWindowResources));
     }
 
     #[test]
@@ -687,6 +751,59 @@ mod tests {
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
         assert!(ids.contains(&TaskId::RuntimeImageResources));
         assert!(!ids.contains(&TaskId::RuntimeResources));
+    }
+
+    #[test]
+    fn phase8_plan_routes_headless_runtime_and_resources_explicitly() {
+        let headless = build_plan(&Options {
+            selection: Selection::Phase(crate::cli::Phase::P08),
+            ci: false,
+            performance: false,
+            runtime: false,
+            resources: false,
+        })
+        .expect("valid Phase 8 headless plan");
+        assert!(
+            headless
+                .iter()
+                .any(|task| task.id() == TaskId::Phase8WindowTests)
+        );
+
+        let runtime = build_plan(&Options {
+            selection: Selection::Phase(crate::cli::Phase::P08),
+            ci: false,
+            performance: false,
+            runtime: true,
+            resources: false,
+        })
+        .expect("valid Phase 8 runtime plan");
+        assert!(
+            runtime
+                .iter()
+                .any(|task| task.id() == TaskId::RuntimeWindowShell)
+        );
+
+        let resources = build_plan(&Options {
+            selection: Selection::Phase(crate::cli::Phase::P08),
+            ci: false,
+            performance: false,
+            runtime: false,
+            resources: true,
+        })
+        .expect("valid Phase 8 resource plan");
+        assert!(
+            resources
+                .iter()
+                .any(|task| task.id() == TaskId::RuntimeWindowResources)
+        );
+        assert!(!resources.iter().any(|task| {
+            matches!(
+                task.id(),
+                TaskId::RuntimeResources
+                    | TaskId::RuntimeMathResources
+                    | TaskId::RuntimeImageResources
+            )
+        }));
     }
 
     use std::collections::BTreeSet;

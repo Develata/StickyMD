@@ -5,13 +5,29 @@
 use winit::event_loop::ActiveEventLoop;
 
 use super::StickyApp;
-use crate::flow::{QuitAction, RecoveryOperation, SaveTrigger};
+use crate::config::ConfigAck;
+use crate::flow::window::state::{QuitBarrier, WindowIntent};
+use crate::flow::{RecoveryOperation, SaveTrigger};
 use crate::instruction::{PersistenceIntent, SaveReason};
 use crate::persistence::{
     IoCompletion, PersistMode, PersistRequest, PersistResult, TemporaryCleanup,
 };
 
 impl StickyApp {
+    pub(super) fn submit_config_if_needed(&mut self) {
+        if !self.config_persistence_allowed {
+            return;
+        }
+        let Some(request) = self.config.begin_persist() else {
+            return;
+        };
+        self.worker.submit_config(
+            self.paths.config_file.clone(),
+            self.paths.config_tmp.clone(),
+            request,
+        );
+    }
+
     pub(super) fn update_window_title(&self) {
         let Some(window) = &self.window else { return };
         let view = self.coordinator.view();
@@ -69,7 +85,7 @@ impl StickyApp {
 
     pub(super) fn dispatch_persistence_intent(
         &mut self,
-        event_loop: Option<&ActiveEventLoop>,
+        _event_loop: Option<&ActiveEventLoop>,
         intent: PersistenceIntent,
     ) -> bool {
         match intent {
@@ -87,62 +103,6 @@ impl StickyApp {
             }
             PersistenceIntent::ResolvePrimary => self.handle_resolution_key(true),
             PersistenceIntent::ResolveSecondary => self.handle_resolution_key(false),
-            PersistenceIntent::RequestQuit => {
-                let Some(event_loop) = event_loop else {
-                    return false;
-                };
-                self.request_quit(event_loop);
-                true
-            }
-        }
-    }
-
-    pub(super) fn request_quit(&mut self, _event_loop: &ActiveEventLoop) {
-        if self.asset_paste_pending {
-            self.quit_pending = true;
-            self.diagnostic = Some("图片粘贴事务正在完成；完成并保存后再退出。".into());
-            self.request_redraw();
-            return;
-        }
-        if self.config_persistence_allowed {
-            self.worker.submit_config(
-                self.paths.config_file.clone(),
-                self.paths.config_tmp.clone(),
-                self.config.clone(),
-            );
-        }
-        match self
-            .persistence
-            .decide_quit(self.recovery.is_pending(), self.coordinator.view().dirty)
-        {
-            QuitAction::BlockedByRecovery => {
-                self.quit_pending = false;
-                self.diagnostic =
-                    Some("退出前必须完成恢复选择  |  [F6 恢复临时内容]  [F7 使用当前文件]".into());
-                self.request_redraw();
-            }
-            QuitAction::BlockedByConflict => {
-                self.quit_pending = false;
-                self.diagnostic =
-                    Some("退出前必须解决外部修改冲突  |  [F6 载入外部]  [F7 保留本地]".into());
-                self.request_redraw();
-            }
-            QuitAction::WaitForInFlightSave => self.quit_pending = true,
-            QuitAction::RecreateMissing => {
-                self.quit_pending = true;
-                self.submit_save(
-                    SaveTrigger::RecreateMissing,
-                    Some(PersistMode::Guarded { expected: None }),
-                );
-            }
-            QuitAction::SaveDirty => {
-                self.quit_pending = true;
-                self.request_immediate_save(SaveTrigger::Shutdown);
-            }
-            QuitAction::Exit => {
-                self.quit_pending = true;
-                self.sync_assets(true);
-            }
         }
     }
 
@@ -172,20 +132,20 @@ impl StickyApp {
                             completion_generation.value(),
                             generation.value()
                         ));
+                        self.complete_window_note_barriers(event_loop, false);
                         self.request_redraw();
                     }
                     Ok(PersistResult::Conflict { observed, .. }) => {
                         self.persistence.note_save_finished(false);
-                        self.quit_pending = false;
                         if self.recovery.is_pending() {
                             self.handle_recovery_save_conflict(observed);
                         } else {
                             self.reconcile_external(observed);
                         }
+                        self.complete_window_note_barriers(event_loop, false);
                     }
                     Err(error) => {
                         self.persistence.note_save_finished(false);
-                        self.quit_pending = false;
                         self.recovery.fail_operation();
                         self.resolving_keep_local = false;
                         self.diagnostic = Some(format!(
@@ -193,29 +153,46 @@ impl StickyApp {
                             completion_generation.value()
                         ));
                         self.update_window_title();
+                        self.complete_window_note_barriers(event_loop, false);
                         self.request_redraw();
                     }
                 }
             }
             IoCompletion::External(Ok(external)) => {
                 self.reconcile_external(external);
-                if self.quit_pending
-                    && !self.persistence.has_required_write()
-                    && self.persistence.conflict().is_none()
-                    && !self.coordinator.view().dirty
-                {
-                    self.sync_assets(true);
-                }
             }
             IoCompletion::External(Err(error)) => {
                 self.diagnostic = Some(format!("外部文件读取失败，未改变当前文本：{error}"));
                 self.request_redraw();
             }
-            IoCompletion::Config(Err(error)) => {
-                self.diagnostic = Some(format!("配置保存失败；笔记保存不受影响：{error}"));
-                self.request_redraw();
+            IoCompletion::Config { revision, result } => {
+                let succeeded = result.is_ok();
+                let acknowledgement = self.config.acknowledge(revision, succeeded);
+                if let Err(error) = result {
+                    self.diagnostic = Some(format!("配置保存失败；笔记保存不受影响：{error}"));
+                    self.request_redraw();
+                } else if matches!(
+                    acknowledgement,
+                    ConfigAck::Applied {
+                        needs_follow_up: true
+                    }
+                ) {
+                    self.submit_config_if_needed();
+                }
+                if matches!(acknowledgement, ConfigAck::Applied { .. })
+                    && !self.config.is_saving()
+                    && (!self.config.is_dirty() || !succeeded)
+                {
+                    self.dispatch_window_intent(
+                        Some(event_loop),
+                        WindowIntent::QuitBarrierCompleted {
+                            barrier: QuitBarrier::Config,
+                            succeeded,
+                            guards: self.window_guards(),
+                        },
+                    );
+                }
             }
-            IoCompletion::Config(Ok(())) => {}
             IoCompletion::TemporaryRemoved { purpose, result } => match (purpose, result) {
                 (TemporaryCleanup::RecoveryResolved, Ok(())) => self.finish_recovery_cleanup(),
                 (TemporaryCleanup::ConflictDiscarded, Ok(())) => {}
@@ -259,6 +236,32 @@ impl StickyApp {
             }
             IoCompletion::WorkerStopped => {
                 self.diagnostic = Some("持久化工作线程已停止；不会假装自动保存仍可用。".into());
+                self.asset_paste_pending = false;
+                self.asset_sync_in_flight = false;
+                self.asset_sync_request_id = None;
+                self.quit_asset_sync_request_id = None;
+                self.dispatch_window_intent(
+                    Some(event_loop),
+                    WindowIntent::HideSaveCompleted {
+                        succeeded: false,
+                        guards: self.window_guards(),
+                    },
+                );
+                for barrier in [
+                    QuitBarrier::Paste,
+                    QuitBarrier::NoteSave,
+                    QuitBarrier::AssetGc,
+                    QuitBarrier::Config,
+                ] {
+                    self.dispatch_window_intent(
+                        Some(event_loop),
+                        WindowIntent::QuitBarrierCompleted {
+                            barrier,
+                            succeeded: false,
+                            guards: self.window_guards(),
+                        },
+                    );
+                }
                 self.request_redraw();
             }
         }
@@ -309,10 +312,25 @@ impl StickyApp {
             // A recreate hint overlapped a different save. Inspect the durable
             // path before deciding whether a second write is still needed.
             self.worker.inspect_external(self.paths.note_file.clone());
-        } else if self.quit_pending && !self.persistence.has_required_write() {
-            self.sync_assets(true);
         }
         self.update_window_title();
+        self.complete_window_note_barriers(_event_loop, true);
         self.request_redraw();
+    }
+
+    fn complete_window_note_barriers(&mut self, event_loop: &ActiveEventLoop, succeeded: bool) {
+        let guards = self.window_guards();
+        self.dispatch_window_intent(
+            Some(event_loop),
+            WindowIntent::HideSaveCompleted { succeeded, guards },
+        );
+        self.dispatch_window_intent(
+            Some(event_loop),
+            WindowIntent::QuitBarrierCompleted {
+                barrier: QuitBarrier::NoteSave,
+                succeeded,
+                guards: self.window_guards(),
+            },
+        );
     }
 }

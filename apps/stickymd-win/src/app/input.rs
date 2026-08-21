@@ -17,7 +17,7 @@ impl StickyApp {
         if !mutation_input_allowed(
             self.recovery.is_pending(),
             self.preview_focused,
-            self.quit_pending,
+            !self.window_accepts_editor_mutation(),
             self.asset_reconcile_pending,
         ) {
             self.session.cancel_preedit();
@@ -62,6 +62,9 @@ impl StickyApp {
         if event.state != ElementState::Pressed {
             return;
         }
+        if self.handle_shell_key(&event) {
+            return;
+        }
         let (generation, text_len) = {
             let view = self.coordinator.view();
             (view.generation, view.text.len())
@@ -87,7 +90,7 @@ impl StickyApp {
         if !mutation_input_allowed(
             self.recovery.is_pending(),
             false,
-            self.quit_pending,
+            !self.window_accepts_editor_mutation(),
             self.asset_reconcile_pending,
         ) {
             return;
@@ -190,6 +193,15 @@ impl StickyApp {
             Some(KeyCode::Escape) if self.session.is_composing() => {
                 self.session.cancel_preedit();
                 self.after_presentation_change();
+                return;
+            }
+            Some(KeyCode::Escape) => {
+                self.dispatch_window_intent(
+                    None,
+                    crate::flow::window::state::WindowIntent::EscapePressed {
+                        now_ms: self.timestamp_ms(),
+                    },
+                );
                 return;
             }
             _ => {}
@@ -299,6 +311,12 @@ impl StickyApp {
     }
 
     pub(super) fn handle_mouse_button(&mut self, state: ElementState, button: MouseButton) {
+        if self.handle_shell_mouse_button(state, button) {
+            return;
+        }
+        if !self.window_accepts_editor_mutation() {
+            return;
+        }
         if button != MouseButton::Left {
             return;
         }
@@ -362,7 +380,12 @@ impl StickyApp {
 
     pub(super) fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
         self.cursor_position = position;
-        let cursor = self.cursor_icon_for_position(position);
+        if self.handle_shell_cursor_moved(position) {
+            return;
+        }
+        let cursor = self
+            .shell_cursor_icon()
+            .unwrap_or_else(|| self.cursor_icon_for_position(position));
         if let Some(window) = &self.window {
             window.set_cursor(cursor);
         }

@@ -14,7 +14,7 @@ use crate::assets::{
     AssetReconcileMode, AssetReconcileReport, AssetStorage, AssetStorageError,
     prepare_and_store_paste, reconcile_safe_boundary,
 };
-use crate::config::{ConfigStorageError, RuntimeConfig, save_config};
+use crate::config::{ConfigPersistRequest, ConfigRevision, ConfigStorageError, save_config};
 use crate::export::{ExportCompletion, ExportError, ExportRequest, export_snapshot};
 
 use super::NoteStorageError;
@@ -33,7 +33,10 @@ pub enum TemporaryCleanup {
 pub enum IoCompletion {
     Note(NoteCompletion),
     External(Result<ExternalFileState, NoteStorageError>),
-    Config(Result<(), ConfigStorageError>),
+    Config {
+        revision: ConfigRevision,
+        result: Result<(), ConfigStorageError>,
+    },
     TemporaryRemoved {
         purpose: TemporaryCleanup,
         result: Result<(), NoteStorageError>,
@@ -76,7 +79,7 @@ struct NoteJob {
 struct ConfigJob {
     target: PathBuf,
     temporary: PathBuf,
-    config: RuntimeConfig,
+    request: ConfigPersistRequest,
 }
 
 struct AssetRoots {
@@ -240,13 +243,18 @@ impl PersistenceWorker {
         }
     }
 
-    pub fn submit_config(&self, target: PathBuf, temporary: PathBuf, config: RuntimeConfig) {
+    pub fn submit_config(
+        &self,
+        target: PathBuf,
+        temporary: PathBuf,
+        request: ConfigPersistRequest,
+    ) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
             mailbox.config = Some(ConfigJob {
                 target,
                 temporary,
-                config,
+                request,
             });
             ready.notify_one();
         }
@@ -461,8 +469,9 @@ where
                 });
             }
             WorkerJob::Config(job) => {
-                let completion = save_config(&job.target, &job.temporary, &job.config);
-                on_completion(IoCompletion::Config(completion));
+                let revision = job.request.revision;
+                let result = save_config(&job.target, &job.temporary, &job.request.config);
+                on_completion(IoCompletion::Config { revision, result });
             }
             WorkerJob::CleanupTemporary(path, purpose) => {
                 let result = remove_temporary(&path);

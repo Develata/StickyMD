@@ -1,11 +1,11 @@
-//! Typed editor, persistence and read-only Preview instructions.
+//! Typed editor, persistence, Preview, and native-window instructions.
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#instruction-interface
 
 use stickymd_core::{EditKind, Generation, Selection};
 use stickymd_render::preview::SpanAction;
 
-use crate::config::ViewMode;
+use crate::config::{ThemeMode, ViewMode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppIntent {
@@ -53,7 +53,6 @@ pub enum PersistenceIntent {
     Export,
     ResolvePrimary,
     ResolveSecondary,
-    RequestQuit,
 }
 
 /// Read-only Preview instructions emitted by the interaction shell.
@@ -64,4 +63,33 @@ pub enum PersistenceIntent {
 pub enum PreviewIntent {
     SetViewMode(ViewMode),
     Activate(SpanAction),
+}
+
+/// Durable and preview-only window preference instructions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowPreferenceIntent {
+    SetTheme(ThemeMode),
+    PreviewOpacity(u8),
+    CommitOpacity(u8),
+    SetAlwaysOnTop(bool),
+}
+
+/// Platform gestures requested by shell hit testing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowPlatformIntent {
+    RequestDrag,
+    RequestResize(WindowResizeEdge),
+}
+
+/// Platform-neutral resize edge/corner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowResizeEdge {
+    North,
+    NorthEast,
+    East,
+    SouthEast,
+    South,
+    SouthWest,
+    West,
+    NorthWest,
 }

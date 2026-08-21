@@ -10,10 +10,11 @@ pub(crate) enum Phase {
     P05,
     P06,
     P07,
+    P08,
 }
 
 impl Phase {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::P00,
         Self::P01,
         Self::P02,
@@ -22,6 +23,7 @@ impl Phase {
         Self::P05,
         Self::P06,
         Self::P07,
+        Self::P08,
     ];
 
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
@@ -34,7 +36,8 @@ impl Phase {
             "5" | "05" | "phase-05" => Ok(Self::P05),
             "6" | "06" | "phase-06" => Ok(Self::P06),
             "7" | "07" | "phase-07" => Ok(Self::P07),
-            _ => Err(format!("unknown phase `{value}`; expected 00..07")),
+            "8" | "08" | "phase-08" => Ok(Self::P08),
+            _ => Err(format!("unknown phase `{value}`; expected 00..08")),
         }
     }
 
@@ -48,6 +51,7 @@ impl Phase {
             Self::P05 => "05",
             Self::P06 => "06",
             Self::P07 => "07",
+            Self::P08 => "08",
         }
     }
 }
@@ -77,7 +81,7 @@ impl Options {
             Some("phase") => {
                 let phase = args
                     .next()
-                    .ok_or_else(|| "`phase` requires a number (00..07)".to_owned())?;
+                    .ok_or_else(|| "`phase` requires a number (00..08)".to_owned())?;
                 Selection::Phase(Phase::parse(&phase)?)
             }
             Some("all") => Selection::All,
@@ -115,17 +119,18 @@ impl Options {
             )
         {
             return Err(
-                "runtime smoke is defined only for Phase 03 through Phase 07, or `all`".to_owned(),
+                "runtime smoke is defined only for Phase 03 through Phase 08, or `all`".to_owned(),
             );
         }
         if options.resources
             && !matches!(
                 selection,
-                Selection::Phase(Phase::P05 | Phase::P06 | Phase::P07) | Selection::All
+                Selection::Phase(Phase::P05 | Phase::P06 | Phase::P07 | Phase::P08)
+                    | Selection::All
             )
         {
             return Err(
-                "resource measurement is defined only for Phase 05 through Phase 07, or `all`"
+                "resource measurement is defined only for Phase 05 through Phase 08, or `all`"
                     .to_owned(),
             );
         }
@@ -133,7 +138,7 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..07> [--performance] [--runtime] [--resources]\n       stickymd-smoke all [--ci] [--performance] [--runtime] [--resources]"
+        "usage: stickymd-smoke phase <00..08> [--performance] [--runtime] [--resources]\n       stickymd-smoke all [--ci] [--performance] [--runtime] [--resources]"
     }
 }
 
@@ -153,6 +158,19 @@ mod tests {
         assert!(options.performance);
         assert!(options.runtime);
         assert!(!options.resources);
+    }
+
+    #[test]
+    fn phase8_accepts_explicit_runtime_and_resource_modes() {
+        let runtime =
+            Options::parse(args(&["phase", "08", "--runtime"])).expect("Phase 8 runtime mode");
+        assert_eq!(runtime.selection, Selection::Phase(Phase::P08));
+        assert!(runtime.runtime);
+
+        let resources = Options::parse(args(&["phase", "phase-08", "--resources"]))
+            .expect("Phase 8 resource mode");
+        assert_eq!(resources.selection, Selection::Phase(Phase::P08));
+        assert!(resources.resources);
     }
 
     #[test]

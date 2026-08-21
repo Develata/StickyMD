@@ -12,6 +12,7 @@ use thiserror::Error;
 use crate::platform::windows::atomic_file::{AtomicPublishError, atomic_publish};
 
 pub const CONFIG_VERSION: u32 = 1;
+const MAX_WINDOW_DIP: u32 = 16_384;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -91,6 +92,21 @@ impl Default for RuntimeConfig {
     }
 }
 
+impl RuntimeConfig {
+    fn is_semantically_valid(&self) -> bool {
+        (70..=100).contains(&self.opacity)
+            && (360..=MAX_WINDOW_DIP).contains(&self.window.width_dip)
+            && (240..=MAX_WINDOW_DIP).contains(&self.window.height_dip)
+            && valid_ratio(self.window.dock_offset_ratio)
+            && valid_ratio(self.window.floating_x_ratio)
+            && valid_ratio(self.window.floating_y_ratio)
+    }
+}
+
+fn valid_ratio(value: f32) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigWarning {
     CorruptPreserved(PathBuf),
@@ -146,7 +162,7 @@ pub fn load_config(path: &Path) -> Result<ConfigLoadOutcome, ConfigStorageError>
     if parsed.version != CONFIG_VERSION {
         return Ok(preserve_corrupt_config(path));
     }
-    if !(70..=100).contains(&parsed.opacity) {
+    if !parsed.is_semantically_valid() {
         return Ok(preserve_corrupt_config(path));
     }
 
@@ -199,7 +215,7 @@ pub enum ConfigStorageError {
 }
 
 #[cfg(test)]
-mod tests {
+mod phase8_config_runtime_tests {
     use super::*;
 
     fn unique_dir(label: &str) -> PathBuf {
@@ -265,7 +281,13 @@ mod tests {
 
     #[test]
     fn invalid_v1_values_and_older_versions_are_preserved_without_blocking_note_startup() {
-        for source in ["version = 1\nopacity = 1\n", "version = 0\n"] {
+        for source in [
+            "version = 1\nopacity = 1\n",
+            "version = 1\n[window]\nwidth_dip = 1\n",
+            "version = 1\n[window]\ndock_offset_ratio = nan\n",
+            "version = 1\n[window]\nfloating_x_ratio = inf\n",
+            "version = 0\n",
+        ] {
             let root = unique_dir("semantic-invalid");
             fs::create_dir(&root).unwrap();
             let path = root.join("config.toml");

@@ -10,3 +10,4 @@ mod rendering;
 
 pub use fonts::{FontSelection, ScriptClass, ScriptRun, segment_script_runs};
 pub use projection::{EditorRect, PreeditVisual, SourceProjection, SourceProjectionError};
+pub use rendering::SourceTheme;
