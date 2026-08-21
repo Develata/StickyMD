@@ -7,6 +7,8 @@ const WM_MOUSEMOVE: u32 = 0x0200;
 const WM_LBUTTONDOWN: u32 = 0x0201;
 const WM_LBUTTONUP: u32 = 0x0202;
 const WM_CLOSE: u32 = 0x0010;
+const WM_KEYDOWN: u32 = 0x0100;
+const WM_KEYUP: u32 = 0x0101;
 const WM_ENTERSIZEMOVE: u32 = 0x0231;
 const WM_EXITSIZEMOVE: u32 = 0x0232;
 const MK_LBUTTON: usize = 0x0001;
@@ -108,11 +110,30 @@ unsafe extern "system" {
 /// CLI; product runtime code does not expose a test command channel.
 pub(crate) fn switch_to_source(process_id: u32) -> Result<(), String> {
     let window = visible_window(process_id)?;
-    click_client(window, 16, 10)?;
+    click_view_control(window, 0)?;
     // Let the application's message pump consume the ordered sequence before
     // the caller starts polling the durable config acknowledgement.
     thread::sleep(Duration::from_millis(50));
     Ok(())
+}
+
+pub(crate) fn switch_to_preview(window: WindowHandle) -> Result<(), String> {
+    click_view_control(window, 2)?;
+    thread::sleep(Duration::from_millis(50));
+    Ok(())
+}
+
+pub(crate) fn press_enter(window: WindowHandle) -> Result<(), String> {
+    post_virtual_key(window, 0x0D, 0x1C)
+}
+
+pub(crate) fn press_f6(window: WindowHandle) -> Result<(), String> {
+    post_virtual_key(window, 0x75, 0x40)
+}
+
+pub(crate) fn title(window: WindowHandle) -> Result<String, String> {
+    ensure_window(window)?;
+    Ok(raw_window_title(window.0))
 }
 
 /// Locate the visible StickyMD top-level window owned by `process_id`.
@@ -312,6 +333,55 @@ pub(crate) fn park_cursor_at_primary_right(window: WindowHandle) -> Result<(), S
     }
 }
 
+pub(crate) fn park_cursor_outside_window(window: WindowHandle) -> Result<(), String> {
+    let rect = window_rect(window)?;
+    let work = primary_work_area()?;
+    let inset = 64_i32;
+    let work_right = work
+        .x
+        .saturating_add(i32::try_from(work.width).unwrap_or(i32::MAX));
+    let work_bottom = work
+        .y
+        .saturating_add(i32::try_from(work.height).unwrap_or(i32::MAX));
+    let candidates = [
+        (work.x.saturating_add(inset), work.y.saturating_add(inset)),
+        (
+            work_right.saturating_sub(inset),
+            work.y.saturating_add(inset),
+        ),
+        (
+            work.x.saturating_add(inset),
+            work_bottom.saturating_sub(inset),
+        ),
+        (
+            work_right.saturating_sub(inset),
+            work_bottom.saturating_sub(inset),
+        ),
+    ];
+    let rect_right = i64::from(rect.x) + i64::from(rect.width);
+    let rect_bottom = i64::from(rect.y) + i64::from(rect.height);
+    let point = candidates.into_iter().find(|(x, y)| {
+        i64::from(*x) < i64::from(rect.x)
+            || i64::from(*x) >= rect_right
+            || i64::from(*y) < i64::from(rect.y)
+            || i64::from(*y) >= rect_bottom
+    });
+    let Some((x, y)) = point else {
+        return Err("cannot park the cursor inside the work area but outside StickyMD".to_owned());
+    };
+    // SAFETY: coordinates are copied by SetCursorPos. The selected point is
+    // inset from every work-area edge and outside the measured StickyMD rect,
+    // avoiding both paper interaction and taskbar/edge-sensor activation.
+    if unsafe { SetCursorPos(x, y) } == 0 {
+        Err(format!(
+            "cannot park cursor outside StickyMD: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) fn window_rect(window: WindowHandle) -> Result<WindowRect, String> {
     native_rect(window, false)
 }
@@ -477,6 +547,29 @@ fn click_client(window: WindowHandle, x: u16, y: u16) -> Result<(), String> {
     Ok(())
 }
 
+fn click_view_control(window: WindowHandle, index: u8) -> Result<(), String> {
+    if index > 2 {
+        return Err(format!("view control index {index} is outside 0..=2"));
+    }
+    let scale = f64::from(window_dpi(window)) / 96.0;
+    let x = (5.0 + f64::from(index) * 32.0 + 14.0) * scale;
+    let y = 17.0 * scale;
+    click_client(window, pixel_u16(x)?, pixel_u16(y)?)
+}
+
+fn post_virtual_key(
+    window: WindowHandle,
+    virtual_key: usize,
+    scan_code: u16,
+) -> Result<(), String> {
+    let pressed = 1_isize | ((scan_code as isize) << 16);
+    let released = pressed | (1_isize << 30) | (1_isize << 31);
+    post_message(window, WM_KEYDOWN, virtual_key, pressed, "key down")?;
+    post_message(window, WM_KEYUP, virtual_key, released, "key up")?;
+    thread::sleep(Duration::from_millis(10));
+    Ok(())
+}
+
 unsafe extern "system" fn find_process_window(window: isize, parameter: isize) -> i32 {
     // SAFETY: EnumWindows invokes this callback synchronously with the pointer
     // to the live `WindowSearch` supplied by `switch_to_source`.
@@ -491,7 +584,7 @@ unsafe extern "system" fn find_process_window(window: isize, parameter: isize) -
     // during the callback.
     let visible = unsafe { IsWindowVisible(window) } != 0;
     if process_id == search.process_id && (!search.require_visible || visible) {
-        if window_title(window).starts_with("StickyMD") {
+        if raw_window_title(window).starts_with("StickyMD") {
             search.window = window;
             0
         } else {
@@ -518,7 +611,7 @@ fn window_area(window: isize) -> i64 {
         * i64::from(rect.bottom.saturating_sub(rect.top).max(0))
 }
 
-fn window_title(window: isize) -> String {
+fn raw_window_title(window: isize) -> String {
     // SAFETY: `window` is a live EnumWindows handle for the duration of the
     // callback and the function only queries the copied title length.
     let length = unsafe { GetWindowTextLengthW(window) };

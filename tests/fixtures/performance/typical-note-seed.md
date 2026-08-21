@@ -10,4 +10,3 @@
 | generation | 42 |
 
 链接：[example](https://example.com)。行内公式：$x^2+y^2=1$。代码：`DocumentState`。
-

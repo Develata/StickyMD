@@ -800,7 +800,7 @@ fn run_resource_measurement(
     for case in cases {
         let mode = case.label;
         let mut memory_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
-        let mut cpu_percent = None;
+        let mut cpu_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
         for repetition in 0..RESOURCE_REPETITIONS {
             let directory = root.join(format!("{mode}-{repetition}"));
             let executable = copy_executable(&source, &directory)?;
@@ -813,6 +813,12 @@ fn run_resource_measurement(
             )?;
             let mut child = start(&executable)?;
             wait_for_layout(&directory)?;
+            // A resource baseline represents a truly idle window. Keep the
+            // physical cursor outside the paper so incidental mouse jitter or
+            // operator movement cannot turn preview hit-testing and title
+            // updates into process CPU attributed to the idle sample.
+            let window = crate::window_control::visible_window(child.id())?;
+            crate::window_control::park_cursor_outside_window(window)?;
             thread::sleep(RESOURCE_WARMUP);
             ensure_alive(&mut child, "resource measurement instance")?;
             if mode == "source-after-preview-cache-release" {
@@ -832,26 +838,26 @@ fn run_resource_measurement(
                 sample.peak_private_bytes,
             );
             memory_samples.push(sample);
-            if repetition == 0 && case.measure_cpu {
-                let before = process_metrics::cpu_time(&child)?;
-                let wall_started = Instant::now();
-                thread::sleep(CPU_INTERVAL);
-                ensure_alive(&mut child, "idle CPU measurement instance")?;
-                let elapsed = wall_started.elapsed();
-                let after = process_metrics::cpu_time(&child)?;
-                let cpu = after.saturating_sub(before).as_secs_f64()
-                    / elapsed.as_secs_f64()
-                    / logical_processors as f64
-                    * 100.0;
-                println!(
-                    "resource cpu mode={mode} interval_seconds={:.3} average_percent={cpu:.6}",
-                    elapsed.as_secs_f64()
-                );
-                cpu_percent = Some(cpu);
+            if case.measure_cpu {
+                cpu_samples.push(measure_idle_cpu(
+                    &mut child,
+                    mode,
+                    logical_processors,
+                    window,
+                )?);
             }
             stop_child(&mut child);
         }
-        print_resource_summary(mode, &memory_samples, cpu_percent)?;
+        print_resource_summary(mode, &memory_samples, &cpu_samples)?;
+        if cpu_samples
+            .iter()
+            .any(|sample| *sample > IDLE_CPU_PERCENT_LIMIT)
+        {
+            return Err(format!(
+                "{mode} idle CPU sample exceeds {:.3}%: {cpu_samples:?}",
+                IDLE_CPU_PERCENT_LIMIT
+            ));
+        }
     }
     Ok(())
 }
@@ -875,9 +881,9 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
     let mut collapsed_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
     let mut hidden_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
     let mut startup_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
-    let mut visible_cpu = None;
-    let mut collapsed_cpu = None;
-    let mut hidden_cpu = None;
+    let mut visible_cpu = Vec::with_capacity(RESOURCE_REPETITIONS);
+    let mut collapsed_cpu = Vec::with_capacity(RESOURCE_REPETITIONS);
+    let mut hidden_cpu = Vec::with_capacity(RESOURCE_REPETITIONS);
     for repetition in 0..RESOURCE_REPETITIONS {
         let directory = root.join(format!("window-resource-{repetition}"));
         let executable = copy_executable(&source, &directory)?;
@@ -904,13 +910,12 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
                 visible.peak_working_set_bytes,
                 visible.peak_private_bytes,
             );
-            if repetition == 0 {
-                visible_cpu = Some(measure_idle_cpu(
-                    &mut child,
-                    "visible-source",
-                    logical_processors,
-                )?);
-            }
+            visible_cpu.push(measure_idle_cpu(
+                &mut child,
+                "visible-source",
+                logical_processors,
+                window,
+            )?);
             crate::window_control::move_to_primary_left_edge(window)?;
             wait_for_config_field(&directory, "dock_edge = \"left\"")?;
             crate::window_control::park_cursor_at_primary_right(window)?;
@@ -930,12 +935,13 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
                 collapsed.peak_working_set_bytes,
                 collapsed.peak_private_bytes,
             );
+            collapsed_cpu.push(measure_idle_cpu(
+                &mut child,
+                "docked-collapsed",
+                logical_processors,
+                window,
+            )?);
             if repetition == 0 {
-                collapsed_cpu = Some(measure_idle_cpu(
-                    &mut child,
-                    "docked-collapsed",
-                    logical_processors,
-                )?);
                 run_window_leak_cycles(&directory, &executable, &mut child, window)?;
             }
             crate::window_control::request_close(window)?;
@@ -951,13 +957,12 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
                 hidden.peak_working_set_bytes,
                 hidden.peak_private_bytes,
             );
-            if repetition == 0 {
-                hidden_cpu = Some(measure_idle_cpu(
-                    &mut child,
-                    "hidden-to-tray",
-                    logical_processors,
-                )?);
-            }
+            hidden_cpu.push(measure_idle_cpu(
+                &mut child,
+                "hidden-to-tray",
+                logical_processors,
+                window,
+            )?);
             Ok::<_, String>((startup, visible, collapsed, hidden))
         })();
         stop_child(&mut child);
@@ -968,9 +973,9 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
         hidden_samples.push(hidden);
     }
     print_duration_summary("startup-to-paper", &mut startup_samples)?;
-    print_resource_summary("visible-source", &visible_samples, visible_cpu)?;
-    print_resource_summary("docked-collapsed", &collapsed_samples, collapsed_cpu)?;
-    print_resource_summary("hidden-to-tray", &hidden_samples, hidden_cpu)?;
+    print_resource_summary("visible-source", &visible_samples, &visible_cpu)?;
+    print_resource_summary("docked-collapsed", &collapsed_samples, &collapsed_cpu)?;
+    print_resource_summary("hidden-to-tray", &hidden_samples, &hidden_cpu)?;
     let observed_max = hidden_samples
         .iter()
         .map(|sample| sample.private_working_set_bytes)
@@ -982,16 +987,18 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
             HIDDEN_PRIVATE_WORKING_SET_LIMIT
         ));
     }
-    for (mode, cpu) in [
-        ("visible-source", visible_cpu),
-        ("docked-collapsed", collapsed_cpu),
-        ("hidden-to-tray", hidden_cpu),
+    for (mode, cpu_samples) in [
+        ("visible-source", &visible_cpu),
+        ("docked-collapsed", &collapsed_cpu),
+        ("hidden-to-tray", &hidden_cpu),
     ] {
-        if cpu.is_some_and(|value| value > IDLE_CPU_PERCENT_LIMIT) {
+        if cpu_samples
+            .iter()
+            .any(|sample| *sample > IDLE_CPU_PERCENT_LIMIT)
+        {
             return Err(format!(
-                "{mode} idle CPU {:.6}% exceeds {:.3}%",
-                cpu.unwrap_or_default(),
-                IDLE_CPU_PERCENT_LIMIT
+                "{mode} idle CPU sample exceeds {:.3}%: {cpu_samples:?}",
+                IDLE_CPU_PERCENT_LIMIT,
             ));
         }
     }
@@ -1002,11 +1009,41 @@ fn measure_idle_cpu(
     child: &mut Child,
     mode: &str,
     logical_processors: usize,
+    window: crate::window_control::WindowHandle,
 ) -> Result<f64, String> {
+    const BUCKETS: u32 = 6;
     let before = process_metrics::cpu_time(child)?;
     let wall_started = Instant::now();
-    thread::sleep(CPU_INTERVAL);
-    ensure_alive(child, &format!("{mode} idle CPU instance"))?;
+    let bucket_interval = CPU_INTERVAL / BUCKETS;
+    let mut previous_cpu = before;
+    let mut previous_wall = wall_started;
+    for bucket in 0..BUCKETS {
+        thread::sleep(bucket_interval);
+        ensure_alive(child, &format!("{mode} idle CPU instance"))?;
+        let current_wall = Instant::now();
+        let current_cpu = process_metrics::cpu_time(child)?;
+        let bucket_cpu = current_cpu.saturating_sub(previous_cpu).as_secs_f64()
+            / current_wall.duration_since(previous_wall).as_secs_f64()
+            / logical_processors as f64
+            * 100.0;
+        let memory = process_metrics::memory(child)?;
+        let rect = crate::window_control::window_rect(window)?;
+        println!(
+            "resource cpu bucket mode={mode} bucket={}/{} average_percent={bucket_cpu:.6} \
+             private_working_set_bytes={} private_bytes={} window_x={} window_y={} \
+             window_width={} window_height={}",
+            bucket + 1,
+            BUCKETS,
+            memory.private_working_set_bytes,
+            memory.private_bytes,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+        );
+        previous_cpu = current_cpu;
+        previous_wall = current_wall;
+    }
     let elapsed = wall_started.elapsed();
     let after = process_metrics::cpu_time(child)?;
     let cpu = after.saturating_sub(before).as_secs_f64()
@@ -1136,6 +1173,7 @@ fn run_window_leak_cycles(
         )?;
     }
     wait_for_config_field(program_directory, "opacity = 100")?;
+    run_persistence_and_image_leak_cycles(program_directory, child, window)?;
     thread::sleep(Duration::from_secs(2));
     ensure_alive(child, "post-cycle Phase 8 resource instance")?;
     let after_memory = process_metrics::memory(child)?;
@@ -1160,6 +1198,130 @@ fn run_window_leak_cycles(
             "Phase 8 repeated shell cycles leaked observable objects: before={before_objects:?} after={after_objects:?}"
         ));
     }
+    Ok(())
+}
+
+fn run_persistence_and_image_leak_cycles(
+    program_directory: &Path,
+    child: &mut Child,
+    window: crate::window_control::WindowHandle,
+) -> Result<(), String> {
+    const CYCLES: usize = 100;
+    const EXTERNAL_SETTLE: Duration = Duration::from_millis(350);
+    let note = program_directory.join("note/note.md");
+    crate::window_control::switch_to_source(child.id())?;
+    wait_for_config_field(program_directory, "view_mode = \"source\"")?;
+
+    for cycle in 0..CYCLES {
+        let external = format!("external reload cycle {cycle}\n").into_bytes();
+        fs::write(&note, &external)
+            .map_err(|error| format!("cannot simulate external reload: {error}"))?;
+        thread::sleep(EXTERNAL_SETTLE);
+        crate::window_control::press_enter(window)?;
+        wait_for_note(&note, |bytes| {
+            is_single_byte_insertion(bytes, &external, b'\n')
+        })?;
+        wait_for_window_title(window, |title| title == "StickyMD", "clean autosave")?;
+        if cycle % 25 == 24 {
+            print_cycle_checkpoint(child, "autosave_external_reload", cycle + 1)?;
+        }
+    }
+
+    for cycle in 0..CYCLES {
+        crate::window_control::press_enter(window)?;
+        wait_for_window_title(window, |title| title == "StickyMD *", "dirty edit")?;
+        let external = format!("external conflict cycle {cycle}\n");
+        fs::write(&note, external.as_bytes())
+            .map_err(|error| format!("cannot simulate external conflict: {error}"))?;
+        wait_for_window_title(
+            window,
+            |title| title.contains("外部修改冲突"),
+            "external conflict",
+        )?;
+        crate::window_control::press_f6(window)?;
+        wait_for_window_title(window, |title| title == "StickyMD", "conflict resolution")?;
+        if cycle % 25 == 24 {
+            print_cycle_checkpoint(child, "conflict", cycle + 1)?;
+        }
+    }
+
+    let image_directory = program_directory.join("note/images");
+    fs::create_dir_all(&image_directory)
+        .map_err(|error| format!("cannot create image-cycle directory: {error}"))?;
+    for cycle in 0..CYCLES {
+        let leaf = format!("leak-cycle-{cycle}.bmp");
+        write_bmp(&image_directory.join(&leaf), 128, 128, cycle)?;
+        let external = format!("![cycle {cycle}](images/{leaf})\n");
+        fs::write(&note, external.as_bytes())
+            .map_err(|error| format!("cannot simulate image source reload: {error}"))?;
+        thread::sleep(EXTERNAL_SETTLE);
+        crate::window_control::switch_to_preview(window)?;
+        wait_for_config_field(program_directory, "view_mode = \"preview\"")?;
+        thread::sleep(Duration::from_millis(150));
+        crate::window_control::switch_to_source(child.id())?;
+        wait_for_config_field(program_directory, "view_mode = \"source\"")?;
+        if cycle % 25 == 24 {
+            print_cycle_checkpoint(child, "image_decode", cycle + 1)?;
+        }
+    }
+    ensure_alive(child, "post persistence/image leak cycles")
+}
+
+fn is_single_byte_insertion(observed: &[u8], original: &[u8], inserted: u8) -> bool {
+    if observed.len() != original.len().saturating_add(1) {
+        return false;
+    }
+    observed.iter().enumerate().any(|(index, byte)| {
+        *byte == inserted
+            && observed[..index] == original[..index]
+            && observed[index + 1..] == original[index..]
+    })
+}
+
+fn wait_for_note(path: &Path, accepted: impl Fn(&[u8]) -> bool) -> Result<Vec<u8>, String> {
+    let deadline = Instant::now() + START_TIMEOUT;
+    let mut observed = Vec::new();
+    while Instant::now() < deadline {
+        if let Ok(bytes) = fs::read(path) {
+            observed = bytes;
+            if accepted(&observed) {
+                return Ok(observed);
+            }
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    Err(format!(
+        "note did not reach the expected state; path={} bytes={}",
+        path.display(),
+        observed.len()
+    ))
+}
+
+fn wait_for_window_title(
+    window: crate::window_control::WindowHandle,
+    accepted: impl Fn(&str) -> bool,
+    label: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + START_TIMEOUT;
+    let mut observed = String::new();
+    while Instant::now() < deadline {
+        observed = crate::window_control::title(window)?;
+        if accepted(&observed) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    Err(format!(
+        "window title did not reach {label}; last title={observed:?}"
+    ))
+}
+
+fn print_cycle_checkpoint(child: &mut Child, label: &str, completed: usize) -> Result<(), String> {
+    let memory = process_metrics::memory(child)?;
+    println!(
+        "lifecycle cycle checkpoint kind={label} completed={completed} private_bytes={}",
+        memory.private_bytes
+    );
     Ok(())
 }
 
@@ -1352,7 +1514,7 @@ fn assert_asset_source_unchanged(program_directory: &Path) -> Result<(), String>
 fn print_resource_summary(
     mode: &str,
     samples: &[MemorySample],
-    cpu_percent: Option<f64>,
+    cpu_samples: &[f64],
 ) -> Result<(), String> {
     if samples.len() != RESOURCE_REPETITIONS {
         return Err(format!("{mode} produced {} samples", samples.len()));
@@ -1374,12 +1536,31 @@ fn print_resource_summary(
     private_bytes.sort_unstable();
     peak_working_set.sort_unstable();
     peak_private_bytes.sort_unstable();
+    let mut cpu_sorted = cpu_samples.to_vec();
+    cpu_sorted.sort_by(f64::total_cmp);
+    if !cpu_sorted.is_empty() && cpu_sorted.len() != RESOURCE_REPETITIONS {
+        return Err(format!(
+            "{mode} produced {} idle CPU samples",
+            cpu_sorted.len()
+        ));
+    }
     let middle = samples.len() / 2;
+    let cpu_summary = if cpu_sorted.is_empty() {
+        "samples=0 median=not-measured p95=not-measured max=not-measured".to_owned()
+    } else {
+        format!(
+            "samples={} median={:.6} p95={:.6} max={:.6}",
+            cpu_sorted.len(),
+            cpu_sorted[middle],
+            cpu_sorted[nearest_rank_index(cpu_sorted.len(), 95)],
+            cpu_sorted[cpu_sorted.len() - 1],
+        )
+    };
     println!(
         "resource summary mode={mode} private_working_set_median_bytes={} private_working_set_max_bytes={} \
          private_bytes_median={} private_bytes_max={} peak_working_set_median_bytes={} \
          peak_working_set_max_bytes={} peak_private_bytes_median={} peak_private_bytes_max={} \
-         idle_cpu_average_percent={}",
+         idle_cpu_percent={cpu_summary}",
         private_working_set[middle],
         private_working_set[samples.len() - 1],
         private_bytes[middle],
@@ -1388,9 +1569,15 @@ fn print_resource_summary(
         peak_working_set[samples.len() - 1],
         peak_private_bytes[middle],
         peak_private_bytes[samples.len() - 1],
-        cpu_percent.map_or_else(|| "not-measured".to_owned(), |value| format!("{value:.6}"))
     );
     Ok(())
+}
+
+fn nearest_rank_index(sample_count: usize, percentile: usize) -> usize {
+    sample_count
+        .saturating_mul(percentile)
+        .div_ceil(100)
+        .saturating_sub(1)
 }
 
 fn prepare_preview_layout(program_directory: &Path, view_mode: &str) -> Result<(), String> {
@@ -1603,4 +1790,23 @@ fn cleanup_root(root: &Path) -> Result<(), String> {
         root.display(),
         last_error.map_or_else(|| "unknown error".to_owned(), |error| error.to_string())
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_single_byte_insertion, nearest_rank_index};
+
+    #[test]
+    fn five_sample_p95_is_the_observed_maximum() {
+        assert_eq!(nearest_rank_index(5, 50), 2);
+        assert_eq!(nearest_rank_index(5, 95), 4);
+    }
+
+    #[test]
+    fn autosave_receipt_accepts_exactly_one_requested_byte() {
+        assert!(is_single_byte_insertion(b"ab\ncd", b"abcd", b'\n'));
+        assert!(is_single_byte_insertion(b"abcd\n", b"abcd", b'\n'));
+        assert!(!is_single_byte_insertion(b"abcd", b"abcd", b'\n'));
+        assert!(!is_single_byte_insertion(b"abycd", b"abcd", b'\n'));
+    }
 }
