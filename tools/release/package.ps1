@@ -11,6 +11,21 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Get-CheckedRelativePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $rootPrefix = $rootPath + '\'
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if (-not $fullPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Package input escapes staging root: $fullPath"
+    }
+    return $fullPath.Substring($rootPrefix.Length)
+}
+
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 if (-not $ExePath) { $ExePath = Join-Path $repoRoot 'target\release\stickymd-win.exe' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot 'dist' }
@@ -49,6 +64,7 @@ if ($ReleaseTag) {
     $archiveName = "StickyMD-$Version-$qualifier-windows-x64-portable.zip"
 }
 $archivePath = Join-Path $OutputDirectory $archiveName
+$archiveTemporaryPath = Join-Path $OutputDirectory (".$archiveName." + [guid]::NewGuid().ToString('N') + '.tmp')
 
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("stickymd-package-" + [guid]::NewGuid().ToString('N'))
@@ -80,16 +96,28 @@ try {
     ) -join "`r`n"
     [IO.File]::WriteAllText((Join-Path $packageRoot 'README.txt'), $readme + "`r`n", [Text.UTF8Encoding]::new($false))
 
-    if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force }
+    if (Test-Path -LiteralPath $archivePath) {
+        throw "Refusing to overwrite an existing package: $archivePath"
+    }
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $stream = [IO.File]::Open($archivePath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $stream = [IO.File]::Open($archiveTemporaryPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     try {
         $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create, $false)
         try {
-            $files = Get-ChildItem -LiteralPath $packageRoot -File -Recurse | Sort-Object { $_.FullName.Substring($temporaryRoot.Length) }
+            $files = [Collections.Generic.List[IO.FileInfo]]::new()
+            foreach ($file in Get-ChildItem -LiteralPath $packageRoot -File -Recurse) {
+                $files.Add($file)
+            }
+            $fileComparison = [Comparison[IO.FileInfo]] {
+                param($left, $right)
+                $leftRelative = Get-CheckedRelativePath -Root $temporaryRoot -Path $left.FullName
+                $rightRelative = Get-CheckedRelativePath -Root $temporaryRoot -Path $right.FullName
+                return [StringComparer]::Ordinal.Compare($leftRelative, $rightRelative)
+            }
+            $files.Sort($fileComparison)
             foreach ($file in $files) {
-                $relative = [IO.Path]::GetRelativePath($temporaryRoot, $file.FullName).Replace('\', '/')
+                $relative = (Get-CheckedRelativePath -Root $temporaryRoot -Path $file.FullName).Replace('\', '/')
                 $entry = $archive.CreateEntry($relative, [IO.Compression.CompressionLevel]::Optimal)
                 $entry.LastWriteTime = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
                 $input = [IO.File]::OpenRead($file.FullName)
@@ -98,6 +126,8 @@ try {
             }
         } finally { $archive.Dispose() }
     } finally { $stream.Dispose() }
+
+    [IO.File]::Move($archiveTemporaryPath, $archivePath)
 
     $zipHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $checksumPath = Join-Path $OutputDirectory 'SHA256SUMS.txt'
@@ -112,4 +142,12 @@ try {
         throw "Refusing to remove unexpected temporary path: $resolvedTemp"
     }
     if (Test-Path -LiteralPath $resolvedTemp) { Remove-Item -LiteralPath $resolvedTemp -Recurse -Force }
+    $resolvedArchiveTemporaryPath = [IO.Path]::GetFullPath($archiveTemporaryPath)
+    $resolvedOutputDirectory = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\') + '\'
+    if (-not $resolvedArchiveTemporaryPath.StartsWith($resolvedOutputDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove unexpected package temporary path: $resolvedArchiveTemporaryPath"
+    }
+    if (Test-Path -LiteralPath $resolvedArchiveTemporaryPath) {
+        Remove-Item -LiteralPath $resolvedArchiveTemporaryPath -Force
+    }
 }
