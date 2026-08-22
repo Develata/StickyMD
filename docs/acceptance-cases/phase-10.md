@@ -41,7 +41,7 @@
 | P10-A31 | final warm cohort has >=30 samples and p95 <=180 ms or exact USER waiver | Automated | copied-Release JSON startup evidence | BLOCKED |
 | P10-A32 | 50/100/300 zoom performance/resource/leak gates | Automated | Release benchmark + copied-runtime resources at `b9f83f1` | AUTOMATED PASS |
 | P10-A33 | AC-001..AC-030 automated regressions | Automated | final Rust CLI task graph | AUTOMATED PASS |
-| P10-A34 | exact Phase 10 EXE/ZIP/SBOM/checksum/package verification | Automated | verified ZIP `277ab831…71a053`, source `b9f83f1` | AUTOMATED PASS |
+| P10-A34 | exact Phase 10 EXE/ZIP/SBOM/checksum/package verification | Automated | verified ZIP `70c8e6f5…fba7e0`, source `9c0e862` | AUTOMATED PASS |
 | P10-A35 | Phase 9 artifact is superseded and not reused as final candidate | Automated | Phase 10 filename/hash and obsolete-artifact audit | AUTOMATED PASS |
 | P10-A36 | core/render unsafe=0 and forbidden runtime dependencies absent | Automated | source/dependency/governance scan | AUTOMATED PASS |
 

@@ -16,7 +16,7 @@ taskbar/Alt+Tab, tray, physical DPI/multi-monitor and failure-site rows remain `
 | Starting commit | `3aedb24d` |
 | Contract commit | `4a3ef1e` |
 | Product implementation commit | `6c372a8` |
-| Candidate source commit | `b9f83f13730b89bb59773e701eaa955d3c0acd0d` |
+| Candidate source commit | `9c0e86298545429e4136c80d861918948be8bb2a` |
 | Runtime dependencies added | None |
 
 ## Corrections
@@ -111,16 +111,22 @@ matrix above remains the current-candidate authority.
 
 | Artifact | Value |
 | --- | --- |
-| source commit | `b9f83f13730b89bb59773e701eaa955d3c0acd0d` |
+| source commit | `9c0e86298545429e4136c80d861918948be8bb2a` |
 | EXE SHA-256 | `4c6b3470cc3e28a7c3fcdde4ee7c79c01a41a96c49756b445f4f33fac12faecf` |
-| ZIP | `StickyMD-0.1.0-local-rc-b9f83f13730b-windows-x64-portable.zip` |
-| ZIP bytes | 3,883,540 |
-| ZIP SHA-256 | `277ab831171001453adb68925c42d1a34da74d6269fcfb73d3808d088571a053` |
-| SBOM SHA-256 | `8bc55ec3a26ee384f704107d51883caefd69242371aa9fdedf990ea47ea9ab0a` |
-| package verification | PASS, including copied runtime |
+| ZIP | `StickyMD-0.1.0-local-rc-9c0e86298545-windows-x64-portable.zip` |
+| ZIP bytes | 3,877,996 |
+| ZIP SHA-256 | `70c8e6f50f39d793888263cfabec469ce0c04efd1c5bef5029c23ffb65fba7e0` |
+| SBOM SHA-256 | `faf99dcb1e1eaf6087d83c8af469d87274f7a55c751f7cd7db263ce3e55a18f8` |
+| package verification | PASS in PowerShell 7 and Windows PowerShell 5.1, including copied runtime |
 
 The prior Phase 9 ZIP is obsolete and was not reused. It was moved out of `dist/` to a recoverable
 system-temporary backup before the Phase 10 package was generated.
+
+The first Phase 10 package was also superseded after final verification exposed PowerShell 5.1
+encoding/API incompatibilities. The repaired pipeline produces byte-identical runtime notices in
+PowerShell 5.1 and 7, writes the ZIP to a unique temporary path, and never publishes or overwrites a
+candidate after a failed archive build. The final candidate above comes from the clean repair
+commit; the product EXE hash is unchanged.
 
 ## Safety and Architecture
 

@@ -48,6 +48,14 @@ The existing package scripts remain responsible for Windows shell-level archive 
 SBOM command invocation. Their results are planned and judged by the Rust automation authority;
 Phase 10 did not duplicate mature archive construction code merely to rename the implementation.
 
+Final independent verification found two Windows PowerShell 5.1 portability defects in that shell
+boundary. Runtime notices now use explicit strict UTF-8 reads and ordinal package/license ordering,
+so PowerShell 5.1 and 7 generate the same notice hash for all 187 runtime packages. Package creation
+uses a unique same-directory temporary ZIP, refuses to overwrite an existing candidate, publishes
+only after the archive is closed, and removes only its own validated temporary path on failure.
+The exact candidate is produced by the repository's pinned PowerShell 7 route; both PowerShell 7
+and 5.1 independently pass full verification of that candidate.
+
 ## CI
 
 The Windows workflow calls:

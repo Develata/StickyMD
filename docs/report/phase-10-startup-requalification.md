@@ -18,10 +18,11 @@ therefore remains `NOT RC READY`.
 | Defender real-time | disabled when measured |
 | Toolchain | rustc/cargo 1.97.1, Release, no debugger |
 | Measured product commit | `6c372a82f21b12e8c16ba5da606e5810aede05c9` |
-| Candidate source commit | `b9f83f13730b89bb59773e701eaa955d3c0acd0d` |
+| Candidate source commit | `9c0e86298545429e4136c80d861918948be8bb2a` |
 
-`b9f83f1` differs from `6c372a8` only in the std-only smoke evidence projection; the product source
-and Release EXE are unchanged. Candidate package identity is recorded in the RC report.
+The final candidate adds only std-only smoke evidence, documentation and release-script reliability
+changes after `6c372a8`; the product source and Release EXE are unchanged. Candidate package
+identity is recorded in the RC report.
 
 ## Method Audit
 
