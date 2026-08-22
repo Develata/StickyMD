@@ -236,18 +236,22 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
 - 表格：GFM alignment、单元格换行、基本边框、行背景轻微交替、宽度不足区域横向滚动；
   不支持列宽拖动与单元格编辑；task checkbox 只读。
 - MathLayoutCache：source + display_mode + foreground → DisplayList；最多 512 entries。
-- MathRasterCache：layout key + effective font size（已折入 DPI）+ theme foreground → raster；
+- MathRasterCache：layout key + effective font size（已折入 DPI 与 Content Zoom）+ theme foreground → raster；
   严格预算 ≤ 8 MiB。
 - painter 的复用 glyph outline 采用独立 ≤ 4 MiB bounded cache；不使用上游无界 outline cache。
 - DecodedImageCache：只缓存 viewport 附近图片；≤ 16 MiB；LRU 淘汰。
 - 进入纯 Source 或隐藏（tray/dock collapsed）一段时间后：清理解码图片与公式 raster，
   保留小型 layout cache、文档与字体数据库，不保留无必要 framebuffer 副本。
+- Content Zoom 改变时复用已解析的 OwnedDocumentTree/RenderTree，只重新布局可见内容；
+  不重新运行 Comrak，也不推进 Document generation。数学只失效受有效字号影响的 raster，
+  保留语义/layout authority；图片按缩放后的布局框请求受 16 MiB 预算约束的 viewport raster，
+  不预生成 300% 全文大图。
 
 ---
 
 ## Inputs
 
-`doc::snapshot`（带 generation）、主题与 DPI 上下文。
+`doc::snapshot`（带 generation）、主题、DPI 与 Content Zoom 上下文。
 
 ## Outputs
 
@@ -272,7 +276,8 @@ PreviewState 只按 `Dirty → Scheduled → Rendering → Clean/Failed` 推进�
 
 ## Configuration
 
-Preview debounce 1000 ms 为固定内部参数；无用户可配排版项（排版 token 固定）。
+Preview debounce 1000 ms 为固定内部参数；排版 token 固定。唯一用户排版比例是全局
+Content Zoom（50–300%，默认 100%），它只缩放内容投影而不改变 Markdown 语义或 Shell。
 
 ## Lifecycle
 

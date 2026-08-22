@@ -31,3 +31,7 @@
   - 内容：Phase 9 pre-release convergence、人工验收、性能加固、供应链与本地 RC 任务原文。
   - 来源 SHA-256：`DEB122277086F6F9323454C454ABF1FF1969CB8FBD9E840945597F72CD52ADD8`
   - 导入方式：逐行原文归档；仅由 `apply_patch` 统一为仓库换行格式，未改写正文。
+- [`2026-08-22-phase-10-user-approved-ux-corrections.md`](2026-08-22-phase-10-user-approved-ux-corrections.md)
+  - 内容：Phase 10 用户批准的交互修订、自动化收敛、启动审计与 RC 重资格化任务原文。
+  - 来源 SHA-256：`E623AAF6FC9FD4E38BC13AE64F709DB6BEE46CBD397CA6EC3E9F1DB6D9375476`
+  - 导入方式：逐行原文归档；仅由 `apply_patch` 统一为仓库换行格式，未改写正文。

@@ -311,7 +311,7 @@ Ctrl+Shift+S 导出到目标目录。
 ## AC-019 Left Dock
 
 ### Preconditions
-浮动窗口靠近屏幕左边缘（≤12 DIP）。
+浮动窗口释放边缘位于屏幕左侧工作区边缘 24 DIP 内，且左侧是最近合格边缘或 tie 规则胜者。
 
 ### Action
 松手；随后 hover 感应条；失焦等待。
@@ -334,7 +334,7 @@ Ctrl+Shift+S 导出到目标目录。
 同上。
 
 ### Expected
-向右缩入，其余行为同 AC-019。
+按 24 DIP 最近合格边缘规则向右吸附并保持展开，其余行为同 AC-019。
 
 ### Failure Signals
 同 AC-019。
@@ -350,7 +350,7 @@ Ctrl+Shift+S 导出到目标目录。
 同上。
 
 ### Expected
-向上缩入，感应条宽度=窗宽；其余行为一致。
+按 24 DIP 最近合格边缘规则向上吸附并保持展开，感应条宽度=窗宽；其余行为一致。
 
 ### Failure Signals
 同 AC-019。
@@ -396,10 +396,10 @@ Ctrl+Shift+S 导出到目标目录。
 打开透明度控件。
 
 ### Action
-拖动 slider、输入 65/105/96.5、松开/Enter/失焦。
+拖动 slider、输入 35/105/96.5、松开/Enter/失焦。
 
 ### Expected
-70–100 实时预览；越界 clamp（65→70，105→100）；非整数不提交；
+40–100 实时预览；越界 clamp（35→40，105→100）；非整数不提交；
 仅在松开/Enter/失焦写配置；整窗（含文字公式图片控件阴影）统一透明。
 
 ### Failure Signals
@@ -504,3 +504,110 @@ scale 正确重算；3 DIP 感应条按显示器缩放；IME 候选框位置正�
 
 ### Failure Signals
 静默覆盖；提示缺失；坏 temp 被恢复。
+
+---
+
+## AC-031 Traditional Clipboard Shortcuts
+
+### Preconditions
+Source 或 Split 中编辑器可接收输入；另在 Preview 中存在可复制选择。
+
+### Action
+分别使用 Ctrl+C/Ctrl+Insert、Ctrl+X/Shift+Delete、Ctrl+V/Shift+Insert；粘贴分别覆盖
+Unicode 文本、图片和文件列表；IME composition 与控件输入焦点下重复边界测试。
+
+### Expected
+每组别名进入完全相同的 typed intent 与权限检查；Shift+Insert 保留 Ctrl+V 的
+CF_HDROP/图片/文本优先级；剪切写剪贴板失败时不删除 canonical text；Preview 只允许复制。
+
+### Failure Signals
+别名绕过 intent；Shift+Insert 退化为 text-only；剪切失败仍删除；Preview 被修改。
+
+---
+
+## AC-032 Content Zoom
+
+### Preconditions
+文档含 Source 文本、Preview 段落/表格、公式和本地图片，三种视图均可切换。
+
+### Action
+使用 Ctrl++/Ctrl+=/数字键盘加号、Ctrl+-/数字键盘减号、Ctrl+0 和 Ctrl+滚轮；遍历
+50/100/300%，切换视图、移动 DPI、重启程序。
+
+### Expected
+全局整数缩放范围 50–300%、默认 100%；键盘每次 10%，滚轮每完整 notch 5% 并正确
+累计高分辨率增量；Source/Preview/Split 共用并持久化；Shell 不缩放；Document generation
+不变、Comrak parse 次数不增加、数学只做必要 raster invalidation、图片缓存仍受预算约束。
+
+### Failure Signals
+越界；不同视图各持一份缩放；缩放修改文档/重解析 Markdown；无界 raster；逐滚轮事件写配置。
+
+---
+
+## AC-033 Compact Window
+
+### Preconditions
+窗口处于 Source、Preview、Split 各模式，含滚动内容和顶部控件。
+
+### Action
+缩小到 220×120 DIP，在三种模式输入/滚动/切换并测试所有边/角 resize 与 dock。
+
+### Expected
+默认仍为 520×680；最小为 220×120；Source/Preview 可基本操作；Split 始终 50/50、
+分隔线 1 DIP 且不自动切模式；关键控制仍可达，不保留每栏 240 DIP 的硬限制。
+
+### Failure Signals
+无法缩到最小；Split 自动变 Source/Preview；控件永久不可达；恢复/吸附几何越界。
+
+---
+
+## AC-034 Tool Window Identity
+
+### Preconditions
+托盘已经建立，主窗口可见；另测试 hidden、collapsed 和 focused 状态。
+
+### Action
+观察任务栏、Alt+Tab/Win+Tab；从 StickyMD 按 Alt+Tab；点击窗口输入并使用 IME；通过
+感应条、托盘和同目录第二实例恢复。
+
+### Expected
+主窗口无任务栏/切换器项且 Alt+Tab 可以切走；窗口仍可激活、聚焦和输入，未设置
+WS_EX_NOACTIVATE；四条恢复路径有效；Tool Window 身份不改变 Close、dock、topmost 或 config。
+
+### Failure Signals
+任务栏/切换器残留；无法 Alt+Tab 离开；点击不聚焦或 IME 失效；隐藏后不可恢复。
+
+---
+
+## AC-035 Dock Capture Semantics
+
+### Preconditions
+多显示器工作区已知，含负坐标/混合 DPI；窗口处于浮动态。
+
+### Action
+在 Left/Right/Top 24 DIP 内与边角 tie/非 tie 位置释放，另让 Bottom 更近、测试 25 DIP
+外、16 DIP detach、聚焦/失焦/手动/Esc。
+
+### Expected
+最近合格边缘胜出；仅距离差 ≤1 DIP 时 Top>Left>Right；Bottom 不参与也不阻止其他边；
+捕获进入 DockedExpanded，聚焦时保持展开；原 700 ms、手动/Esc、16 DIP detach 规则不变。
+
+### Failure Signals
+非 tie 被固定优先级抢走；Bottom 影响结果；24 DIP 使用物理像素；捕获后立即收起。
+
+---
+
+## AC-036 Extended Opacity
+
+### Preconditions
+窗口含 Source/Preview、公式、图片、控件并可使用 IME。
+
+### Action
+slider/整数输入测试 39、40、70、96、100、101 与非整数；重启验证持久化。
+
+### Expected
+40–100 整数范围、默认 96，越界 clamp；整窗统一 alpha；40% 仍可点击/聚焦/输入且不
+click-through；100% 清理 layered style；只有 release/Enter/失焦提交配置。
+
+### Failure Signals
+仍 clamp 到 70；40% 不可交互；部分内容未透明；100% 样式清理破坏其他 extended bits。

@@ -214,7 +214,7 @@ struct AssetState {
 ```rust
 struct WindowState {
     placement: WindowPlacement,   // DIP size + monitor identity + ratio
-    opacity: u8,                  // 70–100
+    opacity: u8,                  // 40–100
     always_on_top: bool,
 }
 
@@ -258,7 +258,8 @@ enum ImeState {
 struct ConfigState {
     version: u32,             // = 1
     theme: ThemeMode,         // light | system | dark
-    opacity: u8,              // 70–100，默认 96
+    opacity: u8,              // 40–100，默认 96
+    content_zoom_percent: u16,// 50–300，默认 100；仅缩放内容投影
     always_on_top: bool,
     view_mode: ViewMode,
     window: WindowConfig,     // width/height_dip、monitor_id、dock_edge、ratios
@@ -266,6 +267,8 @@ struct ConfigState {
 ```
 
 - 运行时 ConfigState 是配置权威；`config.toml` 是 durable projection。
+- Content Zoom 不属于 DocumentState、WindowState 或任一 projection；其提交不推进 Document generation，
+  不触发 Markdown 重新解析，也不缩放窗口 Shell/控件/边框。
 - 只在明确提交点写盘（原子替换）；未知字段忽略，缺字段用默认值；损坏则改名保留并以默认启动。
 
 ---

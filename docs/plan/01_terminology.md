@@ -246,10 +246,17 @@
 
 ### Runtime Config
 
-- **Definition**：运行时的配置状态（ConfigState）：theme、opacity、always on top、view mode、窗口布局等。
+- **Definition**：运行时的配置状态（ConfigState）：theme、opacity、content zoom、always on top、view mode、窗口布局等。
 - **Authority**：运行时 ConfigState 是当前配置权威。
 - **Not equivalent to**：config.toml 文件本身。
 - **Lifetime**：进程生命周期；启动时从 durable config 载入（损坏则默认值）。
+
+### Content Zoom
+
+- **Definition**：Source、Preview 与 Split 内容区共享的整数缩放偏好，范围 50–300%，默认 100%。
+- **Authority**：Runtime Config 中的 `content_zoom_percent`；UI、source projection、Preview、数学与图片只消费该值。
+- **Not equivalent to**：Windows DPI、窗口尺寸、Document generation、Markdown 语义或 Shell 控件缩放。
+- **Lifetime**：进程内由 ConfigCoordinator 提交更新，持久投影到 Durable Config；重启后恢复。
 
 ### Durable Config
 

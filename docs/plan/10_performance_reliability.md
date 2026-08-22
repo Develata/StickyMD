@@ -71,6 +71,12 @@ Rust 工具链、是否首次启动、是否开启 Defender、文档 fixture。
 内存指标使用 Private Working Set 与 Commit Size；启动后等待 30 s；
 所有动画结束；无调试器；Release build；重复 ≥ 5 次，报告 median 与最大值。
 
+启动门使用 copied standalone Release EXE 与真实 `EDITOR_READY`（canonical note 已载入、
+Source projection 已整形、首个可用 frame 已呈现且 IME 已启用）。最终资格化至少各取
+30 个 cold/warm 样本，nearest-rank p95，不裁剪。每个样本必须使用 PID/nonce 唯一的
+ready object，并确认前一进程、mutex、tray 与 worker 已退出；warm 在同一已 bootstrap
+目录连续启动，cold 另行记录冷却条件。测量方法错误不得通过放宽门槛来掩盖。
+
 ### 目标表
 
 | 场景 | Target | Hard Failure Condition | Future Benchmark Entry |
@@ -88,6 +94,10 @@ Rust 工具链、是否首次启动、是否开启 Defender、文档 fixture。
 | 100 KiB preview 构建 | ≤ 200 ms | > 400 ms | 预览基准 |
 | 1 MiB preview 构建 | ≤ 1 s（后台） | > 2 s（后台） | 预览基准 |
 | Portable ZIP | ≤ 20 MiB | > 30 MiB | 发布检查 |
+
+Phase 10 还必须测量 50/100/300% zoom 的 Source/Preview/Split、数学/图片缓存、220×120
+窗口与 Tool Window 资源差异；缩放不得造成 Markdown 重解析、无界 raster/cache 或
+按滚轮事件逐次配置写盘。
 
 分栏模式同时保留源码与预览布局，允许有限内存例外，但不得持续增长。
 
@@ -148,7 +158,9 @@ Not applicable（性能参数为内部固定值）。
 
 ## Lifecycle
 
-Targets 在技术验证阶段实测校准；校准结论以 report + plan 更新形式落盘。
+Targets 在技术验证阶段实测校准；校准结论以 report + plan 更新形式落盘。冷启动原始
+hard gate 仍为 300 ms；USER 已授权仅在正确方法与低复杂度优化仍无法解决时讨论 400 ms
+fallback。热启动 hard gate 仍为 180 ms，除非 USER 另行明确 waiver。
 
 ## Extension / Replacement Points
 

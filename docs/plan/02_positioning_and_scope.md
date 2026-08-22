@@ -135,8 +135,9 @@ v1 不支持 Windows 10、Linux、macOS、ARM64。
 9. Undo/Redo：仅当前进程，max 256 entries 或 4 MiB，先到先淘汰。
 10. 图片粘贴：managed 命名 `stickymd-<hash>.<ext>`；保留原编码；截图转 PNG；GC 只作用于 managed。
 11. 导出（Ctrl+Shift+S）：复制引用图片到 `<name>-assets/`，重写相对路径；不是“另存为”。
-12. 窗口：Always on top、左/右/上 dock、auto-hide、hover reveal、手动/Esc 收起、opacity 70–100、Light/System/Dark 主题、托盘生命周期、多显示器（混合 DPI、拔插、负坐标）。
+12. 窗口：Always on top、左/右/上 dock、auto-hide、hover reveal、手动/Esc 收起、opacity 40–100、Light/System/Dark 主题、托盘生命周期、多显示器（混合 DPI、拔插、负坐标）。
 13. 文件可靠性：UTF-8（兼容 BOM 读取）、换行风格保留、temp 恢复、外部修改 reconcile、脏冲突 banner、无效 UTF-8 安全处理。
+14. Phase 10 交互修订：Windows 传统剪贴板快捷键；Source/Preview/Split 共享 50–300% Content Zoom；220×120 DIP 最小窗口；主窗口采用可聚焦的 Tool Window 身份；24 DIP 最近合格边缘 dock 捕获。
 
 详细契约见 `docs/plan/05..11`；用户可见行为投影见 `docs/features/`；
 验收见 `docs/acceptance-cases/`。

@@ -30,12 +30,15 @@
 
 - cosmic-text 布局 + 自绘 caret / selection / preedit。
 - viewport 滚动（垂直；水平按需）。
-- 常规快捷键：编辑、复制/粘贴、Ctrl+Z / Ctrl+Y、Ctrl+S、Ctrl+Shift+S。
+- 常规快捷键：编辑、Ctrl+C/X/V、Ctrl+Insert/Shift+Delete/Shift+Insert、
+  Ctrl+Z / Ctrl+Y、Ctrl+S、Ctrl+Shift+S。传统剪贴板快捷键必须映射到与常规快捷键
+  完全相同的 typed intents；Shift+Insert 必须保留文本/图片剪贴板的同一优先级路径。
 - 剪贴板文本（文件列表剪贴板由平台层补充）。
 - 字符/脚本级字体 run（见下）。
 - 向 Flow Coordination 发出 dirty/autosave 事件。
 - 不做完整语法高亮；Markdown marker 不额外着色；当前行可有极轻背景提示。
-- 默认字号建议 16 DIP，行高建议 1.55（固定值，不提供排版设置）。
+- Source 基准字号 16 DIP、基准行高 1.55；统一乘以全局 Content Zoom（50–300%）。
+  不提供独立 Source 字号、行高或字体配置。
 - caret、selection、IME preedit 必须明显可见。
 
 <a id="font-runs"></a>
@@ -85,7 +88,7 @@
 8. composition 取消不污染 undo。
 9. 高 DPI 候选框位置正确。
 10. 分栏 / 源码 / 吸附展开后都可输入。
-11. 整窗透明度 70–100 时输入正常。
+11. 整窗透明度 40–100 时输入正常。
 12. 失焦/重新聚焦后 composition 状态正确。
 13. 输入期间绝不自动收起。
 
@@ -176,7 +179,10 @@ caret 变化只改变 Editor Session；成功 canonical edit 才推进 generatio
 
 ## Configuration
 
-字号/行高为固定建议值，无用户配置项。
+基准字号/行高为固定 token；全局 `content_zoom_percent` 是唯一内容缩放配置。
+键盘 `Ctrl++`/`Ctrl+=`/数字键盘 `+` 与 `Ctrl+-`/数字键盘 `-` 每次 ±10%，
+`Ctrl+0` 恢复 100%；`Ctrl+Wheel` 每个完整 notch ±5%，高分辨率滚轮增量先在
+Interaction Session 中累计。缩放提交经 ConfigCoordinator 合并写入；普通滚轮仍只滚动。
 
 ## Lifecycle
 

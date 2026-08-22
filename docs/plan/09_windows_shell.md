@@ -35,8 +35,9 @@
 ### 窗口与视图
 
 - 单主窗口，三互斥视图：Source / Split / Preview（默认 Source）。
-- 默认尺寸 520×680 DIP；最小 360×240 DIP；分栏推荐宽度 900 DIP；
-  顶部控制区 34 DIP；分栏每栏不得窄于 240 DIP。
+- 默认尺寸 520×680 DIP；最小 220×120 DIP；分栏推荐宽度 900 DIP；
+  顶部控制区 34 DIP。Split 始终保持 50/50 与 1 DIP 固定分隔线；紧凑窗口不因旧的
+  240-DIP 单栏建议自动切换模式，内容栏可在小尺寸下继续裁剪/滚动。
 - 进入分栏窗口过窄时可向屏幕内侧临时扩展；离开时恢复先前宽度。
 - 顶部图标控件：模式切换×3、Always on top、主题、透明度、手动收起、关闭到托盘。
   控件仅在鼠标位于窗口内/窗口聚焦/正在交互时明显显示，其余状态淡化但可发现。
@@ -50,14 +51,18 @@
 ### 透明度
 
 - 作用整窗（背景、文字、公式、图片、控件、阴影）。
-- 70–100 整数 slider（步长 1）+ 整数输入框；默认 96；越界 clamp；非整数不提交。
+- 40–100 整数 slider（步长 1）+ 整数输入框；默认 96；越界 clamp；非整数不提交。
 - 拖动实时预览；仅在松开滑块、Enter、输入框失焦时写配置（不逐步写盘）。
 
 ### Dock 与自动隐藏
 
 - 支持边缘：左、右、上。**不支持底部**（避免任务栏冲突）。
-- 吸附：松手时窗口边缘距工作区边缘 ≤ 12 DIP → dock；保留 3 DIP 感应条
+- 吸附：松手时根据释放窗口 rect 与候选显示器工作区计算 Left/Right/Top 三个合格边缘
+  的 DIP 距离；最近合格边缘 ≤ 24 DIP → `DockedExpanded(edge)`，保留 3 DIP 感应条
   （顶部吸附时条宽=窗宽；左右吸附时条高=窗高）。
+- Bottom 永不参与候选，也不得因为它更近而阻止合格的 Left/Right/Top。
+- 只有候选距离相差 ≤ 1 DIP 时使用 `Top > Left > Right` 决胜；非 tie 必须由最近边缘胜出。
+- 捕获后若窗口仍聚焦，保持展开；后续收起仍只由既有 700 ms 失焦、手动或 Esc 规则触发。
 - 拖离边缘 > 16 DIP → Floating。
 - 焦点规则：获得键盘焦点后禁止自动收起；IME composition 期间绝不收起；
   鼠标临时离开不触发收起。
@@ -78,6 +83,17 @@
 - 真正退出仅来自托盘“退出”：先等待/收敛资产粘贴事务 → 保存最新 canonical generation
   → 安全 GC → 保存配置 → 释放 mutex → 清理已确认无用的临时文件。
 - 退出保存失败：显示明确错误、保持运行、不静默退出、不丢内存文本。
+
+### 主窗口身份与可达性
+
+- 主窗口是无任务栏项、无 Alt+Tab/Win+Tab 切换项的 Tool Window，但仍可通过点击获得
+  键盘焦点并支持 IME；禁止设置 `WS_EX_NOACTIVATE`。
+- 优先使用 winit 的 skip-taskbar 能力；若实测不足以同时满足任务栏与切换器身份，
+  平台 adapter 可在首次显示前设置 `WS_EX_TOOLWINDOW` 并清除冲突的 `WS_EX_APPWINDOW`。
+- Tool Window 身份是固定平台不变量，不进入 ConfigState/WindowState。
+- 窗口必须始终可由当前可见窗口、3-DIP sensor、托盘和同目录第二实例唤醒四条路径恢复；
+  在采用不可从任务栏恢复的身份前，托盘可达性必须已建立。Tool Window 不改变 Close/Quit
+  生命周期、dock、topmost、透明度或焦点规则。
 
 <a id="single-instance"></a>
 ### 单实例唤醒
@@ -166,7 +182,8 @@ WindowDockCoordinator/LifecycleCoordinator 是窗口业务状态的 mutation own
 
 ## Configuration
 
-窗口/主题/透明度/置顶 → ConfigState（见 `04`）；时间常量（12/3/100/700/500/140 ms）为固定内部参数。
+窗口/主题/透明度/置顶 → ConfigState（见 `04`）；24 DIP 捕获、1 DIP tie、16 DIP
+detach、3 DIP sensor 与 100/700/500/140 ms 时间常量为固定内部参数。
 
 ## Lifecycle
 
@@ -184,12 +201,13 @@ WindowDockCoordinator/LifecycleCoordinator 是窗口业务状态的 mutation own
 
 ## Verification
 
-- 手工矩阵：dock×3、hover、失焦、typing guard、Esc、手动、topmost、
-  透明度 70/85/96/100、Light/System/Dark、运行时主题切换、close to tray、tray quit、
+- 手工矩阵：dock×3、24 DIP 捕获/tie/Bottom 反例、hover、失焦、typing guard、Esc、手动、topmost、
+  透明度 40/70/96/100、220×120 Source/Preview/Split、Tool Window 任务栏/Alt+Tab/焦点/IME、
+  Light/System/Dark、运行时主题切换、close to tray、tray quit、
   双显示器（同 DPI/混合 DPI/左侧/上方）、拔线、sleep/resume、RDP。
 - property：任意窗口几何变化后窗口仍在至少一个工作区内。
-- 验收：AC-019..AC-029。
+- 验收：AC-019..AC-029、AC-033..AC-036。
 
 ## Non-Goals
 
-底部 dock、多窗口、全局快捷键 v1、开机启动 v1、窗口管理增强（贴角、四分区等）。
+底部 dock、多窗口、系统级全局热键 v1、开机启动 v1、窗口管理增强（贴角、四分区等）。

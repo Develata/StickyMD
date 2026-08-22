@@ -132,6 +132,12 @@ docs/acceptance-cases/phase-XX.md
 - `tools/smoke/phase-XX.ps1` 只能是薄入口；断言、任务规划、去重、进程退出码传播与
   收据输出由 std-only Rust CLI `stickymd-smoke` 持有。
 - PowerShell 脚本不得复制测试判断或产品业务逻辑。
+- Rust CLI 是 automated smoke、performance gate、runtime process measurement 与 readiness
+  聚合的主要 authority；硬阈值必须集中在 Rust 侧或由 plan 单向投影，禁止 Rust/PowerShell
+  各持一份不同数字。
+- CLI 同时提供 human-readable 与 `--json` machine-readable 输出。JSON 至少包含稳定的
+  `schema_version`、commit、artifact SHA-256（适用时）、suite 与逐项 status/evidence；
+  `0` 表示所有请求的自动门通过，非零表示失败、阻塞或所请求能力不可验证。
 - Rust CLI 属于开发验证面，不是 StickyMD runtime dependency，不进入 portable 发布包。
 - `all --ci` 合并 Phase 的无界面任务图并按 task identity 去重；CI 不应为了逐 Phase
   显示而重复运行相同 workspace 测试。
@@ -139,6 +145,9 @@ docs/acceptance-cases/phase-XX.md
   机器相关测量值只作诊断，不得冒充跨机器承诺。
 - 本地 `--performance` 是同一组性能入口的显式复跑方式；`--runtime` 会创建原生窗口，
   只允许显式本地运行，不得偷偷进入 headless CI。
+- CLI 自身必须有任务规划、JSON schema/序列化与 exit-code 单元测试。cargo fmt/clippy/test/deny
+  保持 CI 原生命令；成熟的 Windows package/GUI helper 可继续由 PowerShell 承担，但不得
+  复制 Rust 已拥有的 gate 判断。
 
 ### 验收矩阵
 
