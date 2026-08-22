@@ -83,8 +83,9 @@ and compact-window interaction.
 
 The Phase 10-specific Release zoom p95 values are 38.700 ms at 50%, 38.275 ms at 100%, and
 34.511 ms at 300%. Five copied Split processes per zoom remain below the 64 MiB hard gate; maximum
-private working sets were 25,497,600, 25,878,528 and 27,901,952 bytes. One hundred zoom-in/out
-cycles reduced private bytes by 86,016 bytes in the observed process, so no linear growth was found.
+private working sets were 25,395,200, 25,706,496 and 27,979,776 bytes. One hundred zoom-in/out
+cycles reduced private bytes by 245,760 bytes in the observed process, so no linear growth was
+found.
 
 ## Architecture Review
 

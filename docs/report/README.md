@@ -30,5 +30,9 @@
 | [`phase-08-windows-desktop-shell.md`](phase-08-windows-desktop-shell.md) | Phase 8 native Windows shell 结果与收据 | automated PASS；manual conditions open |
 | [`phase-09-performance-final.md`](phase-09-performance-final.md) | Phase 9 Release 性能与资源证据 | all measured gates pass except warm startup |
 | [`phase-09-release-readiness.md`](phase-09-release-readiness.md) | Phase 9 发布收口结论 | NOT RC READY；warm/manual blockers open |
+| [`phase-10-automation-consolidation.md`](phase-10-automation-consolidation.md) | Rust smoke/JSON/CI 收敛 | automated architecture PASS |
+| [`phase-10-ux-corrections.md`](phase-10-ux-corrections.md) | Phase 10 十项交互修订 | implementation/automated runtime PASS |
+| [`phase-10-startup-requalification.md`](phase-10-startup-requalification.md) | 30+30 启动重新资格化 | cold 400 ms PASS；warm 180 ms FAIL |
+| [`phase-10-rc-requalification.md`](phase-10-rc-requalification.md) | Phase 10 本地候选总证据 | NOT RC READY |
 | [`phase-verification-harness-architecture.md`](phase-verification-harness-architecture.md) | 逐阶段 smoke 与矩阵治理决策 | USER approved；落实到 plan 11 |
 | [`RISK-ttf-parser-unmaintained.md`](RISK-ttf-parser-unmaintained.md) | 字体解析依赖维护风险 | exact advisory temporarily acknowledged |

@@ -2,7 +2,7 @@
 
 StickyMD is a native, portable Windows 11 Markdown scratchpad: launch it, write, and let it save the single note beside the executable. It is deliberately not a general-purpose editor or knowledge-management system.
 
-> Pre-release status: Phase 9 implementation is complete, but release validation is not. Warm startup and the manual IME, visual, tray, DPI, multi-monitor, recovery, and clean-VM acceptance rows remain open. No RC-ready or stable release is claimed.
+> Pre-release status: Phase 10 implementation and automated local-candidate qualification are complete, but release validation is not. Warm startup and the manual IME, visual, taskbar/Alt+Tab, tray, DPI, multi-monitor, recovery, and clean-VM acceptance rows remain open. No RC-ready or stable release is claimed.
 
 ## What it does
 
@@ -43,7 +43,7 @@ Machine-dependent GUI, IME, display-topology, resource and visual checks are int
 - [中文说明](README.zh-CN.md)
 - [Architecture contract](docs/plan/)
 - [Acceptance contract](docs/acceptance-cases/00_v1_acceptance.md)
-- [Phase 9 matrix](docs/acceptance-cases/phase-09.md)
+- [Phase 10 matrix](docs/acceptance-cases/phase-10.md)
 - [Release checklist](docs/release-checklist.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 - [Security policy](SECURITY.md)

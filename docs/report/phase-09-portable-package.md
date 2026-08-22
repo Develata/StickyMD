@@ -1,5 +1,9 @@
 # Phase 9 Portable Package Report
 
+> **Superseded:** this Phase 9 local candidate is obsolete. Phase 10 generated and verified a new
+> exact-source candidate; see `phase-10-rc-requalification.md`. No Phase 9 artifact is reused for
+> current release qualification.
+
 ## Contract
 
 The package script accepts an already-built EXE; it never invokes Cargo. Local RC names include workspace version and a 12-character source commit. A dirty tree is refused unless the caller explicitly requests a `local-validation-...-dirty` artifact, which cannot be mistaken for an RC. Tagged names are accepted only when `vX.Y.Z` exactly matches the workspace version.

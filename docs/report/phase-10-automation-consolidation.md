@@ -65,7 +65,7 @@ capability is `NOT_TESTED`, never PASS.
 
 ## Verification
 
-- 28 CLI unit tests and two process exit/JSON integration tests pass.
+- 30 CLI unit tests and two process exit/JSON integration tests pass.
 - strict `clippy -D warnings` passes for the tools crate.
 - task-graph tests cover CI, Phase 10 performance/runtime/resources and package modes.
 - JSON schema tests cover escaping, measurements, NOT_TESTED and verified artifact hash admission.
