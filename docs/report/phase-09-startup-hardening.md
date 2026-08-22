@@ -40,10 +40,10 @@ adds another text authority, or initializes Preview/RaTeX eagerly.
 
 | Cohort | Samples | p50 | p95 | max | Gate |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Cold | 20 | 252.337 ms | 268.595 ms | 374.945 ms | PASS: p95 <=300 ms |
-| Warm | 20 | 254.754 ms | 267.094 ms | 272.364 ms | FAIL: p95 >180 ms |
+| Cold | 20 | 258.771 ms | 277.205 ms | 404.996 ms | PASS: p95 <=300 ms |
+| Warm | 20 | 325.975 ms | 342.891 ms | 356.433 ms | FAIL: p95 >180 ms |
 
-The complete cold cohort retains its first-launch 374.945 ms observation. Nearest-rank p95 is the
+The complete cold cohort retains its first-launch 404.996 ms observation. Nearest-rank p95 is the
 nineteenth ordered sample, not the maximum; no observation was discarded. The cold result therefore
 passes the frozen percentile contract without invoking the 400 ms relaxation.
 
@@ -53,19 +53,19 @@ Milestones are cumulative from `main_enter`.
 
 | Milestone | Cold p50 | Cold p95 | Warm p50 | Warm p95 |
 | --- | ---: | ---: | ---: | ---: |
-| FontSystem ready | 83.413 ms | 86.117 ms | 82.128 ms | 86.171 ms |
-| source projection shaped | 179.389 ms | 184.578 ms | 179.780 ms | 186.463 ms |
-| editor ready | 228.125 ms | 235.596 ms | 224.023 ms | 236.275 ms |
+| FontSystem ready | 82.332 ms | 90.934 ms | 114.842 ms | 134.365 ms |
+| source projection shaped | 180.880 ms | 191.725 ms | 244.519 ms | 252.025 ms |
+| editor ready | 233.815 ms | 249.432 ms | 289.376 ms | 309.050 ms |
 
 The externally observed ready signal trails the internal `editor_ready` milestone by event delivery
 and process-observer overhead. The external value is authoritative for the release gate.
 
 ## Findings
 
-1. `FontSystem::new()` remains material, usually about 52--60 ms in ordinary cold samples, but is
-   not the sole bottleneck.
+1. `FontSystem::new()` remains material (cold p95 about 91 ms cumulative and warm p95 about 134 ms
+   cumulative), but is not the sole bottleneck.
 2. Source buffer construction/shaping plus the native-shell present path dominates the remaining
-   warm time. The external warm p95 is 87.094 ms above the gate; the distribution does not support
+   warm time. The external warm p95 is 162.891 ms above the gate; the distribution does not support
    a 180 ms claim.
 3. `cosmic-text` retains the complete system font fallback behavior; `syntect` and `vi` are not
    enabled.
@@ -78,6 +78,6 @@ and process-observer overhead. The external value is authoritative for the relea
 
 | Gate | Result |
 | --- | --- |
-| Cold p95 <=300 ms | **PASS**, 268.595 ms |
+| Cold p95 <=300 ms | **PASS**, 277.205 ms |
 | USER-authorized fallback cold p95 <=400 ms | Not needed |
-| Warm p95 <=180 ms | **FAIL**, 267.094 ms; no waiver granted |
+| Warm p95 <=180 ms | **FAIL**, 342.891 ms; no waiver granted |

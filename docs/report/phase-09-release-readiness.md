@@ -7,32 +7,32 @@
 The Phase 9 implementation and automated release pipeline are implemented and locally exercised,
 but the unchanged warm-startup gate fails and the release-critical manual matrix has no
 current-artifact receipts. Independent-review findings for diagnostic file safety, CPU sampling,
-leak coverage, runtime notices and package verification were repaired; the exact clean-source
-package must still be regenerated. Cold startup passes the original 300 ms gate, so its
-USER-authorized 400 ms fallback is not needed.
+leak coverage, runtime notices and package verification were repaired and the exact clean-source
+package was regenerated. Cold startup passes the original 300 ms gate, so its USER-authorized
+400 ms fallback is not needed.
 
 ## Release Blockers
 
 | ID | Severity | Result |
 | --- | --- | --- |
-| RB-001 warm startup p95 <=180 ms | P0 | **FAIL**, 267.094 ms; no waiver |
+| RB-001 warm startup p95 <=180 ms | P0 | **FAIL**, 342.891 ms; no waiver |
 | RB-002 Microsoft Pinyin / WeChat IME | P0 | NOT TESTED |
 | RB-003 Preview / math / image visual quality | P0 | NOT TESTED |
 | RB-004 tray / docking / theme / opacity / physical displays | P0 | NOT TESTED |
 | RB-005 clipboard producers / native export / crash / reparse / ACL / clean VM | P0 | NOT TESTED |
 | RB-006 user asset / managed-looking fake full safety chain | P0 | NOT TESTED |
-| RB-007 exact runtime license notices and package regeneration | P0 | notice generator PASS; exact package pending |
-| RB-008 release workflow and supply-chain final static gates | P0 | implementation repaired; final verification pending |
+| RB-007 exact runtime license notices and package regeneration | P0 | CLOSED locally on exact clean package |
+| RB-008 release workflow and supply-chain final static gates | P0 | CLOSED locally; remote execution NOT EXECUTED |
 
-Final performance/resource evidence is closed locally. Remote GitHub workflow execution is
-deliberately not treated as a local PASS.
+Package, supply-chain and final performance/resource evidence are closed locally. Remote GitHub
+workflow execution is deliberately not treated as a local PASS.
 
 ## Startup
 
 | Cohort | Samples | p50 | p95 | max | Result |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Cold | 20 | 252.337 ms | 268.595 ms | 374.945 ms | PASS <=300 ms |
-| Warm | 20 | 254.754 ms | 267.094 ms | 272.364 ms | FAIL >180 ms |
+| Cold | 20 | 258.771 ms | 277.205 ms | 404.996 ms | PASS <=300 ms |
+| Warm | 20 | 325.975 ms | 342.891 ms | 356.433 ms | FAIL >180 ms |
 
 Readiness is signalled after the first usable, visible and presented source frame with IME enabled.
 The harness uses a graceful diagnostic exit, nearest-rank percentiles and no trimming. The full
@@ -54,21 +54,21 @@ clean Windows VM all remain `NOT TESTED`.
 
 ## Performance and Memory
 
-- Source / Preview / Split private working-set maxima: 7.758 / 18.238 / 19.504 MiB.
-- Hidden-to-tray private working-set maximum: 7.578 MiB.
+- Source / Preview / Split private working-set maxima: 7.785 / 18.215 / 19.578 MiB.
+- Hidden-to-tray private working-set maximum: 7.195 MiB.
 - Five independent 60-second samples per mode produced Source / Preview / Split / Hidden p95 idle
-  CPU of 0.002604 / 0.001302 / 0.002604 / 0.001302%, all below 0.1%.
-- 1 MiB source worst measured operation p95: full resync 37.446 ms, PASS <=50 ms.
-- Preview p95: 20 KiB 37.242 ms; 100 KiB 263.444 ms; 1 MiB 1.785 s, all PASS.
-- 1 MiB persistence end-to-end p95: 9.373 ms.
+  CPU of 0.002604 / 0.001302 / 0.005208 / 0.002604%, all below 0.1%.
+- 1 MiB source worst measured operation p95: full resync 36.775 ms, PASS <=50 ms.
+- Preview p95: 20 KiB 36.408 ms; 100 KiB 174.067 ms; 1 MiB 1.744 s, all PASS.
+- 1 MiB persistence end-to-end p95: 8.091 ms.
 - 1000 window cycles, 100 autosave/external reloads, 100 dirty conflicts and 100 image cycles changed
-  private bytes by +0.641 MiB without monotonic growth; GDI objects were unchanged.
+  private bytes by +0.527 MiB without monotonic growth; GDI objects were unchanged.
 
 Detailed medians/p95/maxima are in `phase-09-performance-final.md`.
 
 ## 4K Image Transient Peak
 
-Peak working set fell from 93.93 to 83.46 MiB and peak private bytes from 79.93 to 65.33 MiB by
+Peak working set fell from 93.93 to 83.438 MiB and peak private bytes from 79.93 to 65.293 MiB by
 dropping the owned encoded buffer before resize allocation. The change uses the existing safe image
 API and introduces no custom decoder, unsafe block, GPU path or cache.
 
@@ -100,23 +100,22 @@ the still-missing real hard-kill, ACL, reparse, external-editor and full user-as
 
 | Field | Value |
 | --- | --- |
-| Source commit | pending exact clean convergence commit |
-| ZIP | pending regeneration |
-| ZIP size | pending |
-| ZIP SHA-256 | pending |
-| EXE size | pending |
-| EXE SHA-256 | pending |
+| Source commit | `eb687b2441a5816111c116ce30a01bb5b0fba8c6` |
+| ZIP | `StickyMD-0.1.0-local-rc-eb687b2441a5-windows-x64-portable.zip` |
+| ZIP size | 3,878,842 bytes |
+| ZIP SHA-256 | `ef3b503d580fbd587239f9585eeb6195734703cd3abda59c6657f422766b05f9` |
+| EXE size | 8,287,744 bytes |
+| EXE SHA-256 | `84057a4322c965dbf48646274f2686464f060059a70aeebe1e72264d260c7831` |
 
-The prior `d02f8a6` ZIP is superseded because it predates the exact runtime dependency notices and
-stricter verifier. The replacement must contain exactly the EXE, README, MIT license, generated
-third-party notice and two KaTeX font-license files under one `StickyMD/` directory. It must contain
-no `note/`, user data, PDB or proprietary font.
+The exact ZIP contains the EXE, README, MIT license, generated third-party notice and two KaTeX
+font-license files under one `StickyMD/` directory. It contains no `note/`, user data, PDB or
+proprietary font. The generated notice is 1,829,345 bytes and covers all 187 registry packages in
+the locked normal Windows runtime graph, including Comrak and winit.
 
 ## Reproducibility Audit
 
-The superseded package proved deterministic archive generation for one EXE input. Determinism and
-copied-runtime behavior must be rerun for the replacement clean-source package. Independent
-Rust/linker build reproducibility remains **NOT TESTED** and is not claimed.
+Two generations from the same clean source commit and built EXE produced the identical ZIP digest.
+Independent Rust/linker build reproducibility remains **NOT TESTED** and is not claimed.
 
 ## SBOM
 
@@ -124,9 +123,9 @@ Rust/linker build reproducibility remains **NOT TESTED** and is not claimed.
 | --- | --- |
 | Tool | Syft 1.50.0, pinned archive and checksum manifest |
 | Format | SPDX 2.3 JSON |
-| File | `SBOM.spdx.json` replacement pending |
-| Coverage | pending exact package generation |
-| SHA-256 | pending |
+| File | `SBOM.spdx.json`, 677,966 bytes |
+| Coverage | 337 packages, 12 file records |
+| SHA-256 | `757163513bb80f89ee9c30437ca35f4dd3db1de294f64b80a0b50b1daf5343ce` |
 
 ## Build and PE Identity
 
@@ -134,7 +133,7 @@ Rust/linker build reproducibility remains **NOT TESTED** and is not claimed.
 - Windows SDK version was not independently recorded;
 - x64 PE32+ executable with PerMonitorV2 and asInvoker manifest;
 - application icon and StickyMD product/file version are embedded;
-- exact replacement EXE/ZIP identity pending.
+- ZIP 3.699 MiB, below the 30 MiB hard gate.
 
 ## GitHub Release Workflow
 
@@ -170,15 +169,15 @@ physical displays or failure timing remains `NOT TESTED` at release level.
 
 ## Known Issues and USER Decisions Required
 
-1. Warm startup p95 is 267.094 ms versus the 180 ms gate. The USER must approve more engineering,
+1. Warm startup p95 is 342.891 ms versus the 180 ms gate. The USER must approve more engineering,
    explicitly waive/change this gate, or keep the release blocked.
 2. Thirty-two frozen/manual Phase 9 rows remain `NOT TESTED`. Each needs a current-artifact receipt or
    an explicit per-gate USER waiver.
 3. `ttf-parser 0.25.1` remains an upstream unmaintained notice, monitored in its risk report.
 4. Remote release workflow execution, code signing and independent-build bit reproducibility are
    not claimed.
-5. Exact runtime notices, five-sample idle CPU and the full leak-stress cycle implementation pass;
-   the exact clean-source ZIP/SBOM and final static gates remain pending.
+5. Exact runtime notices, five-sample idle CPU, full leak stress, clean-source ZIP/SBOM and final
+   local static gates pass. Remote release workflow execution remains unclaimed.
 6. Version remains `0.1.0`; no stable version/tag decision has been taken.
 
 ## Stable Release Recommendation

@@ -8,12 +8,12 @@ RC-ready recommendation.
 
 ## Final Evidence
 
-- copied Release source identity: measured Phase 9 convergence tree; exact package commit recorded
-  after the implementation tree is committed;
-- cold, 20 samples: p50 252.337 ms, p95 268.595 ms, max 374.945 ms;
-- warm, 20 samples: p50 254.754 ms, p95 267.094 ms, max 272.364 ms;
-- cold internal editor-ready: p50 228.125 ms, p95 235.596 ms;
-- warm internal editor-ready: p50 224.023 ms, p95 236.275 ms;
+- copied Release source identity: exact clean source commit
+  `eb687b2441a5816111c116ce30a01bb5b0fba8c6`;
+- cold, 20 samples: p50 258.771 ms, p95 277.205 ms, max 404.996 ms;
+- warm, 20 samples: p50 325.975 ms, p95 342.891 ms, max 356.433 ms;
+- cold internal editor-ready: p50 233.815 ms, p95 249.432 ms;
+- warm internal editor-ready: p50 289.376 ms, p95 309.050 ms;
 - method: private ready event after first usable present, graceful diagnostic exit, nearest-rank,
   no trimming.
 

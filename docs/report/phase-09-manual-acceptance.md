@@ -19,12 +19,12 @@ failure-timing observation.
 | Display facts | two WMI monitor parameter records; physical topology and per-monitor DPI not manually verified |
 | Language profiles | en-GB and zh-Hans-CN; two Chinese TIP identifiers present |
 | Input method versions | not identified or manually exercised |
-| Source baseline | no frozen Phase 9 convergence RC yet |
-| Candidate EXE | pending exact clean-source package; not published |
-| Candidate EXE SHA-256 | pending |
+| Source baseline | exact local RC source commit `eb687b2441a5816111c116ce30a01bb5b0fba8c6` |
+| Candidate EXE | packaged exact-commit local RC; not published |
+| Candidate EXE SHA-256 | `84057a4322c965dbf48646274f2686464f060059a70aeebe1e72264d260c7831` |
 
-The previous `d02f8a6` candidate was superseded without any manual execution. No manual row can
-advance until the replacement exact candidate identity is frozen and a checked-in receipt exists.
+The EXE above is now the common manual candidate identity. No manual row has been executed against
+it, so assigning the hash does not advance any result beyond `NOT TESTED`.
 
 ## Manual Matrix
 

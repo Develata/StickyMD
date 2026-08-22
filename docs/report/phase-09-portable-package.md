@@ -19,10 +19,19 @@ No `note/`, config, images, trash, PDB, user data or proprietary font can enter 
 
 ## Exact local RC
 
-The prior `d02f8a6` local RC is superseded: it predates generated notices for the complete locked
-Windows runtime graph and the stricter checksum/PE verifier. The replacement source commit, file,
-size and ZIP/EXE/SBOM SHA-256 values remain pending until the review fixes are committed and built
-from a clean tree. Superseded digests are intentionally not presented as current evidence.
+The prior `d02f8a6` local RC is superseded. The replacement exact local RC is:
+
+- source commit: `eb687b2441a5816111c116ce30a01bb5b0fba8c6`;
+- file: `StickyMD-0.1.0-local-rc-eb687b2441a5-windows-x64-portable.zip`;
+- size: 3,878,842 bytes (3.699 MiB);
+- ZIP SHA-256: `ef3b503d580fbd587239f9585eeb6195734703cd3abda59c6657f422766b05f9`;
+- packaged EXE size: 8,287,744 bytes (7.904 MiB);
+- packaged EXE SHA-256: `84057a4322c965dbf48646274f2686464f060059a70aeebe1e72264d260c7831`;
+- SBOM SHA-256: `757163513bb80f89ee9c30437ca35f4dd3db1de294f64b80a0b50b1daf5343ce`.
+
+The package was generated twice from the same clean commit and built EXE and produced the same ZIP
+digest. This proves deterministic archive construction for one EXE input; it does not claim two
+independent Rust/linker builds are bit-for-bit reproducible.
 
 ## Automated verification
 
@@ -32,8 +41,8 @@ regenerates the frozen runtime notices for a byte comparison, and verifies the 3
 PE/x86_64/PE32+/GUI subsystem, PerMonitorV2/asInvoker manifest, complete matching version resource
 and an extractable application icon.
 
-The replacement exact local RC must rerun copied-package runtime tests in ASCII, space-containing
-and Chinese paths, same-directory wake/exit and different-directory isolation. No archive was
+The replacement exact local RC passed copied-package runtime tests in ASCII, space-containing and
+Chinese paths, same-directory wake/exit and different-directory isolation. No archive was
 published, tagged or pushed.
 
 ## Symbols

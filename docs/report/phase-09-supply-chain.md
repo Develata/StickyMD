@@ -6,7 +6,7 @@
 - Advisory policy: **PASS** (`cargo deny 0.20.2`; no unresolved security advisory).
 - Licenses and sources: **PASS**.
 - Runtime network/database/async-framework boundary: **PASS**.
-- SPDX generation pipeline: implemented; replacement exact-package run pending.
+- SPDX generation pipeline: **PASS on exact local RC source commit**.
 
 ## Frozen inputs
 
@@ -28,10 +28,10 @@ The scan context contains the exact `Cargo.lock` plus the extracted portable sta
 
 ## Exact Local RC Evidence
 
-The previous `d02f8a6` SBOM/package evidence is superseded because the runtime notice boundary and
-package verifier changed. The replacement SPDX package/file counts, size and checksum are recorded
-after the exact clean-source package run. The verifier requires both the SBOM and ZIP as the only
-two entries in `SHA256SUMS.txt`.
+Source commit `eb687b2441a5816111c116ce30a01bb5b0fba8c6` generated SPDX 2.3 with 337 packages and 12
+file records. `SBOM.spdx.json` is 677,966 bytes with SHA-256
+`757163513bb80f89ee9c30437ca35f4dd3db1de294f64b80a0b50b1daf5343ce`. The verifier requires the
+SBOM and ZIP as the only two entries in `SHA256SUMS.txt` and verified both digests.
 
 `Cargo.lock` SHA-256 is
 `0c44aa6811f0ef0226a3cc41bddcdebc497a2de7ea13b032f43134f28fabfa25`.

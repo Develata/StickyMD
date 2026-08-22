@@ -14,8 +14,8 @@
 | P09-D004 | Cold startup完整instrumentation。 | Automated | startup instrumentation, copied-Release measurements and startup report | AUTOMATED PASS |
 | P09-D005 | Cold startup ≥20 samples。 | Automated | two copied-Release cohorts, each with 20 cold samples | AUTOMATED PASS |
 | P09-D006 | Warm startup ≥20 samples。 | Automated | two copied-Release cohorts, each with 20 warm samples | AUTOMATED PASS |
-| P09-D007 | Cold startup p95 ≤300ms，或USER WAIVED。 | Automated | final 20-sample copied-Release p95 268.595 ms; original gate PASS, fallback unused | AUTOMATED PASS |
-| P09-D008 | Warm startup p95 ≤180ms，或USER WAIVED。 | Automated | final 20-sample copied-Release p95 267.094 ms; no USER waiver exists | BLOCKED |
+| P09-D007 | Cold startup p95 ≤300ms，或USER WAIVED。 | Automated | final 20-sample copied-Release p95 277.205 ms; original gate PASS, fallback unused | AUTOMATED PASS |
+| P09-D008 | Warm startup p95 ≤180ms，或USER WAIVED。 | Automated | final 20-sample copied-Release p95 342.891 ms; no USER waiver exists | BLOCKED |
 | P09-D009 | FontSystem瓶颈被实测。 | Automated | two milestone cohorts; see startup hardening report | AUTOMATED PASS |
 | P09-D010 | Startup优化没有牺牲CJK/Emoji fallback。 | Automated | unchanged full system font database plus source Unicode regression suite | AUTOMATED PASS |
 | P09-D011 | 没有bundle proprietary fonts。 | Automated | dependency/package source scan; no font asset was added | AUTOMATED PASS |
@@ -60,15 +60,15 @@
 | P09-D050 | Final Preview memory测量。 | Automated | final five-run copied-Release resource report | AUTOMATED PASS |
 | P09-D051 | Final Split memory测量。 | Automated | final five-run copied-Release resource report | AUTOMATED PASS |
 | P09-D052 | Final Hidden memory测量。 | Automated | final five-run copied-Release resource report | AUTOMATED PASS |
-| P09-D053 | Final Idle CPU测量。 | Automated | five independent 60-second samples per mode; Source/Preview/Split/Hidden p95 0.002604/0.001302/0.002604/0.001302% | AUTOMATED PASS |
+| P09-D053 | Final Idle CPU测量。 | Automated | five independent 60-second samples per mode; Source/Preview/Split/Hidden p95 0.002604/0.001302/0.005208/0.002604% | AUTOMATED PASS |
 | P09-D054 | Final input latency测量。 | Automated | current-code Release source pipeline baseline | AUTOMATED PASS |
 | P09-D055 | Final Preview latency测量。 | Automated | current-code Release native Preview baseline | AUTOMATED PASS |
 | P09-D056 | Final startup测量。 | Automated | final 20 cold + 20 warm copied-Release cohorts | AUTOMATED PASS |
-| P09-D057 | Leak stress PASS。 | Automated | 1000 window cycles plus 100 autosave/reload, 100 conflicts and 100 image-decode cycles; private bytes +0.641 MiB, no linear growth | AUTOMATED PASS |
+| P09-D057 | Leak stress PASS。 | Automated | 1000 window cycles plus 100 autosave/reload, 100 conflicts and 100 image-decode cycles; private bytes +0.527 MiB, no linear growth | AUTOMATED PASS |
 | P09-D058 | Cargo dependency freeze。 | Automated | Cargo.lock hash + supply-chain report | AUTOMATED PASS |
 | P09-D059 | cargo deny PASS。 | Automated | final `cargo deny check` | AUTOMATED PASS |
 | P09-D060 | unresolved high-severity advisory = 0。 | Automated | deny audit + explicit unmaintained-only risk report | AUTOMATED PASS |
-| P09-D061 | third-party licenses完整。 | Automated | frozen runtime-graph notice generator added; exact package regeneration pending | BLOCKED |
+| P09-D061 | third-party licenses完整。 | Automated | exact package includes generated license texts for all 187 locked Windows runtime registry packages | AUTOMATED PASS |
 | P09-D062 | proprietary font package scan PASS。 | Automated | package allowlist and source audit | AUTOMATED PASS |
 | P09-D063 | `SBOM.spdx.json`生成。 | Automated | exact local RC SPDX 2.3 report | AUTOMATED PASS |
 | P09-D064 | SBOM tool/version固定。 | Automated | Syft 1.50.0 archive/checksum pins | AUTOMATED PASS |
@@ -115,7 +115,7 @@
 | P09-D105 | workspace tests PASS。 | Automated | latest full run: 357 passed, 0 failed, 12 Release performance tests explicitly exercised separately | AUTOMATED PASS |
 | P09-D106 | Release build PASS。 | Automated | final locked workspace Release build | AUTOMATED PASS |
 | P09-D107 | cargo deny PASS。 | Automated | advisories/licenses/bans/sources PASS | AUTOMATED PASS |
-| P09-D108 | git diff --check PASS。 | Automated | final diff validation pending after review fixes | BLOCKED |
+| P09-D108 | git diff --check PASS。 | Automated | final Phase 9 evidence diff validated with zero whitespace errors | AUTOMATED PASS |
 | P09-D109 | core unsafe=0。 | Automated | forbid declaration + unsafe scan | AUTOMATED PASS |
 | P09-D110 | render unsafe=0。 | Automated | forbid declaration + unsafe scan | AUTOMATED PASS |
 | P09-D111 | no WebView。 | Automated | Cargo.lock/source forbidden-architecture scan | AUTOMATED PASS |
