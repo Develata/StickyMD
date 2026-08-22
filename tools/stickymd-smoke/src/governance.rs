@@ -45,6 +45,9 @@ const REQUIRED_FILES: &[&str] = &[
     "docs/release-checklist.md",
     "docs/report/phase-09-performance-final.md",
     "docs/report/phase-09-release-readiness.md",
+    "docs/phases/2026-08-22-phase-10-user-approved-ux-corrections.md",
+    "docs/tasks/phase-10-ux-corrections-rc-requalification.md",
+    "docs/acceptance-cases/phase-10.md",
     "tools/release/package.ps1",
     "tools/release/generate-third-party-notices.ps1",
     "tools/release/generate-sbom.ps1",
@@ -107,10 +110,45 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_phase8_frozen_trace(root)?;
     verify_phase8_shell_artifacts(root)?;
     verify_phase9_frozen_trace(root)?;
+    verify_phase10_contract_trace(root)?;
     verify_release_infrastructure(root)?;
     verify_plan_refs(root)?;
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
+    Ok(())
+}
+
+fn verify_phase10_contract_trace(root: &Path) -> Result<(), String> {
+    let path = root.join("docs/acceptance-cases/phase-10.md");
+    let content = read_text(&path)?;
+    let automated = frozen_trace_ids(&content, "P10-A")?;
+    let expected_automated: Vec<u16> = (1..=36).collect();
+    if automated != expected_automated {
+        return Err(format!(
+            "{} automated IDs must be exactly P10-A01..P10-A36; observed {automated:?}",
+            path.display()
+        ));
+    }
+    let manual = frozen_trace_ids(&content, "UX10-")?;
+    let expected_manual: Vec<u16> = (1..=23).collect();
+    if manual != expected_manual {
+        return Err(format!(
+            "{} manual IDs must be exactly UX10-01..UX10-23; observed {manual:?}",
+            path.display()
+        ));
+    }
+    for row in read_matrix_rows(&path)? {
+        let line = content.lines().nth(row.line - 1).unwrap_or_default();
+        if line.trim_start().starts_with("| UX10-")
+            && (row.mode != "Manual" || row.status != "NOT TESTED")
+        {
+            return Err(format!(
+                "{}:{} Phase 10 real-environment row must remain Manual / NOT TESTED until a receipt is checked in",
+                path.display(),
+                row.line
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -502,10 +540,10 @@ fn verify_global_acceptance_sequence(root: &Path) -> Result<(), String> {
             observed.push(number);
         }
     }
-    let expected: Vec<u8> = (1..=30).collect();
+    let expected: Vec<u8> = (1..=36).collect();
     if observed != expected {
         return Err(format!(
-            "global acceptance IDs must be exactly AC-001..AC-030; observed {observed:?}"
+            "global acceptance IDs must be exactly AC-001..AC-036; observed {observed:?}"
         ));
     }
     Ok(())

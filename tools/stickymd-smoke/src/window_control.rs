@@ -15,9 +15,14 @@ const MK_LBUTTON: usize = 0x0001;
 const GWL_EXSTYLE: i32 = -20;
 const WS_EX_TOPMOST: isize = 0x0000_0008;
 const WS_EX_LAYERED: isize = 0x0008_0000;
+const WS_EX_TOOLWINDOW: isize = 0x0000_0080;
+const WS_EX_APPWINDOW: isize = 0x0004_0000;
+const WS_EX_NOACTIVATE: isize = 0x0800_0000;
+const WS_EX_TRANSPARENT: isize = 0x0000_0020;
 const LWA_ALPHA: u32 = 0x0000_0002;
 const SPI_GETWORKAREA: u32 = 0x0030;
 const SWP_NOSIZE: u32 = 0x0001;
+const SWP_NOMOVE: u32 = 0x0002;
 const SWP_NOZORDER: u32 = 0x0004;
 const SWP_NOACTIVATE: u32 = 0x0010;
 
@@ -53,6 +58,14 @@ pub(crate) struct WindowRect {
 pub(crate) struct LayeredAlpha {
     pub(crate) layered: bool,
     pub(crate) alpha: Option<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct WindowStyleFacts {
+    pub(crate) tool_window: bool,
+    pub(crate) app_window: bool,
+    pub(crate) no_activate: bool,
+    pub(crate) transparent: bool,
 }
 
 #[repr(C)]
@@ -131,6 +144,14 @@ pub(crate) fn press_f6(window: WindowHandle) -> Result<(), String> {
     post_virtual_key(window, 0x75, 0x40)
 }
 
+pub(crate) fn press_zoom_in(window: WindowHandle) -> Result<(), String> {
+    post_control_chord(window, 0x6B, 0x4E)
+}
+
+pub(crate) fn press_zoom_out(window: WindowHandle) -> Result<(), String> {
+    post_control_chord(window, 0x6D, 0x4A)
+}
+
 pub(crate) fn title(window: WindowHandle) -> Result<String, String> {
     ensure_window(window)?;
     Ok(raw_window_title(window.0))
@@ -162,9 +183,7 @@ pub(crate) fn request_close(window: WindowHandle) -> Result<(), String> {
 pub(crate) fn click_toolbar(window: WindowHandle, control: ToolbarControl) -> Result<(), String> {
     let client = client_rect(window)?;
     let scale = f64::from(window_dpi(window)) / 96.0;
-    let control_size = 28.0 * scale;
-    let gap = 4.0 * scale;
-    let edge = 5.0 * scale;
+    let (control_size, gap, edge) = toolbar_metrics(client.width, scale);
     let right_width = 5.0 * control_size + 4.0 * gap;
     let right_origin =
         (f64::from(client.width) - edge - right_width).max(edge + 3.0 * (control_size + gap) + gap);
@@ -182,24 +201,22 @@ pub(crate) fn click_toolbar(window: WindowHandle, control: ToolbarControl) -> Re
 }
 
 pub(crate) fn commit_opacity_slider(window: WindowHandle, opacity: u8) -> Result<(), String> {
-    if !(70..=100).contains(&opacity) {
-        return Err(format!("opacity {opacity} is outside 70..=100"));
+    if !(40..=100).contains(&opacity) {
+        return Err(format!("opacity {opacity} is outside 40..=100"));
     }
     let client = client_rect(window)?;
     let scale = f64::from(window_dpi(window)) / 96.0;
-    let control_size = 28.0 * scale;
-    let gap = 4.0 * scale;
-    let edge = 5.0 * scale;
+    let (control_size, gap, edge) = toolbar_metrics(client.width, scale);
     let right_width = 5.0 * control_size + 4.0 * gap;
     let right_origin =
         (f64::from(client.width) - edge - right_width).max(edge + 3.0 * (control_size + gap) + gap);
     let opacity_control_right = right_origin + 3.0 * (control_size + gap) - gap;
-    let popup_width = 230.0 * scale;
+    let popup_width = (230.0 * scale).min(f64::from(client.width));
     let popup_x = (opacity_control_right - popup_width)
         .clamp(0.0, (f64::from(client.width) - popup_width).max(0.0));
     let slider_x = popup_x + 12.0 * scale;
     let slider_width = 150.0 * scale;
-    let ratio = f64::from(opacity - 70) / 30.0;
+    let ratio = f64::from(opacity - 40) / 60.0;
     let x = (slider_x + slider_width * ratio).min(slider_x + slider_width - scale.max(1.0));
     let y = 34.0 * scale + 29.0 * scale;
     click_client(window, pixel_u16(x)?, pixel_u16(y)?)?;
@@ -386,6 +403,53 @@ pub(crate) fn window_rect(window: WindowHandle) -> Result<WindowRect, String> {
     native_rect(window, false)
 }
 
+pub(crate) fn resize_to_dip(
+    window: WindowHandle,
+    width_dip: u32,
+    height_dip: u32,
+) -> Result<(), String> {
+    ensure_window(window)?;
+    let scale = f64::from(window_dpi(window)) / 96.0;
+    let width = (f64::from(width_dip) * scale).round() as i32;
+    let height = (f64::from(height_dip) * scale).round() as i32;
+    post_message(window, WM_ENTERSIZEMOVE, 0, 0, "enter move-size")?;
+    thread::sleep(Duration::from_millis(50));
+    // SAFETY: `window` is live, dimensions are bounded smoke inputs, and the
+    // call preserves position, z-order, and activation without retaining data.
+    if unsafe {
+        SetWindowPos(
+            window.0,
+            0,
+            0,
+            0,
+            width,
+            height,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+    } == 0
+    {
+        return Err(format!(
+            "cannot resize StickyMD compact window: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    post_message(window, WM_EXITSIZEMOVE, 0, 0, "exit move-size")?;
+    thread::sleep(Duration::from_millis(100));
+    Ok(())
+}
+
+pub(crate) fn style_facts(window: WindowHandle) -> Result<WindowStyleFacts, String> {
+    ensure_window(window)?;
+    // SAFETY: immutable pointer-free query of a live HWND's style bits.
+    let style = unsafe { GetWindowLongPtrW(window.0, GWL_EXSTYLE) };
+    Ok(WindowStyleFacts {
+        tool_window: style & WS_EX_TOOLWINDOW != 0,
+        app_window: style & WS_EX_APPWINDOW != 0,
+        no_activate: style & WS_EX_NOACTIVATE != 0,
+        transparent: style & WS_EX_TRANSPARENT != 0,
+    })
+}
+
 pub(crate) fn is_topmost(window: WindowHandle) -> Result<bool, String> {
     ensure_window(window)?;
     // SAFETY: this reads immutable style bits from the live HWND and retains
@@ -529,6 +593,15 @@ fn window_dpi(window: WindowHandle) -> u32 {
     unsafe { GetDpiForWindow(window.0) }.max(96)
 }
 
+fn toolbar_metrics(client_width: u32, scale: f64) -> (f64, f64, f64) {
+    let regular_required = 2.0 * 5.0 + 8.0 * 28.0 + 7.0 * 4.0;
+    let compact = f64::from(client_width) / scale < regular_required;
+    let edge = if compact { 3.0 } else { 5.0 } * scale;
+    let gap = if compact { 2.0 } else { 4.0 } * scale;
+    let available = (f64::from(client_width) - 2.0 * edge - 7.0 * gap).max(8.0 * scale);
+    ((available / 8.0).min(28.0 * scale), gap, edge)
+}
+
 fn pixel_u16(value: f64) -> Result<u16, String> {
     if !value.is_finite() || value < 0.0 || value > f64::from(u16::MAX) {
         return Err(format!("client coordinate {value} is outside u16 range"));
@@ -566,6 +639,43 @@ fn post_virtual_key(
     let released = pressed | (1_isize << 30) | (1_isize << 31);
     post_message(window, WM_KEYDOWN, virtual_key, pressed, "key down")?;
     post_message(window, WM_KEYUP, virtual_key, released, "key up")?;
+    thread::sleep(Duration::from_millis(10));
+    Ok(())
+}
+
+fn post_control_chord(
+    window: WindowHandle,
+    virtual_key: usize,
+    scan_code: u16,
+) -> Result<(), String> {
+    const VK_CONTROL: usize = 0x11;
+    const CONTROL_SCAN_CODE: u16 = 0x1D;
+    let ctrl_pressed = 1_isize | ((CONTROL_SCAN_CODE as isize) << 16);
+    let ctrl_released = ctrl_pressed | (1_isize << 30) | (1_isize << 31);
+    let key_pressed = 1_isize | ((scan_code as isize) << 16);
+    let key_released = key_pressed | (1_isize << 30) | (1_isize << 31);
+    post_message(
+        window,
+        WM_KEYDOWN,
+        VK_CONTROL,
+        ctrl_pressed,
+        "control key down",
+    )?;
+    post_message(
+        window,
+        WM_KEYDOWN,
+        virtual_key,
+        key_pressed,
+        "zoom key down",
+    )?;
+    post_message(window, WM_KEYUP, virtual_key, key_released, "zoom key up")?;
+    post_message(
+        window,
+        WM_KEYUP,
+        VK_CONTROL,
+        ctrl_released,
+        "control key up",
+    )?;
     thread::sleep(Duration::from_millis(10));
     Ok(())
 }
@@ -666,5 +776,14 @@ mod tests {
     fn window_handle_is_an_opaque_copyable_value() {
         let handle = WindowHandle(42);
         assert_eq!(handle, handle);
+    }
+
+    #[test]
+    fn phase10_compact_toolbar_driver_matches_the_minimum_hit_target_contract() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let (control, gap, edge) = toolbar_metrics((220.0 * scale) as u32, scale);
+            assert!(control / scale >= 24.0);
+            assert!(2.0 * edge + 8.0 * control + 7.0 * gap <= 220.0 * scale + 0.5);
+        }
     }
 }

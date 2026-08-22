@@ -35,8 +35,7 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: phase smoke (headless, deduplicated)
-        shell: pwsh
-        run: ./tools/smoke/all.ps1 -Ci
+        run: cargo run -p stickymd-smoke --locked -- all --ci --json
       - name: release build
         run: cargo build --workspace --release --locked
 

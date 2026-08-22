@@ -12,10 +12,11 @@ pub(crate) enum Phase {
     P07,
     P08,
     P09,
+    P10,
 }
 
 impl Phase {
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 11] = [
         Self::P00,
         Self::P01,
         Self::P02,
@@ -26,6 +27,7 @@ impl Phase {
         Self::P07,
         Self::P08,
         Self::P09,
+        Self::P10,
     ];
 
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
@@ -40,7 +42,8 @@ impl Phase {
             "7" | "07" | "phase-07" => Ok(Self::P07),
             "8" | "08" | "phase-08" => Ok(Self::P08),
             "9" | "09" | "phase-09" => Ok(Self::P09),
-            _ => Err(format!("unknown phase `{value}`; expected 00..09")),
+            "10" | "phase-10" => Ok(Self::P10),
+            _ => Err(format!("unknown phase `{value}`; expected 00..10")),
         }
     }
 
@@ -56,6 +59,7 @@ impl Phase {
             Self::P07 => "07",
             Self::P08 => "08",
             Self::P09 => "09",
+            Self::P10 => "10",
         }
     }
 }
@@ -75,6 +79,7 @@ pub(crate) struct Options {
     pub(crate) resources: bool,
     pub(crate) release: bool,
     pub(crate) package: bool,
+    pub(crate) json: bool,
 }
 
 impl Options {
@@ -87,7 +92,7 @@ impl Options {
             Some("phase") => {
                 let phase = args
                     .next()
-                    .ok_or_else(|| "`phase` requires a number (00..09)".to_owned())?;
+                    .ok_or_else(|| "`phase` requires a number (00..10)".to_owned())?;
                 Selection::Phase(Phase::parse(&phase)?)
             }
             Some("all") => Selection::All,
@@ -104,6 +109,7 @@ impl Options {
             resources: false,
             release: false,
             package: false,
+            json: false,
         };
         for argument in args {
             match argument.as_str() {
@@ -113,6 +119,7 @@ impl Options {
                 "--resources" => options.resources = true,
                 "--release" => options.release = true,
                 "--package" => options.package = true,
+                "--json" => options.json = true,
                 _ => return Err(format!("unknown option `{argument}`\n{}", Self::usage())),
             }
         }
@@ -149,27 +156,31 @@ impl Options {
         if options.resources
             && !matches!(
                 selection,
-                Selection::Phase(Phase::P05 | Phase::P06 | Phase::P07 | Phase::P08 | Phase::P09)
-                    | Selection::All
+                Selection::Phase(
+                    Phase::P05 | Phase::P06 | Phase::P07 | Phase::P08 | Phase::P09 | Phase::P10,
+                ) | Selection::All
             )
         {
             return Err(
-                "resource measurement is defined only for Phase 05 through Phase 09, or `all`"
+                "resource measurement is defined only for Phase 05 through Phase 10, or `all`"
                     .to_owned(),
             );
         }
         if (options.release || options.package)
-            && !matches!(selection, Selection::Phase(Phase::P09) | Selection::All)
+            && !matches!(
+                selection,
+                Selection::Phase(Phase::P09 | Phase::P10) | Selection::All
+            )
         {
             return Err(
-                "release and package modes are defined only for Phase 09 or `all`".to_owned(),
+                "release and package modes are defined only for Phase 09/10 or `all`".to_owned(),
             );
         }
         Ok(options)
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..09> [--performance|--runtime|--resources|--release|--package]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package]"
+        "usage: stickymd-smoke phase <00..10> [--performance|--runtime|--resources|--release|--package] [--json]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package] [--json]"
     }
 }
 
@@ -191,6 +202,7 @@ mod tests {
         assert!(!options.resources);
         assert!(!options.release);
         assert!(!options.package);
+        assert!(!options.json);
     }
 
     #[test]
@@ -234,5 +246,13 @@ mod tests {
         let error = Options::parse(args(&["phase", "02", "--runtime"]))
             .expect_err("Phase 02 has no runtime smoke");
         assert!(error.contains("Phase 03"));
+    }
+
+    #[test]
+    fn phase10_and_json_are_supported() {
+        let options =
+            Options::parse(args(&["phase", "10", "--json"])).expect("Phase 10 JSON evidence mode");
+        assert_eq!(options.selection, Selection::Phase(Phase::P10));
+        assert!(options.json);
     }
 }

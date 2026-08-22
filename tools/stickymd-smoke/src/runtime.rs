@@ -4,9 +4,11 @@ use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::evidence::EvidenceMeasurement;
 use crate::process_metrics::{self, MemorySample};
 use crate::ready_event::ReadyEvent;
 use crate::runner::RuntimeScenario;
@@ -18,23 +20,59 @@ const CPU_INTERVAL: Duration = Duration::from_secs(60);
 const RESOURCE_REPETITIONS: usize = 5;
 const HIDDEN_PRIVATE_WORKING_SET_LIMIT: u64 = 36 * 1024 * 1024;
 const IDLE_CPU_PERCENT_LIMIT: f64 = 0.1;
-const STARTUP_SAMPLE_COUNT: usize = 20;
+const STARTUP_SAMPLE_COUNT: usize = 30;
 const COLD_START_IDLE: Duration = Duration::from_secs(10);
 const WARM_START_IDLE: Duration = Duration::from_millis(250);
-const ORIGINAL_COLD_START_LIMIT: Duration = Duration::from_millis(300);
-const USER_APPROVED_COLD_START_LIMIT: Duration = Duration::from_millis(400);
+const COLD_START_LIMIT: Duration = Duration::from_millis(400);
 const WARM_START_LIMIT: Duration = Duration::from_millis(180);
+const ZOOM_RESOURCE_WARMUP: Duration = Duration::from_secs(5);
+const ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT: u64 = 8 * 1024 * 1024;
+static QUIET_OUTPUT: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn run(repository: &Path, scenario: RuntimeScenario) -> Result<(), String> {
+macro_rules! runtime_report {
+    ($($argument:tt)*) => {
+        if !QUIET_OUTPUT.load(Ordering::Relaxed) {
+            println!($($argument)*);
+        }
+    };
+}
+
+pub(crate) fn run(
+    repository: &Path,
+    scenario: RuntimeScenario,
+    quiet: bool,
+) -> Result<RuntimeEvidence, String> {
+    QUIET_OUTPUT.store(quiet, Ordering::Relaxed);
     let root = create_smoke_root()?;
     let mut children = Vec::new();
-    let result = run_inner(repository, &root, scenario, &mut children);
+    let result = if scenario == RuntimeScenario::Startup {
+        run_startup_measurement(repository, &root)
+    } else if scenario == RuntimeScenario::ZoomResources {
+        run_zoom_resource_measurement(repository, &root).map(RuntimeEvidence::passed)
+    } else {
+        run_inner(repository, &root, scenario, &mut children)
+            .map(|()| RuntimeEvidence::passed(Vec::new()))
+    };
     stop_children(&mut children);
     let cleanup = cleanup_root(&root);
     match (result, cleanup) {
         (Err(error), _) => Err(error),
-        (Ok(()), Err(error)) => Err(error),
-        (Ok(()), Ok(())) => Ok(()),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(evidence), Ok(())) => Ok(evidence),
+    }
+}
+
+pub(crate) struct RuntimeEvidence {
+    pub(crate) measurements: Vec<EvidenceMeasurement>,
+    pub(crate) gate_failure: Option<String>,
+}
+
+impl RuntimeEvidence {
+    fn passed(measurements: Vec<EvidenceMeasurement>) -> Self {
+        Self {
+            measurements,
+            gate_failure: None,
+        }
     }
 }
 
@@ -55,9 +93,6 @@ fn run_inner(
     }
     if scenario == RuntimeScenario::WindowResources {
         return run_window_resource_measurement(repository, root);
-    }
-    if scenario == RuntimeScenario::Startup {
-        return run_startup_measurement(repository, root);
     }
     let source = repository.join("target/release/stickymd-win.exe");
     if !source.is_file() {
@@ -81,6 +116,9 @@ fn run_inner(
 
     if scenario == RuntimeScenario::WindowShell {
         return run_window_shell_lifecycle(&first_dir, &first_exe, &mut children[0]);
+    }
+    if scenario == RuntimeScenario::Phase10 {
+        return run_phase10_lifecycle(&first_dir, &first_exe, &mut children[0]);
     }
 
     if scenario == RuntimeScenario::Launch {
@@ -143,7 +181,7 @@ struct StartupSample {
     milestones_us: Vec<(String, u128)>,
 }
 
-fn run_startup_measurement(repository: &Path, root: &Path) -> Result<(), String> {
+fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvidence, String> {
     let source = repository.join("target/release/stickymd-win.exe");
     if !source.is_file() {
         return Err(format!(
@@ -154,8 +192,8 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<(), String>
     let directory = root.join("phase9-startup");
     let executable = copy_executable(&source, &directory)?;
     prepare_resource_layout(&directory, "source", 0, 0, ImageResourceFixture::None)?;
-    println!(
-        "startup contract: fixture_bytes={} cold_samples={} cold_idle_seconds={} warm_samples={} warm_idle_ms={} original_cold_limit_ms={} user_approved_cold_limit_ms={} warm_limit_ms={}",
+    runtime_report!(
+        "startup contract: fixture_bytes={} cold_samples={} cold_idle_seconds={} warm_samples={} warm_idle_ms={} cold_limit_ms={} warm_limit_ms={} ordering=interleaved",
         fs::metadata(directory.join("note/note.md"))
             .map_err(|error| format!("cannot inspect startup fixture: {error}"))?
             .len(),
@@ -163,22 +201,20 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<(), String>
         COLD_START_IDLE.as_secs(),
         STARTUP_SAMPLE_COUNT,
         WARM_START_IDLE.as_millis(),
-        ORIGINAL_COLD_START_LIMIT.as_millis(),
-        USER_APPROVED_COLD_START_LIMIT.as_millis(),
+        COLD_START_LIMIT.as_millis(),
         WARM_START_LIMIT.as_millis(),
     );
 
     let mut sequence = 0_u64;
     let mut cold = Vec::with_capacity(STARTUP_SAMPLE_COUNT);
+    let mut warm = Vec::with_capacity(STARTUP_SAMPLE_COUNT);
     for run in 0..STARTUP_SAMPLE_COUNT {
         thread::sleep(COLD_START_IDLE);
         sequence = sequence.saturating_add(1);
         let sample = measure_editor_ready(&executable, &directory, sequence)?;
         print_startup_sample("cold", run + 1, &sample);
         cold.push(sample);
-    }
-    let mut warm = Vec::with_capacity(STARTUP_SAMPLE_COUNT);
-    for run in 0..STARTUP_SAMPLE_COUNT {
+
         thread::sleep(WARM_START_IDLE);
         sequence = sequence.saturating_add(1);
         let sample = measure_editor_ready(&executable, &directory, sequence)?;
@@ -186,29 +222,66 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<(), String>
         warm.push(sample);
     }
 
-    let cold_p95 = print_startup_summary("cold", &cold)?;
-    let warm_p95 = print_startup_summary("warm", &warm)?;
-    if cold_p95 > USER_APPROVED_COLD_START_LIMIT {
-        return Err(format!(
-            "cold editor-ready p95 {:.3} ms exceeds USER-approved 400 ms hard gate",
-            cold_p95.as_secs_f64() * 1_000.0
-        ));
-    }
-    println!(
-        "startup gate original_300ms={} relaxed_400ms=PASS",
-        if cold_p95 <= ORIGINAL_COLD_START_LIMIT {
-            "PASS"
-        } else {
-            "FAIL_USER_WAIVER_REQUIRED"
-        }
-    );
-    if warm_p95 > WARM_START_LIMIT {
-        return Err(format!(
+    let cold_summary = print_startup_summary("cold", &cold)?;
+    let warm_summary = print_startup_summary("warm", &warm)?;
+    let gate_failure = if cold_summary.p95 > COLD_START_LIMIT {
+        Some(format!(
+            "cold editor-ready p95 {:.3} ms exceeds the USER-approved 400 ms hard gate",
+            cold_summary.p95.as_secs_f64() * 1_000.0
+        ))
+    } else if warm_summary.p95 > WARM_START_LIMIT {
+        Some(format!(
             "warm editor-ready p95 {:.3} ms exceeds 180 ms hard gate",
-            warm_p95.as_secs_f64() * 1_000.0
-        ));
-    }
-    Ok(())
+            warm_summary.p95.as_secs_f64() * 1_000.0
+        ))
+    } else {
+        None
+    };
+    Ok(RuntimeEvidence {
+        measurements: startup_measurements(cold_summary, warm_summary),
+        gate_failure,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StartupSummary {
+    p50: Duration,
+    p95: Duration,
+    max: Duration,
+}
+
+fn startup_measurements(cold: StartupSummary, warm: StartupSummary) -> Vec<EvidenceMeasurement> {
+    let mut measurements = Vec::with_capacity(8);
+    measurements.push(EvidenceMeasurement {
+        name: "cold.samples".to_owned(),
+        unit: "count".to_owned(),
+        value: STARTUP_SAMPLE_COUNT as f64,
+    });
+    measurements.extend(startup_summary_measurements("cold", cold));
+    measurements.push(EvidenceMeasurement {
+        name: "warm.samples".to_owned(),
+        unit: "count".to_owned(),
+        value: STARTUP_SAMPLE_COUNT as f64,
+    });
+    measurements.extend(startup_summary_measurements("warm", warm));
+    measurements
+}
+
+fn startup_summary_measurements(
+    kind: &str,
+    summary: StartupSummary,
+) -> impl Iterator<Item = EvidenceMeasurement> {
+    [
+        ("p50", summary.p50),
+        ("p95", summary.p95),
+        ("max", summary.max),
+    ]
+    .into_iter()
+    .map(move |(statistic, duration)| EvidenceMeasurement {
+        name: format!("{kind}.{statistic}"),
+        unit: "ms".to_owned(),
+        value: duration.as_secs_f64() * 1_000.0,
+    })
 }
 
 fn measure_editor_ready(
@@ -324,7 +397,7 @@ fn print_startup_sample(kind: &str, run: usize, sample: &StartupSample) {
         .map_or(0.0, |(_, value)| *value as f64 / 1_000.0);
     let font_begin = milestone_us(sample, "font_system_begin");
     let font_end = milestone_us(sample, "font_system_end");
-    println!(
+    runtime_report!(
         "startup sample kind={kind} run={run} external_ms={:.3} internal_ms={internal:.3} process_overhead_ms={:.3} font_system_ms={:.3}",
         sample.external.as_secs_f64() * 1_000.0,
         (sample.external.as_secs_f64() * 1_000.0 - internal).max(0.0),
@@ -340,7 +413,7 @@ fn milestone_us(sample: &StartupSample, name: &str) -> u128 {
         .unwrap_or_default()
 }
 
-fn print_startup_summary(kind: &str, samples: &[StartupSample]) -> Result<Duration, String> {
+fn print_startup_summary(kind: &str, samples: &[StartupSample]) -> Result<StartupSummary, String> {
     if samples.len() != STARTUP_SAMPLE_COUNT {
         return Err(format!("{kind} startup produced {} samples", samples.len()));
     }
@@ -354,7 +427,7 @@ fn print_startup_summary(kind: &str, samples: &[StartupSample]) -> Result<Durati
     let max = *external
         .last()
         .ok_or_else(|| "startup samples are empty".to_owned())?;
-    println!(
+    runtime_report!(
         "startup summary kind={kind} samples={} p50_ms={:.3} p95_ms={:.3} max_ms={:.3}",
         external.len(),
         p50.as_secs_f64() * 1_000.0,
@@ -383,13 +456,13 @@ fn print_startup_summary(kind: &str, samples: &[StartupSample]) -> Result<Durati
             .map(|sample| Duration::from_micros(milestone_us(sample, name) as u64))
             .collect::<Vec<_>>();
         values.sort_unstable();
-        println!(
+        runtime_report!(
             "startup milestone kind={kind} name={name} p50_ms={:.3} p95_ms={:.3}",
             nearest_rank(&values, 50)?.as_secs_f64() * 1_000.0,
             nearest_rank(&values, 95)?.as_secs_f64() * 1_000.0,
         );
     }
-    Ok(p95)
+    Ok(StartupSummary { p50, p95, max })
 }
 
 fn nearest_rank(samples: &[Duration], percentile: usize) -> Result<Duration, String> {
@@ -409,7 +482,7 @@ fn run_window_shell_lifecycle(
     primary: &mut Child,
 ) -> Result<(), String> {
     let window = crate::window_control::visible_window(primary.id())?;
-    println!(
+    runtime_report!(
         "Phase 8 runtime paper rect={:?}",
         crate::window_control::window_rect(window)?
     );
@@ -516,6 +589,56 @@ fn run_window_shell_lifecycle(
     Ok(())
 }
 
+fn run_phase10_lifecycle(
+    program_directory: &Path,
+    executable: &Path,
+    primary: &mut Child,
+) -> Result<(), String> {
+    let window = crate::window_control::visible_window(primary.id())?;
+    let initial_style = wait_for_tool_window_style(window)?;
+
+    run_window_shell_lifecycle(program_directory, executable, primary)?;
+    let restored_style = wait_for_tool_window_style(window)?;
+
+    crate::window_control::resize_to_dip(window, 220, 120)?;
+    wait_for_config_field(program_directory, "width_dip = 220")?;
+    wait_for_config_field(program_directory, "height_dip = 120")?;
+    let compact = crate::window_control::window_rect(window)?;
+    if compact.width == 0 || compact.height == 0 {
+        return Err("Phase 10 compact HWND has an empty extent".to_owned());
+    }
+
+    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Opacity)?;
+    crate::window_control::commit_opacity_slider(window, 40)?;
+    wait_for_config_field(program_directory, "opacity = 40")?;
+    wait_for_layered_alpha(window, Some(102))?;
+    runtime_report!(
+        "Phase 10 runtime initial_style={initial_style:?} restored_style={restored_style:?} compact_rect={compact:?} opacity=40"
+    );
+    Ok(())
+}
+
+fn wait_for_tool_window_style(
+    window: crate::window_control::WindowHandle,
+) -> Result<crate::window_control::WindowStyleFacts, String> {
+    let deadline = Instant::now() + START_TIMEOUT;
+    let mut observed = crate::window_control::style_facts(window)?;
+    while Instant::now() < deadline {
+        observed = crate::window_control::style_facts(window)?;
+        if observed.tool_window
+            && !observed.app_window
+            && !observed.no_activate
+            && !observed.transparent
+        {
+            return Ok(observed);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Err(format!(
+        "Phase 10 tool-window style invariant failed: {observed:?}"
+    ))
+}
+
 fn wait_for_config_field(program_directory: &Path, expected: &str) -> Result<(), String> {
     let path = program_directory.join("note/config.toml");
     let deadline = Instant::now() + START_TIMEOUT;
@@ -620,7 +743,7 @@ fn run_resource_measurement(
         ));
     }
     let logical_processors = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-    println!(
+    runtime_report!(
         "resource contract: warmup={}s repetitions={} cpu_interval={}s logical_processors={logical_processors}",
         RESOURCE_WARMUP.as_secs(),
         RESOURCE_REPETITIONS,
@@ -795,7 +918,7 @@ fn run_resource_measurement(
         if cases.len() != 1 {
             return Err(format!("unknown resource case filter `{filter}`"));
         }
-        println!("resource development filter: {filter}");
+        runtime_report!("resource development filter: {filter}");
     }
     for case in cases {
         let mode = case.label;
@@ -828,7 +951,7 @@ fn run_resource_measurement(
                 ensure_alive(&mut child, "Source-after-Preview resource instance")?;
             }
             let sample = process_metrics::memory(&child)?;
-            println!(
+            runtime_report!(
                 "resource sample mode={mode} run={} private_working_set_bytes={} private_bytes={} \
                  peak_working_set_bytes={} peak_private_bytes={}",
                 repetition + 1,
@@ -862,6 +985,141 @@ fn run_resource_measurement(
     Ok(())
 }
 
+fn run_zoom_resource_measurement(
+    repository: &Path,
+    root: &Path,
+) -> Result<Vec<EvidenceMeasurement>, String> {
+    const SPLIT_PRIVATE_WORKING_SET_LIMIT: u64 = 64 * 1024 * 1024;
+    let source = repository.join("target/release/stickymd-win.exe");
+    if !source.is_file() {
+        return Err(format!(
+            "Release executable is missing: {}",
+            source.display()
+        ));
+    }
+    runtime_report!(
+        "Phase 10 zoom resource contract: zoom=50/100/300 warmup={}s repetitions={}",
+        ZOOM_RESOURCE_WARMUP.as_secs(),
+        RESOURCE_REPETITIONS,
+    );
+    let mut evidence = Vec::new();
+    for zoom in [50_u16, 100, 300] {
+        let label = format!("split-zoom-{zoom}");
+        let mut samples = Vec::with_capacity(RESOURCE_REPETITIONS);
+        for repetition in 0..RESOURCE_REPETITIONS {
+            let directory = root.join(format!("{label}-{repetition}"));
+            let executable = copy_executable(&source, &directory)?;
+            prepare_resource_layout(&directory, "split", 20, 12, ImageResourceFixture::None)?;
+            set_resource_zoom(&directory, zoom)?;
+            let mut child = start(&executable)?;
+            let result = (|| {
+                wait_for_layout(&directory)?;
+                let window = crate::window_control::visible_window(child.id())?;
+                crate::window_control::park_cursor_outside_window(window)?;
+                thread::sleep(ZOOM_RESOURCE_WARMUP);
+                ensure_alive(&mut child, "Phase 10 zoom resource instance")?;
+                if zoom == 100 && repetition == 0 {
+                    let growth =
+                        verify_zoom_relayout_does_not_leak(&directory, &mut child, window)?;
+                    evidence.push(EvidenceMeasurement {
+                        name: "zoom_cycles.private_growth".to_owned(),
+                        unit: "bytes".to_owned(),
+                        value: growth as f64,
+                    });
+                }
+                process_metrics::memory(&child)
+            })();
+            stop_child(&mut child);
+            let sample = result?;
+            runtime_report!(
+                "Phase 10 zoom resource sample zoom={zoom} run={} private_working_set_bytes={} private_bytes={} peak_working_set_bytes={} peak_private_bytes={}",
+                repetition + 1,
+                sample.private_working_set_bytes,
+                sample.private_bytes,
+                sample.peak_working_set_bytes,
+                sample.peak_private_bytes,
+            );
+            samples.push(sample);
+        }
+        print_resource_summary(&label, &samples, &[])?;
+        evidence.extend(memory_measurements(&label, &samples));
+        let observed_max = samples
+            .iter()
+            .map(|sample| sample.private_working_set_bytes)
+            .max()
+            .unwrap_or_default();
+        if observed_max > SPLIT_PRIVATE_WORKING_SET_LIMIT {
+            return Err(format!(
+                "{label} private working set max {observed_max} exceeds {SPLIT_PRIVATE_WORKING_SET_LIMIT} bytes"
+            ));
+        }
+    }
+    Ok(evidence)
+}
+
+fn verify_zoom_relayout_does_not_leak(
+    program_directory: &Path,
+    child: &mut Child,
+    window: crate::window_control::WindowHandle,
+) -> Result<i64, String> {
+    const CYCLES: usize = 100;
+    let before = process_metrics::memory(child)?;
+    for _ in 0..CYCLES {
+        crate::window_control::press_zoom_in(window)?;
+        crate::window_control::press_zoom_out(window)?;
+    }
+    thread::sleep(Duration::from_secs(2));
+    ensure_alive(child, "Phase 10 zoom-cycle instance")?;
+    wait_for_config_field(program_directory, "content_zoom_percent = 100")?;
+    let after = process_metrics::memory(child)?;
+    runtime_report!(
+        "Phase 10 zoom cycles={CYCLES} before_private_bytes={} after_private_bytes={}",
+        before.private_bytes,
+        after.private_bytes,
+    );
+    if after.private_bytes
+        > before
+            .private_bytes
+            .saturating_add(ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT)
+    {
+        return Err(format!(
+            "Phase 10 repeated zoom relayout grew private bytes by more than {} bytes",
+            ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT
+        ));
+    }
+    Ok(after.private_bytes as i64 - before.private_bytes as i64)
+}
+
+fn memory_measurements(mode: &str, samples: &[MemorySample]) -> Vec<EvidenceMeasurement> {
+    let mut private_working_set = samples
+        .iter()
+        .map(|sample| sample.private_working_set_bytes)
+        .collect::<Vec<_>>();
+    let mut private_bytes = samples
+        .iter()
+        .map(|sample| sample.private_bytes)
+        .collect::<Vec<_>>();
+    private_working_set.sort_unstable();
+    private_bytes.sort_unstable();
+    let middle = samples.len() / 2;
+    [
+        ("private_working_set_median", private_working_set[middle]),
+        (
+            "private_working_set_max",
+            private_working_set[samples.len() - 1],
+        ),
+        ("private_bytes_median", private_bytes[middle]),
+        ("private_bytes_max", private_bytes[samples.len() - 1]),
+    ]
+    .into_iter()
+    .map(|(statistic, value)| EvidenceMeasurement {
+        name: format!("{mode}.{statistic}"),
+        unit: "bytes".to_owned(),
+        value: value as f64,
+    })
+    .collect()
+}
+
 fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(), String> {
     let source = repository.join("target/release/stickymd-win.exe");
     if !source.is_file() {
@@ -871,7 +1129,7 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
         ));
     }
     let logical_processors = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-    println!(
+    runtime_report!(
         "Phase 8 window resource contract: warmup={}s repetitions={} cpu_interval={}s logical_processors={logical_processors}",
         RESOURCE_WARMUP.as_secs(),
         RESOURCE_REPETITIONS,
@@ -894,7 +1152,7 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
             wait_for_layout(&directory)?;
             let window = crate::window_control::visible_window(child.id())?;
             let startup = startup_started.elapsed();
-            println!(
+            runtime_report!(
                 "window startup run={} elapsed_ms={:.3}",
                 repetition + 1,
                 startup.as_secs_f64() * 1_000.0
@@ -902,7 +1160,7 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
             thread::sleep(RESOURCE_WARMUP);
             ensure_alive(&mut child, "visible window resource instance")?;
             let visible = process_metrics::memory(&child)?;
-            println!(
+            runtime_report!(
                 "resource sample mode=visible-source run={} private_working_set_bytes={} private_bytes={} peak_working_set_bytes={} peak_private_bytes={}",
                 repetition + 1,
                 visible.private_working_set_bytes,
@@ -927,7 +1185,7 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
             thread::sleep(RESOURCE_WARMUP);
             ensure_alive(&mut child, "collapsed window resource instance")?;
             let collapsed = process_metrics::memory(&child)?;
-            println!(
+            runtime_report!(
                 "resource sample mode=docked-collapsed run={} private_working_set_bytes={} private_bytes={} peak_working_set_bytes={} peak_private_bytes={}",
                 repetition + 1,
                 collapsed.private_working_set_bytes,
@@ -949,7 +1207,7 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
             thread::sleep(RESOURCE_WARMUP);
             ensure_alive(&mut child, "hidden-to-tray resource instance")?;
             let hidden = process_metrics::memory(&child)?;
-            println!(
+            runtime_report!(
                 "resource sample mode=hidden-to-tray run={} private_working_set_bytes={} private_bytes={} peak_working_set_bytes={} peak_private_bytes={}",
                 repetition + 1,
                 hidden.private_working_set_bytes,
@@ -1028,7 +1286,7 @@ fn measure_idle_cpu(
             * 100.0;
         let memory = process_metrics::memory(child)?;
         let rect = crate::window_control::window_rect(window)?;
-        println!(
+        runtime_report!(
             "resource cpu bucket mode={mode} bucket={}/{} average_percent={bucket_cpu:.6} \
              private_working_set_bytes={} private_bytes={} window_x={} window_y={} \
              window_width={} window_height={}",
@@ -1050,7 +1308,7 @@ fn measure_idle_cpu(
         / elapsed.as_secs_f64()
         / logical_processors as f64
         * 100.0;
-    println!(
+    runtime_report!(
         "resource cpu mode={mode} interval_seconds={:.3} average_percent={cpu:.6}",
         elapsed.as_secs_f64()
     );
@@ -1128,7 +1386,7 @@ fn run_window_leak_cycles(
         reveal_primary_left_and_wait(window)?;
         if cycle % 250 == 249 {
             let checkpoint = process_metrics::memory(child)?;
-            println!(
+            runtime_report!(
                 "window cycle checkpoint expand_collapse={} private_bytes={}",
                 cycle + 1,
                 checkpoint.private_bytes
@@ -1139,7 +1397,7 @@ fn run_window_leak_cycles(
     let after_cpu = process_metrics::cpu_time(child)?;
     let animation_cpu =
         after_cpu.saturating_sub(before_cpu).as_secs_f64() / cycle_elapsed.as_secs_f64() * 100.0;
-    println!(
+    runtime_report!(
         "window animation cycles={} elapsed_seconds={:.3} single_core_cpu_percent={animation_cpu:.3}",
         ANIMATION_CYCLES,
         cycle_elapsed.as_secs_f64()
@@ -1178,9 +1436,10 @@ fn run_window_leak_cycles(
     ensure_alive(child, "post-cycle Phase 8 resource instance")?;
     let after_memory = process_metrics::memory(child)?;
     let after_objects = process_metrics::objects(child)?;
-    println!(
+    runtime_report!(
         "window cycle resources before_private_bytes={} after_private_bytes={} before_objects={before_objects:?} after_objects={after_objects:?}",
-        before_memory.private_bytes, after_memory.private_bytes
+        before_memory.private_bytes,
+        after_memory.private_bytes
     );
     const PRIVATE_GROWTH_LIMIT: u64 = 8 * 1024 * 1024;
     if after_memory.private_bytes
@@ -1318,7 +1577,7 @@ fn wait_for_window_title(
 
 fn print_cycle_checkpoint(child: &mut Child, label: &str, completed: usize) -> Result<(), String> {
     let memory = process_metrics::memory(child)?;
-    println!(
+    runtime_report!(
         "lifecycle cycle checkpoint kind={label} completed={completed} private_bytes={}",
         memory.private_bytes
     );
@@ -1330,7 +1589,7 @@ fn print_duration_summary(mode: &str, samples: &mut [Duration]) -> Result<(), St
         return Err(format!("{mode} produced {} timing samples", samples.len()));
     }
     samples.sort_unstable();
-    println!(
+    runtime_report!(
         "timing summary mode={mode} median_ms={:.3} max_ms={:.3}",
         samples[samples.len() / 2].as_secs_f64() * 1_000.0,
         samples[samples.len() - 1].as_secs_f64() * 1_000.0
@@ -1410,6 +1669,14 @@ fn prepare_resource_layout(
     )
     .map_err(|error| format!("cannot seed resource config: {error}"))?;
     Ok(())
+}
+
+fn set_resource_zoom(program_directory: &Path, zoom: u16) -> Result<(), String> {
+    let path = program_directory.join("note/config.toml");
+    let mut config = fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read resource config: {error}"))?;
+    config.push_str(&format!("content_zoom_percent = {zoom}\n"));
+    fs::write(&path, config).map_err(|error| format!("cannot seed resource zoom: {error}"))
 }
 
 fn write_4k_bmp(path: &Path) -> Result<(), String> {
@@ -1556,7 +1823,7 @@ fn print_resource_summary(
             cpu_sorted[cpu_sorted.len() - 1],
         )
     };
-    println!(
+    runtime_report!(
         "resource summary mode={mode} private_working_set_median_bytes={} private_working_set_max_bytes={} \
          private_bytes_median={} private_bytes_max={} peak_working_set_median_bytes={} \
          peak_working_set_max_bytes={} peak_private_bytes_median={} peak_private_bytes_max={} \
