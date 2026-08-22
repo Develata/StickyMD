@@ -11,7 +11,14 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $DestinationPath = [IO.Path]::GetFullPath($DestinationPath)
 $metadataJson = & cargo metadata --format-version 1 --locked --filter-platform x86_64-pc-windows-msvc
 if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed while generating runtime notices' }
-$metadata = $metadataJson | ConvertFrom-Json -Depth 100
+$convertFromJson = Get-Command ConvertFrom-Json -ErrorAction Stop
+if ($convertFromJson.Parameters.ContainsKey('Depth')) {
+    $metadata = $metadataJson | ConvertFrom-Json -Depth 100
+} else {
+    # Windows PowerShell 5.1 has no -Depth parameter. Its parser still handles
+    # Cargo's metadata graph, while PowerShell 7 receives the explicit bound.
+    $metadata = $metadataJson | ConvertFrom-Json
+}
 $rootPackage = @($metadata.packages | Where-Object { $_.name -eq 'stickymd-win' })
 if ($rootPackage.Count -ne 1) { throw 'Cannot identify the stickymd-win package in cargo metadata' }
 
@@ -29,14 +36,19 @@ while ($pending.Count -ne 0) {
     }
 }
 
-$thirdPartyPackages = @(
-    $metadata.packages |
-        Where-Object {
-            $visited.Contains($_.id) -and
-            $null -ne $_.source
-        } |
-        Sort-Object name, version
-)
+$thirdPartyPackages = [Collections.Generic.List[object]]::new()
+foreach ($package in $metadata.packages) {
+    if ($visited.Contains($package.id) -and $null -ne $package.source) {
+        $thirdPartyPackages.Add($package)
+    }
+}
+$packageComparison = [Comparison[object]] {
+    param($left, $right)
+    $nameOrder = [StringComparer]::Ordinal.Compare([string]$left.name, [string]$right.name)
+    if ($nameOrder -ne 0) { return $nameOrder }
+    return [StringComparer]::Ordinal.Compare([string]$left.version, [string]$right.version)
+}
+$thirdPartyPackages.Sort($packageComparison)
 $unsupportedSources = @(
     $thirdPartyPackages |
         Where-Object { -not $_.source.StartsWith('registry+', [StringComparison]::Ordinal) }
@@ -61,8 +73,9 @@ $fallbackFiles = @{
     'ratex-unicode-font' = 'assets\licenses\RaTeX-MIT.txt'
 }
 
+$utf8 = [Text.UTF8Encoding]::new($false, $true)
 $builder = [Text.StringBuilder]::new()
-[void]$builder.AppendLine((Get-Content -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Raw).TrimEnd())
+[void]$builder.AppendLine(([IO.File]::ReadAllText((Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md'), $utf8)).TrimEnd())
 [void]$builder.AppendLine()
 [void]$builder.AppendLine('## Generated Rust Runtime Dependency Notices')
 [void]$builder.AppendLine()
@@ -86,11 +99,17 @@ foreach ($package in $packages) {
     [void]$builder.AppendLine("SOURCE: $repository")
 
     $packageDirectory = Split-Path -Parent $package.manifest_path
-    $licenseFiles = @(
-        Get-ChildItem -LiteralPath $packageDirectory -File |
-            Where-Object { $_.Name -match '^(?i)(LICENSE|COPYING|NOTICE)([._-].*)?$' } |
-            Sort-Object Name
-    )
+    $licenseFiles = [Collections.Generic.List[IO.FileInfo]]::new()
+    foreach ($candidate in Get-ChildItem -LiteralPath $packageDirectory -File) {
+        if ($candidate.Name -match '^(?i)(LICENSE|COPYING|NOTICE)([._-].*)?$') {
+            $licenseFiles.Add($candidate)
+        }
+    }
+    $licenseComparison = [Comparison[IO.FileInfo]] {
+        param($left, $right)
+        return [StringComparer]::Ordinal.Compare($left.Name, $right.Name)
+    }
+    $licenseFiles.Sort($licenseComparison)
     if ($licenseFiles.Count -eq 0) {
         if (-not $fallbackFiles.ContainsKey($package.name)) {
             throw "Runtime package $($package.name) $($package.version) contains no license notice and has no reviewed fallback"
@@ -105,7 +124,7 @@ foreach ($package in $packages) {
     foreach ($licenseFile in $licenseFiles) {
         [void]$builder.AppendLine("LICENSE FILE: $($licenseFile.Name)")
         [void]$builder.AppendLine('--------------------------------------------------------------------------------')
-        $text = (Get-Content -LiteralPath $licenseFile.FullName -Raw).Replace("`r`n", "`n").TrimEnd()
+        $text = ([IO.File]::ReadAllText($licenseFile.FullName, $utf8)).Replace("`r`n", "`n").TrimEnd()
         [void]$builder.AppendLine($text)
     }
 }
