@@ -35,7 +35,7 @@ fn main() {
     use platform::windows::program_dir::RuntimePaths;
     use platform::windows::single_instance::{InstanceDisposition, SingleInstanceGuard};
     use startup::StartupDiagnostics;
-    use startup::bootstrap;
+    use startup::{BootstrapMilestone, bootstrap_observed};
     use std::sync::{Arc, Mutex};
     use winit::event_loop::{EventLoop, EventLoopProxy};
     use winit::platform::windows::EventLoopBuilderExtWindows;
@@ -62,7 +62,9 @@ fn main() {
         fatal_startup(&format!("无法创建便签目录：{error}"));
     }
     startup_diagnostics.record("persistence_ready");
-    let mut bootstrap = match bootstrap(&paths) {
+    let mut bootstrap = match bootstrap_observed(&paths, |milestone| match milestone {
+        BootstrapMilestone::ConfigReady => startup_diagnostics.record("config_ready"),
+    }) {
         Ok(bootstrap) => bootstrap,
         Err(error) => fatal_startup(&format!("StickyMD 无法安全启动：{error}")),
     };

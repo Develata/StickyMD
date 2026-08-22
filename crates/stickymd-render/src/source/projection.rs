@@ -427,10 +427,17 @@ impl SourceProjection {
         Ok(())
     }
 
-    pub fn set_viewport(&mut self, width_px: u32, height_px: u32, scale: f32) {
+    pub fn set_viewport(&mut self, width_px: u32, height_px: u32, scale: f32) -> bool {
+        let scale = scale.max(0.5);
+        if self.width_px == width_px
+            && self.height_px == height_px
+            && self.scale_factor.to_bits() == scale.to_bits()
+        {
+            return false;
+        }
         self.width_px = width_px;
         self.height_px = height_px;
-        self.scale_factor = scale.max(0.5);
+        self.scale_factor = scale;
         self.buffer.set_metrics_and_size(
             scaled_metrics(self.scale_factor),
             Some(self.content_width()),
@@ -442,6 +449,7 @@ impl SourceProjection {
             Some(24.0 * self.scale_factor),
         );
         self.buffer.shape_until_scroll(&mut self.font_system, false);
+        true
     }
 
     pub fn set_preedit(&mut self, preedit: Option<PreeditVisual>) {
@@ -940,6 +948,16 @@ mod tests {
             ]
         );
         assert_eq!(projection.projected_text(), source.text.as_ref());
+    }
+
+    #[test]
+    fn phase11_equal_viewport_does_not_repeat_source_layout() {
+        let source = snapshot("English 中文");
+        let mut projection = SourceProjection::new(&source, 600, 400, 1.0);
+
+        assert!(!projection.set_viewport(600, 400, 1.0));
+        assert!(projection.set_viewport(600, 366, 1.0));
+        assert!(!projection.set_viewport(600, 366, 1.0));
     }
 
     #[test]

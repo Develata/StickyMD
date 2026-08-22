@@ -18,6 +18,11 @@
 > 尚未由实际实现验证，不得对外宣传。
 > 它们只作为后续技术验证与 release gate 的起点基线。
 
+性能门是工程决策阈值，服从 Engineering Constitution 的优先级，不得通过引入不成比例的
+架构复杂度来满足。结构性正确性、安全边界、authority 与 failure-path invariant 不属于可调
+性能门，不能以 waiver 代替满足。当某项目标已无法通过简单、高内聚、可测量的改进继续逼近时，
+进一步优化必须先进行显式 gate reassessment，而不是降低架构质量。
+
 ## Boundary
 
 - 量化实现与基准测试在技术验证阶段建立；本章只定义结构与底线。
@@ -149,6 +154,8 @@ opt-level = 3、lto = fat、codegen-units = 1、panic = abort、strip symbols
 ## Failure Paths
 
 - 超出 Hard Failure Condition：视为 release blocker，进入优化或风险报告流程。
+- 只有 USER 可以放宽量化工程门；Agent 只能提交带环境、样本、统计、复杂度影响与替代方案的
+  gate reassessment。结构性 invariant 不可放宽。
 - 无法定位原因的内存超标：按 Agent Stop Conditions 记录
   `docs/report/RISK-<topic>.md`，不绕过规格。
 

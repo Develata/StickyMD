@@ -4,8 +4,7 @@
 
 use std::sync::Arc;
 
-use cosmic_text::{Align, FontSystem, Metrics, Wrap};
-use unicode_segmentation::UnicodeSegmentation;
+use cosmic_text::{Align, FontSystem, Metrics};
 
 use crate::image::{
     DecodedImageCache, ImageCacheKey, PreviewImageSource, decode_scaled_image_owned,
@@ -15,20 +14,15 @@ use crate::math::{MAX_DOCUMENT_FORMULAS, MathEngine, MathError, MathRaster};
 use crate::source::FontSelection;
 
 use super::image_layout::image_target;
+use super::inline_text_layout::{append_text_pieces, text_piece};
 use super::layout::{
-    ChunkBuild, DecorationRole, LayoutChunk, LayoutContent, LayoutDecoration, math_foreground,
+    ChunkBuild, DecorationRole, InlinePiece, LayoutChunk, LayoutContent, LayoutDecoration,
+    math_foreground,
 };
-use super::text_layout::make_text_chunk;
+use super::text_layout::TextLayoutCache;
 use super::{PreviewRect, PreviewTextBox, RenderSpan};
 
-struct InlinePiece {
-    chunk: LayoutChunk,
-    boxes: Vec<PreviewTextBox>,
-    decorations: Vec<LayoutDecoration>,
-    width: f32,
-    height: f32,
-    baseline: f32,
-}
+const ATTRIBUTED_TEXT_COALESCE_AFTER_SOURCE_BYTES: usize = 64 * 1024;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_mixed_chunk(
@@ -47,10 +41,39 @@ pub(super) fn make_mixed_chunk(
     image_source: Option<&dyn PreviewImageSource>,
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
+    text_layout_cache: &mut TextLayoutCache,
 ) -> ChunkBuild {
     let mut pieces = Vec::new();
-    for span in spans {
+    let mut pending_text_start = 0;
+    // Coalescing pays for itself in mixed projection runs because it avoids a
+    // buffer per short fragment around atomic math/image content. Attributed
+    // runs remain fine-grained near the start of typical notes, where repeated
+    // zoom relayout is faster. Once source offsets prove the note is large,
+    // short attributed runs are merged to bound layout-object proliferation.
+    let coalesce_short_text = spans
+        .iter()
+        .any(|span| span.math.is_some() || span.image.is_some());
+    let coalesce_attributed_short_text = spans.iter().any(|span| {
+        span.source_range
+            .is_some_and(|range| range.end > ATTRIBUTED_TEXT_COALESCE_AFTER_SOURCE_BYTES)
+    });
+    let max_text_piece_chars = (width / metrics.font_size.max(1.0))
+        .floor()
+        .clamp(1.0, 48.0) as usize;
+    for (index, span) in spans.iter().enumerate() {
         if let Some(math) = &span.math {
+            append_text_pieces(
+                font_system,
+                fonts,
+                &spans[pending_text_start..index],
+                metrics,
+                selection_text,
+                &mut pieces,
+                coalesce_short_text,
+                coalesce_attributed_short_text,
+                max_text_piece_chars,
+                text_layout_cache,
+            );
             *formula_count = formula_count.saturating_add(1);
             let error =
                 (*formula_count > MAX_DOCUMENT_FORMULAS).then_some(MathError::TooManyFormulas);
@@ -67,12 +90,33 @@ pub(super) fn make_mixed_chunk(
             );
             pieces.push(match rendered {
                 Ok(raster) => formula_piece(span, raster, selection_text),
-                Err(error) => error_piece(font_system, fonts, span, metrics, selection_text, error),
+                Err(error) => error_piece(
+                    font_system,
+                    fonts,
+                    span,
+                    metrics,
+                    selection_text,
+                    error,
+                    text_layout_cache,
+                ),
             });
+            pending_text_start = index + 1;
             continue;
         }
-        if span.image.is_some()
-            && let Some(piece) = image_piece(
+        if span.image.is_some() {
+            append_text_pieces(
+                font_system,
+                fonts,
+                &spans[pending_text_start..index],
+                metrics,
+                selection_text,
+                &mut pieces,
+                coalesce_short_text,
+                coalesce_attributed_short_text,
+                max_text_piece_chars,
+                text_layout_cache,
+            );
+            if let Some(piece) = image_piece(
                 span,
                 width,
                 y,
@@ -81,47 +125,26 @@ pub(super) fn make_mixed_chunk(
                 image_source,
                 image_cache,
                 image_band,
-            )
-        {
-            pieces.push(piece);
-            continue;
-        }
-        // Short text adjacent to a formula is one shaped run. Building a
-        // cosmic-text buffer per word is measurably expensive and provides no
-        // wrapping benefit while the run itself comfortably fits a line.
-        if span.text == span.copy_text && span.text.chars().count() > 48 {
-            for token in span
-                .text
-                .split_word_bounds()
-                .filter(|token| !token.is_empty())
-            {
-                let token_span = RenderSpan {
-                    text: token.to_owned(),
-                    copy_text: token.to_owned(),
-                    source_range: span.source_range,
-                    style: span.style,
-                    action: span.action.clone(),
-                    math: None,
-                    image: None,
-                };
-                pieces.push(text_piece(
-                    font_system,
-                    fonts,
-                    &token_span,
-                    metrics,
-                    selection_text,
-                ));
+            ) {
+                pieces.push(piece);
+                pending_text_start = index + 1;
+            } else {
+                pending_text_start = index;
             }
-        } else {
-            pieces.push(text_piece(
-                font_system,
-                fonts,
-                span,
-                metrics,
-                selection_text,
-            ));
         }
     }
+    append_text_pieces(
+        font_system,
+        fonts,
+        &spans[pending_text_start..],
+        metrics,
+        selection_text,
+        &mut pieces,
+        coalesce_short_text,
+        coalesce_attributed_short_text,
+        max_text_piece_chars,
+        text_layout_cache,
+    );
 
     let mut output = ChunkBuild {
         chunks: Vec::new(),
@@ -245,50 +268,6 @@ fn image_piece(
     })
 }
 
-fn text_piece(
-    font_system: &mut FontSystem,
-    fonts: &FontSelection,
-    span: &RenderSpan,
-    metrics: Metrics,
-    selection_text: &mut String,
-) -> InlinePiece {
-    let mut built = make_text_chunk(
-        font_system,
-        fonts,
-        std::slice::from_ref(span),
-        0.0,
-        0.0,
-        1_000_000.0,
-        metrics,
-        Align::Left,
-        Wrap::None,
-        selection_text,
-    );
-    let mut chunk = built.chunks.remove(0);
-    let (width, baseline) = match &chunk.content {
-        LayoutContent::Text(buffer) => {
-            let mut runs = buffer.layout_runs();
-            let first = runs.next();
-            let width = first.as_ref().map_or(1.0, |run| run.line_w.max(1.0));
-            let baseline = first.map_or(metrics.font_size, |run| run.line_y);
-            (width, baseline)
-        }
-        LayoutContent::Math(_) => (1.0, metrics.font_size),
-        LayoutContent::Image(raster) => (raster.width as f32, raster.height as f32),
-        LayoutContent::ImagePlaceholder { width, height } => (*width as f32, *height as f32),
-    };
-    chunk.x = 0.0;
-    chunk.y = 0.0;
-    InlinePiece {
-        chunk,
-        boxes: built.boxes,
-        decorations: built.decorations,
-        width,
-        height: built.height,
-        baseline,
-    }
-}
-
 fn formula_piece(
     span: &RenderSpan,
     raster: Arc<MathRaster>,
@@ -333,11 +312,19 @@ fn error_piece(
     metrics: Metrics,
     selection_text: &mut String,
     error: MathError,
+    text_layout_cache: &mut TextLayoutCache,
 ) -> InlinePiece {
     let mut fallback = span.clone();
     fallback.math = None;
     fallback.style.math_placeholder = true;
-    let mut piece = text_piece(font_system, fonts, &fallback, metrics, selection_text);
+    let mut piece = text_piece(
+        font_system,
+        fonts,
+        &fallback,
+        metrics,
+        selection_text,
+        text_layout_cache,
+    );
     for text_box in &mut piece.boxes {
         text_box.atomic = true;
         text_box.tooltip = Some(Arc::from(error.to_string()));
@@ -398,4 +385,118 @@ fn flush_line(
         output.decorations.extend(piece.decorations);
     }
     line_height
+}
+
+#[cfg(test)]
+mod tests {
+    use cosmic_text::{Align, FontSystem, Metrics};
+
+    use super::make_mixed_chunk;
+    use crate::math::{MathEngine, MathKind};
+    use crate::preview::render_tree::{RenderMath, SpanAction};
+    use crate::preview::text_layout::TextLayoutCache;
+    use crate::preview::{LinkKind, PreviewTheme, RenderSpan, RenderStyle, SourceRange};
+    use crate::source::FontSelection;
+
+    fn text_span(text: &str, style: RenderStyle) -> RenderSpan {
+        RenderSpan {
+            text: text.to_owned(),
+            copy_text: text.to_owned(),
+            source_range: SourceRange::new(0, text.len()),
+            style,
+            action: None,
+            math: None,
+            image: None,
+        }
+    }
+
+    #[test]
+    fn phase11_short_adjacent_text_around_math_uses_one_buffer_per_side() {
+        let mut font_system = FontSystem::new();
+        let fonts = FontSelection::resolve(&mut font_system);
+        let mut math_engine = MathEngine::new();
+        let mut selection_text = String::new();
+        let mut formula_count = 0;
+        let mut math = text_span("$x^2$", RenderStyle::default());
+        math.math = Some(RenderMath {
+            source: "x^2".to_owned(),
+            kind: MathKind::Inline,
+        });
+        let spans = vec![
+            text_span("before ", RenderStyle::default()),
+            text_span("plain", RenderStyle::default()),
+            math,
+            text_span(" after ", RenderStyle::default()),
+            text_span("tail", RenderStyle::default()),
+        ];
+
+        let built = make_mixed_chunk(
+            &mut font_system,
+            &fonts,
+            &mut math_engine,
+            &spans,
+            0.0,
+            0.0,
+            1_000.0,
+            Metrics::new(17.0, 26.35),
+            Align::Left,
+            &mut selection_text,
+            &mut formula_count,
+            PreviewTheme::Light,
+            None,
+            &mut crate::image::DecodedImageCache::default(),
+            (0.0, f32::MAX),
+            &mut TextLayoutCache::default(),
+        );
+
+        assert_eq!(built.chunks.len(), 3);
+        assert_eq!(selection_text, "before plain$x^2$ after tail");
+    }
+
+    #[test]
+    fn phase11_large_document_policy_coalesces_short_attributed_runs() {
+        let mut font_system = FontSystem::new();
+        let fonts = FontSelection::resolve(&mut font_system);
+        let mut math_engine = MathEngine::new();
+        let mut selection_text = String::new();
+        let mut formula_count = 0;
+        let mut linked = text_span("link", RenderStyle::default());
+        linked.action = Some(SpanAction::OpenLink {
+            destination: "https://example.com".to_owned(),
+            kind: LinkKind::Https,
+        });
+        let mut math = text_span("$x$", RenderStyle::default());
+        math.math = Some(RenderMath {
+            source: "x".to_owned(),
+            kind: MathKind::Inline,
+        });
+        let mut before = text_span("before ", RenderStyle::default());
+        before.source_range = SourceRange::new(70_000, 70_007);
+        linked.source_range = SourceRange::new(70_007, 70_011);
+        math.source_range = SourceRange::new(70_011, 70_014);
+        let spans = vec![before, linked, math];
+
+        let built = make_mixed_chunk(
+            &mut font_system,
+            &fonts,
+            &mut math_engine,
+            &spans,
+            0.0,
+            0.0,
+            1_000.0,
+            Metrics::new(17.0, 26.35),
+            Align::Left,
+            &mut selection_text,
+            &mut formula_count,
+            PreviewTheme::Light,
+            None,
+            &mut crate::image::DecodedImageCache::default(),
+            (0.0, f32::MAX),
+            &mut TextLayoutCache::default(),
+        );
+
+        assert_eq!(built.chunks.len(), 2);
+        assert_eq!(selection_text, "before link$x$");
+        assert!(built.boxes.iter().any(|text_box| text_box.action.is_some()));
+    }
 }

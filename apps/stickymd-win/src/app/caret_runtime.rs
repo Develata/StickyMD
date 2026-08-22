@@ -27,7 +27,7 @@ impl StickyApp {
         }
         if let Err(error) = self.sync_native_caret_overlay() {
             self.native_caret_failed = true;
-            self.native_caret_drawn = false;
+            self.native_caret_overlay = None;
             self.diagnostic = Some(format!("caret overlay unavailable: {error}"));
             self.request_caret_redraw();
         }
@@ -72,47 +72,71 @@ impl StickyApp {
             self.diagnostic = Some(error.to_string());
             return false;
         }
-        self.native_caret_drawn = false;
+        self.native_caret_overlay = None;
         true
     }
 
     pub(super) fn sync_native_caret_overlay(&mut self) -> Result<(), String> {
         let desired = self.caret_animation_active() && self.session.caret_visible;
-        if desired == self.native_caret_drawn {
-            return Ok(());
-        }
-        let pane = self
-            .view_geometry()
-            .and_then(|geometry| geometry.source)
-            .ok_or_else(|| "source pane is unavailable".to_owned())?;
+        let pane = self.view_geometry().and_then(|geometry| geometry.source);
         let caret = self
             .projection
             .as_ref()
-            .and_then(|projection| projection.caret_rect(self.session.selection.active.byte))
-            .ok_or_else(|| "caret rectangle is unavailable".to_owned())?;
-        let damage = caret_damage_rect(pane, caret)
-            .ok_or_else(|| "caret rectangle is outside the source pane".to_owned())?;
+            .and_then(|projection| projection.caret_rect(self.session.selection.active.byte));
+        let desired_overlay = desired
+            .then(|| caret_overlay_damage(pane, caret))
+            .flatten()
+            .map(caret_overlay_rect)
+            .transpose()?;
+        if desired_overlay == self.native_caret_overlay {
+            return Ok(());
+        }
         let window = self
             .window
             .as_ref()
             .ok_or_else(|| "window is unavailable".to_owned())?;
+        if let Some(current) = self.native_caret_overlay {
+            crate::platform::windows::caret_overlay::toggle_caret_overlay(window.as_ref(), current)
+                .map_err(|error| error.to_string())?;
+            self.native_caret_overlay = None;
+        }
+        let Some(desired_overlay) = desired_overlay else {
+            // `cosmic-text` only exposes layout runs around the visible
+            // scroll window. A canonical caret outside that window is a
+            // normal presentation state. Any old XOR was removed by its
+            // recorded rectangle above, so no failure or diagnostic is due.
+            return Ok(());
+        };
         crate::platform::windows::caret_overlay::toggle_caret_overlay(
             window.as_ref(),
-            crate::platform::windows::caret_overlay::CaretOverlayRect {
-                x: i32::try_from(damage.x)
-                    .map_err(|_| "caret x coordinate exceeds Win32 range".to_owned())?,
-                y: i32::try_from(damage.y)
-                    .map_err(|_| "caret y coordinate exceeds Win32 range".to_owned())?,
-                width: i32::try_from(damage.width)
-                    .map_err(|_| "caret width exceeds Win32 range".to_owned())?,
-                height: i32::try_from(damage.height)
-                    .map_err(|_| "caret height exceeds Win32 range".to_owned())?,
-            },
+            desired_overlay,
         )
         .map_err(|error| error.to_string())?;
-        self.native_caret_drawn = desired;
+        self.native_caret_overlay = Some(desired_overlay);
         Ok(())
     }
+}
+
+fn caret_overlay_rect(
+    damage: DamageRect,
+) -> Result<crate::platform::windows::caret_overlay::CaretOverlayRect, String> {
+    Ok(crate::platform::windows::caret_overlay::CaretOverlayRect {
+        x: i32::try_from(damage.x)
+            .map_err(|_| "caret x coordinate exceeds Win32 range".to_owned())?,
+        y: i32::try_from(damage.y)
+            .map_err(|_| "caret y coordinate exceeds Win32 range".to_owned())?,
+        width: i32::try_from(damage.width)
+            .map_err(|_| "caret width exceeds Win32 range".to_owned())?,
+        height: i32::try_from(damage.height)
+            .map_err(|_| "caret height exceeds Win32 range".to_owned())?,
+    })
+}
+
+fn caret_overlay_damage(
+    pane: Option<PaneRect>,
+    caret: Option<stickymd_render::source::EditorRect>,
+) -> Option<DamageRect> {
+    pane.and_then(|pane| caret.and_then(|caret| caret_damage_rect(pane, caret)))
 }
 
 fn caret_damage_rect(
@@ -152,7 +176,7 @@ fn blit_damage(source: &Pixmap, target: &mut Pixmap, pane: PaneRect, damage: Dam
 
 #[cfg(test)]
 mod tests {
-    use super::caret_damage_rect;
+    use super::{caret_damage_rect, caret_overlay_damage, caret_overlay_rect};
     use crate::app::preview_runtime::PaneRect;
     use crate::surface::DamageRect;
     use stickymd_render::source::EditorRect;
@@ -176,5 +200,49 @@ mod tests {
         )
         .expect("partially visible caret");
         assert_eq!(damage, DamageRect::new(108, 65, 2, 5));
+    }
+
+    #[test]
+    fn phase11_offscreen_caret_is_not_a_native_overlay_failure() {
+        let pane = PaneRect {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 50,
+        };
+        assert_eq!(caret_overlay_damage(Some(pane), None), None);
+        assert_eq!(
+            caret_overlay_damage(
+                Some(pane),
+                Some(EditorRect {
+                    x: 5.0,
+                    y: 80.0,
+                    width: 1.0,
+                    height: 20.0,
+                })
+            ),
+            None
+        );
+        assert_eq!(
+            caret_overlay_damage(
+                None,
+                Some(EditorRect {
+                    x: 5.0,
+                    y: 5.0,
+                    width: 1.0,
+                    height: 20.0,
+                })
+            ),
+            None
+        );
+        assert_eq!(
+            caret_overlay_rect(DamageRect::new(10, 20, 2, 18)).unwrap(),
+            crate::platform::windows::caret_overlay::CaretOverlayRect {
+                x: 10,
+                y: 20,
+                width: 2,
+                height: 18,
+            }
+        );
     }
 }

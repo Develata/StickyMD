@@ -32,6 +32,15 @@ pub enum AppIntent {
         selection: Selection,
         timestamp_ms: u64,
     },
+    /// Converts Comrak-recognized `\\(...\\)` / `\\[...\\]` nodes as one
+    /// canonical edit. Source and Split may scope the operation to a non-empty
+    /// selection; Preview always requests the whole document.
+    ConvertLatexMathDelimiters {
+        expected_generation: Generation,
+        selection: Selection,
+        scope_to_selection: bool,
+        timestamp_ms: u64,
+    },
     /// Clipboard-only projection effect. It never reads or mutates canonical
     /// document text and is used by read-only Preview selection.
     WriteClipboard {

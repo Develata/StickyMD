@@ -6,6 +6,7 @@ use stickymd_core::{
     AssetEffect, CursorSnapshot, DocumentError, DocumentSnapshot, DocumentState, EditKind,
     EditMeta, EditRequest, ExternalFileFact, Generation, Hash32, Selection, TextDelta,
 };
+use stickymd_render::preview::{SemanticConversionError, convert_latex_math_delimiters};
 use thiserror::Error;
 
 use super::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
@@ -48,6 +49,8 @@ pub enum EditorFlowError {
     Document(#[from] DocumentError),
     #[error(transparent)]
     Clipboard(#[from] ClipboardError),
+    #[error(transparent)]
+    SemanticConversion(#[from] SemanticConversionError),
 }
 
 pub struct EditorCoordinator<C> {
@@ -174,6 +177,17 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
                 selection,
                 timestamp_ms,
             } => self.paste_clipboard(expected_generation, selection, timestamp_ms),
+            AppIntent::ConvertLatexMathDelimiters {
+                expected_generation,
+                selection,
+                scope_to_selection,
+                timestamp_ms,
+            } => self.convert_math_delimiters(
+                expected_generation,
+                selection,
+                scope_to_selection,
+                timestamp_ms,
+            ),
             AppIntent::WriteClipboard { text } => {
                 if text.is_empty() {
                     Ok(AppEffect::NoOp)
@@ -228,6 +242,43 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
             CursorSnapshot::new(selection),
             cursor_after,
             EditMeta::new(effective_kind, timestamp_ms),
+        );
+        let outcome = self.document.edit(request)?;
+        let Some(delta) = outcome.delta else {
+            return Ok(AppEffect::NoOp);
+        };
+        Ok(AppEffect::DocumentChanged {
+            generation: outcome.generation,
+            selection: cursor_after.selection,
+            delta,
+            asset_effects: outcome.asset_effects,
+        })
+    }
+
+    fn convert_math_delimiters(
+        &mut self,
+        expected_generation: Generation,
+        selection: Selection,
+        scope_to_selection: bool,
+        timestamp_ms: u64,
+    ) -> Result<AppEffect, EditorFlowError> {
+        self.require_generation(expected_generation)?;
+        let snapshot = self.document.snapshot();
+        let scope = scope_to_selection.then(|| selection.normalized_range());
+        let Some(conversion) = convert_latex_math_delimiters(&snapshot, scope)? else {
+            return Ok(AppEffect::NoOp);
+        };
+        let cursor_after = CursorSnapshot::new(Selection::new(
+            conversion.map_position(selection.anchor.byte),
+            conversion.map_position(selection.active.byte),
+        ));
+        let request = EditRequest::new(
+            expected_generation,
+            0..snapshot.text.len(),
+            conversion.into_text(),
+            CursorSnapshot::new(selection),
+            cursor_after,
+            EditMeta::new(EditKind::Other, timestamp_ms),
         );
         let outcome = self.document.edit(request)?;
         let Some(delta) = outcome.delta else {
@@ -607,5 +658,63 @@ mod tests {
             1
         );
         assert!(!coordinator.view().dirty);
+    }
+
+    #[test]
+    fn phase11b_math_delimiter_batch_is_one_generation_and_one_undo_step() {
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        let source = "前 \\(x\\) 中 \\[y\\] 后";
+        edit(&mut coordinator, source);
+        let before_generation = coordinator.view().generation;
+
+        let effect = coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: before_generation,
+                selection: Selection::caret(source.len()),
+                scope_to_selection: false,
+                timestamp_ms: 10,
+            })
+            .unwrap();
+        assert!(matches!(effect, AppEffect::DocumentChanged { .. }));
+        assert_eq!(
+            coordinator.view().generation.value(),
+            before_generation.value() + 1
+        );
+        assert_eq!(&*coordinator.snapshot().text, "前 $x$ 中 $$y$$ 后");
+
+        coordinator.dispatch(AppIntent::Undo).unwrap();
+        assert_eq!(&*coordinator.snapshot().text, source);
+        coordinator.dispatch(AppIntent::Redo).unwrap();
+        assert_eq!(&*coordinator.snapshot().text, "前 $x$ 中 $$y$$ 后");
+    }
+
+    #[test]
+    fn phase11b_math_delimiter_selection_scope_and_no_match_are_transactional() {
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        let source = "\\(a\\) xx \\(b\\) yy";
+        edit(&mut coordinator, source);
+        let start = source.find("\\(b").unwrap();
+        let end = start + "\\(b\\)".len();
+        coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: coordinator.view().generation,
+                selection: Selection::new(end, start),
+                scope_to_selection: true,
+                timestamp_ms: 20,
+            })
+            .unwrap();
+        assert_eq!(&*coordinator.snapshot().text, "\\(a\\) xx $b$ yy");
+
+        let before = coordinator.snapshot();
+        let outcome = coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: before.generation,
+                selection: Selection::caret(0),
+                scope_to_selection: true,
+                timestamp_ms: 21,
+            })
+            .unwrap();
+        assert_eq!(outcome, AppEffect::NoOp);
+        assert_eq!(coordinator.snapshot(), before);
     }
 }

@@ -13,10 +13,12 @@ pub(crate) enum Phase {
     P08,
     P09,
     P10,
+    P11,
+    P11B,
 }
 
 impl Phase {
-    pub(crate) const ALL: [Self; 11] = [
+    pub(crate) const ALL: [Self; 13] = [
         Self::P00,
         Self::P01,
         Self::P02,
@@ -28,6 +30,8 @@ impl Phase {
         Self::P08,
         Self::P09,
         Self::P10,
+        Self::P11,
+        Self::P11B,
     ];
 
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
@@ -43,7 +47,9 @@ impl Phase {
             "8" | "08" | "phase-08" => Ok(Self::P08),
             "9" | "09" | "phase-09" => Ok(Self::P09),
             "10" | "phase-10" => Ok(Self::P10),
-            _ => Err(format!("unknown phase `{value}`; expected 00..10")),
+            "11" | "phase-11" => Ok(Self::P11),
+            "11-b" | "phase-11-b" => Ok(Self::P11B),
+            _ => Err(format!("unknown phase `{value}`; expected 00..11-b")),
         }
     }
 
@@ -60,6 +66,8 @@ impl Phase {
             Self::P08 => "08",
             Self::P09 => "09",
             Self::P10 => "10",
+            Self::P11 => "11",
+            Self::P11B => "11-b",
         }
     }
 }
@@ -70,7 +78,9 @@ pub(crate) enum Selection {
     All,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+use std::path::PathBuf;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Options {
     pub(crate) selection: Selection,
     pub(crate) ci: bool,
@@ -80,6 +90,7 @@ pub(crate) struct Options {
     pub(crate) release: bool,
     pub(crate) package: bool,
     pub(crate) json: bool,
+    pub(crate) evidence_file: Option<PathBuf>,
 }
 
 impl Options {
@@ -92,7 +103,7 @@ impl Options {
             Some("phase") => {
                 let phase = args
                     .next()
-                    .ok_or_else(|| "`phase` requires a number (00..10)".to_owned())?;
+                    .ok_or_else(|| "`phase` requires a number (00..11-b)".to_owned())?;
                 Selection::Phase(Phase::parse(&phase)?)
             }
             Some("all") => Selection::All,
@@ -110,6 +121,7 @@ impl Options {
             release: false,
             package: false,
             json: false,
+            evidence_file: None,
         };
         for argument in args {
             match argument.as_str() {
@@ -120,6 +132,14 @@ impl Options {
                 "--release" => options.release = true,
                 "--package" => options.package = true,
                 "--json" => options.json = true,
+                value if value.starts_with("--evidence-file=") => {
+                    let path = value
+                        .strip_prefix("--evidence-file=")
+                        .filter(|path| !path.is_empty())
+                        .ok_or_else(|| "`--evidence-file` requires a path".to_owned())?;
+                    options.evidence_file = Some(PathBuf::from(path));
+                    options.json = true;
+                }
                 _ => return Err(format!("unknown option `{argument}`\n{}", Self::usage())),
             }
         }
@@ -157,30 +177,39 @@ impl Options {
             && !matches!(
                 selection,
                 Selection::Phase(
-                    Phase::P05 | Phase::P06 | Phase::P07 | Phase::P08 | Phase::P09 | Phase::P10,
+                    Phase::P05
+                        | Phase::P06
+                        | Phase::P07
+                        | Phase::P08
+                        | Phase::P09
+                        | Phase::P10
+                        | Phase::P11
+                        | Phase::P11B,
                 ) | Selection::All
             )
         {
             return Err(
-                "resource measurement is defined only for Phase 05 through Phase 10, or `all`"
+                "resource measurement is defined only for Phase 05 through Phase 11-B, or `all`"
                     .to_owned(),
             );
         }
         if (options.release || options.package)
             && !matches!(
                 selection,
-                Selection::Phase(Phase::P09 | Phase::P10) | Selection::All
+                Selection::Phase(Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B)
+                    | Selection::All
             )
         {
             return Err(
-                "release and package modes are defined only for Phase 09/10 or `all`".to_owned(),
+                "release and package modes are defined only for Phase 09/10/11/11-B or `all`"
+                    .to_owned(),
             );
         }
         Ok(options)
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..10> [--performance|--runtime|--resources|--release|--package] [--json]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package] [--json]"
+        "usage: stickymd-smoke phase <00..11-b> [--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]"
     }
 }
 
@@ -254,5 +283,53 @@ mod tests {
             Options::parse(args(&["phase", "10", "--json"])).expect("Phase 10 JSON evidence mode");
         assert_eq!(options.selection, Selection::Phase(Phase::P10));
         assert!(options.json);
+    }
+
+    #[test]
+    fn phase11_supports_every_local_convergence_mode() {
+        for mode in [
+            "--performance",
+            "--runtime",
+            "--resources",
+            "--release",
+            "--package",
+        ] {
+            let options = Options::parse(args(&["phase", "11", mode, "--json"]))
+                .expect("valid Phase 11 mode");
+            assert_eq!(options.selection, Selection::Phase(Phase::P11));
+            assert!(options.json);
+        }
+    }
+
+    #[test]
+    fn phase11b_supports_every_local_amendment_mode() {
+        for mode in [
+            "--performance",
+            "--runtime",
+            "--resources",
+            "--release",
+            "--package",
+        ] {
+            let options = Options::parse(args(&["phase", "11-b", mode, "--json"]))
+                .expect("valid Phase 11-B mode");
+            assert_eq!(options.selection, Selection::Phase(Phase::P11B));
+            assert!(options.json);
+        }
+    }
+
+    #[test]
+    fn evidence_file_enables_json_without_terminal_redirection() {
+        let options = Options::parse(args(&[
+            "phase",
+            "11",
+            "--performance",
+            "--evidence-file=docs/report/evidence/phase-11.json",
+        ]))
+        .expect("valid evidence file option");
+        assert!(options.json);
+        assert_eq!(
+            options.evidence_file.as_deref(),
+            Some(std::path::Path::new("docs/report/evidence/phase-11.json"))
+        );
     }
 }

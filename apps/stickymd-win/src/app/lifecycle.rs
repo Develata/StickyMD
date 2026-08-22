@@ -94,15 +94,28 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             }
         };
         self.startup_diagnostics.record("surface_ready");
+        self.startup_diagnostics.record("display_ready");
         let initial_snapshot = self.coordinator.snapshot();
         self.startup_diagnostics.record("font_system_begin");
         let document_scale =
             window.scale_factor() as f32 * self.config.current().content_zoom_percent.factor();
+        let initial_geometry = super::preview_runtime::geometry(
+            self.config.current().view_mode,
+            size,
+            window.scale_factor() as f32,
+        );
+        let (initial_width, initial_height) = initial_geometry
+            .source
+            .or(initial_geometry.preview)
+            .map_or((size.width.max(1), size.height.max(1)), |pane| {
+                (pane.width.max(1), pane.height.max(1))
+            });
+        self.startup_diagnostics.record("source_layout_begin");
         let diagnostics = &mut self.startup_diagnostics;
         let projection = SourceProjection::new_observed(
             &initial_snapshot,
-            size.width,
-            size.height,
+            initial_width,
+            initial_height,
             document_scale,
             |milestone| match milestone {
                 SourceInitializationMilestone::FontSystemReady => {
@@ -112,6 +125,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                     diagnostics.record("source_buffer_ready")
                 }
                 SourceInitializationMilestone::SourceShaped => {
+                    diagnostics.record("source_layout_end");
                     diagnostics.record("source_projection_ready")
                 }
             },

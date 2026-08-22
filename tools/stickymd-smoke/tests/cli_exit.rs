@@ -28,6 +28,6 @@ fn successful_json_request_returns_zero_and_writes_one_json_document() {
     );
     let stdout = String::from_utf8(output.stdout).expect("JSON stdout is UTF-8");
     assert_eq!(stdout.lines().count(), 1);
-    assert!(stdout.starts_with("{\"schema_version\":1,"));
+    assert!(stdout.starts_with("{\"schema_version\":2,\"suite_version\":\"2\","));
     assert!(stdout.trim_end().ends_with('}'));
 }

@@ -77,6 +77,7 @@ pub struct PreviewPipeline {
     math_engine: MathEngine,
     image_cache: DecodedImageCache,
     image_band: (f32, f32),
+    layout_has_image_source: bool,
     tree: Option<RenderTree>,
     layout: Option<LaidOutDocument>,
     counters: PreviewPipelineCounters,
@@ -101,6 +102,7 @@ impl PreviewPipeline {
             math_engine: MathEngine::new(),
             image_cache: DecodedImageCache::default(),
             image_band: (0.0, 0.0),
+            layout_has_image_source: false,
             tree: None,
             layout: None,
             counters: PreviewPipelineCounters::default(),
@@ -166,6 +168,7 @@ impl PreviewPipeline {
         self.tree = Some(tree);
         self.layout = Some(layout);
         self.image_band = image_band;
+        self.layout_has_image_source = image_source.is_some();
         self.paint_with_image_source(
             snapshot.generation,
             height_px,
@@ -207,6 +210,24 @@ impl PreviewPipeline {
         if width_px == 0 {
             return Err(PreviewPipelineError::InvalidWidth);
         }
+        let normalized_scale = scale.max(0.5);
+        let image_source_available = image_source.is_some();
+        if self.layout.as_ref().is_some_and(|layout| {
+            layout.generation == generation
+                && layout.width_px == width_px
+                && layout.scale.to_bits() == normalized_scale.to_bits()
+                && layout.theme == theme
+                && self.layout_has_image_source == image_source_available
+        }) {
+            return self.paint_with_image_source(
+                generation,
+                height_px,
+                scroll_y,
+                selection,
+                theme,
+                image_source,
+            );
+        }
         self.layout = None;
         let tree = self.tree.as_ref().ok_or(PreviewPipelineError::NoDocument)?;
         if tree.generation != generation {
@@ -231,6 +252,7 @@ impl PreviewPipeline {
             theme,
         ));
         self.image_band = image_band;
+        self.layout_has_image_source = image_source_available;
         self.counters.layouts = self.counters.layouts.saturating_add(1);
         self.paint_with_image_source(
             generation,
@@ -262,8 +284,19 @@ impl PreviewPipeline {
         theme: PreviewTheme,
         image_source: Option<&dyn PreviewImageSource>,
     ) -> Result<PreviewFrame, PreviewPipelineError> {
-        let needs_image_band = image_source.is_some()
-            && (scroll_y < self.image_band.0 || scroll_y + height_px as f32 > self.image_band.1);
+        // The UI may enqueue several wheel events before the previous frame
+        // returns. Use the current document extent for lazy-image admission,
+        // otherwise an overscroll value can build a band beyond the document
+        // while `paint_document` later clamps the visible frame to its bottom.
+        let effective_scroll_y = self.layout.as_ref().map_or(scroll_y, |layout| {
+            scroll_y.clamp(0.0, (layout.height_px - height_px as f32).max(0.0))
+        });
+        let image_source_available = image_source.is_some();
+        let needs_image_source_refresh = self.layout_has_image_source != image_source_available;
+        let needs_image_band = needs_image_source_refresh
+            || (image_source_available
+                && (effective_scroll_y < self.image_band.0
+                    || effective_scroll_y + height_px as f32 > self.image_band.1));
         if needs_image_band {
             let (width, scale) = self
                 .layout
@@ -272,7 +305,7 @@ impl PreviewPipeline {
                 .ok_or(PreviewPipelineError::NoDocument)?;
             self.layout = None;
             let tree = self.tree.as_ref().ok_or(PreviewPipelineError::NoDocument)?;
-            let band = image_band(scroll_y, height_px, scale);
+            let band = image_band(effective_scroll_y, height_px, scale);
             self.layout = Some(layout_document(
                 LayoutResources {
                     font_system: &mut self.font_system,
@@ -288,6 +321,7 @@ impl PreviewPipeline {
                 theme,
             ));
             self.image_band = band;
+            self.layout_has_image_source = image_source_available;
             self.counters.layouts = self.counters.layouts.saturating_add(1);
         }
         if self
@@ -316,6 +350,7 @@ impl PreviewPipeline {
                 scale,
                 theme,
             ));
+            self.layout_has_image_source = image_source_available;
             self.counters.layouts = self.counters.layouts.saturating_add(1);
         }
         let layout = self
@@ -333,7 +368,7 @@ impl PreviewPipeline {
             &mut self.swash_cache,
             layout,
             height_px,
-            scroll_y,
+            effective_scroll_y,
             selection,
             theme,
         )?;
@@ -471,6 +506,58 @@ mod tests {
                 paints: 1_101,
             }
         );
+    }
+
+    #[test]
+    fn phase11_identical_relayout_only_repaints_but_image_source_change_rebuilds() {
+        let generation = Generation::initial();
+        let prepared = crate::image::prepare_rgba_image(8, 4, vec![200; 8 * 4 * 4]).unwrap();
+        let images = MemoryImages {
+            bytes: prepared.bytes().to_vec(),
+            loads: Cell::new(0),
+        };
+        let mut pipeline = PreviewPipeline::new();
+        pipeline
+            .build(
+                &snapshot("![local](image.png)", generation),
+                600,
+                300,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        let initial = pipeline.counters();
+
+        pipeline
+            .relayout(
+                generation,
+                600,
+                300,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        assert_eq!(pipeline.counters().layouts, initial.layouts);
+        assert_eq!(pipeline.counters().paints, initial.paints + 1);
+
+        pipeline
+            .relayout_with_image_source(
+                generation,
+                600,
+                300,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+                Some(&images),
+            )
+            .unwrap();
+        assert_eq!(pipeline.counters().layouts, initial.layouts + 1);
+        assert!(images.loads.get() > 0);
     }
 
     #[test]
@@ -822,6 +909,60 @@ mod tests {
     }
 
     #[test]
+    fn phase11_overscroll_decodes_images_at_the_clamped_bottom_viewport() {
+        let prepared = crate::image::prepare_rgba_image(64, 64, vec![160; 64 * 64 * 4]).unwrap();
+        let images = MemoryImages {
+            bytes: prepared.bytes().to_vec(),
+            loads: Cell::new(0),
+        };
+        let mut source = String::new();
+        for index in 0..40 {
+            source.push_str(&format!("![image-{index}](image.png)\n\n"));
+        }
+        let generation = Generation::initial();
+        let mut pipeline = PreviewPipeline::new();
+        pipeline
+            .build_with_image_source(
+                &snapshot(&source, generation),
+                300,
+                120,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+                Some(&images),
+            )
+            .unwrap();
+        let initial_loads = images.loads.get();
+        assert!(initial_loads < 40);
+
+        let frame = pipeline
+            .paint_with_image_source(
+                generation,
+                120,
+                f32::MAX,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+                Some(&images),
+            )
+            .unwrap();
+
+        assert!(frame.scroll_y().is_finite());
+        assert!(images.loads.get() > initial_loads);
+        assert!(
+            pipeline
+                .layout
+                .as_ref()
+                .and_then(|layout| layout.blocks.last())
+                .is_some_and(|block| block.chunks.iter().any(|chunk| matches!(
+                    chunk.content,
+                    crate::preview::layout::LayoutContent::Image(_)
+                ))),
+            "the final visible image must be decoded after scroll clamps to the document bottom"
+        );
+    }
+
+    #[test]
     fn formula_resize_scroll_release_scale_and_theme_obey_cache_boundaries() {
         let generation = Generation::initial();
         let mut pipeline = PreviewPipeline::new();
@@ -1027,6 +1168,34 @@ mod tests {
             assert!(first.rect.height >= 20.0 * scale);
         }
         assert!(left_edges.windows(2).all(|pair| pair[1] > pair[0]));
+    }
+
+    #[test]
+    fn phase11_large_fixture_retains_absolute_source_offsets() {
+        let source = fixture(1024 * 1024);
+        let owned = PreviewParser
+            .parse(&snapshot(&source, Generation::initial()))
+            .unwrap();
+        let tree = RenderTreeBuilder.build(&owned);
+        let mixed_blocks = tree
+            .blocks
+            .iter()
+            .filter(|block| block.spans.iter().any(|span| span.math.is_some()))
+            .count();
+        let late_mixed_blocks = tree
+            .blocks
+            .iter()
+            .filter(|block| block.spans.iter().any(|span| span.math.is_some()))
+            .filter(|block| {
+                block
+                    .spans
+                    .iter()
+                    .any(|span| span.source_range.is_some_and(|range| range.end > 64 * 1024))
+            })
+            .count();
+
+        assert!(mixed_blocks > 1_000);
+        assert!(late_mixed_blocks * 10 > mixed_blocks * 9);
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#native-preview-layout
 
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use cosmic_text::{
@@ -13,12 +14,34 @@ use crate::source::{FontSelection, ScriptClass, segment_script_runs};
 use super::layout::{ChunkBuild, LayoutChunk, LayoutContent};
 use super::{PreviewRect, PreviewTextBox, RenderSpan, RenderStyle, SpanAction};
 
+const MAX_TEXT_LAYOUT_CACHE_ENTRIES: usize = 1_024;
+const MAX_TEXT_LAYOUT_CACHE_TEXT_BYTES: usize = 1_024;
+
 #[derive(Debug, Clone)]
 struct Segment {
     visual_range: Range<usize>,
     selection_range: Range<usize>,
     source_range: Option<super::SourceRange>,
     action: Option<SpanAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TextLayoutKey {
+    visual: String,
+    span_shapes: Vec<(usize, u8)>,
+    width_bits: u32,
+    font_size_bits: u32,
+    line_height_bits: u32,
+    align: u8,
+    wrap: u8,
+}
+
+/// Ephemeral, document-scoped shaping reuse. It is dropped after one layout
+/// and therefore cannot become another document or preview authority.
+#[derive(Default)]
+pub(super) struct TextLayoutCache {
+    buffers: HashMap<TextLayoutKey, Buffer>,
+    seen_once: HashSet<TextLayoutKey>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -33,11 +56,12 @@ pub(super) fn make_text_chunk(
     align: Align,
     wrap: Wrap,
     selection_text: &mut String,
+    cache: &mut TextLayoutCache,
 ) -> ChunkBuild {
     let mut visual = String::new();
-    let mut attributed = Vec::new();
     let mut segments = Vec::with_capacity(spans.len());
-    for (index, span) in spans.iter().enumerate() {
+    let mut span_shapes = Vec::with_capacity(spans.len());
+    for span in spans {
         let visual_start = visual.len();
         visual.push_str(&span.text);
         let visual_end = visual.len();
@@ -50,34 +74,66 @@ pub(super) fn make_text_chunk(
             source_range: span.source_range,
             action: span.action.clone(),
         });
-        append_attributed_runs(
-            &visual,
-            visual_start..visual_end,
-            index + 1,
-            span.style,
-            metrics,
-            fonts,
-            &mut attributed,
-        );
+        span_shapes.push((visual_end, style_key(span.style)));
     }
     if visual.is_empty() {
         visual.push(' ');
-        attributed.push((0..1, Attrs::new().metrics(metrics)));
+        span_shapes.push((1, 0));
     }
-
-    let mut buffer = Buffer::new(font_system, metrics);
-    buffer.set_size(Some(width), None);
-    buffer.set_wrap(wrap);
-    let default = Attrs::new().family(Family::Serif).metrics(metrics);
-    buffer.set_rich_text(
-        attributed
-            .iter()
-            .map(|(range, attrs)| (&visual[range.clone()], attrs.clone())),
-        &default,
-        Shaping::Advanced,
-        Some(align),
-    );
-    buffer.shape_until_scroll(font_system, false);
+    let key = TextLayoutKey {
+        visual,
+        span_shapes,
+        width_bits: width.to_bits(),
+        font_size_bits: metrics.font_size.to_bits(),
+        line_height_bits: metrics.line_height.to_bits(),
+        align: align_key(align),
+        wrap: wrap_key(wrap),
+    };
+    let buffer = if let Some(buffer) = cache.buffers.get(&key) {
+        buffer.clone()
+    } else {
+        let mut attributed = Vec::new();
+        let mut start = 0;
+        for (index, span) in spans.iter().enumerate() {
+            let end = key.span_shapes[index].0;
+            append_attributed_runs(
+                &key.visual,
+                start..end,
+                index + 1,
+                span.style,
+                metrics,
+                fonts,
+                &mut attributed,
+            );
+            start = end;
+        }
+        if spans.is_empty() {
+            attributed.push((0..1, Attrs::new().metrics(metrics)));
+        }
+        let mut buffer = Buffer::new(font_system, metrics);
+        buffer.set_size(Some(width), None);
+        buffer.set_wrap(wrap);
+        let default = Attrs::new().family(Family::Serif).metrics(metrics);
+        buffer.set_rich_text(
+            attributed
+                .iter()
+                .map(|(range, attrs)| (&key.visual[range.clone()], attrs.clone())),
+            &default,
+            Shaping::Advanced,
+            Some(align),
+        );
+        buffer.shape_until_scroll(font_system, false);
+        if key.visual.len() <= MAX_TEXT_LAYOUT_CACHE_TEXT_BYTES {
+            if cache.seen_once.remove(&key) {
+                if cache.buffers.len() < MAX_TEXT_LAYOUT_CACHE_ENTRIES {
+                    cache.buffers.insert(key, buffer.clone());
+                }
+            } else if cache.buffers.len() + cache.seen_once.len() < MAX_TEXT_LAYOUT_CACHE_ENTRIES {
+                cache.seen_once.insert(key);
+            }
+        }
+        buffer
+    };
     let height = buffer
         .layout_runs()
         .map(|run| run.line_top + run.line_height)
@@ -92,6 +148,36 @@ pub(super) fn make_text_chunk(
         height,
         boxes,
         decorations: Vec::new(),
+    }
+}
+
+fn style_key(style: RenderStyle) -> u8 {
+    u8::from(style.strong)
+        | (u8::from(style.emphasis) << 1)
+        | (u8::from(style.strikethrough) << 2)
+        | (u8::from(style.code) << 3)
+        | (u8::from(style.link) << 4)
+        | (u8::from(style.html_literal) << 5)
+        | (u8::from(style.math_placeholder) << 6)
+        | (u8::from(style.image_placeholder) << 7)
+}
+
+const fn align_key(align: Align) -> u8 {
+    match align {
+        Align::Left => 0,
+        Align::Right => 1,
+        Align::Center => 2,
+        Align::Justified => 3,
+        Align::End => 4,
+    }
+}
+
+const fn wrap_key(wrap: Wrap) -> u8 {
+    match wrap {
+        Wrap::None => 0,
+        Wrap::Glyph => 1,
+        Wrap::Word => 2,
+        Wrap::WordOrGlyph => 3,
     }
 }
 
@@ -219,4 +305,80 @@ fn selection_range_for_visual_line(segment: &Segment, visual: Range<usize>) -> R
     let start = visual.start.saturating_sub(segment.visual_range.start);
     let end = visual.end.saturating_sub(segment.visual_range.start);
     (segment.selection_range.start + start)..(segment.selection_range.start + end)
+}
+
+#[cfg(test)]
+mod tests {
+    use cosmic_text::{Align, FontSystem, Metrics, Wrap};
+
+    use super::{TextLayoutCache, make_text_chunk};
+    use crate::preview::{LinkKind, RenderSpan, RenderStyle, SourceRange, SpanAction};
+    use crate::source::FontSelection;
+
+    fn linked_span(destination: &str, source_start: usize) -> RenderSpan {
+        RenderSpan {
+            text: "link".to_owned(),
+            copy_text: "link".to_owned(),
+            source_range: SourceRange::new(source_start, source_start + 4),
+            style: RenderStyle {
+                link: true,
+                ..RenderStyle::default()
+            },
+            action: Some(SpanAction::OpenLink {
+                destination: destination.to_owned(),
+                kind: LinkKind::Https,
+            }),
+            math: None,
+            image: None,
+        }
+    }
+
+    #[test]
+    fn shaping_cache_reuses_geometry_but_reprojects_source_and_actions() {
+        let mut font_system = FontSystem::new();
+        let fonts = FontSelection::resolve(&mut font_system);
+        let mut cache = TextLayoutCache::default();
+        let mut selection_text = String::new();
+        let first = linked_span("https://first.example", 0);
+        let second = linked_span("https://second.example", 100);
+
+        make_text_chunk(
+            &mut font_system,
+            &fonts,
+            &[first],
+            0.0,
+            0.0,
+            300.0,
+            Metrics::new(17.0, 26.35),
+            Align::Left,
+            Wrap::WordOrGlyph,
+            &mut selection_text,
+            &mut cache,
+        );
+        let built = make_text_chunk(
+            &mut font_system,
+            &fonts,
+            &[second],
+            0.0,
+            30.0,
+            300.0,
+            Metrics::new(17.0, 26.35),
+            Align::Left,
+            Wrap::WordOrGlyph,
+            &mut selection_text,
+            &mut cache,
+        );
+
+        assert_eq!(cache.buffers.len(), 1);
+        assert_eq!(selection_text, "linklink");
+        assert!(!built.boxes.is_empty());
+        assert!(built.boxes.iter().all(|item| {
+            item.source_range == SourceRange::new(100, 104)
+                && matches!(
+                    &item.action,
+                    Some(SpanAction::OpenLink { destination, .. })
+                        if destination == "https://second.example"
+                )
+        }));
+    }
 }

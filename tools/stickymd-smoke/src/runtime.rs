@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::evidence::EvidenceMeasurement;
+use crate::evidence::{EvidenceGate, EvidenceMeasurement, EvidenceSample};
 use crate::process_metrics::{self, MemorySample};
 use crate::ready_event::ReadyEvent;
 use crate::runner::RuntimeScenario;
@@ -20,7 +20,8 @@ const CPU_INTERVAL: Duration = Duration::from_secs(60);
 const RESOURCE_REPETITIONS: usize = 5;
 const HIDDEN_PRIVATE_WORKING_SET_LIMIT: u64 = 36 * 1024 * 1024;
 const IDLE_CPU_PERCENT_LIMIT: f64 = 0.1;
-const STARTUP_SAMPLE_COUNT: usize = 30;
+const COLD_STARTUP_SAMPLE_COUNT: usize = 30;
+const WARM_STARTUP_SAMPLE_COUNT: usize = 50;
 const COLD_START_IDLE: Duration = Duration::from_secs(10);
 const WARM_START_IDLE: Duration = Duration::from_millis(250);
 const COLD_START_LIMIT: Duration = Duration::from_millis(400);
@@ -72,6 +73,8 @@ pub(crate) fn run(
 
 pub(crate) struct RuntimeEvidence {
     pub(crate) measurements: Vec<EvidenceMeasurement>,
+    pub(crate) gates: Vec<EvidenceGate>,
+    pub(crate) samples: Vec<EvidenceSample>,
     pub(crate) gate_failure: Option<String>,
 }
 
@@ -79,6 +82,8 @@ impl RuntimeEvidence {
     fn passed(measurements: Vec<EvidenceMeasurement>) -> Self {
         Self {
             measurements,
+            gates: Vec::new(),
+            samples: Vec::new(),
             gate_failure: None,
         }
     }
@@ -114,6 +119,8 @@ fn run_inner(
         prepare_math_layout(&first_dir, "preview")?;
     } else if scenario == RuntimeScenario::Assets {
         prepare_asset_layout(&first_dir, "preview", 12)?;
+    } else if scenario == RuntimeScenario::Phase11B {
+        prepare_phase11b_layout(&first_dir)?;
     }
     children.push(start(&first_exe)?);
     wait_for_layout(&first_dir)?;
@@ -124,6 +131,9 @@ fn run_inner(
     }
     if scenario == RuntimeScenario::Phase10 {
         return run_phase10_lifecycle(&first_dir, &first_exe, &mut children[0]);
+    }
+    if scenario == RuntimeScenario::Phase11B {
+        return run_phase11b_lifecycle(&first_dir, &mut children[0]);
     }
 
     if scenario == RuntimeScenario::Launch {
@@ -202,18 +212,18 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
         fs::metadata(directory.join("note/note.md"))
             .map_err(|error| format!("cannot inspect startup fixture: {error}"))?
             .len(),
-        STARTUP_SAMPLE_COUNT,
+        COLD_STARTUP_SAMPLE_COUNT,
         COLD_START_IDLE.as_secs(),
-        STARTUP_SAMPLE_COUNT,
+        WARM_STARTUP_SAMPLE_COUNT,
         WARM_START_IDLE.as_millis(),
         COLD_START_LIMIT.as_millis(),
         WARM_START_LIMIT.as_millis(),
     );
 
     let mut sequence = 0_u64;
-    let mut cold = Vec::with_capacity(STARTUP_SAMPLE_COUNT);
-    let mut warm = Vec::with_capacity(STARTUP_SAMPLE_COUNT);
-    for run in 0..STARTUP_SAMPLE_COUNT {
+    let mut cold = Vec::with_capacity(COLD_STARTUP_SAMPLE_COUNT);
+    let mut warm = Vec::with_capacity(WARM_STARTUP_SAMPLE_COUNT);
+    for run in 0..COLD_STARTUP_SAMPLE_COUNT {
         thread::sleep(COLD_START_IDLE);
         sequence = sequence.saturating_add(1);
         let sample = measure_editor_ready(&executable, &directory, sequence)?;
@@ -227,8 +237,16 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
         warm.push(sample);
     }
 
-    let cold_summary = print_startup_summary("cold", &cold)?;
-    let warm_summary = print_startup_summary("warm", &warm)?;
+    for run in COLD_STARTUP_SAMPLE_COUNT..WARM_STARTUP_SAMPLE_COUNT {
+        thread::sleep(WARM_START_IDLE);
+        sequence = sequence.saturating_add(1);
+        let sample = measure_editor_ready(&executable, &directory, sequence)?;
+        print_startup_sample("warm", run + 1, &sample);
+        warm.push(sample);
+    }
+
+    let cold_summary = print_startup_summary("cold", &cold, COLD_STARTUP_SAMPLE_COUNT)?;
+    let warm_summary = print_startup_summary("warm", &warm, WARM_STARTUP_SAMPLE_COUNT)?;
     let gate_failure = if cold_summary.p95 > COLD_START_LIMIT {
         Some(format!(
             "cold editor-ready p95 {:.3} ms exceeds the USER-approved 400 ms hard gate",
@@ -244,6 +262,8 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
     };
     Ok(RuntimeEvidence {
         measurements: startup_measurements(cold_summary, warm_summary),
+        gates: startup_gates(),
+        samples: startup_samples(&cold, &warm),
         gate_failure,
     })
 }
@@ -251,8 +271,12 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct StartupSummary {
     p50: Duration,
+    p90: Duration,
     p95: Duration,
+    p99: Duration,
     max: Duration,
+    mean_us: u128,
+    stddev_us: u128,
 }
 
 fn startup_measurements(cold: StartupSummary, warm: StartupSummary) -> Vec<EvidenceMeasurement> {
@@ -260,13 +284,13 @@ fn startup_measurements(cold: StartupSummary, warm: StartupSummary) -> Vec<Evide
     measurements.push(EvidenceMeasurement {
         name: "cold.samples".to_owned(),
         unit: "count".to_owned(),
-        value: STARTUP_SAMPLE_COUNT as f64,
+        value: COLD_STARTUP_SAMPLE_COUNT as f64,
     });
     measurements.extend(startup_summary_measurements("cold", cold));
     measurements.push(EvidenceMeasurement {
         name: "warm.samples".to_owned(),
         unit: "count".to_owned(),
-        value: STARTUP_SAMPLE_COUNT as f64,
+        value: WARM_STARTUP_SAMPLE_COUNT as f64,
     });
     measurements.extend(startup_summary_measurements("warm", warm));
     measurements
@@ -276,17 +300,91 @@ fn startup_summary_measurements(
     kind: &str,
     summary: StartupSummary,
 ) -> impl Iterator<Item = EvidenceMeasurement> {
-    [
+    let durations = [
         ("p50", summary.p50),
+        ("p90", summary.p90),
         ("p95", summary.p95),
+        ("p99", summary.p99),
         ("max", summary.max),
+    ];
+    durations
+        .into_iter()
+        .map(move |(statistic, duration)| EvidenceMeasurement {
+            name: format!("{kind}.{statistic}"),
+            unit: "ms".to_owned(),
+            value: duration.as_secs_f64() * 1_000.0,
+        })
+        .chain(
+            [
+                ("mean", summary.mean_us as f64 / 1_000.0),
+                ("stddev", summary.stddev_us as f64 / 1_000.0),
+            ]
+            .into_iter()
+            .map(move |(statistic, value)| EvidenceMeasurement {
+                name: format!("{kind}.{statistic}"),
+                unit: "ms".to_owned(),
+                value,
+            }),
+        )
+}
+
+fn startup_gates() -> Vec<EvidenceGate> {
+    let source = "docs/plan/10_performance_reliability.md#initial-engineering-targets";
+    vec![
+        EvidenceGate {
+            metric: "cold.p95".to_owned(),
+            comparator: "<=".to_owned(),
+            value: COLD_START_LIMIT.as_secs_f64() * 1_000.0,
+            unit: "ms".to_owned(),
+            source: source.to_owned(),
+        },
+        EvidenceGate {
+            metric: "warm.p95".to_owned(),
+            comparator: "<=".to_owned(),
+            value: WARM_START_LIMIT.as_secs_f64() * 1_000.0,
+            unit: "ms".to_owned(),
+            source: source.to_owned(),
+        },
     ]
-    .into_iter()
-    .map(move |(statistic, duration)| EvidenceMeasurement {
-        name: format!("{kind}.{statistic}"),
-        unit: "ms".to_owned(),
-        value: duration.as_secs_f64() * 1_000.0,
-    })
+}
+
+fn startup_samples(cold: &[StartupSample], warm: &[StartupSample]) -> Vec<EvidenceSample> {
+    let mut samples = Vec::with_capacity(cold.len() + warm.len());
+    for (cohort, cohort_samples) in [("cold", cold), ("warm", warm)] {
+        for (index, sample) in cohort_samples.iter().enumerate() {
+            let internal_us = milestone_us(sample, "editor_ready");
+            let external_us = sample.external.as_micros();
+            let mut measurements = Vec::with_capacity(sample.milestones_us.len() + 3);
+            measurements.push(EvidenceMeasurement {
+                name: "external".to_owned(),
+                unit: "ms".to_owned(),
+                value: external_us as f64 / 1_000.0,
+            });
+            measurements.push(EvidenceMeasurement {
+                name: "internal".to_owned(),
+                unit: "ms".to_owned(),
+                value: internal_us as f64 / 1_000.0,
+            });
+            measurements.push(EvidenceMeasurement {
+                name: "process_overhead".to_owned(),
+                unit: "ms".to_owned(),
+                value: external_us.saturating_sub(internal_us) as f64 / 1_000.0,
+            });
+            measurements.extend(sample.milestones_us.iter().map(|(name, value)| {
+                EvidenceMeasurement {
+                    name: format!("milestone.{name}"),
+                    unit: "ms".to_owned(),
+                    value: *value as f64 / 1_000.0,
+                }
+            }));
+            samples.push(EvidenceSample {
+                cohort: cohort.to_owned(),
+                run: index + 1,
+                measurements,
+            });
+        }
+    }
+    samples
 }
 
 fn measure_editor_ready(
@@ -364,21 +462,30 @@ fn wait_for_startup_trace(path: &Path) -> Result<Vec<(String, u128)>, String> {
 
 fn validate_startup_milestones(milestones: &[(String, u128)]) -> Result<(), String> {
     const EXPECTED: &[&str] = &[
+        "process_start",
         "main_enter",
         "program_dir_ready",
         "single_instance_ready",
         "persistence_ready",
+        "config_ready",
         "document_ready",
         "event_loop_ready",
         "window_created",
         "surface_ready",
+        "display_ready",
         "font_system_begin",
+        "source_layout_begin",
         "font_system_end",
         "source_buffer_ready",
+        "source_layout_end",
         "source_projection_ready",
         "monitor_ready",
         "tray_ready",
         "window_visible",
+        "opacity_ready",
+        "topmost_ready",
+        "focus_ready",
+        "guards_ready",
         "shell_ready",
         "editor_ready",
     ];
@@ -418,8 +525,12 @@ fn milestone_us(sample: &StartupSample, name: &str) -> u128 {
         .unwrap_or_default()
 }
 
-fn print_startup_summary(kind: &str, samples: &[StartupSample]) -> Result<StartupSummary, String> {
-    if samples.len() != STARTUP_SAMPLE_COUNT {
+fn print_startup_summary(
+    kind: &str,
+    samples: &[StartupSample],
+    expected_count: usize,
+) -> Result<StartupSummary, String> {
+    if samples.len() != expected_count {
         return Err(format!("{kind} startup produced {} samples", samples.len()));
     }
     let mut external = samples
@@ -428,31 +539,56 @@ fn print_startup_summary(kind: &str, samples: &[StartupSample]) -> Result<Startu
         .collect::<Vec<_>>();
     external.sort_unstable();
     let p50 = nearest_rank(&external, 50)?;
+    let p90 = nearest_rank(&external, 90)?;
     let p95 = nearest_rank(&external, 95)?;
+    let p99 = nearest_rank(&external, 99)?;
     let max = *external
         .last()
         .ok_or_else(|| "startup samples are empty".to_owned())?;
+    let total_us = external
+        .iter()
+        .try_fold(0_u128, |total, sample| {
+            total.checked_add(sample.as_micros())
+        })
+        .ok_or_else(|| "startup sample duration sum overflowed".to_owned())?;
+    let mean_us = total_us / external.len() as u128;
+    let variance = external.iter().fold(0.0_f64, |total, sample| {
+        let delta = sample.as_micros() as f64 - mean_us as f64;
+        total + delta * delta
+    }) / external.len() as f64;
+    let stddev_us = variance.sqrt().round() as u128;
     runtime_report!(
-        "startup summary kind={kind} samples={} p50_ms={:.3} p95_ms={:.3} max_ms={:.3}",
+        "startup summary kind={kind} samples={} p50_ms={:.3} p90_ms={:.3} p95_ms={:.3} p99_ms={:.3} max_ms={:.3} mean_ms={:.3} stddev_ms={:.3}",
         external.len(),
         p50.as_secs_f64() * 1_000.0,
+        p90.as_secs_f64() * 1_000.0,
         p95.as_secs_f64() * 1_000.0,
+        p99.as_secs_f64() * 1_000.0,
         max.as_secs_f64() * 1_000.0,
+        mean_us as f64 / 1_000.0,
+        stddev_us as f64 / 1_000.0,
     );
     for name in [
         "program_dir_ready",
         "single_instance_ready",
         "persistence_ready",
+        "config_ready",
         "document_ready",
         "event_loop_ready",
         "window_created",
         "surface_ready",
+        "display_ready",
         "font_system_end",
         "source_buffer_ready",
+        "source_layout_end",
         "source_projection_ready",
         "monitor_ready",
         "tray_ready",
         "window_visible",
+        "opacity_ready",
+        "topmost_ready",
+        "focus_ready",
+        "guards_ready",
         "shell_ready",
         "editor_ready",
     ] {
@@ -467,7 +603,15 @@ fn print_startup_summary(kind: &str, samples: &[StartupSample]) -> Result<Startu
             nearest_rank(&values, 95)?.as_secs_f64() * 1_000.0,
         );
     }
-    Ok(StartupSummary { p50, p95, max })
+    Ok(StartupSummary {
+        p50,
+        p90,
+        p95,
+        p99,
+        max,
+        mean_us,
+        stddev_us,
+    })
 }
 
 fn nearest_rank(samples: &[Duration], percentile: usize) -> Result<Duration, String> {
@@ -619,6 +763,18 @@ fn run_phase10_lifecycle(
     wait_for_layered_alpha(window, Some(102))?;
     runtime_report!(
         "Phase 10 runtime initial_style={initial_style:?} restored_style={restored_style:?} compact_rect={compact:?} opacity=40"
+    );
+    Ok(())
+}
+
+fn run_phase11b_lifecycle(program_directory: &Path, primary: &mut Child) -> Result<(), String> {
+    let window = crate::window_control::visible_window(primary.id())?;
+    let note = program_directory.join("note/note.md");
+    crate::window_control::click_math_conversion(window)?;
+    wait_for_note(&note, |bytes| bytes == PHASE11B_CONVERTED.as_bytes())?;
+    ensure_alive(primary, "post Phase 11-B toolbar-conversion lifecycle")?;
+    runtime_report!(
+        "Phase 11-B runtime toolbar conversion, literal safety, and autosave lifecycle PASS"
     );
     Ok(())
 }
@@ -1931,6 +2087,33 @@ fn prepare_preview_layout(program_directory: &Path, view_mode: &str) -> Result<(
     )
     .map_err(|error| format!("cannot seed preview smoke config: {error}"))?;
     Ok(())
+}
+
+const PHASE11B_SOURCE: &str = concat!(
+    "# Phase 11-B\n\n",
+    "Inline: \\(x^2+中\\)\n\n",
+    "Display: \\[\\frac{a}{b}\\]\n\n",
+    "Literal: `\\(example\\)` and $already$.\n",
+);
+
+const PHASE11B_CONVERTED: &str = concat!(
+    "# Phase 11-B\n\n",
+    "Inline: $x^2+中$\n\n",
+    "Display: $$\\frac{a}{b}$$\n\n",
+    "Literal: `\\(example\\)` and $already$.\n",
+);
+
+fn prepare_phase11b_layout(program_directory: &Path) -> Result<(), String> {
+    let note_directory = program_directory.join("note");
+    fs::create_dir(&note_directory)
+        .map_err(|error| format!("cannot create Phase 11-B smoke note directory: {error}"))?;
+    fs::write(note_directory.join("note.md"), PHASE11B_SOURCE)
+        .map_err(|error| format!("cannot seed Phase 11-B smoke note: {error}"))?;
+    fs::write(
+        note_directory.join("config.toml"),
+        "version = 1\nview_mode = \"source\"\n",
+    )
+    .map_err(|error| format!("cannot seed Phase 11-B smoke config: {error}"))
 }
 
 const MATH_RUNTIME_FIXTURE: &str = concat!(

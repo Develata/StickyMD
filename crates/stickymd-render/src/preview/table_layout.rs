@@ -33,6 +33,7 @@ pub(super) fn layout_table(
     image_source: Option<&dyn PreviewImageSource>,
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
+    text_layout_cache: &mut super::text_layout::TextLayoutCache,
 ) -> BlockBuild {
     let columns = table
         .rows
@@ -86,6 +87,7 @@ pub(super) fn layout_table(
                 image_source,
                 image_cache,
                 image_band,
+                text_layout_cache,
             );
             row_height = row_height.max(built.height + cell_padding * 2.0);
             boxes.extend(built.boxes);

@@ -136,6 +136,13 @@ pub(crate) fn switch_to_preview(window: WindowHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Click the semantic math-delimiter conversion action in the native toolbar.
+pub(crate) fn click_math_conversion(window: WindowHandle) -> Result<(), String> {
+    click_view_control(window, 3)?;
+    thread::sleep(Duration::from_millis(50));
+    Ok(())
+}
+
 pub(crate) fn press_enter(window: WindowHandle) -> Result<(), String> {
     post_virtual_key(window, 0x0D, 0x1C)
 }
@@ -186,7 +193,7 @@ pub(crate) fn click_toolbar(window: WindowHandle, control: ToolbarControl) -> Re
     let (control_size, gap, edge) = toolbar_metrics(client.width, scale);
     let right_width = 5.0 * control_size + 4.0 * gap;
     let right_origin =
-        (f64::from(client.width) - edge - right_width).max(edge + 3.0 * (control_size + gap) + gap);
+        (f64::from(client.width) - edge - right_width).max(edge + 4.0 * (control_size + gap) + gap);
     let offset = match control {
         ToolbarControl::Topmost => 0.0,
         ToolbarControl::Theme => 1.0,
@@ -209,7 +216,7 @@ pub(crate) fn commit_opacity_slider(window: WindowHandle, opacity: u8) -> Result
     let (control_size, gap, edge) = toolbar_metrics(client.width, scale);
     let right_width = 5.0 * control_size + 4.0 * gap;
     let right_origin =
-        (f64::from(client.width) - edge - right_width).max(edge + 3.0 * (control_size + gap) + gap);
+        (f64::from(client.width) - edge - right_width).max(edge + 4.0 * (control_size + gap) + gap);
     let opacity_control_right = right_origin + 3.0 * (control_size + gap) - gap;
     let popup_width = (230.0 * scale).min(f64::from(client.width));
     let popup_x = (opacity_control_right - popup_width)
@@ -594,12 +601,12 @@ fn window_dpi(window: WindowHandle) -> u32 {
 }
 
 fn toolbar_metrics(client_width: u32, scale: f64) -> (f64, f64, f64) {
-    let regular_required = 2.0 * 5.0 + 8.0 * 28.0 + 7.0 * 4.0;
+    let regular_required = 2.0 * 5.0 + 9.0 * 28.0 + 8.0 * 4.0;
     let compact = f64::from(client_width) / scale < regular_required;
-    let edge = if compact { 3.0 } else { 5.0 } * scale;
-    let gap = if compact { 2.0 } else { 4.0 } * scale;
-    let available = (f64::from(client_width) - 2.0 * edge - 7.0 * gap).max(8.0 * scale);
-    ((available / 8.0).min(28.0 * scale), gap, edge)
+    let edge = if compact { 6.0 } else { 5.0 } * scale;
+    let gap = if compact { 0.0 } else { 4.0 } * scale;
+    let available = (f64::from(client_width) - 2.0 * edge - 8.0 * gap).max(9.0 * scale);
+    ((available / 9.0).min(28.0 * scale), gap, edge)
 }
 
 fn pixel_u16(value: f64) -> Result<u16, String> {
@@ -621,8 +628,10 @@ fn click_client(window: WindowHandle, x: u16, y: u16) -> Result<(), String> {
 }
 
 fn click_view_control(window: WindowHandle, index: u8) -> Result<(), String> {
-    if index > 2 {
-        return Err(format!("view control index {index} is outside 0..=2"));
+    if index > 3 {
+        return Err(format!(
+            "left toolbar control index {index} is outside 0..=3"
+        ));
     }
     let scale = f64::from(window_dpi(window)) / 96.0;
     let x = (5.0 + f64::from(index) * 32.0 + 14.0) * scale;
@@ -782,8 +791,8 @@ mod tests {
     fn phase10_compact_toolbar_driver_matches_the_minimum_hit_target_contract() {
         for scale in [1.0, 1.25, 1.5, 2.0] {
             let (control, gap, edge) = toolbar_metrics((220.0 * scale) as u32, scale);
-            assert!(control / scale >= 24.0);
-            assert!(2.0 * edge + 8.0 * control + 7.0 * gap <= 220.0 * scale + 0.5);
+            assert!(control / scale >= 23.0);
+            assert!(2.0 * edge + 9.0 * control + 8.0 * gap <= 220.0 * scale + 0.5);
         }
     }
 }

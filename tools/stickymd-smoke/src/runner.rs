@@ -4,7 +4,9 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::cli::{Options, Phase, Selection};
-use crate::evidence::{self, EvidenceMeasurement, EvidenceResult, EvidenceStatus};
+use crate::evidence::{
+    self, EvidenceGate, EvidenceMeasurement, EvidenceResult, EvidenceSample, EvidenceStatus,
+};
 use crate::governance;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -33,6 +35,8 @@ enum TaskId {
     Phase9ConvergenceTests,
     Phase10UxTests,
     Phase10Performance,
+    Phase11BTests,
+    Phase11BPerformance,
     FormatCheck,
     ClippyCheck,
     DependencyPolicy,
@@ -52,6 +56,7 @@ enum TaskId {
     RuntimeWindowResources,
     RuntimeStartup,
     RuntimePhase10,
+    RuntimePhase11B,
     RuntimeZoomResources,
 }
 
@@ -89,17 +94,25 @@ pub(crate) enum RuntimeScenario {
     WindowResources,
     Startup,
     Phase10,
+    Phase11B,
     ZoomResources,
 }
 
 enum TaskExecution {
-    Passed(Vec<EvidenceMeasurement>),
+    Passed(TaskEvidence),
     Failed {
         detail: String,
-        measurements: Vec<EvidenceMeasurement>,
+        evidence: TaskEvidence,
     },
     #[cfg(not(windows))]
     NotTested(String),
+}
+
+#[derive(Default)]
+struct TaskEvidence {
+    measurements: Vec<EvidenceMeasurement>,
+    gates: Vec<EvidenceGate>,
+    samples: Vec<EvidenceSample>,
 }
 
 impl Task {
@@ -132,24 +145,25 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
             println!("[{}/{}] {task_name}", index + 1, tasks.len());
         }
         match run_task(root, task, options.json) {
-            Ok(TaskExecution::Passed(measurements)) => results.push(EvidenceResult {
+            Ok(TaskExecution::Passed(evidence)) => results.push(EvidenceResult {
                 id: task_name.to_owned(),
                 status: EvidenceStatus::Passed,
                 detail: None,
-                measurements,
+                measurements: evidence.measurements,
+                gates: evidence.gates,
+                samples: evidence.samples,
             }),
-            Ok(TaskExecution::Failed {
-                detail,
-                measurements,
-            }) => {
+            Ok(TaskExecution::Failed { detail, evidence }) => {
                 results.push(EvidenceResult {
                     id: task_name.to_owned(),
                     status: EvidenceStatus::Failed,
                     detail: Some(detail.clone()),
-                    measurements,
+                    measurements: evidence.measurements,
+                    gates: evidence.gates,
+                    samples: evidence.samples,
                 });
                 if options.json {
-                    evidence::emit(root, &label, &results);
+                    evidence::emit(root, &label, &results, options.evidence_file.as_deref())?;
                 }
                 return Err(detail);
             }
@@ -160,9 +174,11 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
                     status: EvidenceStatus::NotTested,
                     detail: Some(detail.clone()),
                     measurements: Vec::new(),
+                    gates: Vec::new(),
+                    samples: Vec::new(),
                 });
                 if options.json {
-                    evidence::emit(root, &label, &results);
+                    evidence::emit(root, &label, &results, options.evidence_file.as_deref())?;
                 }
                 return Err(format!("`{task_name}` is NOT_TESTED: {detail}"));
             }
@@ -172,9 +188,11 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
                     status: EvidenceStatus::Failed,
                     detail: Some(error.clone()),
                     measurements: Vec::new(),
+                    gates: Vec::new(),
+                    samples: Vec::new(),
                 });
                 if options.json {
-                    evidence::emit(root, &label, &results);
+                    evidence::emit(root, &label, &results, options.evidence_file.as_deref())?;
                 }
                 return Err(error);
             }
@@ -188,9 +206,11 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
             status: EvidenceStatus::Failed,
             detail: Some(error.clone()),
             measurements: Vec::new(),
+            gates: Vec::new(),
+            samples: Vec::new(),
         });
         if options.json {
-            evidence::emit(root, &label, &results);
+            evidence::emit(root, &label, &results, options.evidence_file.as_deref())?;
         }
         return Err(error);
     }
@@ -203,9 +223,11 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
         status: EvidenceStatus::Passed,
         detail: None,
         measurements: Vec::new(),
+        gates: Vec::new(),
+        samples: Vec::new(),
     });
     if options.json {
-        evidence::emit(root, &label, &results);
+        evidence::emit(root, &label, &results, options.evidence_file.as_deref())?;
     } else {
         println!("StickyMD smoke PASS: {label}");
     }
@@ -270,6 +292,10 @@ fn task_label(task: &Task) -> &'static str {
             ..
         } => "copied Release Phase 10 compact/tool-window/opacity lifecycle",
         Task::Runtime {
+            scenario: RuntimeScenario::Phase11B,
+            ..
+        } => "copied Release Phase 11-B semantic-conversion lifecycle",
+        Task::Runtime {
             scenario: RuntimeScenario::ZoomResources,
             ..
         } => "copied Release Phase 10 zoom resource matrix",
@@ -278,14 +304,18 @@ fn task_label(task: &Task) -> &'static str {
 
 fn run_task(root: &Path, task: &Task, capture_output: bool) -> Result<TaskExecution, String> {
     match task {
-        Task::Governance => governance::verify(root).map(|()| TaskExecution::Passed(Vec::new())),
+        Task::Governance => {
+            governance::verify(root).map(|()| TaskExecution::Passed(TaskEvidence::default()))
+        }
         Task::Cargo { label, args, .. } => {
             let mut command = Command::new("cargo");
             command.args(args).current_dir(root);
             if capture_output {
-                run_captured(command, label).map(|()| TaskExecution::Passed(Vec::new()))
+                run_captured(command, label)
+                    .map(|()| TaskExecution::Passed(TaskEvidence::default()))
             } else {
-                run_inherited(command, label).map(|()| TaskExecution::Passed(Vec::new()))
+                run_inherited(command, label)
+                    .map(|()| TaskExecution::Passed(TaskEvidence::default()))
             }
         }
         Task::PowerShell {
@@ -301,9 +331,11 @@ fn run_task(root: &Path, task: &Task, capture_output: bool) -> Result<TaskExecut
                 .args(args)
                 .current_dir(root);
             if capture_output {
-                run_captured(command, label).map(|()| TaskExecution::Passed(Vec::new()))
+                run_captured(command, label)
+                    .map(|()| TaskExecution::Passed(TaskEvidence::default()))
             } else {
-                run_inherited(command, label).map(|()| TaskExecution::Passed(Vec::new()))
+                run_inherited(command, label)
+                    .map(|()| TaskExecution::Passed(TaskEvidence::default()))
             }
         }
         Task::Runtime { scenario, .. } => run_runtime(root, *scenario, capture_output),
@@ -347,10 +379,18 @@ fn run_runtime(
         if let Some(detail) = outcome.gate_failure {
             TaskExecution::Failed {
                 detail,
-                measurements: outcome.measurements,
+                evidence: TaskEvidence {
+                    measurements: outcome.measurements,
+                    gates: outcome.gates,
+                    samples: outcome.samples,
+                },
             }
         } else {
-            TaskExecution::Passed(outcome.measurements)
+            TaskExecution::Passed(TaskEvidence {
+                measurements: outcome.measurements,
+                gates: outcome.gates,
+                samples: outcome.samples,
+            })
         }
     })
 }
@@ -376,6 +416,13 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             Selection::Phase(Phase::P07) => push_unique(&mut tasks, runtime_image_resources()),
             Selection::Phase(Phase::P08) => push_unique(&mut tasks, runtime_window_resources()),
             Selection::Phase(Phase::P10) => {
+                push_unique(&mut tasks, runtime_resources());
+                push_unique(&mut tasks, runtime_math_resources());
+                push_unique(&mut tasks, runtime_image_resources());
+                push_unique(&mut tasks, runtime_window_resources());
+                push_unique(&mut tasks, runtime_zoom_resources());
+            }
+            Selection::Phase(Phase::P11 | Phase::P11B) => {
                 push_unique(&mut tasks, runtime_resources());
                 push_unique(&mut tasks, runtime_math_resources());
                 push_unique(&mut tasks, runtime_image_resources());
@@ -432,6 +479,8 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         Selection::Phase(Phase::P08) => push_unique(&mut tasks, phase8_window_tests()),
         Selection::Phase(Phase::P09) => push_unique(&mut tasks, phase9_convergence_tests()),
         Selection::Phase(Phase::P10) => push_unique(&mut tasks, phase10_ux_tests()),
+        Selection::Phase(Phase::P11) => push_unique(&mut tasks, workspace_tests()),
+        Selection::Phase(Phase::P11B) => push_unique(&mut tasks, phase11b_tests()),
     }
 
     // CI owns every headless task. `--performance` remains the explicit local
@@ -479,6 +528,35 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                     }
                     push_unique(&mut tasks, phase10_performance());
                 }
+                Phase::P11 => {
+                    if options.performance {
+                        push_unique(&mut tasks, phase1_markdown_performance());
+                        push_unique(&mut tasks, phase1_persistence_performance());
+                        push_unique(&mut tasks, phase2_performance());
+                        push_unique(&mut tasks, phase3_performance());
+                        push_unique(&mut tasks, phase4_performance());
+                        push_unique(&mut tasks, phase5_performance());
+                        push_unique(&mut tasks, phase6_performance());
+                        push_unique(&mut tasks, phase7_performance());
+                        push_unique(&mut tasks, phase8_performance());
+                    }
+                    push_unique(&mut tasks, phase10_performance());
+                }
+                Phase::P11B => {
+                    if options.performance {
+                        push_unique(&mut tasks, phase1_markdown_performance());
+                        push_unique(&mut tasks, phase1_persistence_performance());
+                        push_unique(&mut tasks, phase2_performance());
+                        push_unique(&mut tasks, phase3_performance());
+                        push_unique(&mut tasks, phase4_performance());
+                        push_unique(&mut tasks, phase5_performance());
+                        push_unique(&mut tasks, phase6_performance());
+                        push_unique(&mut tasks, phase7_performance());
+                        push_unique(&mut tasks, phase8_performance());
+                    }
+                    push_unique(&mut tasks, phase10_performance());
+                    push_unique(&mut tasks, phase11b_performance());
+                }
             }
         }
     }
@@ -486,7 +564,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
     if options.performance
         && selected_phases(options.selection)
             .iter()
-            .any(|phase| matches!(phase, Phase::P09 | Phase::P10))
+            .any(|phase| matches!(phase, Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B))
     {
         push_unique(&mut tasks, release_build());
         push_unique(&mut tasks, runtime_startup());
@@ -506,6 +584,17 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             }
             Selection::Phase(Phase::P10) => {
                 push_unique(&mut tasks, runtime_phase10());
+            }
+            Selection::Phase(Phase::P11 | Phase::P11B) => {
+                push_unique(&mut tasks, runtime_portable());
+                push_unique(&mut tasks, runtime_preview());
+                push_unique(&mut tasks, runtime_math());
+                push_unique(&mut tasks, runtime_assets());
+                push_unique(&mut tasks, runtime_window_shell());
+                push_unique(&mut tasks, runtime_phase10());
+                if matches!(options.selection, Selection::Phase(Phase::P11B)) {
+                    push_unique(&mut tasks, runtime_phase11b());
+                }
             }
             Selection::All => {
                 push_unique(&mut tasks, runtime_portable());
@@ -769,6 +858,14 @@ fn phase10_ux_tests() -> Task {
     )
 }
 
+fn phase11b_tests() -> Task {
+    cargo(
+        TaskId::Phase11BTests,
+        "Phase 11-B semantic-conversion and Pin orthogonality tests",
+        &["test", "--workspace", "--locked", "phase11b_"],
+    )
+}
+
 fn phase1_markdown_performance() -> Task {
     cargo(
         TaskId::Phase1MarkdownMathPerformance,
@@ -938,6 +1035,24 @@ fn phase10_performance() -> Task {
     )
 }
 
+fn phase11b_performance() -> Task {
+    cargo(
+        TaskId::Phase11BPerformance,
+        "Phase 11-B semantic-conversion Release baseline",
+        &[
+            "test",
+            "-p",
+            "stickymd-render",
+            "--release",
+            "--locked",
+            "phase11b_performance_",
+            "--",
+            "--ignored",
+            "--nocapture",
+        ],
+    )
+}
+
 fn release_build() -> Task {
     cargo(
         TaskId::ReleaseBuild,
@@ -1030,6 +1145,13 @@ const fn runtime_phase10() -> Task {
     }
 }
 
+const fn runtime_phase11b() -> Task {
+    Task::Runtime {
+        id: TaskId::RuntimePhase11B,
+        scenario: RuntimeScenario::Phase11B,
+    }
+}
+
 const fn runtime_zoom_resources() -> Task {
     Task::Runtime {
         id: TaskId::RuntimeZoomResources,
@@ -1053,6 +1175,7 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            evidence_file: None,
         })
         .expect("valid all plan");
         let ids: Vec<_> = tasks.iter().map(super::Task::id).collect();
@@ -1078,6 +1201,7 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            evidence_file: None,
         })
         .expect("valid performance plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
@@ -1089,6 +1213,7 @@ mod tests {
         assert!(ids.contains(&TaskId::Phase6Performance));
         assert!(ids.contains(&TaskId::Phase7Performance));
         assert!(ids.contains(&TaskId::Phase8Performance));
+        assert!(ids.contains(&TaskId::Phase11BPerformance));
     }
 
     #[test]
@@ -1102,6 +1227,7 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            evidence_file: None,
         })
         .expect("valid CI plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
@@ -1116,6 +1242,7 @@ mod tests {
             TaskId::Phase7Performance,
             TaskId::Phase8Performance,
             TaskId::Phase10Performance,
+            TaskId::Phase11BPerformance,
         ] {
             assert!(ids.contains(&expected));
         }
@@ -1131,6 +1258,7 @@ mod tests {
         assert!(!ids.contains(&TaskId::RuntimeWindowResources));
         assert!(!ids.contains(&TaskId::RuntimeStartup));
         assert!(!ids.contains(&TaskId::RuntimePhase10));
+        assert!(!ids.contains(&TaskId::RuntimePhase11B));
         assert!(!ids.contains(&TaskId::RuntimeZoomResources));
         assert!(!requires_full_readiness(&Options {
             selection: Selection::All,
@@ -1141,6 +1269,7 @@ mod tests {
             release: false,
             package: false,
             json: true,
+            evidence_file: None,
         }));
     }
 
@@ -1155,6 +1284,7 @@ mod tests {
             release: false,
             package: false,
             json: true,
+            evidence_file: None,
         }));
     }
 
@@ -1169,6 +1299,7 @@ mod tests {
             release: false,
             package: false,
             json: true,
+            evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 10 headless plan");
         assert_eq!(
@@ -1221,6 +1352,121 @@ mod tests {
     }
 
     #[test]
+    fn phase11_routes_convergence_runtime_resources_and_performance_once() {
+        let options = |performance, runtime, resources| Options {
+            selection: Selection::Phase(crate::cli::Phase::P11),
+            ci: false,
+            performance,
+            runtime,
+            resources,
+            release: false,
+            package: false,
+            json: true,
+            evidence_file: None,
+        };
+        let headless = build_plan(&options(false, false, false)).expect("Phase 11 headless plan");
+        assert_eq!(
+            headless
+                .iter()
+                .filter(|task| task.id() == TaskId::WorkspaceTests)
+                .count(),
+            1
+        );
+        let runtime = build_plan(&options(false, true, false)).expect("Phase 11 runtime plan");
+        for expected in [
+            TaskId::RuntimePortable,
+            TaskId::RuntimePreview,
+            TaskId::RuntimeMath,
+            TaskId::RuntimeAssets,
+            TaskId::RuntimeWindowShell,
+            TaskId::RuntimePhase10,
+        ] {
+            assert_eq!(
+                runtime.iter().filter(|task| task.id() == expected).count(),
+                1
+            );
+        }
+        let resources = build_plan(&options(false, false, true)).expect("Phase 11 resources plan");
+        for expected in [
+            TaskId::RuntimeResources,
+            TaskId::RuntimeMathResources,
+            TaskId::RuntimeImageResources,
+            TaskId::RuntimeWindowResources,
+            TaskId::RuntimeZoomResources,
+        ] {
+            assert_eq!(
+                resources
+                    .iter()
+                    .filter(|task| task.id() == expected)
+                    .count(),
+                1
+            );
+        }
+        let performance =
+            build_plan(&options(true, false, false)).expect("Phase 11 performance plan");
+        assert_eq!(
+            performance
+                .iter()
+                .filter(|task| task.id() == TaskId::RuntimeStartup)
+                .count(),
+            1
+        );
+        assert_eq!(
+            performance
+                .iter()
+                .filter(|task| task.id() == TaskId::Phase10Performance)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn phase11b_routes_amendment_tests_runtime_and_release_performance_once() {
+        let options = |performance, runtime| Options {
+            selection: Selection::Phase(crate::cli::Phase::P11B),
+            ci: false,
+            performance,
+            runtime,
+            resources: false,
+            release: false,
+            package: false,
+            json: true,
+            evidence_file: None,
+        };
+        let headless = build_plan(&options(false, false)).expect("Phase 11-B headless plan");
+        assert_eq!(
+            headless
+                .iter()
+                .filter(|task| task.id() == TaskId::Phase11BTests)
+                .count(),
+            1
+        );
+        let runtime = build_plan(&options(false, true)).expect("Phase 11-B runtime plan");
+        assert_eq!(
+            runtime
+                .iter()
+                .filter(|task| task.id() == TaskId::RuntimePhase11B)
+                .count(),
+            1
+        );
+        let performance = build_plan(&options(true, false)).expect("Phase 11-B performance plan");
+        assert_eq!(
+            performance
+                .iter()
+                .filter(|task| task.id() == TaskId::Phase11BPerformance)
+                .count(),
+            1
+        );
+        assert_eq!(
+            performance
+                .iter()
+                .filter(|task| task.id() == TaskId::RuntimeStartup)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn phase6_resources_select_the_math_matrix() {
         let tasks = build_plan(&Options {
             selection: Selection::Phase(crate::cli::Phase::P06),
@@ -1231,6 +1477,7 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            evidence_file: None,
         })
         .expect("valid Phase 6 resource plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
@@ -1249,6 +1496,7 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            evidence_file: None,
         })
         .expect("valid Phase 7 resource plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
@@ -1267,6 +1515,7 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            evidence_file: None,
         })
         .expect("valid Phase 8 headless plan");
         assert!(
@@ -1284,6 +1533,7 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            evidence_file: None,
         })
         .expect("valid Phase 8 runtime plan");
         assert!(
@@ -1301,6 +1551,7 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            evidence_file: None,
         })
         .expect("valid Phase 8 resource plan");
         assert!(
@@ -1329,6 +1580,7 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            evidence_file: None,
         })
         .expect("valid Phase 9 performance plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();
@@ -1359,6 +1611,7 @@ mod tests {
             release: false,
             package: true,
             json: false,
+            evidence_file: None,
         })
         .expect("valid Phase 9 package plan");
         let ids: Vec<_> = tasks.iter().map(super::Task::id).collect();
@@ -1385,6 +1638,7 @@ mod tests {
             release: true,
             package: false,
             json: false,
+            evidence_file: None,
         })
         .expect("valid Phase 9 release plan");
         let ids: BTreeSet<_> = tasks.iter().map(super::Task::id).collect();

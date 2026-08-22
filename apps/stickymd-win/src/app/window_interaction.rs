@@ -13,7 +13,7 @@ use super::controls::{ControlId, ControlLayout};
 use crate::config::{ThemeMode, ViewMode};
 use crate::flow::window::state::{ShowReason, WindowIntent};
 use crate::instruction::{
-    PreviewIntent, WindowPlatformIntent, WindowPreferenceIntent, WindowResizeEdge,
+    AppIntent, PreviewIntent, WindowPlatformIntent, WindowPreferenceIntent, WindowResizeEdge,
 };
 use crate::platform::windows::tray::TrayPlatformEvent;
 
@@ -184,6 +184,7 @@ impl StickyApp {
             ControlId::Preview => {
                 self.dispatch_preview_intent(PreviewIntent::SetViewMode(ViewMode::Preview))
             }
+            ControlId::ConvertMath => self.convert_math_delimiters(),
             ControlId::Topmost => self.toggle_topmost(),
             ControlId::Theme => self.cycle_theme(),
             ControlId::Opacity => {
@@ -205,6 +206,17 @@ impl StickyApp {
                 },
             ),
         }
+    }
+
+    fn convert_math_delimiters(&mut self) {
+        let selection = self.session.selection;
+        let mode = self.config.current().view_mode;
+        self.dispatch(AppIntent::ConvertLatexMathDelimiters {
+            expected_generation: self.coordinator.view().generation,
+            selection,
+            scope_to_selection: mode != ViewMode::Preview && !selection.is_collapsed(),
+            timestamp_ms: self.timestamp_ms(),
+        });
     }
 
     fn toggle_topmost(&mut self) {

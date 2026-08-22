@@ -54,6 +54,7 @@ pub(super) fn paint_toolbar(
         (ControlId::Source, visual.mode == ViewMode::Source),
         (ControlId::Split, visual.mode == ViewMode::Split),
         (ControlId::Preview, visual.mode == ViewMode::Preview),
+        (ControlId::ConvertMath, false),
         (ControlId::Topmost, visual.topmost),
         (ControlId::Theme, visual.system_theme),
         (ControlId::Opacity, visual.opacity_popup),
@@ -151,6 +152,50 @@ fn paint_control_icon(
                 1.5 * scale,
                 ink,
             );
+        }
+        ControlId::ConvertMath => {
+            // A compact delimiter-conversion glyph: `\\` followed by `$`.
+            fill_rect(
+                pixmap,
+                x + 2.0 * scale,
+                y + 1.0 * scale,
+                1.5 * scale,
+                14.0 * scale,
+                ink,
+            );
+            fill_rect(
+                pixmap,
+                x + 6.0 * scale,
+                y + 1.0 * scale,
+                1.5 * scale,
+                14.0 * scale,
+                ink,
+            );
+            fill_rect(
+                pixmap,
+                x + 11.0 * scale,
+                y + 2.0 * scale,
+                6.0 * scale,
+                1.5 * scale,
+                ink,
+            );
+            fill_rect(
+                pixmap,
+                x + 10.0 * scale,
+                y + 7.0 * scale,
+                7.0 * scale,
+                1.5 * scale,
+                ink,
+            );
+            fill_rect(
+                pixmap,
+                x + 10.0 * scale,
+                y + 12.0 * scale,
+                6.0 * scale,
+                1.5 * scale,
+                ink,
+            );
+            fill_rect(pixmap, x + 13.0 * scale, y, 1.2 * scale, 15.0 * scale, ink);
         }
         ControlId::Topmost => {
             fill_rect(pixmap, x + 4.0 * scale, y, 10.0 * scale, 2.0 * scale, ink);

@@ -7,6 +7,7 @@
 
 mod export;
 mod image_layout;
+mod inline_text_layout;
 mod layout;
 mod math_layout;
 mod model;
@@ -15,6 +16,7 @@ mod parser;
 mod pipeline;
 mod render_tree;
 mod selection;
+mod semantic_conversion;
 mod source_map;
 mod table_layout;
 mod text_layout;
@@ -40,4 +42,7 @@ pub use render_tree::{
     RenderTreeBuilder, SpanAction,
 };
 pub use selection::{PreviewRect, PreviewSelection, PreviewTextBox, PreviewTextIndex};
+pub use semantic_conversion::{
+    MathDelimiterConversion, SemanticConversionError, convert_latex_math_delimiters,
+};
 use source_map::SourceMap;

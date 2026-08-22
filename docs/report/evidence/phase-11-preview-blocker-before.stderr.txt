@@ -1,0 +1,11 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.32s
+     Running `target\debug\stickymd-smoke.exe phase 11 --performance --json`
+stickymd-smoke: `Phase 5 native-preview Release baseline` failed with exit code: 101: Compiling stickymd-render v0.1.0 (E:\gitclone\StickyMD\crates\stickymd-render)
+    Finished `release` profile [optimized] target(s) in 1m 32s
+     Running unittests src\lib.rs (target\release\deps\stickymd_render-a87a50022740ec2d.exe)
+
+thread 'preview::pipeline::tests::phase5_preview_release_baseline' (48124) panicked at crates\stickymd-render\src\preview\pipeline.rs:1064:13:
+1048576-byte preview p95 2.3339645s exceeds 2s
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p stickymd-render --lib`
+error: process didn't exit successfully: `target\debug\stickymd-smoke.exe phase 11 --performance --json` (exit code: 1)

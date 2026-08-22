@@ -244,7 +244,7 @@ impl StickyApp {
             true
         };
         if presented {
-            self.native_caret_drawn = false;
+            self.native_caret_overlay = None;
             if !self.native_caret_failed
                 && let Err(error) = self.sync_native_caret_overlay()
             {

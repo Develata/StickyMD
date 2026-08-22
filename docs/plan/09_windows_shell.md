@@ -39,7 +39,9 @@
   顶部控制区 34 DIP。Split 始终保持 50/50 与 1 DIP 固定分隔线；紧凑窗口不因旧的
   240-DIP 单栏建议自动切换模式，内容栏可在小尺寸下继续裁剪/滚动。
 - 进入分栏窗口过窄时可向屏幕内侧临时扩展；离开时恢复先前宽度。
-- 顶部图标控件：模式切换×3、Always on top、主题、透明度、手动收起、关闭到托盘。
+- 顶部图标控件：模式切换×3、紧凑数学分隔符转换 action、Always on top、主题、透明度、
+  手动收起、关闭到托盘。220 DIP 宽度下转换 action 不得挤掉 Close 或破坏模式控件可达性；
+  不因此增加设置菜单或重设计 toolbar。
   控件仅在鼠标位于窗口内/窗口聚焦/正在交互时明显显示，其余状态淡化但可发现。
 
 ### 主题
@@ -72,6 +74,12 @@
 - 动画：展开/收起 140 ms ease-out。
 - 感应条收起与未聚焦 hover 展开期间可使用独立的临时 topmost；它不得改变用户配置的
   Always-on-top，也不得写入 config。获得焦点、拖动、隐藏到托盘时必须撤销临时状态。
+- Always-on-top / Pin 与 Dock reveal/collapse 状态严格正交。configured topmost、temporary
+  sensor topmost 与 effective Windows topmost 只决定 Z-order，禁止进入 auto-hide predicate。
+  在相同 focus、IME、drag、resize、popup、pointer 与 timer 输入下，Pin ON/OFF 的
+  DockRevealState transition 必须完全相同；Pin ON 仍执行 700 ms 失焦收起、100 ms sensor
+  reveal、500 ms 未聚焦 hover-leave 收起以及立即 manual/Esc 收起。Floating 无论 Pin 状态
+  都不因普通 focus loss 执行 edge auto-hide。
 - HiddenToTray、DockedCollapsed 与未聚焦 hover 展开状态不得接受编辑 mutation。
 
 ### 托盘生命周期

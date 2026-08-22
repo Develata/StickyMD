@@ -240,6 +240,8 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
   严格预算 ≤ 8 MiB。
 - painter 的复用 glyph outline 采用独立 ≤ 4 MiB bounded cache；不使用上游无界 outline cache。
 - DecodedImageCache：只缓存 viewport 附近图片；≤ 16 MiB；LRU 淘汰。
+- 单次文档 layout 内允许复用等价文字 shaping；只在第二次出现后 admission，最多 1024 个、
+  单 key 文本最多 1024 bytes，layout 完成即释放索引，不跨 generation 保存历史 Preview。
 - 进入纯 Source 或隐藏（tray/dock collapsed）一段时间后：清理解码图片与公式 raster，
   保留小型 layout cache、文档与字体数据库，不保留无必要 framebuffer 副本。
 - Content Zoom 改变时复用已解析的 OwnedDocumentTree/RenderTree，只重新布局可见内容；

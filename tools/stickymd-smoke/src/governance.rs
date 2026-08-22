@@ -48,6 +48,12 @@ const REQUIRED_FILES: &[&str] = &[
     "docs/phases/2026-08-22-phase-10-user-approved-ux-corrections.md",
     "docs/tasks/phase-10-ux-corrections-rc-requalification.md",
     "docs/acceptance-cases/phase-10.md",
+    "docs/phases/2026-08-22-phase-11-rc-convergence.md",
+    "docs/tasks/phase-11-rc-convergence.md",
+    "docs/acceptance-cases/phase-11.md",
+    "docs/phases/2026-08-22-phase-11-b-final-interaction-amendment.md",
+    "docs/tasks/phase-11-b-final-interaction-amendment.md",
+    "docs/acceptance-cases/phase-11-b.md",
     "tools/release/package.ps1",
     "tools/release/generate-third-party-notices.ps1",
     "tools/release/generate-sbom.ps1",
@@ -111,10 +117,83 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_phase8_shell_artifacts(root)?;
     verify_phase9_frozen_trace(root)?;
     verify_phase10_contract_trace(root)?;
+    verify_phase11_contract_trace(root)?;
+    verify_phase11b_contract_trace(root)?;
     verify_release_infrastructure(root)?;
     verify_plan_refs(root)?;
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
+    Ok(())
+}
+
+fn verify_phase11b_contract_trace(root: &Path) -> Result<(), String> {
+    const LAST_ACCEPTANCE: u16 = 6;
+    const LAST_DOD: u16 = 46;
+    const LAST_MANUAL: u16 = 5;
+    let path = root.join("docs/acceptance-cases/phase-11-b.md");
+    let content = read_text(&path)?;
+    for (prefix, last) in [
+        ("P11B-A", LAST_ACCEPTANCE),
+        ("P11B-D", LAST_DOD),
+        ("P11B-M", LAST_MANUAL),
+    ] {
+        let observed = frozen_trace_ids(&content, prefix)?;
+        let expected: Vec<u16> = (1..=last).collect();
+        if observed != expected {
+            return Err(format!(
+                "{} IDs must be exactly {prefix}01..{prefix}{last:02}; observed {observed:?}",
+                path.display()
+            ));
+        }
+    }
+    for row in read_matrix_rows(&path)? {
+        let line = content.lines().nth(row.line - 1).unwrap_or_default();
+        if line.trim_start().starts_with("| P11B-M")
+            && (row.mode != "Manual" || row.status != "NOT TESTED")
+        {
+            return Err(format!(
+                "{}:{} Phase 11-B real-environment row must remain Manual / NOT TESTED until a receipt is checked in",
+                path.display(),
+                row.line
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn verify_phase11_contract_trace(root: &Path) -> Result<(), String> {
+    const LAST_DOD: u16 = 85;
+    const MANUAL_DOD: &[u16] = &[
+        28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 42, 43, 44, 45, 46, 48, 49, 50,
+    ];
+    let path = root.join("docs/acceptance-cases/phase-11.md");
+    let content = read_text(&path)?;
+    let observed = frozen_trace_ids(&content, "P11-D")?;
+    let expected: Vec<u16> = (1..=LAST_DOD).collect();
+    if observed != expected {
+        return Err(format!(
+            "{} Phase 11 DoD IDs must be exactly P11-D001..P11-D{LAST_DOD:03}; observed {observed:?}",
+            path.display()
+        ));
+    }
+    for row in read_matrix_rows(&path)? {
+        let line = content.lines().nth(row.line - 1).unwrap_or_default();
+        let Some(id) = line
+            .trim_start()
+            .strip_prefix("| P11-D")
+            .and_then(|tail| tail.split_whitespace().next())
+            .and_then(|digits| digits.parse::<u16>().ok())
+        else {
+            continue;
+        };
+        if MANUAL_DOD.contains(&id) && (row.mode != "Manual" || row.status != "NOT TESTED") {
+            return Err(format!(
+                "{}:{} Phase 11 real-environment row P11-D{id:03} must remain Manual / NOT TESTED until a receipt is checked in",
+                path.display(),
+                row.line
+            ));
+        }
+    }
     Ok(())
 }
 

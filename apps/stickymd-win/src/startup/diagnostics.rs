@@ -31,17 +31,23 @@ impl StartupDiagnostics {
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
         let enabled = ready_event.is_some() || trace_path.is_some();
+        let mut milestones = if enabled {
+            Vec::with_capacity(24)
+        } else {
+            Vec::new()
+        };
+        if enabled {
+            // This is the first Rust-side diagnostic epoch. OS process creation
+            // remains visible as external elapsed minus this internal trace.
+            milestones.push(("process_start", 0));
+        }
         Self {
             started: Instant::now(),
             ready_event,
             trace_path,
             exit_after_ready: enabled
                 && env::var(EXIT_AFTER_READY_ENV).is_ok_and(|value| value == "1"),
-            milestones: if enabled {
-                Vec::with_capacity(16)
-            } else {
-                Vec::new()
-            },
+            milestones,
             finished: false,
         }
     }
@@ -75,7 +81,7 @@ impl StartupDiagnostics {
                 .map_err(|error| format!("cannot signal diagnostic ready event: {error}"))?;
         }
         if let Some(path) = &self.trace_path {
-            let mut output = String::from("stickymd_startup_trace_v1\n");
+            let mut output = String::from("stickymd_startup_trace_v2\n");
             for (name, elapsed_us) in &self.milestones {
                 let _ = writeln!(output, "{name}={elapsed_us}");
             }

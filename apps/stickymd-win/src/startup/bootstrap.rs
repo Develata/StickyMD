@@ -27,7 +27,20 @@ pub struct BootstrapOutcome {
     pub warnings: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BootstrapMilestone {
+    ConfigReady,
+}
+
+#[cfg(test)]
 pub fn bootstrap(paths: &RuntimePaths) -> Result<BootstrapOutcome, StartupError> {
+    bootstrap_observed(paths, |_| {})
+}
+
+pub fn bootstrap_observed(
+    paths: &RuntimePaths,
+    mut observe: impl FnMut(BootstrapMilestone),
+) -> Result<BootstrapOutcome, StartupError> {
     let mut warnings = Vec::new();
     let config_outcome = load_config(&paths.config_file).map_err(StartupError::Config)?;
     if let Some(warning) = &config_outcome.warning {
@@ -42,6 +55,7 @@ pub fn bootstrap(paths: &RuntimePaths) -> Result<BootstrapOutcome, StartupError>
     {
         warnings.push(format!("默认配置未能保存；笔记仍可使用：{error}"));
     }
+    observe(BootstrapMilestone::ConfigReady);
 
     let canonical = inspect_note(&paths.note_file).map_err(StartupError::NoteStorage)?;
     let temporary = inspect_note(&paths.note_tmp).map_err(StartupError::TemporaryStorage)?;

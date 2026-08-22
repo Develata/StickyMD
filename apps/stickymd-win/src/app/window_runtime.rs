@@ -209,6 +209,7 @@ impl StickyApp {
             self.diagnostic = Some(format!("无法应用窗口透明度：{error}"));
             return false;
         }
+        self.startup_diagnostics.record("opacity_ready");
         if let Err(error) = set_window_topmost_no_activate(
             window.as_ref(),
             effective_topmost(
@@ -221,8 +222,11 @@ impl StickyApp {
             self.diagnostic = Some(format!("无法应用窗口置顶状态：{error}"));
             return false;
         }
+        self.startup_diagnostics.record("topmost_ready");
         window.focus_window();
+        self.startup_diagnostics.record("focus_ready");
         self.refresh_window_guards(None);
+        self.startup_diagnostics.record("guards_ready");
         self.startup_diagnostics.record("shell_ready");
         true
     }

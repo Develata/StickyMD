@@ -10,6 +10,8 @@ pub(crate) struct EvidenceResult {
     pub(crate) status: EvidenceStatus,
     pub(crate) detail: Option<String>,
     pub(crate) measurements: Vec<EvidenceMeasurement>,
+    pub(crate) gates: Vec<EvidenceGate>,
+    pub(crate) samples: Vec<EvidenceSample>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -17,6 +19,22 @@ pub(crate) struct EvidenceMeasurement {
     pub(crate) name: String,
     pub(crate) unit: String,
     pub(crate) value: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct EvidenceGate {
+    pub(crate) metric: String,
+    pub(crate) comparator: String,
+    pub(crate) value: f64,
+    pub(crate) unit: String,
+    pub(crate) source: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct EvidenceSample {
+    pub(crate) cohort: String,
+    pub(crate) run: usize,
+    pub(crate) measurements: Vec<EvidenceMeasurement>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,14 +61,54 @@ impl EvidenceStatus {
     }
 }
 
-pub(crate) fn emit(root: &Path, suite: &str, results: &[EvidenceResult]) {
+pub(crate) fn emit(
+    root: &Path,
+    suite: &str,
+    results: &[EvidenceResult],
+    output_file: Option<&Path>,
+) -> Result<(), String> {
     let commit = current_commit(root).unwrap_or_else(|_| "UNKNOWN".to_owned());
     let worktree_dirty = current_worktree_dirty(root).unwrap_or(true);
     let artifact = verified_artifact_sha256(root, results);
-    println!(
-        "{}",
-        render_json(&commit, worktree_dirty, artifact.as_deref(), suite, results,)
+    let executable = executable_sha256(root);
+    let json = render_json(
+        &commit,
+        worktree_dirty,
+        artifact.as_deref(),
+        executable.as_deref(),
+        suite,
+        results,
     );
+    if let Some(path) = output_file {
+        fs::write(path, json)
+            .map_err(|error| format!("cannot write evidence file `{}`: {error}", path.display()))?;
+    } else {
+        println!("{json}");
+    }
+    Ok(())
+}
+
+fn executable_sha256(root: &Path) -> Option<String> {
+    let executable = root.join("target/release/stickymd-win.exe");
+    if !executable.is_file() {
+        return None;
+    }
+    #[cfg(windows)]
+    let output = Command::new("certutil")
+        .args(["-hashfile"])
+        .arg(&executable)
+        .arg("SHA256")
+        .output()
+        .ok()?;
+    #[cfg(not(windows))]
+    let output = Command::new("sha256sum").arg(&executable).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .find(|token| token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .map(str::to_ascii_lowercase)
 }
 
 fn verified_artifact_sha256(root: &Path, results: &[EvidenceResult]) -> Option<String> {
@@ -102,14 +160,18 @@ fn render_json(
     commit: &str,
     worktree_dirty: bool,
     artifact_sha256: Option<&str>,
+    executable_sha256: Option<&str>,
     suite: &str,
     results: &[EvidenceResult],
 ) -> String {
     let mut output = format!(
-        "{{\"schema_version\":1,\"commit\":\"{}\",\"worktree_dirty\":{},\"artifact_sha256\":{},\"suite\":\"{}\",\"results\":[",
+        "{{\"schema_version\":2,\"suite_version\":\"2\",\"commit\":\"{}\",\"worktree_dirty\":{},\"artifact_sha256\":{},\"executable_sha256\":{},\"suite\":\"{}\",\"results\":[",
         escape_json(commit),
         worktree_dirty,
         artifact_sha256
+            .map(|hash| format!("\"{}\"", escape_json(hash)))
+            .unwrap_or_else(|| "null".to_owned()),
+        executable_sha256
             .map(|hash| format!("\"{}\"", escape_json(hash)))
             .unwrap_or_else(|| "null".to_owned()),
         escape_json(suite)
@@ -138,6 +200,43 @@ fn render_json(
                 escape_json(&measurement.unit),
                 measurement.value,
             ));
+        }
+        output.push_str("],\"gates\":[");
+        for (gate_index, gate) in result.gates.iter().enumerate() {
+            if gate_index > 0 {
+                output.push(',');
+            }
+            output.push_str(&format!(
+                "{{\"metric\":\"{}\",\"comparator\":\"{}\",\"value\":{:.6},\"unit\":\"{}\",\"source\":\"{}\"}}",
+                escape_json(&gate.metric),
+                escape_json(&gate.comparator),
+                gate.value,
+                escape_json(&gate.unit),
+                escape_json(&gate.source),
+            ));
+        }
+        output.push_str("],\"samples\":[");
+        for (sample_index, sample) in result.samples.iter().enumerate() {
+            if sample_index > 0 {
+                output.push(',');
+            }
+            output.push_str(&format!(
+                "{{\"cohort\":\"{}\",\"run\":{},\"measurements\":[",
+                escape_json(&sample.cohort),
+                sample.run,
+            ));
+            for (measurement_index, measurement) in sample.measurements.iter().enumerate() {
+                if measurement_index > 0 {
+                    output.push(',');
+                }
+                output.push_str(&format!(
+                    "{{\"name\":\"{}\",\"unit\":\"{}\",\"value\":{:.6}}}",
+                    escape_json(&measurement.name),
+                    escape_json(&measurement.unit),
+                    measurement.value,
+                ));
+            }
+            output.push_str("]}");
         }
         output.push_str("]}");
     }
@@ -170,15 +269,17 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        EvidenceMeasurement, EvidenceResult, EvidenceStatus, render_json, verified_artifact_sha256,
+        EvidenceGate, EvidenceMeasurement, EvidenceResult, EvidenceSample, EvidenceStatus,
+        render_json, verified_artifact_sha256,
     };
 
     #[test]
-    fn phase10_json_schema_is_stable_and_escaped() {
+    fn phase11_json_schema_exposes_gates_samples_and_suite_identity() {
         let json = render_json(
             "abc",
             true,
             None,
+            Some(&"b".repeat(64)),
             "phase-10",
             &[
                 EvidenceResult {
@@ -190,18 +291,37 @@ mod tests {
                         unit: "ms".to_owned(),
                         value: 12.5,
                     }],
+                    gates: vec![EvidenceGate {
+                        metric: "warm.p95".to_owned(),
+                        comparator: "<=".to_owned(),
+                        value: 180.0,
+                        unit: "ms".to_owned(),
+                        source: "docs/plan/10_performance_reliability.md".to_owned(),
+                    }],
+                    samples: vec![EvidenceSample {
+                        cohort: "warm".to_owned(),
+                        run: 1,
+                        measurements: vec![EvidenceMeasurement {
+                            name: "external".to_owned(),
+                            unit: "ms".to_owned(),
+                            value: 12.5,
+                        }],
+                    }],
                 },
                 EvidenceResult {
                     id: "manual capability".to_owned(),
                     status: EvidenceStatus::NotTested,
                     detail: Some("capability unavailable".to_owned()),
                     measurements: Vec::new(),
+                    gates: Vec::new(),
+                    samples: Vec::new(),
                 },
             ],
         );
-        assert!(json.starts_with("{\"schema_version\":1,"));
+        assert!(json.starts_with("{\"schema_version\":2,\"suite_version\":\"2\","));
         assert!(json.contains("\"worktree_dirty\":true"));
         assert!(json.contains("\"artifact_sha256\":null"));
+        assert!(json.contains(&format!("\"executable_sha256\":\"{}\"", "b".repeat(64))));
         assert!(json.contains("\"suite\":\"phase-10\""));
         assert!(json.contains("task\\\"one"));
         assert!(json.contains("line\\nfailed"));
@@ -211,6 +331,8 @@ mod tests {
                 "\"measurements\":[{\"name\":\"p95\",\"unit\":\"ms\",\"value\":12.500000}]"
             )
         );
+        assert!(json.contains("\"metric\":\"warm.p95\""));
+        assert!(json.contains("\"cohort\":\"warm\",\"run\":1"));
         assert!(json.ends_with("]}"));
     }
 
@@ -234,6 +356,8 @@ mod tests {
             status: EvidenceStatus::Failed,
             detail: None,
             measurements: Vec::new(),
+            gates: Vec::new(),
+            samples: Vec::new(),
         }];
         assert_eq!(verified_artifact_sha256(&root, &failed), None);
         let passed = [EvidenceResult {
@@ -241,6 +365,8 @@ mod tests {
             status: EvidenceStatus::Passed,
             detail: None,
             measurements: Vec::new(),
+            gates: Vec::new(),
+            samples: Vec::new(),
         }];
         assert_eq!(verified_artifact_sha256(&root, &passed), Some(hash));
         fs::remove_dir_all(root).expect("remove evidence fixture");

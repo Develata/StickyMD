@@ -46,6 +46,15 @@ pub(super) struct LayoutChunk {
     pub y: f32,
 }
 
+pub(super) struct InlinePiece {
+    pub chunk: LayoutChunk,
+    pub boxes: Vec<PreviewTextBox>,
+    pub decorations: Vec<LayoutDecoration>,
+    pub width: f32,
+    pub height: f32,
+    pub baseline: f32,
+}
+
 pub(super) enum LayoutContent {
     Text(Buffer),
     Math(Arc<MathRaster>),
@@ -112,6 +121,7 @@ pub(super) fn layout_document(
     let mut selection_text = String::new();
     let mut boxes = Vec::new();
     let mut formula_count = 0usize;
+    let mut text_layout_cache = super::text_layout::TextLayoutCache::default();
     let foreground = math_foreground(theme);
     math_engine.prepare_projection(scale, foreground);
 
@@ -134,6 +144,7 @@ pub(super) fn layout_document(
                 image_source,
                 image_cache,
                 image_band,
+                &mut text_layout_cache,
             ),
             RenderBlockKind::ThematicBreak => {
                 let height = 13.0 * scale;
@@ -167,6 +178,7 @@ pub(super) fn layout_document(
                 image_source,
                 image_cache,
                 image_band,
+                &mut text_layout_cache,
             ),
         };
         boxes.append(&mut laid_out.boxes);
@@ -222,6 +234,7 @@ fn layout_text_block(
     image_source: Option<&dyn PreviewImageSource>,
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
+    text_layout_cache: &mut super::text_layout::TextLayoutCache,
 ) -> BlockBuild {
     let indent = block.indent as f32 * INDENT_DIP * scale;
     let quote_extra = matches!(block.kind, RenderBlockKind::Quote)
@@ -260,6 +273,7 @@ fn layout_text_block(
         image_source,
         image_cache,
         image_band,
+        text_layout_cache,
     );
     let height = built.height.max(metrics.line_height);
     let mut decorations = Vec::new();
@@ -323,6 +337,7 @@ pub(super) fn make_chunk(
     image_source: Option<&dyn PreviewImageSource>,
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
+    text_layout_cache: &mut super::text_layout::TextLayoutCache,
 ) -> ChunkBuild {
     if spans
         .iter()
@@ -339,6 +354,7 @@ pub(super) fn make_chunk(
             align,
             Wrap::WordOrGlyph,
             selection_text,
+            text_layout_cache,
         );
     }
     super::math_layout::make_mixed_chunk(
@@ -357,6 +373,7 @@ pub(super) fn make_chunk(
         image_source,
         image_cache,
         image_band,
+        text_layout_cache,
     )
 }
 

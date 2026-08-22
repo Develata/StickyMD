@@ -8,14 +8,18 @@ pub(super) const TOOLBAR_HEIGHT_DIP: f64 = 34.0;
 const CONTROL_DIP: f64 = 28.0;
 const CONTROL_GAP_DIP: f64 = 4.0;
 const EDGE_DIP: f64 = 5.0;
-const COMPACT_EDGE_DIP: f64 = 3.0;
-const COMPACT_GAP_DIP: f64 = 2.0;
+// The compact edge stays outside the 6 DIP native resize hit region. At the
+// 220 DIP minimum, removing inter-control gaps leaves nine approximately
+// 23.1 DIP hit targets instead of shrinking them below usable size.
+const COMPACT_EDGE_DIP: f64 = 6.0;
+const COMPACT_GAP_DIP: f64 = 0.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ControlId {
     Source,
     Split,
     Preview,
+    ConvertMath,
     Topmost,
     Theme,
     Opacity,
@@ -42,7 +46,7 @@ impl ControlRect {
 
 #[derive(Debug, Clone)]
 pub(super) struct ControlLayout {
-    controls: [(ControlId, ControlRect); 8],
+    controls: [(ControlId, ControlRect); 9],
     pub toolbar: ControlRect,
     pub opacity_popup: ControlRect,
     pub opacity_slider: ControlRect,
@@ -53,7 +57,7 @@ impl ControlLayout {
     pub fn new(size: PhysicalSize<u32>, scale: f64) -> Self {
         let scale = scale.max(0.5);
         let toolbar_height = TOOLBAR_HEIGHT_DIP * scale;
-        let regular_required = 2.0 * EDGE_DIP + 8.0 * CONTROL_DIP + 7.0 * CONTROL_GAP_DIP;
+        let regular_required = 2.0 * EDGE_DIP + 9.0 * CONTROL_DIP + 8.0 * CONTROL_GAP_DIP;
         let compact = size.width as f64 / scale < regular_required;
         let edge = if compact { COMPACT_EDGE_DIP } else { EDGE_DIP } * scale;
         let gap = if compact {
@@ -61,10 +65,15 @@ impl ControlLayout {
         } else {
             CONTROL_GAP_DIP
         } * scale;
-        let available = (size.width as f64 - 2.0 * edge - 7.0 * gap).max(8.0 * scale);
-        let control = (available / 8.0).min(CONTROL_DIP * scale);
+        let available = (size.width as f64 - 2.0 * edge - 8.0 * gap).max(9.0 * scale);
+        let control = (available / 9.0).min(CONTROL_DIP * scale);
         let y = (toolbar_height - control) * 0.5;
-        let left = [ControlId::Source, ControlId::Split, ControlId::Preview];
+        let left = [
+            ControlId::Source,
+            ControlId::Split,
+            ControlId::Preview,
+            ControlId::ConvertMath,
+        ];
         let right = [
             ControlId::Topmost,
             ControlId::Theme,
@@ -80,7 +89,7 @@ impl ControlLayout {
                 width: control,
                 height: control,
             },
-        ); 8];
+        ); 9];
         for (index, id) in left.into_iter().enumerate() {
             controls[index] = (
                 id,
@@ -95,7 +104,7 @@ impl ControlLayout {
         let right_width = right.len() as f64 * control + (right.len() - 1) as f64 * gap;
         let right_origin = size.width as f64 - edge - right_width;
         for (offset, id) in right.into_iter().enumerate() {
-            controls[3 + offset] = (
+            controls[4 + offset] = (
                 id,
                 ControlRect {
                     x: right_origin + offset as f64 * (control + gap),
@@ -107,7 +116,10 @@ impl ControlLayout {
         }
         let popup_width = (230.0 * scale).min(size.width as f64);
         let popup_height = 58.0 * scale;
-        let opacity = controls[5].1;
+        let opacity = controls
+            .iter()
+            .find_map(|(id, rect)| (*id == ControlId::Opacity).then_some(*rect))
+            .unwrap_or(controls[0].1);
         let popup_x = (opacity.x + opacity.width - popup_width)
             .clamp(0.0, (size.width as f64 - popup_width).max(0.0));
         let opacity_popup = ControlRect {
@@ -219,6 +231,7 @@ mod phase8_control_tests {
             ControlId::Source,
             ControlId::Split,
             ControlId::Preview,
+            ControlId::ConvertMath,
             ControlId::Topmost,
             ControlId::Theme,
             ControlId::Opacity,
@@ -260,6 +273,7 @@ mod phase8_control_tests {
                 ControlId::Source,
                 ControlId::Split,
                 ControlId::Preview,
+                ControlId::ConvertMath,
                 ControlId::Topmost,
                 ControlId::Theme,
                 ControlId::Opacity,
@@ -267,7 +281,8 @@ mod phase8_control_tests {
                 ControlId::Close,
             ] {
                 let rect = layout.rect(id);
-                assert!(rect.x >= previous_right);
+                assert!(rect.width / scale >= 23.0);
+                assert!(rect.x + f64::EPSILON * 256.0 >= previous_right);
                 assert!(rect.x + rect.width <= f64::from(width) + f64::EPSILON);
                 previous_right = rect.x + rect.width;
             }

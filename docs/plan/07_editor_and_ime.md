@@ -41,6 +41,27 @@
   不提供独立 Source 字号、行高或字体配置。
 - caret、selection、IME preedit 必须明显可见。
 
+<a id="semantic-math-delimiter-conversion"></a>
+### AI 数学分隔符语义转换
+
+- 顶部工具栏提供一个紧凑的 `Convert AI math delimiters` typed action；Interaction Shell
+  只能发出 intent，不得直接改写 `DocumentState`。
+- 每次 action 必须从当前 generation 的 `DocumentSnapshot` 经现有 Comrak semantic pipeline
+  识别真正的 math node，只转换原始 delimiter 为 `\(...\)` 或 `\[...\]` 的节点；不得用
+  regex、全局 replace、自有 math parser、stale Preview AST 或 code/literal 猜测替代 Comrak。
+- `\(SOURCE\)` 转为 `$SOURCE$`；`\[SOURCE\]` 转为 `$$SOURCE$$`。只替换 delimiter bytes，
+  inner source（含空白、换行、Unicode 与 escape）必须 byte-for-byte 保持；既有 dollar math、
+  inline/fenced code、普通讨论文本与 malformed delimiter 不变。
+- Source/Split 存在非空 Source selection 时，只转换 source range 完全包含于 normalized
+  selection 的 math node；部分相交与 selection 外节点不动。Source selection 为空或纯
+  Preview 模式时转换整篇当前 canonical document。
+- 一次 parse 收集互不重叠 replacements，按 source range 从后向前构造一个 replacement，
+  最终只经单一 canonical mutation gateway 提交一次用户事务：generation 最多递增一次，
+  任意数量节点共用一个 Undo/Redo step，并正常触发 dirty/autosave/Preview。零匹配必须是
+  完整 no-op（text/generation/undo/dirty 均不变）。
+- 1 MiB / 1000 math-node Release smoke 的 p95 engineering check 为 `< 50 ms`；超过时先审计
+  重复 parse、全文 clone 与逐 formula mutation，不引入增量 Markdown parser 或后台 runtime。
+
 <a id="font-runs"></a>
 ## 字体 Run 规则
 
