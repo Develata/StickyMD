@@ -474,6 +474,178 @@ mod tests {
     }
 
     #[test]
+    fn phase10_one_hundred_zoom_relayouts_reuse_markdown_and_math_semantics() {
+        let generation = Generation::initial();
+        let mut pipeline = PreviewPipeline::new();
+        pipeline
+            .build(
+                &snapshot("# Zoom\n\nRepeated $x^2$ and $x^2$.", generation),
+                600,
+                300,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        for index in 0..100 {
+            let scale = 0.5 + (index % 51) as f32 * 0.05;
+            pipeline
+                .relayout(
+                    generation,
+                    600,
+                    300,
+                    scale,
+                    0.0,
+                    PreviewSelection::default(),
+                    PreviewTheme::Light,
+                )
+                .unwrap();
+        }
+        assert_eq!(pipeline.counters().parses, 1);
+        assert_eq!(pipeline.counters().render_tree_builds, 1);
+        assert_eq!(pipeline.counters().layouts, 101);
+        assert_eq!(pipeline.math_counters().parse_layout_calls, 1);
+        assert!(pipeline.math_counters().rasterizations > 1);
+    }
+
+    #[test]
+    fn phase10_zoom_reuses_sufficient_image_rasters_and_never_exceeds_pane_width() {
+        let prepared = crate::image::prepare_rgba_image(8, 4, vec![200; 8 * 4 * 4]).unwrap();
+        let images = MemoryImages {
+            bytes: prepared.bytes().to_vec(),
+            loads: Cell::new(0),
+        };
+        let generation = Generation::initial();
+        let mut pipeline = PreviewPipeline::new();
+        pipeline
+            .build_with_image_source(
+                &snapshot("![alt](image.png)", generation),
+                220,
+                120,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+                Some(&images),
+            )
+            .unwrap();
+        for index in 0..100 {
+            pipeline
+                .relayout_with_image_source(
+                    generation,
+                    220,
+                    120,
+                    0.5 + (index % 51) as f32 * 0.05,
+                    0.0,
+                    PreviewSelection::default(),
+                    PreviewTheme::Light,
+                    Some(&images),
+                )
+                .unwrap();
+        }
+        assert_eq!(pipeline.image_cache_counters().misses, 1);
+        assert!(pipeline.image_cache_counters().hits >= 100);
+        let layout = pipeline.layout.as_ref().unwrap();
+        assert!(
+            layout
+                .blocks
+                .iter()
+                .flat_map(|block| &block.chunks)
+                .all(|chunk| {
+                    match &chunk.content {
+                        crate::preview::layout::LayoutContent::Image(raster) => {
+                            chunk.x + raster.width as f32 <= layout.width_px as f32 + 0.5
+                        }
+                        _ => true,
+                    }
+                })
+        );
+    }
+
+    #[test]
+    #[ignore = "Release-only Phase 10 zoom relayout performance receipt"]
+    fn phase10_zoom_release_baseline() {
+        const REPEATS_PER_SCALE: usize = 100;
+        const HARD_P95: Duration = Duration::from_millis(50);
+        let prepared = crate::image::prepare_rgba_image(64, 32, vec![160; 64 * 32 * 4]).unwrap();
+        let images = MemoryImages {
+            bytes: prepared.bytes().to_vec(),
+            loads: Cell::new(0),
+        };
+        let generation = Generation::initial();
+        let mut source = fixture(20 * 1024);
+        source.push_str("\n\nRepeated math $x^2+y^2=1$.\n\n![local](image.png)\n");
+        let mut pipeline = PreviewPipeline::new();
+        pipeline
+            .build_with_image_source(
+                &snapshot(&source, generation),
+                900,
+                680,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+                Some(&images),
+            )
+            .unwrap();
+        let semantic_counters = pipeline.counters();
+        let math_parse_layout_calls = pipeline.math_counters().parse_layout_calls;
+        for scale in [0.5_f32, 1.0, 3.0] {
+            for _ in 0..10 {
+                pipeline
+                    .relayout_with_image_source(
+                        generation,
+                        900,
+                        680,
+                        scale,
+                        0.0,
+                        PreviewSelection::default(),
+                        PreviewTheme::Light,
+                        Some(&images),
+                    )
+                    .unwrap();
+            }
+            let mut samples = Vec::with_capacity(REPEATS_PER_SCALE);
+            for _ in 0..REPEATS_PER_SCALE {
+                let started = Instant::now();
+                pipeline
+                    .relayout_with_image_source(
+                        generation,
+                        900,
+                        680,
+                        scale,
+                        0.0,
+                        PreviewSelection::default(),
+                        PreviewTheme::Light,
+                        Some(&images),
+                    )
+                    .unwrap();
+                samples.push(started.elapsed());
+            }
+            let p95 = percentile(&samples, 95);
+            println!(
+                "phase10 zoom_percent={} repeats={REPEATS_PER_SCALE} relayout_ms={:.3}/{:.3}/{:.3}",
+                (scale * 100.0).round() as u16,
+                percentile(&samples, 50).as_secs_f64() * 1_000.0,
+                p95.as_secs_f64() * 1_000.0,
+                max(&samples).as_secs_f64() * 1_000.0,
+            );
+            assert!(p95 <= HARD_P95, "zoom {scale} relayout p95={p95:?}");
+        }
+        assert_eq!(pipeline.counters().parses, semantic_counters.parses);
+        assert_eq!(
+            pipeline.counters().render_tree_builds,
+            semantic_counters.render_tree_builds
+        );
+        assert_eq!(
+            pipeline.math_counters().parse_layout_calls,
+            math_parse_layout_calls
+        );
+        assert!(pipeline.image_cache_bytes() <= crate::image::IMAGE_CACHE_BUDGET_BYTES);
+    }
+
+    #[test]
     fn local_image_is_decoded_on_worker_projection_and_remote_never_loads() {
         let prepared = crate::image::prepare_rgba_image(8, 4, vec![200; 8 * 4 * 4]).unwrap();
         let images = MemoryImages {

@@ -133,6 +133,8 @@ pub struct StickyApp {
     tray: Option<TrayController>,
     shell_input_enabled: bool,
     move_resize_active: bool,
+    zoom_wheel: input::ZoomWheelAccumulator,
+    zoom_config_deadline: Option<u64>,
     startup_diagnostics: StartupDiagnostics,
 }
 
@@ -201,6 +203,8 @@ impl StickyApp {
             tray: None,
             shell_input_enabled: true,
             move_resize_active: false,
+            zoom_wheel: input::ZoomWheelAccumulator::default(),
+            zoom_config_deadline: None,
             startup_diagnostics,
         };
         if app.recovery.is_pending() {
@@ -211,6 +215,14 @@ impl StickyApp {
             app.start_watcher();
         }
         app
+    }
+
+    fn document_scale_factor(&self) -> f32 {
+        let dpi = self
+            .window
+            .as_ref()
+            .map_or(1.0, |window| window.scale_factor() as f32);
+        dpi * self.config.current().content_zoom_percent.factor()
     }
 
     fn resolved_dark_theme(&self) -> bool {

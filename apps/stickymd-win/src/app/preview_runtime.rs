@@ -219,10 +219,7 @@ impl StickyApp {
         let Some(geometry) = self.view_geometry() else {
             return;
         };
-        let scale = self
-            .window
-            .as_ref()
-            .map_or(1.0, |window| window.scale_factor() as f32);
+        let scale = self.document_scale_factor();
         if let (Some(source), Some(projection)) = (geometry.source, &mut self.projection) {
             projection.set_viewport(source.width.max(1), source.height.max(1), scale);
             if self.source_frame.as_ref().is_none_or(|frame| {
@@ -272,7 +269,7 @@ impl StickyApp {
 
     fn preview_viewport(&self) -> Option<PreviewViewport> {
         let pane = self.view_geometry()?.preview?;
-        let scale = self.window.as_ref()?.scale_factor() as f32;
+        let scale = self.document_scale_factor();
         Some(PreviewViewport {
             width_px: pane.width.max(1),
             height_px: pane.height.max(1),
@@ -368,6 +365,33 @@ mod tests {
                 assert_eq!(pane.y, geometry.toolbar_height);
                 assert_eq!(pane.height + pane.y, 680);
             }
+        }
+    }
+
+    #[test]
+    fn phase10_minimum_window_keeps_all_modes_operable_and_split_is_fifty_fifty() {
+        for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+            let size = PhysicalSize::new(
+                (220.0 * scale).round() as u32,
+                (120.0 * scale).round() as u32,
+            );
+            let source = geometry(ViewMode::Source, size, scale)
+                .source
+                .expect("Source pane");
+            let preview = geometry(ViewMode::Preview, size, scale)
+                .preview
+                .expect("Preview pane");
+            assert!(source.width > 0 && source.height > 0);
+            assert!(preview.width > 0 && preview.height > 0);
+
+            let split = geometry(ViewMode::Split, size, scale);
+            let left = split.source.expect("Split source pane");
+            let right = split.preview.expect("Split preview pane");
+            let divider = (SPLIT_DIVIDER_DIP * scale).round().max(1.0) as u32;
+            assert_eq!(right.x, left.width + divider);
+            assert!((left.width as i64 - right.width as i64).abs() <= 1);
+            assert_eq!(left.width + divider + right.width, size.width);
+            assert!(left.height > 0 && right.height > 0);
         }
     }
 

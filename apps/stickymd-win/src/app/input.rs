@@ -8,8 +8,10 @@ use winit::event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 use super::StickyApp;
-use crate::config::ViewMode;
-use crate::instruction::{AppIntent, PersistenceIntent, PreviewIntent, SaveReason};
+use crate::config::{ContentZoomPercent, ViewMode};
+use crate::instruction::{
+    AppIntent, PersistenceIntent, PreviewIntent, SaveReason, WindowPreferenceIntent,
+};
 use crate::interaction::ImeSignal;
 
 impl StickyApp {
@@ -96,6 +98,11 @@ impl StickyApp {
             return;
         }
 
+        if shortcut && let Some(command) = zoom_key_command(code) {
+            self.apply_zoom_command(command, true);
+            return;
+        }
+
         if shortcut {
             let mode = match code {
                 Some(KeyCode::Digit1) => Some(ViewMode::Source),
@@ -110,7 +117,12 @@ impl StickyApp {
         }
 
         if self.preview_focused {
-            self.handle_preview_key(code, shortcut);
+            self.handle_preview_key(code, shortcut, shift);
+            return;
+        }
+
+        if let Some(command) = clipboard_alias(code, shortcut, shift) {
+            self.dispatch_clipboard_alias(command, generation, timestamp_ms);
             return;
         }
 
@@ -216,6 +228,49 @@ impl StickyApp {
                 .handle_keyboard_text(&text, generation, timestamp_ms)
         {
             self.dispatch(intent);
+        }
+    }
+
+    fn dispatch_clipboard_alias(
+        &mut self,
+        command: ClipboardAlias,
+        generation: stickymd_core::Generation,
+        timestamp_ms: u64,
+    ) {
+        match command {
+            ClipboardAlias::Copy => self.dispatch(AppIntent::CopySelection {
+                expected_generation: generation,
+                selection: self.session.selection,
+            }),
+            ClipboardAlias::Cut => {
+                self.session.cancel_preedit();
+                self.dispatch(AppIntent::CutSelection {
+                    expected_generation: generation,
+                    selection: self.session.selection,
+                    timestamp_ms,
+                });
+            }
+            ClipboardAlias::Paste => {
+                self.session.cancel_preedit();
+                self.dispatch(AppIntent::PasteClipboard {
+                    expected_generation: generation,
+                    selection: self.session.selection,
+                    timestamp_ms,
+                });
+            }
+        }
+    }
+
+    fn apply_zoom_command(&mut self, command: ZoomCommand, persist_now: bool) {
+        let current = self.config.current().content_zoom_percent;
+        let next = match command {
+            ZoomCommand::Step(delta) => current.stepped(delta),
+            ZoomCommand::Reset => ContentZoomPercent::default(),
+        };
+        self.dispatch_window_preference_intent(WindowPreferenceIntent::SetContentZoom(next));
+        if persist_now {
+            self.zoom_config_deadline = None;
+            self.submit_config_if_needed();
         }
     }
 
@@ -429,6 +484,19 @@ impl StickyApp {
     }
 
     pub(super) fn handle_scroll(&mut self, delta: MouseScrollDelta) {
+        if self.modifiers.control_key() && !self.modifiers.alt_key() {
+            let dpi = self
+                .window
+                .as_ref()
+                .map_or(1.0, |window| window.scale_factor());
+            let steps = self.zoom_wheel.push(delta, dpi);
+            if steps != 0 {
+                let delta =
+                    (steps.saturating_mul(5)).clamp(i32::from(i16::MIN), i32::from(i16::MAX));
+                self.apply_zoom_command(ZoomCommand::Step(delta as i16), false);
+            }
+            return;
+        }
         let pixels = match delta {
             MouseScrollDelta::LineDelta(_, lines) => -lines * 48.0,
             MouseScrollDelta::PixelDelta(position) => -position.y as f32,
@@ -462,6 +530,56 @@ impl StickyApp {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardAlias {
+    Copy,
+    Cut,
+    Paste,
+}
+
+fn clipboard_alias(code: Option<KeyCode>, shortcut: bool, shift: bool) -> Option<ClipboardAlias> {
+    match (code, shortcut, shift) {
+        (Some(KeyCode::Insert), true, _) => Some(ClipboardAlias::Copy),
+        (Some(KeyCode::Delete), false, true) => Some(ClipboardAlias::Cut),
+        (Some(KeyCode::Insert), false, true) => Some(ClipboardAlias::Paste),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ZoomCommand {
+    Step(i16),
+    Reset,
+}
+
+fn zoom_key_command(code: Option<KeyCode>) -> Option<ZoomCommand> {
+    match code {
+        Some(KeyCode::Equal | KeyCode::NumpadAdd) => Some(ZoomCommand::Step(10)),
+        Some(KeyCode::Minus | KeyCode::NumpadSubtract) => Some(ZoomCommand::Step(-10)),
+        Some(KeyCode::Digit0 | KeyCode::Numpad0) => Some(ZoomCommand::Reset),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ZoomWheelAccumulator {
+    units: f64,
+}
+
+impl ZoomWheelAccumulator {
+    const UNITS_PER_NOTCH: f64 = 120.0;
+
+    fn push(&mut self, delta: MouseScrollDelta, dpi_scale: f64) -> i32 {
+        self.units += match delta {
+            MouseScrollDelta::LineDelta(_, lines) => f64::from(lines) * Self::UNITS_PER_NOTCH,
+            MouseScrollDelta::PixelDelta(position) => position.y / dpi_scale.max(0.5),
+        };
+        let steps = (self.units / Self::UNITS_PER_NOTCH).trunc() as i32;
+        self.units -= f64::from(steps) * Self::UNITS_PER_NOTCH;
+        steps
+    }
+}
+
 fn mutation_input_allowed(
     recovery_pending: bool,
     preview_only: bool,
@@ -473,7 +591,13 @@ fn mutation_input_allowed(
 
 #[cfg(test)]
 mod recovery_tests {
-    use super::mutation_input_allowed;
+    use super::{
+        ClipboardAlias, ZoomCommand, ZoomWheelAccumulator, clipboard_alias, mutation_input_allowed,
+        zoom_key_command,
+    };
+    use winit::dpi::PhysicalPosition;
+    use winit::event::MouseScrollDelta;
+    use winit::keyboard::KeyCode;
 
     #[test]
     fn recovery_pending_rejects_ime_commits_and_preedit() {
@@ -486,5 +610,60 @@ mod recovery_tests {
     fn quit_and_asset_reconcile_freeze_keyboard_and_ime_mutations() {
         assert!(!mutation_input_allowed(false, false, true, false));
         assert!(!mutation_input_allowed(false, false, false, true));
+    }
+
+    #[test]
+    fn phase10_clipboard_aliases_are_unambiguous() {
+        assert_eq!(
+            clipboard_alias(Some(KeyCode::Insert), true, false),
+            Some(ClipboardAlias::Copy)
+        );
+        assert_eq!(
+            clipboard_alias(Some(KeyCode::Delete), false, true),
+            Some(ClipboardAlias::Cut)
+        );
+        assert_eq!(
+            clipboard_alias(Some(KeyCode::Insert), false, true),
+            Some(ClipboardAlias::Paste)
+        );
+        assert_eq!(clipboard_alias(Some(KeyCode::Delete), false, false), None);
+    }
+
+    #[test]
+    fn phase10_zoom_keys_and_high_resolution_wheel_are_deterministic() {
+        for key in [KeyCode::Equal, KeyCode::NumpadAdd] {
+            assert_eq!(zoom_key_command(Some(key)), Some(ZoomCommand::Step(10)));
+        }
+        for key in [KeyCode::Minus, KeyCode::NumpadSubtract] {
+            assert_eq!(zoom_key_command(Some(key)), Some(ZoomCommand::Step(-10)));
+        }
+        for key in [KeyCode::Digit0, KeyCode::Numpad0] {
+            assert_eq!(zoom_key_command(Some(key)), Some(ZoomCommand::Reset));
+        }
+        let mut accumulator = ZoomWheelAccumulator::default();
+        for _ in 0..3 {
+            assert_eq!(
+                accumulator.push(
+                    MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 30.0)),
+                    1.0,
+                ),
+                0
+            );
+        }
+        assert_eq!(
+            accumulator.push(
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 30.0)),
+                1.0,
+            ),
+            1
+        );
+        assert_eq!(
+            accumulator.push(MouseScrollDelta::LineDelta(0.0, -0.5), 1.0),
+            0
+        );
+        assert_eq!(
+            accumulator.push(MouseScrollDelta::LineDelta(0.0, -0.5), 1.0),
+            -1
+        );
     }
 }

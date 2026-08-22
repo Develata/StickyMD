@@ -86,7 +86,7 @@ ready object，并确认前一进程、mutex、tray 与 worker 已退出；warm 
 | 分栏模式同上 | ≤ 48 MiB | > 64 MiB | 内存基准 |
 | Hidden to tray（cache purge 后） | ≤ 24 MiB | > 36 MiB | 内存基准 |
 | 空闲 CPU 60 s 平均 | ≤ 0.05% | > 0.1% | CPU 采样 |
-| 冷启动到可输入 p95 | ≤ 180 ms | > 300 ms | 启动基准 |
+| 冷启动到可输入 p95 | ≤ 180 ms | > 400 ms | 启动基准；原 300 ms 门槛在 Phase 10 经 USER 明确 waiver |
 | 热启动到可输入 p95 | ≤ 100 ms | > 180 ms | 启动基准 |
 | 100 KiB 输入延迟 p95 | ≤ 16 ms | > 25 ms | 编辑基准 |
 | 1 MiB 输入延迟 p95 | ≤ 33 ms | > 50 ms | 编辑基准 |
@@ -158,9 +158,11 @@ Not applicable（性能参数为内部固定值）。
 
 ## Lifecycle
 
-Targets 在技术验证阶段实测校准；校准结论以 report + plan 更新形式落盘。冷启动原始
-hard gate 仍为 300 ms；USER 已授权仅在正确方法与低复杂度优化仍无法解决时讨论 400 ms
-fallback。热启动 hard gate 仍为 180 ms，除非 USER 另行明确 waiver。
+Targets 在技术验证阶段实测校准；校准结论以 report + plan 更新形式落盘。Phase 10
+先移除重复的 taskbar-list 初始化路径，使最终冷启动 cohort 的 p95 从 394.881 ms 降至
+343.220 ms；仍无法稳定满足原 300 ms 门槛，因此按 USER 的明确授权将冷启动 hard gate
+放宽为 400 ms。该结论是显式 waiver，不得回写成“原 300 ms 门槛通过”。热启动 hard
+gate 仍为 180 ms，除非 USER 另行明确 waiver。
 
 ## Extension / Replacement Points
 

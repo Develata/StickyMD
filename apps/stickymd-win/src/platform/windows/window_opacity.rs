@@ -12,12 +12,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_LAYERED,
 };
 
-pub const MIN_OPACITY_PERCENT: u8 = 70;
+pub const MIN_OPACITY_PERCENT: u8 = 40;
 pub const MAX_OPACITY_PERCENT: u8 = 100;
 
 #[derive(Debug, Error)]
 pub enum WindowOpacityError {
-    #[error("opacity must be in the inclusive range 70..=100, got {0}")]
+    #[error("opacity must be in the inclusive range 40..=100, got {0}")]
     OutOfRange(u8),
     #[error("window handle is unavailable: {0}")]
     Handle(#[from] HandleError),
@@ -139,6 +139,7 @@ mod tests {
 
     #[test]
     fn phase8_alpha_conversion_rounds_to_nearest_byte() {
+        assert_eq!(alpha_from_percent(40), 102);
         assert_eq!(alpha_from_percent(70), 179);
         assert_eq!(alpha_from_percent(85), 217);
         assert_eq!(alpha_from_percent(96), 245);

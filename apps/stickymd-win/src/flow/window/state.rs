@@ -20,9 +20,9 @@ pub enum DockEdge {
 impl DockEdge {
     pub(crate) const fn tie_break_order(self) -> u8 {
         match self {
-            Self::Left => 0,
-            Self::Right => 1,
-            Self::Top => 2,
+            Self::Top => 0,
+            Self::Left => 1,
+            Self::Right => 2,
         }
     }
 }
@@ -277,7 +277,6 @@ pub struct WindowShellState {
     pub(super) lifecycle: LifecycleState,
     pub(super) tray_available: bool,
     pub(super) hide_save_pending: bool,
-    pub(super) pre_split_width_dip: Option<f64>,
     pub(super) temporary_sensor_topmost: bool,
 }
 

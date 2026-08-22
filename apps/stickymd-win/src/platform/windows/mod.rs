@@ -16,6 +16,7 @@ pub(crate) mod native_message;
 pub(crate) mod program_dir;
 pub(crate) mod shell;
 pub(crate) mod single_instance;
+pub(crate) mod tool_window;
 pub(crate) mod tray;
 pub(crate) mod window_opacity;
 pub(crate) mod window_topmost;

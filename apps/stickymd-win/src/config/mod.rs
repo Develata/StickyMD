@@ -10,6 +10,6 @@ pub use coordinator::{
 };
 
 pub use runtime::{
-    ConfigStorageError, ConfigWarning, DockEdge, RuntimeConfig, ThemeMode, ViewMode, load_config,
-    save_config,
+    ConfigStorageError, ConfigWarning, ContentZoomPercent, DockEdge, MIN_WINDOW_HEIGHT_DIP,
+    MIN_WINDOW_WIDTH_DIP, RuntimeConfig, ThemeMode, ViewMode, load_config, save_config,
 };

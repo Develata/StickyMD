@@ -84,12 +84,17 @@
   → 安全 GC → 保存配置 → 释放 mutex → 清理已确认无用的临时文件。
 - 退出保存失败：显示明确错误、保持运行、不静默退出、不丢内存文本。
 
+<a id="tool-window-identity"></a>
 ### 主窗口身份与可达性
 
 - 主窗口是无任务栏项、无 Alt+Tab/Win+Tab 切换项的 Tool Window，但仍可通过点击获得
   键盘焦点并支持 IME；禁止设置 `WS_EX_NOACTIVATE`。
 - 优先使用 winit 的 skip-taskbar 能力；若实测不足以同时满足任务栏与切换器身份，
   平台 adapter 可在首次显示前设置 `WS_EX_TOOLWINDOW` 并清除冲突的 `WS_EX_APPWINDOW`。
+- 当前锁定的 winit 0.30.13 在 Windows 上以 taskbar API 实现 skip-taskbar，并会在
+  `set_visible` / `set_minimized` 的样式投影中重写扩展样式。因此，托盘已建立时，平台
+  adapter 必须在这些 winit 操作完成后重新断言 Tool Window 身份并读回验证；失败时恢复
+  普通任务栏入口，禁止留下不可恢复的隐藏窗口。
 - Tool Window 身份是固定平台不变量，不进入 ConfigState/WindowState。
 - 窗口必须始终可由当前可见窗口、3-DIP sensor、托盘和同目录第二实例唤醒四条路径恢复；
   在采用不可从任务栏恢复的身份前，托盘可达性必须已建立。Tool Window 不改变 Close/Quit

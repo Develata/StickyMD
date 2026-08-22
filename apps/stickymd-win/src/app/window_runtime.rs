@@ -3,6 +3,7 @@
 //! plan_ref: docs/plan/09_windows_shell.md#windows-shell-purpose
 
 use winit::event_loop::ActiveEventLoop;
+use winit::platform::windows::WindowExtWindows;
 use winit::window::{ResizeDirection, Theme};
 
 use super::StickyApp;
@@ -92,6 +93,14 @@ impl StickyApp {
                 self.submit_config_if_needed();
                 self.request_redraw();
             }
+            WindowPreferenceEffect::ApplyContentZoom(_) => {
+                self.source_paint_key = None;
+                self.configure_viewports();
+                self.request_preview_relayout();
+                self.update_ime_area();
+                self.zoom_config_deadline = Some(self.timestamp_ms().saturating_add(250));
+                self.request_redraw();
+            }
         }
     }
 
@@ -150,6 +159,23 @@ impl StickyApp {
             }
         };
         let tray_available = tray.is_some();
+        if tray_available {
+            if let Err(error) =
+                crate::platform::windows::tool_window::apply_tool_window_identity(window.as_ref())
+            {
+                crate::platform::windows::message_box::show_error(
+                    "StickyMD",
+                    &format!(
+                        "无法建立安全的工具窗口身份；StickyMD 不会显示无恢复入口的窗口。\n\n{error}"
+                    ),
+                );
+                return false;
+            }
+        } else {
+            // A tool-window-only lifecycle without a tray recovery path is
+            // forbidden. Restore ordinary taskbar reachability before show.
+            window.set_skip_taskbar(false);
+        }
         self.window_flow = Some(WindowShellCoordinator::new(
             placement,
             visibility,
@@ -168,6 +194,13 @@ impl StickyApp {
             },
         );
         window.set_visible(true);
+        if let Err(error) = self.reassert_tool_window_identity() {
+            crate::platform::windows::message_box::show_error(
+                "StickyMD",
+                &format!("窗口显示后无法保持安全的工具窗口身份；StickyMD 将停止启动。\n\n{error}"),
+            );
+            return false;
+        }
         self.startup_diagnostics.record("window_visible");
         // Winit may refresh native extended styles while making the window
         // visible. Apply layered alpha and z-order after that transition so
@@ -258,6 +291,7 @@ impl StickyApp {
                         window.set_minimized(false);
                     }
                 }
+                self.reassert_tool_window_identity_or_restore_taskbar();
                 if let Some(tray) = &self.tray {
                     tray.set_window_visible(visible);
                 }
@@ -277,6 +311,7 @@ impl StickyApp {
                     window.set_minimized(false);
                     window.focus_window();
                 }
+                self.reassert_tool_window_identity_or_restore_taskbar();
             }
             WindowEffect::CancelImePreedit => {
                 self.session.cancel_preedit();
@@ -355,6 +390,30 @@ impl StickyApp {
         }
     }
 
+    fn reassert_tool_window_identity(
+        &self,
+    ) -> Result<(), crate::platform::windows::tool_window::ToolWindowError> {
+        if self.tray.is_none() {
+            return Ok(());
+        }
+        let Some(window) = &self.window else {
+            return Ok(());
+        };
+        crate::platform::windows::tool_window::apply_tool_window_identity(window.as_ref())
+    }
+
+    fn reassert_tool_window_identity_or_restore_taskbar(&mut self) {
+        if let Err(error) = self.reassert_tool_window_identity() {
+            if let Some(window) = &self.window {
+                window.set_skip_taskbar(false);
+            }
+            self.diagnostic = Some(format!(
+                "无法保持工具窗口身份；已恢复任务栏入口以避免窗口不可达：{error}"
+            ));
+            self.request_redraw();
+        }
+    }
+
     fn request_quit_config_flush(&mut self, event_loop: Option<&ActiveEventLoop>) {
         if !self.config_persistence_allowed {
             self.dispatch_window_intent(
@@ -386,8 +445,8 @@ impl StickyApp {
         dock_edge: Option<DockEdge>,
     ) {
         let result = self.config.update(|config| {
-            config.window.width_dip = placement.width_dip.round().clamp(360.0, 16_384.0) as u32;
-            config.window.height_dip = placement.height_dip.round().clamp(240.0, 16_384.0) as u32;
+            config.window.width_dip = placement.width_dip.round().clamp(220.0, 16_384.0) as u32;
+            config.window.height_dip = placement.height_dip.round().clamp(120.0, 16_384.0) as u32;
             config.window.monitor_id = placement
                 .monitor_identity
                 .as_ref()

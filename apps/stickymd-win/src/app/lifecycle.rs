@@ -14,7 +14,7 @@ use winit::platform::windows::{CornerPreference, WindowAttributesExtWindows};
 use winit::window::{Theme, WindowAttributes, WindowId};
 
 use super::{AppEvent, CARET_BLINK, StickyApp};
-use crate::config::ViewMode;
+use crate::config::{MIN_WINDOW_HEIGHT_DIP, MIN_WINDOW_WIDTH_DIP, ViewMode};
 use crate::instruction::{PersistenceIntent, SaveReason};
 use crate::platform::windows::file_watch::{FileWatchSignal, NoteDirectoryWatcher};
 use crate::surface::SoftwareSurface;
@@ -69,7 +69,10 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 self.config.current().window.width_dip as f64,
                 self.config.current().window.height_dip as f64,
             ))
-            .with_min_inner_size(LogicalSize::new(360.0, 240.0));
+            .with_min_inner_size(LogicalSize::new(
+                f64::from(MIN_WINDOW_WIDTH_DIP),
+                f64::from(MIN_WINDOW_HEIGHT_DIP),
+            ));
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),
             Err(error) => {
@@ -93,12 +96,14 @@ impl ApplicationHandler<AppEvent> for StickyApp {
         self.startup_diagnostics.record("surface_ready");
         let initial_snapshot = self.coordinator.snapshot();
         self.startup_diagnostics.record("font_system_begin");
+        let document_scale =
+            window.scale_factor() as f32 * self.config.current().content_zoom_percent.factor();
         let diagnostics = &mut self.startup_diagnostics;
         let projection = SourceProjection::new_observed(
             &initial_snapshot,
             size.width,
             size.height,
-            window.scale_factor() as f32,
+            document_scale,
             |milestone| match milestone {
                 SourceInitializationMilestone::FontSystemReady => {
                     diagnostics.record("font_system_end")
@@ -225,6 +230,13 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             self.worker.inspect_external(self.paths.note_file.clone());
         }
         self.tick_preview(now_ms);
+        if self
+            .zoom_config_deadline
+            .is_some_and(|deadline| now_ms >= deadline)
+        {
+            self.zoom_config_deadline = None;
+            self.submit_config_if_needed();
+        }
         self.dispatch_window_intent(
             Some(event_loop),
             crate::flow::window::state::WindowIntent::Tick { now_ms },
@@ -237,6 +249,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             self.persistence.external_deadline(),
             self.preview_deadline(),
             self.window_next_deadline(),
+            self.zoom_config_deadline,
         ]
         .into_iter()
         .flatten()

@@ -50,7 +50,6 @@ impl WindowShellCoordinator {
                 lifecycle: LifecycleState::Running,
                 tray_available,
                 hide_save_pending: false,
-                pre_split_width_dip: None,
                 temporary_sensor_topmost: matches!(
                     initial_visibility,
                     StableVisibility::DockedCollapsed(_)
@@ -198,10 +197,7 @@ impl WindowShellCoordinator {
         } else {
             snap_edge(frame, &monitor).or(previous_edge)
         };
-        let mut placement = placement_from_frame(frame, &monitor, &self.state.placement, edge);
-        if let Some(original_width) = self.state.pre_split_width_dip {
-            placement.width_dip = original_width;
-        }
+        let placement = placement_from_frame(frame, &monitor, &self.state.placement, edge);
         self.state.placement = placement;
         self.state.dock.monitor = monitor;
         self.state.dock.edge = edge;
@@ -209,12 +205,8 @@ impl WindowShellCoordinator {
         self.state.dock.manually_hidden = false;
         self.state.dock.hover_revealed = false;
         self.set_temporary_sensor_topmost(false, effects);
-        self.state.frame = effective_expanded_frame(
-            &self.state.placement,
-            edge,
-            &self.state.dock.monitor,
-            self.state.pre_split_width_dip.is_some(),
-        );
+        self.state.frame =
+            effective_expanded_frame(&self.state.placement, edge, &self.state.dock.monitor);
         let stable = edge.map_or(StableVisibility::Floating, StableVisibility::DockedExpanded);
         self.state.visibility = VisibilityState::Presented(stable);
         effects.push(WindowEffect::ApplyFrame(self.state.frame));
@@ -248,16 +240,9 @@ impl WindowShellCoordinator {
         self.state.dock.hover_revealed = false;
         let sensor_topmost = matches!(stable, StableVisibility::DockedCollapsed(_));
         self.set_temporary_sensor_topmost(sensor_topmost, effects);
-        let effective_expanded = if self.state.pre_split_width_dip.is_some() {
-            temporary_split_frame(expanded, edge, monitor)
-        } else {
-            expanded
-        };
         self.state.frame = match stable {
-            StableVisibility::DockedCollapsed(edge) => {
-                collapsed_frame(effective_expanded, edge, monitor)
-            }
-            _ => effective_expanded,
+            StableVisibility::DockedCollapsed(edge) => collapsed_frame(expanded, edge, monitor),
+            _ => expanded,
         };
         self.state.visibility = match self.state.visibility {
             VisibilityState::HiddenToTray { .. } => {
@@ -280,28 +265,9 @@ impl WindowShellCoordinator {
         });
     }
 
-    fn update_split_mode(&mut self, split: bool, effects: &mut Vec<WindowEffect>) {
-        const MIN_SPLIT_WIDTH_DIP: f64 = 481.0;
-        if split {
-            if self.state.pre_split_width_dip.is_some()
-                || self.state.placement.width_dip >= MIN_SPLIT_WIDTH_DIP
-            {
-                return;
-            }
-            self.state.pre_split_width_dip = Some(self.state.placement.width_dip);
-            let monitor = &self.state.dock.monitor;
-            let edge = self.current_stable().dock_edge();
-            let base = expanded_frame(&self.state.placement, edge, monitor);
-            self.state.frame = temporary_split_frame(base, edge, monitor);
-            effects.push(WindowEffect::ApplyFrame(self.state.frame));
-        } else if self.state.pre_split_width_dip.take().is_some() {
-            self.state.frame = expanded_frame(
-                &self.state.placement,
-                self.current_stable().dock_edge(),
-                &self.state.dock.monitor,
-            );
-            effects.push(WindowEffect::ApplyFrame(self.state.frame));
-        }
+    fn update_split_mode(&mut self, _split: bool, _effects: &mut Vec<WindowEffect>) {
+        // Phase 10 keeps every ViewMode at the user-selected width, including
+        // the 220 DIP minimum. Split is a 50/50 projection, not geometry policy.
     }
 
     fn tick(&mut self, now_ms: u64, effects: &mut Vec<WindowEffect>) {
@@ -360,12 +326,8 @@ impl WindowShellCoordinator {
         self.state.dock.edge = Some(edge);
         self.state.dock.hover_revealed = false;
         self.set_temporary_sensor_topmost(true, effects);
-        let expanded = effective_expanded_frame(
-            &self.state.placement,
-            Some(edge),
-            &self.state.dock.monitor,
-            self.state.pre_split_width_dip.is_some(),
-        );
+        let expanded =
+            effective_expanded_frame(&self.state.placement, Some(edge), &self.state.dock.monitor);
         let target = collapsed_frame(expanded, edge, &self.state.dock.monitor);
         self.start_animation(
             now_ms,
@@ -388,12 +350,8 @@ impl WindowShellCoordinator {
         self.state.dock.hover_revealed = hover_revealed;
         self.state.dock.manually_hidden = false;
         self.set_temporary_sensor_topmost(hover_revealed, effects);
-        let target = effective_expanded_frame(
-            &self.state.placement,
-            Some(edge),
-            &self.state.dock.monitor,
-            self.state.pre_split_width_dip.is_some(),
-        );
+        let target =
+            effective_expanded_frame(&self.state.placement, Some(edge), &self.state.dock.monitor);
         self.start_animation(
             now_ms,
             target,
@@ -453,34 +411,8 @@ pub(super) fn effective_expanded_frame(
     placement: &WindowPlacement,
     edge: Option<DockEdge>,
     monitor: &MonitorGeometry,
-    split_expanded: bool,
 ) -> PhysicalRect {
-    let base = expanded_frame(placement, edge, monitor);
-    if split_expanded {
-        temporary_split_frame(base, edge, monitor)
-    } else {
-        base
-    }
-}
-
-pub(super) fn temporary_split_frame(
-    base: PhysicalRect,
-    edge: Option<DockEdge>,
-    monitor: &MonitorGeometry,
-) -> PhysicalRect {
-    const MIN_SPLIT_WIDTH_DIP: f64 = 481.0;
-    let width = (MIN_SPLIT_WIDTH_DIP * monitor.scale_factor)
-        .round()
-        .clamp(1.0, f64::from(monitor.work_area.width)) as u32;
-    let work = monitor.work_area;
-    let rightmost =
-        (work.right() - i64::from(width)).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-    let x = match edge {
-        Some(DockEdge::Left) => work.x,
-        Some(DockEdge::Right) => rightmost,
-        Some(DockEdge::Top) | None => base.x.clamp(work.x, rightmost),
-    };
-    PhysicalRect::new(x, base.y, width, base.height)
+    expanded_frame(placement, edge, monitor)
 }
 
 #[cfg(test)]
@@ -1142,6 +1074,36 @@ mod phase8_window_tests {
     }
 
     #[test]
+    fn phase10_focused_dock_release_stays_expanded_without_collapse_deadline() {
+        let monitor = monitor("focused-release", -1920, 1.5, true);
+        let mut coordinator = WindowShellCoordinator::new(
+            WindowPlacement::new(520.0, 680.0, None, 0.5, 0.5, 0.25),
+            StableVisibility::Floating,
+            monitor.clone(),
+            true,
+        );
+        coordinator.dispatch(WindowIntent::GuardsChanged {
+            guards: WindowGuardSnapshot {
+                window_focused: true,
+                dragging: true,
+                ..Default::default()
+            },
+            now_ms: 0,
+        });
+        let frame = PhysicalRect::new(monitor.work_area.x, monitor.work_area.y + 100, 780, 900);
+        coordinator.dispatch(WindowIntent::DragEnded {
+            frame,
+            monitor,
+            now_ms: 10,
+        });
+        assert_eq!(
+            coordinator.state().visibility(),
+            VisibilityState::Presented(StableVisibility::DockedExpanded(DockEdge::Left))
+        );
+        assert_eq!(coordinator.state().next_deadline_ms(), None);
+    }
+
+    #[test]
     fn hidden_monitor_recovery_stays_hidden_then_shows_expanded_on_primary() {
         let mut coordinator = coordinator(StableVisibility::DockedCollapsed(DockEdge::Left));
         coordinator.dispatch(WindowIntent::CloseRequested {
@@ -1169,10 +1131,10 @@ mod phase8_window_tests {
     }
 
     #[test]
-    fn split_expands_toward_screen_interior_and_restores_durable_width() {
+    fn phase10_split_keeps_the_user_selected_compact_width() {
         let monitor = monitor("right", -1920, 1.5, true);
         let placement =
-            WindowPlacement::new(360.0, 680.0, Some(monitor.identity.clone()), 0.5, 0.5, 0.25);
+            WindowPlacement::new(220.0, 120.0, Some(monitor.identity.clone()), 0.5, 0.5, 0.25);
         let mut coordinator = WindowShellCoordinator::new(
             placement,
             StableVisibility::DockedExpanded(DockEdge::Right),
@@ -1180,18 +1142,18 @@ mod phase8_window_tests {
             true,
         );
         let original = coordinator.state().frame();
-        let expanded = coordinator.dispatch(WindowIntent::SplitModeChanged { split: true });
-        let split = expanded
-            .into_iter()
-            .find_map(|effect| match effect {
-                WindowEffect::ApplyFrame(frame) => Some(frame),
-                _ => None,
-            })
-            .unwrap();
-        assert_eq!(split.right(), monitor.work_area.right());
-        assert!(split.width > original.width);
-        let restored = coordinator.dispatch(WindowIntent::SplitModeChanged { split: false });
-        assert!(restored.contains(&WindowEffect::ApplyFrame(original)));
+        assert!(
+            coordinator
+                .dispatch(WindowIntent::SplitModeChanged { split: true })
+                .is_empty()
+        );
+        assert_eq!(coordinator.state().frame(), original);
+        assert!(
+            coordinator
+                .dispatch(WindowIntent::SplitModeChanged { split: false })
+                .is_empty()
+        );
+        assert_eq!(coordinator.state().frame(), original);
     }
 
     #[test]

@@ -71,7 +71,6 @@ impl WindowShellCoordinator {
             &self.state.placement,
             restore.dock_edge(),
             &self.state.dock.monitor,
-            self.state.pre_split_width_dip.is_some(),
         );
         effects.push(WindowEffect::ApplyFrame(self.state.frame));
         effects.push(WindowEffect::SetVisible(true));

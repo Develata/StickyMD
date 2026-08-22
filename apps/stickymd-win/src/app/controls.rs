@@ -8,6 +8,8 @@ pub(super) const TOOLBAR_HEIGHT_DIP: f64 = 34.0;
 const CONTROL_DIP: f64 = 28.0;
 const CONTROL_GAP_DIP: f64 = 4.0;
 const EDGE_DIP: f64 = 5.0;
+const COMPACT_EDGE_DIP: f64 = 3.0;
+const COMPACT_GAP_DIP: f64 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ControlId {
@@ -51,9 +53,16 @@ impl ControlLayout {
     pub fn new(size: PhysicalSize<u32>, scale: f64) -> Self {
         let scale = scale.max(0.5);
         let toolbar_height = TOOLBAR_HEIGHT_DIP * scale;
-        let control = CONTROL_DIP * scale;
-        let gap = CONTROL_GAP_DIP * scale;
-        let edge = EDGE_DIP * scale;
+        let regular_required = 2.0 * EDGE_DIP + 8.0 * CONTROL_DIP + 7.0 * CONTROL_GAP_DIP;
+        let compact = size.width as f64 / scale < regular_required;
+        let edge = if compact { COMPACT_EDGE_DIP } else { EDGE_DIP } * scale;
+        let gap = if compact {
+            COMPACT_GAP_DIP
+        } else {
+            CONTROL_GAP_DIP
+        } * scale;
+        let available = (size.width as f64 - 2.0 * edge - 7.0 * gap).max(8.0 * scale);
+        let control = (available / 8.0).min(CONTROL_DIP * scale);
         let y = (toolbar_height - control) * 0.5;
         let left = [ControlId::Source, ControlId::Split, ControlId::Preview];
         let right = [
@@ -84,8 +93,7 @@ impl ControlLayout {
             );
         }
         let right_width = right.len() as f64 * control + (right.len() - 1) as f64 * gap;
-        let right_origin =
-            (size.width as f64 - edge - right_width).max(edge + 3.0 * (control + gap) + gap);
+        let right_origin = size.width as f64 - edge - right_width;
         for (offset, id) in right.into_iter().enumerate() {
             controls[3 + offset] = (
                 id,
@@ -97,7 +105,7 @@ impl ControlLayout {
                 },
             );
         }
-        let popup_width = 230.0 * scale;
+        let popup_width = (230.0 * scale).min(size.width as f64);
         let popup_height = 58.0 * scale;
         let opacity = controls[5].1;
         let popup_x = (opacity.x + opacity.width - popup_width)
@@ -153,7 +161,7 @@ impl ControlLayout {
 
     pub fn opacity_at(&self, x: f64) -> u8 {
         let ratio = ((x - self.opacity_slider.x) / self.opacity_slider.width).clamp(0.0, 1.0);
-        (70.0 + ratio * 30.0).round() as u8
+        (40.0 + ratio * 60.0).round() as u8
     }
 }
 
@@ -168,7 +176,7 @@ pub(super) struct ControlState {
 
 impl ControlState {
     pub fn new(opacity: u8) -> Self {
-        let opacity = opacity.clamp(70, 100);
+        let opacity = opacity.clamp(40, 100);
         Self {
             opacity_popup_open: false,
             opacity_dragging: false,
@@ -179,7 +187,7 @@ impl ControlState {
     }
 
     pub fn preview(&mut self, opacity: u8) -> u8 {
-        self.opacity_preview = opacity.clamp(70, 100);
+        self.opacity_preview = opacity.clamp(40, 100);
         self.opacity_input = self.opacity_preview.to_string();
         self.opacity_preview
     }
@@ -192,7 +200,7 @@ impl ControlState {
 
     pub fn commit_input(&mut self) -> Option<u8> {
         let parsed = self.opacity_input.parse::<u16>().ok()?;
-        let opacity = parsed.clamp(70, 100) as u8;
+        let opacity = parsed.clamp(40, 100) as u8;
         self.preview(opacity);
         Some(opacity)
     }
@@ -227,7 +235,7 @@ mod phase8_control_tests {
     #[test]
     fn phase8_opacity_slider_and_input_clamp_only_on_commit() {
         let layout = ControlLayout::new(PhysicalSize::new(520, 680), 1.0);
-        assert_eq!(layout.opacity_at(layout.opacity_slider.x - 100.0), 70);
+        assert_eq!(layout.opacity_at(layout.opacity_slider.x - 100.0), 40);
         assert_eq!(
             layout.opacity_at(layout.opacity_slider.x + layout.opacity_slider.width + 100.0),
             100
@@ -236,9 +244,34 @@ mod phase8_control_tests {
         state.replace_input("7".into());
         assert_eq!(state.opacity_input, "7");
         assert_eq!(state.opacity_preview, 96);
-        assert_eq!(state.commit_input(), Some(70));
+        assert_eq!(state.commit_input(), Some(40));
         state.replace_input("x".into());
-        assert_eq!(state.opacity_input, "70");
+        assert_eq!(state.opacity_input, "40");
+    }
+
+    #[test]
+    fn phase10_compact_layout_keeps_every_control_inside_without_overlap() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let width = (220.0 * scale) as u32;
+            let layout =
+                ControlLayout::new(PhysicalSize::new(width, (120.0 * scale) as u32), scale);
+            let mut previous_right = 0.0;
+            for id in [
+                ControlId::Source,
+                ControlId::Split,
+                ControlId::Preview,
+                ControlId::Topmost,
+                ControlId::Theme,
+                ControlId::Opacity,
+                ControlId::Collapse,
+                ControlId::Close,
+            ] {
+                let rect = layout.rect(id);
+                assert!(rect.x >= previous_right);
+                assert!(rect.x + rect.width <= f64::from(width) + f64::EPSILON);
+                previous_right = rect.x + rect.width;
+            }
+        }
     }
 
     #[test]

@@ -129,10 +129,7 @@ impl StickyApp {
         let Some(geometry) = self.view_geometry() else {
             return;
         };
-        let scale = self
-            .window
-            .as_ref()
-            .map_or(1.0, |window| window.scale_factor());
+        let scale = f64::from(self.document_scale_factor());
         let source_theme = if self.resolved_dark_theme() {
             stickymd_render::source::SourceTheme::Dark
         } else {

@@ -630,6 +630,20 @@ mod tests {
     }
 
     #[test]
+    fn phase10_content_zoom_relayouts_without_claiming_document_authority() {
+        let source = snapshot("中文 Rust 🙂\nsecond line");
+        let mut projection = SourceProjection::new(&source, 440, 240, 1.0);
+        let generation = projection.projected_generation();
+        let text = projection.projected_text().to_owned();
+        for scale in [0.5, 1.0, 3.0, 1.25] {
+            projection.set_viewport(440, 240, scale);
+            assert_eq!(projection.projected_generation(), generation);
+            assert_eq!(projection.projected_text(), text);
+            assert!(projection.caret_rect(0).is_some());
+        }
+    }
+
+    #[test]
     fn paint_rejects_invalid_selection_without_panicking() {
         let source = snapshot("中");
         let mut projection = SourceProjection::new(&source, 400, 300, 1.0);

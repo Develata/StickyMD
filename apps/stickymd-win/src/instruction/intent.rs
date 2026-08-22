@@ -5,7 +5,7 @@
 use stickymd_core::{EditKind, Generation, Selection};
 use stickymd_render::preview::SpanAction;
 
-use crate::config::{ThemeMode, ViewMode};
+use crate::config::{ContentZoomPercent, ThemeMode, ViewMode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppIntent {
@@ -72,6 +72,7 @@ pub enum WindowPreferenceIntent {
     PreviewOpacity(u8),
     CommitOpacity(u8),
     SetAlwaysOnTop(bool),
+    SetContentZoom(ContentZoomPercent),
 }
 
 /// Platform gestures requested by shell hit testing.

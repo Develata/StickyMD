@@ -54,8 +54,13 @@ impl StickyApp {
         }
     }
 
-    pub(super) fn handle_preview_key(&mut self, code: Option<KeyCode>, shortcut: bool) {
-        match preview_command(code, shortcut) {
+    pub(super) fn handle_preview_key(
+        &mut self,
+        code: Option<KeyCode>,
+        shortcut: bool,
+        shift: bool,
+    ) {
+        match preview_command(code, shortcut, shift) {
             PreviewCommand::None => {}
             PreviewCommand::ClearSelection => {
                 self.preview_selection = stickymd_render::preview::PreviewSelection::default();
@@ -163,12 +168,12 @@ impl StickyApp {
     }
 }
 
-fn preview_command(code: Option<KeyCode>, shortcut: bool) -> PreviewCommand {
-    match (shortcut, code) {
-        (false, Some(KeyCode::Escape)) => PreviewCommand::ClearSelection,
-        (true, Some(KeyCode::KeyA)) => PreviewCommand::SelectAll,
-        (true, Some(KeyCode::KeyC)) => PreviewCommand::Copy,
-        (true, Some(KeyCode::KeyS)) => PreviewCommand::Save,
+fn preview_command(code: Option<KeyCode>, shortcut: bool, shift: bool) -> PreviewCommand {
+    match (shortcut, shift, code) {
+        (false, false, Some(KeyCode::Escape)) => PreviewCommand::ClearSelection,
+        (true, _, Some(KeyCode::KeyA)) => PreviewCommand::SelectAll,
+        (true, _, Some(KeyCode::KeyC | KeyCode::Insert)) => PreviewCommand::Copy,
+        (true, _, Some(KeyCode::KeyS)) => PreviewCommand::Save,
         _ => PreviewCommand::None,
     }
 }
@@ -211,19 +216,34 @@ mod tests {
     #[test]
     fn preview_shortcuts_are_read_only_and_reserve_copy_select_all_and_save() {
         assert_eq!(
-            preview_command(Some(KeyCode::KeyA), true),
+            preview_command(Some(KeyCode::KeyA), true, false),
             PreviewCommand::SelectAll
         );
         assert_eq!(
-            preview_command(Some(KeyCode::KeyC), true),
+            preview_command(Some(KeyCode::KeyC), true, false),
             PreviewCommand::Copy
         );
         assert_eq!(
-            preview_command(Some(KeyCode::KeyS), true),
+            preview_command(Some(KeyCode::KeyS), true, false),
             PreviewCommand::Save
         );
         for blocked in [KeyCode::KeyX, KeyCode::KeyV, KeyCode::Backspace] {
-            assert_eq!(preview_command(Some(blocked), true), PreviewCommand::None);
+            assert_eq!(
+                preview_command(Some(blocked), true, false),
+                PreviewCommand::None
+            );
         }
+        assert_eq!(
+            preview_command(Some(KeyCode::Insert), true, false),
+            PreviewCommand::Copy
+        );
+        assert_eq!(
+            preview_command(Some(KeyCode::Delete), false, true),
+            PreviewCommand::None
+        );
+        assert_eq!(
+            preview_command(Some(KeyCode::Insert), false, true),
+            PreviewCommand::None
+        );
     }
 }

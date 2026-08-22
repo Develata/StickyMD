@@ -274,7 +274,7 @@ fn paint_opacity_popup(pixmap: &mut Pixmap, layout: &ControlLayout, visual: Tool
         3.0,
         track,
     );
-    let ratio = f64::from(visual.opacity.saturating_sub(70)) / 30.0;
+    let ratio = f64::from(visual.opacity.saturating_sub(40)) / 60.0;
     let thumb_x = slider.x + ratio * slider.width;
     fill_rect(
         pixmap,

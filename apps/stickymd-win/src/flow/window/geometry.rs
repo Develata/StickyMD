@@ -4,11 +4,12 @@
 
 use super::state::DockEdge;
 
-pub const SNAP_DISTANCE_DIP: f64 = 12.0;
+pub const SNAP_DISTANCE_DIP: f64 = 24.0;
+pub const SNAP_TIE_EPSILON_DIP: f64 = 1.0;
 pub const UNDOCK_DISTANCE_DIP: f64 = 16.0;
 pub const SENSOR_THICKNESS_DIP: f64 = 3.0;
-pub const MIN_WINDOW_WIDTH_DIP: f64 = 360.0;
-pub const MIN_WINDOW_HEIGHT_DIP: f64 = 240.0;
+pub const MIN_WINDOW_WIDTH_DIP: f64 = 220.0;
+pub const MIN_WINDOW_HEIGHT_DIP: f64 = 120.0;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MonitorIdentity(String);
@@ -118,23 +119,34 @@ pub fn sensor_thickness_px(monitor: &MonitorGeometry) -> u32 {
 }
 
 pub fn snap_edge(frame: PhysicalRect, monitor: &MonitorGeometry) -> Option<DockEdge> {
-    let limit = i64::from(dip_to_px(SNAP_DISTANCE_DIP, monitor.scale_factor));
+    let scale = valid_scale(monitor.scale_factor);
     let work = monitor.work_area;
-    [
+    let candidates = [
         (
             DockEdge::Left,
-            (i64::from(frame.x) - i64::from(work.x)).abs(),
+            (i64::from(frame.x) - i64::from(work.x)).unsigned_abs() as f64 / scale,
         ),
-        (DockEdge::Right, (frame.right() - work.right()).abs()),
+        (
+            DockEdge::Right,
+            (frame.right() - work.right()).unsigned_abs() as f64 / scale,
+        ),
         (
             DockEdge::Top,
-            (i64::from(frame.y) - i64::from(work.y)).abs(),
+            (i64::from(frame.y) - i64::from(work.y)).unsigned_abs() as f64 / scale,
         ),
-    ]
-    .into_iter()
-    .filter(|(_, distance)| *distance <= limit)
-    .min_by_key(|(edge, distance)| (*distance, edge.tie_break_order()))
-    .map(|(edge, _)| edge)
+    ];
+    let nearest = candidates
+        .iter()
+        .map(|(_, distance)| *distance)
+        .filter(|distance| *distance <= SNAP_DISTANCE_DIP)
+        .min_by(f64::total_cmp)?;
+    candidates
+        .into_iter()
+        .filter(|(_, distance)| {
+            *distance <= SNAP_DISTANCE_DIP && *distance <= nearest + SNAP_TIE_EPSILON_DIP
+        })
+        .min_by_key(|(edge, _)| edge.tie_break_order())
+        .map(|(edge, _)| edge)
 }
 
 pub fn should_undock(edge: DockEdge, frame: PhysicalRect, monitor: &MonitorGeometry) -> bool {
@@ -342,6 +354,49 @@ mod phase8_window_tests {
             100,
         );
         assert_eq!(snap_edge(near_bottom_only, &monitor), None);
+    }
+
+    #[test]
+    fn phase10_snap_uses_nearest_edge_and_only_tie_breaks_within_one_dip() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let monitor = MonitorGeometry::new(
+                MonitorIdentity::new(format!("scale-{scale}")),
+                PhysicalRect::new(-1920, -1080, 1920, 1080),
+                scale,
+                true,
+            );
+            let capture = dip_to_px(SNAP_DISTANCE_DIP, scale) as i32;
+            let inside = PhysicalRect::new(
+                monitor.work_area.x + capture,
+                monitor.work_area.y + 400,
+                400,
+                500,
+            );
+            assert_eq!(snap_edge(inside, &monitor), Some(DockEdge::Left));
+            let outside = PhysicalRect::new(inside.x + 1, inside.y, inside.width, inside.height);
+            assert_eq!(snap_edge(outside, &monitor), None);
+
+            let top_distance = dip_to_px(10.0, scale) as i32;
+            let left_distance = dip_to_px(11.0, scale) as i32;
+            let tied = PhysicalRect::new(
+                monitor.work_area.x + left_distance,
+                monitor.work_area.y + top_distance,
+                400,
+                500,
+            );
+            assert_eq!(snap_edge(tied, &monitor), Some(DockEdge::Top));
+
+            let clearly_nearer_left = PhysicalRect::new(
+                monitor.work_area.x + dip_to_px(8.0, scale) as i32,
+                monitor.work_area.y + dip_to_px(11.0, scale) as i32,
+                400,
+                500,
+            );
+            assert_eq!(
+                snap_edge(clearly_nearer_left, &monitor),
+                Some(DockEdge::Left)
+            );
+        }
     }
 
     #[test]
