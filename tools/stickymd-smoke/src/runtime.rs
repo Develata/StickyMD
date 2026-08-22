@@ -47,6 +47,14 @@ pub(crate) fn run(
     let mut children = Vec::new();
     let result = if scenario == RuntimeScenario::Startup {
         run_startup_measurement(repository, &root)
+    } else if scenario == RuntimeScenario::Resources {
+        run_resource_measurement(repository, &root, false, false).map(RuntimeEvidence::passed)
+    } else if scenario == RuntimeScenario::MathResources {
+        run_resource_measurement(repository, &root, true, false).map(RuntimeEvidence::passed)
+    } else if scenario == RuntimeScenario::ImageResources {
+        run_resource_measurement(repository, &root, false, true).map(RuntimeEvidence::passed)
+    } else if scenario == RuntimeScenario::WindowResources {
+        run_window_resource_measurement(repository, &root).map(RuntimeEvidence::passed)
     } else if scenario == RuntimeScenario::ZoomResources {
         run_zoom_resource_measurement(repository, &root).map(RuntimeEvidence::passed)
     } else {
@@ -82,18 +90,15 @@ fn run_inner(
     scenario: RuntimeScenario,
     children: &mut Vec<Child>,
 ) -> Result<(), String> {
-    if scenario == RuntimeScenario::Resources {
-        return run_resource_measurement(repository, root, false, false);
-    }
-    if scenario == RuntimeScenario::MathResources {
-        return run_resource_measurement(repository, root, true, false);
-    }
-    if scenario == RuntimeScenario::ImageResources {
-        return run_resource_measurement(repository, root, false, true);
-    }
-    if scenario == RuntimeScenario::WindowResources {
-        return run_window_resource_measurement(repository, root);
-    }
+    debug_assert!(!matches!(
+        scenario,
+        RuntimeScenario::Resources
+            | RuntimeScenario::MathResources
+            | RuntimeScenario::ImageResources
+            | RuntimeScenario::WindowResources
+            | RuntimeScenario::Startup
+            | RuntimeScenario::ZoomResources
+    ));
     let source = repository.join("target/release/stickymd-win.exe");
     if !source.is_file() {
         return Err(format!(
@@ -734,7 +739,7 @@ fn run_resource_measurement(
     root: &Path,
     math_matrix: bool,
     image_matrix: bool,
-) -> Result<(), String> {
+) -> Result<Vec<EvidenceMeasurement>, String> {
     let source = repository.join("target/release/stickymd-win.exe");
     if !source.is_file() {
         return Err(format!(
@@ -920,6 +925,7 @@ fn run_resource_measurement(
         }
         runtime_report!("resource development filter: {filter}");
     }
+    let mut evidence = Vec::new();
     for case in cases {
         let mode = case.label;
         let mut memory_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
@@ -972,6 +978,8 @@ fn run_resource_measurement(
             stop_child(&mut child);
         }
         print_resource_summary(mode, &memory_samples, &cpu_samples)?;
+        evidence.extend(memory_measurements(mode, &memory_samples));
+        evidence.extend(cpu_measurements(mode, &cpu_samples));
         if cpu_samples
             .iter()
             .any(|sample| *sample > IDLE_CPU_PERCENT_LIMIT)
@@ -982,7 +990,7 @@ fn run_resource_measurement(
             ));
         }
     }
-    Ok(())
+    Ok(evidence)
 }
 
 fn run_zoom_resource_measurement(
@@ -1120,7 +1128,48 @@ fn memory_measurements(mode: &str, samples: &[MemorySample]) -> Vec<EvidenceMeas
     .collect()
 }
 
-fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(), String> {
+fn cpu_measurements(mode: &str, samples: &[f64]) -> Vec<EvidenceMeasurement> {
+    if samples.is_empty() {
+        return Vec::new();
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let middle = sorted.len() / 2;
+    [
+        ("idle_cpu_median", sorted[middle]),
+        ("idle_cpu_p95", sorted[nearest_rank_index(sorted.len(), 95)]),
+        ("idle_cpu_max", sorted[sorted.len() - 1]),
+    ]
+    .into_iter()
+    .map(|(statistic, value)| EvidenceMeasurement {
+        name: format!("{mode}.{statistic}"),
+        unit: "percent".to_owned(),
+        value,
+    })
+    .collect()
+}
+
+fn duration_measurements(mode: &str, samples: &[Duration]) -> Vec<EvidenceMeasurement> {
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    let middle = sorted.len() / 2;
+    [
+        ("median", sorted[middle]),
+        ("max", sorted[sorted.len() - 1]),
+    ]
+    .into_iter()
+    .map(|(statistic, value)| EvidenceMeasurement {
+        name: format!("{mode}.{statistic}"),
+        unit: "ms".to_owned(),
+        value: value.as_secs_f64() * 1_000.0,
+    })
+    .collect()
+}
+
+fn run_window_resource_measurement(
+    repository: &Path,
+    root: &Path,
+) -> Result<Vec<EvidenceMeasurement>, String> {
     let source = repository.join("target/release/stickymd-win.exe");
     if !source.is_file() {
         return Err(format!(
@@ -1234,6 +1283,15 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
     print_resource_summary("visible-source", &visible_samples, &visible_cpu)?;
     print_resource_summary("docked-collapsed", &collapsed_samples, &collapsed_cpu)?;
     print_resource_summary("hidden-to-tray", &hidden_samples, &hidden_cpu)?;
+    let mut evidence = duration_measurements("window.startup_to_paper", &startup_samples);
+    for (mode, memory, cpu) in [
+        ("visible-source", &visible_samples, &visible_cpu),
+        ("docked-collapsed", &collapsed_samples, &collapsed_cpu),
+        ("hidden-to-tray", &hidden_samples, &hidden_cpu),
+    ] {
+        evidence.extend(memory_measurements(mode, memory));
+        evidence.extend(cpu_measurements(mode, cpu));
+    }
     let observed_max = hidden_samples
         .iter()
         .map(|sample| sample.private_working_set_bytes)
@@ -1260,7 +1318,7 @@ fn run_window_resource_measurement(repository: &Path, root: &Path) -> Result<(),
             ));
         }
     }
-    Ok(())
+    Ok(evidence)
 }
 
 fn measure_idle_cpu(
@@ -2061,7 +2119,11 @@ fn cleanup_root(root: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_single_byte_insertion, nearest_rank_index};
+    use std::time::Duration;
+
+    use super::{
+        cpu_measurements, duration_measurements, is_single_byte_insertion, nearest_rank_index,
+    };
 
     #[test]
     fn five_sample_p95_is_the_observed_maximum() {
@@ -2075,5 +2137,27 @@ mod tests {
         assert!(is_single_byte_insertion(b"abcd\n", b"abcd", b'\n'));
         assert!(!is_single_byte_insertion(b"abcd", b"abcd", b'\n'));
         assert!(!is_single_byte_insertion(b"abycd", b"abcd", b'\n'));
+    }
+
+    #[test]
+    fn resource_summaries_project_structured_machine_measurements() {
+        let cpu = cpu_measurements("source", &[0.01, 0.03, 0.02, 0.04, 0.05]);
+        assert_eq!(cpu.len(), 3);
+        assert_eq!(cpu[0].name, "source.idle_cpu_median");
+        assert_eq!(cpu[0].value, 0.03);
+        assert_eq!(cpu[1].value, 0.05);
+        assert_eq!(cpu[2].value, 0.05);
+
+        let duration = duration_measurements(
+            "window.startup",
+            &[
+                Duration::from_millis(1),
+                Duration::from_millis(3),
+                Duration::from_millis(2),
+            ],
+        );
+        assert_eq!(duration.len(), 2);
+        assert_eq!(duration[0].value, 2.0);
+        assert_eq!(duration[1].value, 3.0);
     }
 }
