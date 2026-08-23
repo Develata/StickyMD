@@ -166,6 +166,36 @@ BLOCKED          自动化或人工验证已知失败，或环境阻止执行
 禁止使用模糊的 `PASS`、`CONDITIONAL` 或模块存在来代替验收证据。一次性终端命令、
 未提交脚本、主观观察、旧 commit 收据均不能把人工项从 `NOT TESTED` 提升为 PASS。
 
+### Phase 12 发布资格状态
+
+Source-controlled Phase matrix 继续只使用上述四个状态。Phase 12 的 ignored exact-artifact
+release receipts 另有两种 USER authority 投影，二者不得混用：
+
+```text
+USER-APPROVED GATE   USER 批准工程 hard boundary 校准；不是人工验收豁免
+USER WAIVED          USER 明确豁免列出的人工 case/group；未列出的 NOT TESTED 仍阻塞
+```
+
+Phase 12 source decision template 与 exact-candidate `dist/evidence/release-decisions.json` projection
+只允许 `PENDING`、`USER APPROVED`、`USER REJECTED`、`NOT APPLICABLE`。Rust automation 只能
+记录 USER 已明确给出的决定，不能自行批准；人工 waiver 必须使用具体 `WAIVER-P12-Mxx`
+key，不接受 blanket waiver。
+
+### Exact-artifact evidence receipts
+
+Phase 12 source freeze 前提交所有 source-controlled 治理、工具和报告；freeze 后的 candidate、
+automated、manual、remote、downloaded-artifact 与 readiness receipts 写入 ignored
+`dist/evidence/`，绑定 source commit、EXE SHA-256 与适用的 ZIP SHA-256。这样人工/远端
+证据不会为了“写回报告”再制造一个不同 HEAD。
+
+- manual recorder 必须是交互式 human receipt recorder，只接受显式
+  `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`，不得从 process/status 自动推断人工 PASS；
+- stale source/EXE receipt 不参与 readiness；
+- readiness 对 P0/P1、未批准 hard gate、mandatory manual NOT TESTED、exact package、remote
+  evidence 与 USER decision fail closed；不得提供 `--force-ready`；
+- freeze 后若任何 source、manifest/lock、runtime asset 或 release tooling 改变，所有 receipts
+  失效并必须重建。
+
 ### CI 与完成门
 
 - Windows CI 必须调用 Rust CLI 的 `all --ci`，覆盖所有能够无界面执行的 Phase 任务。

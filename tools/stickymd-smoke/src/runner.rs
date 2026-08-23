@@ -422,7 +422,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 push_unique(&mut tasks, runtime_window_resources());
                 push_unique(&mut tasks, runtime_zoom_resources());
             }
-            Selection::Phase(Phase::P11 | Phase::P11B) => {
+            Selection::Phase(Phase::P11 | Phase::P11B | Phase::P12) => {
                 push_unique(&mut tasks, runtime_resources());
                 push_unique(&mut tasks, runtime_math_resources());
                 push_unique(&mut tasks, runtime_image_resources());
@@ -481,6 +481,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         Selection::Phase(Phase::P10) => push_unique(&mut tasks, phase10_ux_tests()),
         Selection::Phase(Phase::P11) => push_unique(&mut tasks, workspace_tests()),
         Selection::Phase(Phase::P11B) => push_unique(&mut tasks, phase11b_tests()),
+        Selection::Phase(Phase::P12) => push_unique(&mut tasks, workspace_tests()),
     }
 
     // CI owns every headless task. `--performance` remains the explicit local
@@ -557,14 +558,32 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                     push_unique(&mut tasks, phase10_performance());
                     push_unique(&mut tasks, phase11b_performance());
                 }
+                Phase::P12 => {
+                    if options.performance {
+                        push_unique(&mut tasks, phase1_markdown_performance());
+                        push_unique(&mut tasks, phase1_persistence_performance());
+                        push_unique(&mut tasks, phase2_performance());
+                        push_unique(&mut tasks, phase3_performance());
+                        push_unique(&mut tasks, phase4_performance());
+                        push_unique(&mut tasks, phase5_performance());
+                        push_unique(&mut tasks, phase6_performance());
+                        push_unique(&mut tasks, phase7_performance());
+                        push_unique(&mut tasks, phase8_performance());
+                    }
+                    push_unique(&mut tasks, phase10_performance());
+                    push_unique(&mut tasks, phase11b_performance());
+                }
             }
         }
     }
 
     if options.performance
-        && selected_phases(options.selection)
-            .iter()
-            .any(|phase| matches!(phase, Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B))
+        && selected_phases(options.selection).iter().any(|phase| {
+            matches!(
+                phase,
+                Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B | Phase::P12
+            )
+        })
     {
         push_unique(&mut tasks, release_build());
         push_unique(&mut tasks, runtime_startup());
@@ -585,14 +604,17 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             Selection::Phase(Phase::P10) => {
                 push_unique(&mut tasks, runtime_phase10());
             }
-            Selection::Phase(Phase::P11 | Phase::P11B) => {
+            Selection::Phase(Phase::P11 | Phase::P11B | Phase::P12) => {
                 push_unique(&mut tasks, runtime_portable());
                 push_unique(&mut tasks, runtime_preview());
                 push_unique(&mut tasks, runtime_math());
                 push_unique(&mut tasks, runtime_assets());
                 push_unique(&mut tasks, runtime_window_shell());
                 push_unique(&mut tasks, runtime_phase10());
-                if matches!(options.selection, Selection::Phase(Phase::P11B)) {
+                if matches!(
+                    options.selection,
+                    Selection::Phase(Phase::P11B | Phase::P12)
+                ) {
                     push_unique(&mut tasks, runtime_phase11b());
                 }
             }
@@ -1464,6 +1486,68 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn phase12_routes_final_headless_runtime_resources_and_performance_once() {
+        let options = |performance, runtime, resources| Options {
+            selection: Selection::Phase(crate::cli::Phase::P12),
+            ci: false,
+            performance,
+            runtime,
+            resources,
+            release: false,
+            package: false,
+            json: true,
+            evidence_file: None,
+        };
+        let headless = build_plan(&options(false, false, false)).expect("Phase 12 headless plan");
+        assert_eq!(
+            headless
+                .iter()
+                .filter(|task| task.id() == TaskId::WorkspaceTests)
+                .count(),
+            1
+        );
+        let runtime = build_plan(&options(false, true, false)).expect("Phase 12 runtime plan");
+        assert_eq!(
+            runtime
+                .iter()
+                .filter(|task| task.id() == TaskId::RuntimePhase11B)
+                .count(),
+            1
+        );
+        let resources = build_plan(&options(false, false, true)).expect("Phase 12 resources plan");
+        for expected in [
+            TaskId::RuntimeResources,
+            TaskId::RuntimeMathResources,
+            TaskId::RuntimeImageResources,
+            TaskId::RuntimeWindowResources,
+            TaskId::RuntimeZoomResources,
+        ] {
+            assert_eq!(
+                resources
+                    .iter()
+                    .filter(|task| task.id() == expected)
+                    .count(),
+                1
+            );
+        }
+        let performance =
+            build_plan(&options(true, false, false)).expect("Phase 12 performance plan");
+        for expected in [
+            TaskId::Phase10Performance,
+            TaskId::Phase11BPerformance,
+            TaskId::RuntimeStartup,
+        ] {
+            assert_eq!(
+                performance
+                    .iter()
+                    .filter(|task| task.id() == expected)
+                    .count(),
+                1
+            );
+        }
     }
 
     #[test]

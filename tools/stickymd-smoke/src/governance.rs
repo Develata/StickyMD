@@ -52,8 +52,15 @@ const REQUIRED_FILES: &[&str] = &[
     "docs/tasks/phase-11-rc-convergence.md",
     "docs/acceptance-cases/phase-11.md",
     "docs/phases/2026-08-22-phase-11-b-final-interaction-amendment.md",
+    "docs/phases/2026-08-23-phase-12-final-release-qualification.md",
     "docs/tasks/phase-11-b-final-interaction-amendment.md",
     "docs/acceptance-cases/phase-11-b.md",
+    "docs/tasks/phase-12-final-release-qualification.md",
+    "docs/acceptance-cases/phase-12.md",
+    "docs/report/phase-12-release-decisions.md",
+    "docs/report/phase-12-final-qualification.md",
+    "docs/report/phase-12-release-handoff.md",
+    "docs/release-notes/0.1.0-draft.md",
     "tools/release/package.ps1",
     "tools/release/generate-third-party-notices.ps1",
     "tools/release/generate-sbom.ps1",
@@ -119,10 +126,39 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_phase10_contract_trace(root)?;
     verify_phase11_contract_trace(root)?;
     verify_phase11b_contract_trace(root)?;
+    verify_phase12_contract_trace(root)?;
     verify_release_infrastructure(root)?;
     verify_plan_refs(root)?;
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
+    Ok(())
+}
+
+fn verify_phase12_contract_trace(root: &Path) -> Result<(), String> {
+    let path = root.join("docs/acceptance-cases/phase-12.md");
+    let content = read_text(&path)?;
+    for (prefix, last) in [("P12-A", 14_u16), ("P12-M", 44_u16)] {
+        let observed = frozen_trace_ids(&content, prefix)?;
+        let expected: Vec<u16> = (1..=last).collect();
+        if observed != expected {
+            return Err(format!(
+                "{} IDs must be exactly {prefix}01..{prefix}{last:02}; observed {observed:?}",
+                path.display()
+            ));
+        }
+    }
+    for row in read_matrix_rows(&path)? {
+        let line = content.lines().nth(row.line - 1).unwrap_or_default();
+        if line.trim_start().starts_with("| P12-M")
+            && (row.mode != "Manual" || row.status != "NOT TESTED")
+        {
+            return Err(format!(
+                "{}:{} Phase 12 human row must remain Manual / NOT TESTED; exact evidence belongs in dist/evidence",
+                path.display(),
+                row.line
+            ));
+        }
+    }
     Ok(())
 }
 

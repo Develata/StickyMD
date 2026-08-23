@@ -34,7 +34,7 @@ jobs:
         run: cargo fmt --check
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: phase smoke (headless, deduplicated)
+      - name: phase smoke through Phase 12 (headless, deduplicated)
         run: cargo run -p stickymd-smoke --locked -- all --ci --json
       - name: release build
         run: cargo build --workspace --release --locked

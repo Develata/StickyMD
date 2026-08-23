@@ -82,3 +82,10 @@ its exact release receipt records the same EXE SHA-256, so no product binary cha
 
 Preview/input/resource gates pass. Startup warm and current-candidate manual acceptance remain release
 blockers independent of these improvements.
+
+## Resolution — 2026-08-23
+
+USER approved a v0.1.0 warm-start engineering gate recalibration: the hard release boundary is now
+`p95 <= 400 ms`, while `<= 180 ms` remains the preferred target. Therefore the recorded 311.353 ms warm
+p95 is a v0.1.0 hard-gate PASS but still misses the preferred target. This resolution does not rewrite the
+historical 180 ms failure and is not a waiver for any manual acceptance case.

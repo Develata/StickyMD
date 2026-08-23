@@ -80,6 +80,16 @@ pub(crate) fn emit(
         results,
     );
     if let Some(path) = output_file {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "cannot create evidence directory `{}`: {error}",
+                    parent.display()
+                )
+            })?;
+        }
         fs::write(path, json)
             .map_err(|error| format!("cannot write evidence file `{}`: {error}", path.display()))?;
     } else {
@@ -294,7 +304,7 @@ mod tests {
                     gates: vec![EvidenceGate {
                         metric: "warm.p95".to_owned(),
                         comparator: "<=".to_owned(),
-                        value: 180.0,
+                        value: 400.0,
                         unit: "ms".to_owned(),
                         source: "docs/plan/10_performance_reliability.md".to_owned(),
                     }],

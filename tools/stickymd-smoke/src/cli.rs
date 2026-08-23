@@ -15,10 +15,11 @@ pub(crate) enum Phase {
     P10,
     P11,
     P11B,
+    P12,
 }
 
 impl Phase {
-    pub(crate) const ALL: [Self; 13] = [
+    pub(crate) const ALL: [Self; 14] = [
         Self::P00,
         Self::P01,
         Self::P02,
@@ -32,6 +33,7 @@ impl Phase {
         Self::P10,
         Self::P11,
         Self::P11B,
+        Self::P12,
     ];
 
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
@@ -49,7 +51,8 @@ impl Phase {
             "10" | "phase-10" => Ok(Self::P10),
             "11" | "phase-11" => Ok(Self::P11),
             "11-b" | "phase-11-b" => Ok(Self::P11B),
-            _ => Err(format!("unknown phase `{value}`; expected 00..11-b")),
+            "12" | "phase-12" => Ok(Self::P12),
+            _ => Err(format!("unknown phase `{value}`; expected 00..12 or 11-b")),
         }
     }
 
@@ -68,8 +71,129 @@ impl Phase {
             Self::P10 => "10",
             Self::P11 => "11",
             Self::P11B => "11-b",
+            Self::P12 => "12",
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CommandLine {
+    Smoke(Options),
+    AcceptanceManual,
+    Qualification(QualificationCommand),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum QualificationCommand {
+    Candidate,
+    Decision {
+        key: String,
+        status: String,
+        evidence: String,
+    },
+    Readiness {
+        explain: bool,
+    },
+    Remote {
+        run_id: u64,
+        attempt: u64,
+    },
+    Downloaded {
+        zip: PathBuf,
+    },
+}
+
+impl CommandLine {
+    pub(crate) fn parse<I>(args: I) -> Result<Self, String>
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let args: Vec<String> = args.into_iter().collect();
+        match args.first().map(String::as_str) {
+            Some("acceptance") => match args.get(1).map(String::as_str) {
+                Some("manual") if args.len() == 2 => Ok(Self::AcceptanceManual),
+                _ => Err("usage: stickymd-smoke acceptance manual".to_owned()),
+            },
+            Some("qualification") => Self::parse_qualification(&args[1..]),
+            _ => Options::parse(args).map(Self::Smoke),
+        }
+    }
+
+    fn parse_qualification(arguments: &[String]) -> Result<Self, String> {
+        match arguments.first().map(String::as_str) {
+            Some("candidate") if arguments.len() == 1 => {
+                Ok(Self::Qualification(QualificationCommand::Candidate))
+            }
+            Some("decision") => {
+                let values = &arguments[1..];
+                if values.len() != 3 {
+                    return Err("usage: stickymd-smoke qualification decision --key=<decision> --status=<state> --evidence=<reference>".to_owned());
+                }
+                Ok(Self::Qualification(QualificationCommand::Decision {
+                    key: named_value(values, "--key=")?.to_owned(),
+                    status: named_value(values, "--status=")?.to_owned(),
+                    evidence: named_value(values, "--evidence=")?.to_owned(),
+                }))
+            }
+            Some("readiness") => {
+                let explain = match arguments.get(1).map(String::as_str) {
+                    None => false,
+                    Some("--explain") if arguments.len() == 2 => true,
+                    _ => {
+                        return Err(
+                            "usage: stickymd-smoke qualification readiness [--explain]".to_owned()
+                        );
+                    }
+                };
+                Ok(Self::Qualification(QualificationCommand::Readiness {
+                    explain,
+                }))
+            }
+            Some("remote") => {
+                let values = &arguments[1..];
+                if values.len() != 2 {
+                    return Err(
+                        "usage: stickymd-smoke qualification remote --run-id=<id> --attempt=<n>"
+                            .to_owned(),
+                    );
+                }
+                Ok(Self::Qualification(QualificationCommand::Remote {
+                    run_id: named_u64(values, "--run-id=")?,
+                    attempt: named_u64(values, "--attempt=")?,
+                }))
+            }
+            Some("downloaded") => {
+                let values = &arguments[1..];
+                if values.len() != 1 {
+                    return Err(
+                        "usage: stickymd-smoke qualification downloaded --zip=<path>".to_owned(),
+                    );
+                }
+                Ok(Self::Qualification(QualificationCommand::Downloaded {
+                    zip: PathBuf::from(named_value(values, "--zip=")?),
+                }))
+            }
+            _ => Err(
+                "qualification requires candidate, decision, readiness, remote, or downloaded"
+                    .to_owned(),
+            ),
+        }
+    }
+}
+
+fn named_value<'a>(arguments: &'a [String], prefix: &str) -> Result<&'a str, String> {
+    arguments
+        .iter()
+        .find_map(|argument| argument.strip_prefix(prefix))
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("missing `{prefix}<value>`"))
+}
+
+fn named_u64(arguments: &[String], prefix: &str) -> Result<u64, String> {
+    let value = named_value(arguments, prefix)?;
+    value
+        .parse::<u64>()
+        .map_err(|error| format!("invalid `{prefix}{value}`: {error}"))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,7 +227,7 @@ impl Options {
             Some("phase") => {
                 let phase = args
                     .next()
-                    .ok_or_else(|| "`phase` requires a number (00..11-b)".to_owned())?;
+                    .ok_or_else(|| "`phase` requires a number (00..12 or 11-b)".to_owned())?;
                 Selection::Phase(Phase::parse(&phase)?)
             }
             Some("all") => Selection::All,
@@ -184,24 +308,25 @@ impl Options {
                         | Phase::P09
                         | Phase::P10
                         | Phase::P11
-                        | Phase::P11B,
+                        | Phase::P11B
+                        | Phase::P12,
                 ) | Selection::All
             )
         {
             return Err(
-                "resource measurement is defined only for Phase 05 through Phase 11-B, or `all`"
+                "resource measurement is defined only for Phase 05 through Phase 12, or `all`"
                     .to_owned(),
             );
         }
         if (options.release || options.package)
             && !matches!(
                 selection,
-                Selection::Phase(Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B)
+                Selection::Phase(Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B | Phase::P12,)
                     | Selection::All
             )
         {
             return Err(
-                "release and package modes are defined only for Phase 09/10/11/11-B or `all`"
+                "release and package modes are defined only for Phase 09 through Phase 12 or `all`"
                     .to_owned(),
             );
         }
@@ -209,13 +334,13 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..11-b> [--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]"
+        "usage: stickymd-smoke phase <00..12|11-b> [--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]"
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Options, Phase, Selection};
+    use super::{CommandLine, Options, Phase, QualificationCommand, Selection};
 
     fn args<'a>(values: &'a [&'a str]) -> impl Iterator<Item = String> + 'a {
         values.iter().map(|value| (*value).to_owned())
@@ -315,6 +440,41 @@ mod tests {
             assert_eq!(options.selection, Selection::Phase(Phase::P11B));
             assert!(options.json);
         }
+    }
+
+    #[test]
+    fn phase12_and_qualification_commands_are_explicit() {
+        let phase = Options::parse(args(&["phase", "12", "--release", "--json"]))
+            .expect("valid Phase 12 release mode");
+        assert_eq!(phase.selection, Selection::Phase(Phase::P12));
+
+        let readiness = CommandLine::parse(args(&["qualification", "readiness", "--explain"]))
+            .expect("valid readiness command");
+        assert_eq!(
+            readiness,
+            CommandLine::Qualification(QualificationCommand::Readiness { explain: true })
+        );
+
+        let decision = CommandLine::parse(args(&[
+            "qualification",
+            "decision",
+            "--key=RELEASE-VERSION",
+            "--status=USER-APPROVED",
+            "--evidence=USER-message",
+        ]))
+        .expect("valid decision command");
+        assert_eq!(
+            decision,
+            CommandLine::Qualification(QualificationCommand::Decision {
+                key: "RELEASE-VERSION".to_owned(),
+                status: "USER-APPROVED".to_owned(),
+                evidence: "USER-message".to_owned(),
+            })
+        );
+
+        let manual = CommandLine::parse(args(&["acceptance", "manual"]))
+            .expect("valid manual recorder command");
+        assert_eq!(manual, CommandLine::AcceptanceManual);
     }
 
     #[test]

@@ -46,6 +46,10 @@ Object Plane             doc::text、preview::render_tree、asset::managed_image
 
 ## 当前实现切片
 
+Phase 11/11-B 已完成 v0.1.0 产品实现收敛；Phase 12 只建立 tools-only exact-artifact
+qualification。运行时权威与依赖图不变：candidate、automated、manual、remote 与 downloaded
+artifact receipts 写入 ignored `dist/evidence/`，不能反向成为产品状态或架构权威。
+
 Phase 2 已建立 `DocumentState`、checked generation、UTF-8 TextDelta、不可变 snapshot
 和有界 Undo/Redo。Phase 3 开发壳实现的实际调用链为：
 

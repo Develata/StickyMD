@@ -25,7 +25,7 @@ const WARM_STARTUP_SAMPLE_COUNT: usize = 50;
 const COLD_START_IDLE: Duration = Duration::from_secs(10);
 const WARM_START_IDLE: Duration = Duration::from_millis(250);
 const COLD_START_LIMIT: Duration = Duration::from_millis(400);
-const WARM_START_LIMIT: Duration = Duration::from_millis(180);
+const WARM_START_LIMIT: Duration = Duration::from_millis(400);
 const ZOOM_RESOURCE_WARMUP: Duration = Duration::from_secs(5);
 const ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT: u64 = 8 * 1024 * 1024;
 static QUIET_OUTPUT: AtomicBool = AtomicBool::new(false);
@@ -254,7 +254,7 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
         ))
     } else if warm_summary.p95 > WARM_START_LIMIT {
         Some(format!(
-            "warm editor-ready p95 {:.3} ms exceeds 180 ms hard gate",
+            "warm editor-ready p95 {:.3} ms exceeds the USER-approved v0.1.0 400 ms hard gate",
             warm_summary.p95.as_secs_f64() * 1_000.0
         ))
     } else {

@@ -35,3 +35,13 @@
   - 内容：Phase 10 用户批准的交互修订、自动化收敛、启动审计与 RC 重资格化任务原文。
   - 来源 SHA-256：`E623AAF6FC9FD4E38BC13AE64F709DB6BEE46CBD397CA6EC3E9F1DB6D9375476`
   - 导入方式：逐行原文归档；仅由 `apply_patch` 统一为仓库换行格式，未改写正文。
+- [`2026-08-22-phase-11-rc-convergence.md`](2026-08-22-phase-11-rc-convergence.md)
+  - 内容：Phase 11 RC convergence、constraint calibration 与人工验收收敛任务原文。
+  - 导入方式：逐行原文归档；仅统一仓库换行格式，未改写正文。
+- [`2026-08-22-phase-11-b-final-interaction-amendment.md`](2026-08-22-phase-11-b-final-interaction-amendment.md)
+  - 内容：Phase 11-B 数学分隔符转换与 Pin/auto-hide 正交性修订任务原文。
+  - 导入方式：逐行原文归档；仅统一仓库换行格式，未改写正文。
+- [`2026-08-23-phase-12-final-release-qualification.md`](2026-08-23-phase-12-final-release-qualification.md)
+  - 内容：Phase 12 final release qualification、exact evidence binding 与 v0.1.0 release preparation 任务原文。
+  - 来源 SHA-256：`9D5BE86E349FF0146CDCAE549B8079118E333CC2B8DF75D810BC8509C51819EF`
+  - 导入方式：逐行原文归档；仅由 `apply_patch` 统一为仓库换行格式，未改写正文。

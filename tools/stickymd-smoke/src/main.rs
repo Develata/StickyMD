@@ -6,6 +6,7 @@ mod evidence;
 mod governance;
 #[cfg(windows)]
 mod process_metrics;
+mod qualification;
 #[cfg(windows)]
 mod ready_event;
 mod runner;
@@ -27,12 +28,16 @@ const fn exit_code(result: &Result<(), String>) -> i32 {
 }
 
 fn run() -> Result<(), String> {
-    let options = cli::Options::parse(std::env::args().skip(1))?;
+    let command = cli::CommandLine::parse(std::env::args().skip(1))?;
     let root = governance::find_repository_root(
         &std::env::current_dir()
             .map_err(|error| format!("cannot read current directory: {error}"))?,
     )?;
-    runner::execute(&root, &options)
+    match command {
+        cli::CommandLine::Smoke(options) => runner::execute(&root, &options),
+        cli::CommandLine::AcceptanceManual => qualification::record_manual(&root),
+        cli::CommandLine::Qualification(command) => qualification::execute(&root, command),
+    }
 }
 
 #[cfg(test)]
