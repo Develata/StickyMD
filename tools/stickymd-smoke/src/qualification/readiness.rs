@@ -28,7 +28,7 @@ const AUTOMATED_RECEIPTS: [AutomatedReceiptContract; 5] = [
     AutomatedReceiptContract {
         path: AUTOMATED_RECEIPT,
         label: "release qualification",
-        suite: "phase-12",
+        suite: "phase-13",
         required_task: "portable package verification",
         binds_artifact: true,
     },
@@ -42,21 +42,21 @@ const AUTOMATED_RECEIPTS: [AutomatedReceiptContract; 5] = [
     AutomatedReceiptContract {
         path: PERFORMANCE_RECEIPT,
         label: "performance qualification",
-        suite: "phase-12",
+        suite: "phase-13",
         required_task: "copied Release Phase 9 editor-ready cold/warm startup matrix",
         binds_artifact: false,
     },
     AutomatedReceiptContract {
         path: RUNTIME_RECEIPT,
         label: "runtime qualification",
-        suite: "phase-12",
+        suite: "phase-13",
         required_task: "copied Release Phase 8 close-to-tray/show lifecycle",
         binds_artifact: false,
     },
     AutomatedReceiptContract {
         path: RESOURCES_RECEIPT,
         label: "resource qualification",
-        suite: "phase-12",
+        suite: "phase-13",
         required_task: "copied Release Phase 8 hidden-window resource matrix",
         binds_artifact: false,
     },
@@ -490,7 +490,7 @@ mod tests {
         };
         let release = automated_receipt(
             &candidate,
-            "phase-12",
+            "phase-13",
             "portable package verification",
             Some(&candidate.zip_sha256),
         );

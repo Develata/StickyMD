@@ -8,10 +8,14 @@ use crate::evidence::{
     self, EvidenceGate, EvidenceMeasurement, EvidenceResult, EvidenceSample, EvidenceStatus,
 };
 use crate::governance;
+use crate::qualification_environment::{
+    self, QualificationEnvironment, QualificationEnvironmentStatus,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum TaskId {
     Governance,
+    QualificationEnvironment,
     WorkspaceCheck,
     Phase1MarkdownMathTests,
     Phase1PersistenceTests,
@@ -63,6 +67,7 @@ enum TaskId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Task {
     Governance,
+    QualificationEnvironment,
     Cargo {
         id: TaskId,
         label: &'static str,
@@ -119,6 +124,7 @@ impl Task {
     const fn id(&self) -> TaskId {
         match self {
             Self::Governance => TaskId::Governance,
+            Self::QualificationEnvironment => TaskId::QualificationEnvironment,
             Self::Cargo { id, .. } | Self::PowerShell { id, .. } | Self::Runtime { id, .. } => *id,
         }
     }
@@ -138,12 +144,67 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
         );
     }
 
-    let mut results = Vec::with_capacity(tasks.len() + 1);
+    let mut results = Vec::with_capacity(tasks.len() + 8);
+    let mut environment = None;
     for (index, task) in tasks.iter().enumerate() {
         let task_name = task_label(task);
         if !options.json {
             println!("[{}/{}] {task_name}", index + 1, tasks.len());
         }
+        if matches!(task, Task::QualificationEnvironment) {
+            let observed = qualification_environment::inspect();
+            environment = Some(observed.clone());
+            let status = environment_evidence_status(&observed);
+            let detail = (status != EvidenceStatus::Passed).then(|| observed.summary());
+            results.push(EvidenceResult {
+                id: task_name.to_owned(),
+                status,
+                detail,
+                measurements: Vec::new(),
+                gates: Vec::new(),
+                samples: Vec::new(),
+            });
+            if observed.status != QualificationEnvironmentStatus::Valid {
+                if options.json {
+                    evidence::emit(
+                        root,
+                        &label,
+                        &results,
+                        environment.as_ref(),
+                        options.evidence_file.as_deref(),
+                    )?;
+                }
+                return Err(environment_failure(&observed));
+            }
+            continue;
+        }
+
+        if options.resources && is_resource_stage(task) {
+            let observed = qualification_environment::inspect();
+            environment = Some(observed.clone());
+            let status = environment_evidence_status(&observed);
+            results.push(EvidenceResult {
+                id: format!("qualification environment before {task_name}"),
+                status,
+                detail: (status != EvidenceStatus::Passed).then(|| observed.summary()),
+                measurements: Vec::new(),
+                gates: Vec::new(),
+                samples: Vec::new(),
+            });
+            if observed.status != QualificationEnvironmentStatus::Valid {
+                if options.json {
+                    emit_partial(
+                        root,
+                        &label,
+                        &results,
+                        environment.as_ref(),
+                        options.evidence_file.as_deref(),
+                    )?;
+                }
+                return Err(environment_failure(&observed));
+            }
+        }
+
         match run_task(root, task, options.json) {
             Ok(TaskExecution::Passed(evidence)) => results.push(EvidenceResult {
                 id: task_name.to_owned(),
@@ -163,7 +224,13 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
                     samples: evidence.samples,
                 });
                 if options.json {
-                    evidence::emit(root, &label, &results, options.evidence_file.as_deref())?;
+                    evidence::emit(
+                        root,
+                        &label,
+                        &results,
+                        environment.as_ref(),
+                        options.evidence_file.as_deref(),
+                    )?;
                 }
                 return Err(detail);
             }
@@ -178,7 +245,13 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
                     samples: Vec::new(),
                 });
                 if options.json {
-                    evidence::emit(root, &label, &results, options.evidence_file.as_deref())?;
+                    evidence::emit(
+                        root,
+                        &label,
+                        &results,
+                        environment.as_ref(),
+                        options.evidence_file.as_deref(),
+                    )?;
                 }
                 return Err(format!("`{task_name}` is NOT_TESTED: {detail}"));
             }
@@ -192,10 +265,25 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
                     samples: Vec::new(),
                 });
                 if options.json {
-                    evidence::emit(root, &label, &results, options.evidence_file.as_deref())?;
+                    evidence::emit(
+                        root,
+                        &label,
+                        &results,
+                        environment.as_ref(),
+                        options.evidence_file.as_deref(),
+                    )?;
                 }
                 return Err(error);
             }
+        }
+        if options.resources && is_resource_stage(task) && options.json {
+            emit_partial(
+                root,
+                &label,
+                &results,
+                environment.as_ref(),
+                options.evidence_file.as_deref(),
+            )?;
         }
     }
     if requires_full_readiness(options)
@@ -210,7 +298,13 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
             samples: Vec::new(),
         });
         if options.json {
-            evidence::emit(root, &label, &results, options.evidence_file.as_deref())?;
+            evidence::emit(
+                root,
+                &label,
+                &results,
+                environment.as_ref(),
+                options.evidence_file.as_deref(),
+            )?;
         }
         return Err(error);
     }
@@ -227,11 +321,75 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
         samples: Vec::new(),
     });
     if options.json {
-        evidence::emit(root, &label, &results, options.evidence_file.as_deref())?;
+        evidence::emit(
+            root,
+            &label,
+            &results,
+            environment.as_ref(),
+            options.evidence_file.as_deref(),
+        )?;
     } else {
         println!("StickyMD smoke PASS: {label}");
     }
     Ok(())
+}
+
+fn emit_partial(
+    root: &Path,
+    label: &str,
+    results: &[EvidenceResult],
+    environment: Option<&QualificationEnvironment>,
+    output_file: Option<&Path>,
+) -> Result<(), String> {
+    let mut partial = results.to_vec();
+    partial.push(EvidenceResult {
+        id: "resource qualification campaign".to_owned(),
+        status: EvidenceStatus::Incomplete,
+        detail: Some("additional required resource scenarios have not completed".to_owned()),
+        measurements: Vec::new(),
+        gates: Vec::new(),
+        samples: Vec::new(),
+    });
+    evidence::emit(root, label, &partial, environment, output_file)
+}
+
+const fn environment_evidence_status(environment: &QualificationEnvironment) -> EvidenceStatus {
+    match environment.status {
+        QualificationEnvironmentStatus::Valid => EvidenceStatus::Passed,
+        QualificationEnvironmentStatus::EnvironmentBlocked
+        | QualificationEnvironmentStatus::Unsupported => EvidenceStatus::NotTested,
+        QualificationEnvironmentStatus::Error => EvidenceStatus::Failed,
+    }
+}
+
+fn environment_failure(environment: &QualificationEnvironment) -> String {
+    match environment.status {
+        QualificationEnvironmentStatus::EnvironmentBlocked => "Qualification environment is blocked by locked/non-interactive desktop. Unlock the active Windows session and rerun Phase 13 evidence campaign.".to_owned(),
+        QualificationEnvironmentStatus::Unsupported => {
+            "qualification environment is unsupported on this host".to_owned()
+        }
+        QualificationEnvironmentStatus::Error => format!(
+            "qualification environment inspection failed: {}",
+            environment.summary()
+        ),
+        QualificationEnvironmentStatus::Valid => {
+            "qualification environment unexpectedly reported a failure".to_owned()
+        }
+    }
+}
+
+const fn is_resource_stage(task: &Task) -> bool {
+    matches!(
+        task,
+        Task::Runtime {
+            scenario: RuntimeScenario::Resources
+                | RuntimeScenario::MathResources
+                | RuntimeScenario::ImageResources
+                | RuntimeScenario::WindowResources
+                | RuntimeScenario::ZoomResources,
+            ..
+        }
+    )
 }
 
 const fn requires_full_readiness(options: &Options) -> bool {
@@ -241,6 +399,7 @@ const fn requires_full_readiness(options: &Options) -> bool {
 fn task_label(task: &Task) -> &'static str {
     match task {
         Task::Governance => "governance contracts",
+        Task::QualificationEnvironment => "qualification environment preflight",
         Task::Cargo { label, .. } => label,
         Task::PowerShell { label, .. } => label,
         Task::Runtime {
@@ -307,6 +466,9 @@ fn run_task(root: &Path, task: &Task, capture_output: bool) -> Result<TaskExecut
         Task::Governance => {
             governance::verify(root).map(|()| TaskExecution::Passed(TaskEvidence::default()))
         }
+        Task::QualificationEnvironment => Err(
+            "qualification environment tasks are handled by the evidence coordinator".to_owned(),
+        ),
         Task::Cargo { label, args, .. } => {
             let mut command = Command::new("cargo");
             command.args(args).current_dir(root);
@@ -409,6 +571,9 @@ fn run_runtime(
 fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
     let mut tasks = Vec::new();
     push_unique(&mut tasks, governance());
+    if options.performance || options.runtime || options.resources {
+        push_unique(&mut tasks, qualification_environment());
+    }
     if options.resources {
         push_unique(&mut tasks, release_build());
         match options.selection {
@@ -422,7 +587,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 push_unique(&mut tasks, runtime_window_resources());
                 push_unique(&mut tasks, runtime_zoom_resources());
             }
-            Selection::Phase(Phase::P11 | Phase::P11B | Phase::P12) => {
+            Selection::Phase(Phase::P11 | Phase::P11B | Phase::P12 | Phase::P13) => {
                 push_unique(&mut tasks, runtime_resources());
                 push_unique(&mut tasks, runtime_math_resources());
                 push_unique(&mut tasks, runtime_image_resources());
@@ -481,7 +646,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         Selection::Phase(Phase::P10) => push_unique(&mut tasks, phase10_ux_tests()),
         Selection::Phase(Phase::P11) => push_unique(&mut tasks, workspace_tests()),
         Selection::Phase(Phase::P11B) => push_unique(&mut tasks, phase11b_tests()),
-        Selection::Phase(Phase::P12) => push_unique(&mut tasks, workspace_tests()),
+        Selection::Phase(Phase::P12 | Phase::P13) => push_unique(&mut tasks, workspace_tests()),
     }
 
     // CI owns every headless task. `--performance` remains the explicit local
@@ -558,7 +723,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                     push_unique(&mut tasks, phase10_performance());
                     push_unique(&mut tasks, phase11b_performance());
                 }
-                Phase::P12 => {
+                Phase::P12 | Phase::P13 => {
                     if options.performance {
                         push_unique(&mut tasks, phase1_markdown_performance());
                         push_unique(&mut tasks, phase1_persistence_performance());
@@ -581,7 +746,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         && selected_phases(options.selection).iter().any(|phase| {
             matches!(
                 phase,
-                Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B | Phase::P12
+                Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B | Phase::P12 | Phase::P13
             )
         })
     {
@@ -604,7 +769,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             Selection::Phase(Phase::P10) => {
                 push_unique(&mut tasks, runtime_phase10());
             }
-            Selection::Phase(Phase::P11 | Phase::P11B | Phase::P12) => {
+            Selection::Phase(Phase::P11 | Phase::P11B | Phase::P12 | Phase::P13) => {
                 push_unique(&mut tasks, runtime_portable());
                 push_unique(&mut tasks, runtime_preview());
                 push_unique(&mut tasks, runtime_math());
@@ -613,7 +778,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 push_unique(&mut tasks, runtime_phase10());
                 if matches!(
                     options.selection,
-                    Selection::Phase(Phase::P11B | Phase::P12)
+                    Selection::Phase(Phase::P11B | Phase::P12 | Phase::P13)
                 ) {
                     push_unique(&mut tasks, runtime_phase11b());
                 }
@@ -648,6 +813,10 @@ fn push_unique(tasks: &mut Vec<Task>, task: Task) {
 
 const fn governance() -> Task {
     Task::Governance
+}
+
+const fn qualification_environment() -> Task {
+    Task::QualificationEnvironment
 }
 
 fn cargo(id: TaskId, label: &'static str, args: &[&'static str]) -> Task {
@@ -1236,6 +1405,7 @@ mod tests {
         assert!(ids.contains(&TaskId::Phase7Performance));
         assert!(ids.contains(&TaskId::Phase8Performance));
         assert!(ids.contains(&TaskId::Phase11BPerformance));
+        assert!(ids.contains(&TaskId::QualificationEnvironment));
     }
 
     #[test]
@@ -1282,6 +1452,7 @@ mod tests {
         assert!(!ids.contains(&TaskId::RuntimePhase10));
         assert!(!ids.contains(&TaskId::RuntimePhase11B));
         assert!(!ids.contains(&TaskId::RuntimeZoomResources));
+        assert!(!ids.contains(&TaskId::QualificationEnvironment));
         assert!(!requires_full_readiness(&Options {
             selection: Selection::All,
             ci: true,
@@ -1547,6 +1718,52 @@ mod tests {
                     .count(),
                 1
             );
+        }
+    }
+
+    #[test]
+    fn phase13_routes_environment_before_every_local_gui_campaign() {
+        let options = |performance, runtime, resources| Options {
+            selection: Selection::Phase(crate::cli::Phase::P13),
+            ci: false,
+            performance,
+            runtime,
+            resources,
+            release: false,
+            package: false,
+            json: true,
+            evidence_file: None,
+        };
+        for plan in [
+            build_plan(&options(true, false, false)).expect("performance plan"),
+            build_plan(&options(false, true, false)).expect("runtime plan"),
+            build_plan(&options(false, false, true)).expect("resource plan"),
+        ] {
+            assert_eq!(plan[0].id(), TaskId::Governance);
+            assert_eq!(plan[1].id(), TaskId::QualificationEnvironment);
+            assert_eq!(
+                plan.iter()
+                    .filter(|task| task.id() == TaskId::QualificationEnvironment)
+                    .count(),
+                1
+            );
+        }
+
+        let runtime = build_plan(&options(false, true, false)).expect("runtime plan");
+        assert!(
+            runtime
+                .iter()
+                .any(|task| task.id() == TaskId::RuntimePhase11B)
+        );
+        let resources = build_plan(&options(false, false, true)).expect("resource plan");
+        for expected in [
+            TaskId::RuntimeResources,
+            TaskId::RuntimeMathResources,
+            TaskId::RuntimeImageResources,
+            TaskId::RuntimeWindowResources,
+            TaskId::RuntimeZoomResources,
+        ] {
+            assert!(resources.iter().any(|task| task.id() == expected));
         }
     }
 

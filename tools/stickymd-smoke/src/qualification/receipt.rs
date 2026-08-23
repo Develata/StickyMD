@@ -35,7 +35,7 @@ pub(super) fn generate_candidate(root: &Path) -> Result<Candidate, String> {
     for path in [&zip, &executable, &sbom, &root.join("Cargo.lock")] {
         if !path.is_file() {
             return Err(format!(
-                "candidate input is missing: {}; run Phase 12 release/package qualification first",
+                "candidate input is missing: {}; run Phase 13 release qualification first",
                 path.display()
             ));
         }

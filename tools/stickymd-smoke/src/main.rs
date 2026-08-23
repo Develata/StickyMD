@@ -7,6 +7,7 @@ mod governance;
 #[cfg(windows)]
 mod process_metrics;
 mod qualification;
+mod qualification_environment;
 #[cfg(windows)]
 mod ready_event;
 mod runner;
@@ -37,7 +38,7 @@ fn run() -> Result<(), String> {
     )?;
     match command {
         cli::CommandLine::Smoke(options) => runner::execute(&root, &options),
-        cli::CommandLine::AcceptanceManual => qualification::record_manual(&root),
+        cli::CommandLine::AcceptanceManual(command) => qualification::record_manual(&root, command),
         cli::CommandLine::Qualification(command) => qualification::execute(&root, command),
     }
 }

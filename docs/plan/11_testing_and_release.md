@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-20
+- `Last Review`: 2026-08-23
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -195,6 +195,33 @@ automated、manual、remote、downloaded-artifact 与 readiness receipts 写入 
   evidence 与 USER decision fail closed；不得提供 `--force-ready`；
 - freeze 后若任何 source、manifest/lock、runtime asset 或 release tooling 改变，所有 receipts
   失效并必须重建。
+
+### Phase 13 qualification environment 与 partial evidence
+
+Phase 13 exact-candidate campaign 在任何 GUI runtime、performance、resources 或人工观察前，
+必须先用 verification tooling 查询当前 Windows session 的实际交互条件。统一状态为：
+
+```text
+VALID
+ENVIRONMENT_BLOCKED
+UNSUPPORTED
+ERROR
+```
+
+只有 `VALID` 可以继续形成 GUI 证据。锁屏、断开的 session、不可访问 input desktop 或缺失
+交互 shell 等情况必须以 `NOT_TESTED — ENVIRONMENT BLOCKED` 和非零退出码 fail fast；它既不是
+产品 FAIL，也不是 PASS。机器可读环境事实不得包含窗口标题、用户名或完整路径。该检测只能
+位于 smoke/tooling adapter，不得进入产品 runtime。
+
+Resources 长矩阵必须在主要场景之间重检环境，并在每个完成场景后覆盖写入 partial receipt。
+未完成 receipt 必须显式包含 `INCOMPLETE`，readiness 仍要求最终 receipt 的所有 result 都为
+`PASSED`，因此 partial evidence 不能冒充完整 PASS。
+
+M1..M5 manual sessions 只允许共享 setup，不改变 P12-M01..P12-M44 的逐项 authority。每项仍须
+单独记录 `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`；session 状态不能自动提升组内 case。
+
+Phase 13 固定本地顺序为 Environment → Release/package → headless CI → Runtime → Performance →
+Resources → Readiness。Runtime 失败或环境阻塞时，不得继续消耗时间运行 Performance/Resources。
 
 ### CI 与完成门
 

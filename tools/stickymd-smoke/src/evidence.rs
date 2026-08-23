@@ -4,6 +4,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use crate::qualification_environment::QualificationEnvironment;
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct EvidenceResult {
     pub(crate) id: String,
@@ -41,13 +43,7 @@ pub(crate) struct EvidenceSample {
 pub(crate) enum EvidenceStatus {
     Passed,
     Failed,
-    #[cfg_attr(
-        all(windows, not(test)),
-        expect(
-            dead_code,
-            reason = "Windows can execute every runtime gate; non-Windows evidence constructs NOT_TESTED"
-        )
-    )]
+    Incomplete,
     NotTested,
 }
 
@@ -56,6 +52,7 @@ impl EvidenceStatus {
         match self {
             Self::Passed => "PASSED",
             Self::Failed => "FAILED",
+            Self::Incomplete => "INCOMPLETE",
             Self::NotTested => "NOT_TESTED",
         }
     }
@@ -65,12 +62,15 @@ pub(crate) fn emit(
     root: &Path,
     suite: &str,
     results: &[EvidenceResult],
+    environment: Option<&QualificationEnvironment>,
     output_file: Option<&Path>,
 ) -> Result<(), String> {
     let commit = current_commit(root).unwrap_or_else(|_| "UNKNOWN".to_owned());
     let worktree_dirty = current_worktree_dirty(root).unwrap_or(true);
     let artifact = verified_artifact_sha256(root, results);
-    let executable = executable_sha256(root);
+    let executable = (suite != "qualification-environment")
+        .then(|| executable_sha256(root))
+        .flatten();
     let json = render_json(
         &commit,
         worktree_dirty,
@@ -78,8 +78,14 @@ pub(crate) fn emit(
         executable.as_deref(),
         suite,
         results,
+        environment,
     );
     if let Some(path) = output_file {
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            root.join(path)
+        };
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
@@ -90,7 +96,7 @@ pub(crate) fn emit(
                 )
             })?;
         }
-        fs::write(path, json)
+        fs::write(&path, json)
             .map_err(|error| format!("cannot write evidence file `{}`: {error}", path.display()))?;
     } else {
         println!("{json}");
@@ -173,9 +179,10 @@ fn render_json(
     executable_sha256: Option<&str>,
     suite: &str,
     results: &[EvidenceResult],
+    environment: Option<&QualificationEnvironment>,
 ) -> String {
     let mut output = format!(
-        "{{\"schema_version\":2,\"suite_version\":\"2\",\"commit\":\"{}\",\"worktree_dirty\":{},\"artifact_sha256\":{},\"executable_sha256\":{},\"suite\":\"{}\",\"results\":[",
+        "{{\"schema_version\":2,\"suite_version\":\"2\",\"commit\":\"{}\",\"worktree_dirty\":{},\"artifact_sha256\":{},\"executable_sha256\":{},\"suite\":\"{}\",\"qualification_environment\":{},\"results\":[",
         escape_json(commit),
         worktree_dirty,
         artifact_sha256
@@ -184,7 +191,8 @@ fn render_json(
         executable_sha256
             .map(|hash| format!("\"{}\"", escape_json(hash)))
             .unwrap_or_else(|| "null".to_owned()),
-        escape_json(suite)
+        escape_json(suite),
+        environment_json(environment),
     );
     for (index, result) in results.iter().enumerate() {
         if index > 0 {
@@ -254,6 +262,32 @@ fn render_json(
     output
 }
 
+fn environment_json(environment: Option<&QualificationEnvironment>) -> String {
+    environment.map_or_else(
+        || "null".to_owned(),
+        |environment| {
+            format!(
+                concat!(
+                    "{{\"status\":\"{}\",",
+                    "\"interactive\":{},",
+                    "\"input_desktop_usable\":{},",
+                    "\"locked\":{},",
+                    "\"interactive_shell_present\":{},",
+                    "\"foreground_available\":{},",
+                    "\"display_count\":{}}}"
+                ),
+                environment.status.as_str(),
+                environment.interactive_session,
+                environment.input_desktop_usable,
+                environment.workstation_locked,
+                environment.interactive_shell_present,
+                environment.foreground_available,
+                environment.display_count,
+            )
+        },
+    )
+}
+
 fn escape_json(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
@@ -281,6 +315,9 @@ mod tests {
     use super::{
         EvidenceGate, EvidenceMeasurement, EvidenceResult, EvidenceSample, EvidenceStatus,
         render_json, verified_artifact_sha256,
+    };
+    use crate::qualification_environment::{
+        QualificationEnvironment, QualificationEnvironmentStatus,
     };
 
     #[test]
@@ -327,12 +364,14 @@ mod tests {
                     samples: Vec::new(),
                 },
             ],
+            None,
         );
         assert!(json.starts_with("{\"schema_version\":2,\"suite_version\":\"2\","));
         assert!(json.contains("\"worktree_dirty\":true"));
         assert!(json.contains("\"artifact_sha256\":null"));
         assert!(json.contains(&format!("\"executable_sha256\":\"{}\"", "b".repeat(64))));
         assert!(json.contains("\"suite\":\"phase-10\""));
+        assert!(json.contains("\"qualification_environment\":null"));
         assert!(json.contains("task\\\"one"));
         assert!(json.contains("line\\nfailed"));
         assert!(json.contains("\"status\":\"NOT_TESTED\""));
@@ -380,5 +419,41 @@ mod tests {
         }];
         assert_eq!(verified_artifact_sha256(&root, &passed), Some(hash));
         fs::remove_dir_all(root).expect("remove evidence fixture");
+    }
+
+    #[test]
+    fn qualification_environment_json_omits_private_desktop_details() {
+        let environment = QualificationEnvironment {
+            status: QualificationEnvironmentStatus::EnvironmentBlocked,
+            interactive_session: true,
+            input_desktop_usable: false,
+            workstation_locked: true,
+            interactive_shell_present: true,
+            foreground_available: false,
+            display_count: 2,
+            detail: Some("private diagnostic must not be serialized".to_owned()),
+        };
+        let json = render_json(
+            "abc",
+            false,
+            None,
+            None,
+            "phase-13",
+            &[EvidenceResult {
+                id: "resource qualification campaign".to_owned(),
+                status: EvidenceStatus::Incomplete,
+                detail: None,
+                measurements: Vec::new(),
+                gates: Vec::new(),
+                samples: Vec::new(),
+            }],
+            Some(&environment),
+        );
+        assert!(json.contains("\"status\":\"ENVIRONMENT_BLOCKED\""));
+        assert!(json.contains("\"locked\":true"));
+        assert!(json.contains("\"display_count\":2"));
+        assert!(json.contains("\"status\":\"INCOMPLETE\""));
+        assert!(!json.contains("private diagnostic"));
+        assert!(!json.contains("desktop_name"));
     }
 }

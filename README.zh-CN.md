@@ -2,7 +2,7 @@
 
 StickyMD 是一张原生、便携、常驻 Windows 11 桌面的 Markdown 草稿纸：打开即写，自动保存，公式可靠，贴边即隐，需要时迅速出现。它不是通用 Markdown 编辑器，也不是知识管理系统。
 
-> 预发布状态：Phase 11/11-B 实现已完成，Phase 12 exact-artifact 资格化正在进行。USER 已批准 v0.1.0 warm-start 400 ms hard boundary（180 ms 仍是 preferred target），但真实输入法、视觉、任务栏/Alt+Tab、托盘、DPI、多显示器、恢复、Clean VM、版本、未签名策略与远端 artifact 门仍开放；当前不宣称 RC-ready 或 stable-ready。
+> 预发布状态：Phase 12 本地资格化基础设施已完成，Phase 13 exact-candidate 证据资格化正在进行，产品 runtime 已冻结。USER 已批准 v0.1.0 cold/warm startup 400 ms hard boundary（warm 180 ms 仍是 preferred target），但真实输入法、视觉、任务栏/Alt+Tab、托盘、DPI、多显示器、恢复、Clean VM、版本、未签名策略与远端 artifact 门仍开放；当前不宣称 RC-ready 或 stable-ready。
 
 ## 使用方式
 

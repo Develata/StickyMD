@@ -16,10 +16,11 @@ pub(crate) enum Phase {
     P11,
     P11B,
     P12,
+    P13,
 }
 
 impl Phase {
-    pub(crate) const ALL: [Self; 14] = [
+    pub(crate) const ALL: [Self; 15] = [
         Self::P00,
         Self::P01,
         Self::P02,
@@ -34,6 +35,7 @@ impl Phase {
         Self::P11,
         Self::P11B,
         Self::P12,
+        Self::P13,
     ];
 
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
@@ -52,7 +54,8 @@ impl Phase {
             "11" | "phase-11" => Ok(Self::P11),
             "11-b" | "phase-11-b" => Ok(Self::P11B),
             "12" | "phase-12" => Ok(Self::P12),
-            _ => Err(format!("unknown phase `{value}`; expected 00..12 or 11-b")),
+            "13" | "phase-13" => Ok(Self::P13),
+            _ => Err(format!("unknown phase `{value}`; expected 00..13 or 11-b")),
         }
     }
 
@@ -72,6 +75,7 @@ impl Phase {
             Self::P11 => "11",
             Self::P11B => "11-b",
             Self::P12 => "12",
+            Self::P13 => "13",
         }
     }
 }
@@ -79,12 +83,55 @@ impl Phase {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandLine {
     Smoke(Options),
-    AcceptanceManual,
+    AcceptanceManual(ManualCommand),
     Qualification(QualificationCommand),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ManualCommand {
+    Run { session: Option<ManualSession> },
+    List,
+    Status,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum ManualSession {
+    M1,
+    M2,
+    M3,
+    M4,
+    M5,
+}
+
+impl ManualSession {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+        match value.to_ascii_uppercase().as_str() {
+            "M1" => Ok(Self::M1),
+            "M2" => Ok(Self::M2),
+            "M3" => Ok(Self::M3),
+            "M4" => Ok(Self::M4),
+            "M5" => Ok(Self::M5),
+            _ => Err(format!("unknown manual session `{value}`; expected M1..M5")),
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::M1 => "M1",
+            Self::M2 => "M2",
+            Self::M3 => "M3",
+            Self::M4 => "M4",
+            Self::M5 => "M5",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum QualificationCommand {
+    Environment {
+        evidence_file: Option<PathBuf>,
+    },
+    LocalCampaign,
     Candidate,
     Decision {
         key: String,
@@ -111,18 +158,66 @@ impl CommandLine {
         let args: Vec<String> = args.into_iter().collect();
         match args.first().map(String::as_str) {
             Some("acceptance") => match args.get(1).map(String::as_str) {
-                Some("manual") if args.len() == 2 => Ok(Self::AcceptanceManual),
-                _ => Err("usage: stickymd-smoke acceptance manual".to_owned()),
+                Some("manual") => Self::parse_manual(&args[2..]).map(Self::AcceptanceManual),
+                _ => Err(
+                    "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|list|status]"
+                        .to_owned(),
+                ),
             },
             Some("qualification") => Self::parse_qualification(&args[1..]),
             _ => Options::parse(args).map(Self::Smoke),
         }
     }
 
+    fn parse_manual(arguments: &[String]) -> Result<ManualCommand, String> {
+        match arguments.first().map(String::as_str) {
+            None => Ok(ManualCommand::Run { session: None }),
+            Some("run") if arguments.len() == 1 => Ok(ManualCommand::Run { session: None }),
+            Some("run") if arguments.len() == 2 => Ok(ManualCommand::Run {
+                session: Some(ManualSession::parse(named_value(
+                    &arguments[1..],
+                    "--session=",
+                )?)?),
+            }),
+            Some("list") if arguments.len() == 1 => Ok(ManualCommand::List),
+            Some("status") if arguments.len() == 1 => Ok(ManualCommand::Status),
+            _ => Err(
+                "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|list|status]"
+                    .to_owned(),
+            ),
+        }
+    }
+
     fn parse_qualification(arguments: &[String]) -> Result<Self, String> {
         match arguments.first().map(String::as_str) {
+            Some("environment") => {
+                let evidence_file = match arguments.get(1).map(String::as_str) {
+                    None => None,
+                    Some(value) if arguments.len() == 2 => Some(PathBuf::from(
+                        value
+                            .strip_prefix("--evidence-file=")
+                            .filter(|value| !value.is_empty())
+                            .ok_or_else(|| {
+                                "usage: stickymd-smoke qualification environment [--evidence-file=<path>]"
+                                    .to_owned()
+                            })?,
+                    )),
+                    _ => {
+                        return Err(
+                            "usage: stickymd-smoke qualification environment [--evidence-file=<path>]"
+                                .to_owned(),
+                        );
+                    }
+                };
+                Ok(Self::Qualification(QualificationCommand::Environment {
+                    evidence_file,
+                }))
+            }
             Some("candidate") if arguments.len() == 1 => {
                 Ok(Self::Qualification(QualificationCommand::Candidate))
+            }
+            Some("local") if arguments.len() == 1 => {
+                Ok(Self::Qualification(QualificationCommand::LocalCampaign))
             }
             Some("decision") => {
                 let values = &arguments[1..];
@@ -174,7 +269,7 @@ impl CommandLine {
                 }))
             }
             _ => Err(
-                "qualification requires candidate, decision, readiness, remote, or downloaded"
+                "qualification requires environment, local, candidate, decision, readiness, remote, or downloaded"
                     .to_owned(),
             ),
         }
@@ -227,7 +322,7 @@ impl Options {
             Some("phase") => {
                 let phase = args
                     .next()
-                    .ok_or_else(|| "`phase` requires a number (00..12 or 11-b)".to_owned())?;
+                    .ok_or_else(|| "`phase` requires a number (00..13 or 11-b)".to_owned())?;
                 Selection::Phase(Phase::parse(&phase)?)
             }
             Some("all") => Selection::All,
@@ -309,24 +404,26 @@ impl Options {
                         | Phase::P10
                         | Phase::P11
                         | Phase::P11B
-                        | Phase::P12,
+                        | Phase::P12
+                        | Phase::P13,
                 ) | Selection::All
             )
         {
             return Err(
-                "resource measurement is defined only for Phase 05 through Phase 12, or `all`"
+                "resource measurement is defined only for Phase 05 through Phase 13, or `all`"
                     .to_owned(),
             );
         }
         if (options.release || options.package)
             && !matches!(
                 selection,
-                Selection::Phase(Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B | Phase::P12,)
-                    | Selection::All
+                Selection::Phase(
+                    Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B | Phase::P12 | Phase::P13,
+                ) | Selection::All
             )
         {
             return Err(
-                "release and package modes are defined only for Phase 09 through Phase 12 or `all`"
+                "release and package modes are defined only for Phase 09 through Phase 13 or `all`"
                     .to_owned(),
             );
         }
@@ -334,13 +431,15 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..12|11-b> [--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]"
+        "usage: stickymd-smoke phase <00..13|11-b> [--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]"
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandLine, Options, Phase, QualificationCommand, Selection};
+    use super::{
+        CommandLine, ManualCommand, ManualSession, Options, Phase, QualificationCommand, Selection,
+    };
 
     fn args<'a>(values: &'a [&'a str]) -> impl Iterator<Item = String> + 'a {
         values.iter().map(|value| (*value).to_owned())
@@ -474,7 +573,49 @@ mod tests {
 
         let manual = CommandLine::parse(args(&["acceptance", "manual"]))
             .expect("valid manual recorder command");
-        assert_eq!(manual, CommandLine::AcceptanceManual);
+        assert_eq!(
+            manual,
+            CommandLine::AcceptanceManual(ManualCommand::Run { session: None })
+        );
+    }
+
+    #[test]
+    fn phase13_environment_and_manual_sessions_are_explicit() {
+        for mode in [
+            "--performance",
+            "--runtime",
+            "--resources",
+            "--release",
+            "--package",
+        ] {
+            let options = Options::parse(args(&["phase", "13", mode, "--json"]))
+                .expect("valid Phase 13 mode");
+            assert_eq!(options.selection, Selection::Phase(Phase::P13));
+        }
+
+        let environment = CommandLine::parse(args(&[
+            "qualification",
+            "environment",
+            "--evidence-file=dist/evidence/qualification-environment.json",
+        ]))
+        .expect("valid environment preflight");
+        assert_eq!(
+            environment,
+            CommandLine::Qualification(QualificationCommand::Environment {
+                evidence_file: Some(std::path::PathBuf::from(
+                    "dist/evidence/qualification-environment.json"
+                )),
+            })
+        );
+
+        let manual = CommandLine::parse(args(&["acceptance", "manual", "run", "--session=M3"]))
+            .expect("valid manual session");
+        assert_eq!(
+            manual,
+            CommandLine::AcceptanceManual(ManualCommand::Run {
+                session: Some(ManualSession::M3),
+            })
+        );
     }
 
     #[test]
