@@ -24,8 +24,9 @@ const COLD_STARTUP_SAMPLE_COUNT: usize = 30;
 const WARM_STARTUP_SAMPLE_COUNT: usize = 50;
 const COLD_START_IDLE: Duration = Duration::from_secs(10);
 const WARM_START_IDLE: Duration = Duration::from_millis(250);
-const COLD_START_LIMIT: Duration = Duration::from_millis(400);
-const WARM_START_LIMIT: Duration = Duration::from_millis(400);
+const STARTUP_PREFERRED_TARGET: Duration = Duration::from_millis(180);
+const STARTUP_ENGINEERING_TARGET: Duration = Duration::from_millis(400);
+const V0_1_0_STARTUP_RELEASE_BOUNDARY: Duration = Duration::from_millis(550);
 const ZOOM_RESOURCE_WARMUP: Duration = Duration::from_secs(5);
 const ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT: u64 = 8 * 1024 * 1024;
 static QUIET_OUTPUT: AtomicBool = AtomicBool::new(false);
@@ -208,7 +209,7 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
     let executable = copy_executable(&source, &directory)?;
     prepare_resource_layout(&directory, "source", 0, 0, ImageResourceFixture::None)?;
     runtime_report!(
-        "startup contract: fixture_bytes={} cold_samples={} cold_idle_seconds={} warm_samples={} warm_idle_ms={} cold_limit_ms={} warm_limit_ms={} ordering=interleaved",
+        "startup contract: fixture_bytes={} cold_samples={} cold_idle_seconds={} warm_samples={} warm_idle_ms={} preferred_ms={} engineering_ms={} release_boundary_ms={} ordering=interleaved",
         fs::metadata(directory.join("note/note.md"))
             .map_err(|error| format!("cannot inspect startup fixture: {error}"))?
             .len(),
@@ -216,8 +217,9 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
         COLD_START_IDLE.as_secs(),
         WARM_STARTUP_SAMPLE_COUNT,
         WARM_START_IDLE.as_millis(),
-        COLD_START_LIMIT.as_millis(),
-        WARM_START_LIMIT.as_millis(),
+        STARTUP_PREFERRED_TARGET.as_millis(),
+        STARTUP_ENGINEERING_TARGET.as_millis(),
+        V0_1_0_STARTUP_RELEASE_BOUNDARY.as_millis(),
     );
 
     let mut sequence = 0_u64;
@@ -247,21 +249,23 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
 
     let cold_summary = print_startup_summary("cold", &cold, COLD_STARTUP_SAMPLE_COUNT)?;
     let warm_summary = print_startup_summary("warm", &warm, WARM_STARTUP_SAMPLE_COUNT)?;
-    let gate_failure = if cold_summary.p95 > COLD_START_LIMIT {
+    print_startup_thresholds("cold", cold_summary.p95);
+    print_startup_thresholds("warm", warm_summary.p95);
+    let gate_failure = if cold_summary.p95 > V0_1_0_STARTUP_RELEASE_BOUNDARY {
         Some(format!(
-            "cold editor-ready p95 {:.3} ms exceeds the USER-approved 400 ms hard gate",
+            "cold editor-ready p95 {:.3} ms exceeds the USER-approved v0.1.0 550 ms release boundary",
             cold_summary.p95.as_secs_f64() * 1_000.0
         ))
-    } else if warm_summary.p95 > WARM_START_LIMIT {
+    } else if warm_summary.p95 > V0_1_0_STARTUP_RELEASE_BOUNDARY {
         Some(format!(
-            "warm editor-ready p95 {:.3} ms exceeds the USER-approved v0.1.0 400 ms hard gate",
+            "warm editor-ready p95 {:.3} ms exceeds the USER-approved v0.1.0 550 ms release boundary",
             warm_summary.p95.as_secs_f64() * 1_000.0
         ))
     } else {
         None
     };
     Ok(RuntimeEvidence {
-        measurements: startup_measurements(cold_summary, warm_summary),
+        measurements: startup_measurements(cold_summary, warm_summary, &cold, &warm)?,
         gates: startup_gates(),
         samples: startup_samples(&cold, &warm),
         gate_failure,
@@ -279,8 +283,13 @@ struct StartupSummary {
     stddev_us: u128,
 }
 
-fn startup_measurements(cold: StartupSummary, warm: StartupSummary) -> Vec<EvidenceMeasurement> {
-    let mut measurements = Vec::with_capacity(8);
+fn startup_measurements(
+    cold: StartupSummary,
+    warm: StartupSummary,
+    cold_samples: &[StartupSample],
+    warm_samples: &[StartupSample],
+) -> Result<Vec<EvidenceMeasurement>, String> {
+    let mut measurements = Vec::with_capacity(48);
     measurements.push(EvidenceMeasurement {
         name: "cold.samples".to_owned(),
         unit: "count".to_owned(),
@@ -293,7 +302,122 @@ fn startup_measurements(cold: StartupSummary, warm: StartupSummary) -> Vec<Evide
         value: WARM_STARTUP_SAMPLE_COUNT as f64,
     });
     measurements.extend(startup_summary_measurements("warm", warm));
-    measurements
+    for (name, value) in [
+        ("startup.preferred_target", STARTUP_PREFERRED_TARGET),
+        ("startup.engineering_target", STARTUP_ENGINEERING_TARGET),
+        (
+            "startup.v0_1_0_release_boundary",
+            V0_1_0_STARTUP_RELEASE_BOUNDARY,
+        ),
+    ] {
+        measurements.push(EvidenceMeasurement {
+            name: name.to_owned(),
+            unit: "ms".to_owned(),
+            value: value.as_secs_f64() * 1_000.0,
+        });
+    }
+    measurements.extend(startup_category_measurements("cold", cold_samples)?);
+    measurements.extend(startup_category_measurements("warm", warm_samples)?);
+    Ok(measurements)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StartupThresholdClass {
+    Preferred,
+    Engineering,
+    ReleaseOnly,
+    Failed,
+}
+
+fn startup_threshold_class(p95: Duration) -> StartupThresholdClass {
+    if p95 <= STARTUP_PREFERRED_TARGET {
+        StartupThresholdClass::Preferred
+    } else if p95 <= STARTUP_ENGINEERING_TARGET {
+        StartupThresholdClass::Engineering
+    } else if p95 <= V0_1_0_STARTUP_RELEASE_BOUNDARY {
+        StartupThresholdClass::ReleaseOnly
+    } else {
+        StartupThresholdClass::Failed
+    }
+}
+
+fn print_startup_thresholds(kind: &str, p95: Duration) {
+    runtime_report!(
+        "startup thresholds kind={kind} p95_ms={:.3} preferred_180={} engineering_400={} release_550={} class={:?}",
+        p95.as_secs_f64() * 1_000.0,
+        p95 <= STARTUP_PREFERRED_TARGET,
+        p95 <= STARTUP_ENGINEERING_TARGET,
+        p95 <= V0_1_0_STARTUP_RELEASE_BOUNDARY,
+        startup_threshold_class(p95),
+    );
+}
+
+const STARTUP_CATEGORIES: &[(&str, &str, &str)] = &[
+    ("bootstrap", "main_enter", "event_loop_ready"),
+    ("window_surface", "event_loop_ready", "font_system_begin"),
+    ("font_discovery", "font_system_begin", "font_system_end"),
+    (
+        "source_layout",
+        "font_system_end",
+        "source_projection_ready",
+    ),
+    ("shell_setup", "source_projection_ready", "window_visible"),
+    ("focus_guards", "window_visible", "editor_ready"),
+];
+
+fn startup_category_measurements(
+    cohort: &str,
+    samples: &[StartupSample],
+) -> Result<Vec<EvidenceMeasurement>, String> {
+    let mut measurements = Vec::with_capacity((STARTUP_CATEGORIES.len() + 1) * 2);
+    let process_overhead = samples
+        .iter()
+        .map(|sample| {
+            sample
+                .external
+                .saturating_sub(Duration::from_micros(
+                    milestone_us(sample, "editor_ready") as u64
+                ))
+        })
+        .collect::<Vec<_>>();
+    extend_category_summary(
+        &mut measurements,
+        cohort,
+        "process_overhead",
+        process_overhead,
+    )?;
+    for (category, start, end) in STARTUP_CATEGORIES {
+        let values = samples
+            .iter()
+            .map(|sample| {
+                Duration::from_micros(
+                    milestone_us(sample, end).saturating_sub(milestone_us(sample, start)) as u64,
+                )
+            })
+            .collect::<Vec<_>>();
+        extend_category_summary(&mut measurements, cohort, category, values)?;
+    }
+    Ok(measurements)
+}
+
+fn extend_category_summary(
+    measurements: &mut Vec<EvidenceMeasurement>,
+    cohort: &str,
+    category: &str,
+    mut values: Vec<Duration>,
+) -> Result<(), String> {
+    values.sort_unstable();
+    for (statistic, value) in [
+        ("p50", nearest_rank(&values, 50)?),
+        ("p95", nearest_rank(&values, 95)?),
+    ] {
+        measurements.push(EvidenceMeasurement {
+            name: format!("{cohort}.category.{category}.{statistic}"),
+            unit: "ms".to_owned(),
+            value: value.as_secs_f64() * 1_000.0,
+        });
+    }
+    Ok(())
 }
 
 fn startup_summary_measurements(
@@ -334,14 +458,14 @@ fn startup_gates() -> Vec<EvidenceGate> {
         EvidenceGate {
             metric: "cold.p95".to_owned(),
             comparator: "<=".to_owned(),
-            value: COLD_START_LIMIT.as_secs_f64() * 1_000.0,
+            value: V0_1_0_STARTUP_RELEASE_BOUNDARY.as_secs_f64() * 1_000.0,
             unit: "ms".to_owned(),
             source: source.to_owned(),
         },
         EvidenceGate {
             metric: "warm.p95".to_owned(),
             comparator: "<=".to_owned(),
-            value: WARM_START_LIMIT.as_secs_f64() * 1_000.0,
+            value: V0_1_0_STARTUP_RELEASE_BOUNDARY.as_secs_f64() * 1_000.0,
             unit: "ms".to_owned(),
             source: source.to_owned(),
         },
@@ -2305,7 +2429,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        cpu_measurements, duration_measurements, is_single_byte_insertion, nearest_rank_index,
+        StartupThresholdClass, cpu_measurements, duration_measurements, is_single_byte_insertion,
+        nearest_rank_index, startup_threshold_class,
     };
 
     #[test]
@@ -2342,5 +2467,25 @@ mod tests {
         assert_eq!(duration.len(), 2);
         assert_eq!(duration[0].value, 2.0);
         assert_eq!(duration[1].value, 3.0);
+    }
+
+    #[test]
+    fn startup_thresholds_keep_targets_diagnostic_and_550_ms_release_blocking() {
+        assert_eq!(
+            startup_threshold_class(Duration::from_millis(180)),
+            StartupThresholdClass::Preferred
+        );
+        assert_eq!(
+            startup_threshold_class(Duration::from_millis(400)),
+            StartupThresholdClass::Engineering
+        );
+        assert_eq!(
+            startup_threshold_class(Duration::from_millis(550)),
+            StartupThresholdClass::ReleaseOnly
+        );
+        assert_eq!(
+            startup_threshold_class(Duration::from_millis(551)),
+            StartupThresholdClass::Failed
+        );
     }
 }

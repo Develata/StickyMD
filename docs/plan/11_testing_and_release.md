@@ -196,9 +196,9 @@ automated、manual、remote、downloaded-artifact 与 readiness receipts 写入 
 - freeze 后若任何 source、manifest/lock、runtime asset 或 release tooling 改变，所有 receipts
   失效并必须重建。
 
-### Phase 13 qualification environment 与 partial evidence
+### Phase 14 qualification environment、独立证据通道与 partial evidence
 
-Phase 13 exact-candidate campaign 在任何 GUI runtime、performance、resources 或人工观察前，
+Phase 14 exact-candidate campaign 在任何 GUI runtime、performance、resources 或人工观察前，
 必须先用 verification tooling 查询当前 Windows session 的实际交互条件。统一状态为：
 
 ```text
@@ -217,11 +217,31 @@ Resources 长矩阵必须在主要场景之间重检环境，并在每个完成�
 未完成 receipt 必须显式包含 `INCOMPLETE`，readiness 仍要求最终 receipt 的所有 result 都为
 `PASSED`，因此 partial evidence 不能冒充完整 PASS。
 
-M1..M5 manual sessions 只允许共享 setup，不改变 P12-M01..P12-M44 的逐项 authority。每项仍须
-单独记录 `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`；session 状态不能自动提升组内 case。
+M1..M5 manual sessions 只允许共享 setup，不改变 P12-M01..P12-M44 的逐项 authority。Phase 14
+增加 G1..G3 guided sessions；每个 guided observation 必须显式映射到一项或多项相同观察事实的
+case ID，并为每项记录 `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`，不能用“整体看起来正常”
+提升整组状态。
 
-Phase 13 固定本地顺序为 Environment → Release/package → headless CI → Runtime → Performance →
-Resources → Readiness。Runtime 失败或环境阻塞时，不得继续消耗时间运行 Performance/Resources。
+Phase 14 固定本地顺序为 Environment → Release/package → headless CI → Runtime → Performance →
+Resources → Manual → Readiness。Environment invalid、candidate identity mismatch、P0/security/
+data-safety failure 或 receipt schema corruption 是全局停止条件；普通 Runtime、Performance 或
+Resources failure 必须分别记录并继续运行仍独立且安全的后续通道。尤其 Performance failure
+不得跳过 Resources，Resources failure 也不得抹去 Performance receipt。
+
+人工发布政策按风险分层：Tier A 是 release-critical human gate，除非 USER 明确批准具体
+case/group waiver，否则必须 PASS；Tier B 是环境依赖 gate，可由 USER 对绑定版本与 exact source
+的明确组 waiver 处置；Tier C 的 `NOT TESTED` 在对应自动化合同已 PASS 时不阻断，已观察到的
+`MANUAL_FAIL` 仍阻断。waiver 只绑定声明的版本、source SHA 与 case/group，不跨版本继承。
+
+v0.1.0 允许 unsigned Authenticode distribution；package/receipt 必须明确记录 unsigned，README
+与 release notes 必须说明 Windows reputation warning 及 checksum/attestation 验证方法。自动化
+不得伪造签名字段，也不得因为缺少 Authenticode 签名而判 package failure。
+
+CI evidence 分三层：GitHub-hosted CI 只运行 deterministic build/test/package，不执行绝对
+550 ms startup 或资源门；本地可信/专用 Windows qualification host 负责 absolute performance/
+resources；真实 IME、视觉、tray/docking 与物理显示拓扑由 human acceptance 负责。不得把对外
+公开仓库连接到高权限、长期在线的自托管 runner；未来优先使用 pull-based local lab 或隔离的
+private release lab。
 
 ### CI 与完成门
 
@@ -245,7 +265,7 @@ tag `v*` 触发：版本一致性校验 → 测试 → deny → release build �
 ### 发布物
 
 ```text
-StickyMD-v1.0.0-windows-x64-portable.zip
+StickyMD-0.1.0-windows-x64-portable.zip
 ├─ StickyMD.exe
 ├─ README.txt
 ├─ LICENSE.txt
@@ -254,8 +274,8 @@ StickyMD-v1.0.0-windows-x64-portable.zip
    ├─ SIL-OFL-1.1.txt
    └─ KaTeX-fonts-NOTICE.txt
 
-StickyMD-v1.0.0-SHA256SUMS.txt
-StickyMD-v1.0.0-symbols.zip
+StickyMD-0.1.0-SHA256SUMS.txt
+StickyMD-0.1.0-symbols.zip
 SBOM.spdx.json
 ```
 

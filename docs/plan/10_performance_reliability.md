@@ -91,8 +91,8 @@ ready object，并确认前一进程、mutex、tray 与 worker 已退出；warm 
 | 分栏模式同上 | ≤ 48 MiB | > 64 MiB | 内存基准 |
 | Hidden to tray（cache purge 后） | ≤ 24 MiB | > 36 MiB | 内存基准 |
 | 空闲 CPU 60 s 平均 | ≤ 0.05% | > 0.1% | CPU 采样 |
-| 冷启动到可输入 p95 | ≤ 180 ms | > 400 ms | 启动基准；原 300 ms 门槛在 Phase 10 经 USER 明确 waiver |
-| 热启动到可输入 p95 | ≤ 180 ms preferred | > 400 ms for v0.1.0 | 启动基准；400 ms 是 Phase 12 USER-approved engineering gate recalibration，不是人工验收 waiver |
+| 冷启动到可输入 p95 | ≤ 180 ms preferred；≤ 400 ms engineering target | > 550 ms for v0.1.0 | 启动基准；550 ms 是 Phase 14 USER-approved v0.1.0 release boundary |
+| 热启动到可输入 p95 | ≤ 180 ms preferred；≤ 400 ms engineering target | > 550 ms for v0.1.0 | 启动基准；180/400 ms 未达标只产生诊断，不阻断 v0.1.0 release |
 | 100 KiB 输入延迟 p95 | ≤ 16 ms | > 25 ms | 编辑基准 |
 | 1 MiB 输入延迟 p95 | ≤ 33 ms | > 50 ms | 编辑基准 |
 | 20 KiB preview 构建 | ≤ 50 ms | > 100 ms | 预览基准 |
@@ -167,12 +167,13 @@ Not applicable（性能参数为内部固定值）。
 
 Targets 在技术验证阶段实测校准；校准结论以 report + plan 更新形式落盘。Phase 10
 先移除重复的 taskbar-list 初始化路径，使最终冷启动 cohort 的 p95 从 394.881 ms 降至
-343.220 ms；仍无法稳定满足原 300 ms 门槛，因此按 USER 的明确授权将冷启动 hard gate
-放宽为 400 ms。该结论是显式 waiver，不得回写成“原 300 ms 门槛通过”。Phase 11 最终
-warm cohort 为 311.353 ms，未达到原 180 ms hard gate；2026-08-23 USER 明确批准将
-v0.1.0 warm hard release boundary 校准为 400 ms，同时保留 180 ms preferred target。该
-warm 结论是 engineering gate recalibration，不是 acceptance waiver，也不得回写成“原
-180 ms 门槛通过”。
+343.220 ms。Phase 13 exact candidate 在当前 qualification host 上测得 cold/warm p95 分别为
+477.577 ms / 493.147 ms，说明 400 ms engineering target 不能稳定作为跨候选 release hard
+boundary。2026-08-23 USER 批准 Phase 14 三层政策：`≤180 ms` 保持 preferred target，
+`≤400 ms` 保持诊断性的 engineering target，v0.1.0 cold/warm release hard boundary 校准为
+`≤550 ms`。只有超过 550 ms 才阻断 v0.1.0；未达到 180/400 ms 必须如实报告，不得回写成
+达到 preferred/engineering target，也不得被称为人工验收 waiver。后续版本仍应通过归因和
+基准继续改善 startup，而不是把 550 ms 当成性能目标。
 
 ## Extension / Replacement Points
 

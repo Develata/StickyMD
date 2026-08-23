@@ -65,6 +65,14 @@ const REQUIRED_FILES: &[&str] = &[
     "docs/acceptance-cases/phase-13.md",
     "docs/report/phase-13-qualification-plan.md",
     "docs/report/phase-13-final-qualification.md",
+    "docs/phases/2026-08-23-phase-14-release-policy-calibration.md",
+    "docs/tasks/phase-14-release-gate-calibration.md",
+    "docs/acceptance-cases/phase-14.md",
+    "docs/report/phase-14-release-policy.md",
+    "docs/report/phase-14-startup-attribution-plan.md",
+    "docs/report/phase-14-final-qualification.md",
+    "docs/reference/qualification-execution-model.md",
+    "tools/manual/phase-14-guide.md",
     "docs/release-notes/0.1.0-draft.md",
     "tools/release/package.ps1",
     "tools/release/generate-third-party-notices.ps1",
@@ -133,10 +141,46 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_phase11b_contract_trace(root)?;
     verify_phase12_contract_trace(root)?;
     verify_phase13_contract_trace(root)?;
+    verify_phase14_contract_trace(root)?;
     verify_release_infrastructure(root)?;
     verify_plan_refs(root)?;
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
+    Ok(())
+}
+
+fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
+    let path = root.join("docs/acceptance-cases/phase-14.md");
+    let content = read_text(&path)?;
+    let observed = frozen_trace_ids(&content, "P14-A")?;
+    let expected: Vec<u16> = (1..=16).collect();
+    if observed != expected {
+        return Err(format!(
+            "{} IDs must be exactly P14-A01..P14-A16; observed {observed:?}",
+            path.display()
+        ));
+    }
+    for guided in ["P14-G1", "P14-G2", "P14-G3"] {
+        let marker = format!("| {guided} |");
+        if content.match_indices(&marker).count() != 1 {
+            return Err(format!(
+                "{} must contain {guided} exactly once",
+                path.display()
+            ));
+        }
+    }
+    for row in read_matrix_rows(&path)? {
+        let line = content.lines().nth(row.line - 1).unwrap_or_default();
+        if line.trim_start().starts_with("| P14-G")
+            && (row.mode != "Guided Manual" || row.status != "NOT TESTED")
+        {
+            return Err(format!(
+                "{}:{} Phase 14 guided row must remain Guided Manual / NOT TESTED",
+                path.display(),
+                row.line
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -835,6 +879,7 @@ fn read_matrix_rows(path: &Path) -> Result<Vec<MatrixRow>, String> {
         match mode {
             "Automated" if matches!(status, "AUTOMATED PASS" | "BLOCKED") => {}
             "Manual" if matches!(status, "MANUAL PASS" | "NOT TESTED" | "BLOCKED") => {}
+            "Guided Manual" if matches!(status, "NOT TESTED" | "BLOCKED") => {}
             _ => {
                 return Err(format!(
                     "{}:{} invalid mode/status pair `{mode}` / `{status}`",

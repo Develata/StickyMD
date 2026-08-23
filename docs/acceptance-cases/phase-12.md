@@ -60,12 +60,12 @@
 | P12-M31 | 对真实 `\\(x\\)` 与多行 `\\[y\\]` 执行转换并一次 Undo | Manual | 转为 `$x$` / `$$...$$`；inline code/literal 不变；一次 Undo 全部恢复 | NOT TESTED |
 | P12-M32 | 完成真实 user asset edit/undo/redo/GC/export/quit/restart 流程 | Manual | 非 managed 用户文件从未被自动移动或删除 | NOT TESTED |
 | P12-M33 | 放置 managed-looking fake file 并完成 GC/restart | Manual | 无 ownership evidence 的伪 managed 文件不被删除 | NOT TESTED |
-| P12-M34 | 在 Clean Windows 11 VM 解压并运行 unsigned ZIP | Manual | 无额外 runtime 安装即可启动；信誉提示与 README 描述一致 | NOT TESTED |
 
-## Manual Tier B
+## Manual Tier B — environment-dependent; exact version/source-bound USER group waiver allowed
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
+| P12-M34 | 在 Clean Windows 11 VM 解压并运行 unsigned ZIP | Manual | 无额外 runtime 安装即可启动；信誉提示与 README 描述一致 | NOT TESTED |
 | P12-M35 | 双显示器同 DPI 拖动、dock、tray restore | Manual | monitor identity、位置和 dock edge 稳定 | NOT TESTED |
 | P12-M36 | 双显示器 mixed DPI 拖动、dock、IME、Preview | Manual | DIP/physical conversion、caret candidate 与感应条正确 | NOT TESTED |
 | P12-M37 | 运行中断开当前显示器再恢复窗口 | Manual | 窗口迁移到可见工作区且不留在不可见坐标 | NOT TESTED |
@@ -73,7 +73,7 @@
 | P12-M39 | 在 150% DPI 完成输入、Preview、dock | Manual | geometry、caret、selection、公式与图片正确 | NOT TESTED |
 | P12-M40 | 在 200% DPI 完成输入、Preview、dock | Manual | geometry、caret、selection、公式与图片正确 | NOT TESTED |
 
-## Manual Tier C
+## Manual Tier C — NOT TESTED is non-blocking only while automated contract coverage passes
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
@@ -84,5 +84,7 @@
 
 ## Current readiness
 
-所有 `P12-M*` 当前均为 `NOT TESTED`。这不会使 headless CI 失败，但会使 release readiness
-保持 `NOT_READY`，除非 exact-artifact manual receipt 全部 PASS 或 USER 明确批准具体 waiver。
+所有 `P12-M*` 当前均为 `NOT TESTED`。这不会使 headless CI 失败。Tier A 仍阻止 release，
+除非 exact-artifact receipt PASS 或 USER 明确批准具体 case/group waiver；Tier B 需要 PASS 或
+绑定 v0.1.0 + exact source 的明确 USER disposition；Tier C 仅在对应自动化合同通过时允许保持
+`NOT TESTED` 而不阻断，任何已观察到的 `MANUAL_FAIL` 仍阻断。

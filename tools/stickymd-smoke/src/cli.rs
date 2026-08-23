@@ -17,10 +17,11 @@ pub(crate) enum Phase {
     P11B,
     P12,
     P13,
+    P14,
 }
 
 impl Phase {
-    pub(crate) const ALL: [Self; 15] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::P00,
         Self::P01,
         Self::P02,
@@ -36,6 +37,7 @@ impl Phase {
         Self::P11B,
         Self::P12,
         Self::P13,
+        Self::P14,
     ];
 
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
@@ -55,7 +57,8 @@ impl Phase {
             "11-b" | "phase-11-b" => Ok(Self::P11B),
             "12" | "phase-12" => Ok(Self::P12),
             "13" | "phase-13" => Ok(Self::P13),
-            _ => Err(format!("unknown phase `{value}`; expected 00..13 or 11-b")),
+            "14" | "phase-14" => Ok(Self::P14),
+            _ => Err(format!("unknown phase `{value}`; expected 00..14 or 11-b")),
         }
     }
 
@@ -76,6 +79,7 @@ impl Phase {
             Self::P11B => "11-b",
             Self::P12 => "12",
             Self::P13 => "13",
+            Self::P14 => "14",
         }
     }
 }
@@ -90,8 +94,35 @@ pub(crate) enum CommandLine {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ManualCommand {
     Run { session: Option<ManualSession> },
+    Guided { session: Option<GuidedSession> },
     List,
     Status,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum GuidedSession {
+    G1,
+    G2,
+    G3,
+}
+
+impl GuidedSession {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+        match value.to_ascii_uppercase().as_str() {
+            "G1" => Ok(Self::G1),
+            "G2" => Ok(Self::G2),
+            "G3" => Ok(Self::G3),
+            _ => Err(format!("unknown guided session `{value}`; expected G1..G3")),
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::G1 => "G1",
+            Self::G2 => "G2",
+            Self::G3 => "G3",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -133,6 +164,7 @@ pub(crate) enum QualificationCommand {
     },
     LocalCampaign,
     Candidate,
+    StartupAttribution,
     Decision {
         key: String,
         status: String,
@@ -160,7 +192,7 @@ impl CommandLine {
             Some("acceptance") => match args.get(1).map(String::as_str) {
                 Some("manual") => Self::parse_manual(&args[2..]).map(Self::AcceptanceManual),
                 _ => Err(
-                    "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|list|status]"
+                    "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G3]|list|status]"
                         .to_owned(),
                 ),
             },
@@ -179,10 +211,19 @@ impl CommandLine {
                     "--session=",
                 )?)?),
             }),
+            Some("guided") if arguments.len() == 1 => {
+                Ok(ManualCommand::Guided { session: None })
+            }
+            Some("guided") if arguments.len() == 2 => Ok(ManualCommand::Guided {
+                session: Some(GuidedSession::parse(named_value(
+                    &arguments[1..],
+                    "--session=",
+                )?)?),
+            }),
             Some("list") if arguments.len() == 1 => Ok(ManualCommand::List),
             Some("status") if arguments.len() == 1 => Ok(ManualCommand::Status),
             _ => Err(
-                "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|list|status]"
+                "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G3]|list|status]"
                     .to_owned(),
             ),
         }
@@ -216,6 +257,9 @@ impl CommandLine {
             Some("candidate") if arguments.len() == 1 => {
                 Ok(Self::Qualification(QualificationCommand::Candidate))
             }
+            Some("attribution") if arguments.len() == 1 => Ok(Self::Qualification(
+                QualificationCommand::StartupAttribution,
+            )),
             Some("local") if arguments.len() == 1 => {
                 Ok(Self::Qualification(QualificationCommand::LocalCampaign))
             }
@@ -269,7 +313,7 @@ impl CommandLine {
                 }))
             }
             _ => Err(
-                "qualification requires environment, local, candidate, decision, readiness, remote, or downloaded"
+                "qualification requires environment, local, candidate, attribution, decision, readiness, remote, or downloaded"
                     .to_owned(),
             ),
         }
@@ -322,7 +366,7 @@ impl Options {
             Some("phase") => {
                 let phase = args
                     .next()
-                    .ok_or_else(|| "`phase` requires a number (00..13 or 11-b)".to_owned())?;
+                    .ok_or_else(|| "`phase` requires a number (00..14 or 11-b)".to_owned())?;
                 Selection::Phase(Phase::parse(&phase)?)
             }
             Some("all") => Selection::All,
@@ -405,12 +449,13 @@ impl Options {
                         | Phase::P11
                         | Phase::P11B
                         | Phase::P12
-                        | Phase::P13,
+                        | Phase::P13
+                        | Phase::P14,
                 ) | Selection::All
             )
         {
             return Err(
-                "resource measurement is defined only for Phase 05 through Phase 13, or `all`"
+                "resource measurement is defined only for Phase 05 through Phase 14, or `all`"
                     .to_owned(),
             );
         }
@@ -418,12 +463,18 @@ impl Options {
             && !matches!(
                 selection,
                 Selection::Phase(
-                    Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B | Phase::P12 | Phase::P13,
+                    Phase::P09
+                        | Phase::P10
+                        | Phase::P11
+                        | Phase::P11B
+                        | Phase::P12
+                        | Phase::P13
+                        | Phase::P14,
                 ) | Selection::All
             )
         {
             return Err(
-                "release and package modes are defined only for Phase 09 through Phase 13 or `all`"
+                "release and package modes are defined only for Phase 09 through Phase 14 or `all`"
                     .to_owned(),
             );
         }
@@ -431,14 +482,15 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..13|11-b> [--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]"
+        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]"
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CommandLine, ManualCommand, ManualSession, Options, Phase, QualificationCommand, Selection,
+        CommandLine, GuidedSession, ManualCommand, ManualSession, Options, Phase,
+        QualificationCommand, Selection,
     };
 
     fn args<'a>(values: &'a [&'a str]) -> impl Iterator<Item = String> + 'a {
@@ -614,6 +666,30 @@ mod tests {
             manual,
             CommandLine::AcceptanceManual(ManualCommand::Run {
                 session: Some(ManualSession::M3),
+            })
+        );
+    }
+
+    #[test]
+    fn phase14_and_guided_manual_sessions_are_explicit() {
+        for mode in [
+            "--performance",
+            "--runtime",
+            "--resources",
+            "--release",
+            "--package",
+        ] {
+            let options = Options::parse(args(&["phase", "14", mode, "--json"]))
+                .expect("valid Phase 14 mode");
+            assert_eq!(options.selection, Selection::Phase(Phase::P14));
+        }
+
+        let guided = CommandLine::parse(args(&["acceptance", "manual", "guided", "--session=G2"]))
+            .expect("valid guided manual session");
+        assert_eq!(
+            guided,
+            CommandLine::AcceptanceManual(ManualCommand::Guided {
+                session: Some(GuidedSession::G2),
             })
         );
     }

@@ -1,12 +1,17 @@
-//! Phase 13 exact-candidate qualification; this tooling never mutates product state.
+//! Phase 14 exact-candidate qualification; this tooling never mutates product state.
 
+mod automated_readiness;
 mod campaign;
 mod decisions;
+mod guided;
 mod json;
 mod manual;
+mod manual_readiness;
+mod manual_receipt;
 mod readiness;
 mod receipt;
 mod remote;
+mod startup_attribution;
 
 use std::path::Path;
 
@@ -29,6 +34,7 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
             println!("REMOTE_SYNCED={}", candidate.remote_synced);
             Ok(())
         }
+        QualificationCommand::StartupAttribution => startup_attribution::record(root),
         QualificationCommand::Decision {
             key,
             status,
@@ -67,7 +73,7 @@ pub(super) fn record_environment(root: &Path, evidence_file: Option<&Path>) -> R
     )?;
     match environment.status {
         QualificationEnvironmentStatus::Valid => Ok(()),
-        QualificationEnvironmentStatus::EnvironmentBlocked => Err("Qualification environment is blocked by locked/non-interactive desktop. Unlock the active Windows session and rerun Phase 13 evidence campaign.".to_owned()),
+        QualificationEnvironmentStatus::EnvironmentBlocked => Err("Qualification environment is blocked by locked/non-interactive desktop. Unlock the active Windows session and rerun the Phase 14 evidence campaign.".to_owned()),
         QualificationEnvironmentStatus::Unsupported => {
             Err("qualification environment is unsupported on this host".to_owned())
         }

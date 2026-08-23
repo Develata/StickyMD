@@ -364,7 +364,7 @@ const fn environment_evidence_status(environment: &QualificationEnvironment) -> 
 
 fn environment_failure(environment: &QualificationEnvironment) -> String {
     match environment.status {
-        QualificationEnvironmentStatus::EnvironmentBlocked => "Qualification environment is blocked by locked/non-interactive desktop. Unlock the active Windows session and rerun Phase 13 evidence campaign.".to_owned(),
+        QualificationEnvironmentStatus::EnvironmentBlocked => "Qualification environment is blocked by locked/non-interactive desktop. Unlock the active Windows session and rerun the Phase 14 evidence campaign.".to_owned(),
         QualificationEnvironmentStatus::Unsupported => {
             "qualification environment is unsupported on this host".to_owned()
         }
@@ -587,7 +587,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 push_unique(&mut tasks, runtime_window_resources());
                 push_unique(&mut tasks, runtime_zoom_resources());
             }
-            Selection::Phase(Phase::P11 | Phase::P11B | Phase::P12 | Phase::P13) => {
+            Selection::Phase(Phase::P11 | Phase::P11B | Phase::P12 | Phase::P13 | Phase::P14) => {
                 push_unique(&mut tasks, runtime_resources());
                 push_unique(&mut tasks, runtime_math_resources());
                 push_unique(&mut tasks, runtime_image_resources());
@@ -646,7 +646,9 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         Selection::Phase(Phase::P10) => push_unique(&mut tasks, phase10_ux_tests()),
         Selection::Phase(Phase::P11) => push_unique(&mut tasks, workspace_tests()),
         Selection::Phase(Phase::P11B) => push_unique(&mut tasks, phase11b_tests()),
-        Selection::Phase(Phase::P12 | Phase::P13) => push_unique(&mut tasks, workspace_tests()),
+        Selection::Phase(Phase::P12 | Phase::P13 | Phase::P14) => {
+            push_unique(&mut tasks, workspace_tests());
+        }
     }
 
     // CI owns every headless task. `--performance` remains the explicit local
@@ -723,7 +725,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                     push_unique(&mut tasks, phase10_performance());
                     push_unique(&mut tasks, phase11b_performance());
                 }
-                Phase::P12 | Phase::P13 => {
+                Phase::P12 | Phase::P13 | Phase::P14 => {
                     if options.performance {
                         push_unique(&mut tasks, phase1_markdown_performance());
                         push_unique(&mut tasks, phase1_persistence_performance());
@@ -746,7 +748,13 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         && selected_phases(options.selection).iter().any(|phase| {
             matches!(
                 phase,
-                Phase::P09 | Phase::P10 | Phase::P11 | Phase::P11B | Phase::P12 | Phase::P13
+                Phase::P09
+                    | Phase::P10
+                    | Phase::P11
+                    | Phase::P11B
+                    | Phase::P12
+                    | Phase::P13
+                    | Phase::P14
             )
         })
     {
@@ -769,7 +777,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             Selection::Phase(Phase::P10) => {
                 push_unique(&mut tasks, runtime_phase10());
             }
-            Selection::Phase(Phase::P11 | Phase::P11B | Phase::P12 | Phase::P13) => {
+            Selection::Phase(Phase::P11 | Phase::P11B | Phase::P12 | Phase::P13 | Phase::P14) => {
                 push_unique(&mut tasks, runtime_portable());
                 push_unique(&mut tasks, runtime_preview());
                 push_unique(&mut tasks, runtime_math());
@@ -778,7 +786,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 push_unique(&mut tasks, runtime_phase10());
                 if matches!(
                     options.selection,
-                    Selection::Phase(Phase::P11B | Phase::P12 | Phase::P13)
+                    Selection::Phase(Phase::P11B | Phase::P12 | Phase::P13 | Phase::P14)
                 ) {
                     push_unique(&mut tasks, runtime_phase11b());
                 }
@@ -1764,6 +1772,35 @@ mod tests {
             TaskId::RuntimeZoomResources,
         ] {
             assert!(resources.iter().any(|task| task.id() == expected));
+        }
+    }
+
+    #[test]
+    fn phase14_routes_environment_before_every_local_gui_campaign() {
+        let options = |performance, runtime, resources| Options {
+            selection: Selection::Phase(crate::cli::Phase::P14),
+            ci: false,
+            performance,
+            runtime,
+            resources,
+            release: false,
+            package: false,
+            json: true,
+            evidence_file: None,
+        };
+        for plan in [
+            build_plan(&options(true, false, false)).expect("performance plan"),
+            build_plan(&options(false, true, false)).expect("runtime plan"),
+            build_plan(&options(false, false, true)).expect("resource plan"),
+        ] {
+            assert_eq!(plan[0].id(), TaskId::Governance);
+            assert_eq!(plan[1].id(), TaskId::QualificationEnvironment);
+            assert_eq!(
+                plan.iter()
+                    .filter(|task| task.id() == TaskId::QualificationEnvironment)
+                    .count(),
+                1
+            );
         }
     }
 

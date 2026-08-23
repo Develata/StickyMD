@@ -54,6 +54,7 @@ pub(super) fn read(root: &Path, candidate: &Candidate) -> Result<Vec<Decision>, 
     for (field, expected) in [
         ("source_commit", candidate.source_commit.as_str()),
         ("exe_sha256", candidate.exe_sha256.as_str()),
+        ("version", candidate.version.as_str()),
     ] {
         let actual = json::string_field(&document, field)?;
         if actual != expected {
@@ -139,9 +140,10 @@ fn parse_json_decisions(document: &str) -> Result<Vec<Decision>, String> {
 
 fn write(root: &Path, candidate: &Candidate, decisions: &[Decision]) -> Result<(), String> {
     let mut document = format!(
-        "{{\"schema_version\":1,\"source_commit\":\"{}\",\"exe_sha256\":\"{}\",\"decisions\":[",
+        "{{\"schema_version\":1,\"source_commit\":\"{}\",\"exe_sha256\":\"{}\",\"version\":\"{}\",\"decisions\":[",
         json::escape(&candidate.source_commit),
         json::escape(&candidate.exe_sha256),
+        json::escape(&candidate.version),
     );
     for (index, decision) in decisions.iter().enumerate() {
         if index > 0 {
@@ -169,12 +171,23 @@ fn normalize_status(value: &str) -> Result<&'static str, String> {
 }
 
 fn valid_manual_waiver_key(key: &str) -> bool {
-    key.strip_prefix("WAIVER-P12-M").is_some_and(|value| {
+    let case_waiver = key.strip_prefix("WAIVER-P12-M").is_some_and(|value| {
         value.len() == 2
             && value.bytes().all(|byte| byte.is_ascii_digit())
             && value
                 .parse::<u8>()
                 .is_ok_and(|number| (1..=44).contains(&number))
+    });
+    case_waiver || valid_tier_b_group_waiver(key)
+}
+
+fn valid_tier_b_group_waiver(key: &str) -> bool {
+    key.strip_prefix("WAIVER-TIER-B-v").is_some_and(|version| {
+        let parts = version.split('.').collect::<Vec<_>>();
+        parts.len() == 3
+            && parts
+                .iter()
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
     })
 }
 
@@ -184,9 +197,9 @@ mod tests {
 
     #[test]
     fn source_ledger_rejects_duplicate_or_inferred_decisions() {
-        let source = "| DEC-01 | WARM-STARTUP-GATE | USER APPROVED | USER message |\n";
+        let source = "| DEC-01 | STARTUP-RELEASE-BOUNDARY | USER APPROVED | USER message |\n";
         let decisions = parse_markdown(source).expect("valid ledger");
-        assert_eq!(decisions[0].key, "WARM-STARTUP-GATE");
+        assert_eq!(decisions[0].key, "STARTUP-RELEASE-BOUNDARY");
         assert!(normalize_status("approved").is_err());
     }
 
@@ -196,6 +209,8 @@ mod tests {
         assert!(valid_manual_waiver_key("WAIVER-P12-M44"));
         assert!(!valid_manual_waiver_key("WAIVER-P12-M1"));
         assert!(!valid_manual_waiver_key("WAIVER-P12-M45"));
+        assert!(valid_manual_waiver_key("WAIVER-TIER-B-v0.1.0"));
+        assert!(!valid_manual_waiver_key("WAIVER-TIER-B-v0.1"));
         assert!(!valid_manual_waiver_key("MANUAL-WAIVERS"));
     }
 }

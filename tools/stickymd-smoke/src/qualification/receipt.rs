@@ -35,7 +35,7 @@ pub(super) fn generate_candidate(root: &Path) -> Result<Candidate, String> {
     for path in [&zip, &executable, &sbom, &root.join("Cargo.lock")] {
         if !path.is_file() {
             return Err(format!(
-                "candidate input is missing: {}; run Phase 13 release qualification first",
+                "candidate input is missing: {}; run Phase 14 release qualification first",
                 path.display()
             ));
         }
@@ -62,6 +62,9 @@ pub(super) fn read_candidate(root: &Path) -> Result<Candidate, String> {
     let document = read_receipt(&root.join(CANDIDATE_RECEIPT))?;
     if json::u64_field(&document, "schema_version")? != 1 {
         return Err("release-candidate receipt schema is not version 1".to_owned());
+    }
+    if json::string_field(&document, "authenticode")? != "UNSIGNED" {
+        return Err("release-candidate Authenticode policy must be explicitly UNSIGNED".to_owned());
     }
     let candidate = Candidate {
         source_commit: json::string_field(&document, "source_commit")?,
@@ -191,6 +194,7 @@ fn write_candidate(root: &Path, candidate: &Candidate) -> Result<(), String> {
             "\"sbom_sha256\":\"{}\",",
             "\"rustc\":\"{}\",",
             "\"target\":\"{}\",",
+            "\"authenticode\":\"UNSIGNED\",",
             "\"remote_synced\":{}",
             "}}\n"
         ),
