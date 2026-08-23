@@ -152,8 +152,13 @@ impl WindowShellCoordinator {
         now_ms: u64,
         effects: &mut Vec<WindowEffect>,
     ) {
+        // Guards are refreshed for IME, persistence, and drag facts too. Only
+        // a real focus acquisition may revoke the collapsed sensor's temporary
+        // z-order; replaying an unchanged focused snapshot after manual hide
+        // must not make the 3-DIP recovery path unreachable.
+        let gained_focus = !self.state.guards.window_focused && guards.window_focused;
         self.state.guards = guards;
-        if guards.window_focused {
+        if gained_focus {
             self.set_temporary_sensor_topmost(false, effects);
         }
         if guards.blocks_auto_collapse() {
@@ -349,7 +354,10 @@ impl WindowShellCoordinator {
         self.state.deadlines.clear();
         self.state.dock.hover_revealed = hover_revealed;
         self.state.dock.manually_hidden = false;
-        self.set_temporary_sensor_topmost(hover_revealed, effects);
+        self.set_temporary_sensor_topmost(
+            hover_revealed && !self.state.guards.window_focused,
+            effects,
+        );
         let target =
             effective_expanded_frame(&self.state.placement, Some(edge), &self.state.dock.monitor);
         self.start_animation(
@@ -994,6 +1002,37 @@ mod phase8_window_tests {
             now_ms: 600,
         });
         assert!(effects.contains(&WindowEffect::SetTemporarySensorTopmost(false)));
+        assert!(!coordinator.state().temporary_sensor_topmost());
+    }
+
+    #[test]
+    fn focused_manual_collapse_keeps_sensor_topmost_until_expansion_starts() {
+        let mut coordinator = coordinator(StableVisibility::DockedExpanded(DockEdge::Left));
+        coordinator.dispatch(WindowIntent::GuardsChanged {
+            guards: WindowGuardSnapshot {
+                window_focused: true,
+                ..Default::default()
+            },
+            now_ms: 0,
+        });
+
+        coordinator.dispatch(WindowIntent::ManualCollapse { now_ms: 100 });
+        let repeated_guard_effects = coordinator.dispatch(WindowIntent::GuardsChanged {
+            guards: WindowGuardSnapshot {
+                window_focused: true,
+                ..Default::default()
+            },
+            now_ms: 101,
+        });
+        assert!(!repeated_guard_effects.contains(&WindowEffect::SetTemporarySensorTopmost(false)));
+        coordinator.dispatch(WindowIntent::Tick { now_ms: 240 });
+        assert!(coordinator.state().temporary_sensor_topmost());
+
+        coordinator.dispatch(WindowIntent::SensorEntered { now_ms: 300 });
+        let expand_effects = coordinator.dispatch(WindowIntent::Tick {
+            now_ms: 300 + HOVER_REVEAL_DELAY_MS,
+        });
+        assert!(expand_effects.contains(&WindowEffect::SetTemporarySensorTopmost(false)));
         assert!(!coordinator.state().temporary_sensor_topmost());
     }
 

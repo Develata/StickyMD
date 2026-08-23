@@ -40,6 +40,8 @@ exact identity；在任何必要证据或 USER 授权缺失时 fail closed。
   不接受 DPI virtualization 后再次缩放的坐标。
 - opt-in desktop smoke 的 cursor parking 允许 3 次 25 ms 有界重试，并用实际 cursor position
   接受“API 返回 false 但目标已达到”的语义成功；持续失败仍终止验收。
+- dock reducer 只把 `false -> true` 的焦点跃迁视为“获得焦点”；手动收起后对相同 focused
+  guard 的重复投影不得撤销 3-DIP sensor 临时置顶，已聚焦窗口开始展开时则立即撤销。
 - readiness 在 manual/remote/USER decision 缺失时必须返回非零且解释 blockers。
 
 ## Out of Scope
@@ -53,4 +55,6 @@ exact identity；在任何必要证据或 USER 授权缺失时 fail closed。
 In Progress
 
 当前本地治理与工具收敛可以完成；mandatory manual acceptance、release version、unsigned
-policy、push/tag/draft/publish 与 remote/downloaded artifact evidence 仍需后续 USER gate。
+policy、push/tag/draft/publish 与 remote/downloaded artifact evidence 仍需后续 USER gate。当前
+输入桌面被 Windows `LockApp` 覆盖，真实 sensor hover runtime 不能在本会话形成 PASS 证据；
+对应人工项目继续为 `NOT TESTED`。

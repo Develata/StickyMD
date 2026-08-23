@@ -64,6 +64,16 @@ parking 辅助调用失败。`SetCursorPos` 返回 false，但 Windows last-erro
 cursor parking 使用 3 次、间隔 25 ms 的有界重试并确认实际坐标；持续失败仍使任务失败，
 不会把真实 input-desktop 不可用误记为 PASS。
 
+第三个候选 `59c5ca7d3ec632756da605619debeaa9cfa21cf9` 通过 Phase 12 Release 与 `all --ci`，
+但 copied-Release Phase 8 runtime 在左侧 sensor hover 阶段停止。隔离诊断构建证明当前会话的
+Windows `LockApp` 窗口覆盖输入桌面：从主屏左缘到正文区域的 `WindowFromPoint` 都返回
+`Windows.UI.Core.CoreWindow` / `LockApp`，而不是已设为 topmost 的 StickyMD HWND；真实 hover
+因此不能在本会话被验收，也没有被改写成 PASS。诊断同时暴露了一个独立 reducer 缺陷：
+手动收起前已经聚焦时，IME/持久化等原因触发的同值 guard 刷新会被误当作“新获得焦点”，
+从而过早撤销 collapsed sensor 的临时 topmost。实现现仅在 `false -> true` 焦点跃迁时撤销，
+并在已聚焦窗口实际开始展开时清理；新增确定性 reducer regression test。该源码修复使
+`59c5ca7` 的所有 exact receipts 作废；当前锁屏输入桌面仍不能替代 P12-M16 的人工验收。
+
 ## Manual Evidence
 
 `docs/acceptance-cases/phase-12.md` 汇总 Tier A/B/C。当前全部保持 `NOT TESTED`；只有
@@ -75,7 +85,8 @@ cursor parking 使用 3 次、间隔 25 ms 的有界重试并确认实际坐标�
 
 ## Architecture Drift
 
-None observed in Phase 12 preparation. Product runtime dependencies and authority boundaries are unchanged.
+No boundary drift. The focused/manual-collapse correction remains inside the existing Window Shell reducer;
+product dependencies, authority ownership, and public capability axes are unchanged.
 
 ## Recommendation
 
