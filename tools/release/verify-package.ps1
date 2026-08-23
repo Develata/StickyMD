@@ -10,12 +10,11 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+. (Join-Path $PSScriptRoot 'package-path.ps1')
 if (-not $PackageDirectory) { $PackageDirectory = Join-Path $repoRoot 'dist' }
 $PackageDirectory = [IO.Path]::GetFullPath($PackageDirectory)
 if (-not $ZipPath) {
-    $packages = @(Get-ChildItem -LiteralPath $PackageDirectory -Filter 'StickyMD-*-windows-x64-portable.zip' -File)
-    if ($packages.Count -ne 1) { throw "Expected exactly one portable ZIP in $PackageDirectory; found $($packages.Count)" }
-    $ZipPath = $packages[0].FullName
+    $ZipPath = Resolve-StickyMdPackagePath -RepoRoot $repoRoot -PackageDirectory $PackageDirectory
 }
 $ZipPath = [IO.Path]::GetFullPath($ZipPath)
 if (-not $ChecksumPath) { $ChecksumPath = Join-Path $PackageDirectory 'SHA256SUMS.txt' }

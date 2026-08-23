@@ -96,9 +96,6 @@ try {
     ) -join "`r`n"
     [IO.File]::WriteAllText((Join-Path $packageRoot 'README.txt'), $readme + "`r`n", [Text.UTF8Encoding]::new($false))
 
-    if (Test-Path -LiteralPath $archivePath) {
-        throw "Refusing to overwrite an existing package: $archivePath"
-    }
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $stream = [IO.File]::Open($archiveTemporaryPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
@@ -127,7 +124,15 @@ try {
         } finally { $archive.Dispose() }
     } finally { $stream.Dispose() }
 
-    [IO.File]::Move($archiveTemporaryPath, $archivePath)
+    if (Test-Path -LiteralPath $archivePath) {
+        $existingHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
+        $temporaryHash = (Get-FileHash -LiteralPath $archiveTemporaryPath -Algorithm SHA256).Hash
+        if (-not $existingHash.Equals($temporaryHash, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to overwrite a different existing package: $archivePath"
+        }
+    } else {
+        [IO.File]::Move($archiveTemporaryPath, $archivePath)
+    }
 
     $zipHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $checksumPath = Join-Path $OutputDirectory 'SHA256SUMS.txt'
