@@ -25,4 +25,3 @@ phase7 paste 10 PNG files total_median_us=87900 total_p95_us=133822 total_max_us
 test assets::transaction::tests::phase7_image_paste_release_baseline ... ok
 
 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 205 filtered out; finished in 5.95s
-
