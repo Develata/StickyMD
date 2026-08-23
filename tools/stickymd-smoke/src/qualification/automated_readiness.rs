@@ -140,7 +140,7 @@ fn check_receipt(
             contract.label, contract.required_task,
         ));
     }
-    match json::status_values(&document) {
+    match json::result_status_values(&document) {
         Ok(statuses)
             if !statuses.is_empty() && statuses.iter().all(|status| status == "PASSED") => {}
         Ok(statuses) => blockers.push(format!(
@@ -220,7 +220,8 @@ mod tests {
             concat!(
                 "{{\"schema_version\":2,\"commit\":\"{}\",\"worktree_dirty\":false,",
                 "\"artifact_sha256\":{},\"executable_sha256\":\"{}\",",
-                "\"suite\":\"{}\",\"results\":[{{\"id\":\"{}\",",
+                "\"suite\":\"{}\",\"qualification_environment\":{{\"status\":\"VALID\"}},",
+                "\"results\":[{{\"id\":\"{}\",",
                 "\"status\":\"PASSED\"}}]}}\n"
             ),
             candidate.source_commit, artifact, candidate.exe_sha256, suite, task

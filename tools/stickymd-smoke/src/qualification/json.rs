@@ -60,11 +60,18 @@ pub(super) fn bool_field(document: &str, key: &str) -> Result<bool, String> {
     }
 }
 
-pub(super) fn status_values(document: &str) -> Result<Vec<String>, String> {
+pub(super) fn result_status_values(document: &str) -> Result<Vec<String>, String> {
+    let results = document
+        .find("\"results\":")
+        .ok_or_else(|| "JSON field `results` is missing".to_owned())?;
+    string_values(&document[results..], "status")
+}
+
+fn string_values(document: &str, key: &str) -> Result<Vec<String>, String> {
     let mut values = Vec::new();
-    let marker = "\"status\":";
+    let marker = format!("\"{}\":", escape(key));
     let mut offset = 0usize;
-    while let Some(relative) = document[offset..].find(marker) {
+    while let Some(relative) = document[offset..].find(&marker) {
         let start = offset + relative + marker.len();
         let (value, end) = parse_string(document, start)?;
         values.push(value);
@@ -121,16 +128,18 @@ fn parse_string(document: &str, start: usize) -> Result<(String, usize), String>
 
 #[cfg(test)]
 mod tests {
-    use super::{bool_field, escape, status_values, string_field, u64_field};
+    use super::{bool_field, escape, result_status_values, string_field, u64_field};
 
     #[test]
     fn fixed_receipt_fields_are_read_without_a_general_json_dependency() {
-        let document =
-            r#"{"schema_version":1,"name":"a\\b\"c","ready":false,"status":"NOT_READY"}"#;
+        let document = r#"{"schema_version":1,"name":"a\\b\"c","ready":false,"qualification_environment":{"status":"VALID"},"results":[{"status":"PASSED"}]}"#;
         assert_eq!(u64_field(document, "schema_version"), Ok(1));
         assert_eq!(string_field(document, "name"), Ok("a\\b\"c".to_owned()));
         assert_eq!(bool_field(document, "ready"), Ok(false));
-        assert_eq!(status_values(document), Ok(vec!["NOT_READY".to_owned()]));
+        assert_eq!(
+            result_status_values(document),
+            Ok(vec!["PASSED".to_owned()])
+        );
         assert_eq!(escape("a\nb"), "a\\nb");
     }
 }
