@@ -2,11 +2,12 @@
 
 ## Executive Result
 
-当前状态：**NOT RC READY — local qualification preparation in progress**。
+当前状态：**NOT RC READY — local qualification blocked**。
 
-Warm startup hard gate 已由 USER 校准为 400 ms；Phase 11 warm p95 311.353 ms 因而满足
-v0.1.0 hard boundary，但没有满足 180 ms preferred target。mandatory manual evidence、release
-version、unsigned policy、remote workflow 与 downloaded artifact evidence 尚未完成，不得 tag。
+Warm startup hard gate 已由 USER 校准为 400 ms；Phase 11 的 warm p95 311.353 ms 曾满足该
+boundary，但 Phase 12 最新 exact diagnostic 为 531.779 ms，必须按 hard gate FAILED 处理。
+exact performance/runtime/resources、mandatory manual evidence、release version、unsigned policy、
+remote workflow 与 downloaded artifact evidence 尚未全部通过，不得 tag。
 
 ## Source Baseline
 
@@ -20,12 +21,14 @@ version、unsigned policy、remote workflow 与 downloaded artifact evidence 尚
 
 ## Gate Calibration
 
-| Metric | Preferred | v0.1.0 hard boundary | Latest measured p95 | Result |
+| Metric | Preferred | v0.1.0 hard boundary | Latest exact diagnostic p95 | Result |
 | --- | ---: | ---: | ---: | --- |
-| Cold startup | 180 ms | 400 ms | 300.692 ms | HARD PASS |
-| Warm startup | 180 ms | 400 ms | 311.353 ms | HARD PASS; preferred missed |
+| Cold startup | 180 ms | 400 ms | 812.599 ms | FAILED |
+| Warm startup | 180 ms | 400 ms | 531.779 ms | FAILED |
 
-Warm 400 ms 是 2026-08-23 USER-approved engineering gate recalibration，不是 waiver。
+400 ms 是 2026-08-23 USER-approved engineering gate recalibration，不是 waiver，也不能把后续
+超过 400 ms 的测量改写成 PASS。以上数据来自已作废候选 `e6484833...`，仅保留诊断价值；
+最终候选仍需要重新生成 exact performance receipt。
 
 ## Qualification Architecture
 
@@ -42,8 +45,10 @@ Warm 400 ms 是 2026-08-23 USER-approved engineering gate recalibration，不是
 ## Known P0 / P1
 
 - known product P0: 0。
-- known automated product P1: 0。
-- release blockers: mandatory human evidence and explicit USER/remote gates listed in the decision ledger。
+- known confirmed source P1: 0；当前环境下的 runtime/performance 失败尚不能归因为新源码回归，
+  但在获得合格 exact evidence 前仍是 release blockers。
+- release blockers: exact performance/runtime/resources、mandatory human evidence and explicit
+  USER/remote gates listed in the decision ledger。
 
 ## Automated Evidence
 

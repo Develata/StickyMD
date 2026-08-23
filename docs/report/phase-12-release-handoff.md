@@ -5,6 +5,10 @@
 Phase 12 stays active. The allowed local preparation/qualification lane does not authorize push, tag,
 draft release, or publish.
 
+Current local blockers include missing exact-candidate performance/runtime/resources PASS receipts.
+The latest diagnostic performance and runtime receipts belong to an invalidated candidate and contain
+FAILED results; they must not be promoted or copied to the current candidate.
+
 ## Exact Evidence Locations
 
 | Evidence | Path | Expected producer |
