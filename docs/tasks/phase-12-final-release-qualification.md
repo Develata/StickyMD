@@ -27,6 +27,8 @@ exact identity；在任何必要证据或 USER 授权缺失时 fail closed。
 - `tools/smoke/phase-12.ps1` 与 `docs/acceptance-cases/phase-12.md`。
 - `stickymd-smoke qualification ...`、exact-candidate decision projection 和
   `stickymd-smoke acceptance manual`。
+- exact candidate 的 Release、headless CI、performance、runtime、resources 五类本地自动
+  receipt；readiness 逐类检查 suite、required task、SHA、clean tree 与全部 PASS。
 - `docs/report/phase-12-release-decisions.md`、最终资格化报告与 handoff。
 - ignored `dist/evidence/*.json` exact-artifact receipts。
 
@@ -43,6 +45,7 @@ exact identity；在任何必要证据或 USER 授权缺失时 fail closed。
 - dock reducer 只把 `false -> true` 的焦点跃迁视为“获得焦点”；手动收起后对相同 focused
   guard 的重复投影不得撤销 3-DIP sensor 临时置顶，已聚焦窗口开始展开时则立即撤销。
 - readiness 在 manual/remote/USER decision 缺失时必须返回非零且解释 blockers。
+- readiness 不允许用 Release/package receipt 替代 performance/runtime/resources receipt。
 
 ## Out of Scope
 

@@ -19,7 +19,7 @@
 | P12-A09 | Candidate receipt binds source, Cargo.lock, EXE, ZIP, SBOM and toolchain | Automated | `stickymd-smoke qualification candidate` plus CLI tests | AUTOMATED PASS |
 | P12-A10 | Manual recorder rejects noninteractive inference and accepts explicit statuses only | Automated | `stickymd-smoke` qualification unit tests | AUTOMATED PASS |
 | P12-A11 | Stale source/EXE/artifact receipts cannot count | Automated | readiness identity validation and tests | AUTOMATED PASS |
-| P12-A12 | Readiness has no force-ready path and reports missing manual/remote/USER gates | Automated | `stickymd-smoke qualification readiness --explain` | AUTOMATED PASS |
+| P12-A12 | Readiness has no force-ready path and reports missing/failed Release, headless CI, performance, runtime, resources, manual, remote and USER gates | Automated | exact-mode receipt contracts plus `stickymd-smoke qualification readiness --explain` | AUTOMATED PASS |
 | P12-A13 | Remote workflow receipt must match exact SHA and successful attempt | Automated | `qualification remote` parser/identity contract | AUTOMATED PASS |
 | P12-A14 | Downloaded ZIP must pass checksums, package/runtime smoke and exact hashes | Automated | `qualification downloaded --zip=<path>` | AUTOMATED PASS |
 

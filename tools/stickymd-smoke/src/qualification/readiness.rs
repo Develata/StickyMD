@@ -6,10 +6,61 @@ use super::receipt::{self, Candidate};
 use super::{decisions, json};
 
 const AUTOMATED_RECEIPT: &str = "dist/evidence/automated-qualification.json";
+const HEADLESS_CI_RECEIPT: &str = "dist/evidence/headless-ci-qualification.json";
+const PERFORMANCE_RECEIPT: &str = "dist/evidence/performance-qualification.json";
+const RUNTIME_RECEIPT: &str = "dist/evidence/runtime-qualification.json";
+const RESOURCES_RECEIPT: &str = "dist/evidence/resources-qualification.json";
 const MANUAL_RECEIPT: &str = "dist/evidence/manual-acceptance.json";
 const REMOTE_RECEIPT: &str = "dist/evidence/remote-workflow.json";
 const DOWNLOADED_RECEIPT: &str = "dist/evidence/downloaded-artifact-smoke.json";
 const READINESS_RECEIPT: &str = "dist/evidence/release-readiness.json";
+
+#[derive(Clone, Copy)]
+struct AutomatedReceiptContract {
+    path: &'static str,
+    label: &'static str,
+    suite: &'static str,
+    required_task: &'static str,
+    binds_artifact: bool,
+}
+
+const AUTOMATED_RECEIPTS: [AutomatedReceiptContract; 5] = [
+    AutomatedReceiptContract {
+        path: AUTOMATED_RECEIPT,
+        label: "release qualification",
+        suite: "phase-12",
+        required_task: "portable package verification",
+        binds_artifact: true,
+    },
+    AutomatedReceiptContract {
+        path: HEADLESS_CI_RECEIPT,
+        label: "headless CI qualification",
+        suite: "all",
+        required_task: "requested headless CI task set",
+        binds_artifact: false,
+    },
+    AutomatedReceiptContract {
+        path: PERFORMANCE_RECEIPT,
+        label: "performance qualification",
+        suite: "phase-12",
+        required_task: "copied Release Phase 9 editor-ready cold/warm startup matrix",
+        binds_artifact: false,
+    },
+    AutomatedReceiptContract {
+        path: RUNTIME_RECEIPT,
+        label: "runtime qualification",
+        suite: "phase-12",
+        required_task: "copied Release Phase 8 close-to-tray/show lifecycle",
+        binds_artifact: false,
+    },
+    AutomatedReceiptContract {
+        path: RESOURCES_RECEIPT,
+        label: "resource qualification",
+        suite: "phase-12",
+        required_task: "copied Release Phase 8 hidden-window resource matrix",
+        binds_artifact: false,
+    },
+];
 
 pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
     let mut blockers = Vec::new();
@@ -84,67 +135,93 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
 }
 
 fn check_automated(root: &Path, candidate: &Candidate, blockers: &mut Vec<String>) {
-    let document = match receipt::read_receipt(&root.join(AUTOMATED_RECEIPT)) {
+    for contract in AUTOMATED_RECEIPTS {
+        check_automated_receipt(root, candidate, contract, blockers);
+    }
+}
+
+fn check_automated_receipt(
+    root: &Path,
+    candidate: &Candidate,
+    contract: AutomatedReceiptContract,
+    blockers: &mut Vec<String>,
+) {
+    let document = match receipt::read_receipt(&root.join(contract.path)) {
         Ok(document) => document,
         Err(error) => {
-            blockers.push(format!("automated qualification receipt: {error}"));
+            blockers.push(format!("{} receipt: {error}", contract.label));
             return;
         }
     };
     match json::u64_field(&document, "schema_version") {
         Ok(2) => {}
         Ok(version) => blockers.push(format!(
-            "automated qualification schema is {version}, expected 2"
+            "{} schema is {version}, expected 2",
+            contract.label
         )),
-        Err(error) => blockers.push(format!("automated receipt schema: {error}")),
+        Err(error) => blockers.push(format!("{} schema: {error}", contract.label)),
     }
     match json::string_field(&document, "suite") {
-        Ok(suite) if suite == "phase-12" => {}
+        Ok(suite) if suite == contract.suite => {}
         Ok(suite) => blockers.push(format!(
-            "automated qualification suite is {suite}, expected phase-12"
+            "{} suite is {suite}, expected {}",
+            contract.label, contract.suite
         )),
-        Err(error) => blockers.push(format!("automated receipt suite: {error}")),
+        Err(error) => blockers.push(format!("{} suite: {error}", contract.label)),
     }
     let checks = [
         (
             json::string_field(&document, "commit"),
             candidate.source_commit.as_str(),
-            "automated receipt source commit",
+            "source commit",
         ),
         (
             json::string_field(&document, "executable_sha256"),
             candidate.exe_sha256.as_str(),
-            "automated receipt EXE hash",
-        ),
-        (
-            json::string_field(&document, "artifact_sha256"),
-            candidate.zip_sha256.as_str(),
-            "automated receipt ZIP hash",
+            "EXE hash",
         ),
     ];
     for (actual, expected, label) in checks {
         match actual {
             Ok(actual) if actual == expected => {}
             Ok(actual) => blockers.push(format!(
-                "STALE RECEIPT: {label} is {actual}, expected {expected}"
+                "STALE RECEIPT: {} {label} is {actual}, expected {expected}",
+                contract.label
             )),
-            Err(error) => blockers.push(format!("{label}: {error}")),
+            Err(error) => blockers.push(format!("{} {label}: {error}", contract.label)),
+        }
+    }
+    if contract.binds_artifact {
+        match json::string_field(&document, "artifact_sha256") {
+            Ok(actual) if actual == candidate.zip_sha256 => {}
+            Ok(actual) => blockers.push(format!(
+                "STALE RECEIPT: {} ZIP hash is {actual}, expected {}",
+                contract.label, candidate.zip_sha256
+            )),
+            Err(error) => blockers.push(format!("{} ZIP hash: {error}", contract.label)),
         }
     }
     match json::bool_field(&document, "worktree_dirty") {
         Ok(false) => {}
-        Ok(true) => {
-            blockers.push("automated qualification was recorded from a dirty tree".to_owned())
-        }
-        Err(error) => blockers.push(format!("automated receipt worktree state: {error}")),
+        Ok(true) => blockers.push(format!("{} was recorded from a dirty tree", contract.label)),
+        Err(error) => blockers.push(format!("{} worktree state: {error}", contract.label)),
+    }
+    let task_marker = format!("\"id\":\"{}\"", contract.required_task);
+    let task_occurrences = document.match_indices(&task_marker).count();
+    if task_occurrences != 1 {
+        blockers.push(format!(
+            "{} contains required task `{}` {task_occurrences} times, expected exactly once",
+            contract.label, contract.required_task,
+        ));
     }
     match json::status_values(&document) {
         Ok(statuses)
             if !statuses.is_empty() && statuses.iter().all(|status| status == "PASSED") => {}
         Ok(statuses) => blockers.push(format!(
-            "automated qualification contains a non-PASSED result: {statuses:?}"
+            "{} contains a non-PASSED result: {statuses:?}",
+            contract.label
         )),
-        Err(error) => blockers.push(format!("automated receipt statuses: {error}")),
+        Err(error) => blockers.push(format!("{} statuses: {error}", contract.label)),
     }
 }
 
@@ -365,8 +442,8 @@ fn render_readiness(candidate: Option<&Candidate>, blockers: &[String]) -> Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        DOWNLOADED_RECEIPT, ManualObservation, check_downloaded, decision_status,
-        manual_case_statuses, render_readiness,
+        AUTOMATED_RECEIPT, AUTOMATED_RECEIPTS, DOWNLOADED_RECEIPT, ManualObservation,
+        check_automated, check_downloaded, decision_status, manual_case_statuses, render_readiness,
     };
     use crate::qualification::decisions::Decision;
     use crate::qualification::receipt::{self, Candidate};
@@ -391,6 +468,71 @@ mod tests {
         let json = render_readiness(None, &["manual missing".to_owned()]);
         assert!(json.contains("\"status\":\"NOT_READY\""));
         assert!(json.contains("manual missing"));
+    }
+
+    #[test]
+    fn automated_readiness_requires_every_exact_local_qualification_mode() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("stickymd-automated-receipts-{nonce}"));
+        let candidate = Candidate {
+            source_commit: "a".repeat(40),
+            version: "0.1.0".to_owned(),
+            cargo_lock_sha256: "b".repeat(64),
+            exe_sha256: "c".repeat(64),
+            zip_sha256: "d".repeat(64),
+            sbom_sha256: "e".repeat(64),
+            rustc: "rustc test".to_owned(),
+            target: "x86_64-pc-windows-msvc".to_owned(),
+            remote_synced: false,
+        };
+        let release = automated_receipt(
+            &candidate,
+            "phase-12",
+            "portable package verification",
+            Some(&candidate.zip_sha256),
+        );
+        receipt::write_receipt(&root, AUTOMATED_RECEIPT, &release).expect("write receipt");
+
+        let mut blockers = Vec::new();
+        check_automated(&root, &candidate, &mut blockers);
+        assert_eq!(
+            blockers
+                .iter()
+                .filter(|blocker| blocker.contains("receipt: cannot read"))
+                .count(),
+            AUTOMATED_RECEIPTS.len() - 1
+        );
+
+        for contract in AUTOMATED_RECEIPTS.into_iter().skip(1) {
+            let document =
+                automated_receipt(&candidate, contract.suite, contract.required_task, None);
+            receipt::write_receipt(&root, contract.path, &document).expect("write receipt");
+        }
+        blockers.clear();
+        check_automated(&root, &candidate, &mut blockers);
+        assert!(blockers.is_empty(), "unexpected blockers: {blockers:?}");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    fn automated_receipt(
+        candidate: &Candidate,
+        suite: &str,
+        task: &str,
+        artifact: Option<&str>,
+    ) -> String {
+        let artifact = artifact.map_or_else(|| "null".to_owned(), |hash| format!("\"{hash}\""));
+        format!(
+            concat!(
+                "{{\"schema_version\":2,\"commit\":\"{}\",\"worktree_dirty\":false,",
+                "\"artifact_sha256\":{},\"executable_sha256\":\"{}\",",
+                "\"suite\":\"{}\",\"results\":[{{\"id\":\"{}\",",
+                "\"status\":\"PASSED\"}}]}}\n"
+            ),
+            candidate.source_commit, artifact, candidate.exe_sha256, suite, task
+        )
     }
 
     #[test]

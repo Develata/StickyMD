@@ -35,6 +35,9 @@ Warm 400 ms 是 2026-08-23 USER-approved engineering gate recalibration，不是
 - receipts bind exact source commit、EXE、ZIP；stale or dirty evidence fails closed。
 - manual recorder requires an interactive terminal and explicit `PASS` / `FAIL` / `NOT TESTED`。
 - readiness has no `--force-ready` path。
+- readiness requires five non-interchangeable exact local receipts: Release/package、headless CI、
+  performance、runtime and resources。每份都校验 suite、唯一 required task、source/EXE identity、
+  clean tree 与全部 PASS；Release/package 另绑定 ZIP。
 
 ## Known P0 / P1
 
@@ -73,6 +76,19 @@ Windows `LockApp` 窗口覆盖输入桌面：从主屏左缘到正文区域的 `
 从而过早撤销 collapsed sensor 的临时 topmost。实现现仅在 `false -> true` 焦点跃迁时撤销，
 并在已聚焦窗口实际开始展开时清理；新增确定性 reducer regression test。该源码修复使
 `59c5ca7` 的所有 exact receipts 作废；当前锁屏输入桌面仍不能替代 P12-M16 的人工验收。
+
+第四个候选 `e6484833ab44a82fd0daadf0238596e469ead733` 通过 Release 10/10 与 exact
+`all --ci` 16/16；portable、Preview/Split、RaTeX 与图片 runtime 也通过。其 Phase 8 sensor
+runtime 仍因上述 `LockApp` 输入桌面阻塞。exact performance receipt 进一步真实记录 cold p95
+`812.599 ms`、warm p95 `531.779 ms`，均超过 400 ms hard gate；cold/warm median 分别仅
+`251.557 ms` / `361.149 ms`，慢样本同时集中在字体、source layout、show/focus 等多个里程碑，
+符合当前被锁输入桌面/系统调度高方差而非本次 reducer 热路径回归的特征，但仍按门禁记为
+FAILED，不以历史数据覆盖。
+
+该失败还暴露了资格化工具的 fail-open 缺陷：readiness 原先只读取 Release/package 的
+`automated-qualification.json`，没有强制 performance/runtime/resources。实现现要求五类
+不可互换的 exact receipt，缺失、FAILED、dirty、stale 或 required task 不匹配均阻塞。
+此 source-controlled 修复再次作废 `e648483` candidate；旧 FAILED receipts仅保留诊断价值。
 
 ## Manual Evidence
 

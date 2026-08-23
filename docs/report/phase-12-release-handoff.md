@@ -10,7 +10,11 @@ draft release, or publish.
 | Evidence | Path | Expected producer |
 | --- | --- | --- |
 | Candidate identity | `dist/evidence/release-candidate.json` | `stickymd-smoke qualification candidate` |
-| Automated gates | `dist/evidence/automated-qualification.json` | Phase 12 `-Release` wrapper / Rust runner |
+| Release/package gates | `dist/evidence/automated-qualification.json` | Phase 12 `-Release` wrapper / Rust runner |
+| Headless CI gates | `dist/evidence/headless-ci-qualification.json` | `stickymd-smoke all --ci --json` with evidence output |
+| Performance gates | `dist/evidence/performance-qualification.json` | Phase 12 `-Performance` wrapper |
+| Runtime gates | `dist/evidence/runtime-qualification.json` | Phase 12 `-Runtime` wrapper |
+| Resource gates | `dist/evidence/resources-qualification.json` | Phase 12 `-Resources` wrapper |
 | USER decisions | `dist/evidence/release-decisions.json` | candidate projection; `qualification decision` only after explicit USER instruction |
 | Manual matrix | `dist/evidence/manual-acceptance.json` | interactive `stickymd-smoke acceptance manual` |
 | Remote workflow | `dist/evidence/remote-workflow.json` | `qualification remote` after push authorization |
