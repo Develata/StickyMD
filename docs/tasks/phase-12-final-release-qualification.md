@@ -38,6 +38,8 @@ exact identity；在任何必要证据或 USER 授权缺失时 fail closed。
 - exact package、SBOM、checksums、portable runtime smoke。
 - smoke CLI 先建立 Per-Monitor V2 DPI context；scaled-monitor runtime controls 使用物理像素，
   不接受 DPI virtualization 后再次缩放的坐标。
+- opt-in desktop smoke 的 cursor parking 允许 3 次 25 ms 有界重试，并用实际 cursor position
+  接受“API 返回 false 但目标已达到”的语义成功；持续失败仍终止验收。
 - readiness 在 manual/remote/USER decision 缺失时必须返回非零且解释 blockers。
 
 ## Out of Scope

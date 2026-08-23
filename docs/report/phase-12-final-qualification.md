@@ -57,6 +57,13 @@ receipt 的动态结果，以免制造 tested commit / report commit 循环。
 成立。修复只改变 smoke 线程的 DPI awareness，不改变产品控件布局、命中算法或 authority。
 所有旧 candidate/automated receipt 依 exact-SHA 规则自然失效，必须从新提交重新生成。
 
+第二个候选 `5c205365d79968d4194c614be0a02e64b9525b20` 的完整 resources 任务在已通过
+Source/Preview/Split 与 math resource 后，于 image resource 第 3 个 Source 样本的 cursor
+parking 辅助调用失败。`SetCursorPos` 返回 false，但 Windows last-error 为 0；紧随其后的独立
+调用成功且 `GetCursorPos` 确认到达目标。该候选因此仍按 fail-closed 规则作废。smoke 现对
+cursor parking 使用 3 次、间隔 25 ms 的有界重试并确认实际坐标；持续失败仍使任务失败，
+不会把真实 input-desktop 不可用误记为 PASS。
+
 ## Manual Evidence
 
 `docs/acceptance-cases/phase-12.md` 汇总 Tier A/B/C。当前全部保持 `NOT TESTED`；只有

@@ -26,6 +26,8 @@ const SWP_NOMOVE: u32 = 0x0002;
 const SWP_NOZORDER: u32 = 0x0004;
 const SWP_NOACTIVATE: u32 = 0x0010;
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
+const CURSOR_MOVE_ATTEMPTS: usize = 3;
+const CURSOR_MOVE_RETRY: Duration = Duration::from_millis(25);
 
 #[derive(Default)]
 struct WindowSearch {
@@ -78,6 +80,13 @@ struct NativeRect {
     bottom: i32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct NativePoint {
+    x: i32,
+    y: i32,
+}
+
 #[link(name = "user32")]
 unsafe extern "system" {
     fn EnumWindows(
@@ -115,6 +124,7 @@ unsafe extern "system" {
         flags: u32,
     ) -> i32;
     fn SetCursorPos(x: i32, y: i32) -> i32;
+    fn GetCursorPos(point: *mut NativePoint) -> i32;
     fn PostMessageW(window: isize, message: u32, wparam: usize, lparam: isize) -> i32;
     fn SendMessageW(window: isize, message: u32, wparam: usize, lparam: isize) -> isize;
     fn SetThreadDpiAwarenessContext(context: isize) -> isize;
@@ -300,15 +310,7 @@ pub(crate) fn reveal_primary_left_sensor(window: WindowHandle) -> Result<(), Str
     let sensor_y = rect
         .y
         .saturating_add((rect.height / 2).min(i32::MAX as u32) as i32);
-    // SAFETY: SetCursorPos consumes only copied screen coordinates and retains
-    // no pointer. This opt-in runtime smoke intentionally drives the real
-    // desktop cursor; it is never part of CI.
-    if unsafe { SetCursorPos(outside_x, sensor_y) } == 0 {
-        return Err(format!(
-            "cannot move cursor away from StickyMD sensor: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
+    set_cursor_position(outside_x, sensor_y, "move cursor away from StickyMD sensor")?;
     // The paper can animate away from a cursor that winit still marks as
     // inside until Windows delivers its tracked leave message. Mirror the
     // actual outside position to the HWND first so the following sensor move
@@ -323,14 +325,7 @@ pub(crate) fn reveal_primary_left_sensor(window: WindowHandle) -> Result<(), Str
     // full scheduling slice to observe CursorLeft before returning to the
     // 3-DIP sensor; otherwise a long stress run can miss a synthetic enter.
     thread::sleep(Duration::from_millis(50));
-    // SAFETY: same contract as above; the destination is the visible primary
-    // left-edge sensor strip owned by the paper window.
-    if unsafe { SetCursorPos(sensor_x, sensor_y) } == 0 {
-        return Err(format!(
-            "cannot hover StickyMD sensor: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
+    set_cursor_position(sensor_x, sensor_y, "hover StickyMD sensor")?;
     // A long stress loop can still have its final physical move coalesced by
     // Windows. Reinforce the real cursor position with the corresponding
     // client WM_MOUSEMOVE so winit's normal enter/track path observes every
@@ -368,16 +363,7 @@ pub(crate) fn park_cursor_at_primary_right(window: WindowHandle) -> Result<(), S
     let y = rect
         .y
         .saturating_add((rect.height / 2).min(i32::MAX as u32) as i32);
-    // SAFETY: coordinates are copied by SetCursorPos. This is an explicit,
-    // opt-in desktop runtime smoke and never executes in CI.
-    if unsafe { SetCursorPos(x, y) } == 0 {
-        Err(format!(
-            "cannot park cursor outside StickyMD: {}",
-            std::io::Error::last_os_error()
-        ))
-    } else {
-        Ok(())
-    }
+    set_cursor_position(x, y, "park cursor outside StickyMD")
 }
 
 pub(crate) fn park_cursor_outside_window(window: WindowHandle) -> Result<(), String> {
@@ -416,17 +402,33 @@ pub(crate) fn park_cursor_outside_window(window: WindowHandle) -> Result<(), Str
     let Some((x, y)) = point else {
         return Err("cannot park the cursor inside the work area but outside StickyMD".to_owned());
     };
-    // SAFETY: coordinates are copied by SetCursorPos. The selected point is
-    // inset from every work-area edge and outside the measured StickyMD rect,
-    // avoiding both paper interaction and taskbar/edge-sensor activation.
-    if unsafe { SetCursorPos(x, y) } == 0 {
-        Err(format!(
-            "cannot park cursor outside StickyMD: {}",
-            std::io::Error::last_os_error()
-        ))
-    } else {
-        Ok(())
+    set_cursor_position(x, y, "park cursor outside StickyMD")
+}
+
+fn set_cursor_position(x: i32, y: i32, operation: &str) -> Result<(), String> {
+    let mut last_error = None;
+    for attempt in 0..CURSOR_MOVE_ATTEMPTS {
+        // SAFETY: SetCursorPos consumes copied screen coordinates and retains
+        // no pointer. This opt-in runtime smoke drives the real desktop cursor
+        // and never runs in CI.
+        if unsafe { SetCursorPos(x, y) } != 0 {
+            return Ok(());
+        }
+        last_error = Some(std::io::Error::last_os_error());
+        let mut actual = NativePoint::default();
+        // SAFETY: `actual` is writable for one POINT; GetCursorPos copies the
+        // current desktop cursor location and retains no pointer.
+        if unsafe { GetCursorPos(&raw mut actual) } != 0 && actual == (NativePoint { x, y }) {
+            return Ok(());
+        }
+        if attempt + 1 < CURSOR_MOVE_ATTEMPTS {
+            thread::sleep(CURSOR_MOVE_RETRY);
+        }
     }
+    Err(format!(
+        "cannot {operation} after {CURSOR_MOVE_ATTEMPTS} attempts: {}",
+        last_error.unwrap_or_else(std::io::Error::last_os_error)
+    ))
 }
 
 pub(crate) fn window_rect(window: WindowHandle) -> Result<WindowRect, String> {
