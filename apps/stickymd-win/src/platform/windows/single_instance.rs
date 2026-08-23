@@ -153,19 +153,14 @@ pub enum SingleInstanceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::unique_temp_path;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::mpsc;
     use std::time::Duration;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_program_directory() -> (PathBuf, ProgramDirectory) {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("stickymd-instance-{}-{nonce}", std::process::id()));
+        let root = unique_temp_path("instance");
         fs::create_dir(&root).unwrap();
         let executable = root.join("StickyMD.exe");
         fs::write(&executable, b"").unwrap();

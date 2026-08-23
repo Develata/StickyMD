@@ -83,9 +83,9 @@ fn reconcile_deferred(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::unique_temp_path;
     use std::fs;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
     use stickymd_core::{AssetEffect, ManagedAssetLocation, hash_bytes};
     use stickymd_render::image::prepare_rgba_image;
 
@@ -95,14 +95,7 @@ mod tests {
         AssetStorage,
         stickymd_core::ManagedAssetName,
     ) {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "stickymd-safe-assets-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = unique_temp_path("safe-assets");
         let note_dir = root.join("note");
         let images = note_dir.join("images");
         let trash = note_dir.join(".trash");

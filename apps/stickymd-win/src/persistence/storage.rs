@@ -370,18 +370,14 @@ pub enum NoteStorageError {
 mod tests {
     use super::*;
     use crate::platform::windows::atomic_file::{prepare_temporary, publish_prepared};
+    use crate::test_support::unique_temp_path;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
     use stickymd_core::{
         CursorSnapshot, DocumentState, EditKind, EditMeta, EditRequest, LineEnding, hash_bytes,
     };
 
     fn unique_dir() -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("stickymd-storage-{}-{nonce}", std::process::id()))
+        unique_temp_path("storage")
     }
 
     fn request(text: &str, expected: Option<DiskFingerprint>, force: bool) -> PersistRequest {

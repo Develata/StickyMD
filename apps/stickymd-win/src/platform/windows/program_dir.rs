@@ -203,15 +203,11 @@ pub enum RuntimePathsError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::unique_temp_path;
     use std::collections::HashSet;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_dir(label: &str) -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("stickymd-{label}-{}-{nonce}", std::process::id()))
+        unique_temp_path(label)
     }
 
     #[test]

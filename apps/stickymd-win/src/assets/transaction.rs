@@ -213,8 +213,8 @@ fn read_file_bounded(path: &PathBuf) -> Result<Vec<u8>, AssetPasteError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::unique_temp_path;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
     use stickymd_core::{
         CursorSnapshot, DocumentState, EditKind, EditMeta, EditRequest, LineEnding,
         ManagedAssetName, Selection,
@@ -222,14 +222,7 @@ mod tests {
     use stickymd_render::image::{inspect_encoded_image, prepare_rgba_image};
 
     fn fixture() -> (PathBuf, AssetStorage) {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "stickymd-asset-transaction-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = unique_temp_path("asset-transaction");
         let images = root.join("images");
         let trash = root.join(".trash");
         fs::create_dir_all(&images).unwrap();

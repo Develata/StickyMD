@@ -79,18 +79,12 @@ pub fn write_startup_trace(path: &Path, bytes: &[u8]) -> Result<(), DiagnosticEv
 #[cfg(test)]
 mod tests {
     use super::write_startup_trace;
+    use crate::test_support::unique_temp_path;
     use std::fs::{self, OpenOptions};
     use std::io::Write as _;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_trace_path(label: &str) -> std::path::PathBuf {
-        let sequence = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |duration| duration.as_nanos());
-        std::env::temp_dir().join(format!(
-            "stickymd-{label}-{}-{sequence}.trace",
-            std::process::id()
-        ))
+        unique_temp_path(label).with_extension("trace")
     }
 
     #[test]

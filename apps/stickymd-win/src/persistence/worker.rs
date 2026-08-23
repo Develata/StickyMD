@@ -499,9 +499,10 @@ enum WorkerJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::unique_temp_path;
     use std::fs;
     use std::sync::{Arc, Barrier, mpsc};
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::Duration;
     use stickymd_core::{Generation, LineEnding, hash_bytes};
 
     fn job(text: &str) -> NoteJob {
@@ -530,14 +531,7 @@ mod tests {
 
     #[test]
     fn next_note_waits_for_ack_and_stale_base_request_is_discarded() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "stickymd-worker-barrier-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = unique_temp_path("worker-barrier");
         fs::create_dir(&root).unwrap();
         let target = root.join("note.md");
         let temporary = root.join("note.md.tmp");
@@ -622,14 +616,7 @@ mod tests {
         use stickymd_core::ManagedAssetLocation;
         use stickymd_render::image::prepare_rgba_image;
 
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "stickymd-worker-asset-order-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = unique_temp_path("worker-asset-order");
         let images = root.join("images");
         let trash = root.join(".trash");
         fs::create_dir_all(&images).unwrap();

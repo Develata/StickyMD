@@ -27,6 +27,8 @@ mod preview;
 mod startup;
 #[cfg(windows)]
 mod surface;
+#[cfg(test)]
+mod test_support;
 
 #[cfg(windows)]
 fn main() {

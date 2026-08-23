@@ -80,9 +80,10 @@ pub enum FileWatchError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::unique_temp_path;
     use std::fs;
     use std::sync::mpsc;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::Duration;
 
     #[test]
     fn watch_filter_is_narrow() {
@@ -105,12 +106,7 @@ mod tests {
 
     #[test]
     fn windows_backend_emits_a_hint_for_external_note_write() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("stickymd-watch-{}-{nonce}", std::process::id()));
+        let root = unique_temp_path("watch");
         fs::create_dir(&root).unwrap();
         let (sender, receiver) = mpsc::channel();
         let watcher = NoteDirectoryWatcher::start(&root, move |signal| {

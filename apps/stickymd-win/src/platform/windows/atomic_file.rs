@@ -291,16 +291,12 @@ pub enum AtomicPublishError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::unique_temp_path;
     use std::fs;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_dir() -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("stickymd-atomic-{}-{nonce}", std::process::id()))
+        unique_temp_path("atomic")
     }
 
     #[test]

@@ -256,17 +256,12 @@ pub enum StartupError {
 mod tests {
     use super::*;
     use crate::platform::windows::program_dir::RuntimePaths;
+    use crate::test_support::unique_temp_path;
     use std::fs;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn fixture() -> (PathBuf, RuntimePaths) {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("stickymd-bootstrap-{}-{nonce}", std::process::id()));
+        let root = unique_temp_path("bootstrap");
         fs::create_dir(&root).unwrap();
         let executable = root.join("StickyMD.exe");
         fs::write(&executable, b"").unwrap();

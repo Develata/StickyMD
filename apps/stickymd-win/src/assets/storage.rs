@@ -479,16 +479,11 @@ fn read_bounded_file(file: &mut File) -> Result<Vec<u8>, AssetStorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::test_support::unique_temp_path;
     use stickymd_render::image::prepare_rgba_image;
 
     fn fixture() -> (PathBuf, AssetStorage) {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("stickymd-assets-{}-{nonce}", std::process::id()));
+        let root = unique_temp_path("assets");
         let images = root.join("images");
         let trash = root.join(".trash");
         fs::create_dir_all(&images).unwrap();
