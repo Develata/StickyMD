@@ -2,7 +2,7 @@
 
 ## Completion State
 
-In Progress
+Completed — awaiting USER review
 
 ## Purpose
 
@@ -85,4 +85,6 @@ receipt 的项目继续保持 `NOT TESTED`。
 
 ## Result
 
-Pending measurement and final evidence.
+Implementation, exact-candidate automation, resource/performance measurement and local packaging are
+complete. Cold startup passes the USER-approved 400 ms gate. Warm startup remains above 180 ms and all
+real-environment manual rows remain `NOT TESTED`; therefore the candidate is intentionally `NOT RC READY`.

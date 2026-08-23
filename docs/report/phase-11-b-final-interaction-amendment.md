@@ -40,10 +40,10 @@ and temporary sensor topmost.
 
 | Workload | median | p95 | max | Gate |
 | --- | ---: | ---: | ---: | --- |
-| 1 MiB / 1000 semantic math nodes | 19.745 ms | 21.904 ms | 22.108 ms | PASS <50 ms |
-| equal-geometry zoom relayout 50% | 1.358 ms | 1.596 ms | 1.691 ms | PASS <=50 ms |
-| Preview 1 MiB | 234.258 ms | 253.253 ms | 266.010 ms | PASS <=2 s |
-| math document 1 MiB / 500 formulas | 237.516 ms | 242.320 ms | 246.823 ms | PASS <=2 s |
+| 1 MiB / 1000 semantic math nodes | 25.218 ms | 29.030 ms | 31.758 ms | PASS <50 ms |
+| equal-geometry zoom relayout 50% | 1.756 ms | 2.479 ms | 2.851 ms | PASS <=50 ms |
+| Preview 1 MiB | 153.957 ms | 208.042 ms | 332.852 ms | PASS <=2 s |
+| math document 1 MiB / 500 formulas | 146.531 ms | 190.651 ms | 195.145 ms | PASS <=2 s |
 
 The first broad short-run aggregation regressed 50% zoom p95 to 56–62 ms and was rejected. The retained
 layout policy keeps typical-note attributed runs fine-grained, batches large-document mixed runs by the
@@ -67,14 +67,15 @@ availability still forces a correct rebuild. No cache survives the current layou
 - Rust CLI owns Phase 11-B headless, performance and copied-Release runtime scenarios;
 - `docs/acceptance-cases/phase-11-b.md` traces P11B-A01..A06, P11B-D001..D046 and
   P11B-M01..M05;
-- final CI-safe evidence: `docs/report/evidence/phase-11-b-ci-final.json`;
+- final CI-safe evidence: `docs/report/evidence/phase-11-all-ci-final.json`;
+- copied-Release interaction evidence: `docs/report/evidence/phase-11-b-runtime-final.json`;
 - five manual rows remain `NOT TESTED`.
 
 ## Artifact and Readiness
 
-The pre-amendment artifact is superseded. A new exact candidate package/hash/SBOM receipt is required after
-the implementation commit. Phase 11 startup and manual gates remain independent blockers, so this amendment
-does not make the product RC ready.
+The pre-amendment artifact is superseded. Candidate `23d2a410a256` has an exact package/hash/SBOM receipt
+in `phase-11-release-final.json`; package SHA-256 is `e5110550...60899`. Phase 11 warm-startup and manual
+gates remain independent blockers, so this amendment does not make the product RC ready.
 
 ## Architecture Drift
 

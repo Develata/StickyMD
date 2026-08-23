@@ -5,6 +5,9 @@
 No current-candidate human receipt was produced in this implementation session. Automated native-window
 and reducer checks are retained as useful regression evidence but are not promoted to manual PASS.
 
+Candidate identity for future receipts: commit `23d2a410a256`, EXE SHA-256
+`6dbc31fb34a21b687316dbcb40719c123623598f8f7d10477af30b2bb41f7c5d`.
+
 ## Summary
 
 | Matrix | Manual rows | MANUAL PASS | NOT TESTED | FAIL | USER WAIVED |

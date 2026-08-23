@@ -21,14 +21,14 @@
 
 | Gate | Current evidence | Status |
 | --- | --- | --- |
-| cold editor-ready p95 <=400 ms | 30 samples, 433.263 ms | FAIL; USER decision required |
-| warm editor-ready p95 <=180 ms | 50 samples, 340.214 ms | FAIL; USER decision required |
+| cold editor-ready p95 <=400 ms | 30 samples, 300.692 ms | PASS under USER-approved gate |
+| warm editor-ready p95 <=180 ms | 50 samples, 311.353 ms | FAIL; USER decision required |
 | Preview <=100/400/2000 ms | current Release baselines | PASS |
-| zoom relayout p95 <=50 ms | 50/100/300% = 41.402/40.072/35.667 ms | PASS |
-| memory / idle CPU | final resource rerun required after amendment | pending final receipt |
+| zoom relayout p95 <=50 ms | 50/100/300% = 2.479/2.365/2.347 ms | PASS |
+| memory / idle CPU | full five-process resource matrix | PASS; max idle CPU 0.005% |
 
 Startup 不是 architecture invariant。当前实现不以第二渲染器、持久字体数据库、后台服务或
-平行 authority 换取数字；在 USER 明确批准新门前，两项失败继续阻断 RC。
+平行 authority 换取数字；cold 已通过，warm 在 USER 明确批准新门前继续阻断 RC。
 
 ## Class C — Environment-dependent Acceptance
 
@@ -44,7 +44,7 @@ Phase 11-B 的真实按钮/Undo/Pin hover timing。
 | Severity | Count | Disposition |
 | --- | ---: | --- |
 | P0 known correctness/security defects | 0 | none known after automated regression |
-| P1 release blockers | 2 classes | startup gates FAIL; release-critical manual matrix NOT TESTED |
+| P1 release blockers | 2 classes | warm startup gate FAIL; release-critical manual matrix NOT TESTED |
 | P2 follow-up observations | 0 | no new frozen-v1 product issue classified |
 
 P1 未归零，且已明确阻断 release。不得 tag、push 或创建 GitHub Release。

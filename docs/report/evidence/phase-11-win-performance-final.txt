@@ -1,0 +1,28 @@
+    Finished `release` profile [optimized] target(s) in 0.63s
+     Running unittests src\main.rs (target\release\deps\stickymd_win-29f04d39c41ea6f7.exe)
+
+running 7 tests
+phase8 control_layout_100k median=2.0318ms p95=2.5197ms max=3.0475ms
+test app::controls::phase8_control_tests::phase8_performance_control_layout_and_hit_test ... ok
+phase8 reducer_100k median=2.5427ms p95=2.9856ms max=3.3523ms; geometry_100k median=2.1878ms p95=2.5009ms max=2.651ms
+test flow::window::reducer::phase8_window_tests::phase8_performance_window_reducer_and_geometry ... ok
+phase6 source_during_math_build edits=100 p95=1.8µs max=365.3µs
+PHASE4_PERSIST size=20480 snapshot=3/11/16us encode=26/38/136us hash=13/16/24us write_flush=5541/8448/9497us replace=2841/4953/7536us total=8436/11889/12606us
+phase7 export 20-references/1MiB-shared-asset median_us=17636 p95_us=22204 max_us=22422
+test export::tests::phase7_export_release_baseline ... ok
+test preview::worker::tests::phase6_source_edit_during_math_build_release_baseline ... ok
+PHASE4_PERSIST size=102400 snapshot=11/52/53us encode=140/188/577us hash=68/80/86us write_flush=4847/7526/8444us replace=2791/4392/4656us total=8141/10540/11501us
+PHASE4_PERSIST size=1048576 snapshot=288/417/474us encode=1306/1546/1694us hash=617/716/731us write_flush=5653/8441/9383us replace=2447/3123/3223us total=10291/13312/14437us
+test persistence::storage::tests::phase4_persistence_release_baseline ... ok
+20 KiB: end typing total p50=0.314ms p95=0.436ms max=0.502ms [mutation=0.003 projection=0.035 caret=0.006 paint=0.416 p95]; start typing p95=0.385ms [mutation=0.015 projection=0.032 caret=0.004 paint=0.363]; middle IME p95=0.266ms [mutation=0.003 projection=0.033 caret=0.002 paint=0.235]
+20 KiB: backspace=3.044ms delete=0.349ms selection-replace=0.309ms newline=0.385ms undo=1.022ms redo=0.456ms full-resync=1.068ms p95
+100 KiB: end typing total p50=0.266ms p95=0.317ms max=0.330ms [mutation=0.009 projection=0.014 caret=0.012 paint=0.277 p95]; start typing p95=0.328ms [mutation=0.005 projection=0.025 caret=0.014 paint=0.292]; middle IME p95=0.923ms [mutation=0.009 projection=0.519 caret=0.027 paint=0.359]
+100 KiB: backspace=2.381ms delete=0.760ms selection-replace=0.789ms newline=1.258ms undo=1.156ms redo=0.743ms full-resync=3.835ms p95
+1 MiB: end typing total p50=0.755ms p95=0.882ms max=0.988ms [mutation=0.003 projection=0.028 caret=0.317 paint=0.539 p95]; start typing p95=1.636ms [mutation=0.064 projection=0.120 caret=0.519 paint=1.005]; middle IME p95=1.532ms [mutation=0.045 projection=0.455 caret=0.391 paint=0.679]
+1 MiB: backspace=4.811ms delete=2.622ms selection-replace=2.624ms newline=4.957ms undo=2.507ms redo=2.108ms full-resync=37.203ms p95
+test app::tests::phase3_source_pipeline_release_baseline ... ok
+phase7 paste 10 PNG files total_median_us=87900 total_p95_us=133822 total_max_us=140789 capture_median_us=1317 capture_p95_us=1994 capture_max_us=2352 inspect_median_us=20 inspect_p95_us=34 inspect_max_us=38 prepare_median_us=35 prepare_p95_us=68 prepare_max_us=102 persist_median_us=87341 persist_p95_us=136215 persist_max_us=182848 insert_median_us=15 insert_p95_us=28 insert_max_us=28
+test assets::transaction::tests::phase7_image_paste_release_baseline ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 205 filtered out; finished in 5.95s
+

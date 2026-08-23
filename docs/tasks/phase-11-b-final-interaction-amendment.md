@@ -2,7 +2,7 @@
 
 ## Status
 
-In Progress
+Completed — awaiting USER review
 
 ## Purpose
 
@@ -38,4 +38,5 @@ Pin/Always-on-top 与 dock auto-hide 状态机正交。
 
 ## Result
 
-Pending final verification and Phase 11 readiness reassessment.
+Semantic conversion, Pin/auto-hide orthogonality, exact-candidate automation and packaging are complete.
+Phase 11 readiness remains blocked only by the unapproved warm-startup gate and manual `NOT TESTED` rows.
