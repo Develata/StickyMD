@@ -36,6 +36,8 @@ exact identity；在任何必要证据或 USER 授权缺失时 fail closed。
 - `all --ci` 无界面合并任务图。
 - fmt、strict Clippy、workspace/core/render/win Release tests、deny、release build。
 - exact package、SBOM、checksums、portable runtime smoke。
+- smoke CLI 先建立 Per-Monitor V2 DPI context；scaled-monitor runtime controls 使用物理像素，
+  不接受 DPI virtualization 后再次缩放的坐标。
 - readiness 在 manual/remote/USER decision 缺失时必须返回非零且解释 blockers。
 
 ## Out of Scope

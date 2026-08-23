@@ -22,6 +22,7 @@
 | P12-A12 | Readiness has no force-ready path and reports missing manual/remote/USER gates | Automated | `stickymd-smoke qualification readiness --explain` | AUTOMATED PASS |
 | P12-A13 | Remote workflow receipt must match exact SHA and successful attempt | Automated | `qualification remote` parser/identity contract | AUTOMATED PASS |
 | P12-A14 | Downloaded ZIP must pass checksums, package/runtime smoke and exact hashes | Automated | `qualification downloaded --zip=<path>` | AUTOMATED PASS |
+| P12-A15 | Runtime driver uses Per-Monitor V2 coordinates and does not double-apply monitor scale | Automated | `phase12_runtime_driver_uses_per_monitor_v2_coordinates` plus copied Release Phase 8 runtime lifecycle at 150% DPI | AUTOMATED PASS |
 
 ## Manual Tier A — release blocking unless explicitly waived
 

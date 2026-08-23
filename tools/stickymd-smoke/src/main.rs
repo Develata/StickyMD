@@ -28,6 +28,8 @@ const fn exit_code(result: &Result<(), String>) -> i32 {
 }
 
 fn run() -> Result<(), String> {
+    #[cfg(windows)]
+    window_control::enable_per_monitor_v2_dpi_awareness()?;
     let command = cli::CommandLine::parse(std::env::args().skip(1))?;
     let root = governance::find_repository_root(
         &std::env::current_dir()

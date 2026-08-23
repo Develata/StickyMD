@@ -25,6 +25,7 @@ const SWP_NOSIZE: u32 = 0x0001;
 const SWP_NOMOVE: u32 = 0x0002;
 const SWP_NOZORDER: u32 = 0x0004;
 const SWP_NOACTIVATE: u32 = 0x0010;
+const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 
 #[derive(Default)]
 struct WindowSearch {
@@ -116,6 +117,28 @@ unsafe extern "system" {
     fn SetCursorPos(x: i32, y: i32) -> i32;
     fn PostMessageW(window: isize, message: u32, wparam: usize, lparam: isize) -> i32;
     fn SendMessageW(window: isize, message: u32, wparam: usize, lparam: isize) -> isize;
+    fn SetThreadDpiAwarenessContext(context: isize) -> isize;
+    #[cfg(test)]
+    fn GetThreadDpiAwarenessContext() -> isize;
+    #[cfg(test)]
+    fn AreDpiAwarenessContextsEqual(first: isize, second: isize) -> i32;
+}
+
+/// Keep native window queries and posted client coordinates in physical
+/// pixels. Without this context Windows virtualizes cross-process coordinates
+/// on scaled monitors, causing the smoke driver to apply DPI twice.
+pub(crate) fn enable_per_monitor_v2_dpi_awareness() -> Result<(), String> {
+    // SAFETY: the pseudo-handle is the documented constant for Per-Monitor V2.
+    // The call changes only the current smoke CLI thread and retains no pointer.
+    let previous =
+        unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    if previous == 0 {
+        return Err(format!(
+            "cannot enable Per-Monitor V2 DPI awareness for runtime smoke: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
 }
 
 /// Click StickyMD's Source toolbar control in the visible top-level window
@@ -794,5 +817,20 @@ mod tests {
             assert!(control / scale >= 23.0);
             assert!(2.0 * edge + 9.0 * control + 8.0 * gap <= 220.0 * scale + 0.5);
         }
+    }
+
+    #[test]
+    fn phase12_runtime_driver_uses_per_monitor_v2_coordinates() {
+        enable_per_monitor_v2_dpi_awareness().expect("enable Per-Monitor V2 DPI awareness");
+        // SAFETY: both APIs return or compare copied DPI-context pseudo-handles
+        // for the current test thread and retain no resources.
+        let current = unsafe { GetThreadDpiAwarenessContext() };
+        assert_ne!(current, 0);
+        assert_ne!(
+            unsafe {
+                AreDpiAwarenessContextsEqual(current, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+            },
+            0
+        );
     }
 }

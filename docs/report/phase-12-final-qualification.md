@@ -47,6 +47,16 @@ Warm 400 ms 是 2026-08-23 USER-approved engineering gate recalibration，不是
 Freeze 后写入 `dist/evidence/automated-qualification.json`。Source-controlled report 不复制临时
 receipt 的动态结果，以免制造 tested commit / report commit 循环。
 
+### Invalidated candidate
+
+初次冻结候选 `48327f4283da488826af9767076b7b12b56447d7` 已作废。其 product runtime 没有发现
+控件故障，但 `stickymd-smoke` 运行时驱动未建立 Per-Monitor V2 DPI context：在 150% DPI
+显示器上，Windows 向 smoke 进程返回虚拟化后的客户区坐标，驱动又按 1.5 缩放一次，消息
+送达产品时再次被系统缩放。独立诊断构建记录到期望的 Preview 点击实际到达
+`PhysicalPosition { x: 175, y: 39 }` 并命中 `ConvertMath`；Phase 8 的 Collapse 点击因此不能
+成立。修复只改变 smoke 线程的 DPI awareness，不改变产品控件布局、命中算法或 authority。
+所有旧 candidate/automated receipt 依 exact-SHA 规则自然失效，必须从新提交重新生成。
+
 ## Manual Evidence
 
 `docs/acceptance-cases/phase-12.md` 汇总 Tier A/B/C。当前全部保持 `NOT TESTED`；只有
