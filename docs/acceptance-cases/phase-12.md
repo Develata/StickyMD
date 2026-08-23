@@ -14,7 +14,7 @@
 | P12-A04 | Workspace and crate Release tests remain clean | Automated | Phase 12 baseline commands | AUTOMATED PASS |
 | P12-A05 | Dependency/advisory/license policy remains enforced | Automated | `cargo deny check` via Phase 12 `-Release` | AUTOMATED PASS |
 | P12-A06 | Exact clean commit creates deterministic local-RC package name | Automated | `tools/release/package.ps1` dirty-tree and SHA contract | AUTOMATED PASS |
-| P12-A07 | ZIP allowlist, PE x64, manifest, license and no-user-data gates run | Automated | `tools/release/verify-package.ps1 -Runtime` | AUTOMATED PASS |
+| P12-A07 | ZIP allowlist, PE x64, manifest, license, no-user-data and DPI-correct runtime gates run | Automated | `tools/release/verify-package.ps1 -Runtime`, `phase12_runtime_driver_uses_per_monitor_v2_coordinates`, and copied Release Phase 8 runtime lifecycle at 150% DPI | AUTOMATED PASS |
 | P12-A08 | SPDX SBOM and checksums bind exact ZIP and SBOM | Automated | pinned Syft generator plus verifier | AUTOMATED PASS |
 | P12-A09 | Candidate receipt binds source, Cargo.lock, EXE, ZIP, SBOM and toolchain | Automated | `stickymd-smoke qualification candidate` plus CLI tests | AUTOMATED PASS |
 | P12-A10 | Manual recorder rejects noninteractive inference and accepts explicit statuses only | Automated | `stickymd-smoke` qualification unit tests | AUTOMATED PASS |
@@ -22,7 +22,6 @@
 | P12-A12 | Readiness has no force-ready path and reports missing manual/remote/USER gates | Automated | `stickymd-smoke qualification readiness --explain` | AUTOMATED PASS |
 | P12-A13 | Remote workflow receipt must match exact SHA and successful attempt | Automated | `qualification remote` parser/identity contract | AUTOMATED PASS |
 | P12-A14 | Downloaded ZIP must pass checksums, package/runtime smoke and exact hashes | Automated | `qualification downloaded --zip=<path>` | AUTOMATED PASS |
-| P12-A15 | Runtime driver uses Per-Monitor V2 coordinates and does not double-apply monitor scale | Automated | `phase12_runtime_driver_uses_per_monitor_v2_coordinates` plus copied Release Phase 8 runtime lifecycle at 150% DPI | AUTOMATED PASS |
 
 ## Manual Tier A — release blocking unless explicitly waived
 
