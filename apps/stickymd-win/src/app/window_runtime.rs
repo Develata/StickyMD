@@ -36,6 +36,7 @@ impl StickyApp {
         match result {
             Ok(()) => {
                 self.move_resize_active = true;
+                self.refresh_window_guards(None);
                 true
             }
             Err(error) => {

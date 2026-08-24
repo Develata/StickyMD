@@ -60,11 +60,13 @@ tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任
 
 ## Candidate Defect Correction
 
-旧 exact candidate 在 G1 人工验收中暴露三项 implementation defect：同一行局部 selection 误涂其它
+旧 exact candidate 在人工验收中暴露四项 implementation defect：同一行局部 selection 误涂其它
 逻辑行；math delimiter conversion 后 Source projection 未立即进入 layout；Split/Preview 之间切换时
-clean preview 未按新 viewport relayout。修复不改变 Document authority、Markdown/math semantics 或
-runtime dependency。Phase 8 copied-Release smoke 同时补齐 left/top/right 与两个顶角；人工 G2 在新候选
-上重跑前仍为 `NOT TESTED`。详见 `docs/report/phase-14-candidate-defect-remediation.md`。
+clean preview 未按新 viewport relayout；真实 winit move loop 未提交 Dock，导致三边失焦自动收起不
+工作。修复不改变 Document authority、Markdown/math semantics 或 runtime dependency。Phase 8
+copied-Release smoke 改用真实指针拖动与真实 shell 失焦，同时补齐 left/top/right、两个顶角和 Pin
+ON/OFF 正交路径；人工 G2 在新候选上重跑前仍为 `NOT TESTED`。详见
+`docs/report/phase-14-candidate-defect-remediation.md`。
 
 ## Resources Failure Triage
 

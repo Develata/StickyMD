@@ -5,14 +5,11 @@
 use std::ffi::c_void;
 
 use windows::Win32::UI::WindowsAndMessaging::{
-    MSG, PBT_APMRESUMEAUTOMATIC, WM_DISPLAYCHANGE, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE,
-    WM_POWERBROADCAST,
+    MSG, PBT_APMRESUMEAUTOMATIC, WM_DISPLAYCHANGE, WM_POWERBROADCAST,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeWindowSignal {
-    MoveSizeStarted,
-    MoveSizeFinished,
     DisplayTopologyChanged,
 }
 
@@ -28,8 +25,6 @@ pub fn translate_message(message: *const c_void) -> Option<NativeWindowSignal> {
     // the pointer is neither retained nor mutated.
     let message = unsafe { &*(message.cast::<MSG>()) };
     match message.message {
-        WM_ENTERSIZEMOVE => Some(NativeWindowSignal::MoveSizeStarted),
-        WM_EXITSIZEMOVE => Some(NativeWindowSignal::MoveSizeFinished),
         WM_DISPLAYCHANGE => Some(NativeWindowSignal::DisplayTopologyChanged),
         WM_POWERBROADCAST if message.wParam.0 as u32 == PBT_APMRESUMEAUTOMATIC => {
             Some(NativeWindowSignal::DisplayTopologyChanged)
@@ -42,6 +37,7 @@ pub fn translate_message(message: *const c_void) -> Option<NativeWindowSignal> {
 mod phase8_native_message_tests {
     use super::*;
     use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::WM_EXITSIZEMOVE;
 
     fn message(kind: u32, wparam: usize) -> MSG {
         MSG {
@@ -55,17 +51,9 @@ mod phase8_native_message_tests {
 
     #[test]
     fn phase8_native_message_hook_emits_only_shell_facts() {
-        let start = message(WM_ENTERSIZEMOVE, 0);
         let finish = message(WM_EXITSIZEMOVE, 0);
         let topology = message(WM_DISPLAYCHANGE, 0);
-        assert_eq!(
-            translate_message((&raw const start).cast()),
-            Some(NativeWindowSignal::MoveSizeStarted)
-        );
-        assert_eq!(
-            translate_message((&raw const finish).cast()),
-            Some(NativeWindowSignal::MoveSizeFinished)
-        );
+        assert_eq!(translate_message((&raw const finish).cast()), None);
         assert_eq!(
             translate_message((&raw const topology).cast()),
             Some(NativeWindowSignal::DisplayTopologyChanged)

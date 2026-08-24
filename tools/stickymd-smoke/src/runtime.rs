@@ -791,10 +791,10 @@ fn run_window_shell_lifecycle(
     // projection step. Poll the native fact instead of racing those two calls.
     wait_for_layered_alpha(window, Some(245))?;
 
-    // Exercise all three supported edges through the real Win32/winit bridge.
-    // Headless reducer tests own exact virtual-clock boundaries; this copied-
-    // Release receipt proves every edge can snap, collapse, reveal, and return
-    // to floating without a product-only test command channel.
+    // Exercise all three supported edges through physical pointer dragging and
+    // real focus loss. Headless reducer tests own the exact virtual-clock
+    // boundaries; this copied-Release receipt proves the native bridge reaches
+    // the 700-ms auto-collapse path without a product-only test command channel.
     exercise_primary_edge(
         program_directory,
         window,
@@ -803,13 +803,40 @@ fn run_window_shell_lifecycle(
     )?;
     crate::window_control::move_to_primary_inset(window, 32)?;
     wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
-    for (edge, config_value) in [
-        (crate::window_control::PrimaryDockEdge::Top, "top"),
-        (crate::window_control::PrimaryDockEdge::Right, "right"),
-    ] {
-        crate::window_control::move_to_primary_floating(window)?;
-        wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
-        exercise_primary_edge(program_directory, window, edge, config_value)?;
+    crate::window_control::move_to_primary_floating(window)?;
+    wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
+    exercise_primary_edge(
+        program_directory,
+        window,
+        crate::window_control::PrimaryDockEdge::Top,
+        "top",
+    )?;
+
+    // Pin is deliberately enabled before the Right-edge focus-loss cycle.
+    // The same auto-collapse/reveal behavior must hold with configured
+    // topmost ON, proving that Pin contributes only to effective Z-order.
+    crate::window_control::move_to_primary_floating(window)?;
+    wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
+    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Topmost)?;
+    wait_for_config_field(program_directory, "always_on_top = true")?;
+    if !crate::window_control::is_topmost(window)? {
+        return Err("configured topmost did not reach the real HWND".to_owned());
+    }
+    exercise_primary_edge(
+        program_directory,
+        window,
+        crate::window_control::PrimaryDockEdge::Right,
+        "right",
+    )?;
+    crate::window_control::move_to_primary_floating(window)?;
+    wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
+    if !crate::window_control::is_topmost(window)? {
+        return Err("configured topmost was lost across auto-collapse/reveal".to_owned());
+    }
+    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Topmost)?;
+    wait_for_config_field(program_directory, "always_on_top = false")?;
+    if crate::window_control::is_topmost(window)? {
+        return Err("cleared configured topmost remained on the real HWND".to_owned());
     }
 
     // A screen corner is simultaneously eligible for Top and one horizontal
@@ -823,17 +850,6 @@ fn run_window_shell_lifecycle(
     }
     crate::window_control::move_to_primary_floating(window)?;
     wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
-
-    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Topmost)?;
-    wait_for_config_field(program_directory, "always_on_top = true")?;
-    if !crate::window_control::is_topmost(window)? {
-        return Err("configured topmost did not reach the real HWND".to_owned());
-    }
-    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Topmost)?;
-    wait_for_config_field(program_directory, "always_on_top = false")?;
-    if crate::window_control::is_topmost(window)? {
-        return Err("cleared configured topmost remained on the real HWND".to_owned());
-    }
 
     for theme in ["system", "dark", "light"] {
         crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Theme)?;
@@ -970,7 +986,7 @@ fn exercise_primary_edge(
         program_directory,
         &format!("dock_edge = \"{config_value}\""),
     )?;
-    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Collapse)?;
+    crate::window_control::focus_shell_desktop(window)?;
     wait_for_primary_edge_state(window, edge, true)?;
     reveal_primary_edge_and_wait(window, edge)
 }

@@ -22,7 +22,7 @@
 | P11B-A03 | code/literal safety | Automated | code/fence/literal/malformed regressions | AUTOMATED PASS |
 | P11B-A04 | selection-scoped conversion | Automated | fully-contained selection regression | AUTOMATED PASS |
 | P11B-A05 | one-step undo | Automated | generation/Undo/Redo transaction regression | AUTOMATED PASS |
-| P11B-A06 | Pin/auto-hide orthogonality | Automated | reducer transition-equivalence regression | AUTOMATED PASS |
+| P11B-A06 | Pin/auto-hide orthogonality | Automated | all-edge reducer transition-equivalence regression + copied-Release Right-edge Pin-ON focus-loss lifecycle | AUTOMATED PASS |
 
 ## Definition-of-Done Trace
 
@@ -47,13 +47,13 @@
 | P11B-D017 | 0 matches no-op | Automated | no-op snapshot regression | AUTOMATED PASS |
 | P11B-D018 | conversion 正常触发 autosave/Source projection/Preview | Automated | ordinary `DocumentChanged` path、immediate source-layout regression、visible-mode relayout regression + copied-runtime lifecycle | AUTOMATED PASS |
 | P11B-D019 | compact toolbar 适配 220 DIP | Automated | compact geometry/hit-test regression | AUTOMATED PASS |
-| P11B-D020 | Pin 与 auto-hide 正交 | Automated | transition-equivalence regression | AUTOMATED PASS |
+| P11B-D020 | Pin 与 auto-hide 正交 | Automated | Left/Top/Right transition-equivalence regression + Right-edge Pin-ON runtime | AUTOMATED PASS |
 | P11B-D021 | auto-hide predicate 不读取 configured topmost | Automated | reducer boundary source audit | AUTOMATED PASS |
 | P11B-D022 | auto-hide predicate 不读取 effective topmost | Automated | reducer boundary source audit | AUTOMATED PASS |
-| P11B-D023 | Pin ON focus loss 仍 700ms collapse | Automated | reducer timer/equivalence regression | AUTOMATED PASS |
+| P11B-D023 | Pin ON focus loss 仍 700ms collapse | Automated | all-edge reducer timer/equivalence regression + Right-edge real focus-loss runtime | AUTOMATED PASS |
 | P11B-D024 | Pin ON manual 仍 collapse | Automated | manual-collapse regression + boundary proof | AUTOMATED PASS |
 | P11B-D025 | Pin ON Esc 仍 collapse | Automated | Escape regression + boundary proof | AUTOMATED PASS |
-| P11B-D026 | Pin ON sensor 仍 100ms reveal | Automated | reducer timer/equivalence regression | AUTOMATED PASS |
+| P11B-D026 | Pin ON sensor 仍 100ms reveal | Automated | all-edge reducer timer/equivalence regression + Right-edge sensor runtime | AUTOMATED PASS |
 | P11B-D027 | Pin ON hover leave 仍 500ms collapse | Automated | reducer timer/equivalence regression | AUTOMATED PASS |
 | P11B-D028 | Floating Pin ON 不进行 edge auto-hide | Automated | floating-state regression | AUTOMATED PASS |
 | P11B-D029 | temporary sensor topmost 逻辑保留 | Automated | sensor-topmost regressions | AUTOMATED PASS |

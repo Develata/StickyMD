@@ -848,17 +848,30 @@ mod phase8_window_tests {
     fn every_edge_auto_collapse_uses_exact_700ms_boundary_and_focus_guard() {
         for edge in [DockEdge::Left, DockEdge::Top, DockEdge::Right] {
             let mut coordinator = coordinator(StableVisibility::DockedExpanded(edge));
-            let effects = coordinator.dispatch(WindowIntent::GuardsChanged {
-                guards: WindowGuardSnapshot::default(),
-                now_ms: 10,
+            let focused_effects = coordinator.dispatch(WindowIntent::GuardsChanged {
+                guards: WindowGuardSnapshot {
+                    window_focused: true,
+                    ..Default::default()
+                },
+                now_ms: 0,
             });
-            assert!(effects.contains(&WindowEffect::WakeAt(10 + AUTO_COLLAPSE_DELAY_MS)));
-            coordinator.dispatch(WindowIntent::Tick { now_ms: 709 });
+            assert!(focused_effects.is_empty());
+            coordinator.dispatch(WindowIntent::Tick { now_ms: 700 });
             assert_eq!(
                 coordinator.state().visibility(),
                 VisibilityState::Presented(StableVisibility::DockedExpanded(edge))
             );
-            coordinator.dispatch(WindowIntent::Tick { now_ms: 710 });
+            let effects = coordinator.dispatch(WindowIntent::GuardsChanged {
+                guards: WindowGuardSnapshot::default(),
+                now_ms: 710,
+            });
+            assert!(effects.contains(&WindowEffect::WakeAt(710 + AUTO_COLLAPSE_DELAY_MS)));
+            coordinator.dispatch(WindowIntent::Tick { now_ms: 1_409 });
+            assert_eq!(
+                coordinator.state().visibility(),
+                VisibilityState::Presented(StableVisibility::DockedExpanded(edge))
+            );
+            coordinator.dispatch(WindowIntent::Tick { now_ms: 1_410 });
             assert!(matches!(
                 coordinator.state().visibility(),
                 VisibilityState::Animating(AnimationState {
@@ -872,7 +885,7 @@ mod phase8_window_tests {
                     ime_composing: true,
                     ..Default::default()
                 },
-                now_ms: 711,
+                now_ms: 1_411,
             });
             assert!(matches!(
                 coordinator.state().visibility(),
@@ -1214,73 +1227,75 @@ mod phase8_window_tests {
 
     #[test]
     fn phase11b_pin_is_orthogonal_to_every_auto_hide_reducer_transition() {
-        let mut unpinned = coordinator(StableVisibility::DockedExpanded(DockEdge::Left));
-        let mut pinned = coordinator(StableVisibility::DockedExpanded(DockEdge::Left));
-        let intents = [
-            WindowIntent::GuardsChanged {
-                guards: WindowGuardSnapshot::default(),
-                now_ms: 0,
-            },
-            WindowIntent::GuardsChanged {
-                guards: WindowGuardSnapshot {
-                    ime_composing: true,
-                    ..Default::default()
+        for edge in [DockEdge::Left, DockEdge::Top, DockEdge::Right] {
+            let mut unpinned = coordinator(StableVisibility::DockedExpanded(edge));
+            let mut pinned = coordinator(StableVisibility::DockedExpanded(edge));
+            let intents = [
+                WindowIntent::GuardsChanged {
+                    guards: WindowGuardSnapshot::default(),
+                    now_ms: 0,
                 },
-                now_ms: 100,
-            },
-            WindowIntent::GuardsChanged {
-                guards: WindowGuardSnapshot {
-                    dragging: true,
-                    ..Default::default()
+                WindowIntent::GuardsChanged {
+                    guards: WindowGuardSnapshot {
+                        ime_composing: true,
+                        ..Default::default()
+                    },
+                    now_ms: 100,
                 },
-                now_ms: 200,
-            },
-            WindowIntent::GuardsChanged {
-                guards: WindowGuardSnapshot {
-                    popup_open: true,
-                    ..Default::default()
+                WindowIntent::GuardsChanged {
+                    guards: WindowGuardSnapshot {
+                        dragging: true,
+                        ..Default::default()
+                    },
+                    now_ms: 200,
                 },
-                now_ms: 300,
-            },
-            WindowIntent::GuardsChanged {
-                guards: WindowGuardSnapshot::default(),
-                now_ms: 400,
-            },
-            WindowIntent::Tick {
-                now_ms: 400 + AUTO_COLLAPSE_DELAY_MS,
-            },
-            WindowIntent::Tick {
-                now_ms: 400 + AUTO_COLLAPSE_DELAY_MS + ANIMATION_DURATION_MS,
-            },
-            WindowIntent::SensorEntered { now_ms: 1_300 },
-            WindowIntent::Tick {
-                now_ms: 1_300 + HOVER_REVEAL_DELAY_MS,
-            },
-            WindowIntent::Tick {
-                now_ms: 1_300 + HOVER_REVEAL_DELAY_MS + ANIMATION_DURATION_MS,
-            },
-            WindowIntent::PointerLeft { now_ms: 1_600 },
-            WindowIntent::Tick {
-                now_ms: 1_600 + HOVER_LEAVE_COLLAPSE_DELAY_MS,
-            },
-        ];
+                WindowIntent::GuardsChanged {
+                    guards: WindowGuardSnapshot {
+                        popup_open: true,
+                        ..Default::default()
+                    },
+                    now_ms: 300,
+                },
+                WindowIntent::GuardsChanged {
+                    guards: WindowGuardSnapshot::default(),
+                    now_ms: 400,
+                },
+                WindowIntent::Tick {
+                    now_ms: 400 + AUTO_COLLAPSE_DELAY_MS,
+                },
+                WindowIntent::Tick {
+                    now_ms: 400 + AUTO_COLLAPSE_DELAY_MS + ANIMATION_DURATION_MS,
+                },
+                WindowIntent::SensorEntered { now_ms: 1_300 },
+                WindowIntent::Tick {
+                    now_ms: 1_300 + HOVER_REVEAL_DELAY_MS,
+                },
+                WindowIntent::Tick {
+                    now_ms: 1_300 + HOVER_REVEAL_DELAY_MS + ANIMATION_DURATION_MS,
+                },
+                WindowIntent::PointerLeft { now_ms: 1_600 },
+                WindowIntent::Tick {
+                    now_ms: 1_600 + HOVER_LEAVE_COLLAPSE_DELAY_MS,
+                },
+            ];
 
-        for intent in intents {
-            let unpinned_effects = unpinned.dispatch(intent.clone());
-            let pinned_effects = pinned.dispatch(intent);
-            assert_eq!(unpinned_effects, pinned_effects);
-            assert_eq!(unpinned.state(), pinned.state());
-            assert_eq!(
-                super::super::state::effective_topmost(
-                    false,
+            for intent in intents {
+                let unpinned_effects = unpinned.dispatch(intent.clone());
+                let pinned_effects = pinned.dispatch(intent);
+                assert_eq!(unpinned_effects, pinned_effects);
+                assert_eq!(unpinned.state(), pinned.state());
+                assert_eq!(
+                    super::super::state::effective_topmost(
+                        false,
+                        unpinned.state().temporary_sensor_topmost()
+                    ),
                     unpinned.state().temporary_sensor_topmost()
-                ),
-                unpinned.state().temporary_sensor_topmost()
-            );
-            assert!(super::super::state::effective_topmost(
-                true,
-                pinned.state().temporary_sensor_topmost()
-            ));
+                );
+                assert!(super::super::state::effective_topmost(
+                    true,
+                    pinned.state().temporary_sensor_topmost()
+                ));
+            }
         }
 
         let mut floating = coordinator(StableVisibility::Floating);

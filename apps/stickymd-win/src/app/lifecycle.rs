@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use stickymd_render::source::{SourceInitializationMilestone, SourceProjection};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::platform::windows::{CornerPreference, WindowAttributesExtWindows};
 use winit::window::{Theme, WindowAttributes, WindowId};
@@ -226,7 +226,12 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 self.request_redraw();
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                let move_resize_finished =
+                    completes_move_resize(self.move_resize_active, state, button);
                 self.handle_mouse_button(state, button);
+                if move_resize_finished {
+                    self.complete_window_drag();
+                }
             }
             WindowEvent::Moved(_) => {}
             WindowEvent::MouseWheel { delta, .. } => self.handle_scroll(delta),
@@ -313,18 +318,44 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             }
             AppEvent::Tray(event) => self.handle_tray_event(event_loop, event),
             AppEvent::Native(signal) => match signal {
-                crate::platform::windows::native_message::NativeWindowSignal::MoveSizeStarted => {
-                    self.move_resize_active = true;
-                    self.refresh_window_guards(Some(event_loop));
-                }
-                crate::platform::windows::native_message::NativeWindowSignal::MoveSizeFinished => {
-                    self.complete_window_drag();
-                }
                 crate::platform::windows::native_message::NativeWindowSignal::DisplayTopologyChanged => {
                     self.recover_display_topology();
                 }
             },
             AppEvent::Preview(completion) => self.handle_preview_completion(completion),
         }
+    }
+}
+
+fn completes_move_resize(active: bool, state: ElementState, button: MouseButton) -> bool {
+    active && state == ElementState::Released && button == MouseButton::Left
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn real_winit_left_release_completes_only_an_active_native_move_resize() {
+        assert!(completes_move_resize(
+            true,
+            ElementState::Released,
+            MouseButton::Left
+        ));
+        assert!(!completes_move_resize(
+            false,
+            ElementState::Released,
+            MouseButton::Left
+        ));
+        assert!(!completes_move_resize(
+            true,
+            ElementState::Pressed,
+            MouseButton::Left
+        ));
+        assert!(!completes_move_resize(
+            true,
+            ElementState::Released,
+            MouseButton::Right
+        ));
     }
 }

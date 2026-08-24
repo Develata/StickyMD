@@ -22,7 +22,6 @@ const WS_EX_NOACTIVATE: isize = 0x0800_0000;
 const WS_EX_TRANSPARENT: isize = 0x0000_0020;
 const LWA_ALPHA: u32 = 0x0000_0002;
 const SPI_GETWORKAREA: u32 = 0x0030;
-const SWP_NOSIZE: u32 = 0x0001;
 const SWP_NOMOVE: u32 = 0x0002;
 const SWP_NOZORDER: u32 = 0x0004;
 const SWP_NOACTIVATE: u32 = 0x0010;
@@ -32,6 +31,8 @@ const CURSOR_MOVE_RETRY: Duration = Duration::from_millis(25);
 const CF_UNICODETEXT: u32 = 13;
 const KEYEVENTF_EXTENDEDKEY: u32 = 0x0001;
 const KEYEVENTF_KEYUP: u32 = 0x0002;
+const MOUSEEVENTF_LEFTDOWN: u32 = 0x0002;
+const MOUSEEVENTF_LEFTUP: u32 = 0x0004;
 
 #[derive(Default)]
 struct WindowSearch {
@@ -135,6 +136,7 @@ unsafe extern "system" {
     ) -> i32;
     fn GetWindowThreadProcessId(window: isize, process_id: *mut u32) -> u32;
     fn GetForegroundWindow() -> *mut c_void;
+    fn GetShellWindow() -> isize;
     fn GetGUIThreadInfo(thread_id: u32, info: *mut NativeGuiThreadInfo) -> i32;
     fn IsWindowVisible(window: isize) -> i32;
     fn IsWindow(window: isize) -> i32;
@@ -166,6 +168,7 @@ unsafe extern "system" {
         flags: u32,
     ) -> i32;
     fn SetCursorPos(x: i32, y: i32) -> i32;
+    fn SetForegroundWindow(window: isize) -> i32;
     fn GetCursorPos(point: *mut NativePoint) -> i32;
     fn PostMessageW(window: isize, message: u32, wparam: usize, lparam: isize) -> i32;
     fn SendMessageW(window: isize, message: u32, wparam: usize, lparam: isize) -> isize;
@@ -180,6 +183,7 @@ unsafe extern "system" {
     fn IsClipboardFormatAvailable(format: u32) -> i32;
     fn GetClipboardData(format: u32) -> isize;
     fn keybd_event(virtual_key: u8, scan_code: u8, flags: u32, extra_info: usize);
+    fn mouse_event(flags: u32, dx: u32, dy: u32, data: u32, extra_info: usize);
 }
 
 #[link(name = "kernel32")]
@@ -502,33 +506,62 @@ pub(crate) fn move_to_primary_inset(window: WindowHandle, inset_px: i32) -> Resu
     )
 }
 
-fn move_window(window: WindowHandle, x: i32, y: i32) -> Result<(), String> {
-    // winit's message hook observes queued thread messages, so move-loop facts
-    // must use PostMessageW. The delay gives the hook and its EventLoopProxy
-    // hand-off a complete scheduling turn before the synthetic move.
-    post_message(window, WM_ENTERSIZEMOVE, 0, 0, "enter move-size")?;
-    thread::sleep(Duration::from_millis(100));
-    // SAFETY: `window` is the live paper HWND. The call retains no pointers,
-    // preserves z-order/activation, and keeps the existing dimensions.
-    if unsafe {
-        SetWindowPos(
-            window.0,
-            0,
-            x,
-            y,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-        )
-    } == 0
-    {
+pub(crate) fn focus_shell_desktop(window: WindowHandle) -> Result<(), String> {
+    ensure_window(window)?;
+    // SAFETY: GetShellWindow returns the borrowed desktop-shell HWND scalar;
+    // no ownership is transferred and no pointer is retained.
+    let shell = unsafe { GetShellWindow() };
+    if shell == 0 {
+        return Err("Windows did not expose a desktop shell window".to_owned());
+    }
+    // SAFETY: both HWND values are live borrowed scalars. This opt-in runtime
+    // smoke merely asks Windows to move foreground focus to the desktop; it
+    // does not send input or mutate any durable user state.
+    if unsafe { SetForegroundWindow(shell) } == 0 {
         return Err(format!(
-            "cannot move StickyMD to requested primary-work-area position: {}",
+            "cannot focus the Windows desktop shell: {}",
             std::io::Error::last_os_error()
         ));
     }
-    post_message(window, WM_EXITSIZEMOVE, 0, 0, "exit move-size")?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    let expected = window.0 as *mut c_void;
+    while std::time::Instant::now() < deadline {
+        // SAFETY: GetForegroundWindow returns a borrowed HWND scalar and
+        // retains no caller-owned data.
+        if unsafe { GetForegroundWindow() } != expected {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Err("StickyMD retained foreground focus after focusing the desktop shell".to_owned())
+}
+
+fn move_window(window: WindowHandle, x: i32, y: i32) -> Result<(), String> {
+    let rect = window_rect(window)?;
+    let scale = f64::from(window_dpi(window)) / 96.0;
+    let drag_x = (rect.width / 2).min(i32::MAX as u32) as i32;
+    let drag_y = (17.0 * scale).round().clamp(1.0, f64::from(i32::MAX)) as i32;
+    let start_x = rect.x.saturating_add(drag_x);
+    let start_y = rect.y.saturating_add(drag_y);
+    let target_x = x.saturating_add(drag_x);
+    let target_y = y.saturating_add(drag_y);
+    set_cursor_position(start_x, start_y, "position cursor in StickyMD drag region")?;
+    // SAFETY: this opt-in runtime smoke targets the live copied-Release HWND;
+    // no pointer is retained and a physical click below remains the authority
+    // for activation if foreground restrictions reject this request.
+    unsafe {
+        SetForegroundWindow(window.0);
+        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+    }
     thread::sleep(Duration::from_millis(100));
+    set_cursor_position(target_x, target_y, "drag StickyMD to requested position")?;
+    thread::sleep(Duration::from_millis(100));
+    // SAFETY: paired with the LEFTDOWN above; copied integer input flags carry
+    // no borrowed data and this runtime mode never runs in CI.
+    unsafe {
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+    }
+    thread::sleep(Duration::from_millis(150));
     Ok(())
 }
 
