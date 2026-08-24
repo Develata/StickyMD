@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use stickymd_core::{DocumentSnapshot, Generation, LineEnding};
@@ -16,8 +17,16 @@ fn owned_ast_golden_is_stable_and_arena_free() {
         line_ending: LineEnding::Lf,
     };
     let tree = PreviewParser.parse(&snapshot).unwrap();
-    assert_eq!(outline(&tree), EXPECTED);
+    assert_eq!(outline(&tree), normalized_golden_outline(EXPECTED));
     assert!(Arc::ptr_eq(&tree.source, &snapshot.text));
+}
+
+fn normalized_golden_outline(source: &str) -> Cow<'_, str> {
+    if source.contains("\r\n") {
+        Cow::Owned(source.replace("\r\n", "\n"))
+    } else {
+        Cow::Borrowed(source)
+    }
 }
 
 fn outline(document: &OwnedDocumentTree) -> String {
@@ -140,4 +149,16 @@ fn inline_outline(inlines: &[InlineNode], output: &mut String) {
             InlineNode::HtmlLiteral { .. } => output.push_str("html:inline"),
         }
     }
+}
+
+#[test]
+fn golden_outline_is_independent_of_checkout_newlines() {
+    assert_eq!(
+        normalized_golden_outline("heading[text]\r\nparagraph[text]\r\n"),
+        "heading[text]\nparagraph[text]\n"
+    );
+    assert_eq!(
+        normalized_golden_outline("literal\rtext\n"),
+        "literal\rtext\n"
+    );
 }

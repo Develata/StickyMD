@@ -12,6 +12,7 @@ Markdown/math 语义、runtime dependency 或发布物结构。
 | CI `32615325124` | `d6ad84a126f218cb22cdcd4a93ff10e03102939c` | Linux portable-core | `math::engine::tests::cjk_text_formula_uses_native_fallback_without_panicking` 在 DejaVu Sans 不含中文字形时错误要求非透明像素 |
 | Scheduled `32692242570` | same | deterministic core/render | 与上项同一断言、同一字体路径，确定为可重复的测试环境前提错误 |
 | CI `32615325124` | same | Windows headless | `phase5_semantics` 失败，但 smoke 只投影 Cargo `stderr`，丢失 test harness `stdout` 中的具体失败正文；旧 run 无法进一步可靠归因 |
+| CI `32743600654` | `64f452f97523a190732d4f847dc09a7e95e374f1` | Windows headless tests shard | 新的双流诊断暴露 `phase5-owned-outline.txt` 在 Windows checkout 中为 CRLF，而运行时 outline 固定为 LF；语义完全相同，fixture 比较错误地绑定了 worktree 换行 |
 
 Linux portable-core 的目的只是证明平台无关 crates 不受 Win32 污染，不承诺 runner 安装 CJK
 字体。修正后的跨平台测试使用 mixed CJK/Latin fixture，验证无 panic、几何与 RGBA buffer 不变量及
@@ -70,6 +71,9 @@ exact-candidate receipts 失效；形成下一候选前必须完成与变更风�
 - WSL/Linux 独立 target：修正后的 mixed CJK/Latin math test PASS。
 - Windows `phase5_semantics`：连续 20 次 PASS；旧 remote run 的具体断言因旧 stdout 丢失缺陷
   无法追溯，不把当前通过倒推成旧 run 的虚构根因。
+- Windows checkout newline 回归：`.gitattributes` 固定 render `.txt` fixtures 为 LF；golden
+  comparison 同时只规范化 CRLF boundary 并保留孤立 CR，因而不再依赖 Git checkout 的
+  `core.autocrlf` 投影。
 - CI `tests` shard：完整 Phase 1 + workspace test task set PASS，suite=`all-ci-tests`。
 - CI `performance` shard：全部无界面 Release baseline PASS，suite=`all-ci-performance`。
 - Phase 8 copied-Release runtime：先通过失败证据发现驱动在鼠标按下后用固定等待猜测
