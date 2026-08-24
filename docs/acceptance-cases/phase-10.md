@@ -1,8 +1,9 @@
 # Phase 10 — UX Corrections, Automation Consolidation and RC Requalification
 
-> Status: Implementation Complete — RC validation incomplete. The USER-approved contract is frozen
-> in `docs/plan`; warm startup remains `BLOCKED`. Real keyboard, visual, shell-switcher, IME, tray,
-> sensor and physical-pointer rows remain `NOT TESTED` without a current-candidate receipt.
+> Status: Implementation Complete — RC validation incomplete. The later USER-approved Phase 14
+> startup policy in `docs/plan` supersedes the historical warm-startup blocker. Real keyboard,
+> visual, shell-switcher, IME, tray, sensor and physical-pointer rows remain `NOT TESTED` without a
+> current-candidate receipt.
 
 ## Automated Contract Matrix
 
@@ -38,7 +39,7 @@
 | P10-A28 | AC-036 40% remains interactive; 100% style cleanup | Automated | HWND alpha/style/hit-test facts | AUTOMATED PASS |
 | P10-A29 | startup readiness object is unique and previous process fully exits | Automated | startup harness unit/integration tests | AUTOMATED PASS |
 | P10-A30 | final cold cohort has >=30 samples and p95 <=300 ms or exact USER waiver | Automated | 30 samples, p95 321.540 ms; original 300 ms USER WAIVED, 400 ms gate passed | AUTOMATED PASS |
-| P10-A31 | final warm cohort has >=30 samples and p95 <=180 ms or exact USER waiver | Automated | copied-Release JSON startup evidence | BLOCKED |
+| P10-A31 | final warm cohort has >=30 samples and satisfies the current USER-approved startup release policy | Automated | Phase 14 policy regression: 180 ms preferred, 400 ms diagnostic, 550 ms v0.1.0 hard boundary | AUTOMATED PASS |
 | P10-A32 | 50/100/300 zoom performance/resource/leak gates | Automated | Release benchmark + copied-runtime resources at `b9f83f1` | AUTOMATED PASS |
 | P10-A33 | AC-001..AC-030 automated regressions | Automated | final Rust CLI task graph | AUTOMATED PASS |
 | P10-A34 | exact Phase 10 EXE/ZIP/SBOM/checksum/package verification | Automated | verified ZIP `70c8e6f5…fba7e0`, source `9c0e862` | AUTOMATED PASS |

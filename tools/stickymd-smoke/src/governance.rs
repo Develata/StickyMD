@@ -153,10 +153,10 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-14.md");
     let content = read_text(&path)?;
     let observed = frozen_trace_ids(&content, "P14-A")?;
-    let expected: Vec<u16> = (1..=18).collect();
+    let expected: Vec<u16> = (1..=19).collect();
     if observed != expected {
         return Err(format!(
-            "{} IDs must be exactly P14-A01..P14-A18; observed {observed:?}",
+            "{} IDs must be exactly P14-A01..P14-A19; observed {observed:?}",
             path.display()
         ));
     }
@@ -215,7 +215,7 @@ fn verify_phase13_contract_trace(root: &Path) -> Result<(), String> {
 fn verify_phase12_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-12.md");
     let content = read_text(&path)?;
-    for (prefix, last) in [("P12-A", 14_u16), ("P12-M", 44_u16)] {
+    for (prefix, last) in [("P12-A", 15_u16), ("P12-M", 44_u16)] {
         let observed = frozen_trace_ids(&content, prefix)?;
         let expected: Vec<u16> = (1..=last).collect();
         if observed != expected {
@@ -460,6 +460,7 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         "tools/release/package.ps1",
         "tools/release/generate-sbom.ps1",
         "tools/release/verify-package.ps1",
+        "qualification native-runtime --exe=target/release/stickymd-win.exe",
         "subject-checksums: dist/SHA256SUMS.txt",
         "sbom-path: dist/SBOM.spdx.json",
         "gh release create",
@@ -468,6 +469,21 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         if !release.contains(required) {
             return Err(format!(
                 "release workflow lacks required security token `{required}`"
+            ));
+        }
+    }
+    let ci = read_text(&root.join(".github/workflows/ci.yml"))?;
+    if !ci.contains("qualification native-runtime --exe=target/release/stickymd-win.exe") {
+        return Err("CI release build lacks the portable native-runtime gate".to_owned());
+    }
+    let cargo_config = read_text(&root.join(".cargo/config.toml"))?;
+    for required in [
+        "[target.x86_64-pc-windows-msvc]",
+        "target-feature=+crt-static",
+    ] {
+        if !cargo_config.contains(required) {
+            return Err(format!(
+                "Windows target config lacks portable runtime token `{required}`"
             ));
         }
     }

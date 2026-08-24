@@ -22,6 +22,7 @@
 | P12-A12 | Readiness has no force-ready path and reports missing/failed Release, headless CI, performance, runtime, resources, manual, remote and USER gates | Automated | exact-mode receipt contracts plus `stickymd-smoke qualification readiness --explain` | AUTOMATED PASS |
 | P12-A13 | Remote workflow receipt must match exact SHA and successful attempt | Automated | `qualification remote` parser/identity contract | AUTOMATED PASS |
 | P12-A14 | Downloaded ZIP must pass checksums, package/runtime smoke and exact hashes | Automated | `qualification downloaded --zip=<path>` | AUTOMATED PASS |
+| P12-A15 | Release PE 普通/延迟导入表不含需另装的 C/C++/Rust developer runtime；构建静态链接 MSVC CRT | Automated | `stickymd-smoke qualification native-runtime --exe=target/release/stickymd-win.exe` + Release/package CI | AUTOMATED PASS |
 
 ## Manual Tier A — release blocking unless explicitly waived
 

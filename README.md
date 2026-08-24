@@ -22,6 +22,8 @@ One directory is one note identity. A second process from the same canonical dir
 
 Version 0.1.0 is intentionally distributed without an Authenticode signature. Windows may display a SmartScreen/reputation warning. Verify `SHA256SUMS.txt` before running a release artifact; advanced users can also verify GitHub artifact attestations with `gh attestation verify`. StickyMD does not recommend disabling Defender or SmartScreen.
 
+The packaged executable statically links its MSVC runtime. Running the portable ZIP does not require Rust, Visual Studio, or a separately installed Visual C++ Redistributable; the Clean Windows 11 VM release gate nevertheless remains a distinct manual qualification.
+
 ## Build from source
 
 Requirements: Windows 11 x64, the MSVC C++/Windows SDK build tools, and the toolchain pinned by `rust-toolchain.toml`.

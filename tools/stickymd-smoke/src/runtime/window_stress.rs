@@ -74,6 +74,8 @@ fn run_once(source: &Path, directory: &Path, options: WindowStressOptions) -> Re
         let window = crate::window_control::visible_window(child.id())?;
         wait_for_shell_state(window, ShellStateExpectation::Visible, START_TIMEOUT)?;
         prepare_primary_left_expanded(window, directory)?;
+        let mut objects = process_metrics::objects(&child)?;
+        runtime_report!("window-stress objects stage=baseline sample={objects:?}");
 
         if matches!(
             options.scenario,
@@ -82,6 +84,7 @@ fn run_once(source: &Path, directory: &Path, options: WindowStressOptions) -> Re
                 | WindowStressScenario::Combined
         ) {
             run_collapse(window, options.collapse_cycles)?;
+            objects = report_object_delta(&child, "collapse", objects)?;
         }
         if matches!(
             options.scenario,
@@ -90,6 +93,7 @@ fn run_once(source: &Path, directory: &Path, options: WindowStressOptions) -> Re
                 | WindowStressScenario::Combined
         ) {
             run_tray(&executable, window, options.tray_cycles)?;
+            objects = report_object_delta(&child, "tray", objects)?;
         }
         if matches!(
             options.scenario,
@@ -97,12 +101,29 @@ fn run_once(source: &Path, directory: &Path, options: WindowStressOptions) -> Re
         ) && let Some(opacity) = run_controls(window, options.control_cycles)?
         {
             wait_for_config_field(directory, &format!("opacity = {opacity}"))?;
+            objects = report_object_delta(&child, "controls", objects)?;
         }
         run_external_reload(directory, &mut child, window, options.persistence_cycles)?;
+        let _ = report_object_delta(&child, "external-reload", objects)?;
         ensure_alive(&mut child, "window-stress instance")
     })();
     stop_child(&mut child);
     result
+}
+
+fn report_object_delta(
+    child: &Child,
+    stage: &str,
+    before: process_metrics::ObjectSample,
+) -> Result<process_metrics::ObjectSample, String> {
+    let after = process_metrics::objects(child)?;
+    runtime_report!(
+        "window-stress objects stage={stage} before={before:?} after={after:?} delta_handles={} delta_gdi={} delta_user={}",
+        i64::from(after.handles) - i64::from(before.handles),
+        i64::from(after.gdi_objects) - i64::from(before.gdi_objects),
+        i64::from(after.user_objects) - i64::from(before.user_objects),
+    );
+    Ok(after)
 }
 
 fn prepare_primary_left_expanded(

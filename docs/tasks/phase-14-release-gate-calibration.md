@@ -32,6 +32,14 @@ Qualification In Progress — USER-observed candidate defects corrected; exact-c
 - 为达到 180/400 ms target 做追逐式优化。
 - push、tag、remote workflow、draft release 或 publish。
 
+USER 在最终候选前补充批准 portable runtime gate：Release EXE 不得要求 Rust/C/C++ 开发环境或
+另装 Visual C++ Redistributable。该项属于既有 portable ZIP 发布合同的资格化加固，不新增产品
+runtime capability；以静态 MSVC CRT 和 exact PE import 自动检查共同实现，Clean VM 仍保留人工
+`NOT TESTED` gate。
+
+实现与交叉验证证据见
+[`phase-14-portable-runtime-hardening.md`](../report/phase-14-portable-runtime-hardening.md)。
+
 ## Authority and Freeze
 
 唯一产品 authority 不变；Phase 14 tracked delta 原则上仅限 plan/projection/docs 与 verification tooling；
@@ -84,6 +92,16 @@ projection 已完成，既没有验证 editor projection，也没有记录 foreg
 `window-stress` reducer、typed shell-state wait 和基于真实 Ctrl+A/C clipboard projection 的 ready
 gate。tracked tooling 变化使旧 candidate 失效；必须在新 freeze commit 上重新收集 Release/package、
 headless CI、Runtime、Performance 与 Resources。Resources PASS 前不开始正式 manual receipt。
+
+后续将 compact resize smoke 改为真实物理输入时，审计确认锁定的 winit 0.30.13 错误地把栈上
+`POINTS` 地址作为 `WM_NCLBUTTONDOWN.lParam`。这不是资源 warm-up 修正的一部分；Phase 14 另在
+既有 Windows native-message adapter 内作最小 signed-screen-coordinate repair，保持 winit/Win32
+move-size lifecycle 权威且不新增 runtime dependency。详见
+`docs/report/phase-14-candidate-defect-remediation.md`。
+
+静态 CRT 复跑同时暴露 Phase 11-B 旧 `replace_range` 循环在 1 MiB/1000 formula 上的近似
+`O(n*k)` 搬移；已改为单向 `O(n+k)` 文本构建，p95 从 278--304 ms 降到 4.1 ms，语义和 authority
+不变。证据写入同一 candidate defect remediation report。
 
 ## Result
 

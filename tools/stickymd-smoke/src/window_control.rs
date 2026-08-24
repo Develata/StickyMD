@@ -4,14 +4,19 @@ use std::ffi::c_void;
 use std::thread;
 use std::time::Duration;
 
+mod physical_input;
+
+use physical_input::{
+    PhysicalCursorKind, PhysicalLeftButtonGuard, current_cursor_handle, current_cursor_position,
+    cursor_matches, move_physical_cursor, move_physical_cursor_with_tolerance, release_left_button,
+};
+
 const WM_MOUSEMOVE: u32 = 0x0200;
 const WM_LBUTTONDOWN: u32 = 0x0201;
 const WM_LBUTTONUP: u32 = 0x0202;
 const WM_CLOSE: u32 = 0x0010;
 const WM_KEYDOWN: u32 = 0x0100;
 const WM_KEYUP: u32 = 0x0101;
-const WM_ENTERSIZEMOVE: u32 = 0x0231;
-const WM_EXITSIZEMOVE: u32 = 0x0232;
 const MK_LBUTTON: usize = 0x0001;
 const GWL_EXSTYLE: i32 = -20;
 const WS_EX_TOPMOST: isize = 0x0000_0008;
@@ -24,7 +29,6 @@ const LWA_ALPHA: u32 = 0x0000_0002;
 const SPI_GETWORKAREA: u32 = 0x0030;
 const SWP_NOMOVE: u32 = 0x0002;
 const SWP_NOSIZE: u32 = 0x0001;
-const SWP_NOZORDER: u32 = 0x0004;
 const SWP_NOACTIVATE: u32 = 0x0010;
 const SWP_SHOWWINDOW: u32 = 0x0040;
 const GA_ROOT: u32 = 2;
@@ -36,8 +40,6 @@ const CURSOR_MOVE_RETRY: Duration = Duration::from_millis(25);
 const CF_UNICODETEXT: u32 = 13;
 const KEYEVENTF_EXTENDEDKEY: u32 = 0x0001;
 const KEYEVENTF_KEYUP: u32 = 0x0002;
-const MOUSEEVENTF_LEFTDOWN: u32 = 0x0002;
-const MOUSEEVENTF_LEFTUP: u32 = 0x0004;
 
 #[derive(Default)]
 struct WindowSearch {
@@ -191,7 +193,6 @@ unsafe extern "system" {
     fn IsClipboardFormatAvailable(format: u32) -> i32;
     fn GetClipboardData(format: u32) -> isize;
     fn keybd_event(virtual_key: u8, scan_code: u8, flags: u32, extra_info: usize);
-    fn mouse_event(flags: u32, dx: u32, dy: u32, data: u32, extra_info: usize);
 }
 
 #[link(name = "kernel32")]
@@ -241,28 +242,6 @@ impl PhysicalInputRouteGuard {
 impl Drop for PhysicalInputRouteGuard {
     fn drop(&mut self) {
         let _ = self.restore();
-    }
-}
-
-struct PhysicalLeftButtonGuard;
-
-impl PhysicalLeftButtonGuard {
-    fn press() -> Self {
-        // SAFETY: copied input flags carry no borrowed data. Drop always emits
-        // the paired button-up, including every early error path.
-        unsafe {
-            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
-        }
-        Self
-    }
-}
-
-impl Drop for PhysicalLeftButtonGuard {
-    fn drop(&mut self) {
-        // SAFETY: paired with `press`; no pointer or resource is retained.
-        unsafe {
-            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-        }
     }
 }
 
@@ -601,6 +580,43 @@ pub(crate) fn focus_shell_desktop(window: WindowHandle) -> Result<(), String> {
     Err("StickyMD retained foreground focus after focusing the desktop shell".to_owned())
 }
 
+pub(crate) fn focus_source_editor(window: WindowHandle) -> Result<(), String> {
+    let (screen_x, screen_y) = content_activation_point(window)?;
+    let mut input_route =
+        prepare_physical_input_target(window, screen_x, screen_y, PhysicalCursorKind::Text)?;
+    let click = PhysicalLeftButtonGuard::press()?;
+    thread::sleep(Duration::from_millis(25));
+    drop(click);
+    wait_for_window_activation(window)?;
+    input_route.restore()
+}
+
+fn wait_for_window_activation(window: WindowHandle) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    let mut observed = activation_facts(window)?;
+    while std::time::Instant::now() < deadline {
+        observed = activation_facts(window)?;
+        if observed.foreground && observed.active && observed.focused && !observed.captured {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Err(format!(
+        "StickyMD source editor did not become an uncaptured foreground input target: {observed:?}"
+    ))
+}
+
+fn content_activation_point(window: WindowHandle) -> Result<(i32, i32), String> {
+    let rect = window_rect(window)?;
+    let scale = f64::from(window_dpi(window)) / 96.0;
+    let client_x = (24.0 * scale).round().clamp(1.0, f64::from(u16::MAX)) as i32;
+    let client_y = (58.0 * scale).round().clamp(1.0, f64::from(u16::MAX)) as i32;
+    Ok((
+        rect.x.saturating_add(client_x),
+        rect.y.saturating_add(client_y),
+    ))
+}
+
 fn move_window(window: WindowHandle, x: i32, y: i32) -> Result<(), String> {
     let rect = window_rect(window)?;
     let scale = f64::from(window_dpi(window)) / 96.0;
@@ -608,71 +624,143 @@ fn move_window(window: WindowHandle, x: i32, y: i32) -> Result<(), String> {
     let drag_y = (17.0 * scale).round().clamp(1.0, f64::from(i32::MAX)) as i32;
     let start_x = rect.x.saturating_add(drag_x);
     let start_y = rect.y.saturating_add(drag_y);
-    let target_x = x.saturating_add(drag_x);
-    let target_y = y.saturating_add(drag_y);
-    let mut input_route = prepare_physical_input_target(window, start_x, start_y)?;
+    let mut input_route =
+        prepare_physical_input_target(window, start_x, start_y, PhysicalCursorKind::DragRegion)?;
     // WindowFromPoint proves only native routing. Give winit's event loop one
     // bounded turn to project the matching CursorMoved fact before the press;
     // the shell intentionally decides whether this point is a drag region
     // from its most recent cursor projection.
     thread::sleep(Duration::from_millis(75));
-    let button = PhysicalLeftButtonGuard::press();
-    wait_for_native_move_size(window)?;
-    set_cursor_position(target_x, target_y, "drag StickyMD to requested position")?;
-    thread::sleep(Duration::from_millis(100));
+    let button = PhysicalLeftButtonGuard::press()?;
+    let (engaged_cursor, engaged_rect) =
+        engage_native_move_size(window, 8, 0, "start StickyMD window drag")?;
+    let target_x = apply_coordinate_delta(engaged_cursor.x, x, engaged_rect.x, "drag x")?;
+    let target_y = apply_coordinate_delta(engaged_cursor.y, y, engaged_rect.y, "drag y")?;
+    move_physical_cursor_with_tolerance(
+        target_x,
+        target_y,
+        32,
+        "drag StickyMD to requested position",
+    )?;
+    thread::sleep(Duration::from_millis(25));
     drop(button);
     thread::sleep(Duration::from_millis(150));
+    let completed_rect = window_rect(window)?;
+    if completed_rect.x.abs_diff(x) > 24 || completed_rect.y.abs_diff(y) > 24 {
+        return Err(format!(
+            "physical StickyMD drag did not reach its requested outer position: requested=({x},{y}) engaged_cursor={engaged_cursor:?} engaged_rect={engaged_rect:?} completed_rect={completed_rect:?}"
+        ));
+    }
     input_route.restore()?;
     Ok(())
 }
 
-fn wait_for_native_move_size(window: WindowHandle) -> Result<(), String> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+fn engage_native_move_size(
+    window: WindowHandle,
+    nudge_step_x: i32,
+    nudge_step_y: i32,
+    operation: &str,
+) -> Result<(NativePoint, WindowRect), String> {
+    let started = std::time::Instant::now();
+    let deadline = started + Duration::from_secs(1);
+    let mut next_nudge = started + Duration::from_millis(250);
     let expected = window.0 as *mut c_void;
+    let initial_cursor = current_cursor_position()?;
+    let initial_rect = window_rect(window)?;
     let mut observed_capture = 0_isize;
     let mut observed_move_size = 0_isize;
+    let mut observed_flags = 0_u32;
+    let mut observed_rect = initial_rect;
+    let mut nudge_count = 0_i32;
     while std::time::Instant::now() < deadline {
-        let mut process_id = 0_u32;
-        // SAFETY: the live HWND is borrowed and `process_id` is writable stack
-        // storage. The API copies identifiers and retains no pointer.
-        let thread_id = unsafe { GetWindowThreadProcessId(window.0, &raw mut process_id) };
-        if thread_id == 0 {
-            return Err(format!(
-                "cannot read StickyMD GUI thread while starting physical drag: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-        let mut info = NativeGuiThreadInfo {
-            size: std::mem::size_of::<NativeGuiThreadInfo>() as u32,
-            ..NativeGuiThreadInfo::default()
-        };
-        // SAFETY: `info` has the documented size and remains writable for the
-        // synchronous query. The API retains no pointer.
-        if unsafe { GetGUIThreadInfo(thread_id, &raw mut info) } == 0 {
-            return Err(format!(
-                "cannot inspect StickyMD native move-size state: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
+        let info = native_gui_thread_info(window, operation)?;
         observed_capture = info.capture as isize;
         observed_move_size = info.move_size as isize;
-        if info.capture == expected || info.move_size == expected {
-            return Ok(());
+        observed_flags = info.flags;
+        observed_rect = window_rect(window)?;
+        if info.move_size == expected || (info.capture == expected && observed_rect != initial_rect)
+        {
+            return Ok((current_cursor_position()?, observed_rect));
+        }
+        if nudge_count < 3 && std::time::Instant::now() >= next_nudge {
+            // A generic HWND capture proves that the press reached winit, but
+            // Windows may not enter the native move-size loop until the cursor
+            // crosses its drag threshold. Advance in three bounded steps, then recompute the
+            // remaining movement from the live geometry after hwndMoveSize is
+            // established; the nudge can therefore never skew the final edge
+            // or compact-size assertion.
+            nudge_count += 1;
+            move_physical_cursor_with_tolerance(
+                initial_cursor
+                    .x
+                    .saturating_add(nudge_step_x.saturating_mul(nudge_count)),
+                initial_cursor
+                    .y
+                    .saturating_add(nudge_step_y.saturating_mul(nudge_count)),
+                16,
+                operation,
+            )?;
+            next_nudge = std::time::Instant::now() + Duration::from_millis(75);
         }
         thread::sleep(Duration::from_millis(10));
     }
     Err(format!(
-        "StickyMD did not enter native move-size after physical press: expected HWND={} capture HWND={observed_capture} move-size HWND={observed_move_size}",
-        window.0
+        "StickyMD did not enter native move-size after physical press: expected HWND={} capture HWND={observed_capture} move-size HWND={observed_move_size} gui_flags=0x{observed_flags:08x} nudges={nudge_count} initial_rect={initial_rect:?} observed_rect={observed_rect:?}",
+        window.0,
     ))
+}
+
+fn apply_coordinate_delta(
+    cursor: i32,
+    desired: i32,
+    observed: i32,
+    operation: &str,
+) -> Result<i32, String> {
+    let value = i64::from(cursor) + i64::from(desired) - i64::from(observed);
+    i32::try_from(value).map_err(|_| format!("{operation} target overflowed"))
+}
+
+fn native_gui_thread_info(
+    window: WindowHandle,
+    operation: &str,
+) -> Result<NativeGuiThreadInfo, String> {
+    let mut process_id = 0_u32;
+    // SAFETY: the live HWND is borrowed and `process_id` is writable stack
+    // storage. The API copies identifiers and retains no pointer.
+    let thread_id = unsafe { GetWindowThreadProcessId(window.0, &raw mut process_id) };
+    if thread_id == 0 {
+        return Err(format!(
+            "cannot read StickyMD GUI thread while {operation}: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let mut info = NativeGuiThreadInfo {
+        size: std::mem::size_of::<NativeGuiThreadInfo>() as u32,
+        ..NativeGuiThreadInfo::default()
+    };
+    // SAFETY: `info` has the documented size and remains writable for the
+    // synchronous query. The API retains no pointer.
+    if unsafe { GetGUIThreadInfo(thread_id, &raw mut info) } == 0 {
+        return Err(format!(
+            "cannot inspect StickyMD GUI thread while {operation}: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(info)
 }
 
 fn prepare_physical_input_target(
     window: WindowHandle,
     x: i32,
     y: i32,
+    expected_cursor: PhysicalCursorKind,
 ) -> Result<PhysicalInputRouteGuard, String> {
     ensure_window(window)?;
+    // Recover from any interrupted prior smoke process before starting a new
+    // physical route. A redundant button-up is harmless, while a stale
+    // synthetic press can leave Windows in a move-size loop and warp every
+    // subsequent cursor placement.
+    release_left_button()?;
     let restore_not_topmost = !is_topmost(window)?;
     if restore_not_topmost {
         // SAFETY: HWND_TOPMOST is the documented Z-order sentinel. This
@@ -700,8 +788,12 @@ fn prepare_physical_input_target(
         window,
         restore_not_topmost,
     };
+    activate_window_for_physical_input(window)?;
     let deadline = std::time::Instant::now() + Duration::from_secs(1);
     let mut observed = 0;
+    let mut observed_cursor = 0_isize;
+    let mut observed_activation = activation_facts(window)?;
+    let mut last_cursor_error = None;
     while std::time::Instant::now() < deadline {
         // SAFETY: the live borrowed HWND and HWND_TOP sentinel contain no
         // caller-owned pointers. This changes only Z-order/activation of the
@@ -729,7 +821,27 @@ fn prepare_physical_input_target(
         unsafe {
             SetForegroundWindow(window.0);
         }
-        set_cursor_position(x, y, "position cursor in StickyMD drag region")?;
+        // Generate a real coordinate transition before every physical press.
+        // An unchanged absolute move can be coalesced without a winit
+        // CursorMoved projection, leaving the product's hit test at an older
+        // resize border. The inward waypoint keeps both drag-region and border
+        // targets inside the paper before returning to the intended point.
+        if let Err(error) = move_physical_cursor_with_tolerance(
+            x.saturating_sub(8),
+            y.saturating_sub(8),
+            16,
+            "prime StickyMD physical cursor projection",
+        ) {
+            last_cursor_error = Some(error);
+            thread::sleep(Duration::from_millis(25));
+            continue;
+        }
+        thread::sleep(Duration::from_millis(25));
+        if let Err(error) = move_physical_cursor(x, y, "position StickyMD physical cursor") {
+            last_cursor_error = Some(error);
+            thread::sleep(Duration::from_millis(25));
+            continue;
+        }
         project_physical_cursor_to_window(window, x, y)?;
         thread::sleep(Duration::from_millis(25));
         // SAFETY: WindowFromPoint and GetAncestor copy/return borrowed HWND
@@ -743,15 +855,40 @@ fn prepare_physical_input_target(
                 GetAncestor(hit, GA_ROOT)
             }
         };
-        if observed == window.0 {
+        observed_cursor = current_cursor_handle()?;
+        observed_activation = activation_facts(window)?;
+        if observed == window.0
+            && cursor_matches(observed_cursor, expected_cursor)?
+            && observed_activation.foreground
+            && observed_activation.active
+            && observed_activation.focused
+            && !observed_activation.captured
+        {
             return Ok(guard);
         }
         thread::sleep(Duration::from_millis(25));
     }
     Err(format!(
-        "physical drag start is not routed to StickyMD: expected HWND={} observed root HWND={observed}",
-        window.0
+        "physical input target is not ready: expected HWND={} observed root HWND={observed} expected_cursor={} observed_cursor=0x{observed_cursor:x} activation={observed_activation:?} last_cursor_error={}",
+        window.0,
+        expected_cursor.description(),
+        last_cursor_error.as_deref().unwrap_or("none"),
     ))
+}
+
+fn activate_window_for_physical_input(window: WindowHandle) -> Result<(), String> {
+    let current = activation_facts(window)?;
+    if current.foreground && current.active && current.focused && !current.captured {
+        return Ok(());
+    }
+    let (x, y) = content_activation_point(window)?;
+    move_physical_cursor(x, y, "activate StickyMD before physical input")?;
+    project_physical_cursor_to_window(window, x, y)?;
+    thread::sleep(Duration::from_millis(25));
+    let click = PhysicalLeftButtonGuard::press()?;
+    thread::sleep(Duration::from_millis(25));
+    drop(click);
+    wait_for_window_activation(window)
 }
 
 fn project_physical_cursor_to_window(window: WindowHandle, x: i32, y: i32) -> Result<(), String> {
@@ -947,32 +1084,60 @@ pub(crate) fn resize_to_dip(
     height_dip: u32,
 ) -> Result<(), String> {
     ensure_window(window)?;
+    let rect = window_rect(window)?;
     let scale = f64::from(window_dpi(window)) / 96.0;
     let width = (f64::from(width_dip) * scale).round() as i32;
     let height = (f64::from(height_dip) * scale).round() as i32;
-    post_message(window, WM_ENTERSIZEMOVE, 0, 0, "enter move-size")?;
-    thread::sleep(Duration::from_millis(50));
-    // SAFETY: `window` is live, dimensions are bounded smoke inputs, and the
-    // call preserves position, z-order, and activation without retaining data.
-    if unsafe {
-        SetWindowPos(
-            window.0,
-            0,
-            0,
-            0,
-            width,
-            height,
-            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+    let inset = scale.ceil().clamp(1.0, f64::from(i32::MAX)) as i32;
+    let current_width = i32::try_from(rect.width).map_err(|_| {
+        format!(
+            "StickyMD width is outside physical resize range: {}",
+            rect.width
         )
-    } == 0
+    })?;
+    let current_height = i32::try_from(rect.height).map_err(|_| {
+        format!(
+            "StickyMD height is outside physical resize range: {}",
+            rect.height
+        )
+    })?;
+    let start_x = rect.x.saturating_add(current_width).saturating_sub(inset);
+    let start_y = rect.y.saturating_add(current_height).saturating_sub(inset);
+    let mut input_route = prepare_physical_input_target(
+        window,
+        start_x,
+        start_y,
+        PhysicalCursorKind::SouthEastResize,
+    )?;
+    // Route the same real pointer sequence as a USER resize. The product
+    // intentionally commits durable placement only after its winit resize
+    // intent observes the paired button release; synthetic WM_*SIZE messages
+    // would resize the HWND without exercising that contract.
+    thread::sleep(Duration::from_millis(75));
+    let button = PhysicalLeftButtonGuard::press()?;
+    let (engaged_cursor, engaged_rect) =
+        engage_native_move_size(window, 8, 8, "start StickyMD compact resize")?;
+    let engaged_width = i32::try_from(engaged_rect.width)
+        .map_err(|_| "engaged StickyMD width does not fit i32".to_owned())?;
+    let engaged_height = i32::try_from(engaged_rect.height)
+        .map_err(|_| "engaged StickyMD height does not fit i32".to_owned())?;
+    let target_x =
+        apply_coordinate_delta(engaged_cursor.x, width, engaged_width, "compact resize x")?;
+    let target_y =
+        apply_coordinate_delta(engaged_cursor.y, height, engaged_height, "compact resize y")?;
+    move_physical_cursor_with_tolerance(target_x, target_y, 32, "resize StickyMD compact window")?;
+    thread::sleep(Duration::from_millis(25));
+    drop(button);
+    thread::sleep(Duration::from_millis(150));
+    let completed_rect = window_rect(window)?;
+    if completed_rect.width.abs_diff(width as u32) > 24
+        || completed_rect.height.abs_diff(height as u32) > 24
     {
         return Err(format!(
-            "cannot resize StickyMD compact window: {}",
-            std::io::Error::last_os_error()
+            "physical StickyMD resize did not reach its requested extent: requested=({width},{height}) engaged_cursor={engaged_cursor:?} engaged_rect={engaged_rect:?} completed_rect={completed_rect:?}"
         ));
     }
-    post_message(window, WM_EXITSIZEMOVE, 0, 0, "exit move-size")?;
-    thread::sleep(Duration::from_millis(100));
+    input_route.restore()?;
     Ok(())
 }
 

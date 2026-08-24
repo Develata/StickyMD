@@ -45,6 +45,7 @@ enum TaskId {
     ClippyCheck,
     DependencyPolicy,
     ReleaseBuild,
+    VerifyNativeRuntimeDependencies,
     PackageArtifact,
     GenerateSbom,
     VerifyPackage,
@@ -83,6 +84,7 @@ enum Task {
         id: TaskId,
         scenario: RuntimeScenario,
     },
+    NativeRuntimeDependencies,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,6 +127,7 @@ impl Task {
         match self {
             Self::Governance => TaskId::Governance,
             Self::QualificationEnvironment => TaskId::QualificationEnvironment,
+            Self::NativeRuntimeDependencies => TaskId::VerifyNativeRuntimeDependencies,
             Self::Cargo { id, .. } | Self::PowerShell { id, .. } | Self::Runtime { id, .. } => *id,
         }
     }
@@ -401,6 +404,7 @@ fn task_label(task: &Task) -> &'static str {
     match task {
         Task::Governance => "governance contracts",
         Task::QualificationEnvironment => "qualification environment preflight",
+        Task::NativeRuntimeDependencies => "portable native-runtime dependency gate",
         Task::Cargo { label, .. } => label,
         Task::PowerShell { label, .. } => label,
         Task::Runtime {
@@ -470,6 +474,10 @@ fn run_task(root: &Path, task: &Task, capture_output: bool) -> Result<TaskExecut
         Task::QualificationEnvironment => Err(
             "qualification environment tasks are handled by the evidence coordinator".to_owned(),
         ),
+        Task::NativeRuntimeDependencies => crate::pe_dependencies::verify_portable_executable(
+            &root.join("target/release/stickymd-win.exe"),
+        )
+        .map(|_| TaskExecution::Passed(TaskEvidence::default())),
         Task::Cargo { label, args, .. } => {
             let mut command = Command::new("cargo");
             command.args(args).current_dir(root);
@@ -646,6 +654,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
     }
     if options.package {
         push_unique(&mut tasks, release_build());
+        push_unique(&mut tasks, verify_native_runtime_dependencies());
         push_unique(&mut tasks, package_artifact());
         push_unique(&mut tasks, generate_sbom());
         push_unique(&mut tasks, verify_package());
@@ -657,6 +666,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         push_unique(&mut tasks, workspace_tests());
         push_unique(&mut tasks, dependency_policy());
         push_unique(&mut tasks, release_build());
+        push_unique(&mut tasks, verify_native_runtime_dependencies());
         push_unique(&mut tasks, package_artifact());
         push_unique(&mut tasks, generate_sbom());
         push_unique(&mut tasks, verify_package());
@@ -868,6 +878,10 @@ const fn governance() -> Task {
 
 const fn qualification_environment() -> Task {
     Task::QualificationEnvironment
+}
+
+const fn verify_native_runtime_dependencies() -> Task {
+    Task::NativeRuntimeDependencies
 }
 
 fn cargo(id: TaskId, label: &'static str, args: &[&'static str]) -> Task {
@@ -2137,6 +2151,7 @@ mod tests {
             vec![
                 TaskId::Governance,
                 TaskId::ReleaseBuild,
+                TaskId::VerifyNativeRuntimeDependencies,
                 TaskId::PackageArtifact,
                 TaskId::GenerateSbom,
                 TaskId::VerifyPackage,
@@ -2167,6 +2182,7 @@ mod tests {
             TaskId::WorkspaceTests,
             TaskId::DependencyPolicy,
             TaskId::ReleaseBuild,
+            TaskId::VerifyNativeRuntimeDependencies,
             TaskId::PackageArtifact,
             TaskId::GenerateSbom,
             TaskId::VerifyPackage,

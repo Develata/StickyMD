@@ -4,6 +4,7 @@
 mod cli;
 mod evidence;
 mod governance;
+mod pe_dependencies;
 #[cfg(windows)]
 mod process_metrics;
 mod qualification;

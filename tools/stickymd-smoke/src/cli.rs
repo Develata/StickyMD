@@ -166,6 +166,9 @@ pub(crate) enum QualificationCommand {
     Candidate,
     StartupAttribution,
     WindowStress(WindowStressOptions),
+    NativeRuntime {
+        executable: PathBuf,
+    },
     Decision {
         key: String,
         status: String,
@@ -344,6 +347,18 @@ impl CommandLine {
                     },
                 )))
             }
+            Some("native-runtime") => {
+                let values = &arguments[1..];
+                if values.len() != 1 {
+                    return Err(
+                        "usage: stickymd-smoke qualification native-runtime --exe=<path>"
+                            .to_owned(),
+                    );
+                }
+                Ok(Self::Qualification(QualificationCommand::NativeRuntime {
+                    executable: PathBuf::from(named_value(values, "--exe=")?),
+                }))
+            }
             Some("local") if arguments.len() == 1 => {
                 Ok(Self::Qualification(QualificationCommand::LocalCampaign))
             }
@@ -397,7 +412,7 @@ impl CommandLine {
                 }))
             }
             _ => Err(
-                "qualification requires environment, local, candidate, attribution, window-stress, decision, readiness, remote, or downloaded"
+                "qualification requires environment, local, candidate, attribution, window-stress, native-runtime, decision, readiness, remote, or downloaded"
                     .to_owned(),
             ),
         }
@@ -865,6 +880,19 @@ mod tests {
         assert_eq!(
             manual,
             CommandLine::AcceptanceManual(ManualCommand::Run { session: None })
+        );
+
+        let native_runtime = CommandLine::parse(args(&[
+            "qualification",
+            "native-runtime",
+            "--exe=target/release/stickymd-win.exe",
+        ]))
+        .expect("valid native-runtime dependency gate");
+        assert_eq!(
+            native_runtime,
+            CommandLine::Qualification(QualificationCommand::NativeRuntime {
+                executable: std::path::PathBuf::from("target/release/stickymd-win.exe"),
+            })
         );
     }
 

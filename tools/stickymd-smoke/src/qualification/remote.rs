@@ -101,6 +101,7 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
             return Err("downloaded ZIP extraction failed".to_owned());
         }
         let executable = temporary.join("StickyMD/StickyMD.exe");
+        crate::pe_dependencies::verify_portable_executable(&executable)?;
         let exe_hash = receipt::sha256(&executable)?;
         if exe_hash != candidate.exe_sha256 {
             return Err("downloaded EXE hash differs from manual candidate identity".to_owned());

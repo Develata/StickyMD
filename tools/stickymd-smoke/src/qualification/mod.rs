@@ -36,6 +36,17 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
         }
         QualificationCommand::StartupAttribution => startup_attribution::record(root),
         QualificationCommand::WindowStress(options) => run_window_stress(root, options),
+        QualificationCommand::NativeRuntime { executable } => {
+            let executable = if executable.is_absolute() {
+                executable
+            } else {
+                root.join(executable)
+            };
+            let report = crate::pe_dependencies::verify_portable_executable(&executable)?;
+            println!("PORTABLE_NATIVE_DEPENDENCIES={}", report.imports.join(","));
+            println!("DEVELOPER_RUNTIME_IMPORTS=none");
+            Ok(())
+        }
         QualificationCommand::Decision {
             key,
             status,

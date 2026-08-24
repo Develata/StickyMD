@@ -62,6 +62,8 @@ jobs:
         run: rustup show
       - name: release build
         run: cargo build --workspace --release --locked
+      - name: Verify portable native runtime dependencies
+        run: cargo run -p stickymd-smoke --locked -- qualification native-runtime --exe=target/release/stickymd-win.exe
 
   portable-core:
     name: Linux portable-core build (core + render only)

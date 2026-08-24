@@ -59,3 +59,32 @@ verification tooling 是 tracked source；因此旧 source/EXE/ZIP receipt 不�
 commit 必须重新执行 Release/package、headless CI、Runtime、Performance 和完整 Resources。
 Resources PASS 前不得开始正式 manual receipt；PASS 后只进入 USER-guided G1/G2/G3，仍不授权
 Phase 15、tag、publish 或 push。
+
+## Exact-candidate Follow-up
+
+source `560ef02b332b91756d51e108e048f3dc955ebdf6` 的完整 Resources 通道随后报告窗口对象从
+`{handles: 415, gdi: 19, user: 26}` 增长到 `{handles: 432, gdi: 19, user: 29}`，句柄增量 17
+刚好超过 hard limit 16。分场景 reducer 给出：tray 100 次为 `+2 handles / +4 USER`，controls
+100 次为 `+2 / +0`，external reload 100 次为 `+6 / +1`，collapse 1000 次无增长；相同组合路径
+从已激活全部子系统后的 baseline 到末尾为净 `-5 handles`。这否定了随循环次数线性增长的产品
+泄漏假设。
+
+根因是旧 measurement baseline 只包含 Source 初始状态，而末值已经首次初始化 tray wake、toolbar
+controls、external conflict、Preview/image decode 等稳定子系统，比较集合不相等。修正只在 baseline
+前对每条被测路径执行一次有界 warm-up，随后仍执行原 1000/100/100/100 压力循环，且不改变
+`8 MiB / +16 handles / +8 GDI / +8 USER` 门槛。定向 copied-Release window resource 通道在相同
+hard limits 下通过；product runtime 与 runtime dependency delta 仍为零。
+
+同一轮 Runtime 的 220x120 durable resize 失败首先归因于 harness：旧 helper 直接
+`SetWindowPos` 并伪造 `WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE`，绕过了产品由真实 winit resize 与
+左键释放提交 durable geometry 的合同。新 helper 改用 `SendInput` 驱动真实右下角 pointer resize，
+并等待 native move-size；输入目标、move-size、最终 HWND 几何和 durable config 均分别验证，桌面
+被 USER 同时操作时会 fail closed，不会以扩大命中范围冒充 PASS。
+
+物理路径同时暴露了独立的 upstream interop defect：锁定的 winit 0.30.13 在
+`handle_os_dragging` 中把栈上 `POINTS` 的地址直接转换成 `WM_NCLBUTTONDOWN` 的 `LPARAM`，而
+Win32 要求 low/high word 中的 signed screen coordinates。Phase 14 因此在已有
+`native_message.rs` adapter 内消费这一个 malformed queued message，以 queued `MSG.pt` screen point
+构造合法 `LPARAM` 并同步重发；其它消息仍由 winit 正常 dispatch。该修正新增少量 product
+adapter runtime code，但不改变窗口 state authority、不新增 dependency，也不复制 move/resize
+状态机。资源 baseline/warm-up 修正本身仍是 product runtime delta 0。

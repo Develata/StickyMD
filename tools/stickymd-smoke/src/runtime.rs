@@ -994,7 +994,14 @@ fn exercise_primary_edge(
     wait_for_config_field(
         program_directory,
         &format!("dock_edge = \"{config_value}\""),
-    )?;
+    )
+    .map_err(|error| {
+        let shell = observe_shell(window).map_or_else(
+            |inspect| format!("unavailable: {inspect}"),
+            |facts| format_shell_observation(&facts),
+        );
+        format!("edge={config_value}: {error}; shell={shell}")
+    })?;
     crate::window_control::focus_shell_desktop(window)?;
     wait_for_primary_edge_state(window, edge, true)?;
     reveal_primary_edge_and_wait(window, edge)
@@ -1944,6 +1951,8 @@ fn run_window_leak_cycles(
     const TRAY_CYCLES: usize = 100;
     const CONTROL_CYCLES: usize = 100;
     reveal_primary_left_and_wait(window)?;
+    warm_window_leak_paths(program_directory, executable, child, window)?;
+    thread::sleep(Duration::from_secs(2));
     let before_memory = process_metrics::memory(child)?;
     let before_objects = process_metrics::objects(child)?;
     let before_cpu = process_metrics::cpu_time(child)?;
@@ -2003,7 +2012,7 @@ fn run_window_leak_cycles(
         )?;
     }
     wait_for_config_field(program_directory, "opacity = 100")?;
-    run_persistence_and_image_leak_cycles(program_directory, child, window)?;
+    run_persistence_and_image_leak_cycles(program_directory, child, window, 100)?;
     thread::sleep(Duration::from_secs(2));
     ensure_alive(child, "post-cycle Phase 8 resource instance")?;
     let after_memory = process_metrics::memory(child)?;
@@ -2032,17 +2041,57 @@ fn run_window_leak_cycles(
     Ok(())
 }
 
+fn warm_window_leak_paths(
+    program_directory: &Path,
+    executable: &Path,
+    child: &mut Child,
+    window: crate::window_control::WindowHandle,
+) -> Result<(), String> {
+    crate::window_control::park_cursor_at_primary_right(window)?;
+    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Collapse)?;
+    wait_for_primary_left_state(window, true)?;
+    reveal_primary_left_and_wait(window)?;
+
+    crate::window_control::request_close(window)?;
+    wait_for_window_visibility(window, false)?;
+    let mut secondary = start(executable)?;
+    let status = wait_for_exit(&mut secondary, EXIT_TIMEOUT)?;
+    if !status.success() {
+        return Err(format!(
+            "window resource warm-up wake instance failed: {status}"
+        ));
+    }
+    wait_for_window_visibility(window, true)?;
+
+    for _ in 0..2 {
+        crate::window_control::click_toolbar(
+            window,
+            crate::window_control::ToolbarControl::Topmost,
+        )?;
+    }
+    for _ in 0..3 {
+        crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Theme)?;
+    }
+    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Opacity)?;
+    crate::window_control::commit_opacity_slider(window, 70)?;
+    crate::window_control::commit_opacity_slider(window, 100)?;
+    wait_for_config_field(program_directory, "opacity = 100")?;
+    run_persistence_and_image_leak_cycles(program_directory, child, window, 1)
+}
+
 fn run_persistence_and_image_leak_cycles(
     program_directory: &Path,
     child: &mut Child,
     window: crate::window_control::WindowHandle,
+    cycles: usize,
 ) -> Result<(), String> {
-    const CYCLES: usize = 100;
     let note = program_directory.join("note/note.md");
     crate::window_control::switch_to_source(child.id())?;
     wait_for_config_field(program_directory, "view_mode = \"source\"")?;
+    reveal_primary_left_and_wait(window)?;
+    crate::window_control::focus_source_editor(window)?;
 
-    for cycle in 0..CYCLES {
+    for cycle in 0..cycles {
         let external = format!("external reload cycle {cycle}\n").into_bytes();
         fs::write(&note, &external)
             .map_err(|error| format!("cannot simulate external reload: {error}"))?;
@@ -2057,7 +2106,7 @@ fn run_persistence_and_image_leak_cycles(
         }
     }
 
-    for cycle in 0..CYCLES {
+    for cycle in 0..cycles {
         crate::window_control::press_enter(window)?;
         wait_for_window_title(window, |title| title == "StickyMD *", "dirty edit")?;
         let external = format!("external conflict cycle {cycle}\n");
@@ -2078,7 +2127,7 @@ fn run_persistence_and_image_leak_cycles(
     let image_directory = program_directory.join("note/images");
     fs::create_dir_all(&image_directory)
         .map_err(|error| format!("cannot create image-cycle directory: {error}"))?;
-    for cycle in 0..CYCLES {
+    for cycle in 0..cycles {
         let leaf = format!("leak-cycle-{cycle}.bmp");
         write_bmp(&image_directory.join(&leaf), 128, 128, cycle)?;
         let external = format!("![cycle {cycle}](images/{leaf})\n");

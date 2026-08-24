@@ -266,10 +266,27 @@ private release lab。
 
 ## Release 合同
 
+<a id="portable-windows-runtime"></a>
+### Portable Windows runtime
+
+- Windows x64 Release 必须能在未安装 Rust toolchain、Visual Studio 或独立 Visual C++
+  Redistributable 的原生 Windows 11 上启动；只允许依赖该系统自带的 Win32 DLL 与 API set。
+- `x86_64-pc-windows-msvc` 通过仓库级 target 配置静态链接 MSVC CRT。该配置只是构建输入，
+  不能单独作为 artifact 自包含性的证据。
+- std-only `stickymd-smoke` 必须解析 exact Release PE32+ 的普通 import table 与 delay-load
+  import table，并拒绝 `VCRUNTIME*`、`MSVCP*`、版本化 `MSVCR*`、`CONCRT*`、debug UCRT 以及
+  GNU C/C++ runtime DLL。Release/package task graph 与 GitHub Release workflow 都必须在打包前
+  执行该 gate。
+- 除 `api-ms-win-*` / `ext-ms-win-*` API set 外，PE gate 使用经审查的 Windows inbox DLL
+  allowlist；未知 import fail closed，不能只依赖 developer-runtime 黑名单。
+- Windows 11 自带的 `api-ms-win-crt-*` API set 与 `msvcrt.dll` 不属于独立开发者环境，允许导入。
+- PE import gate 证明 artifact 没有已知的外置开发者 runtime 依赖，但不能替代 Clean Windows 11
+  VM 人工运行。该人工项在真实执行前必须保持 `NOT TESTED`。
+
 ### 触发与步骤（方向性）
 
 tag `v*` 触发：版本一致性校验 → 测试 → deny → release build → manifest 检查
-→ smoke test → portable ZIP → SHA-256 checksums → 许可证 notice → SBOM
+→ native-runtime import gate → smoke test → portable ZIP → SHA-256 checksums → 许可证 notice → SBOM
 → provenance/attestation → draft release → 人工 Windows 11 验收后发布。
 
 ### 发布物

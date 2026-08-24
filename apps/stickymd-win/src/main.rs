@@ -101,13 +101,14 @@ fn main() {
     let native_proxy_for_hook = Arc::clone(&native_proxy);
     let mut event_loop_builder = EventLoop::<AppEvent>::with_user_event();
     event_loop_builder.with_msg_hook(move |message| {
-        if let Some(signal) = platform::windows::native_message::translate_message(message)
+        let action = platform::windows::native_message::handle_message(message);
+        if let Some(signal) = action.signal
             && let Ok(proxy) = native_proxy_for_hook.lock()
             && let Some(proxy) = proxy.as_ref()
         {
             let _ = proxy.send_event(AppEvent::Native(signal));
         }
-        false
+        action.handled
     });
     let event_loop = match event_loop_builder.build() {
         Ok(event_loop) => event_loop,

@@ -40,6 +40,7 @@ pub(super) fn generate_candidate(root: &Path) -> Result<Candidate, String> {
             ));
         }
     }
+    crate::pe_dependencies::verify_portable_executable(&executable)?;
     let zip_sha256 = sha256(&zip)?;
     let sbom_sha256 = sha256(&sbom)?;
     verify_checksum_manifest(root, &zip_name, &zip_sha256, &sbom_sha256)?;
@@ -111,6 +112,7 @@ pub(super) fn validate_candidate_against_repository(
     if !executable.is_file() || sha256(&executable)? != candidate.exe_sha256 {
         return Err("STALE RECEIPT: Release EXE is missing or changed".to_owned());
     }
+    crate::pe_dependencies::verify_portable_executable(&executable)?;
     let zip = candidate_zip(root, candidate);
     if !zip.is_file() || sha256(&zip)? != candidate.zip_sha256 {
         return Err("STALE RECEIPT: exact portable ZIP is missing or changed".to_owned());

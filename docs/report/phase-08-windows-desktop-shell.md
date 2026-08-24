@@ -328,10 +328,12 @@ See [`phase-08-windows-api-delta.md`](phase-08-windows-api-delta.md).
 ```text
 stickymd-core runtime unsafe = 0
 stickymd-render runtime unsafe = 0
-Windows shell unsafe = confined to monitor.rs, window_opacity.rs and window_topmost.rs
+Phase 8 Windows shell unsafe = confined to monitor.rs, window_opacity.rs and window_topmost.rs
 ```
 
 Every handwritten block has an adjacent `SAFETY:` invariant. `tray.rs` contains no handwritten unsafe.
+Phase 14 later added a bounded `native_message.rs` repair for winit's malformed non-client drag
+payload; see [`phase-08-windows-api-delta.md`](phase-08-windows-api-delta.md#phase-14-native-drag-addendum).
 
 ## Architecture Authority
 

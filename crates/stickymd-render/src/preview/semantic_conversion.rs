@@ -15,6 +15,10 @@ pub enum SemanticConversionError {
     Parse(#[from] PreviewParseError),
     #[error("conversion scope is not a valid UTF-8 range")]
     InvalidScope,
+    #[error("semantic conversion source ranges overlap")]
+    OverlappingSourceRanges,
+    #[error("semantic conversion source range is outside UTF-8 source boundaries")]
+    InvalidSourceRange,
 }
 
 /// One immutable conversion projection. Applying it remains the document
@@ -112,12 +116,42 @@ pub fn convert_latex_math_delimiters(
     if replacements.is_empty() {
         return Ok(None);
     }
-
-    let mut text = snapshot.text.to_string();
-    for replacement in replacements.iter().rev() {
-        text.replace_range(replacement.range.as_range(), &replacement.replacement);
-    }
+    let text = apply_replacements(&snapshot.text, &replacements)?;
     Ok(Some(MathDelimiterConversion { text, replacements }))
+}
+
+/// Builds the converted source in one forward pass. Repeated `replace_range`
+/// would shift the remaining document once per formula and degrade to
+/// O(document bytes * formula count) on a large note.
+fn apply_replacements(
+    source: &str,
+    replacements: &[DelimiterReplacement],
+) -> Result<String, SemanticConversionError> {
+    let mut text = String::with_capacity(source.len());
+    let mut source_cursor = 0;
+    for replacement in replacements {
+        if replacement.range.start < source_cursor {
+            return Err(SemanticConversionError::OverlappingSourceRanges);
+        }
+        let unchanged = source
+            .get(source_cursor..replacement.range.start)
+            .ok_or(SemanticConversionError::InvalidSourceRange)?;
+        if source
+            .get(replacement.range.start..replacement.range.end)
+            .is_none()
+        {
+            return Err(SemanticConversionError::InvalidSourceRange);
+        }
+        text.push_str(unchanged);
+        text.push_str(&replacement.replacement);
+        source_cursor = replacement.range.end;
+    }
+    text.push_str(
+        source
+            .get(source_cursor..)
+            .ok_or(SemanticConversionError::InvalidSourceRange)?,
+    );
+    Ok(text)
 }
 
 fn validate_scope(
@@ -304,6 +338,28 @@ mod tests {
         assert_eq!(
             convert_latex_math_delimiters(&snapshot(source), Some(1..source.len())),
             Err(SemanticConversionError::InvalidScope)
+        );
+    }
+
+    #[test]
+    fn phase11b_overlapping_projection_ranges_fail_before_building_text() {
+        let replacements = [
+            DelimiterReplacement {
+                range: SourceRange { start: 0, end: 4 },
+                replacement: "$a$".to_owned(),
+                new_open_len: 1,
+                new_close_len: 1,
+            },
+            DelimiterReplacement {
+                range: SourceRange { start: 3, end: 7 },
+                replacement: "$b$".to_owned(),
+                new_open_len: 1,
+                new_close_len: 1,
+            },
+        ];
+        assert_eq!(
+            apply_replacements("abcdefgh", &replacements),
+            Err(SemanticConversionError::OverlappingSourceRanges)
         );
     }
 

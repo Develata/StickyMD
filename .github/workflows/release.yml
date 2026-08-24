@@ -56,6 +56,8 @@ jobs:
         run: ./tools/smoke/all.ps1 -Ci
       - name: Build exact release commit
         run: cargo build --workspace --release --locked
+      - name: Verify portable native runtime dependencies
+        run: cargo run -p stickymd-smoke --locked -- qualification native-runtime --exe=target/release/stickymd-win.exe
       - name: Package
         shell: pwsh
         run: |

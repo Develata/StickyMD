@@ -30,6 +30,28 @@ Implementation corrected; fresh exact-candidate qualification and USER manual co
 没有新增 runtime dependency，没有引入第二份 document authority，也没有让 smoke/test channel 进入产品
 runtime。
 
+## Native Drag Interop Hardening
+
+将 copied-Release smoke 从伪造窗口消息改为真实物理输入后，锁定的 winit 0.30.13 Windows 实现还
+暴露出一个上游参数错误：`handle_os_dragging` 将栈上 `POINTS` 地址作为
+`WM_NCLBUTTONDOWN.lParam` post 到 event queue。Win32 合同要求 `lParam` 直接包含 signed screen
+`x/y` 的 low/high words。该错误会使 move/resize anchor 取决于无关栈地址，无法作为 exact-candidate
+窗口资格化基础。
+
+修正保持在现有 `platform/windows/native_message.rs` 薄适配器中：
+
+- winit message hook 只消费 `WM_NCLBUTTONDOWN` 这一种 malformed queued message；
+- 使用 queued `MSG.pt` 中由 Windows 记录的 message-time screen point，不再进行第二次 desktop query；
+- 正确打包 signed coordinate 后，以同 HWND/message/wParam 同步 `SendMessageW`；
+- `handled=true` 阻止原 malformed message 再被 winit dispatch；
+- nested dispatch 仍进入 winit/Win32 原生 move-size 生命周期，`WM_EXITSIZEMOVE` 与产品
+  `complete_window_drag` authority 不变。
+
+没有 fork winit、没有引入 beta dependency，也没有在 StickyMD 实现第二套 drag state machine。
+新增 unsafe 仅限 Windows adapter，每个 block 均记录 pointer、HWND 与同步调用不变量；对应单元测试
+固定验证负坐标的 signed packing。smoke 的绝对鼠标坐标按 virtual desktop 映射，覆盖负坐标环境；
+真实 GUI 路径仍要求独占输入桌面，USER 同时移动鼠标会使它明确失败而不是扩大容差通过。
+
 ## Dock Coverage Correction
 
 旧 copied-Release shell smoke 通过 `PostMessageW(WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE)` 与
@@ -56,8 +78,32 @@ Docked 窗口获得键盘焦点时按产品契约保持展开；失焦后才进�
 自动化不冒充真实 100/125/150/200% DPI、肉眼动画或真实失焦计时；这些 G2 项在新候选人工运行前
 继续是 `NOT TESTED`。
 
+## Semantic Conversion Linearization
+
+静态 CRT candidate 的首次 Phase 14 headless run 稳定暴露了既有算法缺陷：1 MiB / 1000 math
+node 的 delimiter conversion 对每个 replacement 逆序调用一次 `String::replace_range`，每次都搬移
+后续大段字节，复杂度接近 `O(document bytes * formula count)`。连续两次测得 p95 分别为
+`303.7952 ms` 与 `278.6936 ms`，超过原有 `50 ms` hard gate。
+
+修正改为按已排序 source range 单向构建最终字符串：原文未修改区间与 replacement 各复制一次，
+复杂度降为 `O(document bytes + formula count)`；不引入 unsafe、缓存或 dependency。重叠 range 与
+非法 UTF-8 range 在构建任何结果前返回 typed error。相同 Release fixture 修正后为：
+
+```text
+median = 3.0808 ms
+p95    = 4.0727 ms
+max    = 5.3591 ms
+```
+
+该变化只优化现有 semantic conversion execution，不改变 Comrak authority、delimiter 语义、
+DocumentState mutation gateway 或一次 Undo contract。
+
 ## Required Requalification
 
 任何修复后的 tracked SHA 都是新 candidate。必须重新执行 Phase 14 Release/package、headless CI、
 Runtime、Performance、Resources，并由 USER 重新完成受影响的 G1/G2 人工验收。旧 EXE/ZIP hash、
 旧 dynamic receipt 与旧手工观察不得迁移为新候选 PASS。
+
+后续 USER 批准的 portable runtime 资格化加固同样改变 Release artifact identity；静态 MSVC CRT
+与 PE import gate 见
+[`phase-14-portable-runtime-hardening.md`](phase-14-portable-runtime-hardening.md)。
