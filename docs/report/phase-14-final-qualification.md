@@ -45,3 +45,11 @@ REMOTE QUALIFIED — TAG APPROVAL REQUIRED
 ```
 
 不得在本模板中声明 RC ready、tagged 或 published。
+
+## Resources Triage Rule
+
+hidden-window resource failure 必须先拆分 collapse/expand、tray hide/show、controls、
+collapse+tray 与原组合路径，并以独立运行和降阶计数区分 product reducer、platform projection、
+qualification harness 与 environment。等待 editor 可写时必须观察真实 shell/source projection；固定
+sleep 不是 ready 证据。任何 tracked harness correction 都使旧 candidate 失效，并触发完整 exact
+candidate requalification。

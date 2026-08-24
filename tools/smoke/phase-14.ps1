@@ -12,6 +12,19 @@ param(
     [switch]$Campaign,
     [switch]$Candidate,
     [switch]$Attribution,
+    [switch]$WindowStress,
+    [ValidateSet('collapse', 'tray', 'controls', 'collapse-tray', 'combined')]
+    [string]$WindowStressScenario = 'combined',
+    [ValidateRange(1, 100)]
+    [int]$WindowStressRuns = 10,
+    [ValidateRange(0, 10000)]
+    [int]$CollapseCycles = 1000,
+    [ValidateRange(0, 10000)]
+    [int]$TrayCycles = 100,
+    [ValidateRange(0, 10000)]
+    [int]$ControlCycles = 100,
+    [ValidateRange(0, 10000)]
+    [int]$PersistenceCycles = 100,
     [string]$DecisionKey,
     [string]$DecisionStatus,
     [string]$DecisionEvidence,
@@ -36,6 +49,7 @@ $qualificationActions = @(
     $Campaign,
     $Candidate,
     $Attribution,
+    $WindowStress,
     [bool]$DecisionKey,
     $Manual,
     [bool]$ManualSession,
@@ -59,6 +73,17 @@ if ($Environment) {
     $arguments += @('qualification', 'candidate')
 } elseif ($Attribution) {
     $arguments += @('qualification', 'attribution')
+} elseif ($WindowStress) {
+    $arguments += @(
+        'qualification',
+        'window-stress',
+        "--scenario=$WindowStressScenario",
+        "--runs=$WindowStressRuns",
+        "--collapse-cycles=$CollapseCycles",
+        "--tray-cycles=$TrayCycles",
+        "--control-cycles=$ControlCycles",
+        "--persistence-cycles=$PersistenceCycles"
+    )
 } elseif ($Manual -or $ManualSession) {
     $arguments += @('acceptance', 'manual', 'run')
     if ($ManualSession) { $arguments += "--session=$ManualSession" }

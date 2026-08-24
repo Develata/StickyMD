@@ -35,6 +35,7 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
             Ok(())
         }
         QualificationCommand::StartupAttribution => startup_attribution::record(root),
+        QualificationCommand::WindowStress(options) => run_window_stress(root, options),
         QualificationCommand::Decision {
             key,
             status,
@@ -46,6 +47,26 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
         }
         QualificationCommand::Downloaded { zip } => remote::verify_downloaded(root, &zip),
     }
+}
+
+#[cfg(windows)]
+fn run_window_stress(root: &Path, options: crate::cli::WindowStressOptions) -> Result<(), String> {
+    let environment = qualification_environment::inspect();
+    if environment.status != QualificationEnvironmentStatus::Valid {
+        return Err(format!(
+            "window-stress diagnostic requires a valid interactive desktop: {}",
+            environment.summary()
+        ));
+    }
+    crate::runtime::run_window_stress_diagnostic(root, options)
+}
+
+#[cfg(not(windows))]
+fn run_window_stress(
+    _root: &Path,
+    _options: crate::cli::WindowStressOptions,
+) -> Result<(), String> {
+    Err("window-stress diagnostic requires Windows".to_owned())
 }
 
 pub(super) fn record_environment(root: &Path, evidence_file: Option<&Path>) -> Result<(), String> {

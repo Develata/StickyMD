@@ -1,5 +1,6 @@
 //! Minimal Windows window-message bridge for opt-in runtime smoke transitions.
 
+use std::ffi::c_void;
 use std::thread;
 use std::time::Duration;
 
@@ -28,6 +29,9 @@ const SWP_NOACTIVATE: u32 = 0x0010;
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 const CURSOR_MOVE_ATTEMPTS: usize = 3;
 const CURSOR_MOVE_RETRY: Duration = Duration::from_millis(25);
+const CF_UNICODETEXT: u32 = 13;
+const KEYEVENTF_EXTENDEDKEY: u32 = 0x0001;
+const KEYEVENTF_KEYUP: u32 = 0x0002;
 
 #[derive(Default)]
 struct WindowSearch {
@@ -71,6 +75,21 @@ pub(crate) struct WindowStyleFacts {
     pub(crate) transparent: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct WindowActivationFacts {
+    pub(crate) foreground: bool,
+    pub(crate) active: bool,
+    pub(crate) focused: bool,
+    pub(crate) captured: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CursorFacts {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) inside_window: bool,
+}
+
 #[repr(C)]
 #[derive(Default)]
 struct NativeRect {
@@ -87,6 +106,20 @@ struct NativePoint {
     y: i32,
 }
 
+#[repr(C)]
+#[derive(Default)]
+struct NativeGuiThreadInfo {
+    size: u32,
+    flags: u32,
+    active: *mut c_void,
+    focus: *mut c_void,
+    capture: *mut c_void,
+    menu_owner: *mut c_void,
+    move_size: *mut c_void,
+    caret: *mut c_void,
+    caret_rect: NativeRect,
+}
+
 #[link(name = "user32")]
 unsafe extern "system" {
     fn EnumWindows(
@@ -94,6 +127,8 @@ unsafe extern "system" {
         parameter: isize,
     ) -> i32;
     fn GetWindowThreadProcessId(window: isize, process_id: *mut u32) -> u32;
+    fn GetForegroundWindow() -> *mut c_void;
+    fn GetGUIThreadInfo(thread_id: u32, info: *mut NativeGuiThreadInfo) -> i32;
     fn IsWindowVisible(window: isize) -> i32;
     fn IsWindow(window: isize) -> i32;
     fn GetWindowTextLengthW(window: isize) -> i32;
@@ -132,6 +167,53 @@ unsafe extern "system" {
     fn GetThreadDpiAwarenessContext() -> isize;
     #[cfg(test)]
     fn AreDpiAwarenessContextsEqual(first: isize, second: isize) -> i32;
+    fn OpenClipboard(owner: isize) -> i32;
+    fn CloseClipboard() -> i32;
+    fn EmptyClipboard() -> i32;
+    fn IsClipboardFormatAvailable(format: u32) -> i32;
+    fn GetClipboardData(format: u32) -> isize;
+    fn keybd_event(virtual_key: u8, scan_code: u8, flags: u32, extra_info: usize);
+}
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GlobalLock(memory: isize) -> *const c_void;
+    fn GlobalUnlock(memory: isize) -> i32;
+    fn GlobalSize(memory: isize) -> usize;
+}
+
+struct ClipboardGuard;
+
+impl ClipboardGuard {
+    fn open() -> Result<Self, String> {
+        const TIMEOUT: Duration = Duration::from_secs(1);
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        loop {
+            // SAFETY: a null owner is valid for this short-lived smoke query;
+            // successful ownership is released by `Drop` on every path.
+            if unsafe { OpenClipboard(0) } != 0 {
+                return Ok(Self);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "cannot open clipboard within {:.3} seconds: {}",
+                    TIMEOUT.as_secs_f64(),
+                    std::io::Error::last_os_error()
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for ClipboardGuard {
+    fn drop(&mut self) {
+        // SAFETY: this guard exists only after OpenClipboard succeeded and is
+        // the sole close obligation for that acquisition.
+        unsafe {
+            CloseClipboard();
+        }
+    }
 }
 
 /// Keep native window queries and posted client coordinates in physical
@@ -182,6 +264,79 @@ pub(crate) fn press_enter(window: WindowHandle) -> Result<(), String> {
 
 pub(crate) fn press_f6(window: WindowHandle) -> Result<(), String> {
     post_virtual_key(window, 0x75, 0x40)
+}
+
+pub(crate) fn press_select_all(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, 0x41, 0x1E, false)
+}
+
+pub(crate) fn press_copy(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, 0x43, 0x2E, false)
+}
+
+pub(crate) fn press_document_end(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, 0x23, 0x4F, true)
+}
+
+pub(crate) fn clear_clipboard() -> Result<(), String> {
+    let _guard = ClipboardGuard::open()?;
+    // SAFETY: ClipboardGuard owns the open clipboard and EmptyClipboard
+    // retains no caller-owned pointer.
+    if unsafe { EmptyClipboard() } == 0 {
+        return Err(format!(
+            "cannot clear clipboard: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn clipboard_text() -> Result<Option<String>, String> {
+    let _guard = ClipboardGuard::open()?;
+    // SAFETY: the clipboard is open for this guard and the query only returns
+    // whether the standard Unicode text format is currently available.
+    if unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT) } == 0 {
+        return Ok(None);
+    }
+    // SAFETY: the clipboard is open and the returned HGLOBAL remains owned by
+    // the clipboard for the duration of this guard.
+    let memory = unsafe { GetClipboardData(CF_UNICODETEXT) };
+    if memory == 0 {
+        return Err(format!(
+            "cannot obtain Unicode clipboard text: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: GlobalSize only queries the clipboard-owned allocation and
+    // retains no pointer.
+    let bytes = unsafe { GlobalSize(memory) };
+    if bytes < std::mem::size_of::<u16>() || bytes % std::mem::size_of::<u16>() != 0 {
+        return Err(format!(
+            "Unicode clipboard allocation has invalid byte length {bytes}"
+        ));
+    }
+    // SAFETY: CF_UNICODETEXT is a NUL-terminated UTF-16 HGLOBAL. The pointer
+    // remains valid while locked and ClipboardGuard keeps the clipboard open.
+    let pointer = unsafe { GlobalLock(memory) }.cast::<u16>();
+    if pointer.is_null() {
+        return Err(format!(
+            "cannot lock Unicode clipboard text: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let units = bytes / std::mem::size_of::<u16>();
+    // SAFETY: GlobalSize bounds the locked allocation to `units` UTF-16 code
+    // units; this read ends before GlobalUnlock below.
+    let text = unsafe { std::slice::from_raw_parts(pointer, units) };
+    let length = text.iter().position(|unit| *unit == 0).unwrap_or(units);
+    let decoded = String::from_utf16(&text[..length])
+        .map_err(|error| format!("clipboard text is invalid UTF-16: {error}"));
+    // SAFETY: `memory` is exactly the HGLOBAL locked above; no borrowed slice
+    // is used after this call.
+    unsafe {
+        GlobalUnlock(memory);
+    }
+    decoded.map(Some)
 }
 
 pub(crate) fn press_zoom_in(window: WindowHandle) -> Result<(), String> {
@@ -482,6 +637,65 @@ pub(crate) fn style_facts(window: WindowHandle) -> Result<WindowStyleFacts, Stri
     })
 }
 
+pub(crate) fn activation_facts(window: WindowHandle) -> Result<WindowActivationFacts, String> {
+    ensure_window(window)?;
+    let mut process_id = 0_u32;
+    // SAFETY: `process_id` is writable stack storage and `window` is a live
+    // HWND. The API copies the owning thread/process identifiers.
+    let thread_id = unsafe { GetWindowThreadProcessId(window.0, &raw mut process_id) };
+    if thread_id == 0 {
+        return Err(format!(
+            "cannot read StickyMD GUI thread: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let mut info = NativeGuiThreadInfo {
+        size: std::mem::size_of::<NativeGuiThreadInfo>() as u32,
+        ..NativeGuiThreadInfo::default()
+    };
+    // SAFETY: `info` has the documented size and remains writable for the
+    // synchronous query. The API retains no pointer.
+    if unsafe { GetGUIThreadInfo(thread_id, &raw mut info) } == 0 {
+        return Err(format!(
+            "cannot read StickyMD GUI-thread state: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: GetForegroundWindow returns a borrowed HWND scalar and retains
+    // no caller-owned data.
+    let foreground = unsafe { GetForegroundWindow() };
+    let expected = window.0 as *mut c_void;
+    Ok(WindowActivationFacts {
+        foreground: foreground == expected,
+        active: info.active == expected,
+        focused: info.focus == expected,
+        captured: info.capture == expected,
+    })
+}
+
+pub(crate) fn cursor_facts(window: WindowHandle) -> Result<CursorFacts, String> {
+    let rect = window_rect(window)?;
+    let mut point = NativePoint::default();
+    // SAFETY: `point` is writable stack storage and the API copies the cursor
+    // position without retaining a pointer.
+    if unsafe { GetCursorPos(&raw mut point) } == 0 {
+        return Err(format!(
+            "cannot read desktop cursor position: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let right = i64::from(rect.x) + i64::from(rect.width);
+    let bottom = i64::from(rect.y) + i64::from(rect.height);
+    Ok(CursorFacts {
+        x: point.x,
+        y: point.y,
+        inside_window: i64::from(point.x) >= i64::from(rect.x)
+            && i64::from(point.x) < right
+            && i64::from(point.y) >= i64::from(rect.y)
+            && i64::from(point.y) < bottom,
+    })
+}
+
 pub(crate) fn is_topmost(window: WindowHandle) -> Result<bool, String> {
     ensure_window(window)?;
     // SAFETY: this reads immutable style bits from the live HWND and retains
@@ -710,6 +924,32 @@ fn post_control_chord(
         ctrl_released,
         "control key up",
     )?;
+    thread::sleep(Duration::from_millis(10));
+    Ok(())
+}
+
+fn send_control_chord(
+    window: WindowHandle,
+    virtual_key: u8,
+    scan_code: u8,
+    extended: bool,
+) -> Result<(), String> {
+    let activation = activation_facts(window)?;
+    if !(activation.foreground && activation.active && activation.focused) {
+        return Err(format!(
+            "refusing keyboard injection without focused foreground StickyMD window: {activation:?}"
+        ));
+    }
+    let key_flags = if extended { KEYEVENTF_EXTENDEDKEY } else { 0 };
+    // SAFETY: keybd_event consumes copied key scalars. The target HWND is the
+    // verified focused foreground window, and the balanced down/up sequence
+    // leaves no modifier pressed after this synchronous smoke action.
+    unsafe {
+        keybd_event(0x11, 0x1D, 0, 0);
+        keybd_event(virtual_key, scan_code, key_flags, 0);
+        keybd_event(virtual_key, scan_code, key_flags | KEYEVENTF_KEYUP, 0);
+        keybd_event(0x11, 0x1D, KEYEVENTF_KEYUP, 0);
+    }
     thread::sleep(Duration::from_millis(10));
     Ok(())
 }

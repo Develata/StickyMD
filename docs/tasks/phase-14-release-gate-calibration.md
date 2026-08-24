@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation Complete — awaiting exact-candidate evidence and USER-driven manual acceptance.
+Qualification In Progress — Resources harness corrected; exact-candidate requalification required.
 
 ## Purpose
 
@@ -53,6 +53,19 @@ tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任
 - workspace fmt / strict Clippy / tests / Release build / deny。
 - exact copied candidate Release, headless, Runtime, Performance, Resources and Readiness channels。
 - product runtime/dependency delta audit。
+
+## Resources Failure Triage
+
+旧 candidate `1d533357ac072605b350b0523f2957597341bc62` 的 Phase 8 hidden-window
+resource matrix 在外部 reload 后注入 Enter 时失败。分段、组合与降阶复现没有重现产品状态机
+错误；根因归类为 `QUALIFICATION HARNESS DEFECT`：旧 harness 用固定 350 ms sleep 推断 source
+projection 已完成，既没有验证 editor projection，也没有记录 foreground/focus/geometry 等 shell
+事实。
+
+修正保持产品 runtime 与 runtime dependency delta 为零：Rust smoke CLI 新增有界
+`window-stress` reducer、typed shell-state wait 和基于真实 Ctrl+A/C clipboard projection 的 ready
+gate。tracked tooling 变化使旧 candidate 失效；必须在新 freeze commit 上重新收集 Release/package、
+headless CI、Runtime、Performance 与 Resources。Resources PASS 前不开始正式 manual receipt。
 
 ## Result
 

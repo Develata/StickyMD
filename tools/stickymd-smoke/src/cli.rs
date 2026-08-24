@@ -165,6 +165,7 @@ pub(crate) enum QualificationCommand {
     LocalCampaign,
     Candidate,
     StartupAttribution,
+    WindowStress(WindowStressOptions),
     Decision {
         key: String,
         status: String,
@@ -180,6 +181,50 @@ pub(crate) enum QualificationCommand {
     Downloaded {
         zip: PathBuf,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WindowStressScenario {
+    Collapse,
+    Tray,
+    Controls,
+    CollapseTray,
+    Combined,
+}
+
+impl WindowStressScenario {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "collapse" => Ok(Self::Collapse),
+            "tray" => Ok(Self::Tray),
+            "controls" => Ok(Self::Controls),
+            "collapse-tray" => Ok(Self::CollapseTray),
+            "combined" => Ok(Self::Combined),
+            _ => Err(format!(
+                "unknown window-stress scenario `{value}`; expected collapse, tray, controls, collapse-tray, or combined"
+            )),
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Collapse => "collapse",
+            Self::Tray => "tray",
+            Self::Controls => "controls",
+            Self::CollapseTray => "collapse-tray",
+            Self::Combined => "combined",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct WindowStressOptions {
+    pub(crate) scenario: WindowStressScenario,
+    pub(crate) runs: usize,
+    pub(crate) collapse_cycles: usize,
+    pub(crate) tray_cycles: usize,
+    pub(crate) control_cycles: usize,
+    pub(crate) persistence_cycles: usize,
 }
 
 impl CommandLine {
@@ -260,6 +305,45 @@ impl CommandLine {
             Some("attribution") if arguments.len() == 1 => Ok(Self::Qualification(
                 QualificationCommand::StartupAttribution,
             )),
+            Some("window-stress") => {
+                let values = &arguments[1..];
+                if values.len() != 6 {
+                    return Err(window_stress_usage());
+                }
+                Ok(Self::Qualification(QualificationCommand::WindowStress(
+                    WindowStressOptions {
+                        scenario: WindowStressScenario::parse(named_value(
+                            values,
+                            "--scenario=",
+                        )?)?,
+                        runs: named_bounded_usize(values, "--runs=", 1, 100)?,
+                        collapse_cycles: named_bounded_usize(
+                            values,
+                            "--collapse-cycles=",
+                            0,
+                            10_000,
+                        )?,
+                        tray_cycles: named_bounded_usize(
+                            values,
+                            "--tray-cycles=",
+                            0,
+                            10_000,
+                        )?,
+                        control_cycles: named_bounded_usize(
+                            values,
+                            "--control-cycles=",
+                            0,
+                            10_000,
+                        )?,
+                        persistence_cycles: named_bounded_usize(
+                            values,
+                            "--persistence-cycles=",
+                            0,
+                            10_000,
+                        )?,
+                    },
+                )))
+            }
             Some("local") if arguments.len() == 1 => {
                 Ok(Self::Qualification(QualificationCommand::LocalCampaign))
             }
@@ -313,7 +397,7 @@ impl CommandLine {
                 }))
             }
             _ => Err(
-                "qualification requires environment, local, candidate, attribution, decision, readiness, remote, or downloaded"
+                "qualification requires environment, local, candidate, attribution, window-stress, decision, readiness, remote, or downloaded"
                     .to_owned(),
             ),
         }
@@ -333,6 +417,28 @@ fn named_u64(arguments: &[String], prefix: &str) -> Result<u64, String> {
     value
         .parse::<u64>()
         .map_err(|error| format!("invalid `{prefix}{value}`: {error}"))
+}
+
+fn named_bounded_usize(
+    arguments: &[String],
+    prefix: &str,
+    minimum: usize,
+    maximum: usize,
+) -> Result<usize, String> {
+    let value = named_value(arguments, prefix)?;
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|error| format!("invalid `{prefix}{value}`: {error}"))?;
+    if !(minimum..=maximum).contains(&parsed) {
+        return Err(format!(
+            "`{prefix}{value}` is outside {minimum}..={maximum}"
+        ));
+    }
+    Ok(parsed)
+}
+
+fn window_stress_usage() -> String {
+    "usage: stickymd-smoke qualification window-stress --scenario=<collapse|tray|controls|collapse-tray|combined> --runs=<1..100> --collapse-cycles=<0..10000> --tray-cycles=<0..10000> --control-cycles=<0..10000> --persistence-cycles=<0..10000>".to_owned()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -490,7 +596,7 @@ impl Options {
 mod tests {
     use super::{
         CommandLine, GuidedSession, ManualCommand, ManualSession, Options, Phase,
-        QualificationCommand, Selection,
+        QualificationCommand, Selection, WindowStressOptions, WindowStressScenario,
     };
 
     fn args<'a>(values: &'a [&'a str]) -> impl Iterator<Item = String> + 'a {
@@ -692,6 +798,45 @@ mod tests {
                 session: Some(GuidedSession::G2),
             })
         );
+    }
+
+    #[test]
+    fn phase14_window_stress_diagnostic_is_typed_and_bounded() {
+        let command = CommandLine::parse(args(&[
+            "qualification",
+            "window-stress",
+            "--scenario=combined",
+            "--runs=10",
+            "--collapse-cycles=1000",
+            "--tray-cycles=100",
+            "--control-cycles=100",
+            "--persistence-cycles=1",
+        ]))
+        .expect("valid window-stress diagnostic");
+        assert_eq!(
+            command,
+            CommandLine::Qualification(QualificationCommand::WindowStress(WindowStressOptions {
+                scenario: WindowStressScenario::Combined,
+                runs: 10,
+                collapse_cycles: 1000,
+                tray_cycles: 100,
+                control_cycles: 100,
+                persistence_cycles: 1,
+            }))
+        );
+
+        let error = CommandLine::parse(args(&[
+            "qualification",
+            "window-stress",
+            "--scenario=tray",
+            "--runs=0",
+            "--collapse-cycles=0",
+            "--tray-cycles=1",
+            "--control-cycles=0",
+            "--persistence-cycles=0",
+        ]))
+        .expect_err("zero independent runs must be rejected");
+        assert!(error.contains("outside 1..=100"));
     }
 
     #[test]

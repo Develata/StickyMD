@@ -39,6 +39,33 @@ macro_rules! runtime_report {
     };
 }
 
+mod window_stress;
+
+pub(crate) use window_stress::run as run_window_stress_diagnostic;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShellStateExpectation {
+    Visible,
+    Hidden,
+    PrimaryLeftCollapsed,
+    PrimaryLeftExpanded,
+    EditorInputReady,
+}
+
+#[derive(Clone, Debug)]
+struct ShellObservation {
+    visible: bool,
+    rect: crate::window_control::WindowRect,
+    work: crate::window_control::WindowRect,
+    activation: crate::window_control::WindowActivationFacts,
+    cursor: crate::window_control::CursorFacts,
+    style: crate::window_control::WindowStyleFacts,
+    topmost: bool,
+    alpha: crate::window_control::LayeredAlpha,
+    title: String,
+    stable_geometry: bool,
+}
+
 pub(crate) fn run(
     repository: &Path,
     scenario: RuntimeScenario,
@@ -1657,7 +1684,12 @@ fn wait_for_primary_left_state(
     window: crate::window_control::WindowHandle,
     collapsed: bool,
 ) -> Result<(), String> {
-    wait_for_primary_left_state_with_timeout(window, collapsed, START_TIMEOUT)
+    let expectation = if collapsed {
+        ShellStateExpectation::PrimaryLeftCollapsed
+    } else {
+        ShellStateExpectation::PrimaryLeftExpanded
+    };
+    wait_for_shell_state(window, expectation, START_TIMEOUT).map(|_| ())
 }
 
 fn wait_for_primary_left_state_with_timeout(
@@ -1665,25 +1697,98 @@ fn wait_for_primary_left_state_with_timeout(
     collapsed: bool,
     timeout: Duration,
 ) -> Result<(), String> {
-    let work = crate::window_control::primary_work_area()?;
+    let expectation = if collapsed {
+        ShellStateExpectation::PrimaryLeftCollapsed
+    } else {
+        ShellStateExpectation::PrimaryLeftExpanded
+    };
+    wait_for_shell_state(window, expectation, timeout).map(|_| ())
+}
+
+fn wait_for_shell_state(
+    window: crate::window_control::WindowHandle,
+    expectation: ShellStateExpectation,
+    timeout: Duration,
+) -> Result<ShellObservation, String> {
     let deadline = Instant::now() + timeout;
-    let mut last_rect = None;
+    let mut last = None;
     while Instant::now() < deadline {
-        let rect = crate::window_control::window_rect(window)?;
-        last_rect = Some(rect);
-        let sensor_right = i64::from(rect.x) + i64::from(rect.width) - i64::from(work.x);
-        let observed_collapsed = rect.x < work.x && (1..=16).contains(&sensor_right);
-        let observed_expanded = (rect.x - work.x).abs() <= 1;
-        if (collapsed && observed_collapsed) || (!collapsed && observed_expanded) {
-            return Ok(());
+        let observed = observe_shell(window)?;
+        if shell_matches(&observed, expectation) {
+            return Ok(observed);
         }
+        last = Some(observed);
         thread::sleep(Duration::from_millis(10));
     }
     Err(format!(
-        "StickyMD did not become primary-left {} within {:.3} seconds; work={work:?} last_rect={last_rect:?}",
-        if collapsed { "collapsed" } else { "expanded" },
-        timeout.as_secs_f64()
+        "expected={expectation:?} timeout_seconds={:.3} actual={}",
+        timeout.as_secs_f64(),
+        last.as_ref()
+            .map_or_else(|| "unobserved".to_owned(), format_shell_observation)
     ))
+}
+
+fn observe_shell(window: crate::window_control::WindowHandle) -> Result<ShellObservation, String> {
+    let rect = crate::window_control::window_rect(window)?;
+    thread::sleep(Duration::from_millis(20));
+    let final_rect = crate::window_control::window_rect(window)?;
+    Ok(ShellObservation {
+        visible: crate::window_control::is_visible(window)?,
+        rect: final_rect,
+        work: crate::window_control::primary_work_area()?,
+        activation: crate::window_control::activation_facts(window)?,
+        cursor: crate::window_control::cursor_facts(window)?,
+        style: crate::window_control::style_facts(window)?,
+        topmost: crate::window_control::is_topmost(window)?,
+        alpha: crate::window_control::layered_alpha(window)?,
+        title: crate::window_control::title(window)?,
+        stable_geometry: rect == final_rect,
+    })
+}
+
+fn shell_matches(observed: &ShellObservation, expectation: ShellStateExpectation) -> bool {
+    let sensor_right =
+        i64::from(observed.rect.x) + i64::from(observed.rect.width) - i64::from(observed.work.x);
+    let collapsed = observed.rect.x < observed.work.x && (1..=16).contains(&sensor_right);
+    let expanded = (observed.rect.x - observed.work.x).abs() <= 1;
+    match expectation {
+        ShellStateExpectation::Visible => observed.visible && observed.stable_geometry,
+        ShellStateExpectation::Hidden => !observed.visible,
+        ShellStateExpectation::PrimaryLeftCollapsed => {
+            observed.visible && observed.stable_geometry && collapsed
+        }
+        ShellStateExpectation::PrimaryLeftExpanded => {
+            observed.visible && observed.stable_geometry && expanded
+        }
+        ShellStateExpectation::EditorInputReady => {
+            observed.visible
+                && observed.stable_geometry
+                && observed.activation.foreground
+                && observed.activation.active
+                && observed.activation.focused
+        }
+    }
+}
+
+fn format_shell_observation(observed: &ShellObservation) -> String {
+    format!(
+        "visible={} stable_geometry={} rect={:?} work={:?} foreground={} active={} focused={} captured={} cursor=({},{} inside={}) title={:?} topmost={} alpha={:?} style={:?}",
+        observed.visible,
+        observed.stable_geometry,
+        observed.rect,
+        observed.work,
+        observed.activation.foreground,
+        observed.activation.active,
+        observed.activation.focused,
+        observed.activation.captured,
+        observed.cursor.x,
+        observed.cursor.y,
+        observed.cursor.inside_window,
+        observed.title,
+        observed.topmost,
+        observed.alpha,
+        observed.style,
+    )
 }
 
 fn reveal_primary_left_and_wait(window: crate::window_control::WindowHandle) -> Result<(), String> {
@@ -1804,7 +1909,6 @@ fn run_persistence_and_image_leak_cycles(
     window: crate::window_control::WindowHandle,
 ) -> Result<(), String> {
     const CYCLES: usize = 100;
-    const EXTERNAL_SETTLE: Duration = Duration::from_millis(350);
     let note = program_directory.join("note/note.md");
     crate::window_control::switch_to_source(child.id())?;
     wait_for_config_field(program_directory, "view_mode = \"source\"")?;
@@ -1813,7 +1917,7 @@ fn run_persistence_and_image_leak_cycles(
         let external = format!("external reload cycle {cycle}\n").into_bytes();
         fs::write(&note, &external)
             .map_err(|error| format!("cannot simulate external reload: {error}"))?;
-        thread::sleep(EXTERNAL_SETTLE);
+        wait_for_source_projection(window, &external)?;
         crate::window_control::press_enter(window)?;
         wait_for_note(&note, |bytes| {
             is_single_byte_insertion(bytes, &external, b'\n')
@@ -1851,7 +1955,7 @@ fn run_persistence_and_image_leak_cycles(
         let external = format!("![cycle {cycle}](images/{leaf})\n");
         fs::write(&note, external.as_bytes())
             .map_err(|error| format!("cannot simulate image source reload: {error}"))?;
-        thread::sleep(EXTERNAL_SETTLE);
+        wait_for_source_projection(window, external.as_bytes())?;
         crate::window_control::switch_to_preview(window)?;
         wait_for_config_field(program_directory, "view_mode = \"preview\"")?;
         thread::sleep(Duration::from_millis(150));
@@ -1862,6 +1966,51 @@ fn run_persistence_and_image_leak_cycles(
         }
     }
     ensure_alive(child, "post persistence/image leak cycles")
+}
+
+fn wait_for_source_projection(
+    window: crate::window_control::WindowHandle,
+    expected: &[u8],
+) -> Result<(), String> {
+    let expected = std::str::from_utf8(expected)
+        .map_err(|error| format!("source projection fixture is invalid UTF-8: {error}"))?;
+    wait_for_shell_state(
+        window,
+        ShellStateExpectation::EditorInputReady,
+        START_TIMEOUT,
+    )?;
+    crate::window_control::clear_clipboard()?;
+    let deadline = Instant::now() + START_TIMEOUT;
+    let mut last = None;
+    while Instant::now() < deadline {
+        crate::window_control::press_select_all(window)?;
+        crate::window_control::press_copy(window)?;
+        last = crate::window_control::clipboard_text()?;
+        if last
+            .as_deref()
+            .is_some_and(|text| normalize_clipboard_newlines(text).as_ref() == expected)
+        {
+            crate::window_control::press_document_end(window)?;
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let _ = crate::window_control::press_document_end(window);
+    let shell = observe_shell(window)?;
+    Err(format!(
+        "source projection did not reach expected text; expected_bytes={} actual_clipboard_bytes={} shell={}",
+        expected.len(),
+        last.as_ref().map_or(0, String::len),
+        format_shell_observation(&shell),
+    ))
+}
+
+fn normalize_clipboard_newlines(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains("\r\n") {
+        std::borrow::Cow::Owned(text.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
 }
 
 fn is_single_byte_insertion(observed: &[u8], original: &[u8], inserted: u8) -> bool {
@@ -2430,7 +2579,7 @@ mod tests {
 
     use super::{
         StartupThresholdClass, cpu_measurements, duration_measurements, is_single_byte_insertion,
-        nearest_rank_index, startup_threshold_class,
+        nearest_rank_index, normalize_clipboard_newlines, startup_threshold_class,
     };
 
     #[test]
@@ -2445,6 +2594,12 @@ mod tests {
         assert!(is_single_byte_insertion(b"abcd\n", b"abcd", b'\n'));
         assert!(!is_single_byte_insertion(b"abcd", b"abcd", b'\n'));
         assert!(!is_single_byte_insertion(b"abycd", b"abcd", b'\n'));
+    }
+
+    #[test]
+    fn source_projection_probe_normalizes_only_windows_newlines() {
+        assert_eq!(normalize_clipboard_newlines("a\r\nb\r\n"), "a\nb\n");
+        assert_eq!(normalize_clipboard_newlines("a\rb\n"), "a\rb\n");
     }
 
     #[test]
