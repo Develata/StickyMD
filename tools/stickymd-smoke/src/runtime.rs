@@ -831,8 +831,7 @@ fn run_window_shell_lifecycle(
         crate::window_control::PrimaryDockEdge::Right,
         "right",
     )?;
-    crate::window_control::move_to_primary_floating(window)?;
-    wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
+    move_to_primary_floating_and_wait(program_directory, window, "after pinned right edge")?;
     if !crate::window_control::is_topmost(window)? {
         return Err("configured topmost was lost across auto-collapse/reveal".to_owned());
     }
@@ -846,13 +845,19 @@ fn run_window_shell_lifecycle(
     // edge. Exercise both physical corners so the runtime bridge preserves the
     // frozen Top > Left > Right tie order instead of only proving the reducer.
     for right in [false, true] {
-        crate::window_control::move_to_primary_floating(window)?;
-        wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
+        move_to_primary_floating_and_wait(
+            program_directory,
+            window,
+            if right {
+                "before top-right corner"
+            } else {
+                "before top-left corner"
+            },
+        )?;
         crate::window_control::move_to_primary_corner(window, right)?;
         wait_for_config_field(program_directory, "dock_edge = \"top\"")?;
     }
-    crate::window_control::move_to_primary_floating(window)?;
-    wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
+    move_to_primary_floating_and_wait(program_directory, window, "after top-right corner")?;
 
     for theme in ["system", "dark", "light"] {
         crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Theme)?;
@@ -984,6 +989,7 @@ fn exercise_primary_edge(
     edge: crate::window_control::PrimaryDockEdge,
     config_value: &str,
 ) -> Result<(), String> {
+    runtime_report!("Phase 8 runtime edge={config_value} transition=drag");
     crate::window_control::move_to_primary_edge(window, edge)?;
     wait_for_config_field(
         program_directory,
@@ -992,6 +998,22 @@ fn exercise_primary_edge(
     crate::window_control::focus_shell_desktop(window)?;
     wait_for_primary_edge_state(window, edge, true)?;
     reveal_primary_edge_and_wait(window, edge)
+}
+
+fn move_to_primary_floating_and_wait(
+    program_directory: &Path,
+    window: crate::window_control::WindowHandle,
+    stage: &str,
+) -> Result<(), String> {
+    runtime_report!("Phase 8 runtime floating transition={stage}");
+    crate::window_control::move_to_primary_floating(window)?;
+    wait_for_config_field(program_directory, "dock_edge = \"none\"").map_err(|error| {
+        let shell = observe_shell(window).map_or_else(
+            |inspect| format!("unavailable: {inspect}"),
+            |facts| format_shell_observation(&facts),
+        );
+        format!("{stage}: {error}; shell={shell}")
+    })
 }
 
 fn wait_for_tool_window_style(
@@ -1071,21 +1093,27 @@ fn wait_for_layered_alpha(
 ) -> Result<(), String> {
     let deadline = Instant::now() + START_TIMEOUT;
     let mut observed = None;
+    let mut last_error = None;
     while Instant::now() < deadline {
-        let alpha = crate::window_control::layered_alpha(window)?;
-        observed = Some(alpha);
-        let matches = match expected {
-            Some(value) => alpha.layered && alpha.alpha == Some(value),
-            None => !alpha.layered && alpha.alpha.is_none(),
-        };
-        if matches {
-            return Ok(());
+        match crate::window_control::layered_alpha(window) {
+            Ok(alpha) => {
+                observed = Some(alpha);
+                last_error = None;
+                let matches = match expected {
+                    Some(value) => alpha.layered && alpha.alpha == Some(value),
+                    None => !alpha.layered && alpha.alpha.is_none(),
+                };
+                if matches {
+                    return Ok(());
+                }
+            }
+            Err(error) => last_error = Some(error),
         }
         thread::sleep(Duration::from_millis(10));
     }
     Err(format!(
-        "whole-window alpha did not become {expected:?} within {} seconds; last observation={observed:?}",
-        START_TIMEOUT.as_secs()
+        "whole-window alpha did not become {expected:?} within {} seconds; last observation={observed:?}; last query error={last_error:?}",
+        START_TIMEOUT.as_secs(),
     ))
 }
 

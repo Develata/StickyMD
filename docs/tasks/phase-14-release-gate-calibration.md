@@ -57,6 +57,8 @@ tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任
 - exact copied candidate Release, headless, Runtime, Performance, Resources and Readiness channels。
 - product runtime/dependency delta audit。
 - USER-observed regression 的 named tests，以及扩展后的三边/顶角 copied-Release smoke。
+- 远端 CI 故障归因与可诊断输出；隔离 runner CI 分片并发、模块化 Resources 定向入口与
+  “分片并集 = 完整任务图”回归。
 
 ## Candidate Defect Correction
 

@@ -321,7 +321,25 @@ mod tests {
     }
 
     #[test]
-    fn cjk_text_formula_uses_native_fallback_without_panicking() {
+    fn mixed_cjk_text_formula_is_safe_without_a_platform_cjk_font() {
+        let mut engine = MathEngine::new();
+        let raster = engine
+            .render(r"\text{中文 Rust}", MathKind::Inline, 17.0, BLACK)
+            .unwrap();
+        assert!(raster.width > 0 && raster.height > 0);
+        assert_eq!(
+            raster.pixels.len(),
+            raster.width as usize * raster.height as usize * 4
+        );
+        // Linux portable-core CI intentionally does not install a CJK font.
+        // The Latin run must still rasterize while missing native glyphs stay
+        // a safe projection concern rather than a panic or malformed buffer.
+        assert!(raster.pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn cjk_text_formula_uses_windows_native_fallback() {
         let mut engine = MathEngine::new();
         let raster = engine
             .render(r"\text{中文}", MathKind::Inline, 17.0, BLACK)

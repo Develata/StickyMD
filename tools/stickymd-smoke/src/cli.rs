@@ -447,15 +447,66 @@ pub(crate) enum Selection {
     All,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CiShard {
+    Tests,
+    Performance,
+}
+
+impl CiShard {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "tests" => Ok(Self::Tests),
+            "performance" => Ok(Self::Performance),
+            _ => Err(format!(
+                "unknown CI shard `{value}`; expected tests or performance"
+            )),
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tests => "tests",
+            Self::Performance => "performance",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ResourceModule {
+    SourcePreview,
+    Math,
+    Images,
+    Window,
+    Zoom,
+}
+
+impl ResourceModule {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "source-preview" => Ok(Self::SourcePreview),
+            "math" => Ok(Self::Math),
+            "images" => Ok(Self::Images),
+            "window" => Ok(Self::Window),
+            "zoom" => Ok(Self::Zoom),
+            _ => Err(format!(
+                "unknown resource module `{value}`; expected source-preview, math, images, window, or zoom"
+            )),
+        }
+    }
+}
+
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Options {
     pub(crate) selection: Selection,
     pub(crate) ci: bool,
+    pub(crate) ci_shard: Option<CiShard>,
     pub(crate) performance: bool,
     pub(crate) runtime: bool,
     pub(crate) resources: bool,
+    pub(crate) resource_module: Option<ResourceModule>,
     pub(crate) release: bool,
     pub(crate) package: bool,
     pub(crate) json: bool,
@@ -484,9 +535,11 @@ impl Options {
         let mut options = Self {
             selection,
             ci: false,
+            ci_shard: None,
             performance: false,
             runtime: false,
             resources: false,
+            resource_module: None,
             release: false,
             package: false,
             json: false,
@@ -495,9 +548,25 @@ impl Options {
         for argument in args {
             match argument.as_str() {
                 "--ci" => options.ci = true,
+                value if value.starts_with("--ci-shard=") => {
+                    options.ci_shard = Some(CiShard::parse(
+                        value
+                            .strip_prefix("--ci-shard=")
+                            .filter(|value| !value.is_empty())
+                            .ok_or_else(|| "`--ci-shard` requires a value".to_owned())?,
+                    )?);
+                }
                 "--performance" => options.performance = true,
                 "--runtime" => options.runtime = true,
                 "--resources" => options.resources = true,
+                value if value.starts_with("--resource-module=") => {
+                    options.resource_module = Some(ResourceModule::parse(
+                        value
+                            .strip_prefix("--resource-module=")
+                            .filter(|value| !value.is_empty())
+                            .ok_or_else(|| "`--resource-module` requires a value".to_owned())?,
+                    )?);
+                }
                 "--release" => options.release = true,
                 "--package" => options.package = true,
                 "--json" => options.json = true,
@@ -520,6 +589,31 @@ impl Options {
                 || options.package)
         {
             return Err("`--ci` cannot be combined with explicit local performance, runtime, resource, release, or package modes".to_owned());
+        }
+        if options.ci_shard.is_some()
+            && (!options.ci || !matches!(options.selection, Selection::All))
+        {
+            return Err("`--ci-shard` requires `all --ci`".to_owned());
+        }
+        if options.resource_module.is_some()
+            && (!options.resources
+                || !matches!(
+                    options.selection,
+                    Selection::All
+                        | Selection::Phase(
+                            Phase::P10
+                                | Phase::P11
+                                | Phase::P11B
+                                | Phase::P12
+                                | Phase::P13
+                                | Phase::P14
+                        )
+                ))
+        {
+            return Err(
+                "`--resource-module` requires `--resources` with all or Phase 10 through 14"
+                    .to_owned(),
+            );
         }
         if options.resources && (options.performance || options.runtime) {
             return Err("`--resources` must run alone so the measured process is not contaminated by other smoke tasks".to_owned());
@@ -588,15 +682,15 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci|--performance|--runtime|--resources|--release|--package] [--json] [--evidence-file=<path>]"
+        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]"
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CommandLine, GuidedSession, ManualCommand, ManualSession, Options, Phase,
-        QualificationCommand, Selection, WindowStressOptions, WindowStressScenario,
+        CiShard, CommandLine, GuidedSession, ManualCommand, ManualSession, Options, Phase,
+        QualificationCommand, ResourceModule, Selection, WindowStressOptions, WindowStressScenario,
     };
 
     fn args<'a>(values: &'a [&'a str]) -> impl Iterator<Item = String> + 'a {
@@ -650,6 +744,43 @@ mod tests {
         let error = Options::parse(args(&["all", "--ci", "--runtime"]))
             .expect_err("CI runtime smoke must be rejected");
         assert!(error.contains("cannot be combined"));
+    }
+
+    #[test]
+    fn ci_shards_are_explicit_and_require_the_all_ci_contract() {
+        let tests =
+            Options::parse(args(&["all", "--ci", "--ci-shard=tests"])).expect("tests CI shard");
+        assert_eq!(tests.ci_shard, Some(CiShard::Tests));
+        let performance = Options::parse(args(&["all", "--ci", "--ci-shard=performance"]))
+            .expect("performance CI shard");
+        assert_eq!(performance.ci_shard, Some(CiShard::Performance));
+        assert!(
+            Options::parse(args(&["all", "--ci-shard=tests"]))
+                .expect_err("shard without CI")
+                .contains("requires `all --ci`")
+        );
+    }
+
+    #[test]
+    fn phase14_resources_can_select_one_measurement_module() {
+        let options = Options::parse(args(&[
+            "phase",
+            "14",
+            "--resources",
+            "--resource-module=window",
+        ]))
+        .expect("targeted Phase 14 window resource module");
+        assert_eq!(options.resource_module, Some(ResourceModule::Window));
+        assert!(
+            Options::parse(args(&[
+                "phase",
+                "08",
+                "--resources",
+                "--resource-module=window",
+            ]))
+            .expect_err("historical phase matrix must retain its own module")
+            .contains("Phase 10 through 14")
+        );
     }
 
     #[test]

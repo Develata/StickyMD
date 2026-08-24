@@ -73,9 +73,11 @@ pub(super) fn run(root: &Path) -> Result<(), String> {
             &Options {
                 selection: Selection::All,
                 ci: true,
+                ci_shard: None,
                 performance: false,
                 runtime: false,
                 resources: false,
+                resource_module: None,
                 release: false,
                 package: false,
                 json: true,
@@ -154,9 +156,11 @@ fn run_mode(
         &Options {
             selection: Selection::Phase(Phase::P14),
             ci: false,
+            ci_shard: None,
             performance,
             runtime,
             resources,
+            resource_module: None,
             release,
             package: false,
             json: true,

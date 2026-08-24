@@ -106,8 +106,9 @@ fuzz_text_delta
 
 ## CI 合同（方向性，后续阶段落地）
 
-- Windows job：fmt --check、clippy -D warnings、tests --locked、release build、
-  cargo deny。
+- Windows CI：fmt/Clippy、headless tests、headless Release performance 与 release build 可以拆成
+  独立 GitHub-hosted jobs 并发执行；各 job 使用隔离 runner，不共享 GUI、进程或测量环境。
+  Rust CLI 必须证明 CI 分片任务并集与完整 `all --ci` 去重任务图一致。
 - Portable-core job：在 Linux runner 上只构建平台无关 crates（防止平台无关代码
   被 Win32 污染）；目的不是发布 Linux app。
 - Scheduled：advisories、依赖更新 dry-run（不自动合并）、fuzz smoke、
@@ -141,10 +142,18 @@ docs/acceptance-cases/phase-XX.md
 - Rust CLI 属于开发验证面，不是 StickyMD runtime dependency，不进入 portable 发布包。
 - `all --ci` 合并 Phase 的无界面任务图并按 task identity 去重；CI 不应为了逐 Phase
   显示而重复运行相同 workspace 测试。
+- `all --ci --ci-shard=tests|performance` 只允许 GitHub-hosted CI 使用；两个分片可以在独立
+  runner 并发，任务并集必须等于未分片的 `all --ci`，且完整入口继续保留给本地全量复核。
 - `all --ci` 还必须执行全部无界面的 Release 性能入口；稳定硬阈值可以作为失败门，
   机器相关测量值只作诊断，不得冒充跨机器承诺。
 - 本地 `--performance` 是同一组性能入口的显式复跑方式；`--runtime` 会创建原生窗口，
   只允许显式本地运行，不得偷偷进入 headless CI。
+- 本地修复默认运行受影响 Phase/模块的定向 smoke。Resources 可用
+  `--resources --resource-module=source-preview|math|images|window|zoom` 单独复核；该结果是
+  定向诊断证据，不能冒充最终候选的完整 Resources receipt。候选冻结、发布资格化或 USER
+  明确要求全量时才运行完整 Campaign。
+- 同一个交互桌面的 GUI runtime、clipboard、tray、物理鼠标/焦点与资源测量不得并发；多个
+  app 会争用共享系统状态并污染性能数据。只有隔离 Windows 会话/机器才允许并发这些通道。
 - CLI 自身必须有任务规划、JSON schema/序列化与 exit-code 单元测试。cargo fmt/clippy/test/deny
   保持 CI 原生命令；成熟的 Windows package/GUI helper 可继续由 PowerShell 承担，但不得
   复制 Rust 已拥有的 gate 判断。
@@ -245,7 +254,8 @@ private release lab。
 
 ### CI 与完成门
 
-- Windows CI 必须调用 Rust CLI 的 `all --ci`，覆盖所有能够无界面执行的 Phase 任务。
+- Windows CI 必须调用 Rust CLI 的完整 `all --ci`，或调用经 CLI 单元测试证明并集等价的
+  `tests` + `performance` 分片，覆盖所有能够无界面执行的 Phase 任务。
 - Phase 专用 PowerShell 入口保留给本地定位与独立复核；CI 使用合并任务图避免重复工作。
 - 人工项保持 `NOT TESTED` 不会使 headless CI 失败，但会阻止对应 Phase / release gate
   被描述为完整通过。

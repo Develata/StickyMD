@@ -24,6 +24,16 @@ failure 只改变该 channel receipt；independent channels 继续运行。依�
 package/manual 还绑定 ZIP SHA-256。manual observation 只接受显式 human status；automated facts
 不能提升人工状态。
 
+## Parallelism and Targeted Reruns
+
+- GitHub-hosted deterministic CI 使用隔离 runner 并发 format/lint、headless tests、headless
+  Release performance、portable-core 与 release build；Rust CLI 的 shard-union test 防止漏项。
+- 日常修复按受影响 Phase 或 Resource module 定向复核；完整 Campaign 只用于候选冻结、发布资格化
+  或明确全量请求。定向资源结果不提升完整 candidate Resources 状态。
+- 一个交互桌面上的窗口、焦点、物理鼠标、clipboard、tray 和资源采样是共享能力，必须串行。
+  多进程同时采样还会污染 CPU、缓存和 working-set 结论，因此不能用“多开 app”换取虚假的速度。
+- Docker 不是 StickyMD v1 的交付对象；没有明确消费者前不建立无用途 image job。
+
 ## Manual Guided Sessions
 
 - G1：Editor / IME / Preview rendering。

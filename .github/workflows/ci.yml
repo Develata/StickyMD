@@ -21,8 +21,8 @@ jobs:
       - name: Licenses, advisories, bans, and sources
         run: cargo deny check
 
-  windows:
-    name: Windows x64 (workspace)
+  windows-quality:
+    name: Windows x64 (format + lint)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -33,9 +33,33 @@ jobs:
       - name: fmt
         run: cargo fmt --check
       - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: phase smoke through Phase 14 (headless, deduplicated)
-        run: cargo run -p stickymd-smoke --locked -- all --ci --json
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  windows-headless:
+    name: Windows x64 headless (${{ matrix.shard }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [tests, performance]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: rustup show
+      - name: Phase 00-14 headless ${{ matrix.shard }} shard
+        run: cargo run -p stickymd-smoke --locked -- all --ci --ci-shard=${{ matrix.shard }} --json
+
+  windows-release:
+    name: Windows x64 release build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: rustup show
       - name: release build
         run: cargo build --workspace --release --locked
 

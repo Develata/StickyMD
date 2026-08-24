@@ -23,8 +23,13 @@ const WS_EX_TRANSPARENT: isize = 0x0000_0020;
 const LWA_ALPHA: u32 = 0x0000_0002;
 const SPI_GETWORKAREA: u32 = 0x0030;
 const SWP_NOMOVE: u32 = 0x0002;
+const SWP_NOSIZE: u32 = 0x0001;
 const SWP_NOZORDER: u32 = 0x0004;
 const SWP_NOACTIVATE: u32 = 0x0010;
+const SWP_SHOWWINDOW: u32 = 0x0040;
+const GA_ROOT: u32 = 2;
+const HWND_TOPMOST: isize = -1;
+const HWND_NOTOPMOST: isize = -2;
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 const CURSOR_MOVE_ATTEMPTS: usize = 3;
 const CURSOR_MOVE_RETRY: Duration = Duration::from_millis(25);
@@ -170,6 +175,9 @@ unsafe extern "system" {
     fn SetCursorPos(x: i32, y: i32) -> i32;
     fn SetForegroundWindow(window: isize) -> i32;
     fn GetCursorPos(point: *mut NativePoint) -> i32;
+    fn ScreenToClient(window: isize, point: *mut NativePoint) -> i32;
+    fn WindowFromPoint(point: NativePoint) -> isize;
+    fn GetAncestor(window: isize, flags: u32) -> isize;
     fn PostMessageW(window: isize, message: u32, wparam: usize, lparam: isize) -> i32;
     fn SendMessageW(window: isize, message: u32, wparam: usize, lparam: isize) -> isize;
     fn SetThreadDpiAwarenessContext(context: isize) -> isize;
@@ -194,6 +202,69 @@ unsafe extern "system" {
 }
 
 struct ClipboardGuard;
+
+struct PhysicalInputRouteGuard {
+    window: WindowHandle,
+    restore_not_topmost: bool,
+}
+
+impl PhysicalInputRouteGuard {
+    fn restore(&mut self) -> Result<(), String> {
+        if !self.restore_not_topmost {
+            return Ok(());
+        }
+        // SAFETY: this reverses the temporary HWND_TOPMOST projection made
+        // solely by the local smoke driver. The HWND is borrowed and no
+        // pointer or ownership obligation crosses the call.
+        if unsafe {
+            SetWindowPos(
+                self.window.0,
+                HWND_NOTOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            )
+        } == 0
+        {
+            return Err(format!(
+                "cannot restore StickyMD non-topmost state after physical drag: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        self.restore_not_topmost = false;
+        Ok(())
+    }
+}
+
+impl Drop for PhysicalInputRouteGuard {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
+struct PhysicalLeftButtonGuard;
+
+impl PhysicalLeftButtonGuard {
+    fn press() -> Self {
+        // SAFETY: copied input flags carry no borrowed data. Drop always emits
+        // the paired button-up, including every early error path.
+        unsafe {
+            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+        }
+        Self
+    }
+}
+
+impl Drop for PhysicalLeftButtonGuard {
+    fn drop(&mut self) {
+        // SAFETY: paired with `press`; no pointer or resource is retained.
+        unsafe {
+            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+        }
+    }
+}
 
 impl ClipboardGuard {
     fn open() -> Result<Self, String> {
@@ -539,24 +610,174 @@ fn move_window(window: WindowHandle, x: i32, y: i32) -> Result<(), String> {
     let start_y = rect.y.saturating_add(drag_y);
     let target_x = x.saturating_add(drag_x);
     let target_y = y.saturating_add(drag_y);
-    set_cursor_position(start_x, start_y, "position cursor in StickyMD drag region")?;
-    // SAFETY: this opt-in runtime smoke targets the live copied-Release HWND;
-    // no pointer is retained and a physical click below remains the authority
-    // for activation if foreground restrictions reject this request.
-    unsafe {
-        SetForegroundWindow(window.0);
-        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
-    }
-    thread::sleep(Duration::from_millis(100));
+    let mut input_route = prepare_physical_input_target(window, start_x, start_y)?;
+    // WindowFromPoint proves only native routing. Give winit's event loop one
+    // bounded turn to project the matching CursorMoved fact before the press;
+    // the shell intentionally decides whether this point is a drag region
+    // from its most recent cursor projection.
+    thread::sleep(Duration::from_millis(75));
+    let button = PhysicalLeftButtonGuard::press();
+    wait_for_native_move_size(window)?;
     set_cursor_position(target_x, target_y, "drag StickyMD to requested position")?;
     thread::sleep(Duration::from_millis(100));
-    // SAFETY: paired with the LEFTDOWN above; copied integer input flags carry
-    // no borrowed data and this runtime mode never runs in CI.
-    unsafe {
-        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-    }
+    drop(button);
     thread::sleep(Duration::from_millis(150));
+    input_route.restore()?;
     Ok(())
+}
+
+fn wait_for_native_move_size(window: WindowHandle) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    let expected = window.0 as *mut c_void;
+    let mut observed_capture = 0_isize;
+    let mut observed_move_size = 0_isize;
+    while std::time::Instant::now() < deadline {
+        let mut process_id = 0_u32;
+        // SAFETY: the live HWND is borrowed and `process_id` is writable stack
+        // storage. The API copies identifiers and retains no pointer.
+        let thread_id = unsafe { GetWindowThreadProcessId(window.0, &raw mut process_id) };
+        if thread_id == 0 {
+            return Err(format!(
+                "cannot read StickyMD GUI thread while starting physical drag: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut info = NativeGuiThreadInfo {
+            size: std::mem::size_of::<NativeGuiThreadInfo>() as u32,
+            ..NativeGuiThreadInfo::default()
+        };
+        // SAFETY: `info` has the documented size and remains writable for the
+        // synchronous query. The API retains no pointer.
+        if unsafe { GetGUIThreadInfo(thread_id, &raw mut info) } == 0 {
+            return Err(format!(
+                "cannot inspect StickyMD native move-size state: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        observed_capture = info.capture as isize;
+        observed_move_size = info.move_size as isize;
+        if info.capture == expected || info.move_size == expected {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Err(format!(
+        "StickyMD did not enter native move-size after physical press: expected HWND={} capture HWND={observed_capture} move-size HWND={observed_move_size}",
+        window.0
+    ))
+}
+
+fn prepare_physical_input_target(
+    window: WindowHandle,
+    x: i32,
+    y: i32,
+) -> Result<PhysicalInputRouteGuard, String> {
+    ensure_window(window)?;
+    let restore_not_topmost = !is_topmost(window)?;
+    if restore_not_topmost {
+        // SAFETY: HWND_TOPMOST is the documented Z-order sentinel. This
+        // temporary smoke-only projection makes the physical input target
+        // deterministic even while another normal app covers the paper.
+        if unsafe {
+            SetWindowPos(
+                window.0,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            )
+        } == 0
+        {
+            return Err(format!(
+                "cannot temporarily raise StickyMD for physical drag: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    let guard = PhysicalInputRouteGuard {
+        window,
+        restore_not_topmost,
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    let mut observed = 0;
+    while std::time::Instant::now() < deadline {
+        // SAFETY: the live borrowed HWND and HWND_TOP sentinel contain no
+        // caller-owned pointers. This changes only Z-order/activation of the
+        // copied Release window used by the explicit local runtime smoke.
+        if unsafe {
+            SetWindowPos(
+                window.0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            )
+        } == 0
+        {
+            return Err(format!(
+                "cannot raise StickyMD before physical drag: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        // SAFETY: the scalar HWND is live. Windows may lawfully reject the
+        // foreground request, so WindowFromPoint below remains the decisive
+        // input-routing fact rather than this return value.
+        unsafe {
+            SetForegroundWindow(window.0);
+        }
+        set_cursor_position(x, y, "position cursor in StickyMD drag region")?;
+        project_physical_cursor_to_window(window, x, y)?;
+        thread::sleep(Duration::from_millis(25));
+        // SAFETY: WindowFromPoint and GetAncestor copy/return borrowed HWND
+        // scalars only; neither retains the by-value POINT or transfers a
+        // window ownership obligation.
+        observed = unsafe {
+            let hit = WindowFromPoint(NativePoint { x, y });
+            if hit == 0 {
+                0
+            } else {
+                GetAncestor(hit, GA_ROOT)
+            }
+        };
+        if observed == window.0 {
+            return Ok(guard);
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    Err(format!(
+        "physical drag start is not routed to StickyMD: expected HWND={} observed root HWND={observed}",
+        window.0
+    ))
+}
+
+fn project_physical_cursor_to_window(window: WindowHandle, x: i32, y: i32) -> Result<(), String> {
+    let mut client = NativePoint { x, y };
+    // SAFETY: `client` is writable stack storage and the live HWND is
+    // borrowed. The API converts the copied point in place and retains no
+    // pointer.
+    if unsafe { ScreenToClient(window.0, &raw mut client) } == 0 {
+        return Err(format!(
+            "cannot convert physical drag point to StickyMD client coordinates: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let client_x = u16::try_from(client.x).map_err(|_| {
+        format!(
+            "physical drag client x is outside WM_MOUSEMOVE range: {}",
+            client.x
+        )
+    })?;
+    let client_y = u16::try_from(client.y).map_err(|_| {
+        format!(
+            "physical drag client y is outside WM_MOUSEMOVE range: {}",
+            client.y
+        )
+    })?;
+    send_mouse_move(window, mouse_lparam(client_x, client_y))
 }
 
 pub(crate) fn reveal_primary_sensor(

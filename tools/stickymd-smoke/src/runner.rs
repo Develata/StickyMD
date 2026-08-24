@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::cli::{Options, Phase, Selection};
+use crate::cli::{CiShard, Options, Phase, ResourceModule, Selection};
 use crate::evidence::{
     self, EvidenceGate, EvidenceMeasurement, EvidenceResult, EvidenceSample, EvidenceStatus,
 };
@@ -132,9 +132,10 @@ impl Task {
 
 pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
     let tasks = build_plan(options)?;
-    let label = match options.selection {
-        Selection::Phase(phase) => format!("phase-{}", phase.number()),
-        Selection::All => "all".to_owned(),
+    let label = match (options.selection, options.ci_shard) {
+        (Selection::All, Some(shard)) => format!("all-ci-{}", shard.as_str()),
+        (Selection::Phase(phase), _) => format!("phase-{}", phase.number()),
+        (Selection::All, None) => "all".to_owned(),
     };
     if !options.json {
         println!(
@@ -522,13 +523,38 @@ fn run_captured(mut command: Command, label: &str) -> Result<(), String> {
     if output.status.success() {
         return Ok(());
     }
-    let detail = String::from_utf8_lossy(&output.stderr);
-    let detail = detail.trim();
+    let detail = captured_failure_detail(&output.stdout, &output.stderr);
     Err(if detail.is_empty() {
         format!("`{label}` failed with {}", output.status)
     } else {
         format!("`{label}` failed with {}: {detail}", output.status)
     })
+}
+
+const CAPTURED_FAILURE_STREAM_LIMIT: usize = 32 * 1024;
+
+fn captured_failure_detail(stdout: &[u8], stderr: &[u8]) -> String {
+    let stdout = String::from_utf8_lossy(stdout);
+    let stderr = String::from_utf8_lossy(stderr);
+    let stdout = tail_at_char_boundary(stdout.trim(), CAPTURED_FAILURE_STREAM_LIMIT);
+    let stderr = tail_at_char_boundary(stderr.trim(), CAPTURED_FAILURE_STREAM_LIMIT);
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => format!("stdout:\n{stdout}"),
+        (true, false) => format!("stderr:\n{stderr}"),
+        (false, false) => format!("stdout:\n{stdout}\nstderr:\n{stderr}"),
+    }
+}
+
+fn tail_at_char_boundary(source: &str, maximum_bytes: usize) -> &str {
+    if source.len() <= maximum_bytes {
+        return source;
+    }
+    let mut start = source.len() - maximum_bytes;
+    while !source.is_char_boundary(start) {
+        start += 1;
+    }
+    &source[start..]
 }
 
 #[cfg(windows)]
@@ -576,6 +602,19 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
     }
     if options.resources {
         push_unique(&mut tasks, release_build());
+        if let Some(module) = options.resource_module {
+            push_unique(
+                &mut tasks,
+                match module {
+                    ResourceModule::SourcePreview => runtime_resources(),
+                    ResourceModule::Math => runtime_math_resources(),
+                    ResourceModule::Images => runtime_image_resources(),
+                    ResourceModule::Window => runtime_window_resources(),
+                    ResourceModule::Zoom => runtime_zoom_resources(),
+                },
+            );
+            return Ok(tasks);
+        }
         match options.selection {
             Selection::Phase(Phase::P06) => push_unique(&mut tasks, runtime_math_resources()),
             Selection::Phase(Phase::P07) => push_unique(&mut tasks, runtime_image_resources()),
@@ -623,38 +662,42 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
         push_unique(&mut tasks, verify_package());
         return Ok(tasks);
     }
-    match options.selection {
-        Selection::All => {
-            push_unique(&mut tasks, phase1_markdown_tests());
-            push_unique(&mut tasks, phase1_persistence_tests());
-            push_unique(&mut tasks, workspace_tests());
-        }
-        Selection::Phase(Phase::P00) => {}
-        Selection::Phase(Phase::P01) => {
-            push_unique(&mut tasks, workspace_check());
-            push_unique(&mut tasks, phase1_markdown_tests());
-            push_unique(&mut tasks, phase1_persistence_tests());
-        }
-        Selection::Phase(Phase::P02) => push_unique(&mut tasks, core_tests()),
-        Selection::Phase(Phase::P03) => push_unique(&mut tasks, render_win_tests()),
-        Selection::Phase(Phase::P04) => push_unique(&mut tasks, core_win_tests()),
-        Selection::Phase(Phase::P05) => push_unique(&mut tasks, phase5_preview_tests()),
-        Selection::Phase(Phase::P06) => push_unique(&mut tasks, phase6_math_tests()),
-        Selection::Phase(Phase::P07) => push_unique(&mut tasks, phase7_asset_tests()),
-        Selection::Phase(Phase::P08) => push_unique(&mut tasks, phase8_window_tests()),
-        Selection::Phase(Phase::P09) => push_unique(&mut tasks, phase9_convergence_tests()),
-        Selection::Phase(Phase::P10) => push_unique(&mut tasks, phase10_ux_tests()),
-        Selection::Phase(Phase::P11) => push_unique(&mut tasks, workspace_tests()),
-        Selection::Phase(Phase::P11B) => push_unique(&mut tasks, phase11b_tests()),
-        Selection::Phase(Phase::P12 | Phase::P13 | Phase::P14) => {
-            push_unique(&mut tasks, workspace_tests());
+    let include_headless = options.ci_shard != Some(CiShard::Performance);
+    if include_headless {
+        match options.selection {
+            Selection::All => {
+                push_unique(&mut tasks, phase1_markdown_tests());
+                push_unique(&mut tasks, phase1_persistence_tests());
+                push_unique(&mut tasks, workspace_tests());
+            }
+            Selection::Phase(Phase::P00) => {}
+            Selection::Phase(Phase::P01) => {
+                push_unique(&mut tasks, workspace_check());
+                push_unique(&mut tasks, phase1_markdown_tests());
+                push_unique(&mut tasks, phase1_persistence_tests());
+            }
+            Selection::Phase(Phase::P02) => push_unique(&mut tasks, core_tests()),
+            Selection::Phase(Phase::P03) => push_unique(&mut tasks, render_win_tests()),
+            Selection::Phase(Phase::P04) => push_unique(&mut tasks, core_win_tests()),
+            Selection::Phase(Phase::P05) => push_unique(&mut tasks, phase5_preview_tests()),
+            Selection::Phase(Phase::P06) => push_unique(&mut tasks, phase6_math_tests()),
+            Selection::Phase(Phase::P07) => push_unique(&mut tasks, phase7_asset_tests()),
+            Selection::Phase(Phase::P08) => push_unique(&mut tasks, phase8_window_tests()),
+            Selection::Phase(Phase::P09) => push_unique(&mut tasks, phase9_convergence_tests()),
+            Selection::Phase(Phase::P10) => push_unique(&mut tasks, phase10_ux_tests()),
+            Selection::Phase(Phase::P11) => push_unique(&mut tasks, workspace_tests()),
+            Selection::Phase(Phase::P11B) => push_unique(&mut tasks, phase11b_tests()),
+            Selection::Phase(Phase::P12 | Phase::P13 | Phase::P14) => {
+                push_unique(&mut tasks, workspace_tests());
+            }
         }
     }
 
     // CI owns every headless task. `--performance` remains the explicit local
     // spelling, while CI runs the same Release baselines without treating
     // machine-specific measurements as portable receipts.
-    if options.performance || options.ci {
+    let include_ci_performance = options.ci && options.ci_shard != Some(CiShard::Tests);
+    if options.performance || include_ci_performance {
         for phase in selected_phases(options.selection) {
             match phase {
                 Phase::P00 => {}
@@ -1360,8 +1403,10 @@ const fn runtime_zoom_resources() -> Task {
 
 #[cfg(test)]
 mod tests {
-    use super::{TaskId, build_plan, requires_full_readiness};
-    use crate::cli::{Options, Selection};
+    use super::{
+        TaskId, build_plan, captured_failure_detail, requires_full_readiness, tail_at_char_boundary,
+    };
+    use crate::cli::{CiShard, Options, ResourceModule, Selection};
 
     #[test]
     fn all_plan_uses_one_consolidated_workspace_test() {
@@ -1374,6 +1419,8 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         })
         .expect("valid all plan");
@@ -1390,6 +1437,24 @@ mod tests {
     }
 
     #[test]
+    fn captured_failure_keeps_test_stdout_and_cargo_stderr() {
+        let detail = captured_failure_detail(
+            b"failures:\nassertion failed: expected native projection",
+            b"error: test failed, to rerun pass `-p render`",
+        );
+        assert!(detail.contains("assertion failed: expected native projection"));
+        assert!(detail.contains("error: test failed"));
+    }
+
+    #[test]
+    fn captured_failure_tail_preserves_utf8_boundaries_and_latest_diagnostic() {
+        let source = format!("{}\n最后的断言", "x".repeat(40_000));
+        let tail = tail_at_char_boundary(&source, 32 * 1024);
+        assert!(tail.len() <= 32 * 1024);
+        assert!(tail.ends_with("最后的断言"));
+    }
+
+    #[test]
     fn all_performance_plan_contains_each_measurement_once() {
         let tasks = build_plan(&Options {
             selection: Selection::All,
@@ -1400,6 +1465,8 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         })
         .expect("valid performance plan");
@@ -1427,6 +1494,8 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         })
         .expect("valid CI plan");
@@ -1470,8 +1539,90 @@ mod tests {
             release: false,
             package: false,
             json: true,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         }));
+    }
+
+    #[test]
+    fn ci_shard_union_equals_the_full_deduplicated_ci_plan() {
+        let options = |ci_shard| Options {
+            selection: Selection::All,
+            ci: true,
+            performance: false,
+            runtime: false,
+            resources: false,
+            release: false,
+            package: false,
+            json: true,
+            ci_shard,
+            resource_module: None,
+            evidence_file: None,
+        };
+        let full: BTreeSet<_> = build_plan(&options(None))
+            .expect("full CI plan")
+            .iter()
+            .map(super::Task::id)
+            .collect();
+        let tests = build_plan(&options(Some(CiShard::Tests))).expect("tests shard");
+        let performance =
+            build_plan(&options(Some(CiShard::Performance))).expect("performance shard");
+        let union: BTreeSet<_> = tests
+            .iter()
+            .chain(performance.iter())
+            .map(super::Task::id)
+            .collect();
+        assert_eq!(union, full);
+        assert!(tests.iter().any(|task| task.id() == TaskId::WorkspaceTests));
+        assert!(!tests.iter().any(|task| {
+            matches!(
+                task.id(),
+                TaskId::Phase1MarkdownMathPerformance
+                    | TaskId::Phase1PersistencePerformance
+                    | TaskId::Phase2Performance
+                    | TaskId::Phase3Performance
+                    | TaskId::Phase4Performance
+                    | TaskId::Phase5Performance
+                    | TaskId::Phase6Performance
+                    | TaskId::Phase7Performance
+                    | TaskId::Phase8Performance
+                    | TaskId::Phase10Performance
+                    | TaskId::Phase11BPerformance
+            )
+        }));
+        assert!(!performance.iter().any(|task| {
+            matches!(
+                task.id(),
+                TaskId::WorkspaceTests
+                    | TaskId::Phase1MarkdownMathTests
+                    | TaskId::Phase1PersistenceTests
+            )
+        }));
+    }
+
+    #[test]
+    fn phase14_resource_module_runs_only_the_requested_measurement_family() {
+        let tasks = build_plan(&Options {
+            selection: Selection::Phase(crate::cli::Phase::P14),
+            ci: false,
+            performance: false,
+            runtime: false,
+            resources: true,
+            release: false,
+            package: false,
+            json: true,
+            ci_shard: None,
+            resource_module: Some(ResourceModule::Window),
+            evidence_file: None,
+        })
+        .expect("targeted Phase 14 window resource plan");
+        let runtime_ids = tasks
+            .iter()
+            .filter(|task| matches!(task, super::Task::Runtime { .. }))
+            .map(super::Task::id)
+            .collect::<Vec<_>>();
+        assert_eq!(runtime_ids, [TaskId::RuntimeWindowResources]);
     }
 
     #[test]
@@ -1485,6 +1636,8 @@ mod tests {
             release: false,
             package: false,
             json: true,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         }));
     }
@@ -1500,6 +1653,8 @@ mod tests {
             release: false,
             package: false,
             json: true,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 10 headless plan");
@@ -1563,6 +1718,8 @@ mod tests {
             release: false,
             package: false,
             json: true,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 11 headless plan");
@@ -1632,6 +1789,8 @@ mod tests {
             release: false,
             package: false,
             json: true,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false)).expect("Phase 11-B headless plan");
@@ -1678,6 +1837,8 @@ mod tests {
             release: false,
             package: false,
             json: true,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 12 headless plan");
@@ -1740,6 +1901,8 @@ mod tests {
             release: false,
             package: false,
             json: true,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         };
         for plan in [
@@ -1786,6 +1949,8 @@ mod tests {
             release: false,
             package: false,
             json: true,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         };
         for plan in [
@@ -1815,6 +1980,8 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         })
         .expect("valid Phase 6 resource plan");
@@ -1834,6 +2001,8 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         })
         .expect("valid Phase 7 resource plan");
@@ -1853,6 +2022,8 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         })
         .expect("valid Phase 8 headless plan");
@@ -1871,6 +2042,8 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         })
         .expect("valid Phase 8 runtime plan");
@@ -1889,6 +2062,8 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         })
         .expect("valid Phase 8 resource plan");
@@ -1918,6 +2093,8 @@ mod tests {
             release: false,
             package: false,
             json: false,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         })
         .expect("valid Phase 9 performance plan");
@@ -1949,6 +2126,8 @@ mod tests {
             release: false,
             package: true,
             json: false,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         })
         .expect("valid Phase 9 package plan");
@@ -1976,6 +2155,8 @@ mod tests {
             release: true,
             package: false,
             json: false,
+            ci_shard: None,
+            resource_module: None,
             evidence_file: None,
         })
         .expect("valid Phase 9 release plan");

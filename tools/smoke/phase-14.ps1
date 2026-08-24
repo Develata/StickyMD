@@ -4,6 +4,8 @@ param(
     [switch]$Performance,
     [switch]$Runtime,
     [switch]$Resources,
+    [ValidateSet('source-preview', 'math', 'images', 'window', 'zoom')]
+    [string]$ResourceModule,
     [switch]$Release,
     [switch]$Package,
     [switch]$Json,
@@ -119,6 +121,7 @@ if ($Environment) {
     if ($Performance) { $arguments += '--performance' }
     if ($Runtime) { $arguments += '--runtime' }
     if ($Resources) { $arguments += '--resources' }
+    if ($ResourceModule) { $arguments += "--resource-module=$ResourceModule" }
     if ($Release) { $arguments += '--release' }
     if ($Package) { $arguments += '--package' }
     if ($Json) { $arguments += '--json' }

@@ -25,6 +25,8 @@ readiness，不能改写此 Markdown 状态。
 | P14-A14 | GitHub-hosted CI 不执行 absolute 550 ms/resource qualification | Automated | workflow governance trace | AUTOMATED PASS |
 | P14-A15 | USER 授权的 candidate defect correction 保持边界内、无新 runtime dependency 且有命名回归 | Automated | git path/dependency audit + source selection/source projection/preview relayout/native-drag-completion/direct-redock regressions | AUTOMATED PASS |
 | P14-A16 | exact candidate Release、headless、Runtime、Performance、Resources receipt 独立绑定；runtime smoke 使用有界 reducer、真实 shell/source projection ready gate，并以物理拖动、真实失焦连续驱动 Left -> Top -> Left -> Right dock/auto-hide、Right Pin-ON 正交路径与顶角优先级 | Automated | Phase 14 qualification campaign、window-stress parser/runtime contract tests；动态 receipt 不回写本表 | AUTOMATED PASS |
+| P14-A17 | CI tests/performance 分片并发时，任务并集严格等于完整 `all --ci` 且失败日志同时保留 test stdout 与 Cargo stderr | Automated | smoke CLI shard-union/output-capture tests + `.github/workflows/ci.yml` | AUTOMATED PASS |
+| P14-A18 | 日常 Resources 可按 source-preview/math/images/window/zoom 定向运行；完整候选仍要求全矩阵 | Automated | `phase-14.ps1 -Resources -ResourceModule <module>` + smoke task-plan tests | AUTOMATED PASS |
 
 ## Guided manual sessions
 
