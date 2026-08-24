@@ -801,22 +801,25 @@ fn run_window_shell_lifecycle(
         crate::window_control::PrimaryDockEdge::Left,
         "left",
     )?;
-    crate::window_control::move_to_primary_inset(window, 32)?;
-    wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
-    crate::window_control::move_to_primary_floating(window)?;
-    wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
+    // Change edges directly from an expanded sensor reveal. This is a distinct
+    // product path from Floating -> Dock: the new edge must win over detach
+    // from the previous edge in the same drag completion.
     exercise_primary_edge(
         program_directory,
         window,
         crate::window_control::PrimaryDockEdge::Top,
         "top",
     )?;
+    exercise_primary_edge(
+        program_directory,
+        window,
+        crate::window_control::PrimaryDockEdge::Left,
+        "left",
+    )?;
 
     // Pin is deliberately enabled before the Right-edge focus-loss cycle.
     // The same auto-collapse/reveal behavior must hold with configured
     // topmost ON, proving that Pin contributes only to effective Z-order.
-    crate::window_control::move_to_primary_floating(window)?;
-    wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
     crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Topmost)?;
     wait_for_config_field(program_directory, "always_on_top = true")?;
     if !crate::window_control::is_topmost(window)? {

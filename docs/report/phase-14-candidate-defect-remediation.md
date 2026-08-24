@@ -12,6 +12,8 @@ Implementation corrected; fresh exact-candidate qualification and USER manual co
    画面可能长期停留在 skeleton。
 4. 真实鼠标将窗口拖到 Left/Top/Right 后，窗口看似贴边但未提交 Dock 状态，因此失焦后不会自动
    收起；旧 runtime smoke 却报告通过。
+5. 已从 Left 停靠展开的窗口直接拖到 Top/Right 时，第一次拖动只会解除旧 Left Dock；必须再轻拖
+   一次才会提交新边并自动收起。
 
 这些事实均来自旧 exact candidate 的真实人工操作；该候选已经失效，不能继续作为 release evidence。
 
@@ -23,6 +25,7 @@ Implementation corrected; fresh exact-candidate qualification and USER manual co
 | Source stale after conversion | 直接 splice 的新 `BufferLine` 保持 empty shaping/layout cache；buffer dirty state 不会发现它 | 只对 replacement logical-line range 建立 layout；full resync 使用 cosmic-text 公共 rich-text setter | ordinary line edit O(affected lines)，不退化为全文 rebuild |
 | Preview skeleton after mode switch | same clean generation 被误认为无需工作，忽略 Split/Preview viewport width 变化 | visible mode change 对 clean generation 发出 typed `Relayout` job | 复用 semantic tree，仅重新 layout/paint |
 | Real drag never commits Dock | winit 的真实 move loop 在自身 WndProc 内处理 `WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE`；旧 `with_msg_hook` 只观察 event-loop queue，因而只对 smoke 人工 `PostMessageW` 的消息生效 | drag/resize 成功后立即建立 guard；真实 winit Left release 统一调用 `complete_window_drag`，移除无效的 move-size hook authority | 每次拖动结束 O(1)，无轮询、无额外线程或 runtime dependency |
+| Direct Dock-to-Dock needs two drags | edge resolution 在检查新 snap candidate 前，先以旧边的 16-DIP detach 判定直接返回 `None` | 不同的新 snap edge 在同一次 `DragEnded` 中优先；只有未命中新边时才执行旧边 detach | 固定三个候选边，时间/空间均 O(1) |
 
 没有新增 runtime dependency，没有引入第二份 document authority，也没有让 smoke/test channel 进入产品
 runtime。
@@ -36,6 +39,7 @@ loop 无法提交 `DragEnded` 的产品缺陷；它属于 harness false positive
 修正后的 copied-Release smoke 驱动：
 
 - 用真实桌面指针完成 Left、Top、Right 拖动与 snap；
+- 连续执行 Left -> Top -> Left -> Right，不插入 Floating 中间态，证明一次拖动即可直接换边；
 - 将 foreground 真实交给 Windows shell，分别等待 700 ms auto-collapse 与 140 ms animation，再以
   3-DIP sensor reveal；
 - top-left 与 top-right 两个物理角落均选择 Top；

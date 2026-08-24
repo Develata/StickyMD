@@ -197,11 +197,7 @@ impl WindowShellCoordinator {
         }
         self.state.deadlines.clear();
         let previous_edge = self.current_stable().dock_edge();
-        let edge = if previous_edge.is_some_and(|edge| should_undock(edge, frame, &monitor)) {
-            None
-        } else {
-            snap_edge(frame, &monitor).or(previous_edge)
-        };
+        let edge = resolve_drag_edge(previous_edge, frame, &monitor);
         let placement = placement_from_frame(frame, &monitor, &self.state.placement, edge);
         self.state.placement = placement;
         self.state.dock.monitor = monitor;
@@ -412,6 +408,21 @@ impl WindowShellCoordinator {
             | VisibilityState::HiddenToTray { restore: stable } => stable,
             VisibilityState::Animating(animation) => animation.final_visibility,
         }
+    }
+}
+
+fn resolve_drag_edge(
+    previous_edge: Option<DockEdge>,
+    frame: PhysicalRect,
+    monitor: &MonitorGeometry,
+) -> Option<DockEdge> {
+    let snapped = snap_edge(frame, monitor);
+    match (previous_edge, snapped) {
+        // A directly reached different edge is one atomic re-dock, not an
+        // intermediate detach followed by a second user drag.
+        (Some(previous), Some(next)) if next != previous => Some(next),
+        (Some(previous), _) if should_undock(previous, frame, monitor) => None,
+        (_, snapped) => snapped.or(previous_edge),
     }
 }
 
@@ -1101,6 +1112,60 @@ mod phase8_window_tests {
             coordinator.state().visibility(),
             VisibilityState::Presented(StableVisibility::Floating)
         );
+    }
+
+    #[test]
+    fn direct_drag_between_dock_edges_redocks_in_one_transition() {
+        let monitor = monitor("direct-redock", -1920, 1.5, true);
+        let targets = [
+            (
+                PhysicalRect::new(monitor.work_area.x, monitor.work_area.y + 100, 780, 900),
+                DockEdge::Left,
+            ),
+            (
+                PhysicalRect::new(monitor.work_area.x + 400, monitor.work_area.y, 780, 900),
+                DockEdge::Top,
+            ),
+            (
+                PhysicalRect::new(
+                    (monitor.work_area.right() - 780) as i32,
+                    monitor.work_area.y + 100,
+                    780,
+                    900,
+                ),
+                DockEdge::Right,
+            ),
+        ];
+
+        for previous_edge in [DockEdge::Left, DockEdge::Top, DockEdge::Right] {
+            for (frame, expected_edge) in targets {
+                if previous_edge == expected_edge {
+                    continue;
+                }
+                let mut coordinator = coordinator(StableVisibility::DockedExpanded(previous_edge));
+                let effects = coordinator.dispatch(WindowIntent::DragEnded {
+                    frame,
+                    monitor: monitor.clone(),
+                    now_ms: 10,
+                });
+                assert_eq!(coordinator.state().dock().edge, Some(expected_edge));
+                assert_eq!(
+                    coordinator.state().visibility(),
+                    VisibilityState::Presented(StableVisibility::DockedExpanded(expected_edge))
+                );
+                assert_eq!(
+                    coordinator.state().next_deadline_ms(),
+                    Some(10 + AUTO_COLLAPSE_DELAY_MS)
+                );
+                assert!(effects.iter().any(|effect| matches!(
+                    effect,
+                    WindowEffect::CommitPlacement {
+                        dock_edge: Some(edge),
+                        ..
+                    } if *edge == expected_edge
+                )));
+            }
+        }
     }
 
     #[test]

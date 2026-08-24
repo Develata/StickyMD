@@ -462,10 +462,16 @@ pub(crate) fn move_to_primary_edge(
     let maximum_y = work
         .y
         .saturating_add(work.height.saturating_sub(current.height) as i32);
+    let centered_x = work.x.saturating_add(
+        i32::try_from(work.width.saturating_sub(current.width) / 2).unwrap_or(i32::MAX),
+    );
+    let centered_y = work.y.saturating_add(
+        i32::try_from(work.height.saturating_sub(current.height) / 2).unwrap_or(i32::MAX),
+    );
     let (x, y) = match edge {
-        PrimaryDockEdge::Left => (work.x, current.y.clamp(work.y, maximum_y)),
-        PrimaryDockEdge::Right => (maximum_x, current.y.clamp(work.y, maximum_y)),
-        PrimaryDockEdge::Top => (current.x.clamp(work.x, maximum_x), work.y),
+        PrimaryDockEdge::Left => (work.x, centered_y.clamp(work.y, maximum_y)),
+        PrimaryDockEdge::Right => (maximum_x, centered_y.clamp(work.y, maximum_y)),
+        PrimaryDockEdge::Top => (centered_x.clamp(work.x, maximum_x), work.y),
     };
     move_window(window, x, y)
 }
@@ -492,18 +498,6 @@ pub(crate) fn move_to_primary_floating(window: WindowHandle) -> Result<(), Strin
         .y
         .saturating_add(work.height.saturating_sub(current.height) as i32 / 2);
     move_window(window, x, y)
-}
-
-pub(crate) fn move_to_primary_inset(window: WindowHandle, inset_px: i32) -> Result<(), String> {
-    let current = window_rect(window)?;
-    let work = primary_work_area()?;
-    move_window(
-        window,
-        work.x.saturating_add(inset_px.max(0)),
-        current
-            .y
-            .clamp(work.y, work.y.saturating_add(work.height as i32)),
-    )
 }
 
 pub(crate) fn focus_shell_desktop(window: WindowHandle) -> Result<(), String> {

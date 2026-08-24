@@ -60,12 +60,14 @@ tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任
 
 ## Candidate Defect Correction
 
-旧 exact candidate 在人工验收中暴露四项 implementation defect：同一行局部 selection 误涂其它
+旧 exact candidate 在人工验收中暴露五项 implementation defect：同一行局部 selection 误涂其它
 逻辑行；math delimiter conversion 后 Source projection 未立即进入 layout；Split/Preview 之间切换时
 clean preview 未按新 viewport relayout；真实 winit move loop 未提交 Dock，导致三边失焦自动收起不
-工作。修复不改变 Document authority、Markdown/math semantics 或 runtime dependency。Phase 8
+工作；从旧 Dock 直接换到另一边时错误地先 detach，导致需要第二次拖动。修复不改变 Document
+authority、Markdown/math semantics 或 runtime dependency。Phase 8
 copied-Release smoke 改用真实指针拖动与真实 shell 失焦，同时补齐 left/top/right、两个顶角和 Pin
-ON/OFF 正交路径；人工 G2 在新候选上重跑前仍为 `NOT TESTED`。详见
+ON/OFF 正交路径，并连续执行 Left -> Top -> Left -> Right、禁止以 Floating 中间态掩盖直接换边；
+人工 G2 在新候选上重跑前仍为 `NOT TESTED`。详见
 `docs/report/phase-14-candidate-defect-remediation.md`。
 
 ## Resources Failure Triage
