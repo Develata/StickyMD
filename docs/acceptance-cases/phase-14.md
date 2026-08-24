@@ -23,9 +23,7 @@ readiness，不能改写此 Markdown 状态。
 | P14-A13 | unsigned package 明确记录且不伪造 Authenticode signed fields | Automated | release/package contract tests | AUTOMATED PASS |
 | P14-A14 | GitHub-hosted CI 不执行 absolute 550 ms/resource qualification | Automated | workflow governance trace | AUTOMATED PASS |
 | P14-A15 | product runtime/dependency delta 为零 | Automated | git path/dependency audit | AUTOMATED PASS |
-| P14-A16 | exact candidate Release、headless、Runtime、Performance、Resources receipt 独立绑定 | Automated | Phase 14 qualification campaign contract tests；动态 receipt 不回写本表 | AUTOMATED PASS |
-| P14-A17 | hidden-window 失败诊断器按 collapse/tray/controls/collapse+tray/combined 分段，运行次数与循环数有类型和上界 | Local Automated | `tools/smoke/phase-14.ps1 -WindowStress`；CLI parser tests | AUTOMATED PASS |
-| P14-A18 | 外部 reload 后按键注入等待真实 source projection 与 foreground/active/focused shell state，不以固定 sleep 推断 ready | Local Automated | typed shell/projection gate；combined 10-run stress；完整 Resources receipt 由 exact candidate 重建 | AUTOMATED PASS |
+| P14-A16 | exact candidate Release、headless、Runtime、Performance、Resources receipt 独立绑定；hidden-window stress 使用有界 reducer 与真实 shell/source projection ready gate | Automated | Phase 14 qualification campaign、window-stress parser/runtime contract tests；动态 receipt 不回写本表 | AUTOMATED PASS |
 
 ## Guided manual sessions
 
