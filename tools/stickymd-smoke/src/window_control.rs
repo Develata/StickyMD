@@ -54,6 +54,13 @@ pub(crate) enum ToolbarControl {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PrimaryDockEdge {
+    Left,
+    Right,
+    Top,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct WindowRect {
     pub(crate) x: i32,
     pub(crate) y: i32,
@@ -251,6 +258,22 @@ pub(crate) fn switch_to_preview(window: WindowHandle) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn switch_to_split(window: WindowHandle) -> Result<(), String> {
+    click_view_control(window, 1)?;
+    thread::sleep(Duration::from_millis(50));
+    Ok(())
+}
+
+pub(crate) fn focus_split_preview(window: WindowHandle) -> Result<(), String> {
+    let client = client_rect(window)?;
+    let x = ((client.width as u64 * 3) / 4).min(u64::from(u16::MAX)) as u16;
+    let scale = f64::from(window_dpi(window)) / 96.0;
+    let y = pixel_u16(34.0 * scale + 32.0 * scale)?;
+    click_client(window, x, y)?;
+    thread::sleep(Duration::from_millis(50));
+    Ok(())
+}
+
 /// Click the semantic math-delimiter conversion action in the native toolbar.
 pub(crate) fn click_math_conversion(window: WindowHandle) -> Result<(), String> {
     click_view_control(window, 3)?;
@@ -420,12 +443,66 @@ pub(crate) fn commit_opacity_slider(window: WindowHandle, opacity: u8) -> Result
 }
 
 pub(crate) fn move_to_primary_left_edge(window: WindowHandle) -> Result<(), String> {
-    move_to_primary_inset(window, 0)
+    move_to_primary_edge(window, PrimaryDockEdge::Left)
+}
+
+pub(crate) fn move_to_primary_edge(
+    window: WindowHandle,
+    edge: PrimaryDockEdge,
+) -> Result<(), String> {
+    let current = window_rect(window)?;
+    let work = primary_work_area()?;
+    let maximum_x = work
+        .x
+        .saturating_add(work.width.saturating_sub(current.width) as i32);
+    let maximum_y = work
+        .y
+        .saturating_add(work.height.saturating_sub(current.height) as i32);
+    let (x, y) = match edge {
+        PrimaryDockEdge::Left => (work.x, current.y.clamp(work.y, maximum_y)),
+        PrimaryDockEdge::Right => (maximum_x, current.y.clamp(work.y, maximum_y)),
+        PrimaryDockEdge::Top => (current.x.clamp(work.x, maximum_x), work.y),
+    };
+    move_window(window, x, y)
+}
+
+pub(crate) fn move_to_primary_corner(window: WindowHandle, right: bool) -> Result<(), String> {
+    let current = window_rect(window)?;
+    let work = primary_work_area()?;
+    let x = if right {
+        work.x
+            .saturating_add(work.width.saturating_sub(current.width) as i32)
+    } else {
+        work.x
+    };
+    move_window(window, x, work.y)
+}
+
+pub(crate) fn move_to_primary_floating(window: WindowHandle) -> Result<(), String> {
+    let current = window_rect(window)?;
+    let work = primary_work_area()?;
+    let x = work
+        .x
+        .saturating_add(work.width.saturating_sub(current.width) as i32 / 2);
+    let y = work
+        .y
+        .saturating_add(work.height.saturating_sub(current.height) as i32 / 2);
+    move_window(window, x, y)
 }
 
 pub(crate) fn move_to_primary_inset(window: WindowHandle, inset_px: i32) -> Result<(), String> {
     let current = window_rect(window)?;
     let work = primary_work_area()?;
+    move_window(
+        window,
+        work.x.saturating_add(inset_px.max(0)),
+        current
+            .y
+            .clamp(work.y, work.y.saturating_add(work.height as i32)),
+    )
+}
+
+fn move_window(window: WindowHandle, x: i32, y: i32) -> Result<(), String> {
     // winit's message hook observes queued thread messages, so move-loop facts
     // must use PostMessageW. The delay gives the hook and its EventLoopProxy
     // hand-off a complete scheduling turn before the synthetic move.
@@ -437,10 +514,8 @@ pub(crate) fn move_to_primary_inset(window: WindowHandle, inset_px: i32) -> Resu
         SetWindowPos(
             window.0,
             0,
-            work.x.saturating_add(inset_px.max(0)),
-            current
-                .y
-                .clamp(work.y, work.y.saturating_add(work.height as i32)),
+            x,
+            y,
             0,
             0,
             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
@@ -448,7 +523,7 @@ pub(crate) fn move_to_primary_inset(window: WindowHandle, inset_px: i32) -> Resu
     } == 0
     {
         return Err(format!(
-            "cannot move StickyMD to primary left edge: {}",
+            "cannot move StickyMD to requested primary-work-area position: {}",
             std::io::Error::last_os_error()
         ));
     }
@@ -457,21 +532,49 @@ pub(crate) fn move_to_primary_inset(window: WindowHandle, inset_px: i32) -> Resu
     Ok(())
 }
 
-pub(crate) fn reveal_primary_left_sensor(window: WindowHandle) -> Result<(), String> {
+pub(crate) fn reveal_primary_sensor(
+    window: WindowHandle,
+    edge: PrimaryDockEdge,
+) -> Result<(), String> {
     let rect = window_rect(window)?;
     let work = primary_work_area()?;
-    let outside_x = work.x.saturating_add(work.width.saturating_sub(2) as i32);
-    let sensor_x = work.x.saturating_add(1);
-    let sensor_y = rect
+    let center_x = rect
+        .x
+        .saturating_add((rect.width / 2).min(i32::MAX as u32) as i32);
+    let center_y = rect
         .y
         .saturating_add((rect.height / 2).min(i32::MAX as u32) as i32);
-    set_cursor_position(outside_x, sensor_y, "move cursor away from StickyMD sensor")?;
+    let (outside_x, outside_y, sensor_x, sensor_y) = match edge {
+        PrimaryDockEdge::Left => (
+            work.x.saturating_add(work.width.saturating_sub(2) as i32),
+            center_y,
+            work.x.saturating_add(1),
+            center_y,
+        ),
+        PrimaryDockEdge::Right => (
+            work.x.saturating_add(1),
+            center_y,
+            work.x.saturating_add(work.width.saturating_sub(2) as i32),
+            center_y,
+        ),
+        PrimaryDockEdge::Top => (
+            center_x,
+            work.y.saturating_add(work.height.saturating_sub(2) as i32),
+            center_x,
+            work.y.saturating_add(1),
+        ),
+    };
+    set_cursor_position(
+        outside_x,
+        outside_y,
+        "move cursor away from StickyMD sensor",
+    )?;
     // The paper can animate away from a cursor that winit still marks as
     // inside until Windows delivers its tracked leave message. Mirror the
     // actual outside position to the HWND first so the following sensor move
     // always crosses a well-defined outside -> inside boundary.
     let outside_client_x = rect.width.saturating_add(16).min(u16::MAX as u32) as u16;
-    let outside_client_y = (sensor_y.saturating_sub(rect.y)).clamp(0, u16::MAX as i32) as u16;
+    let outside_client_y = (outside_y.saturating_sub(rect.y)).clamp(0, u16::MAX as i32) as u16;
     let outside_lparam =
         isize::try_from((u32::from(outside_client_y) << 16) | u32::from(outside_client_x))
             .map_err(|_| "outside mouse coordinates do not fit LPARAM".to_owned())?;

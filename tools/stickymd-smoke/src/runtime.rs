@@ -47,8 +47,8 @@ pub(crate) use window_stress::run as run_window_stress_diagnostic;
 enum ShellStateExpectation {
     Visible,
     Hidden,
-    PrimaryLeftCollapsed,
-    PrimaryLeftExpanded,
+    PrimaryEdgeCollapsed(crate::window_control::PrimaryDockEdge),
+    PrimaryEdgeExpanded(crate::window_control::PrimaryDockEdge),
     EditorInputReady,
 }
 
@@ -791,16 +791,37 @@ fn run_window_shell_lifecycle(
     // projection step. Poll the native fact instead of racing those two calls.
     wait_for_layered_alpha(window, Some(245))?;
 
-    // Drive one real native move-loop cycle through the copied executable.
-    // Pure reducer tests cover every edge and exact DIP boundary; this receipt
-    // proves the Win32/winit bridge can dock, collapse, reveal, and detach a
-    // real HWND without a product-only test command channel.
-    crate::window_control::move_to_primary_left_edge(window)?;
-    wait_for_config_field(program_directory, "dock_edge = \"left\"")?;
-    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Collapse)?;
-    wait_for_primary_left_state(window, true)?;
-    reveal_primary_left_and_wait(window)?;
+    // Exercise all three supported edges through the real Win32/winit bridge.
+    // Headless reducer tests own exact virtual-clock boundaries; this copied-
+    // Release receipt proves every edge can snap, collapse, reveal, and return
+    // to floating without a product-only test command channel.
+    exercise_primary_edge(
+        program_directory,
+        window,
+        crate::window_control::PrimaryDockEdge::Left,
+        "left",
+    )?;
     crate::window_control::move_to_primary_inset(window, 32)?;
+    wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
+    for (edge, config_value) in [
+        (crate::window_control::PrimaryDockEdge::Top, "top"),
+        (crate::window_control::PrimaryDockEdge::Right, "right"),
+    ] {
+        crate::window_control::move_to_primary_floating(window)?;
+        wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
+        exercise_primary_edge(program_directory, window, edge, config_value)?;
+    }
+
+    // A screen corner is simultaneously eligible for Top and one horizontal
+    // edge. Exercise both physical corners so the runtime bridge preserves the
+    // frozen Top > Left > Right tie order instead of only proving the reducer.
+    for right in [false, true] {
+        crate::window_control::move_to_primary_floating(window)?;
+        wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
+        crate::window_control::move_to_primary_corner(window, right)?;
+        wait_for_config_field(program_directory, "dock_edge = \"top\"")?;
+    }
+    crate::window_control::move_to_primary_floating(window)?;
     wait_for_config_field(program_directory, "dock_edge = \"none\"")?;
 
     crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Topmost)?;
@@ -923,11 +944,35 @@ fn run_phase11b_lifecycle(program_directory: &Path, primary: &mut Child) -> Resu
     let note = program_directory.join("note/note.md");
     crate::window_control::click_math_conversion(window)?;
     wait_for_note(&note, |bytes| bytes == PHASE11B_CONVERTED.as_bytes())?;
+    wait_for_source_projection(window, PHASE11B_CONVERTED.as_bytes())?;
+    crate::window_control::switch_to_split(window)?;
+    wait_for_config_field(program_directory, "view_mode = \"split\"")?;
+    crate::window_control::focus_split_preview(window)?;
+    wait_for_preview_projection(window, &["Phase 11-B", "$x^2+中$", "$$\\frac{a}{b}$$"])?;
+    crate::window_control::switch_to_preview(window)?;
+    wait_for_config_field(program_directory, "view_mode = \"preview\"")?;
+    wait_for_preview_projection(window, &["Phase 11-B", "$x^2+中$", "$$\\frac{a}{b}$$"])?;
     ensure_alive(primary, "post Phase 11-B toolbar-conversion lifecycle")?;
     runtime_report!(
-        "Phase 11-B runtime toolbar conversion, literal safety, and autosave lifecycle PASS"
+        "Phase 11-B runtime toolbar conversion, immediate source projection, preview relayout, literal safety, and autosave lifecycle PASS"
     );
     Ok(())
+}
+
+fn exercise_primary_edge(
+    program_directory: &Path,
+    window: crate::window_control::WindowHandle,
+    edge: crate::window_control::PrimaryDockEdge,
+    config_value: &str,
+) -> Result<(), String> {
+    crate::window_control::move_to_primary_edge(window, edge)?;
+    wait_for_config_field(
+        program_directory,
+        &format!("dock_edge = \"{config_value}\""),
+    )?;
+    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Collapse)?;
+    wait_for_primary_edge_state(window, edge, true)?;
+    reveal_primary_edge_and_wait(window, edge)
 }
 
 fn wait_for_tool_window_style(
@@ -1684,23 +1729,31 @@ fn wait_for_primary_left_state(
     window: crate::window_control::WindowHandle,
     collapsed: bool,
 ) -> Result<(), String> {
-    let expectation = if collapsed {
-        ShellStateExpectation::PrimaryLeftCollapsed
-    } else {
-        ShellStateExpectation::PrimaryLeftExpanded
-    };
-    wait_for_shell_state(window, expectation, START_TIMEOUT).map(|_| ())
+    wait_for_primary_edge_state(
+        window,
+        crate::window_control::PrimaryDockEdge::Left,
+        collapsed,
+    )
 }
 
-fn wait_for_primary_left_state_with_timeout(
+fn wait_for_primary_edge_state(
     window: crate::window_control::WindowHandle,
+    edge: crate::window_control::PrimaryDockEdge,
+    collapsed: bool,
+) -> Result<(), String> {
+    wait_for_primary_edge_state_with_timeout(window, edge, collapsed, START_TIMEOUT)
+}
+
+fn wait_for_primary_edge_state_with_timeout(
+    window: crate::window_control::WindowHandle,
+    edge: crate::window_control::PrimaryDockEdge,
     collapsed: bool,
     timeout: Duration,
 ) -> Result<(), String> {
     let expectation = if collapsed {
-        ShellStateExpectation::PrimaryLeftCollapsed
+        ShellStateExpectation::PrimaryEdgeCollapsed(edge)
     } else {
-        ShellStateExpectation::PrimaryLeftExpanded
+        ShellStateExpectation::PrimaryEdgeExpanded(edge)
     };
     wait_for_shell_state(window, expectation, timeout).map(|_| ())
 }
@@ -1747,18 +1800,40 @@ fn observe_shell(window: crate::window_control::WindowHandle) -> Result<ShellObs
 }
 
 fn shell_matches(observed: &ShellObservation, expectation: ShellStateExpectation) -> bool {
-    let sensor_right =
-        i64::from(observed.rect.x) + i64::from(observed.rect.width) - i64::from(observed.work.x);
-    let collapsed = observed.rect.x < observed.work.x && (1..=16).contains(&sensor_right);
-    let expanded = (observed.rect.x - observed.work.x).abs() <= 1;
+    let rect_right = i64::from(observed.rect.x) + i64::from(observed.rect.width);
+    let rect_bottom = i64::from(observed.rect.y) + i64::from(observed.rect.height);
+    let work_right = i64::from(observed.work.x) + i64::from(observed.work.width);
+    let left_sensor = rect_right - i64::from(observed.work.x);
+    let right_sensor = work_right - i64::from(observed.rect.x);
+    let top_sensor = rect_bottom - i64::from(observed.work.y);
+    let edge_collapsed = |edge| match edge {
+        crate::window_control::PrimaryDockEdge::Left => {
+            observed.rect.x < observed.work.x && (1..=16).contains(&left_sensor)
+        }
+        crate::window_control::PrimaryDockEdge::Right => {
+            rect_right > work_right && (1..=16).contains(&right_sensor)
+        }
+        crate::window_control::PrimaryDockEdge::Top => {
+            observed.rect.y < observed.work.y && (1..=16).contains(&top_sensor)
+        }
+    };
+    let edge_expanded = |edge| match edge {
+        crate::window_control::PrimaryDockEdge::Left => {
+            (observed.rect.x - observed.work.x).abs() <= 1
+        }
+        crate::window_control::PrimaryDockEdge::Right => (rect_right - work_right).abs() <= 1,
+        crate::window_control::PrimaryDockEdge::Top => {
+            (observed.rect.y - observed.work.y).abs() <= 1
+        }
+    };
     match expectation {
         ShellStateExpectation::Visible => observed.visible && observed.stable_geometry,
         ShellStateExpectation::Hidden => !observed.visible,
-        ShellStateExpectation::PrimaryLeftCollapsed => {
-            observed.visible && observed.stable_geometry && collapsed
+        ShellStateExpectation::PrimaryEdgeCollapsed(edge) => {
+            observed.visible && observed.stable_geometry && edge_collapsed(edge)
         }
-        ShellStateExpectation::PrimaryLeftExpanded => {
-            observed.visible && observed.stable_geometry && expanded
+        ShellStateExpectation::PrimaryEdgeExpanded(edge) => {
+            observed.visible && observed.stable_geometry && edge_expanded(edge)
         }
         ShellStateExpectation::EditorInputReady => {
             observed.visible
@@ -1792,12 +1867,19 @@ fn format_shell_observation(observed: &ShellObservation) -> String {
 }
 
 fn reveal_primary_left_and_wait(window: crate::window_control::WindowHandle) -> Result<(), String> {
+    reveal_primary_edge_and_wait(window, crate::window_control::PrimaryDockEdge::Left)
+}
+
+fn reveal_primary_edge_and_wait(
+    window: crate::window_control::WindowHandle,
+    edge: crate::window_control::PrimaryDockEdge,
+) -> Result<(), String> {
     const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(1);
     let deadline = Instant::now() + START_TIMEOUT;
     let mut last_error = None;
     while Instant::now() < deadline {
-        crate::window_control::reveal_primary_left_sensor(window)?;
-        match wait_for_primary_left_state_with_timeout(window, false, ATTEMPT_TIMEOUT) {
+        crate::window_control::reveal_primary_sensor(window, edge)?;
+        match wait_for_primary_edge_state_with_timeout(window, edge, false, ATTEMPT_TIMEOUT) {
             Ok(()) => return Ok(()),
             Err(error) => last_error = Some(error),
         }
@@ -2002,6 +2084,33 @@ fn wait_for_source_projection(
         expected.len(),
         last.as_ref().map_or(0, String::len),
         format_shell_observation(&shell),
+    ))
+}
+
+fn wait_for_preview_projection(
+    window: crate::window_control::WindowHandle,
+    required_fragments: &[&str],
+) -> Result<(), String> {
+    crate::window_control::clear_clipboard()?;
+    let deadline = Instant::now() + START_TIMEOUT;
+    let mut last = None;
+    while Instant::now() < deadline {
+        crate::window_control::press_select_all(window)?;
+        crate::window_control::press_copy(window)?;
+        last = crate::window_control::clipboard_text()?;
+        if last.as_deref().is_some_and(|text| {
+            required_fragments
+                .iter()
+                .all(|fragment| text.contains(fragment))
+        }) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    Err(format!(
+        "preview projection did not expose the converted document within {} seconds; required={required_fragments:?} actual={:?}",
+        START_TIMEOUT.as_secs(),
+        last.as_deref()
     ))
 }
 

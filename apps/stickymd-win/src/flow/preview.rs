@@ -21,6 +21,7 @@ pub enum PreviewVisibility {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewAction {
     Build(Generation),
+    Relayout(Generation),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,14 +98,16 @@ impl PreviewCoordinator {
         generation: Generation,
         visibility: PreviewVisibility,
     ) -> Option<PreviewAction> {
-        if visibility == PreviewVisibility::Hidden
-            || (self.applied_generation == Some(generation)
-                && self.dirty_generation != Some(generation))
-        {
+        if visibility == PreviewVisibility::Hidden {
             return None;
         }
         self.scheduled = None;
-        Some(PreviewAction::Build(generation))
+        if self.applied_generation == Some(generation) && self.dirty_generation != Some(generation)
+        {
+            Some(PreviewAction::Relayout(generation))
+        } else {
+            Some(PreviewAction::Build(generation))
+        }
     }
 
     pub fn tick(&mut self, now_ms: u64) -> Option<PreviewAction> {
@@ -196,6 +199,25 @@ mod tests {
         assert_eq!(
             flow.on_document_changed(0, generation, PreviewVisibility::Preview),
             Some(PreviewAction::Build(generation))
+        );
+    }
+
+    #[test]
+    fn clean_preview_relayouts_when_a_visible_mode_change_alters_its_viewport() {
+        let mut flow = PreviewCoordinator::default();
+        let generation = next(Generation::initial());
+        assert_eq!(
+            flow.admit_completion(generation, generation),
+            PreviewAdmission::Apply
+        );
+
+        assert_eq!(
+            flow.show(generation, PreviewVisibility::Preview),
+            Some(PreviewAction::Relayout(generation))
+        );
+        assert_eq!(
+            flow.show(generation, PreviewVisibility::Split),
+            Some(PreviewAction::Relayout(generation))
         );
     }
 

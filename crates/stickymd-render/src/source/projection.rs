@@ -405,6 +405,16 @@ impl SourceProjection {
         self.buffer
             .lines
             .splice(start_line..remove_end, replacement_lines);
+        // `Buffer::lines` is public, but freshly constructed `BufferLine`s
+        // start with empty caches. cosmic-text's `shape_until_scroll` only
+        // notices invalidated (previously populated) line caches when the
+        // buffer-level dirty flags are otherwise clear. Lay out exactly the
+        // replacement range so every new logical line becomes immediately
+        // visible without forcing an O(document) rebuild for an ordinary
+        // newline edit.
+        for line in start_line..start_line + new_line_count {
+            let _ = self.buffer.line_layout(&mut self.font_system, line);
+        }
         self.buffer
             .set_scroll(Scroll::new(scroll_line, scroll.vertical, scroll.horizontal));
         self.buffer.set_redraw(true);
@@ -481,8 +491,7 @@ impl SourceProjection {
         self.line_starts = line_starts(&self.canonical);
         self.configure_buffer();
 
-        self.buffer.lines = source_buffer_lines(&self.canonical, &self.fonts);
-        self.buffer.set_redraw(true);
+        set_source_buffer_text(&mut self.buffer, &self.canonical, &self.fonts);
     }
 
     fn configure_buffer(&mut self) {
@@ -530,25 +539,47 @@ fn attrs_for_line(text: &str, fonts: &FontSelection) -> AttrsList {
     attrs
 }
 
-fn source_buffer_lines(text: &str, fonts: &FontSelection) -> Vec<BufferLine> {
-    let mut source = text.split('\n').peekable();
-    let mut lines = Vec::with_capacity(text.bytes().filter(|byte| *byte == b'\n').count() + 1);
-    while let Some(line_text) = source.next() {
-        let ending = if source.peek().is_some() {
-            BufferLineEnding::Lf
-        } else {
-            BufferLineEnding::None
-        };
-        let mut line = BufferLine::new(
-            line_text,
-            ending,
-            attrs_for_line(line_text, fonts),
+fn set_source_buffer_text(buffer: &mut Buffer, text: &str, fonts: &FontSelection) {
+    let default = Attrs::new().family(Family::Serif);
+    let runs = segment_script_runs(text);
+    buffer.set_rich_text(
+        runs.iter().map(|run| {
+            (
+                &text[run.range.clone()],
+                Attrs::new().family(Family::Name(fonts.family_for(run.class))),
+            )
+        }),
+        &default,
+        Shaping::Advanced,
+        Some(Align::Left),
+    );
+    if text.ends_with('\n')
+        && !buffer
+            .lines
+            .last()
+            .is_some_and(|line| line.text().is_empty() && line.ending() == BufferLineEnding::None)
+    {
+        let mut trailing = BufferLine::new(
+            "",
+            BufferLineEnding::None,
+            attrs_for_line("", fonts),
             Shaping::Advanced,
         );
-        line.set_align(Some(Align::Left));
-        lines.push(line);
+        trailing.set_align(Some(Align::Left));
+        buffer.lines.push(trailing);
+    } else if let Some(last) = buffer.lines.last_mut() {
+        last.set_ending(BufferLineEnding::None);
     }
-    lines
+    if buffer.lines.is_empty() {
+        let mut empty = BufferLine::new(
+            "",
+            BufferLineEnding::None,
+            attrs_for_line("", fonts),
+            Shaping::Advanced,
+        );
+        empty.set_align(Some(Align::Left));
+        buffer.lines.push(empty);
+    }
 }
 
 #[cfg(test)]
@@ -836,6 +867,96 @@ mod tests {
         assert_eq!(projection.buffer.lines[1].text(), "second");
         let cursor = projection.cursor_for_global(document.text().len()).unwrap();
         assert_eq!((cursor.line, cursor.index), (2, "third".len()));
+    }
+
+    #[test]
+    fn whole_document_math_conversion_updates_the_source_projection_before_repaint() {
+        let source = "first\n\\[x^2\\]\nthird\n";
+        let converted = "first\n$$x^2$$\nthird\n";
+        let mut document = DocumentState::loaded(source, LineEnding::Lf, None);
+        let mut projection = SourceProjection::new(&document.snapshot(), 600, 400, 1.0);
+        let mut before = Pixmap::new(600, 400).unwrap();
+        projection
+            .paint(
+                &mut before,
+                Selection::caret(source.len()),
+                true,
+                false,
+                None,
+                SourceTheme::Light,
+            )
+            .unwrap();
+        let request = EditRequest::new(
+            document.generation(),
+            0..source.len(),
+            converted,
+            CursorSnapshot::caret(source.len()),
+            CursorSnapshot::caret(converted.len()),
+            EditMeta::new(EditKind::Other, 10),
+        );
+        let outcome = document.edit(request).unwrap();
+
+        projection
+            .apply_delta(document.generation(), outcome.delta.as_ref().unwrap())
+            .unwrap();
+
+        assert_eq!(projection.projected_text(), converted);
+        assert_eq!(projection.projected_generation(), document.generation());
+        assert_eq!(
+            projection
+                .buffer
+                .lines
+                .iter()
+                .map(|line| line.text())
+                .collect::<Vec<_>>(),
+            ["first", "$$x^2$$", "third", ""]
+        );
+        assert_eq!(
+            projection.line_starts,
+            [
+                0,
+                "first\n".len(),
+                "first\n$$x^2$$\n".len(),
+                converted.len()
+            ]
+        );
+        assert!(
+            projection
+                .buffer
+                .lines
+                .iter()
+                .all(|line| line.shape_opt().is_some() && line.layout_opt().is_some()),
+            "replacement lines were not shaped and laid out"
+        );
+        assert_eq!(
+            projection
+                .buffer
+                .layout_runs()
+                .map(|run| run.line_i)
+                .collect::<Vec<_>>(),
+            [0, 1, 2, 3]
+        );
+        let mut pixmap = Pixmap::new(600, 400).unwrap();
+        projection
+            .paint(
+                &mut pixmap,
+                Selection::caret(converted.len()),
+                true,
+                false,
+                None,
+                SourceTheme::Light,
+            )
+            .unwrap();
+        assert_ne!(pixmap.data(), before.data());
+        let first = projection.caret_rect(0).unwrap();
+        let formula = projection
+            .caret_rect(converted.find("x^2").unwrap() + 1)
+            .unwrap();
+        let third = projection
+            .caret_rect(converted.find("third").unwrap() + 1)
+            .unwrap();
+        assert!(formula.y > first.y, "formula line did not enter layout");
+        assert!(third.y > formula.y, "third line did not enter layout");
     }
 
     #[test]

@@ -251,6 +251,18 @@ impl StickyApp {
                     worker.submit(PreviewJob::Build { snapshot, viewport });
                 }
             }
+            PreviewAction::Relayout(generation) => {
+                let Some(viewport) = self.preview_viewport() else {
+                    return;
+                };
+                self.ensure_preview_worker();
+                if let Some(worker) = &self.preview_worker {
+                    worker.submit(PreviewJob::Relayout {
+                        generation,
+                        viewport,
+                    });
+                }
+            }
         }
     }
 

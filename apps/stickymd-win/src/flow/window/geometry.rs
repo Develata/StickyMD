@@ -386,6 +386,24 @@ mod phase8_window_tests {
             );
             assert_eq!(snap_edge(tied, &monitor), Some(DockEdge::Top));
 
+            let top_left_corner =
+                PhysicalRect::new(monitor.work_area.x, monitor.work_area.y, 400, 500);
+            assert_eq!(snap_edge(top_left_corner, &monitor), Some(DockEdge::Top));
+            let top_right_corner = PhysicalRect::new(
+                monitor.work_area.x + monitor.work_area.width as i32 - 400,
+                monitor.work_area.y,
+                400,
+                500,
+            );
+            assert_eq!(snap_edge(top_right_corner, &monitor), Some(DockEdge::Top));
+            let left_right_tie = PhysicalRect::new(
+                monitor.work_area.x,
+                monitor.work_area.y + 400,
+                monitor.work_area.width,
+                500,
+            );
+            assert_eq!(snap_edge(left_right_tie, &monitor), Some(DockEdge::Left));
+
             let clearly_nearer_left = PhysicalRect::new(
                 monitor.work_area.x + dip_to_px(8.0, scale) as i32,
                 monitor.work_area.y + dip_to_px(11.0, scale) as i32,

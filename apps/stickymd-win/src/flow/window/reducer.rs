@@ -845,38 +845,43 @@ mod phase8_window_tests {
     }
 
     #[test]
-    fn auto_collapse_uses_exact_700ms_boundary_and_focus_guard() {
-        let mut coordinator = coordinator(StableVisibility::DockedExpanded(DockEdge::Left));
-        let effects = coordinator.dispatch(WindowIntent::GuardsChanged {
-            guards: WindowGuardSnapshot::default(),
-            now_ms: 10,
-        });
-        assert!(effects.contains(&WindowEffect::WakeAt(10 + AUTO_COLLAPSE_DELAY_MS)));
-        coordinator.dispatch(WindowIntent::Tick { now_ms: 709 });
-        assert_eq!(
-            coordinator.state().visibility(),
-            VisibilityState::Presented(StableVisibility::DockedExpanded(DockEdge::Left))
-        );
-        coordinator.dispatch(WindowIntent::Tick { now_ms: 710 });
-        assert!(matches!(
-            coordinator.state().visibility(),
-            VisibilityState::Animating(_)
-        ));
+    fn every_edge_auto_collapse_uses_exact_700ms_boundary_and_focus_guard() {
+        for edge in [DockEdge::Left, DockEdge::Top, DockEdge::Right] {
+            let mut coordinator = coordinator(StableVisibility::DockedExpanded(edge));
+            let effects = coordinator.dispatch(WindowIntent::GuardsChanged {
+                guards: WindowGuardSnapshot::default(),
+                now_ms: 10,
+            });
+            assert!(effects.contains(&WindowEffect::WakeAt(10 + AUTO_COLLAPSE_DELAY_MS)));
+            coordinator.dispatch(WindowIntent::Tick { now_ms: 709 });
+            assert_eq!(
+                coordinator.state().visibility(),
+                VisibilityState::Presented(StableVisibility::DockedExpanded(edge))
+            );
+            coordinator.dispatch(WindowIntent::Tick { now_ms: 710 });
+            assert!(matches!(
+                coordinator.state().visibility(),
+                VisibilityState::Animating(AnimationState {
+                    final_visibility: StableVisibility::DockedCollapsed(collapsed_edge),
+                    ..
+                }) if collapsed_edge == edge
+            ));
 
-        coordinator.dispatch(WindowIntent::GuardsChanged {
-            guards: WindowGuardSnapshot {
-                ime_composing: true,
-                ..Default::default()
-            },
-            now_ms: 711,
-        });
-        assert!(matches!(
-            coordinator.state().visibility(),
-            VisibilityState::Animating(AnimationState {
-                final_visibility: StableVisibility::DockedExpanded(_),
-                ..
-            })
-        ));
+            coordinator.dispatch(WindowIntent::GuardsChanged {
+                guards: WindowGuardSnapshot {
+                    ime_composing: true,
+                    ..Default::default()
+                },
+                now_ms: 711,
+            });
+            assert!(matches!(
+                coordinator.state().visibility(),
+                VisibilityState::Animating(AnimationState {
+                    final_visibility: StableVisibility::DockedExpanded(expanded_edge),
+                    ..
+                }) if expanded_edge == edge
+            ));
+        }
     }
 
     #[test]

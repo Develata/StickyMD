@@ -1,6 +1,7 @@
 # Phase 14 Acceptance Matrix
 
-本矩阵验证 release policy / qualification tooling；不新增产品功能。自动项由 std-only Rust CLI
+本矩阵验证 release policy / qualification tooling；不新增产品功能。USER 在 exact-candidate 人工验收中
+发现的 release-blocking 产品缺陷允许作最小纠正，但任何纠正都会作废旧候选并触发完整重新资格化。自动项由 std-only Rust CLI
 持有并由 CI 调用。人工项始终保留 `NOT TESTED`，只有 ignored exact-candidate receipt 可改变
 readiness，不能改写此 Markdown 状态。
 
@@ -22,8 +23,8 @@ readiness，不能改写此 Markdown 状态。
 | P14-A12 | manual receipt 绑定 exact source/EXE/ZIP/version/Windows build/session/case | Automated | manual receipt tests | AUTOMATED PASS |
 | P14-A13 | unsigned package 明确记录且不伪造 Authenticode signed fields | Automated | release/package contract tests | AUTOMATED PASS |
 | P14-A14 | GitHub-hosted CI 不执行 absolute 550 ms/resource qualification | Automated | workflow governance trace | AUTOMATED PASS |
-| P14-A15 | product runtime/dependency delta 为零 | Automated | git path/dependency audit | AUTOMATED PASS |
-| P14-A16 | exact candidate Release、headless、Runtime、Performance、Resources receipt 独立绑定；hidden-window stress 使用有界 reducer 与真实 shell/source projection ready gate | Automated | Phase 14 qualification campaign、window-stress parser/runtime contract tests；动态 receipt 不回写本表 | AUTOMATED PASS |
+| P14-A15 | USER 授权的 candidate defect correction 保持边界内、无新 runtime dependency 且有命名回归 | Automated | git path/dependency audit + source selection/source projection/preview relayout regressions | AUTOMATED PASS |
+| P14-A16 | exact candidate Release、headless、Runtime、Performance、Resources receipt 独立绑定；runtime smoke 使用有界 reducer、真实 shell/source projection ready gate，并驱动三边 dock 与顶角优先级 | Automated | Phase 14 qualification campaign、window-stress parser/runtime contract tests；动态 receipt 不回写本表 | AUTOMATED PASS |
 
 ## Guided manual sessions
 

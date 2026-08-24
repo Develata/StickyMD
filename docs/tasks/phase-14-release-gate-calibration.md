@@ -2,11 +2,11 @@
 
 ## Status
 
-Qualification In Progress — Resources harness corrected; exact-candidate requalification required.
+Qualification In Progress — USER-observed candidate defects corrected; exact-candidate requalification required.
 
 ## Purpose
 
-在产品 runtime 冻结的前提下，校准 v0.1.0 startup release boundary，完成 startup attribution、
+在产品 runtime 默认冻结的前提下，校准 v0.1.0 startup release boundary，完成 startup attribution、
 风险分层人工验收、独立 evidence channel 与 local readiness 收口。
 
 ## Prerequisites
@@ -23,16 +23,19 @@ Qualification In Progress — Resources harness corrected; exact-candidate requa
   manual sessions、risk-tier readiness 和 independent channel collection。
 - 建立 exact candidate 并重新收集 Release、headless CI、Runtime、Performance、Resources、
   Manual、Readiness evidence。
+- 对 exact-candidate 人工验收中 USER 实际观察到的 release-blocking 缺陷作最小、回归绑定的纠正；
+  每次 tracked correction 都作废旧候选并重新开始资格化。
 
 ## Out of Scope
 
-- 产品 runtime、产品依赖、Markdown/IME/window/persistence 行为变化。
+- 未经 USER 实际缺陷报告授权的产品 runtime、产品依赖、Markdown/IME/window/persistence 行为变化。
 - 为达到 180/400 ms target 做追逐式优化。
 - push、tag、remote workflow、draft release 或 publish。
 
 ## Authority and Freeze
 
-唯一产品 authority 不变；Phase 14 tracked delta 仅限 plan/projection/docs 与 verification tooling。
+唯一产品 authority 不变；Phase 14 tracked delta 原则上仅限 plan/projection/docs 与 verification tooling；
+USER 在 exact-candidate 人工验收中报告的 release-blocking implementation defect 可以按原 plan 作最小纠正。
 tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任何 tracked source 改变都会
 创建新 candidate，并使旧 candidate receipt 失效。
 
@@ -53,6 +56,15 @@ tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任
 - workspace fmt / strict Clippy / tests / Release build / deny。
 - exact copied candidate Release, headless, Runtime, Performance, Resources and Readiness channels。
 - product runtime/dependency delta audit。
+- USER-observed regression 的 named tests，以及扩展后的三边/顶角 copied-Release smoke。
+
+## Candidate Defect Correction
+
+旧 exact candidate 在 G1 人工验收中暴露三项 implementation defect：同一行局部 selection 误涂其它
+逻辑行；math delimiter conversion 后 Source projection 未立即进入 layout；Split/Preview 之间切换时
+clean preview 未按新 viewport relayout。修复不改变 Document authority、Markdown/math semantics 或
+runtime dependency。Phase 8 copied-Release smoke 同时补齐 left/top/right 与两个顶角；人工 G2 在新候选
+上重跑前仍为 `NOT TESTED`。详见 `docs/report/phase-14-candidate-defect-remediation.md`。
 
 ## Resources Failure Triage
 

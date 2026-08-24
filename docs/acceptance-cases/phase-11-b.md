@@ -45,7 +45,7 @@
 | P11B-D015 | 整批转换一个 Undo step | Automated | document-flow transaction regression | AUTOMATED PASS |
 | P11B-D016 | Redo 正确 | Automated | document-flow transaction regression | AUTOMATED PASS |
 | P11B-D017 | 0 matches no-op | Automated | no-op snapshot regression | AUTOMATED PASS |
-| P11B-D018 | conversion 正常触发 autosave/preview | Automated | ordinary `DocumentChanged` path + runtime autosave | AUTOMATED PASS |
+| P11B-D018 | conversion 正常触发 autosave/Source projection/Preview | Automated | ordinary `DocumentChanged` path、immediate source-layout regression、visible-mode relayout regression + copied-runtime lifecycle | AUTOMATED PASS |
 | P11B-D019 | compact toolbar 适配 220 DIP | Automated | compact geometry/hit-test regression | AUTOMATED PASS |
 | P11B-D020 | Pin 与 auto-hide 正交 | Automated | transition-equivalence regression | AUTOMATED PASS |
 | P11B-D021 | auto-hide predicate 不读取 configured topmost | Automated | reducer boundary source audit | AUTOMATED PASS |

@@ -115,7 +115,7 @@ fn prepare_primary_left_expanded(
     crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Collapse)?;
     wait_for_shell_state(
         window,
-        ShellStateExpectation::PrimaryLeftCollapsed,
+        ShellStateExpectation::PrimaryEdgeCollapsed(crate::window_control::PrimaryDockEdge::Left),
         START_TIMEOUT,
     )?;
     reveal_primary_left_and_wait(window)
@@ -130,7 +130,9 @@ fn run_collapse(window: crate::window_control::WindowHandle, cycles: usize) -> R
         )?;
         wait_for_shell_state(
             window,
-            ShellStateExpectation::PrimaryLeftCollapsed,
+            ShellStateExpectation::PrimaryEdgeCollapsed(
+                crate::window_control::PrimaryDockEdge::Left,
+            ),
             START_TIMEOUT,
         )
         .map_err(|error| format!("stage=collapse cycle={} {error}", cycle + 1))?;

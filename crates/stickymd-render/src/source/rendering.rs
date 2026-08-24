@@ -148,6 +148,9 @@ impl SourceProjection {
             return;
         };
         for run in self.buffer.layout_runs() {
+            if run.line_i < start.line || run.line_i > end.line {
+                continue;
+            }
             for (x, width) in run.highlight(start, end) {
                 rect(
                     pixmap,
@@ -305,5 +308,93 @@ impl SourceProjection {
                 blend_glyph_rect(pixmap, x + x_offset, y + y_offset, width, height, color);
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use stickymd_core::{DocumentSnapshot, Generation, LineEnding, Selection};
+    use tiny_skia::Pixmap;
+
+    use super::{SourceProjection, SourceTheme};
+
+    fn changed_pixels_in_band(before: &Pixmap, after: &Pixmap, top: f32, height: f32) -> usize {
+        let width = before.width() as usize;
+        let start = top.ceil().max(0.0) as usize;
+        let end = (top + height).floor().min(before.height() as f32) as usize;
+        before
+            .data()
+            .chunks_exact(4)
+            .zip(after.data().chunks_exact(4))
+            .enumerate()
+            .filter(|(index, (left, right))| {
+                let row = index / width;
+                (start..end).contains(&row) && left != right
+            })
+            .count()
+    }
+
+    #[test]
+    fn same_line_selection_does_not_paint_unselected_lines() {
+        let text = "StickyMD basic 选择替换 123 🙂\nnihao 这是Rust的trait示例\n择顶项";
+        let snapshot = DocumentSnapshot {
+            text: Arc::from(text),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        };
+        let mut projection = SourceProjection::new(&snapshot, 600, 300, 1.0);
+        let selection_start = text.find("示例").expect("fixture selection");
+        let selection_end = selection_start + "示例".len();
+        let first_line = projection.caret_rect(0).expect("first line");
+        let second_line = projection
+            .caret_rect(text.find('\n').expect("second line") + 1)
+            .expect("second line");
+        let third_line_start = text.rfind('\n').expect("third line") + 1;
+        let third_line = projection.caret_rect(third_line_start).expect("third line");
+
+        let mut baseline = Pixmap::new(600, 300).expect("baseline pixmap");
+        projection
+            .paint(
+                &mut baseline,
+                Selection::caret(selection_start),
+                true,
+                false,
+                None,
+                SourceTheme::Light,
+            )
+            .expect("baseline paint");
+        for selection in [
+            Selection::new(selection_start, selection_end),
+            Selection::new(selection_end, selection_start),
+        ] {
+            let mut selected = Pixmap::new(600, 300).expect("selected pixmap");
+            projection
+                .paint(
+                    &mut selected,
+                    selection,
+                    true,
+                    false,
+                    None,
+                    SourceTheme::Light,
+                )
+                .expect("selection paint");
+
+            assert_eq!(
+                changed_pixels_in_band(&baseline, &selected, first_line.y, first_line.height),
+                0,
+                "a same-line selection painted the preceding logical line"
+            );
+            assert!(
+                changed_pixels_in_band(&baseline, &selected, second_line.y, second_line.height) > 0,
+                "the selected logical line received no highlight"
+            );
+            assert_eq!(
+                changed_pixels_in_band(&baseline, &selected, third_line.y, third_line.height),
+                0,
+                "a same-line selection painted the following logical line"
+            );
+        }
     }
 }
