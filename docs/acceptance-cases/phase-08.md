@@ -16,7 +16,7 @@ monitor-topology, IME, and visual-quality row remains `NOT TESTED` until a check
 | P08-A00 | Phase 8 smoke routing | Automated | Rust CLI P08 parsing, deduplicated headless/performance/runtime/resource plans and runner unit tests | AUTOMATED PASS |
 | P08-A01 | AC-019..021 visibility and dock state machine | Automated | `phase8_` tests cover Floating, DockedExpanded, DockedCollapsed and Animating transitions | AUTOMATED PASS |
 | P08-A02 | AC-019..022 exact timer and priority rules | Automated | `phase8_` virtual-clock tests cover 100/500/700/140 ms boundaries and event priority | AUTOMATED PASS |
-| P08-A03 | AC-019..021 dock geometry | Automated | `phase8_` tests cover 12-DIP snap, greater-than-16-DIP undock, one-step transitions among all three dock edges, 3-DIP strip and left/right/top work-area geometry | AUTOMATED PASS |
+| P08-A03 | AC-019..021 dock geometry | Automated | `phase8_` tests cover the current 24-DIP snap contract, greater-than-16-DIP undock, one-step transitions among all three dock edges, 3-DIP strip and left/right/top work-area geometry | AUTOMATED PASS |
 | P08-A04 | AC-028/029 monitor recovery geometry | Automated | `phase8_` synthetic topology tests cover negative coordinates, primary fallback, mixed DPI, missing monitors and full visibility | AUTOMATED PASS |
 | P08-A05 | AC-022 focus, IME, popup, conflict and recovery guards | Automated | `phase8_` reducer tests prove guards suppress auto-hide while Esc/manual collapse keeps priority | AUTOMATED PASS |
 | P08-A06 | AC-023 lifecycle and tray model | Automated | `phase8_` tests prove Close hides, Show restores, the menu has exactly three commands, note-save failure cancels Quit, and GC/config failure follows the documented warning policy | AUTOMATED PASS |
@@ -99,7 +99,7 @@ environment-sensitive behavior is never relabelled automated merely because a sy
 | P08-D040 | right dock works | Manual | real receipt required by M02 | NOT TESTED |
 | P08-D041 | top dock works | Manual | real receipt required by M03 | NOT TESTED |
 | P08-D042 | bottom dock is absent | Automated | A03 edge-enum tests PASS | AUTOMATED PASS |
-| P08-D043 | snap threshold is 12 DIP | Automated | A03 exact-boundary tests PASS | AUTOMATED PASS |
+| P08-D043 | snap threshold is 24 DIP | Automated | A03 exact-boundary tests PASS | AUTOMATED PASS |
 | P08-D044 | detach threshold is greater than 16 DIP | Automated | A03 exact-boundary tests PASS | AUTOMATED PASS |
 | P08-D045 | collapsed sensor is 3 DIP | Automated | A03 DPI geometry tests PASS | AUTOMATED PASS |
 | P08-D046 | top sensor retains window width | Automated | A03 geometry tests PASS | AUTOMATED PASS |

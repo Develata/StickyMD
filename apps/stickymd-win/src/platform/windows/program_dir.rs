@@ -113,21 +113,30 @@ impl RuntimePaths {
 
     /// Verify create/write/flush/delete semantics before creating durable files.
     pub fn verify_program_directory_writable(&self) -> Result<(), RuntimePathsError> {
-        let probe = self
-            .program_dir
-            .real_path()
-            .join(format!(".stickymd-write-test-{}", std::process::id()));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&probe)
-            .map_err(RuntimePathsError::WritableProbeCreate)?;
-        file.write_all(b"StickyMD writable probe")
-            .map_err(RuntimePathsError::WritableProbeWrite)?;
-        file.sync_all()
-            .map_err(RuntimePathsError::WritableProbeFlush)?;
-        drop(file);
-        fs::remove_file(&probe).map_err(RuntimePathsError::WritableProbeCleanup)
+        for suffix in 0..128_u8 {
+            let probe = self.program_dir.real_path().join(format!(
+                ".stickymd-write-test-{}-{suffix}",
+                std::process::id()
+            ));
+            let mut file = match OpenOptions::new().write(true).create_new(true).open(&probe) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(RuntimePathsError::WritableProbeCreate(error)),
+            };
+            if let Err(error) = file.write_all(b"StickyMD writable probe") {
+                drop(file);
+                let _ = fs::remove_file(&probe);
+                return Err(RuntimePathsError::WritableProbeWrite(error));
+            }
+            if let Err(error) = file.sync_all() {
+                drop(file);
+                let _ = fs::remove_file(&probe);
+                return Err(RuntimePathsError::WritableProbeFlush(error));
+            }
+            drop(file);
+            return fs::remove_file(&probe).map_err(RuntimePathsError::WritableProbeCleanup);
+        }
+        Err(RuntimePathsError::WritableProbeNameExhausted)
     }
 
     pub fn ensure_layout(&self) -> Result<(), RuntimePathsError> {
@@ -178,6 +187,8 @@ pub enum RuntimePathsError {
     Canonicalize(std::io::Error),
     #[error("cannot create the writable probe: {0}")]
     WritableProbeCreate(std::io::Error),
+    #[error("cannot allocate a unique writable probe name")]
+    WritableProbeNameExhausted,
     #[error("cannot write the writable probe: {0}")]
     WritableProbeWrite(std::io::Error),
     #[error("cannot flush the writable probe: {0}")]
@@ -304,19 +315,16 @@ mod tests {
     }
 
     #[test]
-    fn phase9_writable_probe_failure_is_typed_and_preserves_existing_file() {
+    fn stale_writable_probe_is_preserved_and_does_not_block_startup() {
         let root = unique_dir("probe-blocked");
         fs::create_dir_all(&root).unwrap();
         let executable = root.join("StickyMD.exe");
         fs::write(&executable, b"").unwrap();
         let paths = RuntimePaths::from_executable(&executable).unwrap();
-        let blocker = root.join(format!(".stickymd-write-test-{}", std::process::id()));
+        let blocker = root.join(format!(".stickymd-write-test-{}-0", std::process::id()));
         fs::write(&blocker, b"external blocker").unwrap();
 
-        assert!(matches!(
-            paths.verify_program_directory_writable(),
-            Err(RuntimePathsError::WritableProbeCreate(_))
-        ));
+        paths.verify_program_directory_writable().unwrap();
         assert_eq!(fs::read(&blocker).unwrap(), b"external blocker");
         assert!(!paths.note_dir.exists());
         fs::remove_dir_all(root).unwrap();

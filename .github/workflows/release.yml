@@ -50,7 +50,7 @@ jobs:
       - name: Format
         run: cargo fmt --check
       - name: Strict clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Headless phase smoke
         shell: pwsh
         run: ./tools/smoke/all.ps1 -Ci

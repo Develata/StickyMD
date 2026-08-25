@@ -33,18 +33,22 @@ pub enum SpanAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderSpan {
-    pub text: String,
+    pub text: Arc<str>,
     /// Text contributed to preview selection and clipboard projection.
     ///
     /// It intentionally differs from `text` for image placeholders: the
     /// preview paints a discoverable placeholder but copying it yields alt
     /// text, as required by the product contract.
-    pub copy_text: String,
+    pub copy_text: Arc<str>,
     pub source_range: Option<SourceRange>,
     pub style: RenderStyle,
     pub action: Option<SpanAction>,
     pub(crate) math: Option<RenderMath>,
     pub(crate) image: Option<RenderImage>,
+    /// Semantic hard break. Keeping this separate from the rendered text
+    /// prevents the mixed inline layout path from treating a newline as a
+    /// zero-width glyph on the same line as an adjacent formula or image.
+    pub(crate) hard_break: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,18 +170,16 @@ impl RenderTreeBuilder {
                     kind: RenderBlockKind::CodeBlock {
                         info: code.info.clone(),
                     },
-                    spans: vec![RenderSpan {
-                        text: code.literal.clone(),
-                        copy_text: code.literal.clone(),
-                        source_range: code.source_range,
-                        style: RenderStyle {
+                    spans: vec![span(
+                        &code.literal,
+                        &code.literal,
+                        code.source_range,
+                        RenderStyle {
                             code: true,
                             ..RenderStyle::default()
                         },
-                        action: None,
-                        math: None,
-                        image: None,
-                    }],
+                        None,
+                    )],
                     indent,
                     source_range: code.source_range,
                 }),
@@ -198,42 +200,42 @@ impl RenderTreeBuilder {
                     source_range,
                 } => output.push(RenderBlock {
                     kind: RenderBlockKind::HtmlLiteral,
-                    spans: vec![RenderSpan {
-                        text: literal.clone(),
-                        copy_text: literal.clone(),
-                        source_range: *source_range,
-                        style: RenderStyle {
+                    spans: vec![span(
+                        literal,
+                        literal,
+                        *source_range,
+                        RenderStyle {
                             code: true,
                             html_literal: true,
                             ..RenderStyle::default()
                         },
-                        action: None,
-                        math: None,
-                        image: None,
-                    }],
+                        None,
+                    )],
                     indent,
                     source_range: *source_range,
                 }),
-                BlockNode::DisplayMath(math) => output.push(RenderBlock {
-                    kind: RenderBlockKind::DisplayMath,
-                    spans: vec![RenderSpan {
-                        text: math.source_literal.clone(),
-                        copy_text: math.source_literal.clone(),
-                        source_range: math.source_range,
-                        style: RenderStyle {
+                BlockNode::DisplayMath(math) => {
+                    let mut math_span = span(
+                        &math.source_literal,
+                        &math.source_literal,
+                        math.source_range,
+                        RenderStyle {
                             math_placeholder: true,
                             ..RenderStyle::default()
                         },
-                        action: None,
-                        math: Some(RenderMath {
-                            source: math.literal.clone(),
-                            kind: MathKind::Display,
-                        }),
-                        image: None,
-                    }],
-                    indent,
-                    source_range: math.source_range,
-                }),
+                        None,
+                    );
+                    math_span.math = Some(RenderMath {
+                        source: math.literal.clone(),
+                        kind: MathKind::Display,
+                    });
+                    output.push(RenderBlock {
+                        kind: RenderBlockKind::DisplayMath,
+                        spans: vec![math_span],
+                        indent,
+                        source_range: math.source_range,
+                    });
+                }
             }
         }
     }
@@ -258,28 +260,12 @@ impl RenderTreeBuilder {
                 first.kind = RenderBlockKind::ListItem;
                 first.spans.insert(
                     0,
-                    RenderSpan {
-                        copy_text: marker.clone(),
-                        text: marker,
-                        source_range: None,
-                        style: RenderStyle::default(),
-                        action: None,
-                        math: None,
-                        image: None,
-                    },
+                    span(&marker, &marker, None, RenderStyle::default(), None),
                 );
             } else {
                 output.push(RenderBlock {
                     kind: RenderBlockKind::ListItem,
-                    spans: vec![RenderSpan {
-                        copy_text: marker.clone(),
-                        text: marker,
-                        source_range: None,
-                        style: RenderStyle::default(),
-                        action: None,
-                        math: None,
-                        image: None,
-                    }],
+                    spans: vec![span(&marker, &marker, None, RenderStyle::default(), None)],
                     indent: indent.saturating_add(1),
                     source_range: item.source_range,
                 });
@@ -414,26 +400,30 @@ fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mu
                 });
                 output.push(image_span);
             }
-            InlineNode::InlineMath(math) => output.push(RenderSpan {
-                text: math.source_literal.clone(),
-                copy_text: math.source_literal.clone(),
-                source_range: math.source_range,
-                style: RenderStyle {
-                    math_placeholder: true,
-                    ..inherited
-                },
-                action: None,
-                math: Some(RenderMath {
+            InlineNode::InlineMath(math) => {
+                let mut math_span = span(
+                    &math.source_literal,
+                    &math.source_literal,
+                    math.source_range,
+                    RenderStyle {
+                        math_placeholder: true,
+                        ..inherited
+                    },
+                    None,
+                );
+                math_span.math = Some(RenderMath {
                     source: math.literal.clone(),
                     kind: MathKind::Inline,
-                }),
-                image: None,
-            }),
+                });
+                output.push(math_span);
+            }
             InlineNode::SoftBreak { source_range } => {
                 output.push(span(" ", " ", *source_range, inherited, None));
             }
             InlineNode::HardBreak { source_range } => {
-                output.push(span("\n", "\n", *source_range, inherited, None));
+                let mut hard_break = span("\n", "\n", *source_range, inherited, None);
+                hard_break.hard_break = true;
+                output.push(hard_break);
             }
             InlineNode::HtmlLiteral {
                 literal,
@@ -460,14 +450,21 @@ fn span(
     style: RenderStyle,
     action: Option<SpanAction>,
 ) -> RenderSpan {
+    let text: Arc<str> = Arc::from(text);
+    let copy_text = if copy_text == text.as_ref() {
+        Arc::clone(&text)
+    } else {
+        Arc::from(copy_text)
+    };
     RenderSpan {
-        text: text.to_owned(),
-        copy_text: copy_text.to_owned(),
+        text,
+        copy_text,
         source_range,
         style,
         action,
         math: None,
         image: None,
+        hard_break: false,
     }
 }
 
@@ -515,6 +512,17 @@ mod tests {
     }
 
     #[test]
+    fn identical_visual_and_clipboard_text_share_one_allocation() {
+        let tree = build("plain **strong** `code` $x$");
+        for span in &tree.blocks[0].spans {
+            assert!(
+                Arc::ptr_eq(&span.text, &span.copy_text),
+                "identical projections should share storage: {span:?}"
+            );
+        }
+    }
+
+    #[test]
     fn blocked_links_remain_visible_but_are_not_openable() {
         let tree = build("[bad](javascript:alert(1)) [good](https://example.com)");
         let actions = tree.blocks[0]
@@ -557,8 +565,8 @@ mod tests {
     fn image_placeholder_shows_path_but_copies_only_alt_text() {
         let tree = build("![diagram](images/diagram.png)");
         let span = &tree.blocks[0].spans[0];
-        assert_eq!(span.text, "[image: diagram] images/diagram.png");
-        assert_eq!(span.copy_text, "diagram");
+        assert_eq!(span.text.as_ref(), "[image: diagram] images/diagram.png");
+        assert_eq!(span.copy_text.as_ref(), "diagram");
         assert!(span.style.image_placeholder);
     }
 }

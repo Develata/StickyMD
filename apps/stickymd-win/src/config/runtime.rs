@@ -224,9 +224,15 @@ pub fn load_config(path: &Path) -> Result<ConfigLoadOutcome, ConfigStorageError>
 }
 
 fn preserve_corrupt_config(path: &Path) -> ConfigLoadOutcome {
-    let preserved = corrupt_path(path);
-    let warning = match fs::rename(path, &preserved) {
-        Ok(()) => ConfigWarning::CorruptPreserved(preserved),
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    preserve_corrupt_config_at(path, stamp)
+}
+
+fn preserve_corrupt_config_at(path: &Path, stamp: u64) -> ConfigLoadOutcome {
+    let warning = match rename_corrupt_config(path, stamp) {
+        Ok(preserved) => ConfigWarning::CorruptPreserved(preserved),
         Err(_) => ConfigWarning::CorruptCouldNotBePreserved,
     };
     let should_create_default = matches!(warning, ConfigWarning::CorruptPreserved(_));
@@ -239,6 +245,32 @@ fn preserve_corrupt_config(path: &Path) -> ConfigLoadOutcome {
     }
 }
 
+fn rename_corrupt_config(path: &Path, stamp: u64) -> std::io::Result<PathBuf> {
+    // Multiple invalid launches can occur within one second. Never let an
+    // existing diagnostic file disable config persistence merely because its
+    // timestamp collides; preserve both files with a bounded numeric suffix.
+    for sequence in 0..=1_024_u16 {
+        let suffix = if sequence == 0 {
+            String::new()
+        } else {
+            format!("-{sequence}")
+        };
+        let candidate = path.with_file_name(format!("config.invalid-{stamp}{suffix}.toml"));
+        if candidate.exists() {
+            continue;
+        }
+        match fs::rename(path, &candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "all corrupt config preservation names are occupied",
+    ))
+}
+
 pub fn save_config(
     target: &Path,
     temporary: &Path,
@@ -246,13 +278,6 @@ pub fn save_config(
 ) -> Result<(), ConfigStorageError> {
     let source = toml::to_string_pretty(config).map_err(ConfigStorageError::Serialize)?;
     atomic_publish(target, temporary, source.as_bytes()).map_err(ConfigStorageError::Publish)
-}
-
-fn corrupt_path(path: &Path) -> PathBuf {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs());
-    path.with_file_name(format!("config.invalid-{stamp}.toml"))
 }
 
 #[derive(Debug, Error)]
@@ -302,6 +327,26 @@ mod phase8_config_runtime_tests {
             Some(ConfigWarning::CorruptPreserved(_))
         ));
         assert!(!path.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corrupt_config_name_collision_preserves_both_evidence_files() {
+        let root = unique_dir("collision");
+        fs::create_dir(&root).unwrap();
+        let path = root.join("config.toml");
+        let occupied = root.join("config.invalid-42.toml");
+        fs::write(&occupied, "older evidence").unwrap();
+        fs::write(&path, "version = invalid").unwrap();
+
+        let outcome = preserve_corrupt_config_at(&path, 42);
+        let Some(ConfigWarning::CorruptPreserved(preserved)) = outcome.warning else {
+            panic!("corrupt config should be preserved");
+        };
+        assert_eq!(preserved, root.join("config.invalid-42-1.toml"));
+        assert_eq!(fs::read_to_string(occupied).unwrap(), "older evidence");
+        assert_eq!(fs::read_to_string(preserved).unwrap(), "version = invalid");
+        assert!(outcome.persistence_allowed);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -5,6 +5,7 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 
@@ -15,9 +16,14 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::core::PCWSTR;
 
+use super::file_identity::observe_open_file;
+
 const ERROR_UNABLE_TO_REMOVE_REPLACED: u32 = 1175;
 const ERROR_UNABLE_TO_MOVE_REPLACEMENT: u32 = 1176;
 const ERROR_UNABLE_TO_MOVE_REPLACEMENT_2: u32 = 1177;
+const FILE_ATTRIBUTE_REPARSE_POINT_VALUE: u32 = 0x400;
+const FILE_FLAG_OPEN_REPARSE_POINT_VALUE: u32 = 0x0020_0000;
+const SHARE_READ: u32 = 0x0000_0001;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplaceFailureKind {
@@ -74,12 +80,7 @@ where
         stage: AtomicStage::BeforeTempCreate,
         source,
     })?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(temporary)
-        .map_err(AtomicPublishError::TempCreate)?;
+    let mut file = open_fixed_temporary(temporary)?;
     observe(AtomicStage::BeforeTempWrite).map_err(|source| AtomicPublishError::Injected {
         stage: AtomicStage::BeforeTempWrite,
         source,
@@ -116,12 +117,7 @@ pub(crate) fn prepare_temporary(
     if target.parent() != temporary.parent() {
         return Err(AtomicPublishError::DifferentDirectories);
     }
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(temporary)
-        .map_err(AtomicPublishError::TempCreate)?;
+    let mut file = open_fixed_temporary(temporary)?;
     file.write_all(bytes)
         .map_err(AtomicPublishError::TempWrite)?;
     file.flush().map_err(AtomicPublishError::TempFlush)?;
@@ -143,12 +139,50 @@ pub(crate) fn prepare_temporary_exclusive(
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
+        .share_mode(SHARE_READ)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT_VALUE)
         .open(temporary)
         .map_err(AtomicPublishError::TempCreate)?;
     file.write_all(bytes)
         .map_err(AtomicPublishError::TempWrite)?;
     file.flush().map_err(AtomicPublishError::TempFlush)?;
     flush_windows_handle(&file).map_err(AtomicPublishError::TempFlush)
+}
+
+fn open_fixed_temporary(path: &Path) -> Result<std::fs::File, AtomicPublishError> {
+    let create = || {
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .share_mode(SHARE_READ)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT_VALUE);
+        options
+    };
+    match create().create_new(true).open(path) {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let file = create()
+                .open(path)
+                .map_err(AtomicPublishError::TempCreate)?;
+            let metadata = file.metadata().map_err(AtomicPublishError::TempInspect)?;
+            let links = observe_open_file(&file)
+                .map_err(AtomicPublishError::TempInspect)?
+                .link_count();
+            if !metadata.file_type().is_file()
+                || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT_VALUE != 0
+                || links != 1
+            {
+                return Err(AtomicPublishError::UnsafeTemporary {
+                    path: path.to_path_buf(),
+                    links,
+                });
+            }
+            file.set_len(0).map_err(AtomicPublishError::TempCreate)?;
+            Ok(file)
+        }
+        Err(error) => Err(AtomicPublishError::TempCreate(error)),
+    }
 }
 
 /// Publish a previously flushed temporary file without any fallback retry.
@@ -260,6 +294,10 @@ pub enum AtomicPublishError {
     DifferentDirectories,
     #[error("cannot create or truncate the temporary file: {0}")]
     TempCreate(std::io::Error),
+    #[error("cannot inspect the temporary file: {0}")]
+    TempInspect(std::io::Error),
+    #[error("temporary path is not a single-link plain file: {path}; links={links}")]
+    UnsafeTemporary { path: PathBuf, links: u32 },
     #[error("cannot write the temporary file: {0}")]
     TempWrite(std::io::Error),
     #[error("cannot flush the temporary file: {0}")]
@@ -358,6 +396,28 @@ mod tests {
         assert!(matches!(result, Err(AtomicPublishError::TempCreate(_))));
         assert_eq!(fs::read(&temporary).unwrap(), b"user evidence");
         assert!(!target.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fixed_temporary_rejects_a_hard_link_without_truncating_user_bytes() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let target = root.join("note.md");
+        let user_file = root.join("user-evidence.md");
+        let temporary = root.join("note.md.tmp");
+        fs::write(&user_file, b"user evidence").unwrap();
+        fs::hard_link(&user_file, &temporary).unwrap();
+
+        let result = atomic_publish(&target, &temporary, b"new note");
+        assert!(matches!(
+            result,
+            Err(AtomicPublishError::UnsafeTemporary { links, .. }) if links >= 2
+        ));
+        assert_eq!(fs::read(&user_file).unwrap(), b"user evidence");
+        assert_eq!(fs::read(&temporary).unwrap(), b"user evidence");
+        assert!(!target.exists());
+
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -9,7 +9,8 @@ use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use stickymd_core::{AssetEffect, ManagedAssetLocation, ManagedAssetName, hash_bytes};
+use sha2::{Digest, Sha256};
+use stickymd_core::{AssetEffect, ManagedAssetLocation, ManagedAssetName};
 use stickymd_render::image::{MAX_ENCODED_IMAGE_BYTES, PreparedImage};
 use thiserror::Error;
 
@@ -248,9 +249,11 @@ impl AssetStorage {
         if !metadata.file_type().is_file() || is_reparse(&metadata) {
             return Err(AssetStorageError::OwnershipNotProven(path));
         }
+        if metadata.len() > MAX_ENCODED_IMAGE_BYTES as u64 {
+            return Err(AssetStorageError::TooLarge);
+        }
         let before = observe_open_file(&file).map_err(AssetStorageError::Io)?;
-        let bytes = read_bounded_file(&mut file)?;
-        let digest = hash_bytes(&bytes);
+        let digest = hash_open_file_bounded(&mut file)?;
         if !digest.to_hex().starts_with(name.hash_prefix()) {
             return Err(AssetStorageError::OwnershipNotProven(path));
         }
@@ -464,16 +467,22 @@ fn require_equal_digest(
         Err(AssetStorageError::AmbiguousCollision(name.clone()))
     }
 }
-fn read_bounded_file(file: &mut File) -> Result<Vec<u8>, AssetStorageError> {
-    let mut bytes = Vec::new();
-    file.take((MAX_ENCODED_IMAGE_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(AssetStorageError::Io)?;
-    if bytes.len() > MAX_ENCODED_IMAGE_BYTES {
-        Err(AssetStorageError::TooLarge)
-    } else {
-        Ok(bytes)
+fn hash_open_file_bounded(file: &mut File) -> Result<stickymd_core::Hash32, AssetStorageError> {
+    let mut digest = Sha256::new();
+    let mut total = 0_usize;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(AssetStorageError::Io)?;
+        if read == 0 {
+            break;
+        }
+        total = total.checked_add(read).ok_or(AssetStorageError::TooLarge)?;
+        if total > MAX_ENCODED_IMAGE_BYTES {
+            return Err(AssetStorageError::TooLarge);
+        }
+        digest.update(&buffer[..read]);
     }
+    Ok(stickymd_core::Hash32::new(digest.finalize().into()))
 }
 
 #[cfg(test)]

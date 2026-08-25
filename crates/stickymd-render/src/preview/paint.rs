@@ -121,17 +121,19 @@ pub(super) fn paint_document(
         }
     }
     if !selection.is_collapsed() {
-        for rectangle in document.index.selection_rects(selection) {
-            if rectangle.bottom() >= scroll_y && rectangle.y <= viewport_bottom {
-                fill_rect(
-                    &mut pixmap,
-                    rectangle.x,
-                    rectangle.y - scroll_y,
-                    rectangle.width,
-                    rectangle.height,
-                    palette.selection,
-                );
-            }
+        for rectangle in
+            document
+                .index
+                .selection_rects_in_y_range(selection, scroll_y, viewport_bottom)
+        {
+            fill_rect(
+                &mut pixmap,
+                rectangle.x,
+                rectangle.y - scroll_y,
+                rectangle.width,
+                rectangle.height,
+                palette.selection,
+            );
         }
     }
     for block in &mut document.blocks[start..end] {
@@ -200,7 +202,7 @@ pub(super) fn paint_document(
         height,
         document_height: document.height_px,
         scroll_y,
-        rgba: pixmap.data().to_vec(),
+        rgba: pixmap.take(),
         index: Arc::clone(&document.index),
         visible_blocks: end.saturating_sub(start),
     })

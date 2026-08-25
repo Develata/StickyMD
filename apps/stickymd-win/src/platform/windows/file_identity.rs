@@ -13,6 +13,7 @@ pub struct OpenFileObservation {
     file_index: u64,
     file_size: u64,
     last_write: u64,
+    links: u32,
 }
 
 impl OpenFileObservation {
@@ -21,6 +22,10 @@ impl OpenFileObservation {
     /// complete observation payload.
     pub const fn same_identity(self, other: Self) -> bool {
         self.volume_serial == other.volume_serial && self.file_index == other.file_index
+    }
+
+    pub const fn link_count(self) -> u32 {
+        self.links
     }
 }
 
@@ -39,6 +44,7 @@ pub fn observe_open_file(file: &std::fs::File) -> std::io::Result<OpenFileObserv
         file_size: u64::from(information.nFileSizeHigh) << 32 | u64::from(information.nFileSizeLow),
         last_write: u64::from(information.ftLastWriteTime.dwHighDateTime) << 32
             | u64::from(information.ftLastWriteTime.dwLowDateTime),
+        links: information.nNumberOfLinks,
     })
 }
 

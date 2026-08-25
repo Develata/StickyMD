@@ -171,14 +171,16 @@ fn append_single_text_span(
             .split_word_bounds()
             .filter(|token| !token.is_empty())
         {
+            let token: std::sync::Arc<str> = std::sync::Arc::from(token);
             let token_span = RenderSpan {
-                text: token.to_owned(),
-                copy_text: token.to_owned(),
+                text: std::sync::Arc::clone(&token),
+                copy_text: token,
                 source_range: span.source_range,
                 style: span.style,
                 action: span.action.clone(),
                 math: None,
                 image: None,
+                hard_break: false,
             };
             pieces.push(text_piece(
                 font_system,

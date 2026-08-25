@@ -339,8 +339,9 @@ impl DocumentState {
     }
 
     /// Restore the startup meaning of a missing canonical note after the user
-    /// discards temporary recovery evidence. The coordinator will subsequently
-    /// publish the empty note through the normal guarded create path.
+    /// discards temporary recovery evidence. The empty replacement stays dirty
+    /// until the coordinator publishes it through the normal guarded create
+    /// path; recovery evidence must not be deleted before that receipt arrives.
     pub fn reset_to_missing_document(&mut self) -> Result<Generation, DocumentError> {
         let next_generation = self
             .generation
@@ -351,7 +352,6 @@ impl DocumentState {
         self.line_ending = LineEnding::Crlf;
         self.undo.clear();
         self.generation = next_generation;
-        self.saved_generation = next_generation;
         self.base_disk_hash = None;
         Ok(next_generation)
     }
@@ -788,15 +788,19 @@ mod tests {
     }
 
     #[test]
-    fn discarding_recovery_for_missing_note_restores_empty_clean_state() {
+    fn discarding_recovery_for_missing_note_requires_an_empty_publish_receipt() {
         let mut doc = DocumentState::empty(LineEnding::Crlf);
         doc.replace_from_unpersisted_recovery("temporary", LineEnding::Lf)
             .unwrap();
-        doc.reset_to_missing_document().unwrap();
+        let generation = doc.reset_to_missing_document().unwrap();
         assert_eq!(doc.text(), "");
-        assert!(!doc.is_dirty());
+        assert!(doc.is_dirty());
         assert_eq!(doc.base_disk_hash(), None);
         assert_eq!(doc.line_ending(), LineEnding::Crlf);
+
+        doc.acknowledge_persisted(generation, hash(11)).unwrap();
+        assert!(!doc.is_dirty());
+        assert_eq!(doc.base_disk_hash(), Some(hash(11)));
     }
 
     #[test]

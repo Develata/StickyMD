@@ -44,6 +44,7 @@ pub(super) fn make_mixed_chunk(
     text_layout_cache: &mut TextLayoutCache,
 ) -> ChunkBuild {
     let mut pieces = Vec::new();
+    let mut line_breaks = Vec::new();
     let mut pending_text_start = 0;
     // Coalescing pays for itself in mixed projection runs because it avoids a
     // buffer per short fragment around atomic math/image content. Attributed
@@ -61,6 +62,24 @@ pub(super) fn make_mixed_chunk(
         .floor()
         .clamp(1.0, 48.0) as usize;
     for (index, span) in spans.iter().enumerate() {
+        if span.hard_break {
+            append_text_pieces(
+                font_system,
+                fonts,
+                &spans[pending_text_start..index],
+                metrics,
+                selection_text,
+                &mut pieces,
+                coalesce_short_text,
+                coalesce_attributed_short_text,
+                max_text_piece_chars,
+                text_layout_cache,
+            );
+            selection_text.push_str(&span.copy_text);
+            line_breaks.push(pieces.len());
+            pending_text_start = index + 1;
+            continue;
+        }
         if let Some(math) = &span.math {
             append_text_pieces(
                 font_system,
@@ -155,7 +174,21 @@ pub(super) fn make_mixed_chunk(
     let mut line = Vec::new();
     let mut line_width = 0.0;
     let mut line_y = y;
-    for piece in pieces {
+    let mut next_break = 0;
+    for (piece_index, piece) in pieces.into_iter().enumerate() {
+        while line_breaks.get(next_break).copied() == Some(piece_index) {
+            line_y += flush_or_advance_line(
+                &mut line,
+                &mut line_width,
+                x,
+                line_y,
+                width,
+                metrics,
+                align,
+                &mut output,
+            );
+            next_break += 1;
+        }
         if !line.is_empty() && line_width + piece.width > width {
             line_y += flush_line(
                 &mut line,
@@ -172,6 +205,19 @@ pub(super) fn make_mixed_chunk(
         line_width += piece.width;
         line.push(piece);
     }
+    while next_break < line_breaks.len() {
+        line_y += flush_or_advance_line(
+            &mut line,
+            &mut line_width,
+            x,
+            line_y,
+            width,
+            metrics,
+            align,
+            &mut output,
+        );
+        next_break += 1;
+    }
     if !line.is_empty() {
         line_y += flush_line(
             &mut line,
@@ -186,6 +232,35 @@ pub(super) fn make_mixed_chunk(
     }
     output.height = (line_y - y).max(metrics.line_height);
     output
+}
+
+#[allow(clippy::too_many_arguments)]
+fn flush_or_advance_line(
+    line: &mut Vec<InlinePiece>,
+    line_width: &mut f32,
+    x: f32,
+    y: f32,
+    available_width: f32,
+    metrics: Metrics,
+    align: Align,
+    output: &mut ChunkBuild,
+) -> f32 {
+    if line.is_empty() {
+        metrics.line_height
+    } else {
+        let height = flush_line(
+            line,
+            *line_width,
+            x,
+            y,
+            available_width,
+            metrics,
+            align,
+            output,
+        );
+        *line_width = 0.0;
+        height
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -399,14 +474,17 @@ mod tests {
     use crate::source::FontSelection;
 
     fn text_span(text: &str, style: RenderStyle) -> RenderSpan {
+        let text: std::sync::Arc<str> = std::sync::Arc::from(text);
+        let text_len = text.len();
         RenderSpan {
-            text: text.to_owned(),
-            copy_text: text.to_owned(),
-            source_range: SourceRange::new(0, text.len()),
+            text: std::sync::Arc::clone(&text),
+            copy_text: text,
+            source_range: SourceRange::new(0, text_len),
             style,
             action: None,
             math: None,
             image: None,
+            hard_break: false,
         }
     }
 

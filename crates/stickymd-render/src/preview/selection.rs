@@ -179,11 +179,36 @@ impl PreviewTextIndex {
     }
 
     pub fn selection_rects(&self, selection: PreviewSelection) -> Vec<PreviewRect> {
+        self.selection_rects_in_y_range(selection, f32::NEG_INFINITY, f32::INFINITY)
+    }
+
+    /// Selection geometry restricted to the visible vertical document band.
+    ///
+    /// Painting uses the row index to avoid scanning and allocating geometry
+    /// for the entire document on every selection frame.
+    pub(crate) fn selection_rects_in_y_range(
+        &self,
+        selection: PreviewSelection,
+        top: f32,
+        bottom: f32,
+    ) -> Vec<PreviewRect> {
         let selected = selection.normalized();
-        if selected.is_empty() {
+        if selected.is_empty() || bottom < top {
             return Vec::new();
         }
-        self.boxes
+        let first_row = self.rows.partition_point(|row| row.bottom < top);
+        let last_row = self.rows.partition_point(|row| row.top <= bottom);
+        if last_row <= first_row {
+            return Vec::new();
+        }
+        let Some(first) = self.rows.get(first_row) else {
+            return Vec::new();
+        };
+        let boxes_end = self
+            .rows
+            .get(last_row.saturating_sub(1))
+            .map_or(first.start, |row| row.end);
+        self.boxes[first.start..boxes_end]
             .iter()
             .filter_map(|item| clipped_selection_rect(item, &selected))
             .collect()
@@ -375,6 +400,36 @@ mod tests {
         let index = PreviewTextIndex::new(Generation::initial(), "x".into(), boxes);
         assert_eq!(index.boxes_at_y(1234.0 * 20.0 + 4.0).len(), 1);
         assert_eq!(index.hit_test(50.0, 1234.0 * 20.0 + 4.0), 1);
+    }
+
+    #[test]
+    fn viewport_selection_geometry_only_visits_visible_rows() {
+        let boxes = (0..10_000)
+            .map(|row| PreviewTextBox {
+                selection_range: 0..1,
+                source_range: None,
+                rect: PreviewRect {
+                    x: 0.0,
+                    y: row as f32 * 20.0,
+                    width: 100.0,
+                    height: 18.0,
+                },
+                action: None,
+                tooltip: None,
+                atomic: false,
+            })
+            .collect();
+        let index = PreviewTextIndex::new(Generation::initial(), "x".into(), boxes);
+        let rects = index.selection_rects_in_y_range(
+            PreviewSelection {
+                anchor: 0,
+                active: 1,
+            },
+            1_234.0 * 20.0,
+            1_234.0 * 20.0 + 18.0,
+        );
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].y, 1_234.0 * 20.0);
     }
 
     #[test]

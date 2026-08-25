@@ -210,6 +210,17 @@ impl PreviewPipeline {
         if width_px == 0 {
             return Err(PreviewPipelineError::InvalidWidth);
         }
+        let current = self
+            .tree
+            .as_ref()
+            .map(|tree| tree.generation)
+            .ok_or(PreviewPipelineError::NoDocument)?;
+        if current != generation {
+            return Err(PreviewPipelineError::GenerationMismatch {
+                requested: generation,
+                current,
+            });
+        }
         let normalized_scale = scale.max(0.5);
         let image_source_available = image_source.is_some();
         if self.layout.as_ref().is_some_and(|layout| {
@@ -228,15 +239,9 @@ impl PreviewPipeline {
                 image_source,
             );
         }
-        self.layout = None;
         let tree = self.tree.as_ref().ok_or(PreviewPipelineError::NoDocument)?;
-        if tree.generation != generation {
-            return Err(PreviewPipelineError::GenerationMismatch {
-                requested: generation,
-                current: tree.generation,
-            });
-        }
         let image_band = image_band(scroll_y, height_px, scale);
+        self.layout = None;
         self.layout = Some(layout_document(
             LayoutResources {
                 font_system: &mut self.font_system,
@@ -284,6 +289,17 @@ impl PreviewPipeline {
         theme: PreviewTheme,
         image_source: Option<&dyn PreviewImageSource>,
     ) -> Result<PreviewFrame, PreviewPipelineError> {
+        let current = self
+            .layout
+            .as_ref()
+            .map(|layout| layout.generation)
+            .ok_or(PreviewPipelineError::NoDocument)?;
+        if current != generation {
+            return Err(PreviewPipelineError::GenerationMismatch {
+                requested: generation,
+                current,
+            });
+        }
         // The UI may enqueue several wheel events before the previous frame
         // returns. Use the current document extent for lazy-image admission,
         // otherwise an overscroll value can build a band beyond the document
@@ -357,12 +373,6 @@ impl PreviewPipeline {
             .layout
             .as_mut()
             .ok_or(PreviewPipelineError::NoDocument)?;
-        if layout.generation != generation {
-            return Err(PreviewPipelineError::GenerationMismatch {
-                requested: generation,
-                current: layout.generation,
-            });
-        }
         let frame = paint_document(
             &mut self.font_system,
             &mut self.swash_cache,
@@ -408,7 +418,10 @@ impl PreviewPipeline {
 }
 
 fn image_band(scroll_y: f32, height_px: u32, scale: f32) -> (f32, f32) {
-    let margin = 300.0 * scale.max(0.5);
+    // Keep at least one viewport predecoded on either side. A fixed 300 px
+    // margin caused a full-document relayout every few wheel events on the
+    // default 680 px window, despite the image cache itself being bounded.
+    let margin = (300.0 * scale.max(0.5)).max(height_px as f32);
     (
         (scroll_y - margin).max(0.0),
         scroll_y + height_px as f32 + margin,
@@ -558,6 +571,139 @@ mod tests {
             .unwrap();
         assert_eq!(pipeline.counters().layouts, initial.layouts + 1);
         assert!(images.loads.get() > 0);
+    }
+
+    #[test]
+    fn stale_relayout_and_paint_preserve_the_current_projection() {
+        let current = Generation::initial();
+        let stale = current.checked_next().unwrap();
+        let prepared = crate::image::prepare_rgba_image(8, 4, vec![200; 8 * 4 * 4]).unwrap();
+        let images = MemoryImages {
+            bytes: prepared.bytes().to_vec(),
+            loads: Cell::new(0),
+        };
+        let mut pipeline = PreviewPipeline::new();
+        pipeline
+            .build(
+                &snapshot("![local](image.png)", current),
+                600,
+                300,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        let before = pipeline.counters();
+
+        assert!(matches!(
+            pipeline.relayout(
+                stale,
+                500,
+                300,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Dark,
+            ),
+            Err(PreviewPipelineError::GenerationMismatch { .. })
+        ));
+        assert!(matches!(
+            pipeline.paint_with_image_source(
+                stale,
+                300,
+                1_000.0,
+                PreviewSelection::default(),
+                PreviewTheme::Dark,
+                Some(&images),
+            ),
+            Err(PreviewPipelineError::GenerationMismatch { .. })
+        ));
+        assert_eq!(pipeline.counters(), before);
+        assert_eq!(pipeline.current_generation(), Some(current));
+        pipeline
+            .paint(
+                current,
+                300,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn hard_break_places_following_formula_on_the_next_visual_line() {
+        let mut pipeline = PreviewPipeline::new();
+        let frame = pipeline
+            .build(
+                &snapshot("before  \n$x^2$", Generation::initial()),
+                600,
+                300,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        assert_eq!(frame.index().text(), "before\n$x^2$");
+        let text_box = frame
+            .index()
+            .boxes()
+            .iter()
+            .find(|item| !item.atomic)
+            .unwrap();
+        let formula_box = frame
+            .index()
+            .boxes()
+            .iter()
+            .find(|item| item.atomic)
+            .unwrap();
+        assert!(
+            formula_box.rect.y >= text_box.rect.bottom() - 0.5,
+            "formula {:?} overlapped preceding line {:?}",
+            formula_box.rect,
+            text_box.rect
+        );
+    }
+
+    #[test]
+    fn viewport_sized_image_margin_avoids_relayout_on_nearby_scroll() {
+        let prepared = crate::image::prepare_rgba_image(8, 4, vec![200; 8 * 4 * 4]).unwrap();
+        let images = MemoryImages {
+            bytes: prepared.bytes().to_vec(),
+            loads: Cell::new(0),
+        };
+        let mut source = String::from("![local](image.png)\n\n");
+        for _ in 0..120 {
+            source.push_str("A paragraph tall enough to keep scrolling.\n\n");
+        }
+        let generation = Generation::initial();
+        let mut pipeline = PreviewPipeline::new();
+        pipeline
+            .build_with_image_source(
+                &snapshot(&source, generation),
+                600,
+                680,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+                Some(&images),
+            )
+            .unwrap();
+        let layouts = pipeline.counters().layouts;
+        pipeline
+            .paint_with_image_source(
+                generation,
+                680,
+                400.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+                Some(&images),
+            )
+            .unwrap();
+        assert_eq!(pipeline.counters().layouts, layouts);
     }
 
     #[test]
@@ -1051,7 +1197,7 @@ mod tests {
             )
             .unwrap();
         let themed = pipeline.math_counters();
-        assert_eq!(themed.parse_layout_calls, 2);
+        assert_eq!(themed.parse_layout_calls, 1);
         assert_eq!(themed.rasterizations, 4);
     }
 

@@ -316,9 +316,10 @@ mod tests {
     use crate::source::FontSelection;
 
     fn linked_span(destination: &str, source_start: usize) -> RenderSpan {
+        let text: std::sync::Arc<str> = std::sync::Arc::from("link");
         RenderSpan {
-            text: "link".to_owned(),
-            copy_text: "link".to_owned(),
+            text: std::sync::Arc::clone(&text),
+            copy_text: text,
             source_range: SourceRange::new(source_start, source_start + 4),
             style: RenderStyle {
                 link: true,
@@ -330,6 +331,7 @@ mod tests {
             }),
             math: None,
             image: None,
+            hard_break: false,
         }
     }
 

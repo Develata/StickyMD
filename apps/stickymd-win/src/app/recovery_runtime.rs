@@ -75,9 +75,10 @@ impl StickyApp {
         let Some(plan) = self.recovery.begin_use_canonical() else {
             return;
         };
-        let restore_result = match plan {
+        let canonical_was_missing = matches!(&plan, CanonicalRecoveryPlan::Missing);
+        let restore_result = match &plan {
             CanonicalRecoveryPlan::Present(canonical) => {
-                self.coordinator.reconcile_external(&canonical)
+                self.coordinator.reconcile_external(canonical)
             }
             CanonicalRecoveryPlan::Missing => self.coordinator.reset_to_missing_document(),
             CanonicalRecoveryPlan::Unusable => {
@@ -94,6 +95,16 @@ impl StickyApp {
             return;
         }
         self.full_projection_resync();
+        if canonical_was_missing {
+            // The temporary file is the only durable evidence until an empty
+            // canonical note has been published. Keep recovery pending and
+            // let the successful save receipt perform the cleanup.
+            self.submit_save(
+                SaveTrigger::KeepLocal,
+                Some(PersistMode::Guarded { expected: None }),
+            );
+            return;
+        }
         self.worker.remove_temporary(
             self.paths.note_tmp.clone(),
             TemporaryCleanup::RecoveryResolved,

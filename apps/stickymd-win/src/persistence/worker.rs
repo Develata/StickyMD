@@ -184,6 +184,31 @@ impl Mailbox {
             || self.export.is_some()
             || self.config.is_some()
     }
+
+    fn take_next_job(&mut self) -> Option<WorkerJob> {
+        if !self.note_blocked_for_ack
+            && let Some(note) = self.note.take()
+        {
+            self.metrics.note_started += 1;
+            self.note_blocked_for_ack = true;
+            Some(WorkerJob::Note(note))
+        } else if let Some(paste) = self.asset_paste.take() {
+            Some(WorkerJob::AssetPaste(paste))
+        } else if let Some(sync) = self.asset_sync.take() {
+            Some(WorkerJob::AssetSync(sync))
+        } else if let Some(export) = self.export.take() {
+            Some(WorkerJob::Export(export))
+        } else if let Some(external) = self.external.take() {
+            self.metrics.external_checks += 1;
+            Some(WorkerJob::External(external))
+        } else if let Some((temporary, purpose)) = self.cleanup_temporary.take() {
+            Some(WorkerJob::CleanupTemporary(temporary, purpose))
+        } else if let Some((source, destination)) = self.preserve_canonical.take() {
+            Some(WorkerJob::PreserveCanonical(source, destination))
+        } else {
+            self.config.take().map(WorkerJob::Config)
+        }
+    }
 }
 
 pub struct PersistenceWorker {
@@ -392,25 +417,8 @@ where
             {
                 return;
             }
-            if let Some(note) = mailbox.note.take() {
-                mailbox.metrics.note_started += 1;
-                mailbox.note_blocked_for_ack = true;
-                WorkerJob::Note(note)
-            } else if let Some(paste) = mailbox.asset_paste.take() {
-                WorkerJob::AssetPaste(paste)
-            } else if let Some(sync) = mailbox.asset_sync.take() {
-                WorkerJob::AssetSync(sync)
-            } else if let Some(export) = mailbox.export.take() {
-                WorkerJob::Export(export)
-            } else if let Some(external) = mailbox.external.take() {
-                mailbox.metrics.external_checks += 1;
-                WorkerJob::External(external)
-            } else if let Some((temporary, purpose)) = mailbox.cleanup_temporary.take() {
-                WorkerJob::CleanupTemporary(temporary, purpose)
-            } else if let Some((source, destination)) = mailbox.preserve_canonical.take() {
-                WorkerJob::PreserveCanonical(source, destination)
-            } else if let Some(config) = mailbox.config.take() {
-                WorkerJob::Config(config)
+            if let Some(job) = mailbox.take_next_job() {
+                job
             } else {
                 continue;
             }
@@ -501,6 +509,7 @@ mod tests {
     use super::*;
     use crate::test_support::unique_temp_path;
     use std::fs;
+    use std::path::Path;
     use std::sync::{Arc, Barrier, mpsc};
     use std::time::Duration;
     use stickymd_core::{Generation, LineEnding, hash_bytes};
@@ -564,6 +573,25 @@ mod tests {
 
         drop(worker);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unrelated_work_cannot_bypass_the_note_completion_barrier() {
+        let mut mailbox = Mailbox {
+            note_blocked_for_ack: true,
+            ..Mailbox::default()
+        };
+        mailbox.replace_note(job("must-wait"));
+        mailbox.external = Some("note.md".into());
+
+        assert!(matches!(
+            mailbox.take_next_job(),
+            Some(WorkerJob::External(path)) if path == Path::new("note.md")
+        ));
+        assert!(mailbox.note.is_some());
+        assert!(mailbox.note_blocked_for_ack);
+        assert_eq!(mailbox.metrics.note_started, 0);
+        assert!(mailbox.take_next_job().is_none());
     }
 
     #[test]

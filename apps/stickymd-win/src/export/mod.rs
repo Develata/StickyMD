@@ -60,6 +60,8 @@ pub enum ExportError {
     },
     #[error("cannot create export staging directory: {0}")]
     StagingCreate(std::io::Error),
+    #[error("cannot allocate a unique export staging directory name")]
+    StagingNameExhausted,
     #[error("cannot publish export asset directory: {0}")]
     AssetPublish(std::io::Error),
     #[error("cannot publish exported Markdown: {0}")]
@@ -95,11 +97,9 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
         })
         .collect::<Vec<_>>();
 
-    let sequence = EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let staging = parent.join(format!(
-        ".stickymd-export-{}-{sequence}.staging",
-        std::process::id()
-    ));
+    let staging = (!local.is_empty())
+        .then(|| create_unique_export_staging(parent))
+        .transpose()?;
     let mut markdown_temporary = None;
     let asset_directory = choose_asset_directory(parent, stem)?;
     let asset_leaf = asset_directory
@@ -109,9 +109,6 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
         .to_owned();
     let markdown_asset_leaf = encode_markdown_path_segment(&asset_leaf);
 
-    if !local.is_empty() {
-        fs::create_dir(&staging).map_err(ExportError::StagingCreate)?;
-    }
     let mut owned_staging_files = Vec::new();
     let result = (|| {
         let mut rewrites = Vec::with_capacity(local.len());
@@ -124,7 +121,10 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
             let output_name = if let Some(existing) = resolved_sources.get(&source) {
                 existing.clone()
             } else {
-                let staged_temporary = staging.join(format!("asset-{index}.tmp"));
+                let staged_temporary = staging
+                    .as_ref()
+                    .ok_or(ExportError::InvalidTargetName)?
+                    .join(format!("asset-{index}.tmp"));
                 owned_staging_files.push(staged_temporary.clone());
                 let (hash, extension) = copy_and_hash(&source, &staged_temporary)?;
                 let name = if let Some(existing) = copied.get(&hash) {
@@ -137,7 +137,10 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
                     existing.clone()
                 } else {
                     let name = choose_export_asset_name(hash, &extension, &occupied_names)?;
-                    let staged_final = staging.join(&name);
+                    let staged_final = staging
+                        .as_ref()
+                        .ok_or(ExportError::InvalidTargetName)?
+                        .join(&name);
                     fs::rename(&staged_temporary, &staged_final).map_err(|source| {
                         ExportError::LocalImage {
                             path: staged_temporary.clone(),
@@ -165,7 +168,11 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
         let prepared = prepare_unique_export_temporary(parent, &request.target, &durable)?;
         markdown_temporary = Some(prepared);
         if !copied.is_empty() {
-            fs::rename(&staging, &asset_directory).map_err(ExportError::AssetPublish)?;
+            fs::rename(
+                staging.as_ref().ok_or(ExportError::InvalidTargetName)?,
+                &asset_directory,
+            )
+            .map_err(ExportError::AssetPublish)?;
         }
         publish_prepared(
             &request.target,
@@ -186,13 +193,38 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
     for path in owned_staging_files.into_iter().rev() {
         let _ = fs::remove_file(path);
     }
-    let _ = fs::remove_dir(&staging);
+    if let Some(staging) = &staging {
+        let _ = fs::remove_dir(staging);
+    }
     if result.is_err()
         && let Some(markdown_temporary) = &markdown_temporary
     {
         let _ = fs::remove_file(markdown_temporary);
     }
     result
+}
+
+fn create_unique_export_staging(parent: &Path) -> Result<PathBuf, ExportError> {
+    create_unique_export_staging_with_sequence(parent, &EXPORT_SEQUENCE)
+}
+
+fn create_unique_export_staging_with_sequence(
+    parent: &Path,
+    sequence: &AtomicU64,
+) -> Result<PathBuf, ExportError> {
+    for _ in 0..128 {
+        let sequence = sequence.fetch_add(1, Ordering::Relaxed);
+        let staging = parent.join(format!(
+            ".stickymd-export-{}-{sequence}.staging",
+            std::process::id()
+        ));
+        match fs::create_dir(&staging) {
+            Ok(()) => return Ok(staging),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(ExportError::StagingCreate(error)),
+        }
+    }
+    Err(ExportError::StagingNameExhausted)
 }
 
 fn is_working_note_target(
@@ -353,6 +385,45 @@ mod tests {
         let root = unique_temp_path("export");
         fs::create_dir(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn stale_export_staging_directory_is_preserved_and_skipped() {
+        let root = fixture();
+        let sequence = AtomicU64::new(7);
+        let occupied = root.join(format!(".stickymd-export-{}-7.staging", std::process::id()));
+        fs::create_dir(&occupied).unwrap();
+        fs::write(occupied.join("recovery-evidence"), b"keep").unwrap();
+
+        let chosen = create_unique_export_staging_with_sequence(&root, &sequence).unwrap();
+        assert_ne!(chosen, occupied);
+        assert_eq!(
+            fs::read(occupied.join("recovery-evidence")).unwrap(),
+            b"keep"
+        );
+
+        fs::remove_dir(chosen).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exhausted_export_staging_names_return_a_typed_error() {
+        let root = fixture();
+        let sequence = AtomicU64::new(0);
+        for number in 0..128 {
+            fs::create_dir(root.join(format!(
+                ".stickymd-export-{}-{number}.staging",
+                std::process::id()
+            )))
+            .unwrap();
+        }
+
+        assert!(matches!(
+            create_unique_export_staging_with_sequence(&root, &sequence),
+            Err(ExportError::StagingNameExhausted)
+        ));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

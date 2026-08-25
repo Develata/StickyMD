@@ -8,8 +8,10 @@ use std::path::PathBuf;
 use std::{collections::BTreeSet, collections::HashMap};
 
 use stickymd_core::{Generation, ManagedAssetLocation, Selection};
+#[cfg(test)]
+use stickymd_render::image::prepare_encoded_image;
 use stickymd_render::image::{
-    MAX_ENCODED_IMAGE_BYTES, PreparedImage, prepare_dib_image, prepare_encoded_image,
+    MAX_ENCODED_IMAGE_BYTES, PreparedImage, prepare_dib_image, prepare_encoded_image_owned,
 };
 use thiserror::Error;
 
@@ -114,7 +116,7 @@ pub fn prepare_and_store_paste(
     let result = match request.payload {
         ClipboardPaste::EncodedImage(bytes) => add_batch_bytes(&mut total_bytes, bytes.len())
             .and_then(|()| {
-                prepare_encoded_image(&bytes)
+                prepare_encoded_image_owned(bytes)
                     .map_err(AssetPasteError::Image)
                     .and_then(|image| store_prepared(storage, image, &mut stored))
             }),
@@ -140,7 +142,7 @@ pub fn prepare_and_store_paste(
                 let next = read_file_bounded(&path)
                     .and_then(|bytes| {
                         add_batch_bytes(&mut total_bytes, bytes.len())?;
-                        prepare_encoded_image(&bytes)
+                        prepare_encoded_image_owned(bytes)
                             .map_err(|_| AssetPasteError::MixedOrUnsupportedFiles)
                     })
                     .and_then(|image| store_prepared(storage, image, &mut stored));

@@ -317,6 +317,11 @@ impl PreviewImageSource for LocalImageSource {
 }
 
 fn coalesce(pending: PreviewJob, incoming: PreviewJob) -> PreviewJob {
+    match incoming.generation().cmp(&pending.generation()) {
+        std::cmp::Ordering::Less => return pending,
+        std::cmp::Ordering::Greater => return incoming,
+        std::cmp::Ordering::Equal => {}
+    }
     match (pending, incoming) {
         (_, incoming @ PreviewJob::Build { .. }) => incoming,
         (
@@ -437,6 +442,34 @@ mod tests {
             viewport: viewport(400),
         };
         assert_eq!(coalesce(pending, build(newer, "new")).generation(), newer);
+    }
+
+    #[test]
+    fn older_jobs_never_replace_a_newer_pending_generation() {
+        let older = Generation::initial();
+        let newer = older.checked_next().unwrap();
+        let pending = PreviewJob::Paint {
+            generation: newer,
+            height_px: 300,
+            scroll_y: 42.0,
+            selection: PreviewSelection::default(),
+            theme: PreviewTheme::Light,
+        };
+        let incoming = PreviewJob::Relayout {
+            generation: older,
+            viewport: viewport(400),
+        };
+        assert_eq!(coalesce(pending, incoming).generation(), newer);
+
+        let pending = build(newer, "newer snapshot");
+        let incoming = PreviewJob::Paint {
+            generation: older,
+            height_px: 300,
+            scroll_y: 0.0,
+            selection: PreviewSelection::default(),
+            theme: PreviewTheme::Light,
+        };
+        assert_eq!(coalesce(pending, incoming).generation(), newer);
     }
 
     #[test]

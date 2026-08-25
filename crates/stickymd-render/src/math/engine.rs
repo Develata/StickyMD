@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use ratex_layout::{LayoutOptions, layout, to_display_list};
 use ratex_types::color::Color;
-use ratex_types::display_item::DisplayList;
+use ratex_types::display_item::{DisplayItem, DisplayList};
 use ratex_types::math_style::MathStyle;
 use thiserror::Error;
 
@@ -17,6 +17,10 @@ pub(crate) const MAX_FORMULA_SOURCE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_DOCUMENT_FORMULAS: usize = 2_000;
 const MAX_LAYOUT_ENTRIES: usize = 512;
 const RASTER_ENTRY_METADATA_ESTIMATE: usize = 128;
+// A layout-only marker outside the user-facing color domain. RaTeX copies the
+// option color into items that inherit the preview foreground; explicit TeX
+// colors remain ordinary 0..=1 values and are therefore left untouched.
+const DEFAULT_COLOR_SENTINEL: Color = Color::new(-1.0, -2.0, -3.0, -4.0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum MathKind {
@@ -68,13 +72,13 @@ pub(crate) struct MathEngineCounters {
 struct LayoutKey {
     source: Arc<str>,
     kind: MathKind,
-    foreground: [u8; 4],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RasterKey {
     layout: LayoutKey,
     font_size_bits: u32,
+    foreground: [u8; 4],
 }
 
 struct MathLayout {
@@ -139,7 +143,6 @@ impl MathEngine {
         let layout_key = LayoutKey {
             source: Arc::from(source),
             kind,
-            foreground,
         };
         let layout = if let Some(layout) = self.layouts.get(&layout_key) {
             self.counters.layout_hits = self.counters.layout_hits.saturating_add(1);
@@ -154,7 +157,7 @@ impl MathEngine {
                     MathKind::Inline => MathStyle::Text,
                     MathKind::Display => MathStyle::Display,
                 },
-                color: rgba_color(foreground),
+                color: DEFAULT_COLOR_SENTINEL,
                 ..LayoutOptions::default()
             };
             let display_list = to_display_list(&layout(&parsed, &options));
@@ -171,6 +174,7 @@ impl MathEngine {
         let raster_key = RasterKey {
             layout: layout_key,
             font_size_bits: font_size_px.to_bits(),
+            foreground,
         };
         if let Some(raster) = self.rasters.get(&raster_key) {
             self.counters.raster_hits = self.counters.raster_hits.saturating_add(1);
@@ -178,11 +182,8 @@ impl MathEngine {
         }
         self.counters.raster_misses = self.counters.raster_misses.saturating_add(1);
         self.counters.rasterizations = self.counters.rasterizations.saturating_add(1);
-        let raster = Arc::new(rasterize(
-            &mut self.painter,
-            &layout.display_list,
-            font_size_px,
-        )?);
+        let display_list = display_list_with_foreground(&layout.display_list, foreground);
+        let raster = Arc::new(rasterize(&mut self.painter, &display_list, font_size_px)?);
         let evicted = self.rasters.insert(
             raster_key,
             Arc::clone(&raster),
@@ -215,6 +216,23 @@ impl MathEngine {
             self.painter.outline_bytes(),
         )
     }
+}
+
+fn display_list_with_foreground(display: &DisplayList, foreground: [u8; 4]) -> DisplayList {
+    let mut display = display.clone();
+    let foreground = rgba_color(foreground);
+    for item in &mut display.items {
+        let color = match item {
+            DisplayItem::GlyphPath { color, .. }
+            | DisplayItem::Line { color, .. }
+            | DisplayItem::Rect { color, .. }
+            | DisplayItem::Path { color, .. } => color,
+        };
+        if *color == DEFAULT_COLOR_SENTINEL {
+            *color = foreground;
+        }
+    }
+    display
 }
 
 fn rgba_color(color: [u8; 4]) -> Color {
@@ -318,6 +336,33 @@ mod tests {
         engine.prepare_projection(2.0, BLACK);
         assert_eq!(engine.cache_sizes().0, 1);
         assert_eq!(engine.cache_sizes().1, 0);
+        let dark_foreground = [230, 228, 220, 255];
+        engine.prepare_projection(2.0, dark_foreground);
+        engine
+            .render("x", MathKind::Inline, 34.0, dark_foreground)
+            .unwrap();
+        assert_eq!(engine.cache_sizes().0, 1);
+        assert_eq!(engine.counters().parse_layout_calls, 1);
+    }
+
+    #[test]
+    fn theme_foreground_does_not_override_explicit_tex_color() {
+        let mut engine = MathEngine::new();
+        let light = engine
+            .render(r"\color{red}x", MathKind::Inline, 17.0, BLACK)
+            .unwrap();
+        let dark = engine
+            .render(
+                r"\color{red}x",
+                MathKind::Inline,
+                17.0,
+                [230, 228, 220, 255],
+            )
+            .unwrap();
+
+        assert_eq!(light.pixels, dark.pixels);
+        assert_eq!(engine.counters().parse_layout_calls, 1);
+        assert_eq!(engine.counters().rasterizations, 2);
     }
 
     #[test]

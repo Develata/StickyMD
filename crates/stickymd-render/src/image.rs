@@ -154,10 +154,18 @@ where
 /// Validate a clipboard/file image completely. Stable encoded formats retain
 /// their exact bytes; BMP/ICO inputs are normalized to PNG.
 pub fn prepare_encoded_image(bytes: &[u8]) -> Result<PreparedImage, ImageAssetError> {
-    let metadata = inspect_encoded_image(bytes)?;
-    let image = decode_encoded(bytes)?;
+    prepare_encoded_image_owned(bytes.to_vec())
+}
+
+/// Validate an owned clipboard/file image without cloning stable encoded
+/// bytes. The worker already owns these payloads, so consuming them avoids a
+/// second allocation of up to 64 MiB while the decoded validation raster is
+/// also live.
+pub fn prepare_encoded_image_owned(bytes: Vec<u8>) -> Result<PreparedImage, ImageAssetError> {
+    let metadata = inspect_encoded_image(&bytes)?;
+    let image = decode_encoded(&bytes)?;
     let (final_bytes, extension) = match metadata.format.managed_extension() {
-        Some(extension) => (bytes.to_vec(), extension),
+        Some(extension) => (bytes, extension),
         None => (encode_png(&image)?, ManagedAssetExtension::Png),
     };
     Ok(PreparedImage {
@@ -396,6 +404,14 @@ mod tests {
         let original = prepare_rgba_image(2, 2, rgba(2, 2, [1, 2, 3, 255])).unwrap();
         let prepared = prepare_encoded_image(&original.bytes).unwrap();
         assert_eq!(&*prepared.bytes, &*original.bytes);
+    }
+
+    #[test]
+    fn owned_stable_format_keeps_exact_input_bytes() {
+        let original = prepare_rgba_image(2, 2, rgba(2, 2, [1, 2, 3, 255])).unwrap();
+        let bytes = original.bytes().to_vec();
+        let prepared = prepare_encoded_image_owned(bytes.clone()).unwrap();
+        assert_eq!(prepared.bytes(), bytes);
     }
     #[test]
     fn phase7_stable_formats_are_preserved_and_bmp_ico_normalize_to_png() {

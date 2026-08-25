@@ -294,7 +294,10 @@ impl StickyApp {
                 metrics.note_coalesced
             );
         }
-        if self.recovery.operation() == Some(RecoveryOperation::Restoring) {
+        if matches!(
+            self.recovery.operation(),
+            Some(RecoveryOperation::Restoring | RecoveryOperation::UsingCanonical)
+        ) {
             self.worker.remove_temporary(
                 self.paths.note_tmp.clone(),
                 TemporaryCleanup::RecoveryResolved,
