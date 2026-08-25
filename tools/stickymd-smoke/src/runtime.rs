@@ -2705,13 +2705,38 @@ fn prepare_math_layout(program_directory: &Path, view_mode: &str) -> Result<(), 
 }
 
 fn assert_math_source_unchanged(program_directory: &Path) -> Result<(), String> {
-    let actual = fs::read_to_string(program_directory.join("note/note.md"))
+    let actual = fs::read(program_directory.join("note/note.md"))
         .map_err(|error| format!("cannot read math smoke note: {error}"))?;
-    if actual == MATH_RUNTIME_FIXTURE {
+    let expected = MATH_RUNTIME_FIXTURE.as_bytes();
+    if actual == expected {
         Ok(())
     } else {
-        Err("native math preview changed canonical Markdown source".to_owned())
+        Err(format!(
+            "native math preview changed canonical Markdown source ({})",
+            byte_mismatch_summary(expected, &actual)
+        ))
     }
+}
+
+fn byte_mismatch_summary(expected: &[u8], actual: &[u8]) -> String {
+    let first_difference = expected
+        .iter()
+        .zip(actual)
+        .position(|(expected, actual)| expected != actual)
+        .unwrap_or(expected.len().min(actual.len()));
+    let newline_counts = |bytes: &[u8]| {
+        (
+            bytes.iter().filter(|byte| **byte == b'\r').count(),
+            bytes.iter().filter(|byte| **byte == b'\n').count(),
+        )
+    };
+    let (expected_cr, expected_lf) = newline_counts(expected);
+    let (actual_cr, actual_lf) = newline_counts(actual);
+    format!(
+        "first_difference={first_difference}, expected_bytes={}, actual_bytes={}, expected_crlf_bytes={expected_cr}/{expected_lf}, actual_crlf_bytes={actual_cr}/{actual_lf}",
+        expected.len(),
+        actual.len()
+    )
 }
 
 fn create_smoke_root() -> Result<PathBuf, String> {
@@ -2869,8 +2894,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        StartupThresholdClass, cpu_measurements, duration_measurements, is_single_byte_insertion,
-        nearest_rank_index, normalize_clipboard_newlines, startup_threshold_class,
+        StartupThresholdClass, byte_mismatch_summary, cpu_measurements, duration_measurements,
+        is_single_byte_insertion, nearest_rank_index, normalize_clipboard_newlines,
+        startup_threshold_class,
     };
 
     #[test]
@@ -2891,6 +2917,14 @@ mod tests {
     fn source_projection_probe_normalizes_only_windows_newlines() {
         assert_eq!(normalize_clipboard_newlines("a\r\nb\r\n"), "a\nb\n");
         assert_eq!(normalize_clipboard_newlines("a\rb\n"), "a\rb\n");
+    }
+
+    #[test]
+    fn byte_mismatch_diagnostic_reports_boundary_and_newline_counts_without_content() {
+        assert_eq!(
+            byte_mismatch_summary(b"a\nb\n", b"a\r\nb\r\n"),
+            "first_difference=1, expected_bytes=4, actual_bytes=6, expected_crlf_bytes=0/2, actual_crlf_bytes=2/2"
+        );
     }
 
     #[test]
