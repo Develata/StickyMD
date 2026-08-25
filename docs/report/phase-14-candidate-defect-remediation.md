@@ -129,6 +129,22 @@ DocumentState mutation gateway 或一次 Undo contract。
 
 ## Required Requalification
 
+### Qualification input activation hardening
+
+首次 exact-candidate campaign 的 Runtime 通道暴露了两处 harness-only 缺陷，产品 runtime 与
+artifact 本身未改变：
+
+- Split preview 的 posted client click 能路由应用内命中测试，却不能取得 Windows foreground / active /
+  focused 状态；后续真实 `Ctrl+A/C` projection probe 因此按 fail-closed 规则拒绝注入。
+- zoom smoke 通过 posted `WM_KEYDOWN/WM_KEYUP` 模拟 `Ctrl+加减号`，但 winit 快捷键判断依赖真实
+  modifier state。posted message 不可靠地更新该状态，导致运行结果取决于启动焦点或外部键盘状态。
+
+修正后的 smoke 在进入 preview probe 或 zoom shortcut 前先以物理点击建立并验证 foreground、active、
+focused、uncaptured 状态；zoom 使用成对的物理 Control + key down/up，且每次注入前再次 fail closed
+检查目标 HWND。Phase 10 targeted copied-Release Runtime 与 Phase 14 串联 Runtime 随后均通过。
+这不是对产品输入 contract 的放宽，也没有增加 product dependency；它消除了资格化对桌面偶然状态的
+依赖。
+
 任何修复后的 tracked SHA 都是新 candidate。必须重新执行 Phase 14 Release/package、headless CI、
 Runtime、Performance、Resources，并由 USER 重新完成受影响的 G1/G2 人工验收。旧 EXE/ZIP hash、
 旧 dynamic receipt 与旧手工观察不得迁移为新候选 PASS。

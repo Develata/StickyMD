@@ -987,6 +987,10 @@ fn verify_zoomed_toolbar_alignment(
     primary: &mut Child,
     window: crate::window_control::WindowHandle,
 ) -> Result<(), String> {
+    crate::window_control::switch_to_source(primary.id())?;
+    wait_for_config_field(program_directory, "view_mode = \"source\"")?;
+    crate::window_control::focus_source_editor(window)?;
+
     let mut current_zoom = 100_u16;
     for target_zoom in [50_u16, 100, 300] {
         if target_zoom == 100 {

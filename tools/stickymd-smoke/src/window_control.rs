@@ -319,13 +319,18 @@ pub(crate) fn switch_to_split(window: WindowHandle) -> Result<(), String> {
 }
 
 pub(crate) fn focus_split_preview(window: WindowHandle) -> Result<(), String> {
+    // A posted client click routes preview selection inside StickyMD but does
+    // not grant Windows foreground/focus. Establish the real top-level input
+    // target first so the following Ctrl+A/C probe never depends on launch
+    // focus or the preceding runtime scenario.
+    activate_window_for_physical_input(window)?;
     let client = client_rect(window)?;
     let x = ((client.width as u64 * 3) / 4).min(u64::from(u16::MAX)) as u16;
     let scale = f64::from(window_dpi(window)) / 96.0;
     let y = pixel_u16(34.0 * scale + 32.0 * scale)?;
     click_client(window, x, y)?;
     thread::sleep(Duration::from_millis(50));
-    Ok(())
+    wait_for_window_activation(window)
 }
 
 /// Click the semantic math-delimiter conversion action in the native toolbar.
@@ -417,15 +422,15 @@ pub(crate) fn clipboard_text() -> Result<Option<String>, String> {
 }
 
 pub(crate) fn press_zoom_in(window: WindowHandle) -> Result<(), String> {
-    post_control_chord(window, 0x6B, 0x4E)
+    send_control_chord(window, 0x6B, 0x4E, false)
 }
 
 pub(crate) fn press_zoom_out(window: WindowHandle) -> Result<(), String> {
-    post_control_chord(window, 0x6D, 0x4A)
+    send_control_chord(window, 0x6D, 0x4A, false)
 }
 
 pub(crate) fn press_zoom_reset(window: WindowHandle) -> Result<(), String> {
-    post_control_chord(window, 0x30, 0x0B)
+    send_control_chord(window, 0x30, 0x0B, false)
 }
 
 pub(crate) fn title(window: WindowHandle) -> Result<String, String> {
@@ -1407,43 +1412,6 @@ fn post_virtual_key(
     let released = pressed | (1_isize << 30) | (1_isize << 31);
     post_message(window, WM_KEYDOWN, virtual_key, pressed, "key down")?;
     post_message(window, WM_KEYUP, virtual_key, released, "key up")?;
-    thread::sleep(Duration::from_millis(10));
-    Ok(())
-}
-
-fn post_control_chord(
-    window: WindowHandle,
-    virtual_key: usize,
-    scan_code: u16,
-) -> Result<(), String> {
-    const VK_CONTROL: usize = 0x11;
-    const CONTROL_SCAN_CODE: u16 = 0x1D;
-    let ctrl_pressed = 1_isize | ((CONTROL_SCAN_CODE as isize) << 16);
-    let ctrl_released = ctrl_pressed | (1_isize << 30) | (1_isize << 31);
-    let key_pressed = 1_isize | ((scan_code as isize) << 16);
-    let key_released = key_pressed | (1_isize << 30) | (1_isize << 31);
-    post_message(
-        window,
-        WM_KEYDOWN,
-        VK_CONTROL,
-        ctrl_pressed,
-        "control key down",
-    )?;
-    post_message(
-        window,
-        WM_KEYDOWN,
-        virtual_key,
-        key_pressed,
-        "zoom key down",
-    )?;
-    post_message(window, WM_KEYUP, virtual_key, key_released, "zoom key up")?;
-    post_message(
-        window,
-        WM_KEYUP,
-        VK_CONTROL,
-        ctrl_released,
-        "control key up",
-    )?;
     thread::sleep(Duration::from_millis(10));
     Ok(())
 }

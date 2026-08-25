@@ -104,6 +104,11 @@ move-size lifecycle 权威且不新增 runtime dependency。详见
 `O(n*k)` 搬移；已改为单向 `O(n+k)` 文本构建，p95 从 278--304 ms 降到 4.1 ms，语义和 authority
 不变。证据写入同一 candidate defect remediation report。
 
+首次 exact-candidate Runtime campaign 还暴露 qualification input activation 缺陷：posted preview click
+不授予 Windows foreground/focus，posted zoom chord 也不可靠更新 winit modifier state。smoke 已统一在
+真实快捷键/projection probe 前建立并验证前台输入目标，并用成对物理 key events 驱动 zoom；Phase 10
+targeted Runtime 与完整 Phase 14 Runtime 均已通过。该变化仅属于资格化工具，不改变产品 runtime。
+
 USER 后续提供的 mixed Markdown/RaTeX 暴力文档已纳入仓库内确定性 fixture；宏包依赖
 仅按当前 RaTeX 支持改写为标准等价表达。Phase 5/6 Rust smoke 现在覆盖全量语义、
 27 个唯一公式布局/raster、窄/宽与高低缩放、深滚动图片懒加载；Phase 5 copied-Release
