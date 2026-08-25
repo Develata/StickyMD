@@ -15,6 +15,8 @@ Implementation corrected; fresh exact-candidate qualification and USER manual co
 5. 已从 Left 停靠展开的窗口直接拖到 Top/Right 时，第一次拖动只会解除旧 Left Dock；必须再轻拖
    一次才会提交新边并自动收起。
 6. 内容缩放可以改变并重置，但非 100% 缩放下顶部工具栏图标的绘制位置与实际点击位置分离。
+7. Preview 中只选择代码块或 raw HTML 的一个逻辑行时，selection 背景会同时覆盖同一多行
+   text span 的其它逻辑行。
 
 这些事实均来自旧 exact candidate 的真实人工操作；该候选已经失效，不能继续作为 release evidence。
 
@@ -28,6 +30,7 @@ Implementation corrected; fresh exact-candidate qualification and USER manual co
 | Real drag never commits Dock | winit 的真实 move loop 在自身 WndProc 内处理 `WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE`；旧 `with_msg_hook` 只观察 event-loop queue，因而只对 smoke 人工 `PostMessageW` 的消息生效 | drag/resize 成功后立即建立 guard；真实 winit Left release 统一调用 `complete_window_drag`，移除无效的 move-size hook authority | 每次拖动结束 O(1)，无轮询、无额外线程或 runtime dependency |
 | Direct Dock-to-Dock needs two drags | edge resolution 在检查新 snap candidate 前，先以旧边的 16-DIP detach 判定直接返回 `None` | 不同的新 snap edge 在同一次 `DragEnded` 中优先；只有未命中新边时才执行旧边 detach | 固定三个候选边，时间/空间均 O(1) |
 | Zoom moves toolbar paint only | toolbar 绘制错误复用了 `DPI × content zoom` 的 document scale，而命中测试按正确的 window DPI 布局 | 显式分离 document/shell scale；Shell 只用 DPI，document projection 才叠加 content zoom | 每帧 O(1)，无新增分配或缓存 |
+| Preview multiline selection overpaint | `cosmic-text` glyph range 相对各自 `BufferLine`，Preview 却把它直接写成整段 clipboard projection 的全局 byte range | layout 时单向累加 logical-line byte base，再投影 glyph range；wrapped run 复用同一 base | O(lines + glyphs)，额外空间 O(1) |
 
 没有新增 runtime dependency，没有引入第二份 document authority，也没有让 smoke/test channel 进入产品
 runtime。
@@ -53,7 +56,7 @@ array、arrow、bra/ket、derivative 与 norm 等价形式，不降低到“出�
 新回归验证 32 个 math node / 27 个唯一 `(literal, display)` cache key 全部经过
 RaTeX parse/layout/native raster；同时覆盖 320/900 px、50/100/300% 内容缩放、Light/Dark、
 `f32::MAX` 滚动 clamp、顶部/底部本地图片懒加载、远程图片不进入 image source，
-以及 copied-Release Preview/Split 字节级 source safety。像素非纯色、几何有界与进程存活是
+多行代码 span 的逻辑行选择隔离，以及 copied-Release Preview/Split 字节级 source safety。像素非纯色、几何有界与进程存活是
 自动化事实；数学美学、文字可读性和人眼视觉质量仍保持 `NOT TESTED`。
 
 该 copied-Release 检查同时接入独立 `zoom` resource module；它不再依赖三边 Dock 物理拖动，桌面鼠标

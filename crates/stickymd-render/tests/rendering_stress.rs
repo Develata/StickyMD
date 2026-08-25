@@ -208,6 +208,41 @@ fn stress_fixture_builds_every_formula_through_native_preview() {
 }
 
 #[test]
+fn stress_fixture_preview_selection_stays_on_one_logical_code_line() {
+    let mut pipeline = PreviewPipeline::new();
+    let frame = pipeline
+        .build(
+            &snapshot(),
+            900,
+            700,
+            1.0,
+            0.0,
+            PreviewSelection::default(),
+            PreviewTheme::Light,
+        )
+        .expect("stress preview builds");
+    let index = frame.index();
+    let needle = "let formula";
+    let start = index
+        .text()
+        .find(needle)
+        .expect("stress code-line selection fixture");
+    let rects = index.selection_rects(PreviewSelection {
+        anchor: start,
+        active: start + needle.len(),
+    });
+
+    assert!(!rects.is_empty(), "selected code text has no geometry");
+    let selected_row = rects[0].y;
+    assert!(
+        rects
+            .iter()
+            .all(|rect| (rect.y - selected_row).abs() <= 0.5),
+        "one code-line selection painted unrelated logical rows: {rects:#?}"
+    );
+}
+
+#[test]
 fn stress_fixture_survives_narrow_wide_zoom_theme_and_overscroll_rasters() {
     for (width, scale, theme) in [
         (320, 0.5, PreviewTheme::Light),

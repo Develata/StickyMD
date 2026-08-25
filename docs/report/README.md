@@ -34,5 +34,6 @@
 | [`phase-10-ux-corrections.md`](phase-10-ux-corrections.md) | Phase 10 十项交互修订 | implementation/automated runtime PASS |
 | [`phase-10-startup-requalification.md`](phase-10-startup-requalification.md) | 30+30 启动重新资格化 | cold 400 ms PASS；warm 180 ms FAIL |
 | [`phase-10-rc-requalification.md`](phase-10-rc-requalification.md) | Phase 10 本地候选总证据 | NOT RC READY |
+| [`phase-14-split-sync-find-replace-scope-question.md`](phase-14-split-sync-find-replace-scope-question.md) | Split 同步滚动与 Source 查找替换的范围/架构分析 | awaiting USER contract decision |
 | [`phase-verification-harness-architecture.md`](phase-verification-harness-architecture.md) | 逐阶段 smoke 与矩阵治理决策 | USER approved；落实到 plan 11 |
 | [`RISK-ttf-parser-unmaintained.md`](RISK-ttf-parser-unmaintained.md) | 字体解析依赖维护风险 | exact advisory temporarily acknowledged |

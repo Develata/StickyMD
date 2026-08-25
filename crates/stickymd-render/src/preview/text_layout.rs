@@ -241,7 +241,21 @@ fn styled_attrs(
 
 fn boxes_for_buffer(buffer: &Buffer, segments: &[Segment], x: f32, y: f32) -> Vec<PreviewTextBox> {
     let mut boxes = Vec::new();
+    let mut logical_line = 0;
+    let mut logical_line_start = 0usize;
     for run in buffer.layout_runs() {
+        while logical_line < run.line_i {
+            let Some(line) = buffer.lines.get(logical_line) else {
+                break;
+            };
+            logical_line_start = logical_line_start
+                .saturating_add(line.text().len())
+                .saturating_add(line.ending().as_str().len());
+            logical_line += 1;
+        }
+        if logical_line != run.line_i {
+            continue;
+        }
         let mut extents = vec![None::<(f32, f32, usize, usize)>; segments.len()];
         for glyph in run.glyphs {
             let Some(index) = glyph.metadata.checked_sub(1) else {
@@ -252,8 +266,17 @@ fn boxes_for_buffer(buffer: &Buffer, segments: &[Segment], x: f32, y: f32) -> Ve
             };
             let left = glyph.x.min(glyph.x + glyph.w);
             let right = glyph.x.max(glyph.x + glyph.w);
-            let visual_start = glyph.start.max(segments[index].visual_range.start);
-            let visual_end = glyph.end.min(segments[index].visual_range.end);
+            // cosmic-text exposes glyph byte offsets relative to each logical
+            // BufferLine. Preview selection ranges address the complete
+            // immutable clipboard projection, so first restore the paragraph
+            // byte offset. Wrapped visual runs on the same logical line reuse
+            // this base; a following logical line advances it exactly once.
+            let visual_start = logical_line_start
+                .saturating_add(glyph.start)
+                .max(segments[index].visual_range.start);
+            let visual_end = logical_line_start
+                .saturating_add(glyph.end)
+                .min(segments[index].visual_range.end);
             if visual_start >= visual_end {
                 continue;
             }
@@ -309,10 +332,16 @@ fn selection_range_for_visual_line(segment: &Segment, visual: Range<usize>) -> R
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use cosmic_text::{Align, FontSystem, Metrics, Wrap};
+    use stickymd_core::Generation;
 
     use super::{TextLayoutCache, make_text_chunk};
-    use crate::preview::{LinkKind, RenderSpan, RenderStyle, SourceRange, SpanAction};
+    use crate::preview::{
+        LinkKind, PreviewSelection, PreviewTextIndex, RenderSpan, RenderStyle, SourceRange,
+        SpanAction,
+    };
     use crate::source::FontSelection;
 
     fn linked_span(destination: &str, source_start: usize) -> RenderSpan {
@@ -382,5 +411,62 @@ mod tests {
                         if destination == "https://second.example"
                 )
         }));
+    }
+
+    #[test]
+    fn multiline_text_boxes_keep_disjoint_selection_ranges() {
+        let mut font_system = FontSystem::new();
+        let fonts = FontSelection::resolve(&mut font_system);
+        let mut cache = TextLayoutCache::default();
+        let mut selection_text = String::new();
+        let text: Arc<str> = Arc::from("alpha\nbeta\ngamma");
+        let span = RenderSpan {
+            text: Arc::clone(&text),
+            copy_text: text,
+            source_range: SourceRange::new(0, 16),
+            style: RenderStyle {
+                code: true,
+                ..RenderStyle::default()
+            },
+            action: None,
+            math: None,
+            image: None,
+            hard_break: false,
+        };
+
+        let built = make_text_chunk(
+            &mut font_system,
+            &fonts,
+            &[span],
+            0.0,
+            0.0,
+            300.0,
+            Metrics::new(17.0, 26.35),
+            Align::Left,
+            Wrap::WordOrGlyph,
+            &mut selection_text,
+            &mut cache,
+        );
+
+        assert_eq!(selection_text, "alpha\nbeta\ngamma");
+        assert_eq!(
+            built
+                .boxes
+                .iter()
+                .map(|item| item.selection_range.clone())
+                .collect::<Vec<_>>(),
+            [0..5, 6..10, 11..16]
+        );
+        let index = PreviewTextIndex::new(Generation::initial(), selection_text, built.boxes);
+        assert_eq!(
+            index
+                .selection_rects(PreviewSelection {
+                    anchor: 6,
+                    active: 10,
+                })
+                .len(),
+            1,
+            "a single logical-line selection painted unrelated visual rows"
+        );
     }
 }
