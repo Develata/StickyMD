@@ -97,6 +97,8 @@ impl StickyApp {
             self.preview_frame = None;
             self.preview_flow.release_projection();
             if let Some(worker) = &self.preview_worker {
+                // Preserve the semantic tree for a fast return to Preview;
+                // only tray-hidden cache release drops document-sized state.
                 worker.release_raster_caches();
             }
         }
@@ -179,6 +181,23 @@ impl StickyApp {
     }
 
     pub(super) fn handle_preview_completion(&mut self, completion: PreviewCompletion) {
+        let hidden_to_tray = self.window_flow.as_ref().is_some_and(|flow| {
+            matches!(
+                flow.state().visibility(),
+                crate::flow::window::state::VisibilityState::HiddenToTray { .. }
+            )
+        });
+        if hidden_to_tray {
+            // A build can finish after the tray-hidden release effect. Never
+            // re-admit that document-sized projection while the paper is not
+            // visible; repeat the idempotent worker-owned release.
+            self.preview_frame = None;
+            self.preview_flow.release_projection();
+            if let Some(worker) = &self.preview_worker {
+                worker.release_document_projection();
+            }
+            return;
+        }
         let current = self.coordinator.view().generation;
         if completion.generation != current {
             if self.preview_visibility() != PreviewVisibility::Hidden {
@@ -359,7 +378,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn split_is_fixed_fifty_fifty_and_source_preview_scroll_are_not_coupled() {
+    fn split_is_fixed_fifty_fifty_while_semantic_scroll_mapping_stays_separate() {
         let geometry = geometry(ViewMode::Split, PhysicalSize::new(901, 700), 1.0);
         let source = geometry.source.unwrap();
         let preview = geometry.preview.unwrap();

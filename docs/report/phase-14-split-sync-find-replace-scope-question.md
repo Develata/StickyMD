@@ -2,7 +2,8 @@
 
 ## Status
 
-Awaiting USER contract decision. No product implementation has started.
+Approved by USER on 2026-08-25. Contract projection and implementation are complete; exact-candidate
+qualification and USER manual acceptance remain pending.
 
 ## Request Classification
 
@@ -44,9 +45,8 @@ active pane scroll gesture
 - Building an anchor table is O(blocks) during existing layout. Each scroll mapping is O(log blocks),
   O(1) auxiliary work, coalesced to at most one target update per redraw.
 
-Recommended interaction: a compact Split-only sync toggle. Keep it disabled by default for v0.1.0 so
-the existing independent-inspection behavior remains available; enabling it aligns both panes. If USER
-wants sync enabled by default, that choice must be stated in the plan/config contract.
+Approved interaction: a compact Split-only sync toggle, enabled by default and persisted in Runtime
+Config. Disabling it restores independent inspection while preserving each pane's saved scroll position.
 
 ## Recommended Source Find/Replace
 
@@ -64,8 +64,7 @@ Ctrl+F / Ctrl+H shell overlay
 - Query, active match and options are Editor Session state, not durable document authority.
 - Any canonical generation change invalidates/recomputes match ranges before mutation; stale byte ranges
   are never applied.
-- Next/Previous may use Rust's standard substring search and a sorted match list. Navigation is O(log k)
-  after an O(n) scan.
+- Next/Previous use a compact ordered match list. Navigation is O(1) after an O(n) scan.
 - Replace Current submits one normal `EditRequest` and one Undo entry.
 - Replace All validates non-overlapping ranges, then copies unchanged slices and replacement text in one
   forward pass. It is one canonical mutation and one Undo entry, O(n + output bytes), instead of repeated
@@ -87,12 +86,13 @@ Ctrl+F / Ctrl+H shell overlay
 | Dependencies | no runtime dependency is required |
 | Verification | Rust CLI/unit coverage plus Phase acceptance matrix; visual/IME behavior remains manual |
 
-## Required USER Decisions
+## USER Decision
 
-1. Split sync default: **off (recommended)** or on.
-2. Find/replace v1 scope: **literal + case toggle (recommended)** or regex as well.
-3. Whether both additions are authorized before v0.1.0 candidate freeze, accepting that they require a
-   new implementation, full automated qualification, and fresh manual acceptance.
+USER approved all three candidate-freeze changes before v0.1.0:
 
-Until these decisions are approved, no authoritative plan, feature projection, acceptance matrix or
-runtime code will be changed for either capability.
+1. Split synchronization has a toggle and defaults to **on**.
+2. Find/replace is **literal text + case-sensitive toggle**, with no regex.
+3. The math delimiter conversion control is relabeled `\(->$`.
+
+These approvals invalidate the previous exact candidate and require new automated qualification and
+fresh manual acceptance before release readiness can be reconsidered.

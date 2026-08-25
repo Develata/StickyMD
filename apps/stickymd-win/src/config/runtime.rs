@@ -121,6 +121,7 @@ pub struct RuntimeConfig {
     pub theme: ThemeMode,
     pub opacity: u8,
     pub content_zoom_percent: ContentZoomPercent,
+    pub split_scroll_sync: bool,
     pub always_on_top: bool,
     pub view_mode: ViewMode,
     pub window: WindowConfig,
@@ -133,6 +134,7 @@ impl Default for RuntimeConfig {
             theme: ThemeMode::Light,
             opacity: 96,
             content_zoom_percent: ContentZoomPercent::default(),
+            split_scroll_sync: true,
             always_on_top: false,
             view_mode: ViewMode::Source,
             window: WindowConfig::default(),
@@ -434,6 +436,25 @@ mod phase8_config_runtime_tests {
         fs::write(&path, "version = 1\nopacity = 40\n").unwrap();
         let migrated = load_config(&path).unwrap();
         assert_eq!(migrated.config.content_zoom_percent.value(), 100);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn phase14_split_scroll_sync_defaults_on_and_persists_off() {
+        let root = unique_dir("phase14-split-sync");
+        fs::create_dir(&root).unwrap();
+        let path = root.join("config.toml");
+        let temporary = root.join("config.toml.tmp");
+
+        fs::write(&path, "version = 1\n").unwrap();
+        assert!(load_config(&path).unwrap().config.split_scroll_sync);
+
+        let config = RuntimeConfig {
+            split_scroll_sync: false,
+            ..RuntimeConfig::default()
+        };
+        save_config(&path, &temporary, &config).unwrap();
+        assert!(!load_config(&path).unwrap().config.split_scroll_sync);
         fs::remove_dir_all(root).unwrap();
     }
 }

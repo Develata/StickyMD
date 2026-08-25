@@ -15,6 +15,7 @@ mod paint;
 mod parser;
 mod pipeline;
 mod render_tree;
+mod scroll;
 mod selection;
 mod semantic_conversion;
 mod source_map;

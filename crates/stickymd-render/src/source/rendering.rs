@@ -6,7 +6,7 @@ use cosmic_text::{Color, Cursor};
 use stickymd_core::Selection;
 use tiny_skia::Pixmap;
 
-use super::paint::{blend_glyph_rect, fill, rect};
+use super::paint::{GlyphClip, blend_glyph_rect, blend_glyph_rect_clipped, fill, rect};
 use super::projection::{PreeditVisual, SourceProjection, SourceProjectionError, selection_valid};
 
 /// Fixed source-editor palette selected by the Windows shell.
@@ -14,6 +14,15 @@ use super::projection::{PreeditVisual, SourceProjection, SourceProjectionError, 
 pub enum SourceTheme {
     Light,
     Dark,
+}
+
+/// Geometry and scale for one transient shell text projection.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UiTextSpec {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub scale: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -59,6 +68,56 @@ impl SourcePalette {
 }
 
 impl SourceProjection {
+    /// Draws one transient shell text line using the existing font database and
+    /// glyph cache. The text is a disposable UI projection, never document data.
+    pub fn paint_ui_text(
+        &mut self,
+        pixmap: &mut Pixmap,
+        text: &str,
+        spec: UiTextSpec,
+        theme: SourceTheme,
+    ) {
+        let scale = spec.scale.max(0.5);
+        self.ui_buffer.set_metrics_and_size(
+            cosmic_text::Metrics::new(13.0 * scale, 20.0 * scale),
+            Some(spec.width.max(1.0)),
+            Some(22.0 * scale),
+        );
+        let attrs =
+            cosmic_text::Attrs::new().family(cosmic_text::Family::Name(self.fonts.cjk_family));
+        self.ui_buffer.set_text(
+            text,
+            &attrs,
+            cosmic_text::Shaping::Advanced,
+            Some(cosmic_text::Align::Left),
+        );
+        self.ui_buffer
+            .shape_until_scroll(&mut self.font_system, false);
+        let color = SourcePalette::for_theme(theme).text;
+        let clip = GlyphClip {
+            left: spec.x.round() as i32,
+            top: spec.y.round() as i32,
+            right: (spec.x + spec.width).round() as i32,
+            bottom: (spec.y + 22.0 * scale).round() as i32,
+        };
+        self.ui_buffer.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            color,
+            |glyph_x, glyph_y, width, height, color| {
+                blend_glyph_rect_clipped(
+                    pixmap,
+                    glyph_x + spec.x.round() as i32,
+                    glyph_y + spec.y.round() as i32,
+                    width,
+                    height,
+                    color,
+                    clip,
+                );
+            },
+        );
+    }
+
     pub fn paint(
         &mut self,
         pixmap: &mut Pixmap,

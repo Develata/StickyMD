@@ -7,6 +7,11 @@ use stickymd_render::preview::SpanAction;
 
 use crate::config::{ContentZoomPercent, ThemeMode, ViewMode};
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LiteralSearchOptions {
+    pub case_sensitive: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppIntent {
     Edit {
@@ -39,6 +44,21 @@ pub enum AppIntent {
         expected_generation: Generation,
         selection: Selection,
         scope_to_selection: bool,
+        timestamp_ms: u64,
+    },
+    ReplaceLiteralMatch {
+        expected_generation: Generation,
+        range: std::ops::Range<usize>,
+        query: String,
+        replacement: String,
+        options: LiteralSearchOptions,
+        timestamp_ms: u64,
+    },
+    ReplaceAllLiteral {
+        expected_generation: Generation,
+        query: String,
+        replacement: String,
+        options: LiteralSearchOptions,
         timestamp_ms: u64,
     },
     /// Clipboard-only projection effect. It never reads or mutates canonical
@@ -82,6 +102,7 @@ pub enum WindowPreferenceIntent {
     CommitOpacity(u8),
     SetAlwaysOnTop(bool),
     SetContentZoom(ContentZoomPercent),
+    SetSplitScrollSync(bool),
 }
 
 /// Platform gestures requested by shell hit testing.

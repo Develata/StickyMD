@@ -2,7 +2,7 @@
 
 StickyMD is a native, portable Windows 11 Markdown scratchpad: launch it, write, and let it save the single note beside the executable. It is deliberately not a general-purpose editor or knowledge-management system.
 
-> Pre-release status: Phase 14 release-policy calibration and exact-candidate closure are active; the product runtime is frozen. The USER approved version 0.1.0, unsigned portable distribution, and a v0.1.0 cold/warm startup hard boundary of 550 ms (180 ms preferred; 400 ms diagnostic engineering target). Manual IME, visual, taskbar/Alt+Tab, tray, display, recovery, clean-VM and remote-artifact gates remain open. No RC-ready or stable release is claimed.
+> Pre-release status: Phase 14 release-policy calibration and exact-candidate closure are active. The previous candidate is invalid; any replacement remains non-ready until its complete evidence closes. The USER approved version 0.1.0, unsigned portable distribution, and a v0.1.0 cold/warm startup hard boundary of 550 ms (180 ms preferred; 400 ms diagnostic engineering target). Manual IME, visual, taskbar/Alt+Tab, tray, display, recovery, clean-VM and remote-artifact gates remain open. No RC-ready or stable release is claimed.
 
 ## What it does
 
@@ -11,6 +11,8 @@ StickyMD is a native, portable Windows 11 Markdown scratchpad: launch it, write,
 - Autosaves through guarded, same-directory atomic replacement and detects external edits.
 - Renders CommonMark/GFM through Comrak and native RaTeX-compatible mathematics.
 - Supports managed local-image paste/export, source/preview/split views, tray lifecycle, left/right/top docking, themes, topmost, and whole-window opacity.
+- Split view uses generation-bound semantic scroll alignment by default and can be switched back to independent panes.
+- Source view has literal find/replace with an optional case-sensitive mode; regular expressions are intentionally out of scope.
 
 ## Portable use
 

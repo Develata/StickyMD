@@ -13,6 +13,7 @@ pub enum WindowPreferenceEffect {
     ApplyOpacity { opacity: u8, persist: bool },
     ApplyAlwaysOnTop(bool),
     ApplyContentZoom(ContentZoomPercent),
+    ApplySplitScrollSync(bool),
 }
 
 /// Applies one typed preference instruction to `ConfigCoordinator`.
@@ -49,6 +50,13 @@ pub fn coordinate_window_preference(
         WindowPreferenceIntent::SetContentZoom(zoom) => {
             if config.update(|candidate| candidate.content_zoom_percent = zoom)? {
                 Ok(WindowPreferenceEffect::ApplyContentZoom(zoom))
+            } else {
+                Ok(WindowPreferenceEffect::NoOp)
+            }
+        }
+        WindowPreferenceIntent::SetSplitScrollSync(enabled) => {
+            if config.update(|candidate| candidate.split_scroll_sync = enabled)? {
+                Ok(WindowPreferenceEffect::ApplySplitScrollSync(enabled))
             } else {
                 Ok(WindowPreferenceEffect::NoOp)
             }
@@ -141,5 +149,29 @@ mod phase8_preference_tests {
         assert_eq!(document.saved_generation(), saved_generation);
         assert_eq!(document.is_dirty(), dirty);
         assert_eq!(document.can_undo(), can_undo);
+    }
+
+    #[test]
+    fn phase14_split_scroll_sync_uses_config_authority_and_can_be_disabled() {
+        let mut config = ConfigCoordinator::loaded(RuntimeConfig::default());
+        assert!(config.current().split_scroll_sync);
+        assert_eq!(
+            coordinate_window_preference(
+                &mut config,
+                WindowPreferenceIntent::SetSplitScrollSync(false),
+            )
+            .unwrap(),
+            WindowPreferenceEffect::ApplySplitScrollSync(false)
+        );
+        assert!(!config.current().split_scroll_sync);
+        assert!(config.is_dirty());
+        assert_eq!(
+            coordinate_window_preference(
+                &mut config,
+                WindowPreferenceIntent::SetSplitScrollSync(false),
+            )
+            .unwrap(),
+            WindowPreferenceEffect::NoOp
+        );
     }
 }

@@ -13,4 +13,4 @@ pub use projection::{
     EditorRect, PreeditVisual, SourceInitializationMilestone, SourceProjection,
     SourceProjectionError,
 };
-pub use rendering::SourceTheme;
+pub use rendering::{SourceTheme, UiTextSpec};

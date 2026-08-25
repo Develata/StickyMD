@@ -11,4 +11,5 @@
 pub mod image;
 mod math;
 pub mod preview;
+pub mod scroll;
 pub mod source;

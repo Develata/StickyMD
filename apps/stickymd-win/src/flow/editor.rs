@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use super::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
 use crate::instruction::AppIntent;
+use crate::source_search::{literal_range_matches, replace_all_literal};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppEffect {
@@ -51,6 +52,8 @@ pub enum EditorFlowError {
     Clipboard(#[from] ClipboardError),
     #[error(transparent)]
     SemanticConversion(#[from] SemanticConversionError),
+    #[error("literal search range no longer matches the current canonical document")]
+    SearchRangeMismatch,
 }
 
 pub struct EditorCoordinator<C> {
@@ -91,6 +94,12 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
             dirty: self.document.is_dirty(),
             base_disk_hash: self.document.base_disk_hash(),
         }
+    }
+
+    /// Reads text for transient shell inputs without exposing clipboard
+    /// ownership or bypassing the execution-domain port.
+    pub fn read_clipboard_text(&mut self) -> Result<Option<String>, EditorFlowError> {
+        self.clipboard.read_text().map_err(Into::into)
     }
 
     pub fn acknowledge_persisted(
@@ -188,6 +197,47 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
                 scope_to_selection,
                 timestamp_ms,
             ),
+            AppIntent::ReplaceLiteralMatch {
+                expected_generation,
+                range,
+                query,
+                replacement,
+                options,
+                timestamp_ms,
+            } => {
+                self.require_generation(expected_generation)?;
+                if !literal_range_matches(self.document.text(), range.clone(), &query, options) {
+                    return Err(EditorFlowError::SearchRangeMismatch);
+                }
+                self.replace(
+                    expected_generation,
+                    Selection::new(range.start, range.end),
+                    replacement,
+                    EditKind::SelectionReplace,
+                    timestamp_ms,
+                )
+            }
+            AppIntent::ReplaceAllLiteral {
+                expected_generation,
+                query,
+                replacement,
+                options,
+                timestamp_ms,
+            } => {
+                self.require_generation(expected_generation)?;
+                let Some((output, _count)) =
+                    replace_all_literal(self.document.text(), &query, &replacement, options)
+                else {
+                    return Ok(AppEffect::NoOp);
+                };
+                self.replace(
+                    expected_generation,
+                    Selection::new(0, self.document.text().len()),
+                    output,
+                    EditKind::Other,
+                    timestamp_ms,
+                )
+            }
             AppIntent::WriteClipboard { text } => {
                 if text.is_empty() {
                     Ok(AppEffect::NoOp)
@@ -716,5 +766,61 @@ mod tests {
             .unwrap();
         assert_eq!(outcome, AppEffect::NoOp);
         assert_eq!(coordinator.snapshot(), before);
+    }
+
+    #[test]
+    fn phase14_literal_replace_is_stale_safe_and_undoable() {
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        edit(&mut coordinator, "Rust rust");
+        let generation = coordinator.view().generation;
+        coordinator
+            .dispatch(AppIntent::ReplaceLiteralMatch {
+                expected_generation: generation,
+                range: 5..9,
+                query: "rust".into(),
+                replacement: "中文".into(),
+                options: crate::instruction::LiteralSearchOptions {
+                    case_sensitive: true,
+                },
+                timestamp_ms: 30,
+            })
+            .unwrap();
+        assert_eq!(&*coordinator.snapshot().text, "Rust 中文");
+        coordinator.dispatch(AppIntent::Undo).unwrap();
+        assert_eq!(&*coordinator.snapshot().text, "Rust rust");
+
+        let before = coordinator.snapshot();
+        let result = coordinator.dispatch(AppIntent::ReplaceLiteralMatch {
+            expected_generation: before.generation,
+            range: 0..4,
+            query: "different".into(),
+            replacement: "x".into(),
+            options: crate::instruction::LiteralSearchOptions::default(),
+            timestamp_ms: 31,
+        });
+        assert_eq!(result, Err(EditorFlowError::SearchRangeMismatch));
+        assert_eq!(coordinator.snapshot(), before);
+    }
+
+    #[test]
+    fn phase14_literal_replace_all_is_one_generation_and_one_undo_step() {
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        edit(&mut coordinator, "Rust rust RUST");
+        let before = coordinator.view().generation;
+        coordinator
+            .dispatch(AppIntent::ReplaceAllLiteral {
+                expected_generation: before,
+                query: "rust".into(),
+                replacement: "R".into(),
+                options: crate::instruction::LiteralSearchOptions {
+                    case_sensitive: false,
+                },
+                timestamp_ms: 40,
+            })
+            .unwrap();
+        assert_eq!(coordinator.view().generation.value(), before.value() + 1);
+        assert_eq!(&*coordinator.snapshot().text, "R R R");
+        coordinator.dispatch(AppIntent::Undo).unwrap();
+        assert_eq!(&*coordinator.snapshot().text, "Rust rust RUST");
     }
 }

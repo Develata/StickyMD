@@ -8,6 +8,7 @@ use tiny_skia::{Paint, Pixmap, Rect, Transform};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 
 use super::controls::ControlLayout;
+use super::search_runtime::paint_search_overlay;
 use super::toolbar_paint::{ToolbarVisual, paint_toolbar};
 use super::{CARET_BLINK, StickyApp};
 use crate::config::{ContentZoomPercent, ViewMode};
@@ -89,6 +90,16 @@ impl StickyApp {
         let Some(window) = self.window.as_ref().cloned() else {
             return;
         };
+        if self.search.open
+            && let Some(layout) = self.search_layout()
+        {
+            let (x, y, height) = layout.ime_rect(self.search.focused);
+            window.set_ime_cursor_area(
+                PhysicalPosition::new(x.round() as i32, y.round() as i32),
+                PhysicalSize::new(1, height.max(1.0).round() as u32),
+            );
+            return;
+        }
         let origin = self
             .view_geometry()
             .and_then(|geometry| geometry.source)
@@ -212,8 +223,10 @@ impl StickyApp {
                 || self.controls.opacity_popup_open,
             opacity_popup: self.controls.opacity_popup_open,
             opacity: self.controls.opacity_preview,
+            split_scroll_sync: self.config.current().split_scroll_sync,
         };
         let caret_animation_active = self.caret_animation_active();
+        let search_layout = self.search_layout();
         let Some(surface) = &mut self.surface else {
             return;
         };
@@ -250,6 +263,14 @@ impl StickyApp {
                 paint_preview_pending(surface.pixmap_mut(), pane, dark);
             }
         }
+        paint_search_overlay(
+            surface.pixmap_mut(),
+            &mut self.projection,
+            &self.search,
+            search_layout,
+            scales.shell as f32,
+            dark,
+        );
         let surface_size = {
             let pixmap = surface.pixmap_mut();
             PhysicalSize::new(pixmap.width(), pixmap.height())
@@ -352,6 +373,7 @@ mod tests {
         let size = PhysicalSize::new(780, 1020);
         let hit_layout = ControlLayout::new(size, dpi);
         let expected_rect = hit_layout.rect(super::super::controls::ControlId::Split);
+        let math_rect = hit_layout.rect(super::super::controls::ControlId::ConvertMath);
         let hit_center = PhysicalPosition::new(
             expected_rect.x + expected_rect.width / 2.0,
             expected_rect.y + expected_rect.height / 2.0,
@@ -389,6 +411,7 @@ mod tests {
                     emphasized: true,
                     opacity_popup: false,
                     opacity: 96,
+                    split_scroll_sync: true,
                 },
             );
             let sample_x = expected_rect.x.floor() as u32 + 1;
@@ -401,6 +424,26 @@ mod tests {
                 Some((210, 215, 218, 255)),
                 "content zoom {zoom}% painted the active Split control outside its hit rectangle"
             );
+
+            let third = math_rect.width / 3.0;
+            for segment in 0..3 {
+                let start = (math_rect.x + third * f64::from(segment)).floor() as u32;
+                let end = (math_rect.x + third * f64::from(segment + 1)).ceil() as u32;
+                let top = math_rect.y.floor() as u32;
+                let bottom = (math_rect.y + math_rect.height).ceil() as u32;
+                let ink_pixels = (top..bottom)
+                    .flat_map(|y| (start..end).map(move |x| (x, y)))
+                    .filter(|(x, y)| {
+                        pixmap.pixel(*x, *y).is_some_and(|color| {
+                            (color.red(), color.green(), color.blue()) == (64, 63, 59)
+                        })
+                    })
+                    .count();
+                assert!(
+                    ink_pixels > 0,
+                    "content zoom {zoom}% lost \\(->$ segment {segment}"
+                );
+            }
         }
     }
 }

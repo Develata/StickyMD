@@ -24,6 +24,8 @@ mod platform;
 #[cfg(windows)]
 mod preview;
 #[cfg(windows)]
+mod source_search;
+#[cfg(windows)]
 mod startup;
 #[cfg(windows)]
 mod surface;

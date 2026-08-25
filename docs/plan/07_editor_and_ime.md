@@ -45,7 +45,7 @@
 ### AI 数学分隔符语义转换
 
 - 顶部工具栏提供一个紧凑的 `Convert AI math delimiters` typed action；Interaction Shell
-  只能发出 intent，不得直接改写 `DocumentState`。
+  以 `\(->$` 明示转换方向；Interaction Shell 只能发出 intent，不得直接改写 `DocumentState`。
 - 每次 action 必须从当前 generation 的 `DocumentSnapshot` 经现有 Comrak semantic pipeline
   识别真正的 math node，只转换原始 delimiter 为 `\(...\)` 或 `\[...\]` 的节点；不得用
   regex、全局 replace、自有 math parser、stale Preview AST 或 code/literal 猜测替代 Comrak。
@@ -61,6 +61,24 @@
   完整 no-op（text/generation/undo/dirty 均不变）。
 - 1 MiB / 1000 math-node Release smoke 的 p95 engineering check 为 `< 50 ms`；超过时先审计
   重复 parse、全文 clone 与逐 formula mutation，不引入增量 Markdown parser 或后台 runtime。
+
+<a id="source-find-replace"></a>
+### Source 纯文本查找与替换
+
+- `Ctrl+F` 打开查找，`Ctrl+H` 打开替换；范围永远是当前单一 canonical `note.md`，不做跨文件
+  搜索、不支持正则。控件提供 query、replacement、大小写开关、上一个/下一个、替换与全部替换。
+- query、replacement、active match 与 match ranges 属 Editor Session projection。match ranges 必须绑定
+  Document generation；任何 canonical mutation 后先重新扫描，再允许导航或替换 stale range。大小写
+  敏感开关默认关闭，关闭 session 后不写入配置。
+- 查找以 UTF-8 byte range 表达。大小写敏感路径使用标准库 substring search；大小写不敏感路径
+  使用确定性的 Unicode lowercase token stream + KMP prefix table，并以 query 长度的边界环形缓冲
+  映射回 source byte，禁止产生 lowercase expansion 中间或非 char-boundary range。扫描 O(n+m+matches)、
+  辅助空间 O(m)，其中 `m` 为 query 长度；导航在有序结果中 O(1)。
+- Replace Current 通过一个普通 typed `EditRequest` 提交；Replace All 先验证不重叠 range，再一次
+  顺序复制 unchanged slices 与 replacement，最终只提交一个 canonical mutation/Undo entry，复杂度
+  O(n + output bytes)，不得对每个 match 重复 `String::replace_range`。
+- replace 成功后正常触发 dirty/autosave/Preview；零匹配是完整 no-op。IME preedit 期间禁止替换，
+  打开控件不得隐式提交、取消或污染 composition。
 
 <a id="font-runs"></a>
 ## 字体 Run 规则

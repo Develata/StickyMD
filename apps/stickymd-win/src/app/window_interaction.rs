@@ -9,7 +9,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorIcon, ResizeDirection};
 
 use super::StickyApp;
-use super::controls::{ControlId, ControlLayout};
+use super::controls::{ControlId, ControlLayout, split_sync_rect};
 use crate::config::{ThemeMode, ViewMode};
 use crate::flow::window::state::{ShowReason, WindowIntent};
 use crate::instruction::{
@@ -89,6 +89,18 @@ impl StickyApp {
                         WindowPlatformIntent::RequestResize(direction),
                     );
                 }
+                if self.config.current().view_mode == ViewMode::Split
+                    && let Some(geometry) = self.view_geometry()
+                    && let Some(divider_x) = geometry.divider_x
+                    && split_sync_rect(divider_x, geometry.toolbar_height, window.scale_factor())
+                        .contains(self.cursor_position)
+                {
+                    let enabled = !self.config.current().split_scroll_sync;
+                    self.dispatch_window_preference_intent(
+                        WindowPreferenceIntent::SetSplitScrollSync(enabled),
+                    );
+                    return true;
+                }
                 if let Some(control) = layout.control_at(self.cursor_position) {
                     self.activate_control(control);
                     return true;
@@ -166,7 +178,15 @@ impl StickyApp {
         .map(|direction| CursorIcon::from(winit_resize_direction(direction)))
         .or_else(|| {
             let layout = ControlLayout::new(window.inner_size(), window.scale_factor());
+            let split_sync = self.config.current().view_mode == ViewMode::Split
+                && self.view_geometry().is_some_and(|geometry| {
+                    geometry.divider_x.is_some_and(|divider_x| {
+                        split_sync_rect(divider_x, geometry.toolbar_height, window.scale_factor())
+                            .contains(self.cursor_position)
+                    })
+                });
             (layout.control_at(self.cursor_position).is_some()
+                || split_sync
                 || (self.controls.opacity_popup_open
                     && layout.opacity_popup.contains(self.cursor_position)))
             .then_some(CursorIcon::Pointer)

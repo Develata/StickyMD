@@ -177,6 +177,20 @@ impl ControlLayout {
     }
 }
 
+/// Split-only synchronization control centered over the fixed divider.
+///
+/// Keeping this control out of the nine-item toolbar preserves the 23 DIP
+/// minimum hit target at the 220 DIP compact-window boundary.
+pub(super) fn split_sync_rect(divider_x: u32, toolbar_height: u32, scale: f64) -> ControlRect {
+    let size = 22.0 * scale.max(0.5);
+    ControlRect {
+        x: f64::from(divider_x) - size * 0.5,
+        y: f64::from(toolbar_height) + 4.0 * scale.max(0.5),
+        width: size,
+        height: size,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct ControlState {
     pub opacity_popup_open: bool,
@@ -286,6 +300,16 @@ mod phase8_control_tests {
                 assert!(rect.x + rect.width <= f64::from(width) + f64::EPSILON);
                 previous_right = rect.x + rect.width;
             }
+        }
+    }
+
+    #[test]
+    fn phase14_split_sync_hit_target_is_centered_on_divider() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let rect = split_sync_rect(260, 34, scale);
+            assert!(((rect.x + rect.width / 2.0) - 260.0).abs() < f64::EPSILON * 32.0);
+            assert!(rect.width / scale >= 22.0);
+            assert!(rect.y >= 34.0);
         }
     }
 

@@ -8,6 +8,9 @@ use std::sync::Arc;
 use stickymd_core::Generation;
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::scroll::ScrollAnchor;
+
+use super::scroll::{PreviewScrollAnchor, PreviewScrollIndex};
 use super::{SourceRange, SpanAction};
 
 /// Geometry in document pixel coordinates.
@@ -81,6 +84,7 @@ pub struct PreviewTextIndex {
     text: Arc<str>,
     boxes: Arc<[PreviewTextBox]>,
     rows: Arc<[HitRow]>,
+    scroll: PreviewScrollIndex,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -96,6 +100,7 @@ impl PreviewTextIndex {
         generation: Generation,
         text: String,
         mut boxes: Vec<PreviewTextBox>,
+        scroll_anchors: Vec<PreviewScrollAnchor>,
     ) -> Self {
         boxes.sort_by(|left, right| {
             left.rect
@@ -109,6 +114,7 @@ impl PreviewTextIndex {
             text: Arc::from(text),
             boxes: boxes.into(),
             rows: rows.into(),
+            scroll: PreviewScrollIndex::new(scroll_anchors),
         }
     }
 
@@ -122,6 +128,16 @@ impl PreviewTextIndex {
 
     pub fn boxes(&self) -> &[PreviewTextBox] {
         &self.boxes
+    }
+
+    /// Maps a document-space y position to a canonical semantic anchor.
+    pub fn scroll_anchor_at_y(&self, y: f32) -> Option<ScrollAnchor> {
+        self.scroll.anchor_at_y(y)
+    }
+
+    /// Maps a canonical semantic anchor into Preview document-space y.
+    pub fn y_for_scroll_anchor(&self, anchor: ScrollAnchor) -> Option<f32> {
+        self.scroll.y_for_anchor(anchor)
     }
 
     pub fn select_all(&self) -> PreviewSelection {
@@ -348,6 +364,7 @@ mod tests {
                 tooltip: None,
                 atomic: false,
             }],
+            Vec::new(),
         )
     }
 
@@ -397,7 +414,7 @@ mod tests {
                 atomic: false,
             })
             .collect();
-        let index = PreviewTextIndex::new(Generation::initial(), "x".into(), boxes);
+        let index = PreviewTextIndex::new(Generation::initial(), "x".into(), boxes, Vec::new());
         assert_eq!(index.boxes_at_y(1234.0 * 20.0 + 4.0).len(), 1);
         assert_eq!(index.hit_test(50.0, 1234.0 * 20.0 + 4.0), 1);
     }
@@ -419,7 +436,7 @@ mod tests {
                 atomic: false,
             })
             .collect();
-        let index = PreviewTextIndex::new(Generation::initial(), "x".into(), boxes);
+        let index = PreviewTextIndex::new(Generation::initial(), "x".into(), boxes, Vec::new());
         let rects = index.selection_rects_in_y_range(
             PreviewSelection {
                 anchor: 0,
@@ -450,6 +467,7 @@ mod tests {
                 tooltip: Some(Arc::from("formula parse failed")),
                 atomic: true,
             }],
+            Vec::new(),
         );
         assert_eq!(index.hit_test(20.0, 20.0), 0);
         assert_eq!(index.hit_test(80.0, 20.0), 5);

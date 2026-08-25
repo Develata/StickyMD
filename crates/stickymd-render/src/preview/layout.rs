@@ -10,6 +10,7 @@ use crate::source::FontSelection;
 use cosmic_text::{Align, Buffer, FontSystem, Metrics, Wrap};
 use stickymd_core::Generation;
 
+use super::scroll::PreviewScrollAnchor;
 use super::{
     PreviewRect, PreviewTextBox, PreviewTextIndex, RenderBlock, RenderBlockKind, RenderSpan,
     RenderTree,
@@ -120,6 +121,7 @@ pub(super) fn layout_document(
     let mut blocks = Vec::with_capacity(tree.blocks.len());
     let mut selection_text = String::new();
     let mut boxes = Vec::new();
+    let mut scroll_anchors = Vec::with_capacity(tree.blocks.len());
     let mut formula_count = 0usize;
     let mut text_layout_cache = super::text_layout::TextLayoutCache::default();
     let foreground = math_foreground(theme);
@@ -183,6 +185,13 @@ pub(super) fn layout_document(
         };
         boxes.append(&mut laid_out.boxes);
         y += laid_out.height;
+        if let Some(source_range) = block.source_range {
+            scroll_anchors.push(PreviewScrollAnchor {
+                source_range,
+                top,
+                bottom: y,
+            });
+        }
         blocks.push(LaidOutBlock {
             top,
             bottom: y,
@@ -205,6 +214,7 @@ pub(super) fn layout_document(
             tree.generation,
             selection_text,
             boxes,
+            scroll_anchors,
         )),
         scale,
         theme,

@@ -23,7 +23,7 @@ use crate::flow::{
     AppEffect, EditorCoordinator, PersistenceCoordinator, PreviewCoordinator, RecoveryCoordinator,
 };
 use crate::instruction::AppIntent;
-use crate::interaction::EditorSession;
+use crate::interaction::{EditorSession, SearchSession};
 use crate::persistence::{IoCompletion, PersistenceWorker};
 use crate::platform::windows::ArboardClipboard;
 use crate::platform::windows::file_watch::NoteDirectoryWatcher;
@@ -48,6 +48,8 @@ mod preview_input;
 mod preview_runtime;
 mod reconciliation_runtime;
 mod recovery_runtime;
+mod search_controller;
+mod search_runtime;
 mod toolbar_paint;
 mod window_geometry_runtime;
 mod window_interaction;
@@ -119,6 +121,7 @@ pub struct StickyApp {
     asset_reconcile_pending: bool,
     export_in_flight: bool,
     session: EditorSession,
+    search: SearchSession,
     modifiers: ModifiersState,
     cursor_position: PhysicalPosition<f64>,
     pointer_inside_window: bool,
@@ -189,6 +192,7 @@ impl StickyApp {
             asset_reconcile_pending: false,
             export_in_flight: false,
             session: EditorSession::default(),
+            search: SearchSession::default(),
             modifiers: ModifiersState::default(),
             cursor_position: PhysicalPosition::new(0.0, 0.0),
             pointer_inside_window: false,
@@ -255,6 +259,8 @@ impl StickyApp {
                     .on_document_changed(self.timestamp_ms(), generation);
                 self.on_preview_document_changed(generation);
                 self.session.accept_document_selection(selection);
+                self.search
+                    .refresh(self.coordinator.view().text, generation);
                 if let Some(projection) = &mut self.projection
                     && let Err(error) = projection.apply_delta(generation, &delta)
                 {

@@ -404,6 +404,21 @@ impl PreviewPipeline {
         self.image_cache.clear();
     }
 
+    /// Drops every document-sized Preview projection while retaining the
+    /// reusable font database and bounded math layout cache.
+    ///
+    /// Returning to Preview therefore requires a fresh generation-tagged
+    /// Build, but Source-only residency no longer scales with the last rendered
+    /// Markdown document.
+    pub fn release_document_projection(&mut self) {
+        self.tree = None;
+        self.layout = None;
+        self.image_band = (0.0, 0.0);
+        self.layout_has_image_source = false;
+        self.math_engine.release_rasters();
+        self.image_cache.clear();
+    }
+
     pub fn image_cache_bytes(&self) -> usize {
         self.image_cache.bytes()
     }
@@ -935,6 +950,34 @@ mod tests {
             )
             .unwrap();
         assert_eq!(images.loads.get(), 0);
+    }
+
+    #[test]
+    fn document_projection_release_requires_a_fresh_build() {
+        let generation = Generation::initial();
+        let mut pipeline = PreviewPipeline::new();
+        pipeline
+            .build(
+                &snapshot("# heading\n\nbody", generation),
+                400,
+                200,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        pipeline.release_document_projection();
+        let result = pipeline.relayout(
+            generation,
+            500,
+            200,
+            1.0,
+            0.0,
+            PreviewSelection::default(),
+            PreviewTheme::Light,
+        );
+        assert!(matches!(result, Err(PreviewPipelineError::NoDocument)));
     }
 
     #[test]

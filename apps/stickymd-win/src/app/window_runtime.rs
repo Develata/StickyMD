@@ -102,6 +102,10 @@ impl StickyApp {
                 self.zoom_config_deadline = Some(self.timestamp_ms().saturating_add(250));
                 self.request_redraw();
             }
+            WindowPreferenceEffect::ApplySplitScrollSync(_) => {
+                self.submit_config_if_needed();
+                self.request_redraw();
+            }
         }
     }
 
@@ -235,9 +239,11 @@ impl StickyApp {
     pub(super) fn window_guards(&self) -> WindowGuardSnapshot {
         WindowGuardSnapshot {
             window_focused: self.session.focused,
-            ime_composing: self.session.is_composing(),
+            ime_composing: self.session.is_composing() || self.search.is_composing(),
             dragging: self.move_resize_active,
-            popup_open: self.controls.opacity_popup_open || self.export_in_flight,
+            popup_open: self.controls.opacity_popup_open
+                || self.search.open
+                || self.export_in_flight,
             conflict_or_recovery: self.recovery.is_pending()
                 || self.persistence.conflict().is_some(),
             paste_pending: self.asset_paste_pending,
@@ -362,7 +368,7 @@ impl StickyApp {
                 self.preview_selection = Default::default();
                 self.preview_flow.release_projection();
                 if let Some(worker) = &self.preview_worker {
-                    worker.release_raster_caches();
+                    worker.release_document_projection();
                 }
                 self.source_frame = None;
                 self.source_paint_key = None;

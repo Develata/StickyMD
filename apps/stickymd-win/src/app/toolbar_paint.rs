@@ -4,7 +4,7 @@
 
 use tiny_skia::{Paint, Pixmap, Rect, Transform};
 
-use super::controls::{ControlId, ControlLayout, ControlRect};
+use super::controls::{ControlId, ControlLayout, ControlRect, split_sync_rect};
 use super::preview_runtime::ViewGeometry;
 use crate::config::ViewMode;
 
@@ -18,6 +18,7 @@ pub(super) struct ToolbarVisual {
     pub(super) emphasized: bool,
     pub(super) opacity_popup: bool,
     pub(super) opacity: u8,
+    pub(super) split_scroll_sync: bool,
 }
 
 pub(super) fn paint_toolbar(
@@ -90,6 +91,13 @@ pub(super) fn paint_toolbar(
                 (190, 186, 175, 255)
             },
         );
+        paint_split_sync(
+            pixmap,
+            split_sync_rect(divider_x, geometry.toolbar_height, f64::from(scale)),
+            visual.split_scroll_sync,
+            visual.dark,
+            ink,
+        );
     }
     if visual.opacity_popup {
         paint_opacity_popup(pixmap, layout, visual);
@@ -154,48 +162,83 @@ fn paint_control_icon(
             );
         }
         ControlId::ConvertMath => {
-            // A compact delimiter-conversion glyph: `\\` followed by `$`.
+            // Pixel label `\(->$`: both source delimiter and target are
+            // visible instead of relying on an ambiguous abstract icon.
+            for offset in 0..5 {
+                fill_rect(
+                    pixmap,
+                    x + offset as f32 * 0.55 * scale,
+                    y + offset as f32 * 2.4 * scale,
+                    scale.max(1.0),
+                    scale.max(1.0),
+                    ink,
+                );
+            }
             fill_rect(
                 pixmap,
-                x + 2.0 * scale,
-                y + 1.0 * scale,
-                1.5 * scale,
-                14.0 * scale,
+                x + 4.0 * scale,
+                y + 2.0 * scale,
+                scale,
+                10.0 * scale,
                 ink,
             );
             fill_rect(
                 pixmap,
-                x + 6.0 * scale,
+                x + 5.0 * scale,
                 y + 1.0 * scale,
-                1.5 * scale,
-                14.0 * scale,
+                2.0 * scale,
+                scale,
+                ink,
+            );
+            fill_rect(
+                pixmap,
+                x + 5.0 * scale,
+                y + 12.0 * scale,
+                2.0 * scale,
+                scale,
+                ink,
+            );
+            fill_rect(
+                pixmap,
+                x + 8.0 * scale,
+                y + 7.0 * scale,
+                5.0 * scale,
+                scale,
                 ink,
             );
             fill_rect(
                 pixmap,
                 x + 11.0 * scale,
+                y + 5.0 * scale,
+                scale,
+                5.0 * scale,
+                ink,
+            );
+            fill_rect(
+                pixmap,
+                x + 15.0 * scale,
                 y + 2.0 * scale,
-                6.0 * scale,
-                1.5 * scale,
+                3.0 * scale,
+                scale,
                 ink,
             );
             fill_rect(
                 pixmap,
-                x + 10.0 * scale,
-                y + 7.0 * scale,
-                7.0 * scale,
-                1.5 * scale,
+                x + 14.0 * scale,
+                y + 6.0 * scale,
+                4.0 * scale,
+                scale,
                 ink,
             );
             fill_rect(
                 pixmap,
-                x + 10.0 * scale,
-                y + 12.0 * scale,
-                6.0 * scale,
-                1.5 * scale,
+                x + 14.0 * scale,
+                y + 10.0 * scale,
+                3.0 * scale,
+                scale,
                 ink,
             );
-            fill_rect(pixmap, x + 13.0 * scale, y, 1.2 * scale, 15.0 * scale, ink);
+            fill_rect(pixmap, x + 16.0 * scale, y, scale, 13.0 * scale, ink);
         }
         ControlId::Topmost => {
             fill_rect(pixmap, x + 4.0 * scale, y, 10.0 * scale, 2.0 * scale, ink);
@@ -291,6 +334,44 @@ fn paint_control_icon(
             }
         }
     }
+}
+
+fn paint_split_sync(
+    pixmap: &mut Pixmap,
+    rect: ControlRect,
+    active: bool,
+    dark: bool,
+    ink: (u8, u8, u8, u8),
+) {
+    fill_control_rect(
+        pixmap,
+        rect,
+        if active {
+            if dark {
+                (73, 76, 79, 235)
+            } else {
+                (210, 215, 218, 235)
+            }
+        } else if dark {
+            (43, 43, 40, 220)
+        } else {
+            (238, 235, 226, 220)
+        },
+    );
+    let scale = (rect.height as f32 / 22.0).max(0.5);
+    let x = rect.x as f32 + 4.0 * scale;
+    let y = rect.y as f32 + 6.0 * scale;
+    fill_rect(pixmap, x, y, 10.0 * scale, scale, ink);
+    fill_rect(pixmap, x, y + 8.0 * scale, 10.0 * scale, scale, ink);
+    fill_rect(pixmap, x, y, scale, 4.0 * scale, ink);
+    fill_rect(
+        pixmap,
+        x + 9.0 * scale,
+        y + 5.0 * scale,
+        scale,
+        4.0 * scale,
+        ink,
+    );
 }
 
 fn paint_opacity_popup(pixmap: &mut Pixmap, layout: &ControlLayout, visual: ToolbarVisual) {

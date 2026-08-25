@@ -203,10 +203,17 @@
 
 ### Split View
 
-- **Definition**：源码与预览固定 50/50 并排的视图。分隔线不可拖动，两侧各自保存滚动位置，不做滚动同步。
+- **Definition**：源码与预览固定 50/50 并排的视图。分隔线不可拖动；两侧各自保存滚动位置，并提供默认开启、可关闭的语义滚动同步。
 - **Authority**：同 Source/Preview；两个面板呈现的是同一 DocumentState。
 - **Not equivalent to**：两个独立文档。
 - **Lifetime**：视图模式切换期间。
+
+### Split Scroll Sync
+
+- **Definition**：Split 中由当前滚动手势所属面板单向驱动的 source-range 语义对齐；不使用两侧原始滚动百分比。
+- **Authority**：Runtime Config 中的 `split_scroll_sync` 只决定是否启用；实际锚点来自当前 Document generation 的 Source/Preview projection。
+- **Not equivalent to**：Document selection、双向反馈循环、两个面板共享同一个 scroll offset。
+- **Lifetime**：配置跨进程持久化；一次同步锚点只在对应 generation/layout 有效。
 
 ---
 
@@ -246,7 +253,7 @@
 
 ### Runtime Config
 
-- **Definition**：运行时的配置状态（ConfigState）：theme、opacity、content zoom、always on top、view mode、窗口布局等。
+- **Definition**：运行时的配置状态（ConfigState）：theme、opacity、content zoom、split scroll sync、always on top、view mode、窗口布局等。
 - **Authority**：运行时 ConfigState 是当前配置权威。
 - **Not equivalent to**：config.toml 文件本身。
 - **Lifetime**：进程生命周期；启动时从 durable config 载入（损坏则默认值）。
@@ -257,6 +264,13 @@
 - **Authority**：Runtime Config 中的 `content_zoom_percent`；UI、source projection、Preview、数学与图片只消费该值。
 - **Not equivalent to**：Windows DPI、窗口尺寸、Document generation、Markdown 语义或 Shell 控件缩放。
 - **Lifetime**：进程内由 ConfigCoordinator 提交更新，持久投影到 Durable Config；重启后恢复。
+
+### Source Search Session
+
+- **Definition**：当前 Source 文档的纯文本查找/替换会话，持有 query、replacement、大小写选项、generation-bound match ranges 与 active match。
+- **Authority**：无；它只读取 DocumentState projection，并通过 typed edit intent 请求替换。
+- **Not equivalent to**：另一份文档文本、正则表达式引擎、跨文件搜索索引。
+- **Lifetime**：进程内的 Editor Session；关闭查找控件后可丢弃，Document generation 改变时旧 match ranges 立即失效。
 
 ### Durable Config
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Qualification In Progress — USER-observed candidate defects corrected; exact-candidate requalification required.
+Implementation Complete — exact qualification and USER manual review remain pending.
 
 ## Purpose
 
@@ -25,10 +25,14 @@ Qualification In Progress — USER-observed candidate defects corrected; exact-c
   Manual、Readiness evidence。
 - 对 exact-candidate 人工验收中 USER 实际观察到的 release-blocking 缺陷作最小、回归绑定的纠正；
   每次 tracked correction 都作废旧候选并重新开始资格化。
+- 实现 USER 在候选冻结前明确批准的 Split 语义滚动同步（默认开启、可关闭）、当前 Source
+  纯文本查找/替换（大小写开关、无正则），以及 `\(->$` 数学转换控件标识。
+- 对 Release 运行时内存做 source/preview/split/cache 分模块归因；只实施有前后测量收益、保持
+  correctness/latency 的低复杂度优化。
 
 ## Out of Scope
 
-- 未经 USER 实际缺陷报告授权的产品 runtime、产品依赖、Markdown/IME/window/persistence 行为变化。
+- 未经 USER 明确授权的其他产品 runtime、产品依赖、Markdown/IME/window/persistence 行为变化。
 - 为达到 180/400 ms target 做追逐式优化。
 - push、tag、remote workflow、draft release 或 publish。
 

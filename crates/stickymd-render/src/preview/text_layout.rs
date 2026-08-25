@@ -457,7 +457,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             [0..5, 6..10, 11..16]
         );
-        let index = PreviewTextIndex::new(Generation::initial(), selection_text, built.boxes);
+        let index = PreviewTextIndex::new(
+            Generation::initial(),
+            selection_text,
+            built.boxes,
+            Vec::new(),
+        );
         assert_eq!(
             index
                 .selection_rects(PreviewSelection {

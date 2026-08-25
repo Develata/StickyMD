@@ -124,7 +124,7 @@ v1 不支持 Windows 10、Linux、macOS、ARM64。
 
 以下能力均为 USER 已批准的骨架级决策，忠实建模即可，不再讨论取舍：
 
-1. 三视图：Source / Preview / Split（固定 50/50，分隔线不可拖动）。
+1. 三视图：Source / Preview / Split（固定 50/50，分隔线不可拖动）；Split 以 generation-bound source range 做默认开启、可关闭的语义滚动同步，并保留两侧独立滚动位置。
 2. Preview debounce 1000 ms；切换纯 Preview 时立即刷新；stale generation 丢弃。
 3. Markdown 方言：CommonMark + GFM + Comrak math delimiter（语义归 Comrak）。
 4. 数学：RaTeX / KaTeX-compatible；四种 delimiter；错误公式显示原文 + 轻提示，不崩溃。
@@ -138,6 +138,7 @@ v1 不支持 Windows 10、Linux、macOS、ARM64。
 12. 窗口：Always on top、左/右/上 dock、auto-hide、hover reveal、手动/Esc 收起、opacity 40–100、Light/System/Dark 主题、托盘生命周期、多显示器（混合 DPI、拔插、负坐标）。
 13. 文件可靠性：UTF-8（兼容 BOM 读取）、换行风格保留、temp 恢复、外部修改 reconcile、脏冲突 banner、无效 UTF-8 安全处理。
 14. Phase 10 交互修订：Windows 传统剪贴板快捷键；Source/Preview/Split 共享 50–300% Content Zoom；220×120 DIP 最小窗口；主窗口采用可聚焦的 Tool Window 身份；24 DIP 最近合格边缘 dock 捕获。
+15. Phase 14 USER 批准的候选冻结前修订：当前 Source 文档纯文本查找/替换（大小写开关、无正则）；数学分隔符转换控件以 `\(->$` 明示转换方向。
 
 详细契约见 `docs/plan/05..11`；用户可见行为投影见 `docs/features/`；
 验收见 `docs/acceptance-cases/`。

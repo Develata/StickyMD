@@ -5,6 +5,6 @@
 mod intent;
 
 pub use intent::{
-    AppIntent, PersistenceIntent, PreviewIntent, SaveReason, WindowPlatformIntent,
-    WindowPreferenceIntent, WindowResizeEdge,
+    AppIntent, LiteralSearchOptions, PersistenceIntent, PreviewIntent, SaveReason,
+    WindowPlatformIntent, WindowPreferenceIntent, WindowResizeEdge,
 };

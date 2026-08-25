@@ -19,13 +19,14 @@ StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown �
 - 核心本体对象只有：Note、Document Text、Preview、Managed Image Asset、Runtime Config、Window Placement、Editor Session。
 
 当前仓库状态：**Phase 14 release-policy calibration and qualification closure in progress**。旧 exact
-candidate 已被 USER 人工验收发现的 release-blocking implementation defects 作废；当前只允许这些
-缺陷的最小、回归绑定纠正，以及 candidate freeze 前的资格化工具/文档修正和 freeze 后的 ignored
-evidence。USER 已批准 release version `0.1.0`、unsigned distribution 与 v0.1.0 cold/warm startup
+candidate 已被 USER 人工验收发现的 release-blocking implementation defects 作废；USER 随后明确批准
+在重新 freeze 前加入默认开启且可关闭的 Split 语义同步、Source 纯文本查找替换、`\(->$` 控件标识，
+并执行有前后证据的 Release 内存审计。除这组批准范围、资格化工具/文档修正和回归绑定纠正外，
+不得扩张产品 runtime。USER 已批准 release version `0.1.0`、unsigned distribution 与 v0.1.0 cold/warm startup
 `550 ms` hard boundary；`180 ms` 仍是 preferred、`400 ms` 是 diagnostic engineering target。
 真实 IME、视觉、任务栏/Alt+Tab、托盘、物理多屏、恢复、Clean VM、manual disposition 与 remote
 artifact gates 尚未关闭。
-当前构建不得声称 RC ready 或稳定发布。
+新的 exact candidate 及其完整 evidence 未关闭前，不得声称 RC ready 或稳定发布。
 任何未写入 `docs/plan` 契约的产品功能，默认禁止实现。
 
 ---

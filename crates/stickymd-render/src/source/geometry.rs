@@ -5,6 +5,8 @@
 use cosmic_text::{Align, Attrs, Buffer, Cursor, Family, Scroll, Shaping, Wrap};
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::scroll::ScrollAnchor;
+
 use super::projection::{
     EditorRect, PADDING_DIP, PreeditVisual, SourceProjection, SourceProjectionError,
     scaled_metrics, selection_valid,
@@ -24,6 +26,48 @@ impl SourceProjection {
 
     pub fn scroll(&self) -> Scroll {
         self.buffer.scroll()
+    }
+
+    /// Maps the viewport top to a generation-local canonical source byte.
+    pub fn scroll_anchor(&self) -> ScrollAnchor {
+        let byte = self.hit_test(self.padding(), self.padding());
+        ScrollAnchor::point(byte)
+    }
+
+    /// Aligns the viewport top with a semantic source anchor.
+    ///
+    /// The source byte is converted to a cosmic-text cursor first. A second
+    /// layout-relative adjustment handles wrapped logical lines without using
+    /// document-wide scroll percentages.
+    pub fn scroll_to_anchor(
+        &mut self,
+        anchor: ScrollAnchor,
+    ) -> Result<Scroll, SourceProjectionError> {
+        if anchor.source_end > self.canonical.len() {
+            return Err(SourceProjectionError::InvalidPosition);
+        }
+        let source_byte = if anchor.source_end > anchor.source_byte {
+            let span = anchor.source_end - anchor.source_byte;
+            let interpolated = anchor.source_byte.saturating_add(
+                ((span as f64 * f64::from(anchor.block_fraction)).round() as usize).min(span),
+            );
+            self.nearest_grapheme_boundary(interpolated)
+        } else {
+            anchor.source_byte
+        };
+        let cursor = self
+            .cursor_for_global(source_byte)
+            .ok_or(SourceProjectionError::InvalidPosition)?;
+        self.buffer.set_scroll(Scroll::new(cursor.line, 0.0, 0.0));
+        self.buffer
+            .shape_until_cursor(&mut self.font_system, cursor, false);
+        let visual_offset = self
+            .caret_rect(source_byte)
+            .map_or(0.0, |rect| (rect.y - self.padding()).max(0.0));
+        self.buffer
+            .set_scroll(Scroll::new(cursor.line, visual_offset, 0.0));
+        self.buffer.shape_until_scroll(&mut self.font_system, false);
+        Ok(self.buffer.scroll())
     }
 
     pub fn hit_test(&self, x_px: f32, y_px: f32) -> usize {

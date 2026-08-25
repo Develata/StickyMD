@@ -611,3 +611,40 @@ click-through；100% 清理 layered style；只有 release/Enter/失焦提交配
 
 ### Failure Signals
 仍 clamp 到 70；40% 不可交互；部分内容未透明；100% 样式清理破坏其他 extended bits。
+
+---
+
+## AC-037 Split Semantic Scroll Sync
+
+### Preconditions
+Split 显示含标题、长段落、代码、表格、公式与图片的当前 generation；同步配置为默认开启。
+
+### Action
+分别在 Source 与 Preview 滚动到顶部、中部和尾部；关闭/重新开启同步；输入使 Preview 暂时
+stale 后继续滚动；重启验证配置。
+
+### Expected
+当前手势面板单向驱动另一侧到相近 source block，不以原始百分比绑定、不反馈抖动；stale Preview
+期间暂停同步；关闭时两侧独立位置可用；默认和持久化值为开启；Document generation 不因同步改变。
+
+### Failure Signals
+长图片/公式后明显比例漂移；双向反馈振荡；stale range 被使用；切换开关丢失两侧位置；同步修改文档。
+
+---
+
+## AC-038 Source Literal Find and Replace
+
+### Preconditions
+Source/Split 文本包含 ASCII、中文、Unicode 大小写差异、重复与相邻匹配；IME 可用。
+
+### Action
+用 Ctrl+F/Ctrl+H 测试大小写敏感/不敏感、上一个/下一个 wrap、替换当前、全部替换、Undo/Redo；
+在查找后修改文档制造 stale generation，并在 IME preedit 中尝试替换。
+
+### Expected
+只搜索当前 canonical Source；无正则；所有 range 都是 UTF-8 char boundary；文档变化后重算匹配；
+替换当前与全部替换分别只产生一个 canonical transaction/Undo entry；preedit 期间不替换且不污染组合。
+
+### Failure Signals
+搜索 Preview display text 或其他文件；大小写开关错误；stale range 改错文本；全部替换逐项生成
+多条 Undo/卡顿；Unicode 被切断；查找会话成为第二份可写文本 authority。

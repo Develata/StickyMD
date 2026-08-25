@@ -69,12 +69,19 @@ pub struct PreviewWorkerMetrics {
     pub completed: u64,
     pub coalesced: u64,
     pub raster_releases: u64,
+    pub projection_releases: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ProjectionRelease {
+    Rasters,
+    Document,
 }
 
 #[derive(Default)]
 struct Mailbox {
     pending: Option<PreviewJob>,
-    release_raster_caches: bool,
+    release: Option<ProjectionRelease>,
     shutdown: bool,
     metrics: PreviewWorkerMetrics,
 }
@@ -143,10 +150,22 @@ impl PreviewWorker {
     }
 
     pub fn release_raster_caches(&self) {
+        self.request_release(ProjectionRelease::Rasters);
+    }
+
+    pub fn release_document_projection(&self) {
+        self.request_release(ProjectionRelease::Document);
+    }
+
+    fn request_release(&self, requested: ProjectionRelease) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
             mailbox.pending = None;
-            mailbox.release_raster_caches = true;
+            mailbox.release = Some(
+                mailbox
+                    .release
+                    .map_or(requested, |queued| queued.max(requested)),
+            );
             ready.notify_one();
         }
     }
@@ -171,6 +190,11 @@ impl Drop for PreviewWorker {
     }
 }
 
+enum WorkerAction {
+    Release(ProjectionRelease),
+    Job(PreviewJob),
+}
+
 fn run_worker<F>(
     shared: Arc<(Mutex<Mailbox>, Condvar)>,
     on_completion: Arc<F>,
@@ -187,7 +211,7 @@ fn run_worker<F>(
                 Ok(mailbox) => mailbox,
                 Err(_) => return,
             };
-            while mailbox.pending.is_none() && !mailbox.release_raster_caches && !mailbox.shutdown {
+            while mailbox.pending.is_none() && mailbox.release.is_none() && !mailbox.shutdown {
                 mailbox = match ready.wait(mailbox) {
                     Ok(mailbox) => mailbox,
                     Err(_) => return,
@@ -196,18 +220,36 @@ fn run_worker<F>(
             if mailbox.shutdown {
                 return;
             }
-            if mailbox.release_raster_caches {
-                mailbox.release_raster_caches = false;
-                mailbox.metrics.raster_releases = mailbox.metrics.raster_releases.saturating_add(1);
-                None
+            if let Some(release) = mailbox.release.take() {
+                match release {
+                    ProjectionRelease::Rasters => {
+                        mailbox.metrics.raster_releases =
+                            mailbox.metrics.raster_releases.saturating_add(1);
+                    }
+                    ProjectionRelease::Document => {
+                        mailbox.metrics.projection_releases =
+                            mailbox.metrics.projection_releases.saturating_add(1);
+                    }
+                }
+                WorkerAction::Release(release)
             } else {
                 mailbox.metrics.started = mailbox.metrics.started.saturating_add(1);
-                mailbox.pending.take()
+                match mailbox.pending.take() {
+                    Some(job) => WorkerAction::Job(job),
+                    None => continue,
+                }
             }
         };
-        let Some(job) = job else {
-            pipeline.release_raster_caches();
-            continue;
+        let job = match job {
+            WorkerAction::Release(ProjectionRelease::Rasters) => {
+                pipeline.release_raster_caches();
+                continue;
+            }
+            WorkerAction::Release(ProjectionRelease::Document) => {
+                pipeline.release_document_projection();
+                continue;
+            }
+            WorkerAction::Job(job) => job,
         };
         let generation = job.generation();
         let result = execute(&mut pipeline, job, image_source.as_ref());
@@ -497,26 +539,65 @@ mod tests {
     }
 
     #[test]
-    fn raster_release_precedes_the_next_pending_relayout() {
+    fn raster_release_keeps_semantic_tree_for_fast_preview_return() {
         let (sender, receiver) = mpsc::sync_channel(2);
         let worker = PreviewWorker::start(move |completion| {
             let _ = sender.send(completion);
         })
         .unwrap();
         let generation = Generation::initial();
-        worker.submit(build(generation, "$x^2$"));
-        let first = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(first.result.is_ok());
+        worker.submit(build(generation, "# heading\n\nbody"));
+        assert!(
+            receiver
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .result
+                .is_ok()
+        );
 
         worker.release_raster_caches();
         worker.submit(PreviewJob::Relayout {
             generation,
             viewport: viewport(600),
         });
+        assert!(
+            receiver
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .result
+                .is_ok()
+        );
+        assert_eq!(worker.metrics().unwrap().raster_releases, 1);
+    }
+
+    #[test]
+    fn document_projection_release_forces_the_next_visible_request_to_rebuild() {
+        let (sender, receiver) = mpsc::sync_channel(2);
+        let worker = PreviewWorker::start(move |completion| {
+            let _ = sender.send(completion);
+        })
+        .unwrap();
+        let generation = Generation::initial();
+        worker.submit(build(generation, "# heading\n\nbody"));
+        assert!(
+            receiver
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .result
+                .is_ok()
+        );
+
+        worker.release_document_projection();
+        worker.submit(PreviewJob::Relayout {
+            generation,
+            viewport: viewport(600),
+        });
         let after_release = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(after_release.result.is_ok());
-        let metrics = worker.metrics().unwrap();
-        assert_eq!(metrics.raster_releases, 1);
+        assert!(matches!(
+            after_release.result,
+            Err(PreviewPipelineError::NoDocument)
+        ));
+        assert_eq!(worker.metrics().unwrap().projection_releases, 1);
     }
 
     #[test]

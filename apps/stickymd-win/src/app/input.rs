@@ -16,6 +16,9 @@ use crate::interaction::ImeSignal;
 
 impl StickyApp {
     pub(super) fn handle_ime(&mut self, event: Ime) {
+        if self.handle_search_ime(&event) {
+            return;
+        }
         if !mutation_input_allowed(
             self.recovery.is_pending(),
             self.preview_focused,
@@ -95,6 +98,14 @@ impl StickyApp {
             !self.window_accepts_editor_mutation(),
             self.asset_reconcile_pending,
         ) {
+            return;
+        }
+
+        if shortcut && matches!(code, Some(KeyCode::KeyF | KeyCode::KeyH)) {
+            self.open_search(code == Some(KeyCode::KeyH));
+            return;
+        }
+        if self.search.open && self.handle_search_key(&event, code, shortcut, shift) {
             return;
         }
 
@@ -369,6 +380,9 @@ impl StickyApp {
         if self.handle_shell_mouse_button(state, button) {
             return;
         }
+        if self.handle_search_mouse_button(state, button) {
+            return;
+        }
         if !self.window_accepts_editor_mutation() {
             return;
         }
@@ -503,7 +517,26 @@ impl StickyApp {
         };
         if self.preview_at_cursor().is_some() {
             self.preview_scroll_y = (self.preview_scroll_y + pixels).max(0.0);
+            if self.config.current().view_mode == ViewMode::Split
+                && self.config.current().split_scroll_sync
+            {
+                let current = self.coordinator.view().generation;
+                let anchor = self.preview_frame.as_ref().and_then(|frame| {
+                    (frame.generation() == current)
+                        .then(|| frame.index().scroll_anchor_at_y(self.preview_scroll_y))
+                        .flatten()
+                });
+                if let (Some(anchor), Some(projection)) = (anchor, &mut self.projection)
+                    && let Ok(scroll) = projection.scroll_to_anchor(anchor)
+                {
+                    self.session.scroll.line = scroll.line;
+                    self.session.scroll.vertical_px = scroll.vertical;
+                    self.session.scroll.horizontal_px = scroll.horizontal;
+                }
+            }
             self.request_preview_paint();
+            self.update_ime_area();
+            self.request_redraw();
             return;
         }
         let Some(projection) = &mut self.projection else {
@@ -513,6 +546,21 @@ impl StickyApp {
         self.session.scroll.line = scroll.line;
         self.session.scroll.vertical_px = scroll.vertical;
         self.session.scroll.horizontal_px = scroll.horizontal;
+        if self.config.current().view_mode == ViewMode::Split
+            && self.config.current().split_scroll_sync
+        {
+            let current = self.coordinator.view().generation;
+            let anchor = projection.scroll_anchor();
+            if let Some(frame) = self
+                .preview_frame
+                .as_ref()
+                .filter(|frame| frame.generation() == current)
+                && let Some(target_y) = frame.index().y_for_scroll_anchor(anchor)
+            {
+                self.preview_scroll_y = target_y.max(0.0);
+                self.request_preview_paint();
+            }
+        }
         self.update_ime_area();
         self.request_redraw();
     }

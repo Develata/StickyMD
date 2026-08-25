@@ -62,6 +62,7 @@ pub struct SourceProjection {
     pub(super) buffer: Buffer,
     pub(super) diagnostic_buffer: Buffer,
     pub(super) diagnostic_text: String,
+    pub(super) ui_buffer: Buffer,
     pub(super) fonts: FontSelection,
     pub(super) canonical: String,
     pub(super) generation: Generation,
@@ -94,6 +95,11 @@ impl SourceProjection {
             Metrics::new(13.0 * scale.max(0.5), 20.0 * scale.max(0.5)),
         );
         diagnostic_buffer.set_wrap(Wrap::None);
+        let mut ui_buffer = Buffer::new(
+            &mut font_system,
+            Metrics::new(13.0 * scale.max(0.5), 20.0 * scale.max(0.5)),
+        );
+        ui_buffer.set_wrap(Wrap::None);
         buffer.set_wrap(Wrap::WordOrGlyph);
         let mut projection = Self {
             font_system,
@@ -101,6 +107,7 @@ impl SourceProjection {
             buffer,
             diagnostic_buffer,
             diagnostic_text: String::new(),
+            ui_buffer,
             fonts,
             canonical: String::new(),
             generation: Generation::initial(),
@@ -657,6 +664,24 @@ mod tests {
                 byte
             );
         }
+    }
+
+    #[test]
+    fn semantic_range_anchor_maps_inside_a_tall_source_block() {
+        let text = (0..100)
+            .map(|index| format!("line {index:03}\n"))
+            .collect::<String>();
+        let mut projection = SourceProjection::new(&snapshot(&text), 500, 200, 1.0);
+        let scroll = projection
+            .scroll_to_anchor(crate::scroll::ScrollAnchor::new(0, text.len(), 0.5))
+            .unwrap();
+        assert!((45..=55).contains(&scroll.line));
+
+        let invalid = crate::scroll::ScrollAnchor::new(0, text.len() + 1, 0.5);
+        assert!(matches!(
+            projection.scroll_to_anchor(invalid),
+            Err(SourceProjectionError::InvalidPosition)
+        ));
     }
 
     #[test]

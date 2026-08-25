@@ -71,6 +71,7 @@ const REQUIRED_FILES: &[&str] = &[
     "docs/report/phase-14-release-policy.md",
     "docs/report/phase-14-startup-attribution-plan.md",
     "docs/report/phase-14-final-qualification.md",
+    "docs/report/phase-14-memory-attribution.md",
     "docs/reference/qualification-execution-model.md",
     "tools/manual/phase-14-guide.md",
     "docs/release-notes/0.1.0-draft.md",
@@ -153,10 +154,10 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-14.md");
     let content = read_text(&path)?;
     let observed = frozen_trace_ids(&content, "P14-A")?;
-    let expected: Vec<u16> = (1..=19).collect();
+    let expected: Vec<u16> = (1..=23).collect();
     if observed != expected {
         return Err(format!(
-            "{} IDs must be exactly P14-A01..P14-A19; observed {observed:?}",
+            "{} IDs must be exactly P14-A01..P14-A23; observed {observed:?}",
             path.display()
         ));
     }
@@ -749,10 +750,10 @@ fn verify_global_acceptance_sequence(root: &Path) -> Result<(), String> {
             observed.push(number);
         }
     }
-    let expected: Vec<u8> = (1..=36).collect();
+    let expected: Vec<u8> = (1..=38).collect();
     if observed != expected {
         return Err(format!(
-            "global acceptance IDs must be exactly AC-001..AC-036; observed {observed:?}"
+            "global acceptance IDs must be exactly AC-001..AC-038; observed {observed:?}"
         ));
     }
     Ok(())

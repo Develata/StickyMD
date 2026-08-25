@@ -182,6 +182,19 @@ Preview 只读，但必须支持：鼠标选择文字、Ctrl+C、滚动、点击
 - 选择公式：视觉选中公式矩形；Ctrl+C 复制其原始数学源码与 delimiter。
 - 选择图片：复制 alt text（不把 bitmap 复制到剪贴板，除非未来单独设计）。
 
+<a id="split-scroll-sync"></a>
+### Split 语义滚动同步
+
+- Split 提供配置开关，默认开启；关闭时 Source 与 Preview 继续使用各自保存的滚动位置。
+- 当前滚动手势所属面板是唯一 driver。它把 viewport 顶部映射为 `source byte + block 内比例`，
+  另一侧通过当前 generation 的有序 source-range anchor index 做一次目标定位；同步更新不得反向
+  触发第二轮滚动。
+- 不得直接绑定滚动条百分比。标题、换行、表格、公式与图片会让两侧高度非线性变化。
+- anchor index 随现有布局以 O(blocks) 构建；每次映射用二分查找 O(log blocks)、O(1) 临时空间，
+  并合并为每次 redraw 最多一次 target update。
+- Preview generation 落后于 Document 时暂停同步并保留两侧位置；没有精确 range 的节点使用最近
+  稳定 source block 与 block 内比例，不得猜测或修改 canonical text。
+
 ---
 
 <a id="preview-link-safety"></a>
