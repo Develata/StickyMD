@@ -10,7 +10,26 @@ use winit::dpi::{PhysicalPosition, PhysicalSize};
 use super::controls::ControlLayout;
 use super::toolbar_paint::{ToolbarVisual, paint_toolbar};
 use super::{CARET_BLINK, StickyApp};
-use crate::config::ViewMode;
+use crate::config::{ContentZoomPercent, ViewMode};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PresentationScales {
+    document: f64,
+    shell: f64,
+}
+
+impl PresentationScales {
+    fn new(dpi: f64, content_zoom: ContentZoomPercent) -> Self {
+        let document = dpi * f64::from(content_zoom.factor());
+        // Content zoom belongs only to document projections. Native shell
+        // geometry (toolbar, resize border, and hit testing) stays in window
+        // DPI coordinates so painting and pointer input cannot drift apart.
+        Self {
+            document,
+            shell: dpi,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PendingRedraw {
@@ -129,7 +148,12 @@ impl StickyApp {
         let Some(geometry) = self.view_geometry() else {
             return;
         };
-        let scale = f64::from(self.document_scale_factor());
+        let dpi = self
+            .window
+            .as_ref()
+            .map_or(1.0, |window| window.scale_factor());
+        let scales = PresentationScales::new(dpi, self.config.current().content_zoom_percent);
+        let scale = scales.document;
         let source_theme = if self.resolved_dark_theme() {
             stickymd_render::source::SourceTheme::Dark
         } else {
@@ -230,7 +254,7 @@ impl StickyApp {
             let pixmap = surface.pixmap_mut();
             PhysicalSize::new(pixmap.width(), pixmap.height())
         };
-        let layout = ControlLayout::new(surface_size, scale);
+        let layout = ControlLayout::new(surface_size, scales.shell);
         paint_toolbar(surface.pixmap_mut(), geometry, &layout, toolbar_visual);
         let presented = if let Err(error) = surface.present() {
             self.diagnostic = Some(error.to_string());
@@ -316,4 +340,67 @@ fn fill_rect(
     let mut paint = Paint::default();
     paint.set_color_rgba8(color.0, color.1, color.2, color.3);
     pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn phase10_content_zoom_keeps_toolbar_paint_and_hit_test_aligned() {
+        let dpi = 1.5;
+        let size = PhysicalSize::new(780, 1020);
+        let hit_layout = ControlLayout::new(size, dpi);
+        let expected_rect = hit_layout.rect(super::super::controls::ControlId::Split);
+        let hit_center = PhysicalPosition::new(
+            expected_rect.x + expected_rect.width / 2.0,
+            expected_rect.y + expected_rect.height / 2.0,
+        );
+        assert_eq!(
+            hit_layout.control_at(hit_center),
+            Some(super::super::controls::ControlId::Split)
+        );
+
+        for zoom in [50, 100, 300] {
+            let scales = PresentationScales::new(dpi, ContentZoomPercent::new_clamped(zoom));
+            assert_eq!(scales.shell, dpi, "content zoom {zoom}% moved the shell");
+            assert_eq!(scales.document, dpi * f64::from(zoom) / 100.0);
+
+            let paint_layout = ControlLayout::new(size, scales.shell);
+            assert_eq!(
+                paint_layout.rect(super::super::controls::ControlId::Split),
+                expected_rect,
+                "content zoom {zoom}% moved the painted Split control away from its hit target"
+            );
+
+            let mut pixmap = Pixmap::new(size.width, size.height).expect("test pixmap");
+            let geometry =
+                super::super::preview_runtime::geometry(ViewMode::Split, size, scales.shell as f32);
+            paint_toolbar(
+                &mut pixmap,
+                geometry,
+                &paint_layout,
+                ToolbarVisual {
+                    mode: ViewMode::Split,
+                    topmost: false,
+                    dark: false,
+                    system_theme: false,
+                    diagnostic: false,
+                    emphasized: true,
+                    opacity_popup: false,
+                    opacity: 96,
+                },
+            );
+            let sample_x = expected_rect.x.floor() as u32 + 1;
+            let sample_y = expected_rect.y.floor() as u32 + 1;
+            let painted = pixmap
+                .pixel(sample_x, sample_y)
+                .map(|color| (color.red(), color.green(), color.blue(), color.alpha()));
+            assert_eq!(
+                painted,
+                Some((210, 215, 218, 255)),
+                "content zoom {zoom}% painted the active Split control outside its hit rectangle"
+            );
+        }
+    }
 }

@@ -23,7 +23,7 @@
 | P10-A12 | AC-032 keyboard zoom ±10 and Ctrl+0 | Automated | main/numpad keyboard mapping tests | AUTOMATED PASS |
 | P10-A13 | AC-032 Ctrl+wheel ±5/notch with high-resolution accumulator | Automated | line/pixel delta accumulator tests | AUTOMATED PASS |
 | P10-A14 | AC-032 one ConfigCoordinator authority and coalesced writes | Automated | revision/write-count/debounce tests | AUTOMATED PASS |
-| P10-A15 | AC-032 Source/Preview/Split share zoom; Shell is unscaled | Automated | geometry/projection tests | AUTOMATED PASS |
+| P10-A15 | AC-032 Source/Preview/Split share zoom; Shell is unscaled | Automated | 50/100/300% toolbar paint-pixel/hit-target regression + copied-Release view-control clicks | AUTOMATED PASS |
 | P10-A16 | AC-032 zoom does not mutate Document or reparse Markdown | Automated | generation/parse-counter tests | AUTOMATED PASS |
 | P10-A17 | AC-032 math invalidation and image cache remain bounded | Automated | cache-key/budget/resource tests | AUTOMATED PASS |
 | P10-A18 | AC-033 minimum 220×120, default 520×680 | Automated | builder/config/geometry boundary tests | AUTOMATED PASS |

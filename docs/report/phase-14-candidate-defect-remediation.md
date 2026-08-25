@@ -14,6 +14,7 @@ Implementation corrected; fresh exact-candidate qualification and USER manual co
    收起；旧 runtime smoke 却报告通过。
 5. 已从 Left 停靠展开的窗口直接拖到 Top/Right 时，第一次拖动只会解除旧 Left Dock；必须再轻拖
    一次才会提交新边并自动收起。
+6. 内容缩放可以改变并重置，但非 100% 缩放下顶部工具栏图标的绘制位置与实际点击位置分离。
 
 这些事实均来自旧 exact candidate 的真实人工操作；该候选已经失效，不能继续作为 release evidence。
 
@@ -26,9 +27,37 @@ Implementation corrected; fresh exact-candidate qualification and USER manual co
 | Preview skeleton after mode switch | same clean generation 被误认为无需工作，忽略 Split/Preview viewport width 变化 | visible mode change 对 clean generation 发出 typed `Relayout` job | 复用 semantic tree，仅重新 layout/paint |
 | Real drag never commits Dock | winit 的真实 move loop 在自身 WndProc 内处理 `WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE`；旧 `with_msg_hook` 只观察 event-loop queue，因而只对 smoke 人工 `PostMessageW` 的消息生效 | drag/resize 成功后立即建立 guard；真实 winit Left release 统一调用 `complete_window_drag`，移除无效的 move-size hook authority | 每次拖动结束 O(1)，无轮询、无额外线程或 runtime dependency |
 | Direct Dock-to-Dock needs two drags | edge resolution 在检查新 snap candidate 前，先以旧边的 16-DIP detach 判定直接返回 `None` | 不同的新 snap edge 在同一次 `DragEnded` 中优先；只有未命中新边时才执行旧边 detach | 固定三个候选边，时间/空间均 O(1) |
+| Zoom moves toolbar paint only | toolbar 绘制错误复用了 `DPI × content zoom` 的 document scale，而命中测试按正确的 window DPI 布局 | 显式分离 document/shell scale；Shell 只用 DPI，document projection 才叠加 content zoom | 每帧 O(1)，无新增分配或缓存 |
 
 没有新增 runtime dependency，没有引入第二份 document authority，也没有让 smoke/test channel 进入产品
 runtime。
+
+工具栏回归同时由两层自动化持有：像素级 renderer test 验证 50/100/300% 下 active control 的绘制矩形
+与 DPI hit rectangle 相同；copied-Release runtime smoke 在三个缩放值下实际点击 Source/Split/Preview 并
+观察 durable view-mode acknowledgement。真实字体/图标观感仍由 G1 人工矩阵判定，不由截图或模拟点击
+冒充人工 PASS。
+
+## USER Rendering Stress Qualification Hardening
+
+USER 提供的压力文档已固化为
+`crates/stickymd-render/tests/fixtures/rendering-stress.md`。源附件 SHA-256 为
+`C27DD8ABAA714FDA3AD925831C79D58204A2733158E9ABAA55BC7F4581469FC6`；本地
+`E:/obsidian/test测试.md` 的 SHA-256 为
+`F59540160B94B201ED42CCBB1B1F1E1D3C242604DD9228D1A646CFAFA4DBBBF2`。CI 不依赖该机器绝对路径。
+
+适配只限于明确边界：Obsidian callout、WikiLink 与 Mermaid 保持 literal/CommonMark 行为；
+`\require`、自定义 `\def`、CD/extarrows 等宏包依赖改写为当前 RaTeX 支持的标准
+array、arrow、bra/ket、derivative 与 norm 等价形式，不降低到“出错也算 PASS”。独立的
+恶意错误公式仍由原有 Phase 6 failure-isolation fixture 持有。
+
+新回归验证 32 个 math node / 27 个唯一 `(literal, display)` cache key 全部经过
+RaTeX parse/layout/native raster；同时覆盖 320/900 px、50/100/300% 内容缩放、Light/Dark、
+`f32::MAX` 滚动 clamp、顶部/底部本地图片懒加载、远程图片不进入 image source，
+以及 copied-Release Preview/Split 字节级 source safety。像素非纯色、几何有界与进程存活是
+自动化事实；数学美学、文字可读性和人眼视觉质量仍保持 `NOT TESTED`。
+
+该 copied-Release 检查同时接入独立 `zoom` resource module；它不再依赖三边 Dock 物理拖动，桌面鼠标
+被 USER 或其它程序移动时不会遮蔽本项结果。完整候选仍会运行组合矩阵，日常缺陷回归可只运行 Zoom。
 
 ## Native Drag Interop Hardening
 

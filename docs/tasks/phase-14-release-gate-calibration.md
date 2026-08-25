@@ -70,11 +70,12 @@ tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任
 
 ## Candidate Defect Correction
 
-旧 exact candidate 在人工验收中暴露五项 implementation defect：同一行局部 selection 误涂其它
+旧 exact candidate 在人工验收中暴露六项 implementation defect：同一行局部 selection 误涂其它
 逻辑行；math delimiter conversion 后 Source projection 未立即进入 layout；Split/Preview 之间切换时
 clean preview 未按新 viewport relayout；真实 winit move loop 未提交 Dock，导致三边失焦自动收起不
 工作；从旧 Dock 直接换到另一边时错误地先 detach，导致需要第二次拖动。修复不改变 Document
-authority、Markdown/math semantics 或 runtime dependency。Phase 8
+authority、Markdown/math semantics 或 runtime dependency；内容缩放导致工具栏 paint/hit 坐标分离的
+问题通过 document scale 与 DPI-only shell scale 分权修复。Phase 8
 copied-Release smoke 改用真实指针拖动与真实 shell 失焦，同时补齐 left/top/right、两个顶角和 Pin
 ON/OFF 正交路径，并连续执行 Left -> Top -> Left -> Right、禁止以 Floating 中间态掩盖直接换边；
 人工 G2 在新候选上重跑前仍为 `NOT TESTED`。详见
@@ -102,6 +103,12 @@ move-size lifecycle 权威且不新增 runtime dependency。详见
 静态 CRT 复跑同时暴露 Phase 11-B 旧 `replace_range` 循环在 1 MiB/1000 formula 上的近似
 `O(n*k)` 搬移；已改为单向 `O(n+k)` 文本构建，p95 从 278--304 ms 降到 4.1 ms，语义和 authority
 不变。证据写入同一 candidate defect remediation report。
+
+USER 后续提供的 mixed Markdown/RaTeX 暴力文档已纳入仓库内确定性 fixture；宏包依赖
+仅按当前 RaTeX 支持改写为标准等价表达。Phase 5/6 Rust smoke 现在覆盖全量语义、
+27 个唯一公式布局/raster、窄/宽与高低缩放、深滚动图片懒加载；Phase 5 copied-Release
+Preview/Split runtime 改用该 fixture 并验证 canonical source 字节不变。人眼观感仍留在 G1
+`NOT TESTED`，不由 headless 像素断言替代。
 
 ## Result
 

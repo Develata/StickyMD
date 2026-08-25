@@ -424,6 +424,10 @@ pub(crate) fn press_zoom_out(window: WindowHandle) -> Result<(), String> {
     post_control_chord(window, 0x6D, 0x4A)
 }
 
+pub(crate) fn press_zoom_reset(window: WindowHandle) -> Result<(), String> {
+    post_control_chord(window, 0x30, 0x0B)
+}
+
 pub(crate) fn title(window: WindowHandle) -> Result<String, String> {
     ensure_window(window)?;
     Ok(raw_window_title(window.0))

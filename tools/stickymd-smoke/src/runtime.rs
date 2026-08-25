@@ -174,6 +174,15 @@ fn run_inner(
     }
 
     if matches!(scenario, RuntimeScenario::Preview | RuntimeScenario::Math) {
+        if scenario == RuntimeScenario::Preview {
+            let first_window = crate::window_control::visible_window(children[0].id())?;
+            crate::window_control::focus_split_preview(first_window)?;
+            wait_for_preview_projection(
+                first_window,
+                &["渲染引擎终极暴力测试", "STICKYMD_RENDERING_STRESS_END"],
+            )?;
+            assert_preview_stress_source_unchanged(&first_dir)?;
+        }
         let second_dir = root.join("split");
         let second_exe = copy_executable(&source, &second_dir)?;
         if scenario == RuntimeScenario::Math {
@@ -189,6 +198,14 @@ fn run_inner(
         if scenario == RuntimeScenario::Math {
             assert_math_source_unchanged(&first_dir)?;
             assert_math_source_unchanged(&second_dir)?;
+        } else {
+            let second_window = crate::window_control::visible_window(children[1].id())?;
+            crate::window_control::focus_split_preview(second_window)?;
+            wait_for_preview_projection(
+                second_window,
+                &["渲染引擎终极暴力测试", "STICKYMD_RENDERING_STRESS_END"],
+            )?;
+            assert_preview_stress_source_unchanged(&second_dir)?;
         }
         return Ok(());
     }
@@ -945,6 +962,8 @@ fn run_phase10_lifecycle(
     run_window_shell_lifecycle(program_directory, executable, primary)?;
     let restored_style = wait_for_tool_window_style(window)?;
 
+    verify_zoomed_toolbar_alignment(program_directory, primary, window)?;
+
     crate::window_control::resize_to_dip(window, 220, 120)?;
     wait_for_config_field(program_directory, "width_dip = 220")?;
     wait_for_config_field(program_directory, "height_dip = 120")?;
@@ -959,6 +978,61 @@ fn run_phase10_lifecycle(
     wait_for_layered_alpha(window, Some(102))?;
     runtime_report!(
         "Phase 10 runtime initial_style={initial_style:?} restored_style={restored_style:?} compact_rect={compact:?} opacity=40"
+    );
+    Ok(())
+}
+
+fn verify_zoomed_toolbar_alignment(
+    program_directory: &Path,
+    primary: &mut Child,
+    window: crate::window_control::WindowHandle,
+) -> Result<(), String> {
+    let mut current_zoom = 100_u16;
+    for target_zoom in [50_u16, 100, 300] {
+        if target_zoom == 100 {
+            crate::window_control::press_zoom_reset(window)?;
+        } else {
+            let steps = current_zoom.abs_diff(target_zoom) / 10;
+            for _ in 0..steps {
+                if target_zoom > current_zoom {
+                    crate::window_control::press_zoom_in(window)?;
+                } else {
+                    crate::window_control::press_zoom_out(window)?;
+                }
+            }
+        }
+        wait_for_config_field(
+            program_directory,
+            &format!("content_zoom_percent = {target_zoom}"),
+        )?;
+        verify_toolbar_view_clicks(program_directory, primary, window, target_zoom, false)?;
+        current_zoom = target_zoom;
+    }
+
+    crate::window_control::press_zoom_reset(window)?;
+    wait_for_config_field(program_directory, "content_zoom_percent = 100")
+}
+
+fn verify_toolbar_view_clicks(
+    program_directory: &Path,
+    child: &mut Child,
+    window: crate::window_control::WindowHandle,
+    zoom: u16,
+    finish_in_split: bool,
+) -> Result<(), String> {
+    crate::window_control::switch_to_source(child.id())?;
+    wait_for_config_field(program_directory, "view_mode = \"source\"")?;
+    crate::window_control::switch_to_preview(window)?;
+    wait_for_config_field(program_directory, "view_mode = \"preview\"")?;
+    crate::window_control::switch_to_split(window)?;
+    wait_for_config_field(program_directory, "view_mode = \"split\"")?;
+    if !finish_in_split {
+        crate::window_control::switch_to_source(child.id())?;
+        wait_for_config_field(program_directory, "view_mode = \"source\"")?;
+    }
+    ensure_alive(child, "Phase 10 zoomed toolbar instance")?;
+    runtime_report!(
+        "Phase 10 runtime zoom={zoom} shell paint coordinates and simulated toolbar hit targets remained aligned"
     );
     Ok(())
 }
@@ -1429,6 +1503,9 @@ fn run_zoom_resource_measurement(
             let result = (|| {
                 wait_for_layout(&directory)?;
                 let window = crate::window_control::visible_window(child.id())?;
+                if repetition == 0 {
+                    verify_toolbar_view_clicks(&directory, &mut child, window, zoom, true)?;
+                }
                 crate::window_control::park_cursor_outside_window(window)?;
                 thread::sleep(ZOOM_RESOURCE_WARMUP);
                 ensure_alive(&mut child, "Phase 10 zoom resource instance")?;
@@ -2547,17 +2624,9 @@ fn prepare_preview_layout(program_directory: &Path, view_mode: &str) -> Result<(
             note_directory.display()
         )
     })?;
-    let fixture = concat!(
-        "# StickyMD Preview Smoke\n\n",
-        "中文 **粗体** and *italic* with [safe link](https://example.com).\n\n",
-        "> quote\n\n- [x] task\n\n",
-        "| left | right |\n| :--- | ---: |\n| A | B |\n\n",
-        "`inline` and $x^2$\n\n",
-        "![remote placeholder](https://example.invalid/no-fetch.png)\n\n",
-        "<script>throw new Error('must remain literal')</script>\n\n",
-        "<iframe src=\"https://example.invalid/must-not-load\"></iframe>\n"
-    );
-    fs::write(note_directory.join("note.md"), fixture)
+    write_tiny_png(&note_directory.join("images/stress-top.png"))?;
+    write_tiny_png(&note_directory.join("images/stress-bottom.png"))?;
+    fs::write(note_directory.join("note.md"), RENDERING_STRESS_FIXTURE)
         .map_err(|error| format!("cannot seed preview smoke note: {error}"))?;
     fs::write(
         note_directory.join("config.toml"),
@@ -2565,6 +2634,19 @@ fn prepare_preview_layout(program_directory: &Path, view_mode: &str) -> Result<(
     )
     .map_err(|error| format!("cannot seed preview smoke config: {error}"))?;
     Ok(())
+}
+
+const RENDERING_STRESS_FIXTURE: &str =
+    include_str!("../../../crates/stickymd-render/tests/fixtures/rendering-stress.md");
+
+fn assert_preview_stress_source_unchanged(program_directory: &Path) -> Result<(), String> {
+    let actual = fs::read_to_string(program_directory.join("note/note.md"))
+        .map_err(|error| format!("cannot read rendering stress note: {error}"))?;
+    if actual == RENDERING_STRESS_FIXTURE {
+        Ok(())
+    } else {
+        Err("native rendering stress preview changed canonical Markdown source".to_owned())
+    }
 }
 
 const PHASE11B_SOURCE: &str = concat!(

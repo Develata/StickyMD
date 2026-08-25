@@ -8,7 +8,7 @@
 | ID | Plan / AC mapping | Mode | Checked-in evidence | Status |
 | --- | --- | --- | --- | --- |
 | P06-A01 | 06 delimiter ownership; AC-014 | Automated | Comrak four-delimiter tests prove RaTeX receives delimiter-free literals | AUTOMATED PASS |
-| P06-A02 | 06 RaTeX parser/layout authority | Automated | representative formula fixture and 10,000 deterministic input test through [`phase-06.ps1`](../../tools/smoke/phase-06.ps1) | AUTOMATED PASS |
+| P06-A02 | 06 RaTeX parser/layout authority | Automated | representative formula fixture, 10,000 deterministic inputs and checked-in rendering-stress corpus: 32 math nodes / 27 unique formula-layout keys all parse, layout and raster through [`phase-06.ps1`](../../tools/smoke/phase-06.ps1) | AUTOMATED PASS |
 | P06-A03 | 06 direct native painter | Automated | exhaustive DisplayItem/PathCommand tests, embedded-font raster golden and dependency scan proving no PNG/WebView hot path | AUTOMATED PASS |
 | P06-A04 | 06 inline/display geometry | Automated | baseline alignment, display centering, container and overwide-formula tests | AUTOMATED PASS |
 | P06-A05 | 06 formula failure isolation; AC-015 | Automated | malformed/oversize/count-limit tests preserve original literal, atomic selection, border marker and hover detail | AUTOMATED PASS |
@@ -16,14 +16,14 @@
 | P06-A07 | 06 DPI/theme cache keys | Automated | 100/125/150/200% scale and Light/Dark rebuild tests | AUTOMATED PASS |
 | P06-A08 | 06 bounded caches | Automated | 512-entry layout, 8 MiB raster and 4 MiB glyph-outline eviction tests | AUTOMATED PASS |
 | P06-A09 | 06 duplicate reuse | Automated | counters prove repeated formula layout/raster hits | AUTOMATED PASS |
-| P06-A10 | 06 resize/scroll stability | Automated | counters prove 100 resizes and 1,000 scrolls add no parse or raster work | AUTOMATED PASS |
+| P06-A10 | 06 resize/scroll stability | Automated | counters prove 100 resizes and 1,000 scrolls add no parse or raster work; stress fixture clamps `f32::MAX` overscroll and admits the deep local image only after the bottom viewport becomes visible | AUTOMATED PASS |
 | P06-A11 | 06 hidden cache policy | Automated | Source transition and worker tests release raster projection while retaining reusable layout/font state | AUTOMATED PASS |
 | P06-A12 | 06 math resources | Automated | 64 KiB/formula, 2,000 formulas/document and pathological raster allocation guards | AUTOMATED PASS |
 | P06-A13 | 06 CJK/Unicode fallback | Automated | native `\\text{中文}` raster test with non-empty alpha output | AUTOMATED PASS |
 | P06-A14 | 10 math performance | Automated | cold/warm formula plus 20 KiB/100 KiB/1 MiB math-document Release baseline via [`phase-06.ps1 -Performance`](../../tools/smoke/phase-06.ps1) | AUTOMATED PASS |
-| P06-A15 | 11 runtime source safety | Automated | copied Release Preview/Split process-survival and byte-exact source test via [`phase-06.ps1 -Runtime`](../../tools/smoke/phase-06.ps1) | AUTOMATED PASS |
+| P06-A15 | 11 runtime source safety | Automated | checked-in rendering-stress tests plus copied Release Preview/Split process-survival and byte-exact source tests; Phase 5 copied-runtime uses the same stress source while focused Phase 6 runtime retains malformed-formula isolation via [`phase-06.ps1 -Runtime`](../../tools/smoke/phase-06.ps1) | AUTOMATED PASS |
 | P06-A16 | 11 dependency/unsafe/CI governance | Automated | Rust smoke governance, cargo-tree denylist, core/render unsafe scan and CI Phase 6 task | AUTOMATED PASS |
-| P06-M01 | AC-014 representative visual fidelity | Manual | Current-commit Windows 11 Release screenshot matrix for all formula fixtures required | NOT TESTED |
+| P06-M01 | AC-014 representative visual fidelity | Manual | Current-commit Windows 11 Release screenshot matrix for focused and rendering-stress formula fixtures required | NOT TESTED |
 | P06-M02 | AC-014 inline baseline and display centering | Manual | 100/125/150/200% DPI Light/Dark mixed-typography receipt required | NOT TESTED |
 | P06-M03 | AC-015 error border/icon/hover presentation | Manual | malformed-formula hover and readability receipt required | NOT TESTED |
 | P06-A17 | 10 formula memory and idle CPU | Automated | Six-state, five-run Private Working Set/Private Bytes matrix and 60 s CPU intervals through [`phase-06.ps1 -Resources`](../../tools/smoke/phase-06.ps1), with current-commit receipt in the Phase 6 report | AUTOMATED PASS |

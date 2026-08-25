@@ -16,7 +16,7 @@
 | P05-A07 | 06 links; AC-013 | Automated | allowed/blocked target classification and hit-test tests | AUTOMATED PASS |
 | P05-A08 | 06 remote images; AC-017 | Automated | image classification and zero-network dependency scan | AUTOMATED PASS |
 | P05-A09 | 06 RenderTree separation | Automated | semantic-to-render projection golden tests | AUTOMATED PASS |
-| P05-A10 | 06 native layout | Automated | paragraph/list/code/table/math/image layout tests | AUTOMATED PASS |
+| P05-A10 | 06 native layout | Automated | paragraph/list/code/table/math/image layout tests plus checked-in rendering-stress raster matrix at 320/900 px, 50/100/300% content scale and Light/Dark | AUTOMATED PASS |
 | P05-A11 | 06 viewport culling | Automated | sorted-block binary-search visibility tests | AUTOMATED PASS |
 | P05-A12 | 06 preview selection/copy; AC-013 | Automated | wrapped-row selection, block-copy, Ctrl+A/C routing and clipboard-boundary tests | AUTOMATED PASS |
 | P05-A13 | 04/06 read-only preview authority | Automated | input-routing tests proving Preview emits no document edit | AUTOMATED PASS |
@@ -24,12 +24,12 @@
 | P05-A15 | 06 bounded preview scheduler | Automated | virtual-time debounce, immediate mode and explicit 100-rapid-Split-edit latest-only build test | AUTOMATED PASS |
 | P05-A16 | 06 worker lifecycle | Automated | one-worker, bounded mailbox and typed failure tests | AUTOMATED PASS |
 | P05-A17 | 06 resource limits | Automated | 5 MiB/depth/node-limit rejection tests | AUTOMATED PASS |
-| P05-A18 | 06 robustness | Automated | 10,000 deterministic malformed/random inputs plus 10k code, 100×20 table and 2k math fixtures | AUTOMATED PASS |
+| P05-A18 | 06 robustness | Automated | 10,000 deterministic malformed/random inputs plus 10k code, 100×20 table, 2k math and USER-supplied mixed Markdown/RaTeX stress fixture; code/math, raw-HTML, Mermaid, WikiLink and remote-image boundaries remain literal/non-executing | AUTOMATED PASS |
 | P05-A19 | 06 no parse on resize/scroll | Automated | counters prove 100 resizes add 0 parses and 1000 scroll paints add 0 parses/semantic rebuilds | AUTOMATED PASS |
 | P05-A20 | 09 Source/Preview/Split | Automated | view-mode, fixed split and independent scroll state tests | AUTOMATED PASS |
 | P05-A21 | 10 preview performance | Automated | [`phase-05.ps1 -Performance`](../../tools/smoke/phase-05.ps1) cold plus 20 warm 20 KiB/100 KiB/1 MiB Release baseline | AUTOMATED PASS |
 | P05-A22 | 11 dependency/unsafe/CI governance | Automated | Phase smoke governance, cargo tree and forbidden architecture checks | AUTOMATED PASS |
-| P05-M01 | AC-013 native visual fidelity | Manual | Current-commit Windows 11 Release visual matrix required | NOT TESTED |
+| P05-M01 | AC-013 native visual fidelity | Manual | Current-commit Windows 11 Release visual matrix, including the checked-in rendering-stress fixture, required; non-flat pixels/process survival do not substitute for visual judgement | NOT TESTED |
 | P05-M02 | AC-013 preview select/copy/link interaction | Manual | Current-commit mouse/clipboard/Shell receipt required | NOT TESTED |
 | P05-M03 | AC-013 Split 50/50 and 1000 ms perceived update | Manual | Current-commit source/preview interaction, selection preservation and independent-scroll receipt required | NOT TESTED |
 | P05-M04 | AC-014 math placeholder presentation | Manual | Current-commit four-delimiter visual receipt required | NOT TESTED |
