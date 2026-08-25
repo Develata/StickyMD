@@ -20,7 +20,7 @@ StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown �
 
 当前仓库状态：**Phase 14 release-policy calibration and qualification closure in progress**。旧 exact
 candidate 已被 USER 人工验收发现的 release-blocking implementation defects 作废；USER 随后明确批准
-在重新 freeze 前加入默认开启且可关闭的 Split 语义同步、Source 纯文本查找替换、`\(->$` 控件标识，
+在重新 freeze 前加入默认开启且可关闭的 Split 语义同步、Source 纯文本查找替换、`$` 控件标识，
 并执行有前后证据的 Release 内存审计。除这组批准范围、资格化工具/文档修正和回归绑定纠正外，
 不得扩张产品 runtime。USER 已批准 release version `0.1.0`、unsigned distribution 与 v0.1.0 cold/warm startup
 `550 ms` hard boundary；`180 ms` 仍是 preferred、`400 ms` 是 diagnostic engineering target。

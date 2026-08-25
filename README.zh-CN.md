@@ -26,7 +26,7 @@ v0.1.0 明确采用未做 Authenticode 签名的 portable ZIP，Windows 可能�
 
 - Split 默认按 generation-bound Markdown source range 双向对齐滚动，可通过分隔线上的同步按钮关闭并保留两边独立位置。
 - Source 支持 `Ctrl+F` 纯文本查找与 `Ctrl+H` 查找替换，大小写敏感开关默认关闭，不支持正则。
-- 顶部 `\(->$` 按钮把 Comrak 确认的 `\(...\)` / `\[...\]` 数学分隔符批量转换为 dollar 形式。
+- 顶部 `$` 按钮把 Comrak 确认的 `\(...\)` / `\[...\]` 数学分隔符批量转换为 dollar 形式。
 
 ## 从源码构建
 

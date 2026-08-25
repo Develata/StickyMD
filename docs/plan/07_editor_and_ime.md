@@ -45,7 +45,7 @@
 ### AI 数学分隔符语义转换
 
 - 顶部工具栏提供一个紧凑的 `Convert AI math delimiters` typed action；Interaction Shell
-  以 `\(->$` 明示转换方向；Interaction Shell 只能发出 intent，不得直接改写 `DocumentState`。
+  使用紧凑、清晰的 `$` 标识；Interaction Shell 只能发出 intent，不得直接改写 `DocumentState`。
 - 每次 action 必须从当前 generation 的 `DocumentSnapshot` 经现有 Comrak semantic pipeline
   识别真正的 math node，只转换原始 delimiter 为 `\(...\)` 或 `\[...\]` 的节点；不得用
   regex、全局 replace、自有 math parser、stale Preview AST 或 code/literal 猜测替代 Comrak。

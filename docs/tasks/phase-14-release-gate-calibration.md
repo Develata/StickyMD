@@ -26,7 +26,7 @@ Implementation Complete — exact qualification and USER manual review remain pe
 - 对 exact-candidate 人工验收中 USER 实际观察到的 release-blocking 缺陷作最小、回归绑定的纠正；
   每次 tracked correction 都作废旧候选并重新开始资格化。
 - 实现 USER 在候选冻结前明确批准的 Split 语义滚动同步（默认开启、可关闭）、当前 Source
-  纯文本查找/替换（大小写开关、无正则），以及 `\(->$` 数学转换控件标识。
+  纯文本查找/替换（大小写开关、无正则），以及 `$` 数学转换控件标识。
 - 对 Release 运行时内存做 source/preview/split/cache 分模块归因；只实施有前后测量收益、保持
   correctness/latency 的低复杂度优化。
 

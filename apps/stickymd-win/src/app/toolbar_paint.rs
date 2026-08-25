@@ -162,83 +162,45 @@ fn paint_control_icon(
             );
         }
         ControlId::ConvertMath => {
-            // Pixel label `\(->$`: both source delimiter and target are
-            // visible instead of relying on an ambiguous abstract icon.
-            for offset in 0..5 {
-                fill_rect(
-                    pixmap,
-                    x + offset as f32 * 0.55 * scale,
-                    y + offset as f32 * 2.4 * scale,
-                    scale.max(1.0),
-                    scale.max(1.0),
-                    ink,
-                );
-            }
+            // A single centered dollar sign remains legible in the compact
+            // toolbar at every supported shell DPI.
+            let stroke = (1.5 * scale).max(1.0);
+            let glyph_x = x + 5.0 * scale;
+            let glyph_y = y;
             fill_rect(
                 pixmap,
-                x + 4.0 * scale,
-                y + 2.0 * scale,
-                scale,
-                10.0 * scale,
+                glyph_x + 3.25 * scale,
+                glyph_y - 2.0 * scale,
+                stroke,
+                17.0 * scale,
+                ink,
+            );
+            fill_rect(pixmap, glyph_x, glyph_y, 8.0 * scale, stroke, ink);
+            fill_rect(
+                pixmap,
+                glyph_x,
+                glyph_y + 6.0 * scale,
+                8.0 * scale,
+                stroke,
                 ink,
             );
             fill_rect(
                 pixmap,
-                x + 5.0 * scale,
-                y + 1.0 * scale,
-                2.0 * scale,
-                scale,
+                glyph_x,
+                glyph_y + 12.0 * scale,
+                8.0 * scale,
+                stroke,
                 ink,
             );
+            fill_rect(pixmap, glyph_x, glyph_y, stroke, 7.0 * scale, ink);
             fill_rect(
                 pixmap,
-                x + 5.0 * scale,
-                y + 12.0 * scale,
-                2.0 * scale,
-                scale,
+                glyph_x + 6.5 * scale,
+                glyph_y + 6.0 * scale,
+                stroke,
+                7.5 * scale,
                 ink,
             );
-            fill_rect(
-                pixmap,
-                x + 8.0 * scale,
-                y + 7.0 * scale,
-                5.0 * scale,
-                scale,
-                ink,
-            );
-            fill_rect(
-                pixmap,
-                x + 11.0 * scale,
-                y + 5.0 * scale,
-                scale,
-                5.0 * scale,
-                ink,
-            );
-            fill_rect(
-                pixmap,
-                x + 15.0 * scale,
-                y + 2.0 * scale,
-                3.0 * scale,
-                scale,
-                ink,
-            );
-            fill_rect(
-                pixmap,
-                x + 14.0 * scale,
-                y + 6.0 * scale,
-                4.0 * scale,
-                scale,
-                ink,
-            );
-            fill_rect(
-                pixmap,
-                x + 14.0 * scale,
-                y + 10.0 * scale,
-                3.0 * scale,
-                scale,
-                ink,
-            );
-            fill_rect(pixmap, x + 16.0 * scale, y, scale, 13.0 * scale, ink);
         }
         ControlId::Topmost => {
             fill_rect(pixmap, x + 4.0 * scale, y, 10.0 * scale, 2.0 * scale, ink);

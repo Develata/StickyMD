@@ -94,5 +94,9 @@ USER approved all three candidate-freeze changes before v0.1.0:
 2. Find/replace is **literal text + case-sensitive toggle**, with no regex.
 3. The math delimiter conversion control is relabeled `\(->$`.
 
+After manual visual review, USER further simplified item 3 to a single `$` glyph because the compact
+pixel label distorted the arrow and dollar sign at the tested shell scale. This is a presentation-only
+calibration; the conversion intent, parser authority, and document transaction remain unchanged.
+
 These approvals invalidate the previous exact candidate and require new automated qualification and
 fresh manual acceptance before release readiness can be reconsidered.

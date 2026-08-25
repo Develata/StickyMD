@@ -425,25 +425,33 @@ mod tests {
                 "content zoom {zoom}% painted the active Split control outside its hit rectangle"
             );
 
-            let third = math_rect.width / 3.0;
-            for segment in 0..3 {
-                let start = (math_rect.x + third * f64::from(segment)).floor() as u32;
-                let end = (math_rect.x + third * f64::from(segment + 1)).ceil() as u32;
-                let top = math_rect.y.floor() as u32;
-                let bottom = (math_rect.y + math_rect.height).ceil() as u32;
-                let ink_pixels = (top..bottom)
-                    .flat_map(|y| (start..end).map(move |x| (x, y)))
-                    .filter(|(x, y)| {
-                        pixmap.pixel(*x, *y).is_some_and(|color| {
-                            (color.red(), color.green(), color.blue()) == (64, 63, 59)
-                        })
+            let top = math_rect.y.floor() as u32;
+            let bottom = (math_rect.y + math_rect.height).ceil() as u32;
+            let left = math_rect.x.floor() as u32;
+            let right = (math_rect.x + math_rect.width).ceil() as u32;
+            let mut ink = (top..bottom)
+                .flat_map(|y| (left..right).map(move |x| (x, y)))
+                .filter(|(x, y)| {
+                    pixmap.pixel(*x, *y).is_some_and(|color| {
+                        (color.red(), color.green(), color.blue()) == (64, 63, 59)
                     })
-                    .count();
-                assert!(
-                    ink_pixels > 0,
-                    "content zoom {zoom}% lost \\(->$ segment {segment}"
-                );
-            }
+                });
+            let first = ink.next().expect("dollar glyph must contain ink");
+            let (min_x, max_x, min_y, max_y) = ink.fold(
+                (first.0, first.0, first.1, first.1),
+                |(min_x, max_x, min_y, max_y), (x, y)| {
+                    (min_x.min(x), max_x.max(x), min_y.min(y), max_y.max(y))
+                },
+            );
+            assert!(
+                f64::from(min_x) >= math_rect.x + math_rect.width * 0.25
+                    && f64::from(max_x) <= math_rect.x + math_rect.width * 0.75,
+                "content zoom {zoom}% did not keep the dollar glyph centered"
+            );
+            assert!(
+                f64::from(max_y - min_y) >= math_rect.height * 0.45,
+                "content zoom {zoom}% clipped the dollar glyph vertically"
+            );
         }
     }
 }
