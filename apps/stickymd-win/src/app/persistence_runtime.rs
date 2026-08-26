@@ -115,13 +115,14 @@ impl StickyApp {
             IoCompletion::Note(completion) => {
                 self.worker.acknowledge_note_completion();
                 let completion_generation = completion.generation;
+                let completion_mode = completion.mode;
                 match completion.result {
                     Ok(PersistResult::Saved {
                         generation,
                         fingerprint,
                         ..
                     }) if generation == completion_generation => {
-                        self.handle_note_saved(event_loop, generation, fingerprint)
+                        self.handle_note_saved(event_loop, generation, fingerprint, completion_mode)
                     }
                     Ok(PersistResult::Saved { generation, .. }) => {
                         self.persistence.note_save_finished(false);
@@ -142,18 +143,26 @@ impl StickyApp {
                         } else {
                             self.reconcile_external(observed);
                         }
-                        self.complete_window_note_barriers(event_loop, false);
+                        if !self.resubmit_keep_local_after_superseded_save(completion_mode) {
+                            self.complete_window_note_barriers(event_loop, false);
+                        }
                     }
                     Err(error) => {
                         self.persistence.note_save_finished(false);
                         self.recovery.fail_operation();
-                        self.resolving_keep_local = false;
-                        self.diagnostic = Some(format!(
-                            "保存 generation {} 失败；内存文本仍保留。Ctrl+S 重试：{error}",
-                            completion_generation.value()
-                        ));
+                        let resubmitted =
+                            self.resubmit_keep_local_after_superseded_save(completion_mode);
+                        if !resubmitted {
+                            self.resolving_keep_local = false;
+                            self.diagnostic = Some(format!(
+                                "保存 generation {} 失败；内存文本仍保留。Ctrl+S 重试：{error}",
+                                completion_generation.value()
+                            ));
+                        }
                         self.update_window_title();
-                        self.complete_window_note_barriers(event_loop, false);
+                        if !resubmitted {
+                            self.complete_window_note_barriers(event_loop, false);
+                        }
                         self.request_redraw();
                     }
                 }
@@ -272,6 +281,7 @@ impl StickyApp {
         _event_loop: &ActiveEventLoop,
         generation: stickymd_core::Generation,
         fingerprint: stickymd_core::Hash32,
+        mode: PersistMode,
     ) {
         let completed_required = self.persistence.note_save_finished(true);
         if let Err(error) = self
@@ -302,14 +312,18 @@ impl StickyApp {
                 self.paths.note_tmp.clone(),
                 TemporaryCleanup::RecoveryResolved,
             );
-        } else if self.resolving_keep_local {
+        } else if self.resolving_keep_local && mode == PersistMode::ForceOverwrite {
             self.resolving_keep_local = false;
             self.persistence.clear_conflict();
             self.diagnostic = Some("已保留本地内容并覆盖外部文件。".into());
         } else {
             self.diagnostic = Some("已保存".into());
         }
-        if self.coordinator.view().dirty {
+        let keep_local_resubmitted = self.resubmit_keep_local_after_superseded_save(mode);
+        if keep_local_resubmitted {
+            // The explicit conflict resolution owns the one latest-pending
+            // slot. A generic stale-generation follow-up must not replace it.
+        } else if self.coordinator.view().dirty {
             self.submit_save(SaveTrigger::Debounce, None);
         } else if self.persistence.durability_required() && !completed_required {
             // A recreate hint overlapped a different save. Inspect the durable
@@ -317,8 +331,24 @@ impl StickyApp {
             self.worker.inspect_external(self.paths.note_file.clone());
         }
         self.update_window_title();
-        self.complete_window_note_barriers(_event_loop, true);
+        if !keep_local_resubmitted {
+            self.complete_window_note_barriers(_event_loop, true);
+        }
         self.request_redraw();
+    }
+
+    fn resubmit_keep_local_after_superseded_save(&mut self, completed_mode: PersistMode) -> bool {
+        if keep_local_needs_resubmit(
+            self.resolving_keep_local,
+            self.persistence.conflict().is_some(),
+            completed_mode,
+        ) {
+            self.diagnostic = Some("旧保存任务已完成；正在用最新内存文本执行“保留本地”…".into());
+            self.submit_save(SaveTrigger::KeepLocal, Some(PersistMode::ForceOverwrite));
+            true
+        } else {
+            false
+        }
     }
 
     fn complete_window_note_barriers(&mut self, event_loop: &ActiveEventLoop, succeeded: bool) {
@@ -335,5 +365,42 @@ impl StickyApp {
                 guards: self.window_guards(),
             },
         );
+    }
+}
+
+fn keep_local_needs_resubmit(
+    resolving_keep_local: bool,
+    conflict_present: bool,
+    completed_mode: PersistMode,
+) -> bool {
+    resolving_keep_local && conflict_present && completed_mode != PersistMode::ForceOverwrite
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keep_local_is_satisfied_only_by_a_force_overwrite_receipt() {
+        assert!(keep_local_needs_resubmit(
+            true,
+            true,
+            PersistMode::Guarded { expected: None }
+        ));
+        assert!(!keep_local_needs_resubmit(
+            true,
+            true,
+            PersistMode::ForceOverwrite
+        ));
+        assert!(!keep_local_needs_resubmit(
+            false,
+            true,
+            PersistMode::Guarded { expected: None }
+        ));
+        assert!(!keep_local_needs_resubmit(
+            true,
+            false,
+            PersistMode::Guarded { expected: None }
+        ));
     }
 }

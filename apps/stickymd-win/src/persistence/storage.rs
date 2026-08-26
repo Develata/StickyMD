@@ -14,7 +14,8 @@ use stickymd_core::{
 use thiserror::Error;
 
 use crate::platform::windows::atomic_file::{
-    AtomicPublishError, prepare_temporary, publish_prepared_existing, publish_prepared_new,
+    AtomicPublishError, move_file_no_replace, prepare_temporary, publish_prepared_existing,
+    publish_prepared_new,
 };
 use crate::platform::windows::file_identity::{OpenFileObservation, observe_open_file};
 
@@ -49,6 +50,10 @@ pub fn quarantine_temporary(path: &Path) -> Result<PathBuf, NoteStorageError> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
+    quarantine_temporary_at(path, stamp)
+}
+
+fn quarantine_temporary_at(path: &Path, stamp: u64) -> Result<PathBuf, NoteStorageError> {
     for suffix in 0..1000u16 {
         let filename = if suffix == 0 {
             format!("note.invalid-tmp-{stamp}.md")
@@ -56,20 +61,44 @@ pub fn quarantine_temporary(path: &Path) -> Result<PathBuf, NoteStorageError> {
             format!("note.invalid-tmp-{stamp}-{suffix}.md")
         };
         let destination = path.with_file_name(filename);
-        if destination
-            .try_exists()
-            .map_err(NoteStorageError::Metadata)?
-        {
-            continue;
+        match move_file_no_replace(path, &destination) {
+            Ok(()) => return Ok(destination),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(NoteStorageError::QuarantineTemporary(error)),
         }
-        fs::rename(path, &destination).map_err(NoteStorageError::QuarantineTemporary)?;
-        return Ok(destination);
     }
     Err(NoteStorageError::QuarantineNameExhausted)
 }
 
 pub fn preserve_canonical(source: &Path, destination: &Path) -> Result<(), NoteStorageError> {
-    fs::rename(source, destination).map_err(NoteStorageError::PreserveCanonical)
+    for suffix in 0..1000u16 {
+        let candidate = suffixed_path(destination, suffix);
+        match move_file_no_replace(source, &candidate) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(NoteStorageError::PreserveCanonical(error)),
+        }
+    }
+    Err(NoteStorageError::PreserveCanonical(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "all canonical recovery preservation names are occupied",
+    )))
+}
+
+fn suffixed_path(path: &Path, suffix: u16) -> PathBuf {
+    if suffix == 0 {
+        return path.to_owned();
+    }
+    let mut file_name = path
+        .file_stem()
+        .unwrap_or_else(|| std::ffi::OsStr::new("note.invalid"))
+        .to_os_string();
+    file_name.push(format!("-{suffix}"));
+    if let Some(extension) = path.extension() {
+        file_name.push(".");
+        file_name.push(extension);
+    }
+    path.with_file_name(file_name)
 }
 
 pub fn inspect_note(path: &Path) -> Result<Option<NoteObservation>, NoteStorageError> {
@@ -579,6 +608,43 @@ mod tests {
         remove_temporary(&temporary).unwrap();
         remove_temporary(&temporary).unwrap();
         assert!(!temporary.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preserving_canonical_never_overwrites_existing_recovery_evidence() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let source = root.join("note.md");
+        let occupied = root.join("note.invalid-42.md");
+        fs::write(&source, b"new canonical evidence").unwrap();
+        fs::write(&occupied, b"older recovery evidence").unwrap();
+
+        preserve_canonical(&source, &occupied).unwrap();
+
+        assert!(!source.exists());
+        assert_eq!(fs::read(&occupied).unwrap(), b"older recovery evidence");
+        assert_eq!(
+            fs::read(root.join("note.invalid-42-1.md")).unwrap(),
+            b"new canonical evidence"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn quarantining_temporary_suffixes_an_occupied_evidence_name() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let temporary = root.join("note.md.tmp");
+        let occupied = root.join("note.invalid-tmp-42.md");
+        fs::write(&temporary, b"new temporary evidence").unwrap();
+        fs::write(&occupied, b"older temporary evidence").unwrap();
+
+        let preserved = quarantine_temporary_at(&temporary, 42).unwrap();
+
+        assert_eq!(preserved, root.join("note.invalid-tmp-42-1.md"));
+        assert_eq!(fs::read(&occupied).unwrap(), b"older temporary evidence");
+        assert_eq!(fs::read(&preserved).unwrap(), b"new temporary evidence");
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -69,21 +69,16 @@ impl LineEnding {
         };
         let mut output = String::with_capacity(normalized.len() + extra);
         let mut segment = 0usize;
-        let mut index = 0usize;
-        while index < bytes.len() {
-            let (break_start, next) =
-                if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
-                    (index, index + 2)
-                } else if bytes[index] == b'\n' {
-                    (index, index + 1)
-                } else {
-                    index += 1;
-                    continue;
-                };
-            output.push_str(&normalized[segment..break_start]);
+        for (index, byte) in bytes.iter().enumerate() {
+            if *byte != b'\n' {
+                continue;
+            }
+            // Canonical text uses `\n` as its only line-break token. A `\r`
+            // immediately before it is still ordinary user content and must
+            // not be consumed as if this were an unnormalized durable CRLF.
+            output.push_str(&normalized[segment..index]);
             output.push_str(replacement);
-            segment = next;
-            index = next;
+            segment = index + 1;
         }
         output.push_str(&normalized[segment..]);
         output
@@ -117,12 +112,20 @@ mod tests {
         let text = "line1\nline2\n";
         assert_eq!(LineEnding::Crlf.apply(text), "line1\r\nline2\r\n");
         assert_eq!(LineEnding::Lf.apply(text), "line1\nline2\n");
-        // Mixed input is normalized first.
-        assert_eq!(LineEnding::Lf.apply("a\r\nb\n"), "a\nb\n");
+        // `apply` receives canonical text. An adjacent carriage return is
+        // content, not a second durable newline representation.
+        assert_eq!(LineEnding::Lf.apply("a\r\nb\n"), "a\r\nb\n");
     }
 
     #[test]
     fn to_internal_preserves_isolated_carriage_return() {
         assert_eq!(LineEnding::to_internal("a\r\nb\rc\n"), "a\nb\rc\n");
+    }
+
+    #[test]
+    fn adjacent_newline_does_not_consume_an_isolated_carriage_return() {
+        let runtime = "a\r\nb";
+        assert_eq!(LineEnding::Lf.apply(runtime), "a\r\nb");
+        assert_eq!(LineEnding::Crlf.apply(runtime), "a\r\r\nb");
     }
 }

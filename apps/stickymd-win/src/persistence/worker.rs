@@ -58,6 +58,7 @@ pub enum IoCompletion {
 #[derive(Debug)]
 pub struct NoteCompletion {
     pub generation: Generation,
+    pub mode: super::PersistMode,
     pub result: Result<PersistResult, NoteStorageError>,
 }
 
@@ -427,11 +428,16 @@ where
         match work {
             WorkerJob::Note(job) => {
                 let generation = job.request.generation;
+                let mode = job.request.mode;
                 let result = persist_note(&job.target, &job.temporary, &job.request);
                 if let Ok(mut mailbox) = shared.0.lock() {
                     mailbox.metrics.note_completed += 1;
                 }
-                on_completion(IoCompletion::Note(NoteCompletion { generation, result }));
+                on_completion(IoCompletion::Note(NoteCompletion {
+                    generation,
+                    mode,
+                    result,
+                }));
             }
             WorkerJob::External(target) => {
                 let completion = inspect_note_state_with_retry(&target);
@@ -560,10 +566,16 @@ mod tests {
             },
         };
         worker.submit_note(target.clone(), temporary.clone(), request("first"));
-        assert!(matches!(
-            receiver.recv_timeout(Duration::from_secs(3)).unwrap(),
-            IoCompletion::Note(_)
-        ));
+        let IoCompletion::Note(completion) = receiver.recv_timeout(Duration::from_secs(3)).unwrap()
+        else {
+            panic!("expected a note completion");
+        };
+        assert_eq!(
+            completion.mode,
+            super::super::PersistMode::Guarded {
+                expected: Some(hash_bytes(b"base"))
+            }
+        );
 
         worker.submit_note(target.clone(), temporary.clone(), request("stale-second"));
         assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());

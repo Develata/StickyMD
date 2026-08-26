@@ -218,6 +218,40 @@ pub(crate) fn publish_prepared_new(
     publish_new(target, temporary)
 }
 
+/// Move a same-directory file while failing if the destination already exists.
+///
+/// This is used when preserving recovery evidence: replacing an older
+/// diagnostic file would be data loss, so destination collision must remain a
+/// normal, retryable `AlreadyExists` result.
+pub(crate) fn move_file_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    if source.parent() != destination.parent() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "source and destination must share a directory",
+        ));
+    }
+    let source_wide = wide(source);
+    let destination_wide = wide(destination);
+    // SAFETY: both buffers are live, NUL-terminated same-directory UTF-16
+    // paths. MOVEFILE_REPLACE_EXISTING is deliberately absent, so an occupied
+    // destination fails without modifying either file.
+    unsafe {
+        MoveFileExW(
+            PCWSTR(source_wide.as_ptr()),
+            PCWSTR(destination_wide.as_ptr()),
+            MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(|source| {
+        let raw_code = (source.code().0 as u32) & 0xffff;
+        if raw_code == 0 {
+            std::io::Error::other(source)
+        } else {
+            std::io::Error::from_raw_os_error(raw_code as i32)
+        }
+    })
+}
+
 fn flush_windows_handle(file: &std::fs::File) -> std::io::Result<()> {
     let handle = HANDLE(file.as_raw_handle());
     // SAFETY: `handle` is borrowed from a live writable `File` and remains valid

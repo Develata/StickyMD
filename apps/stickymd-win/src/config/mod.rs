@@ -4,12 +4,14 @@
 
 mod coordinator;
 mod runtime;
+mod storage;
 
 pub use coordinator::{
     ConfigAck, ConfigCoordinator, ConfigPersistRequest, ConfigRevision, ConfigRevisionExhausted,
 };
 
 pub use runtime::{
-    ConfigStorageError, ConfigWarning, ContentZoomPercent, DockEdge, MIN_WINDOW_HEIGHT_DIP,
-    MIN_WINDOW_WIDTH_DIP, RuntimeConfig, ThemeMode, ViewMode, load_config, save_config,
+    ContentZoomPercent, DockEdge, MIN_WINDOW_HEIGHT_DIP, MIN_WINDOW_WIDTH_DIP, RuntimeConfig,
+    ThemeMode, ViewMode,
 };
+pub use storage::{ConfigStorageError, ConfigWarning, load_config, save_config};

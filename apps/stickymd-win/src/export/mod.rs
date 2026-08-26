@@ -17,11 +17,19 @@ use thiserror::Error;
 
 use crate::assets::resolve_local_image;
 use crate::platform::windows::atomic_file::{
-    AtomicPublishError, prepare_temporary_exclusive, publish_prepared,
+    AtomicPublishError, move_file_no_replace, prepare_temporary_exclusive, publish_prepared,
 };
-use crate::platform::windows::file_identity::same_existing_file;
+use crate::platform::windows::file_identity::{
+    OpenFileObservation, observe_open_file, same_existing_file,
+};
+use crate::platform::windows::managed_file::{delete_open_file, open_for_managed_mutation};
 
 static EXPORT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+struct OwnedStagingFile {
+    path: PathBuf,
+    observation: OpenFileObservation,
+}
 
 #[derive(Debug)]
 pub struct ExportRequest {
@@ -125,15 +133,18 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
                     .as_ref()
                     .ok_or(ExportError::InvalidTargetName)?
                     .join(format!("asset-{index}.tmp"));
-                owned_staging_files.push(staged_temporary.clone());
-                let (hash, extension) = copy_and_hash(&source, &staged_temporary)?;
+                let (hash, extension, observation) = copy_and_hash(&source, &staged_temporary)?;
+                owned_staging_files.push(OwnedStagingFile {
+                    path: staged_temporary.clone(),
+                    observation,
+                });
                 let name = if let Some(existing) = copied.get(&hash) {
-                    fs::remove_file(&staged_temporary).map_err(|source| {
-                        ExportError::LocalImage {
+                    remove_owned_staging_file(&staged_temporary, observation).map_err(
+                        |source| ExportError::LocalImage {
                             path: staged_temporary.clone(),
                             source,
-                        }
-                    })?;
+                        },
+                    )?;
                     existing.clone()
                 } else {
                     let name = choose_export_asset_name(hash, &extension, &occupied_names)?;
@@ -141,13 +152,15 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
                         .as_ref()
                         .ok_or(ExportError::InvalidTargetName)?
                         .join(&name);
-                    fs::rename(&staged_temporary, &staged_final).map_err(|source| {
+                    move_file_no_replace(&staged_temporary, &staged_final).map_err(|source| {
                         ExportError::LocalImage {
                             path: staged_temporary.clone(),
                             source,
                         }
                     })?;
-                    owned_staging_files.push(staged_final);
+                    if let Some(owned) = owned_staging_files.last_mut() {
+                        owned.path = staged_final;
+                    }
                     copied.insert(hash, name.clone());
                     occupied_names.insert(name.clone(), hash);
                     name
@@ -168,7 +181,7 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
         let prepared = prepare_unique_export_temporary(parent, &request.target, &durable)?;
         markdown_temporary = Some(prepared);
         if !copied.is_empty() {
-            fs::rename(
+            move_file_no_replace(
                 staging.as_ref().ok_or(ExportError::InvalidTargetName)?,
                 &asset_directory,
             )
@@ -190,8 +203,8 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
     // Only remove files this invocation created by create_new/rename; if the
     // directory contains anything else, remove_dir fails closed and leaves
     // recoverable clutter rather than touching the extra entry.
-    for path in owned_staging_files.into_iter().rev() {
-        let _ = fs::remove_file(path);
+    for owned in owned_staging_files.into_iter().rev() {
+        let _ = remove_owned_staging_file(&owned.path, owned.observation);
     }
     if let Some(staging) = &staging {
         let _ = fs::remove_dir(staging);
@@ -320,7 +333,10 @@ fn choose_asset_directory(parent: &Path, stem: &str) -> Result<PathBuf, ExportEr
     Err(ExportError::InvalidTargetName)
 }
 
-fn copy_and_hash(source: &Path, destination: &Path) -> Result<(Hash32, String), ExportError> {
+fn copy_and_hash(
+    source: &Path,
+    destination: &Path,
+) -> Result<(Hash32, String, OpenFileObservation), ExportError> {
     let mut input = File::open(source).map_err(|source_error| ExportError::LocalImage {
         path: source.to_owned(),
         source: source_error,
@@ -359,6 +375,11 @@ fn copy_and_hash(source: &Path, destination: &Path) -> Result<(Hash32, String), 
             path: destination.to_owned(),
             source: source_error,
         })?;
+    let observation =
+        observe_open_file(&output).map_err(|source_error| ExportError::LocalImage {
+            path: destination.to_owned(),
+            source: source_error,
+        })?;
     let extension = source
         .extension()
         .and_then(|value| value.to_str())
@@ -369,7 +390,22 @@ fn copy_and_hash(source: &Path, destination: &Path) -> Result<(Hash32, String), 
         })
         .map(str::to_ascii_lowercase)
         .unwrap_or_else(|| "img".to_owned());
-    Ok((Hash32::new(digest.finalize().into()), extension))
+    Ok((
+        Hash32::new(digest.finalize().into()),
+        extension,
+        observation,
+    ))
+}
+
+fn remove_owned_staging_file(path: &Path, expected: OpenFileObservation) -> std::io::Result<()> {
+    let file = open_for_managed_mutation(path)?;
+    let observed = observe_open_file(&file)?;
+    if observed != expected {
+        return Err(std::io::Error::other(
+            "export staging identity changed before cleanup",
+        ));
+    }
+    delete_open_file(file)
 }
 
 #[cfg(test)]
@@ -403,6 +439,24 @@ mod tests {
         );
 
         fs::remove_dir(chosen).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn export_cleanup_never_deletes_a_path_replaced_after_ownership_proof() {
+        let root = fixture();
+        let source = root.join("source.png");
+        let staging = root.join("asset.tmp");
+        let original = root.join("original-owned.tmp");
+        fs::write(&source, b"owned export bytes").unwrap();
+        let (_, _, observation) = copy_and_hash(&source, &staging).unwrap();
+        fs::rename(&staging, &original).unwrap();
+        fs::write(&staging, b"external replacement").unwrap();
+
+        assert!(remove_owned_staging_file(&staging, observation).is_err());
+        assert_eq!(fs::read(&staging).unwrap(), b"external replacement");
+        assert_eq!(fs::read(&original).unwrap(), b"owned export bytes");
+
         fs::remove_dir_all(root).unwrap();
     }
 
