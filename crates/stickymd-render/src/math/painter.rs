@@ -17,7 +17,7 @@ use ratex_types::display_item::{DisplayItem, DisplayList};
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Rect, Transform};
 
 use super::cache::ByteLru;
-use super::engine::MathRaster;
+use super::engine::{DEFAULT_COLOR_SENTINEL, MathRaster};
 use super::path_painter::paint_path;
 
 pub(super) const MAX_RASTER_BYTES: usize = 8 * 1024 * 1024;
@@ -74,6 +74,7 @@ pub(super) fn rasterize(
     painter: &mut MathPainter,
     display: &DisplayList,
     font_size_px: f32,
+    foreground: [u8; 4],
 ) -> Result<MathRaster, MathPaintError> {
     let padding_px = PADDING_DIP * (font_size_px / BASE_FONT_DIP);
     let width = raster_dimension(display.width, font_size_px, padding_px)?;
@@ -97,6 +98,7 @@ pub(super) fn rasterize(
         &font_refs,
         font_size_px,
         padding_px,
+        foreground,
     );
     Ok(MathRaster {
         width,
@@ -145,7 +147,9 @@ fn paint_display_list(
     fonts: &HashMap<FontId, FontRef<'_>>,
     em: f32,
     padding: f32,
+    foreground: [u8; 4],
 ) {
+    let foreground = rgba_color(foreground);
     for item in &display.items {
         match item {
             DisplayItem::GlyphPath {
@@ -155,17 +159,20 @@ fn paint_display_list(
                 font,
                 char_code,
                 color,
-            } => paint_glyph(
-                painter,
-                pixmap,
-                padding + *x as f32 * em,
-                padding + *y as f32 * em,
-                FontId::parse(font).unwrap_or(FontId::MainRegular),
-                *char_code,
-                color,
-                fonts,
-                em * *scale as f32,
-            ),
+            } => {
+                let color = effective_color(color, &foreground);
+                paint_glyph(
+                    painter,
+                    pixmap,
+                    padding + *x as f32 * em,
+                    padding + *y as f32 * em,
+                    FontId::parse(font).unwrap_or(FontId::MainRegular),
+                    *char_code,
+                    color,
+                    fonts,
+                    em * *scale as f32,
+                )
+            }
             DisplayItem::Line {
                 x,
                 y,
@@ -173,46 +180,72 @@ fn paint_display_list(
                 thickness,
                 color,
                 dashed,
-            } => paint_line(
-                pixmap,
-                padding + *x as f32 * em,
-                padding + *y as f32 * em,
-                *width as f32 * em,
-                *thickness as f32 * em,
-                color,
-                *dashed,
-            ),
+            } => {
+                let color = effective_color(color, &foreground);
+                paint_line(
+                    pixmap,
+                    padding + *x as f32 * em,
+                    padding + *y as f32 * em,
+                    *width as f32 * em,
+                    *thickness as f32 * em,
+                    color,
+                    *dashed,
+                )
+            }
             DisplayItem::Rect {
                 x,
                 y,
                 width,
                 height,
                 color,
-            } => paint_rect(
-                pixmap,
-                padding + *x as f32 * em,
-                padding + *y as f32 * em,
-                *width as f32 * em,
-                *height as f32 * em,
-                color,
-            ),
+            } => {
+                let color = effective_color(color, &foreground);
+                paint_rect(
+                    pixmap,
+                    padding + *x as f32 * em,
+                    padding + *y as f32 * em,
+                    *width as f32 * em,
+                    *height as f32 * em,
+                    color,
+                )
+            }
             DisplayItem::Path {
                 x,
                 y,
                 commands,
                 fill,
                 color,
-            } => paint_path(
-                pixmap,
-                padding + *x as f32 * em,
-                padding + *y as f32 * em,
-                commands,
-                *fill,
-                color,
-                em,
-            ),
+            } => {
+                let color = effective_color(color, &foreground);
+                paint_path(
+                    pixmap,
+                    padding + *x as f32 * em,
+                    padding + *y as f32 * em,
+                    commands,
+                    *fill,
+                    color,
+                    em,
+                )
+            }
         }
     }
+}
+
+fn effective_color<'a>(color: &'a Color, foreground: &'a Color) -> &'a Color {
+    if *color == DEFAULT_COLOR_SENTINEL {
+        foreground
+    } else {
+        color
+    }
+}
+
+fn rgba_color(color: [u8; 4]) -> Color {
+    Color::new(
+        f32::from(color[0]) / 255.0,
+        f32::from(color[1]) / 255.0,
+        f32::from(color[2]) / 255.0,
+        f32::from(color[3]) / 255.0,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -490,7 +523,7 @@ mod tests {
             ],
         };
         let mut painter = MathPainter::new();
-        let raster = rasterize(&mut painter, &display, 20.0).unwrap();
+        let raster = rasterize(&mut painter, &display, 20.0, [0, 0, 0, 255]).unwrap();
         assert!(raster.width > 0 && raster.height > 0);
         assert!(raster.pixels.iter().any(|value| *value != 0));
     }
@@ -504,7 +537,7 @@ mod tests {
             items: Vec::new(),
         };
         assert!(matches!(
-            rasterize(&mut MathPainter::new(), &display, 40.0),
+            rasterize(&mut MathPainter::new(), &display, 40.0, [0, 0, 0, 255]),
             Err(MathPaintError::RasterTooLarge)
         ));
     }
@@ -529,7 +562,8 @@ mod tests {
                     ..LayoutOptions::default()
                 },
             ));
-            let raster = rasterize(&mut painter, &display, 17.0).expect("golden raster paints");
+            let raster = rasterize(&mut painter, &display, 17.0, [0, 0, 0, 255])
+                .expect("golden raster paints");
             let alpha_coverage = raster
                 .pixels
                 .chunks_exact(4)

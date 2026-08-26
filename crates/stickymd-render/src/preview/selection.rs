@@ -226,7 +226,7 @@ impl PreviewTextIndex {
             .map_or(first.start, |row| row.end);
         self.boxes[first.start..boxes_end]
             .iter()
-            .filter_map(|item| clipped_selection_rect(item, &selected))
+            .filter_map(|item| clipped_selection_rect(&self.text, item, &selected))
             .collect()
     }
 
@@ -303,7 +303,11 @@ fn proportional_boundary(text: &str, range: Range<usize>, x: f32, left: f32, wid
     boundaries[slot.min(boundaries.len() - 1)]
 }
 
-fn clipped_selection_rect(item: &PreviewTextBox, selected: &Range<usize>) -> Option<PreviewRect> {
+fn clipped_selection_rect(
+    text: &str,
+    item: &PreviewTextBox,
+    selected: &Range<usize>,
+) -> Option<PreviewRect> {
     let start = item.selection_range.start.max(selected.start);
     let end = item.selection_range.end.min(selected.end);
     if start >= end || item.selection_range.is_empty() {
@@ -312,9 +316,16 @@ fn clipped_selection_rect(item: &PreviewTextBox, selected: &Range<usize>) -> Opt
     if item.atomic {
         return Some(item.rect);
     }
-    let length = item.selection_range.len() as f32;
-    let left_ratio = (start - item.selection_range.start) as f32 / length;
-    let right_ratio = (end - item.selection_range.start) as f32 / length;
+    let item_text = text.get(item.selection_range.clone())?;
+    let grapheme_count = item_text.graphemes(true).count();
+    if grapheme_count == 0 {
+        return None;
+    }
+    let left = text.get(item.selection_range.start..start)?;
+    let selected_text = text.get(start..end)?;
+    let left_ratio = left.graphemes(true).count() as f32 / grapheme_count as f32;
+    let right_ratio = (left.graphemes(true).count() + selected_text.graphemes(true).count()) as f32
+        / grapheme_count as f32;
     Some(PreviewRect {
         x: item.rect.x + item.rect.width * left_ratio,
         y: item.rect.y,
@@ -395,6 +406,37 @@ mod tests {
         let rects = index.selection_rects(selection);
         assert_eq!(rects.len(), 1);
         assert!(rects[0].width > 0.0 && rects[0].width < 100.0);
+    }
+
+    #[test]
+    fn selection_geometry_uses_graphemes_instead_of_utf8_byte_lengths() {
+        let index = PreviewTextIndex::new(
+            Generation::initial(),
+            "中a🙂".into(),
+            vec![PreviewTextBox {
+                selection_range: 0.."中a🙂".len(),
+                source_range: None,
+                rect: PreviewRect {
+                    x: 10.0,
+                    y: 10.0,
+                    width: 90.0,
+                    height: 20.0,
+                },
+                action: None,
+                tooltip: None,
+                atomic: false,
+            }],
+            Vec::new(),
+        );
+
+        let rects = index.selection_rects(PreviewSelection {
+            anchor: 0,
+            active: "中".len(),
+        });
+
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].x, 10.0);
+        assert_eq!(rects[0].width, 30.0);
     }
 
     #[test]

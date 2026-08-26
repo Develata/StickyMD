@@ -201,14 +201,21 @@ fn visit_unicode_case_insensitive(
             if matched == pattern.len() {
                 let (match_start, starts_at_source_boundary) =
                     boundaries.front().copied().unwrap_or((source_start, false));
-                if starts_at_source_boundary && last && !visit(match_start..source_end) {
-                    return;
+                if starts_at_source_boundary && last {
+                    if !visit(match_start..source_end) {
+                        return;
+                    }
+                    // Match `str::match_indices`: accepted source ranges do
+                    // not overlap.
+                    matched = 0;
+                    boundaries.clear();
+                } else {
+                    // The folded token stream matched, but the source range
+                    // began or ended inside a scalar's lowercase expansion.
+                    // Preserve the KMP suffix: it may start at a later real
+                    // source boundary and become the next valid match.
+                    matched = prefix[matched - 1];
                 }
-                // An invalid boundary match belongs to the current expanded
-                // source scalar; resetting cannot skip a valid match starting
-                // at the next scalar boundary.
-                matched = 0;
-                boundaries.clear();
             }
             first = false;
         }
@@ -286,6 +293,31 @@ mod tests {
         );
         assert_eq!(matches.ranges.len(), 1);
         assert_eq!(matches.ranges[0].range(), "İ ".len().."İ i".len());
+    }
+
+    #[test]
+    fn invalid_expansion_match_does_not_hide_later_boundary_aligned_match() {
+        let combining_dot = '\u{307}';
+        let text = format!("İc{combining_dot}c{combining_dot}");
+        let query = format!("{combining_dot}c{combining_dot}");
+
+        let matches = find_literal_matches(
+            &text,
+            &query,
+            LiteralSearchOptions {
+                case_sensitive: false,
+            },
+        );
+
+        let expected_start = "İc".len();
+        assert_eq!(
+            matches
+                .ranges
+                .iter()
+                .map(|value| value.range())
+                .collect::<Vec<_>>(),
+            vec![expected_start..text.len()]
+        );
     }
 
     #[test]

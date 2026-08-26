@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use ratex_layout::{LayoutOptions, layout, to_display_list};
 use ratex_types::color::Color;
-use ratex_types::display_item::{DisplayItem, DisplayList};
+use ratex_types::display_item::DisplayList;
 use ratex_types::math_style::MathStyle;
 use thiserror::Error;
 
@@ -20,7 +20,17 @@ const RASTER_ENTRY_METADATA_ESTIMATE: usize = 128;
 // A layout-only marker outside the user-facing color domain. RaTeX copies the
 // option color into items that inherit the preview foreground; explicit TeX
 // colors remain ordinary 0..=1 values and are therefore left untouched.
-const DEFAULT_COLOR_SENTINEL: Color = Color::new(-1.0, -2.0, -3.0, -4.0);
+pub(super) const DEFAULT_COLOR_SENTINEL: Color = Color::new(-1.0, -2.0, -3.0, -4.0);
+
+#[cfg(test)]
+fn rgba_color(color: [u8; 4]) -> Color {
+    Color::new(
+        f32::from(color[0]) / 255.0,
+        f32::from(color[1]) / 255.0,
+        f32::from(color[2]) / 255.0,
+        f32::from(color[3]) / 255.0,
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum MathKind {
@@ -129,11 +139,12 @@ impl MathEngine {
 
     pub(crate) fn render(
         &mut self,
-        source: &str,
+        source: impl Into<Arc<str>>,
         kind: MathKind,
         font_size_px: f32,
         foreground: [u8; 4],
     ) -> Result<Arc<MathRaster>, MathError> {
+        let source = source.into();
         if source.len() > MAX_FORMULA_SOURCE_BYTES {
             return Err(MathError::SourceTooLong);
         }
@@ -141,7 +152,7 @@ impl MathEngine {
             return Err(MathError::InvalidGeometry);
         }
         let layout_key = LayoutKey {
-            source: Arc::from(source),
+            source: Arc::clone(&source),
             kind,
         };
         let layout = if let Some(layout) = self.layouts.get(&layout_key) {
@@ -150,7 +161,7 @@ impl MathEngine {
         } else {
             self.counters.layout_misses = self.counters.layout_misses.saturating_add(1);
             self.counters.parse_layout_calls = self.counters.parse_layout_calls.saturating_add(1);
-            let parsed = ratex_parser::parse(source)
+            let parsed = ratex_parser::parse(&source)
                 .map_err(|error| MathError::Parse(sanitized_parse_error(&error.to_string())))?;
             let options = LayoutOptions {
                 style: match kind {
@@ -182,8 +193,12 @@ impl MathEngine {
         }
         self.counters.raster_misses = self.counters.raster_misses.saturating_add(1);
         self.counters.rasterizations = self.counters.rasterizations.saturating_add(1);
-        let display_list = display_list_with_foreground(&layout.display_list, foreground);
-        let raster = Arc::new(rasterize(&mut self.painter, &display_list, font_size_px)?);
+        let raster = Arc::new(rasterize(
+            &mut self.painter,
+            &layout.display_list,
+            font_size_px,
+            foreground,
+        )?);
         let evicted = self.rasters.insert(
             raster_key,
             Arc::clone(&raster),
@@ -216,32 +231,6 @@ impl MathEngine {
             self.painter.outline_bytes(),
         )
     }
-}
-
-fn display_list_with_foreground(display: &DisplayList, foreground: [u8; 4]) -> DisplayList {
-    let mut display = display.clone();
-    let foreground = rgba_color(foreground);
-    for item in &mut display.items {
-        let color = match item {
-            DisplayItem::GlyphPath { color, .. }
-            | DisplayItem::Line { color, .. }
-            | DisplayItem::Rect { color, .. }
-            | DisplayItem::Path { color, .. } => color,
-        };
-        if *color == DEFAULT_COLOR_SENTINEL {
-            *color = foreground;
-        }
-    }
-    display
-}
-
-fn rgba_color(color: [u8; 4]) -> Color {
-    Color::new(
-        f32::from(color[0]) / 255.0,
-        f32::from(color[1]) / 255.0,
-        f32::from(color[2]) / 255.0,
-        f32::from(color[3]) / 255.0,
-    )
 }
 
 fn valid_display_list(display: &DisplayList) -> bool {
@@ -286,6 +275,21 @@ mod tests {
     }
 
     #[test]
+    fn render_tree_and_formula_caches_share_the_source_allocation() {
+        let mut engine = MathEngine::new();
+        let source: Arc<str> = Arc::from(r"\frac{shared}{source}");
+
+        engine
+            .render(Arc::clone(&source), MathKind::Inline, 17.0, BLACK)
+            .unwrap();
+
+        assert!(
+            Arc::strong_count(&source) >= 3,
+            "layout and raster keys should retain the caller's Arc, not clone its text"
+        );
+    }
+
+    #[test]
     fn raster_budget_accounts_for_source_and_entry_metadata() {
         let mut engine = MathEngine::new();
         let source = r"\frac{a}{b}";
@@ -306,7 +310,7 @@ mod tests {
         ));
         let oversized = "x".repeat(MAX_FORMULA_SOURCE_BYTES + 1);
         assert!(matches!(
-            engine.render(&oversized, MathKind::Inline, 17.0, BLACK),
+            engine.render(oversized.as_str(), MathKind::Inline, 17.0, BLACK),
             Err(MathError::SourceTooLong)
         ));
     }
@@ -316,7 +320,7 @@ mod tests {
         let mut engine = MathEngine::new();
         for index in 0..600 {
             engine
-                .render(&format!("x_{{{index}}}"), MathKind::Inline, 17.0, BLACK)
+                .render(format!("x_{{{index}}}"), MathKind::Inline, 17.0, BLACK)
                 .unwrap();
         }
         let (layouts, _rasters, raster_bytes, outline_bytes) = engine.cache_sizes();
@@ -463,7 +467,7 @@ mod tests {
         let display_time = display_started.elapsed();
         let raster_started = Instant::now();
         let mut painter = MathPainter::new();
-        let _raster = rasterize(&mut painter, &display, 17.0).unwrap();
+        let _raster = rasterize(&mut painter, &display, 17.0, [20, 20, 20, 255]).unwrap();
         let raster = raster_started.elapsed();
         let cold_total = total_started.elapsed();
 

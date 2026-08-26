@@ -99,7 +99,7 @@ pub(super) fn make_mixed_chunk(
             let rendered = error.map_or_else(
                 || {
                     math_engine.render(
-                        &math.source,
+                        Arc::clone(&math.source),
                         math.kind,
                         metrics.font_size,
                         math_foreground(theme),
@@ -497,7 +497,7 @@ mod tests {
         let mut formula_count = 0;
         let mut math = text_span("$x^2$", RenderStyle::default());
         math.math = Some(RenderMath {
-            source: "x^2".to_owned(),
+            source: std::sync::Arc::from("x^2"),
             kind: MathKind::Inline,
         });
         let spans = vec![
@@ -545,7 +545,7 @@ mod tests {
         });
         let mut math = text_span("$x$", RenderStyle::default());
         math.math = Some(RenderMath {
-            source: "x".to_owned(),
+            source: std::sync::Arc::from("x"),
             kind: MathKind::Inline,
         });
         let mut before = text_span("before ", RenderStyle::default());

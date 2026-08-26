@@ -53,7 +53,10 @@ pub struct RenderSpan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RenderMath {
-    pub source: String,
+    /// Shared formula source. The render tree and MathLayoutCache retain the
+    /// same allocation so relayout/cache hits do not clone up to 64 KiB per
+    /// formula.
+    pub source: Arc<str>,
     pub kind: MathKind,
 }
 
@@ -226,7 +229,7 @@ impl RenderTreeBuilder {
                         None,
                     );
                     math_span.math = Some(RenderMath {
-                        source: math.literal.clone(),
+                        source: Arc::from(math.literal.as_str()),
                         kind: MathKind::Display,
                     });
                     output.push(RenderBlock {
@@ -412,7 +415,7 @@ fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mu
                     None,
                 );
                 math_span.math = Some(RenderMath {
-                    source: math.literal.clone(),
+                    source: Arc::from(math.literal.as_str()),
                     kind: MathKind::Inline,
                 });
                 output.push(math_span);
