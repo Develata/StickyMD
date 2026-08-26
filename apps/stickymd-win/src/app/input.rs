@@ -101,6 +101,10 @@ impl StickyApp {
             return;
         }
 
+        if let Some(intent) = global_persistence_shortcut(code, shortcut, shift) {
+            self.dispatch_persistence_intent(None, intent);
+            return;
+        }
         if shortcut && matches!(code, Some(KeyCode::KeyF | KeyCode::KeyH)) {
             self.open_search(code == Some(KeyCode::KeyH));
             return;
@@ -320,16 +324,6 @@ impl StickyApp {
             }
             Some(KeyCode::KeyZ) => self.undo_or_cancel(true),
             Some(KeyCode::KeyY) => self.undo_or_cancel(false),
-            Some(KeyCode::KeyS) => {
-                self.dispatch_persistence_intent(
-                    None,
-                    if shift {
-                        PersistenceIntent::Export
-                    } else {
-                        PersistenceIntent::SaveNow(SaveReason::Manual)
-                    },
-                );
-            }
             Some(KeyCode::Home) | Some(KeyCode::End) => {
                 self.session
                     .move_document_boundary(text_len, code == Some(KeyCode::End), shift);
@@ -609,6 +603,18 @@ fn zoom_key_command(code: Option<KeyCode>) -> Option<ZoomCommand> {
     }
 }
 
+fn global_persistence_shortcut(
+    code: Option<KeyCode>,
+    shortcut: bool,
+    shift: bool,
+) -> Option<PersistenceIntent> {
+    match (code, shortcut, shift) {
+        (Some(KeyCode::KeyS), true, false) => Some(PersistenceIntent::SaveNow(SaveReason::Manual)),
+        (Some(KeyCode::KeyS), true, true) => Some(PersistenceIntent::Export),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Default)]
 pub(super) struct ZoomWheelAccumulator {
     units: f64,
@@ -640,9 +646,10 @@ fn mutation_input_allowed(
 #[cfg(test)]
 mod recovery_tests {
     use super::{
-        ClipboardAlias, ZoomCommand, ZoomWheelAccumulator, clipboard_alias, mutation_input_allowed,
-        zoom_key_command,
+        ClipboardAlias, ZoomCommand, ZoomWheelAccumulator, clipboard_alias,
+        global_persistence_shortcut, mutation_input_allowed, zoom_key_command,
     };
+    use crate::instruction::{PersistenceIntent, SaveReason};
     use winit::dpi::PhysicalPosition;
     use winit::event::MouseScrollDelta;
     use winit::keyboard::KeyCode;
@@ -712,6 +719,22 @@ mod recovery_tests {
         assert_eq!(
             accumulator.push(MouseScrollDelta::LineDelta(0.0, -0.5), 1.0),
             -1
+        );
+    }
+
+    #[test]
+    fn phase14_save_and_export_shortcuts_remain_global_with_search_focus() {
+        assert_eq!(
+            global_persistence_shortcut(Some(KeyCode::KeyS), true, false),
+            Some(PersistenceIntent::SaveNow(SaveReason::Manual))
+        );
+        assert_eq!(
+            global_persistence_shortcut(Some(KeyCode::KeyS), true, true),
+            Some(PersistenceIntent::Export)
+        );
+        assert_eq!(
+            global_persistence_shortcut(Some(KeyCode::KeyS), false, false),
+            None
         );
     }
 }

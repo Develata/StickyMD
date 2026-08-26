@@ -72,7 +72,13 @@ impl SearchSession {
 
     pub fn close(&mut self) {
         self.open = false;
+        self.generation = None;
+        // Match ranges are a potentially large document projection. Keep the
+        // user's small query/replacement strings for the next invocation, but
+        // release the derived index as soon as the overlay closes.
+        self.matches = Vec::new();
         self.active = None;
+        self.truncated = false;
         self.preedit.clear();
     }
 
@@ -83,6 +89,12 @@ impl SearchSession {
     }
 
     pub fn refresh(&mut self, text: &str, generation: Generation) {
+        // Closed search is not an observer of canonical edits. Besides saving
+        // an O(n) scan per keystroke, this prevents a dismissed overlay from
+        // retaining up to the bounded maximum match projection indefinitely.
+        if !self.open {
+            return;
+        }
         let result = find_literal_matches(text, &self.query, self.options());
         self.generation = Some(generation);
         self.matches = result.ranges;
@@ -244,5 +256,25 @@ mod tests {
         session.open(false, Some("rust"), "Rust rust", Generation::initial());
         assert!(!session.case_sensitive);
         assert_eq!(session.match_summary(), (1, 2, false));
+    }
+
+    #[test]
+    fn closed_search_releases_match_projection_and_ignores_document_refreshes() {
+        let mut session = SearchSession::default();
+        let source = "a".repeat(100_000);
+        session.open(false, Some("a"), &source, Generation::initial());
+        assert_eq!(session.match_summary(), (1, 100_000, false));
+        assert!(session.matches.capacity() >= 100_000);
+
+        session.close();
+        assert_eq!(session.match_summary(), (0, 0, false));
+        assert_eq!(session.matches.capacity(), 0);
+        assert!(!session.is_current(Generation::initial()));
+
+        let next = Generation::initial().checked_next().unwrap();
+        session.refresh(&source, next);
+        assert_eq!(session.match_summary(), (0, 0, false));
+        assert!(!session.is_current(next));
+        assert_eq!(session.query, "a", "closing retains only cheap user input");
     }
 }

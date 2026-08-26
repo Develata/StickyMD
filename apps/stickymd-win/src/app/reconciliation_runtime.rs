@@ -64,6 +64,7 @@ impl StickyApp {
     pub(super) fn full_projection_resync(&mut self) {
         let snapshot = self.coordinator.snapshot();
         self.session.selection = clamp_selection(&snapshot.text, self.session.selection);
+        self.search.refresh(&snapshot.text, snapshot.generation);
         if let Some(projection) = &mut self.projection {
             let _ = projection.resync(&snapshot);
         }

@@ -29,7 +29,7 @@ readiness，不能改写此 Markdown 状态。
 | P14-A18 | 日常 Resources 可按 source-preview/math/images/window/zoom 定向运行；完整候选仍要求全矩阵 | Automated | `phase-14.ps1 -Resources -ResourceModule <module>` + smoke task-plan tests | AUTOMATED PASS |
 | P14-A19 | Portable Release 静态链接 MSVC CRT，Rust CLI 同时检查普通与 delay-load PE imports，CI 在打包前拒绝外置 developer runtime | Automated | `.cargo/config.toml` + `qualification native-runtime` + CI/release workflow trace | AUTOMATED PASS |
 | P14-A20 | Split 语义同步默认开启、可持久关闭；双向手势单向映射、stale generation guard、无反馈环且保留独立位置 | Automated | render anchor-index + app reducer/config + Rust CLI regression | AUTOMATED PASS |
-| P14-A21 | Source 纯文本查找/替换支持大小写开关、wrap、单次/全部替换、generation invalidation、Unicode boundary 与单事务 Undo；不含正则 | Automated | interaction/flow/core tests + Rust CLI regression | AUTOMATED PASS |
+| P14-A21 | Source 纯文本查找/替换支持大小写开关、wrap、单次/全部替换、generation invalidation、Unicode boundary 与单事务 Undo；关闭后释放匹配投影且不再扫描，外部重载刷新打开会话，搜索焦点不吞掉全局保存/导出；不含正则 | Automated | interaction/flow/core tests + Rust CLI workspace-test shard regression | AUTOMATED PASS |
 | P14-A22 | 数学分隔符转换控件以清晰的 `$` 标识，paint/hit geometry 在 50/100/300% 一致 | Automated | toolbar paint/hit contract + headless CI | AUTOMATED PASS |
 | P14-A23 | Release 内存按 Source/Preview/Split/cache 分模块归因；优化决策有实测依据且不放宽既有 hard gate | Automated | targeted resource modules + `docs/report/phase-14-memory-attribution.md` | AUTOMATED PASS |
 
