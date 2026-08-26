@@ -22,7 +22,7 @@
 | P07-A12 | 08 semantic export; AC-012 | Automated | only real Comrak image nodes are collected; code/raw/normal reference links and remote images are preserved | AUTOMATED PASS |
 | P07-A13 | 08 export resources; AC-012 | Automated | relative/absolute/user local copies, byte dedup, 20→32 hash collision expansion, percent-safe paths, missing-resource fail-before-publish and existing-directory suffix tests | AUTOMATED PASS |
 | P07-A14 | 08 source-preserving export; AC-012 | Automated | no-image byte identity, localized image rewrite, reference-style normalization and title/alt tests | AUTOMATED PASS |
-| P07-A15 | 08 export isolation | Automated | immutable snapshot, exclusive owned temp, dedicated I/O job and canonical/hardlink working-note rejection prove export never mutates document authority or user temp evidence | AUTOMATED PASS |
+| P07-A15 | 08 export isolation | Automated | immutable snapshot, exclusive owned temp, no-replace staging publication, handle-observed cleanup and canonical/hardlink working-note rejection prove export never mutates document authority or deletes a path replaced after ownership proof | AUTOMATED PASS |
 | P07-A16 | 10 Phase 7 performance | Automated | 1 MiB full/incremental scan, 10-file paste, scaled decode and 20-reference export Release baselines via [`phase-07.ps1 -Performance`](../../tools/smoke/phase-07.ps1) | AUTOMATED PASS |
 | P07-A17 | 11 runtime local-image smoke | Automated | copied Release local-image Preview process/source/user-file survival via [`phase-07.ps1 -Runtime`](../../tools/smoke/phase-07.ps1) | AUTOMATED PASS |
 | P07-A18 | 11 governance/CI | Automated | Rust smoke Phase 07 route, all-phase CI, plan-ref/unsafe/dependency checks and locked workspace tests | AUTOMATED PASS |

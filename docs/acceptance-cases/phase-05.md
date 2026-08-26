@@ -18,7 +18,7 @@
 | P05-A09 | 06 RenderTree separation | Automated | semantic-to-render projection golden tests | AUTOMATED PASS |
 | P05-A10 | 06 native layout | Automated | paragraph/list/code/table/math/image layout tests plus checked-in rendering-stress raster matrix at 320/900 px, 50/100/300% content scale and Light/Dark | AUTOMATED PASS |
 | P05-A11 | 06 viewport culling | Automated | sorted-block binary-search visibility tests | AUTOMATED PASS |
-| P05-A12 | 06 preview selection/copy; AC-013 | Automated | wrapped-row and multiline logical-line selection isolation, block-copy, Ctrl+A/C routing and clipboard-boundary tests | AUTOMATED PASS |
+| P05-A12 | 06 preview selection/copy; AC-013 | Automated | wrapped-row and multiline logical-line selection isolation, grapheme-proportional CJK/emoji highlight clipping, block-copy, Ctrl+A/C routing and clipboard-boundary tests | AUTOMATED PASS |
 | P05-A13 | 04/06 read-only preview authority | Automated | input-routing tests proving Preview emits no document edit | AUTOMATED PASS |
 | P05-A14 | 04/06 PreviewState generation | Automated | stale result/error rejection tests | AUTOMATED PASS |
 | P05-A15 | 06 bounded preview scheduler | Automated | virtual-time debounce, immediate mode and explicit 100-rapid-Split-edit latest-only build test | AUTOMATED PASS |

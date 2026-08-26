@@ -10,9 +10,9 @@
 | P04-A02 | AC-005 650 ms autosave and bounded coalescing | Automated | deterministic scheduler/worker tests | AUTOMATED PASS |
 | P04-A03 | AC-006 manual-save intent and durable acknowledgement | Automated | coordinator/storage tests | AUTOMATED PASS |
 | P04-A04 | AC-007 clean external reconciliation subset | Automated | watcher/reconciliation tests | AUTOMATED PASS |
-| P04-A05 | AC-008 dirty conflict, Load External and Keep Local subset | Automated | OCC/coordinator/storage tests | AUTOMATED PASS |
+| P04-A05 | AC-008 dirty conflict, Load External and Keep Local subset | Automated | OCC/coordinator/storage tests, including an old guarded completion superseding a queued Keep Local request and force-receipt-only resolution | AUTOMATED PASS |
 | P04-A06 | AC-026/AC-027 same/different directory instance behavior | Automated | Windows adapter tests + [`phase-04.ps1 -Runtime`](../../tools/smoke/phase-04.ps1) | AUTOMATED PASS |
-| P04-A07 | AC-030 recovery classification/choice subset | Automated | bootstrap/recovery/failure-injection tests | AUTOMATED PASS |
+| P04-A07 | AC-030 recovery classification/choice subset | Automated | bootstrap/recovery/failure-injection tests plus occupied recovery/quarantine-name no-overwrite regressions | AUTOMATED PASS |
 | P04-A08 | 20 KiB/100 KiB/1 MiB persistence stages | Automated | [`phase-04.ps1 -Performance`](../../tools/smoke/phase-04.ps1) | AUTOMATED PASS |
 | P04-M01 | real Notepad clean reload and dirty conflict UI | Manual | Current-commit Notepad matrix required | NOT TESTED |
 | P04-M02 | read-only note.md and permission error UI | Manual | Current-commit ACL/UI receipt required | NOT TESTED |

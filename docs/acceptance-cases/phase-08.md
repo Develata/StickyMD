@@ -20,7 +20,7 @@ monitor-topology, IME, and visual-quality row remains `NOT TESTED` until a check
 | P08-A04 | AC-028/029 monitor recovery geometry | Automated | `phase8_` synthetic topology tests cover negative coordinates, primary fallback, mixed DPI, missing monitors and full visibility | AUTOMATED PASS |
 | P08-A05 | AC-022 focus, IME, popup, conflict and recovery guards | Automated | `phase8_` reducer tests prove guards suppress auto-hide while Esc/manual collapse keeps priority | AUTOMATED PASS |
 | P08-A06 | AC-023 lifecycle and tray model | Automated | `phase8_` tests prove Close hides, Show restores, the menu has exactly three commands, note-save failure cancels Quit, and GC/config failure follows the documented warning policy | AUTOMATED PASS |
-| P08-A07 | AC-024 opacity reducer and adapter | Automated | `phase8_` tests cover 70..100 clamp, integer-only commit, live preview, one durable commit and alpha conversion | AUTOMATED PASS |
+| P08-A07 | AC-024 opacity reducer and adapter | Automated | `phase8_`/Phase 10 tests cover 40..100 clamp, integer-only commit, live preview, one durable commit and alpha conversion | AUTOMATED PASS |
 | P08-A08 | AC-025 theme reducer and adapter | Automated | `phase8_` tests cover Light/System/Dark, default Light, runtime System changes and configuration round-trip | AUTOMATED PASS |
 | P08-A09 | Always-on-top and controls projection | Automated | `phase8_` tests cover typed topmost effects and control fade/hit-test behavior without document mutation | AUTOMATED PASS |
 | P08-A10 | AC-026 same-directory wake | Automated | `phase8_` coordinator tests plus copied-Release `-Runtime` prove hidden primary wake, secondary exit and no secondary durable write | AUTOMATED PASS |
@@ -36,9 +36,9 @@ monitor-topology, IME, and visual-quality row remains `NOT TESTED` until a check
 | P08-M01 | AC-019 left dock visual/timing | Manual | Real 100/125/150/200% DPI drag, 3-DIP strip, hover reveal, focus collapse and greater-than-16-DIP undock receipt required | NOT TESTED |
 | P08-M02 | AC-020 right dock visual/timing | Manual | Real 100/125/150/200% DPI right-edge drag and timing receipt required | NOT TESTED |
 | P08-M03 | AC-021 top dock visual/timing | Manual | Real top-edge horizontal strip, window-width sensor and timing receipt required | NOT TESTED |
-| P08-M04 | AC-022 real IME/focus guard | Manual | Microsoft Pinyin and WeChat IME in Source/Split, three dock edges and 70/96/100 opacity receipt required | NOT TESTED |
+| P08-M04 | AC-022 real IME/focus guard | Manual | Microsoft Pinyin and WeChat IME in Source/Split, three dock edges and 40/96/100 opacity receipt required | NOT TESTED |
 | P08-M05 | AC-023 real tray lifecycle | Manual | Explorer tray icon and exact Show/Hide, Topmost, Quit menu interaction; failed-save Quit must keep the process alive | NOT TESTED |
-| P08-M06 | AC-024 whole-window opacity visual | Manual | Background, text, formulas, images, controls and shadow at 70/85/96/100 with slider/input commit receipt required | NOT TESTED |
+| P08-M06 | AC-024 whole-window opacity visual | Manual | Background, text, formulas, images, controls and shadow at 40/70/96/100 with slider/input commit receipt required | NOT TESTED |
 | P08-M07 | AC-025 real theme visual | Manual | Light/Dark/System screenshots and live Windows application-theme switch receipt required | NOT TESTED |
 | P08-M08 | AC-026 same-directory user flow | Manual | Hidden/minimized/docked first instance must be visibly restored by a second launch under Windows foreground restrictions | NOT TESTED |
 | P08-M09 | AC-027 distinct portable instances | Manual | Two copied directories must show independent windows, tray icons, note content and config behavior | NOT TESTED |
@@ -75,11 +75,11 @@ environment-sensitive behavior is never relabelled automated merely because a sy
 | P08-D016 | System mode responds to runtime theme changes | Manual | synthetic event is A08; real Windows change remains M07 | NOT TESTED |
 | P08-D017 | theme changes do not change Document generation | Automated | A08/A14 authority tests PASS | AUTOMATED PASS |
 | P08-D018 | theme changes do not reparse Markdown | Automated | A08/A14 effect-count tests PASS | AUTOMATED PASS |
-| P08-D019 | opacity range is 70..100 | Automated | A07 reducer tests PASS | AUTOMATED PASS |
+| P08-D019 | opacity range is 40..100 | Automated | A07 reducer tests PASS | AUTOMATED PASS |
 | P08-D020 | opacity applies to the whole window | Manual | real whole-window receipt required by M06 | NOT TESTED |
 | P08-D021 | opacity slider previews live | Manual | reducer is A07; real slider receipt required by M06 | NOT TESTED |
 | P08-D022 | opacity has an integer numeric input | Manual | real input receipt required by M06 | NOT TESTED |
-| P08-D023 | opacity clamps to 70..100 | Automated | A07 boundary tests PASS | AUTOMATED PASS |
+| P08-D023 | opacity clamps to 40..100 | Automated | A07 boundary tests PASS | AUTOMATED PASS |
 | P08-D024 | opacity writes config only on release, Enter or focus loss | Automated | A07 effect-count tests PASS | AUTOMATED PASS |
 | P08-D025 | opacity 100 removes unnecessary layered style | Automated | A07 adapter-style tests PASS | AUTOMATED PASS |
 | P08-D026 | opacity changes do not mutate Document | Automated | A07/A14 authority tests PASS | AUTOMATED PASS |

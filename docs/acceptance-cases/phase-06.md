@@ -9,12 +9,12 @@
 | --- | --- | --- | --- | --- |
 | P06-A01 | 06 delimiter ownership; AC-014 | Automated | Comrak four-delimiter tests prove RaTeX receives delimiter-free literals | AUTOMATED PASS |
 | P06-A02 | 06 RaTeX parser/layout authority | Automated | representative formula fixture, 10,000 deterministic inputs and checked-in rendering-stress corpus: 32 math nodes / 27 unique formula-layout keys all parse, layout and raster through [`phase-06.ps1`](../../tools/smoke/phase-06.ps1) | AUTOMATED PASS |
-| P06-A03 | 06 direct native painter | Automated | exhaustive DisplayItem/PathCommand tests, embedded-font raster golden and dependency scan proving no PNG/WebView hot path | AUTOMATED PASS |
+| P06-A03 | 06 direct native painter | Automated | exhaustive DisplayItem/PathCommand tests, embedded-font raster golden, borrowed foreground substitution without DisplayList cloning, and dependency scan proving no PNG/WebView hot path | AUTOMATED PASS |
 | P06-A04 | 06 inline/display geometry | Automated | baseline alignment, display centering, container and overwide-formula tests | AUTOMATED PASS |
 | P06-A05 | 06 formula failure isolation; AC-015 | Automated | malformed/oversize/count-limit tests preserve original literal, atomic selection, border marker and hover detail | AUTOMATED PASS |
 | P06-A06 | 06 exact copy semantics; AC-013/014 | Automated | four-delimiter, formula-only and select-all clipboard projection tests | AUTOMATED PASS |
 | P06-A07 | 06 DPI/theme cache keys | Automated | 100/125/150/200% scale and Light/Dark rebuild tests | AUTOMATED PASS |
-| P06-A08 | 06 bounded caches | Automated | 512-entry layout, 8 MiB raster and 4 MiB glyph-outline eviction tests | AUTOMATED PASS |
+| P06-A08 | 06 bounded caches | Automated | 512-entry layout, 8 MiB raster and 4 MiB glyph-outline eviction tests; RenderTree/layout/raster keys share one formula-source allocation | AUTOMATED PASS |
 | P06-A09 | 06 duplicate reuse | Automated | counters prove repeated formula layout/raster hits | AUTOMATED PASS |
 | P06-A10 | 06 resize/scroll stability | Automated | counters prove 100 resizes and 1,000 scrolls add no parse or raster work; stress fixture clamps `f32::MAX` overscroll and admits the deep local image only after the bottom viewport becomes visible | AUTOMATED PASS |
 | P06-A11 | 06 hidden cache policy | Automated | Source transition and worker tests release raster projection while retaining reusable layout/font state | AUTOMATED PASS |
