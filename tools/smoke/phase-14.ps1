@@ -15,9 +15,9 @@ param(
     [switch]$Candidate,
     [switch]$Attribution,
     [switch]$WindowStress,
-    [ValidateSet('collapse', 'tray', 'controls', 'collapse-tray', 'combined')]
+    [ValidateSet('collapse', 'tray', 'controls', 'view-mode', 'collapse-tray', 'combined')]
     [string]$WindowStressScenario = 'combined',
-    [ValidateRange(1, 100)]
+    [ValidateRange(1, 1000)]
     [int]$WindowStressRuns = 10,
     [ValidateRange(0, 10000)]
     [int]$CollapseCycles = 1000,
@@ -25,6 +25,8 @@ param(
     [int]$TrayCycles = 100,
     [ValidateRange(0, 10000)]
     [int]$ControlCycles = 100,
+    [ValidateRange(0, 10000)]
+    [int]$ViewModeCycles = 100,
     [ValidateRange(0, 10000)]
     [int]$PersistenceCycles = 100,
     [string]$DecisionKey,
@@ -84,6 +86,7 @@ if ($Environment) {
         "--collapse-cycles=$CollapseCycles",
         "--tray-cycles=$TrayCycles",
         "--control-cycles=$ControlCycles",
+        "--view-mode-cycles=$ViewModeCycles",
         "--persistence-cycles=$PersistenceCycles"
     )
 } elseif ($Manual -or $ManualSession) {

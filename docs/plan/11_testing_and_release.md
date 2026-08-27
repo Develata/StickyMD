@@ -237,6 +237,28 @@ data-safety failure 或 receipt schema corruption 是全局停止条件；普通
 Resources failure 必须分别记录并继续运行仍独立且安全的后续通道。尤其 Performance failure
 不得跳过 Resources，Resources failure 也不得抹去 Performance receipt。
 
+<a id="desktop-repetition-jitter-policy"></a>
+### Desktop repetition jitter policy
+
+只有显式标记为桌面输入/焦点/窗口调度抖动的重复 GUI qualification 可以使用成功率处置。
+适用集合必须包含至少 100 个相互独立的 copied-Release run；每个失败必须保留 run、stage、窗口
+activation/geometry 与原始错误。对该集合使用严格不等式：
+
+```text
+success rate > 98%        -> PASS WITH RECORDED JITTER
+95% < success rate <= 98% -> USER VERIFICATION REQUIRED
+success rate <= 95%       -> FAIL
+```
+
+`USER VERIFICATION REQUIRED` 保持非零退出码；只有 USER 对绑定 exact source/artifact 与该组失败
+证据作出明确处置后才能转为 PASS。该策略是工程经验阈值，不得描述成严格的正态三西格玛推断。
+
+以下情况永远不适用成功率容错：deterministic unit/integration test、canonical text 或 durable file
+不一致、保存/恢复/原子替换错误、进程崩溃、security/P0 failure、resource/performance hard gate、
+receipt identity/schema 错误，以及任何未能分类为桌面环境抖动的失败。只要集合中出现一项上述
+blocking failure，整组仍为 FAIL。完整 Resources 自身不因该策略自动放宽；低频交互失败只能由
+独立 reducer 形成满足样本数的 jitter receipt 后，再按本节处置。
+
 人工发布政策按风险分层：Tier A 是 release-critical human gate，除非 USER 明确批准具体
 case/group waiver，否则必须 PASS；Tier B 是环境依赖 gate，可由 USER 对绑定版本与 exact source
 的明确组 waiver 处置；Tier C 的 `NOT TESTED` 在对应自动化合同已 PASS 时不阻断，已观察到的

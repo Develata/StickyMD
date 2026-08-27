@@ -1125,16 +1125,30 @@ fn wait_for_tool_window_style(
 fn wait_for_config_field(program_directory: &Path, expected: &str) -> Result<(), String> {
     let path = program_directory.join("note/config.toml");
     let deadline = Instant::now() + START_TIMEOUT;
+    let mut observed = String::new();
     while Instant::now() < deadline {
-        if fs::read_to_string(&path).is_ok_and(|source| source.contains(expected)) {
-            return Ok(());
+        if let Ok(source) = fs::read_to_string(&path) {
+            observed = source;
+            if observed.contains(expected) {
+                return Ok(());
+            }
         }
         thread::sleep(Duration::from_millis(25));
     }
+    let expected_key = expected
+        .split('=')
+        .next()
+        .map(str::trim)
+        .unwrap_or(expected);
+    let observed_field = observed
+        .lines()
+        .find(|line| line.split('=').next().map(str::trim) == Some(expected_key))
+        .unwrap_or("<missing>");
     Err(format!(
-        "config did not contain `{expected}` within {} seconds: {}",
+        "config did not contain `{expected}` within {} seconds: {}; observed_field={observed_field:?} config_bytes={}",
         START_TIMEOUT.as_secs(),
-        path.display()
+        path.display(),
+        observed.len(),
     ))
 }
 
@@ -2188,8 +2202,14 @@ fn run_persistence_and_image_leak_cycles(
     }
 
     for cycle in 0..cycles {
-        crate::window_control::press_enter(window)?;
-        wait_for_window_title(window, |title| title == "StickyMD *", "dirty edit")?;
+        let source = fs::read(&note)
+            .map_err(|error| format!("stage=conflict-source-read cycle={} {error}", cycle + 1))?;
+        wait_for_source_projection(window, &source)
+            .map_err(|error| format!("stage=conflict-source-ready cycle={} {error}", cycle + 1))?;
+        crate::window_control::press_enter(window)
+            .map_err(|error| format!("stage=conflict-edit cycle={} {error}", cycle + 1))?;
+        wait_for_window_title(window, |title| title == "StickyMD *", "dirty edit")
+            .map_err(|error| format!("stage=conflict-dirty cycle={} {error}", cycle + 1))?;
         let external = format!("external conflict cycle {cycle}\n");
         fs::write(&note, external.as_bytes())
             .map_err(|error| format!("cannot simulate external conflict: {error}"))?;
@@ -2198,8 +2218,10 @@ fn run_persistence_and_image_leak_cycles(
             |title| title.contains("外部修改冲突"),
             "external conflict",
         )?;
-        crate::window_control::press_f6(window)?;
-        wait_for_window_title(window, |title| title == "StickyMD", "conflict resolution")?;
+        crate::window_control::press_f6(window)
+            .map_err(|error| format!("stage=conflict-resolve cycle={} {error}", cycle + 1))?;
+        wait_for_window_title(window, |title| title == "StickyMD", "conflict resolution")
+            .map_err(|error| format!("stage=conflict-clean cycle={} {error}", cycle + 1))?;
         if cycle % 25 == 24 {
             print_cycle_checkpoint(child, "conflict", cycle + 1)?;
         }
@@ -2216,10 +2238,15 @@ fn run_persistence_and_image_leak_cycles(
             .map_err(|error| format!("cannot simulate image source reload: {error}"))?;
         wait_for_source_projection(window, external.as_bytes())?;
         crate::window_control::switch_to_preview(window)?;
-        wait_for_config_field(program_directory, "view_mode = \"preview\"")?;
+        wait_for_config_field(program_directory, "view_mode = \"preview\"")
+            .map_err(|error| format!("stage=image-preview-config cycle={} {error}", cycle + 1))?;
         thread::sleep(Duration::from_millis(150));
         crate::window_control::switch_to_source(child.id())?;
-        wait_for_config_field(program_directory, "view_mode = \"source\"")?;
+        wait_for_source_projection(window, external.as_bytes()).map_err(|error| {
+            format!("stage=image-source-projection cycle={} {error}", cycle + 1)
+        })?;
+        wait_for_config_field(program_directory, "view_mode = \"source\"")
+            .map_err(|error| format!("stage=image-source-config cycle={} {error}", cycle + 1))?;
         if cycle % 25 == 24 {
             print_cycle_checkpoint(child, "image_decode", cycle + 1)?;
         }
@@ -2233,6 +2260,8 @@ fn wait_for_source_projection(
 ) -> Result<(), String> {
     let expected = std::str::from_utf8(expected)
         .map_err(|error| format!("source projection fixture is invalid UTF-8: {error}"))?;
+    crate::window_control::focus_source_editor(window)
+        .map_err(|error| format!("cannot focus source projection probe: {error}"))?;
     wait_for_shell_state(
         window,
         ShellStateExpectation::EditorInputReady,
@@ -2241,9 +2270,26 @@ fn wait_for_source_projection(
     crate::window_control::clear_clipboard()?;
     let deadline = Instant::now() + START_TIMEOUT;
     let mut last = None;
+    let mut last_input_error = None;
     while Instant::now() < deadline {
-        crate::window_control::press_select_all(window)?;
-        crate::window_control::press_copy(window)?;
+        if let Err(error) = crate::window_control::press_select_all(window) {
+            last_input_error = Some(error);
+            crate::window_control::focus_source_editor(window).map_err(|focus_error| {
+                format!(
+                    "cannot restore source projection focus after input-route loss: {focus_error}"
+                )
+            })?;
+            continue;
+        }
+        if let Err(error) = crate::window_control::press_copy(window) {
+            last_input_error = Some(error);
+            crate::window_control::focus_source_editor(window).map_err(|focus_error| {
+                format!(
+                    "cannot restore source projection focus after copy-route loss: {focus_error}"
+                )
+            })?;
+            continue;
+        }
         last = crate::window_control::clipboard_text()?;
         if last
             .as_deref()
@@ -2257,9 +2303,10 @@ fn wait_for_source_projection(
     let _ = crate::window_control::press_document_end(window);
     let shell = observe_shell(window)?;
     Err(format!(
-        "source projection did not reach expected text; expected_bytes={} actual_clipboard_bytes={} shell={}",
+        "source projection did not reach expected text; expected_bytes={} actual_clipboard_bytes={} last_input_error={} shell={}",
         expected.len(),
         last.as_ref().map_or(0, String::len),
+        last_input_error.as_deref().unwrap_or("none"),
         format_shell_observation(&shell),
     ))
 }

@@ -191,6 +191,7 @@ pub(crate) enum WindowStressScenario {
     Collapse,
     Tray,
     Controls,
+    ViewMode,
     CollapseTray,
     Combined,
 }
@@ -201,10 +202,11 @@ impl WindowStressScenario {
             "collapse" => Ok(Self::Collapse),
             "tray" => Ok(Self::Tray),
             "controls" => Ok(Self::Controls),
+            "view-mode" => Ok(Self::ViewMode),
             "collapse-tray" => Ok(Self::CollapseTray),
             "combined" => Ok(Self::Combined),
             _ => Err(format!(
-                "unknown window-stress scenario `{value}`; expected collapse, tray, controls, collapse-tray, or combined"
+                "unknown window-stress scenario `{value}`; expected collapse, tray, controls, view-mode, collapse-tray, or combined"
             )),
         }
     }
@@ -214,6 +216,7 @@ impl WindowStressScenario {
             Self::Collapse => "collapse",
             Self::Tray => "tray",
             Self::Controls => "controls",
+            Self::ViewMode => "view-mode",
             Self::CollapseTray => "collapse-tray",
             Self::Combined => "combined",
         }
@@ -227,6 +230,7 @@ pub(crate) struct WindowStressOptions {
     pub(crate) collapse_cycles: usize,
     pub(crate) tray_cycles: usize,
     pub(crate) control_cycles: usize,
+    pub(crate) view_mode_cycles: usize,
     pub(crate) persistence_cycles: usize,
 }
 
@@ -310,7 +314,7 @@ impl CommandLine {
             )),
             Some("window-stress") => {
                 let values = &arguments[1..];
-                if values.len() != 6 {
+                if values.len() != 7 {
                     return Err(window_stress_usage());
                 }
                 Ok(Self::Qualification(QualificationCommand::WindowStress(
@@ -319,7 +323,7 @@ impl CommandLine {
                             values,
                             "--scenario=",
                         )?)?,
-                        runs: named_bounded_usize(values, "--runs=", 1, 100)?,
+                        runs: named_bounded_usize(values, "--runs=", 1, 1_000)?,
                         collapse_cycles: named_bounded_usize(
                             values,
                             "--collapse-cycles=",
@@ -335,6 +339,12 @@ impl CommandLine {
                         control_cycles: named_bounded_usize(
                             values,
                             "--control-cycles=",
+                            0,
+                            10_000,
+                        )?,
+                        view_mode_cycles: named_bounded_usize(
+                            values,
+                            "--view-mode-cycles=",
                             0,
                             10_000,
                         )?,
@@ -453,7 +463,7 @@ fn named_bounded_usize(
 }
 
 fn window_stress_usage() -> String {
-    "usage: stickymd-smoke qualification window-stress --scenario=<collapse|tray|controls|collapse-tray|combined> --runs=<1..100> --collapse-cycles=<0..10000> --tray-cycles=<0..10000> --control-cycles=<0..10000> --persistence-cycles=<0..10000>".to_owned()
+    "usage: stickymd-smoke qualification window-stress --scenario=<collapse|tray|controls|view-mode|collapse-tray|combined> --runs=<1..1000> --collapse-cycles=<0..10000> --tray-cycles=<0..10000> --control-cycles=<0..10000> --view-mode-cycles=<0..10000> --persistence-cycles=<0..10000>".to_owned()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -969,6 +979,7 @@ mod tests {
             "--collapse-cycles=1000",
             "--tray-cycles=100",
             "--control-cycles=100",
+            "--view-mode-cycles=100",
             "--persistence-cycles=1",
         ]))
         .expect("valid window-stress diagnostic");
@@ -980,6 +991,7 @@ mod tests {
                 collapse_cycles: 1000,
                 tray_cycles: 100,
                 control_cycles: 100,
+                view_mode_cycles: 100,
                 persistence_cycles: 1,
             }))
         );
@@ -992,10 +1004,25 @@ mod tests {
             "--collapse-cycles=0",
             "--tray-cycles=1",
             "--control-cycles=0",
+            "--view-mode-cycles=0",
             "--persistence-cycles=0",
         ]))
         .expect_err("zero independent runs must be rejected");
-        assert!(error.contains("outside 1..=100"));
+        assert!(error.contains("outside 1..=1000"));
+
+        let error = CommandLine::parse(args(&[
+            "qualification",
+            "window-stress",
+            "--scenario=tray",
+            "--runs=1001",
+            "--collapse-cycles=0",
+            "--tray-cycles=1",
+            "--control-cycles=0",
+            "--view-mode-cycles=0",
+            "--persistence-cycles=0",
+        ]))
+        .expect_err("more than one thousand independent runs must be rejected");
+        assert!(error.contains("outside 1..=1000"));
     }
 
     #[test]

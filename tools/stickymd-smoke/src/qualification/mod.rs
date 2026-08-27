@@ -11,6 +11,7 @@ mod manual_receipt;
 mod readiness;
 mod receipt;
 mod remote;
+pub(crate) mod repetition;
 mod startup_attribution;
 
 use std::path::Path;

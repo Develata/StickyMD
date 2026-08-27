@@ -59,6 +59,7 @@ struct NativeCursorInfo {
 #[derive(Clone, Copy)]
 pub(super) enum PhysicalCursorKind {
     Text,
+    Pointer,
     DragRegion,
     SouthEastResize,
 }
@@ -67,6 +68,7 @@ impl PhysicalCursorKind {
     fn resource(self) -> usize {
         match self {
             Self::Text => IDC_IBEAM,
+            Self::Pointer => IDC_HAND,
             Self::DragRegion => IDC_HAND,
             Self::SouthEastResize => IDC_SIZENWSE,
         }
@@ -75,6 +77,7 @@ impl PhysicalCursorKind {
     pub(super) fn description(self) -> &'static str {
         match self {
             Self::Text => "text",
+            Self::Pointer => "pointer",
             Self::DragRegion => "drag-region",
             Self::SouthEastResize => "south-east-resize",
         }

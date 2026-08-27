@@ -14,9 +14,8 @@ use physical_input::{
 const WM_MOUSEMOVE: u32 = 0x0200;
 const WM_LBUTTONDOWN: u32 = 0x0201;
 const WM_LBUTTONUP: u32 = 0x0202;
+const WM_MOUSELEAVE: u32 = 0x02A3;
 const WM_CLOSE: u32 = 0x0010;
-const WM_KEYDOWN: u32 = 0x0100;
-const WM_KEYUP: u32 = 0x0101;
 const MK_LBUTTON: usize = 0x0001;
 const GWL_EXSTYLE: i32 = -20;
 const WS_EX_TOPMOST: isize = 0x0000_0008;
@@ -341,11 +340,11 @@ pub(crate) fn click_math_conversion(window: WindowHandle) -> Result<(), String> 
 }
 
 pub(crate) fn press_enter(window: WindowHandle) -> Result<(), String> {
-    post_virtual_key(window, 0x0D, 0x1C)
+    send_physical_key(window, 0x0D, 0x1C, false)
 }
 
 pub(crate) fn press_f6(window: WindowHandle) -> Result<(), String> {
-    post_virtual_key(window, 0x75, 0x40)
+    send_physical_key(window, 0x75, 0x40, false)
 }
 
 pub(crate) fn press_select_all(window: WindowHandle) -> Result<(), String> {
@@ -891,8 +890,13 @@ fn activate_window_for_physical_input(window: WindowHandle) -> Result<(), String
         return Ok(());
     }
     let (x, y) = content_activation_point(window)?;
-    move_physical_cursor(x, y, "activate StickyMD before physical input")?;
-    project_physical_cursor_to_window(window, x, y)?;
+    // This point is deliberately well inside the document surface. Allow a
+    // small amount of real-desktop mouse jitter while remaining far away from
+    // every toolbar or resize hit target, then project the actually observed
+    // coordinate rather than the requested one into winit's cursor state.
+    move_physical_cursor_with_tolerance(x, y, 8, "activate StickyMD before physical input")?;
+    let observed = current_cursor_position()?;
+    project_physical_cursor_to_window(window, observed.x, observed.y)?;
     thread::sleep(Duration::from_millis(25));
     let click = PhysicalLeftButtonGuard::press()?;
     thread::sleep(Duration::from_millis(25));
@@ -963,16 +967,11 @@ pub(crate) fn reveal_primary_sensor(
         outside_y,
         "move cursor away from StickyMD sensor",
     )?;
-    // The paper can animate away from a cursor that winit still marks as
-    // inside until Windows delivers its tracked leave message. Mirror the
-    // actual outside position to the HWND first so the following sensor move
-    // always crosses a well-defined outside -> inside boundary.
-    let outside_client_x = rect.width.saturating_add(16).min(u16::MAX as u32) as u16;
-    let outside_client_y = (outside_y.saturating_sub(rect.y)).clamp(0, u16::MAX as i32) as u16;
-    let outside_lparam =
-        isize::try_from((u32::from(outside_client_y) << 16) | u32::from(outside_client_x))
-            .map_err(|_| "outside mouse coordinates do not fit LPARAM".to_owned())?;
-    send_mouse_move(window, outside_lparam)?;
+    // A client WM_MOUSEMOVE whose coordinates happen to be outside the client
+    // rectangle is not the tracked-leave fact consumed by winit. Deliver the
+    // actual WM_MOUSELEAVE transition after the physical cursor is outside so
+    // the subsequent sensor move always starts a fresh enter/track sequence.
+    send_window_message(window, WM_MOUSELEAVE, 0, 0)?;
     // Windows may coalesce rapid pointer moves. Give the winit event loop a
     // full scheduling slice to observe CursorLeft before returning to the
     // 3-DIP sensor; otherwise a long stress run can miss a synthetic enter.
@@ -1385,9 +1384,13 @@ fn click_client(window: WindowHandle, x: u16, y: u16) -> Result<(), String> {
     // supported scale factors: the hit test derives the same 34-DIP toolbar
     // scale and maps the first 38-DIP slot to Source mode.
     let position = mouse_lparam(x, y);
-    post_message(window, WM_MOUSEMOVE, 0, position, "mouse move")?;
-    post_message(window, WM_LBUTTONDOWN, MK_LBUTTON, position, "mouse down")?;
-    post_message(window, WM_LBUTTONUP, 0, position, "mouse up")?;
+    // Toolbar qualification requires an observed, ordered click, not merely
+    // successful insertion into a message queue. Synchronous delivery keeps
+    // move/down/up ordered and prevents a long resource campaign from
+    // mistaking one lost posted click for a persistence failure.
+    send_window_message(window, WM_MOUSEMOVE, 0, position)?;
+    send_window_message(window, WM_LBUTTONDOWN, MK_LBUTTON, position)?;
+    send_window_message(window, WM_LBUTTONUP, 0, position)?;
     Ok(())
 }
 
@@ -1397,21 +1400,43 @@ fn click_view_control(window: WindowHandle, index: u8) -> Result<(), String> {
             "left toolbar control index {index} is outside 0..=3"
         ));
     }
+    let client = client_rect(window)?;
     let scale = f64::from(window_dpi(window)) / 96.0;
-    let x = (5.0 + f64::from(index) * 32.0 + 14.0) * scale;
-    let y = 17.0 * scale;
-    click_client(window, pixel_u16(x)?, pixel_u16(y)?)
+    let (control_size, gap, edge) = toolbar_metrics(client.width, scale);
+    let client_x = edge + f64::from(index) * (control_size + gap) + control_size / 2.0;
+    let client_y = 17.0 * scale;
+    let rect = window_rect(window)?;
+    let screen_x = rect.x.saturating_add(i32::from(pixel_u16(client_x)?));
+    let screen_y = rect.y.saturating_add(i32::from(pixel_u16(client_y)?));
+    let mut input_route =
+        prepare_physical_input_target(window, screen_x, screen_y, PhysicalCursorKind::Pointer)?;
+    let button = PhysicalLeftButtonGuard::press()?;
+    thread::sleep(Duration::from_millis(25));
+    drop(button);
+    thread::sleep(Duration::from_millis(50));
+    input_route.restore()
 }
 
-fn post_virtual_key(
+fn send_physical_key(
     window: WindowHandle,
-    virtual_key: usize,
-    scan_code: u16,
+    virtual_key: u8,
+    scan_code: u8,
+    extended: bool,
 ) -> Result<(), String> {
-    let pressed = 1_isize | ((scan_code as isize) << 16);
-    let released = pressed | (1_isize << 30) | (1_isize << 31);
-    post_message(window, WM_KEYDOWN, virtual_key, pressed, "key down")?;
-    post_message(window, WM_KEYUP, virtual_key, released, "key up")?;
+    let activation = activation_facts(window)?;
+    if !(activation.foreground && activation.active && activation.focused) {
+        return Err(format!(
+            "refusing keyboard injection without focused foreground StickyMD window: {activation:?}"
+        ));
+    }
+    let flags = if extended { KEYEVENTF_EXTENDEDKEY } else { 0 };
+    // SAFETY: keybd_event consumes copied key scalars. The target HWND is the
+    // verified focused foreground window, and the balanced down/up sequence
+    // leaves no key pressed after this synchronous smoke action.
+    unsafe {
+        keybd_event(virtual_key, scan_code, flags, 0);
+        keybd_event(virtual_key, scan_code, flags | KEYEVENTF_KEYUP, 0);
+    }
     thread::sleep(Duration::from_millis(10));
     Ok(())
 }
