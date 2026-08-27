@@ -144,6 +144,13 @@ mod windows {
     type Hdesk = *mut c_void;
     type Hwnd = *mut c_void;
 
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
     const FALSE: Bool = 0;
     const TH32CS_SNAPPROCESS: Dword = 0x0000_0002;
     const INVALID_HANDLE_VALUE: KernelHandle = -1;
@@ -213,6 +220,8 @@ mod windows {
     unsafe extern "system" {
         fn OpenInputDesktop(flags: Dword, inherit: Bool, desired_access: Dword) -> Hdesk;
         fn CloseDesktop(desktop: Hdesk) -> Bool;
+        fn GetCursorPos(point: *mut Point) -> Bool;
+        fn SetCursorPos(x: i32, y: i32) -> Bool;
         fn GetForegroundWindow() -> Hwnd;
         fn GetSystemMetrics(index: i32) -> i32;
     }
@@ -318,7 +327,14 @@ mod windows {
         // SAFETY: desktop is a valid handle returned by OpenInputDesktop and has
         // not been closed yet.
         unsafe { CloseDesktop(desktop) };
-        true
+
+        let mut cursor = Point::default();
+        // SAFETY: `cursor` is writable POINT storage. SetCursorPos receives the
+        // exact coordinate just read, so the capability probe does not visibly
+        // move the user's pointer; both calls retain no pointer or ownership.
+        unsafe {
+            GetCursorPos(&raw mut cursor) != FALSE && SetCursorPos(cursor.x, cursor.y) != FALSE
+        }
     }
 
     fn process_exists_in_session(name: &str, expected_session: Dword) -> Result<bool, String> {

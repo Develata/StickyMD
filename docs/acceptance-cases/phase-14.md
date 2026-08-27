@@ -15,7 +15,7 @@ readiness，不能改写此 Markdown 状态。
 | P14-A04 | Performance ordinary failure 不跳过 Resources | Automated | campaign policy unit tests | AUTOMATED PASS |
 | P14-A05 | Resources failure 不抹除 Performance receipt | Automated | campaign policy unit tests | AUTOMATED PASS |
 | P14-A06 | Runtime ordinary failure 仍保留后续独立、安全 receipt | Automated | campaign policy unit tests | AUTOMATED PASS |
-| P14-A07 | invalid environment、identity mismatch、P0/data-safety failure 全局停止 | Automated | campaign policy unit tests | AUTOMATED PASS |
+| P14-A07 | invalid environment（含无法写入物理 cursor position）、identity mismatch、P0/data-safety failure 全局停止 | Automated | qualification environment capability probe + campaign policy unit tests | AUTOMATED PASS |
 | P14-A08 | startup attribution 使用 per-sample milestone intervals 并输出唯一 decision | Automated | attribution parser/classifier tests | AUTOMATED PASS |
 | P14-A09 | Tier A `NOT TESTED` 阻断；PASS 或 explicit waiver 才 eligible | Automated | readiness tests | AUTOMATED PASS |
 | P14-A10 | Tier B group waiver 必须绑定 version/source；Tier C NT 仅在 automation PASS 时 nonblocking | Automated | readiness tests | AUTOMATED PASS |

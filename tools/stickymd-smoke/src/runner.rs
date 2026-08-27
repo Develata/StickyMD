@@ -368,7 +368,7 @@ const fn environment_evidence_status(environment: &QualificationEnvironment) -> 
 
 fn environment_failure(environment: &QualificationEnvironment) -> String {
     match environment.status {
-        QualificationEnvironmentStatus::EnvironmentBlocked => "Qualification environment is blocked by locked/non-interactive desktop. Unlock the active Windows session and rerun the Phase 14 evidence campaign.".to_owned(),
+        QualificationEnvironmentStatus::EnvironmentBlocked => "Qualification environment is blocked by a locked/non-interactive desktop or unavailable physical cursor control. Restore an unlocked, controllable Windows input desktop and rerun the Phase 14 evidence campaign.".to_owned(),
         QualificationEnvironmentStatus::Unsupported => {
             "qualification environment is unsupported on this host".to_owned()
         }

@@ -217,10 +217,11 @@ UNSUPPORTED
 ERROR
 ```
 
-只有 `VALID` 可以继续形成 GUI 证据。锁屏、断开的 session、不可访问 input desktop 或缺失
-交互 shell 等情况必须以 `NOT_TESTED — ENVIRONMENT BLOCKED` 和非零退出码 fail fast；它既不是
-产品 FAIL，也不是 PASS。机器可读环境事实不得包含窗口标题、用户名或完整路径。该检测只能
-位于 smoke/tooling adapter，不得进入产品 runtime。
+只有 `VALID` 可以继续形成 GUI 证据。锁屏、断开的 session、不可访问 input desktop、当前进程
+无法写入物理 cursor position 或缺失交互 shell 等情况必须以
+`NOT_TESTED — ENVIRONMENT BLOCKED` 和非零退出码 fail fast；它既不是产品 FAIL，也不是 PASS。
+cursor capability probe 只能把当前坐标写回原位，不得产生可见位移。机器可读环境事实不得包含
+窗口标题、用户名或完整路径。该检测只能位于 smoke/tooling adapter，不得进入产品 runtime。
 
 Resources 长矩阵必须在主要场景之间重检环境，并在每个完成场景后覆盖写入 partial receipt。
 未完成 receipt 必须显式包含 `INCOMPLETE`，readiness 仍要求最终 receipt 的所有 result 都为
