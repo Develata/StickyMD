@@ -147,13 +147,12 @@ probe 现在在每次 mutation 前用真实正文点击重建 foreground/active/
 
 ## Repeated Desktop Jitter Disposition
 
-USER 随后批准独立重复桌面实验的经验处置：样本至少 100，成功率严格 `>98%` 可直接
-`PASS WITH RECORDED JITTER`；严格 `>95%` 但不超过 98% 时为
-`USER VERIFICATION REQUIRED`；其余 FAIL。Rust CLI 使用整数比例比较，避免浮点边界漂移，并以
-命名测试固定 99/100、98/100、96/100、95/100 边界。
+USER 随后将独立重复桌面实验的经验处置简化为：样本至少 100，成功率 `>=98%` 直接 PASS，
+低于 98% 则 FAIL。Rust CLI 使用整数比例比较，避免浮点边界漂移，并以命名测试固定
+99/100、98/100、97/100 与 979/1000 边界。
 
 该路径只接受集中 classifier 明确识别的 physical cursor、foreground/focus、Windows desktop
 scheduling 抖动。任一 canonical content、persistence、crash、cleanup、identity、resource/performance
 hard gate 或未知失败都会把整组判为 blocking FAIL。完整 Resources 本身不被放宽；只有独立
-copied-Release reducer 达到样本门槛后才能形成 jitter disposition。95–98% 仍以非零退出码等待
-USER 对 exact evidence 作出明确决定。该政策不宣称是严格的正态三西格玛统计推断。
+copied-Release reducer 达到样本门槛后才能形成 jitter disposition。不存在中间人工处置区间；
+PASS 仍保留全部低频抖动失败证据。该政策不宣称是严格的正态三西格玛统计推断。

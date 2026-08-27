@@ -245,13 +245,12 @@ Resources failure 必须分别记录并继续运行仍独立且安全的后续�
 activation/geometry 与原始错误。对该集合使用严格不等式：
 
 ```text
-success rate > 98%        -> PASS WITH RECORDED JITTER
-95% < success rate <= 98% -> USER VERIFICATION REQUIRED
-success rate <= 95%       -> FAIL
+success rate >= 98% -> PASS
+success rate < 98%  -> FAIL
 ```
 
-`USER VERIFICATION REQUIRED` 保持非零退出码；只有 USER 对绑定 exact source/artifact 与该组失败
-证据作出明确处置后才能转为 PASS。该策略是工程经验阈值，不得描述成严格的正态三西格玛推断。
+98% 边界为包含关系，不设置中间人工处置状态。即使整组 PASS，所有失败 run 的 stage、activation/
+geometry 与原始错误仍必须保留。该策略是工程经验阈值，不得描述成严格的正态三西格玛推断。
 
 以下情况永远不适用成功率容错：deterministic unit/integration test、canonical text 或 durable file
 不一致、保存/恢复/原子替换错误、进程崩溃、security/P0 failure、resource/performance hard gate、

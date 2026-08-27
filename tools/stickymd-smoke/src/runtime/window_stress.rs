@@ -97,12 +97,9 @@ pub(crate) fn run(repository: &Path, options: WindowStressOptions) -> Result<(),
             return Err(summary);
         }
         match repetition::classify(options.runs, failed_runs) {
-            RepetitionDisposition::PassWithRecordedJitter => {
-                runtime_report!("{summary} disposition=PASS_WITH_RECORDED_JITTER");
+            RepetitionDisposition::Pass => {
+                runtime_report!("{summary} disposition=PASS");
                 Ok(())
-            }
-            RepetitionDisposition::UserVerificationRequired => {
-                Err(format!("{summary} disposition=USER_VERIFICATION_REQUIRED"))
             }
             RepetitionDisposition::Fail => Err(format!("{summary} disposition=FAIL")),
             RepetitionDisposition::InsufficientSamples => Err(format!(

@@ -32,7 +32,7 @@ readiness，不能改写此 Markdown 状态。
 | P14-A21 | Source 纯文本查找/替换支持大小写开关、wrap、单次/全部替换、generation invalidation、Unicode boundary 与单事务 Undo；关闭后释放匹配投影且不再扫描，外部重载刷新打开会话，搜索焦点不吞掉全局保存/导出；不含正则 | Automated | interaction/flow/core tests + Rust CLI workspace-test shard regression | AUTOMATED PASS |
 | P14-A22 | 数学分隔符转换控件以清晰的 `$` 标识，paint/hit geometry 在 50/100/300% 一致 | Automated | toolbar paint/hit contract + headless CI | AUTOMATED PASS |
 | P14-A23 | Release 内存按 Source/Preview/Split/cache 分模块归因；优化决策有实测依据且不放宽既有 hard gate | Automated | targeted resource modules + `docs/report/phase-14-memory-attribution.md` | AUTOMATED PASS |
-| P14-A24 | 至少 100 个独立 copied-Release 桌面运行且全部失败仅为已分类输入/调度抖动时，严格 `>98%` 直接记录抖动后 PASS、严格 `>95%` 请求 USER 核验、其余 FAIL；内容/数据安全/崩溃/resource hard gate 永不容错 | Automated | repetition boundary tests + window-stress jitter/blocking classifier tests + `docs/plan/11_testing_and_release.md#desktop-repetition-jitter-policy` | AUTOMATED PASS |
+| P14-A24 | 至少 100 个独立 copied-Release 桌面运行且全部失败仅为已分类输入/调度抖动时，成功率 `≥98%` PASS、`<98%` FAIL；内容/数据安全/崩溃/resource hard gate 永不容错 | Automated | repetition boundary tests + window-stress jitter/blocking classifier tests + `docs/plan/11_testing_and_release.md#desktop-repetition-jitter-policy` | AUTOMATED PASS |
 
 ## Guided manual sessions
 
