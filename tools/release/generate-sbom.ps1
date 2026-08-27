@@ -27,6 +27,44 @@ $ZipPath = [IO.Path]::GetFullPath($ZipPath)
 if (-not $OutputPath) { $OutputPath = Join-Path $PackageDirectory 'SBOM.spdx.json' }
 $OutputPath = [IO.Path]::GetFullPath($OutputPath)
 
+function Get-VerifiedCachedFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$CachePath,
+        [Parameter(Mandatory = $true)][string]$ExpectedSha256,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    if (Test-Path -LiteralPath $CachePath -PathType Leaf) {
+        $cachedHash = (Get-FileHash -LiteralPath $CachePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($cachedHash -eq $ExpectedSha256) { return $CachePath }
+    }
+
+    $cacheDirectory = Split-Path -Parent $CachePath
+    New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
+    $lastFailure = 'download was not attempted'
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $partial = "$CachePath.partial-$PID-$attempt-$([guid]::NewGuid().ToString('N'))"
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $partial
+            $actual = (Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $ExpectedSha256) {
+                throw "$Label checksum mismatch after download: $actual"
+            }
+            Move-Item -LiteralPath $partial -Destination $CachePath -Force
+            return $CachePath
+        } catch {
+            $lastFailure = $_.Exception.Message
+        } finally {
+            if (Test-Path -LiteralPath $partial) {
+                Remove-Item -LiteralPath $partial -Force
+            }
+        }
+        if ($attempt -lt 3) { Start-Sleep -Seconds $attempt }
+    }
+    throw "$Label download failed after 3 attempts: $lastFailure"
+}
+
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("stickymd-sbom-" + [guid]::NewGuid().ToString('N'))
 $context = Join-Path $temporaryRoot 'context'
 New-Item -ItemType Directory -Path $context -Force | Out-Null
@@ -39,11 +77,19 @@ try {
         $toolRoot = Join-Path $temporaryRoot 'syft'
         New-Item -ItemType Directory -Path $toolRoot | Out-Null
         $archiveName = "syft_${SyftVersion}_windows_amd64.zip"
-        $archive = Join-Path $toolRoot $archiveName
-        $checksums = Join-Path $toolRoot "syft_${SyftVersion}_checksums.txt"
+        $cacheRoot = Join-Path $repoRoot "target/release-tools/syft/$SyftVersion"
+        $checksumsName = "syft_${SyftVersion}_checksums.txt"
         $base = "https://github.com/anchore/syft/releases/download/v$SyftVersion"
-        Invoke-WebRequest -UseBasicParsing -Uri "$base/$archiveName" -OutFile $archive
-        Invoke-WebRequest -UseBasicParsing -Uri "$base/syft_${SyftVersion}_checksums.txt" -OutFile $checksums
+        $archive = Get-VerifiedCachedFile `
+            -Uri "$base/$archiveName" `
+            -CachePath (Join-Path $cacheRoot $archiveName) `
+            -ExpectedSha256 $SyftArchiveSha256 `
+            -Label 'Syft archive'
+        $checksums = Get-VerifiedCachedFile `
+            -Uri "$base/$checksumsName" `
+            -CachePath (Join-Path $cacheRoot $checksumsName) `
+            -ExpectedSha256 $SyftChecksumsSha256 `
+            -Label 'Syft checksum manifest'
         $actualArchive = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
         $actualChecksums = (Get-FileHash -LiteralPath $checksums -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actualArchive -ne $SyftArchiveSha256) { throw "Syft archive checksum mismatch: $actualArchive" }
