@@ -4,11 +4,13 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::qualification_environment::{self, QualificationEnvironmentStatus};
+
+pub(super) use crate::managed_process::ChildGuard;
 
 use super::receipt;
 
@@ -84,78 +86,6 @@ impl Drop for QualificationRoot {
         if !self.preserve {
             let _ = fs::remove_dir_all(&self.path);
         }
-    }
-}
-
-pub(super) struct ChildGuard(Child);
-
-impl ChildGuard {
-    pub(super) fn start(executable: &Path) -> Result<Self, String> {
-        let child = Command::new(executable)
-            .current_dir(
-                executable
-                    .parent()
-                    .ok_or_else(|| format!("{} has no parent", executable.display()))?,
-            )
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| format!("cannot start {}: {error}", executable.display()))?;
-        Ok(Self(child))
-    }
-
-    pub(super) fn id(&self) -> u32 {
-        self.0.id()
-    }
-
-    pub(super) fn is_running(&mut self) -> Result<bool, String> {
-        self.0
-            .try_wait()
-            .map(|status| status.is_none())
-            .map_err(|error| format!("cannot inspect StickyMD child: {error}"))
-    }
-
-    pub(super) fn kill_and_wait(&mut self) -> Result<(), String> {
-        if self.is_running()? {
-            self.0
-                .kill()
-                .map_err(|error| format!("cannot terminate StickyMD child: {error}"))?;
-        }
-        self.0
-            .wait()
-            .map(|_| ())
-            .map_err(|error| format!("cannot wait for StickyMD child: {error}"))
-    }
-
-    pub(super) fn wait_for_exit(&mut self) -> Result<(), String> {
-        let deadline = Instant::now() + TIMEOUT;
-        loop {
-            if let Some(status) = self
-                .0
-                .try_wait()
-                .map_err(|error| format!("cannot inspect StickyMD child: {error}"))?
-            {
-                return if status.success() {
-                    Ok(())
-                } else {
-                    Err(format!("StickyMD exited unsuccessfully: {status}"))
-                };
-            }
-            if Instant::now() >= deadline {
-                return Err(
-                    "StickyMD did not exit within the bounded qualification timeout".into(),
-                );
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-    }
-}
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
     }
 }
 

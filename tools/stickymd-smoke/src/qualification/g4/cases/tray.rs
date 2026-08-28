@@ -48,7 +48,7 @@ pub(super) fn g4_01(repository: &Path, program: &Path) -> Result<(), String> {
     replace_source(window, LATEST)?;
     assert_sole_stickymd_process(child.id())?;
     invoke_uia(repository, "tray-exit", child.id(), None)?;
-    child.wait_for_exit()?;
+    child.wait_for_exit(super::super::super::exact_desktop::TIMEOUT)?;
     let durable = fs::read_to_string(program.join("note/note.md")).map_err(io_error)?;
     if durable != LATEST {
         return Err("tray Quit exited without durably saving the latest generation".to_owned());

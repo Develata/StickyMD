@@ -31,7 +31,7 @@ pub(super) fn g4_05(_repository: &Path, program: &Path) -> Result<(), String> {
     let config = program.join("note/config.toml");
     let before = (file_stamp(&note)?, file_stamp(&config)?);
     let mut secondary = ChildGuard::start(&alias.join("StickyMD.exe"))?;
-    secondary.wait_for_exit()?;
+    secondary.wait_for_exit(super::super::super::exact_desktop::TIMEOUT)?;
     wait_for_visibility(window, true)?;
     let after = (file_stamp(&note)?, file_stamp(&config)?);
     if before != after {

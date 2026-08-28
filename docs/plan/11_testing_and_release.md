@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-23
+- `Last Review`: 2026-08-28
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -167,9 +167,31 @@ docs/acceptance-cases/phase-XX.md
   tray、foreground、global hotkey、dock 或精确资源数据的验收。严格只读、无输入、无共享托盘/剪贴板、
   独立 portable directory 的截图采样可以作为定向诊断并发，但不能替代正式 GUI receipt；startup、
   performance、memory/CPU/resource gate 始终单独运行，避免相互预热和资源竞争。
+- 正式 startup Performance 的 warm-cache cohort 必须遵循
+  `10_performance_reliability.md#initial-engineering-targets`：前一进程完全退出后固定等待
+  `1000 ms`。`250 ms` rapid-restart 只属于定向诊断，必须以独立名称报告且不得生成或替代
+  warm-cache release receipt。
 - CLI 自身必须有任务规划、JSON schema/序列化与 exit-code 单元测试。cargo fmt/clippy/test/deny
   保持 CI 原生命令；成熟的 Windows package/GUI helper 可继续由 PowerShell 承担，但不得
   复制 Rust 已拥有的 gate 判断。
+
+<a id="qualification-process-isolation"></a>
+### GUI qualification process isolation
+
+- Rust smoke CLI 启动的每个 StickyMD GUI child 必须在 `spawn` 成功后立即移交给统一的
+  RAII owner。正常路径可以显式等待或终止；任何 `?` 提前返回、错误传播或 Rust unwind 都必须
+  由 owner 的 `Drop` 执行 best-effort `kill + wait`，不能依赖函数末尾的手工清理语句。
+- Startup Performance 与所有 Resources 模块在创建 fixture 或启动新 child 前，必须枚举当前
+  Windows session 中既有的 `StickyMD.exe`。若其可执行文件位于 smoke tooling 自己命名的系统
+  temp qualification root，则判为 stale smoke-owned process，当前测量 fail closed，且不得生成
+  Performance/Resources PASS receipt。
+- stale-process preflight 只观测并报告 PID/count，不把完整 executable path 写入机器可读 evidence。
+  它不得自动终止 preflight 前已经存在的进程，也不得把用户自己的 portable StickyMD 当作可清理
+  对象；用户进程的关闭权始终属于 USER。
+- preflight 不能替代 RAII：前者防止旧运行污染新 evidence，后者保证当前运行的所有普通错误路径
+  收敛 child 生命周期。两者都只属于 verification tooling，不进入产品 runtime 或 portable ZIP。
+- 自动化必须包含：模拟 post-spawn 中途失败后 child 已退出的真实进程回归；smoke-owned temp path
+  被识别、普通用户路径不被识别的纯分类测试；检测到 stale process 时 preflight 返回非零且不杀进程。
 
 ### 验收矩阵
 

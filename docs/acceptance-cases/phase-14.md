@@ -11,7 +11,7 @@ ignored exact-candidate receipt 可改变 readiness，不能改写此 Markdown �
 | --- | --- | --- | --- | --- |
 | P14-A01 | Phase 14 stable PowerShell entry、task、report、matrix、guided manual guide 存在 | Automated | `stickymd-smoke phase 14 --ci` | AUTOMATED PASS |
 | P14-A02 | Phase 14 加入 deduplicated headless CI graph | Automated | `stickymd-smoke all --ci --json` | AUTOMATED PASS |
-| P14-A03 | cold/warm startup 同时报告 180/400/550 ms；仅 >550 ms hard fail | Automated | qualification/runtime unit tests | AUTOMATED PASS |
+| P14-A03 | cold/warm startup 同时报告 180/400/550 ms；正式 warm-cache 固定等待 1000 ms，250 ms rapid-restart 仅作独立诊断；仅 >550 ms hard fail | Automated | qualification/runtime interval + threshold unit tests | AUTOMATED PASS |
 | P14-A04 | Performance ordinary failure 不跳过 Resources | Automated | campaign policy unit tests | AUTOMATED PASS |
 | P14-A05 | Resources failure 不抹除 Performance receipt | Automated | campaign policy unit tests | AUTOMATED PASS |
 | P14-A06 | Runtime ordinary failure 仍保留后续独立、安全 receipt | Automated | campaign policy unit tests | AUTOMATED PASS |
@@ -39,6 +39,7 @@ ignored exact-candidate receipt 可改变 readiness，不能改写此 Markdown �
 | P14-A28 | Preview 选择保留 Cosmic Text shaping cluster 几何；Times/CJK/Emoji/组合字符/换行/BiDi 的 hit-test、蓝框与 copy range 同源，几何仅缓存当前 viewport，禁止整段比例估算 | Automated | render viewport-cluster geometry unit/integration tests + Phase 14 headless tests shard + Release baseline（5,000 rows；viewport projection p95 19.1 µs；10,000 hits 340.8 µs） | AUTOMATED PASS |
 | P14-A29 | 查找/替换使用单一 session；Ctrl+F toggle、Ctrl+H expand、Find-only replacement guard、方向键导航、字段 caret/mouse/IME geometry 与源码 caret 隔离均有回归 | Automated | interaction/render/app unit tests + Phase 14 headless shard | AUTOMATED PASS |
 | P14-A30 | exact candidate 使用真实 Microsoft Pinyin 与 WeType profile，以物理键盘验证 Source/Search composition、commit/cancel、selection replace 与一次 Undo；测试结束恢复原 profile | Automated exact candidate | `phase-14.ps1 -G4 -G4Case G4-06`；完整 G4 receipt 必须包含 G4-06 | NOT TESTED |
+| P14-A31 | smoke 启动的每个 StickyMD GUI child 都由 RAII owner 持有，普通错误返回或 unwind 会执行 kill + wait；Performance/Resources 在启动前对已遗留的 smoke-owned 测试进程 fail closed，且绝不自动终止用户自己的便签实例 | Automated | `managed_process::tests` + runtime isolation-scenario tests；正式测量前置检查 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 ## Guided manual sessions

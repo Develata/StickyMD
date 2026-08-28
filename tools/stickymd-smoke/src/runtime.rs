@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::evidence::{EvidenceGate, EvidenceMeasurement, EvidenceSample};
+use crate::managed_process::{self, ChildGuard};
 use crate::process_metrics::{self, MemorySample};
 use crate::ready_event::ReadyEvent;
 use crate::runner::RuntimeScenario;
@@ -23,7 +24,8 @@ const IDLE_CPU_PERCENT_LIMIT: f64 = 0.1;
 const COLD_STARTUP_SAMPLE_COUNT: usize = 30;
 const WARM_STARTUP_SAMPLE_COUNT: usize = 50;
 const COLD_START_IDLE: Duration = Duration::from_secs(10);
-const WARM_START_IDLE: Duration = Duration::from_millis(250);
+pub(crate) const WARM_CACHE_START_IDLE: Duration = Duration::from_secs(1);
+pub(crate) const RAPID_RESTART_DIAGNOSTIC_IDLE: Duration = Duration::from_millis(250);
 const STARTUP_PREFERRED_TARGET: Duration = Duration::from_millis(180);
 const STARTUP_ENGINEERING_TARGET: Duration = Duration::from_millis(400);
 const V0_1_0_STARTUP_RELEASE_BOUNDARY: Duration = Duration::from_millis(550);
@@ -72,6 +74,9 @@ pub(crate) fn run(
     quiet: bool,
 ) -> Result<RuntimeEvidence, String> {
     QUIET_OUTPUT.store(quiet, Ordering::Relaxed);
+    if requires_measurement_isolation(scenario) {
+        managed_process::ensure_no_stale_smoke_stickymd()?;
+    }
     let root = create_smoke_root()?;
     let mut children = Vec::new();
     let result = if scenario == RuntimeScenario::Startup {
@@ -99,6 +104,18 @@ pub(crate) fn run(
     }
 }
 
+const fn requires_measurement_isolation(scenario: RuntimeScenario) -> bool {
+    matches!(
+        scenario,
+        RuntimeScenario::Startup
+            | RuntimeScenario::Resources
+            | RuntimeScenario::MathResources
+            | RuntimeScenario::ImageResources
+            | RuntimeScenario::WindowResources
+            | RuntimeScenario::ZoomResources
+    )
+}
+
 pub(crate) struct RuntimeEvidence {
     pub(crate) measurements: Vec<EvidenceMeasurement>,
     pub(crate) gates: Vec<EvidenceGate>,
@@ -121,7 +138,7 @@ fn run_inner(
     repository: &Path,
     root: &Path,
     scenario: RuntimeScenario,
-    children: &mut Vec<Child>,
+    children: &mut Vec<ChildGuard>,
 ) -> Result<(), String> {
     debug_assert!(!matches!(
         scenario,
@@ -253,14 +270,15 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
     let executable = copy_executable(&source, &directory)?;
     prepare_resource_layout(&directory, "source", 0, 0, ImageResourceFixture::None)?;
     runtime_report!(
-        "startup contract: fixture_bytes={} cold_samples={} cold_idle_seconds={} warm_samples={} warm_idle_ms={} preferred_ms={} engineering_ms={} release_boundary_ms={} ordering=interleaved",
+        "startup contract: fixture_bytes={} cold_samples={} cold_idle_seconds={} warm_samples={} warm_cache_idle_ms={} rapid_restart_diagnostic_ms={} preferred_ms={} engineering_ms={} release_boundary_ms={} ordering=interleaved",
         fs::metadata(directory.join("note/note.md"))
             .map_err(|error| format!("cannot inspect startup fixture: {error}"))?
             .len(),
         COLD_STARTUP_SAMPLE_COUNT,
         COLD_START_IDLE.as_secs(),
         WARM_STARTUP_SAMPLE_COUNT,
-        WARM_START_IDLE.as_millis(),
+        WARM_CACHE_START_IDLE.as_millis(),
+        RAPID_RESTART_DIAGNOSTIC_IDLE.as_millis(),
         STARTUP_PREFERRED_TARGET.as_millis(),
         STARTUP_ENGINEERING_TARGET.as_millis(),
         V0_1_0_STARTUP_RELEASE_BOUNDARY.as_millis(),
@@ -276,7 +294,7 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
         print_startup_sample("cold", run + 1, &sample);
         cold.push(sample);
 
-        thread::sleep(WARM_START_IDLE);
+        thread::sleep(WARM_CACHE_START_IDLE);
         sequence = sequence.saturating_add(1);
         let sample = measure_editor_ready(&executable, &directory, sequence)?;
         print_startup_sample("warm", run + 1, &sample);
@@ -284,7 +302,7 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
     }
 
     for run in COLD_STARTUP_SAMPLE_COUNT..WARM_STARTUP_SAMPLE_COUNT {
-        thread::sleep(WARM_START_IDLE);
+        thread::sleep(WARM_CACHE_START_IDLE);
         sequence = sequence.saturating_add(1);
         let sample = measure_editor_ready(&executable, &directory, sequence)?;
         print_startup_sample("warm", run + 1, &sample);
@@ -333,7 +351,7 @@ fn startup_measurements(
     cold_samples: &[StartupSample],
     warm_samples: &[StartupSample],
 ) -> Result<Vec<EvidenceMeasurement>, String> {
-    let mut measurements = Vec::with_capacity(48);
+    let mut measurements = Vec::with_capacity(50);
     measurements.push(EvidenceMeasurement {
         name: "cold.samples".to_owned(),
         unit: "count".to_owned(),
@@ -346,6 +364,7 @@ fn startup_measurements(
         value: WARM_STARTUP_SAMPLE_COUNT as f64,
     });
     measurements.extend(startup_summary_measurements("warm", warm));
+    measurements.extend(startup_interval_measurements());
     for (name, value) in [
         ("startup.preferred_target", STARTUP_PREFERRED_TARGET),
         ("startup.engineering_target", STARTUP_ENGINEERING_TARGET),
@@ -363,6 +382,21 @@ fn startup_measurements(
     measurements.extend(startup_category_measurements("cold", cold_samples)?);
     measurements.extend(startup_category_measurements("warm", warm_samples)?);
     Ok(measurements)
+}
+
+fn startup_interval_measurements() -> [EvidenceMeasurement; 2] {
+    [
+        ("startup.warm_cache_idle", WARM_CACHE_START_IDLE),
+        (
+            "startup.rapid_restart_diagnostic_idle",
+            RAPID_RESTART_DIAGNOSTIC_IDLE,
+        ),
+    ]
+    .map(|(name, value)| EvidenceMeasurement {
+        name: name.to_owned(),
+        unit: "ms".to_owned(),
+        value: value.as_secs_f64() * 1_000.0,
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -563,16 +597,19 @@ fn measure_editor_ready(
     let ready = ReadyEvent::create(sequence)?;
     let trace = directory.join(format!("startup-trace-{sequence}.txt"));
     let started = Instant::now();
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .current_dir(directory)
         .env("STICKYMD_DIAGNOSTIC_READY_EVENT", ready.name())
         .env("STICKYMD_DIAGNOSTIC_STARTUP_TRACE", &trace)
         .env("STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("cannot start {}: {error}", executable.display()))?;
+        .stderr(Stdio::null());
+    let mut child = ChildGuard::spawn(
+        &mut command,
+        &format!("cannot start {}", executable.display()),
+    )?;
     let result = (|| {
         ready.wait(START_TIMEOUT)?;
         let external = started.elapsed();
@@ -2811,18 +2848,8 @@ fn copy_executable(source: &Path, directory: &Path) -> Result<PathBuf, String> {
     Ok(destination)
 }
 
-fn start(executable: &Path) -> Result<Child, String> {
-    Command::new(executable)
-        .current_dir(
-            executable
-                .parent()
-                .ok_or_else(|| format!("{} has no parent", executable.display()))?,
-        )
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("cannot start {}: {error}", executable.display()))
+fn start(executable: &Path) -> Result<ChildGuard, String> {
+    ChildGuard::start(executable)
 }
 
 fn wait_for_layout(program_directory: &Path) -> Result<(), String> {
@@ -2879,7 +2906,7 @@ fn file_state(path: &Path) -> Result<(Vec<u8>, SystemTime), String> {
     Ok((bytes, modified))
 }
 
-fn stop_children(children: &mut [Child]) {
+fn stop_children(children: &mut [ChildGuard]) {
     for child in children {
         match child.try_wait() {
             Ok(Some(_)) => {}
@@ -2941,10 +2968,53 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        StartupThresholdClass, byte_mismatch_summary, cpu_measurements, duration_measurements,
-        is_single_byte_insertion, nearest_rank_index, normalize_clipboard_newlines,
-        startup_threshold_class,
+        RAPID_RESTART_DIAGNOSTIC_IDLE, StartupThresholdClass, WARM_CACHE_START_IDLE,
+        byte_mismatch_summary, cpu_measurements, duration_measurements, is_single_byte_insertion,
+        nearest_rank_index, normalize_clipboard_newlines, requires_measurement_isolation,
+        startup_interval_measurements, startup_threshold_class,
     };
+    use crate::runner::RuntimeScenario;
+
+    #[test]
+    fn startup_and_resource_measurements_require_process_isolation() {
+        for scenario in [
+            RuntimeScenario::Startup,
+            RuntimeScenario::Resources,
+            RuntimeScenario::MathResources,
+            RuntimeScenario::ImageResources,
+            RuntimeScenario::WindowResources,
+            RuntimeScenario::ZoomResources,
+        ] {
+            assert!(requires_measurement_isolation(scenario));
+        }
+
+        for scenario in [
+            RuntimeScenario::Launch,
+            RuntimeScenario::Portable,
+            RuntimeScenario::Preview,
+            RuntimeScenario::Math,
+            RuntimeScenario::Assets,
+            RuntimeScenario::WindowShell,
+            RuntimeScenario::Phase10,
+            RuntimeScenario::Phase11B,
+        ] {
+            assert!(!requires_measurement_isolation(scenario));
+        }
+    }
+
+    #[test]
+    fn formal_warm_cache_and_rapid_restart_intervals_remain_distinct() {
+        assert_eq!(WARM_CACHE_START_IDLE, Duration::from_millis(1_000));
+        assert_eq!(RAPID_RESTART_DIAGNOSTIC_IDLE, Duration::from_millis(250));
+        assert!(WARM_CACHE_START_IDLE > RAPID_RESTART_DIAGNOSTIC_IDLE);
+
+        let receipt = startup_interval_measurements();
+        assert_eq!(receipt[0].name, "startup.warm_cache_idle");
+        assert_eq!(receipt[0].unit, "ms");
+        assert_eq!(receipt[0].value, 1_000.0);
+        assert_eq!(receipt[1].name, "startup.rapid_restart_diagnostic_idle");
+        assert_eq!(receipt[1].value, 250.0);
+    }
 
     #[test]
     fn five_sample_p95_is_the_observed_maximum() {

@@ -38,6 +38,11 @@ headless/Release baselines; all prior exact-candidate evidence remains invalidat
   同一物理桌面的输入、tray、clipboard、dock 与资源通道保持串行。
 - 将 Microsoft Pinyin / WeType 的客观功能矩阵迁入 G4 exact-candidate 自动化；TSF profile 临时切换必须
   fail closed 并恢复原 profile，候选窗纯视觉继续由 G1 人工持有。
+- 统一 smoke GUI child 的进程所有权：所有正常错误返回与 unwind 均由 RAII owner 执行 kill + wait；
+  Performance/Resources 在启动前检测遗留的 smoke-owned 测试进程并 fail closed，但不得自动终止任何
+  启动前已存在的 StickyMD 实例。
+- 将正式 warm-cache startup 进程间隔校准为 `1000 ms`；原 `250 ms` 只保留为命名清晰的
+  rapid-restart 诊断，不生成或替代发布门收据，门槛和样本统计方法不变。
 
 ## Out of Scope
 
@@ -152,3 +157,14 @@ locator；Search 字段使用单一 layout authority 提供 paint/hit/caret/IME 
 正式 PASS。真实 Microsoft Pinyin / WeType 的客观功能矩阵已迁入 G4-06 exact automation，候选窗出现、
 位置与视觉仍由 G1 人工判断；自动化实现与边界见 `phase-14-real-ime-automation-design.md`。自动化结果见
 `phase-14-preview-selection-geometry-design.md`；新 exact candidate 尚未生成。
+
+资格化工具的进程隔离缺陷也已关闭：旧 runtime harness 在启动 GUI child 后仍存在可由 `?` 提前返回、
+绕过尾部显式清理的路径，曾遗留 copied-Release 进程并污染后续 startup 采样。现由统一 RAII owner
+覆盖 runtime、G3、G4、G5 的 GUI child，且 Startup/Resources 六个测量入口先执行只读遗留进程预检；
+预检只拒绝继续，不替用户终止现有便签。根因与验证见
+`docs/report/phase-14-smoke-process-isolation.md`。
+
+同一当前 EXE 的干净定向诊断显示：`250 ms` / `1000 ms` cohort p95 分别为 `316.55 ms` /
+`310.79 ms`，说明二者都可在安静主机上满足 550 ms 边界；正式失败时则出现跨 cohort 的主机非稳态。
+USER 于 2026-08-28 批准把正式 warm-cache 间隔设为 `1000 ms`，用来降低快速进程重启语义对发布
+性能事实的污染；`250 ms` 继续保留为 rapid-restart stress diagnostic。

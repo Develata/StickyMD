@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-20
+- `Last Review`: 2026-08-28
 - `Scope`: 性能约束的性质定义（Target / Measurement Method / Hard Failure Condition / Future Benchmark Entry）与可靠性底线
 
 ---
@@ -79,8 +79,11 @@ Rust 工具链、是否首次启动、是否开启 Defender、文档 fixture。
 启动门使用 copied standalone Release EXE 与真实 `EDITOR_READY`（canonical note 已载入、
 Source projection 已整形、首个可用 frame 已呈现且 IME 已启用）。最终资格化至少各取
 30 个 cold/warm 样本，nearest-rank p95，不裁剪。每个样本必须使用 PID/nonce 唯一的
-ready object，并确认前一进程、mutex、tray 与 worker 已退出；warm 在同一已 bootstrap
-目录连续启动，cold 另行记录冷却条件。测量方法错误不得通过放宽门槛来掩盖。
+ready object，并确认前一进程、mutex、tray 与 worker 已退出；warm-cache 在同一已 bootstrap
+目录连续启动，并在前一进程完全回收后等待固定 `1000 ms` 再启动。`250 ms` 只定义为
+rapid-restart stress diagnostic，用于观察短周期进程退出、字体/文件缓存与 Windows 调度扰动，
+不参与 v0.1.0 cold/warm release hard gate，也不能替代正式 warm-cache cohort。cold 另行记录
+冷却条件。测量方法错误不得通过放宽门槛来掩盖。
 
 ### 目标表
 
@@ -173,7 +176,9 @@ boundary。2026-08-23 USER 批准 Phase 14 三层政策：`≤180 ms` 保持 pre
 `≤400 ms` 保持诊断性的 engineering target，v0.1.0 cold/warm release hard boundary 校准为
 `≤550 ms`。只有超过 550 ms 才阻断 v0.1.0；未达到 180/400 ms 必须如实报告，不得回写成
 达到 preferred/engineering target，也不得被称为人工验收 waiver。后续版本仍应通过归因和
-基准继续改善 startup，而不是把 550 ms 当成性能目标。
+基准继续改善 startup，而不是把 550 ms 当成性能目标。2026-08-28 USER 进一步批准把正式
+warm-cache cohort 的进程间隔从 `250 ms` 校准为 `1000 ms`；门槛数值、样本数、nearest-rank
+p95 与不裁剪规则均不改变，`250 ms` 仅保留为非发布门的 rapid-restart 诊断。
 
 ## Extension / Replacement Points
 

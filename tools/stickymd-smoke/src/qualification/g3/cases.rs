@@ -191,7 +191,7 @@ pub(super) fn g3_04(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     assert_user_asset(program, &user, &baseline)?;
     assert_sole_stickymd_process(child.id())?;
     invoke_uia(repository, "tray-exit", child.id(), None)?;
-    child.wait_for_exit()?;
+    child.wait_for_exit(super::super::exact_desktop::TIMEOUT)?;
     assert_user_asset(program, &user, &baseline)?;
 
     let mut restarted = ChildGuard::start(&program.join("StickyMD.exe"))?;
@@ -210,7 +210,7 @@ pub(super) fn g3_05(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     wait_for_layout(program)?;
     assert_sole_stickymd_process(child.id())?;
     invoke_uia(repository, "tray-exit", child.id(), None)?;
-    child.wait_for_exit()?;
+    child.wait_for_exit(super::super::exact_desktop::TIMEOUT)?;
     assert_fake_asset(program, &fake, &baseline)?;
     let mut restarted = ChildGuard::start(&program.join("StickyMD.exe"))?;
     wait_for_layout(program)?;
