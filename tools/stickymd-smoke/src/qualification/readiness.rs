@@ -3,7 +3,10 @@
 use std::path::Path;
 
 use super::receipt::{self, Candidate};
-use super::{automated_readiness, decisions, g3_readiness, g4_readiness, json, manual_readiness};
+use super::{
+    automated_readiness, decisions, g3_readiness, g4_readiness, g5_readiness, json,
+    manual_readiness,
+};
 
 const REMOTE_RECEIPT: &str = "dist/evidence/remote-workflow.json";
 const DOWNLOADED_RECEIPT: &str = "dist/evidence/downloaded-artifact-smoke.json";
@@ -73,6 +76,7 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
         let automated_ok = automated_readiness::check(root, candidate, &mut blockers);
         g3_readiness::check(root, candidate, &mut blockers);
         g4_readiness::check(root, candidate, &mut blockers);
+        g5_readiness::check(root, candidate, &mut blockers);
         manual_readiness::check(root, candidate, &decisions, automated_ok, &mut blockers);
         check_optional_remote(root, candidate, &mut remote_pending);
     }

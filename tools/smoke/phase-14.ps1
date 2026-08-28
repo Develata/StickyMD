@@ -46,6 +46,10 @@ param(
     [string]$G4Zip,
     [ValidateSet('G4-01', 'G4-02', 'G4-03', 'G4-04', 'G4-05')]
     [string]$G4Case,
+    [switch]$G5,
+    [string]$G5Zip,
+    [ValidateSet('G5-01', 'G5-02', 'G5-03', 'G5-04')]
+    [string]$G5Case,
     [switch]$ManualList,
     [switch]$ManualStatus,
     [switch]$Readiness,
@@ -60,6 +64,8 @@ if ($G3Zip -and -not $G3) { throw 'G3Zip requires -G3' }
 if ($G3Case -and -not $G3) { throw 'G3Case requires -G3' }
 if ($G4Zip -and -not $G4) { throw 'G4Zip requires -G4' }
 if ($G4Case -and -not $G4) { throw 'G4Case requires -G4' }
+if ($G5Zip -and -not $G5) { throw 'G5Zip requires -G5' }
+if ($G5Case -and -not $G5) { throw 'G5Case requires -G5' }
 $qualificationActions = @(
     $Environment,
     $Campaign,
@@ -73,6 +79,7 @@ $qualificationActions = @(
     [bool]$GuidedSession,
     $G3,
     $G4,
+    $G5,
     $ManualList,
     $ManualStatus,
     $Readiness,
@@ -119,6 +126,11 @@ if ($Environment) {
     if ($G4Zip) { $arguments += "--zip=$G4Zip" }
     if ($EvidenceFile) { $arguments += "--evidence-file=$EvidenceFile" }
     if ($G4Case) { $arguments += "--case=$G4Case" }
+} elseif ($G5) {
+    $arguments += @('qualification', 'g5')
+    if ($G5Zip) { $arguments += "--zip=$G5Zip" }
+    if ($EvidenceFile) { $arguments += "--evidence-file=$EvidenceFile" }
+    if ($G5Case) { $arguments += "--case=$G5Case" }
 } elseif ($ManualList) {
     $arguments += @('acceptance', 'manual', 'list')
 } elseif ($ManualStatus) {

@@ -35,6 +35,7 @@ ignored exact-candidate receipt 可改变 readiness，不能改写此 Markdown �
 | P14-A24 | 至少 100 个独立 copied-Release 桌面运行且全部失败仅为已分类输入/调度抖动时，成功率 `≥98%` PASS、`<98%` FAIL；内容/数据安全/崩溃/resource hard gate 永不容错 | Automated | repetition boundary tests + window-stress jitter/blocking classifier tests + `docs/plan/11_testing_and_release.md#desktop-repetition-jitter-policy` | AUTOMATED PASS |
 | P14-A25 | G3 exact automation 串行使用隔离候选目录；Rust 持有 clipboard/export/kill/recovery/asset 断言，UIA 只适配原生对话框/tray；receipt 对 source/harness/clean tree/EXE/ZIP/五项结果 fail closed | Automated | `qualification g3` parser/receipt tests + `tools/stickymd-smoke/helpers/windows-uia.ps1` boundary audit；GitHub-hosted CI 只运行无界面子集 | AUTOMATED PASS |
 | P14-A26 | G4 exact automation 串行使用隔离候选目录；Rust 持有 tray lifecycle、三边 dock/时序、legacy shortcuts、真实数学转换与 junction 单实例断言；receipt 对 source/harness/clean tree/EXE/ZIP/五组结果 fail closed | Automated | `qualification g4` parser/receipt/unit contract tests；UIA 只适配 tray；GitHub-hosted CI 只运行无界面子集 | AUTOMATED PASS |
+| P14-A27 | G5 exact automation 串行验证 ToolWindow shell identity、220×120 Source/Preview/Split mechanics、50/100/300% zoom、40 opacity、主题循环以及 Markdown/math/image stress，并把逐候选截图 path/SHA-256 绑定到 receipt；真实 IME、mixed-DPI 与首次视觉判断仍由人工持有 | Automated | `qualification g5` parser/receipt/unit contract tests；UIA 只负责窗口截图，不持有判定；GitHub-hosted CI 只运行无界面子集 | AUTOMATED PASS |
 
 ## Guided manual sessions
 
@@ -43,7 +44,7 @@ ignored exact-candidate receipt 可改变 readiness，不能改写此 Markdown �
 | ID | Scope | Mode | Underlying cases / Evidence | Status |
 | --- | --- | --- | --- | --- |
 | P14-G1 | Editor / IME / rendering | Guided Manual | P12-M01,M02,M21,M22,M24..M26 | NOT TESTED |
-| P14-G2 | ToolWindow / mixed-DPI dock / compact window / theme | Guided Manual | P12-M03..M05,M11,M12,M18..M20,M23 | NOT TESTED |
+| P14-G2 | focus recovery / mixed-DPI dock / compact visual / theme | Guided Manual | P12-M05,M11,M12,M18..M20,M23；可复核 G5 截图以减少重复操作 | NOT TESTED |
 
 ## Exact-candidate automated desktop session
 
@@ -51,6 +52,7 @@ ignored exact-candidate receipt 可改变 readiness，不能改写此 Markdown �
 | --- | --- | --- | --- | --- |
 | P14-G3 | clipboard / native export / process-kill recovery / asset safety | Automated exact candidate | `phase-14.ps1 -G3`; P12-M28..M30,M32,M33；独立 `g3-exact-qualification.json` | NOT TESTED |
 | P14-G4 | tray lifecycle / dock timing / legacy shortcuts / math conversion / junction identity | Automated exact candidate | `phase-14.ps1 -G4`; P12-M06..M10,M13..M17,M27,M31,M44；独立 `g4-exact-qualification.json` | NOT TESTED |
+| P14-G5 | shell identity / compact / presentation / rendering mechanics | Automated exact candidate | `phase-14.ps1 -G5`; P12-M03,M04，并为 M05/M18..M26 提供候选绑定的机械与截图 companion evidence；独立 `g5-exact-qualification.json` | NOT TESTED |
 
 ## Readiness interpretation
 

@@ -48,9 +48,20 @@ pub(super) fn render_receipt(
             .map(|value| format!("\"{}\"", json::escape(value)))
             .unwrap_or_else(|| "null".to_owned());
         output.push_str(&format!(
-            "{{\"id\":\"{}\",\"status\":\"{}\",\"detail\":{detail}}}",
+            "{{\"id\":\"{}\",\"status\":\"{}\",\"detail\":{detail},\"artifacts\":[",
             result.id, result.status
         ));
+        for (artifact_index, artifact) in result.artifacts.iter().enumerate() {
+            if artifact_index > 0 {
+                output.push(',');
+            }
+            output.push_str(&format!(
+                "{{\"path\":\"{}\",\"sha256\":\"{}\"}}",
+                json::escape(&artifact.path),
+                json::escape(&artifact.sha256),
+            ));
+        }
+        output.push_str("]}");
     }
     output.push_str("]}\n");
     output
@@ -59,7 +70,7 @@ pub(super) fn render_receipt(
 #[cfg(test)]
 mod tests {
     use super::render_receipt;
-    use crate::qualification::exact_desktop::CaseResult;
+    use crate::qualification::exact_desktop::{ArtifactEvidence, CaseResult};
     use crate::qualification::receipt::Candidate;
 
     #[test]
@@ -85,10 +96,16 @@ mod tests {
                 id: "GX-01",
                 status: "PASSED",
                 detail: None,
+                artifacts: vec![ArtifactEvidence {
+                    path: "dist/evidence/gx.png".to_owned(),
+                    sha256: "f".repeat(64),
+                }],
             }],
         );
         assert!(document.contains("\"status\":\"PASSED\""));
         assert!(document.contains(&format!("\"zip_sha256\":\"{}\"", candidate.zip_sha256)));
         assert_eq!(document.matches("\"id\":\"GX-").count(), 1);
+        assert!(document.contains("\"path\":\"dist/evidence/gx.png\""));
+        assert!(document.contains(&format!("\"sha256\":\"{}\"", "f".repeat(64))));
     }
 }

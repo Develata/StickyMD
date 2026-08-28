@@ -154,10 +154,10 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-14.md");
     let content = read_text(&path)?;
     let observed = frozen_trace_ids(&content, "P14-A")?;
-    let expected: Vec<u16> = (1..=26).collect();
+    let expected: Vec<u16> = (1..=27).collect();
     if observed != expected {
         return Err(format!(
-            "{} IDs must be exactly P14-A01..P14-A26; observed {observed:?}",
+            "{} IDs must be exactly P14-A01..P14-A27; observed {observed:?}",
             path.display()
         ));
     }
@@ -181,11 +181,13 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
                 row.line
             ));
         }
-        if (line.trim_start().starts_with("| P14-G3") || line.trim_start().starts_with("| P14-G4"))
+        if (line.trim_start().starts_with("| P14-G3")
+            || line.trim_start().starts_with("| P14-G4")
+            || line.trim_start().starts_with("| P14-G5"))
             && (row.mode != "Automated exact candidate" || row.status != "NOT TESTED")
         {
             return Err(format!(
-                "{}:{} Phase 14 G3/G4 row must remain Automated exact candidate / NOT TESTED until an exact receipt exists",
+                "{}:{} Phase 14 G3/G4/G5 row must remain Automated exact candidate / NOT TESTED until an exact receipt exists",
                 path.display(),
                 row.line
             ));
@@ -254,7 +256,7 @@ fn verify_phase12_contract_trace(root: &Path) -> Result<(), String> {
         };
         if !valid {
             return Err(format!(
-                "{}:{} Phase 12 row mode/status does not match its manual or exact G3/G4 authority",
+                "{}:{} Phase 12 row mode/status does not match its manual or exact G3/G4/G5 authority",
                 path.display(),
                 row.line
             ));

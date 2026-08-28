@@ -13,6 +13,9 @@ mod g3_readiness;
 #[cfg(windows)]
 mod g4;
 mod g4_readiness;
+#[cfg(windows)]
+mod g5;
+mod g5_readiness;
 mod guided;
 mod json;
 mod manual;
@@ -26,7 +29,7 @@ mod startup_attribution;
 
 use std::path::Path;
 
-use crate::cli::{G3Case, G4Case, ManualCommand, QualificationCommand};
+use crate::cli::{G3Case, G4Case, G5Case, ManualCommand, QualificationCommand};
 use crate::evidence::{self, EvidenceResult, EvidenceStatus};
 use crate::qualification_environment::{self, QualificationEnvironmentStatus};
 
@@ -68,6 +71,11 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
             evidence_file,
             case,
         } => run_g4(root, zip.as_deref(), evidence_file.as_deref(), case),
+        QualificationCommand::G5Exact {
+            zip,
+            evidence_file,
+            case,
+        } => run_g5(root, zip.as_deref(), evidence_file.as_deref(), case),
         QualificationCommand::Decision {
             key,
             status,
@@ -101,6 +109,16 @@ fn run_g4(
     g4::run(root, zip, evidence_file, case)
 }
 
+#[cfg(windows)]
+fn run_g5(
+    root: &Path,
+    zip: Option<&Path>,
+    evidence_file: Option<&Path>,
+    case: Option<G5Case>,
+) -> Result<(), String> {
+    g5::run(root, zip, evidence_file, case)
+}
+
 #[cfg(not(windows))]
 fn run_g4(
     _root: &Path,
@@ -119,6 +137,16 @@ fn run_g3(
     _case: Option<G3Case>,
 ) -> Result<(), String> {
     Err("G3 exact qualification requires Windows".to_owned())
+}
+
+#[cfg(not(windows))]
+fn run_g5(
+    _root: &Path,
+    _zip: Option<&Path>,
+    _evidence_file: Option<&Path>,
+    _case: Option<G5Case>,
+) -> Result<(), String> {
+    Err("G5 exact qualification requires Windows".to_owned())
 }
 
 #[cfg(windows)]

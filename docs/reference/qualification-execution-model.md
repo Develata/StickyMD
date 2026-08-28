@@ -7,7 +7,7 @@
 1. **GitHub-hosted deterministic CI/package**：fmt、Clippy、tests、deny、package structure、SBOM、
    static/runtime contract smoke。共享 runner 不执行绝对 550 ms startup 或资源门。
 2. **Trusted Windows qualification host**：exact copied EXE 的 Runtime、Performance、Resources、
-   environment preflight、startup attribution 与串行 G3/G4 exact desktop automation。未来
+   environment preflight、startup attribution 与串行 G3/G4/G5 exact desktop automation。未来
    优先 pull-based local lab；不得给 public repo 绑定高权限、长期在线的 persistent self-hosted runner。
 3. **Human interaction acceptance**：真实 IME、视觉、tray/docking 观感、物理显示拓扑与 Clean VM。
 
@@ -43,7 +43,11 @@ package/manual 还绑定 ZIP SHA-256。manual observation 只接受显式 human 
 - G4：本地串行 exact-candidate automation，覆盖 Tray lifecycle / 主屏 Dock timing / legacy
   shortcuts / math conversion / junction identity；`-G4Case` 只用于单组诊断，独立收据不参与
   release readiness。mixed-DPI Left/Right sensor 仍由 G2 人工观察。
+- G5：本地串行 exact-candidate automation，覆盖 ToolWindow shell eligibility、compact 三视图、
+  zoom/opacity/theme mechanics 与 rendering stress；`-G5Case` 只用于单组诊断。逐窗口 PNG 的相对
+  path/SHA-256 写入 receipt，readiness 会重新读取并校验；截图只提供 visual companion evidence，
+  不替代真实 IME、mixed-DPI 或首次人工视觉判断。
 
 G1/G2 guided step 可同时映射多个 case，仅限这些 case 由同一个观察事实直接支持；manual receipt
-仍逐 case 保存状态和 observation。G3/G4 不写人工状态，分别写 exact automated receipt，并按
-G3 后 G4 串行执行。
+仍逐 case 保存状态和 observation。G3/G4/G5 不写人工状态，分别写 exact automated receipt，并按
+G3 → G4 → G5 串行执行。

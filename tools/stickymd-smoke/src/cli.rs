@@ -176,6 +176,11 @@ pub(crate) enum QualificationCommand {
         evidence_file: Option<PathBuf>,
         case: Option<G4Case>,
     },
+    G5Exact {
+        zip: Option<PathBuf>,
+        evidence_file: Option<PathBuf>,
+        case: Option<G5Case>,
+    },
     Decision {
         key: String,
         status: String,
@@ -253,6 +258,35 @@ impl G4Case {
             Self::G403 => "G4-03",
             Self::G404 => "G4-04",
             Self::G405 => "G4-05",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum G5Case {
+    G501,
+    G502,
+    G503,
+    G504,
+}
+
+impl G5Case {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+        match value.to_ascii_uppercase().as_str() {
+            "G5-01" => Ok(Self::G501),
+            "G5-02" => Ok(Self::G502),
+            "G5-03" => Ok(Self::G503),
+            "G5-04" => Ok(Self::G504),
+            _ => Err(format!("unknown G5 case `{value}`; expected G5-01..G5-04")),
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::G501 => "G5-01",
+            Self::G502 => "G5-02",
+            Self::G503 => "G5-03",
+            Self::G504 => "G5-04",
         }
     }
 }
@@ -492,6 +526,32 @@ impl CommandLine {
                     case,
                 }))
             }
+            Some("g5") => {
+                let values = &arguments[1..];
+                if values.len() > 3
+                    || values.iter().any(|value| {
+                        !value.starts_with("--zip=")
+                            && !value.starts_with("--evidence-file=")
+                            && !value.starts_with("--case=")
+                    })
+                {
+                    return Err(
+                        "usage: stickymd-smoke qualification g5 [--zip=<path>] [--evidence-file=<path>] [--case=G5-01..G5-04]"
+                            .to_owned(),
+                    );
+                }
+                let zip = optional_named_value(values, "--zip=")?.map(PathBuf::from);
+                let evidence_file =
+                    optional_named_value(values, "--evidence-file=")?.map(PathBuf::from);
+                let case = optional_named_value(values, "--case=")?
+                    .map(G5Case::parse)
+                    .transpose()?;
+                Ok(Self::Qualification(QualificationCommand::G5Exact {
+                    zip,
+                    evidence_file,
+                    case,
+                }))
+            }
             Some("local") if arguments.len() == 1 => {
                 Ok(Self::Qualification(QualificationCommand::LocalCampaign))
             }
@@ -545,7 +605,7 @@ impl CommandLine {
                 }))
             }
             _ => Err(
-                "qualification requires environment, local, candidate, attribution, window-stress, native-runtime, g3, g4, decision, readiness, remote, or downloaded"
+                "qualification requires environment, local, candidate, attribution, window-stress, native-runtime, g3, g4, g5, decision, readiness, remote, or downloaded"
                     .to_owned(),
             ),
         }
@@ -1169,6 +1229,33 @@ mod tests {
                 zip: None,
                 evidence_file: None,
                 case: Some(super::G4Case::G405),
+            })
+        );
+
+        let g5 = CommandLine::parse(args(&[
+            "qualification",
+            "g5",
+            "--zip=dist/candidate.zip",
+            "--evidence-file=dist/evidence/g5.json",
+        ]))
+        .expect("valid exact-candidate G5 command");
+        assert_eq!(
+            g5,
+            CommandLine::Qualification(QualificationCommand::G5Exact {
+                zip: Some(std::path::PathBuf::from("dist/candidate.zip")),
+                evidence_file: Some(std::path::PathBuf::from("dist/evidence/g5.json")),
+                case: None,
+            })
+        );
+
+        let targeted_g5 = CommandLine::parse(args(&["qualification", "g5", "--case=G5-04"]))
+            .expect("valid targeted G5 command");
+        assert_eq!(
+            targeted_g5,
+            CommandLine::Qualification(QualificationCommand::G5Exact {
+                zip: None,
+                evidence_file: None,
+                case: Some(super::G5Case::G504),
             })
         );
     }

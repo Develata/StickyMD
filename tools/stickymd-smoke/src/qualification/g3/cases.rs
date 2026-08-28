@@ -8,8 +8,8 @@ use std::thread;
 use std::time::Duration;
 
 use super::super::exact_desktop::{
-    ChildGuard, assert_sole_stickymd_process, invoke_uia, io_error, seed_note, wait_for_layout,
-    wait_note, wait_until,
+    CaseEvidence, ChildGuard, assert_sole_stickymd_process, invoke_uia, io_error, seed_note,
+    wait_for_layout, wait_note, wait_until,
 };
 use super::super::receipt;
 
@@ -19,7 +19,7 @@ const PNG: &[u8] = &[
     39, 24, 227, 102, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ];
 
-pub(super) fn g3_01(_repository: &Path, program: &Path) -> Result<(), String> {
+pub(super) fn g3_01(_repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
     let fixture = program.join("clipboard-source.png");
     fs::write(&fixture, PNG).map_err(|error| format!("cannot seed clipboard fixture: {error}"))?;
     for producer in ["explorer", "snipping", "browser"] {
@@ -67,10 +67,10 @@ pub(super) fn g3_01(_repository: &Path, program: &Path) -> Result<(), String> {
         })?;
         child.kill_and_wait()?;
     }
-    Ok(())
+    Ok(CaseEvidence::default())
 }
 
-pub(super) fn g3_02(repository: &Path, program: &Path) -> Result<(), String> {
+pub(super) fn g3_02(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
     let source = "![local](images/user-export.png)\n![remote](https://example.com/remote.png)\n";
     seed_note(program, source)?;
     let user_asset = program.join("note/images/user-export.png");
@@ -99,10 +99,11 @@ pub(super) fn g3_02(repository: &Path, program: &Path) -> Result<(), String> {
     if fs::read_to_string(program.join("note/note.md")).map_err(io_error)? != source {
         return Err("export changed the canonical working note".to_owned());
     }
-    child.kill_and_wait()
+    child.kill_and_wait()?;
+    Ok(CaseEvidence::default())
 }
 
-pub(super) fn g3_03(_repository: &Path, program: &Path) -> Result<(), String> {
+pub(super) fn g3_03(_repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
     for (index, offset_ms) in [0_u64, 15, 75, 250].into_iter().enumerate() {
         let instance = program.join(format!("kill-{index}"));
         fs::create_dir(&instance).map_err(io_error)?;
@@ -155,10 +156,10 @@ pub(super) fn g3_03(_repository: &Path, program: &Path) -> Result<(), String> {
         }
         restarted.kill_and_wait()?;
     }
-    Ok(())
+    Ok(CaseEvidence::default())
 }
 
-pub(super) fn g3_04(repository: &Path, program: &Path) -> Result<(), String> {
+pub(super) fn g3_04(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
     let original = "![user](images/user-important.png)\n";
     seed_note(program, original)?;
     let user = program.join("note/images/user-important.png");
@@ -196,10 +197,11 @@ pub(super) fn g3_04(repository: &Path, program: &Path) -> Result<(), String> {
     let mut restarted = ChildGuard::start(&program.join("StickyMD.exe"))?;
     wait_for_layout(program)?;
     assert_user_asset(program, &user, &baseline)?;
-    restarted.kill_and_wait()
+    restarted.kill_and_wait()?;
+    Ok(CaseEvidence::default())
 }
 
-pub(super) fn g3_05(repository: &Path, program: &Path) -> Result<(), String> {
+pub(super) fn g3_05(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
     seed_note(program, "safe boundary\n")?;
     let fake = program.join("note/images/stickymd-00000000000000000000.png");
     fs::write(&fake, PNG).map_err(io_error)?;
@@ -213,7 +215,8 @@ pub(super) fn g3_05(repository: &Path, program: &Path) -> Result<(), String> {
     let mut restarted = ChildGuard::start(&program.join("StickyMD.exe"))?;
     wait_for_layout(program)?;
     assert_fake_asset(program, &fake, &baseline)?;
-    restarted.kill_and_wait()
+    restarted.kill_and_wait()?;
+    Ok(CaseEvidence::default())
 }
 
 fn assert_user_asset(program: &Path, path: &Path, baseline: &str) -> Result<(), String> {

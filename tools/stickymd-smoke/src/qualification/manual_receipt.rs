@@ -102,9 +102,9 @@ fn parse_manual_cases(content: &str) -> Result<Vec<ManualCase>, String> {
             tier: tier_for_case(cells[0])?,
         });
     }
-    if cases.len() != 26 {
+    if cases.len() != 24 {
         return Err(format!(
-            "phase-12 manual matrix must contain exactly 26 cases after G3/G4 automation; observed {}",
+            "phase-12 manual matrix must contain exactly 24 cases after G3/G4/G5 automation; observed {}",
             cases.len()
         ));
     }
@@ -299,7 +299,7 @@ mod tests {
     fn matrix_parser_exposes_all_cases_and_sessions() {
         let mut content = String::new();
         for number in 1..=44 {
-            let mode = if matches!(number, 6..=10 | 13..=17 | 27..=33 | 44) {
+            let mode = if matches!(number, 3 | 4 | 6..=10 | 13..=17 | 27..=33 | 44) {
                 "Automated exact candidate"
             } else {
                 "Manual"
@@ -309,11 +309,11 @@ mod tests {
             ));
         }
         let cases = parse_manual_cases(&content).expect("manual cases");
-        assert_eq!(cases.len(), 26);
+        assert_eq!(cases.len(), 24);
         assert_eq!(cases[0].session, ManualSession::M1);
         assert!(
             (1..=44)
-                .filter(|number| !matches!(number, 6..=10 | 13..=17 | 27..=33 | 44))
+                .filter(|number| !matches!(number, 3 | 4 | 6..=10 | 13..=17 | 27..=33 | 44))
                 .all(|number| session_for_case(&format!("P12-M{number:02}")).is_ok())
         );
     }

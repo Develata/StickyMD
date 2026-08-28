@@ -16,7 +16,18 @@ mod evidence;
 
 pub(super) const TIMEOUT: Duration = Duration::from_secs(12);
 
-pub(super) type CaseOperation = fn(&Path, &Path) -> Result<(), String>;
+pub(super) type CaseOperation = fn(&Path, &Path) -> Result<CaseEvidence, String>;
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct CaseEvidence {
+    pub(super) artifacts: Vec<ArtifactEvidence>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ArtifactEvidence {
+    pub(super) path: String,
+    pub(super) sha256: String,
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct ExactCase {
@@ -36,6 +47,7 @@ struct CaseResult {
     id: &'static str,
     status: &'static str,
     detail: Option<String>,
+    artifacts: Vec<ArtifactEvidence>,
 }
 
 struct QualificationRoot {
@@ -216,12 +228,13 @@ pub(super) fn run(
         let case_directory = qualification_root.path.join(case.id.to_ascii_lowercase());
         copy_directory(&template_program, &case_directory)?;
         match (case.operation)(repository, &case_directory) {
-            Ok(()) => {
+            Ok(evidence) => {
                 println!("{}=PASSED", case.id);
                 results.push(CaseResult {
                     id: case.id,
                     status: "PASSED",
                     detail: None,
+                    artifacts: evidence.artifacts,
                 });
             }
             Err(error) => {
@@ -230,6 +243,7 @@ pub(super) fn run(
                     id: case.id,
                     status: "FAILED",
                     detail: Some(error),
+                    artifacts: Vec::new(),
                 });
             }
         }

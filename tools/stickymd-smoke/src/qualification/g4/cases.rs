@@ -9,22 +9,29 @@ mod tray;
 
 use std::path::Path;
 
-pub(super) fn g4_01(repository: &Path, program: &Path) -> Result<(), String> {
-    tray::g4_01(repository, program)
+use super::super::exact_desktop::CaseEvidence;
+
+pub(super) fn g4_01(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
+    tray::g4_01(repository, program)?;
+    Ok(CaseEvidence::default())
 }
 
-pub(super) fn g4_02(repository: &Path, program: &Path) -> Result<(), String> {
-    dock::g4_02(repository, program)
+pub(super) fn g4_02(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
+    dock::g4_02(repository, program)?;
+    Ok(CaseEvidence::default())
 }
 
-pub(super) fn g4_03(repository: &Path, program: &Path) -> Result<(), String> {
-    editor::g4_03(repository, program)
+pub(super) fn g4_03(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
+    editor::g4_03(repository, program)?;
+    Ok(CaseEvidence::default())
 }
 
-pub(super) fn g4_04(repository: &Path, program: &Path) -> Result<(), String> {
-    editor::g4_04(repository, program)
+pub(super) fn g4_04(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
+    editor::g4_04(repository, program)?;
+    Ok(CaseEvidence::default())
 }
 
-pub(super) fn g4_05(repository: &Path, program: &Path) -> Result<(), String> {
-    identity::g4_05(repository, program)
+pub(super) fn g4_05(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
+    identity::g4_05(repository, program)?;
+    Ok(CaseEvidence::default())
 }

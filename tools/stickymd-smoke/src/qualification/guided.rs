@@ -63,20 +63,6 @@ pub(super) const STEPS: &[GuidedStep] = &[
     ),
     step(
         GuidedSession::G2,
-        "G2-01",
-        &["P12-M03"],
-        "观察 Windows taskbar",
-        "StickyMD 不出现在任务栏",
-    ),
-    step(
-        GuidedSession::G2,
-        "G2-02",
-        &["P12-M04"],
-        "打开 Alt+Tab switcher",
-        "StickyMD 不出现在 Alt+Tab 列表",
-    ),
-    step(
-        GuidedSession::G2,
         "G2-03",
         &["P12-M05"],
         "聚焦后 Alt+Tab 离开，再经点击/托盘/传感区恢复并输入",
@@ -144,6 +130,6 @@ mod tests {
                 assert_eq!(session_for_case(case), Some(step.session));
             }
         }
-        assert_eq!(observed.len(), 16);
+        assert_eq!(observed.len(), 14);
     }
 }

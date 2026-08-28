@@ -32,8 +32,8 @@
 | --- | --- | --- | --- | --- |
 | P12-M01 | 用 Microsoft Pinyin 连续中文、中英混输、selection composition、cancel、一次 Undo | Manual | 候选框跟 caret；commit 一次撤销；composition 不污染 canonical/undo | NOT TESTED |
 | P12-M02 | 用 WeChat Input Method 重复真实 IME 矩阵 | Manual | 与 Microsoft Pinyin 同等正确；环境缺失必须记录 NOT TESTED | NOT TESTED |
-| P12-M03 | 启动并观察 Windows taskbar | Manual | StickyMD 不出现在任务栏 | NOT TESTED |
-| P12-M04 | 打开 Alt+Tab switcher | Manual | StickyMD 不出现在 Alt+Tab 列表 | NOT TESTED |
+| P12-M03 | 启动并验证 Windows taskbar eligibility | Automated exact candidate | `phase-14.ps1 -G5` / G5-01；真实 HWND 保持 `WS_EX_TOOLWINDOW` 且无 `WS_EX_APPWINDOW` | NOT TESTED |
+| P12-M04 | 验证 Alt+Tab eligibility | Automated exact candidate | `phase-14.ps1 -G5` / G5-01；真实 HWND 保持 ToolWindow shell identity，不进入普通 app switch surface | NOT TESTED |
 | P12-M05 | 聚焦 StickyMD 后 Alt+Tab 离开，再点击/托盘/传感区恢复并输入 | Manual | 切换 away 正常；恢复焦点和 IME 正常 | NOT TESTED |
 | P12-M06 | 检查 exact EXE 的 StickyMD tray 项 | Automated exact candidate | `phase-14.ps1 -G4` / G4-01；菜单恰为显示/隐藏、置顶、退出 | NOT TESTED |
 | P12-M07 | 点击 exact EXE 纸张关闭按钮 | Automated exact candidate | `phase-14.ps1 -G4` / G4-01；窗口隐藏，进程与文本保留 | NOT TESTED |
@@ -87,7 +87,7 @@
 
 ## Current readiness
 
-所有 source matrix 行仍为 `NOT TESTED`，这不会使 headless CI 失败。G3/G4 自动 exact 行只有对应
+所有 source matrix 行仍为 `NOT TESTED`，这不会使 headless CI 失败。G3/G4/G5 自动 exact 行只有对应
 receipt 完整 PASS 才解除 readiness blocker；其余 Tier A 仍需人工 PASS 或 USER 明确批准具体
 case/group waiver。Tier B 需要 PASS 或
 绑定 v0.1.0 + exact source 的明确 USER disposition；Tier C 仅在对应自动化合同通过时允许保持

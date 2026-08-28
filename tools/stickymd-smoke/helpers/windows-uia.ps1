@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('export', 'tray-exit', 'tray-menu', 'tray-show')]
+    [ValidateSet('capture-window', 'export', 'tray-exit', 'tray-menu', 'tray-show')]
     [string]$Action,
     [Parameter(Mandatory = $true)]
     [int]$ProcessId,
@@ -12,6 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -52,6 +53,18 @@ function Find-ProcessTopLevel([int]$OwnerPid, [string]$ExpectedName) {
     return $null
 }
 
+function Find-StickyMdPaperWindow([int]$OwnerPid) {
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $condition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+        $OwnerPid
+    )
+    foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)) {
+        if ($window.Current.Name.StartsWith('StickyMD')) { return $window }
+    }
+    return $null
+}
+
 function Invoke-ExportDialog {
     if (-not $Path) { throw 'export action requires -Path' }
     $exportLabel = ([string][char]0x5bfc) + ([string][char]0x51fa)
@@ -88,6 +101,38 @@ function Invoke-ExportDialog {
     $invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
     Write-Output 'UIA_EXPORT_SUBMITTED'
+}
+
+function Save-WindowCapture {
+    if (-not $Path) { throw 'capture-window action requires -Path' }
+    $window = Wait-Until { Find-StickyMdPaperWindow $ProcessId } 'StickyMD paper window'
+    $rect = $window.Current.BoundingRectangle
+    $width = [int][Math]::Ceiling($rect.Width)
+    $height = [int][Math]::Ceiling($rect.Height)
+    if ($width -le 0 -or $height -le 0) { throw 'StickyMD window has invalid capture geometry' }
+    $target = [IO.Path]::GetFullPath($Path)
+    $parent = [IO.Path]::GetDirectoryName($target)
+    if ($parent) { [IO.Directory]::CreateDirectory($parent) | Out-Null }
+    $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+    try {
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        try {
+            $graphics.CopyFromScreen(
+                [int][Math]::Floor($rect.X),
+                [int][Math]::Floor($rect.Y),
+                0,
+                0,
+                (New-Object System.Drawing.Size($width, $height)),
+                [System.Drawing.CopyPixelOperation]::SourceCopy
+            )
+        } finally {
+            $graphics.Dispose()
+        }
+        $bitmap.Save($target, [System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+        $bitmap.Dispose()
+    }
+    Write-Output ('UIA_WINDOW_CAPTURE=' + $target)
 }
 
 function Find-TrayIcon {
@@ -211,6 +256,7 @@ function Invoke-TrayShow {
 }
 
 switch ($Action) {
+    'capture-window' { Save-WindowCapture }
     'export' { Invoke-ExportDialog }
     'tray-exit' { Invoke-TrayExit }
     'tray-menu' { Inspect-TrayMenu }

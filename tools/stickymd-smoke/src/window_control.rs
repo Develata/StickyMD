@@ -10,6 +10,7 @@ mod physical_input;
 use physical_input::{
     PhysicalCursorKind, PhysicalLeftButtonGuard, current_cursor_handle, current_cursor_position,
     cursor_matches, move_physical_cursor, move_physical_cursor_with_tolerance, release_left_button,
+    scroll_wheel,
 };
 
 const WM_MOUSEMOVE: u32 = 0x0200;
@@ -338,6 +339,29 @@ pub(crate) fn focus_split_preview(window: WindowHandle) -> Result<(), String> {
     click_client(window, x, y)?;
     thread::sleep(Duration::from_millis(50));
     wait_for_window_activation(window)
+}
+
+pub(crate) fn scroll_preview_down(window: WindowHandle, notches: u32) -> Result<(), String> {
+    focus_split_preview(window)?;
+    let rect = window_rect(window)?;
+    let x = rect
+        .x
+        .saturating_add(i32::try_from(rect.width.saturating_mul(3) / 4).unwrap_or(i32::MAX));
+    let y = rect
+        .y
+        .saturating_add(i32::try_from(rect.height / 2).unwrap_or(i32::MAX));
+    move_physical_cursor(x, y, "route preview wheel input")?;
+    let mut remaining = notches;
+    while remaining > 0 {
+        let batch = remaining.min(20);
+        let batch = i32::try_from(batch)
+            .map_err(|_| format!("preview scroll notch batch {batch} exceeds i32"))?;
+        scroll_wheel(-batch)?;
+        remaining -= batch as u32;
+        thread::sleep(Duration::from_millis(10));
+    }
+    thread::sleep(Duration::from_millis(150));
+    Ok(())
 }
 
 /// Click the semantic math-delimiter conversion action in the native toolbar.

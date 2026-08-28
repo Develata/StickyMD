@@ -61,12 +61,12 @@ pub(super) fn check(
     };
     let observed_ids: Vec<_> = cases.iter().map(|case| case.case_id.as_str()).collect();
     let expected_ids: Vec<_> = (1..=44)
-        .filter(|number| !matches!(number, 6..=10 | 13..=17 | 27..=33 | 44))
         .map(|number| format!("P12-M{number:02}"))
+        .filter(|id| super::exact_groups::group_for_phase12_case(id).is_none())
         .collect();
     if observed_ids != expected_ids.iter().map(String::as_str).collect::<Vec<_>>() {
         blockers.push(format!(
-            "manual receipt cases must contain the 26 non-G3/G4 P12 manual cases; observed {observed_ids:?}"
+            "manual receipt cases must contain the 24 non-G3/G4/G5 P12 manual cases; observed {observed_ids:?}"
         ));
         return;
     }

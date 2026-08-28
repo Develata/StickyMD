@@ -199,8 +199,8 @@ automated、manual、remote、downloaded-artifact 与 readiness receipts 写入 
 
 - manual recorder 必须是交互式 human receipt recorder，只接受显式
   `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`，不得从 process/status 自动推断人工 PASS；
-- stale source/EXE receipt 不参与 readiness；G3/G4 exact receipt 还必须绑定 ZIP、运行 harness commit、
-  clean worktree 与各自五项逐项结果，不能用旧候选或开发期 dirty receipt 替代；
+- stale source/EXE receipt 不参与 readiness；G3/G4/G5 exact receipt 还必须绑定 ZIP、运行 harness commit、
+  clean worktree 与各组预期逐项结果，不能用旧候选或开发期 dirty receipt 替代；
 - readiness 对 P0/P1、未批准 hard gate、mandatory manual NOT TESTED、exact package、remote
   evidence 与 USER decision fail closed；不得提供 `--force-ready`；
 - freeze 后若任何 source、manifest/lock、runtime asset 或 release tooling 改变，所有 receipts
@@ -248,6 +248,13 @@ clipboard shortcuts 与 Preview 只读；G4-04 真实 toolbar 数学分隔符转
 safety 与单次 Undo；G4-05 真实 junction canonical identity、同 HWND 唤醒与第二实例零 durable write。
 G3/G4 都必须串行且独占桌面，不能并发争抢 clipboard、tray、窗口焦点或鼠标；单项诊断 receipt
 不能替代完整五组 receipt。P12-M11/M12 的 mixed-DPI 实机事实仍属于 G2 人工验收。
+
+G5 shell/compact/presentation/rendering 路径复用相同 exact-candidate identity、独立候选副本与独占
+交互桌面。G5-01 以真实 HWND style 和 focus transition 持有 P12-M03/M04 的可机械 shell eligibility；
+G5-02..04 自动驱动 compact、zoom、opacity、theme 与 rendering stress，并把窗口截图的相对路径和
+SHA-256 写入 exact receipt。截图适配器只采集像素，不得判 PASS。真实微软拼音/微信输入法、物理
+mixed-DPI/多屏、System 主题实际切换和首次视觉判断仍由人工 authority 持有；G5 companion evidence
+只能减少重复操作，不能把这些观察静默升级为人工 PASS。G3、G4、G5 必须串行执行。
 
 Phase 14 固定本地顺序为 Environment → Release/package → headless CI → Runtime → Performance →
 Resources → Manual → Readiness。Environment invalid、candidate identity mismatch、P0/security/

@@ -20,7 +20,7 @@ Implementation Complete — exact qualification and USER manual review remain pe
 
 - 更新 `docs/plan/10` / `docs/plan/11` 发布合同。
 - `stickymd-smoke` 增加 Phase 14、三层 startup threshold、startup attribution、G1/G2 guided
-  manual sessions、G3/G4 exact-candidate automation、risk-tier readiness 和 independent channel collection。
+  manual sessions、G3/G4/G5 exact-candidate automation、risk-tier readiness 和 independent channel collection。
 - 建立 exact candidate 并重新收集 Release、headless CI、Runtime、Performance、Resources、
   Manual、Readiness evidence。
 - 对 exact-candidate 人工验收中 USER 实际观察到的 release-blocking 缺陷作最小、回归绑定的纠正；
@@ -71,8 +71,8 @@ tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任
 - exact copied candidate Release, headless, Runtime, Performance, Resources and Readiness channels。
 - product runtime/dependency delta audit。
 - USER-observed regression 的 named tests，以及扩展后的三边/顶角 copied-Release smoke。
-- G3/G4 exact desktop groups 分别在独立候选副本中串行通过，并生成 clean、同 commit、同 ZIP/EXE
-  identity 的完整五项 receipt；单项诊断收据不计入 readiness。
+- G3/G4/G5 exact desktop groups 分别在独立候选副本中串行通过，并生成 clean、同 commit、同 ZIP/EXE
+  identity 的完整 group receipt；单项诊断收据不计入 readiness。
 - 远端 CI 故障归因与可诊断输出；隔离 runner CI 分片并发、模块化 Resources 定向入口与
   “分片并集 = 完整任务图”回归。
 
@@ -126,6 +126,7 @@ Preview/Split runtime 改用该 fixture 并验证 canonical source 字节不变�
 ## Result
 
 source-controlled policy、CLI、CI、guided manual 与 readiness contract 已实现并通过冻结前基线。
-G3/G4 exact-candidate harness 已完成开发态五项全通过；clean receipt 仍必须在本次提交生成的新
+G3/G4 exact-candidate harness 已完成开发态五项全通过；G5 exact harness 已完成四组开发态全通过，
+并为 compact、presentation 与 rendering 生成候选绑定截图。clean receipt 仍必须在本次提交生成的新
 candidate 上重新采集。
 动态 evidence 与最终 recommendation 只在 exact source freeze 后产生；人工项目不会因此自动 PASS。

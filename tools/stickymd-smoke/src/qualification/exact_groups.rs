@@ -10,11 +10,15 @@ pub(crate) const G4_PHASE12_CASES: [&str; 13] = [
     "P12-M16", "P12-M17", "P12-M27", "P12-M31", "P12-M44",
 ];
 
+pub(crate) const G5_PHASE12_CASES: [&str; 2] = ["P12-M03", "P12-M04"];
+
 pub(crate) fn group_for_phase12_case(id: &str) -> Option<&'static str> {
     if G3_PHASE12_CASES.contains(&id) {
         Some("G3")
     } else if G4_PHASE12_CASES.contains(&id) {
         Some("G4")
+    } else if G5_PHASE12_CASES.contains(&id) {
+        Some("G5")
     } else {
         None
     }
@@ -24,17 +28,19 @@ pub(crate) fn group_for_phase12_case(id: &str) -> Option<&'static str> {
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{G3_PHASE12_CASES, G4_PHASE12_CASES, group_for_phase12_case};
+    use super::{G3_PHASE12_CASES, G4_PHASE12_CASES, G5_PHASE12_CASES, group_for_phase12_case};
 
     #[test]
-    fn exact_groups_are_disjoint_and_cover_eighteen_phase12_rows() {
+    fn exact_groups_are_disjoint_and_cover_twenty_phase12_rows() {
         let ids = G3_PHASE12_CASES
             .into_iter()
             .chain(G4_PHASE12_CASES)
+            .chain(G5_PHASE12_CASES)
             .collect::<BTreeSet<_>>();
-        assert_eq!(ids.len(), 18);
+        assert_eq!(ids.len(), 20);
         assert_eq!(group_for_phase12_case("P12-M28"), Some("G3"));
         assert_eq!(group_for_phase12_case("P12-M06"), Some("G4"));
+        assert_eq!(group_for_phase12_case("P12-M03"), Some("G5"));
         assert_eq!(group_for_phase12_case("P12-M11"), None);
     }
 }

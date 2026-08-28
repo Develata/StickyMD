@@ -13,6 +13,7 @@ const INPUT_MOUSE: u32 = 0;
 const MOUSEEVENTF_MOVE: u32 = 0x0001;
 const MOUSEEVENTF_LEFTDOWN: u32 = 0x0002;
 const MOUSEEVENTF_LEFTUP: u32 = 0x0004;
+const MOUSEEVENTF_WHEEL: u32 = 0x0800;
 const MOUSEEVENTF_VIRTUALDESK: u32 = 0x4000;
 const MOUSEEVENTF_ABSOLUTE: u32 = 0x8000;
 const SM_XVIRTUALSCREEN: i32 = 76;
@@ -114,6 +115,16 @@ impl Drop for PhysicalLeftButtonGuard {
 pub(super) fn release_left_button() -> Result<(), String> {
     send_mouse_input(MOUSEEVENTF_LEFTUP, 0, 0)?;
     wait_for_left_button_state(false)
+}
+
+pub(super) fn scroll_wheel(notches: i32) -> Result<(), String> {
+    if notches == 0 {
+        return Ok(());
+    }
+    let delta = notches
+        .checked_mul(120)
+        .ok_or_else(|| format!("mouse-wheel notch count {notches} overflowed"))?;
+    send_mouse_input_with_data(MOUSEEVENTF_WHEEL, 0, 0, delta as u32)
 }
 
 fn wait_for_left_button_state(down: bool) -> Result<(), String> {
@@ -257,13 +268,17 @@ fn normalize_absolute_coordinate(value: i32, origin: i32, extent: i32) -> Result
 }
 
 fn send_mouse_input(flags: u32, dx: i32, dy: i32) -> Result<(), String> {
+    send_mouse_input_with_data(flags, dx, dy, 0)
+}
+
+fn send_mouse_input_with_data(flags: u32, dx: i32, dy: i32, mouse_data: u32) -> Result<(), String> {
     let input = NativeInput {
         input_type: INPUT_MOUSE,
         data: NativeInputData {
             mouse: NativeMouseInput {
                 dx,
                 dy,
-                mouse_data: 0,
+                mouse_data,
                 flags,
                 time: 0,
                 extra_info: 0,

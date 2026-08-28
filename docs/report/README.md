@@ -7,6 +7,7 @@
 
 | 文件 | 类型 | 状态 |
 | --- | --- | --- |
+| [`phase-14-g5-exact-automation.md`](phase-14-g5-exact-automation.md) | Phase 14 shell/compact/presentation/rendering exact automation | development PASS；new exact receipt pending |
 | [`phase-00-repository-governance-check.md`](phase-00-repository-governance-check.md) | Phase 0 现状检查记录 | 无冲突，已完成 |
 | [`phase-00-governance-revalidation.md`](phase-00-governance-revalidation.md) | Phase 0 takeover 契约复核 | PASS after targeted corrections |
 | [`phase-00-03-architecture-convergence.md`](phase-00-03-architecture-convergence.md) | Phase 0–3 实现对齐与架构收敛审计 | automated PASS；manual gates open |
