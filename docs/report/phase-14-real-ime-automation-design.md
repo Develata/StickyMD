@@ -131,6 +131,7 @@ Left/Right/Backspace 编辑的首个候选错误复用于干净 Search compositi
 - `stickymd-smoke all --ci --ci-shard=tests --json`：governance、Markdown/math、persistence、workspace
   tests 与 requested shard 全部 PASS。
 
-诊断验证：旧产品 candidate `f406933d18c1...` + 当前未提交 harness 的 targeted `G4-06` 已完整通过
-Microsoft Pinyin 与 WeType。该组合只证明 harness/root-cause 修复，不能形成正式候选收据。当前实现尚未
-freeze 为新 exact candidate；P14-A30 与候选窗人工视觉项继续保持 `NOT TESTED`，不得复用任何旧候选收据。
+诊断验证：旧产品 candidate `f406933d18c1...` + harness commit `80b5c4d...` 的 targeted `G4-06` 已完整
+通过 Microsoft Pinyin 与 WeType。该组合只证明 harness/root-cause 修复，不能形成正式候选收据。当前
+实现尚未 freeze 为新 exact candidate；P14-A30 与候选窗人工视觉项继续保持 `NOT TESTED`，不得复用任何
+旧候选收据。
