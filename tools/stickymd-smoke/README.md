@@ -19,6 +19,10 @@ release package.
 ./tools/smoke/phase-06.ps1 -Resources
 ./tools/smoke/phase-07.ps1 -Performance -Runtime
 ./tools/smoke/phase-07.ps1 -Resources
+./tools/smoke/phase-14.ps1 -G3
+./tools/smoke/phase-14.ps1 -G3 -G3Case G3-05
+./tools/smoke/phase-14.ps1 -G4
+./tools/smoke/phase-14.ps1 -G4 -G4Case G4-02
 ./tools/smoke/all.ps1 -Ci
 ```
 
@@ -31,6 +35,27 @@ points. Stable hard thresholds may fail CI; machine-specific measurements are
 diagnostic only. `-Performance` reruns the same measurements explicitly on a
 local machine. `-Runtime` creates native windows and remains local-only. The
 CLI rejects combining either explicit local mode with `-Ci`.
+
+`phase-14.ps1 -G3` is the serial exact-candidate Windows desktop lane for
+clipboard, native export, process-kill recovery, and asset-safety checks. Rust
+owns isolation, assertions, and the exact receipt. The checked-in UI Automation
+helper only selects a native export path or invokes tray Exit. Its headless
+parser/receipt tests are included in `all --ci`; GitHub-hosted CI never starts
+the interactive G3 lane.
+
+`-G3Case G3-01..G3-05` runs one module for fast diagnosis and writes a
+case-suffixed receipt. A targeted receipt is intentionally insufficient for
+release readiness; only the default full five-case receipt can close G3.
+Because Explorer tray elements do not expose the owning application PID, G3
+fails closed when any StickyMD process already exists and rechecks sole-process
+ownership before tray Exit. It never terminates an unrelated user instance.
+
+`phase-14.ps1 -G4` reuses the same exact-candidate lifecycle for five serial,
+isolated groups: tray lifecycle, primary-monitor three-edge docking/timing,
+legacy clipboard shortcuts, toolbar math conversion, and junction identity.
+`-G4Case G4-01..G4-05` is diagnostic only. G3 and G4 must run sequentially on
+an exclusive interactive desktop; their receipts are independently required.
+Mixed-DPI Left/Right sensor behavior remains a guided human observation.
 
 `-Resources` is the long-running Windows resource measurement. It launches copied standalone
 Release executables, waits 30 seconds, records private working set/private bytes over five runs,

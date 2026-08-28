@@ -36,8 +36,16 @@ param(
     [ValidateSet('M1', 'M2', 'M3', 'M4', 'M5')]
     [string]$ManualSession,
     [switch]$Guided,
-    [ValidateSet('G1', 'G2', 'G3')]
+    [ValidateSet('G1', 'G2')]
     [string]$GuidedSession,
+    [switch]$G3,
+    [string]$G3Zip,
+    [ValidateSet('G3-01', 'G3-02', 'G3-03', 'G3-04', 'G3-05')]
+    [string]$G3Case,
+    [switch]$G4,
+    [string]$G4Zip,
+    [ValidateSet('G4-01', 'G4-02', 'G4-03', 'G4-04', 'G4-05')]
+    [string]$G4Case,
     [switch]$ManualList,
     [switch]$ManualStatus,
     [switch]$Readiness,
@@ -48,6 +56,10 @@ param(
 )
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+if ($G3Zip -and -not $G3) { throw 'G3Zip requires -G3' }
+if ($G3Case -and -not $G3) { throw 'G3Case requires -G3' }
+if ($G4Zip -and -not $G4) { throw 'G4Zip requires -G4' }
+if ($G4Case -and -not $G4) { throw 'G4Case requires -G4' }
 $qualificationActions = @(
     $Environment,
     $Campaign,
@@ -59,6 +71,8 @@ $qualificationActions = @(
     [bool]$ManualSession,
     $Guided,
     [bool]$GuidedSession,
+    $G3,
+    $G4,
     $ManualList,
     $ManualStatus,
     $Readiness,
@@ -95,6 +109,16 @@ if ($Environment) {
 } elseif ($Guided -or $GuidedSession) {
     $arguments += @('acceptance', 'manual', 'guided')
     if ($GuidedSession) { $arguments += "--session=$GuidedSession" }
+} elseif ($G3) {
+    $arguments += @('qualification', 'g3')
+    if ($G3Zip) { $arguments += "--zip=$G3Zip" }
+    if ($EvidenceFile) { $arguments += "--evidence-file=$EvidenceFile" }
+    if ($G3Case) { $arguments += "--case=$G3Case" }
+} elseif ($G4) {
+    $arguments += @('qualification', 'g4')
+    if ($G4Zip) { $arguments += "--zip=$G4Zip" }
+    if ($EvidenceFile) { $arguments += "--evidence-file=$EvidenceFile" }
+    if ($G4Case) { $arguments += "--case=$G4Case" }
 } elseif ($ManualList) {
     $arguments += @('acceptance', 'manual', 'list')
 } elseif ($ManualStatus) {

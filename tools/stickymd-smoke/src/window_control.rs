@@ -1,6 +1,7 @@
 //! Minimal Windows window-message bridge for opt-in runtime smoke transitions.
 
 use std::ffi::c_void;
+use std::os::windows::ffi::OsStrExt;
 use std::thread;
 use std::time::Duration;
 
@@ -37,6 +38,9 @@ const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 const CURSOR_MOVE_ATTEMPTS: usize = 3;
 const CURSOR_MOVE_RETRY: Duration = Duration::from_millis(25);
 const CF_UNICODETEXT: u32 = 13;
+const CF_DIB: u32 = 8;
+const CF_HDROP: u32 = 15;
+const GMEM_MOVEABLE: u32 = 0x0002;
 const KEYEVENTF_EXTENDEDKEY: u32 = 0x0001;
 const KEYEVENTF_KEYUP: u32 = 0x0002;
 
@@ -191,6 +195,8 @@ unsafe extern "system" {
     fn EmptyClipboard() -> i32;
     fn IsClipboardFormatAvailable(format: u32) -> i32;
     fn GetClipboardData(format: u32) -> isize;
+    fn SetClipboardData(format: u32, memory: isize) -> isize;
+    fn RegisterClipboardFormatW(name: *const u16) -> u32;
     fn keybd_event(virtual_key: u8, scan_code: u8, flags: u32, extra_info: usize);
 }
 
@@ -199,6 +205,8 @@ unsafe extern "system" {
     fn GlobalLock(memory: isize) -> *const c_void;
     fn GlobalUnlock(memory: isize) -> i32;
     fn GlobalSize(memory: isize) -> usize;
+    fn GlobalAlloc(flags: u32, bytes: usize) -> isize;
+    fn GlobalFree(memory: isize) -> isize;
 }
 
 struct ClipboardGuard;
@@ -355,6 +363,38 @@ pub(crate) fn press_copy(window: WindowHandle) -> Result<(), String> {
     send_control_chord(window, 0x43, 0x2E, false)
 }
 
+pub(crate) fn press_paste(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, 0x56, 0x2F, false)
+}
+
+pub(crate) fn press_ctrl_insert(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, 0x2D, 0x52, true)
+}
+
+pub(crate) fn press_shift_insert(window: WindowHandle) -> Result<(), String> {
+    send_shift_chord(window, 0x2D, 0x52, true)
+}
+
+pub(crate) fn press_shift_delete(window: WindowHandle) -> Result<(), String> {
+    send_shift_chord(window, 0x2E, 0x53, true)
+}
+
+pub(crate) fn press_undo(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, 0x5A, 0x2C, false)
+}
+
+pub(crate) fn press_redo(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, 0x59, 0x15, false)
+}
+
+pub(crate) fn press_save(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, 0x53, 0x1F, false)
+}
+
+pub(crate) fn press_export(window: WindowHandle) -> Result<(), String> {
+    send_control_shift_chord(window, 0x53, 0x1F)
+}
+
 pub(crate) fn press_document_end(window: WindowHandle) -> Result<(), String> {
     send_control_chord(window, 0x23, 0x4F, true)
 }
@@ -368,6 +408,133 @@ pub(crate) fn clear_clipboard() -> Result<(), String> {
             "cannot clear clipboard: {}",
             std::io::Error::last_os_error()
         ));
+    }
+    Ok(())
+}
+
+/// Replace the clipboard with an Explorer-compatible Unicode file drop.
+pub(crate) fn set_clipboard_file_drop(paths: &[&std::path::Path]) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("clipboard file drop requires at least one path".to_owned());
+    }
+    let header_bytes = 20usize;
+    let mut payload = vec![0u8; header_bytes];
+    payload[0..4].copy_from_slice(&(header_bytes as u32).to_le_bytes());
+    payload[16..20].copy_from_slice(&1_i32.to_le_bytes());
+    let mut wide = Vec::new();
+    for path in paths {
+        wide.extend(path.as_os_str().encode_wide());
+        wide.push(0);
+    }
+    wide.push(0);
+    payload.reserve(wide.len() * 2);
+    for unit in wide {
+        payload.extend_from_slice(&unit.to_le_bytes());
+    }
+    set_clipboard_payloads(&[(CF_HDROP, payload)])
+}
+
+pub(crate) fn set_clipboard_png_with_text(bytes: &[u8], text: &str) -> Result<(), String> {
+    let mut name: Vec<u16> = "PNG".encode_utf16().collect();
+    name.push(0);
+    // SAFETY: `name` is NUL terminated and remains alive for the call.
+    let format = unsafe { RegisterClipboardFormatW(name.as_ptr()) };
+    if format == 0 {
+        return Err(format!(
+            "cannot register PNG clipboard format: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    set_clipboard_payloads(&[
+        (format, bytes.to_vec()),
+        (CF_UNICODETEXT, unicode_clipboard_bytes(text)),
+    ])
+}
+
+pub(crate) fn set_clipboard_text(text: &str) -> Result<(), String> {
+    set_clipboard_payloads(&[(CF_UNICODETEXT, unicode_clipboard_bytes(text))])
+}
+
+fn unicode_clipboard_bytes(text: &str) -> Vec<u8> {
+    text.encode_utf16()
+        .chain(std::iter::once(0))
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
+/// Replace the clipboard with a Snipping-Tool-compatible 32-bit DIB.
+pub(crate) fn set_clipboard_dib() -> Result<(), String> {
+    let width = 2_i32;
+    let height = -2_i32;
+    let mut dib = vec![0u8; 40];
+    dib[0..4].copy_from_slice(&40_u32.to_le_bytes());
+    dib[4..8].copy_from_slice(&width.to_le_bytes());
+    dib[8..12].copy_from_slice(&height.to_le_bytes());
+    dib[12..14].copy_from_slice(&1_u16.to_le_bytes());
+    dib[14..16].copy_from_slice(&32_u16.to_le_bytes());
+    dib[20..24].copy_from_slice(&16_u32.to_le_bytes());
+    dib.extend_from_slice(&[
+        0x00, 0x00, 0xff, 0xff, 0x00, 0xff, 0x00, 0xff, 0xff, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+        0xff,
+    ]);
+    set_clipboard_payloads(&[(CF_DIB, dib)])
+}
+
+fn set_clipboard_payloads(payloads: &[(u32, Vec<u8>)]) -> Result<(), String> {
+    let _guard = ClipboardGuard::open()?;
+    // SAFETY: ClipboardGuard owns the open clipboard; clearing it is required
+    // before transferring newly allocated HGLOBAL ownership to the system.
+    if unsafe { EmptyClipboard() } == 0 {
+        return Err(format!(
+            "cannot empty clipboard before publication: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    for (format, bytes) in payloads {
+        if bytes.is_empty() {
+            return Err(format!("clipboard format {format} has an empty payload"));
+        }
+        // SAFETY: GMEM_MOVEABLE is required by SetClipboardData; the allocation
+        // is either freed below on failure or transferred exactly once.
+        let memory = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len()) };
+        if memory == 0 {
+            return Err(format!(
+                "cannot allocate {} clipboard bytes: {}",
+                bytes.len(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        // SAFETY: the fresh allocation has exactly `bytes.len()` writable bytes
+        // and no system ownership until SetClipboardData succeeds.
+        let pointer = unsafe { GlobalLock(memory) }.cast_mut().cast::<u8>();
+        if pointer.is_null() {
+            // SAFETY: SetClipboardData has not run, so the caller still owns it.
+            unsafe {
+                GlobalFree(memory);
+            }
+            return Err(format!(
+                "cannot lock clipboard allocation: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        // SAFETY: source and fresh destination are non-overlapping and both
+        // have `bytes.len()` valid bytes.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer, bytes.len());
+            GlobalUnlock(memory);
+        }
+        // SAFETY: the clipboard is open and `memory` is a valid movable global
+        // allocation. Success transfers ownership permanently to the system.
+        if unsafe { SetClipboardData(*format, memory) } == 0 {
+            // SAFETY: failed SetClipboardData leaves ownership with the caller.
+            unsafe {
+                GlobalFree(memory);
+            }
+            return Err(format!(
+                "cannot publish clipboard format {format}: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
     }
     Ok(())
 }
@@ -556,6 +723,33 @@ pub(crate) fn move_to_primary_floating(window: WindowHandle) -> Result<(), Strin
         .y
         .saturating_add(work.height.saturating_sub(current.height) as i32 / 2);
     move_window(window, x, y)
+}
+
+/// Physically drag the outer window rectangle to an exact primary-work-area
+/// coordinate. Exact-candidate docking qualification owns the requested
+/// geometry; the product still receives only the normal native move loop.
+pub(crate) fn move_outer_to_primary_offset(
+    window: WindowHandle,
+    x_offset: i32,
+    y_offset: i32,
+) -> Result<(), String> {
+    let work = primary_work_area()?;
+    move_window(
+        window,
+        work.x.saturating_add(x_offset),
+        work.y.saturating_add(y_offset),
+    )
+}
+
+pub(crate) fn dip_pixels(window: WindowHandle, dip: f64) -> Result<i32, String> {
+    if !dip.is_finite() {
+        return Err("DIP conversion requires a finite value".to_owned());
+    }
+    let pixels = (dip * f64::from(window_dpi(window)) / 96.0).round();
+    if pixels < f64::from(i32::MIN) || pixels > f64::from(i32::MAX) {
+        return Err(format!("DIP value {dip} overflows physical pixels"));
+    }
+    Ok(pixels as i32)
 }
 
 pub(crate) fn focus_shell_desktop(window: WindowHandle) -> Result<(), String> {
@@ -1053,7 +1247,8 @@ pub(crate) fn park_cursor_outside_window(window: WindowHandle) -> Result<(), Str
     let Some((x, y)) = point else {
         return Err("cannot park the cursor inside the work area but outside StickyMD".to_owned());
     };
-    set_cursor_position(x, y, "park cursor outside StickyMD")
+    set_cursor_position(x, y, "park cursor outside StickyMD")?;
+    send_window_message(window, WM_MOUSELEAVE, 0, 0)
 }
 
 fn set_cursor_position(x: i32, y: i32, operation: &str) -> Result<(), String> {
@@ -1464,6 +1659,52 @@ fn send_control_chord(
         keybd_event(0x11, 0x1D, KEYEVENTF_KEYUP, 0);
     }
     thread::sleep(Duration::from_millis(10));
+    Ok(())
+}
+
+fn send_shift_chord(
+    window: WindowHandle,
+    virtual_key: u8,
+    scan_code: u8,
+    extended: bool,
+) -> Result<(), String> {
+    let activation = activation_facts(window)?;
+    if !(activation.foreground && activation.active && activation.focused) {
+        return Err(format!(
+            "refusing keyboard injection without focused foreground StickyMD window: {activation:?}"
+        ));
+    }
+    let key_flags = if extended { KEYEVENTF_EXTENDEDKEY } else { 0 };
+    // SAFETY: keybd_event consumes copied scalar key data. The balanced
+    // Shift/key sequence leaves no modifier pressed and targets the verified
+    // foreground StickyMD window.
+    unsafe {
+        keybd_event(0x10, 0x2A, 0, 0);
+        keybd_event(virtual_key, scan_code, key_flags, 0);
+        keybd_event(virtual_key, scan_code, key_flags | KEYEVENTF_KEYUP, 0);
+        keybd_event(0x10, 0x2A, KEYEVENTF_KEYUP, 0);
+    }
+    thread::sleep(Duration::from_millis(10));
+    Ok(())
+}
+
+fn send_control_shift_chord(
+    window: WindowHandle,
+    virtual_key: u8,
+    scan_code: u8,
+) -> Result<(), String> {
+    activate_window_for_physical_input(window)?;
+    // SAFETY: keybd_event consumes copied scalar key data. Modifiers are
+    // released in reverse order in the same synchronous sequence.
+    unsafe {
+        keybd_event(0x11, 0x1D, 0, 0);
+        keybd_event(0x10, 0x2A, 0, 0);
+        keybd_event(virtual_key, scan_code, 0, 0);
+        keybd_event(virtual_key, scan_code, KEYEVENTF_KEYUP, 0);
+        keybd_event(0x10, 0x2A, KEYEVENTF_KEYUP, 0);
+        keybd_event(0x11, 0x1D, KEYEVENTF_KEYUP, 0);
+    }
+    thread::sleep(Duration::from_millis(50));
     Ok(())
 }
 

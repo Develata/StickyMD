@@ -3,6 +3,16 @@
 mod automated_readiness;
 mod campaign;
 mod decisions;
+#[cfg(windows)]
+mod exact_desktop;
+pub(crate) mod exact_groups;
+mod exact_readiness;
+#[cfg(windows)]
+mod g3;
+mod g3_readiness;
+#[cfg(windows)]
+mod g4;
+mod g4_readiness;
 mod guided;
 mod json;
 mod manual;
@@ -16,7 +26,7 @@ mod startup_attribution;
 
 use std::path::Path;
 
-use crate::cli::{ManualCommand, QualificationCommand};
+use crate::cli::{G3Case, G4Case, ManualCommand, QualificationCommand};
 use crate::evidence::{self, EvidenceResult, EvidenceStatus};
 use crate::qualification_environment::{self, QualificationEnvironmentStatus};
 
@@ -48,6 +58,16 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
             println!("DEVELOPER_RUNTIME_IMPORTS=none");
             Ok(())
         }
+        QualificationCommand::G3Exact {
+            zip,
+            evidence_file,
+            case,
+        } => run_g3(root, zip.as_deref(), evidence_file.as_deref(), case),
+        QualificationCommand::G4Exact {
+            zip,
+            evidence_file,
+            case,
+        } => run_g4(root, zip.as_deref(), evidence_file.as_deref(), case),
         QualificationCommand::Decision {
             key,
             status,
@@ -59,6 +79,46 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
         }
         QualificationCommand::Downloaded { zip } => remote::verify_downloaded(root, &zip),
     }
+}
+
+#[cfg(windows)]
+fn run_g3(
+    root: &Path,
+    zip: Option<&Path>,
+    evidence_file: Option<&Path>,
+    case: Option<G3Case>,
+) -> Result<(), String> {
+    g3::run(root, zip, evidence_file, case)
+}
+
+#[cfg(windows)]
+fn run_g4(
+    root: &Path,
+    zip: Option<&Path>,
+    evidence_file: Option<&Path>,
+    case: Option<G4Case>,
+) -> Result<(), String> {
+    g4::run(root, zip, evidence_file, case)
+}
+
+#[cfg(not(windows))]
+fn run_g4(
+    _root: &Path,
+    _zip: Option<&Path>,
+    _evidence_file: Option<&Path>,
+    _case: Option<G4Case>,
+) -> Result<(), String> {
+    Err("G4 exact qualification requires Windows".to_owned())
+}
+
+#[cfg(not(windows))]
+fn run_g3(
+    _root: &Path,
+    _zip: Option<&Path>,
+    _evidence_file: Option<&Path>,
+    _case: Option<G3Case>,
+) -> Result<(), String> {
+    Err("G3 exact qualification requires Windows".to_owned())
 }
 
 #[cfg(windows)]

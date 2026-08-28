@@ -6,6 +6,7 @@ use std::path::Path;
 
 use crate::cli::{GuidedSession, ManualSession};
 
+use super::exact_groups;
 use super::receipt::Candidate;
 use super::{guided, json, receipt};
 
@@ -75,10 +76,22 @@ fn parse_manual_cases(content: &str) -> Result<Vec<ManualCase>, String> {
             .split('|')
             .map(str::trim)
             .collect();
-        if cells.len() != 5 || cells[2] != "Manual" {
+        if cells.len() != 5 {
             return Err(format!(
-                "phase-12 manual row {} must have five columns and Manual mode",
+                "phase-12 acceptance row {} must have five columns",
                 index + 1
+            ));
+        }
+        if cells[2] == "Automated exact candidate"
+            && exact_groups::group_for_phase12_case(cells[0]).is_some()
+        {
+            continue;
+        }
+        if cells[2] != "Manual" {
+            return Err(format!(
+                "phase-12 acceptance row {} has unsupported mode {}",
+                index + 1,
+                cells[2]
             ));
         }
         cases.push(ManualCase {
@@ -89,9 +102,9 @@ fn parse_manual_cases(content: &str) -> Result<Vec<ManualCase>, String> {
             tier: tier_for_case(cells[0])?,
         });
     }
-    if cases.len() != 44 {
+    if cases.len() != 26 {
         return Err(format!(
-            "phase-12 manual matrix must contain exactly 44 cases; observed {}",
+            "phase-12 manual matrix must contain exactly 26 cases after G3/G4 automation; observed {}",
             cases.len()
         ));
     }
@@ -107,11 +120,11 @@ fn case_number(id: &str) -> Result<u8, String> {
 
 fn session_for_case(id: &str) -> Result<ManualSession, String> {
     match case_number(id)? {
-        1 | 2 | 21 | 24 | 25 | 27 | 31 => Ok(ManualSession::M1),
-        3..=20 | 22 | 23 => Ok(ManualSession::M2),
-        26 | 28..=30 | 32 | 33 => Ok(ManualSession::M3),
+        1 | 2 | 21 | 24 | 25 => Ok(ManualSession::M1),
+        3..=5 | 11 | 12 | 18..=20 | 22 | 23 => Ok(ManualSession::M2),
+        26 => Ok(ManualSession::M3),
         35..=40 | 43 => Ok(ManualSession::M4),
-        34 | 41 | 42 | 44 => Ok(ManualSession::M5),
+        34 | 41 | 42 => Ok(ManualSession::M5),
         _ => Err(format!("manual case `{id}` has no Phase 13/14 session")),
     }
 }
@@ -259,7 +272,7 @@ fn environment_value(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| "UNKNOWN".to_owned())
 }
 
-fn windows_build() -> String {
+pub(super) fn windows_build() -> String {
     std::process::Command::new("cmd")
         .args(["/C", "ver"])
         .output()
@@ -286,14 +299,23 @@ mod tests {
     fn matrix_parser_exposes_all_cases_and_sessions() {
         let mut content = String::new();
         for number in 1..=44 {
+            let mode = if matches!(number, 6..=10 | 13..=17 | 27..=33 | 44) {
+                "Automated exact candidate"
+            } else {
+                "Manual"
+            };
             content.push_str(&format!(
-                "| P12-M{number:02} | action | Manual | expected | NOT TESTED |\n"
+                "| P12-M{number:02} | action | {mode} | expected | NOT TESTED |\n"
             ));
         }
         let cases = parse_manual_cases(&content).expect("manual cases");
-        assert_eq!(cases.len(), 44);
+        assert_eq!(cases.len(), 26);
         assert_eq!(cases[0].session, ManualSession::M1);
-        assert!((1..=44).all(|number| session_for_case(&format!("P12-M{number:02}")).is_ok()));
+        assert!(
+            (1..=44)
+                .filter(|number| !matches!(number, 6..=10 | 13..=17 | 27..=33 | 44))
+                .all(|number| session_for_case(&format!("P12-M{number:02}")).is_ok())
+        );
     }
 
     #[test]

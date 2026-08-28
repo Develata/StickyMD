@@ -199,7 +199,8 @@ automated、manual、remote、downloaded-artifact 与 readiness receipts 写入 
 
 - manual recorder 必须是交互式 human receipt recorder，只接受显式
   `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`，不得从 process/status 自动推断人工 PASS；
-- stale source/EXE receipt 不参与 readiness；
+- stale source/EXE receipt 不参与 readiness；G3/G4 exact receipt 还必须绑定 ZIP、运行 harness commit、
+  clean worktree 与各自五项逐项结果，不能用旧候选或开发期 dirty receipt 替代；
 - readiness 对 P0/P1、未批准 hard gate、mandatory manual NOT TESTED、exact package、remote
   evidence 与 USER decision fail closed；不得提供 `--force-ready`；
 - freeze 后若任何 source、manifest/lock、runtime asset 或 release tooling 改变，所有 receipts
@@ -228,9 +229,25 @@ Resources 长矩阵必须在主要场景之间重检环境，并在每个完成�
 `PASSED`，因此 partial evidence 不能冒充完整 PASS。
 
 M1..M5 manual sessions 只允许共享 setup，不改变 P12-M01..P12-M44 的逐项 authority。Phase 14
-增加 G1..G3 guided sessions；每个 guided observation 必须显式映射到一项或多项相同观察事实的
+保留 G1/G2 guided sessions；每个 guided observation 必须显式映射到一项或多项相同观察事实的
 case ID，并为每项记录 `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`，不能用“整体看起来正常”
 提升整组状态。
+
+G3 clipboard/export/recovery/asset-safety 路径由本地、串行、独占交互桌面的 exact-candidate
+自动化持有。Rust CLI 负责隔离候选目录、标准 Windows clipboard producer、进程/文件断言、
+候选身份和 receipt；PowerShell/UI Automation 只可作为 native save dialog 与 tray menu 的薄适配，
+不得持有 PASS/FAIL 规则。每项使用独立候选副本，数据安全断言一项失败即整项 FAIL，禁止套用
+desktop jitter 成功率。GitHub-hosted CI 只运行该 harness 的无界面 parser/receipt/fixture 测试，
+不得在非交互 runner 启动 G3 GUI。Explorer、Snipping Tool、browser 本身的 UI 操作可作附加人工
+spot check，但标准 clipboard 格式的 exact-EXE 集成结果才是该组可重复的 release evidence。
+
+G4 tray/dock/editor-compatibility/identity 路径复用同一 exact-candidate 生命周期与收据合同，并保持
+五个高内聚组：G4-01 tray 菜单、close/show/dirty quit；G4-02 主屏 Left/Top/Right、3 DIP 感应条、
+24/25 DIP capture、`Top > Left > Right`、700/100/500 ms 与 focus/IME/Pin guard；G4-03 legacy
+clipboard shortcuts 与 Preview 只读；G4-04 真实 toolbar 数学分隔符转换、源码即时投影、literal
+safety 与单次 Undo；G4-05 真实 junction canonical identity、同 HWND 唤醒与第二实例零 durable write。
+G3/G4 都必须串行且独占桌面，不能并发争抢 clipboard、tray、窗口焦点或鼠标；单项诊断 receipt
+不能替代完整五组 receipt。P12-M11/M12 的 mixed-DPI 实机事实仍属于 G2 人工验收。
 
 Phase 14 固定本地顺序为 Environment → Release/package → headless CI → Runtime → Performance →
 Resources → Manual → Readiness。Environment invalid、candidate identity mismatch、P0/security/

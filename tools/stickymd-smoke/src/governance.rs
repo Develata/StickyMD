@@ -154,14 +154,14 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-14.md");
     let content = read_text(&path)?;
     let observed = frozen_trace_ids(&content, "P14-A")?;
-    let expected: Vec<u16> = (1..=24).collect();
+    let expected: Vec<u16> = (1..=26).collect();
     if observed != expected {
         return Err(format!(
-            "{} IDs must be exactly P14-A01..P14-A24; observed {observed:?}",
+            "{} IDs must be exactly P14-A01..P14-A26; observed {observed:?}",
             path.display()
         ));
     }
-    for guided in ["P14-G1", "P14-G2", "P14-G3"] {
+    for guided in ["P14-G1", "P14-G2", "P14-G3", "P14-G4"] {
         let marker = format!("| {guided} |");
         if content.match_indices(&marker).count() != 1 {
             return Err(format!(
@@ -172,11 +172,20 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
     }
     for row in read_matrix_rows(&path)? {
         let line = content.lines().nth(row.line - 1).unwrap_or_default();
-        if line.trim_start().starts_with("| P14-G")
+        if (line.trim_start().starts_with("| P14-G1") || line.trim_start().starts_with("| P14-G2"))
             && (row.mode != "Guided Manual" || row.status != "NOT TESTED")
         {
             return Err(format!(
                 "{}:{} Phase 14 guided row must remain Guided Manual / NOT TESTED",
+                path.display(),
+                row.line
+            ));
+        }
+        if (line.trim_start().starts_with("| P14-G3") || line.trim_start().starts_with("| P14-G4"))
+            && (row.mode != "Automated exact candidate" || row.status != "NOT TESTED")
+        {
+            return Err(format!(
+                "{}:{} Phase 14 G3/G4 row must remain Automated exact candidate / NOT TESTED until an exact receipt exists",
                 path.display(),
                 row.line
             ));
@@ -216,7 +225,7 @@ fn verify_phase13_contract_trace(root: &Path) -> Result<(), String> {
 fn verify_phase12_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-12.md");
     let content = read_text(&path)?;
-    for (prefix, last) in [("P12-A", 15_u16), ("P12-M", 44_u16)] {
+    for (prefix, last) in [("P12-A", 17_u16), ("P12-M", 44_u16)] {
         let observed = frozen_trace_ids(&content, prefix)?;
         let expected: Vec<u16> = (1..=last).collect();
         if observed != expected {
@@ -228,11 +237,24 @@ fn verify_phase12_contract_trace(root: &Path) -> Result<(), String> {
     }
     for row in read_matrix_rows(&path)? {
         let line = content.lines().nth(row.line - 1).unwrap_or_default();
-        if line.trim_start().starts_with("| P12-M")
-            && (row.mode != "Manual" || row.status != "NOT TESTED")
-        {
+        if !line.trim_start().starts_with("| P12-M") {
+            continue;
+        }
+        let exact = line
+            .trim_start()
+            .split('|')
+            .nth(1)
+            .map(str::trim)
+            .and_then(crate::qualification::exact_groups::group_for_phase12_case)
+            .is_some();
+        let valid = if exact {
+            row.mode == "Automated exact candidate" && row.status == "NOT TESTED"
+        } else {
+            row.mode == "Manual" && row.status == "NOT TESTED"
+        };
+        if !valid {
             return Err(format!(
-                "{}:{} Phase 12 human row must remain Manual / NOT TESTED; exact evidence belongs in dist/evidence",
+                "{}:{} Phase 12 row mode/status does not match its manual or exact G3/G4 authority",
                 path.display(),
                 row.line
             ));
@@ -897,6 +919,7 @@ fn read_matrix_rows(path: &Path) -> Result<Vec<MatrixRow>, String> {
             "Automated" if matches!(status, "AUTOMATED PASS" | "BLOCKED") => {}
             "Manual" if matches!(status, "MANUAL PASS" | "NOT TESTED" | "BLOCKED") => {}
             "Guided Manual" if matches!(status, "NOT TESTED" | "BLOCKED") => {}
+            "Automated exact candidate" if matches!(status, "NOT TESTED" | "BLOCKED") => {}
             _ => {
                 return Err(format!(
                     "{}:{} invalid mode/status pair `{mode}` / `{status}`",

@@ -62,20 +62,6 @@ pub(super) const STEPS: &[GuidedStep] = &[
         "方向、缩放、lazy display、placeholder 与滚动后的图片显示正确",
     ),
     step(
-        GuidedSession::G1,
-        "G1-08",
-        &["P12-M27"],
-        "使用 Shift+Insert、Ctrl+Insert、Shift+Delete 操作文本并 Undo/Redo",
-        "传统剪贴板语义与 Undo/Redo 正确",
-    ),
-    step(
-        GuidedSession::G1,
-        "G1-09",
-        &["P12-M31"],
-        "转换真实 \\(x\\) 与多行 \\[y\\]，再执行一次 Undo",
-        "转换为 dollar delimiters；literal 不变；一次 Undo 全部恢复",
-    ),
-    step(
         GuidedSession::G2,
         "G2-01",
         &["P12-M03"],
@@ -99,100 +85,23 @@ pub(super) const STEPS: &[GuidedStep] = &[
     step(
         GuidedSession::G2,
         "G2-04",
-        &["P12-M06", "P12-M07", "P12-M08"],
-        "检查 tray 菜单，关闭纸张到 tray，再从 tray 显示",
-        "菜单受限；同一窗口/文本保留并可立即输入",
+        &["P12-M11", "P12-M12"],
+        "在真实 mixed-DPI 双屏环境分别验证 Left/Right dock 与 3 DIP 感应条",
+        "两边 dock、失焦收起、sensor 展开与 DIP/physical conversion 均正确",
     ),
     step(
         GuidedSession::G2,
         "G2-05",
-        &["P12-M10", "P12-M16"],
-        "Top dock，失焦收起，再由 3 DIP sensor hover 展开/离开",
-        "Top-only dock 与 700/100/500 ms 时序符合合同",
-    ),
-    step(
-        GuidedSession::G2,
-        "G2-06",
-        &["P12-M11", "P12-M14"],
-        "Left dock 并实测 24 DIP capture threshold",
-        "Left dock 可用；阈值内吸附、阈值外不吸附",
-    ),
-    step(
-        GuidedSession::G2,
-        "G2-07",
-        &["P12-M12", "P12-M15"],
-        "Right dock，并在角落/等距位置实测 nearest-edge/tie",
-        "Right dock 与 reducer 最近边/tie 结果稳定",
-    ),
-    step(
-        GuidedSession::G2,
-        "G2-08",
-        &["P12-M13"],
-        "把窗口拖向底边",
-        "不进入 Bottom dock",
-    ),
-    step(
-        GuidedSession::G2,
-        "G2-09",
-        &["P12-M17"],
-        "Docked 时分别 Pin ON/OFF 后失焦并重复 sensor 流程",
-        "Pin 与 auto-hide 正交，时序不变",
-    ),
-    step(
-        GuidedSession::G2,
-        "G2-10",
         &["P12-M18", "P12-M19", "P12-M20"],
         "在 220x120 分别操作 Source/Preview/Split",
         "三种模式均可用且几何可恢复",
     ),
     step(
         GuidedSession::G2,
-        "G2-11",
+        "G2-06",
         &["P12-M23"],
         "实测 Light/Dark/System 与运行时系统主题切换",
         "背景、文字、公式、图片和控件一致更新",
-    ),
-    step(
-        GuidedSession::G2,
-        "G2-12",
-        &["P12-M09"],
-        "确认保存后从 tray 执行退出",
-        "保存完成、worker join 后进程退出",
-    ),
-    step(
-        GuidedSession::G3,
-        "G3-01",
-        &["P12-M28"],
-        "从 Explorer、Snipping Tool 与可用 browser 粘贴真实图片",
-        "格式优先级、文件写入、Markdown 插入与 Undo 原子性正确",
-    ),
-    step(
-        GuidedSession::G3,
-        "G3-02",
-        &["P12-M29"],
-        "执行 Ctrl+Shift+S native Export dialog",
-        "原生对话框、路径重写、图片复制正确且 active note 不切换",
-    ),
-    step(
-        GuidedSession::G3,
-        "G3-03",
-        &["P12-M30"],
-        "在保存窗口附近强杀复制目录中的 Release EXE 并重启",
-        "note 完整或 tmp 可恢复；没有 half UTF-8；证据未被静默删除",
-    ),
-    step(
-        GuidedSession::G3,
-        "G3-04",
-        &["P12-M32"],
-        "完成真实 user asset edit/undo/redo/GC/export/quit/restart",
-        "非 managed 用户文件从未被自动移动或删除",
-    ),
-    step(
-        GuidedSession::G3,
-        "G3-05",
-        &["P12-M33"],
-        "放置 managed-looking fake file 并完成 GC/restart",
-        "无 ownership evidence 的伪 managed 文件不被删除",
     ),
 ];
 
@@ -235,6 +144,6 @@ mod tests {
                 assert_eq!(session_for_case(case), Some(step.session));
             }
         }
-        assert_eq!(observed.len(), 33);
+        assert_eq!(observed.len(), 16);
     }
 }

@@ -43,7 +43,7 @@ fn list(root: &Path) -> Result<(), String> {
             .collect::<Vec<_>>();
         println!("{}: {}", session.as_str(), ids.join(", "));
     }
-    for session in [GuidedSession::G1, GuidedSession::G2, GuidedSession::G3] {
+    for session in [GuidedSession::G1, GuidedSession::G2] {
         let steps = guided::STEPS
             .iter()
             .filter(|step| step.session == session)

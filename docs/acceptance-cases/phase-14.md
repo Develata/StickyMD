@@ -2,8 +2,8 @@
 
 本矩阵验证 release policy / qualification tooling，以及 USER 在 candidate freeze 前明确批准的
 Split 同步、Source 查找替换和转换控件标识。任何 runtime 变化都会作废旧候选并触发完整重新资格化。自动项由 std-only Rust CLI
-持有并由 CI 调用。人工项始终保留 `NOT TESTED`，只有 ignored exact-candidate receipt 可改变
-readiness，不能改写此 Markdown 状态。
+持有并由 CI 调用。人工项和 exact-desktop 动态项在 source matrix 中保持 `NOT TESTED`，只有对应的
+ignored exact-candidate receipt 可改变 readiness，不能改写此 Markdown 状态。
 
 ## Automated qualification
 
@@ -33,6 +33,8 @@ readiness，不能改写此 Markdown 状态。
 | P14-A22 | 数学分隔符转换控件以清晰的 `$` 标识，paint/hit geometry 在 50/100/300% 一致 | Automated | toolbar paint/hit contract + headless CI | AUTOMATED PASS |
 | P14-A23 | Release 内存按 Source/Preview/Split/cache 分模块归因；优化决策有实测依据且不放宽既有 hard gate | Automated | targeted resource modules + `docs/report/phase-14-memory-attribution.md` | AUTOMATED PASS |
 | P14-A24 | 至少 100 个独立 copied-Release 桌面运行且全部失败仅为已分类输入/调度抖动时，成功率 `≥98%` PASS、`<98%` FAIL；内容/数据安全/崩溃/resource hard gate 永不容错 | Automated | repetition boundary tests + window-stress jitter/blocking classifier tests + `docs/plan/11_testing_and_release.md#desktop-repetition-jitter-policy` | AUTOMATED PASS |
+| P14-A25 | G3 exact automation 串行使用隔离候选目录；Rust 持有 clipboard/export/kill/recovery/asset 断言，UIA 只适配原生对话框/tray；receipt 对 source/harness/clean tree/EXE/ZIP/五项结果 fail closed | Automated | `qualification g3` parser/receipt tests + `tools/stickymd-smoke/helpers/windows-uia.ps1` boundary audit；GitHub-hosted CI 只运行无界面子集 | AUTOMATED PASS |
+| P14-A26 | G4 exact automation 串行使用隔离候选目录；Rust 持有 tray lifecycle、三边 dock/时序、legacy shortcuts、真实数学转换与 junction 单实例断言；receipt 对 source/harness/clean tree/EXE/ZIP/五组结果 fail closed | Automated | `qualification g4` parser/receipt/unit contract tests；UIA 只适配 tray；GitHub-hosted CI 只运行无界面子集 | AUTOMATED PASS |
 
 ## Guided manual sessions
 
@@ -40,9 +42,15 @@ readiness，不能改写此 Markdown 状态。
 
 | ID | Scope | Mode | Underlying cases / Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P14-G1 | Editor / IME / rendering | Guided Manual | P12-M01,M02,M21,M22,M24..M27,M31 | NOT TESTED |
-| P14-G2 | ToolWindow / tray / dock / theme | Guided Manual | P12-M03..M20,M23 | NOT TESTED |
-| P14-G3 | clipboard / export / recovery / asset safety | Guided Manual | P12-M28..M30,M32,M33 | NOT TESTED |
+| P14-G1 | Editor / IME / rendering | Guided Manual | P12-M01,M02,M21,M22,M24..M26 | NOT TESTED |
+| P14-G2 | ToolWindow / mixed-DPI dock / compact window / theme | Guided Manual | P12-M03..M05,M11,M12,M18..M20,M23 | NOT TESTED |
+
+## Exact-candidate automated desktop session
+
+| ID | Scope | Mode | Underlying cases / Evidence | Status |
+| --- | --- | --- | --- | --- |
+| P14-G3 | clipboard / native export / process-kill recovery / asset safety | Automated exact candidate | `phase-14.ps1 -G3`; P12-M28..M30,M32,M33；独立 `g3-exact-qualification.json` | NOT TESTED |
+| P14-G4 | tray lifecycle / dock timing / legacy shortcuts / math conversion / junction identity | Automated exact candidate | `phase-14.ps1 -G4`; P12-M06..M10,M13..M17,M27,M31,M44；独立 `g4-exact-qualification.json` | NOT TESTED |
 
 ## Readiness interpretation
 

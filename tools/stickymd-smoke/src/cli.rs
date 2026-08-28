@@ -103,7 +103,6 @@ pub(crate) enum ManualCommand {
 pub(crate) enum GuidedSession {
     G1,
     G2,
-    G3,
 }
 
 impl GuidedSession {
@@ -111,8 +110,7 @@ impl GuidedSession {
         match value.to_ascii_uppercase().as_str() {
             "G1" => Ok(Self::G1),
             "G2" => Ok(Self::G2),
-            "G3" => Ok(Self::G3),
-            _ => Err(format!("unknown guided session `{value}`; expected G1..G3")),
+            _ => Err(format!("unknown guided session `{value}`; expected G1..G2")),
         }
     }
 
@@ -120,7 +118,6 @@ impl GuidedSession {
         match self {
             Self::G1 => "G1",
             Self::G2 => "G2",
-            Self::G3 => "G3",
         }
     }
 }
@@ -169,6 +166,16 @@ pub(crate) enum QualificationCommand {
     NativeRuntime {
         executable: PathBuf,
     },
+    G3Exact {
+        zip: Option<PathBuf>,
+        evidence_file: Option<PathBuf>,
+        case: Option<G3Case>,
+    },
+    G4Exact {
+        zip: Option<PathBuf>,
+        evidence_file: Option<PathBuf>,
+        case: Option<G4Case>,
+    },
     Decision {
         key: String,
         status: String,
@@ -184,6 +191,70 @@ pub(crate) enum QualificationCommand {
     Downloaded {
         zip: PathBuf,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum G3Case {
+    G301,
+    G302,
+    G303,
+    G304,
+    G305,
+}
+
+impl G3Case {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+        match value.to_ascii_uppercase().as_str() {
+            "G3-01" => Ok(Self::G301),
+            "G3-02" => Ok(Self::G302),
+            "G3-03" => Ok(Self::G303),
+            "G3-04" => Ok(Self::G304),
+            "G3-05" => Ok(Self::G305),
+            _ => Err(format!("unknown G3 case `{value}`; expected G3-01..G3-05")),
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::G301 => "G3-01",
+            Self::G302 => "G3-02",
+            Self::G303 => "G3-03",
+            Self::G304 => "G3-04",
+            Self::G305 => "G3-05",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum G4Case {
+    G401,
+    G402,
+    G403,
+    G404,
+    G405,
+}
+
+impl G4Case {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+        match value.to_ascii_uppercase().as_str() {
+            "G4-01" => Ok(Self::G401),
+            "G4-02" => Ok(Self::G402),
+            "G4-03" => Ok(Self::G403),
+            "G4-04" => Ok(Self::G404),
+            "G4-05" => Ok(Self::G405),
+            _ => Err(format!("unknown G4 case `{value}`; expected G4-01..G4-05")),
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::G401 => "G4-01",
+            Self::G402 => "G4-02",
+            Self::G403 => "G4-03",
+            Self::G404 => "G4-04",
+            Self::G405 => "G4-05",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -244,7 +315,7 @@ impl CommandLine {
             Some("acceptance") => match args.get(1).map(String::as_str) {
                 Some("manual") => Self::parse_manual(&args[2..]).map(Self::AcceptanceManual),
                 _ => Err(
-                    "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G3]|list|status]"
+                    "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G2]|list|status]"
                         .to_owned(),
                 ),
             },
@@ -275,7 +346,7 @@ impl CommandLine {
             Some("list") if arguments.len() == 1 => Ok(ManualCommand::List),
             Some("status") if arguments.len() == 1 => Ok(ManualCommand::Status),
             _ => Err(
-                "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G3]|list|status]"
+                "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G2]|list|status]"
                     .to_owned(),
             ),
         }
@@ -369,6 +440,58 @@ impl CommandLine {
                     executable: PathBuf::from(named_value(values, "--exe=")?),
                 }))
             }
+            Some("g3") => {
+                let values = &arguments[1..];
+                if values.len() > 3
+                    || values.iter().any(|value| {
+                        !value.starts_with("--zip=")
+                            && !value.starts_with("--evidence-file=")
+                            && !value.starts_with("--case=")
+                    })
+                {
+                    return Err(
+                        "usage: stickymd-smoke qualification g3 [--zip=<path>] [--evidence-file=<path>] [--case=G3-01..G3-05]"
+                            .to_owned(),
+                    );
+                }
+                let zip = optional_named_value(values, "--zip=")?.map(PathBuf::from);
+                let evidence_file =
+                    optional_named_value(values, "--evidence-file=")?.map(PathBuf::from);
+                let case = optional_named_value(values, "--case=")?
+                    .map(G3Case::parse)
+                    .transpose()?;
+                Ok(Self::Qualification(QualificationCommand::G3Exact {
+                    zip,
+                    evidence_file,
+                    case,
+                }))
+            }
+            Some("g4") => {
+                let values = &arguments[1..];
+                if values.len() > 3
+                    || values.iter().any(|value| {
+                        !value.starts_with("--zip=")
+                            && !value.starts_with("--evidence-file=")
+                            && !value.starts_with("--case=")
+                    })
+                {
+                    return Err(
+                        "usage: stickymd-smoke qualification g4 [--zip=<path>] [--evidence-file=<path>] [--case=G4-01..G4-05]"
+                            .to_owned(),
+                    );
+                }
+                let zip = optional_named_value(values, "--zip=")?.map(PathBuf::from);
+                let evidence_file =
+                    optional_named_value(values, "--evidence-file=")?.map(PathBuf::from);
+                let case = optional_named_value(values, "--case=")?
+                    .map(G4Case::parse)
+                    .transpose()?;
+                Ok(Self::Qualification(QualificationCommand::G4Exact {
+                    zip,
+                    evidence_file,
+                    case,
+                }))
+            }
             Some("local") if arguments.len() == 1 => {
                 Ok(Self::Qualification(QualificationCommand::LocalCampaign))
             }
@@ -422,7 +545,7 @@ impl CommandLine {
                 }))
             }
             _ => Err(
-                "qualification requires environment, local, candidate, attribution, window-stress, native-runtime, decision, readiness, remote, or downloaded"
+                "qualification requires environment, local, candidate, attribution, window-stress, native-runtime, g3, g4, decision, readiness, remote, or downloaded"
                     .to_owned(),
             ),
         }
@@ -435,6 +558,23 @@ fn named_value<'a>(arguments: &'a [String], prefix: &str) -> Result<&'a str, Str
         .find_map(|argument| argument.strip_prefix(prefix))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("missing `{prefix}<value>`"))
+}
+
+fn optional_named_value<'a>(
+    arguments: &'a [String],
+    prefix: &str,
+) -> Result<Option<&'a str>, String> {
+    let mut values = arguments
+        .iter()
+        .filter_map(|argument| argument.strip_prefix(prefix));
+    let value = values.next();
+    if values.next().is_some() {
+        return Err(format!("duplicate `{prefix}<value>`"));
+    }
+    match value {
+        Some("") => Err(format!("empty `{prefix}<value>`")),
+        value => Ok(value),
+    }
 }
 
 fn named_u64(arguments: &[String], prefix: &str) -> Result<u64, String> {
@@ -965,6 +1105,70 @@ mod tests {
             guided,
             CommandLine::AcceptanceManual(ManualCommand::Guided {
                 session: Some(GuidedSession::G2),
+            })
+        );
+
+        let g3 = CommandLine::parse(args(&[
+            "qualification",
+            "g3",
+            "--zip=dist/candidate.zip",
+            "--evidence-file=dist/evidence/g3.json",
+        ]))
+        .expect("valid exact-candidate G3 command");
+        assert_eq!(
+            g3,
+            CommandLine::Qualification(QualificationCommand::G3Exact {
+                zip: Some(std::path::PathBuf::from("dist/candidate.zip")),
+                evidence_file: Some(std::path::PathBuf::from("dist/evidence/g3.json")),
+                case: None,
+            })
+        );
+
+        let targeted_g3 = CommandLine::parse(args(&["qualification", "g3", "--case=G3-05"]))
+            .expect("valid targeted G3 command");
+        assert_eq!(
+            targeted_g3,
+            CommandLine::Qualification(QualificationCommand::G3Exact {
+                zip: None,
+                evidence_file: None,
+                case: Some(super::G3Case::G305),
+            })
+        );
+
+        assert!(
+            CommandLine::parse(args(&[
+                "qualification",
+                "g3",
+                "--case=G3-04",
+                "--case=G3-05",
+            ]))
+            .is_err()
+        );
+
+        let g4 = CommandLine::parse(args(&[
+            "qualification",
+            "g4",
+            "--zip=dist/candidate.zip",
+            "--evidence-file=dist/evidence/g4.json",
+        ]))
+        .expect("valid exact-candidate G4 command");
+        assert_eq!(
+            g4,
+            CommandLine::Qualification(QualificationCommand::G4Exact {
+                zip: Some(std::path::PathBuf::from("dist/candidate.zip")),
+                evidence_file: Some(std::path::PathBuf::from("dist/evidence/g4.json")),
+                case: None,
+            })
+        );
+
+        let targeted_g4 = CommandLine::parse(args(&["qualification", "g4", "--case=G4-05"]))
+            .expect("valid targeted G4 command");
+        assert_eq!(
+            targeted_g4,
+            CommandLine::Qualification(QualificationCommand::G4Exact {
+                zip: None,
+                evidence_file: None,
+                case: Some(super::G4Case::G405),
             })
         );
     }
