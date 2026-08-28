@@ -147,7 +147,7 @@ fn wait_for_edge(
     })
 }
 
-fn assert_edge(
+pub(super) fn assert_edge(
     window: crate::window_control::WindowHandle,
     edge: crate::window_control::PrimaryDockEdge,
     collapsed: bool,

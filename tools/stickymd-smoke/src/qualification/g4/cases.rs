@@ -5,6 +5,7 @@
 mod dock;
 mod editor;
 mod identity;
+mod ime;
 mod tray;
 
 use std::path::Path;
@@ -33,5 +34,10 @@ pub(super) fn g4_04(repository: &Path, program: &Path) -> Result<CaseEvidence, S
 
 pub(super) fn g4_05(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
     identity::g4_05(repository, program)?;
+    Ok(CaseEvidence::default())
+}
+
+pub(super) fn g4_06(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
+    ime::g4_06(repository, program)?;
     Ok(CaseEvidence::default())
 }

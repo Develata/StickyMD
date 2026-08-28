@@ -220,7 +220,7 @@ impl StickyApp {
                     completion.generation,
                     self.preview_selection,
                 );
-                let text_len = frame.index().text().len();
+                let text_len = frame.text().len();
                 self.preview_selection.anchor = self.preview_selection.anchor.min(text_len);
                 self.preview_selection.active = self.preview_selection.active.min(text_len);
                 self.preview_frame = Some(frame);

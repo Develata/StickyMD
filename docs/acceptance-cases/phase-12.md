@@ -30,8 +30,8 @@
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P12-M01 | 用 Microsoft Pinyin 连续中文、中英混输、selection composition、cancel、一次 Undo | Manual | 候选框跟 caret；commit 一次撤销；composition 不污染 canonical/undo | NOT TESTED |
-| P12-M02 | 用 WeChat Input Method 重复真实 IME 矩阵 | Manual | 与 Microsoft Pinyin 同等正确；环境缺失必须记录 NOT TESTED | NOT TESTED |
+| P12-M01 | 观察 Microsoft Pinyin 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Manual | 功能矩阵由 Phase 14 G4-06 自动化；本项只判候选窗视觉 | NOT TESTED |
+| P12-M02 | 观察 WeChat Input Method / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Manual | 功能矩阵由 Phase 14 G4-06 自动化；环境缺失必须记录 NOT TESTED | NOT TESTED |
 | P12-M03 | 启动并验证 Windows taskbar eligibility | Automated exact candidate | `phase-14.ps1 -G5` / G5-01；真实 HWND 保持 `WS_EX_TOOLWINDOW` 且无 `WS_EX_APPWINDOW` | NOT TESTED |
 | P12-M04 | 验证 Alt+Tab eligibility | Automated exact candidate | `phase-14.ps1 -G5` / G5-01；真实 HWND 保持 ToolWindow shell identity，不进入普通 app switch surface | NOT TESTED |
 | P12-M05 | 聚焦 StickyMD 后 Alt+Tab 离开，再点击/托盘/传感区恢复并输入 | Manual | 切换 away 正常；恢复焦点和 IME 正常 | NOT TESTED |

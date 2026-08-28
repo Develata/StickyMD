@@ -38,7 +38,7 @@ impl StickyApp {
             };
             let x = position.x as f32 - pane.x as f32;
             let y = position.y as f32 - pane.y as f32 + frame.scroll_y();
-            return if frame.index().action_at(x, y).is_some() {
+            return if frame.action_at(x, y).is_some() {
                 CursorIcon::Pointer
             } else {
                 CursorIcon::Text
@@ -68,15 +68,14 @@ impl StickyApp {
             }
             PreviewCommand::SelectAll => {
                 if let Some(frame) = &self.preview_frame {
-                    self.preview_selection = frame.index().select_all();
+                    self.preview_selection = frame.select_all();
                     self.request_preview_paint();
                 }
             }
             PreviewCommand::Copy => {
                 let copied = self.preview_frame.as_ref().and_then(|frame| {
                     frame
-                        .index()
-                        .copy(self.preview_selection)
+                        .copy_selection(self.preview_selection)
                         .map(str::to_owned)
                 });
                 if let Some(text) = copied {
@@ -125,7 +124,7 @@ impl StickyApp {
             return;
         };
         let document_y = y + frame.scroll_y();
-        let hit = frame.index().hit_test(x, document_y);
+        let hit = frame.hit_test(x, document_y);
         self.preview_selection = if self.modifiers.shift_key() {
             stickymd_render::preview::PreviewSelection {
                 anchor: self.preview_selection.anchor,
@@ -134,7 +133,7 @@ impl StickyApp {
         } else {
             stickymd_render::preview::PreviewSelection::caret(hit)
         };
-        self.preview_press_action = frame.index().action_at(x, document_y).cloned();
+        self.preview_press_action = frame.action_at(x, document_y).cloned();
         self.preview_press_position = Some(self.cursor_position);
         self.preview_dragging = true;
         self.preview_drag_moved = self.modifiers.shift_key();
@@ -151,7 +150,7 @@ impl StickyApp {
         let x = (position.x as f32 - pane.x as f32).clamp(0.0, pane.width as f32);
         let y =
             (position.y as f32 - pane.y as f32).clamp(0.0, pane.height as f32) + frame.scroll_y();
-        self.preview_selection.active = frame.index().hit_test(x, y);
+        self.preview_selection.active = frame.hit_test(x, y);
         self.request_preview_paint();
     }
 

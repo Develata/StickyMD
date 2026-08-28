@@ -118,6 +118,121 @@ impl SourceProjection {
         );
     }
 
+    /// Paints a single-line editable shell field and its caret from one shaped
+    /// geometry projection. Long text scrolls horizontally just enough to keep
+    /// the caret visible; no document/editor state is mutated.
+    pub fn paint_ui_text_field(
+        &mut self,
+        pixmap: &mut Pixmap,
+        text: &str,
+        cursor: usize,
+        spec: UiTextSpec,
+        theme: SourceTheme,
+    ) -> Option<super::EditorRect> {
+        let (offset, caret) = self.shape_ui_text_field(text, cursor, spec)?;
+        let palette = SourcePalette::for_theme(theme);
+        let clip = ui_text_clip(spec);
+        let origin_x = (spec.x - offset).round() as i32;
+        let origin_y = spec.y.round() as i32;
+        self.ui_buffer.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            palette.text,
+            |glyph_x, glyph_y, width, height, color| {
+                blend_glyph_rect_clipped(
+                    pixmap,
+                    glyph_x + origin_x,
+                    glyph_y + origin_y,
+                    width,
+                    height,
+                    color,
+                    clip,
+                );
+            },
+        );
+        rect(
+            pixmap,
+            caret.x,
+            caret.y,
+            caret.width,
+            caret.height,
+            palette.caret,
+        );
+        Some(caret)
+    }
+
+    /// Returns the caret rectangle using the same shaping and horizontal
+    /// offset as `paint_ui_text_field`.
+    pub fn ui_text_field_caret(
+        &mut self,
+        text: &str,
+        cursor: usize,
+        spec: UiTextSpec,
+    ) -> Option<super::EditorRect> {
+        self.shape_ui_text_field(text, cursor, spec)
+            .map(|(_, caret)| caret)
+    }
+
+    /// Maps a shell-space x coordinate to a valid byte boundary in the field.
+    pub fn ui_text_field_hit(
+        &mut self,
+        text: &str,
+        cursor: usize,
+        spec: UiTextSpec,
+        shell_x: f32,
+    ) -> Option<usize> {
+        let (offset, _) = self.shape_ui_text_field(text, cursor, spec)?;
+        let local_x = (shell_x - spec.x + offset).max(0.0);
+        let hit = self
+            .ui_buffer
+            .hit(local_x, 10.0 * spec.scale.max(0.5))
+            .map_or(text.len(), |cursor| cursor.index)
+            .min(text.len());
+        text.is_char_boundary(hit).then_some(hit)
+    }
+
+    fn shape_ui_text_field(
+        &mut self,
+        text: &str,
+        cursor: usize,
+        spec: UiTextSpec,
+    ) -> Option<(f32, super::EditorRect)> {
+        if cursor > text.len() || !text.is_char_boundary(cursor) {
+            return None;
+        }
+        let scale = spec.scale.max(0.5);
+        self.ui_buffer.set_metrics_and_size(
+            cosmic_text::Metrics::new(13.0 * scale, 20.0 * scale),
+            Some(spec.width.max(1.0)),
+            Some(22.0 * scale),
+        );
+        let attrs =
+            cosmic_text::Attrs::new().family(cosmic_text::Family::Name(self.fonts.cjk_family));
+        self.ui_buffer.set_text(
+            text,
+            &attrs,
+            cosmic_text::Shaping::Advanced,
+            Some(cosmic_text::Align::Left),
+        );
+        let cursor = Cursor::new(0, cursor);
+        self.ui_buffer
+            .shape_until_cursor(&mut self.font_system, cursor, false);
+        let run = self.ui_buffer.layout_runs().next()?;
+        let logical_x = run.cursor_position(&cursor)?;
+        let caret_width = scale.max(1.0);
+        let right_inset = (spec.width - caret_width - 2.0 * scale).max(0.0);
+        let offset = (logical_x - right_inset).max(0.0);
+        Some((
+            offset,
+            super::EditorRect {
+                x: spec.x + logical_x - offset,
+                y: spec.y + run.line_top,
+                width: caret_width,
+                height: run.line_height,
+            },
+        ))
+    }
+
     pub fn paint(
         &mut self,
         pixmap: &mut Pixmap,
@@ -370,6 +485,16 @@ impl SourceProjection {
     }
 }
 
+fn ui_text_clip(spec: UiTextSpec) -> GlyphClip {
+    let scale = spec.scale.max(0.5);
+    GlyphClip {
+        left: spec.x.round() as i32,
+        top: spec.y.round() as i32,
+        right: (spec.x + spec.width).round() as i32,
+        bottom: (spec.y + 22.0 * scale).round() as i32,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -377,7 +502,7 @@ mod tests {
     use stickymd_core::{DocumentSnapshot, Generation, LineEnding, Selection};
     use tiny_skia::Pixmap;
 
-    use super::{SourceProjection, SourceTheme};
+    use super::{SourceProjection, SourceTheme, UiTextSpec};
 
     fn changed_pixels_in_band(before: &Pixmap, after: &Pixmap, top: f32, height: f32) -> usize {
         let width = before.width() as usize;
@@ -455,5 +580,39 @@ mod tests {
                 "a same-line selection painted the following logical line"
             );
         }
+    }
+
+    #[test]
+    fn shell_text_field_uses_one_layout_for_caret_hit_and_horizontal_reveal() {
+        let snapshot = DocumentSnapshot {
+            text: Arc::from(""),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        };
+        let mut projection = SourceProjection::new(&snapshot, 200, 80, 1.0);
+        let text = "iiii 中文 WWWW 🙂 tail";
+        let cursor = text.find("tail").unwrap() + "tail".len();
+        let spec = UiTextSpec {
+            x: 12.0,
+            y: 8.0,
+            width: 72.0,
+            scale: 1.0,
+        };
+        let mut pixmap = Pixmap::new(200, 80).unwrap();
+
+        let painted = projection
+            .paint_ui_text_field(&mut pixmap, text, cursor, spec, SourceTheme::Light)
+            .expect("field caret");
+        let measured = projection
+            .ui_text_field_caret(text, cursor, spec)
+            .expect("measured caret");
+        let hit = projection
+            .ui_text_field_hit(text, cursor, spec, painted.x)
+            .expect("field hit");
+
+        assert_eq!(painted, measured);
+        assert!(painted.x >= spec.x && painted.x <= spec.x + spec.width);
+        assert_eq!(hit, cursor);
+        assert!(pixmap.data().chunks_exact(4).any(|pixel| pixel[3] != 0));
     }
 }

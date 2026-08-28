@@ -44,7 +44,7 @@ param(
     [string]$G3Case,
     [switch]$G4,
     [string]$G4Zip,
-    [ValidateSet('G4-01', 'G4-02', 'G4-03', 'G4-04', 'G4-05')]
+    [ValidateSet('G4-01', 'G4-02', 'G4-03', 'G4-04', 'G4-05', 'G4-06')]
     [string]$G4Case,
     [switch]$G5,
     [string]$G5Zip,

@@ -2,7 +2,8 @@
 
 ## Status
 
-Implementation Complete — exact qualification and USER manual review remain pending.
+Implementation Reopened — Preview selection geometry and Search input correction are implemented and pass
+headless/Release baselines; all prior exact-candidate evidence remains invalidated until a new candidate is built.
 
 ## Purpose
 
@@ -29,6 +30,14 @@ Implementation Complete — exact qualification and USER manual review remain pe
   纯文本查找/替换（大小写开关、无正则），以及 `$` 数学转换控件标识。
 - 对 Release 运行时内存做 source/preview/split/cache 分模块归因；只实施有前后测量收益、保持
   correctness/latency 的低复杂度优化。
+- 修复 USER 在正式人工验收中确认的 Preview 选择几何模型缺陷：保留 Cosmic Text cluster 事实，
+  以 viewport-local projection 统一 hit-test、selection paint 与 copy range，不新增 shaping dependency。
+- 修复 Source 查找面板的 caret/IME/mouse geometry、Ctrl+F toggle、Ctrl+H 同 session expand、方向键
+  语义与 Find-only replacement guard；不改变查找算法或 Document authority。
+- 将不必要固定等待改为 observable acknowledgement + bounded early-exit；仅并发独立 headless 模块，
+  同一物理桌面的输入、tray、clipboard、dock 与资源通道保持串行。
+- 将 Microsoft Pinyin / WeType 的客观功能矩阵迁入 G4 exact-candidate 自动化；TSF profile 临时切换必须
+  fail closed 并恢复原 profile，候选窗纯视觉继续由 G1 人工持有。
 
 ## Out of Scope
 
@@ -78,7 +87,7 @@ tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任
 
 ## Candidate Defect Correction
 
-旧 exact candidate 在人工验收中暴露六项 implementation defect：同一行局部 selection 误涂其它
+旧 exact candidate 在人工验收中暴露多项 implementation defect：同一行局部 selection 误涂其它
 逻辑行；math delimiter conversion 后 Source projection 未立即进入 layout；Split/Preview 之间切换时
 clean preview 未按新 viewport relayout；真实 winit move loop 未提交 Dock，导致三边失焦自动收起不
 工作；从旧 Dock 直接换到另一边时错误地先 detach，导致需要第二次拖动。修复不改变 Document
@@ -88,6 +97,10 @@ copied-Release smoke 改用真实指针拖动与真实 shell 失焦，同时补�
 ON/OFF 正交路径，并连续执行 Left -> Top -> Left -> Right、禁止以 Floating 中间态掩盖直接换边；
 人工 G2 在新候选上重跑前仍为 `NOT TESTED`。详见
 `docs/report/phase-14-candidate-defect-remediation.md`。
+
+随后对变宽 Preview 文本的正式 G1 复测又证明：旧 selection 蓝框虽不再跨逻辑行，但仍按整段
+grapheme 数量比例估算 x/boundary，导致蓝框与实际 byte selection/copy 不一致。该缺陷是几何模型
+错误，不是偶发桌面抖动；修复期间 Phase 14 保持 reopened，不得生成或复用旧 exact candidate。
 
 ## Resources Failure Triage
 
@@ -130,3 +143,12 @@ G3/G4 exact-candidate harness 已完成开发态五项全通过；G5 exact harne
 并为 compact、presentation 与 rendering 生成候选绑定截图。clean receipt 仍必须在本次提交生成的新
 candidate 上重新采集。
 动态 evidence 与最终 recommendation 只在 exact source freeze 后产生；人工项目不会因此自动 PASS。
+
+本轮 reopened implementation slice 已完成：Preview 选择改为 viewport shaping-cluster 几何与 visual-row
+locator；Search 字段使用单一 layout authority 提供 paint/hit/caret/IME geometry；Ctrl+F/Ctrl+H reducer、
+方向键与 Find-only guard 已回归。G5 rendering 的三个固定 2 s 等待改为最多 12 s、连续稳定截图即提前
+结束的 bounded acknowledgement。无界面任务继续由既有 CI tests/performance shards 并发；同一物理
+桌面的 foreground、鼠标、clipboard、tray、dock 与 resource measurement 不并发，避免把相互干扰写成
+正式 PASS。真实 Microsoft Pinyin / WeType 的客观功能矩阵已迁入 G4-06 exact automation，候选窗出现、
+位置与视觉仍由 G1 人工判断；自动化实现与边界见 `phase-14-real-ime-automation-design.md`。自动化结果见
+`phase-14-preview-selection-geometry-design.md`；新 exact candidate 尚未生成。

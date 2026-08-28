@@ -41,6 +41,7 @@ enum TaskId {
     Phase10Performance,
     Phase11BTests,
     Phase11BPerformance,
+    Phase14Performance,
     FormatCheck,
     ClippyCheck,
     DependencyPolicy,
@@ -792,6 +793,9 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                     }
                     push_unique(&mut tasks, phase10_performance());
                     push_unique(&mut tasks, phase11b_performance());
+                    if phase == Phase::P14 {
+                        push_unique(&mut tasks, phase14_performance());
+                    }
                 }
             }
         }
@@ -1309,6 +1313,24 @@ fn phase11b_performance() -> Task {
     )
 }
 
+fn phase14_performance() -> Task {
+    cargo(
+        TaskId::Phase14Performance,
+        "Phase 14 viewport selection Release baseline",
+        &[
+            "test",
+            "-p",
+            "stickymd-render",
+            "--release",
+            "--locked",
+            "phase14_preview_selection_geometry_release_baseline",
+            "--",
+            "--ignored",
+            "--nocapture",
+        ],
+    )
+}
+
 fn release_build() -> Task {
     cargo(
         TaskId::ReleaseBuild,
@@ -1494,6 +1516,7 @@ mod tests {
         assert!(ids.contains(&TaskId::Phase7Performance));
         assert!(ids.contains(&TaskId::Phase8Performance));
         assert!(ids.contains(&TaskId::Phase11BPerformance));
+        assert!(ids.contains(&TaskId::Phase14Performance));
         assert!(ids.contains(&TaskId::QualificationEnvironment));
     }
 
@@ -1526,6 +1549,7 @@ mod tests {
             TaskId::Phase8Performance,
             TaskId::Phase10Performance,
             TaskId::Phase11BPerformance,
+            TaskId::Phase14Performance,
         ] {
             assert!(ids.contains(&expected));
         }
@@ -1603,6 +1627,7 @@ mod tests {
                     | TaskId::Phase8Performance
                     | TaskId::Phase10Performance
                     | TaskId::Phase11BPerformance
+                    | TaskId::Phase14Performance
             )
         }));
         assert!(!performance.iter().any(|task| {
@@ -1981,6 +2006,14 @@ mod tests {
                 1
             );
         }
+        let performance = build_plan(&options(true, false, false)).expect("performance plan");
+        assert_eq!(
+            performance
+                .iter()
+                .filter(|task| task.id() == TaskId::Phase14Performance)
+                .count(),
+            1
+        );
     }
 
     #[test]

@@ -8,7 +8,7 @@ use tiny_skia::{Paint, Pixmap, Rect, Transform};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 
 use super::controls::ControlLayout;
-use super::search_runtime::paint_search_overlay;
+use super::search_runtime::{paint_search_overlay, search_field_display};
 use super::toolbar_paint::{ToolbarVisual, paint_toolbar};
 use super::{CARET_BLINK, StickyApp};
 use crate::config::{ContentZoomPercent, ViewMode};
@@ -73,6 +73,7 @@ impl StickyApp {
     pub(super) fn caret_animation_active(&self) -> bool {
         self.session.focused
             && !self.preview_focused
+            && !self.search.open
             && !self.session.is_composing()
             && self
                 .window_flow
@@ -93,11 +94,23 @@ impl StickyApp {
         if self.search.open
             && let Some(layout) = self.search_layout()
         {
-            let (x, y, height) = layout.ime_rect(self.search.focused);
-            window.set_ime_cursor_area(
-                PhysicalPosition::new(x.round() as i32, y.round() as i32),
-                PhysicalSize::new(1, height.max(1.0).round() as u32),
-            );
+            let scale = window.scale_factor() as f32;
+            let focused = self.search.focused;
+            let (display, cursor) = search_field_display(&self.search, focused);
+            let spec = layout.field_spec(focused, scale);
+            if let Some(caret) = self
+                .projection
+                .as_mut()
+                .and_then(|projection| projection.ui_text_field_caret(&display, cursor, spec))
+            {
+                window.set_ime_cursor_area(
+                    PhysicalPosition::new(caret.x.round() as i32, caret.y.round() as i32),
+                    PhysicalSize::new(
+                        caret.width.max(1.0).round() as u32,
+                        caret.height.max(1.0).round() as u32,
+                    ),
+                );
+            }
             return;
         }
         let origin = self

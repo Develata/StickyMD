@@ -72,6 +72,8 @@ const REQUIRED_FILES: &[&str] = &[
     "docs/report/phase-14-startup-attribution-plan.md",
     "docs/report/phase-14-final-qualification.md",
     "docs/report/phase-14-memory-attribution.md",
+    "docs/report/phase-14-preview-selection-geometry-design.md",
+    "docs/report/phase-14-real-ime-automation-design.md",
     "docs/reference/qualification-execution-model.md",
     "tools/manual/phase-14-guide.md",
     "docs/release-notes/0.1.0-draft.md",
@@ -154,10 +156,10 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-14.md");
     let content = read_text(&path)?;
     let observed = frozen_trace_ids(&content, "P14-A")?;
-    let expected: Vec<u16> = (1..=27).collect();
+    let expected: Vec<u16> = (1..=30).collect();
     if observed != expected {
         return Err(format!(
-            "{} IDs must be exactly P14-A01..P14-A27; observed {observed:?}",
+            "{} IDs must be exactly P14-A01..P14-A30; observed {observed:?}",
             path.display()
         ));
     }

@@ -5,10 +5,8 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use stickymd_core::Generation;
-use unicode_segmentation::UnicodeSegmentation;
-
 use crate::scroll::ScrollAnchor;
+use stickymd_core::Generation;
 
 use super::scroll::{PreviewScrollAnchor, PreviewScrollIndex};
 use super::{SourceRange, SpanAction};
@@ -70,21 +68,56 @@ pub struct PreviewTextBox {
     pub selection_range: Range<usize>,
     pub source_range: Option<SourceRange>,
     pub rect: PreviewRect,
-    pub action: Option<SpanAction>,
+    pub action: Option<Arc<SpanAction>>,
     /// Short diagnostic exposed only while hovering a failed visual object.
     pub tooltip: Option<Arc<str>>,
     /// Atomic objects such as formulas select as one visual rectangle.
     pub atomic: bool,
+    /// Document-space x coordinate of the logical range start boundary.
+    /// It can be greater than `end_x` for an RTL shaping cluster.
+    pub start_x: f32,
+    /// Document-space x coordinate of the logical range end boundary.
+    pub end_x: f32,
 }
 
-/// Immutable, renderer-owned mapping used by the shell for selection and links.
+/// Immutable full-document projection shared by successive viewport frames.
 #[derive(Debug, Clone)]
-pub struct PreviewTextIndex {
+pub(super) struct PreviewDocumentProjection {
     generation: Generation,
     text: Arc<str>,
+    scroll: PreviewScrollIndex,
+}
+
+impl PreviewDocumentProjection {
+    pub(super) fn new(
+        generation: Generation,
+        text: String,
+        scroll_anchors: Vec<PreviewScrollAnchor>,
+    ) -> Self {
+        Self {
+            generation,
+            text: Arc::from(text),
+            scroll: PreviewScrollIndex::new(scroll_anchors),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) const fn generation(&self) -> Generation {
+        self.generation
+    }
+
+    #[cfg(test)]
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+/// Immutable viewport mapping used for selection and safe actions.
+#[derive(Debug, Clone)]
+pub struct PreviewTextIndex {
+    document: Arc<PreviewDocumentProjection>,
     boxes: Arc<[PreviewTextBox]>,
     rows: Arc<[HitRow]>,
-    scroll: PreviewScrollIndex,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -96,11 +129,26 @@ struct HitRow {
 }
 
 impl PreviewTextIndex {
+    #[cfg(test)]
     pub(super) fn new(
         generation: Generation,
         text: String,
-        mut boxes: Vec<PreviewTextBox>,
+        boxes: Vec<PreviewTextBox>,
         scroll_anchors: Vec<PreviewScrollAnchor>,
+    ) -> Self {
+        Self::from_document(
+            Arc::new(PreviewDocumentProjection::new(
+                generation,
+                text,
+                scroll_anchors,
+            )),
+            boxes,
+        )
+    }
+
+    pub(super) fn from_document(
+        document: Arc<PreviewDocumentProjection>,
+        mut boxes: Vec<PreviewTextBox>,
     ) -> Self {
         boxes.sort_by(|left, right| {
             left.rect
@@ -110,20 +158,18 @@ impl PreviewTextIndex {
         });
         let rows = build_hit_rows(&boxes);
         Self {
-            generation,
-            text: Arc::from(text),
+            document,
             boxes: boxes.into(),
             rows: rows.into(),
-            scroll: PreviewScrollIndex::new(scroll_anchors),
         }
     }
 
-    pub const fn generation(&self) -> Generation {
-        self.generation
+    pub fn generation(&self) -> Generation {
+        self.document.generation
     }
 
     pub fn text(&self) -> &str {
-        &self.text
+        &self.document.text
     }
 
     pub fn boxes(&self) -> &[PreviewTextBox] {
@@ -132,65 +178,53 @@ impl PreviewTextIndex {
 
     /// Maps a document-space y position to a canonical semantic anchor.
     pub fn scroll_anchor_at_y(&self, y: f32) -> Option<ScrollAnchor> {
-        self.scroll.anchor_at_y(y)
+        self.document.scroll.anchor_at_y(y)
     }
 
     /// Maps a canonical semantic anchor into Preview document-space y.
     pub fn y_for_scroll_anchor(&self, anchor: ScrollAnchor) -> Option<f32> {
-        self.scroll.y_for_anchor(anchor)
+        self.document.scroll.y_for_anchor(anchor)
     }
 
     pub fn select_all(&self) -> PreviewSelection {
         PreviewSelection {
             anchor: 0,
-            active: self.text.len(),
+            active: self.document.text.len(),
         }
     }
 
     pub fn copy(&self, selection: PreviewSelection) -> Option<&str> {
         let range = selection.normalized();
-        self.text.get(range)
+        self.document.text.get(range)
     }
 
     /// Hit test in document coordinates, returning a valid UTF-8 boundary in
     /// the preview clipboard projection.
     pub fn hit_test(&self, x: f32, y: f32) -> usize {
         let candidate = self
-            .boxes_at_y(y)
-            .iter()
-            .find(|item| item.rect.contains(x, y))
-            .or_else(|| self.nearest_box(x, y));
+            .nearest_row(y)
+            .and_then(|row| self.nearest_box_in_row(row, x, y));
         let Some(item) = candidate else {
             return 0;
         };
-        if item.atomic {
-            if x < item.rect.x + item.rect.width * 0.5 {
-                item.selection_range.start
-            } else {
-                item.selection_range.end
-            }
+        if (x - item.start_x).abs() <= (x - item.end_x).abs() {
+            item.selection_range.start
         } else {
-            proportional_boundary(
-                &self.text,
-                item.selection_range.clone(),
-                x,
-                item.rect.x,
-                item.rect.width,
-            )
+            item.selection_range.end
         }
     }
 
     pub fn action_at(&self, x: f32, y: f32) -> Option<&SpanAction> {
-        self.boxes_at_y(y)
-            .iter()
-            .find(|item| item.rect.contains(x, y))
-            .and_then(|item| item.action.as_ref())
+        self.row_at_y(y)
+            .and_then(|row| self.nearest_box_in_row(row, x, y))
+            .filter(|item| item.rect.contains(x, y))
+            .and_then(|item| item.action.as_deref())
     }
 
     pub fn tooltip_at(&self, x: f32, y: f32) -> Option<&str> {
-        self.boxes_at_y(y)
-            .iter()
-            .find(|item| item.rect.contains(x, y))
+        self.row_at_y(y)
+            .and_then(|row| self.nearest_box_in_row(row, x, y))
+            .filter(|item| item.rect.contains(x, y))
             .and_then(|item| item.tooltip.as_deref())
     }
 
@@ -224,27 +258,41 @@ impl PreviewTextIndex {
             .rows
             .get(last_row.saturating_sub(1))
             .map_or(first.start, |row| row.end);
-        self.boxes[first.start..boxes_end]
+        let rectangles = self.boxes[first.start..boxes_end]
             .iter()
-            .filter_map(|item| clipped_selection_rect(&self.text, item, &selected))
-            .collect()
+            .filter(|item| ranges_intersect(&item.selection_range, &selected))
+            .map(|item| item.rect)
+            .collect::<Vec<_>>();
+        merge_adjacent_rects(rectangles)
     }
 
-    fn nearest_box(&self, x: f32, y: f32) -> Option<&PreviewTextBox> {
-        let candidates = self
-            .nearest_row(y)
-            .map_or(&[][..], |row| &self.boxes[row.start..row.end]);
-        candidates.iter().min_by(|left, right| {
-            squared_distance(left.rect, x, y).total_cmp(&squared_distance(right.rect, x, y))
-        })
+    fn nearest_box_in_row(&self, row: &HitRow, x: f32, y: f32) -> Option<&PreviewTextBox> {
+        let boxes = &self.boxes[row.start..row.end];
+        let split = boxes.partition_point(|item| item.rect.x <= x);
+        match (split.checked_sub(1), boxes.get(split)) {
+            (Some(previous), Some(next)) => {
+                let previous = &boxes[previous];
+                if squared_distance(previous.rect, x, y) < squared_distance(next.rect, x, y) {
+                    Some(previous)
+                } else {
+                    Some(next)
+                }
+            }
+            (Some(previous), None) => boxes.get(previous),
+            (None, Some(next)) => Some(next),
+            (None, None) => None,
+        }
     }
 
+    #[cfg(test)]
     fn boxes_at_y(&self, y: f32) -> &[PreviewTextBox] {
-        let index = self.rows.partition_point(|row| row.bottom < y);
-        self.rows
-            .get(index)
-            .filter(|row| row.top <= y)
+        self.row_at_y(y)
             .map_or(&[][..], |row| &self.boxes[row.start..row.end])
+    }
+
+    fn row_at_y(&self, y: f32) -> Option<&HitRow> {
+        let index = self.rows.partition_point(|row| row.bottom < y);
+        self.rows.get(index).filter(|row| row.top <= y)
     }
 
     fn nearest_row(&self, y: f32) -> Option<&HitRow> {
@@ -286,52 +334,26 @@ fn build_hit_rows(boxes: &[PreviewTextBox]) -> Vec<HitRow> {
     rows
 }
 
-fn proportional_boundary(text: &str, range: Range<usize>, x: f32, left: f32, width: f32) -> usize {
-    let Some(selected) = text.get(range.clone()) else {
-        return range.start.min(text.len());
-    };
-    let boundaries = selected
-        .grapheme_indices(true)
-        .map(|(byte, _)| range.start + byte)
-        .chain(std::iter::once(range.end))
-        .collect::<Vec<_>>();
-    if boundaries.len() <= 1 || width <= 0.0 {
-        return range.start;
-    }
-    let ratio = ((x - left) / width).clamp(0.0, 1.0);
-    let slot = (ratio * (boundaries.len() - 1) as f32).round() as usize;
-    boundaries[slot.min(boundaries.len() - 1)]
+fn ranges_intersect(left: &Range<usize>, right: &Range<usize>) -> bool {
+    left.start < right.end && right.start < left.end
 }
 
-fn clipped_selection_rect(
-    text: &str,
-    item: &PreviewTextBox,
-    selected: &Range<usize>,
-) -> Option<PreviewRect> {
-    let start = item.selection_range.start.max(selected.start);
-    let end = item.selection_range.end.min(selected.end);
-    if start >= end || item.selection_range.is_empty() {
-        return None;
+fn merge_adjacent_rects(rectangles: Vec<PreviewRect>) -> Vec<PreviewRect> {
+    let mut merged: Vec<PreviewRect> = Vec::with_capacity(rectangles.len());
+    for rectangle in rectangles {
+        if let Some(previous) = merged.last_mut()
+            && (previous.y - rectangle.y).abs() <= 0.5
+            && (previous.height - rectangle.height).abs() <= 0.5
+            && rectangle.x <= previous.right() + 0.5
+        {
+            let right = previous.right().max(rectangle.right());
+            previous.x = previous.x.min(rectangle.x);
+            previous.width = right - previous.x;
+            continue;
+        }
+        merged.push(rectangle);
     }
-    if item.atomic {
-        return Some(item.rect);
-    }
-    let item_text = text.get(item.selection_range.clone())?;
-    let grapheme_count = item_text.graphemes(true).count();
-    if grapheme_count == 0 {
-        return None;
-    }
-    let left = text.get(item.selection_range.start..start)?;
-    let selected_text = text.get(start..end)?;
-    let left_ratio = left.graphemes(true).count() as f32 / grapheme_count as f32;
-    let right_ratio = (left.graphemes(true).count() + selected_text.graphemes(true).count()) as f32
-        / grapheme_count as f32;
-    Some(PreviewRect {
-        x: item.rect.x + item.rect.width * left_ratio,
-        y: item.rect.y,
-        width: item.rect.width * (right_ratio - left_ratio),
-        height: item.rect.height,
-    })
+    merged
 }
 
 fn squared_distance(rect: PreviewRect, x: f32, y: f32) -> f32 {
@@ -355,28 +377,39 @@ fn squared_distance(rect: PreviewRect, x: f32, y: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use stickymd_core::Generation;
+    use unicode_segmentation::UnicodeSegmentation;
 
     use super::*;
 
     fn index() -> PreviewTextIndex {
-        PreviewTextIndex::new(
-            Generation::initial(),
-            "中文🙂abc".into(),
-            vec![PreviewTextBox {
-                selection_range: 0.."中文🙂abc".len(),
-                source_range: None,
-                rect: PreviewRect {
-                    x: 10.0,
-                    y: 10.0,
-                    width: 100.0,
-                    height: 20.0,
-                },
-                action: None,
-                tooltip: None,
-                atomic: false,
-            }],
-            Vec::new(),
-        )
+        let text = "中文🙂abc";
+        let widths = [24.0, 24.0, 30.0, 10.0, 10.0, 10.0];
+        let mut x = 10.0;
+        let boxes = text
+            .grapheme_indices(true)
+            .zip(widths)
+            .map(|((start, grapheme), width)| {
+                let end = start + grapheme.len();
+                let item = PreviewTextBox {
+                    selection_range: start..end,
+                    source_range: None,
+                    rect: PreviewRect {
+                        x,
+                        y: 10.0,
+                        width,
+                        height: 20.0,
+                    },
+                    action: None,
+                    tooltip: None,
+                    atomic: false,
+                    start_x: x,
+                    end_x: x + width,
+                };
+                x += width;
+                item
+            })
+            .collect();
+        PreviewTextIndex::new(Generation::initial(), text.into(), boxes, Vec::new())
     }
 
     #[test]
@@ -409,23 +442,57 @@ mod tests {
     }
 
     #[test]
-    fn selection_geometry_uses_graphemes_instead_of_utf8_byte_lengths() {
+    fn selection_geometry_uses_exact_cluster_widths() {
         let index = PreviewTextIndex::new(
             Generation::initial(),
             "中a🙂".into(),
-            vec![PreviewTextBox {
-                selection_range: 0.."中a🙂".len(),
-                source_range: None,
-                rect: PreviewRect {
-                    x: 10.0,
-                    y: 10.0,
-                    width: 90.0,
-                    height: 20.0,
+            vec![
+                PreviewTextBox {
+                    selection_range: 0.."中".len(),
+                    source_range: None,
+                    rect: PreviewRect {
+                        x: 10.0,
+                        y: 10.0,
+                        width: 48.0,
+                        height: 20.0,
+                    },
+                    action: None,
+                    tooltip: None,
+                    atomic: false,
+                    start_x: 10.0,
+                    end_x: 58.0,
                 },
-                action: None,
-                tooltip: None,
-                atomic: false,
-            }],
+                PreviewTextBox {
+                    selection_range: "中".len().."中a".len(),
+                    source_range: None,
+                    rect: PreviewRect {
+                        x: 58.0,
+                        y: 10.0,
+                        width: 12.0,
+                        height: 20.0,
+                    },
+                    action: None,
+                    tooltip: None,
+                    atomic: false,
+                    start_x: 58.0,
+                    end_x: 70.0,
+                },
+                PreviewTextBox {
+                    selection_range: "中a".len().."中a🙂".len(),
+                    source_range: None,
+                    rect: PreviewRect {
+                        x: 70.0,
+                        y: 10.0,
+                        width: 30.0,
+                        height: 20.0,
+                    },
+                    action: None,
+                    tooltip: None,
+                    atomic: false,
+                    start_x: 70.0,
+                    end_x: 100.0,
+                },
+            ],
             Vec::new(),
         );
 
@@ -436,7 +503,7 @@ mod tests {
 
         assert_eq!(rects.len(), 1);
         assert_eq!(rects[0].x, 10.0);
-        assert_eq!(rects[0].width, 30.0);
+        assert_eq!(rects[0].width, 48.0);
     }
 
     #[test]
@@ -454,11 +521,13 @@ mod tests {
                 action: None,
                 tooltip: None,
                 atomic: false,
+                start_x: 0.0,
+                end_x: 100.0,
             })
             .collect();
         let index = PreviewTextIndex::new(Generation::initial(), "x".into(), boxes, Vec::new());
         assert_eq!(index.boxes_at_y(1234.0 * 20.0 + 4.0).len(), 1);
-        assert_eq!(index.hit_test(50.0, 1234.0 * 20.0 + 4.0), 1);
+        assert_eq!(index.hit_test(60.0, 1234.0 * 20.0 + 4.0), 1);
     }
 
     #[test]
@@ -476,6 +545,8 @@ mod tests {
                 action: None,
                 tooltip: None,
                 atomic: false,
+                start_x: 0.0,
+                end_x: 100.0,
             })
             .collect();
         let index = PreviewTextIndex::new(Generation::initial(), "x".into(), boxes, Vec::new());
@@ -508,6 +579,8 @@ mod tests {
                 action: None,
                 tooltip: Some(Arc::from("formula parse failed")),
                 atomic: true,
+                start_x: 10.0,
+                end_x: 90.0,
             }],
             Vec::new(),
         );

@@ -18,11 +18,80 @@ const MAX_TEXT_LAYOUT_CACHE_ENTRIES: usize = 1_024;
 const MAX_TEXT_LAYOUT_CACHE_TEXT_BYTES: usize = 1_024;
 
 #[derive(Debug, Clone)]
-struct Segment {
+pub(super) struct TextSegment {
     visual_range: Range<usize>,
     selection_range: Range<usize>,
     source_range: Option<super::SourceRange>,
-    action: Option<SpanAction>,
+    action: Option<std::sync::Arc<SpanAction>>,
+    atomic: bool,
+    tooltip: Option<std::sync::Arc<str>>,
+}
+
+pub(super) struct TextLayout {
+    pub buffer: Buffer,
+    segments: Vec<TextSegment>,
+    rows: Vec<TextLayoutRow>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TextLayoutRow {
+    logical_line: usize,
+    layout_row: usize,
+    logical_byte_start: usize,
+    top: f32,
+    height: f32,
+}
+
+impl TextLayoutRow {
+    fn bottom(self) -> f32 {
+        self.top + self.height
+    }
+}
+
+impl TextLayout {
+    fn new(buffer: Buffer, segments: Vec<TextSegment>) -> Self {
+        let mut logical_byte_starts = Vec::with_capacity(buffer.lines.len());
+        let mut logical_byte_start = 0usize;
+        for line in &buffer.lines {
+            logical_byte_starts.push(logical_byte_start);
+            logical_byte_start = logical_byte_start
+                .saturating_add(line.text().len())
+                .saturating_add(line.ending().as_str().len());
+        }
+
+        let mut next_layout_row = vec![0usize; buffer.lines.len()];
+        let rows = buffer
+            .layout_runs()
+            .filter_map(|run| {
+                let layout_row = next_layout_row.get_mut(run.line_i)?;
+                let row = TextLayoutRow {
+                    logical_line: run.line_i,
+                    layout_row: *layout_row,
+                    logical_byte_start: *logical_byte_starts.get(run.line_i)?,
+                    top: run.line_top,
+                    height: run.line_height,
+                };
+                *layout_row = layout_row.saturating_add(1);
+                Some(row)
+            })
+            .collect();
+        Self {
+            buffer,
+            segments,
+            rows,
+        }
+    }
+
+    fn height(&self, fallback: f32) -> f32 {
+        self.rows.last().map_or(fallback, |row| row.bottom())
+    }
+
+    pub(super) fn mark_atomic_with_tooltip(&mut self, tooltip: std::sync::Arc<str>) {
+        for segment in &mut self.segments {
+            segment.atomic = true;
+            segment.tooltip = Some(std::sync::Arc::clone(&tooltip));
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -68,11 +137,13 @@ pub(super) fn make_text_chunk(
         let selection_start = selection_text.len();
         selection_text.push_str(&span.copy_text);
         let selection_end = selection_text.len();
-        segments.push(Segment {
+        segments.push(TextSegment {
             visual_range: visual_start..visual_end,
             selection_range: selection_start..selection_end,
             source_range: span.source_range,
-            action: span.action.clone(),
+            action: span.action.clone().map(std::sync::Arc::new),
+            atomic: false,
+            tooltip: None,
         });
         span_shapes.push((visual_end, style_key(span.style)));
     }
@@ -134,19 +205,16 @@ pub(super) fn make_text_chunk(
         }
         buffer
     };
-    let height = buffer
-        .layout_runs()
-        .map(|run| run.line_top + run.line_height)
-        .fold(metrics.line_height, f32::max);
-    let boxes = boxes_for_buffer(&buffer, &segments, x, y);
+    let layout = TextLayout::new(buffer, segments);
+    let height = layout.height(metrics.line_height);
     ChunkBuild {
         chunks: vec![LayoutChunk {
-            content: LayoutContent::Text(buffer),
+            content: LayoutContent::Text(layout),
             x,
             y,
         }],
         height,
-        boxes,
+        boxes: Vec::new(),
         decorations: Vec::new(),
     }
 }
@@ -239,29 +307,38 @@ fn styled_attrs(
     attrs
 }
 
-fn boxes_for_buffer(buffer: &Buffer, segments: &[Segment], x: f32, y: f32) -> Vec<PreviewTextBox> {
-    let mut boxes = Vec::new();
-    let mut logical_line = 0;
-    let mut logical_line_start = 0usize;
-    for run in buffer.layout_runs() {
-        while logical_line < run.line_i {
-            let Some(line) = buffer.lines.get(logical_line) else {
-                break;
-            };
-            logical_line_start = logical_line_start
-                .saturating_add(line.text().len())
-                .saturating_add(line.ending().as_str().len());
-            logical_line += 1;
-        }
-        if logical_line != run.line_i {
+pub(super) fn project_visible_text_boxes(
+    layout: &TextLayout,
+    x: f32,
+    y: f32,
+    viewport_top: f32,
+    viewport_bottom: f32,
+) -> Vec<PreviewTextBox> {
+    let buffer = &layout.buffer;
+    let segments = &layout.segments;
+    let mut boxes: Vec<PreviewTextBox> = Vec::new();
+    let local_top = viewport_top - y;
+    let local_bottom = viewport_bottom - y;
+    let first_row = layout.rows.partition_point(|row| row.bottom() < local_top);
+    let last_row = layout.rows.partition_point(|row| row.top <= local_bottom);
+    if last_row <= first_row {
+        return boxes;
+    }
+    let mut atomic_extents = vec![None::<(f32, f32)>; segments.len()];
+    let mut touched_atomic = Vec::new();
+    for row in &layout.rows[first_row..last_row] {
+        let Some(line) = buffer.lines.get(row.logical_line) else {
             continue;
-        }
-        let mut extents = vec![None::<(f32, f32, usize, usize)>; segments.len()];
-        for glyph in run.glyphs {
+        };
+        let Some(layout_line) = line.layout_opt().and_then(|rows| rows.get(row.layout_row)) else {
+            continue;
+        };
+        let row_top = y + row.top;
+        for glyph in &layout_line.glyphs {
             let Some(index) = glyph.metadata.checked_sub(1) else {
                 continue;
             };
-            let Some(extent) = extents.get_mut(index) else {
+            let Some(segment) = segments.get(index) else {
                 continue;
             };
             let left = glyph.x.min(glyph.x + glyph.w);
@@ -271,36 +348,54 @@ fn boxes_for_buffer(buffer: &Buffer, segments: &[Segment], x: f32, y: f32) -> Ve
             // immutable clipboard projection, so first restore the paragraph
             // byte offset. Wrapped visual runs on the same logical line reuse
             // this base; a following logical line advances it exactly once.
-            let visual_start = logical_line_start
+            let visual_start = row
+                .logical_byte_start
                 .saturating_add(glyph.start)
                 .max(segments[index].visual_range.start);
-            let visual_end = logical_line_start
+            let visual_end = row
+                .logical_byte_start
                 .saturating_add(glyph.end)
                 .min(segments[index].visual_range.end);
             if visual_start >= visual_end {
                 continue;
             }
-            *extent = Some(extent.map_or(
-                (left, right, visual_start, visual_end),
-                |(current_left, current_right, current_start, current_end)| {
-                    (
-                        current_left.min(left),
-                        current_right.max(right),
-                        current_start.min(visual_start),
-                        current_end.max(visual_end),
-                    )
-                },
-            ));
-        }
-        for (index, extent) in extents.into_iter().enumerate() {
-            let (left, right, visual_start, visual_end) = match extent {
-                Some(extent) => extent,
-                None => continue,
-            };
-            let segment = &segments[index];
             let selection_range =
-                selection_range_for_visual_line(segment, visual_start..visual_end);
+                selection_range_for_visual_cluster(segment, visual_start..visual_end);
             if selection_range.is_empty() {
+                continue;
+            }
+            let atomic =
+                segment.atomic || segment.visual_range.len() != segment.selection_range.len();
+            if atomic {
+                let extent = &mut atomic_extents[index];
+                if extent.is_none() {
+                    touched_atomic.push(index);
+                }
+                *extent = Some(
+                    extent.map_or((left, right), |(current_left, current_right)| {
+                        (current_left.min(left), current_right.max(right))
+                    }),
+                );
+                continue;
+            }
+            let rtl = glyph.level.is_rtl();
+            let start_x = x + if rtl { right } else { left };
+            let end_x = x + if rtl { left } else { right };
+            if let Some(previous) = boxes.last_mut()
+                && previous.selection_range == selection_range
+                && (previous.rect.y - row_top).abs() <= 0.5
+            {
+                let merged_left = previous.rect.x.min(x + left);
+                let merged_right = previous.rect.right().max(x + right);
+                previous.rect.x = merged_left;
+                previous.rect.width = (merged_right - merged_left).max(1.0);
+                if rtl {
+                    previous.start_x = previous.start_x.max(start_x);
+                    previous.end_x = previous.end_x.min(end_x);
+                } else {
+                    previous.start_x = previous.start_x.min(start_x);
+                    previous.end_x = previous.end_x.max(end_x);
+                }
                 continue;
             }
             boxes.push(PreviewTextBox {
@@ -308,20 +403,43 @@ fn boxes_for_buffer(buffer: &Buffer, segments: &[Segment], x: f32, y: f32) -> Ve
                 source_range: segment.source_range,
                 rect: PreviewRect {
                     x: x + left,
-                    y: y + run.line_top,
+                    y: row_top,
                     width: (right - left).max(1.0),
-                    height: run.line_height,
+                    height: row.height,
                 },
                 action: segment.action.clone(),
-                tooltip: None,
+                tooltip: segment.tooltip.clone(),
                 atomic: false,
+                start_x,
+                end_x,
+            });
+        }
+        for index in touched_atomic.drain(..) {
+            let Some((left, right)) = atomic_extents[index].take() else {
+                continue;
+            };
+            let segment = &segments[index];
+            boxes.push(PreviewTextBox {
+                selection_range: segment.selection_range.clone(),
+                source_range: segment.source_range,
+                rect: PreviewRect {
+                    x: x + left,
+                    y: row_top,
+                    width: (right - left).max(1.0),
+                    height: row.height,
+                },
+                action: segment.action.clone(),
+                tooltip: segment.tooltip.clone(),
+                atomic: true,
+                start_x: x + left,
+                end_x: x + right,
             });
         }
     }
     boxes
 }
 
-fn selection_range_for_visual_line(segment: &Segment, visual: Range<usize>) -> Range<usize> {
+fn selection_range_for_visual_cluster(segment: &TextSegment, visual: Range<usize>) -> Range<usize> {
     if segment.visual_range.len() != segment.selection_range.len() {
         return segment.selection_range.clone();
     }
@@ -332,12 +450,15 @@ fn selection_range_for_visual_line(segment: &Segment, visual: Range<usize>) -> R
 
 #[cfg(test)]
 mod tests {
+    use std::mem::size_of;
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     use cosmic_text::{Align, FontSystem, Metrics, Wrap};
     use stickymd_core::Generation;
 
-    use super::{TextLayoutCache, make_text_chunk};
+    use super::{TextLayoutCache, make_text_chunk, project_visible_text_boxes};
+    use crate::preview::layout::LayoutContent;
     use crate::preview::{
         LinkKind, PreviewSelection, PreviewTextIndex, RenderSpan, RenderStyle, SourceRange,
         SpanAction,
@@ -402,11 +523,15 @@ mod tests {
 
         assert_eq!(cache.buffers.len(), 1);
         assert_eq!(selection_text, "linklink");
-        assert!(!built.boxes.is_empty());
-        assert!(built.boxes.iter().all(|item| {
+        let LayoutContent::Text(layout) = &built.chunks[0].content else {
+            panic!("text chunk expected");
+        };
+        let boxes = project_visible_text_boxes(layout, 0.0, 30.0, 0.0, 300.0);
+        assert!(!boxes.is_empty());
+        assert!(boxes.iter().all(|item| {
             item.source_range == SourceRange::new(100, 104)
                 && matches!(
-                    &item.action,
+                    item.action.as_deref(),
                     Some(SpanAction::OpenLink { destination, .. })
                         if destination == "https://second.example"
                 )
@@ -449,20 +574,33 @@ mod tests {
         );
 
         assert_eq!(selection_text, "alpha\nbeta\ngamma");
+        let LayoutContent::Text(layout) = &built.chunks[0].content else {
+            panic!("text chunk expected");
+        };
+        let boxes = project_visible_text_boxes(layout, 0.0, 0.0, 0.0, 300.0);
         assert_eq!(
-            built
-                .boxes
+            boxes
                 .iter()
                 .map(|item| item.selection_range.clone())
                 .collect::<Vec<_>>(),
-            [0..5, 6..10, 11..16]
+            [
+                0..1,
+                1..2,
+                2..3,
+                3..4,
+                4..5,
+                6..7,
+                7..8,
+                8..9,
+                9..10,
+                11..12,
+                12..13,
+                13..14,
+                14..15,
+                15..16,
+            ]
         );
-        let index = PreviewTextIndex::new(
-            Generation::initial(),
-            selection_text,
-            built.boxes,
-            Vec::new(),
-        );
+        let index = PreviewTextIndex::new(Generation::initial(), selection_text, boxes, Vec::new());
         assert_eq!(
             index
                 .selection_rects(PreviewSelection {
@@ -473,5 +611,273 @@ mod tests {
             1,
             "a single logical-line selection painted unrelated visual rows"
         );
+    }
+
+    #[test]
+    fn variable_width_clusters_roundtrip_hit_highlight_and_copy() {
+        let mut font_system = FontSystem::new();
+        let fonts = FontSelection::resolve(&mut font_system);
+        let mut selection_text = String::new();
+        let text: Arc<str> = Arc::from("iiii WWWW 中文 🙂 e\u{301}");
+        let span = RenderSpan {
+            text: Arc::clone(&text),
+            copy_text: text,
+            source_range: SourceRange::new(0, "iiii WWWW 中文 🙂 e\u{301}".len()),
+            style: RenderStyle::default(),
+            action: None,
+            math: None,
+            image: None,
+            hard_break: false,
+        };
+        let built = make_text_chunk(
+            &mut font_system,
+            &fonts,
+            &[span],
+            10.0,
+            20.0,
+            600.0,
+            Metrics::new(17.0, 26.35),
+            Align::Left,
+            Wrap::None,
+            &mut selection_text,
+            &mut TextLayoutCache::default(),
+        );
+        let LayoutContent::Text(layout) = &built.chunks[0].content else {
+            panic!("text chunk expected");
+        };
+        let boxes = project_visible_text_boxes(layout, 10.0, 20.0, 0.0, 200.0);
+        assert!(boxes.len() > 8);
+        assert!(
+            boxes
+                .windows(2)
+                .all(|pair| pair[0].selection_range != pair[1].selection_range),
+            "multiple glyphs from one shaping cluster must be merged"
+        );
+        let widths = boxes.iter().map(|item| item.rect.width).collect::<Vec<_>>();
+        assert!(
+            widths.iter().any(|width| (*width - widths[0]).abs() > 1.0),
+            "fixture must retain variable shaping widths"
+        );
+        let index = PreviewTextIndex::new(
+            Generation::initial(),
+            selection_text,
+            boxes.clone(),
+            Vec::new(),
+        );
+        for item in &boxes {
+            assert_eq!(
+                index.hit_test(item.start_x, item.rect.y + 1.0),
+                item.selection_range.start
+            );
+            assert_eq!(
+                index.hit_test(item.end_x, item.rect.y + 1.0),
+                item.selection_range.end
+            );
+            let selection = PreviewSelection {
+                anchor: item.selection_range.start,
+                active: item.selection_range.end,
+            };
+            assert_eq!(
+                index.copy(selection),
+                index.text().get(item.selection_range.clone())
+            );
+            assert_eq!(index.selection_rects(selection), vec![item.rect]);
+        }
+        let combining_start = index.text().find("e\u{301}").unwrap();
+        assert_eq!(
+            boxes
+                .iter()
+                .filter(|item| item.selection_range.start == combining_start)
+                .count(),
+            1,
+            "combining sequence must not duplicate one shaping cluster"
+        );
+    }
+
+    #[test]
+    fn bidi_clusters_preserve_logical_boundary_direction() {
+        let mut font_system = FontSystem::new();
+        let fonts = FontSelection::resolve(&mut font_system);
+        let mut selection_text = String::new();
+        let text: Arc<str> = Arc::from("abc אבג");
+        let span = RenderSpan {
+            text: Arc::clone(&text),
+            copy_text: text,
+            source_range: SourceRange::new(0, "abc אבג".len()),
+            style: RenderStyle::default(),
+            action: None,
+            math: None,
+            image: None,
+            hard_break: false,
+        };
+        let built = make_text_chunk(
+            &mut font_system,
+            &fonts,
+            &[span],
+            0.0,
+            0.0,
+            400.0,
+            Metrics::new(17.0, 26.35),
+            Align::Left,
+            Wrap::None,
+            &mut selection_text,
+            &mut TextLayoutCache::default(),
+        );
+        let LayoutContent::Text(layout) = &built.chunks[0].content else {
+            panic!("text chunk expected");
+        };
+        let boxes = project_visible_text_boxes(layout, 0.0, 0.0, 0.0, 100.0);
+        let rtl = boxes
+            .iter()
+            .find(|item| item.start_x > item.end_x)
+            .expect("Hebrew fixture must expose an RTL cluster")
+            .clone();
+        let index = PreviewTextIndex::new(Generation::initial(), selection_text, boxes, Vec::new());
+        let toward_end = (rtl.end_x - rtl.start_x).signum() * 0.1;
+        assert_eq!(
+            index.hit_test(rtl.start_x + toward_end, rtl.rect.y + 1.0),
+            rtl.selection_range.start
+        );
+        assert_eq!(
+            index.hit_test(rtl.end_x - toward_end, rtl.rect.y + 1.0),
+            rtl.selection_range.end
+        );
+    }
+
+    #[test]
+    fn viewport_projection_does_not_retain_offscreen_clusters() {
+        let mut font_system = FontSystem::new();
+        let fonts = FontSelection::resolve(&mut font_system);
+        let mut selection_text = String::new();
+        let text: Arc<str> = Arc::from(
+            (0..500)
+                .map(|row| format!("row-{row}\n"))
+                .collect::<String>(),
+        );
+        let span = RenderSpan {
+            text: Arc::clone(&text),
+            copy_text: text,
+            source_range: None,
+            style: RenderStyle::default(),
+            action: None,
+            math: None,
+            image: None,
+            hard_break: false,
+        };
+        let built = make_text_chunk(
+            &mut font_system,
+            &fonts,
+            &[span],
+            0.0,
+            0.0,
+            400.0,
+            Metrics::new(17.0, 26.35),
+            Align::Left,
+            Wrap::WordOrGlyph,
+            &mut selection_text,
+            &mut TextLayoutCache::default(),
+        );
+        let LayoutContent::Text(layout) = &built.chunks[0].content else {
+            panic!("text chunk expected");
+        };
+        let all = project_visible_text_boxes(layout, 0.0, 0.0, 0.0, f32::MAX);
+        let viewport = project_visible_text_boxes(layout, 0.0, 0.0, 200.0, 500.0);
+        assert!(!viewport.is_empty());
+        assert!(viewport.len() * 10 < all.len());
+        assert!(
+            viewport
+                .iter()
+                .all(|item| item.rect.bottom() >= 200.0 && item.rect.y <= 500.0)
+        );
+    }
+
+    #[test]
+    #[ignore = "Release-only Phase 14 viewport selection performance receipt"]
+    fn phase14_preview_selection_geometry_release_baseline() {
+        let mut font_system = FontSystem::new();
+        let fonts = FontSelection::resolve(&mut font_system);
+        let mut selection_text = String::new();
+        let text: Arc<str> = Arc::from(
+            (0..5_000)
+                .map(|row| format!("row-{row:04} iiii WWWW 中文 🙂 e\u{301}\n"))
+                .collect::<String>(),
+        );
+        let span = RenderSpan {
+            text: Arc::clone(&text),
+            copy_text: text,
+            source_range: None,
+            style: RenderStyle::default(),
+            action: None,
+            math: None,
+            image: None,
+            hard_break: false,
+        };
+        let built = make_text_chunk(
+            &mut font_system,
+            &fonts,
+            &[span],
+            0.0,
+            0.0,
+            600.0,
+            Metrics::new(17.0, 26.35),
+            Align::Left,
+            Wrap::WordOrGlyph,
+            &mut selection_text,
+            &mut TextLayoutCache::default(),
+        );
+        let LayoutContent::Text(layout) = &built.chunks[0].content else {
+            panic!("text chunk expected");
+        };
+        let viewport_top = layout.rows[layout.rows.len() / 2].top;
+        let viewport_bottom = viewport_top + 720.0;
+        let project =
+            || project_visible_text_boxes(layout, 0.0, 0.0, viewport_top, viewport_bottom);
+        let boxes = project();
+        assert!(!boxes.is_empty());
+
+        let row_locator_bytes = layout.rows.len() * size_of::<super::TextLayoutRow>();
+        let viewport_geometry_bytes = boxes.len() * size_of::<crate::preview::PreviewTextBox>();
+        assert!(
+            viewport_geometry_bytes < 512 * 1024,
+            "viewport geometry retained {viewport_geometry_bytes} bytes"
+        );
+
+        let mut projection_samples = Vec::with_capacity(100);
+        for _ in 0..100 {
+            let started = Instant::now();
+            std::hint::black_box(project());
+            projection_samples.push(started.elapsed());
+        }
+        projection_samples.sort_unstable();
+        let projection_p95 = projection_samples[projection_samples.len() * 95 / 100];
+
+        let index = PreviewTextIndex::new(Generation::initial(), selection_text, boxes, Vec::new());
+        let hit_started = Instant::now();
+        for sample in 0..10_000 {
+            let x = (sample % 600) as f32;
+            let y = viewport_top + (sample % 700) as f32;
+            std::hint::black_box(index.hit_test(x, y));
+        }
+        let hit_batch = hit_started.elapsed();
+
+        println!(
+            "phase14 preview_selection rows={} row_locator_bytes={} visible_clusters={} viewport_geometry_bytes={} project_median={:?} project_p95={projection_p95:?} project_max={:?} hit_10000={hit_batch:?}",
+            layout.rows.len(),
+            row_locator_bytes,
+            index.boxes().len(),
+            viewport_geometry_bytes,
+            projection_samples[projection_samples.len() / 2],
+            projection_samples.last().copied().unwrap_or_default(),
+        );
+        if !cfg!(debug_assertions) {
+            assert!(
+                projection_p95 <= Duration::from_millis(10),
+                "viewport cluster projection p95 {projection_p95:?} exceeds 10ms"
+            );
+            assert!(
+                hit_batch <= Duration::from_millis(20),
+                "10,000 viewport hits took {hit_batch:?}"
+            );
+        }
     }
 }

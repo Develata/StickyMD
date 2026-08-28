@@ -18,7 +18,9 @@
 .\tools\smoke\phase-14.ps1 -GuidedSession G1
 ```
 
-覆盖 Microsoft Pinyin、WeChat Input Method、zoom/opacity、Preview、math 与滚动后的 lazy image。
+Microsoft Pinyin / WeType 的 composition、commit/cancel、selection replace、Undo 与 Search 功能由
+G4-06 自动化；G1 只观察候选窗位置、遮挡、字体、动画、DPI 视觉，以及 zoom/opacity、Preview、math
+与滚动后的 lazy image 主观质量。
 真实输入法或视觉观察不可由自动测试替代。
 
 ## G2 — ToolWindow / mixed-DPI Dock / Compact Window / Theme
@@ -57,8 +59,9 @@ Rust CLI 在独立候选副本中串行覆盖 Windows file-drop、DIB、PNG+text
 .\tools\smoke\phase-14.ps1 -G4
 ```
 
-单组调试可使用 `-G4Case G4-01..G4-05`。五组依次覆盖 tray lifecycle、主屏三边 dock/精确时序、
-legacy clipboard shortcuts、真实 toolbar 数学分隔符转换与 junction 单实例。G4 与 G3 共用 exact
+单组调试可使用 `-G4Case G4-01..G4-06`。六组依次覆盖 tray lifecycle、主屏三边 dock/精确时序、
+legacy clipboard shortcuts、真实 toolbar 数学分隔符转换、junction 单实例与 Microsoft Pinyin/WeType
+真实 IME 功能矩阵。G4 与 G3 共用 exact
 candidate/clean harness/isolated-copy 收据合同，但分别写入 `g4-exact-qualification.json`；单组诊断
 收据同样不能解除 readiness blocker。G3/G4 必须依次串行，不能并发争抢 clipboard、tray、窗口
 焦点或鼠标。

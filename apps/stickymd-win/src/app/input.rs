@@ -453,12 +453,9 @@ impl StickyApp {
             window.set_cursor(cursor);
         }
         let math_tooltip = self.preview_at_cursor().and_then(|(x, y)| {
-            self.preview_frame.as_ref().and_then(|frame| {
-                frame
-                    .index()
-                    .tooltip_at(x, y + frame.scroll_y())
-                    .map(str::to_owned)
-            })
+            self.preview_frame
+                .as_ref()
+                .and_then(|frame| frame.tooltip_at(x, y + frame.scroll_y()).map(str::to_owned))
         });
         if let (Some(window), Some(detail)) = (&self.window, math_tooltip) {
             window.set_title(&format!("StickyMD — 公式错误：{detail}"));
@@ -517,7 +514,7 @@ impl StickyApp {
                 let current = self.coordinator.view().generation;
                 let anchor = self.preview_frame.as_ref().and_then(|frame| {
                     (frame.generation() == current)
-                        .then(|| frame.index().scroll_anchor_at_y(self.preview_scroll_y))
+                        .then(|| frame.scroll_anchor_at_y(self.preview_scroll_y))
                         .flatten()
                 });
                 if let (Some(anchor), Some(projection)) = (anchor, &mut self.projection)
@@ -549,7 +546,7 @@ impl StickyApp {
                 .preview_frame
                 .as_ref()
                 .filter(|frame| frame.generation() == current)
-                && let Some(target_y) = frame.index().y_for_scroll_anchor(anchor)
+                && let Some(target_y) = frame.y_for_scroll_anchor(anchor)
             {
                 self.preview_scroll_y = target_y.max(0.0);
                 self.request_preview_paint();

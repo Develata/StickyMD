@@ -121,18 +121,43 @@ fn dpi_scales_formula_once_and_display_math_is_centered() {
 #[test]
 fn formula_limit_and_source_limit_render_errors_without_aborting_preview() {
     let source = "$$x$$\n\n".repeat(2_001);
-    let (pipeline, frame) = build(&source, 1.0);
+    let (mut pipeline, frame) = build(&source, 1.0);
     assert_eq!(pipeline.math_counters().parse_layout_calls, 1);
     assert_eq!(pipeline.math_counters().rasterizations, 1);
     assert_eq!(
         frame
+            .copy_selection(frame.select_all())
+            .map(|text| text.matches("$$x$$").count()),
+        Some(2_001)
+    );
+    let maximum_scroll = (frame.document_height() - frame.height() as f32).max(0.0);
+    for scroll in [0.0, maximum_scroll * 0.5, maximum_scroll] {
+        let viewport = pipeline
+            .paint(
+                Generation::initial(),
+                700,
+                scroll,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .expect("formula-limit viewport repaint");
+        let visible_atomic = viewport
             .index()
             .boxes()
             .iter()
             .filter(|item| item.atomic)
-            .count(),
-        2_001
-    );
+            .count();
+        assert!(
+            visible_atomic > 0 && visible_atomic < 2_001,
+            "viewport-only geometry must retain visible atomic errors, observed {visible_atomic}"
+        );
+        assert_eq!(
+            viewport
+                .copy_selection(viewport.select_all())
+                .map(|text| text.matches("$$x$$").count()),
+            Some(2_001)
+        );
+    }
 
     let huge = format!("${}$", "x".repeat(64 * 1024 + 1));
     let (pipeline, frame) = build(&huge, 1.0);

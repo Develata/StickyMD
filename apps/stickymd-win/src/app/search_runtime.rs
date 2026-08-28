@@ -48,6 +48,23 @@ pub(super) enum SearchHit {
     ReplaceAll,
 }
 
+pub(super) fn search_field_display(
+    search: &crate::interaction::SearchSession,
+    field: SearchField,
+) -> (String, usize) {
+    let (mut display, cursor) = search.composed_field(field);
+    if field == SearchField::Query {
+        let summary = search.match_summary();
+        display.push_str(&format!(
+            "  [{}/{}{}]",
+            summary.0,
+            summary.1,
+            if summary.2 { "+" } else { "" }
+        ));
+    }
+    (display, cursor)
+}
+
 impl SearchLayout {
     pub(super) fn new(
         pane: super::preview_runtime::PaneRect,
@@ -142,12 +159,22 @@ impl SearchLayout {
         self.popup.contains(position).then_some(SearchHit::Query)
     }
 
-    pub(super) fn ime_rect(self, focused: SearchField) -> (f32, f32, f32) {
+    pub(super) fn field_spec(
+        self,
+        focused: SearchField,
+        scale: f32,
+    ) -> stickymd_render::source::UiTextSpec {
         let rect = match focused {
             SearchField::Query => self.query,
             SearchField::Replacement => self.replacement,
         };
-        (rect.x + 6.0, rect.y + rect.height - 4.0, rect.height)
+        let inset = 5.0 * scale.max(0.5);
+        stickymd_render::source::UiTextSpec {
+            x: rect.x + inset,
+            y: rect.y + 3.0 * scale.max(0.5),
+            width: (rect.width - inset * 2.0).max(1.0),
+            scale,
+        }
     }
 }
 
@@ -212,50 +239,39 @@ pub(super) fn paint_search_overlay(
         fill(pixmap, layout.replace, field);
         fill(pixmap, layout.replace_all, field);
     }
-    let mut query = search.query.clone();
-    if search.focused == SearchField::Query {
-        query.push_str(&search.preedit);
-    }
-    let mut replacement = search.replacement.clone();
-    if search.focused == SearchField::Replacement {
-        replacement.push_str(&search.preedit);
-    }
-    let summary = search.match_summary();
-    let query_display = format!(
-        "{query}  [{}/{}{}]",
-        summary.0,
-        summary.1,
-        if summary.2 { "+" } else { "" }
-    );
+    let (query_display, query_cursor) = search_field_display(search, SearchField::Query);
+    let (replacement, replacement_cursor) = search_field_display(search, SearchField::Replacement);
     let source_theme = if dark {
         stickymd_render::source::SourceTheme::Dark
     } else {
         stickymd_render::source::SourceTheme::Light
     };
     if let Some(projection) = projection {
-        projection.paint_ui_text(
-            pixmap,
-            &query_display,
-            stickymd_render::source::UiTextSpec {
-                x: layout.query.x + 5.0 * scale,
-                y: layout.query.y + 3.0 * scale,
-                width: (layout.query.width - 10.0 * scale).max(1.0),
-                scale,
-            },
-            source_theme,
-        );
-        if search.replace_visible {
-            projection.paint_ui_text(
+        let query_spec = layout.field_spec(SearchField::Query, scale);
+        if search.focused == SearchField::Query {
+            projection.paint_ui_text_field(
                 pixmap,
-                &replacement,
-                stickymd_render::source::UiTextSpec {
-                    x: layout.replacement.x + 5.0 * scale,
-                    y: layout.replacement.y + 3.0 * scale,
-                    width: (layout.replacement.width - 10.0 * scale).max(1.0),
-                    scale,
-                },
+                &query_display,
+                query_cursor,
+                query_spec,
                 source_theme,
             );
+        } else {
+            projection.paint_ui_text(pixmap, &query_display, query_spec, source_theme);
+        }
+        if search.replace_visible {
+            let replacement_spec = layout.field_spec(SearchField::Replacement, scale);
+            if search.focused == SearchField::Replacement {
+                projection.paint_ui_text_field(
+                    pixmap,
+                    &replacement,
+                    replacement_cursor,
+                    replacement_spec,
+                    source_theme,
+                );
+            } else {
+                projection.paint_ui_text(pixmap, &replacement, replacement_spec, source_theme);
+            }
         }
         for (label, rect) in [
             ("Aa", layout.case_toggle),

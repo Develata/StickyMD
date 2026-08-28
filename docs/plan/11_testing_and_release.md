@@ -90,7 +90,8 @@ fuzz_text_delta
 - 系统：当前与前一个受支持 Windows 11 版本；100/125/150/200% DPI；
   单显示器、双显示器（同 DPI / 混合 DPI / 左侧 / 上方）、运行中断开外接、
   sleep/resume、RDP reconnect。
-- 输入法：微软拼音、微信输入法（验证项见 `07_editor_and_ime.md`）。
+- 输入法：微软拼音、微信输入法（验证项见 `07_editor_and_ime.md`）。真实 profile 的可客观功能事实进入
+  exact-candidate 自动化；候选窗位置、遮挡、字体与动画等视觉质量保留人工。
 - 窗口与文件矩阵见 `09_windows_shell.md`、`05_document_persistence.md`。
 
 ### 文件故障注入
@@ -154,6 +155,18 @@ docs/acceptance-cases/phase-XX.md
   明确要求全量时才运行完整 Campaign。
 - 同一个交互桌面的 GUI runtime、clipboard、tray、物理鼠标/焦点与资源测量不得并发；多个
   app 会争用共享系统状态并污染性能数据。只有隔离 Windows 会话/机器才允许并发这些通道。
+- 自动化等待必须优先等待可观察事实：进程退出、typed reducer state、窗口/文件/clipboard
+  acknowledgement、JSON receipt 或 artifact hash。事实已经成立时立即继续；不得为了“稳妥”再追加
+  无条件固定 sleep。只能在产品合同本身包含时间边界（例如 650 ms autosave、700 ms auto-hide、
+  动画）或平台暂时没有可观察 acknowledgement 时使用有界轮询/等待，并必须允许 early exit、记录
+  timeout 与最后观察状态。
+- Headless 单元/集成、互不写同一目录的 CLI smoke 与 GitHub-hosted isolated jobs 可以按模块并发；
+  任务图必须声明读写资源，不能让多个进程争用同一 Cargo build output、runtime note、evidence path
+  或 named object。编译可由 Cargo 自身增量/依赖图共享一次产物，禁止为表面并发重复构建相同 target。
+- 同一物理桌面即使能把四个窗口放在四个角，也不能并行执行需要 focus、keyboard、mouse、clipboard、
+  tray、foreground、global hotkey、dock 或精确资源数据的验收。严格只读、无输入、无共享托盘/剪贴板、
+  独立 portable directory 的截图采样可以作为定向诊断并发，但不能替代正式 GUI receipt；startup、
+  performance、memory/CPU/resource gate 始终单独运行，避免相互预热和资源竞争。
 - CLI 自身必须有任务规划、JSON schema/序列化与 exit-code 单元测试。cargo fmt/clippy/test/deny
   保持 CI 原生命令；成熟的 Windows package/GUI helper 可继续由 PowerShell 承担，但不得
   复制 Rust 已拥有的 gate 判断。
@@ -241,18 +254,20 @@ desktop jitter 成功率。GitHub-hosted CI 只运行该 harness 的无界面 pa
 不得在非交互 runner 启动 G3 GUI。Explorer、Snipping Tool、browser 本身的 UI 操作可作附加人工
 spot check，但标准 clipboard 格式的 exact-EXE 集成结果才是该组可重复的 release evidence。
 
-G4 tray/dock/editor-compatibility/identity 路径复用同一 exact-candidate 生命周期与收据合同，并保持
-五个高内聚组：G4-01 tray 菜单、close/show/dirty quit；G4-02 主屏 Left/Top/Right、3 DIP 感应条、
+G4 tray/dock/editor-compatibility/identity/real-IME 路径复用同一 exact-candidate 生命周期与收据合同，并保持
+六个高内聚组：G4-01 tray 菜单、close/show/dirty quit；G4-02 主屏 Left/Top/Right、3 DIP 感应条、
 24/25 DIP capture、`Top > Left > Right`、700/100/500 ms 与 focus/IME/Pin guard；G4-03 legacy
 clipboard shortcuts 与 Preview 只读；G4-04 真实 toolbar 数学分隔符转换、源码即时投影、literal
-safety 与单次 Undo；G4-05 真实 junction canonical identity、同 HWND 唤醒与第二实例零 durable write。
+safety 与单次 Undo；G4-05 真实 junction canonical identity、同 HWND 唤醒与第二实例零 durable write；
+G4-06 临时激活 Microsoft Pinyin / WeType 真实 TSF profile，以物理键盘验证 Source/Search composition、
+commit/cancel、selection replace 与一次 Undo，并在结束前恢复原 active profile。
 G3/G4 都必须串行且独占桌面，不能并发争抢 clipboard、tray、窗口焦点或鼠标；单项诊断 receipt
 不能替代完整五组 receipt。P12-M11/M12 的 mixed-DPI 实机事实仍属于 G2 人工验收。
 
 G5 shell/compact/presentation/rendering 路径复用相同 exact-candidate identity、独立候选副本与独占
 交互桌面。G5-01 以真实 HWND style 和 focus transition 持有 P12-M03/M04 的可机械 shell eligibility；
 G5-02..04 自动驱动 compact、zoom、opacity、theme 与 rendering stress，并把窗口截图的相对路径和
-SHA-256 写入 exact receipt。截图适配器只采集像素，不得判 PASS。真实微软拼音/微信输入法、物理
+SHA-256 写入 exact receipt。截图适配器只采集像素，不得判 PASS。真实输入法候选窗视觉、物理
 mixed-DPI/多屏、System 主题实际切换和首次视觉判断仍由人工 authority 持有；G5 companion evidence
 只能减少重复操作，不能把这些观察静默升级为人工 PASS。G3、G4、G5 必须串行执行。
 
@@ -294,7 +309,8 @@ v0.1.0 允许 unsigned Authenticode distribution；package/receipt 必须明确�
 
 CI evidence 分三层：GitHub-hosted CI 只运行 deterministic build/test/package，不执行绝对
 550 ms startup 或资源门；本地可信/专用 Windows qualification host 负责 absolute performance/
-resources；真实 IME、视觉、tray/docking 与物理显示拓扑由 human acceptance 负责。不得把对外
+resources；真实 TSF profile 的 composition/commit/cancel/Undo/Search 等客观事实由 exact-candidate
+自动化负责，候选窗视觉、普通 UI 视觉、tray/docking 主观观感与物理显示拓扑由 human acceptance 负责。不得把对外
 公开仓库连接到高权限、长期在线的自托管 runner；未来优先使用 pull-based local lab 或隔离的
 private release lab。
 
@@ -305,8 +321,8 @@ private release lab。
 - Phase 专用 PowerShell 入口保留给本地定位与独立复核；CI 使用合并任务图避免重复工作。
 - 人工项保持 `NOT TESTED` 不会使 headless CI 失败，但会阻止对应 Phase / release gate
   被描述为完整通过。
-- smoke 只证明其任务清单；它不能替代性能测量、真实 IME、视觉、多显示器或故障现场
-  等明确的人工验收。
+- smoke 只证明其任务清单；synthetic IME 不能替代真实 profile exact case，真实 profile 功能 case 也
+  不能替代候选窗视觉、多显示器、性能测量或故障现场等明确的人工验收。
 
 ---
 

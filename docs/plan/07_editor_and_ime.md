@@ -65,8 +65,13 @@
 <a id="source-find-replace"></a>
 ### Source 纯文本查找与替换
 
-- `Ctrl+F` 打开查找，`Ctrl+H` 打开替换；范围永远是当前单一 canonical `note.md`，不做跨文件
-  搜索、不支持正则。控件提供 query、replacement、大小写开关、上一个/下一个、替换与全部替换。
+- 查找与替换是同一个 `SearchSession`、同一个面板和同一套匹配 projection，不建立两套实现。
+  `Ctrl+F` 在面板关闭时打开 Find-only；面板已打开时再次按 `Ctrl+F` 关闭。`Ctrl+H` 在关闭时
+  打开并展开 replacement row，在 Find-only 状态下只展开同一 session，已经展开时聚焦 replacement
+  输入框。范围永远是当前单一 canonical `note.md`，不做跨文件搜索、不支持正则。
+- Find-only 状态在 state reducer 和 command boundary 都必须禁止 Replace Current / Replace All；
+  不能仅隐藏按钮后仍让快捷键以空 replacement 修改文档。替换面板提供 query、replacement、
+  大小写开关、上一个/下一个、替换与全部替换。
 - query、replacement、active match 与 match ranges 属 Editor Session projection。match ranges 必须绑定
   Document generation；任何 canonical mutation 后先重新扫描，再允许导航或替换 stale range。大小写
   敏感开关默认关闭，关闭 session 后不写入配置。
@@ -79,6 +84,24 @@
   O(n + output bytes)，不得对每个 match 重复 `String::replace_range`。
 - replace 成功后正常触发 dirty/autosave/Preview；零匹配是完整 no-op。IME preedit 期间禁止替换，
   打开控件不得隐式提交、取消或污染 composition。
+
+输入、caret 与导航合同：
+
+- query/replacement 输入框各持有独立 UTF-8 byte cursor。Left/Right 只在当前输入框移动 cursor；
+  Up/Down 分别导航上一个/下一个 match。Enter=下一个，Shift+Enter=上一个，Esc=关闭，Tab 在字段、
+  大小写与动作间循环。全局 Ctrl+S/导出等既有命令不得被面板吞掉。
+- IME composition 期间，方向键、Backspace、commit/cancel 优先交给 composition；不得把 preedit 内
+  导航误解释为 match navigation。preedit 不写入 query/replacement authority，只在当前 byte cursor
+  处临时投影；commit 后一次性插入，cancel 后字段不变。
+- 输入框 paint、mouse hit、caret 和 `set_ime_cursor_area` 必须来自同一次 Cosmic Text 单行 layout。
+  不得用固定 x、文本尾部或源码 editor caret 代替查找框 caret。面板打开时源码原生 caret 停止闪烁/
+  绘制；当前字段绘制自己的 caret，并在内容过宽时只做水平 viewport 偏移与裁剪，保证 caret 可见。
+- 鼠标点击输入框必须按该字段的真实 cluster geometry 设置 cursor；找不到安全 cluster boundary 时
+  取最近合法 UTF-8 boundary。selection 当前不属于 v1 输入框合同，不得为此引入第二套编辑器。
+- 真实 Microsoft Pinyin / WeChat Input Method 的 composition、commit、cancel、Undo、selection replace、
+  refocus 和 Search 字段链路属于可客观观测的功能事实，必须由 exact-candidate 物理键盘自动化覆盖；
+  synthetic `Ime` event 只证明 reducer，不得替代真实 profile。候选窗位置、遮挡、字体和动画属于视觉
+  验收，继续由人工判定。
 
 <a id="font-runs"></a>
 ## 字体 Run 规则
@@ -237,7 +260,11 @@ EditorBackend 平级实现；TextStore String→rope（见 `04`）。
 
 ## Verification
 
-- 手工矩阵：微软拼音 + 微信输入法 × 上述 13 项 × 100/150/200% DPI。
+- exact-candidate 自动化：微软拼音 + 微信输入法的连续/混输、selection composition、composition
+  导航与 Backspace、commit/cancel/Undo、Source/Split/Docked-expanded、40% opacity、失焦重聚焦、
+  typing auto-hide guard 与 Search 字段链路。synthetic event 只补充 deterministic reducer 边界。
+- 人工视觉矩阵：微软拼音 + 微信输入法 × 100/150/200% DPI，只观察候选窗是否真实出现、是否位于
+  caret 附近，以及遮挡、字体、动画和透明度观感；不得重复承担上述客观功能判定。
 - 单元/property：UTF-8 byte range、CJK、emoji、combining mark、selection 替换、
   undo grouping、256/4 MiB 限制、commit 一次撤销。
 - 验收：AC-002/003/004/009/022。

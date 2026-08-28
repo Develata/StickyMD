@@ -46,12 +46,11 @@
 微软拼音为活动输入法。
 
 ### Action
-执行 `07_editor_and_ime.md` 的 13 项验证（连续输入、混输、候选框位置、
-selection 中起 composition、composition 内方向键/Backspace、commit 一次撤销、
-取消不污染 undo、高 DPI、各视图与透明度、失焦重聚焦、输入不收起）。
+exact-candidate G4-06 执行 `07_editor_and_ime.md` 中可客观判断的真实 profile 功能矩阵；人工只观察
+候选窗是否真实出现、是否位于 caret 附近，以及遮挡、字体、动画、透明度和不同 DPI 的视觉质量。
 
 ### Expected
-13 项全部通过。
+自动化功能矩阵通过，候选窗视觉矩阵由人工明确判定。
 
 ### Failure Signals
 候选框错位；commit 丢字；composition 内容进入 undo；输入期间窗口收起。
@@ -64,7 +63,7 @@ selection 中起 composition、composition 内方向键/Backspace、commit 一�
 微信输入法为活动输入法。
 
 ### Action
-同 AC-003 的 13 项。
+同 AC-003 的自动化功能矩阵与人工候选窗视觉矩阵。
 
 ### Expected
 13 项全部通过。
@@ -213,14 +212,17 @@ Ctrl+Z，再 Ctrl+Y。
 文档含标题、列表、表格、代码块、引用、链接、图片。
 
 ### Action
-切换到预览/分栏，等待 debounce。
+切换到预览/分栏，等待 generation/viewport acknowledgement；对 Times/CJK/Emoji/组合字符/连字、
+自动换行、代码块、raw HTML 与混合 BiDi 分别进行单行局部选择、跨行选择、反向选择和复制。
 
 ### Expected
 各元素正确渲染；表格对齐与滚动正确；代码块 Consolas 无高亮；
-链接可点击（http/https/mailto/file）；选择与复制可用；旧预览在新结果前保持可用。
+链接可点击（http/https/mailto/file）；蓝色 selection 矩形、hit-test byte boundary 与 Ctrl+C 内容来自
+同一份 shaping cluster geometry，不能选中或涂抹范围外逻辑行；旧预览在新结果前保持可用。
 
 ### Failure Signals
-布局崩溃；stale 结果覆盖新结果；预览可编辑。
+布局崩溃；stale 结果覆盖新结果；预览可编辑；按整段字符/字素比例估算变宽文本；实际复制 range
+与蓝框不一致；单行局部选择同时涂抹其它行。
 
 ---
 
@@ -638,13 +640,18 @@ stale 后继续滚动；重启验证配置。
 Source/Split 文本包含 ASCII、中文、Unicode 大小写差异、重复与相邻匹配；IME 可用。
 
 ### Action
-用 Ctrl+F/Ctrl+H 测试大小写敏感/不敏感、上一个/下一个 wrap、替换当前、全部替换、Undo/Redo；
-在查找后修改文档制造 stale generation，并在 IME preedit 中尝试替换。
+用 Ctrl+F 打开/再次关闭，用 Ctrl+H 展开同一 session 的替换行；测试大小写敏感/不敏感、
+Left/Right 输入 caret、Up/Down 与 Enter/Shift+Enter wrap、替换当前、全部替换、Undo/Redo；用鼠标
+点击长 query 中部并验证 caret/水平裁剪/候选框位置。在查找后修改文档制造 stale generation，并在
+IME preedit 中使用方向键、Backspace、commit/cancel 后尝试替换。
 
 ### Expected
 只搜索当前 canonical Source；无正则；所有 range 都是 UTF-8 char boundary；文档变化后重算匹配；
-替换当前与全部替换分别只产生一个 canonical transaction/Undo entry；preedit 期间不替换且不污染组合。
+Ctrl+F toggle 与 Ctrl+H expand 不创建第二份 session；Find-only 的任何隐藏快捷键都不能替换；
+字段文本、mouse hit、caret 与 IME area 共用真实 layout，源码 caret 不穿透面板；替换当前与全部替换
+分别只产生一个 canonical transaction/Undo entry；preedit 期间不替换且不污染组合。
 
 ### Failure Signals
 搜索 Preview display text 或其他文件；大小写开关错误；stale range 改错文本；全部替换逐项生成
-多条 Undo/卡顿；Unicode 被切断；查找会话成为第二份可写文本 authority。
+多条 Undo/卡顿；Unicode 被切断；查找会话成为第二份可写文本 authority；caret 飞出输入框；preedit
+固定追加到字段末尾；Find-only 通过隐藏 Replace 快捷键删除文本。

@@ -58,6 +58,38 @@ impl PreviewFrame {
         &self.index
     }
 
+    pub fn text(&self) -> &str {
+        self.index.text()
+    }
+
+    pub fn select_all(&self) -> PreviewSelection {
+        self.index.select_all()
+    }
+
+    pub fn copy_selection(&self, selection: PreviewSelection) -> Option<&str> {
+        self.index.copy(selection)
+    }
+
+    pub fn hit_test(&self, x: f32, document_y: f32) -> usize {
+        self.index.hit_test(x, document_y)
+    }
+
+    pub fn action_at(&self, x: f32, document_y: f32) -> Option<&super::SpanAction> {
+        self.index.action_at(x, document_y)
+    }
+
+    pub fn tooltip_at(&self, x: f32, document_y: f32) -> Option<&str> {
+        self.index.tooltip_at(x, document_y)
+    }
+
+    pub fn scroll_anchor_at_y(&self, document_y: f32) -> Option<crate::scroll::ScrollAnchor> {
+        self.index.scroll_anchor_at_y(document_y)
+    }
+
+    pub fn y_for_scroll_anchor(&self, anchor: crate::scroll::ScrollAnchor) -> Option<f32> {
+        self.index.y_for_scroll_anchor(anchor)
+    }
+
     pub const fn visible_blocks(&self) -> usize {
         self.visible_blocks
     }
@@ -115,17 +147,39 @@ pub(super) fn paint_document(
         .blocks
         .partition_point(|block| block.top <= viewport_bottom);
 
+    let mut visible_boxes = Vec::new();
+    for block in &document.blocks[start..end] {
+        visible_boxes.extend(
+            block
+                .boxes
+                .iter()
+                .filter(|item| item.rect.bottom() >= scroll_y && item.rect.y <= viewport_bottom)
+                .cloned(),
+        );
+        for chunk in &block.chunks {
+            if let LayoutContent::Text(layout) = &chunk.content {
+                visible_boxes.extend(super::text_layout::project_visible_text_boxes(
+                    layout,
+                    chunk.x,
+                    chunk.y,
+                    scroll_y,
+                    viewport_bottom,
+                ));
+            }
+        }
+    }
+    let index = Arc::new(PreviewTextIndex::from_document(
+        Arc::clone(&document.projection),
+        visible_boxes,
+    ));
+
     for block in &document.blocks[start..end] {
         for decoration in &block.decorations {
             paint_decoration(&mut pixmap, *decoration, scroll_y, palette);
         }
     }
     if !selection.is_collapsed() {
-        for rectangle in
-            document
-                .index
-                .selection_rects_in_y_range(selection, scroll_y, viewport_bottom)
-        {
+        for rectangle in index.selection_rects_in_y_range(selection, scroll_y, viewport_bottom) {
             fill_rect(
                 &mut pixmap,
                 rectangle.x,
@@ -141,7 +195,7 @@ pub(super) fn paint_document(
             let origin_x = chunk.x.round() as i32;
             let origin_y = (chunk.y - scroll_y).round() as i32;
             match &mut chunk.content {
-                LayoutContent::Text(buffer) => buffer.draw(
+                LayoutContent::Text(layout) => layout.buffer.draw(
                     font_system,
                     swash_cache,
                     palette.text,
@@ -203,7 +257,7 @@ pub(super) fn paint_document(
         document_height: document.height_px,
         scroll_y,
         rgba: pixmap.take(),
-        index: Arc::clone(&document.index),
+        index,
         visible_blocks: end.saturating_sub(start),
     })
 }

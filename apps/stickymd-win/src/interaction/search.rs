@@ -23,6 +23,7 @@ pub struct SearchSession {
     pub replacement: String,
     pub case_sensitive: bool,
     pub preedit: String,
+    preedit_cursor: Option<(usize, usize)>,
     generation: Option<Generation>,
     matches: Vec<LiteralMatch>,
     active: Option<usize>,
@@ -41,6 +42,7 @@ impl Default for SearchSession {
             replacement: String::new(),
             case_sensitive: false,
             preedit: String::new(),
+            preedit_cursor: None,
             generation: None,
             matches: Vec::new(),
             active: None,
@@ -61,7 +63,11 @@ impl SearchSession {
     ) {
         self.open = true;
         self.replace_visible = replace;
-        self.focused = SearchField::Query;
+        self.focused = if replace {
+            SearchField::Replacement
+        } else {
+            SearchField::Query
+        };
         if let Some(selected) = selected.filter(|value| !value.contains(['\r', '\n'])) {
             self.query.clear();
             self.query.push_str(selected);
@@ -80,6 +86,7 @@ impl SearchSession {
         self.active = None;
         self.truncated = false;
         self.preedit.clear();
+        self.preedit_cursor = None;
     }
 
     pub fn options(&self) -> LiteralSearchOptions {
@@ -155,12 +162,19 @@ impl SearchSession {
         }
     }
 
-    pub fn set_preedit(&mut self, text: String) {
+    pub fn show_replace(&mut self) {
+        self.replace_visible = true;
+        self.focused = SearchField::Replacement;
+    }
+
+    pub fn set_preedit(&mut self, text: String, cursor: Option<(usize, usize)>) {
         self.preedit = text;
+        self.preedit_cursor = cursor;
     }
 
     pub fn commit_preedit(&mut self, text: &str, source: &str, generation: Generation) {
         self.preedit.clear();
+        self.preedit_cursor = None;
         self.insert(text, source, generation);
     }
 
@@ -210,6 +224,41 @@ impl SearchSession {
         };
     }
 
+    pub fn composed_field(&self, field: SearchField) -> (String, usize) {
+        let (value, committed_cursor) = self.field_value_and_cursor(field);
+        let mut display = value.to_owned();
+        if self.focused != field || self.preedit.is_empty() {
+            return (display, committed_cursor);
+        }
+        display.insert_str(committed_cursor, &self.preedit);
+        let mut preedit_cursor = self
+            .preedit_cursor
+            .map_or(self.preedit.len(), |(_, end)| end.min(self.preedit.len()));
+        while preedit_cursor > 0 && !self.preedit.is_char_boundary(preedit_cursor) {
+            preedit_cursor -= 1;
+        }
+        (display, committed_cursor + preedit_cursor)
+    }
+
+    pub fn set_focused_cursor(&mut self, cursor: usize) -> bool {
+        if self.is_composing() {
+            return false;
+        }
+        let (value, current) = self.focused_value_mut();
+        if cursor > value.len() || !value.is_char_boundary(cursor) {
+            return false;
+        }
+        *current = cursor;
+        true
+    }
+
+    fn field_value_and_cursor(&self, field: SearchField) -> (&str, usize) {
+        match field {
+            SearchField::Query => (&self.query, self.query_cursor),
+            SearchField::Replacement => (&self.replacement, self.replacement_cursor),
+        }
+    }
+
     fn focused_value_mut(&mut self) -> (&mut String, &mut usize) {
         match self.focused {
             SearchField::Query => (&mut self.query, &mut self.query_cursor),
@@ -239,12 +288,12 @@ mod tests {
     #[test]
     fn query_edits_are_grapheme_safe_and_replacement_is_independent() {
         let mut session = SearchSession::default();
-        session.open(true, None, "🙂a🙂", Generation::initial());
+        session.open(false, None, "🙂a🙂", Generation::initial());
         session.insert("🙂", "🙂a🙂", Generation::initial());
         assert_eq!(session.match_summary().1, 2);
         session.backspace("🙂a🙂", Generation::initial());
         assert!(session.query.is_empty());
-        session.focus_next();
+        session.show_replace();
         session.insert("中", "🙂a🙂", Generation::initial());
         assert_eq!(session.replacement, "中");
         assert!(session.query.is_empty());
@@ -276,5 +325,38 @@ mod tests {
         assert_eq!(session.match_summary(), (0, 0, false));
         assert!(!session.is_current(next));
         assert_eq!(session.query, "a", "closing retains only cheap user input");
+    }
+
+    #[test]
+    fn preedit_is_projected_at_the_field_cursor_without_mutating_committed_text() {
+        let mut session = SearchSession::default();
+        session.open(false, None, "ab", Generation::initial());
+        session.insert("ab", "ab", Generation::initial());
+        session.move_cursor(false);
+        session.set_preedit("中文".into(), Some((0, "中".len())));
+
+        let (display, cursor) = session.composed_field(SearchField::Query);
+
+        assert_eq!(display, "a中文b");
+        assert_eq!(cursor, "a中".len());
+        assert_eq!(session.query, "ab");
+        assert!(
+            !session.set_focused_cursor(0),
+            "mouse cannot steal an active IME composition"
+        );
+    }
+
+    #[test]
+    fn replace_expansion_reuses_the_same_query_and_match_projection() {
+        let mut session = SearchSession::default();
+        session.open(false, Some("a"), "a b a", Generation::initial());
+        let before = session.match_summary();
+
+        session.show_replace();
+
+        assert!(session.open && session.replace_visible);
+        assert_eq!(session.focused, SearchField::Replacement);
+        assert_eq!(session.query, "a");
+        assert_eq!(session.match_summary(), before);
     }
 }

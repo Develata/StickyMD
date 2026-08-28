@@ -178,9 +178,70 @@ Preview 只读，但必须支持：鼠标选择文字、Ctrl+C、滚动、点击
 
 ### Preview 文本选择
 
-- 每个文字 run 保存 source range + 显示文本 + glyph rects。
-- 选择公式：视觉选中公式矩形；Ctrl+C 复制其原始数学源码与 delimiter。
-- 选择图片：复制 alt text（不把 bitmap 复制到剪贴板，除非未来单独设计）。
+Preview 选择必须使用 shaping 产生的真实 cluster 几何；禁止用字符数、字素数或整段宽度比例
+反推 byte boundary 或 selection rectangle。变宽 Latin、CJK、Emoji、组合字符、连字、换行和
+BiDi 都必须经过同一份坐标—文本映射。
+
+权威边界：
+
+- `DocumentState` 仍是 canonical text authority；Preview 只持有不可变 projection。
+- Cosmic Text 的 layout run / glyph cluster 是当前排版结果的几何事实，但不得作为长期文档
+  authority，也不得越过 Render crate 暴露给 Interaction Shell。
+- `PreviewDocumentProjection` 持有 generation、完整可复制显示文本 `Arc<str>` 与语义滚动 anchor；
+  它随 semantic/layout generation 更新，不因选择或 hover 变化而复制全文。
+- `PreviewFrameGeometry` 只持有当前 viewport 的行、cluster、原子对象与 action 几何；它是可丢弃
+  的帧投影，不是第二份全文索引。
+- 每个已排版文本 block 可以附带一个紧凑 visual-row locator（logical line、layout row、top、height、
+  logical byte base）。它只定位 Cosmic Text 已经持有的 layout row，不复制 glyph、cluster、文本或
+  action；其目的是让 viewport 投影通过 y 二分直接访问可见 row，避免滚动时重新线性遍历长代码块
+  或超长换行段落的全部行。
+
+每个可见文本 cluster 至少保存：
+
+```text
+selection byte start/end
+leading x / trailing x
+row y / height（由所在 visible row 持有）
+```
+
+规则：
+
+- byte range 映射到 Preview 的 display/clipboard projection，不直接等同 Markdown source range；
+  link action、diagnostic 与 scroll anchor 另持 source range。
+- 同一 shaping cluster 产生多个 glyph 时，按相同 byte range 合并为一个 cluster 几何；不得为每个
+  glyph 重复保存 byte range。`leading_x > trailing_x` 可以表达 RTL 视觉方向。同一 link/tooltip
+  payload 跨多个可见 cluster 时必须共享所有权，不得为每个 cluster 复制 destination 字符串。
+- hit-test 先按 y 二分找到 visible row，再在该行有序 cluster 中定位 boundary；cluster 内部不能
+  安全细分时遵循 Cosmic Text 的 cluster boundary/fallback，不自行猜测 GDEF、ligature caret 或
+  grapheme 比例。
+- byte range → selection rectangles 与 point → byte boundary 必须消费同一份 cluster map；跨行、
+  BiDi 或不连续视觉范围允许产生多个矩形。复制只按最终 byte range 读取完整 document projection，
+  不能从蓝框、glyph 或 source AST 重新拼文本。
+- 公式和图片是 atomic selectable object：选择公式时绘制公式矩形，Ctrl+C 复制原始数学源码与
+  delimiter；选择图片时复制 alt text，不复制 bitmap。它们不得伪造成普通等宽文本 cluster。
+- `PreviewFrame` 只向 App 暴露 `hit_test`、`selection_rects`、`copy_selection`、`action_at`、
+  `tooltip_at` 等语义方法；App 不读取 cluster 数组，不依赖 Cosmic Text 类型。
+
+生命周期与缓存：
+
+- geometry cache key 至少包含 `generation + viewport width/height + scroll + content scale`；影响
+  shaping 的主题/字体 token 也必须使其失效。selection、hover、clipboard copy 不得触发 relayout
+  或重建 cluster map。
+- 构建新 Preview frame 时只投影与 viewport 相交的行和少量既有 overscan；滚动离开后旧 frame
+  geometry 可直接释放。不得为整篇长文永久保存每个 glyph/cluster rectangle。
+- stale generation 或不匹配 viewport key 的 frame 必须丢弃。任何非法 UTF-8 boundary、倒序范围
+  或越界映射均 fail closed：跳过有问题的几何/拒绝提交该 frame，不 panic、不修改 Document。
+
+复杂度与资源目标：
+
+- visual-row locator 构建为每次 block layout 的 O(block visual rows)，viewport geometry 构建为
+  O(log block visual rows + visible glyphs)；行命中 O(log visible rows)，行内命中可二分为
+  O(log row clusters)，selection paint 为 O(intersecting visible clusters)。
+- 额外长期内存为 O(document blocks + visual rows + clipboard text)，其中 row locator 是固定宽度
+  小记录；精确 cluster 几何只为 O(viewport clusters)。典型窗口应为数十 KiB 量级，不得演变为
+  全文 glyph cache。
+- 不新增 DirectWrite、HarfBuzz 或另一套 shaping dependency；精确性来自保留现有 Cosmic Text
+  已经计算出的 cluster 事实，而不是重复排版。
 
 <a id="split-scroll-sync"></a>
 ### Split 语义滚动同步

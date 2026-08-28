@@ -5,7 +5,10 @@ use std::os::windows::ffi::OsStrExt;
 use std::thread;
 use std::time::Duration;
 
+mod ime_profile;
 mod physical_input;
+
+pub(crate) use ime_profile::{ImeProfile, ImeProfileGuard};
 
 use physical_input::{
     PhysicalCursorKind, PhysicalLeftButtonGuard, current_cursor_handle, current_cursor_position,
@@ -373,6 +376,62 @@ pub(crate) fn click_math_conversion(window: WindowHandle) -> Result<(), String> 
 
 pub(crate) fn press_enter(window: WindowHandle) -> Result<(), String> {
     send_physical_key(window, 0x0D, 0x1C, false)
+}
+
+pub(crate) fn press_escape(window: WindowHandle) -> Result<(), String> {
+    send_physical_key(window, 0x1B, 0x01, false)
+}
+
+pub(crate) fn press_backspace(window: WindowHandle) -> Result<(), String> {
+    send_physical_key(window, 0x08, 0x0E, false)
+}
+
+pub(crate) fn press_arrow_left(window: WindowHandle) -> Result<(), String> {
+    send_physical_key(window, 0x25, 0x4B, true)
+}
+
+pub(crate) fn press_arrow_right(window: WindowHandle) -> Result<(), String> {
+    send_physical_key(window, 0x27, 0x4D, true)
+}
+
+pub(crate) fn press_arrow_down(window: WindowHandle) -> Result<(), String> {
+    send_physical_key(window, 0x28, 0x50, true)
+}
+
+pub(crate) fn press_arrow_up(window: WindowHandle) -> Result<(), String> {
+    send_physical_key(window, 0x26, 0x48, true)
+}
+
+pub(crate) fn press_tab(window: WindowHandle) -> Result<(), String> {
+    send_physical_key(window, 0x09, 0x0F, false)
+}
+
+pub(crate) fn press_shift(window: WindowHandle) -> Result<(), String> {
+    send_physical_key(window, 0x10, 0x2A, false)
+}
+
+pub(crate) fn press_find(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, b'F', 0x21, false)
+}
+
+pub(crate) fn press_replace(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, b'H', 0x23, false)
+}
+
+pub(crate) fn press_control_enter(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, 0x0D, 0x1C, false)
+}
+
+pub(crate) fn type_ascii_letters(window: WindowHandle, text: &str) -> Result<(), String> {
+    for byte in text.bytes() {
+        if !byte.is_ascii_alphabetic() {
+            return Err(format!(
+                "physical IME input only accepts ASCII letters, found byte 0x{byte:02X}"
+            ));
+        }
+        send_physical_key(window, byte.to_ascii_uppercase(), 0, false)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn press_f6(window: WindowHandle) -> Result<(), String> {

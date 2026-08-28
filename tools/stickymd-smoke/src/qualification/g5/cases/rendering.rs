@@ -4,8 +4,6 @@
 
 use std::fs;
 use std::path::Path;
-use std::thread;
-use std::time::Duration;
 
 use super::super::super::exact_desktop::{CaseEvidence, seed_note};
 use super::support;
@@ -41,29 +39,27 @@ pub(super) fn run(repository: &Path, program: &Path) -> Result<CaseEvidence, Str
         ],
     )?;
     assert_note_unchanged(program, &before, "preview-selection")?;
-    thread::sleep(Duration::from_secs(2));
     let mut artifacts = Vec::new();
-    support::capture(
+    support::capture_when_stable(
         repository,
         child.id(),
         "G5-04",
         "preview-top",
+        None,
         &mut artifacts,
     )?;
     assert_note_unchanged(program, &before, "preview-top-capture")?;
     crate::window_control::scroll_preview_down(window, 2_000)?;
-    thread::sleep(Duration::from_secs(2));
     assert_note_unchanged(program, &before, "preview-wheel")?;
-    support::capture(
+    let top_sha = artifacts[0].sha256.clone();
+    support::capture_when_stable(
         repository,
         child.id(),
         "G5-04",
         "preview-bottom",
+        Some(&top_sha),
         &mut artifacts,
     )?;
-    if artifacts[0].sha256 == artifacts[1].sha256 {
-        return Err("Preview bottom-scroll screenshot is identical to the top viewport".to_owned());
-    }
 
     support::switch_split(window, program)?;
     assert_note_unchanged(program, &before, "switch-split")?;
@@ -73,12 +69,12 @@ pub(super) fn run(repository: &Path, program: &Path) -> Result<CaseEvidence, Str
         &["G5 image-format appendix", "G5_IMAGE_FORMAT_END"],
     )?;
     crate::window_control::scroll_preview_down(window, 2_000)?;
-    thread::sleep(Duration::from_secs(2));
-    support::capture(
+    support::capture_when_stable(
         repository,
         child.id(),
         "G5-04",
         "split-bottom",
+        None,
         &mut artifacts,
     )?;
     assert_note_unchanged(program, &before, "split-selection-scroll")?;

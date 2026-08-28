@@ -2,7 +2,8 @@
 
 ## Status
 
-Implementation corrected; fresh exact-candidate qualification and USER manual confirmation required.
+Implementation reopened; Preview cluster geometry and Search input correction are implemented and pass
+automated headless/Release baselines. New exact-candidate visual and real-IME evidence is pending.
 
 ## Observed Defects
 
@@ -17,6 +18,10 @@ Implementation corrected; fresh exact-candidate qualification and USER manual co
 6. 内容缩放可以改变并重置，但非 100% 缩放下顶部工具栏图标的绘制位置与实际点击位置分离。
 7. Preview 中只选择代码块或 raw HTML 的一个逻辑行时，selection 背景会同时覆盖同一多行
    text span 的其它逻辑行。
+8. Preview 对 Times/CJK/Emoji 等变宽字形仍按整段 grapheme 数量比例估算 x/boundary；实际 byte
+   selection、复制内容与蓝框位置不一致。
+9. Source 查找/替换面板没有绘制自身的真实 caret，源码 caret 继续穿透面板；preedit/IME area 与
+   mouse hit 也未绑定字段实际 layout，且 Find-only 隐藏状态仍可能接受 replacement shortcut。
 
 这些事实均来自旧 exact candidate 的真实人工操作；该候选已经失效，不能继续作为 release evidence。
 
@@ -31,9 +36,17 @@ Implementation corrected; fresh exact-candidate qualification and USER manual co
 | Direct Dock-to-Dock needs two drags | edge resolution 在检查新 snap candidate 前，先以旧边的 16-DIP detach 判定直接返回 `None` | 不同的新 snap edge 在同一次 `DragEnded` 中优先；只有未命中新边时才执行旧边 detach | 固定三个候选边，时间/空间均 O(1) |
 | Zoom moves toolbar paint only | toolbar 绘制错误复用了 `DPI × content zoom` 的 document scale，而命中测试按正确的 window DPI 布局 | 显式分离 document/shell scale；Shell 只用 DPI，document projection 才叠加 content zoom | 每帧 O(1)，无新增分配或缓存 |
 | Preview multiline selection overpaint | `cosmic-text` glyph range 相对各自 `BufferLine`，Preview 却把它直接写成整段 clipboard projection 的全局 byte range | layout 时单向累加 logical-line byte base，再投影 glyph range；wrapped run 复用同一 base | O(lines + glyphs)，额外空间 O(1) |
+| Preview variable-width selection mismatch | layout 聚合 glyph 后丢弃 cluster boundary/x，后续按整段 grapheme count 比例反推 hit 与蓝框 | 分离 document projection 与 viewport frame geometry；保留并合并 visible shaping clusters，让 hit/paint/copy 同源 | 构建 O(visible glyphs)，命中 O(log rows + log clusters)，内存 O(viewport clusters) |
+| Search caret/shortcut leakage | 面板只画字段文本，仍沿用 Source caret；preedit 固定追加尾部，IME area 使用常量位置；replacement command 未在 reducer 边界检查可见模式 | 同一字段 layout 提供 paint/hit/caret/IME geometry，Source caret 在 session 打开时禁用；统一 session shortcut reducer 并双层 guard replacement | 每帧仅单行字段 shaping；无全文 clone或新 dependency |
 
 没有新增 runtime dependency，没有引入第二份 document authority，也没有让 smoke/test channel 进入产品
 runtime。
+
+Defect 8 已由 viewport shaping-cluster map、visual-row locator 与 frame semantic API 修复；变量宽度、
+CJK、Emoji、combining、BiDi、多行和 atomic content 回归通过，5,000-row Release projection p95 为
+19.1 µs。Defect 9 已由单一 search field layout authority 和统一 session reducer 修复；自动化验证
+paint/hit/caret/IME geometry、Ctrl+F toggle、Ctrl+H expand、方向键及 Find-only guard。真实字体视觉、
+Microsoft Pinyin 与 WeChat IME 仍需新 exact candidate 人工验收，不得从自动化结果推导为 PASS。
 
 工具栏回归同时由两层自动化持有：像素级 renderer test 验证 50/100/300% 下 active control 的绘制矩形
 与 DPI hit rectangle 相同；copied-Release runtime smoke 在三个缩放值下实际点击 Source/Split/Preview 并

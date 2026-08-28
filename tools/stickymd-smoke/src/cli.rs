@@ -237,6 +237,7 @@ pub(crate) enum G4Case {
     G403,
     G404,
     G405,
+    G406,
 }
 
 impl G4Case {
@@ -247,7 +248,8 @@ impl G4Case {
             "G4-03" => Ok(Self::G403),
             "G4-04" => Ok(Self::G404),
             "G4-05" => Ok(Self::G405),
-            _ => Err(format!("unknown G4 case `{value}`; expected G4-01..G4-05")),
+            "G4-06" => Ok(Self::G406),
+            _ => Err(format!("unknown G4 case `{value}`; expected G4-01..G4-06")),
         }
     }
 
@@ -258,6 +260,7 @@ impl G4Case {
             Self::G403 => "G4-03",
             Self::G404 => "G4-04",
             Self::G405 => "G4-05",
+            Self::G406 => "G4-06",
         }
     }
 }
@@ -510,7 +513,7 @@ impl CommandLine {
                     })
                 {
                     return Err(
-                        "usage: stickymd-smoke qualification g4 [--zip=<path>] [--evidence-file=<path>] [--case=G4-01..G4-05]"
+                        "usage: stickymd-smoke qualification g4 [--zip=<path>] [--evidence-file=<path>] [--case=G4-01..G4-06]"
                             .to_owned(),
                     );
                 }
@@ -1221,14 +1224,14 @@ mod tests {
             })
         );
 
-        let targeted_g4 = CommandLine::parse(args(&["qualification", "g4", "--case=G4-05"]))
+        let targeted_g4 = CommandLine::parse(args(&["qualification", "g4", "--case=G4-06"]))
             .expect("valid targeted G4 command");
         assert_eq!(
             targeted_g4,
             CommandLine::Qualification(QualificationCommand::G4Exact {
                 zip: None,
                 evidence_file: None,
-                case: Some(super::G4Case::G405),
+                case: Some(super::G4Case::G406),
             })
         );
 

@@ -32,6 +32,10 @@ const CASES: &[ExactCase] = &[
         id: "G4-05",
         operation: cases::g4_05,
     },
+    ExactCase {
+        id: "G4-06",
+        operation: cases::g4_06,
+    },
 ];
 
 pub(super) fn run(

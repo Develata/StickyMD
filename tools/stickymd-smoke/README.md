@@ -53,7 +53,7 @@ ownership before tray Exit. It never terminates an unrelated user instance.
 `phase-14.ps1 -G4` reuses the same exact-candidate lifecycle for five serial,
 isolated groups: tray lifecycle, primary-monitor three-edge docking/timing,
 legacy clipboard shortcuts, toolbar math conversion, and junction identity.
-`-G4Case G4-01..G4-05` is diagnostic only. G3 and G4 must run sequentially on
+`-G4Case G4-01..G4-06` is diagnostic only. G3 and G4 must run sequentially on
 an exclusive interactive desktop; their receipts are independently required.
 Mixed-DPI Left/Right sensor behavior remains a guided human observation.
 

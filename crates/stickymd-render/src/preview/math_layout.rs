@@ -332,9 +332,11 @@ fn image_piece(
                 width,
                 height,
             },
-            action: span.action.clone(),
+            action: span.action.clone().map(Arc::new),
             tooltip: None,
             atomic: true,
+            start_x: 0.0,
+            end_x: width,
         }],
         decorations: Vec::new(),
         width,
@@ -369,9 +371,11 @@ fn formula_piece(
                 width,
                 height,
             },
-            action: span.action.clone(),
+            action: span.action.clone().map(Arc::new),
             tooltip: None,
             atomic: true,
+            start_x: 0.0,
+            end_x: width,
         }],
         decorations: Vec::new(),
         width,
@@ -400,9 +404,8 @@ fn error_piece(
         selection_text,
         text_layout_cache,
     );
-    for text_box in &mut piece.boxes {
-        text_box.atomic = true;
-        text_box.tooltip = Some(Arc::from(error.to_string()));
+    if let LayoutContent::Text(layout) = &mut piece.chunk.content {
+        layout.mark_atomic_with_tooltip(Arc::from(error.to_string()));
     }
     piece.decorations.push(LayoutDecoration {
         rect: PreviewRect {
@@ -449,6 +452,8 @@ fn flush_line(
         for text_box in &mut piece.boxes {
             text_box.rect.x += cursor_x;
             text_box.rect.y += offset_y;
+            text_box.start_x += cursor_x;
+            text_box.end_x += cursor_x;
         }
         for decoration in &mut piece.decorations {
             decoration.rect.x += cursor_x;
@@ -468,6 +473,7 @@ mod tests {
 
     use super::make_mixed_chunk;
     use crate::math::{MathEngine, MathKind};
+    use crate::preview::layout::LayoutContent;
     use crate::preview::render_tree::{RenderMath, SpanAction};
     use crate::preview::text_layout::TextLayoutCache;
     use crate::preview::{LinkKind, PreviewTheme, RenderSpan, RenderStyle, SourceRange};
@@ -575,6 +581,19 @@ mod tests {
 
         assert_eq!(built.chunks.len(), 2);
         assert_eq!(selection_text, "before link$x$");
-        assert!(built.boxes.iter().any(|text_box| text_box.action.is_some()));
+        assert!(built.chunks.iter().any(|chunk| {
+            let LayoutContent::Text(layout) = &chunk.content else {
+                return false;
+            };
+            crate::preview::text_layout::project_visible_text_boxes(
+                layout,
+                chunk.x,
+                chunk.y,
+                0.0,
+                f32::MAX,
+            )
+            .iter()
+            .any(|text_box| text_box.action.is_some())
+        }));
     }
 }

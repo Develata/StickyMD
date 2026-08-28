@@ -266,8 +266,8 @@ fn text_spans_piece(
     );
     let mut chunk = built.chunks.remove(0);
     let (width, baseline) = match &chunk.content {
-        LayoutContent::Text(buffer) => {
-            let mut runs = buffer.layout_runs();
+        LayoutContent::Text(layout) => {
+            let mut runs = layout.buffer.layout_runs();
             let first = runs.next();
             let width = first.as_ref().map_or(1.0, |run| run.line_w.max(1.0));
             let baseline = first.map_or(metrics.font_size, |run| run.line_y);

@@ -36,6 +36,10 @@ ignored exact-candidate receipt 可改变 readiness，不能改写此 Markdown �
 | P14-A25 | G3 exact automation 串行使用隔离候选目录；Rust 持有 clipboard/export/kill/recovery/asset 断言，UIA 只适配原生对话框/tray；receipt 对 source/harness/clean tree/EXE/ZIP/五项结果 fail closed | Automated | `qualification g3` parser/receipt tests + `tools/stickymd-smoke/helpers/windows-uia.ps1` boundary audit；GitHub-hosted CI 只运行无界面子集 | AUTOMATED PASS |
 | P14-A26 | G4 exact automation 串行使用隔离候选目录；Rust 持有 tray lifecycle、三边 dock/时序、legacy shortcuts、真实数学转换与 junction 单实例断言；receipt 对 source/harness/clean tree/EXE/ZIP/五组结果 fail closed | Automated | `qualification g4` parser/receipt/unit contract tests；UIA 只适配 tray；GitHub-hosted CI 只运行无界面子集 | AUTOMATED PASS |
 | P14-A27 | G5 exact automation 串行验证 ToolWindow shell identity、220×120 Source/Preview/Split mechanics、50/100/300% zoom、40 opacity、主题循环以及 Markdown/math/image stress，并把逐候选截图 path/SHA-256 绑定到 receipt；真实 IME、mixed-DPI 与首次视觉判断仍由人工持有 | Automated | `qualification g5` parser/receipt/unit contract tests；UIA 只负责窗口截图，不持有判定；GitHub-hosted CI 只运行无界面子集 | AUTOMATED PASS |
+| P14-A28 | Preview 选择保留 Cosmic Text shaping cluster 几何；Times/CJK/Emoji/组合字符/换行/BiDi 的 hit-test、蓝框与 copy range 同源，几何仅缓存当前 viewport，禁止整段比例估算 | Automated | render viewport-cluster geometry unit/integration tests + Phase 14 headless tests shard + Release baseline（5,000 rows；viewport projection p95 19.1 µs；10,000 hits 340.8 µs） | AUTOMATED PASS |
+| P14-A29 | 查找/替换使用单一 session；Ctrl+F toggle、Ctrl+H expand、Find-only replacement guard、方向键导航、字段 caret/mouse/IME geometry 与源码 caret 隔离均有回归 | Automated | interaction/render/app unit tests + Phase 14 headless shard | AUTOMATED PASS |
+| P14-A30 | exact candidate 使用真实 Microsoft Pinyin 与 WeType profile，以物理键盘验证 Source/Search composition、commit/cancel、selection replace 与一次 Undo；测试结束恢复原 profile | Automated exact candidate | `phase-14.ps1 -G4 -G4Case G4-06`；完整 G4 receipt 必须包含 G4-06 | NOT TESTED |
+| P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 ## Guided manual sessions
 
@@ -51,7 +55,7 @@ ignored exact-candidate receipt 可改变 readiness，不能改写此 Markdown �
 | ID | Scope | Mode | Underlying cases / Evidence | Status |
 | --- | --- | --- | --- | --- |
 | P14-G3 | clipboard / native export / process-kill recovery / asset safety | Automated exact candidate | `phase-14.ps1 -G3`; P12-M28..M30,M32,M33；独立 `g3-exact-qualification.json` | NOT TESTED |
-| P14-G4 | tray lifecycle / dock timing / legacy shortcuts / math conversion / junction identity | Automated exact candidate | `phase-14.ps1 -G4`; P12-M06..M10,M13..M17,M27,M31,M44；独立 `g4-exact-qualification.json` | NOT TESTED |
+| P14-G4 | tray lifecycle / dock timing / legacy shortcuts / math conversion / junction identity / real IME functional matrix | Automated exact candidate | `phase-14.ps1 -G4`; P12-M06..M10,M13..M17,M27,M31,M44 + P14-A30；独立 `g4-exact-qualification.json` | NOT TESTED |
 | P14-G5 | shell identity / compact / presentation / rendering mechanics | Automated exact candidate | `phase-14.ps1 -G5`; P12-M03,M04，并为 M05/M18..M26 提供候选绑定的机械与截图 companion evidence；独立 `g5-exact-qualification.json` | NOT TESTED |
 
 ## Readiness interpretation

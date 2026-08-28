@@ -2,6 +2,8 @@
 //!
 //! plan_ref: docs/plan/08_assets_and_export.md#local-image-read-boundary
 
+use std::sync::Arc;
+
 use crate::image::{
     DecodedImageCache, ImageCacheKey, PreviewImageSource, decode_scaled_image_owned,
     inspect_encoded_image,
@@ -78,9 +80,11 @@ pub(super) fn layout_image_block(
             selection_range: selection_start..selection_end,
             source_range: span.source_range,
             rect,
-            action: span.action.clone(),
+            action: span.action.clone().map(Arc::new),
             tooltip: None,
             atomic: true,
+            start_x: rect.x,
+            end_x: rect.right(),
         }],
     })
 }

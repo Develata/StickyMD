@@ -7,14 +7,11 @@ use std::sync::Arc;
 use crate::image::{DecodedImageCache, PreviewImageSource};
 use crate::math::{MathEngine, MathRaster};
 use crate::source::FontSelection;
-use cosmic_text::{Align, Buffer, FontSystem, Metrics, Wrap};
+use cosmic_text::{Align, FontSystem, Metrics, Wrap};
 use stickymd_core::Generation;
 
 use super::scroll::PreviewScrollAnchor;
-use super::{
-    PreviewRect, PreviewTextBox, PreviewTextIndex, RenderBlock, RenderBlockKind, RenderSpan,
-    RenderTree,
-};
+use super::{PreviewRect, PreviewTextBox, RenderBlock, RenderBlockKind, RenderSpan, RenderTree};
 
 const BODY_SIZE_DIP: f32 = 17.0;
 const BODY_LINE_DIP: f32 = 26.35;
@@ -29,7 +26,7 @@ pub(super) struct LaidOutDocument {
     pub width_px: u32,
     pub height_px: f32,
     pub blocks: Vec<LaidOutBlock>,
-    pub index: std::sync::Arc<PreviewTextIndex>,
+    pub projection: std::sync::Arc<super::selection::PreviewDocumentProjection>,
     pub scale: f32,
     pub theme: super::PreviewTheme,
 }
@@ -39,6 +36,9 @@ pub(super) struct LaidOutBlock {
     pub bottom: f32,
     pub chunks: Vec<LayoutChunk>,
     pub decorations: Vec<LayoutDecoration>,
+    /// Atomic math/image objects. Text cluster geometry is projected only for
+    /// the current viewport from each text chunk.
+    pub boxes: Vec<PreviewTextBox>,
 }
 
 pub(super) struct LayoutChunk {
@@ -57,7 +57,7 @@ pub(super) struct InlinePiece {
 }
 
 pub(super) enum LayoutContent {
-    Text(Buffer),
+    Text(super::text_layout::TextLayout),
     Math(Arc<MathRaster>),
     Image(Arc<crate::image::DecodedImageRaster>),
     ImagePlaceholder { width: u32, height: u32 },
@@ -120,7 +120,6 @@ pub(super) fn layout_document(
     let mut y = padding;
     let mut blocks = Vec::with_capacity(tree.blocks.len());
     let mut selection_text = String::new();
-    let mut boxes = Vec::new();
     let mut scroll_anchors = Vec::with_capacity(tree.blocks.len());
     let mut formula_count = 0usize;
     let mut text_layout_cache = super::text_layout::TextLayoutCache::default();
@@ -129,7 +128,7 @@ pub(super) fn layout_document(
 
     for (block_index, block) in tree.blocks.iter().enumerate() {
         let top = y;
-        let mut laid_out = match &block.kind {
+        let laid_out = match &block.kind {
             RenderBlockKind::Table(table) => super::table_layout::layout_table(
                 font_system,
                 fonts,
@@ -183,7 +182,6 @@ pub(super) fn layout_document(
                 &mut text_layout_cache,
             ),
         };
-        boxes.append(&mut laid_out.boxes);
         y += laid_out.height;
         if let Some(source_range) = block.source_range {
             scroll_anchors.push(PreviewScrollAnchor {
@@ -197,6 +195,7 @@ pub(super) fn layout_document(
             bottom: y,
             chunks: laid_out.chunks,
             decorations: laid_out.decorations,
+            boxes: laid_out.boxes,
         });
         if block_index + 1 < tree.blocks.len() {
             selection_text.push('\n');
@@ -210,10 +209,9 @@ pub(super) fn layout_document(
         width_px,
         height_px,
         blocks,
-        index: std::sync::Arc::new(PreviewTextIndex::new(
+        projection: std::sync::Arc::new(super::selection::PreviewDocumentProjection::new(
             tree.generation,
             selection_text,
-            boxes,
             scroll_anchors,
         )),
         scale,
@@ -450,24 +448,42 @@ mod tests {
         )
     }
 
+    fn projected_boxes(document: &LaidOutDocument) -> Vec<PreviewTextBox> {
+        let mut boxes = Vec::new();
+        for block in &document.blocks {
+            boxes.extend(block.boxes.iter().cloned());
+            for chunk in &block.chunks {
+                if let LayoutContent::Text(layout) = &chunk.content {
+                    boxes.extend(super::super::text_layout::project_visible_text_boxes(
+                        layout,
+                        chunk.x,
+                        chunk.y,
+                        f32::NEG_INFINITY,
+                        f32::INFINITY,
+                    ));
+                }
+            }
+        }
+        boxes.sort_by(|left, right| {
+            left.rect
+                .y
+                .total_cmp(&right.rect.y)
+                .then_with(|| left.rect.x.total_cmp(&right.rect.x))
+        });
+        boxes
+    }
+
     #[test]
     fn layout_produces_selectable_native_text_and_source_ranges() {
         let document = layout("# 标题\n\n[text](https://example.com) $x$", 520);
         assert!(document.height_px > 0.0);
-        assert_eq!(document.index.generation(), Generation::initial());
-        assert!(document.index.text().contains("标题"));
-        assert!(document.index.text().contains("$x$"));
+        assert_eq!(document.projection.generation(), Generation::initial());
+        assert!(document.projection.text().contains("标题"));
+        assert!(document.projection.text().contains("$x$"));
+        let boxes = projected_boxes(&document);
+        assert!(boxes.iter().any(|item| item.action.is_some()));
         assert!(
-            document
-                .index
-                .boxes()
-                .iter()
-                .any(|item| item.action.is_some())
-        );
-        assert!(
-            document
-                .index
-                .boxes()
+            boxes
                 .iter()
                 .all(|item| item.source_range.is_some() || item.action.is_none())
         );
@@ -478,7 +494,7 @@ mod tests {
         let wide = layout(&"中文 English ".repeat(30), 900);
         let narrow = layout(&"中文 English ".repeat(30), 300);
         assert_eq!(wide.generation, narrow.generation);
-        assert_eq!(wide.index.text(), narrow.index.text());
+        assert_eq!(wide.projection.text(), narrow.projection.text());
         assert!(narrow.height_px > wide.height_px);
     }
 
@@ -486,7 +502,7 @@ mod tests {
     fn wrapped_visual_rows_map_to_disjoint_selectable_byte_ranges() {
         let source = "alpha beta gamma delta epsilon ".repeat(20);
         let document = layout(&source, 220);
-        let boxes = document.index.boxes();
+        let boxes = projected_boxes(&document);
         assert!(boxes.len() > 2, "fixture must wrap across visual rows");
         assert!(
             boxes
@@ -500,20 +516,20 @@ mod tests {
         );
         assert_eq!(
             boxes.last().map(|item| item.selection_range.end),
-            Some(document.index.text().len())
+            Some(document.projection.text().len())
         );
     }
 
     #[test]
     fn rendered_copy_uses_one_newline_between_blocks() {
         let document = layout("# Heading\n\nparagraph", 520);
-        assert_eq!(document.index.text(), "Heading\nparagraph");
+        assert_eq!(document.projection.text(), "Heading\nparagraph");
     }
 
     #[test]
     fn table_layout_keeps_cells_bounded_inside_document_width() {
         let document = layout("| A | B |\n| :- | -: |\n| 中文 | value |", 420);
-        assert!(document.index.boxes().iter().all(|item| {
+        assert!(projected_boxes(&document).iter().all(|item| {
             item.rect.x >= 0.0 && item.rect.right() <= document.width_px as f32 + 0.5
         }));
         assert!(

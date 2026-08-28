@@ -29,6 +29,51 @@ pub(super) fn capture(
     label: &str,
     artifacts: &mut Vec<ArtifactEvidence>,
 ) -> Result<(), String> {
+    artifacts.push(capture_artifact(repository, process_id, case_id, label)?);
+    Ok(())
+}
+
+/// Captures the same window until its pixels converge, replacing a blind
+/// post-action sleep with an observable bounded acknowledgement.
+pub(super) fn capture_when_stable(
+    repository: &Path,
+    process_id: u32,
+    case_id: &str,
+    label: &str,
+    must_differ_from: Option<&str>,
+    artifacts: &mut Vec<ArtifactEvidence>,
+) -> Result<(), String> {
+    const REQUIRED_EQUAL_SAMPLES: usize = 3;
+    let deadline = Instant::now() + PROJECTION_TIMEOUT;
+    let mut previous = None::<String>;
+    let mut equal_samples = 0usize;
+    while Instant::now() < deadline {
+        let artifact = capture_artifact(repository, process_id, case_id, label)?;
+        let differs = must_differ_from.is_none_or(|hash| hash != artifact.sha256);
+        if differs && previous.as_deref() == Some(artifact.sha256.as_str()) {
+            equal_samples += 1;
+            if equal_samples >= REQUIRED_EQUAL_SAMPLES {
+                artifacts.push(artifact);
+                return Ok(());
+            }
+        } else {
+            equal_samples = 0;
+        }
+        previous = Some(artifact.sha256);
+        thread::sleep(Duration::from_millis(50));
+    }
+    Err(format!(
+        "window pixels did not stabilize for {case_id}/{label} before {:?}",
+        PROJECTION_TIMEOUT
+    ))
+}
+
+fn capture_artifact(
+    repository: &Path,
+    process_id: u32,
+    case_id: &str,
+    label: &str,
+) -> Result<ArtifactEvidence, String> {
     let relative = PathBuf::from("dist/evidence/g5-artifacts")
         .join(case_id.to_ascii_lowercase())
         .join(format!("{label}.png"));
@@ -47,11 +92,10 @@ pub(super) fn capture(
             metadata.len()
         ));
     }
-    artifacts.push(ArtifactEvidence {
+    Ok(ArtifactEvidence {
         path: relative.to_string_lossy().replace('\\', "/"),
         sha256: receipt::sha256(&output)?,
-    });
-    Ok(())
+    })
 }
 
 pub(super) fn assert_source_projection(
