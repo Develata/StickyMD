@@ -432,7 +432,7 @@ fn expand_zip(zip: &Path, destination: &Path, group: &str) -> Result<(), String>
     }
 }
 
-fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
+pub(super) fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
     fs::create_dir(destination).map_err(io_error)?;
     for entry in fs::read_dir(source).map_err(io_error)? {
         let entry = entry.map_err(io_error)?;

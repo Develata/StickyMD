@@ -7,12 +7,21 @@ use std::ptr;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::WindowHandle;
+
 const S_OK: i32 = 0;
 const COINIT_APARTMENTTHREADED: u32 = 0x2;
 const CLSCTX_INPROC_SERVER: u32 = 0x1;
 const TF_PROFILETYPE_INPUTPROCESSOR: u32 = 1;
 const TF_IPPMF_FORSESSION: u32 = 0x2000_0000;
 const TF_IPP_FLAG_ENABLED: u32 = 0x2;
+const WM_INPUTLANGCHANGEREQUEST: u32 = 0x0050;
+const WM_IME_CONTROL: u32 = 0x0283;
+const IMC_GETCONVERSIONMODE: usize = 0x0001;
+const IMC_SETCONVERSIONMODE: usize = 0x0002;
+const IMC_GETOPENSTATUS: usize = 0x0005;
+const IMC_SETOPENSTATUS: usize = 0x0006;
+const IME_CMODE_NATIVE: isize = 0x0001;
 const PROFILE_TIMEOUT: Duration = Duration::from_secs(3);
 
 const CLSID_TF_INPUT_PROCESSOR_PROFILES: Guid = Guid::new(
@@ -181,15 +190,174 @@ unsafe extern "system" {
     ) -> i32;
 }
 
+#[link(name = "imm32")]
+unsafe extern "system" {
+    fn ImmGetDefaultIMEWnd(window: isize) -> isize;
+}
+
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn GetKeyboardLayout(thread_id: u32) -> isize;
+    fn GetWindowThreadProcessId(window: isize, process_id: *mut u32) -> u32;
+    fn PostMessageW(window: isize, message: u32, wparam: usize, lparam: isize) -> i32;
+    fn SendMessageW(window: isize, message: u32, wparam: usize, lparam: isize) -> isize;
+}
+
+pub(crate) fn set_ime_open_status(window: WindowHandle, open: bool) -> Result<(), String> {
+    let ime_window = default_ime_window(window)?;
+    send_ime_control(ime_window, IMC_SETOPENSTATUS, isize::from(open))?;
+    let observed = send_ime_query(ime_window, IMC_GETOPENSTATUS) != 0;
+    if observed != open {
+        return Err(format!(
+            "StickyMD IME open status acknowledgement mismatch: requested={open} observed={observed}"
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn set_ime_native_mode(window: WindowHandle, native: bool) -> Result<(), String> {
+    let ime_window = default_ime_window(window)?;
+    let mode = if native { IME_CMODE_NATIVE } else { 0 };
+    send_ime_control(ime_window, IMC_SETCONVERSIONMODE, mode)?;
+    let observed = send_ime_query(ime_window, IMC_GETCONVERSIONMODE);
+    if (observed & IME_CMODE_NATIVE != 0) != native {
+        return Err(format!(
+            "StickyMD IME conversion acknowledgement mismatch: requested_native={native} observed_mode=0x{observed:x}"
+        ));
+    }
+    Ok(())
+}
+
+fn default_ime_window(window: WindowHandle) -> Result<isize, String> {
+    // SAFETY: WindowHandle contains the borrowed live StickyMD HWND selected by
+    // exact-candidate process ownership. The returned default IME HWND is also
+    // borrowed and exists specifically to receive WM_IME_CONTROL.
+    let ime_window = unsafe { ImmGetDefaultIMEWnd(window.0) };
+    if ime_window == 0 {
+        return Err(format!(
+            "StickyMD thread has no default IME window: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(ime_window)
+}
+
+fn send_ime_control(ime_window: isize, command: usize, value: isize) -> Result<(), String> {
+    // SAFETY: the borrowed default IME HWND belongs to the candidate thread;
+    // scalar command parameters contain no pointers and SendMessageW returns
+    // only after the IME window has processed the request.
+    let result = unsafe { SendMessageW(ime_window, WM_IME_CONTROL, command, value) };
+    if result != 0 {
+        return Err(format!(
+            "default IME window rejected command 0x{command:x} value=0x{value:x}: result={result}"
+        ));
+    }
+    Ok(())
+}
+
+fn send_ime_query(ime_window: isize, command: usize) -> isize {
+    // SAFETY: the same borrowed IME HWND remains live and the GET command has
+    // no pointer-bearing parameter.
+    unsafe { SendMessageW(ime_window, WM_IME_CONTROL, command, 0) }
+}
+
+fn route_input_language(
+    window: WindowHandle,
+    profile: &NativeProfile,
+    label: &str,
+) -> Result<(), String> {
+    let thread_id = window_thread_id(window)?;
+    let before = keyboard_layout(thread_id);
+    if profile.substitute_layout == 0 {
+        return if input_language(before) == profile.language {
+            Ok(())
+        } else {
+            Err(format!(
+                "cannot route {label} to StickyMD: profile language=0x{:04x}, current layout=0x{before:x}, and TSF exposed no substitute layout",
+                profile.language
+            ))
+        };
+    }
+
+    // A matching LANGID is insufficient: the target thread can still be bound
+    // to a different TIP for the same language. Always post the substitute HKL
+    // after TSF profile activation so the already-running candidate refreshes
+    // its text-service binding.
+    // SAFETY: the exact-candidate HWND is live and focused. The message copies
+    // the scalar substitute HKL returned by TSF and retains no caller-owned
+    // memory. DefWindowProc performs the target-thread locale transition.
+    if unsafe {
+        PostMessageW(
+            window.0,
+            WM_INPUTLANGCHANGEREQUEST,
+            0,
+            profile.substitute_layout,
+        )
+    } == 0
+    {
+        return Err(format!(
+            "cannot post {label} input-language request to StickyMD: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    // WM_INPUTLANGCHANGEREQUEST is explicitly a posted message. When the
+    // target already has the same LANGID, GetKeyboardLayout cannot distinguish
+    // the old TIP binding from the newly requested one, so allow the candidate
+    // thread one narrow dispatch interval before acknowledgement polling.
+    thread::sleep(Duration::from_millis(50));
+
+    let deadline = Instant::now() + PROFILE_TIMEOUT;
+    loop {
+        let observed = keyboard_layout(thread_id);
+        if input_language(observed) == profile.language {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "StickyMD did not acknowledge {label} input language: requested_lang=0x{:04x} substitute_layout=0x{:x} observed_layout=0x{observed:x}",
+                profile.language, profile.substitute_layout
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn window_thread_id(window: WindowHandle) -> Result<u32, String> {
+    let mut process_id = 0_u32;
+    // SAFETY: the exact-candidate HWND is borrowed and `process_id` is valid
+    // writable stack storage. The API retains no pointer.
+    let thread_id = unsafe { GetWindowThreadProcessId(window.0, &raw mut process_id) };
+    if thread_id == 0 {
+        return Err(format!(
+            "cannot read StickyMD GUI thread for input-language routing: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(thread_id)
+}
+
+fn keyboard_layout(thread_id: u32) -> isize {
+    // SAFETY: the thread id came from the live exact-candidate HWND; the API
+    // returns a copied input-locale handle and retains no caller state.
+    unsafe { GetKeyboardLayout(thread_id) }
+}
+
+fn input_language(layout: isize) -> u16 {
+    (layout as usize & 0xffff) as u16
+}
+
 pub(crate) struct ImeProfileGuard {
     manager: *mut ProfileManager,
     original: NativeProfile,
+    target: NativeProfile,
+    target_label: &'static str,
     active: bool,
     com_initialized: bool,
 }
 
 impl ImeProfileGuard {
-    pub(crate) fn activate(profile: ImeProfile) -> Result<Self, String> {
+    pub(crate) fn activate(profile: ImeProfile, window: WindowHandle) -> Result<Self, String> {
         let initialized = {
             // SAFETY: null reserved storage and a documented apartment flag are
             // passed on the current smoke thread. Successful initialization is
@@ -229,6 +397,8 @@ impl ImeProfileGuard {
         let mut guard = Self {
             manager,
             original: NativeProfile::default(),
+            target: NativeProfile::default(),
+            target_label: profile.name(),
             active: false,
             com_initialized: true,
         };
@@ -245,8 +415,17 @@ impl ImeProfileGuard {
         // From this point Drop must restore the captured profile even when
         // activation succeeds but acknowledgement times out.
         guard.active = true;
+        guard.target = target;
         guard.activate_native(&target, spec.name)?;
+        route_input_language(window, &target, spec.name)?;
         Ok(guard)
+    }
+
+    pub(crate) fn route_to(&self, window: WindowHandle) -> Result<(), String> {
+        if !self.active {
+            return Err("cannot route a restored IME profile guard".to_owned());
+        }
+        route_input_language(window, &self.target, self.target_label)
     }
 
     pub(crate) fn restore(mut self) -> Result<(), String> {

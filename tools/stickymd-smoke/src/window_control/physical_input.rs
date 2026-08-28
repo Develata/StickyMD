@@ -100,7 +100,19 @@ pub(super) struct PhysicalLeftButtonGuard;
 impl PhysicalLeftButtonGuard {
     pub(super) fn press() -> Result<Self, String> {
         send_mouse_input(MOUSEEVENTF_LEFTDOWN, 0, 0)?;
-        wait_for_left_button_state(true)?;
+        if let Err(error) = wait_for_left_button_state(true) {
+            // The input may have reached Windows even when the asynchronous
+            // state probe missed its pressed interval. Fail closed, but always
+            // balance the injected DOWN before returning without a guard.
+            let release = send_mouse_input(MOUSEEVENTF_LEFTUP, 0, 0)
+                .and_then(|()| wait_for_left_button_state(false));
+            return match release {
+                Ok(()) => Err(error),
+                Err(release_error) => Err(format!(
+                    "{error}; additionally failed to release the injected left button: {release_error}"
+                )),
+            };
+        }
         Ok(Self)
     }
 }

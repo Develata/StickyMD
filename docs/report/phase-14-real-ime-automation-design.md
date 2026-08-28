@@ -26,6 +26,8 @@ G4 exact-candidate harness
          capture active keyboard profile
          validate requested profile is installed/enabled
          activate for current input desktop
+         route the target HWND to the profile's substitute layout
+         set and acknowledge open/native state through its default IME window
     -> verified foreground StickyMD HWND
     -> balanced physical key input
     -> durable note / clipboard projection assertions
@@ -51,7 +53,8 @@ active profile 时，exact case fail closed 为 environment unavailable，不得
 
 ## Lifecycle and Failure Paths
 
-1. 在独占、解锁、可控的交互桌面启动 isolated exact candidate。
+1. 在独占、解锁、可控的交互桌面为每个 profile 复制一份独立 portable candidate；不得让前一 profile
+   的 opacity、view mode 或 dock config 成为后一 profile 的 startup state。
 2. 创建 TSF manager，读取并保存当前 `GUID_TFCAT_TIP_KEYBOARD` active profile。
 3. 验证目标 profile，使用 session-scoped activation；再次读取 active profile确认一致。
 4. 只有 StickyMD HWND 同时 foreground、active、focused 时才允许物理键盘注入。
@@ -69,7 +72,8 @@ clipboard、dock、tray 或 resource measurement 并发。
 
 1. Source preedit 跨过 650 ms autosave boundary 时 durable note 不变。
 2. composition 中 Left/Right/Backspace 后可继续输入并 commit。
-3. commit 得到非 ASCII 合法 Unicode 文本；一次 Undo 完整恢复 commit 前文本。
+3. commit 得到非 ASCII 合法 Unicode 文本；一次 Undo 完整恢复 commit 前文本；同一 profile 下再输入
+   `rust`，若 TIP 保持 composition，则用 Enter 提交原始罗马字并验证一次 Undo。
 4. Escape cancel 不改变 canonical/durable text。
 5. selection replacement 的 commit 是一次独立 Undo。
 6. Search query/replacement 接受真实 IME commit；Up/Down 导航命中，关闭面板后 clipboard selection
@@ -78,7 +82,22 @@ clipboard、dock、tray 或 resource measurement 并发。
    composition 期间 durable note 与自动收起均受 guard 保护。
 
 候选词具体字面量不是测试 authority，避免用户词频和输入法版本改变导致脆弱断言；测试只接受非空、
-合法 Unicode、包含 CJK 且不含未提交拼音字母的 commit，并使用实际 commit 作为后续 Search fixture。
+合法 Unicode、包含 CJK 且不含未提交拼音字母的 commit。Search fixture 由同一 profile 在 Source 中先做
+一次无组合编辑的干净 commit、读取实际 durable term、Undo，再在 Search 中复现同一输入；不得把带
+Left/Right/Backspace 编辑的首个候选错误复用于干净 Search composition。
+
+## Diagnostic Resolution
+
+- Microsoft Pinyin 完整矩阵先通过；WeType 首次停在中英混输。`WM_IME_CONTROL` 对 non-native bit 的
+  acknowledgement 不保证该 TIP 直接发出普通 ASCII，`ImmSimulateHotKey` 也被 WeType 拒绝。因此删除
+  hot-key fallback，统一保持 profile 自然 composition：直接 ASCII 已成为 canonical edit 时立即验证；
+  否则 Enter 提交原始罗马字。该路径不依赖用户 Shift 配置或私有 TIP 行为。
+- 第二次诊断越过混输后，WeType 窗口被前一 Microsoft Pinyin 场景遗留的 40% opacity + left dock config
+  恢复到屏幕外，物理 cursor 被夹到桌面边界。每个 profile 改用从未启动的 candidate template 的独立副本，
+  消除 verification fixture 的跨 profile 状态泄漏。
+- 第三次诊断越过 selection 后，Search 用干净 `zhongguo` 查询，而文档 term 来自带组合编辑的首次提交；
+  WeType 两次实际候选不同。Search fixture 改为前述同 profile 干净 commit 捕获，不硬编码候选文字。
+- durable note assertion 只在 probe 边界把 CRLF 转为内部 `\n`，不改变文件，也不把孤立 `\r` 归一化。
 
 ## Performance and Dependencies
 
@@ -98,16 +117,20 @@ clipboard、dock、tray 或 resource measurement 并发。
 ## Implementation Evidence
 
 - `window_control/ime_profile.rs`：std-only TSF COM adapter，捕获原 profile、验证目标 installed/enabled、
-  session-scoped 激活、active profile 回读、显式恢复与 Drop best-effort 清理；不修改 profile 注册或默认值。
+  session-scoped 激活、active profile 回读，通过 `WM_INPUTLANGCHANGEREQUEST` 把目标 HWND 路由到目标
+  substitute layout，并通过候选线程的 default IME window 发送
+  `WM_IME_CONTROL` 显式设置/回读 open status 与 native conversion bit；测试后显式恢复 profile，Drop
+  只作 best-effort 清理。不跨进程持有 HIMC，不依赖用户 Shift 配置，不修改 profile 注册或默认值。
 - `qualification/g4/cases/ime.rs`：每个 profile 使用独立 exact-candidate 副本和物理键盘，覆盖 Source
   preedit/commit/cancel/selection/Undo、中英混输、Search query/replacement、Up/Down、Find-only guard、
   Source/Split、40% opacity、左侧 Docked-expanded 与 refocus。
 - G4 parser、PowerShell ValidateSet、六项 receipt/readiness 和治理合同均已更新；旧五项 G4 receipt 不再
   能解除 readiness blocker。
-- `cargo test -p stickymd-smoke --locked --no-fail-fast`：94 passed、0 failed（92 unit + 2 CLI）。
+- `cargo test -p stickymd-smoke --locked`：97 passed、0 failed（95 unit + 2 CLI）。
 - `cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings`：PASS。
 - `stickymd-smoke all --ci --ci-shard=tests --json`：governance、Markdown/math、persistence、workspace
   tests 与 requested shard 全部 PASS。
 
-未运行：G4-06 exact desktop。原因是当前实现尚未 freeze 为新 exact candidate；P14-A30 与候选窗人工
-视觉项继续保持 `NOT TESTED`，不得复用 `ad030008...` 的旧候选收据。
+诊断验证：旧产品 candidate `f406933d18c1...` + 当前未提交 harness 的 targeted `G4-06` 已完整通过
+Microsoft Pinyin 与 WeType。该组合只证明 harness/root-cause 修复，不能形成正式候选收据。当前实现尚未
+freeze 为新 exact candidate；P14-A30 与候选窗人工视觉项继续保持 `NOT TESTED`，不得复用任何旧候选收据。

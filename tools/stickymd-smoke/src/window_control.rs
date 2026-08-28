@@ -8,7 +8,9 @@ use std::time::Duration;
 mod ime_profile;
 mod physical_input;
 
-pub(crate) use ime_profile::{ImeProfile, ImeProfileGuard};
+pub(crate) use ime_profile::{
+    ImeProfile, ImeProfileGuard, set_ime_native_mode, set_ime_open_status,
+};
 
 use physical_input::{
     PhysicalCursorKind, PhysicalLeftButtonGuard, current_cursor_handle, current_cursor_position,
@@ -378,6 +380,10 @@ pub(crate) fn press_enter(window: WindowHandle) -> Result<(), String> {
     send_physical_key(window, 0x0D, 0x1C, false)
 }
 
+pub(crate) fn press_space(window: WindowHandle) -> Result<(), String> {
+    send_physical_key(window, 0x20, 0x39, false)
+}
+
 pub(crate) fn press_escape(window: WindowHandle) -> Result<(), String> {
     send_physical_key(window, 0x1B, 0x01, false)
 }
@@ -402,14 +408,6 @@ pub(crate) fn press_arrow_up(window: WindowHandle) -> Result<(), String> {
     send_physical_key(window, 0x26, 0x48, true)
 }
 
-pub(crate) fn press_tab(window: WindowHandle) -> Result<(), String> {
-    send_physical_key(window, 0x09, 0x0F, false)
-}
-
-pub(crate) fn press_shift(window: WindowHandle) -> Result<(), String> {
-    send_physical_key(window, 0x10, 0x2A, false)
-}
-
 pub(crate) fn press_find(window: WindowHandle) -> Result<(), String> {
     send_control_chord(window, b'F', 0x21, false)
 }
@@ -429,9 +427,47 @@ pub(crate) fn type_ascii_letters(window: WindowHandle, text: &str) -> Result<(),
                 "physical IME input only accepts ASCII letters, found byte 0x{byte:02X}"
             ));
         }
-        send_physical_key(window, byte.to_ascii_uppercase(), 0, false)?;
+        let virtual_key = byte.to_ascii_uppercase();
+        send_physical_key(window, virtual_key, qwerty_scan_code(virtual_key)?, false)?;
     }
     Ok(())
+}
+
+fn qwerty_scan_code(virtual_key: u8) -> Result<u8, String> {
+    let scan_code = match virtual_key {
+        b'A' => 0x1E,
+        b'B' => 0x30,
+        b'C' => 0x2E,
+        b'D' => 0x20,
+        b'E' => 0x12,
+        b'F' => 0x21,
+        b'G' => 0x22,
+        b'H' => 0x23,
+        b'I' => 0x17,
+        b'J' => 0x24,
+        b'K' => 0x25,
+        b'L' => 0x26,
+        b'M' => 0x32,
+        b'N' => 0x31,
+        b'O' => 0x18,
+        b'P' => 0x19,
+        b'Q' => 0x10,
+        b'R' => 0x13,
+        b'S' => 0x1F,
+        b'T' => 0x14,
+        b'U' => 0x16,
+        b'V' => 0x2F,
+        b'W' => 0x11,
+        b'X' => 0x2D,
+        b'Y' => 0x15,
+        b'Z' => 0x2C,
+        _ => {
+            return Err(format!(
+                "QWERTY scan-code mapping requires an uppercase ASCII letter, found 0x{virtual_key:02X}"
+            ));
+        }
+    };
+    Ok(scan_code)
 }
 
 pub(crate) fn press_f6(window: WindowHandle) -> Result<(), String> {
@@ -863,6 +899,15 @@ pub(crate) fn focus_shell_desktop(window: WindowHandle) -> Result<(), String> {
         thread::sleep(Duration::from_millis(10));
     }
     Err("StickyMD retained foreground focus after focusing the desktop shell".to_owned())
+}
+
+pub(crate) fn focus_window(window: WindowHandle) -> Result<bool, String> {
+    let activation = activation_facts(window)?;
+    let restored = !(activation.foreground && activation.active && activation.focused);
+    if restored {
+        activate_window_for_physical_input(window)?;
+    }
+    Ok(restored)
 }
 
 pub(crate) fn focus_source_editor(window: WindowHandle) -> Result<(), String> {
