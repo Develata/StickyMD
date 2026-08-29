@@ -249,7 +249,8 @@ Source Freeze
 → push + CI
 → release workflow build/package/verify
 → record successful run/attempt/artifact id
-→ download ZIP + SHA256SUMS + SBOM
+→ qualification CLI 按已记录 run/name 下载 ZIP + SHA256SUMS + SBOM
+→ 与用户指定的 downloaded copy 逐文件 byte/hash 比对
 → verify checksum/SBOM/package/native runtime/runtime smoke
 → atomically Promote into dist/exact-candidate/
 → artifact-bound qualification
@@ -291,6 +292,9 @@ Promotion failure path 必须保持 fail closed：下载不完整、checksum/SBO
 ZIP 不能解压、PE/native-runtime/runtime smoke 失败时，既有 Promoted Candidate 不得被半更新，
 也不得写成 PASS receipt。原子 staging 成功但 receipt 写入失败时，candidate resolver 仍必须因
 缺失 receipt 而拒绝使用该目录；不得从本地 preflight 补位。
+为避免把同 source 的本地 build 误归因为 remote artifact，Promote 不得只相信调用者给出的
+ZIP 路径；qualification CLI 必须按 remote receipt 的 run/name 自行下载权威副本，确认
+ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
 
 - manual recorder 必须是交互式 human receipt recorder，只接受显式
   `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`，不得从 process/status 自动推断人工 PASS；

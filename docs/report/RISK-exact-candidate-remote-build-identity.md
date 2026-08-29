@@ -217,7 +217,7 @@ source freeze
 
 1. GitHub `release` workflow artifact 是唯一 Release Exact Artifact 来源；
 2. 本地 build 降级为 Source Freeze 下的 Local Preflight Build，不参与远端 EXE/ZIP 等价判断；
-3. 下载产物只有在 checksum、SBOM、package、native runtime 与 runtime smoke 全部通过后才能 Promote；
+3. CLI 按已记录 workflow run/name 自行下载权威 artifact；用户副本逐文件一致，且 checksum、SBOM、package、native runtime 与 runtime smoke 全部通过后才能 Promote；
 4. Runtime、Performance、Resources、G3、G4、G5 与人工收据必须在 Promote 后针对相同 staged candidate 重建；
 5. 若 Source Freeze 未变化，source-only CI/headless evidence 可以复用；不重跑 Phase 0–14 全量 Campaign；
 6. 不建立或声称 bit-for-bit reproducible Windows build；

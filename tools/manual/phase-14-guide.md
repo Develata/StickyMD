@@ -7,6 +7,9 @@
 .\tools\smoke\phase-14.ps1 -DownloadedZip <artifact-directory>\StickyMD-...-windows-x64-portable.zip
 ```
 
+该命令会根据已记录的 workflow run/name 再下载一份权威 artifact，并要求所给
+ZIP、`SHA256SUMS.txt` 与 SBOM 与权威副本逐字节一致；同 source 的本地 package 不会被晋升。
+
 建议在正常 Windows 11 交互桌面中依次执行两个人工 session。每一步只接受：
 
 - `P`：实际观察满足 Expected；

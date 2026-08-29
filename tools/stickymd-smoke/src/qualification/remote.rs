@@ -99,15 +99,15 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
     {
         return Err("remote workflow receipt is stale for the current Source Freeze".to_owned());
     }
-    let zip = zip
+    let supplied_zip = zip
         .canonicalize()
         .map_err(|error| format!("cannot resolve downloaded ZIP {}: {error}", zip.display()))?;
-    let parent = zip
+    let supplied_parent = supplied_zip
         .parent()
         .ok_or_else(|| "downloaded ZIP has no parent directory".to_owned())?;
-    let checksum = parent.join("SHA256SUMS.txt");
-    let sbom = parent.join("SBOM.spdx.json");
-    for input in [&checksum, &sbom] {
+    let supplied_checksum = supplied_parent.join("SHA256SUMS.txt");
+    let supplied_sbom = supplied_parent.join("SBOM.spdx.json");
+    for input in [&supplied_checksum, &supplied_sbom] {
         if !input.is_file() {
             return Err(format!(
                 "downloaded workflow artifact is incomplete: {}",
@@ -115,7 +115,7 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
             ));
         }
     }
-    let zip_name = zip
+    let zip_name = supplied_zip
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| "downloaded ZIP name is not UTF-8".to_owned())?
@@ -126,6 +126,16 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
             "downloaded ZIP is {zip_name}, expected Source Freeze artifact {expected_zip_name}"
         ));
     }
+    let authoritative = download_recorded_artifact(root, &remote)?;
+    let zip = authoritative.path.join(&zip_name);
+    let checksum = authoritative.path.join("SHA256SUMS.txt");
+    let sbom = authoritative.path.join("SBOM.spdx.json");
+    verify_supplied_copy(&[
+        (&supplied_zip, &zip, "ZIP"),
+        (&supplied_checksum, &checksum, "SHA256SUMS.txt"),
+        (&supplied_sbom, &sbom, "SBOM"),
+    ])?;
+    let parent = &authoritative.path;
     let zip_sha256 = receipt::sha256(&zip)?;
     let sbom_sha256 = receipt::sha256(&sbom)?;
     receipt::verify_checksum_manifest(parent, &zip_name, &zip_sha256, &sbom_sha256)?;
@@ -178,6 +188,115 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
     } else {
         outcome
     }
+}
+
+struct DownloadedArtifact {
+    root: PathBuf,
+    path: PathBuf,
+}
+
+impl Drop for DownloadedArtifact {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn download_recorded_artifact(
+    root: &Path,
+    remote: &RemoteWorkflow,
+) -> Result<DownloadedArtifact, String> {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock precedes Unix epoch: {error}"))?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "stickymd-recorded-artifact-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir(&path)
+        .map_err(|error| format!("cannot create artifact download directory: {error}"))?;
+    let mut download = DownloadedArtifact {
+        root: path.clone(),
+        path,
+    };
+    let status = Command::new("gh")
+        .args(["run", "download", &remote.run_id.to_string(), "--name"])
+        .arg(&remote.artifact_name)
+        .arg("--dir")
+        .arg(&download.path)
+        .current_dir(root)
+        .status()
+        .map_err(|error| format!("cannot download recorded workflow artifact: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "recorded workflow artifact download failed with {status}"
+        ));
+    }
+    let expected_zip = format!(
+        "StickyMD-{}-windows-x64-portable.zip",
+        receipt::workspace_version(root)?
+    );
+    let expected = [expected_zip.as_str(), "SHA256SUMS.txt", "SBOM.spdx.json"];
+    let nested_path = download.root.join(&remote.artifact_name);
+    let payload = if nested_path.is_dir() {
+        nested_path
+    } else {
+        download.root.clone()
+    };
+    let observed = member_set(&payload)?;
+    let expected = expected_member_set(&expected);
+    if observed != expected {
+        return Err(format!(
+            "recorded artifact member set is {observed:?}, expected {expected:?}"
+        ));
+    }
+    download.path = payload;
+    Ok(download)
+}
+
+fn member_set(directory: &Path) -> Result<Vec<String>, String> {
+    let mut observed = fs::read_dir(directory)
+        .map_err(|error| format!("cannot inspect recorded artifact: {error}"))?
+        .map(|entry| {
+            entry
+                .map_err(|error| format!("cannot inspect recorded artifact member: {error}"))
+                .and_then(|entry| {
+                    if !entry
+                        .file_type()
+                        .map_err(|error| format!("cannot inspect artifact member type: {error}"))?
+                        .is_file()
+                    {
+                        return Err("recorded artifact contains a non-file member".to_owned());
+                    }
+                    entry
+                        .file_name()
+                        .into_string()
+                        .map_err(|_| "recorded artifact member name is not UTF-8".to_owned())
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    observed.sort();
+    Ok(observed)
+}
+
+fn expected_member_set(expected: &[&str]) -> Vec<String> {
+    let mut expected = expected
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect::<Vec<_>>();
+    expected.sort();
+    expected
+}
+
+fn verify_supplied_copy(pairs: &[(&Path, &Path, &str)]) -> Result<(), String> {
+    for (supplied, authoritative, label) in pairs {
+        if receipt::sha256(supplied)? != receipt::sha256(authoritative)? {
+            return Err(format!(
+                "supplied {label} is not byte-identical to the recorded workflow artifact"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn query_release_artifact(root: &Path, run_id: u64) -> Result<(u64, String), String> {
@@ -371,7 +490,9 @@ fn unique_staging_directory(root: &Path) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_artifact_query;
+    use super::{parse_artifact_query, verify_supplied_copy};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn artifact_query_requires_one_exact_nonzero_identity() {
@@ -387,5 +508,23 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn supplied_artifact_copy_must_match_authoritative_bytes() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("stickymd-artifact-copy-{nonce}"));
+        fs::create_dir(&root).expect("root");
+        let supplied = root.join("supplied");
+        let authoritative = root.join("authoritative");
+        fs::write(&supplied, b"same").expect("supplied");
+        fs::write(&authoritative, b"same").expect("authoritative");
+        assert!(verify_supplied_copy(&[(&supplied, &authoritative, "ZIP")]).is_ok());
+        fs::write(&supplied, b"different").expect("change supplied");
+        assert!(verify_supplied_copy(&[(&supplied, &authoritative, "ZIP")]).is_err());
+        fs::remove_dir_all(root).expect("cleanup");
     }
 }

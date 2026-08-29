@@ -584,6 +584,20 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
             ));
         }
     }
+    let remote_promotion =
+        read_text(&root.join("tools/stickymd-smoke/src/qualification/remote.rs"))?;
+    for required in [
+        "download_recorded_artifact",
+        "Command::new(\"gh\")",
+        ".args([\"run\", \"download\"",
+        "verify_supplied_copy",
+    ] {
+        if !remote_promotion.contains(required) {
+            return Err(format!(
+                "remote promotion lacks authoritative-download token `{required}`"
+            ));
+        }
+    }
     let notices = read_text(&root.join("tools/release/generate-third-party-notices.ps1"))?;
     for required in [
         "cargo metadata --format-version 1 --locked --filter-platform x86_64-pc-windows-msvc",
