@@ -1,11 +1,13 @@
-//! Ordered Phase 14 campaign preserves independent exact-candidate evidence channels.
+//! Ordered local/source preflight before remote artifact promotion.
+//!
+//! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 use std::path::{Path, PathBuf};
 
 use crate::cli::{Options, Phase, Selection};
 use crate::runner;
 
-use super::{decisions, readiness, receipt, startup_attribution};
+use super::{decisions, source_freeze};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FailureClass {
@@ -59,11 +61,10 @@ pub(super) fn run(root: &Path) -> Result<(), String> {
         "dist/evidence/automated-qualification.json",
     )?;
 
-    let candidate = receipt::generate_candidate(root)?;
-    decisions::project(root, &candidate)?;
-    println!("RELEASE_SOURCE_COMMIT={}", candidate.source_commit);
-    println!("RELEASE_EXE_SHA256={}", candidate.exe_sha256);
-    println!("RELEASE_ZIP_SHA256={}", candidate.zip_sha256);
+    let source = source_freeze::create(root)?;
+    decisions::project(root, &source)?;
+    println!("RELEASE_SOURCE_COMMIT={}", source.source_commit);
+    println!("RELEASE_CARGO_LOCK_SHA256={}", source.cargo_lock_sha256);
 
     let mut ledger = CampaignLedger::default();
     ledger.record(
@@ -87,42 +88,10 @@ pub(super) fn run(root: &Path) -> Result<(), String> {
             },
         ),
     )?;
-    ledger.record(
-        "runtime",
-        run_mode(
-            root,
-            false,
-            true,
-            false,
-            false,
-            "dist/evidence/runtime-qualification.json",
-        ),
-    )?;
-    ledger.record(
-        "performance",
-        run_mode(
-            root,
-            true,
-            false,
-            false,
-            false,
-            "dist/evidence/performance-qualification.json",
-        ),
-    )?;
-    ledger.record("startup-attribution", startup_attribution::record(root))?;
-    ledger.record(
-        "resources",
-        run_mode(
-            root,
-            false,
-            false,
-            true,
-            false,
-            "dist/evidence/resources-qualification.json",
-        ),
-    )?;
-    println!("MANUAL_CHANNEL=USER_DRIVEN use `stickymd-smoke acceptance manual guided`");
-    ledger.record("readiness", readiness::evaluate(root, true))?;
+    println!("LOCAL_PREFLIGHT=PASS");
+    println!(
+        "NEXT=push approved Source Freeze, run remote release workflow, then Promote downloaded artifact"
+    );
     ledger.finish()
 }
 

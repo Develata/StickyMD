@@ -160,7 +160,7 @@ pub(crate) enum QualificationCommand {
         evidence_file: Option<PathBuf>,
     },
     LocalCampaign,
-    Candidate,
+    SourceFreeze,
     StartupAttribution,
     WindowStress(WindowStressOptions),
     NativeRuntime {
@@ -414,8 +414,8 @@ impl CommandLine {
                     evidence_file,
                 }))
             }
-            Some("candidate") if arguments.len() == 1 => {
-                Ok(Self::Qualification(QualificationCommand::Candidate))
+            Some("source-freeze") if arguments.len() == 1 => {
+                Ok(Self::Qualification(QualificationCommand::SourceFreeze))
             }
             Some("attribution") if arguments.len() == 1 => Ok(Self::Qualification(
                 QualificationCommand::StartupAttribution,
@@ -608,7 +608,7 @@ impl CommandLine {
                 }))
             }
             _ => Err(
-                "qualification requires environment, local, candidate, attribution, window-stress, native-runtime, g3, g4, g5, decision, readiness, remote, or downloaded"
+                "qualification requires environment, local, source-freeze, attribution, window-stress, native-runtime, g3, g4, g5, decision, readiness, remote, or downloaded"
                     .to_owned(),
             ),
         }
@@ -1063,6 +1063,13 @@ mod tests {
         let phase = Options::parse(args(&["phase", "12", "--release", "--json"]))
             .expect("valid Phase 12 release mode");
         assert_eq!(phase.selection, Selection::Phase(Phase::P12));
+
+        let source_freeze = CommandLine::parse(args(&["qualification", "source-freeze"]))
+            .expect("valid Source Freeze command");
+        assert_eq!(
+            source_freeze,
+            CommandLine::Qualification(QualificationCommand::SourceFreeze)
+        );
 
         let readiness = CommandLine::parse(args(&["qualification", "readiness", "--explain"]))
             .expect("valid readiness command");

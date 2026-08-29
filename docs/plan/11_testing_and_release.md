@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-28
+- `Last Review`: 2026-08-29
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -23,7 +23,7 @@
 
 ## Owned Objects
 
-测试 fixture、golden baseline、验证收据与 release artifact manifest；这些是验证证据，
+测试 fixture、golden baseline、Source Freeze、验证收据、Promoted Candidate 与 release artifact manifest；这些是验证证据，
 不是产品运行时 authority。
 
 ## Inputs
@@ -32,7 +32,7 @@
 
 ## Outputs
 
-PASS/FAIL/NOT TESTED 收据、差异 artifact、checksums、SBOM 与 portable ZIP 候选。
+PASS/FAIL/NOT TESTED 收据、差异 artifact、checksums、SBOM、Source Freeze 与唯一 Promoted Candidate。
 
 ## State Changes
 
@@ -220,17 +220,77 @@ USER-APPROVED GATE   USER 批准工程 hard boundary 校准；不是人工验收
 USER WAIVED          USER 明确豁免列出的人工 case/group；未列出的 NOT TESTED 仍阻塞
 ```
 
-Phase 12 source decision template 与 exact-candidate `dist/evidence/release-decisions.json` projection
+Phase 12 source decision template 与 Source Freeze-bound `dist/evidence/release-decisions.json` projection
 只允许 `PENDING`、`USER APPROVED`、`USER REJECTED`、`NOT APPLICABLE`。Rust automation 只能
-记录 USER 已明确给出的决定，不能自行批准；人工 waiver 必须使用具体 `WAIVER-P12-Mxx`
-key，不接受 blanket waiver。
+记录 USER 已明确给出的决定，不能自行批准；PUSH 决定必须在 remote workflow 前绑定 source identity。
+人工 waiver 必须使用具体 `WAIVER-P12-Mxx` key，不接受 blanket waiver；其 source/version identity
+来自相同 Source Freeze，最终 manual PASS 仍额外绑定 Promoted Candidate。
 
-### Exact-artifact evidence receipts
+<a id="release-artifact-authority"></a>
+### Source freeze、remote artifact promotion 与 exact evidence
 
-Phase 12 source freeze 前提交所有 source-controlled 治理、工具和报告；freeze 后的 candidate、
-automated、manual、remote、downloaded-artifact 与 readiness receipts 写入 ignored
-`dist/evidence/`，绑定 source commit、EXE SHA-256 与适用的 ZIP SHA-256。这样人工/远端
-证据不会为了“写回报告”再制造一个不同 HEAD。
+Phase 12 source freeze 前提交所有 source-controlled 治理、工具和报告。clean HEAD 先生成 ignored
+`dist/evidence/release-source-freeze.json`，绑定 source commit、workspace version、`Cargo.lock`
+SHA-256、target 与 harness。Source Freeze 是 source-only evidence 和动态 USER action decision 的身份边界，
+不是最终发布 artifact。
+
+本机 `target/release/stickymd-win.exe`、本地 ZIP 与本地 SBOM 只构成 Local Preflight Build。它们可以尽早
+验证源码、构建、包结构、developer-runtime import 与 release tooling，但不得写入最终
+`release-candidate.json`，也不得被 Runtime/Performance/Resources/G3/G4/G5/manual readiness 当作最终
+发布字节。相同 source commit 的独立 Windows build 只有在另行证明完整 reproducible-build contract 后
+才可要求 bit-identical；v0.1.0 不作该声明。
+
+唯一 Release Exact Artifact 必须来自已批准 Source Freeze 的 GitHub `release` workflow：
+
+```text
+Source Freeze
+→ local/source preflight
+→ explicit USER PUSH authority
+→ push + CI
+→ release workflow build/package/verify
+→ record successful run/attempt/artifact id
+→ download ZIP + SHA256SUMS + SBOM
+→ verify checksum/SBOM/package/native runtime/runtime smoke
+→ atomically Promote into dist/exact-candidate/
+→ artifact-bound qualification
+```
+
+Promote transaction 只有在全部输入验证成功后才写 `dist/evidence/release-candidate.json`。candidate receipt
+必须记录 source SHA、version、Cargo.lock SHA-256、workflow run/attempt、artifact id/name、ZIP/EXE/SBOM
+SHA-256、target 与 unsigned policy；不得记录机器绝对路径。canonical ignored staging 固定为：
+
+```text
+dist/exact-candidate/
+├─ StickyMD-<version>-windows-x64-portable.zip
+├─ SHA256SUMS.txt
+├─ SBOM.spdx.json
+└─ StickyMD/StickyMD.exe
+```
+
+所有 artifact-bound runner 必须通过一个 candidate resolver 获取 staged EXE/ZIP，禁止在 qualification
+模块各自硬编码 `target/release/stickymd-win.exe`。Source Freeze 建立前，开发期 targeted smoke
+可以显式使用 Local Preflight Build；Source Freeze 建立后即进入 release qualification，candidate receipt
+缺失、格式错误或 source/hash/staging 不匹配时都必须 fail closed，不得静默 fallback 到本地 EXE。
+
+ignored `dist/evidence/` 中：
+
+- source-only receipt 绑定 Source Freeze，不要求 final EXE hash；
+- remote workflow receipt 绑定 source/run/attempt/artifact id，不复制尚未产生的 final EXE hash；
+- downloaded/promotion receipt 与 candidate receipt 绑定实际 ZIP/EXE/SBOM hash；
+- Runtime、Performance、Resources、G3、G4、G5 与 manual receipt 绑定 Promoted Candidate 的 EXE，适用时
+  同时绑定 ZIP；
+- readiness 只接受 Promoted Candidate 及其之后生成的 artifact-bound receipt。
+
+每次 Promote 或 candidate identity 变化，旧 artifact-bound receipt 必须变 stale。若 Source Freeze 完全不变，
+source-only CI/headless receipt 可以复用；只需重跑 downloaded/package/native-runtime、Runtime、Performance、
+Resources、G3、G4、G5 与仍适用的人工项目。这一“最小 exact 重验”是完整 artifact identity 重验，不是
+Phase 0–14 全量 Campaign；任何 source/manifest/lock/harness/release tooling 变化仍会使相应 source-only
+证据失效。
+
+Promotion failure path 必须保持 fail closed：下载不完整、checksum/SBOM/source identity 不符、
+ZIP 不能解压、PE/native-runtime/runtime smoke 失败时，既有 Promoted Candidate 不得被半更新，
+也不得写成 PASS receipt。原子 staging 成功但 receipt 写入失败时，candidate resolver 仍必须因
+缺失 receipt 而拒绝使用该目录；不得从本地 preflight 补位。
 
 - manual recorder 必须是交互式 human receipt recorder，只接受显式
   `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`，不得从 process/status 自动推断人工 PASS；
@@ -238,8 +298,9 @@ automated、manual、remote、downloaded-artifact 与 readiness receipts 写入 
   clean worktree 与各组预期逐项结果，不能用旧候选或开发期 dirty receipt 替代；
 - readiness 对 P0/P1、未批准 hard gate、mandatory manual NOT TESTED、exact package、remote
   evidence 与 USER decision fail closed；不得提供 `--force-ready`；
-- freeze 后若任何 source、manifest/lock、runtime asset 或 release tooling 改变，所有 receipts
-  失效并必须重建。
+- freeze 后若任何 source、manifest/lock、runtime asset 或 release tooling 改变，Source Freeze 及所有下游
+  receipts 失效并必须重建；仅 candidate 字节变化时 source-only receipt 可保留，但所有 artifact-bound
+  receipt 失效。
 
 ### Phase 14 qualification environment、独立证据通道与 partial evidence
 
@@ -310,11 +371,12 @@ SHA-256 写入 exact receipt。截图适配器只采集像素，不得判 PASS�
 mixed-DPI/多屏、System 主题实际切换和首次视觉判断仍由人工 authority 持有；G5 companion evidence
 只能减少重复操作，不能把这些观察静默升级为人工 PASS。G3、G4、G5 必须串行执行。
 
-Phase 14 固定本地顺序为 Environment → Release/package → headless CI → Runtime → Performance →
-Resources → Manual → Readiness。Environment invalid、candidate identity mismatch、P0/security/
-data-safety failure 或 receipt schema corruption 是全局停止条件；普通 Runtime、Performance 或
-Resources failure 必须分别记录并继续运行仍独立且安全的后续通道。尤其 Performance failure
-不得跳过 Resources，Resources failure 也不得抹去 Performance receipt。
+Phase 14 固定顺序为 Source Freeze → Local/Source Preflight → explicit PUSH authority → remote CI/release
+workflow → download/Promote → Environment → Runtime → Performance → Resources → G3 → G4 → G5 → Manual
+→ Readiness。Local Preflight 不生成 final candidate；Promote 前不得执行 final artifact-bound qualification。
+Environment invalid、candidate identity mismatch、P0/security/data-safety failure 或 receipt schema corruption
+是全局停止条件；普通 Runtime、Performance 或 Resources failure 必须分别记录并继续运行仍独立且安全的
+后续通道。尤其 Performance failure不得跳过 Resources，Resources failure 也不得抹去 Performance receipt。
 
 <a id="desktop-repetition-jitter-policy"></a>
 ### Desktop repetition jitter policy
@@ -386,9 +448,22 @@ private release lab。
 
 ### 触发与步骤（方向性）
 
-tag `v*` 触发：版本一致性校验 → 测试 → deny → release build → manifest 检查
-→ native-runtime import gate → smoke test → portable ZIP → SHA-256 checksums → 许可证 notice → SBOM
-→ provenance/attestation → draft release → 人工 Windows 11 验收后发布。
+候选构建与发布晋升必须分离，禁止 tag 事件重新 build 已验收 candidate：
+
+1. `release.yml` 只接受显式 `workflow_dispatch`，从 Source Freeze 构建、测试、deny、检查 manifest、
+   native-runtime import、生成 portable ZIP/checksums/license/SBOM 并上传 workflow artifact；它不创建 tag、
+   draft 或 publish。
+2. 本地下载并 Promote 该 artifact，完成全部 artifact-bound qualification，readiness 必须为 `READY`。
+3. USER 分别授权 TAG、DRAFT-RELEASE、PUBLISH 后，`promote-release.yml` 以独立
+   `workflow_dispatch` operation 执行对应动作。每次 dispatch 显式携带 source SHA、原 candidate
+   workflow run id、预期 ZIP/SBOM SHA-256 与 tag。
+4. TAG operation 只为 exact source 创建 tag；DRAFT operation 从指定历史 workflow run 下载同一 artifact，
+   重新校验预期 hash 后生成 provenance/SBOM attestation 并创建 draft；PUBLISH operation 在重新下载并校验
+   draft assets 后只把既有 draft 公开。
+
+任一 promotion operation 都不得重新运行 Cargo build/package。artifact run id 或 hash 不匹配必须 fail closed；
+不得自动选择“最新同 commit build”替代已验收 artifact。TAG/DRAFT/PUBLISH 仍是三个独立 USER authority，
+前一项批准不授权后一项。
 
 ### 发布物
 

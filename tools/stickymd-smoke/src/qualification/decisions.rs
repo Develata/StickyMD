@@ -1,10 +1,13 @@
-//! Exact-candidate projection of USER release decisions.
+//! Source-freeze projection of USER release decisions.
+//!
+//! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 use std::fs;
 use std::path::Path;
 
 use super::json;
-use super::receipt::{self, Candidate};
+use super::receipt;
+use super::source_freeze::{self, SourceFreeze};
 
 const SOURCE_LEDGER: &str = "docs/report/phase-12-release-decisions.md";
 pub(super) const DECISION_RECEIPT: &str = "dist/evidence/release-decisions.json";
@@ -16,17 +19,17 @@ pub(super) struct Decision {
     pub(super) evidence: String,
 }
 
-pub(super) fn project(root: &Path, candidate: &Candidate) -> Result<(), String> {
-    let source = fs::read_to_string(root.join(SOURCE_LEDGER))
+pub(super) fn project(root: &Path, source: &SourceFreeze) -> Result<(), String> {
+    let source_document = fs::read_to_string(root.join(SOURCE_LEDGER))
         .map_err(|error| format!("cannot read release decision ledger: {error}"))?;
-    let decisions = parse_markdown(&source)?;
-    write(root, candidate, &decisions)
+    let decisions = parse_markdown(&source_document)?;
+    write(root, source, &decisions)
 }
 
 pub(super) fn update(root: &Path, key: &str, status: &str, evidence: &str) -> Result<(), String> {
-    let candidate = receipt::read_candidate(root)?;
-    receipt::validate_candidate_against_repository(root, &candidate)?;
-    let mut decisions = read(root, &candidate)?;
+    let source = source_freeze::read(root)?;
+    source_freeze::validate_against_repository(root, &source)?;
+    let mut decisions = read(root, &source)?;
     let status = normalize_status(status)?;
     if evidence.trim().is_empty() {
         return Err("decision evidence must not be empty".to_owned());
@@ -43,18 +46,18 @@ pub(super) fn update(root: &Path, key: &str, status: &str, evidence: &str) -> Re
     } else {
         return Err(format!("unknown release decision `{key}`"));
     }
-    write(root, &candidate, &decisions)
+    write(root, &source, &decisions)
 }
 
-pub(super) fn read(root: &Path, candidate: &Candidate) -> Result<Vec<Decision>, String> {
+pub(super) fn read(root: &Path, source: &SourceFreeze) -> Result<Vec<Decision>, String> {
     let document = receipt::read_receipt(&root.join(DECISION_RECEIPT))?;
-    if json::u64_field(&document, "schema_version")? != 1 {
-        return Err("release decision receipt schema is not version 1".to_owned());
+    if json::u64_field(&document, "schema_version")? != 2 {
+        return Err("release decision receipt schema is not version 2".to_owned());
     }
     for (field, expected) in [
-        ("source_commit", candidate.source_commit.as_str()),
-        ("exe_sha256", candidate.exe_sha256.as_str()),
-        ("version", candidate.version.as_str()),
+        ("source_commit", source.source_commit.as_str()),
+        ("cargo_lock_sha256", source.cargo_lock_sha256.as_str()),
+        ("version", source.version.as_str()),
     ] {
         let actual = json::string_field(&document, field)?;
         if actual != expected {
@@ -138,12 +141,12 @@ fn parse_json_decisions(document: &str) -> Result<Vec<Decision>, String> {
     Ok(decisions)
 }
 
-fn write(root: &Path, candidate: &Candidate, decisions: &[Decision]) -> Result<(), String> {
+fn write(root: &Path, source: &SourceFreeze, decisions: &[Decision]) -> Result<(), String> {
     let mut document = format!(
-        "{{\"schema_version\":1,\"source_commit\":\"{}\",\"exe_sha256\":\"{}\",\"version\":\"{}\",\"decisions\":[",
-        json::escape(&candidate.source_commit),
-        json::escape(&candidate.exe_sha256),
-        json::escape(&candidate.version),
+        "{{\"schema_version\":2,\"source_commit\":\"{}\",\"cargo_lock_sha256\":\"{}\",\"version\":\"{}\",\"decisions\":[",
+        json::escape(&source.source_commit),
+        json::escape(&source.cargo_lock_sha256),
+        json::escape(&source.version),
     );
     for (index, decision) in decisions.iter().enumerate() {
         if index > 0 {

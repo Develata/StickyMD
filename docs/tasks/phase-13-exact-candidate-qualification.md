@@ -12,7 +12,8 @@ commit，并按固定顺序收集 exact-artifact 自动、人工与远端证据�
 ## Prerequisites
 
 - Phase 12 local qualification infrastructure complete。
-- USER 已批准 v0.1.0 cold/warm startup hard gate 均为 400 ms；warm 180 ms 仅 preferred。
+- Phase 13 当时使用 400 ms hard gate；该历史前提已被 Phase 14 的 550 ms release boundary
+  取代，180 ms 为 preferred、400 ms 仅为 diagnostic engineering target。
 - 当前 Phase 12 旧收据只作历史诊断，不可用于 Phase 13 PASS。
 
 ## Scope

@@ -2,11 +2,11 @@
 
 ## Automated gates
 
-- [ ] Phase 14 source-controlled qualification tooling/docs are frozen and an exact clean `RELEASE_SOURCE_COMMIT` receipt exists.
+- [ ] Phase 14 source-controlled qualification tooling/docs are frozen and a clean Source Freeze receipt exists.
 - [ ] Qualification environment is `VALID` before GUI evidence; blocked/unsupported state remains `NOT TESTED`, never product FAIL/PASS.
-- [ ] `cargo fmt`, strict Clippy, workspace/Release tests, `cargo deny check`, and Rust `all --ci --json` pass on the exact Phase 14 candidate.
-- [ ] Phase 14 Release/package、headless CI、runtime、performance、resources 五类 receipt 分别通过，
-      且绑定 exact source commit 与适用的 EXE/ZIP SHA-256。
+- [ ] `cargo fmt`, strict Clippy, workspace/Release tests, `cargo deny check`, and Rust `all --ci --json` pass as Source Freeze / Local Preflight evidence.
+- [ ] The successful GitHub `release` workflow run exposes exactly one non-expired release artifact；downloaded ZIP/checksum/SBOM 通过 source/package/native-runtime/runtime verification 并 Promote 到 `dist/exact-candidate/`。
+- [ ] Phase 14 runtime、performance、resources、G3、G4、G5 与 manual receipt 分别通过，且绑定 Promoted Candidate 的 exact source/EXE/ZIP identity。
 - [ ] Exact Phase 14 portable ZIP passes `tools/release/verify-package.ps1`.
 - [ ] Exact Release PE normal/delay imports pass the Rust native-runtime gate and contain no external
       Visual C++/GNU developer runtime DLL dependency.
@@ -30,13 +30,14 @@
       180 ms remains preferred and 400 ms remains the diagnostic engineering target。
 - [ ] Approve every remaining manual waiver individually.
 - [x] USER approved unsigned Authenticode portable distribution for v0.1.0；package/README must state it。
-- [ ] Approve pushing the exact commit and tag.
+- [ ] Approve pushing the exact Source Freeze commit.
+- [ ] After readiness is `READY`, separately approve TAG, DRAFT-RELEASE, and PUBLISH.
 
-## GitHub draft release
+## GitHub artifact promotion and release
 
-- [ ] Confirm the tag version exactly matches the workspace version and its commit belongs to the approved branch.
-- [ ] Confirm the remote release workflow passed for the exact tag SHA.
-- [ ] Download artifacts; verify `SHA256SUMS.txt` and run `gh attestation verify <artifact> --repo <owner/repo>`.
-- [ ] Re-run the portable smoke on the downloaded ZIP and a clean Windows machine.
-- [ ] Inspect the generated draft release and release notes.
-- [ ] Publish the draft only after explicit USER approval.
+- [ ] Confirm the candidate-only `release.yml` run passed for the approved Source Freeze SHA; it must not create a tag or release.
+- [ ] Download and Promote that run's exact artifact; complete the minimal artifact-bound requalification and obtain `READY`.
+- [ ] After explicit TAG authorization, create/verify `v0.1.0` at the exact Source Freeze without rebuilding.
+- [ ] After explicit DRAFT-RELEASE authorization, download the same run, re-verify source/ZIP/SBOM hashes, attest it, and create the draft without rebuilding.
+- [ ] Inspect the draft assets and release notes; verify `SHA256SUMS.txt` and attestations.
+- [ ] After explicit PUBLISH authorization, re-verify the existing draft assets and publish without rebuilding or replacing them.

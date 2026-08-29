@@ -16,11 +16,11 @@ gitignored `dist/evidence/`；本文件在 candidate freeze 后不回填运行�
 | P13-A06 | 环境收据只含布尔事实和显示器数量，不含标题、用户名或路径 | Automated | evidence schema serialization test | AUTOMATED PASS |
 | P13-A07 | Resources 每个主要场景前重新检查环境 | Automated | resource coordinator task tests | AUTOMATED PASS |
 | P13-A08 | Resources 每个已完成场景覆盖写入 partial receipt，未完成状态为 `INCOMPLETE` | Automated | partial evidence serializer/coordinator tests | AUTOMATED PASS |
-| P13-A09 | Release/package receipt 绑定 exact source、EXE、ZIP、SBOM 与 Cargo.lock | Automated | Phase 13 `-Release` + `qualification candidate` | AUTOMATED PASS |
-| P13-A10 | Headless CI receipt 绑定 exact source/EXE 且不运行 GUI 项 | Automated | Phase 13 local campaign `all --ci` stage | AUTOMATED PASS |
-| P13-A11 | Runtime receipt 先于 Performance/Resources，失败或环境阻塞时停止昂贵后续阶段 | Automated | ordered Rust `qualification local` campaign | AUTOMATED PASS |
-| P13-A12 | Cold/Warm startup hard gate 都是 400 ms；warm 180 ms 仅 preferred | Automated | startup runtime gate + approved plan/decision projection | AUTOMATED PASS |
-| P13-A13 | 五类自动收据必须全部 exact、完整且所有 result 为 `PASSED` | Automated | readiness fail-closed receipt validation tests | AUTOMATED PASS |
+| P13-A09 | Local Release/package preflight 绑定 Source Freeze；最终 EXE/ZIP/SBOM 仅由 remote artifact promotion 建立 | Automated | Phase 13 `-Release` + `qualification source-freeze` + Phase 14 promotion contract | AUTOMATED PASS |
+| P13-A10 | Headless CI receipt 只绑定 Source Freeze 且不运行 GUI 项；不得宣称验证了 final EXE | Automated | Phase 13 local/source campaign `all --ci` stage | AUTOMATED PASS |
+| P13-A11 | Local campaign 只产生 Source/Preflight evidence；Promote 后 Runtime、Performance、Resources、G3/G4/G5 作为独立 artifact-bound channel 收集，普通失败不抹除其它安全收据 | Automated | campaign/task-plan + readiness tests | AUTOMATED PASS |
+| P13-A12 | Cold/Warm startup hard gate 都是 550 ms；180 ms 为 preferred、400 ms 为 diagnostic engineering target | Automated | startup runtime gate + approved plan/decision projection | AUTOMATED PASS |
+| P13-A13 | 所有必需 source-bound 与 artifact-bound 收据必须 identity 匹配、完整且所有 result 为 `PASSED` | Automated | readiness fail-closed receipt validation tests | AUTOMATED PASS |
 | P13-A14 | stale source、EXE、ZIP、SBOM 或 incomplete receipt 不参与 readiness | Automated | candidate/readiness identity tests | AUTOMATED PASS |
 | P13-A15 | Manual recorder 只接受显式 `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED` | Automated | manual parser/interactive-token tests | AUTOMATED PASS |
 | P13-A16 | M1..M5 只共享 setup；原 P12-M01..P12-M44 每项恰好映射一个 session 并单独记录 | Automated | manual session mapping test | AUTOMATED PASS |

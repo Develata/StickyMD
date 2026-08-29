@@ -96,17 +96,17 @@
 | P09-D086 | SECURITY.md完善。 | Automated | checked-in security policy | AUTOMATED PASS |
 | P09-D087 | CONTRIBUTING.md完善。 | Automated | checked-in contribution policy | AUTOMATED PASS |
 | P09-D088 | release checklist完成。 | Automated | checked-in release checklist | AUTOMATED PASS |
-| P09-D089 | `.github/workflows/release.yml`完成。 | Automated | actionlint + local static audit | AUTOMATED PASS |
-| P09-D090 | release workflow actions pin full SHA。 | Automated | governance static audit | AUTOMATED PASS |
-| P09-D091 | release workflow最小permissions。 | Automated | governance static audit | AUTOMATED PASS |
+| P09-D089 | candidate 与 promotion release workflows 完成。 | Automated | actionlint + local static audit | AUTOMATED PASS |
+| P09-D090 | release workflows actions pin full SHA。 | Automated | governance static audit | AUTOMATED PASS |
+| P09-D091 | release workflows 按 operation 使用最小 permissions。 | Automated | governance static audit | AUTOMATED PASS |
 | P09-D092 | no pull_request_target release privilege。 | Automated | governance static audit | AUTOMATED PASS |
 | P09-D093 | no curl/sh。 | Automated | governance static audit | AUTOMATED PASS |
 | P09-D094 | package script是CI/local唯一规则。 | Automated | workflow invokes checked-in scripts | AUTOMATED PASS |
 | P09-D095 | release workflow生成checksums。 | Automated | local exact-RC pipeline + workflow audit | AUTOMATED PASS |
 | P09-D096 | release workflow生成SBOM。 | Automated | local exact-RC pipeline + workflow audit | AUTOMATED PASS |
-| P09-D097 | release workflow配置actions/attest。 | Automated | pinned action and least-privilege permissions audit | AUTOMATED PASS |
-| P09-D098 | release workflow只创建draft release。 | Automated | workflow static audit | AUTOMATED PASS |
-| P09-D099 | release workflow不自动stable publish。 | Automated | workflow static audit | AUTOMATED PASS |
+| P09-D097 | draft promotion operation 配置 actions/attest 且复用 exact artifact。 | Automated | pinned action and exact run/hash audit | AUTOMATED PASS |
+| P09-D098 | candidate workflow 不创建 release；draft operation 只创建/更新 draft。 | Automated | workflow static audit | AUTOMATED PASS |
+| P09-D099 | publish 仅由独立显式 operation 执行，不由 candidate/tag/draft 自动触发。 | Automated | workflow static audit | AUTOMATED PASS |
 | P09-D100 | release workflow未在Phase9擅自运行远端。 | Automated | no push/tag/release; remote execution NOT EXECUTED | AUTOMATED PASS |
 | P09-D101 | Phase9 smoke完成。 | Automated | all code tests pass; final status gate rejects P09-D008 warm-start BLOCKED | BLOCKED |
 | P09-D102 | all.ps1 -Ci PASS。 | Automated | all 13 CI tasks run; final ready-status gate rejects P09-D008 | BLOCKED |

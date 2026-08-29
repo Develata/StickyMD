@@ -25,6 +25,7 @@ mod readiness;
 mod receipt;
 mod remote;
 pub(crate) mod repetition;
+mod source_freeze;
 mod startup_attribution;
 
 use std::path::Path;
@@ -39,13 +40,12 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
             record_environment(root, evidence_file.as_deref())
         }
         QualificationCommand::LocalCampaign => campaign::run(root),
-        QualificationCommand::Candidate => {
-            let candidate = receipt::generate_candidate(root)?;
-            decisions::project(root, &candidate)?;
-            println!("RELEASE_SOURCE_COMMIT={}", candidate.source_commit);
-            println!("RELEASE_EXE_SHA256={}", candidate.exe_sha256);
-            println!("RELEASE_ZIP_SHA256={}", candidate.zip_sha256);
-            println!("REMOTE_SYNCED={}", candidate.remote_synced);
+        QualificationCommand::SourceFreeze => {
+            let source = source_freeze::create(root)?;
+            decisions::project(root, &source)?;
+            println!("RELEASE_SOURCE_COMMIT={}", source.source_commit);
+            println!("RELEASE_CARGO_LOCK_SHA256={}", source.cargo_lock_sha256);
+            println!("REMOTE_SYNCED={}", source.remote_synced);
             Ok(())
         }
         QualificationCommand::StartupAttribution => startup_attribution::record(root),
@@ -207,4 +207,8 @@ pub(super) fn record_environment(root: &Path, evidence_file: Option<&Path>) -> R
 
 pub(crate) fn record_manual(root: &Path, command: ManualCommand) -> Result<(), String> {
     manual::execute(root, command)
+}
+
+pub(crate) fn release_executable(root: &Path) -> Result<std::path::PathBuf, String> {
+    receipt::resolve_release_executable(root)
 }

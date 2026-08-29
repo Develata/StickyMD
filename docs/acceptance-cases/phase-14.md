@@ -1,7 +1,8 @@
 # Phase 14 Acceptance Matrix
 
 本矩阵验证 release policy / qualification tooling，以及 USER 在 candidate freeze 前明确批准的
-Split 同步、Source 查找替换和转换控件标识。任何 runtime 变化都会作废旧候选并触发完整重新资格化。自动项由 std-only Rust CLI
+Split 同步、Source 查找替换和转换控件标识。任何 runtime 变化都会作废旧候选；Source Freeze 不变而
+仅 candidate 字节变化时采用 plan 定义的最小 exact 重验，不重复 Phase 0–14 source-only Campaign。自动项由 std-only Rust CLI
 持有并由 CI 调用。人工项和 exact-desktop 动态项在 source matrix 中保持 `NOT TESTED`，只有对应的
 ignored exact-candidate receipt 可改变 readiness，不能改写此 Markdown 状态。
 
@@ -40,6 +41,9 @@ ignored exact-candidate receipt 可改变 readiness，不能改写此 Markdown �
 | P14-A29 | 查找/替换使用单一 session；Ctrl+F toggle、Ctrl+H expand、Find-only replacement guard、方向键导航、字段 caret/mouse/IME geometry 与源码 caret 隔离均有回归 | Automated | interaction/render/app unit tests + Phase 14 headless shard | AUTOMATED PASS |
 | P14-A30 | exact candidate 使用真实 Microsoft Pinyin 与 WeType profile，以物理键盘验证 Source/Search composition、commit/cancel、selection replace 与一次 Undo；测试结束恢复原 profile | Automated exact candidate | `phase-14.ps1 -G4 -G4Case G4-06`；完整 G4 receipt 必须包含 G4-06 | NOT TESTED |
 | P14-A31 | smoke 启动的每个 StickyMD GUI child 都由 RAII owner 持有，普通错误返回或 unwind 会执行 kill + wait；Performance/Resources 在启动前对已遗留的 smoke-owned 测试进程 fail closed，且绝不自动终止用户自己的便签实例 | Automated | `managed_process::tests` + runtime isolation-scenario tests；正式测量前置检查 | AUTOMATED PASS |
+| P14-A32 | Local Preflight Build 与 Release Exact Artifact 分离；只有 successful remote workflow artifact 通过 checksum/SBOM/package/runtime 后可原子 Promote 到 canonical ignored staging；candidate receipt 绑定 run/attempt/artifact id 与实际 ZIP/EXE/SBOM hash | Automated | qualification source-freeze/remote/downloaded/candidate resolver tests | AUTOMATED PASS |
+| P14-A33 | Promote 或 candidate identity 改变后，Runtime/Performance/Resources/G3/G4/G5/manual 旧收据 fail closed；Source Freeze 未变时 source-only CI/headless 可复用，因此 final requalification 不要求重跑完整 Phase 0–14 Campaign | Automated | readiness evidence-class tests + central candidate resolver regression | AUTOMATED PASS |
+| P14-A34 | Candidate workflow 与 publish promotion workflow 分离；tag/draft/publish 只接受显式 source/run/hash/tag 输入并复用同一 artifact，禁止 tag 触发重建或自动选择另一 build | Automated | release workflow governance + operation separation audit | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 ## Guided manual sessions

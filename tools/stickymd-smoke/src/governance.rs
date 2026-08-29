@@ -19,6 +19,7 @@ const REQUIRED_FILES: &[&str] = &[
     "CONTRIBUTING.md",
     ".github/workflows/ci.yml",
     ".github/workflows/release.yml",
+    ".github/workflows/promote-release.yml",
     ".github/workflows/scheduled.yml",
     "docs/AGENTS.md",
     "docs/coverage-matrix.md",
@@ -81,6 +82,7 @@ const REQUIRED_FILES: &[&str] = &[
     "tools/release/generate-third-party-notices.ps1",
     "tools/release/generate-sbom.ps1",
     "tools/release/verify-package.ps1",
+    "tools/release/verify-promoted-artifact.ps1",
 ];
 
 const FORBIDDEN_PACKAGES: &[&str] = &[
@@ -156,10 +158,10 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-14.md");
     let content = read_text(&path)?;
     let observed = frozen_trace_ids(&content, "P14-A")?;
-    let expected: Vec<u16> = (1..=31).collect();
+    let expected: Vec<u16> = (1..=34).collect();
     if observed != expected {
         return Err(format!(
-            "{} IDs must be exactly P14-A01..P14-A31; observed {observed:?}",
+            "{} IDs must be exactly P14-A01..P14-A34; observed {observed:?}",
             path.display()
         ));
     }
@@ -229,7 +231,7 @@ fn verify_phase13_contract_trace(root: &Path) -> Result<(), String> {
 fn verify_phase12_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-12.md");
     let content = read_text(&path)?;
-    for (prefix, last) in [("P12-A", 17_u16), ("P12-M", 44_u16)] {
+    for (prefix, last) in [("P12-A", 18_u16), ("P12-M", 44_u16)] {
         let observed = frozen_trace_ids(&content, prefix)?;
         let expected: Vec<u16> = (1..=last).collect();
         if observed != expected {
@@ -435,6 +437,7 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     for relative in [
         ".github/workflows/ci.yml",
         ".github/workflows/release.yml",
+        ".github/workflows/promote-release.yml",
         ".github/workflows/scheduled.yml",
     ] {
         let path = root.join(relative);
@@ -483,19 +486,59 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     let release = read_text(&root.join(".github/workflows/release.yml"))?;
     for required in [
         "permissions:\n  contents: read",
+        "workflow_dispatch:",
         "persist-credentials: false",
-        "tools/release/package.ps1",
+        "tools/release/package.ps1 -ExactCandidate",
         "tools/release/generate-sbom.ps1",
         "tools/release/verify-package.ps1",
         "qualification native-runtime --exe=target/release/stickymd-win.exe",
-        "subject-checksums: dist/SHA256SUMS.txt",
-        "sbom-path: dist/SBOM.spdx.json",
-        "gh release create",
-        "--draft",
+        "name: stickymd-windows-x64-release",
     ] {
         if !release.contains(required) {
             return Err(format!(
                 "release workflow lacks required security token `{required}`"
+            ));
+        }
+    }
+    for forbidden in ["push:\n    tags:", "gh release", "actions/attest@"] {
+        if release.contains(forbidden) {
+            return Err(format!(
+                "candidate workflow must not tag, attest, or create releases: `{forbidden}`"
+            ));
+        }
+    }
+    let promotion = read_text(&root.join(".github/workflows/promote-release.yml"))?;
+    for required in [
+        "operation:",
+        "- tag",
+        "- draft",
+        "- publish",
+        "source_sha:",
+        "artifact_run_id:",
+        "expected_zip_sha256:",
+        "expected_sbom_sha256:",
+        "run-id: ${{ inputs.artifact_run_id }}",
+        "actions/runs/${{ inputs.artifact_run_id }}",
+        "tools/release/verify-promoted-artifact.ps1",
+        "subject-checksums: dist/promoted/SHA256SUMS.txt",
+        "sbom-path: dist/promoted/SBOM.spdx.json",
+        "gh release create",
+        "gh release edit",
+    ] {
+        if !promotion.contains(required) {
+            return Err(format!(
+                "promotion workflow lacks exact-artifact token `{required}`"
+            ));
+        }
+    }
+    for forbidden in [
+        "cargo build",
+        "tools/release/package.ps1",
+        "push:\n    tags:",
+    ] {
+        if promotion.contains(forbidden) {
+            return Err(format!(
+                "promotion workflow must reuse rather than rebuild exact artifact: `{forbidden}`"
             ));
         }
     }
@@ -520,6 +563,26 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     }
     if !package.contains("generate-third-party-notices.ps1") {
         return Err("package.ps1 must generate notices from the frozen runtime graph".to_owned());
+    }
+    if !package.contains("function Copy-NormalizedUtf8Lf")
+        || package.matches("Copy-NormalizedUtf8Lf -Source").count() != 3
+        || !package.contains("[Text.UTF8Encoding]::new($false)")
+    {
+        return Err(
+            "package.ps1 must normalize all source-controlled license text to UTF-8/LF".to_owned(),
+        );
+    }
+    let verify_package = read_text(&root.join("tools/release/verify-package.ps1"))?;
+    let verify_promoted = read_text(&root.join("tools/release/verify-promoted-artifact.ps1"))?;
+    for (label, script) in [
+        ("package verifier", verify_package.as_str()),
+        ("promotion verifier", verify_promoted.as_str()),
+    ] {
+        if !script.contains("Source commit:") {
+            return Err(format!(
+                "{label} must bind the packaged README to the approved source commit"
+            ));
+        }
     }
     let notices = read_text(&root.join("tools/release/generate-third-party-notices.ps1"))?;
     for required in [

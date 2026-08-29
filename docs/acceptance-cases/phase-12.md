@@ -13,18 +13,19 @@
 | P12-A03 | Workspace formatting and strict Clippy remain clean | Automated | Phase 12 `-Release` task graph | AUTOMATED PASS |
 | P12-A04 | Workspace and crate Release tests remain clean | Automated | Phase 12 baseline commands | AUTOMATED PASS |
 | P12-A05 | Dependency/advisory/license policy remains enforced | Automated | `cargo deny check` via Phase 12 `-Release` | AUTOMATED PASS |
-| P12-A06 | Exact clean commit creates deterministic local-RC package name | Automated | `tools/release/package.ps1` dirty-tree and SHA contract | AUTOMATED PASS |
+| P12-A06 | Exact clean commit creates deterministic Local Preflight package name；相同 staging bytes 的 ZIP 可重复，但不声称独立 Windows linker build 可复现 | Automated | `tools/release/package.ps1` dirty-tree/SHA/EOL contract | AUTOMATED PASS |
 | P12-A07 | ZIP allowlist, PE x64, manifest, license, no-user-data and DPI-correct runtime gates run | Automated | package runtime smoke; Per-Monitor V2 coordinate test; bounded cursor parking with actual-position confirmation; focus-transition sensor-topmost regression; copied Release Phase 8 lifecycle at 150% DPI | AUTOMATED PASS |
 | P12-A08 | SPDX SBOM and checksums bind exact ZIP and SBOM | Automated | pinned Syft generator plus verifier | AUTOMATED PASS |
-| P12-A09 | Candidate receipt binds source, Cargo.lock, EXE, ZIP, SBOM and toolchain | Automated | `stickymd-smoke qualification candidate` plus CLI tests | AUTOMATED PASS |
+| P12-A09 | Source Freeze 与 Promoted Candidate 分离；最终 candidate 绑定 source、Cargo.lock、workflow run/attempt/artifact id、EXE、ZIP、SBOM 和 target | Automated | `stickymd-smoke qualification source-freeze` / `downloaded` promotion + CLI tests | AUTOMATED PASS |
 | P12-A10 | Manual recorder rejects noninteractive inference and accepts explicit statuses only | Automated | `stickymd-smoke` qualification unit tests | AUTOMATED PASS |
-| P12-A11 | Stale source/EXE/artifact receipts cannot count | Automated | readiness identity validation and tests | AUTOMATED PASS |
+| P12-A11 | Stale source/EXE/artifact receipts不能计入；Promote 后旧 artifact-bound receipt 全部失效，source-only receipt 只在 Source Freeze 不变时可复用 | Automated | readiness/candidate resolver identity validation and tests | AUTOMATED PASS |
 | P12-A12 | Readiness has no force-ready path and reports missing/failed Release, headless CI, performance, runtime, resources, manual, remote and USER gates | Automated | exact-mode receipt contracts plus `stickymd-smoke qualification readiness --explain` | AUTOMATED PASS |
-| P12-A13 | Remote workflow receipt must match exact SHA and successful attempt | Automated | `qualification remote` parser/identity contract | AUTOMATED PASS |
-| P12-A14 | Downloaded ZIP must pass checksums, package/runtime smoke and exact hashes | Automated | `qualification downloaded --zip=<path>` | AUTOMATED PASS |
+| P12-A13 | Remote workflow receipt must match Source Freeze、successful run/attempt 与唯一 non-expired release artifact id；不得预填 final EXE hash | Automated | `qualification remote` parser/identity contract | AUTOMATED PASS |
+| P12-A14 | Downloaded artifact 集合必须通过 checksum、SBOM、package/native runtime/runtime smoke 后原子晋升为唯一 candidate；本地 preflight hash 不参与等价判断 | Automated | `qualification downloaded --zip=<path>` | AUTOMATED PASS |
 | P12-A15 | Release PE 普通/延迟导入表不含需另装的 C/C++/Rust developer runtime；构建静态链接 MSVC CRT | Automated | `stickymd-smoke qualification native-runtime --exe=target/release/stickymd-win.exe` + Release/package CI | AUTOMATED PASS |
 | P12-A16 | G3 exact harness 的命令、隔离、receipt identity 与五项 fail-closed 聚合可由 headless CI 验证 | Automated | `stickymd-smoke` G3 CLI/receipt unit tests；GUI 只在本地交互桌面运行 | AUTOMATED PASS |
-| P12-A17 | G4 exact harness 的命令、隔离、receipt identity 与五组 fail-closed 聚合可由 headless CI 验证 | Automated | `stickymd-smoke` G4 CLI/receipt/unit contract tests；GUI 只在本地交互桌面运行 | AUTOMATED PASS |
+| P12-A17 | G4 exact harness 的命令、隔离、receipt identity 与六组 fail-closed 聚合可由 headless CI 验证 | Automated | `stickymd-smoke` G4 CLI/receipt/unit contract tests；GUI 只在本地交互桌面运行 | AUTOMATED PASS |
+| P12-A18 | Tag/Draft/Publish promotion 必须复用已验收 workflow artifact run/id/hash，三个 USER authority 独立且任何 operation 都不重新 build/package | Automated | `.github/workflows/{release,promote-release}.yml` static governance | AUTOMATED PASS |
 
 ## Manual Tier A — release blocking unless explicitly waived
 
@@ -87,8 +88,9 @@
 
 ## Current readiness
 
-所有 source matrix 行仍为 `NOT TESTED`，这不会使 headless CI 失败。G3/G4/G5 自动 exact 行只有对应
-receipt 完整 PASS 才解除 readiness blocker；其余 Tier A 仍需人工 PASS 或 USER 明确批准具体
+所有 source matrix 行仍为 `NOT TESTED`，这不会使 headless CI 失败。最终 readiness 只接受 GitHub
+workflow artifact 晋升后的 Promoted Candidate；G3/G4/G5 自动 exact 行只有对应 candidate receipt 完整
+PASS 才解除 blocker。其余 Tier A 仍需人工 PASS 或 USER 明确批准具体
 case/group waiver。Tier B 需要 PASS 或
 绑定 v0.1.0 + exact source 的明确 USER disposition；Tier C 仅在对应自动化合同通过时允许保持
 `NOT TESTED` 而不阻断，任何已观察到的 `MANUAL_FAIL` 仍阻断。

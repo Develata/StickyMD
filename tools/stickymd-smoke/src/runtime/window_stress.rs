@@ -21,7 +21,7 @@ struct StressFailure {
 /// resource samples. Each run uses a fresh copied executable and portable
 /// directory so failures cannot inherit another run's shell state.
 pub(crate) fn run(repository: &Path, options: WindowStressOptions) -> Result<(), String> {
-    let source = repository.join("target/release/stickymd-win.exe");
+    let source = crate::qualification::release_executable(repository)?;
     if !source.is_file() {
         return Err(format!(
             "Release executable is missing: {}",

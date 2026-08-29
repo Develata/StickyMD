@@ -2,8 +2,8 @@
 
 ## Status
 
-Implementation Reopened — Preview selection geometry and Search input correction are implemented and pass
-headless/Release baselines; all prior exact-candidate evidence remains invalidated until a new candidate is built.
+Implementation Reopened — USER 已批准 remote workflow artifact promotion（Option B）与最小 exact 重验；
+qualification authority/tooling 正在收敛，所有旧 local-build-bound evidence 已失效。
 
 ## Purpose
 
@@ -22,8 +22,9 @@ headless/Release baselines; all prior exact-candidate evidence remains invalidat
 - 更新 `docs/plan/10` / `docs/plan/11` 发布合同。
 - `stickymd-smoke` 增加 Phase 14、三层 startup threshold、startup attribution、G1/G2 guided
   manual sessions、G3/G4/G5 exact-candidate automation、risk-tier readiness 和 independent channel collection。
-- 建立 exact candidate 并重新收集 Release、headless CI、Runtime、Performance、Resources、
-  Manual、Readiness evidence。
+- 建立 Source Freeze 与 Local Preflight；将 successful GitHub release workflow artifact 下载、验证并
+  Promote 为唯一 exact candidate；Source Freeze 不变时复用 source-only evidence，仅重新收集
+  downloaded、Runtime、Performance、Resources、G3、G4、G5、Manual、Readiness artifact-bound evidence。
 - 对 exact-candidate 人工验收中 USER 实际观察到的 release-blocking 缺陷作最小、回归绑定的纠正；
   每次 tracked correction 都作废旧候选并重新开始资格化。
 - 实现 USER 在候选冻结前明确批准的 Split 语义滚动同步（默认开启、可关闭）、当前 Source
@@ -63,7 +64,7 @@ runtime capability；以静态 MSVC CRT 和 exact PE import 自动检查共同�
 唯一产品 authority 不变；Phase 14 tracked delta 原则上仅限 plan/projection/docs 与 verification tooling；
 USER 在 exact-candidate 人工验收中报告的 release-blocking implementation defect 可以按原 plan 作最小纠正。
 tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任何 tracked source 改变都会
-创建新 candidate，并使旧 candidate receipt 失效。
+创建新 Source Freeze 并使旧 candidate receipt 失效；candidate 只能由 remote workflow artifact Promote。
 
 ## Deliverables
 

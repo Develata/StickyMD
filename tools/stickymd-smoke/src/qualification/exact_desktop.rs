@@ -125,6 +125,7 @@ pub(super) fn run(
     }
 
     let candidate = receipt::read_candidate(repository)?;
+    receipt::validate_candidate_against_repository(repository, &candidate)?;
     let zip = requested_zip
         .map(|path| absolute(repository, path))
         .unwrap_or_else(|| receipt::candidate_zip(repository, &candidate));

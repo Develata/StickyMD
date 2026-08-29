@@ -5,6 +5,7 @@ param(
     [string]$Version,
     [string]$CommitSha,
     [string]$ReleaseTag,
+    [switch]$ExactCandidate,
     [switch]$AllowDirtyValidation
 )
 
@@ -24,6 +25,17 @@ function Get-CheckedRelativePath {
         throw "Package input escapes staging root: $fullPath"
     }
     return $fullPath.Substring($rootPrefix.Length)
+}
+
+function Copy-NormalizedUtf8Lf {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    $text = [IO.File]::ReadAllText($Source)
+    $normalized = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+    [IO.File]::WriteAllText($Destination, $normalized, [Text.UTF8Encoding]::new($false))
 }
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
@@ -55,7 +67,13 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect Git working tree state' }
 if ($dirty -and -not $AllowDirtyValidation) {
     throw 'Refusing to label a dirty working tree as a local RC; commit first or use -AllowDirtyValidation for non-RC script validation'
 }
-if ($ReleaseTag) {
+if ($ReleaseTag -and $ExactCandidate) {
+    throw 'ReleaseTag and ExactCandidate are mutually exclusive'
+}
+if ($ExactCandidate) {
+    if ($dirty) { throw 'An exact workflow candidate cannot be built from a dirty working tree' }
+    $archiveName = "StickyMD-$Version-windows-x64-portable.zip"
+} elseif ($ReleaseTag) {
     if ($ReleaseTag -ne "v$Version") { throw "Release tag $ReleaseTag does not match workspace version v$Version" }
     if ($dirty) { throw 'A tagged release package cannot be built from a dirty working tree' }
     $archiveName = "StickyMD-$ReleaseTag-windows-x64-portable.zip"
@@ -73,14 +91,21 @@ New-Item -ItemType Directory -Path (Join-Path $packageRoot 'licenses') -Force | 
 
 try {
     Copy-Item -LiteralPath $ExePath -Destination (Join-Path $packageRoot 'StickyMD.exe')
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $packageRoot 'LICENSE.txt')
+    Copy-NormalizedUtf8Lf -Source (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $packageRoot 'LICENSE.txt')
     & (Join-Path $repoRoot 'tools\release\generate-third-party-notices.ps1') -DestinationPath (Join-Path $packageRoot 'THIRD_PARTY_NOTICES.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Runtime dependency notice generation failed' }
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'assets\licenses\SIL-OFL-1.1.txt') -Destination (Join-Path $packageRoot 'licenses\SIL-OFL-1.1.txt')
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'assets\licenses\KaTeX-fonts-NOTICE.txt') -Destination (Join-Path $packageRoot 'licenses\KaTeX-fonts-NOTICE.txt')
+    Copy-NormalizedUtf8Lf -Source (Join-Path $repoRoot 'assets\licenses\SIL-OFL-1.1.txt') -Destination (Join-Path $packageRoot 'licenses\SIL-OFL-1.1.txt')
+    Copy-NormalizedUtf8Lf -Source (Join-Path $repoRoot 'assets\licenses\KaTeX-fonts-NOTICE.txt') -Destination (Join-Path $packageRoot 'licenses\KaTeX-fonts-NOTICE.txt')
 
-    $readme = @(
+    $readmeTitle = if ($ReleaseTag) {
+        'StickyMD portable release for Windows 11 x64'
+    } elseif ($ExactCandidate) {
+        'StickyMD exact workflow candidate for Windows 11 x64'
+    } else {
         'StickyMD portable release candidate for Windows 11 x64'
+    }
+    $readme = @(
+        $readmeTitle
         "Version: $Version"
         "Source commit: $($CommitSha.ToLowerInvariant())"
         ''
@@ -140,7 +165,16 @@ try {
     [IO.File]::WriteAllText($checksumPath, "$zipHash *$archiveName`n", [Text.UTF8Encoding]::new($false))
     Write-Output "PACKAGE_PATH=$archivePath"
     Write-Output "PACKAGE_SHA256=$zipHash"
-    Write-Output "SOURCE_TREE_STATE=$(if ($dirty) { 'DIRTY_VALIDATION' } else { 'CLEAN_RC' })"
+    $sourceTreeState = if ($ExactCandidate) {
+        'EXACT_WORKFLOW_CANDIDATE'
+    } elseif ($ReleaseTag) {
+        'TAGGED_RELEASE'
+    } elseif ($dirty) {
+        'DIRTY_VALIDATION'
+    } else {
+        'CLEAN_PREFLIGHT'
+    }
+    Write-Output "SOURCE_TREE_STATE=$sourceTreeState"
 } finally {
     $resolvedTemp = [IO.Path]::GetFullPath($temporaryRoot)
     $systemTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())

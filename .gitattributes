@@ -9,6 +9,8 @@
 docs/phases/*.md text eol=lf -whitespace
 *.toml text eol=lf
 Cargo.lock text eol=lf
+LICENSE text eol=lf
+assets/licenses/*.txt text eol=lf
 *.rs text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf

@@ -475,10 +475,11 @@ fn run_task(root: &Path, task: &Task, capture_output: bool) -> Result<TaskExecut
         Task::QualificationEnvironment => Err(
             "qualification environment tasks are handled by the evidence coordinator".to_owned(),
         ),
-        Task::NativeRuntimeDependencies => crate::pe_dependencies::verify_portable_executable(
-            &root.join("target/release/stickymd-win.exe"),
-        )
-        .map(|_| TaskExecution::Passed(TaskEvidence::default())),
+        Task::NativeRuntimeDependencies => {
+            let executable = crate::qualification::release_executable(root)?;
+            crate::pe_dependencies::verify_portable_executable(&executable)
+                .map(|_| TaskExecution::Passed(TaskEvidence::default()))
+        }
         Task::Cargo { label, args, .. } => {
             let mut command = Command::new("cargo");
             command.args(args).current_dir(root);

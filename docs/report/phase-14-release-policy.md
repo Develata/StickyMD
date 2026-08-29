@@ -12,7 +12,7 @@ Phase 14 是 release-policy / verification-plane phase。产品功能和 runtime
 | `≤180 ms` preferred / `≤400 ms` engineering target | ACTIVE DIAGNOSTIC | 未达到不阻断 v0.1.0，但必须报告 |
 | Tier A/B/C manual policy | USER APPROVED | version + source + case/group binding |
 | Independent evidence channels | USER APPROVED | 普通失败不抹除独立证据 |
-| Push/tag/draft/publish | PENDING | 不得执行 |
+| Push/tag/draft/publish | PENDING | 四个独立 authority；未经对应 USER 批准不得执行 |
 
 ## Startup Threshold Semantics
 
@@ -45,4 +45,6 @@ unsigned 本身失败。README/release notes 必须建议核对 `SHA256SUMS.txt`
 
 ## Remaining Authority
 
-PUSH、TAG、DRAFT-RELEASE、PUBLISH 均保持 `PENDING`。Phase 14 不执行任何 remote mutation。
+PUSH、TAG、DRAFT-RELEASE、PUBLISH 均保持 `PENDING`。Phase 14 只在 USER 单独批准 PUSH 后
+允许推送 Source Freeze 并运行 candidate-only remote workflow；TAG/DRAFT/PUBLISH 必须等
+Promoted Candidate 的最小 exact 重验与 readiness `READY` 后再分别请求授权，任何一项都不授权后续动作。

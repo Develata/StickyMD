@@ -1,9 +1,10 @@
 # Phase 14 Guided Manual Campaign
 
-本指南只记录真实人工观察，不会把未执行项目提升为 PASS。开始前必须已有 exact candidate：
+本指南只记录真实人工观察，不会把未执行项目提升为 PASS。开始前必须已将 successful GitHub
+`release` workflow artifact 下载并晋升为 exact candidate：
 
 ```powershell
-.\tools\smoke\phase-14.ps1 -Candidate
+.\tools\smoke\phase-14.ps1 -DownloadedZip <artifact-directory>\StickyMD-...-windows-x64-portable.zip
 ```
 
 建议在正常 Windows 11 交互桌面中依次执行两个人工 session。每一步只接受：

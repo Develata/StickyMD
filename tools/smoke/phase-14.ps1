@@ -12,7 +12,7 @@ param(
     [string]$EvidenceFile,
     [switch]$Environment,
     [switch]$Campaign,
-    [switch]$Candidate,
+    [switch]$SourceFreeze,
     [switch]$Attribution,
     [switch]$WindowStress,
     [ValidateSet('collapse', 'tray', 'controls', 'view-mode', 'collapse-tray', 'combined')]
@@ -69,7 +69,7 @@ if ($G5Case -and -not $G5) { throw 'G5Case requires -G5' }
 $qualificationActions = @(
     $Environment,
     $Campaign,
-    $Candidate,
+    $SourceFreeze,
     $Attribution,
     $WindowStress,
     [bool]$DecisionKey,
@@ -94,8 +94,8 @@ if ($Environment) {
     if ($EvidenceFile) { $arguments += "--evidence-file=$EvidenceFile" }
 } elseif ($Campaign) {
     $arguments += @('qualification', 'local')
-} elseif ($Candidate) {
-    $arguments += @('qualification', 'candidate')
+} elseif ($SourceFreeze) {
+    $arguments += @('qualification', 'source-freeze')
 } elseif ($Attribution) {
     $arguments += @('qualification', 'attribution')
 } elseif ($WindowStress) {

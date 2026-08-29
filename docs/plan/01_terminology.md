@@ -5,7 +5,7 @@
 - `Layer`: Foundation
 - `Status`: Governing Rule
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-20
+- `Last Review`: 2026-08-29
 - `Scope`: 固定 StickyMD 核心术语的定义、权威来源、等价性边界与生命周期；全仓库文档与代码命名必须使用本表术语
 
 每个术语包含四个字段：
@@ -278,6 +278,63 @@
 - **Authority**：启动时作为初始来源；运行期间不是权威。
 - **Not equivalent to**：实时配置镜像；拖动 slider 过程中的中间值不写盘。
 - **Lifetime**：持久；损坏时被改名保留并以默认值启动。
+
+---
+
+## 发布资格化
+
+### Source Freeze
+
+- **Definition**：从 clean worktree 建立的发布源身份，至少绑定 source commit、workspace version、
+  `Cargo.lock` SHA-256、目标平台与资格化 harness。它允许 source-only CI、依赖治理和本地构建
+  preflight 在最终发布字节产生前执行。
+- **Authority**：clean Git HEAD、受控 manifest/lock 与 Rust smoke CLI 生成的 ignored receipt。
+- **Not equivalent to**：Release Exact Artifact、Promoted Candidate、本地 `target/release` 输出或发布授权。
+- **Lifetime**：从 clean HEAD freeze 到 source/manifest/lock/release tooling 发生变化；变化后旧 Source Freeze
+  与其动态决策投影全部 stale。
+
+### Local Preflight Build
+
+- **Definition**：由当前 Source Freeze 在本机生成的 Release/ZIP/SBOM，用于尽早验证源码、构建、包结构、
+  native runtime import 与工具合同。
+- **Authority**：仅对该次本地 preflight 结果成立；它不拥有最终发布 artifact 身份。
+- **Not equivalent to**：Release Exact Artifact；相同 source commit 的独立 Windows linker build 也不得据此
+  假定逐字节相同。
+- **Lifetime**：一次 preflight；Source Freeze 变化或产物被替换后失效。
+
+### Release Exact Artifact
+
+- **Definition**：由批准 Source Freeze 的 GitHub `release` workflow 构建、校验并上传的单一 Windows x64
+  artifact 集合，包含 portable ZIP、`SHA256SUMS.txt` 与 `SBOM.spdx.json`。它是拟发布字节的唯一来源。
+- **Authority**：成功 workflow run/attempt 的 artifact id，加上下载后对 checksum、SBOM、包结构、portable
+  runtime 与成员 hash 的重新验证。
+- **Not equivalent to**：同 commit 的本地 build、source equivalence、可复现构建证明、tag/draft/publish。
+- **Lifetime**：workflow artifact 产生后存在；只有经 Promote 后才能成为本地 exact qualification 的输入。
+
+### Promoted Candidate
+
+- **Definition**：已下载并通过完整 artifact 自校验后，被原子复制到 ignored canonical staging
+  `dist/exact-candidate/` 的 Release Exact Artifact。candidate receipt 绑定 source SHA、workflow run/attempt、
+  artifact id/name、ZIP/EXE/SBOM SHA-256，且不记录机器绝对路径。
+- **Authority**：Rust qualification promotion transaction 与 canonical staging 中重新校验的字节。
+- **Not equivalent to**：Local Preflight Build、任意 downloaded ZIP、remote workflow 仅成功、source-only receipt。
+- **Lifetime**：从成功 Promote 到任何 source/manifest/lock/release tooling 变化或下一次 Promote；替换 candidate
+  会使所有旧 artifact-bound receipt stale。
+
+### Source-bound Evidence
+
+- **Definition**：只依赖 Source Freeze 的 fmt、Clippy、headless tests、portable-core、dependency-policy 等证据。
+- **Authority**：与 Source Freeze identity 匹配的可重复命令或 CI receipt。
+- **Not equivalent to**：最终 EXE/ZIP 的运行、性能、资源、桌面或人工验收证据。
+- **Lifetime**：在 Source Freeze 不变且相应 harness contract 未改变时可复用。
+
+### Artifact-bound Evidence
+
+- **Definition**：必须针对 Promoted Candidate 的确切 EXE/ZIP 产生的 package/runtime、Performance、Resources、
+  G3/G4/G5 与人工验收收据。
+- **Authority**：统一 candidate resolver 返回的 canonical staged ZIP/EXE 与包含其 hash 的 receipt。
+- **Not equivalent to**：Local Preflight Build 结果、旧 candidate receipt 或 source-only CI。
+- **Lifetime**：只绑定一个 Promoted Candidate；任何 candidate identity 变化立即 stale。
 
 ---
 

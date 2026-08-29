@@ -82,9 +82,12 @@ mod tests {
             exe_sha256: "c".repeat(64),
             zip_sha256: "d".repeat(64),
             sbom_sha256: "e".repeat(64),
-            rustc: "rustc test".to_owned(),
             target: "x86_64-pc-windows-msvc".to_owned(),
-            remote_synced: false,
+            workflow_run_id: 1,
+            workflow_attempt: 1,
+            artifact_id: 2,
+            artifact_name: crate::qualification::receipt::RELEASE_ARTIFACT_NAME.to_owned(),
+            zip_name: "StickyMD-0.1.0-windows-x64-portable.zip".to_owned(),
         };
         let document = render_receipt(
             &candidate,

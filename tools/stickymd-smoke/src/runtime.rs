@@ -149,7 +149,7 @@ fn run_inner(
             | RuntimeScenario::Startup
             | RuntimeScenario::ZoomResources
     ));
-    let source = repository.join("target/release/stickymd-win.exe");
+    let source = crate::qualification::release_executable(repository)?;
     if !source.is_file() {
         return Err(format!(
             "Release executable is missing: {}; run the planned Release build first",
@@ -259,7 +259,7 @@ struct StartupSample {
 }
 
 fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvidence, String> {
-    let source = repository.join("target/release/stickymd-win.exe");
+    let source = crate::qualification::release_executable(repository)?;
     if !source.is_file() {
         return Err(format!(
             "Release executable is missing: {}",
@@ -1275,7 +1275,7 @@ fn run_resource_measurement(
     math_matrix: bool,
     image_matrix: bool,
 ) -> Result<Vec<EvidenceMeasurement>, String> {
-    let source = repository.join("target/release/stickymd-win.exe");
+    let source = crate::qualification::release_executable(repository)?;
     if !source.is_file() {
         return Err(format!(
             "Release executable is missing: {}",
@@ -1533,7 +1533,7 @@ fn run_zoom_resource_measurement(
     root: &Path,
 ) -> Result<Vec<EvidenceMeasurement>, String> {
     const SPLIT_PRIVATE_WORKING_SET_LIMIT: u64 = 64 * 1024 * 1024;
-    let source = repository.join("target/release/stickymd-win.exe");
+    let source = crate::qualification::release_executable(repository)?;
     if !source.is_file() {
         return Err(format!(
             "Release executable is missing: {}",
@@ -1708,7 +1708,7 @@ fn run_window_resource_measurement(
     repository: &Path,
     root: &Path,
 ) -> Result<Vec<EvidenceMeasurement>, String> {
-    let source = repository.join("target/release/stickymd-win.exe");
+    let source = crate::qualification::release_executable(repository)?;
     if !source.is_file() {
         return Err(format!(
             "Release executable is missing: {}",

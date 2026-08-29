@@ -1,75 +1,79 @@
-//! Exact-candidate validation for independently collected automated receipts.
+//! Source-only and promoted-artifact automated receipt validation.
+//!
+//! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 use std::path::Path;
 
 use super::receipt::Candidate;
+use super::source_freeze::SourceFreeze;
 use super::{json, receipt};
 
-const AUTOMATED_RECEIPT: &str = "dist/evidence/automated-qualification.json";
 const HEADLESS_CI_RECEIPT: &str = "dist/evidence/headless-ci-qualification.json";
 const PERFORMANCE_RECEIPT: &str = "dist/evidence/performance-qualification.json";
 const RUNTIME_RECEIPT: &str = "dist/evidence/runtime-qualification.json";
 const RESOURCES_RECEIPT: &str = "dist/evidence/resources-qualification.json";
 
 #[derive(Clone, Copy)]
-struct ReceiptContract {
+struct ArtifactReceiptContract {
     path: &'static str,
     label: &'static str,
-    suite: &'static str,
     required_task: &'static str,
-    binds_artifact: bool,
 }
 
-const RECEIPTS: [ReceiptContract; 5] = [
-    ReceiptContract {
-        path: AUTOMATED_RECEIPT,
-        label: "release qualification",
-        suite: "phase-14",
-        required_task: "portable package verification",
-        binds_artifact: true,
-    },
-    ReceiptContract {
-        path: HEADLESS_CI_RECEIPT,
-        label: "headless CI qualification",
-        suite: "all",
-        required_task: "requested headless CI task set",
-        binds_artifact: false,
-    },
-    ReceiptContract {
-        path: PERFORMANCE_RECEIPT,
-        label: "performance qualification",
-        suite: "phase-14",
-        required_task: "copied Release Phase 9 editor-ready cold/warm startup matrix",
-        binds_artifact: false,
-    },
-    ReceiptContract {
+const ARTIFACT_RECEIPTS: [ArtifactReceiptContract; 3] = [
+    ArtifactReceiptContract {
         path: RUNTIME_RECEIPT,
         label: "runtime qualification",
-        suite: "phase-14",
         required_task: "copied Release Phase 8 close-to-tray/show lifecycle",
-        binds_artifact: false,
     },
-    ReceiptContract {
+    ArtifactReceiptContract {
+        path: PERFORMANCE_RECEIPT,
+        label: "performance qualification",
+        required_task: "copied Release Phase 9 editor-ready cold/warm startup matrix",
+    },
+    ArtifactReceiptContract {
         path: RESOURCES_RECEIPT,
         label: "resource qualification",
-        suite: "phase-14",
         required_task: "copied Release Phase 8 hidden-window resource matrix",
-        binds_artifact: false,
     },
 ];
 
-pub(super) fn check(root: &Path, candidate: &Candidate, blockers: &mut Vec<String>) -> bool {
+pub(super) fn check(
+    root: &Path,
+    source: &SourceFreeze,
+    candidate: &Candidate,
+    blockers: &mut Vec<String>,
+) -> bool {
     let before = blockers.len();
-    for contract in RECEIPTS {
-        check_receipt(root, candidate, contract, blockers);
+    check_source_receipt(root, source, blockers);
+    for contract in ARTIFACT_RECEIPTS {
+        check_artifact_receipt(root, candidate, contract, blockers);
     }
     blockers.len() == before
 }
 
-fn check_receipt(
+fn check_source_receipt(root: &Path, source: &SourceFreeze, blockers: &mut Vec<String>) {
+    let document = match receipt::read_receipt(&root.join(HEADLESS_CI_RECEIPT)) {
+        Ok(document) => document,
+        Err(error) => {
+            blockers.push(format!("headless CI qualification receipt: {error}"));
+            return;
+        }
+    };
+    check_common(
+        &document,
+        "headless CI qualification",
+        "all",
+        "requested headless CI task set",
+        &source.source_commit,
+        blockers,
+    );
+}
+
+fn check_artifact_receipt(
     root: &Path,
     candidate: &Candidate,
-    contract: ReceiptContract,
+    contract: ArtifactReceiptContract,
     blockers: &mut Vec<String>,
 ) {
     let document = match receipt::read_receipt(&root.join(contract.path)) {
@@ -79,120 +83,130 @@ fn check_receipt(
             return;
         }
     };
-    match json::u64_field(&document, "schema_version") {
+    check_common(
+        &document,
+        contract.label,
+        "phase-14",
+        contract.required_task,
+        &candidate.source_commit,
+        blockers,
+    );
+    match json::string_field(&document, "executable_sha256") {
+        Ok(actual) if actual == candidate.exe_sha256 => {}
+        Ok(actual) => blockers.push(format!(
+            "STALE RECEIPT: {} EXE hash is {actual}, expected {}",
+            contract.label, candidate.exe_sha256
+        )),
+        Err(error) => blockers.push(format!("{} EXE hash: {error}", contract.label)),
+    }
+}
+
+fn check_common(
+    document: &str,
+    label: &str,
+    suite: &str,
+    required_task: &str,
+    source_commit: &str,
+    blockers: &mut Vec<String>,
+) {
+    match json::u64_field(document, "schema_version") {
         Ok(2) => {}
-        Ok(version) => blockers.push(format!(
-            "{} schema is {version}, expected 2",
-            contract.label
+        Ok(version) => blockers.push(format!("{label} schema is {version}, expected 2")),
+        Err(error) => blockers.push(format!("{label} schema: {error}")),
+    }
+    match json::string_field(document, "suite") {
+        Ok(actual) if actual == suite => {}
+        Ok(actual) => blockers.push(format!("{label} suite is {actual}, expected {suite}")),
+        Err(error) => blockers.push(format!("{label} suite: {error}")),
+    }
+    match json::string_field(document, "commit") {
+        Ok(actual) if actual == source_commit => {}
+        Ok(actual) => blockers.push(format!(
+            "STALE RECEIPT: {label} source commit is {actual}, expected {source_commit}"
         )),
-        Err(error) => blockers.push(format!("{} schema: {error}", contract.label)),
+        Err(error) => blockers.push(format!("{label} source commit: {error}")),
     }
-    match json::string_field(&document, "suite") {
-        Ok(suite) if suite == contract.suite => {}
-        Ok(suite) => blockers.push(format!(
-            "{} suite is {suite}, expected {}",
-            contract.label, contract.suite
-        )),
-        Err(error) => blockers.push(format!("{} suite: {error}", contract.label)),
-    }
-    for (actual, expected, label) in [
-        (
-            json::string_field(&document, "commit"),
-            candidate.source_commit.as_str(),
-            "source commit",
-        ),
-        (
-            json::string_field(&document, "executable_sha256"),
-            candidate.exe_sha256.as_str(),
-            "EXE hash",
-        ),
-    ] {
-        match actual {
-            Ok(actual) if actual == expected => {}
-            Ok(actual) => blockers.push(format!(
-                "STALE RECEIPT: {} {label} is {actual}, expected {expected}",
-                contract.label
-            )),
-            Err(error) => blockers.push(format!("{} {label}: {error}", contract.label)),
-        }
-    }
-    if contract.binds_artifact {
-        match json::string_field(&document, "artifact_sha256") {
-            Ok(actual) if actual == candidate.zip_sha256 => {}
-            Ok(actual) => blockers.push(format!(
-                "STALE RECEIPT: {} ZIP hash is {actual}, expected {}",
-                contract.label, candidate.zip_sha256
-            )),
-            Err(error) => blockers.push(format!("{} ZIP hash: {error}", contract.label)),
-        }
-    }
-    match json::bool_field(&document, "worktree_dirty") {
+    match json::bool_field(document, "worktree_dirty") {
         Ok(false) => {}
-        Ok(true) => blockers.push(format!("{} was recorded from a dirty tree", contract.label)),
-        Err(error) => blockers.push(format!("{} worktree state: {error}", contract.label)),
+        Ok(true) => blockers.push(format!("{label} was recorded from a dirty tree")),
+        Err(error) => blockers.push(format!("{label} worktree state: {error}")),
     }
-    let task_occurrences = document
-        .match_indices(&format!("\"id\":\"{}\"", contract.required_task))
+    let count = document
+        .match_indices(&format!("\"id\":\"{required_task}\""))
         .count();
-    if task_occurrences != 1 {
+    if count != 1 {
         blockers.push(format!(
-            "{} contains required task `{}` {task_occurrences} times, expected exactly once",
-            contract.label, contract.required_task,
+            "{label} contains required task `{required_task}` {count} times, expected exactly once"
         ));
     }
-    match json::result_status_values(&document) {
+    match json::result_status_values(document) {
         Ok(statuses)
             if !statuses.is_empty() && statuses.iter().all(|status| status == "PASSED") => {}
         Ok(statuses) => blockers.push(format!(
-            "{} contains a non-PASSED result: {statuses:?}",
-            contract.label
+            "{label} contains a non-PASSED result: {statuses:?}"
         )),
-        Err(error) => blockers.push(format!("{} statuses: {error}", contract.label)),
+        Err(error) => blockers.push(format!("{label} statuses: {error}")),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AUTOMATED_RECEIPT, RECEIPTS, check};
-    use crate::qualification::receipt::{self, Candidate};
+    use super::{ARTIFACT_RECEIPTS, HEADLESS_CI_RECEIPT, check};
+    use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
+    use crate::qualification::source_freeze::SourceFreeze;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn every_exact_local_qualification_mode_is_required() {
+    fn source_only_headless_can_differ_from_final_exe_but_artifact_receipts_cannot() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
         let root = std::env::temp_dir().join(format!("stickymd-automated-receipts-{nonce}"));
+        let source = source();
         let candidate = candidate();
-        let release = receipt_document(
-            &candidate,
-            "phase-14",
-            "portable package verification",
-            Some(&candidate.zip_sha256),
+        let headless = receipt_document(
+            &source.source_commit,
+            "f".repeat(64).as_str(),
+            "all",
+            "requested headless CI task set",
         );
-        receipt::write_receipt(&root, AUTOMATED_RECEIPT, &release).expect("write receipt");
-
-        let mut blockers = Vec::new();
-        check(&root, &candidate, &mut blockers);
-        assert_eq!(
-            blockers
-                .iter()
-                .filter(|blocker| blocker.contains("receipt: cannot read"))
-                .count(),
-            RECEIPTS.len() - 1
-        );
-
-        for contract in RECEIPTS.into_iter().skip(1) {
-            let document =
-                receipt_document(&candidate, contract.suite, contract.required_task, None);
-            receipt::write_receipt(&root, contract.path, &document).expect("write receipt");
+        receipt::write_receipt(&root, HEADLESS_CI_RECEIPT, &headless).expect("headless");
+        for contract in ARTIFACT_RECEIPTS {
+            let document = receipt_document(
+                &candidate.source_commit,
+                &candidate.exe_sha256,
+                "phase-14",
+                contract.required_task,
+            );
+            receipt::write_receipt(&root, contract.path, &document).expect("artifact receipt");
         }
+        let mut blockers = Vec::new();
+        assert!(check(&root, &source, &candidate, &mut blockers));
+
+        let stale = receipt_document(
+            &candidate.source_commit,
+            "0".repeat(64).as_str(),
+            "phase-14",
+            ARTIFACT_RECEIPTS[0].required_task,
+        );
+        receipt::write_receipt(&root, ARTIFACT_RECEIPTS[0].path, &stale).expect("stale");
         blockers.clear();
-        check(&root, &candidate, &mut blockers);
-        assert!(blockers.is_empty(), "unexpected blockers: {blockers:?}");
+        assert!(!check(&root, &source, &candidate, &mut blockers));
+        assert!(blockers.iter().any(|item| item.contains("EXE hash")));
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    fn source() -> SourceFreeze {
+        SourceFreeze {
+            source_commit: "a".repeat(40),
+            version: "0.1.0".to_owned(),
+            cargo_lock_sha256: "b".repeat(64),
+            rustc: "rustc test".to_owned(),
+            target: "x86_64-pc-windows-msvc".to_owned(),
+            remote_synced: true,
+        }
     }
 
     fn candidate() -> Candidate {
@@ -203,28 +217,24 @@ mod tests {
             exe_sha256: "c".repeat(64),
             zip_sha256: "d".repeat(64),
             sbom_sha256: "e".repeat(64),
-            rustc: "rustc test".to_owned(),
             target: "x86_64-pc-windows-msvc".to_owned(),
-            remote_synced: false,
+            workflow_run_id: 1,
+            workflow_attempt: 1,
+            artifact_id: 2,
+            artifact_name: RELEASE_ARTIFACT_NAME.to_owned(),
+            zip_name: "StickyMD-0.1.0-windows-x64-portable.zip".to_owned(),
         }
     }
 
-    fn receipt_document(
-        candidate: &Candidate,
-        suite: &str,
-        task: &str,
-        artifact: Option<&str>,
-    ) -> String {
-        let artifact = artifact.map_or_else(|| "null".to_owned(), |hash| format!("\"{hash}\""));
+    fn receipt_document(commit: &str, exe: &str, suite: &str, task: &str) -> String {
         format!(
             concat!(
                 "{{\"schema_version\":2,\"commit\":\"{}\",\"worktree_dirty\":false,",
-                "\"artifact_sha256\":{},\"executable_sha256\":\"{}\",",
+                "\"artifact_sha256\":null,\"executable_sha256\":\"{}\",",
                 "\"suite\":\"{}\",\"qualification_environment\":{{\"status\":\"VALID\"}},",
-                "\"results\":[{{\"id\":\"{}\",",
-                "\"status\":\"PASSED\"}}]}}\n"
+                "\"results\":[{{\"id\":\"{}\",\"status\":\"PASSED\"}}]}}"
             ),
-            candidate.source_commit, artifact, candidate.exe_sha256, suite, task
+            commit, exe, suite, task
         )
     }
 }

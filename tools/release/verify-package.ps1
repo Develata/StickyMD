@@ -86,6 +86,15 @@ $runtimeProcesses = [Collections.Generic.List[Diagnostics.Process]]::new()
 try {
     Expand-Archive -LiteralPath $ZipPath -DestinationPath $temporaryRoot
     $exe = Join-Path $temporaryRoot 'StickyMD\StickyMD.exe'
+    $readme = Join-Path $temporaryRoot 'StickyMD\README.txt'
+    $sourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim().ToLowerInvariant()
+    if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') {
+        throw 'Cannot resolve the exact source commit for package verification'
+    }
+    $readmeText = [IO.File]::ReadAllText($readme)
+    if (-not ($readmeText -split "`r?`n" -contains "Source commit: $sourceCommit")) {
+        throw "Packaged README does not bind source commit $sourceCommit"
+    }
     $packagedNotices = Join-Path $temporaryRoot 'StickyMD\THIRD_PARTY_NOTICES.txt'
     $expectedNotices = Join-Path $temporaryRoot 'expected-third-party-notices.txt'
     & (Join-Path $repoRoot 'tools\release\generate-third-party-notices.ps1') -DestinationPath $expectedNotices

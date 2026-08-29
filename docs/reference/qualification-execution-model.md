@@ -19,9 +19,15 @@ failure 只改变该 channel receipt；independent channels 继续运行。依�
 
 ## Evidence Binding
 
-动态 receipt 至少绑定 source SHA、EXE SHA-256、version、Windows build 与 channel/session。
-package/manual 还绑定 ZIP SHA-256。manual observation 只接受显式 human status；automated facts
-不能提升人工状态。
+Source Freeze 先绑定 clean source SHA、version、Cargo.lock 与 harness。GitHub `release` workflow 的
+ZIP/SHA256SUMS/SBOM 下载并验证后，才晋升为 canonical `dist/exact-candidate/`；最终 candidate 还绑定
+run/attempt/artifact id 与实际 EXE/ZIP/SBOM SHA-256。动态 artifact-bound receipt 至少绑定 source SHA、
+EXE SHA-256、version、Windows build 与 channel/session，package/manual 还绑定 ZIP SHA-256。manual
+observation 只接受显式 human status；automated facts 不能提升人工状态。
+
+本地 `target/release` 只用于 source preflight，不与远端独立 build 比较逐字节等价。Promote 后所有
+artifact-bound receipt 必须针对 staged candidate 重建；Source Freeze 未变时 fmt/Clippy/headless/
+dependency 等 source-only evidence 可复用。这就是最小 exact 重验，不是完整 Phase 0–14 Campaign。
 
 ## Parallelism and Targeted Reruns
 

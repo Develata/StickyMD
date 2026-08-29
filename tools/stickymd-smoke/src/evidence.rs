@@ -105,7 +105,7 @@ pub(crate) fn emit(
 }
 
 fn executable_sha256(root: &Path) -> Option<String> {
-    let executable = root.join("target/release/stickymd-win.exe");
+    let executable = crate::qualification::release_executable(root).ok()?;
     if !executable.is_file() {
         return None;
     }
