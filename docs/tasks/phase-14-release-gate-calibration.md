@@ -88,6 +88,9 @@ tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任
 - USER-observed regression 的 named tests，以及扩展后的三边/顶角 copied-Release smoke。
 - G3/G4/G5 exact desktop groups 分别在独立候选副本中串行通过，并生成 clean、同 commit、同 ZIP/EXE
   identity 的完整 group receipt；单项诊断收据不计入 readiness。
+- G4 physical-drag harness 必须区分 Floating requested-position 与 Dock application-resolved 终态，并以
+  150% DPI 回归防止 DIP/physical-pixel 单位混用；G4-06 首次模式纠正后的二次探针前必须完整重申
+  profile/route/open/native，仍只允许一次有界纠正。
 - 远端 CI 故障归因与可诊断输出；隔离 runner CI 分片并发、模块化 Resources 定向入口与
   “分片并集 = 完整任务图”回归。
 

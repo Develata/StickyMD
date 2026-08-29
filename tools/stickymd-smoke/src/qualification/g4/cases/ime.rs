@@ -25,6 +25,22 @@ enum OrdinaryInputRecovery {
     ProfileReassertion,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecoveryAction {
+    PhysicalShift,
+    ReassertProfile,
+    ConfirmOpen,
+    ConfirmNative,
+}
+
+const PHYSICAL_MODE_CORRECTION_ACTIONS: &[RecoveryAction] = &[
+    RecoveryAction::PhysicalShift,
+    RecoveryAction::ReassertProfile,
+    RecoveryAction::ConfirmOpen,
+    RecoveryAction::ConfirmNative,
+];
+const PROFILE_REASSERTION_ACTIONS: &[RecoveryAction] = &[RecoveryAction::ReassertProfile];
+
 impl OrdinaryInputRecovery {
     const fn for_session(composition_confirmed: bool) -> Self {
         if composition_confirmed {
@@ -38,6 +54,13 @@ impl OrdinaryInputRecovery {
         match self {
             Self::PhysicalModeCorrection => "physical input mode correction",
             Self::ProfileReassertion => "profile reassertion",
+        }
+    }
+
+    const fn actions(self) -> &'static [RecoveryAction] {
+        match self {
+            Self::PhysicalModeCorrection => PHYSICAL_MODE_CORRECTION_ACTIONS,
+            Self::ProfileReassertion => PROFILE_REASSERTION_ACTIONS,
         }
     }
 }
@@ -65,18 +88,6 @@ impl<'guard> RealImeSession<'guard> {
         }
     }
 
-    fn correct_input_mode(&mut self) -> Result<(), String> {
-        if self.mode_corrected {
-            return Err(format!(
-                "{} returned to ordinary ASCII after its physical input mode was already corrected",
-                self.profile.name()
-            ));
-        }
-        crate::window_control::press_shift(self.window)?;
-        self.mode_corrected = true;
-        Ok(())
-    }
-
     fn restore_input_mode(&mut self) -> Result<(), String> {
         if !self.mode_corrected {
             return Ok(());
@@ -90,10 +101,29 @@ impl<'guard> RealImeSession<'guard> {
 
     fn recover_after_ordinary_input(&mut self) -> Result<OrdinaryInputRecovery, String> {
         let recovery = OrdinaryInputRecovery::for_session(self.composition_confirmed);
-        match recovery {
-            OrdinaryInputRecovery::PhysicalModeCorrection => self.correct_input_mode()?,
-            OrdinaryInputRecovery::ProfileReassertion => {
-                self.profile_guard.reassert(self.window)?;
+        for action in recovery.actions() {
+            match action {
+                RecoveryAction::PhysicalShift => {
+                    if self.mode_corrected {
+                        return Err(format!(
+                            "{} returned to ordinary ASCII after its physical input mode was already corrected",
+                            self.profile.name()
+                        ));
+                    }
+                    crate::window_control::press_shift(self.window)?;
+                    // Set this immediately after the physical toggle so every
+                    // later error path restores the desktop input mode.
+                    self.mode_corrected = true;
+                }
+                RecoveryAction::ReassertProfile => {
+                    self.profile_guard.reassert(self.window)?;
+                }
+                RecoveryAction::ConfirmOpen => {
+                    crate::window_control::set_ime_open_status(self.window, true)?;
+                }
+                RecoveryAction::ConfirmNative => {
+                    crate::window_control::set_ime_native_mode(self.window, true)?;
+                }
             }
         }
         Ok(recovery)
@@ -607,8 +637,8 @@ fn is_cjk(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        ImeProfile, OrdinaryInputRecovery, canonical_line_endings, combine_profile_results,
-        title_is_dirty, valid_cjk_commit,
+        ImeProfile, OrdinaryInputRecovery, RecoveryAction, canonical_line_endings,
+        combine_profile_results, title_is_dirty, valid_cjk_commit,
     };
 
     #[test]
@@ -658,6 +688,19 @@ mod tests {
         assert_eq!(
             OrdinaryInputRecovery::for_session(true),
             OrdinaryInputRecovery::ProfileReassertion
+        );
+        assert_eq!(
+            OrdinaryInputRecovery::PhysicalModeCorrection.actions(),
+            &[
+                RecoveryAction::PhysicalShift,
+                RecoveryAction::ReassertProfile,
+                RecoveryAction::ConfirmOpen,
+                RecoveryAction::ConfirmNative,
+            ]
+        );
+        assert_eq!(
+            OrdinaryInputRecovery::ProfileReassertion.actions(),
+            &[RecoveryAction::ReassertProfile]
         );
     }
 }

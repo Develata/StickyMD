@@ -348,13 +348,18 @@ clipboard shortcuts 与 Preview 只读；G4-04 真实 toolbar 数学分隔符转
 safety 与单次 Undo；G4-05 真实 junction canonical identity、同 HWND 唤醒与第二实例零 durable write；
 G4-06 临时激活 Microsoft Pinyin / WeType 真实 TSF profile，以物理键盘验证 Source/Search composition、
 commit/cancel、selection replace 与一次 Undo，并在结束前恢复原 active profile。
+G4-02 的物理拖动必须区分两种终态：Floating 定位要求窗口停在请求坐标附近；Dock/capture 操作允许产品在
+释放鼠标后把窗口归一化到工作区边缘。后者不得再用固定物理像素比较“请求坐标 == 最终坐标”，而必须以
+DIP 转换后的输入阈值、稳定的 HWND geometry 与产品持久化 dock fact 共同确认。特别是 125/150/200% DPI
+下，24 DIP 本来就可能大于 24 physical pixels；测试不得让 96-DPI 偶然相等掩盖单位错误。
 TSF active-profile 回读只证明输入桌面选择了指定 profile；目标窗口的 `GetKeyboardLayout` 只证明 HKL / LANGID，
 当多个 TIP 共享 `0x0804` 或 profile 不提供 substitute layout 时，不得把它当作中文转换子模式的确认。
 `WM_IME_CONTROL` 的 open/native 回读同样只能作为兼容性预置，不能替代真实按键行为。G4-06 必须以“拼音物理
 按键未写入 canonical text”为 composition acknowledgement；每次 composition 前都必须重新激活并回读同一 profile，
 再对目标 HWND route，不能把“窗口原本已有 focus”当成无需重申 profile。若本 profile 会话尚未成功证明过 composition，
 首次探针成为普通 ASCII edit 时，必须先取消残余 composition、Undo 回到原文，再且仅再执行一次被测 profile 的
-用户等价物理 `Shift` 模式纠正。若会话已经证明过 composition，后续 ordinary ASCII 只能再次重申 profile，不得
+用户等价物理 `Shift` 模式纠正；纠正后必须再次激活并回读目标 TSF profile、重新 route 目标 HWND，并重新设置及
+回读 open/native compatibility state，然后才允许第二次行为探针。若会话已经证明过 composition，后续 ordinary ASCII 只能再次重申 profile，不得
 盲目 `Shift`。第二次仍为 ASCII 必须 FAIL，不得追加 sleep 或无限重试。任何被工具执行的模式纠正必须在 profile
 restore 和 child teardown 之前对称恢复；正常路径恢复失败必须使 case 失败，错误返回与 unwind 路径由 RAII
 best-effort 恢复。

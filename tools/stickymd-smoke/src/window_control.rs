@@ -78,6 +78,15 @@ pub(crate) enum PrimaryDockEdge {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DragCompletion {
+    /// The product must leave a floating window near the requested position.
+    RequestedPosition,
+    /// The product may normalize the released position, for example by
+    /// snapping a captured window to the exact work-area edge.
+    ApplicationResolved,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct WindowRect {
     pub(crate) x: i32,
     pub(crate) y: i32,
@@ -821,7 +830,7 @@ pub(crate) fn move_to_primary_edge(
         PrimaryDockEdge::Right => (maximum_x, centered_y.clamp(work.y, maximum_y)),
         PrimaryDockEdge::Top => (centered_x.clamp(work.x, maximum_x), work.y),
     };
-    move_window(window, x, y)
+    move_window(window, x, y, DragCompletion::ApplicationResolved)
 }
 
 pub(crate) fn move_to_primary_corner(window: WindowHandle, right: bool) -> Result<(), String> {
@@ -833,7 +842,7 @@ pub(crate) fn move_to_primary_corner(window: WindowHandle, right: bool) -> Resul
     } else {
         work.x
     };
-    move_window(window, x, work.y)
+    move_window(window, x, work.y, DragCompletion::ApplicationResolved)
 }
 
 pub(crate) fn move_to_primary_floating(window: WindowHandle) -> Result<(), String> {
@@ -845,7 +854,7 @@ pub(crate) fn move_to_primary_floating(window: WindowHandle) -> Result<(), Strin
     let y = work
         .y
         .saturating_add(work.height.saturating_sub(current.height) as i32 / 2);
-    move_window(window, x, y)
+    move_window(window, x, y, DragCompletion::RequestedPosition)
 }
 
 /// Physically drag the outer window rectangle to an exact primary-work-area
@@ -861,6 +870,7 @@ pub(crate) fn move_outer_to_primary_offset(
         window,
         work.x.saturating_add(x_offset),
         work.y.saturating_add(y_offset),
+        DragCompletion::ApplicationResolved,
     )
 }
 
@@ -964,7 +974,12 @@ fn content_activation_point(window: WindowHandle) -> Result<(i32, i32), String> 
     ))
 }
 
-fn move_window(window: WindowHandle, x: i32, y: i32) -> Result<(), String> {
+fn move_window(
+    window: WindowHandle,
+    x: i32,
+    y: i32,
+    completion: DragCompletion,
+) -> Result<(), String> {
     let rect = window_rect(window)?;
     let scale = f64::from(window_dpi(window)) / 96.0;
     let drag_x = (rect.width / 2).min(i32::MAX as u32) as i32;
@@ -993,13 +1008,30 @@ fn move_window(window: WindowHandle, x: i32, y: i32) -> Result<(), String> {
     drop(button);
     thread::sleep(Duration::from_millis(150));
     let completed_rect = window_rect(window)?;
-    if completed_rect.x.abs_diff(x) > 24 || completed_rect.y.abs_diff(y) > 24 {
+    let requested_tolerance = dip_pixels(window, 16.0)?.unsigned_abs();
+    if !drag_completion_is_valid(completion, x, y, completed_rect, requested_tolerance) {
         return Err(format!(
-            "physical StickyMD drag did not reach its requested outer position: requested=({x},{y}) engaged_cursor={engaged_cursor:?} engaged_rect={engaged_rect:?} completed_rect={completed_rect:?}"
+            "physical StickyMD drag did not reach its requested floating position: requested=({x},{y}) tolerance_px={requested_tolerance} engaged_cursor={engaged_cursor:?} engaged_rect={engaged_rect:?} completed_rect={completed_rect:?}"
         ));
     }
     input_route.restore()?;
     Ok(())
+}
+
+fn drag_completion_is_valid(
+    completion: DragCompletion,
+    requested_x: i32,
+    requested_y: i32,
+    completed: WindowRect,
+    requested_tolerance: u32,
+) -> bool {
+    match completion {
+        DragCompletion::RequestedPosition => {
+            completed.x.abs_diff(requested_x) <= requested_tolerance
+                && completed.y.abs_diff(requested_y) <= requested_tolerance
+        }
+        DragCompletion::ApplicationResolved => true,
+    }
 }
 
 fn engage_native_move_size(
@@ -2007,5 +2039,38 @@ mod tests {
             },
             0
         );
+    }
+
+    #[test]
+    fn dock_drag_accepts_application_snap_but_floating_drag_keeps_position_contract() {
+        let snapped = WindowRect {
+            x: 0,
+            y: 254,
+            width: 780,
+            height: 1020,
+        };
+        // At 150% DPI, the 24-DIP capture point is 36 physical pixels from
+        // the edge. The product is expected to normalize that release to x=0.
+        assert!(drag_completion_is_valid(
+            DragCompletion::ApplicationResolved,
+            36,
+            254,
+            snapped,
+            24,
+        ));
+        assert!(!drag_completion_is_valid(
+            DragCompletion::RequestedPosition,
+            36,
+            254,
+            snapped,
+            24,
+        ));
+        assert!(drag_completion_is_valid(
+            DragCompletion::RequestedPosition,
+            24,
+            254,
+            snapped,
+            24,
+        ));
     }
 }
