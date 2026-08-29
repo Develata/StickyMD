@@ -16,15 +16,25 @@ Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
+public struct StickyMdSmokePoint {
+    public int X;
+    public int Y;
+}
 public static class StickyMdSmokeMouse {
     [DllImport("user32.dll", SetLastError=true)]
     public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll", SetLastError=true)]
+    public static extern bool GetCursorPos(out StickyMdSmokePoint point);
     [DllImport("user32.dll")]
     public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
     [DllImport("user32.dll")]
     public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extra);
 }
 '@
+
+$TrayMenuOpenAttempts = 2
+$TrayMenuOpenTimeoutMilliseconds = 1500
+$TrayMenuCloseTimeoutMilliseconds = 1500
 
 function Wait-Until([scriptblock]$Probe, [string]$Label) {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
@@ -170,24 +180,30 @@ function Open-TrayOverflow {
     $invoke.Invoke()
 }
 
-function Open-StickyMdTrayMenu {
+function Resolve-StickyMdTrayTarget {
     $icon = Find-TrayIcon
     if ($null -eq $icon) {
         Open-TrayOverflow
         $null = Wait-Until { Find-TrayIcon } 'StickyMD tray icon'
     }
-    $null = Wait-Until {
+    return Wait-Until {
         $current = Find-TrayIcon
         if ($null -eq $current) { return $null }
         $rect = $current.Current.BoundingRectangle
         if ($rect.Width -le 0 -or $rect.Height -le 0) { return $null }
         $x = [int]($rect.X + $rect.Width / 2)
         $y = [int]($rect.Y + $rect.Height / 2)
-        if ([StickyMdSmokeMouse]::SetCursorPos($x, $y)) { return $current }
-        return $null
+        if (-not [StickyMdSmokeMouse]::SetCursorPos($x, $y)) { return $null }
+        $actual = New-Object StickyMdSmokePoint
+        if (-not [StickyMdSmokeMouse]::GetCursorPos([ref]$actual)) { return $null }
+        if ($actual.X -ne $x -or $actual.Y -ne $y) { return $null }
+        return [PSCustomObject]@{
+            X = $x
+            Y = $y
+            Geometry = ('x={0};y={1};width={2};height={3}' -f
+                [int]$rect.X, [int]$rect.Y, [int]$rect.Width, [int]$rect.Height)
+        }
     } 'movable StickyMD tray icon'
-    [StickyMdSmokeMouse]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
-    [StickyMdSmokeMouse]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
 }
 
 function Find-ProcessMenuItems {
@@ -209,11 +225,23 @@ function Find-ProcessMenuItems {
                 # item beneath SystemMenuBar. It is unrelated to the tray
                 # popup and must not become product-menu evidence.
                 if ($null -ne $parent -and $parent.Current.AutomationId -eq 'SystemMenuBar') { continue }
-                if ($item.Current.IsEnabled -and $item.Current.Name) { $items.Add($item) }
+                $current = $item.Current
+                $rect = $current.BoundingRectangle
+                if (-not $current.IsEnabled -or $current.IsOffscreen -or -not $current.Name) { continue }
+                if ($rect.Width -le 0 -or $rect.Height -le 0) { continue }
+                # Snapshot volatile UIA properties while the native popup is
+                # live. The provider can invalidate Current immediately after
+                # Escape/Invoke, so diagnostics must not re-read stale nodes.
+                $items.Add([PSCustomObject]@{
+                    Element = $item
+                    Name = $current.Name
+                    Geometry = ('x={0};y={1};width={2};height={3}' -f
+                        [int]$rect.X, [int]$rect.Y, [int]$rect.Width, [int]$rect.Height)
+                })
             }
         } catch { }
     }
-    if ($items.Count -eq 0) { return $null }
+    if ($items.Count -eq 0) { return @() }
     return $items.ToArray()
 }
 
@@ -221,26 +249,93 @@ function Convert-NameToHex([string]$Name) {
     return (($Name.ToCharArray() | ForEach-Object { '{0:X4}' -f [int]$_ }) -join '-')
 }
 
+function Format-MenuItems([object[]]$Items) {
+    if ($null -eq $Items -or $Items.Count -eq 0) { return '<none>' }
+    return (($Items | ForEach-Object {
+        '{0}@{1}' -f (Convert-NameToHex $_.Name), $_.Geometry
+    }) -join ',')
+}
+
+function Wait-ForProcessMenuItems([int]$TimeoutMilliseconds) {
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    do {
+        $items = @(Find-ProcessMenuItems)
+        if ($items.Count -gt 0) { return $items }
+        Start-Sleep -Milliseconds 25
+    } while ([DateTime]::UtcNow -lt $deadline)
+    return @()
+}
+
+function Wait-ForProcessMenuClosed([int]$TimeoutMilliseconds) {
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    do {
+        if (@(Find-ProcessMenuItems).Count -eq 0) { return $true }
+        Start-Sleep -Milliseconds 25
+    } while ([DateTime]::UtcNow -lt $deadline)
+    return $false
+}
+
+function Close-StickyMdTrayMenu {
+    [StickyMdSmokeMouse]::keybd_event(0x1b, 0x01, 0, [UIntPtr]::Zero)
+    [StickyMdSmokeMouse]::keybd_event(0x1b, 0x01, 0x0002, [UIntPtr]::Zero)
+    if (-not (Wait-ForProcessMenuClosed $TrayMenuCloseTimeoutMilliseconds)) {
+        $observed = @(Find-ProcessMenuItems)
+        throw ('StickyMD tray menu did not close after Escape; observed_items={0}' -f
+            (Format-MenuItems $observed))
+    }
+}
+
+function Open-StickyMdTrayMenu {
+    $existing = @(Find-ProcessMenuItems)
+    if ($existing.Count -gt 0) { return $existing }
+
+    $lastGeometry = '<unavailable>'
+    $lastCursor = '<unavailable>'
+    for ($attempt = 1; $attempt -le $TrayMenuOpenAttempts; $attempt++) {
+        $target = Resolve-StickyMdTrayTarget
+        $lastGeometry = $target.Geometry
+        $lastCursor = ('x={0};y={1}' -f $target.X, $target.Y)
+        [StickyMdSmokeMouse]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
+        [StickyMdSmokeMouse]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
+
+        $items = @(Wait-ForProcessMenuItems $TrayMenuOpenTimeoutMilliseconds)
+        if ($items.Count -gt 0) { return $items }
+
+        # A desktop notification or USER input may have taken the physical
+        # click after SetCursorPos. Close any unrelated popup before the one
+        # permitted retry; this harness requires an otherwise exclusive desktop.
+        [StickyMdSmokeMouse]::keybd_event(0x1b, 0x01, 0, [UIntPtr]::Zero)
+        [StickyMdSmokeMouse]::keybd_event(0x1b, 0x01, 0x0002, [UIntPtr]::Zero)
+        $null = Wait-ForProcessMenuClosed $TrayMenuCloseTimeoutMilliseconds
+    }
+
+    $observed = @(Find-ProcessMenuItems)
+    throw ('StickyMD tray menu did not open after {0} attempts; icon={1}; cursor={2}; observed_items={3}' -f
+        $TrayMenuOpenAttempts, $lastGeometry, $lastCursor, (Format-MenuItems $observed))
+}
+
 function Invoke-TrayMenuItem([string]$ExpectedName, [string]$Label) {
-    Open-StickyMdTrayMenu
-    $item = Wait-Until {
-        foreach ($candidate in @(Find-ProcessMenuItems)) {
-            if ($candidate.Current.Name -eq $ExpectedName) { return $candidate }
-        }
-        return $null
-    } $Label
-    $invoke = $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    $items = @(Open-StickyMdTrayMenu)
+    $item = $items | Where-Object { $_.Name -eq $ExpectedName } | Select-Object -First 1
+    if ($null -eq $item) {
+        $observed = Format-MenuItems $items
+        Close-StickyMdTrayMenu
+        throw ('{0} is absent from the opened StickyMD tray menu; observed_items={1}' -f
+            $Label, $observed)
+    }
+    $invoke = $item.Element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
+    if (-not (Wait-ForProcessMenuClosed $TrayMenuCloseTimeoutMilliseconds)) {
+        throw "$Label did not close the StickyMD tray menu"
+    }
 }
 
 function Inspect-TrayMenu {
-    Open-StickyMdTrayMenu
-    $items = Wait-Until { Find-ProcessMenuItems } 'StickyMD tray menu items'
+    $items = @(Open-StickyMdTrayMenu)
     foreach ($item in @($items)) {
-        Write-Output ('UIA_TRAY_ITEM_HEX=' + (Convert-NameToHex $item.Current.Name))
+        Write-Output ('UIA_TRAY_ITEM_HEX=' + (Convert-NameToHex $item.Name))
     }
-    [StickyMdSmokeMouse]::keybd_event(0x1b, 0x01, 0, [UIntPtr]::Zero)
-    [StickyMdSmokeMouse]::keybd_event(0x1b, 0x01, 0x0002, [UIntPtr]::Zero)
+    Close-StickyMdTrayMenu
 }
 
 function Invoke-TrayExit {

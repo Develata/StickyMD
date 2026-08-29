@@ -670,6 +670,24 @@ fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
         }
     }
 
+    let tray_uia_path = root.join("tools/stickymd-smoke/helpers/windows-uia.ps1");
+    let tray_uia = read_text(&tray_uia_path)?;
+    for marker in [
+        "$TrayMenuOpenAttempts = 2",
+        "GetCursorPos",
+        "IsOffscreen",
+        "Wait-ForProcessMenuItems",
+        "Wait-ForProcessMenuClosed",
+        "observed_items=",
+    ] {
+        if !tray_uia.contains(marker) {
+            return Err(format!(
+                "{} must retain acknowledged tray-menu interaction marker `{marker}`",
+                tray_uia_path.display()
+            ));
+        }
+    }
+
     let flow_directory = root.join("apps/stickymd-win/src/flow/window");
     let mut flow_rust = Vec::new();
     collect_files(&flow_directory, "rs", &mut flow_rust)?;

@@ -294,7 +294,14 @@ TSF active-profile 回读只证明输入桌面选择了指定 profile；目标�
 restore 和 child teardown 之前对称恢复；正常路径恢复失败必须使 case 失败，错误返回与 unwind 路径由 RAII
 best-effort 恢复。
 G3/G4 都必须串行且独占桌面，不能并发争抢 clipboard、tray、窗口焦点或鼠标；单项诊断 receipt
-不能替代完整五组 receipt。P12-M11/M12 的 mixed-DPI 实机事实仍属于 G2 人工验收。
+不能替代完整六组 receipt。P12-M11/M12 的 mixed-DPI 实机事实仍属于 G2 人工验收。
+G4-01 的 tray UIA adapter 必须把物理右键视为请求而非菜单已打开的 acknowledgement：每次尝试都要
+重新解析 `StickyMD` tray icon、将鼠标移动到当前 icon rectangle 并回读实际 cursor position；只有目标
+进程的产品 menu items 已出现才算打开成功。第一次没有出现时最多允许一次相同语义的有界重试，禁止
+无限点击或仅延长固定 sleep。菜单检查后的 Escape 必须等待目标 menu items 消失，避免旧 popup 污染下一步。
+最终失败必须报告尝试次数、icon/cursor geometry 与实际观察到的 product menu item names，不能把“物理
+右键未路由”误报成“显示菜单项不存在”。这些动作只增强 verification adapter；tray lifecycle、窗口可见性、
+同 HWND、文本与 durable save 的 PASS/FAIL authority 仍由 Rust CLI 持有。
 
 G5 shell/compact/presentation/rendering 路径复用相同 exact-candidate identity、独立候选副本与独占
 交互桌面。G5-01 以真实 HWND style 和 focus transition 持有 P12-M03/M04 的可机械 shell eligibility；
