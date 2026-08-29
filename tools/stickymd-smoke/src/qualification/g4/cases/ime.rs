@@ -19,6 +19,97 @@ const INPUT_PROJECTION_OBSERVATION: Duration = Duration::from_millis(600);
 const IME_COMMIT_SETTLE: Duration = Duration::from_millis(100);
 const SOURCE_PREFIX: &str = "StickyMD IME baseline: ";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OrdinaryInputRecovery {
+    PhysicalModeCorrection,
+    ProfileReassertion,
+}
+
+impl OrdinaryInputRecovery {
+    const fn for_session(composition_confirmed: bool) -> Self {
+        if composition_confirmed {
+            Self::ProfileReassertion
+        } else {
+            Self::PhysicalModeCorrection
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::PhysicalModeCorrection => "physical input mode correction",
+            Self::ProfileReassertion => "profile reassertion",
+        }
+    }
+}
+
+struct RealImeSession<'guard> {
+    profile: ImeProfile,
+    profile_guard: &'guard ImeProfileGuard,
+    window: WindowHandle,
+    mode_corrected: bool,
+    composition_confirmed: bool,
+}
+
+impl<'guard> RealImeSession<'guard> {
+    fn new(
+        profile: ImeProfile,
+        profile_guard: &'guard ImeProfileGuard,
+        window: WindowHandle,
+    ) -> Self {
+        Self {
+            profile,
+            profile_guard,
+            window,
+            mode_corrected: false,
+            composition_confirmed: false,
+        }
+    }
+
+    fn correct_input_mode(&mut self) -> Result<(), String> {
+        if self.mode_corrected {
+            return Err(format!(
+                "{} returned to ordinary ASCII after its physical input mode was already corrected",
+                self.profile.name()
+            ));
+        }
+        crate::window_control::press_shift(self.window)?;
+        self.mode_corrected = true;
+        Ok(())
+    }
+
+    fn restore_input_mode(&mut self) -> Result<(), String> {
+        if !self.mode_corrected {
+            return Ok(());
+        }
+        crate::window_control::focus_source_editor(self.window)?;
+        crate::window_control::press_escape(self.window)?;
+        crate::window_control::press_shift(self.window)?;
+        self.mode_corrected = false;
+        Ok(())
+    }
+
+    fn recover_after_ordinary_input(&mut self) -> Result<OrdinaryInputRecovery, String> {
+        let recovery = OrdinaryInputRecovery::for_session(self.composition_confirmed);
+        match recovery {
+            OrdinaryInputRecovery::PhysicalModeCorrection => self.correct_input_mode()?,
+            OrdinaryInputRecovery::ProfileReassertion => {
+                self.profile_guard.reassert(self.window)?;
+            }
+        }
+        Ok(recovery)
+    }
+
+    fn confirm_composition(&mut self) {
+        self.composition_confirmed = true;
+    }
+}
+
+impl Drop for RealImeSession<'_> {
+    fn drop(&mut self) {
+        let _ = self.restore_input_mode();
+    }
+}
+
 pub(super) fn g4_06(_repository: &Path, program: &Path) -> Result<(), String> {
     let parent = program.parent().ok_or_else(|| {
         format!(
@@ -52,35 +143,48 @@ fn exercise_profile(program: &Path, profile: ImeProfile) -> Result<(), String> {
     crate::window_control::focus_source_editor(window)?;
     crate::window_control::press_document_end(window)?;
     let profile_guard = ImeProfileGuard::activate(profile, window)?;
+    let mut ime = RealImeSession::new(profile, &profile_guard, window);
     let checks = (|| {
         crate::window_control::set_ime_open_status(window, true)?;
         crate::window_control::set_ime_native_mode(window, true)?;
-        let term = source_commit_and_undo(program, window, profile, &profile_guard)
+        let term = source_commit_and_undo(program, window, &mut ime)
             .map_err(|error| format!("source commit/Undo: {error}"))?;
-        source_cancel_is_non_mutating(program, window, profile, &profile_guard)
+        source_cancel_is_non_mutating(program, window, &mut ime)
             .map_err(|error| format!("source cancel: {error}"))?;
-        selection_commit_is_one_undo(program, window, profile, &profile_guard)
+        selection_commit_is_one_undo(program, window, &mut ime)
             .map_err(|error| format!("selection commit/Undo: {error}"))?;
-        search_fields_accept_real_ime(program, window, profile, &profile_guard, &term)
+        search_fields_accept_real_ime(program, window, &mut ime, &term)
             .map_err(|error| format!("Search query/replacement: {error}"))?;
-        runtime_states_accept_real_ime(program, window, child.id(), profile, &profile_guard)
+        runtime_states_accept_real_ime(program, window, child.id(), &mut ime)
             .map_err(|error| format!("runtime state matrix: {error}"))
     })();
 
+    let mode_restore = ime.restore_input_mode();
+    drop(ime);
     let child_cleanup = child.kill_and_wait();
     let profile_restore = profile_guard.restore();
-    combine_profile_results(profile, checks, child_cleanup, profile_restore)
+    combine_profile_results(
+        profile,
+        checks,
+        mode_restore,
+        child_cleanup,
+        profile_restore,
+    )
 }
 
 fn combine_profile_results(
     profile: ImeProfile,
     checks: Result<(), String>,
+    mode_restore: Result<(), String>,
     child_cleanup: Result<(), String>,
     profile_restore: Result<(), String>,
 ) -> Result<(), String> {
     let mut failures = Vec::new();
     if let Err(error) = checks {
         failures.push(error);
+    }
+    if let Err(error) = mode_restore {
+        failures.push(format!("physical input mode restore: {error}"));
     }
     if let Err(error) = child_cleanup {
         failures.push(format!("StickyMD cleanup: {error}"));
@@ -98,17 +202,9 @@ fn combine_profile_results(
 fn source_commit_and_undo(
     program: &Path,
     window: WindowHandle,
-    profile: ImeProfile,
-    profile_guard: &ImeProfileGuard,
+    ime: &mut RealImeSession<'_>,
 ) -> Result<String, String> {
-    begin_preedit(
-        program,
-        window,
-        SOURCE_PREFIX,
-        "zhongguo",
-        profile,
-        profile_guard,
-    )?;
+    begin_preedit(program, window, SOURCE_PREFIX, "zhongguo", ime)?;
     crate::window_control::press_arrow_left(window)?;
     crate::window_control::press_arrow_right(window)?;
     crate::window_control::press_backspace(window)?;
@@ -122,7 +218,7 @@ fn source_commit_and_undo(
     let committed = read_note(program)?;
     let term = committed
         .strip_prefix(SOURCE_PREFIX)
-        .ok_or_else(|| format!("{} commit replaced the source prefix", profile.name()))?
+        .ok_or_else(|| format!("{} commit replaced the source prefix", ime.profile.name()))?
         .to_owned();
 
     type_mixed_ascii(program, window, &format!("{SOURCE_PREFIX}{term}"))?;
@@ -133,23 +229,15 @@ fn source_commit_and_undo(
     crate::window_control::press_undo(window)?;
     wait_note(program, |text| text == SOURCE_PREFIX)
         .map_err(|error| format!("IME commit Undo did not restore source prefix: {error}"))?;
-    capture_search_fixture_term(program, window, profile, profile_guard)
+    capture_search_fixture_term(program, window, ime)
 }
 
 fn capture_search_fixture_term(
     program: &Path,
     window: WindowHandle,
-    profile: ImeProfile,
-    profile_guard: &ImeProfileGuard,
+    ime: &mut RealImeSession<'_>,
 ) -> Result<String, String> {
-    begin_preedit(
-        program,
-        window,
-        SOURCE_PREFIX,
-        "zhongguo",
-        profile,
-        profile_guard,
-    )?;
+    begin_preedit(program, window, SOURCE_PREFIX, "zhongguo", ime)?;
     commit_first_candidate(window)?;
     wait_note(program, |text| {
         text.strip_prefix(SOURCE_PREFIX)
@@ -162,7 +250,7 @@ fn capture_search_fixture_term(
         .ok_or_else(|| {
             format!(
                 "{} Search fixture replaced the source prefix",
-                profile.name()
+                ime.profile.name()
             )
         })?
         .to_owned();
@@ -197,17 +285,9 @@ fn type_mixed_ascii(
 fn source_cancel_is_non_mutating(
     program: &Path,
     window: WindowHandle,
-    profile: ImeProfile,
-    profile_guard: &ImeProfileGuard,
+    ime: &mut RealImeSession<'_>,
 ) -> Result<(), String> {
-    begin_preedit(
-        program,
-        window,
-        SOURCE_PREFIX,
-        "nihao",
-        profile,
-        profile_guard,
-    )?;
+    begin_preedit(program, window, SOURCE_PREFIX, "nihao", ime)?;
     crate::window_control::press_escape(window)?;
     thread::sleep(AUTOSAVE_OBSERVATION);
     assert_note(
@@ -220,13 +300,12 @@ fn source_cancel_is_non_mutating(
 fn selection_commit_is_one_undo(
     program: &Path,
     window: WindowHandle,
-    profile: ImeProfile,
-    profile_guard: &ImeProfileGuard,
+    ime: &mut RealImeSession<'_>,
 ) -> Result<(), String> {
     const SELECTED: &str = "selection target";
     replace_document(program, window, SELECTED)?;
     crate::window_control::press_select_all(window)?;
-    begin_preedit(program, window, SELECTED, "nihao", profile, profile_guard)?;
+    begin_preedit(program, window, SELECTED, "nihao", ime)?;
     commit_first_candidate(window)?;
     wait_note(program, valid_cjk_commit)?;
     crate::window_control::press_undo(window)?;
@@ -236,22 +315,14 @@ fn selection_commit_is_one_undo(
 fn search_fields_accept_real_ime(
     program: &Path,
     window: WindowHandle,
-    profile: ImeProfile,
-    profile_guard: &ImeProfileGuard,
+    ime: &mut RealImeSession<'_>,
     term: &str,
 ) -> Result<(), String> {
     let document = format!("{term}\n分隔\n{term}");
     replace_document(program, window, &document)?;
 
     crate::window_control::press_find(window)?;
-    begin_preedit(
-        program,
-        window,
-        &document,
-        "zhongguo",
-        profile,
-        profile_guard,
-    )?;
+    begin_preedit(program, window, &document, "zhongguo", ime)?;
     commit_first_candidate(window)?;
     crate::window_control::press_control_enter(window)?;
     thread::sleep(AUTOSAVE_OBSERVATION);
@@ -270,12 +341,12 @@ fn search_fields_accept_real_ime(
     if selected != term {
         return Err(format!(
             "{} Search IME query did not select its committed source term: expected={term:?} observed={selected:?}",
-            profile.name()
+            ime.profile.name()
         ));
     }
 
     crate::window_control::press_replace(window)?;
-    begin_preedit(program, window, &document, "nihao", profile, profile_guard)?;
+    begin_preedit(program, window, &document, "nihao", ime)?;
     commit_first_candidate(window)?;
     crate::window_control::press_control_enter(window)?;
     wait_note(program, |text| text != document && text.contains(term))?;
@@ -283,7 +354,7 @@ fn search_fields_accept_real_ime(
     if replaced.bytes().any(|byte| byte.is_ascii_alphabetic()) {
         return Err(format!(
             "{} replacement field left uncommitted romanization in the document",
-            profile.name()
+            ime.profile.name()
         ));
     }
     crate::window_control::press_find(window)?;
@@ -295,54 +366,32 @@ fn runtime_states_accept_real_ime(
     program: &Path,
     window: WindowHandle,
     process_id: u32,
-    profile: ImeProfile,
-    profile_guard: &ImeProfileGuard,
+    ime: &mut RealImeSession<'_>,
 ) -> Result<(), String> {
     const BASELINE: &str = "真实输入法状态基线";
 
     replace_document(program, window, BASELINE)?;
     crate::window_control::switch_to_split(window)?;
     wait_for_config(program, "view_mode = \"split\"")?;
-    commit_and_undo(
-        program,
-        window,
-        BASELINE,
-        "nihao",
-        profile,
-        profile_guard,
-        "Split",
-    )?;
+    commit_and_undo(program, window, BASELINE, "nihao", ime, "Split")?;
 
     crate::window_control::switch_to_source(process_id)?;
     wait_for_config(program, "view_mode = \"source\"")?;
     crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Opacity)?;
     crate::window_control::commit_opacity_slider(window, 40)?;
     wait_for_config(program, "opacity = 40")?;
-    commit_and_undo(
-        program,
-        window,
-        BASELINE,
-        "shijie",
-        profile,
-        profile_guard,
-        "40% opacity",
-    )?;
+    commit_and_undo(program, window, BASELINE, "shijie", ime, "40% opacity")?;
 
     crate::window_control::move_to_primary_edge(
         window,
         crate::window_control::PrimaryDockEdge::Left,
     )?;
     wait_for_config(program, "dock_edge = \"left\"")?;
-    crate::window_control::focus_source_editor(window)?;
+    crate::window_control::focus_source_editor(window)
+        .map_err(|error| format!("left-dock focus: {error}"))?;
     crate::window_control::press_document_end(window)?;
-    begin_preedit(
-        program,
-        window,
-        BASELINE,
-        "zhongwen",
-        profile,
-        profile_guard,
-    )?;
+    begin_preedit(program, window, BASELINE, "zhongwen", ime)
+        .map_err(|error| format!("left-dock preedit: {error}"))?;
     super::dock::assert_edge(
         window,
         crate::window_control::PrimaryDockEdge::Left,
@@ -356,20 +405,35 @@ fn runtime_states_accept_real_ime(
     crate::window_control::press_undo(window)?;
     wait_note(program, |text| text == BASELINE)?;
 
-    begin_preedit(program, window, BASELINE, "nihao", profile, profile_guard)?;
+    crate::window_control::move_to_primary_floating(window)?;
+    wait_for_config(program, "dock_edge = \"none\"")?;
+    begin_preedit(program, window, BASELINE, "nihao", ime)
+        .map_err(|error| format!("pre-refocus composition: {error}"))?;
     crate::window_control::focus_shell_desktop(window)?;
+    // GetForegroundWindow proves the native focus owner changed, but winit's
+    // target event loop has no cross-process acknowledgement for reducing the
+    // paired Focused(false) and set_ime_allowed(false) transition. Keep one
+    // bounded dispatch interval before requesting focus back; this fixture is
+    // floating, so the 700 ms dock-collapse contract cannot race this wait.
     thread::sleep(Duration::from_millis(100));
-    crate::window_control::focus_source_editor(window)?;
-    replace_document(program, window, BASELINE)?;
-    commit_and_undo(
+    crate::window_control::request_window_foreground(window)
+        .map_err(|error| format!("post-composition native refocus: {error}"))?;
+    crate::window_control::focus_source_editor(window)
+        .map_err(|error| format!("post-composition refocus: {error}"))?;
+    assert_note(
         program,
-        window,
         BASELINE,
-        "zaijian",
-        profile,
-        profile_guard,
-        "refocus",
-    )
+        "focus loss committed or discarded the active preedit into canonical text",
+    )?;
+    crate::window_control::press_document_end(window)?;
+    begin_preedit(program, window, BASELINE, "zaijian", ime)
+        .map_err(|error| format!("refocus preedit: {error}"))?;
+    commit_first_candidate(window)?;
+    wait_note(program, |text| {
+        text.strip_prefix(BASELINE).is_some_and(valid_cjk_commit)
+    })?;
+    crate::window_control::press_undo(window)?;
+    wait_note(program, |text| text == BASELINE).map(|_| ())
 }
 
 fn commit_and_undo(
@@ -377,20 +441,14 @@ fn commit_and_undo(
     window: WindowHandle,
     baseline: &str,
     romanization: &str,
-    profile: ImeProfile,
-    profile_guard: &ImeProfileGuard,
+    ime: &mut RealImeSession<'_>,
     context: &str,
 ) -> Result<(), String> {
-    crate::window_control::focus_source_editor(window)?;
+    crate::window_control::focus_source_editor(window)
+        .map_err(|error| format!("{context} focus: {error}"))?;
     crate::window_control::press_document_end(window)?;
-    begin_preedit(
-        program,
-        window,
-        baseline,
-        romanization,
-        profile,
-        profile_guard,
-    )?;
+    begin_preedit(program, window, baseline, romanization, ime)
+        .map_err(|error| format!("{context} preedit: {error}"))?;
     commit_first_candidate(window)?;
     wait_note(program, |text| {
         text.strip_prefix(baseline).is_some_and(valid_cjk_commit)
@@ -406,12 +464,10 @@ fn begin_preedit(
     window: WindowHandle,
     durable_before: &str,
     romanization: &str,
-    profile: ImeProfile,
-    profile_guard: &ImeProfileGuard,
+    ime: &mut RealImeSession<'_>,
 ) -> Result<(), String> {
-    if crate::window_control::focus_window(window)? {
-        profile_guard.route_to(window)?;
-    }
+    let _ = crate::window_control::focus_window(window)?;
+    ime.profile_guard.reassert(window)?;
     crate::window_control::set_ime_open_status(window, true)?;
     crate::window_control::set_ime_native_mode(window, true)?;
     crate::window_control::type_ascii_letters(window, romanization)?;
@@ -423,9 +479,10 @@ fn begin_preedit(
             durable_before,
             &format!(
                 "{} preedit crossed into durable text before commit",
-                profile.name()
+                ime.profile.name()
             ),
         )?;
+        ime.confirm_composition();
         return Ok(());
     }
 
@@ -439,19 +496,18 @@ fn begin_preedit(
     wait_note(program, |text| text == durable_before).map_err(|error| {
         format!(
             "{} could not roll back ordinary text emitted while opening composition: {error}",
-            profile.name()
+            ime.profile.name()
         )
     })?;
-    crate::window_control::set_ime_open_status(window, true)?;
-    crate::window_control::set_ime_native_mode(window, true)?;
+    let recovery = ime.recover_after_ordinary_input()?.label();
     crate::window_control::type_ascii_letters(window, romanization)?;
     if wait_for_dirty_projection(window)? {
         crate::window_control::press_escape(window)?;
         crate::window_control::press_undo(window)?;
         let _ = wait_note(program, |text| text == durable_before);
         return Err(format!(
-            "{} emitted ordinary ASCII instead of an active composition after one mode correction",
-            profile.name()
+            "{} emitted ordinary ASCII instead of an active composition after one {recovery}",
+            ime.profile.name(),
         ));
     }
     thread::sleep(AUTOSAVE_OBSERVATION.saturating_sub(INPUT_PROJECTION_OBSERVATION));
@@ -459,10 +515,12 @@ fn begin_preedit(
         program,
         durable_before,
         &format!(
-            "{} preedit crossed into durable text after mode correction",
-            profile.name()
+            "{} preedit crossed into durable text after {recovery}",
+            ime.profile.name(),
         ),
-    )
+    )?;
+    ime.confirm_composition();
+    Ok(())
 }
 
 fn commit_first_candidate(window: WindowHandle) -> Result<(), String> {
@@ -549,8 +607,8 @@ fn is_cjk(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        ImeProfile, canonical_line_endings, combine_profile_results, title_is_dirty,
-        valid_cjk_commit,
+        ImeProfile, OrdinaryInputRecovery, canonical_line_endings, combine_profile_results,
+        title_is_dirty, valid_cjk_commit,
     };
 
     #[test]
@@ -563,15 +621,17 @@ mod tests {
     }
 
     #[test]
-    fn profile_failure_reports_cleanup_and_restore_failures_together() {
+    fn profile_failure_reports_all_cleanup_and_restore_failures_together() {
         let error = combine_profile_results(
             ImeProfile::MicrosoftPinyin,
             Err("functional failure".to_owned()),
+            Err("mode restore failure".to_owned()),
             Err("child failure".to_owned()),
             Err("restore failure".to_owned()),
         )
         .expect_err("combined failures must fail");
         assert!(error.contains("functional failure"));
+        assert!(error.contains("mode restore failure"));
         assert!(error.contains("child failure"));
         assert!(error.contains("restore failure"));
     }
@@ -587,5 +647,17 @@ mod tests {
     fn durable_note_probe_normalizes_only_windows_line_endings() {
         assert_eq!(canonical_line_endings("a\r\nb\r"), "a\nb\r");
         assert_eq!(canonical_line_endings("a\nb"), "a\nb");
+    }
+
+    #[test]
+    fn ordinary_input_recovery_never_toggles_after_composition_was_proven() {
+        assert_eq!(
+            OrdinaryInputRecovery::for_session(false),
+            OrdinaryInputRecovery::PhysicalModeCorrection
+        );
+        assert_eq!(
+            OrdinaryInputRecovery::for_session(true),
+            OrdinaryInputRecovery::ProfileReassertion
+        );
     }
 }

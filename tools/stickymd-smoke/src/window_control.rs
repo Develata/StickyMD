@@ -474,6 +474,10 @@ pub(crate) fn press_f6(window: WindowHandle) -> Result<(), String> {
     send_physical_key(window, 0x75, 0x40, false)
 }
 
+pub(crate) fn press_shift(window: WindowHandle) -> Result<(), String> {
+    send_physical_key(window, 0x10, 0x2A, false)
+}
+
 pub(crate) fn press_select_all(window: WindowHandle) -> Result<(), String> {
     send_control_chord(window, 0x41, 0x1E, false)
 }
@@ -910,6 +914,19 @@ pub(crate) fn focus_window(window: WindowHandle) -> Result<bool, String> {
     Ok(restored)
 }
 
+pub(crate) fn request_window_foreground(window: WindowHandle) -> Result<(), String> {
+    ensure_window(window)?;
+    // SAFETY: the borrowed exact-candidate HWND remains live throughout this
+    // bounded shell-equivalent activation request; no ownership is transferred.
+    if unsafe { SetForegroundWindow(window.0) } == 0 {
+        return Err(format!(
+            "Windows rejected StickyMD foreground activation: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    wait_for_window_activation(window)
+}
+
 pub(crate) fn focus_source_editor(window: WindowHandle) -> Result<(), String> {
     let (screen_x, screen_y) = content_activation_point(window)?;
     let mut input_route =
@@ -1220,10 +1237,44 @@ fn activate_window_for_physical_input(window: WindowHandle) -> Result<(), String
     let observed = current_cursor_position()?;
     project_physical_cursor_to_window(window, observed.x, observed.y)?;
     thread::sleep(Duration::from_millis(25));
+    // SAFETY: the point is copied by value and the returned HWND values are
+    // borrowed only for this bounded routing check.
+    let pre_click_root = unsafe {
+        let hit = WindowFromPoint(NativePoint { x, y });
+        if hit == 0 {
+            0
+        } else {
+            GetAncestor(hit, GA_ROOT)
+        }
+    };
+    if pre_click_root != window.0 {
+        let rect = window_rect(window)?;
+        let visible = is_visible(window)?;
+        let style = style_facts(window)?;
+        return Err(format!(
+            "refusing activation click outside StickyMD: point=({x},{y}) observed_root={pre_click_root} expected_root={} rect={rect:?} visible={visible} style={style:?}",
+            window.0,
+        ));
+    }
     let click = PhysicalLeftButtonGuard::press()?;
     thread::sleep(Duration::from_millis(25));
     drop(click);
-    wait_for_window_activation(window)
+    wait_for_window_activation(window).map_err(|error| {
+        // SAFETY: the point is copied by value and the returned HWND values
+        // are borrowed only for this bounded failure diagnostic.
+        let observed_root = unsafe {
+            let hit = WindowFromPoint(NativePoint { x, y });
+            if hit == 0 {
+                0
+            } else {
+                GetAncestor(hit, GA_ROOT)
+            }
+        };
+        format!(
+            "{error}; activation_point=({x},{y}) observed_root={observed_root} expected_root={}",
+            window.0
+        )
+    })
 }
 
 fn project_physical_cursor_to_window(window: WindowHandle, x: i32, y: i32) -> Result<(), String> {

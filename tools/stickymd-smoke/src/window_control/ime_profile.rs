@@ -268,33 +268,30 @@ fn route_input_language(
 ) -> Result<(), String> {
     let thread_id = window_thread_id(window)?;
     let before = keyboard_layout(thread_id);
-    if profile.substitute_layout == 0 {
-        return if input_language(before) == profile.language {
-            Ok(())
-        } else {
-            Err(format!(
+    let requested_layout = if profile.substitute_layout == 0 {
+        if input_language(before) != profile.language {
+            return Err(format!(
                 "cannot route {label} to StickyMD: profile language=0x{:04x}, current layout=0x{before:x}, and TSF exposed no substitute layout",
                 profile.language
-            ))
-        };
-    }
+            ));
+        }
+        // A zero substitute HKL is normal for some modern TSF profiles. Post
+        // the target thread's existing full HKL anyway: after profile
+        // activation, DefWindowProc must traverse WM_INPUTLANGCHANGE so the
+        // already-running target refreshes its text-service binding.
+        before
+    } else {
+        profile.substitute_layout
+    };
 
     // A matching LANGID is insufficient: the target thread can still be bound
-    // to a different TIP for the same language. Always post the substitute HKL
+    // to a different TIP for the same language. Always post the selected HKL
     // after TSF profile activation so the already-running candidate refreshes
     // its text-service binding.
     // SAFETY: the exact-candidate HWND is live and focused. The message copies
-    // the scalar substitute HKL returned by TSF and retains no caller-owned
+    // the scalar requested HKL and retains no caller-owned
     // memory. DefWindowProc performs the target-thread locale transition.
-    if unsafe {
-        PostMessageW(
-            window.0,
-            WM_INPUTLANGCHANGEREQUEST,
-            0,
-            profile.substitute_layout,
-        )
-    } == 0
-    {
+    if unsafe { PostMessageW(window.0, WM_INPUTLANGCHANGEREQUEST, 0, requested_layout) } == 0 {
         return Err(format!(
             "cannot post {label} input-language request to StickyMD: {}",
             std::io::Error::last_os_error()
@@ -315,8 +312,8 @@ fn route_input_language(
         }
         if Instant::now() >= deadline {
             return Err(format!(
-                "StickyMD did not acknowledge {label} input language: requested_lang=0x{:04x} substitute_layout=0x{:x} observed_layout=0x{observed:x}",
-                profile.language, profile.substitute_layout
+                "StickyMD did not acknowledge {label} input language: requested_lang=0x{:04x} requested_layout=0x{requested_layout:x} substitute_layout=0x{:x} observed_layout=0x{observed:x}",
+                profile.language, profile.substitute_layout,
             ));
         }
         thread::sleep(Duration::from_millis(10));
@@ -428,13 +425,21 @@ impl ImeProfileGuard {
         route_input_language(window, &self.target, self.target_label)
     }
 
+    pub(crate) fn reassert(&self, window: WindowHandle) -> Result<(), String> {
+        if !self.active {
+            return Err("cannot reassert a restored IME profile guard".to_owned());
+        }
+        self.activate_native(&self.target, self.target_label)?;
+        self.route_to(window)
+    }
+
     pub(crate) fn restore(mut self) -> Result<(), String> {
         let result = self.restore_inner();
         self.release();
         result
     }
 
-    fn activate_native(&mut self, profile: &NativeProfile, label: &str) -> Result<(), String> {
+    fn activate_native(&self, profile: &NativeProfile, label: &str) -> Result<(), String> {
         // SAFETY: the guard owns the interface reference for this whole call.
         let manager = unsafe { self.manager.as_ref() }
             .ok_or_else(|| "TSF profile manager is null".to_owned())?;

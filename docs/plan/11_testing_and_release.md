@@ -283,6 +283,16 @@ clipboard shortcuts 与 Preview 只读；G4-04 真实 toolbar 数学分隔符转
 safety 与单次 Undo；G4-05 真实 junction canonical identity、同 HWND 唤醒与第二实例零 durable write；
 G4-06 临时激活 Microsoft Pinyin / WeType 真实 TSF profile，以物理键盘验证 Source/Search composition、
 commit/cancel、selection replace 与一次 Undo，并在结束前恢复原 active profile。
+TSF active-profile 回读只证明输入桌面选择了指定 profile；目标窗口的 `GetKeyboardLayout` 只证明 HKL / LANGID，
+当多个 TIP 共享 `0x0804` 或 profile 不提供 substitute layout 时，不得把它当作中文转换子模式的确认。
+`WM_IME_CONTROL` 的 open/native 回读同样只能作为兼容性预置，不能替代真实按键行为。G4-06 必须以“拼音物理
+按键未写入 canonical text”为 composition acknowledgement；每次 composition 前都必须重新激活并回读同一 profile，
+再对目标 HWND route，不能把“窗口原本已有 focus”当成无需重申 profile。若本 profile 会话尚未成功证明过 composition，
+首次探针成为普通 ASCII edit 时，必须先取消残余 composition、Undo 回到原文，再且仅再执行一次被测 profile 的
+用户等价物理 `Shift` 模式纠正。若会话已经证明过 composition，后续 ordinary ASCII 只能再次重申 profile，不得
+盲目 `Shift`。第二次仍为 ASCII 必须 FAIL，不得追加 sleep 或无限重试。任何被工具执行的模式纠正必须在 profile
+restore 和 child teardown 之前对称恢复；正常路径恢复失败必须使 case 失败，错误返回与 unwind 路径由 RAII
+best-effort 恢复。
 G3/G4 都必须串行且独占桌面，不能并发争抢 clipboard、tray、窗口焦点或鼠标；单项诊断 receipt
 不能替代完整五组 receipt。P12-M11/M12 的 mixed-DPI 实机事实仍属于 G2 人工验收。
 

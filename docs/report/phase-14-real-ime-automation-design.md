@@ -2,7 +2,7 @@
 
 ## Status
 
-USER approved on 2026-08-28. Contract and implementation complete; exact-candidate evidence pending.
+USER approved on 2026-08-28. Contract and implementation repaired on 2026-08-29; clean exact-candidate evidence pending.
 
 ## Problem and Evidence Boundary
 
@@ -26,8 +26,11 @@ G4 exact-candidate harness
          capture active keyboard profile
          validate requested profile is installed/enabled
          activate for current input desktop
-         route the target HWND to the profile's substitute layout
-         set and acknowledge open/native state through its default IME window
+         route the target HWND with substitute or current same-language HKL
+         apply best-effort open/native compatibility preconditions
+    -> behavior acknowledgement from physical romanization
+         preedit: canonical text remains clean
+         direct ASCII: rollback, one physical Shift correction, retry
     -> verified foreground StickyMD HWND
     -> balanced physical key input
     -> durable note / clipboard projection assertions
@@ -58,8 +61,12 @@ active profile 时，exact case fail closed 为 environment unavailable，不得
 2. 创建 TSF manager，读取并保存当前 `GUID_TFCAT_TIP_KEYBOARD` active profile。
 3. 验证目标 profile，使用 session-scoped activation；再次读取 active profile确认一致。
 4. 只有 StickyMD HWND 同时 foreground、active、focused 时才允许物理键盘注入。
-5. 每次 composition 后从 `note.md` 或 clipboard 读取客观结果；不依赖候选文字像素或固定候选词。
-6. 正常路径显式恢复原 profile；unwind/drop 路径 best-effort 恢复并释放 COM。恢复失败必须使 case 失败，
+5. 每次 composition 前重新激活并回读同一 profile，再 route 目标 HWND；不能因为窗口已经 focused 就跳过。
+6. 每次 composition 后从 `note.md` 或 clipboard 读取客观结果；不依赖候选文字像素或固定候选词。若 profile
+   尚未成功 composition 且首次输入落成普通 ASCII，先 cancel + Undo，再允许一次物理 `Shift` 模式纠正；若
+   已有成功 composition，ordinary ASCII 只允许重新激活 profile，不允许反向 Shift。第二次仍为 ASCII 立即失败。
+7. 若测试执行过模式纠正，必须在 child teardown 和 profile restore 之前对称执行一次物理 `Shift` 恢复。
+8. 正常路径显式恢复输入模式与原 profile；unwind/drop 路径 best-effort 恢复并释放 COM。恢复失败必须使 case 失败，
    不能留下 PASS receipt。
 
 测试进程异常终止可能使当前桌面暂时停留在被测 profile，这是 verification-plane 的残余风险；它不修改
@@ -88,10 +95,40 @@ Left/Right/Backspace 编辑的首个候选错误复用于干净 Search compositi
 
 ## Diagnostic Resolution
 
-- Microsoft Pinyin 完整矩阵先通过；WeType 首次停在中英混输。`WM_IME_CONTROL` 对 non-native bit 的
-  acknowledgement 不保证该 TIP 直接发出普通 ASCII，`ImmSimulateHotKey` 也被 WeType 拒绝。因此删除
-  hot-key fallback，统一保持 profile 自然 composition：直接 ASCII 已成为 canonical edit 时立即验证；
-  否则 Enter 提交原始罗马字。该路径不依赖用户 Shift 配置或私有 TIP 行为。
+- 2026-08-29 在同一 exact executable 上稳定复现 Microsoft Pinyin ordinary-ASCII failure。TSF 返回的目标
+  profile 已通过 active-profile 回读，但该 profile 的 `substitute_layout` 与 `keyboard_layout` 均为 `0`，目标线程
+  只能观察到共享的简体中文 HKL `0x8040804`。因此 LANGID 无法确认 Microsoft Pinyin 的“中/英”转换子模式；
+  `WM_IME_CONTROL` open/native 回读为成功时，真实物理拼音仍连续两次成为 canonical ASCII，证明该兼容窗口
+  不是现代 TSF 子模式的可靠 acknowledgement。跨进程 `ImmGetContext(candidate_hwnd)` 又以
+  `ERROR_INVALID_HANDLE` 失败，verification process 不能合法持有 candidate thread 的 HIMC。
+- 修复合同改为黑盒行为 acknowledgement：只有“物理拼音未污染 canonical text”才证明 composition 已开始；
+  首次 direct ASCII 先事务性回滚，再执行一次所测 Microsoft Pinyin / WeType 的用户等价物理 `Shift` 纠正。
+  工具记录是否纠正，并在结束或 unwind 时对称恢复。该方案不新增产品 test API，不跨进程读取 TSF 私有状态，
+  不用固定 sleep 冒充状态确认。Windows 官方说明 `WM_INPUTLANGCHANGEREQUEST` 本来就是 posted message，
+  `GetKeyboardLayout` 的低字仅是语言 ID；TSF conversion flag 的 authority 是
+  `GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION`，而不是 smoke 进程自己的兼容 IME window。
+  参考：<https://learn.microsoft.com/windows/win32/winmsg/wm-inputlangchangerequest>、
+  <https://learn.microsoft.com/windows/win32/winmsg/wm-inputlangchange>、
+  <https://learn.microsoft.com/windows/win32/tsf/predefined-compartments>。
+- 后续诊断证明 refocus 后会在本会话已多次成功 composition 的情况下短暂落成 ASCII；此时 `Shift` 会把正确模式
+  反向切走。根因是旧 harness 仅在 `focus_window()` 实际改变 focus 时 route profile，错误地把“已经 focused”
+  当成“TSF profile 仍绑定”。每次 preedit 现改为无条件 session-scoped profile reactivation + active-profile 回读 +
+  HWND route；只有尚无任何成功 composition 的初始状态才允许一次物理模式纠正。对于 TSF 返回
+  `substitute_layout=0` 的 profile，route 使用目标线程已有的同语言完整 HKL post
+  `WM_INPUTLANGCHANGEREQUEST`，迫使已运行窗口重新经过 `WM_INPUTLANGCHANGE`；若线程语言不同且没有
+  substitute layout 则继续 fail closed。
+- active preedit 的失焦复测还暴露了第二个时序缺口：`GetForegroundWindow()!=candidate` 只证明 native
+  foreground owner 已改变，不证明 winit event loop 已消费 `Focused(false)` 并完成
+  `set_ime_allowed(false)`。立即请求 foreground back 会合并/越过这一 reducer 边界，随后新拼音成为 ASCII。
+  Refocus fixture 先从 docked-expanded 回到 floating，避免 700 ms auto-hide 与 IME focus 形成复合场景；在
+  shell foreground acknowledgement 后保留唯一 100 ms target-event-loop dispatch interval，再用 bounded
+  native foreground acknowledgement 返回 candidate。该等待没有可用跨进程 reducer projection，且远小于
+  dock collapse boundary；不用于普通输入、不得扩大成通用 sleep。
+
+- 2026-08-28 的旧修复曾因 WeType 中英混输删除所有 hot-key fallback；它只覆盖当时自然 composition 的
+  桌面状态。2026-08-29 的重复实验进一步证明 Microsoft Pinyin 可以在 profile/open/native 全部回读成功时
+  仍处于 direct-ASCII 子模式，因此旧结论被更精确的“行为探针 + 至多一次物理 Shift + 对称恢复”取代。
+  WeType 已成功 composition 后不得走该 correction，而是重申 profile；两类恢复仍共享同一有界二次探针。
 - 第二次诊断越过混输后，WeType 窗口被前一 Microsoft Pinyin 场景遗留的 40% opacity + left dock config
   恢复到屏幕外，物理 cursor 被夹到桌面边界。每个 profile 改用从未启动的 candidate template 的独立副本，
   消除 verification fixture 的跨 profile 状态泄漏。
@@ -119,14 +156,18 @@ Left/Right/Backspace 编辑的首个候选错误复用于干净 Search compositi
 - `window_control/ime_profile.rs`：std-only TSF COM adapter，捕获原 profile、验证目标 installed/enabled、
   session-scoped 激活、active profile 回读，通过 `WM_INPUTLANGCHANGEREQUEST` 把目标 HWND 路由到目标
   substitute layout，并通过候选线程的 default IME window 发送
-  `WM_IME_CONTROL` 显式设置/回读 open status 与 native conversion bit；测试后显式恢复 profile，Drop
-  只作 best-effort 清理。不跨进程持有 HIMC，不依赖用户 Shift 配置，不修改 profile 注册或默认值。
+  `WM_IME_CONTROL` 设置/回读 open status 与 native conversion bit 作为兼容性预置；这些回读不再被当作
+  composition acknowledgement。不跨进程持有 HIMC，不修改 profile 注册或默认值。
 - `qualification/g4/cases/ime.rs`：每个 profile 使用独立 exact-candidate 副本和物理键盘，覆盖 Source
   preedit/commit/cancel/selection/Undo、中英混输、Search query/replacement、Up/Down、Find-only guard、
-  Source/Split、40% opacity、左侧 Docked-expanded 与 refocus。
+  Source/Split、40% opacity、左侧 Docked-expanded 与 refocus；行为探针需要时至多执行一次物理 `Shift`
+  模式纠正，并用 RAII 在 child/profile teardown 前对称恢复。
+- `window_control.rs`：物理 activation 在点击前要求 `WindowFromPoint` 的 root HWND 就是 candidate，避免
+  composition/candidate overlay 或已收起窗口让 smoke 误点用户桌面；refocus 可走 bounded native foreground
+  request，再以真实 source click 验证编辑器输入目标。
 - G4 parser、PowerShell ValidateSet、六项 receipt/readiness 和治理合同均已更新；旧五项 G4 receipt 不再
   能解除 readiness blocker。
-- `cargo test -p stickymd-smoke --locked`：97 passed、0 failed（95 unit + 2 CLI）。
+- `cargo test -p stickymd-smoke --locked`：104 passed、0 failed（102 unit + 2 CLI）。
 - `cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings`：PASS。
 - `stickymd-smoke all --ci --ci-shard=tests --json`：governance、Markdown/math、persistence、workspace
   tests 与 requested shard 全部 PASS。
@@ -135,3 +176,12 @@ Left/Right/Backspace 编辑的首个候选错误复用于干净 Search compositi
 通过 Microsoft Pinyin 与 WeType。该组合只证明 harness/root-cause 修复，不能形成正式候选收据。当前
 实现尚未 freeze 为新 exact candidate；P14-A30 与候选窗人工视觉项继续保持 `NOT TESTED`，不得复用任何
 旧候选收据。
+
+2026-08-29 回归诊断使用产品 exact executable SHA-256
+`5c21d46e3831af1511bbb41b325a01524fd6692861a1918770b2b5a5021ad167` 与 dirty repaired harness 运行 targeted
+`G4-06`，Microsoft Pinyin / WeType 完整通过。该结果证明当前修复路径，不是 clean-worktree exact receipt；
+提交后仍须生成新 candidate 并重建完整 G4 evidence。
+
+同一 dirty harness 的完整 G4 诊断结果为 G4-02..G4-06 PASS、G4-01 FAIL；G4-01 及其独立重跑均在
+Windows UIA 等待 `StickyMD Show` 托盘菜单项时超时。该失败不属于 G4-06 调用路径，不能被本报告的 IME
+修复或 targeted PASS 覆盖；它继续作为单独资格化 blocker 等待后续诊断。
