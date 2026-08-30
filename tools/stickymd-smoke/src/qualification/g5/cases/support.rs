@@ -4,8 +4,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::super::super::exact_desktop::{
     ArtifactEvidence, ChildGuard, invoke_uia, wait_for_config,
@@ -75,6 +76,7 @@ fn capture_artifact(
     label: &str,
 ) -> Result<ArtifactEvidence, String> {
     let relative = PathBuf::from("dist/evidence/g5-artifacts")
+        .join(format!("run-{}-{process_id}", artifact_run_id()?))
         .join(case_id.to_ascii_lowercase())
         .join(format!("{label}.png"));
     let output = repository.join(&relative);
@@ -96,6 +98,18 @@ fn capture_artifact(
         path: relative.to_string_lossy().replace('\\', "/"),
         sha256: receipt::sha256(&output)?,
     })
+}
+
+fn artifact_run_id() -> Result<u128, String> {
+    static RUN_ID: OnceLock<u128> = OnceLock::new();
+    if let Some(value) = RUN_ID.get() {
+        return Ok(*value);
+    }
+    let value = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before Unix epoch: {error}"))?
+        .as_nanos();
+    Ok(*RUN_ID.get_or_init(|| value))
 }
 
 pub(super) fn assert_source_projection(

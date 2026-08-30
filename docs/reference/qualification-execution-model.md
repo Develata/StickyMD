@@ -25,16 +25,18 @@ run/attempt/artifact id 与实际 EXE/ZIP/SBOM SHA-256。动态 artifact-bound r
 EXE SHA-256、version、Windows build 与 channel/session，package/manual 还绑定 ZIP SHA-256。manual
 observation 只接受显式 human status；automated facts 不能提升人工状态。
 
-本地 `target/release` 只用于 source preflight，不与远端独立 build 比较逐字节等价。Promote 后所有
-artifact-bound receipt 必须针对 staged candidate 重建；Source Freeze 未变时 fmt/Clippy/headless/
-dependency 等 source-only evidence 可复用。这就是最小 exact 重验，不是完整 Phase 0–14 Campaign。
+本地 `target/release` 只用于 source preflight，不与远端独立 build 比较逐字节等价。Promote 后
+download/package/checksum/SBOM/PE/native-runtime 等 exact-byte evidence 必须针对 staged candidate 重建。
+功能 qualification 按 Rust module registry 的相关输入指纹复用每模块 last-success receipt；相同指纹显示
+`REUSED PASS` 与 origin candidate，变化时只运行受影响模块。失败或用户/环境中止不覆盖最后成功。
 
 ## Parallelism and Targeted Reruns
 
 - GitHub-hosted deterministic CI 使用隔离 runner 并发 format/lint、headless tests、headless
   Release performance、portable-core 与 release build；Rust CLI 的 shard-union test 防止漏项。
 - 日常修复按受影响 Phase 或 Resource module 定向复核；完整 Campaign 只用于候选冻结、发布资格化
-  或明确全量请求。定向资源结果不提升完整 candidate Resources 状态。
+  或明确全量请求。即使请求 Campaign，planner 也只启动当前指纹没有兼容成功记录的模块；定向资源结果
+  不提升未覆盖模块的成功状态。
 - 一个交互桌面上的窗口、焦点、物理鼠标、clipboard、tray 和资源采样是共享能力，必须串行。
   多进程同时采样还会污染 CPU、缓存和 working-set 结论，因此不能用“多开 app”换取虚假的速度。
 - Docker 不是 StickyMD v1 的交付对象；没有明确消费者前不建立无用途 image job。

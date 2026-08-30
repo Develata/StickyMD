@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use super::exact_readiness;
-use super::receipt;
+use super::module_ledger::{self, ModuleId};
 use super::receipt::Candidate;
 
 pub(super) const G5_RECEIPT: &str = "dist/evidence/g5-exact-qualification.json";
@@ -13,15 +13,27 @@ const EXPECTED_CASES: [&str; 4] = ["G5-01", "G5-02", "G5-03", "G5-04"];
 
 pub(super) fn check(root: &Path, candidate: &Candidate, blockers: &mut Vec<String>) -> bool {
     let before = blockers.len();
-    if exact_readiness::check(root, candidate, "G5", G5_RECEIPT, &EXPECTED_CASES, blockers) {
+    if exact_readiness::check(
+        root,
+        candidate,
+        ModuleId::G5,
+        "G5",
+        G5_RECEIPT,
+        &EXPECTED_CASES,
+        blockers,
+    ) {
         verify_artifacts(root, blockers);
     }
     blockers.len() == before
 }
 
 fn verify_artifacts(root: &Path, blockers: &mut Vec<String>) {
-    let document = match receipt::read_receipt(&root.join(G5_RECEIPT)) {
-        Ok(document) => document,
+    let document = match module_ledger::compatible_success(root, ModuleId::G5) {
+        Ok(Some(success)) => success.document,
+        Ok(None) => {
+            blockers.push("G5 screenshot evidence has no compatible last success".to_owned());
+            return;
+        }
         Err(error) => {
             blockers.push(format!("G5 screenshot evidence: {error}"));
             return;
@@ -42,7 +54,7 @@ fn verify_artifacts(root: &Path, blockers: &mut Vec<String>) {
                 continue;
             }
             let absolute = root.join(&path);
-            match receipt::sha256(&absolute) {
+            match super::receipt::sha256(&absolute) {
                 Ok(actual) if actual == expected => {}
                 Ok(actual) => blockers.push(format!(
                     "STALE RECEIPT: G5 artifact {path} hash is {actual}, expected {expected}"

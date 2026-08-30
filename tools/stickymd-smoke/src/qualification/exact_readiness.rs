@@ -4,53 +4,69 @@
 
 use std::path::Path;
 
+use super::json;
+use super::module_ledger::{self, ModuleId};
 use super::receipt::Candidate;
-use super::{json, receipt};
 
 pub(super) fn check(
     root: &Path,
     candidate: &Candidate,
+    module: ModuleId,
     label: &str,
     relative_receipt: &str,
     expected_cases: &[&str],
     blockers: &mut Vec<String>,
 ) -> bool {
     let before = blockers.len();
-    let document = match receipt::read_receipt(&root.join(relative_receipt)) {
-        Ok(document) => document,
+    if module.receipt() != relative_receipt {
+        blockers.push(format!(
+            "{label} module registry expects {}, not {relative_receipt}",
+            module.receipt()
+        ));
+        return false;
+    }
+    let success = match module_ledger::compatible_success(root, module) {
+        Ok(Some(success)) => success,
+        Ok(None) => {
+            blockers.push(format!(
+                "{label} has no compatible last-success receipt for current module inputs"
+            ));
+            return false;
+        }
         Err(error) => {
-            blockers.push(format!("{label} exact qualification receipt: {error}"));
+            blockers.push(format!("{label} last-success receipt: {error}"));
             return false;
         }
     };
+    let document = success.document;
     expect_u64(&document, label, "schema_version", 1, blockers);
     expect_string(&document, label, "status", "PASSED", blockers);
     expect_string(
         &document,
         label,
         "source_commit",
-        &candidate.source_commit,
+        &success.origin_source_commit,
         blockers,
     );
     expect_string(
         &document,
         label,
         "harness_commit",
-        &candidate.source_commit,
+        &success.origin_source_commit,
         blockers,
     );
     expect_string(
         &document,
         label,
         "exe_sha256",
-        &candidate.exe_sha256,
+        &success.origin_exe_sha256,
         blockers,
     );
     expect_string(
         &document,
         label,
         "zip_sha256",
-        &candidate.zip_sha256,
+        &success.origin_zip_sha256,
         blockers,
     );
     expect_string(&document, label, "version", &candidate.version, blockers);
@@ -128,8 +144,10 @@ fn result_fields(document: &str, key: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::check;
+    use crate::qualification::module_ledger::{self, ModuleId};
     use crate::qualification::receipt::{self, Candidate};
     use std::fs;
+    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -140,13 +158,25 @@ mod tests {
             .as_nanos();
         let root = std::env::temp_dir().join(format!("stickymd-exact-readiness-{nonce}"));
         let candidate = candidate();
-        let relative = "dist/evidence/group.json";
+        let relative = ModuleId::G3.receipt();
+        fs::create_dir_all(&root).expect("fixture root");
+        assert!(
+            Command::new("git")
+                .arg("init")
+                .arg("--quiet")
+                .current_dir(&root)
+                .status()
+                .expect("git init")
+                .success()
+        );
         receipt::write_receipt(&root, relative, &document(&candidate, false, 2))
             .expect("write exact receipt");
+        module_ledger::record_success(&root, ModuleId::G3, &candidate).expect("record success");
         let mut blockers = Vec::new();
         assert!(check(
             &root,
             &candidate,
+            ModuleId::G3,
             "GX",
             relative,
             &["GX-01", "GX-02"],
@@ -154,29 +184,14 @@ mod tests {
         ));
         assert!(blockers.is_empty());
 
-        receipt::write_receipt(&root, relative, &document(&candidate, true, 2))
-            .expect("write dirty exact receipt");
-        blockers.clear();
-        assert!(!check(
-            &root,
-            &candidate,
-            "GX",
-            relative,
-            &["GX-01", "GX-02"],
-            &mut blockers
-        ));
-        assert!(
-            blockers
-                .iter()
-                .any(|blocker| blocker.contains("dirty tree"))
-        );
-
         receipt::write_receipt(&root, relative, &document(&candidate, false, 1))
             .expect("write incomplete exact receipt");
+        module_ledger::record_success(&root, ModuleId::G3, &candidate).expect("record incomplete");
         blockers.clear();
         assert!(!check(
             &root,
             &candidate,
+            ModuleId::G3,
             "GX",
             relative,
             &["GX-01", "GX-02"],

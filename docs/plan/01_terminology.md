@@ -5,7 +5,7 @@
 - `Layer`: Foundation
 - `Status`: Governing Rule
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-29
+- `Last Review`: 2026-08-30
 - `Scope`: 固定 StickyMD 核心术语的定义、权威来源、等价性边界与生命周期；全仓库文档与代码命名必须使用本表术语
 
 每个术语包含四个字段：
@@ -330,11 +330,34 @@
 
 ### Artifact-bound Evidence
 
-- **Definition**：必须针对 Promoted Candidate 的确切 EXE/ZIP 产生的 package/runtime、Performance、Resources、
-  G3/G4/G5 与人工验收收据。
-- **Authority**：统一 candidate resolver 返回的 canonical staged ZIP/EXE 与包含其 hash 的 receipt。
-- **Not equivalent to**：Local Preflight Build 结果、旧 candidate receipt 或 source-only CI。
-- **Lifetime**：只绑定一个 Promoted Candidate；任何 candidate identity 变化立即 stale。
+- **Definition**：直接证明 Promoted Candidate 精确 ZIP/EXE/SBOM 字节的 downloaded/package/checksum/SBOM、
+  PE/native-runtime 与 portable-runtime 收据。
+- **Authority**：统一 candidate resolver 返回的 canonical staged artifact 与包含其 hash 的 receipt。
+- **Not equivalent to**：Local Preflight Build、source equivalence、功能模块成功记录或旧 candidate receipt。
+- **Lifetime**：只绑定一个 Promoted Candidate；适用 artifact hash 变化立即 stale。
+
+### Qualification Module Fingerprint
+
+- **Definition**：某个稳定资格化模块的相关产品输入、共享依赖、harness、验收合同，以及适用时的
+  toolchain/manifest/lock/exact-artifact hash，经排序和稳定 SHA-256 得到的内容身份。
+- **Authority**：Rust Qualification Module Registry 声明输入集合，实际 tracked/worktree bytes 决定 hash。
+- **Not equivalent to**：source commit、文件 mtime、最近 candidate、最近运行时间或整个仓库的无条件 hash。
+- **Lifetime**：任一声明输入的 bytes 变化即产生新指纹；无法分类的 tracked path 触发保守失效。
+
+### Last Successful Module Receipt
+
+- **Definition**：每个资格化模块唯一保留的最近一次完整成功记录，包含模块指纹、成功来源 source/candidate、
+  evidence class 与结果摘要。相同当前指纹可投影为 `REUSED PASS`。
+- **Authority**：Rust smoke CLI 在模块完整 PASS 后执行的原子更新。
+- **Not equivalent to**：最近一次尝试、失败/中止日志、partial receipt、旧指纹 PASS 或当前 candidate 本身。
+- **Lifetime**：从一次成功写入到相同模块下一次成功原子替换；失败或中止不得覆盖。
+
+### Qualification Module Registry
+
+- **Definition**：测试模块 ID、runner、产品/共享/harness/contract 输入、依赖传播和 evidence class 的稳定注册表。
+- **Authority**：`stickymd-smoke` 的受测试 registry；readiness 与 impacted planner 只能消费该注册表。
+- **Not equivalent to**：按目录名猜测、Git commit 整体失效、运行时插件系统或人工临时跳过清单。
+- **Lifetime**：verification tooling 生命周期；registry 变化会使受影响模块指纹变化。
 
 ---
 

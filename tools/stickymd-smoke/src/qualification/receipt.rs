@@ -8,7 +8,6 @@ use std::process::Command;
 
 use super::{json, source_freeze};
 
-pub(super) const EVIDENCE_DIRECTORY: &str = "dist/evidence";
 pub(super) const CANDIDATE_RECEIPT: &str = "dist/evidence/release-candidate.json";
 pub(super) const EXACT_CANDIDATE_DIRECTORY: &str = "dist/exact-candidate";
 pub(super) const RELEASE_ARTIFACT_NAME: &str = "stickymd-windows-x64-release";
@@ -211,11 +210,8 @@ pub(super) fn write_candidate(root: &Path, candidate: &Candidate) -> Result<(), 
 }
 
 pub(super) fn write_receipt(root: &Path, relative: &str, contents: &str) -> Result<(), String> {
-    let directory = root.join(EVIDENCE_DIRECTORY);
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("cannot create {}: {error}", directory.display()))?;
     let path = root.join(relative);
-    fs::write(&path, contents).map_err(|error| format!("cannot write {}: {error}", path.display()))
+    crate::atomic_evidence::write(&path, contents.as_bytes())
 }
 
 pub(super) fn read_receipt(path: &Path) -> Result<String, String> {

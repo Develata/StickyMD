@@ -43,7 +43,6 @@ pub(crate) struct EvidenceSample {
 pub(crate) enum EvidenceStatus {
     Passed,
     Failed,
-    Incomplete,
     NotTested,
 }
 
@@ -52,7 +51,6 @@ impl EvidenceStatus {
         match self {
             Self::Passed => "PASSED",
             Self::Failed => "FAILED",
-            Self::Incomplete => "INCOMPLETE",
             Self::NotTested => "NOT_TESTED",
         }
     }
@@ -96,8 +94,8 @@ pub(crate) fn emit(
                 )
             })?;
         }
-        fs::write(&path, json)
-            .map_err(|error| format!("cannot write evidence file `{}`: {error}", path.display()))?;
+        crate::atomic_evidence::write(&path, json.as_bytes())?;
+        crate::qualification::record_last_success_for_evidence(root, &path)?;
     } else {
         println!("{json}");
     }
@@ -441,7 +439,7 @@ mod tests {
             "phase-13",
             &[EvidenceResult {
                 id: "resource qualification campaign".to_owned(),
-                status: EvidenceStatus::Incomplete,
+                status: EvidenceStatus::NotTested,
                 detail: None,
                 measurements: Vec::new(),
                 gates: Vec::new(),
@@ -452,7 +450,7 @@ mod tests {
         assert!(json.contains("\"status\":\"ENVIRONMENT_BLOCKED\""));
         assert!(json.contains("\"locked\":true"));
         assert!(json.contains("\"display_count\":2"));
-        assert!(json.contains("\"status\":\"INCOMPLETE\""));
+        assert!(json.contains("\"status\":\"NOT_TESTED\""));
         assert!(!json.contains("private diagnostic"));
         assert!(!json.contains("desktop_name"));
     }

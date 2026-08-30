@@ -21,6 +21,7 @@ mod json;
 mod manual;
 mod manual_readiness;
 mod manual_receipt;
+mod module_ledger;
 mod readiness;
 mod receipt;
 mod remote;
@@ -40,6 +41,7 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
             record_environment(root, evidence_file.as_deref())
         }
         QualificationCommand::LocalCampaign => campaign::run(root),
+        QualificationCommand::Modules => module_ledger::print_status(root),
         QualificationCommand::SourceFreeze => {
             let source = source_freeze::create(root)?;
             decisions::project(root, &source)?;
@@ -211,4 +213,12 @@ pub(crate) fn record_manual(root: &Path, command: ManualCommand) -> Result<(), S
 
 pub(crate) fn release_executable(root: &Path) -> Result<std::path::PathBuf, String> {
     receipt::resolve_release_executable(root)
+}
+
+pub(crate) fn reuse_last_success_for_evidence(root: &Path, path: &Path) -> Result<bool, String> {
+    module_ledger::reuse_for_receipt(root, path)
+}
+
+pub(crate) fn record_last_success_for_evidence(root: &Path, path: &Path) -> Result<(), String> {
+    module_ledger::record_for_receipt(root, path)
 }

@@ -135,6 +135,12 @@ impl Task {
 }
 
 pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
+    if options.json
+        && let Some(path) = options.evidence_file.as_deref()
+        && crate::qualification::reuse_last_success_for_evidence(root, path)?
+    {
+        return Ok(());
+    }
     let tasks = build_plan(options)?;
     let label = match (options.selection, options.ci_shard) {
         (Selection::All, Some(shard)) => format!("all-ci-{}", shard.as_str()),
@@ -170,15 +176,6 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
                 samples: Vec::new(),
             });
             if observed.status != QualificationEnvironmentStatus::Valid {
-                if options.json {
-                    evidence::emit(
-                        root,
-                        &label,
-                        &results,
-                        environment.as_ref(),
-                        options.evidence_file.as_deref(),
-                    )?;
-                }
                 return Err(environment_failure(&observed));
             }
             continue;
@@ -197,15 +194,6 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
                 samples: Vec::new(),
             });
             if observed.status != QualificationEnvironmentStatus::Valid {
-                if options.json {
-                    emit_partial(
-                        root,
-                        &label,
-                        &results,
-                        environment.as_ref(),
-                        options.evidence_file.as_deref(),
-                    )?;
-                }
                 return Err(environment_failure(&observed));
             }
         }
@@ -228,15 +216,6 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
                     gates: evidence.gates,
                     samples: evidence.samples,
                 });
-                if options.json {
-                    evidence::emit(
-                        root,
-                        &label,
-                        &results,
-                        environment.as_ref(),
-                        options.evidence_file.as_deref(),
-                    )?;
-                }
                 return Err(detail);
             }
             #[cfg(not(windows))]
@@ -249,15 +228,6 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
                     gates: Vec::new(),
                     samples: Vec::new(),
                 });
-                if options.json {
-                    evidence::emit(
-                        root,
-                        &label,
-                        &results,
-                        environment.as_ref(),
-                        options.evidence_file.as_deref(),
-                    )?;
-                }
                 return Err(format!("`{task_name}` is NOT_TESTED: {detail}"));
             }
             Err(error) => {
@@ -269,26 +239,8 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
                     gates: Vec::new(),
                     samples: Vec::new(),
                 });
-                if options.json {
-                    evidence::emit(
-                        root,
-                        &label,
-                        &results,
-                        environment.as_ref(),
-                        options.evidence_file.as_deref(),
-                    )?;
-                }
                 return Err(error);
             }
-        }
-        if options.resources && is_resource_stage(task) && options.json {
-            emit_partial(
-                root,
-                &label,
-                &results,
-                environment.as_ref(),
-                options.evidence_file.as_deref(),
-            )?;
         }
     }
     if requires_full_readiness(options)
@@ -302,15 +254,6 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
             gates: Vec::new(),
             samples: Vec::new(),
         });
-        if options.json {
-            evidence::emit(
-                root,
-                &label,
-                &results,
-                environment.as_ref(),
-                options.evidence_file.as_deref(),
-            )?;
-        }
         return Err(error);
     }
     results.push(EvidenceResult {
@@ -337,25 +280,6 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
         println!("StickyMD smoke PASS: {label}");
     }
     Ok(())
-}
-
-fn emit_partial(
-    root: &Path,
-    label: &str,
-    results: &[EvidenceResult],
-    environment: Option<&QualificationEnvironment>,
-    output_file: Option<&Path>,
-) -> Result<(), String> {
-    let mut partial = results.to_vec();
-    partial.push(EvidenceResult {
-        id: "resource qualification campaign".to_owned(),
-        status: EvidenceStatus::Incomplete,
-        detail: Some("additional required resource scenarios have not completed".to_owned()),
-        measurements: Vec::new(),
-        gates: Vec::new(),
-        samples: Vec::new(),
-    });
-    evidence::emit(root, label, &partial, environment, output_file)
 }
 
 const fn environment_evidence_status(environment: &QualificationEnvironment) -> EvidenceStatus {

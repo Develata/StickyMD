@@ -160,6 +160,7 @@ pub(crate) enum QualificationCommand {
         evidence_file: Option<PathBuf>,
     },
     LocalCampaign,
+    Modules,
     SourceFreeze,
     StartupAttribution,
     WindowStress(WindowStressOptions),
@@ -558,6 +559,9 @@ impl CommandLine {
             Some("local") if arguments.len() == 1 => {
                 Ok(Self::Qualification(QualificationCommand::LocalCampaign))
             }
+            Some("modules") if arguments.len() == 1 => {
+                Ok(Self::Qualification(QualificationCommand::Modules))
+            }
             Some("decision") => {
                 let values = &arguments[1..];
                 if values.len() != 3 {
@@ -608,7 +612,7 @@ impl CommandLine {
                 }))
             }
             _ => Err(
-                "qualification requires environment, local, source-freeze, attribution, window-stress, native-runtime, g3, g4, g5, decision, readiness, remote, or downloaded"
+                "qualification requires environment, local, modules, source-freeze, attribution, window-stress, native-runtime, g3, g4, g5, decision, readiness, remote, or downloaded"
                     .to_owned(),
             ),
         }
@@ -1076,6 +1080,13 @@ mod tests {
         assert_eq!(
             readiness,
             CommandLine::Qualification(QualificationCommand::Readiness { explain: true })
+        );
+
+        let modules = CommandLine::parse(args(&["qualification", "modules"]))
+            .expect("valid module status command");
+        assert_eq!(
+            modules,
+            CommandLine::Qualification(QualificationCommand::Modules)
         );
 
         let decision = CommandLine::parse(args(&[

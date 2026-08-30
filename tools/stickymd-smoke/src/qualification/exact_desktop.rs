@@ -103,6 +103,13 @@ pub(super) fn run(
             group.name
         ));
     }
+    let formal_group_run =
+        group.selected_case.is_none() && requested_zip.is_none() && evidence_file.is_none();
+    if formal_group_run
+        && super::module_ledger::reuse_for_receipt(repository, Path::new(group.default_receipt))?
+    {
+        return Ok(());
+    }
     let environment = qualification_environment::inspect();
     if environment.status != QualificationEnvironmentStatus::Valid {
         return Err(format!(
@@ -187,14 +194,6 @@ pub(super) fn run(
         &["status", "--porcelain", "--untracked-files=normal"],
     )?
     .is_empty();
-    let document = evidence::render_receipt(
-        &candidate,
-        &harness_commit,
-        worktree_dirty,
-        &super::manual_receipt::windows_build(),
-        &environment.summary(),
-        &results,
-    );
     let output = evidence_file.map_or_else(
         || match group.selected_case {
             Some(case) => repository.join(format!(
@@ -206,18 +205,23 @@ pub(super) fn run(
         },
         |path| absolute(repository, path),
     );
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("cannot create {} evidence directory: {error}", group.name))?;
-    }
-    fs::write(&output, document)
-        .map_err(|error| format!("cannot write {}: {error}", output.display()))?;
-
     let failed = results
         .iter()
         .filter(|result| result.status != "PASSED")
         .count();
     if failed == 0 {
+        let document = evidence::render_receipt(
+            &candidate,
+            &harness_commit,
+            worktree_dirty,
+            &super::manual_receipt::windows_build(),
+            &environment.summary(),
+            &results,
+        );
+        crate::atomic_evidence::write(&output, document.as_bytes())?;
+        if formal_group_run {
+            super::module_ledger::record_for_receipt(repository, &output)?;
+        }
         println!("{}_EXACT_RECEIPT={}", group.name, output.display());
         Ok(())
     } else {

@@ -4,35 +4,33 @@
 
 use std::path::Path;
 
+use super::module_ledger::{self, ModuleId};
 use super::receipt::Candidate;
 use super::source_freeze::SourceFreeze;
 use super::{json, receipt};
 
 const HEADLESS_CI_RECEIPT: &str = "dist/evidence/headless-ci-qualification.json";
-const PERFORMANCE_RECEIPT: &str = "dist/evidence/performance-qualification.json";
-const RUNTIME_RECEIPT: &str = "dist/evidence/runtime-qualification.json";
-const RESOURCES_RECEIPT: &str = "dist/evidence/resources-qualification.json";
 
 #[derive(Clone, Copy)]
 struct ArtifactReceiptContract {
-    path: &'static str,
+    module: ModuleId,
     label: &'static str,
     required_task: &'static str,
 }
 
 const ARTIFACT_RECEIPTS: [ArtifactReceiptContract; 3] = [
     ArtifactReceiptContract {
-        path: RUNTIME_RECEIPT,
+        module: ModuleId::Runtime,
         label: "runtime qualification",
         required_task: "copied Release Phase 8 close-to-tray/show lifecycle",
     },
     ArtifactReceiptContract {
-        path: PERFORMANCE_RECEIPT,
+        module: ModuleId::Performance,
         label: "performance qualification",
         required_task: "copied Release Phase 9 editor-ready cold/warm startup matrix",
     },
     ArtifactReceiptContract {
-        path: RESOURCES_RECEIPT,
+        module: ModuleId::Resources,
         label: "resource qualification",
         required_task: "copied Release Phase 8 hidden-window resource matrix",
     },
@@ -41,13 +39,13 @@ const ARTIFACT_RECEIPTS: [ArtifactReceiptContract; 3] = [
 pub(super) fn check(
     root: &Path,
     source: &SourceFreeze,
-    candidate: &Candidate,
+    _candidate: &Candidate,
     blockers: &mut Vec<String>,
 ) -> bool {
     let before = blockers.len();
     check_source_receipt(root, source, blockers);
     for contract in ARTIFACT_RECEIPTS {
-        check_artifact_receipt(root, candidate, contract, blockers);
+        check_artifact_receipt(root, contract, blockers);
     }
     blockers.len() == before
 }
@@ -72,30 +70,37 @@ fn check_source_receipt(root: &Path, source: &SourceFreeze, blockers: &mut Vec<S
 
 fn check_artifact_receipt(
     root: &Path,
-    candidate: &Candidate,
     contract: ArtifactReceiptContract,
     blockers: &mut Vec<String>,
 ) {
-    let document = match receipt::read_receipt(&root.join(contract.path)) {
-        Ok(document) => document,
+    let success = match module_ledger::compatible_success(root, contract.module) {
+        Ok(Some(success)) => success,
+        Ok(None) => {
+            blockers.push(format!(
+                "{} has no compatible last-success receipt for current module inputs",
+                contract.label
+            ));
+            return;
+        }
         Err(error) => {
-            blockers.push(format!("{} receipt: {error}", contract.label));
+            blockers.push(format!("{} last-success receipt: {error}", contract.label));
             return;
         }
     };
+    let document = success.document;
     check_common(
         &document,
         contract.label,
         "phase-14",
         contract.required_task,
-        &candidate.source_commit,
+        &success.origin_source_commit,
         blockers,
     );
     match json::string_field(&document, "executable_sha256") {
-        Ok(actual) if actual == candidate.exe_sha256 => {}
+        Ok(actual) if actual == success.origin_exe_sha256 => {}
         Ok(actual) => blockers.push(format!(
             "STALE RECEIPT: {} EXE hash is {actual}, expected {}",
-            contract.label, candidate.exe_sha256
+            contract.label, success.origin_exe_sha256
         )),
         Err(error) => blockers.push(format!("{} EXE hash: {error}", contract.label)),
     }
@@ -152,9 +157,11 @@ fn check_common(
 #[cfg(test)]
 mod tests {
     use super::{ARTIFACT_RECEIPTS, HEADLESS_CI_RECEIPT, check};
+    use crate::qualification::module_ledger;
     use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
     use crate::qualification::source_freeze::SourceFreeze;
     use std::fs;
+    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -166,6 +173,16 @@ mod tests {
         let root = std::env::temp_dir().join(format!("stickymd-automated-receipts-{nonce}"));
         let source = source();
         let candidate = candidate();
+        fs::create_dir_all(&root).expect("fixture root");
+        assert!(
+            Command::new("git")
+                .arg("init")
+                .arg("--quiet")
+                .current_dir(&root)
+                .status()
+                .expect("git init")
+                .success()
+        );
         let headless = receipt_document(
             &source.source_commit,
             "f".repeat(64).as_str(),
@@ -180,7 +197,10 @@ mod tests {
                 "phase-14",
                 contract.required_task,
             );
-            receipt::write_receipt(&root, contract.path, &document).expect("artifact receipt");
+            receipt::write_receipt(&root, contract.module.receipt(), &document)
+                .expect("artifact receipt");
+            module_ledger::record_success(&root, contract.module, &candidate)
+                .expect("record module success");
         }
         let mut blockers = Vec::new();
         assert!(check(&root, &source, &candidate, &mut blockers));
@@ -191,7 +211,10 @@ mod tests {
             "phase-14",
             ARTIFACT_RECEIPTS[0].required_task,
         );
-        receipt::write_receipt(&root, ARTIFACT_RECEIPTS[0].path, &stale).expect("stale");
+        receipt::write_receipt(&root, ARTIFACT_RECEIPTS[0].module.receipt(), &stale)
+            .expect("stale");
+        module_ledger::record_success(&root, ARTIFACT_RECEIPTS[0].module, &candidate)
+            .expect("record stale module receipt");
         blockers.clear();
         assert!(!check(&root, &source, &candidate, &mut blockers));
         assert!(blockers.iter().any(|item| item.contains("EXE hash")));

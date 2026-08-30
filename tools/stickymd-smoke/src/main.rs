@@ -1,6 +1,7 @@
 //! StickyMD checked-in phase verification CLI.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod atomic_evidence;
 mod cli;
 mod evidence;
 mod governance;

@@ -23,8 +23,8 @@ qualification authority/tooling 正在收敛，所有旧 local-build-bound evide
 - `stickymd-smoke` 增加 Phase 14、三层 startup threshold、startup attribution、G1/G2 guided
   manual sessions、G3/G4/G5 exact-candidate automation、risk-tier readiness 和 independent channel collection。
 - 建立 Source Freeze 与 Local Preflight；将 successful GitHub release workflow artifact 下载、验证并
-  Promote 为唯一 exact candidate；Source Freeze 不变时复用 source-only evidence，仅重新收集
-  downloaded、Runtime、Performance、Resources、G3、G4、G5、Manual、Readiness artifact-bound evidence。
+  Promote 为唯一 exact candidate；download/package/checksum/SBOM/PE 等 exact-byte evidence 继续绑定当前
+  artifact，Runtime、Performance、Resources、G3、G4、G5 则按模块输入指纹复用最后成功或仅重跑受影响模块。
 - 对 exact-candidate 人工验收中 USER 实际观察到的 release-blocking 缺陷作最小、回归绑定的纠正；
   每次 tracked correction 都作废旧候选并重新开始资格化。
 - 实现 USER 在候选冻结前明确批准的 Split 语义滚动同步（默认开启、可关闭）、当前 Source
@@ -78,16 +78,21 @@ tracked freeze commit 后所有动态收据只写 ignored `dist/evidence/`。任
 - exact Phase 14 evidence bundle and final readiness report
 - `dist/evidence/g3-exact-qualification.json`（ignored dynamic receipt）及其 fail-closed validator
 - `dist/evidence/g4-exact-qualification.json`（ignored dynamic receipt）及其 fail-closed validator
+- `dist/evidence/module-success/`（ignored、每模块最后成功 ledger 与不可变 evidence 归档）
+- `docs/report/phase-14-module-success-ledger.md`
 
 ## Verification
 
 - Phase 14 targeted Rust CLI tests and smoke contract trace。
 - workspace fmt / strict Clippy / tests / Release build / deny。
-- exact copied candidate Release, headless, Runtime, Performance, Resources and Readiness channels。
+- exact copied candidate Release/headless 字节门，以及按输入指纹规划的 Runtime、Performance、Resources
+  与 Readiness channels；兼容项必须明确输出 `REUSED PASS` 和 origin identity。
 - product runtime/dependency delta audit。
 - USER-observed regression 的 named tests，以及扩展后的三边/顶角 copied-Release smoke。
-- G3/G4/G5 exact desktop groups 分别在独立候选副本中串行通过，并生成 clean、同 commit、同 ZIP/EXE
-  identity 的完整 group receipt；单项诊断收据不计入 readiness。
+- G3/G4/G5 exact desktop groups 分别在独立候选副本中串行通过；当前输入指纹已有完整 clean success 时
+  可复用其 origin ZIP/EXE 记录，否则生成新的完整 group receipt；单项诊断收据不计入 readiness。
+- last-success 回归必须证明：相关输入变化只使受影响模块 `RUN REQUIRED`；FAIL/ABORTED 不覆盖旧成功；
+  新 PASS 以不可变 evidence + 原子 ledger 指针更新；readiness 不把复用伪装成本候选实际运行。
 - G4 physical-drag harness 必须区分 Floating requested-position 与 Dock application-resolved 终态，并以
   150% DPI 回归防止 DIP/physical-pixel 单位混用；G4-06 首次模式纠正后的二次探针前必须完整重申
   profile/route/open/native，仍只允许一次有界纠正。
@@ -148,6 +153,11 @@ Preview/Split runtime 改用该 fixture 并验证 canonical source 字节不变�
 ## Result
 
 source-controlled policy、CLI、CI、guided manual 与 readiness contract 已实现并通过冻结前基线。
+
+模块化资格化账本已实现：Runtime、Performance、Resources、G3、G4、G5 以稳定输入指纹判断
+`RUN_REQUIRED` / `REUSED PASS`，最近成功 evidence 采用内容哈希不可变归档与原子 ledger 指针；失败、
+环境中止和 unwind 不覆盖旧成功。旧固定收据不自动导入，因此本次 tracked tooling 变化后的六个模块
+均需在新 exact candidate 上各成功一次，之后无关模块变化不再触发机械全量重跑。
 G3/G4 exact-candidate harness 已完成开发态五项全通过；G5 exact harness 已完成四组开发态全通过，
 并为 compact、presentation 与 rendering 生成候选绑定截图。clean receipt 仍必须在本次提交生成的新
 candidate 上重新采集。

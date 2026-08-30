@@ -7,7 +7,7 @@ use std::path::Path;
 use super::receipt::{self, Candidate};
 use super::{
     automated_readiness, decisions, g3_readiness, g4_readiness, g5_readiness, json,
-    manual_readiness, remote, source_freeze,
+    manual_readiness, module_ledger, remote, source_freeze,
 };
 
 const READINESS_RECEIPT: &str = "dist/evidence/release-readiness.json";
@@ -87,6 +87,7 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
     }
     let document = render_readiness(candidate.as_ref(), &blockers);
     receipt::write_receipt(root, READINESS_RECEIPT, &document)?;
+    module_ledger::print_status_for_candidate(root, candidate.as_ref())?;
     if explain || !blockers.is_empty() {
         if blockers.is_empty() {
             println!("Release readiness: READY");

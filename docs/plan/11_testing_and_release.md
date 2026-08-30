@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-29
+- `Last Review`: 2026-08-30
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -23,8 +23,8 @@
 
 ## Owned Objects
 
-测试 fixture、golden baseline、Source Freeze、验证收据、Promoted Candidate 与 release artifact manifest；这些是验证证据，
-不是产品运行时 authority。
+测试 fixture、golden baseline、Source Freeze、Qualification Module Registry、Last Successful Module
+Receipt、Promoted Candidate 与 release artifact manifest；这些是验证证据，不是产品运行时 authority。
 
 ## Inputs
 
@@ -32,7 +32,8 @@
 
 ## Outputs
 
-PASS/FAIL/NOT TESTED 收据、差异 artifact、checksums、SBOM、Source Freeze 与唯一 Promoted Candidate。
+PASS/FAIL/NOT TESTED 命令结果、每模块 last-success 收据、差异 artifact、checksums、SBOM、Source Freeze
+与唯一 Promoted Candidate。
 
 ## State Changes
 
@@ -278,15 +279,19 @@ ignored `dist/evidence/` 中：
 - source-only receipt 绑定 Source Freeze，不要求 final EXE hash；
 - remote workflow receipt 绑定 source/run/attempt/artifact id，不复制尚未产生的 final EXE hash；
 - downloaded/promotion receipt 与 candidate receipt 绑定实际 ZIP/EXE/SBOM hash；
-- Runtime、Performance、Resources、G3、G4、G5 与 manual receipt 绑定 Promoted Candidate 的 EXE，适用时
-  同时绑定 ZIP；
-- readiness 只接受 Promoted Candidate 及其之后生成的 artifact-bound receipt。
+- downloaded/package/checksum/SBOM、PE/native-runtime 与 portable-runtime 直接证明当前 artifact bytes，
+  必须绑定 Promoted Candidate 的适用 ZIP/EXE/SBOM hash；
+- Runtime、Performance、Resources、G3、G4、G5 与可模块化 manual observation 使用下文定义的
+  Last Successful Module Receipt；它们记录成功来源 candidate，但由当前 Qualification Module
+  Fingerprint 决定能否复用；
+- readiness 只接受当前 Promoted Candidate 的 exact-byte evidence，以及与当前模块指纹兼容的
+  last-success evidence。
 
-每次 Promote 或 candidate identity 变化，旧 artifact-bound receipt 必须变 stale。若 Source Freeze 完全不变，
-source-only CI/headless receipt 可以复用；只需重跑 downloaded/package/native-runtime、Runtime、Performance、
-Resources、G3、G4、G5 与仍适用的人工项目。这一“最小 exact 重验”是完整 artifact identity 重验，不是
-Phase 0–14 全量 Campaign；任何 source/manifest/lock/harness/release tooling 变化仍会使相应 source-only
-证据失效。
+每次 Promote 或 candidate identity 变化，旧 exact-byte evidence 必须变 stale。Source-bound 与功能资格化
+evidence 不按整个 source commit 或“最新 candidate”机械失效，而是由声明的模块输入指纹判断。相关产品、共享、
+harness、contract、manifest/lock/toolchain 输入完全相同时可以复用最后成功；任一适用输入变化只要求重跑受影响
+模块。无法分类的 tracked path 必须保守命中共享/全局失效集合。不得因为同 source 的独立 build 产生不同 EXE
+hash 就自动重跑无关功能模块，也不得用 source equivalence 跳过 exact-byte gate。
 
 Promotion failure path 必须保持 fail closed：下载不完整、checksum/SBOM/source identity 不符、
 ZIP 不能解压、PE/native-runtime/runtime smoke 失败时，既有 Promoted Candidate 不得被半更新，
@@ -298,13 +303,54 @@ ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
 
 - manual recorder 必须是交互式 human receipt recorder，只接受显式
   `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`，不得从 process/status 自动推断人工 PASS；
-- stale source/EXE receipt 不参与 readiness；G3/G4/G5 exact receipt 还必须绑定 ZIP、运行 harness commit、
-  clean worktree 与各组预期逐项结果，不能用旧候选或开发期 dirty receipt 替代；
+- stale module fingerprint 不参与 readiness；G3/G4/G5 成功记录还必须包含 origin ZIP/EXE、运行 harness、
+  clean worktree 与各组预期逐项结果，只有当前 registry 指纹兼容时才能复用；
 - readiness 对 P0/P1、未批准 hard gate、mandatory manual NOT TESTED、exact package、remote
   evidence 与 USER decision fail closed；不得提供 `--force-ready`；
-- freeze 后若任何 source、manifest/lock、runtime asset 或 release tooling 改变，Source Freeze 及所有下游
-  receipts 失效并必须重建；仅 candidate 字节变化时 source-only receipt 可保留，但所有 artifact-bound
-  receipt 失效。
+- freeze 后 source/manifest/lock/runtime asset 或 release tooling 变化仍要求重建 Source Freeze。下游证据由
+  evidence class 决定：exact-byte evidence 必须重建；module evidence 只在其 registry 输入指纹变化时 stale。
+
+<a id="module-success-ledger"></a>
+### Qualification Module Registry 与 last-success ledger
+
+Rust smoke CLI 必须用一个注册表统一声明稳定 qualification module：模块 ID、runner、产品输入、共享输入、
+harness、权威 plan/acceptance contract、依赖传播和 evidence class。PowerShell、readiness 与各 runner 不得各自
+维护另一份路径判断。注册表属于 verification tooling，不进入产品 runtime。
+
+模块指纹必须对排序后的相对路径与实际文件 bytes 计算稳定 SHA-256；不能使用 mtime、提交时间、目录枚举顺序、
+“是否最新 candidate”或只看 `git diff` 的易漂移判断。同一 planning invocation 可缓存共享文件 digest，但不得把
+全部仓库内容同时复制到内存。共享 core、Cargo manifests/lock、toolchain、build/release 配置和 contract 变化按
+注册依赖保守传播；任何 tracked path 无法分类时，planner 必须使保守共享集合 stale，而不是默认忽略。
+
+每个模块只维护一份 Last Successful Module Receipt：
+
+```text
+no compatible success
+    -> RUN REQUIRED
+
+current fingerprint == last successful fingerprint
+    -> REUSED PASS（不启动 runner；显示 origin candidate/source）
+
+RUN REQUIRED -> complete PASS
+    -> atomically replace that module's last-success receipt
+
+RUN REQUIRED -> FAIL / ENVIRONMENT BLOCKED / USER ABORTED / unwind
+    -> return non-zero; do not create or overwrite last-success receipt
+```
+
+last-success 文件只允许 `PASSED`；失败、中止和 partial result 不是正式成功收据。它们可以输出到当前命令终端或
+临时诊断，但不得改变 ledger authority。成功 evidence 先写入按内容 hash 命名的不可变归档，再用同目录 temp +
+atomic replace 更新 ledger 指针；这样即使新 ledger 写入失败，旧指针及其 evidence 仍然完整。ledger 更新成功后才可
+清理上一份归档。旧成功记录保留不代表旧指纹当前有效：readiness 每次必须重新计算并比较当前指纹。
+
+package/download/checksum/SBOM/PE/native-runtime 等精确字节门不进入功能 ledger，仍直接绑定当前
+ZIP/EXE/SBOM 并在 artifact hash 改变后重跑。功能行为模块可以跨 candidate 复用，但必须保留 origin identity，且
+产品、共享、harness 与 contract 输入逐字节兼容。
+readiness 输出必须区分 `RAN PASS` 与 `REUSED PASS`；二者都是通过，但后者不能伪装成在当前 candidate 上实际启动。
+
+candidate freeze、release readiness 或 USER 明确要求时，planner 只运行指纹 stale 的功能模块与当前 artifact
+需要的 exact-byte gate，不再机械重跑完整 Phase 0–14 Campaign。需要重新观察兼容模块时使用现有定向诊断命令；
+诊断输出不改变 last-success ledger。
 
 ### Phase 14 qualification environment、独立证据通道与 partial evidence
 
