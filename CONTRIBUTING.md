@@ -8,6 +8,20 @@
 文档错字、失效链接和不改变产品行为的明显测试补充可以直接提交；其余代码、依赖、架构、
 用户行为和验证工具修改都应先讨论。
 
+## 维护方式与回复时效
+
+仓库主维护者 Develata 有时需要优先处理学业，Issue、Discussion 与 Pull Request 的接收、复现和
+回复可能比商业项目慢。没有立即回复通常不表示拒绝；请避免为同一问题重复开帖或连续催促，
+补充新的复现证据时直接回复原 Issue 即可。
+
+当前仓库的大部分实现、测试、文档整理与回归检查由 AI Agent 在维护者授权和审查下完成；后续
+Issue 与 Pull Request 也可能进入 AI 辅助的自动分类、契约追踪、代码审计和测试复核。AI 不是最终
+决策者：产品范围、风险接受与合并仍由维护者决定，任何自动审计结论都应能落到具体代码、契约和
+可复现证据。提交者仍需对自己提供的代码、数据、许可证与测试结论负责。
+
+仓库内容和公开 Issue 可能被自动化工具处理，因此请不要提交私人便签、完整个人路径、账号、令牌、
+剪贴板内容或未经授权的数据。
+
 ## 先了解产品边界
 
 StickyMD 是一张 Markdown 草稿，不是通用 Markdown 编辑器或知识管理系统。我们不会因为某项
@@ -36,20 +50,100 @@ StickyMD 是一张 Markdown 草稿，不是通用 Markdown 编辑器或知识管
 
 ## 报告问题
 
+### 先选择正确分类
+
+- **Bug / Regression**：已有或文档承诺的行为不正确，包括崩溃、错误选择/渲染、保存失败、
+  输入法异常、窗口不可达、性能退化和资源持续增长。
+- **功能建议**：希望增加或改变用户可见行为。请使用 Feature 模板；即使方案很小，也不要伪装成
+  Bug 来绕过范围讨论。
+- **文档 / 构建 / 验收工具**：README、贡献流程、构建脚本、CI 或 smoke 的问题可以使用 Bug
+  模板，并选择对应区域。
+- **安全问题**：可能导致代码执行、文件越权、数据泄露或供应链风险时，不要开公开 Issue，改用
+  [`SECURITY.md`](SECURITY.md) 的私密 Security Advisory。
+
+一个 Issue 尽量只描述一个可以独立关闭的问题。标题建议使用
+`[Bug] <区域>: <可观察现象>` 或 `[Feature] <最小能力>`；Issue 表单会自动补充前缀。
+
 ### Bug 报告
 
 提交 Issue 前请先搜索是否已有相同问题。报告中尽量包含：
 
+- 分类：Bug、Regression、数据可靠性、兼容性、性能/资源、文档/工具。
+- 影响程度与发生频率；是否只发生一次、稳定复现，还是升级后才出现。
 - StickyMD 版本或完整 commit SHA。
 - Release ZIP 或 `StickyMD.exe` 的 SHA-256（如果使用发布包）。
 - Windows 11 build、显示缩放、显示器数量。
 - 使用的输入法及版本（涉及输入时）。
 - 最小复现步骤、预期行为和实际行为。
+- 如果是回归：最后一个正常版本，以及第一个出现问题的版本（如果已知）。
 - 是否涉及保存失败、数据覆盖、崩溃、窗口不可达或持续资源增长。
-- 可以公开的合成 Markdown、截图或短视频。
+- 可以公开的最小合成 Markdown、截图、短视频和诊断信息。
+
+高质量 Bug 报告的最小结构是：
+
+```text
+类型 / 影响 / 频率
+版本与 SHA-256
+Windows / DPI / 显示器 / 输入法环境
+复现前提
+最小复现步骤
+预期结果
+实际结果
+是否回归
+合成样本与截图
+诊断输出（有则附；没有也可以提交）
+```
 
 请不要公开上传真实 `note.md`、剪贴板内容、用户名、完整个人路径、恢复文件、crash dump、
 令牌或其他敏感信息。
+
+<a id="collect-diagnostics"></a>
+#### 获取诊断信息
+
+`v0.1.0` **没有原生日志文件、`crash.log`、遥测或后台日志上传**。正常双击运行时也不会打开
+控制台。没有日志不妨碍提交 Issue；最小复现、实际结果和合成样本通常更重要。
+
+如果问题可以稳定复现，可以先从托盘菜单完全退出同目录下的 StickyMD，再在一份不含私人内容的
+独立测试目录中打开 PowerShell，使用以下方式启动：
+
+```powershell
+$stickyDir = (Get-Location).Path
+$stickyExe = (Resolve-Path .\StickyMD.exe).Path
+$stickyProcess = Start-Process `
+  -FilePath $stickyExe `
+  -WorkingDirectory $stickyDir `
+  -RedirectStandardError .\stickymd-stderr.log `
+  -RedirectStandardOutput .\stickymd-stdout.log `
+  -PassThru
+```
+
+复现后从托盘选择“退出”，然后执行：
+
+```powershell
+$stickyProcess.WaitForExit()
+```
+
+`stickymd-stderr.log` 只能捕获程序当前主动写出的有限诊断，可能为空；它不是完整 tracing 日志。
+`stickymd-stdout.log` 通常也为空，但一并提供有助于排除启动方式差异。若界面底部出现错误提示，
+请同时附截图或逐字抄录提示。
+
+如果进程崩溃，可以在崩溃后尽快从 Windows Application log 导出与 `StickyMD.exe` 有关的系统事件：
+
+```powershell
+$since = (Get-Date).AddMinutes(-15)
+Get-WinEvent -FilterHashtable @{
+  LogName = 'Application'
+  StartTime = $since
+  Level = 2
+} | Where-Object {
+  $_.Message -match 'StickyMD\.exe'
+} | Format-List TimeCreated, ProviderName, Id, LevelDisplayName, Message |
+  Out-File .\stickymd-windows-events.txt -Encoding utf8
+```
+
+这些记录由 Windows 的 Application Error / Windows Error Reporting 产生，不是 StickyMD 自己的
+日志；没有匹配事件也是正常情况。提交前请打开所有诊断文件，删除用户名、完整个人路径、便签内容
+和其它私人信息。不要公开上传内存 dump；可能涉及安全问题时改走私密报告。
 
 ### 功能建议
 
@@ -60,6 +154,7 @@ StickyMD 是一张 Markdown 草稿，不是通用 Markdown 编辑器或知识管
 3. 它会不会引入新的产品本体、设置面板、长期依赖或维护轴？
 4. 能否用更小、更统一的交互解决？
 5. 如何验证失败路径、性能与内存边界？
+6. 明确不打算解决什么，避免建议在讨论中持续扩张。
 
 功能建议获得讨论支持，不等于实现方案已经获批。涉及主骨架、核心 authority、对象关系、
 持久格式或关键接口时，必须先提交分析报告并获得维护者明确批准。
