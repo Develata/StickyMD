@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-28
+- `Last Review`: 2026-08-30
 - `Scope`: 性能约束的性质定义（Target / Measurement Method / Hard Failure Condition / Future Benchmark Entry）与可靠性底线
 
 ---

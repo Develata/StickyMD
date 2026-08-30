@@ -1,9 +1,10 @@
 # Phase 10 — UX Corrections, Automation Consolidation and RC Requalification
 
-> Status: Implementation Complete — RC validation incomplete. The later USER-approved Phase 14
-> startup policy in `docs/plan` supersedes the historical warm-startup blocker. Real keyboard,
-> visual, shell-switcher, IME, tray, sensor and physical-pointer rows remain `NOT TESTED` without a
-> current-candidate receipt.
+> Historical source baseline. Phase 10 rows preserve the implementation-time RC state rather than
+> the current `v0.1.0` release verdict. The later USER-approved Phase 14 startup policy supersedes
+> the historical warm-startup blocker; exact release identity, manual dispositions and remaining
+> environment gaps are recorded in
+> [`../release-notes/0.1.0.md`](../release-notes/0.1.0.md).
 
 ## Automated Contract Matrix
 

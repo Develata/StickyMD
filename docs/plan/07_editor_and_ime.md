@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-20
+- `Last Review`: 2026-08-30
 - `Scope`: Source 编辑器职责、IME preedit/commit 语义、字体 run、undo 分组、RichEdit fallback 治理
 
 ---

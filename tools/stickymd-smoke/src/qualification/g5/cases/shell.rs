@@ -1,6 +1,6 @@
 //! G5 shell-surface eligibility and focus-recovery probe.
 //!
-//! plan_ref: docs/plan/09_windows_shell.md#main-window-identity
+//! plan_ref: docs/plan/09_windows_shell.md#tool-window-identity
 
 use std::path::Path;
 

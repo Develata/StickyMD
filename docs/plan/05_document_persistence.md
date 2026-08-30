@@ -4,8 +4,8 @@
 
 - `Layer`: Runtime
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-08-20
+- `Version`: 0.1.0
+- `Last Review`: 2026-08-30
 - `Scope`: note.md 与 config.toml 的编码、换行、原子保存、崩溃恢复、外部修改处理、可写性与单实例身份
 
 ---
@@ -16,7 +16,7 @@
 并维持“程序目录即便签身份”的 portable 模型。
 
 <a id="persistence-authority"></a>
-## Boundary 与 Authority
+## Boundary
 
 - 本章定义持久化契约；线程调度与 coordinator 结构见 `03`/`04`。
 - 所有磁盘写入必须经 Execution Domain 的文件 adapter；UI 线程不做文件写入。

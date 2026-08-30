@@ -1,0 +1,64 @@
+name: 功能建议
+description: 讨论服务于“一张 Markdown 草稿”的小而明确的改进
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        StickyMD 有意保持精简，不以成为通用编辑器或知识管理系统为目标。
+
+        代码贡献必须先通过 Issue 确认问题、范围和方案。讨论支持不等于实现已经获批。
+
+  - type: checkboxes
+    id: scope-check
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已经阅读 README 的“设计边界”和 CONTRIBUTING.md。
+          required: true
+        - label: 我已经搜索现有 Issue，没有找到相同建议。
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的具体问题
+      description: 请先描述真实使用场景，而不是直接给出功能名称。
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-workaround
+    attributes:
+      label: 当前如何处理
+      description: 现有功能为什么不能完成，或者当前需要哪些额外步骤？
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议的最小方案
+      description: 优先说明不扩大产品边界的简洁交互。
+    validations:
+      required: true
+
+  - type: textarea
+    id: product-fit
+    attributes:
+      label: 为什么符合 StickyMD
+      description: 说明它如何直接服务于“一张 Markdown 草稿”，以及为什么不会引入通用编辑器、知识库、插件、云或新维护轴。
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: 如何验证
+      description: 可说明成功行为、失败路径、性能/内存影响和需要的人工视觉检查。
+
+  - type: checkboxes
+    id: discussion-first
+    attributes:
+      label: 实现约束
+      options:
+        - label: 我理解在维护者明确确认范围前，不应开始提交产品代码。
+          required: true

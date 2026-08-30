@@ -4,9 +4,12 @@
 
 ## 现有资料
 
-（暂无。技术验证阶段开始后将记录：上游库接口要点、平台 API 笔记与版本核实结果。）
+- [`windows-file-replacement.md`](windows-file-replacement.md)：`FlushFileBuffers`、
+  `ReplaceFileW`、`MoveFileExW` 与 partial-failure 分类参考。
+- [`qualification-execution-model.md`](qualification-execution-model.md)：CI、可信 Windows host、
+  人工验收、exact artifact 与模块化重验的可读投影。
 
-## 计划纳入（技术验证阶段）
+## 后续可补充
 
 - Markdown / 数学解析库的方言选项与版本核实记录。
 - Windows 平台 API（原子替换、显示器枚举、命名对象、剪贴板）使用笔记。

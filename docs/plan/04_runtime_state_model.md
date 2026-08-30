@@ -5,7 +5,7 @@
 - `Layer`: Architecture
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-20
+- `Last Review`: 2026-08-30
 - `Scope`: 运行时状态结构、所有权与修改权、authority 划分、generation 语义、核心 invariant
 
 ---

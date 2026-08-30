@@ -1,19 +1,24 @@
 # phase-01-technical-foundation.md - Phase 1 重建记录
 
-## Status
+## Completion State
 
-`Rebuilt — automated evidence complete; manual/environment gates remain open`（2026-08-20）
+Completed
 
-## Goals
+本任务的技术基础与可删除 spike 已于 2026-08-20 完成；当时尚未关闭的人工/环境条件继续
+保留在本文件的 Risks/Result 中，并由后续 release qualification 与 USER disposition 处理。
+
+## Goal
 
 建立可编译 production workspace 边界，并用可删除实验验证 Markdown/Math 与 portable
 persistence 的高风险事实；窗口/IME 由当前 production dev shell 复核，避免保留第二套实现。
 
-## Dependencies
+## Inputs
 
 见 `docs/report/phase-01-dependency-baseline.md`。原 `arrayref` yanked 风险结论已在后续复核中证伪并更正。
 
-## Spikes
+## Scope
+
+### Spikes
 
 - Window/framebuffer：由当前 `stickymd-win` Release dev shell 进行五次稳定采样；产品 DPI/
   opacity/DWM 仍未验收。
@@ -37,6 +42,12 @@ persistence 的高风险事实；窗口/IME 由当前 production dev shell 复�
 - production workspace baseline and `cargo deny check` with the Windows-target policy。
 - Windows-target forbidden dependency scan。
 - `experiments/phase-01` 可删除性检查。
+
+## Out of Scope
+
+- 把 spike 直接保留为第二套 production 实现。
+- 代替后续 Phase 完成真实 IME、Preview painter、持久化与 Windows shell 产品验收。
+- 把当时未执行的人工/环境项目提升为 PASS。
 
 ## Risks
 

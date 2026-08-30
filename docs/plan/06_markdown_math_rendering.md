@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-20
+- `Last Review`: 2026-08-30
 - `Scope`: Markdown 语义权威、数学语义权威、Owned AST、Preview 调度与 generation、渲染桥接、缓存与资源限制
 
 ---

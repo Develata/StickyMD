@@ -1,10 +1,18 @@
 # Phase 3 — Native Source Editor, IME & Interaction Pipeline
 
-## Status
+## Completion State
 
-Implementation Complete — verification incomplete; awaiting USER manual IME acceptance.
+Completed
 
-## Prerequisites
+本任务的实现与自动化验证已完成；以下 Manual Gate/Risks 保留 Phase 3 当时仍开放的真实输入法
+条件，后续 exact-candidate automation、人工视觉验收和 USER disposition 才负责发布处置。
+
+## Goal
+
+建立 native Source editor、IME session 与 typed interaction pipeline，同时保持
+`DocumentState` 为唯一 canonical text authority。
+
+## Inputs
 
 - Phase 0 contracts are present.
 - Corrected Phase 2 document authority passes automated and Release gates.
@@ -91,6 +99,13 @@ The same run also measured p95 for editing commands and the conservative full-re
 The 1 MiB full resync is an exceptional recovery path, not the ordinary input or newline path. Its
 cost remains measured explicitly so a future regression cannot hide O(n) recovery work in the hot
 path.
+
+## Deliverables
+
+- Typed intents/effects 与唯一 `EditorCoordinator` mutation gateway。
+- Source selection/navigation、IME preedit/commit 与 clipboard failure paths。
+- cosmic-text Source projection、tiny-skia painter 与增量 affected-line update。
+- Phase 3 smoke、验收矩阵、性能基线和人工 IME checklist。
 
 ## Verification
 

@@ -1,16 +1,16 @@
 # Phase 2 — Core Document Model
 
-## Status
+## Completion State
 
-Completed after contract-alignment rebuild on 2026-08-20; awaiting USER review.
+Completed
 
-## Purpose
+## Goal
 
 Establish `DocumentState` as the sole runtime authority for canonical Markdown text and provide
 typed UTF-8 edits, monotonic generations, immutable snapshots, and bounded undo/redo without any
 UI, parser, filesystem, or Windows dependency.
 
-## Prerequisites
+## Inputs
 
 - Phase 0 governing contracts are present.
 - Phase 1 evidence limitations are recorded in

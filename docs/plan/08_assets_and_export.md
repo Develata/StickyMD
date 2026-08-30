@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-20
+- `Last Review`: 2026-08-30
 - `Scope`: managed/user 资产边界、命名、编码保留、引用追踪、.trash、undo/redo 副作用、启动 reconcile、安全 GC、remote 图片、导出
 
 ---

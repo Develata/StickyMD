@@ -2,7 +2,7 @@
 
 ## Completion State
 
-In Progress
+Completed
 
 ## Goal
 
@@ -138,7 +138,8 @@ component evidence is not relabeled as complete manual end-to-end acceptance.
 
 The production persistence slice is implemented with guarded whole-file publication, bounded
 coordination, recoverable temporary evidence, external reconciliation, and portable single-instance
-identity. Automated and portable Release evidence passes, but the task remains In Progress under the
-repository completion rule until the listed manual conditions are closed. The inherited real-IME gate, an actual
-Notepad receipt, read-only `note.md`, long-path behavior, and a deterministic kill during the narrow
-publish transaction remain explicit manual conditions; see the Phase 4 report.
+identity. Automated and portable Release evidence passes. The Phase 4 task is now closed because the
+remaining manual conditions were carried into later release qualification and explicitly dispositioned;
+this current completion state does not retroactively rewrite the Phase 4 report or matrix. The inherited
+real-IME gate, Notepad receipt, read-only `note.md`, long-path behavior, and deterministic kill timing
+remain documented as the Phase-local historical gaps.

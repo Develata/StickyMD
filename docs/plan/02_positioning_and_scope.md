@@ -5,7 +5,7 @@
 - `Layer`: Foundation
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-20
+- `Last Review`: 2026-08-30
 - `Scope`: StickyMD 的存在理由、本体、便签模型、平台与 v1 范围、Non-Goals、优先级与功能拒绝标准
 
 ---

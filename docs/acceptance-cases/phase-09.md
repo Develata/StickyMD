@@ -1,10 +1,11 @@
 # Phase 09 — Pre-Release Convergence Acceptance Matrix
 
-> Status: In Progress. Individual automated rows may record current evidence, while the aggregate
-> Phase 9 and CI readiness rows remain `BLOCKED` if any required automated gate fails. Real GUI,
-> IME, visual, physical-display, fault-timing and user-asset observations remain `NOT TESTED`
-> without a checked-in receipt. The frozen checklist below is a trace projection of the USER Phase
-> 9 prompt, not a new product contract.
+> Historical source baseline. Individual rows preserve Phase 9 evidence and then-open blockers;
+> they are not the current `v0.1.0` release verdict. Real GUI, IME, visual, physical-display,
+> fault-timing and user-asset observations remain `NOT TESTED` here unless Phase 9 itself recorded
+> them. The frozen checklist below is a trace projection of the USER Phase 9 prompt, not a new
+> product contract. Current release identity and dispositions are recorded in
+> [`../release-notes/0.1.0.md`](../release-notes/0.1.0.md).
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |

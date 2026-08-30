@@ -1,7 +1,5 @@
 # Phase 12 — Final Release Qualification
 
-Status: In Progress
-
 ## Goal
 
 把冻结的 v0.1.0 源码、portable artifact、自动化结果、人工结果与远端 workflow 绑定到同一
@@ -55,9 +53,9 @@ exact identity；在任何必要证据或 USER 授权缺失时 fail closed。
 
 ## Completion State
 
-In Progress
+Completed
 
-当前本地治理与工具收敛可以完成；mandatory manual acceptance、release version、unsigned
-policy、push/tag/draft/publish 与 remote/downloaded artifact evidence 仍需后续 USER gate。当前
-输入桌面被 Windows `LockApp` 覆盖，真实 sensor hover runtime 不能在本会话形成 PASS 证据；
-对应人工项目继续为 `NOT TESTED`。
+Phase 12 的本地治理与资格化工具已完成。本文保留当时尚待 Phase 13/14 与 USER gate 关闭的
+manual、remote、downloaded artifact 和 publish 条件；`v0.1.0` 后续已在 exact source
+`64690ab8f86f63f3cbfeabbb0961276978c8f26d` 上完成 readiness、tag、draft 与 publish。
+这不回写 Phase 12 当时被 `LockApp` 阻塞的单次运行记录。

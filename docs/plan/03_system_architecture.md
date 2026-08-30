@@ -5,7 +5,7 @@
 - `Layer`: Architecture
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-20
+- `Last Review`: 2026-08-30
 - `Scope`: StickyMD 主骨架：四层调用架构 + Object Plane、层间规则、coordinator 清单、核心调用链
 
 ---

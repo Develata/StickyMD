@@ -1,21 +1,21 @@
 # Phase 14 — Release Gate Calibration and Qualification Closure
 
-## Status
+## Completion State
 
-Implementation Reopened — USER 已批准 remote workflow artifact promotion（Option B）与最小 exact 重验；
-qualification authority/tooling 正在收敛，所有旧 local-build-bound evidence 已失效。
+Completed
 
-## Purpose
+## Goal
 
 在产品 runtime 默认冻结的前提下，校准 v0.1.0 startup release boundary，完成 startup attribution、
 风险分层人工验收、独立 evidence channel 与 local readiness 收口。
 
-## Prerequisites
+## Inputs
 
 - Phase 13 exact candidate 自动化通道已形成可审计收据。
 - USER 已明确批准 v0.1.0、unsigned distribution、550 ms cold/warm hard boundary、
   Tier A/B/C manual policy 与 independent evidence collection。
-- push、tag、draft release、publish 均未授权。
+- 任务启动时 push、tag、draft release、publish 均未授权；这些 authority 后续仍按独立 USER
+  决策逐项取得，并记录在 `docs/release-checklist.md`。
 
 ## Scope
 
@@ -152,15 +152,20 @@ Preview/Split runtime 改用该 fixture 并验证 canonical source 字节不变�
 
 ## Result
 
-source-controlled policy、CLI、CI、guided manual 与 readiness contract 已实现并通过冻结前基线。
+Phase 14 已完成。`v0.1.0` 从 exact source
+`64690ab8f86f63f3cbfeabbb0961276978c8f26d` 获得 `READY`，随后按独立 USER authority 完成
+tag、draft 与 publish；最终 artifact identity 和 workflow runs 见 `docs/release-checklist.md`。
+
+以下段落保留 Phase 14 实施过程中的中间事实，用于解释最终方案如何形成；其中“仍需重采”或
+“尚未生成”的表述只描述当时检查点，不是当前发布状态。
 
 模块化资格化账本已实现：Runtime、Performance、Resources、G3、G4、G5 以稳定输入指纹判断
 `RUN_REQUIRED` / `REUSED PASS`，最近成功 evidence 采用内容哈希不可变归档与原子 ledger 指针；失败、
 环境中止和 unwind 不覆盖旧成功。旧固定收据不自动导入，因此本次 tracked tooling 变化后的六个模块
 均需在新 exact candidate 上各成功一次，之后无关模块变化不再触发机械全量重跑。
-G3/G4 exact-candidate harness 已完成开发态五项全通过；G5 exact harness 已完成四组开发态全通过，
-并为 compact、presentation 与 rendering 生成候选绑定截图。clean receipt 仍必须在本次提交生成的新
-candidate 上重新采集。
+G3/G4 exact-candidate harness 当时已完成开发态五项全通过；G5 exact harness 已完成四组开发态全通过，
+并为 compact、presentation 与 rendering 生成候选绑定截图。该检查点要求在后续 exact candidate
+重采 clean receipt；最终收据已按模块输入指纹与 last-success contract 关闭。
 动态 evidence 与最终 recommendation 只在 exact source freeze 后产生；人工项目不会因此自动 PASS。
 
 本轮 reopened implementation slice 已完成：Preview 选择改为 viewport shaping-cluster 几何与 visual-row
@@ -170,7 +175,8 @@ locator；Search 字段使用单一 layout authority 提供 paint/hit/caret/IME 
 桌面的 foreground、鼠标、clipboard、tray、dock 与 resource measurement 不并发，避免把相互干扰写成
 正式 PASS。真实 Microsoft Pinyin / WeType 的客观功能矩阵已迁入 G4-06 exact automation，候选窗出现、
 位置与视觉仍由 G1 人工判断；自动化实现与边界见 `phase-14-real-ime-automation-design.md`。自动化结果见
-`phase-14-preview-selection-geometry-design.md`；新 exact candidate 尚未生成。
+`phase-14-preview-selection-geometry-design.md`；该检查点尚未生成的新 exact candidate 后续已收敛为
+上述正式发布 source。
 
 资格化工具的进程隔离缺陷也已关闭：旧 runtime harness 在启动 GUI child 后仍存在可由 `?` 提前返回、
 绕过尾部显式清理的路径，曾遗留 copied-Release 进程并污染后续 startup 采样。现由统一 RAII owner

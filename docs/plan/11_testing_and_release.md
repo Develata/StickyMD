@@ -524,19 +524,21 @@ private release lab。
 
 ```text
 StickyMD-0.1.0-windows-x64-portable.zip
-├─ StickyMD.exe
-├─ README.txt
-├─ LICENSE.txt
-├─ THIRD_PARTY_NOTICES.txt
-└─ licenses\
-   ├─ SIL-OFL-1.1.txt
-   └─ KaTeX-fonts-NOTICE.txt
+└─ StickyMD\
+   ├─ StickyMD.exe
+   ├─ README.txt
+   ├─ LICENSE.txt
+   ├─ THIRD_PARTY_NOTICES.txt
+   └─ licenses\
+      ├─ SIL-OFL-1.1.txt
+      └─ KaTeX-fonts-NOTICE.txt
 
-StickyMD-0.1.0-SHA256SUMS.txt
-StickyMD-0.1.0-symbols.zip
+SHA256SUMS.txt
 SBOM.spdx.json
 ```
 
+- v0.1.0 不发布独立 symbols ZIP；若未来版本新增调试符号资产，必须先更新本合同、打包
+  allowlist 与 exact-artifact 校验，不能把未生成的文件列为强制发布物。
 - 不预创建用户 `note/`（首次运行创建）。
 - v1 不提供：MSI、MSIX、Microsoft Store、自动更新器、管理员安装、
   Program Files 安装。代码签名可后续加入，不阻塞开源 v1。

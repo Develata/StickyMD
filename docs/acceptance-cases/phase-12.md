@@ -4,6 +4,10 @@
 只有 exact candidate 上的 interactive receipt 才能改变 readiness，Markdown 仍保持
 `NOT TESTED`，不得用旧记录或 Win32 style readback 代替真实观察。
 
+本文件的状态列是 tracked source baseline，不是 `v0.1.0` 当前发布 verdict。Phase 12 之后的
+exact receipt、USER disposition 与最终 `READY` 结论见
+[`../release-notes/0.1.0.md`](../release-notes/0.1.0.md)；动态结果不事后回填本矩阵。
+
 ## Automated qualification
 
 | ID | Requirement | Mode | Evidence | Status |

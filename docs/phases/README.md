@@ -45,3 +45,11 @@
   - 内容：Phase 12 final release qualification、exact evidence binding 与 v0.1.0 release preparation 任务原文。
   - 来源 SHA-256：`9D5BE86E349FF0146CDCAE549B8079118E333CC2B8DF75D810BC8509C51819EF`
   - 导入方式：逐行原文归档；仅由 `apply_patch` 统一为仓库换行格式，未改写正文。
+- [`2026-08-23-phase-13-exact-candidate-qualification.md`](2026-08-23-phase-13-exact-candidate-qualification.md)
+  - 内容：Phase 13 exact candidate qualification、环境门、五通道 evidence 与人工/远端交接任务原文。
+  - 来源 SHA-256：`994B797B9808F3B18389B8816BFB3E3FB32077C6923D6C1AE63B32C1CB9D7E08`
+  - 导入方式：逐行原文归档；仅统一仓库换行格式，未改写正文。
+- [`2026-08-23-phase-14-release-policy-calibration.md`](2026-08-23-phase-14-release-policy-calibration.md)
+  - 内容：Phase 14 release policy calibration、startup attribution、risk-tier acceptance 与 qualification closure 任务原文。
+  - 来源 SHA-256：`ED66E10C93A2DB7AE1A599A3B90B1F32B9993E5FA15B67D190544D8F0C87B463`
+  - 导入方式：逐行原文归档；仅统一仓库换行格式，未改写正文。

@@ -1,10 +1,15 @@
 # Phase 08 — Windows Desktop Shell
 
-## Status
+## Completion State
 
-Completed — awaiting USER review.
+Completed
 
-## Preconditions
+## Goal
+
+建立单一 `WindowShellState` 与薄 Windows adapter，交付三边 Dock、自动隐藏、托盘、主题、
+透明度、置顶和多显示器恢复，同时不把 shell 状态与 Document authority 混合。
+
+## Inputs
 
 - Starting commit: `a7af3a40fa357edd36cd1ae231e1c936f1b763bd`.
 - Phase 7 recommendation: `APPROVE Phase 8 WITH CONDITIONS`.
@@ -44,7 +49,7 @@ config.toml          = durable projection
 winit / Win32 / tray = platform facts and effect adapters only
 ```
 
-## Implementation Slices
+## Deliverables
 
 1. Pure geometry, timers, visibility and lifecycle reducer.
 2. Revisioned runtime configuration projection.

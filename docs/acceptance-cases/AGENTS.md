@@ -15,3 +15,7 @@
   无证据的裸 `PASS` 或 `CONDITIONAL`。
 - 人工项没有当前提交的正式矩阵收据时必须保持 `NOT TESTED`；一次性终端记录、旧报告、
   未提交脚本或自动化替代动作均不能算人工验收。
+- 对按 `docs/plan/11_testing_and_release.md` 写入 ignored `dist/evidence/` 的动态 exact-candidate
+  验收，tracked Markdown 的状态列是 source baseline，不是当前公开版本的动态 verdict。该矩阵
+  必须明确这一语义，并链接公开 release notes/checklist；不得把 ignored receipt 数值事后回填到
+  历史 source matrix，也不得因此把当前发布结论描述成永久 `NOT TESTED`。

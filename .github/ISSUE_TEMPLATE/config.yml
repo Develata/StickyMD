@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞 / Security vulnerability
+    url: https://github.com/Develata/StickyMD/security/advisories/new
+    about: 请通过私密 Security Advisory 报告，不要公开漏洞或私人便签内容。
+  - name: 贡献指南
+    url: https://github.com/Develata/StickyMD/blob/main/CONTRIBUTING.md
+    about: 提交代码前先阅读产品边界、讨论流程和验证要求。

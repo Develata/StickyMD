@@ -1,10 +1,10 @@
 # Phase 5 — Markdown Semantic Pipeline, Owned AST & Native Preview Foundation
 
-## Status
+## Completion State
 
-Completed — awaiting USER review
+Completed
 
-## Prerequisites
+## Inputs
 
 - USER accepted the Phase 4 recommendation with its manual conditions still open.
 - `DocumentState` remains the only canonical text authority.
@@ -16,7 +16,7 @@ Completed — awaiting USER review
 - Real Notepad, ACL/read-only, kill-during-publish, long-path and live rare ReplaceFileW conditions
   remain `NOT TESTED` in the Phase 4 matrix.
 
-## Purpose
+## Goal
 
 Turn immutable `DocumentSnapshot` values into a native, read-only Markdown preview without leaking
 Comrak Arena nodes, parser types or a second text authority into application state.

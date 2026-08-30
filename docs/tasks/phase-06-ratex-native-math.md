@@ -1,10 +1,10 @@
 # Phase 6 — RaTeX Native Math
 
-## Status
+## Completion State
 
-Implementation Complete — manual verification incomplete; awaiting USER review.
+Completed
 
-## Prerequisites
+## Inputs
 
 - Phase 5 recommendation: `APPROVE Phase 6 WITH CONDITIONS`.
 - USER explicitly supplied and authorized the Phase 6 task.
@@ -17,6 +17,11 @@ Implementation Complete — manual verification incomplete; awaiting USER review
 - Microsoft Pinyin and WeChat IME manual gates remain `NOT TESTED`.
 - Phase 6 formula visual/DPI/theme and first-formula OS-memory rows remain `NOT TESTED` until
   durable current-commit receipts exist.
+
+## Goal
+
+Integrate RaTeX parser/layout/fonts into the native Preview pipeline with a bounded cache, direct
+native painter, atomic formula selection and explicit error/resource behavior.
 
 ## Preflight Baseline
 

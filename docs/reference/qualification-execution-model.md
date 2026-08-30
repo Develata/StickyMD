@@ -9,7 +9,9 @@
 2. **Trusted Windows qualification host**：exact copied EXE 的 Runtime、Performance、Resources、
    environment preflight、startup attribution 与串行 G3/G4/G5 exact desktop automation。未来
    优先 pull-based local lab；不得给 public repo 绑定高权限、长期在线的 persistent self-hosted runner。
-3. **Human interaction acceptance**：真实 IME、视觉、tray/docking 观感、物理显示拓扑与 Clean VM。
+3. **Human interaction acceptance**：输入法候选窗和其它主观视觉、tray/docking 观感、物理显示
+   拓扑与 Clean VM。真实 IME 的 composition/commit/cancel/Undo/Search 客观功能事实由 G4-06
+   exact automation 持有；候选窗是否出现、位置和观感仍由人工判断。
 
 ## Failure Propagation
 
@@ -49,7 +51,7 @@ download/package/checksum/SBOM/PE/native-runtime 等 exact-byte evidence 必须�
   UIA 仅为 Windows shell 薄适配，判定与收据由 Rust CLI 持有；`-G3Case` 可单独诊断一个
   case，但其独立收据不参与 release readiness。
 - G4：本地串行 exact-candidate automation，覆盖 Tray lifecycle / 主屏 Dock timing / legacy
-  shortcuts / math conversion / junction identity；`-G4Case` 只用于单组诊断，独立收据不参与
+  shortcuts / math conversion / junction identity / Microsoft Pinyin 与 WeType 客观功能矩阵；`-G4Case` 只用于单组诊断，独立收据不参与
   release readiness。mixed-DPI Left/Right sensor 仍由 G2 人工观察。
 - G5：本地串行 exact-candidate automation，覆盖 ToolWindow shell eligibility、compact 三视图、
   zoom/opacity/theme mechanics 与 rendering stress；`-G5Case` 只用于单组诊断。逐窗口 PNG 的相对

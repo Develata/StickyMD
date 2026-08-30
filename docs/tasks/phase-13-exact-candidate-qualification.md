@@ -1,15 +1,15 @@
 # Phase 13 — Exact Candidate Qualification Campaign
 
-## Status
+## Completion State
 
-In Progress — source preparation precedes the exact candidate freeze.
+Completed
 
-## Purpose
+## Goal
 
 在不修改产品 runtime 的前提下，建立可快速拒绝锁屏/非交互环境的资格化门，冻结唯一候选
 commit，并按固定顺序收集 exact-artifact 自动、人工与远端证据。
 
-## Prerequisites
+## Inputs
 
 - Phase 12 local qualification infrastructure complete。
 - Phase 13 当时使用 400 ms hard gate；该历史前提已被 Phase 14 的 550 ms release boundary
@@ -49,6 +49,12 @@ tracked tooling/docs 后提交一次 freeze commit；此后所有动态收据只
 9. Local readiness consolidation。
 10. 等待 USER 授权 push/remote；不 tag、不发布。
 
+## Deliverables
+
+- Environment preflight、Source Freeze 与 exact-artifact evidence schema。
+- Runtime/Performance/Resources/Manual/Remote 五通道资格化流程。
+- Phase 13 smoke、acceptance matrix、qualification plan 与 final report。
+
 ## Verification
 
 - `cargo fmt --check`
@@ -71,4 +77,6 @@ tracked tooling/docs 后提交一次 freeze commit；此后所有动态收据只
 
 ## Result
 
-尚未形成。freeze 后的真实结果只写入 `dist/evidence/` 与最终聊天报告，不修改本文件。
+Phase 13 的 qualification campaign 与 evidence 模型已完成，并在 Phase 14 继续校准和收口。
+freeze 后的动态真实结果仍只写入 ignored `dist/evidence/`；本任务状态记录完成，不把后续
+receipt 数值回填为 Phase 13 当时的静态事实。

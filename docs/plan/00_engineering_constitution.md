@@ -5,7 +5,7 @@
 - `Layer`: Foundation
 - `Status`: Governing Rule
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-19
+- `Last Review`: 2026-08-30
 - `Scope`: 全系统最高优先级治理约束；所有其它 plan 章节、投影文档与代码均不得与之冲突
 
 > 本文正文为 USER 批准的工程宪法原文。除 Metadata 与 Markdown 排版整理外，

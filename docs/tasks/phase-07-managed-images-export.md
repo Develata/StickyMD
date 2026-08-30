@@ -1,13 +1,18 @@
 # Phase 7 — Managed Images, Clipboard Paste, Asset Transactions, GC & Export
 
-## Status
+## Completion State
 
-Completed — awaiting USER review.
+Completed
 
 The automated implementation gate is complete. Every real clipboard, visual, crash-timing,
 reparse-point and inherited IME row listed below remains explicitly `NOT TESTED`.
 
-## Prerequisites
+## Goal
+
+建立 managed image、Windows clipboard paste、资产事务/GC、native image Preview 与 Markdown
+export，同时保持文档与用户资产 authority、失败原子性和资源上限清晰可证。
+
+## Inputs
 
 - Starting commit: `44e3e08`.
 - Phase 6 recommendation: `APPROVE Phase 7 WITH CONDITIONS`.
@@ -133,6 +138,20 @@ Release measurements cover 1 MiB full/incremental scanning, ten-image paste, sca
 twenty-reference export. OS process-resource automation has a stable `-Resources` entry; results
 are reported separately from algorithmic cache invariants and include a same-process
 image-saturated Preview-to-Source release receipt.
+
+## Deliverables
+
+- Managed image identity、ownership proof、reference tracker 与 asset-effect Undo/Redo。
+- Bounded clipboard preparation、local-image decode/cache、startup/exit reconciliation 与 safe GC。
+- Snapshot-based Markdown export、Windows adapter、Phase 7 smoke 与 acceptance matrix。
+
+## Verification
+
+- `tools/smoke/phase-07.ps1`
+- `tools/smoke/phase-07.ps1 -Performance`
+- `tools/smoke/phase-07.ps1 -Runtime`
+- `tools/smoke/phase-07.ps1 -Resources`
+- workspace fmt、Clippy、tests、Release build、dependency/unsafe/forbidden-architecture scans。
 
 ## Manual Verification
 

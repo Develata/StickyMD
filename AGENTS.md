@@ -18,16 +18,16 @@ StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown �
 - 纯 portable：解压即用，无安装器，不写 AppData / Registry。
 - 核心本体对象只有：Note、Document Text、Preview、Managed Image Asset、Runtime Config、Window Placement、Editor Session。
 
-当前仓库状态：**Phase 14 release-policy calibration and qualification closure in progress**。旧 exact
-candidate 已被 USER 人工验收发现的 release-blocking implementation defects 作废；USER 随后明确批准
-在重新 freeze 前加入默认开启且可关闭的 Split 语义同步、Source 纯文本查找替换、`$` 控件标识，
-并执行有前后证据的 Release 内存审计。除这组批准范围、资格化工具/文档修正和回归绑定纠正外，
-不得扩张产品 runtime。USER 已批准 release version `0.1.0`、unsigned distribution 与 v0.1.0 cold/warm startup
-`550 ms` hard boundary；`180 ms` 仍是 preferred、`400 ms` 是 diagnostic engineering target。
-真实 IME、视觉、任务栏/Alt+Tab、托盘、物理多屏、恢复、Clean VM、manual disposition 与 remote
-artifact gates 尚未关闭。
-新的 exact candidate 及其完整 evidence 未关闭前，不得声称 RC ready 或稳定发布。
-任何未写入 `docs/plan` 契约的产品功能，默认禁止实现。
+当前仓库状态：**`v0.1.0` 已从 exact source
+`64690ab8f86f63f3cbfeabbb0961276978c8f26d` 正式发布**。公开 portable ZIP、checksum 与 SBOM
+来自同一份已验收的 GitHub Release artifact；tag 和既有发布资产不得被后续 `main` 文档或维护提交
+冒充为已重建。Phase 14 报告与 ignored evidence 继续作为 `v0.1.0` 的历史资格化记录，不代表后续
+提交自动继承 exact-artifact 身份。
+
+产品 runtime 继续维持 v1 冻结边界：StickyMD 是一张 Markdown 草稿，不进入通用编辑器、知识管理、
+插件、云、AI 或网络服务方向。外部 Issue 与 Pull Request 已开放，但代码贡献必须先讨论并确认范围；
+任何未写入 `docs/plan` 契约的产品功能默认禁止实现。未来版本仍须按 `11_testing_and_release.md` 建立
+新的 Source Freeze、Promoted Candidate 与适用证据，不能复用 `v0.1.0` tag 作为当前 worktree 的发布证明。
 
 ---
 

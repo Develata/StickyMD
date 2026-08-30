@@ -51,9 +51,9 @@
 
 ## Completion State
 
-`Revalidated`（2026-08-20）
+Completed
 
-说明：本阶段仅完成治理与契约文档。
+说明：本阶段于 2026-08-20 完成重验证，仅交付治理与契约文档。
 **任何运行时能力均未实现，也不得据本文声称已具备。**
 
 2026-08-20 takeover review 保留了完整工程宪法与治理树，并修复了 contract heading、

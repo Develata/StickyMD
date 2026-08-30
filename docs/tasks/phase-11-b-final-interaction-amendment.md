@@ -1,13 +1,19 @@
 # Phase 11-B Final Interaction Amendment
 
-## Status
+## Completion State
 
-Completed — awaiting USER review
+Completed
 
-## Purpose
+## Goal
 
 在不重开 Phase 11 架构收口的前提下，加入 Comrak 语义数学分隔符批量转换，并证明
 Pin/Always-on-top 与 dock auto-hide 状态机正交。
+
+## Inputs
+
+- Phase 11 已冻结的 Document/editor/window authority。
+- USER 批准的 delimiter conversion 与 Pin/auto-hide 正交性修订。
+- Comrak owned semantic tree 与既有 window reducer。
 
 ## Authority
 
@@ -28,6 +34,12 @@ Pin/Always-on-top 与 dock auto-hide 状态机正交。
 
 - regex/manual Markdown parsing、math body rewrite、delimiter reverse conversion。
 - window reducer 重写、新依赖、新产品功能、push/tag/release。
+
+## Deliverables
+
+- Comrak 语义驱动的 delimiter conversion 与单事务 Undo/Redo。
+- Pin ON/OFF transition-equivalence 回归和 compact toolbar action。
+- Phase 11-B smoke、acceptance matrix 与 Release 性能门。
 
 ## Verification
 

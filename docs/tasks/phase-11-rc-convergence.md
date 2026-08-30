@@ -2,14 +2,14 @@
 
 ## Completion State
 
-Completed — awaiting USER review
+Completed
 
-## Purpose
+## Goal
 
 在不增加产品功能的前提下，校准启动门、收口最终自动化证据、保持人工门真实状态，并生成新的
 本地 RC 候选。Phase 11 不以牺牲边界、authority 或维护成本换取性能数字。
 
-## Prerequisites
+## Inputs
 
 - Phase 10 实现已完成，但 warm startup 与真实环境人工验收仍未关闭。
 - Starting commit: `3b4ec804209dcfbce8108643ca539ab6b0a257be`。

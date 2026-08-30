@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-20
+- `Last Review`: 2026-08-30
 - `Scope`: 窗口生命周期、托盘、置顶、透明度、主题、dock 状态机、多显示器、DPI、单实例唤醒；Windows 实现细节与核心行为契约分离
 
 ---
@@ -32,6 +32,7 @@
 
 ## 核心行为契约（平台无关部分）
 
+<a id="window-geometry"></a>
 ### 窗口与视图
 
 - 单主窗口，三互斥视图：Source / Split / Preview（默认 Source）。
@@ -44,11 +45,16 @@
   不因此增加设置菜单或重设计 toolbar。
   控件仅在鼠标位于窗口内/窗口聚焦/正在交互时明显显示，其余状态淡化但可发现。
 
-### 主题
+<a id="theme-opacity-and-content-zoom"></a>
+### 主题、透明度与内容缩放
 
 - 三态：Light / System / Dark；三态滑块 ☀ / ▣ / ☾。
 - 首次默认 Light；System 跟随 Windows 应用主题且运行时变化立即响应。
 - 写入 config；不提供主题编辑器/自定义颜色/主题文件。
+
+内容缩放为 50–300% 的呈现状态；Source、Preview 与 Split 必须共享同一缩放投影，
+缩放不得改变 canonical Markdown、generation 或持久化 authority。具体文本布局与命中合同见
+`06_markdown_math_rendering.md` 与 `07_editor_and_ime.md`。
 
 ### 透明度
 

@@ -6,6 +6,13 @@ module input fingerprint 决定复用或重跑，不按整个 commit/candidate �
 持有并由 CI 调用。人工项和 exact-desktop 动态项在 source matrix 中保持 `NOT TESTED`，只有对应的
 ignored exact-candidate receipt 可改变 readiness，不能改写此 Markdown 状态。
 
+因此下表 `Status` 是 tracked source baseline，不是 `v0.1.0` 当前发布 verdict。`v0.1.0` 已从
+exact source `64690ab8f86f63f3cbfeabbb0961276978c8f26d` 取得 `READY` 并正式发布；最终身份、
+USER waiver 与仍未执行的极端环境项见
+[`../release-notes/0.1.0.md`](../release-notes/0.1.0.md) 和
+[`../release-checklist.md`](../release-checklist.md)。历史行继续保持原 baseline，避免用发布后的
+动态收据重写 source-controlled 证据。
+
 ## Automated qualification
 
 | ID | Requirement | Mode | Evidence | Status |

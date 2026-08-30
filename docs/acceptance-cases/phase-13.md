@@ -4,6 +4,10 @@
 [`phase-12.md`](phase-12.md) 的 44 个 exact-artifact 人工 case 与全局 AC 约束。动态结果写入
 gitignored `dist/evidence/`；本文件在 candidate freeze 后不回填运行数字。
 
+因此下表是 qualification contract/source baseline。`v0.1.0` 的最终 exact identity、USER
+disposition 与 `READY` 结论见
+[`../release-notes/0.1.0.md`](../release-notes/0.1.0.md)，不通过改写历史行表达。
+
 ## Automated qualification process
 
 | ID | Requirement | Mode | Evidence | Status |

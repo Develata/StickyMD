@@ -42,8 +42,8 @@ Release/deny；30 cold + 30 warm；AC-001..036 自动化回归。真实 IME、�
 
 ## Completion State
 
-Implementation Complete — RC validation incomplete
+Completed
 
-Automated UX/resource/package work is complete. Warm startup remains `BLOCKED`; all current-
-candidate real-environment rows remain `NOT TESTED`. See
-`docs/report/phase-10-rc-requalification.md`.
+Automated UX/resource/package work is complete. Phase 10 当时的 warm startup blocker 与
+current-candidate real-environment `NOT TESTED` 状态仍如实保留在
+`docs/report/phase-10-rc-requalification.md`；后续 Phase 处理了发布门与 USER disposition。
