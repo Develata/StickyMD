@@ -29,12 +29,15 @@ public static class StickyMdSmokeMouse {
     public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
     [DllImport("user32.dll")]
     public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extra);
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int index);
 }
 '@
 
 $TrayMenuOpenAttempts = 2
 $TrayMenuOpenTimeoutMilliseconds = 1500
 $TrayMenuCloseTimeoutMilliseconds = 1500
+$TrayContainerClasses = @('Shell_TrayWnd', 'TopLevelWindowForOverflowXamlIsland')
 
 function Wait-Until([scriptblock]$Probe, [string]$Label) {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
@@ -145,24 +148,74 @@ function Save-WindowCapture {
     Write-Output ('UIA_WINDOW_CAPTURE=' + $target)
 }
 
-function Find-TrayIcon {
+function Find-StickyMdTrayTarget {
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     $name = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::NameProperty,
         'StickyMD'
     )
-    foreach ($top in $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)) {
-        try {
-            $matches = $top.FindAll([System.Windows.Automation.TreeScope]::Descendants, $name)
-            foreach ($match in $matches) {
-                if ($match.Current.AutomationId -eq 'NotifyItemIcon') { return $match }
-            }
-        } catch { }
+    $id = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
+        'NotifyItemIcon'
+    )
+    $iconCondition = New-Object System.Windows.Automation.AndCondition($name, $id)
+    $virtualLeft = [StickyMdSmokeMouse]::GetSystemMetrics(76)
+    $virtualTop = [StickyMdSmokeMouse]::GetSystemMetrics(77)
+    $virtualRight = $virtualLeft + [StickyMdSmokeMouse]::GetSystemMetrics(78)
+    $virtualBottom = $virtualTop + [StickyMdSmokeMouse]::GetSystemMetrics(79)
+
+    # Restrict enumeration to Explorer's two known tray containers. Walking every
+    # top-level provider can block indefinitely and can surface stale same-name
+    # nodes left behind by a display-topology rebuild.
+    foreach ($className in $TrayContainerClasses) {
+        $class = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ClassNameProperty,
+            $className
+        )
+        foreach ($container in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $class)) {
+            try {
+                foreach ($match in $container.FindAll([System.Windows.Automation.TreeScope]::Descendants, $iconCondition)) {
+                    $current = $match.Current
+                    $rect = $current.BoundingRectangle
+                    if (-not $current.IsEnabled -or $current.IsOffscreen) { continue }
+                    if ($rect.Width -le 0 -or $rect.Height -le 0) { continue }
+                    $x = [int]($rect.X + $rect.Width / 2)
+                    $y = [int]($rect.Y + $rect.Height / 2)
+                    if ($x -lt $virtualLeft -or $x -ge $virtualRight -or
+                        $y -lt $virtualTop -or $y -ge $virtualBottom) { continue }
+                    return [PSCustomObject]@{
+                        X = $x
+                        Y = $y
+                        Geometry = ('container={0};x={1};y={2};width={3};height={4}' -f
+                            $className, [int]$rect.X, [int]$rect.Y,
+                            [int]$rect.Width, [int]$rect.Height)
+                    }
+                }
+            } catch { }
+        }
     }
     return $null
 }
 
-function Open-TrayOverflow {
+function Test-TrayOverflowVisible {
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $class = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ClassNameProperty,
+        'TopLevelWindowForOverflowXamlIsland'
+    )
+    foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $class)) {
+        try {
+            $current = $window.Current
+            $rect = $current.BoundingRectangle
+            if (-not $current.IsOffscreen -and $rect.Width -gt 0 -and $rect.Height -gt 0) {
+                return $true
+            }
+        } catch { }
+    }
+    return $false
+}
+
+function Invoke-TrayOverflowToggle {
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     $class = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ClassNameProperty,
@@ -180,30 +233,58 @@ function Open-TrayOverflow {
     $invoke.Invoke()
 }
 
+function Open-TrayOverflow {
+    if (-not (Test-TrayOverflowVisible)) { Invoke-TrayOverflowToggle }
+}
+
+function Close-TrayOverflow {
+    if (Test-TrayOverflowVisible) { Invoke-TrayOverflowToggle }
+}
+
 function Resolve-StickyMdTrayTarget {
-    $icon = Find-TrayIcon
-    if ($null -eq $icon) {
+    $target = Find-StickyMdTrayTarget
+    $openedOverflow = $false
+    if ($null -eq $target) {
+        $openedOverflow = -not (Test-TrayOverflowVisible)
         Open-TrayOverflow
-        $null = Wait-Until { Find-TrayIcon } 'StickyMD tray icon'
-    }
-    return Wait-Until {
-        $current = Find-TrayIcon
-        if ($null -eq $current) { return $null }
-        $rect = $current.Current.BoundingRectangle
-        if ($rect.Width -le 0 -or $rect.Height -le 0) { return $null }
-        $x = [int]($rect.X + $rect.Width / 2)
-        $y = [int]($rect.Y + $rect.Height / 2)
-        if (-not [StickyMdSmokeMouse]::SetCursorPos($x, $y)) { return $null }
-        $actual = New-Object StickyMdSmokePoint
-        if (-not [StickyMdSmokeMouse]::GetCursorPos([ref]$actual)) { return $null }
-        if ($actual.X -ne $x -or $actual.Y -ne $y) { return $null }
-        return [PSCustomObject]@{
-            X = $x
-            Y = $y
-            Geometry = ('x={0};y={1};width={2};height={3}' -f
-                [int]$rect.X, [int]$rect.Y, [int]$rect.Width, [int]$rect.Height)
+        try {
+            $target = Wait-Until { Find-StickyMdTrayTarget } 'usable StickyMD tray icon'
+        } catch {
+            if ($openedOverflow) {
+                try { Close-TrayOverflow } catch { }
+            }
+            throw
         }
-    } 'movable StickyMD tray icon'
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $lastGeometry = $target.Geometry
+    $lastCursor = '<unavailable>'
+    do {
+        $current = Find-StickyMdTrayTarget
+        if ($null -eq $current) {
+            $lastGeometry = '<none>'
+            Start-Sleep -Milliseconds 50
+            continue
+        }
+        $lastGeometry = $current.Geometry
+        if (-not [StickyMdSmokeMouse]::SetCursorPos($current.X, $current.Y)) {
+            Start-Sleep -Milliseconds 50
+            continue
+        }
+        $actual = New-Object StickyMdSmokePoint
+        if (-not [StickyMdSmokeMouse]::GetCursorPos([ref]$actual)) {
+            Start-Sleep -Milliseconds 50
+            continue
+        }
+        $lastCursor = ('x={0};y={1}' -f $actual.X, $actual.Y)
+        if ($actual.X -eq $current.X -and $actual.Y -eq $current.Y) { return $current }
+        Start-Sleep -Milliseconds 50
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($openedOverflow) {
+        try { Close-TrayOverflow } catch { }
+    }
+    throw ('Timed out waiting for movable StickyMD tray icon; candidate={0}; cursor={1}' -f
+        $lastGeometry, $lastCursor)
 }
 
 function Find-ProcessMenuItems {

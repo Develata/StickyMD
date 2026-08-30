@@ -71,6 +71,16 @@ overflow island 导致的 stale rectangle 只做有界重取，绝不猜测或�
 `worktree_dirty=true`，因此只证明当前 harness 能安全驱动既有候选，不参与 release readiness。
 新 source freeze 后必须生成新 candidate 并重新收集 clean exact receipt。
 
+### 2026-08-30 display-topology follow-up
+
+在双屏扩展切换到单屏后，G3-04 可重复停在 `movable StickyMD tray icon`，而同一 exact candidate 的
+`NotifyItemIcon` 已在 Windows 11 `TopLevelWindowForOverflowXamlIsland` 中以可见、启用、40x40 且位于
+当前 virtual desktop 的 rectangle 出现。根因位于 adapter：旧 `Find-TrayIcon` 遍历所有顶层 UIA provider
+的完整 descendants，并返回第一个同名节点；它既可能选中显示拓扑切换后残留的隐藏/屏幕外节点，也可能
+被无关 provider 无限阻塞。纠正边界为：只枚举 `Shell_TrayWnd` 与 overflow island，先快照并验证节点几何，
+没有可用目标时确保 overflow 打开后有界重取；Rust 对整个 PowerShell helper 施加硬超时并负责 kill + wait。
+产品 tray runtime、菜单协议与候选 EXE 不变。
+
 ## Architecture Drift
 
 None. 验证 authority 仍在 std-only Rust CLI，PowerShell 只承担成熟 Windows GUI adapter；产品

@@ -3,8 +3,9 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -17,6 +18,7 @@ use super::receipt;
 mod evidence;
 
 pub(super) const TIMEOUT: Duration = Duration::from_secs(12);
+const UIA_HELPER_TIMEOUT: Duration = Duration::from_secs(35);
 
 pub(super) type CaseOperation = fn(&Path, &Path) -> Result<CaseEvidence, String>;
 
@@ -266,9 +268,11 @@ pub(super) fn invoke_uia(
     if let Some(path) = path {
         command.arg("-Path").arg(path);
     }
-    let output = command
-        .output()
-        .map_err(|error| format!("cannot start Windows UIA helper: {error}"))?;
+    let output = run_bounded_output(
+        &mut command,
+        UIA_HELPER_TIMEOUT,
+        &format!("Windows UIA {action} helper"),
+    )?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     } else {
@@ -277,6 +281,56 @@ pub(super) fn invoke_uia(
             String::from_utf8_lossy(&output.stderr).trim()
         ))
     }
+}
+
+fn run_bounded_output(
+    command: &mut Command,
+    timeout: Duration,
+    label: &str,
+) -> Result<Output, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = ChildGuard::spawn(command, &format!("cannot start {label}"))?;
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child
+            .try_wait()
+            .map_err(|error| format!("cannot inspect {label}: {error}"))?
+        {
+            Some(status) => break status,
+            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            None => {
+                let process_id = child.id();
+                child.kill_and_wait().map_err(|error| {
+                    format!(
+                        "{label} exceeded {timeout:?}; failed to reap PID {process_id}: {error}"
+                    )
+                })?;
+                return Err(format!(
+                    "{label} exceeded {timeout:?}; killed and reaped PID {process_id}"
+                ));
+            }
+        }
+    };
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{label} stdout pipe is unavailable"))?
+        .read_to_end(&mut stdout)
+        .map_err(|error| format!("cannot read {label} stdout: {error}"))?;
+    child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("{label} stderr pipe is unavailable"))?
+        .read_to_end(&mut stderr)
+        .map_err(|error| format!("cannot read {label} stderr: {error}"))?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 pub(super) fn seed_note(program: &Path, text: &str) -> Result<(), String> {
@@ -420,7 +474,14 @@ fn absolute(repository: &Path, path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_stickymd_tasklist;
+    use std::fs;
+    use std::process::Command;
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use super::{parse_stickymd_tasklist, run_bounded_output};
+
+    const BOUNDED_CHILD_SENTINEL: &str = "STICKYMD_BOUNDED_HELPER_SENTINEL";
 
     #[test]
     fn exact_process_isolation_parser_is_locale_independent_and_deduplicated() {
@@ -431,5 +492,43 @@ mod tests {
             "INFO: No tasks are running which match the specified criteria.\r\n",
         );
         assert_eq!(parse_stickymd_tasklist(tasklist), vec![7, 42]);
+    }
+
+    #[test]
+    fn bounded_helper_timeout_kills_and_reaps_child() {
+        if let Some(sentinel) = std::env::var_os(BOUNDED_CHILD_SENTINEL) {
+            thread::sleep(Duration::from_millis(500));
+            fs::write(sentinel, b"leaked").expect("write bounded helper sentinel");
+            return;
+        }
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-bounded-helper-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).expect("create bounded helper fixture");
+        let sentinel = root.join("leaked.txt");
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        command
+            .args([
+                "--exact",
+                "qualification::exact_desktop::tests::bounded_helper_timeout_kills_and_reaps_child",
+            ])
+            .env(BOUNDED_CHILD_SENTINEL, &sentinel);
+
+        let error = run_bounded_output(
+            &mut command,
+            Duration::from_millis(50),
+            "bounded helper regression child",
+        )
+        .expect_err("helper must time out");
+        assert!(error.contains("killed and reaped"), "{error}");
+        thread::sleep(Duration::from_millis(700));
+        assert!(!sentinel.exists(), "timed-out helper leaked past its owner");
+        fs::remove_dir_all(root).expect("remove bounded helper fixture");
     }
 }
