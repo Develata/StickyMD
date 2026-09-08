@@ -1,5 +1,7 @@
 //! Deduplicated task planning and subprocess execution.
 
+pub(crate) mod headless;
+
 use std::path::Path;
 use std::process::Command;
 

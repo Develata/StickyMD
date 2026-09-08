@@ -2,11 +2,14 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod atomic_evidence;
+mod ci;
 mod cli;
 mod evidence;
 mod governance;
+mod headless;
 #[cfg(windows)]
 mod managed_process;
+mod package_path;
 mod pe_dependencies;
 #[cfg(windows)]
 mod process_metrics;
@@ -14,6 +17,7 @@ mod qualification;
 mod qualification_environment;
 #[cfg(windows)]
 mod ready_event;
+mod repository;
 mod runner;
 #[cfg(windows)]
 mod runtime;
@@ -42,8 +46,14 @@ fn run() -> Result<(), String> {
     )?;
     match command {
         cli::CommandLine::Smoke(options) => runner::execute(&root, &options),
+        cli::CommandLine::Ci(command) => ci::execute(&root, &command),
+        cli::CommandLine::Modules(command) => runner::headless::execute(&root, &command),
         cli::CommandLine::AcceptanceManual(command) => qualification::record_manual(&root, command),
         cli::CommandLine::Qualification(command) => qualification::execute(&root, command),
+        cli::CommandLine::PackagePath(directory) => {
+            println!("{}", package_path::resolve(&root, &directory)?.display());
+            Ok(())
+        }
     }
 }
 

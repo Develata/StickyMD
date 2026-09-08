@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-30
+- `Last Review`: 2026-09-08
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -110,11 +110,13 @@ fuzz_text_delta
 
 - Windows CI：fmt/Clippy、headless tests、headless Release performance 与 release build 可以拆成
   独立 GitHub-hosted jobs 并发执行；各 job 使用隔离 runner，不共享 GUI、进程或测量环境。
-  Rust CLI 必须证明 CI 分片任务并集与完整 `all --ci` 去重任务图一致。
+  Rust CLI 必须证明完整分片/模块任务并集与完整 `all --ci` 去重任务图一致；日常选测规则见
+  [模块化 headless CI](#modular-headless-ci)。
 - Portable-core job：在 Linux runner 上只构建平台无关 crates（防止平台无关代码
   被 Win32 污染）；目的不是发布 Linux app。
 - Scheduled：advisories、依赖更新 dry-run（不自动合并）、fuzz smoke、
   sanitizer/Miri 平台无关核心、许可证报告。
+- 手动完整 CI、定时 CI 和发布准备必须执行完整 headless 集合，不沿用日常选测省略的任务。
 - 失败日志与 math/preview diff 作为 artifact 上传。
 
 <a id="phase-verification-harness"></a>
@@ -175,6 +177,35 @@ docs/acceptance-cases/phase-XX.md
 - CLI 自身必须有任务规划、JSON schema/序列化与 exit-code 单元测试。cargo fmt/clippy/test/deny
   保持 CI 原生命令；成熟的 Windows package/GUI helper 可继续由 PowerShell 承担，但不得
   复制 Rust 已拥有的 gate 判断。
+
+<a id="modular-headless-ci"></a>
+### 模块化 headless CI
+
+- 日常 main push / PR 可执行受影响工程模块及其反向依赖；模块注册表、路径归属、依赖闭包、
+  检查范围和聚合判定由 Rust CLI 唯一持有。GitHub workflow 只提供事件基线、隔离 runner、
+  缓存、参数转发和任务结果，不复制路径分类规则。
+- 工程模块沿用 Cargo 边界：core、render、windows、smoke、两个 Phase 01 实验；与
+  Qualification Module Registry 的 Runtime/Performance/Resources/G3/G4/G5 区分。
+  显式本地模块入口只运行请求范围；日常 CI 规划器负责补全反向依赖。
+- PR 比较 base commit 与实际被 checkout 的 merge commit；push 比较 before commit 与
+  当前 checkout。完整 SHA、Git 对象存在性及比较结果必须验证；无基线、零 SHA、对象缺失、
+  比较失败、非 UTF-8 路径或无法识别的路径一律回退完整入口。删除和重命名覆盖旧、新归属。
+- Cargo manifest/lock、toolchain、共享构建配置、CI/workflow/规划器、authority/验收合同变化
+  选择全部。纯说明/报告文档仍运行 fmt 与治理检查；未知文件不能因扩展名或目录相似被忽略。
+  模块/依赖注册与 Cargo 事实不一致时回退原完整 `all --ci`，不能以旧注册表遗漏新 crate。
+- 所选模块运行既有 tests 与 headless Release performance；适用的 Windows Clippy、Release
+  build/native-runtime gate、Linux portable-core 与依赖政策检查由同一计划给出。
+  Release build 适用于 windows 及其上游变化；完整回退执行所有原有检查。
+- 完整 `all --ci` 与 tests/performance 分片保留。手动、定时及发布流程始终全量；
+  完整与定向 CI 计划均声明 scope、source SHA、基线、原因及调度任务清单；显式模块入口
+  可输出所选范围的具体命令清单。计划本身标为 `NOT_RUN`。
+- CI 聚合门仅在所有计划内 job 成功，且省略的 job 与计划一致时通过；失败、取消、缺少规划
+  输出、意外 skip 或无法识别的状态必须失败。无受影响模块的文档变更可只完成公共治理门。
+- 部分 CI 成功只证明选择范围，不写候选功能 last-success ledger，不产生 exact artifact 或
+  人工验收证据。Cargo 缓存只保存构建/下载产物，不包含资格化账本、便签数据或发布证据。
+  同分支被新提交取代的日常 CI 可取消；取消不得被聚合为成功。
+- 验证必须覆盖路径分类、反向依赖、增删/重命名、共享/未知输入、缺失基线、全量并集、
+  空矩阵、状态聚合及工作流结构。远程耗时收益须以实际 workflow 数据确认。
 
 <a id="qualification-process-isolation"></a>
 ### GUI qualification process isolation
@@ -472,8 +503,9 @@ private release lab。
 
 ### CI 与完成门
 
-- Windows CI 必须调用 Rust CLI 的完整 `all --ci`，或调用经 CLI 单元测试证明并集等价的
-  `tests` + `performance` 分片，覆盖所有能够无界面执行的 Phase 任务。
+- 完整 Windows CI 必须调用 Rust CLI 的 `all --ci`，或调用经 CLI 单元测试证明并集等价的
+  `tests` + `performance` 分片，覆盖所有能够无界面执行的 Phase 任务；日常 push / PR 可按
+  [模块化 headless CI](#modular-headless-ci)执行定向集合，不能将其描述为完整资格化通过。
 - Phase 专用 PowerShell 入口保留给本地定位与独立复核；CI 使用合并任务图避免重复工作。
 - 人工项保持 `NOT TESTED` 不会使 headless CI 失败，但会阻止对应 Phase / release gate
   被描述为完整通过。

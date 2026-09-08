@@ -12,18 +12,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  full-ci:
+    name: Scheduled complete headless CI
+    uses: ./.github/workflows/ci.yml
+
   dependency-and-stress:
-    name: Dependency drift and deterministic stress
+    name: Dependency drift report
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Install checksum-verified cargo-deny 0.20.2
-        run: cargo install cargo-deny --version 0.20.2 --locked
-      - name: Advisory, license, source, and ban policy
-        run: cargo deny check
+      - uses: ./.github/actions/rust-cache
+        with:
+          lane: scheduled-drift
       - name: Report dependency drift without changing Cargo.lock
         run: cargo update --dry-run
-      - name: Deterministic platform-independent stress suite
-        run: cargo test -p stickymd-core -p stickymd-render --locked

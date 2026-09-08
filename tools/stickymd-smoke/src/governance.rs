@@ -1,5 +1,7 @@
 //! Repository-contract validation used by every phase smoke.
 
+mod actions;
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -434,38 +436,21 @@ fn verify_phase9_frozen_trace(root: &Path) -> Result<(), String> {
 }
 
 fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
-    for relative in [
+    let mut workflows: Vec<_> = [
         ".github/workflows/ci.yml",
         ".github/workflows/release.yml",
         ".github/workflows/promote-release.yml",
         ".github/workflows/scheduled.yml",
-    ] {
-        let path = root.join(relative);
+    ]
+    .into_iter()
+    .map(|relative| root.join(relative))
+    .collect();
+    for extension in ["yml", "yaml"] {
+        collect_files(&root.join(".github/actions"), extension, &mut workflows)?;
+    }
+    for path in workflows {
         let content = read_text(&path)?;
-        for (index, line) in content.lines().enumerate() {
-            let trimmed = line.trim();
-            let Some(action) = trimmed.strip_prefix("uses:") else {
-                continue;
-            };
-            let action = action
-                .split_once('#')
-                .map_or(action, |(value, _)| value)
-                .trim();
-            let Some((_, revision)) = action.rsplit_once('@') else {
-                return Err(format!(
-                    "{}:{} action is not pinned: {action}",
-                    path.display(),
-                    index + 1
-                ));
-            };
-            if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return Err(format!(
-                    "{}:{} action must use a full immutable commit SHA: {action}",
-                    path.display(),
-                    index + 1
-                ));
-            }
-        }
+        actions::verify_uses(root, &path, &content)?;
         for forbidden in [
             "pull_request_target",
             "packages: write",

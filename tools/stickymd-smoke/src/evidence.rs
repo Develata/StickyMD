@@ -286,7 +286,7 @@ fn environment_json(environment: Option<&QualificationEnvironment>) -> String {
     )
 }
 
-fn escape_json(value: &str) -> String {
+pub(crate) fn escape_json(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
         match character {

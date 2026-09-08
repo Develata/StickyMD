@@ -44,3 +44,14 @@
 | 06 GFM / canonical source ranges / formula copy; 07 math delimiter conversion; 08 source-preserving image export | Phase 05 table formula regression coverage, AC-013/014 | `preview/{parser,source_map}.rs`; `tests/table_math_pipes.rs`: escaped-pipe coordinate restoration, four delimiters, UTF-8, containers, copy, conversion and image rewrite |
 
 本次只修复既有投影合同下的源码坐标；未转义 `|` 的 GFM 分列规则保持不变。自动化结果与未验证项见 [表格公式报告](report/2026-09-08-table-math-source-ranges.md)，不归属于已发布的 `v0.1.0` artifact。
+
+## 2026-09-08 开发工具维护投影
+
+| Plan | Feature（投影） | Acceptance | Code Area | Current Evidence |
+| --- | --- | --- | --- | --- |
+| `11_testing_and_release.md#phase-verification-harness` | 开发工具；不增加产品功能 | P00-A06 | `stickymd-smoke/src/{headless.rs,runner/headless.rs}` | 显式单/多模块入口、完整并集、共享命令去重、既有 Release 参数保留与未知目标拒绝 |
+| `11_testing_and_release.md#modular-headless-ci` | 开发工具；普通 CI 与候选资格化分离 | P00-A08/A09 | `stickymd-smoke/src/ci/*`; `.github/workflows/{ci,scheduled}.yml`; `.github/actions/rust-cache/action.yml` | 已批准日常选测、反向依赖及全量回退；Git/分类/聚合/工作流本地回归；远程执行及耗时尚未验证 |
+| `11_testing_and_release.md#release-artifact-authority` | 开发工具；不改变发布资产身份 | P00-A07 | `stickymd-smoke/src/{package_path.rs,repository.rs}`; `tools/release/package-path.ps1` | 包路径判断迁入 Rust；单包、多包、clean/dirty、错误路径和 Windows PowerShell 5.1 中文路径兼容回归 |
+
+这些维护验证不继承 `v0.1.0` exact artifact 身份；新 CI 选测规则的批准记录见
+[模块化 CI 影响分析](report/RISK-2026-09-08-modular-ci.md)。

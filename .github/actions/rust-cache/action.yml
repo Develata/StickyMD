@@ -1,0 +1,23 @@
+name: Rust build cache
+description: Cache downloads and Cargo build outputs without qualification evidence
+inputs:
+  lane:
+    description: Isolated job or module identity
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/debug/
+          target/release/
+          target/cargo-deny/
+          experiments/phase-01/markdown-math/target/
+          experiments/phase-01/persistence/target/
+        key: cargo-v1-${{ runner.os }}-${{ inputs.lane }}-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', '.github/actions/rust-cache/action.yml') }}-${{ github.sha }}
+        restore-keys: |
+          cargo-v1-${{ runner.os }}-${{ inputs.lane }}-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', '.github/actions/rust-cache/action.yml') }}-
