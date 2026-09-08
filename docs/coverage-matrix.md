@@ -36,3 +36,11 @@
 3. Code Area 或验证状态变化 → 同步更新本表；部分实现不得标记完整 AC PASS。
 4. 每个 Phase 新建时同步创建 `tools/smoke/phase-XX.ps1` 与
    `docs/acceptance-cases/phase-XX.md`；CI 只自动执行其中可无界面运行的部分。
+
+## 2026-09-08 table formula maintenance coverage
+
+| Plan / feature mapping | Acceptance projection | Code / evidence |
+| --- | --- | --- |
+| 06 GFM / canonical source ranges / formula copy; 07 math delimiter conversion; 08 source-preserving image export | Phase 05 table formula regression coverage, AC-013/014 | `preview/{parser,source_map}.rs`; `tests/table_math_pipes.rs`: escaped-pipe coordinate restoration, four delimiters, UTF-8, containers, copy, conversion and image rewrite |
+
+本次只修复既有投影合同下的源码坐标；未转义 `|` 的 GFM 分列规则保持不变。自动化结果与未验证项见 [表格公式报告](report/2026-09-08-table-math-source-ranges.md)，不归属于已发布的 `v0.1.0` artifact。

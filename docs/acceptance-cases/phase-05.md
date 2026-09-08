@@ -45,3 +45,13 @@ Phase 5's checked-in automated surface passes through the Rust smoke task graph.
 intentionally not inferred from unit tests, runtime process survival or a single developer
 observation and therefore remain `NOT TESTED`. P05-M07 is the exception because a checked-in Rust
 measurement runner now owns the complete five-run/60-second protocol and its durable receipt.
+
+## 2026-09-08 table formula source-range regression coverage
+
+This supplements P05-A03/A05/A12 and AC-013/014 under the existing GFM and source-preservation contracts; it does not change historical candidate or manual statuses.
+
+- Preconditions: a six-column Markdown table with an absolute-value formula; escaped pipes before and inside formulas, code, links or images; four math delimiters and CJK/emoji content.
+- Action: preview and copy the formula; convert LaTeX delimiters; export an image occurrence. Repeat in table headers/body rows, blockquotes and lists, with CRLF, whitespace and consecutive backslashes.
+- Expected: `\lvert...\rvert`, `\left\lvert...\right\rvert` and table-escaped `\|...\|` produce the same six-column structure; source ranges preserve complete canonical formula/image markup. Conversion and export change only their intended source ranges. Unescaped pipes retain standard GFM column behavior.
+- Failure signals: lost formula delimiters, ranges landing inside UTF-8 characters, altered neighboring text, or corrections leaking into another cell/paragraph.
+- Entry: `cargo test -p stickymd-render --locked --test table_math_pipes`; the existing Rust Phase 05 runner includes this target through the render crate tests. Invalid coordinate rejection is additionally covered by the `preview::source_map` unit tests. Native window appearance remains `NOT TESTED` for this maintenance change.

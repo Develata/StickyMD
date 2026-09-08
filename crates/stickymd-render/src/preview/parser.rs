@@ -10,6 +10,7 @@ use comrak::{Arena, Options, parse_document};
 use stickymd_core::DocumentSnapshot;
 use thiserror::Error;
 
+use super::source_map::TableCellSourceMap;
 use super::{
     BlockNode, CodeBlockNode, ImageKind, InlineNode, LinkKind, ListItem, ListNode, MathNode,
     OwnedDocumentTree, SourceMap, SourceRange, TableAlignment, TableCell, TableNode, TableRow,
@@ -83,6 +84,7 @@ impl PreviewParser {
                 source: &snapshot.text,
                 source_map: &source_map,
                 node_count: 0,
+                table_cell_map: None,
             };
             let blocks = context.convert_blocks(root, 0)?;
             (blocks, context.node_count)
@@ -108,6 +110,7 @@ struct ConvertContext<'a> {
     source: &'a str,
     source_map: &'a SourceMap,
     node_count: usize,
+    table_cell_map: Option<TableCellSourceMap>,
 }
 
 impl ConvertContext<'_> {
@@ -132,8 +135,11 @@ impl ConvertContext<'_> {
     }
 
     fn source_range<'arena>(&self, node: &'arena AstNode<'arena>) -> Option<SourceRange> {
-        self.source_map
-            .range(self.source, node.data.borrow().sourcepos)
+        let mut position = node.data.borrow().sourcepos;
+        if let Some(map) = &self.table_cell_map {
+            position = map.restore(position)?;
+        }
+        self.source_map.range(self.source, position)
     }
 
     fn convert_blocks<'arena>(
@@ -230,9 +236,15 @@ impl ConvertContext<'_> {
                     let mut cells = Vec::new();
                     for cell in row.children() {
                         self.touch(depth + 2)?;
+                        let source_range = self.source_range(cell);
+                        self.table_cell_map = self
+                            .source_map
+                            .table_cell(self.source, cell.data.borrow().sourcepos);
+                        let content = self.convert_inlines(cell, depth + 2);
+                        self.table_cell_map = None;
                         cells.push(TableCell {
-                            content: self.convert_inlines(cell, depth + 2)?,
-                            source_range: self.source_range(cell),
+                            content: content?,
+                            source_range,
                         });
                     }
                     rows.push(TableRow {
