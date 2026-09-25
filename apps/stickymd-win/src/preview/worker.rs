@@ -59,6 +59,7 @@ pub struct PreviewViewport {
 #[derive(Debug)]
 pub struct PreviewCompletion {
     pub generation: Generation,
+    pub requested_scroll_y: f32,
     pub result: Result<PreviewFrame, PreviewPipelineError>,
 }
 
@@ -252,11 +253,21 @@ fn run_worker<F>(
             WorkerAction::Job(job) => job,
         };
         let generation = job.generation();
+        let requested_scroll_y = match &job {
+            PreviewJob::Build { viewport, .. } | PreviewJob::Relayout { viewport, .. } => {
+                viewport.scroll_y
+            }
+            PreviewJob::Paint { scroll_y, .. } => *scroll_y,
+        };
         let result = execute(&mut pipeline, job, image_source.as_ref());
         if let Ok(mut mailbox) = shared.0.lock() {
             mailbox.metrics.completed = mailbox.metrics.completed.saturating_add(1);
         }
-        on_completion(PreviewCompletion { generation, result });
+        on_completion(PreviewCompletion {
+            generation,
+            requested_scroll_y,
+            result,
+        });
     }
 }
 
@@ -536,6 +547,39 @@ mod tests {
         assert_eq!(metrics.submitted, 1);
         assert_eq!(metrics.started, 1);
         assert_eq!(metrics.completed, 1);
+    }
+
+    #[test]
+    fn scrollbar_completion_preserves_requested_offset_even_after_clamping() {
+        let (sender, receiver) = mpsc::channel();
+        let worker = PreviewWorker::start(move |completion| {
+            let _ = sender.send(completion);
+        })
+        .unwrap();
+        let generation = Generation::initial();
+        let mut requested = viewport(500);
+        requested.scroll_y = 100_000.0;
+        worker.submit(PreviewJob::Build {
+            snapshot: DocumentSnapshot {
+                text: Arc::from("short"),
+                generation,
+                line_ending: LineEnding::Lf,
+            },
+            viewport: requested,
+        });
+        let first = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(first.requested_scroll_y, 100_000.0);
+        assert_eq!(first.result.unwrap().scroll_y(), 0.0);
+        worker.submit(PreviewJob::Paint {
+            generation,
+            height_px: 300,
+            scroll_y: 0.0,
+            selection: PreviewSelection::default(),
+            theme: PreviewTheme::Light,
+        });
+        let second = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(second.requested_scroll_y, 0.0);
+        assert_eq!(second.result.unwrap().scroll_y(), 0.0);
     }
 
     #[test]

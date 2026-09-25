@@ -7,6 +7,7 @@ mod geometry;
 mod paint;
 mod projection;
 mod rendering;
+mod scrollbar;
 
 pub use fonts::{FontSelection, ScriptClass, ScriptRun, segment_script_runs};
 pub use projection::{
@@ -14,3 +15,4 @@ pub use projection::{
     SourceProjectionError,
 };
 pub use rendering::{SourceTheme, UiTextSpec};
+pub use scrollbar::SourceScrollMetrics;

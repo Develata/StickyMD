@@ -49,6 +49,8 @@ mod preview_input;
 mod preview_runtime;
 mod reconciliation_runtime;
 mod recovery_runtime;
+mod scroll_runtime;
+mod scrollbar;
 mod search_controller;
 mod search_runtime;
 mod toolbar_paint;
@@ -98,6 +100,7 @@ pub struct StickyApp {
     preview_flow: PreviewCoordinator,
     preview_selection: PreviewSelection,
     preview_scroll_y: f32,
+    scrollbars: scrollbar::ScrollbarInteraction,
     preview_focused: bool,
     preview_dragging: bool,
     preview_drag_moved: bool,
@@ -166,6 +169,7 @@ impl StickyApp {
             preview_flow: PreviewCoordinator::default(),
             preview_selection: PreviewSelection::default(),
             preview_scroll_y: 0.0,
+            scrollbars: scrollbar::ScrollbarInteraction::default(),
             preview_focused,
             preview_dragging: false,
             preview_drag_moved: false,

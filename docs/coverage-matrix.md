@@ -116,3 +116,10 @@ P00-A10：`cli.rs`、`qualification/{mod.rs,repetition.rs}`、`qualification_env
 回归验证 GUI 资格化仍以非零和 `UNSUPPORTED` / `NOT_TESTED` 拒绝。
 CI plan job 在 full/smoke 范围运行 Linux 严格 lint 和 smoke tests，避免该维护缺口复发。
 实际运行结果见上述报告的合并前 Resolution；人工与发布状态不变。
+
+2026-09-25 垂直滚动条映射 `09_windows_shell.md#vertical-scrollbars`、`07` Source editor 与
+`06` Split scroll sync：用户投影见三种视图中的长文滚动，验收见 Phase 03/05 当日维护案例。
+实现为 `stickymd-render/src/source/scrollbar.rs` 的惰性首尾定位与
+`stickymd-win/src/app/{scrollbar,scroll_runtime}.rs` 的窄槽绘制、手势和既有语义同步；
+Preview worker 回执保留请求位置。定向 Rust tests、Release baseline 与 native message probe
+的范围及人工缺口见 [维护报告](report/2026-09-25-vertical-scrollbars.md)。

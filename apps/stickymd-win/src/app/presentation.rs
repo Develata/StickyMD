@@ -154,6 +154,7 @@ impl StickyApp {
         if size.width == 0 || size.height == 0 {
             return;
         }
+        self.cancel_scrollbar_drag();
         if let Some(surface) = &mut self.surface
             && let Err(error) = surface.resize(size.width, size.height)
         {
@@ -240,6 +241,7 @@ impl StickyApp {
         };
         let caret_animation_active = self.caret_animation_active();
         let search_layout = self.search_layout();
+        let scrollbars = self.scrollbar_geometry();
         let Some(surface) = &mut self.surface else {
             return;
         };
@@ -275,6 +277,14 @@ impl StickyApp {
             } else {
                 paint_preview_pending(surface.pixmap_mut(), pane, dark);
             }
+        }
+        for bar in scrollbars.into_iter().flatten() {
+            let emphasized = self.scrollbars.hovered == Some(bar.pane)
+                || self
+                    .scrollbars
+                    .drag
+                    .is_some_and(|drag| drag.pane == bar.pane);
+            bar.paint(surface.pixmap_mut(), emphasized, dark);
         }
         paint_search_overlay(
             surface.pixmap_mut(),

@@ -182,6 +182,8 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             WindowEvent::Focused(focused) => {
                 self.session.focused = focused;
                 if !focused {
+                    self.cancel_scrollbar_drag();
+                    self.scrollbars.hovered = None;
                     self.session.cancel_preedit();
                     if self.coordinator.view().dirty {
                         self.dispatch_persistence_intent(
@@ -217,6 +219,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             }
             WindowEvent::CursorLeft { .. } => {
                 self.pointer_inside_window = false;
+                self.scrollbars.hovered = None;
                 self.dispatch_window_intent(
                     Some(event_loop),
                     crate::flow::window::state::WindowIntent::PointerLeft {

@@ -30,6 +30,7 @@
 
 - cosmic-text 布局 + 自绘 caret / selection / preedit。
 - viewport 滚动（垂直；水平按需）。
+- 垂直滚动条及其视口/交互边界遵守 `09_windows_shell.md#vertical-scrollbars`。
 - 常规快捷键：编辑、Ctrl+C/X/V、Ctrl+Insert/Shift+Delete/Shift+Insert、
   Ctrl+Z / Ctrl+Y、Ctrl+S、Ctrl+Shift+S。传统剪贴板快捷键必须映射到与常规快捷键
   完全相同的 typed intents；Shift+Insert 必须保留文本/图片剪贴板的同一优先级路径。

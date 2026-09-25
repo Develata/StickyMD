@@ -371,6 +371,12 @@ impl StickyApp {
     }
 
     pub(super) fn handle_mouse_button(&mut self, state: ElementState, button: MouseButton) {
+        if state == ElementState::Released
+            && self.scrollbars.drag.is_some()
+            && self.handle_scrollbar_button(state, button)
+        {
+            return;
+        }
         if self.handle_shell_mouse_button(state, button) {
             return;
         }
@@ -378,6 +384,9 @@ impl StickyApp {
             return;
         }
         if !self.window_accepts_editor_mutation() {
+            return;
+        }
+        if self.handle_scrollbar_button(state, button) {
             return;
         }
         if button != MouseButton::Left {
@@ -446,8 +455,15 @@ impl StickyApp {
         if self.handle_shell_cursor_moved(position) {
             return;
         }
+        if self.handle_scrollbar_cursor() {
+            return;
+        }
         let cursor = self
             .shell_cursor_icon()
+            .or_else(|| {
+                self.scrollbar_gutter_at_cursor()
+                    .map(|_| winit::window::CursorIcon::Default)
+            })
             .unwrap_or_else(|| self.cursor_icon_for_position(position));
         if let Some(window) = &self.window {
             window.set_cursor(cursor);
@@ -506,54 +522,14 @@ impl StickyApp {
             MouseScrollDelta::LineDelta(_, lines) => -lines * 48.0,
             MouseScrollDelta::PixelDelta(position) => -position.y as f32,
         };
-        if self.preview_at_cursor().is_some() {
-            self.preview_scroll_y = (self.preview_scroll_y + pixels).max(0.0);
-            if self.config.current().view_mode == ViewMode::Split
-                && self.config.current().split_scroll_sync
-            {
-                let current = self.coordinator.view().generation;
-                let anchor = self.preview_frame.as_ref().and_then(|frame| {
-                    (frame.generation() == current)
-                        .then(|| frame.scroll_anchor_at_y(self.preview_scroll_y))
-                        .flatten()
-                });
-                if let (Some(anchor), Some(projection)) = (anchor, &mut self.projection)
-                    && let Ok(scroll) = projection.scroll_to_anchor(anchor)
-                {
-                    self.session.scroll.line = scroll.line;
-                    self.session.scroll.vertical_px = scroll.vertical;
-                    self.session.scroll.horizontal_px = scroll.horizontal;
-                }
-            }
-            self.request_preview_paint();
-            self.update_ime_area();
-            self.request_redraw();
-            return;
-        }
-        let Some(projection) = &mut self.projection else {
-            return;
-        };
-        let scroll = projection.scroll_by(pixels);
-        self.session.scroll.line = scroll.line;
-        self.session.scroll.vertical_px = scroll.vertical;
-        self.session.scroll.horizontal_px = scroll.horizontal;
-        if self.config.current().view_mode == ViewMode::Split
-            && self.config.current().split_scroll_sync
+        let pane = if self.preview_at_cursor().is_some()
+            || self.scrollbar_gutter_at_cursor() == Some(super::scrollbar::ScrollPane::Preview)
         {
-            let current = self.coordinator.view().generation;
-            let anchor = projection.scroll_anchor();
-            if let Some(frame) = self
-                .preview_frame
-                .as_ref()
-                .filter(|frame| frame.generation() == current)
-                && let Some(target_y) = frame.y_for_scroll_anchor(anchor)
-            {
-                self.preview_scroll_y = target_y.max(0.0);
-                self.request_preview_paint();
-            }
-        }
-        self.update_ime_area();
-        self.request_redraw();
+            super::scrollbar::ScrollPane::Preview
+        } else {
+            super::scrollbar::ScrollPane::Source
+        };
+        self.scroll_pane_by(pane, pixels);
     }
 
     fn source_local_cursor(&self) -> Option<(f32, f32)> {

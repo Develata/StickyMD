@@ -71,6 +71,7 @@ pub struct SourceProjection {
     pub(super) height_px: u32,
     pub(super) scale_factor: f32,
     pub(super) preedit: Option<PreeditVisual>,
+    pub(super) scroll_extent: Option<super::scrollbar::SourceScrollExtent>,
 }
 
 impl SourceProjection {
@@ -116,6 +117,7 @@ impl SourceProjection {
             height_px,
             scale_factor: scale.max(0.5),
             preedit: None,
+            scroll_extent: None,
         };
         projection.rebuild_buffer(snapshot);
         observe(SourceInitializationMilestone::SourceBufferReady);

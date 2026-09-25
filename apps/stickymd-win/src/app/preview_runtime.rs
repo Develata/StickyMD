@@ -82,6 +82,7 @@ impl StickyApp {
         if self.config.current().view_mode == mode {
             return;
         }
+        self.cancel_scrollbar_drag();
         self.session.cancel_preedit();
         self.dispatch_window_intent(
             None,
@@ -212,6 +213,27 @@ impl StickyApp {
                     .admit_completion(completion.generation, current)
                     == PreviewAdmission::Apply =>
             {
+                // A previous paint can complete while the user is already
+                // dragging to a newer position. Keep the latest request and
+                // never display the old frame at its stale scroll offset.
+                if completion.requested_scroll_y.to_bits() != self.preview_scroll_y.to_bits() {
+                    if self.preview_frame.as_ref().is_none_or(|previous| {
+                        previous.generation() != frame.generation()
+                            || previous.width() != frame.width()
+                            || previous.height() != frame.height()
+                    }) {
+                        self.preview_selection = selection_for_generation(
+                            self.preview_frame
+                                .as_ref()
+                                .map(|previous| previous.generation()),
+                            completion.generation,
+                            self.preview_selection,
+                        );
+                        self.preview_frame = Some(frame);
+                    }
+                    self.request_preview_paint();
+                    return;
+                }
                 self.preview_scroll_y = frame.scroll_y();
                 self.preview_selection = selection_for_generation(
                     self.preview_frame
@@ -338,7 +360,7 @@ pub(super) fn geometry(mode: ViewMode, size: PhysicalSize<u32>, scale: f32) -> V
         width: size.width.max(1),
         height: content_height,
     };
-    match mode {
+    let mut geometry = match mode {
         ViewMode::Source => ViewGeometry {
             toolbar_height,
             source: Some(full),
@@ -370,7 +392,15 @@ pub(super) fn geometry(mode: ViewMode, size: PhysicalSize<u32>, scale: f32) -> V
                 divider_x: Some(source_width),
             }
         }
+    };
+    let gutter = (super::scrollbar::GUTTER_DIP * scale.max(0.5)).round() as u32;
+    for pane in [&mut geometry.source, &mut geometry.preview]
+        .into_iter()
+        .flatten()
+    {
+        pane.width = pane.width.saturating_sub(gutter).max(1);
     }
+    geometry
 }
 
 #[cfg(test)]
@@ -382,7 +412,10 @@ mod tests {
         let geometry = geometry(ViewMode::Split, PhysicalSize::new(901, 700), 1.0);
         let source = geometry.source.unwrap();
         let preview = geometry.preview.unwrap();
-        assert_eq!(geometry.divider_x, Some(source.width));
+        assert_eq!(
+            geometry.divider_x,
+            Some(source.width + super::super::scrollbar::GUTTER_DIP as u32)
+        );
         assert!((source.width as i64 - preview.width as i64).abs() <= 1);
         assert_eq!(source.y, preview.y);
         assert_eq!(source.height, preview.height);
@@ -419,9 +452,10 @@ mod tests {
             let left = split.source.expect("Split source pane");
             let right = split.preview.expect("Split preview pane");
             let divider = (SPLIT_DIVIDER_DIP * scale).round().max(1.0) as u32;
-            assert_eq!(right.x, left.width + divider);
+            let gutter = (super::super::scrollbar::GUTTER_DIP * scale).round() as u32;
+            assert_eq!(right.x, left.width + gutter + divider);
             assert!((left.width as i64 - right.width as i64).abs() <= 1);
-            assert_eq!(left.width + divider + right.width, size.width);
+            assert_eq!(left.width + divider + right.width + 2 * gutter, size.width);
             assert!(left.height > 0 && right.height > 0);
         }
     }

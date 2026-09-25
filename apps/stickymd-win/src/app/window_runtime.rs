@@ -240,7 +240,7 @@ impl StickyApp {
         WindowGuardSnapshot {
             window_focused: self.session.focused,
             ime_composing: self.session.is_composing() || self.search.is_composing(),
-            dragging: self.move_resize_active,
+            dragging: self.move_resize_active || self.scrollbars.drag.is_some(),
             popup_open: self.controls.opacity_popup_open
                 || self.search.open
                 || self.export_in_flight,
@@ -290,6 +290,7 @@ impl StickyApp {
             }
             WindowEffect::SetVisible(visible) => {
                 if !visible {
+                    self.scrollbars = super::scrollbar::ScrollbarInteraction::default();
                     self.controls.opacity_popup_open = false;
                     self.controls.opacity_dragging = false;
                     self.controls.opacity_input_focused = false;
@@ -335,6 +336,9 @@ impl StickyApp {
             }
             WindowEffect::SetEditorInputEnabled(enabled) => {
                 self.shell_input_enabled = enabled;
+                if !enabled {
+                    self.scrollbars = super::scrollbar::ScrollbarInteraction::default();
+                }
             }
             WindowEffect::RequestNoteSave(reason) => {
                 self.request_immediate_save(match reason {

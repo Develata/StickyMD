@@ -24,3 +24,18 @@
 - Failure signals: a persistent `Clipboard updated` overlay, a success notification hiding an error, incorrect copied text, or mutation on a failed copy.
 - Automated entry: `cargo test -p stickymd-win --locked`; existing copy/clipboard coordinator tests cover content, generation and failure atomicity. Source/Preview shortcuts converge on the same `ClipboardWritten` shell effect, which now leaves presentation unchanged on success.
 - Visual scope: the supplied screenshots reproduce the original obstruction; real desktop verification of the rebuilt application remains `NOT TESTED` until observed. The historical manual rows above are not upgraded by headless tests.
+
+## 2026-09-25 vertical scrollbar maintenance
+
+- Contract: `09_windows_shell.md#vertical-scrollbars`; feature: long-document scrolling in the three views.
+- Preconditions: short/empty notes, a 10,000-line note, a single wrapped paragraph, and an active preedit/selection.
+- Action: query scroll bounds, drag to both ends and back, edit or replace the note, resize, and change content scale.
+- Expected: short notes hide the thumb; long notes reach the first/last visible row without shaping intervening lines;
+  bounds follow the current generation and viewport. Text, generation, preedit and selection remain unchanged by scrolling.
+  Reserving the gutter does not shift unwrapped text; measuring bounds and a round trip preserve its exact pixels.
+- Failure signals: missed document end, stale bounds, whole-document shaping during a jump, altered text/preedit,
+  or different pixels after returning to the same viewport.
+- Automated entry: `cargo test -p stickymd-render -p stickymd-win --locked scrollbar`, also included in the Rust-owned
+  render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1). Status: `AUTOMATED PASS`.
+- Timing entry: `cargo test -p stickymd-render --lib --release --locked scrollbar_release_baseline -- --ignored --nocapture --test-threads=1`.
+- Physical mouse/IME/DPI visual matrix: `NOT TESTED`; synthetic native messages and headless pixels do not upgrade the manual rows.
