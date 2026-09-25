@@ -1,5 +1,7 @@
 //! Repository-contract validation used by every phase smoke.
 
+mod actions;
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -83,6 +85,10 @@ const REQUIRED_FILES: &[&str] = &[
     "tools/release/generate-sbom.ps1",
     "tools/release/verify-package.ps1",
     "tools/release/verify-promoted-artifact.ps1",
+    "tools/release/invoke-smoke.ps1",
+    "tools/release/archive-facts.ps1",
+    "tools/release/resource-facts.ps1",
+    "tools/stickymd-smoke/tests/release_wrappers.rs",
 ];
 
 const FORBIDDEN_PACKAGES: &[&str] = &[
@@ -434,38 +440,21 @@ fn verify_phase9_frozen_trace(root: &Path) -> Result<(), String> {
 }
 
 fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
-    for relative in [
+    let mut workflows: Vec<_> = [
         ".github/workflows/ci.yml",
         ".github/workflows/release.yml",
         ".github/workflows/promote-release.yml",
         ".github/workflows/scheduled.yml",
-    ] {
-        let path = root.join(relative);
+    ]
+    .into_iter()
+    .map(|relative| root.join(relative))
+    .collect();
+    for extension in ["yml", "yaml"] {
+        collect_files(&root.join(".github/actions"), extension, &mut workflows)?;
+    }
+    for path in workflows {
         let content = read_text(&path)?;
-        for (index, line) in content.lines().enumerate() {
-            let trimmed = line.trim();
-            let Some(action) = trimmed.strip_prefix("uses:") else {
-                continue;
-            };
-            let action = action
-                .split_once('#')
-                .map_or(action, |(value, _)| value)
-                .trim();
-            let Some((_, revision)) = action.rsplit_once('@') else {
-                return Err(format!(
-                    "{}:{} action is not pinned: {action}",
-                    path.display(),
-                    index + 1
-                ));
-            };
-            if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return Err(format!(
-                    "{}:{} action must use a full immutable commit SHA: {action}",
-                    path.display(),
-                    index + 1
-                ));
-            }
-        }
+        actions::verify_uses(root, &path, &content)?;
         for forbidden in [
             "pull_request_target",
             "packages: write",
@@ -564,26 +553,9 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     if !package.contains("generate-third-party-notices.ps1") {
         return Err("package.ps1 must generate notices from the frozen runtime graph".to_owned());
     }
-    if !package.contains("function Copy-NormalizedUtf8Lf")
-        || package.matches("Copy-NormalizedUtf8Lf -Source").count() != 3
-        || !package.contains("[Text.UTF8Encoding]::new($false)")
-    {
-        return Err(
-            "package.ps1 must normalize all source-controlled license text to UTF-8/LF".to_owned(),
-        );
-    }
-    let verify_package = read_text(&root.join("tools/release/verify-package.ps1"))?;
-    let verify_promoted = read_text(&root.join("tools/release/verify-promoted-artifact.ps1"))?;
-    for (label, script) in [
-        ("package verifier", verify_package.as_str()),
-        ("promotion verifier", verify_promoted.as_str()),
-    ] {
-        if !script.contains("Source commit:") {
-            return Err(format!(
-                "{label} must bind the packaged README to the approved source commit"
-            ));
-        }
-    }
+    // Release semantics are exercised against compiled Rust by release::* tests and
+    // tests/release_wrappers.rs (including actual packaged license bytes).
+    // PowerShell source tokens are not evidence of a gate.
     let remote_promotion =
         read_text(&root.join("tools/stickymd-smoke/src/qualification/remote.rs"))?;
     for required in [
@@ -595,18 +567,6 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         if !remote_promotion.contains(required) {
             return Err(format!(
                 "remote promotion lacks authoritative-download token `{required}`"
-            ));
-        }
-    }
-    let notices = read_text(&root.join("tools/release/generate-third-party-notices.ps1"))?;
-    for required in [
-        "cargo metadata --format-version 1 --locked --filter-platform x86_64-pc-windows-msvc",
-        "Runtime package",
-        "Cargo.lock SHA-256",
-    ] {
-        if !notices.contains(required) {
-            return Err(format!(
-                "third-party notice generator lacks required contract token `{required}`"
             ));
         }
     }

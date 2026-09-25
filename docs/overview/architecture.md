@@ -157,6 +157,12 @@ Clean VM、真实双屏/混合 DPI、运行中拔屏、RDP 与物理负坐标等
 
 ## 文档导航
 
+开发验证由 std-only `stickymd-smoke` 持有。显式模块入口复用完整 headless 任务图；
+日常 CI 由 Rust 按变更及反向依赖选测，共享/未知输入或缺失基线回退原完整入口。
+GitHub workflow 只转发计划、隔离 job 与缓存；`CI result` 聚合失败、取消和预期 skip。
+手动、定时、发布完整检查及候选证据门保持独立，见
+[模块化 headless CI 合同](../plan/11_testing_and_release.md#modular-headless-ci)。
+
 | 想了解 | 看这里 |
 | --- | --- |
 | 工程最高约束 | [工程宪法](../plan/00_engineering_constitution.md) |

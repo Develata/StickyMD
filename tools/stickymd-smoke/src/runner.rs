@@ -1,5 +1,7 @@
 //! Deduplicated task planning and subprocess execution.
 
+pub(crate) mod headless;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -108,6 +110,7 @@ pub(crate) enum RuntimeScenario {
 
 enum TaskExecution {
     Passed(TaskEvidence),
+    #[cfg(windows)]
     Failed {
         detail: String,
         evidence: TaskEvidence,
@@ -207,6 +210,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
                 gates: evidence.gates,
                 samples: evidence.samples,
             }),
+            #[cfg(windows)]
             Ok(TaskExecution::Failed { detail, evidence }) => {
                 results.push(EvidenceResult {
                     id: task_name.to_owned(),

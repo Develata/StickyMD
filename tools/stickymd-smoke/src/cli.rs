@@ -86,7 +86,11 @@ impl Phase {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandLine {
+    Release(crate::release::Command),
     Smoke(Options),
+    PackagePath(PathBuf),
+    Modules(crate::headless::Command),
+    Ci(crate::ci::Command),
     AcceptanceManual(ManualCommand),
     Qualification(QualificationCommand),
 }
@@ -220,6 +224,7 @@ impl G3Case {
         }
     }
 
+    #[cfg(windows)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::G301 => "G3-01",
@@ -254,6 +259,7 @@ impl G4Case {
         }
     }
 
+    #[cfg(windows)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::G401 => "G4-01",
@@ -285,6 +291,7 @@ impl G5Case {
         }
     }
 
+    #[cfg(windows)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::G501 => "G5-01",
@@ -320,6 +327,7 @@ impl WindowStressScenario {
         }
     }
 
+    #[cfg(windows)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Collapse => "collapse",
@@ -350,6 +358,10 @@ impl CommandLine {
     {
         let args: Vec<String> = args.into_iter().collect();
         match args.first().map(String::as_str) {
+            Some("release") => crate::release::parse(&args[1..]).map(Self::Release),
+            Some("package-path") => crate::package_path::parse(&args[1..]).map(Self::PackagePath),
+            Some("modules") => crate::headless::Command::parse(&args[1..]).map(Self::Modules),
+            Some("ci") => crate::ci::Command::parse(&args[1..]).map(Self::Ci),
             Some("acceptance") => match args.get(1).map(String::as_str) {
                 Some("manual") => Self::parse_manual(&args[2..]).map(Self::AcceptanceManual),
                 _ => Err(
@@ -914,7 +926,7 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]"
+        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke release <package-inputs|workspace-version|verify-promoted|verify-package|notices|checksums|publish-sbom> [options]; see tools/stickymd-smoke/README.md"
     }
 }
 

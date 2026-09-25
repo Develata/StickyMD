@@ -161,6 +161,7 @@ fn is_smoke_owned_stickymd(temporary: &Path, executable: &Path) -> bool {
         "stickymd-g4-",
         "stickymd-g5-",
         "stickymd-downloaded-smoke-",
+        "stickymd-verify-",
     ]
     .iter()
     .any(|prefix| root_name.starts_with(prefix))
@@ -349,6 +350,10 @@ mod tests {
             &temporary,
             &temporary.join(r"StickyMD-G4-42-99\case\stickymd.EXE")
         ));
+        assert!(is_smoke_owned_stickymd(
+            &temporary,
+            &temporary.join(r"stickymd-verify-42-99\runtime\ascii\StickyMD.exe")
+        ));
         assert!(!is_smoke_owned_stickymd(
             &temporary,
             Path::new(r"D:\Notes\Research\StickyMD.exe")
@@ -367,8 +372,14 @@ mod tests {
         }
 
         let _serial = PROCESS_TEST_LOCK.lock().expect("lock process test");
+        for prefix in ["stickymd-smoke", "stickymd-verify"] {
+            assert_stale_preflight_preserves_child(prefix);
+        }
+    }
+
+    fn assert_stale_preflight_preserves_child(prefix: &str) {
         let root = unique_temp("preflight")
-            .with_file_name(format!("stickymd-smoke-{}-preflight", std::process::id()));
+            .with_file_name(format!("{prefix}-{}-preflight", std::process::id()));
         fs::create_dir(&root).expect("create preflight fixture");
         let executable = root.join("StickyMD.exe");
         fs::copy(

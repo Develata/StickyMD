@@ -4,79 +4,215 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
 
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
+  plan:
+    name: CI plan and governance
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.plan.outputs.full }}
+      modules: ${{ steps.plan.outputs.modules }}
+      windows_matrix: ${{ steps.plan.outputs.windows_matrix }}
+      dependency_needed: ${{ steps.plan.outputs.dependency_needed }}
+      quality_needed: ${{ steps.plan.outputs.quality_needed }}
+      headless_needed: ${{ steps.plan.outputs.headless_needed }}
+      release_needed: ${{ steps.plan.outputs.release_needed }}
+      portable_needed: ${{ steps.plan.outputs.portable_needed }}
+      lint_args: ${{ steps.plan.outputs.lint_args }}
+      portable_args: ${{ steps.plan.outputs.portable_args }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/rust-cache
+        with:
+          lane: planner
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: Governance
+        run: cargo run --quiet -p stickymd-smoke --locked -- phase 00 --json
+      - name: Select requested scope
+        id: plan
+        env:
+          CI_EVENT: ${{ github.event_name }}
+          CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
+          CI_PUSH_BASE: ${{ github.event.before }}
+        run: |
+          $selection = @('--full')
+          if ($env:CI_EVENT -eq 'pull_request') {
+            $selection = @("--base=$env:CI_PR_BASE")
+          } elseif ($env:CI_EVENT -eq 'push') {
+            $selection = @("--base=$env:CI_PUSH_BASE")
+          }
+          $json = & cargo run --quiet -p stickymd-smoke --locked -- ci plan @selection
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Output $json
+          $plan = $json | ConvertFrom-Json -ErrorAction Stop
+          foreach ($key in @('full', 'modules', 'windows_matrix', 'dependency_needed', 'quality_needed', 'headless_needed', 'release_needed', 'portable_needed', 'lint_args', 'portable_args')) {
+            $value = ConvertTo-Json -InputObject $plan.$key -Depth 10 -Compress
+            "$key=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+      - name: Linux smoke CLI lint and tests
+        if: steps.plan.outputs.full == 'true' || contains(fromJSON(steps.plan.outputs.modules), 'smoke')
+        run: |
+          cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p stickymd-smoke --locked
+          exit $LASTEXITCODE
+
   dependency-policy:
     name: Dependency policy
+    needs: plan
+    if: needs.plan.outputs.dependency_needed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - uses: ./.github/actions/rust-cache
+        with:
+          lane: dependency-policy
       - name: Install checksum-verified cargo-deny 0.20.2
-        run: cargo install cargo-deny --version 0.20.2 --locked
+        run: cargo install cargo-deny --version 0.20.2 --locked --target-dir target/cargo-deny
       - name: Licenses, advisories, bans, and sources
         run: cargo deny check
 
   windows-quality:
     name: Windows x64 (format + lint)
+    needs: plan
+    if: needs.plan.outputs.quality_needed == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
-        run: rustup show
-      - name: fmt
-        run: cargo fmt --check
-      - name: clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - uses: ./.github/actions/rust-cache
+        with:
+          lane: windows-quality
+      - name: clippy for requested packages
+        env:
+          CI_LINT_ARGS: ${{ needs.plan.outputs.lint_args }}
+        run: |
+          $arguments = @($env:CI_LINT_ARGS | ConvertFrom-Json -ErrorAction Stop)
+          & cargo @arguments
+          exit $LASTEXITCODE
 
   windows-headless:
-    name: Windows x64 headless (${{ matrix.shard }})
+    name: Windows x64 headless (${{ matrix.module }}, ${{ matrix.mode }})
+    needs: plan
+    if: needs.plan.outputs.headless_needed == 'true'
     runs-on: windows-latest
     strategy:
       fail-fast: false
-      matrix:
-        shard: [tests, performance]
+      matrix: ${{ fromJSON(needs.plan.outputs.windows_matrix) }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
-        run: rustup show
-      - name: Phase 00-14 headless ${{ matrix.shard }} shard
-        run: cargo run -p stickymd-smoke --locked -- all --ci --ci-shard=${{ matrix.shard }} --json
+      - uses: ./.github/actions/rust-cache
+        with:
+          lane: headless-${{ matrix.module }}-${{ matrix.mode }}
+      - name: Run requested headless tasks
+        env:
+          CI_FULL: ${{ matrix.full }}
+          CI_MODULE: ${{ matrix.module }}
+          CI_MODE: ${{ matrix.mode }}
+        run: |
+          if ($env:CI_FULL -eq 'true') {
+            & cargo run --quiet -p stickymd-smoke --locked -- all --ci "--ci-shard=$env:CI_MODE" --json
+          } else {
+            & cargo run --quiet -p stickymd-smoke --locked -- modules run $env:CI_MODULE "--mode=$env:CI_MODE"
+          }
+          exit $LASTEXITCODE
 
   windows-release:
     name: Windows x64 release build
+    needs: plan
+    if: needs.plan.outputs.release_needed == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
-        run: rustup show
+      - uses: ./.github/actions/rust-cache
+        with:
+          lane: windows-release
       - name: release build
         run: cargo build --workspace --release --locked
       - name: Verify portable native runtime dependencies
-        run: cargo run -p stickymd-smoke --locked -- qualification native-runtime --exe=target/release/stickymd-win.exe
+        run: cargo run --quiet -p stickymd-smoke --locked -- qualification native-runtime --exe=target/release/stickymd-win.exe
 
   portable-core:
     name: Linux portable-core build (core + render only)
+    needs: plan
+    if: needs.plan.outputs.portable_needed == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CI_PORTABLE_ARGS: ${{ needs.plan.outputs.portable_args }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-cache
+        with:
+          lane: portable-core
+      # Never build the Windows app on this portability lane.
+      - name: Build requested portable packages
+        run: |
+          $arguments = @($env:CI_PORTABLE_ARGS | ConvertFrom-Json -ErrorAction Stop)
+          & cargo build @arguments
+          exit $LASTEXITCODE
+      - name: Test requested portable packages
+        run: |
+          $arguments = @($env:CI_PORTABLE_ARGS | ConvertFrom-Json -ErrorAction Stop)
+          & cargo test @arguments
+          exit $LASTEXITCODE
+
+  result:
+    name: CI result
+    if: always()
+    needs: [plan, dependency-policy, windows-quality, windows-headless, windows-release, portable-core]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
-        run: rustup show
-      # Purpose: prove platform-independent crates stay Win32-free.
-      # This job must never grow to build the Windows app.
-      - name: build core + render
-        run: cargo build -p stickymd-core -p stickymd-render --locked
-      - name: test core + render
-        run: cargo test -p stickymd-core -p stickymd-render --locked
+      - uses: ./.github/actions/rust-cache
+        with:
+          lane: planner
+      - name: Observe workflow cancellation
+        id: cancellation
+        if: cancelled()
+        run: '"cancelled=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'
+      - name: Aggregate requested job results
+        if: always()
+        env:
+          CI_CANCELLED: ${{ steps.cancellation.outputs.cancelled || 'false' }}
+          CI_FULL: ${{ needs.plan.outputs.full }}
+          CI_MODULES: ${{ join(fromJSON(needs.plan.outputs.modules || '[]'), ',') }}
+          CI_PLAN: ${{ needs.plan.result }}
+          CI_DEPENDENCY: ${{ needs.dependency-policy.result }}
+          CI_QUALITY: ${{ needs.windows-quality.result }}
+          CI_HEADLESS: ${{ needs.windows-headless.result }}
+          CI_RELEASE: ${{ needs.windows-release.result }}
+          CI_PORTABLE: ${{ needs.portable-core.result }}
+        run: |
+          & cargo run --quiet -p stickymd-smoke --locked -- ci verify "--cancelled=$env:CI_CANCELLED" "--full=$env:CI_FULL" "--modules=$env:CI_MODULES" "--plan=$env:CI_PLAN" "--dependency=$env:CI_DEPENDENCY" "--quality=$env:CI_QUALITY" "--headless=$env:CI_HEADLESS" "--release=$env:CI_RELEASE" "--portable=$env:CI_PORTABLE"
+          exit $LASTEXITCODE

@@ -4,7 +4,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use super::{json, source_freeze};
 
@@ -218,59 +217,7 @@ pub(super) fn read_receipt(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 
-pub(super) fn command_text(
-    root: &Path,
-    program: &str,
-    arguments: &[&str],
-) -> Result<String, String> {
-    let output = Command::new(program)
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .map_err(|error| format!("cannot start `{program}`: {error}"))?;
-    if !output.status.success() {
-        return Err(format!("`{program} {}` failed", arguments.join(" ")));
-    }
-    String::from_utf8(output.stdout)
-        .map(|value| value.trim().to_owned())
-        .map_err(|error| format!("`{program}` output is not UTF-8: {error}"))
-}
-
-pub(super) fn sha256(path: &Path) -> Result<String, String> {
-    #[cfg(windows)]
-    let output = Command::new("certutil")
-        .args(["-hashfile"])
-        .arg(path)
-        .arg("SHA256")
-        .output();
-    #[cfg(not(windows))]
-    let output = Command::new("sha256sum").arg(path).output();
-    let output = output.map_err(|error| format!("cannot hash {}: {error}", path.display()))?;
-    if !output.status.success() {
-        return Err(format!("SHA-256 command failed for {}", path.display()));
-    }
-    let hash = String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .find(|token| token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .map(str::to_ascii_lowercase)
-        .ok_or_else(|| format!("SHA-256 output is malformed for {}", path.display()))?;
-    validate_sha256(&hash, "SHA-256")?;
-    Ok(hash)
-}
-
-pub(super) fn workspace_version(root: &Path) -> Result<String, String> {
-    let manifest = fs::read_to_string(root.join("Cargo.toml"))
-        .map_err(|error| format!("cannot read Cargo.toml: {error}"))?;
-    manifest
-        .lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_prefix("version = \"")
-                .and_then(|value| value.strip_suffix('"'))
-        })
-        .map(str::to_owned)
-        .ok_or_else(|| "workspace version is missing".to_owned())
-}
+pub(super) use crate::repository::{command_text, workspace_version};
 
 pub(super) fn ensure_clean(root: &Path) -> Result<(), String> {
     let status = command_text(
@@ -289,35 +236,9 @@ pub(super) fn upstream_commit(root: &Path) -> Result<String, String> {
     command_text(root, "git", &["rev-parse", "@{upstream}"])
 }
 
-pub(super) fn verify_checksum_manifest(
-    directory: &Path,
-    zip_name: &str,
-    zip_hash: &str,
-    sbom_hash: &str,
-) -> Result<(), String> {
-    let manifest = fs::read_to_string(directory.join("SHA256SUMS.txt"))
-        .map_err(|error| format!("cannot read SHA256SUMS.txt: {error}"))?;
-    let expected_zip = format!("{zip_hash} *{zip_name}");
-    let expected_sbom = format!("{sbom_hash} *SBOM.spdx.json");
-    if !manifest.lines().any(|line| line == expected_zip)
-        || !manifest.lines().any(|line| line == expected_sbom)
-    {
-        return Err("SHA256SUMS.txt does not bind the exact candidate ZIP and SBOM".to_owned());
-    }
-    Ok(())
-}
-
-pub(super) fn validate_sha256(value: &str, label: &str) -> Result<(), String> {
-    validate_hex(value, 64, label)
-}
-
-pub(super) fn validate_hex(value: &str, length: usize, label: &str) -> Result<(), String> {
-    if value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        Ok(())
-    } else {
-        Err(format!("{label} is not a {length}-digit hexadecimal value"))
-    }
-}
+pub(super) use crate::integrity::{
+    sha256, validate_hex, validate_sha256, verify_checksum_manifest,
+};
 
 fn validate_zip_name(value: &str, version: &str) -> Result<(), String> {
     let expected = format!("StickyMD-{version}-windows-x64-portable.zip");

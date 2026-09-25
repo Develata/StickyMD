@@ -83,6 +83,29 @@ fn inspect_bytes(bytes: &[u8]) -> Result<NativeDependencyReport, String> {
     Ok(NativeDependencyReport { imports })
 }
 
+/// Package resource checks share the PE header parser with the import gate.
+pub(crate) fn verify_package_image(path: &Path) -> Result<(), String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    verify_package_bytes(&bytes)
+}
+
+fn verify_package_bytes(bytes: &[u8]) -> Result<(), String> {
+    let image = PeImage::parse(bytes)?;
+    if read_u16(bytes, image.optional_header + 68)? != 2 {
+        return Err("StickyMD.exe is not a Windows GUI-subsystem executable".to_owned());
+    }
+    for token in [b"PerMonitorV2".as_slice(), b"asInvoker".as_slice()] {
+        if !bytes.windows(token.len()).any(|window| window == token) {
+            return Err(format!(
+                "Embedded manifest lacks {}",
+                String::from_utf8_lossy(token)
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn is_developer_runtime(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     let stem = lower.strip_suffix(".dll").unwrap_or(&lower);
@@ -340,6 +363,28 @@ fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::{inspect_bytes, is_developer_runtime, is_windows_inbox_dependency};
+
+    #[test]
+    fn package_headers_reuse_pe_validation_and_require_gui_and_manifest_markers() {
+        let mut bytes = synthetic_pe(Some("KERNEL32.dll"), None);
+        put_u16(&mut bytes, 0x98 + 68, 2);
+        bytes.extend_from_slice(b"PerMonitorV2 asInvoker");
+        super::verify_package_bytes(&bytes).unwrap();
+        put_u16(&mut bytes, 0x98 + 68, 3);
+        assert!(
+            super::verify_package_bytes(&bytes)
+                .unwrap_err()
+                .contains("GUI-subsystem")
+        );
+        put_u16(&mut bytes, 0x98 + 68, 2);
+        bytes.truncate(0x500);
+        assert!(
+            super::verify_package_bytes(&bytes)
+                .unwrap_err()
+                .contains("PerMonitorV2")
+        );
+        assert!(super::verify_package_bytes(&bytes[..0x40]).is_err());
+    }
 
     #[test]
     fn parses_standard_and_delay_load_dependency_tables() {

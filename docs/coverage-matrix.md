@@ -36,3 +36,60 @@
 3. Code Area 或验证状态变化 → 同步更新本表；部分实现不得标记完整 AC PASS。
 4. 每个 Phase 新建时同步创建 `tools/smoke/phase-XX.ps1` 与
    `docs/acceptance-cases/phase-XX.md`；CI 只自动执行其中可无界面运行的部分。
+
+## 2026-09-08 table formula maintenance coverage
+
+| Plan / feature mapping | Acceptance projection | Code / evidence |
+| --- | --- | --- |
+| 06 GFM / canonical source ranges / formula copy; 07 math delimiter conversion; 08 source-preserving image export | Phase 05 table formula regression coverage, AC-013/014 | `preview/{parser,source_map}.rs`; `tests/table_math_pipes.rs`: escaped-pipe coordinate restoration, four delimiters, UTF-8, containers, copy, conversion and image rewrite |
+
+本次只修复既有投影合同下的源码坐标；未转义 `|` 的 GFM 分列规则保持不变。自动化结果与未验证项见 [表格公式报告](report/2026-09-08-table-math-source-ranges.md)，不归属于已发布的 `v0.1.0` artifact。
+
+## 2026-09-08 开发工具维护投影
+
+| Plan | Feature（投影） | Acceptance | Code Area | Current Evidence |
+| --- | --- | --- | --- | --- |
+| `11_testing_and_release.md#phase-verification-harness` | 开发工具；不增加产品功能 | P00-A06 | `stickymd-smoke/src/{headless.rs,runner/headless.rs}` | 显式单/多模块入口、完整并集、共享命令去重、既有 Release 参数保留与未知目标拒绝 |
+| `11_testing_and_release.md#modular-headless-ci` | 开发工具；普通 CI 与候选资格化分离 | P00-A08/A09 | `stickymd-smoke/src/ci/*`; `.github/workflows/{ci,scheduled}.yml`; `.github/actions/rust-cache/action.yml` | 已批准日常选测、反向依赖及全量回退；Git/分类/聚合/工作流本地回归；远程执行及耗时尚未验证 |
+| `11_testing_and_release.md#release-artifact-authority` | 开发工具；不改变发布资产身份 | P00-A07 | `stickymd-smoke/src/{package_path.rs,repository.rs}`; `tools/release/package-path.ps1` | 包路径判断迁入 Rust；单包、多包、clean/dirty、错误路径和 Windows PowerShell 5.1 中文路径兼容回归 |
+
+这些维护验证不继承 `v0.1.0` exact artifact 身份；新 CI 选测规则的批准记录见
+[模块化 CI 影响分析](report/RISK-2026-09-08-modular-ci.md)。
+
+## 2026-09-22 release CLI maintenance coverage
+
+| Plan / existing acceptance mapping | Maintenance projection | Authoritative implementation / verification |
+| --- | --- | --- |
+| 11 release-artifact-authority / P14-A32/A34 | Phase 14 REL-CLI-01/02 | `stickymd-smoke/src/integrity.rs`、`release/identity.rs`、`release/promoted.rs`；candidate receipts 共用 checksum 实现 |
+| 10 ZIP hard gate + 11 portable-windows-runtime / P09-D066..D082、P14-A19 | Phase 14 REL-CLI-03/06 | `release/package*.rs`、现有 PE parser/ChildGuard；ZIP/资源事实仍由 PowerShell 采集 |
+| 11 dependency/release contract / P09-D061 | Phase 14 REL-CLI-04/05 | `release/notices/`；锁定 metadata、许可证失败路径、同输入字节比较、PowerShell 双版本测试 |
+| 11 phase-verification-harness / package selection and staging | Phase 14 REL-CLI-07 | `release/package_inputs.rs`、`package_path.rs`、`repository.rs`；现有阶段入口和选测继续复用 |
+
+工具修改与验证细节见 [2026-09-22 migration](report/2026-09-22-release-cli-migration.md)。
+本次维护不产生 Source Freeze、Promoted Candidate、人工或远端发布证据。
+
+同日 review 补充覆盖：`integrity` 的 ZIP/SBOM 角色重名、空文件、64 位十六进制路径词与 GNU escaped filename；
+`repository` 的 workspace 版本作用域/赋值空白/歧义拒绝；`managed_process` 对
+`stickymd-verify-*` 遗留测试进程的只读阻断。分别映射 REL-CLI-02/07/06，
+Windows 双宿主 wrapper 使用含十六进制词、中文与空格的真实路径。
+
+2026-09-25 复核补充 REL-CLI-05：`release/windows.rs` 为 Windows PowerShell 子进程恢复自身模块搜索环境；
+双宿主 wrapper 注入冲突模块，验证 ZIP adapter 可用且父进程 `PSModulePath`、CWD、编码保持不变。
+当日重新执行的工具测试和本地包检查见上述维护报告的追加 Resolution；不继承历史验收结论。
+
+2026-09-25 输出收尾继续映射 plan 11 的 release-artifact-authority 与 phase-verification-harness：
+
+| Maintenance projection | Authoritative implementation / verification |
+| --- | --- |
+| Phase 14 REL-CLI-08 | `release/sbom.rs`：生成与验包复用 SPDX 结构/必需文件覆盖 gate；Rust unit、compiled CLI 与双 PowerShell 宿主失败输出回归 |
+| Phase 14 REL-CLI-09 | `release/checksums.rs`、`integrity.rs`、`atomic_evidence.rs`：同一 manifest 规则、路径别名拒绝、单文件原子替换、manifest 最后写入与失败拒绝验证 |
+| Phase 14 REL-CLI-10 | `tests/release_outputs.ps1`：实际 ZIP 许可证 bytes、失败 Syft、checksum 格式、输出接口和环境恢复；替代治理中的脚本函数名/次数断言 |
+
+实际验证与多文件非事务边界见 [输出收尾报告](report/2026-09-25-release-output-finalization.md)。
+
+2026-09-25 合并前工具维护映射 plan 11 phase-verification-harness / modular-headless-ci 与
+P00-A10：`cli.rs`、`qualification/{mod.rs,repetition.rs}`、`qualification_environment.rs`、
+`runner{,/headless}.rs` 按平台编译实际执行路径并保留纯规则测试；Linux 上的 compiled CLI
+回归验证 GUI 资格化仍以非零和 `UNSUPPORTED` / `NOT_TESTED` 拒绝。
+CI plan job 在 full/smoke 范围运行 Linux 严格 lint 和 smoke tests，避免该维护缺口复发。
+实际运行结果见上述报告的合并前 Resolution；人工与发布状态不变。

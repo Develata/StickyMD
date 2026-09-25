@@ -14,18 +14,17 @@ $SyftArchiveSha256 = '815ee6973ec5dff6a671d7f41b0e78835a8c45b91d5a39f4743ea1cee8
 $SyftChecksumsSha256 = 'bb8824a06c27c625fc103db5d7e9d7131ba2cc6e7c7a79318ee71686ede3c3f0'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 . (Join-Path $PSScriptRoot 'package-path.ps1')
-$workspaceManifest = Get-Content -LiteralPath (Join-Path $repoRoot 'Cargo.toml') -Raw
-$versionMatch = [regex]::Match($workspaceManifest, '(?m)^version\s*=\s*"([^"]+)"\s*$')
-if (-not $versionMatch.Success) { throw 'Cannot read workspace version from Cargo.toml' }
-$workspaceVersion = $versionMatch.Groups[1].Value
+. (Join-Path $PSScriptRoot 'invoke-smoke.ps1')
+$workspaceVersion = Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments @('workspace-version')
 if (-not $PackageDirectory) { $PackageDirectory = Join-Path $repoRoot 'dist' }
-$PackageDirectory = [IO.Path]::GetFullPath($PackageDirectory)
+$PackageDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PackageDirectory)
 if (-not $ZipPath) {
     $ZipPath = Resolve-StickyMdPackagePath -RepoRoot $repoRoot -PackageDirectory $PackageDirectory
 }
-$ZipPath = [IO.Path]::GetFullPath($ZipPath)
+$ZipPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ZipPath)
 if (-not $OutputPath) { $OutputPath = Join-Path $PackageDirectory 'SBOM.spdx.json' }
-$OutputPath = [IO.Path]::GetFullPath($OutputPath)
+$OutputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
+if ($SyftPath) { $SyftPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SyftPath) }
 
 function Get-VerifiedCachedFile {
     param(
@@ -67,6 +66,7 @@ function Get-VerifiedCachedFile {
 
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("stickymd-sbom-" + [guid]::NewGuid().ToString('N'))
 $context = Join-Path $temporaryRoot 'context'
+$stagedSbom = Join-Path $temporaryRoot 'generated.spdx.json'
 New-Item -ItemType Directory -Path $context -Force | Out-Null
 try {
     Copy-Item -LiteralPath (Join-Path $repoRoot 'Cargo.lock') -Destination (Join-Path $context 'Cargo.lock')
@@ -108,35 +108,17 @@ try {
     try {
         $env:SYFT_FILE_METADATA_SELECTION = 'all'
         $env:SYFT_CHECK_FOR_APP_UPDATE = 'false'
-        & $SyftPath "dir:$context" '--source-name' 'StickyMD' '--source-version' $workspaceVersion '--output' "spdx-json=$OutputPath"
+        & $SyftPath "dir:$context" '--source-name' 'StickyMD' '--source-version' $workspaceVersion '--output' "spdx-json=$stagedSbom"
         if ($LASTEXITCODE -ne 0) { throw "Syft $SyftVersion failed with exit code $LASTEXITCODE" }
     } finally {
         $env:SYFT_FILE_METADATA_SELECTION = $previousFileSelection
         $env:SYFT_CHECK_FOR_APP_UPDATE = $previousUpdateCheck
     }
-    $sbom = Get-Content -LiteralPath $OutputPath -Raw | ConvertFrom-Json
-    if ($sbom.spdxVersion -notmatch '^SPDX-2\.') { throw 'Generated document is not an SPDX 2.x JSON SBOM' }
-    if (@($sbom.packages).Count -eq 0) { throw 'Generated SBOM contains no packages' }
-    $sbomFileNames = @($sbom.files | ForEach-Object { $_.fileName })
-    foreach ($requiredFile in @(
-        '\package\StickyMD\StickyMD.exe',
-        '\package\StickyMD\THIRD_PARTY_NOTICES.txt',
-        '\package\StickyMD\licenses\SIL-OFL-1.1.txt',
-        '\package\StickyMD\licenses\KaTeX-fonts-NOTICE.txt'
-    )) {
-        if ($requiredFile -notin $sbomFileNames) { throw "Generated SBOM does not cover packaged file $requiredFile" }
-    }
-
-    $zipHash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $sbomHash = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $checksumPath = Join-Path $PackageDirectory 'SHA256SUMS.txt'
-    $lines = @(
-        "$zipHash *$([IO.Path]::GetFileName($ZipPath))"
-        "$sbomHash *$([IO.Path]::GetFileName($OutputPath))"
+    Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments @(
+        'publish-sbom', '--input', $stagedSbom, '--output', $OutputPath,
+        '--zip', $ZipPath, '--checksums', $checksumPath
     )
-    [IO.File]::WriteAllText($checksumPath, ($lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
-    Write-Output "SBOM_PATH=$OutputPath"
-    Write-Output "SBOM_SHA256=$sbomHash"
     Write-Output "SYFT_VERSION=$SyftVersion"
 } finally {
     $resolvedTemp = [IO.Path]::GetFullPath($temporaryRoot)

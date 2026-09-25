@@ -1,0 +1,157 @@
+# 2026-09-25 发布工具输出收尾
+
+## 背景与授权
+
+本记录继续 [release CLI 迁移](2026-09-22-release-cli-migration.md)，适用 plan 11 的
+`phase-verification-harness`、`release-artifact-authority` 与 `portable-windows-runtime`。
+USER 在当前任务明确授权继续收尾并分批 commit + push；此前报告中的未提交状态是历史记录。
+原有产品运行时、其他 Phase 投影与 Phase 05 benchmark 串行化改动不属于此次提交。
+本轮不改变 plan、产品依赖、候选身份、发布权限或人工验收状态。
+
+## 已复现的问题与根因
+
+在同一双 PowerShell 宿主 fixture 中，让假 Syft 写出不完整内容后退出 23，事先在最终路径
+保存旧 SBOM 和旧 manifest。旧 `generate-sbom.ps1` 直接将最终路径交给 Syft，失败后旧 SBOM
+已被替换；`outputs-before.log` 记录了 `Failed SBOM generation modified previous outputs`。
+
+另外，checksum 的格式化/写入与 SPDX 版本、packages、必需文件覆盖判断仍在 PowerShell；
+包验证只校验 SBOM 的摘要，正确摘要不能证明其内容通过生成端的结构检查。治理中的许可证
+函数名/调用次数断言也不能证明 ZIP 内实际文本符合编码要求。
+
+最初测试目录叠加完整 SHA、中文、空格及打包临时后缀触及 Windows PowerShell 5.1 的路径长度
+限制。测试输出改用另一个较短的独立临时目录后，保留中文/空格和原长路径 verifier fixture，
+再执行上述相同输入基线。本轮未声称增加了生产长路径支持。
+
+## 实现与失败边界
+
+- `release/checksums.rs` 复用 `integrity` 的名称、摘要、成员互异与严格集合规则生成 manifest。
+  `package.ps1` 调用 Rust 并保留原有 `PACKAGE_PATH`/`PACKAGE_SHA256` 输出。
+- `release/sbom.rs` 统一 SPDX 2.x、非空 packages 和四个必需打包文件的结构/覆盖规则；
+  生成发布与 package verifier 复用它。它不宣称完整 SPDX schema 或许可证审计。
+- Syft 先写入本次独占临时目录且位于扫描 context 之外。Rust 对该文件建立私有快照，
+  完成 UTF-8/JSON、内容、路径和摘要校验，再复用 `atomic_evidence` 替换最终文件。
+- 两个输出逐文件原子替换，manifest 最后写入。生成/校验失败保留两个既有输出；
+  SBOM 替换失败同样保留旧文件。若 SBOM 已替换而 manifest 被占用，命令失败，
+  旧 manifest 与新 SBOM 不匹配时验证拒绝。Windows 文件锁回归验证该路径和临时文件清理。
+- 沿用既有单文件原子设施，没有增加多文件事务、回滚账本或新的并列 authority。
+  临时文件发布不是 Source Freeze、Promote，也不更新候选或资格化收据。
+- ZIP/资源/Syft 获取调用/UIA 平台适配保留。Syft 版本及下载摘要固定值不变。
+  PowerShell 使用调用者 SessionState 解析相对路径，并恢复 CWD、编码及 Syft 环境。
+- 许可证治理改为读取实际生成 ZIP 的三个许可证成员，验证非空 UTF-8、无 BOM 和 LF。
+  pin 等声明性治理检查仍保留；普通规则不再靠函数名或调用次数证明。
+
+可选路径是继续直接写最终文件，或引入跨文件事务。前者保留已复现的数据覆盖问题；后者超出
+此次本地输出维护的必要范围。当前选择先完整验证、逐文件原子替换、manifest 最后写入并在
+不匹配时拒绝验证，保持已有 artifact/checksum 身份合同。
+
+## 已执行的定向验证
+
+证据根目录：`C:\Users\QQ\AppData\Local\Temp\stickymd-release-finish-20260925-k4m4419u`。
+
+| 检查 | 实际结果 / 日志 |
+| --- | --- |
+| 同输入前后回归 | 旧输出覆盖复现失败；修复后双宿主回归通过：`outputs-before.log`、`outputs-after.log` |
+| Windows smoke unit + compiled CLI | 170 + 9 通过：`windows-tests.log`；包含正确 hash 仍拒绝非法 SBOM |
+| PowerShell 5.1/7 | 两个宿主均执行实际打包、失败 Syft、非法 SBOM、输出字节和环境恢复测试 |
+| Linux smoke | 137 unit + 9 CLI 通过：`linux-checks.log`；Windows wrapper 在 Linux 不适用，不计入通过数 |
+| Windows Clippy | `--all-targets --locked -- -D warnings` 通过：`windows-clippy.log` |
+| Linux Clippy | 普通 Clippy 退出 0；严格 `-D warnings` 失败于既有 `dead_code`。收尾前独立工作树与最终代码逐项比较 warning 消息/位置一致，bin 11 条、test 6 条（5 条重复）：`linux-{baseline,final}-clippy.log`、`linux-warning-comparison.txt` |
+| 格式与补丁 | `cargo fmt --all -- --check`、`git diff --check` 通过 |
+| 第一批独立提交 | `f8644ea` 在干净独立工作树运行完整 Windows smoke：164 unit + 8 CLI + 2 wrapper = 174 通过，`batch1-clean-tests.log` |
+
+## 推断与未验证事项
+
+基于实际调用和回归，输出规则已由 Rust 单点持有，失败时不会将不完整 Syft 输出直接写到最终
+SBOM。没有测量或宣称性能收益。单文件原子替换不提供两个文件一起提交的事务保证。
+
+以上是工具维护证据，不继承 `v0.1.0` exact artifact 身份。完整产品 workspace、资源/性能/
+G3/G4/G5 Campaign、人工视觉、物理多屏、Clean VM 和远程 workflow 不在此次定向验证范围。
+后续独立提交的本地包检查另行追加记录；不会以旧包或旧资格化收据替代本次工具验证。
+
+## Resolution — 2026-09-25 独立提交复核
+
+实现已分为 `f8644ea2c9c911c8c2f76cb0eb5a5b42cb9b9688`（发布规则与 notices 迁移）和
+`a2394fc65952f7316da683cc653b09b15b146c02`（SBOM/manifest 输出收尾）。
+第二批提交在 `E:\stickymd-release-check-45c2c549` 的干净独立工作树中运行完整 Windows smoke，
+**170 unit + 9 CLI + 2 wrapper = 181** 项全部通过；双 PowerShell 宿主实际执行了相对路径、
+中文/空格路径及输出失败回归。该独立提交的严格 Clippy、workspace fmt 同样通过。
+日志为 `batch2-clean-tests.log`、`batch2-clean-clippy.log`；稳定 `phase-00.ps1` 入口另有
+`governance.log`，相对路径定向复验为 `outputs-relative.log`。
+
+按开始收尾时的 SHA-256 清单核对，19 份无关文件逐字节不变，coverage 的原有运行时维护段
+完整保留。提交内容不包含产品 crate、Cargo.toml/Cargo.lock、其他 Phase 文档或
+`runner.rs` 的既有 Phase 05 benchmark 改动。索引已逐批 review，未将这些修改混入提交。
+
+在同一干净 `a2394fc` 工作树中，`cargo build -p stickymd-win --release --locked` 通过，
+PE gate 报告 `DEVELOPER_RUNTIME_IMPORTS=none`。随后新建中文/空格输出目录，实际运行
+`package.ps1`、固定且经摘要验证的 Syft 1.50.0、Windows PowerShell 5.1
+`verify-package.ps1 -Runtime`，再串行使用 PowerShell 7 验包，全部通过。
+这是 `CLEAN_PREFLIGHT` 本地包，没有调用 exact-candidate、Source Freeze、Promote 或任何
+资格化收据/账本写入。后续记录性文档提交不改变该测试包所绑定的 `a2394fc` 来源。
+
+- ZIP：`StickyMD-0.1.0-local-rc-a2394fc65952-windows-x64-portable.zip`，
+  SHA-256 `f44d257060cba61d981d634b086f8c5dcf50ad4cd2e00c638ceb6875078e7425`。
+- 本次新 SBOM SHA-256：`623c291dd3a03c63028571f184d70698b8a6804a3458a06f703a87b0fd90ecad`。
+- notices 的运行时依赖数为 187；package verifier 在两个宿主均重新生成并比较 notices。
+- 真实启动覆盖 ASCII、空格、中文路径、同目录第二实例退出/文件不变，以及不同目录实例独立。
+  全部 GUI 操作串行，不发送键盘、鼠标、托盘或剪贴板输入。
+- 集成前后进程清单一致，仅有用户原便签 PID 29116，没有本轮测试子进程残留。
+  日志与摘要清单为 `integration-final.log`、`artifact-hashes.json`、`processes-{before,after}.json`。
+
+完整产品 Campaign、人工验收和远程 workflow 仍未执行；未创建或移动 tag，未发布 Release。
+本地集成通过不替代这些不同范围的证据，也不更新已发布 `v0.1.0` 的历史资格化状态。
+
+## Resolution — 2026-09-25 合并前 Linux 严格检查修复
+
+USER 随后授权修复遗留问题并合并 main。本轮从已提交的 `8c03fc4` 建立独立干净检出，
+不带入原工作区的未提交运行时改动。`origin/main` 刷新后仍为 `37fa6e0`。
+上述 Linux `dead_code` 缺口以相同 `cargo clippy -p stickymd-smoke --all-targets --locked
+-- -D warnings` 复现，bin 11 个、test 6 个诊断使检查退出 101。
+
+根因是 Windows 专用执行/展示路径仍在 Linux 构建中声明。现将 case/scenario 输出方法和
+携带 runtime evidence 的失败分支限定于 Windows，将桌面事实分类与重复运行规则保留在
+Windows 或 unit-test 构建。CLI 参数解析和 Linux 上的纯规则测试继续可用。
+四种共享证据状态保持原有名称和序列化语义；只有 Windows 会构造的两个状态使用具名、
+按平台限定的 `expect(dead_code)`，若将来该例外不再成立，严格 Clippy 会以未满足的 lint
+expectation 报错。没有添加 crate 级 lint 豁免、删除纯规则测试或改变 unsupported 结果。
+
+新增 Linux compiled CLI 回归：真实执行 `qualification environment` 返回 1，输出
+`UNSUPPORTED` / `NOT_TESTED`，且不输出 `PASSED`。CI plan job 对 full/smoke 范围执行
+Linux 严格 Clippy 与 smoke tests，失败直接阻断 plan 和后续聚合；普通说明文档仍可只运行
+fmt/governance。对应 README、P00-A10、coverage 已同步，无需修改 plan 或产品功能投影。
+
+证据目录为 `C:\Users\QQ\AppData\Local\Temp\stickymd-cli-merge-983d0010`：
+
+| 本轮检查 | 结果 |
+| --- | --- |
+| Linux strict Clippy + smoke tests | 无诊断，137 unit + 10 CLI = 147 通过，`linux-after.log` |
+| Windows strict Clippy + smoke tests | 无诊断，170 unit + 9 CLI + 2 wrapper = 181 通过，`windows-clippy.log`、`windows-tests.log` |
+| `cargo fmt --all -- --check` | 通过 |
+| Phase 00 JSON governance | 通过 |
+| CI/scheduled `actionlint` | 通过 |
+
+本轮修复没有改变 Windows 执行逻辑、artifact 字节规则、依赖或资格化状态；未重跑桌面、
+资源/性能或发布 Campaign。合并范围包含分支原先已提交的表格源码坐标修正与模块化 CI，
+远端检查由 PR 的实际记录提供，不以前述本地定向结果冒充。
+
+## Resolution — 2026-09-25 远程 CI 的 8.3 路径回归修复
+
+[PR #1 首轮 CI](https://github.com/Develata/StickyMD/actions/runs/36170205316)
+在 Windows workspace tests 中暴露 `package_path_wrapper` 的相对路径比较失败。
+原始日志保存在上述证据目录的 `pr-job-108187833836.log`。
+
+本地将测试进程的 TEMP/TMP 指向新建目录的 Windows 8.3 别名，复现了相同失败；
+单独执行 `release_wrappers` 也复现同类 promotion 路径预期失败。PowerShell 5.1 和 7
+的现场诊断均确认：`Set-Location` / `Get-Location` 将短别名展开为长目录名，而显式
+绝对路径参数可以保留别名。两种路径指向同一目录，但旧测试错误地要求字符串完全相同。
+
+修复只调整测试 oracle：相对包路径按调用者实际 PowerShell location 拼接预期；
+相对发布路径按实际 location / 已存在输出目录的完整名称比较。显式绝对路径的 Unicode
+round-trip、失败退出码、既有文件保护、输出内容及调用者状态恢复断言仍然保留。
+未修改 package-path 或发布 wrapper 的生产行为，没有放宽任何性能或发布门禁。
+
+短别名环境下两个 wrapper 集成测试均通过，发布脚本覆盖 PowerShell 5.1/7，见
+`short-path-wrappers-after.log`；普通长路径下两项也通过，见
+`long-path-wrappers-after.log`。修复后 fmt 与 Windows strict Clippy 通过。
+对应 P00-A07 与 REL-CLI-05 已补充该环境的验证范围。
+最新提交的远程 CI 结果以 PR 实际记录为准。

@@ -25,6 +25,7 @@ mod module_ledger;
 mod readiness;
 mod receipt;
 mod remote;
+#[cfg(any(windows, test))]
 pub(crate) mod repetition;
 mod source_freeze;
 mod startup_attribution;
