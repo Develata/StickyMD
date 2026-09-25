@@ -25,6 +25,7 @@
 - Ctrl+Z / Ctrl+Y 撤销重做；Ctrl+C/X/V 复制/剪切/粘贴。
 - Windows 传统快捷键也等价可用：Ctrl+Insert 复制、Shift+Delete 剪切、Shift+Insert
   粘贴；Shift+Insert 与 Ctrl+V 使用同一文本/图片剪贴板优先级。
+- 复制成功不在正文上覆盖提示条；复制失败仍显示错误信息。
 
 ## 三种视图
 

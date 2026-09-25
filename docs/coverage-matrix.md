@@ -37,6 +37,13 @@
 4. 每个 Phase 新建时同步创建 `tools/smoke/phase-XX.ps1` 与
    `docs/acceptance-cases/phase-XX.md`；CI 只自动执行其中可无界面运行的部分。
 
+## 2026-09-25 clipboard feedback maintenance coverage
+
+2026-09-25 剪贴板反馈修复：`07_editor_and_ime.md#source-editor` → 输入 Markdown 行为投影 →
+[Phase 03 clipboard feedback regression](acceptance-cases/phase-03.md#2026-09-25-clipboard-feedback-regression)
+→ `stickymd-win/src/app.rs::apply_effect`。成功复制不再遮挡源码或覆盖既有错误；
+剪贴板内容与失败原子性由现有 Windows 模块测试覆盖，真实桌面观察仍按 Phase 03 单列。
+
 ## 2026-09-07 maintenance coverage
 
 本次在既有合同下补充回归，不增加产品能力或更新已发布 artifact 的资格化状态。

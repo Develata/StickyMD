@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#interaction-shell
 //! plan_ref: docs/plan/07_editor_and_ime.md#ime-semantics
+//! plan_ref: docs/plan/07_editor_and_ime.md#source-editor
 //!
 //! This shell translates and presents. It cannot obtain `&mut DocumentState`;
 //! all canonical mutations flow through `EditorCoordinator::dispatch`.
@@ -301,11 +302,9 @@ impl StickyApp {
                     }
                 }
             }
-            AppEffect::ClipboardWritten => {
-                self.diagnostic = Some("Clipboard updated".to_owned());
-                self.request_redraw();
-            }
-            AppEffect::NoOp => {}
+            // Successful copy needs no overlay or repaint. In particular, it
+            // must not cover source text or replace a pending error diagnostic.
+            AppEffect::ClipboardWritten | AppEffect::NoOp => {}
         }
     }
 }
