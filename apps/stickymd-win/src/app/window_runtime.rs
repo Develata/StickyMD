@@ -369,6 +369,7 @@ impl StickyApp {
             } => self.commit_window_placement(&placement, dock_edge),
             WindowEffect::ReleaseHiddenCaches => {
                 self.preview_frame = None;
+                self.preview_frame_viewport = None;
                 self.preview_selection = Default::default();
                 self.preview_flow.release_projection();
                 if let Some(worker) = &self.preview_worker {

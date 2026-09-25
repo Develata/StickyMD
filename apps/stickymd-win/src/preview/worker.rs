@@ -28,25 +28,24 @@ pub enum PreviewJob {
         generation: Generation,
         viewport: PreviewViewport,
     },
-    Paint {
-        generation: Generation,
-        height_px: u32,
-        scroll_y: f32,
-        selection: PreviewSelection,
-        theme: PreviewTheme,
-    },
 }
 
 impl PreviewJob {
     pub const fn generation(&self) -> Generation {
         match self {
             Self::Build { snapshot, .. } => snapshot.generation,
-            Self::Relayout { generation, .. } | Self::Paint { generation, .. } => *generation,
+            Self::Relayout { generation, .. } => *generation,
+        }
+    }
+
+    const fn viewport(&self) -> PreviewViewport {
+        match self {
+            Self::Build { viewport, .. } | Self::Relayout { viewport, .. } => *viewport,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PreviewViewport {
     pub width_px: u32,
     pub height_px: u32,
@@ -56,10 +55,21 @@ pub struct PreviewViewport {
     pub theme: PreviewTheme,
 }
 
+impl PreviewViewport {
+    /// Scroll and selection may change while the same layout is still usable
+    /// for document bounds and semantic scroll anchors.
+    pub fn same_layout(self, other: Self) -> bool {
+        self.width_px == other.width_px
+            && self.height_px == other.height_px
+            && self.scale == other.scale
+            && self.theme == other.theme
+    }
+}
+
 #[derive(Debug)]
 pub struct PreviewCompletion {
     pub generation: Generation,
-    pub requested_scroll_y: f32,
+    pub viewport: PreviewViewport,
     pub result: Result<PreviewFrame, PreviewPipelineError>,
 }
 
@@ -253,19 +263,14 @@ fn run_worker<F>(
             WorkerAction::Job(job) => job,
         };
         let generation = job.generation();
-        let requested_scroll_y = match &job {
-            PreviewJob::Build { viewport, .. } | PreviewJob::Relayout { viewport, .. } => {
-                viewport.scroll_y
-            }
-            PreviewJob::Paint { scroll_y, .. } => *scroll_y,
-        };
+        let viewport = job.viewport();
         let result = execute(&mut pipeline, job, image_source.as_ref());
         if let Ok(mut mailbox) = shared.0.lock() {
             mailbox.metrics.completed = mailbox.metrics.completed.saturating_add(1);
         }
         on_completion(PreviewCompletion {
             generation,
-            requested_scroll_y,
+            viewport,
             result,
         });
     }
@@ -287,6 +292,9 @@ fn execute(
             viewport.theme,
             image_source.map(|source| source as &dyn PreviewImageSource),
         ),
+        // The pipeline reuses matching geometry and only paints when width,
+        // scale and theme are unchanged. Every request still carries the full
+        // viewport, so a scroll cannot restore a pre-resize/zoom layout.
         PreviewJob::Relayout {
             generation,
             viewport,
@@ -298,20 +306,6 @@ fn execute(
             viewport.scroll_y,
             viewport.selection,
             viewport.theme,
-            image_source.map(|source| source as &dyn PreviewImageSource),
-        ),
-        PreviewJob::Paint {
-            generation,
-            height_px,
-            scroll_y,
-            selection,
-            theme,
-        } => pipeline.paint_with_image_source(
-            generation,
-            height_px,
-            scroll_y,
-            selection,
-            theme,
             image_source.map(|source| source as &dyn PreviewImageSource),
         ),
     }
@@ -377,61 +371,10 @@ fn coalesce(pending: PreviewJob, incoming: PreviewJob) -> PreviewJob {
     }
     match (pending, incoming) {
         (_, incoming @ PreviewJob::Build { .. }) => incoming,
-        (
-            PreviewJob::Build {
-                snapshot,
-                viewport: _old,
-            },
-            PreviewJob::Relayout {
-                generation,
-                viewport,
-            },
-        ) if snapshot.generation == generation => PreviewJob::Build { snapshot, viewport },
-        (
-            PreviewJob::Build {
-                snapshot,
-                mut viewport,
-            },
-            PreviewJob::Paint {
-                generation,
-                height_px,
-                scroll_y,
-                selection,
-                theme,
-            },
-        ) if snapshot.generation == generation => {
-            viewport.height_px = height_px;
-            viewport.scroll_y = scroll_y;
-            viewport.selection = selection;
-            viewport.theme = theme;
+        (PreviewJob::Build { snapshot, .. }, PreviewJob::Relayout { viewport, .. }) => {
             PreviewJob::Build { snapshot, viewport }
         }
-        (pending @ PreviewJob::Build { .. }, _) => pending,
         (_, incoming @ PreviewJob::Relayout { .. }) => incoming,
-        (
-            PreviewJob::Relayout {
-                generation,
-                mut viewport,
-            },
-            PreviewJob::Paint {
-                generation: paint_generation,
-                height_px,
-                scroll_y,
-                selection,
-                theme,
-            },
-        ) if generation == paint_generation => {
-            viewport.height_px = height_px;
-            viewport.scroll_y = scroll_y;
-            viewport.selection = selection;
-            viewport.theme = theme;
-            PreviewJob::Relayout {
-                generation,
-                viewport,
-            }
-        }
-        (pending @ PreviewJob::Relayout { .. }, PreviewJob::Paint { .. }) => pending,
-        (_, incoming @ PreviewJob::Paint { .. }) => incoming,
     }
 }
 
@@ -487,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn newer_build_supersedes_relayout_and_paint() {
+    fn newer_build_supersedes_viewport_updates() {
         let current = Generation::initial();
         let newer = current.checked_next().unwrap();
         let pending = PreviewJob::Relayout {
@@ -501,12 +444,9 @@ mod tests {
     fn older_jobs_never_replace_a_newer_pending_generation() {
         let older = Generation::initial();
         let newer = older.checked_next().unwrap();
-        let pending = PreviewJob::Paint {
+        let pending = PreviewJob::Relayout {
             generation: newer,
-            height_px: 300,
-            scroll_y: 42.0,
-            selection: PreviewSelection::default(),
-            theme: PreviewTheme::Light,
+            viewport: viewport(500),
         };
         let incoming = PreviewJob::Relayout {
             generation: older,
@@ -515,12 +455,9 @@ mod tests {
         assert_eq!(coalesce(pending, incoming).generation(), newer);
 
         let pending = build(newer, "newer snapshot");
-        let incoming = PreviewJob::Paint {
+        let incoming = PreviewJob::Relayout {
             generation: older,
-            height_px: 300,
-            scroll_y: 0.0,
-            selection: PreviewSelection::default(),
-            theme: PreviewTheme::Light,
+            viewport: viewport(500),
         };
         assert_eq!(coalesce(pending, incoming).generation(), newer);
     }
@@ -568,18 +505,123 @@ mod tests {
             viewport: requested,
         });
         let first = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(first.requested_scroll_y, 100_000.0);
+        assert_eq!(first.viewport, requested);
         assert_eq!(first.result.unwrap().scroll_y(), 0.0);
-        worker.submit(PreviewJob::Paint {
+        worker.submit(PreviewJob::Relayout {
             generation,
-            height_px: 300,
-            scroll_y: 0.0,
-            selection: PreviewSelection::default(),
-            theme: PreviewTheme::Light,
+            viewport: viewport(500),
         });
         let second = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(second.requested_scroll_y, 0.0);
+        assert_eq!(second.viewport, viewport(500));
         assert_eq!(second.result.unwrap().scroll_y(), 0.0);
+    }
+
+    #[test]
+    fn scrollbar_viewport_identity_rejects_same_offset_with_stale_geometry_or_selection() {
+        let current = viewport(500);
+        for stale in [
+            PreviewViewport {
+                width_px: 400,
+                ..current
+            },
+            PreviewViewport {
+                height_px: 200,
+                ..current
+            },
+            PreviewViewport {
+                scale: 1.5,
+                ..current
+            },
+            PreviewViewport {
+                theme: PreviewTheme::Dark,
+                ..current
+            },
+            PreviewViewport {
+                selection: PreviewSelection::caret(1),
+                ..current
+            },
+        ] {
+            assert_eq!(stale.scroll_y, current.scroll_y);
+            assert_ne!(
+                stale, current,
+                "scroll offset alone cannot admit this frame"
+            );
+        }
+        assert!(current.same_layout(PreviewViewport {
+            scroll_y: 100.0,
+            selection: PreviewSelection::caret(1),
+            ..current
+        }));
+        assert!(!current.same_layout(PreviewViewport {
+            scale: 1.5,
+            ..current
+        }));
+    }
+
+    #[test]
+    fn scrollbar_coalesces_resize_zoom_and_reverse_drag_without_reparsing() {
+        let generation = Generation::initial();
+        let text = "中文 paragraph for wrapped preview text and scrolling.\n\n".repeat(80);
+        let mut pending = PreviewJob::Build {
+            snapshot: DocumentSnapshot {
+                text: Arc::from(text),
+                generation,
+                line_ending: LineEnding::Lf,
+            },
+            viewport: viewport(500),
+        };
+        let mut latest = viewport(320);
+        latest.scale = 1.5;
+        latest.theme = PreviewTheme::Dark;
+        latest.selection = PreviewSelection {
+            anchor: 0,
+            active: 6,
+        };
+        for scroll_y in [100.0, 10_000.0, 0.0] {
+            latest.scroll_y = scroll_y;
+            pending = coalesce(
+                pending,
+                PreviewJob::Relayout {
+                    generation,
+                    viewport: latest,
+                },
+            );
+        }
+        assert!(matches!(pending, PreviewJob::Build { .. }));
+        assert_eq!(pending.viewport(), latest);
+        let mut pipeline = PreviewPipeline::new();
+        let first = execute(&mut pipeline, pending, None).unwrap();
+        assert_eq!(first.width(), 320);
+        let before = pipeline.counters();
+        assert_eq!(before.parses, 1);
+        for scroll_y in [500.0, 1000.0, 0.0] {
+            latest.scroll_y = scroll_y;
+            let frame = execute(
+                &mut pipeline,
+                PreviewJob::Relayout {
+                    generation,
+                    viewport: latest,
+                },
+                None,
+            )
+            .unwrap();
+            assert_eq!(frame.scroll_y(), scroll_y);
+        }
+        assert_eq!(pipeline.counters().layouts, before.layouts);
+        assert_eq!(pipeline.counters().parses, before.parses);
+        assert_eq!(pipeline.counters().paints, before.paints + 3);
+        latest.scale = 2.0;
+        execute(
+            &mut pipeline,
+            PreviewJob::Relayout {
+                generation,
+                viewport: latest,
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(pipeline.counters().layouts, before.layouts + 1);
+        assert_eq!(pipeline.counters().parses, before.parses);
     }
 
     #[test]

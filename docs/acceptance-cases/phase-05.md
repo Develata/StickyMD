@@ -80,15 +80,17 @@ This supplements P05-A03/A05/A12 and AC-013/014 under the existing GFM and sourc
 - Preconditions: Source, Preview and Split contain a long note; repeat with split synchronization enabled/disabled,
   a tiny viewport, multiple DPI scales and a pending Preview paint.
 - Action: hover and drag each thumb, click the track, release outside the window, lose focus, resize or switch modes;
-  rapidly reverse direction while preview work completes.
+  rapidly reverse direction, resize, zoom, change theme or change selection while preview work completes.
 - Expected: each pane owns its gutter, with a persistent thin thumb that thickens on hover/drag. The gutter avoids
   text, native resize borders and the Split sync toggle. First/last rows remain reachable, and released/cancelled drags
   stop. Enabled sync uses source anchors; disabled sync preserves the other pane's position. Old paint completions
-  cannot overwrite the latest requested scroll position. Selection and document bytes remain unchanged.
+  cannot overwrite the latest requested viewport (size, scale, theme, scroll and selection). A stale layout cannot
+  drive scroll synchronization or new selection/link hit tests. Selection and document bytes remain unchanged by scrolling.
 - Failure signals: text covered by a thumb, toggling sync or resizing instead of dragging, stuck drag, stale-position
   snapback, hidden short-note thumb still accepting drag, selection mutation, or cross-pane percentage binding.
 - Automated entry: `cargo test -p stickymd-render -p stickymd-win --locked scrollbar`; geometry/paint tests cover
-  100/125/150/200% DPI and the worker retains unclamped request identity. Status: `AUTOMATED PASS`.
+  100/125/150/200% DPI and the worker retains complete unclamped viewport identity. Coalescing keeps the latest
+  viewport and the pending document snapshot; repeated scroll updates reuse layout without parsing. Status: `AUTOMATED PASS`.
 - Native message probe and remaining limits are recorded in [the scrollbar maintenance report](../report/2026-09-25-vertical-scrollbars.md).
   This local evidence does not qualify a release artifact. Physical dragging, real IME and the complete theme/DPI
   visual matrix remain `NOT TESTED`.

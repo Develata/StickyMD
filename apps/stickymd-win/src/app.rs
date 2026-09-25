@@ -32,7 +32,7 @@ use crate::platform::windows::native_message::NativeWindowSignal;
 use crate::platform::windows::program_dir::RuntimePaths;
 use crate::platform::windows::single_instance::SingleInstanceGuard;
 use crate::platform::windows::tray::{TrayController, TrayPlatformEvent};
-use crate::preview::{PreviewCompletion, PreviewWorker};
+use crate::preview::{PreviewCompletion, PreviewViewport, PreviewWorker};
 use crate::startup::BootstrapOutcome;
 use crate::startup::StartupDiagnostics;
 use crate::surface::SoftwareSurface;
@@ -96,6 +96,7 @@ pub struct StickyApp {
     source_paint_key: Option<presentation::SourcePaintKey>,
     pending_redraw: presentation::PendingRedraw,
     preview_frame: Option<PreviewFrame>,
+    preview_frame_viewport: Option<PreviewViewport>,
     preview_worker: Option<PreviewWorker>,
     preview_flow: PreviewCoordinator,
     preview_selection: PreviewSelection,
@@ -165,6 +166,7 @@ impl StickyApp {
             source_paint_key: None,
             pending_redraw: presentation::PendingRedraw::None,
             preview_frame: None,
+            preview_frame_viewport: None,
             preview_worker: None,
             preview_flow: PreviewCoordinator::default(),
             preview_selection: PreviewSelection::default(),

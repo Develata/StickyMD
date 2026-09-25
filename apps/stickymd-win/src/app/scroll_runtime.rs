@@ -18,6 +18,7 @@ impl StickyApp {
         let Some(geometry) = self.view_geometry() else {
             return [None, None];
         };
+        let preview_current = self.preview_layout_is_current();
         let dpi = self
             .window
             .as_ref()
@@ -42,10 +43,7 @@ impl StickyApp {
                 .preview
                 .zip(self.preview_frame.as_ref())
                 .and_then(|(pane, frame)| {
-                    if frame.generation() != self.coordinator.view().generation
-                        || frame.width() != pane.width
-                        || frame.height() != pane.height
-                    {
+                    if !preview_current {
                         return None;
                     }
                     let height = f64::from(frame.document_height());
@@ -134,10 +132,11 @@ impl StickyApp {
             return false;
         }
         let bars = self.scrollbar_geometry();
+        let gutter = self.scrollbar_gutter_at_cursor();
         let hovered = bars
             .iter()
             .flatten()
-            .find(|bar| bar.contains(self.cursor_position))
+            .find(|bar| gutter == Some(bar.pane))
             .map(|bar| bar.pane);
         if self.scrollbars.hovered != hovered {
             self.scrollbars.hovered = hovered;
@@ -201,12 +200,10 @@ impl StickyApp {
     fn after_pane_scroll(&mut self, driver: ScrollPane) {
         let sync = self.config.current().view_mode == ViewMode::Split
             && self.config.current().split_scroll_sync;
-        let current = self.coordinator.view().generation;
+        let preview_current = self.preview_layout_is_current();
         if sync
             && let (Some(frame), Some(projection)) = (
-                self.preview_frame
-                    .as_ref()
-                    .filter(|frame| frame.generation() == current),
+                self.preview_frame.as_ref().filter(|_| preview_current),
                 &mut self.projection,
             )
         {

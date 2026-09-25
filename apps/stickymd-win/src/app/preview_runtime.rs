@@ -96,6 +96,7 @@ impl StickyApp {
         }
         if mode == ViewMode::Source {
             self.preview_frame = None;
+            self.preview_frame_viewport = None;
             self.preview_flow.release_projection();
             if let Some(worker) = &self.preview_worker {
                 // Preserve the semantic tree for a fast return to Preview;
@@ -165,18 +166,18 @@ impl StickyApp {
         let Some(frame) = &self.preview_frame else {
             return;
         };
+        if frame.generation() != self.coordinator.view().generation {
+            return;
+        }
         let Some(viewport) = self.preview_viewport() else {
             return;
         };
         let generation = frame.generation();
         self.ensure_preview_worker();
         if let Some(worker) = &self.preview_worker {
-            worker.submit(PreviewJob::Paint {
+            worker.submit(PreviewJob::Relayout {
                 generation,
-                height_px: viewport.height_px,
-                scroll_y: viewport.scroll_y,
-                selection: viewport.selection,
-                theme: viewport.theme,
+                viewport,
             });
         }
     }
@@ -193,6 +194,7 @@ impl StickyApp {
             // re-admit that document-sized projection while the paper is not
             // visible; repeat the idempotent worker-owned release.
             self.preview_frame = None;
+            self.preview_frame_viewport = None;
             self.preview_flow.release_projection();
             if let Some(worker) = &self.preview_worker {
                 worker.release_document_projection();
@@ -206,6 +208,19 @@ impl StickyApp {
             }
             return;
         }
+        let Some(viewport) = self.preview_viewport() else {
+            return;
+        };
+        if completion.viewport != viewport {
+            // The worker owns a valid semantic tree after a successful build,
+            // even when its pixels are already stale. Reuse it for the latest
+            // viewport without displaying or hit-testing the stale frame.
+            if completion.result.is_ok() {
+                self.preview_flow.admit_completion(current, current);
+            }
+            self.request_preview_relayout();
+            return;
+        }
         match completion.result {
             Ok(frame)
                 if self
@@ -213,27 +228,6 @@ impl StickyApp {
                     .admit_completion(completion.generation, current)
                     == PreviewAdmission::Apply =>
             {
-                // A previous paint can complete while the user is already
-                // dragging to a newer position. Keep the latest request and
-                // never display the old frame at its stale scroll offset.
-                if completion.requested_scroll_y.to_bits() != self.preview_scroll_y.to_bits() {
-                    if self.preview_frame.as_ref().is_none_or(|previous| {
-                        previous.generation() != frame.generation()
-                            || previous.width() != frame.width()
-                            || previous.height() != frame.height()
-                    }) {
-                        self.preview_selection = selection_for_generation(
-                            self.preview_frame
-                                .as_ref()
-                                .map(|previous| previous.generation()),
-                            completion.generation,
-                            self.preview_selection,
-                        );
-                        self.preview_frame = Some(frame);
-                    }
-                    self.request_preview_paint();
-                    return;
-                }
                 self.preview_scroll_y = frame.scroll_y();
                 self.preview_selection = selection_for_generation(
                     self.preview_frame
@@ -245,6 +239,7 @@ impl StickyApp {
                 let text_len = frame.text().len();
                 self.preview_selection.anchor = self.preview_selection.anchor.min(text_len);
                 self.preview_selection.active = self.preview_selection.active.min(text_len);
+                self.preview_frame_viewport = Some(viewport);
                 self.preview_frame = Some(frame);
             }
             Ok(_) => {}
@@ -279,14 +274,9 @@ impl StickyApp {
                 if snapshot.generation != generation {
                     return;
                 }
-                let Some(mut viewport) = self.preview_viewport() else {
+                let Some(viewport) = self.preview_viewport() else {
                     return;
                 };
-                viewport.selection = selection_for_generation(
-                    self.preview_frame.as_ref().map(|frame| frame.generation()),
-                    generation,
-                    viewport.selection,
-                );
                 self.ensure_preview_worker();
                 if let Some(worker) = &self.preview_worker {
                     worker.submit(PreviewJob::Build { snapshot, viewport });
@@ -320,6 +310,16 @@ impl StickyApp {
         }
     }
 
+    pub(super) fn preview_layout_is_current(&self) -> bool {
+        self.preview_frame.as_ref().is_some_and(|frame| {
+            frame.generation() == self.coordinator.view().generation
+                && self
+                    .preview_frame_viewport
+                    .zip(self.preview_viewport())
+                    .is_some_and(|(applied, current)| applied.same_layout(current))
+        })
+    }
+
     fn preview_viewport(&self) -> Option<PreviewViewport> {
         let pane = self.view_geometry()?.preview?;
         let scale = self.document_scale_factor();
@@ -328,7 +328,11 @@ impl StickyApp {
             height_px: pane.height.max(1),
             scale,
             scroll_y: self.preview_scroll_y,
-            selection: self.preview_selection,
+            selection: selection_for_generation(
+                self.preview_frame.as_ref().map(|frame| frame.generation()),
+                self.coordinator.view().generation,
+                self.preview_selection,
+            ),
             theme: if self.resolved_dark_theme() {
                 PreviewTheme::Dark
             } else {

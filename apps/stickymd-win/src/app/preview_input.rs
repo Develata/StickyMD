@@ -33,7 +33,11 @@ impl StickyApp {
         if let Some(pane) = geometry.preview
             && pane.contains(position.x as f32, position.y as f32)
         {
-            let Some(frame) = &self.preview_frame else {
+            let Some(frame) = self
+                .preview_frame
+                .as_ref()
+                .filter(|_| self.preview_layout_is_current())
+            else {
                 return CursorIcon::Text;
             };
             let x = position.x as f32 - pane.x as f32;
@@ -117,6 +121,9 @@ impl StickyApp {
     }
 
     pub(super) fn press_preview_selection(&mut self) {
+        if !self.preview_layout_is_current() {
+            return;
+        }
         let Some((x, y)) = self.preview_at_cursor() else {
             return;
         };
@@ -141,6 +148,9 @@ impl StickyApp {
     }
 
     pub(super) fn extend_preview_selection(&mut self, position: PhysicalPosition<f64>) {
+        if !self.preview_layout_is_current() {
+            return;
+        }
         let Some(pane) = self.view_geometry().and_then(|geometry| geometry.preview) else {
             return;
         };
@@ -158,7 +168,7 @@ impl StickyApp {
         self.preview_dragging = false;
         self.preview_press_position = None;
         let action = self.preview_press_action.take();
-        if self.preview_drag_moved {
+        if self.preview_drag_moved || !self.preview_layout_is_current() {
             return;
         }
         if let Some(action) = action {
