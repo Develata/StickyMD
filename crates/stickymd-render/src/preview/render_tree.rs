@@ -107,6 +107,24 @@ pub struct RenderTree {
     pub blocks: Vec<RenderBlock>,
 }
 
+impl RenderTree {
+    pub(super) fn has_local_images(&self) -> bool {
+        let has_image = |span: &RenderSpan| {
+            span.image.as_ref().is_some_and(|image| {
+                matches!(
+                    image.kind,
+                    ImageKind::LocalRelative | ImageKind::LocalAbsolute
+                )
+            })
+        };
+        self.blocks.iter().any(|block| {
+            block.spans.iter().any(has_image)
+                || matches!(&block.kind, RenderBlockKind::Table(table)
+                    if table.rows.iter().flat_map(|row| &row.cells).flatten().any(has_image))
+        })
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RenderTreeBuilder;
 

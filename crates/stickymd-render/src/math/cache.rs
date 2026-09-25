@@ -151,26 +151,50 @@ impl<K: Clone + Eq + Hash, V: Clone> ByteLru<K, V> {
         self.bytes = 0;
     }
 
+    /// Reserve space without forgetting allocations still leased by a layout.
+    /// The caller inserts synchronously after this check, before another admission.
+    pub(super) fn make_room(&mut self, bytes: usize, can_evict: impl Fn(&V) -> bool) -> bool {
+        if bytes > self.limit || self.limit == 0 {
+            return false;
+        }
+        while self.bytes > self.limit - bytes {
+            let Some(removed) = self.evict_oldest_if(&can_evict) else {
+                return false;
+            };
+            self.bytes -= removed;
+        }
+        true
+    }
+
     fn next_stamp(&mut self) -> u64 {
         if self.clock == u64::MAX {
-            self.entries.clear();
-            self.bytes = 0;
-            self.clock = 0;
+            // Recency may wrap, but leased allocations must stay in the ledger.
+            // Compress stamps while preserving their order and byte charges.
+            let mut entries: Vec<_> = self.entries.values_mut().collect();
+            entries.sort_unstable_by_key(|entry| entry.last_used);
+            for (index, entry) in entries.into_iter().enumerate() {
+                entry.last_used = index as u64;
+            }
+            self.clock = self.entries.len() as u64;
         }
         self.clock += 1;
         self.clock
     }
 
     fn evict_oldest(&mut self) -> Option<usize> {
+        self.evict_oldest_if(&|_| true)
+    }
+
+    fn evict_oldest_if(&mut self, can_evict: &impl Fn(&V) -> bool) -> Option<usize> {
         let oldest = self
             .entries
             .iter()
+            .filter(|(_, entry)| can_evict(&entry.value))
             .min_by_key(|(_, entry)| entry.last_used)
             .map(|(key, _)| key.clone())?;
         self.entries.remove(&oldest).map(|entry| entry.bytes)
     }
 
-    #[cfg(test)]
     pub(super) fn len(&self) -> usize {
         self.entries.len()
     }
@@ -205,6 +229,27 @@ mod tests {
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.insert(3, "large", 11), 0);
         assert_eq!(cache.bytes(), 6);
+    }
+
+    #[test]
+    fn byte_lru_clock_rollover_preserves_leases_and_accounting() {
+        use std::sync::Arc;
+
+        for rollover_on_insert in [false, true] {
+            let mut cache = ByteLru::new(10);
+            let leased = Arc::new("leased");
+            cache.insert(1, Arc::clone(&leased), 6);
+            cache.clock = u64::MAX - u64::from(rollover_on_insert);
+            assert!(Arc::ptr_eq(&cache.get(&1).unwrap(), &leased));
+            assert!(cache.make_room(4, |value| Arc::strong_count(value) == 1));
+            cache.insert(2, Arc::new("unleased"), 4);
+            assert_eq!(cache.bytes(), 10);
+            assert!(!cache.make_room(5, |value| Arc::strong_count(value) == 1));
+            assert_eq!(cache.bytes(), 6);
+            assert_eq!(cache.get(&2), None);
+            drop(leased);
+            assert!(cache.make_room(5, |value| Arc::strong_count(value) == 1));
+        }
     }
 
     #[test]

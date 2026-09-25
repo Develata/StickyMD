@@ -452,6 +452,9 @@ impl SourceProjection {
         {
             return false;
         }
+        if self.scale_factor.to_bits() != scale.to_bits() {
+            self.swash_cache = SwashCache::new();
+        }
         self.width_px = width_px;
         self.height_px = height_px;
         self.scale_factor = scale;
@@ -705,6 +708,31 @@ mod tests {
             assert_eq!(projection.projected_text(), text);
             assert!(projection.caret_rect(0).is_some());
         }
+    }
+
+    #[test]
+    fn source_zoom_releases_obsolete_glyph_rasters_but_resize_reuses_them() {
+        let source = snapshot("中文 Rust mixed preview");
+        let mut projection = SourceProjection::new(&source, 440, 240, 1.0);
+        let mut pixmap = Pixmap::new(440, 240).unwrap();
+        projection
+            .paint(
+                &mut pixmap,
+                Selection::caret(0),
+                false,
+                false,
+                None,
+                SourceTheme::Light,
+            )
+            .unwrap();
+        let cached = projection.swash_cache.image_cache.len();
+        assert!(cached > 0);
+        projection.set_viewport(450, 240, 1.0);
+        assert_eq!(projection.swash_cache.image_cache.len(), cached);
+        projection.set_viewport(450, 240, 2.0);
+        assert!(projection.swash_cache.image_cache.is_empty());
+        assert_eq!(projection.projected_text(), &*source.text);
+        assert_eq!(projection.projected_generation(), source.generation);
     }
 
     #[test]

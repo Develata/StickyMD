@@ -195,10 +195,11 @@ pub(super) fn paint_document(
             let origin_x = chunk.x.round() as i32;
             let origin_y = (chunk.y - scroll_y).round() as i32;
             match &mut chunk.content {
-                LayoutContent::Text(layout) => layout.buffer.draw(
+                LayoutContent::Text(layout) => layout.draw_visible(
                     font_system,
                     swash_cache,
                     palette.text,
+                    (scroll_y - chunk.y)..(viewport_bottom - chunk.y),
                     |x, y, width, height, color| {
                         blend_glyph_rect(
                             &mut pixmap,

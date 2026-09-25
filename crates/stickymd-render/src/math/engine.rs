@@ -11,7 +11,7 @@ use ratex_types::math_style::MathStyle;
 use thiserror::Error;
 
 use super::cache::{ByteLru, EntryLru};
-use super::painter::{MAX_RASTER_BYTES, MathPaintError, MathPainter, rasterize};
+use super::painter::{MAX_RASTER_BYTES, MathPaintError, MathPainter, raster_size, rasterize};
 
 pub(crate) const MAX_FORMULA_SOURCE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_DOCUMENT_FORMULAS: usize = 2_000;
@@ -62,6 +62,8 @@ pub(crate) enum MathError {
     Parse(String),
     #[error("formula geometry is not finite or non-negative")]
     InvalidGeometry,
+    #[error("formula rasters in the current preview exhausted the 8 MiB safety budget")]
+    RasterBudgetExhausted,
     #[error(transparent)]
     Paint(#[from] MathPaintError),
 }
@@ -192,6 +194,21 @@ impl MathEngine {
             return Ok(raster);
         }
         self.counters.raster_misses = self.counters.raster_misses.saturating_add(1);
+        let bytes = raster_size(&layout.display_list, font_size_px)?
+            .2
+            .saturating_add(source.len())
+            .saturating_add(RASTER_ENTRY_METADATA_ESTIMATE);
+        let previous_entries = self.rasters.len();
+        let admitted = self
+            .rasters
+            .make_room(bytes, |raster| Arc::strong_count(raster) == 1);
+        self.counters.raster_evictions = self
+            .counters
+            .raster_evictions
+            .saturating_add((previous_entries - self.rasters.len()) as u64);
+        if !admitted {
+            return Err(MathError::RasterBudgetExhausted);
+        }
         self.counters.rasterizations = self.counters.rasterizations.saturating_add(1);
         let raster = Arc::new(rasterize(
             &mut self.painter,
@@ -199,14 +216,11 @@ impl MathEngine {
             font_size_px,
             foreground,
         )?);
-        let evicted = self.rasters.insert(
-            raster_key,
-            Arc::clone(&raster),
-            raster
-                .byte_len()
-                .saturating_add(source.len())
-                .saturating_add(RASTER_ENTRY_METADATA_ESTIMATE),
+        debug_assert_eq!(
+            bytes,
+            raster.byte_len() + source.len() + RASTER_ENTRY_METADATA_ESTIMATE
         );
+        let evicted = self.rasters.insert(raster_key, Arc::clone(&raster), bytes);
         self.counters.raster_evictions = self
             .counters
             .raster_evictions
@@ -299,6 +313,43 @@ mod tests {
         let (_, _, accounted_bytes, _) = engine.cache_sizes();
         assert!(accounted_bytes >= raster.byte_len() + source.len());
         assert!(accounted_bytes <= MAX_RASTER_BYTES);
+    }
+
+    #[test]
+    fn live_formula_rasters_cannot_escape_the_shared_budget() {
+        let mut engine = MathEngine::new();
+        // A small cache makes the same ownership failure reproducible without
+        // allocating a document full of large formula rasters.
+        engine.rasters = ByteLru::new(4_096);
+        let mut live = Vec::new();
+        for index in 0..40 {
+            match engine.render(format!("x_{{{index}}}"), MathKind::Inline, 17.0, BLACK) {
+                Ok(raster) => live.push(raster),
+                Err(error) => assert_eq!(error, MathError::RasterBudgetExhausted),
+            }
+        }
+        let live_bytes: usize = live.iter().map(|raster| raster.byte_len()).sum();
+        eprintln!(
+            "formula raster budget=4096 live_bytes={live_bytes} cache_bytes={}",
+            engine.cache_sizes().2
+        );
+        assert!(
+            live_bytes <= 4_096,
+            "live formula pixels escaped cache accounting: {live_bytes}"
+        );
+        assert!(!live.is_empty());
+        assert!(
+            live.len() < 40,
+            "cache pressure must reject additional leases"
+        );
+        assert_eq!(engine.counters().rasterizations as usize, live.len());
+        let reused = engine
+            .render("x_{0}", MathKind::Inline, 17.0, BLACK)
+            .unwrap();
+        assert!(Arc::ptr_eq(&reused, &live[0]));
+        drop(reused);
+        drop(live);
+        assert!(engine.render("y", MathKind::Inline, 17.0, BLACK).is_ok());
     }
 
     #[test]

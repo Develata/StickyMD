@@ -78,6 +78,7 @@ pub struct PreviewPipeline {
     image_cache: DecodedImageCache,
     image_band: (f32, f32),
     layout_has_image_source: bool,
+    tree_has_local_images: bool,
     tree: Option<RenderTree>,
     layout: Option<LaidOutDocument>,
     counters: PreviewPipelineCounters,
@@ -103,6 +104,7 @@ impl PreviewPipeline {
             image_cache: DecodedImageCache::default(),
             image_band: (0.0, 0.0),
             layout_has_image_source: false,
+            tree_has_local_images: false,
             tree: None,
             layout: None,
             counters: PreviewPipelineCounters::default(),
@@ -149,6 +151,7 @@ impl PreviewPipeline {
         // before admitting a replacement so the strict cache budget can evict
         // rasters that are no longer visible instead of mistaking them for
         // still-live memory.
+        self.prepare_text_scale(scale);
         self.layout = None;
         let layout = layout_document(
             LayoutResources {
@@ -165,6 +168,7 @@ impl PreviewPipeline {
             theme,
         );
         self.counters.layouts = self.counters.layouts.saturating_add(1);
+        self.tree_has_local_images = tree.has_local_images();
         self.tree = Some(tree);
         self.layout = Some(layout);
         self.image_band = image_band;
@@ -228,7 +232,8 @@ impl PreviewPipeline {
                 && layout.width_px == width_px
                 && layout.scale.to_bits() == normalized_scale.to_bits()
                 && layout.theme == theme
-                && self.layout_has_image_source == image_source_available
+                && (!self.tree_has_local_images
+                    || self.layout_has_image_source == image_source_available)
         }) {
             return self.paint_with_image_source(
                 generation,
@@ -239,6 +244,7 @@ impl PreviewPipeline {
                 image_source,
             );
         }
+        self.prepare_text_scale(scale);
         let tree = self.tree.as_ref().ok_or(PreviewPipelineError::NoDocument)?;
         let image_band = image_band(scroll_y, height_px, scale);
         self.layout = None;
@@ -309,10 +315,13 @@ impl PreviewPipeline {
         });
         let image_source_available = image_source.is_some();
         let needs_image_source_refresh = self.layout_has_image_source != image_source_available;
-        let needs_image_band = needs_image_source_refresh
-            || (image_source_available
-                && (effective_scroll_y < self.image_band.0
-                    || effective_scroll_y + height_px as f32 > self.image_band.1));
+        // An adapter is always present in production, including text-only notes.
+        // Only semantic local-image nodes need band admission or source refresh.
+        let needs_image_band = self.tree_has_local_images
+            && (needs_image_source_refresh
+                || (image_source_available
+                    && (effective_scroll_y < self.image_band.0
+                        || effective_scroll_y + height_px as f32 > self.image_band.1)));
         if needs_image_band {
             let (width, scale) = self
                 .layout
@@ -400,6 +409,7 @@ impl PreviewPipeline {
 
     pub fn release_raster_caches(&mut self) {
         self.layout = None;
+        self.swash_cache = SwashCache::new();
         self.math_engine.release_rasters();
         self.image_cache.clear();
     }
@@ -412,11 +422,21 @@ impl PreviewPipeline {
     /// Markdown document.
     pub fn release_document_projection(&mut self) {
         self.tree = None;
-        self.layout = None;
+        self.release_raster_caches();
         self.image_band = (0.0, 0.0);
         self.layout_has_image_source = false;
-        self.math_engine.release_rasters();
-        self.image_cache.clear();
+        self.tree_has_local_images = false;
+    }
+
+    fn prepare_text_scale(&mut self, scale: f32) {
+        if self
+            .layout
+            .as_ref()
+            .is_some_and(|layout| layout.scale.to_bits() != scale.max(0.5).to_bits())
+        {
+            // Swash keys include effective font size but do not evict old sizes.
+            self.swash_cache = SwashCache::new();
+        }
     }
 
     pub fn image_cache_bytes(&self) -> usize {
@@ -442,6 +462,10 @@ fn image_band(scroll_y: f32, height_px: u32, scale: f32) -> (f32, f32) {
         scroll_y + height_px as f32 + margin,
     )
 }
+
+#[cfg(test)]
+#[path = "pipeline/audit_tests.rs"]
+mod audit_tests;
 
 #[cfg(test)]
 mod tests {

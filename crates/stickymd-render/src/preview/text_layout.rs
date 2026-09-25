@@ -14,6 +14,8 @@ use crate::source::{FontSelection, ScriptClass, segment_script_runs};
 use super::layout::{ChunkBuild, LayoutChunk, LayoutContent};
 use super::{PreviewRect, PreviewTextBox, RenderSpan, RenderStyle, SpanAction};
 
+mod painting;
+
 const MAX_TEXT_LAYOUT_CACHE_ENTRIES: usize = 1_024;
 const MAX_TEXT_LAYOUT_CACHE_TEXT_BYTES: usize = 1_024;
 
@@ -28,9 +30,12 @@ pub(super) struct TextSegment {
 }
 
 pub(super) struct TextLayout {
-    pub buffer: Buffer,
+    // Immutable after construction, so row locators cannot become stale through
+    // a sibling module mutating cosmic-text's shaping state.
+    buffer: Buffer,
     segments: Vec<TextSegment>,
     rows: Vec<TextLayoutRow>,
+    max_glyph_y_offset: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -40,6 +45,7 @@ struct TextLayoutRow {
     logical_byte_start: usize,
     top: f32,
     height: f32,
+    baseline: f32,
 }
 
 impl TextLayoutRow {
@@ -50,6 +56,15 @@ impl TextLayoutRow {
 
 impl TextLayout {
     fn new(buffer: Buffer, segments: Vec<TextSegment>) -> Self {
+        // Derive one paint margin in O(glyphs) after shaping. This is not a
+        // glyph-geometry cache: only cosmic-text owns those offsets. Keeping
+        // this separate leaves row-locator construction O(visual rows).
+        let max_glyph_y_offset = buffer
+            .layout_runs()
+            .flat_map(|run| run.glyphs)
+            .fold(0.0f32, |offset, glyph| {
+                offset.max((glyph.y - glyph.font_size * glyph.y_offset).abs())
+            });
         let mut logical_byte_starts = Vec::with_capacity(buffer.lines.len());
         let mut logical_byte_start = 0usize;
         for line in &buffer.lines {
@@ -70,6 +85,7 @@ impl TextLayout {
                     logical_byte_start: *logical_byte_starts.get(run.line_i)?,
                     top: run.line_top,
                     height: run.line_height,
+                    baseline: run.line_y,
                 };
                 *layout_row = layout_row.saturating_add(1);
                 Some(row)
@@ -79,11 +95,21 @@ impl TextLayout {
             buffer,
             segments,
             rows,
+            max_glyph_y_offset,
         }
     }
 
     fn height(&self, fallback: f32) -> f32 {
         self.rows.last().map_or(fallback, |row| row.bottom())
+    }
+
+    pub(super) fn first_line_metrics(&self, fallback_baseline: f32) -> (f32, f32) {
+        self.buffer
+            .layout_runs()
+            .next()
+            .map_or((1.0, fallback_baseline), |run| {
+                (run.line_w.max(1.0), run.line_y)
+            })
     }
 
     pub(super) fn mark_atomic_with_tooltip(&mut self, tooltip: std::sync::Arc<str>) {

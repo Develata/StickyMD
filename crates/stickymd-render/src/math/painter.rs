@@ -77,15 +77,7 @@ pub(super) fn rasterize(
     foreground: [u8; 4],
 ) -> Result<MathRaster, MathPaintError> {
     let padding_px = PADDING_DIP * (font_size_px / BASE_FONT_DIP);
-    let width = raster_dimension(display.width, font_size_px, padding_px)?;
-    let height = raster_dimension(display.total_height(), font_size_px, padding_px)?;
-    let bytes = (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or(MathPaintError::RasterTooLarge)?;
-    if width > MAX_RASTER_SIDE || height > MAX_RASTER_SIDE || bytes > MAX_RASTER_BYTES {
-        return Err(MathPaintError::RasterTooLarge);
-    }
+    let (width, height, _) = raster_size(display, font_size_px)?;
     let mut pixmap =
         Pixmap::new(width, height).ok_or(MathPaintError::Allocation { width, height })?;
     let fonts = ratex_font_loader::load_fonts_for_items("", &display.items)
@@ -106,6 +98,24 @@ pub(super) fn rasterize(
         baseline: padding_px + display.height as f32 * font_size_px,
         pixels: Arc::from(pixmap.data()),
     })
+}
+
+/// Shared preflight geometry lets the cache reject a raster before allocating pixels.
+pub(super) fn raster_size(
+    display: &DisplayList,
+    font_size_px: f32,
+) -> Result<(u32, u32, usize), MathPaintError> {
+    let padding_px = PADDING_DIP * (font_size_px / BASE_FONT_DIP);
+    let width = raster_dimension(display.width, font_size_px, padding_px)?;
+    let height = raster_dimension(display.total_height(), font_size_px, padding_px)?;
+    let bytes = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or(MathPaintError::RasterTooLarge)?;
+    if width > MAX_RASTER_SIDE || height > MAX_RASTER_SIDE || bytes > MAX_RASTER_BYTES {
+        return Err(MathPaintError::RasterTooLarge);
+    }
+    Ok((width, height, bytes))
 }
 
 fn raster_dimension(em: f64, font_size_px: f32, padding_px: f32) -> Result<u32, MathPaintError> {
