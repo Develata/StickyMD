@@ -1148,6 +1148,7 @@ fn phase5_performance() -> Task {
             "--",
             "--ignored",
             "--nocapture",
+            "--test-threads=1",
         ],
     )
 }

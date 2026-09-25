@@ -40,3 +40,21 @@
 The Rust CLI owns all headless Phase 6 checks. Passing them does not upgrade visual, IME, OS
 or real first-formula memory observations; those rows deliberately remain `NOT TESTED`. P06-A17 is
 the resource exception because it is a repeatable Rust-owned measurement, not a one-off manual log.
+
+## 2026-09-07 maintenance regression coverage
+
+This supplements the existing math raster-budget and release checks; it does not refresh v0.1.0 artifact evidence.
+
+- Preconditions: multiple distinct formula rasters are still leased by the current layout; their combined charge would exceed the cache budget.
+- Action: continue rendering formulas, repaint the bottom error projection, release the document, then build a small replacement.
+- Expected: leased pixels remain accounted; excess admission fails before raster allocation, preserves copyable formula source and an error tooltip, and succeeds again after old leases are released.
+- Failure signals: live pixels exceed 8 MiB while the cache reports compliance; missing formula source; stale leases prevent replacement after release.
+- Entry: `cargo test -p stickymd-render --locked` includes the 4 KiB ownership regression and actual 8 MiB document-pressure test. Results and remaining OS-resource/visual gaps are in [the dated audit](../report/2026-09-07-runtime-audit.md).
+
+### 2026-09-25 review regression
+
+- Preconditions: a test cache retains a leased raster and its recency counter is explicitly placed at the `u64` rollover boundary.
+- Action: trigger rollover through lookup and insertion, then request space while the lease is alive and again after release.
+- Expected: recency rollover preserves cached ownership and byte charges; only unleased entries can make room.
+- Failure signal: rollover clears the ledger while the old allocation is still alive.
+- Entry: `cargo test -p stickymd-render --lib --locked byte_lru_`. This is an injected boundary check, not an observed production overflow.

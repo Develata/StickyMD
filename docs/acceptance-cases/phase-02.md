@@ -13,3 +13,13 @@
 
 Phase 2 has no independent manual acceptance item. Real caret, IME, clipboard and rendering gates are
 owned by Phase 3 and are not inferred from this matrix.
+
+## 2026-09-07 maintenance regression coverage
+
+This supplements P02-A01 under AC-009; it does not change a published artifact's qualification.
+
+- Preconditions: adjacent same-kind edits without a selection; separately exercise backward and forward deletion around a newline.
+- Action: compare edit gaps of 749/750/751 ms, and undo deletion of text/newline/text.
+- Expected: only 749 ms merges; a deleted newline separates undo steps in both directions.
+- Failure signals: 750 ms merges, or one undo restores text across the newline boundary.
+- Entry: `cargo test -p stickymd-core --locked undo::tests`; the existing Phase 02 Rust task includes these tests. Current maintenance results are recorded in [the dated audit](../report/2026-09-07-runtime-audit.md); this does not refresh unrelated historical rows.

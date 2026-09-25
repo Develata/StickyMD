@@ -37,6 +37,22 @@
 4. 每个 Phase 新建时同步创建 `tools/smoke/phase-XX.ps1` 与
    `docs/acceptance-cases/phase-XX.md`；CI 只自动执行其中可无界面运行的部分。
 
+## 2026-09-07 maintenance coverage
+
+本次在既有合同下补充回归，不增加产品能力或更新已发布 artifact 的资格化状态。
+
+| Plan / feature mapping | Acceptance projection | Code / evidence |
+| --- | --- | --- |
+| 07 Undo / AC-009 | Phase 02 maintenance coverage | `stickymd-core/src/undo.rs`: 750 ms and newline deletion boundaries |
+| 06 native preview / Markdown rendering | Phase 05 maintenance coverage | semantic image detection, immutable text row locator, visible-row glyph paint; serial Phase 05 Release scroll benchmarks |
+| 06 bounded math raster / math error source preservation | Phase 06 maintenance coverage | lease-aware cache admission, allocation preflight and pressure/release tests |
+| 06/10 cache lifecycle / Content Zoom | Phase 10 maintenance coverage | Source/Preview discard obsolete glyph scales; Preview purge releases text rasters |
+
+当前维护结果与未验证项见 [2026-09-07 audit](report/2026-09-07-runtime-audit.md)。
+
+2026-09-25 复审补充：Phase 05 覆盖多行组合符号墨迹的可见绘制，Phase 06 覆盖 LRU
+计数器溢出时的位图租用与计账。当前验证见同一报告追加的 Resolution；历史发布资格不变。
+
 ## 2026-09-08 table formula maintenance coverage
 
 | Plan / feature mapping | Acceptance projection | Code / evidence |

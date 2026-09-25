@@ -46,6 +46,24 @@ intentionally not inferred from unit tests, runtime process survival or a single
 observation and therefore remain `NOT TESTED`. P05-M07 is the exception because a checked-in Rust
 measurement runner now owns the complete five-run/60-second protocol and its durable receipt.
 
+## 2026-09-07 maintenance regression coverage
+
+This supplements P05-A11/A19/A21 under native-preview-layout; historical/manual statuses above retain their original evidence scope.
+
+- Preconditions: a text-only note with the production image adapter present; a long fenced code block with distinct offscreen characters; mixed-script decorated and wrapped text.
+- Action: scroll beyond the image predecode band and paint fractional viewport boundaries at multiple scales.
+- Expected: no additional text-only layout or parse; offscreen rows do not fill the glyph cache; visible pixels match the full-buffer reference, including decorations. Real local images, including table-cell images, still enter the lazy-image path.
+- Failure signals: scroll increments text-only layout counters, caches hundreds of invisible characters, or changes visible reference pixels.
+- Entry: `cargo test -p stickymd-render --locked`; `phase-05.ps1 -Performance` also selects the new `phase5_preview_release_baseline_*` scrolling measurements, serially. The narrow benchmark command and diagnostic results are in [the dated audit](../report/2026-09-07-runtime-audit.md). Desktop smoothness and OS memory remain separate observations.
+
+### 2026-09-25 review regression
+
+- Preconditions: a shaped paragraph contains stacked combining marks extending several rows above and below their logical line.
+- Action: paint viewports on both sides of that line and compare against Cosmic Text's full-buffer draw.
+- Expected: identical viewport pixels, including ink originating outside the immediately adjacent rows; the paint margin comes from the existing shaping offsets.
+- Failure signal: visible ink disappears when the originating line leaves the fixed overscan range.
+- Entry: `cargo test -p stickymd-render --lib --locked viewport_pixels_`; see the dated audit's 2026-09-25 Resolution for current evidence and limits.
+
 ## 2026-09-08 table formula source-range regression coverage
 
 This supplements P05-A03/A05/A12 and AC-013/014 under the existing GFM and source-preservation contracts; it does not change historical candidate or manual statuses.

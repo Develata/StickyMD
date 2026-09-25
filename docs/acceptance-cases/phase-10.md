@@ -80,3 +80,13 @@
 All Phase 9 manual rows remain `NOT TESTED` unless a later current-Phase-10-candidate receipt updates
 the owning matrix. This Phase does not infer or synthesize manual success from HWND style readback,
 unit tests, screenshots without an interaction protocol, or prior candidate evidence.
+
+## 2026-09-07 maintenance regression coverage
+
+This supplements the existing Content Zoom/cache lifecycle checks; the historical qualification and manual statuses above are unchanged.
+
+- Preconditions: Source or Preview has painted text, so its glyph cache contains raster entries.
+- Action: resize at the same scale, cycle content scales back to the original value, then release Preview rasters/document projection.
+- Expected: a size-only change can reuse glyphs; obsolete scales are discarded; both Preview release paths clear text glyphs as well as formula/image rasters; text and generation remain unchanged.
+- Failure signals: one zoom cycle retains all old scales, release leaves text raster entries, or a cache operation changes canonical text/generation.
+- Entry: `cargo test -p stickymd-render --locked`; concrete counts and verification limits are in [the dated audit](../report/2026-09-07-runtime-audit.md). Cache counts do not substitute for the five-run Windows process memory protocol.
