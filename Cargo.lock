@@ -2264,7 +2264,7 @@ dependencies = [
 
 [[package]]
 name = "stickymd-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.20",
@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "stickymd-render"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ab_glyph",
  "comrak",
@@ -2293,11 +2293,11 @@ dependencies = [
 
 [[package]]
 name = "stickymd-smoke"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "stickymd-win"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arboard",
  "crossbeam-channel",
