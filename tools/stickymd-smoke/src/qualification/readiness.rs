@@ -31,12 +31,6 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
             if let Err(error) = receipt::validate_candidate_against_repository(root, &candidate) {
                 blockers.push(error);
             }
-            if candidate.version != "0.1.0" {
-                blockers.push(format!(
-                    "candidate version is {}, expected USER-approved 0.1.0",
-                    candidate.version
-                ));
-            }
             Some(candidate)
         }
         Err(error) => {
@@ -44,12 +38,8 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
             None
         }
     };
-    if let (Some(source), Some(candidate)) = (&source, &candidate)
-        && (source.source_commit != candidate.source_commit
-            || source.cargo_lock_sha256 != candidate.cargo_lock_sha256
-            || source.version != candidate.version)
-    {
-        blockers.push("promoted candidate identity differs from Source Freeze".to_owned());
+    if let (Some(source), Some(candidate)) = (&source, &candidate) {
+        check_source_identity(source, candidate, &mut blockers);
     }
 
     let release_decisions = source
@@ -108,6 +98,19 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
             "release is NOT_READY; see {}",
             root.join(READINESS_RECEIPT).display()
         ))
+    }
+}
+
+fn check_source_identity(
+    source: &source_freeze::SourceFreeze,
+    candidate: &Candidate,
+    blockers: &mut Vec<String>,
+) {
+    if source.source_commit != candidate.source_commit
+        || source.cargo_lock_sha256 != candidate.cargo_lock_sha256
+        || source.version != candidate.version
+    {
+        blockers.push("promoted candidate identity differs from Source Freeze".to_owned());
     }
 }
 
@@ -258,9 +261,10 @@ fn render_readiness(candidate: Option<&Candidate>, blockers: &[String]) -> Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{check_downloaded, render_readiness};
+    use super::{check_downloaded, check_source_identity, render_readiness};
     use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
     use crate::qualification::remote::DOWNLOADED_RECEIPT;
+    use crate::qualification::source_freeze::SourceFreeze;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -271,6 +275,27 @@ mod tests {
             render_readiness(None, &["manual missing".to_owned()])
                 .contains("\"status\":\"NOT_READY\"")
         );
+    }
+
+    #[test]
+    fn candidate_version_tracks_source_freeze() {
+        let mut candidate = candidate();
+        candidate.version = "0.1.1".to_owned();
+        let source = SourceFreeze {
+            source_commit: candidate.source_commit.clone(),
+            version: candidate.version.clone(),
+            cargo_lock_sha256: candidate.cargo_lock_sha256.clone(),
+            rustc: "rustc test".to_owned(),
+            target: candidate.target.clone(),
+            remote_synced: true,
+        };
+        let mut blockers = Vec::new();
+        check_source_identity(&source, &candidate, &mut blockers);
+        assert!(blockers.is_empty(), "{blockers:?}");
+
+        candidate.version = "0.1.0".to_owned();
+        check_source_identity(&source, &candidate, &mut blockers);
+        assert_eq!(blockers.len(), 1, "old version must remain rejected");
     }
 
     #[test]

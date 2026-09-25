@@ -22,7 +22,18 @@ pub(super) struct Decision {
 pub(super) fn project(root: &Path, source: &SourceFreeze) -> Result<(), String> {
     let source_document = fs::read_to_string(root.join(SOURCE_LEDGER))
         .map_err(|error| format!("cannot read release decision ledger: {error}"))?;
-    let decisions = parse_markdown(&source_document)?;
+    let mut decisions = parse_markdown(&source_document)?;
+    // The template records historical policy; each freeze needs its own version authority.
+    if let Some(version) = decisions
+        .iter_mut()
+        .find(|decision| decision.key == "RELEASE-VERSION")
+    {
+        version.status = "PENDING".to_owned();
+        version.evidence = format!(
+            "USER approval required for version {} at Source Freeze {}",
+            source.version, source.source_commit
+        );
+    }
     write(root, source, &decisions)
 }
 
@@ -197,6 +208,36 @@ fn valid_tier_b_group_waiver(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{normalize_status, parse_markdown, valid_manual_waiver_key};
+
+    #[test]
+    fn source_freeze_requires_fresh_version_approval() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("stickymd-decision-version-{nonce}"));
+        std::fs::create_dir_all(root.join("docs/report")).expect("fixture directory");
+        std::fs::write(
+            root.join(super::SOURCE_LEDGER),
+            "| DEC-02 | RELEASE-VERSION | USER APPROVED | USER approved 0.1.0 |\n",
+        )
+        .expect("historical template");
+        let source = super::SourceFreeze {
+            source_commit: "a".repeat(40),
+            version: "0.1.1".to_owned(),
+            cargo_lock_sha256: "b".repeat(64),
+            rustc: "rustc test".to_owned(),
+            target: crate::qualification::receipt::RELEASE_TARGET.to_owned(),
+            remote_synced: false,
+        };
+        super::project(&root, &source).expect("project current freeze");
+        let decisions = super::read(&root, &source).expect("read projected decisions");
+        std::fs::remove_dir_all(&root).expect("cleanup fixture");
+        assert_eq!(
+            super::status(&decisions, "RELEASE-VERSION"),
+            Some("PENDING")
+        );
+    }
 
     #[test]
     fn source_ledger_rejects_duplicate_or_inferred_decisions() {

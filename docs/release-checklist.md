@@ -34,6 +34,8 @@
 - [ ] `cargo deny check` PASS 或所有 advisory 均有当前版本的明确处置。
 - [ ] `./tools/smoke/all.ps1 -Ci` PASS；CI 分片并集与完整任务图一致。
 - [ ] Source Freeze receipt 已生成，并且后续 tracked source/tooling/contract 修改会使其 stale。
+- [ ] Freeze 后通过 `qualification decision --key=RELEASE-VERSION --status=USER_APPROVED --evidence=<本次明确授权>`
+      记录 USER 已批准的当前版本；历史模板不会自动批准新 Freeze 的版本。
 
 ## 2. Remote Release Exact Artifact
 
