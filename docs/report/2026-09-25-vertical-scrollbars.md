@@ -59,3 +59,9 @@ Microsoft Pinyin/WeChat Input Method 候选窗。对应人工项保持 `NOT TEST
 - 最终本地 EXE：8,563,712 bytes；SHA-256
   `97F9FF1DA00FE90BD83B04D3C772D3EBE85159E69470873B1A78DFF605F4834B`。
   这是本次维护的本地构建身份，人工/发布边界仍如上。
+
+## Resolution — 2026-09-25 后续 review
+
+后续审查补齐了 Preview 完整视口回执校验、过期布局命中隔离、窄槽 hover 范围、Source 性能入口的
+CI 覆盖和模块诊断归档。发现、实现取舍、验证结果及新本地 EXE 身份见
+[滚动条与模块 CI 审查](2026-09-25-scrollbar-ci-review.md)；上面的初始证据保留为历史记录。

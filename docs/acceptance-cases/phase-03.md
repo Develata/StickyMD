@@ -38,4 +38,6 @@
 - Automated entry: `cargo test -p stickymd-render -p stickymd-win --locked scrollbar`, also included in the Rust-owned
   render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1). Status: `AUTOMATED PASS`.
 - Timing entry: `cargo test -p stickymd-render --lib --release --locked scrollbar_release_baseline -- --ignored --nocapture --test-threads=1`.
+  This baseline is also selected by `phase-03.ps1 -Performance`, `modules run render --mode=performance`
+  and the complete CI performance shard; each task is deduplicated and measurements run serially per runner.
 - Physical mouse/IME/DPI visual matrix: `NOT TESTED`; synthetic native messages and headless pixels do not upgrade the manual rows.

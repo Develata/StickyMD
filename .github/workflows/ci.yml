@@ -25,6 +25,7 @@ jobs:
   plan:
     name: CI plan and governance
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       full: ${{ steps.plan.outputs.full }}
       modules: ${{ steps.plan.outputs.modules }}
@@ -64,11 +65,19 @@ jobs:
           $json = & cargo run --quiet -p stickymd-smoke --locked -- ci plan @selection
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Output $json
+          $json | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'ci-plan.json') -Encoding utf8
           $plan = $json | ConvertFrom-Json -ErrorAction Stop
           foreach ($key in @('full', 'modules', 'windows_matrix', 'dependency_needed', 'quality_needed', 'headless_needed', 'release_needed', 'portable_needed', 'lint_args', 'portable_args')) {
             $value = ConvertTo-Json -InputObject $plan.$key -Depth 10 -Compress
             "$key=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           }
+      - name: Upload requested CI scope
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-plan-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-plan.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Linux smoke CLI lint and tests
         if: steps.plan.outputs.full == 'true' || contains(fromJSON(steps.plan.outputs.modules), 'smoke')
         run: |
@@ -119,6 +128,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.headless_needed == 'true'
     runs-on: windows-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.windows_matrix) }}
@@ -135,12 +145,22 @@ jobs:
           CI_MODULE: ${{ matrix.module }}
           CI_MODE: ${{ matrix.mode }}
         run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $log = Join-Path $env:RUNNER_TEMP 'headless.log'
           if ($env:CI_FULL -eq 'true') {
-            & cargo run --quiet -p stickymd-smoke --locked -- all --ci "--ci-shard=$env:CI_MODE" --json
+            & cargo run --quiet -p stickymd-smoke --locked -- all --ci "--ci-shard=$env:CI_MODE" --json 2>&1 | Tee-Object -FilePath $log
           } else {
-            & cargo run --quiet -p stickymd-smoke --locked -- modules run $env:CI_MODULE "--mode=$env:CI_MODE"
+            & cargo run --quiet -p stickymd-smoke --locked -- modules run $env:CI_MODULE "--mode=$env:CI_MODE" 2>&1 | Tee-Object -FilePath $log
           }
           exit $LASTEXITCODE
+      - name: Upload module diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: headless-${{ matrix.module }}-${{ matrix.mode }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/headless.log
+          if-no-files-found: warn
+          retention-days: 14
 
   windows-release:
     name: Windows x64 release build

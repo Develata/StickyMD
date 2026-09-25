@@ -121,5 +121,8 @@ CI plan job 在 full/smoke 范围运行 Linux 严格 lint 和 smoke tests，避�
 `06` Split scroll sync：用户投影见三种视图中的长文滚动，验收见 Phase 03/05 当日维护案例。
 实现为 `stickymd-render/src/source/scrollbar.rs` 的惰性首尾定位与
 `stickymd-win/src/app/{scrollbar,scroll_runtime}.rs` 的窄槽绘制、手势和既有语义同步；
-Preview worker 回执保留请求位置。定向 Rust tests、Release baseline 与 native message probe
+Preview worker 回执保留完整视口（尺寸、缩放、主题、滚动位置与选区），过期布局不参与新命中或同步。
+Source scrollbar baseline 接入 Phase 03、render 模块和完整 CI 性能分片；P00-A06/A09 约束覆盖并集、
+任务去重、runner 内串行测量及 CI 日志/计划归档。定向 Rust tests、Release baseline 与 native message probe
 的范围及人工缺口见 [维护报告](report/2026-09-25-vertical-scrollbars.md)。
+后续审查、修复和复核见 [滚动条与 CI review](report/2026-09-25-scrollbar-ci-review.md)。

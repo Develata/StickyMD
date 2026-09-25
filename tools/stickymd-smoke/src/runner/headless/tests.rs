@@ -144,6 +144,22 @@ fn rendering_selection_preserves_performance_filters_and_serial_measurement() {
             })
             .unwrap()
     };
+    assert!(args(TaskId::SourceScrollbarPerformance).contains(&"scrollbar_release_baseline"));
+    for id in [
+        TaskId::SourceScrollbarPerformance,
+        TaskId::Phase5Performance,
+        TaskId::Phase11BPerformance,
+        TaskId::Phase14Performance,
+    ] {
+        assert!(
+            args(id).contains(&"--lib"),
+            "{id:?} must not link unused integration targets"
+        );
+        assert!(
+            args(id).contains(&"--test-threads=1"),
+            "{id:?} measurements must be serial"
+        );
+    }
     assert_eq!(
         args(TaskId::Phase6Performance),
         [
@@ -155,7 +171,8 @@ fn rendering_selection_preserves_performance_filters_and_serial_measurement() {
             "stickymd-render",
             "--",
             "--ignored",
-            "--nocapture"
+            "--nocapture",
+            "--test-threads=1"
         ]
     );
     assert!(

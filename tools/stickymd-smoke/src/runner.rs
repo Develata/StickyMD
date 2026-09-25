@@ -29,6 +29,7 @@ enum TaskId {
     Phase1PersistencePerformance,
     Phase2Performance,
     Phase3Performance,
+    SourceScrollbarPerformance,
     Phase4Performance,
     Phase5PreviewTests,
     Phase5Performance,
@@ -458,10 +459,15 @@ fn run_captured(mut command: Command, label: &str) -> Result<(), String> {
     let output = command
         .output()
         .map_err(|error| format!("cannot start `{label}`: {error}"))?;
+    let detail = captured_failure_detail(&output.stdout, &output.stderr);
     if output.status.success() {
+        // Keep stdout machine-readable while retaining benchmark measurements
+        // and build/test summaries in the CI log, including successful runs.
+        if !detail.is_empty() {
+            eprintln!("[{label}]\n{detail}");
+        }
         return Ok(());
     }
-    let detail = captured_failure_detail(&output.stdout, &output.stderr);
     Err(if detail.is_empty() {
         format!("`{label}` failed with {}", output.status)
     } else {
@@ -646,7 +652,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                     push_unique(&mut tasks, phase1_persistence_performance());
                 }
                 Phase::P02 => push_unique(&mut tasks, phase2_performance()),
-                Phase::P03 => push_unique(&mut tasks, phase3_performance()),
+                Phase::P03 => push_source_performance(&mut tasks),
                 Phase::P04 => push_unique(&mut tasks, phase4_performance()),
                 Phase::P05 => push_unique(&mut tasks, phase5_performance()),
                 Phase::P06 => push_unique(&mut tasks, phase6_performance()),
@@ -657,7 +663,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                         push_unique(&mut tasks, phase1_markdown_performance());
                         push_unique(&mut tasks, phase1_persistence_performance());
                         push_unique(&mut tasks, phase2_performance());
-                        push_unique(&mut tasks, phase3_performance());
+                        push_source_performance(&mut tasks);
                         push_unique(&mut tasks, phase4_performance());
                         push_unique(&mut tasks, phase5_performance());
                         push_unique(&mut tasks, phase6_performance());
@@ -670,7 +676,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                         push_unique(&mut tasks, phase1_markdown_performance());
                         push_unique(&mut tasks, phase1_persistence_performance());
                         push_unique(&mut tasks, phase2_performance());
-                        push_unique(&mut tasks, phase3_performance());
+                        push_source_performance(&mut tasks);
                         push_unique(&mut tasks, phase4_performance());
                         push_unique(&mut tasks, phase5_performance());
                         push_unique(&mut tasks, phase6_performance());
@@ -684,7 +690,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                         push_unique(&mut tasks, phase1_markdown_performance());
                         push_unique(&mut tasks, phase1_persistence_performance());
                         push_unique(&mut tasks, phase2_performance());
-                        push_unique(&mut tasks, phase3_performance());
+                        push_source_performance(&mut tasks);
                         push_unique(&mut tasks, phase4_performance());
                         push_unique(&mut tasks, phase5_performance());
                         push_unique(&mut tasks, phase6_performance());
@@ -698,7 +704,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                         push_unique(&mut tasks, phase1_markdown_performance());
                         push_unique(&mut tasks, phase1_persistence_performance());
                         push_unique(&mut tasks, phase2_performance());
-                        push_unique(&mut tasks, phase3_performance());
+                        push_source_performance(&mut tasks);
                         push_unique(&mut tasks, phase4_performance());
                         push_unique(&mut tasks, phase5_performance());
                         push_unique(&mut tasks, phase6_performance());
@@ -713,7 +719,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                         push_unique(&mut tasks, phase1_markdown_performance());
                         push_unique(&mut tasks, phase1_persistence_performance());
                         push_unique(&mut tasks, phase2_performance());
-                        push_unique(&mut tasks, phase3_performance());
+                        push_source_performance(&mut tasks);
                         push_unique(&mut tasks, phase4_performance());
                         push_unique(&mut tasks, phase5_performance());
                         push_unique(&mut tasks, phase6_performance());
@@ -1112,8 +1118,33 @@ fn phase3_performance() -> Task {
             "--",
             "--ignored",
             "--nocapture",
+            "--test-threads=1",
         ],
     )
+}
+
+fn push_source_performance(tasks: &mut Vec<Task>) {
+    push_unique(tasks, phase3_performance());
+    push_unique(
+        tasks,
+        cargo(
+            TaskId::SourceScrollbarPerformance,
+            "Phase 3 source scrollbar Release baseline",
+            &[
+                "test",
+                "-p",
+                "stickymd-render",
+                "--lib",
+                "--release",
+                "--locked",
+                "scrollbar_release_baseline",
+                "--",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+        ),
+    );
 }
 
 fn phase4_performance() -> Task {
@@ -1130,6 +1161,7 @@ fn phase4_performance() -> Task {
             "--",
             "--ignored",
             "--nocapture",
+            "--test-threads=1",
         ],
     )
 }
@@ -1142,6 +1174,7 @@ fn phase5_performance() -> Task {
             "test",
             "-p",
             "stickymd-render",
+            "--lib",
             "--release",
             "--locked",
             "phase5_preview_release_baseline",
@@ -1166,6 +1199,7 @@ fn phase6_performance() -> Task {
             "--",
             "--ignored",
             "--nocapture",
+            "--test-threads=1",
         ],
     )
 }
@@ -1183,6 +1217,7 @@ fn phase7_performance() -> Task {
             "--",
             "--ignored",
             "--nocapture",
+            "--test-threads=1",
         ],
     )
 }
@@ -1201,6 +1236,7 @@ fn phase8_performance() -> Task {
             "--",
             "--ignored",
             "--nocapture",
+            "--test-threads=1",
         ],
     )
 }
@@ -1221,6 +1257,7 @@ fn phase10_performance() -> Task {
             "--",
             "--ignored",
             "--nocapture",
+            "--test-threads=1",
         ],
     )
 }
@@ -1233,12 +1270,14 @@ fn phase11b_performance() -> Task {
             "test",
             "-p",
             "stickymd-render",
+            "--lib",
             "--release",
             "--locked",
             "phase11b_performance_",
             "--",
             "--ignored",
             "--nocapture",
+            "--test-threads=1",
         ],
     )
 }
@@ -1251,12 +1290,14 @@ fn phase14_performance() -> Task {
             "test",
             "-p",
             "stickymd-render",
+            "--lib",
             "--release",
             "--locked",
             "phase14_preview_selection_geometry_release_baseline",
             "--",
             "--ignored",
             "--nocapture",
+            "--test-threads=1",
         ],
     )
 }
@@ -1440,6 +1481,7 @@ mod tests {
         assert_eq!(ids.len(), tasks.len());
         assert!(ids.contains(&TaskId::Phase2Performance));
         assert!(ids.contains(&TaskId::Phase3Performance));
+        assert!(ids.contains(&TaskId::SourceScrollbarPerformance));
         assert!(ids.contains(&TaskId::Phase4Performance));
         assert!(ids.contains(&TaskId::Phase5Performance));
         assert!(ids.contains(&TaskId::Phase6Performance));
@@ -1472,6 +1514,7 @@ mod tests {
             TaskId::Phase1PersistencePerformance,
             TaskId::Phase2Performance,
             TaskId::Phase3Performance,
+            TaskId::SourceScrollbarPerformance,
             TaskId::Phase4Performance,
             TaskId::Phase5Performance,
             TaskId::Phase6Performance,
@@ -1550,6 +1593,7 @@ mod tests {
                     | TaskId::Phase1PersistencePerformance
                     | TaskId::Phase2Performance
                     | TaskId::Phase3Performance
+                    | TaskId::SourceScrollbarPerformance
                     | TaskId::Phase4Performance
                     | TaskId::Phase5Performance
                     | TaskId::Phase6Performance
@@ -2080,6 +2124,7 @@ mod tests {
         for expected in [
             TaskId::Phase2Performance,
             TaskId::Phase3Performance,
+            TaskId::SourceScrollbarPerformance,
             TaskId::Phase4Performance,
             TaskId::Phase5Performance,
             TaskId::Phase6Performance,

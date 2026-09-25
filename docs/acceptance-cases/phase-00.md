@@ -30,6 +30,11 @@ P00-A09: Given a declared CI scope and completed job statuses, aggregate the res
 success only when requested jobs succeeded and intentional skips match the plan. Failure,
 cancellation, missing/unknown status or unexpected skip must return nonzero. Manual, scheduled
 and release lanes must retain full checks. These local adapter checks do not prove remote execution.
+The workflow retains the Rust plan and per-module stdout/stderr as separate CI artifacts;
+logging must preserve a failing native exit code. Successful captured performance tasks keep their
+measurements on stderr while CLI stdout remains JSON. Module performance plans include the Source
+scrollbar baseline, keep measurements serial within a runner, and do not link integration binaries for
+library-only baselines. The module union must remain equal to the complete deduplicated task graph.
 
 P00-A10: Given a Linux host, build/lint the smoke CLI with locked dependencies and
 `--all-targets -- -D warnings`, then request GUI qualification environment inspection.

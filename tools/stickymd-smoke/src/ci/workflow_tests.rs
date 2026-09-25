@@ -46,6 +46,14 @@ fn ci_workflow_wires_all_selected_lanes_and_fails_closed_at_the_aggregate_gate()
     assert!(headless.contains("-- all --ci \"--ci-shard=$env:CI_MODE\" --json"));
     assert!(headless.contains("-- modules run $env:CI_MODULE \"--mode=$env:CI_MODE\""));
     assert!(headless.contains("exit $LASTEXITCODE"));
+    assert!(headless.contains("$PSNativeCommandUseErrorActionPreference = $false"));
+    assert!(headless.contains("2>&1 | Tee-Object -FilePath $log"));
+    assert!(headless.contains("if: always()"));
+    assert!(headless.contains("${{ runner.temp }}/headless.log"));
+    assert!(
+        headless
+            .contains("headless-${{ matrix.module }}-${{ matrix.mode }}-${{ github.run_attempt }}")
+    );
 }
 
 #[test]
