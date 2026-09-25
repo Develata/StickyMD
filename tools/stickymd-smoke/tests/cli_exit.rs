@@ -58,6 +58,9 @@ fn malformed_release_requests_never_emit_a_success_marker() {
         ],
         vec!["release", "workspace-version", "--runtime"],
         vec!["release", "verify-package", "--exact-candidate"],
+        vec!["release", "checksums", "--zip", "missing"],
+        vec!["release", "publish-sbom", "--input", "missing"],
+        vec!["release", "checksums", "--zip=a", "--output=b", "--runtime"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
             .args(args)
@@ -67,6 +70,43 @@ fn malformed_release_requests_never_emit_a_success_marker() {
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stdout.is_empty());
     }
+}
+
+#[test]
+fn checksum_match_does_not_make_malformed_sbom_a_valid_package() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "stickymd-invalid-sbom-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("fixture.zip"), b"abc").unwrap();
+    std::fs::write(root.join("SBOM.spdx.json"), b"abc").unwrap();
+    let hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    std::fs::write(
+        root.join("SHA256SUMS.txt"),
+        format!("{hash} *fixture.zip\n{hash} *SBOM.spdx.json\n"),
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
+        .args(["release", "verify-package", "--package-directory"])
+        .arg(&root)
+        .arg("--zip")
+        .arg(root.join("fixture.zip"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(result.status.code(), Some(1));
+    assert!(result.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("JSON"),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 }
 
 #[test]

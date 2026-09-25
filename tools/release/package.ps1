@@ -41,8 +41,8 @@ function Copy-NormalizedUtf8Lf {
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 if (-not $ExePath) { $ExePath = Join-Path $repoRoot 'target\release\stickymd-win.exe' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot 'dist' }
-$ExePath = [IO.Path]::GetFullPath($ExePath)
-$OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+$ExePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ExePath)
+$OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 
 if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
     throw "Release executable does not exist: $ExePath"
@@ -137,11 +137,12 @@ try {
         [IO.File]::Move($archiveTemporaryPath, $archivePath)
     }
 
-    $zipHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $checksumPath = Join-Path $OutputDirectory 'SHA256SUMS.txt'
-    [IO.File]::WriteAllText($checksumPath, "$zipHash *$archiveName`n", [Text.UTF8Encoding]::new($false))
+    $hashes = (Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments @(
+        'checksums', '--zip', $archivePath, '--output', $checksumPath
+    )) | ConvertFrom-Json
     Write-Output "PACKAGE_PATH=$archivePath"
-    Write-Output "PACKAGE_SHA256=$zipHash"
+    Write-Output "PACKAGE_SHA256=$($hashes.zip_sha256)"
     $sourceTreeState = $inputs.source_tree_state
     Write-Output "SOURCE_TREE_STATE=$sourceTreeState"
 } finally {

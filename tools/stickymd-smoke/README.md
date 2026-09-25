@@ -143,6 +143,7 @@ The existing PowerShell parameter interfaces remain available:
 ./tools/release/verify-package.ps1 -PackageDirectory <directory> [-ZipPath <zip>] [-ChecksumPath <manifest>] [-Runtime]
 ./tools/release/verify-promoted-artifact.ps1 -ArtifactDirectory <directory> -SourceSha <full-sha> -ExpectedZipSha256 <sha256> -ExpectedSbomSha256 <sha256> -ReleaseTag v0.1.0
 ./tools/release/generate-third-party-notices.ps1 -DestinationPath <new-file>
+./tools/release/generate-sbom.ps1 -PackageDirectory <directory> [-ZipPath <zip>] [-OutputPath <sbom>] [-SyftPath <syft>]
 ```
 
 Their reusable commands are in the existing std-only CLI:
@@ -153,6 +154,8 @@ cargo run --quiet -p stickymd-smoke --locked -- release workspace-version
 cargo run --quiet -p stickymd-smoke --locked -- release verify-package --package-directory <directory> [--zip <zip>] [--checksums <manifest>] [--runtime]
 cargo run --quiet -p stickymd-smoke --locked -- release verify-promoted --artifact-directory <directory> --source-sha <full-sha> --expected-zip-sha256 <sha256> --expected-sbom-sha256 <sha256> --release-tag v0.1.0
 cargo run --quiet -p stickymd-smoke --locked -- release notices --destination <new-file>
+cargo run --quiet -p stickymd-smoke --locked -- release checksums --zip <zip> [--sbom <sbom>] --output <manifest>
+cargo run --quiet -p stickymd-smoke --locked -- release publish-sbom --input <staged-sbom> --output <sbom> --zip <zip> --checksums <manifest>
 ```
 
 `package-inputs` also accepts `--version`, `--commit-sha`, `--release-tag` and
@@ -179,7 +182,27 @@ files have their actual SHA-256 on Windows as well as Linux.
 checksum members, unsafe names and ambiguous README source declarations fail
 closed. The ZIP and SBOM checksum roles must have distinct artifact names;
 one file cannot satisfy both roles. An explicit ZIP must be the file covered by the package directory's
-manifest. Archive checks operate on a private snapshot of the supplied ZIP.
+manifest. Archive and SBOM checks operate on private snapshots of the supplied files.
+
+`release/checksums.rs` uses the same manifest name/hash rules for generation.
+`checksums` writes UTF-8 without BOM, lowercase SHA-256 and LF, then returns one
+JSON object containing `zip_sha256` and optional `sbom_sha256`. Hashing a file
+does not establish package or SBOM validity.
+
+`release/sbom.rs` owns the existing SPDX 2.x version, nonempty package list and
+four required packaged-file coverage checks. Both publication and package
+verification use these checks; a correct checksum cannot make malformed SBOM
+JSON valid. This is the repository's structural/coverage gate, not a complete
+SPDX schema or license audit.
+
+Syft writes into its private temporary directory, outside the scanned context.
+`publish-sbom` snapshots and validates that output before replacing the final
+SBOM and checksum manifest. Both destinations require existing parents and must
+be distinct from each other and the inputs. Each replacement is atomic; the
+manifest is written last. Generation/validation failures preserve both existing
+outputs. This is not a multi-file transaction: if manifest replacement fails
+after SBOM replacement, the command fails and verification rejects mismatched
+bytes. No successful result or qualification receipt is written on that path.
 
 `release/package_rules.rs` owns the six-member allowlist, Windows path safety,
 30 MiB limit and version/icon fact assertions. PE checks reuse `pe_dependencies`.
@@ -211,7 +234,9 @@ These are distinct scopes: selecting a path, verifying a package, verifying
 supplied promotion inputs, and qualifying a Promoted Candidate. None of the new
 commands creates a candidate, updates a qualification ledger, authorizes a remote
 action or advances manual acceptance. Tests run with `cargo test -p stickymd-smoke
---locked`; `release_wrappers` exercises PowerShell 5.1 and PowerShell 7 when available.
+--locked`; `release_wrappers` exercises PowerShell 5.1 and PowerShell 7 when available,
+including actual packaged license bytes, failed Syft output, invalid SBOMs,
+checksum contents and preservation of the caller's environment.
 
 ## Acceptance status
 

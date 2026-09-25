@@ -553,16 +553,9 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     if !package.contains("generate-third-party-notices.ps1") {
         return Err("package.ps1 must generate notices from the frozen runtime graph".to_owned());
     }
-    if !package.contains("function Copy-NormalizedUtf8Lf")
-        || package.matches("Copy-NormalizedUtf8Lf -Source").count() != 3
-        || !package.contains("[Text.UTF8Encoding]::new($false)")
-    {
-        return Err(
-            "package.ps1 must normalize all source-controlled license text to UTF-8/LF".to_owned(),
-        );
-    }
     // Release semantics are exercised against compiled Rust by release::* tests and
-    // tests/release_wrappers.rs. PowerShell source tokens are not evidence of a gate.
+    // tests/release_wrappers.rs (including actual packaged license bytes).
+    // PowerShell source tokens are not evidence of a gate.
     let remote_promotion =
         read_text(&root.join("tools/stickymd-smoke/src/qualification/remote.rs"))?;
     for required in [

@@ -2,7 +2,7 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#portable-windows-runtime
 
 use super::{
-    cli::PackageOptions, identity, json, notices, package_rules, package_runtime,
+    cli::PackageOptions, identity, json, notices, package_rules, package_runtime, sbom,
     temporary::TemporaryDirectory, windows,
 };
 use crate::{integrity, package_path, pe_dependencies, repository};
@@ -36,8 +36,12 @@ pub(super) fn verify(root: &Path, options: &PackageOptions) -> Result<(), String
     let copied_zip = temporary.path().join("input.zip");
     fs::copy(&zip, &copied_zip).map_err(|error| format!("cannot snapshot ZIP: {error}"))?;
     let zip_hash = integrity::sha256(&copied_zip)?;
-    let sbom_hash = integrity::sha256(&directory.join("SBOM.spdx.json"))?;
+    let copied_sbom = temporary.path().join("SBOM.spdx.json");
+    fs::copy(directory.join("SBOM.spdx.json"), &copied_sbom)
+        .map_err(|error| format!("cannot snapshot SBOM: {error}"))?;
+    let sbom_hash = integrity::sha256(&copied_sbom)?;
     integrity::verify_manifest_file(&checksums, zip_name, &zip_hash, &sbom_hash)?;
+    sbom::validate_file(&copied_sbom)?;
     package_rules::size(
         fs::metadata(&copied_zip)
             .map_err(|error| error.to_string())?

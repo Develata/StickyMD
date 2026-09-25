@@ -1,6 +1,7 @@
 //! Local release-tool checks; these commands never promote, authorize or publish.
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
+mod checksums;
 mod cli;
 mod identity;
 mod json;
@@ -10,6 +11,7 @@ mod package_inputs;
 mod package_rules;
 mod package_runtime;
 mod promoted;
+mod sbom;
 mod temporary;
 mod windows;
 
@@ -26,5 +28,7 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
             println!("{}", crate::repository::workspace_version(root)?);
             Ok(())
         }
+        Command::Checksums(options) => checksums::generate(options),
+        Command::PublishSbom(options) => sbom::publish(options),
     }
 }

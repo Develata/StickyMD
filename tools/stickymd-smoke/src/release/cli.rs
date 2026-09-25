@@ -10,6 +10,23 @@ pub(crate) enum Command {
     Notices(PathBuf),
     PackageInputs(PackageInputOptions),
     WorkspaceVersion,
+    Checksums(ChecksumOptions),
+    PublishSbom(SbomOptions),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ChecksumOptions {
+    pub zip: PathBuf,
+    pub sbom: Option<PathBuf>,
+    pub output: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SbomOptions {
+    pub input: PathBuf,
+    pub output: PathBuf,
+    pub zip: PathBuf,
+    pub checksums: PathBuf,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -107,6 +124,17 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
         }),
         "notices" => Command::Notices(PathBuf::from(take("--destination")?)),
         "workspace-version" => Command::WorkspaceVersion,
+        "checksums" => Command::Checksums(ChecksumOptions {
+            zip: PathBuf::from(take("--zip")?),
+            output: PathBuf::from(take("--output")?),
+            sbom: options.remove("--sbom").map(PathBuf::from),
+        }),
+        "publish-sbom" => Command::PublishSbom(SbomOptions {
+            input: PathBuf::from(take("--input")?),
+            output: PathBuf::from(take("--output")?),
+            zip: PathBuf::from(take("--zip")?),
+            checksums: PathBuf::from(take("--checksums")?),
+        }),
         "package-inputs" => Command::PackageInputs(PackageInputOptions {
             version: options.remove("--version").map(str::to_owned),
             commit: options.remove("--commit-sha").map(str::to_owned),

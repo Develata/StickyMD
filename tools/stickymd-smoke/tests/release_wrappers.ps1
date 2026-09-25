@@ -31,7 +31,8 @@ $name = "StickyMD-$version-windows-x64-portable.zip"
 $zip = Join-Path $fixture $name
 $sbom = Join-Path $fixture 'SBOM.spdx.json'
 $manifest = Join-Path $fixture 'SHA256SUMS.txt'
-[IO.File]::WriteAllText($sbom, '{}', [Text.UTF8Encoding]::new($false))
+$validSbomText = '{"spdxVersion":"SPDX-2.3","packages":[{}],"files":[{"fileName":"\\package\\StickyMD\\StickyMD.exe"},{"fileName":"\\package\\StickyMD\\THIRD_PARTY_NOTICES.txt"},{"fileName":"\\package\\StickyMD\\licenses\\SIL-OFL-1.1.txt"},{"fileName":"\\package\\StickyMD\\licenses\\KaTeX-fonts-NOTICE.txt"}]}'
+[IO.File]::WriteAllText($sbom, $validSbomText, [Text.UTF8Encoding]::new($false))
 function New-Archive([string[]]$names, [string]$sourceText) {
     if ([IO.File]::Exists($zip)) { [IO.File]::Delete($zip) }
     $stream = [IO.File]::Open($zip, [IO.FileMode]::CreateNew)

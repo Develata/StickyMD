@@ -69,6 +69,16 @@ pub(crate) fn verify_manifest_text(
     Ok(())
 }
 
+/// Generation and verification share the same name, digest and duplicate rules.
+pub(crate) fn render_checksums(artifacts: &[(&str, &str)]) -> Result<String, String> {
+    let text = artifacts
+        .iter()
+        .map(|(name, hash)| format!("{} *{name}\n", hash.to_ascii_lowercase()))
+        .collect::<String>();
+    verify_manifest_text(&text, artifacts)?;
+    Ok(text)
+}
+
 pub(crate) fn verify_checksum_manifest(
     directory: &Path,
     zip_name: &str,

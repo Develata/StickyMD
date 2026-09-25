@@ -76,3 +76,13 @@ Windows 双宿主 wrapper 使用含十六进制词、中文与空格的真实路
 2026-09-25 复核补充 REL-CLI-05：`release/windows.rs` 为 Windows PowerShell 子进程恢复自身模块搜索环境；
 双宿主 wrapper 注入冲突模块，验证 ZIP adapter 可用且父进程 `PSModulePath`、CWD、编码保持不变。
 当日重新执行的工具测试和本地包检查见上述维护报告的追加 Resolution；不继承历史验收结论。
+
+2026-09-25 输出收尾继续映射 plan 11 的 release-artifact-authority 与 phase-verification-harness：
+
+| Maintenance projection | Authoritative implementation / verification |
+| --- | --- |
+| Phase 14 REL-CLI-08 | `release/sbom.rs`：生成与验包复用 SPDX 结构/必需文件覆盖 gate；Rust unit、compiled CLI 与双 PowerShell 宿主失败输出回归 |
+| Phase 14 REL-CLI-09 | `release/checksums.rs`、`integrity.rs`、`atomic_evidence.rs`：同一 manifest 规则、路径别名拒绝、单文件原子替换、manifest 最后写入与失败拒绝验证 |
+| Phase 14 REL-CLI-10 | `tests/release_outputs.ps1`：实际 ZIP 许可证 bytes、失败 Syft、checksum 格式、输出接口和环境恢复；替代治理中的脚本函数名/次数断言 |
+
+实际验证与多文件非事务边界见 [输出收尾报告](report/2026-09-25-release-output-finalization.md)。

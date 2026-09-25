@@ -36,10 +36,20 @@ fn release_wrappers_preserve_interfaces_utf8_exit_codes_and_caller_state() {
             "a".repeat(64)
         ));
         fs::create_dir(&fixture).unwrap();
+        // Package names include a source SHA and a temporary suffix; stay below WinPS 5.1 MAX_PATH.
+        let outputs = std::env::temp_dir().join(format!(
+            "stickymd-outputs-{}-{nonce}-中文 space",
+            std::process::id()
+        ));
+        fs::create_dir(&outputs).unwrap();
         let script = fixture.join("check.ps1");
         fs::write(
             &script,
-            format!("\u{feff}{}", include_str!("release_wrappers.ps1")),
+            format!(
+                "\u{feff}{}\n{}",
+                include_str!("release_wrappers.ps1"),
+                include_str!("release_outputs.ps1")
+            ),
         )
         .unwrap();
         let output = Command::new(shell)
@@ -56,9 +66,11 @@ fn release_wrappers_preserve_interfaces_utf8_exit_codes_and_caller_state() {
             .env("STICKYMD_TEST_EXE", env!("CARGO_BIN_EXE_stickymd-smoke"))
             .env("STICKYMD_TEST_ROOT", root)
             .env("STICKYMD_TEST_DIRECTORY", &fixture)
+            .env("STICKYMD_TEST_OUTPUT_DIRECTORY", &outputs)
             .output()
             .expect("run release wrapper integration");
         fs::remove_dir_all(&fixture).unwrap();
+        fs::remove_dir_all(&outputs).unwrap();
         assert!(
             output.status.success(),
             "{shell}: stdout={} stderr={}",
@@ -66,5 +78,6 @@ fn release_wrappers_preserve_interfaces_utf8_exit_codes_and_caller_state() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("RELEASE_WRAPPERS=PASS"));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("RELEASE_OUTPUTS=PASS"));
     }
 }
