@@ -134,6 +134,85 @@ location, preserves Unicode paths and restores the caller's working
 directory and console encoding on success and failure. ZIP processing and native
 UI Automation remain platform adapters.
 
+## Release tooling
+
+The existing PowerShell parameter interfaces remain available:
+
+```powershell
+./tools/release/package.ps1 -OutputDirectory <directory> -AllowDirtyValidation
+./tools/release/verify-package.ps1 -PackageDirectory <directory> [-ZipPath <zip>] [-ChecksumPath <manifest>] [-Runtime]
+./tools/release/verify-promoted-artifact.ps1 -ArtifactDirectory <directory> -SourceSha <full-sha> -ExpectedZipSha256 <sha256> -ExpectedSbomSha256 <sha256> -ReleaseTag v0.1.0
+./tools/release/generate-third-party-notices.ps1 -DestinationPath <new-file>
+```
+
+Their reusable commands are in the existing std-only CLI:
+
+```powershell
+cargo run --quiet -p stickymd-smoke --locked -- release package-inputs --allow-dirty-validation
+cargo run --quiet -p stickymd-smoke --locked -- release workspace-version
+cargo run --quiet -p stickymd-smoke --locked -- release verify-package --package-directory <directory> [--zip <zip>] [--checksums <manifest>] [--runtime]
+cargo run --quiet -p stickymd-smoke --locked -- release verify-promoted --artifact-directory <directory> --source-sha <full-sha> --expected-zip-sha256 <sha256> --expected-sbom-sha256 <sha256> --release-tag v0.1.0
+cargo run --quiet -p stickymd-smoke --locked -- release notices --destination <new-file>
+```
+
+`package-inputs` also accepts `--version`, `--commit-sha`, `--release-tag` and
+`--exact-candidate`, preserving `package.ps1`'s override and dirty-tree policy.
+It returns one JSON plan marked `NOT_RUN`. Package selection and naming use the
+same Rust implementation. `workspace-version` reads the scalar from
+`[workspace.package]`, accepts assignment whitespace and comments, and refuses
+missing or duplicate versions instead of selecting a dependency/metadata version.
+Verification/notices retain the scripts' `KEY=value` stdout and 0/nonzero exit
+semantics. The wrappers resolve relative paths using the caller's PowerShell
+location, restore that location and console encoding even on failure, and use
+locked Cargo invocations.
+
+Rust-launched Windows release adapters start with the selected host's default
+module search path. They do not inherit `PSModulePath` from a different PowerShell
+edition through Cargo; this affects only the child environment. Wrapper tests
+exercise a conflicting module path as well as preserving the caller's environment.
+
+`integrity.rs` shares hash validation and strict two-member checksum manifests
+between package checks, promotion input checks and existing candidate receipts.
+Hash adapters parse the digest field, never hex-looking filename words; empty
+files have their actual SHA-256 on Windows as well as Linux.
+`release/identity.rs` binds the full source SHA and release tag/version. Duplicate
+checksum members, unsafe names and ambiguous README source declarations fail
+closed. The ZIP and SBOM checksum roles must have distinct artifact names;
+one file cannot satisfy both roles. An explicit ZIP must be the file covered by the package directory's
+manifest. Archive checks operate on a private snapshot of the supplied ZIP.
+
+`release/package_rules.rs` owns the six-member allowlist, Windows path safety,
+30 MiB limit and version/icon fact assertions. PE checks reuse `pe_dependencies`.
+`release/package_runtime.rs` owns bounded bootstrap, same-directory secondary
+exit and unchanged durable-file assertions, and independent ASCII/space/Chinese
+directories. Children use the existing RAII owner; cleanup targets only the
+processes and temporary directories created by this invocation. This check does
+not send keyboard, clipboard, tray or mouse input. Run it serially on an interactive
+Windows desktop.
+Performance/resource preflight also recognizes leftover `stickymd-verify-*`
+package-test children and blocks measurement without terminating those processes.
+
+`release/notices/` invokes locked Windows-filtered Cargo metadata, follows normal
+dependency edges through local packages, excludes build/dev-only edges, sorts
+ordinally, and selects license files or the existing reviewed fallback list.
+Missing graph/classification/license facts and unsupported runtime sources fail.
+Output remains UTF-8 without BOM, with LF, and includes the Cargo.lock hash.
+The destination parent must exist; an existing output is never overwritten.
+Publication uses a same-directory temporary file and a no-replace move on Windows
+(an atomic hard link on Linux); unsupported filesystem operations return failure.
+
+PowerShell keeps ZIP compression/extraction, native resource fact collection,
+Syft acquisition/invocation and existing UIA/COM adapters. `package.ps1` still
+assembles the staging directory and README. No product dependency was added.
+The general metadata JSON reader is confined to release tooling; qualification
+receipt schemas and release permissions are unchanged.
+
+These are distinct scopes: selecting a path, verifying a package, verifying
+supplied promotion inputs, and qualifying a Promoted Candidate. None of the new
+commands creates a candidate, updates a qualification ledger, authorizes a remote
+action or advances manual acceptance. Tests run with `cargo test -p stickymd-smoke
+--locked`; `release_wrappers` exercises PowerShell 5.1 and PowerShell 7 when available.
+
 ## Acceptance status
 
 The persistent result for each phase lives in

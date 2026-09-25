@@ -7,6 +7,7 @@ mod cli;
 mod evidence;
 mod governance;
 mod headless;
+mod integrity;
 #[cfg(windows)]
 mod managed_process;
 mod package_path;
@@ -17,10 +18,12 @@ mod qualification;
 mod qualification_environment;
 #[cfg(windows)]
 mod ready_event;
+mod release;
 mod repository;
 mod runner;
 #[cfg(windows)]
 mod runtime;
+mod startup_timing;
 #[cfg(windows)]
 mod window_control;
 
@@ -47,6 +50,7 @@ fn run() -> Result<(), String> {
     match command {
         cli::CommandLine::Smoke(options) => runner::execute(&root, &options),
         cli::CommandLine::Ci(command) => ci::execute(&root, &command),
+        cli::CommandLine::Release(command) => release::execute(&root, &command),
         cli::CommandLine::Modules(command) => runner::headless::execute(&root, &command),
         cli::CommandLine::AcceptanceManual(command) => qualification::record_manual(&root, command),
         cli::CommandLine::Qualification(command) => qualification::execute(&root, command),

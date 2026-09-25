@@ -1,6 +1,75 @@
 use std::process::Command;
 
 #[test]
+fn package_checksum_roles_must_refer_to_distinct_artifacts() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "stickymd-checksum-alias-{}-{nonce}-中文 space",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let zip = directory.join("SBOM.spdx.json");
+    std::fs::write(&zip, b"abc").unwrap();
+    let hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    std::fs::write(
+        directory.join("SHA256SUMS.txt"),
+        format!("{hash} *SBOM.spdx.json\n{hash} *unexpected.bin\n"),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
+        .args(["release", "verify-package", "--package-directory"])
+        .arg(&directory)
+        .arg("--zip")
+        .arg(&zip)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output();
+    std::fs::remove_dir_all(directory).unwrap();
+    let output = output.unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("distinct names"),
+        "roles must be rejected before ZIP/native checks: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn malformed_release_requests_never_emit_a_success_marker() {
+    for args in [
+        vec!["release", "notices"],
+        vec![
+            "release",
+            "verify-promoted",
+            "--artifact-directory",
+            "missing",
+        ],
+        vec!["release", "verify-package", "--unknown", "value"],
+        vec![
+            "release",
+            "notices",
+            "--destination",
+            "one",
+            "--destination",
+            "two",
+        ],
+        vec!["release", "workspace-version", "--runtime"],
+        vec!["release", "verify-package", "--exact-candidate"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
+            .args(args)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
 fn invalid_request_returns_a_nonzero_process_exit_code() {
     let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
         .arg("not-a-command")

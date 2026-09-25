@@ -47,40 +47,17 @@ $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
     throw "Release executable does not exist: $ExePath"
 }
-if (-not $Version) {
-    $workspaceManifest = Get-Content -LiteralPath (Join-Path $repoRoot 'Cargo.toml') -Raw
-    $match = [regex]::Match($workspaceManifest, '(?m)^version\s*=\s*"([^"]+)"\s*$')
-    if (-not $match.Success) { throw 'Cannot read workspace version from Cargo.toml' }
-    $Version = $match.Groups[1].Value
-}
-if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$') {
-    throw "Invalid workspace version: $Version"
-}
-if (-not $CommitSha) {
-    $CommitSha = (& git -C $repoRoot rev-parse HEAD).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve current Git commit' }
-}
-if ($CommitSha -notmatch '^[0-9a-fA-F]{40}$') { throw "Invalid full commit SHA: $CommitSha" }
-$shortSha = $CommitSha.Substring(0, 12).ToLowerInvariant()
-$dirty = [bool](& git -C $repoRoot status --porcelain)
-if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect Git working tree state' }
-if ($dirty -and -not $AllowDirtyValidation) {
-    throw 'Refusing to label a dirty working tree as a local RC; commit first or use -AllowDirtyValidation for non-RC script validation'
-}
-if ($ReleaseTag -and $ExactCandidate) {
-    throw 'ReleaseTag and ExactCandidate are mutually exclusive'
-}
-if ($ExactCandidate) {
-    if ($dirty) { throw 'An exact workflow candidate cannot be built from a dirty working tree' }
-    $archiveName = "StickyMD-$Version-windows-x64-portable.zip"
-} elseif ($ReleaseTag) {
-    if ($ReleaseTag -ne "v$Version") { throw "Release tag $ReleaseTag does not match workspace version v$Version" }
-    if ($dirty) { throw 'A tagged release package cannot be built from a dirty working tree' }
-    $archiveName = "StickyMD-$ReleaseTag-windows-x64-portable.zip"
-} else {
-    $qualifier = if ($dirty) { "local-validation-$shortSha-dirty" } else { "local-rc-$shortSha" }
-    $archiveName = "StickyMD-$Version-$qualifier-windows-x64-portable.zip"
-}
+. (Join-Path $PSScriptRoot 'invoke-smoke.ps1')
+$inputArguments = @('package-inputs')
+if ($Version) { $inputArguments += @('--version', $Version) }
+if ($CommitSha) { $inputArguments += @('--commit-sha', $CommitSha) }
+if ($ReleaseTag) { $inputArguments += @('--release-tag', $ReleaseTag) }
+if ($ExactCandidate) { $inputArguments += '--exact-candidate' }
+if ($AllowDirtyValidation) { $inputArguments += '--allow-dirty-validation' }
+$inputs = (Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments $inputArguments) | ConvertFrom-Json
+$Version = $inputs.version
+$CommitSha = $inputs.source_commit
+$archiveName = $inputs.archive_name
 $archivePath = Join-Path $OutputDirectory $archiveName
 $archiveTemporaryPath = Join-Path $OutputDirectory (".$archiveName." + [guid]::NewGuid().ToString('N') + '.tmp')
 
@@ -165,15 +142,7 @@ try {
     [IO.File]::WriteAllText($checksumPath, "$zipHash *$archiveName`n", [Text.UTF8Encoding]::new($false))
     Write-Output "PACKAGE_PATH=$archivePath"
     Write-Output "PACKAGE_SHA256=$zipHash"
-    $sourceTreeState = if ($ExactCandidate) {
-        'EXACT_WORKFLOW_CANDIDATE'
-    } elseif ($ReleaseTag) {
-        'TAGGED_RELEASE'
-    } elseif ($dirty) {
-        'DIRTY_VALIDATION'
-    } else {
-        'CLEAN_PREFLIGHT'
-    }
+    $sourceTreeState = $inputs.source_tree_state
     Write-Output "SOURCE_TREE_STATE=$sourceTreeState"
 } finally {
     $resolvedTemp = [IO.Path]::GetFullPath($temporaryRoot)

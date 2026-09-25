@@ -55,3 +55,24 @@
 
 这些维护验证不继承 `v0.1.0` exact artifact 身份；新 CI 选测规则的批准记录见
 [模块化 CI 影响分析](report/RISK-2026-09-08-modular-ci.md)。
+
+## 2026-09-22 release CLI maintenance coverage
+
+| Plan / existing acceptance mapping | Maintenance projection | Authoritative implementation / verification |
+| --- | --- | --- |
+| 11 release-artifact-authority / P14-A32/A34 | Phase 14 REL-CLI-01/02 | `stickymd-smoke/src/integrity.rs`、`release/identity.rs`、`release/promoted.rs`；candidate receipts 共用 checksum 实现 |
+| 10 ZIP hard gate + 11 portable-windows-runtime / P09-D066..D082、P14-A19 | Phase 14 REL-CLI-03/06 | `release/package*.rs`、现有 PE parser/ChildGuard；ZIP/资源事实仍由 PowerShell 采集 |
+| 11 dependency/release contract / P09-D061 | Phase 14 REL-CLI-04/05 | `release/notices/`；锁定 metadata、许可证失败路径、同输入字节比较、PowerShell 双版本测试 |
+| 11 phase-verification-harness / package selection and staging | Phase 14 REL-CLI-07 | `release/package_inputs.rs`、`package_path.rs`、`repository.rs`；现有阶段入口和选测继续复用 |
+
+工具修改与验证细节见 [2026-09-22 migration](report/2026-09-22-release-cli-migration.md)。
+本次维护不产生 Source Freeze、Promoted Candidate、人工或远端发布证据。
+
+同日 review 补充覆盖：`integrity` 的 ZIP/SBOM 角色重名、空文件、64 位十六进制路径词与 GNU escaped filename；
+`repository` 的 workspace 版本作用域/赋值空白/歧义拒绝；`managed_process` 对
+`stickymd-verify-*` 遗留测试进程的只读阻断。分别映射 REL-CLI-02/07/06，
+Windows 双宿主 wrapper 使用含十六进制词、中文与空格的真实路径。
+
+2026-09-25 复核补充 REL-CLI-05：`release/windows.rs` 为 Windows PowerShell 子进程恢复自身模块搜索环境；
+双宿主 wrapper 注入冲突模块，验证 ZIP adapter 可用且父进程 `PSModulePath`、CWD、编码保持不变。
+当日重新执行的工具测试和本地包检查见上述维护报告的追加 Resolution；不继承历史验收结论。

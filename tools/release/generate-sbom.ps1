@@ -14,10 +14,8 @@ $SyftArchiveSha256 = '815ee6973ec5dff6a671d7f41b0e78835a8c45b91d5a39f4743ea1cee8
 $SyftChecksumsSha256 = 'bb8824a06c27c625fc103db5d7e9d7131ba2cc6e7c7a79318ee71686ede3c3f0'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 . (Join-Path $PSScriptRoot 'package-path.ps1')
-$workspaceManifest = Get-Content -LiteralPath (Join-Path $repoRoot 'Cargo.toml') -Raw
-$versionMatch = [regex]::Match($workspaceManifest, '(?m)^version\s*=\s*"([^"]+)"\s*$')
-if (-not $versionMatch.Success) { throw 'Cannot read workspace version from Cargo.toml' }
-$workspaceVersion = $versionMatch.Groups[1].Value
+. (Join-Path $PSScriptRoot 'invoke-smoke.ps1')
+$workspaceVersion = Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments @('workspace-version')
 if (-not $PackageDirectory) { $PackageDirectory = Join-Path $repoRoot 'dist' }
 $PackageDirectory = [IO.Path]::GetFullPath($PackageDirectory)
 if (-not $ZipPath) {

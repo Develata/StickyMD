@@ -77,3 +77,26 @@ USER waiver 与仍未执行的极端环境项见
 - Tier B requires exact PASS or version/source-bound USER disposition。
 - Tier C `NOT TESTED` is nonblocking only while corresponding automated coverage is PASS；FAIL blocks。
 - PUSH、TAG、DRAFT-RELEASE、PUBLISH 均不由本矩阵授权。
+
+## 2026-09-22 release CLI maintenance verification
+
+本节是 plan 11 既有发布与验证合同的工具维护投影，关联 P09-D061/D066..D082、
+P14-A19/A32/A34，不修改上面的历史 source baseline 或人工状态。
+
+Preconditions：当前工作树、锁定 Cargo 依赖、隔离 fixture 与本次新构建的本地验证包。
+Action：执行 smoke crate tests、对应 PowerShell 薄入口及一次串行 package runtime 检查。
+Expected：合法输入保持输出语义；下列错误返回非零，失败不写候选/资格化收据或覆盖既有输出。
+Failure Signals：接受缺失/冲突来源、哈希不符、重复 manifest、危险路径、缺失许可证；状态恢复失败；
+把局部工具通过描述为 exact candidate 或人工验收通过。
+
+| ID | Requirement | Mode | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| REL-CLI-01 | full source SHA、tag/version、预期 ZIP/SBOM hash 与唯一 README 来源绑定 | Automated | Rust `release::identity/promoted` + `release_wrappers` | AUTOMATED PASS |
+| REL-CLI-02 | checksum 恰好绑定不同名称的 ZIP 与 SBOM，拒绝角色重名、重复、缺失、危险名称和错误 hash；空文件与含十六进制名称的路径按实际 bytes 哈希；candidate receipt 复用同一实现 | Automated | Rust `integrity::tests` + `cli_exit` + PowerShell 两版本失败路径 | AUTOMATED PASS |
+| REL-CLI-03 | allowlist、路径安全、30 MiB 边界、explicit ZIP 与 manifest 所指文件一致、PE 与原生资源验证 | Automated | Rust `release::package/package_rules`、`pe_dependencies` + 新本地包检查 | AUTOMATED PASS |
+| REL-CLI-04 | Cargo normal-edge 闭包、build/dev 分类、本地依赖传递、循环终止、稳定排序与许可证选择/拒绝 | Automated | Rust `release::notices` + 迁移前后同一锁图输出逐字节比较 | AUTOMATED PASS |
+| REL-CLI-05 | PowerShell 5.1/7 保留输出、失败退出码、Unicode/空格路径、CWD 和编码恢复；子进程不继承不兼容模块路径且父进程环境不变；notices 拒绝覆盖 | Automated | `tests/release_wrappers.rs` + `atomic_evidence` 并发新文件测试 | AUTOMATED PASS |
+| REL-CLI-06 | ASCII/空格/中文隔离启动、同目录第二实例退出且 durable files 不变、不同目录进程独立存活；遗留 package-test child 阻断后续测量且不被自动终止 | Automated local | 本次新构建包的 `verify-package.ps1 -Runtime` + `managed_process::tests`；结果见维护报告 | AUTOMATED PASS |
+| REL-CLI-07 | package naming/dirty/tag/exact 策略在 Rust 单点实现，计划不生成验收收据；版本只取 workspace.package，兼容赋值空白并拒绝缺失/歧义 | Automated | Rust `release::package_inputs`、`repository` 与现有 `package_path` 回归 | AUTOMATED PASS |
+
+详细运行环境、数据及未验证项见 [维护报告](../report/2026-09-22-release-cli-migration.md)。

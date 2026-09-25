@@ -85,6 +85,10 @@ const REQUIRED_FILES: &[&str] = &[
     "tools/release/generate-sbom.ps1",
     "tools/release/verify-package.ps1",
     "tools/release/verify-promoted-artifact.ps1",
+    "tools/release/invoke-smoke.ps1",
+    "tools/release/archive-facts.ps1",
+    "tools/release/resource-facts.ps1",
+    "tools/stickymd-smoke/tests/release_wrappers.rs",
 ];
 
 const FORBIDDEN_PACKAGES: &[&str] = &[
@@ -557,18 +561,8 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
             "package.ps1 must normalize all source-controlled license text to UTF-8/LF".to_owned(),
         );
     }
-    let verify_package = read_text(&root.join("tools/release/verify-package.ps1"))?;
-    let verify_promoted = read_text(&root.join("tools/release/verify-promoted-artifact.ps1"))?;
-    for (label, script) in [
-        ("package verifier", verify_package.as_str()),
-        ("promotion verifier", verify_promoted.as_str()),
-    ] {
-        if !script.contains("Source commit:") {
-            return Err(format!(
-                "{label} must bind the packaged README to the approved source commit"
-            ));
-        }
-    }
+    // Release semantics are exercised against compiled Rust by release::* tests and
+    // tests/release_wrappers.rs. PowerShell source tokens are not evidence of a gate.
     let remote_promotion =
         read_text(&root.join("tools/stickymd-smoke/src/qualification/remote.rs"))?;
     for required in [
@@ -580,18 +574,6 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         if !remote_promotion.contains(required) {
             return Err(format!(
                 "remote promotion lacks authoritative-download token `{required}`"
-            ));
-        }
-    }
-    let notices = read_text(&root.join("tools/release/generate-third-party-notices.ps1"))?;
-    for required in [
-        "cargo metadata --format-version 1 --locked --filter-platform x86_64-pc-windows-msvc",
-        "Runtime package",
-        "Cargo.lock SHA-256",
-    ] {
-        if !notices.contains(required) {
-            return Err(format!(
-                "third-party notice generator lacks required contract token `{required}`"
             ));
         }
     }

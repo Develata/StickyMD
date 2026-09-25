@@ -107,22 +107,7 @@ fn executable_sha256(root: &Path) -> Option<String> {
     if !executable.is_file() {
         return None;
     }
-    #[cfg(windows)]
-    let output = Command::new("certutil")
-        .args(["-hashfile"])
-        .arg(&executable)
-        .arg("SHA256")
-        .output()
-        .ok()?;
-    #[cfg(not(windows))]
-    let output = Command::new("sha256sum").arg(&executable).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .find(|token| token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .map(str::to_ascii_lowercase)
+    crate::integrity::sha256(&executable).ok()
 }
 
 fn verified_artifact_sha256(root: &Path, results: &[EvidenceResult]) -> Option<String> {
@@ -132,16 +117,15 @@ fn verified_artifact_sha256(root: &Path, results: &[EvidenceResult]) -> Option<S
     if !verified {
         return None;
     }
-    fs::read_to_string(root.join("dist/SHA256SUMS.txt"))
+    let manifest = fs::read_to_string(root.join("dist/SHA256SUMS.txt")).ok()?;
+    let mut artifacts = crate::integrity::parse_checksums(&manifest)
         .ok()?
-        .lines()
-        .find_map(|line| {
-            let (hash, name) = line.split_once(" *")?;
-            (name.ends_with("-windows-x64-portable.zip")
-                && hash.len() == 64
-                && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            .then(|| hash.to_ascii_lowercase())
-        })
+        .into_iter()
+        .filter_map(|(name, hash)| name.ends_with("-windows-x64-portable.zip").then_some(hash));
+    match (artifacts.next(), artifacts.next()) {
+        (Some(hash), None) => Some(hash),
+        _ => None,
+    }
 }
 
 fn current_commit(root: &Path) -> Result<String, String> {

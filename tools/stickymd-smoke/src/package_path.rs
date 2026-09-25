@@ -63,10 +63,12 @@ pub(crate) fn resolve(root: &Path, directory: &Path) -> Result<PathBuf, String> 
         })
 }
 
-fn local_archive_name(version: &str, commit: &str, dirty: bool) -> Result<String, String> {
-    if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("cannot select a portable package without a full Git commit SHA".to_owned());
-    }
+pub(crate) fn local_archive_name(
+    version: &str,
+    commit: &str,
+    dirty: bool,
+) -> Result<String, String> {
+    crate::integrity::validate_hex(commit, 40, "portable package Git commit SHA")?;
     let short = commit[..12].to_ascii_lowercase();
     let qualifier = if dirty {
         format!("local-validation-{short}-dirty")

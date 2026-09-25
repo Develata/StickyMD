@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 
 use super::json;
 use super::receipt::{self, Candidate};
-use crate::runtime::{RAPID_RESTART_DIAGNOSTIC_IDLE, WARM_CACHE_START_IDLE};
+use crate::startup_timing::{RAPID_RESTART_DIAGNOSTIC_IDLE, WARM_CACHE_START_IDLE};
 
 const PERFORMANCE_RECEIPT: &str = "dist/evidence/performance-qualification.json";
 const ATTRIBUTION_RECEIPT: &str = "dist/evidence/startup-attribution.json";
