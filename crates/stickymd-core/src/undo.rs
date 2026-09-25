@@ -45,8 +45,10 @@ impl UndoEntry {
         if self.kind != newer.kind
             || !self.kind.is_groupable()
             || newer.timestamp_ms < self.timestamp_ms
-            || newer.timestamp_ms - self.timestamp_ms > MERGE_WINDOW_MS
+            || newer.timestamp_ms - self.timestamp_ms >= MERGE_WINDOW_MS
             || self.delta.cursor_after != newer.delta.cursor_before
+            || self.delta.deleted.contains('\n')
+            || newer.delta.deleted.contains('\n')
         {
             return false;
         }
@@ -298,6 +300,47 @@ mod tests {
         assert_eq!(entry.delta.inserted(), "abc");
         assert_eq!(entry.delta.cursor_before(), CursorSnapshot::caret(0));
         assert_eq!(entry.delta.cursor_after(), CursorSnapshot::caret(3));
+    }
+
+    #[test]
+    fn merge_window_boundary_starts_a_new_undo_entry() {
+        for (gap, expected_entries) in [(749, 1), (750, 2), (751, 2)] {
+            let mut history = UndoManager::new();
+            history.record(UndoEntry::new(
+                delta(0..0, "", "a", 0, 1),
+                EditKind::Typing,
+                0,
+                Vec::new(),
+            ));
+            history.record(UndoEntry::new(
+                delta(1..1, "", "b", 1, 2),
+                EditKind::Typing,
+                gap,
+                Vec::new(),
+            ));
+            assert_eq!(history.undo_len(), expected_entries, "gap={gap}");
+        }
+    }
+
+    #[test]
+    fn deleting_newlines_never_merges_across_undo_steps() {
+        for kind in [EditKind::Backspace, EditKind::DeleteForward] {
+            let mut history = UndoManager::new();
+            for (index, deleted) in ["b", "\n", "a"].into_iter().enumerate() {
+                let (range, before, after) = if kind == EditKind::Backspace {
+                    (2 - index..3 - index, 3 - index, 2 - index)
+                } else {
+                    (0..1, 0, 0)
+                };
+                history.record(UndoEntry::new(
+                    delta(range, deleted, "", before, after),
+                    kind,
+                    index as u64 * 100,
+                    Vec::new(),
+                ));
+            }
+            assert_eq!(history.undo_len(), 3, "kind={kind:?}");
+        }
     }
 
     #[test]
