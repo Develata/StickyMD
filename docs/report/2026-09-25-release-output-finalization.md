@@ -100,3 +100,36 @@ PE gate 报告 `DEVELOPER_RUNTIME_IMPORTS=none`。随后新建中文/空格输�
 
 完整产品 Campaign、人工验收和远程 workflow 仍未执行；未创建或移动 tag，未发布 Release。
 本地集成通过不替代这些不同范围的证据，也不更新已发布 `v0.1.0` 的历史资格化状态。
+
+## Resolution — 2026-09-25 合并前 Linux 严格检查修复
+
+USER 随后授权修复遗留问题并合并 main。本轮从已提交的 `8c03fc4` 建立独立干净检出，
+不带入原工作区的未提交运行时改动。`origin/main` 刷新后仍为 `37fa6e0`。
+上述 Linux `dead_code` 缺口以相同 `cargo clippy -p stickymd-smoke --all-targets --locked
+-- -D warnings` 复现，bin 11 个、test 6 个诊断使检查退出 101。
+
+根因是 Windows 专用执行/展示路径仍在 Linux 构建中声明。现将 case/scenario 输出方法和
+携带 runtime evidence 的失败分支限定于 Windows，将桌面事实分类与重复运行规则保留在
+Windows 或 unit-test 构建。CLI 参数解析和 Linux 上的纯规则测试继续可用。
+四种共享证据状态保持原有名称和序列化语义；只有 Windows 会构造的两个状态使用具名、
+按平台限定的 `expect(dead_code)`，若将来该例外不再成立，严格 Clippy 会以未满足的 lint
+expectation 报错。没有添加 crate 级 lint 豁免、删除纯规则测试或改变 unsupported 结果。
+
+新增 Linux compiled CLI 回归：真实执行 `qualification environment` 返回 1，输出
+`UNSUPPORTED` / `NOT_TESTED`，且不输出 `PASSED`。CI plan job 对 full/smoke 范围执行
+Linux 严格 Clippy 与 smoke tests，失败直接阻断 plan 和后续聚合；普通说明文档仍可只运行
+fmt/governance。对应 README、P00-A10、coverage 已同步，无需修改 plan 或产品功能投影。
+
+证据目录为 `C:\Users\QQ\AppData\Local\Temp\stickymd-cli-merge-983d0010`：
+
+| 本轮检查 | 结果 |
+| --- | --- |
+| Linux strict Clippy + smoke tests | 无诊断，137 unit + 10 CLI = 147 通过，`linux-after.log` |
+| Windows strict Clippy + smoke tests | 无诊断，170 unit + 9 CLI + 2 wrapper = 181 通过，`windows-clippy.log`、`windows-tests.log` |
+| `cargo fmt --all -- --check` | 通过 |
+| Phase 00 JSON governance | 通过 |
+| CI/scheduled `actionlint` | 通过 |
+
+本轮修复没有改变 Windows 执行逻辑、artifact 字节规则、依赖或资格化状态；未重跑桌面、
+资源/性能或发布 Campaign。合并范围包含分支原先已提交的表格源码坐标修正与模块化 CI，
+远端检查由 PR 的实际记录提供，不以前述本地定向结果冒充。

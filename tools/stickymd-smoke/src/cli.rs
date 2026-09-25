@@ -224,6 +224,7 @@ impl G3Case {
         }
     }
 
+    #[cfg(windows)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::G301 => "G3-01",
@@ -258,6 +259,7 @@ impl G4Case {
         }
     }
 
+    #[cfg(windows)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::G401 => "G4-01",
@@ -289,6 +291,7 @@ impl G5Case {
         }
     }
 
+    #[cfg(windows)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::G501 => "G5-01",
@@ -324,6 +327,7 @@ impl WindowStressScenario {
         }
     }
 
+    #[cfg(windows)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Collapse => "collapse",

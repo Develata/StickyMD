@@ -44,6 +44,7 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
         println!("[{}/{}] {}", index + 1, tasks.len(), task_label(task));
         match run_task(root, task, false)? {
             TaskExecution::Passed(_) => {}
+            #[cfg(windows)]
             TaskExecution::Failed { detail, .. } => return Err(detail),
             #[cfg(not(windows))]
             TaskExecution::NotTested(detail) => return Err(format!("NOT_TESTED: {detail}")),

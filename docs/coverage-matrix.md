@@ -86,3 +86,10 @@ Windows 双宿主 wrapper 使用含十六进制词、中文与空格的真实路
 | Phase 14 REL-CLI-10 | `tests/release_outputs.ps1`：实际 ZIP 许可证 bytes、失败 Syft、checksum 格式、输出接口和环境恢复；替代治理中的脚本函数名/次数断言 |
 
 实际验证与多文件非事务边界见 [输出收尾报告](report/2026-09-25-release-output-finalization.md)。
+
+2026-09-25 合并前工具维护映射 plan 11 phase-verification-harness / modular-headless-ci 与
+P00-A10：`cli.rs`、`qualification/{mod.rs,repetition.rs}`、`qualification_environment.rs`、
+`runner{,/headless}.rs` 按平台编译实际执行路径并保留纯规则测试；Linux 上的 compiled CLI
+回归验证 GUI 资格化仍以非零和 `UNSUPPORTED` / `NOT_TESTED` 拒绝。
+CI plan job 在 full/smoke 范围运行 Linux 严格 lint 和 smoke tests，避免该维护缺口复发。
+实际运行结果见上述报告的合并前 Resolution；人工与发布状态不变。

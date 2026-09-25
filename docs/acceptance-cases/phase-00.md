@@ -15,6 +15,7 @@
 | P00-A07 | Rust package selection with a thin Windows adapter | Automated | `cargo test -p stickymd-smoke --locked`: [`package selection tests`](../../tools/stickymd-smoke/src/package_path/tests.rs), [`PowerShell compatibility regression`](../../tools/stickymd-smoke/tests/package_path_wrapper.rs), ambiguity/missing inputs and Unicode paths with state restoration | AUTOMATED PASS |
 | P00-A08 | plan 11 modular headless CI selection and conservative fallback | Automated | `cargo test -p stickymd-smoke --locked ci::`: [`Git input tests`](../../tools/stickymd-smoke/src/ci/git/tests.rs), [`classification tests`](../../tools/stickymd-smoke/src/ci/selection/tests.rs), Cargo registry verification | AUTOMATED PASS |
 | P00-A09 | plan 11 job aggregation and full manual/scheduled/release boundaries | Automated | [`workflow adapter tests`](../../tools/stickymd-smoke/src/ci/workflow_tests.rs), [`result aggregation`](../../tools/stickymd-smoke/src/ci/results.rs), actionlint for CI/scheduled workflows | AUTOMATED PASS |
+| P00-A10 | plan 11 portable verification tooling and unsupported GUI evidence boundary | Automated | strict smoke CLI Clippy on Windows/Linux; Linux planner job runs lint/tests for full or smoke scope; [`compiled CLI regression`](../../tools/stickymd-smoke/tests/cli_exit.rs) checks unsupported GUI requests | AUTOMATED PASS |
 | P00-M01 | USER constitution semantic fidelity review | Manual | Current-commit section-by-section review receipt required | NOT TESTED |
 | P00-M02 | architecture contract judgment review | Manual | Current-commit architecture checklist receipt required | NOT TESTED |
 
@@ -29,3 +30,9 @@ P00-A09: Given a declared CI scope and completed job statuses, aggregate the res
 success only when requested jobs succeeded and intentional skips match the plan. Failure,
 cancellation, missing/unknown status or unexpected skip must return nonzero. Manual, scheduled
 and release lanes must retain full checks. These local adapter checks do not prove remote execution.
+
+P00-A10: Given a Linux host, build/lint the smoke CLI with locked dependencies and
+`--all-targets -- -D warnings`, then request GUI qualification environment inspection.
+Expect a nonzero exit code with `UNSUPPORTED` / `NOT_TESTED` evidence, never `PASSED`.
+Windows-only execution paths must not disable portable CLI parsing or pure rule tests.
+Any lint failure, successful GUI qualification on Linux, or success evidence is a failure.

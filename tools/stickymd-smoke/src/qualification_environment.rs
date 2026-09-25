@@ -7,6 +7,13 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum QualificationEnvironmentStatus {
     Valid,
+    #[cfg_attr(
+        not(any(windows, test)),
+        expect(
+            dead_code,
+            reason = "shared evidence status; only Windows inspects desktop facts"
+        )
+    )]
     EnvironmentBlocked,
     #[cfg_attr(
         windows,
@@ -16,6 +23,13 @@ pub(crate) enum QualificationEnvironmentStatus {
         )
     )]
     Unsupported,
+    #[cfg_attr(
+        not(windows),
+        expect(
+            dead_code,
+            reason = "shared evidence status; only the Windows inspector can fail"
+        )
+    )]
     Error,
 }
 
@@ -94,6 +108,7 @@ pub(crate) fn inspect() -> QualificationEnvironment {
     }
 }
 
+#[cfg(any(windows, test))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct EnvironmentFacts {
     session_active: bool,
@@ -104,6 +119,7 @@ struct EnvironmentFacts {
     display_count: u32,
 }
 
+#[cfg(any(windows, test))]
 fn classify(facts: EnvironmentFacts) -> QualificationEnvironment {
     let interactive_session = facts.session_active && facts.display_count > 0;
     let workstation_locked = !facts.session_unlocked;

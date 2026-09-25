@@ -1,5 +1,21 @@
 use std::process::Command;
 
+#[cfg(not(windows))]
+#[test]
+fn unsupported_gui_qualification_emits_not_tested_and_returns_failure() {
+    let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
+        .args(["qualification", "environment"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let evidence = String::from_utf8(output.stdout).unwrap();
+    assert!(evidence.contains("\"UNSUPPORTED\""), "{evidence}");
+    assert!(evidence.contains("\"NOT_TESTED\""), "{evidence}");
+    assert!(!evidence.contains("\"PASSED\""), "{evidence}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported on this host"));
+}
+
 #[test]
 fn package_checksum_roles_must_refer_to_distinct_artifacts() {
     let nonce = std::time::SystemTime::now()

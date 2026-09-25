@@ -109,6 +109,12 @@ rendering-stress fixture also selects full CI because the smoke harness embeds i
 Known documentation-only changes retain fmt and governance. Planner regressions
 run with the smoke module; changes to the planner itself select complete CI.
 
+The Linux planner job also runs strict smoke CLI Clippy and tests when the plan
+selects `smoke` or full coverage. Windows desktop executors are compiled only for
+Windows; their pure classification/repetition rules retain Linux unit coverage.
+Shared evidence status names remain stable. A GUI qualification request on Linux
+reports `UNSUPPORTED` / `NOT_TESTED` and returns a nonzero exit code.
+
 Rust also projects the applicable lint, Linux portability, dependency-policy and
 Windows Release checks. The GitHub adapter forwards those arguments and runs
 selected modules on isolated runners. The stable `CI result` job uses `ci verify`
