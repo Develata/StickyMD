@@ -133,3 +133,25 @@ fmt/governance。对应 README、P00-A10、coverage 已同步，无需修改 pla
 本轮修复没有改变 Windows 执行逻辑、artifact 字节规则、依赖或资格化状态；未重跑桌面、
 资源/性能或发布 Campaign。合并范围包含分支原先已提交的表格源码坐标修正与模块化 CI，
 远端检查由 PR 的实际记录提供，不以前述本地定向结果冒充。
+
+## Resolution — 2026-09-25 远程 CI 的 8.3 路径回归修复
+
+[PR #1 首轮 CI](https://github.com/Develata/StickyMD/actions/runs/36170205316)
+在 Windows workspace tests 中暴露 `package_path_wrapper` 的相对路径比较失败。
+原始日志保存在上述证据目录的 `pr-job-108187833836.log`。
+
+本地将测试进程的 TEMP/TMP 指向新建目录的 Windows 8.3 别名，复现了相同失败；
+单独执行 `release_wrappers` 也复现同类 promotion 路径预期失败。PowerShell 5.1 和 7
+的现场诊断均确认：`Set-Location` / `Get-Location` 将短别名展开为长目录名，而显式
+绝对路径参数可以保留别名。两种路径指向同一目录，但旧测试错误地要求字符串完全相同。
+
+修复只调整测试 oracle：相对包路径按调用者实际 PowerShell location 拼接预期；
+相对发布路径按实际 location / 已存在输出目录的完整名称比较。显式绝对路径的 Unicode
+round-trip、失败退出码、既有文件保护、输出内容及调用者状态恢复断言仍然保留。
+未修改 package-path 或发布 wrapper 的生产行为，没有放宽任何性能或发布门禁。
+
+短别名环境下两个 wrapper 集成测试均通过，发布脚本覆盖 PowerShell 5.1/7，见
+`short-path-wrappers-after.log`；普通长路径下两项也通过，见
+`long-path-wrappers-after.log`。修复后 fmt 与 Windows strict Clippy 通过。
+对应 P00-A07 与 REL-CLI-05 已补充该环境的验证范围。
+最新提交的远程 CI 结果以 PR 实际记录为准。

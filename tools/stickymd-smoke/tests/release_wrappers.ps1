@@ -10,6 +10,8 @@ $repo = $env:STICKYMD_TEST_ROOT
 $fixture = $env:STICKYMD_TEST_DIRECTORY
 Set-Location -LiteralPath $fixture
 $location = (Get-Location).Path
+# Relative wrapper inputs use the long location even when TEMP contains an 8.3 alias.
+$fixture = $location
 [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(936)
 function Assert-State {
     if ([Console]::OutputEncoding.CodePage -ne 936 -or (Get-Location).Path -cne $location) {

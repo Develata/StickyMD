@@ -96,7 +96,7 @@ Failure Signals：接受缺失/冲突来源、哈希不符、重复 manifest、�
 | REL-CLI-02 | checksum 恰好绑定不同名称的 ZIP 与 SBOM，拒绝角色重名、重复、缺失、危险名称和错误 hash；空文件与含十六进制名称的路径按实际 bytes 哈希；candidate receipt 复用同一实现 | Automated | Rust `integrity::tests` + `cli_exit` + PowerShell 两版本失败路径 | AUTOMATED PASS |
 | REL-CLI-03 | allowlist、路径安全、30 MiB 边界、explicit ZIP 与 manifest 所指文件一致、PE 与原生资源验证 | Automated | Rust `release::package/package_rules`、`pe_dependencies` + 新本地包检查 | AUTOMATED PASS |
 | REL-CLI-04 | Cargo normal-edge 闭包、build/dev 分类、本地依赖传递、循环终止、稳定排序与许可证选择/拒绝 | Automated | Rust `release::notices` + 迁移前后同一锁图输出逐字节比较 | AUTOMATED PASS |
-| REL-CLI-05 | PowerShell 5.1/7 保留输出、失败退出码、Unicode/空格路径、CWD 和编码恢复；子进程不继承不兼容模块路径且父进程环境不变；notices 拒绝覆盖 | Automated | `tests/release_wrappers.rs` + `atomic_evidence` 并发新文件测试 | AUTOMATED PASS |
+| REL-CLI-05 | PowerShell 5.1/7 保留输出、失败退出码、Unicode/空格路径、CWD 和编码恢复；相对路径按调用者实际目录解释，兼容 8.3 TEMP 别名；子进程不继承不兼容模块路径且父进程环境不变；notices 拒绝覆盖 | Automated | `tests/release_wrappers.rs` + `atomic_evidence` 并发新文件测试 | AUTOMATED PASS |
 | REL-CLI-06 | ASCII/空格/中文隔离启动、同目录第二实例退出且 durable files 不变、不同目录进程独立存活；遗留 package-test child 阻断后续测量且不被自动终止 | Automated local | 本次新构建包的 `verify-package.ps1 -Runtime` + `managed_process::tests`；结果见维护报告 | AUTOMATED PASS |
 | REL-CLI-07 | package naming/dirty/tag/exact 策略在 Rust 单点实现，计划不生成验收收据；版本只取 workspace.package，兼容赋值空白并拒绝缺失/歧义 | Automated | Rust `release::package_inputs`、`repository` 与现有 `package_path` 回归 | AUTOMATED PASS |
 | REL-CLI-08 | Syft 先写隔离临时文件；失败、非法 UTF-8/JSON、错误 SPDX 版本、空 packages 或缺失必需文件均不得替换既有 SBOM/manifest；包验证复用同一结构/覆盖规则，即使 hash 正确也拒绝非法 SBOM | Automated | Rust `release::sbom::tests`、`cli_exit` + PowerShell 5.1/7 `release_outputs.ps1` 行为回归 | AUTOMATED PASS |

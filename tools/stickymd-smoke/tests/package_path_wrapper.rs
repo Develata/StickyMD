@@ -42,7 +42,11 @@ if ([Console]::OutputEncoding.CodePage -ne 936 -or (Get-Location).Path -cne $exp
     throw 'Success changed the caller state'
 }
 $relative = Resolve-StickyMdPackagePath -RepoRoot $env:STICKYMD_TEST_ROOT -PackageDirectory '.'
-if ($relative -cne $observed) { throw 'Relative path did not use the caller PowerShell location' }
+# Set-Location expands 8.3 aliases; relative inputs follow that actual location.
+$expectedRelative = Join-Path $expectedLocation 'StickyMD-old-windows-x64-portable.zip'
+if ($relative -cne $expectedRelative) {
+    throw "Relative package path mismatch: expected '$expectedRelative', observed '$relative'"
+}
 $failed = $false
 try {
     Resolve-StickyMdPackagePath -RepoRoot $env:STICKYMD_TEST_ROOT -PackageDirectory (Join-Path $env:STICKYMD_TEST_DIRECTORY 'missing')

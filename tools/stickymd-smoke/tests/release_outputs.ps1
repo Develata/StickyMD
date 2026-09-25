@@ -1,6 +1,6 @@
 # Runs after release_wrappers.ps1 in the same isolated host and fixture.
 [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(936)
-$outputDirectory = $env:STICKYMD_TEST_OUTPUT_DIRECTORY
+$outputDirectory = (Get-Item -LiteralPath $env:STICKYMD_TEST_OUTPUT_DIRECTORY).FullName
 $outputRelative = Join-Path '..' ([IO.Path]::GetFileName($outputDirectory))
 $fakeExe = Join-Path $fixture 'fixture.exe'
 [IO.File]::WriteAllBytes($fakeExe, [byte[]](77,90,0,1))
