@@ -67,3 +67,36 @@ SBOM。没有测量或宣称性能收益。单文件原子替换不提供两个�
 以上是工具维护证据，不继承 `v0.1.0` exact artifact 身份。完整产品 workspace、资源/性能/
 G3/G4/G5 Campaign、人工视觉、物理多屏、Clean VM 和远程 workflow 不在此次定向验证范围。
 后续独立提交的本地包检查另行追加记录；不会以旧包或旧资格化收据替代本次工具验证。
+
+## Resolution — 2026-09-25 独立提交复核
+
+实现已分为 `f8644ea2c9c911c8c2f76cb0eb5a5b42cb9b9688`（发布规则与 notices 迁移）和
+`a2394fc65952f7316da683cc653b09b15b146c02`（SBOM/manifest 输出收尾）。
+第二批提交在 `E:\stickymd-release-check-45c2c549` 的干净独立工作树中运行完整 Windows smoke，
+**170 unit + 9 CLI + 2 wrapper = 181** 项全部通过；双 PowerShell 宿主实际执行了相对路径、
+中文/空格路径及输出失败回归。该独立提交的严格 Clippy、workspace fmt 同样通过。
+日志为 `batch2-clean-tests.log`、`batch2-clean-clippy.log`；稳定 `phase-00.ps1` 入口另有
+`governance.log`，相对路径定向复验为 `outputs-relative.log`。
+
+按开始收尾时的 SHA-256 清单核对，19 份无关文件逐字节不变，coverage 的原有运行时维护段
+完整保留。提交内容不包含产品 crate、Cargo.toml/Cargo.lock、其他 Phase 文档或
+`runner.rs` 的既有 Phase 05 benchmark 改动。索引已逐批 review，未将这些修改混入提交。
+
+在同一干净 `a2394fc` 工作树中，`cargo build -p stickymd-win --release --locked` 通过，
+PE gate 报告 `DEVELOPER_RUNTIME_IMPORTS=none`。随后新建中文/空格输出目录，实际运行
+`package.ps1`、固定且经摘要验证的 Syft 1.50.0、Windows PowerShell 5.1
+`verify-package.ps1 -Runtime`，再串行使用 PowerShell 7 验包，全部通过。
+这是 `CLEAN_PREFLIGHT` 本地包，没有调用 exact-candidate、Source Freeze、Promote 或任何
+资格化收据/账本写入。后续记录性文档提交不改变该测试包所绑定的 `a2394fc` 来源。
+
+- ZIP：`StickyMD-0.1.0-local-rc-a2394fc65952-windows-x64-portable.zip`，
+  SHA-256 `f44d257060cba61d981d634b086f8c5dcf50ad4cd2e00c638ceb6875078e7425`。
+- 本次新 SBOM SHA-256：`623c291dd3a03c63028571f184d70698b8a6804a3458a06f703a87b0fd90ecad`。
+- notices 的运行时依赖数为 187；package verifier 在两个宿主均重新生成并比较 notices。
+- 真实启动覆盖 ASCII、空格、中文路径、同目录第二实例退出/文件不变，以及不同目录实例独立。
+  全部 GUI 操作串行，不发送键盘、鼠标、托盘或剪贴板输入。
+- 集成前后进程清单一致，仅有用户原便签 PID 29116，没有本轮测试子进程残留。
+  日志与摘要清单为 `integration-final.log`、`artifact-hashes.json`、`processes-{before,after}.json`。
+
+完整产品 Campaign、人工验收和远程 workflow 仍未执行；未创建或移动 tag，未发布 Release。
+本地集成通过不替代这些不同范围的证据，也不更新已发布 `v0.1.0` 的历史资格化状态。
