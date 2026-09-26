@@ -95,7 +95,13 @@ pub(crate) fn emit(
             })?;
         }
         crate::atomic_evidence::write(&path, json.as_bytes())?;
-        crate::qualification::record_last_success_for_evidence(root, &path)?;
+        if !results.is_empty()
+            && results
+                .iter()
+                .all(|result| result.status == EvidenceStatus::Passed)
+        {
+            crate::qualification::record_last_success_for_evidence(root, &path)?;
+        }
     } else {
         println!("{json}");
     }
@@ -301,6 +307,61 @@ mod tests {
     use crate::qualification_environment::{
         QualificationEnvironment, QualificationEnvironmentStatus,
     };
+
+    #[test]
+    fn failed_receipt_keeps_measurements_without_touching_success_ledger() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-failed-evidence-{}-{nonce}",
+            std::process::id()
+        ));
+        let ledger = root.join("dist/evidence/module-success/performance.json");
+        fs::create_dir_all(ledger.parent().unwrap()).expect("create fixture");
+        fs::write(&ledger, b"previous immutable success").expect("seed ledger");
+        fs::write(
+            root.join("dist/evidence/release-candidate.json"),
+            b"invalid",
+        )
+        .expect("seed invalid candidate");
+        let output = root.join("dist/evidence/performance-qualification.json");
+        let measurement = EvidenceMeasurement {
+            name: "cold.p95".to_owned(),
+            unit: "ms".to_owned(),
+            value: 3_340.666,
+        };
+        for status in [EvidenceStatus::Failed, EvidenceStatus::NotTested] {
+            let result = EvidenceResult {
+                id: "startup matrix".to_owned(),
+                status,
+                detail: Some("startup gate failed".to_owned()),
+                measurements: vec![measurement.clone()],
+                gates: vec![EvidenceGate {
+                    metric: "cold.p95".to_owned(),
+                    comparator: "<=".to_owned(),
+                    value: 550.0,
+                    unit: "ms".to_owned(),
+                    source: "approved startup boundary".to_owned(),
+                }],
+                samples: vec![EvidenceSample {
+                    cohort: "cold".to_owned(),
+                    run: 1,
+                    measurements: vec![measurement.clone()],
+                }],
+            };
+            super::emit(&root, "phase-14", &[result], None, Some(&output))
+                .expect("failure evidence does not require a valid success candidate");
+            let document = fs::read_to_string(&output).expect("read failure evidence");
+            assert!(document.contains(status.as_str()), "{document}");
+            assert!(document.contains("3340.666000"), "{document}");
+            assert!(document.contains("\"gates\":[{"), "{document}");
+            assert!(document.contains("\"cohort\":\"cold\""), "{document}");
+            assert_eq!(fs::read(&ledger).unwrap(), b"previous immutable success");
+        }
+        fs::remove_dir_all(root).expect("remove owned fixture");
+    }
 
     #[test]
     fn phase11_json_schema_exposes_gates_samples_and_suite_identity() {

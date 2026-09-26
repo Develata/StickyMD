@@ -1,3 +1,5 @@
+# Failed task runs retain diagnostic JSON when -Json/-EvidenceFile is requested;
+# only complete PASS results can update the qualification last-success ledger.
 [CmdletBinding()]
 param(
     [switch]$Ci,

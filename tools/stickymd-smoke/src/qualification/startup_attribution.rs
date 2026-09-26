@@ -42,7 +42,7 @@ pub(super) fn record(root: &Path) -> Result<(), String> {
         RAPID_RESTART_DIAGNOSTIC_IDLE.as_millis() as f64,
     )?;
     let etw_status = etw_status();
-    let decision = "NO PRODUCT OPTIMIZATION NEEDED";
+    let decision = "ATTRIBUTION ONLY; SEE PERFORMANCE RECEIPT FOR GATE STATUS";
     let document = format!(
         concat!(
             "{{\"schema_version\":1,",

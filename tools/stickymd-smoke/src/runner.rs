@@ -161,6 +161,39 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
 
     let mut results = Vec::with_capacity(tasks.len() + 8);
     let mut environment = None;
+    let outcome = execute_tasks(root, options, &tasks, &mut results, &mut environment);
+    let emitted = if options.json {
+        evidence::emit(
+            root,
+            &label,
+            &results,
+            environment.as_ref(),
+            options.evidence_file.as_deref(),
+        )
+    } else {
+        Ok(())
+    };
+    match (outcome, emitted) {
+        (Ok(()), Ok(())) => {
+            if !options.json {
+                println!("StickyMD smoke PASS: {label}");
+            }
+            Ok(())
+        }
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(task_error), Err(evidence_error)) => Err(format!(
+            "{task_error}; evidence emission also failed: {evidence_error}"
+        )),
+    }
+}
+
+fn execute_tasks(
+    root: &Path,
+    options: &Options,
+    tasks: &[Task],
+    results: &mut Vec<EvidenceResult>,
+    environment: &mut Option<QualificationEnvironment>,
+) -> Result<(), String> {
     for (index, task) in tasks.iter().enumerate() {
         let task_name = task_label(task);
         if !options.json {
@@ -168,7 +201,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
         }
         if matches!(task, Task::QualificationEnvironment) {
             let observed = qualification_environment::inspect();
-            environment = Some(observed.clone());
+            *environment = Some(observed.clone());
             let status = environment_evidence_status(&observed);
             let detail = (status != EvidenceStatus::Passed).then(|| observed.summary());
             results.push(EvidenceResult {
@@ -187,7 +220,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
 
         if options.resources && is_resource_stage(task) {
             let observed = qualification_environment::inspect();
-            environment = Some(observed.clone());
+            *environment = Some(observed.clone());
             let status = environment_evidence_status(&observed);
             results.push(EvidenceResult {
                 id: format!("qualification environment before {task_name}"),
@@ -273,17 +306,6 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
         gates: Vec::new(),
         samples: Vec::new(),
     });
-    if options.json {
-        evidence::emit(
-            root,
-            &label,
-            &results,
-            environment.as_ref(),
-            options.evidence_file.as_deref(),
-        )?;
-    } else {
-        println!("StickyMD smoke PASS: {label}");
-    }
     Ok(())
 }
 
@@ -1414,6 +1436,74 @@ mod tests {
         TaskId, build_plan, captured_failure_detail, requires_full_readiness, tail_at_char_boundary,
     };
     use crate::cli::{CiShard, Options, ResourceModule, Selection};
+
+    #[test]
+    fn failed_task_replaces_stale_evidence_without_claiming_success() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-failed-task-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).expect("create evidence fixture");
+        let output = root.join("evidence.json");
+        std::fs::write(&output, b"stale success").expect("seed stale evidence");
+        let result = super::execute(
+            &root,
+            &Options {
+                selection: Selection::All,
+                ci: true,
+                ci_shard: None,
+                performance: false,
+                runtime: false,
+                resources: false,
+                resource_module: None,
+                release: false,
+                package: false,
+                json: true,
+                evidence_file: Some(output.clone()),
+            },
+        );
+        let evidence = std::fs::read_to_string(&output).expect("read evidence");
+        std::fs::remove_dir_all(&root).expect("remove owned fixture");
+
+        assert!(result.is_err(), "invalid repository must fail governance");
+        assert!(evidence.contains("\"status\":\"FAILED\""), "{evidence}");
+        assert!(evidence.contains("governance contracts"), "{evidence}");
+        assert!(!evidence.contains("PASSED"), "{evidence}");
+        assert!(
+            !evidence.contains("workspace tests"),
+            "later tasks must not run"
+        );
+    }
+
+    #[test]
+    fn failed_task_retains_original_error_when_evidence_write_also_fails() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-failed-evidence-write-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).expect("create owned fixture");
+        let original_error = crate::governance::verify(&root).expect_err("invalid fixture");
+        let options = Options::parse([
+            "phase".to_owned(),
+            "00".to_owned(),
+            "--ci".to_owned(),
+            format!("--evidence-file={}", root.display()),
+        ])
+        .expect("valid options with a directory as the evidence destination");
+        let error = super::execute(&root, &options).expect_err("both operations must fail");
+        std::fs::remove_dir_all(root).expect("remove owned fixture");
+
+        assert!(error.starts_with(&original_error), "{error}");
+        assert!(error.contains("evidence emission also failed:"), "{error}");
+    }
 
     #[test]
     fn all_plan_uses_one_consolidated_workspace_test() {

@@ -30,11 +30,13 @@ const STARTUP_ENGINEERING_TARGET: Duration = Duration::from_millis(400);
 const V0_1_0_STARTUP_RELEASE_BOUNDARY: Duration = Duration::from_millis(550);
 const ZOOM_RESOURCE_WARMUP: Duration = Duration::from_secs(5);
 const ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT: u64 = 8 * 1024 * 1024;
-static QUIET_OUTPUT: AtomicBool = AtomicBool::new(false);
+static JSON_OUTPUT: AtomicBool = AtomicBool::new(false);
 
 macro_rules! runtime_report {
     ($($argument:tt)*) => {
-        if !QUIET_OUTPUT.load(Ordering::Relaxed) {
+        if JSON_OUTPUT.load(Ordering::Relaxed) {
+            eprintln!($($argument)*);
+        } else {
             println!($($argument)*);
         }
     };
@@ -70,9 +72,9 @@ struct ShellObservation {
 pub(crate) fn run(
     repository: &Path,
     scenario: RuntimeScenario,
-    quiet: bool,
+    json_output: bool,
 ) -> Result<RuntimeEvidence, String> {
-    QUIET_OUTPUT.store(quiet, Ordering::Relaxed);
+    JSON_OUTPUT.store(json_output, Ordering::Relaxed);
     if requires_measurement_isolation(scenario) {
         managed_process::ensure_no_stale_smoke_stickymd()?;
     }

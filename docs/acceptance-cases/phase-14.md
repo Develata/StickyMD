@@ -24,7 +24,7 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A05 | Resources failure 不抹除 Performance receipt | Automated | campaign policy unit tests | AUTOMATED PASS |
 | P14-A06 | Runtime ordinary failure 仍保留后续独立、安全 receipt | Automated | campaign policy unit tests | AUTOMATED PASS |
 | P14-A07 | invalid environment（含无法写入物理 cursor position）、identity mismatch、P0/data-safety failure 全局停止 | Automated | qualification environment capability probe + campaign policy unit tests | AUTOMATED PASS |
-| P14-A08 | startup attribution 使用 per-sample milestone intervals 并输出唯一 decision | Automated | attribution parser/classifier tests | AUTOMATED PASS |
+| P14-A08 | startup attribution 使用 per-sample milestone intervals；归因记录不自动断言无需产品优化，门槛结果由 Performance receipt 持有 | Automated | attribution parser/classifier tests | AUTOMATED PASS |
 | P14-A09 | Tier A `NOT TESTED` 阻断；PASS 或 explicit waiver 才 eligible | Automated | readiness tests | AUTOMATED PASS |
 | P14-A10 | Tier B group waiver 必须绑定 version/source；Tier C NT 仅在 automation PASS 时 nonblocking | Automated | readiness tests | AUTOMATED PASS |
 | P14-A11 | v0.1.0 waiver 不适用于 v0.1.1 | Automated | readiness version-binding test | AUTOMATED PASS |
@@ -52,6 +52,7 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A33 | Promote 或 candidate identity 改变后 exact-byte evidence fail closed；功能资格化只在相关产品/共享/harness/contract 输入指纹改变时 stale，无法分类的 tracked path 保守失效 | Automated | module registry/fingerprint/readiness evidence-class tests + central candidate resolver regression | AUTOMATED PASS |
 | P14-A34 | Candidate workflow 与 publish promotion workflow 分离；tag/draft/publish 只接受显式 source/run/hash/tag 输入并复用同一 artifact，禁止 tag 触发重建或自动选择另一 build | Automated | release workflow governance + operation separation audit | AUTOMATED PASS |
 | P14-A35 | 每个 qualification module 只持久化最后一次完整成功记录；相同指纹显示来源 candidate 的 `REUSED PASS`，PASS 原子更新，FAIL/ABORTED/环境中止不创建或覆盖成功记录 | Automated | last-success ledger atomicity、failure non-overwrite、impacted planner 与 origin identity tests | AUTOMATED PASS |
+| P14-A36 | 已开始执行的 smoke task 失败或环境中止时仍原子写入本轮 JSON、已收集的 measurements/gates/samples；保持非零退出码、不执行后续任务、不更新成功账本；证据写入失败时同时保留原始错误 | Automated | runner failure-evidence regression + evidence failure/NOT_TESTED ledger-isolation tests | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 ## Guided manual sessions
