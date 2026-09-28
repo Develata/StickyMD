@@ -1,5 +1,7 @@
 # Failed task runs retain diagnostic JSON when -Json/-EvidenceFile is requested;
 # only complete PASS results can update the qualification last-success ledger.
+# Resource evidence files include INCOMPLETE checkpoints between major stages;
+# G3/G4/G5 also retain failed case results without updating the success ledger.
 [CmdletBinding()]
 param(
     [switch]$Ci,

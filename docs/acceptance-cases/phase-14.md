@@ -53,6 +53,9 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A34 | Candidate workflow 与 publish promotion workflow 分离；tag/draft/publish 只接受显式 source/run/hash/tag 输入并复用同一 artifact，禁止 tag 触发重建或自动选择另一 build | Automated | release workflow governance + operation separation audit | AUTOMATED PASS |
 | P14-A35 | 每个 qualification module 只持久化最后一次完整成功记录；相同指纹显示来源 candidate 的 `REUSED PASS`，PASS 原子更新，FAIL/ABORTED/环境中止不创建或覆盖成功记录 | Automated | last-success ledger atomicity、failure non-overwrite、impacted planner 与 origin identity tests | AUTOMATED PASS |
 | P14-A36 | 已开始执行的 smoke task 失败或环境中止时仍原子写入本轮 JSON、已收集的 measurements/gates/samples；保持非零退出码、不执行后续任务、不更新成功账本；证据写入失败时同时保留原始错误 | Automated | runner failure-evidence regression + evidence failure/NOT_TESTED ledger-isolation tests | AUTOMATED PASS |
+| P14-A37 | Resources 在开始及每个主要场景完成后持久化显式 `INCOMPLETE` 收据，保留已完成测量；最终完整成功才清除该标识；checkpoint 写入失败不得把部分结果登记为成功 | Automated | `runner/resource_progress` 的旧收据替换、测量保留、写入失败和成功账本隔离回归 | AUTOMATED PASS |
+| P14-A38 | 资源矩阵的无公式及 1/20 公式样本仅包含指定数量的公式与图片；修复资源 padding 不改变既有 startup fixture bytes；fixture 变化使对应模块指纹失效 | Automated | runtime fixture 数量/UTF-8/尺寸和 startup SHA-256 回归；module fingerprint 实际文件变更回归 | AUTOMATED PASS |
+| P14-A39 | G3/G4/G5 的普通 case 失败仍原子写出本轮完整结果，保留已通过项目和原始错误；失败不得覆盖 last-success，证据写入失败同时报告两项错误 | Automated | `exact_desktop/evidence` 失败收据替换与账本隔离回归 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 ## Guided manual sessions

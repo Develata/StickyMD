@@ -1,6 +1,7 @@
 //! Deduplicated task planning and subprocess execution.
 
 pub(crate) mod headless;
+mod resource_progress;
 
 use std::path::Path;
 use std::process::Command;
@@ -161,7 +162,14 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
 
     let mut results = Vec::with_capacity(tasks.len() + 8);
     let mut environment = None;
-    let outcome = execute_tasks(root, options, &tasks, &mut results, &mut environment);
+    let outcome = execute_tasks(
+        root,
+        options,
+        &label,
+        &tasks,
+        &mut results,
+        &mut environment,
+    );
     let emitted = if options.json {
         evidence::emit(
             root,
@@ -190,10 +198,12 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
 fn execute_tasks(
     root: &Path,
     options: &Options,
+    label: &str,
     tasks: &[Task],
     results: &mut Vec<EvidenceResult>,
     environment: &mut Option<QualificationEnvironment>,
 ) -> Result<(), String> {
+    resource_progress::emit(root, label, options, results, environment.as_ref())?;
     for (index, task) in tasks.iter().enumerate() {
         let task_name = task_label(task);
         if !options.json {
@@ -279,6 +289,9 @@ fn execute_tasks(
                 });
                 return Err(error);
             }
+        }
+        if is_resource_stage(task) {
+            resource_progress::emit(root, label, options, results, environment.as_ref())?;
         }
     }
     if requires_full_readiness(options)

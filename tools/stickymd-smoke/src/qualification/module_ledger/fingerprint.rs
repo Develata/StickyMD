@@ -150,6 +150,12 @@ fn path_domains(path: &str) -> u64 {
     if path == "crates/stickymd-render/tests/fixtures/rendering-stress.md" {
         return G5_HARNESS | PREVIEW | MATH | IMAGES;
     }
+    if path == "tests/fixtures/performance/typical-note-seed.md" {
+        return PERFORMANCE_HARNESS;
+    }
+    if path == "tests/fixtures/performance/resource-note-seed.md" {
+        return RESOURCES_HARNESS;
+    }
     if is_non_behavior_document(path) {
         return 0;
     }
@@ -283,6 +289,9 @@ fn is_editor_path(path: &str) -> bool {
 }
 
 fn harness_domains(path: &str) -> u64 {
+    if path == "tools/stickymd-smoke/src/runner/resource_progress.rs" {
+        return RESOURCES_HARNESS;
+    }
     if path.starts_with("tools/stickymd-smoke/src/qualification/g3") {
         return G3_HARNESS;
     }
@@ -329,6 +338,42 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn measurement_fixture_bytes_invalidate_only_their_qualification_module() {
+        let root = fixture();
+        let before_performance = calculate(&root, ModuleId::Performance).unwrap();
+        let before_resources = calculate(&root, ModuleId::Resources).unwrap();
+        let before_g4 = calculate(&root, ModuleId::G4).unwrap();
+        fs::write(
+            root.join("tests/fixtures/performance/resource-note-seed.md"),
+            "new resource fixture",
+        )
+        .unwrap();
+        let after_resources = calculate(&root, ModuleId::Resources).unwrap();
+        assert_ne!(before_resources, after_resources);
+        assert_eq!(
+            before_performance,
+            calculate(&root, ModuleId::Performance).unwrap()
+        );
+        assert_eq!(before_g4, calculate(&root, ModuleId::G4).unwrap());
+
+        fs::write(
+            root.join("tests/fixtures/performance/typical-note-seed.md"),
+            "new startup fixture",
+        )
+        .unwrap();
+        assert_ne!(
+            before_performance,
+            calculate(&root, ModuleId::Performance).unwrap()
+        );
+        assert_eq!(
+            after_resources,
+            calculate(&root, ModuleId::Resources).unwrap()
+        );
+        assert_eq!(before_g4, calculate(&root, ModuleId::G4).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn unrelated_group_harness_does_not_change_module_fingerprint() {
         let root = fixture();
         let before_g3 = calculate(&root, ModuleId::G3).expect("G3 fingerprint");
@@ -363,6 +408,8 @@ mod tests {
             "tools/stickymd-smoke/src/qualification/g3/cases.rs",
             "tools/stickymd-smoke/src/qualification/g4/cases/dock.rs",
             "docs/report/note.md",
+            "tests/fixtures/performance/typical-note-seed.md",
+            "tests/fixtures/performance/resource-note-seed.md",
         ] {
             let path = root.join(path);
             fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");

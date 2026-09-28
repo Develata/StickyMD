@@ -3,8 +3,32 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
 
 use crate::qualification::{json, receipt};
+use std::path::Path;
 
 use super::CaseResult;
+
+pub(super) fn finish(
+    repository: &Path,
+    output: &Path,
+    formal_group_run: bool,
+    document: &str,
+    outcome: Result<(), String>,
+) -> Result<(), String> {
+    let emitted = crate::atomic_evidence::write(output, document.as_bytes()).and_then(|()| {
+        if formal_group_run && outcome.is_ok() {
+            crate::qualification::record_last_success_for_evidence(repository, output)
+        } else {
+            Ok(())
+        }
+    });
+    match (outcome, emitted) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(case_error), Err(evidence_error)) => Err(format!(
+            "{case_error}; evidence emission also failed: {evidence_error}"
+        )),
+    }
+}
 
 pub(super) fn render_receipt(
     candidate: &receipt::Candidate,
@@ -14,7 +38,7 @@ pub(super) fn render_receipt(
     environment: &str,
     results: &[CaseResult],
 ) -> String {
-    let status = if results.iter().all(|result| result.status == "PASSED") {
+    let status = if !results.is_empty() && results.iter().all(|result| result.status == "PASSED") {
         "PASSED"
     } else {
         "FAILED"
@@ -72,6 +96,98 @@ mod tests {
     use super::render_receipt;
     use crate::qualification::exact_desktop::{ArtifactEvidence, CaseResult};
     use crate::qualification::receipt::Candidate;
+
+    #[test]
+    fn exact_failure_replaces_stale_receipt_without_replacing_success_ledger() {
+        use std::fs;
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-exact-failure-{}-{nonce}",
+            std::process::id()
+        ));
+        let output = root.join("dist/evidence/g4-exact-qualification.json");
+        let ledger = root.join("dist/evidence/module-success/g4.json");
+        fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+        fs::write(&ledger, "last complete success").unwrap();
+        fs::write(&output, "stale successful receipt").unwrap();
+        let candidate = candidate();
+        let document = render_receipt(
+            &candidate,
+            &candidate.source_commit,
+            false,
+            "Windows test",
+            "VALID",
+            &[
+                CaseResult {
+                    id: "G4-01",
+                    status: "FAILED",
+                    detail: Some("tray probe failed".to_owned()),
+                    artifacts: Vec::new(),
+                },
+                CaseResult {
+                    id: "G4-02",
+                    status: "PASSED",
+                    detail: None,
+                    artifacts: Vec::new(),
+                },
+            ],
+        );
+        let error = super::finish(
+            &root,
+            &output,
+            true,
+            &document,
+            Err("G4 failed 1/2".to_owned()),
+        )
+        .unwrap_err();
+        assert_eq!(error, "G4 failed 1/2");
+        assert_eq!(fs::read_to_string(&output).unwrap(), document);
+        assert!(document.contains("\"status\":\"FAILED\""));
+        assert!(document.contains("tray probe failed"));
+        assert!(document.contains("\"id\":\"G4-02\",\"status\":\"PASSED\""));
+        assert_eq!(
+            fs::read_to_string(&ledger).unwrap(),
+            "last complete success"
+        );
+
+        let error = super::finish(
+            &root,
+            &root,
+            true,
+            &document,
+            Err("original case failure".to_owned()),
+        )
+        .unwrap_err();
+        assert!(
+            error.starts_with("original case failure; evidence emission also failed:"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(&ledger).unwrap(),
+            "last complete success"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn candidate() -> Candidate {
+        Candidate {
+            source_commit: "a".repeat(40),
+            version: "0.1.1".to_owned(),
+            cargo_lock_sha256: "b".repeat(64),
+            exe_sha256: "c".repeat(64),
+            zip_sha256: "d".repeat(64),
+            sbom_sha256: "e".repeat(64),
+            target: "x86_64-pc-windows-msvc".to_owned(),
+            workflow_run_id: 1,
+            workflow_attempt: 1,
+            artifact_id: 2,
+            artifact_name: crate::qualification::receipt::RELEASE_ARTIFACT_NAME.to_owned(),
+            zip_name: "StickyMD-0.1.1-windows-x64-portable.zip".to_owned(),
+        }
+    }
 
     #[test]
     fn exact_receipt_binds_candidate_harness_and_results() {

@@ -211,30 +211,31 @@ pub(super) fn run(
         .iter()
         .filter(|result| result.status != "PASSED")
         .count();
-    if failed == 0 {
-        let document = evidence::render_receipt(
-            &candidate,
-            &harness_commit,
-            worktree_dirty,
-            &super::manual_receipt::windows_build(),
-            &environment.summary(),
-            &results,
-        );
-        crate::atomic_evidence::write(&output, document.as_bytes())?;
-        if formal_group_run {
-            super::module_ledger::record_for_receipt(repository, &output)?;
-        }
-        println!("{}_EXACT_RECEIPT={}", group.name, output.display());
+    let document = evidence::render_receipt(
+        &candidate,
+        &harness_commit,
+        worktree_dirty,
+        &super::manual_receipt::windows_build(),
+        &environment.summary(),
+        &results,
+    );
+    let outcome = if failed == 0 {
         Ok(())
     } else {
-        qualification_root.preserve();
         Err(format!(
             "{} exact qualification failed {failed}/{} cases; preserved {}",
             group.name,
             results.len(),
             qualification_root.path.display()
         ))
+    };
+    let finalized = evidence::finish(repository, &output, formal_group_run, &document, outcome);
+    if finalized.is_err() {
+        qualification_root.preserve();
     }
+    finalized?;
+    println!("{}_EXACT_RECEIPT={}", group.name, output.display());
+    Ok(())
 }
 
 pub(super) fn assert_sole_stickymd_process(expected: u32) -> Result<(), String> {

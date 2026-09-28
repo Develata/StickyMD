@@ -126,3 +126,10 @@ Source scrollbar baseline 接入 Phase 03、render 模块和完整 CI 性能分�
 任务去重、runner 内串行测量及 CI 日志/计划归档。定向 Rust tests、Release baseline 与 native message probe
 的范围及人工缺口见 [维护报告](report/2026-09-25-vertical-scrollbars.md)。
 后续审查、修复和复核见 [滚动条与 CI review](report/2026-09-25-scrollbar-ci-review.md)。
+
+2026-09-28 桌面验收工具修复映射 plan 10 的固定测量 fixture、plan 11 的 partial evidence、
+失败留证与 module-success-ledger：P14-A37..A39 由 `runner/resource_progress.rs`、
+`runtime.rs`、`qualification/exact_desktop/evidence.rs` 和 module fingerprint 回归持有。
+资源 padding 与 startup padding 分离；startup fixture SHA-256 保持不变，资源样本变化会使
+Resources 成功记录失效。实际桌面失败与诊断范围见
+[本轮报告](report/2026-09-28-v0.1.1-desktop-qualification.md)。

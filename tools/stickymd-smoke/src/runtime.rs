@@ -269,7 +269,7 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
     }
     let directory = root.join("phase9-startup");
     let executable = copy_executable(&source, &directory)?;
-    prepare_resource_layout(&directory, "source", 0, 0, ImageResourceFixture::None)?;
+    prepare_startup_layout(&directory)?;
     runtime_report!(
         "startup contract: fixture_bytes={} cold_samples={} cold_idle_seconds={} warm_samples={} warm_cache_idle_ms={} rapid_restart_diagnostic_ms={} preferred_ms={} engineering_ms={} release_boundary_ms={} ordering=interleaved",
         fs::metadata(directory.join("note/note.md"))
@@ -2478,6 +2478,41 @@ fn prepare_resource_layout(
     image_count: usize,
     image_fixture: ImageResourceFixture,
 ) -> Result<(), String> {
+    const RESOURCE_NOTE_SEED: &str =
+        include_str!("../../../tests/fixtures/performance/resource-note-seed.md");
+    prepare_resource_layout_with_seed(
+        program_directory,
+        view_mode,
+        formula_count,
+        image_count,
+        image_fixture,
+        RESOURCE_NOTE_SEED,
+    )
+}
+
+fn prepare_startup_layout(program_directory: &Path) -> Result<(), String> {
+    // Startup comparisons keep the existing mixed-note bytes. Resource cohorts
+    // need math-free padding so their explicit formula counts remain accurate.
+    const TYPICAL_NOTE_SEED: &str =
+        include_str!("../../../tests/fixtures/performance/typical-note-seed.md");
+    prepare_resource_layout_with_seed(
+        program_directory,
+        "source",
+        0,
+        0,
+        ImageResourceFixture::None,
+        TYPICAL_NOTE_SEED,
+    )
+}
+
+fn prepare_resource_layout_with_seed(
+    program_directory: &Path,
+    view_mode: &str,
+    formula_count: usize,
+    image_count: usize,
+    image_fixture: ImageResourceFixture,
+    padding_seed: &str,
+) -> Result<(), String> {
     let note_directory = program_directory.join("note");
     fs::create_dir(&note_directory)
         .map_err(|error| format!("cannot create resource note directory: {error}"))?;
@@ -2509,11 +2544,9 @@ fn prepare_resource_layout(
         }
         fixture.push_str("\n\n");
     }
-    const TYPICAL_NOTE_SEED: &str =
-        include_str!("../../../tests/fixtures/performance/typical-note-seed.md");
     if fixture.len() < 20 * 1024 {
         while fixture.len() < 20 * 1024 {
-            fixture.push_str(TYPICAL_NOTE_SEED);
+            fixture.push_str(padding_seed);
         }
         while fixture.len() > 20 * 1024 {
             fixture.pop();
@@ -2975,6 +3008,56 @@ mod tests {
         startup_interval_measurements, startup_threshold_class,
     };
     use crate::runner::RuntimeScenario;
+
+    #[test]
+    fn resource_fixtures_contain_only_the_requested_formulas_and_images() {
+        let root = super::create_smoke_root().unwrap();
+        for formula_count in [0, 1, 20] {
+            for (mode, image_count) in [("source", 0), ("preview", 0), ("split", 12)] {
+                let program = root.join(format!("{mode}-{formula_count}"));
+                std::fs::create_dir(&program).unwrap();
+                super::prepare_resource_layout(
+                    &program,
+                    mode,
+                    formula_count,
+                    image_count,
+                    super::ImageResourceFixture::None,
+                )
+                .unwrap();
+                let text = std::fs::read_to_string(program.join("note/note.md")).unwrap();
+                assert_eq!(
+                    text.matches('$').count(),
+                    2 * formula_count,
+                    "{mode}/{formula_count}"
+                );
+                assert_eq!(
+                    text.matches("![local](images/local.png)").count(),
+                    image_count
+                );
+                assert!((20 * 1024 - 3..=20 * 1024).contains(&text.len()));
+                for index in 0..formula_count {
+                    assert!(text.contains(&format!("$x_{index}^2+y_{index}^2=1$")));
+                }
+                assert!(!text.contains("$x^2+y^2=1$"));
+                assert!(!text.contains("\\("));
+                assert!(!text.contains("\\["));
+            }
+        }
+        super::cleanup_root(&root).unwrap();
+    }
+
+    #[test]
+    fn startup_fixture_keeps_its_existing_mixed_note_identity() {
+        let root = super::create_smoke_root().unwrap();
+        super::prepare_startup_layout(&root).unwrap();
+        let note = root.join("note/note.md");
+        assert_eq!(std::fs::metadata(&note).unwrap().len(), 20 * 1024);
+        assert_eq!(
+            crate::integrity::sha256(&note).unwrap(),
+            "cba874eb6af0fce3f6798f6c85122b9be9f745224260a16436b04aa663a2655c",
+        );
+        super::cleanup_root(&root).unwrap();
+    }
 
     #[test]
     fn startup_and_resource_measurements_require_process_isolation() {
