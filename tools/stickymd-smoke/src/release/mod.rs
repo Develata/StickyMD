@@ -4,7 +4,7 @@
 mod checksums;
 mod cli;
 mod identity;
-mod json;
+pub(crate) mod json;
 mod notices;
 mod package;
 mod package_inputs;

@@ -36,6 +36,7 @@ pub(crate) struct EvidenceGate {
 pub(crate) struct EvidenceSample {
     pub(crate) cohort: String,
     pub(crate) run: usize,
+    pub(crate) shared_from: Option<String>,
     pub(crate) measurements: Vec<EvidenceMeasurement>,
 }
 
@@ -79,6 +80,7 @@ pub(crate) fn emit(
         environment,
     );
     if let Some(path) = output_file {
+        crate::qualification::validate_public_evidence_path(root, path)?;
         let path = if path.is_absolute() {
             path.to_path_buf()
         } else {
@@ -160,7 +162,7 @@ fn current_worktree_dirty(root: &Path) -> Result<bool, String> {
     Ok(!output.stdout.is_empty())
 }
 
-fn render_json(
+pub(crate) fn render_json(
     commit: &str,
     worktree_dirty: bool,
     artifact_sha256: Option<&str>,
@@ -227,10 +229,14 @@ fn render_json(
                 output.push(',');
             }
             output.push_str(&format!(
-                "{{\"cohort\":\"{}\",\"run\":{},\"measurements\":[",
+                "{{\"cohort\":\"{}\",\"run\":{},",
                 escape_json(&sample.cohort),
                 sample.run,
             ));
+            if let Some(origin) = &sample.shared_from {
+                output.push_str(&format!("\"shared_from\":\"{}\",", escape_json(origin)));
+            }
+            output.push_str("\"measurements\":[");
             for (measurement_index, measurement) in sample.measurements.iter().enumerate() {
                 if measurement_index > 0 {
                     output.push(',');
@@ -348,6 +354,7 @@ mod tests {
                 samples: vec![EvidenceSample {
                     cohort: "cold".to_owned(),
                     run: 1,
+                    shared_from: None,
                     measurements: vec![measurement.clone()],
                 }],
             };
@@ -391,6 +398,7 @@ mod tests {
                     samples: vec![EvidenceSample {
                         cohort: "warm".to_owned(),
                         run: 1,
+                        shared_from: None,
                         measurements: vec![EvidenceMeasurement {
                             name: "external".to_owned(),
                             unit: "ms".to_owned(),

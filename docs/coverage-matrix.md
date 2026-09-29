@@ -141,3 +141,35 @@ Resources 成功记录失效。实际桌面失败与诊断范围见
 
 P14-A33 的并发隔离回归以固定时间戳验证临时路径唯一性；指纹流与测试目录共用
 进程内序号，流文件 exclusive create 后才取得清理所有权。输入字节序列与指纹算法不变。
+
+P14-A42..A46 投影 plan 11 的资源子模块资格化：`resource_plan` 统一场景身份与完整覆盖，
+`runtime/resources` 保留原生测量协议，`runner/resource_session` 负责同命令去重与计时，
+`qualification/resource_modules` 和 module ledger 持有五组 last-success。完整入口完成一组
+就登记，后续失败保留已完成组；readiness 要求五组兼容成功。旧 aggregate 不迁移，定向
+诊断不能写正式收据。共享窗口/进程输入使所有消费者失效，window/zoom 专属 harness
+按组失效。19 名称/15 测量和 25 分钟固定等待差是静态与无界面回归结论；
+真实桌面资源与提速仍为 P14-A46 NOT TESTED，见
+[优化报告](report/2026-09-29-resource-verification-optimization.md)。
+
+P14-A47/A48 继续投影 plan 11 的候选测量与失败证据规则：`runner/candidate_input`
+用完整候选校验替代未使用的本地 EXE 构建；`runtime/resources/cohort` 保留完整单次样本，
+在既有 any/max 硬门确定失败时终止后续轮次；`runner/resource_session` 把失败观测送入
+统一 JSON 收尾路径，五类 last-success 不受影响。成功次数、预热/CPU 窗口和 startup
+p95 算法不变；首轮 CPU 失败减少 360 秒固定等待是静态预算，桌面实测仍为 P14-A46。
+
+P14-A49..A51 投影 plan 11 的 `shared-headless-prerequisite`：
+`qualification/workspace_tests` 持有完整 Runtime/Performance workspace tests 的 source-bound
+成功与执行身份，`module_ledger/fingerprint` 和 `resource_modules` 共享单轮规划结果，
+`runner/timing` 保留任务失败用时。执行与复用前后重新核对输入；未知设置绕过共享，
+失败/partial/CI 不登记；历史运行时间明确标为 origin。真实 Git/freeze fixture、受控执行器、
+指纹与失败观测回归验证工具规则；资源产品依赖仍覆盖 ALL_PRODUCT，原生验收保持 P14-A46。
+
+上述优化的独立 review 修复继续映射 P14-A42/A43/A49：`resource_plan/observations`
+核对实际样本、统计、来源和既有硬门；共享 cohort 缓存保留完整观测。`module_ledger`
+按文件系统身份统一输出别名，`smoke_scope` 在任务前保护内部路径；`workspace_tests/identity`
+按 Cargo 子进程工作目录解析相对配置。隔离旧行为复现与修复回归见优化报告追加 Resolution。
+
+P14-A50/A51 的批量规划回归由 `module_ledger/fingerprint/stream` 持有：共享输入单次流式
+读取，逐组保持旧摘要协议；有界缓冲、真实读取/flush 失败、临时文件冲突及 unwind 清理
+验证本次临时文件所有权。显式 `resource_planning_profile` 比较旧实现与批量实现的指纹、
+源码读取量和规划用时，默认测试跳过该本机计时；其结果不等于 P14-A46 的原生测量。

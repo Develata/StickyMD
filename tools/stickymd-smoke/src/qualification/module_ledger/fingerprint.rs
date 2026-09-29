@@ -2,15 +2,16 @@
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#module-success-ledger
 
-use std::fs::{self, File};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::ModuleId;
-use crate::qualification::receipt;
+use crate::cli::ResourceModule;
+
+mod stream;
+pub(in crate::qualification) use stream::Batch;
 
 const GLOBAL: u64 = 1 << 0;
 const STARTUP: u64 = 1 << 1;
@@ -28,6 +29,8 @@ const RESOURCES_HARNESS: u64 = 1 << 12;
 const G3_HARNESS: u64 = 1 << 13;
 const G4_HARNESS: u64 = 1 << 14;
 const G5_HARNESS: u64 = 1 << 15;
+const WINDOW_RESOURCES: u64 = 1 << 16;
+const ZOOM_RESOURCES: u64 = 1 << 17;
 const ALL_PRODUCT: u64 =
     STARTUP | SHELL | EDITOR | PREVIEW | MATH | IMAGES | ASSETS | PERSISTENCE | EXPORT;
 const ALL_HARNESS: u64 = RUNTIME_HARNESS
@@ -35,56 +38,65 @@ const ALL_HARNESS: u64 = RUNTIME_HARNESS
     | RESOURCES_HARNESS
     | G3_HARNESS
     | G4_HARNESS
-    | G5_HARNESS;
+    | G5_HARNESS
+    | WINDOW_RESOURCES
+    | ZOOM_RESOURCES;
 const ALL_MODULES: u64 = ALL_PRODUCT | ALL_HARNESS | GLOBAL;
 
-pub(super) fn calculate(root: &Path, module: ModuleId) -> Result<String, String> {
-    let tracked = tracked_files(root)?;
-    let temporary = temporary_path()?;
-    // Only clean up a stream this invocation created; never truncate an existing file.
-    let mut output = File::create_new(&temporary)
-        .map_err(|error| format!("cannot create module fingerprint stream: {error}"))?;
-    let written = write_stream(root, module, &tracked, &mut output);
-    drop(output);
-    let result = written.and_then(|()| receipt::sha256(&temporary));
-    let _ = fs::remove_file(&temporary);
-    result
+pub(in crate::qualification) fn calculate(root: &Path, module: ModuleId) -> Result<String, String> {
+    PlanningInputs::read(root)?.calculate(root, module)
 }
 
-fn write_stream(
-    root: &Path,
-    module: ModuleId,
-    tracked: &[String],
-    output: &mut File,
-) -> Result<(), String> {
-    output
-        .write_all(b"StickyMD qualification module fingerprint v1\0")
-        .map_err(io_error)?;
-    output
-        .write_all(module.as_str().as_bytes())
-        .map_err(io_error)?;
-    output.write_all(&[0]).map_err(io_error)?;
-    for relative in tracked {
-        if path_domains(relative) & domains(module) == 0 {
-            continue;
-        }
-        let name = relative.as_bytes();
-        output
-            .write_all(&(name.len() as u64).to_le_bytes())
-            .map_err(io_error)?;
-        output.write_all(name).map_err(io_error)?;
-        let path = root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
-        let length = path
-            .metadata()
-            .map_err(|error| format!("cannot stat module input {relative}: {error}"))?
-            .len();
-        output.write_all(&length.to_le_bytes()).map_err(io_error)?;
-        let mut input = File::open(&path)
-            .map_err(|error| format!("cannot open module input {relative}: {error}"))?;
-        std::io::copy(&mut input, &mut *output)
-            .map_err(|error| format!("cannot hash module input {relative}: {error}"))?;
+/// A short-lived planning pass; callers must use fresh calculate() before promotion/reuse.
+pub(in crate::qualification) struct PlanningInputs {
+    tracked: Vec<String>,
+}
+
+impl PlanningInputs {
+    pub(in crate::qualification) fn read(root: &Path) -> Result<Self, String> {
+        Ok(Self {
+            tracked: tracked_files(root)?,
+        })
     }
-    output.sync_all().map_err(io_error)
+
+    pub(in crate::qualification) fn calculate(
+        &self,
+        root: &Path,
+        module: ModuleId,
+    ) -> Result<String, String> {
+        calculate_from(root, Some(module), &self.tracked, &[])
+    }
+
+    pub(in crate::qualification) fn calculate_many(
+        &self,
+        root: &Path,
+        modules: &[ModuleId],
+    ) -> Result<Batch, String> {
+        stream::calculate(
+            root,
+            &modules.iter().copied().map(Some).collect::<Vec<_>>(),
+            &self.tracked,
+            &[],
+        )
+    }
+}
+
+pub(in crate::qualification) fn workspace_inputs(
+    root: &Path,
+    execution_identity: &[u8],
+) -> Result<String, String> {
+    calculate_from(root, None, &tracked_files(root)?, execution_identity)
+}
+
+fn calculate_from(
+    root: &Path,
+    module: Option<ModuleId>,
+    tracked: &[String],
+    extra: &[u8],
+) -> Result<String, String> {
+    Ok(stream::calculate(root, &[module], tracked, extra)?
+        .digests
+        .remove(0))
 }
 
 fn domains(module: ModuleId) -> u64 {
@@ -93,7 +105,16 @@ fn domains(module: ModuleId) -> u64 {
         ModuleId::Performance => {
             STARTUP | EDITOR | PREVIEW | PERSISTENCE | PERFORMANCE_HARNESS | GLOBAL
         }
-        ModuleId::Resources => ALL_PRODUCT | RESOURCES_HARNESS | GLOBAL,
+        ModuleId::Resource(group) => {
+            ALL_PRODUCT
+                | RESOURCES_HARNESS
+                | GLOBAL
+                | match group {
+                    ResourceModule::Window => WINDOW_RESOURCES,
+                    ResourceModule::Zoom => ZOOM_RESOURCES,
+                    _ => 0,
+                }
+        }
         ModuleId::G3 => EDITOR | IMAGES | ASSETS | PERSISTENCE | EXPORT | G3_HARNESS | GLOBAL,
         ModuleId::G4 => SHELL | EDITOR | PREVIEW | MATH | PERSISTENCE | G4_HARNESS | GLOBAL,
         ModuleId::G5 => SHELL | EDITOR | PREVIEW | MATH | IMAGES | G5_HARNESS | GLOBAL,
@@ -302,7 +323,22 @@ fn is_editor_path(path: &str) -> bool {
 }
 
 fn harness_domains(path: &str) -> u64 {
-    if path == "tools/stickymd-smoke/src/runner/resource_progress.rs" {
+    if path.starts_with("tools/stickymd-smoke/src/runtime/resources/window")
+        || path.starts_with("tools/stickymd-smoke/src/runtime/window_stress")
+    {
+        return WINDOW_RESOURCES;
+    }
+    if path.starts_with("tools/stickymd-smoke/src/runtime/resources/zoom") {
+        return ZOOM_RESOURCES;
+    }
+    if path == "tools/stickymd-smoke/src/runtime/resources.rs"
+        || path.starts_with("tools/stickymd-smoke/src/runtime/resources/")
+        || path.starts_with("tools/stickymd-smoke/src/resource_plan")
+        || path == "tools/stickymd-smoke/src/runner/resource_session.rs"
+        || path == "tools/stickymd-smoke/src/qualification/resource_modules.rs"
+        || path.starts_with("tools/stickymd-smoke/src/qualification/resource_modules/")
+        || path == "tools/stickymd-smoke/src/runner/resource_progress.rs"
+    {
         return RESOURCES_HARNESS;
     }
     if path.starts_with("tools/stickymd-smoke/src/qualification/g3") {
@@ -314,15 +350,19 @@ fn harness_domains(path: &str) -> u64 {
     if path.starts_with("tools/stickymd-smoke/src/qualification/g5") {
         return G5_HARNESS;
     }
-    if path.starts_with("tools/stickymd-smoke/src/qualification/exact_desktop")
-        || path.ends_with("managed_process.rs")
+    if path.ends_with("managed_process.rs")
         || path.starts_with("tools/stickymd-smoke/src/window_control")
+    {
+        return ALL_HARNESS;
+    }
+    if path.starts_with("tools/stickymd-smoke/src/qualification/exact_desktop")
         || path.ends_with("helpers/windows-uia.ps1")
     {
         return G3_HARNESS | G4_HARNESS | G5_HARNESS;
     }
     if path.ends_with("tools/stickymd-smoke/src/runtime.rs")
         || path.ends_with("tools/stickymd-smoke/src/runner.rs")
+        || path == "tools/stickymd-smoke/src/runner/candidate_input.rs"
         || path.ends_with("tools/stickymd-smoke/src/evidence.rs")
         || path.ends_with("tools/stickymd-smoke/src/process_metrics.rs")
         || path.ends_with("tools/stickymd-smoke/src/ready_event.rs")
@@ -338,143 +378,5 @@ fn harness_domains(path: &str) -> u64 {
     GLOBAL
 }
 
-fn io_error(error: std::io::Error) -> String {
-    error.to_string()
-}
-
 #[cfg(test)]
-mod tests {
-    use super::{GLOBAL, calculate, path_domains};
-    use crate::qualification::module_ledger::ModuleId;
-    use std::fs;
-    use std::process::Command;
-
-    #[test]
-    fn identical_clock_values_do_not_alias_temporary_inputs() {
-        let paths = std::thread::scope(|scope| {
-            let workers: Vec<_> = (0..16)
-                .map(|_| scope.spawn(|| super::temporary_path_at(42)))
-                .collect();
-            workers
-                .into_iter()
-                .map(|worker| worker.join().unwrap())
-                .collect::<std::collections::BTreeSet<_>>()
-        });
-        assert_eq!(paths.len(), 16);
-    }
-
-    #[test]
-    fn measurement_fixture_bytes_invalidate_only_their_qualification_module() {
-        let root = fixture();
-        let before_performance = calculate(&root, ModuleId::Performance).unwrap();
-        let before_resources = calculate(&root, ModuleId::Resources).unwrap();
-        let before_g4 = calculate(&root, ModuleId::G4).unwrap();
-        fs::write(
-            root.join("tests/fixtures/performance/resource-note-seed.md"),
-            "new resource fixture",
-        )
-        .unwrap();
-        let after_resources = calculate(&root, ModuleId::Resources).unwrap();
-        assert_ne!(before_resources, after_resources);
-        assert_eq!(
-            before_performance,
-            calculate(&root, ModuleId::Performance).unwrap()
-        );
-        assert_eq!(before_g4, calculate(&root, ModuleId::G4).unwrap());
-
-        fs::write(
-            root.join("tests/fixtures/performance/typical-note-seed.md"),
-            "new startup fixture",
-        )
-        .unwrap();
-        assert_ne!(
-            before_performance,
-            calculate(&root, ModuleId::Performance).unwrap()
-        );
-        assert_eq!(
-            after_resources,
-            calculate(&root, ModuleId::Resources).unwrap()
-        );
-        assert_eq!(before_g4, calculate(&root, ModuleId::G4).unwrap());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn g5_image_bytes_invalidate_g5_without_invalidating_other_groups() {
-        let root = fixture();
-        let before =
-            super::super::MODULES.map(|module| (module, calculate(&root, module).unwrap()));
-        fs::write(
-            root.join("crates/stickymd-render/tests/fixtures/qualification-images/g5.png"),
-            b"changed encoded image bytes",
-        )
-        .unwrap();
-        for (module, fingerprint) in before {
-            let changed = calculate(&root, module).unwrap() != fingerprint;
-            assert_eq!(changed, module == ModuleId::G5, "{module:?}");
-        }
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn unrelated_group_harness_does_not_change_module_fingerprint() {
-        let root = fixture();
-        let before_g3 = calculate(&root, ModuleId::G3).expect("G3 fingerprint");
-        let before_g4 = calculate(&root, ModuleId::G4).expect("G4 fingerprint");
-        fs::write(
-            root.join("tools/stickymd-smoke/src/qualification/g4/cases/dock.rs"),
-            "changed",
-        )
-        .expect("change G4 harness");
-        assert_eq!(before_g3, calculate(&root, ModuleId::G3).expect("G3 after"));
-        assert_ne!(before_g4, calculate(&root, ModuleId::G4).expect("G4 after"));
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn report_text_is_not_a_behavior_input_but_contract_is_global() {
-        assert_eq!(path_domains("docs/report/note.md"), 0);
-        assert_eq!(path_domains("dist/evidence/module-success/g4.json"), 0);
-        assert_ne!(
-            path_domains("docs/plan/11_testing_and_release.md") & GLOBAL,
-            0
-        );
-    }
-
-    fn fixture() -> std::path::PathBuf {
-        let root = super::temporary_path()
-            .expect("fixture path")
-            .with_extension("fixture");
-        fs::create_dir(&root).expect("exclusive fixture directory");
-        for path in [
-            "tools/stickymd-smoke/src/qualification/g3/cases.rs",
-            "tools/stickymd-smoke/src/qualification/g4/cases/dock.rs",
-            "docs/report/note.md",
-            "tests/fixtures/performance/typical-note-seed.md",
-            "tests/fixtures/performance/resource-note-seed.md",
-            "crates/stickymd-render/tests/fixtures/qualification-images/g5.png",
-        ] {
-            let path = root.join(path);
-            fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-            fs::write(path, "initial").expect("write fixture");
-        }
-        assert!(
-            Command::new("git")
-                .arg("init")
-                .arg("--quiet")
-                .current_dir(&root)
-                .status()
-                .expect("git init")
-                .success()
-        );
-        assert!(
-            Command::new("git")
-                .args(["add", "."])
-                .current_dir(&root)
-                .status()
-                .expect("git add")
-                .success()
-        );
-        root
-    }
-}
+mod tests;

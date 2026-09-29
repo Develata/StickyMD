@@ -1,7 +1,10 @@
 //! Deduplicated task planning and subprocess execution.
 
+mod candidate_input;
 pub(crate) mod headless;
 mod resource_progress;
+mod resource_session;
+mod timing;
 
 use std::path::Path;
 use std::process::Command;
@@ -50,6 +53,7 @@ enum TaskId {
     ClippyCheck,
     DependencyPolicy,
     ReleaseBuild,
+    VerifyPromotedCandidate,
     VerifyNativeRuntimeDependencies,
     PackageArtifact,
     GenerateSbom,
@@ -90,6 +94,7 @@ enum Task {
         scenario: RuntimeScenario,
     },
     NativeRuntimeDependencies,
+    PromotedCandidate,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -108,6 +113,19 @@ pub(crate) enum RuntimeScenario {
     Phase10,
     Phase11B,
     ZoomResources,
+}
+
+impl RuntimeScenario {
+    pub(crate) const fn resource_group(self) -> Option<ResourceModule> {
+        match self {
+            Self::Resources => Some(ResourceModule::SourcePreview),
+            Self::MathResources => Some(ResourceModule::Math),
+            Self::ImageResources => Some(ResourceModule::Images),
+            Self::WindowResources => Some(ResourceModule::Window),
+            Self::ZoomResources => Some(ResourceModule::Zoom),
+            _ => None,
+        }
+    }
 }
 
 enum TaskExecution {
@@ -134,19 +152,21 @@ impl Task {
             Self::Governance => TaskId::Governance,
             Self::QualificationEnvironment => TaskId::QualificationEnvironment,
             Self::NativeRuntimeDependencies => TaskId::VerifyNativeRuntimeDependencies,
+            Self::PromotedCandidate => TaskId::VerifyPromotedCandidate,
             Self::Cargo { id, .. } | Self::PowerShell { id, .. } | Self::Runtime { id, .. } => *id,
         }
     }
 }
 
 pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
+    crate::qualification::smoke_scope::validate(root, options)?;
     if options.json
         && let Some(path) = options.evidence_file.as_deref()
         && crate::qualification::reuse_last_success_for_evidence(root, path)?
     {
         return Ok(());
     }
-    let tasks = build_plan(options)?;
+    let tasks = candidate_input::execution_plan(root, options)?;
     let label = match (options.selection, options.ci_shard) {
         (Selection::All, Some(shard)) => format!("all-ci-{}", shard.as_str()),
         (Selection::Phase(phase), _) => format!("phase-{}", phase.number()),
@@ -204,92 +224,147 @@ fn execute_tasks(
     environment: &mut Option<QualificationEnvironment>,
 ) -> Result<(), String> {
     resource_progress::emit(root, label, options, results, environment.as_ref())?;
+    let mut resources = match resource_session::Session::prepare(root, options, tasks) {
+        Ok(session) => session,
+        Err(error) => {
+            results.push(failed_task("resource campaign preflight", &error));
+            return Err(error);
+        }
+    };
     for (index, task) in tasks.iter().enumerate() {
+        let started = std::time::Instant::now();
+        let result_start = results.len();
         let task_name = task_label(task);
         if !options.json {
             println!("[{}/{}] {task_name}", index + 1, tasks.len());
         }
-        if matches!(task, Task::QualificationEnvironment) {
-            let observed = qualification_environment::inspect();
-            *environment = Some(observed.clone());
-            let status = environment_evidence_status(&observed);
-            let detail = (status != EvidenceStatus::Passed).then(|| observed.summary());
-            results.push(EvidenceResult {
-                id: task_name.to_owned(),
-                status,
-                detail,
-                measurements: Vec::new(),
-                gates: Vec::new(),
-                samples: Vec::new(),
-            });
-            if observed.status != QualificationEnvironmentStatus::Valid {
-                return Err(environment_failure(&observed));
-            }
-            continue;
-        }
-
-        if options.resources && is_resource_stage(task) {
-            let observed = qualification_environment::inspect();
-            *environment = Some(observed.clone());
-            let status = environment_evidence_status(&observed);
-            results.push(EvidenceResult {
-                id: format!("qualification environment before {task_name}"),
-                status,
-                detail: (status != EvidenceStatus::Passed).then(|| observed.summary()),
-                measurements: Vec::new(),
-                gates: Vec::new(),
-                samples: Vec::new(),
-            });
-            if observed.status != QualificationEnvironmentStatus::Valid {
-                return Err(environment_failure(&observed));
-            }
-        }
-
-        match run_task(root, task, options.json) {
-            Ok(TaskExecution::Passed(evidence)) => results.push(EvidenceResult {
-                id: task_name.to_owned(),
-                status: EvidenceStatus::Passed,
-                detail: None,
-                measurements: evidence.measurements,
-                gates: evidence.gates,
-                samples: evidence.samples,
-            }),
-            #[cfg(windows)]
-            Ok(TaskExecution::Failed { detail, evidence }) => {
+        let outcome = (|| {
+            if matches!(task, Task::QualificationEnvironment) {
+                let observed = qualification_environment::inspect();
+                *environment = Some(observed.clone());
+                let status = environment_evidence_status(&observed);
+                let detail = (status != EvidenceStatus::Passed).then(|| observed.summary());
                 results.push(EvidenceResult {
                     id: task_name.to_owned(),
-                    status: EvidenceStatus::Failed,
-                    detail: Some(detail.clone()),
+                    status,
+                    detail,
+                    measurements: Vec::new(),
+                    gates: Vec::new(),
+                    samples: Vec::new(),
+                });
+                if observed.status != QualificationEnvironmentStatus::Valid {
+                    return Err(environment_failure(&observed));
+                }
+                return Ok(());
+            }
+
+            let resource_group = match task {
+                Task::Runtime { scenario, .. } => scenario.resource_group(),
+                _ => None,
+            };
+            if let Some(group) = resource_group {
+                match resources.reuse(root, group) {
+                    Ok(Some(reused)) => {
+                        results.push(reused);
+                        return Ok(());
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        results.push(failed_task(task_name, &error));
+                        return Err(error);
+                    }
+                }
+            }
+            if options.resources && is_resource_stage(task) {
+                let observed = qualification_environment::inspect();
+                *environment = Some(observed.clone());
+                let status = environment_evidence_status(&observed);
+                results.push(EvidenceResult {
+                    id: format!("qualification environment before {task_name}"),
+                    status,
+                    detail: (status != EvidenceStatus::Passed).then(|| observed.summary()),
+                    measurements: Vec::new(),
+                    gates: Vec::new(),
+                    samples: Vec::new(),
+                });
+                if observed.status != QualificationEnvironmentStatus::Valid {
+                    return Err(environment_failure(&observed));
+                }
+            }
+
+            if let Some(group) = resource_group {
+                match resources.run(root, group, options.json, environment.as_ref()) {
+                    Ok(result) => resource_session::append_result(results, result)?,
+                    Err(error) => {
+                        results.push(failed_task(task_name, &error));
+                        return Err(error);
+                    }
+                }
+                return Ok(());
+            }
+            if task.id() == TaskId::WorkspaceTests
+                && crate::qualification::workspace_tests::eligible(root, options)
+                && let Task::Cargo { label, args, .. } = task
+            {
+                let result = crate::qualification::workspace_tests::execute(root, || {
+                    run_cargo(root, label, args, options.json)
+                });
+                return resource_session::append_result(results, result);
+            }
+            match run_task(root, task, options.json) {
+                Ok(TaskExecution::Passed(evidence)) => results.push(EvidenceResult {
+                    id: task_name.to_owned(),
+                    status: EvidenceStatus::Passed,
+                    detail: None,
                     measurements: evidence.measurements,
                     gates: evidence.gates,
                     samples: evidence.samples,
-                });
-                return Err(detail);
+                }),
+                #[cfg(windows)]
+                Ok(TaskExecution::Failed { detail, evidence }) => {
+                    results.push(EvidenceResult {
+                        id: task_name.to_owned(),
+                        status: EvidenceStatus::Failed,
+                        detail: Some(detail.clone()),
+                        measurements: evidence.measurements,
+                        gates: evidence.gates,
+                        samples: evidence.samples,
+                    });
+                    return Err(detail);
+                }
+                #[cfg(not(windows))]
+                Ok(TaskExecution::NotTested(detail)) => {
+                    results.push(EvidenceResult {
+                        id: task_name.to_owned(),
+                        status: EvidenceStatus::NotTested,
+                        detail: Some(detail.clone()),
+                        measurements: Vec::new(),
+                        gates: Vec::new(),
+                        samples: Vec::new(),
+                    });
+                    return Err(format!("`{task_name}` is NOT_TESTED: {detail}"));
+                }
+                Err(error) => {
+                    results.push(EvidenceResult {
+                        id: task_name.to_owned(),
+                        status: EvidenceStatus::Failed,
+                        detail: Some(error.clone()),
+                        measurements: Vec::new(),
+                        gates: Vec::new(),
+                        samples: Vec::new(),
+                    });
+                    return Err(error);
+                }
             }
-            #[cfg(not(windows))]
-            Ok(TaskExecution::NotTested(detail)) => {
-                results.push(EvidenceResult {
-                    id: task_name.to_owned(),
-                    status: EvidenceStatus::NotTested,
-                    detail: Some(detail.clone()),
-                    measurements: Vec::new(),
-                    gates: Vec::new(),
-                    samples: Vec::new(),
-                });
-                return Err(format!("`{task_name}` is NOT_TESTED: {detail}"));
-            }
-            Err(error) => {
-                results.push(EvidenceResult {
-                    id: task_name.to_owned(),
-                    status: EvidenceStatus::Failed,
-                    detail: Some(error.clone()),
-                    measurements: Vec::new(),
-                    gates: Vec::new(),
-                    samples: Vec::new(),
-                });
-                return Err(error);
-            }
-        }
+            Ok(())
+        })();
+        timing::record(
+            task_name,
+            started.elapsed(),
+            &mut results[result_start..],
+            outcome.is_ok(),
+        );
+        outcome?;
         if is_resource_stage(task) {
             resource_progress::emit(root, label, options, results, environment.as_ref())?;
         }
@@ -320,6 +395,37 @@ fn execute_tasks(
         samples: Vec::new(),
     });
     Ok(())
+}
+
+fn failed_task(task: &str, error: &str) -> EvidenceResult {
+    EvidenceResult {
+        id: task.into(),
+        status: EvidenceStatus::Failed,
+        detail: Some(error.into()),
+        measurements: Vec::new(),
+        gates: Vec::new(),
+        samples: Vec::new(),
+    }
+}
+
+pub(crate) fn formal_task_labels(runtime: bool) -> Result<Vec<&'static str>, String> {
+    let options = Options::parse(
+        [
+            "phase",
+            "14",
+            if runtime {
+                "--runtime"
+            } else {
+                "--performance"
+            },
+        ]
+        .map(str::to_owned),
+    )?;
+    let mut tasks = build_plan(&options)?;
+    candidate_input::use_promoted_candidate(&mut tasks);
+    let mut labels: Vec<_> = tasks.iter().map(task_label).collect();
+    labels.push("acceptance readiness");
+    Ok(labels)
 }
 
 const fn environment_evidence_status(environment: &QualificationEnvironment) -> EvidenceStatus {
@@ -370,6 +476,7 @@ fn task_label(task: &Task) -> &'static str {
         Task::Governance => "governance contracts",
         Task::QualificationEnvironment => "qualification environment preflight",
         Task::NativeRuntimeDependencies => "portable native-runtime dependency gate",
+        Task::PromotedCandidate => "promoted candidate identity and artifact verification",
         Task::Cargo { label, .. } => label,
         Task::PowerShell { label, .. } => label,
         Task::Runtime {
@@ -439,22 +546,15 @@ fn run_task(root: &Path, task: &Task, capture_output: bool) -> Result<TaskExecut
         Task::QualificationEnvironment => Err(
             "qualification environment tasks are handled by the evidence coordinator".to_owned(),
         ),
+        Task::PromotedCandidate => crate::qualification::verify_promoted_candidate(root)
+            .map(|()| TaskExecution::Passed(TaskEvidence::default())),
         Task::NativeRuntimeDependencies => {
             let executable = crate::qualification::release_executable(root)?;
             crate::pe_dependencies::verify_portable_executable(&executable)
                 .map(|_| TaskExecution::Passed(TaskEvidence::default()))
         }
-        Task::Cargo { label, args, .. } => {
-            let mut command = Command::new("cargo");
-            command.args(args).current_dir(root);
-            if capture_output {
-                run_captured(command, label)
-                    .map(|()| TaskExecution::Passed(TaskEvidence::default()))
-            } else {
-                run_inherited(command, label)
-                    .map(|()| TaskExecution::Passed(TaskEvidence::default()))
-            }
-        }
+        Task::Cargo { label, args, .. } => run_cargo(root, label, args, capture_output)
+            .map(|()| TaskExecution::Passed(TaskEvidence::default())),
         Task::PowerShell {
             label,
             script,
@@ -476,6 +576,16 @@ fn run_task(root: &Path, task: &Task, capture_output: bool) -> Result<TaskExecut
             }
         }
         Task::Runtime { scenario, .. } => run_runtime(root, *scenario, capture_output),
+    }
+}
+
+fn run_cargo(root: &Path, label: &str, args: &[&str], capture_output: bool) -> Result<(), String> {
+    let mut command = Command::new("cargo");
+    command.args(args).current_dir(root);
+    if capture_output {
+        run_captured(command, label)
+    } else {
+        run_inherited(command, label)
     }
 }
 
@@ -976,7 +1086,7 @@ fn workspace_tests() -> Task {
     cargo(
         TaskId::WorkspaceTests,
         "workspace tests",
-        &["test", "--workspace", "--locked"],
+        &crate::qualification::workspace_tests::ARGS,
     )
 }
 

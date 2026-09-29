@@ -27,8 +27,11 @@ mod receipt;
 mod remote;
 #[cfg(any(windows, test))]
 pub(crate) mod repetition;
+pub(crate) mod resource_modules;
+pub(crate) mod smoke_scope;
 mod source_freeze;
 mod startup_attribution;
+pub(crate) mod workspace_tests;
 
 use std::path::Path;
 
@@ -216,10 +219,37 @@ pub(crate) fn release_executable(root: &Path) -> Result<std::path::PathBuf, Stri
     receipt::resolve_release_executable(root)
 }
 
+pub(crate) fn requires_promoted_candidate(root: &Path) -> bool {
+    root.join(receipt::CANDIDATE_RECEIPT).exists()
+        || root.join(source_freeze::SOURCE_FREEZE_RECEIPT).exists()
+}
+
+pub(crate) fn verify_promoted_candidate(root: &Path) -> Result<(), String> {
+    let candidate = receipt::read_candidate(root)?;
+    receipt::validate_candidate_against_repository(root, &candidate)
+}
+
 pub(crate) fn reuse_last_success_for_evidence(root: &Path, path: &Path) -> Result<bool, String> {
     module_ledger::reuse_for_receipt(root, path)
 }
 
 pub(crate) fn record_last_success_for_evidence(root: &Path, path: &Path) -> Result<(), String> {
     module_ledger::record_for_receipt(root, path)
+}
+
+pub(crate) fn validate_public_evidence_path(root: &Path, path: &Path) -> Result<(), String> {
+    if module_ledger::matches_receipt(root, path, workspace_tests::RECEIPT) {
+        return Err(
+            "shared workspace receipt is coordinator-owned; use a diagnostic evidence path".into(),
+        );
+    }
+    if matches!(
+        module_ledger::module_for_receipt(root, path),
+        Some(module_ledger::ModuleId::Resource(_))
+    ) {
+        return Err(
+            "resource child receipts are coordinator-owned; use a diagnostic evidence path".into(),
+        );
+    }
+    Ok(())
 }

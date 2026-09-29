@@ -61,6 +61,99 @@ Mixed-DPI Left/Right sensor behavior remains a guided human observation.
 Release executables, waits 30 seconds, records private working set/private bytes over five runs,
 and measures 60-second idle CPU for Source, Preview and Split. It is never part of headless CI.
 
+The complete Phase 14 resource entry is:
+
+```powershell
+cargo run --quiet -p stickymd-smoke --locked -- phase 14 --resources --json --evidence-file=dist/evidence/resources-qualification.json
+cargo run --quiet -p stickymd-smoke --locked -- qualification modules
+```
+
+With a clean Source Freeze and valid Promoted Candidate, the full entry selects incompatible
+groups from `source-preview`, `math`, `images`, `window`, and `zoom`. Each complete group
+saves its own last-success receipt; a later failure preserves earlier successes. Readiness
+requires all five compatible receipts. The aggregate JSON is a progress/source summary;
+legacy aggregate success is not automatically imported. Reused results retain their original
+source/EXE/ZIP identity and evidence hash. `qualification modules` reports missing, changed
+or invalid receipts without launching desktop tests.
+
+Each group archive contains its complete raw observations and existing hard gates. Shared
+cohorts copy those observations with a `shared_from` origin; they remain the same five samples.
+Recording/readiness validates run coverage, units, summary consistency and hard-gate results.
+Count markers or `PASSED` alone cannot establish completeness.
+
+Equivalent scenarios share a complete cohort within one command: the 19 Source/Preview,
+math and image names require 15 executions. The fixed waiting budget decreases by
+1,500 seconds (25 minutes); this is a calculated budget, not a measured speedup.
+Sampling counts, warmups, CPU intervals and thresholds are unchanged. Operation history
+is part of scenario identity, so Preview-to-Source cache release is a separate execution.
+The command reports its waiting budget, per-case/group elapsed time and shared sample origins.
+
+Runtime, Performance and Resources requests that consume a Promoted Candidate validate its
+source and staged EXE/ZIP/SBOM instead of building an unused local Release EXE. The plan records
+this as candidate verification, not a build. A missing or invalid candidate fails closed;
+local preflight, packaging, release builds and headless CI keep their existing build steps.
+
+Resource any/max gates stop after the first complete over-limit observation. Idle CPU still
+uses the entire 60-second average, never an individual 10-second bucket. A failure preserves
+raw memory/CPU observations, actual counts, thresholds and the error in JSON, leaves successful
+ledgers intact, and stops later work. Successful cohorts still collect all five samples;
+startup p95 sampling is unchanged. When the first CPU sample fails, skipping four remaining
+30+60-second trials saves 360 seconds of fixed waiting in that cohort (a budget, not a benchmark).
+
+`--resource-module=<group>` and `STICKYMD_SMOKE_RESOURCE_CASE` remain diagnostics.
+Use a separate output such as `dist/evidence/window-diagnostic.json`; partial requests
+are rejected when pointed at formal receipts. Diagnostics never replace last-success.
+Filesystem aliases, including Windows verbatim/short paths and junctions, receive the same
+protection before execution and writing; this also covers output files not yet created.
+An interrupted window stress group reruns the whole group. All native measurements still
+require an exclusive interactive Windows desktop; the new harness has not yet received
+its full desktop acceptance (P14-A46).
+
+## Shared Runtime / Performance prerequisite
+
+Full Phase 14 Runtime and Performance requests using their canonical evidence paths
+share a successful `cargo test --workspace --locked` prerequisite when its inputs match:
+
+```powershell
+./tools/smoke/phase-14.ps1 -Runtime -EvidenceFile dist/evidence/runtime-qualification.json
+./tools/smoke/phase-14.ps1 -Performance -EvidenceFile dist/evidence/performance-qualification.json
+```
+
+The source-only receipt at `dist/evidence/source-success/workspace-tests.json` binds the
+clean Source Freeze, repository bytes, actual smoke executable, Rust/Cargo versions,
+host/work directory and execution settings. Identity is checked again after execution
+or before reuse. Failures and input changes preserve the previous success; a successful
+prerequisite remains reusable even when a later desktop task fails. Partial requests,
+ordinary diagnostics and CI cannot populate this receipt.
+
+Unknown Rust/Cargo overrides, StickyMD test filters and unfamiliar Cargo configuration
+disable sharing and run the full test command normally. Supported configuration is empty
+or the repository's static MSVC CRT setting. Cargo's ordinary Rustup launch metadata is
+included in the identity. Receipts contain hashes, never raw environment/configuration
+values. A malformed, incomplete or mismatched receipt causes a fresh full test run.
+Relative `CARGO_HOME` resolves from Cargo's repository working directory, including when
+the smoke command itself starts in a repository subdirectory.
+Empty `CARGO_HOME` uses the user-home fallback. Windows drive-relative values such as
+`C:cache` disable sharing and run the complete test command normally.
+
+`REUSED_PASS` reports its source and fingerprint. `workspace.origin_run_seconds` is
+historical; `workspace.run_seconds` exists only for a new run. Task timing is emitted as
+`TASK_TIMING` and, when the task has a result, `task.execution_seconds` in JSON. Identity
+checks have separate measurements. Resource planning enumerates paths once and streams
+each shared input once into buffered, independent v1 fingerprints. `RESOURCE_FINGERPRINT_BATCH`
+reports batch time and actual source files/bytes read; `RESOURCE_COMPATIBILITY` reports
+each group's receipt checks. Scratch streams are flushed before hashing and cleaned on
+success, error or unwind. Reuse and promotion still recompute current inputs. Product dependency scopes
+remain conservative; this optimization does not establish native acceptance or measured
+end-to-end savings. See [plan 11](../../docs/plan/11_testing_and_release.md#shared-headless-prerequisite).
+
+The optional local comparison reads the checkout without starting StickyMD or writing
+qualification evidence; it is ignored by normal test runs:
+
+```powershell
+cargo test -p stickymd-smoke --bin stickymd-smoke --locked resource_planning_profile -- --ignored --nocapture --test-threads=1
+```
+
 ## Explicit headless modules
 
 ```powershell

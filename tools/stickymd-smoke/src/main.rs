@@ -20,6 +20,7 @@ mod qualification_environment;
 mod ready_event;
 mod release;
 mod repository;
+mod resource_plan;
 mod runner;
 #[cfg(windows)]
 mod runtime;

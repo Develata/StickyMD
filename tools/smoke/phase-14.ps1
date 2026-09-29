@@ -5,6 +5,14 @@
 # Window resources restore the fixed note after leak stress and verify every hidden sample.
 # G5 uses shared image fixtures validated by the render crate's actual decoder tests.
 # Module fingerprints isolate concurrent temporary streams even when clock values coincide.
+# Full canonical Resources saves five complete groups independently and reuses compatible success.
+# ResourceModule/case filters remain diagnostics; equivalent cohorts share samples in one command.
+# Candidate measurements validate staged artifacts without building an unused local Release EXE.
+# Resource any/max hard failures stop after a complete sample and retain partial failure evidence.
+# Canonical Runtime/Performance share complete source-bound workspace tests with fresh identity checks.
+# Rust reports task, identity and resource-planning timings; historical reuse time remains distinct.
+# Fingerprint planning streams shared inputs once; reuse/promotion still read fresh bytes.
+# Reserved output aliases are rejected before execution; shared resource cohorts retain raw samples/gates.
 [CmdletBinding()]
 param(
     [switch]$Ci,

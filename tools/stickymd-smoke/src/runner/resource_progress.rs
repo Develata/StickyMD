@@ -1,4 +1,4 @@
-//! Incomplete resource checkpoints; only the final runner result can record success.
+//! Incomplete aggregate checkpoints; complete child groups own their success receipts.
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
 

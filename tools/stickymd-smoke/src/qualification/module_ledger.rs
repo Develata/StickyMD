@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 
 use super::json;
 use super::receipt::{self, Candidate};
+use crate::cli::ResourceModule;
 
-mod fingerprint;
+pub(super) mod fingerprint;
 #[cfg(test)]
 mod tests;
 
@@ -16,27 +17,29 @@ mod tests;
 pub(super) enum ModuleId {
     Runtime,
     Performance,
-    Resources,
+    Resource(ResourceModule),
     G3,
     G4,
     G5,
 }
 
-const MODULES: [ModuleId; 6] = [
-    ModuleId::Runtime,
-    ModuleId::Performance,
-    ModuleId::Resources,
-    ModuleId::G3,
-    ModuleId::G4,
-    ModuleId::G5,
-];
+fn modules() -> impl Iterator<Item = ModuleId> {
+    [ModuleId::Runtime, ModuleId::Performance]
+        .into_iter()
+        .chain(
+            crate::resource_plan::GROUPS
+                .into_iter()
+                .map(ModuleId::Resource),
+        )
+        .chain([ModuleId::G3, ModuleId::G4, ModuleId::G5])
+}
 
 impl ModuleId {
     pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::Runtime => "runtime",
             Self::Performance => "performance",
-            Self::Resources => "resources",
+            Self::Resource(group) => group.ledger_id(),
             Self::G3 => "g3",
             Self::G4 => "g4",
             Self::G5 => "g5",
@@ -47,7 +50,7 @@ impl ModuleId {
         match self {
             Self::Runtime => "dist/evidence/runtime-qualification.json",
             Self::Performance => "dist/evidence/performance-qualification.json",
-            Self::Resources => "dist/evidence/resources-qualification.json",
+            Self::Resource(group) => group.receipt(),
             Self::G3 => "dist/evidence/g3-exact-qualification.json",
             Self::G4 => "dist/evidence/g4-exact-qualification.json",
             Self::G5 => "dist/evidence/g5-exact-qualification.json",
@@ -66,20 +69,32 @@ pub(super) struct CompatibleSuccess {
 }
 
 pub(super) fn module_for_receipt(root: &Path, path: &Path) -> Option<ModuleId> {
-    let relative = if path.is_absolute() {
-        path.strip_prefix(root).ok()?
-    } else {
-        path
-    };
-    let normalized = normalize(relative);
-    MODULES
-        .into_iter()
-        .find(|module| module.receipt() == normalized)
+    modules().find(|module| matches_receipt(root, path, module.receipt()))
+}
+
+pub(super) fn matches_receipt(root: &Path, path: &Path, expected: &str) -> bool {
+    normalize(&root.join(path)) == normalize(&root.join(expected))
 }
 
 pub(super) fn compatible_success(
     root: &Path,
     module: ModuleId,
+) -> Result<Option<CompatibleSuccess>, String> {
+    compatible_success_using(root, module, || fingerprint::calculate(root, module))
+}
+
+pub(super) fn compatible_success_for_input(
+    root: &Path,
+    module: ModuleId,
+    current: &str,
+) -> Result<Option<CompatibleSuccess>, String> {
+    compatible_success_using(root, module, || Ok(current.to_owned()))
+}
+
+fn compatible_success_using(
+    root: &Path,
+    module: ModuleId,
+    current: impl FnOnce() -> Result<String, String>,
 ) -> Result<Option<CompatibleSuccess>, String> {
     let path = success_path(root, module);
     if !path.is_file() {
@@ -87,7 +102,7 @@ pub(super) fn compatible_success(
     }
     let document = receipt::read_receipt(&path)?;
     validate_success_schema(&document, module)?;
-    let current = fingerprint::calculate(root, module)?;
+    let current = current()?;
     if json::string_field(&document, "input_fingerprint")? != current {
         return Ok(None);
     }
@@ -113,6 +128,15 @@ pub(super) fn compatible_success(
     }
     let evidence_document = receipt::read_receipt(&evidence_path)?;
     validate_success_evidence(&evidence_document, module)?;
+    if matches!(module, ModuleId::Resource(_))
+        && (json::string_field(&evidence_document, "resource_input_fingerprint")? != current
+            || json::string_field(&evidence_document, "commit")?
+                != json::string_field(&document, "origin_source_commit")?
+            || json::string_field(&evidence_document, "executable_sha256")?
+                != json::string_field(&document, "origin_exe_sha256")?)
+    {
+        return Err("resource evidence identity differs from its last-success entry".to_owned());
+    }
     Ok(Some(CompatibleSuccess {
         module,
         origin_source_commit: json::string_field(&document, "origin_source_commit")?,
@@ -131,6 +155,15 @@ pub(super) fn record_success(
     let source_evidence = root.join(module.receipt());
     let source_document = receipt::read_receipt(&source_evidence)?;
     validate_success_evidence(&source_document, module)?;
+    let input_fingerprint = fingerprint::calculate(root, module)?;
+    if matches!(module, ModuleId::Resource(_))
+        && (json::string_field(&source_document, "resource_input_fingerprint")?
+            != input_fingerprint
+            || json::string_field(&source_document, "commit")? != candidate.source_commit
+            || json::string_field(&source_document, "executable_sha256")? != candidate.exe_sha256)
+    {
+        return Err("resource inputs or candidate changed during measurement".to_owned());
+    }
     let evidence_sha256 = receipt::sha256(&source_evidence)?;
     let evidence_relative = format!(
         "dist/evidence/module-success/evidence/{}-{evidence_sha256}.json",
@@ -144,7 +177,6 @@ pub(super) fn record_success(
         )
     })?;
     crate::atomic_evidence::write(&evidence_path, &evidence_bytes)?;
-    let input_fingerprint = fingerprint::calculate(root, module)?;
     let previous_evidence = previous_evidence_path(root, module);
     let document = format!(
         concat!(
@@ -207,7 +239,7 @@ pub(super) fn print_status_for_candidate(
     root: &Path,
     candidate: Option<&Candidate>,
 ) -> Result<(), String> {
-    for module in MODULES {
+    for module in modules() {
         match compatible_success(root, module) {
             Ok(Some(success)) => println!(
                 "MODULE={} STATUS={} ORIGIN_SOURCE={} ORIGIN_EXE={} EVIDENCE={}",
@@ -217,7 +249,11 @@ pub(super) fn print_status_for_candidate(
                 success.origin_exe_sha256,
                 success.evidence_path.display()
             ),
-            Ok(None) => println!("MODULE={} STATUS=RUN_REQUIRED", module.as_str()),
+            Ok(None) => println!(
+                "MODULE={} STATUS=RUN_REQUIRED REASON={}",
+                module.as_str(),
+                rerun_reason(root, module)
+            ),
             Err(error) => println!(
                 "MODULE={} STATUS=RUN_REQUIRED REASON={}",
                 module.as_str(),
@@ -237,6 +273,14 @@ fn success_status(success: &CompatibleSuccess, candidate: Option<&Candidate>) ->
         "RAN_PASS"
     } else {
         "REUSED_PASS"
+    }
+}
+
+pub(super) fn rerun_reason(root: &Path, module: ModuleId) -> &'static str {
+    if success_path(root, module).is_file() {
+        "INPUT_FINGERPRINT_CHANGED"
+    } else {
+        "NO_LAST_SUCCESS"
     }
 }
 
@@ -280,6 +324,9 @@ fn validate_success_schema(document: &str, module: ModuleId) -> Result<(), Strin
 }
 
 fn validate_success_evidence(document: &str, module: ModuleId) -> Result<(), String> {
+    if let ModuleId::Resource(group) = module {
+        return crate::resource_plan::validate_receipt(document, group);
+    }
     match json::bool_field(document, "worktree_dirty") {
         Ok(false) => {}
         Ok(true) => {
@@ -297,9 +344,37 @@ fn validate_success_evidence(document: &str, module: ModuleId) -> Result<(), Str
             module.as_str()
         ));
     }
+    if matches!(module, ModuleId::Runtime | ModuleId::Performance) {
+        super::smoke_scope::validate_task_coverage(document, module == ModuleId::Runtime)?;
+    }
     Ok(())
 }
 
 fn normalize(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    // Resolve existing filesystem identity before lexical cleanup: Windows verbatim/8.3
+    // paths and directory junctions can name the same reserved evidence destination.
+    // New output files inherit the identity of their nearest existing ancestor.
+    let resolved = path.ancestors().find_map(|ancestor| {
+        ancestor
+            .canonicalize()
+            .ok()
+            .map(|existing| existing.join(path.strip_prefix(ancestor).expect("ancestor prefix")))
+    });
+    let path = resolved.as_deref().unwrap_or(path);
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    let normalized = normalized.to_string_lossy().replace('\\', "/");
+    if cfg!(windows) {
+        normalized.to_lowercase()
+    } else {
+        normalized
+    }
 }

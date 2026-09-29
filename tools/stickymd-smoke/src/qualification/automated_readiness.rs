@@ -8,6 +8,7 @@ use super::module_ledger::{self, ModuleId};
 use super::receipt::Candidate;
 use super::source_freeze::SourceFreeze;
 use super::{json, receipt};
+use crate::cli::ResourceModule;
 
 const HEADLESS_CI_RECEIPT: &str = "dist/evidence/headless-ci-qualification.json";
 
@@ -18,7 +19,7 @@ struct ArtifactReceiptContract {
     required_task: &'static str,
 }
 
-const ARTIFACT_RECEIPTS: [ArtifactReceiptContract; 3] = [
+const ARTIFACT_RECEIPTS: [ArtifactReceiptContract; 2] = [
     ArtifactReceiptContract {
         module: ModuleId::Runtime,
         label: "runtime qualification",
@@ -29,12 +30,23 @@ const ARTIFACT_RECEIPTS: [ArtifactReceiptContract; 3] = [
         label: "performance qualification",
         required_task: "copied Release Phase 9 editor-ready cold/warm startup matrix",
     },
-    ArtifactReceiptContract {
-        module: ModuleId::Resources,
-        label: "resource qualification",
-        required_task: "copied Release Phase 8 hidden-window resource matrix",
-    },
 ];
+
+fn artifact_receipts() -> impl Iterator<Item = ArtifactReceiptContract> {
+    ARTIFACT_RECEIPTS.into_iter().chain(
+        crate::resource_plan::GROUPS
+            .into_iter()
+            .map(resource_contract),
+    )
+}
+
+const fn resource_contract(group: ResourceModule) -> ArtifactReceiptContract {
+    ArtifactReceiptContract {
+        module: ModuleId::Resource(group),
+        label: group.name(),
+        required_task: group.task_label(),
+    }
+}
 
 pub(super) fn check(
     root: &Path,
@@ -44,7 +56,7 @@ pub(super) fn check(
 ) -> bool {
     let before = blockers.len();
     check_source_receipt(root, source, blockers);
-    for contract in ARTIFACT_RECEIPTS {
+    for contract in artifact_receipts() {
         check_artifact_receipt(root, contract, blockers);
     }
     blockers.len() == before
@@ -190,13 +202,8 @@ mod tests {
             "requested headless CI task set",
         );
         receipt::write_receipt(&root, HEADLESS_CI_RECEIPT, &headless).expect("headless");
-        for contract in ARTIFACT_RECEIPTS {
-            let document = receipt_document(
-                &candidate.source_commit,
-                &candidate.exe_sha256,
-                "phase-14",
-                contract.required_task,
-            );
+        for contract in super::artifact_receipts() {
+            let document = module_document(&root, contract, &candidate.exe_sha256);
             receipt::write_receipt(&root, contract.module.receipt(), &document)
                 .expect("artifact receipt");
             module_ledger::record_success(&root, contract.module, &candidate)
@@ -205,12 +212,21 @@ mod tests {
         let mut blockers = Vec::new();
         assert!(check(&root, &source, &candidate, &mut blockers));
 
-        let stale = receipt_document(
-            &candidate.source_commit,
-            "0".repeat(64).as_str(),
-            "phase-14",
-            ARTIFACT_RECEIPTS[0].required_task,
-        );
+        // A window sentinel (or aggregate PASS) cannot stand in for any missing group.
+        for group in crate::resource_plan::GROUPS {
+            let path = root.join(format!(
+                "dist/evidence/module-success/{}.json",
+                group.ledger_id()
+            ));
+            let saved = fs::read(&path).unwrap();
+            fs::remove_file(&path).unwrap();
+            blockers.clear();
+            assert!(!check(&root, &source, &candidate, &mut blockers));
+            assert!(blockers.iter().any(|item| item.contains(group.name())));
+            crate::atomic_evidence::write(&path, &saved).unwrap();
+        }
+
+        let stale = module_document(&root, ARTIFACT_RECEIPTS[0], &"0".repeat(64));
         receipt::write_receipt(&root, ARTIFACT_RECEIPTS[0].module.receipt(), &stale)
             .expect("stale");
         module_ledger::record_success(&root, ARTIFACT_RECEIPTS[0].module, &candidate)
@@ -219,6 +235,45 @@ mod tests {
         assert!(!check(&root, &source, &candidate, &mut blockers));
         assert!(blockers.iter().any(|item| item.contains("EXE hash")));
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    fn module_document(
+        root: &std::path::Path,
+        contract: super::ArtifactReceiptContract,
+        exe: &str,
+    ) -> String {
+        use module_ledger::ModuleId;
+        if let ModuleId::Resource(group) = contract.module {
+            let result = crate::resource_plan::tests::valid_resource_result(group);
+            let base = crate::resource_plan::tests::document(group, &result);
+            let input = module_ledger::fingerprint::calculate(root, contract.module).unwrap();
+            return format!(
+                "{{\"resource_input_fingerprint\":\"{input}\",{}",
+                &base[1..]
+            );
+        }
+        let tasks =
+            crate::runner::formal_task_labels(contract.module == ModuleId::Runtime).unwrap();
+        let results = tasks
+            .into_iter()
+            .map(|id| crate::evidence::EvidenceResult {
+                id: id.into(),
+                status: crate::evidence::EvidenceStatus::Passed,
+                detail: None,
+                measurements: Vec::new(),
+                gates: Vec::new(),
+                samples: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        crate::evidence::render_json(
+            &"a".repeat(40),
+            false,
+            None,
+            Some(exe),
+            "phase-14",
+            &results,
+            None,
+        )
     }
 
     fn source() -> SourceFreeze {

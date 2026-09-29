@@ -58,6 +58,16 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A39 | G3/G4/G5 的普通 case 失败仍原子写出本轮完整结果，保留已通过项目和原始错误；失败不得覆盖 last-success，证据写入失败同时报告两项错误 | Automated | `exact_desktop/evidence` 失败收据替换与账本隔离回归 | AUTOMATED PASS |
 | P14-A40 | 窗口资源压力循环结束后原子恢复原始 20 KiB 文档，等待真实 Source 投影与 clean 状态后才开始隐藏预热；每轮采样后逐字节校验基线并记录文档长度，不一致不得形成完整成功收据 | Automated exact candidate | `phase-14.ps1 -Resources -ResourceModule window` 定向回归；正式证据属于完整 Resources receipt，包含五次 `hidden-to-tray.run_N.fixture_bytes` 与真实 Source projection acknowledgement | NOT TESTED |
 | P14-A41 | G5 与 headless 回归共享同一份 PNG/JPEG/WebP/GIF bytes；验证实际产品解码、格式、尺寸、不透明彩色区域与 bytes 保留；图片变化必须使 G5 成功指纹失效 | Automated | render `qualification_images` 集成测试 + module fingerprint 实际文件变更回归 | AUTOMATED PASS |
+| P14-A42 | 同一资源命令的 19 个基础/数学/图片场景名称对应 15 份独立五次采样；四个等价别名记录来源，Preview→Source 历史不误合并，失败 cohort 不复用；固定等待差为 1500 秒 | Automated | resource plan、实际 fixture bytes/config 等价性与失败缓存回归；预算不是实测加速 | AUTOMATED PASS |
+| P14-A43 | 局部/筛选请求不能写正式 Runtime/Performance/Resources 路径；资源子收据只能由完整入口持有；缺项、重复项、错误次数或单个 sentinel 不能代表完整覆盖 | Automated | smoke scope、resource coverage 与 formal task-plan 回归 | AUTOMATED PASS |
+| P14-A44 | 每个完整资源组独立原子保存 last-success，后续失败保留兄弟成功；指纹或 candidate 在测量期间变化拒绝登记；readiness 缺任一组均阻塞，旧 aggregate 不自动导入 | Automated | module ledger、input/candidate drift 与逐组移除 readiness 回归 | AUTOMATED PASS |
+| P14-A45 | 共享窗口/进程适配器使所有消费者失效；独立 window/zoom 资源 harness 变化只使对应资源组失效；样本结构在启动等待前预检 | Automated | 实际文件变更 fingerprint 回归 + fixture preflight 回归 | AUTOMATED PASS |
+| P14-A46 | 新资源执行器在独占 Windows 桌面完成五组完整资格化，验证真实 CPU/内存、共享 cohort 来源、中断重跑与实际耗时 | Automated exact candidate | 完整 `phase 14 --resources` canonical 入口；必须使用新 Source Freeze / Promoted Candidate | NOT TESTED |
+| P14-A47 | Promoted Candidate 测量计划执行独立候选校验并省略未使用的本地 Release build；候选缺失/损坏阻断后续任务，正式覆盖不能用本地 build 冒充候选校验；preflight/package/release/CI 保留原构建 | Automated | candidate input planning、失败中止与 formal task coverage 回归 | AUTOMATED PASS |
+| P14-A48 | Resources 的 any/max 硬门在完整样本已超限时立即失败；原始样本、实际次数及门槛进入失败 JSON，不覆盖五类成功账本；阈值相等允许通过，成功仍须五次，startup p95 与 60 秒 CPU 窗口不变 | Automated | resource cohort 边界/首轮与后续轮失败、失败 JSON/账本隔离及指纹传播回归；原生实测仍由 P14-A46 持有 | AUTOMATED PASS |
+| P14-A49 | 正式 Runtime/Performance 仅共享同机同输入的完整 workspace tests；绑定 clean Source Freeze、全部仓库 bytes、实际 harness、工具链和执行设置，前后身份变化或失败不登记，未知配置绕过缓存；partial/CI/损坏收据不能冒充完整成功 | Automated | `qualification/workspace_tests` 可控执行器与真实 Git/freeze 身份回归；不替代原生桌面验收 | AUTOMATED PASS |
+| P14-A50 | 资源规划只枚举一次文件清单，每组只计算一次指纹供兼容性检查；摘要协议、证据完整性校验不变，复用/登记仍重新读取当前输入 | Automated | planned/fresh digest 一致性、新增文件失效与归档损坏拒绝回归 | AUTOMATED PASS |
+| P14-A51 | 任务失败也保留执行用时和已有错误/观测；共享测试的本轮身份核对耗时与历史执行耗时分开记录，资源规划输出总计/逐组用时 | Automated | runner timing、shared prerequisite measurements 与失败留证回归 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 P14-A40 Preconditions：隔离 portable 目录、固定资源 fixture、独占交互桌面。
@@ -75,6 +85,49 @@ Failure Signals：只检查文件头、允许损坏图片作正向样本、解�
 P14-A33 并发回归补充：同一个时钟值下并行申请指纹流和测试输入目录时，路径仍须唯一；
 指纹流使用 exclusive create，创建失败不得截断或清理其他调用持有的文件。
 固定时间戳回归与既有模块输入变更回归共同验证这一要求。
+
+P14-A47 Preconditions：相同测量参数，分别使用无 freeze 的本地 preflight、正式候选请求，
+以及缺失/损坏候选的隔离 fixture。
+Action：检查实际任务计划并执行候选失败路径。
+Expected：正式请求先验证候选，不执行本地 EXE 构建；失败返回非零且不执行后续任务。
+Failure Signals：默默回退到本地 EXE、缺少候选校验仍可登记正式完整成功、影响 source-only 构建。
+
+P14-A48 Preconditions：可控的五轮 CPU/内存样本和已有成功账本。
+Action：分别注入第一轮、中间轮、最后一轮超限、阈值相等及负的缩放内存增长。
+Expected：完整超限样本立即返回失败并保留该样本；此前样本不裁剪，实际次数不补成五次；
+所有成功账本保持不变。未超限路径完整执行五次，负增长不被误判失败。
+Failure Signals：超限仍继续等待、丢失失败样本、部分样本被标成完整通过、失败覆盖成功账本。
+
+P14-A49 Preconditions：隔离临时 Git 仓库与有效 Source Freeze，或可控的输入身份/执行器；
+正式 Runtime/Performance 请求以及诊断、partial、CI 对照请求。
+Action：依次运行两通道的共享前置任务，改变源码/执行身份，注入测试失败、损坏收据、
+记录写入失败和不支持的配置；真实 Git fixture 在冻结后再次编辑源码。
+Expected：相同身份只执行一次完整命令并明确输出复用来源；变化时重跑或拒绝登记，
+未知配置每次完整执行且不更新缓存；dirty tree 拒绝开始，旧成功不被失败覆盖。
+Failure Signals：筛选测试可登记、身份变化仍跳过、失败形成成功、来源或证据类型混淆。
+
+P14-A50 Preconditions：具有 tracked/untracked 输入和已有归档成功的隔离仓库。
+Action：比较批量规划与旧字节协议摘要，覆盖空/二进制/中文路径及跨缓冲区输入；规划后
+修改/新增/删除输入，并注入读取失败、临时路径冲突及归档损坏。
+Expected：每个共享输入本批只读取一次，各组摘要与原协议一致；新的独立检查发现输入变化；
+失败不返回部分成功、不遗留本次临时流、不改动冲突路径；预计算摘要不能绕过归档校验。
+Failure Signals：修改指纹协议、把规划快照用于最终登记、只凭摘要字符串信任损坏证据、
+失败遗留临时输入或清理他人文件。
+
+P14-A51 Preconditions：带原始错误/观测的失败任务，以及实际执行和复用两种前置任务。
+Action：记录任务用时并检查 JSON 测量项，检查资源指纹批次总计与逐组兼容性检查输出。
+Expected：失败详情与观测保持原样；历史运行用时仅标为 origin，本轮用时单独记录。
+Failure Signals：计时覆盖错误或样本、把历史时长当成本轮测量、宣称未经实测的整体提速。
+
+P14-A42/A43 独立 review 回归补充：每个资源子收据必须携带每个 cohort 的五份原始观测与
+既有硬门。共享观测保留 `shared_from`，缺样本/硬门、重复 run、错误单位/统计、非等价来源、
+混用新测与复用来源或既有门超限均拒绝登记。Windows verbatim、短路径与 junction 别名
+及尚未创建的目标文件不能绕过正式/内部路径保护，失败诊断不得覆盖旧成功。
+
+P14-A49 独立 review 回归补充：从仓库子目录启动并使用相对 `CARGO_HOME`，修改实际
+Cargo 工作目录下的配置必须改变缓存身份；不支持的配置禁止复用，真实 Cargo 失败仍保留。
+空 `CARGO_HOME` 必须捕获用户目录的回退配置；Windows `C:cache` 等带盘符的相对路径
+禁用共享，仍执行完整测试。
 
 ## Guided manual sessions
 

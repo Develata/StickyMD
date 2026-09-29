@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 #[derive(Debug, PartialEq)]
-pub(super) enum Value {
+pub(crate) enum Value {
     Null,
     Bool(bool),
     Number(String),
@@ -51,7 +51,7 @@ impl Value {
     }
 }
 
-pub(super) fn parse(text: &str) -> Result<Value, String> {
+pub(crate) fn parse(text: &str) -> Result<Value, String> {
     let mut parser = Parser {
         text: text.trim_start_matches('\u{feff}'),
         offset: 0,

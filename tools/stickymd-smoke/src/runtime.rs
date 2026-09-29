@@ -12,15 +12,17 @@ use crate::evidence::{EvidenceGate, EvidenceMeasurement, EvidenceSample};
 use crate::managed_process::{self, ChildGuard};
 use crate::process_metrics::{self, MemorySample};
 use crate::ready_event::ReadyEvent;
+use crate::resource_plan::ImageResourceFixture;
 use crate::runner::RuntimeScenario;
 
 const START_TIMEOUT: Duration = Duration::from_secs(10);
 const EXIT_TIMEOUT: Duration = Duration::from_secs(5);
-const RESOURCE_WARMUP: Duration = Duration::from_secs(30);
-const CPU_INTERVAL: Duration = Duration::from_secs(60);
-const RESOURCE_REPETITIONS: usize = 5;
-const HIDDEN_PRIVATE_WORKING_SET_LIMIT: u64 = 36 * 1024 * 1024;
-const IDLE_CPU_PERCENT_LIMIT: f64 = 0.1;
+const RESOURCE_WARMUP: Duration = Duration::from_secs(crate::resource_plan::WARMUP_SECONDS);
+const CPU_INTERVAL: Duration = Duration::from_secs(crate::resource_plan::CPU_SECONDS);
+const RESOURCE_REPETITIONS: usize = crate::resource_plan::REPETITIONS;
+const HIDDEN_PRIVATE_WORKING_SET_LIMIT: u64 =
+    crate::resource_plan::HIDDEN_PRIVATE_WORKING_SET_LIMIT;
+const IDLE_CPU_PERCENT_LIMIT: f64 = crate::resource_plan::IDLE_CPU_PERCENT_LIMIT;
 const COLD_STARTUP_SAMPLE_COUNT: usize = 30;
 const WARM_STARTUP_SAMPLE_COUNT: usize = 50;
 const COLD_START_IDLE: Duration = Duration::from_secs(10);
@@ -28,8 +30,9 @@ use crate::startup_timing::{RAPID_RESTART_DIAGNOSTIC_IDLE, WARM_CACHE_START_IDLE
 const STARTUP_PREFERRED_TARGET: Duration = Duration::from_millis(180);
 const STARTUP_ENGINEERING_TARGET: Duration = Duration::from_millis(400);
 const V0_1_0_STARTUP_RELEASE_BOUNDARY: Duration = Duration::from_millis(550);
-const ZOOM_RESOURCE_WARMUP: Duration = Duration::from_secs(5);
-const ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT: u64 = 8 * 1024 * 1024;
+const ZOOM_RESOURCE_WARMUP: Duration =
+    Duration::from_secs(crate::resource_plan::ZOOM_WARMUP_SECONDS);
+const ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT: u64 = crate::resource_plan::ZOOM_PRIVATE_GROWTH_LIMIT;
 static JSON_OUTPUT: AtomicBool = AtomicBool::new(false);
 
 macro_rules! runtime_report {
@@ -42,6 +45,7 @@ macro_rules! runtime_report {
     };
 }
 
+pub(crate) mod resources;
 mod window_stress;
 
 pub(crate) use window_stress::run as run_window_stress_diagnostic;
@@ -74,6 +78,20 @@ pub(crate) fn run(
     scenario: RuntimeScenario,
     json_output: bool,
 ) -> Result<RuntimeEvidence, String> {
+    if let Some(group) = scenario.resource_group() {
+        return resources::run(
+            repository,
+            group,
+            json_output,
+            &mut resources::Cache::default(),
+        )
+        .map(|output| RuntimeEvidence {
+            measurements: output.measurements,
+            gates: output.gates,
+            samples: output.samples,
+            gate_failure: output.failure,
+        });
+    }
     JSON_OUTPUT.store(json_output, Ordering::Relaxed);
     if requires_measurement_isolation(scenario) {
         managed_process::ensure_no_stale_smoke_stickymd()?;
@@ -82,16 +100,6 @@ pub(crate) fn run(
     let mut children = Vec::new();
     let result = if scenario == RuntimeScenario::Startup {
         run_startup_measurement(repository, &root)
-    } else if scenario == RuntimeScenario::Resources {
-        run_resource_measurement(repository, &root, false, false).map(RuntimeEvidence::passed)
-    } else if scenario == RuntimeScenario::MathResources {
-        run_resource_measurement(repository, &root, true, false).map(RuntimeEvidence::passed)
-    } else if scenario == RuntimeScenario::ImageResources {
-        run_resource_measurement(repository, &root, false, true).map(RuntimeEvidence::passed)
-    } else if scenario == RuntimeScenario::WindowResources {
-        run_window_resource_measurement(repository, &root).map(RuntimeEvidence::passed)
-    } else if scenario == RuntimeScenario::ZoomResources {
-        run_zoom_resource_measurement(repository, &root).map(RuntimeEvidence::passed)
     } else {
         run_inner(repository, &root, scenario, &mut children)
             .map(|()| RuntimeEvidence::passed(Vec::new()))
@@ -583,6 +591,7 @@ fn startup_samples(cold: &[StartupSample], warm: &[StartupSample]) -> Vec<Eviden
             samples.push(EvidenceSample {
                 cohort: cohort.to_owned(),
                 run: index + 1,
+                shared_from: None,
                 measurements,
             });
         }
@@ -1254,389 +1263,6 @@ fn wait_for_layered_alpha(
     ))
 }
 
-struct ResourceCase {
-    label: &'static str,
-    view_mode: &'static str,
-    formula_count: usize,
-    image_count: usize,
-    image_fixture: ImageResourceFixture,
-    measure_cpu: bool,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ImageResourceFixture {
-    None,
-    FourK,
-    SaturatedCache,
-}
-
-fn run_resource_measurement(
-    repository: &Path,
-    root: &Path,
-    math_matrix: bool,
-    image_matrix: bool,
-) -> Result<Vec<EvidenceMeasurement>, String> {
-    let source = crate::qualification::release_executable(repository)?;
-    if !source.is_file() {
-        return Err(format!(
-            "Release executable is missing: {}",
-            source.display()
-        ));
-    }
-    let logical_processors = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-    runtime_report!(
-        "resource contract: warmup={}s repetitions={} cpu_interval={}s logical_processors={logical_processors}",
-        RESOURCE_WARMUP.as_secs(),
-        RESOURCE_REPETITIONS,
-        CPU_INTERVAL.as_secs(),
-    );
-    let mut cases = if image_matrix {
-        vec![
-            ResourceCase {
-                label: "source-no-images",
-                view_mode: "source",
-                formula_count: 0,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: false,
-            },
-            ResourceCase {
-                label: "source-12-images-lazy",
-                view_mode: "source",
-                formula_count: 0,
-                image_count: 12,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: true,
-            },
-            ResourceCase {
-                label: "preview-no-images",
-                view_mode: "preview",
-                formula_count: 0,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: false,
-            },
-            ResourceCase {
-                label: "preview-1-image",
-                view_mode: "preview",
-                formula_count: 0,
-                image_count: 1,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: false,
-            },
-            ResourceCase {
-                label: "preview-12-images",
-                view_mode: "preview",
-                formula_count: 0,
-                image_count: 12,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: true,
-            },
-            ResourceCase {
-                label: "split-12-images",
-                view_mode: "split",
-                formula_count: 0,
-                image_count: 12,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: true,
-            },
-            ResourceCase {
-                label: "preview-4k-image",
-                view_mode: "preview",
-                formula_count: 0,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::FourK,
-                measure_cpu: false,
-            },
-            ResourceCase {
-                label: "preview-image-cache-saturated",
-                view_mode: "preview",
-                formula_count: 0,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::SaturatedCache,
-                measure_cpu: true,
-            },
-            ResourceCase {
-                label: "split-image-cache-saturated",
-                view_mode: "split",
-                formula_count: 0,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::SaturatedCache,
-                measure_cpu: true,
-            },
-            ResourceCase {
-                label: "source-after-preview-cache-release",
-                view_mode: "preview",
-                formula_count: 0,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::SaturatedCache,
-                measure_cpu: true,
-            },
-        ]
-    } else if math_matrix {
-        vec![
-            ResourceCase {
-                label: "source-20-math-lazy",
-                view_mode: "source",
-                formula_count: 20,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: true,
-            },
-            ResourceCase {
-                label: "preview-no-math",
-                view_mode: "preview",
-                formula_count: 0,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: false,
-            },
-            ResourceCase {
-                label: "preview-1-math",
-                view_mode: "preview",
-                formula_count: 1,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: false,
-            },
-            ResourceCase {
-                label: "preview-20-math",
-                view_mode: "preview",
-                formula_count: 20,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: true,
-            },
-            ResourceCase {
-                label: "split-20-math",
-                view_mode: "split",
-                formula_count: 20,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: true,
-            },
-            ResourceCase {
-                label: "preview-200-unique",
-                view_mode: "preview",
-                formula_count: 200,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: false,
-            },
-        ]
-    } else {
-        vec![
-            ResourceCase {
-                label: "source",
-                view_mode: "source",
-                formula_count: 20,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: true,
-            },
-            ResourceCase {
-                label: "preview",
-                view_mode: "preview",
-                formula_count: 20,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: true,
-            },
-            ResourceCase {
-                label: "split",
-                view_mode: "split",
-                formula_count: 20,
-                image_count: 0,
-                image_fixture: ImageResourceFixture::None,
-                measure_cpu: true,
-            },
-        ]
-    };
-    if let Ok(filter) = std::env::var("STICKYMD_SMOKE_RESOURCE_CASE")
-        && !filter.is_empty()
-    {
-        cases.retain(|case| case.label == filter);
-        if cases.len() != 1 {
-            return Err(format!("unknown resource case filter `{filter}`"));
-        }
-        runtime_report!("resource development filter: {filter}");
-    }
-    let mut evidence = Vec::new();
-    for case in cases {
-        let mode = case.label;
-        let mut memory_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
-        let mut cpu_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
-        for repetition in 0..RESOURCE_REPETITIONS {
-            let directory = root.join(format!("{mode}-{repetition}"));
-            let executable = copy_executable(&source, &directory)?;
-            prepare_resource_layout(
-                &directory,
-                case.view_mode,
-                case.formula_count,
-                case.image_count,
-                case.image_fixture,
-            )?;
-            let mut child = start(&executable)?;
-            wait_for_layout(&directory)?;
-            // A resource baseline represents a truly idle window. Keep the
-            // physical cursor outside the paper so incidental mouse jitter or
-            // operator movement cannot turn preview hit-testing and title
-            // updates into process CPU attributed to the idle sample.
-            let window = crate::window_control::visible_window(child.id())?;
-            crate::window_control::park_cursor_outside_window(window)?;
-            thread::sleep(RESOURCE_WARMUP);
-            ensure_alive(&mut child, "resource measurement instance")?;
-            if mode == "source-after-preview-cache-release" {
-                crate::window_control::switch_to_source(child.id())?;
-                wait_for_view_mode(&directory, "source")?;
-                thread::sleep(Duration::from_secs(5));
-                ensure_alive(&mut child, "Source-after-Preview resource instance")?;
-            }
-            let sample = process_metrics::memory(&child)?;
-            runtime_report!(
-                "resource sample mode={mode} run={} private_working_set_bytes={} private_bytes={} \
-                 peak_working_set_bytes={} peak_private_bytes={}",
-                repetition + 1,
-                sample.private_working_set_bytes,
-                sample.private_bytes,
-                sample.peak_working_set_bytes,
-                sample.peak_private_bytes,
-            );
-            memory_samples.push(sample);
-            if case.measure_cpu {
-                cpu_samples.push(measure_idle_cpu(
-                    &mut child,
-                    mode,
-                    logical_processors,
-                    window,
-                )?);
-            }
-            stop_child(&mut child);
-        }
-        print_resource_summary(mode, &memory_samples, &cpu_samples)?;
-        evidence.extend(memory_measurements(mode, &memory_samples));
-        evidence.extend(cpu_measurements(mode, &cpu_samples));
-        if cpu_samples
-            .iter()
-            .any(|sample| *sample > IDLE_CPU_PERCENT_LIMIT)
-        {
-            return Err(format!(
-                "{mode} idle CPU sample exceeds {:.3}%: {cpu_samples:?}",
-                IDLE_CPU_PERCENT_LIMIT
-            ));
-        }
-    }
-    Ok(evidence)
-}
-
-fn run_zoom_resource_measurement(
-    repository: &Path,
-    root: &Path,
-) -> Result<Vec<EvidenceMeasurement>, String> {
-    const SPLIT_PRIVATE_WORKING_SET_LIMIT: u64 = 64 * 1024 * 1024;
-    let source = crate::qualification::release_executable(repository)?;
-    if !source.is_file() {
-        return Err(format!(
-            "Release executable is missing: {}",
-            source.display()
-        ));
-    }
-    runtime_report!(
-        "Phase 10 zoom resource contract: zoom=50/100/300 warmup={}s repetitions={}",
-        ZOOM_RESOURCE_WARMUP.as_secs(),
-        RESOURCE_REPETITIONS,
-    );
-    let mut evidence = Vec::new();
-    for zoom in [50_u16, 100, 300] {
-        let label = format!("split-zoom-{zoom}");
-        let mut samples = Vec::with_capacity(RESOURCE_REPETITIONS);
-        for repetition in 0..RESOURCE_REPETITIONS {
-            let directory = root.join(format!("{label}-{repetition}"));
-            let executable = copy_executable(&source, &directory)?;
-            prepare_resource_layout(&directory, "split", 20, 12, ImageResourceFixture::None)?;
-            set_resource_zoom(&directory, zoom)?;
-            let mut child = start(&executable)?;
-            let result = (|| {
-                wait_for_layout(&directory)?;
-                let window = crate::window_control::visible_window(child.id())?;
-                if repetition == 0 {
-                    verify_toolbar_view_clicks(&directory, &mut child, window, zoom, true)?;
-                }
-                crate::window_control::park_cursor_outside_window(window)?;
-                thread::sleep(ZOOM_RESOURCE_WARMUP);
-                ensure_alive(&mut child, "Phase 10 zoom resource instance")?;
-                if zoom == 100 && repetition == 0 {
-                    let growth =
-                        verify_zoom_relayout_does_not_leak(&directory, &mut child, window)?;
-                    evidence.push(EvidenceMeasurement {
-                        name: "zoom_cycles.private_growth".to_owned(),
-                        unit: "bytes".to_owned(),
-                        value: growth as f64,
-                    });
-                }
-                process_metrics::memory(&child)
-            })();
-            stop_child(&mut child);
-            let sample = result?;
-            runtime_report!(
-                "Phase 10 zoom resource sample zoom={zoom} run={} private_working_set_bytes={} private_bytes={} peak_working_set_bytes={} peak_private_bytes={}",
-                repetition + 1,
-                sample.private_working_set_bytes,
-                sample.private_bytes,
-                sample.peak_working_set_bytes,
-                sample.peak_private_bytes,
-            );
-            samples.push(sample);
-        }
-        print_resource_summary(&label, &samples, &[])?;
-        evidence.extend(memory_measurements(&label, &samples));
-        let observed_max = samples
-            .iter()
-            .map(|sample| sample.private_working_set_bytes)
-            .max()
-            .unwrap_or_default();
-        if observed_max > SPLIT_PRIVATE_WORKING_SET_LIMIT {
-            return Err(format!(
-                "{label} private working set max {observed_max} exceeds {SPLIT_PRIVATE_WORKING_SET_LIMIT} bytes"
-            ));
-        }
-    }
-    Ok(evidence)
-}
-
-fn verify_zoom_relayout_does_not_leak(
-    program_directory: &Path,
-    child: &mut Child,
-    window: crate::window_control::WindowHandle,
-) -> Result<i64, String> {
-    const CYCLES: usize = 100;
-    let before = process_metrics::memory(child)?;
-    for _ in 0..CYCLES {
-        crate::window_control::press_zoom_in(window)?;
-        crate::window_control::press_zoom_out(window)?;
-    }
-    thread::sleep(Duration::from_secs(2));
-    ensure_alive(child, "Phase 10 zoom-cycle instance")?;
-    wait_for_config_field(program_directory, "content_zoom_percent = 100")?;
-    let after = process_metrics::memory(child)?;
-    runtime_report!(
-        "Phase 10 zoom cycles={CYCLES} before_private_bytes={} after_private_bytes={}",
-        before.private_bytes,
-        after.private_bytes,
-    );
-    if after.private_bytes
-        > before
-            .private_bytes
-            .saturating_add(ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT)
-    {
-        return Err(format!(
-            "Phase 10 repeated zoom relayout grew private bytes by more than {} bytes",
-            ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT
-        ));
-    }
-    Ok(after.private_bytes as i64 - before.private_bytes as i64)
-}
-
 fn memory_measurements(mode: &str, samples: &[MemorySample]) -> Vec<EvidenceMeasurement> {
     let mut private_working_set = samples
         .iter()
@@ -1703,195 +1329,6 @@ fn duration_measurements(mode: &str, samples: &[Duration]) -> Vec<EvidenceMeasur
         value: value.as_secs_f64() * 1_000.0,
     })
     .collect()
-}
-
-fn run_window_resource_measurement(
-    repository: &Path,
-    root: &Path,
-) -> Result<Vec<EvidenceMeasurement>, String> {
-    let source = crate::qualification::release_executable(repository)?;
-    if !source.is_file() {
-        return Err(format!(
-            "Release executable is missing: {}",
-            source.display()
-        ));
-    }
-    let logical_processors = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-    runtime_report!(
-        "Phase 8 window resource contract: warmup={}s repetitions={} cpu_interval={}s logical_processors={logical_processors}",
-        RESOURCE_WARMUP.as_secs(),
-        RESOURCE_REPETITIONS,
-        CPU_INTERVAL.as_secs(),
-    );
-    let mut visible_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
-    let mut collapsed_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
-    let mut hidden_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
-    let mut startup_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
-    let mut visible_cpu = Vec::with_capacity(RESOURCE_REPETITIONS);
-    let mut collapsed_cpu = Vec::with_capacity(RESOURCE_REPETITIONS);
-    let mut hidden_cpu = Vec::with_capacity(RESOURCE_REPETITIONS);
-    let mut hidden_fixture_measurements = Vec::with_capacity(RESOURCE_REPETITIONS);
-    for repetition in 0..RESOURCE_REPETITIONS {
-        let directory = root.join(format!("window-resource-{repetition}"));
-        let executable = copy_executable(&source, &directory)?;
-        prepare_resource_layout(&directory, "source", 0, 0, ImageResourceFixture::None)?;
-        let note = directory.join("note/note.md");
-        let baseline_note = fs::read(&note)
-            .map_err(|error| format!("cannot read window resource baseline: {error}"))?;
-        let startup_started = Instant::now();
-        let mut child = start(&executable)?;
-        let result = (|| {
-            wait_for_layout(&directory)?;
-            let window = crate::window_control::visible_window(child.id())?;
-            let startup = startup_started.elapsed();
-            runtime_report!(
-                "window startup run={} elapsed_ms={:.3}",
-                repetition + 1,
-                startup.as_secs_f64() * 1_000.0
-            );
-            thread::sleep(RESOURCE_WARMUP);
-            ensure_alive(&mut child, "visible window resource instance")?;
-            let visible = process_metrics::memory(&child)?;
-            runtime_report!(
-                "resource sample mode=visible-source run={} private_working_set_bytes={} private_bytes={} peak_working_set_bytes={} peak_private_bytes={}",
-                repetition + 1,
-                visible.private_working_set_bytes,
-                visible.private_bytes,
-                visible.peak_working_set_bytes,
-                visible.peak_private_bytes,
-            );
-            visible_cpu.push(measure_idle_cpu(
-                &mut child,
-                "visible-source",
-                logical_processors,
-                window,
-            )?);
-            crate::window_control::move_to_primary_left_edge(window)?;
-            wait_for_config_field(&directory, "dock_edge = \"left\"")?;
-            crate::window_control::park_cursor_at_primary_right(window)?;
-            crate::window_control::click_toolbar(
-                window,
-                crate::window_control::ToolbarControl::Collapse,
-            )?;
-            wait_for_primary_left_state(window, true)?;
-            thread::sleep(RESOURCE_WARMUP);
-            ensure_alive(&mut child, "collapsed window resource instance")?;
-            let collapsed = process_metrics::memory(&child)?;
-            runtime_report!(
-                "resource sample mode=docked-collapsed run={} private_working_set_bytes={} private_bytes={} peak_working_set_bytes={} peak_private_bytes={}",
-                repetition + 1,
-                collapsed.private_working_set_bytes,
-                collapsed.private_bytes,
-                collapsed.peak_working_set_bytes,
-                collapsed.peak_private_bytes,
-            );
-            collapsed_cpu.push(measure_idle_cpu(
-                &mut child,
-                "docked-collapsed",
-                logical_processors,
-                window,
-            )?);
-            if repetition == 0 {
-                run_window_leak_cycles(&directory, &executable, &mut child, window)?;
-                // Persistence/image stress replaces the document. Restore the same
-                // baseline before hidden warmup so all five samples measure it.
-                crate::atomic_evidence::write(&note, &baseline_note)?;
-                wait_for_source_projection(window, &baseline_note)?;
-                wait_for_window_title(
-                    window,
-                    |title| title == "StickyMD",
-                    "restored window resource baseline",
-                )?;
-            }
-            crate::window_control::request_close(window)?;
-            wait_for_window_visibility(window, false)?;
-            thread::sleep(RESOURCE_WARMUP);
-            ensure_alive(&mut child, "hidden-to-tray resource instance")?;
-            let hidden = process_metrics::memory(&child)?;
-            runtime_report!(
-                "resource sample mode=hidden-to-tray run={} private_working_set_bytes={} private_bytes={} peak_working_set_bytes={} peak_private_bytes={}",
-                repetition + 1,
-                hidden.private_working_set_bytes,
-                hidden.private_bytes,
-                hidden.peak_working_set_bytes,
-                hidden.peak_private_bytes,
-            );
-            hidden_cpu.push(measure_idle_cpu(
-                &mut child,
-                "hidden-to-tray",
-                logical_processors,
-                window,
-            )?);
-            let observed_note = fs::read(&note)
-                .map_err(|error| format!("cannot verify hidden resource baseline: {error}"))?;
-            if observed_note != baseline_note {
-                return Err(format!(
-                    "hidden resource run={} changed its baseline: expected_bytes={} actual_bytes={}",
-                    repetition + 1,
-                    baseline_note.len(),
-                    observed_note.len(),
-                ));
-            }
-            runtime_report!(
-                "resource fixture mode=hidden-to-tray run={} bytes={} baseline_matches=true",
-                repetition + 1,
-                observed_note.len(),
-            );
-            Ok::<_, String>((startup, visible, collapsed, hidden))
-        })();
-        stop_child(&mut child);
-        let (startup, visible, collapsed, hidden) = result?;
-        startup_samples.push(startup);
-        visible_samples.push(visible);
-        collapsed_samples.push(collapsed);
-        hidden_samples.push(hidden);
-        hidden_fixture_measurements.push(EvidenceMeasurement {
-            name: format!("hidden-to-tray.run_{}.fixture_bytes", repetition + 1),
-            unit: "bytes".to_owned(),
-            value: baseline_note.len() as f64,
-        });
-    }
-    print_duration_summary("startup-to-paper", &mut startup_samples)?;
-    print_resource_summary("visible-source", &visible_samples, &visible_cpu)?;
-    print_resource_summary("docked-collapsed", &collapsed_samples, &collapsed_cpu)?;
-    print_resource_summary("hidden-to-tray", &hidden_samples, &hidden_cpu)?;
-    let mut evidence = duration_measurements("window.startup_to_paper", &startup_samples);
-    evidence.extend(hidden_fixture_measurements);
-    for (mode, memory, cpu) in [
-        ("visible-source", &visible_samples, &visible_cpu),
-        ("docked-collapsed", &collapsed_samples, &collapsed_cpu),
-        ("hidden-to-tray", &hidden_samples, &hidden_cpu),
-    ] {
-        evidence.extend(memory_measurements(mode, memory));
-        evidence.extend(cpu_measurements(mode, cpu));
-    }
-    let observed_max = hidden_samples
-        .iter()
-        .map(|sample| sample.private_working_set_bytes)
-        .max()
-        .unwrap_or_default();
-    if observed_max > HIDDEN_PRIVATE_WORKING_SET_LIMIT {
-        return Err(format!(
-            "hidden-to-tray private working set max {observed_max} exceeds {} bytes",
-            HIDDEN_PRIVATE_WORKING_SET_LIMIT
-        ));
-    }
-    for (mode, cpu_samples) in [
-        ("visible-source", &visible_cpu),
-        ("docked-collapsed", &collapsed_cpu),
-        ("hidden-to-tray", &hidden_cpu),
-    ] {
-        if cpu_samples
-            .iter()
-            .any(|sample| *sample > IDLE_CPU_PERCENT_LIMIT)
-        {
-            return Err(format!(
-                "{mode} idle CPU sample exceeds {:.3}%: {cpu_samples:?}",
-                IDLE_CPU_PERCENT_LIMIT,
-            ));
-        }
-    }
-    Ok(evidence)
 }
 
 fn measure_idle_cpu(

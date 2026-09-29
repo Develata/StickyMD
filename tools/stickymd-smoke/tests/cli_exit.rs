@@ -1,5 +1,58 @@
 use std::process::Command;
 
+#[test]
+fn partial_resource_requests_fail_before_overwriting_formal_evidence() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "stickymd-resource-scope-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(root.join("dist/evidence/resources")).unwrap();
+    for marker in ["Cargo.toml", "AGENTS.md"] {
+        std::fs::write(root.join(marker), "").unwrap();
+    }
+    let resource_path = "dist/evidence/resources-qualification.json";
+    let child_path = "dist/evidence/resources/window.json";
+    for path in [resource_path, child_path] {
+        std::fs::write(root.join(path), "preserved receipt").unwrap();
+    }
+    for (selection, extra, path, filter) in [
+        ("14", Some("--resource-module=window"), resource_path, None),
+        ("08", None, resource_path, None),
+        ("14", None, resource_path, Some("source")),
+        ("14", None, child_path, None),
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"));
+        command
+            .args(["phase", selection, "--resources"])
+            .arg(format!("--evidence-file={path}"))
+            .current_dir(&root)
+            .env_remove("STICKYMD_SMOKE_RESOURCE_CASE");
+        if let Some(extra) = extra {
+            command.arg(extra);
+        }
+        if let Some(filter) = filter {
+            command.env("STICKYMD_SMOKE_RESOURCE_CASE", filter);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("formal qualification output"),
+            "{:?}",
+            output
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(path)).unwrap(),
+            "preserved receipt"
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(not(windows))]
 #[test]
 fn unsupported_gui_qualification_emits_not_tested_and_returns_failure() {
@@ -155,6 +208,8 @@ fn successful_json_request_returns_zero_and_writes_one_json_document() {
     assert_eq!(stdout.lines().count(), 1);
     assert!(stdout.starts_with("{\"schema_version\":2,\"suite_version\":\"2\","));
     assert!(stdout.trim_end().ends_with('}'));
+    assert!(stdout.contains("\"name\":\"task.execution_seconds\""));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("TASK_TIMING"));
 }
 
 #[test]
