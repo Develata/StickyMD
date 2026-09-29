@@ -251,6 +251,8 @@ fn unknown_module_returns_a_nonzero_process_exit_code() {
 fn ci_full_plan_returns_one_source_scoped_unexecuted_json_document() {
     let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
         .args(["ci", "plan", "--full"])
+        // Planning reads Git status without refreshing the index shared by other cases.
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("start full CI plan subprocess");

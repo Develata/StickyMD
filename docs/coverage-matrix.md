@@ -45,6 +45,12 @@ plan 11 `phase-verification-harness` / `modular-headless-ci` → P00-A09/A10 与
 [并行维护报告](report/2026-09-29-headless-test-parallelism.md)。GUI、startup 和资源测量继续独占，
 这些工具测试不产生产品或候选资格化证据。
 
+同日后续维护：plan 11 `phase-verification-harness` → P00-A07/A10 →
+`tools/stickymd-smoke/tests/headless.rs`。CLI、包路径和发布 wrapper 合并为一个 Cargo
+集成测试 target，保持原有用例并集并允许默认 test harness 并发；完整清单对照、子进程隔离、
+本机小幅收益以及已撤回的收据并行试验见
+[集成测试合并报告](report/2026-09-29-headless-integration-consolidation.md)。
+
 ## 2026-09-25 clipboard feedback maintenance coverage
 
 2026-09-25 剪贴板反馈修复：`07_editor_and_ime.md#source-editor` → 输入 Markdown 行为投影 →

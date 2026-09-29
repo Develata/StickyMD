@@ -1,6 +1,8 @@
 #![cfg(windows)]
 
-use std::{fs, path::Path, process::Command, time::SystemTime};
+use std::{fs, path::Path, time::SystemTime};
+
+use super::powershell_command;
 
 #[test]
 fn package_path_wrapper_preserves_unicode_paths_and_restores_the_callers_state() {
@@ -18,7 +20,7 @@ fn package_path_wrapper_preserves_unicode_paths_and_restores_the_callers_state()
     ));
     fs::create_dir(&fixture).unwrap();
     fs::write(fixture.join("StickyMD-old-windows-x64-portable.zip"), []).unwrap();
-    let output = Command::new("powershell.exe")
+    let output = powershell_command("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command"])
         .arg(
             r#"

@@ -338,15 +338,28 @@ action or advances manual acceptance. Tests run with `cargo test -p stickymd-smo
 --locked`; `release_wrappers` exercises PowerShell 5.1 and PowerShell 7 when available,
 including actual packaged license bytes, failed Syft output, invalid SBOMs,
 checksum contents and preservation of the caller's environment.
-The two editions are separate Rust tests and can run concurrently under the default
-test harness. They read the same prebuilt CLI and repository; each owns distinct
+CLI, package-path and release-wrapper cases share the `headless` integration target,
+so the default Rust test harness can overlap their independent work. They read the
+same prebuilt CLI and repository; each owns distinct
 temporary fixture/output directories, child environment and console state. The
 PowerShell fixtures dispatch to the prebuilt CLI instead of invoking Cargo builds.
 Git queries disable optional index writes; dependency metadata/cache access remains
 with Cargo.
 Cases within an edition retain their order because they share mutable fixture state.
-`--test-threads=1` still serializes the two editions when requested. This concurrency
+`--test-threads=1` still serializes the integration cases when requested. This concurrency
 does not apply to GUI, startup or resource qualification.
+
+Focused integration checks use the module filter within that target:
+
+```powershell
+cargo test -p stickymd-smoke --locked --test headless cli_exit::
+cargo test -p stickymd-smoke --locked --test headless package_path_wrapper::
+cargo test -p stickymd-smoke --locked --test headless release_wrappers::
+```
+
+Automatic standalone integration-target discovery is disabled for this crate; register
+new integration modules in `tests/headless.rs`. Existing module/phase/workspace commands,
+unit tests and Cargo's documentation-test handling are unchanged.
 
 ## Acceptance status
 

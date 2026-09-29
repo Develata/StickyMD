@@ -1,6 +1,8 @@
 #![cfg(windows)]
 
-use std::{fs, os::windows::process::CommandExt, path::Path, process::Command, time::SystemTime};
+use std::{fs, path::Path, time::SystemTime};
+
+use super::powershell_command;
 
 #[test]
 fn powershell_51_preserves_release_interfaces_utf8_exit_codes_and_caller_state() {
@@ -12,24 +14,12 @@ fn powershell_7_preserves_release_interfaces_utf8_exit_codes_and_caller_state() 
     check_release_wrappers("pwsh.exe", "ps7");
 }
 
-fn shell_command(shell: &str) -> Command {
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let mut command = Command::new(shell);
-    // Each host owns its encoding state instead of sharing the caller's Windows console.
-    command
-        .creation_flags(CREATE_NO_WINDOW)
-        .env_remove("PSModulePath")
-        // Repository queries must not refresh the shared Git index while cases overlap.
-        .env("GIT_OPTIONAL_LOCKS", "0");
-    command
-}
-
 fn check_release_wrappers(shell: &str, edition: &str) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
         .unwrap();
-    if shell_command(shell)
+    if powershell_command(shell)
         .args([
             "-NoProfile",
             "-Command",
@@ -75,7 +65,7 @@ fn check_release_wrappers(shell: &str, edition: &str) {
         ),
     )
     .unwrap();
-    let output = shell_command(shell)
+    let output = powershell_command(shell)
         .args([
             "-NoProfile",
             "-NonInteractive",

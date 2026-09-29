@@ -44,3 +44,10 @@ P00-A10: Given a Linux host, build/lint the smoke CLI with locked dependencies a
 Expect a nonzero exit code with `UNSUPPORTED` / `NOT_TESTED` evidence, never `PASSED`.
 Windows-only execution paths must not disable portable CLI parsing or pure rule tests.
 Any lint failure, successful GUI qualification on Linux, or success evidence is a failure.
+
+P00-A07/A10 integration concurrency: Given the existing CLI and Windows-wrapper cases,
+run the Cargo `headless` integration target. Expect the same case inventory with independent
+temporary outputs, child environments and console state; a case failure must fail the target.
+The Windows cases remain platform-gated, and the Linux unsupported-GUI case stays included.
+Missing or duplicated cases, shared mutable fixtures, or starting concurrent Cargo builds
+are failure signals. Module and phase commands keep their existing coverage.
