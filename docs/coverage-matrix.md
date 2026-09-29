@@ -133,3 +133,8 @@ Source scrollbar baseline 接入 Phase 03、render 模块和完整 CI 性能分�
 资源 padding 与 startup padding 分离；startup fixture SHA-256 保持不变，资源样本变化会使
 Resources 成功记录失效。实际桌面失败与诊断范围见
 [本轮报告](report/2026-09-28-v0.1.1-desktop-qualification.md)。
+
+2026-09-29 的 P14-A40/A41 继续投影 plan 10 固定测量样本、plan 08 图片解码与 plan 11
+验证合同：窗口压力循环后恢复固定文档并校验每轮 bytes；G5 与 render 集成测试共享图片，
+使用实际解码器验证彩色像素，样本变化只命中 G5 指纹。诊断与正式资格化的边界见
+[独占桌面验收报告](report/2026-09-29-v0.1.1-exclusive-desktop-qualification.md)。
