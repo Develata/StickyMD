@@ -2,6 +2,7 @@
 # only complete PASS results can update the qualification last-success ledger.
 # Resource evidence files include INCOMPLETE checkpoints between major stages;
 # G3/G4/G5 also retain failed case results without updating the success ledger.
+# Window resources restore the fixed note after leak stress and verify every hidden sample.
 [CmdletBinding()]
 param(
     [switch]$Ci,

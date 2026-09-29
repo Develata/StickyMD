@@ -1730,10 +1730,14 @@ fn run_window_resource_measurement(
     let mut visible_cpu = Vec::with_capacity(RESOURCE_REPETITIONS);
     let mut collapsed_cpu = Vec::with_capacity(RESOURCE_REPETITIONS);
     let mut hidden_cpu = Vec::with_capacity(RESOURCE_REPETITIONS);
+    let mut hidden_fixture_measurements = Vec::with_capacity(RESOURCE_REPETITIONS);
     for repetition in 0..RESOURCE_REPETITIONS {
         let directory = root.join(format!("window-resource-{repetition}"));
         let executable = copy_executable(&source, &directory)?;
         prepare_resource_layout(&directory, "source", 0, 0, ImageResourceFixture::None)?;
+        let note = directory.join("note/note.md");
+        let baseline_note = fs::read(&note)
+            .map_err(|error| format!("cannot read window resource baseline: {error}"))?;
         let startup_started = Instant::now();
         let mut child = start(&executable)?;
         let result = (|| {
@@ -1789,6 +1793,15 @@ fn run_window_resource_measurement(
             )?);
             if repetition == 0 {
                 run_window_leak_cycles(&directory, &executable, &mut child, window)?;
+                // Persistence/image stress replaces the document. Restore the same
+                // baseline before hidden warmup so all five samples measure it.
+                crate::atomic_evidence::write(&note, &baseline_note)?;
+                wait_for_source_projection(window, &baseline_note)?;
+                wait_for_window_title(
+                    window,
+                    |title| title == "StickyMD",
+                    "restored window resource baseline",
+                )?;
             }
             crate::window_control::request_close(window)?;
             wait_for_window_visibility(window, false)?;
@@ -1809,6 +1822,21 @@ fn run_window_resource_measurement(
                 logical_processors,
                 window,
             )?);
+            let observed_note = fs::read(&note)
+                .map_err(|error| format!("cannot verify hidden resource baseline: {error}"))?;
+            if observed_note != baseline_note {
+                return Err(format!(
+                    "hidden resource run={} changed its baseline: expected_bytes={} actual_bytes={}",
+                    repetition + 1,
+                    baseline_note.len(),
+                    observed_note.len(),
+                ));
+            }
+            runtime_report!(
+                "resource fixture mode=hidden-to-tray run={} bytes={} baseline_matches=true",
+                repetition + 1,
+                observed_note.len(),
+            );
             Ok::<_, String>((startup, visible, collapsed, hidden))
         })();
         stop_child(&mut child);
@@ -1817,12 +1845,18 @@ fn run_window_resource_measurement(
         visible_samples.push(visible);
         collapsed_samples.push(collapsed);
         hidden_samples.push(hidden);
+        hidden_fixture_measurements.push(EvidenceMeasurement {
+            name: format!("hidden-to-tray.run_{}.fixture_bytes", repetition + 1),
+            unit: "bytes".to_owned(),
+            value: baseline_note.len() as f64,
+        });
     }
     print_duration_summary("startup-to-paper", &mut startup_samples)?;
     print_resource_summary("visible-source", &visible_samples, &visible_cpu)?;
     print_resource_summary("docked-collapsed", &collapsed_samples, &collapsed_cpu)?;
     print_resource_summary("hidden-to-tray", &hidden_samples, &hidden_cpu)?;
     let mut evidence = duration_measurements("window.startup_to_paper", &startup_samples);
+    evidence.extend(hidden_fixture_measurements);
     for (mode, memory, cpu) in [
         ("visible-source", &visible_samples, &visible_cpu),
         ("docked-collapsed", &collapsed_samples, &collapsed_cpu),

@@ -56,7 +56,15 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A37 | Resources 在开始及每个主要场景完成后持久化显式 `INCOMPLETE` 收据，保留已完成测量；最终完整成功才清除该标识；checkpoint 写入失败不得把部分结果登记为成功 | Automated | `runner/resource_progress` 的旧收据替换、测量保留、写入失败和成功账本隔离回归 | AUTOMATED PASS |
 | P14-A38 | 资源矩阵的无公式及 1/20 公式样本仅包含指定数量的公式与图片；修复资源 padding 不改变既有 startup fixture bytes；fixture 变化使对应模块指纹失效 | Automated | runtime fixture 数量/UTF-8/尺寸和 startup SHA-256 回归；module fingerprint 实际文件变更回归 | AUTOMATED PASS |
 | P14-A39 | G3/G4/G5 的普通 case 失败仍原子写出本轮完整结果，保留已通过项目和原始错误；失败不得覆盖 last-success，证据写入失败同时报告两项错误 | Automated | `exact_desktop/evidence` 失败收据替换与账本隔离回归 | AUTOMATED PASS |
+| P14-A40 | 窗口资源压力循环结束后原子恢复原始 20 KiB 文档，等待真实 Source 投影与 clean 状态后才开始隐藏预热；每轮采样后逐字节校验基线并记录文档长度，不一致不得形成完整成功收据 | Automated exact candidate | `phase-14.ps1 -Resources -ResourceModule window` 定向回归；正式证据属于完整 Resources receipt，包含五次 `hidden-to-tray.run_N.fixture_bytes` 与真实 Source projection acknowledgement | NOT TESTED |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
+
+P14-A40 Preconditions：隔离 portable 目录、固定资源 fixture、独占交互桌面。
+Action：运行完整窗口资源模块，包括首轮持久化/图片压力循环和五轮隐藏采样。
+Expected：五轮隐藏采样均使用原始 20,480 bytes，首轮必须先观察到恢复后的编辑器内容；
+恢复或校验失败时返回非零，不写完整成功账本。
+Failure Signals：首轮遗留压力文档、仅恢复磁盘而未等待投影、样本不一致仍报告通过。
+该工具回归通过不替代新候选的完整 Resources 资格化。
 
 ## Guided manual sessions
 
