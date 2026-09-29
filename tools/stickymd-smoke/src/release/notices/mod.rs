@@ -7,9 +7,11 @@ mod licenses;
 mod tests;
 
 use crate::{atomic_evidence, integrity, repository};
-use std::{fmt::Write, path::Path};
+use std::{fmt::Write, fs, path::Path};
 
 pub(super) fn generate(root: &Path, destination: &Path) -> Result<(), String> {
+    let destination = std::path::absolute(destination).map_err(|error| error.to_string())?;
+    preflight_destination(&destination)?;
     let metadata = repository::command_text(
         root,
         "cargo",
@@ -23,13 +25,36 @@ pub(super) fn generate(root: &Path, destination: &Path) -> Result<(), String> {
         ],
     )?;
     let (contents, count) = render(root, &metadata)?;
-    let destination = std::path::absolute(destination).map_err(|error| error.to_string())?;
+    // The preflight is only an early rejection; publication must still reject a
+    // destination created while Cargo metadata and license files were being read.
     atomic_evidence::write_new(&destination, contents.as_bytes())?;
     println!(
         "THIRD_PARTY_NOTICES={}\nRUNTIME_DEPENDENCY_COUNT={count}",
         destination.display()
     );
     Ok(())
+}
+
+fn preflight_destination(destination: &Path) -> Result<(), String> {
+    let parent = destination.parent().ok_or("new file path has no parent")?;
+    if !parent.is_dir() {
+        return Err(format!(
+            "destination directory does not exist: {}",
+            parent.display()
+        ));
+    }
+    // A dangling symlink is occupied too; Path::exists would follow it and miss that case.
+    match fs::symlink_metadata(destination) {
+        Ok(_) => Err(format!(
+            "notice destination already exists: {}",
+            destination.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "cannot inspect notice destination {}: {error}",
+            destination.display()
+        )),
+    }
 }
 
 fn render(root: &Path, metadata: &str) -> Result<(String, usize), String> {

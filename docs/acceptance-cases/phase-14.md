@@ -184,3 +184,9 @@ Failure Signals：接受缺失/冲突来源、哈希不符、重复 manifest、�
 
 详细运行环境、数据及未验证项见 [维护报告](../report/2026-09-22-release-cli-migration.md)。
 SBOM 与 checksum 收尾记录见 [输出维护报告](../report/2026-09-25-release-output-finalization.md)。
+
+REL-CLI-05 notices 输出预检：Given 已存在的目标文件/目录或缺失的父目录，且当前 fixture
+没有可用的 Cargo manifest，调用 notices 生成。Expect 在依赖读取之前返回对应输出路径错误，
+原文件字节和目录保持不变，不生成临时输出；合法目标仍须通过完整依赖和许可证检查。
+最终发布继续使用原子 no-replace 操作，预检后的并发创建不得被覆盖。
+Failure Signals：先报 Cargo/许可证错误、生成部分文件、创建缺失父目录或覆盖已有目标。

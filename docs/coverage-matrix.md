@@ -51,6 +51,11 @@ plan 11 `phase-verification-harness` / `modular-headless-ci` → P00-A09/A10 与
 本机小幅收益以及已撤回的收据并行试验见
 [集成测试合并报告](report/2026-09-29-headless-integration-consolidation.md)。
 
+发布声明输出维护：plan 11 `phase-verification-harness` → REL-CLI-05 →
+`tools/stickymd-smoke/src/release/notices/`。无效目标在读取依赖前拒绝，最终原子
+no-replace 发布仍持有防覆盖责任；无 manifest 的失败路径回归、两版 PowerShell 兼容性与
+分项耗时见[输出预检报告](report/2026-09-29-notices-preflight-optimization.md)。
+
 ## 2026-09-25 clipboard feedback maintenance coverage
 
 2026-09-25 剪贴板反馈修复：`07_editor_and_ime.md#source-editor` → 输入 Markdown 行为投影 →

@@ -2,6 +2,34 @@ use super::*;
 use crate::{evidence::escape_json, release::temporary::TemporaryDirectory};
 use std::fs;
 
+#[test]
+fn invalid_notice_destinations_fail_before_dependency_inspection_and_preserve_outputs() {
+    // No Cargo.toml: invalid output paths must be rejected independently of the toolchain input.
+    let scratch = TemporaryDirectory::new("notices-destination-test").unwrap();
+    let root = scratch.path();
+    let existing = root.join("已有 notices.txt");
+    let directory = root.join("existing-directory");
+    fs::write(&existing, b"original notices").unwrap();
+    fs::create_dir(&directory).unwrap();
+    for destination in [&existing, &directory] {
+        let error = generate(root, destination).unwrap_err();
+        assert!(
+            error.contains("notice destination already exists"),
+            "{error}"
+        );
+    }
+    let missing = root.join("missing-parent").join("output.txt");
+    let error = generate(root, &missing).unwrap_err();
+    assert!(
+        error.contains("destination directory does not exist"),
+        "{error}"
+    );
+    assert_eq!(fs::read(&existing).unwrap(), b"original notices");
+    assert!(directory.is_dir());
+    assert!(!missing.parent().unwrap().exists());
+    assert_eq!(fs::read_dir(root).unwrap().count(), 2);
+}
+
 fn package(id: &str, name: &str, source: &str, directory: &Path) -> String {
     format!(
         r#"{{"id":"{id}","name":"{name}","version":"1.0.0","source":{source},"license":"MIT","repository":null,"homepage":null,"manifest_path":"{}"}}"#,

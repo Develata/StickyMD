@@ -322,6 +322,9 @@ ordinally, and selects license files or the existing reviewed fallback list.
 Missing graph/classification/license facts and unsupported runtime sources fail.
 Output remains UTF-8 without BOM, with LF, and includes the Cargo.lock hash.
 The destination parent must exist; an existing output is never overwritten.
+Occupied destinations and missing parents are rejected before invoking Cargo metadata
+or reading license files. This preflight does not reserve the path: final atomic
+publication still rejects an output created concurrently during generation.
 Publication uses a same-directory temporary file and a no-replace move on Windows
 (an atomic hard link on Linux); unsupported filesystem operations return failure.
 
