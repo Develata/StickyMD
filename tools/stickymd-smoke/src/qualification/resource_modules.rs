@@ -1,17 +1,20 @@
 //! Per-group resource success promotion and compatible reuse.
 //! plan_ref: docs/plan/11_testing_and_release.md#resource-module-qualification
 
-use super::module_ledger::{self, CompatibleSuccess, ModuleId, fingerprint};
+use super::module_ledger::{self, ModuleId, fingerprint};
 use super::{json, receipt};
 use crate::cli::ResourceModule;
 use crate::evidence::{self, EvidenceResult, EvidenceStatus};
 use crate::qualification_environment::QualificationEnvironment;
 use std::path::Path;
 
+#[cfg(test)]
+mod tests;
+
 struct Entry {
     group: ResourceModule,
     fingerprint: String,
-    reusable: Option<CompatibleSuccess>,
+    reusable: bool,
 }
 
 pub(crate) struct Campaign {
@@ -78,7 +81,7 @@ impl Campaign {
             entries.push(Entry {
                 group,
                 fingerprint: input,
-                reusable,
+                reusable: reusable.is_some(),
             });
         }
         eprintln!(
@@ -89,7 +92,7 @@ impl Campaign {
     }
 
     pub(crate) fn needs_run(&self, group: ResourceModule) -> bool {
-        self.entry(group).reusable.is_none()
+        !self.entry(group).reusable
     }
 
     pub(crate) fn reuse(
@@ -97,10 +100,20 @@ impl Campaign {
         root: &Path,
         group: ResourceModule,
     ) -> Result<Option<EvidenceResult>, String> {
-        let Some(success) = &self.entry(group).reusable else {
+        if !self.entry(group).reusable {
             return Ok(None);
-        };
-        self.verify_current(root, group)?;
+        }
+        let current = self.verify_current(root, group)?;
+        // Planning determines scheduling only. Re-read the ledger and its archive using
+        // the input digest just verified above, without hashing the same inputs twice.
+        let success =
+            module_ledger::compatible_success_for_input(root, ModuleId::Resource(group), &current)?
+                .ok_or_else(|| {
+                    format!(
+                        "{} resource last-success is no longer compatible",
+                        group.name()
+                    )
+                })?;
         let detail = format!(
             "REUSED_PASS origin_source={} origin_exe={} origin_zip={} evidence={}",
             success.origin_source_commit,
@@ -156,18 +169,18 @@ impl Campaign {
             .expect("complete group registry")
     }
 
-    fn verify_current(&self, root: &Path, group: ResourceModule) -> Result<(), String> {
+    fn verify_current(&self, root: &Path, group: ResourceModule) -> Result<String, String> {
         if receipt::read_candidate(root)? != self.candidate {
             return Err("promoted candidate changed during the resource campaign".into());
         }
         receipt::validate_candidate_against_repository(root, &self.candidate)?;
-        if fingerprint::calculate(root, ModuleId::Resource(group))? != self.entry(group).fingerprint
-        {
+        let current = fingerprint::calculate(root, ModuleId::Resource(group))?;
+        if current != self.entry(group).fingerprint {
             return Err(format!(
                 "{} resource inputs changed during measurement",
                 group.name()
             ));
         }
-        Ok(())
+        Ok(current)
     }
 }

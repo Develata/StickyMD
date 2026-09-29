@@ -361,7 +361,7 @@ fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{inspect_bytes, is_developer_runtime, is_windows_inbox_dependency};
 
     #[test]
@@ -428,7 +428,7 @@ mod tests {
         assert!(error.contains("MZ"));
     }
 
-    fn synthetic_pe(standard: Option<&str>, delayed: Option<&str>) -> Vec<u8> {
+    pub(crate) fn synthetic_pe(standard: Option<&str>, delayed: Option<&str>) -> Vec<u8> {
         let mut bytes = vec![0_u8; 0x500];
         bytes[0..2].copy_from_slice(b"MZ");
         put_u32(&mut bytes, 0x3c, 0x80);

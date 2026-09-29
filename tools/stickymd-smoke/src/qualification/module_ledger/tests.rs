@@ -66,6 +66,8 @@ fn canonical_reserved_paths_are_rejected_before_tasks_or_evidence_writes() {
     for receipt in [
         crate::qualification::workspace_tests::RECEIPT,
         crate::cli::ResourceModule::Math.receipt(),
+        "dist/evidence/module-success/resources-window.json",
+        "dist/evidence/module-success/evidence/resources-window-fixture.json",
     ] {
         let alias = canonical_root.join(receipt);
         assert!(super::matches_receipt(&root, &alias, receipt));
@@ -131,6 +133,21 @@ fn evidence_directory_aliases_cannot_bypass_reserved_paths_before_file_creation(
     assert!(crate::qualification::validate_public_evidence_path(&root, &path).is_err());
     let module = alias.join("resources/math.json");
     assert!(crate::qualification::validate_public_evidence_path(&root, &module).is_err());
+    for path in [
+        "module-success/resources-window.json",
+        "module-success/evidence/new.json",
+    ] {
+        assert!(
+            crate::qualification::validate_public_evidence_path(&root, &alias.join(path)).is_err()
+        );
+    }
+    assert!(
+        crate::qualification::validate_public_evidence_path(
+            &root,
+            &alias.join("module-success-diagnostic.json")
+        )
+        .is_ok()
+    );
     assert_eq!(
         super::module_for_receipt(&root, &alias.join("runtime-qualification.json")),
         Some(ModuleId::Runtime)
@@ -139,6 +156,49 @@ fn evidence_directory_aliases_cannot_bypass_reserved_paths_before_file_creation(
     fs::remove_dir(&alias).unwrap();
     #[cfg(unix)]
     fs::remove_file(&alias).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn win32_aliases_are_reserved_without_changing_verbatim_path_identity() {
+    let root = fixture();
+    for relative in [
+        "dist/evidence/resources/window.json.",
+        "dist/evidence/resources/window.json ",
+    ] {
+        assert!(
+            crate::qualification::validate_public_evidence_path(&root, Path::new(relative))
+                .is_err(),
+            "{relative}"
+        );
+    }
+    fs::create_dir_all(root.join("dist/evidence/resources")).unwrap();
+    for relative in [
+        "dist/evidence/resources. /window.json",
+        "dist/evidence/resources.../window.json",
+        "dist/evidence/resources/.. /window.json",
+        "dist/evidence/resources/.../window.json",
+    ] {
+        let error = crate::qualification::validate_public_evidence_path(&root, Path::new(relative))
+            .unwrap_err();
+        assert!(error.contains("ambiguous directories"), "{error}");
+    }
+    let device = PathBuf::from(format!(
+        r"\\.\{}",
+        root.join("dist/evidence/resources/window.json.").display()
+    ));
+    assert!(crate::qualification::validate_public_evidence_path(&root, &device).is_err());
+    let verbatim = root
+        .canonicalize()
+        .unwrap()
+        .join("dist/evidence/resources/window.json.");
+    assert!(!super::matches_receipt(
+        &root,
+        &verbatim,
+        crate::cli::ResourceModule::Window.receipt()
+    ));
+    assert!(crate::qualification::validate_public_evidence_path(&root, &verbatim).is_ok());
     fs::remove_dir_all(root).unwrap();
 }
 

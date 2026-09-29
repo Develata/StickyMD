@@ -105,6 +105,14 @@ Use a separate output such as `dist/evidence/window-diagnostic.json`; partial re
 are rejected when pointed at formal receipts. Diagnostics never replace last-success.
 Filesystem aliases, including Windows verbatim/short paths and junctions, receive the same
 protection before execution and writing; this also covers output files not yet created.
+Ordinary Windows paths with trailing dots/spaces are checked before creation as well;
+verbatim paths retain their literal identity. Ordinary paths with dots/spaces at the end
+of an intermediate directory are rejected because ancestor lookup can change their meaning.
+The entire `dist/evidence/module-success/`
+ledger/archive directory is internal, including for G3/G4/G5 diagnostic output.
+Resource reuse rechecks the current ledger, archived bytes and complete coverage at the
+point of use; planning only decides which groups need measurement. If evidence disappears
+or becomes invalid during the campaign, reuse fails without overwriting previous success.
 An interrupted window stress group reruns the whole group. All native measurements still
 require an exclusive interactive Windows desktop; the new harness has not yet received
 its full desktop acceptance (P14-A46).

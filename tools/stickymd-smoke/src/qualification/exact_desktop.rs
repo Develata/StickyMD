@@ -97,6 +97,9 @@ pub(super) fn run(
     evidence_file: Option<&Path>,
     group: ExactGroup<'_>,
 ) -> Result<(), String> {
+    if let Some(path) = evidence_file {
+        super::validate_public_evidence_path(repository, path)?;
+    }
     if let Some(selected) = group.selected_case
         && !group.cases.iter().any(|case| case.id == selected)
     {

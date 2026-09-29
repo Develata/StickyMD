@@ -192,3 +192,9 @@ P14-A50/A51 的批量规划回归由 `module_ledger/fingerprint/stream` 持有�
 读取，逐组保持旧摘要协议；有界缓冲、真实读取/flush 失败、临时文件冲突及 unwind 清理
 验证本次临时文件所有权。显式 `resource_planning_profile` 比较旧实现与批量实现的指纹、
 源码读取量和规划用时，默认测试跳过该本机计时；其结果不等于 P14-A46 的原生测量。
+
+本轮独立 review 补漏仍映射 P14-A42/A43/A50：`resource_modules/tests` 用真实 Git/freeze、
+合成且不执行的 PE 和完整资源收据，验证规划后 ignored 账本/归档删除、损坏及来源更新；
+`module_ledger`、`exact_desktop/evidence` 与 CLI 回归验证整个成功存储目录、目录别名和
+Windows 未创建目标的尾随点/空格保护。验证结果见
+[`2026-09-29-optimization-independent-review.md`](report/2026-09-29-optimization-independent-review.md)。

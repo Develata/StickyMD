@@ -1,6 +1,71 @@
 use std::process::Command;
 
 #[test]
+fn diagnostic_commands_preserve_internal_success_files() {
+    for receipt in [
+        "dist/evidence/module-success/resources-window.json",
+        "dist/evidence/module-success/evidence/resources-window-fixture.json",
+    ] {
+        assert_protected_output(receipt, "", true);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn uncreated_formal_outputs_reject_win32_trailing_dot_and_space_aliases() {
+    for receipt in [
+        "dist/evidence/resources-qualification.json",
+        "dist/evidence/resources/window.json",
+        "dist/evidence/source-success/workspace-tests.json",
+    ] {
+        for suffix in [".", " "] {
+            assert_protected_output(receipt, suffix, false);
+        }
+    }
+}
+
+fn assert_protected_output(receipt: &str, suffix: &str, existing: bool) {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "stickymd-reserved-output-{}-{nonce}",
+        std::process::id()
+    ));
+    let destination = root.join(receipt);
+    std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+    for marker in ["Cargo.toml", "AGENTS.md"] {
+        std::fs::write(root.join(marker), "").unwrap();
+    }
+    if existing {
+        std::fs::write(&destination, "preserved receipt").unwrap();
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
+        .args(["phase", "00"])
+        .arg(format!("--evidence-file={receipt}{suffix}"))
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let unchanged = if existing {
+        std::fs::read_to_string(&destination).unwrap() == "preserved receipt"
+    } else {
+        !destination.exists()
+    };
+    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        unchanged,
+        "diagnostic wrote protected destination: {receipt}{suffix:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("formal qualification output"),
+        "{output:?}"
+    );
+}
+
+#[test]
 fn partial_resource_requests_fail_before_overwriting_formal_evidence() {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

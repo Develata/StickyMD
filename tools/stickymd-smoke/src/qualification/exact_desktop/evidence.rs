@@ -14,13 +14,15 @@ pub(super) fn finish(
     document: &str,
     outcome: Result<(), String>,
 ) -> Result<(), String> {
-    let emitted = crate::atomic_evidence::write(output, document.as_bytes()).and_then(|()| {
-        if formal_group_run && outcome.is_ok() {
-            crate::qualification::record_last_success_for_evidence(repository, output)
-        } else {
-            Ok(())
-        }
-    });
+    let emitted = crate::qualification::validate_public_evidence_path(repository, output)
+        .and_then(|()| crate::atomic_evidence::write(output, document.as_bytes()))
+        .and_then(|()| {
+            if formal_group_run && outcome.is_ok() {
+                crate::qualification::record_last_success_for_evidence(repository, output)
+            } else {
+                Ok(())
+            }
+        });
     match (outcome, emitted) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
@@ -96,6 +98,50 @@ mod tests {
     use super::render_receipt;
     use crate::qualification::exact_desktop::{ArtifactEvidence, CaseResult};
     use crate::qualification::receipt::Candidate;
+
+    #[test]
+    fn exact_diagnostic_output_cannot_replace_internal_success_files() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-exact-output-{}-{nonce}",
+            std::process::id()
+        ));
+        for path in [
+            "dist/evidence/module-success/resources-window.json",
+            "dist/evidence/module-success/evidence/resources-window-fixture.json",
+            crate::qualification::workspace_tests::RECEIPT,
+            crate::cli::ResourceModule::Window.receipt(),
+        ] {
+            let output = root.join(path);
+            crate::atomic_evidence::write(&output, b"preserved success").unwrap();
+            let group = crate::qualification::exact_desktop::ExactGroup {
+                name: "G4",
+                default_receipt: "dist/evidence/g4-exact-qualification.json",
+                cases: &[],
+                selected_case: None,
+            };
+            let error = super::super::run(&root, None, Some(&output), group).unwrap_err();
+            assert!(
+                error.contains("coordinator-owned"),
+                "must reject before desktop checks: {error}"
+            );
+            let error = super::finish(
+                &root,
+                &output,
+                false,
+                "failed diagnostic",
+                Err("original failure".into()),
+            )
+            .unwrap_err();
+            assert!(error.starts_with("original failure"));
+            assert!(error.contains("coordinator-owned"), "{error}");
+            assert_eq!(std::fs::read(&output).unwrap(), b"preserved success");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn exact_failure_replaces_stale_receipt_without_replacing_success_ledger() {
