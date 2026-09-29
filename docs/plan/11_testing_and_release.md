@@ -154,8 +154,8 @@ docs/acceptance-cases/phase-XX.md
   只允许显式本地运行，不得偷偷进入 headless CI。
 - 本地修复默认运行受影响 Phase/模块的定向 smoke。Resources 可用
   `--resources --resource-module=source-preview|math|images|window|zoom` 单独复核；该结果是
-  定向诊断证据，不能冒充最终候选的完整 Resources receipt。候选冻结、发布资格化或 USER
-  明确要求全量时才运行完整 Campaign。
+  定向诊断证据，不写正式成功账本。完整 Resources 入口按下述资源子模块契约选择需要
+  重跑的模块，最终必须覆盖整个矩阵；不能将任意定向诊断拼成完整成功。
 - 同一个交互桌面的 GUI runtime、clipboard、tray、物理鼠标/焦点与资源测量不得并发；多个
   app 会争用共享系统状态并污染性能数据。只有隔离 Windows 会话/机器才允许并发这些通道。
 - 自动化等待必须优先等待可观察事实：进程退出、typed reducer state、窗口/文件/clipboard
@@ -382,6 +382,69 @@ readiness 输出必须区分 `RAN PASS` 与 `REUSED PASS`；二者都是通过�
 candidate freeze、release readiness 或 USER 明确要求时，planner 只运行指纹 stale 的功能模块与当前 artifact
 需要的 exact-byte gate，不再机械重跑完整 Phase 0–14 Campaign。需要重新观察兼容模块时使用现有定向诊断命令；
 诊断输出不改变 last-success ledger。
+
+<a id="shared-headless-prerequisite"></a>
+### Runtime / Performance 共享无界面前置检查
+
+- 完整 Phase 14 Runtime 与 Performance 的 canonical 请求可以共享同机、同输入的完整
+  `cargo test --workspace --locked` 成功。它只替代任务图中的 workspace tests，不替代
+  headless CI 全集、原生桌面、startup、资源或 exact-byte 证据。
+- 共享记录绑定有效 Source Freeze、clean worktree、全部仓库输入 bytes、实际 harness、
+  Rust/Cargo 工具链、命令参数、主机与工作目录，以及适用的环境/Cargo 配置身份。
+  无法完整识别的配置或测试筛选条件禁止复用；普通诊断、选模块和 CI 不写该记录。
+  相对 Cargo 配置路径必须按实际 Cargo 子进程的工作目录解析，不能使用调用者所在子目录。
+  空 `CARGO_HOME` 使用用户目录回退；Windows 带盘符的相对路径等不能可靠解析的配置禁止共享。
+- 执行前后重新获取身份；发生变化、测试失败、中止或记录写入失败均返回非零，不得
+  把 partial 结果登记为成功。记录以原子替换保留最近一次完整成功，损坏或不匹配时重跑。
+  只在完整测试本身通过后登记，后续桌面失败不撤销已完成的 source-bound 前置检查。
+- 复用结果明确标为 `REUSED_PASS` 并保留来源与输入身份；正式通道的 task coverage
+  继续要求这项任务。输出规划、身份检查、任务执行耗时；历史运行时间不能冒充本轮耗时。
+- 资源规划同轮只枚举一次输入清单，每组指纹计算一次并传给兼容性判断。复用/登记阶段
+  的当前身份核对不使用规划缓存；指纹字节格式和依赖范围不因此改变。
+  同轮多个组可流式共读相同输入，保持各组排序后的原始 bytes 协议，不缓存整个仓库内容。
+  临时指纹流须完整 flush 后才能哈希；任何输入读取或输出失败使整批失败，清理仅限本次
+  exclusive create 持有的临时文件。批次总耗时与逐组兼容性检查用时分别报告。
+
+<a id="resource-module-qualification"></a>
+### 资源场景去重与子模块资格化
+
+Resources 是 source-preview、math、images、window、zoom 五类兼容成功的聚合投影，
+不再拥有可独立替代五类证据的整组 last-success。Rust 资源注册表统一持有场景定义、
+分组、操作历史、采样协议、覆盖要求和固定等待预算，runner/readiness 不得另建跳过清单。
+
+- 同一次命令的相同样本、初始配置、操作历史及采样协议可以共享一份完整测量；别名必须
+  指向实际测量来源，不能伪装为额外独立样本。每个独立场景仍保留原有次数和时间窗口。
+  Preview→Source 释放、窗口压力循环等有状态过程不得只按最终画面合并。
+- 只有 `phase 14 --resources` 的无筛选完整请求，显式写入 canonical
+  `dist/evidence/resources-qualification.json`，才进入子模块资格化。要求 clean worktree、
+  有效 Promoted Candidate、独占桌面与适用环境检查。选组/选 case 请求写入此路径必须
+  在执行前拒绝；诊断不会因为输出文件名而登记成功。
+  Runtime/Performance 的 canonical 输出同样要求对应的完整 Phase 14 单一模式请求；
+  登记与复用均须按 Rust task plan 核对全部任务，单个成功标志不代表完整覆盖。
+  入口保护按文件系统身份识别正式/内部收据，包括 Windows verbatim、短路径与目录别名；
+  未创建文件按最近存在的父目录解析，在执行前及输出写入前均执行保护。
+- 五类账本分别绑定其产品/共享/harness/样本/合同输入及 origin identity。每类完成全部
+  必需场景后才能原子更新；缺项、重复项、失败、INCOMPLETE 或被中断的 cohort 不合格。
+  一个模块失败不覆盖其他完整成功；中断的窗口压力循环整段重跑。
+  每组成功归档须自包含五次原始观测与适用的既有硬门；共享 cohort 保留这些数据并通过
+  `shared_from` 标明原始场景，不算作新的独立采样。完整性检查核对实际 run、单位、
+  统计与原始观测的一致性及硬门结果，不能只相信计数标记或 PASSED 字样。
+- 记录前重新核对 source/candidate、clean tree 与本次测量开始时的模块指纹。输入变化
+  拒绝登记。下一次完整请求只复用当前指纹兼容的子模块，输出来源与重跑原因。
+- readiness 必须核对五类成功及各自完整覆盖；aggregate 文件仅作本次执行进度/来源摘要。
+  旧 `resources.json` 账本、旧整组收据与定向诊断均不自动拆分或导入，原文件保留。
+- 窗口控制、进程生命周期等共享适配器的变化必须使所有实际消费者失效。未知 tracked
+  输入保守失效；成功文件路径本身不能决定请求具备哪一种资格。
+- 预检样本结构后才开始等待；报告计划固定等待预算、各场景/模块实际用时及共享来源。
+  预算与模拟执行只能证明计划开销，不构成真实桌面速度、资源或产品质量证据。
+- Runtime/Performance/Resources 消费 Promoted Candidate 时，以显式的候选校验任务替代
+  不参与测量的本地 Release build；仍须完整验证 Source Freeze、clean tree、EXE/ZIP/SBOM
+  hash、checksum 与 native-runtime。候选缺失或失效即失败，不能回退本地构建；Local
+  Preflight、package/release 与 headless CI 的原有构建职责保持不变。
+- Resources 的任一样本超限或最大值硬门，在一个完整样本已确定失败时立即停止后续
+  采样及任务。CPU 必须完成原有 60 秒平均窗口后再判断；窗口内分桶不能提前判失败。
+  失败收据保留实际样本、已完成次数、门槛及错误，不写 last-success。成功仍须完成
+  全部五次采样、原预热/采样时长及完整压力循环。此规则不应用于 startup p95 门。
 
 ### Phase 14 qualification environment、独立证据通道与 partial evidence
 

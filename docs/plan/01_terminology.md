@@ -359,6 +359,13 @@
 - **Not equivalent to**：按目录名猜测、Git commit 整体失效、运行时插件系统或人工临时跳过清单。
 - **Lifetime**：verification tooling 生命周期；registry 变化会使受影响模块指纹变化。
 
+### Resource Qualification Group
+
+- **Definition**：Resources 的五个完整采样单位：source-preview、math、images、window、zoom。每组包含注册表规定的全部场景与采样协议。
+- **Authority**：完整 Phase 14 Resources 入口产生的该组 last-success；readiness 核对五组覆盖与当前输入兼容性。
+- **Not equivalent to**：选组诊断、单个 case、部分 cohort、aggregate 进度文件，或把共享样本算作两次独立测量。
+- **Lifetime**：该组最后一次完整成功；后续组失败不覆盖它，相关输入变化使其失效。
+
 ---
 
 ## 架构层
