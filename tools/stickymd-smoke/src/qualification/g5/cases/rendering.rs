@@ -100,7 +100,7 @@ fn seed_images(program: &Path) -> Result<(), String> {
     let images = program.join("note/images");
     fs::create_dir_all(&images)
         .map_err(|error| format!("cannot create G5 image fixture directory: {error}"))?;
-    for (name, encoded) in [
+    for (name, bytes) in [
         ("stress-top.png", PNG),
         ("stress-bottom.png", PNG),
         ("g5.png", PNG),
@@ -108,9 +108,7 @@ fn seed_images(program: &Path) -> Result<(), String> {
         ("g5.webp", WEBP),
         ("g5.gif", GIF),
     ] {
-        let bytes = decode_base64(encoded)?;
-        fs::write(images.join(name), bytes)
-            .map_err(|error| format!("cannot seed G5 image {name}: {error}"))?;
+        crate::atomic_evidence::write(&images.join(name), bytes)?;
     }
     let mut oversized = vec![0_u8; 54];
     oversized[0..2].copy_from_slice(b"BM");
@@ -121,61 +119,20 @@ fn seed_images(program: &Path) -> Result<(), String> {
     oversized[22..26].copy_from_slice(&100_000_i32.to_le_bytes());
     oversized[26..28].copy_from_slice(&1_u16.to_le_bytes());
     oversized[28..30].copy_from_slice(&32_u16.to_le_bytes());
-    fs::write(images.join("g5-oversize.bmp"), oversized)
-        .map_err(|error| format!("cannot seed oversized image fixture: {error}"))
+    crate::atomic_evidence::write(&images.join("g5-oversize.bmp"), &oversized)
 }
 
-fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
-    let mut output = Vec::with_capacity(input.len() * 3 / 4);
-    let mut chunk = [0_u8; 4];
-    let mut used = 0;
-    for byte in input.bytes().filter(|byte| !byte.is_ascii_whitespace()) {
-        chunk[used] = match byte {
-            b'A'..=b'Z' => byte - b'A',
-            b'a'..=b'z' => byte - b'a' + 26,
-            b'0'..=b'9' => byte - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            b'=' => 64,
-            _ => return Err(format!("invalid base64 byte {byte}")),
-        };
-        used += 1;
-        if used == 4 {
-            output.push((chunk[0] << 2) | (chunk[1] >> 4));
-            if chunk[2] != 64 {
-                output.push((chunk[1] << 4) | (chunk[2] >> 2));
-            }
-            if chunk[3] != 64 {
-                output.push((chunk[2] << 6) | chunk[3]);
-            }
-            used = 0;
-        }
-    }
-    if used != 0 {
-        return Err("base64 fixture length is not divisible by four".to_owned());
-    }
-    Ok(output)
-}
-
-const PNG: &str =
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUAAQEnGONmAAAAAElFTkSuQmCC";
-const GIF: &str = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
-const WEBP: &str = "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/vuUAAA=";
-const JPEG: &str = concat!(
-    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////",
-    "2wBDAf//////////////////////////////////////////////////////////////////////////////////////",
-    "wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAEf/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABD/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/EH//xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/EH//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/EH//2Q=="
+// These exact bytes are decoded by the render crate's qualification_images test.
+// Keep visible color regions so desktop evidence can distinguish images from fallback text.
+const PNG: &[u8] = include_bytes!(
+    "../../../../../../crates/stickymd-render/tests/fixtures/qualification-images/g5.png"
 );
-
-#[cfg(test)]
-mod tests {
-    use super::{GIF, JPEG, PNG, WEBP, decode_base64};
-
-    #[test]
-    fn embedded_g5_images_have_expected_container_signatures() {
-        assert!(decode_base64(PNG).expect("PNG").starts_with(b"\x89PNG"));
-        assert!(decode_base64(JPEG).expect("JPEG").starts_with(b"\xff\xd8"));
-        assert!(decode_base64(WEBP).expect("WebP").starts_with(b"RIFF"));
-        assert!(decode_base64(GIF).expect("GIF").starts_with(b"GIF89a"));
-    }
-}
+const JPEG: &[u8] = include_bytes!(
+    "../../../../../../crates/stickymd-render/tests/fixtures/qualification-images/g5.jpg"
+);
+const WEBP: &[u8] = include_bytes!(
+    "../../../../../../crates/stickymd-render/tests/fixtures/qualification-images/g5.webp"
+);
+const GIF: &[u8] = include_bytes!(
+    "../../../../../../crates/stickymd-render/tests/fixtures/qualification-images/g5.gif"
+);

@@ -26,6 +26,12 @@ pub(super) fn select(paths: &[String]) -> Selection {
         if is_shared(path) {
             return Selection::full(format!("shared input: {path}"));
         }
+        // G5 embeds these bytes without a Cargo dependency on the render crate.
+        // Validate the decoder and the embedding harness when a fixture changes.
+        if path.starts_with("crates/stickymd-render/tests/fixtures/qualification-images/") {
+            direct.extend([Module::Render, Module::Smoke]);
+            continue;
+        }
         if let Some(module) = Module::ALL
             .into_iter()
             .find(|module| path.starts_with(module.root()))

@@ -150,6 +150,9 @@ fn path_domains(path: &str) -> u64 {
     if path == "crates/stickymd-render/tests/fixtures/rendering-stress.md" {
         return G5_HARNESS | PREVIEW | MATH | IMAGES;
     }
+    if path.starts_with("crates/stickymd-render/tests/fixtures/qualification-images/") {
+        return G5_HARNESS;
+    }
     if path == "tests/fixtures/performance/typical-note-seed.md" {
         return PERFORMANCE_HARNESS;
     }
@@ -374,6 +377,23 @@ mod tests {
     }
 
     #[test]
+    fn g5_image_bytes_invalidate_g5_without_invalidating_other_groups() {
+        let root = fixture();
+        let before =
+            super::super::MODULES.map(|module| (module, calculate(&root, module).unwrap()));
+        fs::write(
+            root.join("crates/stickymd-render/tests/fixtures/qualification-images/g5.png"),
+            b"changed encoded image bytes",
+        )
+        .unwrap();
+        for (module, fingerprint) in before {
+            let changed = calculate(&root, module).unwrap() != fingerprint;
+            assert_eq!(changed, module == ModuleId::G5, "{module:?}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn unrelated_group_harness_does_not_change_module_fingerprint() {
         let root = fixture();
         let before_g3 = calculate(&root, ModuleId::G3).expect("G3 fingerprint");
@@ -410,6 +430,7 @@ mod tests {
             "docs/report/note.md",
             "tests/fixtures/performance/typical-note-seed.md",
             "tests/fixtures/performance/resource-note-seed.md",
+            "crates/stickymd-render/tests/fixtures/qualification-images/g5.png",
         ] {
             let path = root.join(path);
             fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");

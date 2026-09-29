@@ -3,6 +3,7 @@
 # Resource evidence files include INCOMPLETE checkpoints between major stages;
 # G3/G4/G5 also retain failed case results without updating the success ledger.
 # Window resources restore the fixed note after leak stress and verify every hidden sample.
+# G5 uses shared image fixtures validated by the render crate's actual decoder tests.
 [CmdletBinding()]
 param(
     [switch]$Ci,

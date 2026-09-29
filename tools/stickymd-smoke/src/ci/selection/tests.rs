@@ -34,6 +34,16 @@ fn ci_reverse_dependencies_cover_downstream_behavior_without_selecting_unrelated
 }
 
 #[test]
+fn ci_g5_image_fixtures_select_both_consumers_and_their_reverse_dependencies() {
+    let selection =
+        selected(&["crates/stickymd-render/tests/fixtures/qualification-images/g5.png"]);
+    let mut expected = vec![Module::Render, Module::Windows, Module::Smoke];
+    expected.sort_unstable();
+    assert!(!selection.full);
+    assert_eq!(selection.modules, expected);
+}
+
+#[test]
 fn ci_shared_and_unknown_inputs_choose_full_even_alongside_known_changes() {
     for path in [
         "Cargo.toml",
