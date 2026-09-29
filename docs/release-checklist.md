@@ -4,6 +4,29 @@
 [`docs/plan/11_testing_and_release.md`](plan/11_testing_and_release.md) 为准；每次发布的 source、artifact、
 收据和 USER authority 必须重新建立，不能从旧版本继承。
 
+## v0.1.1 已发布记录
+
+- Release：[StickyMD v0.1.1](https://github.com/Develata/StickyMD/releases/tag/v0.1.1)
+- 发布时间：`2026-09-29T12:50:39Z`；正式版，非 draft/prerelease。
+- Exact source / tag：`9a0a00a1fe143cf25fa4208a54ec5dfea7f3e7c9`
+- Candidate CI：`36565543814`，PASS；candidate workflow run：`36565605768` / attempt 1。
+- ZIP SHA-256：`c8a46192df50d580354363e05545787e186788f27a103978dcfe039252ff27a3`
+- EXE SHA-256：`c398e969c0b2e8319a1cac2d66278feca57177a1d467b01cac529662ba23fa5a`
+- SBOM SHA-256：`fefff9935883369d02627b78a9c2661a7063828cd4383e07334214f722413457`
+- 技术 readiness：保留 `NOT_READY`；发布依据为本版本明确的 USER exception。
+- Tag 校验 run：`36569493129` / attempt 2；draft run：`36569914568`；publish run：`36570737949`。
+- 晋升 workflow revision：`6daccc1c21a1a71c500aed68cb23d71c9160d77d`；其 CI `36569445309` PASS。
+  该维护提交修复晋升 runner，不是产品源码 tag，也没有重建候选。
+- 公开三个附件重新下载后与原候选 SHA-256 全部一致；ZIP/SBOM provenance 和 ZIP 的 SBOM
+  attestation 均通过仓库、workflow 路径及 signer digest 约束校验。
+- 发布形态：unsigned Authenticode、Windows 11 x64 portable ZIP。
+
+USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以及资源/G5 修复后的完整复验、
+人工视觉、Clean Windows VM、多屏/DPI 尚未完成的缺口。原始失败和未验证状态不改写为 PASS，
+本次例外不改变未来版本的工程门。完整范围与证据见
+[发布决定](report/2026-09-29-v0.1.1-release-authorization.md)及
+[发布说明](release-notes/0.1.1.md)。
+
 ## v0.1.0 已发布记录
 
 - Release：[StickyMD v0.1.0](https://github.com/Develata/StickyMD/releases/tag/v0.1.0)

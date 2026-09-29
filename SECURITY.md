@@ -4,6 +4,7 @@
 
 | Version | Status |
 | --- | --- |
+| `0.1.1` | Supported; latest published version |
 | `0.1.0` | Supported |
 | Current `main` | Security fixes are developed here, but unreleased commits are not release artifacts |
 
@@ -44,7 +45,7 @@ writable by the current user and should not be run as administrator.
 
 ## Unsigned releases
 
-Version `0.1.0` is distributed without an Authenticode signature. Windows can therefore display a
+Versions `0.1.0` and `0.1.1` are distributed without Authenticode signatures. Windows can therefore display a
 SmartScreen or reputation warning. Such a warning alone is not evidence of malware.
 
 Verify the published ZIP against `SHA256SUMS.txt`. Advanced users may also verify the GitHub artifact

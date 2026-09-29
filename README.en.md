@@ -19,7 +19,7 @@ It is not a knowledge-management system or a general-purpose editor. StickyMD fo
 keeping a desktop Markdown scratchpad lightweight, reliable, and immediately available.
 
 [Download](https://github.com/Develata/StickyMD/releases/latest) ·
-[Release notes](docs/release-notes/0.1.0.md) ·
+[Release notes](docs/release-notes/0.1.1.md) ·
 [中文](README.md) ·
 [Report an issue](https://github.com/Develata/StickyMD/issues/new/choose)
 
@@ -97,6 +97,8 @@ document compiler.
 - Preview renders CommonMark, GFM, tables, task lists, code, links, images, and math natively.
 - Split is a fixed 50/50 view with semantic scroll alignment enabled by default and independently
   switchable.
+- Long documents have draggable slim scrollbars in Source and Preview, one per pane in Split;
+  the scrollbar widens when the pointer approaches it.
 - Preview selection uses the actual shaped text geometry; Raw HTML is displayed literally and is
   never executed.
 - All three views share 50–300% content zoom.
@@ -109,7 +111,7 @@ document compiler.
 - If none of those families is available, the text engine selects an installed system fallback;
   code and mathematics use system monospace and RaTeX's embedded math fonts respectively.
 
-Version 0.1.0 has no runtime font setting. For a custom source build, edit `CJK_CANDIDATES` and
+Version 0.1.1 has no runtime font setting. For a custom source build, edit `CJK_CANDIDATES` and
 `LATIN_CANDIDATES` in
 [`crates/stickymd-render/src/source/fonts.rs`](crates/stickymd-render/src/source/fonts.rs), place the
 installed Windows font family name first, and rebuild. `config.toml` cannot currently change fonts.
@@ -152,7 +154,8 @@ installed Windows font family name first, and rebuild. `config.toml` cannot curr
 There is no browser runtime, database, network client, or general async runtime. Idle operation does
 not redraw continuously, and undo, formula, and image caches have explicit bounds.
 
-Across five independent local Release processes sampled after 30 idle seconds, median Private
+In development measurements for `v0.1.0`, five independent local Release-build processes sampled
+after 30 idle seconds had median Private
 Working Set was 12.98 MiB in Source, 15.50 MiB in Preview, and 20.89 MiB in Split; maxima were 13.03,
 15.56, and 23.58 MiB, with idle CPU p95 between 0 and 0.0027%. These are reproducible local results,
 not fixed guarantees for every machine; usage still varies with document, formula, image, and Windows
@@ -160,6 +163,10 @@ state. See the [Release memory attribution report](docs/report/phase-14-memory-a
 method and full data, and the
 [performance and reliability contract](docs/plan/10_performance_reliability.md) for targets and hard
 gates.
+
+These historical measurements do not establish a complete resource rerun for `v0.1.1`. Its known
+startup performance overrun and qualification gaps are disclosed in the
+[release notes](docs/release-notes/0.1.1.md#验收边界).
 
 <a id="privacy"></a>
 
@@ -189,20 +196,20 @@ StickyMD under `Program Files`; no administrator privileges are required.
 
 The published portable ZIP has no identified dependency on Rust, Visual Studio, a C/C++ toolchain,
 the Windows SDK, or a separate Visual C++ Redistributable. The Release build statically links the
-MSVC CRT and passes ordinary and delay-load PE import checks. Version `v0.1.0` has not yet been
+MSVC CRT and passes ordinary and delay-load PE import checks. Version `v0.1.1` has not yet been
 independently exercised in a clean Windows 11 VM; that disclosed qualification gap is distinct from
 an external runtime requirement.
 
-Version `v0.1.0` is not Authenticode-signed, so Windows may show a SmartScreen or reputation warning.
+Version `v0.1.1` is not Authenticode-signed, so Windows may show a SmartScreen or reputation warning.
 Do not disable Defender or SmartScreen. Download
 [`SHA256SUMS.txt`](https://github.com/Develata/StickyMD/releases/latest/download/SHA256SUMS.txt) from
 the same Release and compare it with:
 
 ```powershell
-Get-FileHash .\StickyMD-0.1.0-windows-x64-portable.zip -Algorithm SHA256
+Get-FileHash .\StickyMD-0.1.1-windows-x64-portable.zip -Algorithm SHA256
 ```
 
-See the [release notes](docs/release-notes/0.1.0.md) and [security policy](SECURITY.md) for details.
+See the [release notes](docs/release-notes/0.1.1.md) and [security policy](SECURITY.md) for details.
 
 <a id="shortcuts"></a>
 
@@ -246,7 +253,7 @@ No. Those are source-build tools only. The clean-VM qualification gap is disclos
 
 **Why does Windows show SmartScreen?**
 
-Version `v0.1.0` is not Authenticode-signed. Verify the official ZIP checksum instead of disabling
+Version `v0.1.1` is not Authenticode-signed. Verify the official ZIP checksum instead of disabling
 system protection.
 
 **Does StickyMD support full LaTeX?**

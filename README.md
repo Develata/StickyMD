@@ -18,7 +18,7 @@ Markdown 与数学公式，也可以贴在屏幕边缘，在需要时迅速出�
 让一张常驻桌面的 Markdown 草稿保持轻巧、可靠、随手可用。
 
 [下载最新版本](https://github.com/Develata/StickyMD/releases/latest) ·
-[发布说明](docs/release-notes/0.1.0.md) ·
+[发布说明](docs/release-notes/0.1.1.md) ·
 [English](README.en.md) ·
 [报告问题](https://github.com/Develata/StickyMD/issues/new/choose)
 
@@ -90,6 +90,7 @@ StickyMD 支持的是 **RaTeX/KaTeX-compatible 数学语法**，不是 TeX Live 
 - Source 直接编辑 Markdown 原文。
 - Preview 原生渲染 CommonMark、GFM、表格、任务列表、代码、链接、图片和公式。
 - Split 固定 50/50，默认按 Markdown 语义位置同步滚动；同步可以独立关闭。
+- 长文时 Source 和 Preview 各有可拖动的细滚动条，鼠标靠近时加粗；Split 中两栏各一条。
 - 预览文字按实际 shaping geometry 精确选择和复制，Raw HTML 只显示原文而不执行。
 - 三种视图共用 50–300% 内容缩放。
 
@@ -101,7 +102,7 @@ StickyMD 支持的是 **RaTeX/KaTeX-compatible 数学语法**，不是 TeX Live 
 - 上述字体均不可用时，由文本引擎选择电脑上可用的系统 fallback；代码和数学分别使用系统
   monospace 与 RaTeX 内置数学字体。
 
-v0.1.0 暂不提供运行时字体设置。需要自行构建定制版本时，请编辑
+v0.1.1 暂不提供运行时字体设置。需要自行构建定制版本时，请编辑
 [`crates/stickymd-render/src/source/fonts.rs`](crates/stickymd-render/src/source/fonts.rs) 中的
 `CJK_CANDIDATES` 和 `LATIN_CANDIDATES`，把已经安装的 Windows 字体 family name 放到候选列表
 首位，然后重新构建；`config.toml` 目前不能修改字体。
@@ -136,12 +137,16 @@ v0.1.0 暂不提供运行时字体设置。需要自行构建定制版本时，�
 没有浏览器运行时、数据库、网络客户端或通用异步运行时；空闲时不持续重绘，Undo、公式和
 图片缓存均有明确上限。
 
-本机五轮独立 Release 进程在空闲 30 秒后测得：Source、Preview、Split 的 Private Working Set
+首版开发阶段的本地 Release 构建，在五轮独立进程、每轮空闲 30 秒后测得：
+Source、Preview、Split 的 Private Working Set
 中位数分别为 12.98、15.50、20.89 MiB，最大值分别为 13.03、15.56、23.58 MiB，空闲 CPU p95
 为 0–0.0027%。这些数字是可复现的本机证据，不是所有电脑上的固定保证；资源仍会随文档、公式、
 图片和 Windows 环境变化。完整方法与数据见
 [Release 内存归因报告](docs/report/phase-14-memory-attribution.md)，目标和 hard gate 见
 [性能与可靠性合同](docs/plan/10_performance_reliability.md)。
+
+这些历史测量不代表 `v0.1.1` 已完成完整资源复验；本版本已知的启动性能超标及验收缺口见
+[发布说明](docs/release-notes/0.1.1.md#验收边界)。
 
 <a id="privacy"></a>
 
@@ -171,18 +176,18 @@ MathScratch/
 
 从依赖角度，公开 portable ZIP 不要求安装 Rust、Visual Studio、C/C++ 编译器、Windows SDK
 或独立 Visual C++ Redistributable。Release 静态链接 MSVC CRT，并通过普通与延迟加载 PE import
-检查。`v0.1.0` 尚未在全新的 Windows 11 VM 中完成独立启动验收；这是已披露的验证缺口，而不是
+检查。`v0.1.1` 尚未在全新的 Windows 11 VM 中完成独立启动验收；这是已披露的验证缺口，而不是
 额外运行库要求。
 
-`v0.1.0` 没有 Authenticode 签名，Windows 可能显示 SmartScreen 或信誉提示。不要因此关闭
+`v0.1.1` 没有 Authenticode 签名，Windows 可能显示 SmartScreen 或信誉提示。不要因此关闭
 Defender 或 SmartScreen；请下载同一 Release 的
 [`SHA256SUMS.txt`](https://github.com/Develata/StickyMD/releases/latest/download/SHA256SUMS.txt) 并核对：
 
 ```powershell
-Get-FileHash .\StickyMD-0.1.0-windows-x64-portable.zip -Algorithm SHA256
+Get-FileHash .\StickyMD-0.1.1-windows-x64-portable.zip -Algorithm SHA256
 ```
 
-更多信息见[正式发布说明](docs/release-notes/0.1.0.md)和[安全策略](SECURITY.md)。
+更多信息见[正式发布说明](docs/release-notes/0.1.1.md)和[安全策略](SECURITY.md)。
 
 <a id="shortcuts"></a>
 
@@ -223,7 +228,7 @@ Get-FileHash .\StickyMD-0.1.0-windows-x64-portable.zip -Algorithm SHA256
 
 **为什么 Windows 显示 SmartScreen？**
 
-`v0.1.0` 没有 Authenticode 签名。请核对官方 Release 的 SHA-256，不要关闭系统防护。
+`v0.1.1` 没有 Authenticode 签名。请核对官方 Release 的 SHA-256，不要关闭系统防护。
 
 **支持完整 LaTeX 吗？**
 
