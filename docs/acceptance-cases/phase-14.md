@@ -72,6 +72,10 @@ Action：执行 render 图片样本集成测试及模块指纹变更回归。
 Expected：四种格式均完整解码为 96×64 不透明彩色图；仅改变图片 bytes 使 G5 需要重跑。
 Failure Signals：只检查文件头、允许损坏图片作正向样本、解码为空白、变更后错误复用 G5。
 
+P14-A33 并发回归补充：同一个时钟值下并行申请指纹流和测试输入目录时，路径仍须唯一；
+指纹流使用 exclusive create，创建失败不得截断或清理其他调用持有的文件。
+固定时间戳回归与既有模块输入变更回归共同验证这一要求。
+
 ## Guided manual sessions
 
 下列 session 是交互记录入口，不替代 `phase-12.md` 的 P12-M01..M44 authority。

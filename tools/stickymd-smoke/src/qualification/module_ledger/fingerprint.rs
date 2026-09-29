@@ -6,6 +6,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::ModuleId;
@@ -40,8 +41,12 @@ const ALL_MODULES: u64 = ALL_PRODUCT | ALL_HARNESS | GLOBAL;
 pub(super) fn calculate(root: &Path, module: ModuleId) -> Result<String, String> {
     let tracked = tracked_files(root)?;
     let temporary = temporary_path()?;
-    let result =
-        write_stream(root, module, &tracked, &temporary).and_then(|()| receipt::sha256(&temporary));
+    // Only clean up a stream this invocation created; never truncate an existing file.
+    let mut output = File::create_new(&temporary)
+        .map_err(|error| format!("cannot create module fingerprint stream: {error}"))?;
+    let written = write_stream(root, module, &tracked, &mut output);
+    drop(output);
+    let result = written.and_then(|()| receipt::sha256(&temporary));
     let _ = fs::remove_file(&temporary);
     result
 }
@@ -50,10 +55,8 @@ fn write_stream(
     root: &Path,
     module: ModuleId,
     tracked: &[String],
-    temporary: &Path,
+    output: &mut File,
 ) -> Result<(), String> {
-    let mut output = File::create(temporary)
-        .map_err(|error| format!("cannot create module fingerprint stream: {error}"))?;
     output
         .write_all(b"StickyMD qualification module fingerprint v1\0")
         .map_err(io_error)?;
@@ -78,7 +81,7 @@ fn write_stream(
         output.write_all(&length.to_le_bytes()).map_err(io_error)?;
         let mut input = File::open(&path)
             .map_err(|error| format!("cannot open module input {relative}: {error}"))?;
-        std::io::copy(&mut input, &mut output)
+        std::io::copy(&mut input, &mut *output)
             .map_err(|error| format!("cannot hash module input {relative}: {error}"))?;
     }
     output.sync_all().map_err(io_error)
@@ -131,10 +134,17 @@ fn temporary_path() -> Result<PathBuf, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("system clock is before Unix epoch: {error}"))?
         .as_nanos();
-    Ok(std::env::temp_dir().join(format!(
-        "stickymd-module-fingerprint-{}-{nonce}.bin",
+    Ok(temporary_path_at(nonce))
+}
+
+fn temporary_path_at(nonce: u128) -> PathBuf {
+    // Windows CI clocks may return the same value to concurrent callers.
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "stickymd-module-fingerprint-{}-{nonce}-{sequence}.bin",
         std::process::id()
-    )))
+    ))
 }
 
 fn path_domains(path: &str) -> u64 {
@@ -338,7 +348,20 @@ mod tests {
     use crate::qualification::module_ledger::ModuleId;
     use std::fs;
     use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn identical_clock_values_do_not_alias_temporary_inputs() {
+        let paths = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..16)
+                .map(|_| scope.spawn(|| super::temporary_path_at(42)))
+                .collect();
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .collect::<std::collections::BTreeSet<_>>()
+        });
+        assert_eq!(paths.len(), 16);
+    }
 
     #[test]
     fn measurement_fixture_bytes_invalidate_only_their_qualification_module() {
@@ -419,11 +442,10 @@ mod tests {
     }
 
     fn fixture() -> std::path::PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("stickymd-module-fingerprint-{nonce}"));
+        let root = super::temporary_path()
+            .expect("fixture path")
+            .with_extension("fixture");
+        fs::create_dir(&root).expect("exclusive fixture directory");
         for path in [
             "tools/stickymd-smoke/src/qualification/g3/cases.rs",
             "tools/stickymd-smoke/src/qualification/g4/cases/dock.rs",
