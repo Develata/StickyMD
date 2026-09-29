@@ -37,6 +37,14 @@
 4. 每个 Phase 新建时同步创建 `tools/smoke/phase-XX.ps1` 与
    `docs/acceptance-cases/phase-XX.md`；CI 只自动执行其中可无界面运行的部分。
 
+## 2026-09-29 headless 并行维护投影
+
+plan 11 `phase-verification-harness` / `modular-headless-ci` → P00-A09/A10 与 REL-CLI-05：
+两版 PowerShell wrapper 用隔离目录、子进程和只读 Git 查询并发；Linux smoke 从 planner 拆到
+独立 job，选择与完整结果聚合继续由 Rust 持有。本地测试、耗时对照及远程未验证边界见
+[并行维护报告](report/2026-09-29-headless-test-parallelism.md)。GUI、startup 和资源测量继续独占，
+这些工具测试不产生产品或候选资格化证据。
+
 ## 2026-09-25 clipboard feedback maintenance coverage
 
 2026-09-25 剪贴板反馈修复：`07_editor_and_ime.md#source-editor` → 输入 Markdown 行为投影 →

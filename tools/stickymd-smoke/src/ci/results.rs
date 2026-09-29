@@ -5,8 +5,9 @@ use super::Checks;
 use crate::headless::{Module, parse_modules};
 use std::collections::BTreeMap;
 
-const JOBS: [&str; 6] = [
+const JOBS: [&str; 7] = [
     "plan",
+    "smoke",
     "dependency",
     "quality",
     "headless",
@@ -27,7 +28,7 @@ pub(crate) struct Results {
     cancelled: bool,
     full: bool,
     modules: Vec<Module>,
-    statuses: [Status; 6],
+    statuses: [Status; JOBS.len()],
 }
 
 impl Results {
@@ -68,7 +69,7 @@ impl Results {
         if full && modules != Module::ALL {
             return Err("full CI scope requires all registered module names".to_owned());
         }
-        let mut statuses = [Status::Skipped; 6];
+        let mut statuses = [Status::Skipped; JOBS.len()];
         for (index, job) in JOBS.iter().enumerate() {
             statuses[index] = match field(job)? {
                 "success" => Status::Success,
@@ -93,6 +94,7 @@ impl Results {
         let checks = Checks::for_modules(self.full, &self.modules);
         let required = [
             true,
+            checks.smoke,
             checks.dependency,
             checks.quality,
             checks.headless,
@@ -125,13 +127,13 @@ mod tests {
             cancelled: false,
             full: true,
             modules: Module::ALL.to_vec(),
-            statuses: [Status::Success; 6],
+            statuses: [Status::Success; JOBS.len()],
         };
         assert!(success.verify().is_ok());
         let mut cancelled_workflow = success.clone();
         cancelled_workflow.cancelled = true;
         assert!(cancelled_workflow.verify().is_err());
-        for index in 0..6 {
+        for index in 0..JOBS.len() {
             for status in [Status::Failure, Status::Cancelled, Status::Skipped] {
                 let mut bad = success.clone();
                 bad.statuses[index] = status;
@@ -149,6 +151,7 @@ mod tests {
                 Status::Skipped,
                 Status::Skipped,
                 Status::Skipped,
+                Status::Skipped,
             ],
         };
         assert!(docs.verify().is_ok());
@@ -158,12 +161,36 @@ mod tests {
     }
 
     #[test]
+    fn ci_core_scope_requires_linux_smoke_to_be_skipped() {
+        let mut core = Results {
+            cancelled: false,
+            full: false,
+            modules: vec![Module::Core],
+            statuses: [
+                Status::Success,
+                Status::Skipped,
+                Status::Success,
+                Status::Success,
+                Status::Success,
+                Status::Skipped,
+                Status::Success,
+            ],
+        };
+        assert!(core.verify().is_ok());
+        for status in [Status::Success, Status::Failure, Status::Cancelled] {
+            core.statuses[1] = status;
+            assert!(core.verify().is_err(), "{status:?}");
+        }
+    }
+
+    #[test]
     fn ci_result_input_requires_known_complete_unique_status_fields() {
         let args = [
             "--cancelled=false",
             "--full=false",
             "--modules=smoke",
             "--plan=success",
+            "--smoke=success",
             "--dependency=success",
             "--quality=success",
             "--headless=success",
@@ -172,7 +199,11 @@ mod tests {
         ]
         .map(str::to_owned);
         assert!(Results::parse(&args).unwrap().verify().is_ok());
-        assert!(Results::parse(&args[..7]).is_err());
+        for index in 0..args.len() {
+            let mut missing = args.to_vec();
+            missing.remove(index);
+            assert!(Results::parse(&missing).is_err(), "{}", args[index]);
+        }
         let mut duplicate = args.to_vec();
         duplicate.push(args[0].clone());
         assert!(Results::parse(&duplicate).is_err());

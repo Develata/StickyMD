@@ -265,6 +265,7 @@ fn ci_full_plan_returns_one_source_scoped_unexecuted_json_document() {
     assert!(json.contains("\"status\":\"NOT_RUN\""));
     assert!(json.contains("\"full\":true"));
     assert!(json.contains("\"base\":null"));
+    assert!(json.contains("\"smoke_needed\":true"));
     assert!(!json.contains("artifact_sha256"));
 }
 
@@ -282,23 +283,31 @@ fn ci_aggregate_process_distinguishes_success_cancelled_and_missing_jobs() {
         "--headless=success",
         "--release=skipped",
         "--portable=skipped",
+        "--smoke=success",
     ];
-    for (status, expected) in [
-        ("--headless=success", true),
-        ("--headless=cancelled", false),
-        ("--headless=skipped", false),
-    ] {
-        let mut args = base;
-        args[8] = status;
-        let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
-            .args(args)
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .output()
-            .expect("start CI result subprocess");
-        assert_eq!(output.status.success(), expected, "{status}");
-        if !expected {
-            assert!(output.stdout.is_empty());
-            assert!(String::from_utf8_lossy(&output.stderr).contains("expected Success"));
+    for (index, job) in [(8, "headless"), (11, "smoke")] {
+        for status in ["success", "failure", "cancelled", "skipped"] {
+            let argument = format!("--{job}={status}");
+            let mut args = base;
+            args[index] = &argument;
+            let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
+                .args(args)
+                .current_dir(env!("CARGO_MANIFEST_DIR"))
+                .output()
+                .expect("start CI result subprocess");
+            assert_eq!(output.status.success(), status == "success", "{argument}");
+            if status != "success" {
+                assert!(output.stdout.is_empty());
+                assert!(String::from_utf8_lossy(&output.stderr).contains("expected Success"));
+            }
         }
     }
+    let missing = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
+        .args(&base[..11])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(missing.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("missing CI result field smoke"));
 }

@@ -15,7 +15,7 @@
 | P00-A07 | Rust package selection with a thin Windows adapter | Automated | `cargo test -p stickymd-smoke --locked`: [`package selection tests`](../../tools/stickymd-smoke/src/package_path/tests.rs), [`PowerShell compatibility regression`](../../tools/stickymd-smoke/tests/package_path_wrapper.rs), ambiguity/missing inputs, Unicode paths and relative paths from the caller's actual location (including 8.3 TEMP aliases), with state restoration | AUTOMATED PASS |
 | P00-A08 | plan 11 modular headless CI selection and conservative fallback | Automated | `cargo test -p stickymd-smoke --locked ci::`: [`Git input tests`](../../tools/stickymd-smoke/src/ci/git/tests.rs), [`classification tests`](../../tools/stickymd-smoke/src/ci/selection/tests.rs), Cargo registry verification | AUTOMATED PASS |
 | P00-A09 | plan 11 job aggregation and full manual/scheduled/release boundaries | Automated | [`workflow adapter tests`](../../tools/stickymd-smoke/src/ci/workflow_tests.rs), [`result aggregation`](../../tools/stickymd-smoke/src/ci/results.rs), actionlint for CI/scheduled workflows | AUTOMATED PASS |
-| P00-A10 | plan 11 portable verification tooling and unsupported GUI evidence boundary | Automated | strict smoke CLI Clippy on Windows/Linux; Linux planner job runs lint/tests for full or smoke scope; [`compiled CLI regression`](../../tools/stickymd-smoke/tests/cli_exit.rs) checks unsupported GUI requests | AUTOMATED PASS |
+| P00-A10 | plan 11 portable verification tooling and unsupported GUI evidence boundary | Automated | strict smoke CLI Clippy on Windows/Linux; independent Linux smoke job runs lint/tests for full or smoke scope; [`compiled CLI regression`](../../tools/stickymd-smoke/tests/cli_exit.rs) checks unsupported GUI requests | AUTOMATED PASS |
 | P00-M01 | USER constitution semantic fidelity review | Manual | Current-commit section-by-section review receipt required | NOT TESTED |
 | P00-M02 | architecture contract judgment review | Manual | Current-commit architecture checklist receipt required | NOT TESTED |
 
@@ -30,6 +30,9 @@ P00-A09: Given a declared CI scope and completed job statuses, aggregate the res
 success only when requested jobs succeeded and intentional skips match the plan. Failure,
 cancellation, missing/unknown status or unexpected skip must return nonzero. Manual, scheduled
 and release lanes must retain full checks. These local adapter checks do not prove remote execution.
+Linux smoke lint/tests must run as a separate job after planning so other lanes can start
+concurrently. Rust selects it for full/smoke scope; its failure, cancellation, missing result
+or unexpected skip must fail the aggregate gate, while other scopes must omit it as planned.
 The workflow retains the Rust plan and per-module stdout/stderr as separate CI artifacts;
 logging must preserve a failing native exit code. Successful captured performance tasks keep their
 measurements on stderr while CLI stdout remains JSON. Module performance plans include the Source

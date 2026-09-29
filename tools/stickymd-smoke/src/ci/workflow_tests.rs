@@ -18,7 +18,7 @@ fn ci_workflow_wires_all_selected_lanes_and_fails_closed_at_the_aggregate_gate()
     assert!(!workflow.contains("continue-on-error"));
     let result = job(&workflow, "result");
     assert!(result.contains("if: always()"));
-    assert!(result.contains("needs: [plan, dependency-policy, windows-quality, windows-headless, windows-release, portable-core]"));
+    assert!(result.contains("needs: [plan, linux-smoke, dependency-policy, windows-quality, windows-headless, windows-release, portable-core]"));
     assert!(result.contains("-- ci verify"));
     assert!(result.contains("if: cancelled()"));
     assert!(
@@ -26,6 +26,7 @@ fn ci_workflow_wires_all_selected_lanes_and_fails_closed_at_the_aggregate_gate()
     );
     assert!(result.contains("--cancelled=$env:CI_CANCELLED"));
     for (name, field) in [
+        ("linux-smoke", "smoke"),
         ("dependency-policy", "dependency"),
         ("windows-quality", "quality"),
         ("windows-headless", "headless"),
@@ -39,7 +40,21 @@ fn ci_workflow_wires_all_selected_lanes_and_fails_closed_at_the_aggregate_gate()
             "{name}"
         );
         assert!(result.contains(&format!("needs.{name}.result")), "{name}");
+        assert!(
+            result.contains(&format!("--{field}=$env:CI_{}", field.to_uppercase())),
+            "{name}"
+        );
     }
+    let plan = job(&workflow, "plan");
+    assert!(plan.contains("smoke_needed: ${{ steps.plan.outputs.smoke_needed }}"));
+    assert!(plan.contains("'smoke_needed'"));
+    assert!(!plan.contains("cargo clippy"));
+    assert!(!plan.contains("cargo test"));
+    let smoke = job(&workflow, "linux-smoke");
+    assert!(smoke.contains("lane: linux-smoke"));
+    assert!(smoke.contains("cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings"));
+    assert!(smoke.contains("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"));
+    assert!(smoke.contains("cargo test -p stickymd-smoke --locked\n          exit $LASTEXITCODE"));
     let headless = job(&workflow, "windows-headless");
     assert!(headless.contains("matrix: ${{ fromJSON(needs.plan.outputs.windows_matrix) }}"));
     assert!(headless.contains("fail-fast: false"));

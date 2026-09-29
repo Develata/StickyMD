@@ -202,9 +202,11 @@ rendering-stress fixture also selects full CI because the smoke harness embeds i
 Known documentation-only changes retain fmt and governance. Planner regressions
 run with the smoke module; changes to the planner itself select complete CI.
 
-The Linux planner job also runs strict smoke CLI Clippy and tests when the plan
-selects `smoke` or full coverage. Windows desktop executors are compiled only for
-Windows; their pure classification/repetition rules retain Linux unit coverage.
+The Rust plan selects a separate Linux smoke job for strict CLI Clippy and tests
+when it selects `smoke` or full coverage. After planning, that job runs alongside
+the other isolated CI jobs and remains required by the aggregate result gate.
+Windows desktop executors are compiled only for Windows; their pure
+classification/repetition rules retain Linux unit coverage.
 Shared evidence status names remain stable. A GUI qualification request on Linux
 reports `UNSUPPORTED` / `NOT_TESTED` and returns a nonzero exit code.
 
@@ -336,6 +338,15 @@ action or advances manual acceptance. Tests run with `cargo test -p stickymd-smo
 --locked`; `release_wrappers` exercises PowerShell 5.1 and PowerShell 7 when available,
 including actual packaged license bytes, failed Syft output, invalid SBOMs,
 checksum contents and preservation of the caller's environment.
+The two editions are separate Rust tests and can run concurrently under the default
+test harness. They read the same prebuilt CLI and repository; each owns distinct
+temporary fixture/output directories, child environment and console state. The
+PowerShell fixtures dispatch to the prebuilt CLI instead of invoking Cargo builds.
+Git queries disable optional index writes; dependency metadata/cache access remains
+with Cargo.
+Cases within an edition retain their order because they share mutable fixture state.
+`--test-threads=1` still serializes the two editions when requested. This concurrency
+does not apply to GUI, startup or resource qualification.
 
 ## Acceptance status
 

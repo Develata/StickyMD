@@ -32,7 +32,7 @@ impl Command {
             [command, rest @ ..] if command == "verify" => {
                 results::Results::parse(rest).map(Self::Verify)
             }
-            _ => Err("usage: stickymd-smoke ci plan <--full|--base=<commit>> | ci verify --cancelled=<bool> --full=<bool> --modules=<list> --plan=<status> --dependency=<status> --quality=<status> --headless=<status> --release=<status> --portable=<status>".to_owned()),
+            _ => Err("usage: stickymd-smoke ci plan <--full|--base=<commit>> | ci verify --cancelled=<bool> --full=<bool> --modules=<list> --plan=<status> --smoke=<status> --dependency=<status> --quality=<status> --headless=<status> --release=<status> --portable=<status>".to_owned()),
         }
     }
 }
@@ -67,6 +67,7 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
 
 #[derive(Debug, Eq, PartialEq)]
 struct Checks {
+    smoke: bool,
     dependency: bool,
     quality: bool,
     headless: bool,
@@ -77,6 +78,7 @@ struct Checks {
 impl Checks {
     fn for_modules(full: bool, modules: &[Module]) -> Self {
         Self {
+            smoke: full || modules.contains(&Module::Smoke),
             dependency: full || !modules.is_empty(),
             quality: full || modules.iter().any(|module| module.package().is_some()),
             headless: full || !modules.is_empty(),

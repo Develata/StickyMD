@@ -58,12 +58,13 @@ pub(super) fn json(head: &str, base: Option<&str>, dirty: bool, selection: &Sele
         }
     }
     format!(
-        "{{\"schema_version\":1,\"kind\":\"headless-ci-plan\",\"status\":\"NOT_RUN\",\"head\":{},\"base\":{},\"worktree_dirty\":{dirty},\"full\":{},\"modules\":{},\"reasons\":{},\"windows_matrix\":{{\"include\":[{windows}]}},\"dependency_needed\":{},\"quality_needed\":{},\"headless_needed\":{},\"release_needed\":{},\"portable_needed\":{},\"lint_args\":{},\"portable_args\":{}}}",
+        "{{\"schema_version\":1,\"kind\":\"headless-ci-plan\",\"status\":\"NOT_RUN\",\"head\":{},\"base\":{},\"worktree_dirty\":{dirty},\"full\":{},\"modules\":{},\"reasons\":{},\"windows_matrix\":{{\"include\":[{windows}]}},\"smoke_needed\":{},\"dependency_needed\":{},\"quality_needed\":{},\"headless_needed\":{},\"release_needed\":{},\"portable_needed\":{},\"lint_args\":{},\"portable_args\":{}}}",
         quote(head),
         base.map(quote).unwrap_or_else(|| "null".to_owned()),
         selection.full,
         array(selection.modules.iter().map(|module| module.name())),
         array(&selection.reasons),
+        checks.smoke,
         checks.dependency,
         checks.quality,
         checks.headless,
@@ -89,6 +90,7 @@ mod tests {
         assert!(full.contains("\"module\":\"all\",\"mode\":\"tests\",\"full\":true"));
         assert!(full.contains("\"module\":\"all\",\"mode\":\"performance\",\"full\":true"));
         assert!(full.contains("\"lint_args\":[\"clippy\",\"--workspace\","));
+        assert!(full.contains("\"smoke_needed\":true"));
         let empty = json(
             &"a".repeat(40),
             Some(&"b".repeat(40)),
@@ -97,7 +99,28 @@ mod tests {
         );
         assert!(empty.contains("\"windows_matrix\":{\"include\":[]}"));
         assert!(empty.contains("\"headless_needed\":false"));
+        assert!(empty.contains("\"smoke_needed\":false"));
         assert!(empty.contains("\"status\":\"NOT_RUN\""));
         assert!(!empty.contains("PASSED"));
+    }
+
+    #[test]
+    fn linux_smoke_lane_is_selected_only_for_tooling_changes() {
+        for (path, needed) in [
+            ("tools/stickymd-smoke/src/package_path.rs", true),
+            ("crates/stickymd-core/src/lib.rs", false),
+            ("docs/report/ci-measurement.md", false),
+        ] {
+            let plan = json(
+                &"a".repeat(40),
+                Some(&"b".repeat(40)),
+                false,
+                &super::super::selection::select(&[path.to_owned()]),
+            );
+            assert!(
+                plan.contains(&format!("\"smoke_needed\":{needed}")),
+                "{plan}"
+            );
+        }
     }
 }

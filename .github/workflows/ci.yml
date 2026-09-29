@@ -30,6 +30,7 @@ jobs:
       full: ${{ steps.plan.outputs.full }}
       modules: ${{ steps.plan.outputs.modules }}
       windows_matrix: ${{ steps.plan.outputs.windows_matrix }}
+      smoke_needed: ${{ steps.plan.outputs.smoke_needed }}
       dependency_needed: ${{ steps.plan.outputs.dependency_needed }}
       quality_needed: ${{ steps.plan.outputs.quality_needed }}
       headless_needed: ${{ steps.plan.outputs.headless_needed }}
@@ -67,7 +68,7 @@ jobs:
           Write-Output $json
           $json | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'ci-plan.json') -Encoding utf8
           $plan = $json | ConvertFrom-Json -ErrorAction Stop
-          foreach ($key in @('full', 'modules', 'windows_matrix', 'dependency_needed', 'quality_needed', 'headless_needed', 'release_needed', 'portable_needed', 'lint_args', 'portable_args')) {
+          foreach ($key in @('full', 'modules', 'windows_matrix', 'smoke_needed', 'dependency_needed', 'quality_needed', 'headless_needed', 'release_needed', 'portable_needed', 'lint_args', 'portable_args')) {
             $value = ConvertTo-Json -InputObject $plan.$key -Depth 10 -Compress
             "$key=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           }
@@ -78,8 +79,21 @@ jobs:
           path: ${{ runner.temp }}/ci-plan.json
           if-no-files-found: error
           retention-days: 14
+
+  linux-smoke:
+    name: Linux smoke CLI (lint + tests)
+    needs: plan
+    if: needs.plan.outputs.smoke_needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-cache
+        with:
+          lane: linux-smoke
       - name: Linux smoke CLI lint and tests
-        if: steps.plan.outputs.full == 'true' || contains(fromJSON(steps.plan.outputs.modules), 'smoke')
         run: |
           cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -208,7 +222,7 @@ jobs:
   result:
     name: CI result
     if: always()
-    needs: [plan, dependency-policy, windows-quality, windows-headless, windows-release, portable-core]
+    needs: [plan, linux-smoke, dependency-policy, windows-quality, windows-headless, windows-release, portable-core]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -228,11 +242,12 @@ jobs:
           CI_FULL: ${{ needs.plan.outputs.full }}
           CI_MODULES: ${{ join(fromJSON(needs.plan.outputs.modules || '[]'), ',') }}
           CI_PLAN: ${{ needs.plan.result }}
+          CI_SMOKE: ${{ needs.linux-smoke.result }}
           CI_DEPENDENCY: ${{ needs.dependency-policy.result }}
           CI_QUALITY: ${{ needs.windows-quality.result }}
           CI_HEADLESS: ${{ needs.windows-headless.result }}
           CI_RELEASE: ${{ needs.windows-release.result }}
           CI_PORTABLE: ${{ needs.portable-core.result }}
         run: |
-          & cargo run --quiet -p stickymd-smoke --locked -- ci verify "--cancelled=$env:CI_CANCELLED" "--full=$env:CI_FULL" "--modules=$env:CI_MODULES" "--plan=$env:CI_PLAN" "--dependency=$env:CI_DEPENDENCY" "--quality=$env:CI_QUALITY" "--headless=$env:CI_HEADLESS" "--release=$env:CI_RELEASE" "--portable=$env:CI_PORTABLE"
+          & cargo run --quiet -p stickymd-smoke --locked -- ci verify "--cancelled=$env:CI_CANCELLED" "--full=$env:CI_FULL" "--modules=$env:CI_MODULES" "--plan=$env:CI_PLAN" "--smoke=$env:CI_SMOKE" "--dependency=$env:CI_DEPENDENCY" "--quality=$env:CI_QUALITY" "--headless=$env:CI_HEADLESS" "--release=$env:CI_RELEASE" "--portable=$env:CI_PORTABLE"
           exit $LASTEXITCODE
