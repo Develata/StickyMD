@@ -160,6 +160,10 @@ P14-A19/A32/A34，不修改上面的历史 source baseline 或人工状态。
 
 Preconditions：当前工作树、锁定 Cargo 依赖、隔离 fixture 与本次新构建的本地验证包。
 Action：执行 smoke crate tests、对应 PowerShell 薄入口及一次串行 package runtime 检查。
+PowerShell 5.1/7 的 headless wrapper 回归可作为两个 Rust tests 并发：共享只读仓库与已编译 CLI，
+各自持有带 edition 标识的临时输入/输出目录和独立子进程环境/控制台；同一 edition 内的状态变更案例
+仍依序执行。两版均须保留成功/失败、Unicode 路径和调用者状态断言；5.1 必须存在，7 缺失显式记为
+`NOT_TESTED`。这不允许并发执行 package runtime、GUI 或资源测量。
 Expected：合法输入保持输出语义；下列错误返回非零，失败不写候选/资格化收据；
 notices 拒绝覆盖，SBOM/manifest 的输出失败边界由 REL-CLI-08/09 明确。
 Failure Signals：接受缺失/冲突来源、哈希不符、重复 manifest、危险路径、缺失许可证；状态恢复失败；
