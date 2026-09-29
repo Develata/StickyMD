@@ -43,7 +43,8 @@ env:
 jobs:
   tag:
     if: inputs.operation == 'tag'
-    runs-on: ubuntu-latest
+    # The frozen candidate verifier uses Windows PowerShell archive/resource adapters.
+    runs-on: windows-latest
     permissions:
       actions: read
       contents: write
@@ -84,7 +85,7 @@ jobs:
 
   draft:
     if: inputs.operation == 'draft'
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     permissions:
       actions: read
       contents: write
@@ -148,7 +149,7 @@ jobs:
 
   publish:
     if: inputs.operation == 'publish'
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     permissions:
       actions: read
       contents: write
