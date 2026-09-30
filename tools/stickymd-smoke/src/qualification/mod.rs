@@ -27,6 +27,7 @@ mod receipt;
 mod remote;
 #[cfg(any(windows, test))]
 pub(crate) mod repetition;
+pub(crate) mod resource_diagnostics;
 pub(crate) mod resource_modules;
 pub(crate) mod smoke_scope;
 mod source_freeze;
@@ -240,6 +241,11 @@ pub(crate) fn record_last_success_for_evidence(root: &Path, path: &Path) -> Resu
 pub(crate) fn validate_public_evidence_path(root: &Path, path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     module_ledger::validate_output_spelling(&root.join(path))?;
+    if module_ledger::is_within(root, path, "target/resource-diagnostics") {
+        return Err(
+            "diagnostic resource cache is internally owned; choose another evidence path".into(),
+        );
+    }
     if module_ledger::is_success_storage_path(root, path) {
         return Err(
             "last-success ledgers and archives are coordinator-owned; use a diagnostic evidence path".into(),

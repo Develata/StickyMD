@@ -6,6 +6,20 @@ use crate::evidence::EvidenceResult;
 // These events are emitted by the native Windows resource executor.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) trait Observer {
+    fn verify(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn load(&mut self, _case: super::ResourceCase) -> Result<Option<EvidenceResult>, String> {
+        Ok(None)
+    }
+    fn save(
+        &mut self,
+        _case: super::ResourceCase,
+        _result: &EvidenceResult,
+        _elapsed_seconds: f64,
+    ) -> Result<(), String> {
+        Ok(())
+    }
     fn stage(&mut self, cohort: &str, run: usize, stage: &str, seconds: u64) -> Result<(), String>;
     fn waited(&mut self, seconds: u64);
     fn checkpoint(&mut self, result: EvidenceResult) -> Result<(), String>;

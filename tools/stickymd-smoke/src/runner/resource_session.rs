@@ -10,6 +10,8 @@ pub(super) struct Session {
     remaining_wait: u64,
     #[cfg(windows)]
     cache: crate::runtime::resources::Cache,
+    #[cfg(windows)]
+    resume: super::resource_resume::Resume,
 }
 
 impl Session {
@@ -49,6 +51,8 @@ impl Session {
             remaining_wait: minimum,
             #[cfg(windows)]
             cache: Default::default(),
+            #[cfg(windows)]
+            resume: super::resource_resume::Resume::new(options.resource_resume),
         })
     }
 
@@ -100,7 +104,13 @@ impl Session {
         eprintln!(
             "RESOURCE_GROUP={} STATUS={} elapsed_seconds={:.3}",
             group.name(),
-            if result.status == EvidenceStatus::Passed {
+            if result
+                .detail
+                .as_deref()
+                .is_some_and(|d| d.starts_with("DIAGNOSTIC_REUSED"))
+            {
+                "DIAGNOSTIC_REUSED"
+            } else if result.status == EvidenceStatus::Passed {
                 "RAN_PASS"
             } else {
                 "FAILED"
@@ -118,7 +128,9 @@ impl Session {
         json: bool,
         observer: &mut dyn crate::resource_plan::progress::Observer,
     ) -> Result<EvidenceResult, String> {
-        let output = crate::runtime::resources::run(root, group, json, &mut self.cache, observer)?;
+        let mut observer = self.resume.observe(root, observer);
+        let output =
+            crate::runtime::resources::run(root, group, json, &mut self.cache, &mut observer)?;
         Ok(measured_result(group, output))
     }
 
@@ -139,6 +151,12 @@ fn measured_result(
     group: ResourceModule,
     output: crate::runtime::resources::Output,
 ) -> EvidenceResult {
+    let historical = output.samples.iter().any(|sample| {
+        sample
+            .shared_from
+            .as_deref()
+            .is_some_and(|source| source.starts_with("diagnostic-cache:"))
+    });
     EvidenceResult {
         id: group.task_label().into(),
         status: if output.failure.is_some() {
@@ -149,7 +167,12 @@ fn measured_result(
         detail: Some(match output.failure {
             Some(error) => error,
             None => format!(
-                "RAN_PASS; shared cohorts: {}",
+                "{}; shared cohorts: {}",
+                if historical {
+                    "DIAGNOSTIC_REUSED (includes historical observations)"
+                } else {
+                    "RAN_PASS"
+                },
                 if output.shared.is_empty() {
                     "none".into()
                 } else {

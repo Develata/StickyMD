@@ -15,6 +15,7 @@
 # Reserved output aliases are rejected before execution; shared resource cohorts retain raw samples/gates.
 # Each measured resource group starts with a disposable physical desktop probe; blocked input records bounded window identity.
 # Resource cases checkpoint INCOMPLETE samples; .progress.json reports rounds, stages and remaining fixed wait outside sampling windows.
+# ResourceResume is diagnostic-only, with complete five-sample cases and strict byte/environment identity in ignored target storage.
 [CmdletBinding()]
 param(
     [switch]$Ci,
@@ -23,6 +24,7 @@ param(
     [switch]$Resources,
     [ValidateSet('source-preview', 'math', 'images', 'window', 'zoom')]
     [string]$ResourceModule,
+    [switch]$ResourceResume,
     [switch]$Release,
     [switch]$Package,
     [switch]$Json,
@@ -178,6 +180,7 @@ if ($Environment) {
     if ($Runtime) { $arguments += '--runtime' }
     if ($Resources) { $arguments += '--resources' }
     if ($ResourceModule) { $arguments += "--resource-module=$ResourceModule" }
+    if ($ResourceResume) { $arguments += '--resource-resume' }
     if ($Release) { $arguments += '--release' }
     if ($Package) { $arguments += '--package' }
     if ($Json) { $arguments += '--json' }

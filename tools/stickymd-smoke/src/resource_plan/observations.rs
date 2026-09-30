@@ -84,6 +84,66 @@ pub(super) fn validate(
     summary: &Measurements<'_>,
 ) -> Result<(), String> {
     let cohorts = group.cohorts();
+    validate_cohorts(
+        result,
+        &cohorts,
+        &required_gates(group),
+        summary,
+        |name, origin| validate_origin(group, name, origin),
+    )
+}
+
+pub(crate) fn validate_case(result: &Value, case: ResourceCase) -> Result<(), String> {
+    if !GROUPS.iter().any(|g| g.cases().contains(&case))
+        || result.field("id")?.string()? != case.label
+        || result.field("status")?.string()? != "PASSED"
+    {
+        return Err("diagnostic cache requires one complete registered case".into());
+    }
+    let summary = measurements(result.field("measurements")?)?;
+    for expected in coverage::cohort_coverage(
+        case.label,
+        REPETITIONS,
+        if case.measure_cpu { REPETITIONS } else { 0 },
+        WARMUP_SECONDS,
+    ) {
+        if summary.get(expected.name.as_str()) != Some(&(expected.value, expected.unit.as_str())) {
+            return Err(format!("incomplete diagnostic protocol {}", expected.name));
+        }
+    }
+    let gates = if case.measure_cpu {
+        vec![EvidenceGate {
+            metric: format!("{}.idle_cpu_max", case.label),
+            comparator: "<=".into(),
+            value: IDLE_CPU_PERCENT_LIMIT,
+            unit: "percent".into(),
+            source: String::new(),
+        }]
+    } else {
+        Vec::new()
+    };
+    validate_cohorts(
+        result,
+        &[(case.label, case.measure_cpu, WARMUP_SECONDS)],
+        &gates,
+        &summary,
+        |_, origin| {
+            if origin.is_none() {
+                Ok(())
+            } else {
+                Err("cache accepts fresh observations only".into())
+            }
+        },
+    )
+}
+
+fn validate_cohorts(
+    result: &Value,
+    cohorts: &[(&str, bool, u64)],
+    required: &[EvidenceGate],
+    summary: &Measurements<'_>,
+    validate_origin: impl Fn(&str, Option<&str>) -> Result<(), String>,
+) -> Result<(), String> {
     let samples = result.field("samples")?.array()?;
     if samples.len() != cohorts.len() * REPETITIONS {
         return Err("resource receipt must contain five actual observations per cohort".into());
@@ -101,13 +161,13 @@ pub(super) fn validate(
             .map(Value::optional_string)
             .transpose()?
             .flatten();
-        validate_origin(group, name, origin)?;
+        validate_origin(name, origin)?;
         let values = measurements(sample.field("measurements")?)?;
         if observed.insert((name, run), (values, origin)).is_some() {
             return Err(format!("duplicate resource observation {name} run {run}"));
         }
     }
-    for (name, cpu, _) in cohorts {
+    for &(name, cpu, _) in cohorts {
         let mut origin = None;
         for run in 1..=REPETITIONS as u64 {
             let (values, shared) = &observed[&(name, run)];
@@ -163,7 +223,6 @@ pub(super) fn validate(
             }
         }
     }
-    let required = required_gates(group);
     let gates = result.field("gates")?.array()?;
     if gates.len() != required.len() {
         return Err("incomplete resource hard gates".into());

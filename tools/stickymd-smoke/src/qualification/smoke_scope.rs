@@ -32,6 +32,17 @@ fn validate_with_filter(root: &Path, options: &Options, filtered: bool) -> Resul
     let resources = module_ledger::matches_receipt(root, path, RESOURCE_SUMMARY);
     let module = module_ledger::module_for_receipt(root, path);
     if !resources && module.is_none() {
+        if options.resource_resume {
+            let ignored = std::process::Command::new("git")
+                .args(["check-ignore", "-q", "--"])
+                .arg(root.join(path))
+                .current_dir(root)
+                .status()
+                .map_err(|e| e.to_string())?;
+            if !module_ledger::is_within(root, path, "target") || !ignored.success() {
+                return Err("diagnostic resume requires an ignored evidence path under target/ so checkpoints cannot change source identity".into());
+            }
+        }
         return Ok(false);
     }
     let mode_matches = if resources {
@@ -54,6 +65,7 @@ fn validate_with_filter(root: &Path, options: &Options, filtered: bool) -> Resul
         || options.release
         || options.package
         || options.resource_module.is_some()
+        || options.resource_resume
         || filtered
         || !options.json
     {
@@ -124,6 +136,13 @@ mod tests {
         )
         .unwrap();
         assert!(validate_with_filter(&root, &options, false).unwrap());
+        options.resource_resume = true;
+        assert!(validate_with_filter(&root, &options, false).is_err());
+        options.evidence_file =
+            Some("dist/evidence/./resources/../resources-qualification.json".into());
+        assert!(validate_with_filter(&root, &options, false).is_err());
+        options.evidence_file = Some(RESOURCE_SUMMARY.into());
+        options.resource_resume = false;
         assert!(validate_with_filter(&root, &options, true).is_err());
         options.resource_module = Some(crate::cli::ResourceModule::Window);
         assert!(validate_with_filter(&root, &options, false).is_err());

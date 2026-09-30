@@ -4,6 +4,9 @@
 //! meaningful GUI runtime, performance, resource, or manual evidence? It never
 //! changes product state and never records window titles, user names, or paths.
 
+#[cfg(windows)]
+pub(crate) mod diagnostic;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum QualificationEnvironmentStatus {
     Valid,

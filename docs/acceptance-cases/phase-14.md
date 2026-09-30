@@ -70,7 +70,18 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A51 | 任务失败也保留执行用时和已有错误/观测；共享测试的本轮身份核对耗时与历史执行耗时分开记录，资源规划输出总计/逐组用时 | Automated | runner timing、shared prerequisite measurements 与失败留证回归 | AUTOMATED PASS |
 | P14-A52 | 每个实际执行资源组在长采样前用独立副本验证物理激活/路由及三种视图的持久化确认；探针失败阻断采样，遮挡诊断只记录现场 HWND/PID、进程文件名和窗口类 | Automated | resource probe 短路、窗口路由诊断与显式 native probe；正式五组覆盖仍由 P14-A46 持有 | AUTOMATED PASS |
 | P14-A53 | 完整场景结束后原子保存当前组的 INCOMPLETE 检查点；独立进度文件显示轮次、阶段及剩余固定预算；进度/检查点失败不得把部分测量提升为成功，原始错误保留 | Automated | resource observer 持久化、预算、失败状态、写入失败与账本隔离回归 | AUTOMATED PASS |
+| P14-A54 | 显式诊断续跑只缓存完整五次采样场景，绑定实际程序/harness、源码输入和环境身份；失效重测、失败不缓存、历史观测标注来源，正式输出和账本拒绝诊断缓存 | Automated | diagnostic cache 原始观测/统计/硬门、损坏/过期/身份漂移、原子写入、路径别名及正式入口保护回归 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
+
+P14-A54 Preconditions：显式 Phase 14 Resources 诊断，`target/` 下 ignored JSON 输出；
+程序、harness、全部源码/fixture 输入和可识别的单显示器交互环境身份保持一致。
+Action：完成一个五次采样场景后再次运行；分别改变输入/身份、损坏/截断/过期缓存，
+注入缺样本、错误统计或硬门，并尝试 canonical 输出及目录别名。
+Expected：仅完整且仍匹配的场景标为 `DIAGNOSTIC_REUSED`，原始观测和历史耗时可区分；
+不匹配/损坏记录整场景重跑，运行期间身份变化中止，失败及部分轮次不保存为缓存；
+正式入口在执行前拒绝此选项，缓存写入失败保留本轮诊断数据并返回非零。
+Failure Signals：拼接部分轮次、无原始观测仍复用、身份漂移被忽略、历史耗时算作新测量、
+诊断输出覆盖正式成功账本或通过路径别名写入缓存内部。真实五组资格仍由 P14-A46 持有。
 
 P14-A40 Preconditions：隔离 portable 目录、固定资源 fixture、独占交互桌面。
 Action：运行完整窗口资源模块，包括首轮持久化/图片压力循环和五轮隐藏采样。

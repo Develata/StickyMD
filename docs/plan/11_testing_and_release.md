@@ -447,6 +447,19 @@ Resources 是 source-preview、math、images、window、zoom 五类兼容成功�
   每个完整基础/数学/图片场景以及完整缩放 cohort 结束后，将当前组已收集数据写入显式
   INCOMPLETE 检查点；窗口压力过程不因此拆成可复用片段。写盘在采样窗口外，失败须返回
   非零且保留原始错误；最终结果仍由既有组/命令证据持有。
+- `--resource-resume` 是显式的 Phase 14 Resources 诊断选项，必须指定 `target/` 下 ignored
+  的独立 JSON evidence 路径，防止检查点改变输入指纹；正式 canonical 输出及其文件系统
+  别名拒绝此选项。缓存只位于 ignored
+  `target/resource-diagnostics/v1/`，公共 evidence writer 不得覆盖该内部目录。
+  只缓存完整通过五次采样的基础/数学/图片场景；窗口压力和缩放组不从中段恢复。
+  缓存绑定全部 tracked/untracked 非 ignored 输入、source、实际 EXE/harness bytes、
+  主机/启动/登录 session、单显示器尺寸/DPI/work area、有效桌面状态及执行设置身份。
+  无法充分识别的环境（含未支持的多显示器配置）禁用缓存并完整运行；缓存不保证瞬时
+  系统负载相同。身份在采样及缓存读取前后、原子记录前重检，运行中发生变化则中止该次诊断。
+  记录最长有效期 24 小时，校验内容摘要、每次原始观测、统计、协议和既有硬门；缺失、
+  损坏、过期或不匹配时从头重测该完整场景，失败轮次不得与其他运行拼接。
+  复用必须标为 DIAGNOSTIC_REUSED，记录历史来源及原执行耗时；本轮耗时另记。
+  旧诊断 JSON 不自动导入，缓存和复用输出不参与任何正式成功登记或 readiness。
 - Runtime/Performance/Resources 消费 Promoted Candidate 时，以显式的候选校验任务替代
   不参与测量的本地 Release build；仍须完整验证 Source Freeze、clean tree、EXE/ZIP/SBOM
   hash、checksum 与 native-runtime。候选缺失或失效即失败，不能回退本地构建；Local

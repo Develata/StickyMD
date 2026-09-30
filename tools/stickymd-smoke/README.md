@@ -390,6 +390,32 @@ not a success receipt. File updates happen outside sampling windows; the budget
 excludes process startup, fixture preparation, probes and stress work. No continuous
 background timer consumes CPU during the 60-second measurements.
 
+For **local diagnostics only**, opt into complete-case resume:
+
+```powershell
+./tools/smoke/phase-14.ps1 -Resources -ResourceModule math -ResourceResume -EvidenceFile target/diagnostics/math.json
+```
+
+The Rust flag is `--resource-resume`; it requires Phase 14 Resources and an ignored
+JSON output under `target/`. Canonical qualification paths and aliases reject it.
+Only complete, successful five-sample Source/Preview, Math and Images cases enter
+`target/resource-diagnostics/v1/`. Window stress and Zoom keep their existing full-run
+boundaries. Partial or failed cases run again from the beginning; old diagnostic JSON
+is not imported. No qualification ledger or readiness result consumes this cache.
+
+Reuse binds all tracked and nonignored untracked input bytes, source commit, actual
+Release EXE and harness hashes, host/boot/logon, single-monitor geometry/DPI/work area,
+power state and execution settings. Unknown identities disable resume; changes detected
+during execution abort the diagnostic. Every record expires after 24 hours and must
+pass checksum, raw-observation, sampling-protocol, statistic and hard-gate validation.
+Missing, corrupt, expired or incompatible records cause a fresh complete case.
+Instantaneous system load is not guaranteed to match historical observations.
+
+Reused cases carry `DIAGNOSTIC_REUSED` and `diagnostic-cache:` sample origins, with
+`origin_execution_seconds` separate from this invocation's `execution_seconds`.
+Progress removes only the fixed waits actually avoided. Identity checks and cache
+writes happen between cases, outside measurement windows.
+
 The persistent result for each phase lives in
 `docs/acceptance-cases/phase-XX.md`. Automated checks may be marked
 `AUTOMATED PASS` only when their checked-in runner passes. Manual checks stay

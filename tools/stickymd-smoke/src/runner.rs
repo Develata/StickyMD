@@ -4,6 +4,8 @@ mod candidate_input;
 pub(crate) mod headless;
 mod resource_observer;
 mod resource_progress;
+#[cfg(windows)]
+mod resource_resume;
 mod resource_session;
 mod timing;
 
@@ -1641,6 +1643,7 @@ mod tests {
                 runtime: false,
                 resources: false,
                 resource_module: None,
+                resource_resume: false,
                 release: false,
                 package: false,
                 json: true,
@@ -1699,6 +1702,7 @@ mod tests {
             json: false,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("valid all plan");
@@ -1745,6 +1749,7 @@ mod tests {
             json: false,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("valid performance plan");
@@ -1776,6 +1781,7 @@ mod tests {
             json: false,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("valid CI plan");
@@ -1823,6 +1829,7 @@ mod tests {
             json: true,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         }));
     }
@@ -1840,6 +1847,7 @@ mod tests {
             json: true,
             ci_shard,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         };
         let full: BTreeSet<_> = build_plan(&options(None))
@@ -1898,6 +1906,7 @@ mod tests {
             json: true,
             ci_shard: None,
             resource_module: Some(ResourceModule::Window),
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("targeted Phase 14 window resource plan");
@@ -1922,6 +1931,7 @@ mod tests {
             json: true,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         }));
     }
@@ -1939,6 +1949,7 @@ mod tests {
             json: true,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 10 headless plan");
@@ -2004,6 +2015,7 @@ mod tests {
             json: true,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 11 headless plan");
@@ -2075,6 +2087,7 @@ mod tests {
             json: true,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false)).expect("Phase 11-B headless plan");
@@ -2123,6 +2136,7 @@ mod tests {
             json: true,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 12 headless plan");
@@ -2187,6 +2201,7 @@ mod tests {
             json: true,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         };
         for plan in [
@@ -2235,6 +2250,7 @@ mod tests {
             json: true,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         };
         for plan in [
@@ -2274,6 +2290,7 @@ mod tests {
             json: false,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("valid Phase 6 resource plan");
@@ -2295,6 +2312,7 @@ mod tests {
             json: false,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("valid Phase 7 resource plan");
@@ -2316,6 +2334,7 @@ mod tests {
             json: false,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("valid Phase 8 headless plan");
@@ -2336,6 +2355,7 @@ mod tests {
             json: false,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("valid Phase 8 runtime plan");
@@ -2356,6 +2376,7 @@ mod tests {
             json: false,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("valid Phase 8 resource plan");
@@ -2387,6 +2408,7 @@ mod tests {
             json: false,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("valid Phase 9 performance plan");
@@ -2421,6 +2443,7 @@ mod tests {
             json: false,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("valid Phase 9 package plan");
@@ -2451,6 +2474,7 @@ mod tests {
             json: false,
             ci_shard: None,
             resource_module: None,
+            resource_resume: false,
             evidence_file: None,
         })
         .expect("valid Phase 9 release plan");

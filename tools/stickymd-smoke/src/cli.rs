@@ -751,6 +751,7 @@ pub(crate) struct Options {
     pub(crate) runtime: bool,
     pub(crate) resources: bool,
     pub(crate) resource_module: Option<ResourceModule>,
+    pub(crate) resource_resume: bool,
     pub(crate) release: bool,
     pub(crate) package: bool,
     pub(crate) json: bool,
@@ -784,6 +785,7 @@ impl Options {
             runtime: false,
             resources: false,
             resource_module: None,
+            resource_resume: false,
             release: false,
             package: false,
             json: false,
@@ -803,6 +805,7 @@ impl Options {
                 "--performance" => options.performance = true,
                 "--runtime" => options.runtime = true,
                 "--resources" => options.resources = true,
+                "--resource-resume" => options.resource_resume = true,
                 value if value.starts_with("--resource-module=") => {
                     options.resource_module = Some(ResourceModule::parse(
                         value
@@ -858,6 +861,13 @@ impl Options {
                 "`--resource-module` requires `--resources` with all or Phase 10 through 14"
                     .to_owned(),
             );
+        }
+        if options.resource_resume
+            && (!options.resources
+                || options.selection != Selection::Phase(Phase::P14)
+                || options.evidence_file.is_none())
+        {
+            return Err("`--resource-resume` requires Phase 14 `--resources` and a diagnostic `--evidence-file`".into());
         }
         if options.resources && (options.performance || options.runtime) {
             return Err("`--resources` must run alone so the measured process is not contaminated by other smoke tasks".to_owned());
@@ -926,7 +936,7 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke release <package-inputs|workspace-version|verify-promoted|verify-package|notices|checksums|publish-sbom> [options]; see tools/stickymd-smoke/README.md"
+        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke release <package-inputs|workspace-version|verify-promoted|verify-package|notices|checksums|publish-sbom> [options]; see tools/stickymd-smoke/README.md"
     }
 }
 
@@ -1025,6 +1035,43 @@ mod tests {
             .expect_err("historical phase matrix must retain its own module")
             .contains("Phase 10 through 14")
         );
+    }
+
+    #[test]
+    fn resource_resume_requires_explicit_phase14_resources_and_evidence() {
+        let options = Options::parse(args(&[
+            "phase",
+            "14",
+            "--resources",
+            "--resource-resume",
+            "--evidence-file=target/diagnostic.json",
+        ]))
+        .unwrap();
+        assert!(options.resource_resume && options.json);
+        for values in [
+            vec![
+                "phase",
+                "14",
+                "--resource-resume",
+                "--evidence-file=target/a.json",
+            ],
+            vec!["phase", "14", "--resources", "--resource-resume"],
+            vec![
+                "phase",
+                "13",
+                "--resources",
+                "--resource-resume",
+                "--evidence-file=target/a.json",
+            ],
+            vec![
+                "all",
+                "--resources",
+                "--resource-resume",
+                "--evidence-file=target/a.json",
+            ],
+        ] {
+            assert!(Options::parse(args(&values)).is_err());
+        }
     }
 
     #[test]

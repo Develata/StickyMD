@@ -15,6 +15,7 @@ use coverage::coverage_measurements;
 pub(crate) use coverage::validate_receipt;
 #[cfg(test)]
 use observations::required_gates;
+pub(crate) use observations::validate_case;
 
 pub(crate) const REPETITIONS: usize = 5;
 pub(crate) const WARMUP_SECONDS: u64 = 30;

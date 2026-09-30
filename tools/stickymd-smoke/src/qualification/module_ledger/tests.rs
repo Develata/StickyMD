@@ -152,6 +152,18 @@ fn evidence_directory_aliases_cannot_bypass_reserved_paths_before_file_creation(
         super::module_for_receipt(&root, &alias.join("runtime-qualification.json")),
         Some(ModuleId::Runtime)
     );
+    let resume_path = alias.join("resources-qualification.json");
+    crate::atomic_evidence::write(&resume_path, b"previous formal evidence").unwrap();
+    let options = crate::cli::Options::parse([
+        "phase".into(),
+        "14".into(),
+        "--resources".into(),
+        "--resource-resume".into(),
+        format!("--evidence-file={}", resume_path.display()),
+    ])
+    .unwrap();
+    assert!(crate::runner::execute(&root, &options).is_err());
+    assert_eq!(fs::read(&resume_path).unwrap(), b"previous formal evidence");
     #[cfg(windows)]
     fs::remove_dir(&alias).unwrap();
     #[cfg(unix)]

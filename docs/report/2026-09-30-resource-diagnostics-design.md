@@ -68,3 +68,30 @@ Phase 00 治理通过。治理首次发现编号上限未同步，更新 A52 注
 资源相关回归为 25 passed、2 ignored（原有规划计时及需显式桌面的 native probe）；
 其中原子检查点、旧进度重置、剩余预算、失败状态、写入失败与成功账本隔离通过。
 严格 Clippy、fmt 和 Phase 00 治理通过；native 矩阵进度将在诊断续跑集成后定向验证。
+
+## Resolution 3（2026-09-30）：诊断场景续跑实现与回归
+
+增加显式 `--resource-resume` / `-ResourceResume`，要求 Phase 14 Resources 和 `target/`
+下 ignored JSON 输出，避免检查点自身改变工作树指纹。正式路径及其目录别名在执行前
+拒绝续跑；内部缓存独立放在 `target/resource-diagnostics/v1/`，不调用成功账本登记。
+
+完整五次场景经原始观测、统计、采样协议和硬门核对后才缓存。记录绑定实际 EXE、
+正在执行的 harness、全部 tracked/nonignored untracked bytes 与源码提交，以及
+主机/启动/登录、单显示器 DPI/尺寸/work area、电源状态和执行设置。24 小时有效期、
+完整记录 SHA-256、读取与采样前后身份核对、原子发布前复查共同约束复用。
+身份无法识别时完整执行；运行期间漂移则停止并保留已有诊断数据。
+
+复用的原始样本保留 `diagnostic-cache:` 来源，跨组别名共享也不覆盖该标记；
+`DIAGNOSTIC_REUSED` 和 `origin_execution_seconds` 区分历史观测、本次检查耗时。
+窗口压力和缩放过程没有增加中段恢复。该实现不导入既有历史 JSON。
+
+本轮完整 smoke 回归为 250 passed、3 ignored，headless 集成为 15 passed；严格 Clippy、
+fmt 和 Phase 00 治理通过。回归覆盖损坏/过期/未来时间、源/EXE/harness/执行输入漂移、
+部分/失败/重复样本、错误统计与硬门、写入失败、目录别名和内部存储越界。
+结果位于 ignored `target/acceptance-profiling/resource-resume-smoke-tests.log` 及
+`resource-resume-governance.json`。未以这些无界面测试代替真实资源资格化。
+
+显式 native 身份稳定性测试已通过，耗时 4.32 秒。首次发现本机 .NET `Groups` 不提供
+登录 SID，因此改为原生 `TOKEN_STATISTICS.AuthenticationId`，没有降级为仅核对用户名或
+可复用的 Windows session number；依据为 [Microsoft TOKEN_STATISTICS 文档](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_statistics)。
+短场景首次采样与跨进程复用的耗时对照将在下文另行追加，当前尚不报告实测加速。

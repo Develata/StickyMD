@@ -77,8 +77,12 @@ pub(super) fn matches_receipt(root: &Path, path: &Path, expected: &str) -> bool 
 }
 
 pub(super) fn is_success_storage_path(root: &Path, path: &Path) -> bool {
+    is_within(root, path, "dist/evidence/module-success")
+}
+
+pub(super) fn is_within(root: &Path, path: &Path, directory: &str) -> bool {
     let path = normalize(&root.join(path));
-    let directory = normalize(&root.join("dist/evidence/module-success"));
+    let directory = normalize(&root.join(directory));
     path == directory
         || path
             .strip_prefix(&directory)

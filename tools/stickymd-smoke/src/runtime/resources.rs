@@ -129,11 +129,36 @@ fn matrix(
         return Err(format!("unknown resource case filter {filter}"));
     }
     for case in cases {
+        observer.verify()?;
         observer.stage(case.label, 0, "case-start", 0)?;
         let started = Instant::now();
         let measured = cache.cohorts.measure(case, || {
+            if let Some(saved) = observer.load(case)? {
+                return Ok(Output {
+                    measurements: saved.measurements,
+                    gates: saved.gates,
+                    samples: saved.samples,
+                    shared: saved.detail.into_iter().collect(),
+                    ..Default::default()
+                });
+            }
             let mut observed = Output::default();
-            let outcome = measure_case(&source, root, case, &mut observed, observer);
+            let sampling = Instant::now();
+            let outcome =
+                measure_case(&source, root, case, &mut observed, observer).and_then(|()| {
+                    observer.save(
+                        case,
+                        &crate::evidence::EvidenceResult {
+                            id: case.label.into(),
+                            status: crate::evidence::EvidenceStatus::Passed,
+                            detail: None,
+                            measurements: observed.measurements.clone(),
+                            gates: observed.gates.clone(),
+                            samples: observed.samples.clone(),
+                        },
+                        sampling.elapsed().as_secs_f64(),
+                    )
+                });
             match outcome {
                 Ok(()) => Ok(observed),
                 Err(error) => {
@@ -158,18 +183,31 @@ fn matrix(
                 case.label
             ));
         }
+        let historical = observed.samples.iter().any(|sample| {
+            sample
+                .shared_from
+                .as_deref()
+                .is_some_and(|source| source.starts_with("diagnostic-cache:"))
+        });
         runtime_report!(
             "RESOURCE_CASE id={} shared_from={} elapsed_seconds={elapsed:.3}",
             case.label,
-            origin.unwrap_or("none")
+            if historical {
+                "diagnostic-cache"
+            } else {
+                origin.unwrap_or("none")
+            }
         );
         output.measurements.extend(observed.measurements);
         output.samples.extend(observed.samples);
         output.gates.extend(observed.gates);
+        output.shared.extend(observed.shared);
         observer.stage(
             case.label,
             RESOURCE_REPETITIONS,
-            if origin.is_some() {
+            if historical {
+                "diagnostic-reused"
+            } else if origin.is_some() {
                 "shared"
             } else {
                 "case-finished"
@@ -195,7 +233,13 @@ fn alias_cohort(output: &mut Output, origin: &str, alias: &str) {
     }
     for sample in &mut output.samples {
         sample.cohort = alias.into();
-        sample.shared_from = Some(origin.into());
+        if !sample
+            .shared_from
+            .as_deref()
+            .is_some_and(|source| source.starts_with("diagnostic-cache:"))
+        {
+            sample.shared_from = Some(origin.into());
+        }
     }
 }
 
@@ -302,6 +346,24 @@ mod tests {
         assert!(validate_filter(ResourceModule::Window, "source").is_err());
         assert!(validate_filter(ResourceModule::Images, "preview-1-image").is_ok());
         assert!(validate_filter(ResourceModule::Zoom, "").is_ok());
+    }
+    #[test]
+    fn shared_diagnostic_cohort_keeps_its_historical_marker() {
+        let mut output = Output {
+            samples: vec![EvidenceSample {
+                cohort: "preview-no-math".into(),
+                run: 1,
+                measurements: Vec::new(),
+                shared_from: Some("diagnostic-cache:origin:100".into()),
+            }],
+            ..Default::default()
+        };
+        alias_cohort(&mut output, "preview-no-math", "preview-no-images");
+        assert_eq!(output.samples[0].cohort, "preview-no-images");
+        assert_eq!(
+            output.samples[0].shared_from.as_deref(),
+            Some("diagnostic-cache:origin:100")
+        );
     }
     #[test]
     fn a_shared_cohort_keeps_raw_samples_and_gates_in_its_independent_group_receipt() {
