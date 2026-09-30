@@ -4,9 +4,27 @@
 [`AGENTS.md`](AGENTS.md)。
 
 报告中的 `NOT READY`、`pending` 或 `NOT TESTED` 只描述报告生成时的状态，不应被解释成
-仓库当前发布状态。`v0.1.0` 已于 2026-08-30 发布；当前用户可见结论见
-[`../release-notes/0.1.0.md`](../release-notes/0.1.0.md)，动态 exact-artifact 收据位于被忽略的
+仓库当前发布状态。当前公开版本是 `v0.1.1`，采用明确的 USER 发布特例，技术 readiness
+仍为 `NOT_READY`；用户可见结论见 [`0.1.1 release notes`](../release-notes/0.1.1.md)。
+后续工具维护和普通 CI 成功不继承该版本的 artifact 身份或特例。动态 exact-artifact 收据位于被忽略的
 `dist/evidence/`，不会回写历史报告制造“事后通过”。
+
+## 当前实现与维护入口
+
+- [Preview 渲染规则与优先级](2026-09-30-preview-rendering-rules.md)：当前语法/样式/布局/调度/缓存的详细源码说明、21 项 targeted 回归与已知合同差异；不是新渲染合同。
+- [本地选测、兼容性夹具与耗时汇总](2026-09-30-local-development-verification.md)：`dev-check` / `timings`、后续 review 和 Windows CI 路径别名修复；按 Resolution 保留失败与复验记录。
+- [发布 CLI 内部复用](2026-09-30-release-cli-reuse.md)：验包、版本与 CI 规则复用及局部测量。
+- [包清单、README 与 Syft 缓存](2026-09-30-package-staging-syft-cli.md)：稳定产物语义、身份校验和双宿主行为。
+- [ZIP 落盘与发布收尾](2026-09-30-release-cli-finalization.md)：冲突、并发、checksum 与阶段路由维护。
+- [阶段路由、发布工作流与哈希](2026-09-30-phase-routing-release-workflows-cng.md)：后续 Rust CLI 收拢及 Windows adapter 边界。
+- [资源场景等价与分批记录](2026-09-30-resource-equivalence-and-batching.md)、[续跑计划](2026-09-30-resource-resume-planning.md)、[实际诊断复审](2026-09-30-resource-live-review.md)：区分完整资格化、定向诊断、历史复用和测量范围。
+
+## v0.1.1 发布与资格化历史
+
+- [发布决定](2026-09-29-v0.1.1-release-authorization.md)：exact source、USER 特例与未关闭的技术 readiness。
+- [独占桌面资格化](2026-09-29-v0.1.1-exclusive-desktop-qualification.md)：该次桌面运行的输入与结果。
+- [桌面资格化记录](2026-09-28-v0.1.1-desktop-qualification.md)、[较早桌面证据](2026-09-26-v0.1.1-desktop-evidence.md)、[较早 readiness](2026-09-25-v0.1.1-readiness.md)：按日期与候选身份阅读，不互相覆盖。
+- [正式发布说明](../release-notes/0.1.1.md)：公开版本的行为、身份与已知缺口。
 
 ## v0.1.0 收口入口
 
@@ -98,8 +116,11 @@
 
 ## 跨阶段验证与风险
 
-- [`2026-09-30-release-cli-reuse.md`](2026-09-30-release-cli-reuse.md)：发布验包内部调用与 CI 规则复用、同输入比较、局部耗时及未验证边界。
-- [`2026-09-30-package-staging-syft-cli.md`](2026-09-30-package-staging-syft-cli.md)：包清单/README 与 Syft cache pin 迁移、同包字节/同输入 SBOM 比较、双宿主失败路径。
+- [表格公式源码范围](2026-09-08-table-math-source-ranges.md)：GFM 分列与公式复制/导出坐标。
+- [运行时审查](2026-09-07-runtime-audit.md)、[垂直滚动条维护](2026-09-25-vertical-scrollbars.md)：按日期记录实现与复审。
+- [发布规则迁移](2026-09-22-release-cli-migration.md)、[输出收尾](2026-09-25-release-output-finalization.md)：Rust 规则权威与 PowerShell 适配。
+- [无界面并行检查](2026-09-29-headless-test-parallelism.md)、[集成测试合并](2026-09-29-headless-integration-consolidation.md)、[许可证输出预检](2026-09-29-notices-preflight-optimization.md)：对应批次的实测与未验证边界。
+- [资源验证优化](2026-09-29-resource-verification-optimization.md)、[当日实际诊断](2026-09-29-resource-optimization-live-diagnostic.md)、[独立复审](2026-09-29-optimization-independent-review.md)、[后续诊断设计](2026-09-30-resource-diagnostics-design.md)：历史耗时不代表当前全部验收有效。
 - [`phase-verification-harness-architecture.md`](phase-verification-harness-architecture.md)
 - [`RISK-exact-candidate-remote-build-identity.md`](RISK-exact-candidate-remote-build-identity.md)
 - [`RISK-source-font-startup.md`](RISK-source-font-startup.md)

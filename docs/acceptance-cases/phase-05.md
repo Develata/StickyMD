@@ -39,6 +39,18 @@
 | P05-M08 | inherited Phase 3 real IME gate | Manual | [`phase-03 manual IME checklist`](../report/phase-03-manual-ime-checklist.md) | NOT TESTED |
 | P05-M09 | inherited Phase 4 external/recovery/platform conditions | Manual | [`phase-04 matrix`](phase-04.md) | NOT TESTED |
 
+## 2026-09-30 implementation review scope
+
+[Current Preview rules and differences](../report/2026-09-30-preview-rendering-rules.md)
+maps the actual parser, projection, layout and adapter behavior at source
+`be1322e43624908b7ad04c7c7942d2c3ecb9ed09`. This documentation pass reran
+`phase5_semantics`, `table_math_pipes`, `phase6_math` and `rendering_stress`: 21 passed.
+It does not make P05-A10 a claim of complete layout conformance: code wrapping,
+table horizontal scrolling/row backgrounds, font binding and complex list projection
+still have the differences recorded there. The local-image UNC read path also needs
+a separate boundary review. Manual rows retain their existing status; no new runtime,
+resource or candidate receipt was produced.
+
 ## Current Phase Gate
 
 Phase 5's checked-in automated surface passes through the Rust smoke task graph. Manual rows are

@@ -3,10 +3,12 @@
 > Plan Contract ↔ Feature Projection ↔ Acceptance Case ↔ Code Area ↔ Current Evidence。
 > `Current Evidence` 只描述已验证范围；不得用模块存在代替端到端验收。
 >
-> 当前快照以已发布 `v0.1.0` exact source
-> `64690ab8f86f63f3cbfeabbb0961276978c8f26d` 为 evidence boundary。后续文档提交不自动
-> 继承该 artifact identity，也不要求把 ignored 动态 receipt 回填到历史 Phase matrix；发布身份、
-> USER disposition 与剩余环境缺口见 [`release-notes/0.1.0.md`](release-notes/0.1.0.md)。
+> 下方主表保留 `v0.1.0` exact source `64690ab8f86f63f3cbfeabbb0961276978c8f26d`
+> 的历史 evidence baseline；后续维护按带日期的小节追加，不自动继承该 artifact identity，
+> 也不把 ignored 动态 receipt 回填到历史 Phase matrix。旧版处置见
+> [`0.1.0 release notes`](release-notes/0.1.0.md)。当前公开版本为 `v0.1.1`，采用 USER
+> 发布特例且技术 readiness 仍为 `NOT_READY`，身份和缺口见
+> [`0.1.1 release notes`](release-notes/0.1.1.md)；这不把主表的旧证据升级为新版验收。
 
 | Plan | Feature（投影） | Acceptance | Code Area | Current Evidence |
 | --- | --- | --- | --- | --- |
@@ -28,6 +30,19 @@
   不直接映射验收案例；其约束通过上述所有章节间接验证。
 - `03_system_architecture.md` 的层间规则通过 code review、`plan_ref` 审查
   与各案例的实现结构间接验证。
+
+## 2026-09-30 Preview 现状说明与覆盖边界
+
+plan 06 `markdown-semantics` / `native-preview-layout` / `preview-scheduling`、plan 08
+`local-image-read-boundary` → 既有 AC-013..017 与 Phase 05/06/07 →
+[Preview 规则详解](report/2026-09-30-preview-rendering-rules.md)。该报告将 parser、RenderTree、
+文字/表格/数学/图片布局、worker 与平台 adapter 的现状集中说明，补充导航，不新增产品合同。
+
+在 source `be1322e43624908b7ad04c7c7942d2c3ecb9ed09` 上执行 `phase5_semantics`、
+`table_math_pipes`、`phase6_math`、`rendering_stress`，共 21 passed。现有“native layout”
+自动化覆盖不能解读为所有视觉条款均符合：报告列出 code 长行换行、表格横向滚动/交替底色、
+monospace 字体绑定、复杂列表投影、zoom 布局范围、图片读取边界等差异或风险。
+其中 UNC 的实际网络访问未测试；本次不修改 runtime，不提升人工或候选验收状态。
 
 ## 维护规则
 

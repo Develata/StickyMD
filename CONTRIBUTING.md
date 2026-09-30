@@ -282,6 +282,23 @@ docs/report/                有时间属性的分析与证据
 
 先运行最小相关测试，不要每改一行就启动完整 Release qualification。
 
+对尚未提交的改动，先查看自动选测计划，再执行：
+
+```powershell
+cargo run --quiet -p stickymd-smoke --locked -- dev-check --plan
+cargo run --quiet -p stickymd-smoke --locked -- dev-check
+```
+
+它相对 `HEAD` 收集暂存、未暂存、未忽略的新增文件、删除与移动，复用 CI 的分类和反向依赖
+规则，并解释每项检查的原因。未知输入、冲突或模块登记漂移会保守回退完整检查。默认运行
+`tests` 模式；需要既有 headless Release 基线时显式选择 `--mode=all`。
+计划输出的 `NOT_RUN` 不表示已经执行；提交后工作树可能为空，不能再用它覆盖刚提交的差异，
+应使用 CI 的提交比较或显式模块入口。
+
+已有日志可交给 `timings --input <日志路径>` 汇总。它区分任务、嵌套测量、历史来源和固定等待
+预算，不将重叠区间相加，也不推算 agent 工时或发布资格。双 PowerShell 宿主的日志保存示例、
+模块入口及资源诊断续跑方式见 [CLI 说明](tools/stickymd-smoke/README.md#local-change-based-checks)。
+
 常见定向入口：
 
 ```powershell
@@ -296,11 +313,12 @@ cargo test -p stickymd-smoke --locked
 将 Phase 编号换成实际拥有该改动的阶段。各 wrapper 的参数并不完全相同：Phase 0–11 不普遍
 接受 `-Ci`，只有声明该参数的 wrapper 才能使用；不确定时先查看对应脚本顶部的 `param(...)`。
 
-提交前至少执行：
+提交前应通过适用的 fmt、Clippy、tests 与治理检查。日常范围由上述计划解释；不要用空工作树
+的计划替代已提交差异的检查。以下是全 workspace 基线命令，供完整检查或保守回退时使用：
 
 ```powershell
 cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 git diff --check
 ```
@@ -308,7 +326,7 @@ git diff --check
 影响依赖、发布、跨 crate 边界或大量公共路径时，还应执行：
 
 ```powershell
-cargo deny check
+cargo deny --locked check
 cargo build --workspace --release --locked
 ./tools/smoke/all.ps1 -Ci
 ```

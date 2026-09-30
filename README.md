@@ -257,6 +257,10 @@ StickyMD 的“精简”指功能边界窄、日常负担低，不代表数据�
 - 平台无关核心禁止 `unsafe`，产品不包含 runtime 网络客户端。
 - 自动化 verdict 由 `tools/stickymd-smoke` Rust CLI 持有。
 
+工程资料见 [文档导航](docs/README.md)。Markdown/Preview 的当前语法、样式叠加、布局参数、
+缓存与已知合同差异集中在 [Preview 实现详解](docs/report/2026-09-30-preview-rendering-rules.md)；
+该报告说明所审查的源码，不代表已发布 ZIP 或完整视觉验收。
+
 从源码构建需要 Windows 11 x64、MSVC C++/Windows SDK 构建工具，以及
 `rust-toolchain.toml` 固定的 Rust 工具链：
 

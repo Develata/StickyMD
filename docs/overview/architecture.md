@@ -46,12 +46,15 @@ Object Plane             doc::text、preview::render_tree、asset::managed_image
 
 ## 当前实现切片
 
-`v0.1.0` 已从 exact source `64690ab8f86f63f3cbfeabbb0961276978c8f26d` 正式发布。
-Phase 11/11-B 完成产品实现收敛，Phase 12–14 建立并关闭 tools-only exact-artifact
-qualification、风险分层人工处置与 tag/draft/publish promotion。运行时权威与依赖图不变：
+`v0.1.1` 已从 exact source `9a0a00a1fe143cf25fa4208a54ec5dfea7f3e7c9` 正式发布。
+Phase 11/11-B 完成产品实现收敛，Phase 12–14 建立 tools-only exact-artifact
+qualification、风险分层人工处置与 tag/draft/publish promotion。本版本采用明确的 USER
+发布特例，技术 readiness 仍为 `NOT_READY`，不能据此称完整验收已关闭。运行时权威与依赖图不变：
 candidate、automated、manual、remote 与 downloaded artifact receipts 写入 ignored
 `dist/evidence/`，不能反向成为产品状态或架构权威；发布身份与剩余环境缺口见
-[`0.1.0 release notes`](../release-notes/0.1.0.md)。
+[`0.1.1 release notes`](../release-notes/0.1.1.md) 和
+[发布决定](../report/2026-09-29-v0.1.1-release-authorization.md)。后续 `main` 的工具维护
+不继承已发布 artifact 的身份或发布特例。
 
 Phase 2 已建立 `DocumentState`、checked generation、UTF-8 TextDelta、不可变 snapshot
 和有界 Undo/Redo。Phase 3 开发壳实现的实际调用链为：
@@ -132,7 +135,7 @@ Rust · winit · cosmic-text · tiny-skia · softbuffer · Comrak · RaTeX · �
 parser/layout/font crates完成 native math projection。项目采用审计过的薄 DisplayList painter；
 `ratex-render`/PNG renderer 不进入生产依赖图。确定性 raster golden 与六场景资源矩阵已
 自动化。Phase-local 报告中当时尚未执行的 DPI/主题视觉与首次公式内存项目继续作为历史
-证据保留；`v0.1.0` 的最终人工处置、自动化替代边界与未执行环境项以 release notes 为准，
+证据保留；`v0.1.1` 的人工处置、自动化替代边界与未执行环境项以该版本 release notes 为准，
 不能从 headless 测试推断主观视觉。Phase 7 的 managed image、bounded decode/cache 和 portable
 export 同样由 Rust smoke CLI 持有；无图片/懒加载/4K/饱和 cache 的进程资源矩阵及标准 Windows
 clipboard/export/recovery/asset-safety 路径已进入 exact automation。
@@ -151,15 +154,19 @@ Window intent + monotonic time + platform facts
 不能读写 `DocumentState`。Close 在 dirty 时先冻结输入并保存最新 generation，再隐藏；Tray Quit
 依次等待资产事务、最新 note save、安全 GC 与 config acknowledgement。PerMonitorV2 manifest、
 CCD stable display identity、signed `rcWork` geometry 和 40–100 整窗 alpha 已接入。托盘、三边
-Dock、紧凑窗口与 presentation mechanics 已由 exact automation 和人工 guided session 覆盖；
+Dock、紧凑窗口与 presentation mechanics 已有对应 exact automation 和历史 guided session；
+每份结果只证明其记录的 candidate，不表示当前源码或新版已完成相同复验。
 Clean VM、真实双屏/混合 DPI、运行中拔屏、RDP 与物理负坐标等未执行或 USER-waived 环境项
-以 `v0.1.0` release notes 的精确清单为准。
+以 [`v0.1.1` release notes](../release-notes/0.1.1.md) 的精确清单为准；旧版证据不能替代新版验收。
 
 ## 文档导航
 
 开发验证由 std-only `stickymd-smoke` 持有。显式模块入口复用完整 headless 任务图；
 日常 CI 由 Rust 按变更及反向依赖选测，共享/未知输入或缺失基线回退原完整入口。
 GitHub workflow 只转发计划、隔离 job 与缓存；`CI result` 聚合失败、取消和预期 skip。
+本地未提交改动可通过 `dev-check --plan` 查看同一分类规则选出的检查和原因，`dev-check`
+执行所选任务；`timings` 只汇总已有耗时观察，不产生验收资格。使用方式见
+[CLI 说明](../../tools/stickymd-smoke/README.md#local-change-based-checks)。
 手动、定时、发布完整检查及候选证据门保持独立，见
 [模块化 headless CI 合同](../plan/11_testing_and_release.md#modular-headless-ci)。
 
@@ -169,8 +176,10 @@ GitHub workflow 只转发计划、隔离 job 与缓存；`CI result` 聚合失�
 | 状态与权威 | [04_runtime_state_model.md](../plan/04_runtime_state_model.md) |
 | 保存与冲突 | [05_document_persistence.md](../plan/05_document_persistence.md) |
 | Markdown/数学 | [06_markdown_math_rendering.md](../plan/06_markdown_math_rendering.md) |
+| 当前 Preview 实现细节与合同差异（有日期的审查） | [Preview 规则详解](../report/2026-09-30-preview-rendering-rules.md) |
 | 编辑器与输入法 | [07_editor_and_ime.md](../plan/07_editor_and_ime.md) |
 | 图片与导出 | [08_assets_and_export.md](../plan/08_assets_and_export.md) |
 | 窗口与托盘 | [09_windows_shell.md](../plan/09_windows_shell.md) |
 | 用户行为投影 | [00_v1_product_behavior.md](../features/00_v1_product_behavior.md) |
 | 验收案例 | [00_v1_acceptance.md](../acceptance-cases/00_v1_acceptance.md) |
+| 其他文档入口 | [文档导航](../README.md) |

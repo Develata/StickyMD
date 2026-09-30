@@ -149,3 +149,15 @@ Rust fixture 固定传入尾部点段，确保本地不依赖 NTFS 8.3 配置也
 集成日志保存在 ignored `target/ci-remote-20260930/headless.log`。
 README、REL-CLI-17 与覆盖映射同步说明路径别名及实际 CWD/编码检查。
 本次没有重跑 GUI、资源或完整性能 Campaign；修复提交的远程 CI 仍待下一次 push 验证。
+
+## Resolution — 2026-09-30 修复提交的远程 CI 完成
+
+用户 push 后，source `be1322e43624908b7ad04c7c7942d2c3ecb9ed09` 的
+[CI run 36790130061](https://github.com/Develata/StickyMD/actions/runs/36790130061)
+已完成，结论为 `success`。九个 jobs（含最终 `CI result`）全部成功，覆盖 plan/governance、
+Linux smoke CLI lint/tests、Windows release build、依赖政策、Windows fmt/lint、
+Linux portable-core、Windows headless tests 与 performance。此前失败的 Windows tests
+分片通过；这补齐该修复提交的远程 CI 验证，不反推旧失败日志中具体 TEMP 别名的形式。
+
+此次观察未触发或重跑远程工作流；运行来自用户 push。普通 CI 成功不产生新的 Source Freeze、
+Promoted Candidate、资源 campaign 或人工验收证据，也不提升 `v0.1.1` 的技术 readiness。
