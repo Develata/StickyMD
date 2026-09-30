@@ -76,7 +76,15 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A57 | 诊断身份检查按阶段计时，省去相邻重复采集，读取前后与采样后/发布前仍检查，同命令共享独立检查 | Automated | 前后任一检查漂移均失败且保留旧记录，显式 native lookup profile | AUTOMATED PASS |
 | P14-A58 | 跨命令仅复用同身份的严格等价完整场景；保留原单元、原始采样和创建时间，不续期、不重存历史结果，Window/Zoom 不混用 | Automated | 四对等价场景双向复用、原始数据与门槛投影、不等价/损坏/过期拒绝回归 | AUTOMATED PASS |
 | P14-A59 | 诊断初始化与计划合并前检查，同组全部缓存命中才批量消费；前后身份验证、部分命中回退与预算不重复扣减 | Automated | batch 漂移/失效/完整返回、同命令 pending 范围与计划 hint 回归；显式 native 身份成本 profile | AUTOMATED PASS |
+| P14-A60 | 可选诊断失败优先保持范围、前置任务和完整协议；提示只排序，选中失败单元强制重测，正式入口拒绝，计划只读 | Automated | 提示生命周期/失效/范围、组与场景排序、强制重测和 CLI/薄入口回归 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
+
+P14-A60 Preconditions：诊断续跑曾记录一个完整注册单元的失败提示。
+Action：打开失败优先，检查组/场景顺序；更换 source、损坏/过期提示、缩小选择范围，
+分别尝试缓存命中与新测量成功，并向正式路径或混合 qualification 薄入口传入此选项。
+Expected：仅选中单元提前并完整重测，前置任务不移动；提示不授权缓存、不扩大范围，
+缺失/无效时回退，历史成功不清除提示，新完整成功只清除仍匹配的旧提示，计划不写文件。
+Failure Signals：失败单元使用旧成功跳过、Window/Zoom 拆段、漏采、越范围、污染正式收据。
 
 P14-A59 Preconditions：同组剩余场景全部存在完整缓存，且当前 identity 可识别。
 Action：批量读取，分别在前后检查时改变 identity，在计划后损坏或移除一项记录。

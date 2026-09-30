@@ -208,6 +208,11 @@ P14-A53 的场景完成回调由 `resource_plan/progress` 定义，执行层只�
 `runner/resource_observer` 持有进度 sidecar 与 INCOMPLETE 检查点的原子写入。
 `runner/resource_progress` 继续持有组间检查点，正式子组成功仍只由既有 Campaign 登记。
 
+P14-A60 映射 plan 11 的诊断失败优先：`resource_diagnostics/priority` 持有有界、校验和与
+有效期约束的提示；`runner/resource_priority` 保持前置任务原位，`resource_resume` 强制
+选中单元新测量、记录实际失败并在完整新成功后清除仍匹配的旧提示。只读计划和正式拒绝
+由 CLI/PowerShell 集成回归覆盖，提示始终不持有任何成功证据权威。
+
 P14-A59 映射 plan 11 的缓存批次：`resource_diagnostics/batch` 保留前后鲜活检查、只返回
 完整批次；`runtime/resources/batch` 限定单组尚未共享的单元，不跨新测量保留批次。
 

@@ -17,7 +17,14 @@ pub(super) struct Session {
 }
 
 impl Session {
-    pub(super) fn prepare(root: &Path, options: &Options, tasks: &[Task]) -> Result<Self, String> {
+    pub(super) fn prepare(
+        root: &Path,
+        options: &Options,
+        tasks: &[Task],
+        priority: crate::qualification::resource_diagnostics::priority::Selection,
+    ) -> Result<Self, String> {
+        #[cfg(not(windows))]
+        let _ = priority;
         let campaign = crate::qualification::smoke_scope::validate(root, options)?
             .then(|| Campaign::prepare(root))
             .transpose()?;
@@ -54,7 +61,7 @@ impl Session {
             #[cfg(windows)]
             cache: Default::default(),
             #[cfg(windows)]
-            resume: super::resource_resume::Resume::new(options.resource_resume),
+            resume: super::resource_resume::Resume::new(options.resource_resume, priority),
             #[cfg(windows)]
             groups,
         })
@@ -133,9 +140,13 @@ impl Session {
         observer: &mut dyn crate::resource_plan::progress::Observer,
     ) -> Result<EvidenceResult, String> {
         self.resume.plan(root, &self.groups)?;
-        let mut observer = self.resume.observe(root, observer);
-        let output =
-            crate::runtime::resources::run(root, group, json, &mut self.cache, &mut observer)?;
+        let mut observer = self.resume.observe(root, group, observer);
+        let mut output =
+            crate::runtime::resources::run(root, group, json, &mut self.cache, &mut observer)
+                .map_err(|error| observer.failed(error))?;
+        if let Some(error) = output.failure.take() {
+            output.failure = Some(observer.failed(error));
+        }
         Ok(measured_result(group, output))
     }
 

@@ -444,6 +444,21 @@ A missing program or unknown identity is shown as `RESUME_DISABLED`, never as a 
 `RESOURCE_IDENTITY` reports Git, artifact hashing, environment and input hashing times
 outside measurement windows.
 
+To prioritize the last failed unit, add `-ResourceFailureFirst` (Rust:
+`--resource-failure-first`) to a diagnostic resume command. Its group and case run
+first after the usual prerequisites, within the selected module/case scope. The
+selected unit runs fresh even if an older complete cache exists; Window/Zoom remain
+whole groups. Sampling counts, durations and gates are unchanged. Combine with
+`-ResourcePlan` to preview without starting the product or modifying evidence/hints.
+Every diagnostic resume can record an advisory `last-failure.json` under the internal
+cache directory. It contains a registered unit, timestamp and revision, with a
+checksum and 24-hour lifetime. Missing, corrupt, expired or out-of-scope hints fall
+back to the fixed order. Hints can survive source changes because they only guide
+ordering; success reuse still requires the full current identity. Historical hits
+do not clear hints. Fresh complete success clears only the still-matching revision;
+this advisory comparison is not a cross-process scheduling lock. Formal evidence
+paths and mixed qualification wrapper actions reject the option.
+
 The persistent result for each phase lives in
 `docs/acceptance-cases/phase-XX.md`. Automated checks may be marked
 `AUTOMATED PASS` only when their checked-in runner passes. Manual checks stay

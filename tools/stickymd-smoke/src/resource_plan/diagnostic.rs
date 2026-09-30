@@ -11,6 +11,27 @@ pub(crate) enum Unit {
 }
 
 impl Unit {
+    pub(crate) fn from_key(key: &str) -> Option<Self> {
+        GROUPS.iter().find_map(|&group| {
+            if matches!(group, ResourceModule::Window | ResourceModule::Zoom) {
+                let unit = Self::Group(group);
+                (unit.key() == key).then_some(unit)
+            } else {
+                group
+                    .cases()
+                    .iter()
+                    .find(|case| case.label == key)
+                    .copied()
+                    .map(Self::Case)
+            }
+        })
+    }
+    pub(crate) fn group(self) -> Option<ResourceModule> {
+        GROUPS.into_iter().find(|&group| match self {
+            Self::Case(case) => group.cases().contains(&case),
+            Self::Group(selected) => selected == group,
+        })
+    }
     pub(crate) fn key(self) -> &'static str {
         match self {
             Self::Case(case) => case.label,

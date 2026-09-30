@@ -128,7 +128,7 @@ fn matrix(
     }
     cache.executable_sha256 = Some(executable_sha256);
     let filter = std::env::var("STICKYMD_SMOKE_RESOURCE_CASE").unwrap_or_default();
-    let cases: Vec<_> = group
+    let mut cases: Vec<_> = group
         .cases()
         .iter()
         .copied()
@@ -137,6 +137,7 @@ fn matrix(
     if cases.is_empty() {
         return Err(format!("unknown resource case filter {filter}"));
     }
+    observer.order_cases(&mut cases);
     let mut batch = batch::prepare(cache, &cases, output, observer)?;
     for case in cases {
         observer.stage(case.label, 0, "case-start", 0)?;

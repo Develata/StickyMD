@@ -51,6 +51,7 @@ pub(crate) fn units(groups: &[ResourceModule], filter: Option<&str>) -> Result<V
 impl Plan {
     fn build(
         units: &[Unit],
+        first: Option<Unit>,
         mut inspect: impl FnMut(Unit) -> Result<Lookup, String>,
     ) -> Result<Self, String> {
         let mut seen: Vec<(ResourceCase, bool)> = Vec::new();
@@ -65,7 +66,14 @@ impl Plan {
                     .copied(),
                 Unit::Group(_) => None,
             };
-            let (action, reason, wait, cached) = if let Some((previous, cached)) = shared {
+            let (action, reason, wait, cached) = if Some(unit) == first {
+                (
+                    "RUN",
+                    "LAST_FAILURE_FORCE_RUN".into(),
+                    unit.minimum_wait_seconds(),
+                    false,
+                )
+            } else if let Some((previous, cached)) = shared {
                 (
                     "SHARE_IN_COMMAND",
                     format!("same complete cohort as {}", previous.label),
@@ -107,7 +115,7 @@ impl Plan {
     }
 
     pub(crate) fn disabled(units: &[Unit], reason: &str) -> Result<Self, String> {
-        Self::build(units, |_| {
+        Self::build(units, None, |_| {
             Ok(Lookup {
                 result: None,
                 reason: format!("RESUME_DISABLED: {reason}"),
@@ -149,24 +157,40 @@ impl Plan {
 }
 
 /// The freshly created Store supplies the pre-read identity; never accepts an old Store.
-pub(crate) fn prepare(root: &Path, units: &[Unit]) -> Result<(Option<Store>, Plan), String> {
+pub(crate) fn prepare(
+    root: &Path,
+    units: &[Unit],
+    first: Option<Unit>,
+) -> Result<(Option<Store>, Plan), String> {
     let store = match Store::open(root) {
         Ok(store) => store,
         Err(error) => return Ok((None, Plan::disabled(units, &error)?)),
     };
-    let plan = Plan::build(units, |unit| store.inspect(root, unit))?;
+    let plan = Plan::build(units, first, |unit| store.inspect(root, unit))?;
     store.verify(root)?;
     Ok((Some(store), plan))
 }
 
-pub(crate) fn preview(root: &Path, groups: &[ResourceModule]) -> Result<String, String> {
-    let units = units(
+pub(crate) fn prioritize(units: &mut [Unit], first: Option<Unit>) {
+    if let Some(first) = first.filter(|first| units.contains(first)) {
+        units.sort_by_key(|&unit| (unit.group() != first.group(), unit != first));
+    }
+}
+
+pub(crate) fn preview(
+    root: &Path,
+    groups: &[ResourceModule],
+    failure_first: bool,
+) -> Result<String, String> {
+    let mut units = units(
         groups,
         std::env::var("STICKYMD_SMOKE_RESOURCE_CASE")
             .ok()
             .as_deref(),
     )?;
-    let (_, plan) = prepare(root, &units)?;
+    let priority = super::priority::select(root, &units, failure_first);
+    prioritize(&mut units, priority.first);
+    let (_, plan) = prepare(root, &units, priority.first)?;
     plan.log();
     Ok(plan.json())
 }
@@ -175,10 +199,48 @@ pub(crate) fn preview(root: &Path, groups: &[ResourceModule]) -> Result<String, 
 mod tests {
     use super::*;
     #[test]
+    fn failure_first_forces_five_fresh_samples_and_propagates_uncached_alias_budget() {
+        let mut units = units(&crate::resource_plan::GROUPS, None).unwrap();
+        let first = Unit::from_key("preview-20-math").unwrap();
+        let expected = units.clone();
+        prioritize(&mut units, Some(first));
+        assert_eq!(units[0], first);
+        assert!(
+            units[..ResourceModule::Math.cases().len()]
+                .iter()
+                .all(|u| u.group() == Some(ResourceModule::Math))
+        );
+        let plan = Plan::build(&units, Some(first), |unit| {
+            assert_ne!(unit, first, "forced unit must not inspect an old success");
+            let result = match unit {
+                Unit::Case(case) => super::super::equivalence_tests::result(case),
+                Unit::Group(group) => crate::resource_plan::tests::valid_resource_result(group),
+            };
+            Ok(Lookup {
+                result: Some(result),
+                reason: "valid".into(),
+            })
+        })
+        .unwrap();
+        assert_eq!(plan.fixed, first.minimum_wait_seconds());
+        assert_eq!(plan.rows[0].reason, "LAST_FAILURE_FORCE_RUN");
+        assert!(!plan.cached_units().contains(&first));
+        let alias = Unit::from_key("preview").unwrap();
+        assert!(!plan.cached_units().contains(&alias));
+        assert_eq!(
+            plan.rows.iter().find(|r| r.unit == alias).unwrap().action,
+            "SHARE_IN_COMMAND"
+        );
+        assert_eq!(units.len(), expected.len());
+        for unit in expected {
+            assert_eq!(units.iter().filter(|&&u| u == unit).count(), 1);
+        }
+    }
+    #[test]
     fn estimates_deduplicate_shared_cases_and_count_only_uncached_waits() {
         let units = units(&crate::resource_plan::GROUPS, None).unwrap();
         let mut checked = Vec::new();
-        let plan = Plan::build(&units, |unit| {
+        let plan = Plan::build(&units, None, |unit| {
             checked.push(unit);
             Ok(Lookup {
                 result: (unit == Unit::Group(ResourceModule::Zoom)).then(|| {

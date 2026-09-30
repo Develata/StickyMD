@@ -118,7 +118,7 @@ fn latest_path(root: &Path, unit: Unit) -> Result<PathBuf, String> {
     )
 }
 
-fn checked(root: &Path, path: PathBuf) -> Result<PathBuf, String> {
+pub(super) fn checked(root: &Path, path: PathBuf) -> Result<PathBuf, String> {
     if !module_ledger::is_within(root, &path, "target")
         || !module_ledger::is_within(root, &path, DIRECTORY)
         || module_ledger::is_within(root, &path, "dist")

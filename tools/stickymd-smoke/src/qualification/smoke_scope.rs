@@ -66,6 +66,7 @@ fn validate_with_filter(root: &Path, options: &Options, filtered: bool) -> Resul
         || options.package
         || options.resource_module.is_some()
         || options.resource_resume
+        || options.resource_failure_first
         || filtered
         || !options.json
     {
@@ -143,6 +144,9 @@ mod tests {
         assert!(validate_with_filter(&root, &options, false).is_err());
         options.evidence_file = Some(RESOURCE_SUMMARY.into());
         options.resource_resume = false;
+        options.resource_failure_first = true;
+        assert!(validate_with_filter(&root, &options, false).is_err());
+        options.resource_failure_first = false;
         assert!(validate_with_filter(&root, &options, true).is_err());
         options.resource_module = Some(crate::cli::ResourceModule::Window);
         assert!(validate_with_filter(&root, &options, false).is_err());

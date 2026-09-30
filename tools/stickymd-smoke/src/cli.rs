@@ -753,6 +753,7 @@ pub(crate) struct Options {
     pub(crate) resource_module: Option<ResourceModule>,
     pub(crate) resource_resume: bool,
     pub(crate) resource_plan: bool,
+    pub(crate) resource_failure_first: bool,
     pub(crate) release: bool,
     pub(crate) package: bool,
     pub(crate) json: bool,
@@ -788,6 +789,7 @@ impl Options {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             release: false,
             package: false,
             json: false,
@@ -809,6 +811,7 @@ impl Options {
                 "--resources" => options.resources = true,
                 "--resource-resume" => options.resource_resume = true,
                 "--resource-plan" => options.resource_plan = true,
+                "--resource-failure-first" => options.resource_failure_first = true,
                 value if value.starts_with("--resource-module=") => {
                     options.resource_module = Some(ResourceModule::parse(
                         value
@@ -867,6 +870,9 @@ impl Options {
         }
         if options.resource_plan && !options.resource_resume {
             return Err("`--resource-plan` requires `--resource-resume`".into());
+        }
+        if options.resource_failure_first && !options.resource_resume {
+            return Err("`--resource-failure-first` requires `--resource-resume`".into());
         }
         if options.resource_resume
             && (!options.resources
@@ -942,7 +948,7 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke release <package-inputs|workspace-version|verify-promoted|verify-package|notices|checksums|publish-sbom> [options]; see tools/stickymd-smoke/README.md"
+        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke release <package-inputs|workspace-version|verify-promoted|verify-package|notices|checksums|publish-sbom> [options]; see tools/stickymd-smoke/README.md"
     }
 }
 
@@ -1090,6 +1096,30 @@ mod tests {
             ],
         ] {
             assert!(Options::parse(args(&values)).is_err());
+        }
+    }
+
+    #[test]
+    fn failure_first_requires_explicit_diagnostic_resume() {
+        let base = [
+            "phase",
+            "14",
+            "--resources",
+            "--resource-failure-first",
+            "--evidence-file=target/diagnostic.json",
+        ];
+        assert!(
+            Options::parse(args(&base))
+                .unwrap_err()
+                .contains("requires `--resource-resume`")
+        );
+        for suffix in [
+            vec!["--resource-resume"],
+            vec!["--resource-resume", "--resource-plan"],
+        ] {
+            let options =
+                Options::parse(base.iter().chain(suffix.iter()).map(|s| s.to_string())).unwrap();
+            assert!(options.resource_failure_first && options.resource_resume);
         }
     }
 

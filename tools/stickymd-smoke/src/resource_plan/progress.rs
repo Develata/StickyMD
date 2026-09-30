@@ -6,6 +6,7 @@ use crate::evidence::EvidenceResult;
 // These events are emitted by the native Windows resource executor.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) trait Observer {
+    fn order_cases(&self, _cases: &mut [super::ResourceCase]) {}
     fn verify(&mut self) -> Result<(), String> {
         Ok(())
     }

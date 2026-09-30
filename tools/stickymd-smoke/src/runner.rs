@@ -3,6 +3,7 @@
 mod candidate_input;
 pub(crate) mod headless;
 mod resource_observer;
+mod resource_priority;
 mod resource_progress;
 #[cfg(windows)]
 mod resource_resume;
@@ -170,7 +171,11 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
         );
         println!(
             "{}",
-            crate::qualification::resource_diagnostics::plan::preview(root, &groups)?
+            crate::qualification::resource_diagnostics::plan::preview(
+                root,
+                &groups,
+                options.resource_failure_first
+            )?
         );
         return Ok(());
     }
@@ -252,12 +257,17 @@ fn execute_tasks(
     results: &mut Vec<EvidenceResult>,
     environment: &mut Option<QualificationEnvironment>,
 ) -> Result<(), String> {
+    let (ordered, priority) =
+        resource_priority::prepare(root, options, tasks).inspect_err(|error| {
+            results.push(failed_task("resource priority preflight", error));
+        })?;
+    let tasks = &ordered;
     resource_progress::emit(root, label, options, results, environment.as_ref())?;
     if let Err(error) = resource_observer::command_state(root, options, "planning") {
         results.push(failed_task("resource progress initialization", &error));
         return Err(error);
     }
-    let mut resources = match resource_session::Session::prepare(root, options, tasks) {
+    let mut resources = match resource_session::Session::prepare(root, options, tasks, priority) {
         Ok(session) => session,
         Err(error) => {
             results.push(failed_task("resource campaign preflight", &error));
@@ -1656,6 +1666,7 @@ mod tests {
                 resource_module: None,
                 resource_resume: false,
                 resource_plan: false,
+                resource_failure_first: false,
                 release: false,
                 package: false,
                 json: true,
@@ -1716,6 +1727,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("valid all plan");
@@ -1764,6 +1776,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("valid performance plan");
@@ -1797,6 +1810,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("valid CI plan");
@@ -1846,6 +1860,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         }));
     }
@@ -1865,6 +1880,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         };
         let full: BTreeSet<_> = build_plan(&options(None))
@@ -1925,6 +1941,7 @@ mod tests {
             resource_module: Some(ResourceModule::Window),
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("targeted Phase 14 window resource plan");
@@ -1951,6 +1968,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         }));
     }
@@ -1970,6 +1988,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 10 headless plan");
@@ -2037,6 +2056,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 11 headless plan");
@@ -2110,6 +2130,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false)).expect("Phase 11-B headless plan");
@@ -2160,6 +2181,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 12 headless plan");
@@ -2226,6 +2248,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         };
         for plan in [
@@ -2276,6 +2299,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         };
         for plan in [
@@ -2317,6 +2341,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("valid Phase 6 resource plan");
@@ -2340,6 +2365,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("valid Phase 7 resource plan");
@@ -2363,6 +2389,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("valid Phase 8 headless plan");
@@ -2385,6 +2412,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("valid Phase 8 runtime plan");
@@ -2407,6 +2435,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("valid Phase 8 resource plan");
@@ -2440,6 +2469,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("valid Phase 9 performance plan");
@@ -2476,6 +2506,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("valid Phase 9 package plan");
@@ -2508,6 +2539,7 @@ mod tests {
             resource_module: None,
             resource_resume: false,
             resource_plan: false,
+            resource_failure_first: false,
             evidence_file: None,
         })
         .expect("valid Phase 9 release plan");

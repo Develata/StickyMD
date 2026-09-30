@@ -17,6 +17,7 @@
 # Resource cases checkpoint INCOMPLETE samples; .progress.json reports rounds, stages and remaining fixed wait outside sampling windows.
 # ResourceResume is diagnostic-only: complete five-sample cases or whole Window/Zoom groups, with strict identity in ignored target storage.
 # ResourcePlan emits advisory NOT_RUN JSON without running resource tasks; identity timings remain outside sample windows.
+# ResourceFailureFirst requires diagnostic resume; it keeps prerequisites and scope, and measures the selected failed unit fresh.
 # Diagnostic resume can use registered equivalent cases across commands without renewing historical observations.
 # Fully cached remaining cases in one group use fresh before/after batch validation; partial hits fall back to individual execution.
 [CmdletBinding()]
@@ -29,6 +30,7 @@ param(
     [string]$ResourceModule,
     [switch]$ResourceResume,
     [switch]$ResourcePlan,
+    [switch]$ResourceFailureFirst,
     [switch]$Release,
     [switch]$Package,
     [switch]$Json,
@@ -113,6 +115,9 @@ if ($qualificationActions.Count -gt 1) { throw 'Select at most one qualification
 if ($ResourcePlan -and (-not $Resources -or -not $ResourceResume -or $qualificationActions.Count -gt 0)) {
     throw 'ResourcePlan requires Resources and ResourceResume and cannot run a qualification action'
 }
+if ($ResourceFailureFirst -and (-not $Resources -or -not $ResourceResume -or $qualificationActions.Count -gt 0)) {
+    throw 'ResourceFailureFirst requires Resources and ResourceResume and cannot run a qualification action'
+}
 
 $arguments = @('run', '-p', 'stickymd-smoke', '--locked', '--')
 if ($Environment) {
@@ -189,6 +194,7 @@ if ($Environment) {
     if ($ResourceModule) { $arguments += "--resource-module=$ResourceModule" }
     if ($ResourceResume) { $arguments += '--resource-resume' }
     if ($ResourcePlan) { $arguments += '--resource-plan' }
+    if ($ResourceFailureFirst) { $arguments += '--resource-failure-first' }
     if ($Release) { $arguments += '--release' }
     if ($Package) { $arguments += '--package' }
     if ($Json) { $arguments += '--json' }

@@ -13,6 +13,7 @@ mod group_tests;
 mod identity;
 mod lookup;
 pub(crate) mod plan;
+pub(crate) mod priority;
 mod record;
 #[cfg(test)]
 mod tests;
