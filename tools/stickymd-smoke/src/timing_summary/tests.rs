@@ -142,6 +142,38 @@ fn cargo_reported_build_and_binary_times_remain_independent() {
 }
 
 #[test]
+fn colored_ci_logs_retain_build_test_and_task_times_without_weakening_validation() {
+    // CI uses CARGO_TERM_COLOR=always; Cargo colors the Finished label even
+    // when stderr is redirected to a file. Libtest can also color its status.
+    let colored = concat!(
+        "\x1b[1m\x1b[92m    Finished\x1b[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.26s\n",
+        "test result: \x1b[32mok\x1b[m. 1 passed; 0 failed; finished in 1.50s\n",
+        "TASK_TIMING task=\"中文 空格\" status=\x1b[38;2;0;255;0mPASSED\x1b[0m elapsed_seconds=2.0\n",
+    );
+    let plain = concat!(
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.26s\n",
+        "test result: ok. 1 passed; 0 failed; finished in 1.50s\n",
+        "TASK_TIMING task=\"中文 空格\" status=PASSED elapsed_seconds=2.0\n",
+    );
+    assert_eq!(
+        summarize(colored).unwrap().observations,
+        summarize(plain).unwrap().observations
+    );
+    assert!(summarize(&colored.replace("0.26s", "NaNs")).is_err());
+    assert!(summarize(&colored.replace("PASSED", "UNKNOWN")).is_err());
+}
+
+#[test]
+fn json_truncation_rejects_missing_closure_with_any_checkout_line_ending() {
+    let receipt = GOVERNANCE.trim_end();
+    let truncated = receipt.strip_suffix('}').expect("fixture is a JSON object");
+    for ending in ["", "\n", "\r\n"] {
+        assert!(summarize(&format!("{receipt}{ending}")).is_ok());
+        assert!(summarize(&format!("{truncated}{ending}")).is_err());
+    }
+}
+
+#[test]
 fn json_rejects_missing_malformed_negative_nonfinite_or_duplicate_timing() {
     for invalid in [
         GOVERNANCE.replace("\"schema_version\":2", "\"schema_version\":1"),
@@ -156,7 +188,6 @@ fn json_rejects_missing_malformed_negative_nonfinite_or_duplicate_timing() {
         GOVERNANCE.replace("\"acceptance readiness\"", "\"governance contracts\""),
         GOVERNANCE.replace("\"value\":2.937108", "\"value\":2.937108,\"value\":3"),
         GOVERNANCE.replace("\"unit\":\"seconds\",\"value\":2.937108}", "\"unit\":\"seconds\",\"value\":2.937108},{\"name\":\"task.execution_seconds\",\"unit\":\"seconds\",\"value\":3}"),
-        GOVERNANCE[..GOVERNANCE.len() - 2].into(),
     ] {
         assert!(summarize(&invalid).is_err(), "{invalid}");
     }

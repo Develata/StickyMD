@@ -1,6 +1,7 @@
 //! Read-only timing observations from existing receipts and stderr logs.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
 
+mod ansi;
 mod cargo;
 mod input;
 mod log;

@@ -36,7 +36,10 @@ fn local_plan_is_read_only_and_malformed_requests_fail_before_checks() {
 fn timing_cli_reads_unicode_inputs_outside_a_repository_and_never_emits_partial_results() {
     let directory = TemporaryDirectory::new("timing-cli", "中文 space");
     let input = directory.path().join("原始日志 space.log");
-    let content = "TASK_TIMING task=\"workspace tests\" status=FAILED elapsed_seconds=1.250000\n";
+    let content = concat!(
+        "\x1b[1m\x1b[92m    Finished\x1b[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.26s\n",
+        "TASK_TIMING task=\"workspace tests\" status=FAILED elapsed_seconds=1.250000\n",
+    );
     fs::write(&input, content).unwrap();
     let output = cli()
         .current_dir(directory.path())
@@ -50,6 +53,8 @@ fn timing_cli_reads_unicode_inputs_outside_a_repository_and_never_emits_partial_
     assert!(text.contains("\"status\":\"OBSERVATION_ONLY\""), "{text}");
     assert!(text.contains("\"agent_work_seconds\":null"), "{text}");
     assert!(text.contains("\"status\":\"FAILED\""), "{text}");
+    assert!(text.contains("\"kind\":\"cargo_build\""), "{text}");
+    assert!(text.contains("\"seconds\":0.26"), "{text}");
     assert_eq!(fs::read_to_string(&input).unwrap(), content);
 
     let output = cli()

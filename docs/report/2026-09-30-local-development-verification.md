@@ -94,3 +94,29 @@ binary 35.62 s。它们是本机本轮观察，包含缓存和调度条件，没
 尚未验证：Linux 本轮编译/Clippy/执行及 Unix FIFO 回归、真实新增 workspace drift 的全量执行、
 其他 target 配置、完整本地九任务执行、远程 CI、GUI/性能/完整资源 campaign、人工验收。
 这些未验证项没有被短测试或历史日志标为通过，产品 readiness 不因此改变。
+
+## Resolution — 2026-09-30 提交后复审
+
+审查范围为 `1a357df`、`07083c3` 两批提交。发现并修复两项问题：
+
+1. **P1，CRLF 检出导致负面测试误报。** `governance.json` 没有强制 LF 属性，Windows
+   `core.autocrlf=true` 的新 worktree 会使用 CRLF。旧测试删除最后两个字节时只删掉换行，
+   未损坏 JSON。隔离 smoke-only `dev-check` 因此以非零退出，单元结果为 323 passed /
+   1 failed。现改为明确删除对象闭合符，分别验证 LF、CRLF 和无末尾换行的有效与损坏输入；
+   不依赖检出换行策略来维持测试正确性。
+2. **P2，CI 彩色日志漏掉编译耗时。** CI 设置 `CARGO_TERM_COLOR=always`，Cargo 的
+   `Finished` 标签带 ANSI SGR 序列。实际 `cargo build --locked --color always` 成功日志
+   被原 `timings` 以 `no recognized timing records` 拒绝。现由独立 `ansi` helper 在日志
+   解析前忽略 SGR 颜色，保留行号与原文件；无颜色行不分配副本。相同原始日志修复后读出
+   Cargo 报告的 0.26 s。非法耗时/状态仍拒绝，JSON 收据解析和观察范围保持原合同。
+
+复验使用中文空格路径的新 worktree，保留 Git 实际检出的 CRLF JSON，只覆盖本轮修复的
+Rust 源文件；不复制主工作树中的 LF fixture。完整执行 smoke-only `dev-check` 的五项
+任务通过：治理、fmt、locked 严格 Clippy、locked cargo-deny、所选测试。其中单元
+326 passed / 10 ignored，集成 24 passed（包含 PowerShell 5.1/7）；隔离 worktree 已移除。
+主工作树另通过 14 项 timing targeted tests、fmt、diff 检查及更新文档后的 Phase 00。
+新 `timings` 成功读取这次完整日志的五个任务观察，仍为 `OBSERVATION_ONLY`。
+
+README、P00-A13 和覆盖映射同步补充彩色日志与换行兼容性。复现及复验日志位于 ignored
+`target/review-cli-20260930/`。这关闭了 smoke-only 本地执行路径的验证缺口；完整九任务、
+Linux、远程 CI、GUI/资源/性能 campaign 和人工验收仍未在本轮验证，没有推算性能收益。

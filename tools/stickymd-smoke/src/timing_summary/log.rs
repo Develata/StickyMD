@@ -13,7 +13,8 @@ pub(super) fn summarize(text: &str) -> Result<Summary, String> {
     let mut tasks = BTreeSet::new();
     for (index, line) in text.lines().enumerate() {
         let line_number = index + 1;
-        let line = line.trim_start();
+        let plain = super::ansi::strip_sgr(line);
+        let line = plain.trim_start();
         if super::cargo::record(line, line_number, &mut summary)? {
             continue;
         }

@@ -38,6 +38,8 @@ to remain distinct. Missing timings stay missing; overlapping scopes and multipl
 are not added into a fabricated wall clock or agent-work total. Malformed/negative/nonfinite
 durations, ambiguous duplicates and invalid later inputs must fail without partial stdout.
 Unicode/spaced paths work outside the repository; input bytes and acceptance state stay intact.
+Cargo/test ANSI colors must not hide elapsed records or bypass invalid-value rejection.
+JSON parsing and malformed-input fixtures must work with LF, CRLF and no trailing newline.
 
 P00-A11: Given each retained PowerShell entry and supported parameters, request a
 read-only route through the compiled CLI. Expect the original canonical arguments,

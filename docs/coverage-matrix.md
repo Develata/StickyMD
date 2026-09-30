@@ -84,7 +84,7 @@ no-replace 发布仍持有防覆盖责任；无 manifest 的失败路径回归�
 | Contract / projection | Implementation and verification |
 | --- | --- |
 | plan 11 phase-verification-harness / modular-headless-ci → P00-A12 | `development/` 采集工作树输入，复用 `ci/selection` 分类、反向依赖与逐任务原因；`runner/headless/local` 复用原任务图。真实 Git 暂存/未暂存/新增/删除/移动、冲突、未知输入与 registry drift 回归；compiled `dev-check --plan` 只读拒绝路径 |
-| plan 11 shared-headless-prerequisite / resource-module-qualification → P00-A13 | `timing_summary/` 复用 JSON parser，读取原 receipts/Cargo/任务/资源日志；本轮、嵌套、历史和预算分开。真实格式、缺失/重复/错误数值、Unicode 路径、任意 CWD 与多输入失败不输出部分摘要 |
+| plan 11 shared-headless-prerequisite / resource-module-qualification → P00-A13 | `timing_summary/` 复用 JSON parser，读取原 receipts/Cargo/任务/资源日志；本轮、嵌套、历史和预算分开。真实格式、CI ANSI 颜色、LF/CRLF/无末尾换行、缺失/重复/错误数值、Unicode 路径、任意 CWD 与多输入失败不输出部分摘要 |
 | P00-A07/A10/A11、REL-CLI-10/16/17 | `tests/support` 统一独占临时目录、失败清理和 PowerShell 5.1/7 调用；原测试保留真实断言，包路径新增 PS7 覆盖。共享预构建 CLI，独立进程/输出目录可并发 |
 
 这些入口属于本地工具诊断；部分检查不生成候选或人工成功收据。耗时汇总不证明历史来源有效，

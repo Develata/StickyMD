@@ -253,7 +253,8 @@ cargo run --quiet -p stickymd-smoke --locked -- timings --input target/check.log
 `timings` reads existing UTF-8 JSON/log files from any working directory. It
 accepts evidence schema 2, resource progress/diagnostic-plan and shared-workspace
 schema 1, existing `TASK_TIMING`/resource telemetry and Cargo's explicit compile/
-test elapsed records. Each input is an independent scope. The report keeps current
+test elapsed records. ANSI SGR color codes are ignored in logs, including CI's
+forced-color output. Each input is an independent scope. The report keeps current
 tasks, nested/group/identity observations, historical origins and fixed-wait
 budgets separate. Missing timings stay missing. Inputs are read before stdout is
 emitted; malformed values, ambiguous duplicates or a later invalid file return
