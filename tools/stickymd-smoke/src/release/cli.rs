@@ -21,6 +21,16 @@ pub(crate) enum Command {
     WorkspaceVersion,
     Checksums(ChecksumOptions),
     PublishSbom(SbomOptions),
+    SyftPlan(Option<PathBuf>),
+    SyftPublish {
+        kind: super::syft::Kind,
+        input: PathBuf,
+    },
+    SyftVerify {
+        archive: PathBuf,
+        checksums: PathBuf,
+        directory: PathBuf,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -137,6 +147,16 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
         },
         "notices" => Command::Notices(PathBuf::from(take("--destination")?)),
         "workspace-version" => Command::WorkspaceVersion,
+        "syft-plan" => Command::SyftPlan(options.remove("--syft-path").map(PathBuf::from)),
+        "syft-publish" => Command::SyftPublish {
+            kind: super::syft::Kind::parse(&take("--kind")?)?,
+            input: PathBuf::from(take("--input")?),
+        },
+        "syft-verify" => Command::SyftVerify {
+            archive: PathBuf::from(take("--archive")?),
+            checksums: PathBuf::from(take("--checksums")?),
+            directory: PathBuf::from(take("--staging-directory")?),
+        },
         "checksums" => Command::Checksums(ChecksumOptions {
             zip: PathBuf::from(take("--zip")?),
             output: PathBuf::from(take("--output")?),

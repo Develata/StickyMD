@@ -59,9 +59,10 @@ fn check_release_wrappers(shell: &str, edition: &str) {
     fs::write(
         &script,
         format!(
-            "\u{feff}{}\n{}",
+            "\u{feff}{}\n{}\n{}",
             include_str!("release_wrappers.ps1"),
-            include_str!("release_outputs.ps1")
+            include_str!("release_outputs.ps1"),
+            include_str!("release_syft.ps1")
         ),
     )
     .unwrap();
@@ -90,4 +91,5 @@ fn check_release_wrappers(shell: &str, edition: &str) {
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("RELEASE_WRAPPERS=PASS"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("RELEASE_OUTPUTS=PASS"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("RELEASE_SYFT=PASS"));
 }

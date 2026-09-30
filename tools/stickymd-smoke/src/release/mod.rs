@@ -14,6 +14,7 @@ mod package_runtime;
 mod package_staging;
 mod promoted;
 mod sbom;
+mod syft;
 mod temporary;
 mod windows;
 pub(crate) mod workflow;
@@ -42,5 +43,12 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
         }
         Command::Checksums(options) => checksums::generate(options),
         Command::PublishSbom(options) => sbom::publish(options),
+        Command::SyftPlan(provided) => syft::plan(root, provided.as_deref()),
+        Command::SyftPublish { kind, input } => syft::publish(root, *kind, input),
+        Command::SyftVerify {
+            archive,
+            checksums,
+            directory,
+        } => syft::verify(archive, checksums, directory),
     }
 }

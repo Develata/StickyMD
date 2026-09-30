@@ -136,9 +136,12 @@ Windows 双宿主 wrapper 使用含十六进制词、中文与空格的真实路
 | Phase 14 REL-CLI-11 / REL-CLI-06 | `release/package.rs` 的同一 typed verifier；`runner/package.rs` 管理输出流，`qualification/remote.rs` 保留原收据边界；同包 direct/wrapper 比较、任务计划回归和隔离 runtime 检查 |
 | Phase 14 REL-CLI-12 / REL-CLI-07 | `repository::workspace_version` 与 `release/workflow.rs`；工作流读取既有 Rust 版本规则，qualification 共用 run identity 谓词；compiled CLI 和双 PowerShell 实际 step 的离线行为测试 |
 | Phase 14 REL-CLI-13 / REL-CLI-03/08/10 | `release/package_content.rs`、README template、`package_staging.rs`；生成、ZIP allowlist 与 SBOM 覆盖共用清单；同输入 ZIP bytes、许可证/身份/占用路径失败和双宿主实际打包 |
+| Phase 14 REL-CLI-14 / REL-CLI-05/08 | `release/syft/` 复用 `integrity` 与 `atomic_evidence`；pins/cache/manifest/私有快照测试；`release_syft.ps1` 双宿主离线传输与失败保留；实际缓存 Syft 输出比较 |
 
 维护不改变阶段脚本参数、产品行为、依赖政策、候选身份或发布权限。性能数字仅覆盖本地静态验包
 调用路径，远程执行仍未验证；详见 [复用维护报告](report/2026-09-30-release-cli-reuse.md)。
+随后完成的包清单/README 与 Syft 缓存迁移见 [后续报告](report/2026-09-30-package-staging-syft-cli.md)，
+该部分只主张一致性与可测试性收益，未测量性能。
 
 2026-09-25 合并前工具维护映射 plan 11 phase-verification-harness / modular-headless-ci 与
 P00-A10：`cli.rs`、`qualification/{mod.rs,repetition.rs}`、`qualification_environment.rs`、

@@ -9,12 +9,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$SyftVersion = '1.50.0'
-$SyftArchiveSha256 = '815ee6973ec5dff6a671d7f41b0e78835a8c45b91d5a39f4743ea1cee833d3be'
-$SyftChecksumsSha256 = 'bb8824a06c27c625fc103db5d7e9d7131ba2cc6e7c7a79318ee71686ede3c3f0'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 . (Join-Path $PSScriptRoot 'package-path.ps1')
 . (Join-Path $PSScriptRoot 'invoke-smoke.ps1')
+. (Join-Path $PSScriptRoot 'syft-download.ps1')
 $workspaceVersion = Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments @('workspace-version')
 if (-not $PackageDirectory) { $PackageDirectory = Join-Path $repoRoot 'dist' }
 $PackageDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PackageDirectory)
@@ -26,43 +24,10 @@ if (-not $OutputPath) { $OutputPath = Join-Path $PackageDirectory 'SBOM.spdx.jso
 $OutputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 if ($SyftPath) { $SyftPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SyftPath) }
 
-function Get-VerifiedCachedFile {
-    param(
-        [Parameter(Mandatory = $true)][string]$Uri,
-        [Parameter(Mandatory = $true)][string]$CachePath,
-        [Parameter(Mandatory = $true)][string]$ExpectedSha256,
-        [Parameter(Mandatory = $true)][string]$Label
-    )
-
-    if (Test-Path -LiteralPath $CachePath -PathType Leaf) {
-        $cachedHash = (Get-FileHash -LiteralPath $CachePath -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($cachedHash -eq $ExpectedSha256) { return $CachePath }
-    }
-
-    $cacheDirectory = Split-Path -Parent $CachePath
-    New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
-    $lastFailure = 'download was not attempted'
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        $partial = "$CachePath.partial-$PID-$attempt-$([guid]::NewGuid().ToString('N'))"
-        try {
-            Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $partial
-            $actual = (Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($actual -ne $ExpectedSha256) {
-                throw "$Label checksum mismatch after download: $actual"
-            }
-            Move-Item -LiteralPath $partial -Destination $CachePath -Force
-            return $CachePath
-        } catch {
-            $lastFailure = $_.Exception.Message
-        } finally {
-            if (Test-Path -LiteralPath $partial) {
-                Remove-Item -LiteralPath $partial -Force
-            }
-        }
-        if ($attempt -lt 3) { Start-Sleep -Seconds $attempt }
-    }
-    throw "$Label download failed after 3 attempts: $lastFailure"
-}
+$syftArguments = @('syft-plan')
+if ($SyftPath) { $syftArguments += @('--syft-path', $SyftPath) }
+$syftPlan = (Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments $syftArguments) | ConvertFrom-Json
+$SyftVersion = $syftPlan.version
 
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("stickymd-sbom-" + [guid]::NewGuid().ToString('N'))
 $context = Join-Path $temporaryRoot 'context'
@@ -76,29 +41,14 @@ try {
     if (-not $SyftPath) {
         $toolRoot = Join-Path $temporaryRoot 'syft'
         New-Item -ItemType Directory -Path $toolRoot | Out-Null
-        $archiveName = "syft_${SyftVersion}_windows_amd64.zip"
-        $cacheRoot = Join-Path $repoRoot "target/release-tools/syft/$SyftVersion"
-        $checksumsName = "syft_${SyftVersion}_checksums.txt"
-        $base = "https://github.com/anchore/syft/releases/download/v$SyftVersion"
-        $archive = Get-VerifiedCachedFile `
-            -Uri "$base/$archiveName" `
-            -CachePath (Join-Path $cacheRoot $archiveName) `
-            -ExpectedSha256 $SyftArchiveSha256 `
-            -Label 'Syft archive'
-        $checksums = Get-VerifiedCachedFile `
-            -Uri "$base/$checksumsName" `
-            -CachePath (Join-Path $cacheRoot $checksumsName) `
-            -ExpectedSha256 $SyftChecksumsSha256 `
-            -Label 'Syft checksum manifest'
-        $actualArchive = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-        $actualChecksums = (Get-FileHash -LiteralPath $checksums -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actualArchive -ne $SyftArchiveSha256) { throw "Syft archive checksum mismatch: $actualArchive" }
-        if ($actualChecksums -ne $SyftChecksumsSha256) { throw "Syft checksum manifest mismatch: $actualChecksums" }
-        $officialLine = @(Get-Content -LiteralPath $checksums | Where-Object { $_ -match "\s+$([regex]::Escape($archiveName))$" })
-        if ($officialLine.Count -ne 1 -or -not $officialLine[0].StartsWith($SyftArchiveSha256, [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'Pinned Syft archive hash is not present in the verified upstream checksum manifest'
+        foreach ($download in $syftPlan.downloads) {
+            Get-PinnedSyftFile -RepoRoot $repoRoot -Entry $download -Attempts $syftPlan.download_attempts
         }
-        Expand-Archive -LiteralPath $archive -DestinationPath $toolRoot
+        $verified = (Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments @(
+            'syft-verify', '--archive', $syftPlan.archive_path, '--checksums', $syftPlan.checksums_path,
+            '--staging-directory', (Join-Path $temporaryRoot 'verified-syft')
+        )) | ConvertFrom-Json
+        Expand-Archive -LiteralPath $verified.archive_path -DestinationPath $toolRoot
         $SyftPath = Join-Path $toolRoot 'syft.exe'
     }
     if (-not (Test-Path -LiteralPath $SyftPath -PathType Leaf)) { throw "Syft executable does not exist: $SyftPath" }

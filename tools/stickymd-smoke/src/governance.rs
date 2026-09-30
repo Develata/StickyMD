@@ -568,18 +568,9 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
             ));
         }
     }
-    let sbom = read_text(&root.join("tools/release/generate-sbom.ps1"))?;
-    for required in [
-        "1.50.0",
-        "815ee6973ec5dff6a671d7f41b0e78835a8c45b91d5a39f4743ea1cee833d3be",
-        "bb8824a06c27c625fc103db5d7e9d7131ba2cc6e7c7a79318ee71686ede3c3f0",
-    ] {
-        if !sbom.contains(required) {
-            return Err(format!(
-                "SBOM script lacks pinned supply-chain token `{required}`"
-            ));
-        }
-    }
+    // Syft's fixed identity, cache hashes, and checksum manifest are owned by
+    // release::syft. Its unit tests and the dual-host release wrapper tests
+    // exercise corrupt downloads, retries, and preservation of the existing cache.
     Ok(())
 }
 

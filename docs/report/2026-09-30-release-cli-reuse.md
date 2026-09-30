@@ -123,3 +123,8 @@ promotion workflow checkout 的新 Source Freeze 必须包含 `verify-workflow`�
 治理链接、默认 Phase 00 JSON 输出和零退出码均通过；没有重跑已通过的其他案例。
 因此本轮累计验证 274 个 unit cases 与 20 个 integration cases 全部通过。
 默认忽略的 8 项中，本轮单独执行 2 项 package diagnostics；其余 6 项资源/桌面诊断没有执行。
+
+## Follow-up — 2026-09-30
+
+用户随后授权继续包内容清单/README 与 Syft 缓存身份校验。该后续工作独立记录在
+[包内容与 Syft 报告](2026-09-30-package-staging-syft-cli.md)，不回改本报告的历史验证范围或计时结论。

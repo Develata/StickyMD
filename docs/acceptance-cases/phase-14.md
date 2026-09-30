@@ -246,6 +246,7 @@ Failure Signals：接受缺失/冲突来源、哈希不符、重复 manifest、�
 | REL-CLI-11 | Phase package task、下载产物检查与外部 CLI 调用同一 Rust 验包实现；保留任务顺序、runtime 检查和输出流边界，失败不产生成功资格化收据 | Automated local | `runner::package`、任务计划回归、`release::package::diagnostics` 同包输出比较和隔离启动检查 | AUTOMATED PASS |
 | REL-CLI-12 | CI 版本读取复用 workspace 解析器；工作流观察要求完整匹配 SHA、成功 conclusion 和 release 名称，与资格化共用规则；查询失败和字段缺失/重复/类型错误拒绝，不授予发布权限 | Automated local | `release::workflow` + `headless release_workflow` 执行实际 workflow step；5.1/7 查询次数、失败退出码及薄入口状态恢复 | AUTOMATED PASS |
 | REL-CLI-13 | 包生成、ZIP allowlist 与 SBOM 必需成员共用清单；README 标题/完整身份/unsigned 文本与编码保持，稳定顺序、不打包用户 note；缺失许可证或非法编码拒绝，既有 staging/不同 ZIP 不覆盖 | Automated local | `release::package_content/package_staging`、同输入 ZIP hash 比较、双宿主 `release_outputs.ps1` 实际成员与失败路径 | AUTOMATED PASS |
+| REL-CLI-14 | Syft 固定版本和双摘要决定缓存命中；下载校验后原子替换，唯一上游 manifest 绑定；解压使用私有验证快照，失败保留旧 cache/清理 partial；外部 SyftPath 不冒充 pin 认证 | Automated local | `release::syft` unit tests、双宿主 `release_syft.ps1` 离线三次重试/非零失败/CWD/编码恢复、真实缓存 Syft 生成与验包 | AUTOMATED PASS |
 
 详细运行环境、数据及未验证项见 [维护报告](../report/2026-09-22-release-cli-migration.md)。
 SBOM 与 checksum 收尾记录见 [输出维护报告](../report/2026-09-25-release-output-finalization.md)。
@@ -253,10 +254,12 @@ SBOM 与 checksum 收尾记录见 [输出维护报告](../report/2026-09-25-rele
 [2026-09-30 维护报告](../report/2026-09-30-release-cli-reuse.md)。REL-CLI-12 的 GitHub 观察为离线 fixture；
 不构成远程 workflow、Source Freeze 或人工验收通过。
 
-REL-CLI-13 Preconditions：锁定依赖、隔离临时目录和本轮生成的 local-validation 包。
-Action：比较迁移前后 ZIP，运行 staging 规则测试与双 PowerShell 入口。
-Expected：成员/README 字节保持，错误拒绝且既有文件不变。
-Failure Signals：额外用户文件入包、source/title 漂移或失败覆盖既有内容。
+REL-CLI-13/14 Preconditions：锁定依赖、隔离临时目录、当前工具、本轮生成的 local-validation 包；
+Syft 传输失败用离线 fixture，实际 Syft 只读已验证缓存。Action：比较迁移前后 ZIP，运行 staging/cache
+纯规则测试与双 PowerShell 入口。Expected：成员/README 与 SBOM 语义保持，错误拒绝且既有文件不变。
+Failure Signals：额外用户文件入包、source/title 漂移、缓存只凭文件名命中、坏摘要进入可执行快照、
+失败覆盖旧缓存或未清理 partial。细节与未验证边界见
+[包内容与 Syft 报告](../report/2026-09-30-package-staging-syft-cli.md)。
 
 REL-CLI-05 notices 输出预检：Given 已存在的目标文件/目录或缺失的父目录，且当前 fixture
 没有可用的 Cargo manifest，调用 notices 生成。Expect 在依赖读取之前返回对应输出路径错误，

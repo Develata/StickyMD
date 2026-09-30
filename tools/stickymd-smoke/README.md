@@ -267,6 +267,9 @@ cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow --source
 cargo run --quiet -p stickymd-smoke --locked -- release notices --destination <new-file>
 cargo run --quiet -p stickymd-smoke --locked -- release checksums --zip <zip> [--sbom <sbom>] --output <manifest>
 cargo run --quiet -p stickymd-smoke --locked -- release publish-sbom --input <staged-sbom> --output <sbom> --zip <zip> --checksums <manifest>
+cargo run --quiet -p stickymd-smoke --locked -- release syft-plan [--syft-path <provided-tool>]
+cargo run --quiet -p stickymd-smoke --locked -- release syft-publish --kind <archive|checksums> --input <downloaded-file>
+cargo run --quiet -p stickymd-smoke --locked -- release syft-verify --archive <archive> --checksums <upstream-manifest> --staging-directory <new-directory>
 ```
 
 `package-inputs` also accepts `--version`, `--commit-sha`, `--release-tag` and
@@ -371,10 +374,32 @@ Publication uses a same-directory temporary file and a no-replace move on Window
 (an atomic hard link on Linux); unsupported filesystem operations return failure.
 
 PowerShell keeps ZIP compression/extraction, native resource fact collection,
-Syft acquisition/invocation and existing UIA/COM adapters. `package.ps1`
+Syft download transport/invocation and existing UIA/COM adapters. `package.ps1`
 delegates staging and README generation to Rust. No product dependency was added.
 The general metadata JSON reader is confined to release tooling; qualification
 receipt schemas and release permissions are unchanged.
+
+`release/syft/` owns the unchanged Syft 1.50.0 archive/manifest pins, filenames,
+download URLs and cache decisions. `syft-plan` is read-only JSON: a matching version
+directory alone is insufficient; only matching file hashes are cache hits. Missing
+or corrupt files become `downloads` entries, with the existing three-attempt limit.
+`syft-publish` validates a private snapshot against the selected fixed pin and
+atomically replaces only that role's cache file under `target/release-tools/syft/`.
+Failed validation/publication preserves existing cache bytes. There is no CLI pin
+override. `syft-verify` creates a new snapshot directory, validates both hashes and
+the unique upstream archive checksum entry, and returns the verified archive path
+for extraction. Later cache changes cannot change that private extraction input.
+The upstream text-mode checksum format uses the existing integrity name/digest/
+duplicate rules after separator normalization.
+
+`-SyftPath` retains its existing caller-provided-tool bypass; `syft-plan --syft-path`
+checks that file exists and returns `external: true` without accessing the cache.
+It does not attest the provided executable's version or hash. The existing
+`SYFT_VERSION` output names the configured pin, not verified external-tool identity.
+`syft-download.ps1` handles network I/O, retry waits and partial-file cleanup;
+it delegates all checksum/cache publication decisions to Rust. Offline dual-host
+tests cover corrupted downloads, interrupted transport, retry bounds, cache
+preservation and cleanup without contacting GitHub.
 
 These are distinct scopes: selecting a path, verifying a package, verifying
 supplied promotion inputs, and qualifying a Promoted Candidate. None of the new
