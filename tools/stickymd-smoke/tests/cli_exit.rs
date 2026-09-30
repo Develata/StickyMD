@@ -1,6 +1,56 @@
 use std::process::Command;
 
 #[test]
+fn resource_plan_is_read_only_even_when_program_and_source_identity_are_missing() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("stickymd-plan-{}-{nonce}", std::process::id()));
+    std::fs::create_dir_all(root.join("target")).unwrap();
+    for marker in ["Cargo.toml", "AGENTS.md"] {
+        std::fs::write(root.join(marker), "").unwrap();
+    }
+    std::fs::write(root.join(".gitignore"), "target/\n").unwrap();
+    std::fs::write(root.join("target/keep.json"), "preserved").unwrap();
+    assert!(
+        Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
+        .args([
+            "phase",
+            "14",
+            "--resources",
+            "--resource-module=zoom",
+            "--resource-resume",
+            "--resource-plan",
+            "--evidence-file=target/keep.json",
+        ])
+        .env_remove("STICKYMD_SMOKE_RESOURCE_CASE")
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let unchanged = std::fs::read_to_string(root.join("target/keep.json")).unwrap() == "preserved";
+    let outputs = std::fs::read_dir(root.join("target")).unwrap().count();
+    let formal = root.join("dist").exists();
+    assert!(root.starts_with(std::env::temp_dir()));
+    std::fs::remove_dir_all(&root).unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        json.contains("\"status\":\"NOT_RUN\"") && json.contains("RESUME_DISABLED"),
+        "{json}"
+    );
+    assert!(unchanged && outputs == 1 && !formal);
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("TASK_TIMING"));
+}
+
+#[test]
 fn diagnostic_commands_preserve_internal_success_files() {
     for receipt in [
         "dist/evidence/module-success/resources-window.json",

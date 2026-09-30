@@ -461,6 +461,12 @@ Resources 是 source-preview、math、images、window、zoom 五类兼容成功�
   损坏、过期或不匹配时从头重测该完整场景，失败轮次不得与其他运行拼接。
   复用必须标为 DIAGNOSTIC_REUSED，记录历史来源及原执行耗时；本轮耗时另记。
   旧诊断 JSON 不自动导入，缓存和复用输出不参与任何正式成功登记或 readiness。
+  诊断执行前输出每个单元的预期复用/重跑、失效原因和预计剩余固定等待预算。同一命令
+  等价场景按首次出现单元计算，避免重复扣减。计划只是假设当前身份不变的预测，实际复用
+  必须再次检查；进度预算只在实际命中后扣减。`--resource-plan` 配合 `--resource-resume`
+  只读取计划并向 stdout 输出 NOT_RUN JSON；不构建、不启动产品、不写指定 evidence 或账本。
+  缺少程序或无法确定身份时明确显示禁用原因。缓存最新索引仅用于解释 source、程序、
+  harness、输入或环境变更，不能授权读取其他身份记录。不得打印私有主机/用户/环境值。
 - Runtime/Performance/Resources 消费 Promoted Candidate 时，以显式的候选校验任务替代
   不参与测量的本地 Release build；仍须完整验证 Source Freeze、clean tree、EXE/ZIP/SBOM
   hash、checksum 与 native-runtime。候选缺失或失效即失败，不能回退本地构建；Local

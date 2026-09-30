@@ -14,6 +14,8 @@ pub(super) fn identity() -> Identity {
         source: "b".repeat(40),
         executable: "c".repeat(64),
         harness: "d".repeat(64),
+        inputs: "e".repeat(64),
+        environment: "f".repeat(64),
         dirty: false,
     }
 }
@@ -232,6 +234,104 @@ fn diagnostic_digest_uses_sha256() {
     assert_eq!(
         digest::bytes(b"abc").unwrap(),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+}
+
+#[test]
+fn latest_pointer_explains_changed_components_but_never_reuses_old_identity() {
+    let root = Root::new();
+    let store = Store {
+        identity: identity(),
+        host: String::new(),
+    };
+    let (unit, result) = case_result(false);
+    store
+        .save_using(&root.0, unit, &result, 150.0, || Ok(identity()))
+        .unwrap();
+    for field in ["source", "executable", "harness", "inputs", "environment"] {
+        let mut changed = identity();
+        changed.fingerprint = "0".repeat(64);
+        match field {
+            "source" => changed.source = "0".repeat(40),
+            "executable" => changed.executable = "0".repeat(64),
+            "harness" => changed.harness = "0".repeat(64),
+            "inputs" => changed.inputs = "0".repeat(64),
+            _ => changed.environment = "0".repeat(64),
+        }
+        let changed = Store {
+            identity: changed,
+            host: String::new(),
+        };
+        let inspected = changed.inspect(&root.0, unit).unwrap();
+        assert!(inspected.result.is_none());
+        assert_eq!(inspected.reason, format!("IDENTITY_CHANGED: {field}"));
+    }
+    let hint = root
+        .0
+        .join(DIRECTORY)
+        .join("latest")
+        .join(format!("{}.key", unit.key()));
+    fs::write(&hint, "../../dist").unwrap();
+    // A corrupt advisory pointer does not override a valid current record.
+    assert!(store.inspect(&root.0, unit).unwrap().result.is_some());
+    fs::remove_file(store.path(&root.0, unit).unwrap()).unwrap();
+    let inspected = store.inspect(&root.0, unit).unwrap();
+    assert!(inspected.result.is_none());
+    assert!(inspected.reason.contains("LATEST_UNAVAILABLE"));
+}
+
+#[test]
+fn expired_and_corrupt_records_have_distinct_bounded_reasons() {
+    let root = Root::new();
+    let store = Store {
+        identity: identity(),
+        host: String::new(),
+    };
+    let (unit, result) = case_result(false);
+    let path = store.path(&root.0, unit).unwrap();
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    for (created, reason) in [(1, "EXPIRED"), (now().unwrap() + 3600, "FUTURE_TIMESTAMP")] {
+        fs::write(
+            &path,
+            record::encode(&identity(), unit, &result, 150.0, created).unwrap(),
+        )
+        .unwrap();
+        let inspected = store.inspect(&root.0, unit).unwrap();
+        assert!(inspected.result.is_none());
+        assert_eq!(inspected.reason, format!("INVALID_RECORD: {reason}"));
+    }
+    let valid = record::encode(&identity(), unit, &result, 150.0, now().unwrap()).unwrap();
+    fs::write(&path, valid.replace("DIAGNOSTIC_ONLY", "OTHER")).unwrap();
+    assert_eq!(
+        store.inspect(&root.0, unit).unwrap().reason,
+        "INVALID_RECORD: CHECKSUM_MISMATCH"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "explicit real identity timing; requires STICKYMD_SMOKE_PROBE_REPOSITORY"]
+fn native_diagnostic_identity_lookup_profile() {
+    let root = PathBuf::from(std::env::var_os("STICKYMD_SMOKE_PROBE_REPOSITORY").unwrap());
+    let started = std::time::Instant::now();
+    eprintln!("IDENTITY_PROFILE_BEGIN first_lookup");
+    let store = Store::open(&root).unwrap();
+    let _ = store
+        .load(&root, Unit::Group(ResourceModule::Zoom))
+        .unwrap();
+    eprintln!(
+        "IDENTITY_PROFILE_END first_lookup elapsed_seconds={:.6}",
+        started.elapsed().as_secs_f64()
+    );
+    let started = std::time::Instant::now();
+    eprintln!("IDENTITY_PROFILE_BEGIN subsequent_lookup");
+    store.verify(&root).unwrap();
+    let _ = store
+        .load(&root, Unit::Group(ResourceModule::Zoom))
+        .unwrap();
+    eprintln!(
+        "IDENTITY_PROFILE_END subsequent_lookup elapsed_seconds={:.6}",
+        started.elapsed().as_secs_f64()
     );
 }
 

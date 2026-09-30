@@ -6,6 +6,8 @@ mod digest;
 #[cfg(test)]
 mod group_tests;
 mod identity;
+mod lookup;
+pub(crate) mod plan;
 mod record;
 #[cfg(test)]
 mod tests;
@@ -60,26 +62,19 @@ impl Store {
         mut fresh: impl FnMut() -> Result<Identity, String>,
     ) -> Result<Option<EvidenceResult>, String> {
         self.matches(fresh()?)?;
-        let path = self.path(root, case)?;
-        let cached = read_bounded(&path)
-            .and_then(|document| record::decode(&document, &self.identity, case, now()?));
+        let cached = self.inspect(root, case)?;
         self.matches(fresh()?)?;
-        match cached {
-            Ok(result) => {
-                eprintln!(
-                    "RESOURCE_RESUME case={} status=DIAGNOSTIC_REUSED",
-                    case.key()
-                );
-                Ok(Some(result))
-            }
-            Err(_) => {
-                eprintln!(
-                    "RESOURCE_RESUME case={} status=MISS (missing, expired or invalid record)",
-                    case.key()
-                );
-                Ok(None)
-            }
-        }
+        eprintln!(
+            "RESOURCE_RESUME unit={} status={} reason=\"{}\"",
+            case.key(),
+            if cached.result.is_some() {
+                "DIAGNOSTIC_REUSED"
+            } else {
+                "MISS"
+            },
+            crate::evidence::escape_json(&cached.reason)
+        );
+        Ok(cached.result)
     }
 
     pub(crate) fn save(
@@ -107,6 +102,8 @@ impl Store {
         let path = self.path(root, case)?;
         fs::create_dir_all(path.parent().ok_or("missing cache parent")?)
             .map_err(|e| e.to_string())?;
+        // Advisory only. Publishing the validated record remains the final operation.
+        self.save_hint(root, case)?;
         self.matches(fresh()?)?;
         // Re-resolve junctions after directory creation, immediately before atomic publication.
         let path = self.path(root, case)?;
@@ -119,18 +116,7 @@ impl Store {
     }
 
     fn path(&self, root: &Path, case: Unit) -> Result<PathBuf, String> {
-        super::receipt::validate_sha256(&self.identity.fingerprint, "diagnostic key")?;
-        case.registered()?;
-        let path = root
-            .join(DIRECTORY)
-            .join(&self.identity.fingerprint)
-            .join(format!("{}.json", case.key()));
-        if !super::module_ledger::is_within(root, &path, "target")
-            || super::module_ledger::is_within(root, &path, "dist")
-        {
-            return Err("diagnostic cache path escaped its target directory".into());
-        }
-        Ok(path)
+        lookup::cache_path(root, &self.identity.fingerprint, case)
     }
 }
 

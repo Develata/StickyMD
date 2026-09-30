@@ -32,11 +32,13 @@ pub(super) fn encode(
     let parsed = json::parse(&payload)?;
     case.validate(&parsed.field("results")?.array()?[0])?;
     let body = format!(
-        "{{\"schema_version\":2,\"kind\":\"DIAGNOSTIC_ONLY\",\"identity\":\"{}\",\"source\":\"{}\",\"executable\":\"{}\",\"harness\":\"{}\",\"unit\":\"{}\",\"created\":{created},\"origin_execution_seconds\":{elapsed},\"payload\":\"{}\"}}",
+        "{{\"schema_version\":2,\"kind\":\"DIAGNOSTIC_ONLY\",\"identity\":\"{}\",\"source\":\"{}\",\"executable\":\"{}\",\"harness\":\"{}\",\"inputs\":\"{}\",\"environment\":\"{}\",\"unit\":\"{}\",\"created\":{created},\"origin_execution_seconds\":{elapsed},\"payload\":\"{}\"}}",
         evidence::escape_json(&identity.fingerprint),
         evidence::escape_json(&identity.source),
         evidence::escape_json(&identity.executable),
         evidence::escape_json(&identity.harness),
+        evidence::escape_json(&identity.inputs),
+        evidence::escape_json(&identity.environment),
         case.key(),
         evidence::escape_json(&payload)
     );
@@ -64,7 +66,7 @@ pub(super) fn decode(
     let outer = json::parse(document)?;
     let body = outer.field("body")?.string()?;
     if digest::bytes(body.as_bytes())? != outer.field("sha256")?.string()? {
-        return Err("diagnostic cache checksum mismatch".into());
+        return Err("CHECKSUM_MISMATCH".into());
     }
     let metadata = json::parse(body)?;
     if metadata.field("schema_version")?.unsigned()? != 2
@@ -73,13 +75,18 @@ pub(super) fn decode(
         || metadata.field("source")?.string()? != identity.source
         || metadata.field("executable")?.string()? != identity.executable
         || metadata.field("harness")?.string()? != identity.harness
+        || metadata.field("inputs")?.string()? != identity.inputs
+        || metadata.field("environment")?.string()? != identity.environment
         || metadata.field("unit")?.string()? != case.key()
     {
         return Err("incompatible diagnostic cache identity".into());
     }
     let created = metadata.field("created")?.unsigned()?;
-    if now.checked_sub(created).is_none_or(|age| age > MAX_AGE) {
-        return Err("expired or future diagnostic cache".into());
+    if created > now {
+        return Err("FUTURE_TIMESTAMP".into());
+    }
+    if now - created > MAX_AGE {
+        return Err("EXPIRED".into());
     }
     let elapsed = number(metadata.field("origin_execution_seconds")?)?;
     if elapsed < 0.0 {

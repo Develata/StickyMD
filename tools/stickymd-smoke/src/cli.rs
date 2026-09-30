@@ -752,6 +752,7 @@ pub(crate) struct Options {
     pub(crate) resources: bool,
     pub(crate) resource_module: Option<ResourceModule>,
     pub(crate) resource_resume: bool,
+    pub(crate) resource_plan: bool,
     pub(crate) release: bool,
     pub(crate) package: bool,
     pub(crate) json: bool,
@@ -786,6 +787,7 @@ impl Options {
             resources: false,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             release: false,
             package: false,
             json: false,
@@ -806,6 +808,7 @@ impl Options {
                 "--runtime" => options.runtime = true,
                 "--resources" => options.resources = true,
                 "--resource-resume" => options.resource_resume = true,
+                "--resource-plan" => options.resource_plan = true,
                 value if value.starts_with("--resource-module=") => {
                     options.resource_module = Some(ResourceModule::parse(
                         value
@@ -861,6 +864,9 @@ impl Options {
                 "`--resource-module` requires `--resources` with all or Phase 10 through 14"
                     .to_owned(),
             );
+        }
+        if options.resource_plan && !options.resource_resume {
+            return Err("`--resource-plan` requires `--resource-resume`".into());
         }
         if options.resource_resume
             && (!options.resources
@@ -936,7 +942,7 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke release <package-inputs|workspace-version|verify-promoted|verify-package|notices|checksums|publish-sbom> [options]; see tools/stickymd-smoke/README.md"
+        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke release <package-inputs|workspace-version|verify-promoted|verify-package|notices|checksums|publish-sbom> [options]; see tools/stickymd-smoke/README.md"
     }
 }
 
@@ -1039,6 +1045,19 @@ mod tests {
 
     #[test]
     fn resource_resume_requires_explicit_phase14_resources_and_evidence() {
+        assert!(
+            Options::parse(
+                [
+                    "phase",
+                    "14",
+                    "--resources",
+                    "--resource-plan",
+                    "--evidence-file=target/plan.json"
+                ]
+                .map(str::to_owned)
+            )
+            .is_err()
+        );
         let options = Options::parse(args(&[
             "phase",
             "14",

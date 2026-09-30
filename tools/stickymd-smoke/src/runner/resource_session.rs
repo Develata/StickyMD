@@ -12,6 +12,8 @@ pub(super) struct Session {
     cache: crate::runtime::resources::Cache,
     #[cfg(windows)]
     resume: super::resource_resume::Resume,
+    #[cfg(windows)]
+    groups: Vec<ResourceModule>,
 }
 
 impl Session {
@@ -53,6 +55,8 @@ impl Session {
             cache: Default::default(),
             #[cfg(windows)]
             resume: super::resource_resume::Resume::new(options.resource_resume),
+            #[cfg(windows)]
+            groups,
         })
     }
 
@@ -128,6 +132,7 @@ impl Session {
         json: bool,
         observer: &mut dyn crate::resource_plan::progress::Observer,
     ) -> Result<EvidenceResult, String> {
+        self.resume.plan(root, &self.groups)?;
         let mut observer = self.resume.observe(root, observer);
         let output =
             crate::runtime::resources::run(root, group, json, &mut self.cache, &mut observer)?;

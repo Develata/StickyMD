@@ -163,6 +163,17 @@ impl Task {
 
 pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
     crate::qualification::smoke_scope::validate(root, options)?;
+    if options.resource_plan {
+        let groups = options.resource_module.map_or_else(
+            || crate::resource_plan::GROUPS.to_vec(),
+            |group| vec![group],
+        );
+        println!(
+            "{}",
+            crate::qualification::resource_diagnostics::plan::preview(root, &groups)?
+        );
+        return Ok(());
+    }
     if options.json
         && let Some(path) = options.evidence_file.as_deref()
         && crate::qualification::reuse_last_success_for_evidence(root, path)?
@@ -1644,6 +1655,7 @@ mod tests {
                 resources: false,
                 resource_module: None,
                 resource_resume: false,
+                resource_plan: false,
                 release: false,
                 package: false,
                 json: true,
@@ -1703,6 +1715,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("valid all plan");
@@ -1750,6 +1763,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("valid performance plan");
@@ -1782,6 +1796,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("valid CI plan");
@@ -1830,6 +1845,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         }));
     }
@@ -1848,6 +1864,7 @@ mod tests {
             ci_shard,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         };
         let full: BTreeSet<_> = build_plan(&options(None))
@@ -1907,6 +1924,7 @@ mod tests {
             ci_shard: None,
             resource_module: Some(ResourceModule::Window),
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("targeted Phase 14 window resource plan");
@@ -1932,6 +1950,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         }));
     }
@@ -1950,6 +1969,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 10 headless plan");
@@ -2016,6 +2036,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 11 headless plan");
@@ -2088,6 +2109,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false)).expect("Phase 11-B headless plan");
@@ -2137,6 +2159,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         };
         let headless = build_plan(&options(false, false, false)).expect("Phase 12 headless plan");
@@ -2202,6 +2225,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         };
         for plan in [
@@ -2251,6 +2275,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         };
         for plan in [
@@ -2291,6 +2316,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("valid Phase 6 resource plan");
@@ -2313,6 +2339,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("valid Phase 7 resource plan");
@@ -2335,6 +2362,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("valid Phase 8 headless plan");
@@ -2356,6 +2384,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("valid Phase 8 runtime plan");
@@ -2377,6 +2406,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("valid Phase 8 resource plan");
@@ -2409,6 +2439,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("valid Phase 9 performance plan");
@@ -2444,6 +2475,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("valid Phase 9 package plan");
@@ -2475,6 +2507,7 @@ mod tests {
             ci_shard: None,
             resource_module: None,
             resource_resume: false,
+            resource_plan: false,
             evidence_file: None,
         })
         .expect("valid Phase 9 release plan");

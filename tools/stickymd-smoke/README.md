@@ -417,6 +417,19 @@ Reused cases carry `DIAGNOSTIC_REUSED` and `diagnostic-cache:` sample origins, w
 Progress removes only the fixed waits actually avoided. Identity checks and cache
 writes happen between cases, outside measurement windows.
 
+Resume prints a per-unit plan before the desktop probe, with `RUN`, `REUSE_IF_VALID`
+or `SHARE_IN_COMMAND`, specific miss reasons, and expected fixed waits. It is advisory:
+execution revalidates identity and records, and live progress credits only actual reuse.
+The internal `latest/` pointer explains changes without authorizing another identity.
+Private host/user/environment values are never printed.
+
+To inspect without building or starting StickyMD, add `-ResourcePlan` (Rust:
+`--resource-plan`) to the same resume command. It emits `DIAGNOSTIC_PLAN` / `NOT_RUN`
+JSON on stdout and leaves `-EvidenceFile` untouched; that path still validates scope.
+A missing program or unknown identity is shown as `RESUME_DISABLED`, never as a pass.
+`RESOURCE_IDENTITY` reports Git, artifact hashing, environment and input hashing times
+outside measurement windows.
+
 The persistent result for each phase lives in
 `docs/acceptance-cases/phase-XX.md`. Automated checks may be marked
 `AUTOMATED PASS` only when their checked-in runner passes. Manual checks stay

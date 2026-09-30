@@ -25,6 +25,7 @@ param(
     [ValidateSet('source-preview', 'math', 'images', 'window', 'zoom')]
     [string]$ResourceModule,
     [switch]$ResourceResume,
+    [switch]$ResourcePlan,
     [switch]$Release,
     [switch]$Package,
     [switch]$Json,
@@ -181,6 +182,7 @@ if ($Environment) {
     if ($Resources) { $arguments += '--resources' }
     if ($ResourceModule) { $arguments += "--resource-module=$ResourceModule" }
     if ($ResourceResume) { $arguments += '--resource-resume' }
+    if ($ResourcePlan) { $arguments += '--resource-plan' }
     if ($Release) { $arguments += '--release' }
     if ($Package) { $arguments += '--package' }
     if ($Json) { $arguments += '--json' }

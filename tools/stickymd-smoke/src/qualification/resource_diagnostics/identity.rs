@@ -2,7 +2,7 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#resource-module-qualification
 
 use crate::qualification::{module_ledger::fingerprint, receipt};
-use std::path::Path;
+use std::{path::Path, time::Instant};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Identity {
@@ -10,6 +10,8 @@ pub(super) struct Identity {
     pub(super) source: String,
     pub(super) executable: String,
     pub(super) harness: String,
+    pub(super) inputs: String,
+    pub(super) environment: String,
     pub(super) dirty: bool,
 }
 
@@ -51,6 +53,7 @@ pub(super) fn host() -> Result<String, String> {
 }
 
 pub(super) fn capture(root: &Path, host: &str) -> Result<Identity, String> {
+    let started = Instant::now();
     let source = receipt::command_text(root, "git", &["rev-parse", "HEAD"])?;
     let dirty = !receipt::command_text(
         root,
@@ -58,14 +61,15 @@ pub(super) fn capture(root: &Path, host: &str) -> Result<Identity, String> {
         &["status", "--porcelain", "--untracked-files=normal"],
     )?
     .is_empty();
+    let git_seconds = started.elapsed().as_secs_f64();
+    let timer = Instant::now();
     let executable = crate::integrity::sha256(&crate::qualification::release_executable(root)?)?;
     let harness = crate::integrity::sha256(&std::env::current_exe().map_err(|e| e.to_string())?)?;
+    let artifact_seconds = timer.elapsed().as_secs_f64();
+    let timer = Instant::now();
     let mut material = Vec::new();
     for value in [
-        "diagnostic resource cohorts v1",
-        &source,
-        &executable,
-        &harness,
+        "diagnostic resource environment v2",
         host,
         &root
             .canonicalize()
@@ -95,12 +99,34 @@ pub(super) fn capture(root: &Path, host: &str) -> Result<Identity, String> {
         part(&mut material, key.as_encoded_bytes());
         part(&mut material, value.as_encoded_bytes());
     }
-    let fingerprint = fingerprint::workspace_inputs(root, &material)?;
+    let environment = super::digest::bytes(&material)?;
+    let environment_seconds = timer.elapsed().as_secs_f64();
+    let timer = Instant::now();
+    let inputs = fingerprint::workspace_inputs(root, &[])?;
+    let input_seconds = timer.elapsed().as_secs_f64();
+    let mut material = Vec::new();
+    for value in [
+        "diagnostic resource units v2",
+        &source,
+        &executable,
+        &harness,
+        &inputs,
+        &environment,
+    ] {
+        part(&mut material, value.as_bytes());
+    }
+    let fingerprint = super::digest::bytes(&material)?;
+    eprintln!(
+        "RESOURCE_IDENTITY git_seconds={git_seconds:.6} artifact_hash_seconds={artifact_seconds:.6} environment_seconds={environment_seconds:.6} input_hash_seconds={input_seconds:.6} total_seconds={:.6}",
+        started.elapsed().as_secs_f64()
+    );
     Ok(Identity {
         fingerprint,
         source,
         executable,
         harness,
+        inputs,
+        environment,
         dirty,
     })
 }

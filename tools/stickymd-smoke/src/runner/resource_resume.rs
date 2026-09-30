@@ -11,13 +11,43 @@ use std::path::Path;
 pub(super) struct Resume {
     enabled: bool,
     store: Option<Store>,
+    planned: bool,
 }
 impl Resume {
     pub(super) fn new(enabled: bool) -> Self {
         Self {
             enabled,
             store: None,
+            planned: false,
         }
+    }
+    pub(super) fn plan(
+        &mut self,
+        root: &Path,
+        groups: &[crate::cli::ResourceModule],
+    ) -> Result<(), String> {
+        if self.planned || !self.enabled {
+            return Ok(());
+        }
+        self.planned = true;
+        use crate::qualification::resource_diagnostics::plan::{self, Plan};
+        let units = plan::units(
+            groups,
+            std::env::var("STICKYMD_SMOKE_RESOURCE_CASE")
+                .ok()
+                .as_deref(),
+        )?;
+        match Store::open(root) {
+            Ok(store) => {
+                store.plan(root, &units)?.log();
+                self.store = Some(store);
+            }
+            Err(error) => {
+                Plan::disabled(&units, &error)?.log();
+                self.enabled = false;
+            }
+        }
+        Ok(())
     }
     pub(super) fn observe<'a>(
         &'a mut self,
