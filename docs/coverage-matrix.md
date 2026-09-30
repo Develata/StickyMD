@@ -208,6 +208,9 @@ P14-A53 的场景完成回调由 `resource_plan/progress` 定义，执行层只�
 `runner/resource_observer` 持有进度 sidecar 与 INCOMPLETE 检查点的原子写入。
 `runner/resource_progress` 继续持有组间检查点，正式子组成功仍只由既有 Campaign 登记。
 
+P14-A58 映射 plan 11 的跨命令等价场景复用：`resource_plan/diagnostic` 定义注册等价和标签
+投影，`resource_diagnostics/lookup` 独立验证原记录，`record` 保留原场景/身份/创建时间。
+
 P14-A57 映射 plan 11 的身份开销与鲜活性边界：`resource_diagnostics/identity` 分项计时，
 Store 保留读取前后/保存前后的鲜活检查；同命令共享经 observer 单独检查身份。
 

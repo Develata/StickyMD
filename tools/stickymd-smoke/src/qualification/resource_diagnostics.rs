@@ -4,6 +4,8 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 mod digest;
 #[cfg(test)]
+mod equivalence_tests;
+#[cfg(test)]
 mod group_tests;
 mod identity;
 mod lookup;

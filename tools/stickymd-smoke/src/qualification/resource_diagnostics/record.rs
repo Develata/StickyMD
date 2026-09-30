@@ -107,7 +107,11 @@ pub(super) fn decode(
     }
     case.validate(&results[0])?;
     let value = &results[0];
-    let origin = format!("diagnostic-cache:{}:{created}", identity.fingerprint);
+    let origin = format!(
+        "diagnostic-cache:{}:{created}:{}",
+        identity.fingerprint,
+        case.key()
+    );
     let mut summary = measurements(value.field("measurements")?)?;
     summary.push(EvidenceMeasurement {
         name: format!("{}.origin_execution_seconds", case.key()),
@@ -118,8 +122,11 @@ pub(super) fn decode(
         id: case.result_id().into(),
         status: EvidenceStatus::Passed,
         detail: Some(format!(
-            "DIAGNOSTIC_REUSED {origin}; origin_source={}; origin_exe_sha256={}; origin_harness_sha256={}; origin_execution_seconds={elapsed}",
-            identity.source, identity.executable, identity.harness
+            "DIAGNOSTIC_REUSED {origin}; origin_unit={}; origin_source={}; origin_exe_sha256={}; origin_harness_sha256={}; origin_execution_seconds={elapsed}",
+            case.key(),
+            identity.source,
+            identity.executable,
+            identity.harness
         )),
         measurements: summary,
         gates: value

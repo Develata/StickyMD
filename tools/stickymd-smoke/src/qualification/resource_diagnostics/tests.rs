@@ -34,9 +34,9 @@ fn case_result(cpu: bool) -> (Unit, EvidenceResult) {
     (case.into(), result)
 }
 
-struct Root(PathBuf);
+pub(super) struct Root(pub(super) PathBuf);
 impl Root {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

@@ -20,6 +20,31 @@ pub(super) struct Lookup {
 
 impl Store {
     pub(super) fn inspect(&self, root: &Path, unit: Unit) -> Result<Lookup, String> {
+        let mut requested = self.inspect_exact(root, unit)?;
+        if requested.result.is_some() {
+            return Ok(requested);
+        }
+        for origin in unit.equivalents() {
+            let cached = self.inspect_exact(root, origin)?;
+            if let Some(mut result) = cached.result {
+                unit.project(origin, &mut result)?;
+                return Ok(Lookup {
+                    result: Some(result),
+                    reason: format!("EQUIVALENT_COMPLETE_RECORD: {}", origin.key()),
+                });
+            }
+            if cached.reason != "MISSING" {
+                requested.reason.push_str(&format!(
+                    "; equivalent {}: {}",
+                    origin.key(),
+                    cached.reason
+                ));
+            }
+        }
+        Ok(requested)
+    }
+
+    fn inspect_exact(&self, root: &Path, unit: Unit) -> Result<Lookup, String> {
         let path = self.path(root, unit)?;
         let exists = path.try_exists().map_err(|e| e.to_string())?;
         if !exists {

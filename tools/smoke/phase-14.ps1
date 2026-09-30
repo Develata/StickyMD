@@ -17,6 +17,7 @@
 # Resource cases checkpoint INCOMPLETE samples; .progress.json reports rounds, stages and remaining fixed wait outside sampling windows.
 # ResourceResume is diagnostic-only: complete five-sample cases or whole Window/Zoom groups, with strict identity in ignored target storage.
 # ResourcePlan emits advisory NOT_RUN JSON without running resource tasks; identity timings remain outside sample windows.
+# Diagnostic resume can use registered equivalent cases across commands without renewing historical observations.
 [CmdletBinding()]
 param(
     [switch]$Ci,

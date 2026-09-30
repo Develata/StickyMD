@@ -412,6 +412,13 @@ pass checksum, raw-observation, sampling-protocol, statistic and hard-gate valid
 Missing, corrupt, expired or incompatible records cause a fresh complete case.
 Instantaneous system load is not guaranteed to match historical observations.
 
+With the same identity, complete equivalent Source/Math/Images cases can be reused
+across commands. The requested case is checked first, followed by registered cases
+with identical inputs, view, operation history and sampling protocol. Each candidate
+passes all checks independently. Reused observations retain the original unit and
+timestamp; relabeling does not write another record or renew its lifetime. Window
+and Zoom remain whole groups. Planning uses the same lookup rules as execution.
+
 Reused cases carry `DIAGNOSTIC_REUSED` and `diagnostic-cache:` sample origins, with
 `origin_execution_seconds` separate from this invocation's `execution_seconds`.
 Progress removes only the fixed waits actually avoided. Identity checks and cache

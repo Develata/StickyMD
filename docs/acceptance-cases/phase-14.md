@@ -74,7 +74,14 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A55 | Window/Zoom 仅以完整组诊断复用，原始五次观测、压力/fixture/硬门完整且清理成功；失败不缓存，历史样本不能登记正式成功 | Automated | 完整组校验、清理/写入失败回归；完整五组资格由 P14-A46 持有 | AUTOMATED PASS |
 | P14-A56 | 诊断计划逐项解释复用/重跑与身份失效，等价场景不重复预算；只看计划不启动产品、不覆盖 evidence，索引不授权跨身份复用 | Automated | plan 预算、失效原因、损坏索引与 CLI 只读入口回归 | AUTOMATED PASS |
 | P14-A57 | 诊断身份检查按阶段计时，省去相邻重复采集，读取前后与采样后/发布前仍检查，同命令共享独立检查 | Automated | 前后任一检查漂移均失败且保留旧记录，显式 native lookup profile | AUTOMATED PASS |
+| P14-A58 | 跨命令仅复用同身份的严格等价完整场景；保留原单元、原始采样和创建时间，不续期、不重存历史结果，Window/Zoom 不混用 | Automated | 四对等价场景双向复用、原始数据与门槛投影、不等价/损坏/过期拒绝回归 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
+
+P14-A58 Preconditions：同一完整身份下有另一个注册且等价场景的完整有效缓存。
+Action：分开建立 Store 后双向请求四对场景，并注入损坏、过期或不同 fixture/CPU/操作历史。
+Expected：只复用严格等价的完整五次观测，计划与执行来源一致；请求名称与历史来源可区分，
+缓存 bytes、创建时间不变，不创建别名副本；历史结果不能重新保存或登记正式成功。
+Failure Signals：跨身份/协议复用、丢失原始观测、混用 Window/Zoom、隐式续期。
 
 P14-A57 Preconditions：诊断缓存及可采集的本地环境。
 Action：分别在读取/保存前后改变输入身份；运行显式 native profile 比较实际采集次数及用时。
