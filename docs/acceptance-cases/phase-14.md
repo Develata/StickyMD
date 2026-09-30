@@ -73,7 +73,13 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A54 | 显式诊断续跑只缓存完整五次采样场景，绑定实际程序/harness、源码输入和环境身份；失效重测、失败不缓存、历史观测标注来源，正式输出和账本拒绝诊断缓存 | Automated | diagnostic cache 原始观测/统计/硬门、损坏/过期/身份漂移、原子写入、路径别名及正式入口保护回归 | AUTOMATED PASS |
 | P14-A55 | Window/Zoom 仅以完整组诊断复用，原始五次观测、压力/fixture/硬门完整且清理成功；失败不缓存，历史样本不能登记正式成功 | Automated | 完整组校验、清理/写入失败回归；完整五组资格由 P14-A46 持有 | AUTOMATED PASS |
 | P14-A56 | 诊断计划逐项解释复用/重跑与身份失效，等价场景不重复预算；只看计划不启动产品、不覆盖 evidence，索引不授权跨身份复用 | Automated | plan 预算、失效原因、损坏索引与 CLI 只读入口回归 | AUTOMATED PASS |
+| P14-A57 | 诊断身份检查按阶段计时，省去相邻重复采集，读取前后与采样后/发布前仍检查，同命令共享独立检查 | Automated | 前后任一检查漂移均失败且保留旧记录，显式 native lookup profile | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
+
+P14-A57 Preconditions：诊断缓存及可采集的本地环境。
+Action：分别在读取/保存前后改变输入身份；运行显式 native profile 比较实际采集次数及用时。
+Expected：任一检查发现变化立即失败且不覆盖旧完整记录；检查耗时与资源样本区分。
+Failure Signals：为提速省略前后检查、依赖旧计划授权复用、采样窗口内哈希或写盘。
 
 P14-A56 Preconditions：诊断续跑或显式只看计划，存在可验证/缺失/损坏/过期及旧身份记录。
 Action：读取计划，改变各身份分量，损坏最新索引，并在程序缺失时使用已有 evidence 路径。

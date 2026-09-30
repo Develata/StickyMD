@@ -14,7 +14,6 @@ pub(super) fn run(
     output: &mut Output,
     observer: &mut dyn Observer,
 ) -> Result<bool, String> {
-    observer.verify()?;
     if let Some(saved) = observer.load(Unit::Group(group))? {
         output.measurements.extend(saved.measurements);
         output.gates.extend(saved.gates);

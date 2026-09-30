@@ -88,6 +88,11 @@ impl Observer for Resuming<'_> {
         Ok(())
     }
     fn load(&mut self, case: Unit) -> Result<Option<EvidenceResult>, String> {
+        if self.resume.enabled && self.resume.store.is_none() {
+            self.verify()?;
+        }
+        // Store::load checks fresh identity on both sides of the cache read.
+        // Same-command aliases bypass this path and explicitly call verify instead.
         let result = self
             .resume
             .store

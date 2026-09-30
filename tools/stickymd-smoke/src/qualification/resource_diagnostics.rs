@@ -34,9 +34,9 @@ impl Store {
     pub(crate) fn open(root: &Path) -> Result<Self, String> {
         let host = identity::host()?;
         let identity = identity::capture(root, &host)?;
-        let store = Self { identity, host };
-        store.verify(root)?;
-        Ok(store)
+        // Establish the command identity. Every load/plan/save has its own fresh bracket;
+        // checking again here would immediately repeat the first operation's pre-check.
+        Ok(Self { identity, host })
     }
 
     pub(crate) fn verify(&self, root: &Path) -> Result<(), String> {

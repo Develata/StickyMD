@@ -467,6 +467,9 @@ Resources 是 source-preview、math、images、window、zoom 五类兼容成功�
   只读取计划并向 stdout 输出 NOT_RUN JSON；不构建、不启动产品、不写指定 evidence 或账本。
   缺少程序或无法确定身份时明确显示禁用原因。缓存最新索引仅用于解释 source、程序、
   harness、输入或环境变更，不能授权读取其他身份记录。不得打印私有主机/用户/环境值。
+  身份采集按 Git、实际程序/harness hash、环境、输入 hash 和总计分别报告耗时，仅在
+  采样窗口外执行。可合并相邻重复采集，但缓存读取前后及采样后的新鲜检查不可省略；
+  原子发布前仍须重检。同命令共享场景绕过持久缓存读取时，必须独立检查当前身份。
 - Runtime/Performance/Resources 消费 Promoted Candidate 时，以显式的候选校验任务替代
   不参与测量的本地 Release build；仍须完整验证 Source Freeze、clean tree、EXE/ZIP/SBOM
   hash、checksum 与 native-runtime。候选缺失或失效即失败，不能回退本地构建；Local

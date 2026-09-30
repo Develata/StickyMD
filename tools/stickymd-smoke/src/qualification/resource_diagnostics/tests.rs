@@ -238,6 +238,44 @@ fn diagnostic_digest_uses_sha256() {
 }
 
 #[test]
+fn every_load_and_save_keeps_two_fresh_checks_and_rejects_either_side_of_drift() {
+    let root = Root::new();
+    let store = Store {
+        identity: identity(),
+        host: String::new(),
+    };
+    let (unit, result) = case_result(false);
+    store
+        .save_using(&root.0, unit, &result, 150.0, || Ok(identity()))
+        .unwrap();
+    let path = store.path(&root.0, unit).unwrap();
+    for saving in [false, true] {
+        for drift_at in [0, 1, 2] {
+            let original = fs::read(&path).unwrap();
+            let mut checks = 0;
+            let mut fresh = || {
+                checks += 1;
+                let mut id = identity();
+                if checks == drift_at {
+                    id.inputs = "0".repeat(64);
+                }
+                Ok(id)
+            };
+            let outcome = if saving {
+                store.save_using(&root.0, unit, &result, 150.0, &mut fresh)
+            } else {
+                store.load_using(&root.0, unit, &mut fresh).map(|_| ())
+            };
+            assert_eq!(outcome.is_ok(), drift_at == 0);
+            assert_eq!(checks, if drift_at == 1 { 1 } else { 2 });
+            if drift_at != 0 {
+                assert_eq!(fs::read(&path).unwrap(), original);
+            }
+        }
+    }
+}
+
+#[test]
 fn latest_pointer_explains_changed_components_but_never_reuses_old_identity() {
     let root = Root::new();
     let store = Store {
@@ -325,7 +363,6 @@ fn native_diagnostic_identity_lookup_profile() {
     );
     let started = std::time::Instant::now();
     eprintln!("IDENTITY_PROFILE_BEGIN subsequent_lookup");
-    store.verify(&root).unwrap();
     let _ = store
         .load(&root, Unit::Group(ResourceModule::Zoom))
         .unwrap();

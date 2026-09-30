@@ -137,7 +137,6 @@ fn matrix(
         return Err(format!("unknown resource case filter {filter}"));
     }
     for case in cases {
-        observer.verify()?;
         observer.stage(case.label, 0, "case-start", 0)?;
         let started = Instant::now();
         let measured = cache.cohorts.measure(case, || {
@@ -176,6 +175,12 @@ fn matrix(
                     Err(error)
                 }
             }
+        });
+        let measured = measured.and_then(|(observed, origin)| {
+            if origin.is_some() {
+                observer.verify()?;
+            }
+            Ok((observed, origin))
         });
         let elapsed = started.elapsed().as_secs_f64();
         output.measurements.push(EvidenceMeasurement {
