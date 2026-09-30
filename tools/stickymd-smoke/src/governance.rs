@@ -553,6 +553,7 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     // tests/release_wrappers.rs (including actual packaged license bytes).
     // tests/release_workflow.rs executes the promotion step with the compiled CLI,
     // covering its remote query and fail-closed identity behavior instead of a URL token.
+    // Phase 12-14 routing is covered by phase_entry tests against the compiled parser.
     // PowerShell source tokens are not evidence of a gate.
     let remote_promotion =
         read_text(&root.join("tools/stickymd-smoke/src/qualification/remote.rs"))?;
@@ -844,28 +845,12 @@ fn verify_phase_artifacts(root: &Path) -> Result<(), String> {
         }
 
         let script = root.join(format!("tools/smoke/phase-{}.ps1", phase.number()));
-        let content = read_text(&script)?;
-        for needle in [
-            "stickymd-smoke",
-            "'phase'",
-            &format!("'{}'", phase.number()),
-        ] {
-            if !content.contains(needle) {
-                return Err(format!(
-                    "{} does not route through Rust CLI token `{needle}`",
-                    script.display()
-                ));
-            }
-        }
+        // Existence belongs here. Routing and failure semantics are exercised by
+        // phase_entry tests against every real wrapper on both PowerShell hosts.
+        read_text(&script)?;
     }
     let all_script = root.join("tools/smoke/all.ps1");
-    let content = read_text(&all_script)?;
-    if !content.contains("stickymd-smoke") || !content.contains("'all'") {
-        return Err(format!(
-            "{} must route through `stickymd-smoke all`",
-            all_script.display()
-        ));
-    }
+    read_text(&all_script)?;
     Ok(())
 }
 

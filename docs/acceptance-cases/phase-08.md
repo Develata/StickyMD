@@ -203,3 +203,6 @@ Phase 8 automated acceptance is **PASS** after the checked-in headless, Release-
 copied-Release window lifecycle and resource routes complete. `-Runtime` and `-Resources` remain
 deliberately opt-in because they manipulate real windows and collect machine-specific process counters.
 M01-M15 remain `NOT TESTED`; no synthetic or copied-Release smoke may close those manual gates.
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

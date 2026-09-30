@@ -26,6 +26,30 @@ release package.
 ./tools/smoke/all.ps1 -Ci
 ```
 
+All phases (00–14, including 11-b) and `all.ps1` retain their PowerShell parameter
+names, types, order and per-entry availability. Their shared
+`invoke-phase.ps1` adapter forwards bound values to `phase-entry`; Rust owns action
+exclusivity, required companions, mappings and window-stress defaults. Semantic
+values reuse the existing canonical parsers. Common PowerShell parameters stay in
+the shell; explicit false switches and zero cycle counts remain distinguishable
+from absent parameters. CWD and console encoding are restored on success/failure.
+The legacy Phase 12/13 `-Candidate` flag still reaches the unsupported legacy command;
+it is not silently reinterpreted as Source Freeze.
+`all` shard selection and Phase 10/14 resource-module values use the same Rust
+parsers as direct CLI calls. Unsupported combinations still fail before execution;
+the shared adapter does not make newer phase flags available to older entries.
+
+For offline route inspection without qualification, GUI work or receipts:
+
+```powershell
+cargo run --quiet -p stickymd-smoke --locked -- phase-entry-plan 14 --WindowStress=true --TrayCycles=0
+cargo run --quiet -p stickymd-smoke --locked -- phase-entry-plan all --Ci=true --CiShard=tests
+```
+
+`phase-entry-plan` validates through the same router and canonical CLI, then emits
+one JSON document with `status: NOT_RUN` and the mapped arguments. `phase-entry`
+executes the mapped existing command, preserving its output and exit code.
+
 For a local diagnosis of one opt-in resource case, set
 `STICKYMD_SMOKE_RESOURCE_CASE` to the exact case label before invoking the owning phase script.
 This development filter is never set by CI or by the durable full-matrix receipts.

@@ -94,3 +94,6 @@ This supplements P05-A03/A05/A12 and AC-013/014 under the existing GFM and sourc
 - Native message probe and remaining limits are recorded in [the scrollbar maintenance report](../report/2026-09-25-vertical-scrollbars.md).
   This local evidence does not qualify a release artifact. Physical dragging, real IME and the complete theme/DPI
   visual matrix remain `NOT TESTED`.
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

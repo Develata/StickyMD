@@ -12,6 +12,7 @@ mod integrity;
 mod managed_process;
 mod package_path;
 mod pe_dependencies;
+mod phase_entry;
 #[cfg(windows)]
 mod process_metrics;
 mod qualification;
@@ -49,6 +50,10 @@ fn run() -> Result<(), String> {
             .map_err(|error| format!("cannot read current directory: {error}"))?,
     )?;
     match command {
+        cli::CommandLine::PhaseEntryPlan(arguments) => {
+            phase_entry::print_plan(&arguments);
+            Ok(())
+        }
         cli::CommandLine::Smoke(options) => runner::execute(&root, &options),
         cli::CommandLine::Ci(command) => ci::execute(&root, &command),
         cli::CommandLine::Release(command) => release::execute(&root, &command),

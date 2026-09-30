@@ -4,6 +4,12 @@
 只有 exact candidate 上的 interactive receipt 才能改变 readiness，Markdown 仍保持
 `NOT TESTED`，不得用旧记录或 Win32 style readback 代替真实观察。
 
+2026-09-30 入口维护验证：`phase-12.ps1` 参数经共享薄适配器交给 Rust `phase_entry`，
+复用既有命令解析与执行。Preconditions：锁定工具、隔离中文/空格目录；Action：同输入比较旧入口
+与新只读路由，检查资格化动作互斥、必需参数、失败退出与 CWD/编码恢复；Expected：映射一致、
+错误不执行动作、不写收据；Failure Signals：错误组合被接受、`-Candidate` 被擅自解释为 Source Freeze。
+PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；人工与候选身份状态不变。
+
 本文件的状态列是 tracked source baseline，不是 `v0.1.0` 当前发布 verdict。Phase 12 之后的
 exact receipt、USER disposition 与最终 `READY` 结论见
 [`../release-notes/0.1.0.md`](../release-notes/0.1.0.md)；动态结果不事后回填本矩阵。

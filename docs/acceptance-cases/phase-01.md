@@ -14,3 +14,6 @@
 | P01-M02 | AC-003 Microsoft Pinyin | Manual | [`phase-03 manual IME checklist`](../report/phase-03-manual-ime-checklist.md) | NOT TESTED |
 | P01-M03 | AC-004 WeChat Input Method | Manual | [`phase-03 manual IME checklist`](../report/phase-03-manual-ime-checklist.md) | NOT TESTED |
 | P01-M04 | junction/non-ASCII identity, ACL, kill-mid-save, hardware-loss boundaries | Manual | Dedicated environment/fault receipts required | NOT TESTED |
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

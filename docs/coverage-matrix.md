@@ -143,6 +143,12 @@ Windows 双宿主 wrapper 使用含十六进制词、中文与空格的真实路
 随后完成的包清单/README 与 Syft 缓存迁移见 [后续报告](report/2026-09-30-package-staging-syft-cli.md)，
 该部分只主张一致性与可测试性收益，未测量性能。
 
+2026-09-30 后续收尾继续映射 plan 11 release-artifact-authority / phase-verification-harness：
+
+| Maintenance projection | Authoritative implementation / verification |
+| --- | --- |
+| Phase 00 P00-A11、Phase 12/13 入口维护、Phase 14 REL-CLI-16 | `phase_entry/` 复用 canonical CLI parsers；00–14、11-b 与 all 共用 `invoke-phase.ps1`，保留各入口参数范围；旧入口同输入比较、双宿主实际 Rust 路由、拒绝与 CWD/编码恢复 |
+
 2026-09-25 合并前工具维护映射 plan 11 phase-verification-harness / modular-headless-ci 与
 P00-A10：`cli.rs`、`qualification/{mod.rs,repetition.rs}`、`qualification_environment.rs`、
 `runner{,/headless}.rs` 按平台编译实际执行路径并保留纯规则测试；Linux 上的 compiled CLI

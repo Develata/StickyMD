@@ -58,3 +58,6 @@ This supplements the existing math raster-budget and release checks; it does not
 - Expected: recency rollover preserves cached ownership and byte charges; only unleased entries can make room.
 - Failure signal: rollover clears the ledger while the old allocation is still alive.
 - Entry: `cargo test -p stickymd-render --lib --locked byte_lru_`. This is an injected boundary check, not an observed production overflow.
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

@@ -84,3 +84,6 @@
 | P11B-M03 | 真实 inline code 与 literal safety | Manual | Current-candidate visual/source receipt unavailable | NOT TESTED |
 | P11B-M04 | Right Dock 下 Pin ON/OFF 失焦均约 700ms collapse | Manual | Current-candidate dock/pin receipt unavailable | NOT TESTED |
 | P11B-M05 | Pin ON/OFF sensor 100ms reveal 与 leave 500ms collapse | Manual | Current-candidate hover timing receipt unavailable | NOT TESTED |
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

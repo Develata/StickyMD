@@ -8,18 +8,6 @@ param(
 )
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
-$smokeArguments = @('run', '-p', 'stickymd-smoke', '--locked', '--', 'phase', '09')
-if ($Performance) { $smokeArguments += '--performance' }
-if ($Runtime) { $smokeArguments += '--runtime' }
-if ($Resources) { $smokeArguments += '--resources' }
-if ($Release) { $smokeArguments += '--release' }
-if ($Package) { $smokeArguments += '--package' }
-$smokeExitCode = 1
-Push-Location -LiteralPath $repoRoot
-try {
-    & cargo @smokeArguments
-    $smokeExitCode = $LASTEXITCODE
-} finally {
-    Pop-Location
-}
-exit $smokeExitCode
+. (Join-Path $PSScriptRoot 'invoke-phase.ps1')
+Invoke-StickyMdPhase -RepoRoot $repoRoot -Phase '09' -Parameters $PSBoundParameters
+exit $LASTEXITCODE

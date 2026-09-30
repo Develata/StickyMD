@@ -173,3 +173,6 @@ The Rust CLI owns all headless Phase 7 checks. Passing them does not promote rea
 clipboard applications, visual quality, crash timing, native-dialog interaction or IME; those rows
 deliberately remain `NOT TESTED`. The separate process-resource row is automated and reports only
 memory/CPU counters, never visual correctness.
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

@@ -41,3 +41,6 @@
   This baseline is also selected by `phase-03.ps1 -Performance`, `modules run render --mode=performance`
   and the complete CI performance shard; each task is deduplicated and measurements run serially per runner.
 - Physical mouse/IME/DPI visual matrix: `NOT TESTED`; synthetic native messages and headless pixels do not upgrade the manual rows.
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

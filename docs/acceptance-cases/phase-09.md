@@ -180,3 +180,6 @@ Release-level totals: 12 `AUTOMATED PASS`, 18 `NOT TESTED`, 0 `MANUAL PASS`, 0 `
 ## Manual Receipt Policy
 
 A manual row can become `MANUAL PASS` only with a checked-in current-RC receipt containing environment, artifact hash, steps, expected/actual results and failure evidence. Automated substitutes, prior-commit reports and one-off terminal output cannot advance a manual row.
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

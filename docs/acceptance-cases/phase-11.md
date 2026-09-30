@@ -128,3 +128,6 @@ Changing any manual row from `NOT TESTED` requires the exact candidate commit an
 build, DPI/display topology, input method/version where applicable, ordered steps, observed result and
 receipt location. An automated native-window check is useful evidence but is not a substitute for a human
 visual or IME acceptance row.
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

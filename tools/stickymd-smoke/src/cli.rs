@@ -86,6 +86,7 @@ impl Phase {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandLine {
+    PhaseEntryPlan(Vec<String>),
     Release(crate::release::Command),
     Smoke(Options),
     PackagePath(PathBuf),
@@ -358,6 +359,8 @@ impl CommandLine {
     {
         let args: Vec<String> = args.into_iter().collect();
         match args.first().map(String::as_str) {
+            Some("phase-entry") => crate::phase_entry::parse(&args[1..], false),
+            Some("phase-entry-plan") => crate::phase_entry::parse(&args[1..], true),
             Some("release") => crate::release::parse(&args[1..]).map(Self::Release),
             Some("package-path") => crate::package_path::parse(&args[1..]).map(Self::PackagePath),
             Some("modules") => crate::headless::Command::parse(&args[1..]).map(Self::Modules),
@@ -948,7 +951,7 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke release <package-inputs|prepare-package|workspace-version|verify-promoted|verify-package|verify-workflow|notices|checksums|publish-sbom|syft-plan|syft-publish|syft-verify> [options]; see tools/stickymd-smoke/README.md"
+        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke phase-entry[-plan] <00..14|11-b|all> [--Parameter=value]\n       stickymd-smoke release <package-inputs|prepare-package|workspace-version|verify-promoted|verify-package|verify-workflow|notices|checksums|publish-sbom|syft-plan|syft-publish|syft-verify> [options]; see tools/stickymd-smoke/README.md"
     }
 }
 

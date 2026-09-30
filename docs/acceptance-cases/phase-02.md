@@ -23,3 +23,6 @@ This supplements P02-A01 under AC-009; it does not change a published artifact's
 - Expected: only 749 ms merges; a deleted newline separates undo steps in both directions.
 - Failure signals: 750 ms merges, or one undo restores text across the newline boundary.
 - Entry: `cargo test -p stickymd-core --locked undo::tests`; the existing Phase 02 Rust task includes these tests. Current maintenance results are recorded in [the dated audit](../report/2026-09-07-runtime-audit.md); this does not refresh unrelated historical rows.
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

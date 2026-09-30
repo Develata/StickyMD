@@ -20,3 +20,6 @@
 | P04-M04 | greater-than-260-character portable Program Directory | Manual | Long-path-enabled Windows receipt required | NOT TESTED |
 | P04-M05 | live ReplaceFileW 1175/1176/1177 filesystem states | Manual | Live Windows fault receipt required | NOT TESTED |
 | P04-M06 | inherited Microsoft Pinyin/WeChat/candidate-position gate | Manual | [`phase-03 manual IME checklist`](../report/phase-03-manual-ime-checklist.md) | NOT TESTED |
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

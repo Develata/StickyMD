@@ -247,6 +247,7 @@ Failure Signals：接受缺失/冲突来源、哈希不符、重复 manifest、�
 | REL-CLI-12 | CI 版本读取复用 workspace 解析器；工作流观察要求完整匹配 SHA、成功 conclusion 和 release 名称，与资格化共用规则；查询失败和字段缺失/重复/类型错误拒绝，不授予发布权限 | Automated local | `release::workflow` + `headless release_workflow` 执行实际 workflow step；5.1/7 查询次数、失败退出码及薄入口状态恢复 | AUTOMATED PASS |
 | REL-CLI-13 | 包生成、ZIP allowlist 与 SBOM 必需成员共用清单；README 标题/完整身份/unsigned 文本与编码保持，稳定顺序、不打包用户 note；缺失许可证或非法编码拒绝，既有 staging/不同 ZIP 不覆盖 | Automated local | `release::package_content/package_staging`、同输入 ZIP hash 比较、双宿主 `release_outputs.ps1` 实际成员与失败路径 | AUTOMATED PASS |
 | REL-CLI-14 | Syft 固定版本和双摘要决定缓存命中；下载校验后原子替换，唯一上游 manifest 绑定；解压使用私有验证快照，失败保留旧 cache/清理 partial；外部 SyftPath 不冒充 pin 认证 | Automated local | `release::syft` unit tests、双宿主 `release_syft.ps1` 离线三次重试/非零失败/CWD/编码恢复、真实缓存 Syft 生成与验包 | AUTOMATED PASS |
+| REL-CLI-16 | 全部 Phase 与 all 参数范围、组合、必需伴随参数与路由由 Rust 单点持有；默认值、显式 false/零、诊断互斥保持；只读路由计划不执行资格化 | Automated local | P00-A11、`phase_entry` 单元测试、5.1/7 旧入口同输入映射比较及 compiled CLI 入口失败/Unicode/CWD/编码测试 | AUTOMATED PASS |
 
 详细运行环境、数据及未验证项见 [维护报告](../report/2026-09-22-release-cli-migration.md)。
 SBOM 与 checksum 收尾记录见 [输出维护报告](../report/2026-09-25-release-output-finalization.md)。

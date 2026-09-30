@@ -90,3 +90,6 @@ This supplements the existing Content Zoom/cache lifecycle checks; the historica
 - Expected: a size-only change can reuse glyphs; obsolete scales are discarded; both Preview release paths clear text glyphs as well as formula/image rasters; text and generation remain unchanged.
 - Failure signals: one zoom cycle retains all old scales, release leaves text raster entries, or a cache operation changes canonical text/generation.
 - Entry: `cargo test -p stickymd-render --locked`; concrete counts and verification limits are in [the dated audit](../report/2026-09-07-runtime-audit.md). Cache counts do not substitute for the five-run Windows process memory protocol.
+
+Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
+is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

@@ -16,10 +16,17 @@
 | P00-A08 | plan 11 modular headless CI selection and conservative fallback | Automated | `cargo test -p stickymd-smoke --locked ci::`: [`Git input tests`](../../tools/stickymd-smoke/src/ci/git/tests.rs), [`classification tests`](../../tools/stickymd-smoke/src/ci/selection/tests.rs), Cargo registry verification | AUTOMATED PASS |
 | P00-A09 | plan 11 job aggregation and full manual/scheduled/release boundaries | Automated | [`workflow adapter tests`](../../tools/stickymd-smoke/src/ci/workflow_tests.rs), [`result aggregation`](../../tools/stickymd-smoke/src/ci/results.rs), actionlint for CI/scheduled workflows | AUTOMATED PASS |
 | P00-A10 | plan 11 portable verification tooling and unsupported GUI evidence boundary | Automated | strict smoke CLI Clippy on Windows/Linux; independent Linux smoke job runs lint/tests for full or smoke scope; [`compiled CLI regression`](../../tools/stickymd-smoke/tests/cli_exit.rs) checks unsupported GUI requests | AUTOMATED PASS |
+| P00-A11 | plan 11 shared phase entry routing, parameter availability and caller-state preservation | Automated | `phase_entry` rules + actual 00–14/11-b/all wrappers on PowerShell 5.1/7; old/new same-input mapping comparison | AUTOMATED PASS |
 | P00-M01 | USER constitution semantic fidelity review | Manual | Current-commit section-by-section review receipt required | NOT TESTED |
 | P00-M02 | architecture contract judgment review | Manual | Current-commit architecture checklist receipt required | NOT TESTED |
 
 The automated rows are re-evaluated by the checked-in runner; manual judgment remains separate.
+
+P00-A11: Given each retained PowerShell entry and supported parameters, request a
+read-only route through the compiled CLI. Expect the original canonical arguments,
+`NOT_RUN`, unchanged caller CWD/encoding, and distinct false/absent values. Unsupported
+entry parameters, invalid shards/resource modules and conflicting modes must fail
+without dispatch or receipt writes. Source-keyword presence is not evidence of routing.
 
 P00-A08: Given clean Git base/HEAD and changed inputs, plan without executing checks. Expect
 the affected modules and reverse dependencies; shared/unknown inputs, missing baseline,
