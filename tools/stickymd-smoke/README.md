@@ -284,13 +284,18 @@ Their reusable commands are in the existing std-only CLI:
 ```powershell
 cargo run --quiet -p stickymd-smoke --locked -- release package-inputs --allow-dirty-validation
 cargo run --quiet -p stickymd-smoke --locked -- release prepare-package --exe <exe> --staging-directory <new-directory> [--allow-dirty-validation]
+cargo run --quiet -p stickymd-smoke --locked -- release build-package [--exe <exe>] [--output-directory <directory>] [--allow-dirty-validation]
+cargo run --quiet -p stickymd-smoke --locked -- release generate-sbom [--package-directory <directory>] [--zip <zip>] [--output <sbom>] [--syft-path <tool>]
 cargo run --quiet -p stickymd-smoke --locked -- release workspace-version
 cargo run --quiet -p stickymd-smoke --locked -- release verify-package --package-directory <directory> [--zip <zip>] [--checksums <manifest>] [--runtime]
 cargo run --quiet -p stickymd-smoke --locked -- release verify-promoted --artifact-directory <directory> --source-sha <full-sha> --expected-zip-sha256 <sha256> --expected-sbom-sha256 <sha256> --release-tag v0.1.0
 cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow --source-sha <full-sha> --workflow-json <utf8-file-or-dash>
+cargo run --quiet -p stickymd-smoke --locked -- release verify-remote-state --kind <tag|draft> --source-sha <full-sha> --release-tag <tag> --query-exit <code> --http-response <utf8-file-or-dash> [--allow-missing]
 cargo run --quiet -p stickymd-smoke --locked -- release notices --destination <new-file>
 cargo run --quiet -p stickymd-smoke --locked -- release checksums --zip <zip> [--sbom <sbom>] --output <manifest>
 cargo run --quiet -p stickymd-smoke --locked -- release publish-sbom --input <staged-sbom> --output <sbom> --zip <zip> --checksums <manifest>
+cargo run --quiet -p stickymd-smoke --locked -- release publish-package --input <completed-zip> --output <zip> --checksums <manifest>
+cargo run --quiet -p stickymd-smoke --locked -- release prepare-sbom --package-directory <directory> --staging-directory <new-directory> [--zip <zip>] [--syft-path <provided-tool>]
 cargo run --quiet -p stickymd-smoke --locked -- release syft-plan [--syft-path <provided-tool>]
 cargo run --quiet -p stickymd-smoke --locked -- release syft-publish --kind <archive|checksums> --input <downloaded-file>
 cargo run --quiet -p stickymd-smoke --locked -- release syft-verify --archive <archive> --checksums <upstream-manifest> --staging-directory <new-directory>
@@ -306,6 +311,16 @@ Verification/notices retain the scripts' `KEY=value` stdout and 0/nonzero exit
 semantics. The wrappers resolve relative paths using the caller's PowerShell
 location, restore that location and console encoding even on failure, and use
 locked Cargo invocations.
+
+`build-package` and `generate-sbom` coordinate these same typed Rust rules directly.
+The runner calls them in-process and preserves its task IDs/order and JSON stdout
+boundary. The stable PowerShell scripts each make one locked Cargo invocation;
+Cargo still checks source freshness. The two commands accept `--powershell <host>`
+for their platform adapter; wrappers supply their own 5.1/7 host, while direct CLI
+and runner calls default to `pwsh`. No application build occurs inside packaging.
+ZIP compression keeps the original member order, timestamp and compression API in
+`package-archive.ps1`. Rust owns private staging, publication and cleanup. Adapter
+or validation failure returns nonzero without creating success qualification evidence.
 
 `prepare-package` accepts the same identity overrides and flags as `package-inputs`.
 It creates only a new staging directory (the parent must exist), writes complete
@@ -330,6 +345,22 @@ The CLI performs no network request and writes no receipt. The publish workflow
 fetches the observation once, propagates GitHub/validation failures, and retains
 its separate draft, tag and artifact checks. It must check out a Source Freeze
 that includes this command; older released sources do not gain new tooling.
+
+`verify-remote-state` consumes `gh api --include` observations. Tags use the REST
+ref response; draft lookup uses GraphQL `repository.release(tagName:)`, because
+drafts can have pending tags. The tool requires a full matching tag SHA, matching
+ref/tag name, an unpublished draft, successful transport and no GraphQL errors.
+The requested release tag must match the workspace version. It returns only
+`{"exists":true}` for a matching object. With explicit `--allow-missing`, a tag
+HTTP 404 with gh exit 1 or successful GraphQL release null returns `{"exists":false}`; missing
+repository/data, 403, 5xx and transport failures are errors. This observation is
+not authorization or a qualification result.
+`github-observation.ps1` performs the read and preserves HTTP status separately
+from native stderr. The workflow retains every GitHub write, permission and
+tag/draft/publish boundary. Offline tests execute the actual step bodies with
+simulated GitHub I/O and the compiled Rust validator, including refusal before
+mutation. They do not establish remote workflow acceptance or an atomic remote
+transaction; state can still change after observation.
 
 Phase package tasks and downloaded-artifact verification call the same typed
 Rust verifier as `release verify-package`. They no longer launch the outer
@@ -358,6 +389,18 @@ manifest. Archive and SBOM checks operate on private snapshots of the supplied f
 `checksums` writes UTF-8 without BOM, lowercase SHA-256 and LF, then returns one
 JSON object containing `zip_sha256` and optional `sbom_sha256`. Hashing a file
 does not establish package or SBOM validity.
+
+`publish-package` snapshots the completed ZIP and uses those same hash/path/
+manifest rules. Existing identical bytes are accepted; different bytes are never
+replaced. Atomic no-replace publication handles concurrent producers: an identical
+winner is accepted, a different winner is refused. The input is preserved for the
+caller's cleanup. UTF-8/LF checksums are written last and success retains the
+checksum JSON shape. A manifest write failure leaves the completed ZIP and returns
+failure, without a qualification receipt; retry is safe. ZIP and manifest are not
+a multi-file transaction. `package.ps1` retains its success markers and exit behavior;
+refusal text is emitted by Rust stderr through the existing release-tool wrapper.
+Windows destination spelling is validated before normalization can erase an unsafe
+trailing dot or space.
 
 `release/sbom.rs` owns the existing SPDX 2.x version, nonempty package list and
 four required packaged-file coverage checks. Both publication and package
@@ -420,10 +463,22 @@ duplicate rules after separator normalization.
 checks that file exists and returns `external: true` without accessing the cache.
 It does not attest the provided executable's version or hash. The existing
 `SYFT_VERSION` output names the configured pin, not verified external-tool identity.
-`syft-download.ps1` handles network I/O, retry waits and partial-file cleanup;
-it delegates all checksum/cache publication decisions to Rust. Offline dual-host
-tests cover corrupted downloads, interrupted transport, retry bounds, cache
-preservation and cleanup without contacting GitHub.
+`syft-fetch.ps1` handles one network transfer; `syft-execute.ps1` extracts archives
+and invokes Syft with scoped environment settings. Rust owns the three-attempt
+retry policy, 1/2-second backoffs, partial cleanup and verified cache publication.
+Offline tests cover corrupted/interrupted downloads, early success, retry bounds,
+cache preservation and cleanup without contacting GitHub.
+
+`prepare-sbom` composes workspace version, existing package-path selection and the
+Syft plan. On a pinned cache hit it also creates the existing verified private
+snapshot. Its JSON contains `workspace_version`, `zip_path`, `syft` (the unchanged
+plan) and `verified_archive` (path or null). No ZIP validation or qualification is
+implied. Cache misses retain the download/publish/verify flow; external Syft keeps
+its bypass and creates no pinned snapshot. The staging directory must be new when
+a snapshot is created. `generate-sbom.ps1` now calls the composed `generate-sbom`
+command once, reusing preparation and publication internally. The earlier two-call
+step and its timing remain historical evidence in the
+[follow-up report](../../docs/report/2026-09-30-release-cli-finalization.md).
 
 These are distinct scopes: selecting a path, verifying a package, verifying
 supplied promotion inputs, and qualifying a Promoted Candidate. None of the new

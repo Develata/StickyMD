@@ -48,14 +48,20 @@ fn cache_state_binds_both_hashes_and_snapshot_survives_later_cache_changes() {
         cache::pending(&root, &pin).unwrap(),
         [Kind::Archive, Kind::Checksums]
     );
+    let output = root.join("verified snapshot");
+    let (plan, snapshot) = prepare_with_pin(&root, None, &output, &pin).unwrap();
+    assert_eq!(plan.json(), plan_json(&root, None, &pin).unwrap());
+    assert!(snapshot.is_none());
+    assert!(!output.exists());
     cache::publish(&root, Kind::Archive, &source, &pin).unwrap();
     assert_eq!(cache::pending(&root, &pin).unwrap(), [Kind::Checksums]);
     cache::publish(&root, Kind::Checksums, &manifest_source, &pin).unwrap();
     assert!(cache::pending(&root, &pin).unwrap().is_empty());
     let archive = pin.path(&root, Kind::Archive);
     let checksums = pin.path(&root, Kind::Checksums);
-    let output = root.join("verified snapshot");
-    let snapshot = cache::snapshot(&archive, &checksums, &output, &pin).unwrap();
+    let (plan, snapshot) = prepare_with_pin(&root, None, &output, &pin).unwrap();
+    assert_eq!(plan.json(), plan_json(&root, None, &pin).unwrap());
+    let snapshot = snapshot.unwrap();
     fs::write(&archive, "corrupted cache").unwrap();
     assert_eq!(integrity::sha256(&snapshot).unwrap(), archive_hash);
     assert_eq!(cache::pending(&root, &pin).unwrap(), [Kind::Archive]);
@@ -91,6 +97,11 @@ fn production_plan_keeps_pins_and_external_override_distinct() {
     let external = root.join("provided 工具.exe");
     fs::write(&external, "caller supplied").unwrap();
     let plan = plan_json(root, Some(&external), &PIN).unwrap();
+    let output = root.join("external snapshot");
+    let (prepared, snapshot) = prepare_with_pin(root, Some(&external), &output, &PIN).unwrap();
+    assert_eq!(prepared.json(), plan);
+    assert!(snapshot.is_none());
+    assert!(!output.exists());
     assert!(plan.contains("\"external\":true"));
     assert!(
         json::parse(&plan)

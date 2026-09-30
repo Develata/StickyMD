@@ -49,6 +49,13 @@ pub(super) fn validate_file(path: &Path) -> Result<(), String> {
 }
 
 pub(super) fn publish(options: &SbomOptions) -> Result<(), String> {
+    publish_with_output(options, &mut std::io::stdout().lock())
+}
+
+pub(super) fn publish_with_output(
+    options: &SbomOptions,
+    output_log: &mut dyn std::io::Write,
+) -> Result<(), String> {
     let output = checksums::destination(&options.output)?;
     let checksum = checksums::destination(&options.checksums)?;
     checksums::distinct_paths(&[&options.input, &options.zip, &output, &checksum])?;
@@ -67,7 +74,12 @@ pub(super) fn publish(options: &SbomOptions) -> Result<(), String> {
     // This is not a multi-file transaction and does not write qualification evidence.
     atomic_evidence::write(&output, &bytes)?;
     atomic_evidence::write(&checksum, manifest.as_bytes())?;
-    println!("SBOM_PATH={}\nSBOM_SHA256={sbom_hash}", output.display());
+    writeln!(
+        output_log,
+        "SBOM_PATH={}\nSBOM_SHA256={sbom_hash}",
+        output.display()
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

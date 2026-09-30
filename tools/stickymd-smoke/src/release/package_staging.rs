@@ -1,4 +1,4 @@
-//! Prepare only new, privately owned package contents; ZIP publication stays in the adapter.
+//! Prepare only new, privately owned package contents for the ZIP adapter.
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 use super::{
@@ -36,7 +36,7 @@ pub(super) fn prepare(
     Ok(())
 }
 
-fn stage(
+pub(super) fn stage(
     root: &Path,
     exe: &Path,
     directory: &Path,

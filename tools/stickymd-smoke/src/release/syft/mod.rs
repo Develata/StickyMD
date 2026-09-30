@@ -2,6 +2,8 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 mod cache;
+mod plan;
+pub(super) use plan::{DOWNLOAD_ATTEMPTS, Download, Plan};
 #[cfg(test)]
 mod tests;
 
@@ -41,7 +43,7 @@ impl Kind {
             Self::Checksums => "checksums",
         }
     }
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::Archive => "Syft archive",
             Self::Checksums => "Syft checksum manifest",
@@ -76,38 +78,78 @@ pub(super) fn plan(root: &Path, provided: Option<&Path>) -> Result<(), String> {
 }
 
 fn plan_json(root: &Path, provided: Option<&Path>, pin: &Pin<'_>) -> Result<String, String> {
-    let pending = if let Some(path) = provided {
+    Ok(Plan::new(
+        root,
+        provided.is_some(),
+        &pending(root, provided, pin)?,
+        pin,
+    )
+    .json())
+}
+
+fn pending(root: &Path, provided: Option<&Path>, pin: &Pin<'_>) -> Result<Vec<Kind>, String> {
+    if let Some(path) = provided {
         if !path.is_file() {
             return Err(format!(
                 "Syft executable does not exist: {}",
                 path.display()
             ));
         }
-        Vec::new()
+        Ok(Vec::new())
     } else {
-        cache::pending(root, pin)?
+        cache::pending(root, pin)
+    }
+}
+
+pub(super) fn prepare(
+    root: &Path,
+    provided: Option<&Path>,
+    directory: &Path,
+) -> Result<(Plan, Option<PathBuf>), String> {
+    prepare_with_pin(root, provided, directory, &PIN)
+}
+
+fn prepare_with_pin(
+    root: &Path,
+    provided: Option<&Path>,
+    directory: &Path,
+    pin: &Pin<'_>,
+) -> Result<(Plan, Option<PathBuf>), String> {
+    let pending = pending(root, provided, pin)?;
+    let plan = Plan::new(root, provided.is_some(), &pending, pin);
+    let verified = if provided.is_none() && pending.is_empty() {
+        Some(cache::snapshot(
+            &pin.path(root, Kind::Archive),
+            &pin.path(root, Kind::Checksums),
+            directory,
+            pin,
+        )?)
+    } else {
+        None
     };
-    let downloads = pending.into_iter().map(|kind| format!(
-        "{{\"kind\":\"{}\",\"label\":\"{}\",\"path\":\"{}\",\"uri\":\"https://github.com/anchore/syft/releases/download/v{}/{}\"}}",
-        kind.key(), kind.label(), escape_json(&pin.path(root, kind).to_string_lossy()), pin.version, pin.name(kind)
-    )).collect::<Vec<_>>().join(",");
-    Ok(format!(
-        "{{\"version\":\"{}\",\"external\":{},\"download_attempts\":3,\"archive_path\":\"{}\",\"checksums_path\":\"{}\",\"downloads\":[{downloads}]}}",
-        pin.version,
-        provided.is_some(),
-        escape_json(&pin.path(root, Kind::Archive).to_string_lossy()),
-        escape_json(&pin.path(root, Kind::Checksums).to_string_lossy())
-    ))
+    Ok((plan, verified))
 }
 
 pub(super) fn publish(root: &Path, kind: Kind, input: &Path) -> Result<(), String> {
-    cache::publish(root, kind, input, &PIN)?;
+    publish_cached(root, kind, input)?;
     println!("SYFT_CACHE=VERIFIED");
     Ok(())
 }
 
+pub(super) fn publish_cached(root: &Path, kind: Kind, input: &Path) -> Result<(), String> {
+    cache::publish(root, kind, input, &PIN)
+}
+
+pub(super) fn snapshot(
+    archive: &Path,
+    checksums: &Path,
+    directory: &Path,
+) -> Result<PathBuf, String> {
+    cache::snapshot(archive, checksums, directory, &PIN)
+}
+
 pub(super) fn verify(archive: &Path, checksums: &Path, directory: &Path) -> Result<(), String> {
-    let path = cache::snapshot(archive, checksums, directory, &PIN)?;
+    let path = snapshot(archive, checksums, directory)?;
     println!(
         "{{\"archive_path\":\"{}\"}}",
         escape_json(&path.to_string_lossy())

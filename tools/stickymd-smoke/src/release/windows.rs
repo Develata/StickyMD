@@ -21,7 +21,26 @@ pub(super) fn archive(
 }
 
 pub(super) fn script(root: &Path, script: &str, arguments: &[&str]) -> Result<String, String> {
-    let output = Command::new("powershell.exe")
+    let mut output = Vec::new();
+    operation(
+        root,
+        Path::new("powershell.exe"),
+        script,
+        arguments,
+        &mut output,
+    )?;
+    String::from_utf8(output)
+        .map_err(|error| format!("Windows adapter facts are not UTF-8: {error}"))
+}
+
+pub(super) fn operation(
+    root: &Path,
+    shell: &Path,
+    script: &str,
+    arguments: &[&str],
+    log: &mut dyn std::io::Write,
+) -> Result<(), String> {
+    let output = Command::new(shell)
         // Native intermediaries retain the caller's PowerShell edition-specific module path.
         // These adapters use built-ins only; let Windows PowerShell select its own modules.
         .env_remove("PSModulePath")
@@ -37,14 +56,17 @@ pub(super) fn script(root: &Path, script: &str, arguments: &[&str]) -> Result<St
         .current_dir(root)
         .output()
         .map_err(|error| format!("cannot start Windows adapter {script}: {error}"))?;
+    log.write_all(&output.stdout).map_err(|e| e.to_string())?;
     if !output.status.success() {
         return Err(format!(
             "Windows adapter {script} failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    String::from_utf8(output.stdout)
-        .map_err(|error| format!("Windows adapter facts are not UTF-8: {error}"))
+    if !output.stderr.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    }
+    Ok(())
 }
 
 pub(super) fn names(root: &Path, zip: &Path) -> Result<Vec<String>, String> {

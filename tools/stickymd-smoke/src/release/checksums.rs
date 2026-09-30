@@ -54,6 +54,9 @@ fn basename(path: &Path) -> Result<&str, String> {
 }
 
 pub(super) fn destination(path: &Path) -> Result<PathBuf, String> {
+    // Windows absolute-path normalization can erase a trailing dot/space alias.
+    // Validate the caller's spelling with the shared name rule before normalizing it.
+    basename(path)?;
     let path = std::path::absolute(path).map_err(|error| error.to_string())?;
     basename(&path)?;
     if !path.parent().is_some_and(Path::is_dir) {

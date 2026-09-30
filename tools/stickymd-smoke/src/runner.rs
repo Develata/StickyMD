@@ -88,12 +88,8 @@ enum Task {
         label: &'static str,
         args: Vec<&'static str>,
     },
-    PowerShell {
-        id: TaskId,
-        label: &'static str,
-        script: &'static str,
-        args: Vec<&'static str>,
-    },
+    PackageArtifact,
+    GenerateSbom,
     Runtime {
         id: TaskId,
         scenario: RuntimeScenario,
@@ -160,7 +156,9 @@ impl Task {
             Self::NativeRuntimeDependencies => TaskId::VerifyNativeRuntimeDependencies,
             Self::PromotedCandidate => TaskId::VerifyPromotedCandidate,
             Self::VerifyPackage => TaskId::VerifyPackage,
-            Self::Cargo { id, .. } | Self::PowerShell { id, .. } | Self::Runtime { id, .. } => *id,
+            Self::PackageArtifact => TaskId::PackageArtifact,
+            Self::GenerateSbom => TaskId::GenerateSbom,
+            Self::Cargo { id, .. } | Self::Runtime { id, .. } => *id,
         }
     }
 }
@@ -563,7 +561,8 @@ fn task_label(task: &Task) -> &'static str {
         Task::PromotedCandidate => "promoted candidate identity and artifact verification",
         Task::VerifyPackage => "portable package verification",
         Task::Cargo { label, .. } => label,
-        Task::PowerShell { label, .. } => label,
+        Task::PackageArtifact => "portable package creation",
+        Task::GenerateSbom => "SPDX SBOM generation",
         Task::Runtime {
             scenario: RuntimeScenario::Launch,
             ..
@@ -642,26 +641,10 @@ fn run_task(root: &Path, task: &Task, capture_output: bool) -> Result<TaskExecut
             .map(|()| TaskExecution::Passed(TaskEvidence::default())),
         Task::VerifyPackage => package::run(root, capture_output)
             .map(|()| TaskExecution::Passed(TaskEvidence::default())),
-        Task::PowerShell {
-            label,
-            script,
-            args,
-            ..
-        } => {
-            let mut command = Command::new("pwsh");
-            command
-                .args(["-NoProfile", "-File"])
-                .arg(root.join(script))
-                .args(args)
-                .current_dir(root);
-            if capture_output {
-                run_captured(command, label)
-                    .map(|()| TaskExecution::Passed(TaskEvidence::default()))
-            } else {
-                run_inherited(command, label)
-                    .map(|()| TaskExecution::Passed(TaskEvidence::default()))
-            }
-        }
+        Task::PackageArtifact => package::build(root, capture_output)
+            .map(|()| TaskExecution::Passed(TaskEvidence::default())),
+        Task::GenerateSbom => package::sbom(root, capture_output)
+            .map(|()| TaskExecution::Passed(TaskEvidence::default())),
         Task::Runtime { scenario, .. } => run_runtime(root, *scenario, capture_output),
     }
 }
@@ -1063,20 +1046,6 @@ fn cargo(id: TaskId, label: &'static str, args: &[&'static str]) -> Task {
     }
 }
 
-fn powershell(
-    id: TaskId,
-    label: &'static str,
-    script: &'static str,
-    args: &[&'static str],
-) -> Task {
-    Task::PowerShell {
-        id,
-        label,
-        script,
-        args: args.to_vec(),
-    }
-}
-
 fn format_check() -> Task {
     cargo(
         TaskId::FormatCheck,
@@ -1109,21 +1078,11 @@ fn dependency_policy() -> Task {
 }
 
 fn package_artifact() -> Task {
-    powershell(
-        TaskId::PackageArtifact,
-        "portable package creation",
-        "tools/release/package.ps1",
-        &[],
-    )
+    Task::PackageArtifact
 }
 
 fn generate_sbom() -> Task {
-    powershell(
-        TaskId::GenerateSbom,
-        "SPDX SBOM generation",
-        "tools/release/generate-sbom.ps1",
-        &[],
-    )
+    Task::GenerateSbom
 }
 
 fn verify_package() -> Task {

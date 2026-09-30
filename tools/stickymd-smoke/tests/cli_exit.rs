@@ -277,6 +277,10 @@ fn malformed_release_requests_never_emit_a_success_marker() {
         vec!["release", "verify-package", "--exact-candidate"],
         vec!["release", "checksums", "--zip", "missing"],
         vec!["release", "publish-sbom", "--input", "missing"],
+        vec!["release", "publish-package", "--input", "missing"],
+        vec!["release", "prepare-sbom"],
+        vec!["release", "verify-remote-state", "--kind", "tag"],
+        vec!["release", "workspace-version", "--allow-missing"],
         vec!["release", "checksums", "--zip=a", "--output=b", "--runtime"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))

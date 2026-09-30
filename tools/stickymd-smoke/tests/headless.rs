@@ -6,6 +6,8 @@ mod cli_exit;
 mod package_path_wrapper;
 #[cfg(windows)]
 mod phase_entry;
+#[cfg(windows)]
+mod release_remote;
 mod release_workflow;
 #[cfg(windows)]
 mod release_wrappers;

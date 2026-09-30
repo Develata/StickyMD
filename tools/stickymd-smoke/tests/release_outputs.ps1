@@ -33,19 +33,17 @@ $originalHash = (Get-FileHash -LiteralPath $outputZip).Hash
 $samePackage = @(& (Join-Path $repo 'tools/release/package.ps1') -ExePath 'fixture.exe' -OutputDirectory $outputRelative -AllowDirtyValidation)
 if ((Get-FileHash -LiteralPath $outputZip).Hash -cne $originalHash) { throw 'Same-input package is not deterministic' }
 [IO.File]::WriteAllBytes($fakeExe, [byte[]](77,90,2,3))
-$refused = $false
-try { & (Join-Path $repo 'tools/release/package.ps1') -ExePath 'fixture.exe' -OutputDirectory $outputRelative -AllowDirtyValidation | Out-Null } catch {
-    if ($_.Exception.Message -notlike 'Refusing to overwrite a different existing package:*') { throw }
-    $refused = $true
-}
-if (-not $refused) { throw 'Different existing package was accepted' }
+$previousManifest = [IO.File]::ReadAllText((Join-Path $outputDirectory 'SHA256SUMS.txt'))
+Assert-Fails 'different existing package' { & (Join-Path $repo 'tools/release/package.ps1') -ExePath 'fixture.exe' -OutputDirectory $outputRelative -AllowDirtyValidation | Out-Null }
 Assert-State
 if ((Get-FileHash -LiteralPath $outputZip).Hash -cne $originalHash) { throw 'Different existing package was overwritten' }
+if ([IO.File]::ReadAllText((Join-Path $outputDirectory 'SHA256SUMS.txt')) -cne $previousManifest) { throw 'Conflict changed the existing manifest' }
 $outputSbom = Join-Path $outputDirectory 'SBOM.spdx.json'
 $outputChecksums = Join-Path $outputDirectory 'SHA256SUMS.txt'
 $fakeSyft = Join-Path $fixture 'fake-syft.ps1'
 [IO.File]::WriteAllText($fakeSyft, @'
 $destination = $args[-1].Substring('spdx-json='.Length)
+if ($env:STICKYMD_TEST_SYFT_MARKER) { [IO.File]::WriteAllText($env:STICKYMD_TEST_SYFT_MARKER, 'called') }
 [IO.File]::WriteAllText($destination, $env:STICKYMD_TEST_SBOM_TEXT, [Text.UTF8Encoding]::new($false))
 if ($env:STICKYMD_TEST_SYFT_FAIL -eq 'yes') { exit 23 }
 exit 0
@@ -68,6 +66,14 @@ try {
     $env:SYFT_CHECK_FOR_APP_UPDATE = 'fixture-update'
     [IO.File]::WriteAllText($outputSbom, 'previous-sbom')
     [IO.File]::WriteAllText($outputChecksums, 'previous-checksums')
+    $env:STICKYMD_TEST_SYFT_MARKER = Join-Path $fixture 'syft-must-not-run.txt'
+    New-Archive @('../escape') 'unsafe entry'
+    Assert-Fails 'unsafe ZIP extraction before Syft' {
+        & (Join-Path $repo 'tools/release/generate-sbom.ps1') -PackageDirectory $outputRelative -ZipPath $zip -SyftPath 'fake-syft.ps1'
+    }
+    Assert-OldOutputs
+    if (Test-Path -LiteralPath $env:STICKYMD_TEST_SYFT_MARKER) { throw 'Syft ran after failed extraction' }
+    Remove-Item Env:STICKYMD_TEST_SYFT_MARKER
     $env:STICKYMD_TEST_SBOM_TEXT = 'truncated output'
     $env:STICKYMD_TEST_SYFT_FAIL = 'yes'
     Assert-Fails 'Syft failed after writing output' { Invoke-TestSbom }
@@ -90,6 +96,7 @@ try {
     $env:SYFT_CHECK_FOR_APP_UPDATE = $previousUpdate
     Remove-Item Env:STICKYMD_TEST_SBOM_TEXT -ErrorAction SilentlyContinue
     Remove-Item Env:STICKYMD_TEST_SYFT_FAIL -ErrorAction SilentlyContinue
+    Remove-Item Env:STICKYMD_TEST_SYFT_MARKER -ErrorAction SilentlyContinue
 }
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 'RELEASE_OUTPUTS=PASS'

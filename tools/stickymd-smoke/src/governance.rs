@@ -553,6 +553,8 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     // tests/release_wrappers.rs (including actual packaged license bytes).
     // tests/release_workflow.rs executes the promotion step with the compiled CLI,
     // covering its remote query and fail-closed identity behavior instead of a URL token.
+    // tests/release_remote.rs also executes actual tag/draft step bodies with observed
+    // HTTP/GraphQL facts, verifying that rejection prevents downstream remote writes.
     // Phase 12-14 routing is covered by phase_entry tests against the compiled parser.
     // PowerShell source tokens are not evidence of a gate.
     let remote_promotion =

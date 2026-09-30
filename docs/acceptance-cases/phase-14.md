@@ -247,7 +247,11 @@ Failure Signals：接受缺失/冲突来源、哈希不符、重复 manifest、�
 | REL-CLI-12 | CI 版本读取复用 workspace 解析器；工作流观察要求完整匹配 SHA、成功 conclusion 和 release 名称，与资格化共用规则；查询失败和字段缺失/重复/类型错误拒绝，不授予发布权限 | Automated local | `release::workflow` + `headless release_workflow` 执行实际 workflow step；5.1/7 查询次数、失败退出码及薄入口状态恢复 | AUTOMATED PASS |
 | REL-CLI-13 | 包生成、ZIP allowlist 与 SBOM 必需成员共用清单；README 标题/完整身份/unsigned 文本与编码保持，稳定顺序、不打包用户 note；缺失许可证或非法编码拒绝，既有 staging/不同 ZIP 不覆盖 | Automated local | `release::package_content/package_staging`、同输入 ZIP hash 比较、双宿主 `release_outputs.ps1` 实际成员与失败路径 | AUTOMATED PASS |
 | REL-CLI-14 | Syft 固定版本和双摘要决定缓存命中；下载校验后原子替换，唯一上游 manifest 绑定；解压使用私有验证快照，失败保留旧 cache/清理 partial；外部 SyftPath 不冒充 pin 认证 | Automated local | `release::syft` unit tests、双宿主 `release_syft.ps1` 离线三次重试/非零失败/CWD/编码恢复、真实缓存 Syft 生成与验包 | AUTOMATED PASS |
+| REL-CLI-15 | 完成 ZIP 相同则接受、不同则拒绝；并发不得覆盖赢家；manifest 最后原子写入，失败保留完整 ZIP 和旧 manifest，输入不删除 | Automated local | `release::package_publish` 并发/路径/文件锁回归、双宿主实际打包、迁移前后同输入 ZIP bytes | AUTOMATED PASS |
 | REL-CLI-16 | 全部 Phase 与 all 参数范围、组合、必需伴随参数与路由由 Rust 单点持有；默认值、显式 false/零、诊断互斥保持；只读路由计划不执行资格化 | Automated local | P00-A11、`phase_entry` 单元测试、5.1/7 旧入口同输入映射比较及 compiled CLI 入口失败/Unicode/CWD/编码测试 | AUTOMATED PASS |
+| REL-CLI-17 | tag 完整 SHA/ref 与草稿 tag/未发布状态由 Rust 校验；只有显式允许的确定缺失可进入创建路径；HTTP/GraphQL/身份失败阻止后续远程写入 | Automated local | `release::remote_state` + 双宿主执行实际 workflow step，GitHub I/O 为离线 fixture；未执行远程写操作 | AUTOMATED PASS |
+| REL-CLI-18 | SBOM 准备组合复用版本、包选择、Syft pin/私有快照规则；cache miss/corruption/external bypass 保持；每次仍锁定调用 Cargo，源码变更不跳过 freshness 检查 | Automated local | `release::syft`、`release_outputs`、当前真实缓存 Syft 输出比较与入口调用计数 | AUTOMATED PASS |
+| REL-CLI-19 | 打包/SBOM 流程由 Rust 直接复用既有规则；阶段任务顺序与输出流保持；平台操作失败、坏下载、坏 SPDX、已有 ZIP 冲突均拒绝且保留已有输出 | Automated local | `runner::package`、`release::sbom_workflow`、5.1/7 `release_outputs/release_syft`、同输入新 ZIP/SPDX 比较 | AUTOMATED PASS |
 
 详细运行环境、数据及未验证项见 [维护报告](../report/2026-09-22-release-cli-migration.md)。
 SBOM 与 checksum 收尾记录见 [输出维护报告](../report/2026-09-25-release-output-finalization.md)。
@@ -267,3 +271,13 @@ REL-CLI-05 notices 输出预检：Given 已存在的目标文件/目录或缺失
 原文件字节和目录保持不变，不生成临时输出；合法目标仍须通过完整依赖和许可证检查。
 最终发布继续使用原子 no-replace 操作，预检后的并发创建不得被覆盖。
 Failure Signals：先报 Cargo/许可证错误、生成部分文件、创建缺失父目录或覆盖已有目标。
+
+REL-CLI-15..18 Preconditions：本轮工具、锁定依赖、隔离临时目录和新生成 local preflight 包；
+远程观察使用离线 fixture，实际 Syft 使用已验证缓存。Action：并发写同一 ZIP、制造不同内容/别名/
+锁定 manifest；比较旧入口与新路由；执行实际 workflow step 并注入错误观察；交替运行新旧 SBOM 入口。
+Expected：错误非零且保留既有数据，失败不会产生成功资格化或远程写；合法映射、ZIP 字节和 SBOM
+语义保持；缓存命中自动选包从五次调用降为两次，每次仍由 Cargo 判断是否重建。
+Failure Signals：覆盖不同 ZIP、把传输失败当不存在、修改已发布 Release、只读计划执行资格化、
+源码变化仍强制复用旧二进制、CWD/编码泄漏。ZIP/manifest 是单文件原子替换，不承诺多文件事务；
+远程观察也不承诺查询与后续写操作之间的原子性。详细数据、失败修复与未验证边界见
+[收尾报告](../report/2026-09-30-release-cli-finalization.md)。人工状态与 readiness 不变。

@@ -71,17 +71,17 @@ jobs:
           -ExpectedSbomSha256 '${{ inputs.expected_sbom_sha256 }}'
           -ReleaseTag '${{ inputs.release_tag }}'
       - name: Create or verify exact source tag
-        shell: bash
+        shell: pwsh
+        env:
+          APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          set -euo pipefail
-          tag='${{ inputs.release_tag }}'
-          source='${{ inputs.source_sha }}'
-          ref="tags/${tag}"
-          if existing="$(gh api "repos/${GH_REPO}/git/ref/${ref}" --jq .object.sha 2>/dev/null)"; then
-            [[ "$existing" == "$source" ]] || { printf 'Existing tag points to %s, expected %s\n' "$existing" "$source" >&2; exit 1; }
-          else
-            gh api --method POST "repos/${GH_REPO}/git/refs" -f "ref=refs/tags/${tag}" -f "sha=${source}" >/dev/null
-          fi
+          . ./tools/release/github-observation.ps1
+          $state = Get-StickyMdRemoteState -RepoRoot (Get-Location).Path -Kind tag -SourceSha $env:APPROVED_SOURCE_SHA -ReleaseTag $env:RELEASE_TAG -AllowMissing
+          if (-not $state.exists) {
+            gh api --method POST "repos/$env:GH_REPO/git/refs" -f "ref=refs/tags/$env:RELEASE_TAG" -f "sha=$env:APPROVED_SOURCE_SHA" | Out-Null
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
   draft:
     if: inputs.operation == 'draft'
@@ -115,11 +115,13 @@ jobs:
           -ExpectedSbomSha256 '${{ inputs.expected_sbom_sha256 }}'
           -ReleaseTag '${{ inputs.release_tag }}'
       - name: Verify tag identity
-        shell: bash
+        shell: pwsh
+        env:
+          APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          set -euo pipefail
-          actual="$(gh api "repos/${GH_REPO}/git/ref/tags/${{ inputs.release_tag }}" --jq .object.sha)"
-          [[ "$actual" == '${{ inputs.source_sha }}' ]] || { printf 'Tag points to %s\n' "$actual" >&2; exit 1; }
+          . ./tools/release/github-observation.ps1
+          Get-StickyMdRemoteState -RepoRoot (Get-Location).Path -Kind tag -SourceSha $env:APPROVED_SOURCE_SHA -ReleaseTag $env:RELEASE_TAG | Out-Null
       - name: Attest exact build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -130,22 +132,25 @@ jobs:
           subject-path: dist/promoted/StickyMD-*-windows-x64-portable.zip
           sbom-path: dist/promoted/SBOM.spdx.json
       - name: Create or update draft only
-        shell: bash
+        shell: pwsh
+        env:
+          APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          set -euo pipefail
-          tag='${{ inputs.release_tag }}'
-          notes="${RUNNER_TEMP}/release-notes.txt"
-          printf '%s\n' \
-            "Unsigned Windows x64 portable draft for ${tag}." \
-            "Verify SHA256SUMS and attestations before separately authorizing publish." \
-            > "$notes"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            [[ "$(gh release view "$tag" --json isDraft --jq .isDraft)" == "true" ]] || { printf 'Refusing to modify a published release\n' >&2; exit 1; }
-            gh release edit "$tag" --draft --title "StickyMD $tag" --notes-file "$notes"
-            gh release upload "$tag" --clobber dist/promoted/StickyMD-*-windows-x64-portable.zip dist/promoted/SHA256SUMS.txt dist/promoted/SBOM.spdx.json
-          else
-            gh release create "$tag" --draft --verify-tag --title "StickyMD $tag" --notes-file "$notes" dist/promoted/StickyMD-*-windows-x64-portable.zip dist/promoted/SHA256SUMS.txt dist/promoted/SBOM.spdx.json
-          fi
+          . ./tools/release/github-observation.ps1
+          $state = Get-StickyMdRemoteState -RepoRoot (Get-Location).Path -Kind draft -SourceSha $env:APPROVED_SOURCE_SHA -ReleaseTag $env:RELEASE_TAG -AllowMissing
+          $tag = $env:RELEASE_TAG
+          $notes = Join-Path $env:RUNNER_TEMP 'release-notes.txt'
+          [IO.File]::WriteAllText($notes, "Unsigned Windows x64 portable draft for $tag.`nVerify SHA256SUMS and attestations before separately authorizing publish.`n", [Text.UTF8Encoding]::new($false))
+          $assets = @((Get-ChildItem -LiteralPath dist/promoted -Filter 'StickyMD-*-windows-x64-portable.zip').FullName) + @('dist/promoted/SHA256SUMS.txt', 'dist/promoted/SBOM.spdx.json')
+          if ($state.exists) {
+            gh release edit $tag --draft --title "StickyMD $tag" --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            gh release upload $tag --clobber @assets
+          } else {
+            gh release create $tag --draft --verify-tag --title "StickyMD $tag" --notes-file $notes @assets
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   publish:
     if: inputs.operation == 'publish'
@@ -170,14 +175,17 @@ jobs:
           $observation | & cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow "--source-sha=$env:APPROVED_SOURCE_SHA" --workflow-json -
           exit $LASTEXITCODE
       - name: Download existing draft assets
-        shell: bash
+        shell: pwsh
+        env:
+          APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          set -euo pipefail
-          [[ "$(gh release view '${{ inputs.release_tag }}' --json isDraft --jq .isDraft)" == "true" ]] || { printf 'Release is not an unpublished draft\n' >&2; exit 1; }
-          actual="$(gh api "repos/${GH_REPO}/git/ref/tags/${{ inputs.release_tag }}" --jq .object.sha)"
-          [[ "$actual" == '${{ inputs.source_sha }}' ]] || { printf 'Tag/source mismatch\n' >&2; exit 1; }
-          mkdir -p dist/promoted
-          gh release download '${{ inputs.release_tag }}' --dir dist/promoted
+          . ./tools/release/github-observation.ps1
+          Get-StickyMdRemoteState -RepoRoot (Get-Location).Path -Kind draft -SourceSha $env:APPROVED_SOURCE_SHA -ReleaseTag $env:RELEASE_TAG | Out-Null
+          Get-StickyMdRemoteState -RepoRoot (Get-Location).Path -Kind tag -SourceSha $env:APPROVED_SOURCE_SHA -ReleaseTag $env:RELEASE_TAG | Out-Null
+          New-Item -ItemType Directory -Path dist/promoted -Force | Out-Null
+          gh release download $env:RELEASE_TAG --dir dist/promoted
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify draft still contains the promoted artifact
         shell: pwsh
         run: >-
