@@ -95,3 +95,44 @@ fmt 和 Phase 00 治理通过。回归覆盖损坏/过期/未来时间、源/EXE
 登录 SID，因此改为原生 `TOKEN_STATISTICS.AuthenticationId`，没有降级为仅核对用户名或
 可复用的 Windows session number；依据为 [Microsoft TOKEN_STATISTICS 文档](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_statistics)。
 短场景首次采样与跨进程复用的耗时对照将在下文另行追加，当前尚不报告实测加速。
+
+## Resolution 4（2026-09-30）：真实短场景与跨进程续跑对照
+
+复用本会话已有的隔离诊断 checkout `E:\gitclone\StickyMD-resource-probe-0d89ca5`，在确认
+工作树干净且无遗留原生 smoke 进程后切换至
+`1006f6c91c532f1753daf5ccb803d6084c65c067`。该 checkout 无 `dist/`/Source Freeze，
+只使用本地 Release，不改变主工作树中的正式收据。两次测试均显式设置
+`STICKYMD_SMOKE_RESOURCE_CASE=preview-no-math`，运行
+`phase 14 --resources --resource-module=math --resource-resume --json`，输出各自独立的
+ignored `first.json`、`resumed.json`，结束后恢复调用者筛选变量。
+
+| 本次对照范围 | 首次完整场景 | 续跑 |
+| --- | ---: | ---: |
+| 整条 CLI 命令，秒 | 170.629 | 11.792 |
+| 筛选后的 Math 组，秒 | 163.679840 | 7.754740 |
+| 场景执行及缓存处理，秒 | 157.171382 | 1.960537 |
+| 本轮新采样数 | 5 | 0 |
+| 历史复用样本数 | 0 | 5 |
+| 实际固定预热等待，秒 | 150 | 0 |
+
+两次命令均零退出、工作树 clean、交互环境 VALID，且均重新完成真实桌面探针。
+首次显示 MISS 并保存完整场景；续跑显示 `DIAGNOSTIC_REUSED`。逐项比对五次原始观测、
+run、cohort 与 gates 一致，续跑的每个样本明确保留历史来源。缓存的原采样执行耗时
+`153.328576` 秒独立记录为 `origin_execution_seconds`，没有当作续跑本轮耗时。
+现场读取进度文件确认预热阶段、轮次和剩余固定预算；两次最终 sidecar 的 stage 均为
+`command-finished`，status 仍是诊断性 `INCOMPLETE`，不是正式收据。
+
+来源与 ignored 证据：
+
+- EXE SHA-256：`ba77d77e3d698d31ed5754e3e5802d050e013f689364b2252944e208a1be4165`。
+- harness SHA-256：`ad7e465066f5509b506b7dd998747556447e2e48ef285374b806c4e8db951e14`。
+- 目录：`target/acceptance-profiling/resource-resume-live-20260930/`，保存两次 JSON、完整日志与进度文件。
+- `first.json` SHA-256：`35a4eb682335b9c88faaf8078efefcbac3000382b7a698d0d7643942656033a2`。
+- `resumed.json` SHA-256：`2e2daf3b5a030c558598ee39b40e71693ef065c916b15bb7c73363f7e94a60af`。
+- 缓存 key：`10a8a2ec8a8c0e01a55c257b742f25625538b298a330be58bbe6baac13aacef8`，
+  created Unix 秒 `1790775445`；独立核对记录 body 的 SHA-256 与保存值一致。
+
+这是一次无公式预览场景的真实采样/复用对照，未执行 CPU 采样、图片长组或完整五组矩阵，
+未故意制造中途菜单遮挡或中断。测试结束没有遗留原生进程，两个工作树均干净。
+本结果只证明本次诊断续跑避开了 150 秒固定等待，不能推算完整正式验收的加速比例。
+P14-A46、人工缺口及既有发布的技术 readiness 不由本次诊断更新。
