@@ -211,6 +211,7 @@ impl<T> Default for ScenarioCache<T> {
 }
 #[cfg(any(windows, test))]
 impl<T: Clone> ScenarioCache<T> {
+    #[cfg(windows)]
     pub(crate) fn contains(&self, case: ResourceCase) -> bool {
         self.entries
             .iter()
