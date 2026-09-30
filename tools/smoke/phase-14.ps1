@@ -108,6 +108,9 @@ $qualificationActions = @(
     [bool]$DownloadedZip
 ) | Where-Object { $_ }
 if ($qualificationActions.Count -gt 1) { throw 'Select at most one qualification action' }
+if ($ResourcePlan -and (-not $Resources -or -not $ResourceResume -or $qualificationActions.Count -gt 0)) {
+    throw 'ResourcePlan requires Resources and ResourceResume and cannot run a qualification action'
+}
 
 $arguments = @('run', '-p', 'stickymd-smoke', '--locked', '--')
 if ($Environment) {

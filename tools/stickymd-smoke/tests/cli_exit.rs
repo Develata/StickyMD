@@ -1,5 +1,41 @@
 use std::process::Command;
 
+#[cfg(windows)]
+#[test]
+fn resource_plan_wrapper_never_silently_dispatches_a_qualification_action() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .unwrap();
+    let output = super::powershell_command("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", r#"
+$ErrorActionPreference = 'Stop'
+function cargo {
+    if ($args -notcontains '--resource-plan' -or $args -notcontains '--resource-resume' -or $args -contains 'qualification') {
+        throw 'Unexpected non-plan Cargo dispatch'
+    }
+    $global:LASTEXITCODE = 0
+    'PLAN_FORWARDED'
+}
+$script = Join-Path $env:STICKYMD_TEST_ROOT 'tools/smoke/phase-14.ps1'
+foreach ($action in @('SourceFreeze', 'Environment', 'WindowStress', 'Campaign')) {
+    $parameters = @{ ResourcePlan=$true; Resources=$true; ResourceResume=$true }
+    $parameters[$action] = $true
+    $rejected = $false
+    try { & $script @parameters } catch {
+        if ($_.Exception.Message -notlike 'ResourcePlan requires*') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected) { throw 'Plan silently executed another action' }
+}
+& $script -Resources -ResourceModule zoom -ResourceResume -ResourcePlan -EvidenceFile target/diagnostics/plan.json
+"#]).env("STICKYMD_TEST_ROOT", root).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "PLAN_FORWARDED"
+    );
+}
+
 #[test]
 fn resource_plan_is_read_only_even_when_program_and_source_identity_are_missing() {
     let nonce = std::time::SystemTime::now()
