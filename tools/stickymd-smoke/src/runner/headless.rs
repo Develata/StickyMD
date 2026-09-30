@@ -8,6 +8,10 @@ use super::{Task, TaskExecution, build_plan, run_task, task_label};
 use crate::cli::Options;
 use crate::headless::{Command, Mode, Module, Request};
 
+mod local;
+mod local_build;
+pub(crate) use local::{Description, LocalPlan};
+
 pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
     let Command::Run(request) = command else {
         for module in Module::ALL {

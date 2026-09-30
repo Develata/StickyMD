@@ -1,0 +1,16 @@
+RESOURCE_PLAN groups=zoom minimum_fixed_wait_seconds=75 shared_cohort_savings_seconds=0 (excludes startup, fixture preparation, transitions and stress)
+TASK_TIMING task="governance contracts" status=PASSED elapsed_seconds=0.348124
+TASK_TIMING task="qualification environment preflight" status=PASSED elapsed_seconds=0.011383
+TASK_TIMING task="Release Windows app build" status=PASSED elapsed_seconds=1.116637
+RESOURCE_IDENTITY git_seconds=0.258439 artifact_hash_seconds=0.101054 environment_seconds=0.090938 input_hash_seconds=0.286590 total_seconds=0.786374
+RESOURCE_IDENTITY git_seconds=0.250261 artifact_hash_seconds=0.111937 environment_seconds=0.090213 input_hash_seconds=0.285370 total_seconds=0.779422
+RESOURCE_IDENTITY git_seconds=0.248181 artifact_hash_seconds=0.107895 environment_seconds=0.092076 input_hash_seconds=0.301201 total_seconds=0.795974
+RESOURCE_RESUME_PLAN unit=group-zoom action=REUSE_IF_VALID fixed_wait_seconds=0 reason="VALID_COMPLETE_RECORD"
+RESOURCE_RESUME_PLAN status=NOT_RUN planned_fixed_wait_seconds=0 avoided_fixed_wait_seconds=75 (advisory; execution revalidates; excludes probes, identity, startup and stress)
+RESOURCE_PROGRESS group=zoom cohort=desktop-probe run=0/5 stage=probe phase_fixed_seconds=0 remaining_fixed_wait_seconds=75
+RESOURCE_IDENTITY git_seconds=0.242029 artifact_hash_seconds=0.101040 environment_seconds=0.081759 input_hash_seconds=0.287633 total_seconds=0.759115
+RESOURCE_IDENTITY git_seconds=0.244201 artifact_hash_seconds=0.115875 environment_seconds=0.087647 input_hash_seconds=0.311343 total_seconds=0.806918
+RESOURCE_PROGRESS group=zoom cohort=group-zoom run=5/5 stage=diagnostic-reused phase_fixed_seconds=0 remaining_fixed_wait_seconds=0
+RESOURCE_GROUP=zoom STATUS=DIAGNOSTIC_REUSED elapsed_seconds=7.557
+RESOURCE_PROGRESS group=zoom cohort= run=0/5 stage=group-finished phase_fixed_seconds=0 remaining_fixed_wait_seconds=0
+TASK_TIMING task="copied Release Phase 10 zoom resource matrix" status=PASSED elapsed_seconds=7.580151

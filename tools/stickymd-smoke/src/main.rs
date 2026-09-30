@@ -4,6 +4,7 @@
 mod atomic_evidence;
 mod ci;
 mod cli;
+mod development;
 mod evidence;
 mod governance;
 mod headless;
@@ -26,6 +27,7 @@ mod runner;
 #[cfg(windows)]
 mod runtime;
 mod startup_timing;
+mod timing_summary;
 #[cfg(windows)]
 mod window_control;
 
@@ -45,6 +47,9 @@ fn run() -> Result<(), String> {
     #[cfg(windows)]
     window_control::enable_per_monitor_v2_dpi_awareness()?;
     let command = cli::CommandLine::parse(std::env::args().skip(1))?;
+    if let cli::CommandLine::Timings(options) = &command {
+        return timing_summary::execute(options);
+    }
     let root = governance::find_repository_root(
         &std::env::current_dir()
             .map_err(|error| format!("cannot read current directory: {error}"))?,
@@ -56,6 +61,8 @@ fn run() -> Result<(), String> {
         }
         cli::CommandLine::Smoke(options) => runner::execute(&root, &options),
         cli::CommandLine::Ci(command) => ci::execute(&root, &command),
+        cli::CommandLine::Development(command) => development::execute(&root, &command),
+        cli::CommandLine::Timings(options) => timing_summary::execute(&options),
         cli::CommandLine::Release(command) => release::execute(&root, &command),
         cli::CommandLine::Modules(command) => runner::headless::execute(&root, &command),
         cli::CommandLine::AcceptanceManual(command) => qualification::record_manual(&root, command),

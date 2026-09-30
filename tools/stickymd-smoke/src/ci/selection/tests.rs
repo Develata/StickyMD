@@ -55,6 +55,7 @@ fn ci_shared_and_unknown_inputs_choose_full_even_alongside_known_changes() {
         "docs/acceptance-cases/phase-00.md",
         "docs/features/00_v1_product_behavior.md",
         "tools/stickymd-smoke/src/ci/git.rs",
+        "tools/stickymd-smoke/src/development/git.rs",
         "tools/stickymd-smoke/src/runner/headless.rs",
         ".github/workflows/ci.yml",
         "tools/release/package.ps1",

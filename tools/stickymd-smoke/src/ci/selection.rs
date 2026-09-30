@@ -2,26 +2,42 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#modular-headless-ci
 
 use crate::headless::Module;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) struct Selection {
-    pub(super) full: bool,
-    pub(super) modules: Vec<Module>,
-    pub(super) reasons: Vec<String>,
+pub(crate) struct Selection {
+    pub(crate) full: bool,
+    pub(crate) modules: Vec<Module>,
+    pub(crate) reasons: Vec<String>,
+    module_reasons: BTreeMap<Module, BTreeSet<String>>,
 }
 
 impl Selection {
-    pub(super) fn full(reason: String) -> Self {
+    pub(crate) fn full(reason: String) -> Self {
         Self {
             full: true,
             modules: Module::ALL.to_vec(),
             reasons: vec![reason],
+            module_reasons: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn reasons_for(&self, module: Module) -> Vec<&str> {
+        if self.full {
+            self.reasons.iter().map(String::as_str).collect()
+        } else {
+            self.module_reasons
+                .get(&module)
+                .into_iter()
+                .flatten()
+                .map(String::as_str)
+                .collect()
         }
     }
 }
 
-pub(super) fn select(paths: &[String]) -> Selection {
+pub(crate) fn select(paths: &[String]) -> Selection {
     let mut direct = BTreeSet::new();
+    let mut module_reasons: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
     for path in paths {
         if is_shared(path) {
             return Selection::full(format!("shared input: {path}"));
@@ -30,6 +46,12 @@ pub(super) fn select(paths: &[String]) -> Selection {
         // Validate the decoder and the embedding harness when a fixture changes.
         if path.starts_with("crates/stickymd-render/tests/fixtures/qualification-images/") {
             direct.extend([Module::Render, Module::Smoke]);
+            for module in [Module::Render, Module::Smoke] {
+                module_reasons
+                    .entry(module)
+                    .or_default()
+                    .insert(format!("embedded fixture input: {path}"));
+            }
             continue;
         }
         if let Some(module) = Module::ALL
@@ -37,6 +59,10 @@ pub(super) fn select(paths: &[String]) -> Selection {
             .find(|module| path.starts_with(module.root()))
         {
             direct.insert(module);
+            module_reasons
+                .entry(module)
+                .or_default()
+                .insert(format!("input: {path}"));
         } else if !is_documentation(path) {
             return Selection::full(format!("unknown input: {path}"));
         }
@@ -45,12 +71,15 @@ pub(super) fn select(paths: &[String]) -> Selection {
     loop {
         let before = modules.len();
         for module in Module::ALL {
-            if module
-                .dependencies()
-                .iter()
-                .any(|dependency| modules.contains(dependency))
-            {
-                modules.insert(module);
+            for dependency in module.dependencies() {
+                if modules.contains(dependency) {
+                    modules.insert(module);
+                    module_reasons.entry(module).or_default().insert(format!(
+                        "reverse dependency: {} depends on {}",
+                        module.name(),
+                        dependency.name()
+                    ));
+                }
             }
         }
         if modules.len() == before {
@@ -75,6 +104,7 @@ pub(super) fn select(paths: &[String]) -> Selection {
         full: false,
         modules: modules.into_iter().collect(),
         reasons,
+        module_reasons,
     }
 }
 
@@ -110,6 +140,8 @@ fn is_shared(path: &str) -> bool {
         || [
             "ci.rs",
             "ci/",
+            "development.rs",
+            "development/",
             "headless.rs",
             "headless/",
             "runner.rs",

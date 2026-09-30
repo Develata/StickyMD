@@ -1,0 +1,96 @@
+# 本地变更选测、兼容性夹具与耗时观察
+
+日期：2026-09-30。实施基线：`d40eea948745521bf75a768ee32dcd4f7fbcc851`。
+这是开发工具维护证据，不改变产品 runtime、发布权限、证据身份或人工验收状态。
+
+## 背景与实施范围
+
+提交型 CI 对 dirty worktree 保守全量是正确边界，但本地调用者此前需要手动选择模块。
+多组 PowerShell 兼容性测试分别准备临时目录、宿主探测、编码和清理；已有资源和任务
+日志也没有统一的只读耗时视图。这些维护成本不能用完整测试矩阵的运行时间代表。
+
+本次按现有 plan 11 `modular-headless-ci` / `phase-verification-harness` 实施：
+
+1. `dev-check` 读取 HEAD、index、worktree 与非 ignored 新文件，复用 CI 分类、反向依赖
+   和 headless 任务图；`--plan` 给出路径、模块、命令和选择原因。
+2. `tests/support` 集中独占临时目录、RAII 失败清理、PowerShell 5.1/7 宿主调用和有界诊断；
+   各用例继续持有自己的真实断言，包路径检查增加 PS7 覆盖。
+3. `timings` 读取既有 JSON/日志，分别展示本轮、嵌套、历史、Cargo 报告和固定等待预算。
+   README 补充本地短检查与既有资源选测、失败优先、诊断续跑的使用顺序。
+
+三项职责并行实现，Cargo 构建和最终检查集中协调；工具测试用独立进程和目录并发，
+性能任务保持串行。本轮没有启动 GUI、资源 campaign、远程 workflow 或发布操作。
+
+## 最终实现与规则归属
+
+`development/{git,projection,mod}` 只负责本地事实采集和说明；路径归属、反向依赖和
+检查范围继续由 `ci/selection`、module registry 与 `Checks` 持有，没有第二套分类规则。
+一次 NUL porcelain 快照保留暂存后恢复为 HEAD 的改动，移动两端都参与选择。
+冲突、未知路径、无有效 HEAD、传输错误和 registry drift 按请求 mode 回退完整 workspace。
+完整回退使用 Cargo 的真实 workspace，显式 `modules run` 的 drift 拒绝接口保持不变。
+
+`runner/headless/local` 复用原任务图和计时输出。适用的 test/build/clippy/dependency-policy
+使用 locked 依赖。本地 Release/native gate 由 `local_build` 读取本轮 Cargo JSON 返回的
+实际 EXE，验证 Windows manifest、bin target 和唯一成功完成记录；它尊重实际 target-dir，
+不会读取旧 Promoted Candidate 或 Source Freeze 来代替新构建。本地成功不写资格化账本。
+
+`timing_summary/{input,log,cargo,report}` 复用既有 JSON parser，输入全部验证后才输出。
+重复路径别名、无效/缺失输入、非法数值、超过 64 MiB 或非普通文件均拒绝。
+历史 receipt 格式 fixture 只验证读取语义，不能证明历史来源仍有效。
+摘要固定为 `OBSERVATION_ONLY`，不合计重叠范围，wall-clock 与 agent 工时保持 unknown。
+资源复用 case 的 `execution_seconds` 是本轮查验时间；只有明确的 origin 字段列为历史耗时。
+
+生产 PowerShell 入口没有修改。ZIP、Syft、UIA/COM 和资源读取等 Windows 适配继续保留；
+资源 sampling、资格化和人工边界也没有改动。本次没有新增依赖或更改 plan 合同。
+
+## 审查发现与修复
+
+并行审查发现本地 native gate 初版可能经旧候选 resolver 校验错误 EXE，现已绑定本轮
+Cargo compiler-artifact；新增 malformed 旧收据与中文空格 target-dir 的真实构建回归。
+正常资源日志还会混入没有 elapsed 的规划/复用行，现已区分这些行并加入实际格式测试。
+非普通文件在打开前检查类型，避免直接打开 Unix FIFO 的阻塞；另保留打开句柄后的复核。
+
+首轮完整测试曾发现新增自动化投影使用了治理不允许的 `NOT TESTED` 状态；改为已执行
+用例的 `AUTOMATED PASS` 后重跑完整测试通过。严格 Clippy 发现的两个冗余闭包/clone
+已修正，并重跑相关单元与 lint。人工行仍为 `NOT TESTED`。
+
+## 实际验证
+
+本轮日志保存在 ignored `target/development-tools-20260930/`，没有写入 release evidence。
+
+| 检查 | 结果 |
+| --- | --- |
+| 实施前 `cargo test -p stickymd-smoke --locked ci::` | 18 passed |
+| 最终 `cargo test -p stickymd-smoke --locked` | 324 unit passed、10 ignored；24 integration passed |
+| Clippy 修正后 `development::` / `timing_summary::` targeted unit | 分别 10 / 12 passed |
+| Windows ignored `actual_locked_local_build_ignores_stale_qualification_receipts` | 1 passed；locked/offline std-only tiny build，不启动 EXE；坏旧收据保持原文 |
+| `cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` | PASS |
+| `cargo fmt --all --check`、`git diff --check` | PASS |
+| 旧/新 CLI 同输入对照 | modules list、smoke module plan、dirty CI plan、Phase 14 route 的退出码与完整 stdout 相同 |
+| 当前实际 `dev-check --plan` | shared planner 改动选择六个模块、九项任务，`NOT_RUN` |
+| 独立中文空格目录的真实 docs-only `dev-check` | 只执行 governance / fmt 两项，PASS，不产生 qualification evidence；fixture 已移除 |
+| 读取上述新日志与完整测试日志 | 两份输入独立、`OBSERVATION_ONLY`；没有推断 wall-clock / agent 工时 |
+| PowerShell 5.1 / 7 实际 wrapper tests | 参数、中文空格路径、失败退出码、编码与 CWD 恢复通过；使用本轮预构建 CLI |
+
+真实 Git 回归覆盖 staged/net-zero、unstaged、untracked、删除、移动、submodule 改动和
+merge conflict，并检查只读规划不改 index。计划还覆盖未知输入、registry drift 和逐任务原因。
+timings 覆盖缺失/重复/非法数值、来源与预算分离、任意 CWD 和后续输入失败不输出部分结果。
+
+## 数据、收益与限制
+
+本次结构检查中，既有上层 PowerShell 测试调用由 17 次变为 14 次：删除四次独立 PS7
+探测、增加一次 PS7 包路径检查。这是调用数量，不能当成 wall-clock 加速比例。
+共享夹具增加了清理和诊断回归；没有声称总源码行数下降。
+
+本轮 docs-only 实测的两个 task elapsed 分别为 0.482385 s、2.050673 s。
+完整 smoke 日志独立报告 Cargo test profile 10.07 s、unit binary 31.41 s、integration
+binary 35.62 s。它们是本机本轮观察，包含缓存和调度条件，没有与等价旧实现做时间基准，
+因此不据此声称性能提升，不推算“30–45 小时”能减少多少。
+
+已证实的收益是规则只有一份、dirty 本地改动可自动选择并解释、兼容性准备统一，
+且 docs-only 实际运行不执行代码测试。后续应先读取真实选测与耗时记录，再决定优化
+编译等待、固定等待或重复运行；不应重建另一套 conformance 框架。
+
+尚未验证：Linux 本轮编译/Clippy/执行及 Unix FIFO 回归、真实新增 workspace drift 的全量执行、
+其他 target 配置、完整本地九任务执行、远程 CI、GUI/性能/完整资源 campaign、人工验收。
+这些未验证项没有被短测试或历史日志标为通过，产品 readiness 不因此改变。

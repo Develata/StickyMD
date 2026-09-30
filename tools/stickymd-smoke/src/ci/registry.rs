@@ -7,7 +7,7 @@ use std::{
     path::Path,
 };
 
-pub(super) fn verify(root: &Path) -> Result<(), String> {
+pub(crate) fn verify(root: &Path) -> Result<(), String> {
     let mut observed = BTreeMap::new();
     for manifest in [
         None,

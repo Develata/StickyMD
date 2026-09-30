@@ -1,11 +1,11 @@
 //! Source-scoped headless CI planning and job-result aggregation.
 //! plan_ref: docs/plan/11_testing_and_release.md#modular-headless-ci
 
-mod git;
+pub(crate) mod git;
 mod projection;
-mod registry;
+pub(crate) mod registry;
 mod results;
-mod selection;
+pub(crate) mod selection;
 #[cfg(test)]
 mod workflow_tests;
 
@@ -66,17 +66,17 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct Checks {
-    smoke: bool,
-    dependency: bool,
-    quality: bool,
-    headless: bool,
-    release: bool,
-    portable: bool,
+pub(crate) struct Checks {
+    pub(crate) smoke: bool,
+    pub(crate) dependency: bool,
+    pub(crate) quality: bool,
+    pub(crate) headless: bool,
+    pub(crate) release: bool,
+    pub(crate) portable: bool,
 }
 
 impl Checks {
-    fn for_modules(full: bool, modules: &[Module]) -> Self {
+    pub(crate) fn for_modules(full: bool, modules: &[Module]) -> Self {
         Self {
             smoke: full || modules.contains(&Module::Smoke),
             dependency: full || !modules.is_empty(),

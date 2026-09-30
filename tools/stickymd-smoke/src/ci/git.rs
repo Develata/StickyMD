@@ -29,7 +29,7 @@ pub(super) fn inspect(root: &Path, base: Option<&str>) -> Result<Facts, String> 
     Ok(Facts { head, dirty, paths })
 }
 
-fn valid_sha(value: &str) -> bool {
+pub(crate) fn valid_sha(value: &str) -> bool {
     value.len() == 40
         && value.bytes().all(|byte| byte.is_ascii_hexdigit())
         && value.bytes().any(|byte| byte != b'0')
@@ -72,7 +72,7 @@ fn changed_paths(root: &Path, base: &str, head: &str) -> Result<Vec<String>, Str
     decode_paths(&bytes)
 }
 
-fn decode_paths(bytes: &[u8]) -> Result<Vec<String>, String> {
+pub(crate) fn decode_paths(bytes: &[u8]) -> Result<Vec<String>, String> {
     if !bytes.is_empty() && !bytes.ends_with(&[0]) {
         return Err("unterminated Git path output".to_owned());
     }

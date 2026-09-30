@@ -2,6 +2,7 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
 
 mod cli_exit;
+mod development_tools;
 #[cfg(windows)]
 mod package_path_wrapper;
 #[cfg(windows)]

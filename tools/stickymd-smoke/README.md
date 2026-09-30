@@ -214,6 +214,77 @@ only its requested scope and writes no qualification or last-success receipt.
 The existing `all --ci` entry remains the complete headless check. Automatic CI
 selection is a separate planner, described below.
 
+## Local change-based checks
+
+```powershell
+cargo run --quiet -p stickymd-smoke --locked -- dev-check --plan
+cargo run --quiet -p stickymd-smoke --locked -- dev-check
+cargo run --quiet -p stickymd-smoke --locked -- dev-check --mode=all --plan
+```
+
+`dev-check` observes staged, unstaged and nonignored untracked inputs relative to
+HEAD. Deletions and moves retain both original and destination owners. It reuses
+the CI path classifier, Cargo module registry and reverse dependency closure;
+the existing commit-only CI still falls back on dirty worktrees. Unknown inputs,
+conflicts, invalid Git facts and registry drift select conservative full checks.
+The `--plan` JSON is `NOT_RUN`, with observed paths, module/check reasons and exact
+commands. It does not build, execute checks or write acceptance receipts.
+
+The default mode is `tests`; `performance` and `all` include the existing explicit
+headless Release baselines. Shared governance and formatting always run; applicable
+Clippy, dependency policy and Windows Release/native checks come from the same CI
+policy. Cargo invocations use locked dependencies. Tasks run in order, Cargo
+manages compilation and independent libtest cases can overlap. Performance
+measurements remain serial. A Windows selection requires Windows to execute.
+The local native-runtime gate verifies the executable reported by this run's
+successful Cargo build, including custom target directories; it does not resolve
+a previously qualified candidate as a substitute for that output.
+Local success only covers the requested checks; the command has no qualification
+or last-success writer. Commit changes are outside its comparison scope: after
+committing, use the existing CI base comparison or explicit module/full entry.
+
+## Timing observations
+
+```powershell
+cargo run --quiet -p stickymd-smoke --locked -- timings --input target/diagnostics/math.json --json
+cargo run --quiet -p stickymd-smoke --locked -- timings --input target/check.log --input target/diagnostics/math.progress.json
+```
+
+`timings` reads existing UTF-8 JSON/log files from any working directory. It
+accepts evidence schema 2, resource progress/diagnostic-plan and shared-workspace
+schema 1, existing `TASK_TIMING`/resource telemetry and Cargo's explicit compile/
+test elapsed records. Each input is an independent scope. The report keeps current
+tasks, nested/group/identity observations, historical origins and fixed-wait
+budgets separate. Missing timings stay missing. Inputs are read before stdout is
+emitted; malformed values, ambiguous duplicates or a later invalid file return
+nonzero without a partial report. Input files are preserved.
+
+The summary is `OBSERVATION_ONLY`: it does not verify source/receipt identity or
+grant acceptance. Overlapping task/subtask measurements and multiple files are
+not summed. Wall-clock and agent-work totals remain unknown. A compile-profile
+elapsed record includes Cargo work; it cannot distinguish lock/queue waits or
+active compiler time. Fixed-wait budgets are predictions, and historical elapsed
+values describe their origin run. No speedup is inferred from a summary.
+
+For a development batch, inspect `dev-check --plan`, run the selected checks, then
+summarize the captured log. PowerShell 5.1/7 can both write an accepted UTF-8 log:
+
+```powershell
+cargo run --quiet -p stickymd-smoke --locked -- dev-check 2>&1 |
+    ForEach-Object { $_.ToString() } |
+    Set-Content -LiteralPath target/dev-check.log -Encoding UTF8
+$checkExitCode = $LASTEXITCODE
+cargo run --quiet -p stickymd-smoke --locked -- timings --input target/dev-check.log --json
+if ($checkExitCode -ne 0) { throw "Local checks failed with exit code $checkExitCode" }
+```
+
+For an affected resource case, use the existing Phase 14 module selector; inspect
+`-ResourceResume -ResourceFailureFirst -ResourcePlan` before explicitly running
+the diagnostic without `-ResourcePlan`. Resume needs an ignored `target/` evidence
+path and the complete existing identity. Failures run fresh; unchanged successful
+cases may reuse validated history. These diagnostics preserve the sampling
+protocol and do not produce formal resource success or manual acceptance.
+
 ## Change-based CI
 
 ```powershell

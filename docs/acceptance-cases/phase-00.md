@@ -17,10 +17,27 @@
 | P00-A09 | plan 11 job aggregation and full manual/scheduled/release boundaries | Automated | [`workflow adapter tests`](../../tools/stickymd-smoke/src/ci/workflow_tests.rs), [`result aggregation`](../../tools/stickymd-smoke/src/ci/results.rs), actionlint for CI/scheduled workflows | AUTOMATED PASS |
 | P00-A10 | plan 11 portable verification tooling and unsupported GUI evidence boundary | Automated | strict smoke CLI Clippy on Windows/Linux; independent Linux smoke job runs lint/tests for full or smoke scope; [`compiled CLI regression`](../../tools/stickymd-smoke/tests/cli_exit.rs) checks unsupported GUI requests | AUTOMATED PASS |
 | P00-A11 | plan 11 shared phase entry routing, parameter availability and caller-state preservation | Automated | `phase_entry` rules + actual 00–14/11-b/all wrappers on PowerShell 5.1/7; old/new same-input mapping comparison | AUTOMATED PASS |
+| P00-A12 | plan 11 local affected-module checks using the existing CI classification and reverse dependencies | Automated | `development` Git/selection tests, shared `runner/headless/local` task plan and compiled `dev-check --plan` | AUTOMATED PASS |
+| P00-A13 | plan 11 read-only timing observations with current/history/budget scopes preserved | Automated | `timing_summary` receipt/log fixtures and compiled Unicode-path/outside-repository/error tests | AUTOMATED PASS |
 | P00-M01 | USER constitution semantic fidelity review | Manual | Current-commit section-by-section review receipt required | NOT TESTED |
 | P00-M02 | architecture contract judgment review | Manual | Current-commit architecture checklist receipt required | NOT TESTED |
 
 The automated rows are re-evaluated by the checked-in runner; manual judgment remains separate.
+
+P00-A12: Given staged, unstaged, new, deleted or renamed local inputs, inspect the affected
+headless checks before execution. Expect the same path classification and reverse dependency
+closure as CI, both owners of a move, per-check reasons, and `NOT_RUN` for the plan. Unknown
+inputs, conflicts, invalid Git transport or Cargo registry drift must select conservative full
+checks in the requested mode. Execution uses the existing task graph with locked Cargo;
+local checks do not write qualification ledgers. Missing checks, a plan claiming PASS,
+loss of either rename owner, or changed commit-only CI behavior are failures.
+
+P00-A13: Given existing task/resource receipts or timing logs, inspect elapsed observations.
+Expect current task times, historical origins, nested measurements and fixed-wait budgets
+to remain distinct. Missing timings stay missing; overlapping scopes and multiple files
+are not added into a fabricated wall clock or agent-work total. Malformed/negative/nonfinite
+durations, ambiguous duplicates and invalid later inputs must fail without partial stdout.
+Unicode/spaced paths work outside the repository; input bytes and acceptance state stay intact.
 
 P00-A11: Given each retained PowerShell entry and supported parameters, request a
 read-only route through the compiled CLI. Expect the original canonical arguments,
