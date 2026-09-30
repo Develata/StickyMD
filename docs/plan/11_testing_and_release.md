@@ -450,8 +450,9 @@ Resources 是 source-preview、math、images、window、zoom 五类兼容成功�
 - `--resource-resume` 是显式的 Phase 14 Resources 诊断选项，必须指定 `target/` 下 ignored
   的独立 JSON evidence 路径，防止检查点改变输入指纹；正式 canonical 输出及其文件系统
   别名拒绝此选项。缓存只位于 ignored
-  `target/resource-diagnostics/v1/`，公共 evidence writer 不得覆盖该内部目录。
-  只缓存完整通过五次采样的基础/数学/图片场景；窗口压力和缩放组不从中段恢复。
+  `target/resource-diagnostics/v2/`，公共 evidence writer 不得覆盖该内部目录。
+  缓存完整通过五次采样的基础/数学/图片场景，或完整 Window/Zoom 组。整组缓存必须通过
+  原始观测、统计、硬门、fixture 和压力完成校验，并成功清理本轮临时程序；不从中段恢复。
   缓存绑定全部 tracked/untracked 非 ignored 输入、source、实际 EXE/harness bytes、
   主机/启动/登录 session、单显示器尺寸/DPI/work area、有效桌面状态及执行设置身份。
   无法充分识别的环境（含未支持的多显示器配置）禁用缓存并完整运行；缓存不保证瞬时

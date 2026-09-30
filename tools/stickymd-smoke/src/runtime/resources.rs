@@ -3,6 +3,7 @@
 
 mod cohort;
 mod probe;
+mod whole_group;
 mod window;
 mod zoom;
 use super::*;
@@ -68,12 +69,12 @@ pub(crate) fn run(
         },
         started.elapsed().as_secs_f64()
     );
+    let sampling = Instant::now();
+    let mut fresh_group = false;
     let result = probe_result.and_then(|()| match group {
-        ResourceModule::Window => {
-            window::run_window_resource_measurement(repository, &root, &mut output, observer)
-        }
-        ResourceModule::Zoom => {
-            zoom::run_zoom_resource_measurement(repository, &root, &mut output, observer)
+        ResourceModule::Window | ResourceModule::Zoom => {
+            whole_group::run(repository, &root, group, &mut output, observer)
+                .map(|fresh| fresh_group = fresh)
         }
         _ => matrix(repository, &root, group, cache, &mut output, observer),
     });
@@ -84,6 +85,13 @@ pub(crate) fn run(
             None => error,
         });
     }
+    whole_group::finish(
+        group,
+        &mut output,
+        fresh_group,
+        sampling.elapsed().as_secs_f64(),
+        observer,
+    );
     Ok(output)
 }
 
@@ -133,7 +141,7 @@ fn matrix(
         observer.stage(case.label, 0, "case-start", 0)?;
         let started = Instant::now();
         let measured = cache.cohorts.measure(case, || {
-            if let Some(saved) = observer.load(case)? {
+            if let Some(saved) = observer.load(case.into())? {
                 return Ok(Output {
                     measurements: saved.measurements,
                     gates: saved.gates,
@@ -147,7 +155,7 @@ fn matrix(
             let outcome =
                 measure_case(&source, root, case, &mut observed, observer).and_then(|()| {
                     observer.save(
-                        case,
+                        case.into(),
                         &crate::evidence::EvidenceResult {
                             id: case.label.into(),
                             status: crate::evidence::EvidenceStatus::Passed,

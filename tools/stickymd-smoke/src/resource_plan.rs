@@ -2,6 +2,7 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#resource-module-qualification
 
 mod coverage;
+pub(crate) mod diagnostic;
 mod observations;
 pub(crate) mod progress;
 #[cfg(test)]
@@ -15,7 +16,6 @@ use coverage::coverage_measurements;
 pub(crate) use coverage::validate_receipt;
 #[cfg(test)]
 use observations::required_gates;
-pub(crate) use observations::validate_case;
 
 pub(crate) const REPETITIONS: usize = 5;
 pub(crate) const WARMUP_SECONDS: u64 = 30;

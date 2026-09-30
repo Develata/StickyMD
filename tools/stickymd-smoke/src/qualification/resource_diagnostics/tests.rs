@@ -8,7 +8,7 @@ use crate::{
     release::json,
 };
 
-fn identity() -> Identity {
+pub(super) fn identity() -> Identity {
     Identity {
         fingerprint: "a".repeat(64),
         source: "b".repeat(40),
@@ -18,7 +18,7 @@ fn identity() -> Identity {
     }
 }
 
-fn case_result(cpu: bool) -> (ResourceCase, EvidenceResult) {
+fn case_result(cpu: bool) -> (Unit, EvidenceResult) {
     let case = ResourceModule::Math.cases()[if cpu { 0 } else { 1 }];
     let mut result = crate::resource_plan::tests::valid_resource_result(ResourceModule::Math);
     result.id = case.label.into();
@@ -29,7 +29,7 @@ fn case_result(cpu: bool) -> (ResourceCase, EvidenceResult) {
         .gates
         .retain(|g| g.metric.starts_with(&format!("{}.", case.label)));
     result.samples.retain(|s| s.cohort == case.label);
-    (case, result)
+    (case.into(), result)
 }
 
 struct Root(PathBuf);
@@ -80,7 +80,7 @@ fn complete_diagnostic_case_roundtrips_with_historical_origin_and_separate_durat
         }
         assert_eq!(
             reused.measurements.last().unwrap().name,
-            format!("{}.origin_execution_seconds", case.label)
+            format!("{}.origin_execution_seconds", case.key())
         );
         assert_eq!(reused.measurements.last().unwrap().value, 151.25);
         assert!(record::encode(&identity(), case, &reused, 0.2, 1_002).is_err());
@@ -294,7 +294,7 @@ fn diagnostic_cache_aliases_are_protected_and_cannot_escape_target() {
     assert!(protected.is_err());
     let outside = root.0.join("dist");
     fs::create_dir(&outside).unwrap();
-    let version = cache.join("v1");
+    let version = cache.join("v2");
     junction(&version, &outside);
     let store = Store {
         identity: identity(),

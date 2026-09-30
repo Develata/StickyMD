@@ -4,7 +4,7 @@
 use crate::{
     evidence::EvidenceResult,
     qualification::resource_diagnostics::Store,
-    resource_plan::{ResourceCase, progress::Observer},
+    resource_plan::{diagnostic::Unit, progress::Observer},
 };
 use std::path::Path;
 
@@ -57,7 +57,7 @@ impl Observer for Resuming<'_> {
         }
         Ok(())
     }
-    fn load(&mut self, case: ResourceCase) -> Result<Option<EvidenceResult>, String> {
+    fn load(&mut self, case: Unit) -> Result<Option<EvidenceResult>, String> {
         let result = self
             .resume
             .store
@@ -66,7 +66,7 @@ impl Observer for Resuming<'_> {
         if result.is_some() {
             self.inner.waited(case.minimum_wait_seconds());
             self.inner.stage(
-                case.label,
+                case.key(),
                 crate::resource_plan::REPETITIONS,
                 "diagnostic-reused",
                 0,
@@ -74,12 +74,7 @@ impl Observer for Resuming<'_> {
         }
         Ok(result)
     }
-    fn save(
-        &mut self,
-        case: ResourceCase,
-        result: &EvidenceResult,
-        elapsed: f64,
-    ) -> Result<(), String> {
+    fn save(&mut self, case: Unit, result: &EvidenceResult, elapsed: f64) -> Result<(), String> {
         self.resume
             .store
             .as_ref()

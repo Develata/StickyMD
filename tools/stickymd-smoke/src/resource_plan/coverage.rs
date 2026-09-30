@@ -73,16 +73,22 @@ pub(crate) fn validate_receipt(document: &str, group: ResourceModule) -> Result<
         ));
     }
     let results = root.field("results")?.array()?;
-    if results.len() != 1
-        || results[0].field("id")?.string()? != group.task_label()
-        || results[0].field("status")?.string()? != "PASSED"
+    if results.len() != 1 {
+        return Err("resource receipt must contain one result".into());
+    }
+    validate_group_result(&results[0], group)
+}
+
+pub(crate) fn validate_group_result(result: &Value, group: ResourceModule) -> Result<(), String> {
+    if result.field("id")?.string()? != group.task_label()
+        || result.field("status")?.string()? != "PASSED"
     {
         return Err(format!(
             "{} resource receipt is not one complete successful group",
             group.name()
         ));
     }
-    let values = super::observations::measurements(results[0].field("measurements")?)?;
+    let values = super::observations::measurements(result.field("measurements")?)?;
     for expected in coverage_measurements(group) {
         if values.get(expected.name.as_str()) != Some(&(expected.value, expected.unit.as_str())) {
             return Err(format!(
@@ -122,7 +128,7 @@ pub(crate) fn validate_receipt(document: &str, group: ResourceModule) -> Result<
     if group == ResourceModule::Zoom {
         require(&values, "zoom_cycles.private_growth", "bytes")?;
     }
-    super::observations::validate(&results[0], group, &values)
+    super::observations::validate(result, group, &values)
 }
 
 fn require(values: &BTreeMap<&str, (f64, &str)>, name: &str, unit: &str) -> Result<(), String> {

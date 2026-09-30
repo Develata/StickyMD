@@ -398,9 +398,10 @@ For **local diagnostics only**, opt into complete-case resume:
 
 The Rust flag is `--resource-resume`; it requires Phase 14 Resources and an ignored
 JSON output under `target/`. Canonical qualification paths and aliases reject it.
-Only complete, successful five-sample Source/Preview, Math and Images cases enter
-`target/resource-diagnostics/v1/`. Window stress and Zoom keep their existing full-run
-boundaries. Partial or failed cases run again from the beginning; old diagnostic JSON
+Only complete, successful five-sample Source/Preview, Math and Images cases, or whole
+Window/Zoom groups, enter `target/resource-diagnostics/v2/`. Whole groups retain every
+fixture, stress and hard-gate check and require successful cleanup. Partial or failed units
+run again from the beginning; old diagnostic JSON and v1 caches
 is not imported. No qualification ledger or readiness result consumes this cache.
 
 Reuse binds all tracked and nonignored untracked input bytes, source commit, actual

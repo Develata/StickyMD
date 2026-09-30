@@ -71,7 +71,13 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A52 | 每个实际执行资源组在长采样前用独立副本验证物理激活/路由及三种视图的持久化确认；探针失败阻断采样，遮挡诊断只记录现场 HWND/PID、进程文件名和窗口类 | Automated | resource probe 短路、窗口路由诊断与显式 native probe；正式五组覆盖仍由 P14-A46 持有 | AUTOMATED PASS |
 | P14-A53 | 完整场景结束后原子保存当前组的 INCOMPLETE 检查点；独立进度文件显示轮次、阶段及剩余固定预算；进度/检查点失败不得把部分测量提升为成功，原始错误保留 | Automated | resource observer 持久化、预算、失败状态、写入失败与账本隔离回归 | AUTOMATED PASS |
 | P14-A54 | 显式诊断续跑只缓存完整五次采样场景，绑定实际程序/harness、源码输入和环境身份；失效重测、失败不缓存、历史观测标注来源，正式输出和账本拒绝诊断缓存 | Automated | diagnostic cache 原始观测/统计/硬门、损坏/过期/身份漂移、原子写入、路径别名及正式入口保护回归 | AUTOMATED PASS |
+| P14-A55 | Window/Zoom 仅以完整组诊断复用，原始五次观测、压力/fixture/硬门完整且清理成功；失败不缓存，历史样本不能登记正式成功 | Automated | 完整组校验、清理/写入失败回归；完整五组资格由 P14-A46 持有 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
+
+P14-A55 Preconditions：Window/Zoom 完整组诊断缓存，身份与有效期符合 P14-A54。
+Action：完成整组后续跑，分别删除原始样本、fixture、压力记录或硬门，注入清理失败。
+Expected：只有完整组复用；清理失败不发布，部分组重跑；本轮桌面探针仍执行，历史耗时独立。
+Failure Signals：部分压力循环续跑、缺样本仍命中、历史观测成为正式资格化收据。
 
 P14-A54 Preconditions：显式 Phase 14 Resources 诊断，`target/` 下 ignored JSON 输出；
 程序、harness、全部源码/fixture 输入和可识别的单显示器交互环境身份保持一致。

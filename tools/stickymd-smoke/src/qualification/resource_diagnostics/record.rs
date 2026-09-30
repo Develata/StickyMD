@@ -7,12 +7,12 @@ use crate::{
         self, EvidenceGate, EvidenceMeasurement, EvidenceResult, EvidenceSample, EvidenceStatus,
     },
     release::json::{self, Value},
-    resource_plan::{self, ResourceCase},
+    resource_plan::diagnostic::Unit,
 };
 
 pub(super) fn encode(
     identity: &Identity,
-    case: ResourceCase,
+    case: Unit,
     result: &EvidenceResult,
     elapsed: f64,
     created: u64,
@@ -25,19 +25,19 @@ pub(super) fn encode(
         identity.dirty,
         None,
         Some(&identity.executable),
-        "resource-diagnostic-cohort",
+        "resource-diagnostic-unit",
         std::slice::from_ref(result),
         None,
     );
     let parsed = json::parse(&payload)?;
-    resource_plan::validate_case(&parsed.field("results")?.array()?[0], case)?;
+    case.validate(&parsed.field("results")?.array()?[0])?;
     let body = format!(
-        "{{\"schema_version\":1,\"kind\":\"DIAGNOSTIC_ONLY\",\"identity\":\"{}\",\"source\":\"{}\",\"executable\":\"{}\",\"harness\":\"{}\",\"case\":\"{}\",\"created\":{created},\"origin_execution_seconds\":{elapsed},\"payload\":\"{}\"}}",
+        "{{\"schema_version\":2,\"kind\":\"DIAGNOSTIC_ONLY\",\"identity\":\"{}\",\"source\":\"{}\",\"executable\":\"{}\",\"harness\":\"{}\",\"unit\":\"{}\",\"created\":{created},\"origin_execution_seconds\":{elapsed},\"payload\":\"{}\"}}",
         evidence::escape_json(&identity.fingerprint),
         evidence::escape_json(&identity.source),
         evidence::escape_json(&identity.executable),
         evidence::escape_json(&identity.harness),
-        case.label,
+        case.key(),
         evidence::escape_json(&payload)
     );
     let document = envelope(&body)?;
@@ -58,7 +58,7 @@ fn envelope(body: &str) -> Result<String, String> {
 pub(super) fn decode(
     document: &str,
     identity: &Identity,
-    case: ResourceCase,
+    case: Unit,
     now: u64,
 ) -> Result<EvidenceResult, String> {
     let outer = json::parse(document)?;
@@ -67,13 +67,13 @@ pub(super) fn decode(
         return Err("diagnostic cache checksum mismatch".into());
     }
     let metadata = json::parse(body)?;
-    if metadata.field("schema_version")?.unsigned()? != 1
+    if metadata.field("schema_version")?.unsigned()? != 2
         || metadata.field("kind")?.string()? != "DIAGNOSTIC_ONLY"
         || metadata.field("identity")?.string()? != identity.fingerprint
         || metadata.field("source")?.string()? != identity.source
         || metadata.field("executable")?.string()? != identity.executable
         || metadata.field("harness")?.string()? != identity.harness
-        || metadata.field("case")?.string()? != case.label
+        || metadata.field("unit")?.string()? != case.key()
     {
         return Err("incompatible diagnostic cache identity".into());
     }
@@ -86,7 +86,7 @@ pub(super) fn decode(
         return Err("invalid diagnostic duration".into());
     }
     let payload = json::parse(metadata.field("payload")?.string()?)?;
-    if payload.field("suite")?.string()? != "resource-diagnostic-cohort"
+    if payload.field("suite")?.string()? != "resource-diagnostic-unit"
         || payload.field("schema_version")?.unsigned()? != 2
         || payload.field("commit")?.string()? != identity.source
         || payload.field("executable_sha256")?.string()? != identity.executable
@@ -98,17 +98,17 @@ pub(super) fn decode(
     if results.len() != 1 {
         return Err("cache must contain exactly one case".into());
     }
-    resource_plan::validate_case(&results[0], case)?;
+    case.validate(&results[0])?;
     let value = &results[0];
     let origin = format!("diagnostic-cache:{}:{created}", identity.fingerprint);
     let mut summary = measurements(value.field("measurements")?)?;
     summary.push(EvidenceMeasurement {
-        name: format!("{}.origin_execution_seconds", case.label),
+        name: format!("{}.origin_execution_seconds", case.key()),
         unit: "seconds".into(),
         value: elapsed,
     });
     Ok(EvidenceResult {
-        id: case.label.into(),
+        id: case.result_id().into(),
         status: EvidenceStatus::Passed,
         detail: Some(format!(
             "DIAGNOSTIC_REUSED {origin}; origin_source={}; origin_exe_sha256={}; origin_harness_sha256={}; origin_execution_seconds={elapsed}",

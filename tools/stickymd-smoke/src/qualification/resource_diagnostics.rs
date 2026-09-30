@@ -3,12 +3,14 @@
 
 #![cfg_attr(not(windows), allow(dead_code))]
 mod digest;
+#[cfg(test)]
+mod group_tests;
 mod identity;
 mod record;
 #[cfg(test)]
 mod tests;
 
-use crate::{evidence::EvidenceResult, resource_plan::ResourceCase};
+use crate::{evidence::EvidenceResult, resource_plan::diagnostic::Unit};
 use identity::Identity;
 use std::{
     fs,
@@ -17,7 +19,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const DIRECTORY: &str = "target/resource-diagnostics/v1";
+const DIRECTORY: &str = "target/resource-diagnostics/v2";
 const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_AGE: u64 = 24 * 60 * 60;
 
@@ -47,18 +49,14 @@ impl Store {
         }
     }
 
-    pub(crate) fn load(
-        &self,
-        root: &Path,
-        case: ResourceCase,
-    ) -> Result<Option<EvidenceResult>, String> {
+    pub(crate) fn load(&self, root: &Path, case: Unit) -> Result<Option<EvidenceResult>, String> {
         self.load_using(root, case, || identity::capture(root, &self.host))
     }
 
     fn load_using(
         &self,
         root: &Path,
-        case: ResourceCase,
+        case: Unit,
         mut fresh: impl FnMut() -> Result<Identity, String>,
     ) -> Result<Option<EvidenceResult>, String> {
         self.matches(fresh()?)?;
@@ -70,14 +68,14 @@ impl Store {
             Ok(result) => {
                 eprintln!(
                     "RESOURCE_RESUME case={} status=DIAGNOSTIC_REUSED",
-                    case.label
+                    case.key()
                 );
                 Ok(Some(result))
             }
             Err(_) => {
                 eprintln!(
                     "RESOURCE_RESUME case={} status=MISS (missing, expired or invalid record)",
-                    case.label
+                    case.key()
                 );
                 Ok(None)
             }
@@ -87,7 +85,7 @@ impl Store {
     pub(crate) fn save(
         &self,
         root: &Path,
-        case: ResourceCase,
+        case: Unit,
         result: &EvidenceResult,
         elapsed: f64,
     ) -> Result<(), String> {
@@ -99,7 +97,7 @@ impl Store {
     fn save_using(
         &self,
         root: &Path,
-        case: ResourceCase,
+        case: Unit,
         result: &EvidenceResult,
         elapsed: f64,
         mut fresh: impl FnMut() -> Result<Identity, String>,
@@ -115,23 +113,18 @@ impl Store {
         crate::atomic_evidence::write(&path, document.as_bytes())?;
         eprintln!(
             "RESOURCE_RESUME case={} status=SAVED_COMPLETE_DIAGNOSTIC",
-            case.label
+            case.key()
         );
         Ok(())
     }
 
-    fn path(&self, root: &Path, case: ResourceCase) -> Result<PathBuf, String> {
+    fn path(&self, root: &Path, case: Unit) -> Result<PathBuf, String> {
         super::receipt::validate_sha256(&self.identity.fingerprint, "diagnostic key")?;
-        if !crate::resource_plan::GROUPS
-            .iter()
-            .any(|g| g.cases().contains(&case))
-        {
-            return Err("unregistered diagnostic case".into());
-        }
+        case.registered()?;
         let path = root
             .join(DIRECTORY)
             .join(&self.identity.fingerprint)
-            .join(format!("{}.json", case.label));
+            .join(format!("{}.json", case.key()));
         if !super::module_ledger::is_within(root, &path, "target")
             || super::module_ledger::is_within(root, &path, "dist")
         {

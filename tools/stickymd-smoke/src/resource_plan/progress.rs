@@ -9,12 +9,12 @@ pub(crate) trait Observer {
     fn verify(&mut self) -> Result<(), String> {
         Ok(())
     }
-    fn load(&mut self, _case: super::ResourceCase) -> Result<Option<EvidenceResult>, String> {
+    fn load(&mut self, _unit: super::diagnostic::Unit) -> Result<Option<EvidenceResult>, String> {
         Ok(None)
     }
     fn save(
         &mut self,
-        _case: super::ResourceCase,
+        _unit: super::diagnostic::Unit,
         _result: &EvidenceResult,
         _elapsed_seconds: f64,
     ) -> Result<(), String> {

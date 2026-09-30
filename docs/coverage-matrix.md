@@ -208,6 +208,10 @@ P14-A53 的场景完成回调由 `resource_plan/progress` 定义，执行层只�
 `runner/resource_observer` 持有进度 sidecar 与 INCOMPLETE 检查点的原子写入。
 `runner/resource_progress` 继续持有组间检查点，正式子组成功仍只由既有 Campaign 登记。
 
+P14-A55 映射 plan 11 的完整 Window/Zoom 诊断复用：`resource_plan/diagnostic` 共享
+正式组结构校验，`runtime/resources/whole_group` 在完整测量及清理后保存；历史原始观测
+仍拒绝正式登记。完整五组现场资格化继续由 P14-A46 持有。
+
 P14-A54 映射 plan 11 的显式诊断续跑：`runner/resource_resume` 在单次命令内持有
 `qualification/resource_diagnostics`，严格核对完整场景和前后身份；公共路径保护隔离
 ignored 缓存与 canonical 账本。原始观测校验复用 `resource_plan/observations`，历史

@@ -15,7 +15,7 @@
 # Reserved output aliases are rejected before execution; shared resource cohorts retain raw samples/gates.
 # Each measured resource group starts with a disposable physical desktop probe; blocked input records bounded window identity.
 # Resource cases checkpoint INCOMPLETE samples; .progress.json reports rounds, stages and remaining fixed wait outside sampling windows.
-# ResourceResume is diagnostic-only, with complete five-sample cases and strict byte/environment identity in ignored target storage.
+# ResourceResume is diagnostic-only: complete five-sample cases or whole Window/Zoom groups, with strict identity in ignored target storage.
 [CmdletBinding()]
 param(
     [switch]$Ci,
