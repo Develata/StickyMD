@@ -2,6 +2,7 @@
 
 mod candidate_input;
 pub(crate) mod headless;
+mod resource_observer;
 mod resource_progress;
 mod resource_session;
 mod timing;
@@ -182,7 +183,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
 
     let mut results = Vec::with_capacity(tasks.len() + 8);
     let mut environment = None;
-    let outcome = execute_tasks(
+    let mut outcome = execute_tasks(
         root,
         options,
         &label,
@@ -190,6 +191,21 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
         &mut results,
         &mut environment,
     );
+    if let Err(error) = resource_observer::command_state(
+        root,
+        options,
+        if outcome.is_ok() {
+            "command-finished"
+        } else {
+            "failed"
+        },
+    ) {
+        results.push(failed_task("resource progress finalization", &error));
+        outcome = Err(match outcome {
+            Ok(()) => error,
+            Err(original) => format!("{original}; progress finalization failed: {error}"),
+        });
+    }
     let emitted = if options.json {
         evidence::emit(
             root,
@@ -224,6 +240,10 @@ fn execute_tasks(
     environment: &mut Option<QualificationEnvironment>,
 ) -> Result<(), String> {
     resource_progress::emit(root, label, options, results, environment.as_ref())?;
+    if let Err(error) = resource_observer::command_state(root, options, "planning") {
+        results.push(failed_task("resource progress initialization", &error));
+        return Err(error);
+    }
     let mut resources = match resource_session::Session::prepare(root, options, tasks) {
         Ok(session) => session,
         Err(error) => {
@@ -293,7 +313,45 @@ fn execute_tasks(
             }
 
             if let Some(group) = resource_group {
-                match resources.run(root, group, options.json, environment.as_ref()) {
+                let mut observer = resource_observer::Reporter::new(
+                    root,
+                    label,
+                    options,
+                    group,
+                    results,
+                    environment.as_ref(),
+                    resources.remaining_wait(),
+                );
+                let mut outcome = resources.run(
+                    root,
+                    group,
+                    options.json,
+                    environment.as_ref(),
+                    &mut observer,
+                );
+                resources.update_remaining_wait(observer.remaining());
+                if let Err(error) = observer.finish(
+                    outcome
+                        .as_ref()
+                        .is_ok_and(|r| r.status == EvidenceStatus::Passed),
+                ) {
+                    match &mut outcome {
+                        Ok(result) => {
+                            result.status = EvidenceStatus::Failed;
+                            result.detail = Some(format!(
+                                "{}; progress finalization failed: {error}",
+                                result
+                                    .detail
+                                    .as_deref()
+                                    .unwrap_or("resource group finished")
+                            ));
+                        }
+                        Err(original) => {
+                            original.push_str(&format!("; progress finalization failed: {error}"))
+                        }
+                    }
+                }
+                match outcome {
                     Ok(result) => resource_session::append_result(results, result)?,
                     Err(error) => {
                         results.push(failed_task(task_name, &error));

@@ -84,6 +84,15 @@ pub(crate) fn run(
             group,
             json_output,
             &mut resources::Cache::default(),
+            &mut crate::resource_plan::progress::Console {
+                remaining: crate::resource_plan::minimum_wait_seconds(
+                    &[group],
+                    true,
+                    std::env::var("STICKYMD_SMOKE_RESOURCE_CASE")
+                        .ok()
+                        .as_deref(),
+                ),
+            },
         )
         .map(|output| RuntimeEvidence {
             measurements: output.measurements,

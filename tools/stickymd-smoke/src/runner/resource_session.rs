@@ -7,6 +7,7 @@ use std::time::Instant;
 
 pub(super) struct Session {
     campaign: Option<Campaign>,
+    remaining_wait: u64,
     #[cfg(windows)]
     cache: crate::runtime::resources::Cache,
 }
@@ -45,9 +46,17 @@ impl Session {
         }
         Ok(Self {
             campaign,
+            remaining_wait: minimum,
             #[cfg(windows)]
             cache: Default::default(),
         })
+    }
+
+    pub(super) fn remaining_wait(&self) -> u64 {
+        self.remaining_wait
+    }
+    pub(super) fn update_remaining_wait(&mut self, remaining: u64) {
+        self.remaining_wait = remaining;
     }
 
     pub(super) fn reuse(
@@ -66,9 +75,10 @@ impl Session {
         group: ResourceModule,
         json: bool,
         environment: Option<&QualificationEnvironment>,
+        observer: &mut dyn crate::resource_plan::progress::Observer,
     ) -> Result<EvidenceResult, String> {
         let started = Instant::now();
-        let mut result = self.measure(root, group, json).map_err(|error| {
+        let mut result = self.measure(root, group, json, observer).map_err(|error| {
             format!(
                 "{} resource group failed after {:.3} seconds: {error}",
                 group.name(),
@@ -106,8 +116,9 @@ impl Session {
         root: &Path,
         group: ResourceModule,
         json: bool,
+        observer: &mut dyn crate::resource_plan::progress::Observer,
     ) -> Result<EvidenceResult, String> {
-        let output = crate::runtime::resources::run(root, group, json, &mut self.cache)?;
+        let output = crate::runtime::resources::run(root, group, json, &mut self.cache, observer)?;
         Ok(measured_result(group, output))
     }
 
@@ -117,6 +128,7 @@ impl Session {
         _root: &Path,
         _group: ResourceModule,
         _json: bool,
+        _observer: &mut dyn crate::resource_plan::progress::Observer,
     ) -> Result<EvidenceResult, String> {
         Err("native resource qualification requires Windows".into())
     }

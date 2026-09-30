@@ -7,6 +7,7 @@ mod window;
 mod zoom;
 use super::*;
 use crate::cli::ResourceModule;
+use crate::resource_plan::progress::Observer;
 use crate::resource_plan::{ResourceCase, ScenarioCache, Transition, WARMUP_SECONDS};
 
 #[derive(Default)]
@@ -23,16 +24,31 @@ pub(crate) struct Output {
     pub(crate) failure: Option<String>,
 }
 
+impl Output {
+    fn checkpoint(&self, group: ResourceModule, observer: &mut dyn Observer) -> Result<(), String> {
+        observer.checkpoint(crate::evidence::EvidenceResult {
+            id: group.task_label().into(),
+            status: crate::evidence::EvidenceStatus::NotTested,
+            detail: Some("INCOMPLETE: resource group has not finished".into()),
+            measurements: self.measurements.clone(),
+            gates: self.gates.clone(),
+            samples: self.samples.clone(),
+        })
+    }
+}
+
 pub(crate) fn run(
     repository: &Path,
     group: ResourceModule,
     json: bool,
     cache: &mut Cache,
+    observer: &mut dyn Observer,
 ) -> Result<Output, String> {
     JSON_OUTPUT.store(json, Ordering::Relaxed);
     let filter = std::env::var("STICKYMD_SMOKE_RESOURCE_CASE").unwrap_or_default();
     validate_filter(group, &filter)?;
     managed_process::ensure_no_stale_smoke_stickymd()?;
+    observer.stage("desktop-probe", 0, "probe", 0)?;
     let root = create_smoke_root()?;
     let mut output = Output::default();
     let started = Instant::now();
@@ -54,10 +70,12 @@ pub(crate) fn run(
     );
     let result = probe_result.and_then(|()| match group {
         ResourceModule::Window => {
-            window::run_window_resource_measurement(repository, &root, &mut output)
+            window::run_window_resource_measurement(repository, &root, &mut output, observer)
         }
-        ResourceModule::Zoom => zoom::run_zoom_resource_measurement(repository, &root, &mut output),
-        _ => matrix(repository, &root, group, cache, &mut output),
+        ResourceModule::Zoom => {
+            zoom::run_zoom_resource_measurement(repository, &root, &mut output, observer)
+        }
+        _ => matrix(repository, &root, group, cache, &mut output, observer),
     });
     output.failure = result.err();
     if let Err(error) = cleanup_root(&root) {
@@ -85,6 +103,7 @@ fn matrix(
     group: ResourceModule,
     cache: &mut Cache,
     output: &mut Output,
+    observer: &mut dyn Observer,
 ) -> Result<(), String> {
     let source = crate::qualification::release_executable(repository)?;
     let executable_sha256 = crate::integrity::sha256(&source)?;
@@ -110,10 +129,11 @@ fn matrix(
         return Err(format!("unknown resource case filter {filter}"));
     }
     for case in cases {
+        observer.stage(case.label, 0, "case-start", 0)?;
         let started = Instant::now();
         let measured = cache.cohorts.measure(case, || {
             let mut observed = Output::default();
-            let outcome = measure_case(&source, root, case, &mut observed);
+            let outcome = measure_case(&source, root, case, &mut observed, observer);
             match outcome {
                 Ok(()) => Ok(observed),
                 Err(error) => {
@@ -146,6 +166,17 @@ fn matrix(
         output.measurements.extend(observed.measurements);
         output.samples.extend(observed.samples);
         output.gates.extend(observed.gates);
+        observer.stage(
+            case.label,
+            RESOURCE_REPETITIONS,
+            if origin.is_some() {
+                "shared"
+            } else {
+                "case-finished"
+            },
+            0,
+        )?;
+        output.checkpoint(group, observer)?;
     }
     Ok(())
 }
@@ -173,12 +204,14 @@ fn measure_case(
     root: &Path,
     case: ResourceCase,
     output: &mut Output,
+    observer: &mut dyn Observer,
 ) -> Result<(), String> {
     let mode = case.label;
     let logical_processors = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let mut cohort = cohort::Cohort::new(mode, WARMUP_SECONDS);
     let outcome = (|| {
         for repetition in 0..RESOURCE_REPETITIONS {
+            observer.stage(mode, repetition + 1, "starting", 0)?;
             let directory = root.join(format!("{mode}-{repetition}"));
             let executable = copy_executable(source, &directory)?;
             prepare_resource_layout(
@@ -197,12 +230,16 @@ fn measure_case(
             // updates into process CPU attributed to the idle sample.
             let window = crate::window_control::visible_window(child.id())?;
             crate::window_control::park_cursor_outside_window(window)?;
+            observer.stage(mode, repetition + 1, "warmup", RESOURCE_WARMUP.as_secs())?;
             thread::sleep(RESOURCE_WARMUP);
+            observer.waited(RESOURCE_WARMUP.as_secs());
             ensure_alive(&mut child, "resource measurement instance")?;
             if case.transition == Transition::PreviewToSource {
+                observer.stage(mode, repetition + 1, "transition", 5)?;
                 crate::window_control::switch_to_source(child.id())?;
                 wait_for_view_mode(&directory, "source")?;
                 thread::sleep(Duration::from_secs(5));
+                observer.waited(5);
                 ensure_alive(&mut child, "Source-after-Preview resource instance")?;
             }
             let sample = process_metrics::memory(&child)?;
@@ -217,7 +254,9 @@ fn measure_case(
             );
             cohort.memory(output, sample, None)?;
             if case.measure_cpu {
+                observer.stage(mode, repetition + 1, "cpu", CPU_INTERVAL.as_secs())?;
                 let cpu = measure_idle_cpu(&mut child, mode, logical_processors, window)?;
+                observer.waited(CPU_INTERVAL.as_secs());
                 cohort.cpu(output, cpu)?;
             }
             stop_child(&mut child);

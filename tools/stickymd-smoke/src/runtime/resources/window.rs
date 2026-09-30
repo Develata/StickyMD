@@ -2,11 +2,13 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#resource-module-qualification
 use super::super::*;
 use super::{Output, cohort::Cohort};
+use crate::resource_plan::progress::Observer;
 
 pub(super) fn run_window_resource_measurement(
     repository: &Path,
     root: &Path,
     output: &mut Output,
+    observer: &mut dyn Observer,
 ) -> Result<(), String> {
     let source = crate::qualification::release_executable(repository)?;
     if !source.is_file() {
@@ -28,6 +30,7 @@ pub(super) fn run_window_resource_measurement(
     let mut startup_samples = Vec::with_capacity(RESOURCE_REPETITIONS);
     let outcome: Result<(), String> = (|| {
         for repetition in 0..RESOURCE_REPETITIONS {
+            observer.stage("visible-source", repetition + 1, "starting", 0)?;
             let directory = root.join(format!("window-resource-{repetition}"));
             let executable = copy_executable(&source, &directory)?;
             prepare_resource_layout(&directory, "source", 0, 0, ImageResourceFixture::None)?;
@@ -52,7 +55,14 @@ pub(super) fn run_window_resource_measurement(
                     repetition + 1,
                     startup.as_secs_f64() * 1_000.0
                 );
+                observer.stage(
+                    "visible-source",
+                    repetition + 1,
+                    "warmup",
+                    RESOURCE_WARMUP.as_secs(),
+                )?;
                 thread::sleep(RESOURCE_WARMUP);
+                observer.waited(RESOURCE_WARMUP.as_secs());
                 ensure_alive(&mut child, "visible window resource instance")?;
                 let visible = process_metrics::memory(&child)?;
                 runtime_report!(
@@ -64,8 +74,15 @@ pub(super) fn run_window_resource_measurement(
                     visible.peak_private_bytes,
                 );
                 visible_cohort.memory(output, visible, None)?;
+                observer.stage(
+                    "visible-source",
+                    repetition + 1,
+                    "cpu",
+                    CPU_INTERVAL.as_secs(),
+                )?;
                 let cpu =
                     measure_idle_cpu(&mut child, "visible-source", logical_processors, window)?;
+                observer.waited(CPU_INTERVAL.as_secs());
                 visible_cohort.cpu(output, cpu)?;
                 crate::window_control::move_to_primary_left_edge(window)?;
                 wait_for_config_field(&directory, "dock_edge = \"left\"")?;
@@ -75,7 +92,14 @@ pub(super) fn run_window_resource_measurement(
                     crate::window_control::ToolbarControl::Collapse,
                 )?;
                 wait_for_primary_left_state(window, true)?;
+                observer.stage(
+                    "docked-collapsed",
+                    repetition + 1,
+                    "warmup",
+                    RESOURCE_WARMUP.as_secs(),
+                )?;
                 thread::sleep(RESOURCE_WARMUP);
+                observer.waited(RESOURCE_WARMUP.as_secs());
                 ensure_alive(&mut child, "collapsed window resource instance")?;
                 let collapsed = process_metrics::memory(&child)?;
                 runtime_report!(
@@ -87,10 +111,18 @@ pub(super) fn run_window_resource_measurement(
                     collapsed.peak_private_bytes,
                 );
                 collapsed_cohort.memory(output, collapsed, None)?;
+                observer.stage(
+                    "docked-collapsed",
+                    repetition + 1,
+                    "cpu",
+                    CPU_INTERVAL.as_secs(),
+                )?;
                 let cpu =
                     measure_idle_cpu(&mut child, "docked-collapsed", logical_processors, window)?;
+                observer.waited(CPU_INTERVAL.as_secs());
                 collapsed_cohort.cpu(output, cpu)?;
                 if repetition == 0 {
+                    observer.stage("window-stress", repetition + 1, "stress", 0)?;
                     run_window_leak_cycles(&directory, &executable, &mut child, window)?;
                     // Persistence/image stress replaces the document. Restore the same
                     // baseline before hidden warmup so all five samples measure it.
@@ -109,7 +141,14 @@ pub(super) fn run_window_resource_measurement(
                 }
                 crate::window_control::request_close(window)?;
                 wait_for_window_visibility(window, false)?;
+                observer.stage(
+                    "hidden-to-tray",
+                    repetition + 1,
+                    "warmup",
+                    RESOURCE_WARMUP.as_secs(),
+                )?;
                 thread::sleep(RESOURCE_WARMUP);
+                observer.waited(RESOURCE_WARMUP.as_secs());
                 ensure_alive(&mut child, "hidden-to-tray resource instance")?;
                 let hidden = process_metrics::memory(&child)?;
                 runtime_report!(
@@ -121,8 +160,15 @@ pub(super) fn run_window_resource_measurement(
                     hidden.peak_private_bytes,
                 );
                 hidden_cohort.memory(output, hidden, Some(HIDDEN_PRIVATE_WORKING_SET_LIMIT))?;
+                observer.stage(
+                    "hidden-to-tray",
+                    repetition + 1,
+                    "cpu",
+                    CPU_INTERVAL.as_secs(),
+                )?;
                 let cpu =
                     measure_idle_cpu(&mut child, "hidden-to-tray", logical_processors, window)?;
+                observer.waited(CPU_INTERVAL.as_secs());
                 hidden_cohort.cpu(output, cpu)?;
                 let observed_note = fs::read(&note)
                     .map_err(|error| format!("cannot verify hidden resource baseline: {error}"))?;
@@ -148,6 +194,7 @@ pub(super) fn run_window_resource_measurement(
             })();
             stop_child(&mut child);
             result?;
+            output.checkpoint(crate::cli::ResourceModule::Window, observer)?;
         }
         print_duration_summary("startup-to-paper", &mut startup_samples)?;
         output.measurements.extend(duration_measurements(

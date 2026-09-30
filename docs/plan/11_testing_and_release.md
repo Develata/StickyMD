@@ -441,6 +441,12 @@ Resources 是 source-preview、math、images、window、zoom 五类兼容成功�
   Source/Preview/Split 切换的持久化确认。探针不产生资源样本，测量使用新进程与原 fixtures。
   遮挡时拒绝输入，并在现场记录可查询的 HWND/PID、可执行文件名和窗口类；不得记录其他
   应用的标题、完整路径或关闭其窗口。探针不能保证后续桌面始终不受干扰。
+- 资源执行器向 runner 上报当前组、场景、轮次和预热/转换/CPU/压力阶段。指定 JSON
+  evidence 输出时，在同目录的 `.progress.json` sidecar 原子保存进度；它始终是诊断进度，
+  不能作资格化收据。剩余时间只表示未执行的固定等待预算，不承诺完成时刻。
+  每个完整基础/数学/图片场景以及完整缩放 cohort 结束后，将当前组已收集数据写入显式
+  INCOMPLETE 检查点；窗口压力过程不因此拆成可复用片段。写盘在采样窗口外，失败须返回
+  非零且保留原始错误；最终结果仍由既有组/命令证据持有。
 - Runtime/Performance/Resources 消费 Promoted Candidate 时，以显式的候选校验任务替代
   不参与测量的本地 Release build；仍须完整验证 Source Freeze、clean tree、EXE/ZIP/SBOM
   hash、checksum 与 native-runtime。候选缺失或失效即失败，不能回退本地构建；Local

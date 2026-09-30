@@ -381,6 +381,15 @@ Occlusion errors include the observed PID, executable basename and window class 
 failure time, without window titles or full process paths. Other windows are not dismissed.
 The probe cannot guarantee that the desktop remains undisturbed later in the run.
 
+With `-Resources -Json -EvidenceFile <path>`, each completed matrix case saves an
+`INCOMPLETE` group checkpoint to the evidence file. Window runs retain diagnostic
+snapshots between complete repetitions; zoom cohorts checkpoint after five samples.
+The adjacent `<stem>.progress.json` reports the group, case, repetition, phase start,
+phase duration and remaining fixed-wait budget. It is always diagnostic progress,
+not a success receipt. File updates happen outside sampling windows; the budget
+excludes process startup, fixture preparation, probes and stress work. No continuous
+background timer consumes CPU during the 60-second measurements.
+
 The persistent result for each phase lives in
 `docs/acceptance-cases/phase-XX.md`. Automated checks may be marked
 `AUTOMATED PASS` only when their checked-in runner passes. Manual checks stay

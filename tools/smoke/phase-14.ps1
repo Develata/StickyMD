@@ -14,6 +14,7 @@
 # Fingerprint planning streams shared inputs once; reuse/promotion still read fresh bytes.
 # Reserved output aliases are rejected before execution; shared resource cohorts retain raw samples/gates.
 # Each measured resource group starts with a disposable physical desktop probe; blocked input records bounded window identity.
+# Resource cases checkpoint INCOMPLETE samples; .progress.json reports rounds, stages and remaining fixed wait outside sampling windows.
 [CmdletBinding()]
 param(
     [switch]$Ci,

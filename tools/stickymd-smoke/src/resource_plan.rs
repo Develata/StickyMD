@@ -3,6 +3,7 @@
 
 mod coverage;
 mod observations;
+pub(crate) mod progress;
 #[cfg(test)]
 pub(crate) mod tests;
 

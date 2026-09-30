@@ -203,3 +203,7 @@ P14-A52 映射 plan 11 的资源交互预检：`runtime/resources/probe` 使用�
 真实 Source/Preview/Split 切换再开始资源等待；`window_control/routing` 在路由错误发生时
 查询 HWND/PID、可执行文件名和窗口类，不记录窗口标题或完整路径。设计与验证记录见
 [资源诊断设计](report/2026-09-30-resource-diagnostics-design.md)。
+
+P14-A53 的场景完成回调由 `resource_plan/progress` 定义，执行层只上报阶段和观测；
+`runner/resource_observer` 持有进度 sidecar 与 INCOMPLETE 检查点的原子写入。
+`runner/resource_progress` 继续持有组间检查点，正式子组成功仍只由既有 Campaign 登记。

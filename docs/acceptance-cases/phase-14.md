@@ -69,6 +69,7 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A50 | 资源规划只枚举一次文件清单，每组只计算一次指纹供兼容性检查；摘要协议、证据完整性校验不变，复用/登记仍重新读取当前输入 | Automated | planned/fresh digest 一致性、新增文件失效与归档损坏拒绝回归 | AUTOMATED PASS |
 | P14-A51 | 任务失败也保留执行用时和已有错误/观测；共享测试的本轮身份核对耗时与历史执行耗时分开记录，资源规划输出总计/逐组用时 | Automated | runner timing、shared prerequisite measurements 与失败留证回归 | AUTOMATED PASS |
 | P14-A52 | 每个实际执行资源组在长采样前用独立副本验证物理激活/路由及三种视图的持久化确认；探针失败阻断采样，遮挡诊断只记录现场 HWND/PID、进程文件名和窗口类 | Automated | resource probe 短路、窗口路由诊断与显式 native probe；正式五组覆盖仍由 P14-A46 持有 | AUTOMATED PASS |
+| P14-A53 | 完整场景结束后原子保存当前组的 INCOMPLETE 检查点；独立进度文件显示轮次、阶段及剩余固定预算；进度/检查点失败不得把部分测量提升为成功，原始错误保留 | Automated | resource observer 持久化、预算、失败状态、写入失败与账本隔离回归 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 P14-A40 Preconditions：隔离 portable 目录、固定资源 fixture、独占交互桌面。

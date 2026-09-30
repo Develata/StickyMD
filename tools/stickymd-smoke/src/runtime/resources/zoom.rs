@@ -5,11 +5,13 @@ use super::{
     Output,
     cohort::{Cohort, check_max},
 };
+use crate::resource_plan::progress::Observer;
 
 pub(super) fn run_zoom_resource_measurement(
     repository: &Path,
     root: &Path,
     output: &mut Output,
+    observer: &mut dyn Observer,
 ) -> Result<(), String> {
     const SPLIT_PRIVATE_WORKING_SET_LIMIT: u64 =
         crate::resource_plan::ZOOM_PRIVATE_WORKING_SET_LIMIT;
@@ -30,6 +32,7 @@ pub(super) fn run_zoom_resource_measurement(
         let mut cohort = Cohort::new(&label, ZOOM_RESOURCE_WARMUP.as_secs());
         let outcome = (|| {
             for repetition in 0..RESOURCE_REPETITIONS {
+                observer.stage(&label, repetition + 1, "starting", 0)?;
                 let directory = root.join(format!("{label}-{repetition}"));
                 let executable = copy_executable(&source, &directory)?;
                 prepare_resource_layout(&directory, "split", 20, 12, ImageResourceFixture::None)?;
@@ -52,9 +55,17 @@ pub(super) fn run_zoom_resource_measurement(
                         verify_toolbar_view_clicks(&directory, &mut child, window, zoom, true)?;
                     }
                     crate::window_control::park_cursor_outside_window(window)?;
+                    observer.stage(
+                        &label,
+                        repetition + 1,
+                        "warmup",
+                        ZOOM_RESOURCE_WARMUP.as_secs(),
+                    )?;
                     thread::sleep(ZOOM_RESOURCE_WARMUP);
+                    observer.waited(ZOOM_RESOURCE_WARMUP.as_secs());
                     ensure_alive(&mut child, "Phase 10 zoom resource instance")?;
                     if zoom == 100 && repetition == 0 {
+                        observer.stage(&label, repetition + 1, "stress", 0)?;
                         let growth =
                             verify_zoom_relayout_does_not_leak(&directory, &mut child, window)?;
                         output.measurements.push(EvidenceMeasurement {
@@ -89,6 +100,8 @@ pub(super) fn run_zoom_resource_measurement(
         })();
         let summary = cohort.finish(output);
         outcome.and(summary)?;
+        observer.stage(&label, RESOURCE_REPETITIONS, "case-finished", 0)?;
+        output.checkpoint(crate::cli::ResourceModule::Zoom, observer)?;
     }
     Ok(())
 }
