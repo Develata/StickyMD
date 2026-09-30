@@ -440,7 +440,9 @@ not authorization or a qualification result.
 from native stderr. The workflow retains every GitHub write, permission and
 tag/draft/publish boundary. Offline tests execute the actual step bodies with
 simulated GitHub I/O and the compiled Rust validator, including refusal before
-mutation. They do not establish remote workflow acceptance or an atomic remote
+mutation. PowerShell 5.1/7 cases use an aliased Unicode/spaced caller directory and
+compare its actual location before/after each step, while checking encoding separately.
+They do not establish remote workflow acceptance or an atomic remote
 transaction; state can still change after observation.
 
 Phase package tasks and downloaded-artifact verification call the same typed

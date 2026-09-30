@@ -120,3 +120,32 @@ Rust 源文件；不复制主工作树中的 LF fixture。完整执行 smoke-onl
 README、P00-A13 和覆盖映射同步补充彩色日志与换行兼容性。复现及复验日志位于 ignored
 `target/review-cli-20260930/`。这关闭了 smoke-only 本地执行路径的验证缺口；完整九任务、
 Linux、远程 CI、GUI/资源/性能 campaign 和人工验收仍未在本轮验证，没有推算性能收益。
+
+## Resolution — 2026-09-30 push 后 CI 路径别名回归
+
+已读取 source `619811ee94026fbb2f55fecbd77bbff2dd6d9e17` 的
+[CI run 36787581253](https://github.com/Develata/StickyMD/actions/runs/36787581253)。
+Windows tests 分片的 `headless` 集成目标为 23 passed / 1 failed，唯一失败是
+`release_remote::actual_tag_and_draft_steps_reject_bad_observations_before_remote_mutations`，
+Windows PowerShell 5.1 报 `Remote adapter changed caller state`。聚合门据此失败；
+Linux smoke、portable-core、Windows lint、release/native-runtime、headless performance、
+依赖政策与 plan/governance jobs 均通过。这补充的是该提交的远程无界面证据，不是新候选资格。
+
+本地原有普通路径用例通过。定位发现断言把 `(Get-Location).Path` 与原始环境变量路径
+直接比较；PowerShell 在首次 `Set-Location` 时就会展开路径别名，因此恢复成功也可能误报。
+在同一 Rust 用例中只将调用者目录改为 `fixture/.` 对应的尾部点段路径后，旧断言稳定失败，
+新增诊断明确显示 expected 有尾部 `\.`、observed 无尾部 `\.`。远端旧日志没有区分位置与
+编码，也没有记录原始 TEMP 字符串，因此尚不能从该日志单独确认远端具体使用了哪种别名。
+
+现按既有 package/phase wrapper 用例的口径，在进入目录后保存实际 caller location，
+每个成功/拒绝分支完成后严格比较该位置，并独立保留 code page 936 的编码恢复断言。
+Rust fixture 固定传入尾部点段，确保本地不依赖 NTFS 8.3 配置也能覆盖这一失效路径；
+路径仍含中文与空格，使用原有 PowerShell 5.1/7 宿主，不增加子进程批次。生产适配脚本、
+工作流、Rust 发布规则与授权边界均无需变更。
+
+修复后 targeted `release_remote::` 通过，完整
+`cargo test -p stickymd-smoke --locked --test headless` 为 24 passed / 0 failed，
+包括双 PowerShell 宿主。`cargo fmt --all --check`、严格 locked Clippy、Phase 00 治理与 diff 检查通过。
+集成日志保存在 ignored `target/ci-remote-20260930/headless.log`。
+README、REL-CLI-17 与覆盖映射同步说明路径别名及实际 CWD/编码检查。
+本次没有重跑 GUI、资源或完整性能 Campaign；修复提交的远程 CI 仍待下一次 push 验证。

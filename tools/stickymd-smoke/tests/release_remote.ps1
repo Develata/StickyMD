@@ -35,6 +35,8 @@ function gh {
     $global:LASTEXITCODE = 0
 }
 Set-Location -LiteralPath $env:STICKYMD_TEST_DIRECTORY
+# PowerShell expands path aliases such as 8.3 TEMP names and trailing dot segments.
+$callerLocation = (Get-Location).Path
 [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(936)
 $env:RUNNER_TEMP = $env:STICKYMD_TEST_DIRECTORY
 $env:GH_REPO = 'owner/StickyMD'
@@ -75,7 +77,8 @@ foreach ($step in $steps) {
             if ($global:RemoteCase -eq 'missing') { $expected = $step[2] }
             if ($caught -or $LASTEXITCODE -ne 0 -or ($global:RemoteWrites -join '|') -cne $expected) { throw "Unexpected $($step[0]) result for $global:RemoteCase exit=$LASTEXITCODE writes=$($global:RemoteWrites -join '|') error=$problem; $([IO.File]::ReadAllText((Join-Path $env:STICKYMD_TEST_DIRECTORY 'error.txt')))" }
         } elseif (-not $caught -or $LASTEXITCODE -eq 0 -or $global:RemoteWrites.Count -ne 0) { throw "Failed observation allowed $($step[0]) mutation for $global:RemoteCase" }
-        if ((Get-Location).Path -cne $env:STICKYMD_TEST_DIRECTORY -or [Console]::OutputEncoding.CodePage -ne 936) { throw 'Remote adapter changed caller state' }
+        if ((Get-Location).Path -cne $callerLocation) { throw "Remote adapter changed caller location: expected '$callerLocation', observed '$((Get-Location).Path)'" }
+        if ([Console]::OutputEncoding.CodePage -ne 936) { throw "Remote adapter changed caller encoding: expected 936, observed $([Console]::OutputEncoding.CodePage)" }
     }
 }
 'REMOTE_STEPS=PASS'
