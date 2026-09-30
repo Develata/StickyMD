@@ -98,6 +98,7 @@
 
 ## 跨阶段验证与风险
 
+- [`2026-09-30-release-cli-reuse.md`](2026-09-30-release-cli-reuse.md)：发布验包内部调用与 CI 规则复用、同输入比较、局部耗时及未验证边界。
 - [`phase-verification-harness-architecture.md`](phase-verification-harness-architecture.md)
 - [`RISK-exact-candidate-remote-build-identity.md`](RISK-exact-candidate-remote-build-identity.md)
 - [`RISK-source-font-startup.md`](RISK-source-font-startup.md)

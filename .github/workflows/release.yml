@@ -34,9 +34,8 @@ jobs:
       - name: Validate source version and provenance
         shell: pwsh
         run: |
-          $manifest = Get-Content Cargo.toml -Raw
-          $version = [regex]::Match($manifest, '(?m)^version\s*=\s*"([^"]+)"\s*$').Groups[1].Value
-          if (-not $version) { throw 'Workspace version is missing' }
+          cargo run --quiet -p stickymd-smoke --locked -- release workspace-version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git merge-base --is-ancestor $env:GITHUB_SHA origin/main
           if ($LASTEXITCODE -ne 0) { throw 'Candidate commit is not contained in origin/main' }
       - name: Install pinned Rust toolchain

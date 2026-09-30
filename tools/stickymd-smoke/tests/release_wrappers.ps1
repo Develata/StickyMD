@@ -123,5 +123,14 @@ if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $before)
 Assert-Fails 'missing notice parent' { & (Join-Path $repo 'tools/release/generate-third-party-notices.ps1') -DestinationPath 'missing/output.txt' }
 $bytes = [IO.File]::ReadAllBytes($destination)
 if ($bytes[0] -eq 0xef -or $bytes -contains 13) { throw 'Notices are not UTF-8 without BOM and LF' }
+$workflowPath = Join-Path $fixture '工作流 observation.json'
+$workflowJson = '{"head_sha":"' + $source + '","conclusion":"success","name":"release"}'
+[IO.File]::WriteAllText($workflowPath, $workflowJson, [Text.UTF8Encoding]::new($false))
+. (Join-Path $repo 'tools/release/invoke-smoke.ps1')
+$output = @(Invoke-StickyMdReleaseTool -RepoRoot $repo -Arguments @('verify-workflow', '--source-sha', $source, '--workflow-json', $workflowPath))
+if ($output.Count -ne 1 -or $output[0] -cne 'WORKFLOW_IDENTITY=PASS') { throw 'Workflow observation output differs' }
+Assert-State
+[IO.File]::WriteAllText($workflowPath, $workflowJson.Replace('success', 'failure'), [Text.UTF8Encoding]::new($false))
+Assert-Fails 'failed workflow observation' { Invoke-StickyMdReleaseTool -RepoRoot $repo -Arguments @('verify-workflow', '--source-sha', $source, '--workflow-json', $workflowPath) }
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 'RELEASE_WRAPPERS=PASS'

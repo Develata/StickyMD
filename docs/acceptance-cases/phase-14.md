@@ -243,9 +243,14 @@ Failure Signals：接受缺失/冲突来源、哈希不符、重复 manifest、�
 | REL-CLI-08 | Syft 先写隔离临时文件；失败、非法 UTF-8/JSON、错误 SPDX 版本、空 packages 或缺失必需文件均不得替换既有 SBOM/manifest；包验证复用同一结构/覆盖规则，即使 hash 正确也拒绝非法 SBOM | Automated | Rust `release::sbom::tests`、`cli_exit` + PowerShell 5.1/7 `release_outputs.ps1` 行为回归 | AUTOMATED PASS |
 | REL-CLI-09 | checksum 生成复用严格名称/hash 规则；拒绝输入输出别名和非法目标；每个输出原子替换且 manifest 最后写入；manifest 替换失败返回非零，不匹配的文件组合不能通过验证 | Automated | Rust `release::checksums::tests`、`release::sbom::tests` 的已知摘要、已有输出保护、Windows 文件锁与残留临时文件回归 | AUTOMATED PASS |
 | REL-CLI-10 | ZIP 中三份受控许可证文本均为非空 UTF-8、无 BOM、LF；保留 checksum/SBOM 输出接口、Unicode/空格路径及 Syft 环境恢复 | Automated | `release_wrappers` 在 PowerShell 5.1/7 实际打包并读取 ZIP 成员和生成输出，不依赖脚本函数名/调用次数 | AUTOMATED PASS |
+| REL-CLI-11 | Phase package task、下载产物检查与外部 CLI 调用同一 Rust 验包实现；保留任务顺序、runtime 检查和输出流边界，失败不产生成功资格化收据 | Automated local | `runner::package`、任务计划回归、`release::package::diagnostics` 同包输出比较和隔离启动检查 | AUTOMATED PASS |
+| REL-CLI-12 | CI 版本读取复用 workspace 解析器；工作流观察要求完整匹配 SHA、成功 conclusion 和 release 名称，与资格化共用规则；查询失败和字段缺失/重复/类型错误拒绝，不授予发布权限 | Automated local | `release::workflow` + `headless release_workflow` 执行实际 workflow step；5.1/7 查询次数、失败退出码及薄入口状态恢复 | AUTOMATED PASS |
 
 详细运行环境、数据及未验证项见 [维护报告](../report/2026-09-22-release-cli-migration.md)。
 SBOM 与 checksum 收尾记录见 [输出维护报告](../report/2026-09-25-release-output-finalization.md)。
+内部调用与 CI 规则复用、本地计时及远程未验证边界见
+[2026-09-30 维护报告](../report/2026-09-30-release-cli-reuse.md)。REL-CLI-12 的 GitHub 观察为离线 fixture；
+不构成远程 workflow、Source Freeze 或人工验收通过。
 
 REL-CLI-05 notices 输出预检：Given 已存在的目标文件/目录或缺失的父目录，且当前 fixture
 没有可用的 Cargo manifest，调用 notices 生成。Expect 在依赖读取之前返回对应输出路径错误，

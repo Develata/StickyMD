@@ -7,6 +7,10 @@ use std::{collections::BTreeMap, path::PathBuf};
 pub(crate) enum Command {
     VerifyPromoted(PromotionOptions),
     VerifyPackage(PackageOptions),
+    VerifyWorkflow {
+        source: String,
+        input: PathBuf,
+    },
     Notices(PathBuf),
     PackageInputs(PackageInputOptions),
     WorkspaceVersion,
@@ -122,6 +126,10 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
             checksums: options.remove("--checksums").map(PathBuf::from),
             runtime,
         }),
+        "verify-workflow" => Command::VerifyWorkflow {
+            source: take("--source-sha")?,
+            input: PathBuf::from(take("--workflow-json")?),
+        },
         "notices" => Command::Notices(PathBuf::from(take("--destination")?)),
         "workspace-version" => Command::WorkspaceVersion,
         "checksums" => Command::Checksums(ChecksumOptions {

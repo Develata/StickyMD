@@ -262,6 +262,7 @@ cargo run --quiet -p stickymd-smoke --locked -- release package-inputs --allow-d
 cargo run --quiet -p stickymd-smoke --locked -- release workspace-version
 cargo run --quiet -p stickymd-smoke --locked -- release verify-package --package-directory <directory> [--zip <zip>] [--checksums <manifest>] [--runtime]
 cargo run --quiet -p stickymd-smoke --locked -- release verify-promoted --artifact-directory <directory> --source-sha <full-sha> --expected-zip-sha256 <sha256> --expected-sbom-sha256 <sha256> --release-tag v0.1.0
+cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow --source-sha <full-sha> --workflow-json <utf8-file-or-dash>
 cargo run --quiet -p stickymd-smoke --locked -- release notices --destination <new-file>
 cargo run --quiet -p stickymd-smoke --locked -- release checksums --zip <zip> [--sbom <sbom>] --output <manifest>
 cargo run --quiet -p stickymd-smoke --locked -- release publish-sbom --input <staged-sbom> --output <sbom> --zip <zip> --checksums <manifest>
@@ -277,6 +278,25 @@ Verification/notices retain the scripts' `KEY=value` stdout and 0/nonzero exit
 semantics. The wrappers resolve relative paths using the caller's PowerShell
 location, restore that location and console encoding even on failure, and use
 locked Cargo invocations.
+
+The release workflow uses `workspace-version` too. `verify-workflow` reads one
+GitHub Actions run API observation from a UTF-8 JSON file, or stdin when
+`--workflow-json -` is supplied. It requires a full matching `head_sha`,
+`conclusion: "success"` and `name: "release"`, rejects missing/duplicate/mistyped
+fields and emits only `WORKFLOW_IDENTITY=PASS` on success. `release/workflow.rs`
+also supplies these predicates to qualification's remote-run recording path.
+The CLI performs no network request and writes no receipt. The publish workflow
+fetches the observation once, propagates GitHub/validation failures, and retains
+its separate draft, tag and artifact checks. It must check out a Source Freeze
+that includes this command; older released sources do not gain new tooling.
+
+Phase package tasks and downloaded-artifact verification call the same typed
+Rust verifier as `release verify-package`. They no longer launch the outer
+PowerShell entry, Cargo and a second smoke process. ZIP/resource adapters and
+locked dependency metadata remain in use. Diagnostics go through an explicit
+writer: human CLI output is unchanged, while JSON phase runs keep them on stderr
+and reserve stdout for their existing receipt format. Package verification alone
+does not qualify a candidate or write a successful qualification receipt.
 
 Rust-launched Windows release adapters start with the selected host's default
 module search path. They do not inherit `PSModulePath` from a different PowerShell
@@ -366,7 +386,21 @@ Focused integration checks use the module filter within that target:
 cargo test -p stickymd-smoke --locked --test headless cli_exit::
 cargo test -p stickymd-smoke --locked --test headless package_path_wrapper::
 cargo test -p stickymd-smoke --locked --test headless release_wrappers::
+cargo test -p stickymd-smoke --locked --test headless release_workflow::
 ```
+
+The workflow tests execute the actual promotion step with an offline GitHub
+observation and the compiled CLI under PowerShell 5.1/7. They check a single query,
+failure propagation and Unicode inputs, not remote authorization or publication.
+Two ignored `release::package::diagnostics` tests can compare direct/wrapper
+dispatch or exercise serial runtime verification. Set
+`STICKYMD_PACKAGE_DIAGNOSTIC_DIRECTORY` to a freshly built isolated local package,
+including its SBOM and manifest, and select one exact test with `--ignored
+--test-threads=1 --nocapture`. The timing test alternates the two paths, excludes
+one warmup pair and checks equivalent output. Run it without concurrent builds;
+it measures local package verification, not product startup or remote CI latency.
+The runtime test opens only its private package copies and checks cleanup; run it
+on an interactive desktop with no other GUI verification campaign.
 
 Automatic standalone integration-target discovery is disabled for this crate; register
 new integration modules in `tests/headless.rs`. Existing module/phase/workspace commands,

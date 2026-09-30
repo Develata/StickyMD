@@ -62,20 +62,7 @@ pub(super) fn record_workflow(root: &Path, run_id: u64, attempt: u64) -> Result<
     let conclusion = json::string_field(&document, "conclusion")?;
     let url = json::string_field(&document, "url")?;
     let workflow = json::string_field(&document, "workflowName")?;
-    if head != source.source_commit {
-        return Err(format!(
-            "remote run head {head} does not match Source Freeze {}",
-            source.source_commit
-        ));
-    }
-    if conclusion != "success" {
-        return Err(format!("remote workflow conclusion is `{conclusion}`"));
-    }
-    if workflow != "release" {
-        return Err(format!(
-            "remote workflow is `{workflow}`, expected `release`"
-        ));
-    }
+    crate::release::workflow::verify_run(&source.source_commit, &head, &conclusion, &workflow)?;
     let (artifact_id, artifact_name) = query_release_artifact(root, run_id)?;
     let evidence = RemoteWorkflow {
         source_commit: source.source_commit,
@@ -455,26 +442,17 @@ fn run_package_verifier(root: &Path, zip: &Path) -> Result<(), String> {
     let parent = zip
         .parent()
         .ok_or_else(|| "downloaded ZIP has no parent directory".to_owned())?;
-    let status = Command::new("pwsh")
-        .args(["-NoProfile", "-File"])
-        .arg(root.join("tools/release/verify-package.ps1"))
-        .arg("-PackageDirectory")
-        .arg(parent)
-        .arg("-ZipPath")
-        .arg(zip)
-        .arg("-ChecksumPath")
-        .arg(parent.join("SHA256SUMS.txt"))
-        .arg("-Runtime")
-        .current_dir(root)
-        .status()
-        .map_err(|error| format!("cannot start package verifier: {error}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "downloaded package verification failed with {status}"
-        ))
-    }
+    crate::release::verify_package(
+        root,
+        &crate::release::PackageOptions {
+            directory: Some(parent.to_path_buf()),
+            zip: Some(zip.to_path_buf()),
+            checksums: Some(parent.join("SHA256SUMS.txt")),
+            runtime: true,
+        },
+        &mut std::io::stdout().lock(),
+    )
+    .map_err(|error| format!("downloaded package verification failed: {error}"))
 }
 
 fn unique_staging_directory(root: &Path) -> Result<PathBuf, String> {

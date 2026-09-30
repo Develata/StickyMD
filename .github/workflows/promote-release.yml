@@ -160,13 +160,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Verify original candidate workflow identity
-        shell: bash
+        shell: pwsh
+        env:
+          APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
         run: |
-          set -euo pipefail
-          endpoint="repos/${GH_REPO}/actions/runs/${{ inputs.artifact_run_id }}"
-          [[ "$(gh api "$endpoint" --jq .head_sha)" == '${{ inputs.source_sha }}' ]] || { printf 'Artifact run/source mismatch\n' >&2; exit 1; }
-          [[ "$(gh api "$endpoint" --jq .conclusion)" == 'success' ]] || { printf 'Artifact run is not successful\n' >&2; exit 1; }
-          [[ "$(gh api "$endpoint" --jq .name)" == 'release' ]] || { printf 'Artifact run is not the release workflow\n' >&2; exit 1; }
+          $observation = & gh api "repos/$env:GH_REPO/actions/runs/$env:ARTIFACT_RUN_ID"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $observation | & cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow "--source-sha=$env:APPROVED_SOURCE_SHA" --workflow-json -
+          exit $LASTEXITCODE
       - name: Download existing draft assets
         shell: bash
         run: |

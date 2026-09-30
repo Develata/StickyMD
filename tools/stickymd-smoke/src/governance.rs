@@ -507,7 +507,6 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         "expected_zip_sha256:",
         "expected_sbom_sha256:",
         "run-id: ${{ inputs.artifact_run_id }}",
-        "actions/runs/${{ inputs.artifact_run_id }}",
         "tools/release/verify-promoted-artifact.ps1",
         "subject-checksums: dist/promoted/SHA256SUMS.txt",
         "sbom-path: dist/promoted/SBOM.spdx.json",
@@ -555,6 +554,8 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     }
     // Release semantics are exercised against compiled Rust by release::* tests and
     // tests/release_wrappers.rs (including actual packaged license bytes).
+    // tests/release_workflow.rs executes the promotion step with the compiled CLI,
+    // covering its remote query and fail-closed identity behavior instead of a URL token.
     // PowerShell source tokens are not evidence of a gate.
     let remote_promotion =
         read_text(&root.join("tools/stickymd-smoke/src/qualification/remote.rs"))?;

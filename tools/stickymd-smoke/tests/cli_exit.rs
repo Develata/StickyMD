@@ -288,6 +288,16 @@ fn malformed_release_requests_never_emit_a_success_marker() {
             "missing",
         ],
         vec!["release", "verify-package", "--unknown", "value"],
+        vec!["release", "verify-workflow", "--source-sha", "abc"],
+        vec![
+            "release",
+            "verify-workflow",
+            "--source-sha",
+            "abc",
+            "--workflow-json",
+            "missing",
+            "--runtime",
+        ],
         vec![
             "release",
             "notices",

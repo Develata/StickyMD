@@ -4,6 +4,7 @@
 mod cli_exit;
 #[cfg(windows)]
 mod package_path_wrapper;
+mod release_workflow;
 #[cfg(windows)]
 mod release_wrappers;
 

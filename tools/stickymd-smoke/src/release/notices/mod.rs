@@ -10,6 +10,14 @@ use crate::{atomic_evidence, integrity, repository};
 use std::{fmt::Write, fs, path::Path};
 
 pub(super) fn generate(root: &Path, destination: &Path) -> Result<(), String> {
+    generate_with_output(root, destination, &mut std::io::stdout().lock())
+}
+
+pub(super) fn generate_with_output(
+    root: &Path,
+    destination: &Path,
+    output: &mut dyn std::io::Write,
+) -> Result<(), String> {
     let destination = std::path::absolute(destination).map_err(|error| error.to_string())?;
     preflight_destination(&destination)?;
     let metadata = repository::command_text(
@@ -28,10 +36,12 @@ pub(super) fn generate(root: &Path, destination: &Path) -> Result<(), String> {
     // The preflight is only an early rejection; publication must still reject a
     // destination created while Cargo metadata and license files were being read.
     atomic_evidence::write_new(&destination, contents.as_bytes())?;
-    println!(
+    writeln!(
+        output,
         "THIRD_PARTY_NOTICES={}\nRUNTIME_DEPENDENCY_COUNT={count}",
         destination.display()
-    );
+    )
+    .map_err(|error| format!("cannot report dependency notices: {error}"))?;
     Ok(())
 }
 

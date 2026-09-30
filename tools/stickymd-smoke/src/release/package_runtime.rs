@@ -74,9 +74,6 @@ pub(super) fn verify(exe: &Path, runtime_root: &Path) -> Result<(), String> {
     for child in &mut children {
         child.kill_and_wait()?;
     }
-    println!(
-        "PACKAGE_RUNTIME=PASS (ASCII, space, Chinese, same-directory and different-directory)"
-    );
     Ok(())
 }
 

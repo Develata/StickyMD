@@ -6,9 +6,13 @@ use super::{
     temporary::TemporaryDirectory, windows,
 };
 use crate::{integrity, package_path, pe_dependencies, repository};
-use std::{fs, path::Path};
+use std::{fs, io::Write, path::Path};
 
-pub(super) fn verify(root: &Path, options: &PackageOptions) -> Result<(), String> {
+pub(crate) fn verify(
+    root: &Path,
+    options: &PackageOptions,
+    output: &mut dyn Write,
+) -> Result<(), String> {
     let directory = options
         .directory
         .clone()
@@ -65,7 +69,7 @@ pub(super) fn verify(root: &Path, options: &PackageOptions) -> Result<(), String
         .map_err(|error| format!("cannot read packaged README: {error}"))?;
     identity::readme_source(&readme, &source)?;
     let expected_notices = temporary.path().join("expected-third-party-notices.txt");
-    notices::generate(root, &expected_notices)?;
+    notices::generate_with_output(root, &expected_notices, output)?;
     if integrity::sha256(&package.join("THIRD_PARTY_NOTICES.txt"))?
         != integrity::sha256(&expected_notices)?
     {
@@ -87,9 +91,19 @@ pub(super) fn verify(root: &Path, options: &PackageOptions) -> Result<(), String
     package_rules::resources(&json::parse(&resources)?, &version)?;
     if options.runtime {
         package_runtime::verify(&exe, &temporary.path().join("runtime"))?;
+        writeln!(
+            output,
+            "PACKAGE_RUNTIME=PASS (ASCII, space, Chinese, same-directory and different-directory)"
+        )
+        .map_err(|error| format!("cannot report package runtime: {error}"))?;
     }
     temporary.close()?;
-    println!("PACKAGE_VERIFY=PASS\nPACKAGE_PATH={}", zip.display());
+    writeln!(
+        output,
+        "PACKAGE_VERIFY=PASS\nPACKAGE_PATH={}",
+        zip.display()
+    )
+    .map_err(|error| format!("cannot report package verification: {error}"))?;
     Ok(())
 }
 
@@ -122,3 +136,7 @@ mod tests {
         assert!(verify_zip_location(&first, &second).is_err());
     }
 }
+
+#[cfg(all(test, windows))]
+#[path = "package_diagnostics.rs"]
+mod diagnostics;

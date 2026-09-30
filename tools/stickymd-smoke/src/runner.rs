@@ -2,6 +2,7 @@
 
 mod candidate_input;
 pub(crate) mod headless;
+mod package;
 mod resource_observer;
 mod resource_priority;
 mod resource_progress;
@@ -99,6 +100,7 @@ enum Task {
     },
     NativeRuntimeDependencies,
     PromotedCandidate,
+    VerifyPackage,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -157,6 +159,7 @@ impl Task {
             Self::QualificationEnvironment => TaskId::QualificationEnvironment,
             Self::NativeRuntimeDependencies => TaskId::VerifyNativeRuntimeDependencies,
             Self::PromotedCandidate => TaskId::VerifyPromotedCandidate,
+            Self::VerifyPackage => TaskId::VerifyPackage,
             Self::Cargo { id, .. } | Self::PowerShell { id, .. } | Self::Runtime { id, .. } => *id,
         }
     }
@@ -558,6 +561,7 @@ fn task_label(task: &Task) -> &'static str {
         Task::QualificationEnvironment => "qualification environment preflight",
         Task::NativeRuntimeDependencies => "portable native-runtime dependency gate",
         Task::PromotedCandidate => "promoted candidate identity and artifact verification",
+        Task::VerifyPackage => "portable package verification",
         Task::Cargo { label, .. } => label,
         Task::PowerShell { label, .. } => label,
         Task::Runtime {
@@ -635,6 +639,8 @@ fn run_task(root: &Path, task: &Task, capture_output: bool) -> Result<TaskExecut
                 .map(|_| TaskExecution::Passed(TaskEvidence::default()))
         }
         Task::Cargo { label, args, .. } => run_cargo(root, label, args, capture_output)
+            .map(|()| TaskExecution::Passed(TaskEvidence::default())),
+        Task::VerifyPackage => package::run(root, capture_output)
             .map(|()| TaskExecution::Passed(TaskEvidence::default())),
         Task::PowerShell {
             label,
@@ -1121,12 +1127,7 @@ fn generate_sbom() -> Task {
 }
 
 fn verify_package() -> Task {
-    powershell(
-        TaskId::VerifyPackage,
-        "portable package verification",
-        "tools/release/verify-package.ps1",
-        &["-Runtime"],
-    )
+    Task::VerifyPackage
 }
 
 fn workspace_check() -> Task {
@@ -2522,6 +2523,7 @@ mod tests {
                 TaskId::VerifyPackage,
             ]
         );
+        assert_eq!(tasks.last(), Some(&super::Task::VerifyPackage));
     }
 
     #[test]
