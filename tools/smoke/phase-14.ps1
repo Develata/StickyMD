@@ -18,6 +18,7 @@
 # ResourceResume is diagnostic-only: complete five-sample cases or whole Window/Zoom groups, with strict identity in ignored target storage.
 # ResourcePlan emits advisory NOT_RUN JSON without running resource tasks; identity timings remain outside sample windows.
 # Diagnostic resume can use registered equivalent cases across commands without renewing historical observations.
+# Fully cached remaining cases in one group use fresh before/after batch validation; partial hits fall back to individual execution.
 [CmdletBinding()]
 param(
     [switch]$Ci,

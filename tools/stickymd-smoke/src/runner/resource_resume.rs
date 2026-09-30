@@ -12,6 +12,7 @@ pub(super) struct Resume {
     enabled: bool,
     store: Option<Store>,
     planned: bool,
+    batch_candidates: Vec<Unit>,
 }
 impl Resume {
     pub(super) fn new(enabled: bool) -> Self {
@@ -19,6 +20,7 @@ impl Resume {
             enabled,
             store: None,
             planned: false,
+            batch_candidates: Vec::new(),
         }
     }
     pub(super) fn plan(
@@ -30,23 +32,18 @@ impl Resume {
             return Ok(());
         }
         self.planned = true;
-        use crate::qualification::resource_diagnostics::plan::{self, Plan};
+        use crate::qualification::resource_diagnostics::plan;
         let units = plan::units(
             groups,
             std::env::var("STICKYMD_SMOKE_RESOURCE_CASE")
                 .ok()
                 .as_deref(),
         )?;
-        match Store::open(root) {
-            Ok(store) => {
-                store.plan(root, &units)?.log();
-                self.store = Some(store);
-            }
-            Err(error) => {
-                Plan::disabled(&units, &error)?.log();
-                self.enabled = false;
-            }
-        }
+        let (store, plan) = plan::prepare(root, &units)?;
+        plan.log();
+        self.batch_candidates = plan.cached_units();
+        self.enabled = store.is_some();
+        self.store = store;
         Ok(())
     }
     pub(super) fn observe<'a>(
@@ -114,6 +111,29 @@ impl Observer for Resuming<'_> {
             .store
             .as_ref()
             .map_or(Ok(()), |store| store.save(self.root, case, result, elapsed))
+    }
+    fn load_all(
+        &mut self,
+        cases: &[crate::resource_plan::ResourceCase],
+    ) -> Result<Option<Vec<EvidenceResult>>, String> {
+        if !cases
+            .iter()
+            .all(|c| self.resume.batch_candidates.contains(&Unit::Case(*c)))
+        {
+            return Ok(None);
+        }
+        let Some(store) = &self.resume.store else {
+            return Ok(None);
+        };
+        let results = store.load_batch(self.root, cases)?;
+        if results.is_some() {
+            for case in cases {
+                self.inner.waited(case.minimum_wait_seconds());
+            }
+            self.inner
+                .stage("diagnostic-cache-batch", 0, "diagnostic-batch-reused", 0)?;
+        }
+        Ok(results)
     }
     fn stage(&mut self, cohort: &str, run: usize, stage: &str, seconds: u64) -> Result<(), String> {
         self.inner.stage(cohort, run, stage, seconds)

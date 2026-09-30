@@ -12,6 +12,12 @@ pub(crate) trait Observer {
     fn load(&mut self, _unit: super::diagnostic::Unit) -> Result<Option<EvidenceResult>, String> {
         Ok(None)
     }
+    fn load_all(
+        &mut self,
+        _cases: &[super::ResourceCase],
+    ) -> Result<Option<Vec<EvidenceResult>>, String> {
+        Ok(None)
+    }
     fn save(
         &mut self,
         _unit: super::diagnostic::Unit,

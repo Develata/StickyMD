@@ -474,6 +474,10 @@ Resources 是 source-preview、math、images、window、zoom 五类兼容成功�
   身份采集按 Git、实际程序/harness hash、环境、输入 hash 和总计分别报告耗时，仅在
   采样窗口外执行。可合并相邻重复采集，但缓存读取前后及采样后的新鲜检查不可省略；
   原子发布前仍须重检。同命令共享场景绕过持久缓存读取时，必须独立检查当前身份。
+  新建诊断 Store 后立即生成计划时，初始采集可作为计划读取前检查，读取后仍重新采集。
+  同一资源组剩余场景全部命中时，可在该组桌面探针后作为一个批次读取：批次前后重新
+  采集全部身份，逐记录验证完整性，全部通过后才消费和扣减预算。部分命中不得暂存命中
+  子集供后续测量后使用，须回到逐场景执行；计划、旧批次或失败提示均不能替代鲜活检查。
 - Runtime/Performance/Resources 消费 Promoted Candidate 时，以显式的候选校验任务替代
   不参与测量的本地 Release build；仍须完整验证 Source Freeze、clean tree、EXE/ZIP/SBOM
   hash、checksum 与 native-runtime。候选缺失或失效即失败，不能回退本地构建；Local

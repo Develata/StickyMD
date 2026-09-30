@@ -2,6 +2,9 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#resource-module-qualification
 
 #![cfg_attr(not(windows), allow(dead_code))]
+mod batch;
+#[cfg(test)]
+mod batch_tests;
 mod digest;
 #[cfg(test)]
 mod equivalence_tests;

@@ -419,6 +419,13 @@ passes all checks independently. Reused observations retain the original unit an
 timestamp; relabeling does not write another record or renew its lifetime. Window
 and Zoom remain whole groups. Planning uses the same lookup rules as execution.
 
+When all remaining cases in a group are cached, resume reads them as one batch after
+the desktop probe, with full fresh identity checks before and after. Each record is
+still validated independently. A missing or invalid case discards the entire batch
+and falls back to per-case execution. No batch survives a fresh measurement. The
+`cache_batch.execution_seconds` metric separates shared validation cost from case
+processing; same-command aliases do not receive a second budget credit.
+
 Reused cases carry `DIAGNOSTIC_REUSED` and `diagnostic-cache:` sample origins, with
 `origin_execution_seconds` separate from this invocation's `execution_seconds`.
 Progress removes only the fixed waits actually avoided. Identity checks and cache

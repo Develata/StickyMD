@@ -19,6 +19,7 @@ struct Row {
     action: &'static str,
     reason: String,
     wait: u64,
+    cached: bool,
 }
 
 pub(crate) fn units(groups: &[ResourceModule], filter: Option<&str>) -> Result<Vec<Unit>, String> {
@@ -52,7 +53,7 @@ impl Plan {
         units: &[Unit],
         mut inspect: impl FnMut(Unit) -> Result<Lookup, String>,
     ) -> Result<Self, String> {
-        let mut seen: Vec<ResourceCase> = Vec::new();
+        let mut seen: Vec<(ResourceCase, bool)> = Vec::new();
         let mut rows = Vec::new();
         let mut fixed = 0;
         let mut saved = 0;
@@ -60,15 +61,16 @@ impl Plan {
             let shared = match unit {
                 Unit::Case(case) => seen
                     .iter()
-                    .find(|&&previous| previous.equivalent(case))
+                    .find(|&&(previous, _)| previous.equivalent(case))
                     .copied(),
                 Unit::Group(_) => None,
             };
-            let (action, reason, wait) = if let Some(previous) = shared {
+            let (action, reason, wait, cached) = if let Some((previous, cached)) = shared {
                 (
                     "SHARE_IN_COMMAND",
                     format!("same complete cohort as {}", previous.label),
                     0,
+                    cached,
                 )
             } else {
                 let lookup = inspect(unit)?;
@@ -85,10 +87,11 @@ impl Plan {
                     },
                     lookup.reason,
                     wait,
+                    lookup.result.is_some(),
                 )
             };
             if let Unit::Case(case) = unit {
-                seen.push(case);
+                seen.push((case, cached));
             }
             fixed += wait;
             saved += unit.minimum_wait_seconds() - wait;
@@ -97,6 +100,7 @@ impl Plan {
                 action,
                 reason,
                 wait,
+                cached,
             });
         }
         Ok(Self { rows, fixed, saved })
@@ -127,6 +131,14 @@ impl Plan {
         );
     }
 
+    pub(crate) fn cached_units(&self) -> Vec<Unit> {
+        self.rows
+            .iter()
+            .filter(|row| row.cached)
+            .map(|row| row.unit)
+            .collect()
+    }
+
     pub(crate) fn json(&self) -> String {
         let rows = self.rows.iter().map(|row| format!("{{\"unit\":\"{}\",\"action\":\"{}\",\"reason\":\"{}\",\"fixed_wait_seconds\":{}}}", row.unit.key(), row.action, escape_json(&row.reason), row.wait)).collect::<Vec<_>>().join(",");
         format!(
@@ -136,13 +148,15 @@ impl Plan {
     }
 }
 
-impl Store {
-    pub(crate) fn plan(&self, root: &Path, units: &[Unit]) -> Result<Plan, String> {
-        self.verify(root)?;
-        let plan = Plan::build(units, |unit| self.inspect(root, unit))?;
-        self.verify(root)?;
-        Ok(plan)
-    }
+/// The freshly created Store supplies the pre-read identity; never accepts an old Store.
+pub(crate) fn prepare(root: &Path, units: &[Unit]) -> Result<(Option<Store>, Plan), String> {
+    let store = match Store::open(root) {
+        Ok(store) => store,
+        Err(error) => return Ok((None, Plan::disabled(units, &error)?)),
+    };
+    let plan = Plan::build(units, |unit| store.inspect(root, unit))?;
+    store.verify(root)?;
+    Ok((Some(store), plan))
 }
 
 pub(crate) fn preview(root: &Path, groups: &[ResourceModule]) -> Result<String, String> {
@@ -152,10 +166,7 @@ pub(crate) fn preview(root: &Path, groups: &[ResourceModule]) -> Result<String, 
             .ok()
             .as_deref(),
     )?;
-    let plan = match Store::open(root) {
-        Ok(store) => store.plan(root, &units)?,
-        Err(error) => Plan::disabled(&units, &error)?,
-    };
+    let (_, plan) = prepare(root, &units)?;
     plan.log();
     Ok(plan.json())
 }
@@ -187,6 +198,7 @@ mod tests {
         assert_eq!(json.field("status").unwrap().string().unwrap(), "NOT_RUN");
         assert!(plan.json().contains("SHARE_IN_COMMAND"));
         assert!(plan.json().contains("REUSE_IF_VALID"));
+        assert_eq!(plan.cached_units(), [Unit::Group(ResourceModule::Zoom)]);
     }
     #[test]
     fn invalid_filters_fail_before_identity_or_desktop_queries() {

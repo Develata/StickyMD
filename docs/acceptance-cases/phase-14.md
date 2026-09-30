@@ -75,7 +75,14 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A56 | 诊断计划逐项解释复用/重跑与身份失效，等价场景不重复预算；只看计划不启动产品、不覆盖 evidence，索引不授权跨身份复用 | Automated | plan 预算、失效原因、损坏索引与 CLI 只读入口回归 | AUTOMATED PASS |
 | P14-A57 | 诊断身份检查按阶段计时，省去相邻重复采集，读取前后与采样后/发布前仍检查，同命令共享独立检查 | Automated | 前后任一检查漂移均失败且保留旧记录，显式 native lookup profile | AUTOMATED PASS |
 | P14-A58 | 跨命令仅复用同身份的严格等价完整场景；保留原单元、原始采样和创建时间，不续期、不重存历史结果，Window/Zoom 不混用 | Automated | 四对等价场景双向复用、原始数据与门槛投影、不等价/损坏/过期拒绝回归 | AUTOMATED PASS |
+| P14-A59 | 诊断初始化与计划合并前检查，同组全部缓存命中才批量消费；前后身份验证、部分命中回退与预算不重复扣减 | Automated | batch 漂移/失效/完整返回、同命令 pending 范围与计划 hint 回归；显式 native 身份成本 profile | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
+
+P14-A59 Preconditions：同组剩余场景全部存在完整缓存，且当前 identity 可识别。
+Action：批量读取，分别在前后检查时改变 identity，在计划后损坏或移除一项记录。
+Expected：完整批次前后各验证一次，全部有效后才消费；部分命中不返回子集，不跨新测量
+保留授权；已在同命令共享的场景不重复读取/扣减，批次检查用时与场景用时分开报告。
+Failure Signals：部分批次作为成功返回、漏跑失效场景、少了后检查、跨测量沿用旧批次。
 
 P14-A58 Preconditions：同一完整身份下有另一个注册且等价场景的完整有效缓存。
 Action：分开建立 Store 后双向请求四对场景，并注入损坏、过期或不同 fixture/CPU/操作历史。

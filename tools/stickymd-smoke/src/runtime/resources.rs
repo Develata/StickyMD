@@ -1,6 +1,7 @@
 //! Isolated native resource execution; pure scenario identity lives in resource_plan.
 //! plan_ref: docs/plan/11_testing_and_release.md#resource-module-qualification
 
+mod batch;
 mod cohort;
 mod probe;
 mod whole_group;
@@ -136,11 +137,17 @@ fn matrix(
     if cases.is_empty() {
         return Err(format!("unknown resource case filter {filter}"));
     }
+    let mut batch = batch::prepare(cache, &cases, output, observer)?;
     for case in cases {
         observer.stage(case.label, 0, "case-start", 0)?;
         let started = Instant::now();
         let measured = cache.cohorts.measure(case, || {
-            if let Some(saved) = observer.load(case.into())? {
+            let saved = if batch.front().is_some_and(|result| result.id == case.label) {
+                batch.pop_front()
+            } else {
+                observer.load(case.into())?
+            };
+            if let Some(saved) = saved {
                 return Ok(Output {
                     measurements: saved.measurements,
                     gates: saved.gates,
