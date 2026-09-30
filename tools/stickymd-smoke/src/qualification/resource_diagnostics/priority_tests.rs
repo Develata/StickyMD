@@ -118,3 +118,53 @@ fn only_fresh_complete_success_clears_the_same_failure_revision() {
         .unwrap();
     assert!(read(&root.0).unwrap().is_none());
 }
+
+#[test]
+fn stale_or_damaged_failure_hint_during_measurement_does_not_fail_fresh_success() {
+    let root = Root::new();
+    let unit = Unit::Group(ResourceModule::Zoom);
+    let result = crate::resource_plan::tests::valid_resource_result(ResourceModule::Zoom);
+    let created = now().unwrap() - MAX_AGE - 1;
+    let expired = encode(unit, created, "FAILED").unwrap();
+    // Valid when this simulated long measurement started, expired when it finished.
+    let selected = Selection {
+        first: Some(unit),
+        hint: decode(&expired, created).unwrap(),
+    };
+    write(&root.0, &expired).unwrap();
+    selected.complete(&root.0, unit, &result).unwrap();
+    assert_eq!(fs::read_to_string(path(&root.0).unwrap()).unwrap(), expired);
+    for replacement in ["broken json", ""] {
+        failed(&root.0, unit).unwrap();
+        let selected = select(&root.0, &[unit], true);
+        write(&root.0, replacement).unwrap();
+        selected.complete(&root.0, unit, &result).unwrap();
+        assert_eq!(
+            fs::read_to_string(path(&root.0).unwrap()).unwrap(),
+            replacement
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn clearing_valid_failure_hint_still_reports_atomic_write_errors() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = Root::new();
+    let unit = Unit::Group(ResourceModule::Zoom);
+    failed(&root.0, unit).unwrap();
+    let selected = select(&root.0, &[unit], true);
+    let before = fs::read(path(&root.0).unwrap()).unwrap();
+    // Permit other readers while preventing the replace operation, without changing ACLs.
+    let locked = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(path(&root.0).unwrap())
+        .unwrap();
+    let result = crate::resource_plan::tests::valid_resource_result(ResourceModule::Zoom);
+    assert!(selected.complete(&root.0, unit, &result).is_err());
+    assert_eq!(fs::read(path(&root.0).unwrap()).unwrap(), before);
+    drop(locked);
+    selected.complete(&root.0, unit, &result).unwrap();
+    assert!(read(&root.0).unwrap().is_none());
+}

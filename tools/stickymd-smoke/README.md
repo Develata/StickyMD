@@ -457,7 +457,27 @@ back to the fixed order. Hints can survive source changes because they only guid
 ordering; success reuse still requires the full current identity. Historical hits
 do not clear hints. Fresh complete success clears only the still-matching revision;
 this advisory comparison is not a cross-process scheduling lock. Formal evidence
-paths and mixed qualification wrapper actions reject the option.
+paths and mixed qualification wrapper actions reject the option. If the hint expires
+or becomes unreadable during measurement, clearing is skipped with a diagnostic;
+the fresh result remains valid. Actual atomic clear-write failures still propagate.
+The wrapper also rejects standalone `-ResourceResume` mixed with qualification actions.
+
+An opt-in Windows test exercises alias and batch reuse with real observations:
+
+```powershell
+$env:STICKYMD_SMOKE_PROBE_REPOSITORY = 'E:\gitclone\StickyMD-resource-probe-0d89ca5'
+cargo test -p stickymd-smoke --locked native_resource_alias_and_batch_reuse -- --ignored --nocapture --test-threads=1
+```
+
+Use a dedicated checkout with a matching Release executable and no existing
+`preview-no-images` cache for its current identity. Leave `STICKYMD_SMOKE_RESOURCE_CASE`
+unset. The test takes the desktop for about five minutes: two registered cases each
+retain all five 30-second warmups. It saves real complete records, reopens the Store,
+compares individual and batch reads, and checks alias observations and unchanged
+origin bytes. It writes `target/acceptance-profiling/resource-native-reuse-review.json`
+under the probe checkout. Do not edit probe inputs or rebuild during the run. This
+tests native observations and Store reuse; it does not run the full resource matrix
+or establish formal qualification.
 
 The persistent result for each phase lives in
 `docs/acceptance-cases/phase-XX.md`. Automated checks may be marked

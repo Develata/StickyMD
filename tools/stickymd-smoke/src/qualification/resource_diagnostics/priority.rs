@@ -68,7 +68,19 @@ impl Selection {
             None,
         );
         unit.validate(&json::parse(&payload)?.field("results")?.array()?[0])?;
-        if read(root)?.is_some_and(|current| current.document == hint.document) {
+        let current = match read(root) {
+            Ok(current) => current,
+            Err(_) => {
+                // Hints only guide ordering. Expiry or damage while a long measurement runs
+                // cannot turn complete fresh observations into a failed resource result.
+                eprintln!(
+                    "RESOURCE_FAILURE_HINT unit={} status=NOT_CLEARED reason=UNAVAILABLE_OR_EXPIRED",
+                    unit.key()
+                );
+                return Ok(());
+            }
+        };
+        if current.is_some_and(|current| current.document == hint.document) {
             // This is an advisory compare-before-write, not a cross-process transaction.
             write(root, &encode(unit, now()?, "CLEARED")?)?;
             eprintln!(

@@ -3,6 +3,8 @@
 
 mod batch;
 mod cohort;
+#[cfg(test)]
+mod native_reuse_tests;
 mod probe;
 mod whole_group;
 mod window;

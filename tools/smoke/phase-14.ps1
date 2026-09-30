@@ -118,6 +118,9 @@ if ($ResourcePlan -and (-not $Resources -or -not $ResourceResume -or $qualificat
 if ($ResourceFailureFirst -and (-not $Resources -or -not $ResourceResume -or $qualificationActions.Count -gt 0)) {
     throw 'ResourceFailureFirst requires Resources and ResourceResume and cannot run a qualification action'
 }
+if ($ResourceResume -and (-not $Resources -or $qualificationActions.Count -gt 0)) {
+    throw 'ResourceResume requires Resources and cannot run a qualification action'
+}
 
 $arguments = @('run', '-p', 'stickymd-smoke', '--locked', '--')
 if ($Environment) {

@@ -10,14 +10,14 @@ fn resource_diagnostic_options_wrapper_never_silently_dispatches_a_qualification
     let output = super::powershell_command("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", r#"
 $ErrorActionPreference = 'Stop'
 function cargo {
-    if (($args -notcontains '--resource-plan' -and $args -notcontains '--resource-failure-first') -or $args -notcontains '--resource-resume' -or $args -contains 'qualification') {
+    if ($args -notcontains '--resource-resume' -or $args -contains 'qualification') {
         throw 'Unexpected diagnostic Cargo dispatch'
     }
     $global:LASTEXITCODE = 0
-    if ($args -contains '--resource-plan') { 'PLAN_FORWARDED' } else { 'FAILURE_FIRST_FORWARDED' }
+    if ($args -contains '--resource-plan') { 'PLAN_FORWARDED' } elseif ($args -contains '--resource-failure-first') { 'FAILURE_FIRST_FORWARDED' } else { 'RESUME_FORWARDED' }
 }
 $script = Join-Path $env:STICKYMD_TEST_ROOT 'tools/smoke/phase-14.ps1'
-foreach ($mode in @('ResourcePlan', 'ResourceFailureFirst')) {
+foreach ($mode in @('ResourcePlan', 'ResourceFailureFirst', 'ResourceResume')) {
 foreach ($action in @('SourceFreeze', 'Environment', 'WindowStress', 'Campaign')) {
     $parameters = @{ Resources=$true; ResourceResume=$true }
     $parameters[$mode] = $true
@@ -32,13 +32,18 @@ foreach ($action in @('SourceFreeze', 'Environment', 'WindowStress', 'Campaign')
 }
 & $script -Resources -ResourceModule zoom -ResourceResume -ResourcePlan -EvidenceFile target/diagnostics/plan.json
 & $script -Resources -ResourceModule zoom -ResourceResume -ResourceFailureFirst -EvidenceFile target/diagnostics/first.json
+& $script -Resources -ResourceModule zoom -ResourceResume -EvidenceFile target/diagnostics/resume.json
 "#]).env("STICKYMD_TEST_ROOT", root).output().unwrap();
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
         String::from_utf8_lossy(&output.stdout)
             .lines()
             .collect::<Vec<_>>(),
-        ["PLAN_FORWARDED", "FAILURE_FIRST_FORWARDED"]
+        [
+            "PLAN_FORWARDED",
+            "FAILURE_FIRST_FORWARDED",
+            "RESUME_FORWARDED"
+        ]
     );
 }
 
