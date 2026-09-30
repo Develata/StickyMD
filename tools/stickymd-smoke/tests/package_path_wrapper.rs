@@ -1,29 +1,10 @@
 #![cfg(windows)]
 
-use std::{fs, path::Path, time::SystemTime};
-
-use super::powershell_command;
+use super::support::powershell::{HOSTS, ScriptFixture, assert_pass};
 
 #[test]
 fn package_path_wrapper_preserves_unicode_paths_and_restores_the_callers_state() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .unwrap();
-    let nonce = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let fixture = std::env::temp_dir().join(format!(
-        "stickymd-package-wrapper-{}-{nonce}-中文 [packages]",
-        std::process::id()
-    ));
-    fs::create_dir(&fixture).unwrap();
-    fs::write(fixture.join("StickyMD-old-windows-x64-portable.zip"), []).unwrap();
-    let output = powershell_command("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command"])
-        .arg(
-            r#"
+    let script = r#"
 $ErrorActionPreference = 'Stop'
 # Use the already-built binary; PowerShell consumes -- when calling a function.
 function cargo {
@@ -60,21 +41,22 @@ if ([Console]::OutputEncoding.CodePage -ne 936 -or (Get-Location).Path -cne $exp
     throw 'Failure changed the caller state'
 }
 'PASS'
-"#,
+"#;
+    for host in HOSTS {
+        let fixture = ScriptFixture::new(
+            "package-wrapper",
+            &format!("{}-中文 [packages]", host.edition),
+            script,
+        );
+        std::fs::write(
+            fixture.path().join("StickyMD-old-windows-x64-portable.zip"),
+            [],
         )
-        .env("STICKYMD_TEST_EXE", env!("CARGO_BIN_EXE_stickymd-smoke"))
-        .env("STICKYMD_TEST_ROOT", root)
-        .env("STICKYMD_TEST_DIRECTORY", &fixture)
-        .output()
-        .expect("start Windows PowerShell compatibility check");
-    // Only the two paths exclusively created by this test are removed.
-    fs::remove_file(fixture.join("StickyMD-old-windows-x64-portable.zip")).unwrap();
-    fs::remove_dir(&fixture).unwrap();
-    assert!(
-        output.status.success(),
-        "stdout={} stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "PASS");
+        .unwrap();
+        let Some(output) = fixture.run(host, |_| {}) else {
+            continue;
+        };
+        assert_pass(host, &output, &["PASS"]);
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "PASS");
+    }
 }

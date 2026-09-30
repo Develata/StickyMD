@@ -3,6 +3,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+use super::support::TemporaryDirectory;
+
 fn verify(source: &str, observation: &str) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
         .args([
@@ -57,14 +59,8 @@ fn workflow_observation_cli_fails_closed_and_does_not_claim_candidate_qualificat
 
 #[test]
 fn workflow_observation_file_supports_unicode_paths_and_rejects_missing_input() {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "stickymd-workflow-{}-{nonce}-中文 space.json",
-        std::process::id()
-    ));
+    let directory = TemporaryDirectory::new("workflow", "中文 space");
+    let path = directory.path().join("run.json");
     let sha = "c".repeat(40);
     std::fs::write(
         &path,
@@ -98,11 +94,11 @@ fn workflow_observation_file_supports_unicode_paths_and_rejects_missing_input() 
 #[cfg(windows)]
 #[test]
 fn actual_workflow_step_queries_once_and_propagates_query_or_validation_failures() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    use super::support::{
+        powershell::{HOSTS, ScriptFixture, diagnostic},
+        repository_root,
+    };
+    let root = repository_root();
     let workflow = std::fs::read_to_string(root.join(".github/workflows/promote-release.yml"))
         .unwrap()
         .replace("\r\n", "\n");
@@ -137,34 +133,16 @@ function cargo {{
 {body}
 "#
     );
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let directory = std::env::temp_dir().join(format!(
-        "stickymd-workflow-step-{}-{nonce}",
-        std::process::id()
-    ));
-    std::fs::create_dir(&directory).unwrap();
-    let script_path = directory.join("step.ps1");
-    let observation = directory.join("run.json");
-    let trace = directory.join("calls.txt");
-    std::fs::write(&script_path, script).unwrap();
     let source = "d".repeat(40);
     let valid = format!(r#"{{"head_sha":"{source}","conclusion":"success","name":"release"}}"#);
-    for shell in ["powershell.exe", "pwsh.exe"] {
-        if super::powershell_command(shell)
-            .args(["-NoProfile", "-Command", "exit 0"])
-            .status()
-            .is_err()
-        {
-            assert_ne!(
-                shell, "powershell.exe",
-                "Windows PowerShell 5.1 is mandatory"
-            );
-            eprintln!("NOT_TESTED: PowerShell 7 is unavailable");
-            continue;
-        }
+    for host in HOSTS {
+        let fixture = ScriptFixture::new(
+            "workflow-step",
+            &format!("{}-中文 space", host.edition),
+            &script,
+        );
+        let observation = fixture.path().join("run.json");
+        let trace = fixture.path().join("calls.txt");
         for (input, query_exit, expected_exit) in [
             (valid.clone(), "0", 0),
             (valid.replace("success", "failure"), "0", 1),
@@ -172,30 +150,24 @@ function cargo {{
         ] {
             std::fs::write(&observation, input).unwrap();
             std::fs::write(&trace, []).unwrap();
-            let output = super::powershell_command(shell)
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                ])
-                .arg(&script_path)
-                .current_dir(root)
-                .env("GH_REPO", "owner/StickyMD")
-                .env("ARTIFACT_RUN_ID", "123")
-                .env("APPROVED_SOURCE_SHA", &source)
-                .env("STICKYMD_TEST_EXE", env!("CARGO_BIN_EXE_stickymd-smoke"))
-                .env("TRACE_PATH", &trace)
-                .env("OBSERVATION_PATH", &observation)
-                .env("QUERY_EXIT", query_exit)
-                .output()
-                .unwrap();
+            let Some(output) = fixture.run(host, |command| {
+                command
+                    .current_dir(root)
+                    .env("GH_REPO", "owner/StickyMD")
+                    .env("ARTIFACT_RUN_ID", "123")
+                    .env("APPROVED_SOURCE_SHA", &source)
+                    .env("TRACE_PATH", &trace)
+                    .env("OBSERVATION_PATH", &observation)
+                    .env("QUERY_EXIT", query_exit);
+            }) else {
+                break;
+            };
             assert_eq!(
                 output.status.code(),
                 Some(expected_exit),
-                "{shell}: {}",
-                String::from_utf8_lossy(&output.stderr)
+                "{}: {}",
+                host.executable,
+                diagnostic(&output)
             );
             assert_eq!(
                 std::fs::read_to_string(&trace).unwrap(),
@@ -212,5 +184,4 @@ function cargo {{
             }
         }
     }
-    std::fs::remove_dir_all(directory).unwrap();
 }
