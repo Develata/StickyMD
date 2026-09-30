@@ -2,6 +2,7 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#resource-module-qualification
 
 mod cohort;
+mod probe;
 mod window;
 mod zoom;
 use super::*;
@@ -29,16 +30,35 @@ pub(crate) fn run(
     cache: &mut Cache,
 ) -> Result<Output, String> {
     JSON_OUTPUT.store(json, Ordering::Relaxed);
+    let filter = std::env::var("STICKYMD_SMOKE_RESOURCE_CASE").unwrap_or_default();
+    validate_filter(group, &filter)?;
     managed_process::ensure_no_stale_smoke_stickymd()?;
     let root = create_smoke_root()?;
     let mut output = Output::default();
-    let result = match group {
+    let started = Instant::now();
+    let probe_result = probe::run(repository, &root);
+    output.measurements.push(EvidenceMeasurement {
+        name: "desktop_probe.execution_seconds".into(),
+        unit: "seconds".into(),
+        value: started.elapsed().as_secs_f64(),
+    });
+    runtime_report!(
+        "RESOURCE_DESKTOP_PROBE group={} status={} elapsed_seconds={:.3}",
+        group.name(),
+        if probe_result.is_ok() {
+            "PASSED"
+        } else {
+            "FAILED"
+        },
+        started.elapsed().as_secs_f64()
+    );
+    let result = probe_result.and_then(|()| match group {
         ResourceModule::Window => {
             window::run_window_resource_measurement(repository, &root, &mut output)
         }
         ResourceModule::Zoom => zoom::run_zoom_resource_measurement(repository, &root, &mut output),
         _ => matrix(repository, &root, group, cache, &mut output),
-    };
+    });
     output.failure = result.err();
     if let Err(error) = cleanup_root(&root) {
         output.failure = Some(match output.failure {
@@ -47,6 +67,16 @@ pub(crate) fn run(
         });
     }
     Ok(output)
+}
+
+fn validate_filter(group: ResourceModule, filter: &str) -> Result<(), String> {
+    if !filter.is_empty() && !group.cases().iter().any(|case| case.label == filter) {
+        return Err(format!(
+            "unknown resource case filter {filter} for {}",
+            group.name()
+        ));
+    }
+    Ok(())
 }
 
 fn matrix(
@@ -227,6 +257,13 @@ fn preflight_fixture(directory: &Path, case: ResourceCase) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn invalid_resource_filter_is_rejected_before_the_desktop_probe() {
+        assert!(validate_filter(ResourceModule::Images, "typo").is_err());
+        assert!(validate_filter(ResourceModule::Window, "source").is_err());
+        assert!(validate_filter(ResourceModule::Images, "preview-1-image").is_ok());
+        assert!(validate_filter(ResourceModule::Zoom, "").is_ok());
+    }
     #[test]
     fn a_shared_cohort_keeps_raw_samples_and_gates_in_its_independent_group_receipt() {
         let mut cache = ScenarioCache::default();

@@ -7,6 +7,7 @@ use std::time::Duration;
 
 mod ime_profile;
 mod physical_input;
+mod routing;
 
 pub(crate) use ime_profile::{
     ImeProfile, ImeProfileGuard, set_ime_native_mode, set_ime_open_status,
@@ -1248,10 +1249,11 @@ fn prepare_physical_input_target(
         thread::sleep(Duration::from_millis(25));
     }
     Err(format!(
-        "physical input target is not ready: expected HWND={} observed root HWND={observed} expected_cursor={} observed_cursor=0x{observed_cursor:x} activation={observed_activation:?} last_cursor_error={}",
+        "physical input target is not ready: expected HWND={} observed root HWND={observed} expected_cursor={} observed_cursor=0x{observed_cursor:x} activation={observed_activation:?} last_cursor_error={} {}",
         window.0,
         expected_cursor.description(),
         last_cursor_error.as_deref().unwrap_or("none"),
+        routing::describe(observed),
     ))
 }
 
@@ -1284,8 +1286,9 @@ fn activate_window_for_physical_input(window: WindowHandle) -> Result<(), String
         let visible = is_visible(window)?;
         let style = style_facts(window)?;
         return Err(format!(
-            "refusing activation click outside StickyMD: point=({x},{y}) observed_root={pre_click_root} expected_root={} rect={rect:?} visible={visible} style={style:?}",
+            "refusing activation click outside StickyMD: point=({x},{y}) observed_root={pre_click_root} expected_root={} rect={rect:?} visible={visible} style={style:?} {}",
             window.0,
+            routing::describe(pre_click_root),
         ));
     }
     let click = PhysicalLeftButtonGuard::press()?;

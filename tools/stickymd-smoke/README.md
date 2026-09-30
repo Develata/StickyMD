@@ -374,6 +374,13 @@ unit tests and Cargo's documentation-test handling are unchanged.
 
 ## Acceptance status
 
+Each measured resource group first runs a disposable desktop interaction probe.
+It verifies real toolbar routing and persisted Source/Preview/Split transitions before
+the long sampling windows. Probe processes never contribute resource samples.
+Occlusion errors include the observed PID, executable basename and window class at
+failure time, without window titles or full process paths. Other windows are not dismissed.
+The probe cannot guarantee that the desktop remains undisturbed later in the run.
+
 The persistent result for each phase lives in
 `docs/acceptance-cases/phase-XX.md`. Automated checks may be marked
 `AUTOMATED PASS` only when their checked-in runner passes. Manual checks stay

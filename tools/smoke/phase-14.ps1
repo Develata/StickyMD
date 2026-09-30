@@ -13,6 +13,7 @@
 # Rust reports task, identity and resource-planning timings; historical reuse time remains distinct.
 # Fingerprint planning streams shared inputs once; reuse/promotion still read fresh bytes.
 # Reserved output aliases are rejected before execution; shared resource cohorts retain raw samples/gates.
+# Each measured resource group starts with a disposable physical desktop probe; blocked input records bounded window identity.
 [CmdletBinding()]
 param(
     [switch]$Ci,

@@ -437,6 +437,10 @@ Resources 是 source-preview、math、images、window、zoom 五类兼容成功�
   输入保守失效；成功文件路径本身不能决定请求具备哪一种资格。
 - 预检样本结构后才开始等待；报告计划固定等待预算、各场景/模块实际用时及共享来源。
   预算与模拟执行只能证明计划开销，不构成真实桌面速度、资源或产品质量证据。
+- 每个实际执行的资源组在长采样前，用独立临时程序副本验证真实窗口激活、点击路由和
+  Source/Preview/Split 切换的持久化确认。探针不产生资源样本，测量使用新进程与原 fixtures。
+  遮挡时拒绝输入，并在现场记录可查询的 HWND/PID、可执行文件名和窗口类；不得记录其他
+  应用的标题、完整路径或关闭其窗口。探针不能保证后续桌面始终不受干扰。
 - Runtime/Performance/Resources 消费 Promoted Candidate 时，以显式的候选校验任务替代
   不参与测量的本地 Release build；仍须完整验证 Source Freeze、clean tree、EXE/ZIP/SBOM
   hash、checksum 与 native-runtime。候选缺失或失效即失败，不能回退本地构建；Local

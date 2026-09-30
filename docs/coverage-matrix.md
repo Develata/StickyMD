@@ -198,3 +198,8 @@ P14-A50/A51 的批量规划回归由 `module_ledger/fingerprint/stream` 持有�
 `module_ledger`、`exact_desktop/evidence` 与 CLI 回归验证整个成功存储目录、目录别名和
 Windows 未创建目标的尾随点/空格保护。验证结果见
 [`2026-09-29-optimization-independent-review.md`](report/2026-09-29-optimization-independent-review.md)。
+
+P14-A52 映射 plan 11 的资源交互预检：`runtime/resources/probe` 使用独立 fixture，先验证
+真实 Source/Preview/Split 切换再开始资源等待；`window_control/routing` 在路由错误发生时
+查询 HWND/PID、可执行文件名和窗口类，不记录窗口标题或完整路径。设计与验证记录见
+[资源诊断设计](report/2026-09-30-resource-diagnostics-design.md)。

@@ -217,8 +217,8 @@ fn running_stickymd_processes() -> Result<Vec<ProcessSnapshot>, String> {
     Ok(processes)
 }
 
-fn process_executable(pid: u32) -> Option<PathBuf> {
-    // SAFETY: OpenProcess receives a PID from the current Toolhelp snapshot.
+pub(crate) fn process_executable(pid: u32) -> Option<PathBuf> {
+    // SAFETY: OpenProcess receives a PID from a Toolhelp snapshot or HWND query.
     // The returned query-only handle is owned by the local guard when non-null.
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) };
     if process == 0 {
