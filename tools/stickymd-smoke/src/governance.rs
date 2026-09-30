@@ -549,9 +549,6 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     if package.contains("cargo build") {
         return Err("package.ps1 must not build the application".to_owned());
     }
-    if !package.contains("generate-third-party-notices.ps1") {
-        return Err("package.ps1 must generate notices from the frozen runtime graph".to_owned());
-    }
     // Release semantics are exercised against compiled Rust by release::* tests and
     // tests/release_wrappers.rs (including actual packaged license bytes).
     // tests/release_workflow.rs executes the promotion step with the compiled CLI,

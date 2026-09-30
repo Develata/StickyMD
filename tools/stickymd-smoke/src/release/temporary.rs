@@ -1,4 +1,4 @@
-//! Exclusively-created release-tool scratch space, removed on every return path.
+//! Exclusive release-tool staging, cleaned up unless ownership is transferred.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
 
 use std::{
@@ -19,6 +19,9 @@ impl TemporaryDirectory {
             .as_nanos();
         let path =
             std::env::temp_dir().join(format!("stickymd-{label}-{}-{nonce}", std::process::id()));
+        Self::create(path)
+    }
+    pub fn create(path: PathBuf) -> Result<Self, String> {
         fs::create_dir(&path)
             .map_err(|error| format!("cannot create {}: {error}", path.display()))?;
         Ok(Self {
@@ -28,6 +31,9 @@ impl TemporaryDirectory {
     }
     pub fn path(&self) -> &Path {
         &self.path
+    }
+    pub fn keep(mut self) {
+        self.closed = true;
     }
     pub fn close(mut self) -> Result<(), String> {
         fs::remove_dir_all(&self.path).map_err(|error| {

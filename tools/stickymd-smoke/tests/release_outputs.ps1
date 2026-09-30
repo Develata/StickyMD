@@ -10,6 +10,15 @@ $outputZip = ($packaged | Where-Object { $_.StartsWith('PACKAGE_PATH=') }).Subst
 $archive = [IO.Compression.ZipFile]::OpenRead($outputZip)
 try {
     # Check the actual archive, not PowerShell function names or source-code tokens.
+    $expectedMembers = @('StickyMD/LICENSE.txt', 'StickyMD/README.txt', 'StickyMD/StickyMD.exe', 'StickyMD/THIRD_PARTY_NOTICES.txt', 'StickyMD/licenses/KaTeX-fonts-NOTICE.txt', 'StickyMD/licenses/SIL-OFL-1.1.txt')
+    if (($archive.Entries.FullName -join '|') -cne ($expectedMembers -join '|')) { throw 'Package inventory or ordinal order drift' }
+    foreach ($entry in $archive.Entries) {
+        if ($entry.LastWriteTime.Year -ne 1980) { throw 'ZIP timestamp drift' }
+    }
+    $reader = [IO.StreamReader]::new($archive.GetEntry('StickyMD/README.txt').Open(), [Text.UTF8Encoding]::new($false, $true))
+    try { $readme = $reader.ReadToEnd() } finally { $reader.Dispose() }
+    if (-not $readme.StartsWith("StickyMD portable release candidate for Windows 11 x64`r`nVersion: $version`r`nSource commit: $source`r`n")) { throw 'README title or source identity drift' }
+    if (-not $readme.EndsWith("`r`n") -or $readme.Replace("`r`n", '').Contains("`n") -or -not $readme.Contains('This build is unsigned.')) { throw 'README encoding or unsigned warning drift' }
     foreach ($member in @('StickyMD/LICENSE.txt', 'StickyMD/licenses/SIL-OFL-1.1.txt', 'StickyMD/licenses/KaTeX-fonts-NOTICE.txt')) {
         $entry = @($archive.Entries | Where-Object FullName -ceq $member)
         if ($entry.Count -ne 1) { throw "Missing/duplicate packaged license: $member" }
@@ -20,6 +29,18 @@ try {
         [void][Text.UTF8Encoding]::new($false, $true).GetString($bytes)
     }
 } finally { $archive.Dispose() }
+$originalHash = (Get-FileHash -LiteralPath $outputZip).Hash
+$samePackage = @(& (Join-Path $repo 'tools/release/package.ps1') -ExePath 'fixture.exe' -OutputDirectory $outputRelative -AllowDirtyValidation)
+if ((Get-FileHash -LiteralPath $outputZip).Hash -cne $originalHash) { throw 'Same-input package is not deterministic' }
+[IO.File]::WriteAllBytes($fakeExe, [byte[]](77,90,2,3))
+$refused = $false
+try { & (Join-Path $repo 'tools/release/package.ps1') -ExePath 'fixture.exe' -OutputDirectory $outputRelative -AllowDirtyValidation | Out-Null } catch {
+    if ($_.Exception.Message -notlike 'Refusing to overwrite a different existing package:*') { throw }
+    $refused = $true
+}
+if (-not $refused) { throw 'Different existing package was accepted' }
+Assert-State
+if ((Get-FileHash -LiteralPath $outputZip).Hash -cne $originalHash) { throw 'Different existing package was overwritten' }
 $outputSbom = Join-Path $outputDirectory 'SBOM.spdx.json'
 $outputChecksums = Join-Path $outputDirectory 'SHA256SUMS.txt'
 $fakeSyft = Join-Path $fixture 'fake-syft.ps1'

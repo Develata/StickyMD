@@ -7,9 +7,11 @@ mod identity;
 pub(crate) mod json;
 mod notices;
 mod package;
+mod package_content;
 mod package_inputs;
 mod package_rules;
 mod package_runtime;
+mod package_staging;
 mod promoted;
 mod sbom;
 mod temporary;
@@ -29,6 +31,11 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
         Command::VerifyWorkflow { source, input } => workflow::verify_input(source, input),
         Command::Notices(destination) => notices::generate(root, destination),
         Command::PackageInputs(options) => package_inputs::execute(root, options),
+        Command::PreparePackage {
+            inputs,
+            exe,
+            directory,
+        } => package_staging::prepare(root, inputs, exe, directory),
         Command::WorkspaceVersion => {
             println!("{}", crate::repository::workspace_version(root)?);
             Ok(())

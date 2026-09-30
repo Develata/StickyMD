@@ -13,6 +13,11 @@ pub(crate) enum Command {
     },
     Notices(PathBuf),
     PackageInputs(PackageInputOptions),
+    PreparePackage {
+        inputs: PackageInputOptions,
+        exe: PathBuf,
+        directory: PathBuf,
+    },
     WorkspaceVersion,
     Checksums(ChecksumOptions),
     PublishSbom(SbomOptions),
@@ -143,13 +148,30 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
             zip: PathBuf::from(take("--zip")?),
             checksums: PathBuf::from(take("--checksums")?),
         }),
-        "package-inputs" => Command::PackageInputs(PackageInputOptions {
-            version: options.remove("--version").map(str::to_owned),
-            commit: options.remove("--commit-sha").map(str::to_owned),
-            tag: options.remove("--release-tag").map(str::to_owned),
-            exact,
-            allow_dirty,
-        }),
+        "package-inputs" | "prepare-package" => {
+            let inputs = PackageInputOptions {
+                version: options.remove("--version").map(str::to_owned),
+                commit: options.remove("--commit-sha").map(str::to_owned),
+                tag: options.remove("--release-tag").map(str::to_owned),
+                exact,
+                allow_dirty,
+            };
+            if command == "prepare-package" {
+                Command::PreparePackage {
+                    inputs,
+                    exe: options
+                        .remove("--exe")
+                        .map(PathBuf::from)
+                        .ok_or("missing --exe")?,
+                    directory: options
+                        .remove("--staging-directory")
+                        .map(PathBuf::from)
+                        .ok_or("missing --staging-directory")?,
+                }
+            } else {
+                Command::PackageInputs(inputs)
+            }
+        }
         _ => return Err(format!("unknown release subcommand {command}")),
     };
     if !options.is_empty() {
@@ -158,7 +180,12 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
     if runtime && !matches!(command, Command::VerifyPackage(_)) {
         return Err("--runtime requires verify-package".to_owned());
     }
-    if (exact || allow_dirty) && !matches!(command, Command::PackageInputs(_)) {
+    if (exact || allow_dirty)
+        && !matches!(
+            command,
+            Command::PackageInputs(_) | Command::PreparePackage { .. }
+        )
+    {
         return Err("package input flags require package-inputs".to_owned());
     }
     Ok(command)

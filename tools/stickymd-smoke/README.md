@@ -259,6 +259,7 @@ Their reusable commands are in the existing std-only CLI:
 
 ```powershell
 cargo run --quiet -p stickymd-smoke --locked -- release package-inputs --allow-dirty-validation
+cargo run --quiet -p stickymd-smoke --locked -- release prepare-package --exe <exe> --staging-directory <new-directory> [--allow-dirty-validation]
 cargo run --quiet -p stickymd-smoke --locked -- release workspace-version
 cargo run --quiet -p stickymd-smoke --locked -- release verify-package --package-directory <directory> [--zip <zip>] [--checksums <manifest>] [--runtime]
 cargo run --quiet -p stickymd-smoke --locked -- release verify-promoted --artifact-directory <directory> --source-sha <full-sha> --expected-zip-sha256 <sha256> --expected-sbom-sha256 <sha256> --release-tag v0.1.0
@@ -278,6 +279,19 @@ Verification/notices retain the scripts' `KEY=value` stdout and 0/nonzero exit
 semantics. The wrappers resolve relative paths using the caller's PowerShell
 location, restore that location and console encoding even on failure, and use
 locked Cargo invocations.
+
+`prepare-package` accepts the same identity overrides and flags as `package-inputs`.
+It creates only a new staging directory (the parent must exist), writes complete
+files atomically, and removes its owned staging tree on failure. Existing files or
+directories are never overwritten or cleaned. Its JSON contains the unchanged
+`inputs` plan, ordered `members`, and `diagnostics` for the wrapper to forward.
+`inputs.status: NOT_RUN` still means package verification/qualification has not run.
+`release/package_content.rs` owns the six members, staging content sources and the
+four SBOM-required flags. ZIP validation and SBOM coverage consume that inventory;
+PowerShell compresses the returned ordinal member list without enumerating or
+selecting content. README titles come from the validated source state; the text
+template remains UTF-8 without BOM with CRLF output. Packaged licenses reuse the
+strict notices decoder, normalize line endings to LF and omit BOMs.
 
 The release workflow uses `workspace-version` too. `verify-workflow` reads one
 GitHub Actions run API observation from a UTF-8 JSON file, or stdin when
@@ -333,8 +347,8 @@ outputs. This is not a multi-file transaction: if manifest replacement fails
 after SBOM replacement, the command fails and verification rejects mismatched
 bytes. No successful result or qualification receipt is written on that path.
 
-`release/package_rules.rs` owns the six-member allowlist, Windows path safety,
-30 MiB limit and version/icon fact assertions. PE checks reuse `pe_dependencies`.
+`release/package_rules.rs` checks the shared inventory, Windows path safety,
+30 MiB limit and version/icon facts. PE checks reuse `pe_dependencies`.
 `release/package_runtime.rs` owns bounded bootstrap, same-directory secondary
 exit and unchanged durable-file assertions, and independent ASCII/space/Chinese
 directories. Children use the existing RAII owner; cleanup targets only the
@@ -357,8 +371,8 @@ Publication uses a same-directory temporary file and a no-replace move on Window
 (an atomic hard link on Linux); unsupported filesystem operations return failure.
 
 PowerShell keeps ZIP compression/extraction, native resource fact collection,
-Syft acquisition/invocation and existing UIA/COM adapters. `package.ps1` still
-assembles the staging directory and README. No product dependency was added.
+Syft acquisition/invocation and existing UIA/COM adapters. `package.ps1`
+delegates staging and README generation to Rust. No product dependency was added.
 The general metadata JSON reader is confined to release tooling; qualification
 receipt schemas and release permissions are unchanged.
 

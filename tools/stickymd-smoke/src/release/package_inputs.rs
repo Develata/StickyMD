@@ -6,6 +6,30 @@ use crate::{evidence::escape_json, integrity, package_path, repository};
 use std::path::Path;
 
 pub(super) fn execute(root: &Path, options: &PackageInputOptions) -> Result<(), String> {
+    println!("{}", resolve(root, options)?.json());
+    Ok(())
+}
+
+pub(super) struct Inputs {
+    pub version: String,
+    pub commit: String,
+    pub archive: String,
+    pub state: &'static str,
+}
+
+impl Inputs {
+    pub fn json(&self) -> String {
+        format!(
+            "{{\"schema_version\":1,\"status\":\"NOT_RUN\",\"version\":\"{}\",\"source_commit\":\"{}\",\"archive_name\":\"{}\",\"source_tree_state\":\"{}\"}}",
+            escape_json(&self.version),
+            self.commit,
+            escape_json(&self.archive),
+            self.state
+        )
+    }
+}
+
+pub(super) fn resolve(root: &Path, options: &PackageInputOptions) -> Result<Inputs, String> {
     let version = options
         .version
         .clone()
@@ -18,13 +42,12 @@ pub(super) fn execute(root: &Path, options: &PackageInputOptions) -> Result<(), 
         .unwrap_or_else(|| super::identity::source(root))?;
     let dirty = !repository::command_text(root, "git", &["status", "--porcelain"])?.is_empty();
     let (archive, state) = plan(&version, &commit, dirty, options)?;
-    println!(
-        "{{\"schema_version\":1,\"status\":\"NOT_RUN\",\"version\":\"{}\",\"source_commit\":\"{}\",\"archive_name\":\"{}\",\"source_tree_state\":\"{state}\"}}",
-        escape_json(&version),
-        commit.to_ascii_lowercase(),
-        escape_json(&archive)
-    );
-    Ok(())
+    Ok(Inputs {
+        version,
+        commit: commit.to_ascii_lowercase(),
+        archive,
+        state,
+    })
 }
 
 fn plan(

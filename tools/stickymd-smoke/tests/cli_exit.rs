@@ -307,6 +307,8 @@ fn malformed_release_requests_never_emit_a_success_marker() {
             "two",
         ],
         vec!["release", "workspace-version", "--runtime"],
+        vec!["release", "prepare-package"],
+        vec!["release", "prepare-package", "--exe", "missing.exe"],
         vec!["release", "verify-package", "--exact-candidate"],
         vec!["release", "checksums", "--zip", "missing"],
         vec!["release", "publish-sbom", "--input", "missing"],

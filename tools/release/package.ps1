@@ -12,32 +12,6 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-function Get-CheckedRelativePath {
-    param(
-        [Parameter(Mandatory = $true)][string]$Root,
-        [Parameter(Mandatory = $true)][string]$Path
-    )
-
-    $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd('\')
-    $rootPrefix = $rootPath + '\'
-    $fullPath = [IO.Path]::GetFullPath($Path)
-    if (-not $fullPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Package input escapes staging root: $fullPath"
-    }
-    return $fullPath.Substring($rootPrefix.Length)
-}
-
-function Copy-NormalizedUtf8Lf {
-    param(
-        [Parameter(Mandatory = $true)][string]$Source,
-        [Parameter(Mandatory = $true)][string]$Destination
-    )
-
-    $text = [IO.File]::ReadAllText($Source)
-    $normalized = $text.Replace("`r`n", "`n").Replace("`r", "`n")
-    [IO.File]::WriteAllText($Destination, $normalized, [Text.UTF8Encoding]::new($false))
-}
-
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 if (-not $ExePath) { $ExePath = Join-Path $repoRoot 'target\release\stickymd-win.exe' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot 'dist' }
@@ -48,56 +22,25 @@ if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
     throw "Release executable does not exist: $ExePath"
 }
 . (Join-Path $PSScriptRoot 'invoke-smoke.ps1')
-$inputArguments = @('package-inputs')
+$temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("stickymd-package-" + [guid]::NewGuid().ToString('N'))
+$stagingRoot = Join-Path $temporaryRoot 'contents'
+$inputArguments = @('prepare-package', '--exe', $ExePath, '--staging-directory', $stagingRoot)
 if ($Version) { $inputArguments += @('--version', $Version) }
 if ($CommitSha) { $inputArguments += @('--commit-sha', $CommitSha) }
 if ($ReleaseTag) { $inputArguments += @('--release-tag', $ReleaseTag) }
 if ($ExactCandidate) { $inputArguments += '--exact-candidate' }
 if ($AllowDirtyValidation) { $inputArguments += '--allow-dirty-validation' }
-$inputs = (Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments $inputArguments) | ConvertFrom-Json
-$Version = $inputs.version
-$CommitSha = $inputs.source_commit
-$archiveName = $inputs.archive_name
-$archivePath = Join-Path $OutputDirectory $archiveName
-$archiveTemporaryPath = Join-Path $OutputDirectory (".$archiveName." + [guid]::NewGuid().ToString('N') + '.tmp')
-
-New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-$temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("stickymd-package-" + [guid]::NewGuid().ToString('N'))
-$packageRoot = Join-Path $temporaryRoot 'StickyMD'
-New-Item -ItemType Directory -Path (Join-Path $packageRoot 'licenses') -Force | Out-Null
+$archiveTemporaryPath = $null
+New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
 
 try {
-    Copy-Item -LiteralPath $ExePath -Destination (Join-Path $packageRoot 'StickyMD.exe')
-    Copy-NormalizedUtf8Lf -Source (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $packageRoot 'LICENSE.txt')
-    & (Join-Path $repoRoot 'tools\release\generate-third-party-notices.ps1') -DestinationPath (Join-Path $packageRoot 'THIRD_PARTY_NOTICES.txt')
-    if ($LASTEXITCODE -ne 0) { throw 'Runtime dependency notice generation failed' }
-    Copy-NormalizedUtf8Lf -Source (Join-Path $repoRoot 'assets\licenses\SIL-OFL-1.1.txt') -Destination (Join-Path $packageRoot 'licenses\SIL-OFL-1.1.txt')
-    Copy-NormalizedUtf8Lf -Source (Join-Path $repoRoot 'assets\licenses\KaTeX-fonts-NOTICE.txt') -Destination (Join-Path $packageRoot 'licenses\KaTeX-fonts-NOTICE.txt')
-
-    $readmeTitle = if ($ReleaseTag) {
-        'StickyMD portable release for Windows 11 x64'
-    } elseif ($ExactCandidate) {
-        'StickyMD exact workflow candidate for Windows 11 x64'
-    } else {
-        'StickyMD portable release candidate for Windows 11 x64'
-    }
-    $readme = @(
-        $readmeTitle
-        "Version: $Version"
-        "Source commit: $($CommitSha.ToLowerInvariant())"
-        ''
-        'Run StickyMD.exe from a writable directory. The program creates its only working note under .\note\note.md.'
-        'The executable includes its MSVC runtime and does not require a Rust toolchain, Visual Studio, or a separate Visual C++ Redistributable installation.'
-        'Do not place the executable under Program Files or another directory that requires administrator rights.'
-        'Closing the paper hides StickyMD to the notification area; use the tray menu Exit command to quit.'
-        'Markdown Preview is native and supports the documented CommonMark/GFM profile plus RaTeX math.'
-        'Remote images are never downloaded; their alt text and link remain available.'
-        ''
-        'This build is unsigned. Windows reputation warnings may appear; verify the SHA-256 checksum before running it.'
-        'License: MIT. Complete Rust dependency notices and the KaTeX font license are included in this package.'
-        'Project: https://github.com/Develata/StickyMD'
-    ) -join "`r`n"
-    [IO.File]::WriteAllText((Join-Path $packageRoot 'README.txt'), $readme + "`r`n", [Text.UTF8Encoding]::new($false))
+    $prepared = (Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments $inputArguments) | ConvertFrom-Json
+    $inputs = $prepared.inputs
+    $prepared.diagnostics | Write-Output
+    $archiveName = $inputs.archive_name
+    $archivePath = Join-Path $OutputDirectory $archiveName
+    $archiveTemporaryPath = Join-Path $OutputDirectory (".$archiveName." + [guid]::NewGuid().ToString('N') + '.tmp')
+    New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -105,22 +48,10 @@ try {
     try {
         $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create, $false)
         try {
-            $files = [Collections.Generic.List[IO.FileInfo]]::new()
-            foreach ($file in Get-ChildItem -LiteralPath $packageRoot -File -Recurse) {
-                $files.Add($file)
-            }
-            $fileComparison = [Comparison[IO.FileInfo]] {
-                param($left, $right)
-                $leftRelative = Get-CheckedRelativePath -Root $temporaryRoot -Path $left.FullName
-                $rightRelative = Get-CheckedRelativePath -Root $temporaryRoot -Path $right.FullName
-                return [StringComparer]::Ordinal.Compare($leftRelative, $rightRelative)
-            }
-            $files.Sort($fileComparison)
-            foreach ($file in $files) {
-                $relative = (Get-CheckedRelativePath -Root $temporaryRoot -Path $file.FullName).Replace('\', '/')
+            foreach ($relative in $prepared.members) {
                 $entry = $archive.CreateEntry($relative, [IO.Compression.CompressionLevel]::Optimal)
                 $entry.LastWriteTime = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
-                $input = [IO.File]::OpenRead($file.FullName)
+                $input = [IO.File]::OpenRead((Join-Path $stagingRoot $relative))
                 $output = $entry.Open()
                 try { $input.CopyTo($output) } finally { $output.Dispose(); $input.Dispose() }
             }
@@ -152,12 +83,14 @@ try {
         throw "Refusing to remove unexpected temporary path: $resolvedTemp"
     }
     if (Test-Path -LiteralPath $resolvedTemp) { Remove-Item -LiteralPath $resolvedTemp -Recurse -Force }
-    $resolvedArchiveTemporaryPath = [IO.Path]::GetFullPath($archiveTemporaryPath)
-    $resolvedOutputDirectory = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\') + '\'
-    if (-not $resolvedArchiveTemporaryPath.StartsWith($resolvedOutputDirectory, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to remove unexpected package temporary path: $resolvedArchiveTemporaryPath"
-    }
-    if (Test-Path -LiteralPath $resolvedArchiveTemporaryPath) {
-        Remove-Item -LiteralPath $resolvedArchiveTemporaryPath -Force
+    if ($archiveTemporaryPath) {
+        $resolvedArchiveTemporaryPath = [IO.Path]::GetFullPath($archiveTemporaryPath)
+        $resolvedOutputDirectory = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\') + '\'
+        if (-not $resolvedArchiveTemporaryPath.StartsWith($resolvedOutputDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to remove unexpected package temporary path: $resolvedArchiveTemporaryPath"
+        }
+        if (Test-Path -LiteralPath $resolvedArchiveTemporaryPath) {
+            Remove-Item -LiteralPath $resolvedArchiveTemporaryPath -Force
+        }
     }
 }

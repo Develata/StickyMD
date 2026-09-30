@@ -9,6 +9,12 @@ mod tests;
 use crate::{atomic_evidence, integrity, repository};
 use std::{fmt::Write, fs, path::Path};
 
+pub(super) fn normalized_license(path: &Path) -> Result<String, String> {
+    Ok(licenses::text(path)?
+        .replace("\r\n", "\n")
+        .replace('\r', "\n"))
+}
+
 pub(super) fn generate(root: &Path, destination: &Path) -> Result<(), String> {
     generate_with_output(root, destination, &mut std::io::stdout().lock())
 }

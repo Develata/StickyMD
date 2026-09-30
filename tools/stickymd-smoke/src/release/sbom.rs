@@ -5,13 +5,6 @@ use super::{checksums, cli::SbomOptions, json, temporary::TemporaryDirectory};
 use crate::{atomic_evidence, integrity};
 use std::{fs, path::Path};
 
-const REQUIRED_FILES: &[&str] = &[
-    r"\package\StickyMD\StickyMD.exe",
-    r"\package\StickyMD\THIRD_PARTY_NOTICES.txt",
-    r"\package\StickyMD\licenses\SIL-OFL-1.1.txt",
-    r"\package\StickyMD\licenses\KaTeX-fonts-NOTICE.txt",
-];
-
 pub(super) fn validate(text: &str) -> Result<(), String> {
     let document = json::parse(text)?;
     if !document
@@ -31,8 +24,15 @@ pub(super) fn validate(text: &str) -> Result<(), String> {
         .iter()
         .map(|file| file.field("fileName")?.string())
         .collect::<Result<Vec<_>, _>>()?;
-    for required in REQUIRED_FILES {
-        if !names.iter().any(|name| name.eq_ignore_ascii_case(required)) {
+    for member in super::package_content::MEMBERS
+        .iter()
+        .filter(|member| member.sbom_required)
+    {
+        let required = format!("\\package\\{}", member.name.replace('/', "\\"));
+        if !names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&required))
+        {
             return Err(format!(
                 "Generated SBOM does not cover packaged file {required}"
             ));

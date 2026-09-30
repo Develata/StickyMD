@@ -20,6 +20,7 @@
 # ResourceFailureFirst requires diagnostic resume; it keeps prerequisites and scope, and measures the selected failed unit fresh.
 # Diagnostic resume can use registered equivalent cases across commands without renewing historical observations.
 # Fully cached remaining cases in one group use fresh before/after batch validation; partial hits fall back to individual execution.
+# Package inventory/README are owned by Rust; ZIP adapters stay in PowerShell.
 [CmdletBinding()]
 param(
     [switch]$Ci,

@@ -1,17 +1,9 @@
 //! Portable member, path, size and native resource rules, independent of adapters.
 //! plan_ref: docs/plan/11_testing_and_release.md#portable-windows-runtime
 
-use super::json::Value;
+use super::{json::Value, package_content::MEMBERS};
 use std::collections::BTreeSet;
 
-const ALLOWED: &[&str] = &[
-    "StickyMD/StickyMD.exe",
-    "StickyMD/README.txt",
-    "StickyMD/LICENSE.txt",
-    "StickyMD/THIRD_PARTY_NOTICES.txt",
-    "StickyMD/licenses/SIL-OFL-1.1.txt",
-    "StickyMD/licenses/KaTeX-fonts-NOTICE.txt",
-];
 const MAX_ZIP_BYTES: u64 = 30 * 1024 * 1024;
 
 pub(super) fn size(bytes: u64) -> Result<(), String> {
@@ -41,16 +33,16 @@ pub(super) fn members(names: &[String]) -> Result<(), String> {
     let unexpected = names
         .iter()
         .filter(|name| {
-            !ALLOWED
+            !MEMBERS
                 .iter()
-                .any(|allowed| name.eq_ignore_ascii_case(allowed))
+                .any(|member| name.eq_ignore_ascii_case(member.name))
         })
         .map(String::as_str)
         .collect::<Vec<_>>();
-    let missing = ALLOWED
+    let missing = MEMBERS
         .iter()
-        .filter(|name| !seen.contains(&name.to_ascii_lowercase()))
-        .copied()
+        .filter(|member| !seen.contains(&member.name.to_ascii_lowercase()))
+        .map(|member| member.name)
         .collect::<Vec<_>>();
     if !unexpected.is_empty() || !missing.is_empty() {
         return Err(format!(
