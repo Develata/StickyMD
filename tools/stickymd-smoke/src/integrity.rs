@@ -5,7 +5,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::Path,
-    process::Command,
 };
 
 pub(crate) fn artifact_name(name: &str) -> Result<(), String> {
@@ -107,70 +106,23 @@ pub(crate) fn verify_manifest_file(
     )
 }
 
+#[cfg(not(windows))]
+mod portable;
+#[cfg(windows)]
+mod windows;
+
 pub(crate) fn sha256(path: &Path) -> Result<String, String> {
     let path = std::path::absolute(path)
         .map_err(|error| format!("cannot resolve hash input {}: {error}", path.display()))?;
     #[cfg(windows)]
     {
-        use std::io::Read;
-        // certutil rejects empty files (ERROR_FILE_INVALID). Observe EOF through an
-        // opened file, not a possibly stale length, before returning SHA-256(empty).
-        let mut file = fs::File::open(&path)
-            .map_err(|error| format!("cannot open hash input {}: {error}", path.display()))?;
-        if file
-            .read(&mut [0_u8; 1])
-            .map_err(|error| format!("cannot read hash input {}: {error}", path.display()))?
-            == 0
-        {
-            return Ok(
-                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned(),
-            );
-        }
+        windows::sha256(&path)
     }
-    #[cfg(windows)]
-    let output = Command::new("certutil")
-        .args(["-hashfile"])
-        .arg(&path)
-        .arg("SHA256")
-        .output();
     #[cfg(not(windows))]
-    let output = Command::new("sha256sum").arg("--").arg(&path).output();
-    let output = output.map_err(|error| format!("cannot hash {}: {error}", path.display()))?;
-    if !output.status.success() {
-        return Err(format!("SHA-256 command failed for {}", path.display()));
+    {
+        portable::sha256(&path)
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let hash = digest_output(&text).map_err(|error| format!("{error} for {}", path.display()))?;
-    Ok(hash.to_ascii_lowercase())
 }
-
-fn digest_output(text: &str) -> Result<&str, String> {
-    #[cfg(windows)]
-    let hash = {
-        // certutil's localized heading contains the full filename. Only the standalone
-        // digest line is authoritative; a hex-looking word in that heading is not.
-        let mut lines = text
-            .lines()
-            .map(str::trim)
-            .filter(|line| line.len() == 64 && line.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        let hash = lines.next().ok_or("SHA-256 output has no digest line")?;
-        if lines.next().is_some() {
-            return Err("SHA-256 output has ambiguous digest lines".to_owned());
-        }
-        hash
-    };
-    #[cfg(not(windows))]
-    let hash = text
-        // GNU sha256sum prefixes an escaped filename record with a backslash.
-        .strip_prefix('\\')
-        .unwrap_or(text)
-        .split_once(' ')
-        .map(|(hash, _)| hash)
-        .ok_or("SHA-256 output has no digest field")?;
-    validate_sha256(hash, "SHA-256")?;
-    Ok(hash)
-}
-
 pub(crate) fn validate_sha256(value: &str, label: &str) -> Result<(), String> {
     validate_hex(value, 64, label)
 }

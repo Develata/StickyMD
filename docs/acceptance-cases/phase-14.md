@@ -252,6 +252,7 @@ Failure Signals：接受缺失/冲突来源、哈希不符、重复 manifest、�
 | REL-CLI-17 | tag 完整 SHA/ref 与草稿 tag/未发布状态由 Rust 校验；只有显式允许的确定缺失可进入创建路径；HTTP/GraphQL/身份失败阻止后续远程写入 | Automated local | `release::remote_state` + 双宿主执行实际 workflow step，GitHub I/O 为离线 fixture；未执行远程写操作 | AUTOMATED PASS |
 | REL-CLI-18 | SBOM 准备组合复用版本、包选择、Syft pin/私有快照规则；cache miss/corruption/external bypass 保持；每次仍锁定调用 Cargo，源码变更不跳过 freshness 检查 | Automated local | `release::syft`、`release_outputs`、当前真实缓存 Syft 输出比较与入口调用计数 | AUTOMATED PASS |
 | REL-CLI-19 | 打包/SBOM 流程由 Rust 直接复用既有规则；阶段任务顺序与输出流保持；平台操作失败、坏下载、坏 SPDX、已有 ZIP 冲突均拒绝且保留已有输出 | Automated local | `runner::package`、`release::sbom_workflow`、5.1/7 `release_outputs/release_syft`、同输入新 ZIP/SPDX 比较 | AUTOMATED PASS |
+| REL-CLI-20 | 共用 Windows SHA-256 由 CNG 流式计算，不启动 certutil、不缓存摘要；空文件、分块/短读、读取失败、锁定和输入变更保持正确拒绝/重读 | Automated local | `integrity::windows::tests`、`integrity::tests`、新旧 CLI 同输入摘要与定向计时 | AUTOMATED PASS |
 
 详细运行环境、数据及未验证项见 [维护报告](../report/2026-09-22-release-cli-migration.md)。
 SBOM 与 checksum 收尾记录见 [输出维护报告](../report/2026-09-25-release-output-finalization.md)。
@@ -281,3 +282,11 @@ Failure Signals：覆盖不同 ZIP、把传输失败当不存在、修改已发�
 源码变化仍强制复用旧二进制、CWD/编码泄漏。ZIP/manifest 是单文件原子替换，不承诺多文件事务；
 远程观察也不承诺查询与后续写操作之间的原子性。详细数据、失败修复与未验证边界见
 [收尾报告](../report/2026-09-30-release-cli-finalization.md)。人工状态与 readiness 不变。
+
+REL-CLI-19/20 Preconditions：锁定构建的当前工具、隔离新包、两个 PowerShell 宿主和独立旧入口快照。
+Action：比较相同输入，注入适配/校验失败，测试共用哈希后端的已知向量与读取失败，串行检查新包启动。
+Expected：ZIP 字节和去掉时间/命名空间后的 SPDX 语义保持；失败非零且旧数据保留；哈希逐次读取实际输入。
+每份保留的打包/SBOM 入口只调用一次 Cargo，Rust runner 不再回调这些入口；内部调用不另建工具缓存。
+Failure Signals：错误变成功、临时文件泄漏、旧文件被覆盖、输出污染 JSON、旧摘要复用或旧人工状态被提升。
+REL-CLI-15..18 的两次调用计数是上一轮基线；当前流程由本行覆盖。性能必须按调用入口与样本分别报告。
+实际数据、失败修正和未验证范围见[阶段路由/流程/CNG 报告](../report/2026-09-30-phase-routing-release-workflows-cng.md)。

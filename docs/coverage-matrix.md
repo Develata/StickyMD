@@ -150,6 +150,7 @@ Windows 双宿主 wrapper 使用含十六进制词、中文与空格的真实路
 | Phase 14 REL-CLI-15 / REL-CLI-09 | `release/package_publish.rs` 复用 `integrity`、`checksums` 和 `atomic_evidence`；并发赢家、冲突保留、manifest 文件锁、同输入真实 ZIP bytes |
 | Phase 00 P00-A11、Phase 12/13 入口维护、Phase 14 REL-CLI-16 | `phase_entry/` 复用 canonical CLI parsers；00–14、11-b 与 all 共用 `invoke-phase.ps1`，保留各入口参数范围；旧入口同输入比较、双宿主实际 Rust 路由、拒绝与 CWD/编码恢复 |
 | Phase 14 REL-CLI-19 | `release/package_workflow`、`sbom_workflow` 直接组合 staging/publish/Syft，runner 保留 task identity；ZIP、网络与外部 Syft 由窄 PowerShell adapter 执行；双宿主与失败保留行为测试 |
+| Phase 14 REL-CLI-20 | `integrity/windows` 为 CNG 平台适配，`integrity/portable` 保留 sha256sum；同一 hash authority 用于包、缓存和证据；已知向量、分块/失败/锁定/变更与同输入基线 |
 | Phase 14 REL-CLI-17 / REL-CLI-12 | `release/remote_state.rs` 验证 HTTP/GraphQL 观察；`release_remote` 执行实际 workflow step + compiled CLI，离线验证拒绝发生在远程写操作之前；工作流保留查询/写操作及授权边界 |
 | Phase 14 REL-CLI-18 / REL-CLI-14 | `release/sbom_preparation.rs` 组合已有版本/包选择/Syft 快照能力；每次仍 `cargo run --locked`；实际缓存命中调用计数和新旧入口交替计时、SPDX 语义比较 |
 

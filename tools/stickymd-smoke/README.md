@@ -281,6 +281,15 @@ The existing PowerShell parameter interfaces remain available:
 
 Their reusable commands are in the existing std-only CLI:
 
+Artifact, cache and evidence SHA-256 share `integrity`. On Windows its CNG adapter
+streams each newly opened input through a bounded 64 KiB buffer, including empty
+files, and returns failure for read/CNG errors. It neither implements cryptography
+nor caches digests. Other platforms retain their existing `sha256sum` adapter.
+Known vectors, interrupted/short/error reads, locked/missing inputs and fresh reads
+after file changes are covered by tests; tool timings are not product benchmarks.
+Measurements, wrapper overhead and verification limits are recorded in the
+[routing/workflow/CNG report](../../docs/report/2026-09-30-phase-routing-release-workflows-cng.md).
+
 ```powershell
 cargo run --quiet -p stickymd-smoke --locked -- release package-inputs --allow-dirty-validation
 cargo run --quiet -p stickymd-smoke --locked -- release prepare-package --exe <exe> --staging-directory <new-directory> [--allow-dirty-validation]
