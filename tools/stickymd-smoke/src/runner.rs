@@ -3,6 +3,7 @@
 mod candidate_input;
 pub(crate) mod headless;
 mod package;
+mod performance;
 mod resource_observer;
 mod resource_priority;
 mod resource_progress;
@@ -13,6 +14,13 @@ mod timing;
 
 use std::path::Path;
 use std::process::Command;
+
+use performance::{
+    phase1_markdown_performance, phase1_persistence_performance, phase2_performance,
+    phase4_performance, phase5_performance, phase6_performance, phase7_performance,
+    phase8_performance, phase10_performance, phase11b_performance, phase14_performance,
+    push_source_performance,
+};
 
 use crate::cli::{CiShard, Options, Phase, ResourceModule, Selection};
 use crate::evidence::{
@@ -1244,247 +1252,6 @@ fn phase11b_tests() -> Task {
         TaskId::Phase11BTests,
         "Phase 11-B semantic-conversion and Pin orthogonality tests",
         &["test", "--workspace", "--locked", "phase11b_"],
-    )
-}
-
-fn phase1_markdown_performance() -> Task {
-    cargo(
-        TaskId::Phase1MarkdownMathPerformance,
-        "Phase 1 Markdown/Math Release measurement",
-        &[
-            "run",
-            "--release",
-            "--manifest-path",
-            "experiments/phase-01/markdown-math/Cargo.toml",
-            "--locked",
-        ],
-    )
-}
-
-fn phase1_persistence_performance() -> Task {
-    cargo(
-        TaskId::Phase1PersistencePerformance,
-        "Phase 1 persistence Release smoke",
-        &[
-            "run",
-            "--release",
-            "--manifest-path",
-            "experiments/phase-01/persistence/Cargo.toml",
-            "--locked",
-        ],
-    )
-}
-
-fn phase2_performance() -> Task {
-    cargo(
-        TaskId::Phase2Performance,
-        "Phase 2 core Release baseline",
-        &[
-            "bench",
-            "-p",
-            "stickymd-core",
-            "--bench",
-            "release_baseline",
-            "--locked",
-        ],
-    )
-}
-
-fn phase3_performance() -> Task {
-    cargo(
-        TaskId::Phase3Performance,
-        "Phase 3 source-pipeline Release baseline",
-        &[
-            "test",
-            "-p",
-            "stickymd-win",
-            "--release",
-            "--locked",
-            "phase3_source_pipeline_release_baseline",
-            "--",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ],
-    )
-}
-
-fn push_source_performance(tasks: &mut Vec<Task>) {
-    push_unique(tasks, phase3_performance());
-    push_unique(
-        tasks,
-        cargo(
-            TaskId::SourceScrollbarPerformance,
-            "Phase 3 source scrollbar Release baseline",
-            &[
-                "test",
-                "-p",
-                "stickymd-render",
-                "--lib",
-                "--release",
-                "--locked",
-                "scrollbar_release_baseline",
-                "--",
-                "--ignored",
-                "--nocapture",
-                "--test-threads=1",
-            ],
-        ),
-    );
-}
-
-fn phase4_performance() -> Task {
-    cargo(
-        TaskId::Phase4Performance,
-        "Phase 4 persistence Release baseline",
-        &[
-            "test",
-            "-p",
-            "stickymd-win",
-            "--release",
-            "--locked",
-            "phase4_persistence_release_baseline",
-            "--",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ],
-    )
-}
-
-fn phase5_performance() -> Task {
-    cargo(
-        TaskId::Phase5Performance,
-        "Phase 5 native-preview Release baseline",
-        &[
-            "test",
-            "-p",
-            "stickymd-render",
-            "--lib",
-            "--release",
-            "--locked",
-            "phase5_preview_release_baseline",
-            "--",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ],
-    )
-}
-
-fn phase6_performance() -> Task {
-    cargo(
-        TaskId::Phase6Performance,
-        "Phase 6 native-math Release baseline",
-        &[
-            "test",
-            "--workspace",
-            "--release",
-            "--locked",
-            "phase6_",
-            "--",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ],
-    )
-}
-
-fn phase7_performance() -> Task {
-    cargo(
-        TaskId::Phase7Performance,
-        "Phase 7 image/export Release baseline",
-        &[
-            "test",
-            "--workspace",
-            "--release",
-            "--locked",
-            "phase7_",
-            "--",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ],
-    )
-}
-
-fn phase8_performance() -> Task {
-    cargo(
-        TaskId::Phase8Performance,
-        "Phase 8 native-window Release baseline",
-        &[
-            "test",
-            "-p",
-            "stickymd-win",
-            "--release",
-            "--locked",
-            "phase8_",
-            "--",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ],
-    )
-}
-
-fn phase10_performance() -> Task {
-    cargo(
-        TaskId::Phase10Performance,
-        "Phase 10 zoom/window Release baseline",
-        &[
-            "test",
-            "-p",
-            "stickymd-render",
-            "-p",
-            "stickymd-win",
-            "--release",
-            "--locked",
-            "phase10_",
-            "--",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ],
-    )
-}
-
-fn phase11b_performance() -> Task {
-    cargo(
-        TaskId::Phase11BPerformance,
-        "Phase 11-B semantic-conversion Release baseline",
-        &[
-            "test",
-            "-p",
-            "stickymd-render",
-            "--lib",
-            "--release",
-            "--locked",
-            "phase11b_performance_",
-            "--",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ],
-    )
-}
-
-fn phase14_performance() -> Task {
-    cargo(
-        TaskId::Phase14Performance,
-        "Phase 14 viewport selection Release baseline",
-        &[
-            "test",
-            "-p",
-            "stickymd-render",
-            "--lib",
-            "--release",
-            "--locked",
-            "phase14_preview_selection_geometry_release_baseline",
-            "--",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ],
     )
 }
 

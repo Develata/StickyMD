@@ -316,3 +316,11 @@ P14-A54 映射 plan 11 的显式诊断续跑：`runner/resource_resume` 在单�
 `qualification/resource_diagnostics`，严格核对完整场景和前后身份；公共路径保护隔离
 ignored 缓存与 canonical 账本。原始观测校验复用 `resource_plan/observations`，历史
 `shared_from` 标记在同命令别名共享时保留，不得投射成正式资格。
+
+## 2026-10-01 Headless Release 命令维护
+
+Headless Release 命令的范围与串行规则映射到 `runner/performance.rs` 和
+`runner/headless/tests`：Phase 6/7 保留三个产品 crate 的全部测试目标，省去无匹配
+用例的 smoke Release 目标；单独 render 的 feature 上下文保持不变。
+验收方法见 [Phase 11](acceptance-cases/phase-11.md#headless-release-recipe-compatibility)，
+本地测试清单等价不代表远程 CI 耗时或 startup 门已经验收。

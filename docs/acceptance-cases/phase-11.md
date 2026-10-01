@@ -126,6 +126,17 @@
 | Exact local package regeneration | `tools/smoke/phase-11.ps1 -Package -Json` |
 | CI-safe subset | `cargo run -p stickymd-smoke --locked -- all --ci --json` |
 
+## Headless Release Recipe Compatibility
+
+Headless Release recipe maintenance is checked with the same input before and after:
+list the ignored tests selected by every recipe, compare names, and verify the Cargo
+feature graph for any changed package selector. Phase 6/7 must retain all product
+unit/integration targets; their excluded smoke targets contain no matching cases.
+`runner/headless/tests` checks full/shard/module coverage, serial measurement and
+the empty smoke performance scope. Missing tests, changed feature contexts or a
+measurement running in parallel are failure signals. These checks do not replace
+the startup cohort or any manual row above.
+
 ## Manual Receipt Contract
 
 Changing any manual row from `NOT TESTED` requires the exact candidate commit and EXE hash, Windows

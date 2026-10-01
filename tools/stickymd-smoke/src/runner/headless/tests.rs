@@ -203,6 +203,32 @@ fn requesting_several_modules_deduplicates_shared_commands() {
 }
 
 #[test]
+fn product_performance_does_not_link_empty_smoke_release_targets() {
+    let smoke = plan(&request(&[Module::Smoke], Mode::Performance)).unwrap();
+    assert_eq!(smoke, [Task::Governance]);
+    let full = plan(&request(&Module::ALL, Mode::Performance)).unwrap();
+    for id in [TaskId::Phase6Performance, TaskId::Phase7Performance] {
+        let task = full.iter().find(|task| task.id() == id).unwrap();
+        let Task::Cargo { args, .. } = task else {
+            panic!("Cargo performance task expected");
+        };
+        assert_eq!(
+            owners(args).unwrap(),
+            [Module::Core, Module::Render, Module::Windows]
+        );
+        // Integration targets remain eligible, as do unit tests. Only the empty
+        // tooling package is removed; no feature/profile override is introduced.
+        assert!(!args.iter().any(|arg| matches!(
+            *arg,
+            "--lib" | "--bins" | "--features" | "--no-default-features"
+        )));
+        assert!(args.contains(&"--locked"));
+        assert!(args.contains(&"--release"));
+        assert!(args.contains(&"--test-threads=1"));
+    }
+}
+
+#[test]
 fn unknown_or_mixed_package_selectors_are_rejected_instead_of_omitted() {
     for args in [
         vec!["test"],

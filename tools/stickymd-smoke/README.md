@@ -208,6 +208,14 @@ selecting every module preserves the original plan exactly. Shared commands
 are run once per request. Governance runs for every request. Workspace membership
 comes from Cargo; an unregistered member or task target fails closed.
 
+Release test recipes share one Rust implementation in `runner/performance.rs`.
+Phase 6/7 select the three product packages, keeping unit and integration targets
+eligible while avoiding the smoke tool's empty Release test programs. Standalone
+render-library recipes retain their original feature context and `--lib` scope;
+they are not widened to the Windows graph. Every measurement still uses the locked
+Release profile and runs serially. Cargo owns artifact freshness and compilation
+parallelism; no executable path cache bypasses its source checks.
+
 `--plan` prints one JSON document marked `NOT_RUN` and does not execute tests.
 Execution stops on failure and returns a nonzero exit code. A module run reports
 only its requested scope and writes no qualification or last-success receipt.
