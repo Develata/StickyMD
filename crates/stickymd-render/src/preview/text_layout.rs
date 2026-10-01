@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+use std::sync::Arc;
 
 use cosmic_text::{
     Align, Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, UnderlineStyle, Weight, Wrap,
@@ -15,6 +16,12 @@ use super::layout::{ChunkBuild, LayoutChunk, LayoutContent};
 use super::{PreviewRect, PreviewTextBox, RenderSpan, RenderStyle, SpanAction};
 
 mod painting;
+mod shape;
+
+#[cfg(test)]
+mod reuse_tests;
+
+use shape::TextShape;
 
 const MAX_TEXT_LAYOUT_CACHE_ENTRIES: usize = 1_024;
 const MAX_TEXT_LAYOUT_CACHE_TEXT_BYTES: usize = 1_024;
@@ -30,81 +37,29 @@ pub(super) struct TextSegment {
 }
 
 pub(super) struct TextLayout {
-    // Immutable after construction, so row locators cannot become stale through
-    // a sibling module mutating cosmic-text's shaping state.
-    buffer: Buffer,
+    // Equivalent chunks in one layout share immutable shaping, never their
+    // source/selection/action projection. The lookup index dies when the layout
+    // pass finishes; only the resulting chunks retain the geometry.
+    shaped: Arc<TextShape>,
     segments: Vec<TextSegment>,
-    rows: Vec<TextLayoutRow>,
-    max_glyph_y_offset: f32,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct TextLayoutRow {
-    logical_line: usize,
-    layout_row: usize,
-    logical_byte_start: usize,
-    top: f32,
-    height: f32,
-    baseline: f32,
-}
-
-impl TextLayoutRow {
-    fn bottom(self) -> f32 {
-        self.top + self.height
-    }
 }
 
 impl TextLayout {
+    #[cfg(test)]
     fn new(buffer: Buffer, segments: Vec<TextSegment>) -> Self {
-        // Derive one paint margin in O(glyphs) after shaping. This is not a
-        // glyph-geometry cache: only cosmic-text owns those offsets. Keeping
-        // this separate leaves row-locator construction O(visual rows).
-        let max_glyph_y_offset = buffer
-            .layout_runs()
-            .flat_map(|run| run.glyphs)
-            .fold(0.0f32, |offset, glyph| {
-                offset.max((glyph.y - glyph.font_size * glyph.y_offset).abs())
-            });
-        let mut logical_byte_starts = Vec::with_capacity(buffer.lines.len());
-        let mut logical_byte_start = 0usize;
-        for line in &buffer.lines {
-            logical_byte_starts.push(logical_byte_start);
-            logical_byte_start = logical_byte_start
-                .saturating_add(line.text().len())
-                .saturating_add(line.ending().as_str().len());
-        }
-
-        let mut next_layout_row = vec![0usize; buffer.lines.len()];
-        let rows = buffer
-            .layout_runs()
-            .filter_map(|run| {
-                let layout_row = next_layout_row.get_mut(run.line_i)?;
-                let row = TextLayoutRow {
-                    logical_line: run.line_i,
-                    layout_row: *layout_row,
-                    logical_byte_start: *logical_byte_starts.get(run.line_i)?,
-                    top: run.line_top,
-                    height: run.line_height,
-                    baseline: run.line_y,
-                };
-                *layout_row = layout_row.saturating_add(1);
-                Some(row)
-            })
-            .collect();
         Self {
-            buffer,
+            shaped: Arc::new(TextShape::new(buffer)),
             segments,
-            rows,
-            max_glyph_y_offset,
         }
     }
 
     fn height(&self, fallback: f32) -> f32 {
-        self.rows.last().map_or(fallback, |row| row.bottom())
+        self.shaped.rows.last().map_or(fallback, |row| row.bottom())
     }
 
     pub(super) fn first_line_metrics(&self, fallback_baseline: f32) -> (f32, f32) {
-        self.buffer
+        self.shaped
+            .buffer
             .layout_runs()
             .next()
             .map_or((1.0, fallback_baseline), |run| {
@@ -135,7 +90,7 @@ struct TextLayoutKey {
 /// and therefore cannot become another document or preview authority.
 #[derive(Default)]
 pub(super) struct TextLayoutCache {
-    buffers: HashMap<TextLayoutKey, Buffer>,
+    shapes: HashMap<TextLayoutKey, Arc<TextShape>>,
     seen_once: HashSet<TextLayoutKey>,
 }
 
@@ -186,8 +141,8 @@ pub(super) fn make_text_chunk(
         align: align_key(align),
         wrap: wrap_key(wrap),
     };
-    let buffer = if let Some(buffer) = cache.buffers.get(&key) {
-        buffer.clone()
+    let shaped = if let Some(shaped) = cache.shapes.get(&key) {
+        Arc::clone(shaped)
     } else {
         let mut attributed = Vec::new();
         let mut start = 0;
@@ -220,18 +175,19 @@ pub(super) fn make_text_chunk(
             Some(align),
         );
         buffer.shape_until_scroll(font_system, false);
+        let shaped = Arc::new(TextShape::new(buffer));
         if key.visual.len() <= MAX_TEXT_LAYOUT_CACHE_TEXT_BYTES {
             if cache.seen_once.remove(&key) {
-                if cache.buffers.len() < MAX_TEXT_LAYOUT_CACHE_ENTRIES {
-                    cache.buffers.insert(key, buffer.clone());
+                if cache.shapes.len() < MAX_TEXT_LAYOUT_CACHE_ENTRIES {
+                    cache.shapes.insert(key, Arc::clone(&shaped));
                 }
-            } else if cache.buffers.len() + cache.seen_once.len() < MAX_TEXT_LAYOUT_CACHE_ENTRIES {
+            } else if cache.shapes.len() + cache.seen_once.len() < MAX_TEXT_LAYOUT_CACHE_ENTRIES {
                 cache.seen_once.insert(key);
             }
         }
-        buffer
+        shaped
     };
-    let layout = TextLayout::new(buffer, segments);
+    let layout = TextLayout { shaped, segments };
     let height = layout.height(metrics.line_height);
     ChunkBuild {
         chunks: vec![LayoutChunk {
@@ -340,19 +296,25 @@ pub(super) fn project_visible_text_boxes(
     viewport_top: f32,
     viewport_bottom: f32,
 ) -> Vec<PreviewTextBox> {
-    let buffer = &layout.buffer;
+    let buffer = &layout.shaped.buffer;
     let segments = &layout.segments;
     let mut boxes: Vec<PreviewTextBox> = Vec::new();
     let local_top = viewport_top - y;
     let local_bottom = viewport_bottom - y;
-    let first_row = layout.rows.partition_point(|row| row.bottom() < local_top);
-    let last_row = layout.rows.partition_point(|row| row.top <= local_bottom);
+    let first_row = layout
+        .shaped
+        .rows
+        .partition_point(|row| row.bottom() < local_top);
+    let last_row = layout
+        .shaped
+        .rows
+        .partition_point(|row| row.top <= local_bottom);
     if last_row <= first_row {
         return boxes;
     }
     let mut atomic_extents = vec![None::<(f32, f32)>; segments.len()];
     let mut touched_atomic = Vec::new();
-    for row in &layout.rows[first_row..last_row] {
+    for row in &layout.shaped.rows[first_row..last_row] {
         let Some(line) = buffer.lines.get(row.logical_line) else {
             continue;
         };
@@ -547,7 +509,7 @@ mod tests {
             &mut cache,
         );
 
-        assert_eq!(cache.buffers.len(), 1);
+        assert_eq!(cache.shapes.len(), 1);
         assert_eq!(selection_text, "linklink");
         let LayoutContent::Text(layout) = &built.chunks[0].content else {
             panic!("text chunk expected");
@@ -854,14 +816,14 @@ mod tests {
         let LayoutContent::Text(layout) = &built.chunks[0].content else {
             panic!("text chunk expected");
         };
-        let viewport_top = layout.rows[layout.rows.len() / 2].top;
+        let viewport_top = layout.shaped.rows[layout.shaped.rows.len() / 2].top;
         let viewport_bottom = viewport_top + 720.0;
         let project =
             || project_visible_text_boxes(layout, 0.0, 0.0, viewport_top, viewport_bottom);
         let boxes = project();
         assert!(!boxes.is_empty());
 
-        let row_locator_bytes = layout.rows.len() * size_of::<super::TextLayoutRow>();
+        let row_locator_bytes = layout.shaped.rows.len() * size_of::<super::shape::TextLayoutRow>();
         let viewport_geometry_bytes = boxes.len() * size_of::<crate::preview::PreviewTextBox>();
         assert!(
             viewport_geometry_bytes < 512 * 1024,
@@ -888,7 +850,7 @@ mod tests {
 
         println!(
             "phase14 preview_selection rows={} row_locator_bytes={} visible_clusters={} viewport_geometry_bytes={} project_median={:?} project_p95={projection_p95:?} project_max={:?} hit_10000={hit_batch:?}",
-            layout.rows.len(),
+            layout.shaped.rows.len(),
             row_locator_bytes,
             index.boxes().len(),
             viewport_geometry_bytes,

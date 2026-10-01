@@ -141,3 +141,28 @@ and manual statuses remain unchanged.
 - Limits: generated raster inspection and headless hit tests do not qualify physical mouse,
   clipboard, full theme/DPI or desktop visual acceptance. Other documented layout differences
   remain open; see the dated [Preview implementation report](../report/2026-09-30-preview-rendering-rules.md).
+
+## Document-scoped text geometry reuse
+
+This supplements P05-A10/A12/A19/A21 under plan 06's native-preview-layout and
+preview-scheduling contracts. Historical manual and candidate statuses are unchanged.
+
+- Preconditions: repeated attributed text with distinct source ranges, links, selection
+  offsets and tooltips; CJK, combining characters, emoji, BiDi and wrapped lines; a unique
+  text control and mixed math/image notes.
+- Action: exercise admitted cache hits and compare them with independently shaped text;
+  vary width, font metrics, alignment, wrapping, style and span boundaries. Drop the lookup
+  index and then the live chunks; repeat with a new layout and over-limit inputs.
+- Expected: exact copy text and cluster geometry, occurrence-local actions/tooltips, and
+  unchanged pixels. Immutable shaping and row locators may be shared within one layout;
+  no lookup survives that layout pass. Second-occurrence admission, 1024 total keys and
+  the 1024-byte per-key limit remain unchanged. Live chunks own their geometry until dropped.
+- Failure signals: stale source/actions, tooltip leakage, geometry reuse across incompatible
+  keys or layout passes, changed wrapping/pixels, unbounded keys or retained dead geometry.
+- Automated entry: `cargo test -p stickymd-render --lib --locked phase5_text_reuse` plus
+  existing text-layout/viewport pixel tests. The existing Phase 05 `-Performance` Rust
+  filter includes `phase5_preview_release_baseline_text_reuse`; it measures 20 warm layout
+  samples after 4 warmups, with identical 20/100 KiB mixed fixtures and a 20 KiB unique-text
+  control. Parsing, font setup, paint and teardown are outside the measured layout interval.
+  Local timing/fingerprint comparisons are diagnostics, not portable pixel goldens or GUI
+  performance acceptance.

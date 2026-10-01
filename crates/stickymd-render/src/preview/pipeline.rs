@@ -488,6 +488,10 @@ mod audit_tests;
 mod image_refresh_tests;
 
 #[cfg(test)]
+#[path = "pipeline/text_reuse_tests.rs"]
+mod text_reuse_tests;
+
+#[cfg(test)]
 mod tests {
     use std::cell::Cell;
     use std::sync::Arc;

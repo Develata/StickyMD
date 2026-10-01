@@ -19,21 +19,26 @@ impl TextLayout {
         // glyph ink crossing a line box. Combining marks can span many rows.
         // The locator belongs to this immutable shaped projection; neither the
         // full document nor all glyphs of a long block are scanned while painting.
-        let viewport =
-            (viewport.start - self.max_glyph_y_offset)..(viewport.end + self.max_glyph_y_offset);
+        let viewport = (viewport.start - self.shaped.max_glyph_y_offset)
+            ..(viewport.end + self.shaped.max_glyph_y_offset);
         let first = self
+            .shaped
             .rows
             .partition_point(|row| row.bottom() < viewport.start)
             .saturating_sub(1);
-        let last =
-            (self.rows.partition_point(|row| row.top <= viewport.end) + 1).min(self.rows.len());
+        let last = (self
+            .shaped
+            .rows
+            .partition_point(|row| row.top <= viewport.end)
+            + 1)
+        .min(self.shaped.rows.len());
         let mut renderer = LegacyRenderer {
             font_system,
             cache,
             callback,
         };
-        for row in &self.rows[first..last] {
-            let line = &self.buffer.lines[row.logical_line];
+        for row in &self.shaped.rows[first..last] {
+            let line = &self.shaped.buffer.lines[row.logical_line];
             let layout =
                 &line.layout_opt().expect("TextLayout contains shaped rows")[row.layout_row];
             let run = LayoutRun {
@@ -107,7 +112,8 @@ mod tests {
                     &mut callback,
                 );
             } else {
-                layout
+                std::sync::Arc::get_mut(&mut layout.shaped)
+                    .unwrap()
                     .buffer
                     .draw(&mut fonts, &mut cache, color, &mut callback);
             }
@@ -185,7 +191,10 @@ mod tests {
                             &mut callback,
                         );
                     } else {
-                        layout.buffer.draw(fonts, cache, color, &mut callback);
+                        std::sync::Arc::get_mut(&mut layout.shaped)
+                            .unwrap()
+                            .buffer
+                            .draw(fonts, cache, color, &mut callback);
                     }
                     pixels
                 };
