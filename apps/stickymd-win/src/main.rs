@@ -33,7 +33,7 @@ mod surface;
 mod test_support;
 
 #[cfg(windows)]
-fn main() {
+fn main() -> std::process::ExitCode {
     use app::{AppEvent, StickyApp};
     use persistence::{IoCompletion, PersistenceWorker};
     use platform::windows::program_dir::RuntimePaths;
@@ -53,7 +53,7 @@ fn main() {
     startup_diagnostics.record("program_dir_ready");
     let mut instance = match SingleInstanceGuard::acquire(&paths.program_dir) {
         Ok(InstanceDisposition::Primary(instance)) => instance,
-        Ok(InstanceDisposition::SecondarySignaled) => return,
+        Ok(InstanceDisposition::SecondarySignaled) => return std::process::ExitCode::SUCCESS,
         Err(error) => fatal_startup(&format!("无法建立单实例保护：{error}")),
     };
     startup_diagnostics.record("single_instance_ready");
@@ -149,6 +149,7 @@ fn main() {
         eprintln!("application event loop failed: {error}");
         std::process::exit(1);
     }
+    app.startup_diagnostic_exit_code()
 }
 
 #[cfg(windows)]

@@ -332,3 +332,7 @@ Plan 10 的测量投影见 [Phase 11](acceptance-cases/phase-11.md#optional-star
 集中校验 v2，`startup_details` 校验绑定、区间及只读输出。覆盖缺失/重复/错序、越界、
 版本不符、混用 trace、占用文件保留、中文空格路径与仓库外调用。
 v2、EDITOR_READY 和正式 cohort 保持兼容；细分输出不是 Performance 或人工验收收据。
+
+同日 review 补充 `startup/diagnostics/tests` 的成功/失败退出回归：显式诊断采集失败
+仍回收进程并返回非零，常驻模式不因诊断错误被关闭，后续 frame 不清除失败状态；
+`startup_details` 的 unit/compiled CLI 覆盖分隔标记缺失换行时的拒绝行为。

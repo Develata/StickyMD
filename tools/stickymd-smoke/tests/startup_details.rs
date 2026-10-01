@@ -39,6 +39,9 @@ fn startup_details_cli_is_read_only_outside_a_checkout_and_fails_without_partial
 
     for invalid in [
         DETAILS
+            .replace("1895\nlegacy_trace_begin", "1895legacy_trace_begin")
+            .into_bytes(),
+        DETAILS
             .replace("editor_ready=2500", "editor_ready=2501")
             .into_bytes(),
         vec![b'x'; 8193],

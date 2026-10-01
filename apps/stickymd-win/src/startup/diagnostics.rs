@@ -24,6 +24,7 @@ pub struct StartupDiagnostics {
     milestones: Vec<(&'static str, u128)>,
     details: Option<details::Details>,
     finished: bool,
+    failed: bool,
 }
 
 impl StartupDiagnostics {
@@ -55,6 +56,7 @@ impl StartupDiagnostics {
             milestones,
             details,
             finished: false,
+            failed: false,
         }
     }
 
@@ -90,6 +92,26 @@ impl StartupDiagnostics {
         }
         self.record("editor_ready");
         self.finished = true;
+        let result = self.publish();
+        self.failed = result.is_err();
+        result.map(|()| self.exit_after_ready)
+    }
+
+    /// An explicitly requested diagnostic exit survives a capture failure.
+    pub fn exit_requested(&self) -> bool {
+        self.finished && self.exit_after_ready
+    }
+
+    /// Return from main normally so app/worker guards are dropped before exit.
+    pub fn exit_code(&self) -> std::process::ExitCode {
+        if self.exit_requested() && self.failed {
+            std::process::ExitCode::FAILURE
+        } else {
+            std::process::ExitCode::SUCCESS
+        }
+    }
+
+    fn publish(&self) -> Result<(), String> {
         if let Some(name) = self.ready_event.as_deref() {
             crate::platform::windows::diagnostic_event::signal_named_event(name)
                 .map_err(|error| format!("cannot signal diagnostic ready event: {error}"))?;
@@ -108,23 +130,9 @@ impl StartupDiagnostics {
                 details.write(&output)?;
             }
         }
-        Ok(self.exit_after_ready)
+        Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::StartupDiagnostics;
-
-    #[test]
-    fn disabled_diagnostics_do_not_accumulate_milestones() {
-        // The regular test process does not set the private smoke variables.
-        let mut diagnostics = StartupDiagnostics::from_environment();
-        if std::env::var_os("STICKYMD_DIAGNOSTIC_READY_EVENT").is_none()
-            && std::env::var_os("STICKYMD_DIAGNOSTIC_STARTUP_TRACE").is_none()
-        {
-            diagnostics.record("main_enter");
-            assert!(diagnostics.milestones.is_empty());
-        }
-    }
-}
+mod tests;

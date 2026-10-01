@@ -41,11 +41,26 @@ fn mismatched_trace_missing_duplicate_reordered_and_out_of_bounds_details_fail()
         DETAILS.replace("legacy_trace_begin\n", "unknown=0\nlegacy_trace_begin\n"),
         DETAILS.replace("editor_ready=2500", "editor_ready=2501"),
         DETAILS.replace("legacy_trace_begin", "legacy_trace_missing"),
+        DETAILS.replace("1895\nlegacy_trace_begin", "1895legacy_trace_begin"),
         format!("{DETAILS}\n"),
     ] {
         assert!(analysis::analyze(&trace, &invalid).is_err(), "{invalid}");
     }
     assert!(analysis::analyze(&trace.replace("_v2", "_v1"), DETAILS).is_err());
+}
+
+#[test]
+fn trace_boundary_must_be_a_complete_line_in_both_newline_styles() {
+    for newline in ["\n", "\r\n"] {
+        let trace = crate::startup_trace::fixture().replace('\n', newline);
+        let details = DETAILS.replace('\n', newline);
+        assert!(analysis::analyze(&trace, &details).is_ok());
+        let malformed = details.replace(
+            &format!("1895{newline}legacy_trace_begin"),
+            "1895legacy_trace_begin",
+        );
+        assert!(analysis::analyze(&trace, &malformed).is_err());
+    }
 }
 
 #[test]

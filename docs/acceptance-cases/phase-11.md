@@ -152,7 +152,11 @@ space-containing paths outside a checkout.
 Expected: v2 still has exactly 26 ordered milestones. The three substeps and remainder
 sum to `tray_ready..window_visible`. Analysis is read-only and `OBSERVATION_ONLY`;
 invalid inputs return nonzero with no partial stdout. Existing output files survive
-write failures. Formal startup sampling removes the detail opt-in variable and retains
+write failures. With `EXIT_AFTER_READY=1`, a ready-event/trace/sidecar failure must
+still end the diagnostic process after normal cleanup, with nonzero status and stderr;
+without that request, it must not close the interactive app. A later frame cannot
+erase the failure. The sidecar marker must occupy a complete LF/CRLF line.
+Formal startup sampling removes the detail opt-in variable and retains
 the existing ready event, cohort and thresholds. Unit/CLI checks cover these failures;
 one native launch is a diagnostic only and does not upgrade the historical matrix.
 

@@ -40,7 +40,7 @@ impl Details {
             .map(|path| Self::new(path.into()))
     }
 
-    fn new(path: PathBuf) -> Self {
+    pub(super) fn new(path: PathBuf) -> Self {
         Self {
             path,
             elapsed_us: [0; 6],

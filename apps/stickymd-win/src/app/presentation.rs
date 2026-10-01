@@ -304,10 +304,11 @@ impl StickyApp {
             self.diagnostic = Some(error.to_string());
             false
         } else {
-            match self.startup_diagnostics.editor_ready() {
-                Ok(true) => event_loop.exit(),
-                Ok(false) => {}
-                Err(error) => eprintln!("startup diagnostics failed: {error}"),
+            if let Err(error) = self.startup_diagnostics.editor_ready() {
+                eprintln!("startup diagnostics failed: {error}");
+            }
+            if self.startup_diagnostics.exit_requested() {
+                event_loop.exit();
             }
             true
         };

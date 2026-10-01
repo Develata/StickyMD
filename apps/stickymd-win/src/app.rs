@@ -147,6 +147,10 @@ pub struct StickyApp {
 }
 
 impl StickyApp {
+    pub fn startup_diagnostic_exit_code(&self) -> std::process::ExitCode {
+        self.startup_diagnostics.exit_code()
+    }
+
     pub fn new(
         paths: RuntimePaths,
         bootstrap: BootstrapOutcome,

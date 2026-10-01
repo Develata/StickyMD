@@ -20,10 +20,7 @@ pub(super) struct Analysis {
 
 pub(super) fn analyze(trace: &str, details: &str) -> Result<Analysis, String> {
     let legacy = crate::startup_trace::parse(trace)?;
-    let (details, bound_trace) = details
-        .split_once("legacy_trace_begin\n")
-        .or_else(|| details.split_once("legacy_trace_begin\r\n"))
-        .ok_or("startup details lack the exact legacy trace binding")?;
+    let (details, bound_trace) = split_legacy_trace(details)?;
     if bound_trace.as_bytes() != trace.as_bytes() {
         return Err("startup details belong to a different legacy trace".into());
     }
@@ -56,6 +53,17 @@ pub(super) fn analyze(trace: &str, details: &str) -> Result<Analysis, String> {
         segments_us,
         other_us,
     })
+}
+
+fn split_legacy_trace(details: &str) -> Result<(&str, &str), String> {
+    let mut offset = 0;
+    for line in details.split_inclusive('\n') {
+        if matches!(line, "legacy_trace_begin\n" | "legacy_trace_begin\r\n") {
+            return Ok((&details[..offset], &details[offset + line.len()..]));
+        }
+        offset += line.len();
+    }
+    Err("startup details lack a complete legacy_trace_begin line".into())
 }
 
 impl Analysis {

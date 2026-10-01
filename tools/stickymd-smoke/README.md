@@ -193,7 +193,10 @@ For an isolated copied Release diagnostic, set both
 `STICKYMD_DIAGNOSTIC_STARTUP_DETAILS` (a separate, new sidecar path) on the child
 process. With no legacy trace path, details stay disabled. Existing files are never
 overwritten; use fresh paths for every run. `STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY=1`
-retains its existing meaning. Collect GUI diagnostics serially in an isolated
+exits after the first ready frame even when capture fails: success returns 0;
+ready-event/trace/sidecar failure is reported on stderr and returns 1 after normal
+app cleanup. Without that explicit exit request, a diagnostic failure leaves the
+interactive app running. Collect GUI diagnostics serially in an isolated
 portable directory; do not reuse the user's running note or candidate receipts.
 
 ```powershell
@@ -207,6 +210,8 @@ showing the window, reasserting tool-window identity, and the remaining time wit
 `tray_ready..window_visible`. Missing, duplicate, out-of-order, nonmonotonic or
 out-of-interval timestamps, unsupported versions and mismatched trace pairs fail
 with exit 1 and no partial stdout.
+The `legacy_trace_begin` marker must occupy its own complete LF/CRLF-terminated
+line; a marker attached to the preceding value is invalid.
 
 The optional sidecar stores six bounded timestamps, PID and the exact v2 trace
 text. The reader requires byte-for-byte equality with the supplied v2 file; it
