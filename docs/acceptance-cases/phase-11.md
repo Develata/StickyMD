@@ -6,16 +6,20 @@
 `stickymd-smoke` 持有，`tools/smoke/phase-11.ps1` 仅为薄入口。真实输入法、物理显示器、
 系统切换与人眼视觉判断在没有当前候选 receipt 时必须保持 `NOT TESTED`。
 
+下表状态保留该阶段的 source baseline，不代表当前版本的动态 verdict。后续 exact-candidate
+收据按 [plan 11](../plan/11_testing_and_release.md) 写入 ignored `dist/evidence/`，不得事后
+回填这些历史行。各版本身份、处置与未验收项见[发布清单](../release-checklist.md)。
+
 ## Status Vocabulary
 
-- `AUTOMATED PASS`: 当前候选的自动检查已通过并有可复核运行证据。
-- `MANUAL PASS`: 当前候选在指定真实环境完成了人工步骤并保留 receipt。
+- `AUTOMATED PASS`: 对该行记录的源码或候选，自动检查已通过并有可复核运行证据。
+- `MANUAL PASS`: 对该行记录的候选，在指定真实环境完成了人工步骤并保留正式 receipt；tracked 行必须有 `receipt:` 引用，不意味着 ignored 收据文件必须入库。
 - `NOT TESTED`: 必需的真实环境或人工证据尚不存在。
 - `BLOCKED`: 自动门尚未运行、未通过，或依赖 USER 决策。
 
 ## Definition-of-Done Trace
 
-| ID | Requirement | Mode | Required checked-in evidence | Status |
+| ID | Requirement | Mode | Evidence / entry | Status |
 | --- | --- | --- | --- | --- |
 | P11-D001 | Performance governance 修正写入 plan | Automated | `phase-11-all-ci-final.json` governance contract | AUTOMATED PASS |
 | P11-D002 | Performance gate 与 architecture invariant 正式区分 | Automated | plan + governance contract | AUTOMATED PASS |

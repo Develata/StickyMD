@@ -6,16 +6,20 @@
 自动化由 Rust CLI `stickymd-smoke` 持有，`tools/smoke/phase-11-b.ps1` 只是薄入口。
 未执行的视觉、真实输入和真实 dock 行为不得由单元测试冒充，必须保持 `NOT TESTED`。
 
+下表状态保留该阶段的 source baseline，不代表当前版本的动态 verdict。后续 exact-candidate
+收据按 [plan 11](../plan/11_testing_and_release.md) 写入 ignored `dist/evidence/`，不得事后
+回填这些历史行。各版本身份、处置与未验收项见[发布清单](../release-checklist.md)。
+
 ## Status Vocabulary
 
-- `AUTOMATED PASS`: 当前候选自动检查已通过并有可复核证据。
-- `MANUAL PASS`: 当前候选在真实环境完成并引用 checked-in `receipt:`。
-- `NOT TESTED`: 当前候选缺少真实环境/人工证据。
+- `AUTOMATED PASS`: 对该行记录的源码或候选，自动检查已通过并有可复核证据。
+- `MANUAL PASS`: 对该行记录的候选，在真实环境完成并保留正式 receipt；tracked 行必须有 `receipt:` 引用，不意味着 ignored 收据文件必须入库。
+- `NOT TESTED`: 该行记录的候选缺少真实环境/人工证据。
 - `BLOCKED`: 自动门尚未运行、未通过或依赖上游 Gate 决策。
 
 ## Functional Acceptance
 
-| ID | Requirement | Mode | Required checked-in evidence | Status |
+| ID | Requirement | Mode | Evidence / entry | Status |
 | --- | --- | --- | --- | --- |
 | P11B-A01 | semantic inline delimiter conversion | Automated | named regression + exact all-CI receipt | AUTOMATED PASS |
 | P11B-A02 | semantic display delimiter conversion | Automated | owned-AST regression + runtime receipt | AUTOMATED PASS |

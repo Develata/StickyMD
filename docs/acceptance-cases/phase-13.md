@@ -13,6 +13,8 @@ PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；没�
 因此下表是 qualification contract/source baseline。`v0.1.0` 的最终 exact identity、USER
 disposition 与 `READY` 结论见
 [`../release-notes/0.1.0.md`](../release-notes/0.1.0.md)，不通过改写历史行表达。
+`v0.1.1` 的独立身份、USER 发布特例和技术 `NOT_READY` 见[发布清单](../release-checklist.md)，
+不能继承旧版 `READY`。
 
 ## Automated qualification process
 

@@ -5,6 +5,11 @@
 > real-DPI appearance remain `NOT TESTED`; repeatable OS resource observations are kept separate
 > from manual visual acceptance.
 
+Tracked statuses preserve the source baseline; they are not a current release verdict. Later
+exact-candidate receipts belong in ignored `dist/evidence/` under [plan 11](../plan/11_testing_and_release.md),
+not in retrospective edits to these rows. Version-specific results and remaining gaps are linked
+from the [release checklist](../release-checklist.md).
+
 | ID | Plan / AC mapping | Mode | Checked-in evidence | Status |
 | --- | --- | --- | --- | --- |
 | P06-A01 | 06 delimiter ownership; AC-014 | Automated | Comrak four-delimiter tests prove RaTeX receives delimiter-free literals | AUTOMATED PASS |

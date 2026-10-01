@@ -3,6 +3,11 @@
 > Verification projection for Native Source Editor, IME state modeling and the interaction pipeline.
 > Synthetic IME tests never substitute for real input-method acceptance.
 
+Tracked statuses preserve the source baseline; they are not a current release verdict. Later
+exact-candidate receipts belong in ignored `dist/evidence/` under [plan 11](../plan/11_testing_and_release.md),
+not in retrospective edits to these rows. Version-specific results and remaining gaps are linked
+from the [release checklist](../release-checklist.md).
+
 | ID | Plan / AC mapping | Mode | Checked-in evidence | Status |
 | --- | --- | --- | --- | --- |
 | P03-A01 | AC-002 source editing pipeline | Automated | render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1) | AUTOMATED PASS |

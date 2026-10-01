@@ -7,7 +7,17 @@ into real Windows interaction receipts.
 The Rust CLI owns automation. [`phase-08.ps1`](../../tools/smoke/phase-08.ps1) is only a stable
 PowerShell entry point. `all --ci` may run headless tests and deterministic Release baselines;
 copied-executable runtime and resource measurements are explicit local modes. Every real tray,
-monitor-topology, IME, and visual-quality row remains `NOT TESTED` until a checked-in receipt exists.
+monitor-topology, IME, and visual-quality observation requires an applicable identity-bound receipt.
+
+Tracked statuses preserve the source baseline; they are not a current release verdict. Later
+exact-candidate receipts belong in ignored `dist/evidence/` under [plan 11](../plan/11_testing_and_release.md),
+not in retrospective edits to these rows. Version-specific results and remaining gaps are linked
+from the [release checklist](../release-checklist.md).
+
+P08-A19's historical wording refers to the tracked `receipt:` reference: the Markdown governance
+check requires that marker for `MANUAL PASS`, but does not validate receipt contents or prove that
+the receipt file was committed. Dynamic candidate identity and readiness need the separate plan 11
+verification; a marker alone is not acceptance evidence.
 
 ## Acceptance Task Graph
 

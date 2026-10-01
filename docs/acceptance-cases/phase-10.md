@@ -1,10 +1,11 @@
 # Phase 10 — UX Corrections, Automation Consolidation and RC Requalification
 
 > Historical source baseline. Phase 10 rows preserve the implementation-time RC state rather than
-> the current `v0.1.0` release verdict. The later USER-approved Phase 14 startup policy supersedes
-> the historical warm-startup blocker; exact release identity, manual dispositions and remaining
-> environment gaps are recorded in
-> [`../release-notes/0.1.0.md`](../release-notes/0.1.0.md).
+> a current release verdict. The later USER-approved Phase 14 startup policy superseded
+> the historical warm-startup blocker for `v0.1.0`; its exact identity and dispositions remain in
+> the [0.1.0 release notes](../release-notes/0.1.0.md). Later versions need their own evidence;
+> the [release checklist](../release-checklist.md) links the `v0.1.1` USER exception and remaining
+> gaps, without changing the historical rows below.
 
 ## Automated Contract Matrix
 

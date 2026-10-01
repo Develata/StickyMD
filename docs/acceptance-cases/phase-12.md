@@ -10,9 +10,11 @@
 错误不执行动作、不写收据；Failure Signals：错误组合被接受、`-Candidate` 被擅自解释为 Source Freeze。
 PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；人工与候选身份状态不变。
 
-本文件的状态列是 tracked source baseline，不是 `v0.1.0` 当前发布 verdict。Phase 12 之后的
-exact receipt、USER disposition 与最终 `READY` 结论见
-[`../release-notes/0.1.0.md`](../release-notes/0.1.0.md)；动态结果不事后回填本矩阵。
+本文件的状态列是 tracked source baseline，不是当前发布 verdict。`v0.1.0` 在 Phase 12
+之后形成的 exact receipt、USER disposition 与 `READY` 结论见
+[0.1.0 release notes](../release-notes/0.1.0.md)；动态结果不事后回填本矩阵。
+`v0.1.1` 的独立身份、USER 发布特例和技术 `NOT_READY` 见[发布清单](../release-checklist.md)，
+不能继承旧版 `READY`。
 
 ## Automated qualification
 

@@ -346,12 +346,16 @@ The existing PowerShell parameter interfaces remain available:
 ```powershell
 ./tools/release/package.ps1 -OutputDirectory <directory> -AllowDirtyValidation
 ./tools/release/verify-package.ps1 -PackageDirectory <directory> [-ZipPath <zip>] [-ChecksumPath <manifest>] [-Runtime]
-./tools/release/verify-promoted-artifact.ps1 -ArtifactDirectory <directory> -SourceSha <full-sha> -ExpectedZipSha256 <sha256> -ExpectedSbomSha256 <sha256> -ReleaseTag v0.1.0
+./tools/release/verify-promoted-artifact.ps1 -ArtifactDirectory <directory> -SourceSha <full-sha> -ExpectedZipSha256 <sha256> -ExpectedSbomSha256 <sha256> -ReleaseTag <release-tag>
 ./tools/release/generate-third-party-notices.ps1 -DestinationPath <new-file>
 ./tools/release/generate-sbom.ps1 -PackageDirectory <directory> [-ZipPath <zip>] [-OutputPath <sbom>] [-SyftPath <syft>]
 ```
 
 Their reusable commands are in the existing std-only CLI:
+
+Replace `<release-tag>` with the tag for the approved source and artifact version.
+Verification binds it to the checkout's full source SHA and workspace version; an old
+release tag is not a reusable default for a later checkout or candidate.
 
 Artifact, cache and evidence SHA-256 share `integrity`. On Windows its CNG adapter
 streams each newly opened input through a bounded 64 KiB buffer, including empty
@@ -369,7 +373,7 @@ cargo run --quiet -p stickymd-smoke --locked -- release build-package [--exe <ex
 cargo run --quiet -p stickymd-smoke --locked -- release generate-sbom [--package-directory <directory>] [--zip <zip>] [--output <sbom>] [--syft-path <tool>]
 cargo run --quiet -p stickymd-smoke --locked -- release workspace-version
 cargo run --quiet -p stickymd-smoke --locked -- release verify-package --package-directory <directory> [--zip <zip>] [--checksums <manifest>] [--runtime]
-cargo run --quiet -p stickymd-smoke --locked -- release verify-promoted --artifact-directory <directory> --source-sha <full-sha> --expected-zip-sha256 <sha256> --expected-sbom-sha256 <sha256> --release-tag v0.1.0
+cargo run --quiet -p stickymd-smoke --locked -- release verify-promoted --artifact-directory <directory> --source-sha <full-sha> --expected-zip-sha256 <sha256> --expected-sbom-sha256 <sha256> --release-tag <release-tag>
 cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow --source-sha <full-sha> --workflow-json <utf8-file-or-dash>
 cargo run --quiet -p stickymd-smoke --locked -- release verify-remote-state --kind <tag|draft> --source-sha <full-sha> --release-tag <tag> --query-exit <code> --http-response <utf8-file-or-dash> [--allow-missing]
 cargo run --quiet -p stickymd-smoke --locked -- release notices --destination <new-file>

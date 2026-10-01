@@ -1,11 +1,13 @@
 # Phase 09 — Pre-Release Convergence Acceptance Matrix
 
 > Historical source baseline. Individual rows preserve Phase 9 evidence and then-open blockers;
-> they are not the current `v0.1.0` release verdict. Real GUI, IME, visual, physical-display,
+> they are not a current release verdict. Real GUI, IME, visual, physical-display,
 > fault-timing and user-asset observations remain `NOT TESTED` here unless Phase 9 itself recorded
 > them. The frozen checklist below is a trace projection of the USER Phase 9 prompt, not a new
-> product contract. Current release identity and dispositions are recorded in
-> [`../release-notes/0.1.0.md`](../release-notes/0.1.0.md).
+> product contract. The later `v0.1.0` disposition remains in its
+> [release notes](../release-notes/0.1.0.md). Current and historical version identities are linked
+> from the [release checklist](../release-checklist.md); the `v0.1.1` USER exception does not
+> upgrade these rows or transfer to a future candidate.
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
@@ -177,9 +179,13 @@ missing even when lower-level reducers or adapters pass.
 Release-level totals: 12 `AUTOMATED PASS`, 18 `NOT TESTED`, 0 `MANUAL PASS`, 0 `USER WAIVED`,
 0 observed failures. Warm startup is a separate automated release-gate failure.
 
-## Manual Receipt Policy
+## Historical Manual Receipt Policy
 
-A manual row can become `MANUAL PASS` only with a checked-in current-RC receipt containing environment, artifact hash, steps, expected/actual results and failure evidence. Automated substitutes, prior-commit reports and one-off terminal output cannot advance a manual row.
+At Phase 9, a manual source row required a tracked `receipt:` reference to formal evidence containing
+environment, artifact hash, steps, expected/actual results and failure evidence. Automated substitutes,
+prior-commit reports and one-off terminal output could not advance it. The historical rows above stay
+unchanged; later exact-candidate receipts follow plan 11 in ignored `dist/evidence/` and inform the
+version-specific release verdict linked at the top of this matrix.
 
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

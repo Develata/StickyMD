@@ -3,8 +3,13 @@
 > Verification projection for managed-image ownership, clipboard image transactions, native local
 > image preview, conservative lifecycle reconciliation and source-preserving Markdown export.
 > Headless rows are owned by the checked-in Rust smoke graph. Real clipboard applications, visual
-> quality and crash timing remain `NOT TESTED` until repeatable receipts are checked in. Process
+> quality and crash timing need repeatable, identity-bound receipts. Process
 > memory/idle CPU is a separate opt-in Rust CLI matrix; it never promotes visual/manual rows.
+
+Tracked statuses preserve the source baseline; they are not a current release verdict. Later
+exact-candidate receipts belong in ignored `dist/evidence/` under [plan 11](../plan/11_testing_and_release.md),
+not in retrospective edits to these rows. Version-specific results and remaining gaps are linked
+from the [release checklist](../release-checklist.md).
 
 | ID | Plan / AC mapping | Mode | Checked-in evidence | Status |
 | --- | --- | --- | --- | --- |

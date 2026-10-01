@@ -1,8 +1,13 @@
 # Phase 04 Acceptance Matrix
 
 > Verification projection for Portable Persistence, Autosave, Recovery and External Reconciliation.
-> Rows map only the Phase 4 slice; they do not upgrade a broader v1 AC whose later UI/assets remain
-> unimplemented.
+> Rows map only the Phase 4 slice; they do not establish coverage of the broader v1 AC or UI/assets
+> implemented in later phases.
+
+Tracked statuses preserve the source baseline; they are not a current release verdict. Later
+exact-candidate receipts belong in ignored `dist/evidence/` under [plan 11](../plan/11_testing_and_release.md),
+not in retrospective edits to these rows. Version-specific results and remaining gaps are linked
+from the [release checklist](../release-checklist.md).
 
 | ID | Plan / AC mapping | Mode | Checked-in evidence | Status |
 | --- | --- | --- | --- | --- |
