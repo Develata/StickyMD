@@ -43,6 +43,8 @@ macro_rules! runtime_report {
     };
 }
 
+#[cfg(test)]
+mod native_diagnostics;
 pub(crate) mod resources;
 mod window_stress;
 
@@ -272,6 +274,10 @@ fn run_inner(
 struct StartupSample {
     external: Duration,
     milestones_us: Vec<(String, u128)>,
+    // Sum over all process threads, sampled after the ready event is observed.
+    // It can exceed wall time and is not an estimate of time spent waiting.
+    process_cpu_at_observation: Duration,
+    cpu_observation_lag: Duration,
 }
 
 fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvidence, String> {
@@ -303,26 +309,32 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
     let mut sequence = 0_u64;
     let mut cold = Vec::with_capacity(COLD_STARTUP_SAMPLE_COUNT);
     let mut warm = Vec::with_capacity(WARM_STARTUP_SAMPLE_COUNT);
-    for run in 0..COLD_STARTUP_SAMPLE_COUNT {
-        thread::sleep(COLD_START_IDLE);
-        sequence = sequence.saturating_add(1);
-        let sample = measure_editor_ready(&executable, &directory, sequence)?;
-        print_startup_sample("cold", run + 1, &sample);
-        cold.push(sample);
+    let sampling = (|| {
+        for run in 0..COLD_STARTUP_SAMPLE_COUNT {
+            thread::sleep(COLD_START_IDLE);
+            sequence = sequence.saturating_add(1);
+            let sample = measure_editor_ready(&executable, &directory, sequence)?;
+            print_startup_sample("cold", run + 1, &sample);
+            cold.push(sample);
 
-        thread::sleep(WARM_CACHE_START_IDLE);
-        sequence = sequence.saturating_add(1);
-        let sample = measure_editor_ready(&executable, &directory, sequence)?;
-        print_startup_sample("warm", run + 1, &sample);
-        warm.push(sample);
-    }
+            thread::sleep(WARM_CACHE_START_IDLE);
+            sequence = sequence.saturating_add(1);
+            let sample = measure_editor_ready(&executable, &directory, sequence)?;
+            print_startup_sample("warm", run + 1, &sample);
+            warm.push(sample);
+        }
 
-    for run in COLD_STARTUP_SAMPLE_COUNT..WARM_STARTUP_SAMPLE_COUNT {
-        thread::sleep(WARM_CACHE_START_IDLE);
-        sequence = sequence.saturating_add(1);
-        let sample = measure_editor_ready(&executable, &directory, sequence)?;
-        print_startup_sample("warm", run + 1, &sample);
-        warm.push(sample);
+        for run in COLD_STARTUP_SAMPLE_COUNT..WARM_STARTUP_SAMPLE_COUNT {
+            thread::sleep(WARM_CACHE_START_IDLE);
+            sequence = sequence.saturating_add(1);
+            let sample = measure_editor_ready(&executable, &directory, sequence)?;
+            print_startup_sample("warm", run + 1, &sample);
+            warm.push(sample);
+        }
+        Ok::<_, String>(())
+    })();
+    if let Err(error) = sampling {
+        return Ok(incomplete_startup(&cold, &warm, error));
     }
 
     let cold_summary = print_startup_summary("cold", &cold, COLD_STARTUP_SAMPLE_COUNT)?;
@@ -348,6 +360,28 @@ fn run_startup_measurement(repository: &Path, root: &Path) -> Result<RuntimeEvid
         samples: startup_samples(&cold, &warm),
         gate_failure,
     })
+}
+
+fn incomplete_startup(
+    cold: &[StartupSample],
+    warm: &[StartupSample],
+    error: String,
+) -> RuntimeEvidence {
+    let mut measurements: Vec<_> = [("cold", cold.len()), ("warm", warm.len())]
+        .into_iter()
+        .map(|(kind, count)| EvidenceMeasurement {
+            name: format!("{kind}.samples"),
+            unit: "count".into(),
+            value: count as f64,
+        })
+        .collect();
+    measurements.extend(startup_interval_measurements());
+    RuntimeEvidence {
+        measurements,
+        gates: startup_gates(),
+        samples: startup_samples(cold, warm),
+        gate_failure: Some(error),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -572,7 +606,7 @@ fn startup_samples(cold: &[StartupSample], warm: &[StartupSample]) -> Vec<Eviden
         for (index, sample) in cohort_samples.iter().enumerate() {
             let internal_us = milestone_us(sample, "editor_ready");
             let external_us = sample.external.as_micros();
-            let mut measurements = Vec::with_capacity(sample.milestones_us.len() + 3);
+            let mut measurements = Vec::with_capacity(sample.milestones_us.len() + 5);
             measurements.push(EvidenceMeasurement {
                 name: "external".to_owned(),
                 unit: "ms".to_owned(),
@@ -588,6 +622,18 @@ fn startup_samples(cold: &[StartupSample], warm: &[StartupSample]) -> Vec<Eviden
                 unit: "ms".to_owned(),
                 value: external_us.saturating_sub(internal_us) as f64 / 1_000.0,
             });
+            measurements.extend([
+                EvidenceMeasurement {
+                    name: "process_cpu_at_ready_observation".into(),
+                    unit: "ms".into(),
+                    value: sample.process_cpu_at_observation.as_secs_f64() * 1_000.0,
+                },
+                EvidenceMeasurement {
+                    name: "cpu_observation_lag".into(),
+                    unit: "ms".into(),
+                    value: sample.cpu_observation_lag.as_secs_f64() * 1_000.0,
+                },
+            ]);
             measurements.extend(sample.milestones_us.iter().map(|(name, value)| {
                 EvidenceMeasurement {
                     name: format!("milestone.{name}"),
@@ -622,6 +668,8 @@ fn measure_editor_ready(
     let result = (|| {
         ready.wait(START_TIMEOUT)?;
         let external = started.elapsed();
+        let process_cpu_at_observation = process_metrics::cpu_time(&child)?;
+        let cpu_observation_lag = started.elapsed().saturating_sub(external);
         ensure_alive(&mut child, "startup measurement instance")?;
         let milestones_us = wait_for_startup_trace(&trace)?;
         let status = wait_for_exit(&mut child, EXIT_TIMEOUT)?;
@@ -633,6 +681,8 @@ fn measure_editor_ready(
         Ok(StartupSample {
             external,
             milestones_us,
+            process_cpu_at_observation,
+            cpu_observation_lag,
         })
     })();
     stop_child(&mut child);
@@ -682,10 +732,12 @@ fn print_startup_sample(kind: &str, run: usize, sample: &StartupSample) {
     let font_begin = milestone_us(sample, "font_system_begin");
     let font_end = milestone_us(sample, "font_system_end");
     runtime_report!(
-        "startup sample kind={kind} run={run} external_ms={:.3} internal_ms={internal:.3} process_overhead_ms={:.3} font_system_ms={:.3}",
+        "startup sample kind={kind} run={run} external_ms={:.3} internal_ms={internal:.3} process_overhead_ms={:.3} font_system_ms={:.3} process_cpu_at_ready_observation_ms={:.3} cpu_observation_lag_ms={:.3}",
         sample.external.as_secs_f64() * 1_000.0,
         (sample.external.as_secs_f64() * 1_000.0 - internal).max(0.0),
         font_end.saturating_sub(font_begin) as f64 / 1_000.0,
+        sample.process_cpu_at_observation.as_secs_f64() * 1_000.0,
+        sample.cpu_observation_lag.as_secs_f64() * 1_000.0,
     );
 }
 
@@ -1294,6 +1346,16 @@ fn measure_idle_cpu(
     logical_processors: usize,
     window: crate::window_control::WindowHandle,
 ) -> Result<f64, String> {
+    measure_idle_cpu_observed(child, mode, logical_processors, window, |_| Ok(()))
+}
+
+fn measure_idle_cpu_observed(
+    child: &mut Child,
+    mode: &str,
+    logical_processors: usize,
+    window: crate::window_control::WindowHandle,
+    observe: impl Fn(&Child) -> Result<(), String>,
+) -> Result<f64, String> {
     const BUCKETS: u32 = 6;
     let before = process_metrics::cpu_time(child)?;
     let wall_started = Instant::now();
@@ -1303,6 +1365,7 @@ fn measure_idle_cpu(
     for bucket in 0..BUCKETS {
         thread::sleep(bucket_interval);
         ensure_alive(child, &format!("{mode} idle CPU instance"))?;
+        observe(child)?;
         let current_wall = Instant::now();
         let current_cpu = process_metrics::cpu_time(child)?;
         let bucket_cpu = current_cpu.saturating_sub(previous_cpu).as_secs_f64()

@@ -122,11 +122,21 @@ fresh-process observations per combination and a 30-second warmup. Source and
 Preview cohorts never visit another view before sampling. The existing Split
 toolbar checks and 100-cycle growth check remain. Coverage, wait budgeting and
 execution use `resource_plan/zoom.rs`; old three-cohort or five-second-warmup
-receipts cannot claim the current matrix. Its fixed wait budget is 1,350 seconds,
-excluding launch/probe/stress costs. Zoom currently records memory, not a
-60-second CPU cohort; compact-window and normal-style/ToolWindow resource
-comparisons remain separate coverage gaps. This expansion still needs native
-measurement and does not close P14-A46 or the manual UX matrix.
+receipts cannot claim the current matrix. Every observation also measures the
+full 60-second idle CPU interval. The fixed wait budget is 4,050 seconds,
+excluding launch/probe/stress costs; memory-only archives fail current coverage.
+
+The Window group additionally compares Source/Preview/Split at default 520×680
+and compact 220×120 DIP, plus a default-size normal-style control for each view.
+`resource_plan/window_comparison.rs` owns these nine cohorts. Each has five
+fresh processes, 30-second warmup and 60-second CPU sampling. Matched arms use
+identical note bytes, 100% zoom and the same DPI; their order rotates across
+repetitions. The control changes only the disposable child's APPWINDOW/TOOLWINDOW
+bits after normal startup, so it measures steady-state style differences, not
+startup in an alternative product mode. Geometry/style are checked during every
+CPU bucket; before/after DPI, size, handle/GDI/USER counts are retained. Invalid
+facts or partial cohorts cannot complete the Window group. Comparisons add
+4,050 seconds of fixed wait. Tool tests do not close P14-A46 or manual UX gates.
 
 Equivalent scenarios share a complete cohort within one command: the 19 Source/Preview,
 math and image names require 15 executions. The fixed waiting budget decreases by
@@ -210,6 +220,32 @@ cargo test -p stickymd-smoke --bin stickymd-smoke --locked resource_planning_pro
 ```
 
 ## Optional startup shell details
+
+Startup observations also retain cumulative process CPU time when the observer
+receives EDITOR_READY, and the lag between observing ready and completing the CPU
+query. The wall timer stops before that query. Process CPU sums all threads, can
+exceed elapsed time, and may include work just after ready; subtracting it from
+wall time does not establish scheduler or I/O wait. This adds no gate or milestone.
+If later startup sampling fails, completed raw samples and their actual counts
+are retained without percentiles for the incomplete cohort; the result stays failed.
+
+For targeted native investigation, the existing Rust test binary provides three
+explicit opt-in diagnostics. Set `STICKYMD_SMOKE_PROBE_REPOSITORY` to a clean
+checkout with a valid local Release build or matching promoted candidate, then run
+one command at a time on an exclusive desktop:
+
+```powershell
+cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_startup_cpu_diagnostic -- --ignored --nocapture --test-threads=1
+cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_zoom_cpu_diagnostic -- --ignored --nocapture --test-threads=1
+cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_window_comparison_diagnostic -- --ignored --nocapture --test-threads=1
+```
+
+These reuse the real startup/resource executors and candidate resolver. Frozen
+checkouts cannot fall back to an unrelated local EXE. Results, including failures,
+are written to unique `tmp/native-diagnostics/` directories in the probe checkout;
+startup traces are archived before fixture cleanup. Source/EXE/harness identities
+are checked before and after. They do not write success ledgers, and targeted
+window comparisons cannot stand in for the full Window stress/hidden matrix.
 
 For an isolated copied Release diagnostic, set both
 `STICKYMD_DIAGNOSTIC_STARTUP_TRACE` (the legacy v2 output path) and

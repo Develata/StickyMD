@@ -78,7 +78,15 @@ pub(super) fn run_zoom_resource_measurement(
                             "tools/stickymd-smoke/src/runtime.rs::ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT",
                         )?;
                     }
-                    process_metrics::memory(&child)
+                    let memory = process_metrics::memory(&child)?;
+                    cohort.memory(output, memory, Some(limit))?;
+                    observer.stage(label, repetition + 1, "cpu", CPU_INTERVAL.as_secs())?;
+                    let processors =
+                        thread::available_parallelism().map_or(1, std::num::NonZero::get);
+                    let cpu = measure_idle_cpu(&mut child, label, processors, window)?;
+                    observer.waited(CPU_INTERVAL.as_secs());
+                    cohort.cpu(output, cpu)?;
+                    Ok::<_, String>(memory)
                 })();
                 stop_child(&mut child);
                 let sample = result?;
@@ -90,7 +98,6 @@ pub(super) fn run_zoom_resource_measurement(
                     sample.peak_working_set_bytes,
                     sample.peak_private_bytes,
                 );
-                cohort.memory(output, sample, Some(limit))?;
             }
             Ok::<_, String>(())
         })();

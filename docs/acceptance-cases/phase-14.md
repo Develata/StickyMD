@@ -82,6 +82,9 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A61 | 1 MiB Unicode 大小写不敏感搜索 Release 基准在 Phase 14、本地 Windows 模块与 CI performance 分片各执行一次；test-only/render-only 不误选 | Automated | `runner/headless/tests::phase14_search_measurement_reaches_local_and_ci_windows_plans` + `source_search::tests::phase14_one_mib_unicode_case_insensitive_search_p95_is_bounded` | AUTOMATED PASS |
 | P14-A62 | 基础 Source/Preview/Split 20 KiB 的 40/52/64 MiB 最大 PWS 硬门进入实时采样、等价别名、单 case 缓存与正式组收据；相等通过，超限或缺门拒绝 | Automated | `resource_plan/tests` 的一致超限原始观测、边界及缺门回归 + `runtime/resources/cohort` 首次失败保留回归 | AUTOMATED PASS |
 | P14-A63 | Zoom 的 Source/Preview/Split × 50/100/300% 九个独立内存 cohort、五次样本和 30 秒预热由共享注册表持有；旧三场景/短预热收据不能通过完整性检查 | Automated | `resource_plan/zoom::tests`、fixture preflight、整组缓存覆盖与预算回归；新增原生测量仍待 P14-A46 | AUTOMATED PASS |
+| P14-A64 | 启动 ready 观测后的累计进程 CPU 与观测延迟单列；不减成等待时间、不改变 wall p95/门槛；显式原生诊断复用执行器且不写成功账本 | Automated | `runtime/native_diagnostics::cpu_observation_is_not_wall_time_or_a_new_startup_gate`；真实启动仍需对应原生入口 | AUTOMATED PASS |
+| P14-A65 | 九种 Zoom 组合每份内存样本均有完整 60 秒 CPU 观测及既有空闲 CPU 门；内存-only 旧收据不能补齐覆盖 | Automated | `resource_plan/zoom::tests`、整组校验及预算回归；原生验收由 P14-A46 持有 | AUTOMATED PASS |
+| P14-A66 | 三视图默认/220×120/普通样式九组对照共用 fixture；五次原始内存/CPU、实际尺寸/DPI/样式及前后对象计数受校验，普通样式只作用于测试子进程 | Automated | `resource_plan/window_comparison`、`runtime/resources/comparison`、`window_control/resource_comparison` 与组指纹回归；正式与人工验收仍分开 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 P14-A61 Preconditions：使用当前 Rust CLI 与锁定依赖。
@@ -102,6 +105,23 @@ Expected：每种组合五次原始内存观测，预热 30 秒；缺项/短预�
 Failure Signals：toolbar 曾切换过某视图就冒充该视图的独立资源 cohort、旧收据升级为新矩阵通过。
 本项只证明工具规则；尚未测量的 Zoom CPU、220×120 与 normal-style/ToolWindow 资源差异，
 以及真实输入法/视觉项目，不因单元测试通过而变更状态。
+
+P14-A64 Preconditions：已停止 wall timer 的 ready 观测和累计 CPU/观测延迟；独立、干净的显式 probe checkout。
+Action：构造 CPU 大于 wall 的合法数据，检查原始记录和两个既有 p95 门；让后续样本失败，检查已完成样本仍保留；原生诊断保留失败与 trace。
+Expected：CPU 原值保留，不转换成负等待或额外门槛；部分采样保留实际样本数，结果仍失败且不产生 p95；不写资格化成功账本。
+Failure Signals：以 CPU 取代 ready wall time、把诊断当正式候选收据，或放宽 550 ms。
+
+P14-A65 Preconditions：完整九组 Zoom 原始内存/CPU 观测。
+Action：删除 CPU 样本、缩短间隔或移除空闲 CPU 门；检查覆盖拒绝与完整固定等待预算。
+Expected：每组五次完整 60 秒采样，沿用 0.1% 硬门；固定等待 4050 秒不含启动/压力成本。
+Failure Signals：用瞬时 CPU 或旧内存-only 收据宣称完整覆盖。
+
+P14-A66 Preconditions：相同 20 KiB/20 公式、100% 缩放、DPI、三视图；隔离子进程。
+Action：轮换默认 ToolWindow、220×120 ToolWindow、默认普通样式，分别预热 30 秒并取五次内存/60 秒 CPU；
+修改夹具中的尺寸、DPI、样式确认或对象计数并检查拒绝。
+Expected：同视图对照的 note bytes 一致；样式只更改 APPWINDOW/TOOLWINDOW；每个 CPU bucket 复核平台事实；
+缺项或发生漂移不能形成完整 Window 成功。普通样式是在正常启动后设置的稳态资源对照，不证明另一种启动路径。
+Failure Signals：影响用户窗口、隐式改变产品模式、把大小相近冒充 220×120，或以定向对照替代完整 Window 压力/隐藏验收。
 
 P14-A60 Preconditions：诊断续跑曾记录一个完整注册单元的失败提示。
 Action：打开失败优先，检查组/场景顺序；更换 source、损坏/过期提示、缩小选择范围，

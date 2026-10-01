@@ -56,10 +56,10 @@ fn whole_group_requires_all_samples_stress_fixtures_gates_and_fresh_origins() {
     assert!(Unit::Group(ResourceModule::Math).registered().is_err());
     assert_eq!(
         Unit::Group(ResourceModule::Window).minimum_wait_seconds(),
-        1350
+        5400
     );
     assert_eq!(
         Unit::Group(ResourceModule::Zoom).minimum_wait_seconds(),
-        1350
+        4050
     );
 }

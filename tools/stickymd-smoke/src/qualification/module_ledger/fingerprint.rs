@@ -325,6 +325,9 @@ fn is_editor_path(path: &str) -> bool {
 fn harness_domains(path: &str) -> u64 {
     if path.starts_with("tools/stickymd-smoke/src/runtime/resources/window")
         || path.starts_with("tools/stickymd-smoke/src/runtime/window_stress")
+        || path == "tools/stickymd-smoke/src/runtime/resources/comparison.rs"
+        || path == "tools/stickymd-smoke/src/resource_plan/window_comparison.rs"
+        || path == "tools/stickymd-smoke/src/window_control/resource_comparison.rs"
     {
         return WINDOW_RESOURCES;
     }

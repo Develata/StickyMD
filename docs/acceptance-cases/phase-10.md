@@ -101,7 +101,9 @@ The historical P10-A32 receipt above is not evidence for the current checkout.
 The current Rust registry now requires separate Source/Preview/Split cohorts at
 50/100/300%, each with five memory samples after a 30-second warmup. Previous
 Split-only or five-second observations remain historical and fail the updated
-coverage check. [P14-A62/A63](phase-14.md) cover the shared memory limits, generated
-fixtures, cache rejection and wait budget. The added native cohorts have not yet
-been measured; Zoom CPU, 220×120 and ToolWindow resource comparisons remain
-unclosed. None of these tooling tests change the manual UX statuses above.
+coverage check. [P14-A62/A63/A65/A66](phase-14.md) cover the shared memory limits,
+60-second Zoom CPU, matched default/compact/normal-style observations, generated
+fixtures, cache rejection and wait budget. The normal-style arm changes only the
+isolated child's native style after startup. Tooling coverage and local native
+diagnostics do not establish current exact-candidate qualification or change the
+manual UX statuses above; full native qualification remains P14-A46.

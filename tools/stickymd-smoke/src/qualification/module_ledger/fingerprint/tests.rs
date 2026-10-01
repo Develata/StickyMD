@@ -143,6 +143,18 @@ fn resource_group_harness_only_invalidates_its_group() {
         ),
         ("tools/stickymd-smoke/src/runtime/resources/zoom.rs", Zoom),
         ("tools/stickymd-smoke/src/resource_plan/zoom.rs", Zoom),
+        (
+            "tools/stickymd-smoke/src/resource_plan/window_comparison.rs",
+            Window,
+        ),
+        (
+            "tools/stickymd-smoke/src/runtime/resources/comparison.rs",
+            Window,
+        ),
+        (
+            "tools/stickymd-smoke/src/window_control/resource_comparison.rs",
+            Window,
+        ),
     ] {
         let before = super::super::modules()
             .map(|module| (module, calculate(&root, module).unwrap()))
@@ -196,6 +208,9 @@ fn fixture() -> std::path::PathBuf {
         "tools/stickymd-smoke/src/runtime/resources/window.rs",
         "tools/stickymd-smoke/src/runtime/resources/zoom.rs",
         "tools/stickymd-smoke/src/resource_plan/zoom.rs",
+        "tools/stickymd-smoke/src/resource_plan/window_comparison.rs",
+        "tools/stickymd-smoke/src/runtime/resources/comparison.rs",
+        "tools/stickymd-smoke/src/window_control/resource_comparison.rs",
         "tools/stickymd-smoke/src/runtime/resources/cohort.rs",
         "tools/stickymd-smoke/src/runner/candidate_input.rs",
         "docs/report/note.md",

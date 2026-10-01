@@ -143,6 +143,31 @@ fn operation_history_and_cpu_protocol_are_part_of_measurement_identity() {
 pub(crate) fn valid_resource_result(group: ResourceModule) -> crate::evidence::EvidenceResult {
     use crate::evidence::{EvidenceMeasurement, EvidenceResult, EvidenceSample, EvidenceStatus};
     let mut measurements = coverage_measurements(group);
+    if group == ResourceModule::Window {
+        for case in window_comparison::CASES {
+            for run in 1..=REPETITIONS {
+                for stage in ["before", "after"] {
+                    measurements.extend(
+                        [
+                            ("width", f64::from(case.width_dip), "dip"),
+                            ("height", f64::from(case.height_dip), "dip"),
+                            ("dpi", 144.0, "dpi"),
+                            ("style_verified", 1.0, "count"),
+                            ("handles", 42.0, "count"),
+                            ("gdi_objects", 12.0, "count"),
+                            ("user_objects", 10.0, "count"),
+                        ]
+                        .into_iter()
+                        .map(|(name, value, unit)| EvidenceMeasurement {
+                            name: format!("{}.run_{run}.{stage}.{name}", case.fixture.label),
+                            unit: unit.into(),
+                            value,
+                        }),
+                    );
+                }
+            }
+        }
+    }
     let mut samples = Vec::new();
     for (name, cpu, _) in group.cohorts() {
         for run in 1..=REPETITIONS {

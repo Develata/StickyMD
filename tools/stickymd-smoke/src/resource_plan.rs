@@ -7,6 +7,7 @@ mod observations;
 pub(crate) mod progress;
 #[cfg(test)]
 pub(crate) mod tests;
+pub(crate) mod window_comparison;
 pub(crate) mod zoom;
 
 use crate::cli::ResourceModule;
@@ -203,10 +204,15 @@ impl ResourceModule {
             Self::Window => ["visible-source", "docked-collapsed", "hidden-to-tray"]
                 .into_iter()
                 .map(|name| (name, true, WARMUP_SECONDS))
+                .chain(
+                    window_comparison::CASES
+                        .iter()
+                        .map(|case| (case.fixture.label, true, WARMUP_SECONDS)),
+                )
                 .collect(),
             Self::Zoom => zoom::CASES
                 .iter()
-                .map(|case| (case.fixture.label, false, WARMUP_SECONDS))
+                .map(|case| (case.fixture.label, case.fixture.measure_cpu, WARMUP_SECONDS))
                 .collect(),
             _ => self
                 .cases()

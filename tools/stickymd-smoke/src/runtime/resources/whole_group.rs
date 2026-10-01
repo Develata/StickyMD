@@ -24,7 +24,8 @@ pub(super) fn run(
     }
     match group {
         ResourceModule::Window => {
-            window::run_window_resource_measurement(repository, root, output, observer)?
+            window::run_window_resource_measurement(repository, root, output, observer)?;
+            super::comparison::run(repository, root, output, observer)?;
         }
         ResourceModule::Zoom => {
             zoom::run_zoom_resource_measurement(repository, root, output, observer)?

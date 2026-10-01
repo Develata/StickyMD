@@ -114,6 +114,7 @@ pub(crate) fn validate_group_result(result: &Value, group: ResourceModule) -> Re
         }
     }
     if group == ResourceModule::Window {
+        super::window_comparison::validate_facts(&values)?;
         for run in 1..=REPETITIONS {
             let name = format!("hidden-to-tray.run_{run}.fixture_bytes");
             if values.get(name.as_str()) != Some(&(20_480.0, "bytes")) {

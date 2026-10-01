@@ -390,3 +390,11 @@ Plan 10 `initial-engineering-targets` / Plan 11 `resource-module-qualification` 
 旧的三种 Split-only/5 秒数据保留为历史观测，不能通过新覆盖检查。错误门槛、缺门、超限、
 部分 cohort、预算与真实 fixture 生成有回归；新增桌面采样、Zoom CPU、最小窗口与
 ToolWindow 资源差异仍未完成，本地工具测试不闭合 P14-A46、G5 或人工矩阵。
+
+P14-A64..A66 继续投影同一 Plan 10/11 合同：`runtime/native_diagnostics` 的显式诊断
+复用正式执行器，保留 ready 后累计进程 CPU/查询延迟而不改变 wall gate；`resource_plan/zoom`
+补齐九组 60 秒 CPU；`resource_plan/window_comparison`、`runtime/resources/comparison` 与
+`window_control/resource_comparison` 共同覆盖三视图默认/最小尺寸/普通样式的稳态对照。
+平台层只采集与操作自有测试窗口，Rust 单点校验实际尺寸、DPI、样式和完整观测。专属规则变化仅使
+Window 组失效；共享规则保守失效消费者。单元/归档校验和 ignored 原生诊断均不冒充当前
+exact-candidate P14-A46 或人工通过；上段未关闭的是原生资格化，不再是工具尚无入口。

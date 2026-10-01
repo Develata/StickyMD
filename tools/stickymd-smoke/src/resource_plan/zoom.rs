@@ -13,7 +13,7 @@ pub(crate) struct ZoomCase {
 
 const fn zoom(label: &'static str, view: &'static str, percent: u16) -> ZoomCase {
     ZoomCase {
-        fixture: case(label, view, 20, 12, false),
+        fixture: case(label, view, 20, 12, true),
         percent,
     }
 }
@@ -50,10 +50,10 @@ mod tests {
         let cohorts = ResourceModule::Zoom.cohorts();
         let names: std::collections::BTreeSet<_> = cohorts.iter().map(|c| c.0).collect();
         assert_eq!(names.len(), 9);
-        assert!(cohorts.iter().all(|(_, _, warmup)| *warmup == 30));
+        assert!(cohorts.iter().all(|(_, cpu, warmup)| *cpu && *warmup == 30));
         assert_eq!(
             minimum_wait_seconds(&[ResourceModule::Zoom], true, None),
-            1350
+            4050
         );
     }
 
@@ -77,5 +77,16 @@ mod tests {
             }
             assert!(validate_receipt(&tests::document(group, &result), group).is_err());
         }
+    }
+    #[test]
+    fn memory_only_zoom_receipt_cannot_close_the_cpu_matrix() {
+        use crate::resource_plan::{tests, validate_receipt};
+        let group = ResourceModule::Zoom;
+        let mut result = tests::valid_resource_result(group);
+        validate_receipt(&tests::document(group, &result), group).unwrap();
+        for sample in &mut result.samples {
+            sample.measurements.retain(|m| m.name != "idle_cpu");
+        }
+        assert!(validate_receipt(&tests::document(group, &result), group).is_err());
     }
 }

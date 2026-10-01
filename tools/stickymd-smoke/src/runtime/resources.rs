@@ -3,6 +3,9 @@
 
 mod batch;
 mod cohort;
+mod comparison;
+#[cfg(test)]
+mod native_diagnostics;
 #[cfg(test)]
 mod native_reuse_tests;
 mod probe;

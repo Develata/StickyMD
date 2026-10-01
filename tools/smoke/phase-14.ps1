@@ -21,6 +21,7 @@
 # Diagnostic resume can use registered equivalent cases across commands without renewing historical observations.
 # Fully cached remaining cases in one group use fresh before/after batch validation; partial hits fall back to individual execution.
 # Package inventory/README and Syft cache validation are owned by Rust; ZIP/network adapters stay in PowerShell.
+# Startup retains diagnostic process CPU observations; Zoom and window comparisons share Rust resource rules.
 [CmdletBinding()]
 param(
     [switch]$Ci,

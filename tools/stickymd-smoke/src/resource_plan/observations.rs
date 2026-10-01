@@ -57,6 +57,10 @@ pub(super) fn required_gates(group: ResourceModule) -> Vec<EvidenceGate> {
             ResourceModule::Window if name == "hidden-to-tray" => {
                 Some(HIDDEN_PRIVATE_WORKING_SET_LIMIT)
             }
+            ResourceModule::Window => window_comparison::CASES
+                .iter()
+                .find(|case| case.fixture.label == name)
+                .and_then(|case| baseline_private_working_set_limit(case.fixture.view_mode)),
             ResourceModule::Zoom => zoom::CASES
                 .iter()
                 .find(|case| case.fixture.label == name)

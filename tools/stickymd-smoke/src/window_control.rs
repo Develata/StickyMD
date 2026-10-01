@@ -7,6 +7,7 @@ use std::time::Duration;
 
 mod ime_profile;
 mod physical_input;
+pub(crate) mod resource_comparison;
 mod routing;
 
 pub(crate) use ime_profile::{
