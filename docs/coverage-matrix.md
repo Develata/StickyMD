@@ -364,3 +364,8 @@ buffer 在写入实际文本前使用 `Buffer::new_empty`，Source 仍在 ready 
 Source 默认属性同时复用已解析的 Latin 字体，避免空白行触发无用的通用 Serif 字体加载；
 首选 Latin 不可用时保留通用 fallback。初始化、增量编辑与 resync 共用同一规则；测试覆盖
 旧 Serif 默认值的像素/geometry 对照、空白段落、缺失字体与编辑后的属性一致性。
+
+同一 Plan 07 的 `ime-semantics` 由 [preedit 初始化投影](acceptance-cases/phase-03.md#preedit-overlay-initialization)
+补充：候选窗定位和绘制共用的临时 buffer 在设置实际 composition 前不做无用空整形。
+`source/geometry/preedit_tests` 对照旧构造方式的 glyph pixels、selection spans 与 candidate geometry，
+并覆盖非法 replacement 和取消后的状态；性能诊断与真实输入法验收保持分离。

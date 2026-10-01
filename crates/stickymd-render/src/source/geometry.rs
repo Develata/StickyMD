@@ -12,6 +12,9 @@ use super::projection::{
     scaled_metrics, selection_valid,
 };
 
+#[cfg(test)]
+mod preedit_tests;
+
 impl SourceProjection {
     pub fn scroll_by(&mut self, vertical_px: f32) -> Scroll {
         let current = self.buffer.scroll();
@@ -145,7 +148,9 @@ impl SourceProjection {
     }
 
     pub(super) fn preedit_buffer(&mut self, preedit: &PreeditVisual, origin: EditorRect) -> Buffer {
-        let mut overlay = Buffer::new(&mut self.font_system, scaled_metrics(self.scale_factor));
+        // The actual composition is set and shaped below. Avoid first shaping
+        // an empty default-font line that will immediately be discarded.
+        let mut overlay = Buffer::new_empty(scaled_metrics(self.scale_factor));
         overlay.set_size(
             Some((self.width_px as f32 - origin.x).max(1.0)),
             Some(origin.height.max(1.0)),

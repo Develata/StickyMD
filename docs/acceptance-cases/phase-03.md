@@ -69,3 +69,19 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
 - Automated entry: `source::projection::initialization_tests` and existing ordered
   initialization tests through the render module / Phase 03 tests. Copied Release A/B
   measurements remain diagnostics; the manual IME/DPI rows above are unchanged.
+
+## Preedit overlay initialization
+
+- Preconditions: empty and mixed-script Source notes; empty, Latin, CJK, combining,
+  emoji, RTL and long preedit text; collapsed/reverse replacement selections and different scales.
+- Action: compare the transient overlay with the previous eager buffer constructor;
+  move the composition cursor, select composition text, cancel, and supply invalid replacement ranges.
+- Expected: identical glyph pixels, selection spans and candidate rectangles. The real
+  composition is shaped before use; preparing it does not shape a discarded empty line.
+  Invalid replacement ranges are rejected without changing canonical text or generation;
+  cancellation restores the canonical caret. Commit/undo and font policy remain unchanged.
+- Failure signals: changed geometry/pixels, canonical mutation from preedit, stale composition
+  after cancellation, or synthetic timings reported as physical IME acceptance.
+- Automated entry: `source::geometry::preedit_tests` through the render module / Phase 03;
+  existing editor-flow tests cover commit/cancel/undo. Release projection timings are diagnostics;
+  the physical IME and manual visual rows above retain their existing status.
