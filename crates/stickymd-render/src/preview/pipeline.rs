@@ -93,6 +93,7 @@ impl Default for PreviewPipeline {
 impl PreviewPipeline {
     pub fn new() -> Self {
         let mut font_system = FontSystem::new();
+        super::fonts::configure_code_font(&mut font_system);
         let fonts = FontSelection::resolve(&mut font_system);
         Self {
             parser: PreviewParser,

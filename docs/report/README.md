@@ -11,7 +11,7 @@
 
 ## 当前实现与维护入口
 
-- [Preview 渲染规则与优先级](2026-09-30-preview-rendering-rules.md)：语法/样式/布局/调度/缓存的详细源码说明、21 项 targeted 回归与已知合同差异；阅读时结合 [2026-10-01 勘误](2026-09-30-preview-rendering-rules.md#review-2026-10-01)，包含列表内表格丢失、字体回退的诊断。不是新渲染合同。
+- [Preview 渲染规则与优先级](2026-09-30-preview-rendering-rules.md)：语法/样式/布局/调度/缓存的详细源码说明与已知合同差异；阅读时结合 [2026-10-01 勘误](2026-09-30-preview-rendering-rules.md#review-2026-10-01)和 [本地图片、列表、字体修复](2026-09-30-preview-rendering-rules.md#fixes-2026-10-01)。各次测试保留日期与范围，不是新渲染合同。
 - [本地选测、兼容性夹具与耗时汇总](2026-09-30-local-development-verification.md)：`dev-check` / `timings`、后续 review 和 Windows CI 路径别名修复；按 Resolution 保留失败与复验记录。
 - [发布 CLI 内部复用](2026-09-30-release-cli-reuse.md)：验包、版本与 CI 规则复用及局部测量。
 - [包清单、README 与 Syft 缓存](2026-09-30-package-staging-syft-cli.md)：稳定产物语义、身份校验和双宿主行为。

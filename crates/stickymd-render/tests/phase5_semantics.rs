@@ -162,3 +162,143 @@ fn golden_outline_is_independent_of_checkout_newlines() {
         "literal\rtext\n"
     );
 }
+
+#[test]
+fn phase5_list_table_keeps_cells_and_selection_text() {
+    use stickymd_render::preview::{
+        PreviewPipeline, PreviewSelection, PreviewTheme, RenderBlockKind, RenderTreeBuilder,
+    };
+    let source = "- | a | b |\n  | --- | --- |\n  | x | y |\n";
+    let snapshot = DocumentSnapshot {
+        text: Arc::from(source),
+        generation: Generation::initial(),
+        line_ending: LineEnding::Lf,
+    };
+    let owned = PreviewParser.parse(&snapshot).unwrap();
+    let tree = RenderTreeBuilder.build(&owned);
+    assert!(matches!(&tree.blocks[0].kind, RenderBlockKind::Table(table) if table.rows.len() == 2));
+    let mut pipeline = PreviewPipeline::new();
+    for (width, scale, theme) in [
+        (140, 0.5, PreviewTheme::Light),
+        (500, 1.0, PreviewTheme::Light),
+        (300, 3.0, PreviewTheme::Dark),
+    ] {
+        let frame = pipeline
+            .build(
+                &snapshot,
+                width,
+                300,
+                scale,
+                0.0,
+                PreviewSelection::default(),
+                theme,
+            )
+            .unwrap();
+        assert_eq!(
+            frame.copy_selection(frame.select_all()),
+            Some("• a\tb\nx\ty")
+        );
+    }
+    assert_eq!(snapshot.text.as_ref(), source);
+}
+
+#[test]
+fn phase5_list_first_blocks_keep_semantics_and_nested_markers() {
+    use stickymd_render::preview::{
+        PreviewPipeline, PreviewSelection, PreviewTheme, RenderBlockKind, RenderTreeBuilder,
+    };
+    let cases = [
+        ("- # 标题\n", "heading", "• 标题"),
+        ("- ```rust\n  let x = 1;\n  ```\n", "code", "• let x = 1;\n"),
+        ("- > quote\n", "quote", "• quote"),
+        ("- $$x$$\n", "math", "• $$x$$"),
+        ("- - inner\n", "list", "• • inner"),
+        ("- [x] **完成**\n", "list", "☑ 完成"),
+        ("10. # 标题\n", "heading", "10. 标题"),
+        ("-\n", "list", "• "),
+    ];
+    let mut pipeline = PreviewPipeline::new();
+    for (source, kind, expected) in cases {
+        let snapshot = DocumentSnapshot {
+            text: Arc::from(source),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        };
+        let tree = RenderTreeBuilder.build(&PreviewParser.parse(&snapshot).unwrap());
+        assert!(
+            matches!(
+                (kind, &tree.blocks[0].kind),
+                ("heading", RenderBlockKind::Heading(_))
+                    | ("code", RenderBlockKind::CodeBlock { .. })
+                    | ("quote", RenderBlockKind::Quote)
+                    | ("math", RenderBlockKind::DisplayMath)
+                    | ("list", RenderBlockKind::ListItem)
+            ),
+            "{source}: {:?}",
+            tree.blocks[0].kind
+        );
+        let frame = pipeline
+            .build(
+                &snapshot,
+                500,
+                300,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        assert_eq!(
+            frame.copy_selection(frame.select_all()),
+            Some(expected),
+            "{source}"
+        );
+        assert_eq!(snapshot.text.as_ref(), source);
+    }
+}
+
+#[test]
+fn phase5_list_markers_and_content_keep_distinct_hit_targets() {
+    use stickymd_render::preview::{PreviewPipeline, PreviewSelection, PreviewTheme};
+    let mut pipeline = PreviewPipeline::new();
+    for source in [
+        "- # 标题 Heading\n",
+        "- ```rust\n  let x = 1;\n  ```\n",
+        "- | a | b |\n  | --- | --- |\n  | x | y |\n",
+        "- > quote\n",
+        "- $$x$$\n",
+        "- - inner\n",
+        "- [x] **完成**\n",
+        "- ![ALT](missing.png)\n",
+    ] {
+        let snapshot = DocumentSnapshot {
+            text: Arc::from(source),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        };
+        let frame = pipeline
+            .build(
+                &snapshot,
+                500,
+                300,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        for item in frame.index().boxes() {
+            let y = item.rect.y + item.rect.height * 0.5;
+            assert_eq!(
+                frame.hit_test(item.start_x, y),
+                item.selection_range.start,
+                "{source}: {item:?}"
+            );
+            assert_eq!(
+                frame.hit_test(item.end_x, y),
+                item.selection_range.end,
+                "{source}: {item:?}"
+            );
+        }
+    }
+}

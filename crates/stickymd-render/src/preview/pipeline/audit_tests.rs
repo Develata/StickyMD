@@ -7,6 +7,23 @@ use std::sync::Arc;
 use std::time::Instant;
 use stickymd_core::LineEnding;
 
+#[test]
+#[cfg(windows)]
+fn phase5_preview_binds_consolas_without_changing_source_fonts() {
+    let pipeline = PreviewPipeline::new();
+    assert_eq!(
+        pipeline
+            .font_system
+            .db()
+            .family_name(&cosmic_text::Family::Monospace),
+        "Consolas"
+    );
+    assert!(
+        pipeline.fonts.latin_family == "Times New Roman"
+            || pipeline.fonts.latin_family == "Georgia"
+    );
+}
+
 struct NoLocalImages;
 
 fn require_release() {

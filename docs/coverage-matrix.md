@@ -54,6 +54,22 @@ generic monospace 的实际字体回退。它们是诊断观察，不是新增�
 阶段矩阵同步明确 tracked source baseline、ignored 动态收据和各版本发布结论的区别；
 原状态列与历史数值不变，人工项未升级。
 
+## 2026-10-01 Preview 实现修复
+
+- plan 08 `local-image-read-boundary` → AC-012/017、Phase 07 A09/A11/A13/A15 →
+  `assets/path.rs`、`platform/windows/local_image_file{,/path,/tests}.rs`、Preview worker 与 Export：
+  同一个只读 opener 拒绝 UNC/device/远程或未知 drive/reparse；真实本地句柄、junction、
+  中文/空格、文件替换及失败保留测试补足仅检查“无网络 client”的覆盖缺口。
+- plan 06 `owned-ast-projection` / `native-preview-layout` / `preview-scheduling` →
+  AC-013/014、Phase 05 → `preview/render_tree/list.rs`、`layout/list.rs`、`fonts.rs`：
+  列表首块保留原语义，表格 cells 与复制内容不丢失；标记与内容命中独立；Consolas 显式
+  绑定且缺失时保留本地 fallback。测试包括实际 glyph face 和 headless frame。
+
+本地图片定向 20 passed / 2 ignored；渲染、开发检查和 raster 的本批结果详见
+[修复记录](report/2026-09-30-preview-rendering-rules.md#fixes-2026-10-01)。局部自动化与生成
+图像检查不升级历史矩阵或人工验收；本地重定向/云占位的兼容性限制、真实网络与桌面矩阵
+缺口均保留，未宣称性能提升或完整符合性。
+
 ## 维护规则
 
 1. 新增 plan 章节 → 必须补充对应 Feature 段落与 Acceptance 案例（或写明不适用理由）。

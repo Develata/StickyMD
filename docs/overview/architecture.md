@@ -39,8 +39,10 @@ Object Plane             doc::text、preview::render_tree、asset::managed_image
 ## 关键安全承诺
 
 以下是工程合同要求；当前实现中发现的差异与未验证边界见
-[Preview 实现审查](../report/2026-09-30-preview-rendering-rules.md#differences)，包括本地图片
-resolver 接受 UNC 的读取风险。没有 runtime 网络客户端不能单独证明所有系统文件读取都在本地。
+[Preview 实现审查](../report/2026-09-30-preview-rendering-rules.md#differences)及
+[2026-10-01 修复](../report/2026-09-30-preview-rendering-rules.md#fixes-2026-10-01)。
+Preview/Export 现共用本地图片读取 adapter，拒绝 UNC、远程映射与 reparse 路径；
+本地 junction/symlink 和云端占位文件也保守拒绝。网络抓包与真实映射盘尚未验证。
 
 - 保存永远原子替换，不产生半写文件；崩溃后可恢复。
 - 外部修改遇到未保存内容时显式冲突，绝不偷偷覆盖。
@@ -180,7 +182,7 @@ GitHub workflow 只转发计划、隔离 job 与缓存；`CI result` 聚合失�
 | 状态与权威 | [04_runtime_state_model.md](../plan/04_runtime_state_model.md) |
 | 保存与冲突 | [05_document_persistence.md](../plan/05_document_persistence.md) |
 | Markdown/数学 | [06_markdown_math_rendering.md](../plan/06_markdown_math_rendering.md) |
-| 当前 Preview 实现细节与合同差异（有日期的审查） | [Preview 规则详解](../report/2026-09-30-preview-rendering-rules.md)及 [2026-10-01 勘误](../report/2026-09-30-preview-rendering-rules.md#review-2026-10-01) |
+| 当前 Preview 实现细节与合同差异（有日期的审查） | [Preview 规则详解](../report/2026-09-30-preview-rendering-rules.md)、[2026-10-01 勘误](../report/2026-09-30-preview-rendering-rules.md#review-2026-10-01)及 [修复记录](../report/2026-09-30-preview-rendering-rules.md#fixes-2026-10-01) |
 | 编辑器与输入法 | [07_editor_and_ime.md](../plan/07_editor_and_ime.md) |
 | 图片与导出 | [08_assets_and_export.md](../plan/08_assets_and_export.md) |
 | 窗口与托盘 | [09_windows_shell.md](../plan/09_windows_shell.md) |

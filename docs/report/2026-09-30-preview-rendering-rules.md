@@ -831,3 +831,132 @@ git diff --check
 本轮仍未验证完整 Markdown/RaTeX conformance、真实桌面视觉、网络共享行为、资源性能
 或新的候选资格。前述 21 项回归与九项 `dev-check` 结果属于 2026-09-30 的执行记录，
 不得当作本次重新运行的数量。
+
+<a id="fixes-2026-10-01"></a>
+## Resolution — 2026-10-01 本地图片、列表投影与代码字体修复
+
+本次在 USER 授权后修复前三项 implementation drift。开发起点为
+`5408d9c0641684f761f3cd0caa5fa8c2589eeceb`，初始工作树干净；下述结果来自该基线之上的
+本批源码、锁定依赖与新生成的测试产物。它们不继承
+`v0.1.0` / `v0.1.1` 的 artifact 身份、人工证据或发布特例。报告前文保留审查当时的事实，
+涉及本地图片、列表首块和 code font 的当前行为以本节为补充。
+
+### 1. 本地图片的读取通路
+
+原先 lexical resolver 接受 UNC，Preview 的 inspect/load 和 Export 后续直接打开路径。
+本次先增加失败回归，确认旧实现允许 `\\server\share\a.png`，然后统一为：
+
+```text
+Comrak local destination
+  → assets/path.rs：percent/file URL 解析，拒绝 UNC/device/ADS/歧义 drive-relative
+  → platform/windows/local_image_file：查询 DOS drive 映射
+  → 只接受已知本地 volume；按名称展开有限层本地 DOS alias
+  → 对观察到的 native volume path 执行只读、禁止 reparse 的原子 open
+  → 校验句柄指向普通、已在本地可用的文件
+  → Preview 元数据/有界读取，或 Export 流式复制
+```
+
+[`local_image_file.rs`](../../apps/stickymd-win/src/platform/windows/local_image_file.rs)
+将 Windows 调用留在既有平台 adapter；[`path.rs`](../../apps/stickymd-win/src/platform/windows/local_image_file/path.rs)
+单独持有可注入 DOS 映射的路径规则。Preview 与 Export 共用这一个 opener，不再各自直接
+`File::open` 本地图片。普通绝对/相对路径、`../`、percent-encoded 中文/空格和本地 drive
+verbatim 路径仍可读取；这些读取不会获得 managed ownership、GC 或额外写入权限。
+
+没有采用“先检查路径，再普通打开”的方案，因为二者之间可能被替换。
+`QueryDosDeviceW` 只查询名称映射，取第一条当前映射；未知、远程或循环映射拒绝。
+随后直接打开观察到的本地 native volume 名称，避免再次解析可被改写的 DOS alias。
+`NtCreateFile` 使用 `FILE_OPEN` 与 `OBJ_DONT_REPARSE`，在取得句柄的同一次操作中拒绝路径
+任意位置的 reparse；`FILE_OPEN_NO_RECALL` 与句柄属性检查保守拒绝非本地可用内容。
+依据为 Microsoft 的 [DOS 映射说明](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-querydosdevicew)、
+[OBJECT_ATTRIBUTES 说明](https://learn.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_object_attributes)
+与 [NtCreateFile 说明](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile)。
+
+兼容性限制：本地 junction/symlink、云端或离线占位文件、未识别设备类型也会拒绝，
+不尝试读取后再推断是否“实际走了网络”。可识别的本地 SUBST alias 按名称展开；测试对
+远程/未知/SUBST 映射采用注入观察值，实际 filesystem 集成使用自建本地 junction。
+没有访问网络共享，没有做网络抓包，也没有测试真实 SMB/WebDAV/DFS 映射盘。
+
+Preview 拒绝后维持占位行为，HTTP/HTTPS 继续不调用本地 source；Export 明确失败且保留
+原输出，清理范围仅为本次 staging。没有改变导出发布顺序、managed asset mutation 或 GC。
+仅为现有锁定 `windows` crate 启用 Wdk Foundation/FileSystem 与 Win32 IO 功能；
+没有新增 crate、升级依赖或改动 `Cargo.lock`。
+
+### 2. 列表标记与子块语义分离
+
+旧 `append_list` 把首块改成 `ListItem` 并往 spans 前插标记，丢失 Table kind 及其 cells。
+新 [`render_tree/list.rs`](../../crates/stickymd-render/src/preview/render_tree/list.rs) 独立保存
+marker；仅普通 Paragraph 保留原 ListItem 分类。Table、Heading、CodeBlock、Quote、
+DisplayMath、HtmlLiteral 和 Rule 沿用各自布局职责，嵌套首块累积外层到内层标记。
+
+[`layout/list.rs`](../../crates/stickymd-render/src/preview/layout/list.rs) 独立 shaping 标记，
+用实际宽度为正文留出空间；复制投影先追加 marker，再追加原块内容。标记与首行使用
+相同块级行度量；code marker 也使用 code font。对于短公式，选择框覆盖同一实际列表行，
+避免 y 行索引把公式与标记拆成重叠的两个命中行。这些几何仍是临时 Preview 投影。
+
+回归先证实旧列表表格失败，修复后表格复制为 `• a\tb\nx\ty`，其中 `\t` / `\n` 表示
+实际 tab / newline。进一步测试发现初版修复的标题、短公式和 task checkbox 命中问题，
+已修正并加入 cluster 边界往返检查；不以“能复制全文”替代鼠标坐标映射的验证。
+
+### 3. Preview 代码字体
+
+[`fonts.rs`](../../crates/stickymd-render/src/preview/fonts.rs) 在 Preview 自有 FontSystem
+初始化时查询 Consolas；存在时显式绑定 generic monospace，缺失则保持原有本地回退。
+现有 code span/block、HTML literal 和错误 literal 的 Monospace 路由复用此绑定。
+普通文字仍遵循原 script-based family；Source 字体数据库的构造没有修改。
+没有下载、内嵌或重新分发专有字体。
+
+旧实现的 generic family 断言先失败；新实现除检查 family 名称外，也检查 shaping 后实际
+ASCII glyph 的 font face，并通过移除 Consolas 的独立数据库验证 fallback。当前机器的
+实际 code glyph 选用 Consolas；这不表示 CJK/Emoji 全部由 Consolas 覆盖。
+
+### 4. 本批验证与剩余范围
+
+- 本地图片定向测试：`cargo test -p stickymd-win --locked phase7_`，20 passed、2 个 opt-in
+  性能用例 ignored。覆盖真实本地句柄/junction、中文/空格、`../`、percent、文件替换、
+  unsafe destination、注入 drive 分类、Preview 占位与 Export 失败保留。
+- `--lib phase5_` 定向验证为 3 passed / 3 ignored；最终 workspace test 中
+  `phase5_semantics`、`table_math_pipes`、`phase6_math`、`rendering_stress` 分别为
+  5 / 7 / 6 / 6 passed，共 24 passed。这些数量来自本批执行，不复用之前的 21 项记录。
+- 新的 raster probe 使用本轮 `cargo build -p stickymd-render --locked --offline
+  --message-format=json-render-diagnostics` 返回的准确 rlib。图片与复制结果在 ignored
+  `target/preview-fixes-20261001/`，覆盖 640px Light / 300px Dark 的列表表格、标题、code、
+  quote、公式、nested/task/ordered markers。已检查这两张最终图像，内容保留且标记与正文
+  可区分；这不替代真实窗口矩阵。PNG 编码只用于此离线检查，没有进入渲染热路径。
+- `cargo run --quiet -p stickymd-smoke --locked -- dev-check` 因共享 `Cargo.toml` 变化选择
+  全部九项检查，最终 9/9 passed：治理、fmt、strict Clippy、依赖策略、两个 Phase 1
+  测试任务、workspace tests、Release build、基于本次 build 输出的原生依赖 gate。
+  首轮 Clippy 指出的两处测试冗余 `as_deref` 已修正；完整复验记录在
+  `target/preview-fixes-20261001/dev-check-final.log`，没有生成资格化收据。
+- 文档扫描为 189 份文档、483 个本地链接/锚点、0 个失效项；963 条历史验收状态数据行
+  逐行不变，原报告正文保持 append-only。外部网页可达性不在该扫描范围。
+
+另外串行运行一次既有 Release Preview 基线：
+
+```powershell
+cargo test -p stickymd-render --release --locked --lib phase5_preview_release_baseline -- --ignored --nocapture --test-threads=1
+```
+
+3 passed。20 次 warm build 的 total p95 与既有门槛如下；原始分段 median/p95/max 和
+cold 结果见 ignored `target/preview-fixes-20261001/preview-performance.log`。
+
+| 输入大小 | 本次 warm total p95 | 既有 p95 门槛 |
+| --- | --- | --- |
+| 20 KiB | 11.670 ms | 100 ms |
+| 100 KiB | 32.405 ms | 400 ms |
+| 1 MiB | 218.209 ms | 2000 ms |
+
+对应 cold Preview build 为 378.705 / 525.830 / 513.758 ms；它不是进程启动时间。
+同次 5000 行代码块的 30 次 viewport paint p95 为 0.705 ms，文本滚动没有增加 layout。
+本次基线没有同环境修复前对照，也没有测量新 opener 的真实图片 I/O，因此只证明该次
+样本通过已有门槛，不能据此声称相对加速或整个 runtime 无性能回退。
+
+没有改变 plan、产品功能边界、PowerShell 参数或发布权限。现有 Phase 05/07 薄入口已通过
+Rust task 覆盖新增用例，因而不增加重复的脚本判断。投影见
+[Phase 05](../acceptance-cases/phase-05.md)、[Phase 07](../acceptance-cases/phase-07.md)
+及 [覆盖映射](../coverage-matrix.md)。
+
+仍未验证：真实 Windows 窗口下的物理鼠标、剪贴板、Shell、native export dialog、完整
+theme/DPI/IME/多显示器矩阵、网络抓包、新候选资格化和完整资源 Campaign。代码长行换行、
+表格横向滚动/交替底色、zoom 全文布局、图片预载范围与其他前文差异没有由本批顺带解决。
+本批收益是读取拒绝规则一致、列表数据/选择完整和字体绑定可测试；没有测量到可归因的
+性能提升，也不承诺性能提升比例。原人工状态与技术 `NOT_READY` 均不升级。

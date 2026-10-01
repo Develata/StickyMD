@@ -2,6 +2,8 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#native-preview-layout
 
+mod list;
+
 use std::sync::Arc;
 
 use stickymd_core::Generation;
@@ -85,6 +87,9 @@ pub struct RenderBlock {
     pub spans: Vec<RenderSpan>,
     pub indent: u16,
     pub source_range: Option<SourceRange>,
+    /// Markers decorate an item's first block without replacing its semantics.
+    /// Multiple markers preserve lists whose first child is another list.
+    pub(crate) list_markers: Vec<RenderSpan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +165,7 @@ impl RenderTreeBuilder {
                     spans: self.inline_spans(content),
                     indent,
                     source_range: *source_range,
+                    list_markers: Vec::new(),
                 }),
                 BlockNode::Heading {
                     level,
@@ -170,6 +176,7 @@ impl RenderTreeBuilder {
                     spans: self.inline_spans(content),
                     indent,
                     source_range: *source_range,
+                    list_markers: Vec::new(),
                 }),
                 BlockNode::BlockQuote {
                     blocks,
@@ -183,6 +190,7 @@ impl RenderTreeBuilder {
                             spans: Vec::new(),
                             indent,
                             source_range: *source_range,
+                            list_markers: Vec::new(),
                         });
                     }
                 }
@@ -203,18 +211,21 @@ impl RenderTreeBuilder {
                     )],
                     indent,
                     source_range: code.source_range,
+                    list_markers: Vec::new(),
                 }),
                 BlockNode::Table(table) => output.push(RenderBlock {
                     kind: RenderBlockKind::Table(self.table(table)),
                     spans: Vec::new(),
                     indent,
                     source_range: table.source_range,
+                    list_markers: Vec::new(),
                 }),
                 BlockNode::ThematicBreak { source_range } => output.push(RenderBlock {
                     kind: RenderBlockKind::ThematicBreak,
                     spans: Vec::new(),
                     indent,
                     source_range: *source_range,
+                    list_markers: Vec::new(),
                 }),
                 BlockNode::HtmlLiteral {
                     literal,
@@ -234,6 +245,7 @@ impl RenderTreeBuilder {
                     )],
                     indent,
                     source_range: *source_range,
+                    list_markers: Vec::new(),
                 }),
                 BlockNode::DisplayMath(math) => {
                     let mut math_span = span(
@@ -255,41 +267,9 @@ impl RenderTreeBuilder {
                         spans: vec![math_span],
                         indent,
                         source_range: math.source_range,
+                        list_markers: Vec::new(),
                     });
                 }
-            }
-        }
-    }
-
-    fn append_list(
-        &self,
-        list: &ListNode,
-        indent: u16,
-        quoted: bool,
-        output: &mut Vec<RenderBlock>,
-    ) {
-        for (index, item) in list.items.iter().enumerate() {
-            let marker = match item.checked {
-                Some(true) => "☑ ".to_owned(),
-                Some(false) => "☐ ".to_owned(),
-                None if list.ordered => format!("{}. ", list.start + index),
-                None => "• ".to_owned(),
-            };
-            let before = output.len();
-            self.append_blocks(&item.blocks, indent.saturating_add(1), quoted, output);
-            if let Some(first) = output.get_mut(before) {
-                first.kind = RenderBlockKind::ListItem;
-                first.spans.insert(
-                    0,
-                    span(&marker, &marker, None, RenderStyle::default(), None),
-                );
-            } else {
-                output.push(RenderBlock {
-                    kind: RenderBlockKind::ListItem,
-                    spans: vec![span(&marker, &marker, None, RenderStyle::default(), None)],
-                    indent: indent.saturating_add(1),
-                    source_range: item.source_range,
-                });
             }
         }
     }

@@ -119,3 +119,25 @@ This supplements P05-A03/A05/A12 and AC-013/014 under the existing GFM and sourc
 
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
+
+## 2026-10-01 list projection and code font regression
+
+This supplements the existing plan 06 semantic/layout/selection coverage; historical matrix rows
+and manual statuses remain unchanged.
+
+- Preconditions: Comrak inputs whose first list block is a table, heading, code block, quote,
+  formula, nested list, task item or empty item; installed Consolas and a separate font database
+  with Consolas removed.
+- Action: build the RenderTree and real Preview frame; check copy text and cluster hit boundaries;
+  shape code through the Preview monospace policy and exercise the missing-font fallback.
+- Expected: list markers do not replace the child's block kind or discard table cells; marker and
+  content hit targets stay distinct, copied text is complete and source bytes remain unchanged.
+  Available Consolas supplies code glyphs; its absence preserves the existing local fallback.
+- Failure signals: marker-only table output, lost block styling, marker clicks routed to content,
+  missing formula/task hit targets, altered source text, or generic monospace ignoring Consolas.
+- Automated entry: `cargo test -p stickymd-render --locked --test phase5_semantics` and
+  `cargo test -p stickymd-render --locked --lib phase5_`. The existing `phase-05.ps1` Rust task
+  includes these targets; no wrapper parameter or routing changes are needed.
+- Limits: generated raster inspection and headless hit tests do not qualify physical mouse,
+  clipboard, full theme/DPI or desktop visual acceptance. Other documented layout differences
+  remain open; see the dated [Preview implementation report](../report/2026-09-30-preview-rendering-rules.md).

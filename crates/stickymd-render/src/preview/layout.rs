@@ -2,6 +2,8 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#native-preview-layout
 
+mod list;
+
 use std::sync::Arc;
 
 use crate::image::{DecodedImageCache, PreviewImageSource};
@@ -128,16 +130,30 @@ pub(super) fn layout_document(
 
     for (block_index, block) in tree.blocks.iter().enumerate() {
         let top = y;
-        let laid_out = match &block.kind {
+        let marker = list::layout_marker(
+            font_system,
+            fonts,
+            block,
+            padding,
+            y,
+            content_width,
+            scale,
+            &mut selection_text,
+            &mut text_layout_cache,
+        );
+        let marker_width = marker.as_ref().map_or(0.0, |(width, _)| *width);
+        let block_padding = padding + marker_width;
+        let block_width = (content_width - marker_width).max(1.0);
+        let mut laid_out = match &block.kind {
             RenderBlockKind::Table(table) => super::table_layout::layout_table(
                 font_system,
                 fonts,
                 math_engine,
                 block,
                 table,
-                padding,
+                block_padding,
                 y,
-                content_width,
+                block_width,
                 scale,
                 &mut selection_text,
                 &mut formula_count,
@@ -154,9 +170,10 @@ pub(super) fn layout_document(
                     chunks: Vec::new(),
                     decorations: vec![LayoutDecoration {
                         rect: PreviewRect {
-                            x: padding,
+                            x: block_padding + block.indent as f32 * INDENT_DIP * scale,
                             y: y + height * 0.5,
-                            width: content_width,
+                            width: (block_width - block.indent as f32 * INDENT_DIP * scale)
+                                .max(1.0),
                             height: scale.max(1.0),
                         },
                         role: DecorationRole::Rule,
@@ -169,9 +186,9 @@ pub(super) fn layout_document(
                 fonts,
                 math_engine,
                 block,
-                padding,
+                block_padding,
                 y,
-                content_width,
+                block_width,
                 scale,
                 &mut selection_text,
                 &mut formula_count,
@@ -182,6 +199,9 @@ pub(super) fn layout_document(
                 &mut text_layout_cache,
             ),
         };
+        if let Some((_, marker)) = marker {
+            list::attach_marker(marker, &mut laid_out, &block.kind);
+        }
         y += laid_out.height;
         if let Some(source_range) = block.source_range {
             scroll_anchors.push(PreviewScrollAnchor {

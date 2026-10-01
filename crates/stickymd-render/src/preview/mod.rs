@@ -6,6 +6,7 @@
 //! No preview type exposes a source mutation or persistence API.
 
 mod export;
+mod fonts;
 mod image_layout;
 mod inline_text_layout;
 mod layout;
