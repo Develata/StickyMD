@@ -112,3 +112,61 @@ fn ci_cache_is_pinned_and_excludes_candidate_evidence_and_user_documents() {
     assert!(cache.contains("${{ runner.os }}-${{ inputs.lane }}"));
     assert!(cache.contains("${{ github.sha }}"));
 }
+
+#[test]
+fn cache_downloads_share_keys_but_build_outputs_keep_lane_identity() {
+    let cache = include_str!("../../../../.github/actions/rust-cache/action.yml");
+    let layers: Vec<_> = cache.split("    - name: ").skip(1).collect();
+    assert_eq!(layers.len(), 2);
+    let expected_paths = [
+        vec![
+            "~/.cargo/registry/index/",
+            "~/.cargo/registry/cache/",
+            "~/.cargo/git/db/",
+        ],
+        vec![
+            "target/debug/",
+            "target/release/",
+            "target/cargo-deny/",
+            "experiments/phase-01/markdown-math/target/",
+            "experiments/phase-01/persistence/target/",
+        ],
+    ];
+    for (index, layer) in layers.iter().enumerate() {
+        let paths: Vec<_> = layer
+            .split_once("path: |")
+            .unwrap()
+            .1
+            .split_once("key:")
+            .unwrap()
+            .0
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        assert_eq!(paths, expected_paths[index]);
+        let (key, restore) = layer.split_once("restore-keys: |").unwrap();
+        let key = key.split_once("key: ").unwrap().1.trim();
+        let restore = restore
+            .lines()
+            .map(str::trim)
+            .find(|s| !s.is_empty())
+            .unwrap();
+        assert_eq!(key, format!("{restore}${{{{ github.sha }}}}"));
+        assert!(key.contains("${{ runner.os }}"));
+        for input in [
+            "**/Cargo.lock",
+            "**/Cargo.toml",
+            ".cargo/config.toml",
+            ".github/actions/rust-cache/action.yml",
+        ] {
+            assert!(key.contains(input));
+        }
+        let lane_a = key.replace("${{ inputs.lane }}", "planner");
+        let lane_b = key.replace("${{ inputs.lane }}", "windows-release");
+        assert_eq!(lane_a == lane_b, index == 0);
+        assert_eq!(key.contains("rust-toolchain.toml"), index == 1);
+        assert!(!layer.contains("if:"));
+    }
+    assert!(!cache.contains("CARGO_INCREMENTAL"));
+}

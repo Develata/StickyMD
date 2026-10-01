@@ -346,3 +346,10 @@ Plan 06 `native-preview-layout` 的既有文字缓存映射到 `preview/text_lay
 `pipeline/text_reuse_tests` 提供固定混合笔记与唯一文本对照的 Release 测量及输出指纹。
 验收投影见 [Phase 05](acceptance-cases/phase-05.md#document-scoped-text-geometry-reuse)。
 原有 Rust Phase 05 入口自动纳入，无新增 PowerShell 判断或人工验收结论。
+
+## CI 下载与构建缓存分层
+
+Plan 11 `modular-headless-ci` 对应 [P00-A09](acceptance-cases/phase-00.md)：
+公共下载缓存跨 lane 共享，构建缓存保留 lane/toolchain 隔离及增量产物；两层仍按 commit
+轮换。`ci/workflow_tests` 检查路径集合、共享/隔离键关系和恢复前缀，actionlint 检查 workflow。
+缓存命中不跳过验证，也不保存候选证据或用户便签。本地构建对照不代表远程 CI 耗时收益。

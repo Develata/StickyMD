@@ -56,6 +56,14 @@ P00-A09: Given a declared CI scope and completed job statuses, aggregate the res
 success only when requested jobs succeeded and intentional skips match the plan. Failure,
 cancellation, missing/unknown status or unexpected skip must return nonzero. Manual, scheduled
 and release lanes must retain full checks. These local adapter checks do not prove remote execution.
+The two Cargo cache layers must contain disjoint, explicit download/build paths.
+Download keys must be shared across lanes of the same OS/dependency identity;
+build keys must also isolate lane/toolchain. Both rotate by commit and restore only
+their matching prefix, preserving incremental outputs without changing local Cargo
+settings. Partial download hits still allow Cargo to fetch missing dependencies;
+neither cache layer may skip validation or contain candidate evidence or user notes.
+`ci::workflow_tests` checks path membership and key relationships; actionlint checks
+workflow syntax. Remote transfer times and cache savings require actual CI observations.
 Linux smoke lint/tests must run as a separate job after planning so other lanes can start
 concurrently. Rust selects it for full/smoke scope; its failure, cancellation, missing result
 or unexpected skip must fail the aggregate gate, while other scopes must omit it as planned.

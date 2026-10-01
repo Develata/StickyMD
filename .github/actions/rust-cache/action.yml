@@ -7,17 +7,29 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
+    # Downloads can be shared across lanes. Keys still rotate by source commit:
+    # the first successful writer may have fetched only part of the locked graph.
+    # Cargo fetches any missing downloads normally; a hit never skips validation.
+    - name: Cargo downloads
+      uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
       with:
         path: |
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
+        key: cargo-downloads-v1-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', '.github/actions/rust-cache/action.yml') }}-${{ github.sha }}
+        restore-keys: |
+          cargo-downloads-v1-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', '.github/actions/rust-cache/action.yml') }}-
+    # Build outputs retain lane/toolchain isolation and useful incremental state.
+    - name: Cargo build outputs
+      uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
+      with:
+        path: |
           target/debug/
           target/release/
           target/cargo-deny/
           experiments/phase-01/markdown-math/target/
           experiments/phase-01/persistence/target/
-        key: cargo-v1-${{ runner.os }}-${{ inputs.lane }}-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', '.github/actions/rust-cache/action.yml') }}-${{ github.sha }}
+        key: cargo-build-v2-${{ runner.os }}-${{ inputs.lane }}-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', '.github/actions/rust-cache/action.yml') }}-${{ github.sha }}
         restore-keys: |
-          cargo-v1-${{ runner.os }}-${{ inputs.lane }}-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', '.github/actions/rust-cache/action.yml') }}-
+          cargo-build-v2-${{ runner.os }}-${{ inputs.lane }}-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', '.github/actions/rust-cache/action.yml') }}-

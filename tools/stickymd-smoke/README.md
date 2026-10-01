@@ -365,8 +365,13 @@ to reject failures, cancellations, missing results and unexpected skipped jobs.
 
 Manual full runs, scheduled maintenance and release preparation retain complete
 checks. Scheduled maintenance reuses the CI workflow; release and promotion
-workflows preserve their existing artifact gates. Shared Cargo caches retain
-downloads/build outputs, never candidate ledgers or note data. Daily CI superseded
+workflows preserve their existing artifact gates. Cargo download caches share an
+OS/dependency identity across lanes; build caches additionally bind the lane and
+toolchain. Both rotate by commit and restore only their matching prefix. A first
+writer may have downloaded only part of the graph; Cargo fetches missing entries
+normally and a cache hit never skips checks. Incremental compilation stays enabled
+where Cargo enables it by default. Caches retain downloads/build outputs, never
+candidate ledgers or note data. Daily CI superseded
 by a newer commit can be cancelled. Actual savings require remote workflow timing.
 
 The governing contract is [plan 11](../../docs/plan/11_testing_and_release.md#modular-headless-ci).
