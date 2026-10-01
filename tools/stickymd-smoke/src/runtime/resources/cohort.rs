@@ -218,6 +218,9 @@ mod tests {
     #[test]
     fn memory_max_gates_keep_the_failing_observation_and_accept_equality() {
         for (label, limit) in [
+            ("source", 40 * 1024 * 1024),
+            ("preview", 52 * 1024 * 1024),
+            ("split", 64 * 1024 * 1024),
             ("hidden-to-tray", HIDDEN_PRIVATE_WORKING_SET_LIMIT),
             ("split-zoom-50", 64 * 1024 * 1024),
         ] {

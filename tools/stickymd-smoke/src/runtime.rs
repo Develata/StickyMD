@@ -30,8 +30,6 @@ use crate::startup_timing::{RAPID_RESTART_DIAGNOSTIC_IDLE, WARM_CACHE_START_IDLE
 const STARTUP_PREFERRED_TARGET: Duration = Duration::from_millis(180);
 const STARTUP_ENGINEERING_TARGET: Duration = Duration::from_millis(400);
 const V0_1_0_STARTUP_RELEASE_BOUNDARY: Duration = Duration::from_millis(550);
-const ZOOM_RESOURCE_WARMUP: Duration =
-    Duration::from_secs(crate::resource_plan::ZOOM_WARMUP_SECONDS);
 const ZOOM_RESOURCE_PRIVATE_GROWTH_LIMIT: u64 = crate::resource_plan::ZOOM_PRIVATE_GROWTH_LIMIT;
 static JSON_OUTPUT: AtomicBool = AtomicBool::new(false);
 

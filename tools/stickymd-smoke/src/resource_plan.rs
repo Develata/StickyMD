@@ -7,6 +7,7 @@ mod observations;
 pub(crate) mod progress;
 #[cfg(test)]
 pub(crate) mod tests;
+pub(crate) mod zoom;
 
 use crate::cli::ResourceModule;
 #[cfg(windows)]
@@ -20,10 +21,8 @@ use observations::required_gates;
 pub(crate) const REPETITIONS: usize = 5;
 pub(crate) const WARMUP_SECONDS: u64 = 30;
 pub(crate) const CPU_SECONDS: u64 = 60;
-pub(crate) const ZOOM_WARMUP_SECONDS: u64 = 5;
 pub(crate) const IDLE_CPU_PERCENT_LIMIT: f64 = 0.1;
 pub(crate) const HIDDEN_PRIVATE_WORKING_SET_LIMIT: u64 = 36 * 1024 * 1024;
-pub(crate) const ZOOM_PRIVATE_WORKING_SET_LIMIT: u64 = 64 * 1024 * 1024;
 pub(crate) const ZOOM_PRIVATE_GROWTH_LIMIT: u64 = 8 * 1024 * 1024;
 pub(crate) const GROUPS: [ResourceModule; 5] = [
     ResourceModule::SourcePreview,
@@ -100,6 +99,28 @@ impl ResourceCase {
                     0
                 })
     }
+
+    /// The plan's three 20 KiB baseline gates also apply to their exact aliases.
+    /// Additional image/cache/stress fixtures are observations, not new gates.
+    pub(crate) fn private_working_set_limit(self) -> Option<u64> {
+        SOURCE
+            .iter()
+            .find(|case| self.equivalent(**case))
+            .map(|case| {
+                baseline_private_working_set_limit(case.view_mode)
+                    .expect("registered baseline view")
+            })
+    }
+}
+
+pub(crate) fn baseline_private_working_set_limit(view: &str) -> Option<u64> {
+    let mib = match view {
+        "source" => 40,
+        "preview" => 52,
+        "split" => 64,
+        _ => return None,
+    };
+    Some(mib * 1024 * 1024)
 }
 
 const SOURCE: &[ResourceCase] = &[
@@ -183,9 +204,9 @@ impl ResourceModule {
                 .into_iter()
                 .map(|name| (name, true, WARMUP_SECONDS))
                 .collect(),
-            Self::Zoom => ["split-zoom-50", "split-zoom-100", "split-zoom-300"]
-                .into_iter()
-                .map(|name| (name, false, ZOOM_WARMUP_SECONDS))
+            Self::Zoom => zoom::CASES
+                .iter()
+                .map(|case| (case.fixture.label, false, WARMUP_SECONDS))
                 .collect(),
             _ => self
                 .cases()

@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(
             plan.fixed,
             crate::resource_plan::minimum_wait_seconds(&crate::resource_plan::GROUPS, true, None)
-                - 75
+                - Unit::Group(ResourceModule::Zoom).minimum_wait_seconds()
         );
         assert!(checked.len() < units.len());
         let json = crate::release::json::parse(&plan.json()).unwrap();

@@ -319,7 +319,7 @@ fn measure_case(
                 sample.peak_working_set_bytes,
                 sample.peak_private_bytes,
             );
-            cohort.memory(output, sample, None)?;
+            cohort.memory(output, sample, case.private_working_set_limit())?;
             if case.measure_cpu {
                 observer.stage(mode, repetition + 1, "cpu", CPU_INTERVAL.as_secs())?;
                 let cpu = measure_idle_cpu(&mut child, mode, logical_processors, window)?;
@@ -491,20 +491,26 @@ mod tests {
     #[test]
     fn preflight_accepts_every_registered_matrix_fixture() {
         let root = create_smoke_root().unwrap();
-        for group in crate::resource_plan::GROUPS {
-            for &case in group.cases() {
-                let directory = root.join(case.label);
-                fs::create_dir(&directory).unwrap();
-                prepare_resource_layout(
-                    &directory,
-                    case.view_mode,
-                    case.formula_count,
-                    case.image_count,
-                    case.image_fixture,
-                )
-                .unwrap();
-                preflight_fixture(&directory, case).unwrap();
-            }
+        let cases = crate::resource_plan::GROUPS
+            .iter()
+            .flat_map(|group| group.cases().iter().copied())
+            .chain(
+                crate::resource_plan::zoom::CASES
+                    .iter()
+                    .map(|case| case.fixture),
+            );
+        for case in cases {
+            let directory = root.join(case.label);
+            fs::create_dir(&directory).unwrap();
+            prepare_resource_layout(
+                &directory,
+                case.view_mode,
+                case.formula_count,
+                case.image_count,
+                case.image_fixture,
+            )
+            .unwrap();
+            preflight_fixture(&directory, case).unwrap();
         }
         cleanup_root(&root).unwrap();
     }

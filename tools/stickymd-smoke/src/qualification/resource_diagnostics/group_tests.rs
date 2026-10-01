@@ -16,7 +16,7 @@ fn whole_group_requires_all_samples_stress_fixtures_gates_and_fresh_origins() {
         let document = record::encode(&identity(), unit, &result, 100.0, 100).unwrap();
         let reused = record::decode(&document, &identity(), unit, 101).unwrap();
         assert_eq!(reused.id, group.task_label());
-        assert_eq!(reused.samples.len(), 15);
+        assert_eq!(reused.samples.len(), group.cohorts().len() * 5);
         assert!(reused.samples.iter().all(|s| {
             s.shared_from
                 .as_deref()
@@ -58,5 +58,8 @@ fn whole_group_requires_all_samples_stress_fixtures_gates_and_fresh_origins() {
         Unit::Group(ResourceModule::Window).minimum_wait_seconds(),
         1350
     );
-    assert_eq!(Unit::Group(ResourceModule::Zoom).minimum_wait_seconds(), 75);
+    assert_eq!(
+        Unit::Group(ResourceModule::Zoom).minimum_wait_seconds(),
+        1350
+    );
 }

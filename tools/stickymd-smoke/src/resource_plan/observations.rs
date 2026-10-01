@@ -57,8 +57,15 @@ pub(super) fn required_gates(group: ResourceModule) -> Vec<EvidenceGate> {
             ResourceModule::Window if name == "hidden-to-tray" => {
                 Some(HIDDEN_PRIVATE_WORKING_SET_LIMIT)
             }
-            ResourceModule::Zoom => Some(ZOOM_PRIVATE_WORKING_SET_LIMIT),
-            _ => None,
+            ResourceModule::Zoom => zoom::CASES
+                .iter()
+                .find(|case| case.fixture.label == name)
+                .and_then(|case| baseline_private_working_set_limit(case.fixture.view_mode)),
+            _ => group
+                .cases()
+                .iter()
+                .find(|case| case.label == name)
+                .and_then(|case| case.private_working_set_limit()),
         };
         if let Some(limit) = memory_limit {
             add(
@@ -111,17 +118,17 @@ pub(crate) fn validate_case(result: &Value, case: ResourceCase) -> Result<(), St
             return Err(format!("incomplete diagnostic protocol {}", expected.name));
         }
     }
-    let gates = if case.measure_cpu {
-        vec![EvidenceGate {
-            metric: format!("{}.idle_cpu_max", case.label),
-            comparator: "<=".into(),
-            value: IDLE_CPU_PERCENT_LIMIT,
-            unit: "percent".into(),
-            source: String::new(),
-        }]
-    } else {
-        Vec::new()
-    };
+    // Reuse the authoritative group rules for a diagnostic case, including
+    // memory gates. A cached case must not be weaker than a full group receipt.
+    let group = GROUPS
+        .into_iter()
+        .find(|group| group.cases().contains(&case))
+        .ok_or("unregistered resource case")?;
+    let prefix = format!("{}.", case.label);
+    let gates: Vec<_> = required_gates(group)
+        .into_iter()
+        .filter(|gate| gate.metric.starts_with(&prefix))
+        .collect();
     validate_cohorts(
         result,
         &[(case.label, case.measure_cpu, WARMUP_SECONDS)],

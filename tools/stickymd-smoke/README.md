@@ -111,10 +111,27 @@ cohorts copy those observations with a `shared_from` origin; they remain the sam
 Recording/readiness validates run coverage, units, summary consistency and hard-gate results.
 Count markers or `PASSED` alone cannot establish completeness.
 
+The baseline 20 KiB Source/Preview/Split cohorts enforce private-working-set
+maxima of 40/52/64 MiB. Their exact math aliases, per-case diagnostic cache and
+group receipts consume the same Rust limits; an archive lacking the memory gate
+is rejected even when its samples are below the limit. Other image/cache stress
+observations do not silently gain a newly invented threshold.
+
+Zoom measures Source, Preview and Split separately at 50/100/300%, with five
+fresh-process observations per combination and a 30-second warmup. Source and
+Preview cohorts never visit another view before sampling. The existing Split
+toolbar checks and 100-cycle growth check remain. Coverage, wait budgeting and
+execution use `resource_plan/zoom.rs`; old three-cohort or five-second-warmup
+receipts cannot claim the current matrix. Its fixed wait budget is 1,350 seconds,
+excluding launch/probe/stress costs. Zoom currently records memory, not a
+60-second CPU cohort; compact-window and normal-style/ToolWindow resource
+comparisons remain separate coverage gaps. This expansion still needs native
+measurement and does not close P14-A46 or the manual UX matrix.
+
 Equivalent scenarios share a complete cohort within one command: the 19 Source/Preview,
 math and image names require 15 executions. The fixed waiting budget decreases by
 1,500 seconds (25 minutes); this is a calculated budget, not a measured speedup.
-Sampling counts, warmups, CPU intervals and thresholds are unchanged. Operation history
+Deduplication preserves each registered case's counts, warmup, CPU interval and gates. Operation history
 is part of scenario identity, so Preview-to-Source cache release is a separate execution.
 The command reports its waiting budget, per-case/group elapsed time and shared sample origins.
 

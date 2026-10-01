@@ -136,17 +136,18 @@ fn shared_window_and_process_adapters_invalidate_every_consumer() {
 fn resource_group_harness_only_invalidates_its_group() {
     use crate::cli::ResourceModule::{Window, Zoom};
     let root = fixture();
-    for (name, group) in [("window", Window), ("zoom", Zoom)] {
+    for (path, group) in [
+        (
+            "tools/stickymd-smoke/src/runtime/resources/window.rs",
+            Window,
+        ),
+        ("tools/stickymd-smoke/src/runtime/resources/zoom.rs", Zoom),
+        ("tools/stickymd-smoke/src/resource_plan/zoom.rs", Zoom),
+    ] {
         let before = super::super::modules()
             .map(|module| (module, calculate(&root, module).unwrap()))
             .collect::<Vec<_>>();
-        fs::write(
-            root.join(format!(
-                "tools/stickymd-smoke/src/runtime/resources/{name}.rs"
-            )),
-            "changed",
-        )
-        .unwrap();
+        fs::write(root.join(path), "changed").unwrap();
         for (module, fingerprint) in before {
             assert_eq!(
                 fingerprint != calculate(&root, module).unwrap(),
@@ -194,6 +195,7 @@ fn fixture() -> std::path::PathBuf {
         "tools/stickymd-smoke/src/window_control/input.rs",
         "tools/stickymd-smoke/src/runtime/resources/window.rs",
         "tools/stickymd-smoke/src/runtime/resources/zoom.rs",
+        "tools/stickymd-smoke/src/resource_plan/zoom.rs",
         "tools/stickymd-smoke/src/runtime/resources/cohort.rs",
         "tools/stickymd-smoke/src/runner/candidate_input.rs",
         "docs/report/note.md",

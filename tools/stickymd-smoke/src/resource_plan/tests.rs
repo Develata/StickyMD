@@ -2,6 +2,87 @@
 use super::*;
 
 #[test]
+fn baseline_memory_over_limit_is_rejected_even_with_consistent_samples() {
+    for (group, labels) in [
+        (
+            ResourceModule::SourcePreview,
+            ["source", "preview", "split"],
+        ),
+        (
+            ResourceModule::Math,
+            ["source-20-math-lazy", "preview-20-math", "split-20-math"],
+        ),
+    ] {
+        for (label, mib) in labels.into_iter().zip([40, 52, 64]) {
+            let mut result = valid_resource_result(group);
+            let over = (mib * 1024 * 1024 + 1) as f64;
+            for sample in &mut result.samples {
+                if sample.cohort == label {
+                    sample.measurements[0].value = over;
+                    sample.measurements[2].value = over;
+                }
+            }
+            for metric in &mut result.measurements {
+                if metric
+                    .name
+                    .starts_with(&format!("{label}.private_working_set_"))
+                {
+                    metric.value = over;
+                }
+            }
+            assert!(
+                validate_receipt(&document(group, &result), group).is_err(),
+                "{label} accepted private working set above {mib} MiB"
+            );
+        }
+    }
+}
+
+#[test]
+fn baseline_case_cache_requires_the_same_memory_gate_as_group_recording() {
+    use crate::release::json;
+    for group in [ResourceModule::SourcePreview, ResourceModule::Math] {
+        for &case in group.cases() {
+            let Some(limit) = case.private_working_set_limit() else {
+                continue;
+            };
+            let prefix = format!("{}.", case.label);
+            let mut result = valid_resource_result(group);
+            result.id = case.label.into();
+            result.measurements.retain(|m| m.name.starts_with(&prefix));
+            result.gates.retain(|g| g.metric.starts_with(&prefix));
+            result.samples.retain(|s| s.cohort == case.label);
+            for sample in &mut result.samples {
+                sample.measurements[0].value = limit as f64;
+                sample.measurements[2].value = limit as f64;
+            }
+            for metric in &mut result.measurements {
+                if metric
+                    .name
+                    .starts_with(&format!("{prefix}private_working_set_"))
+                {
+                    metric.value = limit as f64;
+                }
+            }
+            let validate = |result: &crate::evidence::EvidenceResult| {
+                let root = json::parse(&document(group, result)).unwrap();
+                diagnostic::Unit::Case(case)
+                    .validate(&root.field("results").unwrap().array().unwrap()[0])
+            };
+            validate(&result).expect("memory at the hard boundary passes");
+            result
+                .gates
+                .retain(|g| !g.metric.ends_with("private_working_set_max"));
+            assert!(
+                validate(&result).is_err(),
+                "missing gate for {}",
+                case.label
+            );
+        }
+    }
+}
+
+#[test]
 fn full_plan_preserves_nineteen_names_with_fifteen_executions_and_1500_seconds_saved() {
     let mut cache = ScenarioCache::default();
     let mut executions = 0;

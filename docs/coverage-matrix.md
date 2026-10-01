@@ -383,3 +383,10 @@ Plan 07 `source-find-replace` / Plan 11 `phase-verification-harness` →
 搜索 Release 基准接入 Phase 14、本地 Windows 模块与 CI performance 分片；实际
 Cargo selector 回归同时验证恰好一次、锁定依赖、串行测量与模块隔离。
 本地性能测试不代表启动硬门、当前候选或人工验收已通过。
+
+Plan 10 `initial-engineering-targets` / Plan 11 `resource-module-qualification` →
+[P14-A62/A63](acceptance-cases/phase-14.md)：基础三视图内存硬门从 `resource_plan` 单向供给
+实时采样、别名及缓存/正式组收据校验。Zoom 九种组合共用注册表，预热回到合同的 30 秒；
+旧的三种 Split-only/5 秒数据保留为历史观测，不能通过新覆盖检查。错误门槛、缺门、超限、
+部分 cohort、预算与真实 fixture 生成有回归；新增桌面采样、Zoom CPU、最小窗口与
+ToolWindow 资源差异仍未完成，本地工具测试不闭合 P14-A46、G5 或人工矩阵。

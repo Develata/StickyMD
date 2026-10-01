@@ -113,7 +113,10 @@ mod tests {
             crate::resource_plan::tests::valid_resource_result(ResourceModule::Zoom).samples;
         finish(ResourceModule::Zoom, &mut output, true, 1.0, &mut writer);
         assert_eq!(writer.0, 1);
-        assert_eq!(output.samples.len(), 15);
+        assert_eq!(
+            output.samples.len(),
+            ResourceModule::Zoom.cohorts().len() * crate::resource_plan::REPETITIONS
+        );
         assert_eq!(output.failure.as_deref(), Some("injected write failure"));
     }
 }

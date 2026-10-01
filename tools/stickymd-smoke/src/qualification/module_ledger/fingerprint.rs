@@ -328,7 +328,9 @@ fn harness_domains(path: &str) -> u64 {
     {
         return WINDOW_RESOURCES;
     }
-    if path.starts_with("tools/stickymd-smoke/src/runtime/resources/zoom") {
+    if path.starts_with("tools/stickymd-smoke/src/runtime/resources/zoom")
+        || path == "tools/stickymd-smoke/src/resource_plan/zoom.rs"
+    {
         return ZOOM_RESOURCES;
     }
     if path == "tools/stickymd-smoke/src/runtime/resources.rs"

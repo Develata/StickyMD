@@ -94,3 +94,14 @@ This supplements the existing Content Zoom/cache lifecycle checks; the historica
 
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
+
+## 2026-10-01 resource coverage correction
+
+The historical P10-A32 receipt above is not evidence for the current checkout.
+The current Rust registry now requires separate Source/Preview/Split cohorts at
+50/100/300%, each with five memory samples after a 30-second warmup. Previous
+Split-only or five-second observations remain historical and fail the updated
+coverage check. [P14-A62/A63](phase-14.md) cover the shared memory limits, generated
+fixtures, cache rejection and wait budget. The added native cohorts have not yet
+been measured; Zoom CPU, 220×120 and ToolWindow resource comparisons remain
+unclosed. None of these tooling tests change the manual UX statuses above.

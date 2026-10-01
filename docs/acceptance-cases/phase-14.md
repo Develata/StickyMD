@@ -80,6 +80,8 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A59 | 诊断初始化与计划合并前检查，同组全部缓存命中才批量消费；前后身份验证、部分命中回退与预算不重复扣减 | Automated | batch 漂移/失效/完整返回、同命令 pending 范围与计划 hint 回归；显式 native 身份成本 profile | AUTOMATED PASS |
 | P14-A60 | 可选诊断失败优先保持范围、前置任务和完整协议；提示只排序，选中失败单元强制重测，正式入口拒绝，计划只读 | Automated | 提示生命周期/失效/范围、组与场景排序、强制重测和 CLI/薄入口回归 | AUTOMATED PASS |
 | P14-A61 | 1 MiB Unicode 大小写不敏感搜索 Release 基准在 Phase 14、本地 Windows 模块与 CI performance 分片各执行一次；test-only/render-only 不误选 | Automated | `runner/headless/tests::phase14_search_measurement_reaches_local_and_ci_windows_plans` + `source_search::tests::phase14_one_mib_unicode_case_insensitive_search_p95_is_bounded` | AUTOMATED PASS |
+| P14-A62 | 基础 Source/Preview/Split 20 KiB 的 40/52/64 MiB 最大 PWS 硬门进入实时采样、等价别名、单 case 缓存与正式组收据；相等通过，超限或缺门拒绝 | Automated | `resource_plan/tests` 的一致超限原始观测、边界及缺门回归 + `runtime/resources/cohort` 首次失败保留回归 | AUTOMATED PASS |
+| P14-A63 | Zoom 的 Source/Preview/Split × 50/100/300% 九个独立内存 cohort、五次样本和 30 秒预热由共享注册表持有；旧三场景/短预热收据不能通过完整性检查 | Automated | `resource_plan/zoom::tests`、fixture preflight、整组缓存覆盖与预算回归；新增原生测量仍待 P14-A46 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 P14-A61 Preconditions：使用当前 Rust CLI 与锁定依赖。
@@ -88,6 +90,18 @@ Action：分别规划 Phase 14 Performance、CI performance 分片、本地 Wind
 Expected：适用性能入口恰好选中一次 1 MiB 搜索，保留 `--locked`、`--release`、
 `--ignored` 和串行测量；不适用入口不选中。
 Failure Signals：遗漏、重复、错误 package/profile，或仅 workspace 普通测试通过却漏掉 ignored 基准。
+
+P14-A62 Preconditions：五次样本及汇总值保持一致的基础场景/等价别名收据。
+Action：分别设置 PWS 等于上限、超过一字节，移除门槛，并通过实时 cohort、组收据和单 case 缓存校验。
+Expected：相等可通过，超限保留失败样本且返回错误；缺门的旧记录不能复用。
+Failure Signals：超限返回成功、缓存绕过门槛，或失败覆盖成功账本。
+
+P14-A63 Preconditions：九种视图/缩放组合及固定 20 KiB、20 公式、12 图片 fixture。
+Action：核对注册表、实际生成的 fixture、预算及归档覆盖；移除 Source/Preview 样本，或把预热改为 5 秒。
+Expected：每种组合五次原始内存观测，预热 30 秒；缺项/短预热拒绝，Window/Zoom 仍按完整组诊断复用。
+Failure Signals：toolbar 曾切换过某视图就冒充该视图的独立资源 cohort、旧收据升级为新矩阵通过。
+本项只证明工具规则；尚未测量的 Zoom CPU、220×120 与 normal-style/ToolWindow 资源差异，
+以及真实输入法/视觉项目，不因单元测试通过而变更状态。
 
 P14-A60 Preconditions：诊断续跑曾记录一个完整注册单元的失败提示。
 Action：打开失败优先，检查组/场景顺序；更换 source、损坏/过期提示、缩小选择范围，
