@@ -12,12 +12,15 @@ pub enum LocalImagePathError {
     InvalidPercentEncoding(String),
     #[error("local image path is not valid UTF-8 after percent decoding: {0}")]
     InvalidUtf8(String),
+    #[error("image destination is not an ordinary local path: {0}")]
+    NonLocalPath(String),
 }
 
 /// Resolve a Comrak image destination for read-only local access. Relative
-/// paths remain relative to `note/`; `file:///C:/...` and file UNC URLs are
-/// converted to native Windows paths. The result is never used as a write or
-/// managed-asset ownership boundary.
+/// paths remain relative to `note/`; local file URLs become Windows paths.
+/// Network/device destinations are rejected lexically. The local-file adapter
+/// must additionally reject mapped drives and reparse traversal when opening.
+/// This result never grants write or managed-asset ownership authority.
 pub fn resolve_local_image(
     note_dir: &Path,
     destination: &str,
@@ -39,12 +42,33 @@ pub fn resolve_local_image(
     } else {
         percent_decode(destination).unwrap_or_else(|_| destination.to_owned())
     };
+    validate_destination(&decoded)?;
     let path = PathBuf::from(decoded);
     Ok(if path.is_absolute() {
         path
     } else {
         note_dir.join(path)
     })
+}
+
+fn validate_destination(value: &str) -> Result<(), LocalImagePathError> {
+    let normalized = value.replace('\\', "/");
+    let ordinary = normalized.strip_prefix("//?/").unwrap_or(&normalized);
+    let drive_absolute = ordinary.as_bytes().get(..3).is_some_and(|prefix| {
+        prefix[0].is_ascii_alphabetic() && prefix[1] == b':' && prefix[2] == b'/'
+    });
+    let remainder = if drive_absolute {
+        &ordinary[2..]
+    } else {
+        ordinary
+    };
+    if value.contains('\0')
+        || (normalized.starts_with("//") && !(normalized.starts_with("//?/") && drive_absolute))
+        || remainder.contains(':')
+    {
+        return Err(LocalImagePathError::NonLocalPath(value.to_owned()));
+    }
+    Ok(())
 }
 
 fn percent_decode(value: &str) -> Result<String, LocalImagePathError> {
@@ -103,13 +127,32 @@ mod tests {
             PathBuf::from("C:/My Notes/a.png")
         );
         assert_eq!(
-            resolve_local_image(Path::new("note"), "file://server/share/a.png").unwrap(),
-            PathBuf::from(r"\\server\share\a.png")
-        );
-        assert_eq!(
             resolve_local_image(Path::new("note"), "100%.png").unwrap(),
             Path::new("note").join("100%.png")
         );
         assert!(resolve_local_image(Path::new("note"), "file:///C:/bad%2.png").is_err());
+    }
+
+    #[test]
+    fn phase7_remote_and_device_destinations_are_rejected_without_io() {
+        for destination in [
+            r"\\server\share\a.png",
+            "//server/share/a.png",
+            "file://server/share/a.png",
+            "FILE://server/share/a.png",
+            "%5c%5cserver%5cshare%5ca.png",
+            r"\\?\UNC\server\share\a.png",
+            r"\\.\pipe\image",
+            r"\\?\GLOBALROOT\Device\Mup\server\share\a.png",
+            "file:C:/a.png",
+            "C:a.png",
+            "images/a.png:stream",
+            "images/a%00.png",
+        ] {
+            assert!(
+                resolve_local_image(Path::new("C:/Sticky/note"), destination).is_err(),
+                "must reject {destination:?} before opening a file"
+            );
+        }
     }
 }

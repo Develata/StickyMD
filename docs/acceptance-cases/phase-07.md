@@ -181,3 +181,26 @@ memory/CPU counters, never visual correctness.
 
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
+
+## 2026-10-01 local image read boundary regression
+
+This supplements P07-A09/A11/A13/A15 under plan 08 `local-image-read-boundary`;
+the historical status rows above retain their source identity.
+
+- Preconditions: isolated temporary directories, ordinary local PNG files with Chinese/space names,
+  a local directory junction, and injected DOS-device observations. No network share is contacted.
+- Action: resolve/open/read through the production adapter shared by Preview and Export; exercise
+  UNC/file-UNC/percent-encoded/device/ADS paths, remote/unknown/cyclic drive mappings, local SUBST
+  mappings, missing files, `../`, verbatim disk paths, and replacement after opening a handle.
+- Expected: ordinary local files remain seekable and unchanged; unsafe destinations are rejected
+  before reading redirected content; missing Preview images remain placeholders; rejected Export
+  leaves the previous Markdown and asset directory intact and removes invocation-owned staging.
+- Failure signals: following a reparse target, accepting a remote/unknown device, losing the opened
+  file identity, changing source bytes, or publishing partial output after rejection.
+- Automated entry: `cargo test -p stickymd-win --locked phase7_` — 20 passed, 2 opt-in performance
+  tests ignored. Existing `phase-07.ps1` routes include these tests through the Rust workspace task.
+- Limits: local junctions/symlinks, offline/cloud placeholders and unknown device types are
+  conservatively rejected. Injected mappings do not constitute a real SMB/WebDAV/DFS drive test;
+  packet capture, native export-dialog and desktop visual acceptance remain unverified.
+
+These checks grant no managed-asset ownership, write authority or release qualification.

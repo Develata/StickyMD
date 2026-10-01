@@ -3,7 +3,7 @@
 //! plan_ref: docs/plan/08_assets_and_export.md#export
 
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,7 +15,7 @@ use stickymd_render::preview::{
 };
 use thiserror::Error;
 
-use crate::assets::resolve_local_image;
+use crate::assets::{open_local_image, resolve_local_image};
 use crate::platform::windows::atomic_file::{
     AtomicPublishError, move_file_no_replace, prepare_temporary_exclusive, publish_prepared,
 };
@@ -337,7 +337,7 @@ fn copy_and_hash(
     source: &Path,
     destination: &Path,
 ) -> Result<(Hash32, String, OpenFileObservation), ExportError> {
-    let mut input = File::open(source).map_err(|source_error| ExportError::LocalImage {
+    let mut input = open_local_image(source).map_err(|source_error| ExportError::LocalImage {
         path: source.to_owned(),
         source: source_error,
     })?;
@@ -532,6 +532,37 @@ mod tests {
                 .to_string_lossy()
                 .starts_with(".stickymd-export-")
         }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn phase7_export_denied_local_paths_preserve_existing_output() {
+        let root = fixture();
+        let target = root.join("copy.md");
+        fs::write(&target, b"previous export").unwrap();
+        for destination in [
+            "file://server/share/a.png",
+            "%5c%5cserver/share/a.png",
+            "%5c%5c.%5cpipe%5cimage",
+        ] {
+            let snapshot = DocumentSnapshot {
+                text: Arc::from(format!("![ALT]({destination})")),
+                generation: Generation::initial(),
+                line_ending: LineEnding::Lf,
+            };
+            let result = export_snapshot(ExportRequest {
+                snapshot,
+                note_dir: root.clone(),
+                target: target.clone(),
+            });
+            assert!(
+                matches!(result, Err(ExportError::UnsupportedLocalPath(_))),
+                "{destination}: {result:?}"
+            );
+            assert_eq!(fs::read(&target).unwrap(), b"previous export");
+            assert!(!root.join("copy-assets").exists());
+            assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

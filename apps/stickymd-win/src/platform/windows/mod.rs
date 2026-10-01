@@ -9,6 +9,7 @@ pub(crate) mod diagnostic_event;
 pub(crate) mod export_dialog;
 pub(crate) mod file_identity;
 pub(crate) mod file_watch;
+pub(crate) mod local_image_file;
 pub(crate) mod managed_file;
 pub(crate) mod message_box;
 pub(crate) mod monitor;

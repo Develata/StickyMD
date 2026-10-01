@@ -2,7 +2,6 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-scheduling
 
-use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
@@ -16,7 +15,7 @@ use stickymd_render::preview::{
     PreviewFrame, PreviewPipeline, PreviewPipelineError, PreviewSelection, PreviewTheme,
 };
 
-use crate::assets::resolve_local_image;
+use crate::assets::{open_local_image, resolve_local_image};
 
 #[derive(Debug)]
 pub enum PreviewJob {
@@ -325,7 +324,7 @@ impl PreviewImageSource for LocalImageSource {
     fn inspect(&self, destination: &str) -> Result<Option<ImageMetadata>, String> {
         let path =
             resolve_local_image(&self.base, destination).map_err(|error| error.to_string())?;
-        let file = match File::open(&path) {
+        let file = match open_local_image(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.to_string()),
@@ -347,7 +346,7 @@ impl PreviewImageSource for LocalImageSource {
         }
         let path =
             resolve_local_image(&self.base, destination).map_err(|error| error.to_string())?;
-        let file = match File::open(&path) {
+        let file = match open_local_image(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.to_string()),
@@ -390,6 +389,55 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn phase7_local_image_adapter_reads_png_and_rejects_network_placeholders() {
+        let root = crate::test_support::unique_temp_path("preview-image-中文 空格");
+        std::fs::create_dir(&root).unwrap();
+        let image = stickymd_render::image::prepare_rgba_image(2, 2, vec![255; 16]).unwrap();
+        let bytes = image.bytes();
+        std::fs::write(root.join("数学 图.png"), bytes).unwrap();
+        let source = LocalImageSource::new(root.clone());
+        let path = "%E6%95%B0%E5%AD%A6%20%E5%9B%BE.png";
+        assert!(source.inspect(path).unwrap().is_some());
+        assert_eq!(source.load(path).unwrap().as_deref(), Some(bytes));
+        assert!(source.inspect("missing.png").unwrap().is_none());
+        for remote in [
+            "file://server/share/a.png",
+            "%5c%5cserver/share/a.png",
+            r"\\.\pipe\image",
+        ] {
+            assert!(source.inspect(remote).is_err());
+            assert!(source.load(remote).is_err());
+        }
+        assert!(
+            source
+                .load("https://example.invalid/a.png")
+                .unwrap()
+                .is_none()
+        );
+        let snapshot = DocumentSnapshot {
+            text: Arc::from("![ALT](file://server/share/a.png)"),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        };
+        let mut pipeline = PreviewPipeline::new();
+        let frame = pipeline
+            .build_with_image_source(
+                &snapshot,
+                500,
+                200,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+                Some(&source),
+            )
+            .unwrap();
+        assert_eq!(frame.copy_selection(frame.select_all()), Some("ALT"));
+        assert_eq!(std::fs::read(root.join("数学 图.png")).unwrap(), bytes);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn viewport(width: u32) -> PreviewViewport {
         PreviewViewport {

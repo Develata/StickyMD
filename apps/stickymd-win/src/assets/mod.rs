@@ -7,6 +7,7 @@ mod safe_boundary;
 mod storage;
 mod transaction;
 
+pub(crate) use crate::platform::windows::local_image_file::open as open_local_image;
 pub use path::resolve_local_image;
 pub use safe_boundary::reconcile_safe_boundary;
 #[cfg(test)]
