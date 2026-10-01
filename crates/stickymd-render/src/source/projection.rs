@@ -90,16 +90,14 @@ impl SourceProjection {
         let fonts = FontSelection::resolve(&mut font_system);
         observe(SourceInitializationMilestone::FontSystemReady);
         let metrics = scaled_metrics(scale);
-        let mut buffer = Buffer::new(&mut font_system, metrics);
-        let mut diagnostic_buffer = Buffer::new(
-            &mut font_system,
-            Metrics::new(13.0 * scale.max(0.5), 20.0 * scale.max(0.5)),
-        );
+        // Each buffer receives its real text before use. Buffer::new would first
+        // shape an empty default-font line that is immediately discarded.
+        let mut buffer = Buffer::new_empty(metrics);
+        let mut diagnostic_buffer =
+            Buffer::new_empty(Metrics::new(13.0 * scale.max(0.5), 20.0 * scale.max(0.5)));
         diagnostic_buffer.set_wrap(Wrap::None);
-        let mut ui_buffer = Buffer::new(
-            &mut font_system,
-            Metrics::new(13.0 * scale.max(0.5), 20.0 * scale.max(0.5)),
-        );
+        let mut ui_buffer =
+            Buffer::new_empty(Metrics::new(13.0 * scale.max(0.5), 20.0 * scale.max(0.5)));
         ui_buffer.set_wrap(Wrap::None);
         buffer.set_wrap(Wrap::WordOrGlyph);
         let mut projection = Self {
@@ -593,6 +591,9 @@ fn set_source_buffer_text(buffer: &mut Buffer, text: &str, fonts: &FontSelection
         buffer.lines.push(empty);
     }
 }
+
+#[cfg(test)]
+mod initialization_tests;
 
 #[cfg(test)]
 mod tests {

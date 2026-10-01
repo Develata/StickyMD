@@ -49,3 +49,19 @@ from the [release checklist](../release-checklist.md).
 
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
+
+## Source buffer initialization
+
+- Preconditions: empty/trailing-newline notes and mixed CJK, Latin, combining marks,
+  emoji and RTL text; exercise different viewport sizes and content scales.
+- Action: compare initialization without discarded empty shaping against buffers
+  initialized by the previous eager constructor. Paint Source selection/caret, empty
+  and nonempty diagnostic banners, and empty/mixed shell text fields.
+- Expected: identical pixels, caret geometry and hit results; unchanged text and
+  generation. Source text is still shaped before its ready milestone, and auxiliary
+  buffers are shaped before use. Font selection and IME/window ordering stay intact.
+- Failure signals: missing first-frame text, changed wrapping/hit targets, changed
+  initialization milestone order, or diagnostics presented as formal startup acceptance.
+- Automated entry: `source::projection::initialization_tests` and existing ordered
+  initialization tests through the render module / Phase 03 tests. Copied Release A/B
+  measurements remain diagnostics; the manual IME/DPI rows above are unchanged.

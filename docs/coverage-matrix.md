@@ -353,3 +353,11 @@ Plan 11 `modular-headless-ci` 对应 [P00-A09](acceptance-cases/phase-00.md)：
 公共下载缓存跨 lane 共享，构建缓存保留 lane/toolchain 隔离及增量产物；两层仍按 commit
 轮换。`ci/workflow_tests` 检查路径集合、共享/隔离键关系和恢复前缀，actionlint 检查 workflow。
 缓存命中不跳过验证，也不保存候选证据或用户便签。本地构建对照不代表远程 CI 耗时收益。
+
+## Source 初始化的空整形消除
+
+Plan 07 `source-editor` / `font-runs` 对应
+[Phase 03](acceptance-cases/phase-03.md#source-buffer-initialization)：Source 与两个辅助文本
+buffer 在写入实际文本前使用 `Buffer::new_empty`，Source 仍在 ready 前整形，字体与窗口时序不变。
+`source/projection/initialization_tests` 比较旧初始化方式的像素、caret、命中、诊断和 shell 文本；
+既有初始化 milestone 测试继续覆盖顺序。Release A/B 是定向诊断，不升级人工或发布验收状态。
