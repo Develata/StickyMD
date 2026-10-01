@@ -1,9 +1,14 @@
 # Phase 05 Acceptance Matrix
 
 > Verification projection for the Markdown semantic pipeline, owned AST and native preview
-> foundation. Automated rows remain `BLOCKED` until their checked-in Phase 5 smoke entry passes on
-> the current commit. Visual, real-shell and OS-resource observations remain `NOT TESTED` until a
-> complete current-commit receipt is checked in.
+> foundation. Automated coverage is owned by the checked-in Phase 5 smoke graph. Visual,
+> real-shell and OS-resource observations require their own applicable receipts; headless tests
+> cannot establish those observations.
+
+Tracked statuses preserve the source baseline; they are not a current release verdict. Later
+exact-candidate receipts belong in ignored `dist/evidence/` under [plan 11](../plan/11_testing_and_release.md),
+not in retrospective edits to these rows. Version-specific results and remaining gaps are linked
+from the [release checklist](../release-checklist.md).
 
 | ID | Plan / AC mapping | Mode | Checked-in evidence | Status |
 | --- | --- | --- | --- | --- |
@@ -50,6 +55,11 @@ table horizontal scrolling/row backgrounds, font binding and complex list projec
 still have the differences recorded there. The local-image UNC read path also needs
 a separate boundary review. Manual rows retain their existing status; no new runtime,
 resource or candidate receipt was produced.
+
+The [2026-10-01 review and errata](../report/2026-09-30-preview-rendering-rules.md#review-2026-10-01)
+correct painting order, Source-to-Preview rebuild behavior and file-URI scope. Headless diagnostics
+also reproduce lost table content when a list item's first block is a table, and a local monospace
+fallback other than Consolas. These observations do not upgrade any acceptance row.
 
 ## Current Phase Gate
 

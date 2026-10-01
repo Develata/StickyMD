@@ -44,6 +44,16 @@ plan 06 `markdown-semantics` / `native-preview-layout` / `preview-scheduling`、
 monospace 字体绑定、复杂列表投影、zoom 布局范围、图片读取边界等差异或风险。
 其中 UNC 的实际网络访问未测试；本次不修改 runtime，不提升人工或候选验收状态。
 
+## 2026-10-01 文档复审与诊断边界
+
+沿用上节 plan / AC 映射，详见 [Preview 勘误](report/2026-09-30-preview-rendering-rules.md#review-2026-10-01)。
+source `ae2e0aa26cec6265bb2d1e594c5c21b75d97f46f` 的 runtime 与上述 `be1322e` 相同。
+本次纠正全局绘制顺序、Source 返回 Preview 的 Build 路由与 file URI 分支范围；五组
+headless 合成输入诊断确认了列表内首个表格只剩 marker 的投影/复制结果，并记录本机
+generic monospace 的实际字体回退。它们是诊断观察，不是新增五项通过测试或完整符合性证明。
+阶段矩阵同步明确 tracked source baseline、ignored 动态收据和各版本发布结论的区别；
+原状态列与历史数值不变，人工项未升级。
+
 ## 维护规则
 
 1. 新增 plan 章节 → 必须补充对应 Feature 段落与 Acceptance 案例（或写明不适用理由）。

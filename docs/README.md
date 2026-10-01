@@ -18,7 +18,7 @@
 | 架构和各模块的职责 | [架构概览](overview/architecture.md) |
 | 工程约束与术语 | [工程宪法](plan/00_engineering_constitution.md)、[术语表](plan/01_terminology.md) |
 | Markdown / 数学应该怎样渲染 | [渲染合同](plan/06_markdown_math_rendering.md) |
-| 当前 Preview 实际规则、冲突处理、参数和已知差异 | [2026-09-30 Preview 实现详解](report/2026-09-30-preview-rendering-rules.md) |
+| 当前 Preview 实际规则、冲突处理、参数和已知差异 | [Preview 实现详解](report/2026-09-30-preview-rendering-rules.md)，含 [2026-10-01 勘误与诊断](report/2026-09-30-preview-rendering-rules.md#review-2026-10-01) |
 | 图片读取、粘贴与导出的边界 | [图片与导出合同](plan/08_assets_and_export.md) |
 | 本地改动要跑什么、如何看耗时 | [贡献指南](../CONTRIBUTING.md#验证改动)、[Rust CLI 说明](../tools/stickymd-smoke/README.md#local-change-based-checks) |
 | 自动化覆盖了什么、哪些还没验收 | [覆盖映射](coverage-matrix.md)、[全局验收案例](acceptance-cases/00_v1_acceptance.md)、[Phase 14](acceptance-cases/phase-14.md) |

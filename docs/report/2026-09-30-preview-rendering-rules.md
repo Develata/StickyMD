@@ -692,3 +692,142 @@ GUI/资源 campaign，也不写 qualification 收据；本轮没有为减少文�
 
 人工未验收项保持原状态。维护此报告时保留日期与 source；后续修复或新证据以带日期的
 Resolution 追加，不回改这次审查的输入、发现和测试结果。
+
+<a id="review-2026-10-01"></a>
+## Resolution — 2026-10-01 文档复审与勘误
+
+本次复审 source 为 `ae2e0aa26cec6265bb2d1e594c5c21b75d97f46f`。
+与上文 `be1322e` 相比，`apps/`、`crates/`、`Cargo.toml`、`Cargo.lock` 没有变化；
+下述内容纠正文档或补充观察，不表示已经修复 runtime，也不改变原有验收结论。
+按报告的追加规则保留原文；阅读对应章节时，应结合本节勘误。
+
+### 1. 三处表述的纠正
+
+**第 10.5 节：绘制顺序按层批量执行。**
+[`paint_document`](../../crates/stickymd-render/src/preview/paint.rs) 先填充 frame 背景，
+计算可见范围，然后依次画所有可见块的 decoration、所有选区矩形、所有可见块的内容。
+原文的“该块”容易被读成逐块交错画完这三层，应以以下顺序理解：
+
+```text
+背景 → 所有可见 decoration → 所有 selection rectangles → 所有可见内容
+```
+
+文字自身的下划线和删除线由
+[`text_layout/painting.rs`](../../crates/stickymd-render/src/preview/text_layout/painting.rs)
+在相应文字行内绘制，不能与块 decoration 混为一层。这次通过代码路径确认顺序，
+没有将它表述成已经完成重叠内容、主题和 DPI 的人工视觉验收。
+
+**第 11.1、12.1 节：保留 RenderTree 不等于 UI 返回时免 parse。**
+pipeline 在保留 RenderTree 后收到 `Relayout` 可以复用语义树；但当前普通 UI 从 Source
+切回 Preview/Split 的调用链是：
+
+```text
+切入 Source
+  → 清除显示 frame，Coordinator.release_projection() 清除 applied generation
+  → worker.release_raster_caches() 保留语义树
+重新显示 Preview/Split
+  → Coordinator.show() 因没有 applied generation 选择 Build
+  → 提交当前 snapshot → pipeline.build() 再次 parse
+```
+
+依据为 [`app/preview_runtime.rs`](../../apps/stickymd-win/src/app/preview_runtime.rs)、
+[`flow/preview.rs`](../../apps/stickymd-win/src/flow/preview.rs) 与
+[`pipeline.rs`](../../crates/stickymd-render/src/preview/pipeline.rs)。因此第 12.1 节
+“清除 raster 后恢复显示”描述的是底层能力及其条件，不能推导为当前 UI 切换的免解析承诺。
+同 generation 且仍保有已应用投影时的 Preview ↔ Split、普通 resize/scroll 需分别判断，
+不因这条 Source 返回路径而全部改称 Build。本次没有测量切换耗时。
+
+**第 8.2 节：严格 percent 解码仅覆盖特定 `file` 前缀。**
+[`assets/path.rs`](../../apps/stickymd-win/src/assets/path.rs) 对 `file:///` 与 `file://`
+做大小写不敏感的专用分支，percent 解码失败会拒绝；其他字符串进入普通路径分支，
+解码失败则保留原文。parser 把 `file:` 归入 LocalAbsolute，并不意味着 resolver
+完整支持所有 file URI 形式。`file:C:/...`、`file:/...` 等不能套用专用分支的结论。
+这条纠正没有消除上文记录的 UNC 读取风险；本次没有访问网络共享。
+
+### 2. 对两项实现差异补充实测
+
+**列表内首块为表格时，内容会在 Render 投影中丢失。** 最小输入是：
+
+```markdown
+- | a | b |
+  | --- | --- |
+  | x | y |
+```
+
+将该字符串送入 `PreviewParser.parse`，Owned AST 保留完整的 List → Table，含表头
+`a`、`b` 和内容 `x`、`y`。随后经 `RenderTreeBuilder.build`，首块被替换为 `ListItem`，
+普通 spans 只剩 `"• "`；经 `PreviewPipeline.build` 后，
+`frame.copy_selection(frame.select_all())` 也只返回 `Some("• ")`。
+因此第 15.1 节的“可能丢失块级布局信息”在这个输入上已经具体表现为表格内容没有进入
+Preview 内容与全选复制结果，而不只是表格外观变化。原始 snapshot 没有被修改。
+
+根因入口是 [`render_tree.rs`](../../crates/stickymd-render/src/preview/render_tree.rs)
+的列表投影。后续修复应保留表格块职责，另行承载列表 marker，并以这个输入建立窄回归；
+不能把 GFM 语义从合同中删去以迁就现状。本次仅记录诊断，不引入 runtime 修复。
+
+**当前等宽字体确实不能由 `Family::Monospace` 推断为 Consolas。**
+锁定的 cosmic-text 0.19.0 在 `FontSystem::new_with_fonts` 中将 generic monospace 名称
+设为 `Noto Sans Mono`；仓库没有再将它绑定为 Consolas。使用当前字体系统对 ASCII
+`plain code 0123456789` 做 `Family::Monospace` shaping，本机观察为：
+
+```text
+monospace-default=Noto Sans Mono
+monospace-sample-faces={"CascadiaCode-Roman"}
+```
+
+前者是 generic family 配置，后者是该字符串实际使用的 face，二者应分开理解。
+这验证了第 10.1、15.1 节所列差异；它不保证另一台 Windows、另一组字符或另一套已安装
+字体也选择 Cascadia Code。后续应按合同明确 code font 绑定并验证 fallback，
+本次没有安装字体或修改字体政策。
+
+### 3. 复审验证与边界
+
+诊断使用当前源码和锁定依赖构建，临时文件位于 ignored
+`target/docs-review-20261001/`：
+
+```powershell
+cargo build -p stickymd-render --locked --offline --message-format=json-render-diagnostics
+```
+
+从本次成功构建的 `compiler-artifact` JSON 取 `stickymd_core`、`stickymd_render`、
+`cosmic_text` 的准确 rlib，再用 `rustc --edition=2024` 的 `--extern` 和
+`-L dependency=target/debug/deps` 编译 `probe.rs`，运行结果记录于 `probe.log`。
+没有按修改时间猜测旧 rlib，也没有运行旧 Release EXE。
+
+| 合成输入 | 本次观察 |
+| --- | --- |
+| 独占 `$$x$$` | DisplayMath 块、Display math kind；复制保留 delimiter |
+| `before $$x$$ after` | 段落中的 math 保留 `display=true`，投影采用 Inline math kind；复制保留完整文本 |
+| 上述列表内表格 | Owned AST 表格完整，Preview 全选复制只剩列表 marker |
+| `before ![ALT](https://example.invalid/image.png) after` | Remote 分类和 Https 动作，复制为 `before ALT after` |
+| ``[`x`](https://example.invalid)`` | code 与 link 样式同时存在，保留 OpenLink 动作，复制为 `x` |
+
+这些是五组输入的诊断观察，**不是五项新增通过的回归测试**。诊断未提供图片读取 adapter，
+未调用 Shell 或启动 GUI；Remote 的对象分类和动作不等于实际点击已验收。
+字体探针同样只覆盖本机合成字符串。
+
+本轮另实际执行以下既有回归与文档检查：
+
+```powershell
+cargo test -p stickymd-win --locked flow::preview::tests
+cargo test -p stickymd-win --locked assets::path::tests
+cargo run --quiet -p stickymd-smoke --locked -- phase 00
+cargo fmt --all -- --check
+git diff --check
+```
+
+两组 targeted tests 分别为 8 passed 和 2 passed，治理、fmt、diff 检查通过。
+文档扫描覆盖 `docs/` 全树及根 README、CONTRIBUTING、CLI README，共 189 份文档、
+468 个本地 Markdown 链接及其锚点，没有发现失效项；代码示例中的伪路径排除在外。
+另逐行比对了 963 条阶段验收状态数据行，全部保持原样，并确认本报告原有正文只追加、未回改。
+链接扫描不验证外部 URL 可达性；语义复核重点是现行合同、验收身份、Preview 调用链与 CLI
+说明，没有逐一重新执行所有历史报告中的实验。
+
+本轮同时复核了文档链接、验收矩阵的证据身份与发布示例；Phase 05/07/08 的旧措辞
+“receipt checked in”已在对应投影中纠正。正式 exact-candidate 动态收据按 plan 11
+写入 ignored `dist/evidence/`，不要求为了更新当前发布 verdict 而回填历史 Markdown。
+原有人工状态、版本身份、技术 `NOT_READY` 和 USER 发布特例均未升级。
+
+本轮仍未验证完整 Markdown/RaTeX conformance、真实桌面视觉、网络共享行为、资源性能
+或新的候选资格。前述 21 项回归与九项 `dev-check` 结果属于 2026-09-30 的执行记录，
+不得当作本次重新运行的数量。
