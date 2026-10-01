@@ -111,7 +111,22 @@ fn preedit_matches_eager_buffer_pixels_selection_and_candidate_geometry() {
                             height: run.line_height,
                         })
                     });
-                    assert_eq!(projection.ime_caret_rect(0), expected);
+                    let actual = projection.ime_caret_rect(0);
+                    if let Some(expected) = expected
+                        && expected.x + expected.width > width as f32
+                    {
+                        // The eager path let long compositions escape the pane.
+                        // Preserve vertical metrics, but assert visibility rather
+                        // than copying that bug into the reference contract.
+                        let actual = actual.unwrap();
+                        assert_eq!(actual.y, expected.y);
+                        assert_eq!(actual.height, expected.height);
+                        assert_eq!(actual.width, expected.width);
+                        assert!(actual.x >= origin.x);
+                        assert!(actual.x + actual.width <= width as f32);
+                    } else {
+                        assert_eq!(actual, expected);
+                    }
                     assert_eq!(projection.preedit(), Some(&preedit));
                     assert_eq!(projection.projected_text(), text);
                     assert_eq!(projection.projected_generation(), snapshot.generation);
@@ -156,4 +171,159 @@ fn invalid_preedit_replacement_remains_failure_atomic() {
     }
     projection.set_preedit(None);
     assert_eq!(projection.ime_caret_rect(0), projection.caret_rect(0));
+}
+
+#[test]
+fn long_preedit_keeps_candidate_caret_inside_source_viewport() {
+    let document = DocumentState::loaded("prefix 中文", LineEnding::Lf, None);
+    let mut projection = SourceProjection::new(&document.snapshot(), 150, 160, 1.5);
+    let composition = "long preedit text ".repeat(8);
+    projection.set_preedit(Some(PreeditVisual {
+        cursor: Some(composition.len()..composition.len()),
+        text: composition,
+        replacement: Selection::caret("prefix ".len()),
+    }));
+    let caret = projection.ime_caret_rect("prefix ".len()).unwrap();
+    assert!(
+        caret.x >= 0.0 && caret.x + caret.width <= 150.0,
+        "candidate caret is outside the Source pane: {caret:?}"
+    );
+}
+
+#[test]
+fn wrapped_replacement_caret_remains_available() {
+    let document = DocumentState::loaded("prefix 中文\nnext row", LineEnding::Lf, None);
+    let mut projection = SourceProjection::new(&document.snapshot(), 200, 240, 3.0);
+    projection.ensure_caret_visible(7).unwrap();
+    let caret = projection.caret_rect(7).unwrap();
+    assert!(caret.y >= 0.0 && caret.y + caret.height <= 240.0);
+    let scroll = projection.scroll();
+    projection.ensure_caret_visible(7).unwrap();
+    assert_eq!(projection.caret_rect(7), Some(caret));
+    assert_eq!(projection.scroll(), scroll);
+    projection.scroll_to_anchor(ScrollAnchor::point(7)).unwrap();
+    let aligned = projection.caret_rect(7).unwrap();
+    assert!((aligned.y - projection.padding()).abs() < 0.01);
+}
+
+#[test]
+fn preedit_reveal_paints_at_candidate_and_clips_without_mutating_source() {
+    for (text, replacement) in [
+        ("", Selection::caret(0)),
+        (
+            "prefix 中文\nnext row",
+            Selection::new("prefix 中文".len(), 7),
+        ),
+    ] {
+        let document = DocumentState::loaded(text, LineEnding::Lf, None);
+        let snapshot = document.snapshot();
+        let mut projection = SourceProjection::new(&snapshot, 200, 240, 1.0);
+        for scale in [0.5, 1.5, 3.0] {
+            projection.set_viewport(200, 240, scale);
+            projection
+                .ensure_caret_visible(replacement.start())
+                .unwrap();
+            let origin = projection.caret_rect(replacement.start()).unwrap();
+            let scroll = projection.scroll();
+            for theme in [SourceTheme::Light, SourceTheme::Dark] {
+                let mut baseline = Pixmap::new(200, 240).unwrap();
+                projection
+                    .paint(&mut baseline, replacement, true, false, None, theme)
+                    .unwrap();
+                for composition in [
+                    "long preedit text ".repeat(8),
+                    "中文 e\u{301} 🙂 tail ".repeat(8),
+                    "אבגדהוזחט ".repeat(8),
+                ] {
+                    let middle = composition.char_indices().nth(8).unwrap().0;
+                    for cursor in [
+                        None,
+                        Some(0..0),
+                        Some(0..middle),
+                        Some(middle..composition.len()),
+                        Some(composition.len()..composition.len()),
+                    ] {
+                        let preedit = PreeditVisual {
+                            text: composition.clone(),
+                            cursor,
+                            replacement,
+                        };
+                        projection.set_preedit(Some(preedit.clone()));
+                        let caret = projection.ime_caret_rect(replacement.active.byte).unwrap();
+                        assert!(caret.x >= origin.x && caret.x + caret.width <= 200.0);
+                        let mut painted = baseline.clone();
+                        projection
+                            .paint(&mut painted, replacement, true, false, None, theme)
+                            .unwrap();
+                        if preedit.cursor.is_some() {
+                            // Use the normal caret painter as the palette/shape
+                            // reference, translated to the reported IME rectangle.
+                            let mut expected = Pixmap::new(200, 240).unwrap();
+                            projection
+                                .paint_caret_overlay(
+                                    &mut expected,
+                                    replacement.start(),
+                                    caret.x - origin.x,
+                                    caret.y - origin.y,
+                                    theme,
+                                )
+                                .unwrap();
+                            for (expected, actual) in expected.pixels().iter().zip(painted.pixels())
+                            {
+                                // Only opaque interior pixels are independent
+                                // of the underlying glyph/background blend.
+                                if expected.alpha() == 255 {
+                                    assert_eq!(actual, expected, "{scale} {caret:?}");
+                                }
+                            }
+                        }
+                        if preedit.cursor == Some(composition.len()..composition.len()) {
+                            // None has the same end-aligned text/viewport but
+                            // hides the caret. Composite over that frame to also
+                            // check subpixel carets with no opaque interior.
+                            projection.set_preedit(Some(PreeditVisual {
+                                cursor: None,
+                                ..preedit.clone()
+                            }));
+                            let mut expected = baseline.clone();
+                            projection
+                                .paint(&mut expected, replacement, true, false, None, theme)
+                                .unwrap();
+                            assert_ne!(expected.data(), painted.data());
+                            projection
+                                .paint_caret_overlay(
+                                    &mut expected,
+                                    replacement.start(),
+                                    caret.x - origin.x,
+                                    caret.y - origin.y,
+                                    theme,
+                                )
+                                .unwrap();
+                            assert!(expected.data() == painted.data(), "{scale} {caret:?}");
+                            projection.set_preedit(Some(preedit.clone()));
+                        }
+                        for y in 0..240 {
+                            for x in 0..200 {
+                                if (x as f32) < origin.x.floor()
+                                    || (y as f32) < origin.y.floor()
+                                    || (y as f32) >= (origin.y + origin.height).ceil()
+                                {
+                                    assert_eq!(painted.pixel(x, y), baseline.pixel(x, y));
+                                }
+                            }
+                        }
+                        assert_eq!(projection.preedit(), Some(&preedit));
+                        assert_eq!(projection.projected_text(), text);
+                        assert_eq!(projection.projected_generation(), snapshot.generation);
+                        assert_eq!(projection.scroll(), scroll);
+                        projection.set_preedit(None);
+                        projection
+                            .paint(&mut painted, replacement, true, false, None, theme)
+                            .unwrap();
+                        assert_eq!(painted.data(), baseline.data());
+                    }
+                }
+            }
+        }
+    }
 }

@@ -369,3 +369,9 @@ Source 默认属性同时复用已解析的 Latin 字体，避免空白行触发
 补充：候选窗定位和绘制共用的临时 buffer 在设置实际 composition 前不做无用空整形。
 `source/geometry/preedit_tests` 对照旧构造方式的 glyph pixels、selection spans 与 candidate geometry，
 并覆盖非法 replacement 和取消后的状态；性能诊断与真实输入法验收保持分离。
+其中[长 preedit 水平显示回归](acceptance-cases/phase-03.md#preedit-horizontal-reveal-regression)
+按契约纠正旧实现的越界 caret：候选位置与绘制共用 viewport offset，字形/选区/下划线裁剪到
+同一 Source 区域。测试直接核对可见性、caret 合成像素、取消恢复及 canonical/scroll 不变，
+不以旧新相等替代正确性断言；真实 IME/DPI 视觉状态不变。
+同组回归覆盖软换行省略空格后的 caret reveal 与语义锚点对齐，避免字体放大后找不到
+replacement 几何，以及二次对齐时丢掉已滚过的行内距离。

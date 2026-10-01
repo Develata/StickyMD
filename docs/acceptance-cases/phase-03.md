@@ -76,7 +76,8 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   emoji, RTL and long preedit text; collapsed/reverse replacement selections and different scales.
 - Action: compare the transient overlay with the previous eager buffer constructor;
   move the composition cursor, select composition text, cancel, and supply invalid replacement ranges.
-- Expected: identical glyph pixels, selection spans and candidate rectangles. The real
+- Expected: identical unscrolled glyph pixels and selection spans; candidate rectangles
+  remain identical while they fit in the pane. The real
   composition is shaped before use; preparing it does not shape a discarded empty line.
   Invalid replacement ranges are rejected without changing canonical text or generation;
   cancellation restores the canonical caret. Commit/undo and font policy remain unchanged.
@@ -85,3 +86,23 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
 - Automated entry: `source::geometry::preedit_tests` through the render module / Phase 03;
   existing editor-flow tests cover commit/cancel/undo. Release projection timings are diagnostics;
   the physical IME and manual visual rows above retain their existing status.
+
+### Preedit horizontal reveal regression
+
+- Preconditions: long Latin, CJK/combining/emoji and RTL compositions in a narrow Source
+  pane; empty notes and a reverse replacement after existing text; 50/150/300% content
+  scales and both themes. Make the canonical replacement caret visible first.
+- Action: move/select the composition cursor at the start, middle and end, query the IME
+  rectangle, paint the frame, and cancel the composition.
+- Expected: the entire candidate caret stays within the Source pane's horizontal bounds. Text, selection,
+  underline and painted caret use the same horizontal reveal; no pixels escape its row
+  or overwrite text to its left. Cancellation restores the original frame, canonical
+  text/generation and Source scroll remain unchanged. Hidden preedit cursors stay hidden.
+- Wrapped replacement boundaries: after a space disappears at a soft wrap, revealing
+  the replacement caret still returns its visible geometry. Repeating reveal is stable;
+  aligning a semantic anchor retains the vertical scroll needed to reach that wrapped row.
+- Failure signals: old/new equality that preserves an off-pane caret, a mismatch between
+  candidate and painted caret, unclipped glyphs/selection, or document/scroll mutation.
+- Automated entry: `source::geometry::preedit_tests`, including the failing-before-fix
+  150 px pane case and whole-frame caret composition checks. Physical candidate-window
+  placement and DPI visual acceptance remain `NOT TESTED`.

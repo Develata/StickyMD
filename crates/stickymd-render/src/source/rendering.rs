@@ -351,14 +351,19 @@ impl SourceProjection {
             return Ok(());
         };
         let mut overlay = self.preedit_buffer(preedit, origin);
+        let Some(viewport) = self.preedit_viewport(&overlay, preedit, origin) else {
+            return Ok(());
+        };
+        let text_x = viewport.left - viewport.offset;
         let width = overlay
             .layout_runs()
-            .map(|run| run.line_w)
+            .map(|run| run.line_w - viewport.offset)
             .fold(0.0f32, f32::max)
-            .max(self.scale_factor * 2.0);
+            .max(self.scale_factor * 2.0)
+            .min(viewport.right - viewport.left);
         rect(
             pixmap,
-            origin.x,
+            viewport.left,
             origin.y,
             width,
             origin.height,
@@ -372,55 +377,59 @@ impl SourceProjection {
             let end = Cursor::new(0, cursor.end);
             for run in overlay.layout_runs() {
                 for (x, width) in run.highlight(start, end) {
+                    let left = (text_x + x).max(viewport.left);
+                    let right = (text_x + x + width).min(viewport.right);
                     rect(
                         pixmap,
-                        origin.x + x,
+                        left,
                         origin.y,
-                        width,
+                        right - left,
                         origin.height,
                         palette.selection,
                     );
                 }
             }
         }
+        let clip = GlyphClip {
+            left: viewport.left.round() as i32,
+            top: origin.y.floor() as i32,
+            right: viewport.right as i32,
+            bottom: (origin.y + origin.height).ceil() as i32,
+        };
         overlay.draw(
             &mut self.font_system,
             &mut self.swash_cache,
             palette.preedit_text,
             |x, y, width, height, color| {
-                blend_glyph_rect(
+                blend_glyph_rect_clipped(
                     pixmap,
-                    x + origin.x as i32,
+                    x + text_x as i32,
                     y + origin.y as i32,
                     width,
                     height,
                     color,
+                    clip,
                 );
             },
         );
         rect(
             pixmap,
-            origin.x,
+            viewport.left,
             origin.y + origin.height - self.scale_factor.max(1.0),
             width,
             self.scale_factor.max(1.0),
             palette.caret,
         );
-        if let Some(cursor) = &preedit.cursor {
-            let cursor = Cursor::new(0, cursor.end);
-            if let Some(x) = overlay
-                .layout_runs()
-                .find_map(|run| run.cursor_position(&cursor))
-            {
-                rect(
-                    pixmap,
-                    origin.x + x,
-                    origin.y,
-                    self.scale_factor.max(1.0),
-                    origin.height,
-                    palette.caret,
-                );
-            }
+        if preedit.cursor.is_some() {
+            let caret = viewport.caret;
+            rect(
+                pixmap,
+                caret.x,
+                caret.y,
+                caret.width,
+                caret.height,
+                palette.caret,
+            );
         }
         Ok(())
     }

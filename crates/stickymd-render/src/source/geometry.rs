@@ -2,7 +2,7 @@
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#source-editor
 
-use cosmic_text::{Align, Attrs, Buffer, Cursor, Family, Scroll, Shaping, Wrap};
+use cosmic_text::{Affinity, Align, Attrs, Buffer, Cursor, Family, Scroll, Shaping, Wrap};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::scroll::ScrollAnchor;
@@ -14,6 +14,13 @@ use super::projection::{
 
 #[cfg(test)]
 mod preedit_tests;
+
+pub(super) struct PreeditViewport {
+    pub left: f32,
+    pub right: f32,
+    pub offset: f32,
+    pub caret: EditorRect,
+}
 
 impl SourceProjection {
     pub fn scroll_by(&mut self, vertical_px: f32) -> Scroll {
@@ -62,13 +69,16 @@ impl SourceProjection {
             .cursor_for_global(source_byte)
             .ok_or(SourceProjectionError::InvalidPosition)?;
         self.buffer.set_scroll(Scroll::new(cursor.line, 0.0, 0.0));
-        self.buffer
-            .shape_until_cursor(&mut self.font_system, cursor, false);
+        self.ensure_caret_visible(source_byte)?;
         let visual_offset = self
             .caret_rect(source_byte)
             .map_or(0.0, |rect| (rect.y - self.padding()).max(0.0));
-        self.buffer
-            .set_scroll(Scroll::new(cursor.line, visual_offset, 0.0));
+        let revealed = self.buffer.scroll();
+        self.buffer.set_scroll(Scroll::new(
+            revealed.line,
+            revealed.vertical + visual_offset,
+            0.0,
+        ));
         self.buffer.shape_until_scroll(&mut self.font_system, false);
         Ok(self.buffer.scroll())
     }
@@ -109,21 +119,9 @@ impl SourceProjection {
             return None;
         }
         let origin = self.caret_rect(preedit.replacement.start())?;
-        let mut overlay = self.preedit_buffer(&preedit, origin);
-        let byte = preedit
-            .cursor
-            .as_ref()
-            .map_or(preedit.text.len(), |cursor| cursor.end);
-        let cursor = Cursor::new(0, byte);
-        overlay.shape_until_cursor(&mut self.font_system, cursor, false);
-        overlay.layout_runs().find_map(|run| {
-            run.cursor_position(&cursor).map(|x| EditorRect {
-                x: origin.x + x,
-                y: origin.y,
-                width: self.scale_factor.max(1.0),
-                height: run.line_height,
-            })
-        })
+        let overlay = self.preedit_buffer(&preedit, origin);
+        self.preedit_viewport(&overlay, &preedit, origin)
+            .map(|viewport| viewport.caret)
     }
 
     pub fn ensure_caret_visible(&mut self, byte: usize) -> Result<(), SourceProjectionError> {
@@ -132,6 +130,15 @@ impl SourceProjection {
             .ok_or(SourceProjectionError::InvalidPosition)?;
         self.buffer
             .shape_until_cursor(&mut self.font_system, cursor, false);
+        if self.caret_rect(byte).is_none() {
+            // Wrapping can omit the space before this byte. cosmic-text then
+            // resolves Before to the start of the logical line, leaving the
+            // actual caret off screen. Retry the following glyph boundary only
+            // when the preferred position could not be revealed.
+            let after = Cursor::new_with_affinity(cursor.line, cursor.index, Affinity::After);
+            self.buffer
+                .shape_until_cursor(&mut self.font_system, after, false);
+        }
         Ok(())
     }
 
@@ -160,6 +167,43 @@ impl SourceProjection {
         overlay.set_text(&preedit.text, &attrs, Shaping::Advanced, Some(Align::Left));
         overlay.shape_until_scroll(&mut self.font_system, false);
         overlay
+    }
+
+    /// Both painting and IME placement consume this horizontal reveal. Cosmic
+    /// layout runs expose unscrolled glyph coordinates, even after scrolling a
+    /// buffer to its cursor, so that scroll alone cannot position an overlay.
+    pub(super) fn preedit_viewport(
+        &self,
+        overlay: &Buffer,
+        preedit: &PreeditVisual,
+        origin: EditorRect,
+    ) -> Option<PreeditViewport> {
+        let byte = preedit
+            .cursor
+            .as_ref()
+            .map_or(preedit.text.len(), |cursor| cursor.end);
+        let cursor = Cursor::new(0, byte);
+        let right = self.width_px as f32;
+        let width = self.scale_factor.max(1.0).min(right);
+        if width <= 0.0 {
+            return None;
+        }
+        let left = origin.x.clamp(0.0, right - width);
+        overlay.layout_runs().find_map(|run| {
+            let logical_x = run.cursor_position(&cursor)?;
+            let visible_x = logical_x.clamp(0.0, (right - left - width).max(0.0));
+            Some(PreeditViewport {
+                left,
+                right,
+                offset: logical_x - visible_x,
+                caret: EditorRect {
+                    x: left + visible_x,
+                    y: origin.y,
+                    width,
+                    height: run.line_height,
+                },
+            })
+        })
     }
 
     pub(super) fn cursor_for_global(&self, byte: usize) -> Option<Cursor> {
