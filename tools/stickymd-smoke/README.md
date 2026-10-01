@@ -246,6 +246,9 @@ are written to unique `tmp/native-diagnostics/` directories in the probe checkou
 startup traces are archived before fixture cleanup. Source/EXE/harness identities
 are checked before and after. They do not write success ledgers, and targeted
 window comparisons cannot stand in for the full Window stress/hidden matrix.
+The repository ignores only `tmp/native-diagnostics/` for these outputs. The
+diagnostic checks that rule before launch, so a fresh checkout cannot become
+dirty solely from its own archived traces; unrelated untracked files stay visible.
 
 For an isolated copied Release diagnostic, set both
 `STICKYMD_DIAGNOSTIC_STARTUP_TRACE` (the legacy v2 output path) and

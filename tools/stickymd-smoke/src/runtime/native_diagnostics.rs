@@ -5,6 +5,8 @@ use super::*;
 use crate::evidence::{self, EvidenceResult, EvidenceStatus};
 use crate::repository::command_text;
 
+const OUTPUT_DIRECTORY: &str = "tmp/native-diagnostics";
+
 #[test]
 #[ignore = "requires an exclusive Windows desktop and STICKYMD_SMOKE_PROBE_REPOSITORY; diagnostic only"]
 fn native_startup_cpu_diagnostic() {
@@ -29,6 +31,7 @@ pub(super) fn diagnose(
             .is_empty()
     );
     let before = identity(&repository).expect("clean diagnostic input identity");
+    require_ignored_output(&repository).expect("ignored diagnostic output required before launch");
     let environment = crate::qualification_environment::inspect();
     assert_eq!(
         environment.status,
@@ -37,7 +40,7 @@ pub(super) fn diagnose(
     managed_process::ensure_no_stale_smoke_stickymd().unwrap();
     crate::window_control::enable_per_monitor_v2_dpi_awareness().unwrap();
     let root = create_smoke_root().unwrap();
-    let output = repository.join("tmp/native-diagnostics").join(format!(
+    let output = repository.join(OUTPUT_DIRECTORY).join(format!(
         "{label}-{}",
         root.file_name().unwrap().to_string_lossy()
     ));
@@ -99,6 +102,13 @@ pub(super) fn diagnose(
     crate::atomic_evidence::write(&path, document.as_bytes()).unwrap();
     eprintln!("NATIVE_DIAGNOSTIC={} seconds={elapsed:.3}", path.display());
     assert!(error.is_none(), "{}", error.unwrap_or_default());
+}
+
+fn require_ignored_output(repository: &Path) -> Result<(), String> {
+    let path = format!("{OUTPUT_DIRECTORY}/");
+    command_text(repository, "git", &["check-ignore", "--", &path])
+        .map(|_| ())
+        .map_err(|_| format!("native diagnostic output must be ignored by Git: {OUTPUT_DIRECTORY}"))
 }
 
 fn identity(repository: &Path) -> Result<(String, String, String), String> {
@@ -211,4 +221,76 @@ fn startup_failure_retains_completed_observations_without_fabricating_percentile
     );
     assert!(!output.measurements.iter().any(|m| m.name.ends_with("p95")));
     assert_eq!(output.gates.len(), 2);
+}
+
+#[test]
+fn diagnostic_output_stays_ignored_in_a_fresh_checkout_without_hiding_other_files() {
+    let root = create_smoke_root().unwrap();
+    command_text(&root, "git", &["init", "--quiet"]).unwrap();
+    // Do not let the user's global excludes mask a missing repository rule.
+    let excludes = root.join(".git/empty-excludes");
+    crate::atomic_evidence::write_new(&excludes, b"").unwrap();
+    command_text(
+        &root,
+        "git",
+        &["config", "core.excludesFile", excludes.to_str().unwrap()],
+    )
+    .unwrap();
+    assert!(require_ignored_output(&root).is_err());
+    crate::atomic_evidence::write_new(
+        &root.join(".gitignore"),
+        include_bytes!("../../../../.gitignore"),
+    )
+    .unwrap();
+    command_text(&root, "git", &["add", ".gitignore"]).unwrap();
+    command_text(
+        &root,
+        "git",
+        &[
+            "-c",
+            "user.name=Smoke",
+            "-c",
+            "user.email=smoke@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+    )
+    .unwrap();
+    require_ignored_output(&root).unwrap();
+    crate::atomic_evidence::write(
+        &root.join(OUTPUT_DIRECTORY).join("probe/observations.json"),
+        b"{}",
+    )
+    .unwrap();
+    let fixture = root.join("target/fixture");
+    crate::atomic_evidence::write(
+        &fixture.join("phase9-startup/startup-trace-1.txt"),
+        b"retained trace",
+    )
+    .unwrap();
+    archive_startup_traces(&fixture, &root.join(OUTPUT_DIRECTORY).join("probe")).unwrap();
+    assert!(
+        command_text(
+            &root,
+            "git",
+            &["status", "--porcelain", "--untracked-files=all"]
+        )
+        .unwrap()
+        .is_empty()
+    );
+    crate::atomic_evidence::write_new(&root.join("tmp/unrelated.txt"), b"keep visible").unwrap();
+    assert!(
+        command_text(
+            &root,
+            "git",
+            &["status", "--porcelain", "--untracked-files=all"]
+        )
+        .unwrap()
+        .contains("tmp/unrelated.txt")
+    );
+    cleanup_root(&root).unwrap();
 }
