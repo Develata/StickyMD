@@ -19,7 +19,7 @@ use performance::{
     phase1_markdown_performance, phase1_persistence_performance, phase2_performance,
     phase4_performance, phase5_performance, phase6_performance, phase7_performance,
     phase8_performance, phase10_performance, phase11b_performance, phase14_performance,
-    push_source_performance,
+    phase14_search_performance, push_source_performance,
 };
 
 use crate::cli::{CiShard, Options, Phase, ResourceModule, Selection};
@@ -62,6 +62,7 @@ enum TaskId {
     Phase11BTests,
     Phase11BPerformance,
     Phase14Performance,
+    Phase14SearchPerformance,
     FormatCheck,
     ClippyCheck,
     DependencyPolicy,
@@ -953,6 +954,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                     push_unique(&mut tasks, phase11b_performance());
                     if phase == Phase::P14 {
                         push_unique(&mut tasks, phase14_performance());
+                        push_unique(&mut tasks, phase14_search_performance());
                     }
                 }
             }
@@ -1556,6 +1558,7 @@ mod tests {
             TaskId::Phase10Performance,
             TaskId::Phase11BPerformance,
             TaskId::Phase14Performance,
+            TaskId::Phase14SearchPerformance,
         ] {
             assert!(ids.contains(&expected));
         }
@@ -1641,6 +1644,7 @@ mod tests {
                     | TaskId::Phase10Performance
                     | TaskId::Phase11BPerformance
                     | TaskId::Phase14Performance
+                    | TaskId::Phase14SearchPerformance
             )
         }));
         assert!(!performance.iter().any(|task| {

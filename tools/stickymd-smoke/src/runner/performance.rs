@@ -163,6 +163,15 @@ pub(super) fn phase14_performance() -> Task {
     )
 }
 
+pub(super) fn phase14_search_performance() -> Task {
+    release_test(
+        TaskId::Phase14SearchPerformance,
+        "Phase 14 source-search Release baseline",
+        WINDOWS,
+        "phase14_one_mib_unicode_case_insensitive_search_p95_is_bounded",
+    )
+}
+
 pub(super) fn push_source_performance(tasks: &mut Vec<Task>) {
     push_unique(tasks, phase3_performance());
     push_unique(

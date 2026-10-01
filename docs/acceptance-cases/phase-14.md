@@ -79,7 +79,15 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A58 | 跨命令仅复用同身份的严格等价完整场景；保留原单元、原始采样和创建时间，不续期、不重存历史结果，Window/Zoom 不混用 | Automated | 四对等价场景双向复用、原始数据与门槛投影、不等价/损坏/过期拒绝回归 | AUTOMATED PASS |
 | P14-A59 | 诊断初始化与计划合并前检查，同组全部缓存命中才批量消费；前后身份验证、部分命中回退与预算不重复扣减 | Automated | batch 漂移/失效/完整返回、同命令 pending 范围与计划 hint 回归；显式 native 身份成本 profile | AUTOMATED PASS |
 | P14-A60 | 可选诊断失败优先保持范围、前置任务和完整协议；提示只排序，选中失败单元强制重测，正式入口拒绝，计划只读 | Automated | 提示生命周期/失效/范围、组与场景排序、强制重测和 CLI/薄入口回归 | AUTOMATED PASS |
+| P14-A61 | 1 MiB Unicode 大小写不敏感搜索 Release 基准在 Phase 14、本地 Windows 模块与 CI performance 分片各执行一次；test-only/render-only 不误选 | Automated | `runner/headless/tests::phase14_search_measurement_reaches_local_and_ci_windows_plans` + `source_search::tests::phase14_one_mib_unicode_case_insensitive_search_p95_is_bounded` | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
+
+P14-A61 Preconditions：使用当前 Rust CLI 与锁定依赖。
+Action：分别规划 Phase 14 Performance、CI performance 分片、本地 Windows、Render 与 tests 模块；
+执行实际搜索 Release 基准。
+Expected：适用性能入口恰好选中一次 1 MiB 搜索，保留 `--locked`、`--release`、
+`--ignored` 和串行测量；不适用入口不选中。
+Failure Signals：遗漏、重复、错误 package/profile，或仅 workspace 普通测试通过却漏掉 ignored 基准。
 
 P14-A60 Preconditions：诊断续跑曾记录一个完整注册单元的失败提示。
 Action：打开失败优先，检查组/场景顺序；更换 source、损坏/过期提示、缩小选择范围，

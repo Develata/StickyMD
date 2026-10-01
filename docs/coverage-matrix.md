@@ -375,3 +375,11 @@ Source 默认属性同时复用已解析的 Latin 字体，避免空白行触发
 不以旧新相等替代正确性断言；真实 IME/DPI 视觉状态不变。
 同组回归覆盖软换行省略空格后的 caret reveal 与语义锚点对齐，避免字体放大后找不到
 replacement 几何，以及二次对齐时丢掉已滚过的行内距离。
+
+## 2026-10-01 性能入口覆盖审查
+
+Plan 07 `source-find-replace` / Plan 11 `phase-verification-harness` →
+[P14-A61](acceptance-cases/phase-14.md)：`runner/performance` 把原来遗漏的 1 MiB Unicode
+搜索 Release 基准接入 Phase 14、本地 Windows 模块与 CI performance 分片；实际
+Cargo selector 回归同时验证恰好一次、锁定依赖、串行测量与模块隔离。
+本地性能测试不代表启动硬门、当前候选或人工验收已通过。

@@ -60,6 +60,12 @@ diagnostic only. `-Performance` reruns the same measurements explicitly on a
 local machine. `-Runtime` creates native windows and remains local-only. The
 CLI rejects combining either explicit local mode with `-Ci`.
 
+Phase 14 performance includes both Preview selection geometry and the Windows
+1 MiB Unicode case-insensitive Source search benchmark. The latter also runs once
+in `all --ci`'s performance shard and `modules run windows --mode=performance`;
+test-only and render-only plans do not select it. Both use locked Release builds
+and serial test execution, preserving their separate Cargo feature contexts.
+
 `phase-14.ps1 -G3` is the serial exact-candidate Windows desktop lane for
 clipboard, native export, process-kill recovery, and asset-safety checks. Rust
 owns isolation, assertions, and the exact receipt. The checked-in UI Automation

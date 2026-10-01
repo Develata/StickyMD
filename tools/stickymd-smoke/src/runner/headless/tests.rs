@@ -229,6 +229,46 @@ fn product_performance_does_not_link_empty_smoke_release_targets() {
 }
 
 #[test]
+fn phase14_search_measurement_reaches_local_and_ci_windows_plans() {
+    let filter = "phase14_one_mib_unicode_case_insensitive_search_p95_is_bounded";
+    let local = Options::parse(["phase", "14", "--performance"].map(str::to_owned)).unwrap();
+    let ci = Options::parse(["all", "--ci", "--ci-shard=performance"].map(str::to_owned)).unwrap();
+    for tasks in [
+        build_plan(&local).unwrap(),
+        build_plan(&ci).unwrap(),
+        plan(&request(&[Module::Windows], Mode::Performance)).unwrap(),
+    ] {
+        let selected: Vec<_> = tasks
+            .iter()
+            .filter_map(|task| match task {
+                Task::Cargo { args, .. } if args.contains(&filter) => Some(args),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            selected.len(),
+            1,
+            "the search benchmark must run exactly once"
+        );
+        let args = selected[0];
+        assert_eq!(owners(args).unwrap(), [Module::Windows]);
+        for required in ["--release", "--locked", "--ignored", "--test-threads=1"] {
+            assert!(args.contains(&required), "missing {required}");
+        }
+    }
+    for (modules, mode) in [
+        (&[Module::Render][..], Mode::Performance),
+        (&Module::ALL[..], Mode::Tests),
+    ] {
+        assert!(
+            plan(&request(modules, mode)).unwrap().iter().all(|task| {
+                !matches!(task, Task::Cargo { args, .. } if args.contains(&filter))
+            })
+        );
+    }
+}
+
+#[test]
 fn unknown_or_mixed_package_selectors_are_rejected_instead_of_omitted() {
     for args in [
         vec!["test"],
