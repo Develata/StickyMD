@@ -21,6 +21,7 @@ use crate::instruction::{WindowPlatformIntent, WindowPreferenceIntent, WindowRes
 use crate::platform::windows::tray::{TrayController, TrayIconRgba};
 use crate::platform::windows::window_opacity::set_window_opacity;
 use crate::platform::windows::window_topmost::set_window_topmost_no_activate;
+use crate::startup::StartupDetail;
 
 impl StickyApp {
     pub(super) fn dispatch_window_platform_intent(&mut self, intent: WindowPlatformIntent) -> bool {
@@ -192,13 +193,23 @@ impl StickyApp {
         }
         self.tray = tray;
         self.startup_diagnostics.record("tray_ready");
+        self.startup_diagnostics
+            .record_detail(StartupDetail::SplitModeBegin);
         self.dispatch_window_intent(
             Some(event_loop),
             WindowIntent::SplitModeChanged {
                 split: self.config.current().view_mode == ViewMode::Split,
             },
         );
+        self.startup_diagnostics
+            .record_detail(StartupDetail::SplitModeEnd);
+        self.startup_diagnostics
+            .record_detail(StartupDetail::WindowShowBegin);
         window.set_visible(true);
+        self.startup_diagnostics
+            .record_detail(StartupDetail::WindowShowEnd);
+        self.startup_diagnostics
+            .record_detail(StartupDetail::ToolIdentityBegin);
         if let Err(error) = self.reassert_tool_window_identity() {
             crate::platform::windows::message_box::show_error(
                 "StickyMD",
@@ -206,6 +217,8 @@ impl StickyApp {
             );
             return false;
         }
+        self.startup_diagnostics
+            .record_detail(StartupDetail::ToolIdentityEnd);
         self.startup_diagnostics.record("window_visible");
         // Winit may refresh native extended styles while making the window
         // visible. Apply layered alpha and z-order after that transition so

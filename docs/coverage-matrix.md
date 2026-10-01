@@ -324,3 +324,11 @@ Headless Release 命令的范围与串行规则映射到 `runner/performance.rs`
 用例的 smoke Release 目标；单独 render 的 feature 上下文保持不变。
 验收方法见 [Phase 11](acceptance-cases/phase-11.md#headless-release-recipe-compatibility)，
 本地测试清单等价不代表远程 CI 耗时或 startup 门已经验收。
+
+## 2026-10-01 启动细分诊断
+
+Plan 10 的测量投影见 [Phase 11](acceptance-cases/phase-11.md#optional-startup-detail-compatibility)：
+产品 `startup/diagnostics/details` 只采集固定子步骤，`stickymd-smoke/startup_trace`
+集中校验 v2，`startup_details` 校验绑定、区间及只读输出。覆盖缺失/重复/错序、越界、
+版本不符、混用 trace、占用文件保留、中文空格路径与仓库外调用。
+v2、EDITOR_READY 和正式 cohort 保持兼容；细分输出不是 Performance 或人工验收收据。

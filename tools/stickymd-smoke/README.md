@@ -186,6 +186,36 @@ qualification evidence; it is ignored by normal test runs:
 cargo test -p stickymd-smoke --bin stickymd-smoke --locked resource_planning_profile -- --ignored --nocapture --test-threads=1
 ```
 
+## Optional startup shell details
+
+For an isolated copied Release diagnostic, set both
+`STICKYMD_DIAGNOSTIC_STARTUP_TRACE` (the legacy v2 output path) and
+`STICKYMD_DIAGNOSTIC_STARTUP_DETAILS` (a separate, new sidecar path) on the child
+process. With no legacy trace path, details stay disabled. Existing files are never
+overwritten; use fresh paths for every run. `STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY=1`
+retains its existing meaning. Collect GUI diagnostics serially in an isolated
+portable directory; do not reuse the user's running note or candidate receipts.
+
+```powershell
+cargo run --quiet -p stickymd-smoke --locked -- startup-details --trace 'tmp/启动 trace.txt' --details 'tmp/启动 details.txt' --json
+```
+
+The analysis command also runs outside a repository using the compiled CLI. It
+reads UTF-8 regular files of at most 8 KiB and never starts a process or writes a
+receipt. Output is `OBSERVATION_ONLY`, in microseconds: Split-mode application,
+showing the window, reasserting tool-window identity, and the remaining time within
+`tray_ready..window_visible`. Missing, duplicate, out-of-order, nonmonotonic or
+out-of-interval timestamps, unsupported versions and mismatched trace pairs fail
+with exit 1 and no partial stdout.
+
+The optional sidecar stores six bounded timestamps, PID and the exact v2 trace
+text. The reader requires byte-for-byte equality with the supplied v2 file; it
+does not treat PID or diagnostic text as release identity. Legacy v2 remains the
+same 26 milestones. Both files are written after the ready event using the existing
+atomic no-replace adapter. The formal startup harness explicitly disables details,
+preserving its cohort, readiness definition and gates. This adds attribution detail,
+not evidence of faster startup or a new successful qualification.
+
 ## Explicit headless modules
 
 ```powershell

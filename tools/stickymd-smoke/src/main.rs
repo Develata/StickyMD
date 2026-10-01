@@ -26,7 +26,9 @@ mod resource_plan;
 mod runner;
 #[cfg(windows)]
 mod runtime;
+mod startup_details;
 mod startup_timing;
+mod startup_trace;
 mod timing_summary;
 #[cfg(windows)]
 mod window_control;
@@ -50,6 +52,9 @@ fn run() -> Result<(), String> {
     if let cli::CommandLine::Timings(options) = &command {
         return timing_summary::execute(options);
     }
+    if let cli::CommandLine::StartupDetails(options) = &command {
+        return startup_details::execute(options);
+    }
     let root = governance::find_repository_root(
         &std::env::current_dir()
             .map_err(|error| format!("cannot read current directory: {error}"))?,
@@ -63,6 +68,7 @@ fn run() -> Result<(), String> {
         cli::CommandLine::Ci(command) => ci::execute(&root, &command),
         cli::CommandLine::Development(command) => development::execute(&root, &command),
         cli::CommandLine::Timings(options) => timing_summary::execute(&options),
+        cli::CommandLine::StartupDetails(options) => startup_details::execute(&options),
         cli::CommandLine::Release(command) => release::execute(&root, &command),
         cli::CommandLine::Modules(command) => runner::headless::execute(&root, &command),
         cli::CommandLine::AcceptanceManual(command) => qualification::record_manual(&root, command),

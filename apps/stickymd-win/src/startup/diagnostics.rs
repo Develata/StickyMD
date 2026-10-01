@@ -7,6 +7,9 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::Instant;
 
+mod details;
+pub use details::StartupDetail;
+
 const READY_EVENT_ENV: &str = "STICKYMD_DIAGNOSTIC_READY_EVENT";
 const TRACE_PATH_ENV: &str = "STICKYMD_DIAGNOSTIC_STARTUP_TRACE";
 const EXIT_AFTER_READY_ENV: &str = "STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY";
@@ -19,6 +22,7 @@ pub struct StartupDiagnostics {
     trace_path: Option<PathBuf>,
     exit_after_ready: bool,
     milestones: Vec<(&'static str, u128)>,
+    details: Option<details::Details>,
     finished: bool,
 }
 
@@ -31,8 +35,9 @@ impl StartupDiagnostics {
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
         let enabled = ready_event.is_some() || trace_path.is_some();
+        let details = details::Details::from_environment(trace_path.is_some());
         let mut milestones = if enabled {
-            Vec::with_capacity(24)
+            Vec::with_capacity(26)
         } else {
             Vec::new()
         };
@@ -48,6 +53,7 @@ impl StartupDiagnostics {
             exit_after_ready: enabled
                 && env::var(EXIT_AFTER_READY_ENV).is_ok_and(|value| value == "1"),
             milestones,
+            details,
             finished: false,
         }
     }
@@ -65,6 +71,14 @@ impl StartupDiagnostics {
         }
         self.milestones
             .push((name, self.started.elapsed().as_micros()));
+    }
+
+    pub fn record_detail(&mut self, milestone: StartupDetail) {
+        if !self.finished
+            && let Some(details) = &mut self.details
+        {
+            details.record(milestone, self.started.elapsed().as_micros());
+        }
     }
 
     /// Completes the startup measurement after the first successful present.
@@ -90,6 +104,9 @@ impl StartupDiagnostics {
                 output.as_bytes(),
             )
             .map_err(|error| format!("cannot write startup trace: {error}"))?;
+            if let Some(details) = &self.details {
+                details.write(&output)?;
+            }
         }
         Ok(self.exit_after_ready)
     }

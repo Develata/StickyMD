@@ -137,6 +137,28 @@ the empty smoke performance scope. Missing tests, changed feature contexts or a
 measurement running in parallel are failure signals. These checks do not replace
 the startup cohort or any manual row above.
 
+## Optional Startup Detail Compatibility
+
+Preconditions: use a fresh isolated copied Release instance, unchanged note fixture,
+and distinct output paths. Enable v2 tracing and its optional startup-details sidecar
+only for this diagnostic child; run desktop checks serially.
+
+Action: collect one trace pair and run `stickymd-smoke startup-details --trace <v2>
+--details <sidecar> --json`. Compare the v2 milestone names with a run before the
+instrumentation change; exercise corrupted, missing, duplicate, nonmonotonic,
+out-of-range and mismatched inputs through the compiled CLI, including Unicode and
+space-containing paths outside a checkout.
+
+Expected: v2 still has exactly 26 ordered milestones. The three substeps and remainder
+sum to `tray_ready..window_visible`. Analysis is read-only and `OBSERVATION_ONLY`;
+invalid inputs return nonzero with no partial stdout. Existing output files survive
+write failures. Formal startup sampling removes the detail opt-in variable and retains
+the existing ready event, cohort and thresholds. Unit/CLI checks cover these failures;
+one native launch is a diagnostic only and does not upgrade the historical matrix.
+
+Failure signals: changed legacy protocol, trace-pair mismatch accepted, diagnostic
+samples promoted to qualification, or changed product window ordering/behavior.
+
 ## Manual Receipt Contract
 
 Changing any manual row from `NOT TESTED` requires the exact candidate commit and EXE hash, Windows

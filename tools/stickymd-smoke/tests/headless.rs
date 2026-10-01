@@ -12,4 +12,5 @@ mod release_remote;
 mod release_workflow;
 #[cfg(windows)]
 mod release_wrappers;
+mod startup_details;
 mod support;

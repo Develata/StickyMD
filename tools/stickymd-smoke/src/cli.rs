@@ -94,6 +94,7 @@ pub(crate) enum CommandLine {
     Ci(crate::ci::Command),
     Development(crate::development::Command),
     Timings(crate::timing_summary::Options),
+    StartupDetails(crate::startup_details::Options),
     AcceptanceManual(ManualCommand),
     Qualification(QualificationCommand),
 }
@@ -369,6 +370,7 @@ impl CommandLine {
             Some("ci") => crate::ci::Command::parse(&args[1..]).map(Self::Ci),
             Some("dev-check") => crate::development::Command::parse(&args[1..]).map(Self::Development),
             Some("timings") => crate::timing_summary::parse(&args[1..]).map(Self::Timings),
+            Some("startup-details") => crate::startup_details::parse(&args[1..]).map(Self::StartupDetails),
             Some("acceptance") => match args.get(1).map(String::as_str) {
                 Some("manual") => Self::parse_manual(&args[2..]).map(Self::AcceptanceManual),
                 _ => Err(
@@ -955,7 +957,7 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke dev-check [--plan] [--mode=tests|performance|all]\n       stickymd-smoke timings --input <json-or-log> [--input <path> ...] [--json]\n       stickymd-smoke phase-entry[-plan] <00..14|11-b|all> [--Parameter=value]\n       stickymd-smoke release <build-package|generate-sbom|package-inputs|prepare-package|publish-package|workspace-version|verify-promoted|verify-package|verify-workflow|verify-remote-state|notices|checksums|prepare-sbom|publish-sbom|syft-plan|syft-publish|syft-verify> [options]; see tools/stickymd-smoke/README.md"
+        "usage: stickymd-smoke phase <00..14|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke dev-check [--plan] [--mode=tests|performance|all]\n       stickymd-smoke timings --input <json-or-log> [--input <path> ...] [--json]\n       stickymd-smoke startup-details --trace <v2-path> --details <sidecar-path> [--json]\n       stickymd-smoke phase-entry[-plan] <00..14|11-b|all> [--Parameter=value]\n       stickymd-smoke release <build-package|generate-sbom|package-inputs|prepare-package|publish-package|workspace-version|verify-promoted|verify-package|verify-workflow|verify-remote-state|notices|checksums|prepare-sbom|publish-sbom|syft-plan|syft-publish|syft-verify> [options]; see tools/stickymd-smoke/README.md"
     }
 }
 

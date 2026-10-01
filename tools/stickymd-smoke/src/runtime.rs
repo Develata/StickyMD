@@ -616,15 +616,7 @@ fn measure_editor_ready(
     let ready = ReadyEvent::create(sequence)?;
     let trace = directory.join(format!("startup-trace-{sequence}.txt"));
     let started = Instant::now();
-    let mut command = Command::new(executable);
-    command
-        .current_dir(directory)
-        .env("STICKYMD_DIAGNOSTIC_READY_EVENT", ready.name())
-        .env("STICKYMD_DIAGNOSTIC_STARTUP_TRACE", &trace)
-        .env("STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    let mut command = startup_command(executable, directory, ready.name(), &trace);
     let mut child = ChildGuard::spawn(
         &mut command,
         &format!("cannot start {}", executable.display()),
@@ -634,7 +626,6 @@ fn measure_editor_ready(
         let external = started.elapsed();
         ensure_alive(&mut child, "startup measurement instance")?;
         let milestones_us = wait_for_startup_trace(&trace)?;
-        validate_startup_milestones(&milestones_us)?;
         let status = wait_for_exit(&mut child, EXIT_TIMEOUT)?;
         if !status.success() {
             return Err(format!(
@@ -650,25 +641,26 @@ fn measure_editor_ready(
     result
 }
 
+fn startup_command(executable: &Path, directory: &Path, ready: &str, trace: &Path) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .current_dir(directory)
+        .env("STICKYMD_DIAGNOSTIC_READY_EVENT", ready)
+        .env("STICKYMD_DIAGNOSTIC_STARTUP_TRACE", trace)
+        .env("STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY", "1")
+        // Fine substeps are opt-in observations, never part of a formal cohort.
+        .env_remove("STICKYMD_DIAGNOSTIC_STARTUP_DETAILS")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
 fn wait_for_startup_trace(path: &Path) -> Result<Vec<(String, u128)>, String> {
     let deadline = Instant::now() + START_TIMEOUT;
     loop {
         match fs::read_to_string(path) {
-            Ok(content) => {
-                let mut milestones = Vec::new();
-                for line in content.lines().skip(1) {
-                    let (name, value) = line
-                        .split_once('=')
-                        .ok_or_else(|| format!("invalid startup trace line `{line}`"))?;
-                    milestones.push((
-                        name.to_owned(),
-                        value.parse::<u128>().map_err(|error| {
-                            format!("invalid startup duration `{line}`: {error}")
-                        })?,
-                    ));
-                }
-                return Ok(milestones);
-            }
+            Ok(content) => return crate::startup_trace::parse(&content),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(format!(
@@ -682,48 +674,6 @@ fn wait_for_startup_trace(path: &Path) -> Result<Vec<(String, u128)>, String> {
         }
         thread::sleep(Duration::from_millis(5));
     }
-}
-
-fn validate_startup_milestones(milestones: &[(String, u128)]) -> Result<(), String> {
-    const EXPECTED: &[&str] = &[
-        "process_start",
-        "main_enter",
-        "program_dir_ready",
-        "single_instance_ready",
-        "persistence_ready",
-        "config_ready",
-        "document_ready",
-        "event_loop_ready",
-        "window_created",
-        "surface_ready",
-        "display_ready",
-        "font_system_begin",
-        "source_layout_begin",
-        "font_system_end",
-        "source_buffer_ready",
-        "source_layout_end",
-        "source_projection_ready",
-        "monitor_ready",
-        "tray_ready",
-        "window_visible",
-        "opacity_ready",
-        "topmost_ready",
-        "focus_ready",
-        "guards_ready",
-        "shell_ready",
-        "editor_ready",
-    ];
-    let names = milestones
-        .iter()
-        .map(|(name, _)| name.as_str())
-        .collect::<Vec<_>>();
-    if names != EXPECTED {
-        return Err(format!("startup milestone order mismatch: {names:?}"));
-    }
-    if milestones.windows(2).any(|pair| pair[0].1 > pair[1].1) {
-        return Err("startup milestone durations are not monotonic".to_owned());
-    }
-    Ok(())
 }
 
 fn print_startup_sample(kind: &str, run: usize, sample: &StartupSample) {
@@ -2479,6 +2429,25 @@ fn cleanup_root(root: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn startup_cohort_disables_inherited_detail_capture() {
+        let command = super::startup_command(
+            std::path::Path::new("app.exe"),
+            std::path::Path::new("isolated"),
+            "unique-ready",
+            std::path::Path::new("trace.txt"),
+        );
+        let environment: std::collections::BTreeMap<_, _> = command.get_envs().collect();
+        assert_eq!(
+            environment.get(std::ffi::OsStr::new("STICKYMD_DIAGNOSTIC_STARTUP_DETAILS")),
+            Some(&None)
+        );
+        assert_eq!(
+            environment.get(std::ffi::OsStr::new("STICKYMD_DIAGNOSTIC_READY_EVENT")),
+            Some(&Some(std::ffi::OsStr::new("unique-ready")))
+        );
+    }
+
     use std::time::Duration;
 
     use super::{

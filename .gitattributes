@@ -15,6 +15,7 @@ assets/licenses/*.txt text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 crates/stickymd-render/tests/fixtures/*.txt text eol=lf
+tools/stickymd-smoke/tests/fixtures/*.trace text eol=lf
 *.ps1 text eol=crlf
 *.bat text eol=crlf
 
