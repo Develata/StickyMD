@@ -28,6 +28,7 @@ pub(super) struct LaidOutDocument {
     pub width_px: u32,
     pub height_px: f32,
     pub blocks: Vec<LaidOutBlock>,
+    pub image_slots: super::image_resources::ImageSlots,
     pub projection: std::sync::Arc<super::selection::PreviewDocumentProjection>,
     pub scale: f32,
     pub theme: super::PreviewTheme,
@@ -61,8 +62,7 @@ pub(super) struct InlinePiece {
 pub(super) enum LayoutContent {
     Text(super::text_layout::TextLayout),
     Math(Arc<MathRaster>),
-    Image(Arc<crate::image::DecodedImageRaster>),
-    ImagePlaceholder { width: u32, height: u32 },
+    Image(Box<super::image_resources::LaidOutImage>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,11 +224,13 @@ pub(super) fn layout_document(
     }
 
     let height_px = (y - gap + padding).max(width_px.min(1) as f32);
+    let image_slots = super::image_resources::ImageSlots::new(&blocks, tree.local_images().count());
     LaidOutDocument {
         generation: tree.generation,
         width_px,
         height_px,
         blocks,
+        image_slots,
         projection: std::sync::Arc::new(super::selection::PreviewDocumentProjection::new(
             tree.generation,
             selection_text,

@@ -269,7 +269,6 @@ fn text_spans_piece(
         LayoutContent::Text(layout) => layout.first_line_metrics(metrics.font_size),
         LayoutContent::Math(_) => (1.0, metrics.font_size),
         LayoutContent::Image(raster) => (raster.width as f32, raster.height as f32),
-        LayoutContent::ImagePlaceholder { width, height } => (*width as f32, *height as f32),
     };
     chunk.x = 0.0;
     chunk.y = 0.0;

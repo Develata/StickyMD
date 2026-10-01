@@ -378,6 +378,10 @@ fn coalesce(pending: PreviewJob, incoming: PreviewJob) -> PreviewJob {
 }
 
 #[cfg(test)]
+#[path = "worker/image_refresh_tests.rs"]
+mod image_refresh_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::Arc;
     use std::sync::mpsc;

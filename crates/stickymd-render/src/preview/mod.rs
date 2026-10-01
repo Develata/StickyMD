@@ -8,6 +8,7 @@
 mod export;
 mod fonts;
 mod image_layout;
+mod image_resources;
 mod inline_text_layout;
 mod layout;
 mod math_layout;

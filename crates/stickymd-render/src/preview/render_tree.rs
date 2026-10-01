@@ -114,19 +114,32 @@ pub struct RenderTree {
 
 impl RenderTree {
     pub(super) fn has_local_images(&self) -> bool {
-        let has_image = |span: &RenderSpan| {
-            span.image.as_ref().is_some_and(|image| {
+        self.local_images().next().is_some()
+    }
+
+    pub(super) fn local_images(&self) -> impl Iterator<Item = &RenderImage> {
+        self.blocks
+            .iter()
+            .flat_map(|block| {
+                let table = match &block.kind {
+                    RenderBlockKind::Table(table) => Some(table),
+                    _ => None,
+                };
+                block.spans.iter().chain(
+                    table
+                        .into_iter()
+                        .flat_map(|table| &table.rows)
+                        .flat_map(|row| &row.cells)
+                        .flatten(),
+                )
+            })
+            .filter_map(|span| span.image.as_ref())
+            .filter(|image| {
                 matches!(
                     image.kind,
                     ImageKind::LocalRelative | ImageKind::LocalAbsolute
                 )
             })
-        };
-        self.blocks.iter().any(|block| {
-            block.spans.iter().any(has_image)
-                || matches!(&block.kind, RenderBlockKind::Table(table)
-                    if table.rows.iter().flat_map(|row| &row.cells).flatten().any(has_image))
-        })
     }
 }
 

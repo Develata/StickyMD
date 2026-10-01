@@ -225,28 +225,31 @@ pub(super) fn paint_document(
                         );
                     }
                 }
-                LayoutContent::Image(raster) => {
-                    if let Some(source) =
-                        PixmapRef::from_bytes(&raster.rgba, raster.width, raster.height)
-                    {
-                        pixmap.draw_pixmap(
-                            origin_x,
-                            origin_y,
-                            source,
-                            &PixmapPaint::default(),
-                            Transform::identity(),
-                            None,
+                LayoutContent::Image(image) => {
+                    if let Some(raster) = &image.raster {
+                        if let Some(source) =
+                            PixmapRef::from_bytes(&raster.rgba, raster.width, raster.height)
+                        {
+                            pixmap.draw_pixmap(
+                                origin_x,
+                                origin_y,
+                                source,
+                                &PixmapPaint::default(),
+                                Transform::identity(),
+                                None,
+                            );
+                        }
+                    } else {
+                        fill_rect(
+                            &mut pixmap,
+                            origin_x as f32,
+                            origin_y as f32,
+                            image.width as f32,
+                            image.height as f32,
+                            palette.code,
                         );
                     }
                 }
-                LayoutContent::ImagePlaceholder { width, height } => fill_rect(
-                    &mut pixmap,
-                    origin_x as f32,
-                    origin_y as f32,
-                    *width as f32,
-                    *height as f32,
-                    palette.code,
-                ),
             }
         }
     }

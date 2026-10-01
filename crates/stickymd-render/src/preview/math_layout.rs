@@ -6,14 +6,11 @@ use std::sync::Arc;
 
 use cosmic_text::{Align, FontSystem, Metrics};
 
-use crate::image::{
-    DecodedImageCache, ImageCacheKey, PreviewImageSource, decode_scaled_image_owned,
-    inspect_encoded_image,
-};
+use crate::image::{DecodedImageCache, PreviewImageSource};
 use crate::math::{MAX_DOCUMENT_FORMULAS, MathEngine, MathError, MathRaster};
 use crate::source::FontSelection;
 
-use super::image_layout::image_target;
+use super::image_resources::LaidOutImage;
 use super::inline_text_layout::{append_text_pieces, text_piece};
 use super::layout::{
     ChunkBuild, DecorationRole, InlinePiece, LayoutChunk, LayoutContent, LayoutDecoration,
@@ -275,43 +272,21 @@ fn image_piece(
     image_band: (f32, f32),
 ) -> Option<InlinePiece> {
     let image = span.image.as_ref()?;
-    if !matches!(
-        image.kind,
-        super::ImageKind::LocalRelative | super::ImageKind::LocalAbsolute
-    ) {
-        return None;
-    }
-    let image_source = image_source?;
-    let metadata = image_source.inspect(&image.destination).ok().flatten()?;
     let max_width = available_width.floor().max(1.0) as u32;
     // An inline image participates in line layout. Cap it to four body lines;
     // standalone image paragraphs retain the larger viewport-oriented cap.
     let max_height = (metrics.line_height * 4.0).floor().max(1.0) as u32;
-    let (mut target_width, mut target_height) = image_target(&metadata, max_width, max_height);
-    let in_decode_band = block_y + target_height as f32 >= image_band.0 && block_y <= image_band.1;
-    let content = if in_decode_band {
-        let bytes = image_source.load(&image.destination).ok().flatten()?;
-        let current_metadata = inspect_encoded_image(&bytes).ok()?;
-        (target_width, target_height) = image_target(&current_metadata, max_width, max_height);
-        let key = ImageCacheKey {
-            source_hash: stickymd_core::hash_bytes(&bytes),
-            width: target_width,
-            height: target_height,
-        };
-        let raster = if let Some(raster) = image_cache.get(&key) {
-            raster
-        } else {
-            decode_scaled_image_owned(bytes, target_width, target_height)
-                .ok()
-                .and_then(|raster| image_cache.insert(key, raster))?
-        };
-        LayoutContent::Image(raster)
-    } else {
-        LayoutContent::ImagePlaceholder {
-            width: target_width,
-            height: target_height,
-        }
-    };
+    let slot = LaidOutImage::build(
+        image,
+        max_width,
+        max_height,
+        block_y,
+        image_source,
+        image_cache,
+        image_band,
+    )?;
+    let (target_width, target_height) = (slot.width, slot.height);
+    let content = LayoutContent::Image(slot);
     let selection_start = selection_text.len();
     selection_text.push_str(&span.copy_text);
     let selection_end = selection_text.len();

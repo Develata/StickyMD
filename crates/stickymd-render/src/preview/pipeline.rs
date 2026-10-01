@@ -329,26 +329,40 @@ impl PreviewPipeline {
                 .as_ref()
                 .map(|layout| (layout.width_px, layout.scale))
                 .ok_or(PreviewPipelineError::NoDocument)?;
-            self.layout = None;
             let tree = self.tree.as_ref().ok_or(PreviewPipelineError::NoDocument)?;
             let band = image_band(effective_scroll_y, height_px, scale);
-            self.layout = Some(layout_document(
-                LayoutResources {
-                    font_system: &mut self.font_system,
-                    fonts: &self.fonts,
-                    math_engine: &mut self.math_engine,
-                    image_source,
-                    image_cache: &mut self.image_cache,
-                    image_band: band,
-                },
-                tree,
-                width,
-                scale,
-                theme,
-            ));
+            let refreshed = !needs_image_source_refresh
+                && self.layout.as_mut().is_some_and(|layout| {
+                    layout.theme == theme
+                        && image_source.is_some_and(|source| {
+                            layout.image_slots.refresh(
+                                &mut layout.blocks,
+                                source,
+                                &mut self.image_cache,
+                                band,
+                            )
+                        })
+                });
+            if !refreshed {
+                self.layout = None;
+                self.layout = Some(layout_document(
+                    LayoutResources {
+                        font_system: &mut self.font_system,
+                        fonts: &self.fonts,
+                        math_engine: &mut self.math_engine,
+                        image_source,
+                        image_cache: &mut self.image_cache,
+                        image_band: band,
+                    },
+                    tree,
+                    width,
+                    scale,
+                    theme,
+                ));
+                self.counters.layouts = self.counters.layouts.saturating_add(1);
+            }
             self.image_band = band;
             self.layout_has_image_source = image_source_available;
-            self.counters.layouts = self.counters.layouts.saturating_add(1);
         }
         if self
             .layout
@@ -455,8 +469,9 @@ impl PreviewPipeline {
 
 fn image_band(scroll_y: f32, height_px: u32, scale: f32) -> (f32, f32) {
     // Keep at least one viewport predecoded on either side. A fixed 300 px
-    // margin caused a full-document relayout every few wheel events on the
-    // default 680 px window, despite the image cache itself being bounded.
+    // margin refreshed the image band every few wheel events on the default
+    // 680 px window. Stable geometry now avoids relayout; the admission margin
+    // remains unchanged so small scrolls also avoid unnecessary image reads.
     let margin = (300.0 * scale.max(0.5)).max(height_px as f32);
     (
         (scroll_y - margin).max(0.0),
@@ -467,6 +482,10 @@ fn image_band(scroll_y: f32, height_px: u32, scale: f32) -> (f32, f32) {
 #[cfg(test)]
 #[path = "pipeline/audit_tests.rs"]
 mod audit_tests;
+
+#[cfg(test)]
+#[path = "pipeline/image_refresh_tests.rs"]
+mod image_refresh_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1037,8 +1056,8 @@ mod tests {
             .flat_map(|block| &block.chunks)
             .filter(|chunk| {
                 matches!(
-                    chunk.content,
-                    crate::preview::layout::LayoutContent::Image(_)
+                    &chunk.content,
+                    crate::preview::layout::LayoutContent::Image(image) if image.raster.is_some()
                 )
             })
             .count();
@@ -1169,8 +1188,8 @@ mod tests {
                 .as_ref()
                 .and_then(|layout| layout.blocks.last())
                 .is_some_and(|block| block.chunks.iter().any(|chunk| matches!(
-                    chunk.content,
-                    crate::preview::layout::LayoutContent::Image(_)
+                    &chunk.content,
+                    crate::preview::layout::LayoutContent::Image(image) if image.raster.is_some()
                 ))),
             "the final visible image must be decoded after scroll clamps to the document bottom"
         );
