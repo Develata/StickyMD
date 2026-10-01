@@ -52,14 +52,18 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
 
 ## Source buffer initialization
 
-- Preconditions: empty/trailing-newline notes and mixed CJK, Latin, combining marks,
-  emoji and RTL text; exercise different viewport sizes and content scales.
+- Preconditions: empty/trailing-newline notes, blank paragraphs, whitespace-only
+  lines and mixed CJK, Latin, combining marks, emoji and RTL text; exercise different
+  viewport sizes and content scales, and absent preferred font families.
 - Action: compare initialization without discarded empty shaping against buffers
-  initialized by the previous eager constructor. Paint Source selection/caret, empty
-  and nonempty diagnostic banners, and empty/mixed shell text fields.
+  initialized by the previous eager constructor and generic Serif defaults. Paint
+  Source selection/caret, empty and nonempty diagnostic banners, and empty/mixed shell
+  text fields; edit blank lines and resynchronize from a canonical snapshot.
 - Expected: identical pixels, caret geometry and hit results; unchanged text and
   generation. Source text is still shaped before its ready milestone, and auxiliary
-  buffers are shaped before use. Font selection and IME/window ordering stay intact.
+  buffers are shaped before use. Blank Source lines reuse the already selected Latin
+  family; unavailable preferred Latin families retain generic Serif fallback. Explicit
+  script runs and IME/window ordering stay intact. Edits and full resync use the same defaults.
 - Failure signals: missing first-frame text, changed wrapping/hit targets, changed
   initialization milestone order, or diagnostics presented as formal startup acceptance.
 - Automated entry: `source::projection::initialization_tests` and existing ordered

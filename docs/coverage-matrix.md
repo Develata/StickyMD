@@ -361,3 +361,6 @@ Plan 07 `source-editor` / `font-runs` 对应
 buffer 在写入实际文本前使用 `Buffer::new_empty`，Source 仍在 ready 前整形，字体与窗口时序不变。
 `source/projection/initialization_tests` 比较旧初始化方式的像素、caret、命中、诊断和 shell 文本；
 既有初始化 milestone 测试继续覆盖顺序。Release A/B 是定向诊断，不升级人工或发布验收状态。
+Source 默认属性同时复用已解析的 Latin 字体，避免空白行触发无用的通用 Serif 字体加载；
+首选 Latin 不可用时保留通用 fallback。初始化、增量编辑与 resync 共用同一规则；测试覆盖
+旧 Serif 默认值的像素/geometry 对照、空白段落、缺失字体与编辑后的属性一致性。

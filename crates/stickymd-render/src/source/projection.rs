@@ -539,8 +539,20 @@ pub(super) fn selection_valid(text: &str, selection: Selection) -> bool {
         && text.is_char_boundary(selection.active.byte)
 }
 
+fn source_default_attrs(fonts: &FontSelection) -> Attrs<'static> {
+    // Nonempty script runs already select these fonts. Use the resolved Latin
+    // family for blank lines too: cosmic-text shapes an internal ellipsis even
+    // for them, so generic Serif would load an otherwise unused fallback font.
+    // Preserve the generic fallback when no preferred Latin family is present.
+    Attrs::new().family(if fonts.latin_found {
+        Family::Name(fonts.latin_family)
+    } else {
+        Family::Serif
+    })
+}
+
 fn attrs_for_line(text: &str, fonts: &FontSelection) -> AttrsList {
-    let default = Attrs::new().family(Family::Serif);
+    let default = source_default_attrs(fonts);
     let mut attrs = AttrsList::new(&default);
     for run in segment_script_runs(text) {
         let run_attrs = Attrs::new().family(Family::Name(fonts.family_for(run.class)));
@@ -550,7 +562,7 @@ fn attrs_for_line(text: &str, fonts: &FontSelection) -> AttrsList {
 }
 
 fn set_source_buffer_text(buffer: &mut Buffer, text: &str, fonts: &FontSelection) {
-    let default = Attrs::new().family(Family::Serif);
+    let default = source_default_attrs(fonts);
     let runs = segment_script_runs(text);
     buffer.set_rich_text(
         runs.iter().map(|run| {
