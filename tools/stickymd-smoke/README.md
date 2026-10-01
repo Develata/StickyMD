@@ -244,7 +244,8 @@ These reuse the real startup/resource executors and candidate resolver. Frozen
 checkouts cannot fall back to an unrelated local EXE. Results, including failures,
 are written to unique `tmp/native-diagnostics/` directories in the probe checkout;
 startup traces are archived before fixture cleanup. Source/EXE/harness identities
-are checked before and after. They do not write success ledgers, and targeted
+and desktop eligibility are checked before and after. A failed final environment
+check preserves observations while failing the diagnostic. They do not write success ledgers, and targeted
 window comparisons cannot stand in for the full Window stress/hidden matrix.
 The repository ignores only `tmp/native-diagnostics/` for these outputs. The
 diagnostic checks that rule before launch, so a fresh checkout cannot become

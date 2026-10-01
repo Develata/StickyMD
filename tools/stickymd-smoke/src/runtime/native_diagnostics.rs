@@ -35,7 +35,9 @@ pub(super) fn diagnose(
     let environment = crate::qualification_environment::inspect();
     assert_eq!(
         environment.status,
-        crate::qualification_environment::QualificationEnvironmentStatus::Valid
+        crate::qualification_environment::QualificationEnvironmentStatus::Valid,
+        "{}",
+        environment.summary()
     );
     managed_process::ensure_no_stale_smoke_stickymd().unwrap();
     crate::window_control::enable_per_monitor_v2_dpi_awareness().unwrap();
@@ -50,23 +52,15 @@ pub(super) fn diagnose(
     // Keep raw startup traces, including on failure, before removing our fixture.
     let archive = archive_startup_traces(&root, &output);
     let cleanup = cleanup_root(&root);
+    let final_environment = crate::qualification_environment::inspect();
+    let usable_desktop = require_valid_final_environment(&final_environment);
     let unchanged = identity(&repository).and_then(|after| {
         (after == before)
             .then_some(())
             .ok_or("diagnostic inputs changed during measurement".into())
     });
-    let (mut data, mut error) = match observed {
-        Ok(data) => {
-            let error = data.gate_failure.clone();
-            (data, error)
-        }
-        Err(error) => (RuntimeEvidence::passed(Vec::new()), Some(error)),
-    };
-    for result in [archive, cleanup, unchanged] {
-        if let Err(next) = result {
-            error = Some(error.map_or(next.clone(), |old| format!("{old}; {next}")));
-        }
-    }
+    let (mut data, error) =
+        finalize_observations(observed, [archive, cleanup, unchanged, usable_desktop]);
     data.measurements.push(EvidenceMeasurement {
         name: "diagnostic.elapsed".into(),
         unit: "seconds".into(),
@@ -102,6 +96,42 @@ pub(super) fn diagnose(
     crate::atomic_evidence::write(&path, document.as_bytes()).unwrap();
     eprintln!("NATIVE_DIAGNOSTIC={} seconds={elapsed:.3}", path.display());
     assert!(error.is_none(), "{}", error.unwrap_or_default());
+}
+
+fn finalize_observations(
+    observed: Result<RuntimeEvidence, String>,
+    final_checks: impl IntoIterator<Item = Result<(), String>>,
+) -> (RuntimeEvidence, Option<String>) {
+    let (data, mut error) = match observed {
+        Ok(data) => {
+            let error = data.gate_failure.clone();
+            (data, error)
+        }
+        Err(error) => (RuntimeEvidence::passed(Vec::new()), Some(error)),
+    };
+    for result in final_checks {
+        if let Err(next) = result {
+            error = Some(match error {
+                Some(old) => format!("{old}; {next}"),
+                None => next,
+            });
+        }
+    }
+    (data, error)
+}
+
+fn require_valid_final_environment(
+    environment: &crate::qualification_environment::QualificationEnvironment,
+) -> Result<(), String> {
+    if environment.status == crate::qualification_environment::QualificationEnvironmentStatus::Valid
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "native diagnostic ended in an unusable desktop: {}",
+            environment.summary()
+        ))
+    }
 }
 
 fn require_ignored_output(repository: &Path) -> Result<(), String> {
@@ -293,4 +323,39 @@ fn diagnostic_output_stays_ignored_in_a_fresh_checkout_without_hiding_other_file
         .contains("tmp/unrelated.txt")
     );
     cleanup_root(&root).unwrap();
+}
+
+#[test]
+fn ending_on_an_unusable_desktop_fails_while_retaining_completed_observations() {
+    use crate::qualification_environment::{
+        QualificationEnvironment, QualificationEnvironmentStatus,
+    };
+    let mut environment = QualificationEnvironment {
+        status: QualificationEnvironmentStatus::Valid,
+        interactive_session: true,
+        input_desktop_usable: true,
+        workstation_locked: false,
+        interactive_shell_present: true,
+        foreground_available: true,
+        display_count: 1,
+        detail: None,
+    };
+    require_valid_final_environment(&environment).unwrap();
+    environment.status = QualificationEnvironmentStatus::EnvironmentBlocked;
+    environment.input_desktop_usable = false;
+    let observed = RuntimeEvidence::passed(vec![EvidenceMeasurement {
+        name: "cold.p95".into(),
+        unit: "ms".into(),
+        value: 432.0,
+    }]);
+    let (retained, error) = finalize_observations(
+        Ok(observed),
+        [require_valid_final_environment(&environment)],
+    );
+    let error = error.unwrap();
+    assert!(error.contains("desktop_usable=false"));
+    assert!(error.contains("locked=false"));
+    assert_eq!(retained.measurements.len(), 1);
+    assert_eq!(retained.measurements[0].name, "cold.p95");
+    assert_eq!(retained.measurements[0].value, 432.0);
 }
