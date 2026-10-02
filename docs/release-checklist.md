@@ -4,6 +4,25 @@
 [`docs/plan/11_testing_and_release.md`](plan/11_testing_and_release.md) 为准；每次发布的 source、artifact、
 收据和 USER authority 必须重新建立，不能从旧版本继承。
 
+## v0.1.2 已发布记录
+
+- Release：[StickyMD v0.1.2](https://github.com/Develata/StickyMD/releases/tag/v0.1.2)
+- 发布时间：`2026-10-02T06:26:54Z`；正式版，非 draft/prerelease，GitHub latest 指向本版本。
+- Exact source / tag：`e36e61d65536c0cbaa84ee4004f1a289fbcb91dd`
+- Candidate CI：`36964107323`，9/9 PASS；candidate workflow：`36964744450` / attempt 1，artifact `11209891744`。
+- ZIP SHA-256：`eeb8e7bd2661833b75acafaacd16ccd7290a39d14839e2ab8d8c106abd06b289`
+- EXE SHA-256：`9a8fac57580bb1c612594617803056e24eab2918bf82ada161b1a1e03a7cf23a`
+- SBOM SHA-256：`d6ed71c2d81ece81fd16bd381e21e672d215c6f9f4c4dffb2869744d9d34a30b`
+- Tag 校验：`36972870040`；draft：`36973016557`；publish：`36973520526`，全部成功。
+- 晋升 workflow revision 与产品 source 均为上述 `e36e61d`；晋升只使用原候选附件。
+- 公开三个附件重新下载后 SHA-256 与原候选一致；ZIP/SBOM provenance 和 ZIP SPDX attestation 校验通过。
+- 技术 readiness 保留 `NOT_READY`，未测项保持 `NOT TESTED`；采用本版本明确的 USER 发布特例。
+
+完整 Runtime/Performance/Resources/G3/G4/G5、本地 exact-bound headless qualification 收据及
+强制人工收据尚未补齐。USER 在看到具体候选、缺口和完整验收耗时后决定先发布本版本；
+该决定不改变未来版本的工程门，也不继承旧版本人工 PASS。范围和验证记录见
+[发布决定](report/2026-10-02-v0.1.2-release-preparation.md)与[发布说明](release-notes/0.1.2.md)。
+
 ## v0.1.1 已发布记录
 
 - Release：[StickyMD v0.1.1](https://github.com/Develata/StickyMD/releases/tag/v0.1.1)

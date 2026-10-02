@@ -52,14 +52,14 @@ Preview/Export 现共用本地图片读取 adapter，拒绝 UNC、远程映射�
 
 ## 当前实现切片
 
-`v0.1.1` 已从 exact source `9a0a00a1fe143cf25fa4208a54ec5dfea7f3e7c9` 正式发布。
+`v0.1.2` 已从 exact source `e36e61d65536c0cbaa84ee4004f1a289fbcb91dd` 正式发布。
 Phase 11/11-B 完成产品实现收敛，Phase 12–14 建立 tools-only exact-artifact
 qualification、风险分层人工处置与 tag/draft/publish promotion。本版本采用明确的 USER
 发布特例，技术 readiness 仍为 `NOT_READY`，不能据此称完整验收已关闭。运行时权威与依赖图不变：
 candidate、automated、manual、remote 与 downloaded artifact receipts 写入 ignored
 `dist/evidence/`，不能反向成为产品状态或架构权威；发布身份与剩余环境缺口见
-[`0.1.1 release notes`](../release-notes/0.1.1.md) 和
-[发布决定](../report/2026-09-29-v0.1.1-release-authorization.md)。后续 `main` 的工具维护
+[`0.1.2 release notes`](../release-notes/0.1.2.md) 和
+[发布决定](../report/2026-10-02-v0.1.2-release-preparation.md)。后续 `main` 的工具维护
 不继承已发布 artifact 的身份或发布特例。
 
 Phase 2 已建立 `DocumentState`、checked generation、UTF-8 TextDelta、不可变 snapshot
@@ -141,7 +141,7 @@ Rust · winit · cosmic-text · tiny-skia · softbuffer · Comrak · RaTeX · �
 parser/layout/font crates完成 native math projection。项目采用审计过的薄 DisplayList painter；
 `ratex-render`/PNG renderer 不进入生产依赖图。确定性 raster golden 与六场景资源矩阵已
 自动化。Phase-local 报告中当时尚未执行的 DPI/主题视觉与首次公式内存项目继续作为历史
-证据保留；`v0.1.1` 的人工处置、自动化替代边界与未执行环境项以该版本 release notes 为准，
+证据保留；`v0.1.2` 的人工处置、自动化替代边界与未执行环境项以该版本 release notes 为准，
 不能从 headless 测试推断主观视觉。Phase 7 的 managed image、bounded decode/cache 和 portable
 export 同样由 Rust smoke CLI 持有；无图片/懒加载/4K/饱和 cache 的进程资源矩阵及标准 Windows
 clipboard/export/recovery/asset-safety 路径已进入 exact automation。
@@ -162,8 +162,9 @@ Window intent + monotonic time + platform facts
 CCD stable display identity、signed `rcWork` geometry 和 40–100 整窗 alpha 已接入。托盘、三边
 Dock、紧凑窗口与 presentation mechanics 已有对应 exact automation 和历史 guided session；
 每份结果只证明其记录的 candidate，不表示当前源码或新版已完成相同复验。
-Clean VM、真实双屏/混合 DPI、运行中拔屏、RDP 与物理负坐标等未执行或 USER-waived 环境项
-以 [`v0.1.1` release notes](../release-notes/0.1.1.md) 的精确清单为准；旧版证据不能替代新版验收。
+Clean VM、真实双屏/混合 DPI、运行中拔屏等未执行环境项的本版本处置
+以 [`v0.1.2` release notes](../release-notes/0.1.2.md) 的精确清单为准；旧版证据不能替代新版验收。
+RDP、sleep/resume 和物理负坐标等 Tier C 项继续遵循 Phase 12 的条件，不因发布特例成为 PASS。
 
 ## 文档导航
 

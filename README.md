@@ -18,7 +18,7 @@ Markdown 与数学公式，也可以贴在屏幕边缘，在需要时迅速出�
 让一张常驻桌面的 Markdown 草稿保持轻巧、可靠、随手可用。
 
 [下载最新版本](https://github.com/Develata/StickyMD/releases/latest) ·
-[发布说明](docs/release-notes/0.1.1.md) ·
+[发布说明](docs/release-notes/0.1.2.md) ·
 [English](README.en.md) ·
 [报告问题](https://github.com/Develata/StickyMD/issues/new/choose)
 
@@ -102,7 +102,7 @@ StickyMD 支持的是 **RaTeX/KaTeX-compatible 数学语法**，不是 TeX Live 
 - 上述字体均不可用时，由文本引擎选择电脑上可用的系统 fallback；代码和数学分别使用系统
   monospace 与 RaTeX 内置数学字体。
 
-v0.1.1 暂不提供运行时字体设置。需要自行构建定制版本时，请编辑
+v0.1.2 暂不提供运行时字体设置。需要自行构建定制版本时，请编辑
 [`crates/stickymd-render/src/source/fonts.rs`](crates/stickymd-render/src/source/fonts.rs) 中的
 `CJK_CANDIDATES` 和 `LATIN_CANDIDATES`，把已经安装的 Windows 字体 family name 放到候选列表
 首位，然后重新构建；`config.toml` 目前不能修改字体。
@@ -145,8 +145,9 @@ Source、Preview、Split 的 Private Working Set
 [Release 内存归因报告](docs/report/phase-14-memory-attribution.md)，目标和 hard gate 见
 [性能与可靠性合同](docs/plan/10_performance_reliability.md)。
 
-这些历史测量不代表 `v0.1.1` 已完成完整资源复验；本版本已知的启动性能超标及验收缺口见
-[发布说明](docs/release-notes/0.1.1.md#验收边界)。
+这些历史测量不代表 `v0.1.2` 已完成完整资源复验。本版本在 CI、精确包与 portable 启动校验
+通过后采用明确发布特例；仍未完成的桌面/人工验收见
+[发布说明](docs/release-notes/0.1.2.md#已知验收边界)。
 
 <a id="privacy"></a>
 
@@ -176,18 +177,18 @@ MathScratch/
 
 从依赖角度，公开 portable ZIP 不要求安装 Rust、Visual Studio、C/C++ 编译器、Windows SDK
 或独立 Visual C++ Redistributable。Release 静态链接 MSVC CRT，并通过普通与延迟加载 PE import
-检查。`v0.1.1` 尚未在全新的 Windows 11 VM 中完成独立启动验收；这是已披露的验证缺口，而不是
+检查。`v0.1.2` 尚未在全新的 Windows 11 VM 中完成独立启动验收；这是已披露的验证缺口，而不是
 额外运行库要求。
 
-`v0.1.1` 没有 Authenticode 签名，Windows 可能显示 SmartScreen 或信誉提示。不要因此关闭
+`v0.1.2` 没有 Authenticode 签名，Windows 可能显示 SmartScreen 或信誉提示。不要因此关闭
 Defender 或 SmartScreen；请下载同一 Release 的
 [`SHA256SUMS.txt`](https://github.com/Develata/StickyMD/releases/latest/download/SHA256SUMS.txt) 并核对：
 
 ```powershell
-Get-FileHash .\StickyMD-0.1.1-windows-x64-portable.zip -Algorithm SHA256
+Get-FileHash .\StickyMD-0.1.2-windows-x64-portable.zip -Algorithm SHA256
 ```
 
-更多信息见[正式发布说明](docs/release-notes/0.1.1.md)和[安全策略](SECURITY.md)。
+更多信息见[正式发布说明](docs/release-notes/0.1.2.md)和[安全策略](SECURITY.md)。
 
 <a id="shortcuts"></a>
 
@@ -228,7 +229,7 @@ Get-FileHash .\StickyMD-0.1.1-windows-x64-portable.zip -Algorithm SHA256
 
 **为什么 Windows 显示 SmartScreen？**
 
-`v0.1.1` 没有 Authenticode 签名。请核对官方 Release 的 SHA-256，不要关闭系统防护。
+`v0.1.2` 没有 Authenticode 签名。请核对官方 Release 的 SHA-256，不要关闭系统防护。
 
 **支持完整 LaTeX 吗？**
 

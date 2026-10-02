@@ -18,15 +18,16 @@ StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown �
 - 纯 portable：解压即用，无安装器，不写 AppData / Registry。
 - 核心本体对象只有：Note、Document Text、Preview、Managed Image Asset、Runtime Config、Window Placement、Editor Session。
 
-当前仓库状态：**`v0.1.1` 已从 exact source
-`9a0a00a1fe143cf25fa4208a54ec5dfea7f3e7c9` 正式发布**。公开 portable ZIP、checksum 与 SBOM
-来自同一份 GitHub Release artifact；候选 CI、精确包及来源证明校验通过。启动性能超标、
-G4 首次失败和剩余桌面/人工验收缺口采用本版本明确的 USER 发布特例，原技术 readiness
+当前仓库状态：**`v0.1.2` 已从 exact source
+`e36e61d65536c0cbaa84ee4004f1a289fbcb91dd` 正式发布**。公开 portable ZIP、checksum 与 SBOM
+来自同一份 GitHub Release artifact；候选 CI、精确包及来源证明校验通过。完整桌面资格化
+和人工验收的剩余缺口采用本版本明确的 USER 发布特例，原技术 readiness
 仍为 `NOT_READY`，不得表述为完整验收通过。详见
-[`v0.1.1` 发布决定](docs/report/2026-09-29-v0.1.1-release-authorization.md)。
+[`v0.1.2` 发布决定](docs/report/2026-10-02-v0.1.2-release-preparation.md)。
 
-`v0.1.0` 的 exact source 仍为 `64690ab8f86f63f3cbfeabbb0961276978c8f26d`；Phase 14 报告与
-ignored evidence 保留其历史资格化身份。两个版本的 tag 和既有资产都不得被后续 `main`
+`v0.1.1` 的 exact source 仍为 `9a0a00a1fe143cf25fa4208a54ec5dfea7f3e7c9`，
+`v0.1.0` 仍为 `64690ab8f86f63f3cbfeabbb0961276978c8f26d`；历史报告与
+ignored evidence 保留各自资格化身份。各版本的 tag 和既有资产都不得被后续 `main`
 文档或维护提交冒充为已重建，后续提交不自动继承 exact-artifact 身份或本次发布特例。
 
 产品 runtime 继续维持 v1 冻结边界：StickyMD 是一张 Markdown 草稿，不进入通用编辑器、知识管理、

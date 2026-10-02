@@ -4,10 +4,10 @@
 
 ## 当前状态
 
-`v0.1.1` 已从 exact source `9a0a00a1fe143cf25fa4208a54ec5dfea7f3e7c9` 发布。
-该版本使用明确的 USER 发布特例，技术 readiness 仍为 `NOT_READY`；启动性能、G4 首次失败和
-桌面/人工验收缺口见 [发布说明](release-notes/0.1.1.md) 与
-[发布决定](report/2026-09-29-v0.1.1-release-authorization.md)。后续 `main` 的代码、工具和文档
+`v0.1.2` 已从 exact source `e36e61d65536c0cbaa84ee4004f1a289fbcb91dd` 发布。
+该版本使用明确的 USER 发布特例，技术 readiness 仍为 `NOT_READY`；完整桌面资格化和
+人工验收缺口见 [发布说明](release-notes/0.1.2.md) 与
+[发布决定](report/2026-10-02-v0.1.2-release-preparation.md)。后续 `main` 的代码、工具和文档
 维护不继承该发布身份或特例。
 
 ## 按问题查找

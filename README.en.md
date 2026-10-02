@@ -19,7 +19,7 @@ It is not a knowledge-management system or a general-purpose editor. StickyMD fo
 keeping a desktop Markdown scratchpad lightweight, reliable, and immediately available.
 
 [Download](https://github.com/Develata/StickyMD/releases/latest) ·
-[Release notes](docs/release-notes/0.1.1.md) ·
+[Release notes](docs/release-notes/0.1.2.md) ·
 [中文](README.md) ·
 [Report an issue](https://github.com/Develata/StickyMD/issues/new/choose)
 
@@ -111,7 +111,7 @@ document compiler.
 - If none of those families is available, the text engine selects an installed system fallback;
   code and mathematics use system monospace and RaTeX's embedded math fonts respectively.
 
-Version 0.1.1 has no runtime font setting. For a custom source build, edit `CJK_CANDIDATES` and
+Version 0.1.2 has no runtime font setting. For a custom source build, edit `CJK_CANDIDATES` and
 `LATIN_CANDIDATES` in
 [`crates/stickymd-render/src/source/fonts.rs`](crates/stickymd-render/src/source/fonts.rs), place the
 installed Windows font family name first, and rebuild. `config.toml` cannot currently change fonts.
@@ -164,9 +164,10 @@ method and full data, and the
 [performance and reliability contract](docs/plan/10_performance_reliability.md) for targets and hard
 gates.
 
-These historical measurements do not establish a complete resource rerun for `v0.1.1`. Its known
-startup performance overrun and qualification gaps are disclosed in the
-[release notes](docs/release-notes/0.1.1.md#验收边界).
+These historical measurements do not establish a complete resource rerun for `v0.1.2`. This version
+uses an explicit release exception after CI, exact-package verification and portable startup checks
+passed. Remaining desktop and manual acceptance gaps are disclosed in the
+[release notes](docs/release-notes/0.1.2.md#已知验收边界).
 
 <a id="privacy"></a>
 
@@ -196,20 +197,20 @@ StickyMD under `Program Files`; no administrator privileges are required.
 
 The published portable ZIP has no identified dependency on Rust, Visual Studio, a C/C++ toolchain,
 the Windows SDK, or a separate Visual C++ Redistributable. The Release build statically links the
-MSVC CRT and passes ordinary and delay-load PE import checks. Version `v0.1.1` has not yet been
+MSVC CRT and passes ordinary and delay-load PE import checks. Version `v0.1.2` has not yet been
 independently exercised in a clean Windows 11 VM; that disclosed qualification gap is distinct from
 an external runtime requirement.
 
-Version `v0.1.1` is not Authenticode-signed, so Windows may show a SmartScreen or reputation warning.
+Version `v0.1.2` is not Authenticode-signed, so Windows may show a SmartScreen or reputation warning.
 Do not disable Defender or SmartScreen. Download
 [`SHA256SUMS.txt`](https://github.com/Develata/StickyMD/releases/latest/download/SHA256SUMS.txt) from
 the same Release and compare it with:
 
 ```powershell
-Get-FileHash .\StickyMD-0.1.1-windows-x64-portable.zip -Algorithm SHA256
+Get-FileHash .\StickyMD-0.1.2-windows-x64-portable.zip -Algorithm SHA256
 ```
 
-See the [release notes](docs/release-notes/0.1.1.md) and [security policy](SECURITY.md) for details.
+See the [release notes](docs/release-notes/0.1.2.md) and [security policy](SECURITY.md) for details.
 
 <a id="shortcuts"></a>
 
@@ -253,7 +254,7 @@ No. Those are source-build tools only. The clean-VM qualification gap is disclos
 
 **Why does Windows show SmartScreen?**
 
-Version `v0.1.1` is not Authenticode-signed. Verify the official ZIP checksum instead of disabling
+Version `v0.1.2` is not Authenticode-signed. Verify the official ZIP checksum instead of disabling
 system protection.
 
 **Does StickyMD support full LaTeX?**

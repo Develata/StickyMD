@@ -4,8 +4,8 @@
 [`AGENTS.md`](AGENTS.md)。
 
 报告中的 `NOT READY`、`pending` 或 `NOT TESTED` 只描述报告生成时的状态，不应被解释成
-仓库当前发布状态。当前公开版本是 `v0.1.1`，采用明确的 USER 发布特例，技术 readiness
-仍为 `NOT_READY`；用户可见结论见 [`0.1.1 release notes`](../release-notes/0.1.1.md)。
+仓库当前发布状态。当前公开版本是 `v0.1.2`，采用明确的 USER 发布特例，技术 readiness
+仍为 `NOT_READY`；用户可见结论见 [`0.1.2 release notes`](../release-notes/0.1.2.md)。
 后续工具维护和普通 CI 成功不继承该版本的 artifact 身份或特例。动态 exact-artifact 收据位于被忽略的
 `dist/evidence/`，不会回写历史报告制造“事后通过”。
 
@@ -18,6 +18,11 @@
 - [ZIP 落盘与发布收尾](2026-09-30-release-cli-finalization.md)：冲突、并发、checksum 与阶段路由维护。
 - [阶段路由、发布工作流与哈希](2026-09-30-phase-routing-release-workflows-cng.md)：后续 Rust CLI 收拢及 Windows adapter 边界。
 - [资源场景等价与分批记录](2026-09-30-resource-equivalence-and-batching.md)、[续跑计划](2026-09-30-resource-resume-planning.md)、[实际诊断复审](2026-09-30-resource-live-review.md)：区分完整资格化、定向诊断、历史复用和测量范围。
+
+## v0.1.2 发布与资格化记录
+
+- [发布准备与决定](2026-10-02-v0.1.2-release-preparation.md)：exact source、候选身份、USER 特例、公开附件及验证范围。
+- [正式发布说明](../release-notes/0.1.2.md)：本版本改进与尚未完成的桌面/人工验收。
 
 ## v0.1.1 发布与资格化历史
 
