@@ -229,13 +229,14 @@ wall time does not establish scheduler or I/O wait. This adds no gate or milesto
 If later startup sampling fails, completed raw samples and their actual counts
 are retained without percentiles for the incomplete cohort; the result stays failed.
 
-For targeted native investigation, the existing Rust test binary provides three
+For targeted native investigation, the existing Rust test binary provides four
 explicit opt-in diagnostics. Set `STICKYMD_SMOKE_PROBE_REPOSITORY` to a clean
 checkout with a valid local Release build or matching promoted candidate, then run
 one command at a time on an exclusive desktop:
 
 ```powershell
 cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_startup_cpu_diagnostic -- --ignored --nocapture --test-threads=1
+cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_startup_focus_diagnostic -- --ignored --nocapture --test-threads=1
 cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_zoom_cpu_diagnostic -- --ignored --nocapture --test-threads=1
 cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_window_comparison_diagnostic -- --ignored --nocapture --test-threads=1
 ```
@@ -250,6 +251,25 @@ window comparisons cannot stand in for the full Window stress/hidden matrix.
 The repository ignores only `tmp/native-diagnostics/` for these outputs. The
 diagnostic checks that rule before launch, so a fresh checkout cannot become
 dirty solely from its own archived traces; unrelated untracked files stay visible.
+
+The focus diagnostic starts Source, Preview and Split three times each in fresh
+portable directories, including Chinese characters and spaces. It reads native
+foreground/active/focused/capture facts immediately after EDITOR_READY, before
+any harness input or activation helper, and checks the existing Tool Window style
+invariant. Ready alone cannot prove focus. This is a regression diagnostic, not
+a timing cohort, a real IME acceptance result or a replacement for manual checks.
+
+For headless attribution of Source initialization, the render crate also offers
+an ignored Release probe:
+
+```powershell
+cargo test -p stickymd-render --release --lib --locked source_initialization_release_baseline -- --ignored --nocapture --test-threads=1
+```
+
+It reports system font scanning, initial buffer shaping, first/cached font
+matching and individual font loading with the full system font database. These
+in-process timings are exploratory; they do not measure native cold startup,
+change font fallback, impose a performance gate or create qualification receipts.
 
 For an isolated copied Release diagnostic, set both
 `STICKYMD_DIAGNOSTIC_STARTUP_TRACE` (the legacy v2 output path) and

@@ -22,6 +22,7 @@
 # Fully cached remaining cases in one group use fresh before/after batch validation; partial hits fall back to individual execution.
 # Package inventory/README and Syft cache validation are owned by Rust; ZIP/network adapters stay in PowerShell.
 # Startup retains diagnostic process CPU observations; Zoom and window comparisons share Rust resource rules.
+# Opt-in Rust startup-focus diagnostics observe native focus before any test input; they do not qualify a candidate.
 [CmdletBinding()]
 param(
     [switch]$Ci,

@@ -241,7 +241,7 @@ impl StickyApp {
             return false;
         }
         self.startup_diagnostics.record("topmost_ready");
-        window.focus_window();
+        crate::platform::windows::window_focus::focus_on_startup(window.as_ref());
         self.startup_diagnostics.record("focus_ready");
         self.refresh_window_guards(None);
         self.startup_diagnostics.record("guards_ready");

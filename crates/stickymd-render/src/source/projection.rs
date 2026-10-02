@@ -608,6 +608,9 @@ fn set_source_buffer_text(buffer: &mut Buffer, text: &str, fonts: &FontSelection
 mod initialization_tests;
 
 #[cfg(test)]
+mod startup_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::Arc;
 

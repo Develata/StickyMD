@@ -82,7 +82,7 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A61 | 1 MiB Unicode 大小写不敏感搜索 Release 基准在 Phase 14、本地 Windows 模块与 CI performance 分片各执行一次；test-only/render-only 不误选 | Automated | `runner/headless/tests::phase14_search_measurement_reaches_local_and_ci_windows_plans` + `source_search::tests::phase14_one_mib_unicode_case_insensitive_search_p95_is_bounded` | AUTOMATED PASS |
 | P14-A62 | 基础 Source/Preview/Split 20 KiB 的 40/52/64 MiB 最大 PWS 硬门进入实时采样、等价别名、单 case 缓存与正式组收据；相等通过，超限或缺门拒绝 | Automated | `resource_plan/tests` 的一致超限原始观测、边界及缺门回归 + `runtime/resources/cohort` 首次失败保留回归 | AUTOMATED PASS |
 | P14-A63 | Zoom 的 Source/Preview/Split × 50/100/300% 九个独立内存 cohort、五次样本和 30 秒预热由共享注册表持有；旧三场景/短预热收据不能通过完整性检查 | Automated | `resource_plan/zoom::tests`、fixture preflight、整组缓存覆盖与预算回归；新增原生测量仍待 P14-A46 | AUTOMATED PASS |
-| P14-A64 | 启动 ready 观测后的累计进程 CPU 与观测延迟单列；失败保留原始样本；显式诊断检查输出隔离及前后桌面环境，不写成功账本 | Automated | `runtime/native_diagnostics` 的 CPU 语义、失败保留、真实 Git 输出隔离和末尾环境拒绝回归；真实启动仍需对应原生入口 | AUTOMATED PASS |
+| P14-A64 | 启动 ready 观测后的累计进程 CPU 与观测延迟单列；失败保留原始样本；显式诊断检查输出隔离及前后桌面环境，不写成功账本；ready 不替代真实焦点观测 | Automated | `runtime/native_diagnostics` 的 CPU 语义、失败保留、真实 Git 输出隔离和末尾环境拒绝回归；`runtime/startup_focus` 焦点判定与 `platform/windows/window_focus` 激活回退单测；真实启动仍需对应原生入口 | AUTOMATED PASS |
 | P14-A65 | 九种 Zoom 组合每份内存样本均有完整 60 秒 CPU 观测及既有空闲 CPU 门；内存-only 旧收据不能补齐覆盖 | Automated | `resource_plan/zoom::tests`、整组校验及预算回归；原生验收由 P14-A46 持有 | AUTOMATED PASS |
 | P14-A66 | 三视图默认/220×120/普通样式九组对照共用 fixture；五次原始内存/CPU、实际尺寸/DPI/样式及前后对象计数受校验，普通样式只作用于测试子进程 | Automated | `resource_plan/window_comparison`、`runtime/resources/comparison`、`window_control/resource_comparison` 与组指纹回归；正式与人工验收仍分开 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
@@ -111,6 +111,13 @@ Action：构造 CPU 大于 wall 的合法数据，检查原始记录和两个既
 在无全局 ignore 的新 Git 仓库验证输出不污染 source，其他未跟踪文件仍可见；输出未被忽略时先于 GUI 拒绝；模拟末尾桌面不可用。
 Expected：CPU 原值保留，不转换成负等待或额外门槛；部分采样保留实际样本数，结果仍失败且不产生 p95；不写资格化成功账本。
 Failure Signals：以 CPU 取代 ready wall time、把诊断当正式候选收据、放宽 550 ms，或在结束时桌面无效仍宣称诊断通过。
+
+P14-A64 启动焦点补充（Plan 09 `tool-window-identity`）：普通激活只有在实际观察到目标成为前台时
+才可省略既有兼容路径；隐藏或最小化窗口不因该请求被显示。单元回归覆盖成功、拒绝和返回成功但
+未成为前台的情况。显式 `native_startup_focus_diagnostic` 在 Source/Preview/Split 的隔离中文空格
+路径各启动三次，收到 ready 后先读取 foreground/active/focused/capture，再检查 Tool Window 样式；
+在此之前不得通过测试输入、视图切换或 focus helper 帮助窗口获得焦点。焦点缺失必须失败，原始
+观测仍保留。该诊断不替代冷/暖启动 cohort、真实输入法或人工验收；人工状态保持 `NOT TESTED`。
 
 P14-A65 Preconditions：完整九组 Zoom 原始内存/CPU 观测。
 Action：删除 CPU 样本、缩短间隔或移除空闲 CPU 门；检查覆盖拒绝与完整固定等待预算。

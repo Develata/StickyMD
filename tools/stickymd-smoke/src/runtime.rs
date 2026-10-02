@@ -46,6 +46,8 @@ macro_rules! runtime_report {
 #[cfg(test)]
 mod native_diagnostics;
 pub(crate) mod resources;
+#[cfg(test)]
+mod startup_focus;
 mod window_stress;
 
 pub(crate) use window_stress::run as run_window_stress_diagnostic;

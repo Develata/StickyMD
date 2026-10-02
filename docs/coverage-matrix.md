@@ -400,3 +400,10 @@ Window 组失效；共享规则保守失效消费者。单元/归档校验和 ig
 exact-candidate P14-A46 或人工通过；上段未关闭的是原生资格化，不再是工具尚无入口。
 P14-A64 同时覆盖 fresh-checkout 的原生输出忽略规则与前后桌面环境拒绝；诊断自身的
 trace 不得污染 source 身份，结束时环境失效仍保留数据，但不能形成成功诊断。
+
+P14-A64 的启动焦点补充映射 Plan 09 `tool-window-identity`：
+`platform/windows/window_focus` 集中持有首次激活的普通请求、实际前台确认与既有回退，
+`runtime/startup_focus` 在任何输入前读取自有子进程的焦点事实，复用身份、环境与清理边界。
+单元测试拒绝缺失的前台/active/focus 和意外 capture，不以 ready 替代焦点。
+`source/projection/startup_tests` 另提供显式 ignored 的无窗口 Release 归因测试，保留完整系统字体库；
+其进程内计时不构成原生启动收益或候选资格化证据。
