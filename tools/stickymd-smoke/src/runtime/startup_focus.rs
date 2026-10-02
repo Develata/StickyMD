@@ -82,6 +82,38 @@ fn observe(
     require_initial_focus(activation)?;
     wait_for_tool_window_style(window)?;
     wait_for_startup_trace(&trace)?;
+    if view != "preview" {
+        let note = directory.join("note/note.md");
+        let original = fs::read(&note).map_err(|error| error.to_string())?;
+        // The physical key helper only checks focus; it must not activate or
+        // click the window to repair startup. Wait for actual durable effects.
+        window_control::press_enter(window)?;
+        wait_for_note(&note, |bytes| {
+            is_single_byte_insertion(bytes, &original, b'\n')
+        })?;
+        output
+            .samples
+            .last_mut()
+            .unwrap()
+            .measurements
+            .push(EvidenceMeasurement {
+                name: "initial_edit_saved".into(),
+                unit: "bool".into(),
+                value: 1.0,
+            });
+        window_control::press_undo(window)?;
+        wait_for_note(&note, |bytes| bytes == original)?;
+        output
+            .samples
+            .last_mut()
+            .unwrap()
+            .measurements
+            .push(EvidenceMeasurement {
+                name: "undo_restored_original".into(),
+                unit: "bool".into(),
+                value: 1.0,
+            });
+    }
     // ChildGuard owns this copied process on every success/error path.
     Ok(())
 }

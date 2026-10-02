@@ -15,6 +15,21 @@ fn native_startup_cpu_diagnostic() {
     });
 }
 
+#[test]
+#[ignore = "exclusive desktop and STICKYMD_SMOKE_PROBE_REPOSITORY; existing Phase 10 native interactions, diagnostic only"]
+fn native_window_interaction_diagnostic() {
+    diagnose("window-interaction", |repository, root| {
+        let mut children = Vec::new();
+        let result = run_inner(repository, root, RuntimeScenario::Phase10, &mut children);
+        // Reap every owned process before the shared archive/environment checks.
+        drop(children);
+        Ok(RuntimeEvidence {
+            gate_failure: result.err(),
+            ..RuntimeEvidence::passed(Vec::new())
+        })
+    });
+}
+
 // Shared setup for explicit diagnostic tests. The normal candidate resolver is
 // retained: a frozen checkout cannot fall back to an arbitrary local binary.
 pub(super) fn diagnose(

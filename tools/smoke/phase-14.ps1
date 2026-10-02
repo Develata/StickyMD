@@ -23,6 +23,7 @@
 # Package inventory/README and Syft cache validation are owned by Rust; ZIP/network adapters stay in PowerShell.
 # Startup retains diagnostic process CPU observations; Zoom and window comparisons share Rust resource rules.
 # Opt-in Rust startup-focus diagnostics observe native focus before any test input; they do not qualify a candidate.
+# Native follow-up checks first input/save/undo and reuses Phase 10 window interactions without changing qualification.
 [CmdletBinding()]
 param(
     [switch]$Ci,

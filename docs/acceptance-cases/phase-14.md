@@ -118,6 +118,10 @@ P14-A64 启动焦点补充（Plan 09 `tool-window-identity`）：普通激活只
 路径各启动三次，收到 ready 后先读取 foreground/active/focused/capture，再检查 Tool Window 样式；
 在此之前不得通过测试输入、视图切换或 focus helper 帮助窗口获得焦点。焦点缺失必须失败，原始
 观测仍保留。该诊断不替代冷/暖启动 cohort、真实输入法或人工验收；人工状态保持 `NOT TESTED`。
+Source/Split 随后不再点击或调用聚焦 helper，直接发送物理 Enter，等待保存一个换行；Undo 后
+等待原文 bytes 恢复。失败不能因 HWND 焦点正常而被忽略。独立的 `native_window_interaction_diagnostic`
+复用 Phase 10 已有窗口 executor，覆盖 dock、pin、隐藏/第二实例唤起、视图/缩放、紧凑尺寸和透明度；
+这些诊断不新增产品规则或延迟门，也不能把自动保存等待当成输入绘制耗时。
 
 P14-A65 Preconditions：完整九组 Zoom 原始内存/CPU 观测。
 Action：删除 CPU 样本、缩短间隔或移除空闲 CPU 门；检查覆盖拒绝与完整固定等待预算。

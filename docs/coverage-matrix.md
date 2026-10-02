@@ -407,3 +407,6 @@ P14-A64 的启动焦点补充映射 Plan 09 `tool-window-identity`：
 单元测试拒绝缺失的前台/active/focus 和意外 capture，不以 ready 替代焦点。
 `source/projection/startup_tests` 另提供显式 ignored 的无窗口 Release 归因测试，保留完整系统字体库；
 其进程内计时不构成原生启动收益或候选资格化证据。
+该焦点诊断在 Source/Split 中追加无再次聚焦的物理 Enter、原子自动保存和 Undo 恢复检查；
+`runtime/native_diagnostics::native_window_interaction_diagnostic` 复用既有 Phase 10 窗口 executor，
+检查激活之后的生命周期，没有复制状态机或另设性能门。

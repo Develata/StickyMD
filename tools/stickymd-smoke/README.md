@@ -229,7 +229,7 @@ wall time does not establish scheduler or I/O wait. This adds no gate or milesto
 If later startup sampling fails, completed raw samples and their actual counts
 are retained without percentiles for the incomplete cohort; the result stays failed.
 
-For targeted native investigation, the existing Rust test binary provides four
+For targeted native investigation, the existing Rust test binary provides five
 explicit opt-in diagnostics. Set `STICKYMD_SMOKE_PROBE_REPOSITORY` to a clean
 checkout with a valid local Release build or matching promoted candidate, then run
 one command at a time on an exclusive desktop:
@@ -237,6 +237,7 @@ one command at a time on an exclusive desktop:
 ```powershell
 cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_startup_cpu_diagnostic -- --ignored --nocapture --test-threads=1
 cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_startup_focus_diagnostic -- --ignored --nocapture --test-threads=1
+cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_window_interaction_diagnostic -- --ignored --nocapture --test-threads=1
 cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_zoom_cpu_diagnostic -- --ignored --nocapture --test-threads=1
 cargo test -p stickymd-smoke --locked --bin stickymd-smoke native_window_comparison_diagnostic -- --ignored --nocapture --test-threads=1
 ```
@@ -258,6 +259,16 @@ foreground/active/focused/capture facts immediately after EDITOR_READY, before
 any harness input or activation helper, and checks the existing Tool Window style
 invariant. Ready alone cannot prove focus. This is a regression diagnostic, not
 a timing cohort, a real IME acceptance result or a replacement for manual checks.
+Source and Split then receive a physical Enter key without another focus helper;
+the diagnostic waits for a single saved newline, sends Undo and waits for the
+original note bytes. These assertions prove input/save/undo in the copied fixture,
+not Chinese composition or a frame-latency percentile.
+
+The window interaction diagnostic reuses the existing Phase 10 executor for edge
+collapse/reveal, pin/theme/opacity, close-to-tray and second-instance wake,
+directory isolation, three-view toolbar controls at 50/100/300% zoom and the
+compact window. It adds no independent product rules or timing threshold, and
+remains separate from the full resource and manual matrices.
 
 For headless attribution of Source initialization, the render crate also offers
 an ignored Release probe:
