@@ -1,5 +1,11 @@
 # coverage-matrix.md - 契约覆盖矩阵
 
+2026-10-08：plan 07 `semantic-math-delimiter-conversion` → 数学 `$` 按钮 →
+[Phase 11-B 等号行连接](acceptance-cases/phase-11-b.md#math-equals-lines) →
+`stickymd-render/src/math_text{,/tests}.rs` 与 `stickymd-win/src/flow/editor.rs`。
+独立纯文本转换与原分隔符转换共用一次编辑事务；自动化入口沿用 `phase11b_`。
+不改变 Markdown/RaTeX/Preview 语义，人工与 exact-candidate evidence 状态不变。
+
 > Plan Contract ↔ Feature Projection ↔ Acceptance Case ↔ Code Area ↔ Current Evidence。
 > `Current Evidence` 只描述已验证范围；不得用模块存在代替端到端验收。
 >

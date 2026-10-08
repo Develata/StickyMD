@@ -10,6 +10,7 @@
 
 pub mod image;
 mod math;
+pub mod math_text;
 pub mod preview;
 pub mod scroll;
 pub mod source;

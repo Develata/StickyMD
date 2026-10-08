@@ -6,6 +6,7 @@ use stickymd_core::{
     AssetEffect, CursorSnapshot, DocumentError, DocumentSnapshot, DocumentState, EditKind,
     EditMeta, EditRequest, ExternalFileFact, Generation, Hash32, Selection, TextDelta,
 };
+use stickymd_render::math_text::join_display_math_equals;
 use stickymd_render::preview::{SemanticConversionError, convert_latex_math_delimiters};
 use thiserror::Error;
 
@@ -315,17 +316,32 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
         self.require_generation(expected_generation)?;
         let snapshot = self.document.snapshot();
         let scope = scope_to_selection.then(|| selection.normalized_range());
-        let Some(conversion) = convert_latex_math_delimiters(&snapshot, scope)? else {
+        let mut selection_after = selection;
+        let mut text = convert_latex_math_delimiters(&snapshot, scope)?.map(|conversion| {
+            selection_after = Selection::new(
+                conversion.map_position(selection.anchor.byte),
+                conversion.map_position(selection.active.byte),
+            );
+            conversion.into_text()
+        });
+        let scope = scope_to_selection.then(|| selection_after.normalized_range());
+        if let Some(conversion) =
+            join_display_math_equals(text.as_deref().unwrap_or(&snapshot.text), scope)
+        {
+            selection_after = Selection::new(
+                conversion.map_position(selection_after.anchor.byte),
+                conversion.map_position(selection_after.active.byte),
+            );
+            text = Some(conversion.into_text());
+        }
+        let Some(text) = text else {
             return Ok(AppEffect::NoOp);
         };
-        let cursor_after = CursorSnapshot::new(Selection::new(
-            conversion.map_position(selection.anchor.byte),
-            conversion.map_position(selection.active.byte),
-        ));
+        let cursor_after = CursorSnapshot::new(selection_after);
         let request = EditRequest::new(
             expected_generation,
             0..snapshot.text.len(),
-            conversion.into_text(),
+            text,
             CursorSnapshot::new(selection),
             cursor_after,
             EditMeta::new(EditKind::Other, timestamp_ms),
@@ -766,6 +782,122 @@ mod tests {
             .unwrap();
         assert_eq!(outcome, AppEffect::NoOp);
         assert_eq!(coordinator.snapshot(), before);
+    }
+
+    #[test]
+    fn phase11b_math_button_composes_both_steps_in_one_undo_and_is_idempotent() {
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        // The indented equals lines are already valid Comrak LaTeX math;
+        // this proves cleanup consumes the delimiter converter's output.
+        let source = "前 \\(x\\) 中 \\[y\\] 后\n\n\\[\na\n    =\nb\n    =\nc\n\\]";
+        let expected = "前 $x$ 中 $$y$$ 后\n\n$$\na=b=c\n$$";
+        edit(&mut coordinator, source);
+        let before_generation = coordinator.view().generation;
+        let effect = coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: before_generation,
+                selection: Selection::caret(source.len()),
+                scope_to_selection: false,
+                timestamp_ms: 10,
+            })
+            .unwrap();
+        assert!(matches!(
+            effect,
+            AppEffect::DocumentChanged { selection, .. }
+                if selection == Selection::caret(expected.len())
+        ));
+        assert_eq!(coordinator.view().text, expected);
+        assert_eq!(
+            coordinator.view().generation.value(),
+            before_generation.value() + 1
+        );
+        let after = coordinator.snapshot();
+        let no_op = coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: after.generation,
+                selection: Selection::caret(expected.len()),
+                scope_to_selection: false,
+                timestamp_ms: 11,
+            })
+            .unwrap();
+        assert_eq!(no_op, AppEffect::NoOp);
+        assert_eq!(coordinator.snapshot(), after);
+        assert!(
+            coordinator
+                .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                    expected_generation: before_generation,
+                    selection: Selection::caret(0),
+                    scope_to_selection: false,
+                    timestamp_ms: 12,
+                })
+                .is_err()
+        );
+        assert_eq!(coordinator.snapshot(), after);
+        coordinator.dispatch(AppIntent::Undo).unwrap();
+        assert_eq!(coordinator.view().text, source);
+        coordinator.dispatch(AppIntent::Redo).unwrap();
+        assert_eq!(coordinator.view().text, expected);
+    }
+
+    #[test]
+    fn phase11b_math_button_maps_reverse_scope_after_delimiters_and_equals() {
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        let source = "$$u\n=\nv$$\n\n\\(前\\)\n\n$$甲\n=\n乙$$\n\n$$c\n=\nd$$";
+        let expected = "$$u\n=\nv$$\n\n$前$\n\n$$甲=乙$$\n\n$$c\n=\nd$$";
+        edit(&mut coordinator, source);
+        let start = source.find("\\(").unwrap();
+        let end = source.find("\n\n$$c").unwrap();
+        let effect = coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: coordinator.view().generation,
+                selection: Selection::new(end, start),
+                scope_to_selection: true,
+                timestamp_ms: 10,
+            })
+            .unwrap();
+        assert_eq!(coordinator.view().text, expected);
+        assert!(matches!(
+            effect,
+            AppEffect::DocumentChanged { selection, .. }
+                if selection == Selection::new(expected.find("\n\n$$c").unwrap(), start)
+        ));
+        coordinator.dispatch(AppIntent::Undo).unwrap();
+        assert_eq!(coordinator.view().text, source);
+    }
+
+    #[test]
+    fn phase11b_math_button_cleans_dollars_without_a_delimiter_match() {
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        let source = "$$\na\n=\nb\n$$";
+        edit(&mut coordinator, source);
+        let before = coordinator.snapshot();
+        let partial = coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: before.generation,
+                selection: Selection::new(2, source.len() - 2),
+                scope_to_selection: true,
+                timestamp_ms: 10,
+            })
+            .unwrap();
+        assert_eq!(partial, AppEffect::NoOp);
+        assert_eq!(coordinator.snapshot(), before);
+        let effect = coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: before.generation,
+                selection: Selection::caret(source.find('b').unwrap()),
+                scope_to_selection: false,
+                timestamp_ms: 11,
+            })
+            .unwrap();
+        let expected = "$$\na=b\n$$";
+        assert_eq!(coordinator.view().text, expected);
+        assert!(matches!(
+            effect,
+            AppEffect::DocumentChanged { selection, .. }
+                if selection == Selection::caret(expected.find('b').unwrap())
+        ));
+        coordinator.dispatch(AppIntent::Undo).unwrap();
+        assert_eq!(coordinator.view().text, source);
     }
 
     #[test]

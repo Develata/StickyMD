@@ -91,3 +91,21 @@
 
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
+
+<a id="math-equals-lines"></a>
+## 2026-10-08 数学按钮等号行连接
+
+- Plan / feature：plan 07 `semantic-math-delimiter-conversion` → 数学公式 `$` 按钮；延续
+  P11B-A01..A05 的范围、代码安全和单次事务，不改写上面的历史 evidence baseline。
+- Preconditions：原有两种 LaTeX delimiter、完整 `$$` 块、LF/CRLF、Unicode/反向选区，以及
+  代码、单美元公式、未闭合块、空行、边缘等号、`\=`、注释、显式换行和结构环境反例。
+- Action：点击现有 `$` action；先执行分隔符转换，再执行独立纯文本等号行连接；重复操作，
+  然后 Undo/Redo。
+- Expected：只把符合条件的块内 `a\n=\nb` / `a\n=\nb\n=\nc` 变成 `a=b` / `a=b=c`；
+  其余文本逐字保留。仅处理完整落在选区内的块，选区按两步映射，整个 action 只增加一次
+  generation 和一个撤销记录；第二次操作为 no-op，stale generation 不修改文档。
+- Failure signals：误改保护区、跨块/空行连接、自动预览改变源文本、光标落在非法 byte、
+  多次撤销才能恢复或原分隔符功能回归。
+- Automated entry：`tools/smoke/phase-11-b.ps1` 已有 Rust `phase11b_` selector 包含新增
+  `math_text` 与 `flow/editor` 回归；无需改动薄 wrapper 或另建验证框架。
+- Manual：真实按钮/IME/DPI 仍为 `NOT TESTED`；本次定向检查不提升人工或发布资格化状态。
