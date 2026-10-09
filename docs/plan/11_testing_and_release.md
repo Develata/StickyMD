@@ -356,9 +356,11 @@ harness、权威 plan/acceptance contract、依赖传播和 evidence class。Pow
 功能模块指纹（v2）对两类文件做发布版本规范化，其余输入仍逐字节参与：根 `Cargo.toml` 去掉
 `[workspace.package]` 唯一的 `version` 行；`Cargo.lock` 去掉 workspace member（由 `[workspace].members`
 与各 member 的 `[package].name` 白名单确定，且 member 必须 `version.workspace = true`）对应、无 `source`、
-版本等于 workspace version 的 `version` 行。任何不在这一窄语法内的写法（重复字段、dotted/inline key、
-多行字符串、未知表、member 缺失或重复、带版本的 member 依赖引用、lock 与 manifest 版本不一致）整体回退为
-原始字节。规范化算法版本写入指纹头；Source Freeze、workspace-tests identity 与 exact-byte 门始终使用原始字节。
+版本等于 workspace version 的 `version` 行。根 manifest、全部 member manifest 与被跟踪的 `Cargo.lock` 在
+规划时作为一组判定：任一文件不在这一窄语法内（重复字段，包括 lock 顶层格式版本及 `source`/`checksum`/
+`dependencies` 的重复；dotted/inline key、多行字符串、未知表、member 缺失或重复、带版本的 member 依赖引用、
+lock 与 manifest 版本不一致、lock 未被跟踪），两份文件都回退为原始字节；只有与判定时逐字节相同的内容才使用
+规范化形式。规范化算法版本写入指纹头；Source Freeze、workspace-tests identity 与 exact-byte 门始终使用原始字节。
 发布说明、README/CHANGELOG/CONTRIBUTING/SECURITY、AGENTS 指南、coverage matrix、release checklist、
 `docs/{adr,overview,features}/`、README 图片与许可证文本不是任何功能模块执行或读取的输入，不使功能模块失效；
 其中由 governance 检查或打包读取的文件继续由 CI 选择与 exact-byte 门覆盖。`docs/plan/`、`docs/acceptance-cases/`
@@ -369,13 +371,17 @@ worktree（包括每次发版新建的隔离 worktree）解析到同一位置；
 每个模块按输入指纹保存成功记录（`modules/<module>/<fingerprint>.json`），不同指纹互不覆盖，查找是
 按当前指纹的直接路径；同指纹重跑替换自身记录，每个模块保留最近 8 份。归档、发布与清理都在存储的
 OS 文件锁（`.lock`，进程退出即释放；等待上限 120 s，超时报错而不是无限阻塞）下串行；读取方持共享锁
-从记录跟随到 evidence 与 companion 文件，同一份 success 快照在同一把共享锁内完成身份与截图校验，清理因此
-不会删除正在被读取或刚被其他写入方发布的内容。写入方只读取一次工作区收据，对同一份字节完成校验、摘要与
+从记录跟随到 evidence 与 companion 文件，清理因此不会删除正在被读取或刚被其他写入方发布的内容。查找在同一把
+共享锁内依次校验：记录（固定字段集的严格 JSON，evidence 名称由模块与摘要决定）、evidence 字节摘要、该模块的
+evidence 合同与每个 companion 归档的摘要。evidence 合同对整份文档严格解析，每个值只从所属对象读取，重复键、
+截断或尾随输入即无效；登记使用同一合同，不完整、失败或身份不符的收据在登记时即被拒绝。因此"可复用"与
+"readiness 合格"是同一判定：记录存在但任一校验失败时为 `INVALID_LAST_SUCCESS`，拒绝复用并显示原因，正式重跑
+完整通过后替换该记录并补回缺失或损坏的 companion 归档。写入方只读取一次工作区收据，对同一份字节完成校验、摘要与
 归档；截图同样对实际归档的字节计算摘要。刚发布的记录无论时间戳是否并列或回拨都被保留。清理遇到任何不可读
 或无法解析的记录、目录项或 evidence 即停止删除并报告，不把"无法确定是否被引用"当成未引用；截图引用从所有
 保留 evidence 的 `results[].artifacts[]` 结构化提取，不受当前工具 case 列表限制。成功记录发布后清理失败只
 告警，不撤销成功。清理所用记录必须是完整、严格可解析的 JSON，用于决定截图引用的 evidence 必须与记录中的
-摘要一致；G5 readiness 只统计每个 case 自身 JSON 对象内的截图。整个共享存储（含 `.lock`）与旧路径一样是
+摘要一致；G5 每个 case 只统计自身 JSON 对象内的截图。整个共享存储（含 `.lock`）与旧路径一样是
 保留路径：别名解析后的路径含 `/stickymd/qualification-ledger/` 段（忽略大小写），或落在由 `.git` 元数据文件
 （不运行 git）定位、并解析过 junction 的存储根之内，均拒绝；`.git` 存在却无法解释（指针为空、目标不是现有
 目录、`commondir` 无效，或 `.git`/`commondir` 本身是悬空链接）时同样拒绝。存储在取得锁时检查根以下所有
@@ -388,8 +394,11 @@ OS 文件锁（`.lock`，进程退出即释放；等待上限 120 s，超时报�
 no record for current fingerprint
     -> RUN REQUIRED
 
-record for current fingerprint
+record for current fingerprint, fully valid
     -> REUSED PASS（不启动 runner；显示 origin candidate/source/version）
+
+record for current fingerprint, but record/evidence/companion invalid
+    -> RUN REQUIRED (INVALID_LAST_SUCCESS, reason shown)
 
 RUN REQUIRED -> complete PASS
     -> atomically publish the record for (module, current fingerprint)
@@ -402,7 +411,8 @@ RUN REQUIRED -> FAIL / ENVIRONMENT BLOCKED / USER ABORTED / unwind
 但不得改变 ledger authority。成功 evidence 先写入按内容 hash 命名的不可变归档（`evidence/`），G5 截图等
 companion 文件按 SHA-256 归档到 `artifacts/` 并在归档前校验，再用同目录 temp + atomic replace 发布记录；
 readiness 从共享存储校验这些归档，不依赖原 worktree 中的文件。旧记录保留不代表当前有效：readiness 每次
-重新计算当前指纹。工作区内旧的 `dist/evidence/module-success/` 不再是 authority，也不自动导入（指纹算法
+重新计算当前指纹；readiness 与状态报告共用一次查找快照（全部有记录模块的一次指纹批量计算、一把共享锁），
+不重复校验。工作区内旧的 `dist/evidence/module-success/` 不再是 authority，也不自动导入（指纹算法
 已变化），但仍是保留路径，普通 smoke 与诊断不得写入。发布归档必须复制 readiness 引用的共享存储 evidence。
 
 package/download/checksum/SBOM/PE/native-runtime 等精确字节门不进入功能 ledger，仍直接绑定当前

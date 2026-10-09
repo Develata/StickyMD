@@ -179,3 +179,58 @@ phase-14 验收更新 P14-A35 并新增 P14-A67..A69；coverage matrix 与 relea
   - junction 回归依赖 runner 上的 `cmd /C mklink /J`。
   - 并发发布偶发失败的根因仍属推断。
   - 真实候选上的桌面资格化与人工验收均未执行。
+
+## 第六轮：整体架构与性能审计（gpt-6-astra max，`972aad4..3c01f5d`）
+
+针对 USER 的质量标准（高内聚低耦合、性能、内存、算法、架构整洁）做整体审计。结论 **DOES-NOT-MEET**：
+1 项 BLOCKER、5 项 SHOULD_FIX、1 项 NICE_TO_HAVE、1 项 NEEDS_VERIFICATION。逐项对照源码核实，均属实，
+修正如下（`3c01f5d..eab875d`）：
+
+1. **BLOCKER：成功判定使用文本扫描器**（属实）。G3/G4/G5 的 case 状态、`worktree_dirty` 与账本记录按
+   `"key":` 首次出现读取：合法 JSON `"status" : "FAILED"` 旁边嵌套一个 `"status":"PASSED"` 可以放行；截断的
+   账本记录仍能读出全部字段。修正（`3fdeabb`）：新增 `module_evidence.rs`，按模块对整份文档严格解析，每个值
+   只从所属对象读取；`module_ledger/record.rs` 以固定字段集严格解析记录，查找与清理共用。
+2. **复用与 readiness 标准不同**（属实）。归档截图缺失时 readiness 阻断，正式 G5 命令却继续跳过重跑。修正
+   （`3fdeabb`）：查找结果分为 `Missing`/`Invalid`/`Valid`，在同一把共享锁内校验记录、evidence 与全部
+   companion；无效时报告 `INVALID_LAST_SUCCESS` 并允许重跑，重跑登记替换记录并补回归档。
+3. **规范化没有整体回退**（属实）。lock 不在语法内时根 manifest 仍被规范化，单独改 workspace version 可保持
+   指纹不变；lock 重复键被接受。修正（`86e47a1`）：root、member manifest 与 lock 在规划时作为一组判定，任一
+   失败两份都用原始字节；只有与判定时逐字节相同的内容才规范化；重复键拒绝。新增指纹级回归。
+4. **模块依赖环**（属实）。`module_ledger → g5_readiness → module_ledger`、`module_ledger → smoke_scope →
+   module_ledger`。修正：`module_registry.rs` 与 `path_identity.rs` 移出账本（`8e31d61`）；evidence 合同移入
+   中立模块，`exact_readiness`、`g3/g4/g5_readiness` 删除，store 改为账本私有（`3fdeabb`）。
+5. **重复计算**（属实）。readiness 逐模块计算指纹后状态输出又全部重算。修正：readiness 与状态报告共用一次
+   `lookup_all` 快照（`3fdeabb`）；资源登记的指纹计算从 3 次降到 2 次（`8e09cdb`）。
+6. **非 Windows SHA 子进程未回收**（属实）。修正（`eab875d`）：写入线程与有界等待，超时或出错时终止并回收，
+   停止失败一并报告。
+
+语义变化需要说明：登记现在与 readiness 使用同一合同，原先能登记、只在 readiness 被拒的不完整或身份不符的
+收据，现在登记即失败（`exact_readiness` 原测试改为断言登记被拒）。`smoke_scope::validate_task_coverage` 并入
+evidence 合同。
+
+另外，Linux CI 首次回放发现 `readers_and_writers_exclude_each_other_through_the_os_lock` 偶发失败：Unix 的
+flock 属于打开文件描述，并行测试派生的子进程在 exec 前持有写锁描述符的副本，释放会短暂滞后。测试改为有界
+重试（`117ade0`）；生产路径本就有 120 s 等待。
+
+### 实测（Windows，debug）
+
+| 项目 | 逐模块 | 批量/快照 |
+| --- | --- | --- |
+| 真实仓库 10 个模块指纹 | 2.76–3.97 s，读 4469 次 / 36.8 MB | 0.39–0.57 s，读 492 次 / 4.04 MB |
+| 10 个模块全部有记录时的查找（fixture） | 1.61–1.84 s | 0.21–0.29 s |
+
+前文"约 0.34–0.46 s（5 个模块）"来自只覆盖资源组的旧 profile，以本表为准。
+
+### 验证
+
+- Windows：`cargo test -p stickymd-smoke --locked` 390 + 25 PASS，17 ignored（显式 profile 与真实环境用例，未计为
+  执行）；clippy `-D warnings`、fmt、`tools/smoke/phase-00.ps1` PASS。
+- Linux（WSL Debian，与 CI "Linux smoke CLI" 相同命令）：clippy 无警告；测试 320 + 19 PASS，连跑 3 次。
+
+### 未处理
+
+- 仍使用文本扫描器的读取面：`manual_readiness`、`decisions`、`source_freeze` 与 candidate 收据解析
+  （`qualification/json.rs`）。不属于账本成功判定，本轮未改，留待审查评估。
+- `governance.rs` 约 1182 行（既有问题，NICE_TO_HAVE），未拆分。
+- 待下一轮讨论：`tools/stickymd-smoke/src/` 下的任何文件都归入 `ALL_HARNESS` 或 `GLOBAL`，工具本身的改动会使
+  全部十个模块失效；工具几乎每个版本都会改，这决定复用在实际中能否生效。

@@ -88,6 +88,7 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A67 | 发版新建的 linked worktree 解析到同一 `<git common dir>/stickymd/qualification-ledger/`，复用其他 worktree 记录的成功；G5 截图按 SHA-256 归档，查找时在同一把共享锁内从共享存储校验，缺截图或 origin 不符即判为无效；诊断输出不得指向共享存储 | Automated | `module_ledger::reuse_tests`、`module_ledger::store::tests` | AUTOMATED PASS |
 | P14-A68 | 仅发布版本号、发布说明、checklist、report 等改动不使功能模块失效（含以真实四个 member manifest 与 lock 的升级回归，以及"真实仓库 manifest 必须在语法内"的守卫）；依赖、产品代码、harness、plan/acceptance 变化仍失效；不在窄语法内的 manifest/lock 写法整体回退原始字节 | Automated | `fingerprint::normalize::tests`、`module_ledger::reuse_tests`、`fingerprint::tests` | AUTOMATED PASS |
 | P14-A69 | G3/G4/G5 readiness 将复用 evidence 的 version/source/EXE/ZIP 与记录 origin 比较，不要求等于当前 candidate；当前 candidate 一致性仍由 Source Freeze 与 exact-byte 门持有 | Automated | `module_evidence::tests`、`module_ledger::reuse_tests` 回归 | AUTOMATED PASS |
+| P14-A70 | 复用、状态报告与 readiness 使用同一严格 evidence 合同：值只从所属 JSON 对象读取，嵌套同名字段、合法空白、重复键与截断均不能放行；登记即拒绝不完整、失败或身份不符的收据；记录存在但记录、evidence 或 companion 归档失效时报告 `INVALID_LAST_SUCCESS` 并拒绝复用，正式重跑通过后替换记录并补回归档；root/member manifest 与 lock 作为一组规范化，任一不在语法内则整体保留原始字节 | Automated | `module_evidence::tests`、`module_ledger::tests`、`module_ledger::reuse_tests`、`record::tests`、`fingerprint::normalize::tests` | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 P14-A61 Preconditions：使用当前 Rust CLI 与锁定依赖。
