@@ -5,6 +5,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) fn write(path: &Path, contents: &[u8]) -> Result<(), String> {
@@ -24,15 +25,23 @@ pub(crate) fn write(path: &Path, contents: &[u8]) -> Result<(), String> {
 }
 
 fn temporary_path(target: &Path) -> Result<PathBuf, String> {
+    // Concurrent writers of one target in one process can read the same clock value
+    // (Windows clock ticks are coarse under load); the sequence keeps temporaries
+    // distinct so the losing writer does not fail on CreateNew.
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("system clock is before Unix epoch: {error}"))?
         .as_nanos();
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let name = target
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| format!("evidence file name is not UTF-8: {}", target.display()))?;
-    Ok(target.with_file_name(format!(".{name}.tmp-{}-{nonce}", std::process::id())))
+    Ok(target.with_file_name(format!(
+        ".{name}.tmp-{}-{nonce}-{sequence}",
+        std::process::id()
+    )))
 }
 
 /// Atomically create a new complete file; preserve the old CreateNew no-overwrite interface.
@@ -162,6 +171,21 @@ mod tests {
     use super::write;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn concurrent_writers_of_one_target_never_share_a_temporary_path() {
+        let target = std::env::temp_dir().join("stickymd-temporary-name-probe.json");
+        let names = std::thread::scope(|scope| {
+            let handles = (0..8)
+                .map(|_| scope.spawn(|| super::temporary_path(&target).unwrap()))
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<std::collections::BTreeSet<_>>()
+        });
+        assert_eq!(names.len(), 8, "every writer needs its own temporary file");
+    }
 
     #[test]
     fn create_new_publishes_once_and_preserves_existing_bytes_under_races() {

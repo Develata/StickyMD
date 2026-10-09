@@ -4,6 +4,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -13,12 +14,18 @@ pub(super) struct TemporaryDirectory {
 }
 impl TemporaryDirectory {
     pub fn new(label: &str) -> Result<Self, String> {
+        // Same-process callers can read the same coarse clock value; the sequence keeps
+        // concurrent scratch directories distinct instead of failing create_dir.
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("stickymd-{label}-{}-{nonce}", std::process::id()));
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "stickymd-{label}-{}-{nonce}-{sequence}",
+            std::process::id()
+        ));
         Self::create(path)
     }
     pub fn create(path: PathBuf) -> Result<Self, String> {

@@ -79,12 +79,17 @@ fn concurrent_publication_never_overwrites_a_winner() {
                 })
             })
             .collect::<Vec<_>>();
-        let successes = handles
+        let results = handles
             .into_iter()
             .map(|h| h.join().unwrap())
-            .filter(Result::is_ok)
-            .count();
-        assert_eq!(successes, if same_bytes { 2 } else { 1 });
+            .collect::<Vec<_>>();
+        let successes = results.iter().filter(|result| result.is_ok()).count();
+        // Keep the losing error: a bare count hid the cause of past intermittent failures.
+        assert_eq!(
+            successes,
+            if same_bytes { 2 } else { 1 },
+            "same_bytes={same_bytes} results={results:?}"
+        );
         let hash = integrity::sha256(&first.output).unwrap();
         assert_eq!(
             fs::read_to_string(&first.checksums).unwrap(),
