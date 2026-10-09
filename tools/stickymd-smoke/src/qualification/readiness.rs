@@ -4,11 +4,10 @@
 
 use std::path::Path;
 
+use super::module_ledger::{self, Lookup, Snapshot};
+use super::module_registry::ModuleId;
 use super::receipt::{self, Candidate};
-use super::{
-    automated_readiness, decisions, g3_readiness, g4_readiness, g5_readiness, json,
-    manual_readiness, module_ledger, remote, source_freeze,
-};
+use super::{automated_readiness, decisions, json, manual_readiness, remote, source_freeze};
 
 const READINESS_RECEIPT: &str = "dist/evidence/release-readiness.json";
 
@@ -60,13 +59,19 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
     ] {
         require_decision(&release_decisions, key, "USER APPROVED", &mut blockers);
     }
+    // One lookup pass serves every module check and the status report below.
+    let snapshot = module_ledger::lookup_all(root);
     if let (Some(source), Some(candidate)) = (&source, &candidate) {
         check_remote(root, source, candidate, &mut blockers);
         check_downloaded(root, candidate, &mut blockers);
-        let automated_ok = automated_readiness::check(root, source, candidate, &mut blockers);
-        g3_readiness::check(root, &mut blockers);
-        g4_readiness::check(root, &mut blockers);
-        g5_readiness::check(root, &mut blockers);
+        let headless_ok = automated_readiness::check(root, source, &mut blockers);
+        let artifact_modules_ok = check_modules(&snapshot, is_artifact_module, &mut blockers);
+        check_modules(
+            &snapshot,
+            |module| !is_artifact_module(module),
+            &mut blockers,
+        );
+        let automated_ok = headless_ok && artifact_modules_ok;
         manual_readiness::check(
             root,
             candidate,
@@ -77,7 +82,7 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
     }
     let document = render_readiness(candidate.as_ref(), &blockers);
     receipt::write_receipt(root, READINESS_RECEIPT, &document)?;
-    module_ledger::print_status_for_candidate(root, candidate.as_ref())?;
+    module_ledger::print_snapshot(&snapshot?, candidate.as_ref());
     if explain || !blockers.is_empty() {
         if blockers.is_empty() {
             println!("Release readiness: READY");
@@ -112,6 +117,46 @@ fn check_source_identity(
     {
         blockers.push("promoted candidate identity differs from Source Freeze".to_owned());
     }
+}
+
+/// Runtime, Performance and Resources run on the promoted artifact and, with the
+/// headless receipt, form the automated coverage that Tier C manual cases rely on.
+const fn is_artifact_module(module: ModuleId) -> bool {
+    matches!(
+        module,
+        ModuleId::Runtime | ModuleId::Performance | ModuleId::Resource(_)
+    )
+}
+
+/// Every selected module needs a valid success for its current inputs.
+fn check_modules(
+    snapshot: &Result<Snapshot, String>,
+    select: impl Fn(ModuleId) -> bool,
+    blockers: &mut Vec<String>,
+) -> bool {
+    let before = blockers.len();
+    match snapshot {
+        Ok(snapshot) => {
+            for (module, lookup) in snapshot
+                .modules
+                .iter()
+                .filter(|(module, _)| select(*module))
+            {
+                match lookup {
+                    Lookup::Valid(_) => {}
+                    Lookup::Missing { .. } => blockers.push(format!(
+                        "{} has no compatible last-success receipt for current module inputs",
+                        module.label()
+                    )),
+                    Lookup::Invalid(reason) => {
+                        blockers.push(format!("{} last-success receipt: {reason}", module.label()));
+                    }
+                }
+            }
+        }
+        Err(error) => blockers.push(format!("qualification module ledger: {error}")),
+    }
+    blockers.len() == before
 }
 
 fn check_remote(

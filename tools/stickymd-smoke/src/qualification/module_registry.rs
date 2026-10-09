@@ -40,6 +40,18 @@ impl ModuleId {
         }
     }
 
+    /// The name readiness reports use for the module.
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::Runtime => "runtime qualification",
+            Self::Performance => "performance qualification",
+            Self::Resource(group) => group.name(),
+            Self::G3 => "G3",
+            Self::G4 => "G4",
+            Self::G5 => "G5",
+        }
+    }
+
     pub(super) const fn receipt(self) -> &'static str {
         match self {
             Self::Runtime => "dist/evidence/runtime-qualification.json",

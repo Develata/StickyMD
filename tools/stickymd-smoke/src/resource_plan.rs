@@ -15,7 +15,7 @@ use crate::cli::ResourceModule;
 pub(crate) use coverage::cohort_coverage;
 #[cfg(test)]
 use coverage::coverage_measurements;
-pub(crate) use coverage::validate_receipt;
+pub(crate) use coverage::{validate_receipt, validate_receipt_value};
 #[cfg(test)]
 use observations::required_gates;
 

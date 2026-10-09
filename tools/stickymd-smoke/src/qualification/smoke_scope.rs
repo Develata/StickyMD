@@ -76,54 +76,10 @@ fn validate_with_filter(root: &Path, options: &Options, filtered: bool) -> Resul
     Ok(resources)
 }
 
-pub(super) fn validate_task_coverage(document: &str, runtime: bool) -> Result<(), String> {
-    let parsed = crate::release::json::parse(document)?;
-    if parsed.field("suite")?.string()? != "phase-14" {
-        return Err("formal module receipt must have suite phase-14".into());
-    }
-    let results = parsed.field("results")?.array()?;
-    let required = crate::runner::formal_task_labels(runtime)?;
-    if results.len() != required.len() {
-        return Err("incomplete formal module task coverage".into());
-    }
-    for (result, expected) in results.iter().zip(required) {
-        if result.field("id")?.string()? != expected
-            || result.field("status")?.string()? != "PASSED"
-        {
-            return Err(format!("missing successful formal module task {expected}"));
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn formal_coverage_requires_candidate_verification_not_an_unused_local_build() {
-        for runtime in [true, false] {
-            let results = crate::runner::formal_task_labels(runtime)
-                .unwrap()
-                .into_iter()
-                .map(|label| format!(r#"{{"id":"{label}","status":"PASSED"}}"#))
-                .collect::<Vec<_>>()
-                .join(",");
-            let document = format!(r#"{{"suite":"phase-14","results":[{results}]}}"#);
-            validate_task_coverage(&document, runtime).unwrap();
-            let old = document.replace(
-                "promoted candidate identity and artifact verification",
-                "Release Windows app build",
-            );
-            assert!(validate_task_coverage(&old, runtime).is_err());
-        }
-    }
-    #[test]
-    fn one_passing_sentinel_does_not_cover_the_formal_task_plan() {
-        let document = r#"{"suite":"phase-14","results":[{"id":"copied Release Phase 8 close-to-tray/show lifecycle","status":"PASSED"}]}"#;
-        assert!(validate_task_coverage(document, true).is_err());
-        assert!(validate_task_coverage(document, false).is_err());
-    }
     #[test]
     fn partial_and_filtered_requests_cannot_reuse_or_overwrite_formal_receipts() {
         let root = std::env::temp_dir();

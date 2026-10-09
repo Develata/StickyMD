@@ -4,51 +4,42 @@
 
 use std::path::Path;
 
-use super::store::LedgerStore;
-use super::{CompatibleSuccess, ModuleId, compatible_success_for_input, fingerprint};
-use crate::qualification::module_registry::modules;
+use super::{CompatibleSuccess, Lookup, Snapshot, lookup_all};
 use crate::qualification::receipt::{self, Candidate};
 
 pub(in crate::qualification) fn print_status(root: &Path) -> Result<(), String> {
     let candidate = receipt::read_candidate(root).ok();
-    print_status_for_candidate(root, candidate.as_ref())
+    print_snapshot(&lookup_all(root)?, candidate.as_ref());
+    Ok(())
 }
 
-pub(in crate::qualification) fn print_status_for_candidate(
-    root: &Path,
-    candidate: Option<&Candidate>,
-) -> Result<(), String> {
-    let store = LedgerStore::for_repository(root)?;
-    println!("LEDGER_STORE={}", store.root().display());
-    // One planning pass reads each shared input once for every module.
-    let all = modules().collect::<Vec<_>>();
-    let digests = fingerprint::PlanningInputs::read(root)?
-        .calculate_many(root, &all)?
-        .digests;
-    for (module, current) in all.into_iter().zip(digests) {
-        match compatible_success_for_input(root, module, &current) {
-            Ok(Some(success)) => println!(
+/// Print lookups that were already validated, e.g. by readiness, without repeating them.
+pub(in crate::qualification) fn print_snapshot(snapshot: &Snapshot, candidate: Option<&Candidate>) {
+    println!("LEDGER_STORE={}", snapshot.store_root.display());
+    for (module, lookup) in &snapshot.modules {
+        match lookup {
+            Lookup::Valid(success) => println!(
                 "MODULE={} STATUS={} ORIGIN_SOURCE={} ORIGIN_VERSION={} ORIGIN_EXE={} EVIDENCE={}",
                 module.as_str(),
-                success_status(&success, candidate),
+                success_status(success, candidate),
                 success.origin_source_commit,
                 success.origin_version,
                 success.origin_exe_sha256,
                 success.evidence_path.display()
             ),
-            Ok(None) => println!(
-                "MODULE={} STATUS=RUN_REQUIRED REASON={}",
+            Lookup::Invalid(reason) => println!(
+                "MODULE={} STATUS=RUN_REQUIRED REASON={} DETAIL={}",
                 module.as_str(),
-                rerun_reason(root, module)
+                lookup.rerun_reason(),
+                reason.replace(['\r', '\n'], " ")
             ),
-            Err(error) => println!(
+            Lookup::Missing { .. } => println!(
                 "MODULE={} STATUS=RUN_REQUIRED REASON={}",
                 module.as_str(),
-                error.replace(['\r', '\n'], " ")
+                lookup.rerun_reason()
             ),
         }
     }
-    Ok(())
 }
 
 pub(super) fn success_status(
@@ -63,15 +54,5 @@ pub(super) fn success_status(
         "RAN_PASS"
     } else {
         "REUSED_PASS"
-    }
-}
-
-pub(in crate::qualification) fn rerun_reason(root: &Path, module: ModuleId) -> &'static str {
-    match LedgerStore::for_repository(root)
-        .and_then(|store| store.has_module_records(module.as_str()))
-    {
-        Ok(true) => "INPUT_FINGERPRINT_CHANGED",
-        Ok(false) => "NO_LAST_SUCCESS",
-        Err(_) => "LEDGER_STORE_UNAVAILABLE",
     }
 }

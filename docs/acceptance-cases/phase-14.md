@@ -85,9 +85,9 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A64 | 启动 ready 观测后的累计进程 CPU 与观测延迟单列；失败保留原始样本；显式诊断检查输出隔离及前后桌面环境，不写成功账本；ready 不替代真实焦点观测 | Automated | `runtime/native_diagnostics` 的 CPU 语义、失败保留、真实 Git 输出隔离和末尾环境拒绝回归；`runtime/startup_focus` 焦点判定单测；真实启动仍需对应原生入口 | AUTOMATED PASS |
 | P14-A65 | 九种 Zoom 组合每份内存样本均有完整 60 秒 CPU 观测及既有空闲 CPU 门；内存-only 旧收据不能补齐覆盖 | Automated | `resource_plan/zoom::tests`、整组校验及预算回归；原生验收由 P14-A46 持有 | AUTOMATED PASS |
 | P14-A66 | 三视图默认/220×120/普通样式九组对照共用 fixture；五次原始内存/CPU、实际尺寸/DPI/样式及前后对象计数受校验，普通样式只作用于测试子进程 | Automated | `resource_plan/window_comparison`、`runtime/resources/comparison`、`window_control/resource_comparison` 与组指纹回归；正式与人工验收仍分开 | AUTOMATED PASS |
-| P14-A67 | 发版新建的 linked worktree 解析到同一 `<git common dir>/stickymd/qualification-ledger/`，复用其他 worktree 记录的成功；G5 截图按 SHA-256 归档，`g5_readiness` 从共享存储校验，缺截图或 origin 不符即阻断；诊断输出不得指向共享存储 | Automated | `module_ledger::reuse_tests`、`module_ledger::store::tests` | AUTOMATED PASS |
+| P14-A67 | 发版新建的 linked worktree 解析到同一 `<git common dir>/stickymd/qualification-ledger/`，复用其他 worktree 记录的成功；G5 截图按 SHA-256 归档，查找时在同一把共享锁内从共享存储校验，缺截图或 origin 不符即判为无效；诊断输出不得指向共享存储 | Automated | `module_ledger::reuse_tests`、`module_ledger::store::tests` | AUTOMATED PASS |
 | P14-A68 | 仅发布版本号、发布说明、checklist、report 等改动不使功能模块失效（含以真实四个 member manifest 与 lock 的升级回归，以及"真实仓库 manifest 必须在语法内"的守卫）；依赖、产品代码、harness、plan/acceptance 变化仍失效；不在窄语法内的 manifest/lock 写法整体回退原始字节 | Automated | `fingerprint::normalize::tests`、`module_ledger::reuse_tests`、`fingerprint::tests` | AUTOMATED PASS |
-| P14-A69 | G3/G4/G5 readiness 将复用 evidence 的 version/source/EXE/ZIP 与记录 origin 比较，不要求等于当前 candidate；当前 candidate 一致性仍由 Source Freeze 与 exact-byte 门持有 | Automated | `exact_readiness`、`automated_readiness` 回归 | AUTOMATED PASS |
+| P14-A69 | G3/G4/G5 readiness 将复用 evidence 的 version/source/EXE/ZIP 与记录 origin 比较，不要求等于当前 candidate；当前 candidate 一致性仍由 Source Freeze 与 exact-byte 门持有 | Automated | `module_evidence::tests`、`module_ledger::reuse_tests` 回归 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 P14-A61 Preconditions：使用当前 Rust CLI 与锁定依赖。

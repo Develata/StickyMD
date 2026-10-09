@@ -6,7 +6,11 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::status::success_status;
-use super::{CompatibleSuccess, ModuleId, compatible_success, record_success};
+use super::{
+    CompatibleSuccess, Lookup, ModuleId, compatible_success, lookup, lookup_all, lookup_for_input,
+    record_path, record_success,
+};
+use crate::qualification::module_evidence::fixtures::valid_document;
 use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
 
 #[test]
@@ -28,11 +32,10 @@ fn changed_input_requires_rerun_without_overwriting_last_success() {
         "changed",
     )
     .expect("change G4 input");
-    assert!(
-        compatible_success(&root, ModuleId::G4)
-            .expect("changed compatibility")
-            .is_none()
-    );
+    assert!(matches!(
+        lookup(&root, ModuleId::G4).unwrap(),
+        Lookup::Missing { other_inputs: true }
+    ));
     assert_eq!(
         ledger_before,
         fs::read(&record).expect("read unchanged ledger")
@@ -47,7 +50,9 @@ fn precomputed_planning_input_still_verifies_archived_evidence_and_schema() {
     write_evidence(&root, module, "complete pass");
     record_success(&root, module, &candidate()).unwrap();
     let input = super::fingerprint::calculate(&root, module).unwrap();
-    let planned = super::compatible_success_for_input(&root, module, &input)
+    let planned = lookup_for_input(&root, module, &input)
+        .unwrap()
+        .into_result()
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -55,7 +60,92 @@ fn precomputed_planning_input_still_verifies_archived_evidence_and_schema() {
         compatible_success(&root, module).unwrap()
     );
     fs::write(&planned.evidence_path, b"tampered archive").unwrap();
-    assert!(super::compatible_success_for_input(&root, module, &input).is_err());
+    assert!(matches!(
+        lookup_for_input(&root, module, &input).unwrap(),
+        Lookup::Invalid(_)
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_damaged_record_is_invalid_and_a_formal_rerun_replaces_it() {
+    let root = fixture();
+    let candidate = candidate();
+    write_evidence(&root, ModuleId::G4, "first pass");
+    record_success(&root, ModuleId::G4, &candidate).unwrap();
+    let record = record_path(&root, ModuleId::G4);
+    let original = fs::read_to_string(&record).unwrap();
+    for damaged in [
+        original.trim_end().trim_end_matches('}').to_owned(),
+        original.replace(
+            "\"recorded_at_unix\":",
+            "\"status\":\"PASSED\",\"recorded_at_unix\":",
+        ),
+    ] {
+        fs::write(&record, &damaged).unwrap();
+        let found = lookup(&root, ModuleId::G4).unwrap();
+        assert_eq!(found.rerun_reason(), "INVALID_LAST_SUCCESS", "{damaged}");
+    }
+    // The next registration of a passing run repairs the record in place.
+    record_success(&root, ModuleId::G4, &candidate).unwrap();
+    assert!(compatible_success(&root, ModuleId::G4).unwrap().is_some());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn registration_applies_the_same_contract_as_readiness() {
+    let root = fixture();
+    let candidate = candidate();
+    write_evidence(&root, ModuleId::G4, "passing run");
+    record_success(&root, ModuleId::G4, &candidate).unwrap();
+    let evidence_before = fs::read(
+        compatible_success(&root, ModuleId::G4)
+            .unwrap()
+            .unwrap()
+            .evidence_path,
+    )
+    .unwrap();
+    let complete = valid_document(&root, ModuleId::G4, &candidate, "", "decoy");
+    // A legal re-spacing of a FAILED case next to a nested PASSED decoy.
+    let decoy = complete.replacen(
+        "\"status\":\"PASSED\",\"detail\"",
+        "\"status\" : \"FAILED\",\"extra\":{\"status\":\"PASSED\"},\"detail\"",
+        1,
+    );
+    // One case short of the group, formerly accepted here and refused only by readiness.
+    let incomplete = complete.replacen(
+        "{\"id\":\"G4-06\",\"status\":\"PASSED\",\"detail\":\"decoy\",\"artifacts\":[]}",
+        "",
+        1,
+    );
+    let incomplete = incomplete.replace(",]", "]");
+    let mut other = candidate.clone();
+    other.exe_sha256 = "0".repeat(64);
+    let foreign = valid_document(&root, ModuleId::G4, &other, "", "foreign");
+    for document in [decoy, incomplete, foreign] {
+        receipt::write_receipt(&root, ModuleId::G4.receipt(), &document).unwrap();
+        assert!(
+            record_success(&root, ModuleId::G4, &candidate).is_err(),
+            "{document}"
+        );
+    }
+    let kept = compatible_success(&root, ModuleId::G4).unwrap().unwrap();
+    assert_eq!(fs::read(kept.evidence_path).unwrap(), evidence_before);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn looking_up_an_empty_store_neither_creates_nor_fingerprints_it() {
+    let root = fixture();
+    let snapshot = lookup_all(&root).unwrap();
+    assert!(!snapshot.store_root.exists());
+    assert!(snapshot.modules.iter().all(|(_, lookup)| matches!(
+        lookup,
+        Lookup::Missing {
+            other_inputs: false
+        }
+    )));
+    assert!(!snapshot.store_root.exists());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -235,7 +325,11 @@ fn successful_rerun_atomically_promotes_new_evidence() {
         .expect("second compatibility")
         .expect("second success");
     assert_ne!(first.evidence_path, second.evidence_path);
-    assert!(second.document.contains("second pass"));
+    assert!(
+        fs::read_to_string(&second.evidence_path)
+            .unwrap()
+            .contains("second pass")
+    );
     assert!(!first.evidence_path.exists());
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -252,8 +346,12 @@ fn failed_result_cannot_replace_the_last_success() {
         .expect("compatibility")
         .expect("success");
 
-    let failed = "{\"worktree_dirty\":false,\"results\":[{\"id\":\"run\",\"status\":\"FAILED\"}]}";
-    receipt::write_receipt(&root, ModuleId::G4.receipt(), failed).expect("write failed result");
+    let failed = valid_document(&root, ModuleId::G4, &candidate, "", "failed run").replacen(
+        "\"status\":\"PASSED\",\"detail\"",
+        "\"status\":\"FAILED\",\"detail\"",
+        1,
+    );
+    receipt::write_receipt(&root, ModuleId::G4.receipt(), &failed).expect("write failed result");
     assert!(record_success(&root, ModuleId::G4, &candidate).is_err());
     assert_eq!(
         ledger_before,
@@ -262,9 +360,8 @@ fn failed_result_cannot_replace_the_last_success() {
     assert_eq!(
         compatible_success(&root, ModuleId::G4)
             .expect("preserved compatibility")
-            .expect("preserved success")
-            .document,
-        success_before.document
+            .expect("preserved success"),
+        success_before
     );
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -279,8 +376,6 @@ fn status_distinguishes_current_candidate_run_from_reused_success() {
         origin_exe_sha256: candidate.exe_sha256.clone(),
         origin_zip_sha256: candidate.zip_sha256.clone(),
         evidence_path: PathBuf::from("evidence.json"),
-        document: String::new(),
-        store: super::LedgerStore::at(PathBuf::from("store")),
     };
     assert_eq!(success_status(&success, Some(&candidate)), "RAN_PASS");
     success.origin_zip_sha256 = "f".repeat(64);
@@ -350,30 +445,44 @@ fn resource_input_or_candidate_drift_cannot_promote_an_old_measurement() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// A per-group lookup: one group's missing record never borrows another's success.
+#[test]
+fn every_resource_group_needs_its_own_success() {
+    let root = fixture();
+    let candidate = candidate();
+    for group in crate::resource_plan::GROUPS {
+        write_resource_evidence(&root, group);
+        record_success(&root, ModuleId::Resource(group), &candidate).unwrap();
+    }
+    for group in crate::resource_plan::GROUPS {
+        let path = record_path(&root, ModuleId::Resource(group));
+        let saved = fs::read(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        let snapshot = lookup_all(&root).unwrap();
+        for (module, found) in &snapshot.modules {
+            let ModuleId::Resource(other) = module else {
+                continue;
+            };
+            assert_eq!(
+                matches!(found, Lookup::Valid(_)),
+                *other != group,
+                "{module:?} with {group:?} removed"
+            );
+        }
+        crate::atomic_evidence::write(&path, &saved).unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn write_resource_evidence(root: &Path, group: crate::cli::ResourceModule) {
-    let result = crate::resource_plan::tests::valid_resource_result(group);
-    let document = crate::resource_plan::tests::document(group, &result);
-    let input = super::fingerprint::calculate(root, ModuleId::Resource(group)).unwrap();
-    let document = format!(
-        "{{\"resource_input_fingerprint\":\"{input}\",{}",
-        &document[1..]
-    );
+    let module = ModuleId::Resource(group);
+    let input = super::fingerprint::calculate(root, module).unwrap();
+    let document = valid_document(root, module, &candidate(), &input, "measured");
     receipt::write_receipt(root, group.receipt(), &document).unwrap();
 }
 
-/// The clone-wide record path for the module's current inputs.
-fn record_path(root: &Path, module: ModuleId) -> PathBuf {
-    let fingerprint = super::fingerprint::calculate(root, module).expect("fingerprint");
-    super::LedgerStore::for_repository(root)
-        .expect("ledger store")
-        .module_record(module.as_str(), &fingerprint)
-        .expect("record path")
-}
-
-fn write_evidence(root: &Path, module: ModuleId, contents: &str) {
-    let document = format!(
-        "{{\"worktree_dirty\":false,\"results\":[{{\"id\":\"{contents}\",\"status\":\"PASSED\"}}]}}"
-    );
+fn write_evidence(root: &Path, module: ModuleId, marker: &str) {
+    let document = valid_document(root, module, &candidate(), "", marker);
     receipt::write_receipt(root, module.receipt(), &document).expect("write evidence");
 }
 

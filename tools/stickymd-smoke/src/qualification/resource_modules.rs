@@ -1,7 +1,7 @@
 //! Per-group resource success promotion and compatible reuse.
 //! plan_ref: docs/plan/11_testing_and_release.md#resource-module-qualification
 
-use super::module_ledger::{self, fingerprint};
+use super::module_ledger::{self, Lookup, fingerprint};
 use super::module_registry::ModuleId;
 use super::{json, receipt};
 use crate::cli::ResourceModule;
@@ -45,44 +45,39 @@ impl Campaign {
             .zip(fingerprints.digests)
         {
             let started = std::time::Instant::now();
-            let reusable = match module_ledger::compatible_success_for_input(
-                root,
-                ModuleId::Resource(group),
-                &input,
-            ) {
-                Ok(success) => success,
-                Err(error) => {
-                    eprintln!(
-                        "RESOURCE_GROUP={} STATUS=RUN_REQUIRED REASON={}",
-                        group.name(),
-                        error.replace(['\r', '\n'], " ")
-                    );
-                    None
-                }
-            };
+            let lookup = module_ledger::lookup_for_input(root, ModuleId::Resource(group), &input);
             eprintln!(
                 "RESOURCE_COMPATIBILITY group={} elapsed_seconds={:.6}",
                 group.name(),
                 started.elapsed().as_secs_f64()
             );
-            eprintln!(
-                "RESOURCE_GROUP={} STATUS={} REASON={}",
-                group.name(),
-                if reusable.is_some() {
-                    "COMPATIBLE_LAST_SUCCESS"
-                } else {
-                    "RUN_REQUIRED"
-                },
-                if reusable.is_some() {
-                    "INPUT_FINGERPRINT_MATCH"
-                } else {
-                    module_ledger::rerun_reason(root, ModuleId::Resource(group))
+            let reusable = matches!(lookup, Ok(Lookup::Valid(_)));
+            let (status, reason, detail) = match &lookup {
+                Ok(Lookup::Valid(_)) => {
+                    ("COMPATIBLE_LAST_SUCCESS", "INPUT_FINGERPRINT_MATCH", None)
                 }
+                Ok(lookup @ Lookup::Invalid(error)) => {
+                    ("RUN_REQUIRED", lookup.rerun_reason(), Some(error.as_str()))
+                }
+                Ok(lookup) => ("RUN_REQUIRED", lookup.rerun_reason(), None),
+                Err(error) => (
+                    "RUN_REQUIRED",
+                    "LEDGER_STORE_UNAVAILABLE",
+                    Some(error.as_str()),
+                ),
+            };
+            eprintln!(
+                "RESOURCE_GROUP={} STATUS={status} REASON={reason}{}",
+                group.name(),
+                detail.map_or_else(String::new, |detail| format!(
+                    " DETAIL={}",
+                    detail.replace(['\r', '\n'], " ")
+                ))
             );
             entries.push(Entry {
                 group,
                 fingerprint: input,
-                reusable: reusable.is_some(),
+                reusable,
             });
         }
         eprintln!(
@@ -107,14 +102,14 @@ impl Campaign {
         let current = self.verify_current(root, group)?;
         // Planning determines scheduling only. Re-read the ledger and its archive using
         // the input digest just verified above, without hashing the same inputs twice.
-        let success =
-            module_ledger::compatible_success_for_input(root, ModuleId::Resource(group), &current)?
-                .ok_or_else(|| {
-                    format!(
-                        "{} resource last-success is no longer compatible",
-                        group.name()
-                    )
-                })?;
+        let success = module_ledger::lookup_for_input(root, ModuleId::Resource(group), &current)?
+            .into_result()?
+            .ok_or_else(|| {
+                format!(
+                    "{} resource last-success is no longer compatible",
+                    group.name()
+                )
+            })?;
         let detail = format!(
             "REUSED_PASS origin_source={} origin_exe={} origin_zip={} evidence={}",
             success.origin_source_commit,

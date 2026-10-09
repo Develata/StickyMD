@@ -6,21 +6,18 @@ mod decisions;
 #[cfg(windows)]
 mod exact_desktop;
 pub(crate) mod exact_groups;
-mod exact_readiness;
 #[cfg(windows)]
 mod g3;
-mod g3_readiness;
 #[cfg(windows)]
 mod g4;
-mod g4_readiness;
 #[cfg(windows)]
 mod g5;
-mod g5_readiness;
 mod guided;
 mod json;
 mod manual;
 mod manual_readiness;
 mod manual_receipt;
+mod module_evidence;
 mod module_ledger;
 mod module_registry;
 mod path_identity;

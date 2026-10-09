@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::super::json;
 use super::status::success_status;
-use super::{ModuleId, compatible_success, record_success};
+use super::{Lookup, ModuleId, compatible_success, lookup, record_success};
+use crate::qualification::module_evidence::fixtures::valid_document;
+use crate::qualification::module_evidence::g5_companions;
 use crate::qualification::module_registry::modules;
 use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
 
@@ -152,27 +153,18 @@ fn release_shaped_change_reuses_every_functional_module_from_a_linked_worktree()
 fn g5_screenshots_are_verified_from_the_store_in_a_linked_worktree() {
     let clone = ReleaseClone::new();
     let first = candidate("0.1.0", "c", "d");
-    let screenshot = "dist/evidence/g5-artifacts/G5-01-light.png";
-    write(&clone.main, screenshot, "png bytes");
-    let sha256 = receipt::sha256(&clone.main.join(screenshot)).unwrap();
-    let document = format!(
-        concat!(
-            "{{\"worktree_dirty\":false,\"results\":[",
-            "{{\"id\":\"G5-01\",\"status\":\"PASSED\",\"artifacts\":[{{\"path\":\"{}\",\"sha256\":\"{}\"}}]}}",
-            "]}}"
-        ),
-        screenshot, sha256
-    );
-    receipt::write_receipt(&clone.main, ModuleId::G5.receipt(), &document).unwrap();
+    write_valid_evidence(&clone.main, ModuleId::G5, &first);
     record_success(&clone.main, ModuleId::G5, &first).unwrap();
+    let document = fs::read_to_string(clone.main.join(ModuleId::G5.receipt())).unwrap();
+    let screenshot = &g5_companions(&document).unwrap()[0];
     let linked = clone.add_linked_worktree();
-    assert!(!linked.join(screenshot).exists());
-    let success = compatible_success(linked, ModuleId::G5).unwrap().unwrap();
-    let archived = success.artifact(&sha256).unwrap();
-    assert_eq!(receipt::sha256(&archived).unwrap(), sha256);
+    assert!(!linked.join(&screenshot.path).exists());
+    assert!(compatible_success(linked, ModuleId::G5).unwrap().is_some());
+    let archived = super::archived_artifact(linked, &screenshot.sha256);
+    assert_eq!(receipt::sha256(&archived).unwrap(), screenshot.sha256);
 
     // A screenshot whose bytes no longer match its listed hash cannot be recorded.
-    write(&clone.main, screenshot, "tampered");
+    write(&clone.main, &screenshot.path, "tampered");
     assert!(record_success(&clone.main, ModuleId::G5, &first).is_err());
 }
 
@@ -272,63 +264,20 @@ fn real_manifests_release_bump_keeps_every_functional_fingerprint() {
 }
 
 #[test]
-fn g5_readiness_reuses_archived_screenshots_and_compares_origin_identity() {
+fn g5_reuse_verifies_archived_screenshots_and_the_record_origin() {
     let clone = ReleaseClone::new();
     let first = candidate("0.1.0", "c", "d");
-    let mut cases = Vec::new();
-    for (case, count) in [("G5-01", 1), ("G5-02", 3), ("G5-03", 13), ("G5-04", 3)] {
-        let mut artifacts = Vec::new();
-        for index in 0..count {
-            let relative = format!("dist/evidence/g5-artifacts/{case}-{index}.png");
-            write(
-                &clone.main,
-                &relative,
-                &format!("{case} screenshot {index}"),
-            );
-            let sha256 = receipt::sha256(&clone.main.join(&relative)).unwrap();
-            artifacts.push(format!(
-                "{{\"path\":\"{relative}\",\"sha256\":\"{sha256}\"}}"
-            ));
-        }
-        cases.push(format!(
-            "{{\"id\":\"{case}\",\"status\":\"PASSED\",\"detail\":null,\"artifacts\":[{}]}}",
-            artifacts.join(",")
-        ));
-    }
-    let document = format!(
-        concat!(
-            "{{\"schema_version\":1,\"status\":\"PASSED\",",
-            "\"source_commit\":\"{commit}\",\"harness_commit\":\"{commit}\",",
-            "\"worktree_dirty\":false,\"version\":\"{version}\",",
-            "\"windows\":\"Windows test\",\"exe_sha256\":\"{exe}\",",
-            "\"zip_sha256\":\"{zip}\",\"results\":[{results}]}}"
-        ),
-        commit = first.source_commit,
-        version = first.version,
-        exe = first.exe_sha256,
-        zip = first.zip_sha256,
-        results = cases.join(","),
-    );
-    receipt::write_receipt(&clone.main, ModuleId::G5.receipt(), &document).unwrap();
+    write_valid_evidence(&clone.main, ModuleId::G5, &first);
     record_success(&clone.main, ModuleId::G5, &first).unwrap();
     clone.release_bump("0.1.0", "0.1.1");
     let linked = clone.add_linked_worktree();
-
-    let mut blockers = Vec::new();
-    assert!(
-        crate::qualification::g5_readiness::check(linked, &mut blockers),
-        "{blockers:?}"
-    );
+    assert!(matches!(
+        lookup(linked, ModuleId::G5).unwrap(),
+        Lookup::Valid(_)
+    ));
 
     // The record's origin is authoritative: evidence from another version is stale.
-    let success = compatible_success(linked, ModuleId::G5).unwrap().unwrap();
-    let record = success
-        .store
-        .module_record(
-            ModuleId::G5.as_str(),
-            &super::fingerprint::calculate(linked, ModuleId::G5).unwrap(),
-        )
-        .unwrap();
+    let record = super::record_path(linked, ModuleId::G5);
     let original = fs::read_to_string(&record).unwrap();
     fs::write(
         &record,
@@ -338,63 +287,78 @@ fn g5_readiness_reuses_archived_screenshots_and_compares_origin_identity() {
         ),
     )
     .unwrap();
-    blockers.clear();
-    assert!(!crate::qualification::g5_readiness::check(
-        linked,
-        &mut blockers
-    ));
-    assert!(
-        blockers.iter().any(|item| item.contains("version")),
-        "{blockers:?}"
-    );
+    let Lookup::Invalid(reason) = lookup(linked, ModuleId::G5).unwrap() else {
+        panic!("a foreign origin version must invalidate the success");
+    };
+    assert!(reason.contains("version"), "{reason}");
     fs::write(&record, original).unwrap();
 
-    // A missing archived screenshot blocks even though the record is compatible.
-    let (_, first_sha) = super::super::g5_readiness::companion_artifacts(&document)
-        .unwrap()
-        .into_iter()
-        .next()
-        .unwrap();
-    fs::remove_file(success.artifact(&first_sha).unwrap()).unwrap();
-    blockers.clear();
-    assert!(!crate::qualification::g5_readiness::check(
-        linked,
-        &mut blockers
+    // A missing archived screenshot makes the success invalid for reuse and readiness
+    // alike, and the next formal registration of a passing run repairs the archive.
+    let document = fs::read_to_string(clone.main.join(ModuleId::G5.receipt())).unwrap();
+    let first_sha = g5_companions(&document).unwrap()[0].sha256.clone();
+    fs::remove_file(super::archived_artifact(linked, &first_sha)).unwrap();
+    let invalid = lookup(linked, ModuleId::G5).unwrap();
+    assert_eq!(invalid.rerun_reason(), "INVALID_LAST_SUCCESS");
+    let Lookup::Invalid(reason) = invalid else {
+        unreachable!()
+    };
+    assert!(reason.contains("archived companion"), "{reason}");
+    record_success(&clone.main, ModuleId::G5, &first).unwrap();
+    assert!(matches!(
+        lookup(linked, ModuleId::G5).unwrap(),
+        Lookup::Valid(_)
     ));
-    assert!(
-        blockers.iter().any(|item| item.contains("artifact")),
-        "{blockers:?}"
-    );
 }
 
 #[test]
 fn artifact_cleanup_keeps_screenshots_of_cases_unknown_to_this_tool() {
     let clone = ReleaseClone::new();
     let first = candidate("0.1.0", "c", "d");
-    // A newer tool recorded an extra case; this tool's case list does not name it.
-    let future = "dist/evidence/g5-artifacts/G5-99-future.png";
-    write(&clone.main, future, "future case screenshot");
-    let sha256 = receipt::sha256(&clone.main.join(future)).unwrap();
-    let document = format!(
-        concat!(
-            "{{\"worktree_dirty\":false,\"results\":[",
-            "{{\"id\":\"G5-99\",\"status\":\"PASSED\",\"artifacts\":[{{\"path\":\"{}\",\"sha256\":\"{}\"}}]}}",
-            "]}}"
-        ),
-        future, sha256
+    write_valid_evidence(&clone.main, ModuleId::G5, &first);
+    record_success(&clone.main, ModuleId::G5, &first).unwrap();
+    // A newer tool recorded a success (under other inputs) with a case this tool does
+    // not know; this tool cannot validate it, but cleanup must keep its screenshot.
+    let store = super::LedgerStore::for_repository(&clone.main).unwrap();
+    let future_bytes = b"future case screenshot";
+    let future_sha = crate::integrity::sha256_bytes(future_bytes).unwrap();
+    let evidence = format!(
+        "{{\"results\":[{{\"id\":\"G5-99\",\"status\":\"PASSED\",\"artifacts\":[{{\"path\":\"dist/evidence/g5-artifacts/G5-99.png\",\"sha256\":\"{future_sha}\"}}]}}]}}"
     );
-    receipt::write_receipt(&clone.main, ModuleId::G5.receipt(), &document).unwrap();
+    let record = super::record::LedgerRecord {
+        module_id: "g5".to_owned(),
+        input_fingerprint: "9".repeat(64),
+        origin_source_commit: first.source_commit.clone(),
+        origin_version: "0.2.0".to_owned(),
+        origin_exe_sha256: first.exe_sha256.clone(),
+        origin_zip_sha256: first.zip_sha256.clone(),
+        evidence_sha256: crate::integrity::sha256_bytes(evidence.as_bytes()).unwrap(),
+        recorded_at_unix: super::store::unix_seconds(),
+    };
+    for (path, bytes) in [
+        (
+            store.artifact(&future_sha).unwrap(),
+            future_bytes.as_slice(),
+        ),
+        (
+            store.evidence(&record.evidence_file()).unwrap(),
+            evidence.as_bytes(),
+        ),
+        (
+            store
+                .module_record("g5", &record.input_fingerprint)
+                .unwrap(),
+            record.render().as_bytes(),
+        ),
+    ] {
+        crate::atomic_evidence::write(&path, bytes).unwrap();
+    }
+    // Another success for this tool's inputs triggers cleanup; the screenshot stays.
     record_success(&clone.main, ModuleId::G5, &first).unwrap();
-    let archived = compatible_success(&clone.main, ModuleId::G5)
-        .unwrap()
-        .unwrap()
-        .artifact(&sha256)
-        .unwrap();
-    assert!(archived.is_file());
-    // Another success for the same inputs triggers cleanup; the screenshot stays.
-    record_success(&clone.main, ModuleId::G5, &first).unwrap();
-    assert!(archived.is_file());
+    assert!(store.artifact(&future_sha).unwrap().is_file());
     // Malformed artifact entries are not "no artifacts": recording fails closed.
+    let document = fs::read_to_string(clone.main.join(ModuleId::G5.receipt())).unwrap();
+    let sha256 = g5_companions(&document).unwrap()[0].sha256.clone();
     let malformed = document.replace(&sha256, "not-a-digest");
     receipt::write_receipt(&clone.main, ModuleId::G5.receipt(), &malformed).unwrap();
     assert!(record_success(&clone.main, ModuleId::G5, &first).is_err());
@@ -583,41 +547,8 @@ fn a_link_below_the_store_root_makes_the_store_refuse_to_operate() {
 }
 
 fn write_valid_evidence(root: &Path, module: ModuleId, candidate: &Candidate) {
-    let document = match module {
-        ModuleId::Resource(group) => {
-            let result = crate::resource_plan::tests::valid_resource_result(group);
-            let document = crate::resource_plan::tests::document(group, &result);
-            let input = super::fingerprint::calculate(root, module).unwrap();
-            format!(
-                "{{\"resource_input_fingerprint\":\"{input}\",{}",
-                &document[1..]
-            )
-        }
-        ModuleId::Runtime | ModuleId::Performance => {
-            let labels = crate::runner::formal_task_labels(module == ModuleId::Runtime).unwrap();
-            let results = labels
-                .iter()
-                .map(|label| {
-                    format!(
-                        "{{\"id\":\"{}\",\"status\":\"PASSED\"}}",
-                        json::escape(label)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            format!(
-                concat!(
-                    "{{\"schema_version\":2,\"commit\":\"{}\",\"worktree_dirty\":false,",
-                    "\"executable_sha256\":\"{}\",\"suite\":\"phase-14\",\"results\":[{}]}}"
-                ),
-                candidate.source_commit, candidate.exe_sha256, results
-            )
-        }
-        ModuleId::G3 | ModuleId::G4 | ModuleId::G5 => {
-            "{\"worktree_dirty\":false,\"results\":[{\"id\":\"exact\",\"status\":\"PASSED\"}]}"
-                .to_owned()
-        }
-    };
+    let input = super::fingerprint::calculate(root, module).unwrap();
+    let document = valid_document(root, module, candidate, &input, "run");
     receipt::write_receipt(root, module.receipt(), &document).unwrap();
 }
 

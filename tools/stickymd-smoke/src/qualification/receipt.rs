@@ -237,7 +237,7 @@ pub(super) fn upstream_commit(root: &Path) -> Result<String, String> {
 }
 
 pub(super) use crate::integrity::{
-    sha256, sha256_bytes, validate_hex, validate_sha256, verify_checksum_manifest,
+    sha256, validate_hex, validate_sha256, verify_checksum_manifest,
 };
 
 fn validate_zip_name(value: &str, version: &str) -> Result<(), String> {

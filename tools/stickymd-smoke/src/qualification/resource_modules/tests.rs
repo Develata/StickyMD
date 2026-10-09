@@ -7,13 +7,7 @@ use std::path::PathBuf;
 const GROUP: ResourceModule = ResourceModule::Window;
 /// The clone-wide ledger record for the window group's current inputs.
 fn ledger(root: &std::path::Path) -> PathBuf {
-    module_ledger::store::LedgerStore::for_repository(root)
-        .unwrap()
-        .module_record(
-            GROUP.ledger_id(),
-            &module_ledger::fingerprint::calculate(root, ModuleId::Resource(GROUP)).unwrap(),
-        )
-        .unwrap()
+    module_ledger::record_path(root, ModuleId::Resource(GROUP))
 }
 
 #[test]

@@ -17,26 +17,27 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::super::receipt;
+use super::record::LedgerRecord;
+use crate::integrity::{sha256_bytes, validate_sha256};
 
 /// Records kept per module; older records and their unreferenced evidence are removed.
-pub(in crate::qualification) const RETAINED_RECORDS: usize = 8;
+pub(super) const RETAINED_RECORDS: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::qualification) struct LedgerStore {
+pub(super) struct LedgerStore {
     root: PathBuf,
 }
 
 /// Holds the store lock until dropped; closing the handle releases it.
 #[must_use = "the store lock is released when the guard is dropped"]
-pub(in crate::qualification) struct StoreGuard {
+pub(super) struct StoreGuard {
     _file: File,
 }
 
 impl LedgerStore {
     /// Resolve the store from a repository root. Fingerprinting already requires git,
     /// so a missing or broken checkout fails closed instead of using a private store.
-    pub(in crate::qualification) fn for_repository(repository: &Path) -> Result<Self, String> {
+    pub(super) fn for_repository(repository: &Path) -> Result<Self, String> {
         let output = Command::new("git")
             .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
             .current_dir(repository)
@@ -59,16 +60,16 @@ impl LedgerStore {
         ))
     }
 
-    pub(in crate::qualification) fn at(root: PathBuf) -> Self {
+    pub(super) fn at(root: PathBuf) -> Self {
         Self { root }
     }
 
-    pub(in crate::qualification) fn root(&self) -> &Path {
+    pub(super) fn root(&self) -> &Path {
         &self.root
     }
 
     /// Shared lock for following records to their evidence.
-    pub(in crate::qualification) fn read_guard(&self) -> Result<StoreGuard, String> {
+    pub(super) fn read_guard(&self) -> Result<StoreGuard, String> {
         let file = self.lock_file()?;
         wait_for_lock(|| file.try_lock_shared(), "reading")?;
         self.ensure_no_links()?;
@@ -76,7 +77,7 @@ impl LedgerStore {
     }
 
     /// Exclusive lock for archiving, publishing and pruning.
-    pub(in crate::qualification) fn write_guard(&self) -> Result<StoreGuard, String> {
+    pub(super) fn write_guard(&self) -> Result<StoreGuard, String> {
         let file = self.lock_file()?;
         wait_for_lock(|| file.try_lock(), "writing")?;
         self.ensure_no_links()?;
@@ -143,27 +144,20 @@ impl LedgerStore {
     }
 
     /// The single record path for `(module, fingerprint)`.
-    pub(in crate::qualification) fn module_record(
-        &self,
-        module: &str,
-        fingerprint: &str,
-    ) -> Result<PathBuf, String> {
-        receipt::validate_sha256(fingerprint, "module input fingerprint")?;
+    pub(super) fn module_record(&self, module: &str, fingerprint: &str) -> Result<PathBuf, String> {
+        validate_sha256(fingerprint, "module input fingerprint")?;
         Ok(self
             .key_directory("modules", module)?
             .join(format!("{fingerprint}.json")))
     }
 
     /// Cheap pre-check before fingerprinting; a racing writer only delays reuse.
-    pub(in crate::qualification) fn has_module_records(
-        &self,
-        module: &str,
-    ) -> Result<bool, String> {
+    pub(super) fn has_module_records(&self, module: &str) -> Result<bool, String> {
         Ok(!record_files(&self.key_directory("modules", module)?)?.is_empty())
     }
 
     /// Content-addressed module evidence archive, `<module>-<sha256>.json`.
-    pub(in crate::qualification) fn evidence(&self, file_name: &str) -> Result<PathBuf, String> {
+    pub(super) fn evidence(&self, file_name: &str) -> Result<PathBuf, String> {
         let (module, rest) = file_name
             .rsplit_once('-')
             .ok_or_else(|| format!("invalid ledger evidence name {file_name}"))?;
@@ -171,20 +165,20 @@ impl LedgerStore {
             .strip_suffix(".json")
             .ok_or_else(|| format!("invalid ledger evidence name {file_name}"))?;
         validate_key(module)?;
-        receipt::validate_sha256(digest, "ledger evidence SHA-256")?;
+        validate_sha256(digest, "ledger evidence SHA-256")?;
         Ok(self.root.join("evidence").join(file_name))
     }
 
     /// Content-addressed binary companion evidence (for example G5 screenshots).
-    pub(in crate::qualification) fn artifact(&self, sha256: &str) -> Result<PathBuf, String> {
-        receipt::validate_sha256(sha256, "ledger artifact SHA-256")?;
+    pub(super) fn artifact(&self, sha256: &str) -> Result<PathBuf, String> {
+        validate_sha256(sha256, "ledger artifact SHA-256")?;
         Ok(self.root.join("artifacts").join(sha256))
     }
 
     /// Keep the newest records of one module and delete that module's evidence that no
     /// remaining record references. Requires the write guard. Any record or directory
     /// that cannot be read stops cleanup: unknown references are never treated as unused.
-    pub(in crate::qualification) fn prune_module(
+    pub(super) fn prune_module(
         &self,
         _guard: &StoreGuard,
         module: &str,
@@ -193,7 +187,7 @@ impl LedgerStore {
         let mut records = Vec::new();
         for path in record_files(&self.key_directory("modules", module)?)? {
             let record = self.read_record(&path)?;
-            records.push((record.recorded_at, record.evidence_file, path));
+            records.push((record.recorded_at_unix, record.evidence_file(), path));
         }
         // The record just published is always retained, whatever its timestamp (equal
         // seconds or a clock moved backwards); the others are kept newest first.
@@ -222,7 +216,7 @@ impl LedgerStore {
 
     /// Delete artifacts outside `referenced`. Requires the write guard; the caller must
     /// pass a complete reference set or not call this at all.
-    pub(in crate::qualification) fn prune_artifacts(
+    pub(super) fn prune_artifacts(
         &self,
         _guard: &StoreGuard,
         referenced: &[String],
@@ -237,19 +231,16 @@ impl LedgerStore {
 
     /// Evidence documents of every retained record of one module; fails on any
     /// unreadable record so callers cannot mistake a partial scan for a complete one.
-    pub(in crate::qualification) fn module_evidence_documents(
-        &self,
-        module: &str,
-    ) -> Result<Vec<String>, String> {
+    pub(super) fn module_evidence_documents(&self, module: &str) -> Result<Vec<String>, String> {
         let mut documents = Vec::new();
         for path in record_files(&self.key_directory("modules", module)?)? {
             let record = self.read_record(&path)?;
-            let evidence = self.evidence(&record.evidence_file)?;
+            let evidence = self.evidence(&record.evidence_file())?;
             let bytes = fs::read(&evidence)
                 .map_err(|error| format!("cannot read {}: {error}", evidence.display()))?;
             // A damaged archive could still be valid JSON with fewer references; only
             // evidence matching its record's digest may decide what cleanup keeps.
-            if receipt::sha256_bytes(&bytes)? != record.evidence_sha256 {
+            if sha256_bytes(&bytes)? != record.evidence_sha256 {
                 return Err(format!(
                     "ledger evidence {} does not match its record digest",
                     evidence.display()
@@ -265,27 +256,13 @@ impl LedgerStore {
         Ok(documents)
     }
 
-    /// The fields cleanup relies on, from a strict parse of the whole record.
-    fn read_record(&self, path: &Path) -> Result<RecordSummary, String> {
-        let text = receipt::read_receipt(path)?;
-        let parsed = crate::release::json::parse(&text)
-            .map_err(|error| format!("ledger record {} is malformed: {error}", path.display()))?;
-        let evidence_file = parsed.field("evidence_file")?.string()?.to_owned();
-        self.evidence(&evidence_file)?;
-        let evidence_sha256 = parsed.field("evidence_sha256")?.string()?.to_owned();
-        receipt::validate_sha256(&evidence_sha256, "ledger record evidence SHA-256")?;
-        Ok(RecordSummary {
-            recorded_at: parsed.field("recorded_at_unix")?.unsigned()?,
-            evidence_file,
-            evidence_sha256,
-        })
+    /// A strictly parsed record; cleanup and lookup share this one parse.
+    fn read_record(&self, path: &Path) -> Result<LedgerRecord, String> {
+        let text = fs::read_to_string(path)
+            .map_err(|error| format!("cannot read ledger record {}: {error}", path.display()))?;
+        LedgerRecord::parse(&text)
+            .map_err(|error| format!("ledger record {}: {error}", path.display()))
     }
-}
-
-struct RecordSummary {
-    recorded_at: u64,
-    evidence_file: String,
-    evidence_sha256: String,
 }
 
 /// Published `<sha256>.json` records; temporaries and foreign names are ignored.
@@ -294,7 +271,7 @@ fn record_files(directory: &Path) -> Result<Vec<PathBuf>, String> {
         .into_iter()
         .filter(|name| {
             name.strip_suffix(".json")
-                .is_some_and(|digest| receipt::validate_sha256(digest, "record").is_ok())
+                .is_some_and(|digest| validate_sha256(digest, "record").is_ok())
         })
         .map(|name| directory.join(name))
         .collect())
@@ -380,7 +357,7 @@ fn validate_key(key: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests;
 
-pub(in crate::qualification) fn unix_seconds() -> u64 {
+pub(super) fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())

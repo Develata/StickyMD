@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::super::record::LedgerRecord;
 use super::{LedgerStore, RETAINED_RECORDS};
 
 struct TempStore(PathBuf);
@@ -36,23 +37,46 @@ fn digest(index: usize) -> String {
     format!("{index:064x}")
 }
 
-/// A record whose digest matches the `{}` evidence these tests archive.
-fn record_json(evidence: &str, recorded_at: u64) -> String {
-    let digest = crate::integrity::sha256_bytes(b"{}").unwrap();
-    format!(
-        "{{\"evidence_file\":\"{evidence}\",\"evidence_sha256\":\"{digest}\",\"recorded_at_unix\":{recorded_at}}}"
-    )
+/// Distinct archived evidence per run, so every record names its own file.
+fn evidence_bytes(index: usize) -> Vec<u8> {
+    format!("{{\"run\":{index}}}").into_bytes()
+}
+
+/// A complete record for run `index`; newer runs carry larger timestamps in callers.
+fn record(index: usize, recorded_at: u64) -> LedgerRecord {
+    LedgerRecord {
+        module_id: "g4".to_owned(),
+        input_fingerprint: digest(index),
+        origin_source_commit: "a".repeat(40),
+        origin_version: "0.1.0".to_owned(),
+        origin_exe_sha256: "c".repeat(64),
+        origin_zip_sha256: "d".repeat(64),
+        evidence_sha256: crate::integrity::sha256_bytes(&evidence_bytes(index)).unwrap(),
+        recorded_at_unix: recorded_at,
+    }
+}
+
+fn evidence_path(store: &LedgerStore, index: usize) -> PathBuf {
+    store.evidence(&record(index, 0).evidence_file()).unwrap()
+}
+
+fn record_path(store: &LedgerStore, index: usize) -> PathBuf {
+    store.module_record("g4", &digest(index)).unwrap()
+}
+
+fn write_record(store: &LedgerStore, index: usize, recorded_at: u64) {
+    let evidence = evidence_path(store, index);
+    fs::create_dir_all(evidence.parent().unwrap()).unwrap();
+    fs::write(evidence, evidence_bytes(index)).unwrap();
+    let path = record_path(store, index);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, record(index, recorded_at).render()).unwrap();
 }
 
 /// One record per index; `recorded_at_unix` equals the index so newer is larger.
 fn write_records(store: &LedgerStore, count: usize) {
     for index in 1..=count {
-        let evidence = format!("g4-{}.json", digest(index));
-        fs::create_dir_all(store.root().join("evidence")).unwrap();
-        fs::write(store.evidence(&evidence).unwrap(), b"{}").unwrap();
-        let record = store.module_record("g4", &digest(index)).unwrap();
-        fs::create_dir_all(record.parent().unwrap()).unwrap();
-        fs::write(record, record_json(&evidence, index as u64)).unwrap();
+        write_record(store, index, index as u64);
     }
 }
 
@@ -63,16 +87,12 @@ fn evidence_that_no_longer_matches_its_record_stops_reference_scans() {
     write_records(&store, 2);
     assert_eq!(store.module_evidence_documents("g4").unwrap().len(), 2);
     // Still valid JSON, but not the archived bytes: it must not shrink the reference set.
-    fs::write(
-        store.evidence(&format!("g4-{}.json", digest(1))).unwrap(),
-        b"{\"results\":[]}",
-    )
-    .unwrap();
+    fs::write(evidence_path(&store, 1), b"{\"results\":[]}").unwrap();
     assert!(store.module_evidence_documents("g4").is_err());
     // A record that is not complete JSON stops pruning as well.
-    let record = store.module_record("g4", &digest(2)).unwrap();
+    let record = record_path(&store, 2);
     let text = fs::read_to_string(&record).unwrap();
-    fs::write(&record, text.trim_end_matches('}')).unwrap();
+    fs::write(&record, text.trim_end().trim_end_matches('}')).unwrap();
     let guard = store.write_guard().unwrap();
     assert!(store.prune_module(&guard, "g4", &record).is_err());
 }
@@ -83,38 +103,21 @@ fn pruning_keeps_the_newest_records_and_exactly_their_evidence() {
     let store = temp.store();
     write_records(&store, RETAINED_RECORDS + 3);
     // Another module's evidence shares the directory and must survive.
-    fs::write(
-        store.evidence(&format!("g5-{}.json", digest(99))).unwrap(),
-        b"{}",
-    )
-    .unwrap();
+    let other = store.evidence(&format!("g5-{}.json", digest(99))).unwrap();
+    fs::write(&other, b"{}").unwrap();
     let guard = store.write_guard().unwrap();
-    let newest = store
-        .module_record("g4", &digest(RETAINED_RECORDS + 3))
-        .unwrap();
+    let newest = record_path(&store, RETAINED_RECORDS + 3);
     store.prune_module(&guard, "g4", &newest).unwrap();
     for index in 1..=RETAINED_RECORDS + 3 {
         let kept = index > 3;
+        assert_eq!(record_path(&store, index).is_file(), kept, "record {index}");
         assert_eq!(
-            store.module_record("g4", &digest(index)).unwrap().is_file(),
-            kept,
-            "record {index}"
-        );
-        assert_eq!(
-            store
-                .evidence(&format!("g4-{}.json", digest(index)))
-                .unwrap()
-                .is_file(),
+            evidence_path(&store, index).is_file(),
             kept,
             "evidence {index}"
         );
     }
-    assert!(
-        store
-            .evidence(&format!("g5-{}.json", digest(99)))
-            .unwrap()
-            .is_file()
-    );
+    assert!(other.is_file());
 }
 
 #[test]
@@ -122,17 +125,14 @@ fn an_unreadable_record_stops_cleanup_without_deleting_anything() {
     let temp = TempStore::new();
     let store = temp.store();
     write_records(&store, RETAINED_RECORDS + 2);
-    let corrupt = store.module_record("g4", &digest(5)).unwrap();
-    fs::write(&corrupt, b"not a record").unwrap();
+    fs::write(record_path(&store, 5), b"not a record").unwrap();
     let orphan = store.evidence(&format!("g4-{}.json", digest(77))).unwrap();
     fs::write(&orphan, b"{}").unwrap();
     let guard = store.write_guard().unwrap();
-    let newest = store
-        .module_record("g4", &digest(RETAINED_RECORDS + 2))
-        .unwrap();
+    let newest = record_path(&store, RETAINED_RECORDS + 2);
     assert!(store.prune_module(&guard, "g4", &newest).is_err());
     for index in 1..=RETAINED_RECORDS + 2 {
-        assert!(store.module_record("g4", &digest(index)).unwrap().is_file());
+        assert!(record_path(&store, index).is_file());
     }
     assert!(
         orphan.is_file(),
@@ -144,23 +144,11 @@ fn an_unreadable_record_stops_cleanup_without_deleting_anything() {
 fn the_record_just_published_survives_equal_or_older_timestamps() {
     let temp = TempStore::new();
     let store = temp.store();
-    write_records(&store, RETAINED_RECORDS + 2);
     // Equal seconds: the published record sorts last by path among the ties.
     for index in 1..=RETAINED_RECORDS + 2 {
-        let record = store.module_record("g4", &digest(index)).unwrap();
-        let text = fs::read_to_string(&record).unwrap();
-        fs::write(
-            &record,
-            text.replace(
-                &format!("\"recorded_at_unix\":{index}}}"),
-                "\"recorded_at_unix\":5}",
-            ),
-        )
-        .unwrap();
+        write_record(&store, index, 5);
     }
-    let published = store
-        .module_record("g4", &digest(RETAINED_RECORDS + 2))
-        .unwrap();
+    let published = record_path(&store, RETAINED_RECORDS + 2);
     let guard = store.write_guard().unwrap();
     store.prune_module(&guard, "g4", &published).unwrap();
     assert!(
@@ -169,27 +157,12 @@ fn the_record_just_published_survives_equal_or_older_timestamps() {
     );
 
     // A clock moved backwards: the newest publication carries the oldest timestamp.
-    let rolled_back = store.module_record("g4", &digest(500)).unwrap();
-    fs::write(
-        store.evidence(&format!("g4-{}.json", digest(500))).unwrap(),
-        b"{}",
-    )
-    .unwrap();
-    fs::write(
-        &rolled_back,
-        record_json(&format!("g4-{}.json", digest(500)), 0),
-    )
-    .unwrap();
+    write_record(&store, 500, 0);
+    let rolled_back = record_path(&store, 500);
     store.prune_module(&guard, "g4", &rolled_back).unwrap();
     assert!(rolled_back.is_file());
-    assert!(
-        store
-            .evidence(&format!("g4-{}.json", digest(500)))
-            .unwrap()
-            .is_file()
-    );
+    assert!(evidence_path(&store, 500).is_file());
 }
-
 #[test]
 fn readers_and_writers_exclude_each_other_through_the_os_lock() {
     let temp = TempStore::new();
