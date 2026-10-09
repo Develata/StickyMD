@@ -210,7 +210,17 @@ fn readers_and_writers_exclude_each_other_through_the_os_lock() {
         "readers wait for the writer"
     );
     drop(writer);
-    assert!(probe.try_lock().is_ok());
+    // On Unix a lock belongs to the open file description. Another test spawning a
+    // process at this moment holds a forked copy of the writer's descriptor until its
+    // exec closes it, so the release can lag briefly; production waits up to LOCK_WAIT.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while probe.try_lock().is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the writer's lock was never released"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 #[cfg(windows)]
