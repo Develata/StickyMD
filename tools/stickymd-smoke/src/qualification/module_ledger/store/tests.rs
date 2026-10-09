@@ -36,6 +36,14 @@ fn digest(index: usize) -> String {
     format!("{index:064x}")
 }
 
+/// A record whose digest matches the `{}` evidence these tests archive.
+fn record_json(evidence: &str, recorded_at: u64) -> String {
+    let digest = crate::integrity::sha256_bytes(b"{}").unwrap();
+    format!(
+        "{{\"evidence_file\":\"{evidence}\",\"evidence_sha256\":\"{digest}\",\"recorded_at_unix\":{recorded_at}}}"
+    )
+}
+
 /// One record per index; `recorded_at_unix` equals the index so newer is larger.
 fn write_records(store: &LedgerStore, count: usize) {
     for index in 1..=count {
@@ -44,12 +52,29 @@ fn write_records(store: &LedgerStore, count: usize) {
         fs::write(store.evidence(&evidence).unwrap(), b"{}").unwrap();
         let record = store.module_record("g4", &digest(index)).unwrap();
         fs::create_dir_all(record.parent().unwrap()).unwrap();
-        fs::write(
-            record,
-            format!("{{\"evidence_file\":\"{evidence}\",\"recorded_at_unix\":{index}}}"),
-        )
-        .unwrap();
+        fs::write(record, record_json(&evidence, index as u64)).unwrap();
     }
+}
+
+#[test]
+fn evidence_that_no_longer_matches_its_record_stops_reference_scans() {
+    let temp = TempStore::new();
+    let store = temp.store();
+    write_records(&store, 2);
+    assert_eq!(store.module_evidence_documents("g4").unwrap().len(), 2);
+    // Still valid JSON, but not the archived bytes: it must not shrink the reference set.
+    fs::write(
+        store.evidence(&format!("g4-{}.json", digest(1))).unwrap(),
+        b"{\"results\":[]}",
+    )
+    .unwrap();
+    assert!(store.module_evidence_documents("g4").is_err());
+    // A record that is not complete JSON stops pruning as well.
+    let record = store.module_record("g4", &digest(2)).unwrap();
+    let text = fs::read_to_string(&record).unwrap();
+    fs::write(&record, text.trim_end_matches('}')).unwrap();
+    let guard = store.write_guard().unwrap();
+    assert!(store.prune_module(&guard, "g4", &record).is_err());
 }
 
 #[test]
@@ -152,10 +177,7 @@ fn the_record_just_published_survives_equal_or_older_timestamps() {
     .unwrap();
     fs::write(
         &rolled_back,
-        format!(
-            "{{\"evidence_file\":\"g4-{}.json\",\"recorded_at_unix\":0}}",
-            digest(500)
-        ),
+        record_json(&format!("g4-{}.json", digest(500)), 0),
     )
     .unwrap();
     store.prune_module(&guard, "g4", &rolled_back).unwrap();

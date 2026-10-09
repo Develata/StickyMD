@@ -441,6 +441,40 @@ fn diagnostics_cannot_target_the_shared_store() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn a_store_root_redirected_by_a_junction_is_still_reserved() {
+    let clone = ReleaseClone::new();
+    let store = super::LedgerStore::for_repository(&clone.main).unwrap();
+    let real = clone
+        .main
+        .parent()
+        .expect("fixture base")
+        .join("ledger-cache");
+    fs::create_dir_all(&real).unwrap();
+    fs::create_dir_all(store.root().parent().unwrap()).unwrap();
+    // Junctions need no privilege; mklink expects backslash spellings.
+    let link = store.root().to_string_lossy().replace('/', "\\");
+    let status = Command::new("cmd")
+        .args(["/C", "mklink", "/J", &link])
+        .arg(&real)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .expect("start mklink");
+    assert!(status.success(), "create junction");
+    // The real location carries no store segment; it is still the store.
+    let through_real = real
+        .join("modules")
+        .join("g4")
+        .join(format!("{}.json", "0".repeat(64)));
+    assert!(
+        crate::qualification::validate_public_evidence_path(&clone.main, &through_real).is_err()
+    );
+    // Removing the clone removes the junction without following it.
+    drop(clone);
+    let _ = fs::remove_dir_all(&real);
+}
+
 fn write_valid_evidence(root: &Path, module: ModuleId, candidate: &Candidate) {
     let document = match module {
         ModuleId::Resource(group) => {

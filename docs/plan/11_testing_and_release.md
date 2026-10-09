@@ -374,9 +374,11 @@ OS 文件锁（`.lock`，进程退出即释放；等待上限 120 s，超时报�
 归档；截图同样对实际归档的字节计算摘要。刚发布的记录无论时间戳是否并列或回拨都被保留。清理遇到任何不可读
 或无法解析的记录、目录项或 evidence 即停止删除并报告，不把"无法确定是否被引用"当成未引用；截图引用从所有
 保留 evidence 的 `results[].artifacts[]` 结构化提取，不受当前工具 case 列表限制。成功记录发布后清理失败只
-告警，不撤销成功。整个共享存储（含 `.lock`）与旧路径一样是保留路径，按别名解析后的
-`/stickymd/qualification-ledger/` 路径段识别（不依赖 git 查询、忽略大小写），普通 smoke 与诊断的
-`--evidence-file` 不得指向其中：
+告警，不撤销成功。清理所用记录必须是完整、严格可解析的 JSON，用于决定截图引用的 evidence 必须与记录中的
+摘要一致；G5 readiness 只统计每个 case 自身 JSON 对象内的截图。整个共享存储（含 `.lock`）与旧路径一样是
+保留路径：别名解析后的路径含 `/stickymd/qualification-ledger/` 段（忽略大小写），或落在由 `.git` 元数据文件
+（不运行 git）定位、并解析过 junction 的存储根之内，均拒绝；`.git` 存在却无法解释时同样拒绝。普通 smoke 与
+诊断的 `--evidence-file` 不得指向其中：
 
 ```text
 no record for current fingerprint

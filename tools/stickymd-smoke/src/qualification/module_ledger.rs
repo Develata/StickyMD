@@ -100,11 +100,71 @@ pub(super) fn is_success_storage_path(root: &Path, path: &Path) -> bool {
 /// git cannot turn the protection off while an existing store is still on disk.
 fn is_shared_store_path(root: &Path, path: &Path) -> bool {
     // Case-folded: on NTFS a differently cased spelling names the same directory.
-    let target = format!("{}/", normalize(&root.join(path))).to_ascii_lowercase();
-    target.contains(STORE_SEGMENTS)
+    let target = normalize(&root.join(path));
+    if format!("{target}/")
+        .to_ascii_lowercase()
+        .contains(STORE_SEGMENTS)
+    {
+        return true;
+    }
+    // The store directory itself may be a junction to another place, which removes the
+    // segment from the resolved target; compare with the resolved store root as well.
+    match git_common_dir_from_files(root) {
+        Ok(None) => false,
+        Ok(Some(common)) => {
+            let store = normalize(&common.join("stickymd").join("qualification-ledger"));
+            let (target, store) = (target.to_ascii_lowercase(), store.to_ascii_lowercase());
+            target == store
+                || target
+                    .strip_prefix(&store)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        }
+        // A `.git` that cannot be interpreted leaves the store location unknown.
+        Err(_) => true,
+    }
 }
 
 const STORE_SEGMENTS: &str = "/stickymd/qualification-ledger/";
+
+/// The git common directory from `.git` metadata files alone, so the reserved-path
+/// check never depends on running git. `None` when the root has no `.git` at all,
+/// which proves no clone-wide store belongs to it.
+fn git_common_dir_from_files(root: &Path) -> Result<Option<PathBuf>, String> {
+    let dot_git = root.join(".git");
+    let git_dir = match fs::metadata(&dot_git) {
+        Ok(metadata) if metadata.is_dir() => dot_git,
+        Ok(_) => {
+            // A linked worktree: `gitdir: <path>` names its private git directory.
+            let text = fs::read_to_string(&dot_git)
+                .map_err(|error| format!("cannot read {}: {error}", dot_git.display()))?;
+            let pointer = text
+                .trim()
+                .strip_prefix("gitdir:")
+                .ok_or_else(|| format!("{} is not a gitdir file", dot_git.display()))?
+                .trim();
+            let pointer = Path::new(pointer);
+            if pointer.is_absolute() {
+                pointer.to_path_buf()
+            } else {
+                root.join(pointer)
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot inspect {}: {error}", dot_git.display())),
+    };
+    match fs::read_to_string(git_dir.join("commondir")) {
+        Ok(text) => {
+            let common = Path::new(text.trim());
+            Ok(Some(if common.is_absolute() {
+                common.to_path_buf()
+            } else {
+                git_dir.join(common)
+            }))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Some(git_dir)),
+        Err(error) => Err(format!("cannot read git commondir: {error}")),
+    }
+}
 
 pub(super) fn is_within(root: &Path, path: &Path, directory: &str) -> bool {
     let path = normalize(&root.join(path));

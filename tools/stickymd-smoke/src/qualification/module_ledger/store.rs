@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::super::{json, receipt};
+use super::super::receipt;
 
 /// Records kept per module; older records and their unreferenced evidence are removed.
 pub(in crate::qualification) const RETAINED_RECORDS: usize = 8;
@@ -152,12 +152,8 @@ impl LedgerStore {
     ) -> Result<(), String> {
         let mut records = Vec::new();
         for path in record_files(&self.key_directory("modules", module)?)? {
-            let document = receipt::read_receipt(&path)?;
-            records.push((
-                json::u64_field(&document, "recorded_at_unix")?,
-                json::string_field(&document, "evidence_file")?,
-                path,
-            ));
+            let record = self.read_record(&path)?;
+            records.push((record.recorded_at, record.evidence_file, path));
         }
         // The record just published is always retained, whatever its timestamp (equal
         // seconds or a clock moved backwards); the others are kept newest first.
@@ -207,12 +203,49 @@ impl LedgerStore {
     ) -> Result<Vec<String>, String> {
         let mut documents = Vec::new();
         for path in record_files(&self.key_directory("modules", module)?)? {
-            let record = receipt::read_receipt(&path)?;
-            let evidence = self.evidence(&json::string_field(&record, "evidence_file")?)?;
-            documents.push(receipt::read_receipt(&evidence)?);
+            let record = self.read_record(&path)?;
+            let evidence = self.evidence(&record.evidence_file)?;
+            let bytes = fs::read(&evidence)
+                .map_err(|error| format!("cannot read {}: {error}", evidence.display()))?;
+            // A damaged archive could still be valid JSON with fewer references; only
+            // evidence matching its record's digest may decide what cleanup keeps.
+            if receipt::sha256_bytes(&bytes)? != record.evidence_sha256 {
+                return Err(format!(
+                    "ledger evidence {} does not match its record digest",
+                    evidence.display()
+                ));
+            }
+            documents.push(String::from_utf8(bytes).map_err(|error| {
+                format!(
+                    "ledger evidence {} is not UTF-8: {error}",
+                    evidence.display()
+                )
+            })?);
         }
         Ok(documents)
     }
+
+    /// The fields cleanup relies on, from a strict parse of the whole record.
+    fn read_record(&self, path: &Path) -> Result<RecordSummary, String> {
+        let text = receipt::read_receipt(path)?;
+        let parsed = crate::release::json::parse(&text)
+            .map_err(|error| format!("ledger record {} is malformed: {error}", path.display()))?;
+        let evidence_file = parsed.field("evidence_file")?.string()?.to_owned();
+        self.evidence(&evidence_file)?;
+        let evidence_sha256 = parsed.field("evidence_sha256")?.string()?.to_owned();
+        receipt::validate_sha256(&evidence_sha256, "ledger record evidence SHA-256")?;
+        Ok(RecordSummary {
+            recorded_at: parsed.field("recorded_at_unix")?.unsigned()?,
+            evidence_file,
+            evidence_sha256,
+        })
+    }
+}
+
+struct RecordSummary {
+    recorded_at: u64,
+    evidence_file: String,
+    evidence_sha256: String,
 }
 
 /// Published `<sha256>.json` records; temporaries and foreign names are ignored.
