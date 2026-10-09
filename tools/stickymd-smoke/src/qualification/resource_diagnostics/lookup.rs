@@ -4,7 +4,7 @@
 use super::{DIRECTORY, Identity, Store, now, read_bounded, record};
 use crate::{
     evidence::EvidenceResult,
-    qualification::{module_ledger, receipt},
+    qualification::{path_identity, receipt},
     release::json,
     resource_plan::diagnostic::Unit,
 };
@@ -119,9 +119,9 @@ fn latest_path(root: &Path, unit: Unit) -> Result<PathBuf, String> {
 }
 
 pub(super) fn checked(root: &Path, path: PathBuf) -> Result<PathBuf, String> {
-    if !module_ledger::is_within(root, &path, "target")
-        || !module_ledger::is_within(root, &path, DIRECTORY)
-        || module_ledger::is_within(root, &path, "dist")
+    if !path_identity::is_within(root, &path, "target")
+        || !path_identity::is_within(root, &path, DIRECTORY)
+        || path_identity::is_within(root, &path, "dist")
     {
         return Err("diagnostic cache path escaped its target directory".into());
     }

@@ -1,7 +1,8 @@
 //! Per-group resource success promotion and compatible reuse.
 //! plan_ref: docs/plan/11_testing_and_release.md#resource-module-qualification
 
-use super::module_ledger::{self, ModuleId, fingerprint};
+use super::module_ledger::{self, fingerprint};
+use super::module_registry::ModuleId;
 use super::{json, receipt};
 use crate::cli::ResourceModule;
 use crate::evidence::{self, EvidenceResult, EvidenceStatus};

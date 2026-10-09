@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use super::exact_readiness;
-use super::module_ledger::ModuleId;
+use super::module_registry::ModuleId;
 
 pub(super) const G3_RECEIPT: &str = "dist/evidence/g3-exact-qualification.json";
 const EXPECTED_CASES: [&str; 5] = ["G3-01", "G3-02", "G3-03", "G3-04", "G3-05"];

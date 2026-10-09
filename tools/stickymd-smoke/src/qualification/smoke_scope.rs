@@ -1,16 +1,17 @@
 //! Formal output paths require the complete corresponding task plan.
 //! plan_ref: docs/plan/11_testing_and_release.md#resource-module-qualification
 
-use super::module_ledger::{self, ModuleId};
+use super::module_registry::{self, ModuleId};
+use super::path_identity;
 use crate::cli::{Options, Phase, Selection};
 use std::path::Path;
 
 pub(crate) const RESOURCE_SUMMARY: &str = "dist/evidence/resources-qualification.json";
 
 pub(crate) fn is_formal_measurement_path(root: &Path, path: &Path) -> bool {
-    module_ledger::matches_receipt(root, path, RESOURCE_SUMMARY)
+    path_identity::matches_receipt(root, path, RESOURCE_SUMMARY)
         || matches!(
-            module_ledger::module_for_receipt(root, path),
+            module_registry::module_for_receipt(root, path),
             Some(ModuleId::Runtime | ModuleId::Performance)
         )
 }
@@ -29,8 +30,8 @@ fn validate_with_filter(root: &Path, options: &Options, filtered: bool) -> Resul
     };
     super::validate_public_evidence_path(root, path)
         .map_err(|error| format!("formal qualification output: {error}"))?;
-    let resources = module_ledger::matches_receipt(root, path, RESOURCE_SUMMARY);
-    let module = module_ledger::module_for_receipt(root, path);
+    let resources = path_identity::matches_receipt(root, path, RESOURCE_SUMMARY);
+    let module = module_registry::module_for_receipt(root, path);
     if !resources && module.is_none() {
         if options.resource_resume {
             let ignored = std::process::Command::new("git")
@@ -39,7 +40,7 @@ fn validate_with_filter(root: &Path, options: &Options, filtered: bool) -> Resul
                 .current_dir(root)
                 .status()
                 .map_err(|e| e.to_string())?;
-            if !module_ledger::is_within(root, path, "target") || !ignored.success() {
+            if !path_identity::is_within(root, path, "target") || !ignored.success() {
                 return Err("diagnostic resume requires an ignored evidence path under target/ so checkpoints cannot change source identity".into());
             }
         }

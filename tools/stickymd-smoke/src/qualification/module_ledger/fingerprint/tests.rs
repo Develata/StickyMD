@@ -1,7 +1,7 @@
 //! Input mutation regressions for qualification dependencies.
 
 use super::{GLOBAL, calculate, path_domains};
-use crate::qualification::module_ledger::ModuleId;
+use crate::qualification::module_registry::ModuleId;
 use std::fs;
 use std::process::Command;
 
@@ -70,7 +70,7 @@ fn measurement_fixture_bytes_invalidate_only_their_qualification_module() {
 #[test]
 fn g5_image_bytes_invalidate_g5_without_invalidating_other_groups() {
     let root = fixture();
-    let before = super::super::modules()
+    let before = crate::qualification::module_registry::modules()
         .map(|module| (module, calculate(&root, module).unwrap()))
         .collect::<Vec<_>>();
     fs::write(
@@ -117,7 +117,7 @@ fn shared_window_and_process_adapters_invalidate_every_consumer() {
         "tools/stickymd-smoke/src/managed_process.rs",
         "tools/stickymd-smoke/src/window_control/input.rs",
     ] {
-        let before = super::super::modules()
+        let before = crate::qualification::module_registry::modules()
             .map(|module| (module, calculate(&root, module).unwrap()))
             .collect::<Vec<_>>();
         fs::write(root.join(path), "changed adapter").unwrap();
@@ -156,7 +156,7 @@ fn resource_group_harness_only_invalidates_its_group() {
             Window,
         ),
     ] {
-        let before = super::super::modules()
+        let before = crate::qualification::module_registry::modules()
             .map(|module| (module, calculate(&root, module).unwrap()))
             .collect::<Vec<_>>();
         fs::write(root.join(path), "changed").unwrap();
@@ -178,7 +178,7 @@ fn candidate_planning_and_resource_cohort_changes_invalidate_their_consumers() {
         ("tools/stickymd-smoke/src/runtime/resources/cohort.rs", true),
         ("tools/stickymd-smoke/src/runner/candidate_input.rs", false),
     ] {
-        let before = super::super::modules()
+        let before = crate::qualification::module_registry::modules()
             .map(|module| (module, calculate(&root, module).unwrap()))
             .collect::<Vec<_>>();
         fs::write(root.join(path), "changed verification behavior").unwrap();
@@ -246,7 +246,7 @@ fn fixture() -> std::path::PathBuf {
 fn planning_enumeration_preserves_digests_but_fresh_validation_detects_new_inputs() {
     let root = fixture();
     let inputs = super::PlanningInputs::read(&root).unwrap();
-    let modules = super::super::modules().collect::<Vec<_>>();
+    let modules = crate::qualification::module_registry::modules().collect::<Vec<_>>();
     let planned = inputs.calculate_many(&root, &modules).unwrap();
     for (module, digest) in modules.into_iter().zip(planned.digests) {
         assert_eq!(digest, calculate(&root, module).unwrap());
@@ -336,7 +336,7 @@ fn batched_fingerprints_preserve_v1_bytes_with_bounded_shared_reads() {
     fs::write(root.join("binary input.bin"), [0, 255, 13, 10, 0]).unwrap();
     fs::write(root.join("large.bin"), vec![137; 131_073]).unwrap();
     let inputs = super::PlanningInputs::read(&root).unwrap();
-    let modules = super::super::modules().collect::<Vec<_>>();
+    let modules = crate::qualification::module_registry::modules().collect::<Vec<_>>();
     let batch = inputs.calculate_many(&root, &modules).unwrap();
     let mut expected_files = 0;
     let mut expected_bytes = 0;

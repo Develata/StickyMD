@@ -8,7 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::super::json;
 use super::status::success_status;
-use super::{ModuleId, compatible_success, modules, record_success};
+use super::{ModuleId, compatible_success, record_success};
+use crate::qualification::module_registry::modules;
 use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
 
 /// A main worktree plus an optional linked worktree, both owned by this test.

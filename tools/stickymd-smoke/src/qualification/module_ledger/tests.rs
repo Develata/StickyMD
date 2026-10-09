@@ -70,7 +70,9 @@ fn canonical_reserved_paths_are_rejected_before_tasks_or_evidence_writes() {
         "dist/evidence/module-success/evidence/resources-window-fixture.json",
     ] {
         let alias = canonical_root.join(receipt);
-        assert!(super::matches_receipt(&root, &alias, receipt));
+        assert!(crate::qualification::path_identity::matches_receipt(
+            &root, &alias, receipt
+        ));
         assert!(crate::qualification::validate_public_evidence_path(&root, &alias).is_err());
         crate::atomic_evidence::write(&root.join(receipt), b"previous success").unwrap();
         let alias = root.join(receipt).canonicalize().unwrap();
@@ -87,7 +89,7 @@ fn canonical_reserved_paths_are_rejected_before_tasks_or_evidence_writes() {
     }
     let runtime = canonical_root.join(ModuleId::Runtime.receipt());
     assert_eq!(
-        super::module_for_receipt(&root, &runtime),
+        crate::qualification::module_registry::module_for_receipt(&root, &runtime),
         Some(ModuleId::Runtime)
     );
     let options = crate::cli::Options::parse([
@@ -120,7 +122,7 @@ fn evidence_directory_aliases_cannot_bypass_reserved_paths_before_file_creation(
             String::from_utf8_lossy(&output.stderr)
         );
         let short_root = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim());
-        assert!(super::matches_receipt(
+        assert!(crate::qualification::path_identity::matches_receipt(
             &root,
             &short_root.join(ModuleId::Runtime.receipt()),
             ModuleId::Runtime.receipt()
@@ -149,7 +151,10 @@ fn evidence_directory_aliases_cannot_bypass_reserved_paths_before_file_creation(
         .is_ok()
     );
     assert_eq!(
-        super::module_for_receipt(&root, &alias.join("runtime-qualification.json")),
+        crate::qualification::module_registry::module_for_receipt(
+            &root,
+            &alias.join("runtime-qualification.json")
+        ),
         Some(ModuleId::Runtime)
     );
     let resume_path = alias.join("resources-qualification.json");
@@ -205,7 +210,7 @@ fn win32_aliases_are_reserved_without_changing_verbatim_path_identity() {
         .canonicalize()
         .unwrap()
         .join("dist/evidence/resources/window.json.");
-    assert!(!super::matches_receipt(
+    assert!(!crate::qualification::path_identity::matches_receipt(
         &root,
         &verbatim,
         crate::cli::ResourceModule::Window.receipt()
@@ -314,7 +319,7 @@ fn resource_failures_preserve_completed_groups_and_old_aggregate_is_not_imported
     let old = root.join("dist/evidence/resources-qualification.json");
     fs::write(&old, "legacy aggregate").unwrap();
     super::record_for_receipt(&root, &old).unwrap();
-    assert!(super::module_for_receipt(&root, &old).is_none());
+    assert!(crate::qualification::module_registry::module_for_receipt(&root, &old).is_none());
     assert!(
         compatible_success(&root, ModuleId::Resource(Window))
             .unwrap()

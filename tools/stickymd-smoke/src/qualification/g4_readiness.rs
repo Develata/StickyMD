@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use super::exact_readiness;
-use super::module_ledger::ModuleId;
+use super::module_registry::ModuleId;
 
 pub(super) const G4_RECEIPT: &str = "dist/evidence/g4-exact-qualification.json";
 const EXPECTED_CASES: [&str; 6] = ["G4-01", "G4-02", "G4-03", "G4-04", "G4-05", "G4-06"];

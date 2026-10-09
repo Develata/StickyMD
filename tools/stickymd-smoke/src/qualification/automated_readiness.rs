@@ -4,7 +4,8 @@
 
 use std::path::Path;
 
-use super::module_ledger::{self, ModuleId};
+use super::module_ledger;
+use super::module_registry::ModuleId;
 use super::receipt::Candidate;
 use super::source_freeze::SourceFreeze;
 use super::{json, receipt};
@@ -170,6 +171,7 @@ fn check_common(
 mod tests {
     use super::{ARTIFACT_RECEIPTS, HEADLESS_CI_RECEIPT, check};
     use crate::qualification::module_ledger;
+    use crate::qualification::module_registry::ModuleId;
     use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
     use crate::qualification::source_freeze::SourceFreeze;
     use std::fs;
@@ -214,7 +216,7 @@ mod tests {
 
         // A window sentinel (or aggregate PASS) cannot stand in for any missing group.
         for group in crate::resource_plan::GROUPS {
-            let module = module_ledger::ModuleId::Resource(group);
+            let module = ModuleId::Resource(group);
             let path = module_ledger::store::LedgerStore::for_repository(&root)
                 .unwrap()
                 .module_record(
@@ -246,7 +248,7 @@ mod tests {
         contract: super::ArtifactReceiptContract,
         exe: &str,
     ) -> String {
-        use module_ledger::ModuleId;
+        use crate::qualification::module_registry::ModuleId;
         if let ModuleId::Resource(group) = contract.module {
             let result = crate::resource_plan::tests::valid_resource_result(group);
             let base = crate::resource_plan::tests::document(group, &result);

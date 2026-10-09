@@ -5,7 +5,8 @@
 use std::path::Path;
 
 use super::json;
-use super::module_ledger::{self, ModuleId};
+use super::module_ledger;
+use super::module_registry::ModuleId;
 
 pub(super) fn check(
     root: &Path,
@@ -159,7 +160,8 @@ fn result_fields(document: &str, key: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::check;
-    use crate::qualification::module_ledger::{self, ModuleId};
+    use crate::qualification::module_ledger;
+    use crate::qualification::module_registry::ModuleId;
     use crate::qualification::receipt::{self, Candidate};
     use std::fs;
     use std::process::Command;

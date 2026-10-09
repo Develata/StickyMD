@@ -5,7 +5,8 @@
 use std::path::Path;
 
 use super::store::LedgerStore;
-use super::{CompatibleSuccess, ModuleId, compatible_success_for_input, fingerprint, modules};
+use super::{CompatibleSuccess, ModuleId, compatible_success_for_input, fingerprint};
+use crate::qualification::module_registry::modules;
 use crate::qualification::receipt::{self, Candidate};
 
 pub(in crate::qualification) fn print_status(root: &Path) -> Result<(), String> {
