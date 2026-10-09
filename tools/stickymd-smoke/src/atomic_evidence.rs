@@ -25,14 +25,18 @@ pub(crate) fn write(path: &Path, contents: &[u8]) -> Result<(), String> {
 }
 
 fn temporary_path(target: &Path) -> Result<PathBuf, String> {
-    // Concurrent writers of one target in one process can read the same clock value
-    // (Windows clock ticks are coarse under load); the sequence keeps temporaries
-    // distinct so the losing writer does not fail on CreateNew.
-    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("system clock is before Unix epoch: {error}"))?
         .as_nanos();
+    temporary_path_at(target, nonce)
+}
+
+fn temporary_path_at(target: &Path, nonce: u128) -> Result<PathBuf, String> {
+    // Concurrent writers of one target in one process can read the same clock value
+    // (Windows clock ticks are coarse under load); the sequence keeps temporaries
+    // distinct so the losing writer does not fail on CreateNew.
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let name = target
         .file_name()
@@ -171,6 +175,14 @@ mod tests {
     use super::write;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn an_identical_clock_value_still_yields_distinct_temporaries() {
+        let target = std::env::temp_dir().join("stickymd-temporary-name-probe.json");
+        let first = super::temporary_path_at(&target, 42).unwrap();
+        let second = super::temporary_path_at(&target, 42).unwrap();
+        assert_ne!(first, second);
+    }
 
     #[test]
     fn concurrent_writers_of_one_target_never_share_a_temporary_path() {

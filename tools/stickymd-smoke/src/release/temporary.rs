@@ -14,19 +14,11 @@ pub(super) struct TemporaryDirectory {
 }
 impl TemporaryDirectory {
     pub fn new(label: &str) -> Result<Self, String> {
-        // Same-process callers can read the same coarse clock value; the sequence keeps
-        // concurrent scratch directories distinct instead of failing create_dir.
-        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
-        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "stickymd-{label}-{}-{nonce}-{sequence}",
-            std::process::id()
-        ));
-        Self::create(path)
+        Self::create(scratch_path(label, nonce))
     }
     pub fn create(path: PathBuf) -> Result<Self, String> {
         fs::create_dir(&path)
@@ -63,5 +55,27 @@ impl Drop for TemporaryDirectory {
                 self.path.display()
             );
         }
+    }
+}
+
+/// Same-process callers can read the same coarse clock value; the sequence keeps
+/// concurrent scratch directories distinct instead of failing `create_dir`.
+fn scratch_path(label: &str, nonce: u128) -> PathBuf {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "stickymd-{label}-{}-{nonce}-{sequence}",
+        std::process::id()
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn an_identical_clock_value_still_yields_distinct_scratch_directories() {
+        assert_ne!(
+            super::scratch_path("probe", 7),
+            super::scratch_path("probe", 7)
+        );
     }
 }
