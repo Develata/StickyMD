@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::{CompatibleSuccess, ModuleId, compatible_success, record_success, success_status};
+use super::status::success_status;
+use super::{CompatibleSuccess, ModuleId, compatible_success, record_success};
 use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
 
 #[test]

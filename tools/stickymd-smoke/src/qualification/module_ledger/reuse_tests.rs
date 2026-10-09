@@ -7,7 +7,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::super::json;
-use super::{ModuleId, compatible_success, modules, record_success, success_status};
+use super::status::success_status;
+use super::{ModuleId, compatible_success, modules, record_success};
 use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
 
 /// A main worktree plus an optional linked worktree, both owned by this test.
@@ -479,7 +480,7 @@ fn a_store_root_redirected_by_a_junction_is_still_reserved() {
 fn git_metadata_pointers_must_name_existing_directories() {
     let clone = ReleaseClone::new();
     let linked = clone.add_linked_worktree();
-    let common = super::git_common_dir_from_files(linked)
+    let common = super::paths::git_common_dir_from_files(linked)
         .unwrap()
         .expect("linked worktree has git metadata");
     assert_eq!(
@@ -487,7 +488,7 @@ fn git_metadata_pointers_must_name_existing_directories() {
         clone.main.join(".git").canonicalize().unwrap()
     );
     assert_eq!(
-        super::git_common_dir_from_files(&clone.main).unwrap(),
+        super::paths::git_common_dir_from_files(&clone.main).unwrap(),
         Some(clone.main.join(".git"))
     );
 
@@ -513,7 +514,7 @@ fn git_metadata_pointers_must_name_existing_directories() {
             fs::write(private.join("commondir"), text).unwrap();
         }
         assert!(
-            super::git_common_dir_from_files(&broken).is_err(),
+            super::paths::git_common_dir_from_files(&broken).is_err(),
             "{gitfile:?} {commondir:?}"
         );
         // An uninterpretable `.git` leaves the store unknown: diagnostics are refused.
@@ -543,7 +544,7 @@ fn a_dangling_dot_git_link_is_not_mistaken_for_no_repository() {
         .status()
         .expect("start mklink");
     assert!(status.success(), "create junction");
-    assert!(super::git_common_dir_from_files(&root).is_err());
+    assert!(super::paths::git_common_dir_from_files(&root).is_err());
     assert!(
         crate::qualification::validate_public_evidence_path(
             &root,
