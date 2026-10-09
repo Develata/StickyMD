@@ -4,6 +4,13 @@
 [`docs/plan/11_testing_and_release.md`](plan/11_testing_and_release.md) 为准；每次发布的 source、artifact、
 收据和 USER authority 必须重新建立，不能从旧版本继承。
 
+## v0.1.3 准备中
+
+本次只准备现有 `$` 按钮独立裸等号行连接的补丁版本。版本提交、CI、候选构建和核验，
+以及门槛通过后的 tag 已获 USER 授权；draft/正式 Release 未授权。新 source 必须重新建立
+证据，readiness 未达 `READY` 时不晋升 tag。详见[准备记录](report/2026-10-09-v0.1.3-release-preparation.md)
+和[发布说明](release-notes/0.1.3.md)。以下已发布版本记录保持各自身份。
+
 ## v0.1.2 已发布记录
 
 - Release：[StickyMD v0.1.2](https://github.com/Develata/StickyMD/releases/tag/v0.1.2)
