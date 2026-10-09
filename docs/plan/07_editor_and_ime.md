@@ -49,18 +49,30 @@
 
 - 顶部工具栏提供一个紧凑的 `Convert AI math delimiters` typed action；Interaction Shell
   使用紧凑、清晰的 `$` 标识；Interaction Shell 只能发出 intent，不得直接改写 `DocumentState`。
-- 每次 action 必须从当前 generation 的 `DocumentSnapshot` 经现有 Comrak semantic pipeline
+- action 的第一步必须从当前 generation 的 `DocumentSnapshot` 经现有 Comrak semantic pipeline
   识别真正的 math node，只转换原始 delimiter 为 `\(...\)` 或 `\[...\]` 的节点；不得用
   regex、全局 replace、自有 math parser、stale Preview AST 或 code/literal 猜测替代 Comrak。
 - `\(SOURCE\)` 转为 `$SOURCE$`；`\[SOURCE\]` 转为 `$$SOURCE$$`。只替换 delimiter bytes，
   inner source（含空白、换行、Unicode 与 escape）必须 byte-for-byte 保持；既有 dollar math、
-  inline/fenced code、普通讨论文本与 malformed delimiter 不变。
+  inline/fenced code、普通讨论文本与 malformed delimiter 不变。此约束属于分隔符转换步骤。
+- 分隔符转换后，显式调用独立的纯文本等号行连接能力；它不进入 Markdown/RaTeX 或自动
+  Preview 管线，不与分隔符转换实现互相依赖，可独立移除或用于其它显式文本动作。
+  仅处理完整、未转义的 `$$...$$` 对：中间行 trim 后恰为裸 `=`，上下紧邻行均非空且
+  不是另一个孤立 `=` 时，删除等号两侧连接处的换行及空白。`a\n=\nb\n=\nc` 可变为
+  `a=b=c`；其它换行、块首尾孤立等号、连续等号行、`\=` 和其它运算符保持原文。
+- 等号连接用 Comrak 识别代码、HTML、链接及非 display-dollar 数学的保护范围；仅此文本
+  动作的临时扫描关闭 Setext 识别，以免独占 `=` 抢先切断代码/数学范围。现有 parser
+  选项与 Preview 语义不变。定位完整 `$$` 对后不跨块或空行连接；未闭合块不改写。
+  含未转义 `%` 注释、显式换行（`\\`、`\cr`、`\crcr`、`\newline`、`\linebreak`、
+  `\displaybreak`）、反斜杠空白或 `\begin`/`\end` 环境命令的块整体跳过。
 - Source/Split 存在非空 Source selection 时，只转换 source range 完全包含于 normalized
   selection 的 math node；部分相交与 selection 外节点不动。Source selection 为空或纯
-  Preview 模式时转换整篇当前 canonical document。
-- 一次 parse 收集互不重叠 replacements，按 source range 从后向前构造一个 replacement，
+  Preview 模式时转换整篇当前 canonical document。等号连接沿用完整块包含规则；两步之间
+  必须映射 selection/scope，最终 caret/selection 也映射到转换后的 UTF-8 byte boundary。
+- 分隔符步骤一次 parse；等号步骤只在存在候选标记/等号行时做独立的保护范围扫描。
+  每步收集互不重叠修改，顺序构造结果，不逐公式修改 canonical document；
   最终只经单一 canonical mutation gateway 提交一次用户事务：generation 最多递增一次，
-  任意数量节点共用一个 Undo/Redo step，并正常触发 dirty/autosave/Preview。零匹配必须是
+  两步的任意数量修改共用一个 Undo/Redo step，并正常触发 dirty/autosave/Preview。零匹配必须是
   完整 no-op（text/generation/undo/dirty 均不变）。
 - 1 MiB / 1000 math-node Release smoke 的 p95 engineering check 为 `< 50 ms`；超过时先审计
   重复 parse、全文 clone 与逐 formula mutation，不引入增量 Markdown parser 或后台 runtime。
