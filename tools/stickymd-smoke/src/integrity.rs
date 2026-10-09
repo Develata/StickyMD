@@ -194,6 +194,20 @@ mod tests {
     }
 
     #[test]
+    fn in_memory_hash_matches_file_hash_beyond_one_pipe_buffer() {
+        assert_eq!(
+            sha256_bytes(b"abc").unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        // Larger than a pipe buffer, so the portable adapter must stream while waiting.
+        let large = vec![0x5a_u8; 3 * 1024 * 1024 + 7];
+        assert_eq!(
+            sha256_bytes(&large).unwrap(),
+            hash_fixture("large.bin", &large).unwrap()
+        );
+    }
+
+    #[test]
     fn empty_file_hash_matches_the_original_powershell_adapter() {
         assert_eq!(
             hash_fixture("empty.bin", b"").unwrap(),
