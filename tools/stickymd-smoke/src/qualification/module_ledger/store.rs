@@ -120,6 +120,14 @@ impl LedgerStore {
                 self.root.display()
             )
         })?;
+        // Opening follows links; refuse a linked lock file before touching its target.
+        let lock = self.root.join(".lock");
+        if fs::symlink_metadata(&lock).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Err(format!(
+                "ledger store lock is a link and is not trusted: {}",
+                lock.display()
+            ));
+        }
         OpenOptions::new()
             .read(true)
             .write(true)

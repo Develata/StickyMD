@@ -213,6 +213,59 @@ fn readers_and_writers_exclude_each_other_through_the_os_lock() {
     assert!(probe.try_lock().is_ok());
 }
 
+#[cfg(windows)]
+#[test]
+fn a_linked_lock_file_is_refused_before_it_is_opened() {
+    let temp = TempStore::new();
+    let store = temp.store();
+    fs::create_dir_all(store.root()).unwrap();
+    let outside = temp.0.with_extension("outside-lock");
+    let link = store.root().join(".lock");
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(&outside)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .expect("start mklink");
+    assert!(status.success(), "create junction");
+    assert!(store.read_guard().is_err());
+    assert!(store.write_guard().is_err());
+    assert!(!outside.exists(), "the link target must not be created");
+}
+
+/// Opt-in measurement for the per-guard link scan (`--ignored --nocapture`).
+#[test]
+#[ignore = "explicit timing profile for the store link scan"]
+fn link_scan_profile() {
+    let temp = TempStore::new();
+    let store = temp.store();
+    for module in 0..12 {
+        let directory = store.root().join("modules").join(format!("m{module}"));
+        fs::create_dir_all(&directory).unwrap();
+        for record in 0..8 {
+            fs::write(directory.join(format!("{}.json", digest(record))), b"{}").unwrap();
+        }
+    }
+    for kind in ["evidence", "artifacts"] {
+        let directory = store.root().join(kind);
+        fs::create_dir_all(&directory).unwrap();
+        for index in 0..400 {
+            fs::write(directory.join(format!("{kind}-{index}")), b"x").unwrap();
+        }
+    }
+    let rounds = 50;
+    let started = std::time::Instant::now();
+    for _ in 0..rounds {
+        drop(store.read_guard().unwrap());
+    }
+    println!(
+        "LINK_SCAN_PROFILE entries={} mean_ms={:.3}",
+        12 * 8 + 800,
+        started.elapsed().as_secs_f64() * 1000.0 / f64::from(rounds)
+    );
+}
+
 #[test]
 fn keys_and_digests_are_validated_before_becoming_paths() {
     let store = TempStore::new().store();

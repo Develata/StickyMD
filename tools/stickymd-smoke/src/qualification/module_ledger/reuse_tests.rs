@@ -530,6 +530,32 @@ fn git_metadata_pointers_must_name_existing_directories() {
 
 #[cfg(windows)]
 #[test]
+fn a_dangling_dot_git_link_is_not_mistaken_for_no_repository() {
+    let clone = ReleaseClone::new();
+    let root = clone.main.parent().unwrap().join("dangling-dot-git");
+    fs::create_dir_all(&root).unwrap();
+    let link = root.join(".git");
+    let status = Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(root.join("missing-target"))
+        .stdout(std::process::Stdio::null())
+        .status()
+        .expect("start mklink");
+    assert!(status.success(), "create junction");
+    assert!(super::git_common_dir_from_files(&root).is_err());
+    assert!(
+        crate::qualification::validate_public_evidence_path(
+            &root,
+            Path::new("target/diagnostics/run.json")
+        )
+        .is_err()
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
 fn a_link_below_the_store_root_makes_the_store_refuse_to_operate() {
     let clone = ReleaseClone::new();
     let first = candidate("0.1.0", "c", "d");

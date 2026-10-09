@@ -144,19 +144,30 @@ fn git_common_dir_from_files(root: &Path) -> Result<Option<PathBuf>, String> {
                 .trim();
             existing_directory(root, pointer, "gitdir")?
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        // Only a truly absent entry proves there is no store; a dangling link is not absence.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !entry_exists(&dot_git) => {
+            return Ok(None);
+        }
         Err(error) => return Err(format!("cannot inspect {}: {error}", dot_git.display())),
     };
-    match fs::read_to_string(git_dir.join("commondir")) {
+    let commondir = git_dir.join("commondir");
+    match fs::read_to_string(&commondir) {
         Ok(text) => Ok(Some(existing_directory(
             &git_dir,
             text.trim(),
             "commondir",
         )?)),
         // A gitfile may name the repository itself (`--separate-git-dir`).
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Some(git_dir)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !entry_exists(&commondir) => {
+            Ok(Some(git_dir))
+        }
         Err(error) => Err(format!("cannot read git commondir: {error}")),
     }
+}
+
+/// Whether a directory entry exists at all, without following a link it may be.
+fn entry_exists(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
 }
 
 /// A non-empty pointer that resolves to an existing directory; anything else leaves
