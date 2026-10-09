@@ -153,3 +153,29 @@ v0.1.3 预检和本轮完整测试各出现一次
 
 plan 11 `#module-success-ledger` 更新存储位置、按指纹记录、规范化与文档分类、G5 归档和 origin 比较；
 phase-14 验收更新 P14-A35 并新增 P14-A67..A69；coverage matrix 与 release checklist 同步。
+
+## 最终状态（2026-10-09，`972aad4..7965350`）
+
+本节以追加方式更正前文已被后续修正取代的表述，前文保持原样。
+
+- **范围**：U1 完成，共 9 个提交（8 个修正 + 1 个按职责拆分）。根因 1、2 与两处读取路径已修复；U2（人工项）与
+  根因 4 维持"未纳入本次的部分"所述状态，未开始实施。
+- **取代"第一阶段"中的保留规则**：24 小时 mtime 保护与同指纹立即删除已在第一轮审查后移除。现行规则是
+  存储级 OS 锁下每模块保留最近 8 份记录，并始终保留刚发布的记录；任何记录、目录项或 evidence 不可读或摘要
+  不符时，清理停止且不删除。
+- **取代"验证"中的计数**：`cargo test -p stickymd-smoke --locked` 380 + 25 PASS，16 ignored（显式计时
+  profile 与真实环境用例，未计为执行）；`cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings`
+  PASS；`cargo fmt -p stickymd-smoke --check` PASS；`tools/smoke/phase-00.ps1` PASS。
+- **真实 CLI**：主工作区 `cargo run -p stickymd-smoke --locked -- qualification modules` 输出
+  `LEDGER_STORE=E:/gitclone/StickyMD/.git\stickymd\qualification-ledger`，10 个功能模块均为
+  `RUN_REQUIRED REASON=NO_LAST_SUCCESS`。这是预期结果：存储为空，第一次使用新工具的版本需要一次全量基线。
+  共享存储不存在时，该命令不会创建它。
+- **结构**：`module_ledger.rs` 拆为记录与查找权威（424 行）、`paths.rs`（路径身份与保留路径，202 行）、
+  `status.rs`（只读状态报告，73 行），另有 `store.rs`（387 行）和 `fingerprint/normalize.rs`（415 行），均低于
+  约 500 行的审视线。调用方通过 re-export 不变。
+- **审查**：gpt-6-astra max 共五轮，第四、五轮结论 PASS / no blocker；拆分提交为纯移动，未单独送审。
+- **未验证**：
+  - 分支未推送，Windows CI 未运行。
+  - junction 回归依赖 runner 上的 `cmd /C mklink /J`。
+  - 并发发布偶发失败的根因仍属推断。
+  - 真实候选上的桌面资格化与人工验收均未执行。
