@@ -398,6 +398,8 @@ fn legacy_digest(
     output.write_all(&[0]).unwrap();
     let mut files = 0;
     let mut bytes = 0;
+    // Same v2 semantics as the batch: module digests see normalized manifests.
+    let normalizer = module.and_then(|_| super::normalize::VersionNormalizer::read(root, tracked));
     for relative in tracked {
         if module.is_some_and(|m| path_domains(relative) & super::domains(m) == 0) {
             continue;
@@ -408,6 +410,19 @@ fn legacy_digest(
             .unwrap();
         output.write_all(name).unwrap();
         let source = root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+        if let Some(normalizer) = normalizer.as_ref()
+            && super::normalize::VersionNormalizer::applies_to(relative)
+        {
+            let raw = fs::read(&source).unwrap();
+            let content = normalizer.normalize(relative, &raw);
+            output
+                .write_all(&(content.len() as u64).to_le_bytes())
+                .unwrap();
+            output.write_all(&content).unwrap();
+            bytes += raw.len() as u64;
+            files += 1;
+            continue;
+        }
         let length = source.metadata().unwrap().len();
         output.write_all(&length.to_le_bytes()).unwrap();
         let mut input = fs::File::open(source).unwrap();

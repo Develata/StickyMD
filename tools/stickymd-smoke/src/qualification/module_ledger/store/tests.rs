@@ -64,7 +64,10 @@ fn pruning_keeps_the_newest_records_and_exactly_their_evidence() {
     )
     .unwrap();
     let guard = store.write_guard().unwrap();
-    store.prune_module(&guard, "g4").unwrap();
+    let newest = store
+        .module_record("g4", &digest(RETAINED_RECORDS + 3))
+        .unwrap();
+    store.prune_module(&guard, "g4", &newest).unwrap();
     for index in 1..=RETAINED_RECORDS + 3 {
         let kept = index > 3;
         assert_eq!(
@@ -99,13 +102,69 @@ fn an_unreadable_record_stops_cleanup_without_deleting_anything() {
     let orphan = store.evidence(&format!("g4-{}.json", digest(77))).unwrap();
     fs::write(&orphan, b"{}").unwrap();
     let guard = store.write_guard().unwrap();
-    assert!(store.prune_module(&guard, "g4").is_err());
+    let newest = store
+        .module_record("g4", &digest(RETAINED_RECORDS + 2))
+        .unwrap();
+    assert!(store.prune_module(&guard, "g4", &newest).is_err());
     for index in 1..=RETAINED_RECORDS + 2 {
         assert!(store.module_record("g4", &digest(index)).unwrap().is_file());
     }
     assert!(
         orphan.is_file(),
         "unknown references are never treated as unused"
+    );
+}
+
+#[test]
+fn the_record_just_published_survives_equal_or_older_timestamps() {
+    let temp = TempStore::new();
+    let store = temp.store();
+    write_records(&store, RETAINED_RECORDS + 2);
+    // Equal seconds: the published record sorts last by path among the ties.
+    for index in 1..=RETAINED_RECORDS + 2 {
+        let record = store.module_record("g4", &digest(index)).unwrap();
+        let text = fs::read_to_string(&record).unwrap();
+        fs::write(
+            &record,
+            text.replace(
+                &format!("\"recorded_at_unix\":{index}}}"),
+                "\"recorded_at_unix\":5}",
+            ),
+        )
+        .unwrap();
+    }
+    let published = store
+        .module_record("g4", &digest(RETAINED_RECORDS + 2))
+        .unwrap();
+    let guard = store.write_guard().unwrap();
+    store.prune_module(&guard, "g4", &published).unwrap();
+    assert!(
+        published.is_file(),
+        "a published record is never pruned on a tie"
+    );
+
+    // A clock moved backwards: the newest publication carries the oldest timestamp.
+    let rolled_back = store.module_record("g4", &digest(500)).unwrap();
+    fs::write(
+        store.evidence(&format!("g4-{}.json", digest(500))).unwrap(),
+        b"{}",
+    )
+    .unwrap();
+    fs::write(
+        &rolled_back,
+        format!(
+            "{{\"evidence_file\":\"g4-{}.json\",\"recorded_at_unix\":0}}",
+            digest(500)
+        ),
+    )
+    .unwrap();
+    store.prune_module(&guard, "g4", &rolled_back).unwrap();
+    assert!(rolled_back.is_file());
+    assert!(
+        store
+            .evidence(&format!("g4-{}.json", digest(500)))
+            .unwrap()
+            .is_file()
     );
 }
 

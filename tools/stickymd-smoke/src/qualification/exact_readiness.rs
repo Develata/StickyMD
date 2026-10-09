@@ -15,7 +15,6 @@ pub(super) fn check(
     expected_cases: &[&str],
     blockers: &mut Vec<String>,
 ) -> bool {
-    let before = blockers.len();
     if module.receipt() != relative_receipt {
         blockers.push(format!(
             "{label} module registry expects {}, not {relative_receipt}",
@@ -23,45 +22,55 @@ pub(super) fn check(
         ));
         return false;
     }
-    let success = match module_ledger::compatible_success(root, module) {
-        Ok(Some(success)) => success,
+    match module_ledger::compatible_success(root, module) {
+        Ok(Some(success)) => check_success(&success, label, expected_cases, blockers),
         Ok(None) => {
             blockers.push(format!(
                 "{label} has no compatible last-success receipt for current module inputs"
             ));
-            return false;
+            false
         }
         Err(error) => {
             blockers.push(format!("{label} last-success receipt: {error}"));
-            return false;
+            false
         }
-    };
-    let document = success.document;
-    expect_u64(&document, label, "schema_version", 1, blockers);
-    expect_string(&document, label, "status", "PASSED", blockers);
+    }
+}
+
+/// Validate one already-loaded success against its own origin identity.
+pub(super) fn check_success(
+    success: &module_ledger::CompatibleSuccess,
+    label: &str,
+    expected_cases: &[&str],
+    blockers: &mut Vec<String>,
+) -> bool {
+    let before = blockers.len();
+    let document = &success.document;
+    expect_u64(document, label, "schema_version", 1, blockers);
+    expect_string(document, label, "status", "PASSED", blockers);
     expect_string(
-        &document,
+        document,
         label,
         "source_commit",
         &success.origin_source_commit,
         blockers,
     );
     expect_string(
-        &document,
+        document,
         label,
         "harness_commit",
         &success.origin_source_commit,
         blockers,
     );
     expect_string(
-        &document,
+        document,
         label,
         "exe_sha256",
         &success.origin_exe_sha256,
         blockers,
     );
     expect_string(
-        &document,
+        document,
         label,
         "zip_sha256",
         &success.origin_zip_sha256,
@@ -70,31 +79,31 @@ pub(super) fn check(
     // Reused evidence carries the version of the candidate it ran on; the current
     // candidate's version is checked against Source Freeze, not against old evidence.
     expect_string(
-        &document,
+        document,
         label,
         "version",
         &success.origin_version,
         blockers,
     );
-    match json::string_field(&document, "windows") {
+    match json::string_field(document, "windows") {
         Ok(value) if !value.trim().is_empty() && value != "UNKNOWN" => {}
         Ok(_) => blockers.push(format!("{label} exact Windows build is unavailable")),
         Err(error) => blockers.push(format!("{label} exact Windows build: {error}")),
     }
-    match json::bool_field(&document, "worktree_dirty") {
+    match json::bool_field(document, "worktree_dirty") {
         Ok(false) => {}
         Ok(true) => blockers.push(format!(
             "{label} exact qualification was recorded from a dirty tree"
         )),
         Err(error) => blockers.push(format!("{label} exact worktree state: {error}")),
     }
-    let ids = result_fields(&document, "id");
+    let ids = result_fields(document, "id");
     if ids != expected_cases {
         blockers.push(format!(
             "{label} exact receipt cases are {ids:?}, expected {expected_cases:?}"
         ));
     }
-    let statuses = result_fields(&document, "status");
+    let statuses = result_fields(document, "status");
     if statuses.len() != expected_cases.len() || statuses.iter().any(|status| status != "PASSED") {
         blockers.push(format!(
             "{label} exact receipt contains non-PASSED case results: {statuses:?}"

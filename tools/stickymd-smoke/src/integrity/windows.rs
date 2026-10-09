@@ -111,6 +111,11 @@ impl Drop for Algorithm {
     }
 }
 
+/// Digest bytes the caller already holds, so it validates and hashes one snapshot.
+pub(super) fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
+    digest(&mut io::Cursor::new(bytes)).map_err(|error| format!("cannot hash bytes: {error}"))
+}
+
 pub(super) fn sha256(path: &Path) -> Result<String, String> {
     let mut file = File::open(path)
         .map_err(|error| format!("cannot open hash input {}: {error}", path.display()))?;

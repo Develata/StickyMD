@@ -95,18 +95,16 @@ pub(super) fn is_success_storage_path(root: &Path, path: &Path) -> bool {
     is_within(root, path, "dist/evidence/module-success") || is_shared_store_path(root, path)
 }
 
+/// The store always lives at `<git common dir>/stickymd/qualification-ledger`. Matching
+/// that segment pair on the alias-resolved path needs no git query, so an unavailable
+/// git cannot turn the protection off while an existing store is still on disk.
 fn is_shared_store_path(root: &Path, path: &Path) -> bool {
-    let Ok(store) = LedgerStore::for_repository(root) else {
-        // Without git there is no store to protect and no ledger can be written.
-        return false;
-    };
-    let target = normalize(&root.join(path));
-    let directory = normalize(store.root());
-    target == directory
-        || target
-            .strip_prefix(&directory)
-            .is_some_and(|suffix| suffix.starts_with('/'))
+    // Case-folded: on NTFS a differently cased spelling names the same directory.
+    let target = format!("{}/", normalize(&root.join(path))).to_ascii_lowercase();
+    target.contains(STORE_SEGMENTS)
 }
+
+const STORE_SEGMENTS: &str = "/stickymd/qualification-ledger/";
 
 pub(super) fn is_within(root: &Path, path: &Path, directory: &str) -> bool {
     let path = normalize(&root.join(path));
@@ -121,7 +119,12 @@ pub(super) fn compatible_success(
     root: &Path,
     module: ModuleId,
 ) -> Result<Option<CompatibleSuccess>, String> {
-    compatible_success_using(root, module, || fingerprint::calculate(root, module))
+    with_success(
+        root,
+        module,
+        || fingerprint::calculate(root, module),
+        |success| success.cloned(),
+    )
 }
 
 pub(super) fn compatible_success_for_input(
@@ -129,28 +132,59 @@ pub(super) fn compatible_success_for_input(
     module: ModuleId,
     current: &str,
 ) -> Result<Option<CompatibleSuccess>, String> {
-    compatible_success_using(root, module, || Ok(current.to_owned()))
+    with_success(
+        root,
+        module,
+        || Ok(current.to_owned()),
+        |success| success.cloned(),
+    )
 }
 
-fn compatible_success_using(
+/// Run `inspect` over one loaded success while the store's shared lock is held, so
+/// every file the caller follows from that record (for example G5 screenshots) stays
+/// in place until it returns. Identity and companion checks then see one snapshot.
+pub(super) fn with_compatible_success<T>(
+    root: &Path,
+    module: ModuleId,
+    inspect: impl FnOnce(Option<&CompatibleSuccess>) -> T,
+) -> Result<T, String> {
+    with_success(
+        root,
+        module,
+        || fingerprint::calculate(root, module),
+        inspect,
+    )
+}
+
+fn with_success<T>(
     root: &Path,
     module: ModuleId,
     current: impl FnOnce() -> Result<String, String>,
-) -> Result<Option<CompatibleSuccess>, String> {
+    inspect: impl FnOnce(Option<&CompatibleSuccess>) -> T,
+) -> Result<T, String> {
     let store = LedgerStore::for_repository(root)?;
     // An empty module directory cannot match; skip fingerprinting the checkout.
     if !store.has_module_records(module.as_str())? {
-        return Ok(None);
+        return Ok(inspect(None));
     }
     let current = current()?;
     let path = store.module_record(module.as_str(), &current)?;
-    // Hold the shared lock while following the record to its evidence, so a
-    // concurrent writer cannot prune what this reader is validating.
     let _guard = store.read_guard()?;
+    let success = load_success(&store, module, &current, &path)?;
+    Ok(inspect(success.as_ref()))
+}
+
+/// Read one record and its evidence; the caller holds the shared store lock.
+fn load_success(
+    store: &LedgerStore,
+    module: ModuleId,
+    current: &str,
+    path: &Path,
+) -> Result<Option<CompatibleSuccess>, String> {
     if !path.is_file() {
         return Ok(None);
     }
-    let document = receipt::read_receipt(&path)?;
+    let document = receipt::read_receipt(path)?;
     validate_success_schema(&document, module)?;
     if json::string_field(&document, "input_fingerprint")? != current {
         return Err(format!(
@@ -167,15 +201,24 @@ fn compatible_success_using(
         ));
     }
     let evidence_path = store.evidence(&evidence_file)?;
+    // Hash and parse one snapshot of the archived bytes.
+    let evidence_bytes = fs::read(&evidence_path).map_err(|error| {
+        format!(
+            "cannot read module {} evidence {}: {error}",
+            module.as_str(),
+            evidence_path.display()
+        )
+    })?;
     let expected_evidence = json::string_field(&document, "evidence_sha256")?;
-    let actual_evidence = receipt::sha256(&evidence_path)?;
+    let actual_evidence = receipt::sha256_bytes(&evidence_bytes)?;
     if expected_evidence != actual_evidence {
         return Err(format!(
             "STALE RECEIPT: module {} evidence hash is {actual_evidence}, expected {expected_evidence}",
             module.as_str()
         ));
     }
-    let evidence_document = receipt::read_receipt(&evidence_path)?;
+    let evidence_document = String::from_utf8(evidence_bytes)
+        .map_err(|error| format!("module {} evidence is not UTF-8: {error}", module.as_str()))?;
     validate_success_evidence(&evidence_document, module)?;
     if matches!(module, ModuleId::Resource(_))
         && (json::string_field(&evidence_document, "resource_input_fingerprint")? != current
@@ -194,7 +237,7 @@ fn compatible_success_using(
         origin_zip_sha256: json::string_field(&document, "origin_zip_sha256")?,
         evidence_path,
         document: evidence_document,
-        store,
+        store: store.clone(),
     }))
 }
 
@@ -203,40 +246,42 @@ pub(super) fn record_success(
     module: ModuleId,
     candidate: &Candidate,
 ) -> Result<(), String> {
+    // Read the receipt once: the same bytes are validated, hashed and archived, so a
+    // concurrent rewrite of the worktree receipt cannot be published as this success.
     let source_evidence = root.join(module.receipt());
-    let source_document = receipt::read_receipt(&source_evidence)?;
-    validate_success_evidence(&source_document, module)?;
+    let evidence_bytes = fs::read(&source_evidence).map_err(|error| {
+        format!(
+            "cannot read {} module evidence {}: {error}",
+            module.as_str(),
+            source_evidence.display()
+        )
+    })?;
+    let source_document = std::str::from_utf8(&evidence_bytes)
+        .map_err(|error| format!("{} module evidence is not UTF-8: {error}", module.as_str()))?;
+    validate_success_evidence(source_document, module)?;
     let input_fingerprint = fingerprint::calculate(root, module)?;
     if matches!(module, ModuleId::Resource(_))
-        && (json::string_field(&source_document, "resource_input_fingerprint")?
-            != input_fingerprint
-            || json::string_field(&source_document, "commit")? != candidate.source_commit
-            || json::string_field(&source_document, "executable_sha256")? != candidate.exe_sha256)
+        && (json::string_field(source_document, "resource_input_fingerprint")? != input_fingerprint
+            || json::string_field(source_document, "commit")? != candidate.source_commit
+            || json::string_field(source_document, "executable_sha256")? != candidate.exe_sha256)
     {
         return Err("resource inputs or candidate changed during measurement".to_owned());
     }
+    let artifacts = if module == ModuleId::G5 {
+        super::g5_readiness::companion_artifacts(source_document)?
+    } else {
+        Vec::new()
+    };
+    let evidence_sha256 = receipt::sha256_bytes(&evidence_bytes)?;
+    let evidence_file = format!("{}-{evidence_sha256}.json", module.as_str());
     let store = LedgerStore::for_repository(root)?;
     let guard = store.write_guard()?;
     // Companion files are archived before the record so a published record never
     // points at evidence that exists only in this (possibly temporary) worktree.
-    let artifacts = if module == ModuleId::G5 {
-        super::g5_readiness::companion_artifacts(&source_document)
-    } else {
-        Vec::new()
-    };
     for (relative, sha256) in &artifacts {
         archive_artifact(root, &store, relative, sha256)?;
     }
-    let evidence_sha256 = receipt::sha256(&source_evidence)?;
-    let evidence_file = format!("{}-{evidence_sha256}.json", module.as_str());
-    let evidence_path = store.evidence(&evidence_file)?;
-    let evidence_bytes = fs::read(&source_evidence).map_err(|error| {
-        format!(
-            "cannot archive {} module evidence: {error}",
-            module.as_str()
-        )
-    })?;
-    crate::atomic_evidence::write(&evidence_path, &evidence_bytes)?;
+    crate::atomic_evidence::write(&store.evidence(&evidence_file)?, &evidence_bytes)?;
     let record_path = store.module_record(module.as_str(), &input_fingerprint)?;
     let document = format!(
         concat!(
@@ -259,20 +304,23 @@ pub(super) fn record_success(
     );
     crate::atomic_evidence::write(&record_path, document.as_bytes())?;
     // The success is durable from here; cleanup problems are reported, not fatal.
-    let cleanup = store.prune_module(&guard, module.as_str()).and_then(|()| {
-        if module == ModuleId::G5 {
-            prune_g5_artifacts(&store, &guard)
-        } else {
-            Ok(())
-        }
-    });
+    let cleanup = store
+        .prune_module(&guard, module.as_str(), &record_path)
+        .and_then(|()| {
+            if module == ModuleId::G5 {
+                prune_g5_artifacts(&store, &guard)
+            } else {
+                Ok(())
+            }
+        });
     if let Err(error) = cleanup {
         eprintln!("LEDGER_PRUNE_SKIPPED={}: {error}", module.as_str());
     }
     Ok(())
 }
 
-/// Copy one G5 companion file into the content-addressed store after verifying it.
+/// Copy one G5 companion file into the content-addressed store. The bytes that are
+/// hashed are the bytes that are written; the caller holds the write lock.
 fn archive_artifact(
     root: &Path,
     store: &LedgerStore,
@@ -282,8 +330,11 @@ fn archive_artifact(
     if !relative.starts_with("dist/evidence/g5-artifacts/") || relative.contains("..") {
         return Err(format!("G5 evidence has unsafe artifact path {relative}"));
     }
-    let source = root.join(relative);
-    let actual = receipt::sha256(&source)?;
+    // This run's file must match its evidence even when the store already holds the
+    // same content: a mismatch means the run's own output changed after capture.
+    let bytes = fs::read(root.join(relative))
+        .map_err(|error| format!("cannot archive G5 artifact {relative}: {error}"))?;
+    let actual = receipt::sha256_bytes(&bytes)?;
     if actual != sha256 {
         return Err(format!(
             "G5 artifact {relative} hash is {actual}, expected {sha256}"
@@ -293,22 +344,22 @@ fn archive_artifact(
     if target.is_file() && receipt::sha256(&target)? == sha256 {
         return Ok(());
     }
-    let bytes = fs::read(&source)
-        .map_err(|error| format!("cannot archive G5 artifact {relative}: {error}"))?;
     crate::atomic_evidence::write(&target, &bytes)
 }
 
-/// Artifacts are pruned only against a complete scan of the retained G5 evidence.
+/// Artifacts are pruned only against a complete, structurally valid scan of every
+/// retained G5 evidence document; any failure keeps every artifact.
 fn prune_g5_artifacts(store: &LedgerStore, guard: &store::StoreGuard) -> Result<(), String> {
-    let referenced = store
-        .module_evidence_documents(ModuleId::G5.as_str())?
-        .iter()
-        .flat_map(|document| super::g5_readiness::companion_artifacts(document))
-        .map(|(_, sha256)| sha256)
-        .collect::<Vec<_>>();
+    let mut referenced = Vec::new();
+    for document in store.module_evidence_documents(ModuleId::G5.as_str())? {
+        referenced.extend(
+            super::g5_readiness::companion_artifacts(&document)?
+                .into_iter()
+                .map(|(_, sha256)| sha256),
+        );
+    }
     store.prune_artifacts(guard, &referenced)
 }
-
 pub(super) fn reuse_for_receipt(root: &Path, path: &Path) -> Result<bool, String> {
     let Some(module) = module_for_receipt(root, path) else {
         return Ok(false);

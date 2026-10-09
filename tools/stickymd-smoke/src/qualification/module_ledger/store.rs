@@ -12,10 +12,10 @@
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#module-success-ledger
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::super::{json, receipt};
 
@@ -70,16 +70,14 @@ impl LedgerStore {
     /// Shared lock for following records to their evidence.
     pub(in crate::qualification) fn read_guard(&self) -> Result<StoreGuard, String> {
         let file = self.lock_file()?;
-        file.lock_shared()
-            .map_err(|error| format!("cannot lock ledger store for reading: {error}"))?;
+        wait_for_lock(|| file.try_lock_shared(), "reading")?;
         Ok(StoreGuard { _file: file })
     }
 
     /// Exclusive lock for archiving, publishing and pruning.
     pub(in crate::qualification) fn write_guard(&self) -> Result<StoreGuard, String> {
         let file = self.lock_file()?;
-        file.lock()
-            .map_err(|error| format!("cannot lock ledger store for writing: {error}"))?;
+        wait_for_lock(|| file.try_lock(), "writing")?;
         Ok(StoreGuard { _file: file })
     }
 
@@ -150,6 +148,7 @@ impl LedgerStore {
         &self,
         _guard: &StoreGuard,
         module: &str,
+        keep: &Path,
     ) -> Result<(), String> {
         let mut records = Vec::new();
         for path in record_files(&self.key_directory("modules", module)?)? {
@@ -160,11 +159,17 @@ impl LedgerStore {
                 path,
             ));
         }
-        // Newest first; ties keep a stable order by path.
-        records.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.2.cmp(&right.2)));
+        // The record just published is always retained, whatever its timestamp (equal
+        // seconds or a clock moved backwards); the others are kept newest first.
+        records.sort_by(|left, right| {
+            (right.2 == keep)
+                .cmp(&(left.2 == keep))
+                .then_with(|| right.0.cmp(&left.0))
+                .then_with(|| left.2.cmp(&right.2))
+        });
         let mut referenced = Vec::new();
         for (index, (_, evidence, path)) in records.iter().enumerate() {
-            if index < RETAINED_RECORDS {
+            if index < RETAINED_RECORDS || path == keep {
                 referenced.push(evidence.clone());
             } else {
                 remove(path)?;
@@ -246,6 +251,35 @@ fn directory_names(directory: &Path) -> Result<Vec<String>, String> {
     }
     names.sort();
     Ok(names)
+}
+
+/// Longest a qualification command waits for another process's store operation.
+const LOCK_WAIT: Duration = Duration::from_secs(120);
+
+/// Bounded wait: store operations take seconds, so a holder past the limit is hung or
+/// suspended and the caller gets a diagnosable error instead of blocking forever.
+fn wait_for_lock(
+    mut attempt: impl FnMut() -> Result<(), TryLockError>,
+    purpose: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + LOCK_WAIT;
+    loop {
+        match attempt() {
+            Ok(()) => return Ok(()),
+            Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(TryLockError::WouldBlock) => {
+                return Err(format!(
+                    "ledger store stayed locked by another qualification process for {} s while {purpose}",
+                    LOCK_WAIT.as_secs()
+                ));
+            }
+            Err(TryLockError::Error(error)) => {
+                return Err(format!("cannot lock ledger store for {purpose}: {error}"));
+            }
+        }
+    }
 }
 
 fn remove(path: &Path) -> Result<(), String> {

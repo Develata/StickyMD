@@ -1,7 +1,38 @@
 //! Portable external SHA-256 adapter; Windows uses the in-process CNG backend.
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
+use std::io::Write;
+use std::process::Stdio;
 use std::{path::Path, process::Command};
+
+/// Digest bytes the caller already holds, so it validates and hashes one snapshot.
+pub(super) fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
+    let mut child = Command::new("sha256sum")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot start sha256sum: {error}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("sha256sum stdin is unavailable")?
+        .write_all(bytes)
+        .map_err(|error| format!("cannot stream bytes to sha256sum: {error}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("sha256sum failed: {error}"))?;
+    if !output.status.success() {
+        return Err("SHA-256 command failed for in-memory bytes".to_owned());
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let hash = text
+        .split_once(' ')
+        .map(|(hash, _)| hash)
+        .ok_or("SHA-256 output has no digest field")?;
+    super::validate_sha256(hash, "SHA-256")?;
+    Ok(hash.to_ascii_lowercase())
+}
 
 pub(super) fn sha256(path: &Path) -> Result<String, String> {
     let output = Command::new("sha256sum")

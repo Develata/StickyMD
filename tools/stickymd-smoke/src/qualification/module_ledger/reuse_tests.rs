@@ -349,6 +349,7 @@ fn g5_readiness_reuses_archived_screenshots_and_compares_origin_identity() {
 
     // A missing archived screenshot blocks even though the record is compatible.
     let (_, first_sha) = super::super::g5_readiness::companion_artifacts(&document)
+        .unwrap()
         .into_iter()
         .next()
         .unwrap();
@@ -362,6 +363,39 @@ fn g5_readiness_reuses_archived_screenshots_and_compares_origin_identity() {
         blockers.iter().any(|item| item.contains("artifact")),
         "{blockers:?}"
     );
+}
+
+#[test]
+fn artifact_cleanup_keeps_screenshots_of_cases_unknown_to_this_tool() {
+    let clone = ReleaseClone::new();
+    let first = candidate("0.1.0", "c", "d");
+    // A newer tool recorded an extra case; this tool's case list does not name it.
+    let future = "dist/evidence/g5-artifacts/G5-99-future.png";
+    write(&clone.main, future, "future case screenshot");
+    let sha256 = receipt::sha256(&clone.main.join(future)).unwrap();
+    let document = format!(
+        concat!(
+            "{{\"worktree_dirty\":false,\"results\":[",
+            "{{\"id\":\"G5-99\",\"status\":\"PASSED\",\"artifacts\":[{{\"path\":\"{}\",\"sha256\":\"{}\"}}]}}",
+            "]}}"
+        ),
+        future, sha256
+    );
+    receipt::write_receipt(&clone.main, ModuleId::G5.receipt(), &document).unwrap();
+    record_success(&clone.main, ModuleId::G5, &first).unwrap();
+    let archived = compatible_success(&clone.main, ModuleId::G5)
+        .unwrap()
+        .unwrap()
+        .artifact(&sha256)
+        .unwrap();
+    assert!(archived.is_file());
+    // Another success for the same inputs triggers cleanup; the screenshot stays.
+    record_success(&clone.main, ModuleId::G5, &first).unwrap();
+    assert!(archived.is_file());
+    // Malformed artifact entries are not "no artifacts": recording fails closed.
+    let malformed = document.replace(&sha256, "not-a-digest");
+    receipt::write_receipt(&clone.main, ModuleId::G5.receipt(), &malformed).unwrap();
+    assert!(record_success(&clone.main, ModuleId::G5, &first).is_err());
 }
 
 #[test]
@@ -386,6 +420,17 @@ fn diagnostics_cannot_target_the_shared_store() {
             target.display()
         );
     }
+    // The rule needs no git: a differently cased alias is still recognized.
+    let shouting = store
+        .root()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("STICKYMD")
+        .join("Qualification-Ledger")
+        .join("modules");
+    assert!(crate::qualification::validate_public_evidence_path(linked, &shouting).is_err());
     // Ordinary diagnostic paths stay available.
     assert!(
         crate::qualification::validate_public_evidence_path(

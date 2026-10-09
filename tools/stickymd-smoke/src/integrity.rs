@@ -123,6 +123,19 @@ pub(crate) fn sha256(path: &Path) -> Result<String, String> {
         portable::sha256(&path)
     }
 }
+/// SHA-256 of bytes already in memory; callers that validate and archive the same
+/// bytes use this instead of re-reading a file that another process may replace.
+pub(crate) fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        windows::sha256_bytes(bytes)
+    }
+    #[cfg(not(windows))]
+    {
+        portable::sha256_bytes(bytes)
+    }
+}
+
 pub(crate) fn validate_sha256(value: &str, label: &str) -> Result<(), String> {
     validate_hex(value, 64, label)
 }

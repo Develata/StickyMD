@@ -12,39 +12,57 @@ const EXPECTED_CASES: [&str; 4] = ["G5-01", "G5-02", "G5-03", "G5-04"];
 
 pub(super) fn check(root: &Path, blockers: &mut Vec<String>) -> bool {
     let before = blockers.len();
-    if exact_readiness::check(
-        root,
-        ModuleId::G5,
-        "G5",
-        G5_RECEIPT,
-        &EXPECTED_CASES,
-        blockers,
-    ) {
-        verify_artifacts(root, blockers);
+    if ModuleId::G5.receipt() != G5_RECEIPT {
+        blockers.push(format!(
+            "G5 module registry expects {}, not {G5_RECEIPT}",
+            ModuleId::G5.receipt()
+        ));
+        return false;
+    }
+    // One success snapshot, validated under one shared store lock: identity and every
+    // screenshot come from the same record, and no writer can prune them meanwhile.
+    let found = module_ledger::with_compatible_success(root, ModuleId::G5, |success| {
+        let Some(success) = success else {
+            blockers.push(
+                "G5 has no compatible last-success receipt for current module inputs".to_owned(),
+            );
+            return;
+        };
+        if exact_readiness::check_success(success, "G5", &EXPECTED_CASES, blockers) {
+            verify_artifacts(success, blockers);
+        }
+    });
+    if let Err(error) = found {
+        blockers.push(format!("G5 last-success receipt: {error}"));
     }
     blockers.len() == before
 }
 
-/// Every `(path, sha256)` companion file listed by a G5 evidence document.
-pub(super) fn companion_artifacts(document: &str) -> Vec<(String, String)> {
-    EXPECTED_CASES
-        .iter()
-        .flat_map(|case| artifacts_for_case(document, case))
-        .collect()
+/// Every `(path, sha256)` companion file in a G5 evidence document, taken from every
+/// result rather than the current case list, so cleanup run by an older tool never
+/// misses a newer case's screenshots. Malformed entries are errors, never "absent".
+pub(super) fn companion_artifacts(document: &str) -> Result<Vec<(String, String)>, String> {
+    use crate::release::json::{self, Value};
+    let parsed = json::parse(document)?;
+    let mut artifacts = Vec::new();
+    for result in parsed.field("results")?.array()? {
+        let Value::Object(fields) = result else {
+            return Err("G5 evidence result is not an object".to_owned());
+        };
+        let Some(listed) = fields.get("artifacts") else {
+            continue;
+        };
+        for artifact in listed.array()? {
+            let path = artifact.field("path")?.string()?.to_owned();
+            let sha256 = artifact.field("sha256")?.string()?.to_owned();
+            super::receipt::validate_sha256(&sha256, "G5 artifact SHA-256")?;
+            artifacts.push((path, sha256));
+        }
+    }
+    Ok(artifacts)
 }
 
-fn verify_artifacts(root: &Path, blockers: &mut Vec<String>) {
-    let success = match module_ledger::compatible_success(root, ModuleId::G5) {
-        Ok(Some(success)) => success,
-        Ok(None) => {
-            blockers.push("G5 screenshot evidence has no compatible last success".to_owned());
-            return;
-        }
-        Err(error) => {
-            blockers.push(format!("G5 screenshot evidence: {error}"));
-            return;
-        }
-    };
+fn verify_artifacts(success: &module_ledger::CompatibleSuccess, blockers: &mut Vec<String>) {
     for (case, minimum) in [("G5-01", 1), ("G5-02", 3), ("G5-03", 13), ("G5-04", 3)] {
         let artifacts = artifacts_for_case(&success.document, case);
         if artifacts.len() < minimum {
