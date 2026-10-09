@@ -63,6 +63,28 @@ candidate；G5 截图只在当前 worktree 的 `dist/evidence/g5-artifacts/` 中
 - 当前指纹批量计算实测约 0.34–0.46 s（debug，5 个模块读取 487 个文件、约 4.5 MB），未做算法重写。
 - 未执行：真实候选上的桌面资格化与人工验收。
 
+## 独立审查与修正（gpt-6-astra max，`972aad4..f2ccdcc`）
+
+审查给出 3 项 BLOCKER、2 项 SHOULD_FIX、1 项 NEEDS_VERIFICATION，均已对照源码核实并修正：
+
+1. **规范化在真实仓库不生效**（属实）：`apps/stickymd-win/Cargo.toml` 的
+   `[target.'cfg(windows)'.dependencies]` 等带引号表头被拒绝，整体回退原始字节，发版仍全部失效；原测试只用
+   简化 manifest。修正：表头支持带引号的 dotted key；新增"真实仓库 manifest 必须在语法内"的守卫测试，以及
+   复制真实四个 member manifest 与 lock 做版本升级、断言十个功能指纹不变而原始 workspace identity 改变的回归。
+2. **GC 竞态与不完整扫描**（属实）：改为存储级 OS 文件锁（`File::lock`/`lock_shared`，进程退出即释放）。
+   归档、发布与清理串行；读取方持共享锁跟随记录到 evidence。去掉 24 小时 mtime 宽限与同指纹立即删除；清理
+   遇到任何不可读记录、目录项或 evidence 即停止删除并报告。
+3. **诊断可覆盖共享存储**（属实）：整个共享存储（含 `.lock`）加入保留路径，沿用既有别名归一化
+   （junction、8.3、`..`），并补充相应测试。
+4. **同指纹立即删除旧 evidence**：已由第 2 条的锁与统一清理取代。
+5. **plan 10 特例与新合同不一致**（属实）：删除该特例，`docs/plan/` 统一向全部功能模块传播。
+6. **readiness 消费链未被证明**：新增从 linked worktree 执行真实 `g5_readiness::check` 的回归，覆盖
+   截图只存在于共享存储、篡改记录 origin version 后阻断、删除归档截图后阻断。
+
+未采纳为本次修改：审查提到 readiness 中各模块单独计算指纹（约 11 次），属性能优化且非阻断，留待实测后决定。
+
+修正后：`cargo test -p stickymd-smoke --locked` 368 + 25 PASS（15 ignored 未计为执行）。
+
 ## 对规格的影响
 
 plan 11 `#module-success-ledger` 更新存储位置、按指纹记录、规范化与文档分类、G5 归档和 origin 比较；

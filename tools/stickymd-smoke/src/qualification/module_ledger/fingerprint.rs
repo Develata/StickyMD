@@ -176,9 +176,6 @@ fn path_domains(path: &str) -> u64 {
     if is_global_input(path) {
         return GLOBAL;
     }
-    if path == "docs/plan/10_performance_reliability.md" {
-        return PERFORMANCE_HARNESS | RESOURCES_HARNESS;
-    }
     if path == "crates/stickymd-render/tests/fixtures/rendering-stress.md" {
         return G5_HARNESS | PREVIEW | MATH | IMAGES;
     }

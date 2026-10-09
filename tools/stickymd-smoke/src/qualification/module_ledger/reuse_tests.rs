@@ -198,6 +198,204 @@ fn records_with_different_inputs_coexist_instead_of_replacing_each_other() {
     );
 }
 
+#[test]
+fn real_manifests_release_bump_keeps_every_functional_fingerprint() {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("repository root");
+    let clone = ReleaseClone::new();
+    let members = [
+        "crates/stickymd-core",
+        "crates/stickymd-render",
+        "apps/stickymd-win",
+        "tools/stickymd-smoke",
+    ];
+    for relative in ["Cargo.toml", "Cargo.lock"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(members.iter().map(|member| format!("{member}/Cargo.toml")))
+    {
+        let text = fs::read_to_string(repository.join(&relative)).expect("real manifest");
+        write(&clone.main, &relative, &text);
+    }
+    commit(&clone.main);
+    let modules = modules().collect::<Vec<_>>();
+    let digests = |root: &Path| {
+        super::fingerprint::PlanningInputs::read(root)
+            .unwrap()
+            .calculate_many(root, &modules)
+            .unwrap()
+            .digests
+    };
+    let before = digests(&clone.main);
+    let workspace_before = super::fingerprint::workspace_inputs(&clone.main, b"").unwrap();
+
+    let version = crate::repository::workspace_version(&clone.main).expect("workspace version");
+    let bumped = "9.8.7";
+    let manifest = fs::read_to_string(clone.main.join("Cargo.toml")).unwrap();
+    let table = manifest
+        .find("[workspace.package]")
+        .expect("workspace.package");
+    let (head, tail) = manifest.split_at(table);
+    let tail = tail.replacen(
+        &format!("version = \"{version}\""),
+        &format!("version = \"{bumped}\""),
+        1,
+    );
+    write(&clone.main, "Cargo.toml", &format!("{head}{tail}"));
+    let mut lock = fs::read_to_string(clone.main.join("Cargo.lock")).unwrap();
+    for member in members {
+        let name = member.rsplit('/').next().unwrap();
+        let old = format!("name = \"{name}\"\nversion = \"{version}\"\n");
+        assert_eq!(lock.matches(&old).count(), 1, "{name}");
+        lock = lock.replace(
+            &old,
+            &format!("name = \"{name}\"\nversion = \"{bumped}\"\n"),
+        );
+    }
+    write(&clone.main, "Cargo.lock", &lock);
+    commit(&clone.main);
+
+    assert_eq!(
+        before,
+        digests(&clone.main),
+        "release bump must not stale modules"
+    );
+    assert_ne!(
+        workspace_before,
+        super::fingerprint::workspace_inputs(&clone.main, b"").unwrap(),
+        "the raw workspace identity must still change"
+    );
+}
+
+#[test]
+fn g5_readiness_reuses_archived_screenshots_and_compares_origin_identity() {
+    let clone = ReleaseClone::new();
+    let first = candidate("0.1.0", "c", "d");
+    let mut cases = Vec::new();
+    for (case, count) in [("G5-01", 1), ("G5-02", 3), ("G5-03", 13), ("G5-04", 3)] {
+        let mut artifacts = Vec::new();
+        for index in 0..count {
+            let relative = format!("dist/evidence/g5-artifacts/{case}-{index}.png");
+            write(
+                &clone.main,
+                &relative,
+                &format!("{case} screenshot {index}"),
+            );
+            let sha256 = receipt::sha256(&clone.main.join(&relative)).unwrap();
+            artifacts.push(format!(
+                "{{\"path\":\"{relative}\",\"sha256\":\"{sha256}\"}}"
+            ));
+        }
+        cases.push(format!(
+            "{{\"id\":\"{case}\",\"status\":\"PASSED\",\"detail\":null,\"artifacts\":[{}]}}",
+            artifacts.join(",")
+        ));
+    }
+    let document = format!(
+        concat!(
+            "{{\"schema_version\":1,\"status\":\"PASSED\",",
+            "\"source_commit\":\"{commit}\",\"harness_commit\":\"{commit}\",",
+            "\"worktree_dirty\":false,\"version\":\"{version}\",",
+            "\"windows\":\"Windows test\",\"exe_sha256\":\"{exe}\",",
+            "\"zip_sha256\":\"{zip}\",\"results\":[{results}]}}"
+        ),
+        commit = first.source_commit,
+        version = first.version,
+        exe = first.exe_sha256,
+        zip = first.zip_sha256,
+        results = cases.join(","),
+    );
+    receipt::write_receipt(&clone.main, ModuleId::G5.receipt(), &document).unwrap();
+    record_success(&clone.main, ModuleId::G5, &first).unwrap();
+    clone.release_bump("0.1.0", "0.1.1");
+    let linked = clone.add_linked_worktree();
+
+    let mut blockers = Vec::new();
+    assert!(
+        crate::qualification::g5_readiness::check(linked, &mut blockers),
+        "{blockers:?}"
+    );
+
+    // The record's origin is authoritative: evidence from another version is stale.
+    let success = compatible_success(linked, ModuleId::G5).unwrap().unwrap();
+    let record = success
+        .store
+        .module_record(
+            ModuleId::G5.as_str(),
+            &super::fingerprint::calculate(linked, ModuleId::G5).unwrap(),
+        )
+        .unwrap();
+    let original = fs::read_to_string(&record).unwrap();
+    fs::write(
+        &record,
+        original.replace(
+            "\"origin_version\":\"0.1.0\"",
+            "\"origin_version\":\"9.9.9\"",
+        ),
+    )
+    .unwrap();
+    blockers.clear();
+    assert!(!crate::qualification::g5_readiness::check(
+        linked,
+        &mut blockers
+    ));
+    assert!(
+        blockers.iter().any(|item| item.contains("version")),
+        "{blockers:?}"
+    );
+    fs::write(&record, original).unwrap();
+
+    // A missing archived screenshot blocks even though the record is compatible.
+    let (_, first_sha) = super::super::g5_readiness::companion_artifacts(&document)
+        .into_iter()
+        .next()
+        .unwrap();
+    fs::remove_file(success.artifact(&first_sha).unwrap()).unwrap();
+    blockers.clear();
+    assert!(!crate::qualification::g5_readiness::check(
+        linked,
+        &mut blockers
+    ));
+    assert!(
+        blockers.iter().any(|item| item.contains("artifact")),
+        "{blockers:?}"
+    );
+}
+
+#[test]
+fn diagnostics_cannot_target_the_shared_store() {
+    let clone = ReleaseClone::new();
+    let linked = clone.add_linked_worktree();
+    let store = super::LedgerStore::for_repository(linked).unwrap();
+    let digest = "0".repeat(64);
+    for target in [
+        store.module_record("g4", &digest).unwrap(),
+        store.evidence(&format!("g4-{digest}.json")).unwrap(),
+        store.artifact(&digest).unwrap(),
+        store
+            .root()
+            .join("..")
+            .join("qualification-ledger")
+            .join(".lock"),
+    ] {
+        assert!(
+            crate::qualification::validate_public_evidence_path(linked, &target).is_err(),
+            "{}",
+            target.display()
+        );
+    }
+    // Ordinary diagnostic paths stay available.
+    assert!(
+        crate::qualification::validate_public_evidence_path(
+            linked,
+            Path::new("target/diagnostics/runtime.json")
+        )
+        .is_ok()
+    );
+}
+
 fn write_valid_evidence(root: &Path, module: ModuleId, candidate: &Candidate) {
     let document = match module {
         ModuleId::Resource(group) => {

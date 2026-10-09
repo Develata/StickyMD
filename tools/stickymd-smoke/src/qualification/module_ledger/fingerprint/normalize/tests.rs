@@ -225,3 +225,47 @@ fn unsupported_lockfile_shapes_fall_back_to_raw_bytes() {
     }
     assert!(normalized(&normalizer, LOCKFILE, "\u{feff}not toml [").is_none());
 }
+
+/// Guard against manifest drift: the real workspace must stay inside the grammar,
+/// otherwise every release bump silently invalidates all functional modules again.
+#[test]
+fn the_real_workspace_manifests_normalize() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repository root");
+    let tracked = super::super::tracked_files(root).expect("tracked files");
+    let normalizer = VersionNormalizer::read(root, &tracked)
+        .expect("the repository manifests must be inside the normalization grammar");
+    for path in [ROOT_MANIFEST, LOCKFILE] {
+        let raw = fs::read(root.join(path)).unwrap();
+        assert!(
+            matches!(normalizer.normalize(path, &raw), Cow::Owned(_)),
+            "{path} must normalize"
+        );
+    }
+}
+
+#[test]
+fn quoted_target_tables_are_inside_the_grammar() {
+    let app = format!(
+        "{APP}\n[target.'cfg(windows)'.dependencies]\nwindows.workspace = true\n\n[target.\"cfg(unix)\".build-dependencies]\ncc = \"1\"\n\n[package.metadata.winresource]\nProductName = \"StickyMD\"\n"
+    );
+    let members = [MEMBERS[0], ("apps/stickymd-win", app.as_str())];
+    let fixture = Fixture::new(&root_manifest("0.1.3"), &members);
+    assert!(VersionNormalizer::read(&fixture.0, &Fixture::tracked(&members)).is_some());
+    for broken in [
+        "[target.''.dependencies]",
+        "[target.'cfg(windows).dependencies]",
+        "[target..dependencies]",
+        "[target.'a\\b'.dependencies]",
+    ] {
+        let app = format!("{APP}\n{broken}\nwindows.workspace = true\n");
+        let members = [MEMBERS[0], ("apps/stickymd-win", app.as_str())];
+        let fixture = Fixture::new(&root_manifest("0.1.3"), &members);
+        assert!(
+            VersionNormalizer::read(&fixture.0, &Fixture::tracked(&members)).is_none(),
+            "{broken}"
+        );
+    }
+}

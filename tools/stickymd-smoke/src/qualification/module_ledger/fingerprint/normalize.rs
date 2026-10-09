@@ -348,6 +348,10 @@ fn strip_comment(line: &str) -> &str {
     line
 }
 
+/// A table header's dotted key, e.g. `package`, `[bench]` arrays, or
+/// `target.'cfg(windows)'.dependencies`. Segments are bare keys or quoted keys without
+/// escapes; the only tables this module interprets are bare (`workspace`,
+/// `workspace.package`, `package`), so quoted segments only need to be well formed.
 fn table_name(content: &str) -> Option<String> {
     let inner = content.strip_prefix('[')?.strip_suffix(']')?;
     let inner = inner
@@ -355,11 +359,36 @@ fn table_name(content: &str) -> Option<String> {
         .and_then(|value| value.strip_suffix(']'))
         .unwrap_or(inner);
     let name = inner.trim();
-    (!name.is_empty()
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_')))
-    .then(|| name.to_owned())
+    let mut rest = name;
+    loop {
+        rest = rest.trim_start();
+        let after_segment = match rest.as_bytes().first()? {
+            quote @ (b'"' | b'\'') => {
+                let body = &rest[1..];
+                let end = body.find(*quote as char)?;
+                if end == 0 || body[..end].contains('\\') {
+                    return None;
+                }
+                &body[end + 1..]
+            }
+            _ => {
+                let end = rest
+                    .find(|character: char| {
+                        !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+                    })
+                    .unwrap_or(rest.len());
+                if end == 0 {
+                    return None;
+                }
+                &rest[end..]
+            }
+        };
+        let after_segment = after_segment.trim_start();
+        if after_segment.is_empty() {
+            return Some(name.to_owned());
+        }
+        rest = after_segment.strip_prefix('.')?;
+    }
 }
 
 /// A basic quoted scalar with no escapes, followed by nothing.

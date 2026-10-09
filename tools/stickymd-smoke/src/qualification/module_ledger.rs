@@ -90,8 +90,22 @@ pub(super) fn matches_receipt(root: &Path, path: &Path, expected: &str) -> bool 
     normalize(&root.join(path)) == normalize(&root.join(expected))
 }
 
+/// Both the retired per-worktree ledger and the clone-wide store are coordinator-owned.
 pub(super) fn is_success_storage_path(root: &Path, path: &Path) -> bool {
-    is_within(root, path, "dist/evidence/module-success")
+    is_within(root, path, "dist/evidence/module-success") || is_shared_store_path(root, path)
+}
+
+fn is_shared_store_path(root: &Path, path: &Path) -> bool {
+    let Ok(store) = LedgerStore::for_repository(root) else {
+        // Without git there is no store to protect and no ledger can be written.
+        return false;
+    };
+    let target = normalize(&root.join(path));
+    let directory = normalize(store.root());
+    target == directory
+        || target
+            .strip_prefix(&directory)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 pub(super) fn is_within(root: &Path, path: &Path, directory: &str) -> bool {
@@ -130,6 +144,9 @@ fn compatible_success_using(
     }
     let current = current()?;
     let path = store.module_record(module.as_str(), &current)?;
+    // Hold the shared lock while following the record to its evidence, so a
+    // concurrent writer cannot prune what this reader is validating.
+    let _guard = store.read_guard()?;
     if !path.is_file() {
         return Ok(None);
     }
@@ -199,6 +216,7 @@ pub(super) fn record_success(
         return Err("resource inputs or candidate changed during measurement".to_owned());
     }
     let store = LedgerStore::for_repository(root)?;
+    let guard = store.write_guard()?;
     // Companion files are archived before the record so a published record never
     // points at evidence that exists only in this (possibly temporary) worktree.
     let artifacts = if module == ModuleId::G5 {
@@ -220,10 +238,6 @@ pub(super) fn record_success(
     })?;
     crate::atomic_evidence::write(&evidence_path, &evidence_bytes)?;
     let record_path = store.module_record(module.as_str(), &input_fingerprint)?;
-    let replaced_evidence = receipt::read_receipt(&record_path)
-        .ok()
-        .and_then(|previous| json::string_field(&previous, "evidence_file").ok())
-        .filter(|previous| previous != &evidence_file);
     let document = format!(
         concat!(
             "{{\"schema_version\":2,\"status\":\"PASSED\",",
@@ -244,15 +258,16 @@ pub(super) fn record_success(
         store::unix_seconds(),
     );
     crate::atomic_evidence::write(&record_path, document.as_bytes())?;
-    // A same-input rerun supersedes its own earlier evidence immediately.
-    if let Some(previous) = replaced_evidence
-        && let Ok(previous) = store.evidence(&previous)
-    {
-        let _ = fs::remove_file(previous);
-    }
-    store.prune_module(module.as_str(), &record_path);
-    if module == ModuleId::G5 {
-        prune_g5_artifacts(&store);
+    // The success is durable from here; cleanup problems are reported, not fatal.
+    let cleanup = store.prune_module(&guard, module.as_str()).and_then(|()| {
+        if module == ModuleId::G5 {
+            prune_g5_artifacts(&store, &guard)
+        } else {
+            Ok(())
+        }
+    });
+    if let Err(error) = cleanup {
+        eprintln!("LEDGER_PRUNE_SKIPPED={}: {error}", module.as_str());
     }
     Ok(())
 }
@@ -283,16 +298,15 @@ fn archive_artifact(
     crate::atomic_evidence::write(&target, &bytes)
 }
 
-fn prune_g5_artifacts(store: &LedgerStore) {
-    let Ok(documents) = store.module_evidence_documents(ModuleId::G5.as_str()) else {
-        return;
-    };
-    let referenced = documents
+/// Artifacts are pruned only against a complete scan of the retained G5 evidence.
+fn prune_g5_artifacts(store: &LedgerStore, guard: &store::StoreGuard) -> Result<(), String> {
+    let referenced = store
+        .module_evidence_documents(ModuleId::G5.as_str())?
         .iter()
         .flat_map(|document| super::g5_readiness::companion_artifacts(document))
         .map(|(_, sha256)| sha256)
         .collect::<Vec<_>>();
-    store.prune_artifacts(&referenced);
+    store.prune_artifacts(guard, &referenced)
 }
 
 pub(super) fn reuse_for_receipt(root: &Path, path: &Path) -> Result<bool, String> {

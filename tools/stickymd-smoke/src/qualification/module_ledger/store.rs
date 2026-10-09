@@ -2,27 +2,35 @@
 //!
 //! Every linked worktree of one clone resolves the same git common directory, so a
 //! fresh release worktree sees successes recorded in any earlier worktree. Records are
-//! keyed by their input fingerprint: concurrent writers with different inputs never
-//! replace each other, and lookup is a direct path, not a scan.
+//! keyed by their input fingerprint: writers with different inputs never replace each
+//! other, and lookup is a direct path, not a scan.
+//!
+//! Concurrency: one OS file lock (`.lock`) serializes every mutation (archive, publish,
+//! prune) and is held shared by readers while they follow a record to its evidence, so
+//! cleanup can never delete something a reader or another writer is about to use. The
+//! OS releases the lock when a process exits, so a crash cannot strand it.
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#module-success-ledger
 
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::super::{json, receipt};
 
-/// Records kept per ledger key beyond the recent-write grace window.
+/// Records kept per module; older records and their unreferenced evidence are removed.
 pub(in crate::qualification) const RETAINED_RECORDS: usize = 8;
-/// Records and archives younger than this are never pruned, so a concurrent writer that
-/// has archived evidence but not yet published its record cannot lose it.
-const RECENT_GRACE_SECONDS: u64 = 24 * 60 * 60;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::qualification) struct LedgerStore {
     root: PathBuf,
+}
+
+/// Holds the store lock until dropped; closing the handle releases it.
+#[must_use = "the store lock is released when the guard is dropped"]
+pub(in crate::qualification) struct StoreGuard {
+    _file: File,
 }
 
 impl LedgerStore {
@@ -59,6 +67,38 @@ impl LedgerStore {
         &self.root
     }
 
+    /// Shared lock for following records to their evidence.
+    pub(in crate::qualification) fn read_guard(&self) -> Result<StoreGuard, String> {
+        let file = self.lock_file()?;
+        file.lock_shared()
+            .map_err(|error| format!("cannot lock ledger store for reading: {error}"))?;
+        Ok(StoreGuard { _file: file })
+    }
+
+    /// Exclusive lock for archiving, publishing and pruning.
+    pub(in crate::qualification) fn write_guard(&self) -> Result<StoreGuard, String> {
+        let file = self.lock_file()?;
+        file.lock()
+            .map_err(|error| format!("cannot lock ledger store for writing: {error}"))?;
+        Ok(StoreGuard { _file: file })
+    }
+
+    fn lock_file(&self) -> Result<File, String> {
+        fs::create_dir_all(&self.root).map_err(|error| {
+            format!(
+                "cannot create ledger store {}: {error}",
+                self.root.display()
+            )
+        })?;
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.root.join(".lock"))
+            .map_err(|error| format!("cannot open ledger store lock: {error}"))
+    }
+
     fn key_directory(&self, kind: &str, key: &str) -> Result<PathBuf, String> {
         validate_key(key)?;
         Ok(self.root.join(kind).join(key))
@@ -76,12 +116,12 @@ impl LedgerStore {
             .join(format!("{fingerprint}.json")))
     }
 
+    /// Cheap pre-check before fingerprinting; a racing writer only delays reuse.
     pub(in crate::qualification) fn has_module_records(
         &self,
         module: &str,
     ) -> Result<bool, String> {
-        let directory = self.key_directory("modules", module)?;
-        Ok(record_files(&directory)?.next().is_some())
+        Ok(!record_files(&self.key_directory("modules", module)?)?.is_empty())
     }
 
     /// Content-addressed module evidence archive, `<module>-<sha256>.json`.
@@ -103,117 +143,117 @@ impl LedgerStore {
         Ok(self.root.join("artifacts").join(sha256))
     }
 
-    /// Keep the newest records of one module plus everything inside the grace window,
-    /// then delete module evidence that no remaining record references. Pruning is
-    /// best effort: a published success stays valid even if cleanup fails.
-    pub(in crate::qualification) fn prune_module(&self, module: &str, keep: &Path) {
-        if let Err(error) = self.try_prune_module(module, keep) {
-            eprintln!("LEDGER_PRUNE_WARNING={module}: {error}");
+    /// Keep the newest records of one module and delete that module's evidence that no
+    /// remaining record references. Requires the write guard. Any record or directory
+    /// that cannot be read stops cleanup: unknown references are never treated as unused.
+    pub(in crate::qualification) fn prune_module(
+        &self,
+        _guard: &StoreGuard,
+        module: &str,
+    ) -> Result<(), String> {
+        let mut records = Vec::new();
+        for path in record_files(&self.key_directory("modules", module)?)? {
+            let document = receipt::read_receipt(&path)?;
+            records.push((
+                json::u64_field(&document, "recorded_at_unix")?,
+                json::string_field(&document, "evidence_file")?,
+                path,
+            ));
         }
-    }
-
-    fn try_prune_module(&self, module: &str, keep: &Path) -> Result<(), String> {
-        let directory = self.key_directory("modules", module)?;
-        let now = unix_seconds();
-        let mut records = record_files(&directory)?
-            .map(|path| {
-                let recorded = receipt::read_receipt(&path)
-                    .ok()
-                    .and_then(|document| json::u64_field(&document, "recorded_at_unix").ok())
-                    .unwrap_or(0);
-                (recorded, path)
-            })
-            .collect::<Vec<_>>();
-        records.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+        // Newest first; ties keep a stable order by path.
+        records.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.2.cmp(&right.2)));
         let mut referenced = Vec::new();
-        for (index, (recorded, path)) in records.iter().enumerate() {
-            let recent = now.saturating_sub(*recorded) < RECENT_GRACE_SECONDS;
-            if index < RETAINED_RECORDS || recent || path == keep {
-                if let Ok(document) = receipt::read_receipt(path)
-                    && let Ok(name) = json::string_field(&document, "evidence_file")
-                {
-                    referenced.push(name);
-                }
+        for (index, (_, evidence, path)) in records.iter().enumerate() {
+            if index < RETAINED_RECORDS {
+                referenced.push(evidence.clone());
             } else {
-                let _ = fs::remove_file(path);
+                remove(path)?;
             }
         }
         let prefix = format!("{module}-");
-        let evidence_directory = self.root.join("evidence");
-        let Ok(entries) = fs::read_dir(&evidence_directory) else {
-            return Ok(());
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with(&prefix)
-                && name.ends_with(".json")
-                && !referenced.iter().any(|kept| kept == &name)
-                && older_than_grace(&entry.path(), now)
-            {
-                let _ = fs::remove_file(entry.path());
+        for name in directory_names(&self.root.join("evidence"))? {
+            if name.starts_with(&prefix) && name.ends_with(".json") && !referenced.contains(&name) {
+                remove(&self.root.join("evidence").join(&name))?;
             }
         }
         Ok(())
     }
 
-    /// Remove content-addressed artifacts that no caller-listed evidence still references.
-    pub(in crate::qualification) fn prune_artifacts(&self, referenced: &[String]) {
-        let now = unix_seconds();
-        let Ok(entries) = fs::read_dir(self.root.join("artifacts")) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !referenced.iter().any(|kept| kept == &name) && older_than_grace(&entry.path(), now)
-            {
-                let _ = fs::remove_file(entry.path());
+    /// Delete artifacts outside `referenced`. Requires the write guard; the caller must
+    /// pass a complete reference set or not call this at all.
+    pub(in crate::qualification) fn prune_artifacts(
+        &self,
+        _guard: &StoreGuard,
+        referenced: &[String],
+    ) -> Result<(), String> {
+        for name in directory_names(&self.root.join("artifacts"))? {
+            if !referenced.contains(&name) {
+                remove(&self.root.join("artifacts").join(&name))?;
             }
         }
+        Ok(())
     }
 
-    /// Evidence documents of every retained record of one module.
+    /// Evidence documents of every retained record of one module; fails on any
+    /// unreadable record so callers cannot mistake a partial scan for a complete one.
     pub(in crate::qualification) fn module_evidence_documents(
         &self,
         module: &str,
     ) -> Result<Vec<String>, String> {
-        let directory = self.key_directory("modules", module)?;
         let mut documents = Vec::new();
-        for path in record_files(&directory)? {
-            let Ok(record) = receipt::read_receipt(&path) else {
-                continue;
-            };
-            let Ok(name) = json::string_field(&record, "evidence_file") else {
-                continue;
-            };
-            if let Ok(evidence) = self.evidence(&name)
-                && let Ok(document) = receipt::read_receipt(&evidence)
-            {
-                documents.push(document);
-            }
+        for path in record_files(&self.key_directory("modules", module)?)? {
+            let record = receipt::read_receipt(&path)?;
+            let evidence = self.evidence(&json::string_field(&record, "evidence_file")?)?;
+            documents.push(receipt::read_receipt(&evidence)?);
         }
         Ok(documents)
     }
 }
 
-fn record_files(directory: &Path) -> Result<impl Iterator<Item = PathBuf>, String> {
+/// Published `<sha256>.json` records; temporaries and foreign names are ignored.
+fn record_files(directory: &Path) -> Result<Vec<PathBuf>, String> {
+    Ok(directory_names(directory)?
+        .into_iter()
+        .filter(|name| {
+            name.strip_suffix(".json")
+                .is_some_and(|digest| receipt::validate_sha256(digest, "record").is_ok())
+        })
+        .map(|name| directory.join(name))
+        .collect())
+}
+
+/// Every entry name, or an error if the directory exists but cannot be fully listed.
+fn directory_names(directory: &Path) -> Result<Vec<String>, String> {
     let entries = match fs::read_dir(directory) {
-        Ok(entries) => Some(entries),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(format!(
-                "cannot list ledger records {}: {error}",
-                directory.display()
-            ));
-        }
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("cannot list {}: {error}", directory.display())),
     };
-    Ok(entries.into_iter().flatten().flatten().filter_map(|entry| {
-        let path = entry.path();
-        let name = path.file_name()?.to_str()?;
-        // Atomic writers publish through dot-prefixed temporaries; only `<sha256>.json` counts.
-        let digest = name.strip_suffix(".json")?;
-        receipt::validate_sha256(digest, "record").ok()?;
-        Some(path)
-    }))
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("cannot list {}: {error}", directory.display()))?;
+        let name = entry.file_name().into_string().map_err(|name| {
+            format!(
+                "ledger store entry is not UTF-8: {}",
+                name.to_string_lossy()
+            )
+        })?;
+        // Atomic writers publish through dot-prefixed temporaries.
+        if !name.starts_with('.') {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn remove(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("cannot prune {}: {error}", path.display())),
+    }
 }
 
 /// Ledger keys become directory names; accept only the registry's ASCII spellings.
@@ -230,16 +270,11 @@ fn validate_key(key: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests;
+
 pub(in crate::qualification) fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())
-}
-
-fn older_than_grace(path: &Path, now: u64) -> bool {
-    fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .ok()
-        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-        .is_some_and(|modified| now.saturating_sub(modified.as_secs()) >= RECENT_GRACE_SECONDS)
 }

@@ -367,7 +367,11 @@ harness、权威 plan/acceptance contract、依赖传播和 evidence class。Pow
 成功记录存放在克隆级共享存储 `<git common dir>/stickymd/qualification-ledger/`，同一克隆的所有 linked
 worktree（包括每次发版新建的隔离 worktree）解析到同一位置；git 不可用时 fail closed，不退回私有存储。
 每个模块按输入指纹保存成功记录（`modules/<module>/<fingerprint>.json`），不同指纹互不覆盖，查找是
-按当前指纹的直接路径；每个模块保留最近 8 份并保护 24 小时内的写入，同指纹重跑替换自身记录：
+按当前指纹的直接路径；同指纹重跑替换自身记录，每个模块保留最近 8 份。归档、发布与清理都在存储的
+OS 文件锁（`.lock`，进程退出即释放）下串行；读取方持共享锁从记录跟随到 evidence，清理因此不会删除
+正在被读取或刚被其他写入方发布的内容。清理遇到任何不可读的记录或目录即停止删除并报告，不把"无法确定
+是否被引用"当成未引用；成功记录发布后清理失败只告警，不撤销成功。整个共享存储（含 `.lock`）与旧路径一样
+是保留路径，普通 smoke 与诊断的 `--evidence-file` 不得指向其中：
 
 ```text
 no record for current fingerprint
