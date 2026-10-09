@@ -288,17 +288,21 @@ fn workspace_identity_binds_test_sources_and_execution_settings_even_when_module
 
 #[test]
 #[ignore = "explicit local planning profile; reads this checkout without qualifying a candidate"]
-fn resource_planning_profile() {
+fn module_planning_profile() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
         .unwrap();
     let inputs = super::PlanningInputs::read(root).unwrap();
-    let modules = crate::resource_plan::GROUPS.map(ModuleId::Resource);
+    // Every registered module, as readiness and `qualification modules` compute them.
+    let modules = crate::qualification::module_registry::modules().collect::<Vec<_>>();
     let serial = || {
         let started = std::time::Instant::now();
-        let values = modules.map(|m| legacy_digest(root, Some(m), &inputs.tracked, &[]));
+        let values = modules
+            .iter()
+            .map(|m| legacy_digest(root, Some(*m), &inputs.tracked, &[]))
+            .collect::<Vec<_>>();
         (values, started.elapsed().as_secs_f64())
     };
     let batched = || {
@@ -317,7 +321,8 @@ fn resource_planning_profile() {
             assert_eq!(&legacy.0, digest);
         }
         println!(
-            "FINGERPRINT_PROFILE round={} legacy_seconds={:.6} batch_seconds={:.6} legacy_reads={} batch_reads={} legacy_bytes={} batch_bytes={}",
+            "FINGERPRINT_PROFILE modules={} round={} legacy_seconds={:.6} batch_seconds={:.6} legacy_reads={} batch_reads={} legacy_bytes={} batch_bytes={}",
+            modules.len(),
             round + 1,
             serial.1,
             batched.1,

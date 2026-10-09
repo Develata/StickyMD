@@ -546,6 +546,43 @@ fn a_link_below_the_store_root_makes_the_store_refuse_to_operate() {
     let _ = fs::remove_dir_all(&real);
 }
 
+/// Opt-in measurement: every module recorded, then looked up one by one versus one
+/// snapshot (`--ignored --nocapture`). The fixture repository is small, so this isolates
+/// the store, git and validation costs from fingerprinting a real checkout.
+#[test]
+#[ignore = "explicit timing profile for whole-ledger lookup"]
+fn lookup_all_profile() {
+    let clone = ReleaseClone::new();
+    let first = candidate("0.1.0", "c", "d");
+    for module in modules() {
+        write_valid_evidence(&clone.main, module, &first);
+        record_success(&clone.main, module, &first).unwrap();
+    }
+    for round in 1..=3 {
+        let started = std::time::Instant::now();
+        for module in modules() {
+            assert!(matches!(
+                lookup(&clone.main, module).unwrap(),
+                Lookup::Valid(_)
+            ));
+        }
+        let separate = started.elapsed().as_secs_f64();
+        let started = std::time::Instant::now();
+        let snapshot = super::lookup_all(&clone.main).unwrap();
+        let together = started.elapsed().as_secs_f64();
+        assert!(
+            snapshot
+                .modules
+                .iter()
+                .all(|(_, found)| matches!(found, Lookup::Valid(_)))
+        );
+        println!(
+            "LOOKUP_PROFILE round={round} modules={} separate_seconds={separate:.6} snapshot_seconds={together:.6}",
+            snapshot.modules.len()
+        );
+    }
+}
+
 fn write_valid_evidence(root: &Path, module: ModuleId, candidate: &Candidate) {
     let input = super::fingerprint::calculate(root, module).unwrap();
     let document = valid_document(root, module, candidate, &input, "run");

@@ -154,8 +154,15 @@ impl Campaign {
         );
         crate::resource_plan::validate_receipt(&document, group)?;
         receipt::write_receipt(root, group.receipt(), &document)?;
-        self.verify_current(root, group)?;
-        module_ledger::record_success(root, ModuleId::Resource(group), &self.candidate)
+        // The digest verified after writing is the one the success is filed under, so the
+        // inputs are hashed twice per registration (before and after), not three times.
+        let current = self.verify_current(root, group)?;
+        module_ledger::record_success_for_input(
+            root,
+            ModuleId::Resource(group),
+            &self.candidate,
+            &current,
+        )
     }
 
     fn entry(&self, group: ResourceModule) -> &Entry {
