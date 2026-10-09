@@ -71,6 +71,7 @@ impl LedgerStore {
     pub(in crate::qualification) fn read_guard(&self) -> Result<StoreGuard, String> {
         let file = self.lock_file()?;
         wait_for_lock(|| file.try_lock_shared(), "reading")?;
+        self.ensure_no_links()?;
         Ok(StoreGuard { _file: file })
     }
 
@@ -78,7 +79,38 @@ impl LedgerStore {
     pub(in crate::qualification) fn write_guard(&self) -> Result<StoreGuard, String> {
         let file = self.lock_file()?;
         wait_for_lock(|| file.try_lock(), "writing")?;
+        self.ensure_no_links()?;
         Ok(StoreGuard { _file: file })
+    }
+
+    /// Entries below the store root must be plain files and directories. A junction or
+    /// symlink inside would let a path outside the reserved location alias trusted
+    /// records, so the store refuses to operate instead. (The root itself may be
+    /// redirected: the reserved-path check resolves the root.)
+    fn ensure_no_links(&self) -> Result<(), String> {
+        let mut pending = vec![self.root.clone()];
+        while let Some(directory) = pending.pop() {
+            let entries = fs::read_dir(&directory)
+                .map_err(|error| format!("cannot list {}: {error}", directory.display()))?;
+            for entry in entries {
+                let entry = entry
+                    .map_err(|error| format!("cannot list {}: {error}", directory.display()))?;
+                // DirEntry::file_type does not follow links; junctions count as links.
+                let file_type = entry.file_type().map_err(|error| {
+                    format!("cannot inspect {}: {error}", entry.path().display())
+                })?;
+                if file_type.is_symlink() {
+                    return Err(format!(
+                        "ledger store contains a link and is not trusted: {}",
+                        entry.path().display()
+                    ));
+                }
+                if file_type.is_dir() {
+                    pending.push(entry.path());
+                }
+            }
+        }
+        Ok(())
     }
 
     fn lock_file(&self) -> Result<File, String> {

@@ -142,28 +142,42 @@ fn git_common_dir_from_files(root: &Path) -> Result<Option<PathBuf>, String> {
                 .strip_prefix("gitdir:")
                 .ok_or_else(|| format!("{} is not a gitdir file", dot_git.display()))?
                 .trim();
-            let pointer = Path::new(pointer);
-            if pointer.is_absolute() {
-                pointer.to_path_buf()
-            } else {
-                root.join(pointer)
-            }
+            existing_directory(root, pointer, "gitdir")?
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("cannot inspect {}: {error}", dot_git.display())),
     };
     match fs::read_to_string(git_dir.join("commondir")) {
-        Ok(text) => {
-            let common = Path::new(text.trim());
-            Ok(Some(if common.is_absolute() {
-                common.to_path_buf()
-            } else {
-                git_dir.join(common)
-            }))
-        }
+        Ok(text) => Ok(Some(existing_directory(
+            &git_dir,
+            text.trim(),
+            "commondir",
+        )?)),
+        // A gitfile may name the repository itself (`--separate-git-dir`).
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Some(git_dir)),
         Err(error) => Err(format!("cannot read git commondir: {error}")),
     }
+}
+
+/// A non-empty pointer that resolves to an existing directory; anything else leaves
+/// the store location unknown, which the reserved-path check treats as reserved.
+fn existing_directory(base: &Path, pointer: &str, label: &str) -> Result<PathBuf, String> {
+    if pointer.is_empty() {
+        return Err(format!("git {label} pointer is empty"));
+    }
+    let pointer = Path::new(pointer);
+    let directory = if pointer.is_absolute() {
+        pointer.to_path_buf()
+    } else {
+        base.join(pointer)
+    };
+    if !directory.is_dir() {
+        return Err(format!(
+            "git {label} does not name a directory: {}",
+            directory.display()
+        ));
+    }
+    Ok(directory)
 }
 
 pub(super) fn is_within(root: &Path, path: &Path, directory: &str) -> bool {

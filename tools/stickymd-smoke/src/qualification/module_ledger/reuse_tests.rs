@@ -475,6 +475,85 @@ fn a_store_root_redirected_by_a_junction_is_still_reserved() {
     let _ = fs::remove_dir_all(&real);
 }
 
+#[test]
+fn git_metadata_pointers_must_name_existing_directories() {
+    let clone = ReleaseClone::new();
+    let linked = clone.add_linked_worktree();
+    let common = super::git_common_dir_from_files(linked)
+        .unwrap()
+        .expect("linked worktree has git metadata");
+    assert_eq!(
+        common.canonicalize().unwrap(),
+        clone.main.join(".git").canonicalize().unwrap()
+    );
+    assert_eq!(
+        super::git_common_dir_from_files(&clone.main).unwrap(),
+        Some(clone.main.join(".git"))
+    );
+
+    let broken = clone.main.parent().unwrap().join("broken-gitfile");
+    let private = broken.join("private-gitdir");
+    fs::create_dir_all(&private).unwrap();
+    for (gitfile, commondir) in [
+        ("gitdir:\n".to_owned(), None),
+        (
+            format!("gitdir: {}\n", broken.join("missing").display()),
+            None,
+        ),
+        (format!("gitdir: {}\n", private.display()), Some("")),
+        (
+            format!("gitdir: {}\n", private.display()),
+            Some("../nowhere"),
+        ),
+        ("not a gitfile\n".to_owned(), None),
+    ] {
+        fs::write(broken.join(".git"), &gitfile).unwrap();
+        let _ = fs::remove_file(private.join("commondir"));
+        if let Some(text) = commondir {
+            fs::write(private.join("commondir"), text).unwrap();
+        }
+        assert!(
+            super::git_common_dir_from_files(&broken).is_err(),
+            "{gitfile:?} {commondir:?}"
+        );
+        // An uninterpretable `.git` leaves the store unknown: diagnostics are refused.
+        assert!(
+            crate::qualification::validate_public_evidence_path(
+                &broken,
+                Path::new("target/diagnostics/run.json")
+            )
+            .is_err()
+        );
+    }
+    let _ = fs::remove_dir_all(&broken);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_link_below_the_store_root_makes_the_store_refuse_to_operate() {
+    let clone = ReleaseClone::new();
+    let first = candidate("0.1.0", "c", "d");
+    write_valid_evidence(&clone.main, ModuleId::G4, &first);
+    record_success(&clone.main, ModuleId::G4, &first).unwrap();
+    let store = super::LedgerStore::for_repository(&clone.main).unwrap();
+    let evidence = store.root().join("evidence");
+    let real = clone.main.parent().unwrap().join("evidence-elsewhere");
+    fs::rename(&evidence, &real).unwrap();
+    let link = evidence.to_string_lossy().replace('/', "\\");
+    let status = Command::new("cmd")
+        .args(["/C", "mklink", "/J", &link])
+        .arg(&real)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .expect("start mklink");
+    assert!(status.success(), "create junction");
+    // Reads and writes both fail closed while the redirected subdirectory exists.
+    assert!(compatible_success(&clone.main, ModuleId::G4).is_err());
+    assert!(record_success(&clone.main, ModuleId::G4, &first).is_err());
+    drop(clone);
+    let _ = fs::remove_dir_all(&real);
+}
+
 fn write_valid_evidence(root: &Path, module: ModuleId, candidate: &Candidate) {
     let document = match module {
         ModuleId::Resource(group) => {

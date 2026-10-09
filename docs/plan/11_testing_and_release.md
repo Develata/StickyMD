@@ -377,8 +377,9 @@ OS 文件锁（`.lock`，进程退出即释放；等待上限 120 s，超时报�
 告警，不撤销成功。清理所用记录必须是完整、严格可解析的 JSON，用于决定截图引用的 evidence 必须与记录中的
 摘要一致；G5 readiness 只统计每个 case 自身 JSON 对象内的截图。整个共享存储（含 `.lock`）与旧路径一样是
 保留路径：别名解析后的路径含 `/stickymd/qualification-ledger/` 段（忽略大小写），或落在由 `.git` 元数据文件
-（不运行 git）定位、并解析过 junction 的存储根之内，均拒绝；`.git` 存在却无法解释时同样拒绝。普通 smoke 与
-诊断的 `--evidence-file` 不得指向其中：
+（不运行 git）定位、并解析过 junction 的存储根之内，均拒绝；`.git` 存在却无法解释（指针为空、目标不是现有
+目录、`commondir` 无效）时同样拒绝。存储根以下的任何 junction 或符号链接都会使存储拒绝读写，因此子目录
+重定向无法让外部路径冒充受信任记录。普通 smoke 与诊断的 `--evidence-file` 不得指向其中：
 
 ```text
 no record for current fingerprint
