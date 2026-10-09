@@ -168,6 +168,31 @@ fn g5_screenshots_are_verified_from_the_store_in_a_linked_worktree() {
     assert!(record_success(&clone.main, ModuleId::G5, &first).is_err());
 }
 
+/// Normalization is decided for the manifest set as a whole: once the lockfile
+/// disagrees with the workspace version, a version change in `Cargo.toml` alone must
+/// change every functional fingerprint instead of hiding behind the raw lockfile.
+#[test]
+fn an_inconsistent_lockfile_keeps_the_version_in_every_fingerprint() {
+    let clone = ReleaseClone::new();
+    write(&clone.main, "Cargo.lock", &lockfile("0.0.9"));
+    let before = modules()
+        .map(|module| super::fingerprint::calculate(&clone.main, module).unwrap())
+        .collect::<Vec<_>>();
+    let manifest = fs::read_to_string(clone.main.join("Cargo.toml")).unwrap();
+    write(
+        &clone.main,
+        "Cargo.toml",
+        &manifest.replace("0.1.0", "0.1.1"),
+    );
+    for (module, before) in modules().zip(before) {
+        assert_ne!(
+            super::fingerprint::calculate(&clone.main, module).unwrap(),
+            before,
+            "{module:?}"
+        );
+    }
+}
+
 #[test]
 fn records_with_different_inputs_coexist_instead_of_replacing_each_other() {
     let clone = ReleaseClone::new();

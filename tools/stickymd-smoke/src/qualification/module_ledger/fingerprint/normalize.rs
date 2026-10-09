@@ -15,22 +15,38 @@ use std::path::Path;
 pub(super) const ROOT_MANIFEST: &str = "Cargo.toml";
 pub(super) const LOCKFILE: &str = "Cargo.lock";
 
-/// Workspace facts read once per planning pass.
+/// The normalized forms of the root manifest and the lockfile, decided once per
+/// planning pass for the whole set: either every manifest and the lockfile are inside
+/// the grammar and agree on the workspace version, or nothing is normalized.
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct VersionNormalizer {
-    version: String,
-    members: Vec<String>,
+    root: Normalized,
+    lock: Normalized,
+}
+
+/// The bytes read during planning and their normalized form.
+#[derive(Debug, Eq, PartialEq)]
+struct Normalized {
+    raw: Vec<u8>,
+    normalized: Vec<u8>,
 }
 
 impl VersionNormalizer {
-    /// `None` unless every workspace member inherits one quoted workspace version.
+    /// `None` unless the root manifest, every workspace member manifest and the tracked
+    /// lockfile are all inside the grammar, every member inherits one quoted workspace
+    /// version, and the lockfile records exactly that version for each member.
     pub(super) fn read(root: &Path, tracked: &[String]) -> Option<Self> {
-        let manifest = fs::read_to_string(root.join(ROOT_MANIFEST)).ok()?;
-        let workspace = parse_root(&manifest)?;
+        let is_tracked = |relative: &str| tracked.iter().any(|path| path == relative);
+        if !is_tracked(ROOT_MANIFEST) || !is_tracked(LOCKFILE) {
+            return None;
+        }
+        let root_raw = fs::read(root.join(ROOT_MANIFEST)).ok()?;
+        let manifest = std::str::from_utf8(&root_raw).ok()?;
+        let workspace = parse_root(manifest)?;
         let mut members = Vec::with_capacity(workspace.members.len());
         for member in &workspace.members {
             let relative = format!("{member}/Cargo.toml");
-            if !tracked.iter().any(|path| path == &relative) {
+            if !is_tracked(&relative) {
                 return None;
             }
             let text = fs::read_to_string(root.join(&relative)).ok()?;
@@ -40,9 +56,19 @@ impl VersionNormalizer {
         if members.windows(2).any(|pair| pair[0] == pair[1]) {
             return None;
         }
+        let lock_raw = fs::read(root.join(LOCKFILE)).ok()?;
+        let lock = std::str::from_utf8(&lock_raw).ok()?;
+        let lock_normalized = lock_without_member_versions(lock, &workspace.version, &members)?;
+        let root_normalized = remove_lines(manifest, &[workspace.version_line]);
         Some(Self {
-            version: workspace.version,
-            members,
+            root: Normalized {
+                raw: root_raw,
+                normalized: root_normalized.into_bytes(),
+            },
+            lock: Normalized {
+                raw: lock_raw,
+                normalized: lock_normalized.into_bytes(),
+            },
         })
     }
 
@@ -50,122 +76,126 @@ impl VersionNormalizer {
         path == ROOT_MANIFEST || path == LOCKFILE
     }
 
-    /// Normalized bytes for one of the two manifest inputs; raw bytes on any doubt.
-    pub(super) fn normalize<'a>(&self, path: &str, bytes: &'a [u8]) -> Cow<'a, [u8]> {
-        let Ok(text) = std::str::from_utf8(bytes) else {
-            return Cow::Borrowed(bytes);
+    /// The normalized form of `bytes`, provided they are exactly the bytes judged during
+    /// planning; anything else (including a file rewritten since) stays raw.
+    pub(super) fn normalize<'a>(&'a self, path: &str, bytes: &'a [u8]) -> Cow<'a, [u8]> {
+        let file = match path {
+            ROOT_MANIFEST => &self.root,
+            LOCKFILE => &self.lock,
+            _ => return Cow::Borrowed(bytes),
         };
-        let normalized = match path {
-            ROOT_MANIFEST => self.root_without_version(text),
-            LOCKFILE => self.lock_without_member_versions(text),
-            _ => None,
-        };
-        normalized.map_or(Cow::Borrowed(bytes), |text| Cow::Owned(text.into_bytes()))
+        if bytes == file.raw.as_slice() {
+            Cow::Borrowed(&file.normalized)
+        } else {
+            Cow::Borrowed(bytes)
+        }
     }
+}
 
-    fn root_without_version(&self, text: &str) -> Option<String> {
-        let workspace = parse_root(text)?;
-        if workspace.version != self.version {
-            return None;
-        }
-        Some(remove_lines(text, &[workspace.version_line]))
+/// The lockfile without the `version` lines of workspace members, which must each
+/// appear exactly once with `version`. Keys are accepted once each; TOML forbids
+/// redefinition, so a repeated key is outside the grammar rather than "last one wins".
+fn lock_without_member_versions(text: &str, version: &str, members: &[String]) -> Option<String> {
+    if has_multiline_string(text) {
+        return None;
     }
-
-    fn lock_without_member_versions(&self, text: &str) -> Option<String> {
-        if has_multiline_string(text) {
-            return None;
-        }
-        let mut remove = Vec::new();
-        let mut seen = vec![false; self.members.len()];
-        let mut block: Option<LockBlock> = None;
-        let mut in_array = false;
-        for (index, line) in lines(text).enumerate() {
-            let trimmed = line.trim();
-            if in_array {
-                // Dependency entries name a member without a version unless Cargo had
-                // to disambiguate; a versioned member reference is outside the grammar.
-                if self
-                    .members
-                    .iter()
-                    .any(|member| trimmed.starts_with(&format!("\"{member} ")))
-                {
-                    return None;
-                }
-                if trimmed.starts_with(']') {
-                    in_array = false;
-                }
-                continue;
-            }
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            if trimmed.starts_with('[') {
-                if let Some(finished) = block.take() {
-                    self.accept_block(finished, &mut seen, &mut remove)?;
-                }
-                if trimmed != "[[package]]" {
-                    return None;
-                }
-                block = Some(LockBlock::default());
-                continue;
-            }
-            let (key, value) = trimmed.split_once('=')?;
-            let (key, value) = (key.trim(), value.trim());
-            let Some(current) = block.as_mut() else {
-                // The only top-level key is the lockfile format version.
-                if key != "version" || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-                    return None;
-                }
-                continue;
-            };
-            match key {
-                "name" => current.name = Some(set_once(current.name.take(), quoted(value)?)?),
-                "version" => {
-                    current.version = Some(set_once(current.version.take(), quoted(value)?)?);
-                    current.version_line = Some(index);
-                }
-                "source" => current.has_source = true,
-                "checksum" => {}
-                "dependencies" => {
-                    if value == "[" {
-                        in_array = true;
-                    } else if value != "[]" {
-                        return None;
-                    }
-                }
-                _ => return None,
-            }
-        }
+    let mut remove = Vec::new();
+    let mut seen = vec![false; members.len()];
+    let mut block: Option<LockBlock> = None;
+    let mut format_version = false;
+    let mut in_array = false;
+    for (index, line) in lines(text).enumerate() {
+        let trimmed = line.trim();
         if in_array {
-            return None;
+            // Dependency entries name a member without a version unless Cargo had
+            // to disambiguate; a versioned member reference is outside the grammar.
+            if members
+                .iter()
+                .any(|member| trimmed.starts_with(&format!("\"{member} ")))
+            {
+                return None;
+            }
+            if trimmed.starts_with(']') {
+                in_array = false;
+            }
+            continue;
         }
-        if let Some(finished) = block.take() {
-            self.accept_block(finished, &mut seen, &mut remove)?;
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
         }
-        if seen.iter().any(|found| !found) {
-            return None;
+        if trimmed.starts_with('[') {
+            if let Some(finished) = block.take() {
+                accept_block(finished, version, members, &mut seen, &mut remove)?;
+            }
+            if trimmed != "[[package]]" {
+                return None;
+            }
+            block = Some(LockBlock::default());
+            continue;
         }
-        Some(remove_lines(text, &remove))
-    }
-
-    fn accept_block(
-        &self,
-        block: LockBlock,
-        seen: &mut [bool],
-        remove: &mut Vec<usize>,
-    ) -> Option<()> {
-        let name = block.name?;
-        block.version.as_ref()?;
-        let Ok(position) = self.members.binary_search(&name) else {
-            return Some(());
+        let (key, value) = trimmed.split_once('=')?;
+        let (key, value) = (key.trim(), value.trim());
+        let Some(current) = block.as_mut() else {
+            // The only top-level key is the lockfile format version, defined once.
+            if key != "version"
+                || format_version
+                || !value.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return None;
+            }
+            format_version = true;
+            continue;
         };
-        if block.has_source || seen[position] || block.version.as_deref() != Some(&self.version) {
-            return None;
+        match key {
+            "name" => current.name = Some(set_once(current.name.take(), quoted(value)?)?),
+            "version" => {
+                current.version = Some(set_once(current.version.take(), quoted(value)?)?);
+                current.version_line = Some(index);
+            }
+            "source" => current.source = Some(set_once(current.source.take(), ())?),
+            "checksum" => current.checksum = Some(set_once(current.checksum.take(), ())?),
+            "dependencies" => {
+                current.dependencies = Some(set_once(current.dependencies.take(), ())?);
+                if value == "[" {
+                    in_array = true;
+                } else if value != "[]" {
+                    return None;
+                }
+            }
+            _ => return None,
         }
-        seen[position] = true;
-        remove.push(block.version_line?);
-        Some(())
     }
+    if in_array || !format_version {
+        return None;
+    }
+    if let Some(finished) = block.take() {
+        accept_block(finished, version, members, &mut seen, &mut remove)?;
+    }
+    if seen.iter().any(|found| !found) {
+        return None;
+    }
+    Some(remove_lines(text, &remove))
+}
+
+/// Record one finished `[[package]]` block; `members` is sorted.
+fn accept_block(
+    block: LockBlock,
+    version: &str,
+    members: &[String],
+    seen: &mut [bool],
+    remove: &mut Vec<usize>,
+) -> Option<()> {
+    let name = block.name?;
+    block.version.as_ref()?;
+    let Ok(position) = members.binary_search(&name) else {
+        return Some(());
+    };
+    if block.source.is_some() || seen[position] || block.version.as_deref() != Some(version) {
+        return None;
+    }
+    seen[position] = true;
+    remove.push(block.version_line?);
+    Some(())
 }
 
 #[derive(Default)]
@@ -173,7 +203,9 @@ struct LockBlock {
     name: Option<String>,
     version: Option<String>,
     version_line: Option<usize>,
-    has_source: bool,
+    source: Option<()>,
+    checksum: Option<()>,
+    dependencies: Option<()>,
 }
 
 struct RootManifest {

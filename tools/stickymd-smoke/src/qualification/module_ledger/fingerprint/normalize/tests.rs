@@ -1,7 +1,6 @@
 //! Release-version normalization must remove only the version label and fall back to
 //! raw bytes for every manifest spelling outside its grammar.
 
-use std::borrow::Cow;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -47,17 +46,20 @@ fn lockfile(version: &str) -> String {
 struct Fixture(PathBuf);
 
 impl Fixture {
-    fn new(root_manifest: &str, members: &[(&str, &str)]) -> Self {
+    fn new(root_manifest: &str, members: &[(&str, &str)], lock: &str) -> Self {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
-            "stickymd-version-normalizer-{}-{nonce}",
+            "stickymd-version-normalizer-{}-{nonce}-{sequence}",
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join(ROOT_MANIFEST), root_manifest).unwrap();
+        fs::write(root.join(LOCKFILE), lock).unwrap();
         for (path, text) in members {
             let manifest = root.join(path).join("Cargo.toml");
             fs::create_dir_all(manifest.parent().unwrap()).unwrap();
@@ -70,7 +72,12 @@ impl Fixture {
         members
             .iter()
             .map(|(path, _)| format!("{path}/Cargo.toml"))
+            .chain([ROOT_MANIFEST.to_owned(), LOCKFILE.to_owned()])
             .collect()
+    }
+
+    fn read(&self, members: &[(&str, &str)]) -> Option<VersionNormalizer> {
+        VersionNormalizer::read(&self.0, &Self::tracked(members))
     }
 }
 
@@ -83,56 +90,68 @@ impl Drop for Fixture {
 
 const MEMBERS: [(&str, &str); 2] = [("crates/stickymd-core", MEMBER), ("apps/stickymd-win", APP)];
 
-fn normalizer(version: &str) -> VersionNormalizer {
-    let fixture = Fixture::new(&root_manifest(version), &MEMBERS);
-    VersionNormalizer::read(&fixture.0, &Fixture::tracked(&MEMBERS)).expect("supported workspace")
-}
-
-fn normalized(normalizer: &VersionNormalizer, path: &str, text: &str) -> Option<String> {
-    match normalizer.normalize(path, text.as_bytes()) {
-        Cow::Owned(bytes) => Some(String::from_utf8(bytes).unwrap()),
-        Cow::Borrowed(_) => None,
-    }
+/// A supported workspace and the normalized forms of its two manifests.
+fn normalized_set(root: &str, lock: &str) -> (String, String) {
+    let fixture = Fixture::new(root, &MEMBERS, lock);
+    let normalizer = fixture.read(&MEMBERS).expect("supported workspace");
+    let output = |path: &str, text: &str| {
+        String::from_utf8(normalizer.normalize(path, text.as_bytes()).into_owned()).unwrap()
+    };
+    (output(ROOT_MANIFEST, root), output(LOCKFILE, lock))
 }
 
 #[test]
 fn release_bump_produces_identical_normalized_manifests() {
-    let old = normalizer("0.1.2");
-    let new = normalizer("0.1.3");
-    let old_root = normalized(&old, ROOT_MANIFEST, &root_manifest("0.1.2")).unwrap();
-    let new_root = normalized(&new, ROOT_MANIFEST, &root_manifest("0.1.3")).unwrap();
-    assert_eq!(old_root, new_root);
-    assert!(!old_root.contains("version = \"0.1.2\""));
-    assert!(old_root.contains("windows = { version = \"0.62.0\""));
-    let old_lock = normalized(&old, LOCKFILE, &lockfile("0.1.2")).unwrap();
-    let new_lock = normalized(&new, LOCKFILE, &lockfile("0.1.3")).unwrap();
-    assert_eq!(old_lock, new_lock);
+    let old = normalized_set(&root_manifest("0.1.2"), &lockfile("0.1.2"));
+    let new = normalized_set(&root_manifest("0.1.3"), &lockfile("0.1.3"));
+    assert_eq!(old, new);
+    assert!(!old.0.contains("version = \"0.1.2\""));
+    assert!(old.0.contains("windows = { version = \"0.62.0\""));
     // External package versions and checksums remain part of the fingerprint.
-    assert!(old_lock.contains("version = \"2.0.12\""));
-    assert!(old_lock.contains("checksum = "));
+    assert!(old.1.contains("version = \"2.0.12\""));
+    assert!(old.1.contains("checksum = "));
+    assert!(!old.1.contains("version = \"0.1.2\""));
 }
 
 #[test]
 fn crlf_manifests_normalize_without_touching_other_lines() {
-    let normalizer = normalizer("0.1.3");
     let crlf = root_manifest("0.1.3").replace('\n', "\r\n");
-    let output = normalized(&normalizer, ROOT_MANIFEST, &crlf).unwrap();
-    assert_eq!(output, crlf.replace("version = \"0.1.3\"\r\n", ""));
+    let (root, _) = normalized_set(&crlf, &lockfile("0.1.3"));
+    assert_eq!(root, crlf.replace("version = \"0.1.3\"\r\n", ""));
 }
 
 #[test]
 fn dependency_changes_still_change_normalized_bytes() {
-    let normalizer = normalizer("0.1.3");
-    let changed = lockfile("0.1.3").replace("2.0.12", "2.0.13");
-    assert_ne!(
-        normalized(&normalizer, LOCKFILE, &lockfile("0.1.3")),
-        normalized(&normalizer, LOCKFILE, &changed)
+    let base = normalized_set(&root_manifest("0.1.3"), &lockfile("0.1.3"));
+    let lock = normalized_set(
+        &root_manifest("0.1.3"),
+        &lockfile("0.1.3").replace("2.0.12", "2.0.13"),
     );
-    let root = root_manifest("0.1.3").replace("0.62.0", "0.63.0");
-    assert_ne!(
-        normalized(&normalizer, ROOT_MANIFEST, &root_manifest("0.1.3")),
-        normalized(&normalizer, ROOT_MANIFEST, &root)
+    assert_ne!(base.1, lock.1);
+    let root = normalized_set(
+        &root_manifest("0.1.3").replace("0.62.0", "0.63.0"),
+        &lockfile("0.1.3"),
     );
+    assert_ne!(base.0, root.0);
+}
+
+#[test]
+fn only_the_bytes_judged_during_planning_are_normalized() {
+    let fixture = Fixture::new(&root_manifest("0.1.3"), &MEMBERS, &lockfile("0.1.3"));
+    let normalizer = fixture.read(&MEMBERS).unwrap();
+    // A manifest rewritten after planning is hashed raw, never as the planned form.
+    let rewritten = root_manifest("0.1.4");
+    assert_eq!(
+        normalizer.normalize(ROOT_MANIFEST, rewritten.as_bytes()),
+        rewritten.as_bytes()
+    );
+    let lock = lockfile("0.1.3");
+    assert_ne!(
+        normalizer.normalize(LOCKFILE, lock.as_bytes()),
+        lock.as_bytes()
+    );
+    let other = b"unrelated";
+    assert_eq!(normalizer.normalize("README.md", other), other.as_slice());
 }
 
 #[test]
@@ -159,11 +178,8 @@ fn unsupported_root_manifest_spellings_disable_normalization() {
         base.replace("version = \"0.1.3\"\n", ""),
         base.replace("members = [", "members = [ \"crates/missing\","),
     ] {
-        let fixture = Fixture::new(&unsupported, &MEMBERS);
-        assert!(
-            VersionNormalizer::read(&fixture.0, &Fixture::tracked(&MEMBERS)).is_none(),
-            "{unsupported}"
-        );
+        let fixture = Fixture::new(&unsupported, &MEMBERS, &lockfile("0.1.3"));
+        assert!(fixture.read(&MEMBERS).is_none(), "{unsupported}");
     }
 }
 
@@ -178,17 +194,23 @@ fn members_must_inherit_the_workspace_version_once() {
         MEMBER.replace("name = \"stickymd-core\"", "name = \"stickymd-win\""),
     ] {
         let members = [("crates/stickymd-core", member.as_str()), MEMBERS[1]];
-        let fixture = Fixture::new(&root_manifest("0.1.3"), &members);
-        assert!(VersionNormalizer::read(&fixture.0, &Fixture::tracked(&members)).is_none());
+        let fixture = Fixture::new(&root_manifest("0.1.3"), &members, &lockfile("0.1.3"));
+        assert!(fixture.read(&members).is_none());
     }
-    // An untracked member manifest is not a supported workspace either.
-    let fixture = Fixture::new(&root_manifest("0.1.3"), &MEMBERS);
+    // Untracked member manifests or lockfiles are not a supported workspace either.
+    let fixture = Fixture::new(&root_manifest("0.1.3"), &MEMBERS, &lockfile("0.1.3"));
     assert!(VersionNormalizer::read(&fixture.0, &Fixture::tracked(&MEMBERS[..1])).is_none());
+    let without_lock = Fixture::tracked(&MEMBERS)
+        .into_iter()
+        .filter(|path| path != LOCKFILE)
+        .collect::<Vec<_>>();
+    assert!(VersionNormalizer::read(&fixture.0, &without_lock).is_none());
 }
 
+/// Any lockfile outside the grammar disables normalization of the whole set, including
+/// the root manifest: a workspace version change then changes the fingerprint.
 #[test]
-fn unsupported_lockfile_shapes_fall_back_to_raw_bytes() {
-    let normalizer = normalizer("0.1.3");
+fn unsupported_lockfile_shapes_keep_both_manifests_raw() {
     let base = lockfile("0.1.3");
     let duplicate_member =
         format!("{base}\n[[package]]\nname = \"stickymd-core\"\nversion = \"0.1.3\"\n");
@@ -208,6 +230,18 @@ fn unsupported_lockfile_shapes_fall_back_to_raw_bytes() {
         base.replace(" \"stickymd-core\",\n", " \"stickymd-core 0.1.3\",\n"),
         format!("{base}\n[metadata]\nkey = \"value\"\n"),
         base.replace("version = 4\n", "version = \"4\"\n"),
+        base.replace("version = 4\n", "version = 4\nversion = 4\n"),
+        base.replace("version = 4\n", ""),
+        base.replace("checksum = ", "checksum = \"x\"\nchecksum = "),
+        base.replace(
+            "source = \"registry",
+            "source = \"registry+https://example.invalid\"\nsource = \"registry",
+        ),
+        base.replacen(
+            "dependencies = [\n \"thiserror\",\n]\n",
+            "dependencies = []\ndependencies = [\n \"thiserror\",\n]\n",
+            1,
+        ),
         base.replacen(
             "name = \"stickymd-core\"\n",
             "name = \"stickymd-core\"\nedition = \"2024\"\n",
@@ -217,15 +251,12 @@ fn unsupported_lockfile_shapes_fall_back_to_raw_bytes() {
             "dependencies = [\n \"thiserror\",\n]\n",
             "dependencies = [\n \"thiserror\",\n",
         ),
+        "\u{feff}not toml [".to_owned(),
     ] {
-        assert!(
-            normalized(&normalizer, LOCKFILE, &unsupported).is_none(),
-            "{unsupported}"
-        );
+        let fixture = Fixture::new(&root_manifest("0.1.3"), &MEMBERS, &unsupported);
+        assert!(fixture.read(&MEMBERS).is_none(), "{unsupported}");
     }
-    assert!(normalized(&normalizer, LOCKFILE, "\u{feff}not toml [").is_none());
 }
-
 /// Guard against manifest drift: the real workspace must stay inside the grammar,
 /// otherwise every release bump silently invalidates all functional modules again.
 #[test]
@@ -239,8 +270,9 @@ fn the_real_workspace_manifests_normalize() {
         .expect("the repository manifests must be inside the normalization grammar");
     for path in [ROOT_MANIFEST, LOCKFILE] {
         let raw = fs::read(root.join(path)).unwrap();
-        assert!(
-            matches!(normalizer.normalize(path, &raw), Cow::Owned(_)),
+        assert_ne!(
+            normalizer.normalize(path, &raw),
+            raw.as_slice(),
             "{path} must normalize"
         );
     }
@@ -252,8 +284,8 @@ fn quoted_target_tables_are_inside_the_grammar() {
         "{APP}\n[target.'cfg(windows)'.dependencies]\nwindows.workspace = true\n\n[target.\"cfg(unix)\".build-dependencies]\ncc = \"1\"\n\n[package.metadata.winresource]\nProductName = \"StickyMD\"\n"
     );
     let members = [MEMBERS[0], ("apps/stickymd-win", app.as_str())];
-    let fixture = Fixture::new(&root_manifest("0.1.3"), &members);
-    assert!(VersionNormalizer::read(&fixture.0, &Fixture::tracked(&members)).is_some());
+    let fixture = Fixture::new(&root_manifest("0.1.3"), &members, &lockfile("0.1.3"));
+    assert!(fixture.read(&members).is_some());
     for broken in [
         "[target.''.dependencies]",
         "[target.'cfg(windows).dependencies]",
@@ -262,10 +294,7 @@ fn quoted_target_tables_are_inside_the_grammar() {
     ] {
         let app = format!("{APP}\n{broken}\nwindows.workspace = true\n");
         let members = [MEMBERS[0], ("apps/stickymd-win", app.as_str())];
-        let fixture = Fixture::new(&root_manifest("0.1.3"), &members);
-        assert!(
-            VersionNormalizer::read(&fixture.0, &Fixture::tracked(&members)).is_none(),
-            "{broken}"
-        );
+        let fixture = Fixture::new(&root_manifest("0.1.3"), &members, &lockfile("0.1.3"));
+        assert!(fixture.read(&members).is_none(), "{broken}");
     }
 }
