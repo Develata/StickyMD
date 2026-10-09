@@ -6,16 +6,14 @@ use std::path::Path;
 
 use super::exact_readiness;
 use super::module_ledger::{self, ModuleId};
-use super::receipt::Candidate;
 
 pub(super) const G5_RECEIPT: &str = "dist/evidence/g5-exact-qualification.json";
 const EXPECTED_CASES: [&str; 4] = ["G5-01", "G5-02", "G5-03", "G5-04"];
 
-pub(super) fn check(root: &Path, candidate: &Candidate, blockers: &mut Vec<String>) -> bool {
+pub(super) fn check(root: &Path, blockers: &mut Vec<String>) -> bool {
     let before = blockers.len();
     if exact_readiness::check(
         root,
-        candidate,
         ModuleId::G5,
         "G5",
         G5_RECEIPT,
@@ -27,9 +25,17 @@ pub(super) fn check(root: &Path, candidate: &Candidate, blockers: &mut Vec<Strin
     blockers.len() == before
 }
 
+/// Every `(path, sha256)` companion file listed by a G5 evidence document.
+pub(super) fn companion_artifacts(document: &str) -> Vec<(String, String)> {
+    EXPECTED_CASES
+        .iter()
+        .flat_map(|case| artifacts_for_case(document, case))
+        .collect()
+}
+
 fn verify_artifacts(root: &Path, blockers: &mut Vec<String>) {
-    let document = match module_ledger::compatible_success(root, ModuleId::G5) {
-        Ok(Some(success)) => success.document,
+    let success = match module_ledger::compatible_success(root, ModuleId::G5) {
+        Ok(Some(success)) => success,
         Ok(None) => {
             blockers.push("G5 screenshot evidence has no compatible last success".to_owned());
             return;
@@ -40,7 +46,7 @@ fn verify_artifacts(root: &Path, blockers: &mut Vec<String>) {
         }
     };
     for (case, minimum) in [("G5-01", 1), ("G5-02", 3), ("G5-03", 13), ("G5-04", 3)] {
-        let artifacts = artifacts_for_case(&document, case);
+        let artifacts = artifacts_for_case(&success.document, case);
         if artifacts.len() < minimum {
             blockers.push(format!(
                 "G5 exact {case} has {} screenshot artifact(s), expected at least {minimum}",
@@ -53,8 +59,16 @@ fn verify_artifacts(root: &Path, blockers: &mut Vec<String>) {
                 blockers.push(format!("G5 exact {case} has unsafe artifact path {path}"));
                 continue;
             }
-            let absolute = root.join(&path);
-            match super::receipt::sha256(&absolute) {
+            // Screenshots are archived with the success, so a fresh release
+            // worktree verifies them from the clone-wide store.
+            let archived = match success.artifact(&expected) {
+                Ok(archived) => archived,
+                Err(error) => {
+                    blockers.push(format!("G5 artifact {path}: {error}"));
+                    continue;
+                }
+            };
+            match super::receipt::sha256(&archived) {
                 Ok(actual) if actual == expected => {}
                 Ok(actual) => blockers.push(format!(
                     "STALE RECEIPT: G5 artifact {path} hash is {actual}, expected {expected}"

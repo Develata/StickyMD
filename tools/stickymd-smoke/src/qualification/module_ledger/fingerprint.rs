@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::ModuleId;
 use crate::cli::ResourceModule;
 
+mod normalize;
 mod stream;
 pub(in crate::qualification) use stream::Batch;
 
@@ -214,18 +215,47 @@ fn is_global_input(path: &str) -> bool {
             | "docs/acceptance-cases/phase-14.md"
             | "tools/stickymd-smoke/src/qualification/module_ledger.rs"
             | "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint.rs"
+            | "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint/normalize.rs"
+            | "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint/stream.rs"
+            | "tools/stickymd-smoke/src/qualification/module_ledger/store.rs"
             | "tools/stickymd-smoke/src/atomic_evidence.rs"
             | "tools/stickymd-smoke/src/qualification/receipt.rs"
     )
 }
 
+/// Inputs that no functional qualification module executes or reads. Governance and
+/// package checks still consume several of them; those run on every change through CI
+/// selection or as exact-byte gates, not through the functional ledger.
 fn is_non_behavior_document(path: &str) -> bool {
     path.starts_with("docs/report/")
         || path.starts_with("docs/tasks/")
         || path.starts_with("docs/reference/")
         || path.starts_with("docs/phases/")
+        || path.starts_with("docs/release-notes/")
+        || path.starts_with("docs/adr/")
+        || path.starts_with("docs/overview/")
+        || path.starts_with("docs/features/")
         || path.starts_with("tests/")
         || path.starts_with("benches/")
+        // README images and license texts are packaged files, verified by exact-byte gates.
+        || path.starts_with("assets/readme/")
+        || path.starts_with("assets/licenses/")
+        || matches!(
+            path,
+            "README.md"
+                | "README.en.md"
+                | "README.zh-CN.md"
+                | "CHANGELOG.md"
+                | "CONTRIBUTING.md"
+                | "SECURITY.md"
+                | "AGENTS.md"
+                | "LICENSE"
+                | "THIRD_PARTY_NOTICES.md"
+                | "docs/AGENTS.md"
+                | "docs/plan/AGENTS.md"
+                | "docs/coverage-matrix.md"
+                | "docs/release-checklist.md"
+        )
 }
 
 fn product_domains(path: &str) -> Option<u64> {

@@ -6,11 +6,9 @@ use std::path::Path;
 
 use super::json;
 use super::module_ledger::{self, ModuleId};
-use super::receipt::Candidate;
 
 pub(super) fn check(
     root: &Path,
-    candidate: &Candidate,
     module: ModuleId,
     label: &str,
     relative_receipt: &str,
@@ -69,7 +67,15 @@ pub(super) fn check(
         &success.origin_zip_sha256,
         blockers,
     );
-    expect_string(&document, label, "version", &candidate.version, blockers);
+    // Reused evidence carries the version of the candidate it ran on; the current
+    // candidate's version is checked against Source Freeze, not against old evidence.
+    expect_string(
+        &document,
+        label,
+        "version",
+        &success.origin_version,
+        blockers,
+    );
     match json::string_field(&document, "windows") {
         Ok(value) if !value.trim().is_empty() && value != "UNKNOWN" => {}
         Ok(_) => blockers.push(format!("{label} exact Windows build is unavailable")),
@@ -175,7 +181,6 @@ mod tests {
         let mut blockers = Vec::new();
         assert!(check(
             &root,
-            &candidate,
             ModuleId::G3,
             "GX",
             relative,
@@ -190,7 +195,6 @@ mod tests {
         blockers.clear();
         assert!(!check(
             &root,
-            &candidate,
             ModuleId::G3,
             "GX",
             relative,

@@ -214,10 +214,14 @@ mod tests {
 
         // A window sentinel (or aggregate PASS) cannot stand in for any missing group.
         for group in crate::resource_plan::GROUPS {
-            let path = root.join(format!(
-                "dist/evidence/module-success/{}.json",
-                group.ledger_id()
-            ));
+            let module = module_ledger::ModuleId::Resource(group);
+            let path = module_ledger::store::LedgerStore::for_repository(&root)
+                .unwrap()
+                .module_record(
+                    group.ledger_id(),
+                    &module_ledger::fingerprint::calculate(&root, module).unwrap(),
+                )
+                .unwrap();
             let saved = fs::read(&path).unwrap();
             fs::remove_file(&path).unwrap();
             blockers.clear();

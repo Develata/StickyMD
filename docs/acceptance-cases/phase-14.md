@@ -53,7 +53,7 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A32 | Local Preflight Build 与 Release Exact Artifact 分离；qualification CLI 按 recorded run/name 自行下载并与用户副本逐字节比对，只有 successful remote artifact 通过 checksum/SBOM/package/runtime 后可 Promote 到 canonical ignored staging；candidate receipt 绑定 run/attempt/artifact id 与实际 ZIP/EXE/SBOM hash | Automated | qualification source-freeze/remote/downloaded/candidate resolver tests | AUTOMATED PASS |
 | P14-A33 | Promote 或 candidate identity 改变后 exact-byte evidence fail closed；功能资格化只在相关产品/共享/harness/contract 输入指纹改变时 stale，无法分类的 tracked path 保守失效 | Automated | module registry/fingerprint/readiness evidence-class tests + central candidate resolver regression | AUTOMATED PASS |
 | P14-A34 | Candidate workflow 与 publish promotion workflow 分离；tag/draft/publish 只接受显式 source/run/hash/tag 输入并复用同一 artifact，禁止 tag 触发重建或自动选择另一 build | Automated | release workflow governance + operation separation audit | AUTOMATED PASS |
-| P14-A35 | 每个 qualification module 只持久化最后一次完整成功记录；相同指纹显示来源 candidate 的 `REUSED PASS`，PASS 原子更新，FAIL/ABORTED/环境中止不创建或覆盖成功记录 | Automated | last-success ledger atomicity、failure non-overwrite、impacted planner 与 origin identity tests | AUTOMATED PASS |
+| P14-A35 | 每个 qualification module 按输入指纹在克隆级共享存储中保存完整成功记录（不同指纹互不覆盖，保留最近 8 份并保护 24 小时内写入）；相同指纹显示来源 candidate/version 的 `REUSED PASS`，记录原子发布，FAIL/ABORTED/环境中止不创建或替换记录 | Automated | `module_ledger` 原子性、失败不覆盖、指纹并存、impacted planner 与 origin identity 回归 | AUTOMATED PASS |
 | P14-A36 | 已开始执行的 smoke task 失败或环境中止时仍原子写入本轮 JSON、已收集的 measurements/gates/samples；保持非零退出码、不执行后续任务、不更新成功账本；证据写入失败时同时保留原始错误 | Automated | runner failure-evidence regression + evidence failure/NOT_TESTED ledger-isolation tests | AUTOMATED PASS |
 | P14-A37 | Resources 在开始及每个主要场景完成后持久化显式 `INCOMPLETE` 收据，保留已完成测量；最终完整成功才清除该标识；checkpoint 写入失败不得把部分结果登记为成功 | Automated | `runner/resource_progress` 的旧收据替换、测量保留、写入失败和成功账本隔离回归 | AUTOMATED PASS |
 | P14-A38 | 资源矩阵的无公式及 1/20 公式样本仅包含指定数量的公式与图片；修复资源 padding 不改变既有 startup fixture bytes；fixture 变化使对应模块指纹失效 | Automated | runtime fixture 数量/UTF-8/尺寸和 startup SHA-256 回归；module fingerprint 实际文件变更回归 | AUTOMATED PASS |
@@ -85,6 +85,9 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A64 | 启动 ready 观测后的累计进程 CPU 与观测延迟单列；失败保留原始样本；显式诊断检查输出隔离及前后桌面环境，不写成功账本；ready 不替代真实焦点观测 | Automated | `runtime/native_diagnostics` 的 CPU 语义、失败保留、真实 Git 输出隔离和末尾环境拒绝回归；`runtime/startup_focus` 焦点判定单测；真实启动仍需对应原生入口 | AUTOMATED PASS |
 | P14-A65 | 九种 Zoom 组合每份内存样本均有完整 60 秒 CPU 观测及既有空闲 CPU 门；内存-only 旧收据不能补齐覆盖 | Automated | `resource_plan/zoom::tests`、整组校验及预算回归；原生验收由 P14-A46 持有 | AUTOMATED PASS |
 | P14-A66 | 三视图默认/220×120/普通样式九组对照共用 fixture；五次原始内存/CPU、实际尺寸/DPI/样式及前后对象计数受校验，普通样式只作用于测试子进程 | Automated | `resource_plan/window_comparison`、`runtime/resources/comparison`、`window_control/resource_comparison` 与组指纹回归；正式与人工验收仍分开 | AUTOMATED PASS |
+| P14-A67 | 发版新建的 linked worktree 解析到同一 `<git common dir>/stickymd/qualification-ledger/`，复用其他 worktree 记录的成功；G5 截图按 SHA-256 归档并从共享存储校验 | Automated | `module_ledger::reuse_tests`（release-shaped 变更、G5 归档、指纹并存） | AUTOMATED PASS |
+| P14-A68 | 仅发布版本号、发布说明、checklist、report 等改动不使功能模块失效；依赖、产品代码、harness、plan/acceptance 变化仍失效；不在窄语法内的 manifest/lock 写法整体回退原始字节 | Automated | `fingerprint::normalize::tests`、`module_ledger::reuse_tests`、`fingerprint::tests` | AUTOMATED PASS |
+| P14-A69 | G3/G4/G5 readiness 将复用 evidence 的 version/source/EXE/ZIP 与记录 origin 比较，不要求等于当前 candidate；当前 candidate 一致性仍由 Source Freeze 与 exact-byte 门持有 | Automated | `exact_readiness`、`automated_readiness` 回归 | AUTOMATED PASS |
 | P14-M01 | Microsoft Pinyin / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Guided Manual | exact candidate G1；自动化矩形/截图只能作 companion evidence | NOT TESTED |
 
 P14-A61 Preconditions：使用当前 Rust CLI 与锁定依赖。

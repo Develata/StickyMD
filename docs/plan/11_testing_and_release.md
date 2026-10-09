@@ -353,30 +353,47 @@ harness、权威 plan/acceptance contract、依赖传播和 evidence class。Pow
 全部仓库内容同时复制到内存。共享 core、Cargo manifests/lock、toolchain、build/release 配置和 contract 变化按
 注册依赖保守传播；任何 tracked path 无法分类时，planner 必须使保守共享集合 stale，而不是默认忽略。
 
-每个模块只维护一份 Last Successful Module Receipt：
+功能模块指纹（v2）对两类文件做发布版本规范化，其余输入仍逐字节参与：根 `Cargo.toml` 去掉
+`[workspace.package]` 唯一的 `version` 行；`Cargo.lock` 去掉 workspace member（由 `[workspace].members`
+与各 member 的 `[package].name` 白名单确定，且 member 必须 `version.workspace = true`）对应、无 `source`、
+版本等于 workspace version 的 `version` 行。任何不在这一窄语法内的写法（重复字段、dotted/inline key、
+多行字符串、未知表、member 缺失或重复、带版本的 member 依赖引用、lock 与 manifest 版本不一致）整体回退为
+原始字节。规范化算法版本写入指纹头；Source Freeze、workspace-tests identity 与 exact-byte 门始终使用原始字节。
+发布说明、README/CHANGELOG/CONTRIBUTING/SECURITY、AGENTS 指南、coverage matrix、release checklist、
+`docs/{adr,overview,features}/`、README 图片与许可证文本不是任何功能模块执行或读取的输入，不使功能模块失效；
+其中由 governance 检查或打包读取的文件继续由 CI 选择与 exact-byte 门覆盖。`docs/plan/`、`docs/acceptance-cases/`
+因跨域约束仍对全部功能模块保守传播。
+
+成功记录存放在克隆级共享存储 `<git common dir>/stickymd/qualification-ledger/`，同一克隆的所有 linked
+worktree（包括每次发版新建的隔离 worktree）解析到同一位置；git 不可用时 fail closed，不退回私有存储。
+每个模块按输入指纹保存成功记录（`modules/<module>/<fingerprint>.json`），不同指纹互不覆盖，查找是
+按当前指纹的直接路径；每个模块保留最近 8 份并保护 24 小时内的写入，同指纹重跑替换自身记录：
 
 ```text
-no compatible success
+no record for current fingerprint
     -> RUN REQUIRED
 
-current fingerprint == last successful fingerprint
-    -> REUSED PASS（不启动 runner；显示 origin candidate/source）
+record for current fingerprint
+    -> REUSED PASS（不启动 runner；显示 origin candidate/source/version）
 
 RUN REQUIRED -> complete PASS
-    -> atomically replace that module's last-success receipt
+    -> atomically publish the record for (module, current fingerprint)
 
 RUN REQUIRED -> FAIL / ENVIRONMENT BLOCKED / USER ABORTED / unwind
-    -> return non-zero; do not create or overwrite last-success receipt
+    -> return non-zero; do not create or replace any record
 ```
 
-last-success 文件只允许 `PASSED`；失败、中止和 partial result 不是正式成功收据。它们可以输出到当前命令终端或
-临时诊断，但不得改变 ledger authority。成功 evidence 先写入按内容 hash 命名的不可变归档，再用同目录 temp +
-atomic replace 更新 ledger 指针；这样即使新 ledger 写入失败，旧指针及其 evidence 仍然完整。ledger 更新成功后才可
-清理上一份归档。旧成功记录保留不代表旧指纹当前有效：readiness 每次必须重新计算并比较当前指纹。
+记录只允许 `PASSED`；失败、中止和 partial result 不是正式成功收据。它们可以输出到当前命令终端或临时诊断，
+但不得改变 ledger authority。成功 evidence 先写入按内容 hash 命名的不可变归档（`evidence/`），G5 截图等
+companion 文件按 SHA-256 归档到 `artifacts/` 并在归档前校验，再用同目录 temp + atomic replace 发布记录；
+readiness 从共享存储校验这些归档，不依赖原 worktree 中的文件。旧记录保留不代表当前有效：readiness 每次
+重新计算当前指纹。工作区内旧的 `dist/evidence/module-success/` 不再是 authority，也不自动导入（指纹算法
+已变化），但仍是保留路径，普通 smoke 与诊断不得写入。发布归档必须复制 readiness 引用的共享存储 evidence。
 
 package/download/checksum/SBOM/PE/native-runtime 等精确字节门不进入功能 ledger，仍直接绑定当前
 ZIP/EXE/SBOM 并在 artifact hash 改变后重跑。功能行为模块可以跨 candidate 复用，但必须保留 origin identity，且
-产品、共享、harness 与 contract 输入逐字节兼容。
+产品、共享、harness 与 contract 输入（按上述规范化）逐字节兼容；readiness 将复用 evidence 内的 source、
+EXE/ZIP 与 version 与该记录的 origin 比较，不与当前 candidate 比较。
 readiness 输出必须区分 `RAN PASS` 与 `REUSED PASS`；二者都是通过，但后者不能伪装成在当前 candidate 上实际启动。
 
 candidate freeze、release readiness 或 USER 明确要求时，planner 只运行指纹 stale 的功能模块与当前 artifact

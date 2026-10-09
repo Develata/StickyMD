@@ -106,6 +106,8 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
 - [ ] warm cohort 使用正式 `1000 ms` 进程间隔；rapid-restart 诊断不冒充 warm receipt。
 - [ ] Resources receipt 绑定 Promoted Candidate，所有 hard gate PASS。
 - [ ] G3、G4、G5 当前输入指纹有 compatible last-success；stale 模块只重跑受影响部分。
+- [ ] 先运行 `qualification modules` 查看克隆级共享账本（`LEDGER_STORE=` 行）中各模块 `REUSED_PASS` / `RUN_REQUIRED`，只重跑后者。
+- [ ] 发布归档复制 readiness 引用的共享账本 evidence 与 G5 截图，不只复制 worktree 的 `dist/evidence/`。
 - [ ] exact-byte package、checksum、SBOM、PE 与 portable-runtime gate 不通过模块 ledger 跳过。
 - [ ] GUI 前环境为 `VALID`；环境阻塞保持 `NOT TESTED`，不制造产品 PASS/FAIL。
 - [ ] smoke-owned child 没有遗留；用户自己的 StickyMD 进程未被工具终止。

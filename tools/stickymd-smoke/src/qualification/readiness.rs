@@ -64,9 +64,9 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
         check_remote(root, source, candidate, &mut blockers);
         check_downloaded(root, candidate, &mut blockers);
         let automated_ok = automated_readiness::check(root, source, candidate, &mut blockers);
-        g3_readiness::check(root, candidate, &mut blockers);
-        g4_readiness::check(root, candidate, &mut blockers);
-        g5_readiness::check(root, candidate, &mut blockers);
+        g3_readiness::check(root, &mut blockers);
+        g4_readiness::check(root, &mut blockers);
+        g5_readiness::check(root, &mut blockers);
         manual_readiness::check(
             root,
             candidate,

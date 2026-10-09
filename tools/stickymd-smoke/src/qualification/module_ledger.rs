@@ -11,7 +11,12 @@ use crate::cli::ResourceModule;
 
 pub(super) mod fingerprint;
 #[cfg(test)]
+mod reuse_tests;
+pub(super) mod store;
+#[cfg(test)]
 mod tests;
+
+use store::LedgerStore;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ModuleId {
@@ -62,10 +67,19 @@ impl ModuleId {
 pub(super) struct CompatibleSuccess {
     pub(super) module: ModuleId,
     pub(super) origin_source_commit: String,
+    pub(super) origin_version: String,
     pub(super) origin_exe_sha256: String,
     pub(super) origin_zip_sha256: String,
     pub(super) evidence_path: PathBuf,
     pub(super) document: String,
+    pub(super) store: LedgerStore,
+}
+
+impl CompatibleSuccess {
+    /// Content-addressed companion evidence archived with this success.
+    pub(super) fn artifact(&self, sha256: &str) -> Result<PathBuf, String> {
+        self.store.artifact(sha256)
+    }
 }
 
 pub(super) fn module_for_receipt(root: &Path, path: &Path) -> Option<ModuleId> {
@@ -109,28 +123,33 @@ fn compatible_success_using(
     module: ModuleId,
     current: impl FnOnce() -> Result<String, String>,
 ) -> Result<Option<CompatibleSuccess>, String> {
-    let path = success_path(root, module);
+    let store = LedgerStore::for_repository(root)?;
+    // An empty module directory cannot match; skip fingerprinting the checkout.
+    if !store.has_module_records(module.as_str())? {
+        return Ok(None);
+    }
+    let current = current()?;
+    let path = store.module_record(module.as_str(), &current)?;
     if !path.is_file() {
         return Ok(None);
     }
     let document = receipt::read_receipt(&path)?;
     validate_success_schema(&document, module)?;
-    let current = current()?;
     if json::string_field(&document, "input_fingerprint")? != current {
-        return Ok(None);
-    }
-    let evidence_relative = json::string_field(&document, "evidence_path")?;
-    let expected_prefix = format!("dist/evidence/module-success/evidence/{}-", module.as_str());
-    if !evidence_relative.starts_with(&expected_prefix)
-        || !evidence_relative.ends_with(".json")
-        || evidence_relative.contains("..")
-    {
         return Err(format!(
-            "module {} success references unexpected evidence path {evidence_relative}",
+            "module {} ledger record {} is filed under a different fingerprint",
+            module.as_str(),
+            path.display()
+        ));
+    }
+    let evidence_file = json::string_field(&document, "evidence_file")?;
+    if !evidence_file.starts_with(&format!("{}-", module.as_str())) {
+        return Err(format!(
+            "module {} success references unexpected evidence {evidence_file}",
             module.as_str()
         ));
     }
-    let evidence_path = root.join(&evidence_relative);
+    let evidence_path = store.evidence(&evidence_file)?;
     let expected_evidence = json::string_field(&document, "evidence_sha256")?;
     let actual_evidence = receipt::sha256(&evidence_path)?;
     if expected_evidence != actual_evidence {
@@ -153,10 +172,12 @@ fn compatible_success_using(
     Ok(Some(CompatibleSuccess {
         module,
         origin_source_commit: json::string_field(&document, "origin_source_commit")?,
+        origin_version: json::string_field(&document, "origin_version")?,
         origin_exe_sha256: json::string_field(&document, "origin_exe_sha256")?,
         origin_zip_sha256: json::string_field(&document, "origin_zip_sha256")?,
         evidence_path,
         document: evidence_document,
+        store,
     }))
 }
 
@@ -177,12 +198,20 @@ pub(super) fn record_success(
     {
         return Err("resource inputs or candidate changed during measurement".to_owned());
     }
+    let store = LedgerStore::for_repository(root)?;
+    // Companion files are archived before the record so a published record never
+    // points at evidence that exists only in this (possibly temporary) worktree.
+    let artifacts = if module == ModuleId::G5 {
+        super::g5_readiness::companion_artifacts(&source_document)
+    } else {
+        Vec::new()
+    };
+    for (relative, sha256) in &artifacts {
+        archive_artifact(root, &store, relative, sha256)?;
+    }
     let evidence_sha256 = receipt::sha256(&source_evidence)?;
-    let evidence_relative = format!(
-        "dist/evidence/module-success/evidence/{}-{evidence_sha256}.json",
-        module.as_str()
-    );
-    let evidence_path = root.join(&evidence_relative);
+    let evidence_file = format!("{}-{evidence_sha256}.json", module.as_str());
+    let evidence_path = store.evidence(&evidence_file)?;
     let evidence_bytes = fs::read(&source_evidence).map_err(|error| {
         format!(
             "cannot archive {} module evidence: {error}",
@@ -190,30 +219,80 @@ pub(super) fn record_success(
         )
     })?;
     crate::atomic_evidence::write(&evidence_path, &evidence_bytes)?;
-    let previous_evidence = previous_evidence_path(root, module);
+    let record_path = store.module_record(module.as_str(), &input_fingerprint)?;
+    let replaced_evidence = receipt::read_receipt(&record_path)
+        .ok()
+        .and_then(|previous| json::string_field(&previous, "evidence_file").ok())
+        .filter(|previous| previous != &evidence_file);
     let document = format!(
         concat!(
-            "{{\"schema_version\":1,\"status\":\"PASSED\",",
+            "{{\"schema_version\":2,\"status\":\"PASSED\",",
             "\"module_id\":\"{}\",\"input_fingerprint\":\"{}\",",
-            "\"origin_source_commit\":\"{}\",",
+            "\"origin_source_commit\":\"{}\",\"origin_version\":\"{}\",",
             "\"origin_exe_sha256\":\"{}\",\"origin_zip_sha256\":\"{}\",",
-            "\"evidence_path\":\"{}\",\"evidence_sha256\":\"{}\"}}\n"
+            "\"evidence_file\":\"{}\",\"evidence_sha256\":\"{}\",",
+            "\"recorded_at_unix\":{}}}\n"
         ),
         module.as_str(),
         input_fingerprint,
         json::escape(&candidate.source_commit),
+        json::escape(&candidate.version),
         json::escape(&candidate.exe_sha256),
         json::escape(&candidate.zip_sha256),
-        evidence_relative,
+        evidence_file,
         evidence_sha256,
+        store::unix_seconds(),
     );
-    crate::atomic_evidence::write(&success_path(root, module), document.as_bytes())?;
-    if let Some(previous) = previous_evidence
-        && previous != evidence_path
+    crate::atomic_evidence::write(&record_path, document.as_bytes())?;
+    // A same-input rerun supersedes its own earlier evidence immediately.
+    if let Some(previous) = replaced_evidence
+        && let Ok(previous) = store.evidence(&previous)
     {
         let _ = fs::remove_file(previous);
     }
+    store.prune_module(module.as_str(), &record_path);
+    if module == ModuleId::G5 {
+        prune_g5_artifacts(&store);
+    }
     Ok(())
+}
+
+/// Copy one G5 companion file into the content-addressed store after verifying it.
+fn archive_artifact(
+    root: &Path,
+    store: &LedgerStore,
+    relative: &str,
+    sha256: &str,
+) -> Result<(), String> {
+    if !relative.starts_with("dist/evidence/g5-artifacts/") || relative.contains("..") {
+        return Err(format!("G5 evidence has unsafe artifact path {relative}"));
+    }
+    let source = root.join(relative);
+    let actual = receipt::sha256(&source)?;
+    if actual != sha256 {
+        return Err(format!(
+            "G5 artifact {relative} hash is {actual}, expected {sha256}"
+        ));
+    }
+    let target = store.artifact(sha256)?;
+    if target.is_file() && receipt::sha256(&target)? == sha256 {
+        return Ok(());
+    }
+    let bytes = fs::read(&source)
+        .map_err(|error| format!("cannot archive G5 artifact {relative}: {error}"))?;
+    crate::atomic_evidence::write(&target, &bytes)
+}
+
+fn prune_g5_artifacts(store: &LedgerStore) {
+    let Ok(documents) = store.module_evidence_documents(ModuleId::G5.as_str()) else {
+        return;
+    };
+    let referenced = documents
+        .iter()
+        .flat_map(|document| super::g5_readiness::companion_artifacts(document))
+        .map(|(_, sha256)| sha256)
+        .collect::<Vec<_>>();
+    store.prune_artifacts(&referenced);
 }
 
 pub(super) fn reuse_for_receipt(root: &Path, path: &Path) -> Result<bool, String> {
@@ -252,13 +331,21 @@ pub(super) fn print_status_for_candidate(
     root: &Path,
     candidate: Option<&Candidate>,
 ) -> Result<(), String> {
-    for module in modules() {
-        match compatible_success(root, module) {
+    let store = LedgerStore::for_repository(root)?;
+    println!("LEDGER_STORE={}", store.root().display());
+    // One planning pass reads each shared input once for every module.
+    let all = modules().collect::<Vec<_>>();
+    let digests = fingerprint::PlanningInputs::read(root)?
+        .calculate_many(root, &all)?
+        .digests;
+    for (module, current) in all.into_iter().zip(digests) {
+        match compatible_success_for_input(root, module, &current) {
             Ok(Some(success)) => println!(
-                "MODULE={} STATUS={} ORIGIN_SOURCE={} ORIGIN_EXE={} EVIDENCE={}",
+                "MODULE={} STATUS={} ORIGIN_SOURCE={} ORIGIN_VERSION={} ORIGIN_EXE={} EVIDENCE={}",
                 module.as_str(),
                 success_status(&success, candidate),
                 success.origin_source_commit,
+                success.origin_version,
                 success.origin_exe_sha256,
                 success.evidence_path.display()
             ),
@@ -290,29 +377,17 @@ fn success_status(success: &CompatibleSuccess, candidate: Option<&Candidate>) ->
 }
 
 pub(super) fn rerun_reason(root: &Path, module: ModuleId) -> &'static str {
-    if success_path(root, module).is_file() {
-        "INPUT_FINGERPRINT_CHANGED"
-    } else {
-        "NO_LAST_SUCCESS"
+    match LedgerStore::for_repository(root)
+        .and_then(|store| store.has_module_records(module.as_str()))
+    {
+        Ok(true) => "INPUT_FINGERPRINT_CHANGED",
+        Ok(false) => "NO_LAST_SUCCESS",
+        Err(_) => "LEDGER_STORE_UNAVAILABLE",
     }
 }
 
-fn success_path(root: &Path, module: ModuleId) -> PathBuf {
-    root.join(format!(
-        "dist/evidence/module-success/{}.json",
-        module.as_str()
-    ))
-}
-
-fn previous_evidence_path(root: &Path, module: ModuleId) -> Option<PathBuf> {
-    let document = receipt::read_receipt(&success_path(root, module)).ok()?;
-    let relative = json::string_field(&document, "evidence_path").ok()?;
-    (!relative.contains("..") && relative.starts_with("dist/evidence/module-success/evidence/"))
-        .then(|| root.join(relative))
-}
-
 fn validate_success_schema(document: &str, module: ModuleId) -> Result<(), String> {
-    if json::u64_field(document, "schema_version")? != 1
+    if json::u64_field(document, "schema_version")? != 2
         || json::string_field(document, "status")? != "PASSED"
         || json::string_field(document, "module_id")? != module.as_str()
     {
@@ -329,6 +404,13 @@ fn validate_success_schema(document: &str, module: ModuleId) -> Result<(), Strin
     ] {
         receipt::validate_sha256(&json::string_field(document, key)?, label)?;
     }
+    if json::string_field(document, "origin_version")?.is_empty() {
+        return Err(format!(
+            "module {} last-success receipt has no origin version",
+            module.as_str()
+        ));
+    }
+    json::u64_field(document, "recorded_at_unix")?;
     receipt::validate_hex(
         &json::string_field(document, "origin_source_commit")?,
         40,

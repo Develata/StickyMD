@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::{
-    CompatibleSuccess, ModuleId, compatible_success, record_success, success_path, success_status,
-};
+use super::{CompatibleSuccess, ModuleId, compatible_success, record_success, success_status};
 use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
 
 #[test]
@@ -16,7 +14,8 @@ fn changed_input_requires_rerun_without_overwriting_last_success() {
     let candidate = candidate();
     write_evidence(&root, ModuleId::G4, "first pass");
     record_success(&root, ModuleId::G4, &candidate).expect("record first success");
-    let ledger_before = fs::read(success_path(&root, ModuleId::G4)).expect("read ledger");
+    let record = record_path(&root, ModuleId::G4);
+    let ledger_before = fs::read(&record).expect("read ledger");
     assert!(
         compatible_success(&root, ModuleId::G4)
             .expect("compatibility")
@@ -35,7 +34,7 @@ fn changed_input_requires_rerun_without_overwriting_last_success() {
     );
     assert_eq!(
         ledger_before,
-        fs::read(success_path(&root, ModuleId::G4)).expect("read unchanged ledger")
+        fs::read(&record).expect("read unchanged ledger")
     );
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -241,7 +240,8 @@ fn failed_result_cannot_replace_the_last_success() {
     let candidate = candidate();
     write_evidence(&root, ModuleId::G4, "passing run");
     record_success(&root, ModuleId::G4, &candidate).expect("record success");
-    let ledger_before = fs::read(success_path(&root, ModuleId::G4)).expect("read ledger");
+    let record = record_path(&root, ModuleId::G4);
+    let ledger_before = fs::read(&record).expect("read ledger");
     let success_before = compatible_success(&root, ModuleId::G4)
         .expect("compatibility")
         .expect("success");
@@ -251,7 +251,7 @@ fn failed_result_cannot_replace_the_last_success() {
     assert!(record_success(&root, ModuleId::G4, &candidate).is_err());
     assert_eq!(
         ledger_before,
-        fs::read(success_path(&root, ModuleId::G4)).expect("read preserved ledger")
+        fs::read(&record).expect("read preserved ledger")
     );
     assert_eq!(
         compatible_success(&root, ModuleId::G4)
@@ -269,10 +269,12 @@ fn status_distinguishes_current_candidate_run_from_reused_success() {
     let mut success = CompatibleSuccess {
         module: ModuleId::G4,
         origin_source_commit: candidate.source_commit.clone(),
+        origin_version: candidate.version.clone(),
         origin_exe_sha256: candidate.exe_sha256.clone(),
         origin_zip_sha256: candidate.zip_sha256.clone(),
         evidence_path: PathBuf::from("evidence.json"),
         document: String::new(),
+        store: super::LedgerStore::at(PathBuf::from("store")),
     };
     assert_eq!(success_status(&success, Some(&candidate)), "RAN_PASS");
     success.origin_zip_sha256 = "f".repeat(64);
@@ -288,7 +290,8 @@ fn resource_failures_preserve_completed_groups_and_old_aggregate_is_not_imported
         write_resource_evidence(&root, group);
         record_success(&root, ModuleId::Resource(group), &candidate).unwrap();
     }
-    let before = fs::read(success_path(&root, ModuleId::Resource(Math))).unwrap();
+    let math_record = record_path(&root, ModuleId::Resource(Math));
+    let before = fs::read(&math_record).unwrap();
     let mut partial = crate::resource_plan::tests::valid_resource_result(Window);
     partial.measurements.remove(0);
     let document = crate::resource_plan::tests::document(Window, &partial);
@@ -306,10 +309,7 @@ fn resource_failures_preserve_completed_groups_and_old_aggregate_is_not_imported
                 .is_some()
         );
     }
-    assert_eq!(
-        before,
-        fs::read(success_path(&root, ModuleId::Resource(Math))).unwrap()
-    );
+    assert_eq!(before, fs::read(&math_record).unwrap());
     let old = root.join("dist/evidence/resources-qualification.json");
     fs::write(&old, "legacy aggregate").unwrap();
     super::record_for_receipt(&root, &old).unwrap();
@@ -330,7 +330,8 @@ fn resource_input_or_candidate_drift_cannot_promote_an_old_measurement() {
     let candidate = candidate();
     write_resource_evidence(&root, Window);
     record_success(&root, module, &candidate).unwrap();
-    let ledger = fs::read(success_path(&root, module)).unwrap();
+    let record = record_path(&root, module);
+    let ledger = fs::read(&record).unwrap();
     let mut wrong_candidate = candidate.clone();
     wrong_candidate.exe_sha256 = "0".repeat(64);
     assert!(record_success(&root, module, &wrong_candidate).is_err());
@@ -338,7 +339,7 @@ fn resource_input_or_candidate_drift_cannot_promote_an_old_measurement() {
     fs::create_dir_all(input.parent().unwrap()).unwrap();
     fs::write(input, "modified during measurement").unwrap();
     assert!(record_success(&root, module, &candidate).is_err());
-    assert_eq!(ledger, fs::read(success_path(&root, module)).unwrap());
+    assert_eq!(ledger, fs::read(&record).unwrap());
     assert!(compatible_success(&root, module).unwrap().is_none());
     fs::remove_dir_all(root).unwrap();
 }
@@ -352,6 +353,15 @@ fn write_resource_evidence(root: &Path, group: crate::cli::ResourceModule) {
         &document[1..]
     );
     receipt::write_receipt(root, group.receipt(), &document).unwrap();
+}
+
+/// The clone-wide record path for the module's current inputs.
+fn record_path(root: &Path, module: ModuleId) -> PathBuf {
+    let fingerprint = super::fingerprint::calculate(root, module).expect("fingerprint");
+    super::LedgerStore::for_repository(root)
+        .expect("ledger store")
+        .module_record(module.as_str(), &fingerprint)
+        .expect("record path")
 }
 
 fn write_evidence(root: &Path, module: ModuleId, contents: &str) {

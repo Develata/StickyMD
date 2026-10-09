@@ -380,9 +380,14 @@ fn legacy_digest(
     use std::io::Write;
     let path = super::temporary_path().unwrap();
     let mut output = fs::File::create_new(&path).unwrap();
-    output
-        .write_all(b"StickyMD qualification module fingerprint v1\0")
-        .unwrap();
+    // Module digests moved to v2 (version normalization); these fixtures contain no
+    // Cargo manifests, so only the header differs from the original serializer.
+    let header: &[u8] = if module.is_some() {
+        b"StickyMD qualification module fingerprint v2\0"
+    } else {
+        b"StickyMD qualification module fingerprint v1\0"
+    };
+    output.write_all(header).unwrap();
     output
         .write_all(
             module
