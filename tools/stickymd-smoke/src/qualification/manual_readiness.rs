@@ -1,11 +1,11 @@
-//! Tier-aware manual receipt validation for exact Phase 14 candidates.
+//! Tier-aware manual receipt validation for exact Phase 14 candidates. The receipt itself
+//! is validated by `manual_receipt::validated_cases`, the same check resuming uses.
 
 use std::path::Path;
 
+use super::manual_receipt::{MANUAL_RECEIPT, ManualTier, validated_cases};
 use super::receipt::Candidate;
 use super::{decisions, json, receipt};
-
-const MANUAL_RECEIPT: &str = "dist/evidence/manual-acceptance.json";
 
 pub(super) fn check(
     root: &Path,
@@ -14,56 +14,17 @@ pub(super) fn check(
     automated_ok: bool,
     blockers: &mut Vec<String>,
 ) {
-    let document = match receipt::read_receipt(&root.join(MANUAL_RECEIPT))
+    let cases = match receipt::read_receipt(&root.join(MANUAL_RECEIPT))
         .and_then(|text| json::parse_object(&text))
+        .and_then(|document| validated_cases(&document, candidate))
     {
-        Ok(document) => document,
+        Ok(cases) => cases,
         Err(error) => {
             blockers.push(format!("mandatory manual acceptance receipt: {error}"));
             return;
         }
     };
-    match json::u64_field(&document, "schema_version") {
-        Ok(1) => {}
-        Ok(version) => blockers.push(format!("manual receipt schema is {version}, expected 1")),
-        Err(error) => blockers.push(format!("manual receipt schema: {error}")),
-    }
-    check_identity(&document, candidate, blockers);
-    match json::string_field(&document, "version") {
-        Ok(version) if version == candidate.version => {}
-        Ok(version) => blockers.push(format!(
-            "STALE RECEIPT: manual version is {version}, expected {}",
-            candidate.version
-        )),
-        Err(error) => blockers.push(format!("manual version: {error}")),
-    }
-    match json::object_field(&document, "environment")
-        .and_then(|environment| json::string_field(environment, "windows"))
-    {
-        Ok(build) if !build.trim().is_empty() && build != "UNKNOWN" => {}
-        Ok(_) => blockers.push("manual receipt Windows build is unavailable".to_owned()),
-        Err(error) => blockers.push(format!("manual Windows build: {error}")),
-    }
-    match json::string_field(&document, "zip_sha256") {
-        Ok(hash) if hash == candidate.zip_sha256 => {}
-        Ok(hash) => blockers.push(format!(
-            "STALE RECEIPT: manual zip_sha256 is {hash}, expected {}",
-            candidate.zip_sha256
-        )),
-        Err(error) => blockers.push(format!("manual ZIP identity: {error}")),
-    }
-    let cases = match case_statuses(&document) {
-        Ok(cases) if !cases.is_empty() => cases,
-        Ok(_) => {
-            blockers.push("manual receipt contains no cases".to_owned());
-            return;
-        }
-        Err(error) => {
-            blockers.push(format!("manual receipt statuses: {error}"));
-            return;
-        }
-    };
-    let observed_ids: Vec<_> = cases.iter().map(|case| case.case_id.as_str()).collect();
+    let observed_ids: Vec<_> = cases.iter().map(|case| case.id.as_str()).collect();
     let expected_ids: Vec<_> = (1..=44)
         .map(|number| format!("P12-M{number:02}"))
         .filter(|id| super::exact_groups::group_for_phase12_case(id).is_none())
@@ -75,37 +36,12 @@ pub(super) fn check(
         return;
     }
     for case in cases {
-        if case.source_commit != candidate.source_commit || case.exe_sha256 != candidate.exe_sha256
-        {
-            blockers.push(format!(
-                "STALE RECEIPT: {} carries a different source/EXE identity",
-                case.case_id
-            ));
-            continue;
-        }
-        let expected_tier = tier(&case.case_id).map_or("INVALID", ManualTier::as_str);
-        if case.tier != expected_tier {
-            blockers.push(format!(
-                "manual acceptance {} tier is {}, expected {expected_tier}",
-                case.case_id, case.tier
-            ));
-            continue;
-        }
-        if !matches!(case.session.as_str(), "M1" | "M2" | "M3" | "M4" | "M5") {
-            blockers.push(format!(
-                "manual acceptance {} has invalid session {}",
-                case.case_id, case.session
-            ));
-            continue;
-        }
         match case.status.as_str() {
-            "MANUAL_PASS" => {}
-            "MANUAL_FAIL" => blockers.push(format!("manual acceptance {} failed", case.case_id)),
+            "MANUAL_FAIL" => blockers.push(format!("manual acceptance {} failed", case.id)),
             "NOT_TESTED" => {
-                let tier = tier(&case.case_id).unwrap_or(ManualTier::A);
                 if let Some(blocker) = not_tested_blocker(
-                    tier,
-                    &case.case_id,
+                    case.tier,
+                    &case.id,
                     &candidate.version,
                     automated_ok,
                     decisions,
@@ -113,57 +49,9 @@ pub(super) fn check(
                     blockers.push(blocker);
                 }
             }
-            _ => blockers.push(format!(
-                "manual acceptance {} contains invalid status {}",
-                case.case_id, case.status
-            )),
+            // `validated_cases` admits only the three statuses.
+            _ => {}
         }
-    }
-}
-
-fn check_identity(document: &json::Value, candidate: &Candidate, blockers: &mut Vec<String>) {
-    for (key, expected) in [
-        ("source_commit", candidate.source_commit.as_str()),
-        ("exe_sha256", candidate.exe_sha256.as_str()),
-    ] {
-        match json::string_field(document, key) {
-            Ok(actual) if actual == expected => {}
-            Ok(actual) => blockers.push(format!(
-                "STALE RECEIPT: manual {key} is {actual}, expected {expected}"
-            )),
-            Err(error) => blockers.push(format!("manual {key}: {error}")),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ManualTier {
-    A,
-    B,
-    C,
-}
-
-impl ManualTier {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::A => "A",
-            Self::B => "B",
-            Self::C => "C",
-        }
-    }
-}
-
-fn tier(case_id: &str) -> Result<ManualTier, String> {
-    let number = case_id
-        .strip_prefix("P12-M")
-        .ok_or_else(|| format!("invalid manual case ID `{case_id}`"))?
-        .parse::<u8>()
-        .map_err(|error| format!("invalid manual case ID `{case_id}`: {error}"))?;
-    match number {
-        1..=33 => Ok(ManualTier::A),
-        34..=40 => Ok(ManualTier::B),
-        41..=44 => Ok(ManualTier::C),
-        _ => Err(format!("manual case `{case_id}` is out of range")),
     }
 }
 
@@ -191,53 +79,11 @@ fn not_tested_blocker(
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ManualObservation {
-    case_id: String,
-    status: String,
-    source_commit: String,
-    exe_sha256: String,
-    session: String,
-    tier: String,
-}
-
-/// Each case is read from its own object in the `cases` array.
-fn case_statuses(document: &json::Value) -> Result<Vec<ManualObservation>, String> {
-    json::objects(document, "cases")?
-        .iter()
-        .map(|object| {
-            Ok(ManualObservation {
-                case_id: json::string_field(object, "case_id")?,
-                status: json::string_field(object, "status")?,
-                source_commit: json::string_field(object, "source_commit")?,
-                exe_sha256: json::string_field(object, "exe_sha256")?,
-                session: json::string_field(object, "session")?,
-                tier: json::string_field(object, "tier")?,
-            })
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{ManualTier, case_statuses, not_tested_blocker};
+    use super::not_tested_blocker;
     use crate::qualification::decisions::Decision;
-
-    #[test]
-    fn a_manual_case_is_read_from_its_own_object() {
-        let case = "{\"case_id\":\"P12-M01\",\"session\":\"M1\",\"tier\":\"A\",\"status\" : \"MANUAL_FAIL\",\"extra\":{\"status\":\"MANUAL_PASS\"},\"source_commit\":\"s\",\"exe_sha256\":\"e\",\"note\":\"\"}";
-        let receipt = |cases: &str| {
-            crate::qualification::json::parse_object(&format!(
-                "{{\"schema_version\":1,\"environment\":{{\"windows\":\"10.0\"}},\"cases\":[{cases}]}}"
-            ))
-            .unwrap()
-        };
-        let cases = case_statuses(&receipt(case)).unwrap();
-        assert_eq!(cases[0].status, "MANUAL_FAIL");
-        // A case without its own status is malformed, not borrowed from a neighbour.
-        let missing = "{\"case_id\":\"P12-M02\",\"session\":\"M1\",\"tier\":\"A\",\"source_commit\":\"s\",\"exe_sha256\":\"e\"}";
-        assert!(case_statuses(&receipt(&format!("{missing},{case}"))).is_err());
-    }
+    use crate::qualification::manual_receipt::ManualTier;
 
     #[test]
     fn tiers_enforce_waiver_and_version_binding() {

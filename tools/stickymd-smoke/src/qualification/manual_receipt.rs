@@ -160,41 +160,64 @@ pub(super) fn load_observations(
         return Ok(observations);
     }
     let document = json::parse_object(&receipt::read_receipt(&path)?)?;
+    for case in validated_cases(&document, candidate)? {
+        let Some(observation) = observations.get_mut(&case.id) else {
+            return Err(format!(
+                "manual receipt contains unknown case `{}`",
+                case.id
+            ));
+        };
+        *observation = ManualObservation {
+            status: case.status,
+            note: case.note,
+        };
+    }
+    Ok(observations)
+}
+
+/// One case of a manual receipt that is valid for its candidate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RecordedCase {
+    pub(super) id: String,
+    pub(super) tier: ManualTier,
+    /// `MANUAL_PASS`, `MANUAL_FAIL` or `NOT_TESTED`.
+    pub(super) status: String,
+    pub(super) note: String,
+}
+
+/// The cases of a manual receipt, provided the whole receipt is valid for `candidate`:
+/// schema 1; the candidate's source, EXE, ZIP and version at the top and its source and
+/// EXE on every case; a known Windows build; each case's registered tier and session; a
+/// known status; and no case twice. Resuming and readiness accept a receipt only through
+/// this check, so resuming can never regenerate provenance that readiness would refuse.
+pub(super) fn validated_cases(
+    document: &json::Value,
+    candidate: &Candidate,
+) -> Result<Vec<RecordedCase>, String> {
+    let schema = json::u64_field(document, "schema_version")?;
+    if schema != 1 {
+        return Err(format!("manual receipt schema is {schema}, expected 1"));
+    }
     for (key, expected) in [
         ("source_commit", candidate.source_commit.as_str()),
         ("exe_sha256", candidate.exe_sha256.as_str()),
         ("zip_sha256", candidate.zip_sha256.as_str()),
         ("version", candidate.version.as_str()),
     ] {
-        let actual = json::string_field(&document, key)?;
+        let actual = json::string_field(document, key)?;
         if actual != expected {
             return Err(format!(
                 "STALE RECEIPT: manual {key} is {actual}, expected {expected}"
             ));
         }
     }
-    let mut seen = std::collections::BTreeSet::new();
-    for (id, observation) in parse_observations(&document, candidate)? {
-        if !observations.contains_key(&id) {
-            return Err(format!("manual receipt contains unknown case `{id}`"));
-        }
-        if !seen.insert(id.clone()) {
-            return Err(format!("manual receipt records case `{id}` more than once"));
-        }
-        observations.insert(id, observation);
+    let windows = json::string_field(json::object_field(document, "environment")?, "windows")?;
+    if windows.trim().is_empty() || windows == "UNKNOWN" {
+        return Err("manual receipt Windows build is unavailable".to_owned());
     }
-    Ok(observations)
-}
-
-/// Each observation is read from its own object in the `cases` array. A case observed
-/// on another source or EXE is stale: resuming must not relabel it as this candidate's,
-/// exactly as readiness refuses it.
-fn parse_observations(
-    document: &json::Value,
-    candidate: &Candidate,
-) -> Result<Vec<(String, ManualObservation)>, String> {
-    let mut observations = Vec::new();
+    let mut cases: Vec<RecordedCase> = Vec::new();
     for object in json::objects(document, "cases")? {
+        let id = json::string_field(object, "case_id")?;
         for (key, expected) in [
             ("source_commit", candidate.source_commit.as_str()),
             ("exe_sha256", candidate.exe_sha256.as_str()),
@@ -202,31 +225,50 @@ fn parse_observations(
             let actual = json::string_field(object, key)?;
             if actual != expected {
                 return Err(format!(
-                    "STALE RECEIPT: manual case {key} is {actual}, expected {expected}"
+                    "STALE RECEIPT: manual case {id} {key} is {actual}, expected {expected}"
                 ));
             }
+        }
+        let tier = tier_for_case(&id)?;
+        let recorded_tier = json::string_field(object, "tier")?;
+        if recorded_tier != tier.as_str() {
+            return Err(format!(
+                "manual case {id} tier is {recorded_tier}, expected {}",
+                tier.as_str()
+            ));
+        }
+        let session = session_for_case(&id)?;
+        let recorded_session = json::string_field(object, "session")?;
+        if recorded_session != session.as_str() {
+            return Err(format!(
+                "manual case {id} session is {recorded_session}, expected {}",
+                session.as_str()
+            ));
         }
         let status = json::string_field(object, "status")?;
         if !matches!(
             status.as_str(),
             "MANUAL_PASS" | "MANUAL_FAIL" | "NOT_TESTED"
         ) {
-            return Err(format!("manual receipt contains invalid status `{status}`"));
+            return Err(format!("manual case {id} has invalid status `{status}`"));
         }
-        observations.push((
-            json::string_field(object, "case_id")?,
-            ManualObservation {
-                status,
-                // A note is optional; one that is present must be a string.
-                note: if json::has_field(object, "note") {
-                    json::string_field(object, "note")?
-                } else {
-                    String::new()
-                },
-            },
-        ));
+        // A note is optional; one that is present must be a string.
+        let note = if json::has_field(object, "note") {
+            json::string_field(object, "note")?
+        } else {
+            String::new()
+        };
+        if cases.iter().any(|case| case.id == id) {
+            return Err(format!("manual receipt records case `{id}` more than once"));
+        }
+        cases.push(RecordedCase {
+            id,
+            tier,
+            status,
+            note,
+        });
     }
-    Ok(observations)
+    Ok(cases)
 }
 
 fn render_manual_receipt(
@@ -308,8 +350,8 @@ mod tests {
 
     use super::{
         MANUAL_RECEIPT, ManualCase, ManualObservation, ManualTier, load_observations,
-        parse_manual_cases, parse_observations, render_manual_receipt, session_for_case,
-        tier_for_case,
+        parse_manual_cases, render_manual_receipt, session_for_case, tier_for_case,
+        validated_cases,
     };
     use crate::cli::ManualSession;
     use crate::qualification::receipt::Candidate;
@@ -391,20 +433,45 @@ mod tests {
         )]);
         let receipt = render_manual_receipt(&candidate, std::slice::from_ref(&case), &observations);
 
-        // Resuming keeps only this candidate's observations, once per case.
-        let parsed = crate::qualification::json::parse_object(&receipt).unwrap();
-        assert_eq!(parse_observations(&parsed, &candidate).unwrap().len(), 1);
-        let foreign = crate::qualification::json::parse_object(&receipt.replacen(
+        // The build string comes from this host; pin it so the test means the same anywhere.
+        let start = receipt.find("\"windows\":\"").unwrap() + "\"windows\":\"".len();
+        let end = start + receipt[start..].find('"').unwrap();
+        let receipt = format!("{}Windows test{}", &receipt[..start], &receipt[end..]);
+
+        // Resuming and readiness accept the same receipts: valid ones once per case, and
+        // nothing whose provenance readiness would refuse.
+        let parse = |text: &str| crate::qualification::json::parse_object(text).unwrap();
+        assert_eq!(
+            validated_cases(&parse(&receipt), &candidate).unwrap().len(),
+            1
+        );
+        let foreign_case = receipt.replacen(
             &format!(
                 "\"source_commit\":\"{}\",\"exe_sha256\"",
                 candidate.source_commit
             ),
             &format!("\"source_commit\":\"{}\",\"exe_sha256\"", "f".repeat(40)),
             2,
-        ))
-        .unwrap();
-        let error = parse_observations(&foreign, &candidate).unwrap_err();
-        assert!(error.contains("manual case source_commit"), "{error}");
+        );
+        for (mutated, reason) in [
+            (foreign_case, "source_commit"),
+            (
+                receipt.replace("\"schema_version\":1", "\"schema_version\":9"),
+                "schema",
+            ),
+            (
+                receipt.replace("\"windows\":\"Windows test\"", "\"windows\":\"UNKNOWN\""),
+                "Windows build",
+            ),
+            (receipt.replace("\"tier\":\"A\"", "\"tier\":\"C\""), "tier"),
+            (
+                receipt.replace("\"session\":\"M1\"", "\"session\":\"M2\""),
+                "session",
+            ),
+        ] {
+            let error = validated_cases(&parse(&mutated), &candidate).unwrap_err();
+            assert!(error.contains(reason), "{reason}: {error}");
+        }
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -419,8 +486,13 @@ mod tests {
             .to_owned();
         let duplicated = receipt.replacen(&case_object, &format!("{case_object},{case_object}"), 1);
         crate::atomic_evidence::write(&root.join(MANUAL_RECEIPT), duplicated.as_bytes()).unwrap();
-        let error = load_observations(&root, &candidate, &[case]).unwrap_err();
+        let error = load_observations(&root, &candidate, std::slice::from_ref(&case)).unwrap_err();
         assert!(error.contains("more than once"), "{error}");
+        // Resuming refuses before anything is persisted: the receipt stays as it was.
+        assert_eq!(
+            std::fs::read_to_string(root.join(MANUAL_RECEIPT)).unwrap(),
+            duplicated
+        );
         std::fs::remove_dir_all(&root).unwrap();
         for marker in [
             "\"version\":\"0.1.0\"",
