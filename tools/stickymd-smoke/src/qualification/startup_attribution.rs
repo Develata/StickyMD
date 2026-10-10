@@ -125,9 +125,18 @@ fn measurement(document: &json::Value, name: &str) -> Result<f64, String> {
             continue;
         }
         for entry in json::objects(result, "measurements")? {
-            if json::string_field(entry, "name")? == name
-                && found.replace(json::f64_field(entry, "value")?).is_some()
-            {
+            if json::string_field(entry, "name")? != name {
+                continue;
+            }
+            // Every attribution input is a duration in milliseconds.
+            let unit = json::string_field(entry, "unit")?;
+            let value = json::f64_field(entry, "value")?;
+            if unit != "ms" || value < 0.0 {
+                return Err(format!(
+                    "measurement `{name}` is {value} {unit}, expected non-negative milliseconds"
+                ));
+            }
+            if found.replace(value).is_some() {
                 return Err(format!(
                     "performance receipt records measurement `{name}` more than once"
                 ));
@@ -205,6 +214,17 @@ mod tests {
             dominant_category(&document, "cold"),
             Ok(("font_discovery", 120.0))
         );
+        for entry in [
+            r#"{"name":"warm.p95","unit":"s","value":0.4}"#,
+            r#"{"name":"warm.p95","unit":"ms","value":1e400}"#,
+            r#"{"name":"warm.p95","unit":"ms","value":-1}"#,
+        ] {
+            let document = crate::qualification::json::parse_object(&format!(
+                r#"{{"results":[{{"id":"startup","measurements":[{entry}]}}]}}"#
+            ))
+            .unwrap();
+            assert!(measurement(&document, "warm.p95").is_err(), "{entry}");
+        }
     }
 
     #[test]

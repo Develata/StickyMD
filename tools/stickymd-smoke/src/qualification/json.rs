@@ -63,9 +63,12 @@ pub(super) fn u64_field(object: &Value, key: &str) -> Result<u64, String> {
 
 pub(super) fn f64_field(object: &Value, key: &str) -> Result<f64, String> {
     match field(object, key)? {
+        // A huge exponent parses to infinity, which no receipt can write back as JSON.
         Value::Number(number) => number
             .parse::<f64>()
-            .map_err(|_| format!("JSON field `{key}` is not a number")),
+            .ok()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| format!("JSON field `{key}` is not a finite number")),
         _ => Err(format!("JSON field `{key}` is not a number")),
     }
 }
