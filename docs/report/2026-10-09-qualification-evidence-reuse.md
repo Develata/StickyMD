@@ -269,3 +269,29 @@ PARTIALLY RESOLVED（依赖环、SHA 子进程回收）。另有 1 项 BLOCKER�
 - Windows：`cargo test -p stickymd-smoke --locked` 394 + 25 PASS，17 ignored；clippy `-D warnings`、fmt、
   phase-00 PASS。
 - Linux（WSL Debian，CI "Linux smoke CLI" 命令）：clippy 无警告；测试 324 + 19 PASS，连跑 3 次。
+
+## 第八轮：第三次复审（gpt-6-astra max，`13886dd..504bdb6`）
+
+第一次尝试在约 10 分钟后以退出码 1 结束，没有给出最终结论，按规则视为未审查。它在中途指出两处线索，核实
+属实后修正（`504bdb6`）：续录人工验收时未逐 case 校验来源与 EXE，重复的 case 会互相覆盖；非 Windows 的哈希
+快照改为仅本人可读写。重试的结论是 **PASS / no blocker**：第七轮的 JSON 读取、headless 完整性、测试基线和
+人工 case 身份四项判定 RESOLVED，SHA 出口判定 PARTIALLY RESOLVED，规划依赖环未处理（可延期）。另有 3 项
+SHOULD_FIX 要求在推送前修正，均已核实：
+
+1. **续录与 readiness 校验不一致**（属实，既有问题）：schema 未知或 Windows 版本为 `UNKNOWN` 的收据，readiness
+   会拒绝，续录却能载入并重新生成这些元信息。修正（`4635fe3`）：两条路径都只通过
+   `manual_receipt::validated_cases` 接受收据，并删除 `manual_readiness` 中重复的 tier 模型与 case 解析。
+2. **SHA 超时后的回收没有期限**（属实）：修正（`138469d`）：终止后的回收有独立上限，超时报告"未回收"而不阻塞。
+3. **快照名可能撞上崩溃残留**（属实）：修正（`138469d`）：名称加入进程启动 nonce，遇到已存在的名称跳过并换名，
+   残留文件不被覆盖；新增针对该路径的测试。
+
+同时处理了两项 NICE：`sha256sum` 的 stderr 改为继承；startup attribution 只接受有限、非负的毫秒值，溢出为
+无穷大的 JSON 数值被拒绝。
+
+仍未处理：`module_evidence → runner` 的纯规划依赖（审查确认可延期）、`governance.rs` 体量，以及完整 readiness
+的端到端耗时与峰值内存（需要真实候选与十个模块的归档）。
+
+### 验证
+
+- Windows：393 + 25 PASS，17 ignored；clippy、fmt、phase-00 PASS。
+- Linux（WSL Debian，CI 命令）：clippy 无警告；324 + 19 PASS，连跑 3 次。
