@@ -31,6 +31,7 @@ pub(crate) mod resource_modules;
 pub(crate) mod smoke_scope;
 mod source_freeze;
 mod startup_attribution;
+mod windows_build;
 pub(crate) mod workspace_tests;
 
 use std::path::Path;

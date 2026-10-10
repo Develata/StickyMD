@@ -212,8 +212,10 @@ pub(super) fn validated_cases(
         }
     }
     let windows = json::string_field(json::object_field(document, "environment")?, "windows")?;
-    if windows.trim().is_empty() || windows == "UNKNOWN" {
-        return Err("manual receipt Windows build is unavailable".to_owned());
+    if !super::windows_build::is_known(&windows) {
+        return Err(format!(
+            "manual receipt Windows build `{windows}` names no version and build"
+        ));
     }
     let mut cases: Vec<RecordedCase> = Vec::new();
     for object in json::objects(document, "cases")? {
@@ -276,7 +278,7 @@ fn render_manual_receipt(
     cases: &[ManualCase],
     observations: &BTreeMap<String, ManualObservation>,
 ) -> String {
-    let windows_build = windows_build();
+    let windows_build = super::windows_build::current();
     let cpu = environment_value("PROCESSOR_IDENTIFIER");
     let mut output = format!(
         concat!(
@@ -330,18 +332,6 @@ fn render_manual_receipt(
 
 fn environment_value(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| "UNKNOWN".to_owned())
-}
-
-pub(super) fn windows_build() -> String {
-    std::process::Command::new("cmd")
-        .args(["/C", "ver"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| environment_value("OS"))
 }
 
 #[cfg(test)]
@@ -436,7 +426,11 @@ mod tests {
         // The build string comes from this host; pin it so the test means the same anywhere.
         let start = receipt.find("\"windows\":\"").unwrap() + "\"windows\":\"".len();
         let end = start + receipt[start..].find('"').unwrap();
-        let receipt = format!("{}Windows test{}", &receipt[..start], &receipt[end..]);
+        let receipt = format!(
+            "{}Microsoft Windows 10.0.26200.9457{}",
+            &receipt[..start],
+            &receipt[end..]
+        );
 
         // Resuming and readiness accept the same receipts: valid ones once per case, and
         // nothing whose provenance readiness would refuse.
@@ -445,22 +439,40 @@ mod tests {
             validated_cases(&parse(&receipt), &candidate).unwrap().len(),
             1
         );
-        let foreign_case = receipt.replacen(
-            &format!(
-                "\"source_commit\":\"{}\",\"exe_sha256\"",
-                candidate.source_commit
-            ),
-            &format!("\"source_commit\":\"{}\",\"exe_sha256\"", "f".repeat(40)),
-            2,
+        // Only the case changes; the top-level identity stays valid, so the case check fires.
+        let case_tail = format!("\"exe_sha256\":\"{}\",\"note\"", candidate.exe_sha256);
+        let case_identity = format!(
+            "\"source_commit\":\"{}\",{case_tail}",
+            candidate.source_commit
         );
+        let foreign_source = receipt.replace(
+            &case_identity,
+            &format!("\"source_commit\":\"{}\",{case_tail}", "f".repeat(40)),
+        );
+        let foreign_exe = receipt.replace(
+            &case_tail,
+            &format!("\"exe_sha256\":\"{}\",\"note\"", "0".repeat(64)),
+        );
+        assert!(foreign_source != receipt && foreign_exe != receipt);
         for (mutated, reason) in [
-            (foreign_case, "source_commit"),
+            (foreign_source, "manual case P12-M01 source_commit"),
+            (foreign_exe, "manual case P12-M01 exe_sha256"),
             (
                 receipt.replace("\"schema_version\":1", "\"schema_version\":9"),
                 "schema",
             ),
             (
-                receipt.replace("\"windows\":\"Windows test\"", "\"windows\":\"UNKNOWN\""),
+                receipt.replace(
+                    "\"windows\":\"Microsoft Windows 10.0.26200.9457\"",
+                    "\"windows\":\"UNKNOWN\"",
+                ),
+                "Windows build",
+            ),
+            (
+                receipt.replace(
+                    "\"windows\":\"Microsoft Windows 10.0.26200.9457\"",
+                    "\"windows\":\"Windows_NT\"",
+                ),
                 "Windows build",
             ),
             (receipt.replace("\"tier\":\"A\"", "\"tier\":\"C\""), "tier"),

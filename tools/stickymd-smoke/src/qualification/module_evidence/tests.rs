@@ -148,7 +148,14 @@ fn exact_groups_need_every_case_in_order_and_the_origin_identity() {
     assert!(error.contains("STALE RECEIPT: version"), "{error}");
     for (from, to) in [
         ("\"worktree_dirty\":false", "\"worktree_dirty\":true"),
-        ("\"windows\":\"Windows test\"", "\"windows\":\"UNKNOWN\""),
+        (
+            "\"windows\":\"Microsoft Windows 10.0.26200.9457\"",
+            "\"windows\":\"UNKNOWN\"",
+        ),
+        (
+            "\"windows\":\"Microsoft Windows 10.0.26200.9457\"",
+            "\"windows\":\"Windows_NT\"",
+        ),
         ("\"harness_commit\":\"aaaa", "\"harness_commit\":\"baaa"),
     ] {
         assert!(

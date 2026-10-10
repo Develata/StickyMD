@@ -214,6 +214,7 @@ fn is_global_input(path: &str) -> bool {
             | "tools/stickymd-smoke/src/qualification/module_registry.rs"
             | "tools/stickymd-smoke/src/qualification/module_ledger.rs"
             | "tools/stickymd-smoke/src/qualification/module_ledger/record.rs"
+            | "tools/stickymd-smoke/src/qualification/windows_build.rs"
             | "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint.rs"
             | "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint/normalize.rs"
             | "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint/stream.rs"

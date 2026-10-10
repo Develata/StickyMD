@@ -116,8 +116,10 @@ fn exact<'a>(root: &'a Value, cases: &[&str], origin: &Origin<'_>) -> Result<&'a
     expect_string(root, "zip_sha256", origin.zip_sha256)?;
     expect_string(root, "version", origin.version)?;
     let windows = root.field("windows")?.string()?;
-    if windows.trim().is_empty() || windows == "UNKNOWN" {
-        return Err("exact Windows build is unavailable".to_owned());
+    if !super::windows_build::is_known(windows) {
+        return Err(format!(
+            "exact Windows build `{windows}` names no version and build"
+        ));
     }
     expect_bool(root, "worktree_dirty", false)?;
     let results = root.field("results")?.array()?;

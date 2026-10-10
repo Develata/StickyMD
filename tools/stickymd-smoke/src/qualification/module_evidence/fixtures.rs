@@ -56,7 +56,7 @@ pub(in crate::qualification) fn exact(candidate: &Candidate, results: &str) -> S
             "{{\"schema_version\":1,\"status\":\"PASSED\",",
             "\"source_commit\":\"{commit}\",\"harness_commit\":\"{commit}\",",
             "\"worktree_dirty\":false,\"version\":\"{version}\",",
-            "\"windows\":\"Windows test\",\"exe_sha256\":\"{exe}\",",
+            "\"windows\":\"Microsoft Windows 10.0.26200.9457\",\"exe_sha256\":\"{exe}\",",
             "\"zip_sha256\":\"{zip}\",\"qualification_environment\":\"VALID\",",
             "\"results\":[{results}]}}\n"
         ),

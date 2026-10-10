@@ -218,7 +218,7 @@ pub(super) fn run(
         &candidate,
         &harness_commit,
         worktree_dirty,
-        &super::manual_receipt::windows_build(),
+        &super::windows_build::current(),
         &environment.summary(),
         &results,
     );
