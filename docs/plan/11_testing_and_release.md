@@ -342,6 +342,9 @@ ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
 - readiness 读取的每份收据（candidate、Source Freeze、decision、remote/downloaded、headless、manual 与模块
   evidence）都整份严格解析为 JSON 对象，每个字段、case 与 decision 只从所属对象读取；重复键、截断、尾随
   输入或类型不符即为无效，不以文本搜索寻找字段；
+- exact evidence 与人工收据记录的 Windows build 必须含具体版本与构建号（如 `Microsoft Windows 10.0.26200.9457`），
+  由 `ver` 输出读取（按控制台代码页有损解码后只取 ASCII 版本号）；读取失败记为 `UNKNOWN` 并使收据无效，不得以
+  `OS` 环境变量（`Windows_NT`）代替；
 - freeze 后 source/manifest/lock/runtime asset 或 release tooling 变化仍要求重建 Source Freeze。下游证据由
   evidence class 决定：exact-byte evidence 必须重建；module evidence 只在其 registry 输入指纹变化时 stale。
 
