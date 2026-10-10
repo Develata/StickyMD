@@ -29,7 +29,7 @@ pub(super) struct Candidate {
 }
 
 pub(super) fn read_candidate(root: &Path) -> Result<Candidate, String> {
-    let document = read_receipt(&root.join(CANDIDATE_RECEIPT))?;
+    let document = json::parse_object(&read_receipt(&root.join(CANDIDATE_RECEIPT))?)?;
     if json::u64_field(&document, "schema_version")? != 2 {
         return Err("release-candidate receipt schema is not version 2".to_owned());
     }

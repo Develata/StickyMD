@@ -56,8 +56,10 @@ pub(super) fn record_workflow(root: &Path, run_id: u64, attempt: u64) -> Result<
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let document = String::from_utf8(output.stdout)
-        .map_err(|error| format!("gh run JSON is not UTF-8: {error}"))?;
+    let document = json::parse_object(
+        &String::from_utf8(output.stdout)
+            .map_err(|error| format!("gh run JSON is not UTF-8: {error}"))?,
+    )?;
     let head = json::string_field(&document, "headSha")?;
     let conclusion = json::string_field(&document, "conclusion")?;
     let url = json::string_field(&document, "url")?;
@@ -346,7 +348,7 @@ fn parse_artifact_query(output: &str) -> Result<(u64, String), String> {
 }
 
 fn read_remote(root: &Path) -> Result<RemoteWorkflow, String> {
-    let document = receipt::read_receipt(&root.join(REMOTE_RECEIPT))?;
+    let document = json::parse_object(&receipt::read_receipt(&root.join(REMOTE_RECEIPT))?)?;
     if json::u64_field(&document, "schema_version")? != 2
         || json::string_field(&document, "status")? != "PASSED"
     {

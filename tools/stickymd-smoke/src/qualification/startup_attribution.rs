@@ -22,7 +22,7 @@ const CATEGORIES: &[&str] = &[
 pub(super) fn record(root: &Path) -> Result<(), String> {
     let candidate = receipt::read_candidate(root)?;
     receipt::validate_candidate_against_repository(root, &candidate)?;
-    let performance = receipt::read_receipt(&root.join(PERFORMANCE_RECEIPT))?;
+    let performance = json::parse_object(&receipt::read_receipt(&root.join(PERFORMANCE_RECEIPT))?)?;
     validate_identity(&performance, &candidate)?;
     let cold = dominant_category(&performance, "cold")?;
     let warm = dominant_category(&performance, "warm")?;
@@ -86,7 +86,7 @@ pub(super) fn record(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_identity(document: &str, candidate: &Candidate) -> Result<(), String> {
+fn validate_identity(document: &json::Value, candidate: &Candidate) -> Result<(), String> {
     for (field, expected) in [
         ("commit", candidate.source_commit.as_str()),
         ("executable_sha256", candidate.exe_sha256.as_str()),
@@ -102,7 +102,7 @@ fn validate_identity(document: &str, candidate: &Candidate) -> Result<(), String
     Ok(())
 }
 
-fn dominant_category(document: &str, cohort: &str) -> Result<(&'static str, f64), String> {
+fn dominant_category(document: &json::Value, cohort: &str) -> Result<(&'static str, f64), String> {
     CATEGORIES
         .iter()
         .map(|category| {
@@ -115,27 +115,26 @@ fn dominant_category(document: &str, cohort: &str) -> Result<(&'static str, f64)
         .ok_or_else(|| format!("{cohort} attribution has no categories"))
 }
 
-fn measurement(document: &str, name: &str) -> Result<f64, String> {
-    let marker = format!("\"name\":\"{}\"", json::escape(name));
-    let start = document
-        .find(&marker)
-        .ok_or_else(|| format!("performance receipt is missing measurement `{name}`"))?;
-    let object = &document[start
-        ..document[start..]
-            .find('}')
-            .map_or(document.len(), |end| start + end + 1)];
-    let value_start = object
-        .find("\"value\":")
-        .map(|offset| offset + "\"value\":".len())
-        .ok_or_else(|| format!("measurement `{name}` has no value"))?;
-    let value = object[value_start..]
-        .split([',', '}'])
-        .next()
-        .ok_or_else(|| format!("measurement `{name}` has an empty value"))?;
-    value
-        .trim()
-        .parse::<f64>()
-        .map_err(|error| format!("measurement `{name}` is invalid: {error}"))
+/// The value of the one measurement called `name`, read from the `measurements` array of
+/// each result object. Per-task measurements such as `task.execution_seconds` repeat across
+/// results; the attribution inputs must appear exactly once.
+fn measurement(document: &json::Value, name: &str) -> Result<f64, String> {
+    let mut found = None;
+    for result in json::objects(document, "results")? {
+        if !json::has_field(result, "measurements") {
+            continue;
+        }
+        for entry in json::objects(result, "measurements")? {
+            if json::string_field(entry, "name")? == name
+                && found.replace(json::f64_field(entry, "value")?).is_some()
+            {
+                return Err(format!(
+                    "performance receipt records measurement `{name}` more than once"
+                ));
+            }
+        }
+    }
+    found.ok_or_else(|| format!("performance receipt is missing measurement `{name}`"))
 }
 
 fn validate_interval(name: &str, actual_ms: f64, expected_ms: f64) -> Result<(), String> {
@@ -173,7 +172,7 @@ mod tests {
 
     #[test]
     fn attribution_reads_exact_named_measurements_and_selects_dominant_category() {
-        let mut document = String::from("{\"measurements\":[");
+        let mut document = String::from("{\"results\":[{\"id\":\"startup\",\"measurements\":[");
         for (index, (name, value)) in [
             ("cold.p95", 477.0),
             ("cold.category.process_overhead.p95", 20.0),
@@ -194,8 +193,14 @@ mod tests {
                 "{{\"name\":\"{name}\",\"unit\":\"ms\",\"value\":{value}}}"
             ));
         }
-        document.push_str("]}");
-        assert_eq!(measurement(&document, "cold.p95"), Ok(477.0));
+        document.push_str("]},{\"id\":\"other\",\"measurements\":[{\"name\":\"cold.p95\",\"unit\":\"ms\",\"value\":1}]}]}");
+        let document = crate::qualification::json::parse_object(&document).unwrap();
+        // A second `cold.p95` in another result is ambiguous, not "first one wins".
+        assert!(measurement(&document, "cold.p95").is_err());
+        assert_eq!(
+            measurement(&document, "cold.category.bootstrap.p95"),
+            Ok(80.0)
+        );
         assert_eq!(
             dominant_category(&document, "cold"),
             Ok(("font_discovery", 120.0))

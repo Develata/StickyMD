@@ -159,7 +159,7 @@ pub(super) fn load_observations(
     if !path.is_file() {
         return Ok(observations);
     }
-    let document = receipt::read_receipt(&path)?;
+    let document = json::parse_object(&receipt::read_receipt(&path)?)?;
     for (key, expected) in [
         ("source_commit", candidate.source_commit.as_str()),
         ("exe_sha256", candidate.exe_sha256.as_str()),
@@ -182,16 +182,10 @@ pub(super) fn load_observations(
     Ok(observations)
 }
 
-fn parse_observations(document: &str) -> Result<Vec<(String, ManualObservation)>, String> {
-    let marker = "\"case_id\":";
+/// Each observation is read from its own object in the `cases` array.
+fn parse_observations(document: &json::Value) -> Result<Vec<(String, ManualObservation)>, String> {
     let mut observations = Vec::new();
-    let mut offset = 0;
-    while let Some(relative) = document[offset..].find(marker) {
-        let start = offset + relative;
-        let next = document[start + marker.len()..]
-            .find(marker)
-            .map_or(document.len(), |next| start + marker.len() + next);
-        let object = &document[start..next];
+    for object in json::objects(document, "cases")? {
         let status = json::string_field(object, "status")?;
         if !matches!(
             status.as_str(),
@@ -203,10 +197,14 @@ fn parse_observations(document: &str) -> Result<Vec<(String, ManualObservation)>
             json::string_field(object, "case_id")?,
             ManualObservation {
                 status,
-                note: json::string_field(object, "note").unwrap_or_default(),
+                // A note is optional; one that is present must be a string.
+                note: if json::has_field(object, "note") {
+                    json::string_field(object, "note")?
+                } else {
+                    String::new()
+                },
             },
         ));
-        offset = next;
     }
     Ok(observations)
 }

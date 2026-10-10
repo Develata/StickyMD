@@ -14,7 +14,9 @@ pub(super) fn check(
     automated_ok: bool,
     blockers: &mut Vec<String>,
 ) {
-    let document = match receipt::read_receipt(&root.join(MANUAL_RECEIPT)) {
+    let document = match receipt::read_receipt(&root.join(MANUAL_RECEIPT))
+        .and_then(|text| json::parse_object(&text))
+    {
         Ok(document) => document,
         Err(error) => {
             blockers.push(format!("mandatory manual acceptance receipt: {error}"));
@@ -35,7 +37,9 @@ pub(super) fn check(
         )),
         Err(error) => blockers.push(format!("manual version: {error}")),
     }
-    match json::string_field(&document, "windows") {
+    match json::object_field(&document, "environment")
+        .and_then(|environment| json::string_field(environment, "windows"))
+    {
         Ok(build) if !build.trim().is_empty() && build != "UNKNOWN" => {}
         Ok(_) => blockers.push("manual receipt Windows build is unavailable".to_owned()),
         Err(error) => blockers.push(format!("manual Windows build: {error}")),
@@ -117,7 +121,7 @@ pub(super) fn check(
     }
 }
 
-fn check_identity(document: &str, candidate: &Candidate, blockers: &mut Vec<String>) {
+fn check_identity(document: &json::Value, candidate: &Candidate, blockers: &mut Vec<String>) {
     for (key, expected) in [
         ("source_commit", candidate.source_commit.as_str()),
         ("exe_sha256", candidate.exe_sha256.as_str()),
@@ -197,33 +201,43 @@ struct ManualObservation {
     tier: String,
 }
 
-fn case_statuses(document: &str) -> Result<Vec<ManualObservation>, String> {
-    let marker = "\"case_id\":";
-    let mut cases = Vec::new();
-    let mut offset = 0;
-    while let Some(relative) = document[offset..].find(marker) {
-        let start = offset + relative;
-        let next = document[start + marker.len()..]
-            .find(marker)
-            .map_or(document.len(), |next| start + marker.len() + next);
-        let object = &document[start..next];
-        cases.push(ManualObservation {
-            case_id: json::string_field(object, "case_id")?,
-            status: json::string_field(object, "status")?,
-            source_commit: json::string_field(object, "source_commit")?,
-            exe_sha256: json::string_field(object, "exe_sha256")?,
-            session: json::string_field(object, "session")?,
-            tier: json::string_field(object, "tier")?,
-        });
-        offset = next;
-    }
-    Ok(cases)
+/// Each case is read from its own object in the `cases` array.
+fn case_statuses(document: &json::Value) -> Result<Vec<ManualObservation>, String> {
+    json::objects(document, "cases")?
+        .iter()
+        .map(|object| {
+            Ok(ManualObservation {
+                case_id: json::string_field(object, "case_id")?,
+                status: json::string_field(object, "status")?,
+                source_commit: json::string_field(object, "source_commit")?,
+                exe_sha256: json::string_field(object, "exe_sha256")?,
+                session: json::string_field(object, "session")?,
+                tier: json::string_field(object, "tier")?,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ManualTier, not_tested_blocker};
+    use super::{ManualTier, case_statuses, not_tested_blocker};
     use crate::qualification::decisions::Decision;
+
+    #[test]
+    fn a_manual_case_is_read_from_its_own_object() {
+        let case = "{\"case_id\":\"P12-M01\",\"session\":\"M1\",\"tier\":\"A\",\"status\" : \"MANUAL_FAIL\",\"extra\":{\"status\":\"MANUAL_PASS\"},\"source_commit\":\"s\",\"exe_sha256\":\"e\",\"note\":\"\"}";
+        let receipt = |cases: &str| {
+            crate::qualification::json::parse_object(&format!(
+                "{{\"schema_version\":1,\"environment\":{{\"windows\":\"10.0\"}},\"cases\":[{cases}]}}"
+            ))
+            .unwrap()
+        };
+        let cases = case_statuses(&receipt(case)).unwrap();
+        assert_eq!(cases[0].status, "MANUAL_FAIL");
+        // A case without its own status is malformed, not borrowed from a neighbour.
+        let missing = "{\"case_id\":\"P12-M02\",\"session\":\"M1\",\"tier\":\"A\",\"source_commit\":\"s\",\"exe_sha256\":\"e\"}";
+        assert!(case_statuses(&receipt(&format!("{missing},{case}"))).is_err());
+    }
 
     #[test]
     fn tiers_enforce_waiver_and_version_binding() {

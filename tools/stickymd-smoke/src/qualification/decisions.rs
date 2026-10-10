@@ -61,7 +61,7 @@ pub(super) fn update(root: &Path, key: &str, status: &str, evidence: &str) -> Re
 }
 
 pub(super) fn read(root: &Path, source: &SourceFreeze) -> Result<Vec<Decision>, String> {
-    let document = receipt::read_receipt(&root.join(DECISION_RECEIPT))?;
+    let document = json::parse_object(&receipt::read_receipt(&root.join(DECISION_RECEIPT))?)?;
     if json::u64_field(&document, "schema_version")? != 2 {
         return Err("release decision receipt schema is not version 2".to_owned());
     }
@@ -121,16 +121,10 @@ fn parse_markdown(content: &str) -> Result<Vec<Decision>, String> {
     Ok(decisions)
 }
 
-fn parse_json_decisions(document: &str) -> Result<Vec<Decision>, String> {
-    let marker = "\"decision\":";
+/// Each decision is read from its own object in the `decisions` array.
+fn parse_json_decisions(document: &json::Value) -> Result<Vec<Decision>, String> {
     let mut decisions = Vec::new();
-    let mut offset = 0usize;
-    while let Some(relative) = document[offset..].find(marker) {
-        let start = offset + relative;
-        let next = document[start + marker.len()..]
-            .find(marker)
-            .map_or(document.len(), |next| start + marker.len() + next);
-        let object = &document[start..next];
+    for object in json::objects(document, "decisions")? {
         let decision = Decision {
             key: json::string_field(object, "decision")?,
             status: json::string_field(object, "status")?,
@@ -144,7 +138,6 @@ fn parse_json_decisions(document: &str) -> Result<Vec<Decision>, String> {
             return Err(format!("duplicate decision key `{}`", decision.key));
         }
         decisions.push(decision);
-        offset = next;
     }
     if decisions.is_empty() {
         return Err("release decision receipt contains no decisions".to_owned());
@@ -207,7 +200,9 @@ fn valid_tier_b_group_waiver(key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_status, parse_markdown, valid_manual_waiver_key};
+    use super::{
+        normalize_status, parse_json_decisions, parse_markdown, status, valid_manual_waiver_key,
+    };
 
     #[test]
     fn source_freeze_requires_fresh_version_approval() {
@@ -245,6 +240,28 @@ mod tests {
         let decisions = parse_markdown(source).expect("valid ledger");
         assert_eq!(decisions[0].key, "STARTUP-RELEASE-BOUNDARY");
         assert!(normalize_status("approved").is_err());
+    }
+
+    #[test]
+    fn a_decision_is_read_from_its_own_object() {
+        let receipt = |decision: &str| {
+            crate::qualification::json::parse_object(&format!(
+                "{{\"schema_version\":2,\"decisions\":[{decision}]}}"
+            ))
+            .unwrap()
+        };
+        let rejected = receipt(
+            "{\"decision\":\"RELEASE-VERSION\",\"status\" : \"USER REJECTED\",\"extra\":{\"status\":\"USER APPROVED\"},\"evidence\":\"rejected\"}",
+        );
+        let decisions = parse_json_decisions(&rejected).unwrap();
+        assert_eq!(status(&decisions, "RELEASE-VERSION"), Some("USER REJECTED"));
+        for broken in [
+            "{\"decision\":\"RELEASE-VERSION\",\"status\":\"USER APPROVED\"}",
+            "{\"decision\":\"A\",\"status\":\"PENDING\",\"evidence\":\"x\"},{\"decision\":\"A\",\"status\":\"PENDING\",\"evidence\":\"y\"}",
+            "\"RELEASE-VERSION\"",
+        ] {
+            assert!(parse_json_decisions(&receipt(broken)).is_err(), "{broken}");
+        }
     }
 
     #[test]

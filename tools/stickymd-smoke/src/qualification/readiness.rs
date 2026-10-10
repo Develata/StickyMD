@@ -165,7 +165,9 @@ fn check_remote(
     candidate: &Candidate,
     blockers: &mut Vec<String>,
 ) {
-    let document = match receipt::read_receipt(&root.join(remote::REMOTE_RECEIPT)) {
+    let document = match receipt::read_receipt(&root.join(remote::REMOTE_RECEIPT))
+        .and_then(|text| json::parse_object(&text))
+    {
         Ok(document) => document,
         Err(error) => {
             blockers.push(format!("remote workflow receipt: {error}"));
@@ -189,13 +191,15 @@ fn check_remote(
     ] {
         expect_u64(&document, key, expected, "remote workflow", blockers);
     }
-    if document.contains("\"exe_sha256\"") {
+    if json::has_field(&document, "exe_sha256") {
         blockers.push("remote workflow receipt must not predeclare final EXE hash".to_owned());
     }
 }
 
 fn check_downloaded(root: &Path, candidate: &Candidate, blockers: &mut Vec<String>) {
-    let document = match receipt::read_receipt(&root.join(remote::DOWNLOADED_RECEIPT)) {
+    let document = match receipt::read_receipt(&root.join(remote::DOWNLOADED_RECEIPT))
+        .and_then(|text| json::parse_object(&text))
+    {
         Ok(document) => document,
         Err(error) => {
             blockers.push(format!("downloaded artifact receipt: {error}"));
@@ -241,7 +245,7 @@ fn check_downloaded(root: &Path, candidate: &Candidate, blockers: &mut Vec<Strin
 }
 
 fn expect_string(
-    document: &str,
+    document: &json::Value,
     key: &str,
     expected: &str,
     label: &str,
@@ -256,7 +260,13 @@ fn expect_string(
     }
 }
 
-fn expect_u64(document: &str, key: &str, expected: u64, label: &str, blockers: &mut Vec<String>) {
+fn expect_u64(
+    document: &json::Value,
+    key: &str,
+    expected: u64,
+    label: &str,
+    blockers: &mut Vec<String>,
+) {
     match json::u64_field(document, key) {
         Ok(actual) if actual == expected => {}
         Ok(actual) => blockers.push(format!(
@@ -372,6 +382,32 @@ mod tests {
         check_downloaded(&root, &candidate, &mut blockers);
         assert!(blockers.iter().any(|item| item.contains("zip_sha256")));
         assert!(blockers.iter().any(|item| item.contains("promoted")));
+
+        // A complete receipt passes; one legal mutation each must block again.
+        let complete = stale
+            .replace(&"f".repeat(64), &candidate.zip_sha256)
+            .replace("\"promoted\":false", "\"promoted\":true");
+        receipt::write_receipt(&root, DOWNLOADED_RECEIPT, &complete).expect("write receipt");
+        blockers.clear();
+        check_downloaded(&root, &candidate, &mut blockers);
+        assert!(blockers.is_empty(), "{blockers:?}");
+        for mutated in [
+            complete.replace(
+                "\"status\":\"PASSED\"",
+                "\"status\" : \"FAILED\",\"extra\":{\"status\":\"PASSED\"}",
+            ),
+            complete.replace(
+                "\"promoted\":true",
+                "\"promoted\" : false,\"nested\":{\"promoted\":true}",
+            ),
+            complete.replace("\"runtime_smoke\":true,", ""),
+            complete.replace("\"promoted\":true}", "\"promoted\":true,\"promoted\":true}"),
+        ] {
+            receipt::write_receipt(&root, DOWNLOADED_RECEIPT, &mutated).expect("write receipt");
+            blockers.clear();
+            check_downloaded(&root, &candidate, &mut blockers);
+            assert!(!blockers.is_empty(), "{mutated}");
+        }
         fs::remove_dir_all(root).expect("cleanup");
     }
 

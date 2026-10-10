@@ -1,4 +1,7 @@
-//! Minimal JSON helpers for the fixed release-receipt schemas.
+//! JSON for the fixed release-receipt schemas: writers escape strings, readers parse
+//! the whole receipt strictly and read each field only from the object that owns it.
+
+pub(super) use crate::release::json::Value;
 
 pub(super) fn escape(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
@@ -19,103 +22,113 @@ pub(super) fn escape(value: &str) -> String {
     escaped
 }
 
-pub(super) fn string_field(document: &str, key: &str) -> Result<String, String> {
-    let marker = format!("\"{}\":", escape(key));
-    let start = document
-        .find(&marker)
-        .ok_or_else(|| format!("JSON field `{key}` is missing"))?
-        + marker.len();
-    parse_string(document, start).map(|(value, _)| value)
-}
-
-pub(super) fn u64_field(document: &str, key: &str) -> Result<u64, String> {
-    let marker = format!("\"{}\":", escape(key));
-    let start = document
-        .find(&marker)
-        .ok_or_else(|| format!("JSON field `{key}` is missing"))?
-        + marker.len();
-    let tail = document[start..].trim_start();
-    let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
-    if digits.is_empty() {
-        return Err(format!("JSON field `{key}` is not an unsigned integer"));
-    }
-    digits
-        .parse::<u64>()
-        .map_err(|error| format!("JSON field `{key}` is invalid: {error}"))
-}
-
-pub(super) fn bool_field(document: &str, key: &str) -> Result<bool, String> {
-    let marker = format!("\"{}\":", escape(key));
-    let start = document
-        .find(&marker)
-        .ok_or_else(|| format!("JSON field `{key}` is missing"))?
-        + marker.len();
-    let tail = document[start..].trim_start();
-    if tail.starts_with("true") {
-        Ok(true)
-    } else if tail.starts_with("false") {
-        Ok(false)
-    } else {
-        Err(format!("JSON field `{key}` is not a boolean"))
+/// Parse a whole receipt strictly (`crate::release::json`: duplicate keys, truncation and
+/// trailing input are errors). It must be one JSON object.
+pub(super) fn parse_object(text: &str) -> Result<Value, String> {
+    match crate::release::json::parse(text)? {
+        object @ Value::Object(_) => Ok(object),
+        _ => Err("receipt is not a JSON object".to_owned()),
     }
 }
 
-fn parse_string(document: &str, start: usize) -> Result<(String, usize), String> {
-    let bytes = document.as_bytes();
-    let mut index = start;
-    while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
-        index += 1;
+/// A field of `object` itself; nested objects are never searched.
+fn field<'a>(object: &'a Value, key: &str) -> Result<&'a Value, String> {
+    let Value::Object(fields) = object else {
+        return Err(format!("JSON field `{key}` is read from a non-object"));
+    };
+    fields
+        .get(key)
+        .ok_or_else(|| format!("JSON field `{key}` is missing"))
+}
+
+pub(super) fn has_field(object: &Value, key: &str) -> bool {
+    matches!(object, Value::Object(fields) if fields.contains_key(key))
+}
+
+pub(super) fn string_field(object: &Value, key: &str) -> Result<String, String> {
+    match field(object, key)? {
+        Value::String(value) => Ok(value.clone()),
+        _ => Err(format!("JSON field `{key}` is not a string")),
     }
-    if bytes.get(index) != Some(&b'"') {
-        return Err("expected JSON string".to_owned());
+}
+
+pub(super) fn u64_field(object: &Value, key: &str) -> Result<u64, String> {
+    match field(object, key)? {
+        Value::Number(number) => number
+            .parse::<u64>()
+            .map_err(|_| format!("JSON field `{key}` is not an unsigned integer")),
+        _ => Err(format!("JSON field `{key}` is not an unsigned integer")),
     }
-    index += 1;
-    let mut value = String::new();
-    while let Some(&byte) = bytes.get(index) {
-        match byte {
-            b'"' => return Ok((value, index + 1)),
-            b'\\' => {
-                index += 1;
-                let escaped = *bytes
-                    .get(index)
-                    .ok_or_else(|| "unterminated JSON escape".to_owned())?;
-                match escaped {
-                    b'"' => value.push('"'),
-                    b'\\' => value.push('\\'),
-                    b'n' => value.push('\n'),
-                    b'r' => value.push('\r'),
-                    b't' => value.push('\t'),
-                    _ => return Err("unsupported JSON escape in receipt".to_owned()),
-                }
-            }
-            byte if byte.is_ascii_control() => {
-                return Err("control character in JSON string".to_owned());
-            }
-            byte if byte.is_ascii() => value.push(char::from(byte)),
-            _ => {
-                let character = document[index..]
-                    .chars()
-                    .next()
-                    .ok_or_else(|| "invalid UTF-8 boundary in JSON string".to_owned())?;
-                value.push(character);
-                index += character.len_utf8() - 1;
-            }
+}
+
+pub(super) fn f64_field(object: &Value, key: &str) -> Result<f64, String> {
+    match field(object, key)? {
+        Value::Number(number) => number
+            .parse::<f64>()
+            .map_err(|_| format!("JSON field `{key}` is not a number")),
+        _ => Err(format!("JSON field `{key}` is not a number")),
+    }
+}
+
+pub(super) fn bool_field(object: &Value, key: &str) -> Result<bool, String> {
+    match field(object, key)? {
+        Value::Bool(value) => Ok(*value),
+        _ => Err(format!("JSON field `{key}` is not a boolean")),
+    }
+}
+
+/// The object stored in `key`.
+pub(super) fn object_field<'a>(object: &'a Value, key: &str) -> Result<&'a Value, String> {
+    match field(object, key)? {
+        nested @ Value::Object(_) => Ok(nested),
+        _ => Err(format!("JSON field `{key}` is not an object")),
+    }
+}
+
+/// The array of objects stored in `key`.
+pub(super) fn objects<'a>(object: &'a Value, key: &str) -> Result<&'a [Value], String> {
+    match field(object, key)? {
+        Value::Array(items) if items.iter().all(|item| matches!(item, Value::Object(_))) => {
+            Ok(items)
         }
-        index += 1;
+        _ => Err(format!("JSON field `{key}` is not an array of objects")),
     }
-    Err("unterminated JSON string".to_owned())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{bool_field, escape, string_field, u64_field};
+    use super::{bool_field, escape, has_field, objects, parse_object, string_field, u64_field};
 
     #[test]
-    fn fixed_receipt_fields_are_read_without_a_general_json_dependency() {
-        let document = r#"{"schema_version":1,"name":"a\\b\"c","ready":false,"qualification_environment":{"status":"VALID"},"results":[{"status":"PASSED"}]}"#;
-        assert_eq!(u64_field(document, "schema_version"), Ok(1));
-        assert_eq!(string_field(document, "name"), Ok("a\\b\"c".to_owned()));
-        assert_eq!(bool_field(document, "ready"), Ok(false));
+    fn receipt_fields_come_only_from_their_own_object() {
+        let document = parse_object(
+            r#"{"schema_version":1,"name":"a\\b\"c","ready":false,"qualification_environment":{"status":"VALID"},"results":[{"status":"PASSED"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(u64_field(&document, "schema_version"), Ok(1));
+        assert_eq!(string_field(&document, "name"), Ok("a\\b\"c".to_owned()));
+        assert_eq!(bool_field(&document, "ready"), Ok(false));
+        // Nested values are not top-level fields.
+        assert!(string_field(&document, "status").is_err());
+        assert!(!has_field(&document, "status"));
+        assert_eq!(objects(&document, "results").unwrap().len(), 1);
         assert_eq!(escape("a\nb"), "a\\nb");
+
+        // Re-spacing is legal JSON and reads the owning object's value, not a decoy.
+        let spaced =
+            parse_object(r#"{"status" : "FAILED", "extra": {"status":"PASSED"}}"#).unwrap();
+        assert_eq!(string_field(&spaced, "status"), Ok("FAILED".to_owned()));
+        for broken in [
+            r#"{"status":"PASSED","status":"FAILED"}"#,
+            r#"{"status":"PASSED""#,
+            r#"{"status":"PASSED"} {}"#,
+            r#"["status","PASSED"]"#,
+        ] {
+            assert!(parse_object(broken).is_err(), "{broken}");
+        }
+        let numbers = parse_object(r#"{"a":-1,"b":1.5,"c":"7"}"#).unwrap();
+        for key in ["a", "b", "c"] {
+            assert!(u64_field(&numbers, key).is_err(), "{key}");
+        }
     }
 }
