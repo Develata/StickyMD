@@ -475,7 +475,7 @@ fn execute_tasks(
     }
     results.push(EvidenceResult {
         id: if options.ci {
-            "requested headless CI task set".to_owned()
+            HEADLESS_TASK_SET.to_owned()
         } else {
             "acceptance readiness".to_owned()
         },
@@ -518,6 +518,18 @@ pub(crate) fn formal_task_labels(runtime: bool) -> Result<Vec<&'static str>, Str
     labels.push("acceptance readiness");
     Ok(labels)
 }
+
+/// The result ids of a complete local headless CI run (`all --ci`), in order: one per
+/// planned task, then the task-set marker. Readiness checks receipts against this plan
+/// instead of keeping its own list.
+pub(crate) fn headless_task_labels() -> Result<Vec<&'static str>, String> {
+    let options = Options::parse(["all", "--ci"].map(str::to_owned))?;
+    let mut labels: Vec<_> = build_plan(&options)?.iter().map(task_label).collect();
+    labels.push(HEADLESS_TASK_SET);
+    Ok(labels)
+}
+
+pub(crate) const HEADLESS_TASK_SET: &str = "requested headless CI task set";
 
 const fn environment_evidence_status(environment: &QualificationEnvironment) -> EvidenceStatus {
     match environment.status {

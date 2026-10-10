@@ -5,16 +5,19 @@
 
 use std::path::Path;
 
-use super::receipt;
 use super::source_freeze::SourceFreeze;
-use crate::release::json::{self, Value};
+use super::{json, receipt};
 
 const HEADLESS_CI_RECEIPT: &str = "dist/evidence/headless-ci-qualification.json";
-const HEADLESS_CI_TASK: &str = "requested headless CI task set";
 
 pub(super) fn check(root: &Path, source: &SourceFreeze, blockers: &mut Vec<String>) -> bool {
-    let checked = receipt::read_receipt(&root.join(HEADLESS_CI_RECEIPT))
-        .and_then(|document| check_document(&document, &source.source_commit));
+    let checked = receipt::read_receipt(&root.join(HEADLESS_CI_RECEIPT)).and_then(|text| {
+        check_document(
+            &text,
+            &source.source_commit,
+            &crate::runner::headless_task_labels()?,
+        )
+    });
     match checked {
         Ok(()) => true,
         Err(error) => {
@@ -24,49 +27,55 @@ pub(super) fn check(root: &Path, source: &SourceFreeze, blockers: &mut Vec<Strin
     }
 }
 
-/// A clean full headless run of the frozen source: the requested task set exactly once
-/// and every result PASSED, read from a strict parse of the receipt.
-fn check_document(document: &str, source_commit: &str) -> Result<(), String> {
-    let root = json::parse(document)?;
-    if root.field("schema_version")?.unsigned()? != 2 {
+/// A clean, complete headless run of the frozen source: one PASSED result for every
+/// task the runner plans for `all --ci`, in order, ending with the task-set marker.
+fn check_document(document: &str, source_commit: &str, expected: &[&str]) -> Result<(), String> {
+    let root = json::parse_object(document)?;
+    if json::u64_field(&root, "schema_version")? != 2 {
         return Err("schema is not 2".to_owned());
     }
-    if root.field("suite")?.string()? != "all" {
+    if json::string_field(&root, "suite")? != "all" {
         return Err("suite is not all".to_owned());
     }
-    let commit = root.field("commit")?.string()?;
+    let commit = json::string_field(&root, "commit")?;
     if commit != source_commit {
         return Err(format!(
             "STALE RECEIPT: source commit is {commit}, expected {source_commit}"
         ));
     }
-    if root.field("worktree_dirty")? != &Value::Bool(false) {
+    if json::bool_field(&root, "worktree_dirty")? {
         return Err("recorded from a dirty tree".to_owned());
     }
-    let results = root.field("results")?.array()?;
-    let mut required = 0;
-    for result in results {
-        if result.field("id")?.string()? == HEADLESS_CI_TASK {
-            required += 1;
-        }
-        let status = result.field("status")?.string()?;
-        if status != "PASSED" {
-            return Err(format!("contains a {status} result"));
-        }
-    }
-    if required != 1 {
+    let results = json::objects(&root, "results")?;
+    let ids = results
+        .iter()
+        .map(|result| json::string_field(result, "id"))
+        .collect::<Result<Vec<_>, _>>()?;
+    if ids != expected {
         return Err(format!(
-            "contains required task `{HEADLESS_CI_TASK}` {required} times, expected exactly once"
+            "results are {ids:?}, expected the complete headless task plan {expected:?}"
         ));
+    }
+    for (result, id) in results.iter().zip(ids) {
+        let status = json::string_field(result, "status")?;
+        if status != "PASSED" {
+            return Err(format!("task `{id}` is {status}"));
+        }
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{HEADLESS_CI_TASK, check_document};
+    use super::check_document;
+    use crate::runner::{HEADLESS_TASK_SET, headless_task_labels};
 
-    fn document(commit: &str, results: &str) -> String {
+    fn document(commit: &str, ids: &[&str]) -> String {
+        let results = ids
+            .iter()
+            .map(|id| format!("{{\"id\":\"{id}\",\"status\":\"PASSED\"}}"))
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
             concat!(
                 "{{\"schema_version\":2,\"commit\":\"{}\",\"worktree_dirty\":false,",
@@ -81,22 +90,36 @@ mod tests {
     }
 
     #[test]
-    fn source_only_headless_receipt_binds_the_frozen_source_and_passes_once() {
+    fn headless_receipt_binds_the_frozen_source_and_the_complete_task_plan() {
         let commit = "a".repeat(40);
-        let task = format!("{{\"id\":\"{HEADLESS_CI_TASK}\",\"status\":\"PASSED\"}}");
+        let plan = headless_task_labels().unwrap();
+        assert!(plan.len() > 1, "{plan:?}");
+        assert_eq!(plan.last(), Some(&HEADLESS_TASK_SET));
+        let complete = document(&commit, &plan);
         // The headless run may use any local executable; only the source is bound.
-        check_document(&document(&commit, &task), &commit).unwrap();
-        assert!(check_document(&document(&commit, &task), &"b".repeat(40)).is_err());
-        assert!(check_document(&document(&commit, &format!("{task},{task}")), &commit).is_err());
-        assert!(check_document(&document(&commit, ""), &commit).is_err());
+        check_document(&complete, &commit, &plan).unwrap();
+        assert!(check_document(&complete, &"b".repeat(40), &plan).is_err());
+        // Only the completion marker, a missing task or a repeated task is incomplete.
+        for ids in [
+            vec![HEADLESS_TASK_SET],
+            plan[1..].to_vec(),
+            [plan.as_slice(), &plan[..1]].concat(),
+        ] {
+            assert!(
+                check_document(&document(&commit, &ids), &commit, &plan).is_err(),
+                "{ids:?}"
+            );
+        }
+        let first = format!("{{\"id\":\"{}\",\"status\":\"PASSED\"}}", plan[0]);
         let decoy = format!(
-            "{{\"id\":\"{HEADLESS_CI_TASK}\",\"status\" : \"FAILED\",\"extra\":{{\"status\":\"PASSED\"}}}}"
+            "{{\"id\":\"{}\",\"status\" : \"FAILED\",\"extra\":{{\"status\":\"PASSED\"}}}}",
+            plan[0]
         );
-        assert!(check_document(&document(&commit, &decoy), &commit).is_err());
-        let dirty = document(&commit, &task).replace(
+        assert!(check_document(&complete.replacen(&first, &decoy, 1), &commit, &plan).is_err());
+        let dirty = complete.replace(
             "\"worktree_dirty\":false",
             "\"worktree_dirty\" : true,\"x\":{\"worktree_dirty\":false}",
         );
-        assert!(check_document(&dirty, &commit).is_err());
+        assert!(check_document(&dirty, &commit, &plan).is_err());
     }
 }
