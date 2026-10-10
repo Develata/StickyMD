@@ -199,7 +199,7 @@ mod tests {
             sha256_bytes(b"abc").unwrap(),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
-        // Larger than a pipe buffer, so the portable adapter must stream while waiting.
+        // Several megabytes: the in-memory digest must equal the file digest of the same bytes.
         let large = vec![0x5a_u8; 3 * 1024 * 1024 + 7];
         assert_eq!(
             sha256_bytes(&large).unwrap(),
