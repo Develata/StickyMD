@@ -103,8 +103,9 @@ fn calculate_from(
 fn domains(module: ModuleId) -> u64 {
     match module {
         ModuleId::Runtime => ALL_PRODUCT | RUNTIME_HARNESS | GLOBAL,
+        // The Phase 7 image/export Release baseline runs `export_snapshot`.
         ModuleId::Performance => {
-            STARTUP | EDITOR | PREVIEW | PERSISTENCE | PERFORMANCE_HARNESS | GLOBAL
+            STARTUP | EDITOR | PREVIEW | PERSISTENCE | EXPORT | PERFORMANCE_HARNESS | GLOBAL
         }
         ModuleId::Resource(group) => {
             ALL_PRODUCT
@@ -271,100 +272,191 @@ fn is_judgement_projection(path: &str) -> bool {
     )
 }
 
+/// Product sources, classified by `classified_product_domains`. A product file without an
+/// explicit rule still invalidates every product domain, so an unclassified file can only
+/// widen; `every_product_source_has_an_explicit_rule` rejects it in CI.
 fn product_domains(path: &str) -> Option<u64> {
-    if path.starts_with("crates/stickymd-core/src/assets") {
-        return Some(ASSETS | IMAGES | EXPORT | EDITOR | PERSISTENCE);
-    }
-    if path.starts_with("crates/stickymd-core/src/") {
-        return Some(EDITOR | PERSISTENCE | STARTUP | ASSETS);
-    }
-    if path.starts_with("crates/stickymd-render/src/source/") {
-        return Some(EDITOR | PREVIEW);
-    }
-    if path.starts_with("crates/stickymd-render/src/math/") {
-        return Some(PREVIEW | MATH);
-    }
-    if path.starts_with("crates/stickymd-render/src/image") {
-        return Some(PREVIEW | IMAGES | EXPORT);
-    }
-    if path.starts_with("crates/stickymd-render/src/preview/") {
-        return Some(PREVIEW | MATH | IMAGES | EXPORT | EDITOR);
-    }
-    if path.starts_with("crates/stickymd-render/src/") {
-        return Some(PREVIEW | EDITOR | MATH | IMAGES | EXPORT);
-    }
-    if path.starts_with("apps/stickymd-win/src/assets/") {
-        return Some(ASSETS | IMAGES | PERSISTENCE);
-    }
-    if path.starts_with("apps/stickymd-win/src/export/") || path.ends_with("/export_runtime.rs") {
-        return Some(EXPORT | ASSETS | IMAGES);
-    }
-    if is_persistence_path(path) {
-        return Some(PERSISTENCE | STARTUP);
-    }
-    if is_shell_path(path) {
-        return Some(SHELL);
-    }
-    if is_preview_path(path) {
-        return Some(PREVIEW | MATH | IMAGES);
-    }
-    if is_editor_path(path) {
-        return Some(EDITOR);
-    }
-    (path.starts_with("apps/stickymd-win/src/") || path.starts_with("assets/"))
-        .then_some(ALL_PRODUCT)
+    PRODUCT_ROOTS
+        .iter()
+        .any(|root| path.starts_with(root))
+        .then(|| classified_product_domains(path).unwrap_or(ALL_PRODUCT))
 }
 
-fn is_persistence_path(path: &str) -> bool {
-    path.starts_with("apps/stickymd-win/src/persistence/")
-        || path.starts_with("apps/stickymd-win/src/startup/")
-        || path.contains("persistence_runtime.rs")
-        || path.contains("recovery_runtime.rs")
-        || path.contains("reconciliation_runtime.rs")
-        || path.starts_with("apps/stickymd-win/src/flow/persistence")
-        || path.starts_with("apps/stickymd-win/src/flow/recovery")
-        || path.starts_with("apps/stickymd-win/src/flow/reconciliation")
-        || path.starts_with("apps/stickymd-win/src/flow/save")
-        || path.contains("atomic_file.rs")
-        || path.contains("file_watch.rs")
-        || path.contains("single_instance.rs")
-        || path.contains("program_dir.rs")
+const PRODUCT_ROOTS: &[&str] = &[
+    "apps/stickymd-win/src/",
+    "crates/stickymd-core/src/",
+    "crates/stickymd-render/src/",
+    "assets/",
+];
+
+/// Code every module's sessions depend on, whatever the module exercises:
+/// - the launch path and every event-loop turn: startup, configuration and preferences, the
+///   note load and managed-asset boundary check, recovery inspection, window and platform
+///   setup, intent routing, the editor session and its reducer, search state, the preview
+///   flow (shown at launch, ticked every turn), the frame surface, source rendering (the
+///   default view), the caret overlay and the shared core;
+/// - the persistence that follows any edit or preference change: autosave, reconciliation of
+///   the app's own writes, and the atomic publish used for the note and the configuration;
+/// - the `StickyApp` state machine (`app.rs`, `app/`): its files share one mutable state that
+///   per-turn code reads (for example `export_in_flight` and `asset_paste_pending` feed the
+///   window guards), so even a feature handler there changes every-turn behaviour.
+///
+/// A pattern ending in `/` names a directory; any other pattern names one file.
+const EVERY_SESSION: &[&str] = &[
+    "apps/stickymd-win/src/main.rs",
+    "apps/stickymd-win/src/app.rs",
+    "apps/stickymd-win/src/app/",
+    "apps/stickymd-win/src/startup/",
+    "apps/stickymd-win/src/config/",
+    "apps/stickymd-win/src/surface.rs",
+    "apps/stickymd-win/src/assets/mod.rs",
+    "apps/stickymd-win/src/assets/safe_boundary.rs",
+    "apps/stickymd-win/src/assets/storage.rs",
+    "apps/stickymd-win/src/flow/mod.rs",
+    "apps/stickymd-win/src/flow/editor.rs",
+    "apps/stickymd-win/src/flow/persistence.rs",
+    "apps/stickymd-win/src/flow/preferences.rs",
+    "apps/stickymd-win/src/flow/preview.rs",
+    "apps/stickymd-win/src/flow/reconciliation.rs",
+    "apps/stickymd-win/src/flow/recovery.rs",
+    "apps/stickymd-win/src/flow/save.rs",
+    "apps/stickymd-win/src/flow/window/",
+    "apps/stickymd-win/src/instruction/",
+    "apps/stickymd-win/src/interaction/mod.rs",
+    "apps/stickymd-win/src/interaction/search.rs",
+    "apps/stickymd-win/src/interaction/session.rs",
+    "apps/stickymd-win/src/persistence/",
+    "apps/stickymd-win/src/platform/mod.rs",
+    "apps/stickymd-win/src/platform/windows/mod.rs",
+    "apps/stickymd-win/src/platform/windows/atomic_file.rs",
+    "apps/stickymd-win/src/platform/windows/caret_overlay.rs",
+    "apps/stickymd-win/src/platform/windows/diagnostic_event.rs",
+    "apps/stickymd-win/src/platform/windows/file_identity.rs",
+    "apps/stickymd-win/src/platform/windows/file_watch.rs",
+    "apps/stickymd-win/src/platform/windows/monitor.rs",
+    "apps/stickymd-win/src/platform/windows/native_message.rs",
+    "apps/stickymd-win/src/platform/windows/program_dir.rs",
+    "apps/stickymd-win/src/platform/windows/single_instance.rs",
+    "apps/stickymd-win/src/platform/windows/tool_window.rs",
+    "apps/stickymd-win/src/platform/windows/tray.rs",
+    "apps/stickymd-win/src/platform/windows/window_opacity.rs",
+    "apps/stickymd-win/src/platform/windows/window_topmost.rs",
+    "crates/stickymd-core/src/",
+    "crates/stickymd-render/src/lib.rs",
+    "crates/stickymd-render/src/scroll.rs",
+    "crates/stickymd-render/src/source/",
+];
+
+/// Files that had no rule before the explicit table. Their closure has not been traced, so
+/// they keep every product domain rather than being narrowed without evidence.
+const NOT_YET_NARROWED: &[&str] = &[
+    "apps/stickymd-win/src/test_support.rs",
+    "apps/stickymd-win/src/platform/windows/export_dialog.rs",
+    "apps/stickymd-win/src/platform/windows/local_image_file.rs",
+    "apps/stickymd-win/src/platform/windows/local_image_file/",
+    "apps/stickymd-win/src/platform/windows/managed_file.rs",
+    "apps/stickymd-win/src/platform/windows/message_box.rs",
+    "apps/stickymd-win/src/platform/windows/shell.rs",
+];
+
+/// Code reached only through the named features, with the domains those features feed. The
+/// first matching pattern wins, after `EVERY_SESSION` and `NOT_YET_NARROWED`.
+const FEATURE_SOURCES: &[(&str, u64)] = &[
+    ("crates/stickymd-render/src/math/", PREVIEW | MATH),
+    (
+        "crates/stickymd-render/src/image.rs",
+        PREVIEW | IMAGES | EXPORT,
+    ),
+    (
+        "crates/stickymd-render/src/image/",
+        PREVIEW | IMAGES | EXPORT,
+    ),
+    (
+        "crates/stickymd-render/src/preview/",
+        PREVIEW | MATH | IMAGES | EXPORT | EDITOR,
+    ),
+    (
+        "crates/stickymd-render/src/math_text.rs",
+        PREVIEW | EDITOR | MATH | IMAGES | EXPORT,
+    ),
+    (
+        "crates/stickymd-render/src/math_text/",
+        PREVIEW | EDITOR | MATH | IMAGES | EXPORT,
+    ),
+    // Image paste staging and local image paths; the storage itself runs every session.
+    (
+        "apps/stickymd-win/src/assets/",
+        ASSETS | IMAGES | PERSISTENCE,
+    ),
+    ("apps/stickymd-win/src/export/", EXPORT | ASSETS | IMAGES),
+    // The worker starts only when Preview or Split becomes visible.
+    ("apps/stickymd-win/src/preview/", PREVIEW | MATH | IMAGES),
+    ("apps/stickymd-win/src/interaction/navigation.rs", EDITOR),
+    ("apps/stickymd-win/src/source_search.rs", EDITOR),
+    // Paste reads encoded images from the clipboard and stages them as managed assets.
+    (
+        "apps/stickymd-win/src/flow/clipboard.rs",
+        EDITOR | ASSETS | IMAGES,
+    ),
+    (
+        "apps/stickymd-win/src/platform/windows/clipboard.rs",
+        EDITOR | ASSETS | IMAGES,
+    ),
+];
+/// Every product source has an explicit rule and every rule still names a tracked file, so
+/// a new or renamed file cannot fall back silently and a stale rule cannot linger. Governance
+/// runs this on every CI plan, including plans that skip the smoke package's own tests.
+pub(crate) fn verify_product_classification(root: &Path) -> Result<(), String> {
+    let tracked = tracked_files(root)?;
+    let unclassified = tracked
+        .iter()
+        .filter(|path| {
+            product_domains(path).is_some()
+                && path_domains(path) != 0
+                && classified_product_domains(path).is_none()
+        })
+        .collect::<Vec<_>>();
+    if !unclassified.is_empty() {
+        return Err(format!(
+            "product files without a domain rule in qualification/module_ledger/fingerprint.rs: {unclassified:?}"
+        ));
+    }
+    let stale = EVERY_SESSION
+        .iter()
+        .chain(NOT_YET_NARROWED)
+        .copied()
+        .chain(FEATURE_SOURCES.iter().map(|(pattern, _)| *pattern))
+        .filter(|pattern| !tracked.iter().any(|path| matches_pattern(path, pattern)))
+        .collect::<Vec<_>>();
+    if !stale.is_empty() {
+        return Err(format!(
+            "product domain rules that match no tracked file: {stale:?}"
+        ));
+    }
+    Ok(())
 }
 
-fn is_shell_path(path: &str) -> bool {
-    path.starts_with("apps/stickymd-win/src/flow/window/")
-        || path.contains("window_runtime.rs")
-        || path.contains("window_interaction.rs")
-        || path.contains("window_geometry_runtime.rs")
-        || path.contains("toolbar_paint.rs")
-        || path.contains("controls.rs")
-        || path.contains("/platform/windows/tray.rs")
-        || path.contains("/platform/windows/monitor.rs")
-        || path.contains("/platform/windows/native_message.rs")
-        || path.contains("/platform/windows/tool_window.rs")
-        || path.contains("/platform/windows/window_")
+fn classified_product_domains(path: &str) -> Option<u64> {
+    if EVERY_SESSION
+        .iter()
+        .chain(NOT_YET_NARROWED)
+        .any(|pattern| matches_pattern(path, pattern))
+    {
+        return Some(ALL_PRODUCT);
+    }
+    FEATURE_SOURCES
+        .iter()
+        .find(|(pattern, _)| matches_pattern(path, pattern))
+        .map(|(_, domains)| *domains)
 }
 
-fn is_preview_path(path: &str) -> bool {
-    path.starts_with("apps/stickymd-win/src/preview/")
-        || path.contains("preview_runtime.rs")
-        || path.contains("preview_input.rs")
-        || path.starts_with("apps/stickymd-win/src/flow/preview")
+fn matches_pattern(path: &str, pattern: &str) -> bool {
+    if pattern.ends_with('/') {
+        path.starts_with(pattern)
+    } else {
+        path == pattern
+    }
 }
-
-fn is_editor_path(path: &str) -> bool {
-    path.starts_with("apps/stickymd-win/src/interaction/")
-        || path.contains("source_search.rs")
-        || path.contains("search_")
-        || path.contains("caret_runtime.rs")
-        || path.contains("/app/input.rs")
-        || path.starts_with("apps/stickymd-win/src/flow/editor")
-        || path.starts_with("apps/stickymd-win/src/flow/clipboard")
-        || path.starts_with("apps/stickymd-win/src/instruction/")
-        || path.contains("/platform/windows/clipboard.rs")
-        || path.contains("/platform/windows/caret_overlay.rs")
-}
-
 fn harness_domains(path: &str) -> u64 {
     if path.starts_with("tools/stickymd-smoke/src/runtime/resources/window")
         || path.starts_with("tools/stickymd-smoke/src/runtime/window_stress")

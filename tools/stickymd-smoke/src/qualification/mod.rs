@@ -34,6 +34,8 @@ mod startup_attribution;
 mod windows_build;
 pub(crate) mod workspace_tests;
 
+pub(crate) use module_ledger::fingerprint::verify_product_classification;
+
 use std::path::Path;
 
 use crate::cli::{G3Case, G4Case, G5Case, ManualCommand, QualificationCommand};

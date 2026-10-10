@@ -465,3 +465,72 @@ fn legacy_digest(
     fs::remove_file(path).unwrap();
     (digest.unwrap(), files, bytes)
 }
+
+#[test]
+fn every_product_source_has_an_explicit_rule() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    super::verify_product_classification(root).unwrap();
+
+    let fixture = fixture();
+    let path = fixture.join("apps/stickymd-win/src/unclassified.rs");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "//! new product file").unwrap();
+    let error = super::verify_product_classification(&fixture).unwrap_err();
+    assert!(
+        error.contains("apps/stickymd-win/src/unclassified.rs"),
+        "{error}"
+    );
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+/// Files the G5 cases reach without any G5-specific trigger: the note load, recovery
+/// inspection, autosave after the paste case, reconciliation of that write, and the atomic
+/// configuration publish the view and opacity cases wait for. Each must stay an input of
+/// every module, not only of the persistence-facing ones.
+#[test]
+fn every_session_persistence_invalidates_every_module() {
+    for path in [
+        "apps/stickymd-win/src/startup/bootstrap.rs",
+        "apps/stickymd-win/src/persistence/storage.rs",
+        "apps/stickymd-win/src/flow/recovery.rs",
+        "apps/stickymd-win/src/flow/save.rs",
+        "apps/stickymd-win/src/flow/reconciliation.rs",
+        "apps/stickymd-win/src/config/storage.rs",
+        "apps/stickymd-win/src/platform/windows/atomic_file.rs",
+        "apps/stickymd-win/src/assets/storage.rs",
+    ] {
+        for module in crate::qualification::module_registry::modules() {
+            assert_ne!(
+                path_domains(path) & super::domains(module),
+                0,
+                "{path}: {module:?}"
+            );
+        }
+    }
+}
+
+/// The formal Performance plan runs Release unit baselines by name filter wherever they live
+/// (for example `phase7_export_release_baseline` in `export/mod.rs` and the Phase 8 window
+/// reducer and control-layout baselines), so the files holding them are its inputs.
+#[test]
+fn performance_baselines_outside_its_features_invalidate_it() {
+    for path in [
+        "apps/stickymd-win/src/export/mod.rs",
+        "apps/stickymd-win/src/assets/transaction.rs",
+        "crates/stickymd-render/src/math/engine.rs",
+        "crates/stickymd-render/src/image.rs",
+        "apps/stickymd-win/src/flow/window/reducer.rs",
+        "apps/stickymd-win/src/app/controls.rs",
+        "apps/stickymd-win/src/source_search.rs",
+    ] {
+        assert_ne!(
+            path_domains(path) & super::domains(ModuleId::Performance),
+            0,
+            "{path}"
+        );
+    }
+}

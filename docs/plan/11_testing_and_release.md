@@ -359,6 +359,13 @@ harness、权威 plan/acceptance contract、依赖传播和 evidence class。Pow
 “是否最新 candidate”或只看 `git diff` 的易漂移判断。同一 planning invocation 可缓存共享文件 digest，但不得把
 全部仓库内容同时复制到内存。共享 core、Cargo manifests/lock、toolchain、build/release 配置和 contract 变化按
 注册依赖保守传播；任何 tracked path 无法分类时，planner 必须使保守共享集合 stale，而不是默认忽略。
+产品文件按显式规则归入产品域：每次会话的启动路径或事件循环每轮都会执行的代码（应用状态机及其逐帧 UI、启动、
+配置与偏好、intent 路由、编辑会话、note 加载与恢复检查、窗口与平台初始化、帧表面、默认视图的源码渲染与共享
+core），以及任何编辑或偏好变化之后的持久化（autosave、自身写入的 reconciliation、note 与配置的原子发布）是每个
+启动产品的模块的输入，归全部产品域；只经某个功能到达的代码归该功能所服务的域；尚未追踪闭包的文件保持
+全部产品域。缩窄必须给出"入口 → 调用/回调/Effect → 共享状态读写 → 验收断言"的依据，拆文件本身不是依据。
+没有显式规则的产品文件在运行时归全部产品域，治理检查（每次 CI plan 都运行）拒绝它；不再命中任何 tracked 文件的规则
+同样被拒绝。
 决定 evidence 能否被接受的规则（模块 evidence 合同、注册表、账本与记录格式）属于全局输入；只展示或汇总
 已有判定的工具代码（状态报告与 release readiness 汇总）不是任何功能模块的输入，由工具自身测试与 CI 覆盖。
 

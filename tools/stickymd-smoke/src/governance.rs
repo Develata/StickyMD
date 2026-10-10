@@ -155,6 +155,7 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_phase14_contract_trace(root)?;
     verify_release_infrastructure(root)?;
     verify_plan_refs(root)?;
+    crate::qualification::verify_product_classification(root)?;
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
     Ok(())
@@ -164,10 +165,10 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-14.md");
     let content = read_text(&path)?;
     let observed = frozen_trace_ids(&content, "P14-A")?;
-    let expected: Vec<u16> = (1..=71).collect();
+    let expected: Vec<u16> = (1..=72).collect();
     if observed != expected {
         return Err(format!(
-            "{} IDs must be exactly P14-A01..P14-A71; observed {observed:?}",
+            "{} IDs must be exactly P14-A01..P14-A72; observed {observed:?}",
             path.display()
         ));
     }
