@@ -295,3 +295,18 @@ SHOULD_FIX 要求在推送前修正，均已核实：
 
 - Windows：393 + 25 PASS，17 ignored；clippy、fmt、phase-00 PASS。
 - Linux（WSL Debian，CI 命令）：clippy 无警告；324 + 19 PASS，连跑 3 次。
+
+## 第九轮：确认审查（gpt-6-astra max，`504bdb6..6887e05`）
+
+结论 **PASS / no blocker**：SHA 回收上限与快照换名判定 RESOLVED；人工收据统一校验判定 PARTIALLY RESOLVED。
+推送前唯一要求是下面第 1 项，已核实并修正（`cb122c6`）：
+
+1. **Windows build 可以没有构建号**（属实，既有问题）：`ver` 的输出不是 UTF-8 时（GBK 控制台默认如此，本机
+   实测为 `[版本 10.0.26200.9457]` 的 GBK 字节），记录值回退为 `OS` 变量 `Windows_NT`；校验只拒绝空值与
+   `UNKNOWN`。修正：新增 `qualification/windows_build.rs`，对 `ver` 有损解码后只保留 ASCII 版本号
+   （`Microsoft Windows 10.0.26200.9457`），读不到即记为 `UNKNOWN`；人工收据与 exact evidence 只接受含版本与
+   构建号的值。本机测试确认能读出已知构建号。
+2. **逐 case 身份测试到不了逐 case 检查**（NICE，属实）：修正为顶层身份保持合法，只改单个 case 的 source 或
+   EXE，并断言具体的 case 错误。
+
+验证：Windows 395 + 25 PASS，17 ignored；Linux（CI 命令）clippy 无警告，325 + 19 PASS，连跑 3 次；fmt、phase-00 PASS。
