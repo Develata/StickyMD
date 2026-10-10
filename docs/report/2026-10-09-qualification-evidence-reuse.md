@@ -234,3 +234,38 @@ flock 属于打开文件描述，并行测试派生的子进程在 exec 前持�
 - `governance.rs` 约 1182 行（既有问题，NICE_TO_HAVE），未拆分。
 - 待下一轮讨论：`tools/stickymd-smoke/src/` 下的任何文件都归入 `ALL_HARNESS` 或 `GLOBAL`，工具本身的改动会使
   全部十个模块失效；工具几乎每个版本都会改，这决定复用在实际中能否生效。
+
+## 第七轮：复审（gpt-6-astra max，`3c01f5d..13886dd`）
+
+第六轮的六项中，四项判定 RESOLVED（账本严格解析、复用与 readiness 统一、整组规范化、重复计算），两项
+PARTIALLY RESOLVED（依赖环、SHA 子进程回收）。另有 1 项 BLOCKER、2 项 SHOULD_FIX、2 项 NICE_TO_HAVE，
+均已核实，处理如下（`13886dd..` 本轮提交）：
+
+1. **BLOCKER：release readiness 仍用文本扫描器**（属实）。decision 收据里重新加空格的 `"status" : "USER
+   REJECTED"` 旁嵌套一个 `"USER APPROVED"`，会被读成批准；downloaded 与 manual 收据同理。修正（`ffb3b70`）：
+   `qualification/json.rs` 只保留整份严格解析与"从给定对象读字段"；candidate、Source Freeze、decision、
+   remote/downloaded、manual 与 startup attribution 全部改为从所属对象读取。startup attribution 所需的测量名
+   必须恰好出现一次；真实收据中 `task.execution_seconds` 每个任务各有一份，因此不能一律拒绝重复名。回归测试
+   都以完整收据为基线，一次只改一个字段。
+2. **headless 收据只要完成标记即可通过**（属实）。修正（`92a1cda`）：结果 id 必须按顺序等于 runner 为
+   `all --ci` 规划的任务加完成标记。该计划与 v0.1.3 候选的真实收据逐项一致（19/19）。
+3. **SHA 子进程的异常出口**（属实，条件性）。修正（`f3ee7b4`）：内存字节写入独占创建的私有临时文件，交给
+   `sha256sum` 读取，不再需要管道和写入线程；每次外部摘要都有上限等待，超时或等待出错时终止并回收，失败
+   的每一步都报告。新增"挂起、失败、成功"三种命令的测试。
+4. **指纹分类**（第七轮问题 C）。修正（`f1405ba`）：`module_ledger/status.rs` 与 `qualification/readiness.rs`
+   只汇报或汇总已有判定，不再是功能模块输入；evidence 接受规则（`module_evidence`、注册表、账本、记录格式）
+   仍为全局。
+5. **畸形 JSON 测试基线本身无效**（NICE，属实）。修正（`f1405ba`）：基线改为完整六项 G4 收据。
+
+未处理：
+
+- **`module_evidence → runner` 依赖**（NICE）：只调用纯规划函数，没有运行时递归。把任务规划移到中立模块会
+  牵动 runner 主体，留到下一轮评估。
+- **`governance.rs` 约 1182 行**：既有问题，未拆分。
+- **完整 readiness 的耗时与峰值内存**（NEEDS_VERIFICATION）：需要真实候选与十个模块的归档，本轮无法测量。
+
+### 验证
+
+- Windows：`cargo test -p stickymd-smoke --locked` 394 + 25 PASS，17 ignored；clippy `-D warnings`、fmt、
+  phase-00 PASS。
+- Linux（WSL Debian，CI "Linux smoke CLI" 命令）：clippy 无警告；测试 324 + 19 PASS，连跑 3 次。

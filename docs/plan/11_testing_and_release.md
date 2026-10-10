@@ -307,7 +307,8 @@ dist/exact-candidate/
 
 ignored `dist/evidence/` 中：
 
-- source-only receipt 绑定 Source Freeze，不要求 final EXE hash；
+- source-only receipt 绑定 Source Freeze，不要求 final EXE hash；本地 headless CI 收据必须恰好包含 runner 为
+  `all --ci` 规划的全部任务（按顺序、每项 `PASSED`）及任务集标记，不另维护任务名单；
 - remote workflow receipt 绑定 source/run/attempt/artifact id，不复制尚未产生的 final EXE hash；
 - downloaded/promotion receipt 与 candidate receipt 绑定实际 ZIP/EXE/SBOM hash；
 - downloaded/package/checksum/SBOM、PE/native-runtime 与 portable-runtime 直接证明当前 artifact bytes，
@@ -338,6 +339,9 @@ ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
   clean worktree 与各组预期逐项结果，只有当前 registry 指纹兼容时才能复用；
 - readiness 对 P0/P1、未批准 hard gate、mandatory manual NOT TESTED、exact package、remote
   evidence 与 USER decision fail closed；不得提供 `--force-ready`；
+- readiness 读取的每份收据（candidate、Source Freeze、decision、remote/downloaded、headless、manual 与模块
+  evidence）都整份严格解析为 JSON 对象，每个字段、case 与 decision 只从所属对象读取；重复键、截断、尾随
+  输入或类型不符即为无效，不以文本搜索寻找字段；
 - freeze 后 source/manifest/lock/runtime asset 或 release tooling 变化仍要求重建 Source Freeze。下游证据由
   evidence class 决定：exact-byte evidence 必须重建；module evidence 只在其 registry 输入指纹变化时 stale。
 
@@ -352,6 +356,8 @@ harness、权威 plan/acceptance contract、依赖传播和 evidence class。Pow
 “是否最新 candidate”或只看 `git diff` 的易漂移判断。同一 planning invocation 可缓存共享文件 digest，但不得把
 全部仓库内容同时复制到内存。共享 core、Cargo manifests/lock、toolchain、build/release 配置和 contract 变化按
 注册依赖保守传播；任何 tracked path 无法分类时，planner 必须使保守共享集合 stale，而不是默认忽略。
+决定 evidence 能否被接受的规则（模块 evidence 合同、注册表、账本与记录格式）属于全局输入；只展示或汇总
+已有判定的工具代码（状态报告与 release readiness 汇总）不是任何功能模块的输入，由工具自身测试与 CI 覆盖。
 
 功能模块指纹（v2）对两类文件做发布版本规范化，其余输入仍逐字节参与：根 `Cargo.toml` 去掉
 `[workspace.package]` 唯一的 `version` 行；`Cargo.lock` 去掉 workspace member（由 `[workspace].members`
