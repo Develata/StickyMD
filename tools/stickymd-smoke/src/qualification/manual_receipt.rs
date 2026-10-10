@@ -173,19 +173,39 @@ pub(super) fn load_observations(
             ));
         }
     }
-    for (id, observation) in parse_observations(&document)? {
+    let mut seen = std::collections::BTreeSet::new();
+    for (id, observation) in parse_observations(&document, candidate)? {
         if !observations.contains_key(&id) {
             return Err(format!("manual receipt contains unknown case `{id}`"));
+        }
+        if !seen.insert(id.clone()) {
+            return Err(format!("manual receipt records case `{id}` more than once"));
         }
         observations.insert(id, observation);
     }
     Ok(observations)
 }
 
-/// Each observation is read from its own object in the `cases` array.
-fn parse_observations(document: &json::Value) -> Result<Vec<(String, ManualObservation)>, String> {
+/// Each observation is read from its own object in the `cases` array. A case observed
+/// on another source or EXE is stale: resuming must not relabel it as this candidate's,
+/// exactly as readiness refuses it.
+fn parse_observations(
+    document: &json::Value,
+    candidate: &Candidate,
+) -> Result<Vec<(String, ManualObservation)>, String> {
     let mut observations = Vec::new();
     for object in json::objects(document, "cases")? {
+        for (key, expected) in [
+            ("source_commit", candidate.source_commit.as_str()),
+            ("exe_sha256", candidate.exe_sha256.as_str()),
+        ] {
+            let actual = json::string_field(object, key)?;
+            if actual != expected {
+                return Err(format!(
+                    "STALE RECEIPT: manual case {key} is {actual}, expected {expected}"
+                ));
+            }
+        }
         let status = json::string_field(object, "status")?;
         if !matches!(
             status.as_str(),
@@ -287,8 +307,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        ManualCase, ManualObservation, ManualTier, parse_manual_cases, render_manual_receipt,
-        session_for_case, tier_for_case,
+        MANUAL_RECEIPT, ManualCase, ManualObservation, ManualTier, load_observations,
+        parse_manual_cases, parse_observations, render_manual_receipt, session_for_case,
+        tier_for_case,
     };
     use crate::cli::ManualSession;
     use crate::qualification::receipt::Candidate;
@@ -368,7 +389,39 @@ mod tests {
                 note: "observed".to_owned(),
             },
         )]);
-        let receipt = render_manual_receipt(&candidate, &[case], &observations);
+        let receipt = render_manual_receipt(&candidate, std::slice::from_ref(&case), &observations);
+
+        // Resuming keeps only this candidate's observations, once per case.
+        let parsed = crate::qualification::json::parse_object(&receipt).unwrap();
+        assert_eq!(parse_observations(&parsed, &candidate).unwrap().len(), 1);
+        let foreign = crate::qualification::json::parse_object(&receipt.replacen(
+            &format!(
+                "\"source_commit\":\"{}\",\"exe_sha256\"",
+                candidate.source_commit
+            ),
+            &format!("\"source_commit\":\"{}\",\"exe_sha256\"", "f".repeat(40)),
+            2,
+        ))
+        .unwrap();
+        let error = parse_observations(&foreign, &candidate).unwrap_err();
+        assert!(error.contains("manual case source_commit"), "{error}");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("stickymd-manual-resume-{nonce}"));
+        let case_object = receipt
+            .split_once("\"cases\":[")
+            .unwrap()
+            .1
+            .trim_end()
+            .trim_end_matches("]}")
+            .to_owned();
+        let duplicated = receipt.replacen(&case_object, &format!("{case_object},{case_object}"), 1);
+        crate::atomic_evidence::write(&root.join(MANUAL_RECEIPT), duplicated.as_bytes()).unwrap();
+        let error = load_observations(&root, &candidate, &[case]).unwrap_err();
+        assert!(error.contains("more than once"), "{error}");
+        std::fs::remove_dir_all(&root).unwrap();
         for marker in [
             "\"version\":\"0.1.0\"",
             "\"windows\":",

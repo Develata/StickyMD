@@ -1,7 +1,7 @@
 //! Portable external SHA-256 adapter; Windows uses the in-process CNG backend.
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
-use std::fs::{self, File};
+use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -100,8 +100,14 @@ impl Snapshot {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        // Exclusive creation: an existing file is never adopted or overwritten.
-        let mut file = File::create_new(&path)
+        // Exclusive creation (an existing file is never adopted or overwritten), readable
+        // and writable only by this user, so no other account can alter what is hashed.
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options
+            .open(&path)
             .map_err(|error| format!("cannot create hash snapshot {}: {error}", path.display()))?;
         let snapshot = Self(path);
         file.write_all(bytes)
