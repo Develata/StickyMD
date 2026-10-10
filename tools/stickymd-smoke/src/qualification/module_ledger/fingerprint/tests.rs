@@ -110,6 +110,25 @@ fn report_text_is_not_a_behavior_input_but_contract_is_global() {
     );
 }
 
+/// Reports of judgements are not inputs; the rules that make the judgements are global.
+#[test]
+fn status_and_readiness_reports_do_not_invalidate_but_acceptance_rules_do() {
+    for path in [
+        "tools/stickymd-smoke/src/qualification/module_ledger/status.rs",
+        "tools/stickymd-smoke/src/qualification/readiness.rs",
+    ] {
+        assert_eq!(path_domains(path), 0, "{path}");
+    }
+    for path in [
+        "tools/stickymd-smoke/src/qualification/module_evidence.rs",
+        "tools/stickymd-smoke/src/qualification/module_registry.rs",
+        "tools/stickymd-smoke/src/qualification/module_ledger.rs",
+        "tools/stickymd-smoke/src/qualification/module_ledger/record.rs",
+    ] {
+        assert_eq!(path_domains(path), GLOBAL, "{path}");
+    }
+}
+
 #[test]
 fn shared_window_and_process_adapters_invalidate_every_consumer() {
     let root = fixture();

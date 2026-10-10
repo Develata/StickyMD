@@ -188,7 +188,7 @@ fn path_domains(path: &str) -> u64 {
     if path == "tests/fixtures/performance/resource-note-seed.md" {
         return RESOURCES_HARNESS;
     }
-    if is_non_behavior_document(path) {
+    if is_non_behavior_document(path) || is_judgement_projection(path) {
         return 0;
     }
     if path.starts_with("docs/plan/") || path.starts_with("docs/acceptance-cases/") {
@@ -256,6 +256,18 @@ fn is_non_behavior_document(path: &str) -> bool {
                 | "docs/coverage-matrix.md"
                 | "docs/release-checklist.md"
         )
+}
+
+/// Tool code that only reports or aggregates module judgements made elsewhere: it neither
+/// runs a module nor decides whether archived evidence is acceptable (that is
+/// `module_evidence`, the record schema and the ledger, all `GLOBAL`), so editing it must
+/// not invalidate any functional module. The tool's own tests and CI still cover it.
+fn is_judgement_projection(path: &str) -> bool {
+    matches!(
+        path,
+        "tools/stickymd-smoke/src/qualification/module_ledger/status.rs"
+            | "tools/stickymd-smoke/src/qualification/readiness.rs"
+    )
 }
 
 fn product_domains(path: &str) -> Option<u64> {

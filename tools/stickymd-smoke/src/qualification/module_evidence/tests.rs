@@ -103,7 +103,10 @@ fn a_nested_or_respaced_field_cannot_stand_in_for_the_real_one() {
 #[test]
 fn malformed_documents_are_invalid_rather_than_partially_read() {
     let candidate = candidate();
-    let document = exact(&candidate, &passing_cases(&["G4-01"]));
+    let ids = ["G4-01", "G4-02", "G4-03", "G4-04", "G4-05", "G4-06"];
+    let document = exact(&candidate, &passing_cases(&ids));
+    // The baseline is complete, so each rejection below comes from its one mutation.
+    validate(ModuleId::G4, &document, &origin(&candidate)).unwrap();
     for broken in [
         document.trim_end().trim_end_matches('}').to_owned(),
         document.replacen(
