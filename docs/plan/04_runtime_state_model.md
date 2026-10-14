@@ -237,6 +237,8 @@ struct DockState {
 ```
 
 - 收起优先级：`Quit > ManualHide/Esc > ActiveDrag > Focused/IME composing > Conflict/Recovery 交互 > Auto-hide timers > Hover reveal`。
+  这里的 Esc 指已送达窗口的收起 intent；原始按键先按 `09_windows_shell.md` 的 Esc 顺序由透明度弹层、IME composition、
+  Search 或 Preview 选区消费，未被消费时才成为该 intent。
 - 焦点或 IME composition 期间：**禁止自动收起**；鼠标临时离开不触发收起。
 
 ## ImeState

@@ -3,6 +3,8 @@
 本矩阵是最终发布资格投影，不修改产品需求。自动项由 Rust CLI/checked-in helper 持有；人工项
 只有 exact candidate 上的 interactive receipt 才能改变 readiness，Markdown 仍保持
 `NOT TESTED`，不得用旧记录或 Win32 style readback 代替真实观察。
+人工项按 plan 11 [人工观察记录](../plan/11_testing_and_release.md#manual-observation-log)逐场景、逐目标环境角色
+（`current`、`previous`）记录；Phase 8 人工义务向本矩阵的逐断言映射尚未完成，已知缺口由 readiness 汇总列出。
 
 2026-09-30 入口维护验证：`phase-12.ps1` 参数经共享薄适配器交给 Rust `phase_entry`，
 复用既有命令解析与执行。Preconditions：锁定工具、隔离中文/空格目录；Action：同输入比较旧入口
