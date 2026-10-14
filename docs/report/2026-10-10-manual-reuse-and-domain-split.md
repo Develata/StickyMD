@@ -630,3 +630,104 @@ SHOULD_FIX：取消透明度弹层未结束滑块拖动（`ControlState::cancel`
 确认轮（2026-10-14）：1b PASS / no blocker；1a PASS / no blocker，2 个 SHOULD_FIX 已修——目标收据声明的同一事务写入只有头部的
 零观察日志，此后缺失、零字节或损坏一律视为丢失；满额重置时未解除 FAIL 按 `(项, 角色, 场景)` 合并带入，保证重置后有追加
 容量。真实桌面的 Esc 行为（IME 事件顺序、修饰键投递、拖动取消、长按跨层）仍待覆盖补全批实测。
+
+## 3-A 第 2 批实施记录（2026-10-14）
+
+新模块 `qualification/manual_observation/`：`registry`（24 项、tier、session、逐项场景与已知覆盖缺口；测试保证与
+`phase-12.md` 的 Manual 集合相等、14/7/3）、`target`（目标收据严格解析与随机上下文 ID）、`role`（匹配谓词）、`log`
+（日志格式、上限与幂等追加）、`reduce`（与登记顺序无关的场景归约，以及重置时的未解除 FAIL 计算，两者共用同一规则）、
+`store`（sidecar 锁、带上限读取、声明、重置、合并带入与归档；写入顺序先日志后目标收据）、`waiver`（key 与
+`(项, 角色)` 集合的一致性）。`decisions` 的 waiver 记录增加上下文与集合，`--manual-scope` 写入时校验，readiness 读取时
+再校验；`RESET-MANUAL-LOG-<digest>` 成为可记录的决定。`manual_readiness` 改为读取上下文、归约、按 tier 与 waiver 处置，
+readiness 普通输出与 JSON（schema 3）都包含逐项逐角色汇总、旧格式提示与已知覆盖缺口。成功账本的有界锁等待抽为共享
+`file_lock`（列为全局输入）。schema 1 收据模块删除，文件保留并报告已被取代。
+
+过渡状态（如实说明）：观察记录器随第 3 批到来，本批期间 `acceptance manual run/guided` 拒绝执行，而不是继续写已被
+取代的收据；`list`、`status`、新增的 `target`（USER 交互声明）与 `reset` 可用。被测机器上的环境事实采集也在第 3 批。
+
+验证：Windows `cargo test -p stickymd-smoke --locked` 全部通过，clippy `-D warnings`、fmt、phase-00 通过；WSL Linux 回放
+clippy 通过、356 + 19 通过、phase-00 通过。新增验收行 P14-A73..A75。
+
+### 第 2 批代码审查第 1 轮（2026-10-14）
+
+第一次运行中断、未写报告（按约定重试一次）；中断前指出 reset 先移走活动文件再写新文件，可能被当作首次初始化——已改为
+复制归档、活动文件保留到新日志与新目标依次替换，任何仍可解析的日志都携带未解除 FAIL。重试结果：3 个 BLOCKER、6 个
+SHOULD_FIX、1 个 NICE_TO_HAVE、1 个 NEEDS_VERIFICATION，核实后全部成立并已修：
+
+- BLOCKER：reset 的未解除 FAIL 计算不验证环境，一条无效 PASS 就能清掉有效 FAIL。现在归约与 reset 共用 `invalidity`；
+  reset 只有在日志确实绑定到某个目标时才让有效 PASS 解除 FAIL，否则携带全部 FAIL。
+- BLOCKER：决定收据的读改写没有锁，并发更新可恢复已撤销的 waiver；reset 在取锁前读取批准。现在决定收据有独立
+  sidecar 锁，所有写入是锁内读改写；锁顺序固定为"人工存储锁先于决定锁"；`declare`/`reset` 在存储排他锁内调用时才
+  读取批准；readiness 在两把锁内取得上下文与决定的一致快照。
+- BLOCKER：readiness 先读 candidate、人工检查再读一次文件算摘要，可能混用两个 candidate。现在 `read_candidate_snapshot`
+  从同一次读取的字节同时给出 candidate 与摘要，readiness 与人工命令都只用它。
+- SHOULD_FIX：携带的 FAIL 在目标变化后被判无效、无法解除 → 携带的 FAIL 保留原角色（只能阻断，且日志解析要求携带项
+  必为 FAIL），之后看到它的有效 PASS 可以解除。超过字节上限的日志无法授权重置 → 重置摘要改为对文件流式计算，写入
+  前检查新日志大小。目标收据接受 `Home`/`Pro` 与不存在的日期 → 拒绝这两个政策标签并校验真实日历日期。readiness
+  缺少重置来源、已覆盖场景与"USER WAIVED 只表示符合批准政策"的说明 → 均写入普通输出与 JSON。账本错误会跳过人工
+  汇总输出 → 改为先打印账本错误再始终打印人工汇总；无 candidate 时也报告旧收据。过渡状态未同步 → 操作指南加过渡
+  说明，P12-A10 与 P14-A12 改写证据，新增"`run/guided` 拒绝且不写文件"的测试。
+- NICE_TO_HAVE：批量追加的 ID 去重改为一次建索引（线性）。
+- NEEDS_VERIFICATION：新增有界等待超时测试（共享 `file_lock`），以及 Windows 上真实的写入失败注入（目标收据只读，
+  替换在日志之后失败）：结果为阻断状态，旧目标收据字节不变，批准后重新声明仍带入 FAIL。
+
+验证：Windows `cargo test -p stickymd-smoke --locked` 432 + 25 通过，clippy、fmt、phase-00 通过。
+
+### 第 2 批代码审查第 2 轮（2026-10-14）
+
+第 1 轮修复经源码核对成立；新增 2 个 BLOCKER、2 个 SHOULD_FIX，核实后已修：
+
+- BLOCKER：readiness 读两次决定（发布门一次、waiver 一次），交错的撤销与批准可产生从未成立过的 READY。现在 readiness 先取
+  人工存储共享锁，在锁内只读一次决定，发布门与人工政策共用这一份快照；人工检查不再自行读取决定（回归测试：磁盘上没有
+  决定收据时，调用方提供的 waiver 仍生效）。
+- BLOCKER：公共证据写入入口可覆盖人工日志、目标收据、归档、sidecar 锁与决定收据。现在 `validate_public_evidence_path`
+  经别名解析拒绝这些路径（测试含 `./` 别名与归档子路径，且被拒后日志字节不变）。
+- SHOULD_FIX：readiness 收据写入失败会跳过人工汇总 → 先打印汇总再传播写入错误。reset 把决定读取或锁超时误报为"需要
+  批准" → 批准回调返回 `Result<bool, String>`，读取或锁错误原样上报（测试）。
+
+验证：Windows 435 + 25 通过，clippy、fmt、phase-00 通过。readiness 写入失败时的输出顺序由代码结构保证，未做输出捕获测试。
+Linux 回放发现 `shared_readers_coexist_and_exclude_a_writer` 偶发失败（Unix flock 属于打开的文件描述，其他测试 fork 的子进程
+在 exec 前短暂持有）；释放后的获取改为有界重试，锁超时测试释放后的等待放宽到 5 s。Linux 连续三次 364 + 19 通过、
+phase-00 通过。
+
+### 第 2 批代码审查第 3 轮（确认轮，2026-10-14）
+
+单快照与锁顺序（三条路径 manual S→decision S、manual S→decision X、manual X→decision S 无环）、错误传播与公共证据入口
+的路径保护经核对成立。新增 2 个 BLOCKER、1 个 SHOULD_FIX，已修：
+
+- BLOCKER：release 的 checksums、SBOM、package 发布与 notices 等入口按调用方路径直接写，可覆盖人工存储与决定收据。
+  `release::execute` 在分派前对所有调用方指定的输出文件复用 `validate_public_evidence_path`，对输出目录用新的
+  `validate_public_output_directory`（拒绝成功账本存储与人工归档）；回归测试覆盖四类入口，被拒后日志字节不变。
+- BLOCKER：目标声明在等待 USER 输入前读取 candidate，提交时不再核对；其间 Promote 新 candidate 后，旧声明会把新
+  candidate 的上下文按"另一 candidate"直接替换。`store::declare/reset` 现在在排他锁内重读 candidate 摘要，与开始时
+  不同即拒绝且不改动任何文件（回归测试）。
+- SHOULD_FIX：锁测试的重试循环会把 `TryLockError::Error` 当作成功 → 三种结果显式匹配。
+
+验证：Windows 437 + 25 通过，clippy、fmt、phase-00 通过；Linux 回放见下。
+Linux 回放：clippy 通过，连续两次 366 + 19 通过，phase-00 通过。
+
+### 第 2 批代码审查第 4 轮（2026-10-14）
+
+锁内重读 candidate 与锁测试三分支修复成立。1 个 BLOCKER、2 个 SHOULD_FIX、1 个 NICE_TO_HAVE，已修：
+
+- BLOCKER：release 防护按仓库根解释相对路径，写入方按工作目录解释，从子目录调用时检查与写入不是同一文件。防护现在先用
+  与写入方相同的 `std::path::absolute` 解析再检查（回归测试：相对工作目录的输出指向存储时被拒）。
+- SHOULD_FIX：派生输出（目录内的 ZIP、`SHA256SUMS.txt`、默认 SBOM）可经存储文件处的符号链接改写人工日志。存储读取
+  与 sidecar 锁现在拒绝链接（Unix 回归测试），因此派生文件写到哪里都改不到存储读取的内容；派生文件名本身与存储文件名
+  不重合。
+- SHOULD_FIX：尚未创建的保留文件可被输出操作占成目录（如 `manual.lock/x.json`）。保留文件同时按前缀保护，其下级路径
+  一律拒绝；目录检查加入决定收据与其锁。
+- NICE_TO_HAVE：防护分派去掉通配分支，逐一列出无调用方输出的 release 命令，新增命令必须显式归类。
+
+验证：Windows 438 + 25 通过，clippy、fmt、phase-00 通过；Linux 回放 clippy 通过，连续两次 368 + 19 通过，phase-00 通过。
+
+### 第 2 批代码审查第 5 轮（2026-10-14）
+
+PASS / no blocker；第 4 轮其余修复成立（release 防护与写入方统一按工作目录解析、存储与 sidecar 拒绝链接、release
+分派穷举）。1 个 SHOULD_FIX 已按审查的最小修法修复：`manual.lock/../diagnostic.json` 在检查时折叠为普通路径，写入时
+`create_dir_all` 却会先把 `manual.lock` 建成目录。保留路径检查改为 `path_identity::reaches`：原始路径的每一级祖先在
+别名解析后、`..` 折叠前与保留路径比较；回归测试覆盖存储文件尚不存在的情形。
+
+最终验证：Windows `cargo test -p stickymd-smoke --locked` 439 + 25 通过，clippy `-D warnings`、fmt、phase-00 通过；WSL Linux
+回放 clippy 通过，连续两次 369 + 19 通过，phase-00 通过。未覆盖：Windows 原生 junction/8.3 实测、真实并发 Promote、
+readiness 写入失败时的输出捕获、性能与内存测量。
