@@ -63,6 +63,16 @@ impl StickyApp {
         }
     }
 
+    /// Esc that no input state consumed collapses the window (plan 09, last row of the Esc order).
+    pub(super) fn dispatch_escape_to_window(&mut self) {
+        self.dispatch_window_intent(
+            None,
+            crate::flow::window::state::WindowIntent::EscapePressed {
+                now_ms: self.timestamp_ms(),
+            },
+        );
+    }
+
     pub(super) fn handle_key(&mut self, event: KeyEvent) {
         if event.state != ElementState::Pressed {
             return;
@@ -98,6 +108,13 @@ impl StickyApp {
             !self.window_accepts_editor_mutation(),
             self.asset_reconcile_pending,
         ) {
+            return;
+        }
+        // An editor composition owns Esc before Search, Preview and the window (plan 09 Esc order),
+        // including a preedit left over when focus moved to the Preview pane.
+        if code == Some(KeyCode::Escape) && self.session.is_composing() {
+            self.session.cancel_preedit();
+            self.after_presentation_change();
             return;
         }
 
@@ -217,18 +234,8 @@ impl StickyApp {
                 }
                 return;
             }
-            Some(KeyCode::Escape) if self.session.is_composing() => {
-                self.session.cancel_preedit();
-                self.after_presentation_change();
-                return;
-            }
             Some(KeyCode::Escape) => {
-                self.dispatch_window_intent(
-                    None,
-                    crate::flow::window::state::WindowIntent::EscapePressed {
-                        now_ms: self.timestamp_ms(),
-                    },
-                );
+                self.dispatch_escape_to_window();
                 return;
             }
             _ => {}
