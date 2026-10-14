@@ -1,47 +1,44 @@
-//! Interactive human-evidence recorder; it never infers a manual PASS.
+//! Manual acceptance commands: the case registry, the observation context status, the
+//! USER's target declaration and an approved reset. It never infers a manual PASS.
+//!
+//! The observation recorder arrives with the environment collector (3-A batch 3); until
+//! then `run` and `guided` refuse instead of writing the superseded schema 1 receipt.
 
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::Path;
 
-use crate::cli::{GuidedSession, ManualCommand, ManualSession};
-use crate::qualification_environment::{self, QualificationEnvironmentStatus};
+use crate::cli::{GuidedSession, ManualCommand};
 
-use super::guided;
-use super::manual_receipt::{
-    MANUAL_RECEIPT, ManualObservation, ManualTier, load_observations, persist, read_manual_cases,
-};
-use super::receipt;
+use super::manual_observation::reduce::{self, Verdict};
+use super::manual_observation::registry::{CASES, KNOWN_GAPS};
+use super::manual_observation::store;
+use super::manual_observation::target::{self, Role, RoleTarget, Target};
+use super::{decisions, guided, receipt};
 
 pub(super) fn execute(root: &Path, command: ManualCommand) -> Result<(), String> {
-    let environment = qualification_environment::inspect();
-    println!("Environment: {}", environment.summary());
     match command {
-        ManualCommand::List => list(root),
+        ManualCommand::List => {
+            list();
+            Ok(())
+        }
         ManualCommand::Status => status(root),
-        ManualCommand::Run { session } => {
-            if environment.status != QualificationEnvironmentStatus::Valid {
-                return Err("Qualification environment is blocked by locked/non-interactive desktop. Unlock the active Windows session and rerun the Phase 14 evidence campaign.".to_owned());
-            }
-            record(root, session)
-        }
-        ManualCommand::Guided { session } => {
-            if environment.status != QualificationEnvironmentStatus::Valid {
-                return Err("Qualification environment is blocked by locked/non-interactive desktop. Unlock the active Windows session and rerun the Phase 14 evidence campaign.".to_owned());
-            }
-            record_guided(root, session)
-        }
+        ManualCommand::Target => declare_target(root),
+        ManualCommand::Reset => reset(root),
+        ManualCommand::Run { .. } | ManualCommand::Guided { .. } => Err(
+            "manual observations are recorded into the observation log; its recorder lands in 3-A batch 3, so `acceptance manual run/guided` is unavailable until then".to_owned(),
+        ),
     }
 }
 
-fn list(root: &Path) -> Result<(), String> {
-    let cases = read_manual_cases(root)?;
-    for session in all_sessions() {
-        let ids = cases
-            .iter()
-            .filter(|case| case.session == session)
-            .map(|case| case.id.as_str())
-            .collect::<Vec<_>>();
-        println!("{}: {}", session.as_str(), ids.join(", "));
+fn list() {
+    for case in CASES {
+        println!(
+            "{} [Tier {}] {}: {}",
+            case.id,
+            case.tier.as_str(),
+            case.session.as_str(),
+            case.scenarios.join(", ")
+        );
     }
     for session in [GuidedSession::G1, GuidedSession::G2] {
         let steps = guided::STEPS
@@ -51,189 +48,145 @@ fn list(root: &Path) -> Result<(), String> {
             .collect::<Vec<_>>();
         println!("{}: {}", session.as_str(), steps.join("; "));
     }
-    Ok(())
+    println!("Known coverage gaps:");
+    for gap in KNOWN_GAPS {
+        println!("  - {gap}");
+    }
 }
 
+/// The reduced verdict per case and role, before tier and waiver policy (readiness).
 fn status(root: &Path) -> Result<(), String> {
-    let candidate = receipt::read_candidate(root)?;
-    receipt::validate_candidate_against_repository(root, &candidate)?;
-    let cases = read_manual_cases(root)?;
-    let observations = load_observations(root, &candidate, &cases)?;
-    for session in all_sessions() {
-        let mut passed = 0;
-        let mut failed = 0;
-        let mut not_tested = 0;
-        for case in cases.iter().filter(|case| case.session == session) {
-            match observations
-                .get(&case.id)
-                .map(|observation| observation.status.as_str())
-                .unwrap_or("NOT_TESTED")
-            {
-                "MANUAL_PASS" => passed += 1,
-                "MANUAL_FAIL" => failed += 1,
-                _ => not_tested += 1,
-            }
-        }
-        println!(
-            "{}: MANUAL_PASS={passed} MANUAL_FAIL={failed} NOT_TESTED={not_tested}",
-            session.as_str()
-        );
-    }
-    for tier in [ManualTier::A, ManualTier::B, ManualTier::C] {
-        let mut passed = 0;
-        let mut failed = 0;
-        let mut not_tested = 0;
-        for case in cases.iter().filter(|case| case.tier == tier) {
-            match observations
-                .get(&case.id)
-                .map(|observation| observation.status.as_str())
-                .unwrap_or("NOT_TESTED")
-            {
-                "MANUAL_PASS" => passed += 1,
-                "MANUAL_FAIL" => failed += 1,
-                _ => not_tested += 1,
-            }
-        }
-        println!(
-            "Tier {}: MANUAL_PASS={passed} MANUAL_FAIL={failed} NOT_TESTED={not_tested}",
-            tier.as_str()
-        );
+    let candidate = current_candidate(root)?;
+    let context = {
+        let _guard = store::lock(root, false)?;
+        store::load(root, &candidate).map_err(|error| error.message())?
+    };
+    println!("Manual observation context {}", context.target.context_id);
+    for cell in reduce::reduce(&context.log, &context.target) {
+        let verdict = match cell.verdict {
+            Verdict::Pass => "PASS".to_owned(),
+            Verdict::Fail(scenarios) => format!("FAIL ({})", scenarios.join(", ")),
+            Verdict::NotTested { covered, missing } => format!(
+                "NOT TESTED ({} of {} scenarios; missing {})",
+                covered.len(),
+                cell.case.scenarios.len(),
+                missing.join(", ")
+            ),
+            Verdict::Invalid(reason) => format!("INVALID ({reason})"),
+        };
+        println!("{} {}: {verdict}", cell.case.id, cell.role.as_str());
     }
     Ok(())
 }
 
-fn all_sessions() -> [ManualSession; 5] {
-    [
-        ManualSession::M1,
-        ManualSession::M2,
-        ManualSession::M3,
-        ManualSession::M4,
-        ManualSession::M5,
-    ]
-}
-
-fn record(root: &Path, session: Option<ManualSession>) -> Result<(), String> {
-    if !io::stdin().is_terminal() {
-        return Err(
-            "manual acceptance requires an interactive human terminal; piped answers are rejected"
-                .to_owned(),
-        );
-    }
-    let candidate = receipt::read_candidate(root)?;
-    receipt::validate_candidate_against_repository(root, &candidate)?;
-    let cases = read_manual_cases(root)?;
-    let mut observations = load_observations(root, &candidate, &cases)?;
-    let selected = cases
-        .iter()
-        .filter(|case| session.is_none_or(|session| case.session == session))
-        .cloned()
-        .collect::<Vec<_>>();
-    if selected.is_empty() {
-        return Err("selected manual session contains no cases".to_owned());
-    }
-
+fn declare_target(root: &Path) -> Result<(), String> {
+    require_terminal()?;
+    let candidate = current_candidate(root)?;
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut output = io::stdout().lock();
-    for case in selected {
-        writeln!(
-            output,
-            "\nSession {} / Case ID: {}",
-            case.session.as_str(),
-            case.id
-        )
-        .map_err(io_error)?;
-        writeln!(output, "What to do: {}", case.action).map_err(io_error)?;
-        writeln!(output, "Expected: {}", case.expected).map_err(io_error)?;
-        writeln!(
-            output,
-            "Artifact: commit={} exe={} zip={}",
-            candidate.source_commit, candidate.exe_sha256, candidate.zip_sha256
-        )
-        .map_err(io_error)?;
-        let status = prompt_status(&mut input, &mut output)?;
-        write!(output, "Note (optional; Enter to leave blank): ").map_err(io_error)?;
-        output.flush().map_err(io_error)?;
-        let note = read_line(&mut input)?;
-        observations.insert(
-            case.id,
-            ManualObservation {
-                status: status.to_owned(),
-                note,
-            },
-        );
-        persist(root, &candidate, &cases, &observations)?;
-    }
-    println!("MANUAL_RECEIPT={}", root.join(MANUAL_RECEIPT).display());
+    let roles = prompt_roles(&mut input, &mut output)?;
+    // Called inside the store's exclusive lock, so an approval is read when it is used.
+    let target = store::declare(
+        root,
+        &candidate,
+        &|| current_candidate(root),
+        roles,
+        &|key| decisions::is_approved(root, key),
+    )?;
+    println!(
+        "MANUAL_TARGETS={} context={}",
+        root.join(target::TARGET_RECEIPT).display(),
+        target.context_id
+    );
     Ok(())
 }
 
-fn record_guided(root: &Path, session: Option<GuidedSession>) -> Result<(), String> {
-    if !io::stdin().is_terminal() {
-        return Err(
-            "guided manual acceptance requires an interactive human terminal; piped answers are rejected"
-                .to_owned(),
-        );
-    }
-    let candidate = receipt::read_candidate(root)?;
+fn reset(root: &Path) -> Result<(), String> {
+    let candidate = current_candidate(root)?;
+    let target = store::reset(root, &candidate, &|| current_candidate(root), &|key| {
+        decisions::is_approved(root, key)
+    })?;
+    println!("MANUAL_CONTEXT={}", target.context_id);
+    Ok(())
+}
+
+/// The digest of the candidate receipt, read once with the candidate it validates.
+fn current_candidate(root: &Path) -> Result<String, String> {
+    let (candidate, digest) = receipt::read_candidate_snapshot(root)?;
     receipt::validate_candidate_against_repository(root, &candidate)?;
-    let cases = read_manual_cases(root)?;
-    let known = cases
-        .iter()
-        .map(|case| case.id.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    let selected = guided::STEPS
-        .iter()
-        .filter(|step| session.is_none_or(|session| step.session == session))
-        .collect::<Vec<_>>();
-    if selected.is_empty() {
-        return Err("selected guided manual session contains no steps".to_owned());
-    }
-    for step in &selected {
-        for case_id in step.case_ids {
-            if !known.contains(case_id) {
-                return Err(format!(
-                    "guided step {} references unknown case {case_id}",
-                    step.id
-                ));
-            }
-        }
-    }
-
-    let mut observations = load_observations(root, &candidate, &cases)?;
-    let stdin = io::stdin();
-    let mut input = stdin.lock();
-    let mut output = io::stdout().lock();
-    for step in selected {
-        writeln!(
-            output,
-            "\nGuided {} / Step {} / Cases: {}",
-            step.session.as_str(),
-            step.id,
-            step.case_ids.join(", ")
-        )
-        .map_err(io_error)?;
-        writeln!(output, "What to do: {}", step.action).map_err(io_error)?;
-        writeln!(output, "Expected: {}", step.expected).map_err(io_error)?;
-        let status = prompt_status(&mut input, &mut output)?;
-        write!(output, "Observation (optional; Enter to leave blank): ").map_err(io_error)?;
-        output.flush().map_err(io_error)?;
-        let note = read_line(&mut input)?;
-        for case_id in step.case_ids {
-            observations.insert(
-                (*case_id).to_owned(),
-                ManualObservation {
-                    status: status.to_owned(),
-                    note: format!("{}: {note}", step.id),
-                },
-            );
-        }
-        persist(root, &candidate, &cases, &observations)?;
-    }
-    println!("MANUAL_RECEIPT={}", root.join(MANUAL_RECEIPT).display());
-    Ok(())
+    Ok(digest)
 }
 
+fn require_terminal() -> Result<(), String> {
+    if io::stdin().is_terminal() {
+        Ok(())
+    } else {
+        Err(
+            "this manual command needs an interactive human terminal; piped answers are rejected"
+                .to_owned(),
+        )
+    }
+}
+
+/// Asks the USER for both roles and validates them with the receipt parser itself.
+fn prompt_roles<R: BufRead, W: Write>(
+    input: &mut R,
+    output: &mut W,
+) -> Result<[RoleTarget; 2], String> {
+    let mut answers = Vec::new();
+    for role in Role::ALL {
+        writeln!(
+            output,
+            "\nTarget role `{}` (from Microsoft's Windows 11 release information):",
+            role.as_str()
+        )
+        .map_err(io_error)?;
+        let mut ask = |question: &str| -> Result<String, String> {
+            write!(output, "  {question}: ").map_err(io_error)?;
+            output.flush().map_err(io_error)?;
+            read_line(input)
+        };
+        let feature_version = ask("feature version (e.g. 25H2)")?;
+        let build_branch = ask("CurrentBuild of that version (e.g. 26200)")?;
+        let builds = ask("approved full builds, comma-separated (e.g. 26200.6899,26200.7019)")?;
+        let editions = ask("allowed EditionID values, comma-separated (e.g. Core,Professional)")?;
+        let machine = ask("native machine (AMD64 or ARM64)")?;
+        let source = ask("source of the approved builds (URL or document)")?;
+        let selected_on = ask("selection date (YYYY-MM-DD)")?;
+        let list = |text: &str| {
+            text.split(',')
+                .map(|item| format!("\"{}\"", super::json::escape(item.trim())))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        answers.push(format!(
+            "{{\"role\":\"{}\",\"feature_version\":\"{}\",\"build_branch\":\"{}\",\"approved_builds\":[{}],\"edition_ids\":[{}],\"native_machine\":\"{}\",\"source\":\"{}\",\"selected_on\":\"{}\"}}",
+            role.as_str(),
+            super::json::escape(&feature_version),
+            super::json::escape(&build_branch),
+            list(&builds),
+            list(&editions),
+            super::json::escape(&machine),
+            super::json::escape(&source),
+            super::json::escape(&selected_on),
+        ));
+    }
+    let probe = format!(
+        "{{\"schema_version\":1,\"context_id\":\"{}\",\"candidate_receipt_sha256\":\"{}\",\"roles\":[{}]}}",
+        "0".repeat(32),
+        "0".repeat(64),
+        answers.join(",")
+    );
+    let Target { roles, .. } = target::parse(&probe)?;
+    Ok(roles)
+}
+
+/// Explicit human status for one scenario; `NOT_TESTED` is answered but never recorded.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the observation recorder (3-A batch 3) uses it")
+)]
 fn prompt_status<R: BufRead, W: Write>(
     input: &mut R,
     output: &mut W,
@@ -254,7 +207,7 @@ fn read_line<R: BufRead>(input: &mut R) -> Result<String, String> {
     let mut line = String::new();
     let bytes = input.read_line(&mut line).map_err(io_error)?;
     if bytes == 0 {
-        return Err("manual recorder reached end of input".to_owned());
+        return Err("manual input reached end of input".to_owned());
     }
     Ok(line.trim().to_owned())
 }
@@ -265,7 +218,7 @@ fn io_error(error: io::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::prompt_status;
+    use super::{prompt_roles, prompt_status};
     use std::io::Cursor;
 
     #[test]
@@ -278,5 +231,38 @@ mod tests {
                 .expect("UTF-8")
                 .contains("P, F, or N")
         );
+    }
+
+    #[test]
+    fn declared_roles_are_validated_by_the_receipt_parser() {
+        let current = "25H2\n26200\n26200.6899, 26200.7019\nCore,Professional\nAMD64\nhttps://learn.microsoft.com\n2026-10-14\n";
+        let previous = "24H2\n26100\n26100.6899\nProfessional\nAMD64\nhttps://learn.microsoft.com\n2026-10-14\n";
+        let mut output = Vec::new();
+        let roles = prompt_roles(
+            &mut Cursor::new(format!("{current}{previous}").into_bytes()),
+            &mut output,
+        )
+        .unwrap();
+        assert_eq!(roles[0].approved_ubrs, vec![6899, 7019]);
+        assert_eq!(roles[1].edition_ids, vec!["Professional".to_owned()]);
+        // The same version for both roles is refused.
+        let same = format!("{current}{current}");
+        assert!(prompt_roles(&mut Cursor::new(same.into_bytes()), &mut Vec::new()).is_err());
+    }
+
+    #[test]
+    fn the_retired_recorder_refuses_and_writes_nothing() {
+        let root = std::env::temp_dir().join(format!("stickymd-manual-run-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        for command in [
+            crate::cli::ManualCommand::Run { session: None },
+            crate::cli::ManualCommand::Guided { session: None },
+        ] {
+            let error = super::execute(&root, command).unwrap_err();
+            assert!(error.contains("observation log"), "{error}");
+        }
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        // Created exclusively by this test under the temp directory.
+        let _ = std::fs::remove_dir_all(root);
     }
 }

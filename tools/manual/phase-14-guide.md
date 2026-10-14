@@ -1,5 +1,11 @@
 # Phase 14 Guided Manual Campaign
 
+> **过渡期说明（2026-10-14）**：人工验收正在迁移到逐场景、逐目标环境角色的观察日志
+> （plan 11 `#manual-observation-log`）。新记录器完成之前，`-GuidedSession` 与
+> `acceptance manual run/guided` 会拒绝执行且不写任何文件；可先用
+> `stickymd-smoke acceptance manual target` 声明目标环境，`list`、`status` 查看注册表与进度。
+> 下文的会话步骤仍描述要观察的内容。
+
 本指南只记录真实人工观察，不会把未执行项目提升为 PASS。开始前必须已将 successful GitHub
 `release` workflow artifact 下载并晋升为 exact candidate：
 

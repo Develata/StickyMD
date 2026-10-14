@@ -1,107 +1,276 @@
-//! Tier-aware manual receipt validation for exact Phase 14 candidates. The receipt itself
-//! is validated by `manual_receipt::validated_cases`, the same check resuming uses.
+//! Manual acceptance at release readiness: the current candidate's observation context
+//! reduced to one verdict per case and role, then tier and waiver policy. The summary and
+//! the known coverage gaps are reported on every run, whatever the verdict.
+//!
+//! plan_ref: docs/plan/11_testing_and_release.md#manual-observation-log
 
 use std::path::Path;
 
-use super::manual_receipt::{MANUAL_RECEIPT, ManualTier, validated_cases};
-use super::receipt::Candidate;
-use super::{decisions, json, receipt};
+use super::decisions::Decision;
+use super::json;
+use super::manual_observation::reduce::{self, Verdict};
+use super::manual_observation::registry::{KNOWN_GAPS, Tier};
+use super::manual_observation::target::Role;
+use super::manual_observation::{store, waiver};
 
-pub(super) fn check(
-    root: &Path,
-    candidate: &Candidate,
-    decisions: &[decisions::Decision],
-    automated_ok: bool,
-    blockers: &mut Vec<String>,
-) {
-    let cases = match receipt::read_receipt(&root.join(MANUAL_RECEIPT))
-        .and_then(|text| json::parse_object(&text))
-        .and_then(|document| validated_cases(&document, candidate))
-    {
-        Ok(cases) => cases,
-        Err(error) => {
-            blockers.push(format!("mandatory manual acceptance receipt: {error}"));
-            return;
-        }
-    };
-    let observed_ids: Vec<_> = cases.iter().map(|case| case.id.as_str()).collect();
-    let expected_ids: Vec<_> = (1..=44)
-        .map(|number| format!("P12-M{number:02}"))
-        .filter(|id| super::exact_groups::group_for_phase12_case(id).is_none())
-        .collect();
-    if observed_ids != expected_ids.iter().map(String::as_str).collect::<Vec<_>>() {
-        blockers.push(format!(
-            "manual receipt cases must contain the 24 non-G3/G4/G5 P12 manual cases; observed {observed_ids:?}"
-        ));
-        return;
-    }
-    for case in cases {
-        match case.status.as_str() {
-            "MANUAL_FAIL" => blockers.push(format!("manual acceptance {} failed", case.id)),
-            "NOT_TESTED" => {
-                if let Some(blocker) = not_tested_blocker(
-                    case.tier,
-                    &case.id,
-                    &candidate.version,
-                    automated_ok,
-                    decisions,
-                ) {
-                    blockers.push(blocker);
-                }
-            }
-            // `validated_cases` admits only the three statuses.
-            _ => {}
+/// The superseded schema 1 receipt: kept as it is, never converted into observations.
+const SUPERSEDED_RECEIPT: &str = "dist/evidence/manual-acceptance.json";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Row {
+    case: &'static str,
+    tier: Tier,
+    role: Role,
+    status: &'static str,
+    detail: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct Report {
+    context_id: Option<String>,
+    /// The reset that started this context: decision key and the replaced context.
+    reset: Option<(String, String)>,
+    rows: Vec<Row>,
+    notes: Vec<String>,
+    superseded_receipt: bool,
+}
+
+impl Report {
+    /// What is known without a context: only whether the superseded receipt is present.
+    pub(super) fn detached(root: &Path) -> Self {
+        Self {
+            superseded_receipt: root.join(SUPERSEDED_RECEIPT).is_file(),
+            ..Self::default()
         }
     }
 }
 
-fn not_tested_blocker(
-    tier: ManualTier,
-    case_id: &str,
+/// Applies the manual policy to the context of `candidate_receipt_sha256`.
+///
+/// Precondition: the caller holds the manual store lock and read `decisions` (the same
+/// snapshot its release gates use) while holding it, so the context and every decision
+/// belong to one moment: a waiver cannot count from a later read than a release approval.
+pub(super) fn check(
+    root: &Path,
+    decisions: &[Decision],
+    candidate_receipt_sha256: &str,
     version: &str,
     automated_ok: bool,
-    decisions: &[decisions::Decision],
-) -> Option<String> {
-    let case_waiver = format!("WAIVER-{case_id}");
-    let tier_b_waiver = format!("WAIVER-TIER-B-v{version}");
-    let waived = decisions::status(decisions, &case_waiver) == Some("USER APPROVED")
-        || (tier == ManualTier::B
-            && decisions::status(decisions, &tier_b_waiver) == Some("USER APPROVED"));
-    match tier {
-        ManualTier::A | ManualTier::B if !waived => Some(format!(
-            "Tier {} manual acceptance {case_id} is NOT_TESTED without an exact-bound USER waiver",
-            tier.as_str()
-        )),
-        ManualTier::C if !automated_ok => Some(format!(
-            "Tier C manual acceptance {case_id} is NOT_TESTED while automated coverage is not fully PASSED"
-        )),
-        ManualTier::A | ManualTier::B | ManualTier::C => None,
+    blockers: &mut Vec<String>,
+) -> Report {
+    let report = Report::detached(root);
+    match store::load(root, candidate_receipt_sha256) {
+        Ok(context) => evaluate(report, &context, decisions, version, automated_ok, blockers),
+        Err(error) => {
+            blockers.push(format!("mandatory manual acceptance: {}", error.message()));
+            report
+        }
     }
+}
+
+/// The manual policy over one consistent context and decision snapshot.
+fn evaluate(
+    mut report: Report,
+    context: &store::Context,
+    decisions: &[Decision],
+    version: &str,
+    automated_ok: bool,
+    blockers: &mut Vec<String>,
+) -> Report {
+    let context_id = context.target.context_id.clone();
+    report.reset = context
+        .log
+        .header
+        .reset
+        .as_ref()
+        .map(|reset| (reset.decision.clone(), reset.previous_context_id.clone()));
+    for decision in decisions {
+        if waiver::is_waiver_key(&decision.key)
+            && decision.status == "USER APPROVED"
+            && decision.scope.is_none()
+        {
+            report.notes.push(format!(
+                "waiver {} uses the superseded format (no context or cells) and waives nothing",
+                decision.key
+            ));
+        }
+    }
+    for cell in reduce::reduce(&context.log, &context.target) {
+        let (case, tier, role) = (cell.case.id, cell.case.tier, cell.role);
+        let label = format!("{case} ({})", role.as_str());
+        let (status, detail) = match cell.verdict {
+            Verdict::Pass => ("MANUAL PASS", String::new()),
+            Verdict::Fail(scenarios) => {
+                let detail = scenarios.join(", ");
+                blockers.push(format!("manual acceptance {label} failed: {detail}"));
+                ("MANUAL_FAIL", detail)
+            }
+            Verdict::Invalid(reason) => {
+                blockers.push(format!(
+                    "manual acceptance {label} has invalid evidence: {reason}"
+                ));
+                ("INVALID", reason)
+            }
+            Verdict::NotTested { covered, missing } => {
+                let missing = if covered.is_empty() {
+                    format!("missing {}", missing.join(", "))
+                } else {
+                    format!(
+                        "covered {}; missing {}",
+                        covered.join(", "),
+                        missing.join(", ")
+                    )
+                };
+                if let Some(key) = covering_waiver(decisions, &context_id, case, role, version) {
+                    ("USER WAIVED", format!("{key}; {missing}"))
+                } else if tier == Tier::C && automated_ok {
+                    (
+                        "NOT TESTED",
+                        format!("Tier C with automated coverage passed; {missing}"),
+                    )
+                } else {
+                    blockers.push(if tier == Tier::C {
+                        format!(
+                            "Tier C manual acceptance {label} is NOT TESTED while automated coverage is not fully PASSED"
+                        )
+                    } else {
+                        format!(
+                            "Tier {} manual acceptance {label} is NOT TESTED without a USER waiver bound to this context ({missing})",
+                            tier.as_str()
+                        )
+                    });
+                    ("NOT TESTED", missing)
+                }
+            }
+        };
+        report.rows.push(Row {
+            case,
+            tier,
+            role,
+            status,
+            detail,
+        });
+    }
+    if report.rows.iter().any(|row| row.status == "USER WAIVED") {
+        report.notes.push(
+            "USER WAIVED cells meet the approved release policy; they are not completed manual acceptance".to_owned(),
+        );
+    }
+    report.context_id = Some(context_id);
+    report
+}
+
+/// The approved waiver, if any, whose own key and recorded cells cover `(case, role)` in
+/// this context. The cells are re-validated against the key, so an edited receipt cannot
+/// widen a waiver.
+fn covering_waiver<'a>(
+    decisions: &'a [Decision],
+    context_id: &str,
+    case: &str,
+    role: Role,
+    version: &str,
+) -> Option<&'a str> {
+    decisions
+        .iter()
+        .filter(|decision| decision.status == "USER APPROVED")
+        .find(|decision| {
+            decision.scope.as_ref().is_some_and(|scope| {
+                scope.context_id == context_id
+                    && scope
+                        .cells
+                        .iter()
+                        .any(|(cell, cell_role)| cell == case && *cell_role == role)
+                    && waiver::validate(&decision.key, &scope.cells, version).is_ok()
+            })
+        })
+        .map(|decision| decision.key.as_str())
+}
+
+pub(super) fn print(report: &Report) {
+    match &report.context_id {
+        Some(context) => println!("Manual acceptance (context {context}):"),
+        None => println!("Manual acceptance: no usable observation context"),
+    }
+    if let Some((decision, previous)) = &report.reset {
+        println!("  started by {decision}, replacing context {previous}");
+    }
+    let mut rows = report.rows.iter().peekable();
+    while let Some(row) = rows.next() {
+        let mut line = format!(
+            "  {} [{}] {}: {}",
+            row.case,
+            row.tier.as_str(),
+            row.role.as_str(),
+            row.status
+        );
+        if !row.detail.is_empty() {
+            line.push_str(&format!(" ({})", row.detail));
+        }
+        if let Some(next) = rows.peek().filter(|next| next.case == row.case) {
+            line.push_str(&format!("; {}: {}", next.role.as_str(), next.status));
+            if !next.detail.is_empty() {
+                line.push_str(&format!(" ({})", next.detail));
+            }
+            rows.next();
+        }
+        println!("{line}");
+    }
+    for note in &report.notes {
+        println!("  note: {note}");
+    }
+    if report.superseded_receipt {
+        println!("  note: {SUPERSEDED_RECEIPT} (schema 1) is superseded; it is kept but not read");
+    }
+    println!("Known manual coverage gaps (no P12 case owns them yet; the matrix is not complete):");
+    for gap in KNOWN_GAPS {
+        println!("  - {gap}");
+    }
+}
+
+/// The `manual` member of the readiness receipt.
+pub(super) fn render(report: &Report) -> String {
+    let context = report
+        .context_id
+        .as_ref()
+        .map_or_else(|| "null".to_owned(), |context| format!("\"{context}\""));
+    let rows = report
+        .rows
+        .iter()
+        .map(|row| {
+            format!(
+                "{{\"case\":\"{}\",\"tier\":\"{}\",\"role\":\"{}\",\"status\":\"{}\",\"detail\":\"{}\"}}",
+                row.case,
+                row.tier.as_str(),
+                row.role.as_str(),
+                row.status,
+                json::escape(&row.detail)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let quoted = |items: &mut dyn Iterator<Item = &str>| {
+        items
+            .map(|item| format!("\"{}\"", json::escape(item)))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let reset = report.reset.as_ref().map_or_else(
+        || "null".to_owned(),
+        |(decision, previous)| {
+            format!(
+                "{{\"decision\":\"{}\",\"previous_context_id\":\"{}\"}}",
+                json::escape(decision),
+                json::escape(previous)
+            )
+        },
+    );
+    format!(
+        "{{\"context_id\":{context},\"reset\":{reset},\"cells\":[{rows}],\"notes\":[{}],\"known_gaps\":[{}],\"superseded_receipt\":{}}}",
+        quoted(&mut report.notes.iter().map(String::as_str)),
+        quoted(&mut KNOWN_GAPS.iter().copied()),
+        report.superseded_receipt
+    )
 }
 
 #[cfg(test)]
-mod tests {
-    use super::not_tested_blocker;
-    use crate::qualification::decisions::Decision;
-    use crate::qualification::manual_receipt::ManualTier;
-
-    #[test]
-    fn tiers_enforce_waiver_and_version_binding() {
-        let none = Vec::new();
-        assert!(not_tested_blocker(ManualTier::A, "P12-M01", "0.1.0", true, &none).is_some());
-        assert!(not_tested_blocker(ManualTier::C, "P12-M41", "0.1.0", true, &none).is_none());
-        assert!(not_tested_blocker(ManualTier::C, "P12-M41", "0.1.0", false, &none).is_some());
-
-        let tier_b_waiver = vec![Decision {
-            key: "WAIVER-TIER-B-v0.1.0".to_owned(),
-            status: "USER APPROVED".to_owned(),
-            evidence: "USER exact group waiver".to_owned(),
-        }];
-        assert!(
-            not_tested_blocker(ManualTier::B, "P12-M34", "0.1.0", true, &tier_b_waiver).is_none()
-        );
-        assert!(
-            not_tested_blocker(ManualTier::B, "P12-M34", "0.1.1", true, &tier_b_waiver).is_some()
-        );
-    }
-}
+mod tests;

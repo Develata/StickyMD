@@ -29,7 +29,27 @@ pub(super) struct Candidate {
 }
 
 pub(super) fn read_candidate(root: &Path) -> Result<Candidate, String> {
-    let document = json::parse_object(&read_receipt(&root.join(CANDIDATE_RECEIPT))?)?;
+    parse_candidate(&read_receipt(&root.join(CANDIDATE_RECEIPT))?)
+}
+
+/// The candidate and the SHA-256 of the very bytes it was parsed from: the identity a
+/// manual observation context binds to. Readiness and the manual commands use this one
+/// read, so a Promote between two reads cannot pair one candidate with another's context.
+/// Re-promoting the same workflow artifact writes the same bytes.
+pub(super) fn read_candidate_snapshot(root: &Path) -> Result<(Candidate, String), String> {
+    let path = root.join(CANDIDATE_RECEIPT);
+    let bytes =
+        fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|error| format!("{} is not UTF-8: {error}", path.display()))?;
+    Ok((
+        parse_candidate(text)?,
+        crate::integrity::sha256_bytes(&bytes)?,
+    ))
+}
+
+fn parse_candidate(text: &str) -> Result<Candidate, String> {
+    let document = json::parse_object(text)?;
     if json::u64_field(&document, "schema_version")? != 2 {
         return Err("release-candidate receipt schema is not version 2".to_owned());
     }

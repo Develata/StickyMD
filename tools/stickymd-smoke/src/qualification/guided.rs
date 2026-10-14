@@ -107,7 +107,8 @@ const fn step(
     }
 }
 
-pub(super) fn session_for_case(case_id: &str) -> Option<GuidedSession> {
+#[cfg(test)]
+fn session_for_case(case_id: &str) -> Option<GuidedSession> {
     STEPS
         .iter()
         .find(|step| step.case_ids.contains(&case_id))

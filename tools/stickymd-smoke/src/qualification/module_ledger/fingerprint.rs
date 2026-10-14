@@ -220,6 +220,7 @@ fn is_global_input(path: &str) -> bool {
             | "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint/normalize.rs"
             | "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint/stream.rs"
             | "tools/stickymd-smoke/src/qualification/module_ledger/store.rs"
+            | "tools/stickymd-smoke/src/qualification/file_lock.rs"
             | "tools/stickymd-smoke/src/atomic_evidence.rs"
             | "tools/stickymd-smoke/src/qualification/receipt.rs"
     )

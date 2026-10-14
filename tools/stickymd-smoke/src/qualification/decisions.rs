@@ -5,21 +5,46 @@
 use std::fs;
 use std::path::Path;
 
+use super::file_lock::{SidecarGuard, sidecar};
 use super::json;
+use super::manual_observation::{log::is_reset_decision, store, target::Role, waiver};
 use super::receipt;
 use super::source_freeze::{self, SourceFreeze};
 
 const SOURCE_LEDGER: &str = "docs/report/phase-12-release-decisions.md";
 pub(super) const DECISION_RECEIPT: &str = "dist/evidence/release-decisions.json";
+const DECISION_LOCK: &str = "dist/evidence/release-decisions.lock";
+
+/// Every change to the decision receipt is a read-modify-write under this exclusive lock;
+/// readers that must agree with a manual observation context take it shared, after the
+/// manual store lock (see `file_lock`).
+fn lock(root: &Path, exclusive: bool) -> Result<SidecarGuard, String> {
+    sidecar(
+        &root.join(DECISION_LOCK),
+        exclusive,
+        "release decision receipt",
+    )
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Decision {
     pub(super) key: String,
     pub(super) status: String,
     pub(super) evidence: String,
+    /// For a manual waiver: the observation context and the `(case, role)` cells it
+    /// disposes of. `None` on a waiver means the superseded format, which no longer
+    /// waives anything.
+    pub(super) scope: Option<WaiverScope>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct WaiverScope {
+    pub(super) context_id: String,
+    pub(super) cells: waiver::Cells,
 }
 
 pub(super) fn project(root: &Path, source: &SourceFreeze) -> Result<(), String> {
+    let _guard = lock(root, true)?;
     let source_document = fs::read_to_string(root.join(SOURCE_LEDGER))
         .map_err(|error| format!("cannot read release decision ledger: {error}"))?;
     let mut decisions = parse_markdown(&source_document)?;
@@ -37,27 +62,86 @@ pub(super) fn project(root: &Path, source: &SourceFreeze) -> Result<(), String> 
     write(root, source, &decisions)
 }
 
-pub(super) fn update(root: &Path, key: &str, status: &str, evidence: &str) -> Result<(), String> {
+/// Records a USER decision. A manual waiver also needs `manual_scope`
+/// (`CASE:ROLE,...`); it is bound to the current manual observation context, so a new
+/// context never inherits it.
+pub(super) fn update(
+    root: &Path,
+    key: &str,
+    status: &str,
+    evidence: &str,
+    manual_scope: Option<&str>,
+) -> Result<(), String> {
     let source = source_freeze::read(root)?;
     source_freeze::validate_against_repository(root, &source)?;
-    let mut decisions = read(root, &source)?;
     let status = normalize_status(status)?;
     if evidence.trim().is_empty() {
         return Err("decision evidence must not be empty".to_owned());
     }
+    let waiver_key = waiver::is_waiver_key(key);
+    // Lock order: the manual store (to pin the context a waiver binds to), then decisions.
+    let _manual = waiver_key.then(|| store::lock(root, false)).transpose()?;
+    let _decisions = lock(root, true)?;
+    let mut decisions = read(root, &source)?;
+    let scope = match (waiver_key, manual_scope) {
+        (true, Some(text)) => {
+            let cells = waiver::parse_cells(text)?;
+            waiver::validate(key, &cells, &source.version)?;
+            let (_, candidate) = receipt::read_candidate_snapshot(root)?;
+            let context = store::load(root, &candidate).map_err(|error| error.message())?;
+            Some(WaiverScope {
+                context_id: context.target.context_id,
+                cells,
+            })
+        }
+        (true, None) => {
+            return Err(format!(
+                "manual waiver {key} needs --manual-scope=CASE:ROLE,..."
+            ));
+        }
+        (false, Some(_)) => {
+            return Err("--manual-scope applies only to manual waivers".to_owned());
+        }
+        (false, None) => None,
+    };
     if let Some(decision) = decisions.iter_mut().find(|decision| decision.key == key) {
         decision.status = status.to_owned();
         decision.evidence = evidence.to_owned();
-    } else if valid_manual_waiver_key(key) {
+        decision.scope = scope;
+    } else if scope.is_some() || is_reset_decision(key) {
         decisions.push(Decision {
             key: key.to_owned(),
             status: status.to_owned(),
             evidence: evidence.to_owned(),
+            scope,
         });
     } else {
         return Err(format!("unknown release decision `{key}`"));
     }
     write(root, &source, &decisions)
+}
+
+/// The decisions as one consistent snapshot (shared lock). A caller that also needs the
+/// manual observation context takes the manual store lock first.
+pub(super) fn read_consistent(root: &Path, source: &SourceFreeze) -> Result<Vec<Decision>, String> {
+    let _guard = lock(root, false)?;
+    read(root, source)
+}
+
+/// Whether the USER approved `key` for the current Source Freeze, read at call time. A
+/// receipt that cannot be read or locked is an error, not a missing approval.
+pub(super) fn is_approved(root: &Path, key: &str) -> Result<bool, String> {
+    let source = source_freeze::read(root)?;
+    let decisions = read_consistent(root, &source)?;
+    Ok(status(&decisions, key) == Some("USER APPROVED"))
+}
+
+/// Whether `path` names the decision receipt or its lock, or anything below them; only
+/// this module writes them.
+pub(super) fn is_internal_path(root: &Path, path: &Path) -> bool {
+    [DECISION_RECEIPT, DECISION_LOCK]
+        .iter()
+        .any(|reserved| super::path_identity::reaches(root, path, reserved))
 }
 
 pub(super) fn read(root: &Path, source: &SourceFreeze) -> Result<Vec<Decision>, String> {
@@ -113,6 +197,7 @@ fn parse_markdown(content: &str) -> Result<Vec<Decision>, String> {
             key: cells[1].to_owned(),
             status: status.to_owned(),
             evidence: cells[3].to_owned(),
+            scope: None,
         });
     }
     if decisions.is_empty() {
@@ -125,10 +210,34 @@ fn parse_markdown(content: &str) -> Result<Vec<Decision>, String> {
 fn parse_json_decisions(document: &json::Value) -> Result<Vec<Decision>, String> {
     let mut decisions = Vec::new();
     for object in json::objects(document, "decisions")? {
+        let key = json::string_field(object, "decision")?;
+        let scope = if json::has_field(object, "manual_context") {
+            if !waiver::is_waiver_key(&key) {
+                return Err(format!(
+                    "decision `{key}` is not a waiver but has a manual scope"
+                ));
+            }
+            let cells = json::objects(object, "scope")?
+                .iter()
+                .map(|cell| {
+                    Ok((
+                        json::string_field(cell, "case")?,
+                        Role::parse(&json::string_field(cell, "role")?)?,
+                    ))
+                })
+                .collect::<Result<waiver::Cells, String>>()?;
+            Some(WaiverScope {
+                context_id: json::string_field(object, "manual_context")?,
+                cells,
+            })
+        } else {
+            None
+        };
         let decision = Decision {
-            key: json::string_field(object, "decision")?,
+            key,
             status: json::string_field(object, "status")?,
             evidence: json::string_field(object, "evidence")?,
+            scope,
         };
         normalize_status(&decision.status)?;
         if decisions
@@ -156,8 +265,26 @@ fn write(root: &Path, source: &SourceFreeze, decisions: &[Decision]) -> Result<(
         if index > 0 {
             document.push(',');
         }
+        let scope = decision.scope.as_ref().map_or_else(String::new, |scope| {
+            let cells = scope
+                .cells
+                .iter()
+                .map(|(case, role)| {
+                    format!(
+                        "{{\"case\":\"{}\",\"role\":\"{}\"}}",
+                        json::escape(case),
+                        role.as_str()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                ",\"manual_context\":\"{}\",\"scope\":[{cells}]",
+                json::escape(&scope.context_id)
+            )
+        });
         document.push_str(&format!(
-            "{{\"decision\":\"{}\",\"status\":\"{}\",\"evidence\":\"{}\"}}",
+            "{{\"decision\":\"{}\",\"status\":\"{}\",\"evidence\":\"{}\"{scope}}}",
             json::escape(&decision.key),
             json::escape(&decision.status),
             json::escape(&decision.evidence),
@@ -177,32 +304,9 @@ fn normalize_status(value: &str) -> Result<&'static str, String> {
     }
 }
 
-fn valid_manual_waiver_key(key: &str) -> bool {
-    let case_waiver = key.strip_prefix("WAIVER-P12-M").is_some_and(|value| {
-        value.len() == 2
-            && value.bytes().all(|byte| byte.is_ascii_digit())
-            && value
-                .parse::<u8>()
-                .is_ok_and(|number| (1..=44).contains(&number))
-    });
-    case_waiver || valid_tier_b_group_waiver(key)
-}
-
-fn valid_tier_b_group_waiver(key: &str) -> bool {
-    key.strip_prefix("WAIVER-TIER-B-v").is_some_and(|version| {
-        let parts = version.split('.').collect::<Vec<_>>();
-        parts.len() == 3
-            && parts
-                .iter()
-                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        normalize_status, parse_json_decisions, parse_markdown, status, valid_manual_waiver_key,
-    };
+    use super::{normalize_status, parse_json_decisions, parse_markdown, status};
 
     #[test]
     fn source_freeze_requires_fresh_version_approval() {
@@ -265,13 +369,27 @@ mod tests {
     }
 
     #[test]
-    fn waiver_keys_are_specific_and_bounded() {
-        assert!(valid_manual_waiver_key("WAIVER-P12-M01"));
-        assert!(valid_manual_waiver_key("WAIVER-P12-M44"));
-        assert!(!valid_manual_waiver_key("WAIVER-P12-M1"));
-        assert!(!valid_manual_waiver_key("WAIVER-P12-M45"));
-        assert!(valid_manual_waiver_key("WAIVER-TIER-B-v0.1.0"));
-        assert!(!valid_manual_waiver_key("WAIVER-TIER-B-v0.1"));
-        assert!(!valid_manual_waiver_key("MANUAL-WAIVERS"));
+    fn a_waiver_scope_round_trips_and_only_waivers_carry_one() {
+        let receipt = |decision: &str| {
+            crate::qualification::json::parse_object(&format!(
+                "{{\"schema_version\":2,\"decisions\":[{decision}]}}"
+            ))
+            .unwrap()
+        };
+        let scoped = receipt(
+            r#"{"decision":"WAIVER-P12-M05","status":"USER APPROVED","evidence":"x","manual_context":"0123456789abcdef0123456789abcdef","scope":[{"case":"P12-M05","role":"previous"}]}"#,
+        );
+        let decisions = parse_json_decisions(&scoped).unwrap();
+        let scope = decisions[0].scope.as_ref().unwrap();
+        assert_eq!(scope.context_id, "0123456789abcdef0123456789abcdef");
+        assert_eq!(scope.cells.len(), 1);
+        // The superseded format still parses but carries no scope, so it waives nothing.
+        let old =
+            receipt(r#"{"decision":"WAIVER-P12-M05","status":"USER APPROVED","evidence":"x"}"#);
+        assert_eq!(parse_json_decisions(&old).unwrap()[0].scope, None);
+        let misplaced = receipt(
+            r#"{"decision":"RELEASE-VERSION","status":"USER APPROVED","evidence":"x","manual_context":"0123456789abcdef0123456789abcdef","scope":[]}"#,
+        );
+        assert!(parse_json_decisions(&misplaced).is_err());
     }
 }

@@ -10,6 +10,19 @@ pub(super) fn matches_receipt(root: &Path, path: &Path, expected: &str) -> bool 
     normalize(&root.join(path)) == normalize(&root.join(expected))
 }
 
+/// Whether `path` reaches `reserved`: names it, lies below it, or passes through it on
+/// the way elsewhere (`reserved/../x`). Every lexical ancestor is compared after alias
+/// resolution and before `..` collapses, because creating the parents of `path` would
+/// create `reserved`.
+pub(super) fn reaches(root: &Path, path: &Path, reserved: &str) -> bool {
+    let reserved_path = root.join(reserved);
+    let reserved = normalize(&reserved_path);
+    root.join(path)
+        .ancestors()
+        .any(|ancestor| normalize(ancestor) == reserved)
+        || is_within(root, path, &reserved_path.to_string_lossy())
+}
+
 pub(super) fn is_within(root: &Path, path: &Path, directory: &str) -> bool {
     let path = normalize(&root.join(path));
     let directory = normalize(&root.join(directory));

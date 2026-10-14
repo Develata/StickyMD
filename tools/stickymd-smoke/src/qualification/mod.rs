@@ -6,6 +6,7 @@ mod decisions;
 #[cfg(windows)]
 mod exact_desktop;
 pub(crate) mod exact_groups;
+mod file_lock;
 #[cfg(windows)]
 mod g3;
 #[cfg(windows)]
@@ -15,8 +16,8 @@ mod g5;
 mod guided;
 mod json;
 mod manual;
+mod manual_observation;
 mod manual_readiness;
-mod manual_receipt;
 mod module_evidence;
 mod module_ledger;
 mod module_registry;
@@ -89,7 +90,8 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
             key,
             status,
             evidence,
-        } => decisions::update(root, &key, &status, &evidence),
+            manual_scope,
+        } => decisions::update(root, &key, &status, &evidence, manual_scope.as_deref()),
         QualificationCommand::Readiness { explain } => readiness::evaluate(root, explain),
         QualificationCommand::Remote { run_id, attempt } => {
             remote::record_workflow(root, run_id, attempt)
@@ -240,6 +242,24 @@ pub(crate) fn record_last_success_for_evidence(root: &Path, path: &Path) -> Resu
     module_ledger::record_for_receipt(root, path)
 }
 
+/// A directory a command outside the coordinators may write into: never inside the
+/// last-success store or the manual observation archive.
+pub(crate) fn validate_public_output_directory(
+    root: &Path,
+    directory: &Path,
+) -> Result<(), String> {
+    if module_ledger::is_success_storage_path(root, directory)
+        || manual_observation::store::is_internal_path(root, directory)
+        || decisions::is_internal_path(root, directory)
+    {
+        return Err(format!(
+            "{} is coordinator-owned qualification storage; choose another directory",
+            directory.display()
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_public_evidence_path(root: &Path, path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     path_identity::validate_output_spelling(&root.join(path))?;
@@ -251,6 +271,13 @@ pub(crate) fn validate_public_evidence_path(root: &Path, path: &Path) -> Result<
     if module_ledger::is_success_storage_path(root, path) {
         return Err(
             "last-success ledgers and archives are coordinator-owned; use a diagnostic evidence path".into(),
+        );
+    }
+    if manual_observation::store::is_internal_path(root, path)
+        || decisions::is_internal_path(root, path)
+    {
+        return Err(
+            "manual observation store and release decision files are coordinator-owned; use a diagnostic evidence path".into(),
         );
     }
     if path_identity::matches_receipt(root, path, workspace_tests::RECEIPT) {

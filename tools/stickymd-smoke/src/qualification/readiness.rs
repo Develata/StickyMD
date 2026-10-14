@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use super::manual_observation::store;
 use super::module_ledger::{self, Lookup, Snapshot};
 use super::module_registry::ModuleId;
 use super::receipt::{self, Candidate};
@@ -25,25 +26,32 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
             None
         }
     };
-    let candidate = match receipt::read_candidate(root) {
-        Ok(candidate) => {
+    // One read: the candidate and the digest its manual context must be bound to.
+    let (candidate, candidate_digest) = match receipt::read_candidate_snapshot(root) {
+        Ok((candidate, digest)) => {
             if let Err(error) = receipt::validate_candidate_against_repository(root, &candidate) {
                 blockers.push(error);
             }
-            Some(candidate)
+            (Some(candidate), Some(digest))
         }
         Err(error) => {
             blockers.push(format!("promoted release candidate receipt: {error}"));
-            None
+            (None, None)
         }
     };
     if let (Some(source), Some(candidate)) = (&source, &candidate) {
         check_source_identity(source, candidate, &mut blockers);
     }
 
+    // Lock order: the manual store first, then decisions. Holding the manual lock while
+    // the one decision snapshot is read pins the manual context to that same moment.
+    let manual_guard = store::lock(root, false);
+    if let Err(error) = &manual_guard {
+        blockers.push(format!("mandatory manual acceptance: {error}"));
+    }
     let release_decisions = source
         .as_ref()
-        .map(|source| decisions::read(root, source))
+        .map(|source| decisions::read_consistent(root, source))
         .transpose()
         .unwrap_or_else(|error| {
             blockers.push(error);
@@ -61,7 +69,10 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
     }
     // One lookup pass serves every module check and the status report below.
     let snapshot = module_ledger::lookup_all(root);
-    if let (Some(source), Some(candidate)) = (&source, &candidate) {
+    let mut manual = manual_readiness::Report::detached(root);
+    if let (Some(source), Some(candidate), Some(digest), Ok(_)) =
+        (&source, &candidate, &candidate_digest, &manual_guard)
+    {
         check_remote(root, source, candidate, &mut blockers);
         check_downloaded(root, candidate, &mut blockers);
         let headless_ok = automated_readiness::check(root, source, &mut blockers);
@@ -72,17 +83,25 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
             &mut blockers,
         );
         let automated_ok = headless_ok && artifact_modules_ok;
-        manual_readiness::check(
+        manual = manual_readiness::check(
             root,
-            candidate,
             &release_decisions,
+            digest,
+            &candidate.version,
             automated_ok,
             &mut blockers,
         );
     }
-    let document = render_readiness(candidate.as_ref(), &blockers);
-    receipt::write_receipt(root, READINESS_RECEIPT, &document)?;
-    module_ledger::print_snapshot(&snapshot?, candidate.as_ref());
+    drop(manual_guard);
+    let document = render_readiness(candidate.as_ref(), &blockers, &manual);
+    // The summary is printed even if the receipt cannot be written; the error follows.
+    let written = receipt::write_receipt(root, READINESS_RECEIPT, &document);
+    match &snapshot {
+        Ok(snapshot) => module_ledger::print_snapshot(snapshot, candidate.as_ref()),
+        Err(error) => println!("Qualification module ledger: {error}"),
+    }
+    manual_readiness::print(&manual);
+    written?;
     if explain || !blockers.is_empty() {
         if blockers.is_empty() {
             println!("Release readiness: READY");
@@ -289,7 +308,11 @@ fn require_decision(
     }
 }
 
-fn render_readiness(candidate: Option<&Candidate>, blockers: &[String]) -> String {
+fn render_readiness(
+    candidate: Option<&Candidate>,
+    blockers: &[String],
+    manual: &manual_readiness::Report,
+) -> String {
     let source = candidate.map_or("UNKNOWN", |value| value.source_commit.as_str());
     let exe = candidate.map_or("UNKNOWN", |value| value.exe_sha256.as_str());
     let zip = candidate.map_or("UNKNOWN", |value| value.zip_sha256.as_str());
@@ -299,7 +322,7 @@ fn render_readiness(candidate: Option<&Candidate>, blockers: &[String]) -> Strin
         "NOT_READY"
     };
     let mut output = format!(
-        "{{\"schema_version\":2,\"status\":\"{status}\",\"source_commit\":\"{}\",\"exe_sha256\":\"{}\",\"zip_sha256\":\"{}\",\"blockers\":[",
+        "{{\"schema_version\":3,\"status\":\"{status}\",\"source_commit\":\"{}\",\"exe_sha256\":\"{}\",\"zip_sha256\":\"{}\",\"blockers\":[",
         json::escape(source),
         json::escape(exe),
         json::escape(zip),
@@ -310,7 +333,9 @@ fn render_readiness(candidate: Option<&Candidate>, blockers: &[String]) -> Strin
         }
         output.push_str(&format!("\"{}\"", json::escape(blocker)));
     }
-    output.push_str("]}\n");
+    output.push_str("],\"manual\":");
+    output.push_str(&manual_readiness::render(manual));
+    output.push_str("}\n");
     output
 }
 
@@ -325,9 +350,9 @@ mod tests {
 
     #[test]
     fn readiness_has_only_ready_or_not_ready_states() {
-        assert!(render_readiness(None, &[]).contains("\"status\":\"READY\""));
+        assert!(render_readiness(None, &[], &Default::default()).contains("\"status\":\"READY\""));
         assert!(
-            render_readiness(None, &["manual missing".to_owned()])
+            render_readiness(None, &["manual missing".to_owned()], &Default::default())
                 .contains("\"status\":\"NOT_READY\"")
         );
     }

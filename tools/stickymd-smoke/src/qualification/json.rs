@@ -32,7 +32,7 @@ pub(super) fn parse_object(text: &str) -> Result<Value, String> {
 }
 
 /// A field of `object` itself; nested objects are never searched.
-fn field<'a>(object: &'a Value, key: &str) -> Result<&'a Value, String> {
+pub(super) fn field<'a>(object: &'a Value, key: &str) -> Result<&'a Value, String> {
     let Value::Object(fields) = object else {
         return Err(format!("JSON field `{key}` is read from a non-object"));
     };
@@ -85,6 +85,31 @@ pub(super) fn object_field<'a>(object: &'a Value, key: &str) -> Result<&'a Value
     match field(object, key)? {
         nested @ Value::Object(_) => Ok(nested),
         _ => Err(format!("JSON field `{key}` is not an object")),
+    }
+}
+
+/// Rejects any field outside `keys`, so a receipt cannot carry data nobody reads.
+pub(super) fn exact_keys(object: &Value, keys: &[&str]) -> Result<(), String> {
+    let Value::Object(fields) = object else {
+        return Err("JSON fields are read from a non-object".to_owned());
+    };
+    match fields.keys().find(|key| !keys.contains(&key.as_str())) {
+        Some(key) => Err(format!("JSON field `{key}` is not expected here")),
+        None => Ok(()),
+    }
+}
+
+/// The array of strings stored in `key`.
+pub(super) fn strings(object: &Value, key: &str) -> Result<Vec<String>, String> {
+    match field(object, key)? {
+        Value::Array(items) => items
+            .iter()
+            .map(|item| match item {
+                Value::String(value) => Ok(value.clone()),
+                _ => Err(format!("JSON field `{key}` holds a non-string")),
+            })
+            .collect(),
+        _ => Err(format!("JSON field `{key}` is not an array of strings")),
     }
 }
 

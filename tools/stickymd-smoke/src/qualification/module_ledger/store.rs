@@ -12,13 +12,14 @@
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#module-success-ledger
 
-use std::fs::{self, File, OpenOptions, TryLockError};
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::record::LedgerRecord;
 use crate::integrity::{sha256_bytes, validate_sha256};
+use crate::qualification::file_lock::wait_for_lock;
 
 /// Records kept per module; older records and their unreferenced evidence are removed.
 pub(super) const RETAINED_RECORDS: usize = 8;
@@ -71,7 +72,7 @@ impl LedgerStore {
     /// Shared lock for following records to their evidence.
     pub(super) fn read_guard(&self) -> Result<StoreGuard, String> {
         let file = self.lock_file()?;
-        wait_for_lock(|| file.try_lock_shared(), "reading")?;
+        wait_for_lock(|| file.try_lock_shared(), "ledger store", "reading")?;
         self.ensure_no_links()?;
         Ok(StoreGuard { _file: file })
     }
@@ -79,7 +80,7 @@ impl LedgerStore {
     /// Exclusive lock for archiving, publishing and pruning.
     pub(super) fn write_guard(&self) -> Result<StoreGuard, String> {
         let file = self.lock_file()?;
-        wait_for_lock(|| file.try_lock(), "writing")?;
+        wait_for_lock(|| file.try_lock(), "ledger store", "writing")?;
         self.ensure_no_links()?;
         Ok(StoreGuard { _file: file })
     }
@@ -301,35 +302,6 @@ fn directory_names(directory: &Path) -> Result<Vec<String>, String> {
     }
     names.sort();
     Ok(names)
-}
-
-/// Longest a qualification command waits for another process's store operation.
-const LOCK_WAIT: Duration = Duration::from_secs(120);
-
-/// Bounded wait: store operations take seconds, so a holder past the limit is hung or
-/// suspended and the caller gets a diagnosable error instead of blocking forever.
-fn wait_for_lock(
-    mut attempt: impl FnMut() -> Result<(), TryLockError>,
-    purpose: &str,
-) -> Result<(), String> {
-    let deadline = Instant::now() + LOCK_WAIT;
-    loop {
-        match attempt() {
-            Ok(()) => return Ok(()),
-            Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            Err(TryLockError::WouldBlock) => {
-                return Err(format!(
-                    "ledger store stayed locked by another qualification process for {} s while {purpose}",
-                    LOCK_WAIT.as_secs()
-                ));
-            }
-            Err(TryLockError::Error(error)) => {
-                return Err(format!("cannot lock ledger store for {purpose}: {error}"));
-            }
-        }
-    }
 }
 
 fn remove(path: &Path) -> Result<(), String> {

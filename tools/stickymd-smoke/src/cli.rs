@@ -101,10 +101,18 @@ pub(crate) enum CommandLine {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ManualCommand {
-    Run { session: Option<ManualSession> },
-    Guided { session: Option<GuidedSession> },
+    Run {
+        session: Option<ManualSession>,
+    },
+    Guided {
+        session: Option<GuidedSession>,
+    },
     List,
     Status,
+    /// USER declaration of the target environments for the current candidate.
+    Target,
+    /// Start a new observation context after an approved `RESET-MANUAL-LOG-<digest>`.
+    Reset,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -194,6 +202,8 @@ pub(crate) enum QualificationCommand {
         key: String,
         status: String,
         evidence: String,
+        /// `CASE:ROLE,...` for a manual waiver.
+        manual_scope: Option<String>,
     },
     Readiness {
         explain: bool,
@@ -374,7 +384,7 @@ impl CommandLine {
             Some("acceptance") => match args.get(1).map(String::as_str) {
                 Some("manual") => Self::parse_manual(&args[2..]).map(Self::AcceptanceManual),
                 _ => Err(
-                    "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G2]|list|status]"
+                    "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G2]|list|status|target|reset]"
                         .to_owned(),
                 ),
             },
@@ -404,8 +414,10 @@ impl CommandLine {
             }),
             Some("list") if arguments.len() == 1 => Ok(ManualCommand::List),
             Some("status") if arguments.len() == 1 => Ok(ManualCommand::Status),
+            Some("target") if arguments.len() == 1 => Ok(ManualCommand::Target),
+            Some("reset") if arguments.len() == 1 => Ok(ManualCommand::Reset),
             _ => Err(
-                "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G2]|list|status]"
+                "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G2]|list|status|target|reset]"
                     .to_owned(),
             ),
         }
@@ -585,13 +597,18 @@ impl CommandLine {
             }
             Some("decision") => {
                 let values = &arguments[1..];
-                if values.len() != 3 {
-                    return Err("usage: stickymd-smoke qualification decision --key=<decision> --status=<state> --evidence=<reference>".to_owned());
+                let manual_scope = values
+                    .iter()
+                    .find_map(|value| value.strip_prefix("--manual-scope="))
+                    .map(str::to_owned);
+                if values.len() != 3 + usize::from(manual_scope.is_some()) {
+                    return Err("usage: stickymd-smoke qualification decision --key=<decision> --status=<state> --evidence=<reference> [--manual-scope=CASE:ROLE,...]".to_owned());
                 }
                 Ok(Self::Qualification(QualificationCommand::Decision {
                     key: named_value(values, "--key=")?.to_owned(),
                     status: named_value(values, "--status=")?.to_owned(),
                     evidence: named_value(values, "--evidence=")?.to_owned(),
+                    manual_scope,
                 }))
             }
             Some("readiness") => {
@@ -1220,6 +1237,7 @@ mod tests {
                 key: "RELEASE-VERSION".to_owned(),
                 status: "USER-APPROVED".to_owned(),
                 evidence: "USER-message".to_owned(),
+                manual_scope: None,
             })
         );
 

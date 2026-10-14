@@ -1,13 +1,16 @@
-//! The Windows version recorded in desktop and manual evidence: a concrete version with
-//! its build number, never a placeholder such as the `OS` variable (`Windows_NT`).
+//! The Windows version recorded in exact desktop evidence: a concrete version with its
+//! build number, never a placeholder such as the `OS` variable (`Windows_NT`). Manual
+//! observations identify Windows from registry facts instead (`manual_observation::role`).
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
+#[cfg(windows)]
 pub(super) const UNKNOWN: &str = "UNKNOWN";
 
 /// `Microsoft Windows <major.minor.build[.revision]>` from `ver`, or [`UNKNOWN`]. `ver`
 /// prints in the console code page (for example `[版本 10.0.26200.9457]` in GBK), so its
 /// bytes are decoded lossily and only the ASCII version token is kept.
+#[cfg(windows)]
 pub(super) fn current() -> String {
     std::process::Command::new("cmd")
         .args(["/C", "ver"])
