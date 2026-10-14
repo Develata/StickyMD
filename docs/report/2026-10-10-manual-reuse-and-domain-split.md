@@ -418,3 +418,215 @@ Source 视图启动，不做数学排版）；治理调用 `git ls-files` 与 CI
 未做：按 Performance 任务的名称过滤自动推导"含基准的文件必须与掩码相交"的通用守卫；当前以回归列出已知文件。
 
 验证：Windows 398 + 25 通过，clippy、fmt、phase-00 通过；WSL Linux 回放 clippy 通过、328 + 19 通过、phase-00 通过。
+
+## 根因 3-A 设计稿（2026-10-14，待审查）
+
+范围：人工验收的**记录模型**——逐项逐场景、目标环境档案、两个 Windows 版本的覆盖、FAIL 优先、多机器导入。
+观察仍绑定当前候选（source/EXE/ZIP/version），**不做跨候选复用**；字体、locale、显示栈身份、轮次身份、进程绑定与
+条件写入属于复用（3-B），本批不实现。理由：3-A 中环境身份只用于判定"这条观察覆盖了哪个目标 Windows 版本"，
+功能版本、edition 与架构不会在一次会话内变化；而字体/locale 只影响"旧观察能否代表新环境"，那是 3-B 的问题。
+
+### 已核实的现状
+
+- phase-12 共 24 个 Manual 项（14 Tier A、7 Tier B、3 Tier C）；P12-M44 是 exact 自动化项，不在人工集合中。
+- Esc 收起与手动收起由 Phase 8 reducer 自动化持有（P08-A05、P08-D058..D060）；透明度 40/70/96/100 视觉是
+  P08-M06，P12 只有 M22 的 40%。plan 09 Verification 把它们笼统列为"手工矩阵"，与现行分工不一致。
+- 全工作区（含 smoke 工具）以 `+crt-static` 构建，工具二进制可在未装 VC runtime 的机器上运行。
+- 现有收据单文件 `dist/evidence/manual-acceptance.json`（schema 1），每项一个状态，Windows 构建只记一个字段。
+
+### 设计
+
+1. **用例与场景注册表**（工具内，`plan_ref` 指向 plan 11）：24 项与 phase-12 的 Manual 集合精确相等（治理检查），
+   每项列出必需场景（第 2 轮修订的场景表，补回 **M22：透明度 40/70/96/100 × 输入、预览、IME**，吸收 P08-M06 进入
+   发布矩阵）。plan 09 Verification 改为区分：Esc/手动收起归 Phase 8 自动化，透明度四档归 M22。
+2. **目标环境档案**：两个角色 `current`、`previous`。Source Freeze 之后由 USER 以交互命令声明一份目标收据（绑定
+   Source Freeze 身份），每个角色写明 Windows 11 功能版本（如 `25H2`）、edition 族（Home/Pro）与架构（x64）。plan 写明
+   选择规则：冻结日期时、面向通用设备的 General Availability Channel 中仍在服务期的最新与次新功能版本，排除只面向
+   特定新设备的分支；工具不联网，不自行推断。
+3. **观察记录**（收据 schema 3，仍是同一文件、仍绑定当前候选）：只追加的观察日志，每条为
+   `{seq, case, scenario, role, status ∈ {MANUAL_PASS, MANUAL_FAIL}, note, observed, declared, session}`。
+   `observed` 由记录器在被测机器上采集：`DisplayVersion`、`EditionID`（`reg query`）、四段构建号（`cmd /d /c ver`，
+   恰好四个数字段）、架构；任一采集失败则拒绝登记。`declared` 为场景参数（DPI、拓扑、主题等），标注来源为声明。
+   观察的 `role` 由 `observed` 与目标收据匹配得出，不由观察者选择；匹配不到任何角色则拒绝登记。
+4. **状态推导**（每个 `(项, 角色)`）：`Absent`（无观察）→ NOT_TESTED；某场景最新观察为 FAIL → `Fail`；全部必需场景
+   最新观察为 PASS → `Pass`；日志损坏或身份不符 → `Invalid`。FAIL 在该场景观察到时立即追加，之后中断不会丢失；
+   只有该场景之后的 PASS 才覆盖它。NOT_TESTED、跳过、中止从不写入。
+5. **并发**：同一工作区同一时刻只允许一个记录会话（`dist/evidence/` 下的 OS 排他锁，进程退出即释放）；追加在锁内
+   完成并原子替换收据。3-A 只有一个写入入口（本地记录或导入），因此不需要条件写入。
+6. **多机器**：其他机器（前一 Windows 版本、Clean VM）用工具二进制的**观察包**模式记录：只需候选 ZIP，不需要仓库；
+   候选身份由本地计算的 ZIP/EXE 摘要给出，包内含目标收据摘要、采集环境与观察。主工作区 `import` 在锁内严格校验
+   （schema、候选身份与当前候选一致、目标收据摘要一致、项/场景已知、无重复 seq），按包内顺序追加。M34 在 Clean VM
+   中先完成 StickyMD 首次运行的观察，**之后**才复制并运行工具记录（工具是静态链接的单文件，不安装 runtime）。
+7. **readiness**：每个 `(项, 角色)`：`Fail`/`Invalid` 阻断，且优先于 waiver 与 Tier C；`Absent` 按 tier 与 waiver 处理；
+   全部 `Pass` 为 `MANUAL PASS`。waiver：保留逐项 key 与 Tier B 组 key；新增档案级 key
+   `WAIVER-PROFILE-PREVIOUS-v{version}`（绑定 Source Freeze），只把 `(项, previous)` 的 `Absent` 处置为 `USER WAIVED`，
+   不覆盖 FAIL/Invalid。汇总逐项逐角色列出状态、场景覆盖与 waiver 引用。
+8. **引导记录器**：一步覆盖多项时逐项询问；一项多场景时逐场景询问。
+9. **迁移**：schema 1 收据缺少场景与角色，不导入；readiness 报告其已被取代。
+
+### 待 USER 决定（GPT 审查后带建议提交）
+
+- **项 × 角色的适用关系**：(i) 全部 24 项在两个角色上都做（严格读法，人工时间约翻倍）；(ii) 全部项做 `current`，
+  `previous` 只做依赖 OS 集成的子集（需在 plan 中逐项列出）。注意产品字体来自系统字体，纯渲染项也随 Windows 版本
+  变化。
+- **档案级 waiver 的结论**：缺 `previous` 时以 `USER WAIVED` 计入 READY（与现有逐项 waiver 一致），还是保持技术
+  `NOT_READY`、走发布特例。
+
+### plan 修改（3-A 部分）
+
+plan 11：:91 角色与选择规则；:237 `MANUAL PASS` 定义改为逐项逐角色、场景完整；:258 waiver（Tier B 组 key 与档案 key）；
+:336–345 记录器（场景、逐项、会话锁、观察包导入、Windows 四段）。`01_terminology.md`：Target Environment Profile、
+Manual Observation。plan 09 Verification 分工。`phase-12.md`：M22 场景。`phase-14.md`：新验收项。复用相关的 :243、
+:316 与 `#module-success-ledger` 人工策略留给 3-B。
+
+### 3-A 设计审查第 1 轮与修订（2026-10-14）
+
+gpt-6-astra（max）：5 个 BLOCKER、3 个 SHOULD_FIX、1 个 NEEDS_VERIFICATION，核实后全部成立。修订如下（与上节冲突处以
+本节为准）。
+
+1. **迟到的观察包不能清除较新的 FAIL。** 每条观察有稳定 ID（`session_id + local_seq`，重复导入幂等）与 `base`：会话开始
+   （或主工作区导出观察任务）时日志的登记长度。某场景的 PASS 只有在 `base` 已包含该场景的最新 FAIL 时才覆盖它——即观察者
+   看到过这个失败并做了正式重测；否则 FAIL 保留，状态为 `Fail`。不需要分布式锁或向量时钟。
+2. **上下文身份。** 日志头绑定 candidate receipt 摘要（含 workflow run/attempt/artifact id；新一次构建即新身份）、目标收据
+   摘要与场景注册表摘要。目标收据含随机上下文 ID，日志存在后不可改；要改目标必须归档当前日志、建立新上下文，旧 waiver
+   不继承。同一 artifact 原样重新晋升得到同一 candidate，不视为新一轮（3-A 不建模信誉等随时间变化的外部状态；第 2 轮修订
+   中"M34 同字节重新晋升也重测"属于 3-B 的复用规则）。
+3. **目标匹配谓词。** 目标收据逐角色记录：选择日期与微软依据（release health 表的版本与日期）、功能版本、对应构建分支
+   （如 25H2 ↔ 26200）、允许的 `EditionID` 白名单（具体 SKU，不用 Home/Pro 这类政策标签）、原生架构。采集：
+   `DisplayVersion`、`CurrentBuild`、`UBR`、`EditionID`、原生 `PROCESSOR_ARCHITECTURE`（`reg query`）、Insider 登记状态
+   （`WindowsSelfHost\Applicability`）。角色当且仅当功能版本、构建分支、SKU、架构全部相符且未登记 Insider 时匹配，且
+   必须唯一；`DisplayVersion` 缺失或匹配不唯一即拒绝登记。导入与 readiness 重新计算角色。审查查得按微软当前发布表，
+   2026-10-14 的两个目标应为 26H2 与 25H2——这是 USER 声明时的事实，工具不联网推断。
+4. **完整的状态推导**（每个 `(项, 角色)`）：证据无效 → `Invalid`；任一必需场景的有效最新观察为 FAIL → `Fail`；全部必需
+   场景 PASS → `Pass`；其余 → `NOT_TESTED`，附已覆盖/缺失场景（零覆盖与部分覆盖只是元数据）。waiver 处置的是未完成的
+   `(项, 角色)`，不删除已有 PASS。
+5. **覆盖映射，而不只是 24 项。** 每条 plan 07/09/11 人工断言与每个 Phase 8 人工行（P08-M01..M15）必须映射到 P12 人工项
+   的场景、或已批准的 exact 自动化入口，或经批准注明退役。逐行核对的结果：
+   - 已覆盖：P08-M01/M02（M11/M12 + M38–M40）、M04/M13（P14-A30、G4-06 + M01/M02）、M05 的托盘菜单与生命周期
+     （P12-M06..M09，G4-01）、M07（M23）、M08（P12-M44，G4-05）、M11（M36、M43）、M14（M24、M25、M23、M38–M40）、
+     M15（M26、M28–M30）。
+   - **缺口**（早于本提案）：顶部 dock 视觉（P08-M03 的视觉部分；时序由 M10/G4-02 自动化）；Alt+F4 隐藏到托盘
+     （P08-D031，无自动化）；两份复制目录互相独立（P08-M09）；主显示器切换与上下排列（P08-M10）；Windows 11 外壳视觉
+     契约——圆角、阴影、置顶按钮、控件淡化、自定义缩放、辅助功能（P08-M12）；DPI/主题下滚动条可抓取且不遮字
+     （plan 09）；真实 Esc 与按钮收起（reducer 由 P08-A05 自动化，但真实键盘入口在 composition 时先取消 preedit 并返回，
+     不进入窗口 intent，二者不等价）。
+   - 处理：Esc/按钮收起（含 composition 中按 Esc 只取消 preedit 的预期）并入 M11/M12；顶部 dock 视觉并入 M38–M40 的
+     dock 场景；滚动条并入 M23 与 M38–M40；主显示器切换与上下排列并入 M35；Alt+F4 并入 M05；新增两项 Manual：
+     **外壳视觉契约**与**两份便携副本互相独立**（新 ID 接在 P12-M44 之后）。M22 吸收 P08-M06 的全部断言（背景、文字、公式、
+     图片、控件、阴影与滑块/数字输入提交）。治理检查"每个 P08 人工行都有映射"。
+6. **观察包与被测实例。** 主工作区导出观察任务（候选 receipt 摘要、目标摘要、场景注册表摘要、`base`）；独立模式校验 ZIP
+   及其中 EXE 与任务一致，导入复用现有 candidate 校验路径。记录器把已校验的 ZIP 解压到会话目录、按场景放入 fixture，
+   自行启动该 EXE，并在观察中记录 EXE 摘要与进程 ID；观察者只观察这个实例。M34 例外：Clean VM 中先完成首次运行观察，
+   之后才运行工具，观察标为人工声明并记录 VM 基线与包的取得方式。威胁模型如实写明：信任 USER，不防伪造观察。
+7. **锁与生命周期。** 独立且不被替换的 sidecar 锁 `dist/evidence/manual.lock`（每个 worktree 各一份；`dist/evidence/` 本就
+   按 worktree 隔离），覆盖"读旧状态到原子提交"；记录、导入、目标声明取排他锁，readiness 取共享锁；等待有上限。FAIL 在
+   可选备注之前落盘；写失败非零退出；观察包整体校验后一次提交。日志损坏为 `Invalid` 并阻断；重建日志需要 USER 决定 key
+   `RESET-MANUAL-LOG-<digest>`，汇总中可见。上限：观察包 1 MiB、单个日志 10 000 条、备注 2 KiB。
+8. **plan 修改补全。** 本批就在 plan 11:316 处说明人工观察是独立的证据类别（含 FAIL，绑定当前候选），不是 Last Successful
+   Module Receipt；同步 Owned Objects/Outputs、readiness 接受规则、上下文失效、失败恢复、引导记录、waiver 范围；plan 09
+   Verification 的分工；Phase 8→12 映射；`phase-12.md` 前言、全部场景与两个新项；`phase-14.md`；coverage matrix。:243 的
+   旧 commit 禁令在 3-A 仍成立，保留。
+9. **待实测**：实际分发的工具 EXE 的导入表，以及在没有仓库、Rust、VS、额外 VC runtime 的 VM 中运行独立模式。
+
+审查对两项 USER 决定的意见：(i) 两个角色都覆盖完整注册表（仍按 tier/waiver 规则处置，不是 48 项无条件 PASS）；档案级
+waiver 计入 READY 并在汇总中逐项列出 `USER WAIVED`，同时写明这是"发布资格满足批准政策"而非"技术验收全部完成"；目标
+收据缺失、损坏或含糊属于 authority 无效，不能用同一 waiver 绕过。
+
+### 3-A 设计审查第 2 轮与修订（2026-10-14）
+
+第 2 轮：只追加日志内的 `base` 规则、部分完成状态、候选身份（同一原始 artifact 原样重新晋升视为同一 candidate）已成立；
+新增 4 个 BLOCKER、2 个 SHOULD_FIX，核实后全部成立。不涉及政策的部分修订如下：
+
+1. **日志重建即新上下文。** 任何清空、重建或丢失日志后的恢复都生成新的随机上下文 ID；旧任务、旧观察包与旧 waiver 都不
+   继承。同 ID 同内容的重复导入是 no-op（不重新分配序号），同 ID 不同内容拒绝。记录器在 FAIL 落盘后提示"重新开始重测
+   任务"，提交旧答案时不自动刷新 `base`。
+2. **观察任务携带内容而非只有摘要**：完整的候选 receipt、目标收据与场景注册表片段随任务导出，无仓库的记录器据此校验
+   ZIP/EXE。
+3. **按场景定义被测实例**（复用 exact harness 现有的候选校验、解压与逐用例副本设施）：同目录单实例场景用同一 canonical
+   目录或其别名第二次启动；两份副本项登记两个目录两个进程；M05 识别被测实例的托盘项；M37/M41/M42 保留原进程与 note，
+   不得靠重启或重新 seed 恢复，预期断连期间的环境探测不判产品 FAIL；M34 保存首次运行的人工声明、VM 基线与取得方式，工具
+   后来启动的实例不替代首次运行事实。会话目录正常与异常退出都有清理和有界保留；日志锁不代替交互桌面独占，记录器开始前
+   检查没有其他 StickyMD 实例。
+4. **注册表驱动 tier 与 waiver 范围**：ID、tier、必需场景、waiver 范围都由同一注册表声明，记录器、校验与 `decisions.rs`
+   的 key 校验都读取它，不再依赖 `M01..M44` 的编号范围。
+5. **plan 修改补充**：`01_terminology.md` 的 Promoted Candidate lifetime 为 3-A 的同 artifact 人工上下文写出窄范围规则，
+   同时保留每次 Promote 重验 exact-byte evidence；plan 11:559"任何人工观察前先检查环境"为 M34 写明例外（事后记录的
+   是人工声明，不冒充事前环境证据）。
+6. **"非 Insider"改为可执行的判定**：不探测 Insider 登记状态（没有一手契约保证该注册表键能识别所有通道，尤其 Release
+   Preview）。目标收据为每个角色列出 USER 依据微软发布历史声明的**获准完整构建号**（`CurrentBuild.UBR`）及来源；观察的
+   完整构建号必须在列表内。构建号相同即同一份系统位，与机器登记在哪个通道无关。原生架构取 `IsWow64Process2` 定义的
+   原生机器类型（不用进程环境变量）。注册表读取写明路径、视图与类型；任一项读取失败即拒绝登记。代价：资格化期间机器
+   打补丁后构建号不在列表内，需要新上下文。
+
+### 待 USER 决定（第 2 轮后）
+
+1. 项 × 角色：(i) 两个角色覆盖完整注册表 / (ii) `previous` 只做子集。审查与我都建议 (i)。
+2. 缺 `previous` 档案：READY 并逐项列出 `USER WAIVED`（写明"符合批准的发布政策"而非"技术验收全部完成"）/ 保持 NOT_READY
+   走发布特例。审查与我都建议前者；目标收据缺失、损坏或含糊不能用 waiver 绕过。
+3. **Esc 语义（产品合同）**：plan 09 写"Esc/手动按钮无条件立即收起"，实现中 IME composition（取消 preedit）与 Search 先消费
+   Esc。建议把输入优先级写进 plan 09：composition、Search、弹出控件先消费，未被消费时才进入窗口收起。
+4. **覆盖缺口的处理方式**：Phase 8 人工义务映射到 P12 需要逐断言粒度（左右 dock 的 100% 与 `>16 DIP` 脱离、Right/Top dock
+   的 IME 路径、保存失败时取消退出、Topmost 与托盘同步、最小化/dock 状态下第二次启动与前台激活、Alt+F4、两份副本的
+   托盘区分、外壳视觉与边缘/角落调整大小等），部分可扩充 G4 自动化，其余为人工场景，可能新增两项 Tier A（外壳视觉、两份
+   副本），注册表变为 26 项 × 2 角色。这些缺口早于本提案。建议**单独作为 3-A 之后的一批**（覆盖补全），3-A 先在现有 24 项
+   上建立记录模型，缺口在报告与汇总中如实列出。
+
+## Resolution（2026-10-14，3-A 范围）
+
+USER 选择：(1) `previous` 角色覆盖完整注册表；(2) 缺 `previous` 档案时以 USER waiver 计入 READY，汇总逐项列出 `USER WAIVED`
+并写明"符合批准的发布政策"，目标收据缺失、损坏或含糊不能用 waiver 绕过；(3) Esc 输入优先级写入 plan 09：IME composition、
+Search、弹出控件先消费，未被消费时才收起窗口；(4) Phase 8 人工义务的覆盖补全作为 3-A 之后单独一批，3-A 在现有 24 项上
+建立记录模型，缺口在报告与 readiness 汇总中如实列出。
+
+### 3-A 文档批次起草中发现的问题（2026-10-14）
+
+核对 Esc 的真实消费顺序（`input.rs`、`window_interaction.rs`、`preview_input.rs`）：透明度数字输入 → 恢复类模态守卫 →
+Search → **Preview 焦点（Esc 只清除 Preview 选区，从不收起窗口）** → IME composition → 窗口收起。USER 批准的优先级只列了
+composition、Search 与弹出控件；Preview 焦点下 Esc 永不收起窗口这一点未经批准，plan 09 草稿暂未写入，待 USER 决定：
+保持现状并写入合同，或改为"有 Preview 选区时清除选区，否则收起"（需要改产品代码）。
+
+### 3-A 设计审查第 3 轮（2026-10-14）与 Resolution
+
+第 3 轮（两次因服务端满载失败后的第三次运行）：模型主体收敛，唯一 BLOCKER 是 Esc 行为表未闭合；SHOULD_FIX：构建号相同
+不等于系统位或环境等价、注册表类型与逐场景采集时点、观察任务需携带待解除的 FAIL、所有人工 waiver 绑定上下文与
+`(项, 角色)` 集合；NEEDS_VERIFICATION：独立记录器需拆开仓库校验入口并实测。另建议场景归约与登记顺序无关、readiness
+始终输出已知缺口、读取前先查字节上限。均已写入 plan 11 草稿。
+
+USER 决定（2026-10-14）：Preview 获焦时 Esc **只在有 Preview 选区时**清除选区并消费，否则继续按规则收起。plan 09 写入完整的
+Esc 行为表。与现有实现相比需要两处产品改动，单独提交：透明度弹层打开但数字输入未获焦时 Esc 关闭弹层（现为不消费）；
+Preview 获焦且无选区时 Esc 继续收起（现为只清除选区）。其余分支与现有实现一致（Search 字段 composition 中 Esc 由 IME
+消费，见 `search_controller.rs`）。
+
+实施分批（按第 3 轮建议）：1a 契约与投影文档；1b Esc 产品改动；2 注册表、上下文、日志、归约、readiness；3 环境采集、
+被测实例与记录器；4 观察任务导出、独立记录与整包导入。每批经 gpt-6-astra 审查后提交推送。
+
+### 3-A 第 1a 批文档审查第 1 轮（2026-10-14）
+
+3 个 BLOCKER、7 个 SHOULD_FIX，核实后成立并已修：Esc 第 2 行改为实际的输入守卫（恢复待处理、资产对账进行中、窗口不接受
+编辑输入），外部修改冲突不在此列；档案 waiver 写明是限定于 `previous` 的跨 tier 例外，旧"只绑定版本、source 与
+case/group"改为引用统一规则；readiness 接受集合加入当前上下文中经归约的人工观察；`ver` 条款限定于 exact evidence；
+记录、导入与 readiness 共用匹配谓词并重算角色；M34 例外覆盖开始采集与启动归属，事后采集与人工声明分开；plan 04 的
+收起优先级与 AC-022 改为指已送达的窗口 intent 并引用 plan 09 的 Esc 顺序；schema 1 收据保留并报告已被取代；`RESET`
+摘要对象为损坏日志字节；被测实例补回保留原 note、不得重新 seed、预期断连不判 FAIL、会话目录清理与有界保留；guided
+session 的 `NOT_TESTED` 只出现在会话输出中。
+
+未采纳的修法：审查建议现在就为记录模型添加标为 `NOT TESTED` 的验收行。治理合同只允许 Automated 行为
+`AUTOMATED PASS` 或 `BLOCKED`（`governance.rs` 的 mode/status 校验），未实现不等于"已知失败"；因此这些行随第 2–4 批
+实现一起加入（预定 P14-A73..A77：目标收据与角色匹配、日志与归约、上下文与恢复、记录器与被测实例、观察任务与导入）。
+
+### 第 1a 批审查第 2 轮与第 1b 批审查第 1 轮（2026-10-14）
+
+1a：PASS / no blocker；3 个 SHOULD_FIX 已修：导出观察任务在共享锁内从同一快照取上下文、`base` 与未解除 FAIL；日志首次创建、
+缺失、为空、损坏与达到条数上限的处理（缺失视为丢失，不当作首次初始化；可读日志重置时未解除 FAIL 带入新上下文）；
+plan 11 增加不带状态的验证清单，coverage matrix 注明随 3-A 第 2–4 批进入 Phase 14 矩阵。
+
+1b：1 个 BLOCKER——Preview 只把无修饰键的 Esc 识别为 Escape，Shift/Ctrl+Esc 在 Preview 焦点下被吞掉；修正为不论修饰键。
+SHOULD_FIX：取消透明度弹层未结束滑块拖动（`ControlState::cancel` 现在一并结束拖动与数字编辑）；原单元断言不保护行为
+变化（新增纯函数测试：弹层取消的四种焦点/拖动组合、`preview_escape` 对默认、`caret(17)`、正反向非空选区的判定，以及
+修饰键）。NEEDS_VERIFICATION：Split 中焦点移到 Preview 后可能残留 Source preedit；编辑区 composition 的 Esc 判定已移到
+输入守卫之后、Search 与 Preview 之前，与 plan 09 的顺序一致。验证：`stickymd-win` 268 个测试通过，clippy 通过。真实桌面
+的 IME 事件顺序、修饰键投递、拖动取消与长按穿过多层状态留待覆盖补全批，不宣称已验收。
+
+确认轮（2026-10-14）：1b PASS / no blocker；1a PASS / no blocker，2 个 SHOULD_FIX 已修——目标收据声明的同一事务写入只有头部的
+零观察日志，此后缺失、零字节或损坏一律视为丢失；满额重置时未解除 FAIL 按 `(项, 角色, 场景)` 合并带入，保证重置后有追加
+容量。真实桌面的 Esc 行为（IME 事件顺序、修饰键投递、拖动取消、长按跨层）仍待覆盖补全批实测。
