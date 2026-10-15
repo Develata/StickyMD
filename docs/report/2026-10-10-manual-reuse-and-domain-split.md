@@ -1001,3 +1001,75 @@ candidate 读取；链接解析后的目录同样受防护，未发现 `\?\` 写
 NEEDS_VERIFICATION：同一 promoted candidate 上的真实导出 → 独立记录 → 导入（含回答落盘后中断、重复与增长包导入、旧任务
 不能解除新 FAIL），以及无仓库、Rust、VS 与额外 VC runtime 的 Clean VM 运行和 M34 顺序，仍未执行，留待 v0.1.3 候选资格化时
 完成。
+
+## 覆盖补全批设计（2026-10-15，经 11 轮审查 AGREE）
+
+范围：把 Phase 8 人工义务与 plan 09 的相关断言映射进 P12 人工注册表（USER 2026-10-14 决定的"3-A 之后单独一批"）。gpt-6-astra
+（effort max）第 11 轮 AGREE（0 BLOCKER、0 SHOULD_FIX），条件是下文四项 USER 决定获批并先更新相关 plan。工作稿与逐轮审查在被
+忽略的 `target/review-evidence/coverage-r1..r11/`；以下是有效内容。
+
+### 原则
+
+- 客观、可由 exact candidate 机器判定的断言归 G3/G4 exact 自动化（扩展现有 case）；人工只保留视觉判断、真实 Explorer / 前台交互
+  与托盘辨识。映射完整不等于验收通过。
+- 只映射已有义务，不发明产品需求；需要的产品改动先进入 plan。
+
+### 义务表与治理
+
+- manual-only 模块 `manual_observation/coverage.rs` 声明义务 `(来源, 断言, 参数) → 目标`，目标为 `Manual{case, scenario}`、
+  `Exact{case, check}`、`Automated{test, mode}`（`unit` / `local-preflight` / `runtime-module`）、`Unit{test, rationale}`、
+  `Retired{decision, source, assertion, params}` 或 `Gap`；`KNOWN_GAPS` 由 `Gap` 推导，`Retired` 单独列出。
+- 完整性：`phase-08.md` 整张矩阵（62 个 Manual 行：15 个 P08-Mxx + 47 个 P08-Dxxx）与 plan 09 的 Esc / 滚动条 / 透明度 / 退出条款
+  按区段与逐条款绑定文本摘要和条数；每个 `(source, assertion_id)` 声明必需参数集合，覆盖只在同一断言内合并；反例测试覆盖追加
+  条款、删减参数、跨断言掩盖、重复、未知 ID 与格式异常。退役决定只授权其列出的条目。C1 交付完整的子断言 × 参数展开表送审。
+- exact 检查标签进入共享收据验证器 `module_evidence`（全局输入）：每个 G3/G4 case 声明必需检查集合，标签带参数身份；缺失、重复、
+  错 case、非成功与未知 schema 均拒绝；记录由检查函数自身产生；按 plan 11 的模块指纹与 origin identity 复用。
+
+### 映射要点
+
+- 人工新增场景：M01/M02 加左 / 右 / 上 dock 下的候选窗视觉；M05 加 `second-launch-hidden/minimized/docked` 与 `exit-save-failure`；
+  M11/M12 加 `undock-16dip`；M22 改为 40/70/96/100 四档；M23 加 `scrollbars`；M35 加 `primary-switch`、`secondary-right`（顶部对齐）、
+  `secondary-below`（左侧对齐）；M38–M40 的 dock 拆为左 / 右 / 上并加 `scrollbars`。
+- 新人工项：M45 两份便携副本（托盘辨识、各自显示 / 隐藏，Tier A）、M46 Windows 11 外壳视觉与操作（圆角阴影、置顶按钮、控件淡化、
+  边角调整大小、各模式控件集成，Tier A）、M47 100% DPI（Tier B）。"accessibility" 从 P08-M12 退役。
+- exact / automated 扩展：G4-06（Right/Top dock 组字不收起、96/100 透明度、composition 中 Esc 只取消 preedit）；G4-02（真实键盘 Esc
+  分支 1/4/5/6、Floating、Shift+Esc、重复 key-down 逐次独立、收起按钮、透明度三种提交与滑块拖动中 Esc）；G4-01（退出保存失败、
+  置顶双向同步与临时 sensor topmost 区分、Alt+F4）；G4-05（dock 收起状态下第二次启动）；G3-03（恢复待处理时 Esc 无变化的确定性
+  fixture，`tmp.mtime > note.mtime` 显式设置并回读，含正向对照；资产写入与移入 trash 的确定性强杀点）；P08-A11 正式 Runtime 收据
+  扩展（两份副本 note/config 双向不串写、退出 A 不影响 B）。
+- `Unit` 覆盖（待 USER 决定）：资产对账进行中、退出进行中两个 Esc 守卫状态（exact 层不可控），以及 Ctrl+Esc（系统快捷键），
+  经生产决策路径的单元测试，不证明原生投递。
+- 人工场景：每角色 55 → 96，两个角色 110 → 192；人工项 24 → 27。
+
+### 协议
+
+- **退出保存失败**：G4-01 与人工场景都按"保存基线 → 设只读并回读 → 输入新文本 → 确认未落盘 → 托盘退出"进行，所有路径显式恢复属性，
+  恢复失败不形成 PASS。因果由产品标题状态判定（待 USER 决定）：只由 `QuitCancelled(NoteSave)` 建立；`requires_note_barrier()`
+  （`dirty || durability_required || note_save_in_flight`）在一次完整的主线程事件处理之后为假时清除；载入外部时解除被取代的重建
+  义务；`update_window_title` 是唯一写入者，优先级为恢复 → 退出已取消：保存失败 → 冲突 → dirty → 公式 hover → 普通；固定字面值
+  `StickyMD * — 退出已取消：保存失败`。
+- **第二次启动**（严格激活，USER 决定）：记录器检查前置状态（隐藏 / `IsIconic` / 实际几何判定的 dock 收起），以带时间戳的采样记录到
+  转换开始；连续性与"双击先于恢复"由观察者声明；PASS 需可见恢复、展开、只剩原 PID、键入进入原窗口；已证实的产品失败（第二进程
+  超时存活、未恢复、原 PID 消失）必须可记 F；Windows 拒绝激活或证据不足记 N。
+- **TwoCopies**（M45，待 USER 决定）：PASS 要求提交时运行的 StickyMD 恰好是注册表声明的实例集合；观察 `instances: Vec`（日志
+  schema 3、观察包 schema 2），计数、PID 唯一与每个 EXE 摘要共用一个判定；不扩展到同目录第二次启动。
+- **输入注入**：五个直接注入点（Rust 键盘与鼠标、helper 的 Esc / 右击 / 重试 Esc）全部迁入一个 `cfg(panic = "unwind")` 注入模块
+  （abort 构建只有返回错误的桩），治理文本扫描禁止三种注入 API 出现在模块之外；先登记后注入，正常路径显式有界释放、`Drop` 兜底；
+  清理以 `SendInput` 插入数为准（短计数即失败；完整计数只证明进入输入流），保留现有鼠标左键释放采样（采到 Down 为失败，0 不证明
+  Up）；清理失败触发共享停止（后续注入输入的 G3/G4 case 不执行、不产生 PASS）；业务断言与清理分开判定。托盘菜单需核验从关闭到
+  打开的变化。
+
+### 需要 USER 决定（实施前）
+
+1. 退出取消标题状态及 plan 09 退出合同的补充（含上述建立、清除与优先级）。
+2. 上述 `Unit` 覆盖范围。
+3. TwoCopies 对 plan 11:315 单实例规则的例外（只适用于 M45；同步 P14-A76）。
+4. 双显示器右 / 下排列归 M35（Tier B）。
+
+已决定（2026-10-15）：严格激活；accessibility 退役；M45 A、M46 A、M47 B；PR #3 先行合并。
+
+### 分批与取证
+
+C1 义务表、治理、注册表与新项、文档；C2 exact / automated 扩展与收据标签；C3 记录器（TwoCopies、前置检查、只读 fixture）与日志 /
+观察包 schema。实施后取证：短计数与释放失败的共享停止、普通 unwind、托盘关闭到打开、实际 abort 二进制在有效环境下到达拒绝桩且
+零注入（绕过收据复用）、TwoCopies 各失败路径、记录器中断、属性恢复失败、观察包往返、确定性强杀边界。
