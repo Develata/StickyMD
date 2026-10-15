@@ -410,6 +410,35 @@ fn the_first_run_is_declared_without_an_instance() {
     assert!(bench.observations.is_empty());
 }
 
+/// A scenario whose recorder procedure has not landed is refused before any prompt, capture
+/// or launch, so no observation can claim a procedure the recorder did not run.
+#[test]
+fn scenarios_awaiting_their_recorder_are_refused_up_front() {
+    let mut bench = FakeBench::new(Vec::new());
+    let (result, output) = record(
+        &mut bench,
+        &context(fixtures::empty()),
+        &[
+            item("P12-M05", "second-launch-hidden"),
+            item("P12-M05", "exit-save-failure"),
+            item("P12-M35", "secondary-below"),
+            item("P12-M45", "tray-identity"),
+        ],
+        "",
+    );
+    assert_eq!(
+        result.unwrap(),
+        Summary {
+            passed: 0,
+            failed: 0,
+            unrecorded: 4
+        }
+    );
+    assert!(bench.observations.is_empty());
+    assert!(bench.events().is_empty(), "{:?}", bench.events());
+    assert_eq!(output.matches("Not recorded: ").count(), 4, "{output}");
+}
+
 /// A guided step that covers several cases asks for each case and scenario on its own.
 #[test]
 fn a_guided_step_is_answered_case_by_case() {
@@ -426,18 +455,18 @@ fn a_guided_step_is_answered_case_by_case() {
             })
         })
         .collect::<Vec<_>>();
-    assert_eq!(items.len(), 2);
-    let mut bench = FakeBench::new(vec![Ok(current()); 4]);
+    assert_eq!(items.len(), 4);
+    let mut bench = FakeBench::new(vec![Ok(current()); 8]);
     let (result, output) = record(
         &mut bench,
         &context(fixtures::empty()),
         &items,
-        "\nP\n\n\nF\n\n",
+        "\nP\n\n\nP\n\n\nF\n\n\nP\n\n",
     );
     assert_eq!(
         result.unwrap(),
         Summary {
-            passed: 1,
+            passed: 3,
             failed: 1,
             unrecorded: 0
         }
@@ -453,6 +482,7 @@ fn a_guided_step_is_answered_case_by_case() {
         .map(|observation| {
             (
                 observation.case.as_str(),
+                observation.scenario.as_str(),
                 observation.seq,
                 observation.status,
             )
@@ -460,7 +490,12 @@ fn a_guided_step_is_answered_case_by_case() {
         .collect::<Vec<_>>();
     assert_eq!(
         answered,
-        [("P12-M11", 1, Status::Pass), ("P12-M12", 2, Status::Fail)]
+        [
+            ("P12-M11", "left-dock-mixed-dpi", 1, Status::Pass),
+            ("P12-M11", "undock-16dip", 2, Status::Pass),
+            ("P12-M12", "right-dock-mixed-dpi", 3, Status::Fail),
+            ("P12-M12", "undock-16dip", 4, Status::Pass),
+        ]
     );
 }
 

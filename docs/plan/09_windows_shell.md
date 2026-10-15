@@ -120,6 +120,14 @@
 - 真正退出仅来自托盘“退出”：先等待/收敛资产粘贴事务 → 保存最新 canonical generation
   → 安全 GC → 保存配置 → 释放 mutex → 清理已确认无用的临时文件。
 - 退出保存失败：显示明确错误、保持运行、不静默退出、不丢内存文本。
+- 退出因 canonical note 保存失败而取消时，窗口进入"退出已取消：保存失败"状态，只由这一结果建立（退出被守卫阻止、粘贴
+  事务未收敛等其他取消原因不建立也不改变它）。一次完整的主线程事件处理（回执确认与待处理任务的合并 / 丢弃、文档与持久化
+  状态提交、协调动作、必要的重新提交，以及退出屏障产生的后续效果）结束后，若退出屏障对 note 的判定
+  `dirty || durability_required || note_save_in_flight` 为假，则清除该状态。接受外部 durable 内容（载入外部）时一并解除
+  被它取代的缺失文件重建义务（`05` #external-change-conflict 的"载入外部"与"外部删除"）。
+- 窗口标题由唯一函数按优先级生成：恢复选择未完成 → `StickyMD * — 退出已取消：保存失败` → 外部修改冲突 → dirty → 公式错误
+  悬停提示 → 普通。主窗口无标题栏，标题通常不可见；用户可见的错误仍是诊断文字。该状态与标题供 exact 自动化判定退出取消的
+  因果。
 
 <a id="tool-window-identity"></a>
 ### 主窗口身份与可达性
@@ -243,10 +251,10 @@ detach、3 DIP sensor 与 100/700/500/140 ms 时间常量为固定内部参数�
 
 ## Verification
 
-- 手工矩阵：dock×3、24 DIP 捕获/tie/Bottom 反例、hover、失焦、typing guard、Esc、手动、topmost、
-  透明度 40/70/96/100、220×120 Source/Preview/Split、Tool Window 任务栏/Alt+Tab/焦点/IME、
-  Light/System/Dark、运行时主题切换、close to tray、tray quit、
-  双显示器（同 DPI/混合 DPI/左侧/上方）、拔线、sleep/resume、RDP。
+- 真实桌面与人工验证的归属：本章的 Esc 行为表、垂直滚动条、透明度与退出保存失败条款，以及 Phase 8 验收矩阵中 Mode 为
+  Manual 的每一行，按断言与参数映射到 Phase 12 人工项场景、G3/G4 exact 自动化、源码级自动化、单元测试、经 USER 批准的退役，
+  或尚未落实的具名缺口（`11` 的人工义务映射；缺口由 readiness 列出，映射不等于覆盖完成）。Esc / 手动收起的 reducer 由 Phase 8 自动化持有，真实键盘与按钮入口由 G4 exact 自动化持有；
+  透明度四档的整窗视觉归 P12-M22；dock、DPI、主题、双显示器、拔线、sleep/resume、RDP 的视觉与真实交互归对应的 P12 人工项。
 - property：任意窗口几何变化后窗口仍在至少一个工作区内。
 - 验收：AC-019..AC-029、AC-033..AC-036。
 

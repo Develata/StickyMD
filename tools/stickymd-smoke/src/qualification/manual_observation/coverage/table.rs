@@ -1,0 +1,1332 @@
+//! The obligation data: one entry per `(source, assertion, parameter)`, in source order.
+//! Edited together with the documents it decomposes (the digests in `tests` say when).
+//!
+//! plan_ref: docs/plan/11_testing_and_release.md#manual-observation-log
+
+use super::{Obligation, Target};
+
+const fn o(
+    source: &'static str,
+    assertion: &'static str,
+    param: &'static str,
+    target: Target,
+) -> Obligation {
+    Obligation {
+        source,
+        assertion,
+        param,
+        target,
+    }
+}
+
+const fn m(case: &'static str, scenario: &'static str) -> Target {
+    Target::Manual { case, scenario }
+}
+
+const fn exact(case: &'static str) -> Target {
+    Target::Exact { case }
+}
+
+const fn gap(planned: &'static str) -> Target {
+    Target::Gap { planned }
+}
+
+// Obligations that existing automation already exercises are owned through module receipts of
+// the executed tests, which land with the exact / automated extensions (C2). Until then they
+// are gaps that name the entry, so readiness lists them instead of trusting prose.
+const C2_SCROLL_SHELL: &str = "C2 绑定模块收据：phase-05 2026-09-25 滚动条维护节 `cargo test -p stickymd-render -p stickymd-win --locked scrollbar`（app 几何、绘制与 Preview worker 回执）";
+const C2_SCROLL_RENDER: &str = "C2 绑定模块收据：phase-03 2026-09-25 滚动条维护节 `cargo test -p stickymd-render -p stickymd-win --locked scrollbar`（render projection）";
+const C2_OPACITY_REDUCER: &str = "C2 绑定模块收据：P08-A07 `phase8_` 透明度 reducer 与输入测试";
+const C2_ISOLATION_RUNTIME: &str =
+    "C2 绑定模块收据：P08-A11 copied-Release `-Runtime`（scenario `WindowShell`）的进程与窗口隔离";
+/// The reducer test checks that a Preview intent does not persist, not that dragging produces
+/// only Preview intents.
+const UNIT_OPACITY_DRAG: &str = "单元测试：拖动滑块经事件路径只产生 Preview intent、不逐步写配置";
+
+const G4_DOCK_COMPOSITION: &str = "G4-06: Right/Top dock 下 composition 不收起";
+const G4_OPACITY_COMMIT: &str = "G4-02: 透明度松开滑块 / Enter / 失焦三种提交";
+const G4_TOPMOST_SYNC: &str = "G4-01: 置顶在托盘与窗口间双向同步，不受临时 sensor topmost 影响";
+const G4_QUIT_SAVE_FAILURE: &str = "G4-01: 退出保存失败时取消退出、保持运行、标题状态";
+const G4_ESC: &str = "G4-02: 真实键盘 Esc 分支";
+const UNIT_ESC_GUARDS: &str =
+    "单元测试：经生产决策路径的 Esc 守卫与修饰键（USER 2026-10-15 批准仅单元覆盖）";
+/// The existing scrollbar tests check the app's geometry and painting, the render projection
+/// and the Preview worker's receipts; no test drives the app runtime that composes the bars,
+/// hovers, drags, pages, ends a drag or admits a Preview receipt.
+const UNIT_SCROLL_RUNTIME: &str =
+    "单元测试：经 app runtime 的滚动条路径（组合、hover、拖动、翻页、拖动结束与回执准入）";
+const G4_DRAG_OUTSIDE: &str = "G4: 真实鼠标拖出窗口后完成滚动条拖动";
+const UNIT_QUIT_STATE: &str = "单元测试：退出已取消状态的建立、保持与清除";
+
+pub(super) const OBLIGATIONS: &[Obligation] = &[
+    // P08-M01..M03: dock visual at each DPI, timing on the primary monitor, undock.
+    o(
+        "P08-M01",
+        "dock-visual",
+        "dpi=100",
+        m("P12-M47", "left-dock"),
+    ),
+    o(
+        "P08-M01",
+        "dock-visual",
+        "dpi=125",
+        m("P12-M38", "left-dock"),
+    ),
+    o(
+        "P08-M01",
+        "dock-visual",
+        "dpi=150",
+        m("P12-M39", "left-dock"),
+    ),
+    o(
+        "P08-M01",
+        "dock-visual",
+        "dpi=200",
+        m("P12-M40", "left-dock"),
+    ),
+    o("P08-M01", "timing", "", exact("G4-02")),
+    o("P08-M01", "undock-16dip", "", m("P12-M11", "undock-16dip")),
+    o(
+        "P08-M02",
+        "dock-visual",
+        "dpi=100",
+        m("P12-M47", "right-dock"),
+    ),
+    o(
+        "P08-M02",
+        "dock-visual",
+        "dpi=125",
+        m("P12-M38", "right-dock"),
+    ),
+    o(
+        "P08-M02",
+        "dock-visual",
+        "dpi=150",
+        m("P12-M39", "right-dock"),
+    ),
+    o(
+        "P08-M02",
+        "dock-visual",
+        "dpi=200",
+        m("P12-M40", "right-dock"),
+    ),
+    o("P08-M02", "timing", "", exact("G4-02")),
+    o("P08-M02", "undock-16dip", "", m("P12-M12", "undock-16dip")),
+    o(
+        "P08-M03",
+        "dock-visual",
+        "dpi=100",
+        m("P12-M47", "top-dock"),
+    ),
+    o(
+        "P08-M03",
+        "dock-visual",
+        "dpi=125",
+        m("P12-M38", "top-dock"),
+    ),
+    o(
+        "P08-M03",
+        "dock-visual",
+        "dpi=150",
+        m("P12-M39", "top-dock"),
+    ),
+    o(
+        "P08-M03",
+        "dock-visual",
+        "dpi=200",
+        m("P12-M40", "top-dock"),
+    ),
+    o("P08-M03", "timing", "", exact("G4-02")),
+    // P08-M04: IME function is exact; the candidate window is visual.
+    o(
+        "P08-M04",
+        "ime-input",
+        "ime=pinyin,mode=source",
+        exact("G4-06"),
+    ),
+    o(
+        "P08-M04",
+        "ime-input",
+        "ime=pinyin,mode=split",
+        exact("G4-06"),
+    ),
+    o(
+        "P08-M04",
+        "ime-input",
+        "ime=wetype,mode=source",
+        exact("G4-06"),
+    ),
+    o(
+        "P08-M04",
+        "ime-input",
+        "ime=wetype,mode=split",
+        exact("G4-06"),
+    ),
+    o(
+        "P08-M04",
+        "composition-no-collapse",
+        "edge=left",
+        exact("G4-06"),
+    ),
+    o(
+        "P08-M04",
+        "composition-no-collapse",
+        "edge=right",
+        gap(G4_DOCK_COMPOSITION),
+    ),
+    o(
+        "P08-M04",
+        "composition-no-collapse",
+        "edge=top",
+        gap(G4_DOCK_COMPOSITION),
+    ),
+    o(
+        "P08-M04",
+        "opacity-ime-commit",
+        "opacity=40",
+        exact("G4-06"),
+    ),
+    o(
+        "P08-M04",
+        "opacity-ime-commit",
+        "opacity=96",
+        gap("G4-06: 96% 透明度下 IME 提交"),
+    ),
+    o(
+        "P08-M04",
+        "opacity-ime-commit",
+        "opacity=100",
+        gap("G4-06: 100% 透明度下 IME 提交"),
+    ),
+    o(
+        "P08-M04",
+        "candidate-visual",
+        "ime=pinyin,edge=left",
+        m("P12-M01", "left-dock"),
+    ),
+    o(
+        "P08-M04",
+        "candidate-visual",
+        "ime=pinyin,edge=right",
+        m("P12-M01", "right-dock"),
+    ),
+    o(
+        "P08-M04",
+        "candidate-visual",
+        "ime=pinyin,edge=top",
+        m("P12-M01", "top-dock"),
+    ),
+    o(
+        "P08-M04",
+        "candidate-visual",
+        "ime=wetype,edge=left",
+        m("P12-M02", "left-dock"),
+    ),
+    o(
+        "P08-M04",
+        "candidate-visual",
+        "ime=wetype,edge=right",
+        m("P12-M02", "right-dock"),
+    ),
+    o(
+        "P08-M04",
+        "candidate-visual",
+        "ime=wetype,edge=top",
+        m("P12-M02", "top-dock"),
+    ),
+    // P08-M05: tray lifecycle.
+    o("P08-M05", "tray-menu", "", exact("G4-01")),
+    o("P08-M05", "failed-save-quit", "", gap(G4_QUIT_SAVE_FAILURE)),
+    o(
+        "P08-M05",
+        "failed-save-visible-error",
+        "",
+        m("P12-M05", "exit-save-failure"),
+    ),
+    o("P08-M05", "topmost-tray-sync", "", gap(G4_TOPMOST_SYNC)),
+    // P08-M06: opacity.
+    o(
+        "P08-M06",
+        "layers-visual",
+        "opacity=40",
+        m("P12-M22", "opacity-40"),
+    ),
+    o(
+        "P08-M06",
+        "layers-visual",
+        "opacity=70",
+        m("P12-M22", "opacity-70"),
+    ),
+    o(
+        "P08-M06",
+        "layers-visual",
+        "opacity=96",
+        m("P12-M22", "opacity-96"),
+    ),
+    o(
+        "P08-M06",
+        "layers-visual",
+        "opacity=100",
+        m("P12-M22", "opacity-100"),
+    ),
+    o(
+        "P08-M06",
+        "commit-modes",
+        "commit=slider-release",
+        gap(G4_OPACITY_COMMIT),
+    ),
+    o(
+        "P08-M06",
+        "commit-modes",
+        "commit=enter",
+        gap(G4_OPACITY_COMMIT),
+    ),
+    o(
+        "P08-M06",
+        "commit-modes",
+        "commit=blur",
+        gap(G4_OPACITY_COMMIT),
+    ),
+    // P08-M07: theme.
+    o(
+        "P08-M07",
+        "theme-visual",
+        "theme=light",
+        m("P12-M23", "light"),
+    ),
+    o(
+        "P08-M07",
+        "theme-visual",
+        "theme=dark",
+        m("P12-M23", "dark"),
+    ),
+    o(
+        "P08-M07",
+        "theme-visual",
+        "theme=system",
+        m("P12-M23", "system"),
+    ),
+    o(
+        "P08-M07",
+        "live-switch",
+        "to=dark",
+        m("P12-M23", "system-to-dark"),
+    ),
+    o(
+        "P08-M07",
+        "live-switch",
+        "to=light",
+        m("P12-M23", "system-to-light"),
+    ),
+    // P08-M08: second launch.
+    o(
+        "P08-M08",
+        "visible-restore-and-focus",
+        "state=hidden",
+        m("P12-M05", "second-launch-hidden"),
+    ),
+    o(
+        "P08-M08",
+        "visible-restore-and-focus",
+        "state=minimized",
+        m("P12-M05", "second-launch-minimized"),
+    ),
+    o(
+        "P08-M08",
+        "visible-restore-and-focus",
+        "state=docked",
+        m("P12-M05", "second-launch-docked"),
+    ),
+    o("P08-M08", "identity-wake", "state=hidden", exact("G4-05")),
+    o(
+        "P08-M08",
+        "identity-wake",
+        "state=docked",
+        gap("G4-05: dock 收起状态下第二次启动"),
+    ),
+    // P08-M09: two portable copies.
+    o(
+        "P08-M09",
+        "process-window-isolation",
+        "",
+        gap(C2_ISOLATION_RUNTIME),
+    ),
+    o(
+        "P08-M09",
+        "note-config-runtime-isolation",
+        "",
+        gap("P08-A11: 运行时双向 note/config 不串写"),
+    ),
+    o(
+        "P08-M09",
+        "quit-isolation",
+        "",
+        gap("P08-A11: 退出一份不影响另一份"),
+    ),
+    o(
+        "P08-M09",
+        "tray-identity",
+        "",
+        m("P12-M45", "tray-identity"),
+    ),
+    o(
+        "P08-M09",
+        "independent-show-hide",
+        "",
+        m("P12-M45", "independent-show-hide"),
+    ),
+    // P08-M10: monitor topology.
+    o(
+        "P08-M10",
+        "arrangement",
+        "side=left",
+        m("P12-M43", "secondary-left"),
+    ),
+    o(
+        "P08-M10",
+        "arrangement",
+        "side=right",
+        m("P12-M35", "secondary-right"),
+    ),
+    o(
+        "P08-M10",
+        "arrangement",
+        "side=above",
+        m("P12-M43", "secondary-above"),
+    ),
+    o(
+        "P08-M10",
+        "arrangement",
+        "side=below",
+        m("P12-M35", "secondary-below"),
+    ),
+    o(
+        "P08-M10",
+        "primary-switch",
+        "",
+        m("P12-M35", "primary-switch"),
+    ),
+    o(
+        "P08-M10",
+        "disconnect-reconnect",
+        "step=disconnect",
+        m("P12-M37", "disconnect-current-monitor"),
+    ),
+    o(
+        "P08-M10",
+        "disconnect-reconnect",
+        "step=reconnect",
+        m("P12-M37", "reconnect-monitor"),
+    ),
+    o("P08-M10", "sleep-resume", "", m("P12-M41", "sleep-resume")),
+    o("P08-M10", "rdp", "", m("P12-M42", "rdp-reconnect")),
+    // P08-M11: mixed DPI and negative coordinates.
+    o(
+        "P08-M11",
+        "mixed-dpi-dock",
+        "edge=left",
+        m("P12-M11", "left-dock-mixed-dpi"),
+    ),
+    o(
+        "P08-M11",
+        "mixed-dpi-dock",
+        "edge=right",
+        m("P12-M12", "right-dock-mixed-dpi"),
+    ),
+    o(
+        "P08-M11",
+        "mixed-dpi-cross-monitor",
+        "what=drag",
+        m("P12-M36", "drag"),
+    ),
+    o(
+        "P08-M11",
+        "mixed-dpi-cross-monitor",
+        "what=dock",
+        m("P12-M36", "dock"),
+    ),
+    o(
+        "P08-M11",
+        "mixed-dpi-cross-monitor",
+        "what=ime",
+        m("P12-M36", "ime"),
+    ),
+    o(
+        "P08-M11",
+        "mixed-dpi-cross-monitor",
+        "what=preview",
+        m("P12-M36", "preview"),
+    ),
+    o(
+        "P08-M11",
+        "negative-coordinates",
+        "side=left",
+        m("P12-M43", "secondary-left"),
+    ),
+    o(
+        "P08-M11",
+        "negative-coordinates",
+        "side=above",
+        m("P12-M43", "secondary-above"),
+    ),
+    // P08-M12: Windows 11 shell; every manual case is observed on both target roles.
+    o(
+        "P08-M12",
+        "supported-builds",
+        "",
+        m("P12-M46", "corners-shadow"),
+    ),
+    o(
+        "P08-M12",
+        "corners-shadow",
+        "",
+        m("P12-M46", "corners-shadow"),
+    ),
+    o(
+        "P08-M12",
+        "topmost-button",
+        "",
+        m("P12-M46", "topmost-button"),
+    ),
+    o("P08-M12", "control-fade", "", m("P12-M46", "control-fade")),
+    o(
+        "P08-M12",
+        "accessibility",
+        "",
+        Target::Retired {
+            decision: "RETIRE-P08-M12-ACCESSIBILITY",
+        },
+    ),
+    // P08-M13..M15: inherited gates.
+    o("P08-M13", "ime-functional", "", exact("G4-06")),
+    o(
+        "P08-M13",
+        "ime-visual",
+        "ime=pinyin",
+        m("P12-M01", "pinyin-100"),
+    ),
+    o(
+        "P08-M13",
+        "ime-visual",
+        "ime=wetype",
+        m("P12-M02", "wetype-100"),
+    ),
+    o(
+        "P08-M14",
+        "preview-selection-visual",
+        "",
+        m("P12-M24", "representative-markdown"),
+    ),
+    o(
+        "P08-M14",
+        "math-visual",
+        "variant=formulas",
+        m("P12-M25", "formulas"),
+    ),
+    o(
+        "P08-M14",
+        "math-visual",
+        "theme=light",
+        m("P12-M23", "light"),
+    ),
+    o("P08-M14", "math-visual", "theme=dark", m("P12-M23", "dark")),
+    o("P08-M14", "math-visual", "dpi=100", m("P12-M47", "preview")),
+    o("P08-M14", "math-visual", "dpi=125", m("P12-M38", "preview")),
+    o("P08-M14", "math-visual", "dpi=150", m("P12-M39", "preview")),
+    o("P08-M14", "math-visual", "dpi=200", m("P12-M40", "preview")),
+    o(
+        "P08-M15",
+        "image-quality",
+        "",
+        m("P12-M26", "image-formats"),
+    ),
+    o("P08-M15", "clipboard-producers", "", exact("G3-01")),
+    o("P08-M15", "export-dialog", "", exact("G3-02")),
+    // G3-03 accepts the old note at every kill point without confirming the edit or the save
+    // began, so a run that never reaches saving passes.
+    o(
+        "P08-M15",
+        "crash-reconciliation",
+        "point=note-save",
+        gap("G3-03: 确认编辑与持久化阶段后在确定性中断点强杀，并以保存未开始的负对照排除空通过"),
+    ),
+    o(
+        "P08-M15",
+        "crash-reconciliation",
+        "point=asset-write",
+        gap("G3-03: 资产写入完成后的确定性强杀"),
+    ),
+    o(
+        "P08-M15",
+        "crash-reconciliation",
+        "point=trash-move",
+        gap("G3-03: 移入 trash 完成后的确定性强杀"),
+    ),
+    // P08-Dxxx: the definition-of-done rows each M row receipt covers.
+    o(
+        "P08-D004",
+        "shell-visual",
+        "",
+        m("P12-M46", "corners-shadow"),
+    ),
+    o(
+        "P08-D005",
+        "rounded-corner",
+        "",
+        m("P12-M46", "corners-shadow"),
+    ),
+    o("P08-D006", "shadow", "", m("P12-M46", "corners-shadow")),
+    o("P08-D007", "drag", "edge=left", m("P12-M47", "left-dock")),
+    o("P08-D007", "drag", "edge=right", m("P12-M47", "right-dock")),
+    o("P08-D007", "drag", "edge=top", m("P12-M47", "top-dock")),
+    o("P08-D008", "resize", "", m("P12-M46", "edge-corner-resize")),
+    o(
+        "P08-D010",
+        "mode-controls",
+        "",
+        m("P12-M46", "controls-in-modes"),
+    ),
+    o(
+        "P08-D012",
+        "topmost-button",
+        "",
+        m("P12-M46", "topmost-button"),
+    ),
+    o("P08-D013", "topmost-tray-sync", "", gap(G4_TOPMOST_SYNC)),
+    o(
+        "P08-D016",
+        "live-theme-change",
+        "to=dark",
+        m("P12-M23", "system-to-dark"),
+    ),
+    o(
+        "P08-D016",
+        "live-theme-change",
+        "to=light",
+        m("P12-M23", "system-to-light"),
+    ),
+    o(
+        "P08-D020",
+        "whole-window",
+        "opacity=40",
+        m("P12-M22", "opacity-40"),
+    ),
+    o(
+        "P08-D020",
+        "whole-window",
+        "opacity=70",
+        m("P12-M22", "opacity-70"),
+    ),
+    o(
+        "P08-D020",
+        "whole-window",
+        "opacity=96",
+        m("P12-M22", "opacity-96"),
+    ),
+    o(
+        "P08-D020",
+        "whole-window",
+        "opacity=100",
+        m("P12-M22", "opacity-100"),
+    ),
+    o("P08-D021", "live-preview", "", m("P12-M22", "opacity-40")),
+    o(
+        "P08-D022",
+        "numeric-input",
+        "commit=enter",
+        gap(G4_OPACITY_COMMIT),
+    ),
+    o(
+        "P08-D022",
+        "numeric-input",
+        "commit=blur",
+        gap(G4_OPACITY_COMMIT),
+    ),
+    o("P08-D027", "tray-icon", "", exact("G4-01")),
+    o("P08-D028", "tray-menu-items", "", exact("G4-01")),
+    o(
+        "P08-D031",
+        "alt-f4",
+        "",
+        gap("G4-01: 真实 Alt+F4 隐藏到托盘"),
+    ),
+    o("P08-D039", "left-dock", "", exact("G4-02")),
+    o("P08-D040", "right-dock", "", exact("G4-02")),
+    o("P08-D041", "top-dock", "", exact("G4-02")),
+    o(
+        "P08-D051",
+        "hover-no-steal",
+        "edge=left",
+        m("P12-M47", "left-dock"),
+    ),
+    o(
+        "P08-D051",
+        "hover-no-steal",
+        "edge=right",
+        m("P12-M47", "right-dock"),
+    ),
+    o(
+        "P08-D051",
+        "hover-no-steal",
+        "edge=top",
+        m("P12-M47", "top-dock"),
+    ),
+    o(
+        "P08-D055",
+        "composition-no-collapse",
+        "edge=left",
+        exact("G4-06"),
+    ),
+    o(
+        "P08-D055",
+        "composition-no-collapse",
+        "edge=right",
+        gap(G4_DOCK_COMPOSITION),
+    ),
+    o(
+        "P08-D055",
+        "composition-no-collapse",
+        "edge=top",
+        gap(G4_DOCK_COMPOSITION),
+    ),
+    // G4-06 composes while focused, and focus alone blocks auto-collapse; the composition
+    // guard's own wiring (and blur cancelling preedit) has reducer coverage only (P08-A05).
+    o(
+        "P08-D055",
+        "composition-guard-wiring",
+        "",
+        gap("单元测试：经 app runtime 的 composition 收起守卫接线与失焦取消 preedit"),
+    ),
+    // G4-02 reveals the sensor with a reinforcing window message and no covering window, so
+    // it does not prove a covered strip is reachable by the real mouse.
+    o(
+        "P08-D068",
+        "covered-sensor-hover",
+        "",
+        gap("G4-02: Pin OFF 时被其他窗口覆盖的感应条经真实鼠标悬停展开"),
+    ),
+    o(
+        "P08-D070",
+        "hover-click-focus",
+        "",
+        m("P12-M05", "restore-sensor"),
+    ),
+    o(
+        "P08-D084",
+        "disconnect-fallback",
+        "",
+        m("P12-M37", "disconnect-current-monitor"),
+    ),
+    o("P08-D089", "dpi-ime-rect", "", m("P12-M36", "ime")),
+    o("P08-D117", "pinyin-functional", "", exact("G4-06")),
+    o("P08-D117", "pinyin-visual", "", m("P12-M01", "pinyin-100")),
+    o("P08-D118", "wetype-functional", "", exact("G4-06")),
+    o("P08-D118", "wetype-visual", "", m("P12-M02", "wetype-100")),
+    o("P08-D119", "light", "", m("P12-M23", "light")),
+    o("P08-D120", "dark", "", m("P12-M23", "dark")),
+    o(
+        "P08-D121",
+        "system-live",
+        "to=dark",
+        m("P12-M23", "system-to-dark"),
+    ),
+    o(
+        "P08-D121",
+        "system-live",
+        "to=light",
+        m("P12-M23", "system-to-light"),
+    ),
+    o(
+        "P08-D122",
+        "opacity-visual",
+        "opacity=40",
+        m("P12-M22", "opacity-40"),
+    ),
+    o(
+        "P08-D122",
+        "opacity-visual",
+        "opacity=70",
+        m("P12-M22", "opacity-70"),
+    ),
+    o(
+        "P08-D122",
+        "opacity-visual",
+        "opacity=96",
+        m("P12-M22", "opacity-96"),
+    ),
+    o(
+        "P08-D122",
+        "opacity-visual",
+        "opacity=100",
+        m("P12-M22", "opacity-100"),
+    ),
+    o("P08-D123", "math-visual", "", m("P12-M25", "formulas")),
+    o(
+        "P08-D124",
+        "image-visual",
+        "",
+        m("P12-M26", "image-formats"),
+    ),
+    o(
+        "P08-D125",
+        "mode-visual",
+        "",
+        m("P12-M46", "controls-in-modes"),
+    ),
+    o(
+        "P08-D126",
+        "left-dock-visual",
+        "dpi=100",
+        m("P12-M47", "left-dock"),
+    ),
+    o(
+        "P08-D126",
+        "left-dock-visual",
+        "dpi=125",
+        m("P12-M38", "left-dock"),
+    ),
+    o(
+        "P08-D126",
+        "left-dock-visual",
+        "dpi=150",
+        m("P12-M39", "left-dock"),
+    ),
+    o(
+        "P08-D126",
+        "left-dock-visual",
+        "dpi=200",
+        m("P12-M40", "left-dock"),
+    ),
+    o(
+        "P08-D127",
+        "right-dock-visual",
+        "dpi=100",
+        m("P12-M47", "right-dock"),
+    ),
+    o(
+        "P08-D127",
+        "right-dock-visual",
+        "dpi=125",
+        m("P12-M38", "right-dock"),
+    ),
+    o(
+        "P08-D127",
+        "right-dock-visual",
+        "dpi=150",
+        m("P12-M39", "right-dock"),
+    ),
+    o(
+        "P08-D127",
+        "right-dock-visual",
+        "dpi=200",
+        m("P12-M40", "right-dock"),
+    ),
+    o(
+        "P08-D128",
+        "top-dock-visual",
+        "dpi=100",
+        m("P12-M47", "top-dock"),
+    ),
+    o(
+        "P08-D128",
+        "top-dock-visual",
+        "dpi=125",
+        m("P12-M38", "top-dock"),
+    ),
+    o(
+        "P08-D128",
+        "top-dock-visual",
+        "dpi=150",
+        m("P12-M39", "top-dock"),
+    ),
+    o(
+        "P08-D128",
+        "top-dock-visual",
+        "dpi=200",
+        m("P12-M40", "top-dock"),
+    ),
+    o(
+        "P08-D129",
+        "sensor-visual",
+        "edge=left",
+        m("P12-M47", "left-dock"),
+    ),
+    o(
+        "P08-D129",
+        "sensor-visual",
+        "edge=right",
+        m("P12-M47", "right-dock"),
+    ),
+    o(
+        "P08-D129",
+        "sensor-visual",
+        "edge=top",
+        m("P12-M47", "top-dock"),
+    ),
+    o(
+        "P08-D130",
+        "hover-no-focus-visual",
+        "edge=left",
+        m("P12-M47", "left-dock"),
+    ),
+    o(
+        "P08-D130",
+        "hover-no-focus-visual",
+        "edge=right",
+        m("P12-M47", "right-dock"),
+    ),
+    o(
+        "P08-D130",
+        "hover-no-focus-visual",
+        "edge=top",
+        m("P12-M47", "top-dock"),
+    ),
+    o(
+        "P08-D131",
+        "tray-visual-menu",
+        "",
+        m("P12-M05", "restore-tray"),
+    ),
+    o("P08-D132", "export-dialog", "", exact("G3-02")),
+    o("P08-D133", "real-dpi", "dpi=125", m("P12-M38", "input")),
+    o("P08-D133", "real-dpi", "dpi=150", m("P12-M39", "input")),
+    o("P08-D133", "real-dpi", "dpi=200", m("P12-M40", "input")),
+    o("P08-D134", "dual-monitor", "", m("P12-M35", "drag")),
+    o("P08-D135", "mixed-dpi", "", m("P12-M36", "drag")),
+    o(
+        "P08-D136",
+        "disconnect",
+        "",
+        m("P12-M37", "disconnect-current-monitor"),
+    ),
+    o(
+        "P08-D137",
+        "negative-geometry",
+        "side=left",
+        m("P12-M43", "secondary-left"),
+    ),
+    o(
+        "P08-D137",
+        "negative-geometry",
+        "side=above",
+        m("P12-M43", "secondary-above"),
+    ),
+    o("P08-D138", "sleep-resume", "", m("P12-M41", "sleep-resume")),
+    o("P08-D139", "rdp", "", m("P12-M42", "rdp-reconnect")),
+    // plan 09: Esc, manual collapse, scrollbars, opacity and quit.
+    o("plan09:esc-1", "popup-close-revert", "", gap(G4_ESC)),
+    o(
+        "plan09:esc-1",
+        "slider-drag-esc",
+        "",
+        gap("G4-02: 滑块拖动中 Esc：关闭、回退、之后不提交"),
+    ),
+    o(
+        "plan09:esc-2",
+        "recovery-pending",
+        "",
+        gap("G3-03: 恢复待处理时 Esc 无变化（确定性 fixture 与正向对照）"),
+    ),
+    o(
+        "plan09:esc-2",
+        "transient-guards",
+        "state=asset-sync",
+        gap(UNIT_ESC_GUARDS),
+    ),
+    o(
+        "plan09:esc-2",
+        "transient-guards",
+        "state=quitting",
+        gap(UNIT_ESC_GUARDS),
+    ),
+    o(
+        "plan09:esc-3",
+        "composition-cancel",
+        "field=editor",
+        gap("G4-06: composition 中 Esc 只取消 preedit"),
+    ),
+    o(
+        "plan09:esc-3",
+        "composition-cancel",
+        "field=search",
+        gap("G4-06: Search 字段 composition 中 Esc 只取消 preedit"),
+    ),
+    o("plan09:esc-4", "search-close", "", gap(G4_ESC)),
+    o(
+        "plan09:esc-5",
+        "preview-selection",
+        "selection=present",
+        gap(G4_ESC),
+    ),
+    o(
+        "plan09:esc-5",
+        "preview-selection",
+        "selection=absent",
+        gap(G4_ESC),
+    ),
+    o("plan09:esc-6", "collapse", "state=docked", gap(G4_ESC)),
+    o("plan09:esc-6", "collapse", "state=floating", gap(G4_ESC)),
+    o("plan09:esc-6", "collapse", "modifier=shift", gap(G4_ESC)),
+    o(
+        "plan09:esc-6",
+        "collapse",
+        "modifier=ctrl",
+        gap(UNIT_ESC_GUARDS),
+    ),
+    o(
+        "plan09:esc-6",
+        "collapse",
+        "repeat",
+        gap("G4-02: 重复 key-down 逐次独立消费"),
+    ),
+    o(
+        "plan09:manual-collapse",
+        "collapse-button",
+        "",
+        gap("G4-02: 真实点击收起按钮"),
+    ),
+    o(
+        "plan09:scroll-1",
+        "per-pane",
+        "view=source",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-1",
+        "per-pane",
+        "view=preview",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-1",
+        "per-pane",
+        "view=split",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-1",
+        "split-sync-switch",
+        "",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-2",
+        "gutter-geometry",
+        "",
+        gap(C2_SCROLL_SHELL),
+    ),
+    o(
+        "plan09:scroll-2",
+        "short-note",
+        "part=hide-thumb",
+        gap(C2_SCROLL_SHELL),
+    ),
+    o(
+        "plan09:scroll-2",
+        "short-note",
+        "part=keep-gutter",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-2",
+        "gutter-runtime",
+        "aspect=hit-test",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-2",
+        "gutter-runtime",
+        "aspect=content-zoom",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-3",
+        "thumb-geometry",
+        "",
+        gap(C2_SCROLL_SHELL),
+    ),
+    o(
+        "plan09:scroll-3",
+        "emphasis-paint",
+        "",
+        gap(C2_SCROLL_SHELL),
+    ),
+    o(
+        "plan09:scroll-3",
+        "emphasis-trigger",
+        "trigger=hover",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-3",
+        "emphasis-trigger",
+        "trigger=drag",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o("plan09:scroll-3", "drag-mapping", "", gap(C2_SCROLL_SHELL)),
+    o(
+        "plan09:scroll-3",
+        "drag-live-update",
+        "",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-3",
+        "ends-reach-document-ends",
+        "view=source",
+        gap(C2_SCROLL_RENDER),
+    ),
+    o(
+        "plan09:scroll-3",
+        "ends-reach-document-ends",
+        "view=preview",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o("plan09:scroll-3", "track-hit", "", gap(C2_SCROLL_SHELL)),
+    o(
+        "plan09:scroll-3",
+        "track-page-scroll",
+        "",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-4",
+        "viewport-only",
+        "state=text",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-4",
+        "viewport-only",
+        "state=generation",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-4",
+        "viewport-only",
+        "state=dirty",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-4",
+        "viewport-only",
+        "state=caret",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-4",
+        "viewport-only",
+        "state=selection",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-4",
+        "viewport-only",
+        "state=preedit",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-4",
+        "drag-exit",
+        "end=release",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-4",
+        "drag-exit",
+        "end=blur",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-4",
+        "drag-exit",
+        "end=view-switch",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-4",
+        "drag-exit",
+        "end=resize",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-4",
+        "drag-outside-window",
+        "",
+        gap(G4_DRAG_OUTSIDE),
+    ),
+    o(
+        "plan09:scroll-5",
+        "source-mapping",
+        "",
+        gap(C2_SCROLL_RENDER),
+    ),
+    o(
+        "plan09:scroll-5",
+        "preview-document-height",
+        "",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-6",
+        "stale-frame-no-thumb",
+        "",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-6",
+        "stale-receipt-identity",
+        "",
+        gap(C2_SCROLL_SHELL),
+    ),
+    o(
+        "plan09:scroll-6",
+        "stale-receipt-guard",
+        "",
+        gap(UNIT_SCROLL_RUNTIME),
+    ),
+    o(
+        "plan09:scroll-7",
+        "grab-no-overlap-visual",
+        "dpi=100",
+        m("P12-M47", "scrollbars"),
+    ),
+    o(
+        "plan09:scroll-7",
+        "grab-no-overlap-visual",
+        "dpi=125",
+        m("P12-M38", "scrollbars"),
+    ),
+    o(
+        "plan09:scroll-7",
+        "grab-no-overlap-visual",
+        "dpi=150",
+        m("P12-M39", "scrollbars"),
+    ),
+    o(
+        "plan09:scroll-7",
+        "grab-no-overlap-visual",
+        "dpi=200",
+        m("P12-M40", "scrollbars"),
+    ),
+    o(
+        "plan09:scroll-7",
+        "grab-no-overlap-visual",
+        "theme",
+        m("P12-M23", "scrollbars"),
+    ),
+    o(
+        "plan09:opacity-1",
+        "whole-window",
+        "opacity=40",
+        m("P12-M22", "opacity-40"),
+    ),
+    o(
+        "plan09:opacity-1",
+        "whole-window",
+        "opacity=70",
+        m("P12-M22", "opacity-70"),
+    ),
+    o(
+        "plan09:opacity-1",
+        "whole-window",
+        "opacity=96",
+        m("P12-M22", "opacity-96"),
+    ),
+    o(
+        "plan09:opacity-1",
+        "whole-window",
+        "opacity=100",
+        m("P12-M22", "opacity-100"),
+    ),
+    o(
+        "plan09:opacity-2",
+        "range-and-input",
+        "",
+        gap(C2_OPACITY_REDUCER),
+    ),
+    o(
+        "plan09:opacity-3",
+        "live-preview",
+        "",
+        m("P12-M22", "opacity-40"),
+    ),
+    o(
+        "plan09:opacity-3",
+        "no-stepwise-write",
+        "",
+        gap(UNIT_OPACITY_DRAG),
+    ),
+    o(
+        "plan09:opacity-3",
+        "commit-modes",
+        "commit=slider-release",
+        gap(G4_OPACITY_COMMIT),
+    ),
+    o(
+        "plan09:opacity-3",
+        "commit-modes",
+        "commit=enter",
+        gap(G4_OPACITY_COMMIT),
+    ),
+    o(
+        "plan09:opacity-3",
+        "commit-modes",
+        "commit=blur",
+        gap(G4_OPACITY_COMMIT),
+    ),
+    o(
+        "plan09:quit-1",
+        "keeps-running",
+        "",
+        gap(G4_QUIT_SAVE_FAILURE),
+    ),
+    o(
+        "plan09:quit-1",
+        "memory-text-kept",
+        "",
+        gap(G4_QUIT_SAVE_FAILURE),
+    ),
+    o(
+        "plan09:quit-1",
+        "visible-error",
+        "",
+        m("P12-M05", "exit-save-failure"),
+    ),
+    o(
+        "plan09:quit-2",
+        "established-only-by-save-failure",
+        "cause=note-save-failure",
+        gap(G4_QUIT_SAVE_FAILURE),
+    ),
+    o(
+        "plan09:quit-2",
+        "established-only-by-save-failure",
+        "cause=quit-guard",
+        gap(UNIT_QUIT_STATE),
+    ),
+    o(
+        "plan09:quit-2",
+        "established-only-by-save-failure",
+        "cause=paste-unconverged",
+        gap(UNIT_QUIT_STATE),
+    ),
+    o(
+        "plan09:quit-2",
+        "cleared-after-event-when-barrier-false",
+        "",
+        gap(UNIT_QUIT_STATE),
+    ),
+    o(
+        "plan09:quit-2",
+        "external-load-releases-rebuild",
+        "",
+        gap(UNIT_QUIT_STATE),
+    ),
+    o(
+        "plan09:quit-3",
+        "title-priority",
+        "",
+        gap("单元测试：窗口标题的唯一写入者与优先级"),
+    ),
+];

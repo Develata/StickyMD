@@ -14,6 +14,14 @@ exact-candidate receipts belong in ignored `dist/evidence/` under [plan 11](../p
 not in retrospective edits to these rows. Version-specific results and remaining gaps are linked
 from the [release checklist](../release-checklist.md).
 
+Every `Manual` row below is mapped, assertion by assertion, to a Phase 12 manual case scenario, an exact G3/G4
+case, source-bound automation, a unit test, a USER-approved retirement, or a named open gap (plan 11 manual
+obligation mapping; the table lives in the Rust tool and is checked against these rows). Readiness and
+`stickymd-smoke acceptance manual list` print every open gap; the mapping is not completed coverage and changes no
+row status. P08-M12 no longer lists
+"accessibility": no plan defines an accessibility contract, and the USER retired the term on 2026-10-15
+(`RETIRE-P08-M12-ACCESSIBILITY`).
+
 P08-A19's historical wording refers to the tracked `receipt:` reference: the Markdown governance
 check requires that marker for `MANUAL PASS`, but does not validate receipt contents or prove that
 the receipt file was committed. Dynamic candidate identity and readiness need the separate plan 11
@@ -34,7 +42,7 @@ verification; a marker alone is not acceptance evidence.
 | P08-A08 | AC-025 theme reducer and adapter | Automated | `phase8_` tests cover Light/System/Dark, default Light, runtime System changes and configuration round-trip | AUTOMATED PASS |
 | P08-A09 | Always-on-top and controls projection | Automated | `phase8_` tests cover typed topmost effects and control fade/hit-test behavior without document mutation | AUTOMATED PASS |
 | P08-A10 | AC-026 same-directory wake | Automated | `phase8_` coordinator tests plus copied-Release `-Runtime` prove hidden primary wake, secondary exit and no secondary durable write | AUTOMATED PASS |
-| P08-A11 | AC-027 different-directory isolation | Automated | copied-Release runtime proves distinct processes, windows, notes and configs; tray-icon distinction remains manual | AUTOMATED PASS |
+| P08-A11 | AC-027 different-directory isolation | Automated | copied-Release `-Runtime` (scenario `WindowShell`) proves distinct live processes and windows and independently seeded notes; runtime note/config isolation and quit isolation are not driven (P08-M09 gaps); tray-icon distinction remains manual | AUTOMATED PASS |
 | P08-A12 | Animation and idle redraw discipline | Automated | `phase8_` tests prove monotone ease-out endpoints, interruption convergence and no post-animation redraw deadline; copied-Release resources cover the cached-caret idle path | AUTOMATED PASS |
 | P08-A13 | DPI/config/platform adapter boundaries | Automated | `phase8_` tests and governance cover PerMonitorV2, validated placement values, minimal Win32 features and SAFETY text | AUTOMATED PASS |
 | P08-A14 | Source/Preview/persistence/assets regressions | Automated | workspace tests plus `phase8_` lifecycle regressions preserve document authority, safe Quit, split width and DPI cache keys | AUTOMATED PASS |
@@ -54,7 +62,7 @@ verification; a marker alone is not acceptance evidence.
 | P08-M09 | AC-027 distinct portable instances | Manual | Two copied directories must show independent windows, tray icons, note content and config behavior | NOT TESTED |
 | P08-M10 | AC-028 live monitor topology | Manual | Left/right/up/down monitor arrangements, primary switch, disconnect/reconnect, sleep/resume and Remote Desktop receipt required | NOT TESTED |
 | P08-M11 | AC-029 mixed-DPI and negative coordinates | Manual | Cross-monitor dock/undock plus real IME candidate, formula and image clarity at mixed DPI and negative coordinates | NOT TESTED |
-| P08-M12 | Windows 11 shell visual contract | Manual | Supported Windows 11 builds, rounded corner, shadow, topmost, control fade and accessibility receipt required | NOT TESTED |
+| P08-M12 | Windows 11 shell visual contract | Manual | Supported Windows 11 builds, rounded corner, shadow, topmost and control fade receipt required | NOT TESTED |
 | P08-M13 | inherited Phase 3 IME gate | Manual | Microsoft Pinyin and WeChat IME end-to-end matrix remains open | NOT TESTED |
 | P08-M14 | inherited Phase 5/6 Preview/math visual gate | Manual | Native Preview selection and RaTeX Light/Dark/DPI visual receipts remain open | NOT TESTED |
 | P08-M15 | inherited Phase 7 image/export visual gate | Manual | Native image quality, clipboard producers, export dialog and crash reconciliation receipts remain open | NOT TESTED |

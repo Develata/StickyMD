@@ -4,7 +4,9 @@
 只有 exact candidate 上的 interactive receipt 才能改变 readiness，Markdown 仍保持
 `NOT TESTED`，不得用旧记录或 Win32 style readback 代替真实观察。
 人工项按 plan 11 [人工观察记录](../plan/11_testing_and_release.md#manual-observation-log)逐场景、逐目标环境角色
-（`current`、`previous`）记录；Phase 8 人工义务向本矩阵的逐断言映射尚未完成，已知缺口由 readiness 汇总列出。
+（`current`、`previous`）记录；每项的场景列表见 `stickymd-smoke acceptance manual list`。Phase 8 验收矩阵中 Mode 为
+Manual 的每一行按断言映射到本矩阵的场景、exact 自动化或其他证据（plan 11 人工义务映射）；尚未落实的缺口与退役项由
+readiness 汇总列出。
 
 2026-09-30 入口维护验证：`phase-12.ps1` 参数经共享薄适配器交给 Rust `phase_entry`，
 复用既有命令解析与执行。Preconditions：锁定工具、隔离中文/空格目录；Action：同输入比较旧入口
@@ -45,18 +47,18 @@ PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；人�
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P12-M01 | 观察 Microsoft Pinyin 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Manual | 功能矩阵由 Phase 14 G4-06 自动化；本项只判候选窗视觉 | NOT TESTED |
-| P12-M02 | 观察 WeChat Input Method / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量 | Manual | 功能矩阵由 Phase 14 G4-06 自动化；环境缺失必须记录 NOT TESTED | NOT TESTED |
+| P12-M01 | 观察 Microsoft Pinyin 候选窗位置、遮挡、字体、动画及 DPI 视觉质量，含左/右/上 dock | Manual | 功能矩阵由 Phase 14 G4-06 自动化；本项只判候选窗视觉 | NOT TESTED |
+| P12-M02 | 观察 WeChat Input Method / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量，含左/右/上 dock | Manual | 功能矩阵由 Phase 14 G4-06 自动化；环境缺失必须记录 NOT TESTED | NOT TESTED |
 | P12-M03 | 启动并验证 Windows taskbar eligibility | Automated exact candidate | `phase-14.ps1 -G5` / G5-01；真实 HWND 保持 `WS_EX_TOOLWINDOW` 且无 `WS_EX_APPWINDOW` | NOT TESTED |
 | P12-M04 | 验证 Alt+Tab eligibility | Automated exact candidate | `phase-14.ps1 -G5` / G5-01；真实 HWND 保持 ToolWindow shell identity，不进入普通 app switch surface | NOT TESTED |
-| P12-M05 | 聚焦 StickyMD 后 Alt+Tab 离开，再点击/托盘/传感区恢复并输入 | Manual | 切换 away 正常；恢复焦点和 IME 正常 | NOT TESTED |
+| P12-M05 | 聚焦 StickyMD 后 Alt+Tab 离开，再点击/托盘/传感区（悬停展开后点击）恢复并输入；从隐藏/最小化/dock 收起状态在 Explorer 中第二次启动；退出时保存失败 | Manual | 切换 away 正常；托盘图标与菜单可辨识；恢复焦点和 IME 正常；第二次启动使原窗口可见恢复并取得焦点；退出保存失败时显示明确错误并保持运行 | NOT TESTED |
 | P12-M06 | 检查 exact EXE 的 StickyMD tray 项 | Automated exact candidate | `phase-14.ps1 -G4` / G4-01；菜单恰为显示/隐藏、置顶、退出 | NOT TESTED |
 | P12-M07 | 点击 exact EXE 纸张关闭按钮 | Automated exact candidate | `phase-14.ps1 -G4` / G4-01；窗口隐藏，进程与文本保留 | NOT TESTED |
 | P12-M08 | 从 tray 对 exact EXE 执行显示 | Automated exact candidate | `phase-14.ps1 -G4` / G4-01；同一 HWND 恢复并可立即输入 | NOT TESTED |
 | P12-M09 | 从 tray 对 dirty exact EXE 执行退出 | Automated exact candidate | `phase-14.ps1 -G4` / G4-01；保存、worker join 后进程退出 | NOT TESTED |
 | P12-M10 | 把 exact EXE 拖到顶部边缘 | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；仅 Top dock，失焦/hover/传感区时序符合合同 | NOT TESTED |
-| P12-M11 | 把窗口拖到左边缘 | Manual | Left dock 行为正确，混合 DPI 下感应条仍可用 | NOT TESTED |
-| P12-M12 | 把窗口拖到右边缘 | Manual | Right dock 行为正确，混合 DPI 下感应条仍可用 | NOT TESTED |
+| P12-M11 | 把窗口拖到左边缘，再拖离超过 16 DIP | Manual | Left dock 行为正确，混合 DPI 下感应条仍可用；拖离后为 Floating | NOT TESTED |
+| P12-M12 | 把窗口拖到右边缘，再拖离超过 16 DIP | Manual | Right dock 行为正确，混合 DPI 下感应条仍可用；拖离后为 Floating | NOT TESTED |
 | P12-M13 | 把 exact EXE 拖向底边 | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；不进入 Bottom dock | NOT TESTED |
 | P12-M14 | 对 exact EXE 实测 24/25 DIP capture threshold | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；24 DIP 吸附，25 DIP 不吸附 | NOT TESTED |
 | P12-M15 | 对 exact EXE 实测 nearest-edge 与 top-left/top-right tie | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；选择最近允许边，精确优先级 `Top > Left > Right` | NOT TESTED |
@@ -66,8 +68,8 @@ PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；人�
 | P12-M19 | 220×120 Preview 模式滚动/选择/链接 | Manual | viewport、selection 与控制区可用 | NOT TESTED |
 | P12-M20 | 220×120 Split 模式输入和两栏滚动 | Manual | 两栏均可操作，无不可恢复几何 | NOT TESTED |
 | P12-M21 | 实测 50/100/300% zoom，含 Source/Preview/Split | Manual | 字体、caret、selection、公式、图片缩放正确且交互流畅 | NOT TESTED |
-| P12-M22 | 调整 opacity 到 40 并输入/预览/IME | Manual | 整窗 alpha 正确；候选框、caret、焦点与控件可用 | NOT TESTED |
-| P12-M23 | 实测 Light、Dark、System 及运行时系统主题切换 | Manual | 背景、文字、公式、图片、控件立即一致更新 | NOT TESTED |
+| P12-M22 | 拖动滑块把 opacity 调到 40/70/96/100（拖动中观察实时预览）并输入/预览/IME | Manual | 拖动中整窗实时变化；整窗 alpha 正确（背景、文字、公式、图片、控件、阴影）；候选框、caret、焦点与控件可用 | NOT TESTED |
+| P12-M23 | 实测 Light、Dark、System 及运行时系统主题切换，含滚动条 | Manual | 背景、文字、公式、图片、控件立即一致更新；滚动条可抓取且不遮字 | NOT TESTED |
 | P12-M24 | 用代表性 Markdown 观察 Preview | Manual | 标题、列表、表格、引用、代码、链接、selection 视觉正确 | NOT TESTED |
 | P12-M25 | 用正确和错误公式观察 Preview | Manual | RaTeX 视觉正确；错误公式保留原文并显示错误态 | NOT TESTED |
 | P12-M26 | 用 PNG/JPEG/WebP/GIF 和超限图片观察 Preview | Manual | 方向、缩放、lazy display、placeholder 与滚动显示正确 | NOT TESTED |
@@ -78,18 +80,21 @@ PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；人�
 | P12-M31 | 对 exact EXE 中真实 `\\(x\\)` 与多行 `\\[y\\]` 执行转换并一次 Undo | Automated exact candidate | `phase-14.ps1 -G4` / G4-04；源码投影立即刷新；inline code/literal 不变；一次 Undo 全部恢复 | NOT TESTED |
 | P12-M32 | 完成 exact EXE user asset edit/undo/redo/GC/export/tray quit/restart 流程 | Automated exact candidate | `phase-14.ps1 -G3` / G3-04；非 managed 用户文件逐边界 hash 不变 | NOT TESTED |
 | P12-M33 | 放置 managed-looking fake file 并完成 exact EXE quit/restart | Automated exact candidate | `phase-14.ps1 -G3` / G3-05；无 ownership evidence 的伪 managed 文件路径/hash 不变 | NOT TESTED |
+| P12-M45 | 同时运行两份便携副本，分别从各自的托盘图标显示/隐藏 | Manual | 两个托盘图标可辨识；显示/隐藏只作用于各自的窗口 | NOT TESTED |
+| P12-M46 | 观察 Windows 11 外壳：圆角、阴影、置顶按钮、控件淡化、边与角调整大小、各模式控件 | Manual | 外壳视觉与操作符合 plan 09 固定视觉效果与窗口契约 | NOT TESTED |
 
 ## Manual Tier B — environment-dependent; exact version/source-bound USER group waiver allowed
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | P12-M34 | 在 Clean Windows 11 VM 解压并运行 unsigned ZIP | Manual | 无额外 runtime 安装即可启动；信誉提示与 README 描述一致 | NOT TESTED |
-| P12-M35 | 双显示器同 DPI 拖动、dock、tray restore | Manual | monitor identity、位置和 dock edge 稳定 | NOT TESTED |
-| P12-M36 | 双显示器 mixed DPI 拖动、dock、IME、Preview | Manual | DIP/physical conversion、caret candidate 与感应条正确 | NOT TESTED |
-| P12-M37 | 运行中断开当前显示器再恢复窗口 | Manual | 窗口迁移到可见工作区且不留在不可见坐标 | NOT TESTED |
-| P12-M38 | 在 125% DPI 完成输入、Preview、dock | Manual | geometry、caret、selection、公式与图片正确 | NOT TESTED |
-| P12-M39 | 在 150% DPI 完成输入、Preview、dock | Manual | geometry、caret、selection、公式与图片正确 | NOT TESTED |
-| P12-M40 | 在 200% DPI 完成输入、Preview、dock | Manual | geometry、caret、selection、公式与图片正确 | NOT TESTED |
+| P12-M35 | 双显示器同 DPI 拖动、dock、tray restore、主显示器切换，副屏在右侧（顶部对齐）与下方（左侧对齐） | Manual | monitor identity、位置和 dock edge 稳定 | NOT TESTED |
+| P12-M36 | 双显示器 mixed DPI 拖动、dock、IME、Preview（跨屏移动后检查公式与图片） | Manual | DIP/physical conversion、caret candidate 与感应条正确；跨屏后公式与图片按新显示器 scale 重新绘制、清晰 | NOT TESTED |
+| P12-M37 | 运行中断开 StickyMD 所在的非主显示器，再重新连接该显示器 | Manual | 断开后窗口恢复到主显示器且完全可见；重新连接后窗口仍完全可见、不留在不可见坐标 | NOT TESTED |
+| P12-M38 | 在 125% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
+| P12-M39 | 在 150% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
+| P12-M40 | 在 200% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
+| P12-M47 | 在 100% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
 
 ## Manual Tier C — NOT TESTED is non-blocking only while automated contract coverage passes
 

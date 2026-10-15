@@ -1079,3 +1079,203 @@ C1 义务表、治理、注册表与新项、文档；C2 exact / automated 扩�
 USER 批准全部四项：(1) 退出取消标题状态，先补 plan 09 退出合同后实施；(2) 资产对账进行中、退出进行中两个 Esc 守卫状态与
 Ctrl+Esc 只由单元测试覆盖，验收中注明不证明原生投递；(3) TwoCopies 对 plan 11 单实例规则的例外，只适用于 M45，同步 P14-A76；
 (4) 双显示器右 / 下排列归 M35（Tier B）。实施按 C1 → C2 → C3 分批进行，每批先更新 plan，再更新投影与代码。
+
+## 覆盖补全 C1 实施记录（2026-10-15）
+
+范围：plan 与投影先行（plan 09 退出取消标题状态与标题优先级、plan 11 `被测实例` 的 TwoCopies 例外与 `人工义务映射`），
+然后是义务表、治理、注册表 v3 与新项。产品 runtime 不变；人工状态仍为 NOT TESTED。
+
+### 落地内容
+
+- **义务表**：`manual_observation/coverage.rs` 只含类型与查询（`gaps()`、`retired()`、`describe()`）；数据在
+  `coverage/table.rs`（217 项：人工场景 141、G3/G4 exact 25、其他自动化 8（`Unit` 7、`RuntimeModule` 1）、具名缺口 42、退役 1）。
+  需求表 `coverage/declared.rs`（`ASSERTIONS` 与 `RETIREMENTS`）只在测试中编译，runtime 只保留静态 `OBLIGATIONS`，
+  readiness 与 `acceptance manual list` 对它做一次线性过滤。
+- **治理测试**（`coverage/tests.rs`）：phase-08 的 62 个 Manual 行与 plan 09 Esc（6）、手工收起（1）、滚动条（7）、透明度（3）、
+  退出（3）按分段摘要与条数、逐条 16 位摘要前缀绑定；每个 `(来源, 断言)` 的参数集合精确相等（`BTreeMap`/`BTreeSet`，
+  O(n log n)），检查器对缩减、跨断言掩盖、重复与未知项的反例测试；所有者存在性一次解析后查找（注册表场景；G3/G4 源码中的
+  `id` 字面量集合，以文本读取避免耦合；Automated 验收行 ID 集合或节标题；退役决定唯一授权且记录在 phase-08）。
+- **注册表 v3**：27 项（Tier A 16、B 8、C 3），每角色 96 个场景；新增 P12-M45（`TwoCopies(Rendering)`）、P12-M46、P12-M47；
+  `KNOWN_GAPS` 删除，由义务表的 `Gap` 推导；readiness JSON 增加 `retired`。
+- **尚未有记录器程序的场景**：M05 的三个第二次启动场景与 `exit-save-failure`、M35 的 `secondary-right/below`，以及双副本
+  用例，在任何提示、采集或启动之前拒绝记录（`manual/flow.rs` 的 `AWAITING_RECORDER`）；schema 2 日志拒绝双副本观察。
+  它们在 C3 之前保持 NOT TESTED：M05 与 M45 作为 Tier A、M35 作为 Tier B 照常阻断，除非有绑定上下文的 USER waiver。
+- **投影**：phase-12 行文本与注册表逐字一致；phase-08 P08-M12 去掉 accessibility 并注明 `RETIRE-P08-M12-ACCESSIBILITY`；
+  guided G1/G2 步骤同步，新增 G2-07（M45）、G2-08（M46）；新增 P14-A79；coverage-matrix 映射。
+- **治理 ID 规则**：Phase 12 人工行按 Tier 分节，M45/M46 位于 Tier A、M47 位于 Tier B，因此 P12-M ID 检查改为排序后与
+  `1..=47` 精确相等（重复或缺号仍失败），P12-A 仍要求文档顺序。
+
+### 与设计稿的差异（均为分批推迟，不改变设计）
+
+- `Exact` 暂只绑定 case；逐检查标签与 `module_evidence` 校验随 C2 的 exact 扩展落地。
+- USER 批准的仅单元覆盖项（两个 Esc 守卫状态、Ctrl+Esc）与标题优先级的单元测试尚不存在，目前是具名 `Gap`，C2 补测试后改为
+  `Automated{mode: Unit}`；`local-preflight` 模式没有使用者，未声明。
+
+### 验证（2026-10-15）
+
+- Windows：`cargo fmt --all -- --check` 通过；`cargo clippy --workspace --all-targets --locked -- -D warnings` 通过；
+  `cargo test -p stickymd-smoke --locked`：单元 498 passed / 17 ignored，集成测试全部通过（含 26 个 CLI 退出测试）；
+  `stickymd-smoke phase 00` PASS。
+- Linux（WSL Debian 重放，表拆分前）：fmt、`clippy -p stickymd-smoke --all-targets -D warnings` 通过；tests 412 passed / 3 ignored、
+  19 passed。
+- 指纹：phase-08 验收文档是共享输入，本批使全部模块失效一次；完整 `dev-check` 结果见下文审查记录。
+
+### C1 代码审查第 1 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、5 SHOULD_FIX；逐项核实后全部接受。
+
+- **B1 P08-D068 归属错误**：G4-02 没有覆盖窗口，且以 `WM_MOUSEMOVE` 补强感应条进入，不能证明被遮挡的感应条可经真实鼠标到达。
+  改为具名缺口（G4-02 扩展：Pin OFF、被覆盖、真实鼠标）。
+- **S1 子断言遗漏**：plan 09 滚动条第 4 条拆出 `drag-exit`（松开 / 失焦 / 切换视图 / 尺寸变化）与 `drag-outside-window`；现有
+  `scrollbar` 测试只检查几何与 clamp，不经过结束拖动的路径，均列为缺口。第 3 条拆为 `thumb-geometry` 与 `hover-drag-emphasis`；
+  透明度第 3 条补 `no-stepwise-write`（P08-A07）；退出第 1 条拆为 `keeps-running`、`memory-text-kept`、`visible-error`，第 2 条拆为
+  建立原因（`cause=note-save-failure / quit-guard / paste-unconverged`）、`cleared-after-event-when-barrier-false` 与
+  `external-load-releases-rebuild`，均为缺口。
+- **S2 人工场景文字不足**：M22 改为拖动滑块并观察拖动中的实时预览；M38–M40、M47 的 dock 明确为拖到边缘、失焦收起、另一窗口在前台时
+  悬停 3 DIP 感应条展开，预期加"悬停展开不抢前台焦点""滚动条可抓取且不遮字"；逐项复核全部 141 个人工映射后，M05 另补"传感区悬停展开
+  后点击"与"托盘图标与菜单可辨识"（P08-D070、P08-D131）。registry、phase-12 与 guided 同步。
+- **S3 来源摘要可绕过**：分解移入只在测试中编译的 `coverage/sources.rs`，成为对文本的纯函数；plan 09 改为绑定 Dock、垂直滚动条、透明度、
+  托盘生命周期四节的原文摘要与条款数，提取器对段落、下级标题、孤立续行、重复条款、无外侧竖线或残缺的 Manual 行报错；反例从修改原始
+  Markdown 出发（Esc 引导句、追加退出条款、托盘新条款、滚动条子标题、透明度正文、无竖线与残缺 Manual 行），并先确认未改文档通过。
+- **S4 自动化目标接受空值**：`Automated` 增加 `file`，按指定文档中的 Automated 行 ID 或完整节标题精确查找；证据文字须与 mode 相符
+  （`Unit` 要求 `cargo test` 或 tests，`RuntimeModule` 要求 runtime），这是文字一致性检查，不证明测试内容；空引用、标题子串、错误文件、
+  错误 mode 的反例均被拒绝。所有者检查一次解析为集合与映射。
+- **S5 投影措辞**：phase-08 说明与 plan 09 验证节写明映射包含具名缺口、不等于覆盖完成。
+
+映射现为 229 项：人工场景 141、exact 24、其他自动化 10（`Unit` 9、`RuntimeModule` 1）、具名缺口 53、退役 1。
+
+### C1 代码审查第 2 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、4 SHOULD_FIX；第 1 轮 B1、S2、S5 判定已修复，S1、S3、S4 部分修复。逐项核实后全部接受。
+
+- **R2-1 滚动条交互仍被绘制测试顶替**：plan 09 滚动条第 3 条再拆为 `thumb-geometry`、`emphasis-paint`、`drag-mapping`、`track-hit`
+  （app 几何与绘制测试）、`ends-reach-document-ends`（render 测试），以及 `emphasis-trigger`（hover / drag）、`drag-live-update`、
+  `track-page-scroll`；后三项需要经过 app runtime 处理路径的测试，列为缺口。
+- **R2-2 M37 不能证明重连与回退主屏**：M37 改为断开 StickyMD 所在的非主显示器再重新连接，预期断开后恢复到主显示器且完全可见、重连后
+  仍完全可见；新增场景 `reconnect-monitor`，P08-M10 `disconnect-reconnect` 按 `step=disconnect / reconnect` 分别归属。每角色场景 96 → 97。
+- **R2-3 anchor 与表格格式绕过**：plan 09 区段改为只在三级及以上标题处结束，anchor 只允许作为区段末尾（之后再有内容即报错）；phase-08 改为
+  绑定整个文档（行尾归一），矩阵行（首格为 P08 ID 的表格行）须为五格且 mode 恰为 `Automated` 或 `Manual`。新增反例：anchor 加新条款、
+  强调的 mode、强调的 ID。
+- **R2-4 mode 由自由文字推断**：`Mode` 改为结构化入口 `Entry`：`Tests { filter }` 须被证据以反引号逐字列出（或为其 `cargo test` 命令的
+  过滤参数）且匹配工作区中至少一个 `#[test]` 函数；`Runtime { scenario }` 须被证据以 `-Runtime` 与场景名逐字列出且是 `RuntimeScenario`
+  的变体。P08-A11 证据补写 copied-Release `-Runtime`（scenario `WindowShell`），与 P08-A10 的写法一致，状态不变。反例包括只写单元测试却
+  提到 runtime 行为的行（P08-A08 形式）、未列出的过滤名、无匹配测试的过滤名与不存在的场景。该检查确认入口真实存在且被文档逐字点名，
+  不证明测试内容。
+
+映射现为 237 项：人工场景 142、exact 24、测试 12、Runtime 1、具名缺口 57、退役 1。
+
+### C1 代码审查第 3 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、5 SHOULD_FIX；R2-1、R2-2 判定已修复，R2-3、R2-4 部分修复。逐项核实后全部接受，R3-2 的
+harness 级部分推迟到 C2（理由见下）。
+
+- **R3-1 plan 09 可被 HTML 注释整体隐藏**：plan 09 改为与 phase-08 一样绑定整个文档（行尾归一），四节原文摘要保留用于定位；新增 HTML 注释
+  包住所绑定各节的反例。
+- **R3-2 词法扫描不等于 harness 测试集合**：扫描范围收窄为根清单列出的工作区成员；它仍是防止过滤名指向空集合的词法检查，不求值 `cfg`、
+  注释与模块可达性，P14-A79 如实写明。以已编译 harness 的测试清单核对，需要在单元测试中嵌套 cargo 构建（锁竞争、CI 时长），本批不做；
+  C2 把 exact / automated 证据接入 `module_evidence` 时，以模块收据记录的已执行测试核对 `Tests` 入口。
+- **R3-3 否定句可满足 Runtime 检查**：证据只取结构化字段：Automated 行的 Evidence 单元格，或节内的 `- Automated entry:` 条目（含其续行），
+  正文其他段落不再计入；入口必须是字段开头：测试过滤名为首个反引号内容或其中 `cargo test` 命令的过滤参数，Runtime 场景须以
+  copied-Release `-Runtime`（scenario `名称`）开头。新增否定句、非首位过滤名、只在正文出现的命令三个反例。
+- **R3-4 滚动条映射仍以底层测试认领 app 行为**：app runtime 没有任何滚动条测试，凡需经过它的子断言均改为缺口。第 1 条：各视图的滚动条
+  （source / preview / split）与分栏同步开关；第 2 条拆为 `gutter-geometry`（测试）、`short-note`（隐藏滑块为测试，保留槽宽为缺口）、
+  `gutter-runtime`（命中与 Content Zoom，缺口）；第 3 条的到达文首/文末按视图拆分，Source 归 render 测试，Preview 为缺口；第 4 条
+  `viewport-only` 按 text、generation、dirty、caret、selection、preedit 六项全部列为缺口；第 5 条补 `preview-document-height`（缺口）；
+  第 6 条拆为 `stale-frame-no-thumb`（缺口）、`stale-receipt-identity`（worker 测试）与 `stale-receipt-guard`（缺口）。
+- **R3-5 P08-A11 过度声明**：该 Runtime 检查只验证两个存活进程、不同 HWND 与预置的不同 note；Evidence 收窄为这些事实，并注明运行时
+  note/config 隔离与退出隔离未驱动（P08-M09 的缺口），状态不变。
+
+映射现为 253 项：人工场景 142、exact 24、测试 11、Runtime 1、具名缺口 74、退役 1。
+
+### C1 代码审查第 4 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、5 SHOULD_FIX；R3-1、R3-4、R3-5 判定已修复，R3-2 的推迟可接受，R3-3 部分修复。
+
+- **R4-1 / R4-2（自动化 owner 的证据仍可被否定句或 HTML 注释绕过）与批次调整**：`Automated` 目标的检查连续三轮（S4 → R2-4 → R3-3 →
+  R4-1/R4-2）都是在自由 Markdown 上做词法判断，每轮修补又出现新的绕过。它只服务 12 个映射、4 处证据字段，而按已批准的分批，exact /
+  automated 扩展与收据标签本来就属于 C2，R3-2 的 harness 级核对也已推迟到 C2。因此 C1 不再保留 `Automated` 目标：12 项改为具名缺口，缺口
+  文字写明现有入口（phase-03 / phase-05 滚动条维护节的 `cargo test … scrollbar`、P08-A07 的 `phase8_`、P08-A11 的 `-Runtime` WindowShell），
+  并删除证据解析、测试名扫描与 Runtime 场景读取。C2 以模块收据记录的已执行测试绑定这些 owner。这是推迟，不是取消；R3-5 对 P08-A11 证据的
+  收窄是独立的文档修正，保留。
+- **R4-3 `no-stepwise-write`**：reducer 测试只证明 Preview intent 不持久化，不证明拖动只产生 Preview intent；改为单独的缺口（经事件路径的
+  单元测试）。
+- **R4-4 mixed-DPI 的公式与图片清晰度**：M36 改为跨屏移动后检查公式与图片，预期按新显示器 scale 重新绘制、清晰（投影 plan 09 §DPI 的
+  "跨显示器移动重算 scale；公式 cache key 含 DPI；图片按设备像素绘制"）；registry 与 phase-12 同步，场景数不变。
+- **R4-5 无首竖线的追踪行被忽略**：治理的矩阵行读取（各阶段共用）对首格为追踪 ID、却不以 `| ` 开头的表格行报错；注册表对照测试同样要求
+  P12-M 行使用规范写法。phase 00 对全部阶段文档通过；新增反例单元测试。
+
+映射现为 253 项：人工场景 142、exact 24、具名缺口 86（其中 11 项待 C2 绑定现有自动化的模块收据）、退役 1。
+
+### C1 代码审查第 5 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX、1 NEEDS_VERIFICATION；R4-1..R4-4 判定已修复，接受把 `Automated` 目标推迟到
+C2（与 R3-2 同一依据），R4-5 部分修复。逐项核实后全部接受。
+
+- **R5-1 格式化的行 ID 仍可绕过**：治理的矩阵行读取改为按表结构判定：首格为 `ID` 的表头开始一张矩阵表，其分隔行之后到无竖线的行为止，
+  每个数据行都必须以竖线加空格开头且首格是不带格式的行 ID（字母数字段以连字符相连、末段为可选字母加数字，覆盖 `P08-D001`、`P11B-A06`、
+  `UX10-01`、`REL-CLI-01`）；强调、代码跨度、HTML 包裹或无外侧竖线的 ID 都报错，与内联写法无关。注册表对照测试改为复用该读取。phase 00
+  对全部阶段文档通过。
+- **R5-2 G3-03 可空通过**：四个强杀点都接受旧 note，且不确认编辑与保存已开始，保存晚于强杀即可通过；`crash-reconciliation`
+  `point=note-save` 改为具名缺口（C2：确认编辑与持久化阶段后在确定性中断点强杀，并以保存未开始的负对照排除空通过）。
+- **R5-3 composition 守卫无法与焦点守卫区分（待验证）**：G4-06 在聚焦时组字，焦点本身就阻止自动收起，所以只能证明"真实 IME、聚焦、
+  左 dock 时不收起"。该映射保留为对行为的观察，另为 P08-D055 增加 `composition-guard-wiring` 缺口（经 app runtime 的守卫接线与失焦取消
+  preedit；目前只有 P08-A05 的 reducer 覆盖）。
+
+映射现为 254 项：人工场景 142、exact 23、具名缺口 88、退役 1。
+
+### C1 代码审查第 6 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX、2 NICE_TO_HAVE；R5-2、R5-3 判定已修复，R5-1 部分修复。逐项核实后全部接受。
+
+- **R6-1 / R6-2 结构检查与各消费者对"哪些行存在"的判断不一致**：根因是检查与读取分离——结构检查用修剪后的首格，冻结 ID、mode/status
+  与注册表对照各自按原始前缀读取，双空格、制表符、表内第二个 `ID` 表头或紧随表格的文本行都能让某一方跳过该行。改为单一读取
+  `trace_rows`：表格须以空行结束（GFM 会把紧随的文本行当作新的一行）；`ID` 表头须以 `| ID |` 开头并紧跟分隔行；矩阵表数据行须为
+  `| <行 ID> | …`（无缩进、竖线后恰一个空格、首格为不带格式的行 ID），表内不能重新进入表头；表外首格为行 ID 的行同样须为该写法。
+  `frozen_trace_ids`、`matrix_rows` 与注册表对照（`governance::manual_rows`）都消费它的结果，一行要么被全部检查看到，要么整份文档被拒绝。
+  反例单元测试对每个变体同时断言三个消费者都失败。phase 00 对全部阶段文档通过。
+- **R6-3 转义竖线**：受限写法不支持转义竖线，遇到即明确报错，而不是误算列数。
+- **R6-4 plan 11 人工项范围**：`P12-M01..P12-M44` 同步为 `P12-M47`。
+
+### C1 代码审查第 7 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、3 SHOULD_FIX、2 NICE_TO_HAVE；R6-3 判定已修复，R6-1、R6-2、R6-4 部分修复。逐项核实后全部接受。
+
+表格读取已连续四轮（R4-5 → R5-1 → R6 → R7）出现新的 GFM 写法绕过，与此前 `Automated` 证据解析的情形相同。本轮采取两条并行措施：读取器只做
+代价低、结构性的收紧，并明确声明它是刻意收窄的写法；C1 依赖其完整性的文档另以整文摘要绑定，与已被接受的 phase-08 / plan 09 做法一致。
+
+- **R7-1 非 P 行绕过 mode/status/evidence**：此前只有 `P…` 行进入校验（沿袭旧实现），Phase 10 对 `UX10-*` 的守卫实际不可达。现在矩阵表的
+  每个数据行都校验（含 `UX10-*`、`REL-CLI-*`），mode 增加现有文档使用的 `Automated local`；新增修改 UX10 行证据与状态的反例。
+- **R7-2 HTML 修饰的表头使整张表退为普通表**：识别表头与行 ID 前先去掉 HTML 标签与 `*`、`_`、反引号；被修饰的 `ID` 表头必须写成规范的
+  `| ID |`，任何表中被修饰的行 ID 都报错。注册表对照测试另以 phase-12 整个文档的 SHA-256 绑定，文档任何改动都须复核后更新。
+- **R7-3 表头宽度与分隔行未关联**：记录表头列数，分隔行与每个数据行都须同宽；表头之后遇到空行、文本或文档结束都报错；单元格只去掉
+  一个外侧竖线，末尾的 `||` 不再被吞掉。
+- **R7-4 / R7-5**：phase-14 的人工入口范围同步为 M01..M47，P14-G2 补列 M45、M46；P14-A79 引用的测试名更正，并收窄为上述受限写法加
+  整文摘要的表述。
+
+phase 00 对全部阶段文档通过。
+
+### C1 代码审查第 8 轮（2026-10-15）
+
+gpt-6-astra（effort max）：**AGREE**（0 BLOCKER、0 SHOULD_FIX），2 NICE_TO_HAVE、1 NEEDS_VERIFICATION。R7-1..R7-5 及此前各轮判定已修复（R3-2
+按批准范围留给 C2）；在已审查摘要常量不变的前提下，未找到能让 C1 人工义务或 P12 人工项静默遗漏而摘要与计数仍全绿的反例。
+
+- **N1 摘要措辞**：摘要按行归一，LF 与 CRLF、末尾单个换行等价；注释与 P14-A79 改为"行内容的任何改动"。
+- **N2 修饰识别的范围**：读取器只识别 HTML 标签与 `*`、`_`、反引号修饰；链接、实体等其他行内写法不识别，由整文摘要兜底。注释与 P14-A79
+  如实限定。
+- **V1 Rust 基线**：审查只读、未运行构建；作者在本 worktree 重跑的结果见下方取证。
+
+### C1 Resolution（2026-10-15）
+
+经 8 轮审查 AGREE。C1 交付：plan 09 退出取消状态与标题优先级、plan 11 被测实例 TwoCopies 例外与人工义务映射；义务表（254 项：人工场景 142、
+exact 23（case 级）、具名缺口 88、退役 1）与只在测试中编译的分解、来源摘要和所有者检查；注册表 v3（27 项，每角色 97 个场景）与 M45 / M46 / M47；
+记录器对尚无程序的场景前置拒绝；治理的受限矩阵读取。相对设计的调整：`Automated` 目标与 exact 逐检查标签推迟到 C2，届时绑定已执行测试的
+模块收据（这 11 项现为写明现有入口的缺口）；多项原归自动化或 exact 的义务经审查改为缺口（D068、note-save 强杀、滚动条 app 路径、
+composition 守卫接线等）。人工状态仍为 NOT TESTED；映射完整不等于验收通过。
+
+### C1 取证（2026-10-15，最终工作树）
+
+- Windows：`stickymd-smoke dev-check` 9/9 PASS（governance、fmt、workspace strict clippy、cargo deny、Phase 1 两组、workspace tests、
+  Release 构建、native-runtime gate；phase-08 是共享输入，全部模块重跑一次）；`cargo test -p stickymd-smoke --locked` 单元 501 passed /
+  17 ignored、CLI 26 passed；`phase 00` PASS。
+- Linux（WSL Debian 重放同一工作树）：fmt、`clippy -p stickymd-smoke --all-targets -D warnings` 通过；tests 415 passed / 3 ignored、19 passed。
+- 未运行：真实桌面、人工记录与 G3/G4 exact 资格化（本批不改产品 runtime）。
