@@ -5,15 +5,17 @@ use std::collections::VecDeque;
 use std::io::Cursor;
 use std::rc::Rc;
 
-use super::{Bench, Item, Summary, Tested, run};
+use super::{Bench, Item, Start, Summary, Tested, run};
 use crate::qualification::guided::STEPS;
 use crate::qualification::manual_observation::log::{
     Instance, Log, Note, Observation, Status, fixtures,
 };
+use crate::qualification::manual_observation::reduce::Binding;
 use crate::qualification::manual_observation::registry::{self, Fixture};
 use crate::qualification::manual_observation::role::{Facts, fixtures::current};
 use crate::qualification::manual_observation::store::{Commit, Context};
-use crate::qualification::manual_observation::target::{Role, fixtures::target};
+use crate::qualification::manual_observation::target::{self, Role, fixtures::target};
+use crate::qualification::manual_observation::transfer::unresolved;
 
 const SESSION: &str = "abcdefabcdefabcdefabcdefabcdef00";
 
@@ -142,6 +144,7 @@ impl Bench for FakeBench {
 fn context(log: Log) -> Context {
     Context {
         target: target(),
+        target_text: target::render(&target()),
         log,
     }
 }
@@ -161,11 +164,24 @@ fn record(
     answers: &str,
 ) -> (Result<Summary, String>, String) {
     let mut output = Vec::new();
+    // As the local recorder starts a session from its log.
+    let unresolved = unresolved(
+        &context.log,
+        Binding {
+            target: &context.target,
+            exe_sha256: fixtures::EXE,
+        },
+    );
+    let start = Start {
+        target: &context.target,
+        base: context.log.observations.len() as u64,
+        unresolved: &unresolved,
+    };
     let result = run(
         &mut Cursor::new(answers.as_bytes().to_vec()),
         &mut output,
         bench,
-        context,
+        &start,
         SESSION,
         items,
     );

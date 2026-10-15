@@ -54,13 +54,22 @@ pub(super) fn check(
     root: &Path,
     decisions: &[Decision],
     candidate_receipt_sha256: &str,
+    candidate_exe_sha256: &str,
     version: &str,
     automated_ok: bool,
     blockers: &mut Vec<String>,
 ) -> Report {
     let report = Report::detached(root);
     match store::load(root, candidate_receipt_sha256) {
-        Ok(context) => evaluate(report, &context, decisions, version, automated_ok, blockers),
+        Ok(context) => evaluate(
+            report,
+            &context,
+            candidate_exe_sha256,
+            decisions,
+            version,
+            automated_ok,
+            blockers,
+        ),
         Err(error) => {
             blockers.push(format!("mandatory manual acceptance: {}", error.message()));
             report
@@ -72,6 +81,7 @@ pub(super) fn check(
 fn evaluate(
     mut report: Report,
     context: &store::Context,
+    candidate_exe_sha256: &str,
     decisions: &[Decision],
     version: &str,
     automated_ok: bool,
@@ -95,7 +105,11 @@ fn evaluate(
             ));
         }
     }
-    for cell in reduce::reduce(&context.log, &context.target) {
+    let binding = reduce::Binding {
+        target: &context.target,
+        exe_sha256: candidate_exe_sha256,
+    };
+    for cell in reduce::reduce(&context.log, binding) {
         let (case, tier, role) = (cell.case.id, cell.case.tier, cell.role);
         let label = format!("{case} ({})", role.as_str());
         let (status, detail) = match cell.verdict {

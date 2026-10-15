@@ -11,4 +11,5 @@ pub(super) mod registry;
 pub(super) mod role;
 pub(super) mod store;
 pub(super) mod target;
+pub(super) mod transfer;
 pub(super) mod waiver;

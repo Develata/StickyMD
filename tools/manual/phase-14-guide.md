@@ -84,6 +84,45 @@ candidate/clean harness/isolated-copy 收据合同，但分别写入 `g4-exact-q
 收据同样不能解除 readiness blocker。G3/G4 必须依次串行，不能并发争抢 clipboard、tray、窗口
 焦点或鼠标。
 
+## 在其他机器上记录（`previous` 角色的机器、Clean VM）
+
+被测机器不需要仓库、Rust 或额外 runtime，只需要工具、观察任务与候选 ZIP：
+
+1. 在主工作区导出观察任务（共享锁内的一份快照；`--select` 取 `all`（默认）、`guided`、`M1`..`M5` 或 `G1`、`G2`）：
+
+   ```powershell
+   cargo run -p stickymd-smoke --locked -- acceptance manual export --task=<task.json> --select=M5
+   ```
+
+2. 从同一提交构建工具（静态 CRT，只导入 Windows 自带的 DLL；解压与进程检查只用 Windows 自带的 PowerShell
+   `Expand-Archive` 与 `tasklist`）：
+
+   ```powershell
+   cargo build -p stickymd-smoke --release --locked
+   ```
+
+3. 把 `target\release\stickymd-smoke.exe`、观察任务与候选 ZIP 复制到被测机器，在交互桌面中运行（观察包所在
+   目录必须已存在，观察包文件本身不得已存在）：
+
+   ```powershell
+   .\stickymd-smoke.exe acceptance manual record --task=<task.json> --zip=<StickyMD-...-portable.zip> --bundle=<bundle.json>
+   ```
+
+   工具内置的注册表必须与任务相同，否则拒绝运行；ZIP 与其中的 EXE 必须是任务所述的 candidate。每个回答都立即写入
+   观察包，中断时已回答的内容保留。观察包上限 1 MiB：超限的回答不记录、会话结束，此时先导入、再导出新的任务。
+4. 把观察包带回主工作区导入（整包写入或整包拒绝；同一个包或其增长后的副本可以重复导入，已登记的记录跳过）：
+
+   ```powershell
+   cargo run -p stickymd-smoke --locked -- acceptance manual import --bundle=<bundle.json>
+   ```
+
+   包所属的 candidate、上下文、目标收据或注册表与当前不同，任一观察的环境不属于它声明的角色，或其实例运行的不是
+   candidate 的 EXE 时，导入被拒绝且日志不变。
+
+**M34（Clean VM 首次运行）**：先在 VM 中解压并运行 StickyMD、完成首次运行观察；退出 StickyMD 之后才复制工具与任务
+（`--select=M5`）。记录器询问 VM 基线、ZIP 的取得方式以及 VM 自首次运行后是否未改动，再采集 VM 的环境事实；它仍
+校验 ZIP 是任务所述的 candidate。M5 的其他项照常启动新实例，不在本次范围内的可按 `S` 跳过。
+
 ## 查看结果
 
 ```powershell

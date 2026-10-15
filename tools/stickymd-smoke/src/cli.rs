@@ -96,10 +96,21 @@ pub(crate) enum CommandLine {
     Timings(crate::timing_summary::Options),
     StartupDetails(crate::startup_details::Options),
     AcceptanceManual(ManualCommand),
+    /// The standalone recorder on a tested machine without the repository.
+    ManualRecord(StandaloneRecord),
     Qualification(QualificationCommand),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// `acceptance manual record`: an exported observation task, the candidate ZIP and the
+/// bundle file to write.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StandaloneRecord {
+    pub(crate) task: PathBuf,
+    pub(crate) zip: PathBuf,
+    pub(crate) bundle: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ManualCommand {
     Run {
         session: Option<ManualSession>,
@@ -113,6 +124,50 @@ pub(crate) enum ManualCommand {
     Target,
     /// Start a new observation context after an approved `RESET-MANUAL-LOG-<digest>`.
     Reset,
+    /// Write an observation task for a recorder on another machine.
+    Export {
+        selection: ManualSelection,
+        task: PathBuf,
+    },
+    /// Import an observation bundle recorded from an exported task.
+    Import {
+        bundle: PathBuf,
+    },
+}
+
+/// The scenarios a recorder session walks: the cases of one manual session (all when
+/// `None`), or the steps of one guided session (all when `None`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ManualSelection {
+    Cases(Option<ManualSession>),
+    Guided(Option<GuidedSession>),
+}
+
+impl ManualSelection {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "all" => Ok(Self::Cases(None)),
+            "guided" => Ok(Self::Guided(None)),
+            value if value.starts_with('M') => {
+                ManualSession::parse(value).map(|session| Self::Cases(Some(session)))
+            }
+            value if value.starts_with('G') => {
+                GuidedSession::parse(value).map(|session| Self::Guided(Some(session)))
+            }
+            _ => Err(format!(
+                "unknown selection `{value}`; expected all, guided, M1..M5 or G1..G2"
+            )),
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cases(None) => "all",
+            Self::Guided(None) => "guided",
+            Self::Cases(Some(session)) => session.as_str(),
+            Self::Guided(Some(session)) => session.as_str(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -382,9 +437,12 @@ impl CommandLine {
             Some("timings") => crate::timing_summary::parse(&args[1..]).map(Self::Timings),
             Some("startup-details") => crate::startup_details::parse(&args[1..]).map(Self::StartupDetails),
             Some("acceptance") => match args.get(1).map(String::as_str) {
+                Some("manual") if args.get(2).map(String::as_str) == Some("record") => {
+                    Self::parse_manual_record(&args[3..]).map(Self::ManualRecord)
+                }
                 Some("manual") => Self::parse_manual(&args[2..]).map(Self::AcceptanceManual),
                 _ => Err(
-                    "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G2]|list|status|target|reset]"
+                    "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G2]|list|status|target|reset|export --task=<path> [--select=all|guided|M1..M5|G1..G2]|import --bundle=<path>|record --task=<path> --zip=<path> --bundle=<path>]"
                         .to_owned(),
                 ),
             },
@@ -416,11 +474,39 @@ impl CommandLine {
             Some("status") if arguments.len() == 1 => Ok(ManualCommand::Status),
             Some("target") if arguments.len() == 1 => Ok(ManualCommand::Target),
             Some("reset") if arguments.len() == 1 => Ok(ManualCommand::Reset),
+            Some("export") => {
+                let [task, selection] = exact_named_values(&arguments[1..], ["--task=", "--select="])?;
+                Ok(ManualCommand::Export {
+                    selection: selection.map_or(Ok(ManualSelection::Cases(None)), ManualSelection::parse)?,
+                    task: PathBuf::from(task.ok_or("missing `--task=<path>`")?),
+                })
+            }
+            Some("import") => {
+                let [bundle] = exact_named_values(&arguments[1..], ["--bundle="])?;
+                Ok(ManualCommand::Import {
+                    bundle: PathBuf::from(bundle.ok_or("missing `--bundle=<path>`")?),
+                })
+            }
             _ => Err(
-                "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G2]|list|status|target|reset]"
+                "usage: stickymd-smoke acceptance manual [run [--session=M1..M5]|guided [--session=G1..G2]|list|status|target|reset|export --task=<path> [--select=all|guided|M1..M5|G1..G2]|import --bundle=<path>|record --task=<path> --zip=<path> --bundle=<path>]"
                     .to_owned(),
             ),
         }
+    }
+
+    fn parse_manual_record(arguments: &[String]) -> Result<StandaloneRecord, String> {
+        let [task, zip, bundle] =
+            exact_named_values(arguments, ["--task=", "--zip=", "--bundle="])?;
+        let required = |value: Option<&str>, name: &str| {
+            value
+                .map(PathBuf::from)
+                .ok_or_else(|| format!("missing `{name}<path>`"))
+        };
+        Ok(StandaloneRecord {
+            task: required(task, "--task=")?,
+            zip: required(zip, "--zip=")?,
+            bundle: required(bundle, "--bundle=")?,
+        })
     }
 
     fn parse_qualification(arguments: &[String]) -> Result<Self, String> {
@@ -663,6 +749,29 @@ fn named_value<'a>(arguments: &'a [String], prefix: &str) -> Result<&'a str, Str
         .find_map(|argument| argument.strip_prefix(prefix))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("missing `{prefix}<value>`"))
+}
+
+/// The values of `<prefix><value>` arguments in `prefixes` order, each given at most once;
+/// any other argument, a duplicate or an empty value is an error.
+fn exact_named_values<'a, const N: usize>(
+    arguments: &'a [String],
+    prefixes: [&str; N],
+) -> Result<[Option<&'a str>; N], String> {
+    let mut values = [None; N];
+    for argument in arguments {
+        let (index, value) = prefixes
+            .iter()
+            .enumerate()
+            .find_map(|(index, prefix)| argument.strip_prefix(prefix).map(|value| (index, value)))
+            .ok_or_else(|| format!("unexpected argument `{argument}`"))?;
+        if value.is_empty() {
+            return Err(format!("empty `{}<value>`", prefixes[index]));
+        }
+        if values[index].replace(value).is_some() {
+            return Err(format!("duplicate `{}<value>`", prefixes[index]));
+        }
+    }
+    Ok(values)
 }
 
 fn optional_named_value<'a>(
@@ -981,8 +1090,9 @@ impl Options {
 #[cfg(test)]
 mod tests {
     use super::{
-        CiShard, CommandLine, GuidedSession, ManualCommand, ManualSession, Options, Phase,
-        QualificationCommand, ResourceModule, Selection, WindowStressOptions, WindowStressScenario,
+        CiShard, CommandLine, GuidedSession, ManualCommand, ManualSelection, ManualSession,
+        Options, Phase, QualificationCommand, ResourceModule, Selection, StandaloneRecord,
+        WindowStressOptions, WindowStressScenario,
     };
 
     fn args<'a>(values: &'a [&'a str]) -> impl Iterator<Item = String> + 'a {
@@ -1247,6 +1357,93 @@ mod tests {
             manual,
             CommandLine::AcceptanceManual(ManualCommand::Run { session: None })
         );
+        assert_eq!(
+            CommandLine::parse(args(&[
+                "acceptance",
+                "manual",
+                "export",
+                "--select=G1",
+                "--task=task.json",
+            ]))
+            .unwrap(),
+            CommandLine::AcceptanceManual(ManualCommand::Export {
+                selection: ManualSelection::Guided(Some(GuidedSession::G1)),
+                task: std::path::PathBuf::from("task.json"),
+            })
+        );
+        assert_eq!(
+            CommandLine::parse(args(&["acceptance", "manual", "export", "--task=t.json"])).unwrap(),
+            CommandLine::AcceptanceManual(ManualCommand::Export {
+                selection: ManualSelection::Cases(None),
+                task: std::path::PathBuf::from("t.json"),
+            })
+        );
+        assert_eq!(
+            CommandLine::parse(args(&["acceptance", "manual", "import", "--bundle=b.json"]))
+                .unwrap(),
+            CommandLine::AcceptanceManual(ManualCommand::Import {
+                bundle: std::path::PathBuf::from("b.json"),
+            })
+        );
+        assert_eq!(
+            CommandLine::parse(args(&[
+                "acceptance",
+                "manual",
+                "record",
+                "--zip=c.zip",
+                "--task=t.json",
+                "--bundle=b.json",
+            ]))
+            .unwrap(),
+            CommandLine::ManualRecord(StandaloneRecord {
+                task: std::path::PathBuf::from("t.json"),
+                zip: std::path::PathBuf::from("c.zip"),
+                bundle: std::path::PathBuf::from("b.json"),
+            })
+        );
+        for invalid in [
+            &["acceptance", "manual", "export"][..],
+            &[
+                "acceptance",
+                "manual",
+                "export",
+                "--task=t.json",
+                "--task=u.json",
+            ],
+            &[
+                "acceptance",
+                "manual",
+                "export",
+                "--task=t.json",
+                "--select=M9",
+            ],
+            &["acceptance", "manual", "import"],
+            &["acceptance", "manual", "import", "--bundle="],
+            &[
+                "acceptance",
+                "manual",
+                "record",
+                "--task=t.json",
+                "--zip=c.zip",
+            ],
+            &[
+                "acceptance",
+                "manual",
+                "record",
+                "--task=t.json",
+                "--zip=c.zip",
+                "--bundle=b",
+                "--x=y",
+            ],
+        ] {
+            assert!(CommandLine::parse(args(invalid)).is_err(), "{invalid:?}");
+        }
+        for selection in ["all", "guided", "M1", "M5", "G1", "G2"] {
+            assert_eq!(
+                ManualSelection::parse(selection).unwrap().as_str(),
+                selection
+            );
+        }
 
         let native_runtime = CommandLine::parse(args(&[
             "qualification",

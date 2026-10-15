@@ -15,6 +15,10 @@
 //! Replacing a context that may hold observations needs the USER's approved
 //! `RESET-MANUAL-LOG-<digest>` for the exact log bytes being replaced, and carries the
 //! unresolved FAILs of whatever log still parses, matched or not, into the new context.
+//!
+//! A recorder session on this machine and an imported observation bundle land the same
+//! way: under the exclusive lock, after the same candidate, context and role checks, as
+//! one atomic replacement of the log.
 
 use std::fs::{self, File};
 use std::io::Read;
@@ -25,19 +29,31 @@ pub(in crate::qualification) use super::super::reserved_paths::{
     OBSERVATION_LOG, lock_manual_store as lock,
 };
 use super::log::{self, Carried, Header, Log, MAX_NOTE_BYTES, Note, Observation, Reset};
-use super::reduce::{invalidity, unresolved_fails};
+use super::reduce::{Binding, invalidity, unresolved_fails};
 use super::registry;
 use super::target::{self, RoleTarget, TARGET_RECEIPT, Target};
+use super::transfer::Bundle;
 use crate::integrity::sha256_bytes;
 
 const MAX_LOG_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_TARGET_BYTES: u64 = 64 * 1024;
+
+/// The promoted candidate a command started with: the receipt digest its context is bound
+/// to, and the EXE digest that receipt names, which every recorder-launched instance must
+/// have run.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::qualification) struct Promoted<'a> {
+    pub(in crate::qualification) receipt_sha256: &'a str,
+    pub(in crate::qualification) exe_sha256: &'a str,
+}
 
 /// A target receipt and its log, checked to belong together, to the candidate and to the
 /// current registry.
 #[derive(Debug)]
 pub(in crate::qualification) struct Context {
     pub(in crate::qualification) target: Target,
+    /// The target receipt exactly as stored: the log header binds its digest.
+    pub(in crate::qualification) target_text: String,
     pub(in crate::qualification) log: Log,
 }
 
@@ -78,8 +94,10 @@ pub(in crate::qualification) fn load(
             }
         });
     };
-    let target = utf8(&target_bytes)
-        .and_then(target::parse)
+    let target_text = utf8(&target_bytes)
+        .map_err(|error| LoadError::Broken(format!("target receipt: {error}")))?
+        .to_owned();
+    let target = target::parse(&target_text)
         .map_err(|error| LoadError::Broken(format!("target receipt: {error}")))?;
     if target.candidate_receipt_sha256 != candidate_receipt_sha256 {
         return Err(LoadError::OtherCandidate);
@@ -114,7 +132,11 @@ pub(in crate::qualification) fn load(
             )));
         }
     }
-    Ok(Context { target, log })
+    Ok(Context {
+        target,
+        target_text,
+        log,
+    })
 }
 
 /// What a commit did when the store itself worked.
@@ -138,7 +160,7 @@ pub(in crate::qualification) enum Commit {
 )]
 pub(in crate::qualification) fn commit(
     root: &Path,
-    candidate_receipt_sha256: &str,
+    candidate: Promoted,
     current_candidate: &dyn Fn() -> Result<String, String>,
     context_id: &str,
     observations: Vec<Observation>,
@@ -146,22 +168,130 @@ pub(in crate::qualification) fn commit(
     last_check: &mut dyn FnMut() -> Result<Option<String>, String>,
 ) -> Result<Commit, String> {
     let _guard = lock(root, true)?;
-    still_promoted(candidate_receipt_sha256, current_candidate)?;
-    let mut context = load(root, candidate_receipt_sha256).map_err(|error| error.message())?;
+    still_promoted(candidate.receipt_sha256, current_candidate)?;
+    let context = load(root, candidate.receipt_sha256).map_err(|error| error.message())?;
     if context.target.context_id != context_id {
         return Err(
             "the manual observation context was replaced after this session started; start a new session"
                 .to_owned(),
         );
     }
+    Ok(
+        match append_and_write(
+            root,
+            context,
+            candidate.exe_sha256,
+            observations,
+            notes,
+            last_check,
+        )? {
+            Appended::Written { .. } => Commit::Written,
+            Appended::Refused(reason) => Commit::Refused(reason),
+        },
+    )
+}
+
+/// How many records an import added; records already logged are not counted.
+#[derive(Debug, Eq, PartialEq)]
+pub(in crate::qualification) struct Imported {
+    pub(in crate::qualification) observations: usize,
+    pub(in crate::qualification) notes: usize,
+}
+
+/// Imports an observation bundle as a whole or not at all. The bundle must name exactly
+/// this context: its candidate receipt, context, target receipt and registry digests are
+/// those of the log header, and its `base` lies within the log. Then it lands as a local
+/// session does, so the role is recomputed from each observation's recorded environment,
+/// every instance must have run the candidate EXE, and records already logged with the
+/// same content are skipped (importing the same or a grown bundle again is safe).
+pub(in crate::qualification) fn import(
+    root: &Path,
+    candidate: Promoted,
+    current_candidate: &dyn Fn() -> Result<String, String>,
+    bundle: Bundle,
+) -> Result<Imported, String> {
+    let _guard = lock(root, true)?;
+    still_promoted(candidate.receipt_sha256, current_candidate)?;
+    let context = load(root, candidate.receipt_sha256).map_err(|error| error.message())?;
+    let header = &context.log.header;
+    for (label, bundled, current) in [
+        (
+            "candidate receipt",
+            &bundle.candidate_receipt_sha256,
+            &header.candidate_receipt_sha256,
+        ),
+        ("context", &bundle.context_id, &header.context_id),
+        (
+            "target receipt",
+            &bundle.target_sha256,
+            &header.target_sha256,
+        ),
+        (
+            "manual registry",
+            &bundle.registry_sha256,
+            &header.registry_sha256,
+        ),
+    ] {
+        if bundled != current {
+            return Err(format!(
+                "the observation bundle's {label} is not this worktree's; it belongs to another candidate or context and was not imported"
+            ));
+        }
+    }
+    let length = context.log.observations.len() as u64;
+    if bundle.base > length {
+        return Err(format!(
+            "the observation bundle starts after the log ({} > {length}); it was not exported from this log",
+            bundle.base
+        ));
+    }
+    match append_and_write(
+        root,
+        context,
+        candidate.exe_sha256,
+        bundle.observations,
+        bundle.notes,
+        &mut || Ok(None),
+    )? {
+        Appended::Written {
+            observations,
+            notes,
+        } => Ok(Imported {
+            observations,
+            notes,
+        }),
+        Appended::Refused(reason) => Err(reason),
+    }
+}
+
+enum Appended {
+    Written { observations: usize, notes: usize },
+    Refused(String),
+}
+
+/// Appends to the loaded `context` and replaces the log once; the caller holds the
+/// exclusive lock. Every observation must be valid evidence for the role it claims, by the
+/// predicate readiness uses.
+fn append_and_write(
+    root: &Path,
+    mut context: Context,
+    candidate_exe_sha256: &str,
+    observations: Vec<Observation>,
+    notes: Vec<Note>,
+    last_check: &mut dyn FnMut() -> Result<Option<String>, String>,
+) -> Result<Appended, String> {
+    let binding = Binding {
+        target: &context.target,
+        exe_sha256: candidate_exe_sha256,
+    };
     if let Some(reason) = observations
         .iter()
-        .find_map(|observation| invalidity(observation, &context.target))
+        .find_map(|observation| invalidity(observation, binding))
     {
         return Err(reason);
     }
-    context.log.append(observations)?;
-    context.log.annotate(notes)?;
+    let observations = context.log.append(observations)?;
+    let notes = context.log.annotate(notes)?;
     let text = log::render(&context.log);
     if text.len() as u64 > MAX_LOG_BYTES {
         return Err(format!(
@@ -169,10 +299,13 @@ pub(in crate::qualification) fn commit(
         ));
     }
     if let Some(reason) = last_check()? {
-        return Ok(Commit::Refused(reason));
+        return Ok(Appended::Refused(reason));
     }
     crate::atomic_evidence::write(&root.join(OBSERVATION_LOG), text.as_bytes())?;
-    Ok(Commit::Written)
+    Ok(Appended::Written {
+        observations,
+        notes,
+    })
 }
 
 /// Declares new targets for the candidate and starts a fresh context. A context of another
@@ -180,14 +313,14 @@ pub(in crate::qualification) fn commit(
 /// existing context needs an approved reset and hands its unresolved FAILs on.
 pub(in crate::qualification) fn declare(
     root: &Path,
-    candidate_receipt_sha256: &str,
+    candidate: Promoted,
     current_candidate: &dyn Fn() -> Result<String, String>,
     roles: [RoleTarget; 2],
     approved: &dyn Fn(&str) -> Result<bool, String>,
 ) -> Result<Target, String> {
     let _guard = lock(root, true)?;
-    still_promoted(candidate_receipt_sha256, current_candidate)?;
-    let carried = match load(root, candidate_receipt_sha256) {
+    still_promoted(candidate.receipt_sha256, current_candidate)?;
+    let carried = match load(root, candidate.receipt_sha256) {
         Err(LoadError::NoContext | LoadError::OtherCandidate) => Replacement::Plain,
         Ok(context) if context.log.observations.is_empty() => Replacement::Plain,
         Ok(context) => Replacement::Reset {
@@ -201,29 +334,29 @@ pub(in crate::qualification) fn declare(
             validated_by: None,
         },
     };
-    replace(root, candidate_receipt_sha256, roles, carried, approved)
+    replace(root, candidate, roles, carried, approved)
 }
 
 /// Starts a new context with the same targets after an approved reset, carrying the old
 /// log's unresolved FAILs when it is still readable.
 pub(in crate::qualification) fn reset(
     root: &Path,
-    candidate_receipt_sha256: &str,
+    candidate: Promoted,
     current_candidate: &dyn Fn() -> Result<String, String>,
     approved: &dyn Fn(&str) -> Result<bool, String>,
 ) -> Result<Target, String> {
     let _guard = lock(root, true)?;
-    still_promoted(candidate_receipt_sha256, current_candidate)?;
+    still_promoted(candidate.receipt_sha256, current_candidate)?;
     let target_bytes = read_limited(&root.join(TARGET_RECEIPT), MAX_TARGET_BYTES)?
         .ok_or("no manual target receipt to reset; declare targets instead")?;
     let target = target::parse(utf8(&target_bytes)?)?;
-    if target.candidate_receipt_sha256 != candidate_receipt_sha256 {
+    if target.candidate_receipt_sha256 != candidate.receipt_sha256 {
         return Err(
             "the manual context belongs to another candidate; declare targets for this one"
                 .to_owned(),
         );
     }
-    let replacement = match load(root, candidate_receipt_sha256) {
+    let replacement = match load(root, candidate.receipt_sha256) {
         Ok(context) => Replacement::Reset {
             log: Some(Box::new(context.log)),
             validated_by: Some(Box::new(context.target)),
@@ -233,13 +366,7 @@ pub(in crate::qualification) fn reset(
             validated_by: None,
         },
     };
-    replace(
-        root,
-        candidate_receipt_sha256,
-        target.roles,
-        replacement,
-        approved,
-    )
+    replace(root, candidate, target.roles, replacement, approved)
 }
 
 /// The caller read the candidate before waiting for the lock (or for the USER's answers);
@@ -271,7 +398,7 @@ enum Replacement {
 
 fn replace(
     root: &Path,
-    candidate_receipt_sha256: &str,
+    candidate: Promoted,
     roles: [RoleTarget; 2],
     replacement: Replacement,
     approved: &dyn Fn(&str) -> Result<bool, String>,
@@ -297,7 +424,15 @@ fn replace(
                 .map_or_else(|| "0".repeat(32), |log| log.header.context_id.clone());
             let carried = log
                 .as_deref()
-                .map(|log| carry(log, validated_by.as_deref()))
+                .map(|log| {
+                    carry(
+                        log,
+                        validated_by.as_deref().map(|target| Binding {
+                            target,
+                            exe_sha256: candidate.exe_sha256,
+                        }),
+                    )
+                })
                 .unwrap_or_default();
             let label = previous_context_id.clone();
             (
@@ -312,14 +447,14 @@ fn replace(
     };
     let target = Target {
         context_id: target::new_context_id(),
-        candidate_receipt_sha256: candidate_receipt_sha256.to_owned(),
+        candidate_receipt_sha256: candidate.receipt_sha256.to_owned(),
         roles,
     };
     let target_text = target::render(&target);
     let mut log = Log {
         header: Header {
             context_id: target.context_id.clone(),
-            candidate_receipt_sha256: candidate_receipt_sha256.to_owned(),
+            candidate_receipt_sha256: candidate.receipt_sha256.to_owned(),
             target_sha256: sha256_bytes(target_text.as_bytes())?,
             registry_sha256: registry_sha256()?,
             reset,
@@ -345,7 +480,7 @@ fn replace(
 /// One FAIL per `(case, role, scenario)` that still has an unresolved failure, based on
 /// its latest one and citing every unresolved original, with that one's note. The merge
 /// keeps the new log far below its size limit whatever the old one held.
-fn carry(old: &Log, validated_by: Option<&Target>) -> (Vec<Observation>, Vec<Note>) {
+fn carry(old: &Log, validated_by: Option<Binding>) -> (Vec<Observation>, Vec<Note>) {
     let session = target::new_context_id();
     let mut notes = Vec::new();
     let observations = unresolved_fails(old, validated_by)
@@ -448,7 +583,10 @@ pub(in crate::qualification) fn registry_sha256() -> Result<String, String> {
 
 /// The file's bytes, `None` when it does not exist; more than `limit` bytes is an error,
 /// checked while reading so a growing file cannot slip past.
-fn read_limited(path: &Path, limit: u64) -> Result<Option<Vec<u8>>, String> {
+pub(in crate::qualification) fn read_limited(
+    path: &Path,
+    limit: u64,
+) -> Result<Option<Vec<u8>>, String> {
     refuse_link(path)?;
     let file = match File::open(path) {
         Ok(file) => file,

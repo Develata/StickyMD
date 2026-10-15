@@ -13,6 +13,15 @@ use super::registry::{self, Case};
 use super::role::match_role;
 use super::target::{Role, Target};
 
+/// What an observation must match to count as evidence: the declared targets, by its
+/// recorded environment, and the promoted candidate's EXE, by the instance it observed (the
+/// M34 first-run declaration has no instance).
+#[derive(Clone, Copy, Debug)]
+pub(in crate::qualification) struct Binding<'a> {
+    pub(in crate::qualification) target: &'a Target,
+    pub(in crate::qualification) exe_sha256: &'a str,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::qualification) enum Verdict {
     Pass,
@@ -68,12 +77,20 @@ impl ScenarioState {
 /// block, and a later valid PASS that saw it resolves it even if the targets changed.
 pub(in crate::qualification) fn invalidity(
     observation: &Observation,
-    target: &Target,
+    binding: Binding,
 ) -> Option<String> {
     if !observation.carried_from.is_empty() {
         return None;
     }
-    match match_role(&observation.observed, target) {
+    if let Some(instance) = &observation.instance
+        && instance.exe_sha256 != binding.exe_sha256
+    {
+        return Some(format!(
+            "observation {}#{} observed EXE {}, not the candidate EXE {}",
+            observation.session, observation.seq, instance.exe_sha256, binding.exe_sha256
+        ));
+    }
+    match match_role(&observation.observed, binding.target) {
         Ok(role) if role == observation.role => None,
         Ok(role) => Some(format!(
             "observation {}#{} claims role {} but its environment matches {}",
@@ -95,13 +112,15 @@ pub(in crate::qualification) fn invalidity(
 /// and every FAIL is carried.
 pub(in crate::qualification) fn unresolved_fails(
     log: &Log,
-    target: Option<&Target>,
+    binding: Option<Binding>,
 ) -> BTreeMap<(String, Role, String), Vec<u64>> {
     let mut states: BTreeMap<(String, Role, String), ScenarioState> = BTreeMap::new();
     for (index, observation) in log.observations.iter().enumerate() {
         let counts = match observation.status {
             Status::Fail => true,
-            Status::Pass => target.is_some_and(|target| invalidity(observation, target).is_none()),
+            Status::Pass => {
+                binding.is_some_and(|binding| invalidity(observation, binding).is_none())
+            }
         };
         if counts {
             states
@@ -126,11 +145,11 @@ pub(in crate::qualification) fn unresolved_fails(
 /// One cell per registered case and role, in registry order then `current`, `previous`.
 /// Preconditions: `log` parsed and its header matched to `target` and the registry by
 /// the caller; every observation names a registered case and scenario (parse checks it).
-pub(in crate::qualification) fn reduce(log: &Log, target: &Target) -> Vec<Cell> {
+pub(in crate::qualification) fn reduce(log: &Log, binding: Binding) -> Vec<Cell> {
     let mut states: BTreeMap<(&str, Role, &str), ScenarioState> = BTreeMap::new();
     let mut invalid: BTreeMap<(&str, Role), String> = BTreeMap::new();
     for (index, observation) in log.observations.iter().enumerate() {
-        if let Some(reason) = invalidity(observation, target) {
+        if let Some(reason) = invalidity(observation, binding) {
             invalid
                 .entry((observation.case.as_str(), observation.role))
                 .or_insert(reason);
@@ -196,13 +215,20 @@ fn scenario_verdict(
 
 #[cfg(test)]
 mod tests {
-    use super::{Verdict, reduce};
+    use super::{Binding, Verdict, reduce};
     use crate::qualification::manual_observation::log::{Log, Status, fixtures};
     use crate::qualification::manual_observation::target::Role::{self, Current, Previous};
-    use crate::qualification::manual_observation::target::fixtures::target;
+    use crate::qualification::manual_observation::target::{Target, fixtures::target};
+
+    fn binding(target: &Target) -> Binding<'_> {
+        Binding {
+            target,
+            exe_sha256: fixtures::EXE,
+        }
+    }
 
     fn verdict(log: &Log, case: &str, role: Role) -> Verdict {
-        reduce(log, &target())
+        reduce(log, binding(&target()))
             .into_iter()
             .find(|cell| cell.case.id == case && cell.role == role)
             .unwrap()
@@ -359,7 +385,7 @@ mod tests {
 
     #[test]
     fn every_registered_case_has_one_cell_per_role() {
-        let cells = reduce(&fixtures::empty(), &target());
+        let cells = reduce(&fixtures::empty(), binding(&target()));
         assert_eq!(
             cells.len(),
             crate::qualification::manual_observation::registry::CASES.len() * 2
@@ -378,13 +404,33 @@ mod tests {
             verdict(&log, "P12-M25", Current),
             Verdict::Invalid(_)
         ));
-        let carried = unresolved_fails(&log, Some(&target()));
+        let carried = unresolved_fails(&log, Some(binding(&target())));
         assert_eq!(carried.len(), 1, "{carried:?}");
         // Without a target to validate against, no PASS resolves anything.
         let mut valid = log.clone();
         valid.observations[1].observed.ubr = 7019;
-        assert!(unresolved_fails(&valid, Some(&target())).is_empty());
+        assert!(unresolved_fails(&valid, Some(binding(&target()))).is_empty());
         assert_eq!(unresolved_fails(&valid, None).len(), 1);
+    }
+
+    /// An instance that ran another EXE than the candidate's is not evidence: the cell is
+    /// invalid, and such a PASS resolves no FAIL. The M34 first-run declaration has no
+    /// instance and is unaffected.
+    #[test]
+    fn an_observation_of_another_exe_is_invalid_and_resolves_nothing() {
+        use super::unresolved_fails;
+        let mut log = log_of(&[
+            (0, "P12-M25", "formulas", Current, Status::Fail),
+            (1, "P12-M25", "formulas", Current, Status::Pass),
+            (0, "P12-M34", "clean-vm-first-run", Current, Status::Pass),
+        ]);
+        log.observations[1].instance.as_mut().unwrap().exe_sha256 = "b".repeat(64);
+        assert!(matches!(
+            verdict(&log, "P12-M25", Current),
+            Verdict::Invalid(reason) if reason.contains("not the candidate EXE")
+        ));
+        assert_eq!(unresolved_fails(&log, Some(binding(&target()))).len(), 1);
+        assert_eq!(verdict(&log, "P12-M34", Current), Verdict::Pass);
     }
 
     #[test]

@@ -2,17 +2,11 @@
 //! `acceptance manual run` walks the selected cases, `acceptance manual guided` the Tier A
 //! guided steps; both ask for every case and scenario on its own.
 
-use crate::cli::{GuidedSession, ManualSession};
+pub(super) use crate::cli::ManualSelection as Selection;
 
 use super::super::guided;
 use super::super::manual_observation::registry::{self, CASES};
 use super::flow::Item;
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum Selection {
-    Cases(Option<ManualSession>),
-    Guided(Option<GuidedSession>),
-}
 
 /// Every scenario of the selection, in registry or guided-step order.
 pub(super) fn items(selection: Selection) -> Result<Vec<Item>, String> {
@@ -68,17 +62,17 @@ pub(super) use live::record;
 mod live {
     use std::io::{self, Write};
     use std::path::Path;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::qualification_environment::{self, QualificationEnvironmentStatus};
 
     use super::super::super::manual_observation::log::{Note, Observation};
+    use super::super::super::manual_observation::reduce::Binding;
     use super::super::super::manual_observation::registry::{Fixture, InstanceRule};
     use super::super::super::manual_observation::role::Facts;
     use super::super::super::manual_observation::store::Commit;
-    use super::super::super::manual_observation::{environment, store, target};
+    use super::super::super::manual_observation::{environment, store, target, transfer};
     use super::super::super::receipt;
-    use super::super::flow::{self, Bench, io_error};
+    use super::super::flow::{self, Bench, Start, io_error};
     use super::super::instance::{Launched, Workshop};
     use super::{Selection, items};
 
@@ -107,6 +101,7 @@ mod live {
         let mut bench = LiveBench {
             root,
             digest: &digest,
+            exe_sha256: &candidate.exe_sha256,
             context_id: &context.target.context_id,
             workshop,
         };
@@ -120,11 +115,23 @@ mod live {
         context.log.observations.len()
     )
     .map_err(io_error)?;
+        let unresolved = transfer::unresolved(
+            &context.log,
+            Binding {
+                target: &context.target,
+                exe_sha256: &candidate.exe_sha256,
+            },
+        );
+        let start = Start {
+            target: &context.target,
+            base: context.log.observations.len() as u64,
+            unresolved: &unresolved,
+        };
         let summary = flow::run(
             &mut input,
             &mut output,
             &mut bench,
-            &context,
+            &start,
             &session,
             &items,
         )?;
@@ -142,6 +149,7 @@ mod live {
     struct LiveBench<'a> {
         root: &'a Path,
         digest: &'a str,
+        exe_sha256: &'a str,
         context_id: &'a str,
         workshop: Option<Workshop>,
     }
@@ -155,7 +163,10 @@ mod live {
         ) -> Result<Commit, String> {
             store::commit(
                 self.root,
-                self.digest,
+                store::Promoted {
+                    receipt_sha256: self.digest,
+                    exe_sha256: self.exe_sha256,
+                },
                 &|| super::super::promoted_digest(self.root),
                 self.context_id,
                 observations,
@@ -195,10 +206,7 @@ mod live {
         }
 
         fn now(&self) -> Result<u64, String> {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_secs())
-                .map_err(|error| format!("system clock is before Unix epoch: {error}"))
+            super::super::unix_now()
         }
     }
 }

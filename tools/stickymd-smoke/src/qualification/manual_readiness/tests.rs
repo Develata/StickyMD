@@ -35,7 +35,10 @@ impl Scratch {
         let candidate = candidate_digest(&root);
         let context = store::declare(
             &root,
-            &candidate,
+            store::Promoted {
+                receipt_sha256: &candidate,
+                exe_sha256: fixtures::EXE,
+            },
             &|| Ok(candidate_digest(&root)),
             target().roles,
             &|_| Ok(false),
@@ -80,6 +83,7 @@ impl Scratch {
         let report = evaluate(
             Report::detached(&self.0),
             &context,
+            fixtures::EXE,
             decisions,
             VERSION,
             automated_ok,
@@ -140,6 +144,7 @@ fn no_context_blocks_and_names_the_declaration() {
         &scratch.0,
         &[],
         &candidate_digest(&scratch.0),
+        fixtures::EXE,
         VERSION,
         true,
         &mut blockers,
@@ -286,6 +291,7 @@ fn the_manual_policy_uses_the_callers_decision_snapshot() {
         &scratch.0,
         &decisions,
         &candidate_digest(&scratch.0),
+        fixtures::EXE,
         VERSION,
         true,
         &mut blockers,

@@ -221,6 +221,11 @@ pub(crate) fn record_manual(root: &Path, command: ManualCommand) -> Result<(), S
     manual::execute(root, command)
 }
 
+/// The standalone recorder: no repository, only the observation task and candidate ZIP.
+pub(crate) fn record_standalone(options: &crate::cli::StandaloneRecord) -> Result<(), String> {
+    manual::record_standalone(options)
+}
+
 pub(crate) fn release_executable(root: &Path) -> Result<std::path::PathBuf, String> {
     receipt::resolve_release_executable(root)
 }

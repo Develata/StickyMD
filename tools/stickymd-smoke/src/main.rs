@@ -55,6 +55,10 @@ fn run() -> Result<(), String> {
     if let cli::CommandLine::StartupDetails(options) = &command {
         return startup_details::execute(options);
     }
+    // The standalone recorder runs on a tested machine that has no repository.
+    if let cli::CommandLine::ManualRecord(options) = &command {
+        return qualification::record_standalone(options);
+    }
     let root = governance::find_repository_root(
         &std::env::current_dir()
             .map_err(|error| format!("cannot read current directory: {error}"))?,
@@ -72,6 +76,7 @@ fn run() -> Result<(), String> {
         cli::CommandLine::Release(command) => release::execute(&root, &command),
         cli::CommandLine::Modules(command) => runner::headless::execute(&root, &command),
         cli::CommandLine::AcceptanceManual(command) => qualification::record_manual(&root, command),
+        cli::CommandLine::ManualRecord(options) => qualification::record_standalone(&options),
         cli::CommandLine::Qualification(command) => qualification::execute(&root, command),
         cli::CommandLine::PackagePath(directory) => {
             println!("{}", package_path::resolve(&root, &directory)?.display());

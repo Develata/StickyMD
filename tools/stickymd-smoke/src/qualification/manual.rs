@@ -1,13 +1,15 @@
 //! Manual acceptance commands: the case registry, the observation context status, the
-//! USER's target declaration, an approved reset and the observation recorder. Nothing here
+//! USER's target declaration, an approved reset, the observation recorder, and the export,
+//! standalone recording and import of observations made on another machine. Nothing here
 //! infers a manual PASS: every status is an explicit human answer.
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#manual-observation-log
 
-// Launching the candidate reuses the Windows-only exact harness; the loop and the
-// selection are portable and tested everywhere.
+mod exchange;
 #[cfg(windows)]
 mod fixture;
+// Launching the candidate reuses the Windows-only exact harness; the loop and the
+// selection are portable and tested everywhere.
 #[cfg_attr(
     all(not(windows), not(test)),
     expect(
@@ -19,13 +21,14 @@ mod flow;
 #[cfg(windows)]
 mod instance;
 mod recorder;
+mod standalone;
 
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::Path;
 
-use crate::cli::{GuidedSession, ManualCommand};
+use crate::cli::{GuidedSession, ManualCommand, StandaloneRecord};
 
-use super::manual_observation::reduce::{self, Verdict};
+use super::manual_observation::reduce::{self, Binding, Verdict};
 use super::manual_observation::registry::{CASES, KNOWN_GAPS};
 use super::manual_observation::store;
 use super::manual_observation::target::{self, Role, RoleTarget, Target};
@@ -44,7 +47,20 @@ pub(super) fn execute(root: &Path, command: ManualCommand) -> Result<(), String>
         ManualCommand::Reset => reset(root),
         ManualCommand::Run { session } => recorder::record(root, Selection::Cases(session)),
         ManualCommand::Guided { session } => recorder::record(root, Selection::Guided(session)),
+        ManualCommand::Export { selection, task } => exchange::export(root, selection, &task),
+        ManualCommand::Import { bundle } => exchange::import(root, &bundle),
     }
+}
+
+pub(super) fn record_standalone(options: &StandaloneRecord) -> Result<(), String> {
+    standalone::record(options)
+}
+
+fn unix_now() -> Result<u64, String> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .map_err(|error| format!("system clock is before Unix epoch: {error}"))
 }
 
 fn list() {
@@ -73,13 +89,17 @@ fn list() {
 
 /// The reduced verdict per case and role, before tier and waiver policy (readiness).
 fn status(root: &Path) -> Result<(), String> {
-    let candidate = current_candidate(root)?;
+    let (candidate, digest) = current_candidate(root)?;
     let context = {
         let _guard = store::lock(root, false)?;
-        store::load(root, &candidate).map_err(|error| error.message())?
+        store::load(root, &digest).map_err(|error| error.message())?
+    };
+    let binding = Binding {
+        target: &context.target,
+        exe_sha256: &candidate.exe_sha256,
     };
     println!("Manual observation context {}", context.target.context_id);
-    for cell in reduce::reduce(&context.log, &context.target) {
+    for cell in reduce::reduce(&context.log, binding) {
         let verdict = match cell.verdict {
             Verdict::Pass => "PASS".to_owned(),
             Verdict::Fail(scenarios) => format!("FAIL ({})", scenarios.join(", ")),
@@ -94,7 +114,7 @@ fn status(root: &Path) -> Result<(), String> {
         println!("{} {}: {verdict}", cell.case.id, cell.role.as_str());
     }
     let log = &context.log;
-    for ((case, role, scenario), indices) in reduce::unresolved_fails(log, Some(&context.target)) {
+    for ((case, role, scenario), indices) in reduce::unresolved_fails(log, Some(binding)) {
         for index in indices {
             let failed = &log.observations[index as usize];
             let note = log
@@ -115,15 +135,22 @@ fn status(root: &Path) -> Result<(), String> {
 
 fn declare_target(root: &Path) -> Result<(), String> {
     require_terminal()?;
-    let candidate = current_candidate(root)?;
+    let (candidate, digest) = current_candidate(root)?;
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut output = io::stdout().lock();
     let roles = prompt_roles(&mut input, &mut output)?;
     // Called inside the store's exclusive lock, so an approval is read when it is used.
-    let target = store::declare(root, &candidate, &|| promoted_digest(root), roles, &|key| {
-        decisions::is_approved(root, key)
-    })?;
+    let target = store::declare(
+        root,
+        store::Promoted {
+            receipt_sha256: &digest,
+            exe_sha256: &candidate.exe_sha256,
+        },
+        &|| promoted_digest(root),
+        roles,
+        &|key| decisions::is_approved(root, key),
+    )?;
     println!(
         "MANUAL_TARGETS={} context={}",
         root.join(target::TARGET_RECEIPT).display(),
@@ -133,10 +160,16 @@ fn declare_target(root: &Path) -> Result<(), String> {
 }
 
 fn reset(root: &Path) -> Result<(), String> {
-    let candidate = current_candidate(root)?;
-    let target = store::reset(root, &candidate, &|| promoted_digest(root), &|key| {
-        decisions::is_approved(root, key)
-    })?;
+    let (candidate, digest) = current_candidate(root)?;
+    let target = store::reset(
+        root,
+        store::Promoted {
+            receipt_sha256: &digest,
+            exe_sha256: &candidate.exe_sha256,
+        },
+        &|| promoted_digest(root),
+        &|key| decisions::is_approved(root, key),
+    )?;
     println!("MANUAL_CONTEXT={}", target.context_id);
     Ok(())
 }
@@ -150,10 +183,11 @@ fn promoted_digest(root: &Path) -> Result<String, String> {
 }
 
 /// The digest of the candidate receipt, read once with the candidate it validates.
-fn current_candidate(root: &Path) -> Result<String, String> {
+/// The promoted candidate, checked against the repository, and its receipt digest.
+fn current_candidate(root: &Path) -> Result<(receipt::Candidate, String), String> {
     let (candidate, digest) = receipt::read_candidate_snapshot(root)?;
     receipt::validate_candidate_against_repository(root, &candidate)?;
-    Ok(digest)
+    Ok((candidate, digest))
 }
 
 fn require_terminal() -> Result<(), String> {

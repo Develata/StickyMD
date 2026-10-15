@@ -204,7 +204,10 @@ impl Log {
     }
 }
 
-fn validate_note(note: &Note, observed: &BTreeSet<(&str, u64)>) -> Result<(), String> {
+pub(in crate::qualification) fn validate_note(
+    note: &Note,
+    observed: &BTreeSet<(&str, u64)>,
+) -> Result<(), String> {
     if !observed.contains(&(note.session.as_str(), note.seq)) {
         return Err(format!(
             "note names observation {}#{}, which is not logged",
@@ -276,12 +279,7 @@ pub(in crate::qualification) fn parse(text: &str) -> Result<Log, String> {
     let mut noted = BTreeSet::new();
     let mut notes = Vec::new();
     for object in json::objects(&document, "notes")? {
-        json::exact_keys(object, &["session", "seq", "text"])?;
-        let note = Note {
-            session: json::string_field(object, "session")?,
-            seq: json::u64_field(object, "seq")?,
-            text: json::string_field(object, "text")?,
-        };
+        let note = parse_note(object)?;
         validate_note(&note, &observed)?;
         if !noted.insert((note.session.clone(), note.seq)) {
             return Err(format!(
@@ -329,7 +327,16 @@ pub(in crate::qualification) fn is_reset_decision(key: &str) -> bool {
         .is_some_and(|digest| crate::integrity::validate_sha256(digest, "reset digest").is_ok())
 }
 
-fn parse_observation(object: &Value) -> Result<Observation, String> {
+pub(in crate::qualification) fn parse_note(object: &Value) -> Result<Note, String> {
+    json::exact_keys(object, &["session", "seq", "text"])?;
+    Ok(Note {
+        session: json::string_field(object, "session")?,
+        seq: json::u64_field(object, "seq")?,
+        text: json::string_field(object, "text")?,
+    })
+}
+
+pub(in crate::qualification) fn parse_observation(object: &Value) -> Result<Observation, String> {
     json::exact_keys(
         object,
         &[
@@ -414,7 +421,10 @@ fn u32_field(object: &Value, key: &str) -> Result<u32, String> {
 }
 
 /// Checks one observation in isolation, given the index it has or would have in the log.
-fn validate_observation(observation: &Observation, index: u64) -> Result<(), String> {
+pub(in crate::qualification) fn validate_observation(
+    observation: &Observation,
+    index: u64,
+) -> Result<(), String> {
     let label = format!("observation {}#{}", observation.session, observation.seq);
     if !is_context_id(&observation.session) || observation.seq == 0 {
         return Err(format!("{label} has a malformed ID"));
@@ -511,14 +521,7 @@ pub(in crate::qualification) fn render(log: &Log) -> String {
     let notes = log
         .notes
         .iter()
-        .map(|note| {
-            format!(
-                "{{\"session\":\"{}\",\"seq\":{},\"text\":\"{}\"}}",
-                json::escape(&note.session),
-                note.seq,
-                json::escape(&note.text)
-            )
-        })
+        .map(render_note)
         .collect::<Vec<_>>()
         .join(",\n");
     format!(
@@ -530,7 +533,16 @@ pub(in crate::qualification) fn render(log: &Log) -> String {
     )
 }
 
-fn render_observation(observation: &Observation) -> String {
+pub(in crate::qualification) fn render_note(note: &Note) -> String {
+    format!(
+        "{{\"session\":\"{}\",\"seq\":{},\"text\":\"{}\"}}",
+        json::escape(&note.session),
+        note.seq,
+        json::escape(&note.text)
+    )
+}
+
+pub(in crate::qualification) fn render_observation(observation: &Observation) -> String {
     let facts = &observation.observed;
     let declared = observation
         .declared
@@ -586,6 +598,9 @@ pub(in crate::qualification) mod fixtures {
     use crate::qualification::manual_observation::target::Role;
 
     pub(in crate::qualification) const SESSION: &str = "fedcba9876543210fedcba9876543210";
+    /// The candidate EXE every fixture instance ran.
+    pub(in crate::qualification) const EXE: &str =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     pub(in crate::qualification) fn empty() -> Log {
         Log {
@@ -639,7 +654,7 @@ pub(in crate::qualification) mod fixtures {
                 BTreeMap::from([("dpi".to_owned(), "150".to_owned())])
             },
             instance: (!first_run).then(|| Instance {
-                exe_sha256: "a".repeat(64),
+                exe_sha256: EXE.to_owned(),
                 pid: 4242,
             }),
             carried_from: Vec::new(),

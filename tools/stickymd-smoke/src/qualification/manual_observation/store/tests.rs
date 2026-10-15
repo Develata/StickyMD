@@ -3,14 +3,23 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{Commit, LoadError, OBSERVATION_LOG, commit, declare, load, lock, reset};
+use super::{
+    Commit, Imported, LoadError, OBSERVATION_LOG, Promoted, commit, declare, import, load, lock,
+    reset,
+};
 use crate::qualification::manual_observation::log::{
     self, MAX_OBSERVATIONS, Note, Status, fixtures,
 };
 use crate::qualification::manual_observation::target::Role::{Current, Previous};
 use crate::qualification::manual_observation::target::{TARGET_RECEIPT, fixtures::target};
+use crate::qualification::manual_observation::transfer::Bundle;
 
 const CANDIDATE: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+/// The promoted candidate the fixture instances ran.
+const PROMOTED: Promoted = Promoted {
+    receipt_sha256: CANDIDATE,
+    exe_sha256: fixtures::EXE,
+};
 
 struct Scratch(PathBuf);
 
@@ -36,7 +45,7 @@ impl Drop for Scratch {
 }
 
 fn declared(root: &Path) -> String {
-    declare(root, CANDIDATE, &promoted, target().roles, &none)
+    declare(root, PROMOTED, &promoted, target().roles, &none)
         .unwrap()
         .context_id
 }
@@ -150,14 +159,14 @@ fn a_context_with_observations_is_replaced_only_after_an_approved_reset() {
         &scratch.0,
         &[(4, "P12-M26", "image-formats", Previous, Status::Pass)],
     );
-    let error = declare(&scratch.0, CANDIDATE, &promoted, target().roles, &none).unwrap_err();
+    let error = declare(&scratch.0, PROMOTED, &promoted, target().roles, &none).unwrap_err();
     assert!(error.contains("RESET-MANUAL-LOG-"), "{error}");
-    let error = reset(&scratch.0, CANDIDATE, &promoted, &none).unwrap_err();
+    let error = reset(&scratch.0, PROMOTED, &promoted, &none).unwrap_err();
     assert!(error.contains("RESET-MANUAL-LOG-"), "{error}");
     assert_eq!(load(&scratch.0, CANDIDATE).unwrap().target.context_id, old);
 
     let approval = approval_for_current_log(&scratch.0);
-    let new = reset(&scratch.0, CANDIDATE, &promoted, &*approval)
+    let new = reset(&scratch.0, PROMOTED, &promoted, &*approval)
         .unwrap()
         .context_id;
     assert_ne!(new, old);
@@ -186,7 +195,7 @@ fn a_context_with_observations_is_replaced_only_after_an_approved_reset() {
         .count();
     assert_eq!(archived, 1);
     // A decision approves only the exact bytes it names.
-    assert!(reset(&scratch.0, CANDIDATE, &promoted, &*approval).is_err());
+    assert!(reset(&scratch.0, PROMOTED, &promoted, &*approval).is_err());
 }
 
 #[test]
@@ -203,7 +212,7 @@ fn a_full_log_resets_into_a_context_with_room_to_retest() {
     )
     .unwrap();
     let approval = approval_for_current_log(&scratch.0);
-    reset(&scratch.0, CANDIDATE, &promoted, &*approval).unwrap();
+    reset(&scratch.0, PROMOTED, &promoted, &*approval).unwrap();
     let context = load(&scratch.0, CANDIDATE).unwrap();
     assert_eq!(context.log.observations.len(), 1);
     assert_eq!(
@@ -259,7 +268,7 @@ fn a_missing_empty_corrupt_or_mismatched_log_is_lost_not_fresh() {
         LoadError::Broken(_)
     ));
     // Replacing a lost context needs the reset decision for its current bytes.
-    let error = declare(&scratch.0, CANDIDATE, &promoted, target().roles, &none).unwrap_err();
+    let error = declare(&scratch.0, PROMOTED, &promoted, target().roles, &none).unwrap_err();
     assert!(error.contains("RESET-MANUAL-LOG-"), "{error}");
 }
 
@@ -323,9 +332,9 @@ fn a_half_replaced_context_blocks_and_still_carries_its_failures() {
         load(&scratch.0, CANDIDATE).unwrap_err(),
         LoadError::Broken(_)
     ));
-    assert!(declare(&scratch.0, CANDIDATE, &promoted, target().roles, &none).is_err());
+    assert!(declare(&scratch.0, PROMOTED, &promoted, target().roles, &none).is_err());
     let approval = approval_for_current_log(&scratch.0);
-    declare(&scratch.0, CANDIDATE, &promoted, target().roles, &*approval).unwrap();
+    declare(&scratch.0, PROMOTED, &promoted, target().roles, &*approval).unwrap();
     let context = load(&scratch.0, CANDIDATE).unwrap();
     assert_eq!(context.log.observations.len(), 1);
     assert_eq!(context.log.observations[0].case, "P12-M25");
@@ -349,7 +358,7 @@ fn a_failed_target_write_blocks_and_keeps_the_failures() {
     read_only.set_readonly(true);
     fs::set_permissions(&target_path, read_only).unwrap();
     let approval = approval_for_current_log(&scratch.0);
-    assert!(reset(&scratch.0, CANDIDATE, &promoted, &*approval).is_err());
+    assert!(reset(&scratch.0, PROMOTED, &promoted, &*approval).is_err());
     assert_eq!(fs::read(&target_path).unwrap(), old_target);
     assert!(matches!(
         load(&scratch.0, CANDIDATE).unwrap_err(),
@@ -357,7 +366,7 @@ fn a_failed_target_write_blocks_and_keeps_the_failures() {
     ));
     fs::set_permissions(&target_path, writable).unwrap();
     let approval = approval_for_current_log(&scratch.0);
-    declare(&scratch.0, CANDIDATE, &promoted, target().roles, &*approval).unwrap();
+    declare(&scratch.0, PROMOTED, &promoted, target().roles, &*approval).unwrap();
     let context = load(&scratch.0, CANDIDATE).unwrap();
     assert_eq!(context.log.observations.len(), 1);
     assert_eq!(context.log.observations[0].case, "P12-M25");
@@ -371,7 +380,7 @@ fn an_unreadable_approval_is_reported_not_mistaken_for_a_missing_one() {
         &scratch.0,
         &[(0, "P12-M25", "formulas", Current, Status::Fail)],
     );
-    let error = reset(&scratch.0, CANDIDATE, &promoted, &|_| {
+    let error = reset(&scratch.0, PROMOTED, &promoted, &|_| {
         Err("release decision receipt stayed locked".to_owned())
     })
     .unwrap_err();
@@ -425,9 +434,13 @@ fn a_declaration_outlived_by_a_promote_changes_nothing() {
     let before = fs::read(scratch.0.join(OBSERVATION_LOG)).unwrap();
     // Started for an older candidate; the current one is CANDIDATE.
     let stale = "e".repeat(64);
-    let error = declare(&scratch.0, &stale, &promoted, target().roles, &none).unwrap_err();
+    let stale_promoted = Promoted {
+        receipt_sha256: &stale,
+        exe_sha256: fixtures::EXE,
+    };
+    let error = declare(&scratch.0, stale_promoted, &promoted, target().roles, &none).unwrap_err();
     assert!(error.contains("candidate changed"), "{error}");
-    let error = reset(&scratch.0, &stale, &promoted, &none).unwrap_err();
+    let error = reset(&scratch.0, stale_promoted, &promoted, &none).unwrap_err();
     assert!(error.contains("candidate changed"), "{error}");
     assert_eq!(fs::read(scratch.0.join(OBSERVATION_LOG)).unwrap(), before);
     assert_eq!(
@@ -485,7 +498,7 @@ fn commit_now(
 ) -> Result<Commit, String> {
     commit(
         root,
-        CANDIDATE,
+        PROMOTED,
         current,
         context_id,
         observations,
@@ -594,7 +607,7 @@ fn a_session_commits_only_into_its_own_context() {
     let mut checked = 0;
     let refused = commit(
         &scratch.0,
-        CANDIDATE,
+        PROMOTED,
         &promoted,
         &context_id,
         vec![next()],
@@ -617,7 +630,7 @@ fn a_session_commits_only_into_its_own_context() {
     assert_eq!(refused, Ok(Commit::Refused("instance exited".to_owned())));
     let failed = commit(
         &scratch.0,
-        CANDIDATE,
+        PROMOTED,
         &promoted,
         &context_id,
         vec![next()],
@@ -630,7 +643,7 @@ fn a_session_commits_only_into_its_own_context() {
     assert_eq!(failed, Err("tasklist failed".to_owned()));
     let unreached = commit(
         &scratch.0,
-        CANDIDATE,
+        PROMOTED,
         &promoted,
         &"f".repeat(32),
         vec![next()],
@@ -642,5 +655,149 @@ fn a_session_commits_only_into_its_own_context() {
     );
     assert!(unreached.is_err());
     assert_eq!(checked, 2);
+    assert_eq!(fs::read(scratch.0.join(OBSERVATION_LOG)).unwrap(), before);
+}
+
+/// A bundle lands whole or not at all, only into the candidate, context, target receipt and
+/// registry its header names; importing it again, or a copy that grew, adds only what is
+/// new.
+#[test]
+fn a_bundle_imports_whole_into_its_own_context_once() {
+    let scratch = Scratch::new();
+    declared(&scratch.0);
+    let header = load(&scratch.0, CANDIDATE).unwrap().log.header;
+    let bundle = || Bundle {
+        task_sha256: "a".repeat(64),
+        context_id: header.context_id.clone(),
+        candidate_receipt_sha256: header.candidate_receipt_sha256.clone(),
+        target_sha256: header.target_sha256.clone(),
+        registry_sha256: header.registry_sha256.clone(),
+        base: 0,
+        session: fixtures::SESSION.to_owned(),
+        observations: vec![fixtures::observation(
+            1,
+            0,
+            "P12-M25",
+            "formulas",
+            Current,
+            Status::Fail,
+        )],
+        notes: vec![Note {
+            session: fixtures::SESSION.to_owned(),
+            seq: 1,
+            text: "matrix misaligned".to_owned(),
+        }],
+    };
+    let imported = |bundle| import(&scratch.0, PROMOTED, &promoted, bundle);
+    assert_eq!(
+        imported(bundle()),
+        Ok(Imported {
+            observations: 1,
+            notes: 1
+        })
+    );
+    assert_eq!(
+        imported(bundle()),
+        Ok(Imported {
+            observations: 0,
+            notes: 0
+        })
+    );
+    let grown = || {
+        let mut grown = bundle();
+        grown.observations.push(fixtures::observation(
+            2,
+            0,
+            "P12-M25",
+            "formulas",
+            Previous,
+            Status::Pass,
+        ));
+        grown
+    };
+    assert_eq!(
+        imported(grown()),
+        Ok(Imported {
+            observations: 1,
+            notes: 0
+        })
+    );
+    let logged = load(&scratch.0, CANDIDATE).unwrap().log;
+    assert_eq!(logged.observations, grown().observations);
+    assert_eq!(logged.notes, bundle().notes);
+    let before = fs::read(scratch.0.join(OBSERVATION_LOG)).unwrap();
+
+    let with = |change: &dyn Fn(&mut Bundle)| {
+        let mut bundle = grown();
+        change(&mut bundle);
+        bundle
+    };
+    let third = |role, base| {
+        let mut observation =
+            fixtures::observation(3, base, "P12-M25", "formulas", Current, Status::Pass);
+        observation.role = role;
+        observation
+    };
+    for (error, bundle) in [
+        (
+            "candidate receipt",
+            with(&|bundle| bundle.candidate_receipt_sha256 = "d".repeat(64)),
+        ),
+        (
+            "context",
+            with(&|bundle| bundle.context_id = "f".repeat(32)),
+        ),
+        (
+            "target receipt",
+            with(&|bundle| bundle.target_sha256 = "e".repeat(64)),
+        ),
+        (
+            "manual registry",
+            with(&|bundle| bundle.registry_sha256 = "9".repeat(64)),
+        ),
+        (
+            "matches",
+            with(&|bundle| bundle.observations.push(third(Previous, 0))),
+        ),
+        (
+            "different content",
+            with(&|bundle| bundle.observations[0].status = Status::Pass),
+        ),
+        (
+            "starts after",
+            with(&|bundle| bundle.observations.push(third(Current, 9))),
+        ),
+        (
+            "different note",
+            with(&|bundle| bundle.notes[0].text = "another text".to_owned()),
+        ),
+        (
+            "not the candidate EXE",
+            with(&|bundle| {
+                let mut other = third(Current, 0);
+                other.instance.as_mut().unwrap().exe_sha256 = "b".repeat(64);
+                bundle.observations.push(other);
+            }),
+        ),
+        (
+            "starts after the log",
+            with(&|bundle| {
+                bundle.observations.clear();
+                bundle.notes.clear();
+                bundle.base = 9;
+            }),
+        ),
+    ] {
+        let message = imported(bundle).unwrap_err();
+        assert!(message.contains(error), "{error}: {message}");
+        assert_eq!(
+            fs::read(scratch.0.join(OBSERVATION_LOG)).unwrap(),
+            before,
+            "{error}"
+        );
+    }
+    let other_candidate = || Ok("d".repeat(64));
+    let message = import(&scratch.0, PROMOTED, &other_candidate, grown()).unwrap_err();
+    assert!(message.contains("promoted candidate changed"), "{message}");
     assert_eq!(fs::read(scratch.0.join(OBSERVATION_LOG)).unwrap(), before);
 }

@@ -88,6 +88,12 @@ const MAX_CANDIDATE_BYTES: u64 = 64 * 1024;
 /// be a plain file of at most `MAX_CANDIDATE_BYTES`, checked while reading, so a damaged
 /// or replaced receipt fails fast (callers re-read it under the manual store lock).
 pub(super) fn read_candidate_snapshot(root: &Path) -> Result<(Candidate, String), String> {
+    read_candidate_text(root).map(|(candidate, digest, _)| (candidate, digest))
+}
+
+/// `read_candidate_snapshot` plus the receipt's text, for an observation task that carries
+/// the receipt to a machine without the repository.
+pub(super) fn read_candidate_text(root: &Path) -> Result<(Candidate, String, String), String> {
     use std::io::Read;
     let path = root.join(CANDIDATE_RECEIPT);
     let metadata = listed_metadata(&path)?;
@@ -104,15 +110,19 @@ pub(super) fn read_candidate_snapshot(root: &Path) -> Result<(Candidate, String)
             path.display()
         ));
     }
-    let text = std::str::from_utf8(&bytes)
+    let text = String::from_utf8(bytes)
         .map_err(|error| format!("{} is not UTF-8: {error}", path.display()))?;
     Ok((
-        parse_candidate(text)?,
-        crate::integrity::sha256_bytes(&bytes)?,
+        parse_candidate(&text)?,
+        crate::integrity::sha256_bytes(text.as_bytes())?,
+        text,
     ))
 }
 
-fn parse_candidate(text: &str) -> Result<Candidate, String> {
+/// Parses a candidate receipt's text. Checking it against the repository is separate
+/// (`validate_candidate_against_repository`), so a recorder without the repository can
+/// read the receipt an observation task carries.
+pub(super) fn parse_candidate(text: &str) -> Result<Candidate, String> {
     let document = json::parse_object(text)?;
     if json::u64_field(&document, "schema_version")? != 2 {
         return Err("release-candidate receipt schema is not version 2".to_owned());
@@ -257,7 +267,11 @@ pub(super) fn invalidate_promoted_candidate(root: &Path) -> Result<(), String> {
 }
 
 pub(super) fn write_candidate(root: &Path, candidate: &Candidate) -> Result<(), String> {
-    let document = format!(
+    write_receipt(root, CANDIDATE_RECEIPT, &render_candidate(candidate))
+}
+
+pub(super) fn render_candidate(candidate: &Candidate) -> String {
+    format!(
         concat!(
             "{{\"schema_version\":2,",
             "\"origin\":\"GITHUB_WORKFLOW_ARTIFACT\",",
@@ -288,8 +302,7 @@ pub(super) fn write_candidate(root: &Path, candidate: &Candidate) -> Result<(), 
         candidate.artifact_id,
         json::escape(&candidate.artifact_name),
         json::escape(&candidate.zip_name),
-    );
-    write_receipt(root, CANDIDATE_RECEIPT, &document)
+    )
 }
 
 pub(super) fn write_receipt(root: &Path, relative: &str, contents: &str) -> Result<(), String> {

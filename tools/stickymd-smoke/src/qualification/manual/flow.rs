@@ -9,6 +9,9 @@
 //! the answer, and again under the store lock just before the write. The answer is
 //! committed before the optional note is asked, so an interruption after a FAIL never
 //! loses it; the note is its own record.
+//!
+//! The loop starts from a `Start`, not from the store: the local recorder takes it from the
+//! log, the standalone recorder from its observation task.
 
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
@@ -16,16 +19,24 @@ use std::io::{self, BufRead, Write};
 use super::super::guided::GuidedStep;
 use super::super::manual_observation::environment::unchanged;
 use super::super::manual_observation::log::{Instance, MAX_NOTE_BYTES, Note, Observation, Status};
-use super::super::manual_observation::reduce::unresolved_fails;
 use super::super::manual_observation::registry::{
     Case, FIRST_RUN_DECLARATIONS, Fixture, InstanceRule,
 };
 use super::super::manual_observation::role::{Facts, match_role};
-use super::super::manual_observation::store::{Commit, Context};
-use super::super::manual_observation::target::Role;
+use super::super::manual_observation::store::Commit;
+use super::super::manual_observation::target::{Role, Target};
+use super::super::manual_observation::transfer::Unresolved;
 
 /// Longest declared value the log accepts.
 const MAX_DECLARED_BYTES: usize = 128;
+
+/// Where a session starts: the targets its roles come from, the log length its PASS answers
+/// resolve FAILs before (`base`), and the unresolved FAILs shown before each retest.
+pub(super) struct Start<'a> {
+    pub(super) target: &'a Target,
+    pub(super) base: u64,
+    pub(super) unresolved: &'a [Unresolved],
+}
 
 /// One scenario to observe, introduced by its guided step in a guided session.
 pub(super) struct Item {
@@ -75,22 +86,22 @@ enum Next {
     Quit,
 }
 
-/// Runs `items` as one session with ID `session` that starts from `context`. The session's
-/// `base` is the log length now, so its PASS resolves exactly the FAILs logged before it.
+/// Runs `items` as one session with ID `session` from `start`. Every observation carries
+/// `start.base`, so its PASS resolves exactly the FAILs logged before the session started.
 pub(super) fn run<B: Bench>(
     input: &mut impl BufRead,
     output: &mut impl Write,
     bench: &mut B,
-    context: &Context,
+    start: &Start,
     session: &str,
     items: &[Item],
 ) -> Result<Summary, String> {
     let mut recorder = Recorder {
         session,
-        base: context.log.observations.len() as u64,
+        base: start.base,
         next_seq: 1,
-        context,
-        unresolved: unresolved_fails(&context.log, Some(&context.target)),
+        target: start.target,
+        unresolved: start.unresolved,
         summary: Summary::default(),
     };
     let mut previous_step = None;
@@ -134,8 +145,8 @@ struct Recorder<'a> {
     session: &'a str,
     base: u64,
     next_seq: u64,
-    context: &'a Context,
-    unresolved: BTreeMap<(String, Role, String), Vec<u64>>,
+    target: &'a Target,
+    unresolved: &'a [Unresolved],
     summary: Summary,
 }
 
@@ -171,7 +182,7 @@ impl Recorder<'_> {
                 return self.unrecorded(output, &format!("environment capture failed: {error}"));
             }
         };
-        let role = match match_role(&start, &self.context.target) {
+        let role = match match_role(&start, self.target) {
             Ok(role) => role,
             Err(error) => return self.unrecorded(output, &error),
         };
@@ -325,22 +336,20 @@ impl Recorder<'_> {
     }
 
     fn show_unresolved(&self, output: &mut impl Write, item: &Item) -> Result<(), String> {
-        let log = &self.context.log;
         for role in Role::ALL {
-            let key = (item.case.id.to_owned(), role, item.scenario.to_owned());
-            for index in self.unresolved.get(&key).into_iter().flatten() {
-                let failed = &log.observations[*index as usize];
-                let note = log
-                    .notes
-                    .iter()
-                    .find(|note| note.session == failed.session && note.seq == failed.seq)
-                    .map_or("(no note)", |note| note.text.as_str());
+            for failed in self.unresolved.iter().filter(|failed| {
+                failed.role == role
+                    && failed.case == item.case.id
+                    && failed.scenario == item.scenario
+            }) {
                 writeln!(
                     output,
-                    "Unresolved FAIL on `{}`: {}#{} (log position {index}): {note}",
+                    "Unresolved FAIL on `{}`: {}#{} (log position {}): {}",
                     role.as_str(),
                     failed.session,
-                    failed.seq
+                    failed.seq,
+                    failed.position,
+                    failed.note.as_deref().unwrap_or("(no note)")
                 )
                 .map_err(io_error)?;
             }

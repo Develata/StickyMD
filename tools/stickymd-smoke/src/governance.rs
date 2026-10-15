@@ -165,10 +165,10 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-14.md");
     let content = read_text(&path)?;
     let observed = frozen_trace_ids(&content, "P14-A")?;
-    let expected: Vec<u16> = (1..=77).collect();
+    let expected: Vec<u16> = (1..=78).collect();
     if observed != expected {
         return Err(format!(
-            "{} IDs must be exactly P14-A01..P14-A77; observed {observed:?}",
+            "{} IDs must be exactly P14-A01..P14-A78; observed {observed:?}",
             path.display()
         ));
     }

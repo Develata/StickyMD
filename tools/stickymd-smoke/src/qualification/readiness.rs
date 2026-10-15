@@ -87,6 +87,7 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
             root,
             &release_decisions,
             digest,
+            &candidate.exe_sha256,
             &candidate.version,
             automated_ok,
             &mut blockers,
