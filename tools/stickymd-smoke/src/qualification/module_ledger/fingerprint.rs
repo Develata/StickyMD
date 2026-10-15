@@ -189,7 +189,7 @@ fn path_domains(path: &str) -> u64 {
     if path == "tests/fixtures/performance/resource-note-seed.md" {
         return RESOURCES_HARNESS;
     }
-    if is_non_behavior_document(path) || is_judgement_projection(path) {
+    if is_non_behavior_document(path) || is_judgement_projection(path) || is_manual_only(path) {
         return 0;
     }
     if path.starts_with("docs/plan/") || path.starts_with("docs/acceptance-cases/") {
@@ -259,6 +259,28 @@ fn is_non_behavior_document(path: &str) -> bool {
                 | "docs/coverage-matrix.md"
                 | "docs/release-checklist.md"
         )
+}
+
+/// Manual acceptance code and guidance: the observation recorder, its registry, store,
+/// reduction and readiness summary, and the campaign guide. Manual observations are their
+/// own evidence category, not ledger records (plan 11 `#manual-observation-log`), and no
+/// functional module runs or reads this code, so editing it must not invalidate one. The
+/// workspace test identity still covers it. What evidence writers share with the store
+/// (its reserved paths and lock) lives in `reserved_paths.rs`, which stays classified;
+/// `only_listed_code_names_manual_only_modules` keeps other code from reaching in.
+fn is_manual_only(path: &str) -> bool {
+    if path.starts_with("tools/manual/") {
+        return true;
+    }
+    path.strip_prefix("tools/stickymd-smoke/src/qualification/")
+        .is_some_and(|rest| {
+            matches!(
+                rest,
+                "manual.rs" | "guided.rs" | "manual_observation.rs" | "manual_readiness.rs"
+            ) || ["manual/", "manual_observation/", "manual_readiness/"]
+                .iter()
+                .any(|directory| rest.starts_with(directory))
+        })
 }
 
 /// Tool code that only reports or aggregates module judgements made elsewhere: it neither

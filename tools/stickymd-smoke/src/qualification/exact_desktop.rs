@@ -6,6 +6,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -19,6 +20,9 @@ mod evidence;
 
 pub(super) const TIMEOUT: Duration = Duration::from_secs(12);
 const UIA_HELPER_TIMEOUT: Duration = Duration::from_secs(35);
+/// A portable ZIP of a few MiB expands in seconds; a slow disk gets ample room.
+const EXPAND_TIMEOUT: Duration = Duration::from_secs(120);
+const TASKLIST_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(super) type CaseOperation = fn(&Path, &Path) -> Result<CaseEvidence, String>;
 
@@ -287,14 +291,24 @@ pub(super) fn invoke_uia(
     }
 }
 
+/// Runs `command` to completion within `timeout`, draining stdout and stderr concurrently
+/// up to `MAX_HELPER_OUTPUT` each; more is an error. The helper starts inside a job that
+/// also holds its descendants: when the helper exits or outlives the deadline (then it is
+/// terminated with a bounded wait), closing the job ends any descendant still holding the
+/// output pipes, so the readers reach end of file. Collecting both outputs shares one
+/// deadline.
 fn run_bounded_output(
     command: &mut Command,
     timeout: Duration,
     label: &str,
 ) -> Result<Output, String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = ChildGuard::spawn(command, &format!("cannot start {label}"))?;
+    // Started inside the job, so every descendant it creates is in the job too.
+    let job = crate::managed_process::Job::create(crate::managed_process::Descendants::Included)?;
+    let mut child = job.spawn(command, &format!("cannot start {label}"))?;
     let deadline = Instant::now() + timeout;
+    let stdout = drain(child.stdout.take(), label, "stdout")?;
+    let stderr = drain(child.stderr.take(), label, "stderr")?;
     let status = loop {
         match child
             .try_wait()
@@ -304,7 +318,9 @@ fn run_bounded_output(
             None if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
             None => {
                 let process_id = child.id();
-                child.kill_and_wait().map_err(|error| {
+                let stopped = child.stop_within(crate::managed_process::STOP_WAIT);
+                drop(job);
+                stopped.map_err(|error| {
                     format!(
                         "{label} exceeded {timeout:?}; failed to reap PID {process_id}: {error}"
                     )
@@ -315,26 +331,57 @@ fn run_bounded_output(
             }
         }
     };
-
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    child
-        .stdout
-        .take()
-        .ok_or_else(|| format!("{label} stdout pipe is unavailable"))?
-        .read_to_end(&mut stdout)
-        .map_err(|error| format!("cannot read {label} stdout: {error}"))?;
-    child
-        .stderr
-        .take()
-        .ok_or_else(|| format!("{label} stderr pipe is unavailable"))?
-        .read_to_end(&mut stderr)
-        .map_err(|error| format!("cannot read {label} stderr: {error}"))?;
+    // Ends any descendant still holding a pipe, so both readers reach end of file.
+    drop(job);
+    let collect_by = Instant::now()
+        + deadline
+            .saturating_duration_since(Instant::now())
+            .max(Duration::from_secs(2));
+    let collect = |pending: mpsc::Receiver<Result<Vec<u8>, String>>, stream: &str| {
+        pending
+            .recv_timeout(collect_by.saturating_duration_since(Instant::now()))
+            .map_err(|_| format!("{label} {stream} stayed open after it exited"))?
+    };
     Ok(Output {
         status,
-        stdout,
-        stderr,
+        stdout: collect(stdout, "stdout")?,
+        stderr: collect(stderr, "stderr")?,
     })
+}
+
+/// Longest stdout or stderr accepted from a helper.
+const MAX_HELPER_OUTPUT: u64 = 1024 * 1024;
+
+fn drain(
+    pipe: Option<impl Read + Send + 'static>,
+    label: &str,
+    stream: &'static str,
+) -> Result<mpsc::Receiver<Result<Vec<u8>, String>>, String> {
+    let mut pipe = pipe.ok_or_else(|| format!("{label} {stream} pipe is unavailable"))?;
+    let owner = label.to_owned();
+    let (sender, receiver) = mpsc::channel();
+    thread::Builder::new()
+        .name(format!("helper-{stream}"))
+        .spawn(move || {
+            let mut bytes = Vec::new();
+            let read = (&mut pipe)
+                .take(MAX_HELPER_OUTPUT + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|error| format!("cannot read {owner} {stream}: {error}"))
+                .and_then(|_| {
+                    if bytes.len() as u64 > MAX_HELPER_OUTPUT {
+                        Err(format!(
+                            "{owner} wrote more than {MAX_HELPER_OUTPUT} bytes to {stream}"
+                        ))
+                    } else {
+                        Ok(bytes)
+                    }
+                });
+            // The receiver is gone only after its deadline; the late result is moot.
+            let _ = sender.send(read);
+        })
+        .map_err(|error| format!("cannot start the {stream} reader for {label}: {error}"))?;
+    Ok(receiver)
 }
 
 pub(super) fn seed_note(program: &Path, text: &str) -> Result<(), String> {
@@ -404,17 +451,19 @@ pub(super) fn io_error(error: std::io::Error) -> String {
     error.to_string()
 }
 
-fn expand_zip(zip: &Path, destination: &Path, group: &str) -> Result<(), String> {
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Expand-Archive -LiteralPath $env:STICKYMD_EXACT_ZIP -DestinationPath $env:STICKYMD_EXACT_DEST -Force",
-        ])
-        .env("STICKYMD_EXACT_ZIP", zip)
-        .env("STICKYMD_EXACT_DEST", destination)
-        .output()
-        .map_err(|error| format!("cannot start Expand-Archive for {group}: {error}"))?;
+pub(super) fn expand_zip(zip: &Path, destination: &Path, group: &str) -> Result<(), String> {
+    let output = run_bounded_output(
+        Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Expand-Archive -LiteralPath $env:STICKYMD_EXACT_ZIP -DestinationPath $env:STICKYMD_EXACT_DEST -Force",
+            ])
+            .env("STICKYMD_EXACT_ZIP", zip)
+            .env("STICKYMD_EXACT_DEST", destination),
+        EXPAND_TIMEOUT,
+        &format!("Expand-Archive for {group}"),
+    )?;
     if output.status.success() {
         Ok(())
     } else {
@@ -440,11 +489,12 @@ pub(super) fn copy_directory(source: &Path, destination: &Path) -> Result<(), St
     Ok(())
 }
 
-fn running_stickymd_processes() -> Result<Vec<u32>, String> {
-    let output = Command::new("tasklist")
-        .args(["/FI", "IMAGENAME eq StickyMD.exe", "/FO", "CSV", "/NH"])
-        .output()
-        .map_err(|error| format!("cannot enumerate StickyMD processes: {error}"))?;
+pub(super) fn running_stickymd_processes() -> Result<Vec<u32>, String> {
+    let output = run_bounded_output(
+        Command::new("tasklist").args(["/FI", "IMAGENAME eq StickyMD.exe", "/FO", "CSV", "/NH"]),
+        TASKLIST_TIMEOUT,
+        "tasklist enumerating StickyMD processes",
+    )?;
     if !output.status.success() {
         return Err(format!(
             "tasklist failed while checking exact process isolation: {}",
@@ -486,6 +536,113 @@ mod tests {
     use super::{parse_stickymd_tasklist, run_bounded_output};
 
     const BOUNDED_CHILD_SENTINEL: &str = "STICKYMD_BOUNDED_HELPER_SENTINEL";
+    const NOISY_CHILD: &str = "STICKYMD_BOUNDED_HELPER_NOISY";
+    const PIPE_HOLDER_PARENT: &str = "STICKYMD_BOUNDED_HELPER_PIPE_PARENT";
+    const PIPE_HOLDER: &str = "STICKYMD_BOUNDED_HELPER_PIPE_HOLDER";
+
+    /// A helper that exits while a descendant still holds its stdout: the call returns
+    /// promptly and the descendant does not survive it.
+    #[test]
+    fn a_descendant_holding_the_output_is_ended_with_the_helper() {
+        const NAME: &str = "qualification::exact_desktop::tests::a_descendant_holding_the_output_is_ended_with_the_helper";
+        if let Some(sentinel) = std::env::var_os(PIPE_HOLDER) {
+            let sentinel = std::path::PathBuf::from(sentinel);
+            fs::write(
+                sentinel.with_extension("started"),
+                std::process::id().to_string(),
+            )
+            .expect("write pipe holder start");
+            thread::sleep(Duration::from_secs(3));
+            fs::write(sentinel, b"survived").expect("write pipe holder sentinel");
+            return;
+        }
+        if let Some(sentinel) = std::env::var_os(PIPE_HOLDER_PARENT) {
+            // Inherits this process's stdout, the helper pipe, and outlives it.
+            #[expect(
+                clippy::zombie_processes,
+                reason = "the descendant must outlive this helper; the helper's job reaps it"
+            )]
+            let _holder = Command::new(std::env::current_exe().expect("current test executable"))
+                .args(["--exact", NAME])
+                .env_remove(PIPE_HOLDER_PARENT)
+                .env(PIPE_HOLDER, &sentinel)
+                .spawn()
+                .expect("start pipe holder");
+            // The holder is known to run before this helper exits.
+            let started = std::path::PathBuf::from(sentinel).with_extension("started");
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !started.exists() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the holder never started"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+            return;
+        }
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-pipe-holder-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).expect("create pipe holder fixture");
+        let sentinel = root.join("survived.txt");
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        command
+            .args(["--exact", NAME])
+            .env(PIPE_HOLDER_PARENT, &sentinel);
+        let started = std::time::Instant::now();
+        let output =
+            run_bounded_output(&mut command, Duration::from_secs(30), "pipe-holding helper")
+                .expect("the helper itself completes");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(
+            sentinel.with_extension("started").exists(),
+            "the descendant never ran"
+        );
+        thread::sleep(Duration::from_secs(4));
+        assert!(!sentinel.exists(), "the descendant outlived its helper");
+        fs::remove_dir_all(root).expect("remove pipe holder fixture");
+    }
+
+    /// A helper that writes past the output cap is refused, not buffered without bound.
+    #[test]
+    fn bounded_helper_output_is_capped() {
+        if std::env::var_os(NOISY_CHILD).is_some() {
+            use std::io::Write;
+            let chunk = vec![b'x'; 64 * 1024];
+            let mut stdout = std::io::stdout().lock();
+            for _ in 0..(super::MAX_HELPER_OUTPUT / chunk.len() as u64 + 2) {
+                if stdout.write_all(&chunk).is_err() {
+                    return;
+                }
+            }
+            return;
+        }
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        command
+            .args([
+                "--exact",
+                "qualification::exact_desktop::tests::bounded_helper_output_is_capped",
+                "--nocapture",
+            ])
+            .env(NOISY_CHILD, "1");
+        let error = run_bounded_output(&mut command, Duration::from_secs(30), "noisy helper")
+            .expect_err("output over the cap");
+        assert!(error.contains("more than"), "{error}");
+    }
 
     #[test]
     fn exact_process_isolation_parser_is_locale_independent_and_deduplicated() {

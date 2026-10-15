@@ -20,25 +20,18 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 
-use super::super::file_lock::{SidecarGuard, sidecar};
-use super::super::path_identity;
-use super::log::{self, Carried, Header, Log, MAX_NOTE_BYTES, Observation, Reset};
-use super::reduce::unresolved_fails;
+use super::super::reserved_paths::MANUAL_ARCHIVE as ARCHIVE;
+pub(in crate::qualification) use super::super::reserved_paths::{
+    OBSERVATION_LOG, lock_manual_store as lock,
+};
+use super::log::{self, Carried, Header, Log, MAX_NOTE_BYTES, Note, Observation, Reset};
+use super::reduce::{invalidity, unresolved_fails};
 use super::registry;
 use super::target::{self, RoleTarget, TARGET_RECEIPT, Target};
 use crate::integrity::sha256_bytes;
 
-pub(in crate::qualification) const OBSERVATION_LOG: &str = "dist/evidence/manual-observations.json";
-const LOCK_FILE: &str = "dist/evidence/manual.lock";
-const ARCHIVE: &str = "dist/evidence/manual-archive";
 const MAX_LOG_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_TARGET_BYTES: u64 = 64 * 1024;
-
-/// Exclusive for any change; shared for reading a consistent target and log. Taken before
-/// the release decision lock whenever both are needed.
-pub(in crate::qualification) fn lock(root: &Path, exclusive: bool) -> Result<SidecarGuard, String> {
-    sidecar(&root.join(LOCK_FILE), exclusive, "manual observation store")
-}
 
 /// A target receipt and its log, checked to belong together, to the candidate and to the
 /// current registry.
@@ -122,6 +115,64 @@ pub(in crate::qualification) fn load(
         }
     }
     Ok(Context { target, log })
+}
+
+/// What a commit did when the store itself worked.
+#[derive(Debug, Eq, PartialEq)]
+pub(in crate::qualification) enum Commit {
+    Written,
+    /// `last_check` refused; nothing was written.
+    Refused(String),
+}
+
+/// Appends a recorder session's observations and notes to the context it started in. The
+/// session is refused with an error, writing nothing, when the candidate was promoted
+/// again, the context was replaced, or an observation's recorded environment does not
+/// match the role it claims (plan 11 has recording use the same role predicate as
+/// readiness). `last_check` runs under the lock after every other check and immediately
+/// before the write, for facts that must hold when the answer lands (a PASS's instance);
+/// `Ok(Some(reason))` refuses without writing.
+#[cfg_attr(
+    all(not(windows), not(test)),
+    expect(dead_code, reason = "only the Windows recorder records observations")
+)]
+pub(in crate::qualification) fn commit(
+    root: &Path,
+    candidate_receipt_sha256: &str,
+    current_candidate: &dyn Fn() -> Result<String, String>,
+    context_id: &str,
+    observations: Vec<Observation>,
+    notes: Vec<Note>,
+    last_check: &mut dyn FnMut() -> Result<Option<String>, String>,
+) -> Result<Commit, String> {
+    let _guard = lock(root, true)?;
+    still_promoted(candidate_receipt_sha256, current_candidate)?;
+    let mut context = load(root, candidate_receipt_sha256).map_err(|error| error.message())?;
+    if context.target.context_id != context_id {
+        return Err(
+            "the manual observation context was replaced after this session started; start a new session"
+                .to_owned(),
+        );
+    }
+    if let Some(reason) = observations
+        .iter()
+        .find_map(|observation| invalidity(observation, &context.target))
+    {
+        return Err(reason);
+    }
+    context.log.append(observations)?;
+    context.log.annotate(notes)?;
+    let text = log::render(&context.log);
+    if text.len() as u64 > MAX_LOG_BYTES {
+        return Err(format!(
+            "the observation log would exceed {MAX_LOG_BYTES} bytes"
+        ));
+    }
+    if let Some(reason) = last_check()? {
+        return Ok(Commit::Refused(reason));
+    }
+    crate::atomic_evidence::write(&root.join(OBSERVATION_LOG), text.as_bytes())?;
+    Ok(Commit::Written)
 }
 
 /// Declares new targets for the candidate and starts a fresh context. A context of another
@@ -226,7 +277,7 @@ fn replace(
     approved: &dyn Fn(&str) -> Result<bool, String>,
 ) -> Result<Target, String> {
     let (reset, carried, archive_label) = match replacement {
-        Replacement::Plain => (None, Vec::new(), "replaced".to_owned()),
+        Replacement::Plain => (None, (Vec::new(), Vec::new()), "replaced".to_owned()),
         Replacement::Reset { log, validated_by } => {
             // Streamed and unbounded: an oversized log can still be named and replaced.
             let path = root.join(OBSERVATION_LOG);
@@ -274,8 +325,11 @@ fn replace(
             reset,
         },
         observations: Vec::new(),
+        notes: Vec::new(),
     };
+    let (carried, carried_notes) = carried;
     log.append(carried)?;
+    log.annotate(carried_notes)?;
     let log_text = log::render(&log);
     if log_text.len() as u64 > MAX_LOG_BYTES {
         return Err(format!(
@@ -289,11 +343,12 @@ fn replace(
 }
 
 /// One FAIL per `(case, role, scenario)` that still has an unresolved failure, based on
-/// its latest one and citing every unresolved original. The merge keeps the new log far
-/// below its size limit whatever the old one held.
-fn carry(old: &Log, validated_by: Option<&Target>) -> Vec<Observation> {
+/// its latest one and citing every unresolved original, with that one's note. The merge
+/// keeps the new log far below its size limit whatever the old one held.
+fn carry(old: &Log, validated_by: Option<&Target>) -> (Vec<Observation>, Vec<Note>) {
     let session = target::new_context_id();
-    unresolved_fails(old, validated_by)
+    let mut notes = Vec::new();
+    let observations = unresolved_fails(old, validated_by)
         .into_values()
         .zip(1_u64..)
         .map(|(indices, seq)| {
@@ -302,17 +357,27 @@ fn carry(old: &Log, validated_by: Option<&Target>) -> Vec<Observation> {
                 .max()
                 .expect("unresolved FAILs are non-empty");
             let original = &old.observations[latest as usize];
+            if let Some(note) = old
+                .notes
+                .iter()
+                .find(|note| note.session == original.session && note.seq == original.seq)
+            {
+                notes.push(Note {
+                    session: session.clone(),
+                    seq,
+                    text: truncate(
+                        &format!(
+                            "carried from context {}: {}",
+                            old.header.context_id, note.text
+                        ),
+                        MAX_NOTE_BYTES,
+                    ),
+                });
+            }
             let mut carried = original.clone();
             carried.session.clone_from(&session);
             carried.seq = seq;
             carried.base = 0;
-            carried.note = truncate(
-                &format!(
-                    "carried from context {}: {}",
-                    old.header.context_id, original.note
-                ),
-                MAX_NOTE_BYTES,
-            );
             carried.carried_from = original
                 .carried_from
                 .iter()
@@ -324,7 +389,8 @@ fn carry(old: &Log, validated_by: Option<&Target>) -> Vec<Observation> {
                 .collect();
             carried
         })
-        .collect()
+        .collect();
+    (observations, notes)
 }
 
 fn truncate(text: &str, limit: usize) -> String {
@@ -374,15 +440,6 @@ fn parsed_log(root: &Path) -> Option<Box<Log>> {
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .and_then(|text| log::parse(&text).ok())
         .map(Box::new)
-}
-
-/// Whether `path` names a file of this store, its archive, or anything below them (so an
-/// output cannot occupy a store file that does not exist yet as a directory). Public
-/// writers refuse them: only the store, under its lock, may replace or archive them.
-pub(in crate::qualification) fn is_internal_path(root: &Path, path: &Path) -> bool {
-    [OBSERVATION_LOG, TARGET_RECEIPT, LOCK_FILE, ARCHIVE]
-        .iter()
-        .any(|reserved| path_identity::reaches(root, path, reserved))
 }
 
 pub(in crate::qualification) fn registry_sha256() -> Result<String, String> {

@@ -1,10 +1,14 @@
 //! The append-only manual observation log: its strict format and the append rule. Files,
 //! locking and context changes live in `store`; the verdict lives in `reduce`.
+//!
+//! An observer's note is its own record, appended after the observation it explains: a
+//! FAIL is written the moment it is answered, before the note is asked, and an appended
+//! observation is never rewritten.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::super::json::{self, Value};
-use super::registry;
+use super::registry::{self, FIRST_RUN_DECLARATIONS, InstanceRule};
 use super::role::Facts;
 use super::target::{Machine, Role, is_context_id};
 
@@ -63,7 +67,6 @@ pub(in crate::qualification) struct Observation {
     pub(in crate::qualification) scenario: String,
     pub(in crate::qualification) role: Role,
     pub(in crate::qualification) status: Status,
-    pub(in crate::qualification) note: String,
     pub(in crate::qualification) observed: Facts,
     /// Scenario parameters the observer declared (DPI, topology, theme, ...).
     pub(in crate::qualification) declared: BTreeMap<String, String>,
@@ -71,6 +74,14 @@ pub(in crate::qualification) struct Observation {
     pub(in crate::qualification) instance: Option<Instance>,
     pub(in crate::qualification) carried_from: Vec<Carried>,
     pub(in crate::qualification) recorded_at_unix: u64,
+}
+
+/// The observer's note on the observation `session#seq`; at most one per observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::qualification) struct Note {
+    pub(in crate::qualification) session: String,
+    pub(in crate::qualification) seq: u64,
+    pub(in crate::qualification) text: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,6 +103,7 @@ pub(in crate::qualification) struct Header {
 pub(in crate::qualification) struct Log {
     pub(in crate::qualification) header: Header,
     pub(in crate::qualification) observations: Vec<Observation>,
+    pub(in crate::qualification) notes: Vec<Note>,
 }
 
 impl Log {
@@ -152,6 +164,60 @@ impl Log {
         self.observations.extend(added);
         Ok(count)
     }
+
+    /// Appends `notes` in order under the same rule: a note already logged with the same
+    /// text is skipped, other text for the same observation rejects the whole batch, and
+    /// every note must name a logged observation. Returns how many were added.
+    pub(in crate::qualification) fn annotate(&mut self, notes: Vec<Note>) -> Result<usize, String> {
+        let observed = self
+            .observations
+            .iter()
+            .map(|observation| (observation.session.as_str(), observation.seq))
+            .collect::<BTreeSet<_>>();
+        let mut noted: HashMap<(&str, u64), &str> = self
+            .notes
+            .iter()
+            .map(|note| ((note.session.as_str(), note.seq), note.text.as_str()))
+            .collect();
+        let mut added = Vec::new();
+        for note in &notes {
+            validate_note(note, &observed)?;
+            match noted.get(&(note.session.as_str(), note.seq)) {
+                Some(text) if *text == note.text => {}
+                Some(_) => {
+                    return Err(format!(
+                        "observation {}#{} already has a different note",
+                        note.session, note.seq
+                    ));
+                }
+                None => {
+                    noted.insert((note.session.as_str(), note.seq), note.text.as_str());
+                    added.push(note);
+                }
+            }
+        }
+        let count = added.len();
+        let added = added.into_iter().cloned().collect::<Vec<_>>();
+        drop(noted);
+        self.notes.extend(added);
+        Ok(count)
+    }
+}
+
+fn validate_note(note: &Note, observed: &BTreeSet<(&str, u64)>) -> Result<(), String> {
+    if !observed.contains(&(note.session.as_str(), note.seq)) {
+        return Err(format!(
+            "note names observation {}#{}, which is not logged",
+            note.session, note.seq
+        ));
+    }
+    if note.text.is_empty() || note.text.len() > MAX_NOTE_BYTES {
+        return Err(format!(
+            "note on {}#{} is empty or exceeds {MAX_NOTE_BYTES} bytes",
+            note.session, note.seq
+        ));
+    }
+    Ok(())
 }
 
 pub(in crate::qualification) fn parse(text: &str) -> Result<Log, String> {
@@ -166,10 +232,11 @@ pub(in crate::qualification) fn parse(text: &str) -> Result<Log, String> {
             "registry_sha256",
             "reset",
             "observations",
+            "notes",
         ],
     )?;
-    if json::u64_field(&document, "schema_version")? != 1 {
-        return Err("manual observation log schema is not version 1".to_owned());
+    if json::u64_field(&document, "schema_version")? != 2 {
+        return Err("manual observation log schema is not version 2".to_owned());
     }
     let context_id = json::string_field(&document, "context_id")?;
     if !is_context_id(&context_id) {
@@ -202,9 +269,33 @@ pub(in crate::qualification) fn parse(text: &str) -> Result<Log, String> {
         }
         observations.push(observation);
     }
+    let observed = observations
+        .iter()
+        .map(|observation| (observation.session.as_str(), observation.seq))
+        .collect::<BTreeSet<_>>();
+    let mut noted = BTreeSet::new();
+    let mut notes = Vec::new();
+    for object in json::objects(&document, "notes")? {
+        json::exact_keys(object, &["session", "seq", "text"])?;
+        let note = Note {
+            session: json::string_field(object, "session")?,
+            seq: json::u64_field(object, "seq")?,
+            text: json::string_field(object, "text")?,
+        };
+        validate_note(&note, &observed)?;
+        if !noted.insert((note.session.clone(), note.seq)) {
+            return Err(format!(
+                "observation {}#{} has two notes",
+                note.session, note.seq
+            ));
+        }
+        notes.push(note);
+    }
+    drop(observed);
     Ok(Log {
         header,
         observations,
+        notes,
     })
 }
 
@@ -249,7 +340,6 @@ fn parse_observation(object: &Value) -> Result<Observation, String> {
             "scenario",
             "role",
             "status",
-            "note",
             "observed",
             "declared",
             "instance",
@@ -304,7 +394,6 @@ fn parse_observation(object: &Value) -> Result<Observation, String> {
         scenario: json::string_field(object, "scenario")?,
         role: Role::parse(&json::string_field(object, "role")?)?,
         status: Status::parse(&json::string_field(object, "status")?)?,
-        note: json::string_field(object, "note")?,
         observed: Facts {
             display_version: json::string_field(observed, "display_version")?,
             current_build: u32_field(observed, "current_build")?,
@@ -341,9 +430,6 @@ fn validate_observation(observation: &Observation, index: u64) -> Result<(), Str
             observation.case, observation.scenario
         ));
     }
-    if observation.note.len() > MAX_NOTE_BYTES {
-        return Err(format!("{label} note exceeds {MAX_NOTE_BYTES} bytes"));
-    }
     let facts = &observation.observed;
     if facts.display_version.is_empty()
         || facts.display_version.len() > 16
@@ -364,12 +450,32 @@ fn validate_observation(observation: &Observation, index: u64) -> Result<(), Str
     {
         return Err(format!("{label} has malformed declared parameters"));
     }
-    if observation
-        .instance
-        .as_ref()
-        .is_some_and(|instance| instance.pid == 0)
-    {
-        return Err(format!("{label} names process 0"));
+    match (case.instance, &observation.instance) {
+        (InstanceRule::FirstRunDeclared, None) => {
+            let [baseline, source, unchanged] = FIRST_RUN_DECLARATIONS;
+            if [baseline, source]
+                .iter()
+                .any(|key| observation.declared.get(*key).is_none_or(String::is_empty))
+                || observation.declared.get(unchanged).map(String::as_str) != Some("yes")
+            {
+                return Err(format!(
+                    "{label} lacks the first-run declarations {FIRST_RUN_DECLARATIONS:?}"
+                ));
+            }
+        }
+        (InstanceRule::FirstRunDeclared, Some(_)) => {
+            return Err(format!(
+                "{label} is a first-run declaration but names an instance"
+            ));
+        }
+        (InstanceRule::Launched(_) | InstanceRule::Preserved(_), None) => {
+            return Err(format!("{label} names no recorder-launched instance"));
+        }
+        (InstanceRule::Launched(_) | InstanceRule::Preserved(_), Some(instance)) => {
+            if instance.pid == 0 {
+                return Err(format!("{label} names process 0"));
+            }
+        }
     }
     if observation
         .carried_from
@@ -402,8 +508,21 @@ pub(in crate::qualification) fn render(log: &Log) -> String {
         .map(render_observation)
         .collect::<Vec<_>>()
         .join(",\n");
+    let notes = log
+        .notes
+        .iter()
+        .map(|note| {
+            format!(
+                "{{\"session\":\"{}\",\"seq\":{},\"text\":\"{}\"}}",
+                json::escape(&note.session),
+                note.seq,
+                json::escape(&note.text)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
     format!(
-        "{{\"schema_version\":1,\"context_id\":\"{}\",\"candidate_receipt_sha256\":\"{}\",\"target_sha256\":\"{}\",\"registry_sha256\":\"{}\",\"reset\":{reset},\"observations\":[\n{observations}\n]}}\n",
+        "{{\"schema_version\":2,\"context_id\":\"{}\",\"candidate_receipt_sha256\":\"{}\",\"target_sha256\":\"{}\",\"registry_sha256\":\"{}\",\"reset\":{reset},\"observations\":[\n{observations}\n],\"notes\":[\n{notes}\n]}}\n",
         header.context_id,
         header.candidate_receipt_sha256,
         header.target_sha256,
@@ -440,7 +559,7 @@ fn render_observation(observation: &Observation) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"session\":\"{}\",\"seq\":{},\"base\":{},\"case\":\"{}\",\"scenario\":\"{}\",\"role\":\"{}\",\"status\":\"{}\",\"note\":\"{}\",\"observed\":{{\"display_version\":\"{}\",\"current_build\":{},\"ubr\":{},\"edition_id\":\"{}\",\"native_machine\":\"{}\"}},\"declared\":{{{declared}}},\"instance\":{instance},\"carried_from\":[{carried}],\"recorded_at_unix\":{}}}",
+        "{{\"session\":\"{}\",\"seq\":{},\"base\":{},\"case\":\"{}\",\"scenario\":\"{}\",\"role\":\"{}\",\"status\":\"{}\",\"observed\":{{\"display_version\":\"{}\",\"current_build\":{},\"ubr\":{},\"edition_id\":\"{}\",\"native_machine\":\"{}\"}},\"declared\":{{{declared}}},\"instance\":{instance},\"carried_from\":[{carried}],\"recorded_at_unix\":{}}}",
         observation.session,
         observation.seq,
         observation.base,
@@ -448,7 +567,6 @@ fn render_observation(observation: &Observation) -> String {
         json::escape(&observation.scenario),
         observation.role.as_str(),
         observation.status.as_str(),
-        json::escape(&observation.note),
         json::escape(&facts.display_version),
         facts.current_build,
         facts.ubr,
@@ -463,6 +581,7 @@ pub(in crate::qualification) mod fixtures {
     use std::collections::BTreeMap;
 
     use super::{Header, Instance, Log, Observation, Status};
+    use crate::qualification::manual_observation::registry::{self, InstanceRule};
     use crate::qualification::manual_observation::role::fixtures::{current, previous};
     use crate::qualification::manual_observation::target::Role;
 
@@ -478,6 +597,7 @@ pub(in crate::qualification) mod fixtures {
                 reset: None,
             },
             observations: Vec::new(),
+            notes: Vec::new(),
         }
     }
 
@@ -491,6 +611,9 @@ pub(in crate::qualification) mod fixtures {
         role: Role,
         status: Status,
     ) -> Observation {
+        // The M34 first run is declared, with no instance; every other case has one.
+        let first_run = registry::find(case)
+            .is_some_and(|case| case.instance == InstanceRule::FirstRunDeclared);
         Observation {
             session: SESSION.to_owned(),
             seq,
@@ -499,13 +622,23 @@ pub(in crate::qualification) mod fixtures {
             scenario: scenario.to_owned(),
             role,
             status,
-            note: String::new(),
             observed: match role {
                 Role::Current => current(),
                 Role::Previous => previous(),
             },
-            declared: BTreeMap::from([("dpi".to_owned(), "150".to_owned())]),
-            instance: Some(Instance {
+            declared: if first_run {
+                BTreeMap::from(
+                    [
+                        ("vm-baseline", "Windows 11 25H2 image, no updates"),
+                        ("package-source", "GitHub release download"),
+                        ("unchanged-since-first-run", "yes"),
+                    ]
+                    .map(|(key, value)| (key.to_owned(), value.to_owned())),
+                )
+            } else {
+                BTreeMap::from([("dpi".to_owned(), "150".to_owned())])
+            },
+            instance: (!first_run).then(|| Instance {
                 exe_sha256: "a".repeat(64),
                 pid: 4242,
             }),
@@ -517,21 +650,87 @@ pub(in crate::qualification) mod fixtures {
 
 #[cfg(test)]
 mod tests {
-    use super::fixtures::{empty, observation};
-    use super::{MAX_OBSERVATIONS, Status, parse, render};
+    use super::fixtures::{SESSION, empty, observation};
+    use super::{MAX_NOTE_BYTES, MAX_OBSERVATIONS, Note, Status, parse, render};
     use crate::qualification::manual_observation::target::Role::{Current, Previous};
 
     #[test]
     fn a_rendered_log_parses_back_unchanged() {
         let mut log = empty();
-        let mut first = observation(1, 0, "P12-M01", "pinyin-100", Current, Status::Fail);
-        first.note = "candidate window \"clipped\"\nat 150%".to_owned();
         log.append(vec![
-            first,
+            observation(1, 0, "P12-M01", "pinyin-100", Current, Status::Fail),
             observation(2, 0, "P12-M23", "system-to-dark", Previous, Status::Pass),
+            observation(3, 0, "P12-M34", "clean-vm-first-run", Current, Status::Pass),
         ])
         .unwrap();
+        log.annotate(vec![note(1, "candidate window \"clipped\"\nat 150%")])
+            .unwrap();
         assert_eq!(parse(&render(&log)).unwrap(), log);
+    }
+
+    fn note(seq: u64, text: &str) -> Note {
+        Note {
+            session: SESSION.to_owned(),
+            seq,
+            text: text.to_owned(),
+        }
+    }
+
+    /// A FAIL is logged before its note is asked, so the note arrives as its own record.
+    #[test]
+    fn notes_follow_their_observation_once() {
+        let mut log = empty();
+        assert!(log.annotate(vec![note(1, "early")]).is_err());
+        log.append(vec![observation(
+            1,
+            0,
+            "P12-M25",
+            "formulas",
+            Current,
+            Status::Fail,
+        )])
+        .unwrap();
+        assert_eq!(
+            log.annotate(vec![note(1, "error state missing")]).unwrap(),
+            1
+        );
+        assert_eq!(
+            log.annotate(vec![note(1, "error state missing")]).unwrap(),
+            0
+        );
+        let error = log.annotate(vec![note(1, "other")]).unwrap_err();
+        assert!(error.contains("different note"), "{error}");
+        for bad in [note(1, ""), note(1, &"x".repeat(MAX_NOTE_BYTES + 1))] {
+            assert!(log.annotate(vec![bad]).is_err());
+        }
+        assert_eq!(log.notes.len(), 1);
+        let text = render(&log);
+        let twice = text.replacen(
+            "\n]}\n",
+            &format!(",\n{}\n]}}\n", text.lines().nth(3).unwrap()),
+            1,
+        );
+        assert!(parse(&twice).unwrap_err().contains("two notes"), "{twice}");
+    }
+
+    #[test]
+    fn instances_follow_the_registry_rule() {
+        let mut log = empty();
+        let mut declared_only = observation(1, 0, "P12-M05", "restore-tray", Current, Status::Pass);
+        declared_only.instance = None;
+        let mut launched_first_run =
+            observation(1, 0, "P12-M34", "clean-vm-first-run", Current, Status::Pass);
+        launched_first_run.instance =
+            observation(1, 0, "P12-M05", "restore-tray", Current, Status::Pass).instance;
+        let mut undeclared_first_run =
+            observation(1, 0, "P12-M34", "clean-vm-first-run", Current, Status::Pass);
+        undeclared_first_run
+            .declared
+            .insert("unchanged-since-first-run".to_owned(), "no".to_owned());
+        for bad in [declared_only, launched_first_run, undeclared_first_run] {
+            assert!(log.append(vec![bad]).is_err());
+        }
+        assert!(log.observations.is_empty());
     }
 
     #[test]
@@ -612,14 +811,16 @@ mod tests {
             ),
             ("\"pid\":4242", "\"pid\":0"),
             ("\"dpi\":\"150\"", "\"dpi\":150"),
+            ("\"schema_version\":2", "\"schema_version\":1"),
+            ("\"notes\":[", "\"notes\":7,\"x\":["),
         ] {
             let broken = good.replacen(from, to, 1);
             assert_ne!(broken, good, "{from}");
             assert!(parse(&broken).is_err(), "{to}");
         }
         let twice = good.replacen(
-            "\n]}",
-            &format!(",{}\n]}}", good.lines().nth(1).unwrap()),
+            "\n],\"notes\"",
+            &format!(",{}\n],\"notes\"", good.lines().nth(1).unwrap()),
             1,
         );
         assert!(parse(&twice).unwrap_err().contains("twice"));

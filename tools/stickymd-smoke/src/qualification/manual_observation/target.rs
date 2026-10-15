@@ -6,7 +6,7 @@ use std::hash::{BuildHasher, Hasher};
 
 use super::super::json;
 
-pub(in crate::qualification) const TARGET_RECEIPT: &str = "dist/evidence/manual-targets.json";
+pub(in crate::qualification) use super::super::reserved_paths::TARGET_RECEIPT;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(in crate::qualification) enum Role {

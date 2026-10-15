@@ -216,8 +216,10 @@ docs/acceptance-cases/phase-XX.md
   由 owner 的 `Drop` 执行 best-effort `kill + wait`，不能依赖函数末尾的手工清理语句。
 - Startup Performance 与所有 Resources 模块在创建 fixture 或启动新 child 前，必须枚举当前
   Windows session 中既有的 `StickyMD.exe`。若其可执行文件位于 smoke tooling 自己命名的系统
-  temp qualification root，则判为 stale smoke-owned process，当前测量 fail closed，且不得生成
-  Performance/Resources PASS receipt。
+  temp qualification root（含人工记录器的会话根目录；按报告路径或其最终路径（解析 8.3 短名与 junction）中任一级
+  目录名识别，不要求位于本进程的 TEMP 下，因为另一终端可能使用不同的 TMP），则判为 stale smoke-owned process，当前测量 fail closed，且不得生成
+  Performance/Resources PASS receipt。无法读取或解析某个 `StickyMD.exe` 的映像路径、或进程枚举提前中断时，隔离
+  无法确认，同样 fail closed；列出后已退出的进程不计入。
 - stale-process preflight 只观测并报告 PID/count，不把完整 executable path 写入机器可读 evidence。
   它不得自动终止 preflight 前已经存在的进程，也不得把用户自己的 portable StickyMD 当作可清理
   对象；用户进程的关闭权始终属于 USER。
@@ -289,14 +291,16 @@ PASS 观察；最终 manual PASS 仍额外绑定 Promoted Candidate。
   Manual 集合精确相等；记录器、校验与 decision key 校验都读取它。注册表变化即新上下文。
 - **观察日志**：`dist/evidence/` 中只追加的日志，头部绑定 candidate receipt 摘要、目标收据摘要与注册表摘要。每条
   观察有稳定 ID（会话 ID 与会话内序号）和 `base`（会话开始或观察任务导出时的日志长度），状态只能是 `MANUAL_PASS`
-  或 `MANUAL_FAIL`；`NOT_TESTED`、跳过与中止从不写入。某场景的 FAIL 一经观察即落盘（先于可选备注）。同 ID 同内容
+  或 `MANUAL_FAIL`；`NOT_TESTED`、跳过与中止从不写入。某场景的 FAIL 一经观察即落盘（先于可选备注）；备注是追加在其观察之后的
+  独立记录，每条观察至多一条，同观察同文本的重复为 no-op、不同文本拒绝。同 ID 同内容
   的重复导入为 no-op，同 ID 不同内容拒绝。日志与观察包在读取前先检查字节上限。
 - **状态归约**（每个 `(项, 角色)`）：场景为 FAIL 当且仅当存在某条 FAIL 观察，且没有任何 `base` 已包含它的 PASS；
   否则有 PASS 即为 PASS，都没有则未覆盖。该判定与登记顺序无关：迟到的旧 PASS 不能清除较新的 FAIL，迟到的旧 FAIL
   在正式重测前保持阻断。证据无效 → 阻断；任一必需场景为 FAIL → `MANUAL_FAIL`；全部必需场景为 PASS →
   `MANUAL PASS`；其余 → `NOT TESTED`，并列出已覆盖与缺失场景。
-- **并发与恢复**：不被替换的 sidecar 锁 `dist/evidence/manual.lock`；记录、导入与目标声明取排他锁，readiness 与
-  观察任务导出取共享锁，等待有上限。导出在同一把锁内从同一份日志快照取得上下文、`base` 与未解除的 FAIL。写失败
+- **并发与恢复**：不被替换的 sidecar 锁 `dist/evidence/manual.lock`；记录、导入与目标声明取排他锁，Promote 替换与 Source
+  Freeze 作废 candidate 时也取排他锁（提交时的 candidate 复核与写入因此不被插入；锁内复核只读 candidate 收据，不
+  等待仓库子进程），readiness 与观察任务导出取共享锁，等待有上限。导出在同一把锁内从同一份日志快照取得上下文、`base` 与未解除的 FAIL。写失败
   非零退出；观察包整体校验后一次原子提交。声明目标收据的同一事务写入合法的零观察日志（只有头部）；此后日志缺失、
   零字节或损坏都视为日志丢失并阻断，不得当作首次初始化。日志达到条数上限后拒绝新观察。日志损坏即阻断；重建日志需要 USER 决定
   `RESET-MANUAL-LOG-<digest>`（`<digest>` 为现有日志文件字节的 SHA-256，日志缺失时为空字节串的 SHA-256）并产生新
@@ -306,8 +310,17 @@ PASS 观察；最终 manual PASS 仍额外绑定 Promoted Candidate。
   readiness 报告其已被取代。
 - **被测实例**：记录器校验候选 ZIP、解压到会话目录、按场景放入 fixture 并自行启动 EXE，观察记录 EXE 摘要与进程
   ID；同目录第二次启动、双副本、跨断屏/睡眠/RDP 保留原进程与原 note（不得重启或重新放入 fixture 来完成恢复）等
-  要求由注册表按场景声明；预期的断连期间环境探测失败不判产品 FAIL。会话目录在正常与异常退出时都清理，保留有
-  上限。开始前确认没有其他 StickyMD 实例；记录器不终止它未启动的进程。
+  要求由注册表按场景声明；预期的断连期间环境探测失败不判产品 FAIL。fixture 随工具提供：输入法项用空白 note，
+  其余用渲染压力 note 与全部图片格式（含超限图片）。PASS 要求记录器启动的进程在提交时仍在运行且是唯一的
+  StickyMD（在存储锁内、写入之前确认）。候选已启动但未在限时内完成初始化时，记录器报告原因，观察者可记录该实例的
+  FAIL 或不记录，PASS 被拒绝；启动之前的准备失败（复制、fixture、摘要不符）不形成观察。实例以挂起状态创建、加入 Job 后才恢复运行，随记录器退出（含中断）
+  而终止，StickyMD 自己启动的进程（如打开链接的浏览器）不受影响；创建与加入 Job 之间被强制终止时会留下一个从未运行的
+  挂起实例，下一次会话拒绝启动并指明它来自中断的记录器。恢复挂起线程失败（含挂起计数不为 1）时该实例被停止、场景
+  不记录；这些原生失败路径只验证了判定逻辑，未做原生故障注入。辅助进程（解压、进程枚举、UIA）同样在包含其子孙的 Job 中
+  启动，退出或超时后其子孙一并结束。会话目录持有会话锁，创建、删除与清理都在会话根目录的锁下串行；正常退出时删除，异常退出后由下一次会话清理
+  失去锁且名称符合会话格式的目录（每次清理的条目数、删除数与耗时有上限，其余留待以后），无法判定的保留并报告，根目录
+  为链接时拒绝。开始前确认没有其他 StickyMD 实例；
+  记录器不终止它未启动的进程。
 - **其他机器**：主工作区导出观察任务（含完整 candidate receipt、目标收据、注册表片段、`base`，以及所选场景尚未
   解除的 FAIL 的 ID、登记序号与说明，记录器在重测前展示）；工具二进制以观察包模式在被测机器上运行，不需要仓库，
   所需 fixture 与 helper 随工具提供；主工作区在锁内严格导入，并复用现有 candidate 校验。
@@ -445,7 +458,9 @@ core），以及任何编辑或偏好变化之后的持久化（autosave、自�
 lock 与 manifest 版本不一致、lock 未被跟踪），两份文件都回退为原始字节；只有与判定时逐字节相同的内容才使用
 规范化形式。规范化算法版本写入指纹头；Source Freeze、workspace-tests identity 与 exact-byte 门始终使用原始字节。
 发布说明、README/CHANGELOG/CONTRIBUTING/SECURITY、AGENTS 指南、coverage matrix、release checklist、
-`docs/{adr,overview,features}/`、README 图片与许可证文本不是任何功能模块执行或读取的输入，不使功能模块失效；
+`docs/{adr,overview,features}/`、README 图片与许可证文本，以及人工验收代码（记录器、人工项注册表、观察存储、归约
+与 readiness 人工汇总）和 `tools/manual/` 指南，不是任何功能模块执行或读取的输入，不使功能模块失效（workspace
+tests 的身份仍覆盖这些代码；各证据写入方共用的人工存储保留路径与锁不在此列，仍是全部功能模块的输入）；
 其中由 governance 检查或打包读取的文件继续由 CI 选择与 exact-byte 门覆盖。`docs/plan/`、`docs/acceptance-cases/`
 因跨域约束仍对全部功能模块保守传播。
 

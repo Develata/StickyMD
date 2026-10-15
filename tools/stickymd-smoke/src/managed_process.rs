@@ -9,11 +9,24 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod job;
+
+pub(crate) use job::{Descendants, Job};
+
+/// The manual recorder's session root under the system temp directory; its instances are
+/// smoke-owned like every other qualification root.
+pub(crate) const MANUAL_SESSIONS: &str = "stickymd-manual-sessions";
+
 const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// A terminated process exits in milliseconds; one that has not after this is stuck in
+/// the kernel, and waiting longer would only hang the caller.
+pub(crate) const STOP_WAIT: Duration = Duration::from_secs(10);
 const FALSE: i32 = 0;
 const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
 const INVALID_SNAPSHOT_HANDLE: isize = -1;
 const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x0000_1000;
+const ERROR_INVALID_PARAMETER: i32 = 87;
+const ERROR_NO_MORE_FILES: i32 = 18;
 const MAX_WINDOWS_PATH_CHARS: usize = 32_768;
 
 /// Owns one smoke-started GUI process and reaps it when the scope ends.
@@ -21,17 +34,8 @@ pub(crate) struct ChildGuard(Child);
 
 impl ChildGuard {
     pub(crate) fn start(executable: &Path) -> Result<Self, String> {
-        let parent = executable
-            .parent()
-            .ok_or_else(|| format!("{} has no parent", executable.display()))?;
-        let mut command = Command::new(executable);
-        command
-            .current_dir(parent)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
         Self::spawn(
-            &mut command,
+            &mut gui_command(executable)?,
             &format!("cannot start {}", executable.display()),
         )
     }
@@ -54,16 +58,29 @@ impl ChildGuard {
             .map_err(|error| format!("cannot inspect StickyMD child: {error}"))
     }
 
+    /// Terminates the process and reaps it, waiting at most `STOP_WAIT`.
     pub(crate) fn kill_and_wait(&mut self) -> Result<(), String> {
+        self.stop_within(STOP_WAIT)
+    }
+
+    /// Terminates the process if it runs and waits at most `limit` for it to exit.
+    pub(crate) fn stop_within(&mut self, limit: Duration) -> Result<(), String> {
         if self.is_running()? {
             self.0
                 .kill()
                 .map_err(|error| format!("cannot terminate StickyMD child: {error}"))?;
         }
-        self.0
-            .wait()
-            .map(|_| ())
-            .map_err(|error| format!("cannot wait for StickyMD child: {error}"))
+        let deadline = Instant::now() + limit;
+        while self.is_running()? {
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "PID {} did not exit within {limit:?} of termination",
+                    self.0.id()
+                ));
+            }
+            thread::sleep(EXIT_POLL_INTERVAL);
+        }
+        Ok(())
     }
 
     pub(crate) fn wait_for_exit(&mut self, timeout: Duration) -> Result<(), String> {
@@ -106,30 +123,64 @@ impl DerefMut for ChildGuard {
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        match self.0.try_wait() {
-            Ok(Some(_)) => {}
-            Ok(None) | Err(_) => {
-                let _ = self.0.kill();
-                let _ = self.0.wait();
-            }
+        // Bounded, so an unkillable process cannot hang the scope that owns it.
+        if let Err(error) = self.stop_within(STOP_WAIT) {
+            eprintln!("warning: cannot reap a smoke-started process: {error}");
         }
     }
+}
+
+/// The command that starts a GUI `executable` from its own directory with no console I/O.
+pub(crate) fn gui_command(executable: &Path) -> Result<Command, String> {
+    let parent = executable
+        .parent()
+        .ok_or_else(|| format!("{} has no parent", executable.display()))?;
+    let mut command = Command::new(executable);
+    command
+        .current_dir(parent)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    Ok(command)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProcessSnapshot {
     pid: u32,
-    executable: PathBuf,
+    /// Why the image path could not be read, when it could not.
+    executable: Result<PathBuf, String>,
 }
 
-/// Rejects a performance/resource measurement contaminated by an older smoke child.
+/// Rejects a performance/resource measurement contaminated by an older smoke child, and
+/// one whose isolation cannot be confirmed because a StickyMD image path is unreadable.
 pub(crate) fn ensure_no_stale_smoke_stickymd() -> Result<(), String> {
-    let temporary = std::env::temp_dir();
-    let mut stale = running_stickymd_processes()?
-        .into_iter()
-        .filter(|process| is_smoke_owned_stickymd(&temporary, &process.executable))
-        .map(|process| process.pid)
-        .collect::<Vec<_>>();
+    let mut stale = Vec::new();
+    let mut unconfirmed = Vec::new();
+    for process in running_stickymd_processes()? {
+        match &process.executable {
+            Ok(executable) if is_smoke_owned_stickymd(executable) => stale.push(process.pid),
+            // The reported path may name a junction or carry 8.3 names; the final path
+            // resolves both, and a smoke root under either name counts.
+            Ok(executable) => match std::fs::canonicalize(executable) {
+                Ok(final_path) if is_smoke_owned_stickymd(&final_path) => {
+                    stale.push(process.pid);
+                }
+                Ok(_) => {}
+                Err(error) => unconfirmed.push(format!(
+                    "PID {}: cannot resolve {}: {error}",
+                    process.pid,
+                    executable.display()
+                )),
+            },
+            Err(error) => unconfirmed.push(format!("PID {}: {error}", process.pid)),
+        }
+    }
+    if !unconfirmed.is_empty() {
+        return Err(format!(
+            "cannot confirm measurement isolation: {}; the preflight will not terminate pre-existing processes",
+            unconfirmed.join("; ")
+        ));
+    }
     stale.sort_unstable();
     stale.dedup();
     if stale.is_empty() {
@@ -141,45 +192,35 @@ pub(crate) fn ensure_no_stale_smoke_stickymd() -> Result<(), String> {
     }
 }
 
-fn is_smoke_owned_stickymd(temporary: &Path, executable: &Path) -> bool {
+/// Whether `executable` runs from a qualification root the tooling names. Any directory of
+/// the path counts, not only one under this process's temp directory: another terminal may
+/// run the tooling with another `TMP`. A user directory that happens to carry such a name
+/// only makes a measurement refuse to start; nothing is ever terminated.
+fn is_smoke_owned_stickymd(executable: &Path) -> bool {
     if !executable
         .file_name()
         .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("StickyMD.exe"))
     {
         return false;
     }
-    let Some(relative) = strip_prefix_case_insensitive(executable, temporary) else {
-        return false;
-    };
-    let Some(root_name) = relative.components().next() else {
-        return false;
-    };
-    let root_name = root_name.as_os_str().to_string_lossy().to_ascii_lowercase();
-    [
-        "stickymd-smoke-",
-        "stickymd-g3-",
-        "stickymd-g4-",
-        "stickymd-g5-",
-        "stickymd-downloaded-smoke-",
-        "stickymd-verify-",
-    ]
-    .iter()
-    .any(|prefix| root_name.starts_with(prefix))
-}
-
-fn strip_prefix_case_insensitive(path: &Path, prefix: &Path) -> Option<PathBuf> {
-    let mut path_components = path.components();
-    for expected in prefix.components() {
-        let actual = path_components.next()?;
-        if !actual
-            .as_os_str()
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&expected.as_os_str().to_string_lossy())
-        {
-            return None;
-        }
-    }
-    Some(path_components.collect())
+    executable
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .any(|component| {
+            let name = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+            [
+                "stickymd-smoke-",
+                "stickymd-g3-",
+                "stickymd-g4-",
+                "stickymd-g5-",
+                "stickymd-downloaded-smoke-",
+                "stickymd-verify-",
+                MANUAL_SESSIONS,
+            ]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+        })
 }
 
 fn running_stickymd_processes() -> Result<Vec<ProcessSnapshot>, String> {
@@ -203,40 +244,66 @@ fn running_stickymd_processes() -> Result<Vec<ProcessSnapshot>, String> {
     let mut available = unsafe { Process32FirstW(snapshot.0, &raw mut entry) } != FALSE;
     let mut processes = Vec::new();
     while available {
-        if executable_name(&entry.executable).eq_ignore_ascii_case("StickyMD.exe")
-            && let Some(executable) = process_executable(entry.process_id)
-        {
-            processes.push(ProcessSnapshot {
-                pid: entry.process_id,
-                executable,
-            });
+        if executable_name(&entry.executable).eq_ignore_ascii_case("StickyMD.exe") {
+            // A process that exited since the snapshot is no longer a contaminant.
+            match query_executable(entry.process_id) {
+                Ok(Some(executable)) => processes.push(ProcessSnapshot {
+                    pid: entry.process_id,
+                    executable: Ok(executable),
+                }),
+                Ok(None) => {}
+                Err(error) => processes.push(ProcessSnapshot {
+                    pid: entry.process_id,
+                    executable: Err(error),
+                }),
+            }
         }
         // SAFETY: snapshot and entry remain valid across the enumeration loop.
         available = unsafe { Process32NextW(snapshot.0, &raw mut entry) } != FALSE;
+    }
+    // The enumeration ends with ERROR_NO_MORE_FILES; anything else lost processes.
+    let end = std::io::Error::last_os_error();
+    if end.raw_os_error() != Some(ERROR_NO_MORE_FILES) {
+        return Err(format!(
+            "process enumeration for measurement isolation stopped early: {end}"
+        ));
     }
     Ok(processes)
 }
 
 pub(crate) fn process_executable(pid: u32) -> Option<PathBuf> {
+    query_executable(pid).ok().flatten()
+}
+
+/// The image path of `pid`; `Ok(None)` when the process no longer exists.
+fn query_executable(pid: u32) -> Result<Option<PathBuf>, String> {
     // SAFETY: OpenProcess receives a PID from a Toolhelp snapshot or HWND query.
     // The returned query-only handle is owned by the local guard when non-null.
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) };
     if process == 0 {
-        return None;
+        let error = std::io::Error::last_os_error();
+        // ERROR_INVALID_PARAMETER: no process has this ID any more.
+        return if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER) {
+            Ok(None)
+        } else {
+            Err(format!("cannot open the process: {error}"))
+        };
     }
     let process = ProcessHandle(process);
     let mut buffer = vec![0_u16; MAX_WINDOWS_PATH_CHARS];
-    let mut length = u32::try_from(buffer.len()).ok()?;
+    let mut length = u32::try_from(buffer.len()).map_err(|error| error.to_string())?;
     // SAFETY: process is a live query handle; buffer is writable UTF-16 storage
     // whose capacity is supplied in length. The API retains neither pointer.
     if unsafe { QueryFullProcessImageNameW(process.0, 0, buffer.as_mut_ptr(), &raw mut length) }
         == FALSE
     {
-        return None;
+        return Err(format!(
+            "cannot read the image path: {}",
+            std::io::Error::last_os_error()
+        ));
     }
-    let length = usize::try_from(length).ok()?;
-    buffer.truncate(length);
-    Some(PathBuf::from(String::from_utf16_lossy(&buffer)))
+    buffer.truncate(usize::try_from(length).map_err(|error| error.to_string())?);
+    Ok(Some(PathBuf::from(String::from_utf16_lossy(&buffer))))
 }
 
 fn executable_name(buffer: &[u16]) -> String {
@@ -297,6 +364,7 @@ unsafe extern "system" {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
     use std::sync::Mutex;
     use std::thread;
@@ -342,26 +410,24 @@ mod tests {
     #[test]
     fn only_known_smoke_temp_roots_are_classified_as_tool_owned() {
         let temporary = PathBuf::from(r"C:\Users\Tester\AppData\Local\Temp");
-        assert!(is_smoke_owned_stickymd(
-            &temporary,
-            &temporary.join(r"stickymd-smoke-42-99\preview-1\StickyMD.exe")
-        ));
-        assert!(is_smoke_owned_stickymd(
-            &temporary,
-            &temporary.join(r"StickyMD-G4-42-99\case\stickymd.EXE")
-        ));
-        assert!(is_smoke_owned_stickymd(
-            &temporary,
-            &temporary.join(r"stickymd-verify-42-99\runtime\ascii\StickyMD.exe")
-        ));
-        assert!(!is_smoke_owned_stickymd(
-            &temporary,
-            Path::new(r"D:\Notes\Research\StickyMD.exe")
-        ));
-        assert!(!is_smoke_owned_stickymd(
-            &temporary,
-            &temporary.join(r"my-portable-note\StickyMD.exe")
-        ));
+        for owned in [
+            temporary.join(r"stickymd-smoke-42-99\preview-1\StickyMD.exe"),
+            temporary.join(r"StickyMD-G4-42-99\case\stickymd.EXE"),
+            temporary.join(r"stickymd-verify-42-99\runtime\ascii\StickyMD.exe"),
+            temporary.join(r"stickymd-manual-sessions\42-99\instance-1\StickyMD.exe"),
+            // Another terminal's TMP: the root is recognized wherever it lives.
+            PathBuf::from(r"C:\Temp\Manual\stickymd-manual-sessions\1-2\instance-1\StickyMD.exe"),
+            PathBuf::from(r"D:\scratch\stickymd-g5-7-8\case\StickyMD.exe"),
+        ] {
+            assert!(is_smoke_owned_stickymd(&owned), "{}", owned.display());
+        }
+        for user in [
+            PathBuf::from(r"D:\Notes\Research\StickyMD.exe"),
+            temporary.join(r"my-portable-note\StickyMD.exe"),
+            temporary.join(r"stickymd-smoke-42-99\helper.exe"),
+        ] {
+            assert!(!is_smoke_owned_stickymd(&user), "{}", user.display());
+        }
     }
 
     #[test]
@@ -372,21 +438,90 @@ mod tests {
         }
 
         let _serial = PROCESS_TEST_LOCK.lock().expect("lock process test");
-        for prefix in ["stickymd-smoke", "stickymd-verify"] {
-            assert_stale_preflight_preserves_child(prefix);
+        for prefix in ["stickymd-smoke", "stickymd-verify", super::MANUAL_SESSIONS] {
+            let root = unique_temp("preflight")
+                .with_file_name(format!("{prefix}-{}-preflight", std::process::id()));
+            assert_stale_preflight_preserves_child(&root, &root, &root);
+        }
+        // A recorder run with another TMP: its sessions root is not directly under ours.
+        let other_tmp = unique_temp("preflight-other-tmp");
+        let root = other_tmp.join(super::MANUAL_SESSIONS).join("1-2");
+        assert_stale_preflight_preserves_child(&root, &root, &other_tmp);
+
+        // Started through a junction whose own name is not a smoke root.
+        let base = unique_temp("preflight-alias");
+        let real = base.join("stickymd-smoke-alias-target");
+        let alias = base.join("plain-alias");
+        fs::create_dir_all(&real).expect("create alias target");
+        let made = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "New-Item -ItemType Junction -Path $env:STICKY_LINK -Target $env:STICKY_TARGET -ErrorAction Stop | Out-Null",
+            ])
+            .env("STICKY_LINK", &alias)
+            .env("STICKY_TARGET", &real)
+            .output()
+            .expect("create junction");
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+        assert_stale_preflight_preserves_child(&real, &alias, &base);
+
+        // Started through an 8.3 short path, when the volume generates short names.
+        let base = unique_temp("preflight-short");
+        let real = base.join("stickymd-smoke-long-directory-name");
+        fs::create_dir_all(&real).expect("create short-name target");
+        // `raw_arg`: cmd parses its own command line, not the C runtime's quoting.
+        let short = Command::new("cmd")
+            .args(["/d", "/c"])
+            .raw_arg("for %I in (\"%STICKY_LONG%\") do @echo %~sI")
+            .env("STICKY_LONG", &real)
+            .output()
+            .expect("query short path");
+        assert!(
+            short.status.success() && !short.stdout.is_empty(),
+            "the short-name query failed: {}",
+            String::from_utf8_lossy(&short.stderr)
+        );
+        let short = PathBuf::from(String::from_utf8_lossy(&short.stdout).trim());
+        // The smoke directory itself must be shortened for this case to mean anything.
+        if short
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().contains('~'))
+        {
+            assert!(!is_smoke_owned_stickymd(&short.join("StickyMD.exe")));
+            eprintln!("8.3 case runs through {}", short.display());
+            assert_stale_preflight_preserves_child(&real, &short, &base);
+        } else {
+            // Evidence runs set this so a skipped case cannot pass unnoticed.
+            assert!(
+                std::env::var_os("STICKYMD_REQUIRE_SHORT_NAMES").is_none(),
+                "the volume did not shorten {}",
+                real.display()
+            );
+            eprintln!(
+                "8.3 case skipped: the volume did not shorten {}",
+                real.display()
+            );
+            fs::remove_dir_all(&base).expect("remove short-name fixture");
         }
     }
 
-    fn assert_stale_preflight_preserves_child(prefix: &str) {
-        let root = unique_temp("preflight")
-            .with_file_name(format!("{prefix}-{}-preflight", std::process::id()));
-        fs::create_dir(&root).expect("create preflight fixture");
-        let executable = root.join("StickyMD.exe");
+    /// Copies the test executable to `<root>/StickyMD.exe`, runs it as
+    /// `<launch>/StickyMD.exe` (the same file under another name, or the same path), checks
+    /// the preflight names it without terminating it, then removes `cleanup`.
+    fn assert_stale_preflight_preserves_child(root: &Path, launch: &Path, cleanup: &Path) {
+        fs::create_dir_all(root).expect("create preflight fixture");
         fs::copy(
             std::env::current_exe().expect("current test executable"),
-            &executable,
+            root.join("StickyMD.exe"),
         )
         .expect("copy preflight child executable");
+        let executable = launch.join("StickyMD.exe");
         let mut child = Command::new(&executable)
             .args([
                 "--exact",
@@ -399,11 +534,26 @@ mod tests {
             .spawn()
             .expect("start preflight child");
         let pid = child.id();
+        eprintln!(
+            "launched {}; Windows reports {:?}",
+            executable.display(),
+            super::query_executable(pid)
+        );
 
         let deadline = Instant::now() + Duration::from_secs(5);
+        // Classified as stale (not merely unconfirmed), with exactly this PID listed.
+        let listed = |error: &str| {
+            error.starts_with("stale smoke-owned")
+                && error
+                    .split_once("pids=[")
+                    .and_then(|(_, rest)| rest.split_once(']'))
+                    .is_some_and(|(pids, _)| {
+                        pids.split(", ").any(|listed| listed == pid.to_string())
+                    })
+        };
         let error = loop {
             match ensure_no_stale_smoke_stickymd() {
-                Err(error) if error.contains(&pid.to_string()) => break error,
+                Err(error) if listed(&error) => break error,
                 Ok(()) | Err(_) if Instant::now() < deadline => {
                     thread::sleep(Duration::from_millis(25));
                 }
@@ -420,7 +570,7 @@ mod tests {
             .kill()
             .expect("terminate preflight child after assertion");
         child.wait().expect("reap preflight child after assertion");
-        fs::remove_dir_all(root).expect("remove preflight fixture");
+        fs::remove_dir_all(cleanup).expect("remove preflight fixture");
     }
 
     fn unique_temp(label: &str) -> PathBuf {

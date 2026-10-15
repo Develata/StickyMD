@@ -27,6 +27,7 @@ mod receipt;
 mod remote;
 #[cfg(any(windows, test))]
 pub(crate) mod repetition;
+mod reserved_paths;
 pub(crate) mod resource_diagnostics;
 pub(crate) mod resource_modules;
 pub(crate) mod smoke_scope;
@@ -249,7 +250,7 @@ pub(crate) fn validate_public_output_directory(
     directory: &Path,
 ) -> Result<(), String> {
     if module_ledger::is_success_storage_path(root, directory)
-        || manual_observation::store::is_internal_path(root, directory)
+        || reserved_paths::is_manual_store_path(root, directory)
         || decisions::is_internal_path(root, directory)
     {
         return Err(format!(
@@ -273,9 +274,7 @@ pub(crate) fn validate_public_evidence_path(root: &Path, path: &Path) -> Result<
             "last-success ledgers and archives are coordinator-owned; use a diagnostic evidence path".into(),
         );
     }
-    if manual_observation::store::is_internal_path(root, path)
-        || decisions::is_internal_path(root, path)
-    {
+    if reserved_paths::is_manual_store_path(root, path) || decisions::is_internal_path(root, path) {
         return Err(
             "manual observation store and release decision files are coordinator-owned; use a diagnostic evidence path".into(),
         );

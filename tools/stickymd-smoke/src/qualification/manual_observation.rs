@@ -4,6 +4,7 @@
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#manual-observation-log
 
+pub(super) mod environment;
 pub(super) mod log;
 pub(super) mod reduce;
 pub(super) mod registry;

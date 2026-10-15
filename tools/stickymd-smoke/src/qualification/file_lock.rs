@@ -3,7 +3,8 @@
 //! releases a lock when its process exits, so a crash cannot strand it.
 //!
 //! Lock order, to rule out deadlock: the manual observation store lock is taken before
-//! the release decision lock, never after.
+//! the release decision lock, never after. Promote and Source Freeze take the manual store
+//! lock alone while they replace or invalidate the candidate.
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#module-success-ledger
 

@@ -3,8 +3,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{LoadError, OBSERVATION_LOG, declare, load, lock, reset};
-use crate::qualification::manual_observation::log::{self, MAX_OBSERVATIONS, Status, fixtures};
+use super::{Commit, LoadError, OBSERVATION_LOG, commit, declare, load, lock, reset};
+use crate::qualification::manual_observation::log::{
+    self, MAX_OBSERVATIONS, Note, Status, fixtures,
+};
 use crate::qualification::manual_observation::target::Role::{Current, Previous};
 use crate::qualification::manual_observation::target::{TARGET_RECEIPT, fixtures::target};
 
@@ -471,4 +473,174 @@ fn a_path_through_a_missing_store_file_is_refused() {
         Path::new("dist/evidence/./diagnostic.json"),
     )
     .unwrap();
+}
+
+/// Commits with no last check, as for a FAIL or a note.
+fn commit_now(
+    root: &Path,
+    current: &dyn Fn() -> Result<String, String>,
+    context_id: &str,
+    observations: Vec<log::Observation>,
+    notes: Vec<Note>,
+) -> Result<Commit, String> {
+    commit(
+        root,
+        CANDIDATE,
+        current,
+        context_id,
+        observations,
+        notes,
+        &mut || Ok(None),
+    )
+}
+
+/// A recorder session appends only to the context it started in, for the candidate it
+/// started with, and only observations whose recorded environment matches their role.
+#[test]
+fn a_session_commits_only_into_its_own_context() {
+    let scratch = Scratch::new();
+    let context_id = declared(&scratch.0);
+    let fail = fixtures::observation(1, 0, "P12-M25", "formulas", Current, Status::Fail);
+    let note = Note {
+        session: fail.session.clone(),
+        seq: 1,
+        text: "error state missing".to_owned(),
+    };
+    let written = commit_now(
+        &scratch.0,
+        &promoted,
+        &context_id,
+        vec![fail.clone()],
+        Vec::new(),
+    );
+    assert_eq!(written, Ok(Commit::Written));
+    let written = commit_now(
+        &scratch.0,
+        &promoted,
+        &context_id,
+        Vec::new(),
+        vec![note.clone()],
+    );
+    assert_eq!(written, Ok(Commit::Written));
+    let logged = load(&scratch.0, CANDIDATE).unwrap().log;
+    assert_eq!(
+        (logged.observations, logged.notes),
+        (vec![fail], vec![note])
+    );
+    let before = fs::read(scratch.0.join(OBSERVATION_LOG)).unwrap();
+
+    let next = || fixtures::observation(2, 1, "P12-M25", "formulas", Current, Status::Pass);
+    let mut wrong_role = next();
+    wrong_role.role = Previous;
+    let other_candidate = || Ok("d".repeat(64));
+    let orphan_note = Note {
+        session: "22222222222222222222222222222222".to_owned(),
+        seq: 1,
+        text: "no such observation".to_owned(),
+    };
+    for (error, attempt) in [
+        (
+            "matches",
+            commit_now(
+                &scratch.0,
+                &promoted,
+                &context_id,
+                vec![wrong_role],
+                Vec::new(),
+            ),
+        ),
+        (
+            "promoted candidate changed",
+            commit_now(
+                &scratch.0,
+                &other_candidate,
+                &context_id,
+                vec![next()],
+                Vec::new(),
+            ),
+        ),
+        (
+            "replaced",
+            commit_now(
+                &scratch.0,
+                &promoted,
+                &"f".repeat(32),
+                vec![next()],
+                Vec::new(),
+            ),
+        ),
+        (
+            "not logged",
+            commit_now(
+                &scratch.0,
+                &promoted,
+                &context_id,
+                vec![next()],
+                vec![orphan_note],
+            ),
+        ),
+    ] {
+        let message = attempt.unwrap_err();
+        assert!(message.contains(error), "{message}");
+        assert_eq!(
+            fs::read(scratch.0.join(OBSERVATION_LOG)).unwrap(),
+            before,
+            "{error}"
+        );
+    }
+
+    // The last check runs under the lock after every other check: a refusal or a failure
+    // there writes nothing, and it is not reached when an earlier check fails.
+    let mut checked = 0;
+    let refused = commit(
+        &scratch.0,
+        CANDIDATE,
+        &promoted,
+        &context_id,
+        vec![next()],
+        Vec::new(),
+        &mut || {
+            checked += 1;
+            // The store lock is held exclusively while the check runs.
+            let probe = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(scratch.0.join("dist/evidence/manual.lock"))
+                .unwrap();
+            assert!(matches!(
+                probe.try_lock_shared(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
+            Ok(Some("instance exited".to_owned()))
+        },
+    );
+    assert_eq!(refused, Ok(Commit::Refused("instance exited".to_owned())));
+    let failed = commit(
+        &scratch.0,
+        CANDIDATE,
+        &promoted,
+        &context_id,
+        vec![next()],
+        Vec::new(),
+        &mut || {
+            checked += 1;
+            Err("tasklist failed".to_owned())
+        },
+    );
+    assert_eq!(failed, Err("tasklist failed".to_owned()));
+    let unreached = commit(
+        &scratch.0,
+        CANDIDATE,
+        &promoted,
+        &"f".repeat(32),
+        vec![next()],
+        Vec::new(),
+        &mut || {
+            checked += 1;
+            Ok(None)
+        },
+    );
+    assert!(unreached.is_err());
+    assert_eq!(checked, 2);
+    assert_eq!(fs::read(scratch.0.join(OBSERVATION_LOG)).unwrap(), before);
 }

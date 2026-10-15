@@ -366,7 +366,8 @@
 ### Manual Observation Log
 
 - **Definition**：当前 Promoted Candidate 的只追加人工观察记录，每条为某个人工项某个场景在某个目标环境角色上的
-  `MANUAL_PASS` 或 `MANUAL_FAIL`，带稳定 ID、`base` 与采集的环境事实；逐项逐角色的状态由它归约得出。
+  `MANUAL_PASS` 或 `MANUAL_FAIL`，带稳定 ID、`base` 与采集的环境事实；观察者备注是其后追加的独立记录。逐项逐角色
+  的状态由它归约得出。
 - **Authority**：交互式人工记录器与严格导入的观察包；USER 是观察的来源。
 - **Not equivalent to**：Last Successful Module Receipt、G5 截图、自动化推断、旧 commit 收据或跨候选复用。
 - **Lifetime**：绑定 candidate receipt、目标环境收据与人工项注册表的摘要；任何一项变化或日志重建都开始新上下文。

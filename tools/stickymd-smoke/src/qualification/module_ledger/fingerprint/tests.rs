@@ -1,6 +1,6 @@
 //! Input mutation regressions for qualification dependencies.
 
-use super::{GLOBAL, calculate, path_domains};
+use super::{GLOBAL, calculate, is_manual_only, path_domains};
 use crate::qualification::module_registry::ModuleId;
 use std::fs;
 use std::process::Command;
@@ -127,6 +127,138 @@ fn status_and_readiness_reports_do_not_invalidate_but_acceptance_rules_do() {
     ] {
         assert_eq!(path_domains(path), GLOBAL, "{path}");
     }
+}
+
+/// Manual observations are not ledger records and no functional module runs the recorder,
+/// so manual-only code and guidance invalidate nothing; what they share stays classified.
+#[test]
+fn manual_acceptance_code_invalidates_no_functional_module() {
+    for path in [
+        "tools/manual/phase-14-guide.md",
+        "tools/stickymd-smoke/src/qualification/manual.rs",
+        "tools/stickymd-smoke/src/qualification/manual/flow.rs",
+        "tools/stickymd-smoke/src/qualification/manual/instance.rs",
+        "tools/stickymd-smoke/src/qualification/guided.rs",
+        "tools/stickymd-smoke/src/qualification/manual_observation.rs",
+        "tools/stickymd-smoke/src/qualification/manual_observation/store.rs",
+        "tools/stickymd-smoke/src/qualification/manual_readiness.rs",
+        "tools/stickymd-smoke/src/qualification/manual_readiness/tests.rs",
+    ] {
+        assert_eq!(path_domains(path), 0, "{path}");
+    }
+    for path in [
+        "tools/stickymd-smoke/src/qualification/manual_receipt.rs",
+        "tools/stickymd-smoke/src/qualification/manualish.rs",
+        "tools/stickymd-smoke/src/qualification/exact_desktop.rs",
+        "tools/stickymd-smoke/src/qualification/decisions.rs",
+        "tools/stickymd-smoke/src/qualification/reserved_paths.rs",
+    ] {
+        assert_ne!(path_domains(path), 0, "{path}");
+    }
+}
+
+/// The same through the fingerprints themselves: editing manual-only code changes no
+/// module's fingerprint, while the reserved paths every evidence writer checks change all.
+#[test]
+fn manual_acceptance_edits_keep_every_module_fingerprint() {
+    let root = fixture();
+    for path in [
+        "tools/manual/phase-14-guide.md",
+        "tools/stickymd-smoke/src/qualification/manual/flow.rs",
+        "tools/stickymd-smoke/src/qualification/manual_observation/store.rs",
+        "tools/stickymd-smoke/src/qualification/reserved_paths.rs",
+    ] {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(path, "initial").expect("write input");
+    }
+    assert!(
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&root)
+            .status()
+            .expect("git add")
+            .success()
+    );
+    let modules = crate::qualification::module_registry::modules().collect::<Vec<_>>();
+    let fingerprints = || {
+        modules
+            .iter()
+            .map(|module| calculate(&root, *module).expect("fingerprint"))
+            .collect::<Vec<_>>()
+    };
+    let before = fingerprints();
+    for path in [
+        "tools/manual/phase-14-guide.md",
+        "tools/stickymd-smoke/src/qualification/manual/flow.rs",
+        "tools/stickymd-smoke/src/qualification/manual_observation/store.rs",
+    ] {
+        fs::write(root.join(path), "changed").expect("change manual code");
+    }
+    assert_eq!(fingerprints(), before);
+    fs::write(
+        root.join("tools/stickymd-smoke/src/qualification/reserved_paths.rs"),
+        "changed",
+    )
+    .expect("change reserved paths");
+    let after = fingerprints();
+    for ((module, before), after) in modules.iter().zip(&before).zip(&after) {
+        assert_ne!(before, after, "{}", module.as_str());
+    }
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+/// Code outside the manual-only set must not reach into it, or editing manual code would
+/// change what a formal module run does without changing its fingerprint. The files that
+/// may name manual modules (besides test modules), and why none lets manual code alter
+/// module evidence:
+/// - `qualification/mod.rs`: module declarations and the `acceptance manual` dispatch;
+/// - `qualification/readiness.rs`: a judgement projection with no domains of its own;
+/// - `qualification/decisions.rs`: decision-key validation. The formal-run output guard
+///   calls only its `is_internal_path`, built from its own constants; the campaign projects
+///   decisions before any module runs, so a validation failure aborts the campaign instead
+///   of changing a module's evidence.
+#[test]
+fn only_listed_code_names_manual_only_modules() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut pending = vec![source.clone()];
+    let mut offenders = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).expect("list sources") {
+            let path = entry.expect("source entry").path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|extension| extension != "rs") {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(&source)
+                .expect("under src")
+                .to_string_lossy()
+                .replace('\\', "/");
+            // Test modules (`tests.rs`) never run in a formal module run.
+            if is_manual_only(&format!("tools/stickymd-smoke/src/{relative}"))
+                || relative.ends_with("tests.rs")
+                || matches!(
+                    relative.as_str(),
+                    "qualification/readiness.rs" | "qualification/decisions.rs"
+                )
+            {
+                continue;
+            }
+            let text = fs::read_to_string(&path).expect("read source");
+            for (line, uses) in manual_module_paths(&text) {
+                // `mod.rs` declares the modules and dispatches `acceptance manual`.
+                if relative == "qualification/mod.rs" && uses == "manual::execute" {
+                    continue;
+                }
+                offenders.push(format!("{relative}:{line}: {uses}"));
+            }
+        }
+    }
+    assert!(offenders.is_empty(), "{offenders:#?}");
 }
 
 #[test]
@@ -533,4 +665,306 @@ fn performance_baselines_outside_its_features_invalidate_it() {
             "{path}"
         );
     }
+}
+
+/// Where `text` may reach a manual-only module: the distinctive names
+/// (`manual_observation`, `manual_readiness`) anywhere in code, including as a macro
+/// argument; the generic ones (`manual`, `guided`) inside a `use` declaration (aliased,
+/// grouped or spread over lines) or next to `::`; and any `#[path]` attribute. Comments,
+/// string and character literals are skipped; `mod manual;` declares rather than uses.
+/// A lexical guard: it does not expand macros or follow re-exports of listed files.
+/// Returns the line and the name with the path segment that follows it.
+fn manual_module_paths(text: &str) -> Vec<(usize, String)> {
+    const DISTINCTIVE: [&str; 2] = ["manual_observation", "manual_readiness"];
+    const GENERIC: [&str; 2] = ["manual", "guided"];
+    // (line, token) with comments and literals removed.
+    let mut tokens: Vec<(usize, String)> = Vec::new();
+    // Rust normalizes CRLF before lexing.
+    let characters = text.replace("\r\n", "\n").chars().collect::<Vec<_>>();
+    let (mut index, mut line) = (0, 1);
+    while index < characters.len() {
+        let character = characters[index];
+        let next = characters.get(index + 1).copied();
+        match character {
+            '\n' => {
+                line += 1;
+                index += 1;
+            }
+            '/' if next == Some('/') => {
+                while index < characters.len() && characters[index] != '\n' {
+                    index += 1;
+                }
+            }
+            '/' if next == Some('*') => {
+                // Block comments nest in Rust.
+                index += 2;
+                let mut depth = 1;
+                while index < characters.len() && depth > 0 {
+                    match (characters[index], characters.get(index + 1)) {
+                        ('/', Some('*')) => {
+                            depth += 1;
+                            index += 2;
+                        }
+                        ('*', Some('/')) => {
+                            depth -= 1;
+                            index += 2;
+                        }
+                        (character, _) => {
+                            line += usize::from(character == '\n');
+                            index += 1;
+                        }
+                    }
+                }
+            }
+            '"' => {
+                // Kept as one quoted token, so a `#[path]` target can be inspected.
+                let (start, opening_line) = (index, line);
+                index += 1;
+                while index < characters.len() && characters[index] != '"' {
+                    line += usize::from(characters[index] == '\n');
+                    index += if characters[index] == '\\' { 2 } else { 1 };
+                }
+                index += 1;
+                let end = index.min(characters.len());
+                tokens.push((opening_line, characters[start..end].iter().collect()));
+            }
+            'r' if matches!(next, Some('"' | '#'))
+                && !tokens.last().is_some_and(|(_, token)| token == "::") =>
+            {
+                let hashes = characters[index + 1..]
+                    .iter()
+                    .take_while(|character| **character == '#')
+                    .count();
+                if characters.get(index + 1 + hashes) != Some(&'"') {
+                    // `r#ident` is a raw identifier: lex it as `ident`.
+                    index += if hashes == 1 { 2 } else { 1 };
+                    if hashes != 1 {
+                        tokens.push((line, "r".to_owned()));
+                    }
+                    continue;
+                }
+                let opening_line = line;
+                index += hashes + 2;
+                let start = index;
+                let close = std::iter::once('"')
+                    .chain(std::iter::repeat_n('#', hashes))
+                    .collect::<Vec<_>>();
+                while index < characters.len() && !characters[index..].starts_with(&close) {
+                    line += usize::from(characters[index] == '\n');
+                    index += 1;
+                }
+                // Kept as a quoted token, like an ordinary string, for `#[path]` checks.
+                let content = characters[start..index.min(characters.len())]
+                    .iter()
+                    .collect::<String>();
+                tokens.push((opening_line, format!("r\"{content}\"")));
+                index += close.len();
+            }
+            '\'' if next == Some('\\') || characters.get(index + 2) == Some(&'\'') => {
+                index += 1;
+                while index < characters.len() && characters[index] != '\'' {
+                    index += if characters[index] == '\\' { 2 } else { 1 };
+                }
+                index += 1;
+            }
+            ':' if next == Some(':') => {
+                tokens.push((line, "::".to_owned()));
+                index += 2;
+            }
+            _ if character.is_alphanumeric() || character == '_' => {
+                let start = index;
+                while index < characters.len()
+                    && (characters[index].is_alphanumeric() || characters[index] == '_')
+                {
+                    index += 1;
+                }
+                tokens.push((line, characters[start..index].iter().collect()));
+            }
+            // Rust's whitespace is `Pattern_White_Space`, not `char::is_whitespace`.
+            '\t' | '\u{000B}' | '\u{000C}' | '\r' | ' ' | '\u{0085}' | '\u{200E}' | '\u{200F}'
+            | '\u{2028}' | '\u{2029}' => index += 1,
+            _ => {
+                tokens.push((line, character.to_string()));
+                index += 1;
+            }
+        }
+    }
+    let mut uses = Vec::new();
+    let mut in_use = false;
+    for (position, (line, token)) in tokens.iter().enumerate() {
+        match token.as_str() {
+            "use" => in_use = true,
+            ";" => in_use = false,
+            _ => {}
+        }
+        let before = position
+            .checked_sub(1)
+            .and_then(|previous| tokens.get(previous))
+            .map(|(_, token)| token.as_str());
+        let after = tokens.get(position + 1).map(|(_, token)| token.as_str());
+        // `#[path = "…"]` naming manual code would compile it under another module name.
+        if token == "path" && before == Some("[") && position >= 2 && tokens[position - 2].1 == "#"
+        {
+            let literal = tokens
+                .get(position + 2)
+                .map_or("", |(_, target)| target.as_str());
+            // Compare the path Rust loads: ordinary strings decode their escapes.
+            let target = literal
+                .strip_prefix('r')
+                .map_or_else(|| unescape(literal), str::to_owned);
+            if [
+                "manual_observation",
+                "manual_readiness",
+                "manual/",
+                "manual\\",
+                "manual.rs",
+                "guided.rs",
+            ]
+            .iter()
+            .any(|name| target.contains(name))
+            {
+                uses.push((*line, format!("#[path = {literal}]")));
+            }
+            continue;
+        }
+        // `mod manual_observation;` declares the module rather than using it.
+        if before == Some("mod") {
+            continue;
+        }
+        let generic_path = GENERIC.contains(&token.as_str())
+            && (in_use || before == Some("::") || after == Some("::"));
+        if DISTINCTIVE.contains(&token.as_str()) || generic_path {
+            let segment = match (after, tokens.get(position + 2)) {
+                (Some("::"), Some((_, next))) => format!("{token}::{next}"),
+                _ => token.clone(),
+            };
+            uses.push((*line, segment));
+        }
+    }
+    uses
+}
+
+/// The value of an ordinary string literal's body (between its quotes), as Rust reads it:
+/// `\\`, `\"`, `\'`, `\n`, `\r`, `\t`, `\0`, `\xHH`, `\u{...}` and line continuations.
+fn unescape(literal: &str) -> String {
+    let body = literal
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or(literal);
+    let mut value = String::new();
+    let mut characters = body.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            value.push(character);
+            continue;
+        }
+        match characters.next() {
+            Some('n') => value.push('\n'),
+            Some('r') => value.push('\r'),
+            Some('t') => value.push('\t'),
+            Some('0') => value.push('\0'),
+            Some('x') => {
+                let hex = characters.by_ref().take(2).collect::<String>();
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    value.push(char::from(byte));
+                }
+            }
+            Some('u') => {
+                let hex = characters
+                    .by_ref()
+                    .skip_while(|character| *character == '{')
+                    .take_while(|character| *character != '}')
+                    .filter(|character| *character != '_')
+                    .collect::<String>();
+                if let Some(decoded) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                    value.push(decoded);
+                }
+            }
+            Some('\n') => {
+                // A continuation skips ASCII whitespace only.
+                while characters
+                    .next_if(|character| matches!(character, ' ' | '\t' | '\n' | '\r'))
+                    .is_some()
+                {}
+            }
+            Some(other) => value.push(other),
+            None => {}
+        }
+    }
+    value
+}
+
+/// Nested comments, Rust's own whitespace and continuations over CRLF line ends hide
+/// nothing and invent nothing.
+#[test]
+fn the_source_guard_lexes_comments_whitespace_and_continuations_as_rust_does() {
+    let nested = "#[path /* outer /* inner */ still */ = \"manual/flow.rs\"]\nmod hidden;\n\
+                  /* outer /* inner */ manual_observation::store */\n";
+    assert_eq!(
+        manual_module_paths(nested),
+        [(1, r#"#[path = "manual/flow.rs"]"#.to_owned())]
+    );
+    let marked = "#[\u{200E}path = \"manual/flow.rs\"]\nmod hidden;\n";
+    assert_eq!(
+        manual_module_paths(marked),
+        [(1, r#"#[path = "manual/flow.rs"]"#.to_owned())]
+    );
+    let continued = "#[path = \"manu\\\r\n    al_observation/registry.rs\"]\r\nmod hidden;\r\n";
+    assert_eq!(manual_module_paths(continued).len(), 1);
+    // Only ASCII whitespace is skipped after a continuation: this names no manual module.
+    let spaced = "#[path = \"manu\\\n\u{2003}al_observation.rs\"]\nmod other;\n";
+    assert!(manual_module_paths(spaced).is_empty());
+}
+
+#[test]
+fn the_source_guard_sees_aliases_groups_macros_and_paths() {
+    let source = r##"
+        use super::manual_observation as observations;
+        use super::{
+            decisions,
+            guided,
+        };
+        mod manual;
+        // manual::execute in a comment
+        /* manual_observation::store */
+        let text = "manual::execute";
+        let raw = r#"guided::STEPS"#;
+        let character = '"';
+        manual::execute(root);
+        let manual = 1;
+        let _ = cases!(manual_observation);
+        #[path = "../manual_observation/registry.rs"]
+        mod hidden;
+        #[path = "priority_tests.rs"]
+        mod tests;
+        pub(super) mod manual_readiness;
+        #[path = r"..\manual\flow.rs"]
+        mod raw;
+        #[path = "manu\u{61}l_observation/registry.rs"]
+        mod escaped;
+        #[path = "manu\u{6_1}l_readiness.rs"]
+        mod underscored;
+        #[r#path = "guided.rs"]
+        mod raw_identifier;
+    "##;
+    assert_eq!(
+        manual_module_paths(source),
+        [
+            (2, "manual_observation".to_owned()),
+            (5, "guided".to_owned()),
+            (13, "manual::execute".to_owned()),
+            (15, "manual_observation".to_owned()),
+            (
+                16,
+                r#"#[path = "../manual_observation/registry.rs"]"#.to_owned()
+            ),
+            (21, r#"#[path = r"..\manual\flow.rs"]"#.to_owned()),
+            (
+                23,
+                r#"#[path = "manu\u{61}l_observation/registry.rs"]"#.to_owned()
+            ),
+            (25, r#"#[path = "manu\u{6_1}l_readiness.rs"]"#.to_owned()),
+            (27, r#"#[path = "guided.rs"]"#.to_owned()),
+        ]
+    );
 }

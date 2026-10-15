@@ -31,8 +31,12 @@ pub(super) fn create(root: &Path) -> Result<SourceFreeze, String> {
         remote_synced: receipt::upstream_commit(root)
             .is_ok_and(|upstream| upstream == source_commit),
     };
+    // A manual observation commits only for the candidate it re-reads under this lock, so
+    // invalidating the candidate under it keeps the two from interleaving.
+    let manual_store = super::reserved_paths::lock_manual_store(root, true)?;
     write(root, &freeze)?;
     receipt::invalidate_promoted_candidate(root)?;
+    drop(manual_store);
     Ok(freeze)
 }
 

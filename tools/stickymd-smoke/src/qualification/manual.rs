@@ -1,8 +1,24 @@
 //! Manual acceptance commands: the case registry, the observation context status, the
-//! USER's target declaration and an approved reset. It never infers a manual PASS.
+//! USER's target declaration, an approved reset and the observation recorder. Nothing here
+//! infers a manual PASS: every status is an explicit human answer.
 //!
-//! The observation recorder arrives with the environment collector (3-A batch 3); until
-//! then `run` and `guided` refuse instead of writing the superseded schema 1 receipt.
+//! plan_ref: docs/plan/11_testing_and_release.md#manual-observation-log
+
+// Launching the candidate reuses the Windows-only exact harness; the loop and the
+// selection are portable and tested everywhere.
+#[cfg(windows)]
+mod fixture;
+#[cfg_attr(
+    all(not(windows), not(test)),
+    expect(
+        dead_code,
+        reason = "the loop records only on Windows; its tests run everywhere"
+    )
+)]
+mod flow;
+#[cfg(windows)]
+mod instance;
+mod recorder;
 
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::Path;
@@ -14,6 +30,8 @@ use super::manual_observation::registry::{CASES, KNOWN_GAPS};
 use super::manual_observation::store;
 use super::manual_observation::target::{self, Role, RoleTarget, Target};
 use super::{decisions, guided, receipt};
+use flow::{io_error, read_line};
+use recorder::Selection;
 
 pub(super) fn execute(root: &Path, command: ManualCommand) -> Result<(), String> {
     match command {
@@ -24,9 +42,8 @@ pub(super) fn execute(root: &Path, command: ManualCommand) -> Result<(), String>
         ManualCommand::Status => status(root),
         ManualCommand::Target => declare_target(root),
         ManualCommand::Reset => reset(root),
-        ManualCommand::Run { .. } | ManualCommand::Guided { .. } => Err(
-            "manual observations are recorded into the observation log; its recorder lands in 3-A batch 3, so `acceptance manual run/guided` is unavailable until then".to_owned(),
-        ),
+        ManualCommand::Run { session } => recorder::record(root, Selection::Cases(session)),
+        ManualCommand::Guided { session } => recorder::record(root, Selection::Guided(session)),
     }
 }
 
@@ -76,6 +93,23 @@ fn status(root: &Path) -> Result<(), String> {
         };
         println!("{} {}: {verdict}", cell.case.id, cell.role.as_str());
     }
+    let log = &context.log;
+    for ((case, role, scenario), indices) in reduce::unresolved_fails(log, Some(&context.target)) {
+        for index in indices {
+            let failed = &log.observations[index as usize];
+            let note = log
+                .notes
+                .iter()
+                .find(|note| note.session == failed.session && note.seq == failed.seq)
+                .map_or("(no note)", |note| note.text.as_str());
+            println!(
+                "Unresolved FAIL {case}/{scenario} on {}: {}#{} at log position {index}: {note}",
+                role.as_str(),
+                failed.session,
+                failed.seq
+            );
+        }
+    }
     Ok(())
 }
 
@@ -87,13 +121,9 @@ fn declare_target(root: &Path) -> Result<(), String> {
     let mut output = io::stdout().lock();
     let roles = prompt_roles(&mut input, &mut output)?;
     // Called inside the store's exclusive lock, so an approval is read when it is used.
-    let target = store::declare(
-        root,
-        &candidate,
-        &|| current_candidate(root),
-        roles,
-        &|key| decisions::is_approved(root, key),
-    )?;
+    let target = store::declare(root, &candidate, &|| promoted_digest(root), roles, &|key| {
+        decisions::is_approved(root, key)
+    })?;
     println!(
         "MANUAL_TARGETS={} context={}",
         root.join(target::TARGET_RECEIPT).display(),
@@ -104,11 +134,19 @@ fn declare_target(root: &Path) -> Result<(), String> {
 
 fn reset(root: &Path) -> Result<(), String> {
     let candidate = current_candidate(root)?;
-    let target = store::reset(root, &candidate, &|| current_candidate(root), &|key| {
+    let target = store::reset(root, &candidate, &|| promoted_digest(root), &|key| {
         decisions::is_approved(root, key)
     })?;
     println!("MANUAL_CONTEXT={}", target.context_id);
     Ok(())
+}
+
+/// The candidate receipt's digest as it is now, read from the file alone. Commands re-check
+/// it under the store lock, which must not wait on repository subprocesses; the full
+/// validation (`current_candidate`) ran when the command started, and a different digest
+/// is a different candidate.
+fn promoted_digest(root: &Path) -> Result<String, String> {
+    receipt::read_candidate_snapshot(root).map(|(_, digest)| digest)
 }
 
 /// The digest of the candidate receipt, read once with the candidate it validates.
@@ -182,56 +220,10 @@ fn prompt_roles<R: BufRead, W: Write>(
     Ok(roles)
 }
 
-/// Explicit human status for one scenario; `NOT_TESTED` is answered but never recorded.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the observation recorder (3-A batch 3) uses it")
-)]
-fn prompt_status<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
-) -> Result<&'static str, String> {
-    loop {
-        write!(output, "Status [P=PASS, F=FAIL, N=NOT TESTED]: ").map_err(io_error)?;
-        output.flush().map_err(io_error)?;
-        match read_line(input)?.to_ascii_uppercase().as_str() {
-            "P" | "PASS" => return Ok("MANUAL_PASS"),
-            "F" | "FAIL" => return Ok("MANUAL_FAIL"),
-            "N" | "NOT TESTED" | "NOT_TESTED" => return Ok("NOT_TESTED"),
-            _ => writeln!(output, "Enter P, F, or N explicitly.").map_err(io_error)?,
-        }
-    }
-}
-
-fn read_line<R: BufRead>(input: &mut R) -> Result<String, String> {
-    let mut line = String::new();
-    let bytes = input.read_line(&mut line).map_err(io_error)?;
-    if bytes == 0 {
-        return Err("manual input reached end of input".to_owned());
-    }
-    Ok(line.trim().to_owned())
-}
-
-fn io_error(error: io::Error) -> String {
-    error.to_string()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{prompt_roles, prompt_status};
+    use super::prompt_roles;
     use std::io::Cursor;
-
-    #[test]
-    fn recorder_accepts_only_explicit_human_status_tokens() {
-        let mut input = Cursor::new(b"maybe\nP\n".to_vec());
-        let mut output = Vec::new();
-        assert_eq!(prompt_status(&mut input, &mut output), Ok("MANUAL_PASS"));
-        assert!(
-            String::from_utf8(output)
-                .expect("UTF-8")
-                .contains("P, F, or N")
-        );
-    }
 
     #[test]
     fn declared_roles_are_validated_by_the_receipt_parser() {
@@ -248,21 +240,5 @@ mod tests {
         // The same version for both roles is refused.
         let same = format!("{current}{current}");
         assert!(prompt_roles(&mut Cursor::new(same.into_bytes()), &mut Vec::new()).is_err());
-    }
-
-    #[test]
-    fn the_retired_recorder_refuses_and_writes_nothing() {
-        let root = std::env::temp_dir().join(format!("stickymd-manual-run-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        for command in [
-            crate::cli::ManualCommand::Run { session: None },
-            crate::cli::ManualCommand::Guided { session: None },
-        ] {
-            let error = super::execute(&root, command).unwrap_err();
-            assert!(error.contains("observation log"), "{error}");
-        }
-        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
-        // Created exclusively by this test under the temp directory.
-        let _ = std::fs::remove_dir_all(root);
     }
 }
