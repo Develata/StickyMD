@@ -98,6 +98,14 @@ fn is_verbatim(path: &Path) -> bool {
 #[cfg(windows)]
 pub(super) fn validate_output_spelling(path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
+    // The evidence writer refuses this too: `/` is no separator in a verbatim path, but
+    // joining the name would make it one.
+    if is_verbatim(path) && path.as_os_str().encode_wide().any(|unit| unit == 0x2F) {
+        return Err(format!(
+            "verbatim evidence paths cannot contain '/': {}",
+            path.display()
+        ));
+    }
     if !is_verbatim(path) {
         let mut components = path.components();
         components.next_back();

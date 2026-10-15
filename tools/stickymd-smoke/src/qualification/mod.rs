@@ -262,6 +262,8 @@ pub(crate) fn validate_public_output_directory(
 }
 
 pub(crate) fn validate_public_evidence_path(root: &Path, path: &Path) -> Result<(), String> {
+    // The writer's own spelling rules, applied before any caller creates a directory.
+    crate::atomic_evidence::check_spelling(&root.join(path))?;
     #[cfg(windows)]
     path_identity::validate_output_spelling(&root.join(path))?;
     if path_identity::is_within(root, path, "target/resource-diagnostics") {
