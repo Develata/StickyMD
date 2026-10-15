@@ -925,3 +925,79 @@ PASS / no blocker（第 5–7 轮连续三轮无阻断）；审查方根据专�
 - N4 限制同步到 plan 11、指南与 P14-A76：恢复挂起线程的原生失败路径只验证了判定逻辑。
 - candidate 收据的保证收窄：只保证不预先打开收据本身；目录自身需取回、目录列表中的属性已过期、检查后被外部替换，
   不在保证范围内（源码注释与 P14-A76 同步）。
+
+## 证据写入超过 MAX_PATH 的修复（2026-10-15，06eefab）
+
+第 3 批推送后 PR CI 在 Windows runner 上以 os error 3 失败：`MoveFileExW` 对普通路径受 260 字符限制，而 runner 的临时
+目录较长，`std` 创建临时文件成功、发布时失败（问题自 U1 起潜伏，本地临时目录较短未触发）。本地以加深目录复现后修复：
+普通路径经已存在父目录的规范形式（`\?\`）加文件名发布，文件名按 Win32 语义去掉末尾的点与空格；verbatim 路径原样
+使用。
+
+- 审查第 1 轮：2 个 BLOCKER——verbatim 路径中的 `/` 在拼接后会变成分隔符，写入位置可能与防护检查的不同；普通路径的
+  DOS 设备名（`NUL`、`COM1` 等）在 Win32 下打开设备，扩展形式却是普通文件。两者都改为写入之前拒绝。
+- 审查第 2 轮：PASS / no blocker；SHOULD_FIX 已修：`COM0`/`LPT0` 是普通文件；普通文件名中的 `:`（备用数据流或设备
+  写法）拒绝；公共证据路径防护先调用同一拼写检查，被拒时不创建父目录；测试与临时目录的写法无关，并断言真实临时文件
+  长度超过 260；防护错误带出路径。
+
+验证：Windows 479 + 25、WSL Linux 393 + 19 通过，clippy、fmt、phase-00 通过。
+
+## 3-A 第 4 批实施记录（2026-10-15）
+
+观察任务导出、独立记录器与整包导入落地（plan 11 `#manual-observation-log`「其他机器」）：
+
+- **格式**（`manual_observation/transfer`）：观察任务携带 candidate receipt 与目标收据的**原文**（日志头绑定的是文件
+  字节的摘要，因此不重新渲染）、注册表摘要、`base`、选择与所选场景未解除的 FAIL（含备注）；解析时核对两份原文的
+  摘要、目标收据指向任务的上下文与 candidate、未解除 FAIL 的场景已知且位于 `base` 之前。观察包是部分日志：日志头的
+  四项摘要加一个会话的观察与备注；解析要求单一会话、序号从 1 连续、`base` 一致、不含携带项、备注只解释包内观察且
+  每条至多一条。两者读取前检查 1 MiB 上限。观察与备注的编解码与日志共用。
+- **导出**（`acceptance manual export --task=<path> [--select=…]`）：先做完整 candidate 校验，再在共享锁内读取 candidate
+  收据原文（与开始时的摘要不同即拒绝）、上下文与日志快照；输出路径经公共证据路径防护；写入前用同一解析器回读。
+- **独立记录器**（`acceptance manual record --task --zip --bundle`）：在查找仓库根之前分派，不需要仓库。工具内置注册表
+  必须与任务的注册表摘要相同；有需要启动实例的场景时按任务的 candidate receipt 校验 ZIP 与 EXE（复用 `Workshop`），
+  只有 M34 首次运行声明时仍校验 ZIP 摘要。观察包先以不得预先存在的方式创建，之后每个回答（含备注）都在下一个问题之前
+  原子重写；会让包超过 1 MiB 的回答被拒绝并结束会话，`last_check` 在大小检查之后、写入之前运行。包路径位于某个仓库内
+  时受该仓库的公共证据路径防护。
+- **导入**（`acceptance manual import --bundle=<path>`）：先做完整 candidate 校验；`store::import` 在排他锁内复核 Promote，
+  要求包头的 candidate receipt、上下文、目标收据与注册表摘要与日志头相同，再与本地会话共用同一追加步骤（按同一谓词
+  重算角色、`base` 不得超出日志、同 ID 同内容跳过、整包一次原子替换）。同一个包或增长后的副本可重复导入。
+- **记录循环**：`flow::run` 不再读取存储上下文，改为 `Start { target, base, unresolved }`；本地记录器从日志构造，独立
+  记录器从任务构造。
+- **工具依赖**：工具以 `+crt-static` 构建；编译出的工具（debug 与 release 一致）在产品允许的 Windows 自带 DLL 之外只导入
+  `bcrypt.dll` 与 `WTSAPI32.dll`（dumpbin 核对），由集成测试用产品导入门对编译出的工具断言。单元测试二进制额外导入
+  `USERENV.dll`（来自测试框架），因此不用它代替工具本身。解压与进程检查只用 Windows 自带的 PowerShell `Expand-Archive`
+  与 `tasklist`。
+- **plan 11 措辞**：原文"观察任务含注册表片段"改为"注册表摘要，工具内置注册表必须相同"。片段不增加校验能力：导入时
+  日志头的注册表摘要本就必须与当前注册表相同，记录器也只能按自己编译进的注册表运行。属于已批准设计内的细化，不是
+  骨架变化。
+
+新增验收行 P14-A78；`cli.rs`、`main.rs`、`receipt.rs` 与 `qualification/mod.rs` 是全局输入，本批会使全部模块指纹失效一次。
+
+验证（审查前）：Windows `cargo test -p stickymd-smoke --locked` 488 + 26 通过，clippy `-D warnings`、fmt、phase-00 通过；
+WSL Linux 回放 clippy 通过、402 + 19 通过、phase-00 通过。
+
+未覆盖（如实说明）：真实机器上的一次完整导出 → 独立记录 → 导入（需要已晋升的 candidate 与已声明的目标环境）；在没有
+仓库、Rust、VS 与额外 VC runtime 的 Clean VM 中运行独立记录器；M34 的实际 Clean VM 流程。
+
+### 第 4 批代码审查第 1 轮（2026-10-15）
+
+1 个 BLOCKER、1 个 SHOULD_FIX、1 个 NICE_TO_HAVE、1 个 NEEDS_VERIFICATION，核实后成立，已修：
+
+- BLOCKER：导入只校验观察中 `instance.exe_sha256` 的格式。把一条有效 PASS 的 EXE 摘要改动一个字符，导入、readiness 都
+  照样接受，还能解除 FAIL。现在由共用的有效性判定（`reduce::Binding`：目标收据与 candidate 的 EXE 摘要）同时检查角色与
+  实例的 EXE 摘要（M34 无实例，不受影响）；本地记录、导入、重置带入、readiness、`status` 与导出都用它，不符的观察使该
+  `(项, 角色)` 无效且不能解除 FAIL。存储接口把 candidate 的两个摘要合成 `Promoted`。plan 11「被测实例」写明这一判定。
+- SHOULD_FIX：包路径防护只看给出的路径，仓库外指向仓库 `dist/evidence` 的目录链接可以绕过。现在对给出的路径与其已存在
+  目录经链接解析后的路径都做仓库识别与公共证据路径防护，目录无法解析即拒绝（Windows junction 与 Unix 符号链接测试）。
+- NICE_TO_HAVE：空观察包的 `base` 不受日志长度约束。解析时 `base` 不得超过日志容量，导入时不得超过当前日志长度。
+- NEEDS_VERIFICATION：真实往返与 Clean VM 运行仍未执行，见上节"未覆盖"。
+
+验证：Windows `cargo test -p stickymd-smoke --locked` 490 + 26 通过，clippy `-D warnings`、fmt、phase-00 通过；WSL Linux
+回放 clippy 通过，连续两次 404 + 19 通过，phase-00 通过。
+
+### 第 4 批代码审查第 2 轮（2026-10-15）
+
+PASS / no blocker；第 1 轮三项修复经源码核对成立（EXE 摘要经共用判定绑定 candidate，receipt 摘要与 EXE 摘要来自同一次
+candidate 读取；链接解析后的目录同样受防护，未发现 `\?\` 写法引入的新绕过；空包的 `base` 受日志长度约束）。剩余
+NEEDS_VERIFICATION：同一 promoted candidate 上的真实导出 → 独立记录 → 导入（含回答落盘后中断、重复与增长包导入、旧任务
+不能解除新 FAIL），以及无仓库、Rust、VS 与额外 VC runtime 的 Clean VM 运行和 M34 顺序，仍未执行，留待 v0.1.3 候选资格化时
+完成。
