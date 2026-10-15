@@ -3,6 +3,7 @@
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#native-preview-layout
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-link-safety
 
+use stickymd_render::preview::PreviewSelection;
 use winit::dpi::PhysicalPosition;
 use winit::keyboard::KeyCode;
 use winit::window::CursorIcon;
@@ -16,7 +17,7 @@ const MEANINGFUL_DRAG_DIP: f64 = 3.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreviewCommand {
     None,
-    ClearSelection,
+    Escape,
     SelectAll,
     Copy,
     Save,
@@ -66,10 +67,13 @@ impl StickyApp {
     ) {
         match preview_command(code, shortcut, shift) {
             PreviewCommand::None => {}
-            PreviewCommand::ClearSelection => {
-                self.preview_selection = stickymd_render::preview::PreviewSelection::default();
-                self.request_preview_paint();
-            }
+            PreviewCommand::Escape => match preview_escape(self.preview_selection) {
+                PreviewEscape::ClearSelection => {
+                    self.preview_selection = PreviewSelection::default();
+                    self.request_preview_paint();
+                }
+                PreviewEscape::Window => self.dispatch_escape_to_window(),
+            },
             PreviewCommand::SelectAll => {
                 if let Some(frame) = &self.preview_frame {
                     self.preview_selection = frame.select_all();
@@ -133,12 +137,12 @@ impl StickyApp {
         let document_y = y + frame.scroll_y();
         let hit = frame.hit_test(x, document_y);
         self.preview_selection = if self.modifiers.shift_key() {
-            stickymd_render::preview::PreviewSelection {
+            PreviewSelection {
                 anchor: self.preview_selection.anchor,
                 active: hit,
             }
         } else {
-            stickymd_render::preview::PreviewSelection::caret(hit)
+            PreviewSelection::caret(hit)
         };
         self.preview_press_action = frame.action_at(x, document_y).cloned();
         self.preview_press_position = Some(self.cursor_position);
@@ -177,9 +181,26 @@ impl StickyApp {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum PreviewEscape {
+    ClearSelection,
+    Window,
+}
+
+/// Esc clears a Preview selection; with nothing selected it reaches the window rule
+/// (plan 09 Esc order).
+fn preview_escape(selection: PreviewSelection) -> PreviewEscape {
+    if selection.is_collapsed() {
+        PreviewEscape::Window
+    } else {
+        PreviewEscape::ClearSelection
+    }
+}
+
 fn preview_command(code: Option<KeyCode>, shortcut: bool, shift: bool) -> PreviewCommand {
     match (shortcut, shift, code) {
-        (false, false, Some(KeyCode::Escape)) => PreviewCommand::ClearSelection,
+        // Modifiers do not change Esc, as in Source, Search and the opacity popup.
+        (_, _, Some(KeyCode::Escape)) => PreviewCommand::Escape,
         (true, _, Some(KeyCode::KeyA)) => PreviewCommand::SelectAll,
         (true, _, Some(KeyCode::KeyC | KeyCode::Insert)) => PreviewCommand::Copy,
         (true, _, Some(KeyCode::KeyS)) => PreviewCommand::Save,
@@ -254,5 +275,29 @@ mod tests {
             preview_command(Some(KeyCode::Insert), false, true),
             PreviewCommand::None
         );
+        for (shortcut, shift) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert_eq!(
+                preview_command(Some(KeyCode::Escape), shortcut, shift),
+                PreviewCommand::Escape
+            );
+        }
+    }
+
+    #[test]
+    fn preview_escape_clears_a_selection_and_otherwise_reaches_the_window() {
+        assert_eq!(
+            preview_escape(PreviewSelection::default()),
+            PreviewEscape::Window
+        );
+        assert_eq!(
+            preview_escape(PreviewSelection::caret(17)),
+            PreviewEscape::Window
+        );
+        for (anchor, active) in [(3, 9), (9, 3)] {
+            assert_eq!(
+                preview_escape(PreviewSelection { anchor, active }),
+                PreviewEscape::ClearSelection
+            );
+        }
     }
 }

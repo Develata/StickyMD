@@ -1,5 +1,19 @@
 # Phase 14 Guided Manual Campaign
 
+人工观察写入逐场景、逐目标环境角色的观察日志（plan 11 `#manual-observation-log`）。开始前用
+`stickymd-smoke acceptance manual target` 声明 `current`、`previous` 两个目标环境角色。每个场景：
+
+1. 按提示准备环境（DPI、显示器、主题等）后按回车；
+2. 记录器读取本机 Windows 版本事实并自动判定角色（不询问角色；不属于任一获准构建则不记录）；
+3. 记录器从已校验的候选 ZIP 启动一个新的 StickyMD，并放入该项的 fixture——只观察这个实例；
+4. 回答 `P`/`F`/`N`；PASS 或 FAIL 在可选备注之前写入日志，备注随后单独记录。
+
+FAIL 的重测要开新会话：只有在该 FAIL 之后开始的会话里的 PASS 才能解除它。候选启动后未能完成初始化时，记录器
+会说明原因，此时只能记录 `F` 或 `N`。运行前请从托盘退出其它 StickyMD；记录器不会结束它没有启动的进程。它启动的
+实例在场景结束时关闭；记录器被中断时实例随之关闭。只有恰在实例创建与加入记录器的 Job 之间被强制终止时，才会留下
+一个从未运行的挂起实例（没有窗口与托盘图标）——下一次运行会拒绝启动并按 PID 指明它来自中断的记录器，在任务管理器中
+按该 PID 结束即可。记录器若报告无法让实例开始运行，该场景不会记录，重试即可。
+
 本指南只记录真实人工观察，不会把未执行项目提升为 PASS。开始前必须已将 successful GitHub
 `release` workflow artifact 下载并晋升为 exact candidate：
 
@@ -13,8 +27,8 @@ ZIP、`SHA256SUMS.txt` 与 SBOM 与权威副本逐字节一致；同 source 的�
 建议在正常 Windows 11 交互桌面中依次执行两个人工 session。每一步只接受：
 
 - `P`：实际观察满足 Expected；
-- `F`：实际观察不满足，必须在 observation 写明现象；
-- `N`：环境不可用或未执行，保持 `NOT TESTED`。
+- `F`：实际观察不满足，在随后的备注中写明现象；
+- `N`：环境不可用或未执行，保持 `NOT TESTED`（不写入日志）。
 
 ## G1 — Editor / IME / Rendering
 
@@ -70,6 +84,45 @@ candidate/clean harness/isolated-copy 收据合同，但分别写入 `g4-exact-q
 收据同样不能解除 readiness blocker。G3/G4 必须依次串行，不能并发争抢 clipboard、tray、窗口
 焦点或鼠标。
 
+## 在其他机器上记录（`previous` 角色的机器、Clean VM）
+
+被测机器不需要仓库、Rust 或额外 runtime，只需要工具、观察任务与候选 ZIP：
+
+1. 在主工作区导出观察任务（共享锁内的一份快照；`--select` 取 `all`（默认）、`guided`、`M1`..`M5` 或 `G1`、`G2`）：
+
+   ```powershell
+   cargo run -p stickymd-smoke --locked -- acceptance manual export --task=<task.json> --select=M5
+   ```
+
+2. 从同一提交构建工具（静态 CRT，只导入 Windows 自带的 DLL；解压与进程检查只用 Windows 自带的 PowerShell
+   `Expand-Archive` 与 `tasklist`）：
+
+   ```powershell
+   cargo build -p stickymd-smoke --release --locked
+   ```
+
+3. 把 `target\release\stickymd-smoke.exe`、观察任务与候选 ZIP 复制到被测机器，在交互桌面中运行（观察包所在
+   目录必须已存在，观察包文件本身不得已存在）：
+
+   ```powershell
+   .\stickymd-smoke.exe acceptance manual record --task=<task.json> --zip=<StickyMD-...-portable.zip> --bundle=<bundle.json>
+   ```
+
+   工具内置的注册表必须与任务相同，否则拒绝运行；ZIP 与其中的 EXE 必须是任务所述的 candidate。每个回答都立即写入
+   观察包，中断时已回答的内容保留。观察包上限 1 MiB：超限的回答不记录、会话结束，此时先导入、再导出新的任务。
+4. 把观察包带回主工作区导入（整包写入或整包拒绝；同一个包或其增长后的副本可以重复导入，已登记的记录跳过）：
+
+   ```powershell
+   cargo run -p stickymd-smoke --locked -- acceptance manual import --bundle=<bundle.json>
+   ```
+
+   包所属的 candidate、上下文、目标收据或注册表与当前不同，任一观察的环境不属于它声明的角色，或其实例运行的不是
+   candidate 的 EXE 时，导入被拒绝且日志不变。
+
+**M34（Clean VM 首次运行）**：先在 VM 中解压并运行 StickyMD、完成首次运行观察；退出 StickyMD 之后才复制工具与任务
+（`--select=M5`）。记录器询问 VM 基线、ZIP 的取得方式以及 VM 自首次运行后是否未改动，再采集 VM 的环境事实；它仍
+校验 ZIP 是任务所述的 candidate。M5 的其他项照常启动新实例，不在本次范围内的可按 `S` 跳过。
+
 ## 查看结果
 
 ```powershell
@@ -80,4 +133,5 @@ candidate/clean harness/isolated-copy 收据合同，但分别写入 `g4-exact-q
 剩余 26 项人工事实由 G1/G2 与 Tier B/C receipt 持有；其中 mixed-DPI M11/M12 不因 G4 主屏
 自动化而被替代。G3/G4 对应的 18 项只有各自 exact receipt 满足 source/harness/clean/EXE/ZIP
 绑定后才解除 `NOT_TESTED` blocker。Tier B/C 未执行项目继续保持
-`NOT TESTED`，任何 waiver 必须由 USER 明确授权并绑定 version、source SHA 与 case/group。
+`NOT TESTED`，任何 waiver 必须由 USER 明确授权，并绑定当前人工观察上下文与明确列出的 `(项, 角色)` 集合
+（plan 11）。

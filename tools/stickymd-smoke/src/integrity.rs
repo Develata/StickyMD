@@ -123,6 +123,19 @@ pub(crate) fn sha256(path: &Path) -> Result<String, String> {
         portable::sha256(&path)
     }
 }
+/// SHA-256 of bytes already in memory; callers that validate and archive the same
+/// bytes use this instead of re-reading a file that another process may replace.
+pub(crate) fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        windows::sha256_bytes(bytes)
+    }
+    #[cfg(not(windows))]
+    {
+        portable::sha256_bytes(bytes)
+    }
+}
+
 pub(crate) fn validate_sha256(value: &str, label: &str) -> Result<(), String> {
     validate_hex(value, 64, label)
 }
@@ -177,6 +190,20 @@ mod tests {
         assert_eq!(
             hash_fixture("abc.bin", b"abc").unwrap(),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn in_memory_hash_matches_file_hash_beyond_one_pipe_buffer() {
+        assert_eq!(
+            sha256_bytes(b"abc").unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        // Several megabytes: the in-memory digest must equal the file digest of the same bytes.
+        let large = vec![0x5a_u8; 3 * 1024 * 1024 + 7];
+        assert_eq!(
+            sha256_bytes(&large).unwrap(),
+            hash_fixture("large.bin", &large).unwrap()
         );
     }
 

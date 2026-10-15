@@ -24,7 +24,7 @@
 ## Owned Objects
 
 测试 fixture、golden baseline、Source Freeze、Qualification Module Registry、Last Successful Module
-Receipt、Promoted Candidate 与 release artifact manifest；这些是验证证据，不是产品运行时 authority。
+Receipt、Target Environment Receipt、Manual Observation Log、Promoted Candidate 与 release artifact manifest；这些是验证证据，不是产品运行时 authority。
 
 ## Inputs
 
@@ -32,8 +32,8 @@ Receipt、Promoted Candidate 与 release artifact manifest；这些是验证证�
 
 ## Outputs
 
-PASS/FAIL/NOT TESTED 命令结果、每模块 last-success 收据、差异 artifact、checksums、SBOM、Source Freeze
-与唯一 Promoted Candidate。
+PASS/FAIL/NOT TESTED 命令结果、每模块 last-success 收据、人工观察日志与逐项逐角色汇总、差异 artifact、checksums、
+SBOM、Source Freeze 与唯一 Promoted Candidate。
 
 ## State Changes
 
@@ -88,7 +88,8 @@ fuzz_text_delta
 
 ### 手工 Windows 11 验收
 
-- 系统：当前与前一个受支持 Windows 11 版本；100/125/150/200% DPI；
+- 系统：当前与前一个受支持 Windows 11 版本（目标环境角色 `current`、`previous`，见
+  [人工观察记录](#manual-observation-log)）；100/125/150/200% DPI；
   单显示器、双显示器（同 DPI / 混合 DPI / 左侧 / 上方）、运行中断开外接、
   sleep/resume、RDP reconnect。
 - 输入法：微软拼音、微信输入法（验证项见 `07_editor_and_ime.md`）。真实 profile 的可客观功能事实进入
@@ -215,8 +216,10 @@ docs/acceptance-cases/phase-XX.md
   由 owner 的 `Drop` 执行 best-effort `kill + wait`，不能依赖函数末尾的手工清理语句。
 - Startup Performance 与所有 Resources 模块在创建 fixture 或启动新 child 前，必须枚举当前
   Windows session 中既有的 `StickyMD.exe`。若其可执行文件位于 smoke tooling 自己命名的系统
-  temp qualification root，则判为 stale smoke-owned process，当前测量 fail closed，且不得生成
-  Performance/Resources PASS receipt。
+  temp qualification root（含人工记录器的会话根目录；按报告路径或其最终路径（解析 8.3 短名与 junction）中任一级
+  目录名识别，不要求位于本进程的 TEMP 下，因为另一终端可能使用不同的 TMP），则判为 stale smoke-owned process，当前测量 fail closed，且不得生成
+  Performance/Resources PASS receipt。无法读取或解析某个 `StickyMD.exe` 的映像路径、或进程枚举提前中断时，隔离
+  无法确认，同样 fail closed；列出后已退出的进程不计入。
 - stale-process preflight 只观测并报告 PID/count，不把完整 executable path 写入机器可读 evidence。
   它不得自动终止 preflight 前已经存在的进程，也不得把用户自己的 portable StickyMD 当作可清理
   对象；用户进程的关闭权始终属于 USER。
@@ -234,7 +237,8 @@ docs/acceptance-cases/phase-XX.md
 
 ```text
 AUTOMATED PASS   当前提交上的仓库内可重复入口已经通过
-MANUAL PASS      当前提交上的正式人工矩阵已执行，并引用完整环境/步骤/结果收据
+MANUAL PASS      当前候选上的正式人工矩阵已执行：每个目标环境角色的全部必需场景均有有效 PASS 观察，
+                 并引用完整环境/步骤/结果收据
 NOT TESTED       人工项尚未完成，或只有一次性/不可重复记录
 BLOCKED          自动化或人工验证已知失败，或环境阻止执行
 ```
@@ -255,8 +259,90 @@ USER WAIVED          USER 明确豁免列出的人工 case/group；未列出的 
 Phase 12 source decision template 与 Source Freeze-bound `dist/evidence/release-decisions.json` projection
 只允许 `PENDING`、`USER APPROVED`、`USER REJECTED`、`NOT APPLICABLE`。Rust automation 只能
 记录 USER 已明确给出的决定，不能自行批准；PUSH 决定必须在 remote workflow 前绑定 source identity。
-人工 waiver 必须使用具体 `WAIVER-P12-Mxx` key，不接受 blanket waiver；其 source/version identity
-来自相同 Source Freeze，最终 manual PASS 仍额外绑定 Promoted Candidate。
+人工 waiver 只接受具体 `WAIVER-P12-Mxx` key、Tier B 组 key `WAIVER-TIER-B-v{version}` 与目标环境档案 key
+`WAIVER-PROFILE-PREVIOUS-v{version}`，不接受全局 blanket waiver；档案 key 是限定于 `previous` 角色的跨 tier 例外，
+逐项 key 与 Tier B 组 key 不跨 tier。其 source/version identity 来自相同
+Source Freeze；每份人工 waiver 还绑定当前人工观察上下文，并明确列出所处置的 `(项, 角色)` 集合，所有种类使用同一
+校验器，旧格式不迁移。waiver 只处置 `NOT TESTED` 的 `(项, 角色)`，不覆盖 `MANUAL_FAIL` 或无效证据，也不删除已有
+PASS 观察；最终 manual PASS 仍额外绑定 Promoted Candidate。
+
+<a id="manual-observation-log"></a>
+### 人工观察记录与目标环境档案
+
+人工观察是独立的证据类别，不是 Last Successful Module Receipt：它同时记录 `MANUAL_PASS` 与 `MANUAL_FAIL`，
+绑定当前 Promoted Candidate，不跨候选复用。
+
+- **目标环境收据**：Promote 之后由 USER 以交互命令声明，绑定 candidate receipt 摘要并含随机上下文 ID。`current`、
+  `previous` 两个角色各写明 Windows 11 功能版本、对应构建分支、USER 依据微软发布历史声明的获准完整构建号
+  （`CurrentBuild.UBR`）及其来源与选择日期、允许的 `EditionID`（具体 SKU）与原生架构。选择规则：选择日期时，面向
+  通用设备的 General Availability Channel 中仍在服务期的最新与次新功能版本，排除只面向特定新设备的分支。工具
+  不联网，不自行推断目标。收据缺失、损坏或含糊时 authority 无效，任何 waiver 都不能替代。两个角色都覆盖完整的
+  人工项注册表，仍按 tier 与 waiver 规则处置。
+- **角色匹配**：记录器在被测机器上读取 `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`（64 位视图）的
+  `DisplayVersion`、`CurrentBuild`、`EditionID`（`REG_SZ`）与 `UBR`（`REG_DWORD`），以及 `IsWow64Process2` 成功返回
+  的 `pNativeMachine`（x64 进程运行于 ARM64 主机不算原生 x64）；采集有超时与输出上限，在每个场景开始与提交时各
+  采集一次，两次不同或任一失败即拒绝该观察。功能版本、构建分支、完整构建号、SKU 与架构全部相符才匹配一个角色，
+  且必须唯一，匹配为零或不唯一即拒绝登记。记录、导入与 readiness 共用同一谓词，按观察内记录的被测环境事实重算
+  角色，观察声明的角色必须与重算结果一致。人工观察的 Windows 身份只由本谓词决定，不读取 `ver`。匹配只表示系统是 USER 批准的公开服务构建之一：不判定 Insider 登记
+  状态，也不证明完整环境等价。获准构建列表是可接受的替代集合，不要求每个构建都完成一遍矩阵；每条观察显示实际
+  构建号；公开的可选预览质量更新可由 USER 按具体构建列入。资格化期间机器更新后构建号不在列表内，需要新的目标
+  收据与上下文，这会使两个角色的进度与全部人工 waiver 一并重新开始。
+- **人工项注册表**：工具内声明每项的 ID、tier、必需场景、对被测实例的要求与 waiver 范围，与 `phase-12.md` 的
+  Manual 集合精确相等；记录器、校验与 decision key 校验都读取它。注册表变化即新上下文。
+- **观察日志**：`dist/evidence/` 中只追加的日志，头部绑定 candidate receipt 摘要、目标收据摘要与注册表摘要。每条
+  观察有稳定 ID（会话 ID 与会话内序号）和 `base`（会话开始或观察任务导出时的日志长度），状态只能是 `MANUAL_PASS`
+  或 `MANUAL_FAIL`；`NOT_TESTED`、跳过与中止从不写入。某场景的 FAIL 一经观察即落盘（先于可选备注）；备注是追加在其观察之后的
+  独立记录，每条观察至多一条，同观察同文本的重复为 no-op、不同文本拒绝。同 ID 同内容
+  的重复导入为 no-op，同 ID 不同内容拒绝。日志与观察包在读取前先检查字节上限。
+- **状态归约**（每个 `(项, 角色)`）：场景为 FAIL 当且仅当存在某条 FAIL 观察，且没有任何 `base` 已包含它的 PASS；
+  否则有 PASS 即为 PASS，都没有则未覆盖。该判定与登记顺序无关：迟到的旧 PASS 不能清除较新的 FAIL，迟到的旧 FAIL
+  在正式重测前保持阻断。证据无效 → 阻断；任一必需场景为 FAIL → `MANUAL_FAIL`；全部必需场景为 PASS →
+  `MANUAL PASS`；其余 → `NOT TESTED`，并列出已覆盖与缺失场景。
+- **并发与恢复**：不被替换的 sidecar 锁 `dist/evidence/manual.lock`；记录、导入与目标声明取排他锁，Promote 替换与 Source
+  Freeze 作废 candidate 时也取排他锁（提交时的 candidate 复核与写入因此不被插入；锁内复核只读 candidate 收据，不
+  等待仓库子进程），readiness 与观察任务导出取共享锁，等待有上限。导出在同一把锁内从同一份日志快照取得上下文、`base` 与未解除的 FAIL。写失败
+  非零退出；观察包整体校验后一次原子提交。声明目标收据的同一事务写入合法的零观察日志（只有头部）；此后日志缺失、
+  零字节或损坏都视为日志丢失并阻断，不得当作首次初始化。日志达到条数上限后拒绝新观察。日志损坏即阻断；重建日志需要 USER 决定
+  `RESET-MANUAL-LOG-<digest>`（`<digest>` 为现有日志文件字节的 SHA-256，日志缺失时为空字节串的 SHA-256）并产生新
+  上下文，旧观察任务、观察包与 waiver 都不继承；重置决定在汇总中可见。日志仍可读（如达到条数上限）时，其未解除的
+  FAIL 按 `(项, 角色, 场景)` 合并为每个三元组一条带来源引用的 FAIL，作为新上下文的首批观察并保持阻断；三元组数远小于
+  条数上限，重置后必有追加容量。旧格式 `manual-acceptance.json`（schema 1）不转换为观察：原文件保留，
+  readiness 报告其已被取代。
+- **被测实例**：记录器校验候选 ZIP、解压到会话目录、按场景放入 fixture 并自行启动 EXE，观察记录 EXE 摘要与进程
+  ID（该摘要必须等于 candidate 的 EXE 摘要，否则观察无效；记录、导入与 readiness 共用这一判定）；同目录第二次启动、
+  双副本、跨断屏/睡眠/RDP 保留原进程与原 note（不得重启或重新放入 fixture 来完成恢复）等
+  要求由注册表按场景声明；预期的断连期间环境探测失败不判产品 FAIL。fixture 随工具提供：输入法项用空白 note，
+  其余用渲染压力 note 与全部图片格式（含超限图片）。PASS 要求记录器启动的进程在提交时仍在运行且是唯一的
+  StickyMD（在存储锁内、写入之前确认）。候选已启动但未在限时内完成初始化时，记录器报告原因，观察者可记录该实例的
+  FAIL 或不记录，PASS 被拒绝；启动之前的准备失败（复制、fixture、摘要不符）不形成观察。实例以挂起状态创建、加入 Job 后才恢复运行，随记录器退出（含中断）
+  而终止，StickyMD 自己启动的进程（如打开链接的浏览器）不受影响；创建与加入 Job 之间被强制终止时会留下一个从未运行的
+  挂起实例，下一次会话拒绝启动并指明它来自中断的记录器。恢复挂起线程失败（含挂起计数不为 1）时该实例被停止、场景
+  不记录；这些原生失败路径只验证了判定逻辑，未做原生故障注入。辅助进程（解压、进程枚举、UIA）同样在包含其子孙的 Job 中
+  启动，退出或超时后其子孙一并结束。会话目录持有会话锁，创建、删除与清理都在会话根目录的锁下串行；正常退出时删除，异常退出后由下一次会话清理
+  失去锁且名称符合会话格式的目录（每次清理的条目数、删除数与耗时有上限，其余留待以后），无法判定的保留并报告，根目录
+  为链接时拒绝。开始前确认没有其他 StickyMD 实例；
+  记录器不终止它未启动的进程。
+- **其他机器**：主工作区导出观察任务（`acceptance manual export`，含 candidate receipt 与目标收据的原文、注册表
+  摘要、`base`，以及所选场景尚未解除的 FAIL 的 ID、登记序号与说明，记录器在重测前展示）；工具二进制以观察包模式在
+  被测机器上运行（`acceptance manual record`），不需要仓库，所需 fixture 随工具提供，helper 只用 Windows 自带的
+  PowerShell `Expand-Archive` 与 `tasklist`，工具二进制只导入 Windows 自带的 DLL。工具内置的注册表必须与任务的注册表
+  摘要相同，否则拒绝运行；记录器按任务携带的 candidate receipt 校验 ZIP 与 EXE。观察包文件不得预先存在，每个回答在
+  下一个问题之前写入，会让包超过上限的回答被拒绝并结束会话；包路径位于某个仓库内（含经链接解析后的目录）时受该仓库的
+  公共证据路径防护。主工作区在排他锁内整包导入（`acceptance manual import`），复用现有 candidate 校验：包头的
+  candidate receipt、上下文、目标收据与注册表摘要必须与日志头相同，包的 `base` 不得超出日志，角色与实例的 EXE 摘要按
+  同一判定重算，同 ID 同内容的记录跳过，任一不符则整包不写。
+- **M34 Clean VM**：先完成首次运行观察，之后才复制并运行工具；该观察标为人工声明，记录 VM 基线与包的取得方式，
+  不冒充事前环境证据。场景开始时的采集、由记录器启动被测实例，以及 Phase 14"人工观察前先查询交互环境"都不适用
+  于这一次首次运行；工具事后在同一 VM 中采集环境事实并据此归属角色，事后采集与首次运行的人工声明分开记录，观察者
+  声明两者之间未更改系统。
+- **信任边界**：信任 USER，不防伪造观察；严格解析、摘要与上下文绑定防止的是混用、陈旧与损坏。
+- **上限**：观察包 1 MiB，单个日志 10 000 条，备注 2 KiB。
+- **已知覆盖缺口**：Phase 8 人工义务尚未全部映射到 P12 人工项。readiness 无论通过与否都在普通输出与 JSON 中列出
+  这些缺口，不得把人工矩阵表述为完整。
+- **验证**（实现时进入 Phase 14 矩阵）：角色唯一匹配，以及类型错误、读取失败、两次采集不同、零匹配与多匹配的
+  拒绝；迟到的旧 PASS 与旧 FAIL、重复与冲突 ID；部分覆盖、FAIL 与无效证据优先于 waiver 与 Tier C；上下文失效、日志
+  缺失、零字节或损坏与重置（含满额日志的未解除 FAIL 合并带入）、写入失败不留半更新、锁等待有界；FAIL 先于备注落盘，guided step 逐项回答；原进程与原 note 保留、
+  M34 例外；观察任务快照一致、无仓库记录、整包导入的拒绝路径；readiness 始终列出已知缺口。
 
 <a id="release-artifact-authority"></a>
 ### Source freeze、remote artifact promotion 与 exact evidence
@@ -307,16 +393,17 @@ dist/exact-candidate/
 
 ignored `dist/evidence/` 中：
 
-- source-only receipt 绑定 Source Freeze，不要求 final EXE hash；
+- source-only receipt 绑定 Source Freeze，不要求 final EXE hash；本地 headless CI 收据必须恰好包含 runner 为
+  `all --ci` 规划的全部任务（按顺序、每项 `PASSED`）及任务集标记，不另维护任务名单；
 - remote workflow receipt 绑定 source/run/attempt/artifact id，不复制尚未产生的 final EXE hash；
 - downloaded/promotion receipt 与 candidate receipt 绑定实际 ZIP/EXE/SBOM hash；
 - downloaded/package/checksum/SBOM、PE/native-runtime 与 portable-runtime 直接证明当前 artifact bytes，
   必须绑定 Promoted Candidate 的适用 ZIP/EXE/SBOM hash；
-- Runtime、Performance、Resources、G3、G4、G5 与可模块化 manual observation 使用下文定义的
-  Last Successful Module Receipt；它们记录成功来源 candidate，但由当前 Qualification Module
-  Fingerprint 决定能否复用；
-- readiness 只接受当前 Promoted Candidate 的 exact-byte evidence，以及与当前模块指纹兼容的
-  last-success evidence。
+- Runtime、Performance、Resources、G3、G4、G5 使用下文定义的 Last Successful Module Receipt；人工观察是独立的
+  证据类别（见[人工观察记录](#manual-observation-log)），绑定当前 Promoted Candidate；上述模块记录成功来源 candidate，但由当前 Qualification
+  Module Fingerprint 决定能否复用；
+- readiness 只接受当前 Promoted Candidate 的 exact-byte evidence、与当前模块指纹兼容的 last-success evidence，
+  以及当前人工观察上下文中经归约的人工观察（`MANUAL_FAIL` 与无效证据优先于任何 waiver）。
 
 每次 Promote 或 candidate identity 变化，旧 exact-byte evidence 必须变 stale。Source-bound 与功能资格化
 evidence 不按整个 source commit 或“最新 candidate”机械失效，而是由声明的模块输入指纹判断。相关产品、共享、
@@ -332,12 +419,19 @@ ZIP 不能解压、PE/native-runtime/runtime smoke 失败时，既有 Promoted C
 ZIP 路径；qualification CLI 必须按 remote receipt 的 run/name 自行下载权威副本，确认
 ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
 
-- manual recorder 必须是交互式 human receipt recorder，只接受显式
-  `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`，不得从 process/status 自动推断人工 PASS；
+- manual recorder 必须是交互式 human receipt recorder，逐场景只接受显式
+  `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`（后者不写入日志），不得从 process/status 自动推断人工 PASS；
+  guided step 覆盖多项时逐项询问；
 - stale module fingerprint 不参与 readiness；G3/G4/G5 成功记录还必须包含 origin ZIP/EXE、运行 harness、
   clean worktree 与各组预期逐项结果，只有当前 registry 指纹兼容时才能复用；
 - readiness 对 P0/P1、未批准 hard gate、mandatory manual NOT TESTED、exact package、remote
   evidence 与 USER decision fail closed；不得提供 `--force-ready`；
+- readiness 读取的每份收据（candidate、Source Freeze、decision、remote/downloaded、headless、manual 与模块
+  evidence）都整份严格解析为 JSON 对象，每个字段、case 与 decision 只从所属对象读取；重复键、截断、尾随
+  输入或类型不符即为无效，不以文本搜索寻找字段；
+- exact evidence 记录的 Windows build 必须含具体版本与构建号（如 `Microsoft Windows 10.0.26200.9457`），
+  由 `ver` 输出读取（按控制台代码页有损解码后只取 ASCII 版本号）；读取失败记为 `UNKNOWN` 并使收据无效，不得以
+  `OS` 环境变量（`Windows_NT`）代替；
 - freeze 后 source/manifest/lock/runtime asset 或 release tooling 变化仍要求重建 Source Freeze。下游证据由
   evidence class 决定：exact-byte evidence 必须重建；module evidence 只在其 registry 输入指纹变化时 stale。
 
@@ -352,31 +446,84 @@ harness、权威 plan/acceptance contract、依赖传播和 evidence class。Pow
 “是否最新 candidate”或只看 `git diff` 的易漂移判断。同一 planning invocation 可缓存共享文件 digest，但不得把
 全部仓库内容同时复制到内存。共享 core、Cargo manifests/lock、toolchain、build/release 配置和 contract 变化按
 注册依赖保守传播；任何 tracked path 无法分类时，planner 必须使保守共享集合 stale，而不是默认忽略。
+产品文件按显式规则归入产品域：每次会话的启动路径或事件循环每轮都会执行的代码（应用状态机及其逐帧 UI、启动、
+配置与偏好、intent 路由、编辑会话、note 加载与恢复检查、窗口与平台初始化、帧表面、默认视图的源码渲染与共享
+core），以及任何编辑或偏好变化之后的持久化（autosave、自身写入的 reconciliation、note 与配置的原子发布）是每个
+启动产品的模块的输入，归全部产品域；只经某个功能到达的代码归该功能所服务的域；尚未追踪闭包的文件保持
+全部产品域。缩窄必须给出"入口 → 调用/回调/Effect → 共享状态读写 → 验收断言"的依据，拆文件本身不是依据。
+没有显式规则的产品文件在运行时归全部产品域，治理检查（每次 CI plan 都运行）拒绝它；不再命中任何 tracked 文件的规则
+同样被拒绝。
+决定 evidence 能否被接受的规则（模块 evidence 合同、注册表、账本与记录格式）属于全局输入；只展示或汇总
+已有判定的工具代码（状态报告与 release readiness 汇总）不是任何功能模块的输入，由工具自身测试与 CI 覆盖。
 
-每个模块只维护一份 Last Successful Module Receipt：
+功能模块指纹（v2）对两类文件做发布版本规范化，其余输入仍逐字节参与：根 `Cargo.toml` 去掉
+`[workspace.package]` 唯一的 `version` 行；`Cargo.lock` 去掉 workspace member（由 `[workspace].members`
+与各 member 的 `[package].name` 白名单确定，且 member 必须 `version.workspace = true`）对应、无 `source`、
+版本等于 workspace version 的 `version` 行。根 manifest、全部 member manifest 与被跟踪的 `Cargo.lock` 在
+规划时作为一组判定：任一文件不在这一窄语法内（重复字段，包括 lock 顶层格式版本及 `source`/`checksum`/
+`dependencies` 的重复；dotted/inline key、多行字符串、未知表、member 缺失或重复、带版本的 member 依赖引用、
+lock 与 manifest 版本不一致、lock 未被跟踪），两份文件都回退为原始字节；只有与判定时逐字节相同的内容才使用
+规范化形式。规范化算法版本写入指纹头；Source Freeze、workspace-tests identity 与 exact-byte 门始终使用原始字节。
+发布说明、README/CHANGELOG/CONTRIBUTING/SECURITY、AGENTS 指南、coverage matrix、release checklist、
+`docs/{adr,overview,features}/`、README 图片与许可证文本，以及人工验收代码（记录器、人工项注册表、观察存储、归约
+与 readiness 人工汇总）和 `tools/manual/` 指南，不是任何功能模块执行或读取的输入，不使功能模块失效（workspace
+tests 的身份仍覆盖这些代码；各证据写入方共用的人工存储保留路径与锁不在此列，仍是全部功能模块的输入）；
+其中由 governance 检查或打包读取的文件继续由 CI 选择与 exact-byte 门覆盖。`docs/plan/`、`docs/acceptance-cases/`
+因跨域约束仍对全部功能模块保守传播。
+
+成功记录存放在克隆级共享存储 `<git common dir>/stickymd/qualification-ledger/`，同一克隆的所有 linked
+worktree（包括每次发版新建的隔离 worktree）解析到同一位置；git 不可用时 fail closed，不退回私有存储。
+每个模块按输入指纹保存成功记录（`modules/<module>/<fingerprint>.json`），不同指纹互不覆盖，查找是
+按当前指纹的直接路径；同指纹重跑替换自身记录，每个模块保留最近 8 份。归档、发布与清理都在存储的
+OS 文件锁（`.lock`，进程退出即释放；等待上限 120 s，超时报错而不是无限阻塞）下串行；读取方持共享锁
+从记录跟随到 evidence 与 companion 文件，清理因此不会删除正在被读取或刚被其他写入方发布的内容。查找在同一把
+共享锁内依次校验：记录（固定字段集的严格 JSON，evidence 名称由模块与摘要决定）、evidence 字节摘要、该模块的
+evidence 合同与每个 companion 归档的摘要。evidence 合同对整份文档严格解析，每个值只从所属对象读取，重复键、
+截断或尾随输入即无效；登记使用同一合同，不完整、失败或身份不符的收据在登记时即被拒绝。因此"可复用"与
+"readiness 合格"是同一判定：记录存在但任一校验失败时为 `INVALID_LAST_SUCCESS`，拒绝复用并显示原因，正式重跑
+完整通过后替换该记录并补回缺失或损坏的 companion 归档。写入方只读取一次工作区收据，对同一份字节完成校验、摘要与
+归档；截图同样对实际归档的字节计算摘要。刚发布的记录无论时间戳是否并列或回拨都被保留。清理遇到任何不可读
+或无法解析的记录、目录项或 evidence 即停止删除并报告，不把"无法确定是否被引用"当成未引用；截图引用从所有
+保留 evidence 的 `results[].artifacts[]` 结构化提取，不受当前工具 case 列表限制。成功记录发布后清理失败只
+告警，不撤销成功。清理所用记录必须是完整、严格可解析的 JSON，用于决定截图引用的 evidence 必须与记录中的
+摘要一致；G5 每个 case 只统计自身 JSON 对象内的截图。整个共享存储（含 `.lock`）与旧路径一样是
+保留路径：别名解析后的路径含 `/stickymd/qualification-ledger/` 段（忽略大小写），或落在由 `.git` 元数据文件
+（不运行 git）定位、并解析过 junction 的存储根之内，均拒绝；`.git` 存在却无法解释（指针为空、目标不是现有
+目录、`commondir` 无效，或 `.git`/`commondir` 本身是悬空链接）时同样拒绝。存储在取得锁时检查根以下所有
+条目（含 `.lock`，且在打开前检查），出现 junction 或符号链接即拒绝读写，因此静态的子目录重定向无法让外部
+路径冒充受信任记录。该保证覆盖遵守同一锁协议的 qualification 进程与静态链接；不遵守锁协议、在持锁期间
+替换存储目录的外部进程不在防御范围内（路径级 API 无法消除这一竞态）。每次取锁的扫描在约 900 个条目时
+实测约 5 ms。普通 smoke 与诊断的 `--evidence-file` 不得指向其中：
 
 ```text
-no compatible success
+no record for current fingerprint
     -> RUN REQUIRED
 
-current fingerprint == last successful fingerprint
-    -> REUSED PASS（不启动 runner；显示 origin candidate/source）
+record for current fingerprint, fully valid
+    -> REUSED PASS（不启动 runner；显示 origin candidate/source/version）
+
+record for current fingerprint, but record/evidence/companion invalid
+    -> RUN REQUIRED (INVALID_LAST_SUCCESS, reason shown)
 
 RUN REQUIRED -> complete PASS
-    -> atomically replace that module's last-success receipt
+    -> atomically publish the record for (module, current fingerprint)
 
 RUN REQUIRED -> FAIL / ENVIRONMENT BLOCKED / USER ABORTED / unwind
-    -> return non-zero; do not create or overwrite last-success receipt
+    -> return non-zero; do not create or replace any record
 ```
 
-last-success 文件只允许 `PASSED`；失败、中止和 partial result 不是正式成功收据。它们可以输出到当前命令终端或
-临时诊断，但不得改变 ledger authority。成功 evidence 先写入按内容 hash 命名的不可变归档，再用同目录 temp +
-atomic replace 更新 ledger 指针；这样即使新 ledger 写入失败，旧指针及其 evidence 仍然完整。ledger 更新成功后才可
-清理上一份归档。旧成功记录保留不代表旧指纹当前有效：readiness 每次必须重新计算并比较当前指纹。
+记录只允许 `PASSED`；失败、中止和 partial result 不是正式成功收据。它们可以输出到当前命令终端或临时诊断，
+但不得改变 ledger authority。成功 evidence 先写入按内容 hash 命名的不可变归档（`evidence/`），G5 截图等
+companion 文件按 SHA-256 归档到 `artifacts/` 并在归档前校验，再用同目录 temp + atomic replace 发布记录；
+readiness 从共享存储校验这些归档，不依赖原 worktree 中的文件。旧记录保留不代表当前有效：readiness 每次
+重新计算当前指纹；readiness 与状态报告共用一次查找快照（全部有记录模块的一次指纹批量计算、一把共享锁），
+不重复校验。工作区内旧的 `dist/evidence/module-success/` 不再是 authority，也不自动导入（指纹算法
+已变化），但仍是保留路径，普通 smoke 与诊断不得写入。发布归档必须复制 readiness 引用的共享存储 evidence。
 
 package/download/checksum/SBOM/PE/native-runtime 等精确字节门不进入功能 ledger，仍直接绑定当前
 ZIP/EXE/SBOM 并在 artifact hash 改变后重跑。功能行为模块可以跨 candidate 复用，但必须保留 origin identity，且
-产品、共享、harness 与 contract 输入逐字节兼容。
+产品、共享、harness 与 contract 输入（按上述规范化）逐字节兼容；readiness 将复用 evidence 内的 source、
+EXE/ZIP 与 version 与该记录的 origin 比较，不与当前 candidate 比较。
 readiness 输出必须区分 `RAN PASS` 与 `REUSED PASS`；二者都是通过，但后者不能伪装成在当前 candidate 上实际启动。
 
 candidate freeze、release readiness 或 USER 明确要求时，planner 只运行指纹 stale 的功能模块与当前 artifact
@@ -498,7 +645,8 @@ Resources 是 source-preview、math、images、window、zoom 五类兼容成功�
 
 ### Phase 14 qualification environment、独立证据通道与 partial evidence
 
-Phase 14 exact-candidate campaign 在任何 GUI runtime、performance、resources 或人工观察前，
+Phase 14 exact-candidate campaign 在任何 GUI runtime、performance、resources 或人工观察（M34 Clean VM 的首次运行
+观察除外，见[人工观察记录](#manual-observation-log)）前，
 必须先用 verification tooling 查询当前 Windows session 的实际交互条件。统一状态为：
 
 ```text
@@ -520,7 +668,8 @@ Resources 长矩阵必须在主要场景之间重检环境，并在每个完成�
 
 M1..M5 manual sessions 只允许共享 setup，不改变 P12-M01..P12-M44 的逐项 authority。Phase 14
 保留 G1/G2 guided sessions；每个 guided observation 必须显式映射到一项或多项相同观察事实的
-case ID，并为每项记录 `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`，不能用“整体看起来正常”
+case ID，并为每项分别回答 `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`（后者只在会话输出中出现，不写入观察
+日志），不能用“整体看起来正常”
 提升整组状态。
 
 G3 clipboard/export/recovery/asset-safety 路径由本地、串行、独占交互桌面的 exact-candidate
@@ -601,7 +750,10 @@ blocking failure，整组仍为 FAIL。完整 Resources 自身不因该策略自
 人工发布政策按风险分层：Tier A 是 release-critical human gate，除非 USER 明确批准具体
 case/group waiver，否则必须 PASS；Tier B 是环境依赖 gate，可由 USER 对绑定版本与 exact source
 的明确组 waiver 处置；Tier C 的 `NOT TESTED` 在对应自动化合同已 PASS 时不阻断，已观察到的
-`MANUAL_FAIL` 仍阻断。waiver 只绑定声明的版本、source SHA 与 case/group，不跨版本继承。
+`MANUAL_FAIL` 仍阻断。waiver 的绑定与范围见上文 Phase 12 发布资格状态（版本、Source Freeze、人工观察上下文与
+`(项, 角色)` 集合），不跨版本继承。缺 `previous` 角色观察时，
+USER 可用档案 key 处置为 `USER WAIVED` 并计入 READY；汇总逐项逐角色列出，并写明这表示"符合批准的发布政策"，
+不表示技术验收全部完成。
 
 v0.1.0 允许 unsigned Authenticode distribution；package/receipt 必须明确记录 unsigned，README
 与 release notes 必须说明 Windows reputation warning 及 checksum/attestation 验证方法。自动化

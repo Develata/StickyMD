@@ -224,6 +224,15 @@ impl ControlState {
         }
     }
 
+    /// Closes the popup without committing: ends any slider drag or numeric edit and shows the
+    /// committed value again, so a later pointer release commits nothing.
+    pub fn cancel(&mut self, committed: u8) {
+        self.opacity_popup_open = false;
+        self.opacity_dragging = false;
+        self.opacity_input_focused = false;
+        self.preview(committed);
+    }
+
     pub fn commit_input(&mut self) -> Option<u8> {
         let parsed = self.opacity_input.parse::<u16>().ok()?;
         let opacity = parsed.clamp(40, 100) as u8;
@@ -237,6 +246,25 @@ mod phase8_control_tests {
     use std::time::Instant;
 
     use super::*;
+
+    #[test]
+    fn cancelling_the_opacity_popup_ends_every_edit_and_restores_the_committed_value() {
+        for (focused, dragging) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut state = ControlState::new(80);
+            state.opacity_popup_open = true;
+            state.opacity_input_focused = focused;
+            state.opacity_dragging = dragging;
+            state.preview(55);
+            state.replace_input("4".to_owned());
+            state.cancel(80);
+            assert!(!state.opacity_popup_open && !state.opacity_input_focused);
+            assert!(!state.opacity_dragging, "a later release must not commit");
+            assert_eq!(
+                (state.opacity_preview, state.opacity_input.as_str()),
+                (80, "80")
+            );
+        }
+    }
 
     #[test]
     fn phase8_controls_share_layout_between_hit_testing_and_painting() {

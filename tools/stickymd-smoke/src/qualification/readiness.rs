@@ -4,11 +4,11 @@
 
 use std::path::Path;
 
+use super::manual_observation::store;
+use super::module_ledger::{self, Lookup, Snapshot};
+use super::module_registry::ModuleId;
 use super::receipt::{self, Candidate};
-use super::{
-    automated_readiness, decisions, g3_readiness, g4_readiness, g5_readiness, json,
-    manual_readiness, module_ledger, remote, source_freeze,
-};
+use super::{automated_readiness, decisions, json, manual_readiness, remote, source_freeze};
 
 const READINESS_RECEIPT: &str = "dist/evidence/release-readiness.json";
 
@@ -26,25 +26,32 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
             None
         }
     };
-    let candidate = match receipt::read_candidate(root) {
-        Ok(candidate) => {
+    // One read: the candidate and the digest its manual context must be bound to.
+    let (candidate, candidate_digest) = match receipt::read_candidate_snapshot(root) {
+        Ok((candidate, digest)) => {
             if let Err(error) = receipt::validate_candidate_against_repository(root, &candidate) {
                 blockers.push(error);
             }
-            Some(candidate)
+            (Some(candidate), Some(digest))
         }
         Err(error) => {
             blockers.push(format!("promoted release candidate receipt: {error}"));
-            None
+            (None, None)
         }
     };
     if let (Some(source), Some(candidate)) = (&source, &candidate) {
         check_source_identity(source, candidate, &mut blockers);
     }
 
+    // Lock order: the manual store first, then decisions. Holding the manual lock while
+    // the one decision snapshot is read pins the manual context to that same moment.
+    let manual_guard = store::lock(root, false);
+    if let Err(error) = &manual_guard {
+        blockers.push(format!("mandatory manual acceptance: {error}"));
+    }
     let release_decisions = source
         .as_ref()
-        .map(|source| decisions::read(root, source))
+        .map(|source| decisions::read_consistent(root, source))
         .transpose()
         .unwrap_or_else(|error| {
             blockers.push(error);
@@ -60,24 +67,42 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
     ] {
         require_decision(&release_decisions, key, "USER APPROVED", &mut blockers);
     }
-    if let (Some(source), Some(candidate)) = (&source, &candidate) {
+    // One lookup pass serves every module check and the status report below.
+    let snapshot = module_ledger::lookup_all(root);
+    let mut manual = manual_readiness::Report::detached(root);
+    if let (Some(source), Some(candidate), Some(digest), Ok(_)) =
+        (&source, &candidate, &candidate_digest, &manual_guard)
+    {
         check_remote(root, source, candidate, &mut blockers);
         check_downloaded(root, candidate, &mut blockers);
-        let automated_ok = automated_readiness::check(root, source, candidate, &mut blockers);
-        g3_readiness::check(root, candidate, &mut blockers);
-        g4_readiness::check(root, candidate, &mut blockers);
-        g5_readiness::check(root, candidate, &mut blockers);
-        manual_readiness::check(
+        let headless_ok = automated_readiness::check(root, source, &mut blockers);
+        let artifact_modules_ok = check_modules(&snapshot, is_artifact_module, &mut blockers);
+        check_modules(
+            &snapshot,
+            |module| !is_artifact_module(module),
+            &mut blockers,
+        );
+        let automated_ok = headless_ok && artifact_modules_ok;
+        manual = manual_readiness::check(
             root,
-            candidate,
             &release_decisions,
+            digest,
+            &candidate.exe_sha256,
+            &candidate.version,
             automated_ok,
             &mut blockers,
         );
     }
-    let document = render_readiness(candidate.as_ref(), &blockers);
-    receipt::write_receipt(root, READINESS_RECEIPT, &document)?;
-    module_ledger::print_status_for_candidate(root, candidate.as_ref())?;
+    drop(manual_guard);
+    let document = render_readiness(candidate.as_ref(), &blockers, &manual);
+    // The summary is printed even if the receipt cannot be written; the error follows.
+    let written = receipt::write_receipt(root, READINESS_RECEIPT, &document);
+    match &snapshot {
+        Ok(snapshot) => module_ledger::print_snapshot(snapshot, candidate.as_ref()),
+        Err(error) => println!("Qualification module ledger: {error}"),
+    }
+    manual_readiness::print(&manual);
+    written?;
     if explain || !blockers.is_empty() {
         if blockers.is_empty() {
             println!("Release readiness: READY");
@@ -114,13 +139,55 @@ fn check_source_identity(
     }
 }
 
+/// Runtime, Performance and Resources run on the promoted artifact and, with the
+/// headless receipt, form the automated coverage that Tier C manual cases rely on.
+const fn is_artifact_module(module: ModuleId) -> bool {
+    matches!(
+        module,
+        ModuleId::Runtime | ModuleId::Performance | ModuleId::Resource(_)
+    )
+}
+
+/// Every selected module needs a valid success for its current inputs.
+fn check_modules(
+    snapshot: &Result<Snapshot, String>,
+    select: impl Fn(ModuleId) -> bool,
+    blockers: &mut Vec<String>,
+) -> bool {
+    let before = blockers.len();
+    match snapshot {
+        Ok(snapshot) => {
+            for (module, lookup) in snapshot
+                .modules
+                .iter()
+                .filter(|(module, _)| select(*module))
+            {
+                match lookup {
+                    Lookup::Valid(_) => {}
+                    Lookup::Missing { .. } => blockers.push(format!(
+                        "{} has no compatible last-success receipt for current module inputs",
+                        module.label()
+                    )),
+                    Lookup::Invalid(reason) => {
+                        blockers.push(format!("{} last-success receipt: {reason}", module.label()));
+                    }
+                }
+            }
+        }
+        Err(error) => blockers.push(format!("qualification module ledger: {error}")),
+    }
+    blockers.len() == before
+}
+
 fn check_remote(
     root: &Path,
     source: &source_freeze::SourceFreeze,
     candidate: &Candidate,
     blockers: &mut Vec<String>,
 ) {
-    let document = match receipt::read_receipt(&root.join(remote::REMOTE_RECEIPT)) {
+    let document = match receipt::read_receipt(&root.join(remote::REMOTE_RECEIPT))
+        .and_then(|text| json::parse_object(&text))
+    {
         Ok(document) => document,
         Err(error) => {
             blockers.push(format!("remote workflow receipt: {error}"));
@@ -144,13 +211,15 @@ fn check_remote(
     ] {
         expect_u64(&document, key, expected, "remote workflow", blockers);
     }
-    if document.contains("\"exe_sha256\"") {
+    if json::has_field(&document, "exe_sha256") {
         blockers.push("remote workflow receipt must not predeclare final EXE hash".to_owned());
     }
 }
 
 fn check_downloaded(root: &Path, candidate: &Candidate, blockers: &mut Vec<String>) {
-    let document = match receipt::read_receipt(&root.join(remote::DOWNLOADED_RECEIPT)) {
+    let document = match receipt::read_receipt(&root.join(remote::DOWNLOADED_RECEIPT))
+        .and_then(|text| json::parse_object(&text))
+    {
         Ok(document) => document,
         Err(error) => {
             blockers.push(format!("downloaded artifact receipt: {error}"));
@@ -196,7 +265,7 @@ fn check_downloaded(root: &Path, candidate: &Candidate, blockers: &mut Vec<Strin
 }
 
 fn expect_string(
-    document: &str,
+    document: &json::Value,
     key: &str,
     expected: &str,
     label: &str,
@@ -211,7 +280,13 @@ fn expect_string(
     }
 }
 
-fn expect_u64(document: &str, key: &str, expected: u64, label: &str, blockers: &mut Vec<String>) {
+fn expect_u64(
+    document: &json::Value,
+    key: &str,
+    expected: u64,
+    label: &str,
+    blockers: &mut Vec<String>,
+) {
     match json::u64_field(document, key) {
         Ok(actual) if actual == expected => {}
         Ok(actual) => blockers.push(format!(
@@ -234,7 +309,11 @@ fn require_decision(
     }
 }
 
-fn render_readiness(candidate: Option<&Candidate>, blockers: &[String]) -> String {
+fn render_readiness(
+    candidate: Option<&Candidate>,
+    blockers: &[String],
+    manual: &manual_readiness::Report,
+) -> String {
     let source = candidate.map_or("UNKNOWN", |value| value.source_commit.as_str());
     let exe = candidate.map_or("UNKNOWN", |value| value.exe_sha256.as_str());
     let zip = candidate.map_or("UNKNOWN", |value| value.zip_sha256.as_str());
@@ -244,7 +323,7 @@ fn render_readiness(candidate: Option<&Candidate>, blockers: &[String]) -> Strin
         "NOT_READY"
     };
     let mut output = format!(
-        "{{\"schema_version\":2,\"status\":\"{status}\",\"source_commit\":\"{}\",\"exe_sha256\":\"{}\",\"zip_sha256\":\"{}\",\"blockers\":[",
+        "{{\"schema_version\":3,\"status\":\"{status}\",\"source_commit\":\"{}\",\"exe_sha256\":\"{}\",\"zip_sha256\":\"{}\",\"blockers\":[",
         json::escape(source),
         json::escape(exe),
         json::escape(zip),
@@ -255,7 +334,9 @@ fn render_readiness(candidate: Option<&Candidate>, blockers: &[String]) -> Strin
         }
         output.push_str(&format!("\"{}\"", json::escape(blocker)));
     }
-    output.push_str("]}\n");
+    output.push_str("],\"manual\":");
+    output.push_str(&manual_readiness::render(manual));
+    output.push_str("}\n");
     output
 }
 
@@ -270,9 +351,9 @@ mod tests {
 
     #[test]
     fn readiness_has_only_ready_or_not_ready_states() {
-        assert!(render_readiness(None, &[]).contains("\"status\":\"READY\""));
+        assert!(render_readiness(None, &[], &Default::default()).contains("\"status\":\"READY\""));
         assert!(
-            render_readiness(None, &["manual missing".to_owned()])
+            render_readiness(None, &["manual missing".to_owned()], &Default::default())
                 .contains("\"status\":\"NOT_READY\"")
         );
     }
@@ -327,6 +408,32 @@ mod tests {
         check_downloaded(&root, &candidate, &mut blockers);
         assert!(blockers.iter().any(|item| item.contains("zip_sha256")));
         assert!(blockers.iter().any(|item| item.contains("promoted")));
+
+        // A complete receipt passes; one legal mutation each must block again.
+        let complete = stale
+            .replace(&"f".repeat(64), &candidate.zip_sha256)
+            .replace("\"promoted\":false", "\"promoted\":true");
+        receipt::write_receipt(&root, DOWNLOADED_RECEIPT, &complete).expect("write receipt");
+        blockers.clear();
+        check_downloaded(&root, &candidate, &mut blockers);
+        assert!(blockers.is_empty(), "{blockers:?}");
+        for mutated in [
+            complete.replace(
+                "\"status\":\"PASSED\"",
+                "\"status\" : \"FAILED\",\"extra\":{\"status\":\"PASSED\"}",
+            ),
+            complete.replace(
+                "\"promoted\":true",
+                "\"promoted\" : false,\"nested\":{\"promoted\":true}",
+            ),
+            complete.replace("\"runtime_smoke\":true,", ""),
+            complete.replace("\"promoted\":true}", "\"promoted\":true,\"promoted\":true}"),
+        ] {
+            receipt::write_receipt(&root, DOWNLOADED_RECEIPT, &mutated).expect("write receipt");
+            blockers.clear();
+            check_downloaded(&root, &candidate, &mut blockers);
+            assert!(!blockers.is_empty(), "{mutated}");
+        }
         fs::remove_dir_all(root).expect("cleanup");
     }
 

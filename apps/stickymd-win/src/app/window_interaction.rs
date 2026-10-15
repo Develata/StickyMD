@@ -136,6 +136,13 @@ impl StickyApp {
         if event.state != ElementState::Pressed {
             return false;
         }
+        // An open opacity popup consumes Esc first, whether or not its numeric input has focus.
+        if self.controls.opacity_popup_open
+            && event.physical_key == PhysicalKey::Code(KeyCode::Escape)
+        {
+            self.cancel_opacity_popup();
+            return true;
+        }
         if self.controls.opacity_popup_open && self.controls.opacity_input_focused {
             match event.physical_key {
                 PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => {
@@ -144,16 +151,6 @@ impl StickyApp {
                 }
                 PhysicalKey::Code(KeyCode::Backspace) => {
                     self.controls.opacity_input.pop();
-                    return true;
-                }
-                PhysicalKey::Code(KeyCode::Escape) => {
-                    self.controls.opacity_input_focused = false;
-                    self.controls.opacity_popup_open = false;
-                    self.controls.opacity_input = self.config.current().opacity.to_string();
-                    self.controls.opacity_preview = self.config.current().opacity;
-                    self.dispatch_window_preference_intent(WindowPreferenceIntent::PreviewOpacity(
-                        self.config.current().opacity,
-                    ));
                     return true;
                 }
                 _ => {
@@ -255,6 +252,13 @@ impl StickyApp {
 
     fn preview_opacity(&mut self, opacity: u8) {
         self.dispatch_window_preference_intent(WindowPreferenceIntent::PreviewOpacity(opacity));
+    }
+
+    /// Closes the popup and drops any uncommitted slider or numeric value.
+    fn cancel_opacity_popup(&mut self) {
+        let committed = self.config.current().opacity;
+        self.controls.cancel(committed);
+        self.dispatch_window_preference_intent(WindowPreferenceIntent::PreviewOpacity(committed));
     }
 
     fn commit_opacity_input(&mut self) {

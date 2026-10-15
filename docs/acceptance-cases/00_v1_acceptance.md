@@ -368,7 +368,8 @@ Ctrl+Shift+S 导出到目标目录。
 等待任意自动收起计时器到期；鼠标短暂移出。
 
 ### Expected
-不收起。Esc 与手动收起按钮仍可收起。冲突/恢复提示存在时同样不收起。
+不收起。手动收起按钮仍可收起；Esc 按 `09_windows_shell.md` 的 Esc 顺序处理（composition 中只取消 preedit，
+未被消费时收起）。冲突/恢复提示存在时同样不自动收起。
 
 ### Failure Signals
 输入中收起；composition 被中断；提示被收起吞掉。

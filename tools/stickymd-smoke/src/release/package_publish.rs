@@ -33,8 +33,29 @@ pub(super) fn publish(options: &PackagePublishOptions) -> Result<String, String>
     temporary.close()?;
     // As for SBOM publication, this is not a multi-file transaction. A manifest failure
     // leaves the complete ZIP available for retry, returns failure, and emits no success.
-    atomic_evidence::write(&manifest, text.as_bytes())?;
+    write_manifest(&manifest, text.as_bytes())?;
     Ok(hash)
+}
+
+/// Publishers of identical bytes race to replace the same manifest, and Windows can
+/// reject a replace while the other publisher's rename is still completing. Retry
+/// briefly and accept a manifest that already holds exactly this text; any other
+/// failure is reported.
+fn write_manifest(manifest: &Path, text: &[u8]) -> Result<(), String> {
+    let mut delay = std::time::Duration::from_millis(10);
+    let mut last_error = String::new();
+    for _ in 0..5 {
+        match atomic_evidence::write(manifest, text) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error,
+        }
+        if fs::read(manifest).is_ok_and(|existing| existing == text) {
+            return Ok(());
+        }
+        std::thread::sleep(delay);
+        delay *= 2;
+    }
+    Err(last_error)
 }
 
 fn matches_existing(path: &Path, expected: &str) -> Result<bool, String> {

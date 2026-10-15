@@ -5,7 +5,10 @@ use std::fs;
 use std::path::PathBuf;
 
 const GROUP: ResourceModule = ResourceModule::Window;
-const LEDGER: &str = "dist/evidence/module-success/resources-window.json";
+/// The clone-wide ledger record for the window group's current inputs.
+fn ledger(root: &std::path::Path) -> PathBuf {
+    module_ledger::record_path(root, ModuleId::Resource(GROUP))
+}
 
 #[test]
 fn reuse_revalidates_ignored_success_files_after_planning() {
@@ -18,7 +21,7 @@ fn reuse_revalidates_ignored_success_files_after_planning() {
     let success = module_ledger::compatible_success(root, ModuleId::Resource(GROUP))
         .unwrap()
         .unwrap();
-    let ledger = root.join(LEDGER);
+    let ledger = ledger(root);
     let ledger_before = fs::read(&ledger).unwrap();
     let archive_before = fs::read(&success.evidence_path).unwrap();
     let mut incorrectly_reused = Vec::new();

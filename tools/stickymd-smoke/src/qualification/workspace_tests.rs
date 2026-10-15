@@ -22,7 +22,7 @@ struct Identity {
 }
 
 pub(crate) fn eligible(root: &Path, options: &Options) -> bool {
-    use super::module_ledger::{ModuleId, module_for_receipt};
+    use super::module_registry::{ModuleId, module_for_receipt};
     options.selection == Selection::Phase(Phase::P14)
         && options.json
         && !options.ci

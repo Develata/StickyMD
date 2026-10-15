@@ -29,7 +29,101 @@ pub(super) struct Candidate {
 }
 
 pub(super) fn read_candidate(root: &Path) -> Result<Candidate, String> {
-    let document = read_receipt(&root.join(CANDIDATE_RECEIPT))?;
+    parse_candidate(&read_receipt(&root.join(CANDIDATE_RECEIPT))?)
+}
+
+/// The candidate and the SHA-256 of the very bytes it was parsed from: the identity a
+/// manual observation context binds to. Readiness and the manual commands use this one
+/// read, so a Promote between two reads cannot pair one candidate with another's context.
+/// Re-promoting the same workflow artifact writes the same bytes.
+/// The metadata of `path` as its directory lists it, without opening the file: on Windows
+/// the listing carries the attributes, so a placeholder receipt is refused before the
+/// receipt itself is opened (on Unix this is `lstat`). Not covered: a directory that must
+/// itself be recalled to be listed, listed attributes that are already stale, and a file
+/// replaced from outside after this check; the store's cooperating writers hold its lock.
+fn listed_metadata(path: &Path) -> Result<fs::Metadata, String> {
+    let unreadable =
+        |error: &dyn std::fmt::Display| format!("cannot read {}: {error}", path.display());
+    let (Some(directory), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(unreadable(&"no file name"));
+    };
+    for entry in fs::read_dir(directory).map_err(|error| unreadable(&error))? {
+        let entry = entry.map_err(|error| unreadable(&error))?;
+        if entry.file_name() == name {
+            return entry.metadata().map_err(|error| unreadable(&error));
+        }
+    }
+    Err(unreadable(&"it does not exist"))
+}
+
+/// Windows: a reparse point (a link, a cloud placeholder) or a file whose data must first
+/// be recalled is not a plain file, so reading it cannot trigger a provider under the lock.
+#[cfg(windows)]
+fn plain_attributes(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    attributes_are_plain(metadata.file_attributes())
+}
+
+#[cfg(not(windows))]
+fn plain_attributes(_: &fs::Metadata) -> bool {
+    true
+}
+
+#[cfg_attr(
+    not(any(windows, test)),
+    expect(dead_code, reason = "Windows file attributes")
+)]
+fn attributes_are_plain(attributes: u32) -> bool {
+    const REPARSE_POINT: u32 = 0x0000_0400;
+    const OFFLINE: u32 = 0x0000_1000;
+    const RECALL_ON_OPEN: u32 = 0x0004_0000;
+    const RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
+    attributes & (REPARSE_POINT | OFFLINE | RECALL_ON_OPEN | RECALL_ON_DATA_ACCESS) == 0
+}
+
+/// A candidate receipt is a few hundred bytes; anything near this is not one.
+const MAX_CANDIDATE_BYTES: u64 = 64 * 1024;
+
+/// The candidate and the SHA-256 of the very bytes it was parsed from. The receipt must
+/// be a plain file of at most `MAX_CANDIDATE_BYTES`, checked while reading, so a damaged
+/// or replaced receipt fails fast (callers re-read it under the manual store lock).
+pub(super) fn read_candidate_snapshot(root: &Path) -> Result<(Candidate, String), String> {
+    read_candidate_text(root).map(|(candidate, digest, _)| (candidate, digest))
+}
+
+/// `read_candidate_snapshot` plus the receipt's text, for an observation task that carries
+/// the receipt to a machine without the repository.
+pub(super) fn read_candidate_text(root: &Path) -> Result<(Candidate, String, String), String> {
+    use std::io::Read;
+    let path = root.join(CANDIDATE_RECEIPT);
+    let metadata = listed_metadata(&path)?;
+    if !metadata.is_file() || !plain_attributes(&metadata) {
+        return Err(format!("{} is not a plain file", path.display()));
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(&path)
+        .and_then(|file| file.take(MAX_CANDIDATE_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    if bytes.len() as u64 > MAX_CANDIDATE_BYTES {
+        return Err(format!(
+            "{} exceeds {MAX_CANDIDATE_BYTES} bytes",
+            path.display()
+        ));
+    }
+    let text = String::from_utf8(bytes)
+        .map_err(|error| format!("{} is not UTF-8: {error}", path.display()))?;
+    Ok((
+        parse_candidate(&text)?,
+        crate::integrity::sha256_bytes(text.as_bytes())?,
+        text,
+    ))
+}
+
+/// Parses a candidate receipt's text. Checking it against the repository is separate
+/// (`validate_candidate_against_repository`), so a recorder without the repository can
+/// read the receipt an observation task carries.
+pub(super) fn parse_candidate(text: &str) -> Result<Candidate, String> {
+    let document = json::parse_object(text)?;
     if json::u64_field(&document, "schema_version")? != 2 {
         return Err("release-candidate receipt schema is not version 2".to_owned());
     }
@@ -173,7 +267,11 @@ pub(super) fn invalidate_promoted_candidate(root: &Path) -> Result<(), String> {
 }
 
 pub(super) fn write_candidate(root: &Path, candidate: &Candidate) -> Result<(), String> {
-    let document = format!(
+    write_receipt(root, CANDIDATE_RECEIPT, &render_candidate(candidate))
+}
+
+pub(super) fn render_candidate(candidate: &Candidate) -> String {
+    format!(
         concat!(
             "{{\"schema_version\":2,",
             "\"origin\":\"GITHUB_WORKFLOW_ARTIFACT\",",
@@ -204,8 +302,7 @@ pub(super) fn write_candidate(root: &Path, candidate: &Candidate) -> Result<(), 
         candidate.artifact_id,
         json::escape(&candidate.artifact_name),
         json::escape(&candidate.zip_name),
-    );
-    write_receipt(root, CANDIDATE_RECEIPT, &document)
+    )
 }
 
 pub(super) fn write_receipt(root: &Path, relative: &str, contents: &str) -> Result<(), String> {
@@ -253,9 +350,54 @@ fn validate_zip_name(value: &str, version: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Candidate, write_candidate};
+    use super::{CANDIDATE_RECEIPT, Candidate, read_candidate_snapshot, write_candidate};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// The candidate receipt is re-read under the manual store lock: an oversized or
+    /// non-plain file fails fast instead of being read whole.
+    #[test]
+    fn an_oversized_or_non_file_candidate_receipt_is_refused() {
+        let root =
+            std::env::temp_dir().join(format!("stickymd-candidate-limit-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let path = root.join(CANDIDATE_RECEIPT);
+        fs::create_dir_all(&path).unwrap();
+        let error = read_candidate_snapshot(&root).unwrap_err();
+        assert!(error.contains("not a plain file"), "{error}");
+        fs::remove_dir(&path).unwrap();
+        fs::write(&path, vec![b' '; 64 * 1024 + 1]).unwrap();
+        let error = read_candidate_snapshot(&root).unwrap_err();
+        assert!(error.contains("exceeds"), "{error}");
+        // A link to a valid-looking file is refused too (needs symlink rights on Windows).
+        let elsewhere = root.join("elsewhere.json");
+        fs::write(&elsewhere, b"{}").unwrap();
+        fs::remove_file(&path).unwrap();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&elsewhere, &path);
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&elsewhere, &path);
+        if linked.is_ok() {
+            let error = read_candidate_snapshot(&root).unwrap_err();
+            assert!(error.contains("not a plain file"), "{error}");
+        }
+        for (attributes, plain) in [
+            (0x20, true),         // archive
+            (0x80, true),         // normal
+            (0x420, false),       // reparse point
+            (0x0040_0020, false), // recall on data access (cloud placeholder)
+            (0x0004_0020, false), // recall on open
+            (0x1020, false),      // offline
+        ] {
+            assert_eq!(
+                super::attributes_are_plain(attributes),
+                plain,
+                "{attributes:#x}"
+            );
+        }
+        // Created exclusively by this test under the temp directory.
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn candidate_receipt_round_trips_promoted_workflow_artifact_identity() {

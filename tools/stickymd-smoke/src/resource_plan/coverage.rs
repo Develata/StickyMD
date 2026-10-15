@@ -55,7 +55,11 @@ pub(crate) fn coverage_measurements(group: ResourceModule) -> Vec<EvidenceMeasur
 }
 
 pub(crate) fn validate_receipt(document: &str, group: ResourceModule) -> Result<(), String> {
-    let root = json::parse(document)?;
+    validate_receipt_value(&json::parse(document)?, group)
+}
+
+/// The same checks over an already strictly parsed receipt.
+pub(crate) fn validate_receipt_value(root: &Value, group: ResourceModule) -> Result<(), String> {
     if root.field("schema_version")?.unsigned()? != 2
         || root.field("resource_protocol")?.unsigned()? != 1
         || root.field("resource_group")?.string()? != group.name()

@@ -3,6 +3,8 @@
 本矩阵是最终发布资格投影，不修改产品需求。自动项由 Rust CLI/checked-in helper 持有；人工项
 只有 exact candidate 上的 interactive receipt 才能改变 readiness，Markdown 仍保持
 `NOT TESTED`，不得用旧记录或 Win32 style readback 代替真实观察。
+人工项按 plan 11 [人工观察记录](../plan/11_testing_and_release.md#manual-observation-log)逐场景、逐目标环境角色
+（`current`、`previous`）记录；Phase 8 人工义务向本矩阵的逐断言映射尚未完成，已知缺口由 readiness 汇总列出。
 
 2026-09-30 入口维护验证：`phase-12.ps1` 参数经共享薄适配器交给 Rust `phase_entry`，
 复用既有命令解析与执行。Preconditions：锁定工具、隔离中文/空格目录；Action：同输入比较旧入口
@@ -29,7 +31,7 @@ PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；人�
 | P12-A07 | ZIP allowlist, PE x64, manifest, license, no-user-data and DPI-correct runtime gates run | Automated | package runtime smoke; Per-Monitor V2 coordinate test; bounded cursor parking with actual-position confirmation; focus-transition sensor-topmost regression; copied Release Phase 8 lifecycle at 150% DPI | AUTOMATED PASS |
 | P12-A08 | SPDX SBOM and checksums bind exact ZIP and SBOM | Automated | pinned Syft generator plus verifier | AUTOMATED PASS |
 | P12-A09 | Source Freeze 与 Promoted Candidate 分离；最终 candidate 绑定 source、Cargo.lock、workflow run/attempt/artifact id、EXE、ZIP、SBOM 和 target；每次 Freeze 的版本授权从 PENDING 开始，不继承历史模板的版本批准 | Automated | `stickymd-smoke qualification source-freeze` / `downloaded` promotion + CLI tests + version authority regression | AUTOMATED PASS |
-| P12-A10 | Manual recorder rejects noninteractive inference and accepts explicit statuses only | Automated | `stickymd-smoke` qualification unit tests | AUTOMATED PASS |
+| P12-A10 | Manual recorder rejects noninteractive inference and accepts explicit statuses only | Automated | 记录器只在交互终端运行；`manual::flow` 测试：状态只接受显式 P/F/N，`N` 不写入，角色由采集的环境事实判定而不询问；目标声明测试 | AUTOMATED PASS |
 | P12-A11 | Stale source/EXE/artifact receipts不能计入；Promote 后旧 artifact-bound receipt 全部失效，source-only receipt 只在 Source Freeze 不变时可复用 | Automated | readiness/candidate resolver identity validation and tests | AUTOMATED PASS |
 | P12-A12 | Readiness has no force-ready path and reports missing/failed Release, headless CI, performance, runtime, resources, manual, remote and USER gates；候选版本必须匹配当前 Source Freeze 与本次版本授权，不固定为历史版本 | Automated | exact-mode receipt contracts plus `stickymd-smoke qualification readiness --explain` + current/stale version regression | AUTOMATED PASS |
 | P12-A13 | Remote workflow receipt must match Source Freeze、successful run/attempt 与唯一 non-expired release artifact id；不得预填 final EXE hash | Automated | `qualification remote` parser/identity contract | AUTOMATED PASS |

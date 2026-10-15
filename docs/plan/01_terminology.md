@@ -319,7 +319,9 @@
 - **Authority**：Rust qualification promotion transaction 与 canonical staging 中重新校验的字节。
 - **Not equivalent to**：Local Preflight Build、任意 downloaded ZIP、remote workflow 仅成功、source-only receipt。
 - **Lifetime**：从成功 Promote 到任何 source/manifest/lock/release tooling 变化或下一次 Promote；替换 candidate
-  会使所有旧 artifact-bound receipt stale。
+  会使所有旧 artifact-bound receipt stale。同一 Release Exact Artifact（相同 workflow run/attempt/artifact id 与字节）
+  原样重新 Promote 得到同一 candidate receipt；按其摘要绑定的人工观察日志因此仍然有效，exact-byte evidence 仍须
+  每次 Promote 重验。
 
 ### Source-bound Evidence
 
@@ -351,6 +353,24 @@
 - **Authority**：Rust smoke CLI 在模块完整 PASS 后执行的原子更新。
 - **Not equivalent to**：最近一次尝试、失败/中止日志、partial receipt、旧指纹 PASS 或当前 candidate 本身。
 - **Lifetime**：从一次成功写入到相同模块下一次成功原子替换；失败或中止不得覆盖。
+
+### Target Environment Receipt
+
+- **Definition**：USER 为当前 Promoted Candidate 声明的人工验收目标环境：`current` 与 `previous` 两个角色各自的
+  Windows 11 功能版本、构建分支、获准完整构建号及其微软来源与选择日期、允许的 `EditionID` 与原生架构，并含随机
+  上下文 ID。
+- **Authority**：USER 的交互声明；Rust smoke CLI 只记录并严格校验，不联网推断。
+- **Not equivalent to**：记录器所在机器的当前环境、readiness 所在机器、构建号大小排序、Insider 通道登记状态。
+- **Lifetime**：绑定一个 candidate receipt 摘要；观察日志存在后不可修改，改目标即新上下文。
+
+### Manual Observation Log
+
+- **Definition**：当前 Promoted Candidate 的只追加人工观察记录，每条为某个人工项某个场景在某个目标环境角色上的
+  `MANUAL_PASS` 或 `MANUAL_FAIL`，带稳定 ID、`base` 与采集的环境事实；观察者备注是其后追加的独立记录。逐项逐角色
+  的状态由它归约得出。
+- **Authority**：交互式人工记录器与严格导入的观察包；USER 是观察的来源。
+- **Not equivalent to**：Last Successful Module Receipt、G5 截图、自动化推断、旧 commit 收据或跨候选复用。
+- **Lifetime**：绑定 candidate receipt、目标环境收据与人工项注册表的摘要；任何一项变化或日志重建都开始新上下文。
 
 ### Qualification Module Registry
 

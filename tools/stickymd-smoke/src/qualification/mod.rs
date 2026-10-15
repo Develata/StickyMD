@@ -6,33 +6,37 @@ mod decisions;
 #[cfg(windows)]
 mod exact_desktop;
 pub(crate) mod exact_groups;
-mod exact_readiness;
+mod file_lock;
 #[cfg(windows)]
 mod g3;
-mod g3_readiness;
 #[cfg(windows)]
 mod g4;
-mod g4_readiness;
 #[cfg(windows)]
 mod g5;
-mod g5_readiness;
 mod guided;
 mod json;
 mod manual;
+mod manual_observation;
 mod manual_readiness;
-mod manual_receipt;
+mod module_evidence;
 mod module_ledger;
+mod module_registry;
+mod path_identity;
 mod readiness;
 mod receipt;
 mod remote;
 #[cfg(any(windows, test))]
 pub(crate) mod repetition;
+mod reserved_paths;
 pub(crate) mod resource_diagnostics;
 pub(crate) mod resource_modules;
 pub(crate) mod smoke_scope;
 mod source_freeze;
 mod startup_attribution;
+mod windows_build;
 pub(crate) mod workspace_tests;
+
+pub(crate) use module_ledger::fingerprint::verify_product_classification;
 
 use std::path::Path;
 
@@ -87,7 +91,8 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
             key,
             status,
             evidence,
-        } => decisions::update(root, &key, &status, &evidence),
+            manual_scope,
+        } => decisions::update(root, &key, &status, &evidence, manual_scope.as_deref()),
         QualificationCommand::Readiness { explain } => readiness::evaluate(root, explain),
         QualificationCommand::Remote { run_id, attempt } => {
             remote::record_workflow(root, run_id, attempt)
@@ -216,6 +221,11 @@ pub(crate) fn record_manual(root: &Path, command: ManualCommand) -> Result<(), S
     manual::execute(root, command)
 }
 
+/// The standalone recorder: no repository, only the observation task and candidate ZIP.
+pub(crate) fn record_standalone(options: &crate::cli::StandaloneRecord) -> Result<(), String> {
+    manual::record_standalone(options)
+}
+
 pub(crate) fn release_executable(root: &Path) -> Result<std::path::PathBuf, String> {
     receipt::resolve_release_executable(root)
 }
@@ -238,10 +248,30 @@ pub(crate) fn record_last_success_for_evidence(root: &Path, path: &Path) -> Resu
     module_ledger::record_for_receipt(root, path)
 }
 
+/// A directory a command outside the coordinators may write into: never inside the
+/// last-success store or the manual observation archive.
+pub(crate) fn validate_public_output_directory(
+    root: &Path,
+    directory: &Path,
+) -> Result<(), String> {
+    if module_ledger::is_success_storage_path(root, directory)
+        || reserved_paths::is_manual_store_path(root, directory)
+        || decisions::is_internal_path(root, directory)
+    {
+        return Err(format!(
+            "{} is coordinator-owned qualification storage; choose another directory",
+            directory.display()
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_public_evidence_path(root: &Path, path: &Path) -> Result<(), String> {
+    // The writer's own spelling rules, applied before any caller creates a directory.
+    crate::atomic_evidence::check_spelling(&root.join(path))?;
     #[cfg(windows)]
-    module_ledger::validate_output_spelling(&root.join(path))?;
-    if module_ledger::is_within(root, path, "target/resource-diagnostics") {
+    path_identity::validate_output_spelling(&root.join(path))?;
+    if path_identity::is_within(root, path, "target/resource-diagnostics") {
         return Err(
             "diagnostic resource cache is internally owned; choose another evidence path".into(),
         );
@@ -251,14 +281,19 @@ pub(crate) fn validate_public_evidence_path(root: &Path, path: &Path) -> Result<
             "last-success ledgers and archives are coordinator-owned; use a diagnostic evidence path".into(),
         );
     }
-    if module_ledger::matches_receipt(root, path, workspace_tests::RECEIPT) {
+    if reserved_paths::is_manual_store_path(root, path) || decisions::is_internal_path(root, path) {
+        return Err(
+            "manual observation store and release decision files are coordinator-owned; use a diagnostic evidence path".into(),
+        );
+    }
+    if path_identity::matches_receipt(root, path, workspace_tests::RECEIPT) {
         return Err(
             "shared workspace receipt is coordinator-owned; use a diagnostic evidence path".into(),
         );
     }
     if matches!(
-        module_ledger::module_for_receipt(root, path),
-        Some(module_ledger::ModuleId::Resource(_))
+        module_registry::module_for_receipt(root, path),
+        Some(module_registry::ModuleId::Resource(_))
     ) {
         return Err(
             "resource child receipts are coordinator-owned; use a diagnostic evidence path".into(),

@@ -56,8 +56,10 @@ pub(super) fn record_workflow(root: &Path, run_id: u64, attempt: u64) -> Result<
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let document = String::from_utf8(output.stdout)
-        .map_err(|error| format!("gh run JSON is not UTF-8: {error}"))?;
+    let document = json::parse_object(
+        &String::from_utf8(output.stdout)
+            .map_err(|error| format!("gh run JSON is not UTF-8: {error}"))?,
+    )?;
     let head = json::string_field(&document, "headSha")?;
     let conclusion = json::string_field(&document, "conclusion")?;
     let url = json::string_field(&document, "url")?;
@@ -159,9 +161,13 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
             artifact_name: remote.artifact_name.clone(),
             zip_name: zip_name.clone(),
         };
+        // A manual observation commits only for the candidate it re-reads under this lock,
+        // so replacing the candidate under it keeps a commit and a Promote from interleaving.
+        let manual_store = super::reserved_paths::lock_manual_store(root, true)?;
         promote_staging(root, &temporary)?;
         receipt::write_candidate(root, &candidate)?;
         write_downloaded(root, &candidate)?;
+        drop(manual_store);
         println!("PROMOTED_CANDIDATE_SOURCE={}", candidate.source_commit);
         println!("PROMOTED_CANDIDATE_EXE_SHA256={}", candidate.exe_sha256);
         println!("PROMOTED_CANDIDATE_ZIP_SHA256={}", candidate.zip_sha256);
@@ -346,7 +352,7 @@ fn parse_artifact_query(output: &str) -> Result<(u64, String), String> {
 }
 
 fn read_remote(root: &Path) -> Result<RemoteWorkflow, String> {
-    let document = receipt::read_receipt(&root.join(REMOTE_RECEIPT))?;
+    let document = json::parse_object(&receipt::read_receipt(&root.join(REMOTE_RECEIPT))?)?;
     if json::u64_field(&document, "schema_version")? != 2
         || json::string_field(&document, "status")? != "PASSED"
     {

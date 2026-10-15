@@ -1,6 +1,7 @@
 //! Bounded streaming of shared inputs into independent v1 fingerprint digests.
 //! plan_ref: docs/plan/11_testing_and_release.md#shared-headless-prerequisite
 
+use super::normalize::VersionNormalizer;
 use super::{ModuleId, domains, path_domains, temporary_path};
 use crate::qualification::receipt;
 use std::fs::{self, File};
@@ -53,9 +54,14 @@ impl Stream {
             writer: Some(BufWriter::with_capacity(64 * 1024, file)),
         };
         let writer = stream.writer();
-        writer
-            .write_all(b"StickyMD qualification module fingerprint v1\0")
-            .map_err(io_error)?;
+        // v2 module digests apply release-version normalization; the workspace-tests
+        // identity keeps the v1 raw-byte serialization.
+        let header: &[u8] = if module.is_some() {
+            b"StickyMD qualification module fingerprint v2\0"
+        } else {
+            b"StickyMD qualification module fingerprint v1\0"
+        };
+        writer.write_all(header).map_err(io_error)?;
         writer
             .write_all(
                 module
@@ -101,12 +107,36 @@ fn write_inputs(
 ) -> Result<(usize, u64), String> {
     let mut input_files = 0;
     let mut input_bytes = 0;
+    let normalizer = streams
+        .iter()
+        .any(|stream| stream.module.is_some())
+        .then(|| VersionNormalizer::read(root, tracked))
+        .flatten();
     for relative in tracked {
         let input_domains = path_domains(relative);
         if !streams.iter().any(|s| s.includes(input_domains)) {
             continue;
         }
         let path = root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+        if let Some(normalizer) = normalizer.as_ref()
+            && VersionNormalizer::applies_to(relative)
+        {
+            // Two small manifests: read once, give module streams the normalized form.
+            let raw =
+                fs::read(&path).map_err(|e| format!("cannot read module input {relative}: {e}"))?;
+            let normalized = normalizer.normalize(relative, &raw);
+            for stream in streams.iter_mut().filter(|s| s.includes(input_domains)) {
+                let content: &[u8] = if stream.module.is_some() {
+                    &normalized
+                } else {
+                    &raw
+                };
+                write_entry(stream.writer(), relative, content).map_err(io_error)?;
+            }
+            input_files += 1;
+            input_bytes += raw.len() as u64;
+            continue;
+        }
         let mut input =
             File::open(&path).map_err(|e| format!("cannot open module input {relative}: {e}"))?;
         let length = input
@@ -141,6 +171,15 @@ fn write_inputs(
             .map_err(io_error)?;
     }
     Ok((input_files, input_bytes))
+}
+
+/// The per-file record shared with the streaming path: name length, name, length, bytes.
+fn write_entry(writer: &mut impl Write, relative: &str, content: &[u8]) -> io::Result<()> {
+    let name = relative.as_bytes();
+    writer.write_all(&(name.len() as u64).to_le_bytes())?;
+    writer.write_all(name)?;
+    writer.write_all(&(content.len() as u64).to_le_bytes())?;
+    writer.write_all(content)
 }
 
 struct Fanout<'a> {
