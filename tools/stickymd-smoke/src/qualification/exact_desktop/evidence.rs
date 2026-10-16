@@ -47,7 +47,7 @@ pub(super) fn render_receipt(
     };
     let mut output = format!(
         concat!(
-            "{{\"schema_version\":1,\"status\":\"{}\",",
+            "{{\"schema_version\":2,\"status\":\"{}\",",
             "\"source_commit\":\"{}\",\"harness_commit\":\"{}\",",
             "\"worktree_dirty\":{},",
             "\"version\":\"{}\",\"windows\":\"{}\",",
@@ -73,8 +73,14 @@ pub(super) fn render_receipt(
             .as_deref()
             .map(|value| format!("\"{}\"", json::escape(value)))
             .unwrap_or_else(|| "null".to_owned());
+        let checks = result
+            .checks
+            .iter()
+            .map(|check| format!("\"{}\"", json::escape(check)))
+            .collect::<Vec<_>>()
+            .join(",");
         output.push_str(&format!(
-            "{{\"id\":\"{}\",\"status\":\"{}\",\"detail\":{detail},\"artifacts\":[",
+            "{{\"id\":\"{}\",\"status\":\"{}\",\"detail\":{detail},\"checks\":[{checks}],\"artifacts\":[",
             result.id, result.status
         ));
         for (artifact_index, artifact) in result.artifacts.iter().enumerate() {
@@ -121,6 +127,7 @@ mod tests {
                 name: "G4",
                 default_receipt: "dist/evidence/g4-exact-qualification.json",
                 cases: &[],
+                operations: &[],
                 selected_case: None,
             };
             let error = super::super::run(&root, None, Some(&output), group).unwrap_err();
@@ -171,12 +178,14 @@ mod tests {
                     id: "G4-01",
                     status: "FAILED",
                     detail: Some("tray probe failed".to_owned()),
+                    checks: Vec::new(),
                     artifacts: Vec::new(),
                 },
                 CaseResult {
                     id: "G4-02",
                     status: "PASSED",
                     detail: None,
+                    checks: vec!["dock-snap:edge=left,pin=off".to_owned()],
                     artifacts: Vec::new(),
                 },
             ],
@@ -194,6 +203,7 @@ mod tests {
         assert!(document.contains("\"status\":\"FAILED\""));
         assert!(document.contains("tray probe failed"));
         assert!(document.contains("\"id\":\"G4-02\",\"status\":\"PASSED\""));
+        assert!(document.contains("\"checks\":[\"dock-snap:edge=left,pin=off\"]"));
         assert_eq!(
             fs::read_to_string(&ledger).unwrap(),
             "last complete success"
@@ -261,13 +271,15 @@ mod tests {
                 id: "GX-01",
                 status: "PASSED",
                 detail: None,
+                checks: Vec::new(),
                 artifacts: vec![ArtifactEvidence {
                     path: "dist/evidence/gx.png".to_owned(),
                     sha256: "f".repeat(64),
                 }],
             }],
         );
-        assert!(document.contains("\"status\":\"PASSED\""));
+        assert!(document.contains("\"schema_version\":2,\"status\":\"PASSED\""));
+        assert!(document.contains("\"checks\":[],\"artifacts\":["));
         assert!(document.contains(&format!("\"zip_sha256\":\"{}\"", candidate.zip_sha256)));
         assert_eq!(document.matches("\"id\":\"GX-").count(), 1);
         assert!(document.contains("\"path\":\"dist/evidence/gx.png\""));

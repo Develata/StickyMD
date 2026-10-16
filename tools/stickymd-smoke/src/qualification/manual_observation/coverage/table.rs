@@ -4,6 +4,7 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#manual-observation-log
 
 use super::{Obligation, Target};
+use crate::qualification::exact_checks;
 
 const fn o(
     source: &'static str,
@@ -23,8 +24,8 @@ const fn m(case: &'static str, scenario: &'static str) -> Target {
     Target::Manual { case, scenario }
 }
 
-const fn exact(case: &'static str) -> Target {
-    Target::Exact { case }
+const fn exact(case: &'static str, checks: &'static [&'static str]) -> Target {
+    Target::Exact { case, checks }
 }
 
 const fn gap(planned: &'static str) -> Target {
@@ -47,6 +48,9 @@ const G4_DOCK_COMPOSITION: &str = "G4-06: Right/Top dock 下 composition 不收�
 const G4_OPACITY_COMMIT: &str = "G4-02: 透明度松开滑块 / Enter / 失焦三种提交";
 const G4_TOPMOST_SYNC: &str = "G4-01: 置顶在托盘与窗口间双向同步，不受临时 sensor topmost 影响";
 const G4_QUIT_SAVE_FAILURE: &str = "G4-01: 退出保存失败时取消退出、保持运行、标题状态";
+/// G4-01 hides the paper with Close; the tray item is only shown to exist.
+const G4_TRAY_HIDE: &str =
+    "G4-01: 窗口可见时经托盘菜单 Hide 隐藏（现只经 Close 隐藏，菜单项只核对存在）";
 const G4_ESC: &str = "G4-02: 真实键盘 Esc 分支";
 const UNIT_ESC_GUARDS: &str = "C2b 绑定模块收据：app::escape::tests 经生产决策路径的 Esc 守卫与修饰键（USER 2026-10-15 批准仅单元覆盖）";
 /// The existing scrollbar tests check the app's geometry and painting, the render projection
@@ -55,6 +59,135 @@ const UNIT_ESC_GUARDS: &str = "C2b 绑定模块收据：app::escape::tests 经�
 const UNIT_SCROLL_RUNTIME: &str = "C2b 绑定模块收据：app::scrollbar 与 app::preview_runtime 的手势、栏可用性与回执路由判定；winit 事件接线（hover、拖动、翻页、拖动结束、回执应用）待 exact 层";
 const G4_DRAG_OUTSIDE: &str = "G4: 真实鼠标拖出窗口后完成滚动条拖动";
 const UNIT_QUIT_STATE: &str = "C2b 绑定模块收据：app::title::tests 与 flow::persistence::tests 的退出已取消状态与载入外部解除";
+
+// Exact owners name the check labels that prove them (`exact_checks`); an obligation without a
+// producer, profile or Pin parameter needs every variant.
+/// P08-M01 timing: the focused guard, both collapse delays, the sensor reveal and re-expansion on the left edge.
+const DOCK_TIMING_LEFT: &[&str] = &[
+    "dock-collapse-delay:edge=left,pin=off",
+    "dock-focus-guard:edge=left,pin=off",
+    "dock-leave-delay:edge=left,pin=off",
+    "dock-reexpand:edge=left,pin=off",
+    "dock-reveal-delay:edge=left,pin=off",
+];
+/// P08-M02 timing on the right edge, with Pin off and on.
+const DOCK_TIMING_RIGHT: &[&str] = &[
+    "dock-collapse-delay:edge=right,pin=off",
+    "dock-collapse-delay:edge=right,pin=on",
+    "dock-focus-guard:edge=right,pin=off",
+    "dock-focus-guard:edge=right,pin=on",
+    "dock-leave-delay:edge=right,pin=off",
+    "dock-leave-delay:edge=right,pin=on",
+    "dock-reexpand:edge=right,pin=off",
+    "dock-reexpand:edge=right,pin=on",
+    "dock-reveal-delay:edge=right,pin=off",
+    "dock-reveal-delay:edge=right,pin=on",
+];
+/// P08-M03 timing on the top edge.
+const DOCK_TIMING_TOP: &[&str] = &[
+    "dock-collapse-delay:edge=top,pin=off",
+    "dock-focus-guard:edge=top,pin=off",
+    "dock-leave-delay:edge=top,pin=off",
+    "dock-reexpand:edge=top,pin=off",
+    "dock-reveal-delay:edge=top,pin=off",
+];
+/// A whole dock cycle (snap plus timing) on the left edge.
+const DOCK_LEFT: &[&str] = &[
+    "dock-collapse-delay:edge=left,pin=off",
+    "dock-focus-guard:edge=left,pin=off",
+    "dock-leave-delay:edge=left,pin=off",
+    "dock-reexpand:edge=left,pin=off",
+    "dock-reveal-delay:edge=left,pin=off",
+    "dock-snap:edge=left,pin=off",
+];
+/// A whole dock cycle on the right edge, with Pin off and on.
+const DOCK_RIGHT: &[&str] = &[
+    "dock-collapse-delay:edge=right,pin=off",
+    "dock-collapse-delay:edge=right,pin=on",
+    "dock-focus-guard:edge=right,pin=off",
+    "dock-focus-guard:edge=right,pin=on",
+    "dock-leave-delay:edge=right,pin=off",
+    "dock-leave-delay:edge=right,pin=on",
+    "dock-reexpand:edge=right,pin=off",
+    "dock-reexpand:edge=right,pin=on",
+    "dock-reveal-delay:edge=right,pin=off",
+    "dock-reveal-delay:edge=right,pin=on",
+    "dock-snap:edge=right,pin=off",
+    "dock-snap:edge=right,pin=on",
+];
+/// A whole dock cycle on the top edge.
+const DOCK_TOP: &[&str] = &[
+    "dock-collapse-delay:edge=top,pin=off",
+    "dock-focus-guard:edge=top,pin=off",
+    "dock-leave-delay:edge=top,pin=off",
+    "dock-reexpand:edge=top,pin=off",
+    "dock-reveal-delay:edge=top,pin=off",
+    "dock-snap:edge=top,pin=off",
+];
+/// Real composition keeps a left-docked paper open, for both IMEs.
+const COMPOSITION_LEFT: &[&str] = &[
+    "ime-composition-no-collapse:edge=left,ime=pinyin",
+    "ime-composition-no-collapse:edge=left,ime=wetype",
+];
+/// An IME commit and Undo at 40% opacity, for both IMEs.
+const OPACITY_40_IME: &[&str] = &[
+    "ime-commit-undo:ime=pinyin,opacity=40",
+    "ime-commit-undo:ime=wetype,opacity=40",
+];
+/// The whole G4-06 functional matrix of Microsoft Pinyin.
+const IME_PINYIN: &[&str] = &[
+    "ime-cancel-non-mutating:ime=pinyin",
+    "ime-commit-undo:edge=left,ime=pinyin",
+    "ime-commit-undo:ime=pinyin,mode=source",
+    "ime-commit-undo:ime=pinyin,mode=split",
+    "ime-commit-undo:ime=pinyin,opacity=40",
+    "ime-composition-no-collapse:edge=left,ime=pinyin",
+    "ime-find-no-replace:ime=pinyin",
+    "ime-find-query-selects-term:ime=pinyin",
+    "ime-focus-loss-keeps-text:ime=pinyin",
+    "ime-preedit-not-durable:ime=pinyin",
+    "ime-profile-activated:ime=pinyin",
+    "ime-refocus-commit-undo:ime=pinyin",
+    "ime-replace-commit:ime=pinyin",
+    "ime-replace-undo:ime=pinyin",
+    "ime-selection-commit-one-undo:ime=pinyin",
+];
+/// The whole G4-06 functional matrix of WeType.
+const IME_WETYPE: &[&str] = &[
+    "ime-cancel-non-mutating:ime=wetype",
+    "ime-commit-undo:edge=left,ime=wetype",
+    "ime-commit-undo:ime=wetype,mode=source",
+    "ime-commit-undo:ime=wetype,mode=split",
+    "ime-commit-undo:ime=wetype,opacity=40",
+    "ime-composition-no-collapse:edge=left,ime=wetype",
+    "ime-find-no-replace:ime=wetype",
+    "ime-find-query-selects-term:ime=wetype",
+    "ime-focus-loss-keeps-text:ime=wetype",
+    "ime-preedit-not-durable:ime=wetype",
+    "ime-profile-activated:ime=wetype",
+    "ime-refocus-commit-undo:ime=wetype",
+    "ime-replace-commit:ime=wetype",
+    "ime-replace-undo:ime=wetype",
+    "ime-selection-commit-one-undo:ime=wetype",
+];
+/// Show, from the exact tray menu, restores the hidden paper with its retained text.
+const TRAY_SHOW: &[&str] = &[
+    "tray-menu-items",
+    "tray-show-restores-window",
+    "tray-show-retains-source",
+];
+/// Quit, from the exact tray menu, saves the latest text and exits.
+const TRAY_QUIT: &[&str] = &[
+    "tray-menu-items",
+    "tray-quit-exits",
+    "tray-quit-saves-latest",
+];
+/// A second launch through a junction wakes the hidden primary and exits.
+const WAKE_HIDDEN: &[&str] = &[
+    "close-hides-window",
+    "junction-second-instance-exits",
+    "junction-wakes-primary",
+];
 
 pub(super) const OBLIGATIONS: &[Obligation] = &[
     // P08-M01..M03: dock visual at each DPI, timing on the primary monitor, undock.
@@ -82,7 +215,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "dpi=200",
         m("P12-M40", "left-dock"),
     ),
-    o("P08-M01", "timing", "", exact("G4-02")),
+    o("P08-M01", "timing", "", exact("G4-02", DOCK_TIMING_LEFT)),
     o("P08-M01", "undock-16dip", "", m("P12-M11", "undock-16dip")),
     o(
         "P08-M02",
@@ -108,7 +241,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "dpi=200",
         m("P12-M40", "right-dock"),
     ),
-    o("P08-M02", "timing", "", exact("G4-02")),
+    o("P08-M02", "timing", "", exact("G4-02", DOCK_TIMING_RIGHT)),
     o("P08-M02", "undock-16dip", "", m("P12-M12", "undock-16dip")),
     o(
         "P08-M03",
@@ -134,37 +267,37 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "dpi=200",
         m("P12-M40", "top-dock"),
     ),
-    o("P08-M03", "timing", "", exact("G4-02")),
+    o("P08-M03", "timing", "", exact("G4-02", DOCK_TIMING_TOP)),
     // P08-M04: IME function is exact; the candidate window is visual.
     o(
         "P08-M04",
         "ime-input",
         "ime=pinyin,mode=source",
-        exact("G4-06"),
+        exact("G4-06", &["ime-commit-undo:ime=pinyin,mode=source"]),
     ),
     o(
         "P08-M04",
         "ime-input",
         "ime=pinyin,mode=split",
-        exact("G4-06"),
+        exact("G4-06", &["ime-commit-undo:ime=pinyin,mode=split"]),
     ),
     o(
         "P08-M04",
         "ime-input",
         "ime=wetype,mode=source",
-        exact("G4-06"),
+        exact("G4-06", &["ime-commit-undo:ime=wetype,mode=source"]),
     ),
     o(
         "P08-M04",
         "ime-input",
         "ime=wetype,mode=split",
-        exact("G4-06"),
+        exact("G4-06", &["ime-commit-undo:ime=wetype,mode=split"]),
     ),
     o(
         "P08-M04",
         "composition-no-collapse",
         "edge=left",
-        exact("G4-06"),
+        exact("G4-06", COMPOSITION_LEFT),
     ),
     o(
         "P08-M04",
@@ -182,7 +315,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "P08-M04",
         "opacity-ime-commit",
         "opacity=40",
-        exact("G4-06"),
+        exact("G4-06", OPACITY_40_IME),
     ),
     o(
         "P08-M04",
@@ -233,7 +366,19 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         m("P12-M02", "top-dock"),
     ),
     // P08-M05: tray lifecycle.
-    o("P08-M05", "tray-menu", "", exact("G4-01")),
+    o(
+        "P08-M05",
+        "tray-menu",
+        "item=show",
+        exact("G4-01", TRAY_SHOW),
+    ),
+    o("P08-M05", "tray-menu", "item=hide", gap(G4_TRAY_HIDE)),
+    o(
+        "P08-M05",
+        "tray-menu",
+        "item=quit",
+        exact("G4-01", TRAY_QUIT),
+    ),
     o("P08-M05", "failed-save-quit", "", gap(G4_QUIT_SAVE_FAILURE)),
     o(
         "P08-M05",
@@ -335,7 +480,12 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "state=docked",
         m("P12-M05", "second-launch-docked"),
     ),
-    o("P08-M08", "identity-wake", "state=hidden", exact("G4-05")),
+    o(
+        "P08-M08",
+        "identity-wake",
+        "state=hidden",
+        exact("G4-05", WAKE_HIDDEN),
+    ),
     o(
         "P08-M08",
         "identity-wake",
@@ -496,7 +646,12 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         },
     ),
     // P08-M13..M15: inherited gates.
-    o("P08-M13", "ime-functional", "", exact("G4-06")),
+    o(
+        "P08-M13",
+        "ime-functional",
+        "",
+        exact("G4-06", exact_checks::G4_06),
+    ),
     o(
         "P08-M13",
         "ime-visual",
@@ -538,8 +693,18 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "",
         m("P12-M26", "image-formats"),
     ),
-    o("P08-M15", "clipboard-producers", "", exact("G3-01")),
-    o("P08-M15", "export-dialog", "", exact("G3-02")),
+    o(
+        "P08-M15",
+        "clipboard-producers",
+        "",
+        exact("G3-01", exact_checks::G3_01),
+    ),
+    o(
+        "P08-M15",
+        "export-dialog",
+        "",
+        exact("G3-02", exact_checks::G3_02),
+    ),
     // G3-03 accepts the old note at every kill point without confirming the edit or the save
     // began, so a run that never reaches saving passes.
     o(
@@ -640,17 +805,27 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "commit=blur",
         gap(G4_OPACITY_COMMIT),
     ),
-    o("P08-D027", "tray-icon", "", exact("G4-01")),
-    o("P08-D028", "tray-menu-items", "", exact("G4-01")),
+    o(
+        "P08-D027",
+        "tray-icon",
+        "",
+        exact("G4-01", &["tray-icon-present"]),
+    ),
+    o(
+        "P08-D028",
+        "tray-menu-items",
+        "",
+        exact("G4-01", &["tray-menu-items"]),
+    ),
     o(
         "P08-D031",
         "alt-f4",
         "",
         gap("G4-01: 真实 Alt+F4 隐藏到托盘"),
     ),
-    o("P08-D039", "left-dock", "", exact("G4-02")),
-    o("P08-D040", "right-dock", "", exact("G4-02")),
-    o("P08-D041", "top-dock", "", exact("G4-02")),
+    o("P08-D039", "left-dock", "", exact("G4-02", DOCK_LEFT)),
+    o("P08-D040", "right-dock", "", exact("G4-02", DOCK_RIGHT)),
+    o("P08-D041", "top-dock", "", exact("G4-02", DOCK_TOP)),
     o(
         "P08-D051",
         "hover-no-steal",
@@ -673,7 +848,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "P08-D055",
         "composition-no-collapse",
         "edge=left",
-        exact("G4-06"),
+        exact("G4-06", COMPOSITION_LEFT),
     ),
     o(
         "P08-D055",
@@ -718,9 +893,19 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         m("P12-M37", "disconnect-current-monitor"),
     ),
     o("P08-D089", "dpi-ime-rect", "", m("P12-M36", "ime")),
-    o("P08-D117", "pinyin-functional", "", exact("G4-06")),
+    o(
+        "P08-D117",
+        "pinyin-functional",
+        "",
+        exact("G4-06", IME_PINYIN),
+    ),
     o("P08-D117", "pinyin-visual", "", m("P12-M01", "pinyin-100")),
-    o("P08-D118", "wetype-functional", "", exact("G4-06")),
+    o(
+        "P08-D118",
+        "wetype-functional",
+        "",
+        exact("G4-06", IME_WETYPE),
+    ),
     o("P08-D118", "wetype-visual", "", m("P12-M02", "wetype-100")),
     o("P08-D119", "light", "", m("P12-M23", "light")),
     o("P08-D120", "dark", "", m("P12-M23", "dark")),
@@ -887,7 +1072,12 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "",
         m("P12-M05", "restore-tray"),
     ),
-    o("P08-D132", "export-dialog", "", exact("G3-02")),
+    o(
+        "P08-D132",
+        "export-dialog",
+        "",
+        exact("G3-02", exact_checks::G3_02),
+    ),
     o("P08-D133", "real-dpi", "dpi=125", m("P12-M38", "input")),
     o("P08-D133", "real-dpi", "dpi=150", m("P12-M39", "input")),
     o("P08-D133", "real-dpi", "dpi=200", m("P12-M40", "input")),

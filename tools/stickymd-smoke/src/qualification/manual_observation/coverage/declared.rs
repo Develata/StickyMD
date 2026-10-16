@@ -75,7 +75,11 @@ pub(super) const ASSERTIONS: &[Assertion] = &[
             "ime=wetype,edge=top",
         ],
     ),
-    a("P08-M05", "tray-menu", NONE),
+    a(
+        "P08-M05",
+        "tray-menu",
+        &["item=show", "item=hide", "item=quit"],
+    ),
     a("P08-M05", "failed-save-quit", NONE),
     a("P08-M05", "failed-save-visible-error", NONE),
     a("P08-M05", "topmost-tray-sync", NONE),

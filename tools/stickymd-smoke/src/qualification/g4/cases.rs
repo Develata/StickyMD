@@ -10,34 +10,38 @@ mod tray;
 
 use std::path::Path;
 
-use super::super::exact_desktop::CaseEvidence;
+use super::super::exact_desktop::{CaseEvidence, Checks};
 
 pub(super) fn g4_01(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
-    tray::g4_01(repository, program)?;
-    Ok(CaseEvidence::default())
+    checked(|checks| tray::g4_01(repository, program, checks))
 }
 
 pub(super) fn g4_02(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
-    dock::g4_02(repository, program)?;
-    Ok(CaseEvidence::default())
+    checked(|checks| dock::g4_02(repository, program, checks))
 }
 
 pub(super) fn g4_03(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
-    editor::g4_03(repository, program)?;
-    Ok(CaseEvidence::default())
+    checked(|checks| editor::g4_03(repository, program, checks))
 }
 
 pub(super) fn g4_04(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
-    editor::g4_04(repository, program)?;
-    Ok(CaseEvidence::default())
+    checked(|checks| editor::g4_04(repository, program, checks))
 }
 
 pub(super) fn g4_05(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
-    identity::g4_05(repository, program)?;
-    Ok(CaseEvidence::default())
+    checked(|checks| identity::g4_05(repository, program, checks))
 }
 
 pub(super) fn g4_06(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
-    ime::g4_06(repository, program)?;
-    Ok(CaseEvidence::default())
+    checked(|checks| ime::g4_06(repository, program, checks))
+}
+
+/// Runs `case` with a fresh recorder; its evidence is the checks it recorded.
+fn checked(case: impl FnOnce(&mut Checks) -> Result<(), String>) -> Result<CaseEvidence, String> {
+    let mut checks = Checks::default();
+    case(&mut checks)?;
+    Ok(CaseEvidence {
+        checks,
+        ..CaseEvidence::default()
+    })
 }

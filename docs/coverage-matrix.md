@@ -435,3 +435,7 @@ plan 05 `external-change-conflict`（载入外部解除重建义务）：`sticky
 2026-10-16 覆盖补全 C2a-2 继续映射 plan 09 `vertical-scrollbars`、`dock-auto-hide` 与透明度提交规则：滚动条手势与栏可用性
 （`app/scrollbar.rs`）、Preview 回执路由（`app/preview_runtime.rs::completion_route`）、透明度指针判定（`app/controls.rs`）与窗口守卫投影
 （`app/guards.rs`）成为纯函数并有单元测试，`StickyApp` 只负责接线；验收见 phase-05 与 phase-08 的 2026-10-16 补充。winit 事件接线仍是缺口。
+
+2026-10-16 覆盖补全 C2b-1 映射 plan 11 `release-artifact-authority` 的 exact 收据 schema 2：G3/G4/G5 的 case 与检查标签在
+`qualification/exact_checks.rs` 一处声明，runner（`exact_desktop.rs`）、模块证据校验（`module_evidence.rs`）、`--case` 选项与人工义务映射
+（`manual_observation/coverage/table.rs` 的 `Target::Exact { case, checks }`）都以它为准；验收见 P14-A80。

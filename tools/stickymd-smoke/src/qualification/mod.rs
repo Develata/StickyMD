@@ -3,6 +3,7 @@
 mod automated_readiness;
 mod campaign;
 mod decisions;
+pub(crate) mod exact_checks;
 #[cfg(windows)]
 mod exact_desktop;
 pub(crate) mod exact_groups;

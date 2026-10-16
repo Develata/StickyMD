@@ -3,8 +3,9 @@
 use std::fs;
 use std::path::Path;
 
-use super::{G3_CASES, G4_CASES, G5_SCREENSHOTS};
+use super::G5_SCREENSHOTS;
 use crate::evidence::{EvidenceResult, EvidenceStatus};
+use crate::qualification::exact_checks::{self, DeclaredCase};
 use crate::qualification::json;
 use crate::qualification::module_registry::ModuleId;
 use crate::qualification::receipt::Candidate;
@@ -37,15 +38,20 @@ pub(in crate::qualification) fn valid_document(
                 &document[1..]
             )
         }
-        ModuleId::G3 => exact(candidate, &cases(&G3_CASES, marker, |_| String::new())),
-        ModuleId::G4 => exact(candidate, &cases(&G4_CASES, marker, |_| String::new())),
-        ModuleId::G5 => {
-            let ids = G5_SCREENSHOTS.map(|(case, _)| case);
-            exact(
-                candidate,
-                &cases(&ids, marker, |case| screenshots(root, case, marker)),
-            )
-        }
+        ModuleId::G3 => exact(
+            candidate,
+            &cases(exact_checks::G3, marker, |_| String::new()),
+        ),
+        ModuleId::G4 => exact(
+            candidate,
+            &cases(exact_checks::G4, marker, |_| String::new()),
+        ),
+        ModuleId::G5 => exact(
+            candidate,
+            &cases(exact_checks::G5, marker, |case| {
+                screenshots(root, case, marker)
+            }),
+        ),
     }
 }
 
@@ -53,7 +59,7 @@ pub(in crate::qualification) fn valid_document(
 pub(in crate::qualification) fn exact(candidate: &Candidate, results: &str) -> String {
     format!(
         concat!(
-            "{{\"schema_version\":1,\"status\":\"PASSED\",",
+            "{{\"schema_version\":2,\"status\":\"PASSED\",",
             "\"source_commit\":\"{commit}\",\"harness_commit\":\"{commit}\",",
             "\"worktree_dirty\":false,\"version\":\"{version}\",",
             "\"windows\":\"Microsoft Windows 10.0.26200.9457\",\"exe_sha256\":\"{exe}\",",
@@ -68,15 +74,28 @@ pub(in crate::qualification) fn exact(candidate: &Candidate, results: &str) -> S
     )
 }
 
-fn cases(ids: &[&str], marker: &str, artifacts: impl Fn(&str) -> String) -> String {
-    ids.iter()
+/// Passing results for `cases`, each with exactly its declared checks.
+fn cases(cases: &[DeclaredCase], marker: &str, artifacts: impl Fn(&str) -> String) -> String {
+    cases
+        .iter()
         .map(|case| {
             format!(
-                "{{\"id\":\"{case}\",\"status\":\"PASSED\",\"detail\":\"{}\",\"artifacts\":[{}]}}",
+                "{{\"id\":\"{}\",\"status\":\"PASSED\",\"detail\":\"{}\",\"checks\":[{}],\"artifacts\":[{}]}}",
+                case.id,
                 json::escape(marker),
-                artifacts(case)
+                checks(case.checks),
+                artifacts(case.id)
             )
         })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// `labels` as the body of a JSON string array.
+pub(in crate::qualification) fn checks(labels: &[&str]) -> String {
+    labels
+        .iter()
+        .map(|label| format!("\"{label}\""))
         .collect::<Vec<_>>()
         .join(",")
 }

@@ -63,5 +63,8 @@ pub(super) fn run(repository: &Path, program: &Path) -> Result<CaseEvidence, Str
     support::switch_source(child.id(), program)?;
     support::assert_source_projection(window, &expected)?;
     child.kill_and_wait()?;
-    Ok(CaseEvidence { artifacts })
+    Ok(CaseEvidence {
+        artifacts,
+        ..CaseEvidence::default()
+    })
 }

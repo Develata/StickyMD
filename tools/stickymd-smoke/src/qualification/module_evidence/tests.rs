@@ -2,8 +2,9 @@
 
 use std::path::PathBuf;
 
-use super::fixtures::{exact, valid_document};
-use super::{Companion, Origin, g5_companions, validate};
+use super::fixtures::{checks, exact, valid_document};
+use super::{Companion, G5_SCREENSHOTS, Origin, g5_companions, validate};
+use crate::qualification::exact_checks::{DeclaredCase, G3, G4, G5};
 use crate::qualification::module_registry::{ModuleId, modules};
 use crate::qualification::receipt::{Candidate, RELEASE_ARTIFACT_NAME};
 
@@ -56,11 +57,71 @@ fn origin(candidate: &Candidate) -> Origin<'_> {
     }
 }
 
-fn passing_cases(ids: &[&str]) -> String {
-    ids.iter()
-        .map(|id| format!("{{\"id\":\"{id}\",\"status\":\"PASSED\",\"detail\":null}}"))
+/// Passing results for `cases`, each with exactly its declared checks.
+fn passing_cases<'a>(cases: impl IntoIterator<Item = &'a DeclaredCase>) -> String {
+    cases
+        .into_iter()
+        .map(|case| {
+            format!(
+                "{{\"id\":\"{}\",\"status\":\"PASSED\",\"detail\":null,\"checks\":[{}]}}",
+                case.id,
+                checks(case.checks)
+            )
+        })
         .collect::<Vec<_>>()
         .join(",")
+}
+
+/// A schema 2 result passes only with exactly its declared checks: a missing, extra,
+/// repeated or out-of-order label, another case's label, an absent or non-string list and a
+/// schema 1 document are all invalid, and a G5 case declares no labels.
+#[test]
+fn exact_results_need_exactly_the_declared_checks() {
+    let scratch = Scratch::new();
+    let candidate = candidate();
+    let complete = exact(&candidate, &passing_cases(G3));
+    validate(ModuleId::G3, &complete, &origin(&candidate)).unwrap();
+    let first = format!("\"checks\":[{}]", checks(G3[0].checks));
+    let mut labels = G3[0].checks.to_vec();
+    let variants =
+        |labels: &[&str]| complete.replacen(&first, &format!("\"checks\":[{}]", checks(labels)), 1);
+    let mut broken = vec![
+        variants(&labels[1..]),
+        variants(&[&labels[..], &["zz-extra"]].concat()),
+    ];
+    broken.push(variants(&[&labels[..1], &labels[..]].concat()));
+    labels.swap(0, 1);
+    broken.push(variants(&labels));
+    broken.push(variants(&[&G3[0].checks[1..], &G3[1].checks[..1]].concat()));
+    broken.push(complete.replacen(&format!(",{first}"), "", 1));
+    broken.push(complete.replacen(&first, "\"checks\":[1]", 1));
+    broken.push(complete.replacen("\"schema_version\":2", "\"schema_version\":1", 1));
+    for document in &broken {
+        assert_ne!(document, &complete);
+        assert!(
+            validate(ModuleId::G3, document, &origin(&candidate)).is_err(),
+            "{document}"
+        );
+    }
+    let error = validate(ModuleId::G3, &broken[0], &origin(&candidate)).unwrap_err();
+    assert!(
+        error.contains("checks differ from the declaration: missing"),
+        "{error}"
+    );
+
+    let g5 = valid_document(&scratch.0, ModuleId::G5, &candidate, INPUT, "run");
+    validate(ModuleId::G5, &g5, &origin(&candidate)).unwrap();
+    let labelled = g5.replacen("\"checks\":[]", "\"checks\":[\"dock-snap\"]", 1);
+    assert!(validate(ModuleId::G5, &labelled, &origin(&candidate)).is_err());
+}
+
+#[test]
+fn g5_screenshot_minimums_follow_the_declared_g5_cases() {
+    let ids = G5_SCREENSHOTS.map(|(case, _)| case);
+    assert_eq!(
+        ids.as_slice(),
+        G5.iter().map(|case| case.id).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -78,9 +139,8 @@ fn every_module_accepts_its_complete_passing_document() {
 #[test]
 fn a_nested_or_respaced_field_cannot_stand_in_for_the_real_one() {
     let candidate = candidate();
-    let ids = ["G3-01", "G3-02", "G3-03", "G3-04", "G3-05"];
     // Legal JSON: whitespace around the real status, a PASSED decoy nested deeper.
-    let failing = passing_cases(&ids).replacen(
+    let failing = passing_cases(G3).replacen(
         "\"status\":\"PASSED\"",
         "\"status\" : \"FAILED\",\"extra\":{\"status\":\"PASSED\"}",
         1,
@@ -93,7 +153,7 @@ fn a_nested_or_respaced_field_cannot_stand_in_for_the_real_one() {
     .unwrap_err();
     assert!(error.contains("did not pass"), "{error}");
 
-    let dirty = exact(&candidate, &passing_cases(&ids)).replace(
+    let dirty = exact(&candidate, &passing_cases(G3)).replace(
         "\"worktree_dirty\":false",
         "\"worktree_dirty\" : true,\"nested\":{\"worktree_dirty\":false}",
     );
@@ -103,8 +163,7 @@ fn a_nested_or_respaced_field_cannot_stand_in_for_the_real_one() {
 #[test]
 fn malformed_documents_are_invalid_rather_than_partially_read() {
     let candidate = candidate();
-    let ids = ["G4-01", "G4-02", "G4-03", "G4-04", "G4-05", "G4-06"];
-    let document = exact(&candidate, &passing_cases(&ids));
+    let document = exact(&candidate, &passing_cases(G4));
     // The baseline is complete, so each rejection below comes from its one mutation.
     validate(ModuleId::G4, &document, &origin(&candidate)).unwrap();
     for broken in [
@@ -126,18 +185,16 @@ fn malformed_documents_are_invalid_rather_than_partially_read() {
 #[test]
 fn exact_groups_need_every_case_in_order_and_the_origin_identity() {
     let candidate = candidate();
-    let ids = ["G4-01", "G4-02", "G4-03", "G4-04", "G4-05", "G4-06"];
-    let complete = exact(&candidate, &passing_cases(&ids));
+    let complete = exact(&candidate, &passing_cases(G4));
     validate(ModuleId::G4, &complete, &origin(&candidate)).unwrap();
-    let incomplete = exact(&candidate, &passing_cases(&ids[..5]));
+    let incomplete = exact(&candidate, &passing_cases(&G4[..5]));
     let error = validate(ModuleId::G4, &incomplete, &origin(&candidate)).unwrap_err();
     assert!(error.contains("exact cases are"), "{error}");
-    let mut reordered = ids;
-    reordered.swap(0, 1);
+    let reordered = [&G4[1], &G4[0]].into_iter().chain(&G4[2..]);
     assert!(
         validate(
             ModuleId::G4,
-            &exact(&candidate, &passing_cases(&reordered)),
+            &exact(&candidate, &passing_cases(reordered)),
             &origin(&candidate)
         )
         .is_err()
@@ -184,12 +241,13 @@ fn g5_needs_each_case_to_own_its_minimum_screenshots_at_safe_paths() {
         first.path, first.sha256
     );
     // G5-01 lists exactly one screenshot, so removing it leaves `"artifacts":[]`.
-    let moved = document.replacen(&entry, "", 1).replace(
-        "\"id\":\"G5-04\",\"status\":\"PASSED\",\"detail\":\"run\",\"artifacts\":[",
-        &format!(
-            "\"id\":\"G5-04\",\"status\":\"PASSED\",\"detail\":\"run\",\"artifacts\":[{entry},"
-        ),
-    );
+    let g5_04 =
+        "\"id\":\"G5-04\",\"status\":\"PASSED\",\"detail\":\"run\",\"checks\":[],\"artifacts\":[";
+    assert_eq!(document.matches(g5_04).count(), 1);
+    let moved = document
+        .replacen(&entry, "", 1)
+        .replace(g5_04, &format!("{g5_04}{entry},"));
+    assert_eq!(g5_companions(&moved).unwrap().len(), companions.len());
     let error = validate(ModuleId::G5, &moved, &origin(&candidate)).unwrap_err();
     assert!(error.contains("G5-01 has 0 screenshot"), "{error}");
     let escaped = document.replacen(

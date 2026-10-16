@@ -92,7 +92,10 @@ pub(super) fn run(repository: &Path, program: &Path) -> Result<CaseEvidence, Str
         }
     }
     child.kill_and_wait()?;
-    Ok(CaseEvidence { artifacts })
+    Ok(CaseEvidence {
+        artifacts,
+        ..CaseEvidence::default()
+    })
 }
 
 fn exercise_zoom(

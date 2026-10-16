@@ -1,7 +1,7 @@
 //! The manual obligation mapping (plan 11 `manual-observation-log`, 人工义务映射): every Phase 8
 //! `Manual` row and the plan 09 clauses that need a real desktop are broken into assertions with
 //! their required parameters, and each `(source, assertion, parameter)` is owned by a Phase 12
-//! scenario, an exact G3/G4 case, a USER retirement or a named open gap. Owners proven by other
+//! scenario, check labels of an exact G3/G4 case, a USER retirement or a named open gap. Owners proven by other
 //! automation are bound to the module receipts of the executed tests with the exact / automated
 //! extensions (coverage batch C2); until then they are gaps that name the existing entry.
 //!
@@ -24,8 +24,12 @@ pub(in crate::qualification) enum Target {
         case: &'static str,
         scenario: &'static str,
     },
-    /// An exact-candidate G3/G4 case; per-check labels arrive with the exact extensions.
-    Exact { case: &'static str },
+    /// Check labels of an exact-candidate G3/G4 case that prove the obligation; a passing
+    /// schema 2 receipt records every declared label (`exact_checks`).
+    Exact {
+        case: &'static str,
+        checks: &'static [&'static str],
+    },
     /// Retired by the USER decision `decision` (see `RETIREMENTS`).
     Retired { decision: &'static str },
     /// Not owned yet; `planned` names the intended owner.

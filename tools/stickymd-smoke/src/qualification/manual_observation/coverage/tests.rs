@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use super::declared::{ASSERTIONS, Assertion, RETIREMENTS};
 use super::sources::{decompose, documents};
 use super::{OBLIGATIONS, Obligation, Target};
+use crate::qualification::exact_checks::{self, DeclaredCase};
 use crate::qualification::manual_observation::registry;
 
 fn repository() -> PathBuf {
@@ -152,22 +153,17 @@ fn the_ownership_checker_rejects_reductions_masking_and_unknowns() {
     assert!(!ownership_errors(&assertions, &unknown).is_empty());
 }
 
-/// The owners the repository provides, parsed once so each lookup is a set query.
+/// The owners the repository provides.
 struct Owners<'a> {
-    /// The `id: "…"` literals of the G3/G4 exact cases, read as text so this test does not
-    /// couple to those modules' types.
-    exact: BTreeSet<&'a str>,
+    /// The declared exact cases with their check labels.
+    exact: &'a [&'a DeclaredCase],
     /// Phase 8, where every retirement must be recorded.
     phase08: &'a str,
 }
 
-fn owners<'a>(exact_sources: &'a [String], phase08: &'a str) -> Owners<'a> {
-    let exact = exact_sources
-        .iter()
-        .flat_map(|source| source.split("id: \"").skip(1))
-        .filter_map(|rest| rest.split('"').next())
-        .collect();
-    Owners { exact, phase08 }
+/// The declared G3 and G4 cases, the groups coverage may name.
+fn declared_exact() -> Vec<&'static DeclaredCase> {
+    exact_checks::G3.iter().chain(exact_checks::G4).collect()
 }
 
 /// Errors in the owners `obligations` name: each must exist and match its kind.
@@ -184,9 +180,22 @@ fn owner_errors(obligations: &[Obligation], owners: &Owners) -> Vec<String> {
                     errors.push(format!("{label}: no scenario {case}/{scenario}"));
                 }
             }
-            Target::Exact { case } => {
-                if !owners.exact.contains(case) {
+            Target::Exact { case, checks } => {
+                let Some(declared) = owners.exact.iter().find(|declared| declared.id == case)
+                else {
                     errors.push(format!("{label}: no exact case {case}"));
+                    continue;
+                };
+                if checks.is_empty() {
+                    errors.push(format!("{label}: {case} names no check"));
+                }
+                if checks.iter().collect::<BTreeSet<_>>().len() != checks.len() {
+                    errors.push(format!("{label}: {case} names a check twice"));
+                }
+                for check in checks {
+                    if !declared.checks.contains(check) {
+                        errors.push(format!("{label}: {case} declares no check {check}"));
+                    }
                 }
             }
             Target::Retired { decision } => {
@@ -220,12 +229,12 @@ fn owner_errors(obligations: &[Obligation], owners: &Owners) -> Vec<String> {
 
 #[test]
 fn every_owner_exists() {
-    let exact_sources = [
-        read("tools/stickymd-smoke/src/qualification/g3.rs"),
-        read("tools/stickymd-smoke/src/qualification/g4.rs"),
-    ];
     let phase08 = read("docs/acceptance-cases/phase-08.md");
-    let owners = owners(&exact_sources, &phase08);
+    let exact = declared_exact();
+    let owners = Owners {
+        exact: &exact,
+        phase08: &phase08,
+    };
     let errors = owner_errors(OBLIGATIONS, &owners);
     assert!(errors.is_empty(), "{errors:#?}");
     // Each retirement authorizes exactly one obligation.
@@ -243,11 +252,46 @@ fn every_owner_exists() {
     }
 }
 
+/// An exact owner without a producer, profile or Pin parameter claims every variant: the
+/// per-profile matrices are exactly that profile's G4-06 labels, and the producer-free
+/// clipboard obligation names every G3-01 label.
+#[test]
+fn unparameterized_exact_owners_claim_every_variant() {
+    let owned = |source: &str, assertion: &str| {
+        OBLIGATIONS
+            .iter()
+            .find(|obligation| obligation.source == source && obligation.assertion == assertion)
+            .map(|obligation| match obligation.target {
+                Target::Exact { checks, .. } => checks,
+                other => panic!("{source} {assertion} is owned by {other:?}"),
+            })
+            .unwrap()
+    };
+    for (source, assertion, profile) in [
+        ("P08-D117", "pinyin-functional", "ime=pinyin"),
+        ("P08-D118", "wetype-functional", "ime=wetype"),
+    ] {
+        let expected = exact_checks::G4_06
+            .iter()
+            .filter(|label| label.contains(profile))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            owned(source, assertion).iter().collect::<BTreeSet<_>>(),
+            expected
+        );
+    }
+    assert_eq!(owned("P08-M13", "ime-functional"), exact_checks::G4_06);
+    assert_eq!(owned("P08-M15", "clipboard-producers"), exact_checks::G3_01);
+}
+
 /// The owner checker itself: missing and unauthorized owners are all reported.
 #[test]
 fn the_owner_checker_rejects_missing_and_unauthorized_owners() {
-    let exact_sources = ["id: \"G4-01\",".to_owned()];
-    let owners = owners(&exact_sources, "RETIRE-P08-M12-ACCESSIBILITY");
+    let exact = declared_exact();
+    let owners = Owners {
+        exact: &exact,
+        phase08: "RETIRE-P08-M12-ACCESSIBILITY",
+    };
     let errors = |target| {
         owner_errors(
             &[Obligation {
@@ -260,7 +304,10 @@ fn the_owner_checker_rejects_missing_and_unauthorized_owners() {
         )
     };
     for good in [
-        Target::Exact { case: "G4-01" },
+        Target::Exact {
+            case: "G4-01",
+            checks: &["tray-icon-present"],
+        },
         Target::Manual {
             case: "P12-M01",
             scenario: "pinyin-100",
@@ -273,7 +320,22 @@ fn the_owner_checker_rejects_missing_and_unauthorized_owners() {
         assert!(errors(good).is_empty(), "{good:?}: {:?}", errors(good));
     }
     for bad in [
-        Target::Exact { case: "G4-99" },
+        Target::Exact {
+            case: "G4-99",
+            checks: &["tray-icon-present"],
+        },
+        Target::Exact {
+            case: "G4-01",
+            checks: &[],
+        },
+        Target::Exact {
+            case: "G4-01",
+            checks: &["dock-snap:edge=left,pin=off"],
+        },
+        Target::Exact {
+            case: "G4-01",
+            checks: &["tray-icon-present", "tray-icon-present"],
+        },
         Target::Manual {
             case: "P12-M01",
             scenario: "no-such-scenario",

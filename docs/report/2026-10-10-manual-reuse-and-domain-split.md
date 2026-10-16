@@ -1368,3 +1368,225 @@ gpt-6-astra（effort max）：**AGREE**（0 BLOCKER、0 SHOULD_FIX），上轮�
 读取窗格高度（`PressOutcome::Page` 只带方向，像素由纯函数 `page_pixels` 计算），与基线的读取时机一致；回执路由测试补上"可见、当前文档、视口相符、
 构建成功 → `Admit`"的正例。
 - 取证（2026-10-16，最终工作树）：Windows `dev-check` 9/9 PASS；Linux 重放 fmt、clippy、stickymd-smoke 415 + 19 passed。
+
+### C2b 设计（2026-10-16，待审查）
+
+USER 2026-10-16 选定方案 A（执行清单收据）。C2b 分两批：C2b-1 exact 逐检查标签，C2b-2 headless 执行清单与单元测试 owner。两批都先改 plan 11。
+
+#### C2b-1：exact 逐检查标签
+
+- **单一来源**：新的平台无关模块 `qualification/exact_checks.rs` 声明 G3/G4 每个 case 的 ID 与必需检查标签集合（静态表）。`g3.rs` / `g4.rs` 的
+  case 表、`module_evidence` 的 case 列表、`cli.rs` 的 `--case` 选项与证据 fixtures 都从它派生，消除目前四处重复的 case ID。
+- **标签**：`名称` 或 `名称:k=v,k=v`（参数按键排序，规范写法由单元测试校验）；只为每次 PASS 都必然经过的事实设标签，条件分支（如 G3-03 的
+  `.tmp` 与恢复标题、G4-06 的 preedit 泄漏分支）不设必需标签。初始标签集合取自本节附带的盘点（G3-01..05、G4-01..06 约 90 个）。
+- **记录**：`CaseEvidence` 增加 `checks`；检查函数在断言成立后记录标签（G3 直接在 case 函数内，G4 经 `&mut Checks` 参数，G4-06 经
+  `RealImeSession` 字段）。失败的 case 不产生标签。
+- **收据 schema 2**：每个结果带 `checks` 数组。`render_receipt` 与 `module_evidence` 都要求记录集合与声明集合完全相等：缺失、多余、重复、
+  属于其他 case 的标签与非 PASSED 结果都使收据无效。schema 1 收据不再被接受，现有 G3/G4 账本记录因此失效、需要重跑（预期行为，不是回归）。
+- **覆盖映射**：`Target::Exact { case, checks: &[label] }`；覆盖测试直接引用 `exact_checks` 静态表校验每个标签都已声明（不再从源码文本提取
+  `id:` 字面量）。未带 profile / producer 参数的义务要求全部变体的标签。
+- **plan 11 拟增文字**（"Source freeze、remote artifact promotion 与 exact evidence"一节 G3/G4/G5 成功记录条目之后）：
+  "G3/G4 exact 收据为 schema 2：每个 case 结果列出该 case 声明的全部检查标签（由检查函数在断言成立后记录，标签带参数身份），必需集合与
+  case 表同源声明；记录与声明不完全相等即无效。schema 1 收据不再有效。"
+
+#### C2b-2：headless 执行清单
+
+- **采集**：`run_captured` 已分别捕获 stdout 与 stderr。cargo 在 stderr 依次打印每个测试二进制的 `Running …` / `Doc-tests …`，二进制在 stdout
+  依次打印 `running N tests` 块；按顺序配对第 k 个块与第 k 个二进制，块数不等即失败。每块内收集 `test <路径> ... ok` 行，并核对条数等于该块
+  `test result` 行的 passed 数，不符即失败（fail closed）。二进制身份取自 `Running` 行的文件名去掉目录、扩展名与 `-<hash>`（如 `stickymd_win`、
+  `cli_exit`），文档测试为 `doc:<crate>`。
+- **收据**：headless CI 收据升为 schema 3，cargo test 任务结果带 `tests` 数组（`<二进制>::<测试全路径>`）；readiness 要求合并的 workspace tests 任务
+  有非空清单。清单约 1.5k 条，内存与收据体积可忽略。
+- **owner 绑定**：覆盖表新增 `Target::Test { binary, path }`；单元测试只校验写法。readiness 在 headless 收据有效并绑定 Source Freeze 时，把未出现在
+  清单中的 Test owner 列为缺口（"owner 测试未执行"），清单内的才算有 owner；`acceptance manual list` 单独列出这些 owner 待执行证据绑定。
+- **plan 11 拟增文字**（同一节 headless 收据条目）："本地 headless CI 收据（schema 3）的每个 cargo test 任务还记录实际执行并通过的测试全名清单；
+  人工义务映射中由单元测试持有的义务，只有其测试出现在当前 Source Freeze 绑定的清单中才算有 owner。"
+
+#### 风险与取舍
+
+- 检查标签由检查函数自行记录，记录调用与断言之间可能漂移；以"记录紧随断言、失败不记录"与审查约束，不另做静态证明。
+- 执行清单依赖 cargo / libtest 的人类可读输出格式；格式变化会让采集失败（fail closed），而不是静默少报。稳定的 JSON 输出需要 nightly，不采用。
+- 两批都会使相关资格化记录失效一次（schema 变化），预期在 v0.1.3 重建时一并重跑。
+
+#### C2b 设计审查第 1 轮（2026-10-16）与设计第 2 版
+
+gpt-6-astra（effort max）：DISAGREE，2 BLOCKER、6 SHOULD_FIX、1 NEEDS_VERIFICATION；全部核实后接受。第 1 版的执行清单靠解析 libtest 的人类可读输出：
+`--nocapture` 下测试正文可以在名字与结果之间打印伪造的 `... ok` 行，计数相等也挡不住（B1）；去掉路径与 hash 的二进制名会在不同 package 间撞名（B2）；
+现有性能测试与 Rust 2024 合并 doctest 的正常输出也不满足配对假设（S3）。这与 C1 的自由文本问题同属一类，因此不再修补解析，改换机制。
+
+**C2b-2 第 2 版：单元测试 owner 核验**
+
+- **owner 身份**：`Target::Test { package, target, path }`，`target` 为 `lib` 或 `bin:<名称>` 或 `test:<名称>`（只允许使用 libtest 默认 harness 的目标；
+  工作区唯一的 `harness = false` 是 stickymd-core 的 bench，不在 `cargo test` 构建范围内），`path` 为测试全路径。
+- **核验任务**：`all --ci`（与 dev-check）增加一个任务，按覆盖表中的 owner 集合执行：
+  1. 执行前记录 HEAD 与工作树是否干净；`cargo test --workspace --locked --no-run --message-format=json`，从结构化的 `compiler-artifact`（`profile.test`、
+     `package_id`、`target.kind/name`、`executable`）建立目标到测试二进制的映射；缺失或歧义的目标即失败。
+  2. 对每个含 owner 的二进制运行 `--list` 与 `--list --ignored`：每个 owner 必须在前者中恰好出现一次、不在后者中。`--list` 不执行测试代码。
+  3. 以 `--exact <owner…>` 运行该二进制一次，要求退出码为 0：上一步已确认每个 owner 存在且未被忽略，libtest 会执行全部匹配项，任一失败即非零。
+  4. 执行后复核 HEAD 与干净状态不变（复用现有身份采集），否则失败。
+- **收据**：任务结果在 headless CI 收据（schema 3，source-only，已由 readiness 绑定 Source Freeze）中列出已核验的 owner 身份；收据由本地 `all --ci` 在冻结源码上产生，
+  与现有 headless 门同一路径。相对 USER 选项描述的"随候选晋升"：本机制把证据绑定到 Source Freeze 提交（候选由同一提交构建），不经 release workflow 与 promotion，
+  因而不改发布资产；dev-check 只运行核验、不写收据（S4）。
+- **readiness 与列表（S6）**：覆盖状态统一计算：Test owner 只有在有效、绑定当前 Source Freeze 的 headless 收据中且已核验集合恰为覆盖表的 owner 集合时才算有 owner；
+  收据缺失、无效、陈旧或集合不符时，所有 Test owner 都列为"待执行证明"。`acceptance manual list` 静态列出它们待证明，readiness 普通输出与 JSON 共用同一结果。
+- **不再采集全量测试名**，因此 S3 的格式问题、`Command::output` 的内存问题都不再适用；核验的进程输出只用于失败诊断。
+
+**C2b-1 修正**
+
+- `window-flow-unit-tests` 从 G4-02 的标签中删除（S7）：它只检查 `cargo test` 退出码，过滤为零也会通过；该单元测试归 headless。
+- `ime-focus-loss-keeps-preedit` 收窄为 `ime-focus-loss-keeps-text`（S8）：现有断言只证明失焦 / 复焦不改变 canonical text。
+- schema 2 用于全部 exact 组（G3/G4/G5；G5 声明空检查集合），渲染照常写出失败结果与诊断；"非 PASSED 或标签不符"只使收据不能作为成功证据，不阻止序列化（N9）。
+  plan 11 与 `module_evidence` 是全局输入，两批合并后统一重建证据。
+
+#### C2b 设计审查第 2 轮（2026-10-16）与设计第 3 版
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、4 SHOULD_FIX、1 NICE_TO_HAVE、1 NEEDS_VERIFICATION；R1 的撞名、输出配对、G4-02 零测试标签、preedit 夸大与
+schema 问题判定已解决，Source Freeze 绑定判定在现行合同下可接受（须记为对原方案措辞的取舍）。本轮核实后：
+
+- **B1 提前 `process::exit(0)`**：同一进程内一个测试提前以 0 退出会让其余 owner 未执行而退出码仍为 0。改为**每个 owner 单独一个进程**（`--exact <owner>`），
+  一个测试的提前退出不再掩盖其他 owner。并写明**威胁模型**：owner 核验针对意外情形——测试被删除、改名、忽略、cfg 排除、过滤失配、失败或未执行；
+  它不防御同权限测试代码的蓄意伪造（在自身测试体内提前 `exit(0)`、伪造 `--list` 输出、篡改结果文件），后者属于代码审查的范围。不采用已 deprecated 的
+  libtest `--logfile`：它会随工具链移除，也不防同权限篡改。
+- **S2 harness 前提**：owner 只允许在 `lib` 与 `bin` 目标（单元测试）中；治理检查要求工作区清单中 `harness` 键只出现在 `[[bench]]`，否则失败，并附自定义 harness 负例。
+- **S3 身份贯通**：`all --ci` 在开始时采集一次源码身份（HEAD 与干净状态），owner 核验任务前后复核，收据序列化使用该身份并在写出前再复核一次；
+  不再在输出时重新读取 HEAD 为结果署名。
+- **S4 范围**：owner 核验只在完整 `all --ci` 中作为 tests 分片任务产生正式结果；定向运行按所选 package 投影 owner，没有适用 owner 时跳过，只作诊断；
+  非 Windows 平台不规划该任务（owner 所在的 stickymd-win 只在 Windows 编译）。开发期身份采集允许未冻结或 dirty 的工作树，但其结果不能作为提交资格证明。
+- **S5 进程与内存**：所有核验命令经现有 `run_bounded_output`（超时、输出上限、子进程回收）；`--list` 与 cargo JSON 的解析有行数与字节上限；去掉"内存问题不再适用"的说法，
+  耗时与峰值在实施后测量报告。
+- **N6 列表与状态**：`acceptance manual list` 把 Test owner 列为"证明要求（由 readiness 对照 headless 收据核对）"，不显示为当前执行状态；状态只由 readiness 计算。
+- **V7 标签语义**：检查函数内部的记录为幂等集合（同一标签多次成立只记一次），收据仍拒绝重复项；规范参数拒绝重复键与含分隔符的值。
+
+#### C2b 设计审查第 3 轮（2026-10-16）与设计第 4 版
+
+gpt-6-astra（effort max）：无 BLOCKER，3 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；逐 owner 进程判定解决了跨 owner 提前退出。全部接受：
+
+- **期间不变性**：开始、任务前后与写出前的复核只能发现漂移，不能证明运行期间源码未被改动后又恢复。正式收据的前提写明：在冻结提交的独占 checkout
+  与构建目录上运行，运行期间不得有其他源码或产物写者（与 Source Freeze 的现行前提一致）；复核保留为漂移检查，不宣称期间不变。
+- **发现阶段的成功条件**：cargo `--no-run` 构建、`--list`、`--list --ignored` 与每个 owner 的执行都必须成功退出；发现输出须完整（未截断）并解析成功后才做集合判断。
+  非零退出、超时、截断或解析失败一律使核验失败，不能贡献已核验 owner；附"ignored 列表失败而执行阶段零退出"的负例。
+- **构建范围**：完整运行用 `--workspace`；定向运行只对含适用 owner 的已选 package 使用 `-p`（及 Cargo 自动带入的依赖）；没有适用 owner 时连发现构建一起跳过。
+- **输出上限**：owner 执行加 `--nocapture`，让测试输出进入父进程已有的上限控制，而不是积累在子进程的捕获缓冲中；实施后以大量输出与超时用例测量父、子进程峰值与回收。
+- **威胁模型按可观察行为划界**：owner 测试必须把控制权正常交回 libtest；测试体自身提前成功退出（无论是否蓄意，包括经辅助函数）、断言遗漏、断言与标签漂移都由代码审查承担。
+  exact 收据的"记录集合等于声明集合"证明声明完整，不独立证明断言语义。
+
+#### C2b 设计审查第 4 轮（2026-10-16）
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX。剩余两项：
+
+- NEEDS_VERIFICATION：owner 核验的输出上限、超时与持有管道的子孙进程回收须在 Windows 上实测（父、子进程峰值、返回耗时、存活进程，失败不贡献
+  已核验 owner）；属于 C2b-2 实施后的测量，设计不扩大。
+- NICE_TO_HAVE：向 plan 11 转录时不得照抄第 1 版拟增文字（它仍写"每个 cargo test 任务记录全部测试名"、只点名 G3/G4）。处理：每批只转录该批的
+  最终条款——C2b-1 写 exact schema 2（含 G5），owner 核验条款随 C2b-2 写入。
+
+### C2b-1 实施记录（2026-10-16）
+
+- **plan 11**（`release-artifact-authority`）：新增 exact 收据 schema 2 条款——标签规范写法、一处静态声明、断言成立后幂等记录、`PASSED` 且记录集合
+  等于声明集合才算成功、G5 空集合且截图要求不变、失败结果照常写出作诊断、schema 1 无效不迁移、标签相等只证明声明的检查都已到达。
+- **单一声明**（新 `qualification/exact_checks.rs`，平台无关）：G3/G4/G5 的 case ID 与检查标签，共 131 个标签（G3-01 13、G3-02 4、G3-03 8、G3-04 11、
+  G3-05 4、G4-01 10、G4-02 34、G4-03 8、G4-04 4、G4-05 5、G4-06 30；G5 空）。每个 case 的标签按字节升序书写，与记录集合（`BTreeSet`）的迭代顺序相同，
+  因此"记录等于声明"是一次 O(n) 切片比较；不等时才用集合差列出排序后的缺失与多余项（确定性诊断）。`label` 对参数键排序，同一断言的参数顺序不影响
+  标签。测试校验规范写法（字母表、键严格升序）、逐 case 严格升序、ID 连续与总数。
+- **runner**：`ExactGroup` 由声明与操作数组配对（`[CaseOperation; G.len()]` 编译期等长，运行时再拒绝数量不符）；新的 `judge` 决定结果——返回错误的
+  case 不带标签，标签不符的 case 为 FAILED 并保留所记录的标签。`g3.rs` / `g4.rs` / `g5.rs` 不再重复 case ID；`module_evidence` 与证据 fixtures 读取
+  同一声明；`--case` 选项保留类型化枚举，由测试确认其恰好接受声明的 case（Windows 上 `as_str` 与声明 ID 一致）；G5 最少截图表由测试对照声明。
+- **记录点**：G3 在 case 函数内，`assert_user_asset` 带阶段参数自行记录；G4 经 `&mut Checks`（`cases.rs` 的 `checked` 统一包装）；
+  `dock_timing_cycle` 带 Pin 参数并在每个计时断言后记录；G4-06 由 `RealImeSession` 为本输入法记录（自动加 `ime=` 参数），整个 profile 连同模式、
+  进程与输入法恢复都成功后才并入 case；`begin_preedit` 只在两个成功出口记录。`run_cargo_test(flow::window)` 调用不变，但不再设标签（设计第 2 版）。
+- **收据与校验**：`render_receipt` 写 schema 2，每个结果带 `checks`；`module_evidence::exact` 要求 schema 2 且每个 PASSED 结果的 `checks` 与声明逐项相等
+  （缺失、多余、重复、乱序、其他 case 的标签、缺字段、非字符串、schema 1 与带标签的 G5 结果均有负例）。
+- **覆盖映射**：23 个 exact 义务改为 `Target::Exact { case, checks }`，列出证明该义务的标签；不带输入法、producer 或 Pin 参数的义务取全部变体——
+  M13 为整个 G4-06，M15 剪贴板为整个 G3-01，M15 / D132 导出为整个 G3-02，D117 / D118 为该输入法的全部 15 个标签，Right dock（M02、D040）含 Pin 开
+  与关两轮；覆盖测试直接查声明（case 存在、标签已声明、非空、不重复），不再扫描源码中的 `id:` 字面量，并另有测试固定上述"全部变体"的义务。
+- **验收投影**：P14-A80（治理范围改为 1..=80），P14-A79 中 exact 目标的描述改指 P14-A80；coverage-matrix 追加映射。
+- **失效（预期）**：plan 11 与 `module_evidence` 是全局输入，所有模块的 last-success 记录随之 stale；既有 G3/G4/G5 schema 1 收据无效，需在 exact
+  候选上重跑，计划在 v0.1.3 重建时一并处理。
+- **未运行**：G3/G4/G5 桌面 exact 用例本身（需要独占桌面）。本批的证据是声明、记录器、runner 判定、收据渲染与校验、覆盖映射的单元测试，以及记录点
+  紧随断言的代码审查；记录调用与断言的对应仍由审查承担。
+- **验证**（2026-10-16，审查前）：`cargo fmt --all -- --check` 通过；`cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 0 警告；
+  `cargo test -p stickymd-smoke --locked` 510 passed、17 ignored，另一个测试二进制 26 passed；`tools/smoke/phase-00.ps1` PASS；`dev-check` 9/9 PASSED
+  （workspace tests 136.9 s，Release 构建 90.1 s）；Linux 复跑（WSL Debian，3795335 上叠加此后改动的 65 个文件）clippy 退出 0、测试 423 passed /
+  3 ignored 与 19 passed。
+
+#### C2b-1 代码审查第 1 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、3 SHOULD_FIX；131 个标签与 23 个 exact 映射静态展开核对无误。三项都对照源码核实后接受：
+
+- **读取失败被当作空文本**（既有缺陷，新标签依赖它）：`exact_desktop::wait_note` 以 `unwrap_or_default()` 把缺失或非 UTF-8 的 `note.md` 读成空串，
+  等待"笔记已清空"的检查（G4-03 剪切 / Undo、G3-01 Undo 等）会在落盘失败时记录成功标签。改为读取失败从不满足等待、在期限内重试，超时报告最后一次
+  读取错误；`accepted_note` 带缺失文件、无效 UTF-8、空文件与不符文本的单元测试。
+- **空替换也能得到 `ime-replace-commit`**：原判定只要求"文本变化、仍含另一处 term、无 ASCII 字母"，`\n分隔\n中国` 也满足。改为 `replacement_fragment`：
+  恰好一处匹配被替换、其余不变，替换片段为单行、非空、不含 term 的 CJK 提交；单元测试含空替换、两处都替换、未替换、残留拼音、保留原匹配后追加等反例。
+- **托盘 Hide 未执行却计入 M05**：G4-01 只经 Close 隐藏，托盘菜单项"隐藏"只核对存在。M05 `tray-menu` 按菜单项分解为 `item=show` / `item=hide` /
+  `item=quit`：Show 与 Quit 绑定各自的 G4-01 标签，Hide 列为具名缺口（"窗口可见时经托盘菜单 Hide 隐藏"），留待 exact 扩展（C2d）。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 512 passed、17 ignored，另一个二进制 26 passed。
+
+#### C2b-1 代码审查第 2 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、4 SHOULD_FIX、1 NICE_TO_HAVE；第 1 轮三项判定已解决、未引入回归；256 个义务参数恰好覆盖一次，M05 拆分后
+exact 义务为 24 个。四项都是"标签名称强于其断言"，属于设计中由代码审查承担的那一层；对照源码核实后全部接受，并加强断言而不是收窄标签：
+
+- **重启检查可能早于启动整理**（G3-04 `user-asset-intact:stage=restart`、G3-05 `fake-asset-intact:stage=restart`）：重启时 note/config 已存在，
+  `wait_for_layout` 立即返回，探针可能在新进程执行 `main.rs` 的启动资产整理之前就检查并杀进程。新增 `exact_desktop::start_until_editor_ready`：
+  复用产品已有的诊断就绪事件（只设 `STICKYMD_DIAGNOSTIC_READY_EVENT`，不写 trace、不退出），等待该次启动的首次 present（整理在编辑器创建之前）再检查。
+- **`shift-delete-cuts` 区分不了剪切与删除**：Ctrl+Insert 已把 `TEXT` 放入剪贴板。现在先把剪贴板换成哨兵文本，Shift+Delete 后同时要求文档为空、剪贴板为
+  `TEXT`。
+- **`redo-restores-asset` 只比较数量**：粘贴后要求 Markdown 引用的正是唯一发布的资产，并记下其路径与 SHA-256；Redo 后要求受管资产恰为该路径且字节不变。
+- **`export-leaves-working-note` 只读旧文件**：导出后在 Source 末尾粘贴标记，要求 `note/note.md` 保存为原文加标记、导出副本不变，证明工作文档与保存目标
+  未切换。
+- NICE_TO_HAVE：G5 截图转移反例因 schema 2 多出 `checks` 而退化为删除反例；匹配串改为新结果形状，并断言转移前后截图总数不变。
+- 这些加强的探针只能在独占桌面的 exact 运行中执行，本批未运行；它们只会让既有路径更严格（误判只会表现为 FAILED，不会产生假 PASS）。验证：fmt、clippy 0 警告；
+  `cargo test -p stickymd-smoke --locked` 512 passed、17 ignored，另一个二进制 26 passed。
+
+#### C2b-1 代码审查第 3 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、3 SHOULD_FIX；第 2 轮各项已落实，就绪事件确在启动资产整理之后。全部核实后接受：
+
+- **Preview 的非法剪切与粘贴可以互相抵消**：原探针连续执行全选、Shift+Delete、Shift+Insert 后才比较正文。Preview 的命令映射把两者都映射为无操作
+  （`preview_input::preview_command`），现在分别验证：剪切后正文不变且剪贴板仍是哨兵，再换一个哨兵后粘贴，正文仍不变。
+- **导出正文未绑定实际复制的图片**：现在先确认恰好复制了一个与原图字节相同的文件，再用它的文件名构造此固定 fixture 的完整预期 Markdown（本地图片指向
+  `g3-export-assets/<该文件>`，远程引用与其余正文不变）逐字比较。
+- **重启探针可能继承其他诊断开关**（本批新代码）：子进程继承父环境，残留的 `STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY=1` 会在设置就绪事件后生效，使候选首帧后
+  自行退出。启动前显式移除退出开关、trace 与细节路径。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 512 passed、17 ignored，另一个二进制 26 passed；桌面探针未运行（同第 2 轮）。
+
+#### C2b-1 代码审查第 4 轮（2026-10-16，逐标签审计）
+
+为收敛，本轮要求审查者逐个审计全部 131 个标签，一次列出所有剩余缺口。gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、6 SHOULD_FIX、1 NEEDS_VERIFICATION；
+其余标签逐项判定为断言与名称相符，第 3 轮三项已解决、未发现回归。六项核实后处理如下：
+
+- **S1 资产枚举把读取错误变成"没有文件"**（G3-01 数量 / 移除 / 恢复、G3-02 复制数量）：`regular_files` 只把目录不存在视为空，打开列表、读取目录项或其类型
+  失败都返回错误；附缺失目录、文件与子目录混合、对文件路径列目录三种用例。
+- **S2 失焦检查可能读到旧落盘文本**（`ime-focus-loss-keeps-text`）：失焦 / 复焦后先等过自动保存 debounce（650 ms）的观察窗口，要求标题不为 dirty 且
+  `note.md` 仍为基线，再进入下一轮组字，避免后续恢复掩盖前一阶段的提交。
+- **S3 七个 `snap-*` 标签缺少输入与终态几何证明**：拖动允许光标误差，终态几何未回读。探针照常运行（配置不符仍使 case 失败），但不再声明标签；
+  标签总数改为 124（G4-02 为 27）。核验实际输入几何与终态几何后再设标签，列入 exact 扩展（C2d）。这七个标签此前没有被覆盖映射引用。
+- **S4 图片快捷键标签只证明引用前缀**：要求正文中恰有一个受管图片引用且文件已发布；file-drop 的发布文件与原 PNG 逐字节相同（PNG 原样保存），DIB 的发布
+  文件是 2×2 PNG（产品把 DIB 转为 PNG）；附引用解析与 PNG 头检查的单元测试。
+- **S5 `junction-no-durable-mutation` 只观察 note/config**：标签改名为 `junction-keeps-note-and-config`，只声明实际观察的两个文件；plan 11 的第二实例零
+  durable write（资产、trash、恢复文件）不由此标签证明。M08 未引用该标签。
+- **S6 Preview 剪切检查没有确认选区存在**：先在有界等待中执行全选与复制，回读到全文后才设置剪切哨兵，证明 Preview 已有画面且选区非空。
+- NEEDS_VERIFICATION：加强后的桌面探针尚无实跑证据，需在独占桌面上运行适用的 G3/G4 后核验收据（与 v0.1.3 重建一并进行）。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 515 passed、17 ignored，另一个二进制 26 passed。P14-A80 的标签数同步为 124。
+
+#### C2b-1 代码审查第 5 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX、1 NEEDS_VERIFICATION；S1、S2、S3、S5、S6 在源码层面成立，124 个标签与 24 项 exact 映射与声明一致。
+两项都在 S4 的修复里，核实后处理：
+
+- **引用解析接受不成立的 Markdown**（缺右括号、代码跨度、额外正文）：产品单图粘贴插入的正文恰为 `![](images/<name>)`（`assets::transaction`），fixture
+  从空文档粘贴，因此改为要求全文恰好等于该写法、文件名只含字母数字与 `-` `.`；负例含缺右括号、代码跨度、尾随换行、额外正文、两张图与路径穿越。
+- **PNG 头检查接受损坏文件**：smoke 工具只用标准库，不引入解码器；DIB→PNG 转换由 `stickymd-render` 的图片测试负责。两个标签按 G3-01 资产标签（第 4 轮判为
+  相符）的口径改名，只声明快捷键走到了图片粘贴路径并发布了被引用的资产：`shift-insert-dib-publishes-asset`（全文恰为该引用、文件存在、PNG 头为 2×2，
+  头部只是健全性检查）与 `shift-insert-file-drop-publishes-asset`（全文恰为该引用、发布文件与原 PNG 逐字节相同）。这两个标签不被覆盖映射引用。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 515 passed、17 ignored，另一个二进制 26 passed。
+
+#### C2b-1 代码审查第 6 轮（2026-10-16）与结论
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX；第 5 轮两项修复成立，全量核对未发现声明、记录调用、schema 2 校验与覆盖映射之间的新冲突
+（124 个标签、24 项 exact 映射）。仍待：加强后的 G3/G4 桌面探针在独占桌面上的实跑（NEEDS_VERIFICATION，随 v0.1.3 重建一并进行）。
+
+最终验证（提交前，同一工作树）：`cargo fmt --all -- --check` 通过；`cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 0 警告；
+`cargo test -p stickymd-smoke --locked` 515 passed、17 ignored，另一个二进制 26 passed；`dev-check` 9/9 PASSED（首次运行的 dependency policy 因拉取 RustSec
+advisory-db 时 TLS 握手失败而失败，网络恢复后重跑通过；workspace tests 122.7 s，Release 构建 95.8 s）；Linux 复跑（WSL Debian，3795335 上叠加 65 个文件）
+clippy 退出 0、测试 423 passed / 3 ignored 与 19 passed。

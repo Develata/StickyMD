@@ -430,6 +430,12 @@ ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
   guided step 覆盖多项时逐项询问；
 - stale module fingerprint 不参与 readiness；G3/G4/G5 成功记录还必须包含 origin ZIP/EXE、运行 harness、
   clean worktree 与各组预期逐项结果，只有当前 registry 指纹兼容时才能复用；
+- G3/G4/G5 exact 收据为 schema 2：每个 case 结果带 `checks` 数组，列出该 case 实际记录的检查标签。标签写作 `名称` 或
+  `名称:k=v[,k=v…]`，名称、键与值只用小写 ASCII 字母、数字与 `-`，参数键严格升序；每个 case 的必需标签集合与 case 表
+  同源、一处静态声明，由检查函数在其断言成立之后记录（同一标签多次成立只记一次）。只有结果为 `PASSED` 且记录集合与
+  声明集合完全相等（无缺失、多余或重复）的 case 才算成功；G5 声明空集合，截图要求不变。失败或标签不符的结果仍完整
+  写入收据作为诊断，但不能作为成功证据；schema 1 收据无效，不迁移。标签相等只证明声明的检查都已到达，不独立证明断言
+  语义，断言与标签的对应由代码审查承担；
 - readiness 对 P0/P1、未批准 hard gate、mandatory manual NOT TESTED、exact package、remote
   evidence 与 USER decision fail closed；不得提供 `--force-ready`；
 - readiness 读取的每份收据（candidate、Source Freeze、decision、remote/downloaded、headless、manual 与模块

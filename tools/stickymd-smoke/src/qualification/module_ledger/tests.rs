@@ -113,12 +113,10 @@ fn registration_applies_the_same_contract_as_readiness() {
         1,
     );
     // One case short of the group, formerly accepted here and refused only by readiness.
-    let incomplete = complete.replacen(
-        "{\"id\":\"G4-06\",\"status\":\"PASSED\",\"detail\":\"decoy\",\"artifacts\":[]}",
-        "",
-        1,
-    );
-    let incomplete = incomplete.replace(",]", "]");
+    // G4-06 is the last result; the final `]}` closes the results and the document.
+    let last = complete.find(",{\"id\":\"G4-06\"").unwrap();
+    let close = complete.rfind("]}").unwrap();
+    let incomplete = format!("{}{}", &complete[..last], &complete[close..]);
     let mut other = candidate.clone();
     other.exe_sha256 = "0".repeat(64);
     let foreign = valid_document(&root, ModuleId::G4, &other, "", "foreign");

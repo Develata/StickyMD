@@ -9,10 +9,11 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use super::super::super::exact_desktop::{
-    ChildGuard, assert_sole_stickymd_process, io_error, seed_note, wait_for_layout, wait_until,
+    Checks, ChildGuard, assert_sole_stickymd_process, io_error, seed_note, wait_for_layout,
+    wait_until,
 };
 
-pub(super) fn g4_05(_repository: &Path, program: &Path) -> Result<(), String> {
+pub(super) fn g4_05(_repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
     const SOURCE: &str = "junction identity must remain singular\n";
     seed_note(program, SOURCE)?;
     let mut primary = ChildGuard::start(&program.join("StickyMD.exe"))?;
@@ -20,6 +21,7 @@ pub(super) fn g4_05(_repository: &Path, program: &Path) -> Result<(), String> {
     let window = crate::window_control::visible_window(primary.id())?;
     crate::window_control::request_close(window)?;
     wait_for_visibility(window, false)?;
+    checks.record("close-hides-window", &[]);
     thread::sleep(Duration::from_millis(300));
 
     let alias = program
@@ -32,12 +34,17 @@ pub(super) fn g4_05(_repository: &Path, program: &Path) -> Result<(), String> {
     let before = (file_stamp(&note)?, file_stamp(&config)?);
     let mut secondary = ChildGuard::start(&alias.join("StickyMD.exe"))?;
     secondary.wait_for_exit(super::super::super::exact_desktop::TIMEOUT)?;
+    checks.record("junction-second-instance-exits", &[]);
     wait_for_visibility(window, true)?;
+    checks.record("junction-wakes-primary", &[]);
     let after = (file_stamp(&note)?, file_stamp(&config)?);
     if before != after {
         return Err("junction second instance modified durable note/config".to_owned());
     }
+    // Only note.md and config.toml are observed; other durable state is not claimed.
+    checks.record("junction-keeps-note-and-config", &[]);
     assert_sole_stickymd_process(primary.id())?;
+    checks.record("sole-process-after-junction", &[]);
     fs::remove_dir(&alias)
         .map_err(|error| format!("cannot remove G4-05 junction after qualification: {error}"))?;
     primary.kill_and_wait()
