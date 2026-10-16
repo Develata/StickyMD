@@ -48,15 +48,14 @@ const G4_OPACITY_COMMIT: &str = "G4-02: 透明度松开滑块 / Enter / 失焦�
 const G4_TOPMOST_SYNC: &str = "G4-01: 置顶在托盘与窗口间双向同步，不受临时 sensor topmost 影响";
 const G4_QUIT_SAVE_FAILURE: &str = "G4-01: 退出保存失败时取消退出、保持运行、标题状态";
 const G4_ESC: &str = "G4-02: 真实键盘 Esc 分支";
-const UNIT_ESC_GUARDS: &str =
-    "单元测试：经生产决策路径的 Esc 守卫与修饰键（USER 2026-10-15 批准仅单元覆盖）";
+const UNIT_ESC_GUARDS: &str = "C2b 绑定模块收据：app::escape::tests 经生产决策路径的 Esc 守卫与修饰键（USER 2026-10-15 批准仅单元覆盖）";
 /// The existing scrollbar tests check the app's geometry and painting, the render projection
 /// and the Preview worker's receipts; no test drives the app runtime that composes the bars,
 /// hovers, drags, pages, ends a drag or admits a Preview receipt.
 const UNIT_SCROLL_RUNTIME: &str =
     "单元测试：经 app runtime 的滚动条路径（组合、hover、拖动、翻页、拖动结束与回执准入）";
 const G4_DRAG_OUTSIDE: &str = "G4: 真实鼠标拖出窗口后完成滚动条拖动";
-const UNIT_QUIT_STATE: &str = "单元测试：退出已取消状态的建立、保持与清除";
+const UNIT_QUIT_STATE: &str = "C2b 绑定模块收据：app::title::tests 与 flow::persistence::tests 的退出已取消状态与载入外部解除";
 
 pub(super) const OBLIGATIONS: &[Obligation] = &[
     // P08-M01..M03: dock visual at each DPI, timing on the primary monitor, undock.
@@ -1327,6 +1326,6 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:quit-3",
         "title-priority",
         "",
-        gap("单元测试：窗口标题的唯一写入者与优先级"),
+        gap("C2b 绑定模块收据：app::title::tests 的标题优先级与唯一原生写入者源码守卫"),
     ),
 ];

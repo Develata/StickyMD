@@ -71,6 +71,14 @@ impl StickyApp {
         self.request_redraw();
     }
 
+    /// Closes Search and refreshes what its overlay projected.
+    pub(super) fn close_search(&mut self) {
+        self.search.close();
+        self.update_search_selection();
+        self.update_ime_area();
+        self.request_redraw();
+    }
+
     pub(super) fn handle_search_key(
         &mut self,
         event: &KeyEvent,
@@ -89,7 +97,6 @@ impl StickyApp {
         }
         let generation = self.coordinator.view().generation;
         match code {
-            Some(KeyCode::Escape) => self.search.close(),
             Some(KeyCode::Tab) => self.search.focus_next(),
             Some(KeyCode::F3) => self.navigate_search(shift),
             Some(KeyCode::Enter | KeyCode::NumpadEnter)

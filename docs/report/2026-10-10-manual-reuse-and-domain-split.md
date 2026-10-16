@@ -1279,3 +1279,51 @@ composition 守卫接线等）。人工状态仍为 NOT TESTED；映射完整不
   17 ignored、CLI 26 passed；`phase 00` PASS。
 - Linux（WSL Debian 重放同一工作树）：fmt、`clippy -p stickymd-smoke --all-targets -D warnings` 通过；tests 415 passed / 3 ignored、19 passed。
 - 未运行：真实桌面、人工记录与 G3/G4 exact 资格化（本批不改产品 runtime）。
+
+## 覆盖补全 C2 实施记录（2026-10-16）
+
+### 分批
+
+- **C2a**：产品侧的最小纯函数接缝与单元测试，不需要桌面。C2a-1 是 plan 09 驱动的产品改动（标题单一写入者与退出已取消状态、Esc 判定、
+  载入外部解除重建义务）；C2a-2 是透明度指针、守卫与失焦、滚动条手势的接缝。
+- **C2b**：exact 收据的逐检查标签（plan 11 先行）；以及以已执行测试为证据的 owner 绑定能否成立——模块收据目前不记录测试名，若不能低成本
+  补上，相关义务继续作为缺口并写明原因。
+- **C2c**：输入注入模块（需要真实桌面回归）。
+- **C2d**：G3/G4 exact 扩展与 P08-A11 Runtime 扩展（与 C2c 共用一次独占桌面资格化）。
+
+### C2a-1
+
+- **窗口标题**：`app/title.rs` 的 `window_title` 是唯一把状态投影成标题文字的地方，优先级为恢复 → 退出已取消：保存失败 → 冲突 → dirty →
+  公式 hover → 普通；`update_window_title` 是唯一写入者，并缓存上次写入的文字，只在变化时调用原生接口（此前每次指针移动都重写标题）。
+  公式 hover 改为状态输入，离开窗口时清除；行为变化：hover 不再盖过恢复、冲突或未保存的 `*`（按 plan 09 优先级）。
+- **退出已取消**：`QuitCancelNotice` 只由 `QuitCancelled(NoteSave)` 建立，`QuitCancelled(Paste)` 与 `QuitBlocked` 既不建立也不清除；
+  在 `about_to_wait`（一次完整事件处理结束）以 `requires_note_barrier()`（`dirty || durability_required || note_save_in_flight`）为假清除。
+- **载入外部解除重建义务（实现漂移修正）**：冲突中的"载入外部"此前只解除冲突，没有解除缺失文件重建义务（干净 reload 路径有），导致
+  退出屏障和新标题状态可能永不解除；两条路径统一为 `PersistenceCoordinator::accept_external`，并加单元测试。
+- **Esc 判定**：`app/escape.rs` 的 `escape_action` 以 plan 09 顺序一次判定，`handle_key` 对每个 Esc key-down 先经它路由；原分散在透明度
+  弹层、编辑区组字、Search、Preview 与 Source 的五处 Esc 分支删除，顺序与行为不变（Search 组字时仍由 IME 自行取消 preedit）。
+  "修饰键不改变 Esc、按住时每次 key-down 各自判定"是 3-A 第 1b 批经审查确立的行为，此前只在代码注释中，现写入 plan 09 的 Esc 引导句。
+- **plan 09**：Esc 引导句补上述规则；为 Dock 与托盘生命周期两节增加锚点 `dock-auto-hide`、`tray-lifecycle`，供新模块的 `plan_ref` 使用。
+  覆盖分解的 plan 09 与 phase-08 整文摘要相应更新（条款摘要不变）。
+- **覆盖映射**：相关缺口文字改为指向新的单元测试；它们仍是缺口，C2b 决定以何种已执行证据绑定。
+- 验收投影：phase-08 增加 2026-10-16 维护节；coverage-matrix 映射。
+
+#### C2a-1 代码审查第 1 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX；Esc 重构判定行为等价，`accept_external` 判定正确。两项核实后接受。
+
+- **结算时机早于本轮调度**：`settle` 位于 `about_to_wait` 开头，而同一轮随后的 `tick_autosave` 可能再提交保存，使"本轮结束时仍在途"
+  的状态被提前判为可清除。改为在 `about_to_wait` 内所有调度（autosave、外部检查、预览与窗口 tick）之后调用 `finish_event_pass`，
+  重新读取 guards 后结算并更新标题。该时序需要真实事件循环，单元测试只覆盖结算规则本身，接线仍属缺口。
+- **公式 hover 缓存会过期**：缓存的 hover 文字不随帧、布局、模式或文档变化失效。改为不缓存：标题投影时按当前指针与当前 Preview 帧
+  派生（指针在窗口内且 Preview 布局为当前时才命中），帧或模式一变即不再显示旧错误。
+
+#### C2a-1 代码审查第 2 轮（2026-10-16）
+
+gpt-6-astra（effort max）：**AGREE**（0 BLOCKER、0 SHOULD_FIX），两项上轮发现判定已修复；2 NICE_TO_HAVE、1 NEEDS_VERIFICATION，前两项已处理：
+
+- 公式 hover 命中排除透明度弹层覆盖的区域（弹层不透明地画在 Preview 之上）。
+- 文档区分标题文字的生成函数 `window_title` 与唯一原生写入者 `update_window_title`；新增源码守卫测试，产品源码中只允许一处 `set_title`。
+- 待验证项：调度顺序与"不移动鼠标完成 reload / 切模式 / 滚动 / resize"需要真实事件循环，留给 exact 批次，相关义务继续是缺口。
+- 取证（2026-10-16，最终工作树）：Windows `dev-check` 9/9 PASS（含 workspace tests 与 Release 构建）；Linux 重放 fmt、clippy、
+  stickymd-smoke 415 + 19 passed。

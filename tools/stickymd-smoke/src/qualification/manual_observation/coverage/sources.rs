@@ -197,12 +197,12 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "phase08:document",
         62,
-        "12352c05499330a1d2502d5008dcc286ae3b9efb0349936063886ae6815e6fcc",
+        "55f80c38e7595d430feed6f2ed8abdb961aaddf97294476b0707f89ac62105ca",
     ),
     (
         "plan09:dock",
         15,
-        "3aef7e284c9bc62bfe509704ce1ffb9d0a9b23a5f17c073cc584c258111cb173",
+        "61eaa593a1f9ec7b8fd1e78eeb71933de2c53aa4b5e6e357c5972d46c6098c7e",
     ),
     (
         "plan09:scrollbars",
@@ -212,7 +212,7 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "plan09:opacity",
         3,
-        "2886049ba4d66255f25dda17470a40b25a381fd210f84939cc2e1eb3db7a161a",
+        "b73c13b169f1a525f4a16a207afc2cb297ad7d6d0f4c73c5ff7eb801c664b3a3",
     ),
     (
         "plan09:tray",
@@ -222,7 +222,7 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "plan09:document",
         32,
-        "03fd768b4058d6bd28e9c8c6e87313b9f8633161775dcf39b7de1aca45285dec",
+        "d059bf18b84cfcbe30ff8efea2fe9e23a553f676bb500ca37da9642c086fadfa",
     ),
 ];
 

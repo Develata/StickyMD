@@ -409,6 +409,9 @@ impl StickyApp {
             }
             WindowEffect::QuitCancelled(barrier) => {
                 self.diagnostic = Some(format!("退出已取消：{barrier:?} 未安全完成。"));
+                if self.quit_notice.on_quit_cancelled(barrier) {
+                    self.update_window_title();
+                }
                 self.request_redraw();
             }
             WindowEffect::QuitWarning(barrier) => {

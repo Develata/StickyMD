@@ -28,19 +28,30 @@ impl StickyApp {
         );
     }
 
-    pub(super) fn update_window_title(&self) {
+    /// The end of a complete main-thread event pass: after this pass's autosave, external check,
+    /// preview and window ticks have scheduled their work. The quit-cancelled notice lasts only
+    /// while the quit barrier still needs the note (plan 09); the title then shows the settled
+    /// state.
+    pub(super) fn finish_event_pass(&mut self) {
+        let note_barrier_required = self.window_guards().requires_note_barrier();
+        self.quit_notice.settle(note_barrier_required);
+        self.update_window_title();
+    }
+
+    /// The only writer of the window title (plan 09 title priority).
+    pub(super) fn update_window_title(&mut self) {
         let Some(window) = &self.window else { return };
-        let view = self.coordinator.view();
-        let title = if self.recovery.is_pending() {
-            "StickyMD — 恢复选择未完成"
-        } else if self.persistence.conflict().is_some() {
-            "StickyMD * — 外部修改冲突"
-        } else if view.dirty {
-            "StickyMD *"
-        } else {
-            "StickyMD"
-        };
-        window.set_title(title);
+        let title = super::title::window_title(super::title::TitleFacts {
+            recovery_pending: self.recovery.is_pending(),
+            quit_cancelled: self.quit_notice.active(),
+            conflict: self.persistence.conflict().is_some(),
+            dirty: self.coordinator.view().dirty,
+            formula_error: self.formula_error_under_pointer(),
+        });
+        if title != self.shown_title {
+            window.set_title(&title);
+            self.shown_title = title.into_owned();
+        }
     }
 
     pub(super) fn submit_save(&mut self, trigger: SaveTrigger, override_mode: Option<PersistMode>) {

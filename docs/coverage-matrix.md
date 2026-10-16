@@ -426,3 +426,8 @@ G3/G4 exact、USER 退役或具名缺口（现有自动化在 C2 绑定已执行
 未观察的 Tier A 项照常阻断。缺口与退役项在 `acceptance manual list` 与 readiness 中列出；本批不改变产品
 runtime，人工状态仍为 NOT TESTED。设计与决定见
 [3-A 报告](report/2026-10-10-manual-reuse-and-domain-split.md)。
+
+2026-10-16 覆盖补全 C2a-1 映射 plan 09 `dock-auto-hide`（Esc 顺序与修饰键）、`tray-lifecycle`（退出已取消状态与窗口标题）与
+plan 05 `external-change-conflict`（载入外部解除重建义务）：`stickymd-win/src/app/{escape,title}.rs` 是 Esc 判定与标题的唯一入口，
+`flow/persistence.rs::accept_external` 统一两条载入外部路径；验收见
+[phase-08 2026-10-16 维护节](acceptance-cases/phase-08.md)。真实键盘投递与只读 note 的退出失败仍由 G4 exact 层持有，列为缺口。

@@ -215,6 +215,27 @@ environment-sensitive behavior is never relabelled automated merely because a sy
 | P08-D138 | sleep/resume when available | Manual | real receipt required by M10 | NOT TESTED |
 | P08-D139 | RDP reconnect when available | Manual | real receipt required by M10 | NOT TESTED |
 
+## 2026-10-16 quit-cancelled title and Esc decision maintenance
+
+This supplements the frozen rows above; their statuses are unchanged.
+
+- Contract: [`09` Esc order and modifiers](../plan/09_windows_shell.md#dock-auto-hide),
+  [`09` quit-cancelled state and window title](../plan/09_windows_shell.md#tray-lifecycle),
+  [`05` load external](../plan/05_document_persistence.md#external-change-conflict).
+- Preconditions: Esc pressed in every input state (opacity popup, recovery or asset reconciliation pending, quitting,
+  editor or Search composition, Search open, Preview with and without a selection) with every modifier combination; a
+  quit cancelled by a failed note save, by a guard and by an unsettled paste; a recreate obligation followed by
+  "load external".
+- Expected: one pure decision (`app::escape::escape_action`) applies the plan 09 order and Esc routing ignores
+  modifiers; the title text comes from one function (`app::title::window_title`) with the priority recovery → quit
+  cancelled → conflict → dirty → formula hover → plain, and a formula hover never hides unsaved text; the only native
+  write is `update_window_title` (a source guard rejects any other `set_title`); only a failed note save
+  establishes the quit-cancelled notice, which clears after an event pass once the note no longer needs the quit
+  barrier; accepting external content discharges a superseded recreate obligation.
+- Automated entry: `cargo test -p stickymd-win --locked -- escape title persistence`. Status: `AUTOMATED PASS`.
+- Not covered here: real keyboard delivery (G4-02), the read-only-note quit failure (G4-01) and the end-of-pass hook
+  in the live event loop remain coverage gaps owned by the exact layer.
+
 ## Current Phase Gate
 
 Phase 8 automated acceptance is **PASS** after the checked-in headless, Release-performance,

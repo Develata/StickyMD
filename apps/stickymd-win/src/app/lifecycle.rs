@@ -263,6 +263,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             Some(event_loop),
             crate::flow::window::state::WindowIntent::Tick { now_ms },
         );
+        self.finish_event_pass();
 
         let now = Instant::now();
         let mut next_wake = None;
