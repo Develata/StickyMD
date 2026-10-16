@@ -67,8 +67,10 @@ impl StickyApp {
             ElementState::Pressed => {
                 if self.controls.opacity_popup_open {
                     if layout.opacity_slider.contains(self.cursor_position) {
-                        self.controls.opacity_dragging = true;
-                        self.preview_opacity(layout.opacity_at(self.cursor_position.x));
+                        let intent = self
+                            .controls
+                            .press_slider(layout.opacity_at(self.cursor_position.x));
+                        self.dispatch_window_preference_intent(intent);
                         return true;
                     }
                     if layout.opacity_input.contains(self.cursor_position) {
@@ -110,9 +112,8 @@ impl StickyApp {
                 }
             }
             ElementState::Released => {
-                if self.controls.opacity_dragging {
-                    self.controls.opacity_dragging = false;
-                    self.commit_opacity(self.controls.opacity_preview);
+                if let Some(intent) = self.controls.release_slider() {
+                    self.dispatch_window_preference_intent(intent);
                     return true;
                 }
             }
@@ -121,12 +122,15 @@ impl StickyApp {
     }
 
     pub(super) fn handle_shell_cursor_moved(&mut self, position: PhysicalPosition<f64>) -> bool {
-        if self.controls.opacity_popup_open
-            && self.controls.opacity_dragging
-            && let Some(window) = &self.window
-        {
-            let layout = ControlLayout::new(window.inner_size(), window.scale_factor());
-            self.preview_opacity(layout.opacity_at(position.x));
+        // The layout is read only while a slider drag is in progress.
+        let intent = self.window.as_ref().and_then(|window| {
+            self.controls.drag_slider(|| {
+                ControlLayout::new(window.inner_size(), window.scale_factor())
+                    .opacity_at(position.x)
+            })
+        });
+        if let Some(intent) = intent {
+            self.dispatch_window_preference_intent(intent);
             return true;
         }
         false
@@ -241,10 +245,6 @@ impl StickyApp {
             ThemeMode::Dark => ThemeMode::Light,
         };
         self.dispatch_window_preference_intent(WindowPreferenceIntent::SetTheme(next));
-    }
-
-    fn preview_opacity(&mut self, opacity: u8) {
-        self.dispatch_window_preference_intent(WindowPreferenceIntent::PreviewOpacity(opacity));
     }
 
     /// Closes the popup and drops any uncommitted slider or numeric value.

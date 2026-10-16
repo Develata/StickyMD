@@ -13,8 +13,8 @@ use crate::config::{DockEdge as ConfigDockEdge, ViewMode};
 use crate::flow::window::geometry::WindowPlacement;
 use crate::flow::window::reducer::WindowShellCoordinator;
 use crate::flow::window::state::{
-    DockEdge, QuitBarrier, StableVisibility, WindowEffect, WindowGuardSnapshot, WindowIntent,
-    WindowSaveReason, effective_topmost,
+    DockEdge, QuitBarrier, StableVisibility, WindowEffect, WindowIntent, WindowSaveReason,
+    effective_topmost,
 };
 use crate::flow::{SaveTrigger, WindowPreferenceEffect, coordinate_window_preference};
 use crate::instruction::{WindowPlatformIntent, WindowPreferenceIntent, WindowResizeEdge};
@@ -247,24 +247,6 @@ impl StickyApp {
         self.startup_diagnostics.record("guards_ready");
         self.startup_diagnostics.record("shell_ready");
         true
-    }
-
-    pub(super) fn window_guards(&self) -> WindowGuardSnapshot {
-        WindowGuardSnapshot {
-            window_focused: self.session.focused,
-            ime_composing: self.session.is_composing() || self.search.is_composing(),
-            dragging: self.move_resize_active || self.scrollbars.drag.is_some(),
-            popup_open: self.controls.opacity_popup_open
-                || self.search.open
-                || self.export_in_flight,
-            conflict_or_recovery: self.recovery.is_pending()
-                || self.persistence.conflict().is_some(),
-            paste_pending: self.asset_paste_pending,
-            asset_transaction_pending: self.asset_sync_in_flight,
-            note_save_required: self.coordinator.view().dirty
-                || self.persistence.durability_required(),
-            note_save_in_flight: self.persistence.note_save_in_flight(),
-        }
     }
 
     pub(super) fn refresh_window_guards(&mut self, event_loop: Option<&ActiveEventLoop>) {

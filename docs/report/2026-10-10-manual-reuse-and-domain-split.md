@@ -1327,3 +1327,44 @@ gpt-6-astra（effort max）：**AGREE**（0 BLOCKER、0 SHOULD_FIX），两项�
 - 待验证项：调度顺序与"不移动鼠标完成 reload / 切模式 / 滚动 / resize"需要真实事件循环，留给 exact 批次，相关义务继续是缺口。
 - 取证（2026-10-16，最终工作树）：Windows `dev-check` 9/9 PASS（含 workspace tests 与 Release 构建）；Linux 重放 fmt、clippy、
   stickymd-smoke 415 + 19 passed。
+
+### C2a-2
+
+把运行时里仍混在 `StickyApp` 方法中的判定抽成最小纯函数，行为逐项不变，接线留在原处：
+
+- **滚动条手势**（`app/scrollbar.rs`）：`ScrollbarInteraction` 判定加粗（hover 或拖动中）、按下（拖动开始 / 轨道翻页 90% 窗格高度）、
+  指针移动（hover 变化、拖动实时目标、拖动栏消失即结束）与结束拖动；`pane_bars` 与 `preview_scroll` 决定可操作的栏（不接受编辑时一条也没有，
+  过期 Preview 帧没有滑块）。`scroll_runtime` 与 `presentation` 只执行这些结果。
+- **Preview 回执路由**（`app/preview_runtime.rs::completion_route`）：托盘隐藏时释放、旧文档重建、无视口丢弃、视口不符重排（成功时复用语义树）、
+  只有当前文档与视口的回执进入准入规则。
+- **透明度指针**（`app/controls.rs`）：`press_slider` / `drag_slider` / `release_slider` 返回偏好 intent；测试经真实的偏好 reducer 确认拖动
+  每一步都是不持久化的 `PreviewOpacity`、有效松开至多产生一个 `CommitOpacity`（值变化时 reducer 要求持久化）、Esc 之后松开不产生提交；
+  运行时的配置提交与落盘不在测试范围内。
+- **窗口守卫**（`app/guards.rs`）：`window_guards` 由 `guard_snapshot` 投影，每个事实只抬起它所属的守卫；编辑区或 Search 字段的组字都阻止自动收起。
+- 观察（未改动）：`opacity_dragging` 只由松开、Esc 取消与隐藏清除；输入禁用、失焦、resize 与切换视图都不清除。具体序列：按下滑块 →
+  Close/Quit 等待保存并禁用输入 → 左键松开因 `shell_input_enabled` 为假被丢弃 → 保存失败恢复输入，此后不按键的移动仍会预览，下一次被接收的
+  左键松开才提交。属于既有行为，记为后续条目；新测试假定松开能到达判定函数。
+- 覆盖映射：相关缺口文字改为指向这些判定测试并写明 winit 接线仍未覆盖；它们仍是缺口。验收投影：phase-05、phase-08 的 2026-10-16 补充与
+  coverage-matrix。
+
+#### C2a-2 代码审查第 1 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX、2 NICE_TO_HAVE；各抽取判定与基线逐项等价，守卫 15 个事实映射无误。全部核实后接受：
+
+- **验收过滤器漏跑回执测试**：测试名不含 `completion_route`；改名为 `completion_route_admits_only_the_current_build`，以 `--list` 确认过滤器选中。
+- **"松开写一次配置"超出证据**：测试只经偏好 reducer 收集 `persist` 标记，不经运行时的配置提交，且拖回原值松开时合法地不持久化；
+  注释、报告、phase-08 与缺口文字统一改为"拖动只产生不持久化的预览，有效松开至多一个提交，值变化时要求持久化"，并写明配置提交不在范围内。
+- **短路求值边界**：恢复原有的提前退出——透明度布局只在拖动中读取（`drag_slider` 改为延迟取值）、滚动条几何只在接受编辑时读取、Preview
+  视口只对可见且当前文档的回执读取。
+- **隐藏优先级的竞争用例**：托盘隐藏与旧文档、缺失或不符的视口、失败结果同时成立时都返回 `ReleaseHidden`。
+- 透明度残留拖动的既有缺陷补记完整事件序列。
+
+另：USER 2026-10-16 为 C2b 选定方案 A——CI 与 dev-check 的 headless 测试把实际通过的测试名写入绑定提交的执行清单收据，随候选晋升，
+readiness 逐个核对单元测试 owner 确实执行并通过。
+
+#### C2a-2 代码审查第 2 轮（2026-10-16）
+
+gpt-6-astra（effort max）：**AGREE**（0 BLOCKER、0 SHOULD_FIX），上轮四项判定三项已修复、一项部分修复；2 NICE_TO_HAVE 已处理：轨道按下只在确认翻页后
+读取窗格高度（`PressOutcome::Page` 只带方向，像素由纯函数 `page_pixels` 计算），与基线的读取时机一致；回执路由测试补上"可见、当前文档、视口相符、
+构建成功 → `Admit`"的正例。
+- 取证（2026-10-16，最终工作树）：Windows `dev-check` 9/9 PASS；Linux 重放 fmt、clippy、stickymd-smoke 415 + 19 passed。

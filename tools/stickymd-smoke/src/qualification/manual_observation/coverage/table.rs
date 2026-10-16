@@ -41,7 +41,7 @@ const C2_ISOLATION_RUNTIME: &str =
     "C2 绑定模块收据：P08-A11 copied-Release `-Runtime`（scenario `WindowShell`）的进程与窗口隔离";
 /// The reducer test checks that a Preview intent does not persist, not that dragging produces
 /// only Preview intents.
-const UNIT_OPACITY_DRAG: &str = "单元测试：拖动滑块经事件路径只产生 Preview intent、不逐步写配置";
+const UNIT_OPACITY_DRAG: &str = "C2b 绑定执行清单：app::controls 的指针判定经偏好 reducer 拖动只产生不持久化的预览、有效松开至多一次提交；实际配置提交与 winit 事件接线待 exact 层";
 
 const G4_DOCK_COMPOSITION: &str = "G4-06: Right/Top dock 下 composition 不收起";
 const G4_OPACITY_COMMIT: &str = "G4-02: 透明度松开滑块 / Enter / 失焦三种提交";
@@ -52,8 +52,7 @@ const UNIT_ESC_GUARDS: &str = "C2b 绑定模块收据：app::escape::tests 经�
 /// The existing scrollbar tests check the app's geometry and painting, the render projection
 /// and the Preview worker's receipts; no test drives the app runtime that composes the bars,
 /// hovers, drags, pages, ends a drag or admits a Preview receipt.
-const UNIT_SCROLL_RUNTIME: &str =
-    "单元测试：经 app runtime 的滚动条路径（组合、hover、拖动、翻页、拖动结束与回执准入）";
+const UNIT_SCROLL_RUNTIME: &str = "C2b 绑定模块收据：app::scrollbar 与 app::preview_runtime 的手势、栏可用性与回执路由判定；winit 事件接线（hover、拖动、翻页、拖动结束、回执应用）待 exact 层";
 const G4_DRAG_OUTSIDE: &str = "G4: 真实鼠标拖出窗口后完成滚动条拖动";
 const UNIT_QUIT_STATE: &str = "C2b 绑定模块收据：app::title::tests 与 flow::persistence::tests 的退出已取消状态与载入外部解除";
 
@@ -694,7 +693,9 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "P08-D055",
         "composition-guard-wiring",
         "",
-        gap("单元测试：经 app runtime 的 composition 收起守卫接线与失焦取消 preedit"),
+        gap(
+            "C2b 绑定模块收据：app::guards 的守卫投影（含 Search 组字）；失焦取消 preedit 的事件接线待 exact 层",
+        ),
     ),
     // G4-02 reveals the sensor with a reinforcing window message and no covering window, so
     // it does not prove a covered strip is reachable by the real mouse.

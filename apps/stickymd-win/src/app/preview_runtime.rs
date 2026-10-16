@@ -15,6 +15,46 @@ use crate::instruction::PreviewIntent;
 use crate::preview::{PreviewCompletion, PreviewJob, PreviewViewport, PreviewWorker};
 
 pub(super) const TOOLBAR_HEIGHT_DIP: f32 = 34.0;
+
+/// What a Preview worker completion may do. Only a build for the current document and viewport
+/// reaches the admission rule, so an old receipt can neither show stale pixels nor move the
+/// view back (plan 09 vertical scrollbars).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CompletionRoute {
+    /// The paper is hidden to the tray: release the projection; never re-admit it.
+    ReleaseHidden,
+    /// Built for an older document: rebuild the current one.
+    Rebuild,
+    /// There is no viewport to show it in.
+    Drop,
+    /// Built for another viewport: keep the semantic tree if the build succeeded, then relayout.
+    Relayout { reuse_tree: bool },
+    /// For the current document and viewport: offer it to the admission rule.
+    Admit,
+}
+
+/// `viewport_matches` is `None` when there is no current viewport.
+pub(super) fn completion_route(
+    hidden_to_tray: bool,
+    completed: Generation,
+    current: Generation,
+    viewport_matches: Option<bool>,
+    succeeded: bool,
+) -> CompletionRoute {
+    if hidden_to_tray {
+        CompletionRoute::ReleaseHidden
+    } else if completed != current {
+        CompletionRoute::Rebuild
+    } else {
+        match viewport_matches {
+            None => CompletionRoute::Drop,
+            Some(false) => CompletionRoute::Relayout {
+                reuse_tree: succeeded,
+            },
+            Some(true) => CompletionRoute::Admit,
+        }
+    }
+}
 const SPLIT_DIVIDER_DIP: f32 = 1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,38 +229,52 @@ impl StickyApp {
                 crate::flow::window::state::VisibilityState::HiddenToTray { .. }
             )
         });
-        if hidden_to_tray {
-            // A build can finish after the tray-hidden release effect. Never
-            // re-admit that document-sized projection while the paper is not
-            // visible; repeat the idempotent worker-owned release.
-            self.preview_frame = None;
-            self.preview_frame_viewport = None;
-            self.preview_flow.release_projection();
-            if let Some(worker) = &self.preview_worker {
-                worker.release_document_projection();
-            }
-            return;
-        }
         let current = self.coordinator.view().generation;
-        if completion.generation != current {
-            if self.preview_visibility() != PreviewVisibility::Hidden {
-                self.submit_preview_action(PreviewAction::Build(current));
+        // The viewport is read only for a visible completion of the current document.
+        let viewport = (!hidden_to_tray && completion.generation == current)
+            .then(|| self.preview_viewport())
+            .flatten();
+        match completion_route(
+            hidden_to_tray,
+            completion.generation,
+            current,
+            viewport.map(|viewport| viewport == completion.viewport),
+            completion.result.is_ok(),
+        ) {
+            CompletionRoute::ReleaseHidden => {
+                // A build can finish after the tray-hidden release effect. Never
+                // re-admit that document-sized projection while the paper is not
+                // visible; repeat the idempotent worker-owned release.
+                self.preview_frame = None;
+                self.preview_frame_viewport = None;
+                self.preview_flow.release_projection();
+                if let Some(worker) = &self.preview_worker {
+                    worker.release_document_projection();
+                }
+                return;
             }
-            return;
+            CompletionRoute::Rebuild => {
+                if self.preview_visibility() != PreviewVisibility::Hidden {
+                    self.submit_preview_action(PreviewAction::Build(current));
+                }
+                return;
+            }
+            CompletionRoute::Drop => return,
+            CompletionRoute::Relayout { reuse_tree } => {
+                // The worker owns a valid semantic tree after a successful build,
+                // even when its pixels are already stale. Reuse it for the latest
+                // viewport without displaying or hit-testing the stale frame.
+                if reuse_tree {
+                    self.preview_flow.admit_completion(current, current);
+                }
+                self.request_preview_relayout();
+                return;
+            }
+            CompletionRoute::Admit => {}
         }
-        let Some(viewport) = self.preview_viewport() else {
+        let Some(viewport) = viewport else {
             return;
         };
-        if completion.viewport != viewport {
-            // The worker owns a valid semantic tree after a successful build,
-            // even when its pixels are already stale. Reuse it for the latest
-            // viewport without displaying or hit-testing the stale frame.
-            if completion.result.is_ok() {
-                self.preview_flow.admit_completion(current, current);
-            }
-            self.request_preview_relayout();
-            return;
-        }
         match completion.result {
             Ok(frame)
                 if self
@@ -410,6 +464,48 @@ pub(super) fn geometry(mode: ViewMode, size: PhysicalSize<u32>, scale: f32) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a completion for the current document and viewport is offered for display; the
+    /// tray-hidden release wins over every other condition.
+    #[test]
+    fn completion_route_admits_only_the_current_build() {
+        let current = Generation::initial().checked_next().unwrap();
+        let older = Generation::initial();
+        for generation in [current, older] {
+            for viewport in [None, Some(false), Some(true)] {
+                for succeeded in [true, false] {
+                    assert_eq!(
+                        completion_route(true, generation, current, viewport, succeeded),
+                        CompletionRoute::ReleaseHidden
+                    );
+                }
+            }
+        }
+        for viewport in [None, Some(false), Some(true)] {
+            assert_eq!(
+                completion_route(false, older, current, viewport, true),
+                CompletionRoute::Rebuild
+            );
+        }
+        assert_eq!(
+            completion_route(false, current, current, None, true),
+            CompletionRoute::Drop
+        );
+        for succeeded in [true, false] {
+            assert_eq!(
+                completion_route(false, current, current, Some(false), succeeded),
+                CompletionRoute::Relayout {
+                    reuse_tree: succeeded
+                }
+            );
+        }
+        for succeeded in [true, false] {
+            assert_eq!(
+                completion_route(false, current, current, Some(true), succeeded),
+                CompletionRoute::Admit
+            );
+        }
+    }
 
     #[test]
     fn split_is_fixed_fifty_fifty_while_semantic_scroll_mapping_stays_separate() {

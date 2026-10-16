@@ -233,8 +233,13 @@ This supplements the frozen rows above; their statuses are unchanged.
   establishes the quit-cancelled notice, which clears after an event pass once the note no longer needs the quit
   barrier; accepting external content discharges a superseded recreate obligation.
 - Automated entry: `cargo test -p stickymd-win --locked -- escape title persistence`. Status: `AUTOMATED PASS`.
-- Not covered here: real keyboard delivery (G4-02), the read-only-note quit failure (G4-01) and the end-of-pass hook
-  in the live event loop remain coverage gaps owned by the exact layer.
+- Also: the opacity pointer decisions (`app::controls`), checked through the real preference reducer: every slider step
+  is a `PreviewOpacity` the reducer does not persist, a valid release yields one `CommitOpacity` (persisted when the
+  value changed) and a release after Esc yields nothing; the runtime's config submission is not exercised; the window guards are one projection
+  (`app::guards`) in which an editor or a Search-field composition alone blocks auto-collapse. Automated entry:
+  `cargo test -p stickymd-win --locked -- phase8_a_slider guards`.
+- Not covered here: real keyboard delivery (G4-02), the read-only-note quit failure (G4-01), the end-of-pass hook in the
+  live event loop and the winit wiring of the pointer and focus events remain coverage gaps owned by the exact layer.
 
 ## Current Phase Gate
 

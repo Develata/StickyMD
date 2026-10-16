@@ -7,15 +7,16 @@ use winit::event::{ElementState, MouseButton};
 use winit::window::CursorIcon;
 
 use super::StickyApp;
-use super::scrollbar::{GUTTER_DIP, ScrollPane, Scrollbar, ScrollbarPress};
+use super::scrollbar::{
+    DragUpdate, GUTTER_DIP, PaneScroll, PressOutcome, ScrollPane, Scrollbar, page_pixels,
+    pane_bars, preview_scroll,
+};
 use crate::config::ViewMode;
 
 impl StickyApp {
     pub(super) fn scrollbar_geometry(&mut self) -> [Option<Scrollbar>; 2] {
-        if !self.window_accepts_editor_mutation() {
-            return [None, None];
-        }
-        let Some(geometry) = self.view_geometry() else {
+        let accepts_input = self.window_accepts_editor_mutation();
+        let Some(geometry) = accepts_input.then(|| self.view_geometry()).flatten() else {
             return [None, None];
         };
         let preview_current = self.preview_layout_is_current();
@@ -23,41 +24,36 @@ impl StickyApp {
             .window
             .as_ref()
             .map_or(1.0, |window| window.scale_factor() as f32);
-        let source =
-            geometry
-                .source
-                .zip(self.projection.as_mut())
-                .and_then(|(pane, projection)| {
-                    let metrics = projection.scroll_metrics();
-                    Scrollbar::new(
-                        ScrollPane::Source,
-                        pane,
-                        dpi,
-                        metrics.fraction,
-                        metrics.viewport_fraction,
-                        geometry.divider_x.is_some(),
-                    )
-                });
+        let source = geometry
+            .source
+            .zip(self.projection.as_mut())
+            .map(|(content, projection)| {
+                let metrics = projection.scroll_metrics();
+                PaneScroll {
+                    content,
+                    fraction: metrics.fraction,
+                    visible: metrics.viewport_fraction,
+                }
+            });
         let preview =
             geometry
                 .preview
                 .zip(self.preview_frame.as_ref())
-                .and_then(|(pane, frame)| {
-                    if !preview_current {
-                        return None;
-                    }
-                    let height = f64::from(frame.document_height());
-                    let viewport = f64::from(pane.height);
-                    Scrollbar::new(
-                        ScrollPane::Preview,
-                        pane,
-                        dpi,
-                        f64::from(self.preview_scroll_y) / (height - viewport).max(1.0),
-                        viewport / height.max(viewport),
-                        false,
+                .and_then(|(content, frame)| {
+                    preview_scroll(
+                        content,
+                        preview_current,
+                        frame.document_height(),
+                        self.preview_scroll_y,
                     )
                 });
-        [source, preview]
+        pane_bars(
+            accepts_input,
+            dpi,
+            geometry.divider_x.is_some(),
+            source,
+            preview,
+        )
     }
 
     pub(super) fn scrollbar_gutter_at_cursor(&self) -> Option<ScrollPane> {
@@ -95,25 +91,19 @@ impl StickyApp {
             return false;
         }
         let bars = self.scrollbar_geometry();
-        if let Some(bar) = bars
-            .into_iter()
-            .flatten()
-            .find(|bar| bar.contains(self.cursor_position))
-        {
-            match bar.press(self.cursor_position.y) {
-                ScrollbarPress::Drag(drag) => {
-                    self.scrollbars.drag = Some(drag);
-                    self.refresh_window_guards(None);
-                }
-                ScrollbarPress::Page(direction) => {
+        if let Some(outcome) = self.scrollbars.press(bars, self.cursor_position) {
+            match outcome {
+                PressOutcome::DragStarted => self.refresh_window_guards(None),
+                PressOutcome::Page { pane, direction } => {
+                    // The pane height is read only for a confirmed track press.
                     let height = self
                         .view_geometry()
-                        .and_then(|geometry| match bar.pane {
+                        .and_then(|geometry| match pane {
                             ScrollPane::Source => geometry.source,
                             ScrollPane::Preview => geometry.preview,
                         })
-                        .map_or(0, |pane| pane.height);
-                    self.scroll_pane_by(bar.pane, direction * height as f32 * 0.9);
+                        .map_or(0, |content| content.height);
+                    self.scroll_pane_by(pane, page_pixels(direction, height));
                 }
             }
             self.request_redraw();
@@ -133,31 +123,31 @@ impl StickyApp {
         }
         let bars = self.scrollbar_geometry();
         let gutter = self.scrollbar_gutter_at_cursor();
-        let hovered = bars
-            .iter()
-            .flatten()
-            .find(|bar| gutter == Some(bar.pane))
-            .map(|bar| bar.pane);
-        if self.scrollbars.hovered != hovered {
-            self.scrollbars.hovered = hovered;
+        let outcome = self
+            .scrollbars
+            .pointer_moved(bars, gutter, self.cursor_position.y);
+        if outcome.hover_changed {
             self.request_redraw();
         }
-        let Some(drag) = self.scrollbars.drag else {
-            return false;
-        };
-        let Some(bar) = bars.into_iter().flatten().find(|bar| bar.pane == drag.pane) else {
-            self.cancel_scrollbar_drag();
-            return true;
-        };
-        if let Some(window) = &self.window {
-            window.set_cursor(CursorIcon::Default)
+        match outcome.drag {
+            DragUpdate::None => false,
+            DragUpdate::Lost => {
+                self.refresh_window_guards(None);
+                self.request_redraw();
+                true
+            }
+            DragUpdate::ScrollTo { pane, fraction } => {
+                if let Some(window) = &self.window {
+                    window.set_cursor(CursorIcon::Default)
+                }
+                self.scroll_pane_to_fraction(pane, fraction);
+                true
+            }
         }
-        self.scroll_pane_to_fraction(drag.pane, bar.fraction_at(drag, self.cursor_position.y));
-        true
     }
 
     pub(super) fn cancel_scrollbar_drag(&mut self) {
-        if self.scrollbars.drag.take().is_some() {
+        if self.scrollbars.end_drag() {
             self.refresh_window_guards(None);
             self.request_redraw();
         }

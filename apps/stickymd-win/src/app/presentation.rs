@@ -279,12 +279,11 @@ impl StickyApp {
             }
         }
         for bar in scrollbars.into_iter().flatten() {
-            let emphasized = self.scrollbars.hovered == Some(bar.pane)
-                || self
-                    .scrollbars
-                    .drag
-                    .is_some_and(|drag| drag.pane == bar.pane);
-            bar.paint(surface.pixmap_mut(), emphasized, dark);
+            bar.paint(
+                surface.pixmap_mut(),
+                self.scrollbars.emphasized(bar.pane),
+                dark,
+            );
         }
         paint_search_overlay(
             surface.pixmap_mut(),

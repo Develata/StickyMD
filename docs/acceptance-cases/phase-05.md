@@ -117,6 +117,15 @@ This supplements P05-A03/A05/A12 and AC-013/014 under the existing GFM and sourc
   This local evidence does not qualify a release artifact. Physical dragging, real IME and the complete theme/DPI
   visual matrix remain `NOT TESTED`.
 
+2026-10-16 supplement: the gesture decisions now live in pure code that the runtime only applies.
+`app::scrollbar` decides hover and drag emphasis, live drag targets, track paging (90% of the pane), the end of a drag
+and which bars are operable (none while the window rejects edits; no Preview thumb for a stale frame), and
+`app::preview_runtime::completion_route` lets only a completion for the current document and viewport reach admission.
+Automated entry: `cargo test -p stickymd-win --locked -- scrollbar completion_route`. Status: `AUTOMATED PASS`.
+The extractions keep the original early exits: bar geometry is read only while the window accepts edits, the Preview
+viewport only for a visible completion of the current document.
+The winit wiring of these decisions is still not exercised by a test.
+
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
 

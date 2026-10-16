@@ -431,3 +431,7 @@ runtime，人工状态仍为 NOT TESTED。设计与决定见
 plan 05 `external-change-conflict`（载入外部解除重建义务）：`stickymd-win/src/app/{escape,title}.rs` 是 Esc 判定与标题的唯一入口，
 `flow/persistence.rs::accept_external` 统一两条载入外部路径；验收见
 [phase-08 2026-10-16 维护节](acceptance-cases/phase-08.md)。真实键盘投递与只读 note 的退出失败仍由 G4 exact 层持有，列为缺口。
+
+2026-10-16 覆盖补全 C2a-2 继续映射 plan 09 `vertical-scrollbars`、`dock-auto-hide` 与透明度提交规则：滚动条手势与栏可用性
+（`app/scrollbar.rs`）、Preview 回执路由（`app/preview_runtime.rs::completion_route`）、透明度指针判定（`app/controls.rs`）与窗口守卫投影
+（`app/guards.rs`）成为纯函数并有单元测试，`StickyApp` 只负责接线；验收见 phase-05 与 phase-08 的 2026-10-16 补充。winit 事件接线仍是缺口。
