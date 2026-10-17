@@ -139,3 +139,10 @@ Preview worker 的 `COMPLETION_DEADLINE = 120 s` 是原 5 s 的 24 倍，在档�
 - 仓库中另有同类固定短时限、但未见失败记录的测试（`apps/stickymd-win/src/persistence/worker.rs` 的 3 s 接收、
   `platform/windows/file_watch.rs` 的 3 s、`platform/windows/single_instance.rs` 的 1 s）。本次按范围未改。
 - 修改的文件进入模块账本指纹，相关模块的既有成功记录将不再复用，下次资格化需重跑。
+
+## Resolution（2026-10-17）
+
+USER 就"需要 USER 判断的一项"决定：Preview worker 的 `COMPLETION_DEADLINE` 由 120 s 提高到 300 s。上文测量与边界表中的
+"修改后"均指 120 s 版本。300 s 版本：`cargo fmt --check`、`cargo clippy -p stickymd-win --all-targets --locked -- -D warnings`
+通过，`cargo test -p stickymd-win --locked` 287 passed / 8 ignored；在 120 s 版本 2/2 失败的 C 0.1% 档位下运行 1 次通过（模块 213 s）。
+样本只有 1 次，更低份额下仍有失效点，见上文说明。

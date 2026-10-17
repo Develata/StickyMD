@@ -457,7 +457,7 @@ mod tests {
     /// A hang guard, not a latency bound: before its first job each worker builds its own
     /// font system from the installed fonts, which can take seconds in a debug build on a
     /// loaded machine.
-    const COMPLETION_DEADLINE: Duration = Duration::from_secs(120);
+    const COMPLETION_DEADLINE: Duration = Duration::from_secs(300);
 
     fn next_completion(receiver: &mpsc::Receiver<PreviewCompletion>) -> PreviewCompletion {
         receiver
