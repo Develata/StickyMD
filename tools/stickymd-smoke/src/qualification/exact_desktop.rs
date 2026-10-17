@@ -609,6 +609,13 @@ mod tests {
     const NOISY_CHILD: &str = "STICKYMD_BOUNDED_HELPER_NOISY";
     const PIPE_HOLDER_PARENT: &str = "STICKYMD_BOUNDED_HELPER_PIPE_PARENT";
     const PIPE_HOLDER: &str = "STICKYMD_BOUNDED_HELPER_PIPE_HOLDER";
+    /// Hang guards for the pipe-holding helper: the helper and its descendant are started
+    /// test binaries, and each start can take tens of seconds on a loaded machine.
+    const HOLDER_START: Duration = Duration::from_secs(150);
+    const HELPER_DEADLINE: Duration = Duration::from_secs(180);
+    /// How long the descendant holds the pipe unless it is killed or probed: beyond the
+    /// helper's deadline, so a call that waited for the pipe to close could not succeed.
+    const HOLDER_LIFETIME: Duration = Duration::from_secs(240);
 
     /// A helper that exits while a descendant still holds its stdout: the call returns
     /// promptly and the descendant does not survive it.
@@ -622,7 +629,12 @@ mod tests {
                 std::process::id().to_string(),
             )
             .expect("write pipe holder start");
-            thread::sleep(Duration::from_secs(3));
+            // Holds the inherited pipe until probed; a survivor answers the probe at once.
+            let probe = sentinel.with_extension("probe");
+            let deadline = std::time::Instant::now() + HOLDER_LIFETIME;
+            while !probe.exists() && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(20));
+            }
             fs::write(sentinel, b"survived").expect("write pipe holder sentinel");
             return;
         }
@@ -640,7 +652,7 @@ mod tests {
                 .expect("start pipe holder");
             // The holder is known to run before this helper exits.
             let started = std::path::PathBuf::from(sentinel).with_extension("started");
-            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let deadline = std::time::Instant::now() + HOLDER_START;
             while !started.exists() {
                 assert!(
                     std::time::Instant::now() < deadline,
@@ -664,25 +676,25 @@ mod tests {
         command
             .args(["--exact", NAME])
             .env(PIPE_HOLDER_PARENT, &sentinel);
-        let started = std::time::Instant::now();
-        let output =
-            run_bounded_output(&mut command, Duration::from_secs(30), "pipe-holding helper")
-                .expect("the helper itself completes");
+        // Completing at all is the promptness proof: the descendant would hold the pipe
+        // past this deadline had the call waited for it to close.
+        let output = run_bounded_output(&mut command, HELPER_DEADLINE, "pipe-holding helper")
+            .expect("the helper itself completes");
         assert!(
             output.status.success(),
             "{}",
             String::from_utf8_lossy(&output.stdout)
         );
         assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "{:?}",
-            started.elapsed()
-        );
-        assert!(
             sentinel.with_extension("started").exists(),
             "the descendant never ran"
         );
-        thread::sleep(Duration::from_secs(4));
+        fs::write(sentinel.with_extension("probe"), b"").expect("probe the pipe holder");
+        let window = std::time::Instant::now() + Duration::from_secs(4);
+        while std::time::Instant::now() < window {
+            assert!(!sentinel.exists(), "the descendant outlived its helper");
+            thread::sleep(Duration::from_millis(50));
+        }
         assert!(!sentinel.exists(), "the descendant outlived its helper");
         fs::remove_dir_all(root).expect("remove pipe holder fixture");
     }
