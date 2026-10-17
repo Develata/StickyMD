@@ -117,6 +117,7 @@ impl Observer for Reporter<'_> {
             &results,
             self.environment,
             Some(path),
+            None,
         )
     }
 }
@@ -180,6 +181,7 @@ mod tests {
             measurements: Vec::new(),
             gates: Vec::new(),
             samples: Vec::new(),
+            owners: Vec::new(),
         };
         result.measurements.push(EvidenceMeasurement {
             name: "preserved".into(),

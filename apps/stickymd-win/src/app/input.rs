@@ -77,6 +77,15 @@ impl StickyApp {
         if event.state != ElementState::Pressed {
             return;
         }
+        let code = match event.physical_key {
+            PhysicalKey::Code(code) => Some(code),
+            PhysicalKey::Unidentified(_) => None,
+        };
+        // Every Esc is decided in one place, in the plan 09 order (`escape.rs`).
+        if super::escape::is_escape(code, self.modifiers) {
+            self.handle_escape();
+            return;
+        }
         if self.handle_shell_key(&event) {
             return;
         }
@@ -87,10 +96,6 @@ impl StickyApp {
         let timestamp_ms = self.timestamp_ms();
         let shift = self.modifiers.shift_key();
         let shortcut = self.modifiers.control_key() && !self.modifiers.alt_key();
-        let code = match event.physical_key {
-            PhysicalKey::Code(code) => Some(code),
-            PhysicalKey::Unidentified(_) => None,
-        };
 
         if code == Some(KeyCode::F6)
             && self.dispatch_persistence_intent(None, PersistenceIntent::ResolvePrimary)
@@ -110,14 +115,6 @@ impl StickyApp {
         ) {
             return;
         }
-        // An editor composition owns Esc before Search, Preview and the window (plan 09 Esc order),
-        // including a preedit left over when focus moved to the Preview pane.
-        if code == Some(KeyCode::Escape) && self.session.is_composing() {
-            self.session.cancel_preedit();
-            self.after_presentation_change();
-            return;
-        }
-
         if let Some(intent) = global_persistence_shortcut(code, shortcut, shift) {
             self.dispatch_persistence_intent(None, intent);
             return;
@@ -232,10 +229,6 @@ impl StickyApp {
                         timestamp_ms,
                     ));
                 }
-                return;
-            }
-            Some(KeyCode::Escape) => {
-                self.dispatch_escape_to_window();
                 return;
             }
             _ => {}
@@ -475,16 +468,8 @@ impl StickyApp {
         if let Some(window) = &self.window {
             window.set_cursor(cursor);
         }
-        let math_tooltip = self.preview_at_cursor().and_then(|(x, y)| {
-            self.preview_frame
-                .as_ref()
-                .and_then(|frame| frame.tooltip_at(x, y + frame.scroll_y()).map(str::to_owned))
-        });
-        if let (Some(window), Some(detail)) = (&self.window, math_tooltip) {
-            window.set_title(&format!("StickyMD — 公式错误：{detail}"));
-        } else {
-            self.update_window_title();
-        }
+        // The formula-error hover title is derived from the pointer and the current frame when
+        // the event pass ends (`update_window_title`), so it cannot outlive either.
         if self.preview_dragging {
             if let Some(start) = self.preview_press_position {
                 let scale = self

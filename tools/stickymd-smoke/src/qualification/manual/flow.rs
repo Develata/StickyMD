@@ -30,6 +30,34 @@ use super::super::manual_observation::transfer::Unresolved;
 /// Longest declared value the log accepts.
 const MAX_DECLARED_BYTES: usize = 128;
 
+/// Scenarios whose recorder procedure has not landed yet (coverage batch C3): the second
+/// launch needs live precondition checks, the failed quit a read-only note set by the
+/// recorder, and the right/below arrangements recorded monitor rectangles. Two-copy cases
+/// (`InstanceRule::TwoCopies`) wait for the two-instance log format. None of them is recorded
+/// until then, so no observation can claim a procedure the recorder did not run.
+const AWAITING_RECORDER: &[(&str, &str)] = &[
+    ("P12-M05", "second-launch-hidden"),
+    ("P12-M05", "second-launch-minimized"),
+    ("P12-M05", "second-launch-docked"),
+    ("P12-M05", "exit-save-failure"),
+    ("P12-M35", "secondary-right"),
+    ("P12-M35", "secondary-below"),
+];
+
+const TWO_COPIES_PENDING: &str =
+    "two-copy scenarios need the two-instance recorder, which has not landed yet";
+
+/// Why `item` cannot be recorded yet, if it cannot. Checked before any prompt, capture or
+/// launch, so a refused scenario costs the observer nothing.
+fn awaiting_recorder(item: &Item) -> Option<&'static str> {
+    if matches!(item.case.instance, InstanceRule::TwoCopies(_)) {
+        return Some(TWO_COPIES_PENDING);
+    }
+    AWAITING_RECORDER
+        .contains(&(item.case.id, item.scenario))
+        .then_some("this scenario needs a recorder procedure that has not landed yet")
+}
+
 /// Where a session starts: the targets its roles come from, the log length its PASS answers
 /// resolve FAILs before (`base`), and the unresolved FAILs shown before each retest.
 pub(super) struct Start<'a> {
@@ -158,6 +186,9 @@ impl Recorder<'_> {
         bench: &mut B,
         item: &Item,
     ) -> Result<Next, String> {
+        if let Some(reason) = awaiting_recorder(item) {
+            return self.unrecorded(output, reason);
+        }
         self.show_unresolved(output, item)?;
         loop {
             write!(
@@ -206,6 +237,8 @@ impl Recorder<'_> {
                     );
                 }
             },
+            // Refused by `awaiting_recorder` before the session reaches this point.
+            InstanceRule::TwoCopies(_) => return self.unrecorded(output, TWO_COPIES_PENDING),
             InstanceRule::Launched(fixture) | InstanceRule::Preserved(fixture) => {
                 match bench.launch(fixture) {
                     Ok(tested) => {
@@ -374,6 +407,9 @@ fn rule_hint(rule: InstanceRule) -> &'static str {
         }
         InstanceRule::FirstRunDeclared => {
             "Answer for the first run in the Clean VM, made before this tool was copied in; the recorder then captures the VM's facts."
+        }
+        InstanceRule::TwoCopies(_) => {
+            "Two portable copies are observed together; their recorder has not landed yet, so this case is not recorded."
         }
     }
 }

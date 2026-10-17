@@ -4,6 +4,8 @@
 
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 
+use crate::instruction::WindowPreferenceIntent;
+
 pub(super) const TOOLBAR_HEIGHT_DIP: f64 = 34.0;
 const CONTROL_DIP: f64 = 28.0;
 const CONTROL_GAP_DIP: f64 = 4.0;
@@ -233,6 +235,26 @@ impl ControlState {
         self.preview(committed);
     }
 
+    /// A press on the slider at `value` starts a drag that previews live.
+    pub fn press_slider(&mut self, value: u8) -> WindowPreferenceIntent {
+        self.opacity_dragging = true;
+        WindowPreferenceIntent::PreviewOpacity(value)
+    }
+
+    /// The pointer moved: a drag in progress previews the slider value `value` yields (read
+    /// only then), never persisting.
+    pub fn drag_slider(&self, value: impl FnOnce() -> u8) -> Option<WindowPreferenceIntent> {
+        (self.opacity_popup_open && self.opacity_dragging)
+            .then(|| WindowPreferenceIntent::PreviewOpacity(value()))
+    }
+
+    /// A pointer release yields at most one `CommitOpacity`, and only if a drag was in progress
+    /// (plan 09: write the config on slider release, not per step).
+    pub fn release_slider(&mut self) -> Option<WindowPreferenceIntent> {
+        std::mem::take(&mut self.opacity_dragging)
+            .then_some(WindowPreferenceIntent::CommitOpacity(self.opacity_preview))
+    }
+
     pub fn commit_input(&mut self) -> Option<u8> {
         let parsed = self.opacity_input.parse::<u16>().ok()?;
         let opacity = parsed.clamp(40, 100) as u8;
@@ -285,6 +307,49 @@ mod phase8_control_tests {
                 PhysicalPosition::new(rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
             assert_eq!(layout.control_at(center), Some(id));
         }
+    }
+
+    /// The pointer decisions through the real preference reducer: every drag step is a
+    /// `PreviewOpacity` the reducer does not persist; a valid release yields one `CommitOpacity`,
+    /// which the reducer persists when the value changed; after Esc a release yields nothing.
+    /// The runtime's config submission and the bytes on disk are not exercised here.
+    #[test]
+    fn phase8_a_slider_drag_commits_at_most_once_on_release() {
+        use crate::config::{ConfigCoordinator, RuntimeConfig};
+        use crate::flow::{WindowPreferenceEffect, coordinate_window_preference};
+
+        let mut config = ConfigCoordinator::loaded(RuntimeConfig::default());
+        let mut controls = ControlState::new(96);
+        controls.opacity_popup_open = true;
+        // Applies one intent as the runtime does; returns the value the reducer asks to persist.
+        let mut apply = |controls: &mut ControlState, intent| {
+            let effect = coordinate_window_preference(&mut config, intent).unwrap();
+            let WindowPreferenceEffect::ApplyOpacity { opacity, persist } = effect else {
+                panic!("{effect:?}");
+            };
+            controls.preview(opacity);
+            persist.then_some(opacity)
+        };
+        let mut persisted = Vec::new();
+        let press = controls.press_slider(80);
+        persisted.extend(apply(&mut controls, press));
+        for value in [70, 60, 55] {
+            let drag = controls.drag_slider(|| value).expect("dragging previews");
+            persisted.extend(apply(&mut controls, drag));
+        }
+        assert!(persisted.is_empty(), "{persisted:?}");
+        let release = controls.release_slider().expect("the release commits");
+        persisted.extend(apply(&mut controls, release));
+        assert_eq!(persisted, [55]);
+        // No drag in progress: moves preview nothing and a release commits nothing.
+        assert!(controls.drag_slider(|| 60).is_none());
+        assert!(controls.release_slider().is_none());
+        // Esc mid-drag cancels it; the later release commits nothing.
+        controls.opacity_popup_open = true;
+        controls.press_slider(70);
+        controls.cancel(55);
+        assert!(controls.drag_slider(|| 65).is_none());
+        assert!(controls.release_slider().is_none());
     }
 
     #[test]

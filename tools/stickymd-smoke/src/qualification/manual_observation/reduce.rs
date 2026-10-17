@@ -251,31 +251,32 @@ mod tests {
     fn zero_partial_and_full_coverage() {
         let empty = fixtures::empty();
         assert_eq!(
-            verdict(&empty, "P12-M05", Current),
+            verdict(&empty, "P12-M36", Current),
             Verdict::NotTested {
                 covered: Vec::new(),
-                missing: vec!["restore-click", "restore-tray", "restore-sensor"]
+                missing: vec!["drag", "dock", "ime", "preview"]
             }
         );
-        let partial = log_of(&[(0, "P12-M05", "restore-tray", Current, Status::Pass)]);
+        let partial = log_of(&[(0, "P12-M36", "dock", Current, Status::Pass)]);
         assert_eq!(
-            verdict(&partial, "P12-M05", Current),
+            verdict(&partial, "P12-M36", Current),
             Verdict::NotTested {
-                covered: vec!["restore-tray"],
-                missing: vec!["restore-click", "restore-sensor"]
+                covered: vec!["dock"],
+                missing: vec!["drag", "ime", "preview"]
             }
         );
         // The same observations on the other role cover nothing there.
         assert!(matches!(
-            verdict(&partial, "P12-M05", Previous),
+            verdict(&partial, "P12-M36", Previous),
             Verdict::NotTested { .. }
         ));
         let full = log_of(&[
-            (0, "P12-M05", "restore-click", Current, Status::Pass),
-            (0, "P12-M05", "restore-tray", Current, Status::Pass),
-            (0, "P12-M05", "restore-sensor", Current, Status::Pass),
+            (0, "P12-M36", "drag", Current, Status::Pass),
+            (0, "P12-M36", "dock", Current, Status::Pass),
+            (0, "P12-M36", "ime", Current, Status::Pass),
+            (0, "P12-M36", "preview", Current, Status::Pass),
         ]);
-        assert_eq!(verdict(&full, "P12-M05", Current), Verdict::Pass);
+        assert_eq!(verdict(&full, "P12-M36", Current), Verdict::Pass);
     }
 
     #[test]

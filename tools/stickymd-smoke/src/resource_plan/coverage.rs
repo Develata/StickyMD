@@ -60,7 +60,7 @@ pub(crate) fn validate_receipt(document: &str, group: ResourceModule) -> Result<
 
 /// The same checks over an already strictly parsed receipt.
 pub(crate) fn validate_receipt_value(root: &Value, group: ResourceModule) -> Result<(), String> {
-    if root.field("schema_version")?.unsigned()? != 2
+    if root.field("schema_version")?.unsigned()? != 3
         || root.field("resource_protocol")?.unsigned()? != 1
         || root.field("resource_group")?.string()? != group.name()
         || root.field("suite")?.string()? != "phase-14"
@@ -92,6 +92,7 @@ pub(crate) fn validate_group_result(result: &Value, group: ResourceModule) -> Re
             group.name()
         ));
     }
+    crate::evidence::require_no_owners(result)?;
     let values = super::observations::measurements(result.field("measurements")?)?;
     for expected in coverage_measurements(group) {
         if values.get(expected.name.as_str()) != Some(&(expected.value, expected.unit.as_str())) {

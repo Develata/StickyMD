@@ -9,8 +9,10 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod bounded;
 mod job;
 
+pub(crate) use bounded::run_bounded_output;
 pub(crate) use job::{Descendants, Job};
 
 /// The manual recorder's session root under the system temp directory; its instances are

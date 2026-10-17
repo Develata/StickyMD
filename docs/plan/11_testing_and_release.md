@@ -312,8 +312,9 @@ PASS 观察；最终 manual PASS 仍额外绑定 Promoted Candidate。
   ID（该摘要必须等于 candidate 的 EXE 摘要，否则观察无效；记录、导入与 readiness 共用这一判定）；同目录第二次启动、
   双副本、跨断屏/睡眠/RDP 保留原进程与原 note（不得重启或重新放入 fixture 来完成恢复）等
   要求由注册表按场景声明；预期的断连期间环境探测失败不判产品 FAIL。fixture 随工具提供：输入法项用空白 note，
-  其余用渲染压力 note 与全部图片格式（含超限图片）。PASS 要求记录器启动的进程在提交时仍在运行且是唯一的
-  StickyMD（在存储锁内、写入之前确认）。候选已启动但未在限时内完成初始化时，记录器报告原因，观察者可记录该实例的
+  其余用渲染压力 note 与全部图片格式（含超限图片）。PASS 要求提交时运行的 StickyMD 恰好是注册表为该场景声明的实例
+  集合（在存储锁内、写入之前确认）：普通场景为记录器启动的那一个；`TwoCopies`（只用于 P12-M45 两份便携副本）为记录器
+  从两个不同副本目录启动的那两个；M34 没有实例。该例外不适用于同目录第二次启动。候选已启动但未在限时内完成初始化时，记录器报告原因，观察者可记录该实例的
   FAIL 或不记录，PASS 被拒绝；启动之前的准备失败（复制、fixture、摘要不符）不形成观察。实例以挂起状态创建、加入 Job 后才恢复运行，随记录器退出（含中断）
   而终止，StickyMD 自己启动的进程（如打开链接的浏览器）不受影响；创建与加入 Job 之间被强制终止时会留下一个从未运行的
   挂起实例，下一次会话拒绝启动并指明它来自中断的记录器。恢复挂起线程失败（含挂起计数不为 1）时该实例被停止、场景
@@ -337,12 +338,17 @@ PASS 观察；最终 manual PASS 仍额外绑定 Promoted Candidate。
   声明两者之间未更改系统。
 - **信任边界**：信任 USER，不防伪造观察；严格解析、摘要与上下文绑定防止的是混用、陈旧与损坏。
 - **上限**：观察包 1 MiB，单个日志 10 000 条，备注 2 KiB。
-- **已知覆盖缺口**：Phase 8 人工义务尚未全部映射到 P12 人工项。readiness 无论通过与否都在普通输出与 JSON 中列出
-  这些缺口，不得把人工矩阵表述为完整。
+- **人工义务映射**：Phase 8 验收矩阵中 Mode 为 Manual 的每一行，以及 `09` 的 Esc 行为表、垂直滚动条、透明度与退出保存
+  失败条款，按 `(来源, 断言, 参数)` 映射到 P12 人工项场景、G3/G4 exact 检查、源码级自动化（单元测试、本地预检或正式
+  Runtime 模块收据分开列出）、单元测试（只用于 exact 层无法稳定制造的状态，写明理由，不证明原生输入投递）、经 USER
+  批准的退役（决定只授权其列出的条目），或尚未落实的缺口。治理测试核对来源区段与逐条款的文本摘要和条数（来源文字变化
+  即需重新核对分解）、每个断言声明的必需参数集合被同一断言的映射恰好覆盖、目标存在。readiness 无论通过与否都在普通
+  输出与 JSON 中列出全部缺口与退役项，不得把人工矩阵表述为完整；映射完整也不等于验收通过。
 - **验证**（实现时进入 Phase 14 矩阵）：角色唯一匹配，以及类型错误、读取失败、两次采集不同、零匹配与多匹配的
   拒绝；迟到的旧 PASS 与旧 FAIL、重复与冲突 ID；部分覆盖、FAIL 与无效证据优先于 waiver 与 Tier C；上下文失效、日志
   缺失、零字节或损坏与重置（含满额日志的未解除 FAIL 合并带入）、写入失败不留半更新、锁等待有界；FAIL 先于备注落盘，guided step 逐项回答；原进程与原 note 保留、
-  M34 例外；观察任务快照一致、无仓库记录、整包导入的拒绝路径；readiness 始终列出已知缺口。
+  M34 例外；观察任务快照一致、无仓库记录、整包导入的拒绝路径；人工义务映射的来源摘要、参数覆盖与目标存在；
+  readiness 始终列出缺口与退役项。
 
 <a id="release-artifact-authority"></a>
 ### Source freeze、remote artifact promotion 与 exact evidence
@@ -395,6 +401,19 @@ ignored `dist/evidence/` 中：
 
 - source-only receipt 绑定 Source Freeze，不要求 final EXE hash；本地 headless CI 收据必须恰好包含 runner 为
   `all --ci` 规划的全部任务（按顺序、每项 `PASSED`）及任务集标记，不另维护任务名单；
+- smoke 证据（所有套件）为 schema 3：每个结果带 `owners` 数组，只有单元测试 owner 核验任务的结果可以非空；schema 2
+  证据无效，不迁移。证据序列化 runner 在开始时采集的源码身份（HEAD 与工作树是否干净），写出前复核，身份变化即追加失败结果；
+- 人工义务映射中由单元测试持有的义务以 owner `(package, target, path)` 声明，`target` 只允许 `lib` 或 `bin:<名称>`（使用
+  libtest 默认 harness 的单元测试目标；工作区清单的 `harness` 键只允许出现在 `[[bench]]`）。Windows 上 `all --ci` 的
+  tests 部分包含 owner 核验任务：以 `cargo test --no-run --message-format=json` 的 `compiler-artifact` 建立目标到测试二进制的
+  映射，对每个含 owner 的二进制执行 `--list` 与 `--list --ignored`（owner 须在前者恰好出现一次、不在后者中），再以
+  `--exact <owner> --nocapture` 让每个 owner 单独一个进程执行。构建、两次列出与每次执行都须成功退出、输出完整（未超时、未截断）
+  并解析成功；任一不满足即任务失败，且不贡献已核验 owner。任务前后复核源码身份与开始时一致。本地 headless CI 收据中 owner 任务的
+  结果列出已核验 owner；readiness 只在该收据有效、绑定当前 Source Freeze，且已核验集合恰为映射中的 owner 集合时，把这些义务算作
+  有 owner，否则全部列为待执行证明。正式收据须在冻结提交的独占 checkout 与构建目录上产生（运行期间没有其他源码或产物写者）；
+  复核只发现漂移，不证明期间不变。核验针对意外情形（测试被删除、改名、忽略、cfg 排除、过滤失配、失败或未执行）；owner 测试须把
+  控制权正常交回 libtest，测试体自身提前成功退出与断言遗漏由代码审查承担。定向运行（`modules run`、dev-check）按所选 package
+  投影 owner，没有适用 owner 时连发现构建一起跳过，且不写收据；
 - remote workflow receipt 绑定 source/run/attempt/artifact id，不复制尚未产生的 final EXE hash；
 - downloaded/promotion receipt 与 candidate receipt 绑定实际 ZIP/EXE/SBOM hash；
 - downloaded/package/checksum/SBOM、PE/native-runtime 与 portable-runtime 直接证明当前 artifact bytes，
@@ -424,6 +443,12 @@ ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
   guided step 覆盖多项时逐项询问；
 - stale module fingerprint 不参与 readiness；G3/G4/G5 成功记录还必须包含 origin ZIP/EXE、运行 harness、
   clean worktree 与各组预期逐项结果，只有当前 registry 指纹兼容时才能复用；
+- G3/G4/G5 exact 收据为 schema 2：每个 case 结果带 `checks` 数组，列出该 case 实际记录的检查标签。标签写作 `名称` 或
+  `名称:k=v[,k=v…]`，名称、键与值只用小写 ASCII 字母、数字与 `-`，参数键严格升序；每个 case 的必需标签集合与 case 表
+  同源、一处静态声明，由检查函数在其断言成立之后记录（同一标签多次成立只记一次）。只有结果为 `PASSED` 且记录集合与
+  声明集合完全相等（无缺失、多余或重复）的 case 才算成功；G5 声明空集合，截图要求不变。失败或标签不符的结果仍完整
+  写入收据作为诊断，但不能作为成功证据；schema 1 收据无效，不迁移。标签相等只证明声明的检查都已到达，不独立证明断言
+  语义，断言与标签的对应由代码审查承担；
 - readiness 对 P0/P1、未批准 hard gate、mandatory manual NOT TESTED、exact package、remote
   evidence 与 USER decision fail closed；不得提供 `--force-ready`；
 - readiness 读取的每份收据（candidate、Source Freeze、decision、remote/downloaded、headless、manual 与模块
@@ -666,7 +691,7 @@ Resources 长矩阵必须在主要场景之间重检环境，并在每个完成�
 未完成 receipt 必须显式包含 `INCOMPLETE`，readiness 仍要求最终 receipt 的所有 result 都为
 `PASSED`，因此 partial evidence 不能冒充完整 PASS。
 
-M1..M5 manual sessions 只允许共享 setup，不改变 P12-M01..P12-M44 的逐项 authority。Phase 14
+M1..M5 manual sessions 只允许共享 setup，不改变 P12-M01..P12-M47 的逐项 authority。Phase 14
 保留 G1/G2 guided sessions；每个 guided observation 必须显式映射到一项或多项相同观察事实的
 case ID，并为每项分别回答 `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`（后者只在会话输出中出现，不写入观察
 日志），不能用“整体看起来正常”

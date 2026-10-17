@@ -16,14 +16,14 @@ pub(super) const STEPS: &[GuidedStep] = &[
         GuidedSession::G1,
         "G1-01",
         &["P12-M01"],
-        "观察 Microsoft Pinyin 候选窗是否出现、是否贴近 caret，以及字体、遮挡、动画和 DPI 视觉质量",
+        "观察 Microsoft Pinyin 候选窗是否出现、是否贴近 caret，以及字体、遮挡、动画和 DPI 视觉质量，含左/右/上 dock",
         "只判候选窗视觉；composition/commit/cancel/Undo 功能由 exact G4-06 自动化持有",
     ),
     step(
         GuidedSession::G1,
         "G1-02",
         &["P12-M02"],
-        "观察 WeChat Input Method / WeType 候选窗是否出现、是否贴近 caret，以及字体、遮挡、动画和 DPI 视觉质量",
+        "观察 WeChat Input Method / WeType 候选窗是否出现、是否贴近 caret，以及字体、遮挡、动画和 DPI 视觉质量，含左/右/上 dock",
         "只判候选窗视觉；功能矩阵由 exact G4-06 自动化持有，环境缺失记录 NOT TESTED",
     ),
     step(
@@ -37,8 +37,8 @@ pub(super) const STEPS: &[GuidedStep] = &[
         GuidedSession::G1,
         "G1-04",
         &["P12-M22"],
-        "把 opacity 调到 40 并输入、预览和使用 IME",
-        "整窗 alpha、候选框、caret、焦点和控件均可用",
+        "拖动滑块把 opacity 依次调到 40/70/96/100（拖动中观察实时预览）并输入、预览和使用 IME",
+        "拖动中整窗实时变化；整窗 alpha（背景、文字、公式、图片、控件、阴影）、候选框、caret、焦点和控件均可用",
     ),
     step(
         GuidedSession::G1,
@@ -65,15 +65,15 @@ pub(super) const STEPS: &[GuidedStep] = &[
         GuidedSession::G2,
         "G2-03",
         &["P12-M05"],
-        "聚焦后 Alt+Tab 离开，再经点击/托盘/传感区恢复并输入",
-        "away、focus restore 与 IME 正常",
+        "聚焦后 Alt+Tab 离开，再经点击/托盘/传感区（悬停展开后点击）恢复并输入；从隐藏/最小化/dock 收起状态在 Explorer 中第二次启动；退出时保存失败",
+        "away、focus restore 与 IME 正常；托盘图标与菜单可辨识；第二次启动使原窗口可见恢复并取得焦点；退出保存失败时显示明确错误并保持运行",
     ),
     step(
         GuidedSession::G2,
         "G2-04",
         &["P12-M11", "P12-M12"],
-        "在真实 mixed-DPI 双屏环境分别验证 Left/Right dock 与 3 DIP 感应条",
-        "两边 dock、失焦收起、sensor 展开与 DIP/physical conversion 均正确",
+        "在真实 mixed-DPI 双屏环境分别验证 Left/Right dock 与 3 DIP 感应条，再拖离超过 16 DIP",
+        "两边 dock、失焦收起、sensor 展开与 DIP/physical conversion 均正确；拖离后为 Floating",
     ),
     step(
         GuidedSession::G2,
@@ -86,8 +86,22 @@ pub(super) const STEPS: &[GuidedStep] = &[
         GuidedSession::G2,
         "G2-06",
         &["P12-M23"],
-        "实测 Light/Dark/System 与运行时系统主题切换",
-        "背景、文字、公式、图片和控件一致更新",
+        "实测 Light/Dark/System 与运行时系统主题切换，含滚动条",
+        "背景、文字、公式、图片和控件一致更新；滚动条可抓取且不遮字",
+    ),
+    step(
+        GuidedSession::G2,
+        "G2-07",
+        &["P12-M45"],
+        "同时运行两份便携副本，分别从各自的托盘图标显示/隐藏",
+        "两个托盘图标可辨识；显示/隐藏只作用于各自的窗口",
+    ),
+    step(
+        GuidedSession::G2,
+        "G2-08",
+        &["P12-M46"],
+        "观察 Windows 11 外壳：圆角、阴影、置顶按钮、控件淡化、边与角调整大小、各模式控件",
+        "外壳视觉与操作符合 plan 09 固定视觉效果与窗口契约",
     ),
 ];
 
@@ -131,6 +145,6 @@ mod tests {
                 assert_eq!(session_for_case(case), Some(step.session));
             }
         }
-        assert_eq!(observed.len(), 14);
+        assert_eq!(observed.len(), 16);
     }
 }

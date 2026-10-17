@@ -17,7 +17,6 @@ const MEANINGFUL_DRAG_DIP: f64 = 3.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreviewCommand {
     None,
-    Escape,
     SelectAll,
     Copy,
     Save,
@@ -67,13 +66,6 @@ impl StickyApp {
     ) {
         match preview_command(code, shortcut, shift) {
             PreviewCommand::None => {}
-            PreviewCommand::Escape => match preview_escape(self.preview_selection) {
-                PreviewEscape::ClearSelection => {
-                    self.preview_selection = PreviewSelection::default();
-                    self.request_preview_paint();
-                }
-                PreviewEscape::Window => self.dispatch_escape_to_window(),
-            },
             PreviewCommand::SelectAll => {
                 if let Some(frame) = &self.preview_frame {
                     self.preview_selection = frame.select_all();
@@ -124,6 +116,27 @@ impl StickyApp {
             .then_some((x - pane.x as f32, y - pane.y as f32))
     }
 
+    /// The formula error under the pointer, read from the current Preview frame. Derived on
+    /// demand rather than cached, so a frame, layout, mode or document change cannot leave a
+    /// stale error in the title.
+    pub(super) fn formula_error_under_pointer(&self) -> Option<&str> {
+        if !self.pointer_inside_window || !self.preview_layout_is_current() {
+            return None;
+        }
+        // An open opacity popup is painted over the Preview; what it covers is not hovered.
+        if self.controls.opacity_popup_open
+            && let Some(window) = &self.window
+            && super::controls::ControlLayout::new(window.inner_size(), window.scale_factor())
+                .opacity_popup
+                .contains(self.cursor_position)
+        {
+            return None;
+        }
+        let (x, y) = self.preview_at_cursor()?;
+        let frame = self.preview_frame.as_ref()?;
+        frame.tooltip_at(x, y + frame.scroll_y())
+    }
+
     pub(super) fn press_preview_selection(&mut self) {
         if !self.preview_layout_is_current() {
             return;
@@ -168,6 +181,12 @@ impl StickyApp {
         self.request_preview_paint();
     }
 
+    /// Clears the Preview selection (plan 09 Esc row 5).
+    pub(super) fn clear_preview_selection(&mut self) {
+        self.preview_selection = PreviewSelection::default();
+        self.request_preview_paint();
+    }
+
     pub(super) fn release_preview_selection(&mut self) {
         self.preview_dragging = false;
         self.preview_press_position = None;
@@ -181,26 +200,8 @@ impl StickyApp {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum PreviewEscape {
-    ClearSelection,
-    Window,
-}
-
-/// Esc clears a Preview selection; with nothing selected it reaches the window rule
-/// (plan 09 Esc order).
-fn preview_escape(selection: PreviewSelection) -> PreviewEscape {
-    if selection.is_collapsed() {
-        PreviewEscape::Window
-    } else {
-        PreviewEscape::ClearSelection
-    }
-}
-
 fn preview_command(code: Option<KeyCode>, shortcut: bool, shift: bool) -> PreviewCommand {
     match (shortcut, shift, code) {
-        // Modifiers do not change Esc, as in Source, Search and the opacity popup.
-        (_, _, Some(KeyCode::Escape)) => PreviewCommand::Escape,
         (true, _, Some(KeyCode::KeyA)) => PreviewCommand::SelectAll,
         (true, _, Some(KeyCode::KeyC | KeyCode::Insert)) => PreviewCommand::Copy,
         (true, _, Some(KeyCode::KeyS)) => PreviewCommand::Save,
@@ -275,29 +276,5 @@ mod tests {
             preview_command(Some(KeyCode::Insert), false, true),
             PreviewCommand::None
         );
-        for (shortcut, shift) in [(false, false), (true, false), (false, true), (true, true)] {
-            assert_eq!(
-                preview_command(Some(KeyCode::Escape), shortcut, shift),
-                PreviewCommand::Escape
-            );
-        }
-    }
-
-    #[test]
-    fn preview_escape_clears_a_selection_and_otherwise_reaches_the_window() {
-        assert_eq!(
-            preview_escape(PreviewSelection::default()),
-            PreviewEscape::Window
-        );
-        assert_eq!(
-            preview_escape(PreviewSelection::caret(17)),
-            PreviewEscape::Window
-        );
-        for (anchor, active) in [(3, 9), (9, 3)] {
-            assert_eq!(
-                preview_escape(PreviewSelection { anchor, active }),
-                PreviewEscape::ClearSelection
-            );
-        }
     }
 }

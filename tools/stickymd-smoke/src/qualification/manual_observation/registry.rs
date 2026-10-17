@@ -51,6 +51,9 @@ pub(in crate::qualification) enum InstanceRule {
     /// The Clean VM first run happens before the tool is copied in, so the observation is
     /// the observer's declaration (`FIRST_RUN_DECLARATIONS`) with no recorded instance.
     FirstRunDeclared,
+    /// Two portable copies in separate program directories, both launched by the recorder;
+    /// a PASS needs exactly those two processes running (plan 11, P12-M45 only).
+    TwoCopies(Fixture),
 }
 
 impl InstanceRule {
@@ -59,6 +62,7 @@ impl InstanceRule {
             Self::Launched(fixture) => format!("launched:{}", fixture.as_str()),
             Self::Preserved(fixture) => format!("preserved:{}", fixture.as_str()),
             Self::FirstRunDeclared => "first-run-declared".to_owned(),
+            Self::TwoCopies(fixture) => format!("two-copies:{}", fixture.as_str()),
         }
     }
 }
@@ -83,7 +87,7 @@ pub(in crate::qualification) struct Case {
 }
 
 use Fixture::{Blank, Rendering};
-use InstanceRule::{FirstRunDeclared, Launched, Preserved};
+use InstanceRule::{FirstRunDeclared, Launched, Preserved, TwoCopies};
 use ManualSession::{M1, M2, M3, M4, M5};
 use Tier::{A, B, C};
 
@@ -92,46 +96,68 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         id: "P12-M01",
         tier: A,
         session: M1,
-        action: "观察 Microsoft Pinyin 候选窗位置、遮挡、字体、动画及 DPI 视觉质量",
+        action: "观察 Microsoft Pinyin 候选窗位置、遮挡、字体、动画及 DPI 视觉质量，含左/右/上 dock",
         expected: "功能矩阵由 Phase 14 G4-06 自动化；本项只判候选窗视觉",
         instance: Launched(Blank),
-        scenarios: &["pinyin-100", "pinyin-150", "pinyin-200"],
+        scenarios: &[
+            "pinyin-100",
+            "pinyin-150",
+            "pinyin-200",
+            "left-dock",
+            "right-dock",
+            "top-dock",
+        ],
     },
     Case {
         id: "P12-M02",
         tier: A,
         session: M1,
-        action: "观察 WeChat Input Method / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量",
+        action: "观察 WeChat Input Method / WeType 候选窗位置、遮挡、字体、动画及 DPI 视觉质量，含左/右/上 dock",
         expected: "功能矩阵由 Phase 14 G4-06 自动化；环境缺失必须记录 NOT TESTED",
         instance: Launched(Blank),
-        scenarios: &["wetype-100", "wetype-150", "wetype-200"],
+        scenarios: &[
+            "wetype-100",
+            "wetype-150",
+            "wetype-200",
+            "left-dock",
+            "right-dock",
+            "top-dock",
+        ],
     },
     Case {
         id: "P12-M05",
         tier: A,
         session: M2,
-        action: "聚焦 StickyMD 后 Alt+Tab 离开，再点击/托盘/传感区恢复并输入",
-        expected: "切换 away 正常；恢复焦点和 IME 正常",
+        action: "聚焦 StickyMD 后 Alt+Tab 离开，再点击/托盘/传感区（悬停展开后点击）恢复并输入；从隐藏/最小化/dock 收起状态在 Explorer 中第二次启动；退出时保存失败",
+        expected: "切换 away 正常；托盘图标与菜单可辨识；恢复焦点和 IME 正常；第二次启动使原窗口可见恢复并取得焦点；退出保存失败时显示明确错误并保持运行",
         instance: Launched(Rendering),
-        scenarios: &["restore-click", "restore-tray", "restore-sensor"],
+        scenarios: &[
+            "restore-click",
+            "restore-tray",
+            "restore-sensor",
+            "second-launch-hidden",
+            "second-launch-minimized",
+            "second-launch-docked",
+            "exit-save-failure",
+        ],
     },
     Case {
         id: "P12-M11",
         tier: A,
         session: M2,
-        action: "把窗口拖到左边缘",
-        expected: "Left dock 行为正确，混合 DPI 下感应条仍可用",
+        action: "把窗口拖到左边缘，再拖离超过 16 DIP",
+        expected: "Left dock 行为正确，混合 DPI 下感应条仍可用；拖离后为 Floating",
         instance: Launched(Rendering),
-        scenarios: &["left-dock-mixed-dpi"],
+        scenarios: &["left-dock-mixed-dpi", "undock-16dip"],
     },
     Case {
         id: "P12-M12",
         tier: A,
         session: M2,
-        action: "把窗口拖到右边缘",
-        expected: "Right dock 行为正确，混合 DPI 下感应条仍可用",
+        action: "把窗口拖到右边缘，再拖离超过 16 DIP",
+        expected: "Right dock 行为正确，混合 DPI 下感应条仍可用；拖离后为 Floating",
         instance: Launched(Rendering),
-        scenarios: &["right-dock-mixed-dpi"],
+        scenarios: &["right-dock-mixed-dpi", "undock-16dip"],
     },
     Case {
         id: "P12-M18",
@@ -184,17 +210,17 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         id: "P12-M22",
         tier: A,
         session: M2,
-        action: "调整 opacity 到 40 并输入/预览/IME",
-        expected: "整窗 alpha 正确；候选框、caret、焦点与控件可用",
+        action: "拖动滑块把 opacity 调到 40/70/96/100（拖动中观察实时预览）并输入/预览/IME",
+        expected: "拖动中整窗实时变化；整窗 alpha 正确（背景、文字、公式、图片、控件、阴影）；候选框、caret、焦点与控件可用",
         instance: Launched(Rendering),
-        scenarios: &["opacity-40"],
+        scenarios: &["opacity-40", "opacity-70", "opacity-96", "opacity-100"],
     },
     Case {
         id: "P12-M23",
         tier: A,
         session: M2,
-        action: "实测 Light、Dark、System 及运行时系统主题切换",
-        expected: "背景、文字、公式、图片、控件立即一致更新",
+        action: "实测 Light、Dark、System 及运行时系统主题切换，含滚动条",
+        expected: "背景、文字、公式、图片、控件立即一致更新；滚动条可抓取且不遮字",
         instance: Launched(Rendering),
         scenarios: &[
             "light",
@@ -202,6 +228,7 @@ pub(in crate::qualification) const CASES: &[Case] = &[
             "system",
             "system-to-dark",
             "system-to-light",
+            "scrollbars",
         ],
     },
     Case {
@@ -232,6 +259,30 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         scenarios: &["image-formats"],
     },
     Case {
+        id: "P12-M45",
+        tier: A,
+        session: M2,
+        action: "同时运行两份便携副本，分别从各自的托盘图标显示/隐藏",
+        expected: "两个托盘图标可辨识；显示/隐藏只作用于各自的窗口",
+        instance: TwoCopies(Rendering),
+        scenarios: &["tray-identity", "independent-show-hide"],
+    },
+    Case {
+        id: "P12-M46",
+        tier: A,
+        session: M2,
+        action: "观察 Windows 11 外壳：圆角、阴影、置顶按钮、控件淡化、边与角调整大小、各模式控件",
+        expected: "外壳视觉与操作符合 plan 09 固定视觉效果与窗口契约",
+        instance: Launched(Rendering),
+        scenarios: &[
+            "corners-shadow",
+            "topmost-button",
+            "control-fade",
+            "edge-corner-resize",
+            "controls-in-modes",
+        ],
+    },
+    Case {
         id: "P12-M34",
         tier: B,
         session: M5,
@@ -244,17 +295,24 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         id: "P12-M35",
         tier: B,
         session: M4,
-        action: "双显示器同 DPI 拖动、dock、tray restore",
+        action: "双显示器同 DPI 拖动、dock、tray restore、主显示器切换，副屏在右侧（顶部对齐）与下方（左侧对齐）",
         expected: "monitor identity、位置和 dock edge 稳定",
         instance: Launched(Rendering),
-        scenarios: &["drag", "dock", "tray-restore"],
+        scenarios: &[
+            "drag",
+            "dock",
+            "tray-restore",
+            "primary-switch",
+            "secondary-right",
+            "secondary-below",
+        ],
     },
     Case {
         id: "P12-M36",
         tier: B,
         session: M4,
-        action: "双显示器 mixed DPI 拖动、dock、IME、Preview",
-        expected: "DIP/physical conversion、caret candidate 与感应条正确",
+        action: "双显示器 mixed DPI 拖动、dock、IME、Preview（跨屏移动后检查公式与图片）",
+        expected: "DIP/physical conversion、caret candidate 与感应条正确；跨屏后公式与图片按新显示器 scale 重新绘制、清晰",
         instance: Launched(Rendering),
         scenarios: &["drag", "dock", "ime", "preview"],
     },
@@ -262,37 +320,74 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         id: "P12-M37",
         tier: B,
         session: M4,
-        action: "运行中断开当前显示器再恢复窗口",
-        expected: "窗口迁移到可见工作区且不留在不可见坐标",
+        action: "运行中断开 StickyMD 所在的非主显示器，再重新连接该显示器",
+        expected: "断开后窗口恢复到主显示器且完全可见；重新连接后窗口仍完全可见、不留在不可见坐标",
         instance: Preserved(Rendering),
-        scenarios: &["disconnect-current-monitor"],
+        scenarios: &["disconnect-current-monitor", "reconnect-monitor"],
     },
     Case {
         id: "P12-M38",
         tier: B,
         session: M4,
-        action: "在 125% DPI 完成输入、Preview、dock",
-        expected: "geometry、caret、selection、公式与图片正确",
+        action: "在 125% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条",
+        expected: "geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
         instance: Launched(Rendering),
-        scenarios: &["input", "preview", "dock"],
+        scenarios: &[
+            "input",
+            "preview",
+            "left-dock",
+            "right-dock",
+            "top-dock",
+            "scrollbars",
+        ],
     },
     Case {
         id: "P12-M39",
         tier: B,
         session: M4,
-        action: "在 150% DPI 完成输入、Preview、dock",
-        expected: "geometry、caret、selection、公式与图片正确",
+        action: "在 150% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条",
+        expected: "geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
         instance: Launched(Rendering),
-        scenarios: &["input", "preview", "dock"],
+        scenarios: &[
+            "input",
+            "preview",
+            "left-dock",
+            "right-dock",
+            "top-dock",
+            "scrollbars",
+        ],
     },
     Case {
         id: "P12-M40",
         tier: B,
         session: M4,
-        action: "在 200% DPI 完成输入、Preview、dock",
-        expected: "geometry、caret、selection、公式与图片正确",
+        action: "在 200% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条",
+        expected: "geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
         instance: Launched(Rendering),
-        scenarios: &["input", "preview", "dock"],
+        scenarios: &[
+            "input",
+            "preview",
+            "left-dock",
+            "right-dock",
+            "top-dock",
+            "scrollbars",
+        ],
+    },
+    Case {
+        id: "P12-M47",
+        tier: B,
+        session: M4,
+        action: "在 100% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条",
+        expected: "geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
+        instance: Launched(Rendering),
+        scenarios: &[
+            "input",
+            "preview",
+            "left-dock",
+            "right-dock",
+            "top-dock",
+            "scrollbars",
+        ],
     },
     Case {
         id: "P12-M41",
@@ -323,30 +418,13 @@ pub(in crate::qualification) const CASES: &[Case] = &[
     },
 ];
 
-/// Phase 8 manual obligations that no P12 case owns yet. Readiness lists them on every run,
-/// whatever the verdict, so a passing matrix is never presented as complete.
-pub(in crate::qualification) const KNOWN_GAPS: &[&str] = &[
-    "P08-M01/M02: left and right dock at 100% DPI and the >16 DIP undock",
-    "P08-M03: top-dock visual (horizontal sensor strip and width)",
-    "P08-M04: real IME on the right and top docks",
-    "P08-M05: Quit cancelled by a failed save; Topmost kept in sync with the tray",
-    "P08-D031: Alt+F4 hides to the tray",
-    "P08-M06: opacity 70/96/100 across every layer",
-    "P08-M08: second launch from a minimized or docked instance, with foreground activation",
-    "P08-M09: two portable copies with separate tray icons used independently",
-    "P08-M10: primary-monitor switch and above/below arrangements",
-    "P08-M12: Windows 11 shell visual (corners, shadow, topmost button, control fade, edge and corner resize)",
-    "plan 09: scrollbar grab and no text overlap under each DPI and theme",
-    "plan 09: real-desktop Esc and collapse-button collapse",
-];
-
 pub(in crate::qualification) fn find(id: &str) -> Option<&'static Case> {
     CASES.iter().find(|case| case.id == id)
 }
 
 /// Canonical text of the table; its digest binds an observation context to this registry.
 pub(in crate::qualification) fn canonical() -> String {
-    let mut text = String::from("stickymd-manual-registry-v2\n");
+    let mut text = String::from("stickymd-manual-registry-v3\n");
     for case in CASES {
         for field in [
             case.id,
@@ -371,7 +449,10 @@ pub(in crate::qualification) fn canonical() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, Fixture, InstanceRule, KNOWN_GAPS, Tier};
+    use super::{CASES, Fixture, InstanceRule, Tier};
+
+    /// SHA-256 of `docs/acceptance-cases/phase-12.md` (lines joined by `\n`) as last reviewed.
+    const PHASE12_SHA256: &str = "e29bb75f523c3035e044440c37b8e73b2525ee8dcc1d3654ee9cd6f15ee68783";
 
     #[test]
     fn registry_equals_the_phase12_manual_rows_with_unique_scenarios() {
@@ -381,24 +462,19 @@ mod tests {
             .parent()
             .unwrap();
         let text = std::fs::read_to_string(root.join("docs/acceptance-cases/phase-12.md")).unwrap();
-        let manual = text
-            .lines()
-            .filter(|line| line.starts_with("| P12-M"))
-            .filter_map(|line| {
-                let cells = line
-                    .trim_matches('|')
-                    .split('|')
-                    .map(str::trim)
-                    .collect::<Vec<_>>();
-                (cells.get(2) == Some(&"Manual")).then(|| {
-                    (
-                        cells[0].to_owned(),
-                        cells[1].to_owned(),
-                        cells[3].to_owned(),
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
+        // The whole document is bound, so no change to its lines (a reformatted table, a
+        // decorated row) can add a manual case the comparison below misses; LF and CRLF, and a
+        // final newline, are equivalent. After reviewing a change, update the constant.
+        let normalized = text.lines().collect::<Vec<_>>().join("\n");
+        assert_eq!(
+            crate::integrity::sha256_bytes(normalized.as_bytes()).unwrap(),
+            PHASE12_SHA256,
+            "phase-12.md changed: confirm every manual row is compared below, then update PHASE12_SHA256"
+        );
+        // Read exactly as governance reads matrix rows, so a row is compared here or refused.
+        let manual =
+            crate::governance::manual_rows(&text, std::path::Path::new("phase-12.md"), "P12-M")
+                .unwrap();
         let registered = CASES
             .iter()
             .map(|case| {
@@ -430,8 +506,7 @@ mod tests {
             }
         }
         let count = |tier| CASES.iter().filter(|case| case.tier == tier).count();
-        assert_eq!((count(Tier::A), count(Tier::B), count(Tier::C)), (14, 7, 3));
-        assert!(!KNOWN_GAPS.is_empty());
+        assert_eq!((count(Tier::A), count(Tier::B), count(Tier::C)), (16, 8, 3));
     }
 
     /// Plan 11: only M34 is observed without a recorder-launched instance, and the
@@ -456,6 +531,10 @@ mod tests {
         assert_eq!(
             with(|rule| rule == InstanceRule::Launched(Fixture::Blank)),
             ["P12-M01", "P12-M02"]
+        );
+        assert_eq!(
+            with(|rule| matches!(rule, InstanceRule::TwoCopies(_))),
+            ["P12-M45"]
         );
     }
 }

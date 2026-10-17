@@ -26,7 +26,7 @@
 | `08_assets_and_export.md` | 图片粘贴、managed GC、导出 | AC-010、AC-011、AC-012、AC-017、AC-018 | `stickymd-core/src/assets.rs`; `stickymd-render/src/{image,preview/export}.rs`; `stickymd-win/{assets,export,app/{assets,export}_runtime.rs,platform/windows/{clipboard,export_dialog,managed_file}.rs}` | handle-bound ownership/scanner/bounded paste OCC/reversed Undo effects/durable safe-boundary GC/live-raster cache/source-preserving export、standard clipboard/native dialog/process-kill recovery/user-asset safety exact automation PASS；主观图片观感由 guided manual PASS |
 | `09_windows_shell.md` | dock、托盘、置顶/auto-hide 正交性、透明度、主题、多显示器、紧凑窗口、Tool Window | AC-019..029、AC-033..036、P11B-A06 | `stickymd-win/{flow/window,config,app/{lifecycle,window_runtime,window_interaction,window_geometry_runtime,controls,toolbar_paint}.rs,platform/windows/{tool_window,tray,monitor,native_message,window_opacity,window_topmost}.rs}` | Pin/auto-hide、三边 Dock/timing、tray lifecycle、220×120 geometry、24-DIP nearest/tie、40% alpha、Tool Window 与 guided visual PASS；Clean VM、真实双屏/mixed DPI/拔屏采用 v0.1.0 USER waiver，RDP/物理负坐标为 Tier C NOT TESTED |
 | `10_performance_reliability.md` | 质量属性 | AC-022、AC-032、空闲/内存观察、P14-A03/A08/A15/A23/A40 | core/source/preview/math/image/export/window/zoom Release baselines；`stickymd-smoke` copied-runtime metrics/attribution；`docs/report/{phase-14-memory-attribution,phase-14-global-module-review,phase-14-global-module-rereview}.md` | v0.1.0 采用 180 preferred / 400 engineering diagnostic / 550 hard 三层 startup policy；正式 warm-cache 间隔 1000 ms，250 ms rapid-restart 仅诊断；五个独立 Release 进程的 Source/Preview/Split median PWS 为 12.98/15.50/20.89 MiB，idle CPU p95 0–0.0027% PASS；关闭 search 后释放约 2 MiB 上限匹配投影并停止 O(n) 隐式扫描；窗口压力测试须先恢复固定文档再做隐藏采样 |
-| `11_testing_and_release.md` | 逐阶段验证、结果驱动等待、可证明并发、GUI child 进程隔离、Source Freeze、remote artifact promotion、module input fingerprint、last-success ledger、exact-artifact JSON evidence、发布形态 | `phase-00.md`..`phase-14.md`、P12-A09/A11/A13/A14/A18、P14-A31..A36、P14-A67..A78、人工观察记录验证（`#manual-observation-log`；记录器与被测实例为 P14-A76，观察任务、独立记录器与整包导入为 P14-A78）、release 验收清单 | `tools/stickymd-smoke`; `tools/smoke/*.ps1`; `.github/workflows/{ci,release,promote-release}.yml`; `dist/evidence/*`; `dist/exact-candidate/*` | Rust task/gate/evidence authority、headless isolated shards 与 targeted module 已落地；Promoted Candidate 继续持有 exact bytes，Runtime/Performance/Resources/G3/G4/G5 按相关输入指纹从克隆级共享存储 `<git common dir>/stickymd/qualification-ledger/` 复用成功记录（发布版本号与发布文档不使其失效）；成功 evidence 与 G5 截图先归档再原子发布记录，失败/中止保留本轮诊断 JSON 但不覆盖成功账本；tag/draft/publish 必须复用已验收 artifact 且不得重建 |
+| `11_testing_and_release.md` | 逐阶段验证、结果驱动等待、可证明并发、GUI child 进程隔离、Source Freeze、remote artifact promotion、module input fingerprint、last-success ledger、exact-artifact JSON evidence、发布形态 | `phase-00.md`..`phase-14.md`、P12-A09/A11/A13/A14/A18、P14-A31..A36、P14-A67..A79、人工观察记录验证（`#manual-observation-log`；记录器与被测实例为 P14-A76，观察任务、独立记录器与整包导入为 P14-A78，人工义务映射为 P14-A79）、release 验收清单 | `tools/stickymd-smoke`; `tools/smoke/*.ps1`; `.github/workflows/{ci,release,promote-release}.yml`; `dist/evidence/*`; `dist/exact-candidate/*` | Rust task/gate/evidence authority、headless isolated shards 与 targeted module 已落地；Promoted Candidate 继续持有 exact bytes，Runtime/Performance/Resources/G3/G4/G5 按相关输入指纹从克隆级共享存储 `<git common dir>/stickymd/qualification-ledger/` 复用成功记录（发布版本号与发布文档不使其失效）；成功 evidence 与 G5 截图先归档再原子发布记录，失败/中止保留本轮诊断 JSON 但不覆盖成功账本；tag/draft/publish 必须复用已验收 artifact 且不得重建 |
 
 ---
 
@@ -416,3 +416,30 @@ P14-A64 的启动焦点补充映射 Plan 09 `tool-window-identity`：
 该焦点诊断在 Source/Split 中追加无再次聚焦的物理 Enter、原子自动保存和 Undo 恢复检查；
 `runtime/native_diagnostics::native_window_interaction_diagnostic` 复用既有 Phase 10 窗口 executor，
 检查激活之后的生命周期，没有复制状态机或另设性能门。
+
+2026-10-15 人工覆盖补全第 C1 批映射 plan 11 `被测实例` 与 `人工义务映射`、plan 09 退出取消标题状态：
+Phase 8 Manual 行与 plan 09 Esc、手工收起、滚动条、透明度、退出条款逐断言映射到 Phase 12 场景、
+G3/G4 exact、USER 退役或具名缺口（现有自动化在 C2 绑定已执行测试的模块收据之前列为缺口），由
+`tools/stickymd-smoke/src/qualification/manual_observation/coverage.rs` 的静态表持有，需求与摘要校验只在测试中
+编译（[P14-A79](acceptance-cases/phase-14.md)）。注册表 v3 新增 P12-M45（双副本，Tier A）、P12-M46
+（Windows 11 外壳，Tier A）、P12-M47（100% DPI，Tier B）；记录器尚未实现的场景与双副本用例在 C3 前拒绝记录，
+未观察的 Tier A 项照常阻断。缺口与退役项在 `acceptance manual list` 与 readiness 中列出；本批不改变产品
+runtime，人工状态仍为 NOT TESTED。设计与决定见
+[3-A 报告](report/2026-10-10-manual-reuse-and-domain-split.md)。
+
+2026-10-16 覆盖补全 C2a-1 映射 plan 09 `dock-auto-hide`（Esc 顺序与修饰键）、`tray-lifecycle`（退出已取消状态与窗口标题）与
+plan 05 `external-change-conflict`（载入外部解除重建义务）：`stickymd-win/src/app/{escape,title}.rs` 是 Esc 判定与标题的唯一入口，
+`flow/persistence.rs::accept_external` 统一两条载入外部路径；验收见
+[phase-08 2026-10-16 维护节](acceptance-cases/phase-08.md)。真实键盘投递与只读 note 的退出失败仍由 G4 exact 层持有，列为缺口。
+
+2026-10-16 覆盖补全 C2a-2 继续映射 plan 09 `vertical-scrollbars`、`dock-auto-hide` 与透明度提交规则：滚动条手势与栏可用性
+（`app/scrollbar.rs`）、Preview 回执路由（`app/preview_runtime.rs::completion_route`）、透明度指针判定（`app/controls.rs`）与窗口守卫投影
+（`app/guards.rs`）成为纯函数并有单元测试，`StickyApp` 只负责接线；验收见 phase-05 与 phase-08 的 2026-10-16 补充。winit 事件接线仍是缺口。
+
+2026-10-16 覆盖补全 C2b-1 映射 plan 11 `release-artifact-authority` 的 exact 收据 schema 2：G3/G4/G5 的 case 与检查标签在
+`qualification/exact_checks.rs` 一处声明，runner（`exact_desktop.rs`）、模块证据校验（`module_evidence.rs`）、`--case` 选项与人工义务映射
+（`manual_observation/coverage/table.rs` 的 `Target::Exact { case, checks }`）都以它为准；验收见 P14-A80。
+
+2026-10-16 覆盖补全 C2b-2 映射 plan 11 `release-artifact-authority` 的单元测试 owner 核验与 smoke 证据 schema 3：owner 声明在人工义务映射
+（`manual_observation/coverage/table.rs` 的 `Target::Test`），核验在 `unit_owners`（解析与 Windows 执行）与 runner 的 `unit-test owner verification`
+任务，收据判定在 `qualification/automated_readiness.rs`，源码身份在 `evidence.rs::SourceIdentity`，`harness` 治理在 `governance.rs`；验收见 P14-A81。

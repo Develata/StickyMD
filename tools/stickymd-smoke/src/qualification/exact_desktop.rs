@@ -3,10 +3,8 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
 
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::sync::mpsc;
+use std::process::{Command, Output};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -14,11 +12,16 @@ use crate::qualification_environment::{self, QualificationEnvironmentStatus};
 
 pub(super) use crate::managed_process::ChildGuard;
 
+use super::exact_checks::{self, DeclaredCase};
 use super::receipt;
+
+pub(super) use super::exact_checks::Checks;
 
 mod evidence;
 
 pub(super) const TIMEOUT: Duration = Duration::from_secs(12);
+/// A started candidate presents its first frame well within this.
+const START_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const UIA_HELPER_TIMEOUT: Duration = Duration::from_secs(35);
 /// A portable ZIP of a few MiB expands in seconds; a slow disk gets ample room.
 const EXPAND_TIMEOUT: Duration = Duration::from_secs(120);
@@ -29,6 +32,8 @@ pub(super) type CaseOperation = fn(&Path, &Path) -> Result<CaseEvidence, String>
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct CaseEvidence {
     pub(super) artifacts: Vec<ArtifactEvidence>,
+    /// The checks the case recorded; a pass needs exactly the declared set.
+    pub(super) checks: Checks,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,16 +42,13 @@ pub(super) struct ArtifactEvidence {
     pub(super) sha256: String,
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct ExactCase {
-    pub(super) id: &'static str,
-    pub(super) operation: CaseOperation,
-}
-
 pub(super) struct ExactGroup<'a> {
     pub(super) name: &'static str,
     pub(super) default_receipt: &'static str,
-    pub(super) cases: &'a [ExactCase],
+    /// The group's declared cases, in run order.
+    pub(super) cases: &'static [DeclaredCase],
+    /// `operations[i]` runs `cases[i]`.
+    pub(super) operations: &'a [CaseOperation],
     pub(super) selected_case: Option<&'static str>,
 }
 
@@ -55,7 +57,42 @@ struct CaseResult {
     id: &'static str,
     status: &'static str,
     detail: Option<String>,
+    /// Recorded labels, ascending; empty when the case returned an error.
+    checks: Vec<String>,
     artifacts: Vec<ArtifactEvidence>,
+}
+
+/// The result of one case run: it passes only when it returned without error and recorded
+/// exactly its declared checks; a mismatch keeps the recorded labels as a diagnostic.
+fn judge(case: &DeclaredCase, outcome: Result<CaseEvidence, String>) -> CaseResult {
+    match outcome {
+        Ok(evidence) => {
+            let checks = evidence.checks.into_sorted();
+            let (status, detail) = match exact_checks::mismatch(case.checks, &checks) {
+                None => ("PASSED", None),
+                Some(difference) => (
+                    "FAILED",
+                    Some(format!(
+                        "recorded checks differ from the declaration: {difference}"
+                    )),
+                ),
+            };
+            CaseResult {
+                id: case.id,
+                status,
+                detail,
+                checks,
+                artifacts: evidence.artifacts,
+            }
+        }
+        Err(error) => CaseResult {
+            id: case.id,
+            status: "FAILED",
+            detail: Some(error),
+            checks: Vec::new(),
+            artifacts: Vec::new(),
+        },
+    }
 }
 
 struct QualificationRoot {
@@ -103,6 +140,14 @@ pub(super) fn run(
 ) -> Result<(), String> {
     if let Some(path) = evidence_file {
         super::validate_public_evidence_path(repository, path)?;
+    }
+    if group.cases.len() != group.operations.len() {
+        return Err(format!(
+            "{} declares {} case(s) but runs {}",
+            group.name,
+            group.cases.len(),
+            group.operations.len()
+        ));
     }
     if let Some(selected) = group.selected_case
         && !group.cases.iter().any(|case| case.id == selected)
@@ -165,7 +210,7 @@ pub(super) fn run(
     }
 
     let mut results = Vec::new();
-    for case in group.cases {
+    for (case, operation) in group.cases.iter().zip(group.operations) {
         if group
             .selected_case
             .is_some_and(|selected| selected != case.id)
@@ -174,26 +219,12 @@ pub(super) fn run(
         }
         let case_directory = qualification_root.path.join(case.id.to_ascii_lowercase());
         copy_directory(&template_program, &case_directory)?;
-        match (case.operation)(repository, &case_directory) {
-            Ok(evidence) => {
-                println!("{}=PASSED", case.id);
-                results.push(CaseResult {
-                    id: case.id,
-                    status: "PASSED",
-                    detail: None,
-                    artifacts: evidence.artifacts,
-                });
-            }
-            Err(error) => {
-                println!("{}=FAILED: {error}", case.id);
-                results.push(CaseResult {
-                    id: case.id,
-                    status: "FAILED",
-                    detail: Some(error),
-                    artifacts: Vec::new(),
-                });
-            }
+        let result = judge(case, operation(repository, &case_directory));
+        match &result.detail {
+            None => println!("{}=PASSED", result.id),
+            Some(error) => println!("{}=FAILED: {error}", result.id),
         }
+        results.push(result);
     }
 
     let harness_commit = receipt::command_text(repository, "git", &["rev-parse", "HEAD"])?;
@@ -291,98 +322,18 @@ pub(super) fn invoke_uia(
     }
 }
 
-/// Runs `command` to completion within `timeout`, draining stdout and stderr concurrently
-/// up to `MAX_HELPER_OUTPUT` each; more is an error. The helper starts inside a job that
-/// also holds its descendants: when the helper exits or outlives the deadline (then it is
-/// terminated with a bounded wait), closing the job ends any descendant still holding the
-/// output pipes, so the readers reach end of file. Collecting both outputs shares one
-/// deadline.
+/// Runs `command` within `timeout` with at most `MAX_HELPER_OUTPUT` bytes per stream
+/// (`managed_process::run_bounded_output`).
 fn run_bounded_output(
     command: &mut Command,
     timeout: Duration,
     label: &str,
 ) -> Result<Output, String> {
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    // Started inside the job, so every descendant it creates is in the job too.
-    let job = crate::managed_process::Job::create(crate::managed_process::Descendants::Included)?;
-    let mut child = job.spawn(command, &format!("cannot start {label}"))?;
-    let deadline = Instant::now() + timeout;
-    let stdout = drain(child.stdout.take(), label, "stdout")?;
-    let stderr = drain(child.stderr.take(), label, "stderr")?;
-    let status = loop {
-        match child
-            .try_wait()
-            .map_err(|error| format!("cannot inspect {label}: {error}"))?
-        {
-            Some(status) => break status,
-            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
-            None => {
-                let process_id = child.id();
-                let stopped = child.stop_within(crate::managed_process::STOP_WAIT);
-                drop(job);
-                stopped.map_err(|error| {
-                    format!(
-                        "{label} exceeded {timeout:?}; failed to reap PID {process_id}: {error}"
-                    )
-                })?;
-                return Err(format!(
-                    "{label} exceeded {timeout:?}; killed and reaped PID {process_id}"
-                ));
-            }
-        }
-    };
-    // Ends any descendant still holding a pipe, so both readers reach end of file.
-    drop(job);
-    let collect_by = Instant::now()
-        + deadline
-            .saturating_duration_since(Instant::now())
-            .max(Duration::from_secs(2));
-    let collect = |pending: mpsc::Receiver<Result<Vec<u8>, String>>, stream: &str| {
-        pending
-            .recv_timeout(collect_by.saturating_duration_since(Instant::now()))
-            .map_err(|_| format!("{label} {stream} stayed open after it exited"))?
-    };
-    Ok(Output {
-        status,
-        stdout: collect(stdout, "stdout")?,
-        stderr: collect(stderr, "stderr")?,
-    })
+    crate::managed_process::run_bounded_output(command, timeout, label, MAX_HELPER_OUTPUT)
 }
 
 /// Longest stdout or stderr accepted from a helper.
 const MAX_HELPER_OUTPUT: u64 = 1024 * 1024;
-
-fn drain(
-    pipe: Option<impl Read + Send + 'static>,
-    label: &str,
-    stream: &'static str,
-) -> Result<mpsc::Receiver<Result<Vec<u8>, String>>, String> {
-    let mut pipe = pipe.ok_or_else(|| format!("{label} {stream} pipe is unavailable"))?;
-    let owner = label.to_owned();
-    let (sender, receiver) = mpsc::channel();
-    thread::Builder::new()
-        .name(format!("helper-{stream}"))
-        .spawn(move || {
-            let mut bytes = Vec::new();
-            let read = (&mut pipe)
-                .take(MAX_HELPER_OUTPUT + 1)
-                .read_to_end(&mut bytes)
-                .map_err(|error| format!("cannot read {owner} {stream}: {error}"))
-                .and_then(|_| {
-                    if bytes.len() as u64 > MAX_HELPER_OUTPUT {
-                        Err(format!(
-                            "{owner} wrote more than {MAX_HELPER_OUTPUT} bytes to {stream}"
-                        ))
-                    } else {
-                        Ok(bytes)
-                    }
-                });
-            // The receiver is gone only after its deadline; the late result is moot.
-            let _ = sender.send(read);
-        })
-        .map_err(|error| format!("cannot start the {stream} reader for {label}: {error}"))?;
-    Ok(receiver)
-}
 
 pub(super) fn seed_note(program: &Path, text: &str) -> Result<(), String> {
     let note = program.join("note");
@@ -391,20 +342,65 @@ pub(super) fn seed_note(program: &Path, text: &str) -> Result<(), String> {
     fs::write(note.join("note.md"), text).map_err(io_error)
 }
 
+/// Starts `executable` and waits for its first editor-ready present. Startup reconciliation
+/// of managed assets runs before the editor exists, so checks made afterwards observe this
+/// start's effects; an existing note/config layout alone does not prove the start got there.
+pub(super) fn start_until_editor_ready(executable: &Path) -> Result<ChildGuard, String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // Disjoint from the sequences the startup measurements number from zero.
+    static SEQUENCE: AtomicU64 = AtomicU64::new(1 << 32);
+    let ready = crate::ready_event::ReadyEvent::create(SEQUENCE.fetch_add(1, Ordering::Relaxed))?;
+    let mut command = crate::managed_process::gui_command(executable)?;
+    // Signal only: an inherited exit flag or trace path would change the process under test.
+    command
+        .env("STICKYMD_DIAGNOSTIC_READY_EVENT", ready.name())
+        .env_remove("STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY")
+        .env_remove("STICKYMD_DIAGNOSTIC_STARTUP_TRACE")
+        .env_remove("STICKYMD_DIAGNOSTIC_STARTUP_DETAILS");
+    let child = ChildGuard::spawn(
+        &mut command,
+        &format!("cannot start {}", executable.display()),
+    )?;
+    ready.wait(START_READY_TIMEOUT)?;
+    Ok(child)
+}
+
 pub(super) fn wait_for_layout(program: &Path) -> Result<(), String> {
     wait_until("portable note/config layout", || {
         Ok(program.join("note/note.md").is_file() && program.join("note/config.toml").is_file())
     })
 }
 
+/// Waits until the durable note reads as text `accepted` admits. A read that fails (a missing
+/// file, invalid UTF-8, a sharing violation during an atomic replace) never satisfies the wait;
+/// it is retried until the deadline, which then reports the last read error.
 pub(super) fn wait_note(program: &Path, accepted: impl Fn(&str) -> bool) -> Result<String, String> {
     let path = program.join("note/note.md");
-    let mut observed = String::new();
+    let mut observed = None;
+    let mut last_error = None;
     wait_until("durable note state", || {
-        observed = fs::read_to_string(&path).unwrap_or_default();
-        Ok(accepted(&observed))
+        match accepted_note(fs::read_to_string(&path), &accepted) {
+            Ok(text) => {
+                last_error = None;
+                observed = text;
+            }
+            Err(error) => last_error = Some(error),
+        }
+        Ok(observed.is_some())
+    })
+    .map_err(|timeout| match &last_error {
+        Some(error) => format!("{timeout}; last note read failed: {error}"),
+        None => timeout,
     })?;
-    Ok(observed)
+    observed.ok_or_else(|| "durable note wait ended without an accepted note".to_owned())
+}
+
+/// The text of a note read that `accepted` admits; a failed read is an error, never text.
+fn accepted_note(
+    read: std::io::Result<String>,
+    accepted: impl Fn(&str) -> bool,
+) -> std::io::Result<Option<String>> {
+    read.map(|text| accepted(&text).then_some(text))
 }
 
 pub(super) fn wait_for_config(program: &Path, expected: &str) -> Result<(), String> {
@@ -533,7 +529,81 @@ mod tests {
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use super::{parse_stickymd_tasklist, run_bounded_output};
+    use super::{
+        CaseEvidence, Checks, accepted_note, judge, parse_stickymd_tasklist, run_bounded_output,
+    };
+    use crate::qualification::exact_checks::DeclaredCase;
+
+    /// A missing or non-UTF-8 note is a read error, never the empty text a wait for an emptied
+    /// note would accept.
+    #[test]
+    fn an_unreadable_note_never_satisfies_a_wait() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("stickymd-note-read-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let note = root.join("note.md");
+        assert!(accepted_note(fs::read_to_string(&note), str::is_empty).is_err());
+        fs::write(&note, [0xff, 0xfe]).unwrap();
+        assert!(accepted_note(fs::read_to_string(&note), str::is_empty).is_err());
+        fs::write(&note, "").unwrap();
+        assert_eq!(
+            accepted_note(fs::read_to_string(&note), str::is_empty).unwrap(),
+            Some(String::new())
+        );
+        fs::write(&note, "text").unwrap();
+        assert_eq!(
+            accepted_note(fs::read_to_string(&note), str::is_empty).unwrap(),
+            None
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A case passes only with exactly its declared checks; an error or any other set fails,
+    /// and a mismatch keeps what was recorded.
+    #[test]
+    fn a_case_passes_only_with_exactly_its_declared_checks() {
+        const CASE: DeclaredCase = DeclaredCase {
+            id: "GX-01",
+            checks: &["a", "b:k=v"],
+        };
+        let evidence = |labels: &[(&str, &[(&str, &str)])]| {
+            let mut checks = Checks::default();
+            for (name, params) in labels {
+                checks.record(name, params);
+            }
+            Ok(CaseEvidence {
+                checks,
+                ..CaseEvidence::default()
+            })
+        };
+        let passed = judge(
+            &CASE,
+            evidence(&[("b", &[("k", "v")]), ("a", &[]), ("a", &[])]),
+        );
+        assert_eq!((passed.status, passed.detail), ("PASSED", None));
+        assert_eq!(passed.checks, ["a", "b:k=v"]);
+
+        let short = judge(&CASE, evidence(&[("a", &[])]));
+        assert_eq!(short.status, "FAILED");
+        assert!(short.detail.unwrap().contains(r#"missing ["b:k=v"]"#));
+        assert_eq!(short.checks, ["a"]);
+        let extra = judge(
+            &CASE,
+            evidence(&[("a", &[]), ("b", &[("k", "v")]), ("c", &[])]),
+        );
+        assert!(extra.detail.unwrap().contains(r#"unexpected ["c"]"#));
+        let other_value = judge(&CASE, evidence(&[("a", &[]), ("b", &[("k", "w")])]));
+        assert_eq!(other_value.status, "FAILED");
+
+        let failed = judge(&CASE, Err("probe failed".to_owned()));
+        assert_eq!(failed.status, "FAILED");
+        assert_eq!(failed.detail.as_deref(), Some("probe failed"));
+        assert!(failed.checks.is_empty());
+    }
 
     const BOUNDED_CHILD_SENTINEL: &str = "STICKYMD_BOUNDED_HELPER_SENTINEL";
     const NOISY_CHILD: &str = "STICKYMD_BOUNDED_HELPER_NOISY";

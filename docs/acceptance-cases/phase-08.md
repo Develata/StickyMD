@@ -14,6 +14,14 @@ exact-candidate receipts belong in ignored `dist/evidence/` under [plan 11](../p
 not in retrospective edits to these rows. Version-specific results and remaining gaps are linked
 from the [release checklist](../release-checklist.md).
 
+Every `Manual` row below is mapped, assertion by assertion, to a Phase 12 manual case scenario, an exact G3/G4
+case, source-bound automation, a unit test, a USER-approved retirement, or a named open gap (plan 11 manual
+obligation mapping; the table lives in the Rust tool and is checked against these rows). Readiness and
+`stickymd-smoke acceptance manual list` print every open gap; the mapping is not completed coverage and changes no
+row status. P08-M12 no longer lists
+"accessibility": no plan defines an accessibility contract, and the USER retired the term on 2026-10-15
+(`RETIRE-P08-M12-ACCESSIBILITY`).
+
 P08-A19's historical wording refers to the tracked `receipt:` reference: the Markdown governance
 check requires that marker for `MANUAL PASS`, but does not validate receipt contents or prove that
 the receipt file was committed. Dynamic candidate identity and readiness need the separate plan 11
@@ -34,7 +42,7 @@ verification; a marker alone is not acceptance evidence.
 | P08-A08 | AC-025 theme reducer and adapter | Automated | `phase8_` tests cover Light/System/Dark, default Light, runtime System changes and configuration round-trip | AUTOMATED PASS |
 | P08-A09 | Always-on-top and controls projection | Automated | `phase8_` tests cover typed topmost effects and control fade/hit-test behavior without document mutation | AUTOMATED PASS |
 | P08-A10 | AC-026 same-directory wake | Automated | `phase8_` coordinator tests plus copied-Release `-Runtime` prove hidden primary wake, secondary exit and no secondary durable write | AUTOMATED PASS |
-| P08-A11 | AC-027 different-directory isolation | Automated | copied-Release runtime proves distinct processes, windows, notes and configs; tray-icon distinction remains manual | AUTOMATED PASS |
+| P08-A11 | AC-027 different-directory isolation | Automated | copied-Release `-Runtime` (scenario `WindowShell`) proves distinct live processes and windows and independently seeded notes; runtime note/config isolation and quit isolation are not driven (P08-M09 gaps); tray-icon distinction remains manual | AUTOMATED PASS |
 | P08-A12 | Animation and idle redraw discipline | Automated | `phase8_` tests prove monotone ease-out endpoints, interruption convergence and no post-animation redraw deadline; copied-Release resources cover the cached-caret idle path | AUTOMATED PASS |
 | P08-A13 | DPI/config/platform adapter boundaries | Automated | `phase8_` tests and governance cover PerMonitorV2, validated placement values, minimal Win32 features and SAFETY text | AUTOMATED PASS |
 | P08-A14 | Source/Preview/persistence/assets regressions | Automated | workspace tests plus `phase8_` lifecycle regressions preserve document authority, safe Quit, split width and DPI cache keys | AUTOMATED PASS |
@@ -54,7 +62,7 @@ verification; a marker alone is not acceptance evidence.
 | P08-M09 | AC-027 distinct portable instances | Manual | Two copied directories must show independent windows, tray icons, note content and config behavior | NOT TESTED |
 | P08-M10 | AC-028 live monitor topology | Manual | Left/right/up/down monitor arrangements, primary switch, disconnect/reconnect, sleep/resume and Remote Desktop receipt required | NOT TESTED |
 | P08-M11 | AC-029 mixed-DPI and negative coordinates | Manual | Cross-monitor dock/undock plus real IME candidate, formula and image clarity at mixed DPI and negative coordinates | NOT TESTED |
-| P08-M12 | Windows 11 shell visual contract | Manual | Supported Windows 11 builds, rounded corner, shadow, topmost, control fade and accessibility receipt required | NOT TESTED |
+| P08-M12 | Windows 11 shell visual contract | Manual | Supported Windows 11 builds, rounded corner, shadow, topmost and control fade receipt required | NOT TESTED |
 | P08-M13 | inherited Phase 3 IME gate | Manual | Microsoft Pinyin and WeChat IME end-to-end matrix remains open | NOT TESTED |
 | P08-M14 | inherited Phase 5/6 Preview/math visual gate | Manual | Native Preview selection and RaTeX Light/Dark/DPI visual receipts remain open | NOT TESTED |
 | P08-M15 | inherited Phase 7 image/export visual gate | Manual | Native image quality, clipboard producers, export dialog and crash reconciliation receipts remain open | NOT TESTED |
@@ -206,6 +214,32 @@ environment-sensitive behavior is never relabelled automated merely because a sy
 | P08-D137 | real negative monitor geometry when available | Manual | real receipt required by M10/M11 | NOT TESTED |
 | P08-D138 | sleep/resume when available | Manual | real receipt required by M10 | NOT TESTED |
 | P08-D139 | RDP reconnect when available | Manual | real receipt required by M10 | NOT TESTED |
+
+## 2026-10-16 quit-cancelled title and Esc decision maintenance
+
+This supplements the frozen rows above; their statuses are unchanged.
+
+- Contract: [`09` Esc order and modifiers](../plan/09_windows_shell.md#dock-auto-hide),
+  [`09` quit-cancelled state and window title](../plan/09_windows_shell.md#tray-lifecycle),
+  [`05` load external](../plan/05_document_persistence.md#external-change-conflict).
+- Preconditions: Esc pressed in every input state (opacity popup, recovery or asset reconciliation pending, quitting,
+  editor or Search composition, Search open, Preview with and without a selection) with every modifier combination; a
+  quit cancelled by a failed note save, by a guard and by an unsettled paste; a recreate obligation followed by
+  "load external".
+- Expected: one pure decision (`app::escape::escape_action`) applies the plan 09 order and Esc routing ignores
+  modifiers; the title text comes from one function (`app::title::window_title`) with the priority recovery → quit
+  cancelled → conflict → dirty → formula hover → plain, and a formula hover never hides unsaved text; the only native
+  write is `update_window_title` (a source guard rejects any other `set_title`); only a failed note save
+  establishes the quit-cancelled notice, which clears after an event pass once the note no longer needs the quit
+  barrier; accepting external content discharges a superseded recreate obligation.
+- Automated entry: `cargo test -p stickymd-win --locked -- escape title persistence`. Status: `AUTOMATED PASS`.
+- Also: the opacity pointer decisions (`app::controls`), checked through the real preference reducer: every slider step
+  is a `PreviewOpacity` the reducer does not persist, a valid release yields one `CommitOpacity` (persisted when the
+  value changed) and a release after Esc yields nothing; the runtime's config submission is not exercised; the window guards are one projection
+  (`app::guards`) in which an editor or a Search-field composition alone blocks auto-collapse. Automated entry:
+  `cargo test -p stickymd-win --locked -- phase8_a_slider guards`.
+- Not covered here: real keyboard delivery (G4-02), the read-only-note quit failure (G4-01), the end-of-pass hook in the
+  live event loop and the winit wiring of the pointer and focus events remain coverage gaps owned by the exact layer.
 
 ## Current Phase Gate
 

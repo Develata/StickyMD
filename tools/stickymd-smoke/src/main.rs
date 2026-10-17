@@ -30,6 +30,7 @@ mod startup_details;
 mod startup_timing;
 mod startup_trace;
 mod timing_summary;
+mod unit_owners;
 #[cfg(windows)]
 mod window_control;
 

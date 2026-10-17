@@ -44,5 +44,8 @@ pub(super) fn run(repository: &Path, program: &Path) -> Result<CaseEvidence, Str
     crate::window_control::press_paste(window)?;
     wait_note(program, |text| text.ends_with("G5_FOCUS_RESTORED\n"))?;
     child.kill_and_wait()?;
-    Ok(CaseEvidence { artifacts })
+    Ok(CaseEvidence {
+        artifacts,
+        ..CaseEvidence::default()
+    })
 }

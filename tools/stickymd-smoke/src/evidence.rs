@@ -14,6 +14,9 @@ pub(crate) struct EvidenceResult {
     pub(crate) measurements: Vec<EvidenceMeasurement>,
     pub(crate) gates: Vec<EvidenceGate>,
     pub(crate) samples: Vec<EvidenceSample>,
+    /// Verified unit-test owners (`package/target/path`), ascending; only the owner
+    /// verification task's result lists any.
+    pub(crate) owners: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -57,15 +60,92 @@ impl EvidenceStatus {
     }
 }
 
+/// A schema 3 result that is not the owner verification: its `owners` must be present and
+/// empty, so every reader judges the same document the same way (plan 11).
+pub(crate) fn require_no_owners(result: &crate::release::json::Value) -> Result<(), String> {
+    if result.field("owners")?.array()?.is_empty() {
+        Ok(())
+    } else {
+        Err("only the unit-test owner verification may list owners".to_owned())
+    }
+}
+
+/// The source a run is about: HEAD and whether the worktree was clean. A runner captures it
+/// when it starts; the evidence records that capture, never a later reading.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceIdentity {
+    pub(crate) commit: String,
+    pub(crate) worktree_dirty: bool,
+}
+
+impl SourceIdentity {
+    /// The current identity; an unreadable repository is `UNKNOWN` and dirty.
+    pub(crate) fn capture(root: &Path) -> Self {
+        Self {
+            commit: current_commit(root).unwrap_or_else(|_| "UNKNOWN".to_owned()),
+            worktree_dirty: current_worktree_dirty(root).unwrap_or(true),
+        }
+    }
+
+    /// An error naming `stage` when the source no longer matches this capture. It detects
+    /// drift at the moments it is called; it cannot prove the source stayed unchanged between
+    /// them (plan 11: formal receipts need an exclusive checkout).
+    pub(crate) fn unchanged(&self, root: &Path, stage: &str) -> Result<(), String> {
+        let now = Self::capture(root);
+        if now == *self {
+            Ok(())
+        } else {
+            Err(format!(
+                "source identity changed {stage}: the run started at {} (dirty {}), now {} (dirty {})",
+                self.commit, self.worktree_dirty, now.commit, now.worktree_dirty
+            ))
+        }
+    }
+}
+
+/// Writes or prints the evidence of `results`. With `identity` (the runner's start capture)
+/// the source is rechecked first: on drift a FAILED `source identity` result is appended,
+/// the document is still written as a diagnostic, and the drift is returned as the error.
+/// Without it the identity is read now, for interim and single-step receipts.
 pub(crate) fn emit(
     root: &Path,
     suite: &str,
     results: &[EvidenceResult],
     environment: Option<&QualificationEnvironment>,
     output_file: Option<&Path>,
+    identity: Option<&SourceIdentity>,
 ) -> Result<(), String> {
-    let commit = current_commit(root).unwrap_or_else(|_| "UNKNOWN".to_owned());
-    let worktree_dirty = current_worktree_dirty(root).unwrap_or(true);
+    let (identity, drift) = match identity {
+        Some(identity) => (
+            identity.clone(),
+            identity
+                .unchanged(root, "before the evidence was written")
+                .err(),
+        ),
+        None => (SourceIdentity::capture(root), None),
+    };
+    let with_drift;
+    let results = match &drift {
+        Some(error) => {
+            with_drift = results
+                .iter()
+                .cloned()
+                .chain(std::iter::once(EvidenceResult {
+                    id: "source identity".to_owned(),
+                    status: EvidenceStatus::Failed,
+                    detail: Some(error.clone()),
+                    measurements: Vec::new(),
+                    gates: Vec::new(),
+                    samples: Vec::new(),
+                    owners: Vec::new(),
+                }))
+                .collect::<Vec<_>>();
+            &with_drift[..]
+        }
+        None => results,
+    };
+    let commit = identity.commit;
+    let worktree_dirty = identity.worktree_dirty;
     let artifact = verified_artifact_sha256(root, results);
     let executable = (suite != "qualification-environment")
         .then(|| executable_sha256(root))
@@ -107,7 +187,7 @@ pub(crate) fn emit(
     } else {
         println!("{json}");
     }
-    Ok(())
+    drift.map_or(Ok(()), Err)
 }
 
 fn executable_sha256(root: &Path) -> Option<String> {
@@ -172,7 +252,7 @@ pub(crate) fn render_json(
     environment: Option<&QualificationEnvironment>,
 ) -> String {
     let mut output = format!(
-        "{{\"schema_version\":2,\"suite_version\":\"2\",\"commit\":\"{}\",\"worktree_dirty\":{},\"artifact_sha256\":{},\"executable_sha256\":{},\"suite\":\"{}\",\"qualification_environment\":{},\"results\":[",
+        "{{\"schema_version\":3,\"suite_version\":\"2\",\"commit\":\"{}\",\"worktree_dirty\":{},\"artifact_sha256\":{},\"executable_sha256\":{},\"suite\":\"{}\",\"qualification_environment\":{},\"results\":[",
         escape_json(commit),
         worktree_dirty,
         artifact_sha256
@@ -249,6 +329,13 @@ pub(crate) fn render_json(
                 ));
             }
             output.push_str("]}");
+        }
+        output.push_str("],\"owners\":[");
+        for (owner_index, owner) in result.owners.iter().enumerate() {
+            if owner_index > 0 {
+                output.push(',');
+            }
+            output.push_str(&format!("\"{}\"", escape_json(owner)));
         }
         output.push_str("]}");
     }
@@ -357,8 +444,9 @@ mod tests {
                     shared_from: None,
                     measurements: vec![measurement.clone()],
                 }],
+                owners: Vec::new(),
             };
-            super::emit(&root, "phase-14", &[result], None, Some(&output))
+            super::emit(&root, "phase-14", &[result], None, Some(&output), None)
                 .expect("failure evidence does not require a valid success candidate");
             let document = fs::read_to_string(&output).expect("read failure evidence");
             assert!(document.contains(status.as_str()), "{document}");
@@ -405,6 +493,7 @@ mod tests {
                             value: 12.5,
                         }],
                     }],
+                    owners: Vec::new(),
                 },
                 EvidenceResult {
                     id: "manual capability".to_owned(),
@@ -413,11 +502,12 @@ mod tests {
                     measurements: Vec::new(),
                     gates: Vec::new(),
                     samples: Vec::new(),
+                    owners: Vec::new(),
                 },
             ],
             None,
         );
-        assert!(json.starts_with("{\"schema_version\":2,\"suite_version\":\"2\","));
+        assert!(json.starts_with("{\"schema_version\":3,\"suite_version\":\"2\","));
         assert!(json.contains("\"worktree_dirty\":true"));
         assert!(json.contains("\"artifact_sha256\":null"));
         assert!(json.contains(&format!("\"executable_sha256\":\"{}\"", "b".repeat(64))));
@@ -434,6 +524,68 @@ mod tests {
         assert!(json.contains("\"metric\":\"warm.p95\""));
         assert!(json.contains("\"cohort\":\"warm\",\"run\":1"));
         assert!(json.ends_with("]}"));
+    }
+
+    /// A run whose source changed before the evidence was written still writes it, with a
+    /// FAILED `source identity` result and the start identity, and fails.
+    #[test]
+    fn evidence_records_the_start_identity_and_fails_on_drift() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-identity-drift-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let output = root.join("dist/evidence/drift.json");
+        // Not a repository: the current identity is UNKNOWN and dirty, unlike the start.
+        let started = super::SourceIdentity {
+            commit: "a".repeat(40),
+            worktree_dirty: false,
+        };
+        let passed = EvidenceResult {
+            id: "task".to_owned(),
+            status: EvidenceStatus::Passed,
+            detail: None,
+            measurements: Vec::new(),
+            gates: Vec::new(),
+            samples: Vec::new(),
+            owners: vec!["p/bin:p/a::b".to_owned()],
+        };
+        let error = super::emit(
+            &root,
+            "all",
+            std::slice::from_ref(&passed),
+            None,
+            Some(&output),
+            Some(&started),
+        )
+        .unwrap_err();
+        assert!(error.contains("source identity changed"), "{error}");
+        let document = fs::read_to_string(&output).unwrap();
+        assert!(document.contains(&format!("\"commit\":\"{}\"", "a".repeat(40))));
+        assert!(document.contains("\"worktree_dirty\":false"));
+        assert!(document.contains("\"owners\":[\"p/bin:p/a::b\"]"));
+        assert!(document.contains("\"id\":\"source identity\",\"status\":\"FAILED\""));
+        // Unchanged, the same run writes only its own results and succeeds.
+        let current = super::SourceIdentity::capture(&root);
+        super::emit(
+            &root,
+            "all",
+            std::slice::from_ref(&passed),
+            None,
+            Some(&output),
+            Some(&current),
+        )
+        .unwrap();
+        assert!(
+            !fs::read_to_string(&output)
+                .unwrap()
+                .contains("source identity")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -458,6 +610,7 @@ mod tests {
             measurements: Vec::new(),
             gates: Vec::new(),
             samples: Vec::new(),
+            owners: Vec::new(),
         }];
         assert_eq!(verified_artifact_sha256(&root, &failed), None);
         let passed = [EvidenceResult {
@@ -467,6 +620,7 @@ mod tests {
             measurements: Vec::new(),
             gates: Vec::new(),
             samples: Vec::new(),
+            owners: Vec::new(),
         }];
         assert_eq!(verified_artifact_sha256(&root, &passed), Some(hash));
         fs::remove_dir_all(root).expect("remove evidence fixture");
@@ -497,6 +651,7 @@ mod tests {
                 measurements: Vec::new(),
                 gates: Vec::new(),
                 samples: Vec::new(),
+                owners: Vec::new(),
             }],
             Some(&environment),
         );

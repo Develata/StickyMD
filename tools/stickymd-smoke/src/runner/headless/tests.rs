@@ -72,6 +72,36 @@ fn coverage(tasks: &[Task]) -> BTreeSet<(Module, TaskId, Vec<&'static str>)> {
     units
 }
 
+/// The owner verification is narrowed like a Cargo task: kept whole when every workspace
+/// package is selected, cut to the selected owning packages otherwise, and dropped (with its
+/// discovery build) when no selected package owns an obligation.
+#[test]
+fn owner_verification_projects_onto_the_selected_owning_packages() {
+    let full = Task::UnitTestOwners { packages: None };
+    assert_eq!(
+        project(full.clone(), &Module::ALL).unwrap(),
+        Some(full.clone())
+    );
+    let owning = crate::qualification::unit_test_owners()
+        .into_iter()
+        .map(|owner| owner.package)
+        .collect::<BTreeSet<_>>();
+    assert!(owning.contains("stickymd-win"), "{owning:?}");
+    assert_eq!(
+        project(full.clone(), &[Module::Windows, Module::Core]).unwrap(),
+        Some(Task::UnitTestOwners {
+            packages: Some(vec!["stickymd-win"])
+        })
+    );
+    for module in Module::ALL {
+        let projected = project(full.clone(), &[module]).unwrap();
+        let owns = module
+            .package()
+            .is_some_and(|package| owning.contains(package));
+        assert_eq!(projected.is_some(), owns, "{module:?}");
+    }
+}
+
 #[test]
 fn individual_modules_form_a_disjoint_complete_cover_of_headless_commands() {
     for mode in [Mode::Tests, Mode::Performance, Mode::All] {

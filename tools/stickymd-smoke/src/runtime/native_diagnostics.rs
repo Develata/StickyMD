@@ -96,6 +96,7 @@ pub(super) fn diagnose(
         measurements: data.measurements,
         gates: data.gates,
         samples: data.samples,
+        owners: Vec::new(),
     };
     let document = evidence::render_json(
         &before.0,

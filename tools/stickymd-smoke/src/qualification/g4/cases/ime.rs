@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 use super::super::super::exact_desktop::{
-    ChildGuard, copy_directory, io_error, seed_note, wait_for_config, wait_for_layout,
+    Checks, ChildGuard, copy_directory, io_error, seed_note, wait_for_config, wait_for_layout,
     wait_note as wait_raw_note,
 };
 use crate::window_control::{ImeProfile, ImeProfileGuard, WindowHandle};
@@ -18,6 +18,8 @@ const AUTOSAVE_OBSERVATION: Duration = Duration::from_millis(800);
 const INPUT_PROJECTION_OBSERVATION: Duration = Duration::from_millis(600);
 const IME_COMMIT_SETTLE: Duration = Duration::from_millis(100);
 const SOURCE_PREFIX: &str = "StickyMD IME baseline: ";
+/// Separates the two matches of the Search fixture `{term}{SEARCH_SEPARATOR}{term}`.
+const SEARCH_SEPARATOR: &str = "\n分隔\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OrdinaryInputRecovery {
@@ -67,25 +69,40 @@ impl OrdinaryInputRecovery {
 
 struct RealImeSession<'guard> {
     profile: ImeProfile,
+    /// The `ime=` parameter of every label this session records.
+    profile_key: &'static str,
     profile_guard: &'guard ImeProfileGuard,
     window: WindowHandle,
     mode_corrected: bool,
     composition_confirmed: bool,
+    /// Checks that held for this profile; the case keeps them only if the profile passes.
+    recorded: Checks,
 }
 
 impl<'guard> RealImeSession<'guard> {
     fn new(
         profile: ImeProfile,
+        profile_key: &'static str,
         profile_guard: &'guard ImeProfileGuard,
         window: WindowHandle,
     ) -> Self {
         Self {
             profile,
+            profile_key,
             profile_guard,
             window,
             mode_corrected: false,
             composition_confirmed: false,
+            recorded: Checks::default(),
         }
+    }
+
+    /// Records `name` for this profile, with `params` besides `ime`.
+    fn record(&mut self, name: &str, params: &[(&str, &str)]) {
+        let mut all = Vec::with_capacity(params.len() + 1);
+        all.push(("ime", self.profile_key));
+        all.extend_from_slice(params);
+        self.recorded.record(name, &all);
     }
 
     fn restore_input_mode(&mut self) -> Result<(), String> {
@@ -140,28 +157,34 @@ impl Drop for RealImeSession<'_> {
     }
 }
 
-pub(super) fn g4_06(_repository: &Path, program: &Path) -> Result<(), String> {
+pub(super) fn g4_06(_repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
     let parent = program.parent().ok_or_else(|| {
         format!(
             "G4-06 program directory has no parent: {}",
             program.display()
         )
     })?;
-    for (profile, suffix) in [
-        (ImeProfile::MicrosoftPinyin, "microsoft-pinyin"),
-        (ImeProfile::WeType, "wetype"),
+    for (profile, suffix, key) in [
+        (ImeProfile::MicrosoftPinyin, "microsoft-pinyin", "pinyin"),
+        (ImeProfile::WeType, "wetype", "wetype"),
     ] {
         // Each profile owns a fresh portable directory. The first profile's
         // 40% opacity and left-dock coverage must not become the second
         // profile's startup state or move its physical input target off-screen.
         let profile_program = parent.join(format!("g4-06-{suffix}"));
         copy_directory(program, &profile_program)?;
-        exercise_profile(&profile_program, profile)?;
+        checks.extend(exercise_profile(&profile_program, profile, key)?);
     }
     Ok(())
 }
 
-fn exercise_profile(program: &Path, profile: ImeProfile) -> Result<(), String> {
+/// Runs the functional matrix for `profile`; returns its checks only if every step and
+/// every restore succeeded.
+fn exercise_profile(
+    program: &Path,
+    profile: ImeProfile,
+    profile_key: &'static str,
+) -> Result<Checks, String> {
     seed_note(program, SOURCE_PREFIX)?;
     let mut child = ChildGuard::start(&program.join("StickyMD.exe"))?;
     wait_for_layout(program)?;
@@ -173,7 +196,8 @@ fn exercise_profile(program: &Path, profile: ImeProfile) -> Result<(), String> {
     crate::window_control::focus_source_editor(window)?;
     crate::window_control::press_document_end(window)?;
     let profile_guard = ImeProfileGuard::activate(profile, window)?;
-    let mut ime = RealImeSession::new(profile, &profile_guard, window);
+    let mut ime = RealImeSession::new(profile, profile_key, &profile_guard, window);
+    ime.record("ime-profile-activated", &[]);
     let checks = (|| {
         crate::window_control::set_ime_open_status(window, true)?;
         crate::window_control::set_ime_native_mode(window, true)?;
@@ -190,6 +214,7 @@ fn exercise_profile(program: &Path, profile: ImeProfile) -> Result<(), String> {
     })();
 
     let mode_restore = ime.restore_input_mode();
+    let recorded = std::mem::take(&mut ime.recorded);
     drop(ime);
     let child_cleanup = child.kill_and_wait();
     let profile_restore = profile_guard.restore();
@@ -200,6 +225,7 @@ fn exercise_profile(program: &Path, profile: ImeProfile) -> Result<(), String> {
         child_cleanup,
         profile_restore,
     )
+    .map(|()| recorded)
 }
 
 fn combine_profile_results(
@@ -259,6 +285,7 @@ fn source_commit_and_undo(
     crate::window_control::press_undo(window)?;
     wait_note(program, |text| text == SOURCE_PREFIX)
         .map_err(|error| format!("IME commit Undo did not restore source prefix: {error}"))?;
+    ime.record("ime-commit-undo", &[("mode", "source")]);
     capture_search_fixture_term(program, window, ime)
 }
 
@@ -324,7 +351,9 @@ fn source_cancel_is_non_mutating(
         program,
         SOURCE_PREFIX,
         "Escape cancel mutated canonical text",
-    )
+    )?;
+    ime.record("ime-cancel-non-mutating", &[]);
+    Ok(())
 }
 
 fn selection_commit_is_one_undo(
@@ -339,7 +368,9 @@ fn selection_commit_is_one_undo(
     commit_first_candidate(window)?;
     wait_note(program, valid_cjk_commit)?;
     crate::window_control::press_undo(window)?;
-    wait_note(program, |text| text == SELECTED).map(|_| ())
+    wait_note(program, |text| text == SELECTED)?;
+    ime.record("ime-selection-commit-one-undo", &[]);
+    Ok(())
 }
 
 fn search_fields_accept_real_ime(
@@ -348,7 +379,7 @@ fn search_fields_accept_real_ime(
     ime: &mut RealImeSession<'_>,
     term: &str,
 ) -> Result<(), String> {
-    let document = format!("{term}\n分隔\n{term}");
+    let document = format!("{term}{SEARCH_SEPARATOR}{term}");
     replace_document(program, window, &document)?;
 
     crate::window_control::press_find(window)?;
@@ -361,6 +392,7 @@ fn search_fields_accept_real_ime(
         &document,
         "Find-only accepted a replacement command",
     )?;
+    ime.record("ime-find-no-replace", &[]);
     crate::window_control::press_arrow_down(window)?;
     crate::window_control::press_arrow_up(window)?;
     crate::window_control::press_arrow_down(window)?;
@@ -374,6 +406,7 @@ fn search_fields_accept_real_ime(
             ime.profile.name()
         ));
     }
+    ime.record("ime-find-query-selects-term", &[]);
 
     crate::window_control::press_replace(window)?;
     begin_preedit(program, window, &document, "nihao", ime)?;
@@ -381,15 +414,18 @@ fn search_fields_accept_real_ime(
     crate::window_control::press_control_enter(window)?;
     wait_note(program, |text| text != document && text.contains(term))?;
     let replaced = read_note(program)?;
-    if replaced.bytes().any(|byte| byte.is_ascii_alphabetic()) {
+    if replacement_fragment(&replaced, term).is_none() {
         return Err(format!(
-            "{} replacement field left uncommitted romanization in the document",
+            "{} replacement did not replace one match with a committed CJK fragment: observed={replaced:?}",
             ime.profile.name()
         ));
     }
+    ime.record("ime-replace-commit", &[]);
     crate::window_control::press_find(window)?;
     crate::window_control::press_undo(window)?;
-    wait_note(program, |text| text == document).map(|_| ())
+    wait_note(program, |text| text == document)?;
+    ime.record("ime-replace-undo", &[]);
+    Ok(())
 }
 
 fn runtime_states_accept_real_ime(
@@ -404,6 +440,7 @@ fn runtime_states_accept_real_ime(
     crate::window_control::switch_to_split(window)?;
     wait_for_config(program, "view_mode = \"split\"")?;
     commit_and_undo(program, window, BASELINE, "nihao", ime, "Split")?;
+    ime.record("ime-commit-undo", &[("mode", "split")]);
 
     crate::window_control::switch_to_source(process_id)?;
     wait_for_config(program, "view_mode = \"source\"")?;
@@ -411,6 +448,7 @@ fn runtime_states_accept_real_ime(
     crate::window_control::commit_opacity_slider(window, 40)?;
     wait_for_config(program, "opacity = 40")?;
     commit_and_undo(program, window, BASELINE, "shijie", ime, "40% opacity")?;
+    ime.record("ime-commit-undo", &[("opacity", "40")]);
 
     crate::window_control::move_to_primary_edge(
         window,
@@ -428,12 +466,14 @@ fn runtime_states_accept_real_ime(
         false,
         "real IME typing guard",
     )?;
+    ime.record("ime-composition-no-collapse", &[("edge", "left")]);
     commit_first_candidate(window)?;
     wait_note(program, |text| {
         text.strip_prefix(BASELINE).is_some_and(valid_cjk_commit)
     })?;
     crate::window_control::press_undo(window)?;
     wait_note(program, |text| text == BASELINE)?;
+    ime.record("ime-commit-undo", &[("edge", "left")]);
 
     crate::window_control::move_to_primary_floating(window)?;
     wait_for_config(program, "dock_edge = \"none\"")?;
@@ -450,11 +490,21 @@ fn runtime_states_accept_real_ime(
         .map_err(|error| format!("post-composition native refocus: {error}"))?;
     crate::window_control::focus_source_editor(window)
         .map_err(|error| format!("post-composition refocus: {error}"))?;
+    // A preedit committed by the focus change shows as an unsaved edit and, after the
+    // autosave debounce, on disk; check both before the next composition can mask it.
+    thread::sleep(AUTOSAVE_OBSERVATION);
+    if title_is_dirty(&crate::window_control::title(window)?) {
+        return Err(format!(
+            "{} focus loss committed the active preedit into the document",
+            ime.profile.name()
+        ));
+    }
     assert_note(
         program,
         BASELINE,
         "focus loss committed or discarded the active preedit into canonical text",
     )?;
+    ime.record("ime-focus-loss-keeps-text", &[]);
     crate::window_control::press_document_end(window)?;
     begin_preedit(program, window, BASELINE, "zaijian", ime)
         .map_err(|error| format!("refocus preedit: {error}"))?;
@@ -463,7 +513,9 @@ fn runtime_states_accept_real_ime(
         text.strip_prefix(BASELINE).is_some_and(valid_cjk_commit)
     })?;
     crate::window_control::press_undo(window)?;
-    wait_note(program, |text| text == BASELINE).map(|_| ())
+    wait_note(program, |text| text == BASELINE)?;
+    ime.record("ime-refocus-commit-undo", &[]);
+    Ok(())
 }
 
 fn commit_and_undo(
@@ -513,6 +565,7 @@ fn begin_preedit(
             ),
         )?;
         ime.confirm_composition();
+        ime.record("ime-preedit-not-durable", &[]);
         return Ok(());
     }
 
@@ -550,6 +603,7 @@ fn begin_preedit(
         ),
     )?;
     ime.confirm_composition();
+    ime.record("ime-preedit-not-durable", &[]);
     Ok(())
 }
 
@@ -624,6 +678,20 @@ fn assert_note(program: &Path, expected: &str, context: &str) -> Result<(), Stri
     }
 }
 
+/// What replaced exactly one `term` of the Search fixture, when everything else is unchanged
+/// and it is a single-line CJK commit other than `term` itself (so neither an empty
+/// replacement, a kept match nor leftover romanization qualifies).
+fn replacement_fragment<'a>(replaced: &'a str, term: &str) -> Option<&'a str> {
+    let (first, second) = replaced.split_once(SEARCH_SEPARATOR)?;
+    let fragment = match (first == term, second == term) {
+        (true, false) => second,
+        (false, true) => first,
+        _ => return None,
+    };
+    (valid_cjk_commit(fragment) && !fragment.contains('\n') && !fragment.contains(term))
+        .then_some(fragment)
+}
+
 fn valid_cjk_commit(text: &str) -> bool {
     !text.is_empty()
         && text.chars().any(is_cjk)
@@ -638,8 +706,32 @@ fn is_cjk(character: char) -> bool {
 mod tests {
     use super::{
         ImeProfile, OrdinaryInputRecovery, RecoveryAction, canonical_line_endings,
-        combine_profile_results, title_is_dirty, valid_cjk_commit,
+        combine_profile_results, replacement_fragment, title_is_dirty, valid_cjk_commit,
     };
+
+    #[test]
+    fn a_replacement_is_one_match_replaced_by_a_cjk_commit() {
+        assert_eq!(
+            replacement_fragment("你好\n分隔\n中国", "中国"),
+            Some("你好")
+        );
+        assert_eq!(
+            replacement_fragment("中国\n分隔\n你好", "中国"),
+            Some("你好")
+        );
+        for rejected in [
+            "\n分隔\n中国",
+            "中国\n分隔\n中国",
+            "你好\n分隔\n你好",
+            "nihao\n分隔\n中国",
+            "中国你好\n分隔\n中国",
+            "你\n好\n分隔\n中国",
+            "中国\n分隔\n中国\n你好",
+            "你好中国",
+        ] {
+            assert_eq!(replacement_fragment(rejected, "中国"), None, "{rejected:?}");
+        }
+    }
 
     #[test]
     fn commit_predicate_rejects_romanization_and_accepts_cjk() {

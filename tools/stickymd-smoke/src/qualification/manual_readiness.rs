@@ -8,8 +8,9 @@ use std::path::Path;
 
 use super::decisions::Decision;
 use super::json;
+use super::manual_observation::coverage;
 use super::manual_observation::reduce::{self, Verdict};
-use super::manual_observation::registry::{KNOWN_GAPS, Tier};
+use super::manual_observation::registry::Tier;
 use super::manual_observation::target::Role;
 use super::manual_observation::{store, waiver};
 
@@ -33,9 +34,17 @@ pub(super) struct Report {
     rows: Vec<Row>,
     notes: Vec<String>,
     superseded_receipt: bool,
+    /// Whether the headless CI receipt verified the mapping's unit-test owners; until it
+    /// did, every obligation a unit test owns awaits that proof.
+    unit_owners_proven: bool,
 }
 
 impl Report {
+    /// Records the headless verdict on the unit-test owners (`automated_readiness::check`).
+    pub(super) fn set_unit_owner_proof(&mut self, proven: bool) {
+        self.unit_owners_proven = proven;
+    }
+
     /// What is known without a context: only whether the superseded receipt is present.
     pub(super) fn detached(root: &Path) -> Self {
         Self {
@@ -235,9 +244,25 @@ pub(super) fn print(report: &Report) {
     if report.superseded_receipt {
         println!("  note: {SUPERSEDED_RECEIPT} (schema 1) is superseded; it is kept but not read");
     }
-    println!("Known manual coverage gaps (no P12 case owns them yet; the matrix is not complete):");
-    for gap in KNOWN_GAPS {
-        println!("  - {gap}");
+    println!(
+        "Open manual coverage gaps (no owner yet; the manual matrix is not complete, and a complete mapping is not a PASS):"
+    );
+    for gap in coverage::gaps() {
+        println!("  - {}", coverage::describe(gap));
+    }
+    println!("Retired manual obligations (USER decisions):");
+    for retired in coverage::retired() {
+        println!("  - {}", coverage::describe(retired));
+    }
+    if report.unit_owners_proven {
+        println!("Unit-test owned obligations (verified by the headless CI receipt):");
+    } else {
+        println!(
+            "Unit-test owned obligations awaiting proof (the headless CI receipt of the frozen source has not verified their owners):"
+        );
+    }
+    for owned in coverage::test_owned() {
+        println!("  - {}", coverage::describe(owned));
     }
 }
 
@@ -262,6 +287,13 @@ pub(super) fn render(report: &Report) -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
+    let gaps = coverage::gaps().map(coverage::describe).collect::<Vec<_>>();
+    let retired = coverage::retired()
+        .map(coverage::describe)
+        .collect::<Vec<_>>();
+    let unit_owned = coverage::test_owned()
+        .map(coverage::describe)
+        .collect::<Vec<_>>();
     let quoted = |items: &mut dyn Iterator<Item = &str>| {
         items
             .map(|item| format!("\"{}\"", json::escape(item)))
@@ -279,9 +311,12 @@ pub(super) fn render(report: &Report) -> String {
         },
     );
     format!(
-        "{{\"context_id\":{context},\"reset\":{reset},\"cells\":[{rows}],\"notes\":[{}],\"known_gaps\":[{}],\"superseded_receipt\":{}}}",
+        "{{\"context_id\":{context},\"reset\":{reset},\"cells\":[{rows}],\"notes\":[{}],\"known_gaps\":[{}],\"retired\":[{}],\"unit_test_owned\":{{\"verified\":{},\"obligations\":[{}]}},\"superseded_receipt\":{}}}",
         quoted(&mut report.notes.iter().map(String::as_str)),
-        quoted(&mut KNOWN_GAPS.iter().copied()),
+        quoted(&mut gaps.iter().map(String::as_str)),
+        quoted(&mut retired.iter().map(String::as_str)),
+        report.unit_owners_proven,
+        quoted(&mut unit_owned.iter().map(String::as_str)),
         report.superseded_receipt
     )
 }

@@ -79,7 +79,10 @@ pub(super) fn run(repository: &Path, program: &Path) -> Result<CaseEvidence, Str
     )?;
     assert_note_unchanged(program, &before, "split-selection-scroll")?;
     child.kill_and_wait()?;
-    Ok(CaseEvidence { artifacts })
+    Ok(CaseEvidence {
+        artifacts,
+        ..CaseEvidence::default()
+    })
 }
 
 fn assert_note_unchanged(program: &Path, expected: &[u8], stage: &str) -> Result<(), String> {
