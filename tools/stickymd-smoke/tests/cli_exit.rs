@@ -358,7 +358,7 @@ fn successful_json_request_returns_zero_and_writes_one_json_document() {
     );
     let stdout = String::from_utf8(output.stdout).expect("JSON stdout is UTF-8");
     assert_eq!(stdout.lines().count(), 1);
-    assert!(stdout.starts_with("{\"schema_version\":2,\"suite_version\":\"2\","));
+    assert!(stdout.starts_with("{\"schema_version\":3,\"suite_version\":\"2\","));
     assert!(stdout.trim_end().ends_with('}'));
     assert!(stdout.contains("\"name\":\"task.execution_seconds\""));
     assert!(String::from_utf8_lossy(&output.stderr).contains("TASK_TIMING"));

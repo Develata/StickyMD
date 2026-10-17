@@ -439,3 +439,7 @@ plan 05 `external-change-conflict`（载入外部解除重建义务）：`sticky
 2026-10-16 覆盖补全 C2b-1 映射 plan 11 `release-artifact-authority` 的 exact 收据 schema 2：G3/G4/G5 的 case 与检查标签在
 `qualification/exact_checks.rs` 一处声明，runner（`exact_desktop.rs`）、模块证据校验（`module_evidence.rs`）、`--case` 选项与人工义务映射
 （`manual_observation/coverage/table.rs` 的 `Target::Exact { case, checks }`）都以它为准；验收见 P14-A80。
+
+2026-10-16 覆盖补全 C2b-2 映射 plan 11 `release-artifact-authority` 的单元测试 owner 核验与 smoke 证据 schema 3：owner 声明在人工义务映射
+（`manual_observation/coverage/table.rs` 的 `Target::Test`），核验在 `unit_owners`（解析与 Windows 执行）与 runner 的 `unit-test owner verification`
+任务，收据判定在 `qualification/automated_readiness.rs`，源码身份在 `evidence.rs::SourceIdentity`，`harness` 治理在 `governance.rs`；验收见 P14-A81。

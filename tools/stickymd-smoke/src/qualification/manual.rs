@@ -90,6 +90,12 @@ fn list() {
     for retired in coverage::retired() {
         println!("  - {}", coverage::describe(retired));
     }
+    println!(
+        "Unit-test owned obligations (a proof requirement: readiness checks the owners against the headless CI receipt):"
+    );
+    for owned in coverage::test_owned() {
+        println!("  - {}", coverage::describe(owned));
+    }
 }
 
 /// The reduced verdict per case and role, before tier and waiver policy (readiness).

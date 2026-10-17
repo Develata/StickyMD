@@ -172,7 +172,7 @@ fn canonical_reserved_paths_are_rejected_before_tasks_or_evidence_writes() {
         .unwrap();
         let error = crate::runner::execute(&root, &options).unwrap_err();
         assert!(error.contains("coordinator-owned"), "{error}");
-        assert!(crate::evidence::emit(&root, "phase-00", &[], None, Some(&alias)).is_err());
+        assert!(crate::evidence::emit(&root, "phase-00", &[], None, Some(&alias), None).is_err());
         assert_eq!(fs::read(root.join(receipt)).unwrap(), b"previous success");
     }
     let runtime = canonical_root.join(ModuleId::Runtime.receipt());

@@ -222,6 +222,18 @@ fn owner_errors(obligations: &[Obligation], owners: &Owners) -> Vec<String> {
                     errors.push(format!("{label}: a gap names no planned owner"));
                 }
             }
+            // Existence is the owner verification's job; here only the identity's form.
+            Target::Test(owner) => {
+                if !crate::headless::Module::ALL
+                    .iter()
+                    .any(|module| module.package() == Some(owner.package))
+                {
+                    errors.push(format!("{label}: {owner} names no workspace package"));
+                }
+                if owner.path.is_empty() || owner.path.contains(char::is_whitespace) {
+                    errors.push(format!("{label}: {owner} has no libtest path"));
+                }
+            }
         }
     }
     errors

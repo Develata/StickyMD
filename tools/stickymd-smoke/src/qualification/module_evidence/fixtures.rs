@@ -130,6 +130,7 @@ fn smoke(module: ModuleId, candidate: &Candidate, marker: &str) -> String {
             measurements: Vec::new(),
             gates: Vec::new(),
             samples: Vec::new(),
+            owners: Vec::new(),
         })
         .collect::<Vec<_>>();
     crate::evidence::render_json(

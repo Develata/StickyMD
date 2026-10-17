@@ -72,7 +72,7 @@ pub(super) fn g5_companions(document: &str) -> Result<Vec<Companion>, String> {
 /// Runtime and Performance: one formal Phase 14 run on the origin executable that
 /// covers the runner's complete formal task plan, in order, every task PASSED.
 fn smoke(root: &Value, runtime: bool, origin: &Origin<'_>) -> Result<(), String> {
-    expect_unsigned(root, "schema_version", 2)?;
+    expect_unsigned(root, "schema_version", 3)?;
     expect_string(root, "suite", "phase-14")?;
     expect_string(root, "commit", origin.source_commit)?;
     expect_bool(root, "worktree_dirty", false)?;
@@ -90,6 +90,7 @@ fn smoke(root: &Value, runtime: bool, origin: &Origin<'_>) -> Result<(), String>
         if result.field("id")?.string()? != expected || !passed(result)? {
             return Err(format!("missing successful formal task {expected}"));
         }
+        crate::evidence::require_no_owners(result)?;
     }
     Ok(())
 }

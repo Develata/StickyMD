@@ -5,6 +5,7 @@
 
 use super::{Obligation, Target};
 use crate::qualification::exact_checks;
+use crate::unit_owners::{Owner, OwnerTarget};
 
 const fn o(
     source: &'static str,
@@ -26,6 +27,15 @@ const fn m(case: &'static str, scenario: &'static str) -> Target {
 
 const fn exact(case: &'static str, checks: &'static [&'static str]) -> Target {
     Target::Exact { case, checks }
+}
+
+/// A unit test of the `stickymd-win` binary; owned once the headless receipt verifies it.
+const fn win_test(path: &'static str) -> Target {
+    Target::Test(Owner {
+        package: "stickymd-win",
+        target: OwnerTarget::Bin("stickymd-win"),
+        path,
+    })
 }
 
 const fn gap(planned: &'static str) -> Target {
@@ -52,7 +62,10 @@ const G4_QUIT_SAVE_FAILURE: &str = "G4-01: 退出保存失败时取消退出、�
 const G4_TRAY_HIDE: &str =
     "G4-01: 窗口可见时经托盘菜单 Hide 隐藏（现只经 Close 隐藏，菜单项只核对存在）";
 const G4_ESC: &str = "G4-02: 真实键盘 Esc 分支";
-const UNIT_ESC_GUARDS: &str = "C2b 绑定模块收据：app::escape::tests 经生产决策路径的 Esc 守卫与修饰键（USER 2026-10-15 批准仅单元覆盖）";
+/// The Esc decision with each guard alone (asset reconcile, input disabled while quitting) and
+/// under every modifier; USER 2026-10-15 approved unit-only coverage of these Esc rows.
+const ESC_GUARDS_TEST: &str = "app::escape::tests::each_guard_alone_ignores_esc";
+const ESC_MODIFIERS_TEST: &str = "app::escape::tests::modifiers_never_change_esc";
 /// The existing scrollbar tests check the app's geometry and painting, the render projection
 /// and the Preview worker's receipts; no test drives the app runtime that composes the bars,
 /// hovers, drags, pages, ends a drag or admits a Preview receipt.
@@ -1121,13 +1134,13 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:esc-2",
         "transient-guards",
         "state=asset-sync",
-        gap(UNIT_ESC_GUARDS),
+        win_test(ESC_GUARDS_TEST),
     ),
     o(
         "plan09:esc-2",
         "transient-guards",
         "state=quitting",
-        gap(UNIT_ESC_GUARDS),
+        win_test(ESC_GUARDS_TEST),
     ),
     o(
         "plan09:esc-3",
@@ -1161,7 +1174,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:esc-6",
         "collapse",
         "modifier=ctrl",
-        gap(UNIT_ESC_GUARDS),
+        win_test(ESC_MODIFIERS_TEST),
     ),
     o(
         "plan09:esc-6",

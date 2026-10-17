@@ -32,8 +32,9 @@ pub(super) fn emit(
         measurements: Vec::new(),
         gates: Vec::new(),
         samples: Vec::new(),
+        owners: Vec::new(),
     });
-    match evidence::emit(root, suite, results, environment, Some(path)) {
+    match evidence::emit(root, suite, results, environment, Some(path), None) {
         Ok(()) => {
             results.pop();
             Ok(())
@@ -107,6 +108,7 @@ mod tests {
             }],
             gates: Vec::new(),
             samples: Vec::new(),
+            owners: Vec::new(),
         }
     }
 
@@ -144,7 +146,15 @@ mod tests {
         // destination so the synthetic fixture needs no real candidate ledger.
         let final_output = fixture.0.join("final.json");
         fs::write(&final_output, partial).unwrap();
-        evidence::emit(&fixture.0, "phase-14", &results, None, Some(&final_output)).unwrap();
+        evidence::emit(
+            &fixture.0,
+            "phase-14",
+            &results,
+            None,
+            Some(&final_output),
+            None,
+        )
+        .unwrap();
         let complete = fs::read_to_string(final_output).unwrap();
         assert!(!complete.contains("INCOMPLETE"));
         assert!(!complete.contains("NOT_TESTED"));
@@ -159,7 +169,7 @@ mod tests {
         assert!(emit(&fixture.0, "phase-14", &options, &mut results, None).is_err());
         assert_eq!(results.last().unwrap().status, EvidenceStatus::Failed);
         let output = fixture.0.join("dist/evidence/resources-qualification.json");
-        evidence::emit(&fixture.0, "phase-14", &results, None, Some(&output)).unwrap();
+        evidence::emit(&fixture.0, "phase-14", &results, None, Some(&output), None).unwrap();
         let document = fs::read_to_string(output).unwrap();
         assert!(document.contains("INCOMPLETE"));
         assert!(document.contains("\"status\":\"FAILED\""));

@@ -44,9 +44,10 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
         request.mode.name(),
         tasks.len()
     );
+    let identity = crate::evidence::SourceIdentity::capture(root);
     for (index, task) in tasks.iter().enumerate() {
         println!("[{}/{}] {}", index + 1, tasks.len(), task_label(task));
-        match run_task(root, task, false)? {
+        match run_task(root, task, false, &identity)? {
             TaskExecution::Passed(_) => {}
             #[cfg(windows)]
             TaskExecution::Failed { detail, .. } => return Err(detail),
@@ -117,6 +118,7 @@ fn project(task: Task, selected: &[Module]) -> Result<Option<Task>, String> {
     let Task::Cargo { id, label, args } = task else {
         return match task {
             Task::Governance => Ok(Some(task)),
+            Task::UnitTestOwners { packages: None } => Ok(project_owners(selected)),
             _ => Err("full headless plan contains an unsupported non-Cargo task".to_owned()),
         };
     };
@@ -166,6 +168,47 @@ fn project(task: Task, selected: &[Module]) -> Result<Option<Task>, String> {
         },
         args: narrowed,
     }))
+}
+
+/// The owner verification narrowed like a Cargo task: unchanged when every workspace
+/// package is selected, otherwise only the selected packages that own obligations, and
+/// none (not even the discovery build) when no selected package owns one.
+fn project_owners(selected: &[Module]) -> Option<Task> {
+    let workspace = Module::ALL
+        .into_iter()
+        .filter(|module| module.package().is_some());
+    if workspace.clone().all(|module| selected.contains(&module)) {
+        return Some(Task::UnitTestOwners { packages: None });
+    }
+    let owning = crate::qualification::unit_test_owners()
+        .into_iter()
+        .map(|owner| owner.package)
+        .collect::<BTreeSet<_>>();
+    let packages = workspace
+        .filter(|module| selected.contains(module))
+        .filter_map(Module::package)
+        .filter(|package| owning.contains(package))
+        .collect::<Vec<_>>();
+    (!packages.is_empty()).then_some(Task::UnitTestOwners {
+        packages: Some(packages),
+    })
+}
+
+/// The modules whose packages an owner verification checks.
+fn owner_modules(packages: Option<&[&str]>) -> Vec<Module> {
+    let owning = crate::qualification::unit_test_owners()
+        .into_iter()
+        .map(|owner| owner.package)
+        .collect::<BTreeSet<_>>();
+    Module::ALL
+        .into_iter()
+        .filter(|module| {
+            module.package().is_some_and(|package| {
+                owning.contains(package)
+                    && packages.is_none_or(|packages| packages.contains(&package))
+            })
+        })
+        .collect()
 }
 
 fn owners(args: &[&str]) -> Result<Vec<Module>, String> {

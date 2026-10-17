@@ -401,6 +401,19 @@ ignored `dist/evidence/` 中：
 
 - source-only receipt 绑定 Source Freeze，不要求 final EXE hash；本地 headless CI 收据必须恰好包含 runner 为
   `all --ci` 规划的全部任务（按顺序、每项 `PASSED`）及任务集标记，不另维护任务名单；
+- smoke 证据（所有套件）为 schema 3：每个结果带 `owners` 数组，只有单元测试 owner 核验任务的结果可以非空；schema 2
+  证据无效，不迁移。证据序列化 runner 在开始时采集的源码身份（HEAD 与工作树是否干净），写出前复核，身份变化即追加失败结果；
+- 人工义务映射中由单元测试持有的义务以 owner `(package, target, path)` 声明，`target` 只允许 `lib` 或 `bin:<名称>`（使用
+  libtest 默认 harness 的单元测试目标；工作区清单的 `harness` 键只允许出现在 `[[bench]]`）。Windows 上 `all --ci` 的
+  tests 部分包含 owner 核验任务：以 `cargo test --no-run --message-format=json` 的 `compiler-artifact` 建立目标到测试二进制的
+  映射，对每个含 owner 的二进制执行 `--list` 与 `--list --ignored`（owner 须在前者恰好出现一次、不在后者中），再以
+  `--exact <owner> --nocapture` 让每个 owner 单独一个进程执行。构建、两次列出与每次执行都须成功退出、输出完整（未超时、未截断）
+  并解析成功；任一不满足即任务失败，且不贡献已核验 owner。任务前后复核源码身份与开始时一致。本地 headless CI 收据中 owner 任务的
+  结果列出已核验 owner；readiness 只在该收据有效、绑定当前 Source Freeze，且已核验集合恰为映射中的 owner 集合时，把这些义务算作
+  有 owner，否则全部列为待执行证明。正式收据须在冻结提交的独占 checkout 与构建目录上产生（运行期间没有其他源码或产物写者）；
+  复核只发现漂移，不证明期间不变。核验针对意外情形（测试被删除、改名、忽略、cfg 排除、过滤失配、失败或未执行）；owner 测试须把
+  控制权正常交回 libtest，测试体自身提前成功退出与断言遗漏由代码审查承担。定向运行（`modules run`、dev-check）按所选 package
+  投影 owner，没有适用 owner 时连发现构建一起跳过，且不写收据；
 - remote workflow receipt 绑定 source/run/attempt/artifact id，不复制尚未产生的 final EXE hash；
 - downloaded/promotion receipt 与 candidate receipt 绑定实际 ZIP/EXE/SBOM hash；
 - downloaded/package/checksum/SBOM、PE/native-runtime 与 portable-runtime 直接证明当前 artifact bytes，

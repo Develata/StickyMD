@@ -8,8 +8,9 @@ use std::collections::BTreeSet;
 pub(super) fn summarize(value: &Value) -> Result<Summary, String> {
     let version = value.field("schema_version")?.unsigned()?;
     if optional(value, "results").is_some() {
-        if version != 2 {
-            return Err("unsupported evidence schema_version (expected 2)".into());
+        // Timing reads the measurements, which schema 3 left unchanged.
+        if version != 2 && version != 3 {
+            return Err("unsupported evidence schema_version (expected 2 or 3)".into());
         }
         return evidence(value);
     }

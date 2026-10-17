@@ -258,6 +258,34 @@ fn g5_needs_each_case_to_own_its_minimum_screenshots_at_safe_paths() {
     assert!(validate(ModuleId::G5, &escaped, &origin(&candidate)).is_err());
 }
 
+/// Schema 3 smoke and resource results list no owners: a missing, non-array or non-empty
+/// `owners` field makes the document invalid for every reader.
+#[test]
+fn smoke_and_resource_results_must_list_no_owners() {
+    let scratch = Scratch::new();
+    let candidate = candidate();
+    for module in [
+        ModuleId::Runtime,
+        ModuleId::Performance,
+        ModuleId::Resource(crate::resource_plan::GROUPS[0]),
+    ] {
+        let document = valid_document(&scratch.0, module, &candidate, INPUT, "run");
+        validate(module, &document, &origin(&candidate)).unwrap();
+        assert!(document.contains("\"owners\":[]"), "{module:?}");
+        for broken in [
+            document.replacen("\"owners\":[]", "\"owners\":[\"p/lib/x\"]", 1),
+            document.replacen(",\"owners\":[]", "", 1),
+            document.replacen("\"owners\":[]", "\"owners\":{}", 1),
+        ] {
+            assert_ne!(broken, document);
+            assert!(
+                validate(module, &broken, &origin(&candidate)).is_err(),
+                "{module:?}: {broken}"
+            );
+        }
+    }
+}
+
 #[test]
 fn smoke_coverage_requires_the_complete_formal_plan_on_the_origin_executable() {
     let candidate = candidate();

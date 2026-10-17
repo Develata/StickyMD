@@ -37,6 +37,7 @@ fn native_resource_alias_and_batch_reuse() {
             measurements: Vec::new(),
             gates: Vec::new(),
             samples: Vec::new(),
+            owners: Vec::new(),
         });
         emit(&repository, &results, &environment).unwrap();
         panic!("{error}");
@@ -57,6 +58,7 @@ fn emit(
         Some(Path::new(
             "target/acceptance-profiling/resource-native-reuse-review.json",
         )),
+        None,
     )
 }
 
@@ -90,6 +92,7 @@ fn collect(repository: &Path, root: &Path, report: &mut Vec<EvidenceResult>) -> 
             measurements: observed.measurements,
             gates: observed.gates,
             samples: observed.samples,
+            owners: Vec::new(),
         };
         report.push(labelled("fresh", &result));
         outcome?;
@@ -157,7 +160,7 @@ fn collect(repository: &Path, root: &Path, report: &mut Vec<EvidenceResult>) -> 
         detail: Some("Two real five-sample cohorts; single reads use four identity captures, batch uses two; DIAGNOSTIC_ONLY, not full resource qualification".into()),
         measurements: [("fresh_case_execution", fresh_seconds), ("single_loads", single_seconds), ("batch_load", batch_seconds)]
             .into_iter().map(|(name, value)| EvidenceMeasurement { name: name.into(), unit: "seconds".into(), value }).collect(),
-        gates: Vec::new(), samples: Vec::new(),
+        gates: Vec::new(), samples: Vec::new(), owners: Vec::new(),
     };
     eprintln!(
         "LIVE_CACHE_REVIEW fresh_seconds={fresh_seconds:.6} single_seconds={single_seconds:.6} batch_seconds={batch_seconds:.6} fresh_samples=10 alias_samples=5; DIAGNOSTIC_ONLY"

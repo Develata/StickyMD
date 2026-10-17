@@ -212,8 +212,11 @@ fn manual_acceptance_edits_keep_every_module_fingerprint() {
 /// change what a formal module run does without changing its fingerprint. The files that
 /// may name manual modules (besides test modules), and why none lets manual code alter
 /// module evidence:
-/// - `qualification/mod.rs`: module declarations and the `acceptance manual` dispatch
-///   (local commands and the standalone recorder);
+/// - `qualification/mod.rs`: module declarations, the `acceptance manual` dispatch (local
+///   commands and the standalone recorder) and the unit-test owner set of the manual
+///   mapping, which only the headless owner verification (a receipt bound to the Source
+///   Freeze commit, never to a module fingerprint, and planned by no functional module run)
+///   and readiness read;
 /// - `qualification/readiness.rs`: a judgement projection with no domains of its own;
 /// - `qualification/decisions.rs`: decision-key validation. The formal-run output guard
 ///   calls only its `is_internal_path`, built from its own constants; the campaign projects
@@ -255,7 +258,9 @@ fn only_listed_code_names_manual_only_modules() {
                 if relative == "qualification/mod.rs"
                     && matches!(
                         uses.as_str(),
-                        "manual::execute" | "manual::record_standalone"
+                        "manual::execute"
+                            | "manual::record_standalone"
+                            | "manual_observation::coverage"
                     )
                 {
                     continue;

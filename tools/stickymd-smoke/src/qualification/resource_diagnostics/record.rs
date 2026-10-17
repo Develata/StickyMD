@@ -94,7 +94,7 @@ pub(super) fn decode(
     }
     let payload = json::parse(metadata.field("payload")?.string()?)?;
     if payload.field("suite")?.string()? != "resource-diagnostic-unit"
-        || payload.field("schema_version")?.unsigned()? != 2
+        || payload.field("schema_version")?.unsigned()? != 3
         || payload.field("commit")?.string()? != identity.source
         || payload.field("executable_sha256")?.string()? != identity.executable
         || payload.field("worktree_dirty")? != &Value::Bool(identity.dirty)
@@ -106,6 +106,7 @@ pub(super) fn decode(
         return Err("cache must contain exactly one case".into());
     }
     case.validate(&results[0])?;
+    crate::evidence::require_no_owners(&results[0])?;
     let value = &results[0];
     let origin = format!(
         "diagnostic-cache:{}:{created}:{}",
@@ -156,6 +157,7 @@ pub(super) fn decode(
                 })
             })
             .collect::<Result<_, String>>()?,
+        owners: Vec::new(),
     })
 }
 

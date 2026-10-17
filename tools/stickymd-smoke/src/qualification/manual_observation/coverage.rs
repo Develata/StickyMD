@@ -1,9 +1,10 @@
 //! The manual obligation mapping (plan 11 `manual-observation-log`, 人工义务映射): every Phase 8
 //! `Manual` row and the plan 09 clauses that need a real desktop are broken into assertions with
 //! their required parameters, and each `(source, assertion, parameter)` is owned by a Phase 12
-//! scenario, check labels of an exact G3/G4 case, a USER retirement or a named open gap. Owners proven by other
-//! automation are bound to the module receipts of the executed tests with the exact / automated
-//! extensions (coverage batch C2); until then they are gaps that name the existing entry.
+//! scenario, check labels of an exact G3/G4 case, a unit test, a USER retirement or a named
+//! open gap. A unit-test owner counts only when the headless CI receipt lists it as verified;
+//! obligations that other existing tests exercise stay gaps naming that entry until they are
+//! bound to an owner (coverage batch C2).
 //!
 //! Two independent tables keep a reduction visible: `declared::ASSERTIONS` (compiled for tests
 //! only) declares what each source requires, `table::OBLIGATIONS` says who owns each required
@@ -30,6 +31,8 @@ pub(in crate::qualification) enum Target {
         case: &'static str,
         checks: &'static [&'static str],
     },
+    /// A unit test; owned only once the headless CI receipt lists it as verified.
+    Test(Owner),
     /// Retired by the USER decision `decision` (see `RETIREMENTS`).
     Retired { decision: &'static str },
     /// Not owned yet; `planned` names the intended owner.
@@ -47,7 +50,27 @@ pub(in crate::qualification) struct Obligation {
 
 mod table;
 
+use std::collections::BTreeSet;
+
+use crate::unit_owners::Owner;
 use table::OBLIGATIONS;
+
+/// The obligations unit tests own, in table order.
+pub(in crate::qualification) fn test_owned() -> impl Iterator<Item = &'static Obligation> {
+    OBLIGATIONS
+        .iter()
+        .filter(|obligation| matches!(obligation.target, Target::Test(_)))
+}
+
+/// Every unit test that owns an obligation, once each.
+pub(in crate::qualification) fn test_owners() -> BTreeSet<Owner> {
+    test_owned()
+        .filter_map(|obligation| match obligation.target {
+            Target::Test(owner) => Some(owner),
+            _ => None,
+        })
+        .collect()
+}
 
 /// The obligations nobody owns yet, in table order.
 pub(in crate::qualification) fn gaps() -> impl Iterator<Item = &'static Obligation> {
@@ -70,9 +93,14 @@ pub(in crate::qualification) fn describe(obligation: &Obligation) -> String {
     } else {
         format!(" [{}]", obligation.param)
     };
+    let test;
     let owner = match obligation.target {
         Target::Gap { planned } => planned,
         Target::Retired { decision } => decision,
+        Target::Test(owner) => {
+            test = format!("unit test {owner}");
+            &test
+        }
         _ => "",
     };
     format!(

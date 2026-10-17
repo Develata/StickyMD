@@ -1,6 +1,7 @@
 //! Repository-contract validation used by every phase smoke.
 
 mod actions;
+mod manifest_harness;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -158,6 +159,27 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     crate::qualification::verify_product_classification(root)?;
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
+    verify_test_harnesses(root)?;
+    Ok(())
+}
+
+/// Unit-test owners rely on libtest's default harness (plan 11): a `harness` key may only
+/// configure a `[[bench]]` target of the workspace or its registered manifests
+/// (`manifest_harness` reads them with TOML's lexical rules).
+fn verify_test_harnesses(root: &Path) -> Result<(), String> {
+    let manifests = std::iter::once("Cargo.toml".to_owned()).chain(
+        crate::headless::Module::ALL
+            .iter()
+            .map(|module| format!("{}Cargo.toml", module.root())),
+    );
+    for relative in manifests {
+        let path = root.join(&relative);
+        if let Some(line) = manifest_harness::harness_outside_benches(&read_text(&path)?) {
+            return Err(format!(
+                "{relative}:{line} sets `harness` outside a [[bench]] target; unit-test owners need libtest's default harness"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -165,10 +187,10 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-14.md");
     let content = read_text(&path)?;
     let observed = frozen_trace_ids(&content, &path, "P14-A")?;
-    let expected: Vec<u16> = (1..=80).collect();
+    let expected: Vec<u16> = (1..=81).collect();
     if observed != expected {
         return Err(format!(
-            "{} IDs must be exactly P14-A01..P14-A80; observed {observed:?}",
+            "{} IDs must be exactly P14-A01..P14-A81; observed {observed:?}",
             path.display()
         ));
     }

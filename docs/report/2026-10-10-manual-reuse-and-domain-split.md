@@ -1590,3 +1590,138 @@ gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX；第 5 轮�
 `cargo test -p stickymd-smoke --locked` 515 passed、17 ignored，另一个二进制 26 passed；`dev-check` 9/9 PASSED（首次运行的 dependency policy 因拉取 RustSec
 advisory-db 时 TLS 握手失败而失败，网络恢复后重跑通过；workspace tests 122.7 s，Release 构建 95.8 s）；Linux 复跑（WSL Debian，3795335 上叠加 65 个文件）
 clippy 退出 0、测试 423 passed / 3 ignored 与 19 passed。
+
+### C2b-2 实施记录（2026-10-16）
+
+本批实现 owner 核验机制，并绑定第一批三项义务；其余 C2a 缺口在下一批逐义务映射后绑定。
+
+- **plan 11**（`release-artifact-authority`，headless 收据条目之后）：一条写 smoke 证据 schema 3 与源码身份；一条写单元测试 owner 的声明、核验、
+  readiness 判定、执行前提与证明边界（按第 4 轮审查 NICE_TO_HAVE，转录最终合并条款，不是第 1 版草案）。
+- **`unit_owners`**（新）：`Owner { package, target (lib | bin:<名称>), path }`，记录为 `package/target/path`。`artifacts` 解析 cargo
+  `--message-format=json`：只取 `profile.test` 且 `executable` 非空的 `compiler-artifact`，包名按 Package ID Specification 取（本工具链的
+  `path+file:///…/stickymd-win#0.1.3` 省略了与目录同名的包名），只认 `["lib"]` 与 `["bin"]` 目标，流须以成功的 `build-finished` 结束且其后无消息。
+  `listing` 严格解析 libtest `--list`：逐行 `name: test|bench`、有条目时一行空行、最后一行摘要（单复数与规范数字），计数须与条目一致。
+  `verify`（Windows）：无 owner 时连构建也跳过；构建、两次列出与每个 owner 的 `--exact <path> --nocapture` 都经有界执行器并要求成功退出；
+  任一失败即整个任务失败、不返回 owner；前后复核源码身份。执行调用可注入，单元测试覆盖已列出 / 忽略 / 缺失 / 重复 / 截断 / 执行失败，以及
+  "ignored 列表失败而 owner 本会通过"（第 4 轮设计要求的负例）。
+- **有界执行器**：`run_bounded_output` 从 `exact_desktop` 移到 `managed_process::bounded`，增加显式上限参数（cargo JSON 16 MiB；列表与 owner
+  1 MiB），行为不变，`exact_desktop` 保留原签名包装，既有持管道子孙、超量输出与超时测试照常运行。
+- **证据 schema 3**：每个结果带 `owners`（只有 owner 任务可非空）。`SourceIdentity` 在 `runner::execute` 开始时采集，owner 任务前后与写出前复核，
+  漂移即追加 FAILED `source identity` 结果、照常写出并使命令失败；中间进度与单步收据仍在写出时读取身份。读取者一并升级：`automated_readiness`、
+  `module_evidence::smoke`、`resource_plan::coverage`、资源诊断 payload；`timing_summary` 只读测量值，接受 2 与 3。
+- **runner**：`Task::UnitTestOwners` 只在 Windows 的 `Selection::All` 中、workspace tests 之后规划（owner 所在包只在 Windows 构建）；
+  `modules run` 与 dev-check 的投影与 Cargo 任务同规则——全部 workspace 包被选中时不变，否则只保留被选中且持有 owner 的包，一个都没有时整项跳过；
+  这些运行不写收据。
+- **readiness**：`check_document` 要求 schema 3，owner 只从 owner 任务结果读取且须与映射的 owner 集合完全相等，其他结果不得列 owner，映射有 owner
+  而计划没有 owner 任务即无效；同一结论既决定阻断，也决定 `unit_test_owned.verified`（普通输出与 JSON 同源）；`acceptance manual list` 把这些义务
+  列为证明要求。
+- **治理**：工作区与已登记清单的 `harness` 键只允许在 `[[bench]]`（区分键与值、注释与更长名称），附负例。
+- **指纹分类**：`qualification/mod.rs` 读取 `manual_observation::coverage` 的 owner 集合列入例外：它只被 headless owner 任务（收据绑定 Source
+  Freeze 提交而非模块指纹，且没有功能模块运行规划它）与 readiness 使用。
+- **首批绑定**：plan 09 `esc-2` transient-guards `state=asset-sync` / `state=quitting` → `app::escape::tests::each_guard_alone_ignores_esc`
+  （分别对应 `asset_reconcile_pending` 与退出期间输入关闭后的 `accepts_editor_mutation = false`），`esc-6` collapse `modifier=ctrl` →
+  `app::escape::tests::modifiers_never_change_esc`（USER 2026-10-15 批准这些 Esc 行仅单元覆盖）。
+- **端到端**（未冻结的 dirty 工作树，仅作开发证据）：`modules run windows --mode=tests` 通过（owner 任务投影为 `-p stickymd-win`）；
+  `all --ci --ci-shard=tests --json` 产生 schema 3 证据，owner 任务 PASSED、列出两个 owner，耗时 4.2 s（workspace tests 209.1 s）；把一个 owner
+  临时改成不存在的测试后 `modules run windows` 以 "owner … is not listed" 失败（已恢复）。另一次运行中我在运行期间改了源码，owner 构建需要重编译
+  正在运行的 `stickymd-smoke.exe`，Windows 拒绝覆盖而失败（fail closed）；这也说明 HEAD / dirty 身份看不到已 dirty 工作树内的内容改动，正式收据
+  依赖独占干净 checkout 的前提。
+- **测量**：父进程对每条流最多缓冲上限加 1 字节（owner 与列表 1 MiB，cargo 16 MiB），子孙进程随作业结束；子进程自身的内存不受此限，属于被测代码。
+- **验证**（审查前）：`cargo fmt --all -- --check` 通过；`cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 0 警告；
+  `cargo test -p stickymd-smoke --locked` 528 passed、17 ignored，另一个二进制 26 passed；`tools/smoke/phase-00.ps1` PASS；`dev-check` 10/10 PASSED
+  （新增的 unit-test owner verification 3.3 s，workspace tests 206.1 s，Release 构建 147.9 s）；Linux 复跑（WSL Debian，3795335 上叠加 95 个文件）
+  首次发现非 Windows 非测试构建中解析器是死代码、一个夹具测试按路径分量比较 Windows 路径，改为 `cfg(any(windows, test))` 与整串比较后 clippy 退出 0、
+  测试 433 passed / 3 ignored 与 19 passed。
+
+#### C2b-2 代码审查第 1 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、3 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；三项 Esc 绑定未发现语义错绑。全部核实后处理：
+
+- **`harness` 治理漏检与误报**：行级启发式不区分引号键（`"harness"`、`'harness'` 与转义写法）、字符串值与注释。改为
+  `governance/manifest_harness.rs`：按 TOML 词法跟踪基本 / 字面字符串（含多行与转义）、注释、表头与内联表 / 数组，找出每个键（裸键或引号键）及其
+  所属表；只有 `[[bench]]` 表或根级 `bench` 内联值里的 `harness` 被允许；无法跟踪的输入（未闭合字符串、表头或括号，顶层逗号）fail closed。测试含
+  引号键、转义键、字符串与多行字符串中的文字、注释、数组中的字符串、多行内联数组、`[package]` 下的 `bench`，以及工作区五个真实清单。
+- **失效的 Source Freeze 仍能得到 `verified: true`**：readiness 中 Freeze 读取与仓库校验抽为 `read_source`，返回 Freeze 与"仍对当前仓库成立"两个值；
+  owner 证明改为 `headless_ok && source_current`。附回归测试：Freeze 与仓库不符时仍返回该 Freeze 但不成立。
+- **非 headless 读取者没有落实 schema 3 的 `owners`**：新增 `evidence::require_no_owners`，`module_evidence::smoke`（每个结果）、
+  `resource_plan::coverage::validate_group_result` 与资源诊断缓存 payload 都要求字段存在且为空数组；测试覆盖 Runtime、Performance 与资源收据中
+  缺字段、类型错误与非空数组。
+- NICE_TO_HAVE：readiness 期望的 owner 字符串改为按字符串排序，与核验写出的顺序一致（同一包同时有 lib 与 bin owner 时不再误判）。
+- NEEDS_VERIFICATION（故障路径测量）：单独运行有界执行器的三个故障测试并采样父进程峰值工作集——子进程写出超过 1 MiB 上限：0.41 s、峰值 11.6 MiB；
+  超时：1.20 s、10.2 MiB；子孙进程持有管道：4.53 s、10.2 MiB；三次运行后都没有残留的测试进程。owner 任务失败时收据中的 owners 见下一条记录。
+- owner 任务失败时的收据：把一个 owner 临时改成不存在的测试后运行 `all --ci --ci-shard=tests --json`，schema 3 证据中 owner 任务为 FAILED
+  （"owner … is not listed"，3.5 s）、`owners` 为空，命令以 1 退出；之后已恢复映射。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 532 passed、17 ignored，另一个二进制 26 passed。
+
+#### C2b-2 代码审查第 2 轮（2026-10-16）
+
+第一次运行因 WSL 服务错误与 Codex 中途退出没有产生结论（环境故障，不是审查结论），重跑后 gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、
+2 SHOULD_FIX、1 NICE_TO_HAVE；第 1 轮的 Source Freeze 门控、非 owner 结果空数组校验与 owner 排序已确认。两项都在新扫描器的字符串处理，核实后接受：
+
+- **多行字符串提前结束**：TOML 允许结束定界符前有一至两个内容引号（`"""hello""""`）。原实现在第一个三引号处结束，剩余引号与注释里的引号重新组成字符串，
+  能把其后的 `[[bin]]` 与 `harness = false` 吞进字符串而漏检；去掉注释时又误拒合法写法。改为：第一段三个及以上的连续引号结束字符串，其中最多两个是
+  内容，超过五个即无效；基本与字面多行字符串同样处理。
+- **行尾反斜杠后的空白被拒绝**：TOML 允许反斜杠与换行之间有空格或 Tab。`escape` 改为只在多行基本字符串中接受"反斜杠、可选空白、换行"并修剪其后
+  所有空白与换行；单行字符串中的续行与"反斜杠加空格加非换行"仍判为无效。
+- NICE_TO_HAVE：P14-A81 的测试入口改为 `governance::manifest_harness::tests`。
+- **差分测试**（为不再一轮轮挖词法边界）：Python 生成器随机组合表头（含引号与空格写法）、裸键 / 引号键 / 转义键、各类字符串（含结尾引号段、续行、
+  内含 `harness = false` / 注释 / 括号的内容）、数组与内联表与注释，用 `tomllib` 保留合法清单并按"`harness` 只能是根级 bench 目标的直接字段"
+  计算期望，再用临时的忽略测试让扫描器读同一语料。种子 20261016 的 20 000 例（9 613 例违规）与种子 777 的 100 000 例（50 816 例违规、51 315 例含多行
+  基本字符串、约 9 000 例含续行）均 0 不一致；第一次比较的 529 例差异来自我的预言过宽（把 bench 目标内更深的嵌套 `harness` 也当允许），按规则收窄后
+  消失。临时测试已删除，不进入提交。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 533 passed、17 ignored，另一个二进制 26 passed。此前一次完整运行中
+  `a_descendant_holding_the_output_is_ended_with_the_helper`（54.7 s）与 `a_candidate_that_exits_at_once_is_a_startup_failure`（等满超时）失败，
+  当时 E: 盘只剩约 6 GB、WSL 中其他项目的构建正在大量写盘；腾出空间后两项都通过，判定为环境压力而非回归。
+
+#### C2b-2 代码审查第 3 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX；第 2 轮两项字符串修复符合 TOML 1.0，owner 核验、schema 3 消费链、readiness、
+投影与三项 Esc 绑定未发现其他应修问题。两项核实后接受：
+
+- **bench 目标内的嵌套 `harness` 被当作直接字段放行**：判断只看外层上下文是否为 `bench`，丢失了点分键前缀与内联嵌套层级——`[[bench]]` 下的
+  `meta.harness = false`、`bench = [{ meta = { harness = false } }]` 被放行，而语义等价的 `[bench.meta]` 下的 `harness` 被拒。改为按"形状"跟踪
+  完整路径：键与数组元素是不同的部分（`[[bench]]` 后的 `harness` 是 `bench[].harness`，其下的 `meta.harness` 是 `bench[].meta.harness`），
+  只允许 `bench[].harness` 与 `bench.harness`；表头的最后一个键同样受此规则约束（`[harness]`、`[[test.harness]]` 被拒）；没有键的括号只允许作为
+  数组元素，其他位置 fail closed。
+- **缺少 TOML 1.1 的 `\xHH` 转义**：Cargo 自 1.94 接受 TOML 1.1，项目锁定 Rust 1.97.1；`description = "\x53tickyMD"` 这样的合法清单会被误拒。
+  增加两位十六进制转义（单行与多行基本字符串、键与值）。
+- 差分测试补充：本机 Python 3.15 的 `tomllib` 已支持 TOML 1.1（`\xHH`、内联表换行与尾随逗号），生成器加入 `\xHH`、点分键（含 bench 内）、
+  `[harness]` 等表头、根级 `bench.harness`、跨行与带尾随逗号的内联表，并去掉此前排除这些形状的过滤。种子 31337 的 100 000 例（75 641 例违规、
+  21 566 例含 `\x`、19 884 例 bench 内点分键、12 733 例 `[harness]`）与此前两个语料（20 000 与 100 000 例）均 0 不一致；临时测试已删除。
+
+#### C2b-2 代码审查第 4 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX；第 3 轮的 bench 嵌套路径与 `\xHH` 修复未发现新问题。核实后接受：
+
+- **点分键与表头中的父键 `harness` 漏检**：只检查路径的最后一个键，`[package.metadata]` 下的 `harness.enabled = false`、
+  `[package.metadata.harness.settings]` 被放行，而等价的 `harness = { enabled = false }` 被拒。TOML 的点分键与表头为路径上的每一级命名表，所以改为
+  `misplaces_harness`：路径上每个名为 `harness` 的键，都以截至该键的前缀检查是否为 bench 目标的直接字段；表头与赋值键共用。负例补点分键、内联点分键、
+  子表头与数组表头。
+- 差分：生成器加入父键位置的 `harness`（`harness.enabled`、`meta.harness.x`、`[package.metadata.harness…]`、`[[harness.x]]`、
+  `[bench.harness.deep]` 等）。种子 4242 的 100 000 例（81 988 例违规、55 592 例含父键位置的 `harness`、18 012 例允许）与此前三个语料共 320 000 例
+  均 0 不一致；临时测试已删除。
+- 期间一次 dev-check（CPU 100%）中 stickymd-win 的 `preview::worker::tests::document_projection_release_forces_the_next_visible_request_to_rebuild`
+  因工作线程接收超时失败；本批未改 `apps/` 与 `crates/`，单独重跑 5 次均通过，判定为负载造成的既有时序敏感。
+
+#### C2b-2 代码审查第 5 轮（2026-10-16，逐构造审计）
+
+本轮要求审查者逐类列举 Cargo 1.97 接受的 TOML 1.1 构造并判定扫描器能否正确定位每个 `harness` 键。gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、
+1 SHOULD_FIX；裸 / 引号 / 点分键、表头与隐式父表、数组表、内联表（空、嵌套、多行、注释、尾随逗号）、全部字符串形式与转义、注释、数组、数值与日期、
+空白与 CRLF 均判为正确，owner 核验、证据与 readiness、计划与分类、三项绑定未发现新问题。唯一一项核实后接受：
+
+- **文件开头的 UTF-8 BOM 使合法清单被误拒**：Cargo 1.97 的 TOML 词法器（`toml_parser` 1.1.2）跳过文件开头的一个 BOM，扫描器把它当作非法键字符。
+  改为扫描前只去掉开头的一个 BOM；测试含 BOM 加合规清单通过、BOM 加非 bench 的 `harness` 仍被拒、两个 BOM 与字符串内的 U+FEFF 照常处理。
+- 本轮期间两次完整运行中各有一个既有时序敏感测试失败：stickymd-win 的两个 Preview worker 测试（工作线程接收超时）与 smoke 的
+  `managed_process::tests::stale_smoke_preflight_fails_without_killing_the_existing_process`（结束子进程后立即删除夹具目录失败）；本批未改 `apps/`、
+  `crates/` 与这些测试，stickymd-win 测试单独连跑 3 次（287 passed）与该 smoke 测试单独连跑 3 次均通过，判定为机器负载下的既有不稳定。
+
+#### C2b-2 代码审查第 6 轮（2026-10-16）与结论
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX；BOM 修复只去掉开头一个 U+FEFF，与上游 lexer 一致；owner 核验、schema 3 消费链、身份漂移、
+readiness、任务投影与三项 Esc 绑定未发现失败后仍贡献 owner、误收旧证据或错绑路径。
+
+最终验证（提交前，同一工作树）：`cargo fmt --all -- --check` 通过；`cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 0 警告；
+`cargo test --workspace --locked --no-fail-fast` 中 stickymd-smoke 534 passed / 17 ignored 与 26 passed、core 与 render 及 phase-1 实验全部通过；
+stickymd-win 有 2 个 Preview worker 测试在当时 CPU 96% 的负载下因接收超时失败（本批未改 `apps/` 与 `crates/`，stickymd-win 不依赖 stickymd-smoke，
+单独运行 stickymd-win 测试连续 3 次 287 passed）；Linux 复跑（WSL Debian，3795335 上叠加 96 个文件）clippy 退出 0、测试 439 passed / 3 ignored 与 19 passed。
+本批之初的 dev-check 曾 10/10 通过；此后的 dev-check 均止于上述负载下的既有时序敏感测试，没有完整通过的最终 dev-check。
