@@ -131,6 +131,8 @@ Preview worker 的 `COMPLETION_DEADLINE = 120 s` 是原 5 s 的 24 倍，在档�
 - `cargo clippy -p stickymd-win -p stickymd-smoke --all-targets --locked -- -D warnings`：0 警告。
 - `cargo test --workspace --locked --no-fail-fast`：退出 0；stickymd-win 287 passed / 8 ignored，stickymd-smoke 534 passed / 17 ignored
   与 headless 26 passed，core 50 + 5、render 168 及其集成测试全部通过。
+- Linux：改动的 `managed_process`、`qualification::exact_desktop`、`qualification::manual::instance` 均为 `#[cfg(windows)]` 模块，
+  CI 的 Linux smoke 作业不编译它们；未另做 Linux 复跑。
 
 ## 未处理与后续
 
