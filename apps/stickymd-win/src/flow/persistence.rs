@@ -286,29 +286,35 @@ mod tests {
 
     /// A missing note leaves a recreate obligation; if the file then reappears with other
     /// content and the user loads it, that obligation must not keep the quit barrier closed.
+    /// Both runtime loads accept external content: a clean reload (no conflict) and loading the
+    /// external side of a conflict.
     #[test]
     fn loading_external_content_discharges_a_superseded_recreate() {
-        let mut flow = PersistenceCoordinator::default();
-        flow.note_save_submitted(SaveTrigger::RecreateMissing);
-        // The recreate write itself failed, so the obligation stays.
-        assert!(flow.note_save_finished(false));
-        assert!(flow.durability_required());
-        flow.enter_conflict(FileConflict {
-            external: ExternalFileState::Present(ExternalFileFact {
-                fingerprint: hash_bytes(b"external"),
-                text: "external".into(),
-                line_ending: LineEnding::Lf,
-                durable_len: 8,
-            }),
-            detected_at_generation: Generation::initial(),
-            previous_disk_fingerprint: None,
-        });
-        flow.accept_external();
-        assert!(!flow.durability_required());
-        assert!(flow.conflict().is_none());
-        assert!(
-            flow.request_save(Generation::initial(), SaveTrigger::Manual)
-                .is_some()
-        );
+        for through_conflict in [false, true] {
+            let mut flow = PersistenceCoordinator::default();
+            flow.note_save_submitted(SaveTrigger::RecreateMissing);
+            // The recreate write itself failed, so the obligation stays.
+            assert!(flow.note_save_finished(false));
+            assert!(flow.durability_required());
+            if through_conflict {
+                flow.enter_conflict(FileConflict {
+                    external: ExternalFileState::Present(ExternalFileFact {
+                        fingerprint: hash_bytes(b"external"),
+                        text: "external".into(),
+                        line_ending: LineEnding::Lf,
+                        durable_len: 8,
+                    }),
+                    detected_at_generation: Generation::initial(),
+                    previous_disk_fingerprint: None,
+                });
+            }
+            flow.accept_external();
+            assert!(!flow.durability_required(), "conflict: {through_conflict}");
+            assert!(flow.conflict().is_none());
+            assert!(
+                flow.request_save(Generation::initial(), SaveTrigger::Manual)
+                    .is_some()
+            );
+        }
     }
 }

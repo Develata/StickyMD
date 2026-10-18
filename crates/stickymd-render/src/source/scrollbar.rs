@@ -123,7 +123,14 @@ mod tests {
         let generation = source.projected_generation();
         assert!(source.scroll_metrics().viewport_fraction < 0.01);
         source.scroll_to_fraction(1.0);
-        assert!(source.caret_rect(text.len()).is_some());
+        // The document end is shown whole, not merely laid out at the bottom edge.
+        let end = source
+            .caret_rect(text.len())
+            .expect("the last line is laid out");
+        assert!(
+            end.y >= 0.0 && end.y + end.height <= 220.0,
+            "the last line {end:?} lies inside the 220 px viewport"
+        );
         assert!((source.scroll_metrics().fraction - 1.0).abs() < 0.00001);
         source.scroll_to_fraction(0.0);
         assert_eq!(source.scroll().line, 0);
@@ -153,7 +160,14 @@ mod tests {
         let last = source
             .caret_rect(text.len())
             .expect("last wrapped row visible");
-        assert!(last.y + last.height <= source.height_px as f32 + 0.1);
+        assert!(last.y >= 0.0 && last.y + last.height <= source.height_px as f32 + 0.1);
+        assert!((source.scroll_metrics().fraction - 1.0).abs() < 0.001);
+        // Back at the start the single logical line is shown from its first row.
+        source.scroll_to_fraction(0.0);
+        assert_eq!(source.scroll().line, 0);
+        assert_eq!(source.scroll().vertical, 0.0);
+        let first = source.caret_rect(0).expect("first wrapped row visible");
+        assert!(first.y >= 0.0 && first.y + first.height <= source.height_px as f32 + 0.1);
         source
             .resync(&DocumentSnapshot {
                 text: Arc::from("short"),

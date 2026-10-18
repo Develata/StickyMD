@@ -8,8 +8,8 @@ use winit::window::CursorIcon;
 
 use super::StickyApp;
 use super::scrollbar::{
-    DragUpdate, GUTTER_DIP, PaneScroll, PressOutcome, ScrollPane, Scrollbar, page_pixels,
-    pane_bars, preview_scroll,
+    DragUpdate, PaneScroll, PressOutcome, ScrollPane, Scrollbar, gutter_at, page_pixels, pane_bars,
+    preview_scroll,
 };
 use crate::config::ViewMode;
 
@@ -59,20 +59,14 @@ impl StickyApp {
     pub(super) fn scrollbar_gutter_at_cursor(&self) -> Option<ScrollPane> {
         let geometry = self.view_geometry()?;
         let dpi = self.window.as_ref()?.scale_factor();
-        [
-            (ScrollPane::Source, geometry.source),
-            (ScrollPane::Preview, geometry.preview),
-        ]
-        .into_iter()
-        .find_map(|(side, pane)| {
-            let pane = pane?;
-            let right = f64::from(pane.x + pane.width);
-            (self.cursor_position.x >= right
-                && self.cursor_position.x < right + f64::from(GUTTER_DIP) * dpi
-                && self.cursor_position.y >= f64::from(pane.y)
-                && self.cursor_position.y < f64::from(pane.y + pane.height))
-            .then_some(side)
-        })
+        gutter_at(
+            self.cursor_position,
+            [
+                (ScrollPane::Source, geometry.source),
+                (ScrollPane::Preview, geometry.preview),
+            ],
+            dpi,
+        )
     }
 
     pub(super) fn handle_scrollbar_button(

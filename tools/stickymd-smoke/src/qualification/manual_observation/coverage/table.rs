@@ -29,30 +29,37 @@ const fn exact(case: &'static str, checks: &'static [&'static str]) -> Target {
     Target::Exact { case, checks }
 }
 
-/// A unit test of the `stickymd-win` binary; owned once the headless receipt verifies it.
-const fn win_test(path: &'static str) -> Target {
-    Target::Test(Owner {
+/// Owned by these unit tests together, once the headless receipt verifies every one.
+const fn tests(owners: &'static [Owner]) -> Target {
+    Target::Test(owners)
+}
+
+/// A unit test of the `stickymd-win` binary.
+const fn win(path: &'static str) -> Owner {
+    Owner {
         package: "stickymd-win",
         target: OwnerTarget::Bin("stickymd-win"),
         path,
-    })
+    }
+}
+
+/// A unit test of the `stickymd-render` library.
+const fn render(path: &'static str) -> Owner {
+    Owner {
+        package: "stickymd-render",
+        target: OwnerTarget::Lib,
+        path,
+    }
 }
 
 const fn gap(planned: &'static str) -> Target {
     Target::Gap { planned }
 }
 
-// Obligations that existing automation already exercises are owned through module receipts of
-// the executed tests, which land with the exact / automated extensions (C2). Until then they
-// are gaps that name the entry, so readiness lists them instead of trusting prose.
-const C2_SCROLL_SHELL: &str = "C2 绑定模块收据：phase-05 2026-09-25 滚动条维护节 `cargo test -p stickymd-render -p stickymd-win --locked scrollbar`（app 几何、绘制与 Preview worker 回执）";
-const C2_SCROLL_RENDER: &str = "C2 绑定模块收据：phase-03 2026-09-25 滚动条维护节 `cargo test -p stickymd-render -p stickymd-win --locked scrollbar`（render projection）";
-const C2_OPACITY_REDUCER: &str = "C2 绑定模块收据：P08-A07 `phase8_` 透明度 reducer 与输入测试";
+// C2b-3 audited every obligation that existing tests seemed to exercise (2026-10-17). Those still
+// gaps say, per obligation, what existing tests already assert and what none does yet.
 const C2_ISOLATION_RUNTIME: &str =
     "C2 绑定模块收据：P08-A11 copied-Release `-Runtime`（scenario `WindowShell`）的进程与窗口隔离";
-/// The reducer test checks that a Preview intent does not persist, not that dragging produces
-/// only Preview intents.
-const UNIT_OPACITY_DRAG: &str = "C2b 绑定执行清单：app::controls 的指针判定经偏好 reducer 拖动只产生不持久化的预览、有效松开至多一次提交；实际配置提交与 winit 事件接线待 exact 层";
 
 const G4_DOCK_COMPOSITION: &str = "G4-06: Right/Top dock 下 composition 不收起";
 const G4_OPACITY_COMMIT: &str = "G4-02: 透明度松开滑块 / Enter / 失焦三种提交";
@@ -64,14 +71,52 @@ const G4_TRAY_HIDE: &str =
 const G4_ESC: &str = "G4-02: 真实键盘 Esc 分支";
 /// The Esc decision with each guard alone (asset reconcile, input disabled while quitting) and
 /// under every modifier; USER 2026-10-15 approved unit-only coverage of these Esc rows.
-const ESC_GUARDS_TEST: &str = "app::escape::tests::each_guard_alone_ignores_esc";
-const ESC_MODIFIERS_TEST: &str = "app::escape::tests::modifiers_never_change_esc";
-/// The existing scrollbar tests check the app's geometry and painting, the render projection
-/// and the Preview worker's receipts; no test drives the app runtime that composes the bars,
-/// hovers, drags, pages, ends a drag or admits a Preview receipt.
-const UNIT_SCROLL_RUNTIME: &str = "C2b 绑定模块收据：app::scrollbar 与 app::preview_runtime 的手势、栏可用性与回执路由判定；winit 事件接线（hover、拖动、翻页、拖动结束、回执应用）待 exact 层";
+const ESC_GUARDS: &[Owner] = &[win("app::escape::tests::each_guard_alone_ignores_esc")];
+const ESC_MODIFIERS: &[Owner] = &[win("app::escape::tests::modifiers_never_change_esc")];
+/// Scrollbar decisions (plan 09 vertical scrollbars) a single test, or tests together, prove.
+const SCROLL_EMPHASIS_DRAG: &[Owner] = &[win(
+    "app::scrollbar::tests::hovering_or_dragging_a_bar_emphasizes_only_that_bar",
+)];
+const SCROLL_EMPHASIS_HOVER: &[Owner] = &[
+    win("app::scrollbar::tests::the_gutter_is_the_band_right_of_each_pane"),
+    win("app::scrollbar::tests::hovering_or_dragging_a_bar_emphasizes_only_that_bar"),
+];
+const SCROLL_EMPHASIS_PAINT: &[Owner] = &[win(
+    "app::scrollbar::tests::scrollbar_paints_inside_gutter_and_avoids_resize_border_at_each_dpi",
+)];
+const SCROLL_DRAG_MAPPING: &[Owner] = &[win(
+    "app::scrollbar::tests::scrollbar_drag_keeps_grab_offset_and_clamps_outside_window",
+)];
+const SCROLL_TRACK_HIT: &[Owner] = &[win(
+    "app::scrollbar::tests::a_track_press_pages_toward_the_click_by_most_of_the_pane",
+)];
+const SCROLL_SOURCE_ENDS: &[Owner] = &[
+    render(
+        "source::scrollbar::tests::scrollbar_jumps_to_both_ends_without_shaping_intervening_lines",
+    ),
+    render(
+        "source::scrollbar::tests::scrollbar_handles_a_single_wrapped_line_and_resized_short_notes",
+    ),
+];
+/// The quit-cancelled notice and the title (plan 09 tray lifecycle).
+const QUIT_NOTICE_ONLY_SAVE: &[Owner] = &[win(
+    "app::title::tests::only_a_failed_note_save_establishes_the_notice",
+)];
+const QUIT_EXTERNAL_LOAD: &[Owner] = &[win(
+    "flow::persistence::tests::loading_external_content_discharges_a_superseded_recreate",
+)];
+const QUIT_TITLE_PRIORITY: &[Owner] = &[
+    win("app::title::tests::each_state_has_its_title_and_higher_states_win"),
+    win("app::title::tests::the_title_has_one_native_writer"),
+];
+/// Scrollbar obligations whose decisions are unit-tested but whose composition in `StickyApp`
+/// (view mode, live state, winit events) is not.
+const SCROLL_VIEW_BARS: &str = "C2b-3 审计：`pane_bars` 的逐窗格输出与 Split 几何各有单元断言；缺视图模式经 `view_geometry` 与 `StickyApp::scrollbar_geometry` 得到恰好对应窗格的栏，以及 Split 同步开关开 / 关下滚动是否带动另一窗格；待新的单元接缝或 exact 层";
+const SCROLL_GUTTER_RUNTIME: &str = "C2b-3 审计：`gutter_at` 与 Split 的窄槽算术有单元断言；缺 Source / Preview 视图保留窄槽、短文与长文正文宽度相同、窄槽内按下不作为正文点击、窄槽不随 Content Zoom 缩放的断言；待补强测试或 exact 层";
+const SCROLL_DRAG_RUNTIME: &str = "C2b-3 审计：拖动实时目标、翻页像素（窗格 90%）与 `end_drag` 有单元断言；缺运行时把它们应用到 Source / Preview 视口（实时定位、Preview 两端、翻页）以及松开、失焦、切换视图、resize 各自结束拖动的接线；待 exact 层";
+const SCROLL_VIEWPORT_ONLY: &str = "C2b-3 审计：render projection 测试断言滚动不改投影文本与 generation、编辑与组字后边界正确；缺运行时滚动后文档 text / generation / dirty、会话 caret / selection 与 IME preedit 不变的断言；待新的单元接缝或 exact 层";
+const SCROLL_PREVIEW_RUNTIME: &str = "C2b-3 审计：`preview_scroll` 对过期帧不给滑块、`completion_route` 只放行当前文档与视口的回执有单元断言；缺 `preview_scroll` 按 document height 的数值、运行时以缓存帧的 document height 计算且不逐事件重排，以及 `preview_layout_is_current` 的当前判定；待补强测试或 exact 层";
 const G4_DRAG_OUTSIDE: &str = "G4: 真实鼠标拖出窗口后完成滚动条拖动";
-const UNIT_QUIT_STATE: &str = "C2b 绑定模块收据：app::title::tests 与 flow::persistence::tests 的退出已取消状态与载入外部解除";
 
 // Exact owners name the check labels that prove them (`exact_checks`); an obligation without a
 // producer, profile or Pin parameter needs every variant.
@@ -882,7 +927,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "composition-guard-wiring",
         "",
         gap(
-            "C2b 绑定模块收据：app::guards 的守卫投影（含 Search 组字）；失焦取消 preedit 的事件接线待 exact 层",
+            "C2b-3 审计：app::guards 的投影测试不证明 `StickyApp::window_guards` 传入编辑区与 Search 的组字状态，也不证明失焦取消 preedit 的事件接线；待 exact 层",
         ),
     ),
     // G4-02 reveals the sensor with a reinforcing window message and no covering window, so
@@ -1134,13 +1179,13 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:esc-2",
         "transient-guards",
         "state=asset-sync",
-        win_test(ESC_GUARDS_TEST),
+        tests(ESC_GUARDS),
     ),
     o(
         "plan09:esc-2",
         "transient-guards",
         "state=quitting",
-        win_test(ESC_GUARDS_TEST),
+        tests(ESC_GUARDS),
     ),
     o(
         "plan09:esc-3",
@@ -1174,7 +1219,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:esc-6",
         "collapse",
         "modifier=ctrl",
-        win_test(ESC_MODIFIERS_TEST),
+        tests(ESC_MODIFIERS),
     ),
     o(
         "plan09:esc-6",
@@ -1192,165 +1237,176 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-1",
         "per-pane",
         "view=source",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_VIEW_BARS),
     ),
     o(
         "plan09:scroll-1",
         "per-pane",
         "view=preview",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_VIEW_BARS),
     ),
     o(
         "plan09:scroll-1",
         "per-pane",
         "view=split",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_VIEW_BARS),
     ),
     o(
         "plan09:scroll-1",
         "split-sync-switch",
         "",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_VIEW_BARS),
     ),
     o(
         "plan09:scroll-2",
         "gutter-geometry",
         "",
-        gap(C2_SCROLL_SHELL),
+        gap(
+            "C2b-3 审计：绘制测试断言轨道在手工构造窗格的窄槽内，并以测试内常量断言避开 resize 边与 Split 同步按钮；Split 的窄槽算术另有断言；缺 Source / Preview 视图由 `geometry()` 保留窄槽，以及轨道与真实 resize 边宽和同步按钮矩形的比较；待补强测试",
+        ),
     ),
     o(
         "plan09:scroll-2",
         "short-note",
         "part=hide-thumb",
-        gap(C2_SCROLL_SHELL),
+        gap(
+            "C2b-3 审计：已有 `Scrollbar::new` 在内容不超一屏时不给滑块、Source 对短文与空文报告全可见的断言；缺 `preview_scroll` 对短于视口的文档报告全可见，以及短文经 `pane_bars` 得到无滑块的链路；待补强测试",
+        ),
     ),
     o(
         "plan09:scroll-2",
         "short-note",
         "part=keep-gutter",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_GUTTER_RUNTIME),
     ),
     o(
         "plan09:scroll-2",
         "gutter-runtime",
         "aspect=hit-test",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_GUTTER_RUNTIME),
     ),
     o(
         "plan09:scroll-2",
         "gutter-runtime",
         "aspect=content-zoom",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_GUTTER_RUNTIME),
     ),
     o(
         "plan09:scroll-3",
         "thumb-geometry",
         "",
-        gap(C2_SCROLL_SHELL),
+        gap(
+            "C2b-3 审计：拖动测试断言 dpi 1 下最小高度 24 与内容不超一屏时无滑块；缺按可见比例的滑块高度与按 DPI 缩放的最小高度；待补强测试",
+        ),
     ),
     o(
         "plan09:scroll-3",
         "emphasis-paint",
         "",
-        gap(C2_SCROLL_SHELL),
+        tests(SCROLL_EMPHASIS_PAINT),
     ),
     o(
         "plan09:scroll-3",
         "emphasis-trigger",
         "trigger=hover",
-        gap(UNIT_SCROLL_RUNTIME),
+        tests(SCROLL_EMPHASIS_HOVER),
     ),
     o(
         "plan09:scroll-3",
         "emphasis-trigger",
         "trigger=drag",
-        gap(UNIT_SCROLL_RUNTIME),
+        tests(SCROLL_EMPHASIS_DRAG),
     ),
-    o("plan09:scroll-3", "drag-mapping", "", gap(C2_SCROLL_SHELL)),
+    o(
+        "plan09:scroll-3",
+        "drag-mapping",
+        "",
+        tests(SCROLL_DRAG_MAPPING),
+    ),
     o(
         "plan09:scroll-3",
         "drag-live-update",
         "",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_DRAG_RUNTIME),
     ),
     o(
         "plan09:scroll-3",
         "ends-reach-document-ends",
         "view=source",
-        gap(C2_SCROLL_RENDER),
+        tests(SCROLL_SOURCE_ENDS),
     ),
     o(
         "plan09:scroll-3",
         "ends-reach-document-ends",
         "view=preview",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_DRAG_RUNTIME),
     ),
-    o("plan09:scroll-3", "track-hit", "", gap(C2_SCROLL_SHELL)),
+    o("plan09:scroll-3", "track-hit", "", tests(SCROLL_TRACK_HIT)),
     o(
         "plan09:scroll-3",
         "track-page-scroll",
         "",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_DRAG_RUNTIME),
     ),
     o(
         "plan09:scroll-4",
         "viewport-only",
         "state=text",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_VIEWPORT_ONLY),
     ),
     o(
         "plan09:scroll-4",
         "viewport-only",
         "state=generation",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_VIEWPORT_ONLY),
     ),
     o(
         "plan09:scroll-4",
         "viewport-only",
         "state=dirty",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_VIEWPORT_ONLY),
     ),
     o(
         "plan09:scroll-4",
         "viewport-only",
         "state=caret",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_VIEWPORT_ONLY),
     ),
     o(
         "plan09:scroll-4",
         "viewport-only",
         "state=selection",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_VIEWPORT_ONLY),
     ),
     o(
         "plan09:scroll-4",
         "viewport-only",
         "state=preedit",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_VIEWPORT_ONLY),
     ),
     o(
         "plan09:scroll-4",
         "drag-exit",
         "end=release",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_DRAG_RUNTIME),
     ),
     o(
         "plan09:scroll-4",
         "drag-exit",
         "end=blur",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_DRAG_RUNTIME),
     ),
     o(
         "plan09:scroll-4",
         "drag-exit",
         "end=view-switch",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_DRAG_RUNTIME),
     ),
     o(
         "plan09:scroll-4",
         "drag-exit",
         "end=resize",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_DRAG_RUNTIME),
     ),
     o(
         "plan09:scroll-4",
@@ -1362,31 +1418,35 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-5",
         "source-mapping",
         "",
-        gap(C2_SCROLL_RENDER),
+        gap(
+            "C2b-3 审计：尾部跳转测试断言只排版末屏（少于 40 行），折行测试断言单行内折行偏移的中间位置；缺折行文本下同时只排版尾部、以及末端边界在重复调用间复用缓存的断言；待补强测试",
+        ),
     ),
     o(
         "plan09:scroll-5",
         "preview-document-height",
         "",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_PREVIEW_RUNTIME),
     ),
     o(
         "plan09:scroll-6",
         "stale-frame-no-thumb",
         "",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_PREVIEW_RUNTIME),
     ),
     o(
         "plan09:scroll-6",
         "stale-receipt-identity",
         "",
-        gap(C2_SCROLL_SHELL),
+        gap(
+            "C2b-3 审计：worker 测试断言偏移相同而尺寸、缩放、主题或选区不同的视口不等；缺只差偏移的旧回执被丢弃、显示位置不回跳的断言；待补强测试",
+        ),
     ),
     o(
         "plan09:scroll-6",
         "stale-receipt-guard",
         "",
-        gap(UNIT_SCROLL_RUNTIME),
+        gap(SCROLL_PREVIEW_RUNTIME),
     ),
     o(
         "plan09:scroll-7",
@@ -1446,7 +1506,9 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:opacity-2",
         "range-and-input",
         "",
-        gap(C2_OPACITY_REDUCER),
+        gap(
+            "C2b-3 审计：已有滑块两端 40 / 100、输入与提交的下限 clamp（`\"7\"` 与 `39` 得 `40`）、非数字字符被拒与默认配置 96 的断言；缺中间位置步长 1 的整数映射、输入上限 clamp 与空输入不提交；实际指针与键盘输入待 exact 层",
+        ),
     ),
     o(
         "plan09:opacity-3",
@@ -1458,7 +1520,9 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:opacity-3",
         "no-stepwise-write",
         "",
-        gap(UNIT_OPACITY_DRAG),
+        gap(
+            "C2b-3 审计：指针判定测试断言拖动中 reducer 不请求持久化、松开恰一次提交，但不读 config；运行时由 `submit_config_if_needed` 在多条路径上按 config dirty 写盘，故未证明拖动中 config 保持不脏（preferences 测试只对单个预览意图断言不脏）；待补强测试，winit 指针事件接线待 exact 层",
+        ),
     ),
     o(
         "plan09:opacity-3",
@@ -1506,30 +1570,34 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:quit-2",
         "established-only-by-save-failure",
         "cause=quit-guard",
-        gap(UNIT_QUIT_STATE),
+        gap(
+            "C2b-3 审计：缺单测证明守卫阻止的退出不建立也不改变该状态（标题测试不经守卫，reducer 测试不经状态）；待补强测试或 exact 层",
+        ),
     ),
     o(
         "plan09:quit-2",
         "established-only-by-save-failure",
         "cause=paste-unconverged",
-        gap(UNIT_QUIT_STATE),
+        tests(QUIT_NOTICE_ONLY_SAVE),
     ),
     o(
         "plan09:quit-2",
         "cleared-after-event-when-barrier-false",
         "",
-        gap(UNIT_QUIT_STATE),
+        gap(
+            "C2b-3 审计：未证明屏障判定由 dirty / durability_required / note_save_in_flight 组成，以及 finish_event_pass 在每次完整事件处理结束时恰运行一次；待补强测试或 exact 层",
+        ),
     ),
     o(
         "plan09:quit-2",
         "external-load-releases-rebuild",
         "",
-        gap(UNIT_QUIT_STATE),
+        tests(QUIT_EXTERNAL_LOAD),
     ),
     o(
         "plan09:quit-3",
         "title-priority",
         "",
-        gap("C2b 绑定模块收据：app::title::tests 的标题优先级与唯一原生写入者源码守卫"),
+        tests(QUIT_TITLE_PRIORITY),
     ),
 ];

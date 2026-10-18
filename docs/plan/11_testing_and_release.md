@@ -403,8 +403,9 @@ ignored `dist/evidence/` 中：
   `all --ci` 规划的全部任务（按顺序、每项 `PASSED`）及任务集标记，不另维护任务名单；
 - smoke 证据（所有套件）为 schema 3：每个结果带 `owners` 数组，只有单元测试 owner 核验任务的结果可以非空；schema 2
   证据无效，不迁移。证据序列化 runner 在开始时采集的源码身份（HEAD 与工作树是否干净），写出前复核，身份变化即追加失败结果；
-- 人工义务映射中由单元测试持有的义务以 owner `(package, target, path)` 声明，`target` 只允许 `lib` 或 `bin:<名称>`（使用
-  libtest 默认 harness 的单元测试目标；工作区清单的 `harness` 键只允许出现在 `[[bench]]`）。Windows 上 `all --ci` 的
+- 人工义务映射中由单元测试持有的义务以一个或多个 owner `(package, target, path)` 声明（一项义务需要几个测试共同证明时
+  全部列出，全部核验才算有 owner），`target` 只允许 `lib` 或 `bin:<名称>`（使用 libtest 默认 harness 的单元测试目标；
+  工作区清单的 `harness` 键只允许出现在 `[[bench]]`）。Windows 上 `all --ci` 的
   tests 部分包含 owner 核验任务：以 `cargo test --no-run --message-format=json` 的 `compiler-artifact` 建立目标到测试二进制的
   映射，对每个含 owner 的二进制执行 `--list` 与 `--list --ignored`（owner 须在前者恰好出现一次、不在后者中），再以
   `--exact <owner> --nocapture` 让每个 owner 单独一个进程执行。构建、两次列出与每次执行都须成功退出、输出完整（未超时、未截断）

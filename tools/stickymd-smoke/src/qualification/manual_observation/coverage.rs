@@ -31,8 +31,9 @@ pub(in crate::qualification) enum Target {
         case: &'static str,
         checks: &'static [&'static str],
     },
-    /// A unit test; owned only once the headless CI receipt lists it as verified.
-    Test(Owner),
+    /// Unit tests that prove it together; owned only once the headless CI receipt lists every
+    /// one of them as verified.
+    Test(&'static [Owner]),
     /// Retired by the USER decision `decision` (see `RETIREMENTS`).
     Retired { decision: &'static str },
     /// Not owned yet; `planned` names the intended owner.
@@ -64,11 +65,18 @@ pub(in crate::qualification) fn test_owned() -> impl Iterator<Item = &'static Ob
 
 /// Every unit test that owns an obligation, once each.
 pub(in crate::qualification) fn test_owners() -> BTreeSet<Owner> {
-    test_owned()
-        .filter_map(|obligation| match obligation.target {
-            Target::Test(owner) => Some(owner),
-            _ => None,
+    owners_of(OBLIGATIONS)
+}
+
+/// The union of the unit tests `obligations` name: every owner of every obligation.
+fn owners_of(obligations: &[Obligation]) -> BTreeSet<Owner> {
+    obligations
+        .iter()
+        .flat_map(|obligation| match obligation.target {
+            Target::Test(owners) => owners,
+            _ => &[],
         })
+        .copied()
         .collect()
 }
 
@@ -97,8 +105,13 @@ pub(in crate::qualification) fn describe(obligation: &Obligation) -> String {
     let owner = match obligation.target {
         Target::Gap { planned } => planned,
         Target::Retired { decision } => decision,
-        Target::Test(owner) => {
-            test = format!("unit test {owner}");
+        Target::Test(owners) => {
+            let names = owners.iter().map(ToString::to_string).collect::<Vec<_>>();
+            test = format!(
+                "unit test{} {}",
+                if names.len() == 1 { "" } else { "s" },
+                names.join(" + ")
+            );
             &test
         }
         _ => "",

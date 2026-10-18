@@ -443,3 +443,7 @@ plan 05 `external-change-conflict`（载入外部解除重建义务）：`sticky
 2026-10-16 覆盖补全 C2b-2 映射 plan 11 `release-artifact-authority` 的单元测试 owner 核验与 smoke 证据 schema 3：owner 声明在人工义务映射
 （`manual_observation/coverage/table.rs` 的 `Target::Test`），核验在 `unit_owners`（解析与 Windows 执行）与 runner 的 `unit-test owner verification`
 任务，收据判定在 `qualification/automated_readiness.rs`，源码身份在 `evidence.rs::SourceIdentity`，`harness` 治理在 `governance.rs`；验收见 P14-A81。
+
+2026-10-17 覆盖补全 C2b-3：`Target::Test` 改为 owner 集合（全部核验才算持有）；逐义务审计 42 项 C2a 单元缺口后绑定 plan 09 滚动条与退出取消九项，
+其中 gutter 命中抽为纯函数 `app/scrollbar.rs::gutter_at`，滚动条、标题与载入外部的 owner 测试按审查补强断言；其余 33 项保留缺口，按义务写明已有断言与缺失部分；验收见 P14-A81 与
+phase-05 的 2026-10-17 补充。

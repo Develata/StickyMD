@@ -126,6 +126,26 @@ The extractions keep the original early exits: bar geometry is read only while t
 viewport only for a visible completion of the current document.
 The winit wiring of these decisions is still not exercised by a test.
 
+2026-10-17 supplement (C2b-3): the gutter under the cursor is decided by the pure `app::scrollbar::gutter_at` (the
+`GUTTER_DIP` band right of each pane over its height, scaled by DPI), tested on its own at 100% and 150% on both sides
+of each of its four edges for both panes. The scrollbar
+tests now also assert, in a Split, that hovering or dragging either pane emphasizes only that pane's bar, and that over all nine hover × drag states a bar is emphasized exactly when it is
+hovered or dragged; that the
+emphasized thumb is wider than the painted resting thumb over the same rows, inside the track, at every DPI; that inside
+the track a drag keeps the grabbed point under the pointer for two grab offsets; that a press on the Preview track pages
+the Preview pane, and that on every edge of either track the last pixel inside pages its pane while the first pixel
+outside hits no bar, and the thumb's first and last rows start a drag while the track just above it and at its end pages; a quarter-pixel
+sweep over and two pixels around each track, for seven bars at 100% DPI whose thumbs start and end between and on pixels, matches the
+half-open track and thumb intervals; so does, at 100/125/150/200% DPI with and without the Split control inset over
+4 thumb sizes x 41 positions, a quarter-pixel sweep across each track two pixels beyond both sides and down it within two
+pixels of the track's and the thumb's ends, plus presses at each stored thumb boundary and the float just below it (that
+float is skipped where the thumb boundary meets a track end, since the hit test reads the pointer as `f32`; those track
+ends are covered by the whole- and quarter-pixel presses); every press also checks whether it started a drag; and that `scroll_to_fraction(1.0)` / `(0.0)` show the last / first Source row whole inside the viewport,
+for many short lines and for one wrapped line. Nine
+plan 09 manual obligations are owned by these and the title / persistence unit tests through P14-A81.
+Automated entry: `cargo test -p stickymd-win --locked -- app::scrollbar` and
+`cargo test -p stickymd-render --lib --locked -- source::scrollbar`. Status: `AUTOMATED PASS`.
+
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
 

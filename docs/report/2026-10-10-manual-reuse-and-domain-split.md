@@ -1725,3 +1725,178 @@ readiness、任务投影与三项 Esc 绑定未发现失败后仍贡献 owner、
 stickymd-win 有 2 个 Preview worker 测试在当时 CPU 96% 的负载下因接收超时失败（本批未改 `apps/` 与 `crates/`，stickymd-win 不依赖 stickymd-smoke，
 单独运行 stickymd-win 测试连续 3 次 287 passed）；Linux 复跑（WSL Debian，3795335 上叠加 96 个文件）clippy 退出 0、测试 439 passed / 3 ignored 与 19 passed。
 本批之初的 dev-check 曾 10/10 通过；此后的 dev-check 均止于上述负载下的既有时序敏感测试，没有完整通过的最终 dev-check。
+
+### C2b-3 实施记录（2026-10-17）
+
+本批逐义务审计 C2a 留给单元测试的 42 项缺口（`UNIT_SCROLL_RUNTIME`、`C2_SCROLL_SHELL`、`C2_SCROLL_RENDER`、`C2_OPACITY_REDUCER`、
+`UNIT_OPACITY_DRAG`、`UNIT_QUIT_STATE` 与两项内联缺口），只绑定能被现有或补强后的单元测试完整证明的义务。
+
+- **方法**：每项义务先由一个映射者读 plan 条款、声明的断言与参数和 `--list` 出的测试名，给出唯一 owner 或"无"；提出 owner 的再由三个独立反驳者
+  各自尝试证伪（默认倾向证伪），多数未证伪才保留。结果：17 项提出 owner、25 项无候选；17 项中 9 项保留、8 项被多数证伪。保留的 9 项里有 6 项各被
+  一位反驳者证伪，逐条核实其理由后补强（见下），不是按票数直接接受。
+- **plan 11**（`release-artifact-authority` 的 owner 条目）：owner 声明改为"一个或多个 owner，全部核验才算有 owner"。这是 C2b-2 已批准合同的
+  细化（集合而非单值），不改变核验、收据与 readiness 判定；`Target::Test(&'static [Owner])`，`test_owners` 取并集，覆盖测试要求非空且不重复。
+- **补强与新增接缝**（针对单票证伪的理由）：
+  - emphasis 绘制：原测试只断言加粗后像素多于静止时，静止宽度为 0 也能通过；补 `thin_count > 0`（每个 DPI）。
+  - hover 触发：原测试把"光标在哪条 gutter"作为参数直接传入，命中判定在 `StickyApp` 方法里没有测试；抽为纯函数 `app::scrollbar::gutter_at`
+    （`scroll_runtime.rs` 只负责取几何与 DPI 后调用），新测试 `the_gutter_is_the_band_right_of_each_pane` 覆盖两侧边界、上下边界、
+    缺失窗格与 150% DPI；该义务由 gutter 判定与 emphasis 判定两个 owner 共同持有。
+  - 轨道命中：原测试只按 Source 一条栏；补 Split 中按 Preview 轨道上下两侧得到 `Page { pane: Preview, direction: ±1 }` 且不开始拖动。
+  - Source 两端可达：`caret_rect(text.len()).is_some()` 对被裁掉一半的末行也成立；改为断言末行完整位于 220 px 视口内。
+  - 标题优先级：plan 条款含"唯一函数"，只测优先级不够；与 `the_title_has_one_native_writer` 一起作为两个 owner。
+  - 载入外部解除重建义务：反驳者认为测试未覆盖"外部删除"语境与运行时调用点。核实：测试的义务正是由 `RecreateMissing` 写入失败产生（外部删除后的
+    重建义务），再经冲突载入 `accept_external` 解除；`IgnoreKnown`（重新出现的已知内容）走 `confirm_durable_present`，不是"载入外部"；运行时的两处
+    载入（`ReloadClean` 与冲突载入）都调用 `accept_external`。接缝与其他绑定一致（单元决策，接线另计），不补强，直接绑定。
+- **绑定的 9 项**（plan 09）：`scroll-3` emphasis-trigger `trigger=hover`（2 个 owner）/ `trigger=drag`、emphasis-paint、drag-mapping、
+  track-hit、ends-reach-document-ends `view=source`（stickymd-render lib owner，首个 `lib` 目标）；`quit-2` established-only-by-save-failure
+  `cause=paste-unconverged`、external-load-releases-rebuild；`quit-3` title-priority（2 个 owner）。`unit_owners` 中 `Lib` 的 dead_code 预期随之删除。
+- **被多数证伪的 8 项**（保留缺口）：thumb-geometry（只测 dpi 1 的最小高度，未测按比例与按 DPI）、drag-live-update、track-page-scroll、
+  viewport-only `state=preedit`、stale-frame-no-thumb、stale-receipt-identity（只测偏移相同的视口不等，未测只差偏移的旧回执被丢弃）、
+  stale-receipt-guard、no-stepwise-write（只断言 reducer 的持久化请求，不读 config，而运行时按 config dirty 写盘）。
+- **无候选的 25 项**：视图模式到窗格栏的组合、`StickyApp` 的 winit 接线（hover、拖动、翻页、结束拖动、回执应用）、对文档状态不变的断言、
+  gutter 几何避让、短笔记隐藏、Source 映射缓存、Preview 文档高度、透明度范围与输入、守卫阻止的退出、屏障判定与每次事件处理后的清除、组字守卫接线。
+- **缺口文案**：各 gap 常量与内联文案改为"C2b-3 审计：……"，写明现有测试未证明的部分与预期的补强或 exact 层，替换此前"C2 / C2b 绑定模块收据"的
+  计划文字（那些文字假设整组测试能持有义务，审计后不成立）。
+- **回归**：首次 `all --ci --ci-shard=tests` 中 `runner::headless::tests::requesting_several_modules_deduplicates_shared_commands` 失败——它假设
+  `core,render` 只规划两个任务，render 有了 owner 后多出投影到 `stickymd-render` 的 owner 任务（行为正确）。测试改为把 owner 任务分开：至多一个，
+  其余仍是去重后的两个任务；是否规划 owner 任务由映射决定，投影本身由 `owner_verification_projects_onto_the_selected_owning_packages` 覆盖。
+- **验证**（审查前，未冻结的 dirty 工作树，仅作开发证据）：`cargo fmt --all -- --check` 通过；`cargo clippy -p stickymd-smoke -p stickymd-win
+  -p stickymd-render --all-targets --locked -- -D warnings` 0 警告；`cargo test -p stickymd-win -- app::scrollbar` 8 passed、`cargo test -p
+  stickymd-render --lib -- source::scrollbar` 4 passed；`modules run windows,render --mode=tests` PASS（stickymd-win 288 passed）；
+  `all --ci --ci-shard=tests --json` 全部 PASSED（workspace tests 207.4 s），schema 3 证据中 owner 任务 PASSED、8.3 s、列出 12 个 owner（11 个
+  `stickymd-win/bin:stickymd-win`，1 个 `stickymd-render/lib`）；Linux 复跑（WSL Debian，3795335 上叠加 97 个文件）stickymd-smoke 与
+  stickymd-render clippy 退出 0、测试 439 passed / 3 ignored、19 passed 与 render 165 passed / 13 ignored 等全部通过。
+
+#### C2b-3 代码审查第 1 轮（2026-10-17）
+
+gpt-6-astra（effort max）：DISAGREE，3 BLOCKER、4 SHOULD_FIX、1 NICE_TO_HAVE；多 owner 机制（并集、`describe`、readiness 严格相等、按包投影）与
+`gutter_at` 抽取未发现问题，9 项绑定中 track-hit 与 `cause=paste-unconverged` 判为成立。全部核实后接受，并对每项补强做了变异检查（临时改生产代码、
+只跑该义务的 owner、确认失败后恢复）：
+
+- **hover / drag 只测 Source**（BLOCKER）：`emphasized()` 限定 Source 或拖动时两栏一起强调都能通过。`hovering_or_dragging_a_bar_emphasizes_only_that_bar`
+  改为 Split 两栏，对每个窗格依次 hover、离开、拖动、结束拖动，并断言另一栏不强调。两个变异均被杀死。
+- **标题期望值引用生产常量、只测顺次清除**（BLOCKER）：`each_state_has_its_title_and_higher_states_win` 改为五个事实的全部 32 种组合，期望标题在测试中
+  逐字写出（退出已取消的字面量即 plan 09 原文）。"取消标题要求 dirty" 与 "字面量漂移" 两个变异均被杀死；唯一原生写入者守卫保留为第二个 owner。
+- **Source 两端只用短行**（BLOCKER）：plan 09 要求覆盖单行折行。`scrollbar_handles_a_single_wrapped_line_and_resized_short_notes` 补首尾断言（末行与首行
+  完整位于视口内、`fraction` 为 1、回到开头 `line` 与 `vertical` 为 0）并加入为第二个 owner。变异"折行行高按一行计"被该测试杀死，而只看短行的原 owner
+  不会失败——这正是需要两个 owner 的原因。
+- **emphasis 绘制只比像素数**（SHOULD_FIX）：改为比较着色像素的列与行范围：强调后两侧都更宽、行范围不变、且仍在轨道内。变异"强调时等宽增高"被杀死。
+- **拖动映射只测原位与越界**（SHOULD_FIX）：补轨道内部位置：两种抓取偏移、四个非整齐位移下，fraction 等于"滑块顶端跟随指针位移"除以可移动长度。
+  变异"fraction 量化为 0.2 步长"被杀死。
+- **载入外部只测有冲突的路径**（SHOULD_FIX）：测试对无冲突（`ReloadClean`）与有冲突两种状态都验证解除。变异"仅在存在冲突时解除"被杀死（首次运行时
+  rustc 因会话中断崩溃，单独重跑后确认）。
+- **gap 文案与现有断言矛盾**（SHOULD_FIX）：例如绘制测试其实断言了避开 resize 边与同步按钮、默认 96 有 config 断言、非数字字符被拒有断言，"任何其它事件都会
+  提交"过强。所有剩余缺口按义务（或同族义务）重写：先写已有的单元断言，再写缺失部分；`UNIT_SCROLL_RUNTIME` 拆为视图与栏、窄槽运行时、拖动运行时、
+  只改视口、Preview 运行时五组，其余七项改为内联文案。
+- **缺 owner 集合的负例**（NICE_TO_HAVE）：owner 检查器的正反例加入 `Target::Test`（合法单 / 双 owner；空、重复、未知包、空路径、含空白路径）；
+  并集抽为 `owners_of` 并以合成义务测试第二个 owner 与跨义务共享 owner。
+- 文档：P14-A81、phase-05 的 2026-10-17 补充与 coverage-matrix 按补强后的断言重写。
+- 验证：fmt、clippy（smoke、win、render）0 警告；`cargo test -p stickymd-smoke --locked` 534 passed / 1 failed / 17 ignored，失败的是既有负载敏感的
+  `qualification::manual::instance::tests::a_candidate_that_exits_at_once_is_a_startup_failure`（本批未改），单独连跑 3 次均通过。
+- 第 1 轮修复后 `all --ci --ci-shard=tests --json` 首次运行因机器提交内存耗尽（rustc os error 1455，另一项目的构建与 Lean / WSL 同时运行）在编译阶段
+  失败，属环境故障；以 `CARGO_BUILD_JOBS=4` 重跑全部 PASSED（workspace tests 383.9 s），owner 任务 12.2 s、列出 13 个 owner（含两个
+  `stickymd-render/lib`）；Linux 复跑（97 个文件）clippy 退出 0，smoke 440 passed / 3 ignored、19 passed，render 165 passed / 13 ignored。
+
+#### C2b-3 代码审查第 2 轮（2026-10-17）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、1 SHOULD_FIX；第 1 轮的标题、Source 两端、绘制、拖动映射、载入外部、gap 文案与 owner 负例判为已关闭，
+emphasis-paint、drag-mapping、Source 两端、`cause=paste-unconverged`、external-load 与 title-priority 六项绑定判为成立（只认单元接缝，调用接线另计）。
+两项核实后接受：
+
+- **hover 与拖动同时成立未测**（BLOCKER）：测试先清除 hover 再拖动，`emphasized()` 改成 `hovered.or(drag)` 或 `drag.or(hovered)` 都能通过，而拖动
+  一栏时 hover 另一栏是 `pointer_moved` 的合法状态。测试在每栏拖动中再 hover 另一栏，断言两栏都强调，结束拖动后只剩被 hover 的一栏。两个变异均被杀死。
+- **轨道命中没有纵向越界的反例**（SHOULD_FIX）：唯一反例在正文区，`Scrollbar::contains` 只查横向也能通过。测试对 Split 两栏轨道上下左右紧邻的外侧各按一次，
+  断言不命中且不开始拖动。"忽略高度"与"左右放宽两像素"两个变异均被杀死。
+- 文档：P14-A81 与 phase-05 补充写入这两项断言。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows,render --mode=tests` PASS（stickymd-win 288 passed、render 168 passed，owner 任务通过）。
+  本轮只改 stickymd-win 的测试与文档，owner 集合不变。
+
+#### C2b-3 代码审查第 3 轮（2026-10-17）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、1 SHOULD_FIX；第 2 轮两项判为已关闭，六项绑定仍判为成立。两项都是相邻边界，核实后接受；为不再逐例补，
+改为在小状态空间上穷举：
+
+- **同一栏同时 hover 与拖动未测**（BLOCKER）：互斥（XOR）的 `emphasized()` 能通过，而"在窄槽内按下滑块后沿原窄槽拖动"正是该状态。测试保留原有转换序列，
+  另穷举 hover（无 / Source / Preview）× 拖动（无 / Source / Preview）九种状态，断言每栏强调当且仅当它被 hover 或被拖动。XOR 与 `Option::or` 变异均被杀死。
+- **轨道左 / 上边界未作为命中测试**（SHOULD_FIX）：轨道是半开矩形 `[left, right) x [top, bottom)`。测试对两栏每条边各按内侧末像素（须翻向对应方向）与
+  外侧首像素（须不命中），并先断言左右边的按点在滑块之上。严格左界、严格上界、含右界、含下界、右界少一像素五个变异均被杀死。
+- **主动补齐同类边界**：hover 的第二个 owner `the_gutter_is_the_band_right_of_each_pane` 原只测部分边界（上 / 下边内侧未作为命中）。改为对两个窗格、两个 DPI
+  的四条边各测内侧与外侧半像素；严格上界、含下界、严格左界、不按 DPI 缩放、忽略高度五个变异均被杀死。
+- 文档：P14-A81 与 phase-05 补充改写为穷举后的断言。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows --mode=tests` PASS（stickymd-win 288 passed，owner 任务通过）；owner 集合不变。
+
+#### C2b-3 代码审查第 4 轮（2026-10-17）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、1 NICE_TO_HAVE；第 3 轮两项与主动补齐的 gutter 边界判为已关闭，hover 与 drag 两项绑定改判为成立，
+九项中八项成立。核实后接受：
+
+- **轨道命中没有测滑块与空白轨道的分界**（BLOCKER）：`Scrollbar::press` 中 `y < thumb_top` 误写为 `<=` 时，track owner 的 21 个按点结果全部不变，而按在滑块
+  首行会变成翻页。测试对两栏补滑块上方半像素（翻页向上）、`thumb_top`（开始拖动）、滑块末行内侧半像素（开始拖动）与 `thumb_top + thumb_height`（翻页向下），
+  每次按下后结束拖动以免串扰。"首行算轨道""末端算滑块""滑块短一像素""滑块晚一像素开始"四个变异均被杀死。
+- **报告措辞**（NICE_TO_HAVE）：第 3 轮记录中 gutter 的"四条边各测内侧与外侧半像素"不准确。更正：每条边取相距 0.5 px 的一内一外两点，其中一点就在边界上——
+  左、上边的边界点是命中点，右、下边的边界点是不命中点。测试取点不变。
+- 文档：P14-A81 与 phase-05 补充写入滑块分界。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows --mode=tests` PASS（stickymd-win 288 passed，owner 任务通过）；owner 集合不变。
+
+#### C2b-3 代码审查第 5 轮（2026-10-18）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER；第 4 轮两项判为已关闭，九项中八项成立。核实后接受：
+
+- **滑块非整数末端的最后整数行未取样**（BLOCKER）：Preview 滑块末端约为 438.396，"末端内侧半像素"取到 437.896，而整数行 438 仍属滑块；末端判定改为向下取整时
+  owner 的 29 个按点结果全部不变。逐点补样已连续三轮留下新的间隙，故改为扫描：对 Split 两栏和四条滑块起止落在像素之间或之上的栏（fraction 0、0.3137、0.6421、1），
+  沿轨道中线自轨道上方两像素到下方两像素、并在三个高度上横跨轨道左右各两像素，每四分之一像素按下一次，期望由半开区间 `[left, right) x [top, bottom)` 与
+  `[thumb_top, thumb_end)` 独立给出，并断言至少一条栏的滑块起点和终点不在整数上。末端向下 / 向上取整、起点向下 / 向上取整、指针纵坐标取整、命中判定取整与
+  "首行算轨道"七个变异均被杀死（其中一次因机器提交内存耗尽而未编译，以 `CARGO_BUILD_JOBS=2` 重跑后确认）。
+- 文档：P14-A81 与 phase-05 补充写入扫描。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows --mode=tests` PASS（stickymd-win 288 passed，owner 任务通过）；owner 集合不变。
+
+#### C2b-3 代码审查第 6 轮（2026-10-18）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER；第 5 轮的扫描判为已关闭，九项中八项成立。核实后接受：
+
+- **末端比较的浮点改写未被排除**（BLOCKER）：把 `y >= thumb_top + thumb_height` 改写为代数等价的 `y - thumb_top >= thumb_height`，两者在部分几何下相差一个
+  ULP。审查者给出合法输入 `preview_scroll(…, 780.0, 4.0)`：滑块末端恰为 567.0 而起点与高度都不是整数，改写后整数行 567 会开始拖动而不是翻页；网格扫描的
+  16 197 个按点都碰不到这种差异。修复：把该 Preview 栏加入扫描（断言末端为 567.0、起点非整数）；另在 3 个 DPI × 4 种可见比例 × 41 个位置上，按滑块起点与
+  末端本身及其前一个浮点值（`next_down`）各按一次，期望由存储的 `[thumb_top, thumb_top + thumb_height)` 给出——舍入方式不同的分类会在其中一部分几何上
+  分歧。"末端向下取整"变异被杀死；末端改写变异的结果见下方验证条目。
+- **探针发现的实现细节**：滑块起点或末端与轨道端点重合时，轨道端点旁的浮点值会被 `Scrollbar::contains` 按 `f32` 读成轨道内（`press` 按 `f64` 分类），
+  例如 y = 41.99999999999999 被当作轨道顶 42 内的点而向上翻页。指针坐标是整像素（`f32` 精确），所以没有用户可见的影响，也不改产品代码；探针在这两种
+  重合处跳过，那里的轨道边缘由整像素与四分之一像素扫描覆盖。
+- **等价变异**：把起点比较改写为相对轨道顶（`y - track.y < thumb_top - track.y`）未被杀死。轨道顶是不超过 2¹⁰ 的整数，减去它在这些量级上不引入舍入
+  （结果所需位数不超过原值），两种写法对所有可达输入一致，判为等价变异，不作为缺口。
+- 文档：P14-A81 与 phase-05 补充写入边界探针。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows --mode=tests` PASS（stickymd-win 288 passed，owner 任务通过）；owner 集合不变。期间 E: 盘
+  剩余低于 10 GB 触发 Rust 磁盘闸，经 USER 同意删除了可重建的 `target/release`（3.5 GB）。
+
+#### C2b-3 代码审查第 7 轮（2026-10-18）
+
+gpt-6-astra（effort max，58 min）：DISAGREE，1 BLOCKER、1 SHOULD_FIX；第 6 轮的末端改写反例判为已关闭，起点相对改写判为等价变异（与本报告判断一致），
+九项中八项成立。本轮按要求区分了整像素影响。两项核实后接受：
+
+- **高 DPI 下的轨道宽度未被扫描**（BLOCKER，整像素可见）：七条扫描栏都是 100% DPI，DPI 网格只按轨道中线；把命中宽度固定为 10 像素（遗漏 DPI 换算）时
+  owner 的全部按点不变，而 150% DPI 下宽 15 像素的轨道右侧 5 像素点击会失效。测试重构为：所有按点经同一个只知半开区间的 `classify` 判定，且每次按下后核对
+  `end_drag` 是否恰报告开始了拖动（第 6 轮的探针此前未核对）；DPI 网格扩为 100% / 125% / 150% / 200% × 有无 Split 控件留白 × 4 种可见比例 × 41 个位置，
+  每条栏以四分之一像素横扫轨道左右各两像素（经过滑块），并纵扫轨道两端与滑块两端各两像素，再加滑块边界与其前一个浮点值的探针。"固定 10 像素宽度"与此前
+  全部 14 个轨道 / 滑块变异（忽略高度、四条边的严格 / 包含错误、指针取整、起止取整、末端相对改写等）共 15 个均被杀死。
+- **投影文档未写排除范围**（SHOULD_FIX）：P14-A81 与 phase-05 补充改写为实际覆盖：哪些按点在哪些 DPI 上、滑块边界与轨道端点重合时跳过哪一个浮点值及原因、
+  轨道端点由哪些按点承担。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows --mode=tests` PASS（stickymd-win 288 passed，owner 任务通过）；owner 集合不变。
+
+#### C2b-3 代码审查第 8 轮（2026-10-18）与结论
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER；第 7 轮两项判为已关闭，九项绑定在声明的单元接缝内全部成立。审查者逐 DPI 复算了杀死"固定 10 像素宽度"的
+整像素按点（125% `(515,59)`、150% `(517,64)`、200% `(523,74)`），并把起点相对改写、整像素输入下的指针取整等判为限于可达输入域的等价变异；在 track 命中、翻页
+方向、滑块分类与是否开始拖动的范围内没有找到仍能通过 owner 的整像素回归。另两项：
+
+- NICE_TO_HAVE（勘误）：第 7 轮记录中"所有按点经同一个 `classify` 判定，且每次按下后核对 `end_drag`"过宽——该测试前段的 29 次按下使用直接写出的期望，其中前
+  21 次不逐次核对 `end_drag`；统一判定与逐次核对只适用于尾部扫描与边界探针（代码注释 "From here" 的范围）。审查者统计尾部与探针共 211 644 次按下。
+- NEEDS_VERIFICATION：当前工作树的 Windows 执行——见下方最终验证。
+
+C2b-3 最终结果：42 项 C2a 单元缺口中 9 项由 13 个单元测试 owner 持有（其中 hover、Source 两端与标题优先级各两个 owner），33 项保留为按义务写明已有断言与
+缺失部分的 gap；产品代码唯一改动是保持原判定的 `gutter_at` 抽取；`Scrollbar::contains` 按 `f32`、`press` 按 `f64` 读取指针的差异对整像素输入无影响，记录
+不改。
+
+最终验证（提交前，同一工作树，未冻结的 dirty 树，仅作开发证据）：`cargo fmt --all -- --check` 通过；clippy（stickymd-smoke、stickymd-win、stickymd-render）
+0 警告；`all --ci --ci-shard=tests --json`（`CARGO_BUILD_JOBS=2`，机器内存紧张）全部 PASSED，workspace tests 266.2 s，owner 任务 13.7 s、列出 13 个
+owner；Linux 复跑（WSL Debian，3795335 上叠加 97 个文件）clippy 退出 0，smoke 440 passed / 3 ignored、19 passed，render 165 passed / 13 ignored。
+报告中各轮的变异检查为临时改生产代码、只跑对应 owner、确认失败后恢复（脚本不进仓库），每次恢复后 `git diff --stat` 与改前一致。

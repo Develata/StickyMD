@@ -87,41 +87,34 @@ mod tests {
         }
     }
 
+    /// All 32 combinations of the five facts: the highest present fact names the title, in plan
+    /// 09 order. The expected titles are spelled out here, not taken from the product's
+    /// constants, so a changed literal fails (the quit-cancelled one is the plan's).
     #[test]
     fn each_state_has_its_title_and_higher_states_win() {
-        let all = TitleFacts {
-            recovery_pending: true,
-            quit_cancelled: true,
-            conflict: true,
-            dirty: true,
-            formula_error: Some("x"),
-        };
-        // Clearing the highest remaining fact reveals the next one, in plan 09 order.
-        let mut current = all;
-        let mut seen = Vec::new();
-        for clear in [
-            |f: &mut TitleFacts<'_>| f.recovery_pending = false,
-            |f: &mut TitleFacts<'_>| f.quit_cancelled = false,
-            |f: &mut TitleFacts<'_>| f.conflict = false,
-            |f: &mut TitleFacts<'_>| f.dirty = false,
-            |f: &mut TitleFacts<'_>| f.formula_error = None,
-        ] {
-            seen.push(window_title(current).into_owned());
-            clear(&mut current);
-        }
-        seen.push(window_title(current).into_owned());
-        assert_eq!(
-            seen,
-            [
-                RECOVERY,
-                QUIT_CANCELLED,
-                CONFLICT,
-                DIRTY,
+        for mask in 0_u8..32 {
+            let on = |bit: u8| mask & (1 << bit) != 0;
+            let facts = TitleFacts {
+                recovery_pending: on(0),
+                quit_cancelled: on(1),
+                conflict: on(2),
+                dirty: on(3),
+                formula_error: on(4).then_some("x"),
+            };
+            let expected = [
+                "StickyMD — 恢复选择未完成",
+                "StickyMD * — 退出已取消：保存失败",
+                "StickyMD * — 外部修改冲突",
+                "StickyMD *",
                 "StickyMD — 公式错误：x",
-                PLAIN
             ]
-        );
-        assert_eq!(window_title(facts()), PLAIN);
+            .into_iter()
+            .enumerate()
+            .find_map(|(bit, title)| on(bit as u8).then_some(title))
+            .unwrap_or("StickyMD");
+            assert_eq!(window_title(facts), expected, "{facts:?}");
+        }
+        assert_eq!(window_title(facts()), "StickyMD");
     }
 
     #[test]

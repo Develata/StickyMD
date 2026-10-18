@@ -37,10 +37,6 @@ pub(crate) use verify::verify;
 /// mean what libtest documents (governance keeps `harness = false` to benches).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum OwnerTarget {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no library test owns an obligation yet")
-    )]
     Lib,
     Bin(&'static str),
 }

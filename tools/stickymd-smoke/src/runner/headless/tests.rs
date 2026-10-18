@@ -215,6 +215,11 @@ fn rendering_selection_preserves_performance_filters_and_serial_measurement() {
 #[test]
 fn requesting_several_modules_deduplicates_shared_commands() {
     let tasks = plan(&request(&[Module::Core, Module::Render], Mode::Tests)).unwrap();
+    // Whether an owner task is planned depends on the mapping; when it is, it is planned once.
+    let (owners, tasks): (Vec<_>, Vec<_>) = tasks
+        .into_iter()
+        .partition(|task| matches!(task, Task::UnitTestOwners { .. }));
+    assert!(owners.len() <= 1, "{owners:?}");
     assert_eq!(tasks.len(), 2);
     let Task::Cargo { args, .. } = &tasks[1] else {
         panic!("Cargo tests expected");

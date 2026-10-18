@@ -7,9 +7,26 @@ use std::path::{Path, PathBuf};
 
 use super::declared::{ASSERTIONS, Assertion, RETIREMENTS};
 use super::sources::{decompose, documents};
-use super::{OBLIGATIONS, Obligation, Target};
+use super::{OBLIGATIONS, Obligation, Target, owners_of};
 use crate::qualification::exact_checks::{self, DeclaredCase};
 use crate::qualification::manual_observation::registry;
+use crate::unit_owners::{Owner, OwnerTarget};
+
+const WIN_A: Owner = Owner {
+    package: "stickymd-win",
+    target: OwnerTarget::Bin("stickymd-win"),
+    path: "app::a::tests::one",
+};
+const WIN_B: Owner = Owner {
+    package: "stickymd-win",
+    target: OwnerTarget::Bin("stickymd-win"),
+    path: "app::b::tests::two",
+};
+const RENDER_A: Owner = Owner {
+    package: "stickymd-render",
+    target: OwnerTarget::Lib,
+    path: "source::a::tests::one",
+};
 
 fn repository() -> PathBuf {
     crate::governance::find_repository_root(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap()
@@ -222,16 +239,24 @@ fn owner_errors(obligations: &[Obligation], owners: &Owners) -> Vec<String> {
                     errors.push(format!("{label}: a gap names no planned owner"));
                 }
             }
-            // Existence is the owner verification's job; here only the identity's form.
-            Target::Test(owner) => {
-                if !crate::headless::Module::ALL
-                    .iter()
-                    .any(|module| module.package() == Some(owner.package))
-                {
-                    errors.push(format!("{label}: {owner} names no workspace package"));
+            // Existence is the owner verification's job; here only the identities' form.
+            Target::Test(owners) => {
+                if owners.is_empty() {
+                    errors.push(format!("{label}: names no unit test"));
                 }
-                if owner.path.is_empty() || owner.path.contains(char::is_whitespace) {
-                    errors.push(format!("{label}: {owner} has no libtest path"));
+                if owners.iter().collect::<BTreeSet<_>>().len() != owners.len() {
+                    errors.push(format!("{label}: names a unit test twice"));
+                }
+                for owner in owners {
+                    if !crate::headless::Module::ALL
+                        .iter()
+                        .any(|module| module.package() == Some(owner.package))
+                    {
+                        errors.push(format!("{label}: {owner} names no workspace package"));
+                    }
+                    if owner.path.is_empty() || owner.path.contains(char::is_whitespace) {
+                        errors.push(format!("{label}: {owner} has no libtest path"));
+                    }
                 }
             }
         }
@@ -328,6 +353,8 @@ fn the_owner_checker_rejects_missing_and_unauthorized_owners() {
             decision: "RETIRE-P08-M12-ACCESSIBILITY",
         },
         Target::Gap { planned: "x" },
+        Target::Test(&[WIN_A]),
+        Target::Test(&[WIN_A, RENDER_A]),
     ] {
         assert!(errors(good).is_empty(), "{good:?}: {:?}", errors(good));
     }
@@ -360,6 +387,17 @@ fn the_owner_checker_rejects_missing_and_unauthorized_owners() {
         Target::Retired {
             decision: "RETIRE-ELSEWHERE",
         },
+        Target::Test(&[]),
+        Target::Test(&[WIN_A, WIN_A]),
+        Target::Test(&[Owner {
+            package: "stickymd-nowhere",
+            ..WIN_A
+        }]),
+        Target::Test(&[Owner { path: "", ..WIN_A }]),
+        Target::Test(&[Owner {
+            path: "app::a::tests one",
+            ..WIN_A
+        }]),
     ] {
         assert!(!errors(bad).is_empty(), "{bad:?} was accepted");
     }
@@ -376,4 +414,24 @@ fn the_owner_checker_rejects_missing_and_unauthorized_owners() {
         &owners,
     );
     assert!(!other.is_empty());
+}
+
+/// The owner set is every owner of every obligation, once each: the second owner of a
+/// multi-owner obligation counts, an owner shared by obligations is listed once, other
+/// targets name none.
+#[test]
+fn the_owner_set_is_the_union_of_every_listed_owner() {
+    let obligation = |target| Obligation {
+        source: "plan09:x",
+        assertion: "y",
+        param: "",
+        target,
+    };
+    let owners = owners_of(&[
+        obligation(Target::Test(&[WIN_A, RENDER_A])),
+        obligation(Target::Test(&[WIN_B, WIN_A])),
+        obligation(Target::Gap { planned: "x" }),
+    ]);
+    assert_eq!(owners, BTreeSet::from([WIN_A, WIN_B, RENDER_A]));
+    assert!(owners_of(&[obligation(Target::Gap { planned: "x" })]).is_empty());
 }
