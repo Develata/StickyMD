@@ -6,8 +6,8 @@ use std::fs;
 use std::path::Path;
 
 use super::super::super::exact_desktop::{
-    Checks, ChildGuard, assert_sole_stickymd_process, invoke_uia, io_error, seed_note,
-    wait_for_layout, wait_until,
+    Checks, ChildGuard, assert_sole_stickymd_process, io_error, seed_note, tray, wait_for_layout,
+    wait_until,
 };
 
 pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
@@ -21,14 +21,10 @@ pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> R
     assert_sole_stickymd_process(child.id())?;
     checks.record("sole-process", &[("stage", "startup")]);
 
-    // The helper opens the menu by clicking the `NotifyItemIcon` it resolves in Explorer's tray
-    // (it reuses an open menu only, and this fresh process has none), so a menu proves the icon.
-    let menu = invoke_uia(repository, "tray-menu", child.id(), None)?;
+    // The menu opens, from closed, on a right-click on the `NotifyItemIcon` the helper resolves
+    // in Explorer's tray, so an opened menu proves the icon.
+    let items = tray::menu_items(repository, child.id())?;
     checks.record("tray-icon-present", &[]);
-    let items = menu
-        .lines()
-        .filter_map(|line| line.strip_prefix("UIA_TRAY_ITEM_HEX="))
-        .collect::<Vec<_>>();
     let expected = ["9690-85CF", "7F6E-9876", "9000-51FA"];
     if items != expected {
         return Err(format!(
@@ -46,7 +42,7 @@ pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> R
     }
     checks.record("close-keeps-process", &[]);
 
-    invoke_uia(repository, "tray-show", child.id(), None)?;
+    tray::show(repository, child.id())?;
     wait_for_visibility(window, true)?;
     checks.record("tray-show-restores-window", &[]);
     if source_projection(window)? != RETAINED {
@@ -57,7 +53,7 @@ pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> R
     replace_source(window, LATEST)?;
     assert_sole_stickymd_process(child.id())?;
     checks.record("sole-process", &[("stage", "pre-exit")]);
-    invoke_uia(repository, "tray-exit", child.id(), None)?;
+    tray::exit(repository, child.id())?;
     child.wait_for_exit(super::super::super::exact_desktop::TIMEOUT)?;
     checks.record("tray-quit-exits", &[]);
     let durable = fs::read_to_string(program.join("note/note.md")).map_err(io_error)?;

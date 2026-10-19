@@ -1984,3 +1984,194 @@ USER 选择：D2 helper 逐个试托盘图标；D3 纯函数 + 少量 G4；D4 �
   旧 note"，与"发布前一刻崩溃"的磁盘状态相同。资产写入与移入 trash 以文件出现为里程碑后强杀，是"在该点或之后"的确定性点。
 - 两者都不覆盖操作系统崩溃或掉电，那依赖 `FlushFileBuffers` 与 `ReplaceFileW` 的系统保证。若将来需要逐阶段的磁盘状态，可用已有的进程内观察接缝
   （`persist_note_with_before_publish`、`atomic_publish_with_observer`）在单元层构造每个阶段并跑启动协调，同样不改产品 runtime；本批不做。
+
+## 覆盖补全 C2c 实施记录（2026-10-19，输入注入模块）
+
+按 2026-10-15 设计的"输入注入"协议与本报告 C2c / C2d 实施计划。plan 11 先行：新增 `#physical-input-injection` 一节（只经一个模块以 `SendInput`
+注入、`cfg(panic = "unwind")` 才注入、先登记后注入与逆序显式有界释放、插入数判定、左键释放采样、共享停止、业务断言与清理分别判定、注入前核验
+目标、托盘菜单核验从关闭到打开、自动化与独占桌面取证要求）。
+
+- **核心** `tools/stickymd-smoke/src/input_injection.rs`：`Injection<B: Backend>` 在一个互斥量中持有后端、已登记的按下与停止原因。`press`
+  先登记再发送按下，按下短计数时照常释放并报错（不停止）；`release` 发送抬起，左键另在 500 ms 内采样，短计数或仍为按下即设置共享停止并报错；
+  `chord` 按序按下修饰键与键、再逆序全部释放；左键以 `LeftButton` 守卫持有，`release()` 显式释放、`Drop` 兜底（失败只能经共享停止报告）。停止后
+  一切注入（含移动、滚轮与左键恢复释放）都返回带停止原因的错误。`live()` 只在 `cfg(all(windows, panic = "unwind"))` 中给出进程唯一的注入器；
+  其余构建的后端是不可构造的 `Refused`，`SendInput` 后端（`input_injection/win32.rs`）根本不编译。
+- **调用方**：键盘的四个发送函数（单键、Ctrl、Shift、Ctrl+Shift 组合）改为 `send_chord`，统一先核验目标窗口为前台、激活且有焦点（原 Ctrl+Shift 组合
+  只激活不核验）再经模块注入；鼠标的左键、移动与滚轮经模块注入；拖动与点击由 `drop(button)` 改为 `button.release()?`，正常路径的释放失败不再被
+  `Drop` 吞掉。
+- **托盘**：helper 去掉 `mouse_event` 与 `keybd_event`，动作改为 `tray-target`（先报告菜单是否已打开，未打开才定位图标并把光标移到其上）、
+  `tray-menu-items`、`tray-menu-closed` 与 `tray-invoke`；`qualification/exact_desktop/tray.rs` 负责编排：要求菜单先关闭，核验光标仍在图标上且其下
+  根窗口为 Explorer 托盘后经模块右击，读到菜单打开才继续，最多两次；Esc 只在前台窗口属于 StickyMD 进程或为托盘时注入。G4-01 的菜单、显示与退出，
+  以及 G3-04 / G3-05 的托盘退出改用它。
+- **runner**：`ExactGroup` 增加 `injects_input`（G3、G4 为真，G5 为假）。注入停止后的 G3/G4 case 记为 FAILED"not run"；case 运行期间发生的释放失败
+  使该 case FAILED，细节同时列出断言结果与清理失败。
+- **治理**：`governance/input_injection.rs` 扫描 `tools/stickymd-smoke/src` 的 Rust 源码与 `tools/` 下全部 PowerShell 脚本（含注释），三种注入 API
+  只允许出现在 `input_injection` 模块；helper 标记改为要求托盘读取标记，Rust 驱动须保留 `TRAY_MENU_OPEN_ATTEMPTS = 2`、菜单已打开的处理、右击与
+  Esc 的核验入口。
+- **未做（需独占桌面）**：实际 abort 构建到达拒绝桩且零注入、托盘菜单从关闭到打开、以及迁移后的全部 G3/G4 case，随 C2d 的独占桌面运行取证。
+- **静态取证（无需桌面）**：解析 PE 导入表——`cargo build -p stickymd-smoke --release`（工作区 release profile 为 `panic = "abort"`）得到的二进制
+  不导入 `SendInput`、`GetAsyncKeyState`、`keybd_event` 与 `mouse_event`；debug（unwind）二进制只导入 `SendInput` 与 `GetAsyncKeyState`，已不再导入
+  `keybd_event`。release 二进制中出现的 `SendInput` / `keybd_event` 字符串是治理扫描的待查名单（拆分的 `concat` 被优化器折叠为常量），不是导入。
+  （第 1 轮审查指出此结论过宽：当时光标放置与合成指针消息仍绕过模块，见下方第 1 轮记录的更正。）
+- **验证**（审查前）：fmt 通过；`cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 0 警告；`cargo check -p stickymd-smoke --release`
+  0 警告；`cargo test -p stickymd-smoke --locked` 551 passed / 17 ignored 与 26 passed；`phase 00` PASS；Linux 复跑（3795335 上叠加 108 个文件，含新文件）
+  clippy 退出 0、测试 452 passed / 3 ignored 与 19 passed（Linux 测试构建编译注入核心但不编译 `SendInput` 后端）。
+- 期间发现：上一提交（第二实例唤醒修复）只跑了 stickymd-win 测试，phase-08 增补使覆盖来源的整文摘要变化，PR CI 的 Linux 与 Windows 测试失败；
+  核对 62 个矩阵行与全部条款摘要不变后单独提交摘要更新（`23d548d`）。今后提交前跑受影响的全部包测试。
+
+#### C2c 代码审查第 1 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，3 BLOCKER、6 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；INPUT 布局、键 / 鼠标标志、cfg 划分、五处迁移与
+runner / 治理入口判为正确。逐项核实后处理：
+
+- **B1 unwind 与锁毒化**（接受）：后端在按下中途 panic 会跳过释放；释放中 panic 时登记已删而停止未设；毒化的锁照常放行。改为：按下登记到发起它的操作；
+  每个操作持有一个 unwind 守卫，unwind 时释放该操作的按下并设置共享停止；释放的登记保留到判定之后，unwind 仍能找到；锁毒化即视为停止。单元测试覆盖
+  后端在按下、释放与采样时 panic 三种情形，以及毒化后的全面拒绝。
+- **B2 绕过模块的输入路径**（接受）：Rust 的光标放置、环境探针的写回与 helper 的托盘光标移动都直接调用 `SetCursorPos`，合成指针消息不受停止约束。
+  改为：后端增加光标放置，三处都经模块（helper 只报告图标坐标，由 Rust 放置并读回核验）；`SetCursorPos` 加入治理禁止名单；合成指针消息
+  （`send_window_message`）先检查共享停止，plan 11 写明它们只送达目标窗口、不改变桌面输入状态、不是物理输入也不证明物理投递。重新解析导入表：
+  release（abort）二进制只剩 `PostMessageW`（`WM_CLOSE` 与输入法切换请求），不再导入 `SetCursorPos` 与 `SendMessageW`（合成消息的停止检查在 abort
+  构建中恒拒绝，调用被消除）；debug 二进制导入 `SendInput`、`SetCursorPos`、`GetAsyncKeyState`、`SendMessageW` 与 `PostMessageW`。
+- **B3 左键采样**（澄清合同而非改实现）：审查者按 plan 11 新文"采到按下即失败"指出 `[Down, Up]` 被判成功。2026-10-15 设计要求的是"保留现有鼠标左键
+  释放采样"，而现有采样（迁移前的 `wait_for_left_button_state`）是在 500 ms 内等待读到抬起、到时限仍为按下才失败——释放后短暂仍读到按下是异步输入
+  处理的正常现象，按"首次读到按下即失败"会制造误判。plan 11 改为准确描述现有采样："有界时间内等待读到相应状态，到时限仍未读到即失败；读到未按下也
+  不证明目标收到释放（无法读取状态时同样读到未按下）"；单元测试覆盖"释放后读到三次按下再抬起"为成功、"到时限仍按下"为停止。
+- **S1 跨操作释放**（接受）：chord 的清理会释放别的操作按住的左键。改为每个操作只释放自己的登记；左键守卫按自己的操作身份释放、不重复；停止后仍可释放
+  已登记的按下，新注入被拒。测试覆盖"按住左键时 tap 与 chord 不松开它"和"停止后守卫仍释放"。
+- **S2 托盘失败路径**（接受）：右击后读取菜单失败直接返回、重试前忽略关闭失败、诊断缺失。改为每次尝试记录图标几何、读回的光标与清理结果；右击后的任一
+  失败先尝试清理再返回；清理未确认关闭即不再点击。
+- **S3 观察失败被当作关闭**（接受）：helper 的菜单枚举区分"观察到为空"与"无法观察"（报告 `UIA_TRAY_MENU_UNOBSERVABLE`），关闭只认观察到的空；
+  Rust 严格解析 `tray-target`、`tray-menu-items`、`tray-menu-closed` 与 `tray-invoke` 的报告，拒绝缺失、重复与矛盾。
+- **S4 两份副本的图标选择**（不在本批）：exact 资格化要求唯一的 StickyMD 进程，第一个可用图标即被测图标；D2 的逐个试图标属于 C2d 的 P08-A11 扩展。
+  `tray.rs` 文档写明这一点，不声称已满足 D2。
+- **S5 托盘 Esc 的目标核验**（接受）：改为只在前台线程处于弹出菜单模式（`GUITHREADINFO.flags` 的 `GUI_POPUPMENUMODE`）且菜单所有者属于被测进程时注入，
+  不再以前台类名为 Explorer 托盘为条件。这依赖托盘菜单由 StickyMD 的隐藏窗口经 `TrackPopupMenu` 拥有，需桌面运行确认。
+- **S6 P14-A82 状态过宽**（接受）：拆为 P14-A82（仓库内可重复的单元与治理检查，AUTOMATED PASS）与 P14-A83（桌面取证：abort 构建零注入、托盘关闭到打开、
+  迁移后的 G3/G4，NOT TESTED）。
+- **N2**：治理模块注释写明它是对所扫文件的词法回归检查，不跟踪构建脚本、其他 crate 或运行时拼接的名称。
+- **N1**：桌面取证仍待独占桌面运行（P14-A83）。
+- 验证：fmt、clippy（smoke）0 警告；`cargo test -p stickymd-smoke --locked` 554 passed / 17 ignored 与 26 passed；`phase 00` PASS；release 构建 0 警告。
+
+#### C2c 代码审查第 2 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，2 BLOCKER、5 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；第 1 轮的 B2、S5（静态）、S6、N2 判为已修复，
+S4（D2）延期到 C2d 可接受。逐项核实后处理：
+
+- **R2-B1 左键释放的 panic 路径**（接受）：显式释放先置 `released` 再释放，释放 panic 时登记残留且无人兜底；外层 case unwind 时左键守卫的 `Drop`
+  若再次 panic 会逃出析构而使进程 abort，`Guarded` 也在可能 panic 的清理之后才停止。改为：左键的显式释放与非 unwind 的 `Drop` 都在该操作的
+  `Guarded` 下进行，释放 panic 时由守卫停止注入并重试一次；unwind 中的清理（`Guarded` 与左键守卫的 `Drop`）先停止，每个释放用 `catch_unwind`
+  隔离、各尝试一次，再次 panic 即注销该登记并继续释放其余按下，不让 panic 逃出析构。已在本工具链（1.97.1，MSVC）实测 unwind 中析构内
+  `catch_unwind` 能接住第二次 panic、进程不 abort。测试覆盖：左键释放的发送与采样 panic 由守卫重试；chord 在 unwind 中释放再次 panic 时其余
+  修饰键仍释放；外层 unwind 时左键释放 panic 不 abort、不留登记、停止注入；非 unwind 的 `Drop` 释放 panic 时守卫重试并停止。
+- **R2-B2 采样语义**（USER 决定）：审查者指出改写 plan 不能代替对"采到按下即失败"条款修订的批准。核实属实：2026-10-15 设计的控制性文本与迁移前
+  实现冲突。USER 2026-10-19 决定：等待读到抬起——有界时间内等待读到相应状态，到时限仍读到按下即失败（释放后 Windows 处理输入期间仍可能读到
+  按下）。plan 11 记入该决定，`wait_left_button` 文档同步。
+- **R2-S1 同一按钮的重叠持有**（接受）：`a = press_left(); b = press_left(); b.release()` 与 `a = press_left(); release_left()` 都会提前结束 A 的按下。
+  改为同一键或按钮同时只由一个操作持有：已持有时拒绝再次按下与恢复性释放，原持有不受影响；plan 11 写明原因（Windows 对每个键只记一个状态）。
+- **R2-S2 托盘失败出口**（接受）：每次打开尝试记录图标几何、读回的光标与结果；右击失败、菜单读取失败、未观察到菜单、`tray-invoke` 报告不合法与
+  所需项缺失都先清理再返回，清理结果（含因共享停止而未执行）写入错误；任一尝试的已有观察不再丢失。
+- **R2-S3 无法观察被当作无菜单**（接受）：helper 的菜单等待器到时限返回最新快照（含其可观察性），不再返回旧的空快照；`GetGUIThreadInfo` 查询失败
+  传播为错误，与"查询成功但无 StickyMD 弹出菜单"分开。
+- **R2-S4 严格解析**（接受）：每种 action 一个解析器，按 `=` 或 `;` 前的键与含分隔符的余部逐行精确匹配：空报告、未知行、缺失、重复、矛盾、
+  空几何、非大写四位十六进制的项名与重复项名一律拒绝；`tray-menu-closed` 只认唯一的 `UIA_TRAY_MENU_CLOSED`，`close` 与 cleanup 复用同一解析器；
+  `tray-invoke` 只认唯一且等于所请求项的 `UIA_TRAY_INVOKED`。反例测试覆盖审查列出的各情形。
+- **R2-S5 激活点击的核验点**（接受）：物理点击前以读回的光标位置为落点，核验该点下的根窗口；托盘图标另要求读回位置与目标点一致。plan 11 同步。
+- **R2-N2 采样时限**（接受）：恢复单调时钟 deadline，同时保留采样次数上限，任一耗尽即失败。
+- **R2-N1**：桌面取证仍待独占桌面运行（P14-A83）；D2 双副本与 D4 真实 Alt+F4 仍属 C2d。
+
+#### C2c 代码审查第 3 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、4 SHOULD_FIX、2 NEEDS_VERIFICATION、1 NICE_TO_HAVE；R2-B2（按 USER 决定）、R2-S1、R2-S3、R2-S4、
+R2-S5 判为已修复。逐项核实后处理：
+
+- **R3-B1 左键守卫在外层 unwind 时未先停止**（接受，并更正第 2 轮记录）：第 2 轮记录称两个 `Drop` 路径都先停止，实际左键守卫在 case unwind 时只做隔离
+  释放、不停止，现有测试还断言了不停止。case 持有左键时 unwind，其结果未知，按保守原则改为与操作 unwind 相同：先停止（原因"a case unwound while
+  it held the left button"），再逐项隔离释放；测试改为要求停止且之后全部入口被拒。
+- **R3-S1 被接住的 panic payload 在隔离范围外析构**（接受）：`catch_unwind` 的 `Err` 被丢弃时会析构 payload，析构若 panic 即逃出析构。改为接住后
+  `mem::forget` payload（每个释放至多一次）。新增测试以析构会 panic 的 payload 触发；变异为 `drop(payload)` 时测试进程以 0xC0000409 异常终止，证实了
+  审查者的静态推断。
+- **R3-S2 时限后的读数被当作成功**（接受）：采样改为按后端时钟——`Backend` 增加 `now()`（真实后端为 `Instant::now`，测试后端为只由 sleep 与慢读推进的
+  虚拟时钟），每次读数之后检查已用时，超过时限的读数无论读到什么都不计；sleep 不超过剩余时间；采样次数上限只防时钟不前进。新增测试：首次释放采样
+  耗时 600 ms 后读到抬起为失败并停止，400 ms 为成功；卡住的按钮恰好睡满 500 ms。
+- **R3-S3 托盘已有观察丢失**（接受）：光标放置与右击拆成两步，放置后先记录读回位置，右击前再读回一次并核验；打开成功时保留各次尝试，之后读取、关闭、
+  缺项与 invoke 的失败都附上打开历史与清理结果；`tray-target` 失败注明"无需清理，未点击"。
+- **R3-S4 菜单所有者查询失败被当作已关闭**（接受）：弹出菜单模式下所有者 HWND 为 0 或 `GetWindowThreadProcessId` 失败改为错误；cleanup 中未发送 Esc 不再
+  等于已关闭，两种情形都要 helper 观察到关闭才算已知关闭。
+- **R3-N3 核验与按下之间的等待**（接受）：五处左键按下统一经 `press_left_on`，在按下前立即读回光标并核验其下根窗口为目标窗口（拖动与缩放的 75 ms
+  等待、激活的 25 ms 等待都在核验之前）；核验与按下之间的残余竞态写入 plan 11。
+- **R3-N1**：A83 仍为 NOT TESTED。工具链行为现有执行证据：本批的隔离测试在 1.97.1 MSVC 的测试二进制中实际运行并通过（见下方验证），变异实验证明去掉
+  隔离会使进程异常终止。abort 构建"到达拒绝桩"仍待桌面运行区分于更早的环境预检失败。
+- **R3-N2 headless 首跑失败**：`cli_exit::diagnostic_commands_preserve_internal_success_files` 在第 2 轮修复后的首次全量运行中失败 1 次，失败详情因输出
+  过滤未保留；随后单独运行 1 次、全量 headless 8 次、强制重新链接后全量 3 次均通过。该测试文件本批未改，预期错误发生在治理执行与注入之前；
+  两个测试共用仅以 PID 与时间戳命名的临时目录，存在既有的碰撞可能，但未证实为根因。结论：根因未知，不以复跑通过关闭；后续全量运行保留完整输出。
+- 验证（第 3 轮修复后，rustc 1.97.1）：fmt 与 `cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 退出 0；`cargo test -p stickymd-smoke --locked`
+  单元 559 passed / 17 ignored、headless 26 passed（完整日志保留）；`phase 00` PASS；release（abort）构建退出 0，其输入相关导入只有 `PostMessageW`，debug 导入
+  `GetAsyncKeyState`、`PostMessageW`、`SendInput`、`SendMessageW`、`SetCursorPos`；Linux 复跑（3795335 上叠加 110 个文件）clippy 退出 0、测试 459 passed /
+  3 ignored 与 19 passed。变异检验：左键守卫 unwind 不停止、析构 payload、接受时限后的读数、sleep 越过时限四个变异均被对应测试杀死。
+
+#### C2c 代码审查第 4 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX、2 NEEDS_VERIFICATION；R3-B1、R3-S1、R3-S2、R3-S4、R3-N3 判为已修复。逐项核实后处理：
+
+- **R4-S1 时限当刻读到按下后仍继续采样**（接受）：已用时恰等于时限时剩余为零，读数不符仍会 `sleep(0)` 后再读并可能成功。改为时限当刻的读数计入、
+  读到不符即失败。测试：释放首次采样恰在 500 ms 读到按下即失败并停止（即使下一次读数会是抬起）；499 ms 读到按下只睡剩余 1 ms、500 ms 读到抬起为成功。
+  去掉该判断的变异被测试杀死。
+- **R4-S2 仍遗漏已取得的观察**（接受）：托盘光标放置把每次读回写入该次尝试的记录，后续放置或读取失败时不再丢失；helper 在菜单无法观察时附带此前已读到的
+  部分菜单项（`UIA_TRAY_MENU_UNOBSERVABLE; partial_items=…`），Rust 解析器只把它们写入错误、从不当作菜单。plan 11 同步。第 3 轮记录"任一尝试的已有观察
+  不再丢失"的说法当时过宽，以本条为准。
+- **R3-N1 延续**：本轮验证改为留存绑定源码身份的证据（见下方验证）；A83 仍为 NOT TESTED。
+- **R3-N2 延续**：根因仍未知，记录不变。
+- 验证（第 4 轮修复后）：证据留存于 ignored 的 `target/review-evidence/c2c-code/verification-r4/`（`identity.txt` 记 HEAD `23d548d`、范围补丁
+  sha256 `65050626…6693`（`tools/stickymd-smoke`、plan 11、phase-14、coverage-matrix；不含记录本次运行的报告）、六个新文件的 sha256、`rustc -Vv`
+  1.97.1 x86_64-pc-windows-msvc；`summary.txt` 记各命令与退出码、测试二进制与 release/debug 可执行文件的 sha256、导入表，以及运行后范围补丁摘要不变）。
+  结果：fmt、clippy（`-D warnings`）、`cargo test -p stickymd-smoke --locked`（单元 559 passed / 17 ignored、headless 26 passed）、`phase 00`、release 与 debug
+  构建均退出 0；release（abort）输入相关导入只有 `PostMessageW`。Linux 复跑（3795335 上叠加 110 个文件，归档 sha256 `d9e9cc4e…d373`，rustc 1.97.1）clippy
+  退出 0、测试 459 passed / 3 ignored 与 19 passed。
+
+#### C2c 代码审查第 5 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX、2 NEEDS_VERIFICATION、1 NICE_TO_HAVE；R4-S1 判为已修复；审查者独立复算了
+`verification-r4` 的范围补丁、六个新文件、两个测试二进制与 release/debug 可执行文件的摘要，均与当前树一致。逐项核实后处理：
+
+- **R5-S1 等待中较早的部分观察被覆盖**（接受）：helper 的菜单等待每轮覆盖快照，较早一次无法观察的轮询已读到的项在后续空轮询后丢失。改为等待中保留
+  最近一次非空的部分项（有界，只存一份），等待结束仍由最新快照决定结果；`UIA_TRAY_MENU_UNOBSERVABLE` 与 `UIA_TRAY_MENU_NONE` 都可附带
+  `; partial_items=…`，Rust 解析器只把它写入该次尝试的结果。新增 Windows 测试从 helper 源码载入其函数、以脚本化序列替换 UIA 枚举（首轮无法观察且读到
+  一项，之后为空），分别断言两种结局的报告与解析；去掉保留语句的变异被杀死。测试的等待时限取 1 s，因为在并行测试负载下 PowerShell 首次调用函数的编译
+  耗时可超过 150 ms（首次以 150 ms 运行时只轮询了一次）。
+- **NICE 扩展名大小写**（接受）：治理的文件收集改为不区分 ASCII 大小写匹配扩展名（Windows 文件名不区分大小写），新增 `tools/probe.PS1` 被扫描的测试，
+  变异被杀死。该函数也供其他治理扫描使用，只会多收集文件。
+- **R3-N1、R3-N2 延续**：不变——A83 仍为 NOT TESTED（环境探针把拒绝原因折叠为布尔值，需桌面运行区分），headless 首次失败根因仍未知。
+- 验证（第 5 轮修复后）：证据在 `target/review-evidence/c2c-code/verification-r5/`（范围补丁 sha256 `a87ff41e…35ee`，运行后不变）。fmt、clippy（`-D warnings`）、
+  `cargo test -p stickymd-smoke --locked`（单元 561 passed / 17 ignored、headless 26 passed）、`phase 00`、release 与 debug 构建均退出 0；release（abort）输入相关
+  导入只有 `PostMessageW`。Linux 复跑（110 个文件，归档 sha256 `6a3afd69…eff8`）clippy 退出 0、测试 460 passed / 3 ignored 与 19 passed（新 helper 测试只在
+  Windows 编译）。
+
+#### C2c 代码审查第 6 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX、2 NEEDS_VERIFICATION（不阻断）、1 NICE_TO_HAVE；R5-S1 与扩展名大小写判为已修复；
+审查者复算 `verification-r5` 的全部摘要，与当前树一致。逐项核实后处理：
+
+- **R6-S1 菜单随后打开时较早的部分观察丢失**（接受）：等待中某次无法观察的轮询读到部分项、随后观察到完整菜单时，helper 只报告当前项，后续关闭或 invoke
+  失败的错误无从得知较早的部分项。改为成功快照同样携带部分项，helper 在菜单项之后至多附一行 `UIA_TRAY_MENU_PARTIAL; partial_items=…`；Rust 解析器只接受它
+  作为菜单项之后的唯一末行，记入该次尝试（"opened; partial_items=…"），从而进入之后各失败出口的打开历史；菜单是否打开仍只由完整当前观察决定。helper 测试
+  增加"部分观察 → 完整打开"结局；去掉 helper 的附加行、成功快照不带部分项、解析器丢弃部分项三个变异均被杀死。
+- **R6-N1 helper 测试依赖调度时间且无进程时限**（接受）：测试先以立即成功的序列预热一次（编译这些函数），再计数正式运行的轮询，不再与首次编译竞争；子进程经
+  `managed_process::run_bounded_output` 运行，60 s 总时限。剩余风险：进程在等待中被挂起超过 1 s 仍会使"至少两次轮询"失败，这是测试的已知前提。
+- **R3-N1、R3-N2 延续**：不变。
+- 验证（第 6 轮修复后）：证据在 `target/review-evidence/c2c-code/verification-r6/`（范围补丁 sha256 `356baa8d…3b01`，运行后不变）。fmt、clippy（`-D warnings`）、
+  `cargo test -p stickymd-smoke --locked`（单元 561 passed / 17 ignored、headless 26 passed）、`phase 00`、release 与 debug 构建均退出 0；release（abort）输入相关
+  导入只有 `PostMessageW`。Linux 复跑（归档 sha256 `049776df…965c`）clippy 退出 0、测试 460 passed / 3 ignored 与 19 passed。
+
+#### C2c 代码审查第 7 轮（2026-10-19）
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX；R6-S1、R5-S1、R4-S2 与扩展名大小写判为已修复；审查者复算 `verification-r6` 的范围补丁、六个新文件
+与四个可执行文件的摘要，均与当前树一致，并独立读取 PE 导入表得到相同的输入 API 集合。保留项：
+
+- **R3-N1（NEEDS_VERIFICATION）**：A83 仍为 NOT TESTED；环境探针把拒绝原因折叠为布尔值，需在独占桌面运行中区分"到达 abort 拒绝桩"与更早的环境预检失败。
+  随 C2d 的独占桌面运行取证。
+- **R3-N2（NEEDS_VERIFICATION）**：headless 首次失败的根因仍未知；再次失败时保留完整断言、退出码、stdout/stderr 与 fixture 路径后定向复现。
+- **R6-N1（NICE_TO_HAVE）**：helper 测试"1 s 内至少两次轮询"仍依赖调度（正式首轮被挂起超过 1 s 会假失败）；60 s 是运行期限，其后另有有界回收时间。
+  可控时钟或等待接缝留作后续改进。
+- **R7-N1（NICE_TO_HAVE）**：打开历史中的部分项从 `MenuRead.partial` 到 `Opened::failed` 的最后一段没有回归断言（把 `format!("opened{}", menu.partial)`
+  改回 `"opened"` 不会被现有测试发现）。下一批抽出成功结果的组装步骤并补断言。
+- 范围：D2 逐图标尝试与 D4 真实 Alt+F4 属 C2d；`apps/stickymd-win`、`crates/stickymd-render` 的未提交改动（C2b-4）不在本批。

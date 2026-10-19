@@ -261,7 +261,7 @@ pub(super) fn g3_04(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     assert_user_asset(program, &user, &baseline, "export", &mut checks)?;
     assert_sole_stickymd_process(child.id())?;
     checks.record("sole-process", &[("stage", "pre-exit")]);
-    invoke_uia(repository, "tray-exit", child.id(), None)?;
+    super::exact_desktop::tray::exit(repository, child.id())?;
     child.wait_for_exit(super::super::exact_desktop::TIMEOUT)?;
     checks.record("tray-exit-closes-process", &[]);
     assert_user_asset(program, &user, &baseline, "tray-exit", &mut checks)?;
@@ -282,7 +282,7 @@ pub(super) fn g3_05(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     wait_for_layout(program)?;
     assert_sole_stickymd_process(child.id())?;
     checks.record("sole-process", &[("stage", "pre-exit")]);
-    invoke_uia(repository, "tray-exit", child.id(), None)?;
+    super::exact_desktop::tray::exit(repository, child.id())?;
     child.wait_for_exit(super::super::exact_desktop::TIMEOUT)?;
     checks.record("tray-exit-closes-process", &[]);
     assert_fake_asset(program, &fake, &baseline)?;

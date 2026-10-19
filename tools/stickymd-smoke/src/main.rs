@@ -8,6 +8,8 @@ mod development;
 mod evidence;
 mod governance;
 mod headless;
+#[cfg(any(windows, test))]
+mod input_injection;
 mod integrity;
 #[cfg(windows)]
 mod managed_process;

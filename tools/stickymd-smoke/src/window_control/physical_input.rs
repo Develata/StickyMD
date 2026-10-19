@@ -1,21 +1,16 @@
-//! Physical Windows mouse injection for opt-in runtime qualification.
+//! Physical mouse input for opt-in runtime qualification: cursor placement, cursor shape and
+//! the left button, injected through `input_injection`.
 //!
-//! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
+//! plan_ref: docs/plan/11_testing_and_release.md#physical-input-injection
 
 use std::thread;
 use std::time::Duration;
 
 use super::NativePoint;
+use crate::input_injection;
 
 const CURSOR_MOVE_ATTEMPTS: usize = 3;
 const CURSOR_MOVE_RETRY: Duration = Duration::from_millis(25);
-const INPUT_MOUSE: u32 = 0;
-const MOUSEEVENTF_MOVE: u32 = 0x0001;
-const MOUSEEVENTF_LEFTDOWN: u32 = 0x0002;
-const MOUSEEVENTF_LEFTUP: u32 = 0x0004;
-const MOUSEEVENTF_WHEEL: u32 = 0x0800;
-const MOUSEEVENTF_VIRTUALDESK: u32 = 0x4000;
-const MOUSEEVENTF_ABSOLUTE: u32 = 0x8000;
 const SM_XVIRTUALSCREEN: i32 = 76;
 const SM_YVIRTUALSCREEN: i32 = 77;
 const SM_CXVIRTUALSCREEN: i32 = 78;
@@ -24,29 +19,6 @@ const CURSOR_SHOWING: u32 = 0x0001;
 const IDC_IBEAM: usize = 32_513;
 const IDC_SIZENWSE: usize = 32_642;
 const IDC_HAND: usize = 32_649;
-const VK_LBUTTON: i32 = 0x01;
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct NativeMouseInput {
-    dx: i32,
-    dy: i32,
-    mouse_data: u32,
-    flags: u32,
-    time: u32,
-    extra_info: usize,
-}
-
-#[repr(C)]
-union NativeInputData {
-    mouse: NativeMouseInput,
-}
-
-#[repr(C)]
-struct NativeInput {
-    input_type: u32,
-    data: NativeInputData,
-}
 
 #[repr(C)]
 #[derive(Default)]
@@ -89,44 +61,18 @@ impl PhysicalCursorKind {
 unsafe extern "system" {
     fn GetCursorPos(point: *mut NativePoint) -> i32;
     fn GetCursorInfo(info: *mut NativeCursorInfo) -> i32;
-    fn GetAsyncKeyState(virtual_key: i32) -> i16;
     fn GetSystemMetrics(index: i32) -> i32;
     fn LoadCursorW(instance: isize, cursor_name: *const u16) -> isize;
-    fn SendInput(count: u32, inputs: *const NativeInput, size: i32) -> u32;
 }
 
-pub(super) struct PhysicalLeftButtonGuard;
-
-impl PhysicalLeftButtonGuard {
-    pub(super) fn press() -> Result<Self, String> {
-        send_mouse_input(MOUSEEVENTF_LEFTDOWN, 0, 0)?;
-        if let Err(error) = wait_for_left_button_state(true) {
-            // The input may have reached Windows even when the asynchronous
-            // state probe missed its pressed interval. Fail closed, but always
-            // balance the injected DOWN before returning without a guard.
-            let release = send_mouse_input(MOUSEEVENTF_LEFTUP, 0, 0)
-                .and_then(|()| wait_for_left_button_state(false));
-            return match release {
-                Ok(()) => Err(error),
-                Err(release_error) => Err(format!(
-                    "{error}; additionally failed to release the injected left button: {release_error}"
-                )),
-            };
-        }
-        Ok(Self)
-    }
+/// Presses the left button; release it with `release` (the guard releases it on drop).
+pub(super) fn press_left_button() -> Result<input_injection::LiveLeftButton, String> {
+    input_injection::live()?.press_left()
 }
 
-impl Drop for PhysicalLeftButtonGuard {
-    fn drop(&mut self) {
-        let _ = send_mouse_input(MOUSEEVENTF_LEFTUP, 0, 0);
-        let _ = wait_for_left_button_state(false);
-    }
-}
-
+/// A left-button release for input an interrupted earlier run may have left down.
 pub(super) fn release_left_button() -> Result<(), String> {
-    send_mouse_input(MOUSEEVENTF_LEFTUP, 0, 0)?;
-    wait_for_left_button_state(false)
+    input_injection::live()?.release_left()
 }
 
 pub(super) fn scroll_wheel(notches: i32) -> Result<(), String> {
@@ -136,25 +82,9 @@ pub(super) fn scroll_wheel(notches: i32) -> Result<(), String> {
     let delta = notches
         .checked_mul(120)
         .ok_or_else(|| format!("mouse-wheel notch count {notches} overflowed"))?;
-    send_mouse_input_with_data(MOUSEEVENTF_WHEEL, 0, 0, delta as u32)
-}
-
-fn wait_for_left_button_state(down: bool) -> Result<(), String> {
-    let deadline = std::time::Instant::now() + Duration::from_millis(500);
-    let mut observed = false;
-    while std::time::Instant::now() < deadline {
-        // SAFETY: VK_LBUTTON is a copied virtual-key identifier. The query
-        // returns process-independent input state and retains no resource.
-        observed = unsafe { GetAsyncKeyState(VK_LBUTTON) } < 0;
-        if observed == down {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-    Err(format!(
-        "Windows left-button state did not become {} after injected input; observed_down={observed}",
-        if down { "pressed" } else { "released" }
-    ))
+    input_injection::live()?
+        .wheel(delta)
+        .map_err(|error| format!("cannot turn the physical mouse wheel: {error}"))
 }
 
 pub(super) fn current_cursor_handle() -> Result<isize, String> {
@@ -257,11 +187,9 @@ fn send_absolute_mouse_move(x: i32, y: i32) -> Result<(), String> {
     }
     let dx = normalize_absolute_coordinate(x, left, width)?;
     let dy = normalize_absolute_coordinate(y, top, height)?;
-    send_mouse_input(
-        MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
-        dx,
-        dy,
-    )
+    input_injection::live()?
+        .move_absolute(dx, dy)
+        .map_err(|error| format!("cannot move the physical cursor: {error}"))
 }
 
 fn normalize_absolute_coordinate(value: i32, origin: i32, extent: i32) -> Result<i32, String> {
@@ -277,38 +205,6 @@ fn normalize_absolute_coordinate(value: i32, origin: i32, extent: i32) -> Result
         .ok_or_else(|| "virtual desktop coordinate normalization failed".to_owned())?;
     i32::try_from(normalized.clamp(0, 65_535))
         .map_err(|_| "normalized mouse coordinate does not fit i32".to_owned())
-}
-
-fn send_mouse_input(flags: u32, dx: i32, dy: i32) -> Result<(), String> {
-    send_mouse_input_with_data(flags, dx, dy, 0)
-}
-
-fn send_mouse_input_with_data(flags: u32, dx: i32, dy: i32, mouse_data: u32) -> Result<(), String> {
-    let input = NativeInput {
-        input_type: INPUT_MOUSE,
-        data: NativeInputData {
-            mouse: NativeMouseInput {
-                dx,
-                dy,
-                mouse_data,
-                flags,
-                time: 0,
-                extra_info: 0,
-            },
-        },
-    };
-    let size = i32::try_from(std::mem::size_of::<NativeInput>())
-        .map_err(|_| "native INPUT size does not fit i32".to_owned())?;
-    // SAFETY: `input` is a correctly sized, initialized INPUT_MOUSE value and
-    // remains alive for the synchronous call. SendInput copies it and retains
-    // no pointer or ownership.
-    if unsafe { SendInput(1, &raw const input, size) } != 1 {
-        return Err(format!(
-            "cannot inject physical mouse input flags=0x{flags:04x}: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

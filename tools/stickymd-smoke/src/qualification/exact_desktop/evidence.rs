@@ -129,6 +129,7 @@ mod tests {
                 cases: &[],
                 operations: &[],
                 selected_case: None,
+                injects_input: true,
             };
             let error = super::super::run(&root, None, Some(&output), group).unwrap_err();
             assert!(

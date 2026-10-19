@@ -1,6 +1,7 @@
 //! Repository-contract validation used by every phase smoke.
 
 mod actions;
+mod input_injection;
 mod manifest_harness;
 
 use std::collections::BTreeSet;
@@ -160,6 +161,7 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
     verify_test_harnesses(root)?;
+    input_injection::verify(root)?;
     Ok(())
 }
 
@@ -187,10 +189,10 @@ fn verify_phase14_contract_trace(root: &Path) -> Result<(), String> {
     let path = root.join("docs/acceptance-cases/phase-14.md");
     let content = read_text(&path)?;
     let observed = frozen_trace_ids(&content, &path, "P14-A")?;
-    let expected: Vec<u16> = (1..=81).collect();
+    let expected: Vec<u16> = (1..=83).collect();
     if observed != expected {
         return Err(format!(
-            "{} IDs must be exactly P14-A01..P14-A81; observed {observed:?}",
+            "{} IDs must be exactly P14-A01..P14-A83; observed {observed:?}",
             path.display()
         ));
     }
@@ -730,17 +732,35 @@ fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
     let tray_uia_path = root.join("tools/stickymd-smoke/helpers/windows-uia.ps1");
     let tray_uia = read_text(&tray_uia_path)?;
     for marker in [
-        "$TrayMenuOpenAttempts = 2",
-        "GetCursorPos",
         "IsOffscreen",
         "Wait-ForProcessMenuItems",
         "Wait-ForProcessMenuClosed",
         "observed_items=",
+        "UIA_TRAY_MENU_ITEMS_BEFORE=",
+        "UIA_TRAY_MENU_UNOBSERVABLE",
     ] {
         if !tray_uia.contains(marker) {
             return Err(format!(
                 "{} must retain acknowledged tray-menu interaction marker `{marker}`",
                 tray_uia_path.display()
+            ));
+        }
+    }
+    // The cursor placement and right-click that open the menu, its one retry and the Esc that
+    // closes it are injected by the Rust caller.
+    let tray_driver_path =
+        root.join("tools/stickymd-smoke/src/qualification/exact_desktop/tray.rs");
+    let tray_driver = read_text(&tray_driver_path)?;
+    for marker in [
+        "pub(super) const TRAY_MENU_OPEN_ATTEMPTS: usize = 2;",
+        "UIA_TRAY_MENU_OPEN",
+        "right_click_tray_icon",
+        "escape_tray_popup",
+    ] {
+        if !tray_driver.contains(marker) {
+            return Err(format!(
+                "{} must retain acknowledged tray-menu interaction marker `{marker}`",
+                tray_driver_path.display()
             ));
         }
     }
@@ -1333,7 +1353,11 @@ fn collect_files(
                 collect_files(&entry.path(), extension, output)?;
             }
         } else if file_type.is_file()
-            && entry.path().extension().and_then(|value| value.to_str()) == Some(extension)
+            && entry
+                .path()
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case(extension))
         {
             output.push(entry.path());
         }

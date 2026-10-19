@@ -240,7 +240,6 @@ mod windows {
         fn OpenInputDesktop(flags: Dword, inherit: Bool, desired_access: Dword) -> Hdesk;
         fn CloseDesktop(desktop: Hdesk) -> Bool;
         fn GetCursorPos(point: *mut Point) -> Bool;
-        fn SetCursorPos(x: i32, y: i32) -> Bool;
         fn GetForegroundWindow() -> Hwnd;
         fn GetSystemMetrics(index: i32) -> i32;
     }
@@ -348,12 +347,17 @@ mod windows {
         unsafe { CloseDesktop(desktop) };
 
         let mut cursor = Point::default();
-        // SAFETY: `cursor` is writable POINT storage. SetCursorPos receives the
-        // exact coordinate just read, so the capability probe does not visibly
-        // move the user's pointer; both calls retain no pointer or ownership.
-        unsafe {
-            GetCursorPos(&raw mut cursor) != FALSE && SetCursorPos(cursor.x, cursor.y) != FALSE
+        // SAFETY: `cursor` is writable POINT storage; GetCursorPos copies the position and
+        // retains no pointer.
+        if unsafe { GetCursorPos(&raw mut cursor) } == FALSE {
+            return false;
         }
+        // The cursor is placed at the coordinate just read, so the capability probe does not
+        // visibly move the pointer. It goes through the injection module like all cursor
+        // placement: a build that cannot inject has no usable input desktop.
+        crate::input_injection::live()
+            .and_then(|injection| injection.place_cursor(cursor.x, cursor.y))
+            .is_ok()
     }
 
     fn process_exists_in_session(name: &str, expected_session: Dword) -> Result<bool, String> {

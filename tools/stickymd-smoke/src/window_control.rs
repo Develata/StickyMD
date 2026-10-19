@@ -9,16 +9,19 @@ mod ime_profile;
 mod physical_input;
 pub(crate) mod resource_comparison;
 mod routing;
+mod tray_input;
 
 pub(crate) use ime_profile::{
     ImeProfile, ImeProfileGuard, set_ime_native_mode, set_ime_open_status,
 };
 
+use crate::input_injection::{self, CONTROL, Key, SHIFT};
 use physical_input::{
-    PhysicalCursorKind, PhysicalLeftButtonGuard, current_cursor_handle, current_cursor_position,
-    cursor_matches, move_physical_cursor, move_physical_cursor_with_tolerance, release_left_button,
-    scroll_wheel,
+    PhysicalCursorKind, current_cursor_handle, current_cursor_position, cursor_matches,
+    move_physical_cursor, move_physical_cursor_with_tolerance, press_left_button,
+    release_left_button, scroll_wheel,
 };
+pub(crate) use tray_input::{escape_tray_popup, place_cursor_on_tray_icon, right_click_tray_icon};
 
 const WM_MOUSEMOVE: u32 = 0x0200;
 const WM_LBUTTONDOWN: u32 = 0x0201;
@@ -49,8 +52,6 @@ const CF_UNICODETEXT: u32 = 13;
 const CF_DIB: u32 = 8;
 const CF_HDROP: u32 = 15;
 const GMEM_MOVEABLE: u32 = 0x0002;
-const KEYEVENTF_EXTENDEDKEY: u32 = 0x0001;
-const KEYEVENTF_KEYUP: u32 = 0x0002;
 
 #[derive(Default)]
 struct WindowSearch {
@@ -194,7 +195,6 @@ unsafe extern "system" {
         value: *mut NativeRect,
         flags: u32,
     ) -> i32;
-    fn SetCursorPos(x: i32, y: i32) -> i32;
     fn SetForegroundWindow(window: isize) -> i32;
     fn GetCursorPos(point: *mut NativePoint) -> i32;
     fn ScreenToClient(window: isize, point: *mut NativePoint) -> i32;
@@ -214,7 +214,6 @@ unsafe extern "system" {
     fn GetClipboardData(format: u32) -> isize;
     fn SetClipboardData(format: u32, memory: isize) -> isize;
     fn RegisterClipboardFormatW(name: *const u16) -> u32;
-    fn keybd_event(virtual_key: u8, scan_code: u8, flags: u32, extra_info: usize);
 }
 
 #[link(name = "kernel32")]
@@ -943,9 +942,9 @@ pub(crate) fn focus_source_editor(window: WindowHandle) -> Result<(), String> {
     let (screen_x, screen_y) = content_activation_point(window)?;
     let mut input_route =
         prepare_physical_input_target(window, screen_x, screen_y, PhysicalCursorKind::Text)?;
-    let click = PhysicalLeftButtonGuard::press()?;
+    let click = press_left_on(window)?;
     thread::sleep(Duration::from_millis(25));
-    drop(click);
+    click.release()?;
     wait_for_window_activation(window)?;
     input_route.restore()
 }
@@ -995,7 +994,7 @@ fn move_window(
     // the shell intentionally decides whether this point is a drag region
     // from its most recent cursor projection.
     thread::sleep(Duration::from_millis(75));
-    let button = PhysicalLeftButtonGuard::press()?;
+    let button = press_left_on(window)?;
     let (engaged_cursor, engaged_rect) =
         engage_native_move_size(window, 8, 0, "start StickyMD window drag")?;
     let target_x = apply_coordinate_delta(engaged_cursor.x, x, engaged_rect.x, "drag x")?;
@@ -1007,7 +1006,7 @@ fn move_window(
         "drag StickyMD to requested position",
     )?;
     thread::sleep(Duration::from_millis(25));
-    drop(button);
+    button.release()?;
     thread::sleep(Duration::from_millis(150));
     let completed_rect = window_rect(window)?;
     let requested_tolerance = dip_pixels(window, 16.0)?.unsigned_abs();
@@ -1225,11 +1224,13 @@ fn prepare_physical_input_target(
         }
         project_physical_cursor_to_window(window, x, y)?;
         thread::sleep(Duration::from_millis(25));
+        // The press lands where the cursor reads back, so that point is the one checked.
+        let landing = current_cursor_position()?;
         // SAFETY: WindowFromPoint and GetAncestor copy/return borrowed HWND
         // scalars only; neither retains the by-value POINT or transfers a
         // window ownership obligation.
         observed = unsafe {
-            let hit = WindowFromPoint(NativePoint { x, y });
+            let hit = WindowFromPoint(landing);
             if hit == 0 {
                 0
             } else {
@@ -1258,6 +1259,36 @@ fn prepare_physical_input_target(
     ))
 }
 
+/// Presses the left button on `window`: the cursor is read back right before the press, and the
+/// root window under it must be `window` (plan 11 physical input injection). The cursor can
+/// still move between that check and the press.
+fn press_left_on(window: WindowHandle) -> Result<input_injection::LiveLeftButton, String> {
+    let landing = current_cursor_position()?;
+    // SAFETY: the point is copied by value and the returned HWND values are borrowed only for
+    // this bounded routing check.
+    let root = unsafe {
+        let hit = WindowFromPoint(landing);
+        if hit == 0 {
+            0
+        } else {
+            GetAncestor(hit, GA_ROOT)
+        }
+    };
+    if root != window.0 {
+        let rect = window_rect(window)?;
+        let visible = is_visible(window)?;
+        let style = style_facts(window)?;
+        return Err(format!(
+            "refusing a left press outside StickyMD: cursor=({},{}) observed_root={root} expected_root={} rect={rect:?} visible={visible} style={style:?} {}",
+            landing.x,
+            landing.y,
+            window.0,
+            routing::describe(root),
+        ));
+    }
+    press_left_button()
+}
+
 fn activate_window_for_physical_input(window: WindowHandle) -> Result<(), String> {
     let current = activation_facts(window)?;
     if current.foreground && current.active && current.focused && !current.captured {
@@ -1272,29 +1303,12 @@ fn activate_window_for_physical_input(window: WindowHandle) -> Result<(), String
     let observed = current_cursor_position()?;
     project_physical_cursor_to_window(window, observed.x, observed.y)?;
     thread::sleep(Duration::from_millis(25));
-    // SAFETY: the point is copied by value and the returned HWND values are
-    // borrowed only for this bounded routing check.
-    let pre_click_root = unsafe {
-        let hit = WindowFromPoint(NativePoint { x, y });
-        if hit == 0 {
-            0
-        } else {
-            GetAncestor(hit, GA_ROOT)
-        }
-    };
-    if pre_click_root != window.0 {
-        let rect = window_rect(window)?;
-        let visible = is_visible(window)?;
-        let style = style_facts(window)?;
-        return Err(format!(
-            "refusing activation click outside StickyMD: point=({x},{y}) observed_root={pre_click_root} expected_root={} rect={rect:?} visible={visible} style={style:?} {}",
-            window.0,
-            routing::describe(pre_click_root),
-        ));
-    }
-    let click = PhysicalLeftButtonGuard::press()?;
+    // The click lands where the cursor reads back, which may differ from the requested point by
+    // the jitter allowed above; the press checks that landing point lies on StickyMD.
+    let (x, y) = (observed.x, observed.y);
+    let click = press_left_on(window)?;
     thread::sleep(Duration::from_millis(25));
-    drop(click);
+    click.release()?;
     wait_for_window_activation(window).map_err(|error| {
         // SAFETY: the point is copied by value and the returned HWND values
         // are borrowed only for this bounded failure diagnostic.
@@ -1402,12 +1416,16 @@ fn send_mouse_move(window: WindowHandle, lparam: isize) -> Result<(), String> {
     send_window_message(window, WM_MOUSEMOVE, 0, lparam)
 }
 
+/// A synthetic pointer message to `window`: it reaches only that window and changes no
+/// desktop input state, so it is not physical input and proves no physical delivery; it
+/// follows the shared input stop all the same (plan 11 physical input injection).
 fn send_window_message(
     window: WindowHandle,
     message: u32,
     wparam: usize,
     lparam: isize,
 ) -> Result<(), String> {
+    input_injection::require_running()?;
     ensure_window(window)?;
     // SAFETY: the target is the live paper HWND and the message carries only
     // copied integer values. SendMessageW returns after winit's native window
@@ -1469,13 +1487,13 @@ pub(crate) fn park_cursor_outside_window(window: WindowHandle) -> Result<(), Str
 fn set_cursor_position(x: i32, y: i32, operation: &str) -> Result<(), String> {
     let mut last_error = None;
     for attempt in 0..CURSOR_MOVE_ATTEMPTS {
-        // SAFETY: SetCursorPos consumes copied screen coordinates and retains
-        // no pointer. This opt-in runtime smoke drives the real desktop cursor
-        // and never runs in CI.
-        if unsafe { SetCursorPos(x, y) } != 0 {
-            return Ok(());
+        // This opt-in runtime smoke drives the real desktop cursor and never runs in CI.
+        match input_injection::live()?.place_cursor(x, y) {
+            Ok(()) => return Ok(()),
+            // A stopped injector refuses every attempt alike.
+            Err(error) if input_injection::stop_reason().is_some() => return Err(error),
+            Err(error) => last_error = Some(error),
         }
-        last_error = Some(std::io::Error::last_os_error());
         let mut actual = NativePoint::default();
         // SAFETY: `actual` is writable for one POINT; GetCursorPos copies the
         // current desktop cursor location and retains no pointer.
@@ -1488,7 +1506,7 @@ fn set_cursor_position(x: i32, y: i32, operation: &str) -> Result<(), String> {
     }
     Err(format!(
         "cannot {operation} after {CURSOR_MOVE_ATTEMPTS} attempts: {}",
-        last_error.unwrap_or_else(std::io::Error::last_os_error)
+        last_error.unwrap_or_else(|| std::io::Error::last_os_error().to_string())
     ))
 }
 
@@ -1532,7 +1550,7 @@ pub(crate) fn resize_to_dip(
     // intent observes the paired button release; synthetic WM_*SIZE messages
     // would resize the HWND without exercising that contract.
     thread::sleep(Duration::from_millis(75));
-    let button = PhysicalLeftButtonGuard::press()?;
+    let button = press_left_on(window)?;
     let (engaged_cursor, engaged_rect) =
         engage_native_move_size(window, 8, 8, "start StickyMD compact resize")?;
     let engaged_width = i32::try_from(engaged_rect.width)
@@ -1545,7 +1563,7 @@ pub(crate) fn resize_to_dip(
         apply_coordinate_delta(engaged_cursor.y, height, engaged_height, "compact resize y")?;
     move_physical_cursor_with_tolerance(target_x, target_y, 32, "resize StickyMD compact window")?;
     thread::sleep(Duration::from_millis(25));
-    drop(button);
+    button.release()?;
     thread::sleep(Duration::from_millis(150));
     let completed_rect = window_rect(window)?;
     if completed_rect.width.abs_diff(width as u32) > 24
@@ -1820,11 +1838,39 @@ fn click_view_control(window: WindowHandle, index: u8) -> Result<(), String> {
     let screen_y = rect.y.saturating_add(i32::from(pixel_u16(client_y)?));
     let mut input_route =
         prepare_physical_input_target(window, screen_x, screen_y, PhysicalCursorKind::Pointer)?;
-    let button = PhysicalLeftButtonGuard::press()?;
+    let button = press_left_on(window)?;
     thread::sleep(Duration::from_millis(25));
-    drop(button);
+    button.release()?;
     thread::sleep(Duration::from_millis(50));
     input_route.restore()
+}
+
+/// The key named by `virtual_key` and `scan_code`.
+const fn key(virtual_key: u8, scan_code: u8, extended: bool) -> Key {
+    Key {
+        virtual_key: virtual_key as u16,
+        scan_code: scan_code as u16,
+        extended,
+    }
+}
+
+/// Keyboard input reaches only a focused foreground StickyMD window (plan 11 physical input).
+fn require_keyboard_target(window: WindowHandle) -> Result<(), String> {
+    let activation = activation_facts(window)?;
+    if activation.foreground && activation.active && activation.focused {
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing keyboard injection without focused foreground StickyMD window: {activation:?}"
+        ))
+    }
+}
+
+fn send_chord(window: WindowHandle, modifiers: &[Key], pressed: Key) -> Result<(), String> {
+    require_keyboard_target(window)?;
+    input_injection::live()?.chord(modifiers, pressed)?;
+    thread::sleep(Duration::from_millis(10));
+    Ok(())
 }
 
 fn send_physical_key(
@@ -1833,22 +1879,7 @@ fn send_physical_key(
     scan_code: u8,
     extended: bool,
 ) -> Result<(), String> {
-    let activation = activation_facts(window)?;
-    if !(activation.foreground && activation.active && activation.focused) {
-        return Err(format!(
-            "refusing keyboard injection without focused foreground StickyMD window: {activation:?}"
-        ));
-    }
-    let flags = if extended { KEYEVENTF_EXTENDEDKEY } else { 0 };
-    // SAFETY: keybd_event consumes copied key scalars. The target HWND is the
-    // verified focused foreground window, and the balanced down/up sequence
-    // leaves no key pressed after this synchronous smoke action.
-    unsafe {
-        keybd_event(virtual_key, scan_code, flags, 0);
-        keybd_event(virtual_key, scan_code, flags | KEYEVENTF_KEYUP, 0);
-    }
-    thread::sleep(Duration::from_millis(10));
-    Ok(())
+    send_chord(window, &[], key(virtual_key, scan_code, extended))
 }
 
 fn send_control_chord(
@@ -1857,24 +1888,7 @@ fn send_control_chord(
     scan_code: u8,
     extended: bool,
 ) -> Result<(), String> {
-    let activation = activation_facts(window)?;
-    if !(activation.foreground && activation.active && activation.focused) {
-        return Err(format!(
-            "refusing keyboard injection without focused foreground StickyMD window: {activation:?}"
-        ));
-    }
-    let key_flags = if extended { KEYEVENTF_EXTENDEDKEY } else { 0 };
-    // SAFETY: keybd_event consumes copied key scalars. The target HWND is the
-    // verified focused foreground window, and the balanced down/up sequence
-    // leaves no modifier pressed after this synchronous smoke action.
-    unsafe {
-        keybd_event(0x11, 0x1D, 0, 0);
-        keybd_event(virtual_key, scan_code, key_flags, 0);
-        keybd_event(virtual_key, scan_code, key_flags | KEYEVENTF_KEYUP, 0);
-        keybd_event(0x11, 0x1D, KEYEVENTF_KEYUP, 0);
-    }
-    thread::sleep(Duration::from_millis(10));
-    Ok(())
+    send_chord(window, &[CONTROL], key(virtual_key, scan_code, extended))
 }
 
 fn send_shift_chord(
@@ -1883,24 +1897,7 @@ fn send_shift_chord(
     scan_code: u8,
     extended: bool,
 ) -> Result<(), String> {
-    let activation = activation_facts(window)?;
-    if !(activation.foreground && activation.active && activation.focused) {
-        return Err(format!(
-            "refusing keyboard injection without focused foreground StickyMD window: {activation:?}"
-        ));
-    }
-    let key_flags = if extended { KEYEVENTF_EXTENDEDKEY } else { 0 };
-    // SAFETY: keybd_event consumes copied scalar key data. The balanced
-    // Shift/key sequence leaves no modifier pressed and targets the verified
-    // foreground StickyMD window.
-    unsafe {
-        keybd_event(0x10, 0x2A, 0, 0);
-        keybd_event(virtual_key, scan_code, key_flags, 0);
-        keybd_event(virtual_key, scan_code, key_flags | KEYEVENTF_KEYUP, 0);
-        keybd_event(0x10, 0x2A, KEYEVENTF_KEYUP, 0);
-    }
-    thread::sleep(Duration::from_millis(10));
-    Ok(())
+    send_chord(window, &[SHIFT], key(virtual_key, scan_code, extended))
 }
 
 fn send_control_shift_chord(
@@ -1909,17 +1906,12 @@ fn send_control_shift_chord(
     scan_code: u8,
 ) -> Result<(), String> {
     activate_window_for_physical_input(window)?;
-    // SAFETY: keybd_event consumes copied scalar key data. Modifiers are
-    // released in reverse order in the same synchronous sequence.
-    unsafe {
-        keybd_event(0x11, 0x1D, 0, 0);
-        keybd_event(0x10, 0x2A, 0, 0);
-        keybd_event(virtual_key, scan_code, 0, 0);
-        keybd_event(virtual_key, scan_code, KEYEVENTF_KEYUP, 0);
-        keybd_event(0x10, 0x2A, KEYEVENTF_KEYUP, 0);
-        keybd_event(0x11, 0x1D, KEYEVENTF_KEYUP, 0);
-    }
-    thread::sleep(Duration::from_millis(50));
+    send_chord(
+        window,
+        &[CONTROL, SHIFT],
+        key(virtual_key, scan_code, false),
+    )?;
+    thread::sleep(Duration::from_millis(40));
     Ok(())
 }
 

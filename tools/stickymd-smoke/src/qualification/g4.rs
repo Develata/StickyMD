@@ -38,6 +38,7 @@ pub(super) fn run(
             cases: exact_checks::G4,
             operations: &OPERATIONS,
             selected_case: selected_case.map(G4Case::as_str),
+            injects_input: true,
         },
     )
 }

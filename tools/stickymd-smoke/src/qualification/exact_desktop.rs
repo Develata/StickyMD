@@ -18,6 +18,7 @@ use super::receipt;
 pub(super) use super::exact_checks::Checks;
 
 mod evidence;
+pub(super) mod tray;
 
 pub(super) const TIMEOUT: Duration = Duration::from_secs(12);
 /// A started candidate presents its first frame well within this.
@@ -50,6 +51,9 @@ pub(super) struct ExactGroup<'a> {
     /// `operations[i]` runs `cases[i]`.
     pub(super) operations: &'a [CaseOperation],
     pub(super) selected_case: Option<&'static str>,
+    /// Whether the cases inject physical input, so a failed release stops them (plan 11
+    /// physical input injection).
+    pub(super) injects_input: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -92,6 +96,35 @@ fn judge(case: &DeclaredCase, outcome: Result<CaseEvidence, String>) -> CaseResu
             checks: Vec::new(),
             artifacts: Vec::new(),
         },
+    }
+}
+
+/// A case not run because input injection had already stopped after a failed release.
+fn not_run(case: &DeclaredCase, reason: &str) -> CaseResult {
+    CaseResult {
+        id: case.id,
+        status: "FAILED",
+        detail: Some(format!(
+            "not run: input injection stopped after a failed release: {reason}"
+        )),
+        checks: Vec::new(),
+        artifacts: Vec::new(),
+    }
+}
+
+/// Judges a case's input cleanup apart from its assertions: a release that failed during the
+/// case fails it even when every assertion held, and both outcomes are reported.
+fn with_cleanup(result: CaseResult, failed_release: Option<String>) -> CaseResult {
+    let Some(reason) = failed_release else {
+        return result;
+    };
+    let assertions = result
+        .detail
+        .unwrap_or_else(|| "assertions passed".to_owned());
+    CaseResult {
+        status: "FAILED",
+        detail: Some(format!("{assertions}; input cleanup failed: {reason}")),
+        ..result
     }
 }
 
@@ -217,9 +250,22 @@ pub(super) fn run(
         {
             continue;
         }
-        let case_directory = qualification_root.path.join(case.id.to_ascii_lowercase());
-        copy_directory(&template_program, &case_directory)?;
-        let result = judge(case, operation(repository, &case_directory));
+        let stopped = group
+            .injects_input
+            .then(crate::input_injection::stop_reason)
+            .flatten();
+        let result = if let Some(reason) = stopped {
+            not_run(case, &reason)
+        } else {
+            let case_directory = qualification_root.path.join(case.id.to_ascii_lowercase());
+            copy_directory(&template_program, &case_directory)?;
+            let result = judge(case, operation(repository, &case_directory));
+            let failed_release = group
+                .injects_input
+                .then(crate::input_injection::stop_reason)
+                .flatten();
+            with_cleanup(result, failed_release)
+        };
         match &result.detail {
             None => println!("{}=PASSED", result.id),
             Some(error) => println!("{}=FAILED: {error}", result.id),
@@ -298,6 +344,17 @@ pub(super) fn invoke_uia(
     process_id: u32,
     path: Option<&Path>,
 ) -> Result<String, String> {
+    run_uia(repository, action, process_id, path, None)
+}
+
+/// Runs one UIA helper action; it locates, reads and invokes, and never injects input.
+fn run_uia(
+    repository: &Path,
+    action: &str,
+    process_id: u32,
+    path: Option<&Path>,
+    item: Option<&str>,
+) -> Result<String, String> {
     let helper = repository.join("tools/stickymd-smoke/helpers/windows-uia.ps1");
     let mut command = Command::new("powershell");
     command
@@ -306,6 +363,9 @@ pub(super) fn invoke_uia(
         .args(["-Action", action, "-ProcessId", &process_id.to_string()]);
     if let Some(path) = path {
         command.arg("-Path").arg(path);
+    }
+    if let Some(item) = item {
+        command.args(["-Item", item]);
     }
     let output = run_bounded_output(
         &mut command,
@@ -530,9 +590,60 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::{
-        CaseEvidence, Checks, accepted_note, judge, parse_stickymd_tasklist, run_bounded_output,
+        CaseEvidence, Checks, accepted_note, judge, not_run, parse_stickymd_tasklist,
+        run_bounded_output, with_cleanup,
     };
     use crate::qualification::exact_checks::DeclaredCase;
+
+    /// Input cleanup is judged apart from the assertions (plan 11 physical input injection): a
+    /// release that failed during a case fails it and both outcomes are reported, and a case
+    /// after the shared stop is not run.
+    #[test]
+    fn a_failed_release_fails_its_case_and_stops_the_later_ones() {
+        let case = DeclaredCase {
+            id: "G4-01",
+            checks: &["tray-icon-present"],
+        };
+        let mut checks = Checks::default();
+        checks.record("tray-icon-present", &[]);
+        let passed = judge(
+            &case,
+            Ok(CaseEvidence {
+                checks,
+                artifacts: Vec::new(),
+            }),
+        );
+        assert_eq!(passed.status, "PASSED");
+        assert_eq!(with_cleanup(passed.clone(), None).status, "PASSED");
+        let unclean = with_cleanup(passed, Some("release of Key(..) failed".to_owned()));
+        assert_eq!(unclean.status, "FAILED");
+        assert_eq!(
+            unclean.detail.as_deref(),
+            Some("assertions passed; input cleanup failed: release of Key(..) failed")
+        );
+        assert_eq!(
+            unclean.checks,
+            ["tray-icon-present"],
+            "the labels stay as a diagnostic"
+        );
+
+        let failed = judge(&case, Err("tray menu did not open".to_owned()));
+        let both = with_cleanup(failed, Some("stuck".to_owned()));
+        assert_eq!(
+            both.detail.as_deref(),
+            Some("tray menu did not open; input cleanup failed: stuck")
+        );
+
+        let skipped = not_run(&case, "stuck");
+        assert_eq!(skipped.status, "FAILED");
+        assert!(skipped.checks.is_empty());
+        assert!(
+            skipped
+                .detail
+                .unwrap()
+                .starts_with("not run: input injection stopped")
+        );
+    }
 
     /// A missing or non-UTF-8 note is a read error, never the empty text a wait for an emptied
     /// note would accept.

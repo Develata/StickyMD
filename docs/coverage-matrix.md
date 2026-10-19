@@ -447,3 +447,8 @@ plan 05 `external-change-conflict`（载入外部解除重建义务）：`sticky
 2026-10-17 覆盖补全 C2b-3：`Target::Test` 改为 owner 集合（全部核验才算持有）；逐义务审计 42 项 C2a 单元缺口后绑定 plan 09 滚动条与退出取消九项，
 其中 gutter 命中抽为纯函数 `app/scrollbar.rs::gutter_at`，滚动条、标题与载入外部的 owner 测试按审查补强断言；其余 33 项保留缺口，按义务写明已有断言与缺失部分；验收见 P14-A81 与
 phase-05 的 2026-10-17 补充。
+
+2026-10-19 覆盖补全 C2c 映射 plan 11 `physical-input-injection`：注入核心在 `tools/stickymd-smoke/src/input_injection.rs`（登记、释放顺序、插入数判定、共享停止）与
+`input_injection/win32.rs`（只在可 unwind 的 Windows 构建中编译的 `SendInput` 后端）；鼠标与键盘调用方在 `window_control.rs` 与 `window_control/{physical_input,tray_input}.rs`；
+托盘菜单编排在 `qualification/exact_desktop/tray.rs`，helper 只做 UIA；共享停止与清理判定在 `qualification/exact_desktop.rs`；治理扫描在 `governance/input_injection.rs`；验收见 P14-A82（headless）
+与 P14-A83（桌面取证，NOT TESTED）。
