@@ -197,7 +197,7 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "phase08:document",
         62,
-        "0b6fcb0cadda50e37fb185161e3c448ba66108e2d2c72a2653ee27164e2bccbe",
+        "d580d4e78e22e875f99b04fb6642c21f2a08d2cc0edec869583118ffd392e010",
     ),
     (
         "plan09:dock",
