@@ -45,7 +45,7 @@ impl WindowShellCoordinator {
         }
     }
 
-    pub(super) fn show(&mut self, effects: &mut Vec<WindowEffect>) {
+    pub(super) fn show(&mut self, now_ms: u64, effects: &mut Vec<WindowEffect>) {
         if self.state.lifecycle.is_quitting() {
             return;
         }
@@ -53,6 +53,11 @@ impl WindowShellCoordinator {
             VisibilityState::HiddenToTray { restore }
             | VisibilityState::AwaitingHideSave { restore } => restore,
             _ => {
+                // A visible window resting, or settling, collapsed at its dock edge is restored
+                // expanded like one shown from the tray (plan 09 single-instance wake).
+                if matches!(self.current_stable(), StableVisibility::DockedCollapsed(_)) {
+                    self.start_expand(now_ms, false, effects);
+                }
                 effects.push(WindowEffect::FocusWindow);
                 return;
             }

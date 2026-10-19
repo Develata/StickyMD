@@ -1900,3 +1900,87 @@ C2b-3 最终结果：42 项 C2a 单元缺口中 9 项由 13 个单元测试 owne
 0 警告；`all --ci --ci-shard=tests --json`（`CARGO_BUILD_JOBS=2`，机器内存紧张）全部 PASSED，workspace tests 266.2 s，owner 任务 13.7 s、列出 13 个
 owner；Linux 复跑（WSL Debian，3795335 上叠加 97 个文件）clippy 退出 0，smoke 440 passed / 3 ignored、19 passed，render 165 passed / 13 ignored。
 报告中各轮的变异检查为临时改生产代码、只跑对应 owner、确认失败后恢复（脚本不进仓库），每次恢复后 `git diff --stat` 与改前一致。
+
+## 覆盖补全 C2c / C2d 准备（2026-10-18）
+
+### 第二实例唤醒收起 dock 的产品缺陷
+
+为 C2d 的 G4-05（dock 收起状态下第二次启动）取证时读代码发现：窗口在 dock 边缘处于稳定收起状态（收起按钮、Esc 或 700 ms 失焦自动收起）时，
+同目录第二次启动只聚焦窗口——`show()` 对非隐藏状态只发出 `FocusWindow`，而获得焦点只展开仍在向收起动画中的窗口，于是窗口停留为获得焦点但拒绝编辑
+输入的 3 DIP 条。plan 09 `#single-instance` 要求"通知第一实例显示并激活"，并把第二实例列为四条恢复路径之一；没有规则让手动收起阻止唤醒，因此判为
+实现偏离而非 plan 问题，不改 plan。
+
+- 复现：新单元测试 `flow::window::reducer::phase8_window_tests::a_second_instance_expands_a_collapsed_dock`（Left / Right / Top，手动收起与
+  初始收起）在修复前失败（`left: Presented(DockedCollapsed(Left))`）。
+- 修复：`show(now_ms, …)` 在非隐藏分支中，若稳定目标为 `DockedCollapsed` 则 `start_expand(now_ms, false, …)` 后再聚焦；`ShowRequested` 与托盘切换
+  传入 `now_ms`；`start_expand` 改为 `pub(super)` 供 lifecycle 使用。隐藏到托盘后的显示路径不变。
+- 验证：fmt、clippy（stickymd-win）0 警告；`cargo test -p stickymd-win --locked` 289 passed / 8 ignored（含 `flow::window` 38 passed）。
+- 投影：phase-08 增补 2026-10-18 节。真实的第二次启动（P08-M08 `identity-wake state=docked`）仍归 G4-05 exact。
+- 审查：gpt-6-astra（effort max）AGREE，逐状态追踪了 `ShowRequested` 与托盘切换（稳定收起仍属可见窗口，托盘切换仍为隐藏）、hover 展开、Pin ON 与
+  退出中的行为。NICE_TO_HAVE：三个用例实际都是手动收起（初始收起也置 `manually_hidden`），且未断言 frame、临时置顶与 140 ms。测试改为三条边 × 三种
+  收起方式（700 ms 失焦自动收起、聚焦时手动收起、初始收起），断言唤醒后临时置顶结束、展开恰从唤醒起 140 ms、frame 为 dock 的展开 frame、无剩余期限，
+  且唤醒请求的焦点使其保持展开。"不展开""从 0 时刻展开""只恢复手动收起""只改 visibility 不移 frame""保留临时置顶"五个变异均被杀死。
+  NEEDS_VERIFICATION（运行证据）：补强后在本机 Windows（HEAD 2e7e7cb 上的同一工作树）重跑——fmt 通过，`cargo clippy -p stickymd-win --all-targets --locked
+  -- -D warnings` 退出 0，`cargo test -p stickymd-win --locked` 289 passed / 8 ignored（`flow::window` 38 passed / 1 ignored）；修复前的失败输出见上方复现条目。
+  `flow` 模块只在 Windows 编译，Linux 复跑不覆盖它。
+
+### C2c / C2d 实施计划（2026-10-18，待 USER 决定 D1–D4）
+
+依据：覆盖补全批设计（2026-10-15，11 轮 AGREE 与 USER Resolution）中的"输入注入"协议与 exact / automated 扩展清单；本节只补实施顺序、取证方式与
+设计未定的机制。现存 77 项缺口按可关闭的层分组：G4 真实输入扩展约 37 项、G3-03 强杀点与恢复待处理 Esc 4 项、P08-A11 双副本 3 项、滚动条运行时
+接线 23 项、可由补强单元测试关闭 10 项。
+
+**C2c 输入注入模块**（不改产品；改 `tools/stickymd-smoke`）
+1. plan 11 先行：在 `#phase-verification-harness` 写入注入合同——注入只经一个模块；该模块只在 `cfg(panic = "unwind")` 中真正注入，abort 构建只有
+   返回错误的桩；先登记后注入，正常路径显式有界释放、`Drop` 兜底；清理以 `SendInput` 插入数判定（短计数即失败，完整计数只证明进入输入流），保留
+   鼠标左键释放采样（采到 Down 为失败）；清理失败触发共享停止，之后注入输入的 G3/G4 case 不执行、不产生 PASS；业务断言与清理分开判定；注入前目标
+   HWND 须为前台、激活且有焦点。
+2. 实现：键盘改用 `SendInput`（`INPUT_KEYBOARD`，替换 `keybd_event`），鼠标沿用 `SendInput`；helper 的右击与两处 Esc 迁回 Rust（helper 只做 UIA
+   定位与菜单核验）；治理文本扫描禁止 `SendInput` / `keybd_event` / `mouse_event` 出现在模块之外（含 helper）。托盘菜单核验从关闭到打开的变化。
+3. 取证（无需独占桌面的部分先做）：短计数、释放失败的共享停止、普通 unwind 由注入调用可替换的单元测试覆盖；真实 abort 二进制到达拒绝桩且零注入、
+   托盘关闭到打开需在独占桌面上运行。
+4. 影响：`window_control*` 属于全部 harness 的共享输入，本批使 G3 / G4 / G5、Runtime、Performance、Resources 的模块证据全部失效一次。
+
+**C2d exact 扩展**（按 2026-10-15 清单；每项先在 `exact_checks.rs` 声明标签）
+- G4-06：Right / Top dock 组字不收起，96 / 100 透明度下提交（先 40 再 96 再 100，避免默认值空通过），编辑区与 Search 中组字时 Esc 只取消 preedit
+  （以下一次输入落点、标题与 dock 几何判定）。
+- G4-02：真实键盘 Esc 各分支（弹出层关闭并回退、Search 关闭、Preview 有 / 无选区、Docked / Floating 收起、Shift+Esc、重复 key-down 逐次独立）、
+  物理点击收起按钮、透明度三种提交与滑块拖动中 Esc、被覆盖的感应条经真实鼠标悬停展开（自建覆盖窗口，不加消息补强）。
+- G4-01：托盘"隐藏"、退出保存失败（只读并回读、键入、确认未落盘、托盘退出、保持运行、标题为固定字面值、所有路径恢复属性）、置顶在托盘与窗口间
+  双向同步且不受临时 sensor topmost 影响、真实 Alt+F4（见 D4）。
+- G4-05：dock 收起状态下第二次启动——上一节的产品缺陷修复后才可能 PASS。
+- G3-03 与 P08-A11：见 D1、D2。
+- 滚动条：见 D3。
+
+**待 USER 决定**
+- D1 G3-03 的确定性强杀点。产品当前没有可在保存中途停住的钩子，且 G3 已批准的边界是"产品 runtime 不变"。
+  (a) 推荐，只改 harness：资产写入与移入 trash 以文件状态为里程碑（最终 `images/stickymd-*` 出现、`.trash/` 出现条目）后立即强杀；note 保存以只读
+  note 使发布失败（产品测试已证明只读会使保存失败），在临时文件写出而发布失败后强杀，重启后按恢复规则判定，并加"编辑后未触发保存即强杀"的负对照；
+  恢复待处理 Esc 以显式设置并回读 `tmp.mtime > note.mtime` 的 fixture 构造，配正向对照。它证明的是"发布失败后的崩溃"，不是系统调用中途的崩溃。
+  (b) 在 Release 产品中加运行时开启的测试里程碑 / 暂停点：能在发布 API 前后精确停住，但改产品 runtime 与 plan，需要新的 USER 决定。
+- D2 P08-A11 的"退出一份不影响另一份"。两份副本的托盘图标同名，现有 helper 取第一个命中且只按 PID 过滤菜单。
+  (a) 推荐：helper 列出全部 StickyMD 托盘图标，逐个打开菜单并只接受菜单属于目标 PID 的那个，其余以 Esc 关闭；有界、无匹配即失败。
+  (b) 只证明 note / config 双向不串写，退出隔离留给 M45 人工。
+- D3 滚动条运行时接线 23 项（视图到栏、窄槽运行时、拖动应用与结束、只改视口、Preview 运行时）。
+  (a) 推荐：把 `StickyApp` 中的滚动应用（视图模式 → 栏、拖动 / 翻页 → 视口、结束拖动的各触发、回执应用）再抽一层纯函数并单元持有决策，真实接线只由
+  G4 持有其中可观察的几项（拖出窗口完成拖动、松开 / 失焦结束拖动），以点击视口固定点后读取光标所在行作为滚动位置的观察。
+  (b) 全部走 G4 exact，需要为滚动位置建立截图或剪贴板观察，用时与脆弱性都更高。
+- D4 真实 Alt+F4。若注入前的焦点核验与注入之间焦点被抢，它会关闭当时的前台窗口（例如运行 harness 的终端）。
+  (a) 推荐：只在独占桌面的 G4 中注入，注入前立即核验目标为前台 / 激活 / 有焦点，失败即不注入；接受该残余竞态。
+  (b) 不注入真实 Alt+F4，该义务改为人工（M05 或 M46）。
+
+**顺序**：先提交第二实例唤醒修复；C2c plan 与模块（可无桌面开发与单元取证）；C2d 各 case 扩展；最后一次独占桌面运行同时完成 C2c 的桌面取证与 C2d 的
+G3 / G4 资格化（运行前向 USER 确认桌面可独占）。10 项可单元关闭的缺口另列 C2b-4，可与 C2c 并行。
+
+### C2c / C2d 决定（2026-10-19）
+
+USER 选择：D2 helper 逐个试托盘图标；D3 纯函数 + 少量 G4；D4 独占桌面下注入真实 Alt+F4。D1 USER 问"长远来看哪种更好"，回答如下，按 (a) 实施：
+
+- 被 `TerminateProcess` 结束的进程在磁盘上留下的正是它最后一次完成的系统调用之后的状态。重启后要证明的性质——从每个中间磁盘状态都能正确协调——无论这个
+  状态是由产品钩子在精确时刻强杀得到，还是由 harness 构造得到，都是同一个。产品钩子不提供额外证据。
+- 产品钩子却要把运行时开关、暂停点及其自身的防护与测试永久留在发布的 EXE 中。这违背 plan 11 `#qualification-process-isolation` 的"验证工具不进入产品
+  runtime 与 ZIP"，也违背 G3 已批准的"产品 runtime 不变"。
+- (a) 的 note 保存点是忠实的：`persist_note` 在发布失败时返回错误而不删除临时文件，所以只读 note 使发布失败后留下的是"已写出并 flush 的完整临时文件 +
+  旧 note"，与"发布前一刻崩溃"的磁盘状态相同。资产写入与移入 trash 以文件出现为里程碑后强杀，是"在该点或之后"的确定性点。
+- 两者都不覆盖操作系统崩溃或掉电，那依赖 `FlushFileBuffers` 与 `ReplaceFileW` 的系统保证。若将来需要逐阶段的磁盘状态，可用已有的进程内观察接缝
+  （`persist_note_with_before_publish`、`atomic_publish_with_observer`）在单元层构造每个阶段并跑启动协调，同样不改产品 runtime；本批不做。

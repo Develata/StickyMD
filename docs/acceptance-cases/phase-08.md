@@ -241,6 +241,23 @@ This supplements the frozen rows above; their statuses are unchanged.
 - Not covered here: real keyboard delivery (G4-02), the read-only-note quit failure (G4-01), the end-of-pass hook in the
   live event loop and the winit wiring of the pointer and focus events remain coverage gaps owned by the exact layer.
 
+## 2026-10-18 second-instance wake of a collapsed dock
+
+This supplements the frozen rows above; their statuses are unchanged.
+
+- Contract: [`09` single-instance wake](../plan/09_windows_shell.md#single-instance) (the second instance has the first
+  shown and activated) and the four restore paths (current window, 3-DIP sensor, tray, second instance).
+- Defect: a window resting collapsed at its dock edge, by the collapse button, Esc or auto-collapse, was only focused by
+  a second launch: the reducer emitted `FocusWindow` alone, and gaining focus expands only a window still animating
+  toward collapse, so the window stayed a focused 3-DIP strip that rejected editor input.
+- Expected: `ShowRequested` on a visible window whose stable target is `DockedCollapsed` starts the 140 ms expansion and
+  focuses it; a hidden window is restored as before.
+- Automated entry: `cargo test -p stickymd-win --locked -- a_second_instance_expands_a_collapsed_dock` (Left, Right and Top;
+  collapsed after 700 ms without focus, by the collapse button while focused, or at start): the wake focuses the window,
+  ends the sensor's temporary topmost, expands over exactly 140 ms from the wake to the dock's expanded frame and leaves
+  no deadline, and the focus it requested keeps it expanded. Status: `AUTOMATED PASS`. The real second launch while docked-collapsed (P08-M08
+  `identity-wake state=docked`) remains G4-05 exact work.
+
 ## Current Phase Gate
 
 Phase 8 automated acceptance is **PASS** after the checked-in headless, Release-performance,
