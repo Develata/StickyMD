@@ -258,6 +258,22 @@ This supplements the frozen rows above; their statuses are unchanged.
   no deadline, and the focus it requested keeps it expanded. Status: `AUTOMATED PASS`. The real second launch while docked-collapsed (P08-M08
   `identity-wake state=docked`) remains G4-05 exact work.
 
+## 2026-10-20 the opacity button closes its open popup
+
+This supplements the frozen rows above; their statuses are unchanged.
+
+- Contract: [`09` opacity](../plan/09_windows_shell.md#theme-opacity-and-content-zoom) (the field writes the config when
+  it loses focus); the toolbar Opacity button toggles the popup.
+- Defect: a press on the Opacity button while the popup was open lands outside the popup, which closed it, and then
+  activated the button, whose toggle reopened it: the button could never close the popup.
+- Expected: the button toggles the popup as the press found it, so the press closes it once; a focused field commits
+  first, a press elsewhere outside the popup still closes it and acts on what it hits, and the 6-DIP resize border
+  over the button's top edge keeps its precedence.
+- Automated entry: `cargo test -p stickymd-win --locked -- the_opacity_button_closes_the_popup_it_finds_open` (the
+  button lies outside the popup at every scale and size; the decision for every control with the popup open and
+  closed). Status: `AUTOMATED PASS`. A unit test because no exact check drives the opacity popup (G4-02 is a gap); it
+  proves the decision, not the winit wiring or native pointer delivery.
+
 ## Current Phase Gate
 
 Phase 8 automated acceptance is **PASS** after the checked-in headless, Release-performance,
