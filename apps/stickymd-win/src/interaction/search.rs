@@ -118,6 +118,10 @@ impl SearchSession {
     /// Puts a parked Search back as it was and rescans it against the current document, so the
     /// active match keeps its place when the document did not change.
     pub fn resume(&mut self, parked: ParkedSearch, text: &str, generation: Generation) {
+        debug_assert!(
+            !self.open,
+            "a parked Search exists only while the live one is closed"
+        );
         *self = parked.0;
         self.refresh(text, generation);
     }

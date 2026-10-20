@@ -123,15 +123,16 @@ impl StickyApp {
             self.open_search(code == Some(KeyCode::KeyH));
             return;
         }
-        // Zoom and the view shortcuts are window commands like save and export: an open Search
-        // does not take them (plan 07), and a view change decides what happens to Search.
-        if shortcut && let Some(command) = zoom_key_command(code) {
-            self.apply_zoom_command(command, true);
-            return;
-        }
-        if shortcut && let Some(mode) = view_key_mode(code) {
-            self.dispatch_preview_intent(PreviewIntent::SetViewMode(mode));
-            return;
+        match window_key(code, shortcut, self.search.is_composing()) {
+            Some(WindowKey::Zoom(command)) => {
+                self.apply_zoom_command(command, true);
+                return;
+            }
+            Some(WindowKey::View(mode)) => {
+                self.dispatch_preview_intent(PreviewIntent::SetViewMode(mode));
+                return;
+            }
+            None => {}
         }
         if self.search.open && self.handle_search_key(&event, code, shortcut, shift) {
             return;
@@ -551,6 +552,25 @@ enum ZoomCommand {
     Reset,
 }
 
+/// A window command decided before Search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowKey {
+    Zoom(ZoomCommand),
+    View(ViewMode),
+}
+
+/// Zoom and the view shortcuts are window commands like save and export: an open Search does
+/// not take them (plan 07), and a view change decides what happens to Search. A Search-field
+/// composition still owns every such key until it ends, as it does every other key.
+fn window_key(code: Option<KeyCode>, shortcut: bool, search_composing: bool) -> Option<WindowKey> {
+    if !shortcut || search_composing {
+        return None;
+    }
+    zoom_key_command(code)
+        .map(WindowKey::Zoom)
+        .or_else(|| view_key_mode(code).map(WindowKey::View))
+}
+
 /// The view a Ctrl+digit shortcut switches to.
 fn view_key_mode(code: Option<KeyCode>) -> Option<ViewMode> {
     match code {
@@ -613,8 +633,9 @@ fn mutation_input_allowed(
 #[cfg(test)]
 mod recovery_tests {
     use super::{
-        ClipboardAlias, ZoomCommand, ZoomWheelAccumulator, clipboard_alias,
-        global_persistence_shortcut, mutation_input_allowed, view_key_mode, zoom_key_command,
+        ClipboardAlias, WindowKey, ZoomCommand, ZoomWheelAccumulator, clipboard_alias,
+        global_persistence_shortcut, mutation_input_allowed, view_key_mode, window_key,
+        zoom_key_command,
     };
     use crate::config::ViewMode;
     use crate::instruction::{PersistenceIntent, SaveReason};
@@ -665,6 +686,38 @@ mod recovery_tests {
             assert_eq!(view_key_mode(Some(key)), None, "{key:?}");
             assert_eq!(zoom_key_command(Some(key)), None, "{key:?}");
         }
+    }
+
+    #[test]
+    fn window_keys_pass_an_open_search_but_not_its_composition() {
+        let zoom_in = Some(KeyCode::Equal);
+        let preview = Some(KeyCode::Digit3);
+        assert_eq!(
+            window_key(zoom_in, true, false),
+            Some(WindowKey::Zoom(ZoomCommand::Step(10)))
+        );
+        assert_eq!(
+            window_key(preview, true, false),
+            Some(WindowKey::View(ViewMode::Preview))
+        );
+        // Ctrl+0 resets zoom; no digit is both.
+        assert_eq!(
+            window_key(Some(KeyCode::Digit0), true, false),
+            Some(WindowKey::Zoom(ZoomCommand::Reset))
+        );
+        for code in [zoom_in, preview, Some(KeyCode::Digit0)] {
+            assert_eq!(
+                window_key(code, true, true),
+                None,
+                "{code:?} while composing"
+            );
+            assert_eq!(
+                window_key(code, false, false),
+                None,
+                "{code:?} without Ctrl"
+            );
+        }
+        assert_eq!(window_key(Some(KeyCode::KeyV), true, false), None);
     }
 
     #[test]

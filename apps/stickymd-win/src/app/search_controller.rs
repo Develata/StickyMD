@@ -95,6 +95,10 @@ impl StickyApp {
 
     /// Where Search is, as a view change reads it.
     pub(super) fn search_place(&self) -> SearchPlace {
+        debug_assert!(
+            !(self.search.open && self.parked_search.is_some()),
+            "a parked Search exists only while the live one is closed"
+        );
         if self.parked_search.is_some() {
             SearchPlace::Parked
         } else if self.search.open {
@@ -116,13 +120,16 @@ impl StickyApp {
     }
 
     /// Puts the parked Search back as it was once the view has a Source pane again, rescanned
-    /// against the current document; the note's selection and scroll stay where they are.
+    /// against the current document. The note's selection follows the active match, as it does
+    /// on opening and navigating, so what is selected is what Replace Current replaces even when
+    /// the document changed while Search was parked.
     pub(super) fn resume_search(&mut self) {
         let Some(parked) = self.parked_search.take() else {
             return;
         };
         let view = self.coordinator.view();
         self.search.resume(parked, view.text, view.generation);
+        self.update_search_selection();
         self.update_ime_area();
         self.request_redraw();
     }
