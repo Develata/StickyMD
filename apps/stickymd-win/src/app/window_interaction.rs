@@ -424,10 +424,11 @@ mod phase8_interaction_tests {
     }
 
     /// The Opacity button toggles the popup as the press found it: open, the press has already
-    /// closed it (the button lies outside the popup at every scale and size), and nothing
-    /// reopens it; closed, the button opens it. Every other control acts either way. A unit test
-    /// because no exact check drives the opacity popup (G4-02 is a gap); it proves the decision,
-    /// not the winit wiring or native pointer delivery.
+    /// closed it (the whole button lies above the popup at every scale and size), and nothing
+    /// reopens it; closed, the button opens it. Every other control acts either way. The exact
+    /// layer opens the popup (G4-06, G5-03) but never presses the button again; this test runs
+    /// in every build and covers scales and sizes one desktop run cannot set. It proves the
+    /// decision, not that the handler applies it, nor native pointer delivery.
     #[test]
     fn the_opacity_button_closes_the_popup_it_finds_open() {
         for scale in [1.0, 1.25, 1.5, 2.0] {
@@ -441,7 +442,7 @@ mod phase8_interaction_tests {
                 );
                 assert_eq!(layout.control_at(center), Some(ControlId::Opacity));
                 assert!(
-                    !layout.opacity_popup.contains(center),
+                    button.y + button.height <= layout.opacity_popup.y,
                     "{size:?} at {scale}"
                 );
             }

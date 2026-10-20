@@ -270,9 +270,10 @@ This supplements the frozen rows above; their statuses are unchanged.
   first, a press elsewhere outside the popup still closes it and acts on what it hits, and the 6-DIP resize border
   over the button's top edge keeps its precedence.
 - Automated entry: `cargo test -p stickymd-win --locked -- the_opacity_button_closes_the_popup_it_finds_open` (the
-  button lies outside the popup at every scale and size; the decision for every control with the popup open and
-  closed). Status: `AUTOMATED PASS`. A unit test because no exact check drives the opacity popup (G4-02 is a gap); it
-  proves the decision, not the winit wiring or native pointer delivery.
+  whole button lies above the popup at every scale and size; the decision for every control with the popup open and
+  closed). Status: `AUTOMATED PASS`. It proves the decision, not that the handler applies it, nor native pointer
+  delivery. The exact layer opens the popup (G4-06, G5-03) but never presses the button again; that real second press
+  remains an exact-layer gap.
 
 ## Current Phase Gate
 

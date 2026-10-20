@@ -456,3 +456,7 @@ phase-05 的 2026-10-17 补充。
 2026-10-19 覆盖补全 C2b-4：`StickyApp` 的滚动决策抽为纯函数 `app/scrollbar.rs::{view_bars, preview_offset_at, preview_offset_by}`，退出已取消状态经唯一入口
 `app/title.rs::QuitCancelNotice::on_window_effect`；补强 scrollbar、window_interaction、preview_runtime、controls、title、guards 与 render
 `source/scrollbar.rs` 的单元测试后绑定 plan 09 滚动条与透明度十一项，其余审计未通过的写明缺失部分保留为 gap；验收见 P14-A81 与 phase-05 的 2026-10-19 补充。
+
+2026-10-20 透明度按钮缺陷修复：弹层打开时按工具栏透明度按钮，弹层外的按下先关闭弹层（聚焦的输入框先提交），按钮再按本次按下开始时的弹层状态切换，
+故只关闭一次（`app/window_interaction.rs::control_press`），resize 边框与其他控件的优先级不变；验收见
+[phase-08 2026-10-20 补充](acceptance-cases/phase-08.md)。单元测试只证明该判定；handler 接线与真实的第二次按下属 exact 层缺口（G4-06、G5-03 只打开弹层）。
