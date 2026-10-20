@@ -947,7 +947,8 @@ fn run_window_shell_lifecycle(
     crate::window_control::commit_opacity_slider(window, 100)?;
     wait_for_config_field(program_directory, "opacity = 100")?;
     wait_for_layered_alpha(window, None)?;
-    opacity_popup::verify_button_closes_open_popup(program_directory, window)?;
+    let note_before_opacity_check =
+        opacity_popup::verify_button_closes_open_popup(program_directory, window)?;
 
     crate::window_control::request_close(window)?;
     if let Err(error) = wait_for_window_visibility(window, false) {
@@ -965,6 +966,7 @@ fn run_window_shell_lifecycle(
     // Let the primary finish any close-triggered save before isolating the
     // secondary-instance wake effect.
     thread::sleep(Duration::from_millis(300));
+    note_before_opacity_check.verify_unchanged()?;
     let note = program_directory.join("note/note.md");
     let config = program_directory.join("note/config.toml");
     let before = (file_state(&note)?, file_state(&config)?);

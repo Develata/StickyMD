@@ -12,18 +12,38 @@ use crate::window_control::{ToolbarControl, WindowHandle, click_toolbar, commit_
 /// pass, so either shows well within this.
 const SETTLE: Duration = Duration::from_millis(500);
 
+/// The note as the check found it; the caller compares it once a hide has saved the note.
+pub(super) struct NoteBefore {
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+impl NoteBefore {
+    /// Call after the window hid: hiding waits for the latest dirty note to be saved, so a digit
+    /// typed into the note is on disk by then.
+    pub(super) fn verify_unchanged(self) -> Result<(), String> {
+        let bytes =
+            fs::read(&self.path).map_err(|error| format!("cannot reread the note: {error}"))?;
+        if bytes == self.bytes {
+            Ok(())
+        } else {
+            Err("the opacity popup check changed the note".to_owned())
+        }
+    }
+}
+
 /// Entered and left with the popup open at a committed 100%. A press on the button while the
 /// popup is open closes it, so a press where the slider was then lands in the editor and changes
-/// nothing: once with nothing edited, once after that press committed digits typed into the field.
-/// Assumes the input method types an ASCII digit (an English layout, or a Chinese IME in
-/// half-width mode): before D5 the field takes no IME commit, so a full-width digit fails the
-/// check, as does a digit that reaches the note.
+/// neither the window alpha nor the committed opacity: once with nothing edited, once after that
+/// press committed a digit typed into the field. Assumes the digit key reaches the field as the
+/// text "4" (as with an English layout): before D5 the field takes no IME commit, so an input
+/// method that composes or converts the digit fails the check.
 pub(super) fn verify_button_closes_open_popup(
     program_directory: &Path,
     window: WindowHandle,
-) -> Result<(), String> {
-    let note_path = program_directory.join("note/note.md");
-    let note = fs::read(&note_path).map_err(|error| format!("cannot read the note: {error}"))?;
+) -> Result<NoteBefore, String> {
+    let path = program_directory.join("note/note.md");
+    let bytes = fs::read(&path).map_err(|error| format!("cannot read the note: {error}"))?;
     click_toolbar(window, ToolbarControl::Opacity)?;
     assert_popup_closed(program_directory, window, 100, None, "a second press")?;
 
@@ -54,13 +74,8 @@ pub(super) fn verify_button_closes_open_popup(
     commit_opacity_slider(window, 100)?;
     wait_for_config_field(program_directory, "opacity = 100")?;
     wait_for_layered_alpha(window, None)?;
-    // Wait out the editor's 650 ms autosave debounce, so a digit typed into the note is on disk.
-    thread::sleep(Duration::from_millis(1_500));
-    if fs::read(&note_path).map_err(|error| format!("cannot reread the note: {error}"))? != note {
-        return Err("the opacity popup check changed the note".to_owned());
-    }
     runtime_report!("Phase 8 runtime opacity button closed the open popup twice");
-    Ok(())
+    Ok(NoteBefore { path, bytes })
 }
 
 /// A press where the slider's 70% point was: with the popup closed it lands in the editor, so

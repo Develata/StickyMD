@@ -277,11 +277,13 @@ This supplements the frozen rows above; their statuses are unchanged.
   runs it too). With the popup open at 100%, a second press on the button and then a press where the slider's 70% point
   was leave the window alpha and the committed `opacity = 100` unchanged 500 ms later; after the slider commits 70, a
   press on the field, a physical `4` and a physical second press on the button (ordered after the digit) commit 40 and
-  close the popup, checked the same way, and the note is unchanged at the end. The other presses are synthetic window
-  messages, not physical pointer delivery. The check assumes the input method types an ASCII digit; before D5 the field
-  takes no IME commit, so a full-width digit fails it. Local runs 2026-10-20: PASS; with the `control_at` site reverted
-  to `activate_control`, the same run failed at the first check (alpha 179, `opacity = 70`). The exact candidate (G4,
-  G5) opens the popup but never presses the button again.
+  close the popup, checked the same way; the note is unchanged once the lifecycle's following close to the tray has
+  saved it. The probe, slider, field and other button presses are synthetic window messages, not physical pointer
+  delivery. The check assumes the digit key reaches the field as the text `4` (as with an English layout); before D5
+  the field takes no IME commit, so an input method that composes or converts the digit fails it. Phase 8 and
+  Phase 10 local runs 2026-10-20: PASS; with the `control_at` site reverted to `activate_control`, the Phase 8 run
+  failed at the first check (alpha 179, `opacity = 70`). The exact candidate (G4, G5) opens the popup but never
+  presses the button again.
 
 ## Current Phase Gate
 
