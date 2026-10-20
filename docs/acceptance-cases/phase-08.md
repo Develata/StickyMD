@@ -276,10 +276,12 @@ This supplements the frozen rows above; their statuses are unchanged.
 - Runtime entry: `./tools/smoke/phase-08.ps1 -Runtime`, in the copied-Release `WindowShell` lifecycle of P08-A11 (Phase 10
   runs it too). With the popup open at 100%, a second press on the button and then a press where the slider's 70% point
   was leave the window alpha and the committed `opacity = 100` unchanged 500 ms later; after the slider commits 70, a
-  press on the field, a physical `4` and a second press on the button commit 40 and close the popup, checked the same
-  way. The pointer messages are synthetic window messages, not physical pointer delivery. Local run 2026-10-20: PASS;
-  with the `control_at` site reverted to `activate_control`, the same run failed at the first check (alpha 179,
-  `opacity = 70`). The exact candidate (G4, G5) opens the popup but never presses the button again.
+  press on the field, a physical `4` and a physical second press on the button (ordered after the digit) commit 40 and
+  close the popup, checked the same way, and the note is unchanged at the end. The other presses are synthetic window
+  messages, not physical pointer delivery. The check assumes the input method types an ASCII digit; before D5 the field
+  takes no IME commit, so a full-width digit fails it. Local runs 2026-10-20: PASS; with the `control_at` site reverted
+  to `activate_control`, the same run failed at the first check (alpha 179, `opacity = 70`). The exact candidate (G4,
+  G5) opens the popup but never presses the button again.
 
 ## Current Phase Gate
 

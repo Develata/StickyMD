@@ -771,6 +771,27 @@ pub(crate) fn request_close(window: WindowHandle) -> Result<(), String> {
 }
 
 pub(crate) fn click_toolbar(window: WindowHandle, control: ToolbarControl) -> Result<(), String> {
+    let (x, y) = toolbar_control_center(window, control)?;
+    click_client(window, pixel_u16(x)?, pixel_u16(y)?)?;
+    thread::sleep(Duration::from_millis(25));
+    Ok(())
+}
+
+/// Click `control` with physical input, so the press is ordered after physical input sent
+/// before it (a window message overtakes queued input).
+pub(crate) fn click_toolbar_physically(
+    window: WindowHandle,
+    control: ToolbarControl,
+) -> Result<(), String> {
+    let (x, y) = toolbar_control_center(window, control)?;
+    click_client_physically(window, x, y)
+}
+
+/// The center of a right toolbar control in client pixels.
+fn toolbar_control_center(
+    window: WindowHandle,
+    control: ToolbarControl,
+) -> Result<(f64, f64), String> {
     let client = client_rect(window)?;
     let scale = f64::from(window_dpi(window)) / 96.0;
     let (control_size, gap, edge) = toolbar_metrics(client.width, scale);
@@ -784,10 +805,7 @@ pub(crate) fn click_toolbar(window: WindowHandle, control: ToolbarControl) -> Re
         ToolbarControl::Collapse => 3.0,
     };
     let x = right_origin + offset * (control_size + gap) + control_size / 2.0;
-    let y = 17.0 * scale;
-    click_client(window, pixel_u16(x)?, pixel_u16(y)?)?;
-    thread::sleep(Duration::from_millis(25));
-    Ok(())
+    Ok((x, 17.0 * scale))
 }
 
 pub(crate) fn commit_opacity_slider(window: WindowHandle, opacity: u8) -> Result<(), String> {
@@ -1859,7 +1877,15 @@ fn click_view_control(window: WindowHandle, index: u8) -> Result<(), String> {
     let scale = f64::from(window_dpi(window)) / 96.0;
     let (control_size, gap, edge) = toolbar_metrics(client.width, scale);
     let client_x = edge + f64::from(index) * (control_size + gap) + control_size / 2.0;
-    let client_y = 17.0 * scale;
+    click_client_physically(window, client_x, 17.0 * scale)
+}
+
+/// A physical click on the toolbar control under client point (`client_x`, `client_y`).
+fn click_client_physically(
+    window: WindowHandle,
+    client_x: f64,
+    client_y: f64,
+) -> Result<(), String> {
     let rect = window_rect(window)?;
     let screen_x = rect.x.saturating_add(i32::from(pixel_u16(client_x)?));
     let screen_y = rect.y.saturating_add(i32::from(pixel_u16(client_y)?));

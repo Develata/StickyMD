@@ -15,10 +15,15 @@ const SETTLE: Duration = Duration::from_millis(500);
 /// Entered and left with the popup open at a committed 100%. A press on the button while the
 /// popup is open closes it, so a press where the slider was then lands in the editor and changes
 /// nothing: once with nothing edited, once after that press committed digits typed into the field.
+/// Assumes the input method types an ASCII digit (an English layout, or a Chinese IME in
+/// half-width mode): before D5 the field takes no IME commit, so a full-width digit fails the
+/// check, as does a digit that reaches the note.
 pub(super) fn verify_button_closes_open_popup(
     program_directory: &Path,
     window: WindowHandle,
 ) -> Result<(), String> {
+    let note_path = program_directory.join("note/note.md");
+    let note = fs::read(&note_path).map_err(|error| format!("cannot read the note: {error}"))?;
     click_toolbar(window, ToolbarControl::Opacity)?;
     assert_popup_closed(program_directory, window, 100, None, "a second press")?;
 
@@ -30,10 +35,12 @@ pub(super) fn verify_button_closes_open_popup(
     wait_for_config_field(program_directory, "opacity = 70")?;
     wait_for_layered_alpha(window, Some(179))?;
     crate::window_control::click_opacity_field(window)?;
-    // The field then holds just "4", which commits as 40 (clamped), before and after D5.
+    // The field then holds just "4", which commits as 40 (clamped), before and after D5. The
+    // press is physical so it follows the digit: a window message would overtake queued input.
     crate::window_control::press_digit(window, 4)?;
-    click_toolbar(window, ToolbarControl::Opacity)?;
-    wait_for_config_field(program_directory, "opacity = 40")?;
+    crate::window_control::click_toolbar_physically(window, ToolbarControl::Opacity)?;
+    wait_for_config_field(program_directory, "opacity = 40")
+        .map_err(|error| format!("the typed 4 was not committed from the field: {error}"))?;
     wait_for_layered_alpha(window, Some(102))?;
     assert_popup_closed(
         program_directory,
@@ -47,6 +54,11 @@ pub(super) fn verify_button_closes_open_popup(
     commit_opacity_slider(window, 100)?;
     wait_for_config_field(program_directory, "opacity = 100")?;
     wait_for_layered_alpha(window, None)?;
+    // Wait out the editor's 650 ms autosave debounce, so a digit typed into the note is on disk.
+    thread::sleep(Duration::from_millis(1_500));
+    if fs::read(&note_path).map_err(|error| format!("cannot reread the note: {error}"))? != note {
+        return Err("the opacity popup check changed the note".to_owned());
+    }
     runtime_report!("Phase 8 runtime opacity button closed the open popup twice");
     Ok(())
 }
