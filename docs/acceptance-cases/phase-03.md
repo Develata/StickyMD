@@ -81,7 +81,8 @@ from the [release checklist](../release-checklist.md).
   Preview then Source, then Ctrl+3 / Ctrl+1 and Ctrl+3 / Ctrl+F and Ctrl+3 / Ctrl+H; in Preview press Esc, type, let
   the window lose focus for 700 ms; with `a X a` and the second `a` active, park, change the file on disk to `a a X`,
   return and press Ctrl+Enter; start a Microsoft Pinyin and a WeType composition in the query field and press
-  toolbar Preview, Ctrl+3 and Ctrl+=; with Search open, hide to tray and show again in each view. Candidate-window
+  toolbar Preview, Ctrl+3 and Ctrl+=, then toolbar Split and Source (the composition must go on and commit once,
+  with the note unchanged); with Search open, hide to tray and show again in each view. Candidate-window
   placement remains a visual check.
 
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)

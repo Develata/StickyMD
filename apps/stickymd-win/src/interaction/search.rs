@@ -403,13 +403,15 @@ mod tests {
         let generation = Generation::initial();
         let mut session = SearchSession::default();
         session.open(true, Some("a"), text, generation);
+        session.toggle_case(text, generation);
         session.replacement.push_str("xy");
         session.replacement_cursor = 1;
         session.query_cursor = 0;
         session.next(false);
-        session.next(false);
         let before = session.clone();
-        assert_eq!(before.match_summary(), (3, 3, false));
+        // Case-sensitive, so `A` is not a match and the second `a` is active.
+        assert!(before.case_sensitive);
+        assert_eq!(before.match_summary(), (2, 2, false));
 
         let parked = session.park().unwrap();
         // The live session is closed and empty, so nothing that reads it finds a Search.
