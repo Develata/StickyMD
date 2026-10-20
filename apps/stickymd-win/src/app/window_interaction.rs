@@ -426,9 +426,9 @@ mod phase8_interaction_tests {
     /// The Opacity button toggles the popup as the press found it: open, the press has already
     /// closed it (the whole button lies above the popup at every scale and size), and nothing
     /// reopens it; closed, the button opens it. Every other control acts either way. The exact
-    /// layer opens the popup (G4-06, G5-03) but never presses the button again; this test runs
-    /// in every build and covers scales and sizes one desktop run cannot set. It proves the
-    /// decision, not that the handler applies it, nor native pointer delivery.
+    /// layer opens the popup (G4-06, G5-03) but has no check that presses the button again; this
+    /// checks the decision at four scales and three sizes, not that the handler applies it, nor
+    /// native pointer delivery.
     #[test]
     fn the_opacity_button_closes_the_popup_it_finds_open() {
         for scale in [1.0, 1.25, 1.5, 2.0] {
