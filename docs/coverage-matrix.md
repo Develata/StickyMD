@@ -460,5 +460,6 @@ phase-05 的 2026-10-17 补充。
 2026-10-20 透明度按钮缺陷修复：弹层打开时按工具栏透明度按钮，弹层外的按下先关闭弹层（聚焦的输入框先提交），按钮再按本次按下开始时的弹层状态切换，
 故只关闭一次（`app/window_interaction.rs::control_press`），resize 边框与其他控件的优先级不变；验收见
 [phase-08 2026-10-20 补充](acceptance-cases/phase-08.md)。单元测试只证明该判定；handler 接线由 copied-Release `WindowShell` runtime（P08-A11，`tools/stickymd-smoke/src/runtime/opacity_popup.rs`）
-经发往真实窗口的合成鼠标消息核对：第二次按下后在滑块原位置按下不改变 alpha 与已提交透明度，含输入框已键入数字的情形；把调用点改回 `activate_control` 时该检查失败。
+核对：第二次按下后在滑块原位置按下不改变 alpha 与已提交透明度，含输入框已键入数字的情形，且收到托盘保存后正文不变；按下为发往真实窗口的合成鼠标消息，
+输入框情形中的数字与其后的按钮按下为物理输入。把调用点改回 `activate_control` 时该检查失败。
 exact 候选（G4、G5）仍只打开弹层。
