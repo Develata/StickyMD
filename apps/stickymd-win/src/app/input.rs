@@ -16,7 +16,7 @@ use crate::interaction::ImeSignal;
 
 impl StickyApp {
     pub(super) fn handle_ime(&mut self, event: Ime) {
-        if self.handle_search_ime(&event) {
+        if self.handle_opacity_ime(&event) || self.handle_search_ime(&event) {
             return;
         }
         if !mutation_input_allowed(
@@ -74,6 +74,14 @@ impl StickyApp {
     }
 
     pub(super) fn handle_key(&mut self, event: KeyEvent) {
+        // The Enter that ended an opacity field edit keeps its repeats and release (`controls.rs`).
+        if self.controls.takes_commit_key_event(
+            event.physical_key,
+            event.state == ElementState::Pressed,
+            event.repeat,
+        ) {
+            return;
+        }
         if event.state != ElementState::Pressed {
             return;
         }
@@ -84,9 +92,6 @@ impl StickyApp {
         // Every Esc is decided in one place, in the plan 09 order (`escape.rs`).
         if super::escape::is_escape(code, self.modifiers) {
             self.handle_escape();
-            return;
-        }
-        if self.handle_shell_key(&event) {
             return;
         }
         let (generation, text_len) = {
@@ -117,6 +122,11 @@ impl StickyApp {
         }
         if let Some(intent) = global_persistence_shortcut(code, shortcut, shift) {
             self.dispatch_persistence_intent(None, intent);
+            return;
+        }
+        // The edited opacity field takes every key past this point, before Search and the note.
+        if self.controls.takes_keys() {
+            self.handle_opacity_key(&event, code);
             return;
         }
         if shortcut && matches!(code, Some(KeyCode::KeyF | KeyCode::KeyH)) {
@@ -400,20 +410,18 @@ impl StickyApp {
                 }
                 if self.preview_at_cursor().is_some() {
                     self.preview_focused = true;
-                    if let Some(window) = &self.window {
-                        window.set_ime_allowed(false);
-                    }
+                    self.sync_ime_allowed();
                     self.press_preview_selection();
                     return;
                 }
-                self.preview_focused = false;
-                if let Some(window) = &self.window {
-                    window.set_ime_allowed(self.session.focused);
-                }
-                self.session.cancel_preedit();
+                // Only a press on the Source pane gives the note the keyboard; one that lands on no
+                // pane (outside the client area while the mouse is captured) changes no focus.
                 let Some(source_position) = self.source_local_cursor() else {
                     return;
                 };
+                self.preview_focused = false;
+                self.sync_ime_allowed();
+                self.session.cancel_preedit();
                 let diagnostic_action = self.projection.as_ref().and_then(|projection| {
                     projection.diagnostic_action_at(source_position.0, source_position.1)
                 });
@@ -450,6 +458,29 @@ impl StickyApp {
         }
     }
 
+    /// Sets the cursor again when what lies under a still pointer changes (the opacity popup
+    /// opening or closing), only while the pointer is over the window: the cursor is shared and
+    /// belongs to the window under the pointer (Microsoft `SetCursor`).
+    pub(super) fn refresh_cursor(&self) {
+        if self.pointer_inside_window {
+            self.apply_cursor();
+        }
+    }
+
+    /// Sets the cursor for what lies under the pointer.
+    fn apply_cursor(&self) {
+        let cursor = self
+            .shell_cursor_icon()
+            .or_else(|| {
+                self.scrollbar_gutter_at_cursor()
+                    .map(|_| winit::window::CursorIcon::Default)
+            })
+            .unwrap_or_else(|| self.cursor_icon_for_position(self.cursor_position));
+        if let Some(window) = &self.window {
+            window.set_cursor(cursor);
+        }
+    }
+
     pub(super) fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
         self.cursor_position = position;
         if self.handle_shell_cursor_moved(position) {
@@ -458,16 +489,7 @@ impl StickyApp {
         if self.handle_scrollbar_cursor() {
             return;
         }
-        let cursor = self
-            .shell_cursor_icon()
-            .or_else(|| {
-                self.scrollbar_gutter_at_cursor()
-                    .map(|_| winit::window::CursorIcon::Default)
-            })
-            .unwrap_or_else(|| self.cursor_icon_for_position(position));
-        if let Some(window) = &self.window {
-            window.set_cursor(cursor);
-        }
+        self.apply_cursor();
         // The formula-error hover title is derived from the pointer and the current frame when
         // the event pass ends (`update_window_title`), so it cannot outlive either.
         if self.preview_dragging {

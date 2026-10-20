@@ -155,9 +155,7 @@ impl StickyApp {
         {
             self.submit_preview_action(action);
         }
-        if let Some(window) = &self.window {
-            window.set_ime_allowed(mode != ViewMode::Preview && self.session.focused);
-        }
+        self.sync_ime_allowed();
         self.submit_config_if_needed();
         self.request_redraw();
     }

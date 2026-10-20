@@ -174,6 +174,35 @@ Automated entry: `cargo test -p stickymd-win --locked -- app::scrollbar app::win
 app::controls app::title app::guards` and `cargo test -p stickymd-render --lib --locked -- source::scrollbar`.
 Status: `AUTOMATED PASS`.
 
+2026-10-20 supplement (USER decision D5): the opacity field keeps every character it is given (a key whose text is a
+control character, such as Tab, is not a typing key); focusing it, or the slider or a commit writing it, selects its
+value, so the next key or Backspace replaces all of it; a commit reads only an integer (`-` and ASCII digits) and clamps
+it into 40–100 whatever its length, and any other entry, such as AC-024's 96.5, commits nothing; while focused the field
+paints the end of the typed text (digits, `-` and `.` as themselves, any other character as a question mark). While it is
+edited the field takes every key that Esc, F6/F7, save and export leave (the place Search has in the key order): Enter
+commits (not Ctrl+Enter) and keeps its auto-repeats and release, Backspace deletes, text without Ctrl, Alt or Win is typed
+and any other key is dropped, so none reaches the note or Search; the keys winit synthesizes when the window gains or
+loses focus are ignored. The field is numeric: it is not focused while the note or Search is composing, the IME is off
+while it is edited, and an IME commit that still arrives is typed and a composition dropped, while the end of a
+composition goes on to its owner. The IME follows whoever takes the keyboard in that key order (the edited field: off; a
+drawn Search: on, while a Search left open in Preview mode is not drawn and gets none; focused Preview: off; the note:
+on), at every site that changes it (window focus, input going away or coming back, a press on Preview or the note,
+opening Search or closing it by any of its ways, a view change, the field's edit starting or ending). The open popup takes
+every press inside it and shows its cursor there, refreshed when it opens or closes while the pointer is over the window
+and when the pointer comes back; a press that lands on no pane changes no focus; a press anywhere else in the
+popup, the window losing focus, hiding or quitting ends the edit and commits an integer (else the value is shown again).
+The C2b-4 opacity `range-and-input` gap is now owned by `app::controls::phase8_control_tests::{
+the_opacity_range_is_40_to_100_in_integer_steps, the_opacity_field_edits_like_a_selected_text_field,
+the_opacity_field_takes_keys_while_edited_and_commits_when_it_ends, the_key_that_ends_an_edit_keeps_its_repeats_and_release}`
+and `app::window_interaction::phase8_interaction_tests::{the_edited_opacity_field_types_only_plain_text,
+the_edited_opacity_field_leaves_the_end_of_a_composition_to_its_owner}` through P14-A81, because exact runs cannot stably
+produce that state space; `the_open_popup_takes_every_press_inside_it` proves where a press lands and
+`the_ime_follows_whoever_takes_the_keyboard` the IME decision. The key order, the Enter claim, the synthetic-key filter,
+the focus refusal, applying the IME decision at each site, the cursor refresh and the blur, hide and quit commits are wired
+in `StickyApp` and are not executed by these tests, and delivering real keys stays with the G4 numeric-input obligations
+(P08-D022). Automated entry: `cargo test -p stickymd-win --locked -- app::controls app::window_interaction
+app::toolbar_paint`. Status: `AUTOMATED PASS`.
+
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
 

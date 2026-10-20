@@ -2317,3 +2317,209 @@ gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX；R4-1（三�
 - **NEEDS_VERIFICATION（变异恢复摘要）**：各次变异运行的前后 diff 摘要只记为"unchanged"。已把四次运行前记录的 `git diff -- apps crates` 摘要补入
   `mutations/README.txt`；最后一次（`e28f401b…8bff`）与审查者对当前状态的复算值相同。此后的变异运行须在汇总中同时写出前后两值。
 - 运行时接线（keep-gutter、content-zoom、preview-document-height、quit-guard、cleared-after-event）、透明度输入（D5）与真实输入 / 桌面验收仍为具名缺口。
+
+## D5 实施记录（2026-10-20，透明度输入框放开输入、提交时 clamp）
+
+依据：USER 2026-10-20 决定 D5；plan 09 透明度条款（"40–100 整数 slider（步长 1）+ 整数输入框；默认 96；越界 clamp；非整数不提交"）原文不变——此前的实现与之不符
+（实现漂移），本批让代码符合 plan。C2b-4 审计时发现的两处缺陷一并修正：按键处理对每个按键以该键文本**替换**整段内容，故真实桌面上无法键入多位数；输入框绘制的是
+预览值而非键入文本。
+
+### 落地内容（`apps/stickymd-win`）
+
+- `app/controls.rs`：`ControlState` 增加私有的"值被选中"状态——聚焦（`focus_input`）、滑块预览或提交写入值后为真，此时下一个被接受的按键或 Backspace 替换整段；
+  `type_input` 逐字符接受数字与仅在首位的负号，其余字符丢弃且不清除选中；`backspace_input` 在选中时清空、否则删除末字符；`commit_input` 的提交值由纯函数
+  `committed_opacity` 计算：负整数（含 `-0`）为 40，去掉前导零后超过三位为 100，其余按值 clamp 到 40–100，无数字（空、只有负号）不提交，任意位数不溢出。
+  `focused_field` 给出聚焦时键入文本的末尾 16 个字符（`OpacityField`，保持工具栏投影为 `Copy`）。原 `replace_input` 删除。
+- `app/window_interaction.rs`：点击输入框调用 `focus_input`；Backspace 调用 `backspace_input`；带文本的按键调用 `type_input`；三者都请求重绘。
+- `app/toolbar_paint.rs`：聚焦时绘制键入文本中放得下的末尾（`visible_tail`，按 9 px 字宽），负号绘为七段的中横；未聚焦时仍绘制值。`app/presentation.rs` 传入
+  `focused_field`。
+- 测试：`the_opacity_range_is_40_to_100_in_integer_steps` 改为逐键键入 25 种输入（含负数、超长整数、非整数字符、只有负号）并核对字段内容与提交值；新增
+  `the_opacity_field_edits_like_a_selected_text_field`（选中替换、追加、负号位置、被丢弃的键保持选中、Backspace 两种情形、滑块与提交重新选中、长输入的末尾）；
+  `toolbar_paint` 新增 `a_long_entry_shows_its_last_characters` 与 `the_focused_field_paints_its_typed_text`（1× 与 2× 下键入文本与值的绘制、负号为一条横、长输入
+  不越出字段）。
+- 覆盖：plan 09 透明度 `range-and-input` 由上述两个 controls 测试持有；把真实按键送到输入框的接线仍属 G4 的数字输入义务（P08-D022 `commit=enter / blur`）。
+
+### 变异检验
+
+`target/review-evidence/d5-code/mutations/`（每个变异的补丁、命令、退出码与完整输出，汇总含运行前后 apps/crates diff 摘要，两者相等）：12 个变异——负数按正数读、
+超长整数溢出为下限、负号可在任意位置、选中值不被替换、选中时 Backspace 只删一字符、预览值不被选中、未聚焦也绘制文本、长输入保留开头、可见末尾多一字符、聚焦仍绘制值、
+负号绘为 8、长输入越出字段——全部被杀死。首轮中"选中时 Backspace 只删一字符"存活（用例字段只有一个字符），补成多字符用例后被杀死。
+
+### 验证（2026-10-20，审查前）
+
+`target/review-evidence/d5-code/verification-r0/`（HEAD `23b8c91`，范围补丁 sha256 `cb2eed7f…268a`，运行后不变）：fmt、`clippy --workspace --all-targets -D warnings` 与
+`all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（`stickymd-smoke`，`stickymd-win` 只在 Windows 构建）clippy 与测试退出 0。
+
+### D5 代码审查第 1 轮（2026-10-20）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、3 SHOULD_FIX、3 NICE_TO_HAVE；审查者确认 `committed_opacity`（`0096→96`、`000→40`、`-0→40`、单独负号不提交、长整数不进入
+可能溢出的解析）、Esc 主路径（取消清除编辑与拖动、恢复已提交值）与主题传递正确，并复算了范围补丁与变异摘要。逐项核实后处理：
+
+- **S1 输入框聚焦时按键与 IME 落到正文**（接受，HEAD 已有的接线缺陷）：输入框只消费 Enter、Backspace 与带文本的按键，Delete、方向键与快捷键继续进入正文处理；IME
+  经 `handle_ime` 完全不看输入框焦点，`Ime::Commit("96")` 会改正文或 Search。改为：编辑期间（`ControlState::takes_keys`：弹层打开且输入框聚焦）`handle_shell_key`
+  接收全部按下的键；`handle_ime` 先交给 `handle_opacity_ime`，提交文本键入输入框、组字丢弃；点击输入框时先取消正文的组字。
+- **S2 失焦不提交、滑块覆盖键入值**（接受，HEAD 已有）：窗口 `Focused(false)` 与弹层内其他控件的按下都不结束数字编辑，按住滑块后松手的提交会覆盖键入值。改为：弹层内
+  任何不在输入框上的按下、窗口失焦都先结束编辑（`finish_input`：有整数则提交，否则恢复显示值并保持选中）；点击弹层外原先的再次提交随之去掉（编辑已在前面提交，
+  值与已提交值相同）。
+- **S3 单元 owner 的适用理由**（接受）：按 plan 11"单元测试只用于 exact 层无法稳定制造的状态，写明理由，不证明原生输入投递"，`OPACITY_RANGE_AND_INPUT` 写明理由（任意长度与
+  符号的整数、被丢弃的字符、选中与部分键入的状态无法经真实输入稳定制造），并写明按键与 IME 路由、Enter / 失焦提交的接线以及真实按键送达仍属 G4 数字输入缺口
+  （P08-D022）。owner 加上新测试 `the_opacity_field_takes_keys_while_edited_and_commits_when_it_ends`。
+- **N 高 DPI 字形**（记录，不在本批）：字段矩形按 DPI 缩放，而七段字形、字距与内边距固定，200% 下数字偏小；这是值与键入文本共用的既有绘制，留作后续改进。尾部缓冲
+  由 16 加到 32 字符，注释改为"600% 以内"。
+- **N 用例**（接受）：补 `0096`、`0000` 与阿拉伯-印度数字、全角数字（被丢弃、保持选中值）；逐键输入表现为 27 种（实施记录中"25 种"有误）。新增变异"有效位数计入
+  前导零"被 `0096` 杀死。
+- **N 补丁换行**（接受）：变异证据中的 `patch.diff` 改为按 LF 写出（此前 Windows 默认换行转换写成 CRLF，`git apply` 不能原样重放）。
+- 变异：重跑 16 个（原 12 个与 S1–S3、N 对应的 4 个），全部 KILLED，汇总写明运行前后 apps/crates diff 摘要（相等）。按键与 IME 路由、失焦提交在 `StickyApp` 中，
+  单元测试只覆盖其判定（`takes_keys`、`finish_input`），不执行接线本身。
+- 验证（第 1 轮修复后）：`target/review-evidence/d5-code/verification-r1/`（范围补丁 sha256 `2169f93e…917d`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（`stickymd-smoke`）clippy 与测试退出 0。
+
+### D5 代码审查第 2 轮（2026-10-20）
+
+结论 DISAGREE（`codex-reviewer`，gpt-6-astra，effort max，只读）：R1-1、R1-3、R1-5、R1-6 已解决，R1-2 部分解决（见 R2-3），R1-4 接受延期（不构成高 DPI
+验收通过）；新发现 4 项 SHOULD_FIX、1 项 NEEDS_VERIFICATION、1 项 NICE_TO_HAVE，逐项对照源码核实，机制均属实。处理如下：
+
+- **R2-1 字段吞掉组字结束事件，Search 的组字残留**（接受）：点击输入框只取消正文组字，字段又吞掉空 Preedit 与 `Disabled`，Search 收不到清理事件。改为：正文或
+  Search 组字中不聚焦输入框（与打开 Search 的既有规则相同，提示"请先完成当前输入法组合。"）；字段只取 Commit 与非空 Preedit（`field_takes_ime`），组字结束事件与
+  `Enabled` 交给原主。
+- **R2-2 全键拦截挡住全局命令、快捷键被当作数字**（接受）：字段按键改在 `handle_key` 中 Search 的位置处理（Esc、F6/F7、保存 / 导出之后），Ctrl+S、Ctrl+Shift+S
+  照常可达；文本只在无 Ctrl / Alt / Win 时键入（与 Search 的判定相同；winit 的 `text` 不受 Ctrl 影响），Ctrl+Enter 不提交（`opacity_key`）。代价：字段也处在
+  `mutation_input_allowed` 门之后，恢复待处理、退出进行中或资产对账中时字段按键丢弃（Esc 仍取消），与 Search 一致；字段编辑期间缩放、视图切换、打开 Search
+  等快捷键丢弃。
+- **R2-3 原生关闭丢失键入值**（接受）：`hide_to_tray` 与 `request_quit` 都先发出 `SetEditorInputEnabled(false)`，唯一发出 `SetVisible(false)` 的 `complete_hide`
+  只在其后调用；字段在该效果处结束编辑并提交，先于隐藏清空弹层，也先于退出的 config 屏障（`request_quit_config_flush` 提交脏 config 并等其写完）。
+- **R2-4 弹层空白处按下穿透正文**（接受）：新增 `ControlLayout::popup_hit`（滑块 / 输入框 / 弹层表面 / 弹层外），弹层表面的按下在必要的提交后由弹层消费；对应
+  的松开在正文路径为无操作（无 Preview 拖动时只清 `dragging_selection`）。此问题在 D5 之前已存在。
+- **R2-5 原生组字跨焦点交接**（部分处理，仍为缺口）：聚焦输入框时关闭 IME（`set_ime_allowed(false)`，与 Preview 获焦相同的既有机制），结束或取消编辑后按窗口
+  获焦时的同一公式恢复（`sync_opacity_ime`）。转入方向由 R2-1 的拒绝聚焦保证没有进行中的组字；转出方向见下方"推断"。未引入 `ImmNotifyIME`：Win32 调用只能
+  在平台 adapter，属骨架改变。
+- **R2-6 选中断言被重新聚焦掩盖**（接受）：两次 `finish_input` 后直接断言 `opacity_input_selected`。
+- 顺带记录（不在本批，D5 之前即如此）：弹层打开时点击工具栏透明度按钮，弹层外按下先关闭弹层，随后 `activate_control` 又把它切换为打开，按钮无法关闭弹层。
+
+证据分层：
+
+- 已验证（本机运行）：新增与改写的单元测试（`the_edited_opacity_field_types_only_plain_text`、`the_edited_opacity_field_leaves_the_end_of_a_composition_to_its_owner`、
+  `the_open_popup_takes_every_press_inside_it`，以及 R2-6 的断言）通过；变异与全量验证见下。前两个测试加入 `OPACITY_RANGE_AND_INPUT` 的 owner。
+- 推断（读源码，未运行）：winit 0.30.13 Windows 实现在 `ime_allowed=false` 时，`WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` 不产生 IME 事件，因此字段中不会开始
+  组字，也就没有迟到的提交落到正文或 Search；`CommitOpacity` 只经 `coordinate_window_preference` 与 `submit_config_if_needed`，不重入窗口 flow；退出时提交的值由
+  config 屏障写盘。
+- 未验证：`ImmAssociateContextEx` 对进行中组字的效果、真实输入法（微软拼音、微信输入法）的事件顺序、真实按键送达，以及按键顺序、拒绝聚焦、IME 开关与失焦 /
+  隐藏 / 退出提交的接线（单元测试只覆盖判定），仍属 G4 / P08-D022 缺口。
+- 变异：`target/review-evidence/d5-code/mutations-r2/` 重跑 26 个（第 1 轮的 16 个，加上本轮 10 个：弹层表面按下穿透、结束编辑取消选中、按住 Ctrl / Alt / Win 仍键入、
+  Ctrl+Enter 提交、Ctrl+Alt 算作快捷键、控制字符被键入、字段取走空 Preedit、字段取走组字结束），全部 KILLED（均为断言失败，退出 101），运行前后 apps/crates diff
+  摘要相等（`60f602fe…aea5`）。按键顺序、拒绝聚焦、IME 开关与隐藏 / 退出提交在 `StickyApp` 中，没有变异或测试执行它们。
+- 验证（第 2 轮修复后）：`target/review-evidence/d5-code/verification-r2/`（范围补丁 sha256 `ec44f503…f5b7`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（基线 `23b8c91` 加 12 个改动文件，`stickymd-smoke`）clippy 与测试
+  退出 0（460 passed / 3 ignored，19 passed）。Linux 日志首次拷贝因 Git Bash 路径转换写成空文件，运行后补拷贝，summary 中注明。
+
+### D5 代码审查第 3 轮（2026-10-20）
+
+结论 DISAGREE（`codex-reviewer`，gpt-6-astra，effort max，只读）：R1-2、R2-1、R2-2、R2-3、R2-4、R2-6 已解决；R1-4 延期本批可接受；R2-5 部分解决，原生验证保留为具名缺口
+可接受；无 BLOCKER，新发现 3 项 SHOULD_FIX、1 项 NEEDS_VERIFICATION、1 项 NICE_TO_HAVE，逐项对照源码核实，均属实。处理如下：
+
+- **R3-1 退出保存失败后 IME 未恢复**（接受，第 2 轮引入）：托盘不可用时关闭降级为退出（plan 09），`SetEditorInputEnabled(false)` 处的字段提交按焦点公式关闭了 IME，而退出
+  取消只发出 `SetEditorInputEnabled(true)` 与 `QuitCancelled`。改为：`SetEditorInputEnabled(true)` 先恢复 `shell_input_enabled`，再按同一公式同步 IME（`sync_ime_allowed`，
+  由 `sync_opacity_ime` 改名）。显示路径上 `SetImeAllowed(true)` 之后会因窗口尚未获焦而暂时关闭 IME，随后由 `Focused(true)` 打开；未获键盘焦点时 IME 关闭是可接受的。
+  未选"退出取消时由 flow 发出 `SetImeAllowed`"（与隐藏失败对称、可在 reducer 测试），因为要把 flow 两个文件拉进本批；记录为可选的后续收敛。
+- **R3-2 长按 Enter 提交后重复事件改写正文**（接受，HEAD 已有）：提交字段的 Enter 记为 `ControlState::commit_key`；`handle_key` 在 Pressed 过滤之前询问
+  `takes_commit_key_event`：同键重复被吞掉并保持，同键松开被吞掉并结束，同键的新按下（松开丢失）结束并照常处理，其他键不受影响。未全局禁用键盘重复。
+- **R3-3 非整数被过滤成另一个整数提交**（接受，整批 D5 的偏差）：此前 `type_input` 丢弃非数字字符，`96.5` 成为 `965` 并提交 100，与 plan 09"非整数不提交"和 AC-024
+  （操作含输入 96.5）冲突。改为：字段保留任意字符（控制字符除外），提交只读整数（`-` 与 ASCII 数字），其余输入不提交、恢复显示值。字段投影改为逐字符取尾部
+  （从末尾按字符回退，不按字节截断），数字、`-`、`.` 照原样绘制，其余字符绘为七段问号（`0x53`，与任何数字不同），因此 `96.5` 与 `x` 都看得见。这是 plan 与 D5
+  "放开输入"的直接读法，不是新决定；用户可见的变化是：此前描述的"其余字符丢弃、保持选中值"不再成立，键入的非数字字符留在字段中并使本次输入不提交。逐键输入表
+  加入 AC-024 的三项（35→40、105→100、96.5→不提交），原"4.5→45"等过滤行改为不提交。
+- **R3-4 第 2 轮 R2-5 推断的更正**（接受，只追加不改写原文）：第 2 轮"推断"一条称关闭 IME 后"字段中不会开始组字，也就没有迟到的提交落到正文或 Search"。前半句成立
+  （winit 0.30.13 在 `ime_allowed=false` 时 `WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` 不产生事件）；后半句不成立：`WM_IME_ENDCOMPOSITION` 的条件是
+  `ime_allowed || ime_state != Disabled`，winit 处于 `Preedit` 时仍可能发出 Commit。可达路径：正文组字中在正文内点击，`input.rs` 只取消正文的投影
+  （`cancel_preedit`），原生组字继续，`session.is_composing()` 为假，聚焦字段不被拒绝；之后的结束组字可能把 Commit 交给字段（编辑中）或正文 / Search（编辑已结束）。
+  这一事件序列在目标输入法上是否出现、落在何处均未验证，仍属 G4 / P08-D022 缺口。
+- **R3-5 最小窗口下弹层与 resize 边框的光标不一致**（接受）：`shell_cursor_icon` 在弹层打开且指针在其中时先给出指针光标，与按下的优先级一致；弹层测试加入
+  220×120 与 `(1,40)`。
+- 变异：`target/review-evidence/d5-code/mutations-r3/` 重建为 34 个：去掉第 2 轮集合中行为已不存在的"负号可在任意位置键入"，"尾部保留开头字符"改按逐字符取尾部
+  重写，新增 9 个（控制字符被键入、其他字符照原样投影、小数点被投影为其他字符、提交键的重复放行、松开不结束占用、新按下仍被占用、其他字符不绘制、小数点不绘制、
+  其他字符绘成 8）；全部 KILLED（均为断言失败，退出 101），运行前后 apps/crates diff 摘要相等（`8c417499…405d`）。按键顺序、Enter 占用的接线、拒绝聚焦、IME 开关
+  与隐藏 / 退出提交及恢复输入时的 IME 同步在 `StickyApp` 中，没有变异或测试执行它们。
+- 验证（第 3 轮修复后）：`target/review-evidence/d5-code/verification-r3/`（范围补丁 sha256 `094e7a7f…0cba`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（基线 `23b8c91` 加 12 个改动文件，`stickymd-smoke`）clippy 与测试
+  退出 0（460 passed / 3 ignored，19 passed）。
+
+### D5 代码审查第 4 轮（2026-10-20）
+
+结论 DISAGREE（`codex-reviewer`，gpt-6-astra，effort max，只读）：R3-1、R3-3、R3-4、R3-5 已解决；R1-4 延期、R2-5 具名缺口本批可接受；R3-2 部分解决；无 BLOCKER，新发现
+2 项 SHOULD_FIX、1 项 NICE_TO_HAVE，逐项对照源码与锁定的 winit 0.30.13 核实，均属实。处理如下：
+
+- **R4-1 合成焦点事件提前结束提交键占用**（接受）：winit 在窗口获焦时为仍按住的键合成按下、失焦时合成松开（`WindowEvent::KeyboardInput::is_synthetic` 的文档），
+  `lifecycle.rs` 原先丢弃该标志，合成松开清掉占用、复焦时合成的按下（`repeat=false`）又进入正文换行。改为在 `KeyboardInput` 处忽略合成事件：它们不是在本窗口
+  按下或松开的键，因此不编辑任何内容，也不结束按住的键的占用。这一改动作用于全部按键（读源码推断：此前按住任意键切回窗口都会被当作一次按下，例如按住 Esc 切回会收起窗口），
+  修饰键状态另由 `ModifiersChanged` 维护，不受影响。
+- **R4-2 IME 判定与实际接收按键者不一致**（接受，含既有的 Search / Preview 焦点问题）：`handle_key` 的接收顺序是：编辑中的字段 → 打开的 Search → 获焦的 Preview →
+  正文，而 IME 公式在 Search 打开且 `preview_focused` 为真（打开 Search 后点击 Preview，可达）时关闭 IME。改为纯函数 `ime_allowed`（窗口获焦且接受输入，并按同一顺序：
+  字段关、Search 开、Preview 关、正文开），所有改变接收者的位置都经 `sync_ime_allowed` 应用：`Focused`、`SetImeAllowed(true)`、`SetEditorInputEnabled(true)`、
+  Preview / 正文按下、`open_search`、视图切换、字段编辑起止。范围因此加入 `search_controller.rs` 与 `preview_runtime.rs`（各一行，原表达式在其状态下与新判定一致，
+  只有"Preview 模式下 Search 仍打开"时由关改开，与该状态下 Search 仍接收按键一致）。建窗时的初值（`lifecycle.rs` 创建窗口处）保留，随后的 `Focused(true)` 同步。
+  既有问题记录（不在本批）：切到 Preview 模式时 Search 不关闭，Search 不可见却仍接收按键。
+- **R4-3 弹层关闭不刷新光标**（接受）：光标计算提成 `refresh_cursor`，指针移动、Esc 取消弹层、弹层外按下关闭弹层与工具栏按钮开关弹层时调用。
+- 顺带收紧 R3-3：第 4 轮审查指出 `type_input` 仍过滤控制字符，原始 `Ime::Commit("9\t6")` 会成为 `96`。改为字段保留给到的全部字符；键盘上文本为控制字符的键（Tab、
+  Delete）在 `opacity_key` 处就不是键入键。逐键表加入 `"9\t6"` → 不提交。
+- 证据分层：已验证（本机运行）为新增的 `the_ime_follows_whoever_takes_the_keyboard`（按接收顺序枚举 16 种状态）与改写的表项；推断（读源码）为合成事件的来源与
+  `repeat` 取值（winit 0.30.13 文档与 Windows 键盘实现）；未验证为合成事件过滤、各处 IME 同步与光标刷新的接线及真实桌面行为，仍属 G4 / P08-D022 缺口。
+- 变异：`target/review-evidence/d5-code/mutations-r4/` 共 37 个：第 3 轮的"控制字符被键入"改为反向的"IME 提交中的控制字符被丢弃"，新增 3 个（Search 打开时点击 Preview
+  后失去 IME、编辑中的字段保留 IME、未获焦窗口保留 IME）；全部 KILLED（均为断言失败，退出 101），运行前后 apps/crates diff 摘要相等（`ca023e0c…7ba0`）。合成事件过滤、
+  各处 IME 同步与光标刷新在 `StickyApp` 中，没有变异或测试执行它们。
+- 验证（第 4 轮修复后）：`target/review-evidence/d5-code/verification-r4/`（范围补丁 sha256 `dfcebc9a…76f9`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（基线 `23b8c91` 加 14 个改动文件，`stickymd-smoke`）clippy 与测试
+  退出 0（460 passed / 3 ignored，19 passed）。
+
+### D5 代码审查第 5 轮（2026-10-20）
+
+结论 DISAGREE（`codex-reviewer`，gpt-6-astra，effort max，只读）：R3-2、R4-1、R4-3 已解决；R1-4 延期、R2-5 具名缺口本批可接受；R4-2 部分解决；无 BLOCKER，新发现
+2 项 SHOULD_FIX、1 项 NEEDS_VERIFICATION、1 项 NICE_TO_HAVE，逐项对照源码核实，均属实。处理如下：
+
+- **R5-1 关闭 Search 不同步 IME**（接受，第 4 轮扩大同步后暴露）：打开 Search 后点击 Preview，IME 因 Search 接收按键而开启；Esc、Ctrl+F 与关闭按钮三个关闭入口都未同步，
+  接收者回到 Preview 后 IME 仍开着。改为三个入口都经 `close_search`，由它同步 IME。**更正第 4 轮记录**：第 4 轮 R4-2 一条称"所有改变接收者的位置都经
+  `sync_ime_allowed` 应用"，当时遗漏了关闭 Search；现补上，并加入输入禁用（见 R5-3）。
+- **R5-2 Preview 模式下不可见的 Search 获得 IME**（接受，第 4 轮引入的影响）：切到 Preview 不关闭 Search，Search 没有布局、不绘制（含 preedit），第 4 轮的公式却因
+  Search 打开而开启 IME，候选框还会落到隐藏正文的 caret 上（plan 07 禁止）。改为：只有已绘制的 Search（与绘制同一条件：`search_layout()` 存在）计为组字接收者，
+  Preview 模式下仍打开的 Search 不给 IME，这一状态回到 HEAD 的行为（关闭）。未采用"切到 Preview 时关闭 Search"：plan 07 只把 Search 定义为 Source 功能，未规定视图
+  切换时的处理，这是契约决定，不在本批。既有问题另列任务：Preview 模式下 Search 不可见却仍接收按键（连 Ctrl+1/2/3 都被吞掉）。
+- **R5-3 无字段编辑的退出等待期间 IME 仍开**（NEEDS_VERIFICATION，既有）：`request_quit` 只发出 `SetEditorInputEnabled(false)`。改为该效果无条件同步 IME（输入禁用即
+  关闭，恢复即按接收者打开），与隐藏路径一致。审查者另指出 `session.focused && shell_input_enabled` 不等于 `window_accepts_editor_mutation()`（后者还看生命周期、
+  收起与动画）；本批未改，记录为既有边界：判定不覆盖这些窗口状态，原生行为未验证。
+- **R5-4 指针在窗口外时刷新光标**（接受）：`refresh_cursor` 只在指针位于窗口内（`pointer_inside_window`）时设置光标（`SetCursor` 是共享资源，只应由指针下的窗口
+  设置）；指针移动仍按原路径设置。
+- 证据分层：已验证（本机运行）为改名后的 IME 判定测试与变异；推断（读源码）为三个关闭入口、Preview 模式下 `search_layout()` 为空与候选框回退；未验证为各同步点、
+  关闭入口与光标刷新的接线及真实桌面行为，仍属 G4 / P08-D022 缺口。
+- 变异：`target/review-evidence/d5-code/mutations-r5/` 共 37 个（第 4 轮集合，IME 判定的 3 个按改名后的 `search_drawn` 重写），全部 KILLED（均为断言失败，退出 101），
+  运行前后 apps/crates diff 摘要相等（`f7dd9519…b816`）。关闭入口、各同步点与光标刷新的接线没有变异或测试执行。
+- 验证（第 5 轮修复后）：`target/review-evidence/d5-code/verification-r5/`（范围补丁 sha256 `266c27d2…6a2e`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（基线 `23b8c91` 加 14 个改动文件，`stickymd-smoke`）clippy 与测试
+  退出 0（460 passed / 3 ignored，19 passed）。
+
+### D5 代码审查第 6 轮（2026-10-20）
+
+结论 DISAGREE（`codex-reviewer`，gpt-6-astra，effort max，只读）：R5-1、R5-4 已解决；R1-4 延期、R2-5 具名缺口、R5-3 的完整窗口门禁差异（生命周期、收起与动画）本批
+可接受；R4-2、R5-2 部分解决；无 BLOCKER，1 项 SHOULD_FIX、1 项 NICE_TO_HAVE，逐项对照源码核实，均属实。处理如下：
+
+- **R6-1 未命中 Source 的按下清除 Preview 焦点**（接受，触发分支 HEAD 已有）：正文按下路径先置 `preview_focused = false` 并同步 IME，之后才检查是否命中 Source；
+  Preview 模式下按住右键（winit 捕获鼠标）把指针移到客户区外再按左键，没有窗格被命中，IME 却按"正文接收"开启，留在 Preview 模式的隐藏 Search 因此可以组字。
+  改为先确认命中 Source，再改变焦点、同步 IME 并取消正文 preedit；未落在任何窗格的按下不改变焦点。**更正第 5 轮记录**：第 5 轮 R5-2 一条的"Preview 模式下仍打开的
+  Search 不给 IME"在该路径下不成立，本轮补上。
+- **R6-2 指针同坐标回到窗口时不刷新光标**（接受）：`CursorEntered` 在置位 `pointer_inside_window` 后刷新光标（同坐标重入时 winit 不发 `CursorMoved`）。
+- 证据分层：已验证（本机运行）为既有测试与变异；推断（读源码与 winit 0.30.13）为右键捕获使窗口外的左键按下送达本窗口，以及重入时省略 `CursorMoved`；未验证为
+  这两处接线与真实桌面行为，仍属 G4 / P08-D022 缺口。
+- 变异：`target/review-evidence/d5-code/mutations-r6/` 重跑第 5 轮的 37 个（本轮只改了未变异的 `input.rs` 与 `lifecycle.rs`），全部 KILLED（均为断言失败，退出 101），
+  运行前后 apps/crates diff 摘要相等（`123abc17…c176`）。
+- 验证（第 6 轮修复后）：`target/review-evidence/d5-code/verification-r6/`（范围补丁 sha256 `b84713ec…4e49`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（基线 `23b8c91` 加 14 个改动文件，`stickymd-smoke`）clippy 与测试
+  退出 0（460 passed / 3 ignored，19 passed）。
+
+### D5 代码审查第 7 轮（2026-10-20）
+
+结论 **AGREE**（`codex-reviewer`，gpt-6-astra，effort max，只读，541 s）：R4-2、R5-2、R6-1、R6-2 已解决（源码层面）；R1-4 延期、R2-5 原生组字交接与 R5-3 完整窗口门禁
+（生命周期、收起与动画）为本批可接受的具名缺口；无 BLOCKER、无 SHOULD_FIX。审查者复算范围补丁 `b84713ec…4e49` 与 37 个变异的补丁、输出与摘要，均一致。
+
+- **R7-1 滑块拖动中经窗口外重入时光标可能保持 resize 形态**（NICE_TO_HAVE，记录，不在本批修改）：`CursorEntered` 的刷新读取上一次 `CursorMoved` 的缓存坐标（窗口外），
+  随后的移动被滑块拖动分支提前消费，不再设置光标。只影响拖动中的光标反馈，不影响透明度值与提交；修复（拖动中重入时保留拖动光标）留作后续。
+- 审查者另注：coverage-matrix 末项未单列"Source 命中检查先于焦点改变"，P14-A81 的"按当前位置刷新"实际使用缓存坐标（见 R7-1）。
+- 未被任何变异或测试执行、仍属 G4 / P08-D022 缺口的接线：实际按键与 IME 路由、Search 可见性的运行期计算与各同步点的调用顺序、拒绝聚焦、Enter 占用接线、合成按键过滤、
+  失焦 / 隐藏 / 退出提交与恢复、Source 命中提前返回、`CursorEntered` 刷新，以及真实输入法投递。

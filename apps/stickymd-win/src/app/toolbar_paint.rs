@@ -4,7 +4,7 @@
 
 use tiny_skia::{Paint, Pixmap, Rect, Transform};
 
-use super::controls::{ControlId, ControlLayout, ControlRect, split_sync_rect};
+use super::controls::{ControlId, ControlLayout, ControlRect, OpacityField, split_sync_rect};
 use super::preview_runtime::ViewGeometry;
 use crate::config::ViewMode;
 
@@ -18,6 +18,8 @@ pub(super) struct ToolbarVisual {
     pub(super) emphasized: bool,
     pub(super) opacity_popup: bool,
     pub(super) opacity: u8,
+    /// The focused field's typed text, shown instead of the value while it is edited.
+    pub(super) opacity_field: Option<OpacityField>,
     pub(super) split_scroll_sync: bool,
 }
 
@@ -373,17 +375,45 @@ fn paint_opacity_popup(pixmap: &mut Pixmap, layout: &ControlLayout, visual: Tool
         accent,
     );
     fill_control_rect(pixmap, layout.opacity_input, track);
-    paint_number(
-        pixmap,
-        visual.opacity,
+    let ink = if visual.dark {
+        (240, 237, 228, 255)
+    } else {
+        (45, 43, 39, 255)
+    };
+    let (x, y) = (
         layout.opacity_input.x as f32 + 5.0,
         layout.opacity_input.y as f32 + 5.0,
-        if visual.dark {
-            (240, 237, 228, 255)
-        } else {
-            (45, 43, 39, 255)
-        },
     );
+    match visual.opacity_field {
+        Some(field) => {
+            let room = (layout.opacity_input.x + layout.opacity_input.width) as f32 - x;
+            paint_field_text(pixmap, visible_tail(field.text(), room), x, y, ink);
+        }
+        None => paint_number(pixmap, visual.opacity, x, y, ink),
+    }
+}
+
+/// Width of one painted field glyph, gap included.
+const GLYPH_ADVANCE: f32 = 9.0;
+
+/// The trailing characters of `text` that fit in `room` pixels: the end of a long entry stays
+/// visible while it is typed.
+fn visible_tail(text: &[u8], room: f32) -> &[u8] {
+    let fits = (room / GLYPH_ADVANCE).floor().max(0.0) as usize;
+    &text[text.len().saturating_sub(fits)..]
+}
+
+fn paint_field_text(pixmap: &mut Pixmap, text: &[u8], mut x: f32, y: f32, color: (u8, u8, u8, u8)) {
+    for &character in text {
+        match character {
+            b'0'..=b'9' => paint_digit(pixmap, character - b'0', x, y, color),
+            b'-' => paint_segments(pixmap, MINUS, x, y, color),
+            b'.' => fill_rect(pixmap, x + 3.0, y + 12.0, 1.5, 1.5, color),
+            // `?`: any other character (`OpacityField`), so a non-integer entry shows as one.
+            _ => paint_segments(pixmap, OTHER, x, y, color),
+        }
+        x += GLYPH_ADVANCE;
+    }
 }
 
 fn paint_number(pixmap: &mut Pixmap, value: u8, mut x: f32, y: f32, color: (u8, u8, u8, u8)) {
@@ -396,13 +426,28 @@ fn paint_number(pixmap: &mut Pixmap, value: u8, mut x: f32, y: f32, color: (u8, 
     };
     for digit in digits.into_iter().flatten() {
         paint_digit(pixmap, digit, x, y, color);
-        x += 9.0;
+        x += GLYPH_ADVANCE;
     }
 }
 
+/// The seven-segment mask of a minus sign: the middle bar alone.
+const MINUS: u8 = 0x40;
+/// The seven-segment mask of any other character: a question mark (top, upper right, middle and
+/// lower left), which no digit uses.
+const OTHER: u8 = 0x53;
+
 fn paint_digit(pixmap: &mut Pixmap, digit: u8, x: f32, y: f32, color: (u8, u8, u8, u8)) {
     const MASKS: [u8; 10] = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f];
-    let mask = MASKS.get(digit as usize).copied().unwrap_or(0);
+    paint_segments(
+        pixmap,
+        MASKS.get(digit as usize).copied().unwrap_or(0),
+        x,
+        y,
+        color,
+    );
+}
+
+fn paint_segments(pixmap: &mut Pixmap, mask: u8, x: f32, y: f32, color: (u8, u8, u8, u8)) {
     let segments = [
         (x + 1.0, y, 5.0, 1.5),
         (x + 6.0, y + 1.0, 1.5, 5.0),
@@ -433,4 +478,112 @@ fn fill_rect(
     let mut paint = Paint::default();
     paint.set_color_rgba8(color.0, color.1, color.2, color.3);
     pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+}
+
+#[cfg(test)]
+mod tests {
+    use winit::dpi::PhysicalSize;
+
+    use super::*;
+    use crate::app::controls::ControlState;
+
+    /// The field shows the end of a long entry: as many trailing characters as fit.
+    #[test]
+    fn a_long_entry_shows_its_last_characters() {
+        assert_eq!(visible_tail(b"12345", 45.0), b"12345");
+        assert_eq!(visible_tail(b"123456", 45.0), b"23456");
+        assert_eq!(visible_tail(b"-1000", 40.0), b"1000");
+        assert_eq!(visible_tail(b"96", 8.9), b"");
+        assert_eq!(visible_tail(b"", 45.0), b"");
+    }
+
+    /// While focused the field paints the typed text, not the value: a minus sign as the middle
+    /// bar alone, a point as a dot and any other character as a question mark unlike any digit;
+    /// everything stays inside the field.
+    #[test]
+    fn the_focused_field_paints_its_typed_text() {
+        let size = PhysicalSize::new(520, 680);
+        for scale in [1.0, 2.0] {
+            let layout = ControlLayout::new(size, scale);
+            let field = layout.opacity_input;
+            let paint = |text: Option<&str>| {
+                let mut state = ControlState::new(96);
+                if let Some(text) = text {
+                    state.focus_input();
+                    state.backspace_input();
+                    state.type_input(text);
+                }
+                let visual = ToolbarVisual {
+                    mode: ViewMode::Source,
+                    topmost: false,
+                    dark: false,
+                    system_theme: false,
+                    diagnostic: false,
+                    emphasized: true,
+                    opacity_popup: true,
+                    opacity: state.opacity_preview,
+                    opacity_field: state.focused_field(),
+                    split_scroll_sync: false,
+                };
+                let mut pixmap = Pixmap::new(size.width, size.height).unwrap();
+                paint_opacity_popup(&mut pixmap, &layout, visual);
+                pixmap
+            };
+            let ink = |pixmap: &Pixmap| {
+                let mut lit = Vec::new();
+                for y in 0..size.height {
+                    for x in 0..size.width {
+                        let color = pixmap.pixel(x, y).unwrap();
+                        if (color.red(), color.green(), color.blue()) == (45, 43, 39) {
+                            lit.push((x, y));
+                        }
+                    }
+                }
+                lit
+            };
+            let value = ink(&paint(None));
+            assert!(!value.is_empty(), "the value is painted at {scale}");
+            assert_eq!(
+                ink(&paint(Some("96"))),
+                value,
+                "typing the value paints it alike"
+            );
+            assert_ne!(
+                ink(&paint(Some("7"))),
+                value,
+                "the typed text is painted at {scale}"
+            );
+            let minus = ink(&paint(Some("-")));
+            assert!(!minus.is_empty(), "a minus sign is painted at {scale}");
+            let (top, bottom) = (
+                minus.iter().map(|&(_, y)| y).min().unwrap(),
+                minus.iter().map(|&(_, y)| y).max().unwrap(),
+            );
+            assert!(bottom - top <= 2, "the minus sign is one bar at {scale}");
+            let point = ink(&paint(Some(".")));
+            assert!(!point.is_empty(), "a point is painted at {scale}");
+            assert!(point.len() <= 9, "the point is a dot at {scale}");
+            let other = ink(&paint(Some("x")));
+            assert!(!other.is_empty(), "another character is painted at {scale}");
+            for digit in 0..=9 {
+                assert_ne!(
+                    ink(&paint(Some(&digit.to_string()))),
+                    other,
+                    "another character paints unlike {digit} at {scale}"
+                );
+            }
+            for (x, y) in ink(&paint(Some("-123456789012345678")))
+                .into_iter()
+                .chain(ink(&paint(Some("96.5x96.5x96.5x96.5x"))))
+            {
+                assert!(
+                    f64::from(x) >= field.x
+                        && f64::from(x) < field.x + field.width
+                        && f64::from(y) >= field.y
+                        && f64::from(y) < field.y + field.height,
+                    "({x},{y}) is outside the field {field:?} at {scale}"
+                );
+            }
+        }
+    }
 }

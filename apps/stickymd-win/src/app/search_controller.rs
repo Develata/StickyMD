@@ -30,9 +30,7 @@ impl StickyApp {
         let action = search_open_action(self.search.open, replace);
         match action {
             SearchOpenAction::Close => {
-                self.search.close();
-                self.update_ime_area();
-                self.request_redraw();
+                self.close_search();
                 return;
             }
             SearchOpenAction::ExpandReplace => {
@@ -64,16 +62,17 @@ impl StickyApp {
         self.search
             .open(replace, selected.as_deref(), view.text, view.generation);
         self.update_search_selection();
-        if let Some(window) = &self.window {
-            window.set_ime_allowed(true);
-        }
+        self.sync_ime_allowed();
         self.update_ime_area();
         self.request_redraw();
     }
 
-    /// Closes Search and refreshes what its overlay projected.
+    /// Closes Search and refreshes what its overlay projected; the keyboard, and with it the IME,
+    /// goes back to Preview or the note. Every way of closing it (Esc, Ctrl+F, its close button)
+    /// comes here.
     pub(super) fn close_search(&mut self) {
         self.search.close();
+        self.sync_ime_allowed();
         self.update_search_selection();
         self.update_ime_area();
         self.request_redraw();
@@ -204,7 +203,7 @@ impl StickyApp {
             }
             SearchHit::Previous => self.navigate_search(true),
             SearchHit::Next => self.navigate_search(false),
-            SearchHit::Close => self.search.close(),
+            SearchHit::Close => self.close_search(),
             SearchHit::Replace => self.replace_current_search(),
             SearchHit::ReplaceAll => self.replace_all_search(),
         }

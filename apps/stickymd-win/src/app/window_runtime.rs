@@ -328,15 +328,27 @@ impl StickyApp {
                 self.sync_preedit();
             }
             WindowEffect::SetImeAllowed(allowed) => {
-                if let Some(window) = &self.window {
-                    window.set_ime_allowed(allowed && !self.preview_focused);
+                if allowed {
+                    // Allowed means: back to whoever takes the keyboard (`sync_ime_allowed`).
+                    self.sync_ime_allowed();
+                } else if let Some(window) = &self.window {
+                    window.set_ime_allowed(false);
                 }
             }
             WindowEffect::SetEditorInputEnabled(enabled) => {
                 self.shell_input_enabled = enabled;
                 if !enabled {
                     self.scrollbars = super::scrollbar::ScrollbarInteraction::default();
+                    if self.controls.opacity_input_focused {
+                        // Hiding or quitting takes the keyboard from the field, which commits it
+                        // (plan 09) before the hide clears the popup or the quit flushes config.
+                        self.commit_opacity_input();
+                    }
                 }
+                // Input going away turns the IME off; input coming back (a show, a cancelled hide
+                // or quit) gives it to whoever takes the keyboard, which an opacity field edit may
+                // have turned off. Before the window is focused that is off, until `Focused(true)`.
+                self.sync_ime_allowed();
             }
             WindowEffect::RequestNoteSave(reason) => {
                 self.request_immediate_save(match reason {

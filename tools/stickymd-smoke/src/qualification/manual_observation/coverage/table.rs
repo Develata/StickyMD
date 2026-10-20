@@ -148,6 +148,34 @@ const SCROLL_SOURCE_MAPPING: &[Owner] = &[
 const SCROLL_STALE_RECEIPT: &[Owner] = &[win(
     "app::preview_runtime::tests::a_receipt_for_an_older_offset_is_relaid_out_and_never_shown",
 )];
+/// The slider's 40–100 integer range, the field keeping any input key by key and committing only
+/// an integer, clamped (plan 09, AC-024, USER decision D5), editing like a selected text field,
+/// ending its edit, which keys and IME events the edited field takes, the committing Enter
+/// keeping its repeats, and the default 96. Unit tests own these decisions because exact runs
+/// cannot stably produce their state space (integers of any length and sign, non-integer and
+/// non-ASCII entries, selected and partly typed values, each modifier, repeat and IME event,
+/// each typed through real input); they do not prove native key delivery. Delivering real keys to the
+/// field, the key order that keeps save and export first, the Enter and blur commits (a press
+/// elsewhere, window focus loss, hiding, quitting), ignoring the keys winit synthesizes on focus
+/// changes, turning the IME off while the field is edited and refusing it focus during a
+/// composition, and keeping keys away from the note while the field is edited stay with the G4
+/// numeric-input obligations (P08-D022, still gaps).
+const OPACITY_RANGE_AND_INPUT: &[Owner] = &[
+    win("app::controls::phase8_control_tests::the_opacity_range_is_40_to_100_in_integer_steps"),
+    win("app::controls::phase8_control_tests::the_opacity_field_edits_like_a_selected_text_field"),
+    win(
+        "app::controls::phase8_control_tests::the_opacity_field_takes_keys_while_edited_and_commits_when_it_ends",
+    ),
+    win(
+        "app::controls::phase8_control_tests::the_key_that_ends_an_edit_keeps_its_repeats_and_release",
+    ),
+    win(
+        "app::window_interaction::phase8_interaction_tests::the_edited_opacity_field_types_only_plain_text",
+    ),
+    win(
+        "app::window_interaction::phase8_interaction_tests::the_edited_opacity_field_leaves_the_end_of_a_composition_to_its_owner",
+    ),
+];
 const OPACITY_NO_STEPWISE_WRITE: &[Owner] = &[win(
     "app::controls::phase8_control_tests::phase8_a_slider_drag_commits_at_most_once_on_release",
 )];
@@ -1549,9 +1577,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:opacity-2",
         "range-and-input",
         "",
-        gap(
-            "C2b-4 审计：滑块在四种 DPI 下以步长 1 到达 40–100 每个整数、三位非负整数输入的提交 clamp、空输入不提交、默认 96 与 reducer 再 clamp 已有单元断言；输入框在键入时拒绝负号与第四位数字，`-1`、`1000` 这类越界整数无法输入也就不会被 clamp；USER 2026-10-20 决定（D5）放开输入、提交时 clamp，待实现；实际指针与键盘输入待 exact 层",
-        ),
+        tests(OPACITY_RANGE_AND_INPUT),
     ),
     o(
         "plan09:opacity-3",
