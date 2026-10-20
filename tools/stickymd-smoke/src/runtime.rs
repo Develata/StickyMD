@@ -45,6 +45,7 @@ macro_rules! runtime_report {
 
 #[cfg(test)]
 mod native_diagnostics;
+mod opacity_popup;
 pub(crate) mod resources;
 #[cfg(test)]
 mod startup_focus;
@@ -946,6 +947,7 @@ fn run_window_shell_lifecycle(
     crate::window_control::commit_opacity_slider(window, 100)?;
     wait_for_config_field(program_directory, "opacity = 100")?;
     wait_for_layered_alpha(window, None)?;
+    opacity_popup::verify_button_closes_open_popup(program_directory, window)?;
 
     crate::window_control::request_close(window)?;
     if let Err(error) = wait_for_window_visibility(window, false) {

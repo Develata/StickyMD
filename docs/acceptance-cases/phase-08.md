@@ -272,8 +272,14 @@ This supplements the frozen rows above; their statuses are unchanged.
 - Automated entry: `cargo test -p stickymd-win --locked -- the_opacity_button_closes_the_popup_it_finds_open` (the
   whole button lies above the popup at every scale and size; the decision for every control with the popup open and
   closed). Status: `AUTOMATED PASS`. It proves the decision, not that the handler applies it, nor native pointer
-  delivery. The exact layer opens the popup (G4-06, G5-03) but never presses the button again; that real second press
-  remains an exact-layer gap.
+  delivery.
+- Runtime entry: `./tools/smoke/phase-08.ps1 -Runtime`, in the copied-Release `WindowShell` lifecycle of P08-A11 (Phase 10
+  runs it too). With the popup open at 100%, a second press on the button and then a press where the slider's 70% point
+  was leave the window alpha and the committed `opacity = 100` unchanged 500 ms later; after the slider commits 70, a
+  press on the field, a physical `4` and a second press on the button commit 40 and close the popup, checked the same
+  way. The pointer messages are synthetic window messages, not physical pointer delivery. Local run 2026-10-20: PASS;
+  with the `control_at` site reverted to `activate_control`, the same run failed at the first check (alpha 179,
+  `opacity = 70`). The exact candidate (G4, G5) opens the popup but never presses the button again.
 
 ## Current Phase Gate
 

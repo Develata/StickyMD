@@ -480,6 +480,16 @@ fn qwerty_scan_code(virtual_key: u8) -> Result<u8, String> {
     Ok(scan_code)
 }
 
+/// Press the main-row digit key `digit` (0–9).
+pub(crate) fn press_digit(window: WindowHandle, digit: u8) -> Result<(), String> {
+    if digit > 9 {
+        return Err(format!("{digit} is not a single digit"));
+    }
+    // Set 1 scan codes: 1..=9 are 0x02..=0x0A and 0 is 0x0B.
+    let scan_code = if digit == 0 { 0x0B } else { digit + 1 };
+    send_physical_key(window, b'0' + digit, scan_code, false)
+}
+
 pub(crate) fn press_f6(window: WindowHandle) -> Result<(), String> {
     send_physical_key(window, 0x75, 0x40, false)
 }
@@ -784,6 +794,30 @@ pub(crate) fn commit_opacity_slider(window: WindowHandle, opacity: u8) -> Result
     if !(40..=100).contains(&opacity) {
         return Err(format!("opacity {opacity} is outside 40..=100"));
     }
+    let (popup_x, scale) = opacity_popup_x(window)?;
+    let slider_x = popup_x + 12.0 * scale;
+    let slider_width = 150.0 * scale;
+    let ratio = f64::from(opacity - 40) / 60.0;
+    let x = (slider_x + slider_width * ratio).min(slider_x + slider_width - scale.max(1.0));
+    let y = 34.0 * scale + 29.0 * scale;
+    click_client(window, pixel_u16(x)?, pixel_u16(y)?)?;
+    thread::sleep(Duration::from_millis(25));
+    Ok(())
+}
+
+/// Click the center of the open opacity popup's 45×30 DIP numeric field, which focuses it.
+pub(crate) fn click_opacity_field(window: WindowHandle) -> Result<(), String> {
+    let (popup_x, scale) = opacity_popup_x(window)?;
+    let x = popup_x + (172.0 + 22.5) * scale;
+    let y = (34.0 + 13.0 + 15.0) * scale;
+    click_client(window, pixel_u16(x)?, pixel_u16(y)?)?;
+    thread::sleep(Duration::from_millis(25));
+    Ok(())
+}
+
+/// The opacity popup's left edge in client pixels, right-aligned to the Opacity control as the
+/// product lays it out, and the window scale.
+fn opacity_popup_x(window: WindowHandle) -> Result<(f64, f64), String> {
     let client = client_rect(window)?;
     let scale = f64::from(window_dpi(window)) / 96.0;
     let (control_size, gap, edge) = toolbar_metrics(client.width, scale);
@@ -794,14 +828,7 @@ pub(crate) fn commit_opacity_slider(window: WindowHandle, opacity: u8) -> Result
     let popup_width = (230.0 * scale).min(f64::from(client.width));
     let popup_x = (opacity_control_right - popup_width)
         .clamp(0.0, (f64::from(client.width) - popup_width).max(0.0));
-    let slider_x = popup_x + 12.0 * scale;
-    let slider_width = 150.0 * scale;
-    let ratio = f64::from(opacity - 40) / 60.0;
-    let x = (slider_x + slider_width * ratio).min(slider_x + slider_width - scale.max(1.0));
-    let y = 34.0 * scale + 29.0 * scale;
-    click_client(window, pixel_u16(x)?, pixel_u16(y)?)?;
-    thread::sleep(Duration::from_millis(25));
-    Ok(())
+    Ok((popup_x, scale))
 }
 
 pub(crate) fn move_to_primary_left_edge(window: WindowHandle) -> Result<(), String> {
