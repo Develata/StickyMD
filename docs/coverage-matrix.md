@@ -452,3 +452,7 @@ phase-05 的 2026-10-17 补充。
 `input_injection/win32.rs`（只在可 unwind 的 Windows 构建中编译的 `SendInput` 后端）；鼠标与键盘调用方在 `window_control.rs` 与 `window_control/{physical_input,tray_input}.rs`；
 托盘菜单编排在 `qualification/exact_desktop/tray.rs`，helper 只做 UIA；共享停止与清理判定在 `qualification/exact_desktop.rs`；治理扫描在 `governance/input_injection.rs`；验收见 P14-A82（headless）
 与 P14-A83（桌面取证，NOT TESTED）。
+
+2026-10-19 覆盖补全 C2b-4：`StickyApp` 的滚动决策抽为纯函数 `app/scrollbar.rs::{view_bars, preview_offset_at, preview_offset_by}`，退出已取消状态经唯一入口
+`app/title.rs::QuitCancelNotice::on_window_effect`；补强 scrollbar、window_interaction、preview_runtime、controls、title、guards 与 render
+`source/scrollbar.rs` 的单元测试后绑定 plan 09 滚动条与透明度十一项，其余审计未通过的写明缺失部分保留为 gap；验收见 P14-A81 与 phase-05 的 2026-10-19 补充。

@@ -8,8 +8,8 @@ use winit::window::CursorIcon;
 
 use super::StickyApp;
 use super::scrollbar::{
-    DragUpdate, PaneScroll, PressOutcome, ScrollPane, Scrollbar, gutter_at, page_pixels, pane_bars,
-    preview_scroll,
+    DragUpdate, PressOutcome, PreviewFacts, ScrollPane, Scrollbar, gutter_at, page_pixels,
+    preview_offset_at, preview_offset_by, view_bars,
 };
 use crate::config::ViewMode;
 
@@ -24,36 +24,20 @@ impl StickyApp {
             .window
             .as_ref()
             .map_or(1.0, |window| window.scale_factor() as f32);
+        // Measured only for a pane the view shows.
         let source = geometry
             .source
-            .zip(self.projection.as_mut())
-            .map(|(content, projection)| {
-                let metrics = projection.scroll_metrics();
-                PaneScroll {
-                    content,
-                    fraction: metrics.fraction,
-                    visible: metrics.viewport_fraction,
-                }
+            .and(self.projection.as_mut())
+            .map(|projection| projection.scroll_metrics());
+        let preview = geometry
+            .preview
+            .and(self.preview_frame.as_ref())
+            .map(|frame| PreviewFacts {
+                document_height: frame.document_height(),
+                scroll_y: self.preview_scroll_y,
+                current: preview_current,
             });
-        let preview =
-            geometry
-                .preview
-                .zip(self.preview_frame.as_ref())
-                .and_then(|(content, frame)| {
-                    preview_scroll(
-                        content,
-                        preview_current,
-                        frame.document_height(),
-                        self.preview_scroll_y,
-                    )
-                });
-        pane_bars(
-            accepts_input,
-            dpi,
-            geometry.divider_x.is_some(),
-            source,
-            preview,
-        )
+        view_bars(dpi, geometry, source, preview)
     }
 
     pub(super) fn scrollbar_gutter_at_cursor(&self) -> Option<ScrollPane> {
@@ -156,8 +140,8 @@ impl StickyApp {
             }
             ScrollPane::Preview => {
                 if let Some(frame) = &self.preview_frame {
-                    self.preview_scroll_y = fraction as f32
-                        * (frame.document_height() - frame.height() as f32).max(0.0);
+                    self.preview_scroll_y =
+                        preview_offset_at(fraction, frame.document_height(), frame.height());
                 }
             }
         }
@@ -172,10 +156,14 @@ impl StickyApp {
                 }
             }
             ScrollPane::Preview => {
-                let max = self.preview_frame.as_ref().map_or(0.0, |frame| {
-                    (frame.document_height() - frame.height() as f32).max(0.0)
+                self.preview_scroll_y = self.preview_frame.as_ref().map_or(0.0, |frame| {
+                    preview_offset_by(
+                        self.preview_scroll_y,
+                        pixels,
+                        frame.document_height(),
+                        frame.height(),
+                    )
                 });
-                self.preview_scroll_y = (self.preview_scroll_y + pixels).clamp(0.0, max);
             }
         }
         self.after_pane_scroll(pane);

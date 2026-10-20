@@ -306,6 +306,97 @@ fn winit_resize_direction(direction: WindowResizeEdge) -> ResizeDirection {
 mod phase8_interaction_tests {
     use super::*;
 
+    /// Plan 09 gutter geometry: in every view, at every DPI and window size, `geometry()`
+    /// reserves exactly the scaled gutter right of each pane (before the divider in a Split,
+    /// before the window edge otherwise), and each pane's scrollbar track lies inside its
+    /// gutter, clear of the native resize border (the real hit test finds no edge on any track
+    /// pixel) and of the Split sync button.
+    #[test]
+    fn every_view_reserves_the_gutter_clear_of_the_resize_border_and_sync_button() {
+        use super::super::preview_runtime::geometry;
+        use super::super::scrollbar::{GUTTER_DIP, ScrollPane, Scrollbar};
+        for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+            let gutter = (GUTTER_DIP * scale).round() as u32;
+            for (width, height) in [(520, 680), (330, 360), (1200, 900), (1921, 1081)] {
+                let size = PhysicalSize::new(
+                    (width as f32 * scale).round() as u32,
+                    (height as f32 * scale).round() as u32,
+                );
+                for mode in [ViewMode::Source, ViewMode::Preview, ViewMode::Split] {
+                    let view = geometry(mode, size, scale);
+                    let label = format!("{mode:?} {size:?} at {scale}");
+                    let panes = [
+                        (ScrollPane::Source, view.source),
+                        (ScrollPane::Preview, view.preview),
+                    ];
+                    assert_eq!(
+                        panes.iter().filter(|(_, pane)| pane.is_some()).count(),
+                        if mode == ViewMode::Split { 2 } else { 1 },
+                        "{label}"
+                    );
+                    for (side, pane) in panes {
+                        let Some(pane) = pane else { continue };
+                        let right = pane.x + pane.width;
+                        let limit = match (side, view.divider_x) {
+                            (ScrollPane::Source, Some(divider)) => divider,
+                            _ => size.width,
+                        };
+                        assert_eq!(right + gutter, limit, "{label}: {side:?} gutter");
+                        let Some(bar) = Scrollbar::new(
+                            side,
+                            pane,
+                            scale,
+                            0.5,
+                            0.2,
+                            side == ScrollPane::Source && view.divider_x.is_some(),
+                        ) else {
+                            continue;
+                        };
+                        let track = bar.track;
+                        assert!(
+                            track.x >= right && track.x + track.width <= limit,
+                            "{label}: {side:?} track {track:?} outside its gutter"
+                        );
+                        let (left, top) = (f64::from(track.x), f64::from(track.y));
+                        let (last_x, last_y) = (
+                            f64::from(track.x + track.width - 1),
+                            f64::from(track.y + track.height - 1),
+                        );
+                        for (x, y) in [
+                            (left, top),
+                            (last_x, top),
+                            (left, last_y),
+                            (last_x, last_y),
+                            ((left + last_x) / 2.0, (top + last_y) / 2.0),
+                        ] {
+                            assert_eq!(
+                                resize_direction(
+                                    size,
+                                    PhysicalPosition::new(x, y),
+                                    f64::from(scale)
+                                ),
+                                None,
+                                "{label}: {side:?} track pixel ({x},{y}) is a resize edge"
+                            );
+                        }
+                        if let (ScrollPane::Source, Some(divider)) = (side, view.divider_x) {
+                            let sync =
+                                split_sync_rect(divider, view.toolbar_height, f64::from(scale));
+                            let apart = sync.x + sync.width <= left
+                                || sync.x >= f64::from(track.x + track.width)
+                                || sync.y + sync.height <= top
+                                || sync.y >= f64::from(track.y + track.height);
+                            assert!(
+                                apart,
+                                "{label}: the Source track {track:?} meets the sync button {sync:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn phase8_resize_hit_test_prioritizes_all_eight_border_regions() {
         let size = PhysicalSize::new(520, 680);

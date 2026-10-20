@@ -146,6 +146,34 @@ plan 09 manual obligations are owned by these and the title / persistence unit t
 Automated entry: `cargo test -p stickymd-win --locked -- app::scrollbar` and
 `cargo test -p stickymd-render --lib --locked -- source::scrollbar`. Status: `AUTOMATED PASS`.
 
+2026-10-19 supplement (C2b-4): the runtime's remaining scroll decisions are pure functions it only calls:
+`app::scrollbar::view_bars` (the bars of the panes a view shows, from the Source metrics and the Preview frame's cached
+document height, offset and currency), `preview_offset_at` (a thumb fraction to a Preview offset) and
+`preview_offset_by` (a page within the document). The tests assert, at 100% and 150% DPI in Source, Preview and Split,
+that exactly the shown panes get a bar on their own content rect, that a short note (Source fully visible, or a Preview
+document no taller than its pane) shows no thumb while a long pane beside it keeps its thumb, and that a stale frame
+shows no Preview thumb without affecting the Source bar; that a fraction of 0 / 1 shows the Preview start / last screen,
+linearly in between and read back by the bar, and that pages move by exactly their pixels in both directions and stop
+at both ends; that the thumb is the visible share of the track, never under 24 DIP at the window's DPI nor the whole
+track, moving linearly from top to bottom (1000 visible shares x 4 DPIs x with and without the Split inset); that
+`geometry()` reserves exactly the scaled gutter right of each pane in every view, DPI and four window sizes, with each
+track inside its gutter, clear of the real resize hit test and of the Split sync button; that on a 2000-line note whose
+every line wraps, the Source end is measured once (laying out fewer than 40 lines) and reused until the geometry
+changes, and a pointer-like run of jumps lays out only around each target and reads its fraction back to within a
+thousandth of a line; that a Source page moves the viewport by exactly its pixels both ways, stopping at both ends; and
+that a Preview receipt for an older offset is only relaid out, never shown. Eleven plan 09 scrollbar and opacity
+obligations are owned by these and the opacity drag test through P14-A81. Still named gaps: the split sync switch, the
+short-note gutter and Content Zoom independence at run time (the owner calls `geometry()` directly), a press in the
+gutter, live drag application, the ends of a drag, viewport-only scrolling, the cached Preview document height at run
+time, the Preview currency decision (`preview_layout_is_current`) and the receipt entry's full identity check, the
+opacity field (it takes at most three unsigned digits; USER decision D5 opens the input and clamps on commit, not yet
+implemented), and the
+quit-cancelled notice's run-time wiring (its decisions and two lexical source guards are tested, the effect handling
+and event-pass settling are not).
+Automated entry: `cargo test -p stickymd-win --locked -- app::scrollbar app::window_interaction app::preview_runtime
+app::controls app::title app::guards` and `cargo test -p stickymd-render --lib --locked -- source::scrollbar`.
+Status: `AUTOMATED PASS`.
+
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
 

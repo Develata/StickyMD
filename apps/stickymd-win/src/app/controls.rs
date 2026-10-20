@@ -322,25 +322,36 @@ mod phase8_control_tests {
         let mut controls = ControlState::new(96);
         controls.opacity_popup_open = true;
         // Applies one intent as the runtime does; returns the value the reducer asks to persist.
-        let mut apply = |controls: &mut ControlState, intent| {
-            let effect = coordinate_window_preference(&mut config, intent).unwrap();
+        let apply = |config: &mut ConfigCoordinator, controls: &mut ControlState, intent| {
+            let effect = coordinate_window_preference(config, intent).unwrap();
             let WindowPreferenceEffect::ApplyOpacity { opacity, persist } = effect else {
                 panic!("{effect:?}");
             };
             controls.preview(opacity);
             persist.then_some(opacity)
         };
+        // The runtime writes the config whenever it is dirty, from whichever event comes next
+        // (`submit_config_if_needed`); a drag must therefore leave it clean at every step.
+        let assert_clean = |config: &mut ConfigCoordinator, step: &str| {
+            assert!(!config.is_dirty(), "{step} dirtied the config");
+            assert_eq!(config.current().opacity, 96, "{step}");
+            assert!(config.begin_persist().is_none(), "{step} would be written");
+        };
         let mut persisted = Vec::new();
         let press = controls.press_slider(80);
-        persisted.extend(apply(&mut controls, press));
+        persisted.extend(apply(&mut config, &mut controls, press));
+        assert_clean(&mut config, "the press");
         for value in [70, 60, 55] {
             let drag = controls.drag_slider(|| value).expect("dragging previews");
-            persisted.extend(apply(&mut controls, drag));
+            persisted.extend(apply(&mut config, &mut controls, drag));
+            assert_clean(&mut config, "a drag step");
         }
         assert!(persisted.is_empty(), "{persisted:?}");
         let release = controls.release_slider().expect("the release commits");
-        persisted.extend(apply(&mut controls, release));
+        persisted.extend(apply(&mut config, &mut controls, release));
         assert_eq!(persisted, [55]);
+        assert!(config.is_dirty(), "the release is written once");
+        assert_eq!(config.current().opacity, 55);
         // No drag in progress: moves preview nothing and a release commits nothing.
         assert!(controls.drag_slider(|| 60).is_none());
         assert!(controls.release_slider().is_none());
@@ -350,6 +361,96 @@ mod phase8_control_tests {
         controls.cancel(55);
         assert!(controls.drag_slider(|| 65).is_none());
         assert!(controls.release_slider().is_none());
+    }
+
+    /// Plan 09 opacity range and input: the slider maps every position to an integer from 40
+    /// to 100 in steps of one and reaches each, at every DPI; a commit clamps out-of-range
+    /// values and commits nothing for an empty field; the configured default is 96. The field
+    /// currently takes at most three unsigned digits, so `-1` or `1000` cannot be typed; USER
+    /// decision D5 (2026-10-20) opens the input and clamps on commit, still to be implemented,
+    /// so the rejected inputs below record the current behaviour only.
+    #[test]
+    fn the_opacity_range_is_40_to_100_in_integer_steps() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let layout = ControlLayout::new(PhysicalSize::new(520, 680), scale);
+            let slider = layout.opacity_slider;
+            let mut previous = layout.opacity_at(slider.x - 40.0);
+            assert_eq!(previous, 40, "left of the slider at {scale}");
+            let mut reached = std::collections::BTreeSet::from([previous]);
+            let mut x = slider.x - 40.0;
+            while x <= slider.x + slider.width + 40.0 {
+                let value = layout.opacity_at(x);
+                assert!(
+                    value >= previous && value - previous <= 1,
+                    "{previous} -> {value} at x={x}, scale {scale}"
+                );
+                reached.insert(value);
+                previous = value;
+                x += 0.25;
+            }
+            assert_eq!(previous, 100, "right of the slider at {scale}");
+            assert_eq!(reached, (40..=100).collect(), "every value at {scale}");
+        }
+
+        let mut state = ControlState::new(70);
+        for accepted in ["", "9", "96", "100", "250"] {
+            state.replace_input(accepted.into());
+            assert_eq!(state.opacity_input, accepted);
+        }
+        for rejected in ["1000", "4.5", "x", "-1", " 9", "9%"] {
+            state.replace_input("70".into());
+            state.replace_input(rejected.into());
+            assert_eq!(state.opacity_input, "70", "{rejected:?} was accepted");
+        }
+        for (input, committed) in [
+            ("0", 40),
+            ("39", 40),
+            ("40", 40),
+            ("96", 96),
+            ("100", 100),
+            ("101", 100),
+            ("250", 100),
+            ("999", 100),
+        ] {
+            state.replace_input(input.into());
+            assert_eq!(state.commit_input(), Some(committed), "{input}");
+            assert_eq!(state.opacity_preview, committed, "{input}");
+            assert_eq!(state.opacity_input, committed.to_string(), "{input}");
+        }
+        state.replace_input(String::new());
+        let before = state.opacity_preview;
+        assert_eq!(state.commit_input(), None, "an empty field commits nothing");
+        assert_eq!(state.opacity_preview, before);
+
+        let default = crate::config::RuntimeConfig::default().opacity;
+        assert_eq!(default, 96);
+        assert_eq!(ControlState::new(default).opacity_preview, 96);
+
+        // The preference reducer clamps both previews and commits into the range again.
+        use crate::config::{ConfigCoordinator, RuntimeConfig};
+        use crate::flow::{WindowPreferenceEffect, coordinate_window_preference};
+        use crate::instruction::WindowPreferenceIntent;
+        let mut config = ConfigCoordinator::loaded(RuntimeConfig::default());
+        for (requested, applied) in [
+            (0, 40),
+            (39, 40),
+            (40, 40),
+            (100, 100),
+            (101, 100),
+            (255, 100),
+        ] {
+            for intent in [
+                WindowPreferenceIntent::PreviewOpacity(requested),
+                WindowPreferenceIntent::CommitOpacity(requested),
+            ] {
+                let effect = coordinate_window_preference(&mut config, intent).unwrap();
+                assert!(
+                    matches!(effect, WindowPreferenceEffect::ApplyOpacity { opacity, .. } if opacity == applied),
+                    "{intent:?} -> {effect:?}"
+                );
+            }
+            assert_eq!(config.current().opacity, applied, "{requested} committed");
+        }
     }
 
     #[test]

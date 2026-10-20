@@ -5,7 +5,8 @@
 use tiny_skia::{Paint, Pixmap, Rect, Transform};
 use winit::dpi::PhysicalPosition;
 
-use super::preview_runtime::PaneRect;
+use super::preview_runtime::{PaneRect, ViewGeometry};
+use stickymd_render::source::SourceScrollMetrics;
 
 pub(super) const GUTTER_DIP: f32 = 20.0;
 
@@ -207,6 +208,59 @@ pub(super) fn pane_bars(
     ]
 }
 
+/// A Preview frame's scroll facts: its cached document height, its offset, and whether it is
+/// the current frame for the document and viewport.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct PreviewFacts {
+    pub document_height: f32,
+    pub scroll_y: f32,
+    pub current: bool,
+}
+
+/// The bars of the panes `geometry` shows (plan 09 vertical scrollbars): the Source bar from
+/// the Source projection's metrics, the Preview bar from the frame's cached document height
+/// and offset; a pane the view does not show has no bar whatever facts are given for it.
+pub(super) fn view_bars(
+    dpi: f32,
+    geometry: ViewGeometry,
+    source: Option<SourceScrollMetrics>,
+    preview: Option<PreviewFacts>,
+) -> [Option<Scrollbar>; 2] {
+    let source = geometry
+        .source
+        .zip(source)
+        .map(|(content, metrics)| PaneScroll {
+            content,
+            fraction: metrics.fraction,
+            visible: metrics.viewport_fraction,
+        });
+    let preview = geometry.preview.zip(preview).and_then(|(content, facts)| {
+        preview_scroll(
+            content,
+            facts.current,
+            facts.document_height,
+            facts.scroll_y,
+        )
+    });
+    pane_bars(true, dpi, geometry.divider_x.is_some(), source, preview)
+}
+
+/// The Preview offset for a scrollbar `fraction`: 0 shows the document start, 1 its last
+/// screen.
+pub(super) fn preview_offset_at(fraction: f64, document_height: f32, viewport_height: u32) -> f32 {
+    fraction as f32 * (document_height - viewport_height as f32).max(0.0)
+}
+
+/// The Preview offset after scrolling `pixels` from `offset`, kept within the document.
+pub(super) fn preview_offset_by(
+    offset: f32,
+    pixels: f32,
+    document_height: f32,
+    viewport_height: u32,
+) -> f32 {
+    (offset + pixels).clamp(0.0, (document_height - viewport_height as f32).max(0.0))
+}
+
 /// Where a pane is scrolled: `fraction` of the scrollable range, `visible` share of the content.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct PaneScroll {
@@ -306,6 +360,242 @@ impl ScrollbarInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Plan 09 per-pane bars: in each view, at each DPI, exactly the panes the view shows get a
+    /// bar, on their own content rect (the Split's Source bar clears the sync control); a pane
+    /// whose content fits one screen (a short note: Source reports all of it visible, or a
+    /// Preview document no taller than the pane) has none, and so has a Preview whose frame is
+    /// not current, without affecting the other pane.
+    #[test]
+    fn each_view_has_a_bar_for_exactly_its_shown_panes() {
+        use super::super::preview_runtime::geometry;
+        use crate::config::ViewMode;
+        use winit::dpi::PhysicalSize;
+        let long_source = SourceScrollMetrics {
+            fraction: 0.3,
+            viewport_fraction: 0.1,
+        };
+        let long_preview = PreviewFacts {
+            document_height: 5000.0,
+            scroll_y: 1000.0,
+            current: true,
+        };
+        for dpi in [1.0_f32, 1.5] {
+            let size = PhysicalSize::new((520.0 * dpi) as u32, (680.0 * dpi) as u32);
+            for mode in [ViewMode::Source, ViewMode::Preview, ViewMode::Split] {
+                let view = geometry(mode, size, dpi);
+                let label = format!("{mode:?} at {dpi}");
+                let [source, preview] = view_bars(dpi, view, Some(long_source), Some(long_preview));
+                assert_eq!(source.is_some(), mode != ViewMode::Preview, "{label}");
+                assert_eq!(preview.is_some(), mode != ViewMode::Source, "{label}");
+                if let Some(bar) = source {
+                    let content = view.source.unwrap();
+                    assert_eq!(bar.pane, ScrollPane::Source);
+                    let inset = if mode == ViewMode::Split { 28.0 } else { 8.0 };
+                    assert_eq!(
+                        bar.track.y,
+                        content.y + (inset * dpi).round() as u32,
+                        "{label}"
+                    );
+                    assert_eq!(
+                        bar.track.x,
+                        content.x + content.width + (2.0 * dpi).round() as u32
+                    );
+                }
+                if let Some(bar) = preview {
+                    let content = view.preview.unwrap();
+                    assert_eq!(bar.pane, ScrollPane::Preview);
+                    assert_eq!(
+                        bar.track.y,
+                        content.y + (8.0 * dpi).round() as u32,
+                        "{label}"
+                    );
+                    assert_eq!(
+                        bar.track.x,
+                        content.x + content.width + (2.0 * dpi).round() as u32
+                    );
+                }
+                // Short notes: everything visible shows no thumb, in each pane alone.
+                let short_source = SourceScrollMetrics {
+                    fraction: 0.0,
+                    viewport_fraction: 1.0,
+                };
+                let pane_height = view.preview.map_or(0, |pane| pane.height) as f32;
+                for document_height in [0.0, 1.0, pane_height] {
+                    let short_preview = PreviewFacts {
+                        document_height,
+                        scroll_y: 0.0,
+                        current: true,
+                    };
+                    let [source, preview] =
+                        view_bars(dpi, view, Some(short_source), Some(short_preview));
+                    assert!(
+                        source.is_none() && preview.is_none(),
+                        "{label} {document_height}"
+                    );
+                    // Each pane decides alone: the long pane keeps its thumb beside a short one.
+                    let [source, preview] =
+                        view_bars(dpi, view, Some(short_source), Some(long_preview));
+                    assert!(source.is_none(), "{label}");
+                    assert_eq!(preview.is_some(), mode != ViewMode::Source, "{label}");
+                    let [source, preview] =
+                        view_bars(dpi, view, Some(long_source), Some(short_preview));
+                    assert!(preview.is_none(), "{label} {document_height}");
+                    assert_eq!(source.is_some(), mode != ViewMode::Preview, "{label}");
+                }
+                // A stale frame offers no Preview thumb; the Source bar is unaffected.
+                let stale = PreviewFacts {
+                    current: false,
+                    ..long_preview
+                };
+                let [source, preview] = view_bars(dpi, view, Some(long_source), Some(stale));
+                assert!(preview.is_none(), "{label}");
+                assert_eq!(source.is_some(), mode != ViewMode::Preview, "{label}");
+                // Without facts for a pane there is no bar for it.
+                assert!(view_bars(dpi, view, None, None).iter().all(Option::is_none));
+            }
+        }
+    }
+
+    /// Plan 09 Preview positions: a scrollbar fraction of 0 shows the document start and 1
+    /// its last screen, linearly in between, and the bar reads the same fraction back from the
+    /// frame's cached document height; a page moves the offset within the document, stopping
+    /// at both ends; a document that fits one screen never scrolls.
+    #[test]
+    fn the_preview_offset_follows_the_fraction_and_pages_within_the_document() {
+        let pane = PaneRect {
+            x: 0,
+            y: 34,
+            width: 500,
+            height: 646,
+        };
+        for document_height in [700.0_f32, 5000.0, 123_456.7] {
+            let range = document_height - pane.height as f32;
+            assert_eq!(preview_offset_at(0.0, document_height, pane.height), 0.0);
+            assert!((preview_offset_at(1.0, document_height, pane.height) - range).abs() < 1e-3);
+            for step in 0..=20 {
+                let fraction = f64::from(step) / 20.0;
+                let offset = preview_offset_at(fraction, document_height, pane.height);
+                assert!((offset - fraction as f32 * range).abs() <= range * 1e-6 + 1e-3);
+                let scroll = preview_scroll(pane, true, document_height, offset).unwrap();
+                assert!(
+                    (scroll.fraction - fraction).abs() < 1e-4,
+                    "{document_height} {fraction}"
+                );
+                assert!(
+                    (scroll.visible - f64::from(pane.height) / f64::from(document_height)).abs()
+                        < 1e-9
+                );
+            }
+            let page = page_pixels(1.0, pane.height);
+            let mut offset = 0.0;
+            let mut pages = 0;
+            while offset < range {
+                let next = preview_offset_by(offset, page, document_height, pane.height);
+                assert!(next > offset && next <= range);
+                // A page moves by its pixels up to f32 rounding at this offset's magnitude.
+                let tolerance = (offset + page) * f32::EPSILON * 4.0;
+                assert!((next - offset - page).abs() <= tolerance || next == range);
+                offset = next;
+                pages += 1;
+                assert!(pages < 100_000);
+            }
+            assert_eq!(
+                preview_offset_by(offset, page, document_height, pane.height),
+                range
+            );
+            assert_eq!(
+                preview_offset_by(0.0, -page, document_height, pane.height),
+                0.0
+            );
+            assert_eq!(
+                preview_offset_by(range, -range * 2.0, document_height, pane.height),
+                0.0
+            );
+            // From the middle a page moves by exactly its pixels in either direction, unless an
+            // end is nearer than a page.
+            let middle = range / 2.0;
+            for (pixels, expected) in [
+                (page, (middle + page).min(range)),
+                (-page, (middle - page).max(0.0)),
+            ] {
+                let moved = preview_offset_by(middle, pixels, document_height, pane.height);
+                assert!(
+                    (moved - expected).abs() <= (middle + page) * f32::EPSILON * 4.0,
+                    "{document_height}: {middle} by {pixels} gave {moved}, not {expected}"
+                );
+            }
+        }
+        for short in [0.0_f32, 1.0, pane.height as f32] {
+            for fraction in [0.0, 0.5, 1.0] {
+                assert_eq!(preview_offset_at(fraction, short, pane.height), 0.0);
+            }
+            assert_eq!(preview_offset_by(0.0, 500.0, short, pane.height), 0.0);
+        }
+    }
+
+    /// Plan 09: a thumb shows only when the content exceeds one screen; its length is the
+    /// visible share of the track, but never under a grabbable 24 DIP at the window's DPI nor
+    /// the whole track; it lies inside the track at every position, at its top for fraction 0
+    /// and its bottom for fraction 1, moving linearly in between.
+    #[test]
+    fn the_thumb_is_the_visible_share_with_a_grabbable_minimum() {
+        let pane = PaneRect {
+            x: 0,
+            y: 34,
+            width: 500,
+            height: 646,
+        };
+        for dpi in [1.0_f32, 1.25, 1.5, 2.0] {
+            let minimum = f64::from(24.0 * dpi);
+            for split in [false, true] {
+                let mut previous_height = 0.0;
+                for step in 1..=1000 {
+                    let visible = f64::from(step) / 1000.0;
+                    let bar = Scrollbar::new(ScrollPane::Source, pane, dpi, 0.0, visible, split);
+                    if step == 1000 {
+                        assert!(bar.is_none(), "one screen or less shows no thumb");
+                        continue;
+                    }
+                    let bar = bar.expect("content beyond one screen shows a thumb");
+                    let track = f64::from(bar.track.height);
+                    let proportional = track * visible;
+                    let expected = proportional.max(minimum).min(track - 1.0);
+                    assert!(
+                        (bar.thumb_height - expected).abs() < 1e-9,
+                        "dpi {dpi} visible {visible}: {} vs {expected}",
+                        bar.thumb_height
+                    );
+                    assert!(bar.thumb_height >= minimum.min(track - 1.0));
+                    assert!(
+                        bar.thumb_height >= previous_height,
+                        "never shrinks as more shows"
+                    );
+                    previous_height = bar.thumb_height;
+                    let top = f64::from(bar.track.y);
+                    let free = track - bar.thumb_height;
+                    for fraction in [0.0, 0.25, 0.5, 0.731, 1.0] {
+                        let moved =
+                            Scrollbar::new(ScrollPane::Source, pane, dpi, fraction, visible, split)
+                                .unwrap();
+                        assert!(
+                            (moved.thumb_top - (top + fraction * free)).abs() < 1e-9,
+                            "dpi {dpi} visible {visible} fraction {fraction}"
+                        );
+                        assert!(moved.thumb_top >= top);
+                        assert!(moved.thumb_top + moved.thumb_height <= top + track + 1e-9);
+                    }
+                    // Fractions outside 0..=1 stay at the ends.
+                    let below = Scrollbar::new(ScrollPane::Source, pane, dpi, -3.0, visible, split)
+                        .unwrap();
+                    let above =
+                        Scrollbar::new(ScrollPane::Source, pane, dpi, 7.0, visible, split).unwrap();
+                    assert!((below.thumb_top - top).abs() < 1e-9);
+                    assert!((above.thumb_top - (top + free)).abs() < 1e-9);
+                }
+            }
+        }
+    }
 
     #[test]
     fn scrollbar_drag_keeps_grab_offset_and_clamps_outside_window() {

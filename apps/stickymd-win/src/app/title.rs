@@ -6,7 +6,7 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#tray-lifecycle
 
-use crate::flow::window::state::QuitBarrier;
+use crate::flow::window::state::{QuitBarrier, WindowEffect};
 
 pub(super) const PLAIN: &str = "StickyMD";
 pub(super) const DIRTY: &str = "StickyMD *";
@@ -60,8 +60,18 @@ impl QuitCancelNotice {
         self.active
     }
 
+    /// Applies one window effect, the only way the notice is established: a quit cancelled by
+    /// a failed canonical-note save establishes it; every other effect, a quit a guard blocked
+    /// included, leaves it alone. Returns whether the notice changed.
+    pub(super) fn on_window_effect(&mut self, effect: &WindowEffect) -> bool {
+        match *effect {
+            WindowEffect::QuitCancelled(barrier) => self.on_quit_cancelled(barrier),
+            _ => false,
+        }
+    }
+
     /// Records a cancelled quit; returns whether the notice changed.
-    pub(super) fn on_quit_cancelled(&mut self, barrier: QuitBarrier) -> bool {
+    fn on_quit_cancelled(&mut self, barrier: QuitBarrier) -> bool {
         let establish = barrier == QuitBarrier::NoteSave && !self.active;
         self.active |= establish;
         establish
@@ -166,6 +176,157 @@ mod tests {
         // A later cancel for another reason leaves it alone.
         assert!(!notice.on_quit_cancelled(QuitBarrier::Paste));
         assert!(notice.active());
+    }
+
+    /// Every window effect the reducer can emit, one of each variant (each quit barrier for the
+    /// barrier-carrying ones). The `match` stops compiling when a variant is added.
+    fn every_effect() -> Vec<WindowEffect> {
+        use crate::flow::window::geometry::{PhysicalRect, WindowPlacement};
+        use crate::flow::window::state::{DockEdge, WindowSaveReason};
+        let barriers = [
+            QuitBarrier::Paste,
+            QuitBarrier::NoteSave,
+            QuitBarrier::AssetGc,
+            QuitBarrier::Config,
+        ];
+        let mut effects = vec![
+            WindowEffect::ApplyFrame(PhysicalRect::new(0, 0, 10, 10)),
+            WindowEffect::SetTemporarySensorTopmost(true),
+            WindowEffect::SetVisible(false),
+            WindowEffect::FocusWindow,
+            WindowEffect::CancelImePreedit,
+            WindowEffect::SetImeAllowed(false),
+            WindowEffect::SetEditorInputEnabled(false),
+            WindowEffect::RequestNoteSave(WindowSaveReason::Shutdown),
+            WindowEffect::RequestNoteSave(WindowSaveReason::HideToTray),
+            WindowEffect::RequestSafeAssetGc,
+            WindowEffect::RequestConfigFlush,
+            WindowEffect::ExitProcess,
+            WindowEffect::CommitPlacement {
+                placement: WindowPlacement::new(520.0, 680.0, None, 0.5, 0.5, 0.25),
+                dock_edge: Some(DockEdge::Left),
+            },
+            WindowEffect::ReleaseHiddenCaches,
+            WindowEffect::ReportTrayUnavailable,
+            WindowEffect::HideBlocked,
+            WindowEffect::HideCancelled,
+            WindowEffect::QuitBlocked,
+            WindowEffect::RequestRedraw,
+            WindowEffect::WakeAt(1),
+        ];
+        effects.extend(barriers.map(WindowEffect::QuitCancelled));
+        effects.extend(barriers.map(WindowEffect::QuitWarning));
+        for effect in &effects {
+            match effect {
+                WindowEffect::ApplyFrame(_)
+                | WindowEffect::SetTemporarySensorTopmost(_)
+                | WindowEffect::SetVisible(_)
+                | WindowEffect::FocusWindow
+                | WindowEffect::CancelImePreedit
+                | WindowEffect::SetImeAllowed(_)
+                | WindowEffect::SetEditorInputEnabled(_)
+                | WindowEffect::RequestNoteSave(_)
+                | WindowEffect::RequestSafeAssetGc
+                | WindowEffect::RequestConfigFlush
+                | WindowEffect::ExitProcess
+                | WindowEffect::CommitPlacement { .. }
+                | WindowEffect::ReleaseHiddenCaches
+                | WindowEffect::ReportTrayUnavailable
+                | WindowEffect::HideBlocked
+                | WindowEffect::HideCancelled
+                | WindowEffect::QuitBlocked
+                | WindowEffect::QuitCancelled(_)
+                | WindowEffect::QuitWarning(_)
+                | WindowEffect::RequestRedraw
+                | WindowEffect::WakeAt(_) => {}
+            }
+        }
+        effects
+    }
+
+    /// From either state, only a quit cancelled by a failed note save changes the notice, and
+    /// only by establishing it: a guard-blocked quit, any other cancel reason and every other
+    /// effect leave it as it was. The runtime hands every effect to this one decision.
+    #[test]
+    fn only_a_quit_cancelled_by_a_failed_save_changes_the_notice() {
+        for effect in every_effect() {
+            let establishes = effect == WindowEffect::QuitCancelled(QuitBarrier::NoteSave);
+            let mut inactive = QuitCancelNotice::default();
+            assert_eq!(
+                inactive.on_window_effect(&effect),
+                establishes,
+                "{effect:?}"
+            );
+            assert_eq!(inactive.active(), establishes, "{effect:?}");
+            let mut active = QuitCancelNotice::default();
+            active.on_window_effect(&WindowEffect::QuitCancelled(QuitBarrier::NoteSave));
+            assert!(!active.on_window_effect(&effect), "{effect:?}");
+            assert!(active.active(), "{effect:?} cleared the notice");
+        }
+    }
+
+    /// No product source other than this file establishes the notice directly: effects reach
+    /// it only through `on_window_effect` (a lexical guard; comments count).
+    #[test]
+    fn the_notice_has_one_entry_for_effects() {
+        let needle = ["on_quit", "_cancelled("].concat();
+        let mut pending = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        let mut mentions = Vec::new();
+        while let Some(path) = pending.pop() {
+            if path.is_dir() {
+                for entry in std::fs::read_dir(&path).unwrap() {
+                    pending.push(entry.unwrap().path());
+                }
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && path.file_name().is_some_and(|name| name != "title.rs")
+                && std::fs::read_to_string(&path).unwrap().contains(&needle)
+            {
+                mentions.push(path);
+            }
+        }
+        assert!(mentions.is_empty(), "{mentions:?}");
+    }
+
+    /// The notice settles once per complete main-thread event pass: `finish_event_pass` is
+    /// called from exactly one place, the end of `about_to_wait`, which winit runs after it has
+    /// delivered every pending event, after the pass's window tick (a lexical guard).
+    #[test]
+    fn the_notice_settles_at_the_end_of_each_event_pass() {
+        let call = ["finish_event", "_pass();"].concat();
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut pending = vec![source];
+        let mut calls = Vec::new();
+        while let Some(path) = pending.pop() {
+            if path.is_dir() {
+                for entry in std::fs::read_dir(&path).unwrap() {
+                    pending.push(entry.unwrap().path());
+                }
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (offset, _) in text.match_indices(call.as_str()) {
+                    calls.push((path.clone(), offset, text.clone()));
+                }
+            }
+        }
+        assert_eq!(
+            calls.len(),
+            1,
+            "{:?}",
+            calls.iter().map(|call| &call.0).collect::<Vec<_>>()
+        );
+        let (path, offset, text) = &calls[0];
+        assert!(path.ends_with("lifecycle.rs"), "{path:?}");
+        let pass = text.find("fn about_to_wait(").expect("about_to_wait");
+        let end = text[pass + 1..]
+            .find("\n    fn ")
+            .map_or(text.len(), |next| pass + 1 + next);
+        let tick = text[pass..end]
+            .find("WindowIntent::Tick")
+            .expect("the window tick in about_to_wait");
+        assert!(
+            (pass + tick..end).contains(offset),
+            "finish_event_pass runs in about_to_wait after the window tick"
+        );
     }
 
     #[test]

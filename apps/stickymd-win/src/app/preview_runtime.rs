@@ -507,6 +507,61 @@ mod tests {
         }
     }
 
+    /// Plan 09: an old scroll request's background receipt never makes the new position jump
+    /// back. The receipt carries the viewport it was built for (the worker echoes it), which
+    /// differs from the current viewport in its offset alone while its layout is the same; the
+    /// identity sees the difference, so the receipt is only re-laid out for the current
+    /// viewport (reusing its tree when it built one) and never admitted for display. The receipt
+    /// for the current offset is admitted.
+    #[test]
+    fn a_receipt_for_an_older_offset_is_relaid_out_and_never_shown() {
+        let generation = Generation::initial().checked_next().unwrap();
+        let current = PreviewViewport {
+            width_px: 500,
+            height_px: 646,
+            scale: 1.25,
+            scroll_y: 1200.0,
+            selection: PreviewSelection::default(),
+            theme: PreviewTheme::Light,
+        };
+        for older in [0.0, 600.0, 1199.0, 1199.75, 1200.25, 4000.0] {
+            let receipt = PreviewViewport {
+                scroll_y: older,
+                ..current
+            };
+            assert!(receipt.same_layout(current), "{older}");
+            assert_ne!(
+                receipt, current,
+                "the offset alone tells them apart: {older}"
+            );
+            for succeeded in [true, false] {
+                assert_eq!(
+                    completion_route(
+                        false,
+                        generation,
+                        generation,
+                        Some(receipt == current),
+                        succeeded
+                    ),
+                    CompletionRoute::Relayout {
+                        reuse_tree: succeeded
+                    },
+                    "{older}"
+                );
+            }
+        }
+        assert_eq!(
+            completion_route(
+                false,
+                generation,
+                generation,
+                Some(current == current),
+                true
+            ),
+            CompletionRoute::Admit
+        );
+    }
+
     #[test]
     fn split_is_fixed_fifty_fifty_while_semantic_scroll_mapping_stays_separate() {
         let geometry = geometry(ViewMode::Split, PhysicalSize::new(901, 700), 1.0);

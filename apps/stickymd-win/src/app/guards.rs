@@ -130,4 +130,48 @@ mod tests {
             assert!(guard_snapshot(facts).blocks_auto_collapse(), "{facts:?}");
         }
     }
+
+    /// The quit barrier still needs the note exactly while it is dirty, a durable write is
+    /// still owed (`durability_required`) or a note save is in flight: all eight combinations,
+    /// whatever the other facts are (plan 09 quit-cancelled state).
+    #[test]
+    fn the_note_barrier_is_dirty_or_owed_or_in_flight() {
+        for mask in 0_u8..8 {
+            let on = |bit: u8| mask & (1 << bit) != 0;
+            for others in [GuardFacts::default(), every_other_fact()] {
+                let facts = GuardFacts {
+                    dirty: on(0),
+                    durability_required: on(1),
+                    note_save_in_flight: on(2),
+                    ..others
+                };
+                assert_eq!(
+                    guard_snapshot(facts).requires_note_barrier(),
+                    on(0) || on(1) || on(2),
+                    "{facts:?}"
+                );
+            }
+        }
+    }
+
+    /// Every fact the note barrier does not read, raised.
+    fn every_other_fact() -> GuardFacts {
+        GuardFacts {
+            window_focused: true,
+            editor_composing: true,
+            search_composing: true,
+            move_resize_active: true,
+            scrollbar_dragging: true,
+            opacity_popup_open: true,
+            search_open: true,
+            export_in_flight: true,
+            recovery_pending: true,
+            conflict: true,
+            paste_pending: true,
+            asset_sync_in_flight: true,
+            dirty: false,
+            durability_required: false,
+            note_save_in_flight: false,
+        }
+    }
 }

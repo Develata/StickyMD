@@ -60,6 +60,10 @@ impl SourceProjection {
         if let Some(cached) = self.scroll_extent.filter(|cached| cached.key == key) {
             return cached;
         }
+        #[cfg(test)]
+        {
+            self.extent_measures += 1;
+        }
         let count = self.buffer.lines.len().max(1);
         let mut line = count - 1;
         let mut remaining = self.content_height();
@@ -148,26 +152,189 @@ mod tests {
         assert_eq!(source.projected_generation(), generation);
     }
 
+    fn laid_out_lines(source: &SourceProjection) -> usize {
+        source
+            .buffer
+            .lines
+            .iter()
+            .filter(|line| line.layout_opt().is_some())
+            .count()
+    }
+
+    /// Plan 09 Source mapping, on a long note whose every logical line wraps: the thumb
+    /// position is the logical line plus the offset inside its wrapped rows (moving to a
+    /// fraction and reading it back agree, and some positions land inside a line); measuring
+    /// the end lays out only the lines of the last screen and caches that boundary, reused by
+    /// later measures until the geometry changes; and each pointer-event-like jump lays out
+    /// only around its target, never the whole note.
+    #[test]
+    fn the_source_maps_wrapped_offsets_and_measures_only_the_tail_once() {
+        let line = "wrapped 中文 source line that is long enough to wrap twice or more ".repeat(3);
+        let text = format!("{line}\n").repeat(2000);
+        let mut source = projection(&text, 300, 220);
+        let total = source.buffer.lines.len();
+        assert!(total >= 2000);
+        let metrics = source.scroll_metrics();
+        assert!(metrics.viewport_fraction < 0.01);
+        let after_measure = laid_out_lines(&source);
+        assert!(
+            after_measure < 40,
+            "the end measure laid out {after_measure} of {total} lines"
+        );
+        let key = source
+            .scroll_extent
+            .map(|extent| (extent.key, extent.max_position));
+        assert!(key.is_some(), "the boundary is cached");
+        assert_eq!(source.extent_measures, 1);
+        // Repeated measures reuse it and lay out nothing more.
+        for _ in 0..5 {
+            source.scroll_metrics();
+        }
+        assert_eq!(source.extent_measures, 1, "the boundary was measured again");
+        assert_eq!(laid_out_lines(&source), after_measure);
+        assert_eq!(
+            source
+                .scroll_extent
+                .map(|extent| (extent.key, extent.max_position)),
+            key
+        );
+        let max_position = key.unwrap().1;
+        // A pointer drag is a run of jumps; each lays out only around its target.
+        let mut inside_a_line = false;
+        for step in 0..=60 {
+            let fraction = f64::from(step) / 60.0;
+            let before = laid_out_lines(&source);
+            let scroll = source.scroll_to_fraction(fraction);
+            let added = laid_out_lines(&source) - before;
+            assert!(
+                added <= 20,
+                "a jump to {fraction} laid out {added} more lines"
+            );
+            inside_a_line |= scroll.vertical > 0.0;
+            let read_back = source.scroll_metrics().fraction;
+            // The offset inside a wrapped line counts: a thousandth of a line at most is lost.
+            assert!(
+                (read_back - fraction).abs() <= 1e-3 / max_position,
+                "{fraction} read back as {read_back}"
+            );
+        }
+        assert!(inside_a_line, "some positions fall inside a wrapped line");
+        assert_eq!(source.extent_measures, 1, "a drag reuses the boundary");
+        assert!(
+            laid_out_lines(&source) < total / 4,
+            "the drag never laid out the whole note"
+        );
+        // A new geometry measures the end again under a new key.
+        source.set_viewport(280, 220, 1.0);
+        source.scroll_metrics();
+        assert_eq!(source.extent_measures, 2);
+        assert_ne!(
+            source.scroll_extent.map(|extent| extent.key),
+            key.map(|(key, _)| key)
+        );
+    }
+
+    /// Plan 09 track paging in Source: a page (the scrollbar's 90% of the pane) moves the
+    /// viewport down or up by exactly its pixels, and paging stops at the document start and at
+    /// the end, where the last line is shown whole.
+    #[test]
+    fn a_source_page_moves_the_viewport_by_its_pixels_within_the_document() {
+        let text = "行 text
+"
+        .repeat(400);
+        let mut source = projection(&text, 300, 220);
+        let line_height = source.buffer.metrics().line_height;
+        let position = |source: &SourceProjection| {
+            let scroll = source.scroll();
+            scroll.line as f32 * line_height + scroll.vertical
+        };
+        let page = 0.9 * 220.0;
+        let mut previous = position(&source);
+        assert_eq!(previous, 0.0);
+        let mut pages = 0;
+        loop {
+            source.scroll_by(page);
+            let now = position(&source);
+            if now == previous {
+                break;
+            }
+            let moved = now - previous;
+            assert!(
+                moved > 0.0 && moved <= page + 0.01,
+                "a page down moved {moved}"
+            );
+            if moved < page - 0.01 {
+                // Only the last page may be short: it stops at the end.
+                source.scroll_by(page);
+                assert_eq!(position(&source), now, "paging continued past the end");
+                previous = now;
+                break;
+            }
+            previous = now;
+            pages += 1;
+            assert!(pages < 1000);
+        }
+        assert!(pages > 10, "the note spans many pages");
+        let end = source.caret_rect(text.len()).expect("the end is shown");
+        assert!(end.y >= 0.0 && end.y + end.height <= 220.0 + 0.1);
+        loop {
+            source.scroll_by(-page);
+            let now = position(&source);
+            let moved = previous - now;
+            // Every page up moves by exactly its pixels, except the one that reaches the start.
+            assert!(
+                (moved - page).abs() <= 0.01 || (now == 0.0 && moved <= page + 0.01),
+                "a page up moved {moved}"
+            );
+            if now == previous || now == 0.0 {
+                break;
+            }
+            previous = now;
+        }
+        source.scroll_by(-page);
+        assert_eq!(position(&source), 0.0, "paging stops at the start");
+        assert_eq!(source.scroll().line, 0);
+    }
+
     #[test]
     fn scrollbar_handles_a_single_wrapped_line_and_resized_short_notes() {
         let text = "中文 e\u{301} text ".repeat(200);
+        // The real layout, read through `caret_rect`, checks the wrapped line's height the
+        // mapping uses, at 1x and at 2x (where a pixel / DIP mix-up would halve it).
+        for scale in [1.0_f32, 2.0] {
+            let side = (160.0 * scale) as u32;
+            let mut source = projection(&text, side, side);
+            source.set_viewport(side, side, scale);
+            assert!(source.scroll_metrics().viewport_fraction < 1.0, "{scale}");
+            source.scroll_to_fraction(0.5);
+            assert!(source.scroll().vertical > 0.0, "{scale}");
+            assert!(
+                (source.scroll_metrics().fraction - 0.5).abs() < 0.001,
+                "{scale}"
+            );
+            source.scroll_to_fraction(1.0);
+            let last = source
+                .caret_rect(text.len())
+                .expect("last wrapped row visible");
+            assert!(
+                last.y >= 0.0 && last.y + last.height <= source.height_px as f32 + 0.1,
+                "{scale}: the last row at {last:?} is outside the viewport"
+            );
+            assert!(
+                (source.scroll_metrics().fraction - 1.0).abs() < 0.001,
+                "{scale}"
+            );
+            // Back at the start the single logical line is shown from its first row.
+            source.scroll_to_fraction(0.0);
+            assert_eq!(source.scroll().line, 0);
+            assert_eq!(source.scroll().vertical, 0.0);
+            let first = source.caret_rect(0).expect("first wrapped row visible");
+            assert!(first.y >= 0.0 && first.y + first.height <= source.height_px as f32 + 0.1);
+        }
+        // The long line's bounds are measured and cached first, so the short note after it
+        // proves the cache is dropped on a new generation.
         let mut source = projection(&text, 160, 160);
         assert!(source.scroll_metrics().viewport_fraction < 1.0);
-        source.scroll_to_fraction(0.5);
-        assert!(source.scroll().vertical > 0.0);
-        assert!((source.scroll_metrics().fraction - 0.5).abs() < 0.001);
-        source.scroll_to_fraction(1.0);
-        let last = source
-            .caret_rect(text.len())
-            .expect("last wrapped row visible");
-        assert!(last.y >= 0.0 && last.y + last.height <= source.height_px as f32 + 0.1);
-        assert!((source.scroll_metrics().fraction - 1.0).abs() < 0.001);
-        // Back at the start the single logical line is shown from its first row.
-        source.scroll_to_fraction(0.0);
-        assert_eq!(source.scroll().line, 0);
-        assert_eq!(source.scroll().vertical, 0.0);
-        let first = source.caret_rect(0).expect("first wrapped row visible");
-        assert!(first.y >= 0.0 && first.y + first.height <= source.height_px as f32 + 0.1);
         source
             .resync(&DocumentSnapshot {
                 text: Arc::from("short"),
@@ -178,6 +345,11 @@ mod tests {
         assert_eq!(source.scroll_metrics().viewport_fraction, 1.0);
         source.set_viewport(80, 40, 2.0);
         assert!(source.scroll_metrics().viewport_fraction < 1.0);
+        // A note that fits the 2x content height is fully visible: the available height is
+        // physical pixels like the line heights (a DIP mix-up would show it a thumb).
+        let mut three = projection("a\nb\nc", 320, 320);
+        three.set_viewport(320, 320, 2.0);
+        assert_eq!(three.scroll_metrics().viewport_fraction, 1.0);
         let mut empty = projection("", 300, 220);
         assert_eq!(empty.scroll_metrics().viewport_fraction, 1.0);
         empty.scroll_to_fraction(1.0);

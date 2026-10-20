@@ -109,13 +109,52 @@ const QUIT_TITLE_PRIORITY: &[Owner] = &[
     win("app::title::tests::each_state_has_its_title_and_higher_states_win"),
     win("app::title::tests::the_title_has_one_native_writer"),
 ];
+/// C2b-4 owners (2026-10-19): the scrollbar decisions extracted from `StickyApp` into pure
+/// functions (`view_bars`, `preview_offset_at`, `preview_offset_by`), the gutter geometry, the
+/// Preview receipt identity and the opacity drag.
+const VIEW_BARS: Owner =
+    win("app::scrollbar::tests::each_view_has_a_bar_for_exactly_its_shown_panes");
+const GUTTER_GEOMETRY: Owner = win(
+    "app::window_interaction::phase8_interaction_tests::every_view_reserves_the_gutter_clear_of_the_resize_border_and_sync_button",
+);
+const PREVIEW_POSITIONS: Owner = win(
+    "app::scrollbar::tests::the_preview_offset_follows_the_fraction_and_pages_within_the_document",
+);
+const SCROLL_VIEW_BARS_OWNED: &[Owner] = &[VIEW_BARS];
+const SCROLL_GUTTER_GEOMETRY: &[Owner] = &[GUTTER_GEOMETRY];
+const SCROLL_THUMB_GEOMETRY: &[Owner] = &[win(
+    "app::scrollbar::tests::the_thumb_is_the_visible_share_with_a_grabbable_minimum",
+)];
+const SCROLL_PREVIEW_ENDS: &[Owner] = &[PREVIEW_POSITIONS];
+/// A track press pages by most of the pane (`a_track_press…`), applied to Preview by
+/// `preview_offset_by` and to Source by `scroll_by`, both within the document.
+const SCROLL_TRACK_PAGING: &[Owner] = &[
+    win("app::scrollbar::tests::a_track_press_pages_toward_the_click_by_most_of_the_pane"),
+    PREVIEW_POSITIONS,
+    render(
+        "source::scrollbar::tests::a_source_page_moves_the_viewport_by_its_pixels_within_the_document",
+    ),
+];
+/// The long-note test checks the mapping against itself (jump and read back share the wrapped
+/// line height); the single wrapped line checks that height against the real layout.
+const SCROLL_SOURCE_MAPPING: &[Owner] = &[
+    render(
+        "source::scrollbar::tests::the_source_maps_wrapped_offsets_and_measures_only_the_tail_once",
+    ),
+    render(
+        "source::scrollbar::tests::scrollbar_handles_a_single_wrapped_line_and_resized_short_notes",
+    ),
+];
+const SCROLL_STALE_RECEIPT: &[Owner] = &[win(
+    "app::preview_runtime::tests::a_receipt_for_an_older_offset_is_relaid_out_and_never_shown",
+)];
+const OPACITY_NO_STEPWISE_WRITE: &[Owner] = &[win(
+    "app::controls::phase8_control_tests::phase8_a_slider_drag_commits_at_most_once_on_release",
+)];
 /// Scrollbar obligations whose decisions are unit-tested but whose composition in `StickyApp`
 /// (view mode, live state, winit events) is not.
-const SCROLL_VIEW_BARS: &str = "C2b-3 审计：`pane_bars` 的逐窗格输出与 Split 几何各有单元断言；缺视图模式经 `view_geometry` 与 `StickyApp::scrollbar_geometry` 得到恰好对应窗格的栏，以及 Split 同步开关开 / 关下滚动是否带动另一窗格；待新的单元接缝或 exact 层";
-const SCROLL_GUTTER_RUNTIME: &str = "C2b-3 审计：`gutter_at` 与 Split 的窄槽算术有单元断言；缺 Source / Preview 视图保留窄槽、短文与长文正文宽度相同、窄槽内按下不作为正文点击、窄槽不随 Content Zoom 缩放的断言；待补强测试或 exact 层";
-const SCROLL_DRAG_RUNTIME: &str = "C2b-3 审计：拖动实时目标、翻页像素（窗格 90%）与 `end_drag` 有单元断言；缺运行时把它们应用到 Source / Preview 视口（实时定位、Preview 两端、翻页）以及松开、失焦、切换视图、resize 各自结束拖动的接线；待 exact 层";
+const SCROLL_DRAG_RUNTIME: &str = "C2b-4：拖动目标、两侧落点与翻页由拖动映射、`preview_offset_at` / `preview_offset_by` 与 Source 映射 / 翻页的单元测试持有；缺指针移动逐次应用到视口（实时定位），以及松开、失焦、切换视图、resize 各自结束拖动的运行时接线；待 exact 层（D3：松开 / 失焦与拖出窗口将由 G4 持有，尚无 exact 用例）";
 const SCROLL_VIEWPORT_ONLY: &str = "C2b-3 审计：render projection 测试断言滚动不改投影文本与 generation、编辑与组字后边界正确；缺运行时滚动后文档 text / generation / dirty、会话 caret / selection 与 IME preedit 不变的断言；待新的单元接缝或 exact 层";
-const SCROLL_PREVIEW_RUNTIME: &str = "C2b-3 审计：`preview_scroll` 对过期帧不给滑块、`completion_route` 只放行当前文档与视口的回执有单元断言；缺 `preview_scroll` 按 document height 的数值、运行时以缓存帧的 document height 计算且不逐事件重排，以及 `preview_layout_is_current` 的当前判定；待补强测试或 exact 层";
 const G4_DRAG_OUTSIDE: &str = "G4: 真实鼠标拖出窗口后完成滚动条拖动";
 
 // Exact owners name the check labels that prove them (`exact_checks`); an obligation without a
@@ -1237,67 +1276,69 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-1",
         "per-pane",
         "view=source",
-        gap(SCROLL_VIEW_BARS),
+        tests(SCROLL_VIEW_BARS_OWNED),
     ),
     o(
         "plan09:scroll-1",
         "per-pane",
         "view=preview",
-        gap(SCROLL_VIEW_BARS),
+        tests(SCROLL_VIEW_BARS_OWNED),
     ),
     o(
         "plan09:scroll-1",
         "per-pane",
         "view=split",
-        gap(SCROLL_VIEW_BARS),
+        tests(SCROLL_VIEW_BARS_OWNED),
     ),
     o(
         "plan09:scroll-1",
         "split-sync-switch",
         "",
-        gap(SCROLL_VIEW_BARS),
+        gap(
+            "C2b-4：逐视图的栏由 `view_bars` 的单元测试持有；缺 Split 同步开关开 / 关下滚动一个窗格是否带动另一窗格的断言（`after_pane_scroll` 的同步分支）；待新的单元接缝或 exact 层",
+        ),
     ),
     o(
         "plan09:scroll-2",
         "gutter-geometry",
         "",
-        gap(
-            "C2b-3 审计：绘制测试断言轨道在手工构造窗格的窄槽内，并以测试内常量断言避开 resize 边与 Split 同步按钮；Split 的窄槽算术另有断言；缺 Source / Preview 视图由 `geometry()` 保留窄槽，以及轨道与真实 resize 边宽和同步按钮矩形的比较；待补强测试",
-        ),
+        tests(SCROLL_GUTTER_GEOMETRY),
     ),
     o(
         "plan09:scroll-2",
         "short-note",
         "part=hide-thumb",
-        gap(
-            "C2b-3 审计：已有 `Scrollbar::new` 在内容不超一屏时不给滑块、Source 对短文与空文报告全可见的断言；缺 `preview_scroll` 对短于视口的文档报告全可见，以及短文经 `pane_bars` 得到无滑块的链路；待补强测试",
-        ),
+        tests(SCROLL_VIEW_BARS_OWNED),
     ),
     o(
         "plan09:scroll-2",
         "short-note",
         "part=keep-gutter",
-        gap(SCROLL_GUTTER_RUNTIME),
+        gap(
+            "C2b-4 审计：`geometry()` 在各视图保留窄槽、`view_bars` 对短文不给滑块已有单元断言；缺运行时窄槽宽度与正文长度无关的断言（owner 直接调用 `geometry()`，不经 `view_geometry` 与短文状态）；待单元接缝或 exact 层",
+        ),
     ),
     o(
         "plan09:scroll-2",
         "gutter-runtime",
         "aspect=hit-test",
-        gap(SCROLL_GUTTER_RUNTIME),
+        gap(
+            "C2b-4：各视图由 `geometry()` 保留窄槽、`gutter_at` 判定所在窗格已有单元断言；缺窄槽内按下不作为正文点击（不移动 caret、不开始选区）的断言；待补强测试或 exact 层",
+        ),
     ),
     o(
         "plan09:scroll-2",
         "gutter-runtime",
         "aspect=content-zoom",
-        gap(SCROLL_GUTTER_RUNTIME),
+        gap(
+            "C2b-4 审计：`geometry()` 按 DPI 缩放窄槽已有单元断言；缺 Content Zoom 改变时窄槽宽度不变的断言（owner 直接以 DPI 调用 `geometry()`，不经 `view_geometry` 的实际输入）；待单元接缝或 exact 层",
+        ),
     ),
     o(
         "plan09:scroll-3",
         "thumb-geometry",
         "",
-        gap(
-            "C2b-3 审计：拖动测试断言 dpi 1 下最小高度 24 与内容不超一屏时无滑块；缺按可见比例的滑块高度与按 DPI 缩放的最小高度；待补强测试",
-        ),
+        tests(SCROLL_THUMB_GEOMETRY),
     ),
     o(
         "plan09:scroll-3",
@@ -1339,14 +1380,14 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-3",
         "ends-reach-document-ends",
         "view=preview",
-        gap(SCROLL_DRAG_RUNTIME),
+        tests(SCROLL_PREVIEW_ENDS),
     ),
     o("plan09:scroll-3", "track-hit", "", tests(SCROLL_TRACK_HIT)),
     o(
         "plan09:scroll-3",
         "track-page-scroll",
         "",
-        gap(SCROLL_DRAG_RUNTIME),
+        tests(SCROLL_TRACK_PAGING),
     ),
     o(
         "plan09:scroll-4",
@@ -1418,35 +1459,37 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-5",
         "source-mapping",
         "",
-        gap(
-            "C2b-3 审计：尾部跳转测试断言只排版末屏（少于 40 行），折行测试断言单行内折行偏移的中间位置；缺折行文本下同时只排版尾部、以及末端边界在重复调用间复用缓存的断言；待补强测试",
-        ),
+        tests(SCROLL_SOURCE_MAPPING),
     ),
     o(
         "plan09:scroll-5",
         "preview-document-height",
         "",
-        gap(SCROLL_PREVIEW_RUNTIME),
+        gap(
+            "C2b-4 审计：`view_bars`、`preview_offset_at` / `preview_offset_by` 由给定的 document height 计算滑块与偏移已有单元断言；缺运行时传入缓存帧的 document height（而非视口高度等其他值）且不逐事件重排的断言；待单元接缝",
+        ),
     ),
     o(
         "plan09:scroll-6",
         "stale-frame-no-thumb",
         "",
-        gap(SCROLL_PREVIEW_RUNTIME),
+        gap(
+            "C2b-4 审计：`view_bars` 对非当前帧不给 Preview 滑块已有单元断言；缺 `preview_layout_is_current`（generation 相同且布局相同才算当前）的判定断言；待单元接缝",
+        ),
     ),
     o(
         "plan09:scroll-6",
         "stale-receipt-identity",
         "",
-        gap(
-            "C2b-3 审计：worker 测试断言偏移相同而尺寸、缩放、主题或选区不同的视口不等；缺只差偏移的旧回执被丢弃、显示位置不回跳的断言；待补强测试",
-        ),
+        tests(SCROLL_STALE_RECEIPT),
     ),
     o(
         "plan09:scroll-6",
         "stale-receipt-guard",
         "",
-        gap(SCROLL_PREVIEW_RUNTIME),
+        gap(
+            "C2b-4 审计：`completion_route` 对只差偏移的旧回执只重排不显示已有单元断言；缺回执入口以完整 `PreviewViewport` 相等（而非 `same_layout`）判定、Relayout 分支提前返回且不改写 frame 与偏移的组合断言；待单元接缝",
+        ),
     ),
     o(
         "plan09:scroll-7",
@@ -1507,7 +1550,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "range-and-input",
         "",
         gap(
-            "C2b-3 审计：已有滑块两端 40 / 100、输入与提交的下限 clamp（`\"7\"` 与 `39` 得 `40`）、非数字字符被拒与默认配置 96 的断言；缺中间位置步长 1 的整数映射、输入上限 clamp 与空输入不提交；实际指针与键盘输入待 exact 层",
+            "C2b-4 审计：滑块在四种 DPI 下以步长 1 到达 40–100 每个整数、三位非负整数输入的提交 clamp、空输入不提交、默认 96 与 reducer 再 clamp 已有单元断言；输入框在键入时拒绝负号与第四位数字，`-1`、`1000` 这类越界整数无法输入也就不会被 clamp；USER 2026-10-20 决定（D5）放开输入、提交时 clamp，待实现；实际指针与键盘输入待 exact 层",
         ),
     ),
     o(
@@ -1520,9 +1563,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:opacity-3",
         "no-stepwise-write",
         "",
-        gap(
-            "C2b-3 审计：指针判定测试断言拖动中 reducer 不请求持久化、松开恰一次提交，但不读 config；运行时由 `submit_config_if_needed` 在多条路径上按 config dirty 写盘，故未证明拖动中 config 保持不脏（preferences 测试只对单个预览意图断言不脏）；待补强测试，winit 指针事件接线待 exact 层",
-        ),
+        tests(OPACITY_NO_STEPWISE_WRITE),
     ),
     o(
         "plan09:opacity-3",
@@ -1571,7 +1612,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "established-only-by-save-failure",
         "cause=quit-guard",
         gap(
-            "C2b-3 审计：缺单测证明守卫阻止的退出不建立也不改变该状态（标题测试不经守卫，reducer 测试不经状态）；待补强测试或 exact 层",
+            "C2b-4 审计：`QuitCancelNotice::on_window_effect` 对全部窗口效果的判定（只有保存失败取消的退出建立状态）已有单元断言，另有词法守卫检查产品源码只经该入口；缺 `apply_window_effect` 实际把每个效果先交给该判定、且其他分支不改动状态的运行时断言（词法守卫不证明调用存在或顺序）；待单元接缝或 exact 层",
         ),
     ),
     o(
@@ -1585,7 +1626,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "cleared-after-event-when-barrier-false",
         "",
         gap(
-            "C2b-3 审计：未证明屏障判定由 dirty / durability_required / note_save_in_flight 组成，以及 finish_event_pass 在每次完整事件处理结束时恰运行一次；待补强测试或 exact 层",
+            "C2b-4 审计：屏障组成（dirty / 欠持久化 / 保存中）与屏障为假时才清除已有单元断言，另有词法守卫检查 `finish_event_pass` 只出现在 `about_to_wait` 的窗口 tick 文本之后；缺事件结算实际读取该屏障、每次事件处理结束恰运行一次的运行时断言（词法守卫不证明执行次数与顺序）；待单元接缝或 exact 层",
         ),
     ),
     o(

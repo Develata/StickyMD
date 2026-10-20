@@ -2175,3 +2175,145 @@ gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX；R6-S1、R5-
 - **R7-N1（NICE_TO_HAVE）**：打开历史中的部分项从 `MenuRead.partial` 到 `Opened::failed` 的最后一段没有回归断言（把 `format!("opened{}", menu.partial)`
   改回 `"opened"` 不会被现有测试发现）。下一批抽出成功结果的组装步骤并补断言。
 - 范围：D2 逐图标尝试与 D4 真实 Alt+F4 属 C2d；`apps/stickymd-win`、`crates/stickymd-render` 的未提交改动（C2b-4）不在本批。
+
+## 覆盖补全 C2b-4 实施记录（2026-10-19，无需桌面的单元绑定）
+
+范围：按 D3（纯函数 + 少量 G4）把 `StickyApp` 剩余的滚动决策抽为纯函数并以单元测试持有，补强透明度、退出取消状态与 Preview 回执的测试，再逐义务审计后绑定。
+产品行为不变：抽取保持原有的早退与输入，只把计算移出 runtime。
+
+### 落地内容
+
+- **纯函数**（`apps/stickymd-win/src/app/scrollbar.rs`）：`view_bars(dpi, geometry, source, preview)` 给出视图显示的窗格的栏（Source 由投影的滚动度量，
+  Preview 由 `PreviewFacts`：帧缓存的 document height、偏移与是否当前）；`preview_offset_at`（滑块比例到 Preview 偏移）与 `preview_offset_by`（文档内翻页）。
+  `scroll_runtime.rs` 改为调用它们：`scrollbar_geometry` 在窗口拒绝编辑时仍先返回无栏，只为视图显示的窗格测量。
+- **退出已取消状态的唯一入口**（`app/title.rs`）：`QuitCancelNotice::on_window_effect` 接收每个窗口效果，只有因 canonical note 保存失败而取消的退出建立该
+  状态；`window_runtime.rs::apply_window_effect` 在处理每个效果前先交给它，原先只在 `QuitCancelled` 分支调用的私有入口不再被外部引用。
+- **测试**：`app::scrollbar` 三项（逐视图的栏、Preview 位置与翻页、滑块几何）、`app::window_interaction` 窄槽几何、`app::preview_runtime` 只差偏移的旧回执、
+  `app::controls` 透明度范围（并补强拖动测试逐步断言 config 不脏）、`app::title` 三项（只有保存失败改变状态、唯一入口的词法守卫、`finish_event_pass` 只在
+  `about_to_wait` 的窗口 tick 之后调用一次的词法守卫）、`app::guards` 屏障组成（8 种组合 × 其余事实全开 / 全关）、render `source::scrollbar` 两项（折行长文的
+  映射与末端边界只测量一次、Source 翻页）。render 的 `SourceProjection` 增加只在测试中编译的 `extent_measures` 计数，用于断言边界缓存被复用。
+
+### 绑定（17 项，`coverage/table.rs`）
+
+| 义务 | owner | 依据 |
+| --- | --- | --- |
+| scroll-1 per-pane（source / preview / split） | `view_bars` 测试 | 三种视图、两种 DPI 下恰好显示的窗格有栏且在自身内容矩形上；`scrollbar_geometry` 直接以 `view_geometry` 调用 `view_bars` |
+| scroll-2 short-note hide-thumb | `view_bars` 测试 | Source 全可见与不高于窗格的 Preview 文档在各窗格单独都无滑块 |
+| scroll-2 short-note keep-gutter | 窄槽几何 + `view_bars` 测试 | `geometry()` 在每个视图保留窄槽，且其输入只有视图模式、窗口尺寸与 DPI，与正文长度无关 |
+| scroll-2 gutter-geometry | 窄槽几何测试 | 四种 DPI × 四种窗口尺寸 × 三种视图：窄槽宽恰为缩放后的 `GUTTER_DIP`，轨道在窄槽内、真实 resize 命中为空、与 Split 同步按钮不相交 |
+| scroll-2 gutter-runtime content-zoom | 窄槽几何测试 | `view_geometry` 只以视图模式、窗口尺寸与窗口 DPI 调用 `geometry()`，Content Zoom 不是输入 |
+| scroll-3 thumb-geometry | 滑块几何测试 | 1000 种可见比例 × 4 种 DPI × 有无 Split 留白：长度为可见比例且不低于 24 DIP × DPI、不等于整条轨道，位置线性且在轨道内 |
+| scroll-3 ends-reach-document-ends（preview） | Preview 位置测试 | 比例 0 / 1 分别为文首与最后一屏 |
+| scroll-3 track-page-scroll | 轨道命中 + Preview 位置 + Source 翻页测试 | 轨道按下按窗格 90% 翻页；Preview 与 Source 都按像素翻页并停在两端 |
+| scroll-5 source-mapping | Source 映射测试 | 每行都折行的 2000 行长文：末端只测量一次（排版少于 40 行）并复用到几何变化；跳转只排版目标附近并读回比例 |
+| scroll-5 preview-document-height | Preview 位置 + `view_bars` 测试 | 滑块比例、可见比例与偏移都由给定的 document height 计算；runtime 传入 `frame.document_height()`（缓存帧的值，不排版） |
+| scroll-6 stale-receipt-identity | 旧回执测试 | 只差偏移的回执布局相同但身份不同，成功与失败都只重排、从不显示 |
+| opacity-2 range-and-input | 透明度范围测试 | 四种 DPI 下滑块以步长 1 到达 40–100 每个整数；输入只收至多三位数字；提交 clamp 到范围、空输入不提交；reducer 对预览与提交再 clamp |
+| opacity-3 no-stepwise-write | 拖动提交测试 | 每个拖动步骤后 config 不脏、`begin_persist` 为空，松开恰写一次 |
+| quit-2 cause=quit-guard | 只有保存失败改变状态 + 唯一入口测试 | 全部窗口效果（含 `QuitBlocked`）从两种初态出发都不改变状态，除保存失败取消的退出；产品源码只有一个入口 |
+| quit-2 cleared-after-event-when-barrier-false | 屏障组成 + 事件结束 + 清除测试 | 屏障恰为 dirty / 欠持久化 / 保存中之一；`finish_event_pass` 只在窗口 tick 之后调用一次；屏障为假时才清除 |
+
+两个词法守卫（唯一入口、调用位置）只检查源码文本，不求值 `cfg` 或宏展开。
+
+### 仍为缺口（改写后的文本见 `table.rs`）
+
+Split 同步开关是否带动另一窗格、窄槽内按下不作为正文点击、指针移动逐次应用到视口（实时定位）、松开 / 失焦 / 切换视图 / resize 结束拖动、拖出窗口完成拖动、
+滚动只改视口（六项状态）、`preview_layout_is_current` 的当前判定（过期帧无滑块、旧回执守卫）。D3 下松开 / 失焦与拖出窗口由 G4 持有；其余待新的单元接缝或 exact 层。
+
+### 验证（2026-10-19，审查前）
+
+- 变异检验（临时改动、恢复，apps/crates 改动的摘要前后一致）：24 个变异全部被对应 owner 测试杀死——守卫阻止的退出建立状态、屏障漏掉欠持久化或保存中、
+  状态在窗口 tick 之前结算、滑块止于 99、输入接受四位、提交 clamp 到 99、拖动预览弄脏 config、滑块下限不随 DPI、滑块比例不 clamp、旧偏移回执被显示、
+  窄槽不随 DPI、resize 边伸进轨道、边界缓存从不读取、跳转忽略行内偏移、Preview 栏忽略当前标志、Preview 视图出现 Source 栏、忽略可见比例、最后一屏被截短、
+  翻页越过末端、reducer clamp 到 99、`view_bars` 忽略 Split 留白、Source 翻页只走一半、另一处源码提及私有入口。
+- 绑定源码身份的证据在 ignored 的 `target/review-evidence/c2b4-code/verification-r0/`（HEAD `5c65b46`，范围补丁 sha256 `b17395bd…bcd7`，运行后不变）：
+  `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings` 与 `stickymd-smoke all --ci --ci-shard=tests`（governance、
+  Phase 1 两组、workspace tests、unit-test owner verification 五项）均退出 0。
+- Linux 复跑（5c65b46 上叠加本批 15 个文件）：`clippy -p stickymd-smoke -p stickymd-render` 退出 0，测试全部通过（render 167 passed / 13 ignored 等，smoke 460 passed /
+  3 ignored 与 19 passed）。`stickymd-win` 只在 Windows 构建。
+
+#### C2b-4 代码审查第 1 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、6 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；建议 17 项绑定中 9 项退回 gap。审查者确认重构保持行为
+（拒绝编辑时的早退、只为可见窗格测量、Preview 高度为缓存字段读取；退出已取消状态的更新移到效果分派之前，标题事实不读取 diagnostic，无可见差异），并复算了
+`verification-r0` 的范围补丁摘要。逐项核实后处理（上文绑定表中的六项以本条为准）：
+
+- **F1 两个词法守卫不证明调用约束**（接受）：唯一入口守卫只禁止其他文件出现私有入口名，删掉或后移 `on_window_effect` 调用、在 `QuitBlocked` 分支直接改状态都能通过；
+  结算守卫只比较文本位置，"先构造 Tick、再结算、后 dispatch"或循环中调用两次都能通过，结算函数体改为 `settle(false)` 也不被三个 owner 发现。`cause=quit-guard`
+  与 `cleared-after-event-when-barrier-false` 退回 gap，文本写明判定与词法守卫已测、效果处理与事件结算的运行时组合未测。两个守卫保留为回归检查，不再作为证明。
+- **F2 依靠未被 owner 执行的调用关系**（接受）：几何测试直接调用 `geometry()`、Preview 测试手填高度，`view_geometry` 改用内容缩放、按短文回收槽宽或把
+  `PreviewFacts` 的高度错接为视口高度都不会被发现。`keep-gutter`、`content-zoom`、`preview-document-height` 退回 gap。
+- **F3 混合长短窗格只检查短的一侧**（接受，补强后保留）：每个混合情形增加"长的一侧仍有滑块"的断言；"任一窗格短就隐藏两侧"的变异被杀死。
+- **F4 数值盲区**（接受，补强后保留）：Source 读回容差由一整逻辑行收紧到千分之一行，"度量忽略行内偏移"的变异被杀死；Source 向上翻页改为除到达文首的一页外每页恰为
+  一页像素，Preview 从文档中部双向翻页断言精确位移，"负向翻页减半"的两个变异均被杀死。
+- **F5 透明度输入的 oracle**（接受，退回 gap 并待 USER）：输入框在键入时拒绝负号与第四位数字，`-1`、`1000` 无法输入也就不会 clamp；plan 09 只写"整数输入框、越界 clamp、
+  非整数不提交"。这是 HEAD 已有的产品行为，是否构成与合同的冲突需 USER 判断，本批不改产品。`range-and-input` 退回 gap，测试注释写明被拒的输入只记录当前行为。
+- **F6 回执 gap 文本合并失当**（接受）：`stale-frame-no-thumb` 缺 `preview_layout_is_current` 的判定断言；`stale-receipt-guard` 缺回执入口以完整 `PreviewViewport` 相等
+  （而非 `same_layout`）判定、Relayout 分支提前返回且不改写 frame 与偏移的组合断言，两项分开写明。拖动 gap 文本改为"将由 G4 持有，尚无 exact 用例"。
+- **F7 变异与 Linux 证据**（接受）：变异脚本与输出保存在 ignored 的 `target/review-evidence/c2b4-code/mutations/`；Linux 复跑的原始输出随下方验证保存。
+- **F8 文档**（接受）：phase-05 的定向入口补上 `app::controls`、`app::title`、`app::guards`；拖动提交测试实际断言的是"松开恰一次提交请求并标脏 config"，未执行落盘，
+  上文绑定表"松开恰写一次"的措辞以此为准。
+
+结果：绑定 11 项（逐视图的栏 × 3、短文无滑块、窄槽几何、滑块几何、Preview 两端、轨道翻页、Source 映射、只差偏移的旧回执、拖动中 config 不脏）；USER 待决：透明度输入框
+是否应允许键入负数与四位以上整数（D5）。
+- **USER 2026-10-20 决定（D5）**：透明度输入框放开输入、提交时 clamp。核实时另发现：输入框的按键处理对每个按键以该键文本**替换**整段内容（自 Phase 8 起），且绘制的是
+  预览值而非键入文本，故真实桌面上无法键入多位数、键入时也看不到内容。D5 的实现（逐键追加、聚焦后首键替换、负号只在首位、提交按数值 clamp、绘制键入文本）改变
+  产品行为，单列一批另行审查与提交；本批 `range-and-input` 保持 gap，文本写明 D5 待实现。
+- 验证（第 1 轮修复后）：`target/review-evidence/c2b4-code/verification-r1/` 记录 fmt、`clippy --workspace --all-targets -D warnings` 与 `all --ci --ci-shard=tests`（五项
+  均 PASSED）退出 0，以及 Linux 复跑的完整输出（`linux.log`：`clippy -p stickymd-smoke -p stickymd-render` 退出 0，render 167 passed / 13 ignored、smoke 460 passed /
+  3 ignored 与 19 passed 等，`test_exit=0`）。之后只改了 D5 相关的三处文本（`changes-since-r1.txt`），`verification-r2/`（范围补丁 sha256 `9114785c…a774`，运行后
+  不变）在该状态上重跑 fmt、clippy 与 CI 测试分片，均退出 0。
+
+#### C2b-4 代码审查第 2 轮（2026-10-20）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；F1–F6、F8 判为已解决，F7 部分解决；保留的 11 项绑定中 10 项判为
+成立，6 项退回的 gap 文本判为准确；D5 延后判为合理。逐项核实后处理：
+
+- **R2-1 Source 映射的正反计算共用未经独立验证的折行高度**（接受）：把 `scroll_line_height` 改为一律按一个视觉行计（误把折行逻辑行当一行），长文测试的跳转与读回
+  使用同一错误高度，仍全部通过——已实测为 SURVIVED。现有"单行折行与真实末行几何"测试以真实布局核对该高度，实测把同一变异杀死，故加入 `SCROLL_SOURCE_MAPPING`
+  的 owner 集合（plan 11：共同证明一项义务的测试须全部列为 owner），不改产品算法。
+- **R2-2 变异与 Linux 证据不完整**（接受）：全部 29 个变异（原 24 个、第 1 轮补强后的 4 个、R2-1 的 1 个）用同一个保留字节的脚本重跑，每个变异单独保存补丁、
+  命令、退出码与含失败断言的完整输出（`target/review-evidence/c2b4-code/mutations/runs/`），29 个均为 KILLED，运行前后 apps/crates 的 diff 摘要相同。Linux 复跑
+  改为 stdout 与 stderr 分开保存（见下方验证）。
+- **R2-3 计数勘误**（接受）：第 1 轮验证记录中"只改了 D5 相关的三处文本"应为四处（`controls.rs` 注释、phase-05、P14-A81、`table.rs`），均为文本。
+- 过程记录：重跑前一次变异运行被中途停止，第 01 号变异留在 `app/title.rs`；已撤销并按字节核对，apps/crates 的 diff 与 `verification-r2/scoped.patch` 完全一致后
+  才重跑。
+- 验证（第 2 轮修复后）：磁盘低于 Rust 构建阈值，经 USER 同意删除 `target/debug` 后从头构建。`target/review-evidence/c2b4-code/verification-r3/`（范围补丁 sha256
+  `07757ff0…bf6a`，运行后不变）：fmt、`clippy --workspace --all-targets -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux
+  复跑（归档 sha256 `1261045a…b671`）clippy 与测试退出 0，stdout / stderr 分开保存（`linux.test.stdout.log` 含 671 条逐项 `ok` 记录与全部 `test result: ok` 摘要）。
+
+#### C2b-4 代码审查第 3 轮（2026-10-20）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX、1 NEEDS_VERIFICATION；R2-1、R2-3 判为已解决，R2-2 部分解决；10 项绑定与 6 项 gap 判为成立 / 准确，
+29 份变异记录与 Linux 日志判为内部一致。逐项核实后处理：
+
+- **R3-1 独立布局依据只在 1× 检查**（接受）：把折行高度误按 DIP 计（`line_height / scale_factor`）时，长文测试全程 1×、单行折行测试的 2× 检查只看短文，两个 owner
+  都会通过。单行折行测试改为在 1× 与 2× 下各做一遍折行长行的中点、末端（末行经 `caret_rect` 读真实布局须在视口内）与文首检查；该变异被 2× 的末端检查杀死
+  （`runs/31`），产品算法不变。
+- **R3-2 "长文 owner 已实测 SURVIVED"缺运行记录**（接受）：第 2 轮记录所称的实测当时只在交互命令中运行、未留存。现补以同一保留字节的脚本留存：`runs/30`（折行计作一行
+  对长文 owner，exit 0，SURVIVED）与 `runs/32`（DIP 变异对长文 owner，SURVIVED），说明两个 owner 缺一不可；`runs/29` 以补强后的单行折行测试重跑仍为 KILLED。
+- 验证（第 3 轮修复后）：`target/review-evidence/c2b4-code/verification-r4/`（范围补丁 sha256 `32605555…25fc3`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（归档 sha256 `35aee46e…8d3f`）clippy 与测试退出 0，stdout / stderr
+  分开保存。
+
+#### C2b-4 代码审查第 4 轮（2026-10-20）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX、1 NICE_TO_HAVE；R3-1、R3-2 判为已解决，32 份变异记录判为内部一致。逐项核实后处理：
+
+- **R4-1 可用高度的单位错误仍能通过**（接受）：把 `content_height()` 误换成 DIP 时，长文测试全程 1×，2× 折行长行的末行仍落在视口内，跳转与读回共用错误边界，两个
+  owner 都通过；而 2× 下本可完全容纳的短文会被算出约 0.75 的可见比例并显示滑块。单行折行测试增加 2×（320×320）下三行短文 `viewport_fraction == 1.0` 的断言；
+  该变异被它杀死（`runs/33`），产品算法不变。
+- **R4-2 resync 前的长文缓存前提在改写中丢失**（接受）：循环外新建的投影未先测量就 resync，缓存键不含 generation 也能通过。恢复为先测量长文（断言未全可见）再
+  resync；"缓存键忽略 generation"的变异被杀死（`runs/34`）。
+- 环境：第 4 轮修复前 E: 盘再次低于构建阈值，原因是 WSL Debian 的 `ext4.vhdx` 膨胀到 207 GB（盘内实用 63 GB）；USER 以 fstrim 与 diskpart 压缩到 75.3 GB 后继续。
+- 验证（第 4 轮修复后）：`target/review-evidence/c2b4-code/verification-r5/`（范围补丁 sha256 `3f8c19e8…2e91`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（归档 sha256 `7681c8e4…83e5e`）clippy 与测试退出 0。
+
+#### C2b-4 代码审查第 5 轮（2026-10-20）
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX；R4-1（三行短文 2× 用例的几何与精确相等经静态计算确认，`runs/33` 的失败值 0.7526881893475851 与之
+一致）与 R4-2（同一对象先测量后 resync，`resync` 不清空缓存、依靠键不匹配重算）判为已解决；11 项绑定判为成立，6 项 gap 判为准确。保留项：
+
+- **NEEDS_VERIFICATION（变异恢复摘要）**：各次变异运行的前后 diff 摘要只记为"unchanged"。已把四次运行前记录的 `git diff -- apps crates` 摘要补入
+  `mutations/README.txt`；最后一次（`e28f401b…8bff`）与审查者对当前状态的复算值相同。此后的变异运行须在汇总中同时写出前后两值。
+- 运行时接线（keep-gutter、content-zoom、preview-document-height、quit-guard、cleared-after-event）、透明度输入（D5）与真实输入 / 桌面验收仍为具名缺口。

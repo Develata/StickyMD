@@ -274,6 +274,9 @@ impl StickyApp {
     }
 
     fn apply_window_effect(&mut self, event_loop: Option<&ActiveEventLoop>, effect: WindowEffect) {
+        if self.quit_notice.on_window_effect(&effect) {
+            self.update_window_title();
+        }
         match effect {
             WindowEffect::ApplyFrame(frame) => {
                 if let Some(window) = &self.window {
@@ -391,9 +394,6 @@ impl StickyApp {
             }
             WindowEffect::QuitCancelled(barrier) => {
                 self.diagnostic = Some(format!("退出已取消：{barrier:?} 未安全完成。"));
-                if self.quit_notice.on_quit_cancelled(barrier) {
-                    self.update_window_title();
-                }
                 self.request_redraw();
             }
             WindowEffect::QuitWarning(barrier) => {
