@@ -456,3 +456,8 @@ phase-05 的 2026-10-17 补充。
 2026-10-19 覆盖补全 C2b-4：`StickyApp` 的滚动决策抽为纯函数 `app/scrollbar.rs::{view_bars, preview_offset_at, preview_offset_by}`，退出已取消状态经唯一入口
 `app/title.rs::QuitCancelNotice::on_window_effect`；补强 scrollbar、window_interaction、preview_runtime、controls、title、guards 与 render
 `source/scrollbar.rs` 的单元测试后绑定 plan 09 滚动条与透明度十一项，其余审计未通过的写明缺失部分保留为 gap；验收见 P14-A81 与 phase-05 的 2026-10-19 补充。
+
+2026-10-20 USER 决定（Search 与视图切换）：Plan 07 `source-find-replace` → [phase-03](acceptance-cases/phase-03.md) 的 2026-10-20 补充。视图切换对 Search 的取舍由纯函数
+`app/search_controller.rs::search_on_view_change` 判定，`app/preview_runtime.rs::apply_view_mode` 在任何副作用之前拒绝、在新视图提交之后经
+`park_search`/`resume_search` 执行；停放值 `interaction/search.rs::ParkedSearch` 由 `SearchSession::{park, resume}` 产生与消费。Preview 中 Ctrl+F/H 的恢复与切换失败
+时不打开在 `open_search`；视图与缩放快捷键在 `app/input.rs::handle_key` 中先于 Search 判定（`view_key_mode`、`zoom_key_command`）。`StickyApp` 接线不由测试执行。

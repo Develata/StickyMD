@@ -47,6 +47,35 @@ from the [release checklist](../release-checklist.md).
   and the complete CI performance shard; each task is deduplicated and measurements run serially per runner.
 - Physical mouse/IME/DPI visual matrix: `NOT TESTED`; synthetic native messages and headless pixels do not upgrade the manual rows.
 
+## 2026-10-20 Search across view changes
+
+- Contract: `07_editor_and_ime.md#source-find-replace` (USER decision: an open Search is parked while the view has no
+  Source pane and comes back as it was); feature: 查找与替换 in the v1 product behavior.
+- Preconditions: Search open in Source and Split, Find-only and with the replacement row, with typed field cursors,
+  a non-first active match and the case option on; a Search-field composition; a closed Search with a kept query.
+- Action: switch to Preview (toolbar or Ctrl+3) and back to Source or Split (toolbar, Ctrl+1/2, Ctrl+F or Ctrl+H);
+  change the document while in Preview; switch while the Search field composes; use Ctrl+1/2/3 and keyboard zoom
+  while Search is visibly open.
+- Expected: entering Preview parks an open, non-composing Search: the live session is closed, so no key, IME event,
+  press, Esc or auto-collapse guard finds it, and it holds no match projection. Leaving Preview restores its query,
+  replacement, case option, replacement row, focused field, cursors and active match place, rescanned against the
+  current generation, without moving the Source selection or viewport. In Preview, Ctrl+F restores a parked Search
+  without rewriting its query and Ctrl+H also expands or focuses its replacement row; a closed one opens as before,
+  and none opens when the view did not change. A composing Search refuses the switch to Preview with the same
+  diagnostic as Ctrl+F/H. Source and Split keep an open Search. View and zoom shortcuts act while Search is open.
+- Failure signals: an undrawn Search that takes keys, IME, Esc or blocks auto-collapse; a lost or altered Search after
+  the round trip; matches kept while parked or stale after the document changed; a query rewritten by Ctrl+F in
+  Preview; a view change during a Search composition; Ctrl+1/2/3 or zoom swallowed by the panel.
+- Automated entry: `cargo test -p stickymd-win --locked -- interaction::search app::search_controller app::input`,
+  also in the Rust-owned render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1):
+  `a_parked_search_comes_back_as_it_was_without_holding_matches`, `a_resumed_search_rescans_the_current_document`,
+  `only_an_open_search_is_parked_and_a_preedit_does_not_survive_it`,
+  `a_view_without_a_source_pane_parks_search_and_one_with_it_resumes_it` and
+  `view_and_zoom_shortcuts_take_no_key_that_search_binds`. Status: `AUTOMATED PASS`.
+- Limits: the `StickyApp` wiring (`apply_view_mode` deciding before any side effect and applying after the view is
+  committed, the two `open_search` guards, the key order) is not executed by these tests; physical keyboard, IME and
+  visual behavior of the round trip are `NOT TESTED`.
+
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
 

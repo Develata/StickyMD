@@ -24,7 +24,7 @@ use crate::flow::{
     AppEffect, EditorCoordinator, PersistenceCoordinator, PreviewCoordinator, RecoveryCoordinator,
 };
 use crate::instruction::AppIntent;
-use crate::interaction::{EditorSession, SearchSession};
+use crate::interaction::{EditorSession, ParkedSearch, SearchSession};
 use crate::persistence::{IoCompletion, PersistenceWorker};
 use crate::platform::windows::ArboardClipboard;
 use crate::platform::windows::file_watch::NoteDirectoryWatcher;
@@ -133,6 +133,8 @@ pub struct StickyApp {
     export_in_flight: bool,
     session: EditorSession,
     search: SearchSession,
+    /// The open Search while the view has no Source pane (`search_controller.rs::park_search`).
+    parked_search: Option<ParkedSearch>,
     modifiers: ModifiersState,
     cursor_position: PhysicalPosition<f64>,
     pointer_inside_window: bool,
@@ -212,6 +214,7 @@ impl StickyApp {
             export_in_flight: false,
             session: EditorSession::default(),
             search: SearchSession::default(),
+            parked_search: None,
             modifiers: ModifiersState::default(),
             cursor_position: PhysicalPosition::new(0.0, 0.0),
             pointer_inside_window: false,

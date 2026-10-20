@@ -123,26 +123,18 @@ impl StickyApp {
             self.open_search(code == Some(KeyCode::KeyH));
             return;
         }
-        if self.search.open && self.handle_search_key(&event, code, shortcut, shift) {
-            return;
-        }
-
+        // Zoom and the view shortcuts are window commands like save and export: an open Search
+        // does not take them (plan 07), and a view change decides what happens to Search.
         if shortcut && let Some(command) = zoom_key_command(code) {
             self.apply_zoom_command(command, true);
             return;
         }
-
-        if shortcut {
-            let mode = match code {
-                Some(KeyCode::Digit1) => Some(ViewMode::Source),
-                Some(KeyCode::Digit2) => Some(ViewMode::Split),
-                Some(KeyCode::Digit3) => Some(ViewMode::Preview),
-                _ => None,
-            };
-            if let Some(mode) = mode {
-                self.dispatch_preview_intent(PreviewIntent::SetViewMode(mode));
-                return;
-            }
+        if shortcut && let Some(mode) = view_key_mode(code) {
+            self.dispatch_preview_intent(PreviewIntent::SetViewMode(mode));
+            return;
+        }
+        if self.search.open && self.handle_search_key(&event, code, shortcut, shift) {
+            return;
         }
 
         if self.preview_focused {
@@ -559,6 +551,16 @@ enum ZoomCommand {
     Reset,
 }
 
+/// The view a Ctrl+digit shortcut switches to.
+fn view_key_mode(code: Option<KeyCode>) -> Option<ViewMode> {
+    match code {
+        Some(KeyCode::Digit1) => Some(ViewMode::Source),
+        Some(KeyCode::Digit2) => Some(ViewMode::Split),
+        Some(KeyCode::Digit3) => Some(ViewMode::Preview),
+        _ => None,
+    }
+}
+
 fn zoom_key_command(code: Option<KeyCode>) -> Option<ZoomCommand> {
     match code {
         Some(KeyCode::Equal | KeyCode::NumpadAdd) => Some(ZoomCommand::Step(10)),
@@ -612,8 +614,9 @@ fn mutation_input_allowed(
 mod recovery_tests {
     use super::{
         ClipboardAlias, ZoomCommand, ZoomWheelAccumulator, clipboard_alias,
-        global_persistence_shortcut, mutation_input_allowed, zoom_key_command,
+        global_persistence_shortcut, mutation_input_allowed, view_key_mode, zoom_key_command,
     };
+    use crate::config::ViewMode;
     use crate::instruction::{PersistenceIntent, SaveReason};
     use winit::dpi::PhysicalPosition;
     use winit::event::MouseScrollDelta;
@@ -630,6 +633,38 @@ mod recovery_tests {
     fn quit_and_asset_reconcile_freeze_keyboard_and_ime_mutations() {
         assert!(!mutation_input_allowed(false, false, true, false));
         assert!(!mutation_input_allowed(false, false, false, true));
+    }
+
+    #[test]
+    fn view_and_zoom_shortcuts_take_no_key_that_search_binds() {
+        assert_eq!(view_key_mode(Some(KeyCode::Digit1)), Some(ViewMode::Source));
+        assert_eq!(view_key_mode(Some(KeyCode::Digit2)), Some(ViewMode::Split));
+        assert_eq!(
+            view_key_mode(Some(KeyCode::Digit3)),
+            Some(ViewMode::Preview)
+        );
+        assert_eq!(view_key_mode(Some(KeyCode::Digit0)), None);
+        assert_eq!(view_key_mode(Some(KeyCode::Digit4)), None);
+        assert_eq!(view_key_mode(None), None);
+        // Decided before Search, so neither may claim a Ctrl key Search or its shortcuts use.
+        for key in [
+            KeyCode::KeyF,
+            KeyCode::KeyH,
+            KeyCode::KeyV,
+            KeyCode::Enter,
+            KeyCode::NumpadEnter,
+            KeyCode::Tab,
+            KeyCode::F3,
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::ArrowUp,
+            KeyCode::ArrowDown,
+        ] {
+            assert_eq!(view_key_mode(Some(key)), None, "{key:?}");
+            assert_eq!(zoom_key_command(Some(key)), None, "{key:?}");
+        }
     }
 
     #[test]

@@ -23,7 +23,7 @@ impl StickyApp {
 
     pub(super) fn open_search(&mut self, replace: bool) {
         if self.search.open && self.search.is_composing() {
-            self.diagnostic = Some("请先完成当前查找输入法组合。".into());
+            self.diagnostic = Some(SEARCH_COMPOSING.into());
             self.request_redraw();
             return;
         }
@@ -50,6 +50,20 @@ impl StickyApp {
         }
         if self.config.current().view_mode == ViewMode::Preview {
             self.dispatch_preview_intent(PreviewIntent::SetViewMode(ViewMode::Source));
+            if self.config.current().view_mode == ViewMode::Preview {
+                // The view did not change (its diagnostic is shown), and Search needs a Source pane.
+                return;
+            }
+            if self.search.open {
+                // The Search that Preview parked came back as it was; opening it again would
+                // reset its row and focus and replace its query with the selected match.
+                if replace {
+                    self.search.show_replace();
+                }
+                self.update_ime_area();
+                self.request_redraw();
+                return;
+            }
         }
         self.preview_focused = false;
         let view = self.coordinator.view();
@@ -75,6 +89,40 @@ impl StickyApp {
     pub(super) fn close_search(&mut self) {
         self.search.close();
         self.update_search_selection();
+        self.update_ime_area();
+        self.request_redraw();
+    }
+
+    /// Where Search is, as a view change reads it.
+    pub(super) fn search_place(&self) -> SearchPlace {
+        if self.parked_search.is_some() {
+            SearchPlace::Parked
+        } else if self.search.open {
+            SearchPlace::Open {
+                composing: self.search.is_composing(),
+            }
+        } else {
+            SearchPlace::Closed
+        }
+    }
+
+    /// Takes the open Search off the screen once the view has no Source pane: the live session is
+    /// left closed, so no key, IME event, press, Esc or auto-collapse guard finds it, and it holds
+    /// no matches until `resume_search` puts it back.
+    pub(super) fn park_search(&mut self) {
+        self.parked_search = self.search.park();
+        self.update_ime_area();
+        self.request_redraw();
+    }
+
+    /// Puts the parked Search back as it was once the view has a Source pane again, rescanned
+    /// against the current document; the note's selection and scroll stay where they are.
+    pub(super) fn resume_search(&mut self) {
+        let Some(parked) = self.parked_search.take() else {
+            return;
+        };
+        let view = self.coordinator.view();
+        self.search.resume(parked, view.text, view.generation);
         self.update_ime_area();
         self.request_redraw();
     }
@@ -288,6 +336,42 @@ impl StickyApp {
     }
 }
 
+pub(super) const SEARCH_COMPOSING: &str = "请先完成当前查找输入法组合。";
+
+/// Where Search is when the view changes. A parked Search exists only while the live one is
+/// closed, so the two never coexist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SearchPlace {
+    Closed,
+    Open { composing: bool },
+    Parked,
+}
+
+/// What a view change does to Search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SearchViewChange {
+    Keep,
+    Park,
+    Resume,
+    /// The Search field is composing: the view does not change, and the composition goes on.
+    Refuse,
+}
+
+/// Search lives in the Source pane (plan 07): a view without one (Preview) parks an open Search
+/// and refuses while it composes, as opening Search does; a view with one resumes a parked Search.
+pub(super) const fn search_on_view_change(
+    target: ViewMode,
+    place: SearchPlace,
+) -> SearchViewChange {
+    let has_source_pane = !matches!(target, ViewMode::Preview);
+    match (has_source_pane, place) {
+        (false, SearchPlace::Open { composing: true }) => SearchViewChange::Refuse,
+        (false, SearchPlace::Open { composing: false }) => SearchViewChange::Park,
+        (true, SearchPlace::Parked) => SearchViewChange::Resume,
+        _ => SearchViewChange::Keep,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SearchOpenAction {
     Open { replace: bool },
@@ -328,6 +412,47 @@ mod tests {
             search_open_action(true, true),
             SearchOpenAction::ExpandReplace
         );
+    }
+
+    #[test]
+    fn a_view_without_a_source_pane_parks_search_and_one_with_it_resumes_it() {
+        use winit::dpi::PhysicalSize;
+
+        use super::super::preview_runtime::geometry;
+        use SearchViewChange::{Keep, Park, Refuse, Resume};
+
+        // Preview is the only view without a Source pane, which is what the decision keys on.
+        for (mode, has_source_pane) in [
+            (ViewMode::Source, true),
+            (ViewMode::Split, true),
+            (ViewMode::Preview, false),
+        ] {
+            let pane = geometry(mode, PhysicalSize::new(900, 680), 1.0).source;
+            assert_eq!(pane.is_some(), has_source_pane, "{mode:?}");
+        }
+        let idle = SearchPlace::Open { composing: false };
+        let composing = SearchPlace::Open { composing: true };
+        let cases = [
+            (ViewMode::Preview, SearchPlace::Closed, Keep),
+            (ViewMode::Preview, idle, Park),
+            (ViewMode::Preview, composing, Refuse),
+            (ViewMode::Preview, SearchPlace::Parked, Keep),
+            (ViewMode::Source, SearchPlace::Closed, Keep),
+            (ViewMode::Source, idle, Keep),
+            (ViewMode::Source, composing, Keep),
+            (ViewMode::Source, SearchPlace::Parked, Resume),
+            (ViewMode::Split, SearchPlace::Closed, Keep),
+            (ViewMode::Split, idle, Keep),
+            (ViewMode::Split, composing, Keep),
+            (ViewMode::Split, SearchPlace::Parked, Resume),
+        ];
+        for (target, place, expected) in cases {
+            assert_eq!(
+                search_on_view_change(target, place),
+                expected,
+                "{target:?} from {place:?}"
+            );
+        }
     }
 
     #[test]

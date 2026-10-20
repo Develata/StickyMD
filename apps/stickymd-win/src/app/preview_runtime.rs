@@ -8,6 +8,7 @@ use stickymd_render::preview::{PreviewSelection, PreviewTheme};
 use tiny_skia::Pixmap;
 use winit::dpi::PhysicalSize;
 
+use super::search_controller::{SEARCH_COMPOSING, SearchViewChange, search_on_view_change};
 use super::{AppEvent, StickyApp};
 use crate::config::ViewMode;
 use crate::flow::{PreviewAction, PreviewAdmission, PreviewEffect, PreviewVisibility};
@@ -122,6 +123,14 @@ impl StickyApp {
         if self.config.current().view_mode == mode {
             return;
         }
+        // Search lives in the Source pane (plan 07). Decided before anything changes, so a
+        // refusal leaves the view untouched; applied only once the new view is committed.
+        let search = search_on_view_change(mode, self.search_place());
+        if search == SearchViewChange::Refuse {
+            self.diagnostic = Some(SEARCH_COMPOSING.into());
+            self.request_redraw();
+            return;
+        }
         self.cancel_scrollbar_drag();
         self.session.cancel_preedit();
         self.dispatch_window_intent(
@@ -154,6 +163,11 @@ impl StickyApp {
             .show(generation, self.preview_visibility())
         {
             self.submit_preview_action(action);
+        }
+        match search {
+            SearchViewChange::Park => self.park_search(),
+            SearchViewChange::Resume => self.resume_search(),
+            SearchViewChange::Keep | SearchViewChange::Refuse => {}
         }
         if let Some(window) = &self.window {
             window.set_ime_allowed(mode != ViewMode::Preview && self.session.focused);
