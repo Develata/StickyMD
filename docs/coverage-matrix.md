@@ -460,3 +460,10 @@ phase-05 的 2026-10-17 补充。
 2026-10-20 USER 决定 D5：透明度输入框的编辑与提交在 `app/controls.rs::ControlState::{focus_input, type_input, backspace_input, commit_input}`（提交值由
 `committed_opacity` 计算，结束编辑在 `finish_input`），聚焦时的键入文本由 `ControlState::focused_field` 投影、`app/toolbar_paint.rs` 绘制；编辑期间按键与 IME 由 `ControlState::takes_keys` 判定：按键由 `app/input.rs::handle_key` 在保存 / 导出之后、Search 之前交给 `app/window_interaction.rs::handle_opacity_key`（取值由 `opacity_key` 判定），IME 由 `handle_ime` 先交给 `handle_opacity_ime`（取舍由 `field_takes_ime` 判定），提交它的 Enter 的长按重复与松开由 `ControlState::takes_commit_key_event` 判定（`handle_key` 最先询问），聚焦在 `focus_opacity_input`，IME 开关由 `ime_allowed` 判定、各处经 `sync_ime_allowed` 应用（`app/lifecycle.rs` 的 `Focused`，`app/window_runtime.rs` 的 `SetImeAllowed` 与 `SetEditorInputEnabled`，`app/input.rs` 的 Preview / 正文按下，`app/search_controller.rs::{open_search, close_search}`（关闭的三个入口都经 `close_search`），`app/preview_runtime.rs` 的视图切换），合成按键在 `app/lifecycle.rs` 的 `KeyboardInput` 处忽略，弹层开关后的光标由 `app/input.rs::refresh_cursor` 在指针位于窗口内时刷新（指针回到窗口时在 `app/lifecycle.rs` 的 `CursorEntered` 再刷新），弹层按下由 `ControlLayout::popup_hit` 判定；失焦提交在 `app/lifecycle.rs` 的 `Focused(false)`，隐藏与退出提交在 `app/window_runtime.rs` 的 `SetEditorInputEnabled(false)`；
 绑定 plan 09 透明度 `range-and-input`，验收见 P14-A81。
+
+2026-10-20 透明度按钮缺陷修复：弹层打开时按工具栏透明度按钮，弹层外的按下先关闭弹层（聚焦的输入框先提交），按钮再按本次按下开始时的弹层状态切换，
+故只关闭一次（`app/window_interaction.rs::control_press`），resize 边框与其他控件的优先级不变；验收见
+[phase-08 2026-10-20 补充](acceptance-cases/phase-08.md)。单元测试只证明该判定；handler 接线由 copied-Release `WindowShell` runtime（P08-A11，`tools/stickymd-smoke/src/runtime/opacity_popup.rs`）
+核对：第二次按下后在滑块原位置按下不改变 alpha 与已提交透明度，含输入框已键入数字的情形，且关闭到托盘、正文保存后正文不变；按下为发往真实窗口的合成鼠标消息，
+输入框情形中的数字与其后的按钮按下为物理输入。把调用点改回 `activate_control` 时该检查失败。
+exact 候选（G4、G5）仍只打开弹层。

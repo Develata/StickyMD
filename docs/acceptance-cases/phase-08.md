@@ -258,6 +258,33 @@ This supplements the frozen rows above; their statuses are unchanged.
   no deadline, and the focus it requested keeps it expanded. Status: `AUTOMATED PASS`. The real second launch while docked-collapsed (P08-M08
   `identity-wake state=docked`) remains G4-05 exact work.
 
+## 2026-10-20 the opacity button closes its open popup
+
+This supplements the frozen rows above; their statuses are unchanged.
+
+- Contract: [`09` opacity](../plan/09_windows_shell.md#theme-opacity-and-content-zoom) (the field writes the config when
+  it loses focus); the toolbar Opacity button toggles the popup.
+- Defect: a press on the Opacity button while the popup was open lands outside the popup, which closed it, and then
+  activated the button, whose toggle reopened it: the button could never close the popup.
+- Expected: the button toggles the popup as the press found it, so the press closes it once; a focused field commits
+  first, a press elsewhere outside the popup still closes it and acts on what it hits, and the 6-DIP resize border
+  over the button's top edge keeps its precedence.
+- Automated entry: `cargo test -p stickymd-win --locked -- the_opacity_button_closes_the_popup_it_finds_open` (the
+  whole button lies above the popup at every scale and size; the decision for every control with the popup open and
+  closed). Status: `AUTOMATED PASS`. It proves the decision, not that the handler applies it, nor native pointer
+  delivery.
+- Runtime entry: `./tools/smoke/phase-08.ps1 -Runtime`, in the copied-Release `WindowShell` lifecycle of P08-A11 (Phase 10
+  runs it too). With the popup open at 100%, a second press on the button and then a press where the slider's 70% point
+  was leave the window alpha and the committed `opacity = 100` unchanged 500 ms later; after the slider commits 70, a
+  press on the field, a physical `4` and a physical second press on the button (ordered after the digit) commit 40 and
+  close the popup, checked the same way; the note is unchanged once the lifecycle's following close to the tray has
+  saved it. The probe, slider, field and other button presses are synthetic window messages, not physical pointer
+  delivery. The check assumes the digit key reaches the field as the text `4` (as with an English layout); before D5
+  the field takes no IME commit, so an input method that composes or converts the digit fails it. Phase 8 and
+  Phase 10 local runs 2026-10-20: PASS; with the `control_at` site reverted to `activate_control`, the Phase 8 run
+  failed at the first check (alpha 179, `opacity = 70`). The exact candidate (G4, G5) opens the popup but never
+  presses the button again.
+
 ## Current Phase Gate
 
 Phase 8 automated acceptance is **PASS** after the checked-in headless, Release-performance,

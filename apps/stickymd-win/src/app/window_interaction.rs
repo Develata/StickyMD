@@ -65,6 +65,9 @@ impl StickyApp {
         let layout = ControlLayout::new(window.inner_size(), window.scale_factor());
         match state {
             ElementState::Pressed => {
+                // A press outside the open popup closes it below, before the control it hits
+                // acts; the Opacity button must see the popup as this press found it.
+                let popup_was_open = self.controls.opacity_popup_open;
                 if self.controls.opacity_popup_open {
                     let hit = layout.popup_hit(self.cursor_position);
                     // A press anywhere but the field ends its edit first (plan 09: the field
@@ -114,7 +117,10 @@ impl StickyApp {
                     return true;
                 }
                 if let Some(control) = layout.control_at(self.cursor_position) {
-                    self.activate_control(control);
+                    match control_press(control, popup_was_open) {
+                        ControlPress::Activate(control) => self.activate_control(control),
+                        ControlPress::PopupClosed => self.request_redraw(),
+                    }
                     return true;
                 }
                 if layout.is_drag_region(self.cursor_position) {
@@ -373,6 +379,26 @@ fn field_takes_ime(event: &Ime) -> bool {
     }
 }
 
+/// What a press on a toolbar control does.
+#[derive(Debug, PartialEq, Eq)]
+enum ControlPress {
+    Activate(ControlId),
+    /// The press found the popup open and has closed it, a field edit committed first: the
+    /// Opacity button's one transition is done.
+    PopupClosed,
+}
+
+/// The Opacity button toggles the popup as the press found it (`popup_was_open`). A press on
+/// it while the popup is open lands outside the popup, which closes it before any control
+/// acts, so activating the button then would reopen it. Every other control acts after the
+/// close.
+fn control_press(control: ControlId, popup_was_open: bool) -> ControlPress {
+    match control {
+        ControlId::Opacity if popup_was_open => ControlPress::PopupClosed,
+        control => ControlPress::Activate(control),
+    }
+}
+
 fn resize_direction(
     size: PhysicalSize<u32>,
     point: PhysicalPosition<f64>,
@@ -586,6 +612,54 @@ mod phase8_interaction_tests {
             (Ime::Enabled, false),
         ] {
             assert_eq!(field_takes_ime(&event), taken, "{event:?}");
+        }
+    }
+
+    /// The Opacity button toggles the popup as the press found it: open, the press has already
+    /// closed it (the whole button lies above the popup at every scale and size), and nothing
+    /// reopens it; closed, the button opens it. Every other control acts either way. This checks
+    /// the decision at four scales and three sizes; that the handler applies it is checked by the
+    /// copied-Release `WindowShell` runtime (`stickymd-smoke` `runtime/opacity_popup.rs`), which
+    /// sends the presses as window messages, not native pointer delivery.
+    #[test]
+    fn the_opacity_button_closes_the_popup_it_finds_open() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for (width, height) in [(520.0, 680.0), (220.0, 120.0), (1200.0, 900.0)] {
+                let size = PhysicalSize::new((width * scale) as u32, (height * scale) as u32);
+                let layout = ControlLayout::new(size, scale);
+                let button = layout.rect(ControlId::Opacity);
+                let center = PhysicalPosition::new(
+                    button.x + button.width * 0.5,
+                    button.y + button.height * 0.5,
+                );
+                assert_eq!(layout.control_at(center), Some(ControlId::Opacity));
+                assert!(
+                    button.y + button.height <= layout.opacity_popup.y,
+                    "{size:?} at {scale}"
+                );
+            }
+        }
+        for control in [
+            ControlId::Source,
+            ControlId::Split,
+            ControlId::Preview,
+            ControlId::ConvertMath,
+            ControlId::Topmost,
+            ControlId::Theme,
+            ControlId::Opacity,
+            ControlId::Collapse,
+            ControlId::Close,
+        ] {
+            assert_eq!(
+                control_press(control, false),
+                ControlPress::Activate(control)
+            );
+            let open = if control == ControlId::Opacity {
+                ControlPress::PopupClosed
+            } else {
+                ControlPress::Activate(control)
+            };
+            assert_eq!(control_press(control, true), open, "{control:?}");
         }
     }
 
