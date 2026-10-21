@@ -185,6 +185,20 @@ impl SearchSession {
             .map(|range| Selection::new(range.start, range.end))
     }
 
+    /// Makes the first match that starts at or after `byte` active, wrapping to the first match
+    /// as navigation does; no match leaves none active. Matches are ascending and disjoint, so
+    /// this is a binary search, O(log matches).
+    pub fn activate_from(&mut self, byte: usize) {
+        let next = self
+            .matches
+            .partition_point(|found| found.range().start < byte);
+        self.active = match (next < self.matches.len(), self.matches.is_empty()) {
+            (_, true) => None,
+            (true, false) => Some(next),
+            (false, false) => Some(0),
+        };
+    }
+
     pub fn toggle_case(&mut self, text: &str, generation: Generation) {
         self.case_sensitive = !self.case_sensitive;
         self.refresh(text, generation);
@@ -471,5 +485,28 @@ mod tests {
         session.resume(parked, "kept", Generation::initial());
         assert!(!session.is_composing());
         assert_eq!(session.query, "kept");
+    }
+
+    #[test]
+    fn the_match_after_a_position_becomes_active_and_wraps_to_the_first() {
+        let generation = Generation::initial();
+        let mut session = SearchSession::default();
+        // `a b a` after its first `a` became `aa`: the inserted text ends at byte 2.
+        session.open(false, Some("a"), "aa b a", generation);
+        assert_eq!(session.match_summary(), (1, 3, false));
+        session.activate_from(2);
+        assert_eq!(session.active_range(), Some(5..6));
+        // A match starting exactly there is the next one.
+        session.activate_from(5);
+        assert_eq!(session.active_range(), Some(5..6));
+        // Past the last match, the first one is next.
+        session.activate_from(6);
+        assert_eq!(session.active_range(), Some(0..1));
+        session.activate_from(0);
+        assert_eq!(session.active_range(), Some(0..1));
+
+        session.refresh("b", generation.checked_next().unwrap());
+        session.activate_from(0);
+        assert_eq!(session.active_range(), None);
     }
 }
