@@ -94,16 +94,17 @@ from the [release checklist](../release-checklist.md).
   `$` conversion while Search is open and press Ctrl+Enter.
 - Expected: Replace Current replaces only when the Source selection is exactly the active match. Otherwise the first
   press selects and reveals the active match and changes nothing (text, generation, dirty and Undo unchanged); the next
-  press replaces it. Navigation, opening Search and a replacement still select the active match, so ordinary repeated
-  Ctrl+Enter replaces one match per press as before. Replace All is unchanged.
+  press replaces it. Navigation, opening Search, the case toggle and a replacement (Ctrl+Enter or the Replace button)
+  select the active match, so repeated Ctrl+Enter or Replace clicks replace one match per press as before. Replace All
+  is unchanged.
 - Failure signals: a replacement of text that was not selected; a first press after a reload that changes the
-  document; a normal replace sequence needing two presses per match.
+  document; a normal replace sequence, by keyboard or by mouse, needing two presses per match.
 - Automated entry: `app::search_controller::tests::replace_current_replaces_only_the_selected_active_match`, in the
   Rust-owned render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1); the command boundary's
   `literal_range_matches` check still rejects a range that is not a match. Status: `AUTOMATED PASS`.
-- Limits: `replace_current_search` applying the decision, and the selection reaching that point unchanged after a
-  reload, conversion or click, are `StickyApp` wiring that these tests do not execute; the desktop steps above are
-  `NOT TESTED`.
+- Limits: `replace_current_search` applying the decision and selecting the next active match after a replacement, and
+  the selection reaching that point unchanged after a reload, conversion or click, are `StickyApp` wiring that these
+  tests do not execute; the desktop steps above, including three consecutive Replace clicks on `a a a`, are `NOT TESTED`.
 
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.

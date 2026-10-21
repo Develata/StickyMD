@@ -258,6 +258,8 @@ impl StickyApp {
                 let generation = self.coordinator.view().generation;
                 let text = self.coordinator.view().text;
                 self.search.toggle_case(text, generation);
+                // The rescanned active match is selected, as Alt+C does from the keyboard.
+                self.update_search_selection();
             }
             SearchHit::Previous => self.navigate_search(true),
             SearchHit::Next => self.navigate_search(false),
@@ -338,6 +340,9 @@ impl StickyApp {
             options: self.search.options(),
             timestamp_ms: self.timestamp_ms(),
         });
+        // The next active match is selected for the keyboard and the Replace button alike, so
+        // each further press replaces one match.
+        self.update_search_selection();
     }
 
     fn replace_all_search(&mut self) {
@@ -506,6 +511,9 @@ mod tests {
         assert_eq!(replace_current_action(Some(2..3), 2..3), Replace(2..3));
         // `a X a` reloaded as `a a X` with the second `a` active: `X` stays selected at 4..5.
         assert_eq!(replace_current_action(Some(2..3), 4..5), Select);
+        // The selection's direction does not matter.
+        let reversed = stickymd_core::Selection::new(3, 2).normalized_range();
+        assert_eq!(replace_current_action(Some(2..3), reversed), Replace(2..3));
         // A caret, a selection overlapping or containing the match, or another match.
         for selected in [2..2, 3..3, 2..4, 1..3, 0..5, 0..1] {
             assert_eq!(

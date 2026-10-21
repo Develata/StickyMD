@@ -463,4 +463,4 @@ phase-05 的 2026-10-17 补充。
 时不打开在 `open_search`；视图与缩放快捷键在 `app/input.rs::handle_key` 中先于 Search 判定（`window_key`，Search 字段 composition 期间不判定），恢复时选区跟随 active match（`resume_search`）。`StickyApp` 接线不由测试执行。
 
 2026-10-21 USER 决定（Replace Current 先选中再替换）：Plan 07 `source-find-replace` → [phase-03](acceptance-cases/phase-03.md) 的 2026-10-21 补充。选区不是 active match
-时由纯函数 `app/search_controller.rs::replace_current_action` 判定为只选中，`replace_current_search` 执行；命令边界的 `flow/editor.rs::literal_range_matches` 校验不变。`StickyApp` 接线不由测试执行。
+时由纯函数 `app/search_controller.rs::replace_current_action` 判定为只选中，`replace_current_search` 执行，并在替换后为键盘与替换按钮同样选中下一个 active match；命令边界的 `flow/editor.rs::literal_range_matches` 校验不变。`StickyApp` 接线不由测试执行。
