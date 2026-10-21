@@ -29,11 +29,14 @@ pub(super) struct SearchLayout {
     query: SearchRect,
     replacement: SearchRect,
     case_toggle: SearchRect,
-    previous: SearchRect,
-    next: SearchRect,
+    /// `None` in the compact tier, which leaves navigation to the keyboard.
+    previous: Option<SearchRect>,
+    next: Option<SearchRect>,
     close: SearchRect,
     replace: SearchRect,
     replace_all: SearchRect,
+    /// The inset of field text from its field's edges, in physical pixels.
+    text_inset: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +99,75 @@ fn panel_colors(dark: bool) -> PanelColors {
     }
 }
 
+/// The least query text room, in DIP, the full tier must leave; below it the panel takes the
+/// compact tier (plan 07).
+const FULL_QUERY_TEXT_MIN_DIP: f32 = 40.0;
+
+/// One tier of the panel's spacing and control sizes, in physical pixels (plan 07). The full tier
+/// lays out `Aa < > x` beside the query; the compact tier, for a narrow Source pane, tightens the
+/// spacing and drops `< >`, whose Enter, Shift+Enter, Up/Down and F3 routes remain.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Tier {
+    margin: f32,
+    gap: f32,
+    text_inset: f32,
+    button: f32,
+    replace: f32,
+    replace_all: f32,
+    navigation: bool,
+}
+
+impl Tier {
+    fn for_panel(popup_width: f32, scale: f32) -> Self {
+        let full = Self::full(popup_width, scale);
+        let full_text = full.query_width(popup_width) - full.text_inset * 2.0;
+        if full_text >= FULL_QUERY_TEXT_MIN_DIP * scale {
+            full
+        } else {
+            Self::compact(scale)
+        }
+    }
+
+    fn full(popup_width: f32, scale: f32) -> Self {
+        let (margin, gap) = (6.0 * scale, 4.0 * scale);
+        let inner = (popup_width - margin * 2.0).max(1.0);
+        let action = ((inner - gap * 2.0) / 3.0).clamp(18.0 * scale, 54.0 * scale);
+        Self {
+            margin,
+            gap,
+            text_inset: 5.0 * scale,
+            button: ((inner - gap * 4.0) / 6.0).clamp(12.0 * scale, 26.0 * scale),
+            replace: action,
+            replace_all: action,
+            navigation: true,
+        }
+    }
+
+    /// Fixed sizes, each button just wide enough for its label inside the label padding
+    /// (`label_spec`), so the fields keep the rest.
+    fn compact(scale: f32) -> Self {
+        Self {
+            margin: 4.0 * scale,
+            gap: 2.0 * scale,
+            text_inset: 3.0 * scale,
+            button: 22.0 * scale,
+            replace: 22.0 * scale,
+            replace_all: 28.0 * scale,
+            navigation: false,
+        }
+    }
+
+    fn inner_width(self, popup_width: f32) -> f32 {
+        (popup_width - self.margin * 2.0).max(1.0)
+    }
+
+    /// The query field's width: the inner width less each button beside it and the gap before it.
+    fn query_width(self, popup_width: f32) -> f32 {
+        let buttons = if self.navigation { 4.0 } else { 2.0 };
+        (self.inner_width(popup_width) - buttons * (self.button + self.gap)).max(1.0)
+    }
+}
+
 impl SearchLayout {
     pub(super) fn new(
         pane: super::preview_runtime::PaneRect,
@@ -103,49 +175,51 @@ impl SearchLayout {
         replace_visible: bool,
     ) -> Self {
         let scale = scale.max(0.5);
-        let margin = 6.0 * scale;
         let row = 28.0 * scale;
-        let gap = 4.0 * scale;
-        let popup_height = margin * 2.0 + row + if replace_visible { row + gap } else { 0.0 };
         let popup_width = (pane.width as f32).min(PANEL_MAX_WIDTH_DIP * scale);
+        let tier = Tier::for_panel(popup_width, scale);
+        let (margin, gap) = (tier.margin, tier.gap);
+        let popup_height = margin * 2.0 + row + if replace_visible { row + gap } else { 0.0 };
         let popup = SearchRect {
             x: pane.x as f32 + pane.width as f32 - popup_width,
             y: pane.y as f32,
             width: popup_width,
             height: popup_height,
         };
-        let inner_width = (popup.width - margin * 2.0).max(1.0);
-        let button = ((inner_width - gap * 4.0) / 6.0).clamp(12.0 * scale, 26.0 * scale);
-        let controls_width = button * 4.0 + gap * 3.0;
         let query = SearchRect {
             x: popup.x + margin,
             y: popup.y + margin,
-            width: (inner_width - controls_width - gap).max(1.0),
+            width: tier.query_width(popup.width),
             height: row,
         };
+        let button = tier.button;
         let mut x = query.x + query.width + gap;
         let case_toggle = button_rect(&mut x, query.y, button, gap);
-        let previous = button_rect(&mut x, query.y, button, gap);
-        let next = button_rect(&mut x, query.y, button, gap);
+        let previous = tier
+            .navigation
+            .then(|| button_rect(&mut x, query.y, button, gap));
+        let next = tier
+            .navigation
+            .then(|| button_rect(&mut x, query.y, button, gap));
         let close = button_rect(&mut x, query.y, button, gap);
         let replacement_y = query.y + row + gap;
-        let action_width = ((inner_width - gap * 2.0) / 3.0).clamp(18.0 * scale, 54.0 * scale);
         let replacement = SearchRect {
             x: query.x,
             y: replacement_y,
-            width: (inner_width - action_width * 2.0 - gap * 2.0).max(1.0),
+            width: (tier.inner_width(popup.width) - tier.replace - tier.replace_all - gap * 2.0)
+                .max(1.0),
             height: row,
         };
         let replace = SearchRect {
             x: replacement.x + replacement.width + gap,
             y: replacement_y,
-            width: action_width,
+            width: tier.replace,
             height: row,
         };
         let replace_all = SearchRect {
             x: replace.x + replace.width + gap,
             y: replacement_y,
-            width: action_width,
+            width: tier.replace_all,
             height: row,
         };
         Self {
@@ -158,7 +232,21 @@ impl SearchLayout {
             close,
             replace,
             replace_all,
+            text_inset: tier.text_inset,
         }
+    }
+
+    /// The panel's buttons, each with its label and what a press on it does; `None` where the
+    /// tier or a hidden replacement row omits it. Paint and hit testing read this one list.
+    fn buttons(self, replace_visible: bool) -> [Option<(&'static str, SearchRect, SearchHit)>; 6] {
+        [
+            Some(("Aa", self.case_toggle, SearchHit::ToggleCase)),
+            self.previous.map(|rect| ("<", rect, SearchHit::Previous)),
+            self.next.map(|rect| (">", rect, SearchHit::Next)),
+            Some(("x", self.close, SearchHit::Close)),
+            replace_visible.then_some(("R", self.replace, SearchHit::Replace)),
+            replace_visible.then_some(("All", self.replace_all, SearchHit::ReplaceAll)),
+        ]
     }
 
     pub(super) fn hit(
@@ -166,26 +254,18 @@ impl SearchLayout {
         position: PhysicalPosition<f64>,
         replace_visible: bool,
     ) -> Option<SearchHit> {
-        for (rect, hit) in [
-            (self.query, SearchHit::Query),
-            (self.case_toggle, SearchHit::ToggleCase),
-            (self.previous, SearchHit::Previous),
-            (self.next, SearchHit::Next),
-            (self.close, SearchHit::Close),
-        ] {
+        let fields = [
+            Some((self.query, SearchHit::Query)),
+            replace_visible.then_some((self.replacement, SearchHit::Replacement)),
+        ];
+        let buttons = self.buttons(replace_visible);
+        let buttons = buttons
+            .into_iter()
+            .flatten()
+            .map(|(_, rect, hit)| (rect, hit));
+        for (rect, hit) in fields.into_iter().flatten().chain(buttons) {
             if rect.contains(position) {
                 return Some(hit);
-            }
-        }
-        if replace_visible {
-            for (rect, hit) in [
-                (self.replacement, SearchHit::Replacement),
-                (self.replace, SearchHit::Replace),
-                (self.replace_all, SearchHit::ReplaceAll),
-            ] {
-                if rect.contains(position) {
-                    return Some(hit);
-                }
             }
         }
         self.popup.contains(position).then_some(SearchHit::Query)
@@ -200,7 +280,7 @@ impl SearchLayout {
             SearchField::Query => self.query,
             SearchField::Replacement => self.replacement,
         };
-        let inset = 5.0 * scale.max(0.5);
+        let inset = self.text_inset;
         stickymd_render::source::UiTextSpec {
             x: rect.x + inset,
             y: rect.y + 3.0 * scale.max(0.5),
@@ -237,12 +317,8 @@ pub(super) fn paint_search_overlay(
             field
         },
     );
-    for rect in [
-        layout.case_toggle,
-        layout.previous,
-        layout.next,
-        layout.close,
-    ] {
+    let buttons = layout.buttons(search.replace_visible).into_iter().flatten();
+    for (_, rect, _) in buttons.clone() {
         fill(pixmap, rect, field);
     }
     if search.case_sensitive {
@@ -258,8 +334,6 @@ pub(super) fn paint_search_overlay(
                 field
             },
         );
-        fill(pixmap, layout.replace, field);
-        fill(pixmap, layout.replace_all, field);
     }
     let (query_display, query_cursor) = search_field_display(search, SearchField::Query);
     let (replacement, replacement_cursor) = search_field_display(search, SearchField::Replacement);
@@ -295,41 +369,21 @@ pub(super) fn paint_search_overlay(
                 projection.paint_ui_text(pixmap, &replacement, replacement_spec, source_theme);
             }
         }
-        for (label, rect) in [
-            ("Aa", layout.case_toggle),
-            ("<", layout.previous),
-            (">", layout.next),
-            ("x", layout.close),
-        ] {
-            projection.paint_ui_text(
-                pixmap,
-                label,
-                stickymd_render::source::UiTextSpec {
-                    x: rect.x + 4.0 * scale,
-                    y: rect.y + 3.0 * scale,
-                    width: (rect.width - 8.0 * scale).max(1.0),
-                    scale,
-                },
-                source_theme,
-            );
-        }
-        if search.replace_visible {
-            for (label, rect) in [("R", layout.replace), ("All", layout.replace_all)] {
-                projection.paint_ui_text(
-                    pixmap,
-                    label,
-                    stickymd_render::source::UiTextSpec {
-                        x: rect.x + 4.0 * scale,
-                        y: rect.y + 3.0 * scale,
-                        width: (rect.width - 8.0 * scale).max(1.0),
-                        scale,
-                    },
-                    source_theme,
-                );
-            }
+        for (label, rect, _) in buttons {
+            projection.paint_ui_text(pixmap, label, label_spec(rect, scale), source_theme);
         }
     } else {
         paint_markers(pixmap, layout, scale, dark, search.replace_visible);
+    }
+}
+
+/// Where a button's label is painted: padded inside the button and clipped to it.
+fn label_spec(rect: SearchRect, scale: f32) -> stickymd_render::source::UiTextSpec {
+    stickymd_render::source::UiTextSpec {
+        x: rect.x + 4.0 * scale,
+        y: rect.y + 3.0 * scale,
+        width: (rect.width - 8.0 * scale).max(1.0),
+        scale,
     }
 }
 
@@ -366,26 +420,18 @@ fn paint_markers(
         (58, 57, 53, 255)
     };
     let line = scale.max(1.0);
-    fill(
-        pixmap,
-        SearchRect {
-            x: layout.previous.x + 8.0 * scale,
-            y: layout.previous.y + 13.0 * scale,
-            width: 10.0 * scale,
-            height: line,
-        },
-        ink,
-    );
-    fill(
-        pixmap,
-        SearchRect {
-            x: layout.next.x + 8.0 * scale,
-            y: layout.next.y + 13.0 * scale,
-            width: 10.0 * scale,
-            height: line,
-        },
-        ink,
-    );
+    for rect in [layout.previous, layout.next].into_iter().flatten() {
+        fill(
+            pixmap,
+            SearchRect {
+                x: rect.x + 8.0 * scale,
+                y: rect.y + 13.0 * scale,
+                width: 10.0 * scale,
+                height: line,
+            },
+            ink,
+        );
+    }
     fill(pixmap, inset(layout.close, 9.0 * scale), ink);
     if replace_visible {
         fill(pixmap, inset(layout.replace, 8.0 * scale), ink);
@@ -406,32 +452,144 @@ fn fill(pixmap: &mut Pixmap, rect: SearchRect, color: (u8, u8, u8, u8)) {
 mod tests {
     use super::*;
 
+    use super::super::preview_runtime::{ViewGeometry, geometry};
+    use crate::config::ViewMode;
+
+    /// The least room field text gets in any view, in DIP: about one and a half CJK glyphs, or
+    /// three Latin ones, at the 13-DIP UI font.
+    const FIELD_TEXT_MIN_DIP: f32 = 20.0;
+
+    /// The real Source and Split views at four window sizes in DIP, the 220x120 minimum among
+    /// them, and four DPIs: (label, view, scale).
+    fn views() -> Vec<(String, ViewGeometry, f32)> {
+        let mut views = Vec::new();
+        for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+            for (width, height) in [
+                (520.0, 680.0),
+                (220.0, 120.0),
+                (330.0, 360.0),
+                (1200.0, 900.0),
+            ] {
+                let size = winit::dpi::PhysicalSize::new(
+                    (width * scale).round() as u32,
+                    (height * scale).round() as u32,
+                );
+                for mode in [ViewMode::Source, ViewMode::Split] {
+                    let label = format!("{mode:?} {width}x{height} DIP at {scale}");
+                    views.push((label, geometry(mode, size, scale), scale));
+                }
+            }
+        }
+        views
+    }
+
+    fn overlap(a: SearchRect, b: SearchRect) -> bool {
+        a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+    }
+
+    /// Plan 07: in every real view, size and DPI each field leaves at least
+    /// `FIELD_TEXT_MIN_DIP` for its text, and each button's label, as Cosmic Text shapes it,
+    /// fits inside the button's label padding. Fields and buttons stay inside the panel without
+    /// overlapping, and a press on each button reaches it. A Source pane whose full tier would
+    /// leave the query less than 40 DIP of text takes the compact tier: no `< >` buttons, so
+    /// no press reaches Previous or Next.
     #[test]
-    fn search_overlay_keeps_fields_and_actions_inside_normal_source_pane() {
-        let layout = SearchLayout::new(
-            super::super::preview_runtime::PaneRect {
-                x: 0,
-                y: 34,
-                width: 520,
-                height: 646,
-            },
-            1.0,
-            true,
-        );
-        for rect in [
-            layout.query,
-            layout.replacement,
-            layout.case_toggle,
-            layout.previous,
-            layout.next,
-            layout.close,
-            layout.replace,
-            layout.replace_all,
-        ] {
-            assert!(rect.x >= layout.popup.x);
-            assert!(rect.y >= layout.popup.y);
-            assert!(rect.x + rect.width <= layout.popup.x + layout.popup.width + 0.01);
-            assert!(rect.y + rect.height <= layout.popup.y + layout.popup.height + 0.01);
+    fn every_view_leaves_readable_fields_and_whole_button_labels() {
+        use stickymd_core::{DocumentState, LineEnding};
+        use stickymd_render::source::{SourceProjection, UiTextSpec};
+
+        let snapshot = DocumentState::loaded("", LineEnding::Lf, None).snapshot();
+        let mut projection = SourceProjection::new(&snapshot, 200, 100, 1.0);
+        let mut tiers_seen = [false; 2];
+        for (label, view, scale) in views() {
+            let pane = view.source.unwrap();
+            for replace in [false, true] {
+                let layout = SearchLayout::new(pane, scale, replace);
+                let label = format!("{label}, replace {replace}");
+                let popup = layout.popup;
+                let compact = layout.previous.is_none();
+                assert_eq!(layout.next.is_none(), compact, "{label}");
+                tiers_seen[usize::from(compact)] = true;
+                let mut rects = vec![layout.query];
+                for field in [SearchField::Query, SearchField::Replacement] {
+                    if field == SearchField::Replacement && !replace {
+                        continue;
+                    }
+                    let room = layout.field_spec(field, scale).width / scale;
+                    assert!(
+                        room >= FIELD_TEXT_MIN_DIP,
+                        "{label}: {field:?} leaves {room} DIP for text"
+                    );
+                }
+                if replace {
+                    rects.push(layout.replacement);
+                }
+                for (text, rect, hit) in layout.buttons(replace).into_iter().flatten() {
+                    let spec = label_spec(rect, scale);
+                    let wide = UiTextSpec {
+                        width: 1000.0 * scale,
+                        ..spec
+                    };
+                    let advance = projection
+                        .ui_text_field_caret(text, text.len(), wide)
+                        .expect("a label end is a char boundary")
+                        .x
+                        - spec.x;
+                    assert!(
+                        advance <= spec.width,
+                        "{label}: {text:?} needs {} DIP of {}",
+                        advance / scale,
+                        spec.width / scale
+                    );
+                    let center = PhysicalPosition::new(
+                        f64::from(rect.x + rect.width / 2.0),
+                        f64::from(rect.y + rect.height / 2.0),
+                    );
+                    assert_eq!(layout.hit(center, replace), Some(hit), "{label}: {text:?}");
+                    rects.push(rect);
+                }
+                for (index, rect) in rects.iter().enumerate() {
+                    assert!(
+                        rect.x >= popup.x - 0.01
+                            && rect.y >= popup.y - 0.01
+                            && rect.x + rect.width <= popup.x + popup.width + 0.01
+                            && rect.y + rect.height <= popup.y + popup.height + 0.01,
+                        "{label}: {rect:?} outside {popup:?}"
+                    );
+                    for other in &rects[index + 1..] {
+                        assert!(!overlap(*rect, *other), "{label}: {rect:?} meets {other:?}");
+                    }
+                }
+                if compact {
+                    for step_x in 0..=40 {
+                        for step_y in 0..=20 {
+                            let position = PhysicalPosition::new(
+                                f64::from(popup.x + popup.width * step_x as f32 / 40.0),
+                                f64::from(popup.y + popup.height * step_y as f32 / 20.0),
+                            );
+                            let hit = layout.hit(position, replace);
+                            assert!(
+                                !matches!(hit, Some(SearchHit::Previous | SearchHit::Next)),
+                                "{label}: {position:?} reaches {hit:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(tiers_seen, [true, true], "both tiers are exercised");
+    }
+
+    /// The tier each real view takes: the minimum Split and the 330-DIP Split are compact; the
+    /// default 520-DIP Split and every Source view at these sizes keep the full tier.
+    #[test]
+    fn narrow_source_panes_take_the_compact_tier() {
+        for (label, view, scale) in views() {
+            let compact = SearchLayout::new(view.source.unwrap(), scale, true)
+                .previous
+                .is_none();
+            let expected = label.starts_with("Split 220x") || label.starts_with("Split 330x");
+            assert_eq!(compact, expected, "{label}");
         }
     }
 
@@ -442,45 +600,30 @@ mod tests {
     #[test]
     fn the_panel_is_a_narrow_strip_at_the_source_pane_top_right() {
         use super::super::controls::split_sync_rect;
-        use super::super::preview_runtime::geometry;
-        use crate::config::ViewMode;
-        use winit::dpi::PhysicalSize;
-        for scale in [1.0_f32, 1.25, 1.5, 2.0] {
-            for (width, height) in [
-                (520.0, 680.0),
-                (220.0, 120.0),
-                (330.0, 360.0),
-                (1200.0, 900.0),
-            ] {
-                let size = PhysicalSize::new(
-                    (width * scale).round() as u32,
-                    (height * scale).round() as u32,
+        for (label, view, scale) in views() {
+            let pane = view.source.unwrap();
+            for replace in [false, true] {
+                let layout = SearchLayout::new(pane, scale, replace);
+                let popup = layout.popup;
+                let (left, right) = (pane.x as f32, (pane.x + pane.width) as f32);
+                assert!(
+                    (popup.x + popup.width - right).abs() < 0.01,
+                    "{label}: right edge"
                 );
-                for mode in [ViewMode::Source, ViewMode::Split] {
-                    let view = geometry(mode, size, scale);
-                    let pane = view.source.unwrap();
-                    let label = format!("{mode:?} {size:?} at {scale}");
-                    for replace in [false, true] {
-                        let layout = SearchLayout::new(pane, scale, replace);
-                        let popup = layout.popup;
-                        let (left, right) = (pane.x as f32, (pane.x + pane.width) as f32);
-                        assert!(
-                            (popup.x + popup.width - right).abs() < 0.01,
-                            "{label}: right edge"
-                        );
-                        assert!(popup.x >= left - 0.01, "{label}: left edge");
-                        let expected = (pane.width as f32).min(PANEL_MAX_WIDTH_DIP * scale);
-                        assert!((popup.width - expected).abs() < 0.01, "{label}: width");
-                        assert_eq!(popup.y, pane.y as f32, "{label}: top");
-                        if let Some(divider) = view.divider_x {
-                            let sync =
-                                split_sync_rect(divider, view.toolbar_height, f64::from(scale));
-                            assert!(
-                                f64::from(popup.x + popup.width) <= sync.x,
-                                "{label}: the panel meets the sync button {sync:?}"
-                            );
-                        }
-                    }
+                assert!(popup.x >= left - 0.01, "{label}: left edge");
+                let expected = (pane.width as f32).min(PANEL_MAX_WIDTH_DIP * scale);
+                assert!((popup.width - expected).abs() < 0.01, "{label}: width");
+                assert_eq!(popup.y, pane.y as f32, "{label}: top");
+                assert!(
+                    popup.y + popup.height <= (pane.y + pane.height) as f32 + 0.01,
+                    "{label}: bottom"
+                );
+                if let Some(divider) = view.divider_x {
+                    let sync = split_sync_rect(divider, view.toolbar_height, f64::from(scale));
+                    assert!(
+                        f64::from(popup.x + popup.width) <= sync.x,
+                        "{label}: the panel meets the sync button {sync:?}"
+                    );
                 }
             }
         }
@@ -511,36 +654,6 @@ mod tests {
             );
             for alpha in [colors.field.3, colors.active.3] {
                 assert!(alpha >= 208 && alpha > background, "dark {dark}: {alpha}");
-            }
-        }
-    }
-
-    #[test]
-    fn search_overlay_stays_inside_compact_split_source_pane() {
-        for scale in [1.0, 1.25, 1.5, 2.0] {
-            let width = (109.0_f32 * scale).round() as u32;
-            let layout = SearchLayout::new(
-                super::super::preview_runtime::PaneRect {
-                    x: 0,
-                    y: (34.0_f32 * scale).round() as u32,
-                    width,
-                    height: (86.0_f32 * scale).round() as u32,
-                },
-                scale,
-                true,
-            );
-            for rect in [
-                layout.query,
-                layout.replacement,
-                layout.case_toggle,
-                layout.previous,
-                layout.next,
-                layout.close,
-                layout.replace,
-                layout.replace_all,
-            ] {
-                assert!(rect.x >= layout.popup.x);
-                assert!(rect.x + rect.width <= layout.popup.x + layout.popup.width + 0.01);
             }
         }
     }

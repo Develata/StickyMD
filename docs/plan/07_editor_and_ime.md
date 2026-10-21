@@ -86,7 +86,8 @@
   输入框。范围永远是当前单一 canonical `note.md`，不做跨文件搜索、不支持正则。
 - Find-only 状态在 state reducer 和 command boundary 都必须禁止 Replace Current / Replace All；
   不能仅隐藏按钮后仍让快捷键以空 replacement 修改文档。替换面板提供 query、replacement、
-  大小写开关、上一个/下一个、替换与全部替换。
+  大小写开关、上一个/下一个、替换与全部替换；窄 Source pane 的紧凑档省略上一个/下一个按钮（见下文
+  面板分档），导航仍由键盘完成。
 - query、replacement、active match 与 match ranges 属 Editor Session projection。match ranges 必须绑定
   Document generation；任何 canonical mutation 后先重新扫描，再允许导航或替换 stale range。大小写
   敏感开关默认关闭，关闭 session 后不写入配置。
@@ -126,6 +127,11 @@
   面板背景约半透明、输入框与按钮接近不透明以保证查询文字可读；透明度相对正文、与窗口透明度无关。
   面板覆盖处的按下归面板（被覆盖的正文可见但不可点），窗口原生 resize 边框与更高层的透明度弹层除外。
   （USER 决定，2026-10-21。）
+- 面板分两档：完整档在 query 旁排 `Aa < > x`；完整档留给 query 文字的宽度不足 40 DIP 时（如 220×120
+  最小窗口或 330 DIP 宽窗口的 Split）改用紧凑档，收紧边距、间距与文字内距，只保留 `Aa` 与 `x`，
+  replacement 行保留替换与全部替换，省略上一个/下一个按钮。导航的合同是 Enter/Shift+Enter、Up/Down
+  与 F3/Shift+F3，按钮只是它的投影。任一档下每个输入框至少留 20 DIP 文字宽度，按钮标签完整落在按钮内；
+  被省略的按钮既不绘制也不响应按下。（USER 决定，2026-10-21。）
 - 鼠标点击输入框必须按该字段的真实 cluster geometry 设置 cursor；找不到安全 cluster boundary 时
   取最近合法 UTF-8 boundary。selection 当前不属于 v1 输入框合同，不得为此引入第二套编辑器。
 - 真实 Microsoft Pinyin / WeChat Input Method 的 composition、commit、cancel、Undo、selection replace、

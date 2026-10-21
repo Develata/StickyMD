@@ -474,4 +474,5 @@ exact 候选（G4、G5）仍只打开弹层。
 时不打开在 `open_search`；视图与缩放快捷键在 `app/input.rs::handle_key` 中先于 Search 判定（`window_key`，Search 字段 composition 期间不判定），恢复时选区跟随 active match（`resume_search`）。`StickyApp` 接线不由测试执行。
 
 2026-10-21 USER 决定（Search 面板位置与透明度）：Plan 07 `source-find-replace` → [phase-03](acceptance-cases/phase-03.md) 的 2026-10-21 补充。面板矩形在
-`app/search_runtime.rs::SearchLayout::new`（Source pane 右上角，宽度上限 `PANEL_MAX_WIDTH_DIP`），填充色在 `panel_colors`；点击、绘制与 IME 区域都取同一 `SearchLayout`。
+`app/search_runtime.rs::SearchLayout::new`（Source pane 右上角，宽度上限 `PANEL_MAX_WIDTH_DIP`），填充色在 `panel_colors`；点击、绘制与 IME 区域都取同一 `SearchLayout`。窄 pane 的紧凑档由
+`Tier::for_panel`（阈值 `FULL_QUERY_TEXT_MIN_DIP`）选择，按钮清单 `SearchLayout::buttons` 供绘制与命中共用。
