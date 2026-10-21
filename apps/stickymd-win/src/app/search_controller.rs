@@ -346,8 +346,8 @@ impl StickyApp {
                 let end = replacement_end(&effect, &range);
                 // Applying the change rescans Search against the new text.
                 self.apply_effect(effect);
-                // The next match is searched for after the inserted text, so a replacement that
-                // contains the query is never replaced again in place.
+                // The next match is searched for after the inserted text, so while a later match
+                // exists a replacement that contains the query is not replaced again in place.
                 self.search.activate_from(end);
             }
             Err(error) => {
@@ -601,6 +601,16 @@ mod tests {
         assert_eq!(press(&mut coordinator, &mut search, "aa"), "aa b aa");
         // Past the last match, navigation wraps to the first, as Enter does.
         assert_eq!(search.active_range(), Some(0..1));
+
+        // With no later match the wrap lands in the text just inserted, as the contract says.
+        let mut search = crate::interaction::SearchSession::default();
+        let document = DocumentState::loaded("a", LineEnding::Lf, None);
+        let mut coordinator = EditorCoordinator::new(document, NoClipboard);
+        let view = coordinator.view();
+        search.open(true, Some("a"), view.text, view.generation);
+        assert_eq!(press(&mut coordinator, &mut search, "aa"), "aa");
+        assert_eq!(search.active_range(), Some(0..1));
+        assert_eq!(press(&mut coordinator, &mut search, "aa"), "aaa");
 
         // A replacement equal to the match changes nothing and still moves on.
         let mut search = crate::interaction::SearchSession::default();

@@ -98,7 +98,9 @@ from the [release checklist](../release-checklist.md).
   select the active match, so repeated Ctrl+Enter or Replace clicks replace one match per press as before. After a
   replacement (or a replacement equal to the match, which changes nothing) the next active match is the first one
   starting at or after the end of the inserted text, wrapping to the first: replacing `a` by `aa` in `a b a` moves on
-  to the second `a` instead of growing the first. Replace All is unchanged.
+  to the second `a` instead of growing the first. With no later match it wraps, which can land in text inserted
+  earlier (a lone `a` becomes `aa`, then `aaa`); with a truncated projection (`+`) it moves and wraps within the
+  retained matches, as navigation does. Replace All is unchanged.
 - Failure signals: a replacement of text that was not selected; a first press after a reload that changes the
   document; a normal replace sequence, by keyboard or by mouse, needing two presses per match.
 - Automated entry: `app::search_controller::tests::{replace_current_replaces_only_the_selected_active_match,

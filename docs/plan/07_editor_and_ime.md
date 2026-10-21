@@ -101,7 +101,8 @@
   选区可能不再是 active match；此时第一次 Replace Current 只选中并显示 active match，不修改文档，
   再次执行才替换。替换并重新扫描后，active match 取插入内容末尾（edit 留下的 caret；replacement 与
   原文相同的 no-op 取原 match 末尾）处或之后起始的第一个 match，没有则回绕到第一个，并选中它；
-  replacement 含 query 时也不会在原处反复替换。
+  之后还有 match 时，replacement 含 query 也不会在原处反复替换；回绕后可能再次命中先前插入的内容。
+  match projection 有上限（超出时计数带 `+`），导航与替换后的下一个 match 只在保留的 match 中前进与回绕。
 - replace 成功后正常触发 dirty/autosave/Preview；零匹配是完整 no-op。IME preedit 期间禁止替换，
   打开控件不得隐式提交、取消或污染 composition。
 - Search 属于 Source pane。切到没有 Source pane 的视图（Preview）时，打开的 Search 被停放：保留
