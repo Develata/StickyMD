@@ -6,5 +6,5 @@ mod navigation;
 mod search;
 mod session;
 
-pub use search::{SearchField, SearchSession};
+pub use search::{ParkedSearch, SearchField, SearchSession};
 pub use session::{EditorSession, ImeSignal};

@@ -8,6 +8,8 @@ mod development;
 mod evidence;
 mod governance;
 mod headless;
+#[cfg(any(windows, test))]
+mod input_injection;
 mod integrity;
 #[cfg(windows)]
 mod managed_process;
@@ -30,6 +32,7 @@ mod startup_details;
 mod startup_timing;
 mod startup_trace;
 mod timing_summary;
+mod unit_owners;
 #[cfg(windows)]
 mod window_control;
 

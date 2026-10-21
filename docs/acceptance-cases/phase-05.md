@@ -117,6 +117,92 @@ This supplements P05-A03/A05/A12 and AC-013/014 under the existing GFM and sourc
   This local evidence does not qualify a release artifact. Physical dragging, real IME and the complete theme/DPI
   visual matrix remain `NOT TESTED`.
 
+2026-10-16 supplement: the gesture decisions now live in pure code that the runtime only applies.
+`app::scrollbar` decides hover and drag emphasis, live drag targets, track paging (90% of the pane), the end of a drag
+and which bars are operable (none while the window rejects edits; no Preview thumb for a stale frame), and
+`app::preview_runtime::completion_route` lets only a completion for the current document and viewport reach admission.
+Automated entry: `cargo test -p stickymd-win --locked -- scrollbar completion_route`. Status: `AUTOMATED PASS`.
+The extractions keep the original early exits: bar geometry is read only while the window accepts edits, the Preview
+viewport only for a visible completion of the current document.
+The winit wiring of these decisions is still not exercised by a test.
+
+2026-10-17 supplement (C2b-3): the gutter under the cursor is decided by the pure `app::scrollbar::gutter_at` (the
+`GUTTER_DIP` band right of each pane over its height, scaled by DPI), tested on its own at 100% and 150% on both sides
+of each of its four edges for both panes. The scrollbar
+tests now also assert, in a Split, that hovering or dragging either pane emphasizes only that pane's bar, and that over all nine hover × drag states a bar is emphasized exactly when it is
+hovered or dragged; that the
+emphasized thumb is wider than the painted resting thumb over the same rows, inside the track, at every DPI; that inside
+the track a drag keeps the grabbed point under the pointer for two grab offsets; that a press on the Preview track pages
+the Preview pane, and that on every edge of either track the last pixel inside pages its pane while the first pixel
+outside hits no bar, and the thumb's first and last rows start a drag while the track just above it and at its end pages; a quarter-pixel
+sweep over and two pixels around each track, for seven bars at 100% DPI whose thumbs start and end between and on pixels, matches the
+half-open track and thumb intervals; so does, at 100/125/150/200% DPI with and without the Split control inset over
+4 thumb sizes x 41 positions, a quarter-pixel sweep across each track two pixels beyond both sides and down it within two
+pixels of the track's and the thumb's ends, plus presses at each stored thumb boundary and the float just below it (that
+float is skipped where the thumb boundary meets a track end, since the hit test reads the pointer as `f32`; those track
+ends are covered by the whole- and quarter-pixel presses); every press also checks whether it started a drag; and that `scroll_to_fraction(1.0)` / `(0.0)` show the last / first Source row whole inside the viewport,
+for many short lines and for one wrapped line. Nine
+plan 09 manual obligations are owned by these and the title / persistence unit tests through P14-A81.
+Automated entry: `cargo test -p stickymd-win --locked -- app::scrollbar` and
+`cargo test -p stickymd-render --lib --locked -- source::scrollbar`. Status: `AUTOMATED PASS`.
+
+2026-10-19 supplement (C2b-4): the runtime's remaining scroll decisions are pure functions it only calls:
+`app::scrollbar::view_bars` (the bars of the panes a view shows, from the Source metrics and the Preview frame's cached
+document height, offset and currency), `preview_offset_at` (a thumb fraction to a Preview offset) and
+`preview_offset_by` (a page within the document). The tests assert, at 100% and 150% DPI in Source, Preview and Split,
+that exactly the shown panes get a bar on their own content rect, that a short note (Source fully visible, or a Preview
+document no taller than its pane) shows no thumb while a long pane beside it keeps its thumb, and that a stale frame
+shows no Preview thumb without affecting the Source bar; that a fraction of 0 / 1 shows the Preview start / last screen,
+linearly in between and read back by the bar, and that pages move by exactly their pixels in both directions and stop
+at both ends; that the thumb is the visible share of the track, never under 24 DIP at the window's DPI nor the whole
+track, moving linearly from top to bottom (1000 visible shares x 4 DPIs x with and without the Split inset); that
+`geometry()` reserves exactly the scaled gutter right of each pane in every view, DPI and four window sizes, with each
+track inside its gutter, clear of the real resize hit test and of the Split sync button; that on a 2000-line note whose
+every line wraps, the Source end is measured once (laying out fewer than 40 lines) and reused until the geometry
+changes, and a pointer-like run of jumps lays out only around each target and reads its fraction back to within a
+thousandth of a line; that a Source page moves the viewport by exactly its pixels both ways, stopping at both ends; and
+that a Preview receipt for an older offset is only relaid out, never shown. Eleven plan 09 scrollbar and opacity
+obligations are owned by these and the opacity drag test through P14-A81. Still named gaps: the split sync switch, the
+short-note gutter and Content Zoom independence at run time (the owner calls `geometry()` directly), a press in the
+gutter, live drag application, the ends of a drag, viewport-only scrolling, the cached Preview document height at run
+time, the Preview currency decision (`preview_layout_is_current`) and the receipt entry's full identity check, the
+opacity field (it takes at most three unsigned digits; USER decision D5 opens the input and clamps on commit, not yet
+implemented), and the
+quit-cancelled notice's run-time wiring (its decisions and two lexical source guards are tested, the effect handling
+and event-pass settling are not).
+Automated entry: `cargo test -p stickymd-win --locked -- app::scrollbar app::window_interaction app::preview_runtime
+app::controls app::title app::guards` and `cargo test -p stickymd-render --lib --locked -- source::scrollbar`.
+Status: `AUTOMATED PASS`.
+
+2026-10-20 supplement (USER decision D5): the opacity field keeps every character it is given (a key whose text is a
+control character, such as Tab, is not a typing key); focusing it, or the slider or a commit writing it, selects its
+value, so the next key or Backspace replaces all of it; a commit reads only an integer (`-` and ASCII digits) and clamps
+it into 40–100 whatever its length, and any other entry, such as AC-024's 96.5, commits nothing; while focused the field
+paints the end of the typed text (digits, `-` and `.` as themselves, any other character as a question mark). While it is
+edited the field takes every key that Esc, F6/F7, save and export leave (the place Search has in the key order): Enter
+commits (not Ctrl+Enter) and keeps its auto-repeats and release, Backspace deletes, text without Ctrl, Alt or Win is typed
+and any other key is dropped, so none reaches the note or Search; the keys winit synthesizes when the window gains or
+loses focus are ignored. The field is numeric: it is not focused while the note or Search is composing, the IME is off
+while it is edited, and an IME commit that still arrives is typed and a composition dropped, while the end of a
+composition goes on to its owner. The IME follows whoever takes the keyboard in that key order (the edited field: off; a
+drawn Search: on, while Preview parks an open Search (phase-03 2026-10-20) and the layout check only guards an undrawn one; focused Preview: off; the note:
+on), at every site that changes it (window focus, input going away or coming back, a press on Preview or the note,
+opening Search or closing it by any of its ways, a view change, the field's edit starting or ending). The open popup takes
+every press inside it and shows its cursor there, refreshed when it opens or closes while the pointer is over the window
+and when the pointer comes back; a press that lands on no pane changes no focus; a press anywhere else in the
+popup, the window losing focus, hiding or quitting ends the edit and commits an integer (else the value is shown again).
+The C2b-4 opacity `range-and-input` gap is now owned by `app::controls::phase8_control_tests::{
+the_opacity_range_is_40_to_100_in_integer_steps, the_opacity_field_edits_like_a_selected_text_field,
+the_opacity_field_takes_keys_while_edited_and_commits_when_it_ends, the_key_that_ends_an_edit_keeps_its_repeats_and_release}`
+and `app::window_interaction::phase8_interaction_tests::{the_edited_opacity_field_types_only_plain_text,
+the_edited_opacity_field_leaves_the_end_of_a_composition_to_its_owner}` through P14-A81, because exact runs cannot stably
+produce that state space; `the_open_popup_takes_every_press_inside_it` proves where a press lands and
+`the_ime_follows_whoever_takes_the_keyboard` the IME decision. The key order, the Enter claim, the synthetic-key filter,
+the focus refusal, applying the IME decision at each site, the cursor refresh and the blur, hide and quit commits are wired
+in `StickyApp` and are not executed by these tests, and delivering real keys stays with the G4 numeric-input obligations
+(P08-D022). Automated entry: `cargo test -p stickymd-win --locked -- app::controls app::window_interaction
+app::toolbar_paint`. Status: `AUTOMATED PASS`.
+
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
 

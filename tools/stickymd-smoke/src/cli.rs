@@ -1099,6 +1099,35 @@ mod tests {
         values.iter().map(|value| (*value).to_owned())
     }
 
+    /// `--case` accepts exactly the declared exact cases of each group, and on Windows names
+    /// each one by its declared id.
+    #[test]
+    fn exact_case_options_are_the_declared_cases() {
+        use crate::qualification::exact_checks::{DeclaredCase, G3, G4, G5};
+        fn accepted<T>(group: &str, parse: impl Fn(&str) -> Result<T, String>) -> Vec<String> {
+            (0..100)
+                .map(|number| format!("{group}-{number:02}"))
+                .filter(|id| parse(id).is_ok())
+                .collect()
+        }
+        let ids = |cases: &[DeclaredCase]| cases.iter().map(|case| case.id).collect::<Vec<_>>();
+        assert_eq!(accepted("G3", super::G3Case::parse), ids(G3));
+        assert_eq!(accepted("G4", super::G4Case::parse), ids(G4));
+        assert_eq!(accepted("G5", super::G5Case::parse), ids(G5));
+        #[cfg(windows)]
+        for case in G3 {
+            assert_eq!(super::G3Case::parse(case.id).unwrap().as_str(), case.id);
+        }
+        #[cfg(windows)]
+        for case in G4 {
+            assert_eq!(super::G4Case::parse(case.id).unwrap().as_str(), case.id);
+        }
+        #[cfg(windows)]
+        for case in G5 {
+            assert_eq!(super::G5Case::parse(case.id).unwrap().as_str(), case.id);
+        }
+    }
+
     #[test]
     fn parses_phase_and_explicit_modes() {
         let options = Options::parse(args(&["phase", "03", "--performance", "--runtime"]))

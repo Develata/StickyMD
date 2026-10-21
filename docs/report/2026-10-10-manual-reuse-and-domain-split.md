@@ -1001,3 +1001,1525 @@ candidate 读取；链接解析后的目录同样受防护，未发现 `\?\` 写
 NEEDS_VERIFICATION：同一 promoted candidate 上的真实导出 → 独立记录 → 导入（含回答落盘后中断、重复与增长包导入、旧任务
 不能解除新 FAIL），以及无仓库、Rust、VS 与额外 VC runtime 的 Clean VM 运行和 M34 顺序，仍未执行，留待 v0.1.3 候选资格化时
 完成。
+
+## 覆盖补全批设计（2026-10-15，经 11 轮审查 AGREE）
+
+范围：把 Phase 8 人工义务与 plan 09 的相关断言映射进 P12 人工注册表（USER 2026-10-14 决定的"3-A 之后单独一批"）。gpt-6-astra
+（effort max）第 11 轮 AGREE（0 BLOCKER、0 SHOULD_FIX），条件是下文四项 USER 决定获批并先更新相关 plan。工作稿与逐轮审查在被
+忽略的 `target/review-evidence/coverage-r1..r11/`；以下是有效内容。
+
+### 原则
+
+- 客观、可由 exact candidate 机器判定的断言归 G3/G4 exact 自动化（扩展现有 case）；人工只保留视觉判断、真实 Explorer / 前台交互
+  与托盘辨识。映射完整不等于验收通过。
+- 只映射已有义务，不发明产品需求；需要的产品改动先进入 plan。
+
+### 义务表与治理
+
+- manual-only 模块 `manual_observation/coverage.rs` 声明义务 `(来源, 断言, 参数) → 目标`，目标为 `Manual{case, scenario}`、
+  `Exact{case, check}`、`Automated{test, mode}`（`unit` / `local-preflight` / `runtime-module`）、`Unit{test, rationale}`、
+  `Retired{decision, source, assertion, params}` 或 `Gap`；`KNOWN_GAPS` 由 `Gap` 推导，`Retired` 单独列出。
+- 完整性：`phase-08.md` 整张矩阵（62 个 Manual 行：15 个 P08-Mxx + 47 个 P08-Dxxx）与 plan 09 的 Esc / 滚动条 / 透明度 / 退出条款
+  按区段与逐条款绑定文本摘要和条数；每个 `(source, assertion_id)` 声明必需参数集合，覆盖只在同一断言内合并；反例测试覆盖追加
+  条款、删减参数、跨断言掩盖、重复、未知 ID 与格式异常。退役决定只授权其列出的条目。C1 交付完整的子断言 × 参数展开表送审。
+- exact 检查标签进入共享收据验证器 `module_evidence`（全局输入）：每个 G3/G4 case 声明必需检查集合，标签带参数身份；缺失、重复、
+  错 case、非成功与未知 schema 均拒绝；记录由检查函数自身产生；按 plan 11 的模块指纹与 origin identity 复用。
+
+### 映射要点
+
+- 人工新增场景：M01/M02 加左 / 右 / 上 dock 下的候选窗视觉；M05 加 `second-launch-hidden/minimized/docked` 与 `exit-save-failure`；
+  M11/M12 加 `undock-16dip`；M22 改为 40/70/96/100 四档；M23 加 `scrollbars`；M35 加 `primary-switch`、`secondary-right`（顶部对齐）、
+  `secondary-below`（左侧对齐）；M38–M40 的 dock 拆为左 / 右 / 上并加 `scrollbars`。
+- 新人工项：M45 两份便携副本（托盘辨识、各自显示 / 隐藏，Tier A）、M46 Windows 11 外壳视觉与操作（圆角阴影、置顶按钮、控件淡化、
+  边角调整大小、各模式控件集成，Tier A）、M47 100% DPI（Tier B）。"accessibility" 从 P08-M12 退役。
+- exact / automated 扩展：G4-06（Right/Top dock 组字不收起、96/100 透明度、composition 中 Esc 只取消 preedit）；G4-02（真实键盘 Esc
+  分支 1/4/5/6、Floating、Shift+Esc、重复 key-down 逐次独立、收起按钮、透明度三种提交与滑块拖动中 Esc）；G4-01（退出保存失败、
+  置顶双向同步与临时 sensor topmost 区分、Alt+F4）；G4-05（dock 收起状态下第二次启动）；G3-03（恢复待处理时 Esc 无变化的确定性
+  fixture，`tmp.mtime > note.mtime` 显式设置并回读，含正向对照；资产写入与移入 trash 的确定性强杀点）；P08-A11 正式 Runtime 收据
+  扩展（两份副本 note/config 双向不串写、退出 A 不影响 B）。
+- `Unit` 覆盖（待 USER 决定）：资产对账进行中、退出进行中两个 Esc 守卫状态（exact 层不可控），以及 Ctrl+Esc（系统快捷键），
+  经生产决策路径的单元测试，不证明原生投递。
+- 人工场景：每角色 55 → 96，两个角色 110 → 192；人工项 24 → 27。
+
+### 协议
+
+- **退出保存失败**：G4-01 与人工场景都按"保存基线 → 设只读并回读 → 输入新文本 → 确认未落盘 → 托盘退出"进行，所有路径显式恢复属性，
+  恢复失败不形成 PASS。因果由产品标题状态判定（待 USER 决定）：只由 `QuitCancelled(NoteSave)` 建立；`requires_note_barrier()`
+  （`dirty || durability_required || note_save_in_flight`）在一次完整的主线程事件处理之后为假时清除；载入外部时解除被取代的重建
+  义务；`update_window_title` 是唯一写入者，优先级为恢复 → 退出已取消：保存失败 → 冲突 → dirty → 公式 hover → 普通；固定字面值
+  `StickyMD * — 退出已取消：保存失败`。
+- **第二次启动**（严格激活，USER 决定）：记录器检查前置状态（隐藏 / `IsIconic` / 实际几何判定的 dock 收起），以带时间戳的采样记录到
+  转换开始；连续性与"双击先于恢复"由观察者声明；PASS 需可见恢复、展开、只剩原 PID、键入进入原窗口；已证实的产品失败（第二进程
+  超时存活、未恢复、原 PID 消失）必须可记 F；Windows 拒绝激活或证据不足记 N。
+- **TwoCopies**（M45，待 USER 决定）：PASS 要求提交时运行的 StickyMD 恰好是注册表声明的实例集合；观察 `instances: Vec`（日志
+  schema 3、观察包 schema 2），计数、PID 唯一与每个 EXE 摘要共用一个判定；不扩展到同目录第二次启动。
+- **输入注入**：五个直接注入点（Rust 键盘与鼠标、helper 的 Esc / 右击 / 重试 Esc）全部迁入一个 `cfg(panic = "unwind")` 注入模块
+  （abort 构建只有返回错误的桩），治理文本扫描禁止三种注入 API 出现在模块之外；先登记后注入，正常路径显式有界释放、`Drop` 兜底；
+  清理以 `SendInput` 插入数为准（短计数即失败；完整计数只证明进入输入流），保留现有鼠标左键释放采样（采到 Down 为失败，0 不证明
+  Up）；清理失败触发共享停止（后续注入输入的 G3/G4 case 不执行、不产生 PASS）；业务断言与清理分开判定。托盘菜单需核验从关闭到
+  打开的变化。
+
+### 需要 USER 决定（实施前）
+
+1. 退出取消标题状态及 plan 09 退出合同的补充（含上述建立、清除与优先级）。
+2. 上述 `Unit` 覆盖范围。
+3. TwoCopies 对 plan 11:315 单实例规则的例外（只适用于 M45；同步 P14-A76）。
+4. 双显示器右 / 下排列归 M35（Tier B）。
+
+已决定（2026-10-15）：严格激活；accessibility 退役；M45 A、M46 A、M47 B；PR #3 先行合并。
+
+### 分批与取证
+
+C1 义务表、治理、注册表与新项、文档；C2 exact / automated 扩展与收据标签；C3 记录器（TwoCopies、前置检查、只读 fixture）与日志 /
+观察包 schema。实施后取证：短计数与释放失败的共享停止、普通 unwind、托盘关闭到打开、实际 abort 二进制在有效环境下到达拒绝桩且
+零注入（绕过收据复用）、TwoCopies 各失败路径、记录器中断、属性恢复失败、观察包往返、确定性强杀边界。
+
+### Resolution（2026-10-15，覆盖补全批）
+
+USER 批准全部四项：(1) 退出取消标题状态，先补 plan 09 退出合同后实施；(2) 资产对账进行中、退出进行中两个 Esc 守卫状态与
+Ctrl+Esc 只由单元测试覆盖，验收中注明不证明原生投递；(3) TwoCopies 对 plan 11 单实例规则的例外，只适用于 M45，同步 P14-A76；
+(4) 双显示器右 / 下排列归 M35（Tier B）。实施按 C1 → C2 → C3 分批进行，每批先更新 plan，再更新投影与代码。
+
+## 覆盖补全 C1 实施记录（2026-10-15）
+
+范围：plan 与投影先行（plan 09 退出取消标题状态与标题优先级、plan 11 `被测实例` 的 TwoCopies 例外与 `人工义务映射`），
+然后是义务表、治理、注册表 v3 与新项。产品 runtime 不变；人工状态仍为 NOT TESTED。
+
+### 落地内容
+
+- **义务表**：`manual_observation/coverage.rs` 只含类型与查询（`gaps()`、`retired()`、`describe()`）；数据在
+  `coverage/table.rs`（217 项：人工场景 141、G3/G4 exact 25、其他自动化 8（`Unit` 7、`RuntimeModule` 1）、具名缺口 42、退役 1）。
+  需求表 `coverage/declared.rs`（`ASSERTIONS` 与 `RETIREMENTS`）只在测试中编译，runtime 只保留静态 `OBLIGATIONS`，
+  readiness 与 `acceptance manual list` 对它做一次线性过滤。
+- **治理测试**（`coverage/tests.rs`）：phase-08 的 62 个 Manual 行与 plan 09 Esc（6）、手工收起（1）、滚动条（7）、透明度（3）、
+  退出（3）按分段摘要与条数、逐条 16 位摘要前缀绑定；每个 `(来源, 断言)` 的参数集合精确相等（`BTreeMap`/`BTreeSet`，
+  O(n log n)），检查器对缩减、跨断言掩盖、重复与未知项的反例测试；所有者存在性一次解析后查找（注册表场景；G3/G4 源码中的
+  `id` 字面量集合，以文本读取避免耦合；Automated 验收行 ID 集合或节标题；退役决定唯一授权且记录在 phase-08）。
+- **注册表 v3**：27 项（Tier A 16、B 8、C 3），每角色 96 个场景；新增 P12-M45（`TwoCopies(Rendering)`）、P12-M46、P12-M47；
+  `KNOWN_GAPS` 删除，由义务表的 `Gap` 推导；readiness JSON 增加 `retired`。
+- **尚未有记录器程序的场景**：M05 的三个第二次启动场景与 `exit-save-failure`、M35 的 `secondary-right/below`，以及双副本
+  用例，在任何提示、采集或启动之前拒绝记录（`manual/flow.rs` 的 `AWAITING_RECORDER`）；schema 2 日志拒绝双副本观察。
+  它们在 C3 之前保持 NOT TESTED：M05 与 M45 作为 Tier A、M35 作为 Tier B 照常阻断，除非有绑定上下文的 USER waiver。
+- **投影**：phase-12 行文本与注册表逐字一致；phase-08 P08-M12 去掉 accessibility 并注明 `RETIRE-P08-M12-ACCESSIBILITY`；
+  guided G1/G2 步骤同步，新增 G2-07（M45）、G2-08（M46）；新增 P14-A79；coverage-matrix 映射。
+- **治理 ID 规则**：Phase 12 人工行按 Tier 分节，M45/M46 位于 Tier A、M47 位于 Tier B，因此 P12-M ID 检查改为排序后与
+  `1..=47` 精确相等（重复或缺号仍失败），P12-A 仍要求文档顺序。
+
+### 与设计稿的差异（均为分批推迟，不改变设计）
+
+- `Exact` 暂只绑定 case；逐检查标签与 `module_evidence` 校验随 C2 的 exact 扩展落地。
+- USER 批准的仅单元覆盖项（两个 Esc 守卫状态、Ctrl+Esc）与标题优先级的单元测试尚不存在，目前是具名 `Gap`，C2 补测试后改为
+  `Automated{mode: Unit}`；`local-preflight` 模式没有使用者，未声明。
+
+### 验证（2026-10-15）
+
+- Windows：`cargo fmt --all -- --check` 通过；`cargo clippy --workspace --all-targets --locked -- -D warnings` 通过；
+  `cargo test -p stickymd-smoke --locked`：单元 498 passed / 17 ignored，集成测试全部通过（含 26 个 CLI 退出测试）；
+  `stickymd-smoke phase 00` PASS。
+- Linux（WSL Debian 重放，表拆分前）：fmt、`clippy -p stickymd-smoke --all-targets -D warnings` 通过；tests 412 passed / 3 ignored、
+  19 passed。
+- 指纹：phase-08 验收文档是共享输入，本批使全部模块失效一次；完整 `dev-check` 结果见下文审查记录。
+
+### C1 代码审查第 1 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、5 SHOULD_FIX；逐项核实后全部接受。
+
+- **B1 P08-D068 归属错误**：G4-02 没有覆盖窗口，且以 `WM_MOUSEMOVE` 补强感应条进入，不能证明被遮挡的感应条可经真实鼠标到达。
+  改为具名缺口（G4-02 扩展：Pin OFF、被覆盖、真实鼠标）。
+- **S1 子断言遗漏**：plan 09 滚动条第 4 条拆出 `drag-exit`（松开 / 失焦 / 切换视图 / 尺寸变化）与 `drag-outside-window`；现有
+  `scrollbar` 测试只检查几何与 clamp，不经过结束拖动的路径，均列为缺口。第 3 条拆为 `thumb-geometry` 与 `hover-drag-emphasis`；
+  透明度第 3 条补 `no-stepwise-write`（P08-A07）；退出第 1 条拆为 `keeps-running`、`memory-text-kept`、`visible-error`，第 2 条拆为
+  建立原因（`cause=note-save-failure / quit-guard / paste-unconverged`）、`cleared-after-event-when-barrier-false` 与
+  `external-load-releases-rebuild`，均为缺口。
+- **S2 人工场景文字不足**：M22 改为拖动滑块并观察拖动中的实时预览；M38–M40、M47 的 dock 明确为拖到边缘、失焦收起、另一窗口在前台时
+  悬停 3 DIP 感应条展开，预期加"悬停展开不抢前台焦点""滚动条可抓取且不遮字"；逐项复核全部 141 个人工映射后，M05 另补"传感区悬停展开
+  后点击"与"托盘图标与菜单可辨识"（P08-D070、P08-D131）。registry、phase-12 与 guided 同步。
+- **S3 来源摘要可绕过**：分解移入只在测试中编译的 `coverage/sources.rs`，成为对文本的纯函数；plan 09 改为绑定 Dock、垂直滚动条、透明度、
+  托盘生命周期四节的原文摘要与条款数，提取器对段落、下级标题、孤立续行、重复条款、无外侧竖线或残缺的 Manual 行报错；反例从修改原始
+  Markdown 出发（Esc 引导句、追加退出条款、托盘新条款、滚动条子标题、透明度正文、无竖线与残缺 Manual 行），并先确认未改文档通过。
+- **S4 自动化目标接受空值**：`Automated` 增加 `file`，按指定文档中的 Automated 行 ID 或完整节标题精确查找；证据文字须与 mode 相符
+  （`Unit` 要求 `cargo test` 或 tests，`RuntimeModule` 要求 runtime），这是文字一致性检查，不证明测试内容；空引用、标题子串、错误文件、
+  错误 mode 的反例均被拒绝。所有者检查一次解析为集合与映射。
+- **S5 投影措辞**：phase-08 说明与 plan 09 验证节写明映射包含具名缺口、不等于覆盖完成。
+
+映射现为 229 项：人工场景 141、exact 24、其他自动化 10（`Unit` 9、`RuntimeModule` 1）、具名缺口 53、退役 1。
+
+### C1 代码审查第 2 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、4 SHOULD_FIX；第 1 轮 B1、S2、S5 判定已修复，S1、S3、S4 部分修复。逐项核实后全部接受。
+
+- **R2-1 滚动条交互仍被绘制测试顶替**：plan 09 滚动条第 3 条再拆为 `thumb-geometry`、`emphasis-paint`、`drag-mapping`、`track-hit`
+  （app 几何与绘制测试）、`ends-reach-document-ends`（render 测试），以及 `emphasis-trigger`（hover / drag）、`drag-live-update`、
+  `track-page-scroll`；后三项需要经过 app runtime 处理路径的测试，列为缺口。
+- **R2-2 M37 不能证明重连与回退主屏**：M37 改为断开 StickyMD 所在的非主显示器再重新连接，预期断开后恢复到主显示器且完全可见、重连后
+  仍完全可见；新增场景 `reconnect-monitor`，P08-M10 `disconnect-reconnect` 按 `step=disconnect / reconnect` 分别归属。每角色场景 96 → 97。
+- **R2-3 anchor 与表格格式绕过**：plan 09 区段改为只在三级及以上标题处结束，anchor 只允许作为区段末尾（之后再有内容即报错）；phase-08 改为
+  绑定整个文档（行尾归一），矩阵行（首格为 P08 ID 的表格行）须为五格且 mode 恰为 `Automated` 或 `Manual`。新增反例：anchor 加新条款、
+  强调的 mode、强调的 ID。
+- **R2-4 mode 由自由文字推断**：`Mode` 改为结构化入口 `Entry`：`Tests { filter }` 须被证据以反引号逐字列出（或为其 `cargo test` 命令的
+  过滤参数）且匹配工作区中至少一个 `#[test]` 函数；`Runtime { scenario }` 须被证据以 `-Runtime` 与场景名逐字列出且是 `RuntimeScenario`
+  的变体。P08-A11 证据补写 copied-Release `-Runtime`（scenario `WindowShell`），与 P08-A10 的写法一致，状态不变。反例包括只写单元测试却
+  提到 runtime 行为的行（P08-A08 形式）、未列出的过滤名、无匹配测试的过滤名与不存在的场景。该检查确认入口真实存在且被文档逐字点名，
+  不证明测试内容。
+
+映射现为 237 项：人工场景 142、exact 24、测试 12、Runtime 1、具名缺口 57、退役 1。
+
+### C1 代码审查第 3 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、5 SHOULD_FIX；R2-1、R2-2 判定已修复，R2-3、R2-4 部分修复。逐项核实后全部接受，R3-2 的
+harness 级部分推迟到 C2（理由见下）。
+
+- **R3-1 plan 09 可被 HTML 注释整体隐藏**：plan 09 改为与 phase-08 一样绑定整个文档（行尾归一），四节原文摘要保留用于定位；新增 HTML 注释
+  包住所绑定各节的反例。
+- **R3-2 词法扫描不等于 harness 测试集合**：扫描范围收窄为根清单列出的工作区成员；它仍是防止过滤名指向空集合的词法检查，不求值 `cfg`、
+  注释与模块可达性，P14-A79 如实写明。以已编译 harness 的测试清单核对，需要在单元测试中嵌套 cargo 构建（锁竞争、CI 时长），本批不做；
+  C2 把 exact / automated 证据接入 `module_evidence` 时，以模块收据记录的已执行测试核对 `Tests` 入口。
+- **R3-3 否定句可满足 Runtime 检查**：证据只取结构化字段：Automated 行的 Evidence 单元格，或节内的 `- Automated entry:` 条目（含其续行），
+  正文其他段落不再计入；入口必须是字段开头：测试过滤名为首个反引号内容或其中 `cargo test` 命令的过滤参数，Runtime 场景须以
+  copied-Release `-Runtime`（scenario `名称`）开头。新增否定句、非首位过滤名、只在正文出现的命令三个反例。
+- **R3-4 滚动条映射仍以底层测试认领 app 行为**：app runtime 没有任何滚动条测试，凡需经过它的子断言均改为缺口。第 1 条：各视图的滚动条
+  （source / preview / split）与分栏同步开关；第 2 条拆为 `gutter-geometry`（测试）、`short-note`（隐藏滑块为测试，保留槽宽为缺口）、
+  `gutter-runtime`（命中与 Content Zoom，缺口）；第 3 条的到达文首/文末按视图拆分，Source 归 render 测试，Preview 为缺口；第 4 条
+  `viewport-only` 按 text、generation、dirty、caret、selection、preedit 六项全部列为缺口；第 5 条补 `preview-document-height`（缺口）；
+  第 6 条拆为 `stale-frame-no-thumb`（缺口）、`stale-receipt-identity`（worker 测试）与 `stale-receipt-guard`（缺口）。
+- **R3-5 P08-A11 过度声明**：该 Runtime 检查只验证两个存活进程、不同 HWND 与预置的不同 note；Evidence 收窄为这些事实，并注明运行时
+  note/config 隔离与退出隔离未驱动（P08-M09 的缺口），状态不变。
+
+映射现为 253 项：人工场景 142、exact 24、测试 11、Runtime 1、具名缺口 74、退役 1。
+
+### C1 代码审查第 4 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、5 SHOULD_FIX；R3-1、R3-4、R3-5 判定已修复，R3-2 的推迟可接受，R3-3 部分修复。
+
+- **R4-1 / R4-2（自动化 owner 的证据仍可被否定句或 HTML 注释绕过）与批次调整**：`Automated` 目标的检查连续三轮（S4 → R2-4 → R3-3 →
+  R4-1/R4-2）都是在自由 Markdown 上做词法判断，每轮修补又出现新的绕过。它只服务 12 个映射、4 处证据字段，而按已批准的分批，exact /
+  automated 扩展与收据标签本来就属于 C2，R3-2 的 harness 级核对也已推迟到 C2。因此 C1 不再保留 `Automated` 目标：12 项改为具名缺口，缺口
+  文字写明现有入口（phase-03 / phase-05 滚动条维护节的 `cargo test … scrollbar`、P08-A07 的 `phase8_`、P08-A11 的 `-Runtime` WindowShell），
+  并删除证据解析、测试名扫描与 Runtime 场景读取。C2 以模块收据记录的已执行测试绑定这些 owner。这是推迟，不是取消；R3-5 对 P08-A11 证据的
+  收窄是独立的文档修正，保留。
+- **R4-3 `no-stepwise-write`**：reducer 测试只证明 Preview intent 不持久化，不证明拖动只产生 Preview intent；改为单独的缺口（经事件路径的
+  单元测试）。
+- **R4-4 mixed-DPI 的公式与图片清晰度**：M36 改为跨屏移动后检查公式与图片，预期按新显示器 scale 重新绘制、清晰（投影 plan 09 §DPI 的
+  "跨显示器移动重算 scale；公式 cache key 含 DPI；图片按设备像素绘制"）；registry 与 phase-12 同步，场景数不变。
+- **R4-5 无首竖线的追踪行被忽略**：治理的矩阵行读取（各阶段共用）对首格为追踪 ID、却不以 `| ` 开头的表格行报错；注册表对照测试同样要求
+  P12-M 行使用规范写法。phase 00 对全部阶段文档通过；新增反例单元测试。
+
+映射现为 253 项：人工场景 142、exact 24、具名缺口 86（其中 11 项待 C2 绑定现有自动化的模块收据）、退役 1。
+
+### C1 代码审查第 5 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX、1 NEEDS_VERIFICATION；R4-1..R4-4 判定已修复，接受把 `Automated` 目标推迟到
+C2（与 R3-2 同一依据），R4-5 部分修复。逐项核实后全部接受。
+
+- **R5-1 格式化的行 ID 仍可绕过**：治理的矩阵行读取改为按表结构判定：首格为 `ID` 的表头开始一张矩阵表，其分隔行之后到无竖线的行为止，
+  每个数据行都必须以竖线加空格开头且首格是不带格式的行 ID（字母数字段以连字符相连、末段为可选字母加数字，覆盖 `P08-D001`、`P11B-A06`、
+  `UX10-01`、`REL-CLI-01`）；强调、代码跨度、HTML 包裹或无外侧竖线的 ID 都报错，与内联写法无关。注册表对照测试改为复用该读取。phase 00
+  对全部阶段文档通过。
+- **R5-2 G3-03 可空通过**：四个强杀点都接受旧 note，且不确认编辑与保存已开始，保存晚于强杀即可通过；`crash-reconciliation`
+  `point=note-save` 改为具名缺口（C2：确认编辑与持久化阶段后在确定性中断点强杀，并以保存未开始的负对照排除空通过）。
+- **R5-3 composition 守卫无法与焦点守卫区分（待验证）**：G4-06 在聚焦时组字，焦点本身就阻止自动收起，所以只能证明"真实 IME、聚焦、
+  左 dock 时不收起"。该映射保留为对行为的观察，另为 P08-D055 增加 `composition-guard-wiring` 缺口（经 app runtime 的守卫接线与失焦取消
+  preedit；目前只有 P08-A05 的 reducer 覆盖）。
+
+映射现为 254 项：人工场景 142、exact 23、具名缺口 88、退役 1。
+
+### C1 代码审查第 6 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX、2 NICE_TO_HAVE；R5-2、R5-3 判定已修复，R5-1 部分修复。逐项核实后全部接受。
+
+- **R6-1 / R6-2 结构检查与各消费者对"哪些行存在"的判断不一致**：根因是检查与读取分离——结构检查用修剪后的首格，冻结 ID、mode/status
+  与注册表对照各自按原始前缀读取，双空格、制表符、表内第二个 `ID` 表头或紧随表格的文本行都能让某一方跳过该行。改为单一读取
+  `trace_rows`：表格须以空行结束（GFM 会把紧随的文本行当作新的一行）；`ID` 表头须以 `| ID |` 开头并紧跟分隔行；矩阵表数据行须为
+  `| <行 ID> | …`（无缩进、竖线后恰一个空格、首格为不带格式的行 ID），表内不能重新进入表头；表外首格为行 ID 的行同样须为该写法。
+  `frozen_trace_ids`、`matrix_rows` 与注册表对照（`governance::manual_rows`）都消费它的结果，一行要么被全部检查看到，要么整份文档被拒绝。
+  反例单元测试对每个变体同时断言三个消费者都失败。phase 00 对全部阶段文档通过。
+- **R6-3 转义竖线**：受限写法不支持转义竖线，遇到即明确报错，而不是误算列数。
+- **R6-4 plan 11 人工项范围**：`P12-M01..P12-M44` 同步为 `P12-M47`。
+
+### C1 代码审查第 7 轮（2026-10-15）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、3 SHOULD_FIX、2 NICE_TO_HAVE；R6-3 判定已修复，R6-1、R6-2、R6-4 部分修复。逐项核实后全部接受。
+
+表格读取已连续四轮（R4-5 → R5-1 → R6 → R7）出现新的 GFM 写法绕过，与此前 `Automated` 证据解析的情形相同。本轮采取两条并行措施：读取器只做
+代价低、结构性的收紧，并明确声明它是刻意收窄的写法；C1 依赖其完整性的文档另以整文摘要绑定，与已被接受的 phase-08 / plan 09 做法一致。
+
+- **R7-1 非 P 行绕过 mode/status/evidence**：此前只有 `P…` 行进入校验（沿袭旧实现），Phase 10 对 `UX10-*` 的守卫实际不可达。现在矩阵表的
+  每个数据行都校验（含 `UX10-*`、`REL-CLI-*`），mode 增加现有文档使用的 `Automated local`；新增修改 UX10 行证据与状态的反例。
+- **R7-2 HTML 修饰的表头使整张表退为普通表**：识别表头与行 ID 前先去掉 HTML 标签与 `*`、`_`、反引号；被修饰的 `ID` 表头必须写成规范的
+  `| ID |`，任何表中被修饰的行 ID 都报错。注册表对照测试另以 phase-12 整个文档的 SHA-256 绑定，文档任何改动都须复核后更新。
+- **R7-3 表头宽度与分隔行未关联**：记录表头列数，分隔行与每个数据行都须同宽；表头之后遇到空行、文本或文档结束都报错；单元格只去掉
+  一个外侧竖线，末尾的 `||` 不再被吞掉。
+- **R7-4 / R7-5**：phase-14 的人工入口范围同步为 M01..M47，P14-G2 补列 M45、M46；P14-A79 引用的测试名更正，并收窄为上述受限写法加
+  整文摘要的表述。
+
+phase 00 对全部阶段文档通过。
+
+### C1 代码审查第 8 轮（2026-10-15）
+
+gpt-6-astra（effort max）：**AGREE**（0 BLOCKER、0 SHOULD_FIX），2 NICE_TO_HAVE、1 NEEDS_VERIFICATION。R7-1..R7-5 及此前各轮判定已修复（R3-2
+按批准范围留给 C2）；在已审查摘要常量不变的前提下，未找到能让 C1 人工义务或 P12 人工项静默遗漏而摘要与计数仍全绿的反例。
+
+- **N1 摘要措辞**：摘要按行归一，LF 与 CRLF、末尾单个换行等价；注释与 P14-A79 改为"行内容的任何改动"。
+- **N2 修饰识别的范围**：读取器只识别 HTML 标签与 `*`、`_`、反引号修饰；链接、实体等其他行内写法不识别，由整文摘要兜底。注释与 P14-A79
+  如实限定。
+- **V1 Rust 基线**：审查只读、未运行构建；作者在本 worktree 重跑的结果见下方取证。
+
+### C1 Resolution（2026-10-15）
+
+经 8 轮审查 AGREE。C1 交付：plan 09 退出取消状态与标题优先级、plan 11 被测实例 TwoCopies 例外与人工义务映射；义务表（254 项：人工场景 142、
+exact 23（case 级）、具名缺口 88、退役 1）与只在测试中编译的分解、来源摘要和所有者检查；注册表 v3（27 项，每角色 97 个场景）与 M45 / M46 / M47；
+记录器对尚无程序的场景前置拒绝；治理的受限矩阵读取。相对设计的调整：`Automated` 目标与 exact 逐检查标签推迟到 C2，届时绑定已执行测试的
+模块收据（这 11 项现为写明现有入口的缺口）；多项原归自动化或 exact 的义务经审查改为缺口（D068、note-save 强杀、滚动条 app 路径、
+composition 守卫接线等）。人工状态仍为 NOT TESTED；映射完整不等于验收通过。
+
+### C1 取证（2026-10-15，最终工作树）
+
+- Windows：`stickymd-smoke dev-check` 9/9 PASS（governance、fmt、workspace strict clippy、cargo deny、Phase 1 两组、workspace tests、
+  Release 构建、native-runtime gate；phase-08 是共享输入，全部模块重跑一次）；`cargo test -p stickymd-smoke --locked` 单元 501 passed /
+  17 ignored、CLI 26 passed；`phase 00` PASS。
+- Linux（WSL Debian 重放同一工作树）：fmt、`clippy -p stickymd-smoke --all-targets -D warnings` 通过；tests 415 passed / 3 ignored、19 passed。
+- 未运行：真实桌面、人工记录与 G3/G4 exact 资格化（本批不改产品 runtime）。
+
+## 覆盖补全 C2 实施记录（2026-10-16）
+
+### 分批
+
+- **C2a**：产品侧的最小纯函数接缝与单元测试，不需要桌面。C2a-1 是 plan 09 驱动的产品改动（标题单一写入者与退出已取消状态、Esc 判定、
+  载入外部解除重建义务）；C2a-2 是透明度指针、守卫与失焦、滚动条手势的接缝。
+- **C2b**：exact 收据的逐检查标签（plan 11 先行）；以及以已执行测试为证据的 owner 绑定能否成立——模块收据目前不记录测试名，若不能低成本
+  补上，相关义务继续作为缺口并写明原因。
+- **C2c**：输入注入模块（需要真实桌面回归）。
+- **C2d**：G3/G4 exact 扩展与 P08-A11 Runtime 扩展（与 C2c 共用一次独占桌面资格化）。
+
+### C2a-1
+
+- **窗口标题**：`app/title.rs` 的 `window_title` 是唯一把状态投影成标题文字的地方，优先级为恢复 → 退出已取消：保存失败 → 冲突 → dirty →
+  公式 hover → 普通；`update_window_title` 是唯一写入者，并缓存上次写入的文字，只在变化时调用原生接口（此前每次指针移动都重写标题）。
+  公式 hover 改为状态输入，离开窗口时清除；行为变化：hover 不再盖过恢复、冲突或未保存的 `*`（按 plan 09 优先级）。
+- **退出已取消**：`QuitCancelNotice` 只由 `QuitCancelled(NoteSave)` 建立，`QuitCancelled(Paste)` 与 `QuitBlocked` 既不建立也不清除；
+  在 `about_to_wait`（一次完整事件处理结束）以 `requires_note_barrier()`（`dirty || durability_required || note_save_in_flight`）为假清除。
+- **载入外部解除重建义务（实现漂移修正）**：冲突中的"载入外部"此前只解除冲突，没有解除缺失文件重建义务（干净 reload 路径有），导致
+  退出屏障和新标题状态可能永不解除；两条路径统一为 `PersistenceCoordinator::accept_external`，并加单元测试。
+- **Esc 判定**：`app/escape.rs` 的 `escape_action` 以 plan 09 顺序一次判定，`handle_key` 对每个 Esc key-down 先经它路由；原分散在透明度
+  弹层、编辑区组字、Search、Preview 与 Source 的五处 Esc 分支删除，顺序与行为不变（Search 组字时仍由 IME 自行取消 preedit）。
+  "修饰键不改变 Esc、按住时每次 key-down 各自判定"是 3-A 第 1b 批经审查确立的行为，此前只在代码注释中，现写入 plan 09 的 Esc 引导句。
+- **plan 09**：Esc 引导句补上述规则；为 Dock 与托盘生命周期两节增加锚点 `dock-auto-hide`、`tray-lifecycle`，供新模块的 `plan_ref` 使用。
+  覆盖分解的 plan 09 与 phase-08 整文摘要相应更新（条款摘要不变）。
+- **覆盖映射**：相关缺口文字改为指向新的单元测试；它们仍是缺口，C2b 决定以何种已执行证据绑定。
+- 验收投影：phase-08 增加 2026-10-16 维护节；coverage-matrix 映射。
+
+#### C2a-1 代码审查第 1 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX；Esc 重构判定行为等价，`accept_external` 判定正确。两项核实后接受。
+
+- **结算时机早于本轮调度**：`settle` 位于 `about_to_wait` 开头，而同一轮随后的 `tick_autosave` 可能再提交保存，使"本轮结束时仍在途"
+  的状态被提前判为可清除。改为在 `about_to_wait` 内所有调度（autosave、外部检查、预览与窗口 tick）之后调用 `finish_event_pass`，
+  重新读取 guards 后结算并更新标题。该时序需要真实事件循环，单元测试只覆盖结算规则本身，接线仍属缺口。
+- **公式 hover 缓存会过期**：缓存的 hover 文字不随帧、布局、模式或文档变化失效。改为不缓存：标题投影时按当前指针与当前 Preview 帧
+  派生（指针在窗口内且 Preview 布局为当前时才命中），帧或模式一变即不再显示旧错误。
+
+#### C2a-1 代码审查第 2 轮（2026-10-16）
+
+gpt-6-astra（effort max）：**AGREE**（0 BLOCKER、0 SHOULD_FIX），两项上轮发现判定已修复；2 NICE_TO_HAVE、1 NEEDS_VERIFICATION，前两项已处理：
+
+- 公式 hover 命中排除透明度弹层覆盖的区域（弹层不透明地画在 Preview 之上）。
+- 文档区分标题文字的生成函数 `window_title` 与唯一原生写入者 `update_window_title`；新增源码守卫测试，产品源码中只允许一处 `set_title`。
+- 待验证项：调度顺序与"不移动鼠标完成 reload / 切模式 / 滚动 / resize"需要真实事件循环，留给 exact 批次，相关义务继续是缺口。
+- 取证（2026-10-16，最终工作树）：Windows `dev-check` 9/9 PASS（含 workspace tests 与 Release 构建）；Linux 重放 fmt、clippy、
+  stickymd-smoke 415 + 19 passed。
+
+### C2a-2
+
+把运行时里仍混在 `StickyApp` 方法中的判定抽成最小纯函数，行为逐项不变，接线留在原处：
+
+- **滚动条手势**（`app/scrollbar.rs`）：`ScrollbarInteraction` 判定加粗（hover 或拖动中）、按下（拖动开始 / 轨道翻页 90% 窗格高度）、
+  指针移动（hover 变化、拖动实时目标、拖动栏消失即结束）与结束拖动；`pane_bars` 与 `preview_scroll` 决定可操作的栏（不接受编辑时一条也没有，
+  过期 Preview 帧没有滑块）。`scroll_runtime` 与 `presentation` 只执行这些结果。
+- **Preview 回执路由**（`app/preview_runtime.rs::completion_route`）：托盘隐藏时释放、旧文档重建、无视口丢弃、视口不符重排（成功时复用语义树）、
+  只有当前文档与视口的回执进入准入规则。
+- **透明度指针**（`app/controls.rs`）：`press_slider` / `drag_slider` / `release_slider` 返回偏好 intent；测试经真实的偏好 reducer 确认拖动
+  每一步都是不持久化的 `PreviewOpacity`、有效松开至多产生一个 `CommitOpacity`（值变化时 reducer 要求持久化）、Esc 之后松开不产生提交；
+  运行时的配置提交与落盘不在测试范围内。
+- **窗口守卫**（`app/guards.rs`）：`window_guards` 由 `guard_snapshot` 投影，每个事实只抬起它所属的守卫；编辑区或 Search 字段的组字都阻止自动收起。
+- 观察（未改动）：`opacity_dragging` 只由松开、Esc 取消与隐藏清除；输入禁用、失焦、resize 与切换视图都不清除。具体序列：按下滑块 →
+  Close/Quit 等待保存并禁用输入 → 左键松开因 `shell_input_enabled` 为假被丢弃 → 保存失败恢复输入，此后不按键的移动仍会预览，下一次被接收的
+  左键松开才提交。属于既有行为，记为后续条目；新测试假定松开能到达判定函数。
+- 覆盖映射：相关缺口文字改为指向这些判定测试并写明 winit 接线仍未覆盖；它们仍是缺口。验收投影：phase-05、phase-08 的 2026-10-16 补充与
+  coverage-matrix。
+
+#### C2a-2 代码审查第 1 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX、2 NICE_TO_HAVE；各抽取判定与基线逐项等价，守卫 15 个事实映射无误。全部核实后接受：
+
+- **验收过滤器漏跑回执测试**：测试名不含 `completion_route`；改名为 `completion_route_admits_only_the_current_build`，以 `--list` 确认过滤器选中。
+- **"松开写一次配置"超出证据**：测试只经偏好 reducer 收集 `persist` 标记，不经运行时的配置提交，且拖回原值松开时合法地不持久化；
+  注释、报告、phase-08 与缺口文字统一改为"拖动只产生不持久化的预览，有效松开至多一个提交，值变化时要求持久化"，并写明配置提交不在范围内。
+- **短路求值边界**：恢复原有的提前退出——透明度布局只在拖动中读取（`drag_slider` 改为延迟取值）、滚动条几何只在接受编辑时读取、Preview
+  视口只对可见且当前文档的回执读取。
+- **隐藏优先级的竞争用例**：托盘隐藏与旧文档、缺失或不符的视口、失败结果同时成立时都返回 `ReleaseHidden`。
+- 透明度残留拖动的既有缺陷补记完整事件序列。
+
+另：USER 2026-10-16 为 C2b 选定方案 A——CI 与 dev-check 的 headless 测试把实际通过的测试名写入绑定提交的执行清单收据，随候选晋升，
+readiness 逐个核对单元测试 owner 确实执行并通过。
+
+#### C2a-2 代码审查第 2 轮（2026-10-16）
+
+gpt-6-astra（effort max）：**AGREE**（0 BLOCKER、0 SHOULD_FIX），上轮四项判定三项已修复、一项部分修复；2 NICE_TO_HAVE 已处理：轨道按下只在确认翻页后
+读取窗格高度（`PressOutcome::Page` 只带方向，像素由纯函数 `page_pixels` 计算），与基线的读取时机一致；回执路由测试补上"可见、当前文档、视口相符、
+构建成功 → `Admit`"的正例。
+- 取证（2026-10-16，最终工作树）：Windows `dev-check` 9/9 PASS；Linux 重放 fmt、clippy、stickymd-smoke 415 + 19 passed。
+
+### C2b 设计（2026-10-16，待审查）
+
+USER 2026-10-16 选定方案 A（执行清单收据）。C2b 分两批：C2b-1 exact 逐检查标签，C2b-2 headless 执行清单与单元测试 owner。两批都先改 plan 11。
+
+#### C2b-1：exact 逐检查标签
+
+- **单一来源**：新的平台无关模块 `qualification/exact_checks.rs` 声明 G3/G4 每个 case 的 ID 与必需检查标签集合（静态表）。`g3.rs` / `g4.rs` 的
+  case 表、`module_evidence` 的 case 列表、`cli.rs` 的 `--case` 选项与证据 fixtures 都从它派生，消除目前四处重复的 case ID。
+- **标签**：`名称` 或 `名称:k=v,k=v`（参数按键排序，规范写法由单元测试校验）；只为每次 PASS 都必然经过的事实设标签，条件分支（如 G3-03 的
+  `.tmp` 与恢复标题、G4-06 的 preedit 泄漏分支）不设必需标签。初始标签集合取自本节附带的盘点（G3-01..05、G4-01..06 约 90 个）。
+- **记录**：`CaseEvidence` 增加 `checks`；检查函数在断言成立后记录标签（G3 直接在 case 函数内，G4 经 `&mut Checks` 参数，G4-06 经
+  `RealImeSession` 字段）。失败的 case 不产生标签。
+- **收据 schema 2**：每个结果带 `checks` 数组。`render_receipt` 与 `module_evidence` 都要求记录集合与声明集合完全相等：缺失、多余、重复、
+  属于其他 case 的标签与非 PASSED 结果都使收据无效。schema 1 收据不再被接受，现有 G3/G4 账本记录因此失效、需要重跑（预期行为，不是回归）。
+- **覆盖映射**：`Target::Exact { case, checks: &[label] }`；覆盖测试直接引用 `exact_checks` 静态表校验每个标签都已声明（不再从源码文本提取
+  `id:` 字面量）。未带 profile / producer 参数的义务要求全部变体的标签。
+- **plan 11 拟增文字**（"Source freeze、remote artifact promotion 与 exact evidence"一节 G3/G4/G5 成功记录条目之后）：
+  "G3/G4 exact 收据为 schema 2：每个 case 结果列出该 case 声明的全部检查标签（由检查函数在断言成立后记录，标签带参数身份），必需集合与
+  case 表同源声明；记录与声明不完全相等即无效。schema 1 收据不再有效。"
+
+#### C2b-2：headless 执行清单
+
+- **采集**：`run_captured` 已分别捕获 stdout 与 stderr。cargo 在 stderr 依次打印每个测试二进制的 `Running …` / `Doc-tests …`，二进制在 stdout
+  依次打印 `running N tests` 块；按顺序配对第 k 个块与第 k 个二进制，块数不等即失败。每块内收集 `test <路径> ... ok` 行，并核对条数等于该块
+  `test result` 行的 passed 数，不符即失败（fail closed）。二进制身份取自 `Running` 行的文件名去掉目录、扩展名与 `-<hash>`（如 `stickymd_win`、
+  `cli_exit`），文档测试为 `doc:<crate>`。
+- **收据**：headless CI 收据升为 schema 3，cargo test 任务结果带 `tests` 数组（`<二进制>::<测试全路径>`）；readiness 要求合并的 workspace tests 任务
+  有非空清单。清单约 1.5k 条，内存与收据体积可忽略。
+- **owner 绑定**：覆盖表新增 `Target::Test { binary, path }`；单元测试只校验写法。readiness 在 headless 收据有效并绑定 Source Freeze 时，把未出现在
+  清单中的 Test owner 列为缺口（"owner 测试未执行"），清单内的才算有 owner；`acceptance manual list` 单独列出这些 owner 待执行证据绑定。
+- **plan 11 拟增文字**（同一节 headless 收据条目）："本地 headless CI 收据（schema 3）的每个 cargo test 任务还记录实际执行并通过的测试全名清单；
+  人工义务映射中由单元测试持有的义务，只有其测试出现在当前 Source Freeze 绑定的清单中才算有 owner。"
+
+#### 风险与取舍
+
+- 检查标签由检查函数自行记录，记录调用与断言之间可能漂移；以"记录紧随断言、失败不记录"与审查约束，不另做静态证明。
+- 执行清单依赖 cargo / libtest 的人类可读输出格式；格式变化会让采集失败（fail closed），而不是静默少报。稳定的 JSON 输出需要 nightly，不采用。
+- 两批都会使相关资格化记录失效一次（schema 变化），预期在 v0.1.3 重建时一并重跑。
+
+#### C2b 设计审查第 1 轮（2026-10-16）与设计第 2 版
+
+gpt-6-astra（effort max）：DISAGREE，2 BLOCKER、6 SHOULD_FIX、1 NEEDS_VERIFICATION；全部核实后接受。第 1 版的执行清单靠解析 libtest 的人类可读输出：
+`--nocapture` 下测试正文可以在名字与结果之间打印伪造的 `... ok` 行，计数相等也挡不住（B1）；去掉路径与 hash 的二进制名会在不同 package 间撞名（B2）；
+现有性能测试与 Rust 2024 合并 doctest 的正常输出也不满足配对假设（S3）。这与 C1 的自由文本问题同属一类，因此不再修补解析，改换机制。
+
+**C2b-2 第 2 版：单元测试 owner 核验**
+
+- **owner 身份**：`Target::Test { package, target, path }`，`target` 为 `lib` 或 `bin:<名称>` 或 `test:<名称>`（只允许使用 libtest 默认 harness 的目标；
+  工作区唯一的 `harness = false` 是 stickymd-core 的 bench，不在 `cargo test` 构建范围内），`path` 为测试全路径。
+- **核验任务**：`all --ci`（与 dev-check）增加一个任务，按覆盖表中的 owner 集合执行：
+  1. 执行前记录 HEAD 与工作树是否干净；`cargo test --workspace --locked --no-run --message-format=json`，从结构化的 `compiler-artifact`（`profile.test`、
+     `package_id`、`target.kind/name`、`executable`）建立目标到测试二进制的映射；缺失或歧义的目标即失败。
+  2. 对每个含 owner 的二进制运行 `--list` 与 `--list --ignored`：每个 owner 必须在前者中恰好出现一次、不在后者中。`--list` 不执行测试代码。
+  3. 以 `--exact <owner…>` 运行该二进制一次，要求退出码为 0：上一步已确认每个 owner 存在且未被忽略，libtest 会执行全部匹配项，任一失败即非零。
+  4. 执行后复核 HEAD 与干净状态不变（复用现有身份采集），否则失败。
+- **收据**：任务结果在 headless CI 收据（schema 3，source-only，已由 readiness 绑定 Source Freeze）中列出已核验的 owner 身份；收据由本地 `all --ci` 在冻结源码上产生，
+  与现有 headless 门同一路径。相对 USER 选项描述的"随候选晋升"：本机制把证据绑定到 Source Freeze 提交（候选由同一提交构建），不经 release workflow 与 promotion，
+  因而不改发布资产；dev-check 只运行核验、不写收据（S4）。
+- **readiness 与列表（S6）**：覆盖状态统一计算：Test owner 只有在有效、绑定当前 Source Freeze 的 headless 收据中且已核验集合恰为覆盖表的 owner 集合时才算有 owner；
+  收据缺失、无效、陈旧或集合不符时，所有 Test owner 都列为"待执行证明"。`acceptance manual list` 静态列出它们待证明，readiness 普通输出与 JSON 共用同一结果。
+- **不再采集全量测试名**，因此 S3 的格式问题、`Command::output` 的内存问题都不再适用；核验的进程输出只用于失败诊断。
+
+**C2b-1 修正**
+
+- `window-flow-unit-tests` 从 G4-02 的标签中删除（S7）：它只检查 `cargo test` 退出码，过滤为零也会通过；该单元测试归 headless。
+- `ime-focus-loss-keeps-preedit` 收窄为 `ime-focus-loss-keeps-text`（S8）：现有断言只证明失焦 / 复焦不改变 canonical text。
+- schema 2 用于全部 exact 组（G3/G4/G5；G5 声明空检查集合），渲染照常写出失败结果与诊断；"非 PASSED 或标签不符"只使收据不能作为成功证据，不阻止序列化（N9）。
+  plan 11 与 `module_evidence` 是全局输入，两批合并后统一重建证据。
+
+#### C2b 设计审查第 2 轮（2026-10-16）与设计第 3 版
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、4 SHOULD_FIX、1 NICE_TO_HAVE、1 NEEDS_VERIFICATION；R1 的撞名、输出配对、G4-02 零测试标签、preedit 夸大与
+schema 问题判定已解决，Source Freeze 绑定判定在现行合同下可接受（须记为对原方案措辞的取舍）。本轮核实后：
+
+- **B1 提前 `process::exit(0)`**：同一进程内一个测试提前以 0 退出会让其余 owner 未执行而退出码仍为 0。改为**每个 owner 单独一个进程**（`--exact <owner>`），
+  一个测试的提前退出不再掩盖其他 owner。并写明**威胁模型**：owner 核验针对意外情形——测试被删除、改名、忽略、cfg 排除、过滤失配、失败或未执行；
+  它不防御同权限测试代码的蓄意伪造（在自身测试体内提前 `exit(0)`、伪造 `--list` 输出、篡改结果文件），后者属于代码审查的范围。不采用已 deprecated 的
+  libtest `--logfile`：它会随工具链移除，也不防同权限篡改。
+- **S2 harness 前提**：owner 只允许在 `lib` 与 `bin` 目标（单元测试）中；治理检查要求工作区清单中 `harness` 键只出现在 `[[bench]]`，否则失败，并附自定义 harness 负例。
+- **S3 身份贯通**：`all --ci` 在开始时采集一次源码身份（HEAD 与干净状态），owner 核验任务前后复核，收据序列化使用该身份并在写出前再复核一次；
+  不再在输出时重新读取 HEAD 为结果署名。
+- **S4 范围**：owner 核验只在完整 `all --ci` 中作为 tests 分片任务产生正式结果；定向运行按所选 package 投影 owner，没有适用 owner 时跳过，只作诊断；
+  非 Windows 平台不规划该任务（owner 所在的 stickymd-win 只在 Windows 编译）。开发期身份采集允许未冻结或 dirty 的工作树，但其结果不能作为提交资格证明。
+- **S5 进程与内存**：所有核验命令经现有 `run_bounded_output`（超时、输出上限、子进程回收）；`--list` 与 cargo JSON 的解析有行数与字节上限；去掉"内存问题不再适用"的说法，
+  耗时与峰值在实施后测量报告。
+- **N6 列表与状态**：`acceptance manual list` 把 Test owner 列为"证明要求（由 readiness 对照 headless 收据核对）"，不显示为当前执行状态；状态只由 readiness 计算。
+- **V7 标签语义**：检查函数内部的记录为幂等集合（同一标签多次成立只记一次），收据仍拒绝重复项；规范参数拒绝重复键与含分隔符的值。
+
+#### C2b 设计审查第 3 轮（2026-10-16）与设计第 4 版
+
+gpt-6-astra（effort max）：无 BLOCKER，3 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；逐 owner 进程判定解决了跨 owner 提前退出。全部接受：
+
+- **期间不变性**：开始、任务前后与写出前的复核只能发现漂移，不能证明运行期间源码未被改动后又恢复。正式收据的前提写明：在冻结提交的独占 checkout
+  与构建目录上运行，运行期间不得有其他源码或产物写者（与 Source Freeze 的现行前提一致）；复核保留为漂移检查，不宣称期间不变。
+- **发现阶段的成功条件**：cargo `--no-run` 构建、`--list`、`--list --ignored` 与每个 owner 的执行都必须成功退出；发现输出须完整（未截断）并解析成功后才做集合判断。
+  非零退出、超时、截断或解析失败一律使核验失败，不能贡献已核验 owner；附"ignored 列表失败而执行阶段零退出"的负例。
+- **构建范围**：完整运行用 `--workspace`；定向运行只对含适用 owner 的已选 package 使用 `-p`（及 Cargo 自动带入的依赖）；没有适用 owner 时连发现构建一起跳过。
+- **输出上限**：owner 执行加 `--nocapture`，让测试输出进入父进程已有的上限控制，而不是积累在子进程的捕获缓冲中；实施后以大量输出与超时用例测量父、子进程峰值与回收。
+- **威胁模型按可观察行为划界**：owner 测试必须把控制权正常交回 libtest；测试体自身提前成功退出（无论是否蓄意，包括经辅助函数）、断言遗漏、断言与标签漂移都由代码审查承担。
+  exact 收据的"记录集合等于声明集合"证明声明完整，不独立证明断言语义。
+
+#### C2b 设计审查第 4 轮（2026-10-16）
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX。剩余两项：
+
+- NEEDS_VERIFICATION：owner 核验的输出上限、超时与持有管道的子孙进程回收须在 Windows 上实测（父、子进程峰值、返回耗时、存活进程，失败不贡献
+  已核验 owner）；属于 C2b-2 实施后的测量，设计不扩大。
+- NICE_TO_HAVE：向 plan 11 转录时不得照抄第 1 版拟增文字（它仍写"每个 cargo test 任务记录全部测试名"、只点名 G3/G4）。处理：每批只转录该批的
+  最终条款——C2b-1 写 exact schema 2（含 G5），owner 核验条款随 C2b-2 写入。
+
+### C2b-1 实施记录（2026-10-16）
+
+- **plan 11**（`release-artifact-authority`）：新增 exact 收据 schema 2 条款——标签规范写法、一处静态声明、断言成立后幂等记录、`PASSED` 且记录集合
+  等于声明集合才算成功、G5 空集合且截图要求不变、失败结果照常写出作诊断、schema 1 无效不迁移、标签相等只证明声明的检查都已到达。
+- **单一声明**（新 `qualification/exact_checks.rs`，平台无关）：G3/G4/G5 的 case ID 与检查标签，共 131 个标签（G3-01 13、G3-02 4、G3-03 8、G3-04 11、
+  G3-05 4、G4-01 10、G4-02 34、G4-03 8、G4-04 4、G4-05 5、G4-06 30；G5 空）。每个 case 的标签按字节升序书写，与记录集合（`BTreeSet`）的迭代顺序相同，
+  因此"记录等于声明"是一次 O(n) 切片比较；不等时才用集合差列出排序后的缺失与多余项（确定性诊断）。`label` 对参数键排序，同一断言的参数顺序不影响
+  标签。测试校验规范写法（字母表、键严格升序）、逐 case 严格升序、ID 连续与总数。
+- **runner**：`ExactGroup` 由声明与操作数组配对（`[CaseOperation; G.len()]` 编译期等长，运行时再拒绝数量不符）；新的 `judge` 决定结果——返回错误的
+  case 不带标签，标签不符的 case 为 FAILED 并保留所记录的标签。`g3.rs` / `g4.rs` / `g5.rs` 不再重复 case ID；`module_evidence` 与证据 fixtures 读取
+  同一声明；`--case` 选项保留类型化枚举，由测试确认其恰好接受声明的 case（Windows 上 `as_str` 与声明 ID 一致）；G5 最少截图表由测试对照声明。
+- **记录点**：G3 在 case 函数内，`assert_user_asset` 带阶段参数自行记录；G4 经 `&mut Checks`（`cases.rs` 的 `checked` 统一包装）；
+  `dock_timing_cycle` 带 Pin 参数并在每个计时断言后记录；G4-06 由 `RealImeSession` 为本输入法记录（自动加 `ime=` 参数），整个 profile 连同模式、
+  进程与输入法恢复都成功后才并入 case；`begin_preedit` 只在两个成功出口记录。`run_cargo_test(flow::window)` 调用不变，但不再设标签（设计第 2 版）。
+- **收据与校验**：`render_receipt` 写 schema 2，每个结果带 `checks`；`module_evidence::exact` 要求 schema 2 且每个 PASSED 结果的 `checks` 与声明逐项相等
+  （缺失、多余、重复、乱序、其他 case 的标签、缺字段、非字符串、schema 1 与带标签的 G5 结果均有负例）。
+- **覆盖映射**：23 个 exact 义务改为 `Target::Exact { case, checks }`，列出证明该义务的标签；不带输入法、producer 或 Pin 参数的义务取全部变体——
+  M13 为整个 G4-06，M15 剪贴板为整个 G3-01，M15 / D132 导出为整个 G3-02，D117 / D118 为该输入法的全部 15 个标签，Right dock（M02、D040）含 Pin 开
+  与关两轮；覆盖测试直接查声明（case 存在、标签已声明、非空、不重复），不再扫描源码中的 `id:` 字面量，并另有测试固定上述"全部变体"的义务。
+- **验收投影**：P14-A80（治理范围改为 1..=80），P14-A79 中 exact 目标的描述改指 P14-A80；coverage-matrix 追加映射。
+- **失效（预期）**：plan 11 与 `module_evidence` 是全局输入，所有模块的 last-success 记录随之 stale；既有 G3/G4/G5 schema 1 收据无效，需在 exact
+  候选上重跑，计划在 v0.1.3 重建时一并处理。
+- **未运行**：G3/G4/G5 桌面 exact 用例本身（需要独占桌面）。本批的证据是声明、记录器、runner 判定、收据渲染与校验、覆盖映射的单元测试，以及记录点
+  紧随断言的代码审查；记录调用与断言的对应仍由审查承担。
+- **验证**（2026-10-16，审查前）：`cargo fmt --all -- --check` 通过；`cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 0 警告；
+  `cargo test -p stickymd-smoke --locked` 510 passed、17 ignored，另一个测试二进制 26 passed；`tools/smoke/phase-00.ps1` PASS；`dev-check` 9/9 PASSED
+  （workspace tests 136.9 s，Release 构建 90.1 s）；Linux 复跑（WSL Debian，3795335 上叠加此后改动的 65 个文件）clippy 退出 0、测试 423 passed /
+  3 ignored 与 19 passed。
+
+#### C2b-1 代码审查第 1 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、3 SHOULD_FIX；131 个标签与 23 个 exact 映射静态展开核对无误。三项都对照源码核实后接受：
+
+- **读取失败被当作空文本**（既有缺陷，新标签依赖它）：`exact_desktop::wait_note` 以 `unwrap_or_default()` 把缺失或非 UTF-8 的 `note.md` 读成空串，
+  等待"笔记已清空"的检查（G4-03 剪切 / Undo、G3-01 Undo 等）会在落盘失败时记录成功标签。改为读取失败从不满足等待、在期限内重试，超时报告最后一次
+  读取错误；`accepted_note` 带缺失文件、无效 UTF-8、空文件与不符文本的单元测试。
+- **空替换也能得到 `ime-replace-commit`**：原判定只要求"文本变化、仍含另一处 term、无 ASCII 字母"，`\n分隔\n中国` 也满足。改为 `replacement_fragment`：
+  恰好一处匹配被替换、其余不变，替换片段为单行、非空、不含 term 的 CJK 提交；单元测试含空替换、两处都替换、未替换、残留拼音、保留原匹配后追加等反例。
+- **托盘 Hide 未执行却计入 M05**：G4-01 只经 Close 隐藏，托盘菜单项"隐藏"只核对存在。M05 `tray-menu` 按菜单项分解为 `item=show` / `item=hide` /
+  `item=quit`：Show 与 Quit 绑定各自的 G4-01 标签，Hide 列为具名缺口（"窗口可见时经托盘菜单 Hide 隐藏"），留待 exact 扩展（C2d）。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 512 passed、17 ignored，另一个二进制 26 passed。
+
+#### C2b-1 代码审查第 2 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、4 SHOULD_FIX、1 NICE_TO_HAVE；第 1 轮三项判定已解决、未引入回归；256 个义务参数恰好覆盖一次，M05 拆分后
+exact 义务为 24 个。四项都是"标签名称强于其断言"，属于设计中由代码审查承担的那一层；对照源码核实后全部接受，并加强断言而不是收窄标签：
+
+- **重启检查可能早于启动整理**（G3-04 `user-asset-intact:stage=restart`、G3-05 `fake-asset-intact:stage=restart`）：重启时 note/config 已存在，
+  `wait_for_layout` 立即返回，探针可能在新进程执行 `main.rs` 的启动资产整理之前就检查并杀进程。新增 `exact_desktop::start_until_editor_ready`：
+  复用产品已有的诊断就绪事件（只设 `STICKYMD_DIAGNOSTIC_READY_EVENT`，不写 trace、不退出），等待该次启动的首次 present（整理在编辑器创建之前）再检查。
+- **`shift-delete-cuts` 区分不了剪切与删除**：Ctrl+Insert 已把 `TEXT` 放入剪贴板。现在先把剪贴板换成哨兵文本，Shift+Delete 后同时要求文档为空、剪贴板为
+  `TEXT`。
+- **`redo-restores-asset` 只比较数量**：粘贴后要求 Markdown 引用的正是唯一发布的资产，并记下其路径与 SHA-256；Redo 后要求受管资产恰为该路径且字节不变。
+- **`export-leaves-working-note` 只读旧文件**：导出后在 Source 末尾粘贴标记，要求 `note/note.md` 保存为原文加标记、导出副本不变，证明工作文档与保存目标
+  未切换。
+- NICE_TO_HAVE：G5 截图转移反例因 schema 2 多出 `checks` 而退化为删除反例；匹配串改为新结果形状，并断言转移前后截图总数不变。
+- 这些加强的探针只能在独占桌面的 exact 运行中执行，本批未运行；它们只会让既有路径更严格（误判只会表现为 FAILED，不会产生假 PASS）。验证：fmt、clippy 0 警告；
+  `cargo test -p stickymd-smoke --locked` 512 passed、17 ignored，另一个二进制 26 passed。
+
+#### C2b-1 代码审查第 3 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、3 SHOULD_FIX；第 2 轮各项已落实，就绪事件确在启动资产整理之后。全部核实后接受：
+
+- **Preview 的非法剪切与粘贴可以互相抵消**：原探针连续执行全选、Shift+Delete、Shift+Insert 后才比较正文。Preview 的命令映射把两者都映射为无操作
+  （`preview_input::preview_command`），现在分别验证：剪切后正文不变且剪贴板仍是哨兵，再换一个哨兵后粘贴，正文仍不变。
+- **导出正文未绑定实际复制的图片**：现在先确认恰好复制了一个与原图字节相同的文件，再用它的文件名构造此固定 fixture 的完整预期 Markdown（本地图片指向
+  `g3-export-assets/<该文件>`，远程引用与其余正文不变）逐字比较。
+- **重启探针可能继承其他诊断开关**（本批新代码）：子进程继承父环境，残留的 `STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY=1` 会在设置就绪事件后生效，使候选首帧后
+  自行退出。启动前显式移除退出开关、trace 与细节路径。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 512 passed、17 ignored，另一个二进制 26 passed；桌面探针未运行（同第 2 轮）。
+
+#### C2b-1 代码审查第 4 轮（2026-10-16，逐标签审计）
+
+为收敛，本轮要求审查者逐个审计全部 131 个标签，一次列出所有剩余缺口。gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、6 SHOULD_FIX、1 NEEDS_VERIFICATION；
+其余标签逐项判定为断言与名称相符，第 3 轮三项已解决、未发现回归。六项核实后处理如下：
+
+- **S1 资产枚举把读取错误变成"没有文件"**（G3-01 数量 / 移除 / 恢复、G3-02 复制数量）：`regular_files` 只把目录不存在视为空，打开列表、读取目录项或其类型
+  失败都返回错误；附缺失目录、文件与子目录混合、对文件路径列目录三种用例。
+- **S2 失焦检查可能读到旧落盘文本**（`ime-focus-loss-keeps-text`）：失焦 / 复焦后先等过自动保存 debounce（650 ms）的观察窗口，要求标题不为 dirty 且
+  `note.md` 仍为基线，再进入下一轮组字，避免后续恢复掩盖前一阶段的提交。
+- **S3 七个 `snap-*` 标签缺少输入与终态几何证明**：拖动允许光标误差，终态几何未回读。探针照常运行（配置不符仍使 case 失败），但不再声明标签；
+  标签总数改为 124（G4-02 为 27）。核验实际输入几何与终态几何后再设标签，列入 exact 扩展（C2d）。这七个标签此前没有被覆盖映射引用。
+- **S4 图片快捷键标签只证明引用前缀**：要求正文中恰有一个受管图片引用且文件已发布；file-drop 的发布文件与原 PNG 逐字节相同（PNG 原样保存），DIB 的发布
+  文件是 2×2 PNG（产品把 DIB 转为 PNG）；附引用解析与 PNG 头检查的单元测试。
+- **S5 `junction-no-durable-mutation` 只观察 note/config**：标签改名为 `junction-keeps-note-and-config`，只声明实际观察的两个文件；plan 11 的第二实例零
+  durable write（资产、trash、恢复文件）不由此标签证明。M08 未引用该标签。
+- **S6 Preview 剪切检查没有确认选区存在**：先在有界等待中执行全选与复制，回读到全文后才设置剪切哨兵，证明 Preview 已有画面且选区非空。
+- NEEDS_VERIFICATION：加强后的桌面探针尚无实跑证据，需在独占桌面上运行适用的 G3/G4 后核验收据（与 v0.1.3 重建一并进行）。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 515 passed、17 ignored，另一个二进制 26 passed。P14-A80 的标签数同步为 124。
+
+#### C2b-1 代码审查第 5 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX、1 NEEDS_VERIFICATION；S1、S2、S3、S5、S6 在源码层面成立，124 个标签与 24 项 exact 映射与声明一致。
+两项都在 S4 的修复里，核实后处理：
+
+- **引用解析接受不成立的 Markdown**（缺右括号、代码跨度、额外正文）：产品单图粘贴插入的正文恰为 `![](images/<name>)`（`assets::transaction`），fixture
+  从空文档粘贴，因此改为要求全文恰好等于该写法、文件名只含字母数字与 `-` `.`；负例含缺右括号、代码跨度、尾随换行、额外正文、两张图与路径穿越。
+- **PNG 头检查接受损坏文件**：smoke 工具只用标准库，不引入解码器；DIB→PNG 转换由 `stickymd-render` 的图片测试负责。两个标签按 G3-01 资产标签（第 4 轮判为
+  相符）的口径改名，只声明快捷键走到了图片粘贴路径并发布了被引用的资产：`shift-insert-dib-publishes-asset`（全文恰为该引用、文件存在、PNG 头为 2×2，
+  头部只是健全性检查）与 `shift-insert-file-drop-publishes-asset`（全文恰为该引用、发布文件与原 PNG 逐字节相同）。这两个标签不被覆盖映射引用。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 515 passed、17 ignored，另一个二进制 26 passed。
+
+#### C2b-1 代码审查第 6 轮（2026-10-16）与结论
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX；第 5 轮两项修复成立，全量核对未发现声明、记录调用、schema 2 校验与覆盖映射之间的新冲突
+（124 个标签、24 项 exact 映射）。仍待：加强后的 G3/G4 桌面探针在独占桌面上的实跑（NEEDS_VERIFICATION，随 v0.1.3 重建一并进行）。
+
+最终验证（提交前，同一工作树）：`cargo fmt --all -- --check` 通过；`cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 0 警告；
+`cargo test -p stickymd-smoke --locked` 515 passed、17 ignored，另一个二进制 26 passed；`dev-check` 9/9 PASSED（首次运行的 dependency policy 因拉取 RustSec
+advisory-db 时 TLS 握手失败而失败，网络恢复后重跑通过；workspace tests 122.7 s，Release 构建 95.8 s）；Linux 复跑（WSL Debian，3795335 上叠加 65 个文件）
+clippy 退出 0、测试 423 passed / 3 ignored 与 19 passed。
+
+### C2b-2 实施记录（2026-10-16）
+
+本批实现 owner 核验机制，并绑定第一批三项义务；其余 C2a 缺口在下一批逐义务映射后绑定。
+
+- **plan 11**（`release-artifact-authority`，headless 收据条目之后）：一条写 smoke 证据 schema 3 与源码身份；一条写单元测试 owner 的声明、核验、
+  readiness 判定、执行前提与证明边界（按第 4 轮审查 NICE_TO_HAVE，转录最终合并条款，不是第 1 版草案）。
+- **`unit_owners`**（新）：`Owner { package, target (lib | bin:<名称>), path }`，记录为 `package/target/path`。`artifacts` 解析 cargo
+  `--message-format=json`：只取 `profile.test` 且 `executable` 非空的 `compiler-artifact`，包名按 Package ID Specification 取（本工具链的
+  `path+file:///…/stickymd-win#0.1.3` 省略了与目录同名的包名），只认 `["lib"]` 与 `["bin"]` 目标，流须以成功的 `build-finished` 结束且其后无消息。
+  `listing` 严格解析 libtest `--list`：逐行 `name: test|bench`、有条目时一行空行、最后一行摘要（单复数与规范数字），计数须与条目一致。
+  `verify`（Windows）：无 owner 时连构建也跳过；构建、两次列出与每个 owner 的 `--exact <path> --nocapture` 都经有界执行器并要求成功退出；
+  任一失败即整个任务失败、不返回 owner；前后复核源码身份。执行调用可注入，单元测试覆盖已列出 / 忽略 / 缺失 / 重复 / 截断 / 执行失败，以及
+  "ignored 列表失败而 owner 本会通过"（第 4 轮设计要求的负例）。
+- **有界执行器**：`run_bounded_output` 从 `exact_desktop` 移到 `managed_process::bounded`，增加显式上限参数（cargo JSON 16 MiB；列表与 owner
+  1 MiB），行为不变，`exact_desktop` 保留原签名包装，既有持管道子孙、超量输出与超时测试照常运行。
+- **证据 schema 3**：每个结果带 `owners`（只有 owner 任务可非空）。`SourceIdentity` 在 `runner::execute` 开始时采集，owner 任务前后与写出前复核，
+  漂移即追加 FAILED `source identity` 结果、照常写出并使命令失败；中间进度与单步收据仍在写出时读取身份。读取者一并升级：`automated_readiness`、
+  `module_evidence::smoke`、`resource_plan::coverage`、资源诊断 payload；`timing_summary` 只读测量值，接受 2 与 3。
+- **runner**：`Task::UnitTestOwners` 只在 Windows 的 `Selection::All` 中、workspace tests 之后规划（owner 所在包只在 Windows 构建）；
+  `modules run` 与 dev-check 的投影与 Cargo 任务同规则——全部 workspace 包被选中时不变，否则只保留被选中且持有 owner 的包，一个都没有时整项跳过；
+  这些运行不写收据。
+- **readiness**：`check_document` 要求 schema 3，owner 只从 owner 任务结果读取且须与映射的 owner 集合完全相等，其他结果不得列 owner，映射有 owner
+  而计划没有 owner 任务即无效；同一结论既决定阻断，也决定 `unit_test_owned.verified`（普通输出与 JSON 同源）；`acceptance manual list` 把这些义务
+  列为证明要求。
+- **治理**：工作区与已登记清单的 `harness` 键只允许在 `[[bench]]`（区分键与值、注释与更长名称），附负例。
+- **指纹分类**：`qualification/mod.rs` 读取 `manual_observation::coverage` 的 owner 集合列入例外：它只被 headless owner 任务（收据绑定 Source
+  Freeze 提交而非模块指纹，且没有功能模块运行规划它）与 readiness 使用。
+- **首批绑定**：plan 09 `esc-2` transient-guards `state=asset-sync` / `state=quitting` → `app::escape::tests::each_guard_alone_ignores_esc`
+  （分别对应 `asset_reconcile_pending` 与退出期间输入关闭后的 `accepts_editor_mutation = false`），`esc-6` collapse `modifier=ctrl` →
+  `app::escape::tests::modifiers_never_change_esc`（USER 2026-10-15 批准这些 Esc 行仅单元覆盖）。
+- **端到端**（未冻结的 dirty 工作树，仅作开发证据）：`modules run windows --mode=tests` 通过（owner 任务投影为 `-p stickymd-win`）；
+  `all --ci --ci-shard=tests --json` 产生 schema 3 证据，owner 任务 PASSED、列出两个 owner，耗时 4.2 s（workspace tests 209.1 s）；把一个 owner
+  临时改成不存在的测试后 `modules run windows` 以 "owner … is not listed" 失败（已恢复）。另一次运行中我在运行期间改了源码，owner 构建需要重编译
+  正在运行的 `stickymd-smoke.exe`，Windows 拒绝覆盖而失败（fail closed）；这也说明 HEAD / dirty 身份看不到已 dirty 工作树内的内容改动，正式收据
+  依赖独占干净 checkout 的前提。
+- **测量**：父进程对每条流最多缓冲上限加 1 字节（owner 与列表 1 MiB，cargo 16 MiB），子孙进程随作业结束；子进程自身的内存不受此限，属于被测代码。
+- **验证**（审查前）：`cargo fmt --all -- --check` 通过；`cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 0 警告；
+  `cargo test -p stickymd-smoke --locked` 528 passed、17 ignored，另一个二进制 26 passed；`tools/smoke/phase-00.ps1` PASS；`dev-check` 10/10 PASSED
+  （新增的 unit-test owner verification 3.3 s，workspace tests 206.1 s，Release 构建 147.9 s）；Linux 复跑（WSL Debian，3795335 上叠加 95 个文件）
+  首次发现非 Windows 非测试构建中解析器是死代码、一个夹具测试按路径分量比较 Windows 路径，改为 `cfg(any(windows, test))` 与整串比较后 clippy 退出 0、
+  测试 433 passed / 3 ignored 与 19 passed。
+
+#### C2b-2 代码审查第 1 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、3 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；三项 Esc 绑定未发现语义错绑。全部核实后处理：
+
+- **`harness` 治理漏检与误报**：行级启发式不区分引号键（`"harness"`、`'harness'` 与转义写法）、字符串值与注释。改为
+  `governance/manifest_harness.rs`：按 TOML 词法跟踪基本 / 字面字符串（含多行与转义）、注释、表头与内联表 / 数组，找出每个键（裸键或引号键）及其
+  所属表；只有 `[[bench]]` 表或根级 `bench` 内联值里的 `harness` 被允许；无法跟踪的输入（未闭合字符串、表头或括号，顶层逗号）fail closed。测试含
+  引号键、转义键、字符串与多行字符串中的文字、注释、数组中的字符串、多行内联数组、`[package]` 下的 `bench`，以及工作区五个真实清单。
+- **失效的 Source Freeze 仍能得到 `verified: true`**：readiness 中 Freeze 读取与仓库校验抽为 `read_source`，返回 Freeze 与"仍对当前仓库成立"两个值；
+  owner 证明改为 `headless_ok && source_current`。附回归测试：Freeze 与仓库不符时仍返回该 Freeze 但不成立。
+- **非 headless 读取者没有落实 schema 3 的 `owners`**：新增 `evidence::require_no_owners`，`module_evidence::smoke`（每个结果）、
+  `resource_plan::coverage::validate_group_result` 与资源诊断缓存 payload 都要求字段存在且为空数组；测试覆盖 Runtime、Performance 与资源收据中
+  缺字段、类型错误与非空数组。
+- NICE_TO_HAVE：readiness 期望的 owner 字符串改为按字符串排序，与核验写出的顺序一致（同一包同时有 lib 与 bin owner 时不再误判）。
+- NEEDS_VERIFICATION（故障路径测量）：单独运行有界执行器的三个故障测试并采样父进程峰值工作集——子进程写出超过 1 MiB 上限：0.41 s、峰值 11.6 MiB；
+  超时：1.20 s、10.2 MiB；子孙进程持有管道：4.53 s、10.2 MiB；三次运行后都没有残留的测试进程。owner 任务失败时收据中的 owners 见下一条记录。
+- owner 任务失败时的收据：把一个 owner 临时改成不存在的测试后运行 `all --ci --ci-shard=tests --json`，schema 3 证据中 owner 任务为 FAILED
+  （"owner … is not listed"，3.5 s）、`owners` 为空，命令以 1 退出；之后已恢复映射。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 532 passed、17 ignored，另一个二进制 26 passed。
+
+#### C2b-2 代码审查第 2 轮（2026-10-16）
+
+第一次运行因 WSL 服务错误与 Codex 中途退出没有产生结论（环境故障，不是审查结论），重跑后 gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、
+2 SHOULD_FIX、1 NICE_TO_HAVE；第 1 轮的 Source Freeze 门控、非 owner 结果空数组校验与 owner 排序已确认。两项都在新扫描器的字符串处理，核实后接受：
+
+- **多行字符串提前结束**：TOML 允许结束定界符前有一至两个内容引号（`"""hello""""`）。原实现在第一个三引号处结束，剩余引号与注释里的引号重新组成字符串，
+  能把其后的 `[[bin]]` 与 `harness = false` 吞进字符串而漏检；去掉注释时又误拒合法写法。改为：第一段三个及以上的连续引号结束字符串，其中最多两个是
+  内容，超过五个即无效；基本与字面多行字符串同样处理。
+- **行尾反斜杠后的空白被拒绝**：TOML 允许反斜杠与换行之间有空格或 Tab。`escape` 改为只在多行基本字符串中接受"反斜杠、可选空白、换行"并修剪其后
+  所有空白与换行；单行字符串中的续行与"反斜杠加空格加非换行"仍判为无效。
+- NICE_TO_HAVE：P14-A81 的测试入口改为 `governance::manifest_harness::tests`。
+- **差分测试**（为不再一轮轮挖词法边界）：Python 生成器随机组合表头（含引号与空格写法）、裸键 / 引号键 / 转义键、各类字符串（含结尾引号段、续行、
+  内含 `harness = false` / 注释 / 括号的内容）、数组与内联表与注释，用 `tomllib` 保留合法清单并按"`harness` 只能是根级 bench 目标的直接字段"
+  计算期望，再用临时的忽略测试让扫描器读同一语料。种子 20261016 的 20 000 例（9 613 例违规）与种子 777 的 100 000 例（50 816 例违规、51 315 例含多行
+  基本字符串、约 9 000 例含续行）均 0 不一致；第一次比较的 529 例差异来自我的预言过宽（把 bench 目标内更深的嵌套 `harness` 也当允许），按规则收窄后
+  消失。临时测试已删除，不进入提交。
+- 验证：fmt、clippy 0 警告；`cargo test -p stickymd-smoke --locked` 533 passed、17 ignored，另一个二进制 26 passed。此前一次完整运行中
+  `a_descendant_holding_the_output_is_ended_with_the_helper`（54.7 s）与 `a_candidate_that_exits_at_once_is_a_startup_failure`（等满超时）失败，
+  当时 E: 盘只剩约 6 GB、WSL 中其他项目的构建正在大量写盘；腾出空间后两项都通过，判定为环境压力而非回归。
+
+#### C2b-2 代码审查第 3 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX；第 2 轮两项字符串修复符合 TOML 1.0，owner 核验、schema 3 消费链、readiness、
+投影与三项 Esc 绑定未发现其他应修问题。两项核实后接受：
+
+- **bench 目标内的嵌套 `harness` 被当作直接字段放行**：判断只看外层上下文是否为 `bench`，丢失了点分键前缀与内联嵌套层级——`[[bench]]` 下的
+  `meta.harness = false`、`bench = [{ meta = { harness = false } }]` 被放行，而语义等价的 `[bench.meta]` 下的 `harness` 被拒。改为按"形状"跟踪
+  完整路径：键与数组元素是不同的部分（`[[bench]]` 后的 `harness` 是 `bench[].harness`，其下的 `meta.harness` 是 `bench[].meta.harness`），
+  只允许 `bench[].harness` 与 `bench.harness`；表头的最后一个键同样受此规则约束（`[harness]`、`[[test.harness]]` 被拒）；没有键的括号只允许作为
+  数组元素，其他位置 fail closed。
+- **缺少 TOML 1.1 的 `\xHH` 转义**：Cargo 自 1.94 接受 TOML 1.1，项目锁定 Rust 1.97.1；`description = "\x53tickyMD"` 这样的合法清单会被误拒。
+  增加两位十六进制转义（单行与多行基本字符串、键与值）。
+- 差分测试补充：本机 Python 3.15 的 `tomllib` 已支持 TOML 1.1（`\xHH`、内联表换行与尾随逗号），生成器加入 `\xHH`、点分键（含 bench 内）、
+  `[harness]` 等表头、根级 `bench.harness`、跨行与带尾随逗号的内联表，并去掉此前排除这些形状的过滤。种子 31337 的 100 000 例（75 641 例违规、
+  21 566 例含 `\x`、19 884 例 bench 内点分键、12 733 例 `[harness]`）与此前两个语料（20 000 与 100 000 例）均 0 不一致；临时测试已删除。
+
+#### C2b-2 代码审查第 4 轮（2026-10-16）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX；第 3 轮的 bench 嵌套路径与 `\xHH` 修复未发现新问题。核实后接受：
+
+- **点分键与表头中的父键 `harness` 漏检**：只检查路径的最后一个键，`[package.metadata]` 下的 `harness.enabled = false`、
+  `[package.metadata.harness.settings]` 被放行，而等价的 `harness = { enabled = false }` 被拒。TOML 的点分键与表头为路径上的每一级命名表，所以改为
+  `misplaces_harness`：路径上每个名为 `harness` 的键，都以截至该键的前缀检查是否为 bench 目标的直接字段；表头与赋值键共用。负例补点分键、内联点分键、
+  子表头与数组表头。
+- 差分：生成器加入父键位置的 `harness`（`harness.enabled`、`meta.harness.x`、`[package.metadata.harness…]`、`[[harness.x]]`、
+  `[bench.harness.deep]` 等）。种子 4242 的 100 000 例（81 988 例违规、55 592 例含父键位置的 `harness`、18 012 例允许）与此前三个语料共 320 000 例
+  均 0 不一致；临时测试已删除。
+- 期间一次 dev-check（CPU 100%）中 stickymd-win 的 `preview::worker::tests::document_projection_release_forces_the_next_visible_request_to_rebuild`
+  因工作线程接收超时失败；本批未改 `apps/` 与 `crates/`，单独重跑 5 次均通过，判定为负载造成的既有时序敏感。
+
+#### C2b-2 代码审查第 5 轮（2026-10-16，逐构造审计）
+
+本轮要求审查者逐类列举 Cargo 1.97 接受的 TOML 1.1 构造并判定扫描器能否正确定位每个 `harness` 键。gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、
+1 SHOULD_FIX；裸 / 引号 / 点分键、表头与隐式父表、数组表、内联表（空、嵌套、多行、注释、尾随逗号）、全部字符串形式与转义、注释、数组、数值与日期、
+空白与 CRLF 均判为正确，owner 核验、证据与 readiness、计划与分类、三项绑定未发现新问题。唯一一项核实后接受：
+
+- **文件开头的 UTF-8 BOM 使合法清单被误拒**：Cargo 1.97 的 TOML 词法器（`toml_parser` 1.1.2）跳过文件开头的一个 BOM，扫描器把它当作非法键字符。
+  改为扫描前只去掉开头的一个 BOM；测试含 BOM 加合规清单通过、BOM 加非 bench 的 `harness` 仍被拒、两个 BOM 与字符串内的 U+FEFF 照常处理。
+- 本轮期间两次完整运行中各有一个既有时序敏感测试失败：stickymd-win 的两个 Preview worker 测试（工作线程接收超时）与 smoke 的
+  `managed_process::tests::stale_smoke_preflight_fails_without_killing_the_existing_process`（结束子进程后立即删除夹具目录失败）；本批未改 `apps/`、
+  `crates/` 与这些测试，stickymd-win 测试单独连跑 3 次（287 passed）与该 smoke 测试单独连跑 3 次均通过，判定为机器负载下的既有不稳定。
+
+#### C2b-2 代码审查第 6 轮（2026-10-16）与结论
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX；BOM 修复只去掉开头一个 U+FEFF，与上游 lexer 一致；owner 核验、schema 3 消费链、身份漂移、
+readiness、任务投影与三项 Esc 绑定未发现失败后仍贡献 owner、误收旧证据或错绑路径。
+
+最终验证（提交前，同一工作树）：`cargo fmt --all -- --check` 通过；`cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 0 警告；
+`cargo test --workspace --locked --no-fail-fast` 中 stickymd-smoke 534 passed / 17 ignored 与 26 passed、core 与 render 及 phase-1 实验全部通过；
+stickymd-win 有 2 个 Preview worker 测试在当时 CPU 96% 的负载下因接收超时失败（本批未改 `apps/` 与 `crates/`，stickymd-win 不依赖 stickymd-smoke，
+单独运行 stickymd-win 测试连续 3 次 287 passed）；Linux 复跑（WSL Debian，3795335 上叠加 96 个文件）clippy 退出 0、测试 439 passed / 3 ignored 与 19 passed。
+本批之初的 dev-check 曾 10/10 通过；此后的 dev-check 均止于上述负载下的既有时序敏感测试，没有完整通过的最终 dev-check。
+
+### C2b-3 实施记录（2026-10-17）
+
+本批逐义务审计 C2a 留给单元测试的 42 项缺口（`UNIT_SCROLL_RUNTIME`、`C2_SCROLL_SHELL`、`C2_SCROLL_RENDER`、`C2_OPACITY_REDUCER`、
+`UNIT_OPACITY_DRAG`、`UNIT_QUIT_STATE` 与两项内联缺口），只绑定能被现有或补强后的单元测试完整证明的义务。
+
+- **方法**：每项义务先由一个映射者读 plan 条款、声明的断言与参数和 `--list` 出的测试名，给出唯一 owner 或"无"；提出 owner 的再由三个独立反驳者
+  各自尝试证伪（默认倾向证伪），多数未证伪才保留。结果：17 项提出 owner、25 项无候选；17 项中 9 项保留、8 项被多数证伪。保留的 9 项里有 6 项各被
+  一位反驳者证伪，逐条核实其理由后补强（见下），不是按票数直接接受。
+- **plan 11**（`release-artifact-authority` 的 owner 条目）：owner 声明改为"一个或多个 owner，全部核验才算有 owner"。这是 C2b-2 已批准合同的
+  细化（集合而非单值），不改变核验、收据与 readiness 判定；`Target::Test(&'static [Owner])`，`test_owners` 取并集，覆盖测试要求非空且不重复。
+- **补强与新增接缝**（针对单票证伪的理由）：
+  - emphasis 绘制：原测试只断言加粗后像素多于静止时，静止宽度为 0 也能通过；补 `thin_count > 0`（每个 DPI）。
+  - hover 触发：原测试把"光标在哪条 gutter"作为参数直接传入，命中判定在 `StickyApp` 方法里没有测试；抽为纯函数 `app::scrollbar::gutter_at`
+    （`scroll_runtime.rs` 只负责取几何与 DPI 后调用），新测试 `the_gutter_is_the_band_right_of_each_pane` 覆盖两侧边界、上下边界、
+    缺失窗格与 150% DPI；该义务由 gutter 判定与 emphasis 判定两个 owner 共同持有。
+  - 轨道命中：原测试只按 Source 一条栏；补 Split 中按 Preview 轨道上下两侧得到 `Page { pane: Preview, direction: ±1 }` 且不开始拖动。
+  - Source 两端可达：`caret_rect(text.len()).is_some()` 对被裁掉一半的末行也成立；改为断言末行完整位于 220 px 视口内。
+  - 标题优先级：plan 条款含"唯一函数"，只测优先级不够；与 `the_title_has_one_native_writer` 一起作为两个 owner。
+  - 载入外部解除重建义务：反驳者认为测试未覆盖"外部删除"语境与运行时调用点。核实：测试的义务正是由 `RecreateMissing` 写入失败产生（外部删除后的
+    重建义务），再经冲突载入 `accept_external` 解除；`IgnoreKnown`（重新出现的已知内容）走 `confirm_durable_present`，不是"载入外部"；运行时的两处
+    载入（`ReloadClean` 与冲突载入）都调用 `accept_external`。接缝与其他绑定一致（单元决策，接线另计），不补强，直接绑定。
+- **绑定的 9 项**（plan 09）：`scroll-3` emphasis-trigger `trigger=hover`（2 个 owner）/ `trigger=drag`、emphasis-paint、drag-mapping、
+  track-hit、ends-reach-document-ends `view=source`（stickymd-render lib owner，首个 `lib` 目标）；`quit-2` established-only-by-save-failure
+  `cause=paste-unconverged`、external-load-releases-rebuild；`quit-3` title-priority（2 个 owner）。`unit_owners` 中 `Lib` 的 dead_code 预期随之删除。
+- **被多数证伪的 8 项**（保留缺口）：thumb-geometry（只测 dpi 1 的最小高度，未测按比例与按 DPI）、drag-live-update、track-page-scroll、
+  viewport-only `state=preedit`、stale-frame-no-thumb、stale-receipt-identity（只测偏移相同的视口不等，未测只差偏移的旧回执被丢弃）、
+  stale-receipt-guard、no-stepwise-write（只断言 reducer 的持久化请求，不读 config，而运行时按 config dirty 写盘）。
+- **无候选的 25 项**：视图模式到窗格栏的组合、`StickyApp` 的 winit 接线（hover、拖动、翻页、结束拖动、回执应用）、对文档状态不变的断言、
+  gutter 几何避让、短笔记隐藏、Source 映射缓存、Preview 文档高度、透明度范围与输入、守卫阻止的退出、屏障判定与每次事件处理后的清除、组字守卫接线。
+- **缺口文案**：各 gap 常量与内联文案改为"C2b-3 审计：……"，写明现有测试未证明的部分与预期的补强或 exact 层，替换此前"C2 / C2b 绑定模块收据"的
+  计划文字（那些文字假设整组测试能持有义务，审计后不成立）。
+- **回归**：首次 `all --ci --ci-shard=tests` 中 `runner::headless::tests::requesting_several_modules_deduplicates_shared_commands` 失败——它假设
+  `core,render` 只规划两个任务，render 有了 owner 后多出投影到 `stickymd-render` 的 owner 任务（行为正确）。测试改为把 owner 任务分开：至多一个，
+  其余仍是去重后的两个任务；是否规划 owner 任务由映射决定，投影本身由 `owner_verification_projects_onto_the_selected_owning_packages` 覆盖。
+- **验证**（审查前，未冻结的 dirty 工作树，仅作开发证据）：`cargo fmt --all -- --check` 通过；`cargo clippy -p stickymd-smoke -p stickymd-win
+  -p stickymd-render --all-targets --locked -- -D warnings` 0 警告；`cargo test -p stickymd-win -- app::scrollbar` 8 passed、`cargo test -p
+  stickymd-render --lib -- source::scrollbar` 4 passed；`modules run windows,render --mode=tests` PASS（stickymd-win 288 passed）；
+  `all --ci --ci-shard=tests --json` 全部 PASSED（workspace tests 207.4 s），schema 3 证据中 owner 任务 PASSED、8.3 s、列出 12 个 owner（11 个
+  `stickymd-win/bin:stickymd-win`，1 个 `stickymd-render/lib`）；Linux 复跑（WSL Debian，3795335 上叠加 97 个文件）stickymd-smoke 与
+  stickymd-render clippy 退出 0、测试 439 passed / 3 ignored、19 passed 与 render 165 passed / 13 ignored 等全部通过。
+
+#### C2b-3 代码审查第 1 轮（2026-10-17）
+
+gpt-6-astra（effort max）：DISAGREE，3 BLOCKER、4 SHOULD_FIX、1 NICE_TO_HAVE；多 owner 机制（并集、`describe`、readiness 严格相等、按包投影）与
+`gutter_at` 抽取未发现问题，9 项绑定中 track-hit 与 `cause=paste-unconverged` 判为成立。全部核实后接受，并对每项补强做了变异检查（临时改生产代码、
+只跑该义务的 owner、确认失败后恢复）：
+
+- **hover / drag 只测 Source**（BLOCKER）：`emphasized()` 限定 Source 或拖动时两栏一起强调都能通过。`hovering_or_dragging_a_bar_emphasizes_only_that_bar`
+  改为 Split 两栏，对每个窗格依次 hover、离开、拖动、结束拖动，并断言另一栏不强调。两个变异均被杀死。
+- **标题期望值引用生产常量、只测顺次清除**（BLOCKER）：`each_state_has_its_title_and_higher_states_win` 改为五个事实的全部 32 种组合，期望标题在测试中
+  逐字写出（退出已取消的字面量即 plan 09 原文）。"取消标题要求 dirty" 与 "字面量漂移" 两个变异均被杀死；唯一原生写入者守卫保留为第二个 owner。
+- **Source 两端只用短行**（BLOCKER）：plan 09 要求覆盖单行折行。`scrollbar_handles_a_single_wrapped_line_and_resized_short_notes` 补首尾断言（末行与首行
+  完整位于视口内、`fraction` 为 1、回到开头 `line` 与 `vertical` 为 0）并加入为第二个 owner。变异"折行行高按一行计"被该测试杀死，而只看短行的原 owner
+  不会失败——这正是需要两个 owner 的原因。
+- **emphasis 绘制只比像素数**（SHOULD_FIX）：改为比较着色像素的列与行范围：强调后两侧都更宽、行范围不变、且仍在轨道内。变异"强调时等宽增高"被杀死。
+- **拖动映射只测原位与越界**（SHOULD_FIX）：补轨道内部位置：两种抓取偏移、四个非整齐位移下，fraction 等于"滑块顶端跟随指针位移"除以可移动长度。
+  变异"fraction 量化为 0.2 步长"被杀死。
+- **载入外部只测有冲突的路径**（SHOULD_FIX）：测试对无冲突（`ReloadClean`）与有冲突两种状态都验证解除。变异"仅在存在冲突时解除"被杀死（首次运行时
+  rustc 因会话中断崩溃，单独重跑后确认）。
+- **gap 文案与现有断言矛盾**（SHOULD_FIX）：例如绘制测试其实断言了避开 resize 边与同步按钮、默认 96 有 config 断言、非数字字符被拒有断言，"任何其它事件都会
+  提交"过强。所有剩余缺口按义务（或同族义务）重写：先写已有的单元断言，再写缺失部分；`UNIT_SCROLL_RUNTIME` 拆为视图与栏、窄槽运行时、拖动运行时、
+  只改视口、Preview 运行时五组，其余七项改为内联文案。
+- **缺 owner 集合的负例**（NICE_TO_HAVE）：owner 检查器的正反例加入 `Target::Test`（合法单 / 双 owner；空、重复、未知包、空路径、含空白路径）；
+  并集抽为 `owners_of` 并以合成义务测试第二个 owner 与跨义务共享 owner。
+- 文档：P14-A81、phase-05 的 2026-10-17 补充与 coverage-matrix 按补强后的断言重写。
+- 验证：fmt、clippy（smoke、win、render）0 警告；`cargo test -p stickymd-smoke --locked` 534 passed / 1 failed / 17 ignored，失败的是既有负载敏感的
+  `qualification::manual::instance::tests::a_candidate_that_exits_at_once_is_a_startup_failure`（本批未改），单独连跑 3 次均通过。
+- 第 1 轮修复后 `all --ci --ci-shard=tests --json` 首次运行因机器提交内存耗尽（rustc os error 1455，另一项目的构建与 Lean / WSL 同时运行）在编译阶段
+  失败，属环境故障；以 `CARGO_BUILD_JOBS=4` 重跑全部 PASSED（workspace tests 383.9 s），owner 任务 12.2 s、列出 13 个 owner（含两个
+  `stickymd-render/lib`）；Linux 复跑（97 个文件）clippy 退出 0，smoke 440 passed / 3 ignored、19 passed，render 165 passed / 13 ignored。
+
+#### C2b-3 代码审查第 2 轮（2026-10-17）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、1 SHOULD_FIX；第 1 轮的标题、Source 两端、绘制、拖动映射、载入外部、gap 文案与 owner 负例判为已关闭，
+emphasis-paint、drag-mapping、Source 两端、`cause=paste-unconverged`、external-load 与 title-priority 六项绑定判为成立（只认单元接缝，调用接线另计）。
+两项核实后接受：
+
+- **hover 与拖动同时成立未测**（BLOCKER）：测试先清除 hover 再拖动，`emphasized()` 改成 `hovered.or(drag)` 或 `drag.or(hovered)` 都能通过，而拖动
+  一栏时 hover 另一栏是 `pointer_moved` 的合法状态。测试在每栏拖动中再 hover 另一栏，断言两栏都强调，结束拖动后只剩被 hover 的一栏。两个变异均被杀死。
+- **轨道命中没有纵向越界的反例**（SHOULD_FIX）：唯一反例在正文区，`Scrollbar::contains` 只查横向也能通过。测试对 Split 两栏轨道上下左右紧邻的外侧各按一次，
+  断言不命中且不开始拖动。"忽略高度"与"左右放宽两像素"两个变异均被杀死。
+- 文档：P14-A81 与 phase-05 补充写入这两项断言。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows,render --mode=tests` PASS（stickymd-win 288 passed、render 168 passed，owner 任务通过）。
+  本轮只改 stickymd-win 的测试与文档，owner 集合不变。
+
+#### C2b-3 代码审查第 3 轮（2026-10-17）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、1 SHOULD_FIX；第 2 轮两项判为已关闭，六项绑定仍判为成立。两项都是相邻边界，核实后接受；为不再逐例补，
+改为在小状态空间上穷举：
+
+- **同一栏同时 hover 与拖动未测**（BLOCKER）：互斥（XOR）的 `emphasized()` 能通过，而"在窄槽内按下滑块后沿原窄槽拖动"正是该状态。测试保留原有转换序列，
+  另穷举 hover（无 / Source / Preview）× 拖动（无 / Source / Preview）九种状态，断言每栏强调当且仅当它被 hover 或被拖动。XOR 与 `Option::or` 变异均被杀死。
+- **轨道左 / 上边界未作为命中测试**（SHOULD_FIX）：轨道是半开矩形 `[left, right) x [top, bottom)`。测试对两栏每条边各按内侧末像素（须翻向对应方向）与
+  外侧首像素（须不命中），并先断言左右边的按点在滑块之上。严格左界、严格上界、含右界、含下界、右界少一像素五个变异均被杀死。
+- **主动补齐同类边界**：hover 的第二个 owner `the_gutter_is_the_band_right_of_each_pane` 原只测部分边界（上 / 下边内侧未作为命中）。改为对两个窗格、两个 DPI
+  的四条边各测内侧与外侧半像素；严格上界、含下界、严格左界、不按 DPI 缩放、忽略高度五个变异均被杀死。
+- 文档：P14-A81 与 phase-05 补充改写为穷举后的断言。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows --mode=tests` PASS（stickymd-win 288 passed，owner 任务通过）；owner 集合不变。
+
+#### C2b-3 代码审查第 4 轮（2026-10-17）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、1 NICE_TO_HAVE；第 3 轮两项与主动补齐的 gutter 边界判为已关闭，hover 与 drag 两项绑定改判为成立，
+九项中八项成立。核实后接受：
+
+- **轨道命中没有测滑块与空白轨道的分界**（BLOCKER）：`Scrollbar::press` 中 `y < thumb_top` 误写为 `<=` 时，track owner 的 21 个按点结果全部不变，而按在滑块
+  首行会变成翻页。测试对两栏补滑块上方半像素（翻页向上）、`thumb_top`（开始拖动）、滑块末行内侧半像素（开始拖动）与 `thumb_top + thumb_height`（翻页向下），
+  每次按下后结束拖动以免串扰。"首行算轨道""末端算滑块""滑块短一像素""滑块晚一像素开始"四个变异均被杀死。
+- **报告措辞**（NICE_TO_HAVE）：第 3 轮记录中 gutter 的"四条边各测内侧与外侧半像素"不准确。更正：每条边取相距 0.5 px 的一内一外两点，其中一点就在边界上——
+  左、上边的边界点是命中点，右、下边的边界点是不命中点。测试取点不变。
+- 文档：P14-A81 与 phase-05 补充写入滑块分界。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows --mode=tests` PASS（stickymd-win 288 passed，owner 任务通过）；owner 集合不变。
+
+#### C2b-3 代码审查第 5 轮（2026-10-18）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER；第 4 轮两项判为已关闭，九项中八项成立。核实后接受：
+
+- **滑块非整数末端的最后整数行未取样**（BLOCKER）：Preview 滑块末端约为 438.396，"末端内侧半像素"取到 437.896，而整数行 438 仍属滑块；末端判定改为向下取整时
+  owner 的 29 个按点结果全部不变。逐点补样已连续三轮留下新的间隙，故改为扫描：对 Split 两栏和四条滑块起止落在像素之间或之上的栏（fraction 0、0.3137、0.6421、1），
+  沿轨道中线自轨道上方两像素到下方两像素、并在三个高度上横跨轨道左右各两像素，每四分之一像素按下一次，期望由半开区间 `[left, right) x [top, bottom)` 与
+  `[thumb_top, thumb_end)` 独立给出，并断言至少一条栏的滑块起点和终点不在整数上。末端向下 / 向上取整、起点向下 / 向上取整、指针纵坐标取整、命中判定取整与
+  "首行算轨道"七个变异均被杀死（其中一次因机器提交内存耗尽而未编译，以 `CARGO_BUILD_JOBS=2` 重跑后确认）。
+- 文档：P14-A81 与 phase-05 补充写入扫描。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows --mode=tests` PASS（stickymd-win 288 passed，owner 任务通过）；owner 集合不变。
+
+#### C2b-3 代码审查第 6 轮（2026-10-18）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER；第 5 轮的扫描判为已关闭，九项中八项成立。核实后接受：
+
+- **末端比较的浮点改写未被排除**（BLOCKER）：把 `y >= thumb_top + thumb_height` 改写为代数等价的 `y - thumb_top >= thumb_height`，两者在部分几何下相差一个
+  ULP。审查者给出合法输入 `preview_scroll(…, 780.0, 4.0)`：滑块末端恰为 567.0 而起点与高度都不是整数，改写后整数行 567 会开始拖动而不是翻页；网格扫描的
+  16 197 个按点都碰不到这种差异。修复：把该 Preview 栏加入扫描（断言末端为 567.0、起点非整数）；另在 3 个 DPI × 4 种可见比例 × 41 个位置上，按滑块起点与
+  末端本身及其前一个浮点值（`next_down`）各按一次，期望由存储的 `[thumb_top, thumb_top + thumb_height)` 给出——舍入方式不同的分类会在其中一部分几何上
+  分歧。"末端向下取整"变异被杀死；末端改写变异的结果见下方验证条目。
+- **探针发现的实现细节**：滑块起点或末端与轨道端点重合时，轨道端点旁的浮点值会被 `Scrollbar::contains` 按 `f32` 读成轨道内（`press` 按 `f64` 分类），
+  例如 y = 41.99999999999999 被当作轨道顶 42 内的点而向上翻页。指针坐标是整像素（`f32` 精确），所以没有用户可见的影响，也不改产品代码；探针在这两种
+  重合处跳过，那里的轨道边缘由整像素与四分之一像素扫描覆盖。
+- **等价变异**：把起点比较改写为相对轨道顶（`y - track.y < thumb_top - track.y`）未被杀死。轨道顶是不超过 2¹⁰ 的整数，减去它在这些量级上不引入舍入
+  （结果所需位数不超过原值），两种写法对所有可达输入一致，判为等价变异，不作为缺口。
+- 文档：P14-A81 与 phase-05 补充写入边界探针。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows --mode=tests` PASS（stickymd-win 288 passed，owner 任务通过）；owner 集合不变。期间 E: 盘
+  剩余低于 10 GB 触发 Rust 磁盘闸，经 USER 同意删除了可重建的 `target/release`（3.5 GB）。
+
+#### C2b-3 代码审查第 7 轮（2026-10-18）
+
+gpt-6-astra（effort max，58 min）：DISAGREE，1 BLOCKER、1 SHOULD_FIX；第 6 轮的末端改写反例判为已关闭，起点相对改写判为等价变异（与本报告判断一致），
+九项中八项成立。本轮按要求区分了整像素影响。两项核实后接受：
+
+- **高 DPI 下的轨道宽度未被扫描**（BLOCKER，整像素可见）：七条扫描栏都是 100% DPI，DPI 网格只按轨道中线；把命中宽度固定为 10 像素（遗漏 DPI 换算）时
+  owner 的全部按点不变，而 150% DPI 下宽 15 像素的轨道右侧 5 像素点击会失效。测试重构为：所有按点经同一个只知半开区间的 `classify` 判定，且每次按下后核对
+  `end_drag` 是否恰报告开始了拖动（第 6 轮的探针此前未核对）；DPI 网格扩为 100% / 125% / 150% / 200% × 有无 Split 控件留白 × 4 种可见比例 × 41 个位置，
+  每条栏以四分之一像素横扫轨道左右各两像素（经过滑块），并纵扫轨道两端与滑块两端各两像素，再加滑块边界与其前一个浮点值的探针。"固定 10 像素宽度"与此前
+  全部 14 个轨道 / 滑块变异（忽略高度、四条边的严格 / 包含错误、指针取整、起止取整、末端相对改写等）共 15 个均被杀死。
+- **投影文档未写排除范围**（SHOULD_FIX）：P14-A81 与 phase-05 补充改写为实际覆盖：哪些按点在哪些 DPI 上、滑块边界与轨道端点重合时跳过哪一个浮点值及原因、
+  轨道端点由哪些按点承担。
+- 验证：fmt、clippy（stickymd-win）0 警告；`modules run windows --mode=tests` PASS（stickymd-win 288 passed，owner 任务通过）；owner 集合不变。
+
+#### C2b-3 代码审查第 8 轮（2026-10-18）与结论
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER；第 7 轮两项判为已关闭，九项绑定在声明的单元接缝内全部成立。审查者逐 DPI 复算了杀死"固定 10 像素宽度"的
+整像素按点（125% `(515,59)`、150% `(517,64)`、200% `(523,74)`），并把起点相对改写、整像素输入下的指针取整等判为限于可达输入域的等价变异；在 track 命中、翻页
+方向、滑块分类与是否开始拖动的范围内没有找到仍能通过 owner 的整像素回归。另两项：
+
+- NICE_TO_HAVE（勘误）：第 7 轮记录中"所有按点经同一个 `classify` 判定，且每次按下后核对 `end_drag`"过宽——该测试前段的 29 次按下使用直接写出的期望，其中前
+  21 次不逐次核对 `end_drag`；统一判定与逐次核对只适用于尾部扫描与边界探针（代码注释 "From here" 的范围）。审查者统计尾部与探针共 211 644 次按下。
+- NEEDS_VERIFICATION：当前工作树的 Windows 执行——见下方最终验证。
+
+C2b-3 最终结果：42 项 C2a 单元缺口中 9 项由 13 个单元测试 owner 持有（其中 hover、Source 两端与标题优先级各两个 owner），33 项保留为按义务写明已有断言与
+缺失部分的 gap；产品代码唯一改动是保持原判定的 `gutter_at` 抽取；`Scrollbar::contains` 按 `f32`、`press` 按 `f64` 读取指针的差异对整像素输入无影响，记录
+不改。
+
+最终验证（提交前，同一工作树，未冻结的 dirty 树，仅作开发证据）：`cargo fmt --all -- --check` 通过；clippy（stickymd-smoke、stickymd-win、stickymd-render）
+0 警告；`all --ci --ci-shard=tests --json`（`CARGO_BUILD_JOBS=2`，机器内存紧张）全部 PASSED，workspace tests 266.2 s，owner 任务 13.7 s、列出 13 个
+owner；Linux 复跑（WSL Debian，3795335 上叠加 97 个文件）clippy 退出 0，smoke 440 passed / 3 ignored、19 passed，render 165 passed / 13 ignored。
+报告中各轮的变异检查为临时改生产代码、只跑对应 owner、确认失败后恢复（脚本不进仓库），每次恢复后 `git diff --stat` 与改前一致。
+
+## 覆盖补全 C2c / C2d 准备（2026-10-18）
+
+### 第二实例唤醒收起 dock 的产品缺陷
+
+为 C2d 的 G4-05（dock 收起状态下第二次启动）取证时读代码发现：窗口在 dock 边缘处于稳定收起状态（收起按钮、Esc 或 700 ms 失焦自动收起）时，
+同目录第二次启动只聚焦窗口——`show()` 对非隐藏状态只发出 `FocusWindow`，而获得焦点只展开仍在向收起动画中的窗口，于是窗口停留为获得焦点但拒绝编辑
+输入的 3 DIP 条。plan 09 `#single-instance` 要求"通知第一实例显示并激活"，并把第二实例列为四条恢复路径之一；没有规则让手动收起阻止唤醒，因此判为
+实现偏离而非 plan 问题，不改 plan。
+
+- 复现：新单元测试 `flow::window::reducer::phase8_window_tests::a_second_instance_expands_a_collapsed_dock`（Left / Right / Top，手动收起与
+  初始收起）在修复前失败（`left: Presented(DockedCollapsed(Left))`）。
+- 修复：`show(now_ms, …)` 在非隐藏分支中，若稳定目标为 `DockedCollapsed` 则 `start_expand(now_ms, false, …)` 后再聚焦；`ShowRequested` 与托盘切换
+  传入 `now_ms`；`start_expand` 改为 `pub(super)` 供 lifecycle 使用。隐藏到托盘后的显示路径不变。
+- 验证：fmt、clippy（stickymd-win）0 警告；`cargo test -p stickymd-win --locked` 289 passed / 8 ignored（含 `flow::window` 38 passed）。
+- 投影：phase-08 增补 2026-10-18 节。真实的第二次启动（P08-M08 `identity-wake state=docked`）仍归 G4-05 exact。
+- 审查：gpt-6-astra（effort max）AGREE，逐状态追踪了 `ShowRequested` 与托盘切换（稳定收起仍属可见窗口，托盘切换仍为隐藏）、hover 展开、Pin ON 与
+  退出中的行为。NICE_TO_HAVE：三个用例实际都是手动收起（初始收起也置 `manually_hidden`），且未断言 frame、临时置顶与 140 ms。测试改为三条边 × 三种
+  收起方式（700 ms 失焦自动收起、聚焦时手动收起、初始收起），断言唤醒后临时置顶结束、展开恰从唤醒起 140 ms、frame 为 dock 的展开 frame、无剩余期限，
+  且唤醒请求的焦点使其保持展开。"不展开""从 0 时刻展开""只恢复手动收起""只改 visibility 不移 frame""保留临时置顶"五个变异均被杀死。
+  NEEDS_VERIFICATION（运行证据）：补强后在本机 Windows（HEAD 2e7e7cb 上的同一工作树）重跑——fmt 通过，`cargo clippy -p stickymd-win --all-targets --locked
+  -- -D warnings` 退出 0，`cargo test -p stickymd-win --locked` 289 passed / 8 ignored（`flow::window` 38 passed / 1 ignored）；修复前的失败输出见上方复现条目。
+  `flow` 模块只在 Windows 编译，Linux 复跑不覆盖它。
+
+### C2c / C2d 实施计划（2026-10-18，待 USER 决定 D1–D4）
+
+依据：覆盖补全批设计（2026-10-15，11 轮 AGREE 与 USER Resolution）中的"输入注入"协议与 exact / automated 扩展清单；本节只补实施顺序、取证方式与
+设计未定的机制。现存 77 项缺口按可关闭的层分组：G4 真实输入扩展约 37 项、G3-03 强杀点与恢复待处理 Esc 4 项、P08-A11 双副本 3 项、滚动条运行时
+接线 23 项、可由补强单元测试关闭 10 项。
+
+**C2c 输入注入模块**（不改产品；改 `tools/stickymd-smoke`）
+1. plan 11 先行：在 `#phase-verification-harness` 写入注入合同——注入只经一个模块；该模块只在 `cfg(panic = "unwind")` 中真正注入，abort 构建只有
+   返回错误的桩；先登记后注入，正常路径显式有界释放、`Drop` 兜底；清理以 `SendInput` 插入数判定（短计数即失败，完整计数只证明进入输入流），保留
+   鼠标左键释放采样（采到 Down 为失败）；清理失败触发共享停止，之后注入输入的 G3/G4 case 不执行、不产生 PASS；业务断言与清理分开判定；注入前目标
+   HWND 须为前台、激活且有焦点。
+2. 实现：键盘改用 `SendInput`（`INPUT_KEYBOARD`，替换 `keybd_event`），鼠标沿用 `SendInput`；helper 的右击与两处 Esc 迁回 Rust（helper 只做 UIA
+   定位与菜单核验）；治理文本扫描禁止 `SendInput` / `keybd_event` / `mouse_event` 出现在模块之外（含 helper）。托盘菜单核验从关闭到打开的变化。
+3. 取证（无需独占桌面的部分先做）：短计数、释放失败的共享停止、普通 unwind 由注入调用可替换的单元测试覆盖；真实 abort 二进制到达拒绝桩且零注入、
+   托盘关闭到打开需在独占桌面上运行。
+4. 影响：`window_control*` 属于全部 harness 的共享输入，本批使 G3 / G4 / G5、Runtime、Performance、Resources 的模块证据全部失效一次。
+
+**C2d exact 扩展**（按 2026-10-15 清单；每项先在 `exact_checks.rs` 声明标签）
+- G4-06：Right / Top dock 组字不收起，96 / 100 透明度下提交（先 40 再 96 再 100，避免默认值空通过），编辑区与 Search 中组字时 Esc 只取消 preedit
+  （以下一次输入落点、标题与 dock 几何判定）。
+- G4-02：真实键盘 Esc 各分支（弹出层关闭并回退、Search 关闭、Preview 有 / 无选区、Docked / Floating 收起、Shift+Esc、重复 key-down 逐次独立）、
+  物理点击收起按钮、透明度三种提交与滑块拖动中 Esc、被覆盖的感应条经真实鼠标悬停展开（自建覆盖窗口，不加消息补强）。
+- G4-01：托盘"隐藏"、退出保存失败（只读并回读、键入、确认未落盘、托盘退出、保持运行、标题为固定字面值、所有路径恢复属性）、置顶在托盘与窗口间
+  双向同步且不受临时 sensor topmost 影响、真实 Alt+F4（见 D4）。
+- G4-05：dock 收起状态下第二次启动——上一节的产品缺陷修复后才可能 PASS。
+- G3-03 与 P08-A11：见 D1、D2。
+- 滚动条：见 D3。
+
+**待 USER 决定**
+- D1 G3-03 的确定性强杀点。产品当前没有可在保存中途停住的钩子，且 G3 已批准的边界是"产品 runtime 不变"。
+  (a) 推荐，只改 harness：资产写入与移入 trash 以文件状态为里程碑（最终 `images/stickymd-*` 出现、`.trash/` 出现条目）后立即强杀；note 保存以只读
+  note 使发布失败（产品测试已证明只读会使保存失败），在临时文件写出而发布失败后强杀，重启后按恢复规则判定，并加"编辑后未触发保存即强杀"的负对照；
+  恢复待处理 Esc 以显式设置并回读 `tmp.mtime > note.mtime` 的 fixture 构造，配正向对照。它证明的是"发布失败后的崩溃"，不是系统调用中途的崩溃。
+  (b) 在 Release 产品中加运行时开启的测试里程碑 / 暂停点：能在发布 API 前后精确停住，但改产品 runtime 与 plan，需要新的 USER 决定。
+- D2 P08-A11 的"退出一份不影响另一份"。两份副本的托盘图标同名，现有 helper 取第一个命中且只按 PID 过滤菜单。
+  (a) 推荐：helper 列出全部 StickyMD 托盘图标，逐个打开菜单并只接受菜单属于目标 PID 的那个，其余以 Esc 关闭；有界、无匹配即失败。
+  (b) 只证明 note / config 双向不串写，退出隔离留给 M45 人工。
+- D3 滚动条运行时接线 23 项（视图到栏、窄槽运行时、拖动应用与结束、只改视口、Preview 运行时）。
+  (a) 推荐：把 `StickyApp` 中的滚动应用（视图模式 → 栏、拖动 / 翻页 → 视口、结束拖动的各触发、回执应用）再抽一层纯函数并单元持有决策，真实接线只由
+  G4 持有其中可观察的几项（拖出窗口完成拖动、松开 / 失焦结束拖动），以点击视口固定点后读取光标所在行作为滚动位置的观察。
+  (b) 全部走 G4 exact，需要为滚动位置建立截图或剪贴板观察，用时与脆弱性都更高。
+- D4 真实 Alt+F4。若注入前的焦点核验与注入之间焦点被抢，它会关闭当时的前台窗口（例如运行 harness 的终端）。
+  (a) 推荐：只在独占桌面的 G4 中注入，注入前立即核验目标为前台 / 激活 / 有焦点，失败即不注入；接受该残余竞态。
+  (b) 不注入真实 Alt+F4，该义务改为人工（M05 或 M46）。
+
+**顺序**：先提交第二实例唤醒修复；C2c plan 与模块（可无桌面开发与单元取证）；C2d 各 case 扩展；最后一次独占桌面运行同时完成 C2c 的桌面取证与 C2d 的
+G3 / G4 资格化（运行前向 USER 确认桌面可独占）。10 项可单元关闭的缺口另列 C2b-4，可与 C2c 并行。
+
+### C2c / C2d 决定（2026-10-19）
+
+USER 选择：D2 helper 逐个试托盘图标；D3 纯函数 + 少量 G4；D4 独占桌面下注入真实 Alt+F4。D1 USER 问"长远来看哪种更好"，回答如下，按 (a) 实施：
+
+- 被 `TerminateProcess` 结束的进程在磁盘上留下的正是它最后一次完成的系统调用之后的状态。重启后要证明的性质——从每个中间磁盘状态都能正确协调——无论这个
+  状态是由产品钩子在精确时刻强杀得到，还是由 harness 构造得到，都是同一个。产品钩子不提供额外证据。
+- 产品钩子却要把运行时开关、暂停点及其自身的防护与测试永久留在发布的 EXE 中。这违背 plan 11 `#qualification-process-isolation` 的"验证工具不进入产品
+  runtime 与 ZIP"，也违背 G3 已批准的"产品 runtime 不变"。
+- (a) 的 note 保存点是忠实的：`persist_note` 在发布失败时返回错误而不删除临时文件，所以只读 note 使发布失败后留下的是"已写出并 flush 的完整临时文件 +
+  旧 note"，与"发布前一刻崩溃"的磁盘状态相同。资产写入与移入 trash 以文件出现为里程碑后强杀，是"在该点或之后"的确定性点。
+- 两者都不覆盖操作系统崩溃或掉电，那依赖 `FlushFileBuffers` 与 `ReplaceFileW` 的系统保证。若将来需要逐阶段的磁盘状态，可用已有的进程内观察接缝
+  （`persist_note_with_before_publish`、`atomic_publish_with_observer`）在单元层构造每个阶段并跑启动协调，同样不改产品 runtime；本批不做。
+
+## 覆盖补全 C2c 实施记录（2026-10-19，输入注入模块）
+
+按 2026-10-15 设计的"输入注入"协议与本报告 C2c / C2d 实施计划。plan 11 先行：新增 `#physical-input-injection` 一节（只经一个模块以 `SendInput`
+注入、`cfg(panic = "unwind")` 才注入、先登记后注入与逆序显式有界释放、插入数判定、左键释放采样、共享停止、业务断言与清理分别判定、注入前核验
+目标、托盘菜单核验从关闭到打开、自动化与独占桌面取证要求）。
+
+- **核心** `tools/stickymd-smoke/src/input_injection.rs`：`Injection<B: Backend>` 在一个互斥量中持有后端、已登记的按下与停止原因。`press`
+  先登记再发送按下，按下短计数时照常释放并报错（不停止）；`release` 发送抬起，左键另在 500 ms 内采样，短计数或仍为按下即设置共享停止并报错；
+  `chord` 按序按下修饰键与键、再逆序全部释放；左键以 `LeftButton` 守卫持有，`release()` 显式释放、`Drop` 兜底（失败只能经共享停止报告）。停止后
+  一切注入（含移动、滚轮与左键恢复释放）都返回带停止原因的错误。`live()` 只在 `cfg(all(windows, panic = "unwind"))` 中给出进程唯一的注入器；
+  其余构建的后端是不可构造的 `Refused`，`SendInput` 后端（`input_injection/win32.rs`）根本不编译。
+- **调用方**：键盘的四个发送函数（单键、Ctrl、Shift、Ctrl+Shift 组合）改为 `send_chord`，统一先核验目标窗口为前台、激活且有焦点（原 Ctrl+Shift 组合
+  只激活不核验）再经模块注入；鼠标的左键、移动与滚轮经模块注入；拖动与点击由 `drop(button)` 改为 `button.release()?`，正常路径的释放失败不再被
+  `Drop` 吞掉。
+- **托盘**：helper 去掉 `mouse_event` 与 `keybd_event`，动作改为 `tray-target`（先报告菜单是否已打开，未打开才定位图标并把光标移到其上）、
+  `tray-menu-items`、`tray-menu-closed` 与 `tray-invoke`；`qualification/exact_desktop/tray.rs` 负责编排：要求菜单先关闭，核验光标仍在图标上且其下
+  根窗口为 Explorer 托盘后经模块右击，读到菜单打开才继续，最多两次；Esc 只在前台窗口属于 StickyMD 进程或为托盘时注入。G4-01 的菜单、显示与退出，
+  以及 G3-04 / G3-05 的托盘退出改用它。
+- **runner**：`ExactGroup` 增加 `injects_input`（G3、G4 为真，G5 为假）。注入停止后的 G3/G4 case 记为 FAILED"not run"；case 运行期间发生的释放失败
+  使该 case FAILED，细节同时列出断言结果与清理失败。
+- **治理**：`governance/input_injection.rs` 扫描 `tools/stickymd-smoke/src` 的 Rust 源码与 `tools/` 下全部 PowerShell 脚本（含注释），三种注入 API
+  只允许出现在 `input_injection` 模块；helper 标记改为要求托盘读取标记，Rust 驱动须保留 `TRAY_MENU_OPEN_ATTEMPTS = 2`、菜单已打开的处理、右击与
+  Esc 的核验入口。
+- **未做（需独占桌面）**：实际 abort 构建到达拒绝桩且零注入、托盘菜单从关闭到打开、以及迁移后的全部 G3/G4 case，随 C2d 的独占桌面运行取证。
+- **静态取证（无需桌面）**：解析 PE 导入表——`cargo build -p stickymd-smoke --release`（工作区 release profile 为 `panic = "abort"`）得到的二进制
+  不导入 `SendInput`、`GetAsyncKeyState`、`keybd_event` 与 `mouse_event`；debug（unwind）二进制只导入 `SendInput` 与 `GetAsyncKeyState`，已不再导入
+  `keybd_event`。release 二进制中出现的 `SendInput` / `keybd_event` 字符串是治理扫描的待查名单（拆分的 `concat` 被优化器折叠为常量），不是导入。
+  （第 1 轮审查指出此结论过宽：当时光标放置与合成指针消息仍绕过模块，见下方第 1 轮记录的更正。）
+- **验证**（审查前）：fmt 通过；`cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 0 警告；`cargo check -p stickymd-smoke --release`
+  0 警告；`cargo test -p stickymd-smoke --locked` 551 passed / 17 ignored 与 26 passed；`phase 00` PASS；Linux 复跑（3795335 上叠加 108 个文件，含新文件）
+  clippy 退出 0、测试 452 passed / 3 ignored 与 19 passed（Linux 测试构建编译注入核心但不编译 `SendInput` 后端）。
+- 期间发现：上一提交（第二实例唤醒修复）只跑了 stickymd-win 测试，phase-08 增补使覆盖来源的整文摘要变化，PR CI 的 Linux 与 Windows 测试失败；
+  核对 62 个矩阵行与全部条款摘要不变后单独提交摘要更新（`23d548d`）。今后提交前跑受影响的全部包测试。
+
+#### C2c 代码审查第 1 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，3 BLOCKER、6 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；INPUT 布局、键 / 鼠标标志、cfg 划分、五处迁移与
+runner / 治理入口判为正确。逐项核实后处理：
+
+- **B1 unwind 与锁毒化**（接受）：后端在按下中途 panic 会跳过释放；释放中 panic 时登记已删而停止未设；毒化的锁照常放行。改为：按下登记到发起它的操作；
+  每个操作持有一个 unwind 守卫，unwind 时释放该操作的按下并设置共享停止；释放的登记保留到判定之后，unwind 仍能找到；锁毒化即视为停止。单元测试覆盖
+  后端在按下、释放与采样时 panic 三种情形，以及毒化后的全面拒绝。
+- **B2 绕过模块的输入路径**（接受）：Rust 的光标放置、环境探针的写回与 helper 的托盘光标移动都直接调用 `SetCursorPos`，合成指针消息不受停止约束。
+  改为：后端增加光标放置，三处都经模块（helper 只报告图标坐标，由 Rust 放置并读回核验）；`SetCursorPos` 加入治理禁止名单；合成指针消息
+  （`send_window_message`）先检查共享停止，plan 11 写明它们只送达目标窗口、不改变桌面输入状态、不是物理输入也不证明物理投递。重新解析导入表：
+  release（abort）二进制只剩 `PostMessageW`（`WM_CLOSE` 与输入法切换请求），不再导入 `SetCursorPos` 与 `SendMessageW`（合成消息的停止检查在 abort
+  构建中恒拒绝，调用被消除）；debug 二进制导入 `SendInput`、`SetCursorPos`、`GetAsyncKeyState`、`SendMessageW` 与 `PostMessageW`。
+- **B3 左键采样**（澄清合同而非改实现）：审查者按 plan 11 新文"采到按下即失败"指出 `[Down, Up]` 被判成功。2026-10-15 设计要求的是"保留现有鼠标左键
+  释放采样"，而现有采样（迁移前的 `wait_for_left_button_state`）是在 500 ms 内等待读到抬起、到时限仍为按下才失败——释放后短暂仍读到按下是异步输入
+  处理的正常现象，按"首次读到按下即失败"会制造误判。plan 11 改为准确描述现有采样："有界时间内等待读到相应状态，到时限仍未读到即失败；读到未按下也
+  不证明目标收到释放（无法读取状态时同样读到未按下）"；单元测试覆盖"释放后读到三次按下再抬起"为成功、"到时限仍按下"为停止。
+- **S1 跨操作释放**（接受）：chord 的清理会释放别的操作按住的左键。改为每个操作只释放自己的登记；左键守卫按自己的操作身份释放、不重复；停止后仍可释放
+  已登记的按下，新注入被拒。测试覆盖"按住左键时 tap 与 chord 不松开它"和"停止后守卫仍释放"。
+- **S2 托盘失败路径**（接受）：右击后读取菜单失败直接返回、重试前忽略关闭失败、诊断缺失。改为每次尝试记录图标几何、读回的光标与清理结果；右击后的任一
+  失败先尝试清理再返回；清理未确认关闭即不再点击。
+- **S3 观察失败被当作关闭**（接受）：helper 的菜单枚举区分"观察到为空"与"无法观察"（报告 `UIA_TRAY_MENU_UNOBSERVABLE`），关闭只认观察到的空；
+  Rust 严格解析 `tray-target`、`tray-menu-items`、`tray-menu-closed` 与 `tray-invoke` 的报告，拒绝缺失、重复与矛盾。
+- **S4 两份副本的图标选择**（不在本批）：exact 资格化要求唯一的 StickyMD 进程，第一个可用图标即被测图标；D2 的逐个试图标属于 C2d 的 P08-A11 扩展。
+  `tray.rs` 文档写明这一点，不声称已满足 D2。
+- **S5 托盘 Esc 的目标核验**（接受）：改为只在前台线程处于弹出菜单模式（`GUITHREADINFO.flags` 的 `GUI_POPUPMENUMODE`）且菜单所有者属于被测进程时注入，
+  不再以前台类名为 Explorer 托盘为条件。这依赖托盘菜单由 StickyMD 的隐藏窗口经 `TrackPopupMenu` 拥有，需桌面运行确认。
+- **S6 P14-A82 状态过宽**（接受）：拆为 P14-A82（仓库内可重复的单元与治理检查，AUTOMATED PASS）与 P14-A83（桌面取证：abort 构建零注入、托盘关闭到打开、
+  迁移后的 G3/G4，NOT TESTED）。
+- **N2**：治理模块注释写明它是对所扫文件的词法回归检查，不跟踪构建脚本、其他 crate 或运行时拼接的名称。
+- **N1**：桌面取证仍待独占桌面运行（P14-A83）。
+- 验证：fmt、clippy（smoke）0 警告；`cargo test -p stickymd-smoke --locked` 554 passed / 17 ignored 与 26 passed；`phase 00` PASS；release 构建 0 警告。
+
+#### C2c 代码审查第 2 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，2 BLOCKER、5 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；第 1 轮的 B2、S5（静态）、S6、N2 判为已修复，
+S4（D2）延期到 C2d 可接受。逐项核实后处理：
+
+- **R2-B1 左键释放的 panic 路径**（接受）：显式释放先置 `released` 再释放，释放 panic 时登记残留且无人兜底；外层 case unwind 时左键守卫的 `Drop`
+  若再次 panic 会逃出析构而使进程 abort，`Guarded` 也在可能 panic 的清理之后才停止。改为：左键的显式释放与非 unwind 的 `Drop` 都在该操作的
+  `Guarded` 下进行，释放 panic 时由守卫停止注入并重试一次；unwind 中的清理（`Guarded` 与左键守卫的 `Drop`）先停止，每个释放用 `catch_unwind`
+  隔离、各尝试一次，再次 panic 即注销该登记并继续释放其余按下，不让 panic 逃出析构。已在本工具链（1.97.1，MSVC）实测 unwind 中析构内
+  `catch_unwind` 能接住第二次 panic、进程不 abort。测试覆盖：左键释放的发送与采样 panic 由守卫重试；chord 在 unwind 中释放再次 panic 时其余
+  修饰键仍释放；外层 unwind 时左键释放 panic 不 abort、不留登记、停止注入；非 unwind 的 `Drop` 释放 panic 时守卫重试并停止。
+- **R2-B2 采样语义**（USER 决定）：审查者指出改写 plan 不能代替对"采到按下即失败"条款修订的批准。核实属实：2026-10-15 设计的控制性文本与迁移前
+  实现冲突。USER 2026-10-19 决定：等待读到抬起——有界时间内等待读到相应状态，到时限仍读到按下即失败（释放后 Windows 处理输入期间仍可能读到
+  按下）。plan 11 记入该决定，`wait_left_button` 文档同步。
+- **R2-S1 同一按钮的重叠持有**（接受）：`a = press_left(); b = press_left(); b.release()` 与 `a = press_left(); release_left()` 都会提前结束 A 的按下。
+  改为同一键或按钮同时只由一个操作持有：已持有时拒绝再次按下与恢复性释放，原持有不受影响；plan 11 写明原因（Windows 对每个键只记一个状态）。
+- **R2-S2 托盘失败出口**（接受）：每次打开尝试记录图标几何、读回的光标与结果；右击失败、菜单读取失败、未观察到菜单、`tray-invoke` 报告不合法与
+  所需项缺失都先清理再返回，清理结果（含因共享停止而未执行）写入错误；任一尝试的已有观察不再丢失。
+- **R2-S3 无法观察被当作无菜单**（接受）：helper 的菜单等待器到时限返回最新快照（含其可观察性），不再返回旧的空快照；`GetGUIThreadInfo` 查询失败
+  传播为错误，与"查询成功但无 StickyMD 弹出菜单"分开。
+- **R2-S4 严格解析**（接受）：每种 action 一个解析器，按 `=` 或 `;` 前的键与含分隔符的余部逐行精确匹配：空报告、未知行、缺失、重复、矛盾、
+  空几何、非大写四位十六进制的项名与重复项名一律拒绝；`tray-menu-closed` 只认唯一的 `UIA_TRAY_MENU_CLOSED`，`close` 与 cleanup 复用同一解析器；
+  `tray-invoke` 只认唯一且等于所请求项的 `UIA_TRAY_INVOKED`。反例测试覆盖审查列出的各情形。
+- **R2-S5 激活点击的核验点**（接受）：物理点击前以读回的光标位置为落点，核验该点下的根窗口；托盘图标另要求读回位置与目标点一致。plan 11 同步。
+- **R2-N2 采样时限**（接受）：恢复单调时钟 deadline，同时保留采样次数上限，任一耗尽即失败。
+- **R2-N1**：桌面取证仍待独占桌面运行（P14-A83）；D2 双副本与 D4 真实 Alt+F4 仍属 C2d。
+
+#### C2c 代码审查第 3 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，1 BLOCKER、4 SHOULD_FIX、2 NEEDS_VERIFICATION、1 NICE_TO_HAVE；R2-B2（按 USER 决定）、R2-S1、R2-S3、R2-S4、
+R2-S5 判为已修复。逐项核实后处理：
+
+- **R3-B1 左键守卫在外层 unwind 时未先停止**（接受，并更正第 2 轮记录）：第 2 轮记录称两个 `Drop` 路径都先停止，实际左键守卫在 case unwind 时只做隔离
+  释放、不停止，现有测试还断言了不停止。case 持有左键时 unwind，其结果未知，按保守原则改为与操作 unwind 相同：先停止（原因"a case unwound while
+  it held the left button"），再逐项隔离释放；测试改为要求停止且之后全部入口被拒。
+- **R3-S1 被接住的 panic payload 在隔离范围外析构**（接受）：`catch_unwind` 的 `Err` 被丢弃时会析构 payload，析构若 panic 即逃出析构。改为接住后
+  `mem::forget` payload（每个释放至多一次）。新增测试以析构会 panic 的 payload 触发；变异为 `drop(payload)` 时测试进程以 0xC0000409 异常终止，证实了
+  审查者的静态推断。
+- **R3-S2 时限后的读数被当作成功**（接受）：采样改为按后端时钟——`Backend` 增加 `now()`（真实后端为 `Instant::now`，测试后端为只由 sleep 与慢读推进的
+  虚拟时钟），每次读数之后检查已用时，超过时限的读数无论读到什么都不计；sleep 不超过剩余时间；采样次数上限只防时钟不前进。新增测试：首次释放采样
+  耗时 600 ms 后读到抬起为失败并停止，400 ms 为成功；卡住的按钮恰好睡满 500 ms。
+- **R3-S3 托盘已有观察丢失**（接受）：光标放置与右击拆成两步，放置后先记录读回位置，右击前再读回一次并核验；打开成功时保留各次尝试，之后读取、关闭、
+  缺项与 invoke 的失败都附上打开历史与清理结果；`tray-target` 失败注明"无需清理，未点击"。
+- **R3-S4 菜单所有者查询失败被当作已关闭**（接受）：弹出菜单模式下所有者 HWND 为 0 或 `GetWindowThreadProcessId` 失败改为错误；cleanup 中未发送 Esc 不再
+  等于已关闭，两种情形都要 helper 观察到关闭才算已知关闭。
+- **R3-N3 核验与按下之间的等待**（接受）：五处左键按下统一经 `press_left_on`，在按下前立即读回光标并核验其下根窗口为目标窗口（拖动与缩放的 75 ms
+  等待、激活的 25 ms 等待都在核验之前）；核验与按下之间的残余竞态写入 plan 11。
+- **R3-N1**：A83 仍为 NOT TESTED。工具链行为现有执行证据：本批的隔离测试在 1.97.1 MSVC 的测试二进制中实际运行并通过（见下方验证），变异实验证明去掉
+  隔离会使进程异常终止。abort 构建"到达拒绝桩"仍待桌面运行区分于更早的环境预检失败。
+- **R3-N2 headless 首跑失败**：`cli_exit::diagnostic_commands_preserve_internal_success_files` 在第 2 轮修复后的首次全量运行中失败 1 次，失败详情因输出
+  过滤未保留；随后单独运行 1 次、全量 headless 8 次、强制重新链接后全量 3 次均通过。该测试文件本批未改，预期错误发生在治理执行与注入之前；
+  两个测试共用仅以 PID 与时间戳命名的临时目录，存在既有的碰撞可能，但未证实为根因。结论：根因未知，不以复跑通过关闭；后续全量运行保留完整输出。
+- 验证（第 3 轮修复后，rustc 1.97.1）：fmt 与 `cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings` 退出 0；`cargo test -p stickymd-smoke --locked`
+  单元 559 passed / 17 ignored、headless 26 passed（完整日志保留）；`phase 00` PASS；release（abort）构建退出 0，其输入相关导入只有 `PostMessageW`，debug 导入
+  `GetAsyncKeyState`、`PostMessageW`、`SendInput`、`SendMessageW`、`SetCursorPos`；Linux 复跑（3795335 上叠加 110 个文件）clippy 退出 0、测试 459 passed /
+  3 ignored 与 19 passed。变异检验：左键守卫 unwind 不停止、析构 payload、接受时限后的读数、sleep 越过时限四个变异均被对应测试杀死。
+
+#### C2c 代码审查第 4 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、2 SHOULD_FIX、2 NEEDS_VERIFICATION；R3-B1、R3-S1、R3-S2、R3-S4、R3-N3 判为已修复。逐项核实后处理：
+
+- **R4-S1 时限当刻读到按下后仍继续采样**（接受）：已用时恰等于时限时剩余为零，读数不符仍会 `sleep(0)` 后再读并可能成功。改为时限当刻的读数计入、
+  读到不符即失败。测试：释放首次采样恰在 500 ms 读到按下即失败并停止（即使下一次读数会是抬起）；499 ms 读到按下只睡剩余 1 ms、500 ms 读到抬起为成功。
+  去掉该判断的变异被测试杀死。
+- **R4-S2 仍遗漏已取得的观察**（接受）：托盘光标放置把每次读回写入该次尝试的记录，后续放置或读取失败时不再丢失；helper 在菜单无法观察时附带此前已读到的
+  部分菜单项（`UIA_TRAY_MENU_UNOBSERVABLE; partial_items=…`），Rust 解析器只把它们写入错误、从不当作菜单。plan 11 同步。第 3 轮记录"任一尝试的已有观察
+  不再丢失"的说法当时过宽，以本条为准。
+- **R3-N1 延续**：本轮验证改为留存绑定源码身份的证据（见下方验证）；A83 仍为 NOT TESTED。
+- **R3-N2 延续**：根因仍未知，记录不变。
+- 验证（第 4 轮修复后）：证据留存于 ignored 的 `target/review-evidence/c2c-code/verification-r4/`（`identity.txt` 记 HEAD `23d548d`、范围补丁
+  sha256 `65050626…6693`（`tools/stickymd-smoke`、plan 11、phase-14、coverage-matrix；不含记录本次运行的报告）、六个新文件的 sha256、`rustc -Vv`
+  1.97.1 x86_64-pc-windows-msvc；`summary.txt` 记各命令与退出码、测试二进制与 release/debug 可执行文件的 sha256、导入表，以及运行后范围补丁摘要不变）。
+  结果：fmt、clippy（`-D warnings`）、`cargo test -p stickymd-smoke --locked`（单元 559 passed / 17 ignored、headless 26 passed）、`phase 00`、release 与 debug
+  构建均退出 0；release（abort）输入相关导入只有 `PostMessageW`。Linux 复跑（3795335 上叠加 110 个文件，归档 sha256 `d9e9cc4e…d373`，rustc 1.97.1）clippy
+  退出 0、测试 459 passed / 3 ignored 与 19 passed。
+
+#### C2c 代码审查第 5 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX、2 NEEDS_VERIFICATION、1 NICE_TO_HAVE；R4-S1 判为已修复；审查者独立复算了
+`verification-r4` 的范围补丁、六个新文件、两个测试二进制与 release/debug 可执行文件的摘要，均与当前树一致。逐项核实后处理：
+
+- **R5-S1 等待中较早的部分观察被覆盖**（接受）：helper 的菜单等待每轮覆盖快照，较早一次无法观察的轮询已读到的项在后续空轮询后丢失。改为等待中保留
+  最近一次非空的部分项（有界，只存一份），等待结束仍由最新快照决定结果；`UIA_TRAY_MENU_UNOBSERVABLE` 与 `UIA_TRAY_MENU_NONE` 都可附带
+  `; partial_items=…`，Rust 解析器只把它写入该次尝试的结果。新增 Windows 测试从 helper 源码载入其函数、以脚本化序列替换 UIA 枚举（首轮无法观察且读到
+  一项，之后为空），分别断言两种结局的报告与解析；去掉保留语句的变异被杀死。测试的等待时限取 1 s，因为在并行测试负载下 PowerShell 首次调用函数的编译
+  耗时可超过 150 ms（首次以 150 ms 运行时只轮询了一次）。
+- **NICE 扩展名大小写**（接受）：治理的文件收集改为不区分 ASCII 大小写匹配扩展名（Windows 文件名不区分大小写），新增 `tools/probe.PS1` 被扫描的测试，
+  变异被杀死。该函数也供其他治理扫描使用，只会多收集文件。
+- **R3-N1、R3-N2 延续**：不变——A83 仍为 NOT TESTED（环境探针把拒绝原因折叠为布尔值，需桌面运行区分），headless 首次失败根因仍未知。
+- 验证（第 5 轮修复后）：证据在 `target/review-evidence/c2c-code/verification-r5/`（范围补丁 sha256 `a87ff41e…35ee`，运行后不变）。fmt、clippy（`-D warnings`）、
+  `cargo test -p stickymd-smoke --locked`（单元 561 passed / 17 ignored、headless 26 passed）、`phase 00`、release 与 debug 构建均退出 0；release（abort）输入相关
+  导入只有 `PostMessageW`。Linux 复跑（110 个文件，归档 sha256 `6a3afd69…eff8`）clippy 退出 0、测试 460 passed / 3 ignored 与 19 passed（新 helper 测试只在
+  Windows 编译）。
+
+#### C2c 代码审查第 6 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX、2 NEEDS_VERIFICATION（不阻断）、1 NICE_TO_HAVE；R5-S1 与扩展名大小写判为已修复；
+审查者复算 `verification-r5` 的全部摘要，与当前树一致。逐项核实后处理：
+
+- **R6-S1 菜单随后打开时较早的部分观察丢失**（接受）：等待中某次无法观察的轮询读到部分项、随后观察到完整菜单时，helper 只报告当前项，后续关闭或 invoke
+  失败的错误无从得知较早的部分项。改为成功快照同样携带部分项，helper 在菜单项之后至多附一行 `UIA_TRAY_MENU_PARTIAL; partial_items=…`；Rust 解析器只接受它
+  作为菜单项之后的唯一末行，记入该次尝试（"opened; partial_items=…"），从而进入之后各失败出口的打开历史；菜单是否打开仍只由完整当前观察决定。helper 测试
+  增加"部分观察 → 完整打开"结局；去掉 helper 的附加行、成功快照不带部分项、解析器丢弃部分项三个变异均被杀死。
+- **R6-N1 helper 测试依赖调度时间且无进程时限**（接受）：测试先以立即成功的序列预热一次（编译这些函数），再计数正式运行的轮询，不再与首次编译竞争；子进程经
+  `managed_process::run_bounded_output` 运行，60 s 总时限。剩余风险：进程在等待中被挂起超过 1 s 仍会使"至少两次轮询"失败，这是测试的已知前提。
+- **R3-N1、R3-N2 延续**：不变。
+- 验证（第 6 轮修复后）：证据在 `target/review-evidence/c2c-code/verification-r6/`（范围补丁 sha256 `356baa8d…3b01`，运行后不变）。fmt、clippy（`-D warnings`）、
+  `cargo test -p stickymd-smoke --locked`（单元 561 passed / 17 ignored、headless 26 passed）、`phase 00`、release 与 debug 构建均退出 0；release（abort）输入相关
+  导入只有 `PostMessageW`。Linux 复跑（归档 sha256 `049776df…965c`）clippy 退出 0、测试 460 passed / 3 ignored 与 19 passed。
+
+#### C2c 代码审查第 7 轮（2026-10-19）
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX；R6-S1、R5-S1、R4-S2 与扩展名大小写判为已修复；审查者复算 `verification-r6` 的范围补丁、六个新文件
+与四个可执行文件的摘要，均与当前树一致，并独立读取 PE 导入表得到相同的输入 API 集合。保留项：
+
+- **R3-N1（NEEDS_VERIFICATION）**：A83 仍为 NOT TESTED；环境探针把拒绝原因折叠为布尔值，需在独占桌面运行中区分"到达 abort 拒绝桩"与更早的环境预检失败。
+  随 C2d 的独占桌面运行取证。
+- **R3-N2（NEEDS_VERIFICATION）**：headless 首次失败的根因仍未知；再次失败时保留完整断言、退出码、stdout/stderr 与 fixture 路径后定向复现。
+- **R6-N1（NICE_TO_HAVE）**：helper 测试"1 s 内至少两次轮询"仍依赖调度（正式首轮被挂起超过 1 s 会假失败）；60 s 是运行期限，其后另有有界回收时间。
+  可控时钟或等待接缝留作后续改进。
+- **R7-N1（NICE_TO_HAVE）**：打开历史中的部分项从 `MenuRead.partial` 到 `Opened::failed` 的最后一段没有回归断言（把 `format!("opened{}", menu.partial)`
+  改回 `"opened"` 不会被现有测试发现）。下一批抽出成功结果的组装步骤并补断言。
+- 范围：D2 逐图标尝试与 D4 真实 Alt+F4 属 C2d；`apps/stickymd-win`、`crates/stickymd-render` 的未提交改动（C2b-4）不在本批。
+
+## 覆盖补全 C2b-4 实施记录（2026-10-19，无需桌面的单元绑定）
+
+范围：按 D3（纯函数 + 少量 G4）把 `StickyApp` 剩余的滚动决策抽为纯函数并以单元测试持有，补强透明度、退出取消状态与 Preview 回执的测试，再逐义务审计后绑定。
+产品行为不变：抽取保持原有的早退与输入，只把计算移出 runtime。
+
+### 落地内容
+
+- **纯函数**（`apps/stickymd-win/src/app/scrollbar.rs`）：`view_bars(dpi, geometry, source, preview)` 给出视图显示的窗格的栏（Source 由投影的滚动度量，
+  Preview 由 `PreviewFacts`：帧缓存的 document height、偏移与是否当前）；`preview_offset_at`（滑块比例到 Preview 偏移）与 `preview_offset_by`（文档内翻页）。
+  `scroll_runtime.rs` 改为调用它们：`scrollbar_geometry` 在窗口拒绝编辑时仍先返回无栏，只为视图显示的窗格测量。
+- **退出已取消状态的唯一入口**（`app/title.rs`）：`QuitCancelNotice::on_window_effect` 接收每个窗口效果，只有因 canonical note 保存失败而取消的退出建立该
+  状态；`window_runtime.rs::apply_window_effect` 在处理每个效果前先交给它，原先只在 `QuitCancelled` 分支调用的私有入口不再被外部引用。
+- **测试**：`app::scrollbar` 三项（逐视图的栏、Preview 位置与翻页、滑块几何）、`app::window_interaction` 窄槽几何、`app::preview_runtime` 只差偏移的旧回执、
+  `app::controls` 透明度范围（并补强拖动测试逐步断言 config 不脏）、`app::title` 三项（只有保存失败改变状态、唯一入口的词法守卫、`finish_event_pass` 只在
+  `about_to_wait` 的窗口 tick 之后调用一次的词法守卫）、`app::guards` 屏障组成（8 种组合 × 其余事实全开 / 全关）、render `source::scrollbar` 两项（折行长文的
+  映射与末端边界只测量一次、Source 翻页）。render 的 `SourceProjection` 增加只在测试中编译的 `extent_measures` 计数，用于断言边界缓存被复用。
+
+### 绑定（17 项，`coverage/table.rs`）
+
+| 义务 | owner | 依据 |
+| --- | --- | --- |
+| scroll-1 per-pane（source / preview / split） | `view_bars` 测试 | 三种视图、两种 DPI 下恰好显示的窗格有栏且在自身内容矩形上；`scrollbar_geometry` 直接以 `view_geometry` 调用 `view_bars` |
+| scroll-2 short-note hide-thumb | `view_bars` 测试 | Source 全可见与不高于窗格的 Preview 文档在各窗格单独都无滑块 |
+| scroll-2 short-note keep-gutter | 窄槽几何 + `view_bars` 测试 | `geometry()` 在每个视图保留窄槽，且其输入只有视图模式、窗口尺寸与 DPI，与正文长度无关 |
+| scroll-2 gutter-geometry | 窄槽几何测试 | 四种 DPI × 四种窗口尺寸 × 三种视图：窄槽宽恰为缩放后的 `GUTTER_DIP`，轨道在窄槽内、真实 resize 命中为空、与 Split 同步按钮不相交 |
+| scroll-2 gutter-runtime content-zoom | 窄槽几何测试 | `view_geometry` 只以视图模式、窗口尺寸与窗口 DPI 调用 `geometry()`，Content Zoom 不是输入 |
+| scroll-3 thumb-geometry | 滑块几何测试 | 1000 种可见比例 × 4 种 DPI × 有无 Split 留白：长度为可见比例且不低于 24 DIP × DPI、不等于整条轨道，位置线性且在轨道内 |
+| scroll-3 ends-reach-document-ends（preview） | Preview 位置测试 | 比例 0 / 1 分别为文首与最后一屏 |
+| scroll-3 track-page-scroll | 轨道命中 + Preview 位置 + Source 翻页测试 | 轨道按下按窗格 90% 翻页；Preview 与 Source 都按像素翻页并停在两端 |
+| scroll-5 source-mapping | Source 映射测试 | 每行都折行的 2000 行长文：末端只测量一次（排版少于 40 行）并复用到几何变化；跳转只排版目标附近并读回比例 |
+| scroll-5 preview-document-height | Preview 位置 + `view_bars` 测试 | 滑块比例、可见比例与偏移都由给定的 document height 计算；runtime 传入 `frame.document_height()`（缓存帧的值，不排版） |
+| scroll-6 stale-receipt-identity | 旧回执测试 | 只差偏移的回执布局相同但身份不同，成功与失败都只重排、从不显示 |
+| opacity-2 range-and-input | 透明度范围测试 | 四种 DPI 下滑块以步长 1 到达 40–100 每个整数；输入只收至多三位数字；提交 clamp 到范围、空输入不提交；reducer 对预览与提交再 clamp |
+| opacity-3 no-stepwise-write | 拖动提交测试 | 每个拖动步骤后 config 不脏、`begin_persist` 为空，松开恰写一次 |
+| quit-2 cause=quit-guard | 只有保存失败改变状态 + 唯一入口测试 | 全部窗口效果（含 `QuitBlocked`）从两种初态出发都不改变状态，除保存失败取消的退出；产品源码只有一个入口 |
+| quit-2 cleared-after-event-when-barrier-false | 屏障组成 + 事件结束 + 清除测试 | 屏障恰为 dirty / 欠持久化 / 保存中之一；`finish_event_pass` 只在窗口 tick 之后调用一次；屏障为假时才清除 |
+
+两个词法守卫（唯一入口、调用位置）只检查源码文本，不求值 `cfg` 或宏展开。
+
+### 仍为缺口（改写后的文本见 `table.rs`）
+
+Split 同步开关是否带动另一窗格、窄槽内按下不作为正文点击、指针移动逐次应用到视口（实时定位）、松开 / 失焦 / 切换视图 / resize 结束拖动、拖出窗口完成拖动、
+滚动只改视口（六项状态）、`preview_layout_is_current` 的当前判定（过期帧无滑块、旧回执守卫）。D3 下松开 / 失焦与拖出窗口由 G4 持有；其余待新的单元接缝或 exact 层。
+
+### 验证（2026-10-19，审查前）
+
+- 变异检验（临时改动、恢复，apps/crates 改动的摘要前后一致）：24 个变异全部被对应 owner 测试杀死——守卫阻止的退出建立状态、屏障漏掉欠持久化或保存中、
+  状态在窗口 tick 之前结算、滑块止于 99、输入接受四位、提交 clamp 到 99、拖动预览弄脏 config、滑块下限不随 DPI、滑块比例不 clamp、旧偏移回执被显示、
+  窄槽不随 DPI、resize 边伸进轨道、边界缓存从不读取、跳转忽略行内偏移、Preview 栏忽略当前标志、Preview 视图出现 Source 栏、忽略可见比例、最后一屏被截短、
+  翻页越过末端、reducer clamp 到 99、`view_bars` 忽略 Split 留白、Source 翻页只走一半、另一处源码提及私有入口。
+- 绑定源码身份的证据在 ignored 的 `target/review-evidence/c2b4-code/verification-r0/`（HEAD `5c65b46`，范围补丁 sha256 `b17395bd…bcd7`，运行后不变）：
+  `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings` 与 `stickymd-smoke all --ci --ci-shard=tests`（governance、
+  Phase 1 两组、workspace tests、unit-test owner verification 五项）均退出 0。
+- Linux 复跑（5c65b46 上叠加本批 15 个文件）：`clippy -p stickymd-smoke -p stickymd-render` 退出 0，测试全部通过（render 167 passed / 13 ignored 等，smoke 460 passed /
+  3 ignored 与 19 passed）。`stickymd-win` 只在 Windows 构建。
+
+#### C2b-4 代码审查第 1 轮（2026-10-19）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、6 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；建议 17 项绑定中 9 项退回 gap。审查者确认重构保持行为
+（拒绝编辑时的早退、只为可见窗格测量、Preview 高度为缓存字段读取；退出已取消状态的更新移到效果分派之前，标题事实不读取 diagnostic，无可见差异），并复算了
+`verification-r0` 的范围补丁摘要。逐项核实后处理（上文绑定表中的六项以本条为准）：
+
+- **F1 两个词法守卫不证明调用约束**（接受）：唯一入口守卫只禁止其他文件出现私有入口名，删掉或后移 `on_window_effect` 调用、在 `QuitBlocked` 分支直接改状态都能通过；
+  结算守卫只比较文本位置，"先构造 Tick、再结算、后 dispatch"或循环中调用两次都能通过，结算函数体改为 `settle(false)` 也不被三个 owner 发现。`cause=quit-guard`
+  与 `cleared-after-event-when-barrier-false` 退回 gap，文本写明判定与词法守卫已测、效果处理与事件结算的运行时组合未测。两个守卫保留为回归检查，不再作为证明。
+- **F2 依靠未被 owner 执行的调用关系**（接受）：几何测试直接调用 `geometry()`、Preview 测试手填高度，`view_geometry` 改用内容缩放、按短文回收槽宽或把
+  `PreviewFacts` 的高度错接为视口高度都不会被发现。`keep-gutter`、`content-zoom`、`preview-document-height` 退回 gap。
+- **F3 混合长短窗格只检查短的一侧**（接受，补强后保留）：每个混合情形增加"长的一侧仍有滑块"的断言；"任一窗格短就隐藏两侧"的变异被杀死。
+- **F4 数值盲区**（接受，补强后保留）：Source 读回容差由一整逻辑行收紧到千分之一行，"度量忽略行内偏移"的变异被杀死；Source 向上翻页改为除到达文首的一页外每页恰为
+  一页像素，Preview 从文档中部双向翻页断言精确位移，"负向翻页减半"的两个变异均被杀死。
+- **F5 透明度输入的 oracle**（接受，退回 gap 并待 USER）：输入框在键入时拒绝负号与第四位数字，`-1`、`1000` 无法输入也就不会 clamp；plan 09 只写"整数输入框、越界 clamp、
+  非整数不提交"。这是 HEAD 已有的产品行为，是否构成与合同的冲突需 USER 判断，本批不改产品。`range-and-input` 退回 gap，测试注释写明被拒的输入只记录当前行为。
+- **F6 回执 gap 文本合并失当**（接受）：`stale-frame-no-thumb` 缺 `preview_layout_is_current` 的判定断言；`stale-receipt-guard` 缺回执入口以完整 `PreviewViewport` 相等
+  （而非 `same_layout`）判定、Relayout 分支提前返回且不改写 frame 与偏移的组合断言，两项分开写明。拖动 gap 文本改为"将由 G4 持有，尚无 exact 用例"。
+- **F7 变异与 Linux 证据**（接受）：变异脚本与输出保存在 ignored 的 `target/review-evidence/c2b4-code/mutations/`；Linux 复跑的原始输出随下方验证保存。
+- **F8 文档**（接受）：phase-05 的定向入口补上 `app::controls`、`app::title`、`app::guards`；拖动提交测试实际断言的是"松开恰一次提交请求并标脏 config"，未执行落盘，
+  上文绑定表"松开恰写一次"的措辞以此为准。
+
+结果：绑定 11 项（逐视图的栏 × 3、短文无滑块、窄槽几何、滑块几何、Preview 两端、轨道翻页、Source 映射、只差偏移的旧回执、拖动中 config 不脏）；USER 待决：透明度输入框
+是否应允许键入负数与四位以上整数（D5）。
+- **USER 2026-10-20 决定（D5）**：透明度输入框放开输入、提交时 clamp。核实时另发现：输入框的按键处理对每个按键以该键文本**替换**整段内容（自 Phase 8 起），且绘制的是
+  预览值而非键入文本，故真实桌面上无法键入多位数、键入时也看不到内容。D5 的实现（逐键追加、聚焦后首键替换、负号只在首位、提交按数值 clamp、绘制键入文本）改变
+  产品行为，单列一批另行审查与提交；本批 `range-and-input` 保持 gap，文本写明 D5 待实现。
+- 验证（第 1 轮修复后）：`target/review-evidence/c2b4-code/verification-r1/` 记录 fmt、`clippy --workspace --all-targets -D warnings` 与 `all --ci --ci-shard=tests`（五项
+  均 PASSED）退出 0，以及 Linux 复跑的完整输出（`linux.log`：`clippy -p stickymd-smoke -p stickymd-render` 退出 0，render 167 passed / 13 ignored、smoke 460 passed /
+  3 ignored 与 19 passed 等，`test_exit=0`）。之后只改了 D5 相关的三处文本（`changes-since-r1.txt`），`verification-r2/`（范围补丁 sha256 `9114785c…a774`，运行后
+  不变）在该状态上重跑 fmt、clippy 与 CI 测试分片，均退出 0。
+
+#### C2b-4 代码审查第 2 轮（2026-10-20）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX、1 NEEDS_VERIFICATION、1 NICE_TO_HAVE；F1–F6、F8 判为已解决，F7 部分解决；保留的 11 项绑定中 10 项判为
+成立，6 项退回的 gap 文本判为准确；D5 延后判为合理。逐项核实后处理：
+
+- **R2-1 Source 映射的正反计算共用未经独立验证的折行高度**（接受）：把 `scroll_line_height` 改为一律按一个视觉行计（误把折行逻辑行当一行），长文测试的跳转与读回
+  使用同一错误高度，仍全部通过——已实测为 SURVIVED。现有"单行折行与真实末行几何"测试以真实布局核对该高度，实测把同一变异杀死，故加入 `SCROLL_SOURCE_MAPPING`
+  的 owner 集合（plan 11：共同证明一项义务的测试须全部列为 owner），不改产品算法。
+- **R2-2 变异与 Linux 证据不完整**（接受）：全部 29 个变异（原 24 个、第 1 轮补强后的 4 个、R2-1 的 1 个）用同一个保留字节的脚本重跑，每个变异单独保存补丁、
+  命令、退出码与含失败断言的完整输出（`target/review-evidence/c2b4-code/mutations/runs/`），29 个均为 KILLED，运行前后 apps/crates 的 diff 摘要相同。Linux 复跑
+  改为 stdout 与 stderr 分开保存（见下方验证）。
+- **R2-3 计数勘误**（接受）：第 1 轮验证记录中"只改了 D5 相关的三处文本"应为四处（`controls.rs` 注释、phase-05、P14-A81、`table.rs`），均为文本。
+- 过程记录：重跑前一次变异运行被中途停止，第 01 号变异留在 `app/title.rs`；已撤销并按字节核对，apps/crates 的 diff 与 `verification-r2/scoped.patch` 完全一致后
+  才重跑。
+- 验证（第 2 轮修复后）：磁盘低于 Rust 构建阈值，经 USER 同意删除 `target/debug` 后从头构建。`target/review-evidence/c2b4-code/verification-r3/`（范围补丁 sha256
+  `07757ff0…bf6a`，运行后不变）：fmt、`clippy --workspace --all-targets -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux
+  复跑（归档 sha256 `1261045a…b671`）clippy 与测试退出 0，stdout / stderr 分开保存（`linux.test.stdout.log` 含 671 条逐项 `ok` 记录与全部 `test result: ok` 摘要）。
+
+#### C2b-4 代码审查第 3 轮（2026-10-20）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX、1 NEEDS_VERIFICATION；R2-1、R2-3 判为已解决，R2-2 部分解决；10 项绑定与 6 项 gap 判为成立 / 准确，
+29 份变异记录与 Linux 日志判为内部一致。逐项核实后处理：
+
+- **R3-1 独立布局依据只在 1× 检查**（接受）：把折行高度误按 DIP 计（`line_height / scale_factor`）时，长文测试全程 1×、单行折行测试的 2× 检查只看短文，两个 owner
+  都会通过。单行折行测试改为在 1× 与 2× 下各做一遍折行长行的中点、末端（末行经 `caret_rect` 读真实布局须在视口内）与文首检查；该变异被 2× 的末端检查杀死
+  （`runs/31`），产品算法不变。
+- **R3-2 "长文 owner 已实测 SURVIVED"缺运行记录**（接受）：第 2 轮记录所称的实测当时只在交互命令中运行、未留存。现补以同一保留字节的脚本留存：`runs/30`（折行计作一行
+  对长文 owner，exit 0，SURVIVED）与 `runs/32`（DIP 变异对长文 owner，SURVIVED），说明两个 owner 缺一不可；`runs/29` 以补强后的单行折行测试重跑仍为 KILLED。
+- 验证（第 3 轮修复后）：`target/review-evidence/c2b4-code/verification-r4/`（范围补丁 sha256 `32605555…25fc3`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（归档 sha256 `35aee46e…8d3f`）clippy 与测试退出 0，stdout / stderr
+  分开保存。
+
+#### C2b-4 代码审查第 4 轮（2026-10-20）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、1 SHOULD_FIX、1 NICE_TO_HAVE；R3-1、R3-2 判为已解决，32 份变异记录判为内部一致。逐项核实后处理：
+
+- **R4-1 可用高度的单位错误仍能通过**（接受）：把 `content_height()` 误换成 DIP 时，长文测试全程 1×，2× 折行长行的末行仍落在视口内，跳转与读回共用错误边界，两个
+  owner 都通过；而 2× 下本可完全容纳的短文会被算出约 0.75 的可见比例并显示滑块。单行折行测试增加 2×（320×320）下三行短文 `viewport_fraction == 1.0` 的断言；
+  该变异被它杀死（`runs/33`），产品算法不变。
+- **R4-2 resync 前的长文缓存前提在改写中丢失**（接受）：循环外新建的投影未先测量就 resync，缓存键不含 generation 也能通过。恢复为先测量长文（断言未全可见）再
+  resync；"缓存键忽略 generation"的变异被杀死（`runs/34`）。
+- 环境：第 4 轮修复前 E: 盘再次低于构建阈值，原因是 WSL Debian 的 `ext4.vhdx` 膨胀到 207 GB（盘内实用 63 GB）；USER 以 fstrim 与 diskpart 压缩到 75.3 GB 后继续。
+- 验证（第 4 轮修复后）：`target/review-evidence/c2b4-code/verification-r5/`（范围补丁 sha256 `3f8c19e8…2e91`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（归档 sha256 `7681c8e4…83e5e`）clippy 与测试退出 0。
+
+#### C2b-4 代码审查第 5 轮（2026-10-20）
+
+gpt-6-astra（effort max）：**AGREE**，0 BLOCKER、0 SHOULD_FIX；R4-1（三行短文 2× 用例的几何与精确相等经静态计算确认，`runs/33` 的失败值 0.7526881893475851 与之
+一致）与 R4-2（同一对象先测量后 resync，`resync` 不清空缓存、依靠键不匹配重算）判为已解决；11 项绑定判为成立，6 项 gap 判为准确。保留项：
+
+- **NEEDS_VERIFICATION（变异恢复摘要）**：各次变异运行的前后 diff 摘要只记为"unchanged"。已把四次运行前记录的 `git diff -- apps crates` 摘要补入
+  `mutations/README.txt`；最后一次（`e28f401b…8bff`）与审查者对当前状态的复算值相同。此后的变异运行须在汇总中同时写出前后两值。
+- 运行时接线（keep-gutter、content-zoom、preview-document-height、quit-guard、cleared-after-event）、透明度输入（D5）与真实输入 / 桌面验收仍为具名缺口。
+
+## D5 实施记录（2026-10-20，透明度输入框放开输入、提交时 clamp）
+
+依据：USER 2026-10-20 决定 D5；plan 09 透明度条款（"40–100 整数 slider（步长 1）+ 整数输入框；默认 96；越界 clamp；非整数不提交"）原文不变——此前的实现与之不符
+（实现漂移），本批让代码符合 plan。C2b-4 审计时发现的两处缺陷一并修正：按键处理对每个按键以该键文本**替换**整段内容，故真实桌面上无法键入多位数；输入框绘制的是
+预览值而非键入文本。
+
+### 落地内容（`apps/stickymd-win`）
+
+- `app/controls.rs`：`ControlState` 增加私有的"值被选中"状态——聚焦（`focus_input`）、滑块预览或提交写入值后为真，此时下一个被接受的按键或 Backspace 替换整段；
+  `type_input` 逐字符接受数字与仅在首位的负号，其余字符丢弃且不清除选中；`backspace_input` 在选中时清空、否则删除末字符；`commit_input` 的提交值由纯函数
+  `committed_opacity` 计算：负整数（含 `-0`）为 40，去掉前导零后超过三位为 100，其余按值 clamp 到 40–100，无数字（空、只有负号）不提交，任意位数不溢出。
+  `focused_field` 给出聚焦时键入文本的末尾 16 个字符（`OpacityField`，保持工具栏投影为 `Copy`）。原 `replace_input` 删除。
+- `app/window_interaction.rs`：点击输入框调用 `focus_input`；Backspace 调用 `backspace_input`；带文本的按键调用 `type_input`；三者都请求重绘。
+- `app/toolbar_paint.rs`：聚焦时绘制键入文本中放得下的末尾（`visible_tail`，按 9 px 字宽），负号绘为七段的中横；未聚焦时仍绘制值。`app/presentation.rs` 传入
+  `focused_field`。
+- 测试：`the_opacity_range_is_40_to_100_in_integer_steps` 改为逐键键入 25 种输入（含负数、超长整数、非整数字符、只有负号）并核对字段内容与提交值；新增
+  `the_opacity_field_edits_like_a_selected_text_field`（选中替换、追加、负号位置、被丢弃的键保持选中、Backspace 两种情形、滑块与提交重新选中、长输入的末尾）；
+  `toolbar_paint` 新增 `a_long_entry_shows_its_last_characters` 与 `the_focused_field_paints_its_typed_text`（1× 与 2× 下键入文本与值的绘制、负号为一条横、长输入
+  不越出字段）。
+- 覆盖：plan 09 透明度 `range-and-input` 由上述两个 controls 测试持有；把真实按键送到输入框的接线仍属 G4 的数字输入义务（P08-D022 `commit=enter / blur`）。
+
+### 变异检验
+
+`target/review-evidence/d5-code/mutations/`（每个变异的补丁、命令、退出码与完整输出，汇总含运行前后 apps/crates diff 摘要，两者相等）：12 个变异——负数按正数读、
+超长整数溢出为下限、负号可在任意位置、选中值不被替换、选中时 Backspace 只删一字符、预览值不被选中、未聚焦也绘制文本、长输入保留开头、可见末尾多一字符、聚焦仍绘制值、
+负号绘为 8、长输入越出字段——全部被杀死。首轮中"选中时 Backspace 只删一字符"存活（用例字段只有一个字符），补成多字符用例后被杀死。
+
+### 验证（2026-10-20，审查前）
+
+`target/review-evidence/d5-code/verification-r0/`（HEAD `23b8c91`，范围补丁 sha256 `cb2eed7f…268a`，运行后不变）：fmt、`clippy --workspace --all-targets -D warnings` 与
+`all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（`stickymd-smoke`，`stickymd-win` 只在 Windows 构建）clippy 与测试退出 0。
+
+### D5 代码审查第 1 轮（2026-10-20）
+
+gpt-6-astra（effort max）：DISAGREE，0 BLOCKER、3 SHOULD_FIX、3 NICE_TO_HAVE；审查者确认 `committed_opacity`（`0096→96`、`000→40`、`-0→40`、单独负号不提交、长整数不进入
+可能溢出的解析）、Esc 主路径（取消清除编辑与拖动、恢复已提交值）与主题传递正确，并复算了范围补丁与变异摘要。逐项核实后处理：
+
+- **S1 输入框聚焦时按键与 IME 落到正文**（接受，HEAD 已有的接线缺陷）：输入框只消费 Enter、Backspace 与带文本的按键，Delete、方向键与快捷键继续进入正文处理；IME
+  经 `handle_ime` 完全不看输入框焦点，`Ime::Commit("96")` 会改正文或 Search。改为：编辑期间（`ControlState::takes_keys`：弹层打开且输入框聚焦）`handle_shell_key`
+  接收全部按下的键；`handle_ime` 先交给 `handle_opacity_ime`，提交文本键入输入框、组字丢弃；点击输入框时先取消正文的组字。
+- **S2 失焦不提交、滑块覆盖键入值**（接受，HEAD 已有）：窗口 `Focused(false)` 与弹层内其他控件的按下都不结束数字编辑，按住滑块后松手的提交会覆盖键入值。改为：弹层内
+  任何不在输入框上的按下、窗口失焦都先结束编辑（`finish_input`：有整数则提交，否则恢复显示值并保持选中）；点击弹层外原先的再次提交随之去掉（编辑已在前面提交，
+  值与已提交值相同）。
+- **S3 单元 owner 的适用理由**（接受）：按 plan 11"单元测试只用于 exact 层无法稳定制造的状态，写明理由，不证明原生输入投递"，`OPACITY_RANGE_AND_INPUT` 写明理由（任意长度与
+  符号的整数、被丢弃的字符、选中与部分键入的状态无法经真实输入稳定制造），并写明按键与 IME 路由、Enter / 失焦提交的接线以及真实按键送达仍属 G4 数字输入缺口
+  （P08-D022）。owner 加上新测试 `the_opacity_field_takes_keys_while_edited_and_commits_when_it_ends`。
+- **N 高 DPI 字形**（记录，不在本批）：字段矩形按 DPI 缩放，而七段字形、字距与内边距固定，200% 下数字偏小；这是值与键入文本共用的既有绘制，留作后续改进。尾部缓冲
+  由 16 加到 32 字符，注释改为"600% 以内"。
+- **N 用例**（接受）：补 `0096`、`0000` 与阿拉伯-印度数字、全角数字（被丢弃、保持选中值）；逐键输入表现为 27 种（实施记录中"25 种"有误）。新增变异"有效位数计入
+  前导零"被 `0096` 杀死。
+- **N 补丁换行**（接受）：变异证据中的 `patch.diff` 改为按 LF 写出（此前 Windows 默认换行转换写成 CRLF，`git apply` 不能原样重放）。
+- 变异：重跑 16 个（原 12 个与 S1–S3、N 对应的 4 个），全部 KILLED，汇总写明运行前后 apps/crates diff 摘要（相等）。按键与 IME 路由、失焦提交在 `StickyApp` 中，
+  单元测试只覆盖其判定（`takes_keys`、`finish_input`），不执行接线本身。
+- 验证（第 1 轮修复后）：`target/review-evidence/d5-code/verification-r1/`（范围补丁 sha256 `2169f93e…917d`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（`stickymd-smoke`）clippy 与测试退出 0。
+
+### D5 代码审查第 2 轮（2026-10-20）
+
+结论 DISAGREE（`codex-reviewer`，gpt-6-astra，effort max，只读）：R1-1、R1-3、R1-5、R1-6 已解决，R1-2 部分解决（见 R2-3），R1-4 接受延期（不构成高 DPI
+验收通过）；新发现 4 项 SHOULD_FIX、1 项 NEEDS_VERIFICATION、1 项 NICE_TO_HAVE，逐项对照源码核实，机制均属实。处理如下：
+
+- **R2-1 字段吞掉组字结束事件，Search 的组字残留**（接受）：点击输入框只取消正文组字，字段又吞掉空 Preedit 与 `Disabled`，Search 收不到清理事件。改为：正文或
+  Search 组字中不聚焦输入框（与打开 Search 的既有规则相同，提示"请先完成当前输入法组合。"）；字段只取 Commit 与非空 Preedit（`field_takes_ime`），组字结束事件与
+  `Enabled` 交给原主。
+- **R2-2 全键拦截挡住全局命令、快捷键被当作数字**（接受）：字段按键改在 `handle_key` 中 Search 的位置处理（Esc、F6/F7、保存 / 导出之后），Ctrl+S、Ctrl+Shift+S
+  照常可达；文本只在无 Ctrl / Alt / Win 时键入（与 Search 的判定相同；winit 的 `text` 不受 Ctrl 影响），Ctrl+Enter 不提交（`opacity_key`）。代价：字段也处在
+  `mutation_input_allowed` 门之后，恢复待处理、退出进行中或资产对账中时字段按键丢弃（Esc 仍取消），与 Search 一致；字段编辑期间缩放、视图切换、打开 Search
+  等快捷键丢弃。
+- **R2-3 原生关闭丢失键入值**（接受）：`hide_to_tray` 与 `request_quit` 都先发出 `SetEditorInputEnabled(false)`，唯一发出 `SetVisible(false)` 的 `complete_hide`
+  只在其后调用；字段在该效果处结束编辑并提交，先于隐藏清空弹层，也先于退出的 config 屏障（`request_quit_config_flush` 提交脏 config 并等其写完）。
+- **R2-4 弹层空白处按下穿透正文**（接受）：新增 `ControlLayout::popup_hit`（滑块 / 输入框 / 弹层表面 / 弹层外），弹层表面的按下在必要的提交后由弹层消费；对应
+  的松开在正文路径为无操作（无 Preview 拖动时只清 `dragging_selection`）。此问题在 D5 之前已存在。
+- **R2-5 原生组字跨焦点交接**（部分处理，仍为缺口）：聚焦输入框时关闭 IME（`set_ime_allowed(false)`，与 Preview 获焦相同的既有机制），结束或取消编辑后按窗口
+  获焦时的同一公式恢复（`sync_opacity_ime`）。转入方向由 R2-1 的拒绝聚焦保证没有进行中的组字；转出方向见下方"推断"。未引入 `ImmNotifyIME`：Win32 调用只能
+  在平台 adapter，属骨架改变。
+- **R2-6 选中断言被重新聚焦掩盖**（接受）：两次 `finish_input` 后直接断言 `opacity_input_selected`。
+- 顺带记录（不在本批，D5 之前即如此）：弹层打开时点击工具栏透明度按钮，弹层外按下先关闭弹层，随后 `activate_control` 又把它切换为打开，按钮无法关闭弹层。
+
+证据分层：
+
+- 已验证（本机运行）：新增与改写的单元测试（`the_edited_opacity_field_types_only_plain_text`、`the_edited_opacity_field_leaves_the_end_of_a_composition_to_its_owner`、
+  `the_open_popup_takes_every_press_inside_it`，以及 R2-6 的断言）通过；变异与全量验证见下。前两个测试加入 `OPACITY_RANGE_AND_INPUT` 的 owner。
+- 推断（读源码，未运行）：winit 0.30.13 Windows 实现在 `ime_allowed=false` 时，`WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` 不产生 IME 事件，因此字段中不会开始
+  组字，也就没有迟到的提交落到正文或 Search；`CommitOpacity` 只经 `coordinate_window_preference` 与 `submit_config_if_needed`，不重入窗口 flow；退出时提交的值由
+  config 屏障写盘。
+- 未验证：`ImmAssociateContextEx` 对进行中组字的效果、真实输入法（微软拼音、微信输入法）的事件顺序、真实按键送达，以及按键顺序、拒绝聚焦、IME 开关与失焦 /
+  隐藏 / 退出提交的接线（单元测试只覆盖判定），仍属 G4 / P08-D022 缺口。
+- 变异：`target/review-evidence/d5-code/mutations-r2/` 重跑 26 个（第 1 轮的 16 个，加上本轮 10 个：弹层表面按下穿透、结束编辑取消选中、按住 Ctrl / Alt / Win 仍键入、
+  Ctrl+Enter 提交、Ctrl+Alt 算作快捷键、控制字符被键入、字段取走空 Preedit、字段取走组字结束），全部 KILLED（均为断言失败，退出 101），运行前后 apps/crates diff
+  摘要相等（`60f602fe…aea5`）。按键顺序、拒绝聚焦、IME 开关与隐藏 / 退出提交在 `StickyApp` 中，没有变异或测试执行它们。
+- 验证（第 2 轮修复后）：`target/review-evidence/d5-code/verification-r2/`（范围补丁 sha256 `ec44f503…f5b7`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（基线 `23b8c91` 加 12 个改动文件，`stickymd-smoke`）clippy 与测试
+  退出 0（460 passed / 3 ignored，19 passed）。Linux 日志首次拷贝因 Git Bash 路径转换写成空文件，运行后补拷贝，summary 中注明。
+
+### D5 代码审查第 3 轮（2026-10-20）
+
+结论 DISAGREE（`codex-reviewer`，gpt-6-astra，effort max，只读）：R1-2、R2-1、R2-2、R2-3、R2-4、R2-6 已解决；R1-4 延期本批可接受；R2-5 部分解决，原生验证保留为具名缺口
+可接受；无 BLOCKER，新发现 3 项 SHOULD_FIX、1 项 NEEDS_VERIFICATION、1 项 NICE_TO_HAVE，逐项对照源码核实，均属实。处理如下：
+
+- **R3-1 退出保存失败后 IME 未恢复**（接受，第 2 轮引入）：托盘不可用时关闭降级为退出（plan 09），`SetEditorInputEnabled(false)` 处的字段提交按焦点公式关闭了 IME，而退出
+  取消只发出 `SetEditorInputEnabled(true)` 与 `QuitCancelled`。改为：`SetEditorInputEnabled(true)` 先恢复 `shell_input_enabled`，再按同一公式同步 IME（`sync_ime_allowed`，
+  由 `sync_opacity_ime` 改名）。显示路径上 `SetImeAllowed(true)` 之后会因窗口尚未获焦而暂时关闭 IME，随后由 `Focused(true)` 打开；未获键盘焦点时 IME 关闭是可接受的。
+  未选"退出取消时由 flow 发出 `SetImeAllowed`"（与隐藏失败对称、可在 reducer 测试），因为要把 flow 两个文件拉进本批；记录为可选的后续收敛。
+- **R3-2 长按 Enter 提交后重复事件改写正文**（接受，HEAD 已有）：提交字段的 Enter 记为 `ControlState::commit_key`；`handle_key` 在 Pressed 过滤之前询问
+  `takes_commit_key_event`：同键重复被吞掉并保持，同键松开被吞掉并结束，同键的新按下（松开丢失）结束并照常处理，其他键不受影响。未全局禁用键盘重复。
+- **R3-3 非整数被过滤成另一个整数提交**（接受，整批 D5 的偏差）：此前 `type_input` 丢弃非数字字符，`96.5` 成为 `965` 并提交 100，与 plan 09"非整数不提交"和 AC-024
+  （操作含输入 96.5）冲突。改为：字段保留任意字符（控制字符除外），提交只读整数（`-` 与 ASCII 数字），其余输入不提交、恢复显示值。字段投影改为逐字符取尾部
+  （从末尾按字符回退，不按字节截断），数字、`-`、`.` 照原样绘制，其余字符绘为七段问号（`0x53`，与任何数字不同），因此 `96.5` 与 `x` 都看得见。这是 plan 与 D5
+  "放开输入"的直接读法，不是新决定；用户可见的变化是：此前描述的"其余字符丢弃、保持选中值"不再成立，键入的非数字字符留在字段中并使本次输入不提交。逐键输入表
+  加入 AC-024 的三项（35→40、105→100、96.5→不提交），原"4.5→45"等过滤行改为不提交。
+- **R3-4 第 2 轮 R2-5 推断的更正**（接受，只追加不改写原文）：第 2 轮"推断"一条称关闭 IME 后"字段中不会开始组字，也就没有迟到的提交落到正文或 Search"。前半句成立
+  （winit 0.30.13 在 `ime_allowed=false` 时 `WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` 不产生事件）；后半句不成立：`WM_IME_ENDCOMPOSITION` 的条件是
+  `ime_allowed || ime_state != Disabled`，winit 处于 `Preedit` 时仍可能发出 Commit。可达路径：正文组字中在正文内点击，`input.rs` 只取消正文的投影
+  （`cancel_preedit`），原生组字继续，`session.is_composing()` 为假，聚焦字段不被拒绝；之后的结束组字可能把 Commit 交给字段（编辑中）或正文 / Search（编辑已结束）。
+  这一事件序列在目标输入法上是否出现、落在何处均未验证，仍属 G4 / P08-D022 缺口。
+- **R3-5 最小窗口下弹层与 resize 边框的光标不一致**（接受）：`shell_cursor_icon` 在弹层打开且指针在其中时先给出指针光标，与按下的优先级一致；弹层测试加入
+  220×120 与 `(1,40)`。
+- 变异：`target/review-evidence/d5-code/mutations-r3/` 重建为 34 个：去掉第 2 轮集合中行为已不存在的"负号可在任意位置键入"，"尾部保留开头字符"改按逐字符取尾部
+  重写，新增 9 个（控制字符被键入、其他字符照原样投影、小数点被投影为其他字符、提交键的重复放行、松开不结束占用、新按下仍被占用、其他字符不绘制、小数点不绘制、
+  其他字符绘成 8）；全部 KILLED（均为断言失败，退出 101），运行前后 apps/crates diff 摘要相等（`8c417499…405d`）。按键顺序、Enter 占用的接线、拒绝聚焦、IME 开关
+  与隐藏 / 退出提交及恢复输入时的 IME 同步在 `StickyApp` 中，没有变异或测试执行它们。
+- 验证（第 3 轮修复后）：`target/review-evidence/d5-code/verification-r3/`（范围补丁 sha256 `094e7a7f…0cba`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（基线 `23b8c91` 加 12 个改动文件，`stickymd-smoke`）clippy 与测试
+  退出 0（460 passed / 3 ignored，19 passed）。
+
+### D5 代码审查第 4 轮（2026-10-20）
+
+结论 DISAGREE（`codex-reviewer`，gpt-6-astra，effort max，只读）：R3-1、R3-3、R3-4、R3-5 已解决；R1-4 延期、R2-5 具名缺口本批可接受；R3-2 部分解决；无 BLOCKER，新发现
+2 项 SHOULD_FIX、1 项 NICE_TO_HAVE，逐项对照源码与锁定的 winit 0.30.13 核实，均属实。处理如下：
+
+- **R4-1 合成焦点事件提前结束提交键占用**（接受）：winit 在窗口获焦时为仍按住的键合成按下、失焦时合成松开（`WindowEvent::KeyboardInput::is_synthetic` 的文档），
+  `lifecycle.rs` 原先丢弃该标志，合成松开清掉占用、复焦时合成的按下（`repeat=false`）又进入正文换行。改为在 `KeyboardInput` 处忽略合成事件：它们不是在本窗口
+  按下或松开的键，因此不编辑任何内容，也不结束按住的键的占用。这一改动作用于全部按键（读源码推断：此前按住任意键切回窗口都会被当作一次按下，例如按住 Esc 切回会收起窗口），
+  修饰键状态另由 `ModifiersChanged` 维护，不受影响。
+- **R4-2 IME 判定与实际接收按键者不一致**（接受，含既有的 Search / Preview 焦点问题）：`handle_key` 的接收顺序是：编辑中的字段 → 打开的 Search → 获焦的 Preview →
+  正文，而 IME 公式在 Search 打开且 `preview_focused` 为真（打开 Search 后点击 Preview，可达）时关闭 IME。改为纯函数 `ime_allowed`（窗口获焦且接受输入，并按同一顺序：
+  字段关、Search 开、Preview 关、正文开），所有改变接收者的位置都经 `sync_ime_allowed` 应用：`Focused`、`SetImeAllowed(true)`、`SetEditorInputEnabled(true)`、
+  Preview / 正文按下、`open_search`、视图切换、字段编辑起止。范围因此加入 `search_controller.rs` 与 `preview_runtime.rs`（各一行，原表达式在其状态下与新判定一致，
+  只有"Preview 模式下 Search 仍打开"时由关改开，与该状态下 Search 仍接收按键一致）。建窗时的初值（`lifecycle.rs` 创建窗口处）保留，随后的 `Focused(true)` 同步。
+  既有问题记录（不在本批）：切到 Preview 模式时 Search 不关闭，Search 不可见却仍接收按键。
+- **R4-3 弹层关闭不刷新光标**（接受）：光标计算提成 `refresh_cursor`，指针移动、Esc 取消弹层、弹层外按下关闭弹层与工具栏按钮开关弹层时调用。
+- 顺带收紧 R3-3：第 4 轮审查指出 `type_input` 仍过滤控制字符，原始 `Ime::Commit("9\t6")` 会成为 `96`。改为字段保留给到的全部字符；键盘上文本为控制字符的键（Tab、
+  Delete）在 `opacity_key` 处就不是键入键。逐键表加入 `"9\t6"` → 不提交。
+- 证据分层：已验证（本机运行）为新增的 `the_ime_follows_whoever_takes_the_keyboard`（按接收顺序枚举 16 种状态）与改写的表项；推断（读源码）为合成事件的来源与
+  `repeat` 取值（winit 0.30.13 文档与 Windows 键盘实现）；未验证为合成事件过滤、各处 IME 同步与光标刷新的接线及真实桌面行为，仍属 G4 / P08-D022 缺口。
+- 变异：`target/review-evidence/d5-code/mutations-r4/` 共 37 个：第 3 轮的"控制字符被键入"改为反向的"IME 提交中的控制字符被丢弃"，新增 3 个（Search 打开时点击 Preview
+  后失去 IME、编辑中的字段保留 IME、未获焦窗口保留 IME）；全部 KILLED（均为断言失败，退出 101），运行前后 apps/crates diff 摘要相等（`ca023e0c…7ba0`）。合成事件过滤、
+  各处 IME 同步与光标刷新在 `StickyApp` 中，没有变异或测试执行它们。
+- 验证（第 4 轮修复后）：`target/review-evidence/d5-code/verification-r4/`（范围补丁 sha256 `dfcebc9a…76f9`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（基线 `23b8c91` 加 14 个改动文件，`stickymd-smoke`）clippy 与测试
+  退出 0（460 passed / 3 ignored，19 passed）。
+
+### D5 代码审查第 5 轮（2026-10-20）
+
+结论 DISAGREE（`codex-reviewer`，gpt-6-astra，effort max，只读）：R3-2、R4-1、R4-3 已解决；R1-4 延期、R2-5 具名缺口本批可接受；R4-2 部分解决；无 BLOCKER，新发现
+2 项 SHOULD_FIX、1 项 NEEDS_VERIFICATION、1 项 NICE_TO_HAVE，逐项对照源码核实，均属实。处理如下：
+
+- **R5-1 关闭 Search 不同步 IME**（接受，第 4 轮扩大同步后暴露）：打开 Search 后点击 Preview，IME 因 Search 接收按键而开启；Esc、Ctrl+F 与关闭按钮三个关闭入口都未同步，
+  接收者回到 Preview 后 IME 仍开着。改为三个入口都经 `close_search`，由它同步 IME。**更正第 4 轮记录**：第 4 轮 R4-2 一条称"所有改变接收者的位置都经
+  `sync_ime_allowed` 应用"，当时遗漏了关闭 Search；现补上，并加入输入禁用（见 R5-3）。
+- **R5-2 Preview 模式下不可见的 Search 获得 IME**（接受，第 4 轮引入的影响）：切到 Preview 不关闭 Search，Search 没有布局、不绘制（含 preedit），第 4 轮的公式却因
+  Search 打开而开启 IME，候选框还会落到隐藏正文的 caret 上（plan 07 禁止）。改为：只有已绘制的 Search（与绘制同一条件：`search_layout()` 存在）计为组字接收者，
+  Preview 模式下仍打开的 Search 不给 IME，这一状态回到 HEAD 的行为（关闭）。未采用"切到 Preview 时关闭 Search"：plan 07 只把 Search 定义为 Source 功能，未规定视图
+  切换时的处理，这是契约决定，不在本批。既有问题另列任务：Preview 模式下 Search 不可见却仍接收按键（连 Ctrl+1/2/3 都被吞掉）。
+- **R5-3 无字段编辑的退出等待期间 IME 仍开**（NEEDS_VERIFICATION，既有）：`request_quit` 只发出 `SetEditorInputEnabled(false)`。改为该效果无条件同步 IME（输入禁用即
+  关闭，恢复即按接收者打开），与隐藏路径一致。审查者另指出 `session.focused && shell_input_enabled` 不等于 `window_accepts_editor_mutation()`（后者还看生命周期、
+  收起与动画）；本批未改，记录为既有边界：判定不覆盖这些窗口状态，原生行为未验证。
+- **R5-4 指针在窗口外时刷新光标**（接受）：`refresh_cursor` 只在指针位于窗口内（`pointer_inside_window`）时设置光标（`SetCursor` 是共享资源，只应由指针下的窗口
+  设置）；指针移动仍按原路径设置。
+- 证据分层：已验证（本机运行）为改名后的 IME 判定测试与变异；推断（读源码）为三个关闭入口、Preview 模式下 `search_layout()` 为空与候选框回退；未验证为各同步点、
+  关闭入口与光标刷新的接线及真实桌面行为，仍属 G4 / P08-D022 缺口。
+- 变异：`target/review-evidence/d5-code/mutations-r5/` 共 37 个（第 4 轮集合，IME 判定的 3 个按改名后的 `search_drawn` 重写），全部 KILLED（均为断言失败，退出 101），
+  运行前后 apps/crates diff 摘要相等（`f7dd9519…b816`）。关闭入口、各同步点与光标刷新的接线没有变异或测试执行。
+- 验证（第 5 轮修复后）：`target/review-evidence/d5-code/verification-r5/`（范围补丁 sha256 `266c27d2…6a2e`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（基线 `23b8c91` 加 14 个改动文件，`stickymd-smoke`）clippy 与测试
+  退出 0（460 passed / 3 ignored，19 passed）。
+
+### D5 代码审查第 6 轮（2026-10-20）
+
+结论 DISAGREE（`codex-reviewer`，gpt-6-astra，effort max，只读）：R5-1、R5-4 已解决；R1-4 延期、R2-5 具名缺口、R5-3 的完整窗口门禁差异（生命周期、收起与动画）本批
+可接受；R4-2、R5-2 部分解决；无 BLOCKER，1 项 SHOULD_FIX、1 项 NICE_TO_HAVE，逐项对照源码核实，均属实。处理如下：
+
+- **R6-1 未命中 Source 的按下清除 Preview 焦点**（接受，触发分支 HEAD 已有）：正文按下路径先置 `preview_focused = false` 并同步 IME，之后才检查是否命中 Source；
+  Preview 模式下按住右键（winit 捕获鼠标）把指针移到客户区外再按左键，没有窗格被命中，IME 却按"正文接收"开启，留在 Preview 模式的隐藏 Search 因此可以组字。
+  改为先确认命中 Source，再改变焦点、同步 IME 并取消正文 preedit；未落在任何窗格的按下不改变焦点。**更正第 5 轮记录**：第 5 轮 R5-2 一条的"Preview 模式下仍打开的
+  Search 不给 IME"在该路径下不成立，本轮补上。
+- **R6-2 指针同坐标回到窗口时不刷新光标**（接受）：`CursorEntered` 在置位 `pointer_inside_window` 后刷新光标（同坐标重入时 winit 不发 `CursorMoved`）。
+- 证据分层：已验证（本机运行）为既有测试与变异；推断（读源码与 winit 0.30.13）为右键捕获使窗口外的左键按下送达本窗口，以及重入时省略 `CursorMoved`；未验证为
+  这两处接线与真实桌面行为，仍属 G4 / P08-D022 缺口。
+- 变异：`target/review-evidence/d5-code/mutations-r6/` 重跑第 5 轮的 37 个（本轮只改了未变异的 `input.rs` 与 `lifecycle.rs`），全部 KILLED（均为断言失败，退出 101），
+  运行前后 apps/crates diff 摘要相等（`123abc17…c176`）。
+- 验证（第 6 轮修复后）：`target/review-evidence/d5-code/verification-r6/`（范围补丁 sha256 `b84713ec…4e49`，运行后不变）：fmt、`clippy --workspace --all-targets
+  -D warnings` 与 `all --ci --ci-shard=tests`（五项均 PASSED，含 owner 核验）退出 0；Linux 复跑（基线 `23b8c91` 加 14 个改动文件，`stickymd-smoke`）clippy 与测试
+  退出 0（460 passed / 3 ignored，19 passed）。
+
+### D5 代码审查第 7 轮（2026-10-20）
+
+结论 **AGREE**（`codex-reviewer`，gpt-6-astra，effort max，只读，541 s）：R4-2、R5-2、R6-1、R6-2 已解决（源码层面）；R1-4 延期、R2-5 原生组字交接与 R5-3 完整窗口门禁
+（生命周期、收起与动画）为本批可接受的具名缺口；无 BLOCKER、无 SHOULD_FIX。审查者复算范围补丁 `b84713ec…4e49` 与 37 个变异的补丁、输出与摘要，均一致。
+
+- **R7-1 滑块拖动中经窗口外重入时光标可能保持 resize 形态**（NICE_TO_HAVE，记录，不在本批修改）：`CursorEntered` 的刷新读取上一次 `CursorMoved` 的缓存坐标（窗口外），
+  随后的移动被滑块拖动分支提前消费，不再设置光标。只影响拖动中的光标反馈，不影响透明度值与提交；修复（拖动中重入时保留拖动光标）留作后续。
+- 审查者另注：coverage-matrix 末项未单列"Source 命中检查先于焦点改变"，P14-A81 的"按当前位置刷新"实际使用缓存坐标（见 R7-1）。
+- 未被任何变异或测试执行、仍属 G4 / P08-D022 缺口的接线：实际按键与 IME 路由、Search 可见性的运行期计算与各同步点的调用顺序、拒绝聚焦、Enter 占用接线、合成按键过滤、
+  失焦 / 隐藏 / 退出提交与恢复、Source 命中提前返回、`CursorEntered` 刷新，以及真实输入法投递。

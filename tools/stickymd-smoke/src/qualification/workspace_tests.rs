@@ -59,6 +59,7 @@ fn execute_with(
         measurements: Vec::new(),
         gates: Vec::new(),
         samples: Vec::new(),
+        owners: Vec::new(),
     };
     let outcome = (|| {
         let started = Instant::now();

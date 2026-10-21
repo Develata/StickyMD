@@ -72,6 +72,36 @@ fn coverage(tasks: &[Task]) -> BTreeSet<(Module, TaskId, Vec<&'static str>)> {
     units
 }
 
+/// The owner verification is narrowed like a Cargo task: kept whole when every workspace
+/// package is selected, cut to the selected owning packages otherwise, and dropped (with its
+/// discovery build) when no selected package owns an obligation.
+#[test]
+fn owner_verification_projects_onto_the_selected_owning_packages() {
+    let full = Task::UnitTestOwners { packages: None };
+    assert_eq!(
+        project(full.clone(), &Module::ALL).unwrap(),
+        Some(full.clone())
+    );
+    let owning = crate::qualification::unit_test_owners()
+        .into_iter()
+        .map(|owner| owner.package)
+        .collect::<BTreeSet<_>>();
+    assert!(owning.contains("stickymd-win"), "{owning:?}");
+    assert_eq!(
+        project(full.clone(), &[Module::Windows, Module::Core]).unwrap(),
+        Some(Task::UnitTestOwners {
+            packages: Some(vec!["stickymd-win"])
+        })
+    );
+    for module in Module::ALL {
+        let projected = project(full.clone(), &[module]).unwrap();
+        let owns = module
+            .package()
+            .is_some_and(|package| owning.contains(package));
+        assert_eq!(projected.is_some(), owns, "{module:?}");
+    }
+}
+
 #[test]
 fn individual_modules_form_a_disjoint_complete_cover_of_headless_commands() {
     for mode in [Mode::Tests, Mode::Performance, Mode::All] {
@@ -185,6 +215,11 @@ fn rendering_selection_preserves_performance_filters_and_serial_measurement() {
 #[test]
 fn requesting_several_modules_deduplicates_shared_commands() {
     let tasks = plan(&request(&[Module::Core, Module::Render], Mode::Tests)).unwrap();
+    // Whether an owner task is planned depends on the mapping; when it is, it is planned once.
+    let (owners, tasks): (Vec<_>, Vec<_>) = tasks
+        .into_iter()
+        .partition(|task| matches!(task, Task::UnitTestOwners { .. }));
+    assert!(owners.len() <= 1, "{owners:?}");
     assert_eq!(tasks.len(), 2);
     let Task::Cargo { args, .. } = &tasks[1] else {
         panic!("Cargo tests expected");

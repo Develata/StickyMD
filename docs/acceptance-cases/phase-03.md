@@ -47,8 +47,126 @@ from the [release checklist](../release-checklist.md).
   and the complete CI performance shard; each task is deduplicated and measurements run serially per runner.
 - Physical mouse/IME/DPI visual matrix: `NOT TESTED`; synthetic native messages and headless pixels do not upgrade the manual rows.
 
+## 2026-10-20 Search across view changes
+
+- Contract: `07_editor_and_ime.md#source-find-replace` (USER decision: an open Search is parked while the view has no
+  Source pane and comes back as it was); feature: 查找与替换 in the v1 product behavior.
+- Preconditions: Search open in Source and Split, Find-only and with the replacement row, with typed field cursors,
+  a non-first active match and the case option on; a Search-field composition; a closed Search with a kept query.
+- Action: switch to Preview (toolbar or Ctrl+3) and back to Source or Split (toolbar, Ctrl+1/2, Ctrl+F or Ctrl+H);
+  change the document while in Preview; switch while the Search field composes; use Ctrl+1/2/3 and keyboard zoom
+  while Search is visibly open.
+- Expected: entering Preview parks an open, non-composing Search: the live session is closed, so no key, IME event,
+  press, Esc or auto-collapse guard finds it, and it holds no match projection. Leaving Preview restores its query,
+  replacement, case option, replacement row, focused field, cursors and active match place, rescanned against the
+  current generation, and the Source selection follows the active match as on opening and navigation. In Preview, Ctrl+F restores a parked Search
+  without rewriting its query and Ctrl+H also expands or focuses its replacement row; a closed one opens as before,
+  and none opens when the view did not change. A composing Search refuses the switch to Preview with the same
+  diagnostic as Ctrl+F/H. Source and Split keep an open Search. View and zoom shortcuts act while Search is open;
+  during a Search-field composition they stay with the composition like every other key.
+- Failure signals: an undrawn Search that takes keys, IME, Esc or blocks auto-collapse; a lost or altered Search after
+  the round trip; matches kept while parked or stale after the document changed; a selection other than the active
+  match after the round trip (Replace Current would then replace an unselected match); a query rewritten by Ctrl+F in
+  Preview; a switch to Preview during a Search composition; Ctrl+1/2/3 or zoom swallowed by a non-composing panel.
+- Automated entry: `cargo test -p stickymd-win --locked -- interaction::search app::search_controller app::input`,
+  also in the Rust-owned render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1):
+  `a_parked_search_comes_back_as_it_was_without_holding_matches`, `a_resumed_search_rescans_the_current_document`,
+  `only_an_open_search_is_parked_and_a_preedit_does_not_survive_it`,
+  `a_view_without_a_source_pane_parks_search_and_one_with_it_resumes_it`,
+  `view_and_zoom_shortcuts_take_no_key_that_search_binds` and `window_keys_pass_an_open_search_but_not_its_composition`.
+  Status: `AUTOMATED PASS`.
+- Limits: the `StickyApp` wiring (`apply_view_mode` deciding before any side effect and applying after the view is
+  committed, the selection following the active match on resume, the two `open_search` guards, the key order) is not
+  executed by these tests. Desktop steps, `MANUAL PASS` 2026-10-21 (USER, Release build of `1965c10` in an
+  isolated program directory, all five groups below; T4 with Microsoft Pinyin and WeType): with Search open and the replacement row expanded, toolbar
+  Preview then Source, then Ctrl+3 / Ctrl+1 and Ctrl+3 / Ctrl+F and Ctrl+3 / Ctrl+H; in Preview press Esc, type, let
+  the window lose focus for 700 ms; with `a X a` and the second `a` active, park, change the file on disk to `a a X`,
+  return and press Ctrl+Enter; start a Microsoft Pinyin and a WeType composition in the query field and press
+  toolbar Preview, Ctrl+3 and Ctrl+=, then toolbar Split and Source (the composition must go on and commit once,
+  with the note unchanged); with Search open, hide to tray and show again in each view. Candidate-window
+  placement remains a visual check.
+
+## 2026-10-21 Replace Current follows the selection
+
+- Contract: `07_editor_and_ime.md#source-find-replace` (USER decision: select first, then replace); feature: 查找与替换.
+- Preconditions: Search open with the replacement row; `a X a` with the second `a` active and selected.
+- Action: change the file on disk to `a a X` and press Ctrl+Enter twice; separately, click or drag elsewhere in the
+  note (a caret, another match, a range around the match) and press Ctrl+Enter or the Replace button; apply the toolbar
+  `$` conversion while Search is open and press Ctrl+Enter.
+- Expected: Replace Current replaces only when the Source selection is exactly the active match. Otherwise the first
+  press selects and reveals the active match and changes nothing (text, generation, dirty and Undo unchanged); the next
+  press replaces it. Navigation, opening Search, the case toggle and a replacement (Ctrl+Enter or the Replace button)
+  select the active match, so repeated Ctrl+Enter or Replace clicks replace one match per press as before. After a
+  replacement (or a replacement equal to the match, which changes nothing) the next active match is the first one
+  starting at or after the end of the inserted text, wrapping to the first: replacing `a` by `aa` in `a b a` moves on
+  to the second `a` instead of growing the first. With no later match it wraps, which can land in text inserted
+  earlier (a lone `a` becomes `aa`, then `aaa`); with a truncated projection (`+`) it moves and wraps within the
+  retained matches, as navigation does. Replace All is unchanged.
+- Failure signals: a replacement of text that was not selected; a first press after a reload that changes the
+  document; a normal replace sequence, by keyboard or by mouse, needing two presses per match.
+- Automated entry: `app::search_controller::tests::{replace_current_replaces_only_the_selected_active_match,
+  consecutive_replacements_move_past_text_that_contains_the_query}` (real replacements through `EditorCoordinator`,
+  including a no-op and a normalized `\r\n`) and
+  `interaction::search::tests::the_match_after_a_position_becomes_active_and_wraps_to_the_first`, in the Rust-owned
+  render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1); the command boundary's
+  `literal_range_matches` check still rejects a range that is not a match. Status: `AUTOMATED PASS`.
+- Limits: `replace_current_search` applying the decision and selecting the next active match after a replacement, and
+  the selection reaching that point unchanged after a reload, conversion or click, are `StickyApp` wiring that these
+  tests do not execute; the desktop steps above, including three consecutive Replace clicks on `a a a`, are `NOT TESTED`.
+
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
+
+## 2026-10-21 Search panel as a top-right strip
+
+- Contract: `07_editor_and_ime.md#source-find-replace` (USER decision 2026-10-21: the panel is a narrow, translucent strip
+  at the Source pane's top-right, as VS Code's find widget, with one fixed opacity); feature: 查找与替换.
+- Expected: the panel is at most 300 DIP wide and right-aligned in the Source pane (the full pane width when the pane is
+  narrower); in Split it sits left of the divider and meets neither the Source scrollbar gutter nor the sync button; its
+  whole surface (background, fields, buttons) is painted opaque into one layer laid over the note at a fixed 40%
+  opacity, so parts differ only in colour and focus changes no transparency, with text and markers opaque on top,
+  independent of the window opacity; a press on it belongs to the panel (the native resize border and the opacity popup excepted). A press on a
+  field maps against the field as painted before it: an unfocused field from its start, a focused one scrolled to its
+  cursor (`SourceProjection::ui_text_hit` against `paint_ui_text`'s layout; `stickymd-render`
+  `an_unfocused_field_hit_reads_the_painted_layout` checks left-to-right and right-to-left text, where a logical cursor
+  at 0 is not the zero offset; the narrower panel made a long field's scroll offset reachable at default sizes). A
+  focused field scrolls both ways to keep its caret visible: an overflowing right-to-left line with the cursor at its
+  end lays out left of the field (`a_focused_right_to_left_field_reveals_a_caret_left_of_it`, caret inside the field
+  and its press mapping back to the cursor at the end, start and middle).
+- Automated entry: `cargo test -p stickymd-win --locked -- app::search_runtime` and `cargo test -p stickymd-render --lib
+  --locked -- an_unfocused_field_hit_reads_the_painted_layout a_focused_right_to_left_field_reveals_a_caret_left_of_it`
+  (`the_panel_is_a_narrow_strip_at_the_source_pane_top_right` over Source and Split at four DPIs and six sizes including
+  the 220x120 minimum; `the_panel_surface_has_one_fixed_opacity`, which reads the background, a field and the focused
+  field and visible buttons over a black frame in both themes and tiers, with and without the replacement row,
+  as their colour times the one opacity). Status: `AUTOMATED PASS`.
+- Desktop check: the USER tuned the opacity on the Release build of the working tree in an isolated program directory
+  (about 53%/88% background/fields was far too opaque; one fixed opacity requested; 40% accepted, 2026-10-21). Dark
+  theme and a 40% window opacity were not reported separately. The narrow-pane gap first noted here (about 3 DIP
+  of query text in the minimum Split) is closed by the
+  compact tier below.
+
+## 2026-10-21 Compact Search panel for a narrow Source pane
+
+- Contract: `07_editor_and_ime.md#source-find-replace` (USER decision 2026-10-21: a narrow pane drops the previous/next
+  buttons, whose keys remain); feature: 查找与替换.
+- Expected: when the full tier would leave the query less than 40 DIP of text, the panel takes the compact tier:
+  tighter margins, gaps, text insets and label padding, `Aa` and `x` beside the query, Replace and All beside the
+  replacement, no `< >` buttons, painted or hit. Among the tested views the 220x120, 330x360 and 396x360 Splits are
+  compact; the 398x360 Split (Source pane at the 178-DIP threshold, full-tier label room 17 DIP), the 520x680 and
+  1200x900 Splits and every Source view keep the full tier. In every view each field leaves at least 20 DIP for its text (the
+  minimum Split: query about 27 DIP, replacement about 21, against 3 and 13 before), each label as Cosmic Text shapes
+  it in every installed UI font candidate (FangSong and the Microsoft YaHei fallback, where `Aa` is 16.3 DIP) fits inside
+  its button's padding, fields and buttons stay inside the panel without overlapping, and a press on a
+  button's center reaches it. Navigation stays on Enter/Shift+Enter, Up/Down and F3/Shift+F3.
+- Automated entry: `cargo test -p stickymd-win --locked -- app::search_runtime`
+  (`every_view_leaves_readable_fields_and_whole_button_labels` and `narrow_source_panes_take_the_compact_tier` over
+  the real `preview_runtime::geometry` Source and Split panes at six sizes and four DPIs, both replace states; the
+  hand-built 109-DIP pane test is folded into them). The `app` module is `cfg(windows)`: run on Windows, where the
+  filter lists four tests. Status: `AUTOMATED PASS`.
+- Limits: how the compact panel reads at the minimum size is a visual check, `NOT TESTED`. Label fit compares each
+  label's shaped advance with its label room, not its rasterized ink against the pixel clip, and only in the candidates
+  installed on the test machine (`仿宋_GB2312` was not); a machine with no candidate installed paints with Cosmic Text's
+  own fallback, which is not measured. Source panes narrower than the 220-DIP minimum window's are outside this check.
 
 ## Source buffer initialization
 

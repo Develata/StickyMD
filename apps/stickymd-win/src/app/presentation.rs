@@ -237,6 +237,7 @@ impl StickyApp {
                 || self.controls.opacity_popup_open,
             opacity_popup: self.controls.opacity_popup_open,
             opacity: self.controls.opacity_preview,
+            opacity_field: self.controls.focused_field(),
             split_scroll_sync: self.config.current().split_scroll_sync,
         };
         let caret_animation_active = self.caret_animation_active();
@@ -279,12 +280,11 @@ impl StickyApp {
             }
         }
         for bar in scrollbars.into_iter().flatten() {
-            let emphasized = self.scrollbars.hovered == Some(bar.pane)
-                || self
-                    .scrollbars
-                    .drag
-                    .is_some_and(|drag| drag.pane == bar.pane);
-            bar.paint(surface.pixmap_mut(), emphasized, dark);
+            bar.paint(
+                surface.pixmap_mut(),
+                self.scrollbars.emphasized(bar.pane),
+                dark,
+            );
         }
         paint_search_overlay(
             surface.pixmap_mut(),
@@ -435,6 +435,7 @@ mod tests {
                     emphasized: true,
                     opacity_popup: false,
                     opacity: 96,
+                    opacity_field: None,
                     split_scroll_sync: true,
                 },
             );

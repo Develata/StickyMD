@@ -247,6 +247,7 @@ pub(crate) fn valid_resource_result(group: ResourceModule) -> crate::evidence::E
         measurements,
         gates: required_gates(group),
         samples,
+        owners: Vec::new(),
     }
 }
 

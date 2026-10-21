@@ -454,6 +454,19 @@ mod tests {
         }
     }
 
+    /// A hang guard, not a latency bound: before its first job each worker builds its own
+    /// font system from the installed fonts, which can take seconds in a debug build on a
+    /// loaded machine.
+    const COMPLETION_DEADLINE: Duration = Duration::from_secs(300);
+
+    fn next_completion(receiver: &mpsc::Receiver<PreviewCompletion>) -> PreviewCompletion {
+        receiver
+            .recv_timeout(COMPLETION_DEADLINE)
+            .unwrap_or_else(|error| {
+                panic!("no preview completion within {COMPLETION_DEADLINE:?}: {error}")
+            })
+    }
+
     fn build(generation: Generation, text: &'static str) -> PreviewJob {
         PreviewJob::Build {
             snapshot: DocumentSnapshot {
@@ -526,7 +539,7 @@ mod tests {
             generation,
             viewport: viewport(500),
         });
-        let completion = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        let completion = next_completion(&receiver);
         assert_eq!(completion.generation, generation);
         assert!(matches!(
             completion.result,
@@ -556,14 +569,14 @@ mod tests {
             },
             viewport: requested,
         });
-        let first = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        let first = next_completion(&receiver);
         assert_eq!(first.viewport, requested);
         assert_eq!(first.result.unwrap().scroll_y(), 0.0);
         worker.submit(PreviewJob::Relayout {
             generation,
             viewport: viewport(500),
         });
-        let second = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        let second = next_completion(&receiver);
         assert_eq!(second.viewport, viewport(500));
         assert_eq!(second.result.unwrap().scroll_y(), 0.0);
     }
@@ -685,26 +698,14 @@ mod tests {
         .unwrap();
         let generation = Generation::initial();
         worker.submit(build(generation, "# heading\n\nbody"));
-        assert!(
-            receiver
-                .recv_timeout(Duration::from_secs(5))
-                .unwrap()
-                .result
-                .is_ok()
-        );
+        assert!(next_completion(&receiver).result.is_ok());
 
         worker.release_raster_caches();
         worker.submit(PreviewJob::Relayout {
             generation,
             viewport: viewport(600),
         });
-        assert!(
-            receiver
-                .recv_timeout(Duration::from_secs(5))
-                .unwrap()
-                .result
-                .is_ok()
-        );
+        assert!(next_completion(&receiver).result.is_ok());
         assert_eq!(worker.metrics().unwrap().raster_releases, 1);
     }
 
@@ -717,20 +718,14 @@ mod tests {
         .unwrap();
         let generation = Generation::initial();
         worker.submit(build(generation, "# heading\n\nbody"));
-        assert!(
-            receiver
-                .recv_timeout(Duration::from_secs(5))
-                .unwrap()
-                .result
-                .is_ok()
-        );
+        assert!(next_completion(&receiver).result.is_ok());
 
         worker.release_document_projection();
         worker.submit(PreviewJob::Relayout {
             generation,
             viewport: viewport(600),
         });
-        let after_release = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        let after_release = next_completion(&receiver);
         assert!(matches!(
             after_release.result,
             Err(PreviewPipelineError::NoDocument)

@@ -72,6 +72,9 @@ pub struct SourceProjection {
     pub(super) scale_factor: f32,
     pub(super) preedit: Option<PreeditVisual>,
     pub(super) scroll_extent: Option<super::scrollbar::SourceScrollExtent>,
+    /// How many times the end boundary was measured rather than reused.
+    #[cfg(test)]
+    pub(super) extent_measures: usize,
 }
 
 impl SourceProjection {
@@ -116,6 +119,8 @@ impl SourceProjection {
             scale_factor: scale.max(0.5),
             preedit: None,
             scroll_extent: None,
+            #[cfg(test)]
+            extent_measures: 0,
         };
         projection.rebuild_buffer(snapshot);
         observe(SourceInitializationMilestone::SourceBufferReady);

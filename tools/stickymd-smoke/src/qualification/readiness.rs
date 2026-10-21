@@ -14,18 +14,7 @@ const READINESS_RECEIPT: &str = "dist/evidence/release-readiness.json";
 
 pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
     let mut blockers = Vec::new();
-    let source = match source_freeze::read(root) {
-        Ok(source) => {
-            if let Err(error) = source_freeze::validate_against_repository(root, &source) {
-                blockers.push(error);
-            }
-            Some(source)
-        }
-        Err(error) => {
-            blockers.push(format!("Source Freeze receipt: {error}"));
-            None
-        }
-    };
+    let (source, source_current) = read_source(root, &mut blockers);
     // One read: the candidate and the digest its manual context must be bound to.
     let (candidate, candidate_digest) = match receipt::read_candidate_snapshot(root) {
         Ok((candidate, digest)) => {
@@ -70,12 +59,14 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
     // One lookup pass serves every module check and the status report below.
     let snapshot = module_ledger::lookup_all(root);
     let mut manual = manual_readiness::Report::detached(root);
+    let mut unit_owners_proven = false;
     if let (Some(source), Some(candidate), Some(digest), Ok(_)) =
         (&source, &candidate, &candidate_digest, &manual_guard)
     {
         check_remote(root, source, candidate, &mut blockers);
         check_downloaded(root, candidate, &mut blockers);
         let headless_ok = automated_readiness::check(root, source, &mut blockers);
+        unit_owners_proven = headless_ok && source_current;
         let artifact_modules_ok = check_modules(&snapshot, is_artifact_module, &mut blockers);
         check_modules(
             &snapshot,
@@ -94,6 +85,7 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
         );
     }
     drop(manual_guard);
+    manual.set_unit_owner_proof(unit_owners_proven);
     let document = render_readiness(candidate.as_ref(), &blockers, &manual);
     // The summary is printed even if the receipt cannot be written; the error follows.
     let written = receipt::write_receipt(root, READINESS_RECEIPT, &document);
@@ -123,6 +115,28 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
             "release is NOT_READY; see {}",
             root.join(READINESS_RECEIPT).display()
         ))
+    }
+}
+
+/// The Source Freeze (kept even when stale, so later checks can name it) and whether it
+/// still holds for the repository. A proof about a stale freeze proves nothing about the
+/// current obligations, so the unit-test owner proof also needs the second value.
+fn read_source(
+    root: &Path,
+    blockers: &mut Vec<String>,
+) -> (Option<source_freeze::SourceFreeze>, bool) {
+    match source_freeze::read(root) {
+        Ok(source) => match source_freeze::validate_against_repository(root, &source) {
+            Ok(()) => (Some(source), true),
+            Err(error) => {
+                blockers.push(error);
+                (Some(source), false)
+            }
+        },
+        Err(error) => {
+            blockers.push(format!("Source Freeze receipt: {error}"));
+            (None, false)
+        }
     }
 }
 
@@ -348,6 +362,44 @@ mod tests {
     use crate::qualification::source_freeze::SourceFreeze;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// A Source Freeze that no longer matches the repository is still read but is not
+    /// current, so it cannot prove the unit-test owners.
+    #[test]
+    fn a_stale_source_freeze_is_kept_but_not_current() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-stale-freeze-{}-{nonce}",
+            std::process::id()
+        ));
+        let receipt = root.join(super::source_freeze::SOURCE_FREEZE_RECEIPT);
+        std::fs::create_dir_all(receipt.parent().unwrap()).unwrap();
+        std::fs::write(
+            &receipt,
+            format!(
+                "{{\"schema_version\":1,\"source_commit\":\"{}\",\"version\":\"0.1.3\",\"cargo_lock_sha256\":\"{}\",\"rustc\":\"rustc\",\"target\":\"x86_64-pc-windows-msvc\",\"remote_synced\":false}}\n",
+                "a".repeat(40),
+                "b".repeat(64)
+            ),
+        )
+        .unwrap();
+        // Not a repository at that commit: the freeze cannot hold.
+        let mut blockers = Vec::new();
+        let (source, current) = super::read_source(&root, &mut blockers);
+        assert_eq!(source.unwrap().source_commit, "a".repeat(40));
+        assert!(!current);
+        assert_eq!(blockers.len(), 1, "{blockers:?}");
+        std::fs::remove_file(&receipt).unwrap();
+        let mut blockers = Vec::new();
+        assert!(matches!(
+            super::read_source(&root, &mut blockers),
+            (None, false)
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn readiness_has_only_ready_or_not_ready_states() {

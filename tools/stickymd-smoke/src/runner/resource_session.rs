@@ -199,6 +199,7 @@ fn measured_result(
         measurements: output.measurements,
         gates: output.gates,
         samples: output.samples,
+        owners: Vec::new(),
     }
 }
 
@@ -272,7 +273,7 @@ mod tests {
         assert!(append_result(&mut results, result).is_err());
         assert_eq!(results, [expected]);
         let path = root.join(crate::qualification::smoke_scope::RESOURCE_SUMMARY);
-        evidence::emit(&root, "phase-14", &results, None, Some(&path)).unwrap();
+        evidence::emit(&root, "phase-14", &results, None, Some(&path), None).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         let json = crate::release::json::parse(&text).unwrap();
         let result = &json.field("results").unwrap().array().unwrap()[0];

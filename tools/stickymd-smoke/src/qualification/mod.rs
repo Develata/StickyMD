@@ -3,6 +3,7 @@
 mod automated_readiness;
 mod campaign;
 mod decisions;
+pub(crate) mod exact_checks;
 #[cfg(windows)]
 mod exact_desktop;
 pub(crate) mod exact_groups;
@@ -37,6 +38,11 @@ mod windows_build;
 pub(crate) mod workspace_tests;
 
 pub(crate) use module_ledger::fingerprint::verify_product_classification;
+
+/// The unit tests that own manual obligations (plan 11 manual obligation mapping).
+pub(crate) fn unit_test_owners() -> std::collections::BTreeSet<crate::unit_owners::Owner> {
+    manual_observation::coverage::test_owners()
+}
 
 use std::path::Path;
 
@@ -196,6 +202,7 @@ pub(super) fn record_environment(root: &Path, evidence_file: Option<&Path>) -> R
         measurements: Vec::new(),
         gates: Vec::new(),
         samples: Vec::new(),
+        owners: Vec::new(),
     }];
     evidence::emit(
         root,
@@ -203,6 +210,7 @@ pub(super) fn record_environment(root: &Path, evidence_file: Option<&Path>) -> R
         &results,
         Some(&environment),
         evidence_file,
+        None,
     )?;
     match environment.status {
         QualificationEnvironmentStatus::Valid => Ok(()),

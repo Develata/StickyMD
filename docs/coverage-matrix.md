@@ -26,7 +26,7 @@
 | `08_assets_and_export.md` | 图片粘贴、managed GC、导出 | AC-010、AC-011、AC-012、AC-017、AC-018 | `stickymd-core/src/assets.rs`; `stickymd-render/src/{image,preview/export}.rs`; `stickymd-win/{assets,export,app/{assets,export}_runtime.rs,platform/windows/{clipboard,export_dialog,managed_file}.rs}` | handle-bound ownership/scanner/bounded paste OCC/reversed Undo effects/durable safe-boundary GC/live-raster cache/source-preserving export、standard clipboard/native dialog/process-kill recovery/user-asset safety exact automation PASS；主观图片观感由 guided manual PASS |
 | `09_windows_shell.md` | dock、托盘、置顶/auto-hide 正交性、透明度、主题、多显示器、紧凑窗口、Tool Window | AC-019..029、AC-033..036、P11B-A06 | `stickymd-win/{flow/window,config,app/{lifecycle,window_runtime,window_interaction,window_geometry_runtime,controls,toolbar_paint}.rs,platform/windows/{tool_window,tray,monitor,native_message,window_opacity,window_topmost}.rs}` | Pin/auto-hide、三边 Dock/timing、tray lifecycle、220×120 geometry、24-DIP nearest/tie、40% alpha、Tool Window 与 guided visual PASS；Clean VM、真实双屏/mixed DPI/拔屏采用 v0.1.0 USER waiver，RDP/物理负坐标为 Tier C NOT TESTED |
 | `10_performance_reliability.md` | 质量属性 | AC-022、AC-032、空闲/内存观察、P14-A03/A08/A15/A23/A40 | core/source/preview/math/image/export/window/zoom Release baselines；`stickymd-smoke` copied-runtime metrics/attribution；`docs/report/{phase-14-memory-attribution,phase-14-global-module-review,phase-14-global-module-rereview}.md` | v0.1.0 采用 180 preferred / 400 engineering diagnostic / 550 hard 三层 startup policy；正式 warm-cache 间隔 1000 ms，250 ms rapid-restart 仅诊断；五个独立 Release 进程的 Source/Preview/Split median PWS 为 12.98/15.50/20.89 MiB，idle CPU p95 0–0.0027% PASS；关闭 search 后释放约 2 MiB 上限匹配投影并停止 O(n) 隐式扫描；窗口压力测试须先恢复固定文档再做隐藏采样 |
-| `11_testing_and_release.md` | 逐阶段验证、结果驱动等待、可证明并发、GUI child 进程隔离、Source Freeze、remote artifact promotion、module input fingerprint、last-success ledger、exact-artifact JSON evidence、发布形态 | `phase-00.md`..`phase-14.md`、P12-A09/A11/A13/A14/A18、P14-A31..A36、P14-A67..A78、人工观察记录验证（`#manual-observation-log`；记录器与被测实例为 P14-A76，观察任务、独立记录器与整包导入为 P14-A78）、release 验收清单 | `tools/stickymd-smoke`; `tools/smoke/*.ps1`; `.github/workflows/{ci,release,promote-release}.yml`; `dist/evidence/*`; `dist/exact-candidate/*` | Rust task/gate/evidence authority、headless isolated shards 与 targeted module 已落地；Promoted Candidate 继续持有 exact bytes，Runtime/Performance/Resources/G3/G4/G5 按相关输入指纹从克隆级共享存储 `<git common dir>/stickymd/qualification-ledger/` 复用成功记录（发布版本号与发布文档不使其失效）；成功 evidence 与 G5 截图先归档再原子发布记录，失败/中止保留本轮诊断 JSON 但不覆盖成功账本；tag/draft/publish 必须复用已验收 artifact 且不得重建 |
+| `11_testing_and_release.md` | 逐阶段验证、结果驱动等待、可证明并发、GUI child 进程隔离、Source Freeze、remote artifact promotion、module input fingerprint、last-success ledger、exact-artifact JSON evidence、发布形态 | `phase-00.md`..`phase-14.md`、P12-A09/A11/A13/A14/A18、P14-A31..A36、P14-A67..A79、人工观察记录验证（`#manual-observation-log`；记录器与被测实例为 P14-A76，观察任务、独立记录器与整包导入为 P14-A78，人工义务映射为 P14-A79）、release 验收清单 | `tools/stickymd-smoke`; `tools/smoke/*.ps1`; `.github/workflows/{ci,release,promote-release}.yml`; `dist/evidence/*`; `dist/exact-candidate/*` | Rust task/gate/evidence authority、headless isolated shards 与 targeted module 已落地；Promoted Candidate 继续持有 exact bytes，Runtime/Performance/Resources/G3/G4/G5 按相关输入指纹从克隆级共享存储 `<git common dir>/stickymd/qualification-ledger/` 复用成功记录（发布版本号与发布文档不使其失效）；成功 evidence 与 G5 截图先归档再原子发布记录，失败/中止保留本轮诊断 JSON 但不覆盖成功账本；tag/draft/publish 必须复用已验收 artifact 且不得重建 |
 
 ---
 
@@ -416,3 +416,66 @@ P14-A64 的启动焦点补充映射 Plan 09 `tool-window-identity`：
 该焦点诊断在 Source/Split 中追加无再次聚焦的物理 Enter、原子自动保存和 Undo 恢复检查；
 `runtime/native_diagnostics::native_window_interaction_diagnostic` 复用既有 Phase 10 窗口 executor，
 检查激活之后的生命周期，没有复制状态机或另设性能门。
+
+2026-10-15 人工覆盖补全第 C1 批映射 plan 11 `被测实例` 与 `人工义务映射`、plan 09 退出取消标题状态：
+Phase 8 Manual 行与 plan 09 Esc、手工收起、滚动条、透明度、退出条款逐断言映射到 Phase 12 场景、
+G3/G4 exact、USER 退役或具名缺口（现有自动化在 C2 绑定已执行测试的模块收据之前列为缺口），由
+`tools/stickymd-smoke/src/qualification/manual_observation/coverage.rs` 的静态表持有，需求与摘要校验只在测试中
+编译（[P14-A79](acceptance-cases/phase-14.md)）。注册表 v3 新增 P12-M45（双副本，Tier A）、P12-M46
+（Windows 11 外壳，Tier A）、P12-M47（100% DPI，Tier B）；记录器尚未实现的场景与双副本用例在 C3 前拒绝记录，
+未观察的 Tier A 项照常阻断。缺口与退役项在 `acceptance manual list` 与 readiness 中列出；本批不改变产品
+runtime，人工状态仍为 NOT TESTED。设计与决定见
+[3-A 报告](report/2026-10-10-manual-reuse-and-domain-split.md)。
+
+2026-10-16 覆盖补全 C2a-1 映射 plan 09 `dock-auto-hide`（Esc 顺序与修饰键）、`tray-lifecycle`（退出已取消状态与窗口标题）与
+plan 05 `external-change-conflict`（载入外部解除重建义务）：`stickymd-win/src/app/{escape,title}.rs` 是 Esc 判定与标题的唯一入口，
+`flow/persistence.rs::accept_external` 统一两条载入外部路径；验收见
+[phase-08 2026-10-16 维护节](acceptance-cases/phase-08.md)。真实键盘投递与只读 note 的退出失败仍由 G4 exact 层持有，列为缺口。
+
+2026-10-16 覆盖补全 C2a-2 继续映射 plan 09 `vertical-scrollbars`、`dock-auto-hide` 与透明度提交规则：滚动条手势与栏可用性
+（`app/scrollbar.rs`）、Preview 回执路由（`app/preview_runtime.rs::completion_route`）、透明度指针判定（`app/controls.rs`）与窗口守卫投影
+（`app/guards.rs`）成为纯函数并有单元测试，`StickyApp` 只负责接线；验收见 phase-05 与 phase-08 的 2026-10-16 补充。winit 事件接线仍是缺口。
+
+2026-10-16 覆盖补全 C2b-1 映射 plan 11 `release-artifact-authority` 的 exact 收据 schema 2：G3/G4/G5 的 case 与检查标签在
+`qualification/exact_checks.rs` 一处声明，runner（`exact_desktop.rs`）、模块证据校验（`module_evidence.rs`）、`--case` 选项与人工义务映射
+（`manual_observation/coverage/table.rs` 的 `Target::Exact { case, checks }`）都以它为准；验收见 P14-A80。
+
+2026-10-16 覆盖补全 C2b-2 映射 plan 11 `release-artifact-authority` 的单元测试 owner 核验与 smoke 证据 schema 3：owner 声明在人工义务映射
+（`manual_observation/coverage/table.rs` 的 `Target::Test`），核验在 `unit_owners`（解析与 Windows 执行）与 runner 的 `unit-test owner verification`
+任务，收据判定在 `qualification/automated_readiness.rs`，源码身份在 `evidence.rs::SourceIdentity`，`harness` 治理在 `governance.rs`；验收见 P14-A81。
+
+2026-10-17 覆盖补全 C2b-3：`Target::Test` 改为 owner 集合（全部核验才算持有）；逐义务审计 42 项 C2a 单元缺口后绑定 plan 09 滚动条与退出取消九项，
+其中 gutter 命中抽为纯函数 `app/scrollbar.rs::gutter_at`，滚动条、标题与载入外部的 owner 测试按审查补强断言；其余 33 项保留缺口，按义务写明已有断言与缺失部分；验收见 P14-A81 与
+phase-05 的 2026-10-17 补充。
+
+2026-10-19 覆盖补全 C2c 映射 plan 11 `physical-input-injection`：注入核心在 `tools/stickymd-smoke/src/input_injection.rs`（登记、释放顺序、插入数判定、共享停止）与
+`input_injection/win32.rs`（只在可 unwind 的 Windows 构建中编译的 `SendInput` 后端）；鼠标与键盘调用方在 `window_control.rs` 与 `window_control/{physical_input,tray_input}.rs`；
+托盘菜单编排在 `qualification/exact_desktop/tray.rs`，helper 只做 UIA；共享停止与清理判定在 `qualification/exact_desktop.rs`；治理扫描在 `governance/input_injection.rs`；验收见 P14-A82（headless）
+与 P14-A83（桌面取证，NOT TESTED）。
+
+2026-10-19 覆盖补全 C2b-4：`StickyApp` 的滚动决策抽为纯函数 `app/scrollbar.rs::{view_bars, preview_offset_at, preview_offset_by}`，退出已取消状态经唯一入口
+`app/title.rs::QuitCancelNotice::on_window_effect`；补强 scrollbar、window_interaction、preview_runtime、controls、title、guards 与 render
+`source/scrollbar.rs` 的单元测试后绑定 plan 09 滚动条与透明度十一项，其余审计未通过的写明缺失部分保留为 gap；验收见 P14-A81 与 phase-05 的 2026-10-19 补充。
+
+2026-10-20 USER 决定 D5：透明度输入框的编辑与提交在 `app/controls.rs::ControlState::{focus_input, type_input, backspace_input, commit_input}`（提交值由
+`committed_opacity` 计算，结束编辑在 `finish_input`），聚焦时的键入文本由 `ControlState::focused_field` 投影、`app/toolbar_paint.rs` 绘制；编辑期间按键与 IME 由 `ControlState::takes_keys` 判定：按键由 `app/input.rs::handle_key` 在保存 / 导出之后、Search 之前交给 `app/window_interaction.rs::handle_opacity_key`（取值由 `opacity_key` 判定），IME 由 `handle_ime` 先交给 `handle_opacity_ime`（取舍由 `field_takes_ime` 判定），提交它的 Enter 的长按重复与松开由 `ControlState::takes_commit_key_event` 判定（`handle_key` 最先询问），聚焦在 `focus_opacity_input`，IME 开关由 `ime_allowed` 判定、各处经 `sync_ime_allowed` 应用（`app/lifecycle.rs` 的 `Focused`，`app/window_runtime.rs` 的 `SetImeAllowed` 与 `SetEditorInputEnabled`，`app/input.rs` 的 Preview / 正文按下，`app/search_controller.rs::{open_search, close_search}`（关闭的三个入口都经 `close_search`），`app/preview_runtime.rs` 的视图切换），合成按键在 `app/lifecycle.rs` 的 `KeyboardInput` 处忽略，弹层开关后的光标由 `app/input.rs::refresh_cursor` 在指针位于窗口内时刷新（指针回到窗口时在 `app/lifecycle.rs` 的 `CursorEntered` 再刷新），弹层按下由 `ControlLayout::popup_hit` 判定；失焦提交在 `app/lifecycle.rs` 的 `Focused(false)`，隐藏与退出提交在 `app/window_runtime.rs` 的 `SetEditorInputEnabled(false)`；
+绑定 plan 09 透明度 `range-and-input`，验收见 P14-A81。
+
+2026-10-20 透明度按钮缺陷修复：弹层打开时按工具栏透明度按钮，弹层外的按下先关闭弹层（聚焦的输入框先提交），按钮再按本次按下开始时的弹层状态切换，
+故只关闭一次（`app/window_interaction.rs::control_press`），resize 边框与其他控件的优先级不变；验收见
+[phase-08 2026-10-20 补充](acceptance-cases/phase-08.md)。单元测试只证明该判定；handler 接线由 copied-Release `WindowShell` runtime（P08-A11，`tools/stickymd-smoke/src/runtime/opacity_popup.rs`）
+核对：第二次按下后在滑块原位置按下不改变 alpha 与已提交透明度，含输入框已键入数字的情形，且关闭到托盘、正文保存后正文不变；按下为发往真实窗口的合成鼠标消息，
+输入框情形中的数字与其后的按钮按下为物理输入。把调用点改回 `activate_control` 时该检查失败。
+exact 候选（G4、G5）仍只打开弹层。
+
+2026-10-20 USER 决定（Search 与视图切换）：Plan 07 `source-find-replace` → [phase-03](acceptance-cases/phase-03.md) 的 2026-10-20 补充。视图切换对 Search 的取舍由纯函数
+`app/search_controller.rs::search_on_view_change` 判定，`app/preview_runtime.rs::apply_view_mode` 在任何副作用之前拒绝、在新视图提交之后经
+`park_search`/`resume_search` 执行；停放值 `interaction/search.rs::ParkedSearch` 由 `SearchSession::{park, resume}` 产生与消费。Preview 中 Ctrl+F/H 的恢复与切换失败
+时不打开在 `open_search`；视图与缩放快捷键在 `app/input.rs::handle_key` 中先于 Search 判定（`window_key`，Search 字段 composition 期间不判定），恢复时选区跟随 active match（`resume_search`）。`StickyApp` 接线不由测试执行。
+
+2026-10-21 USER 决定（Search 面板位置与透明度）：Plan 07 `source-find-replace` → [phase-03](acceptance-cases/phase-03.md) 的 2026-10-21 补充。面板矩形在
+`app/search_runtime.rs::SearchLayout::new`（Source pane 右上角，宽度上限 `PANEL_MAX_WIDTH_DIP`），填充色在 `panel_colors`，整块表面经 `paint_panel_surface` 以固定不透明度 `PANEL_OPACITY` 叠加；点击、绘制与 IME 区域都取同一 `SearchLayout`。窄 pane 的紧凑档由
+`Tier::for_panel`（阈值 `FULL_QUERY_TEXT_MIN_DIP`）选择，按钮清单 `SearchLayout::buttons` 供表面图层、标签绘制与命中共用。
+
+2026-10-21 USER 决定（Replace Current 先选中再替换）：Plan 07 `source-find-replace` → [phase-03](acceptance-cases/phase-03.md) 的 2026-10-21 补充。选区不是 active match
+时由纯函数 `app/search_controller.rs::replace_current_action` 判定为只选中，`replace_current_search` 执行，并在替换后经 `replacement_end` 与 `interaction/search.rs::SearchSession::activate_from` 取插入内容之后的下一个 match，为键盘与替换按钮同样选中它；命令边界的 `flow/editor.rs::literal_range_matches` 校验不变。`StickyApp` 接线不由测试执行。

@@ -2,12 +2,15 @@
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#source-find-replace
 
+use std::ops::Range;
+
 use winit::event::{ElementState, Ime, KeyEvent, MouseButton};
 use winit::keyboard::KeyCode;
 
 use super::StickyApp;
 use super::search_runtime::{SearchHit, SearchLayout, search_field_display};
 use crate::config::ViewMode;
+use crate::flow::AppEffect;
 use crate::instruction::{AppIntent, PreviewIntent};
 use crate::interaction::SearchField;
 
@@ -23,16 +26,14 @@ impl StickyApp {
 
     pub(super) fn open_search(&mut self, replace: bool) {
         if self.search.open && self.search.is_composing() {
-            self.diagnostic = Some("请先完成当前查找输入法组合。".into());
+            self.diagnostic = Some(SEARCH_COMPOSING.into());
             self.request_redraw();
             return;
         }
         let action = search_open_action(self.search.open, replace);
         match action {
             SearchOpenAction::Close => {
-                self.search.close();
-                self.update_ime_area();
-                self.request_redraw();
+                self.close_search();
                 return;
             }
             SearchOpenAction::ExpandReplace => {
@@ -50,6 +51,20 @@ impl StickyApp {
         }
         if self.config.current().view_mode == ViewMode::Preview {
             self.dispatch_preview_intent(PreviewIntent::SetViewMode(ViewMode::Source));
+            if self.config.current().view_mode == ViewMode::Preview {
+                // The view did not change (its diagnostic is shown), and Search needs a Source pane.
+                return;
+            }
+            if self.search.open {
+                // The Search that Preview parked came back as it was; opening it again would
+                // reset its row and focus and replace its query with the selected match.
+                if replace {
+                    self.search.show_replace();
+                }
+                self.update_ime_area();
+                self.request_redraw();
+                return;
+            }
         }
         self.preview_focused = false;
         let view = self.coordinator.view();
@@ -64,9 +79,59 @@ impl StickyApp {
         self.search
             .open(replace, selected.as_deref(), view.text, view.generation);
         self.update_search_selection();
-        if let Some(window) = &self.window {
-            window.set_ime_allowed(true);
+        self.sync_ime_allowed();
+        self.update_ime_area();
+        self.request_redraw();
+    }
+
+    /// Closes Search and refreshes what its overlay projected; the keyboard, and with it the IME,
+    /// goes back to Preview or the note. Every way of closing it (Esc, Ctrl+F, its close button)
+    /// comes here.
+    pub(super) fn close_search(&mut self) {
+        self.search.close();
+        self.sync_ime_allowed();
+        self.update_search_selection();
+        self.update_ime_area();
+        self.request_redraw();
+    }
+
+    /// Where Search is, as a view change reads it.
+    pub(super) fn search_place(&self) -> SearchPlace {
+        debug_assert!(
+            !(self.search.open && self.parked_search.is_some()),
+            "a parked Search exists only while the live one is closed"
+        );
+        if self.parked_search.is_some() {
+            SearchPlace::Parked
+        } else if self.search.open {
+            SearchPlace::Open {
+                composing: self.search.is_composing(),
+            }
+        } else {
+            SearchPlace::Closed
         }
+    }
+
+    /// Takes the open Search off the screen once the view has no Source pane: the live session is
+    /// left closed, so no key, IME event, press, Esc or auto-collapse guard finds it, and it holds
+    /// no matches until `resume_search` puts it back.
+    pub(super) fn park_search(&mut self) {
+        self.parked_search = self.search.park();
+        self.update_ime_area();
+        self.request_redraw();
+    }
+
+    /// Puts the parked Search back as it was once the view has a Source pane again, rescanned
+    /// against the current document. The note's selection follows the active match, as it does
+    /// on opening and navigating, so what is selected is what Replace Current replaces even when
+    /// the document changed while Search was parked.
+    pub(super) fn resume_search(&mut self) {
+        let Some(parked) = self.parked_search.take() else {
+            return;
+        };
+        let view = self.coordinator.view();
+        self.search.resume(parked, view.text, view.generation);
+        self.update_search_selection();
         self.update_ime_area();
         self.request_redraw();
     }
@@ -89,7 +154,6 @@ impl StickyApp {
         }
         let generation = self.coordinator.view().generation;
         match code {
-            Some(KeyCode::Escape) => self.search.close(),
             Some(KeyCode::Tab) => self.search.focus_next(),
             Some(KeyCode::F3) => self.navigate_search(shift),
             Some(KeyCode::Enter | KeyCode::NumpadEnter)
@@ -194,10 +258,12 @@ impl StickyApp {
                 let generation = self.coordinator.view().generation;
                 let text = self.coordinator.view().text;
                 self.search.toggle_case(text, generation);
+                // The rescanned active match is selected, as Alt+C does from the keyboard.
+                self.update_search_selection();
             }
             SearchHit::Previous => self.navigate_search(true),
             SearchHit::Next => self.navigate_search(false),
-            SearchHit::Close => self.search.close(),
+            SearchHit::Close => self.close_search(),
             SearchHit::Replace => self.replace_current_search(),
             SearchHit::ReplaceAll => self.replace_all_search(),
         }
@@ -219,15 +285,23 @@ impl StickyApp {
     }
 
     fn focus_search_field_at_pointer(&mut self, field: SearchField, layout: SearchLayout) {
+        // The press lands on the field as it was painted before it: from the start when it was
+        // not focused, scrolled to its cursor when it was.
+        let was_focused = self.search.focused == field;
+        let (display, cursor) = search_field_display(&self.search, field);
         self.search.focused = field;
         let scale = self
             .window
             .as_ref()
             .map_or(1.0, |window| window.scale_factor() as f32);
-        let (display, cursor) = search_field_display(&self.search, field);
         let spec = layout.field_spec(field, scale);
+        let x = self.cursor_position.x as f32;
         let hit = self.projection.as_mut().and_then(|projection| {
-            projection.ui_text_field_hit(&display, cursor, spec, self.cursor_position.x as f32)
+            if was_focused {
+                projection.ui_text_field_hit(&display, cursor, spec, x)
+            } else {
+                projection.ui_text_hit(&display, spec, x)
+            }
         });
         if let Some(hit) = hit {
             let committed_len = match field {
@@ -254,17 +328,43 @@ impl StickyApp {
             self.search
                 .refresh(self.coordinator.view().text, generation);
         }
-        let Some(range) = self.search.active_range() else {
-            return;
+        let action = replace_current_action(
+            self.search.active_range(),
+            self.session.selection.normalized_range(),
+        );
+        let range = match action {
+            ReplaceCurrentAction::Nothing => return,
+            ReplaceCurrentAction::Select => {
+                self.update_search_selection();
+                return;
+            }
+            ReplaceCurrentAction::Replace(range) => range,
         };
-        self.dispatch(AppIntent::ReplaceLiteralMatch {
+        let result = self.coordinator.dispatch(AppIntent::ReplaceLiteralMatch {
             expected_generation: generation,
-            range,
+            range: range.clone(),
             query: self.search.query.clone(),
             replacement: self.search.replacement.clone(),
             options: self.search.options(),
             timestamp_ms: self.timestamp_ms(),
         });
+        match result {
+            Ok(effect) => {
+                let end = replacement_end(&effect, &range);
+                // Applying the change rescans Search against the new text.
+                self.apply_effect(effect);
+                // The next match is searched for after the inserted text, so while a later match
+                // exists a replacement that contains the query is not replaced again in place.
+                self.search.activate_from(end);
+            }
+            Err(error) => {
+                self.diagnostic = Some(error.to_string());
+                self.request_redraw();
+            }
+        }
+        // The next active match is selected for the keyboard and the Replace button alike, so
+        // each further press replaces one match.
+        self.update_search_selection();
     }
 
     fn replace_all_search(&mut self) {
@@ -281,6 +381,42 @@ impl StickyApp {
     }
 }
 
+pub(super) const SEARCH_COMPOSING: &str = "请先完成当前查找输入法组合。";
+
+/// Where Search is when the view changes. A parked Search exists only while the live one is
+/// closed, so the two never coexist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SearchPlace {
+    Closed,
+    Open { composing: bool },
+    Parked,
+}
+
+/// What a view change does to Search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SearchViewChange {
+    Keep,
+    Park,
+    Resume,
+    /// The Search field is composing: the view does not change, and the composition goes on.
+    Refuse,
+}
+
+/// Search lives in the Source pane (plan 07): a view without one (Preview) parks an open Search
+/// and refuses while it composes, as opening Search does; a view with one resumes a parked Search.
+pub(super) const fn search_on_view_change(
+    target: ViewMode,
+    place: SearchPlace,
+) -> SearchViewChange {
+    let has_source_pane = !matches!(target, ViewMode::Preview);
+    match (has_source_pane, place) {
+        (false, SearchPlace::Open { composing: true }) => SearchViewChange::Refuse,
+        (false, SearchPlace::Open { composing: false }) => SearchViewChange::Park,
+        (true, SearchPlace::Parked) => SearchViewChange::Resume,
+        _ => SearchViewChange::Keep,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SearchOpenAction {
     Open { replace: bool },
@@ -293,6 +429,39 @@ const fn search_open_action(open: bool, replace_shortcut: bool) -> SearchOpenAct
         (false, replace) => SearchOpenAction::Open { replace },
         (true, false) => SearchOpenAction::Close,
         (true, true) => SearchOpenAction::ExpandReplace,
+    }
+}
+
+/// What Replace Current does (plan 07).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReplaceCurrentAction {
+    /// There is no active match.
+    Nothing,
+    /// The note's selection is not the active match: select it, and replace on the next press.
+    Select,
+    Replace(Range<usize>),
+}
+
+/// Replace Current replaces only the match the note shows selected. A reload, a toolbar
+/// conversion or a click in the note can leave the selection elsewhere while Search is open;
+/// the first press then selects the active match instead of replacing text that is not selected.
+fn replace_current_action(
+    active: Option<Range<usize>>,
+    selected: Range<usize>,
+) -> ReplaceCurrentAction {
+    match active {
+        None => ReplaceCurrentAction::Nothing,
+        Some(active) if active == selected => ReplaceCurrentAction::Replace(active),
+        Some(_) => ReplaceCurrentAction::Select,
+    }
+}
+
+/// Where the text that replaced `matched` ends: at the caret the edit leaves after it, or, when
+/// the replacement equals the match and nothing changed, at the match's end.
+fn replacement_end(effect: &AppEffect, matched: &Range<usize>) -> usize {
+    match effect {
+        AppEffect::DocumentChanged { selection, .. } => selection.normalized_range().end,
+        _ => matched.end,
     }
 }
 
@@ -321,6 +490,157 @@ mod tests {
             search_open_action(true, true),
             SearchOpenAction::ExpandReplace
         );
+    }
+
+    #[test]
+    fn a_view_without_a_source_pane_parks_search_and_one_with_it_resumes_it() {
+        use winit::dpi::PhysicalSize;
+
+        use super::super::preview_runtime::geometry;
+        use SearchViewChange::{Keep, Park, Refuse, Resume};
+
+        // Preview is the only view without a Source pane, which is what the decision keys on.
+        for (mode, has_source_pane) in [
+            (ViewMode::Source, true),
+            (ViewMode::Split, true),
+            (ViewMode::Preview, false),
+        ] {
+            let pane = geometry(mode, PhysicalSize::new(900, 680), 1.0).source;
+            assert_eq!(pane.is_some(), has_source_pane, "{mode:?}");
+        }
+        let idle = SearchPlace::Open { composing: false };
+        let composing = SearchPlace::Open { composing: true };
+        let cases = [
+            (ViewMode::Preview, SearchPlace::Closed, Keep),
+            (ViewMode::Preview, idle, Park),
+            (ViewMode::Preview, composing, Refuse),
+            (ViewMode::Preview, SearchPlace::Parked, Keep),
+            (ViewMode::Source, SearchPlace::Closed, Keep),
+            (ViewMode::Source, idle, Keep),
+            (ViewMode::Source, composing, Keep),
+            (ViewMode::Source, SearchPlace::Parked, Resume),
+            (ViewMode::Split, SearchPlace::Closed, Keep),
+            (ViewMode::Split, idle, Keep),
+            (ViewMode::Split, composing, Keep),
+            (ViewMode::Split, SearchPlace::Parked, Resume),
+        ];
+        for (target, place, expected) in cases {
+            assert_eq!(
+                search_on_view_change(target, place),
+                expected,
+                "{target:?} from {place:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn replace_current_replaces_only_the_selected_active_match() {
+        use ReplaceCurrentAction::{Nothing, Replace, Select};
+
+        assert_eq!(replace_current_action(None, 0..0), Nothing);
+        assert_eq!(replace_current_action(None, 2..3), Nothing);
+        assert_eq!(replace_current_action(Some(2..3), 2..3), Replace(2..3));
+        // `a X a` reloaded as `a a X` with the second `a` active: `X` stays selected at 4..5.
+        assert_eq!(replace_current_action(Some(2..3), 4..5), Select);
+        // The selection's direction does not matter.
+        let reversed = stickymd_core::Selection::new(3, 2).normalized_range();
+        assert_eq!(replace_current_action(Some(2..3), reversed), Replace(2..3));
+        // A caret, a selection overlapping or containing the match, or another match.
+        for selected in [2..2, 3..3, 2..4, 1..3, 0..5, 0..1] {
+            assert_eq!(
+                replace_current_action(Some(2..3), selected.clone()),
+                Select,
+                "{selected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn consecutive_replacements_move_past_text_that_contains_the_query() {
+        use stickymd_core::{DocumentState, LineEnding};
+
+        use crate::flow::{ClipboardError, ClipboardPort, EditorCoordinator};
+        use crate::instruction::LiteralSearchOptions;
+
+        struct NoClipboard;
+        impl ClipboardPort for NoClipboard {
+            fn read_text(&mut self) -> Result<Option<String>, ClipboardError> {
+                Ok(None)
+            }
+            fn write_text(&mut self, _text: &str) -> Result<(), ClipboardError> {
+                Ok(())
+            }
+        }
+
+        // One Replace Current press, as `replace_current_search` performs it.
+        fn press(
+            coordinator: &mut EditorCoordinator<NoClipboard>,
+            search: &mut crate::interaction::SearchSession,
+            replacement: &str,
+        ) -> String {
+            let range = search.active_range().unwrap();
+            let effect = coordinator
+                .dispatch(AppIntent::ReplaceLiteralMatch {
+                    expected_generation: coordinator.view().generation,
+                    range: range.clone(),
+                    query: search.query.clone(),
+                    replacement: replacement.into(),
+                    options: LiteralSearchOptions::default(),
+                    timestamp_ms: 0,
+                })
+                .unwrap();
+            let end = replacement_end(&effect, &range);
+            let view = coordinator.view();
+            search.refresh(view.text, view.generation);
+            search.activate_from(end);
+            view.text.to_owned()
+        }
+
+        let document = DocumentState::loaded("a b a", LineEnding::Lf, None);
+        let mut coordinator = EditorCoordinator::new(document, NoClipboard);
+        let mut search = crate::interaction::SearchSession::default();
+        let view = coordinator.view();
+        search.open(true, Some("a"), view.text, view.generation);
+
+        // The inserted `aa` contains the query; the next press reaches the second original `a`.
+        assert_eq!(press(&mut coordinator, &mut search, "aa"), "aa b a");
+        assert_eq!(search.active_range(), Some(5..6));
+        assert_eq!(press(&mut coordinator, &mut search, "aa"), "aa b aa");
+        // Past the last match, navigation wraps to the first, as Enter does.
+        assert_eq!(search.active_range(), Some(0..1));
+
+        // With no later match the wrap lands in the text just inserted, as the contract says.
+        let mut search = crate::interaction::SearchSession::default();
+        let document = DocumentState::loaded("a", LineEnding::Lf, None);
+        let mut coordinator = EditorCoordinator::new(document, NoClipboard);
+        let view = coordinator.view();
+        search.open(true, Some("a"), view.text, view.generation);
+        assert_eq!(press(&mut coordinator, &mut search, "aa"), "aa");
+        assert_eq!(search.active_range(), Some(0..1));
+        assert_eq!(press(&mut coordinator, &mut search, "aa"), "aaa");
+
+        // A replacement equal to the match changes nothing and still moves on.
+        let mut search = crate::interaction::SearchSession::default();
+        let document = DocumentState::loaded("a a", LineEnding::Lf, None);
+        let mut coordinator = EditorCoordinator::new(document, NoClipboard);
+        let view = coordinator.view();
+        search.open(true, Some("a"), view.text, view.generation);
+        let generation = coordinator.view().generation;
+        assert_eq!(press(&mut coordinator, &mut search, "a"), "a a");
+        assert_eq!(coordinator.view().generation, generation);
+        assert_eq!(search.active_range(), Some(2..3));
+
+        // Newlines in the replacement are normalized, so the inserted text is shorter than the
+        // replacement typed: the next match starts right where the caret is (3), not at 4.
+        let mut search = crate::interaction::SearchSession::default();
+        let document = DocumentState::loaded("aaa", LineEnding::Lf, None);
+        let mut coordinator = EditorCoordinator::new(document, NoClipboard);
+        let view = coordinator.view();
+        search.open(true, Some("a"), view.text, view.generation);
+        let replacement = "x\r\ny";
+        assert_eq!(replacement.len(), 4);
+        assert_eq!(press(&mut coordinator, &mut search, replacement), "x\nyaa");
+        assert_eq!(search.active_range(), Some(3..4));
     }
 
     #[test]

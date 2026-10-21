@@ -16,7 +16,7 @@ use crate::interaction::ImeSignal;
 
 impl StickyApp {
     pub(super) fn handle_ime(&mut self, event: Ime) {
-        if self.handle_search_ime(&event) {
+        if self.handle_opacity_ime(&event) || self.handle_search_ime(&event) {
             return;
         }
         if !mutation_input_allowed(
@@ -74,10 +74,24 @@ impl StickyApp {
     }
 
     pub(super) fn handle_key(&mut self, event: KeyEvent) {
+        // The Enter that ended an opacity field edit keeps its repeats and release (`controls.rs`).
+        if self.controls.takes_commit_key_event(
+            event.physical_key,
+            event.state == ElementState::Pressed,
+            event.repeat,
+        ) {
+            return;
+        }
         if event.state != ElementState::Pressed {
             return;
         }
-        if self.handle_shell_key(&event) {
+        let code = match event.physical_key {
+            PhysicalKey::Code(code) => Some(code),
+            PhysicalKey::Unidentified(_) => None,
+        };
+        // Every Esc is decided in one place, in the plan 09 order (`escape.rs`).
+        if super::escape::is_escape(code, self.modifiers) {
+            self.handle_escape();
             return;
         }
         let (generation, text_len) = {
@@ -87,10 +101,6 @@ impl StickyApp {
         let timestamp_ms = self.timestamp_ms();
         let shift = self.modifiers.shift_key();
         let shortcut = self.modifiers.control_key() && !self.modifiers.alt_key();
-        let code = match event.physical_key {
-            PhysicalKey::Code(code) => Some(code),
-            PhysicalKey::Unidentified(_) => None,
-        };
 
         if code == Some(KeyCode::F6)
             && self.dispatch_persistence_intent(None, PersistenceIntent::ResolvePrimary)
@@ -110,42 +120,32 @@ impl StickyApp {
         ) {
             return;
         }
-        // An editor composition owns Esc before Search, Preview and the window (plan 09 Esc order),
-        // including a preedit left over when focus moved to the Preview pane.
-        if code == Some(KeyCode::Escape) && self.session.is_composing() {
-            self.session.cancel_preedit();
-            self.after_presentation_change();
-            return;
-        }
-
         if let Some(intent) = global_persistence_shortcut(code, shortcut, shift) {
             self.dispatch_persistence_intent(None, intent);
+            return;
+        }
+        // The edited opacity field takes every key past this point, before Search and the note.
+        if self.controls.takes_keys() {
+            self.handle_opacity_key(&event, code);
             return;
         }
         if shortcut && matches!(code, Some(KeyCode::KeyF | KeyCode::KeyH)) {
             self.open_search(code == Some(KeyCode::KeyH));
             return;
         }
-        if self.search.open && self.handle_search_key(&event, code, shortcut, shift) {
-            return;
-        }
-
-        if shortcut && let Some(command) = zoom_key_command(code) {
-            self.apply_zoom_command(command, true);
-            return;
-        }
-
-        if shortcut {
-            let mode = match code {
-                Some(KeyCode::Digit1) => Some(ViewMode::Source),
-                Some(KeyCode::Digit2) => Some(ViewMode::Split),
-                Some(KeyCode::Digit3) => Some(ViewMode::Preview),
-                _ => None,
-            };
-            if let Some(mode) = mode {
+        match window_key(code, shortcut, self.search.is_composing()) {
+            Some(WindowKey::Zoom(command)) => {
+                self.apply_zoom_command(command, true);
+                return;
+            }
+            Some(WindowKey::View(mode)) => {
                 self.dispatch_preview_intent(PreviewIntent::SetViewMode(mode));
                 return;
             }
+            None => {}
+        }
+        if self.search.open && self.handle_search_key(&event, code, shortcut, shift) {
+            return;
         }
 
         if self.preview_focused {
@@ -232,10 +232,6 @@ impl StickyApp {
                         timestamp_ms,
                     ));
                 }
-                return;
-            }
-            Some(KeyCode::Escape) => {
-                self.dispatch_escape_to_window();
                 return;
             }
             _ => {}
@@ -407,20 +403,18 @@ impl StickyApp {
                 }
                 if self.preview_at_cursor().is_some() {
                     self.preview_focused = true;
-                    if let Some(window) = &self.window {
-                        window.set_ime_allowed(false);
-                    }
+                    self.sync_ime_allowed();
                     self.press_preview_selection();
                     return;
                 }
-                self.preview_focused = false;
-                if let Some(window) = &self.window {
-                    window.set_ime_allowed(self.session.focused);
-                }
-                self.session.cancel_preedit();
+                // Only a press on the Source pane gives the note the keyboard; one that lands on no
+                // pane (outside the client area while the mouse is captured) changes no focus.
                 let Some(source_position) = self.source_local_cursor() else {
                     return;
                 };
+                self.preview_focused = false;
+                self.sync_ime_allowed();
+                self.session.cancel_preedit();
                 let diagnostic_action = self.projection.as_ref().and_then(|projection| {
                     projection.diagnostic_action_at(source_position.0, source_position.1)
                 });
@@ -457,6 +451,29 @@ impl StickyApp {
         }
     }
 
+    /// Sets the cursor again when what lies under a still pointer changes (the opacity popup
+    /// opening or closing), only while the pointer is over the window: the cursor is shared and
+    /// belongs to the window under the pointer (Microsoft `SetCursor`).
+    pub(super) fn refresh_cursor(&self) {
+        if self.pointer_inside_window {
+            self.apply_cursor();
+        }
+    }
+
+    /// Sets the cursor for what lies under the pointer.
+    fn apply_cursor(&self) {
+        let cursor = self
+            .shell_cursor_icon()
+            .or_else(|| {
+                self.scrollbar_gutter_at_cursor()
+                    .map(|_| winit::window::CursorIcon::Default)
+            })
+            .unwrap_or_else(|| self.cursor_icon_for_position(self.cursor_position));
+        if let Some(window) = &self.window {
+            window.set_cursor(cursor);
+        }
+    }
+
     pub(super) fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
         self.cursor_position = position;
         if self.handle_shell_cursor_moved(position) {
@@ -465,26 +482,9 @@ impl StickyApp {
         if self.handle_scrollbar_cursor() {
             return;
         }
-        let cursor = self
-            .shell_cursor_icon()
-            .or_else(|| {
-                self.scrollbar_gutter_at_cursor()
-                    .map(|_| winit::window::CursorIcon::Default)
-            })
-            .unwrap_or_else(|| self.cursor_icon_for_position(position));
-        if let Some(window) = &self.window {
-            window.set_cursor(cursor);
-        }
-        let math_tooltip = self.preview_at_cursor().and_then(|(x, y)| {
-            self.preview_frame
-                .as_ref()
-                .and_then(|frame| frame.tooltip_at(x, y + frame.scroll_y()).map(str::to_owned))
-        });
-        if let (Some(window), Some(detail)) = (&self.window, math_tooltip) {
-            window.set_title(&format!("StickyMD — 公式错误：{detail}"));
-        } else {
-            self.update_window_title();
-        }
+        self.apply_cursor();
+        // The formula-error hover title is derived from the pointer and the current frame when
+        // the event pass ends (`update_window_title`), so it cannot outlive either.
         if self.preview_dragging {
             if let Some(start) = self.preview_press_position {
                 let scale = self
@@ -574,6 +574,35 @@ enum ZoomCommand {
     Reset,
 }
 
+/// A window command decided before Search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowKey {
+    Zoom(ZoomCommand),
+    View(ViewMode),
+}
+
+/// Zoom and the view shortcuts are window commands like save and export: an open Search does
+/// not take them (plan 07), and a view change decides what happens to Search. A Search-field
+/// composition still owns every such key until it ends, as it does every other key.
+fn window_key(code: Option<KeyCode>, shortcut: bool, search_composing: bool) -> Option<WindowKey> {
+    if !shortcut || search_composing {
+        return None;
+    }
+    zoom_key_command(code)
+        .map(WindowKey::Zoom)
+        .or_else(|| view_key_mode(code).map(WindowKey::View))
+}
+
+/// The view a Ctrl+digit shortcut switches to.
+fn view_key_mode(code: Option<KeyCode>) -> Option<ViewMode> {
+    match code {
+        Some(KeyCode::Digit1) => Some(ViewMode::Source),
+        Some(KeyCode::Digit2) => Some(ViewMode::Split),
+        Some(KeyCode::Digit3) => Some(ViewMode::Preview),
+        _ => None,
+    }
+}
+
 fn zoom_key_command(code: Option<KeyCode>) -> Option<ZoomCommand> {
     match code {
         Some(KeyCode::Equal | KeyCode::NumpadAdd) => Some(ZoomCommand::Step(10)),
@@ -626,9 +655,11 @@ fn mutation_input_allowed(
 #[cfg(test)]
 mod recovery_tests {
     use super::{
-        ClipboardAlias, ZoomCommand, ZoomWheelAccumulator, clipboard_alias,
-        global_persistence_shortcut, mutation_input_allowed, zoom_key_command,
+        ClipboardAlias, WindowKey, ZoomCommand, ZoomWheelAccumulator, clipboard_alias,
+        global_persistence_shortcut, mutation_input_allowed, view_key_mode, window_key,
+        zoom_key_command,
     };
+    use crate::config::ViewMode;
     use crate::instruction::{PersistenceIntent, SaveReason};
     use winit::dpi::PhysicalPosition;
     use winit::event::MouseScrollDelta;
@@ -645,6 +676,70 @@ mod recovery_tests {
     fn quit_and_asset_reconcile_freeze_keyboard_and_ime_mutations() {
         assert!(!mutation_input_allowed(false, false, true, false));
         assert!(!mutation_input_allowed(false, false, false, true));
+    }
+
+    #[test]
+    fn view_and_zoom_shortcuts_take_no_key_that_search_binds() {
+        assert_eq!(view_key_mode(Some(KeyCode::Digit1)), Some(ViewMode::Source));
+        assert_eq!(view_key_mode(Some(KeyCode::Digit2)), Some(ViewMode::Split));
+        assert_eq!(
+            view_key_mode(Some(KeyCode::Digit3)),
+            Some(ViewMode::Preview)
+        );
+        assert_eq!(view_key_mode(Some(KeyCode::Digit0)), None);
+        assert_eq!(view_key_mode(Some(KeyCode::Digit4)), None);
+        assert_eq!(view_key_mode(None), None);
+        // Decided before Search, so neither may claim a Ctrl key Search or its shortcuts use.
+        for key in [
+            KeyCode::KeyF,
+            KeyCode::KeyH,
+            KeyCode::KeyV,
+            KeyCode::Enter,
+            KeyCode::NumpadEnter,
+            KeyCode::Tab,
+            KeyCode::F3,
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::ArrowUp,
+            KeyCode::ArrowDown,
+        ] {
+            assert_eq!(view_key_mode(Some(key)), None, "{key:?}");
+            assert_eq!(zoom_key_command(Some(key)), None, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn window_keys_pass_an_open_search_but_not_its_composition() {
+        let zoom_in = Some(KeyCode::Equal);
+        let preview = Some(KeyCode::Digit3);
+        assert_eq!(
+            window_key(zoom_in, true, false),
+            Some(WindowKey::Zoom(ZoomCommand::Step(10)))
+        );
+        assert_eq!(
+            window_key(preview, true, false),
+            Some(WindowKey::View(ViewMode::Preview))
+        );
+        // Ctrl+0 resets zoom; no digit is both.
+        assert_eq!(
+            window_key(Some(KeyCode::Digit0), true, false),
+            Some(WindowKey::Zoom(ZoomCommand::Reset))
+        );
+        for code in [zoom_in, preview, Some(KeyCode::Digit0)] {
+            assert_eq!(
+                window_key(code, true, true),
+                None,
+                "{code:?} while composing"
+            );
+            assert_eq!(
+                window_key(code, false, false),
+                None,
+                "{code:?} without Ctrl"
+            );
+        }
+        assert_eq!(window_key(Some(KeyCode::KeyV), true, false), None);
     }
 
     #[test]

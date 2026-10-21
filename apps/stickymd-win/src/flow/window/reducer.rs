@@ -69,11 +69,11 @@ impl WindowShellCoordinator {
                 self.state.guards = guards;
                 self.hide_to_tray(&mut effects);
             }
-            WindowIntent::ShowRequested { .. } => self.show(&mut effects),
-            WindowIntent::TrayToggleRequested { now_ms: _, guards } => {
+            WindowIntent::ShowRequested { now_ms, .. } => self.show(now_ms, &mut effects),
+            WindowIntent::TrayToggleRequested { now_ms, guards } => {
                 self.state.guards = guards;
                 if matches!(self.state.visibility, VisibilityState::HiddenToTray { .. }) {
-                    self.show(&mut effects);
+                    self.show(now_ms, &mut effects);
                 } else {
                     self.hide_to_tray(&mut effects);
                 }
@@ -338,7 +338,12 @@ impl WindowShellCoordinator {
         );
     }
 
-    fn start_expand(&mut self, now_ms: u64, hover_revealed: bool, effects: &mut Vec<WindowEffect>) {
+    pub(super) fn start_expand(
+        &mut self,
+        now_ms: u64,
+        hover_revealed: bool,
+        effects: &mut Vec<WindowEffect>,
+    ) {
         let Some(edge) = self.current_stable().dock_edge() else {
             return;
         };
@@ -962,6 +967,110 @@ mod phase8_window_tests {
             VisibilityState::Presented(StableVisibility::DockedCollapsed(DockEdge::Top))
         );
         assert_eq!(coordinator.state().next_deadline_ms(), None);
+    }
+
+    /// Plan 09 single-instance wake: a same-directory second instance shows and activates the
+    /// first, and a window resting collapsed at its dock edge is restored expanded like a show
+    /// from the tray, however it collapsed: after 700 ms without focus, by the collapse button
+    /// while focused, or already collapsed at start.
+    #[test]
+    fn a_second_instance_expands_a_collapsed_dock() {
+        #[derive(Debug, Clone, Copy)]
+        enum Collapse {
+            Blur,
+            ByHandFocused,
+            AtStart,
+        }
+        let focused = |window_focused| WindowIntent::GuardsChanged {
+            guards: WindowGuardSnapshot {
+                window_focused,
+                ..Default::default()
+            },
+            now_ms: 0,
+        };
+        for edge in [DockEdge::Left, DockEdge::Right, DockEdge::Top] {
+            for collapse in [Collapse::Blur, Collapse::ByHandFocused, Collapse::AtStart] {
+                let label = format!("{edge:?} {collapse:?}");
+                let mut coordinator = match collapse {
+                    Collapse::AtStart => coordinator(StableVisibility::DockedCollapsed(edge)),
+                    Collapse::Blur | Collapse::ByHandFocused => {
+                        coordinator(StableVisibility::DockedExpanded(edge))
+                    }
+                };
+                let expanded = effective_expanded_frame(
+                    &coordinator.state.placement,
+                    Some(edge),
+                    &coordinator.state.dock.monitor,
+                );
+                match collapse {
+                    Collapse::Blur => {
+                        coordinator.dispatch(focused(false));
+                        coordinator.dispatch(WindowIntent::Tick {
+                            now_ms: AUTO_COLLAPSE_DELAY_MS,
+                        });
+                        coordinator.dispatch(WindowIntent::Tick {
+                            now_ms: AUTO_COLLAPSE_DELAY_MS + ANIMATION_DURATION_MS,
+                        });
+                        assert!(!coordinator.state.dock.manually_hidden, "{label}");
+                    }
+                    Collapse::ByHandFocused => {
+                        coordinator.dispatch(focused(true));
+                        coordinator.dispatch(WindowIntent::ManualCollapse { now_ms: 10 });
+                        coordinator.dispatch(WindowIntent::Tick {
+                            now_ms: 10 + ANIMATION_DURATION_MS,
+                        });
+                    }
+                    Collapse::AtStart => {}
+                }
+                assert_eq!(
+                    coordinator.state().visibility(),
+                    VisibilityState::Presented(StableVisibility::DockedCollapsed(edge)),
+                    "{label}"
+                );
+                assert_ne!(coordinator.state().frame(), expanded, "{label}");
+
+                let now = 1_000;
+                let effects = coordinator.dispatch(WindowIntent::ShowRequested {
+                    reason: ShowReason::SecondInstance,
+                    now_ms: now,
+                });
+                assert!(effects.contains(&WindowEffect::FocusWindow), "{label}");
+                assert!(
+                    !coordinator.state().temporary_sensor_topmost(),
+                    "{label}: the sensor's temporary topmost ends with the wake"
+                );
+                // The 140 ms expansion starts at the wake, not before or after it.
+                coordinator.dispatch(WindowIntent::Tick {
+                    now_ms: now + ANIMATION_DURATION_MS - 1,
+                });
+                assert!(
+                    matches!(
+                        coordinator.state().visibility(),
+                        VisibilityState::Animating(_)
+                    ),
+                    "{label}"
+                );
+                coordinator.dispatch(WindowIntent::Tick {
+                    now_ms: now + ANIMATION_DURATION_MS,
+                });
+                assert_eq!(
+                    coordinator.state().visibility(),
+                    VisibilityState::Presented(StableVisibility::DockedExpanded(edge)),
+                    "{label}"
+                );
+                assert_eq!(coordinator.state().frame(), expanded, "{label}");
+                assert_eq!(coordinator.state().next_deadline_ms(), None, "{label}");
+                assert!(coordinator.state().accepts_editor_mutation(), "{label}");
+                // The focus the wake requested keeps it expanded.
+                coordinator.dispatch(focused(true));
+                assert_eq!(coordinator.state().next_deadline_ms(), None, "{label}");
+                assert_eq!(
+                    coordinator.state().visibility(),
+                    VisibilityState::Presented(StableVisibility::DockedExpanded(edge)),
+                    "{label}"
+                );
+            }
+        }
     }
 
     #[test]

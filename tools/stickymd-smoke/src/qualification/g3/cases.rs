@@ -8,8 +8,8 @@ use std::thread;
 use std::time::Duration;
 
 use super::super::exact_desktop::{
-    CaseEvidence, ChildGuard, assert_sole_stickymd_process, invoke_uia, io_error, seed_note,
-    wait_for_layout, wait_note, wait_until,
+    CaseEvidence, Checks, ChildGuard, assert_sole_stickymd_process, invoke_uia, io_error,
+    seed_note, start_until_editor_ready, wait_for_layout, wait_note, wait_until,
 };
 use super::super::receipt;
 
@@ -20,6 +20,7 @@ const PNG: &[u8] = &[
 ];
 
 pub(super) fn g3_01(_repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
+    let mut checks = Checks::default();
     let fixture = program.join("clipboard-source.png");
     fs::write(&fixture, PNG).map_err(|error| format!("cannot seed clipboard fixture: {error}"))?;
     for producer in ["explorer", "snipping", "browser"] {
@@ -44,30 +45,61 @@ pub(super) fn g3_01(_repository: &Path, program: &Path) -> Result<CaseEvidence, 
             _ => unreachable!(),
         }
         crate::window_control::press_paste(window)?;
+        let producer_param = [("producer", producer)];
         let pasted = wait_note(&instance, |text| text.contains("![](images/stickymd-"))?;
+        checks.record("paste-image-markdown", &producer_param);
         if pasted.contains("TEXT_FORMAT_MUST_NOT_WIN_IMAGE_PRIORITY") {
             return Err(format!("{producer} image lost clipboard format priority"));
         }
+        // Only the browser producer also offers text, so only it discriminates priority.
+        if producer == "browser" {
+            checks.record("paste-format-priority", &producer_param);
+        }
         let active = managed_files(&instance.join("note/images"))?;
-        if active.len() != 1 {
+        let [asset] = active.as_slice() else {
             return Err(format!(
                 "{producer} paste published {} active assets",
                 active.len()
             ));
+        };
+        let asset_name = asset
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| format!("{producer} asset name is not UTF-8"))?;
+        if !pasted.contains(&format!("](images/{asset_name})")) {
+            return Err(format!(
+                "{producer} paste does not reference its published asset {asset_name}"
+            ));
         }
+        let asset = asset.clone();
+        let asset_digest = receipt::sha256(&asset)?;
+        checks.record("paste-single-managed-asset", &producer_param);
         crate::window_control::press_undo(window)?;
         wait_note(&instance, str::is_empty)?;
         wait_until("undo asset disposition", || {
             Ok(managed_files(&instance.join("note/images"))?.is_empty())
         })?;
+        checks.record("undo-removes-asset", &producer_param);
         crate::window_control::press_redo(window)?;
         wait_note(&instance, |text| text == pasted)?;
         wait_until("redo asset restoration", || {
-            Ok(managed_files(&instance.join("note/images"))?.len() == 1)
+            Ok(managed_files(&instance.join("note/images"))? == [asset.clone()])
         })?;
+        if receipt::sha256(&asset)? != asset_digest {
+            return Err(format!("{producer} redo restored different asset bytes"));
+        }
+        checks.record("redo-restores-asset", &producer_param);
         child.kill_and_wait()?;
     }
-    Ok(CaseEvidence::default())
+    Ok(checked(checks))
+}
+
+/// The evidence of a case whose proof is its recorded checks.
+fn checked(checks: Checks) -> CaseEvidence {
+    CaseEvidence {
+        checks,
+        ..CaseEvidence::default()
+    }
 }
 
 pub(super) fn g3_02(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
@@ -78,33 +110,64 @@ pub(super) fn g3_02(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     let export_parent = program.join("exports");
     fs::create_dir(&export_parent).map_err(|error| format!("cannot create export dir: {error}"))?;
     let target = export_parent.join("g3-export.md");
+    let mut checks = Checks::default();
     let mut child = ChildGuard::start(&program.join("StickyMD.exe"))?;
     wait_for_layout(program)?;
     let window = crate::window_control::visible_window(child.id())?;
     crate::window_control::press_export(window)?;
     invoke_uia(repository, "export", child.id(), Some(&target))?;
     wait_until("export publication", || Ok(target.is_file()))?;
+    checks.record("export-publishes-file", &[]);
     let exported = fs::read_to_string(&target)
         .map_err(|error| format!("cannot read exported Markdown: {error}"))?;
-    if !exported.contains("https://example.com/remote.png")
-        || exported.contains("images/user-export.png")
-        || !exported.contains("g3-export-assets/")
-    {
-        return Err("export did not rewrite only the local asset reference".to_owned());
-    }
     let copied = regular_files(&export_parent.join("g3-export-assets"))?;
-    if copied.len() != 1 || fs::read(&copied[0]).map_err(io_error)? != PNG {
-        return Err("export did not copy the exact local user asset once".to_owned());
+    let [copy] = copied.as_slice() else {
+        return Err(format!(
+            "export copied {} local asset(s), expected one",
+            copied.len()
+        ));
+    };
+    if fs::read(copy).map_err(io_error)? != PNG {
+        return Err("export did not copy the exact local user asset".to_owned());
     }
+    checks.record("export-copies-asset-once", &[]);
+    let copy_name = copy
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "exported asset name is not UTF-8".to_owned())?;
+    // Only the local image changes, and it points at the copy actually written.
+    let expected = format!(
+        "![local](g3-export-assets/{copy_name})\n![remote](https://example.com/remote.png)\n"
+    );
+    if exported != expected {
+        return Err(format!(
+            "export did not rewrite only the local asset reference to its copy: {exported:?}"
+        ));
+    }
+    checks.record("export-rewrites-local-asset-only", &[]);
     if fs::read_to_string(program.join("note/note.md")).map_err(io_error)? != source {
         return Err("export changed the canonical working note".to_owned());
     }
+    // An edit after the export must still save to the working note, never to the copy.
+    const MARKER: &str = "after export\n";
+    crate::window_control::focus_source_editor(window)?;
+    crate::window_control::press_document_end(window)?;
+    crate::window_control::set_clipboard_text(MARKER)?;
+    crate::window_control::press_paste(window)?;
+    wait_note(program, |text| text == format!("{source}{MARKER}"))?;
+    if fs::read_to_string(&target).map_err(io_error)? != exported {
+        return Err("an edit after export changed the exported copy".to_owned());
+    }
+    checks.record("export-leaves-working-note", &[]);
     child.kill_and_wait()?;
-    Ok(CaseEvidence::default())
+    Ok(checked(checks))
 }
 
 pub(super) fn g3_03(_repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
+    let mut checks = Checks::default();
     for (index, offset_ms) in [0_u64, 15, 75, 250].into_iter().enumerate() {
+        let offset = offset_ms.to_string();
+        let offset_param = [("offset", offset.as_str())];
         let instance = program.join(format!("kill-{index}"));
         fs::create_dir(&instance).map_err(io_error)?;
         fs::copy(program.join("StickyMD.exe"), instance.join("StickyMD.exe")).map_err(io_error)?;
@@ -132,6 +195,7 @@ pub(super) fn g3_03(_repository: &Path, program: &Path) -> Result<CaseEvidence, 
                 "kill offset {offset_ms} left a partial canonical note"
             ));
         }
+        checks.record("kill-note-complete", &offset_param);
         if temporary.is_file() {
             let bytes = fs::read(&temporary).map_err(io_error)?;
             std::str::from_utf8(&bytes).map_err(|error| {
@@ -154,9 +218,10 @@ pub(super) fn g3_03(_repository: &Path, program: &Path) -> Result<CaseEvidence, 
                 "kill offset {offset_ms} did not restart from complete text"
             ));
         }
+        checks.record("restart-note-complete", &offset_param);
         restarted.kill_and_wait()?;
     }
-    Ok(CaseEvidence::default())
+    Ok(checked(checks))
 }
 
 pub(super) fn g3_04(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
@@ -165,6 +230,7 @@ pub(super) fn g3_04(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     let user = program.join("note/images/user-important.png");
     fs::write(&user, PNG).map_err(io_error)?;
     let baseline = receipt::sha256(&user)?;
+    let mut checks = Checks::default();
     let mut child = ChildGuard::start(&program.join("StickyMD.exe"))?;
     wait_for_layout(program)?;
     let window = crate::window_control::visible_window(child.id())?;
@@ -173,12 +239,15 @@ pub(super) fn g3_04(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     crate::window_control::set_clipboard_text("plain text\n")?;
     crate::window_control::press_paste(window)?;
     wait_note(program, |text| text == "plain text\n")?;
-    assert_user_asset(program, &user, &baseline)?;
+    checks.record("paste-replaces-note", &[]);
+    assert_user_asset(program, &user, &baseline, "paste", &mut checks)?;
     crate::window_control::press_undo(window)?;
     wait_note(program, |text| text == original)?;
-    assert_user_asset(program, &user, &baseline)?;
+    checks.record("undo-restores-note", &[]);
+    assert_user_asset(program, &user, &baseline, "undo", &mut checks)?;
     crate::window_control::press_redo(window)?;
     wait_note(program, |text| text == "plain text\n")?;
+    checks.record("redo-replaces-note", &[]);
     crate::window_control::press_undo(window)?;
     wait_note(program, |text| text == original)?;
 
@@ -188,17 +257,19 @@ pub(super) fn g3_04(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     crate::window_control::press_export(window)?;
     invoke_uia(repository, "export", child.id(), Some(&target))?;
     wait_until("user asset export", || Ok(target.is_file()))?;
-    assert_user_asset(program, &user, &baseline)?;
+    checks.record("export-publishes-file", &[]);
+    assert_user_asset(program, &user, &baseline, "export", &mut checks)?;
     assert_sole_stickymd_process(child.id())?;
-    invoke_uia(repository, "tray-exit", child.id(), None)?;
+    checks.record("sole-process", &[("stage", "pre-exit")]);
+    super::exact_desktop::tray::exit(repository, child.id())?;
     child.wait_for_exit(super::super::exact_desktop::TIMEOUT)?;
-    assert_user_asset(program, &user, &baseline)?;
+    checks.record("tray-exit-closes-process", &[]);
+    assert_user_asset(program, &user, &baseline, "tray-exit", &mut checks)?;
 
-    let mut restarted = ChildGuard::start(&program.join("StickyMD.exe"))?;
-    wait_for_layout(program)?;
-    assert_user_asset(program, &user, &baseline)?;
+    let mut restarted = start_until_editor_ready(&program.join("StickyMD.exe"))?;
+    assert_user_asset(program, &user, &baseline, "restart", &mut checks)?;
     restarted.kill_and_wait()?;
-    Ok(CaseEvidence::default())
+    Ok(checked(checks))
 }
 
 pub(super) fn g3_05(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
@@ -206,26 +277,38 @@ pub(super) fn g3_05(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     let fake = program.join("note/images/stickymd-00000000000000000000.png");
     fs::write(&fake, PNG).map_err(io_error)?;
     let baseline = receipt::sha256(&fake)?;
+    let mut checks = Checks::default();
     let mut child = ChildGuard::start(&program.join("StickyMD.exe"))?;
     wait_for_layout(program)?;
     assert_sole_stickymd_process(child.id())?;
-    invoke_uia(repository, "tray-exit", child.id(), None)?;
+    checks.record("sole-process", &[("stage", "pre-exit")]);
+    super::exact_desktop::tray::exit(repository, child.id())?;
     child.wait_for_exit(super::super::exact_desktop::TIMEOUT)?;
+    checks.record("tray-exit-closes-process", &[]);
     assert_fake_asset(program, &fake, &baseline)?;
-    let mut restarted = ChildGuard::start(&program.join("StickyMD.exe"))?;
-    wait_for_layout(program)?;
+    checks.record("fake-asset-intact", &[("stage", "tray-exit")]);
+    let mut restarted = start_until_editor_ready(&program.join("StickyMD.exe"))?;
     assert_fake_asset(program, &fake, &baseline)?;
+    checks.record("fake-asset-intact", &[("stage", "restart")]);
     restarted.kill_and_wait()?;
-    Ok(CaseEvidence::default())
+    Ok(checked(checks))
 }
 
-fn assert_user_asset(program: &Path, path: &Path, baseline: &str) -> Result<(), String> {
+/// The user asset is unchanged and outside managed trash; records that for `stage`.
+fn assert_user_asset(
+    program: &Path,
+    path: &Path,
+    baseline: &str,
+    stage: &str,
+    checks: &mut Checks,
+) -> Result<(), String> {
     if !path.is_file() || receipt::sha256(path)? != baseline {
         return Err("user-supplied asset changed or disappeared".to_owned());
     }
     if program.join("note/.trash/user-important.png").exists() {
         return Err("user-supplied asset was moved into managed trash".to_owned());
     }
+    checks.record("user-asset-intact", &[("stage", stage)]);
     Ok(())
 }
 
@@ -253,16 +336,57 @@ fn managed_files(directory: &Path) -> Result<Vec<PathBuf>, String> {
         .collect())
 }
 
+/// The regular files directly in `directory`, sorted; a missing directory has none. Any other
+/// failure (opening the listing, reading an entry or its type) is an error, so a file that
+/// could not be seen is never reported as absent.
 fn regular_files(directory: &Path) -> Result<Vec<PathBuf>, String> {
-    if !directory.is_dir() {
-        return Ok(Vec::new());
+    let listing_error =
+        |error: std::io::Error| format!("cannot list {}: {error}", directory.display());
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(listing_error(error)),
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(listing_error)?;
+        if entry.file_type().map_err(listing_error)?.is_file() {
+            files.push(entry.path());
+        }
     }
-    let mut files = fs::read_dir(directory)
-        .map_err(io_error)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-        .collect::<Vec<_>>();
     files.sort();
     Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::regular_files;
+
+    #[test]
+    fn listing_failures_are_errors_and_only_a_missing_directory_is_empty() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-g3-listing-{}-{nonce}",
+            std::process::id()
+        ));
+        assert_eq!(
+            regular_files(&root).unwrap(),
+            Vec::<std::path::PathBuf>::new()
+        );
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(root.join("b.png"), b"b").unwrap();
+        fs::write(root.join("a.png"), b"a").unwrap();
+        assert_eq!(
+            regular_files(&root).unwrap(),
+            [root.join("a.png"), root.join("b.png")]
+        );
+        // A path that exists but cannot be listed is an error, not an empty directory.
+        assert!(regular_files(&root.join("a.png")).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -77,22 +77,8 @@ impl SourceProjection {
         spec: UiTextSpec,
         theme: SourceTheme,
     ) {
+        self.shape_ui_text(text, spec);
         let scale = spec.scale.max(0.5);
-        self.ui_buffer.set_metrics_and_size(
-            cosmic_text::Metrics::new(13.0 * scale, 20.0 * scale),
-            Some(spec.width.max(1.0)),
-            Some(22.0 * scale),
-        );
-        let attrs =
-            cosmic_text::Attrs::new().family(cosmic_text::Family::Name(self.fonts.cjk_family));
-        self.ui_buffer.set_text(
-            text,
-            &attrs,
-            cosmic_text::Shaping::Advanced,
-            Some(cosmic_text::Align::Left),
-        );
-        self.ui_buffer
-            .shape_until_scroll(&mut self.font_system, false);
         let color = SourcePalette::for_theme(theme).text;
         let clip = GlyphClip {
             left: spec.x.round() as i32,
@@ -173,6 +159,39 @@ impl SourceProjection {
             .map(|(_, caret)| caret)
     }
 
+    /// Maps a shell-space x coordinate to a valid byte boundary in text as `paint_ui_text` paints
+    /// it: from the field's left edge, with no horizontal offset (an unfocused field).
+    pub fn ui_text_hit(&mut self, text: &str, spec: UiTextSpec, shell_x: f32) -> Option<usize> {
+        self.shape_ui_text(text, spec);
+        let local_x = (shell_x - spec.x).max(0.0);
+        let hit = self
+            .ui_buffer
+            .hit(local_x, 10.0 * spec.scale.max(0.5))
+            .map_or(text.len(), |cursor| cursor.index)
+            .min(text.len());
+        text.is_char_boundary(hit).then_some(hit)
+    }
+
+    /// Shapes `text` into the one-line UI buffer as `paint_ui_text` and `ui_text_hit` read it.
+    fn shape_ui_text(&mut self, text: &str, spec: UiTextSpec) {
+        let scale = spec.scale.max(0.5);
+        self.ui_buffer.set_metrics_and_size(
+            cosmic_text::Metrics::new(13.0 * scale, 20.0 * scale),
+            Some(spec.width.max(1.0)),
+            Some(22.0 * scale),
+        );
+        let attrs =
+            cosmic_text::Attrs::new().family(cosmic_text::Family::Name(self.fonts.cjk_family));
+        self.ui_buffer.set_text(
+            text,
+            &attrs,
+            cosmic_text::Shaping::Advanced,
+            Some(cosmic_text::Align::Left),
+        );
+        self.ui_buffer
+            .shape_until_scroll(&mut self.font_system, false);
+    }
+
     /// Maps a shell-space x coordinate to a valid byte boundary in the field.
     pub fn ui_text_field_hit(
         &mut self,
@@ -182,7 +201,8 @@ impl SourceProjection {
         shell_x: f32,
     ) -> Option<usize> {
         let (offset, _) = self.shape_ui_text_field(text, cursor, spec)?;
-        let local_x = (shell_x - spec.x + offset).max(0.0);
+        // The offset can be negative (right-to-left text), so the layout x is not clamped.
+        let local_x = shell_x - spec.x + offset;
         let hit = self
             .ui_buffer
             .hit(local_x, 10.0 * spec.scale.max(0.5))
@@ -221,7 +241,15 @@ impl SourceProjection {
         let logical_x = run.cursor_position(&cursor)?;
         let caret_width = scale.max(1.0);
         let right_inset = (spec.width - caret_width - 2.0 * scale).max(0.0);
-        let offset = (logical_x - right_inset).max(0.0);
+        // The visible window follows the caret both ways: an overflowing right-to-left line lays
+        // out to the left of the field, so its caret can sit at a negative x.
+        let offset = if logical_x > right_inset {
+            logical_x - right_inset
+        } else if logical_x < 0.0 {
+            logical_x
+        } else {
+            0.0
+        };
         Some((
             offset,
             super::EditorRect {
@@ -588,6 +616,98 @@ mod tests {
                 0,
                 "a same-line selection painted the following logical line"
             );
+        }
+    }
+
+    /// An unfocused field is painted from its left edge (`paint_ui_text`), so a press on a
+    /// painted glyph maps to one of that glyph's boundaries, for overflowing left-to-right and
+    /// right-to-left text alike; a logical cursor at 0 is not the zero offset for right-to-left
+    /// text, where it sits at the right edge.
+    #[test]
+    fn an_unfocused_field_hit_reads_the_painted_layout() {
+        let snapshot = DocumentSnapshot {
+            text: Arc::from(""),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        };
+        let mut projection = SourceProjection::new(&snapshot, 400, 80, 1.0);
+        let spec = UiTextSpec {
+            x: 12.0,
+            y: 8.0,
+            width: 162.0,
+            scale: 1.0,
+        };
+        for text in ["abcdefghij".repeat(8), "\u{5d0}".repeat(80)] {
+            let mut pixmap = Pixmap::new(400, 80).unwrap();
+            projection.paint_ui_text(&mut pixmap, &text, spec, SourceTheme::Light);
+            let rtl = projection
+                .ui_buffer
+                .layout_runs()
+                .next()
+                .expect("one run")
+                .rtl;
+            let glyphs: Vec<(f32, f32, usize, usize)> = projection
+                .ui_buffer
+                .layout_runs()
+                .flat_map(|run| run.glyphs.iter())
+                .filter(|glyph| glyph.x >= 0.0 && glyph.x + glyph.w <= spec.width)
+                .map(|glyph| (glyph.x, glyph.w, glyph.start, glyph.end))
+                .collect();
+            assert!(glyphs.len() > 4, "{} glyphs visible", glyphs.len());
+            for (x, w, start, end) in [glyphs[0], glyphs[glyphs.len() / 2]] {
+                // A press in a glyph's left quarter lands on its left boundary, in its right
+                // quarter on its right one: in reading order, start then end left to right,
+                // end then start right to left. An offset of a few pixels crosses the middle.
+                let (left, right) = if rtl { (end, start) } else { (start, end) };
+                for (inside, expected) in [(x + w * 0.25, left), (x + w * 0.75, right)] {
+                    let hit = projection
+                        .ui_text_hit(&text, spec, spec.x + inside)
+                        .expect("hit");
+                    assert_eq!(hit, expected, "rtl {rtl}: glyph {start}..{end} at {inside}");
+                }
+            }
+        }
+        assert!(
+            projection
+                .ui_buffer
+                .layout_runs()
+                .next()
+                .is_some_and(|run| run.rtl),
+            "the last text checked is right to left"
+        );
+    }
+
+    /// A focused field keeps its caret visible in both directions: an overflowing right-to-left
+    /// line with the cursor at its end has a caret left of the field, so the window scrolls left
+    /// to it, and a press on the caret maps back to the cursor.
+    #[test]
+    fn a_focused_right_to_left_field_reveals_a_caret_left_of_it() {
+        let snapshot = DocumentSnapshot {
+            text: Arc::from(""),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        };
+        let mut projection = SourceProjection::new(&snapshot, 400, 80, 1.0);
+        let spec = UiTextSpec {
+            x: 12.0,
+            y: 8.0,
+            width: 162.0,
+            scale: 1.0,
+        };
+        let text = "\u{5d0}".repeat(80);
+        for cursor in [text.len(), 0, text.len() / 2] {
+            let mut pixmap = Pixmap::new(400, 80).unwrap();
+            let caret = projection
+                .paint_ui_text_field(&mut pixmap, &text, cursor, spec, SourceTheme::Light)
+                .expect("field caret");
+            assert!(
+                caret.x >= spec.x && caret.x + caret.width <= spec.x + spec.width,
+                "cursor {cursor}: caret {caret:?} outside the field"
+            );
+            let hit = projection
+                .ui_text_field_hit(&text, cursor, spec, caret.x)
+                .expect("field hit");
+            assert_eq!(hit, cursor, "cursor {cursor}");
         }
     }
 

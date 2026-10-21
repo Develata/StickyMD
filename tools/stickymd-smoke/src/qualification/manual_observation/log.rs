@@ -478,6 +478,11 @@ pub(in crate::qualification) fn validate_observation(
                 "{label} is a first-run declaration but names an instance"
             ));
         }
+        (InstanceRule::TwoCopies(_), _) => {
+            return Err(format!(
+                "{label} observes two copies, which needs the two-instance log format that has not landed yet"
+            ));
+        }
         (InstanceRule::Launched(_) | InstanceRule::Preserved(_), None) => {
             return Err(format!("{label} names no recorder-launched instance"));
         }
@@ -742,7 +747,14 @@ mod tests {
         undeclared_first_run
             .declared
             .insert("unchanged-since-first-run".to_owned(), "no".to_owned());
-        for bad in [declared_only, launched_first_run, undeclared_first_run] {
+        // Schema 2 holds one instance, so a two-copy observation waits for the next schema.
+        let two_copies = observation(1, 0, "P12-M45", "tray-identity", Current, Status::Pass);
+        for bad in [
+            declared_only,
+            launched_first_run,
+            undeclared_first_run,
+            two_copies,
+        ] {
             assert!(log.append(vec![bad]).is_err());
         }
         assert!(log.observations.is_empty());

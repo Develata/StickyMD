@@ -8,6 +8,7 @@
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#module-success-ledger
 
+use super::exact_checks::{self, DeclaredCase};
 use super::module_registry::ModuleId;
 use crate::cli::ResourceModule;
 use crate::integrity::validate_sha256;
@@ -30,9 +31,8 @@ pub(super) struct Companion {
     pub(super) sha256: String,
 }
 
-const G3_CASES: [&str; 5] = ["G3-01", "G3-02", "G3-03", "G3-04", "G3-05"];
-const G4_CASES: [&str; 6] = ["G4-01", "G4-02", "G4-03", "G4-04", "G4-05", "G4-06"];
-/// G5 cases with the minimum number of screenshots each must archive.
+/// G5 cases with the minimum number of screenshots each must archive, in the order of
+/// `exact_checks::G5` (a test keeps the ids equal).
 const G5_SCREENSHOTS: [(&str, usize); 4] =
     [("G5-01", 1), ("G5-02", 3), ("G5-03", 13), ("G5-04", 3)];
 const G5_ARTIFACT_PREFIX: &str = "dist/evidence/g5-artifacts/";
@@ -49,12 +49,9 @@ pub(super) fn validate(
             smoke(&root, module == ModuleId::Runtime, origin).map(|()| Vec::new())
         }
         ModuleId::Resource(group) => resource(&root, group, origin).map(|()| Vec::new()),
-        ModuleId::G3 => exact(&root, &G3_CASES, origin).map(|_| Vec::new()),
-        ModuleId::G4 => exact(&root, &G4_CASES, origin).map(|_| Vec::new()),
-        ModuleId::G5 => {
-            let cases = G5_SCREENSHOTS.map(|(case, _)| case);
-            g5_screenshots(exact(&root, &cases, origin)?)
-        }
+        ModuleId::G3 => exact(&root, exact_checks::G3, origin).map(|_| Vec::new()),
+        ModuleId::G4 => exact(&root, exact_checks::G4, origin).map(|_| Vec::new()),
+        ModuleId::G5 => g5_screenshots(exact(&root, exact_checks::G5, origin)?),
     });
     checked.map_err(|error| format!("{} evidence: {error}", module.as_str()))
 }
@@ -75,7 +72,7 @@ pub(super) fn g5_companions(document: &str) -> Result<Vec<Companion>, String> {
 /// Runtime and Performance: one formal Phase 14 run on the origin executable that
 /// covers the runner's complete formal task plan, in order, every task PASSED.
 fn smoke(root: &Value, runtime: bool, origin: &Origin<'_>) -> Result<(), String> {
-    expect_unsigned(root, "schema_version", 2)?;
+    expect_unsigned(root, "schema_version", 3)?;
     expect_string(root, "suite", "phase-14")?;
     expect_string(root, "commit", origin.source_commit)?;
     expect_bool(root, "worktree_dirty", false)?;
@@ -93,6 +90,7 @@ fn smoke(root: &Value, runtime: bool, origin: &Origin<'_>) -> Result<(), String>
         if result.field("id")?.string()? != expected || !passed(result)? {
             return Err(format!("missing successful formal task {expected}"));
         }
+        crate::evidence::require_no_owners(result)?;
     }
     Ok(())
 }
@@ -105,10 +103,15 @@ fn resource(root: &Value, group: ResourceModule, origin: &Origin<'_>) -> Result<
     expect_string(root, "executable_sha256", origin.exe_sha256)
 }
 
-/// An exact-candidate group: clean run of the origin candidate with exactly `cases`, in
-/// order, every case PASSED. Returns the result objects for group-specific checks.
-fn exact<'a>(root: &'a Value, cases: &[&str], origin: &Origin<'_>) -> Result<&'a [Value], String> {
-    expect_unsigned(root, "schema_version", 1)?;
+/// An exact-candidate group (schema 2): clean run of the origin candidate with exactly
+/// `cases`, in order, every case PASSED with exactly its declared checks. Returns the result
+/// objects for group-specific checks.
+fn exact<'a>(
+    root: &'a Value,
+    cases: &[DeclaredCase],
+    origin: &Origin<'_>,
+) -> Result<&'a [Value], String> {
+    expect_unsigned(root, "schema_version", 2)?;
     expect_string(root, "status", "PASSED")?;
     expect_string(root, "source_commit", origin.source_commit)?;
     expect_string(root, "harness_commit", origin.source_commit)?;
@@ -127,12 +130,25 @@ fn exact<'a>(root: &'a Value, cases: &[&str], origin: &Origin<'_>) -> Result<&'a
         .iter()
         .map(|result| result.field("id")?.string())
         .collect::<Result<Vec<_>, _>>()?;
-    if ids != cases {
-        return Err(format!("exact cases are {ids:?}, expected {cases:?}"));
+    let expected = cases.iter().map(|case| case.id).collect::<Vec<_>>();
+    if ids != expected {
+        return Err(format!("exact cases are {ids:?}, expected {expected:?}"));
     }
     for (result, case) in results.iter().zip(cases) {
         if !passed(result)? {
-            return Err(format!("exact case {case} did not pass"));
+            return Err(format!("exact case {} did not pass", case.id));
+        }
+        let checks = result
+            .field("checks")?
+            .array()?
+            .iter()
+            .map(Value::string)
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(difference) = exact_checks::mismatch(case.checks, &checks) {
+            return Err(format!(
+                "exact case {} checks differ from the declaration: {difference}",
+                case.id
+            ));
         }
     }
     Ok(results)
@@ -142,6 +158,7 @@ fn exact<'a>(root: &'a Value, cases: &[&str], origin: &Origin<'_>) -> Result<&'a
 /// directory, with a well-formed digest.
 fn g5_screenshots(results: &[Value]) -> Result<Vec<Companion>, String> {
     let mut companions = Vec::new();
+    // `exact` matched the results to `exact_checks::G5`, whose ids `G5_SCREENSHOTS` repeats.
     for (result, (case, minimum)) in results.iter().zip(G5_SCREENSHOTS) {
         let listed = listed_companions(result)?;
         if listed.len() < minimum {

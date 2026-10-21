@@ -113,12 +113,10 @@ fn registration_applies_the_same_contract_as_readiness() {
         1,
     );
     // One case short of the group, formerly accepted here and refused only by readiness.
-    let incomplete = complete.replacen(
-        "{\"id\":\"G4-06\",\"status\":\"PASSED\",\"detail\":\"decoy\",\"artifacts\":[]}",
-        "",
-        1,
-    );
-    let incomplete = incomplete.replace(",]", "]");
+    // G4-06 is the last result; the final `]}` closes the results and the document.
+    let last = complete.find(",{\"id\":\"G4-06\"").unwrap();
+    let close = complete.rfind("]}").unwrap();
+    let incomplete = format!("{}{}", &complete[..last], &complete[close..]);
     let mut other = candidate.clone();
     other.exe_sha256 = "0".repeat(64);
     let foreign = valid_document(&root, ModuleId::G4, &other, "", "foreign");
@@ -174,7 +172,7 @@ fn canonical_reserved_paths_are_rejected_before_tasks_or_evidence_writes() {
         .unwrap();
         let error = crate::runner::execute(&root, &options).unwrap_err();
         assert!(error.contains("coordinator-owned"), "{error}");
-        assert!(crate::evidence::emit(&root, "phase-00", &[], None, Some(&alias)).is_err());
+        assert!(crate::evidence::emit(&root, "phase-00", &[], None, Some(&alias), None).is_err());
         assert_eq!(fs::read(root.join(receipt)).unwrap(), b"previous success");
     }
     let runtime = canonical_root.join(ModuleId::Runtime.receipt());

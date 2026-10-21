@@ -7,10 +7,10 @@ use std::thread;
 use std::time::Duration;
 
 use super::super::super::exact_desktop::{
-    ChildGuard, run_cargo_test, seed_note, wait_for_config, wait_for_layout, wait_until,
+    Checks, ChildGuard, run_cargo_test, seed_note, wait_for_config, wait_for_layout, wait_until,
 };
 
-pub(super) fn g4_02(repository: &Path, program: &Path) -> Result<(), String> {
+pub(super) fn g4_02(repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
     // Virtual-time reducer and pure geometry are the authority for exact
     // 24/25 DIP, 100/500/700 ms, IME/focus, and Pin invariants. The copied
     // candidate below proves those transitions reach the real HWND.
@@ -26,7 +26,7 @@ pub(super) fn g4_02(repository: &Path, program: &Path) -> Result<(), String> {
         (crate::window_control::PrimaryDockEdge::Top, "top"),
         (crate::window_control::PrimaryDockEdge::Right, "right"),
     ] {
-        dock_timing_cycle(program, window, edge, value)?;
+        dock_timing_cycle(program, window, edge, value, "off", checks)?;
     }
 
     crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Topmost)?;
@@ -34,51 +34,70 @@ pub(super) fn g4_02(repository: &Path, program: &Path) -> Result<(), String> {
     if !crate::window_control::is_topmost(window)? {
         return Err("Pin ON did not reach the native HWND".to_owned());
     }
+    checks.record("pin-on-reaches-hwnd", &[]);
     dock_timing_cycle(
         program,
         window,
         crate::window_control::PrimaryDockEdge::Right,
         "right",
+        "on",
+        checks,
     )?;
     if !crate::window_control::is_topmost(window)? {
         return Err("Pin ON was lost during right-edge auto-hide".to_owned());
     }
+    checks.record("pin-survives-autohide", &[]);
     crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Topmost)?;
     wait_for_config(program, "always_on_top = false")?;
+    checks.record("pin-off-config", &[]);
 
+    // The snap boundaries are checked by configuration only: the drag accepts a cursor error
+    // and the final geometry is not read back, so they record no label.
     verify_snap_boundaries(program, window)?;
     child.kill_and_wait()
 }
 
+/// One dock cycle on `edge` with Pin `pin` (`on` / `off`): snap, focused guard, the 700 ms
+/// focus-loss collapse, the 100 ms sensor reveal, the 500 ms hover-leave collapse, re-expand.
 fn dock_timing_cycle(
     program: &Path,
     window: crate::window_control::WindowHandle,
     edge: crate::window_control::PrimaryDockEdge,
     config_value: &str,
+    pin: &str,
+    checks: &mut Checks,
 ) -> Result<(), String> {
+    let cycle = [("edge", config_value), ("pin", pin)];
     crate::window_control::move_to_primary_edge(window, edge)?;
     wait_for_config(program, &format!("dock_edge = \"{config_value}\""))?;
     wait_for_edge(window, edge, false)?;
+    checks.record("dock-snap", &cycle);
 
     thread::sleep(Duration::from_millis(850));
     assert_edge(window, edge, false, "focused dock guard")?;
+    checks.record("dock-focus-guard", &cycle);
 
     crate::window_control::focus_shell_desktop(window)?;
     thread::sleep(Duration::from_millis(600));
     assert_edge(window, edge, false, "pre-700ms focus-loss boundary")?;
     wait_for_edge(window, edge, true)?;
+    checks.record("dock-collapse-delay", &cycle);
 
     crate::window_control::reveal_primary_sensor(window, edge)?;
     thread::sleep(Duration::from_millis(60));
     assert_edge(window, edge, true, "pre-100ms sensor boundary")?;
     wait_for_edge(window, edge, false)?;
+    checks.record("dock-reveal-delay", &cycle);
 
     crate::window_control::park_cursor_outside_window(window)?;
     thread::sleep(Duration::from_millis(400));
     assert_edge(window, edge, false, "pre-500ms hover-leave boundary")?;
     wait_for_edge(window, edge, true)?;
+    checks.record("dock-leave-delay", &cycle);
     crate::window_control::reveal_primary_sensor(window, edge)?;
-    wait_for_edge(window, edge, false)
+    wait_for_edge(window, edge, false)?;
+    checks.record("dock-reexpand", &cycle);
+    Ok(())
 }
 
 fn verify_snap_boundaries(

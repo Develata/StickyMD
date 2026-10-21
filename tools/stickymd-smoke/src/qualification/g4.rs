@@ -8,34 +8,18 @@ use std::path::Path;
 
 use crate::cli::G4Case;
 
-use super::exact_desktop::{self, ExactCase, ExactGroup};
+use super::exact_checks;
+use super::exact_desktop::{self, CaseOperation, ExactGroup};
 
 const DEFAULT_RECEIPT: &str = "dist/evidence/g4-exact-qualification.json";
-const CASES: &[ExactCase] = &[
-    ExactCase {
-        id: "G4-01",
-        operation: cases::g4_01,
-    },
-    ExactCase {
-        id: "G4-02",
-        operation: cases::g4_02,
-    },
-    ExactCase {
-        id: "G4-03",
-        operation: cases::g4_03,
-    },
-    ExactCase {
-        id: "G4-04",
-        operation: cases::g4_04,
-    },
-    ExactCase {
-        id: "G4-05",
-        operation: cases::g4_05,
-    },
-    ExactCase {
-        id: "G4-06",
-        operation: cases::g4_06,
-    },
+/// Runs `exact_checks::G4` in order.
+const OPERATIONS: [CaseOperation; exact_checks::G4.len()] = [
+    cases::g4_01,
+    cases::g4_02,
+    cases::g4_03,
+    cases::g4_04,
+    cases::g4_05,
+    cases::g4_06,
 ];
 
 pub(super) fn run(
@@ -51,8 +35,10 @@ pub(super) fn run(
         ExactGroup {
             name: "G4",
             default_receipt: DEFAULT_RECEIPT,
-            cases: CASES,
+            cases: exact_checks::G4,
+            operations: &OPERATIONS,
             selected_case: selected_case.map(G4Case::as_str),
+            injects_input: true,
         },
     )
 }

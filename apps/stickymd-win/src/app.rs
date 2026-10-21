@@ -24,7 +24,7 @@ use crate::flow::{
     AppEffect, EditorCoordinator, PersistenceCoordinator, PreviewCoordinator, RecoveryCoordinator,
 };
 use crate::instruction::AppIntent;
-use crate::interaction::{EditorSession, SearchSession};
+use crate::interaction::{EditorSession, ParkedSearch, SearchSession};
 use crate::persistence::{IoCompletion, PersistenceWorker};
 use crate::platform::windows::ArboardClipboard;
 use crate::platform::windows::file_watch::NoteDirectoryWatcher;
@@ -40,7 +40,9 @@ use crate::surface::SoftwareSurface;
 mod assets_runtime;
 mod caret_runtime;
 mod controls;
+mod escape;
 mod export_runtime;
+mod guards;
 mod input;
 mod lifecycle;
 mod persistence_runtime;
@@ -53,6 +55,7 @@ mod scroll_runtime;
 mod scrollbar;
 mod search_controller;
 mod search_runtime;
+mod title;
 mod toolbar_paint;
 mod window_geometry_runtime;
 mod window_interaction;
@@ -118,6 +121,9 @@ pub struct StickyApp {
     proxy: EventLoopProxy<AppEvent>,
     _instance: SingleInstanceGuard,
     resolving_keep_local: bool,
+    quit_notice: title::QuitCancelNotice,
+    /// The title last written to the window, so unchanged projections skip the native call.
+    shown_title: String,
     asset_paste_pending: bool,
     asset_sync_in_flight: bool,
     asset_sync_sequence: u64,
@@ -127,6 +133,8 @@ pub struct StickyApp {
     export_in_flight: bool,
     session: EditorSession,
     search: SearchSession,
+    /// The open Search while the view has no Source pane (`search_controller.rs::park_search`).
+    parked_search: Option<ParkedSearch>,
     modifiers: ModifiersState,
     cursor_position: PhysicalPosition<f64>,
     pointer_inside_window: bool,
@@ -195,6 +203,8 @@ impl StickyApp {
             proxy,
             _instance: instance,
             resolving_keep_local: false,
+            quit_notice: title::QuitCancelNotice::default(),
+            shown_title: title::PLAIN.to_owned(),
             asset_paste_pending: false,
             asset_sync_in_flight: false,
             asset_sync_sequence: 0,
@@ -204,6 +214,7 @@ impl StickyApp {
             export_in_flight: false,
             session: EditorSession::default(),
             search: SearchSession::default(),
+            parked_search: None,
             modifiers: ModifiersState::default(),
             cursor_position: PhysicalPosition::new(0.0, 0.0),
             pointer_inside_window: false,

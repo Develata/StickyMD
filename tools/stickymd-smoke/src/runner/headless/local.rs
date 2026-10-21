@@ -3,7 +3,9 @@
 
 use std::{path::Path, time::Instant};
 
-use super::{Module, Request, Task, TaskExecution, owners, plan, run_task, task_label};
+use super::{
+    Module, Request, Task, TaskExecution, owner_modules, owners, plan, run_task, task_label,
+};
 use crate::{ci::Checks, headless::Mode};
 
 pub(crate) struct Description {
@@ -89,6 +91,7 @@ impl LocalPlan {
         #[cfg(windows)]
         let _ = self.windows_required;
         let mut executable = None;
+        let identity = crate::evidence::SourceIdentity::capture(root);
         for (index, task) in self.tasks.iter().enumerate() {
             println!("[{}/{}] {}", index + 1, self.tasks.len(), task_label(task));
             let started = Instant::now();
@@ -109,7 +112,7 @@ impl LocalPlan {
                     })
                     .and_then(crate::pe_dependencies::verify_portable_executable)
                     .map(|_| TaskExecution::Passed(super::super::TaskEvidence::default())),
-                _ => run_task(root, task, false),
+                _ => run_task(root, task, false, &identity),
             };
             super::super::timing::record(
                 task_label(task),
@@ -138,6 +141,12 @@ fn describe(task: &Task) -> Result<Description, String> {
             vec![],
             vec![Module::Windows],
             "selected Windows build requires its native-runtime gate",
+        ),
+        Task::UnitTestOwners { packages } => (
+            None,
+            vec![],
+            owner_modules(packages.as_deref()),
+            "unit tests of the selected packages that own manual obligations",
         ),
         Task::Cargo { id, args, .. } => match id {
             TaskId::FormatCheck => (

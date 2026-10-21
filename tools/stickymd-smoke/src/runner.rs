@@ -86,6 +86,7 @@ enum TaskId {
     RuntimePhase10,
     RuntimePhase11B,
     RuntimeZoomResources,
+    UnitTestOwners,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,6 +107,11 @@ enum Task {
     NativeRuntimeDependencies,
     PromotedCandidate,
     VerifyPackage,
+    /// Verify the unit tests that own manual obligations (plan 11); `None` checks every
+    /// owner, a projection names the selected packages.
+    UnitTestOwners {
+        packages: Option<Vec<&'static str>>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -155,6 +161,7 @@ struct TaskEvidence {
     measurements: Vec<EvidenceMeasurement>,
     gates: Vec<EvidenceGate>,
     samples: Vec<EvidenceSample>,
+    owners: Vec<String>,
 }
 
 impl Task {
@@ -167,6 +174,7 @@ impl Task {
             Self::VerifyPackage => TaskId::VerifyPackage,
             Self::PackageArtifact => TaskId::PackageArtifact,
             Self::GenerateSbom => TaskId::GenerateSbom,
+            Self::UnitTestOwners { .. } => TaskId::UnitTestOwners,
             Self::Cargo { id, .. } | Self::Runtime { id, .. } => *id,
         }
     }
@@ -209,6 +217,8 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
         );
     }
 
+    // The evidence binds the source as it was when the run started.
+    let identity = evidence::SourceIdentity::capture(root);
     let mut results = Vec::with_capacity(tasks.len() + 8);
     let mut environment = None;
     let mut outcome = execute_tasks(
@@ -216,6 +226,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
         options,
         &label,
         &tasks,
+        &identity,
         &mut results,
         &mut environment,
     );
@@ -241,6 +252,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<(), String> {
             &results,
             environment.as_ref(),
             options.evidence_file.as_deref(),
+            Some(&identity),
         )
     } else {
         Ok(())
@@ -264,6 +276,7 @@ fn execute_tasks(
     options: &Options,
     label: &str,
     tasks: &[Task],
+    identity: &evidence::SourceIdentity,
     results: &mut Vec<EvidenceResult>,
     environment: &mut Option<QualificationEnvironment>,
 ) -> Result<(), String> {
@@ -304,6 +317,7 @@ fn execute_tasks(
                     measurements: Vec::new(),
                     gates: Vec::new(),
                     samples: Vec::new(),
+                    owners: Vec::new(),
                 });
                 if observed.status != QualificationEnvironmentStatus::Valid {
                     return Err(environment_failure(&observed));
@@ -339,6 +353,7 @@ fn execute_tasks(
                     measurements: Vec::new(),
                     gates: Vec::new(),
                     samples: Vec::new(),
+                    owners: Vec::new(),
                 });
                 if observed.status != QualificationEnvironmentStatus::Valid {
                     return Err(environment_failure(&observed));
@@ -402,7 +417,7 @@ fn execute_tasks(
                 });
                 return resource_session::append_result(results, result);
             }
-            match run_task(root, task, options.json) {
+            match run_task(root, task, options.json, identity) {
                 Ok(TaskExecution::Passed(evidence)) => results.push(EvidenceResult {
                     id: task_name.to_owned(),
                     status: EvidenceStatus::Passed,
@@ -410,6 +425,7 @@ fn execute_tasks(
                     measurements: evidence.measurements,
                     gates: evidence.gates,
                     samples: evidence.samples,
+                    owners: evidence.owners,
                 }),
                 #[cfg(windows)]
                 Ok(TaskExecution::Failed { detail, evidence }) => {
@@ -420,6 +436,7 @@ fn execute_tasks(
                         measurements: evidence.measurements,
                         gates: evidence.gates,
                         samples: evidence.samples,
+                        owners: Vec::new(),
                     });
                     return Err(detail);
                 }
@@ -432,6 +449,7 @@ fn execute_tasks(
                         measurements: Vec::new(),
                         gates: Vec::new(),
                         samples: Vec::new(),
+                        owners: Vec::new(),
                     });
                     return Err(format!("`{task_name}` is NOT_TESTED: {detail}"));
                 }
@@ -443,6 +461,7 @@ fn execute_tasks(
                         measurements: Vec::new(),
                         gates: Vec::new(),
                         samples: Vec::new(),
+                        owners: Vec::new(),
                     });
                     return Err(error);
                 }
@@ -470,6 +489,7 @@ fn execute_tasks(
             measurements: Vec::new(),
             gates: Vec::new(),
             samples: Vec::new(),
+            owners: Vec::new(),
         });
         return Err(error);
     }
@@ -484,6 +504,7 @@ fn execute_tasks(
         measurements: Vec::new(),
         gates: Vec::new(),
         samples: Vec::new(),
+        owners: Vec::new(),
     });
     Ok(())
 }
@@ -496,6 +517,7 @@ fn failed_task(task: &str, error: &str) -> EvidenceResult {
         measurements: Vec::new(),
         gates: Vec::new(),
         samples: Vec::new(),
+        owners: Vec::new(),
     }
 }
 
@@ -530,6 +552,8 @@ pub(crate) fn headless_task_labels() -> Result<Vec<&'static str>, String> {
 }
 
 pub(crate) const HEADLESS_TASK_SET: &str = "requested headless CI task set";
+/// The result id of the unit-test owner verification; only its result may list owners.
+pub(crate) const UNIT_TEST_OWNERS_TASK: &str = "unit-test owner verification";
 
 const fn environment_evidence_status(environment: &QualificationEnvironment) -> EvidenceStatus {
     match environment.status {
@@ -581,6 +605,7 @@ fn task_label(task: &Task) -> &'static str {
         Task::NativeRuntimeDependencies => "portable native-runtime dependency gate",
         Task::PromotedCandidate => "promoted candidate identity and artifact verification",
         Task::VerifyPackage => "portable package verification",
+        Task::UnitTestOwners { .. } => UNIT_TEST_OWNERS_TASK,
         Task::Cargo { label, .. } => label,
         Task::PackageArtifact => "portable package creation",
         Task::GenerateSbom => "SPDX SBOM generation",
@@ -643,7 +668,12 @@ fn task_label(task: &Task) -> &'static str {
     }
 }
 
-fn run_task(root: &Path, task: &Task, capture_output: bool) -> Result<TaskExecution, String> {
+fn run_task(
+    root: &Path,
+    task: &Task,
+    capture_output: bool,
+    identity: &evidence::SourceIdentity,
+) -> Result<TaskExecution, String> {
     match task {
         Task::Governance => {
             governance::verify(root).map(|()| TaskExecution::Passed(TaskEvidence::default()))
@@ -667,7 +697,40 @@ fn run_task(root: &Path, task: &Task, capture_output: bool) -> Result<TaskExecut
         Task::GenerateSbom => package::sbom(root, capture_output)
             .map(|()| TaskExecution::Passed(TaskEvidence::default())),
         Task::Runtime { scenario, .. } => run_runtime(root, *scenario, capture_output),
+        Task::UnitTestOwners { packages } => {
+            run_unit_test_owners(root, packages.as_deref(), identity)
+        }
     }
+}
+
+/// The owners of the selected packages (all owners for `None`), verified on Windows.
+#[cfg(windows)]
+fn run_unit_test_owners(
+    root: &Path,
+    packages: Option<&[&'static str]>,
+    identity: &evidence::SourceIdentity,
+) -> Result<TaskExecution, String> {
+    let owners = crate::qualification::unit_test_owners()
+        .into_iter()
+        .filter(|owner| packages.is_none_or(|packages| packages.contains(&owner.package)))
+        .collect();
+    crate::unit_owners::verify(root, &owners, packages, identity).map(|owners| {
+        TaskExecution::Passed(TaskEvidence {
+            owners,
+            ..TaskEvidence::default()
+        })
+    })
+}
+
+#[cfg(not(windows))]
+fn run_unit_test_owners(
+    _root: &Path,
+    _packages: Option<&[&'static str]>,
+    _identity: &evidence::SourceIdentity,
+) -> Result<TaskExecution, String> {
+    Ok(TaskExecution::NotTested(
+        "unit-test owners are verified on Windows, where their package builds".to_owned(),
+    ))
 }
 
 fn run_cargo(root: &Path, label: &str, args: &[&str], capture_output: bool) -> Result<(), String> {
@@ -751,6 +814,7 @@ fn run_runtime(
                     measurements: outcome.measurements,
                     gates: outcome.gates,
                     samples: outcome.samples,
+                    owners: Vec::new(),
                 },
             }
         } else {
@@ -758,6 +822,7 @@ fn run_runtime(
                 measurements: outcome.measurements,
                 gates: outcome.gates,
                 samples: outcome.samples,
+                owners: Vec::new(),
             })
         }
     })
@@ -851,6 +916,9 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 push_unique(&mut tasks, phase1_markdown_tests());
                 push_unique(&mut tasks, phase1_persistence_tests());
                 push_unique(&mut tasks, workspace_tests());
+                // The owners' package builds only on Windows, so only there is it planned.
+                #[cfg(windows)]
+                push_unique(&mut tasks, Task::UnitTestOwners { packages: None });
             }
             Selection::Phase(Phase::P00) => {}
             Selection::Phase(Phase::P01) => {

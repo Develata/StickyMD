@@ -126,6 +126,7 @@ impl Campaign {
             measurements: Vec::new(),
             gates: Vec::new(),
             samples: Vec::new(),
+            owners: Vec::new(),
         }))
     }
 

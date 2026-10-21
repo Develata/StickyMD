@@ -28,8 +28,9 @@ use std::path::Path;
 
 use crate::cli::{GuidedSession, ManualCommand, StandaloneRecord};
 
+use super::manual_observation::coverage;
 use super::manual_observation::reduce::{self, Binding, Verdict};
-use super::manual_observation::registry::{CASES, KNOWN_GAPS};
+use super::manual_observation::registry::CASES;
 use super::manual_observation::store;
 use super::manual_observation::target::{self, Role, RoleTarget, Target};
 use super::{decisions, guided, receipt};
@@ -81,9 +82,19 @@ fn list() {
             .collect::<Vec<_>>();
         println!("{}: {}", session.as_str(), steps.join("; "));
     }
-    println!("Known coverage gaps:");
-    for gap in KNOWN_GAPS {
-        println!("  - {gap}");
+    println!("Open manual coverage gaps (plan 11 manual obligation mapping):");
+    for gap in coverage::gaps() {
+        println!("  - {}", coverage::describe(gap));
+    }
+    println!("Retired manual obligations:");
+    for retired in coverage::retired() {
+        println!("  - {}", coverage::describe(retired));
+    }
+    println!(
+        "Unit-test owned obligations (a proof requirement: readiness checks the owners against the headless CI receipt):"
+    );
+    for owned in coverage::test_owned() {
+        println!("  - {}", coverage::describe(owned));
     }
 }
 

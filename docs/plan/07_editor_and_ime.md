@@ -86,7 +86,8 @@
   输入框。范围永远是当前单一 canonical `note.md`，不做跨文件搜索、不支持正则。
 - Find-only 状态在 state reducer 和 command boundary 都必须禁止 Replace Current / Replace All；
   不能仅隐藏按钮后仍让快捷键以空 replacement 修改文档。替换面板提供 query、replacement、
-  大小写开关、上一个/下一个、替换与全部替换。
+  大小写开关、上一个/下一个、替换与全部替换；窄 Source pane 的紧凑档省略上一个/下一个按钮（见下文
+  面板分档），导航仍由键盘完成。
 - query、replacement、active match 与 match ranges 属 Editor Session projection。match ranges 必须绑定
   Document generation；任何 canonical mutation 后先重新扫描，再允许导航或替换 stale range。大小写
   敏感开关默认关闭，关闭 session 后不写入配置。
@@ -97,8 +98,24 @@
 - Replace Current 通过一个普通 typed `EditRequest` 提交；Replace All 先验证不重叠 range，再一次
   顺序复制 unchanged slices 与 replacement，最终只提交一个 canonical mutation/Undo entry，复杂度
   O(n + output bytes)，不得对每个 match 重复 `String::replace_range`。
+- Replace Current 只替换 Source 当前选中的 active match。外部重载、工具栏转换或在正文中点击后，
+  选区可能不再是 active match；此时第一次 Replace Current 只选中并显示 active match，不修改文档，
+  再次执行才替换。替换并重新扫描后，active match 取插入内容末尾（edit 留下的 caret；replacement 与
+  原文相同的 no-op 取原 match 末尾）处或之后起始的第一个 match，没有则回绕到第一个，并选中它；
+  之后还有 match 时，replacement 含 query 也不会在原处反复替换；回绕后可能再次命中先前插入的内容。
+  match projection 有上限（超出时计数带 `+`），导航与替换后的下一个 match 只在保留的 match 中前进与回绕。
 - replace 成功后正常触发 dirty/autosave/Preview；零匹配是完整 no-op。IME preedit 期间禁止替换，
   打开控件不得隐式提交、取消或污染 composition。
+- Search 属于 Source pane。切到没有 Source pane 的视图（Preview）时，打开的 Search 被停放：保留
+  query、replacement、大小写开关、replacement row、当前字段、各字段 cursor 与 active match 序号，
+  释放 match projection；停放期间它不绘制、不接收键盘/IME/鼠标、不观察 canonical mutation，Esc
+  顺序与自动收起判定都按 Search 未打开处理。切回 Source/Split 时原样恢复并按当前 generation 重新
+  扫描（文档未变时 active match 不变），Source selection 与打开、导航时一样跟随 active match；Source
+  与 Split 之间切换保留打开的 Search。Search 字段 IME composition 进行中时拒绝切到 Preview 并给出诊断，与打开查找
+  时的拒绝一致。Preview 中 `Ctrl+F`/`Ctrl+H` 先切回 Source：有停放的 Search 时原样恢复（`Ctrl+H`
+  再展开或聚焦 replacement row），不按选区改写 query；切换未发生时不打开 Search。
+- 视图切换 `Ctrl+1/2/3` 与键盘内容缩放是窗口命令，与保存/导出一样不被面板吞掉；Search 字段
+  composition 期间它们与其它按键一样留给 composition。
 
 输入、caret 与导航合同：
 
@@ -111,6 +128,17 @@
 - 输入框 paint、mouse hit、caret 和 `set_ime_cursor_area` 必须来自同一次 Cosmic Text 单行 layout。
   不得用固定 x、文本尾部或源码 editor caret 代替查找框 caret。面板打开时源码原生 caret 停止闪烁/
   绘制；当前字段绘制自己的 caret，并在内容过宽时只做水平 viewport 偏移与裁剪，保证 caret 可见。
+- 面板是 Source pane 右上角的窄条（同 VS Code 查找框）：宽度上限 300 DIP，pane 更窄时占满 pane 宽度；
+  Split 中位于 Source pane（分隔线左侧）的右上角，不越过 Source 滚动条 gutter 与分隔线上的同步按钮。
+  面板表面（背景、输入框、按钮）整体使用同一个固定不透明度 40%，各部分只以颜色区分、焦点切换不改变透明度；
+  文字与图标不透明以保证可读；该透明度相对正文、与窗口透明度无关。
+  面板覆盖处的按下归面板（被覆盖的正文可见但不可点），窗口原生 resize 边框与更高层的透明度弹层除外。
+  （USER 决定，2026-10-21。）
+- 面板分两档：完整档在 query 旁排 `Aa < > x`；完整档留给 query 文字的宽度不足 40 DIP 时（如 220×120
+  最小窗口或 330 DIP 宽窗口的 Split）改用紧凑档，收紧边距、间距与文字内距，只保留 `Aa` 与 `x`，
+  replacement 行保留替换与全部替换，省略上一个/下一个按钮。导航的合同是 Enter/Shift+Enter、Up/Down
+  与 F3/Shift+F3，按钮只是它的投影。任一档下每个输入框至少留 20 DIP 文字宽度，按钮标签在任一 CJK/UI 字体候选下都完整落在按钮内；
+  被省略的按钮既不绘制也不响应按下。（USER 决定，2026-10-21。）
 - 鼠标点击输入框必须按该字段的真实 cluster geometry 设置 cursor；找不到安全 cluster boundary 时
   取最近合法 UTF-8 boundary。selection 当前不属于 v1 输入框合同，不得为此引入第二套编辑器。
 - 真实 Microsoft Pinyin / WeChat Input Method 的 composition、commit、cancel、Undo、selection replace、

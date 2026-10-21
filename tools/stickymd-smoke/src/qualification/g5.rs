@@ -8,27 +8,13 @@ use std::path::Path;
 
 use crate::cli::G5Case;
 
-use super::exact_desktop::{self, ExactCase, ExactGroup};
+use super::exact_checks;
+use super::exact_desktop::{self, CaseOperation, ExactGroup};
 
 const DEFAULT_RECEIPT: &str = "dist/evidence/g5-exact-qualification.json";
-const CASES: &[ExactCase] = &[
-    ExactCase {
-        id: "G5-01",
-        operation: cases::g5_01,
-    },
-    ExactCase {
-        id: "G5-02",
-        operation: cases::g5_02,
-    },
-    ExactCase {
-        id: "G5-03",
-        operation: cases::g5_03,
-    },
-    ExactCase {
-        id: "G5-04",
-        operation: cases::g5_04,
-    },
-];
+/// Runs `exact_checks::G5` in order.
+const OPERATIONS: [CaseOperation; exact_checks::G5.len()] =
+    [cases::g5_01, cases::g5_02, cases::g5_03, cases::g5_04];
 
 pub(super) fn run(
     repository: &Path,
@@ -43,8 +29,10 @@ pub(super) fn run(
         ExactGroup {
             name: "G5",
             default_receipt: DEFAULT_RECEIPT,
-            cases: CASES,
+            cases: exact_checks::G5,
+            operations: &OPERATIONS,
             selected_case: selected_case.map(G5Case::as_str),
+            injects_input: false,
         },
     )
 }

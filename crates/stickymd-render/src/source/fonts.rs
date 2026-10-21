@@ -7,7 +7,8 @@ use std::ops::Range;
 use cosmic_text::FontSystem;
 use unicode_script::{Script, UnicodeScript};
 
-const CJK_CANDIDATES: &[&str] = &[
+/// The CJK (and shell UI) font families in preference order; the first installed one is used.
+pub const CJK_CANDIDATES: &[&str] = &[
     "仿宋_GB2312",
     "FangSong_GB2312",
     "仿宋",

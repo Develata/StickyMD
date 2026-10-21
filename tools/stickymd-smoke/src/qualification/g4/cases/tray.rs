@@ -6,11 +6,11 @@ use std::fs;
 use std::path::Path;
 
 use super::super::super::exact_desktop::{
-    ChildGuard, assert_sole_stickymd_process, invoke_uia, io_error, seed_note, wait_for_layout,
+    Checks, ChildGuard, assert_sole_stickymd_process, io_error, seed_note, tray, wait_for_layout,
     wait_until,
 };
 
-pub(super) fn g4_01(repository: &Path, program: &Path) -> Result<(), String> {
+pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
     const RETAINED: &str = "tray retained 中文🙂\n";
     const LATEST: &str = "tray quit latest generation 中文🙂\n";
 
@@ -19,40 +19,48 @@ pub(super) fn g4_01(repository: &Path, program: &Path) -> Result<(), String> {
     wait_for_layout(program)?;
     let window = crate::window_control::visible_window(child.id())?;
     assert_sole_stickymd_process(child.id())?;
+    checks.record("sole-process", &[("stage", "startup")]);
 
-    let menu = invoke_uia(repository, "tray-menu", child.id(), None)?;
-    let items = menu
-        .lines()
-        .filter_map(|line| line.strip_prefix("UIA_TRAY_ITEM_HEX="))
-        .collect::<Vec<_>>();
+    // The menu opens, from closed, on a right-click on the `NotifyItemIcon` the helper resolves
+    // in Explorer's tray, so an opened menu proves the icon.
+    let items = tray::menu_items(repository, child.id())?;
+    checks.record("tray-icon-present", &[]);
     let expected = ["9690-85CF", "7F6E-9876", "9000-51FA"];
     if items != expected {
         return Err(format!(
             "tray menu items are {items:?}, expected only {expected:?} in order"
         ));
     }
+    checks.record("tray-menu-items", &[]);
 
     replace_source(window, RETAINED)?;
     crate::window_control::request_close(window)?;
     wait_for_visibility(window, false)?;
+    checks.record("close-hides-window", &[]);
     if !child.is_running()? {
         return Err("paper Close terminated the StickyMD process".to_owned());
     }
+    checks.record("close-keeps-process", &[]);
 
-    invoke_uia(repository, "tray-show", child.id(), None)?;
+    tray::show(repository, child.id())?;
     wait_for_visibility(window, true)?;
+    checks.record("tray-show-restores-window", &[]);
     if source_projection(window)? != RETAINED {
         return Err("tray Show did not restore the same retained source text".to_owned());
     }
+    checks.record("tray-show-retains-source", &[]);
 
     replace_source(window, LATEST)?;
     assert_sole_stickymd_process(child.id())?;
-    invoke_uia(repository, "tray-exit", child.id(), None)?;
+    checks.record("sole-process", &[("stage", "pre-exit")]);
+    tray::exit(repository, child.id())?;
     child.wait_for_exit(super::super::super::exact_desktop::TIMEOUT)?;
+    checks.record("tray-quit-exits", &[]);
     let durable = fs::read_to_string(program.join("note/note.md")).map_err(io_error)?;
     if durable != LATEST {
         return Err("tray Quit exited without durably saving the latest generation".to_owned());
     }
+    checks.record("tray-quit-saves-latest", &[]);
     Ok(())
 }
 

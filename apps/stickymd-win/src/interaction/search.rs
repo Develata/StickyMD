@@ -32,6 +32,12 @@ pub struct SearchSession {
     truncated: bool,
 }
 
+/// An open Search taken off the screen while the view has no Source pane (plan 07). It owns the
+/// whole session but has no method of its own, so nothing can type into it, navigate it or
+/// rescan it; [`SearchSession::resume`] is the only way back.
+#[derive(Debug)]
+pub struct ParkedSearch(SearchSession);
+
 impl Default for SearchSession {
     fn default() -> Self {
         Self {
@@ -87,6 +93,37 @@ impl SearchSession {
         self.truncated = false;
         self.preedit.clear();
         self.preedit_cursor = None;
+    }
+
+    /// Parks an open Search and leaves this session closed and empty; a closed one is not
+    /// parked. The parked Search keeps its fields, cursors, focus, replacement row, case option
+    /// and the active match's place, and drops the match projection, which it would otherwise
+    /// hold while observing no edits. The caller refuses to park a composing Search; were it
+    /// asked to, the preedit (a projection, never field text) is dropped rather than leaving an
+    /// undrawn Search open.
+    pub fn park(&mut self) -> Option<ParkedSearch> {
+        if !self.open {
+            return None;
+        }
+        // `take` moves the strings and the match vector out without copying them.
+        let mut parked = std::mem::take(self);
+        parked.generation = None;
+        parked.matches = Vec::new();
+        parked.truncated = false;
+        parked.preedit.clear();
+        parked.preedit_cursor = None;
+        Some(ParkedSearch(parked))
+    }
+
+    /// Puts a parked Search back as it was and rescans it against the current document, so the
+    /// active match keeps its place when the document did not change.
+    pub fn resume(&mut self, parked: ParkedSearch, text: &str, generation: Generation) {
+        debug_assert!(
+            !self.open,
+            "a parked Search exists only while the live one is closed"
+        );
+        *self = parked.0;
+        self.refresh(text, generation);
     }
 
     pub fn options(&self) -> LiteralSearchOptions {
@@ -146,6 +183,20 @@ impl SearchSession {
         self.active = Some(next);
         self.active_range()
             .map(|range| Selection::new(range.start, range.end))
+    }
+
+    /// Makes the first match that starts at or after `byte` active, wrapping to the first match
+    /// as navigation does; no match leaves none active. Matches are ascending and disjoint, so
+    /// this is a binary search, O(log matches).
+    pub fn activate_from(&mut self, byte: usize) {
+        let next = self
+            .matches
+            .partition_point(|found| found.range().start < byte);
+        self.active = match (next < self.matches.len(), self.matches.is_empty()) {
+            (_, true) => None,
+            (true, false) => Some(next),
+            (false, false) => Some(0),
+        };
     }
 
     pub fn toggle_case(&mut self, text: &str, generation: Generation) {
@@ -358,5 +409,104 @@ mod tests {
         assert_eq!(session.focused, SearchField::Replacement);
         assert_eq!(session.query, "a");
         assert_eq!(session.match_summary(), before);
+    }
+
+    #[test]
+    fn a_parked_search_comes_back_as_it_was_without_holding_matches() {
+        let text = "a b A b a";
+        let generation = Generation::initial();
+        let mut session = SearchSession::default();
+        session.open(true, Some("a"), text, generation);
+        session.toggle_case(text, generation);
+        session.replacement.push_str("xy");
+        session.replacement_cursor = 1;
+        session.query_cursor = 0;
+        session.next(false);
+        let before = session.clone();
+        // Case-sensitive, so `A` is not a match and the second `a` is active.
+        assert!(before.case_sensitive);
+        assert_eq!(before.match_summary(), (2, 2, false));
+
+        let parked = session.park().unwrap();
+        // The live session is closed and empty, so nothing that reads it finds a Search.
+        assert!(!session.open);
+        assert!(session.query.is_empty() && session.matches.is_empty());
+        assert_eq!(session.active_range(), None);
+        // The parked one holds no match projection.
+        assert!(parked.0.matches.is_empty() && parked.0.generation.is_none());
+
+        session.resume(parked, text, generation);
+        assert!(session.open && session.replace_visible);
+        assert_eq!(session.focused, SearchField::Replacement);
+        assert_eq!(session.query, before.query);
+        assert_eq!(session.replacement, before.replacement);
+        assert_eq!(session.case_sensitive, before.case_sensitive);
+        assert_eq!(session.query_cursor, before.query_cursor);
+        assert_eq!(session.replacement_cursor, before.replacement_cursor);
+        assert_eq!(session.matches, before.matches);
+        assert_eq!(session.match_summary(), before.match_summary());
+        assert_eq!(session.active_range(), before.active_range());
+        assert!(session.is_current(generation));
+    }
+
+    #[test]
+    fn a_resumed_search_rescans_the_current_document() {
+        let mut session = SearchSession::default();
+        session.open(false, Some("a"), "a a a", Generation::initial());
+        session.next(false);
+        session.next(false);
+        let parked = session.park().unwrap();
+
+        let changed = Generation::initial().checked_next().unwrap();
+        session.resume(parked, "b a", changed);
+        assert!(session.is_current(changed));
+        // The active match keeps its place where it still exists, else the last one.
+        assert_eq!(session.match_summary(), (1, 1, false));
+        assert_eq!(session.active_range(), Some(2..3));
+
+        let parked = session.park().unwrap();
+        let emptied = changed.checked_next().unwrap();
+        session.resume(parked, "b", emptied);
+        assert!(session.open);
+        assert_eq!(session.match_summary(), (0, 0, false));
+        assert_eq!(session.active_range(), None);
+    }
+
+    #[test]
+    fn only_an_open_search_is_parked_and_a_preedit_does_not_survive_it() {
+        let mut session = SearchSession::default();
+        session.query.push_str("kept");
+        assert!(session.park().is_none());
+        assert_eq!(session.query, "kept");
+
+        session.open(false, None, "kept", Generation::initial());
+        session.set_preedit("中".into(), Some((0, "中".len())));
+        let parked = session.park().unwrap();
+        session.resume(parked, "kept", Generation::initial());
+        assert!(!session.is_composing());
+        assert_eq!(session.query, "kept");
+    }
+
+    #[test]
+    fn the_match_after_a_position_becomes_active_and_wraps_to_the_first() {
+        let generation = Generation::initial();
+        let mut session = SearchSession::default();
+        // `a b a` after its first `a` became `aa`: the inserted text ends at byte 2.
+        session.open(false, Some("a"), "aa b a", generation);
+        assert_eq!(session.match_summary(), (1, 3, false));
+        session.activate_from(2);
+        assert_eq!(session.active_range(), Some(5..6));
+        // A match starting exactly there is the next one.
+        session.activate_from(5);
+        assert_eq!(session.active_range(), Some(5..6));
+        // Past the last match, the first one is next.
+        session.activate_from(6);
+        assert_eq!(session.active_range(), Some(0..1));
+        session.activate_from(0);
+        assert_eq!(session.active_range(), Some(0..1));
+
+        session.refresh("b", generation.checked_next().unwrap());
+        session.activate_from(0);
+        assert_eq!(session.active_range(), None);
     }
 }

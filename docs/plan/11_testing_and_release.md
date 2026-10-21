@@ -228,6 +228,38 @@ docs/acceptance-cases/phase-XX.md
 - 自动化必须包含：模拟 post-spawn 中途失败后 child 已退出的真实进程回归；smoke-owned temp path
   被识别、普通用户路径不被识别的纯分类测试；检测到 stale process 时 preflight 返回非零且不杀进程。
 
+<a id="physical-input-injection"></a>
+### 物理输入注入
+
+- smoke CLI 对真实桌面的键盘与鼠标输入（`SendInput`）以及光标放置（`SetCursorPos`，含只写回当前坐标的环境探针）只经一个
+  注入模块。`keybd_event`、`mouse_event`，以及该模块之外的 `SendInput` 与 `SetCursorPos`（含 PowerShell helper）由治理文本
+  扫描拒绝。helper 只做 UIA 定位、读取与 `InvokePattern`，并区分"观察到为空"与"无法观察"；它需要的光标放置、按键或点击由
+  Rust 侧经该模块注入。发给目标窗口的合成指针消息（`WM_MOUSEMOVE` 等）只送达该窗口、不改变桌面输入状态，不是物理输入，也
+  不证明物理投递，但同样服从下述共享停止。
+- 该模块只在 `cfg(panic = "unwind")` 构建中注入；abort 构建只编译返回错误的桩，因为 abort 路径上未释放的按下无法由 `Drop`
+  兜底。
+- 每个按下先登记到发起它的操作，再注入；同一键或按钮同时只由一个操作持有（Windows 对每个键只记一个状态，第二个持有者的
+  释放会结束第一个的按下），已被持有时拒绝再次按下或恢复性释放。每个操作只释放自己登记的按下，按与按下相反的顺序：正常
+  路径显式、有界地释放，左键守卫的 `Drop` 与操作的 unwind 守卫兜底；释放返回后才注销登记。unwind 时（操作本身 unwind，或
+  case 在持有左键时 unwind）先停止再释放；unwind 中的每个释放各尝试一次，其中再次发生的 panic 被接住且其 payload 不析构，
+  不得逃出析构而使进程 abort、也不得中断其余释放。每次 `SendInput` 以返回的插入数判定：少于请求数即失败；完整插入只证明
+  事件进入了输入流，不证明目标收到。左键按下与释放后各在有界时间内采样 `GetAsyncKeyState`，等待其读到相应状态：到时限仍未
+  读到即失败：时限当刻取得的读数计入、读到不符即失败，时限之后取得的读数无论读到什么都不计（USER 2026-10-19
+  决定：释放后 Windows 处理输入期间仍可能读到按下，故等待而非一次采样）；读到"未按下"也不证明目标收到释放（无法读取状态时同样读到未按下）。
+- 任一释放失败（短计数、到时限仍读到按下、`Drop` 中的释放失败）、上述 unwind、或锁被此类 panic 毒化，都触发进程内共享停止：
+  此后该进程的新注入、光标放置与合成指针消息一律拒绝（已登记的按下仍可释放），exact runner 不再执行注入输入的 G3/G4 case，
+  它们不产生 PASS，收据如实记录未执行的原因。case 的业务断言与输入清理分别判定，清理失败的 case 即使业务断言成立也不是
+  PASS。
+- 注入前须核验目标：键盘输入时目标窗口为前台、激活且有焦点；托盘菜单的 Esc 只在前台线程处于弹出菜单模式且菜单所有者属于
+  被测进程时注入，查询失败或所有者无法读取即为错误，未注入 Esc 也不证明菜单已关闭（关闭只认 helper 观察到关闭）；鼠标按下
+  前立即读回光标，以读回位置为落点，该点下的根窗口须为目标窗口（托盘为 Explorer 的托盘窗口），需要精确落点的操作（托盘
+  图标）另要求读回位置与目标点一致。不满足即不注入；核验与按下之间光标仍可能移动，这一残余竞态如实记录。托盘菜单的打开须
+  核验从"观察到关闭"到"观察到打开"的变化，无法观察即失败；每个失败出口都报告各次尝试已取得的观察（含等待中任一次
+  无法观察的轮询已读到的部分菜单项与光标读回位置，它们只作诊断）与清理结果。
+- 自动化必须包含：可替换注入后端的单元测试覆盖短计数、释放失败后的共享停止、操作 unwind 与锁毒化后的释放与停止、unwind 中
+  再次 panic（含析构会 panic 的 payload）的隔离、按后端时钟的采样时限、操作之间互不释放、以及停止后仍可释放已登记的按下；
+  独占桌面上取证实际 abort 构建到达拒绝桩且零注入（绕过收据复用）、托盘菜单从关闭到打开、以及迁移后的 G3/G4 case。
+
 ### 验收矩阵
 
 每个 `phase-XX.md` 必须逐项列出：稳定 ID、映射的 plan/AC、验证模式、仓库内入口、
@@ -312,8 +344,9 @@ PASS 观察；最终 manual PASS 仍额外绑定 Promoted Candidate。
   ID（该摘要必须等于 candidate 的 EXE 摘要，否则观察无效；记录、导入与 readiness 共用这一判定）；同目录第二次启动、
   双副本、跨断屏/睡眠/RDP 保留原进程与原 note（不得重启或重新放入 fixture 来完成恢复）等
   要求由注册表按场景声明；预期的断连期间环境探测失败不判产品 FAIL。fixture 随工具提供：输入法项用空白 note，
-  其余用渲染压力 note 与全部图片格式（含超限图片）。PASS 要求记录器启动的进程在提交时仍在运行且是唯一的
-  StickyMD（在存储锁内、写入之前确认）。候选已启动但未在限时内完成初始化时，记录器报告原因，观察者可记录该实例的
+  其余用渲染压力 note 与全部图片格式（含超限图片）。PASS 要求提交时运行的 StickyMD 恰好是注册表为该场景声明的实例
+  集合（在存储锁内、写入之前确认）：普通场景为记录器启动的那一个；`TwoCopies`（只用于 P12-M45 两份便携副本）为记录器
+  从两个不同副本目录启动的那两个；M34 没有实例。该例外不适用于同目录第二次启动。候选已启动但未在限时内完成初始化时，记录器报告原因，观察者可记录该实例的
   FAIL 或不记录，PASS 被拒绝；启动之前的准备失败（复制、fixture、摘要不符）不形成观察。实例以挂起状态创建、加入 Job 后才恢复运行，随记录器退出（含中断）
   而终止，StickyMD 自己启动的进程（如打开链接的浏览器）不受影响；创建与加入 Job 之间被强制终止时会留下一个从未运行的
   挂起实例，下一次会话拒绝启动并指明它来自中断的记录器。恢复挂起线程失败（含挂起计数不为 1）时该实例被停止、场景
@@ -337,12 +370,17 @@ PASS 观察；最终 manual PASS 仍额外绑定 Promoted Candidate。
   声明两者之间未更改系统。
 - **信任边界**：信任 USER，不防伪造观察；严格解析、摘要与上下文绑定防止的是混用、陈旧与损坏。
 - **上限**：观察包 1 MiB，单个日志 10 000 条，备注 2 KiB。
-- **已知覆盖缺口**：Phase 8 人工义务尚未全部映射到 P12 人工项。readiness 无论通过与否都在普通输出与 JSON 中列出
-  这些缺口，不得把人工矩阵表述为完整。
+- **人工义务映射**：Phase 8 验收矩阵中 Mode 为 Manual 的每一行，以及 `09` 的 Esc 行为表、垂直滚动条、透明度与退出保存
+  失败条款，按 `(来源, 断言, 参数)` 映射到 P12 人工项场景、G3/G4 exact 检查、源码级自动化（单元测试、本地预检或正式
+  Runtime 模块收据分开列出）、单元测试（只用于 exact 层无法稳定制造的状态，写明理由，不证明原生输入投递）、经 USER
+  批准的退役（决定只授权其列出的条目），或尚未落实的缺口。治理测试核对来源区段与逐条款的文本摘要和条数（来源文字变化
+  即需重新核对分解）、每个断言声明的必需参数集合被同一断言的映射恰好覆盖、目标存在。readiness 无论通过与否都在普通
+  输出与 JSON 中列出全部缺口与退役项，不得把人工矩阵表述为完整；映射完整也不等于验收通过。
 - **验证**（实现时进入 Phase 14 矩阵）：角色唯一匹配，以及类型错误、读取失败、两次采集不同、零匹配与多匹配的
   拒绝；迟到的旧 PASS 与旧 FAIL、重复与冲突 ID；部分覆盖、FAIL 与无效证据优先于 waiver 与 Tier C；上下文失效、日志
   缺失、零字节或损坏与重置（含满额日志的未解除 FAIL 合并带入）、写入失败不留半更新、锁等待有界；FAIL 先于备注落盘，guided step 逐项回答；原进程与原 note 保留、
-  M34 例外；观察任务快照一致、无仓库记录、整包导入的拒绝路径；readiness 始终列出已知缺口。
+  M34 例外；观察任务快照一致、无仓库记录、整包导入的拒绝路径；人工义务映射的来源摘要、参数覆盖与目标存在；
+  readiness 始终列出缺口与退役项。
 
 <a id="release-artifact-authority"></a>
 ### Source freeze、remote artifact promotion 与 exact evidence
@@ -395,6 +433,20 @@ ignored `dist/evidence/` 中：
 
 - source-only receipt 绑定 Source Freeze，不要求 final EXE hash；本地 headless CI 收据必须恰好包含 runner 为
   `all --ci` 规划的全部任务（按顺序、每项 `PASSED`）及任务集标记，不另维护任务名单；
+- smoke 证据（所有套件）为 schema 3：每个结果带 `owners` 数组，只有单元测试 owner 核验任务的结果可以非空；schema 2
+  证据无效，不迁移。证据序列化 runner 在开始时采集的源码身份（HEAD 与工作树是否干净），写出前复核，身份变化即追加失败结果；
+- 人工义务映射中由单元测试持有的义务以一个或多个 owner `(package, target, path)` 声明（一项义务需要几个测试共同证明时
+  全部列出，全部核验才算有 owner），`target` 只允许 `lib` 或 `bin:<名称>`（使用 libtest 默认 harness 的单元测试目标；
+  工作区清单的 `harness` 键只允许出现在 `[[bench]]`）。Windows 上 `all --ci` 的
+  tests 部分包含 owner 核验任务：以 `cargo test --no-run --message-format=json` 的 `compiler-artifact` 建立目标到测试二进制的
+  映射，对每个含 owner 的二进制执行 `--list` 与 `--list --ignored`（owner 须在前者恰好出现一次、不在后者中），再以
+  `--exact <owner> --nocapture` 让每个 owner 单独一个进程执行。构建、两次列出与每次执行都须成功退出、输出完整（未超时、未截断）
+  并解析成功；任一不满足即任务失败，且不贡献已核验 owner。任务前后复核源码身份与开始时一致。本地 headless CI 收据中 owner 任务的
+  结果列出已核验 owner；readiness 只在该收据有效、绑定当前 Source Freeze，且已核验集合恰为映射中的 owner 集合时，把这些义务算作
+  有 owner，否则全部列为待执行证明。正式收据须在冻结提交的独占 checkout 与构建目录上产生（运行期间没有其他源码或产物写者）；
+  复核只发现漂移，不证明期间不变。核验针对意外情形（测试被删除、改名、忽略、cfg 排除、过滤失配、失败或未执行）；owner 测试须把
+  控制权正常交回 libtest，测试体自身提前成功退出与断言遗漏由代码审查承担。定向运行（`modules run`、dev-check）按所选 package
+  投影 owner，没有适用 owner 时连发现构建一起跳过，且不写收据；
 - remote workflow receipt 绑定 source/run/attempt/artifact id，不复制尚未产生的 final EXE hash；
 - downloaded/promotion receipt 与 candidate receipt 绑定实际 ZIP/EXE/SBOM hash；
 - downloaded/package/checksum/SBOM、PE/native-runtime 与 portable-runtime 直接证明当前 artifact bytes，
@@ -424,6 +476,12 @@ ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
   guided step 覆盖多项时逐项询问；
 - stale module fingerprint 不参与 readiness；G3/G4/G5 成功记录还必须包含 origin ZIP/EXE、运行 harness、
   clean worktree 与各组预期逐项结果，只有当前 registry 指纹兼容时才能复用；
+- G3/G4/G5 exact 收据为 schema 2：每个 case 结果带 `checks` 数组，列出该 case 实际记录的检查标签。标签写作 `名称` 或
+  `名称:k=v[,k=v…]`，名称、键与值只用小写 ASCII 字母、数字与 `-`，参数键严格升序；每个 case 的必需标签集合与 case 表
+  同源、一处静态声明，由检查函数在其断言成立之后记录（同一标签多次成立只记一次）。只有结果为 `PASSED` 且记录集合与
+  声明集合完全相等（无缺失、多余或重复）的 case 才算成功；G5 声明空集合，截图要求不变。失败或标签不符的结果仍完整
+  写入收据作为诊断，但不能作为成功证据；schema 1 收据无效，不迁移。标签相等只证明声明的检查都已到达，不独立证明断言
+  语义，断言与标签的对应由代码审查承担；
 - readiness 对 P0/P1、未批准 hard gate、mandatory manual NOT TESTED、exact package、remote
   evidence 与 USER decision fail closed；不得提供 `--force-ready`；
 - readiness 读取的每份收据（candidate、Source Freeze、decision、remote/downloaded、headless、manual 与模块
@@ -666,7 +724,7 @@ Resources 长矩阵必须在主要场景之间重检环境，并在每个完成�
 未完成 receipt 必须显式包含 `INCOMPLETE`，readiness 仍要求最终 receipt 的所有 result 都为
 `PASSED`，因此 partial evidence 不能冒充完整 PASS。
 
-M1..M5 manual sessions 只允许共享 setup，不改变 P12-M01..P12-M44 的逐项 authority。Phase 14
+M1..M5 manual sessions 只允许共享 setup，不改变 P12-M01..P12-M47 的逐项 authority。Phase 14
 保留 G1/G2 guided sessions；每个 guided observation 必须显式映射到一项或多项相同观察事实的
 case ID，并为每项分别回答 `MANUAL_PASS` / `MANUAL_FAIL` / `NOT_TESTED`（后者只在会话输出中出现，不写入观察
 日志），不能用“整体看起来正常”

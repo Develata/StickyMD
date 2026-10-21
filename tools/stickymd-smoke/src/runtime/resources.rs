@@ -40,6 +40,7 @@ impl Output {
             measurements: self.measurements.clone(),
             gates: self.gates.clone(),
             samples: self.samples.clone(),
+            owners: Vec::new(),
         })
     }
 }
@@ -175,6 +176,7 @@ fn matrix(
                             measurements: observed.measurements.clone(),
                             gates: observed.gates.clone(),
                             samples: observed.samples.clone(),
+                            owners: Vec::new(),
                         },
                         sampling.elapsed().as_secs_f64(),
                     )

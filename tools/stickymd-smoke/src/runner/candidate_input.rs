@@ -71,6 +71,7 @@ mod tests {
                 &options,
                 "phase-14",
                 &tasks,
+                &crate::evidence::SourceIdentity::capture(&root),
                 &mut results,
                 &mut environment,
             );

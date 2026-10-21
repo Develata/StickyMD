@@ -69,6 +69,7 @@ fn save(
                 .collect(),
             gates: output.gates.clone(),
             samples: output.samples.clone(),
+            owners: Vec::new(),
         },
         elapsed,
     )

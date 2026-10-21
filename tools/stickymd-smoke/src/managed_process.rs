@@ -9,8 +9,10 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod bounded;
 mod job;
 
+pub(crate) use bounded::run_bounded_output;
 pub(crate) use job::{Descendants, Job};
 
 /// The manual recorder's session root under the system temp directory; its instances are
@@ -570,7 +572,30 @@ mod tests {
             .kill()
             .expect("terminate preflight child after assertion");
         child.wait().expect("reap preflight child after assertion");
-        fs::remove_dir_all(cleanup).expect("remove preflight fixture");
+        remove_after_exit(cleanup);
+    }
+
+    /// Removes a fixture holding the executable of a child that was just reaped. Windows
+    /// can keep that image (or a scan of the fresh copy) open for a moment after the
+    /// process has exited, so the removal is retried within a bound and still fails if it
+    /// never succeeds.
+    fn remove_after_exit(fixture: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut delay = Duration::from_millis(25);
+        let mut retried = false;
+        loop {
+            match fs::remove_dir_all(fixture) {
+                Ok(()) => return,
+                // A failed attempt may still have removed the directory itself.
+                Err(error) if retried && error.kind() == std::io::ErrorKind::NotFound => return,
+                Err(error) if Instant::now() >= deadline => {
+                    panic!("remove preflight fixture {}: {error}", fixture.display())
+                }
+                Err(_) => thread::sleep(delay),
+            }
+            retried = true;
+            delay = (delay * 2).min(Duration::from_secs(1));
+        }
     }
 
     fn unique_temp(label: &str) -> PathBuf {

@@ -184,6 +184,10 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 if !focused {
                     self.cancel_scrollbar_drag();
                     self.scrollbars.hovered = None;
+                    if self.controls.opacity_input_focused {
+                        // The field loses focus with the window, which commits it (plan 09).
+                        self.commit_opacity_input();
+                    }
                     self.session.cancel_preedit();
                     if self.coordinator.view().dirty {
                         self.dispatch_persistence_intent(
@@ -192,16 +196,23 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                         );
                     }
                 }
-                if let Some(window) = &self.window {
-                    window.set_ime_allowed(
-                        focused && !self.preview_focused && self.shell_input_enabled,
-                    );
-                }
+                self.sync_ime_allowed();
                 self.refresh_window_guards(Some(event_loop));
                 self.after_presentation_change();
             }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
-            WindowEvent::KeyboardInput { event, .. } => self.handle_key(event),
+            // winit synthesizes a press for every key held when the window gains focus and a
+            // release when it loses it; neither is a key pressed or released here, so neither
+            // edits anything nor ends what a held key owns (the opacity field's Enter).
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic,
+                ..
+            } => {
+                if !is_synthetic {
+                    self.handle_key(event);
+                }
+            }
             WindowEvent::Ime(event) => {
                 self.handle_ime(event);
                 self.refresh_window_guards(Some(event_loop));
@@ -209,6 +220,9 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             WindowEvent::CursorMoved { position, .. } => self.handle_cursor_moved(position),
             WindowEvent::CursorEntered { .. } => {
                 self.pointer_inside_window = true;
+                // What lies under the pointer may have changed while it was away (the opacity
+                // popup closing), and a re-entry at the same position brings no `CursorMoved`.
+                self.refresh_cursor();
                 self.dispatch_window_intent(
                     Some(event_loop),
                     crate::flow::window::state::WindowIntent::SensorEntered {
@@ -263,6 +277,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             Some(event_loop),
             crate::flow::window::state::WindowIntent::Tick { now_ms },
         );
+        self.finish_event_pass();
 
         let now = Instant::now();
         let mut next_wake = None;
