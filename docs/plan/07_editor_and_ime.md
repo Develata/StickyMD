@@ -97,6 +97,9 @@
 - Replace Current 通过一个普通 typed `EditRequest` 提交；Replace All 先验证不重叠 range，再一次
   顺序复制 unchanged slices 与 replacement，最终只提交一个 canonical mutation/Undo entry，复杂度
   O(n + output bytes)，不得对每个 match 重复 `String::replace_range`。
+- Replace Current 只替换 Source 当前选中的 active match。外部重载、工具栏转换或在正文中点击后，
+  选区可能不再是 active match；此时第一次 Replace Current 只选中并显示 active match，不修改文档，
+  再次执行才替换。
 - replace 成功后正常触发 dirty/autosave/Preview；零匹配是完整 no-op。IME preedit 期间禁止替换，
   打开控件不得隐式提交、取消或污染 composition。
 - Search 属于 Source pane。切到没有 Source pane 的视图（Preview）时，打开的 Search 被停放：保留

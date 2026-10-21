@@ -85,6 +85,26 @@ from the [release checklist](../release-checklist.md).
   with the note unchanged); with Search open, hide to tray and show again in each view. Candidate-window
   placement remains a visual check.
 
+## 2026-10-21 Replace Current follows the selection
+
+- Contract: `07_editor_and_ime.md#source-find-replace` (USER decision: select first, then replace); feature: 查找与替换.
+- Preconditions: Search open with the replacement row; `a X a` with the second `a` active and selected.
+- Action: change the file on disk to `a a X` and press Ctrl+Enter twice; separately, click or drag elsewhere in the
+  note (a caret, another match, a range around the match) and press Ctrl+Enter or the Replace button; apply the toolbar
+  `$` conversion while Search is open and press Ctrl+Enter.
+- Expected: Replace Current replaces only when the Source selection is exactly the active match. Otherwise the first
+  press selects and reveals the active match and changes nothing (text, generation, dirty and Undo unchanged); the next
+  press replaces it. Navigation, opening Search and a replacement still select the active match, so ordinary repeated
+  Ctrl+Enter replaces one match per press as before. Replace All is unchanged.
+- Failure signals: a replacement of text that was not selected; a first press after a reload that changes the
+  document; a normal replace sequence needing two presses per match.
+- Automated entry: `app::search_controller::tests::replace_current_replaces_only_the_selected_active_match`, in the
+  Rust-owned render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1); the command boundary's
+  `literal_range_matches` check still rejects a range that is not a match. Status: `AUTOMATED PASS`.
+- Limits: `replace_current_search` applying the decision, and the selection reaching that point unchanged after a
+  reload, conversion or click, are `StickyApp` wiring that these tests do not execute; the desktop steps above are
+  `NOT TESTED`.
+
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
 

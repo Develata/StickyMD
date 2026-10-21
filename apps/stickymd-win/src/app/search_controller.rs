@@ -2,6 +2,8 @@
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#source-find-replace
 
+use std::ops::Range;
+
 use winit::event::{ElementState, Ime, KeyEvent, MouseButton};
 use winit::keyboard::KeyCode;
 
@@ -316,8 +318,17 @@ impl StickyApp {
             self.search
                 .refresh(self.coordinator.view().text, generation);
         }
-        let Some(range) = self.search.active_range() else {
-            return;
+        let action = replace_current_action(
+            self.search.active_range(),
+            self.session.selection.normalized_range(),
+        );
+        let range = match action {
+            ReplaceCurrentAction::Nothing => return,
+            ReplaceCurrentAction::Select => {
+                self.update_search_selection();
+                return;
+            }
+            ReplaceCurrentAction::Replace(range) => range,
         };
         self.dispatch(AppIntent::ReplaceLiteralMatch {
             expected_generation: generation,
@@ -394,6 +405,30 @@ const fn search_open_action(open: bool, replace_shortcut: bool) -> SearchOpenAct
     }
 }
 
+/// What Replace Current does (plan 07).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReplaceCurrentAction {
+    /// There is no active match.
+    Nothing,
+    /// The note's selection is not the active match: select it, and replace on the next press.
+    Select,
+    Replace(Range<usize>),
+}
+
+/// Replace Current replaces only the match the note shows selected. A reload, a toolbar
+/// conversion or a click in the note can leave the selection elsewhere while Search is open;
+/// the first press then selects the active match instead of replacing text that is not selected.
+fn replace_current_action(
+    active: Option<Range<usize>>,
+    selected: Range<usize>,
+) -> ReplaceCurrentAction {
+    match active {
+        None => ReplaceCurrentAction::Nothing,
+        Some(active) if active == selected => ReplaceCurrentAction::Replace(active),
+        Some(_) => ReplaceCurrentAction::Select,
+    }
+}
+
 fn replacement_allowed(search: &crate::interaction::SearchSession) -> bool {
     search.replace_visible && !search.is_composing()
 }
@@ -458,6 +493,25 @@ mod tests {
                 search_on_view_change(target, place),
                 expected,
                 "{target:?} from {place:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn replace_current_replaces_only_the_selected_active_match() {
+        use ReplaceCurrentAction::{Nothing, Replace, Select};
+
+        assert_eq!(replace_current_action(None, 0..0), Nothing);
+        assert_eq!(replace_current_action(None, 2..3), Nothing);
+        assert_eq!(replace_current_action(Some(2..3), 2..3), Replace(2..3));
+        // `a X a` reloaded as `a a X` with the second `a` active: `X` stays selected at 4..5.
+        assert_eq!(replace_current_action(Some(2..3), 4..5), Select);
+        // A caret, a selection overlapping or containing the match, or another match.
+        for selected in [2..2, 3..3, 2..4, 1..3, 0..5, 0..1] {
+            assert_eq!(
+                replace_current_action(Some(2..3), selected.clone()),
+                Select,
+                "{selected:?}"
             );
         }
     }
