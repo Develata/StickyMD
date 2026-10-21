@@ -185,7 +185,7 @@ and any other key is dropped, so none reaches the note or Search; the keys winit
 loses focus are ignored. The field is numeric: it is not focused while the note or Search is composing, the IME is off
 while it is edited, and an IME commit that still arrives is typed and a composition dropped, while the end of a
 composition goes on to its owner. The IME follows whoever takes the keyboard in that key order (the edited field: off; a
-drawn Search: on, while a Search left open in Preview mode is not drawn and gets none; focused Preview: off; the note:
+drawn Search: on, while Preview parks an open Search (phase-03 2026-10-20) and the layout check only guards an undrawn one; focused Preview: off; the note:
 on), at every site that changes it (window focus, input going away or coming back, a press on Preview or the note,
 opening Search or closing it by any of its ways, a view change, the field's edit starting or ending). The open popup takes
 every press inside it and shows its cursor there, refreshed when it opens or closes while the pointer is over the window
