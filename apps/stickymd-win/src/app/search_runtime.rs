@@ -37,6 +37,8 @@ pub(super) struct SearchLayout {
     replace_all: SearchRect,
     /// The inset of field text from its field's edges, in physical pixels.
     text_inset: f32,
+    /// The inset of a button's label from the button's left and right edges, in physical pixels.
+    label_pad: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +113,7 @@ struct Tier {
     margin: f32,
     gap: f32,
     text_inset: f32,
+    label_pad: f32,
     button: f32,
     replace: f32,
     replace_all: f32,
@@ -136,6 +139,7 @@ impl Tier {
             margin,
             gap,
             text_inset: 5.0 * scale,
+            label_pad: 4.0 * scale,
             button: ((inner - gap * 4.0) / 6.0).clamp(12.0 * scale, 26.0 * scale),
             replace: action,
             replace_all: action,
@@ -143,13 +147,14 @@ impl Tier {
         }
     }
 
-    /// Fixed sizes, each button just wide enough for its label inside the label padding
-    /// (`label_spec`), so the fields keep the rest.
+    /// Fixed sizes, each button just wide enough for its label in every UI font candidate
+    /// inside the label padding (`SearchLayout::label_spec`), so the fields keep the rest.
     fn compact(scale: f32) -> Self {
         Self {
             margin: 4.0 * scale,
             gap: 2.0 * scale,
             text_inset: 3.0 * scale,
+            label_pad: 2.0 * scale,
             button: 22.0 * scale,
             replace: 22.0 * scale,
             replace_all: 28.0 * scale,
@@ -233,6 +238,7 @@ impl SearchLayout {
             replace,
             replace_all,
             text_inset: tier.text_inset,
+            label_pad: tier.label_pad,
         }
     }
 
@@ -269,6 +275,16 @@ impl SearchLayout {
             }
         }
         self.popup.contains(position).then_some(SearchHit::Query)
+    }
+
+    /// Where a button's label is painted: padded inside the button and clipped to it.
+    fn label_spec(self, rect: SearchRect, scale: f32) -> stickymd_render::source::UiTextSpec {
+        stickymd_render::source::UiTextSpec {
+            x: rect.x + self.label_pad,
+            y: rect.y + 3.0 * scale,
+            width: (rect.width - self.label_pad * 2.0).max(1.0),
+            scale,
+        }
     }
 
     pub(super) fn field_spec(
@@ -370,20 +386,11 @@ pub(super) fn paint_search_overlay(
             }
         }
         for (label, rect, _) in buttons {
-            projection.paint_ui_text(pixmap, label, label_spec(rect, scale), source_theme);
+            let spec = layout.label_spec(rect, scale);
+            projection.paint_ui_text(pixmap, label, spec, source_theme);
         }
     } else {
         paint_markers(pixmap, layout, scale, dark, search.replace_visible);
-    }
-}
-
-/// Where a button's label is painted: padded inside the button and clipped to it.
-fn label_spec(rect: SearchRect, scale: f32) -> stickymd_render::source::UiTextSpec {
-    stickymd_render::source::UiTextSpec {
-        x: rect.x + 4.0 * scale,
-        y: rect.y + 3.0 * scale,
-        width: (rect.width - 8.0 * scale).max(1.0),
-        scale,
     }
 }
 
@@ -483,23 +490,57 @@ mod tests {
         views
     }
 
+    /// `text`'s advance at the 13-DIP UI size in each installed UI font candidate, in physical
+    /// pixels, shaped as `SourceProjection::paint_ui_text` shapes a label: the machine's
+    /// first candidate is what it paints with, and any later one is what another machine
+    /// without the earlier ones paints with.
+    fn label_advances(
+        fonts: &mut cosmic_text::FontSystem,
+        text: &str,
+        scale: f32,
+    ) -> Vec<(&'static str, f32)> {
+        use cosmic_text::fontdb::{Family, Query, Stretch, Style, Weight};
+        use cosmic_text::{Attrs, Buffer, Metrics, Shaping, Wrap};
+
+        let mut advances = Vec::new();
+        for &family in stickymd_render::source::CJK_CANDIDATES {
+            let query = Query {
+                families: &[Family::Name(family)],
+                weight: Weight::NORMAL,
+                stretch: Stretch::Normal,
+                style: Style::Normal,
+            };
+            if fonts.db().query(&query).is_none() {
+                continue;
+            }
+            let mut buffer = Buffer::new_empty(Metrics::new(13.0 * scale, 20.0 * scale));
+            buffer.set_wrap(Wrap::None);
+            let attrs = Attrs::new().family(cosmic_text::Family::Name(family));
+            buffer.set_text(text, &attrs, Shaping::Advanced, None);
+            buffer.shape_until_scroll(fonts, false);
+            let advance = buffer
+                .layout_runs()
+                .map(|run| run.line_w)
+                .fold(0.0, f32::max);
+            advances.push((family, advance));
+        }
+        advances
+    }
+
     fn overlap(a: SearchRect, b: SearchRect) -> bool {
         a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
     }
 
     /// Plan 07: in every real view, size and DPI each field leaves at least
-    /// `FIELD_TEXT_MIN_DIP` for its text, and each button's label, as Cosmic Text shapes it,
-    /// fits inside the button's label padding. Fields and buttons stay inside the panel without
+    /// `FIELD_TEXT_MIN_DIP` for its text, and each button's label, as Cosmic Text shapes it in
+    /// every installed UI font candidate, fits inside the button's label padding. Fields and buttons stay inside the panel without
     /// overlapping, and a press on each button reaches it. A Source pane whose full tier would
     /// leave the query less than 40 DIP of text takes the compact tier: no `< >` buttons, so
     /// no press reaches Previous or Next.
     #[test]
     fn every_view_leaves_readable_fields_and_whole_button_labels() {
-        use stickymd_core::{DocumentState, LineEnding};
-        use stickymd_render::source::{SourceProjection, UiTextSpec};
-
-        let snapshot = DocumentState::loaded("", LineEnding::Lf, None).snapshot();
-        let mut projection = SourceProjection::new(&snapshot, 200, 100, 1.0);
+        let mut fonts = cosmic_text::FontSystem::new();
+        let mut measured = 0;
         let mut tiers_seen = [false; 2];
         for (label, view, scale) in views() {
             let pane = view.source.unwrap();
@@ -525,22 +566,16 @@ mod tests {
                     rects.push(layout.replacement);
                 }
                 for (text, rect, hit) in layout.buttons(replace).into_iter().flatten() {
-                    let spec = label_spec(rect, scale);
-                    let wide = UiTextSpec {
-                        width: 1000.0 * scale,
-                        ..spec
-                    };
-                    let advance = projection
-                        .ui_text_field_caret(text, text.len(), wide)
-                        .expect("a label end is a char boundary")
-                        .x
-                        - spec.x;
-                    assert!(
-                        advance <= spec.width,
-                        "{label}: {text:?} needs {} DIP of {}",
-                        advance / scale,
-                        spec.width / scale
-                    );
+                    let spec = layout.label_spec(rect, scale);
+                    for (family, advance) in label_advances(&mut fonts, text, scale) {
+                        assert!(
+                            advance > 0.0 && advance <= spec.width,
+                            "{label}: {text:?} in {family} needs {} DIP of {}",
+                            advance / scale,
+                            spec.width / scale
+                        );
+                        measured += 1;
+                    }
                     let center = PhysicalPosition::new(
                         f64::from(rect.x + rect.width / 2.0),
                         f64::from(rect.y + rect.height / 2.0),
@@ -578,6 +613,7 @@ mod tests {
             }
         }
         assert_eq!(tiers_seen, [true, true], "both tiers are exercised");
+        assert!(measured > 0, "no UI font candidate is installed");
     }
 
     /// The tier each real view takes: the minimum Split and the 330-DIP Split are compact; the

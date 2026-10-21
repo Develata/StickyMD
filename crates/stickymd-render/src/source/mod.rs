@@ -9,7 +9,7 @@ mod projection;
 mod rendering;
 mod scrollbar;
 
-pub use fonts::{FontSelection, ScriptClass, ScriptRun, segment_script_runs};
+pub use fonts::{CJK_CANDIDATES, FontSelection, ScriptClass, ScriptRun, segment_script_runs};
 pub use projection::{
     EditorRect, PreeditVisual, SourceInitializationMilestone, SourceProjection,
     SourceProjectionError,

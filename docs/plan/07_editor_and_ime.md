@@ -130,7 +130,7 @@
 - 面板分两档：完整档在 query 旁排 `Aa < > x`；完整档留给 query 文字的宽度不足 40 DIP 时（如 220×120
   最小窗口或 330 DIP 宽窗口的 Split）改用紧凑档，收紧边距、间距与文字内距，只保留 `Aa` 与 `x`，
   replacement 行保留替换与全部替换，省略上一个/下一个按钮。导航的合同是 Enter/Shift+Enter、Up/Down
-  与 F3/Shift+F3，按钮只是它的投影。任一档下每个输入框至少留 20 DIP 文字宽度，按钮标签完整落在按钮内；
+  与 F3/Shift+F3，按钮只是它的投影。任一档下每个输入框至少留 20 DIP 文字宽度，按钮标签在任一 CJK/UI 字体候选下都完整落在按钮内；
   被省略的按钮既不绘制也不响应按下。（USER 决定，2026-10-21。）
 - 鼠标点击输入框必须按该字段的真实 cluster geometry 设置 cursor；找不到安全 cluster boundary 时
   取最近合法 UTF-8 boundary。selection 当前不属于 v1 输入框合同，不得为此引入第二套编辑器。
