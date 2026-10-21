@@ -85,8 +85,13 @@ impl Workshop {
             armed: true,
         };
         copy_directory(&self.template, &copy.path)?;
-        let (child, instance, startup_error) =
-            start(&self.job, &copy.path, fixture, &self.exe_sha256)?;
+        let (child, instance, startup_error) = start(
+            &self.job,
+            &copy.path,
+            fixture,
+            &self.exe_sha256,
+            exact_desktop::TIMEOUT,
+        )?;
         copy.armed = false;
         Ok(Launched {
             child,
@@ -113,13 +118,14 @@ impl Drop for Copy {
 
 /// Seeds the copy, checks its EXE and starts it in `job`. An error means the preparation
 /// failed and nothing runs. Once the candidate runs, a failure to initialize (no note and
-/// configuration within the layout timeout) is returned with the instance: it may be the
-/// product failing, which only the observer can record.
+/// configuration within `startup_timeout`, the layout timeout in a session) is returned
+/// with the instance: it may be the product failing, which only the observer can record.
 fn start(
     job: &Job,
     program: &Path,
     fixture: Fixture,
     expected_sha256: &str,
+    startup_timeout: Duration,
 ) -> Result<(ChildGuard, Instance, Option<String>), String> {
     fixture::seed(program, fixture)?;
     let executable = program.join("StickyMD.exe");
@@ -133,14 +139,18 @@ fn start(
         exe_sha256,
         pid: child.id(),
     };
-    let startup_error = wait_for_startup(&mut child, program).err();
+    let startup_error = wait_for_startup(&mut child, program, startup_timeout).err();
     Ok((child, instance, startup_error))
 }
 
 /// Waits until the started candidate has its note and configuration, as the exact harness
 /// does, but stops as soon as the process exits.
-fn wait_for_startup(child: &mut ChildGuard, program: &Path) -> Result<(), String> {
-    let deadline = Instant::now() + exact_desktop::TIMEOUT;
+fn wait_for_startup(
+    child: &mut ChildGuard,
+    program: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
     loop {
         if program.join("note/note.md").is_file() && program.join("note/config.toml").is_file() {
             return Ok(());
@@ -155,8 +165,7 @@ fn wait_for_startup(child: &mut ChildGuard, program: &Path) -> Result<(), String
         }
         if Instant::now() >= deadline {
             return Err(format!(
-                "StickyMD did not write its note and configuration within {:?}",
-                exact_desktop::TIMEOUT
+                "StickyMD did not write its note and configuration within {timeout:?}"
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -748,10 +757,13 @@ mod tests {
         )
         .unwrap();
         let digest = crate::qualification::receipt::sha256(&program.join("StickyMD.exe")).unwrap();
+        // Far beyond any start and exit on a loaded machine, so returning before it shows
+        // the wait ended when the process exited rather than at its deadline.
+        const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
         let job = Job::create(Descendants::BreakAway).unwrap();
         let started = std::time::Instant::now();
         let (mut child, instance, startup_error) =
-            super::start(&job, &program, Fixture::Blank, &digest).unwrap();
+            super::start(&job, &program, Fixture::Blank, &digest, STARTUP_TIMEOUT).unwrap();
         assert_eq!(
             (instance.exe_sha256.as_str(), instance.pid),
             (digest.as_str(), child.id())
@@ -759,7 +771,7 @@ mod tests {
         let error = startup_error.expect("the stand-in never initializes");
         assert!(error.contains("exited"), "{error}");
         assert!(
-            started.elapsed() < Duration::from_secs(10),
+            started.elapsed() < STARTUP_TIMEOUT,
             "waited for the full timeout"
         );
         assert!(!child.is_running().unwrap());
