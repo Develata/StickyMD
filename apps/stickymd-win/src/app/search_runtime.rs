@@ -2,7 +2,7 @@
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#source-find-replace
 
-use tiny_skia::{Paint, Pixmap, Rect, Transform};
+use tiny_skia::{Paint, Pixmap, PixmapPaint, Rect, Transform};
 use winit::dpi::PhysicalPosition;
 
 use crate::interaction::SearchField;
@@ -69,29 +69,32 @@ pub(super) fn search_field_display(
 /// widget (plan 07); a narrower pane gets the panel at its full width.
 const PANEL_MAX_WIDTH_DIP: f32 = 300.0;
 
-/// The panel's fill colours. The background lets the note show through it (about half
-/// transparent); fields and buttons stay nearly opaque so typed text reads clearly. They blend
-/// over the note in the frame, so the window's own opacity applies on top and does not change
-/// these ratios.
+/// The panel's one opacity (USER decision 2026-10-21): its surface — background, fields and
+/// buttons — is painted opaque into a layer and laid over the note at this opacity, so every part
+/// is equally transparent and parts differ only in colour; text and markers stay opaque on top.
+/// It blends over the note in the frame, so the window's own opacity applies on top of it.
+const PANEL_OPACITY: f32 = 0.4;
+
+/// The panel surface's colours, all opaque within the layer (`PANEL_OPACITY` applies to it whole).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PanelColors {
-    background: (u8, u8, u8, u8),
-    field: (u8, u8, u8, u8),
-    active: (u8, u8, u8, u8),
+    background: (u8, u8, u8),
+    field: (u8, u8, u8),
+    active: (u8, u8, u8),
 }
 
 fn panel_colors(dark: bool) -> PanelColors {
     if dark {
         PanelColors {
-            background: (48, 48, 45, 136),
-            field: (33, 33, 31, 224),
-            active: (74, 91, 112, 232),
+            background: (48, 48, 45),
+            field: (33, 33, 31),
+            active: (74, 91, 112),
         }
     } else {
         PanelColors {
-            background: (244, 241, 232, 136),
-            field: (255, 254, 249, 224),
-            active: (205, 220, 236, 232),
+            background: (244, 241, 232),
+            field: (255, 254, 249),
+            active: (205, 220, 236),
         }
     }
 }
@@ -222,45 +225,7 @@ pub(super) fn paint_search_overlay(
         return;
     }
     let Some(layout) = layout else { return };
-    let PanelColors {
-        background,
-        field,
-        active,
-    } = panel_colors(dark);
-    fill(pixmap, layout.popup, background);
-    fill(
-        pixmap,
-        layout.query,
-        if search.focused == SearchField::Query {
-            active
-        } else {
-            field
-        },
-    );
-    for rect in [
-        layout.case_toggle,
-        layout.previous,
-        layout.next,
-        layout.close,
-    ] {
-        fill(pixmap, rect, field);
-    }
-    if search.case_sensitive {
-        fill(pixmap, inset(layout.case_toggle, 5.0 * scale), active);
-    }
-    if search.replace_visible {
-        fill(
-            pixmap,
-            layout.replacement,
-            if search.focused == SearchField::Replacement {
-                active
-            } else {
-                field
-            },
-        );
-        fill(pixmap, layout.replace, field);
-        fill(pixmap, layout.replace_all, field);
-    }
+    paint_panel_surface(pixmap, layout, search, scale, dark);
     let (query_display, query_cursor) = search_field_display(search, SearchField::Query);
     let (replacement, replacement_cursor) = search_field_display(search, SearchField::Replacement);
     let source_theme = if dark {
@@ -393,6 +358,83 @@ fn paint_markers(
     }
 }
 
+/// Paints the panel surface opaque into a layer the panel's size and lays it over the frame at
+/// `PANEL_OPACITY`, so overlapping parts (a field on the background) do not stack their alpha.
+fn paint_panel_surface(
+    pixmap: &mut Pixmap,
+    layout: SearchLayout,
+    search: &crate::interaction::SearchSession,
+    scale: f32,
+    dark: bool,
+) {
+    let popup = layout.popup;
+    let (left, top) = (popup.x.floor(), popup.y.floor());
+    let width = (popup.x + popup.width - left).ceil().max(1.0) as u32;
+    let height = (popup.y + popup.height - top).ceil().max(1.0) as u32;
+    let Some(mut layer) = Pixmap::new(width, height) else {
+        return;
+    };
+    let at = |rect: SearchRect| SearchRect {
+        x: rect.x - left,
+        y: rect.y - top,
+        ..rect
+    };
+    let opaque = |(r, g, b): (u8, u8, u8)| (r, g, b, 255);
+    let PanelColors {
+        background,
+        field,
+        active,
+    } = panel_colors(dark);
+    let field_color = |which: SearchField| {
+        opaque(if search.focused == which {
+            active
+        } else {
+            field
+        })
+    };
+    fill(&mut layer, at(popup), opaque(background));
+    fill(
+        &mut layer,
+        at(layout.query),
+        field_color(SearchField::Query),
+    );
+    for rect in [
+        layout.case_toggle,
+        layout.previous,
+        layout.next,
+        layout.close,
+    ] {
+        fill(&mut layer, at(rect), opaque(field));
+    }
+    if search.case_sensitive {
+        fill(
+            &mut layer,
+            at(inset(layout.case_toggle, 5.0 * scale)),
+            opaque(active),
+        );
+    }
+    if search.replace_visible {
+        fill(
+            &mut layer,
+            at(layout.replacement),
+            field_color(SearchField::Replacement),
+        );
+        fill(&mut layer, at(layout.replace), opaque(field));
+        fill(&mut layer, at(layout.replace_all), opaque(field));
+    }
+    pixmap.draw_pixmap(
+        left as i32,
+        top as i32,
+        layer.as_ref(),
+        &PixmapPaint {
+            opacity: PANEL_OPACITY,
+            ..PixmapPaint::default()
+        },
+        Transform::identity(),
+        None,
+    );
+}
+
 fn fill(pixmap: &mut Pixmap, rect: SearchRect, color: (u8, u8, u8, u8)) {
     let Some(rect) = Rect::from_xywh(rect.x, rect.y, rect.width, rect.height) else {
         return;
@@ -498,19 +540,69 @@ mod tests {
         assert_eq!((layout.popup.x, layout.popup.width), (200.0, 300.0));
     }
 
-    /// The background is about half transparent; fields, buttons and the focused field are
-    /// nearly opaque and more opaque than it, in both themes.
+    /// The whole panel surface has one opacity: over a black frame, the background, an
+    /// unfocused field and the focused field each come out as their own colour times
+    /// `PANEL_OPACITY`, so a field on the background does not stack alpha; in both themes.
     #[test]
-    fn the_panel_is_half_transparent_with_readable_fields() {
+    fn the_panel_surface_has_one_fixed_opacity() {
+        use super::super::preview_runtime::PaneRect;
+        assert!((0.25..=0.6).contains(&PANEL_OPACITY), "{PANEL_OPACITY}");
+        let layout = SearchLayout::new(
+            PaneRect {
+                x: 0,
+                y: 34,
+                width: 500,
+                height: 646,
+            },
+            1.0,
+            true,
+        );
+        let expected = |channel: u8| (f32::from(channel) * PANEL_OPACITY).round() as i32;
+        let pixel = |pixmap: &Pixmap, rect: SearchRect, dx: f32| {
+            let color = pixmap
+                .pixel((rect.x + dx) as u32, (rect.y + rect.height * 0.5) as u32)
+                .unwrap();
+            [color.red(), color.green(), color.blue()].map(i32::from)
+        };
         for dark in [false, true] {
+            let mut search = crate::interaction::SearchSession::default();
+            search.open = true;
+            search.replace_visible = true;
+            search.focused = SearchField::Replacement;
+            let mut pixmap = Pixmap::new(520, 200).unwrap();
+            pixmap.fill(tiny_skia::Color::BLACK);
+            paint_search_overlay(&mut pixmap, &mut None, &search, Some(layout), 1.0, dark);
             let colors = panel_colors(dark);
-            let background = colors.background.3;
-            assert!(
-                (112..=144).contains(&background),
-                "dark {dark}: {background}"
-            );
-            for alpha in [colors.field.3, colors.active.3] {
-                assert!(alpha >= 208 && alpha > background, "dark {dark}: {alpha}");
+            // A point of the background between the query field and the panel's left edge.
+            let background = SearchRect {
+                x: layout.popup.x,
+                y: layout.query.y,
+                width: layout.query.x - layout.popup.x,
+                height: layout.query.height,
+            };
+            for (rect, dx, color, part) in [
+                (background, 1.0, colors.background, "background"),
+                (
+                    layout.query,
+                    layout.query.width * 0.5,
+                    colors.field,
+                    "field",
+                ),
+                (
+                    layout.replacement,
+                    layout.replacement.width * 0.5,
+                    colors.active,
+                    "focused field",
+                ),
+            ] {
+                let got = pixel(&pixmap, rect, dx);
+                let want = [color.0, color.1, color.2].map(expected);
+                for (g, w) in got.iter().zip(want) {
+                    assert!(
+                        (g - w).abs() <= 1,
+                        "dark {dark}: {part} {got:?} != {want:?}"
+                    );
+                }
             }
         }
     }

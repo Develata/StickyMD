@@ -91,12 +91,13 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
 
 ## 2026-10-21 Search panel as a top-right strip
 
-- Contract: `07_editor_and_ime.md#source-find-replace` (USER decision 2026-10-21: the panel is a narrow, half-transparent
-  strip at the Source pane's top-right, as VS Code's find widget); feature: 查找与替换.
+- Contract: `07_editor_and_ime.md#source-find-replace` (USER decision 2026-10-21: the panel is a narrow, translucent strip
+  at the Source pane's top-right, as VS Code's find widget, with one fixed opacity); feature: 查找与替换.
 - Expected: the panel is at most 300 DIP wide and right-aligned in the Source pane (the full pane width when the pane is
   narrower); in Split it sits left of the divider and meets neither the Source scrollbar gutter nor the sync button; its
-  background is about half transparent over the note, its fields and buttons nearly opaque, independent of the window
-  opacity; a press on it belongs to the panel (the native resize border and the opacity popup excepted). A press on a
+  whole surface (background, fields, buttons) is painted opaque into one layer laid over the note at a fixed 40%
+  opacity, so parts differ only in colour and focus changes no transparency, with text and markers opaque on top,
+  independent of the window opacity; a press on it belongs to the panel (the native resize border and the opacity popup excepted). A press on a
   field maps against the field as painted before it: an unfocused field from its start, a focused one scrolled to its
   cursor (`SourceProjection::ui_text_hit` against `paint_ui_text`'s layout; `stickymd-render`
   `an_unfocused_field_hit_reads_the_painted_layout` checks left-to-right and right-to-left text, where a logical cursor
@@ -107,9 +108,11 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
 - Automated entry: `cargo test -p stickymd-win --locked -- app::search_runtime` and `cargo test -p stickymd-render --lib
   --locked -- an_unfocused_field_hit_reads_the_painted_layout a_focused_right_to_left_field_reveals_a_caret_left_of_it`
   (`the_panel_is_a_narrow_strip_at_the_source_pane_top_right` over Source and Split at four DPIs and four sizes including
-  the 220x120 minimum; `the_panel_is_half_transparent_with_readable_fields`). Status: `AUTOMATED PASS`.
-- Limits: legibility of the note through the panel, and of the panel's text over the note, is a visual check, `NOT
-  TESTED`. Pre-existing and unchanged here: in the minimum Split (Source pane about 89 DIP wide after its gutter) the
+  the 220x120 minimum; `the_panel_surface_has_one_fixed_opacity`, which reads the background, a field and the focused
+  field over a black frame in both themes as their colour times the one opacity). Status: `AUTOMATED PASS`.
+- Desktop check: the USER tuned the opacity on the Release build of the working tree in an isolated program directory
+  (about 53%/88% background/fields was far too opaque; one fixed opacity requested; 40% accepted, 2026-10-21). Dark
+  theme and a 40% window opacity were not reported separately. Pre-existing and unchanged here: in the minimum Split (Source pane about 89 DIP wide after its gutter) the
   compact field rects stay inside the panel but leave about 3 DIP for query text; a compact layout for that width is
   separate work.
 
