@@ -99,6 +99,16 @@
   O(n + output bytes)，不得对每个 match 重复 `String::replace_range`。
 - replace 成功后正常触发 dirty/autosave/Preview；零匹配是完整 no-op。IME preedit 期间禁止替换，
   打开控件不得隐式提交、取消或污染 composition。
+- Search 属于 Source pane。切到没有 Source pane 的视图（Preview）时，打开的 Search 被停放：保留
+  query、replacement、大小写开关、replacement row、当前字段、各字段 cursor 与 active match 序号，
+  释放 match projection；停放期间它不绘制、不接收键盘/IME/鼠标、不观察 canonical mutation，Esc
+  顺序与自动收起判定都按 Search 未打开处理。切回 Source/Split 时原样恢复并按当前 generation 重新
+  扫描（文档未变时 active match 不变），Source selection 与打开、导航时一样跟随 active match；Source
+  与 Split 之间切换保留打开的 Search。Search 字段 IME composition 进行中时拒绝切到 Preview 并给出诊断，与打开查找
+  时的拒绝一致。Preview 中 `Ctrl+F`/`Ctrl+H` 先切回 Source：有停放的 Search 时原样恢复（`Ctrl+H`
+  再展开或聚焦 replacement row），不按选区改写 query；切换未发生时不打开 Search。
+- 视图切换 `Ctrl+1/2/3` 与键盘内容缩放是窗口命令，与保存/导出一样不被面板吞掉；Search 字段
+  composition 期间它们与其它按键一样留给 composition。
 
 输入、caret 与导航合同：
 

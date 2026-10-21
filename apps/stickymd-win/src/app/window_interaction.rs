@@ -329,8 +329,8 @@ impl StickyApp {
 /// Whether the IME is on: only in a focused window that accepts input, and only for a receiver
 /// that composes, taken in `handle_key`'s order: the edited opacity field (numeric, no IME), then
 /// a drawn Search (composes, even after a press on Preview), then focused Preview (no IME), then
-/// the note (composes). A Search left open in Preview mode is not drawn, so a composition there
-/// would show nowhere: it gets no IME.
+/// the note (composes). Preview parks an open Search (it is closed there, `park_search`); a
+/// Search that is open without a layout would not be drawn, so it still gets no IME.
 fn ime_allowed(
     window_takes_input: bool,
     field_edited: bool,

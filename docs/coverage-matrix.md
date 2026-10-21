@@ -467,3 +467,8 @@ phase-05 的 2026-10-17 补充。
 核对：第二次按下后在滑块原位置按下不改变 alpha 与已提交透明度，含输入框已键入数字的情形，且关闭到托盘、正文保存后正文不变；按下为发往真实窗口的合成鼠标消息，
 输入框情形中的数字与其后的按钮按下为物理输入。把调用点改回 `activate_control` 时该检查失败。
 exact 候选（G4、G5）仍只打开弹层。
+
+2026-10-20 USER 决定（Search 与视图切换）：Plan 07 `source-find-replace` → [phase-03](acceptance-cases/phase-03.md) 的 2026-10-20 补充。视图切换对 Search 的取舍由纯函数
+`app/search_controller.rs::search_on_view_change` 判定，`app/preview_runtime.rs::apply_view_mode` 在任何副作用之前拒绝、在新视图提交之后经
+`park_search`/`resume_search` 执行；停放值 `interaction/search.rs::ParkedSearch` 由 `SearchSession::{park, resume}` 产生与消费。Preview 中 Ctrl+F/H 的恢复与切换失败
+时不打开在 `open_search`；视图与缩放快捷键在 `app/input.rs::handle_key` 中先于 Search 判定（`window_key`，Search 字段 composition 期间不判定），恢复时选区跟随 active match（`resume_search`）。`StickyApp` 接线不由测试执行。
