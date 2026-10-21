@@ -466,8 +466,10 @@ mod tests {
     /// three Latin ones, at the 13-DIP UI font.
     const FIELD_TEXT_MIN_DIP: f32 = 20.0;
 
-    /// The real Source and Split views at four window sizes in DIP, the 220x120 minimum among
-    /// them, and four DPIs: (label, view, scale).
+    /// The real Source and Split views at six window sizes in DIP, and four DPIs: (label, view,
+    /// scale). Among the sizes are the 220x120 minimum and, about the compact threshold, a
+    /// 396-DIP Split whose Source pane is just below 178 DIP and a 398-DIP one just above it,
+    /// where the full tier's buttons and label room are narrowest.
     fn views() -> Vec<(String, ViewGeometry, f32)> {
         let mut views = Vec::new();
         for scale in [1.0_f32, 1.25, 1.5, 2.0] {
@@ -475,6 +477,8 @@ mod tests {
                 (520.0, 680.0),
                 (220.0, 120.0),
                 (330.0, 360.0),
+                (396.0, 360.0),
+                (398.0, 360.0),
                 (1200.0, 900.0),
             ] {
                 let size = winit::dpi::PhysicalSize::new(
@@ -616,15 +620,17 @@ mod tests {
         assert!(measured > 0, "no UI font candidate is installed");
     }
 
-    /// The tier each real view takes: the minimum Split and the 330-DIP Split are compact; the
-    /// default 520-DIP Split and every Source view at these sizes keep the full tier.
+    /// The tier each real view takes: the minimum, 330-DIP and 396-DIP Splits are compact; the
+    /// 398-DIP and default 520-DIP Splits and every Source view at these sizes keep the full tier.
     #[test]
     fn narrow_source_panes_take_the_compact_tier() {
         for (label, view, scale) in views() {
             let compact = SearchLayout::new(view.source.unwrap(), scale, true)
                 .previous
                 .is_none();
-            let expected = label.starts_with("Split 220x") || label.starts_with("Split 330x");
+            let expected = ["Split 220x", "Split 330x", "Split 396x"]
+                .iter()
+                .any(|prefix| label.starts_with(prefix));
             assert_eq!(compact, expected, "{label}");
         }
     }

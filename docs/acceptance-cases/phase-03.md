@@ -106,7 +106,7 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   and its press mapping back to the cursor at the end, start and middle).
 - Automated entry: `cargo test -p stickymd-win --locked -- app::search_runtime` and `cargo test -p stickymd-render --lib
   --locked -- an_unfocused_field_hit_reads_the_painted_layout a_focused_right_to_left_field_reveals_a_caret_left_of_it`
-  (`the_panel_is_a_narrow_strip_at_the_source_pane_top_right` over Source and Split at four DPIs and four sizes including
+  (`the_panel_is_a_narrow_strip_at_the_source_pane_top_right` over Source and Split at four DPIs and six sizes including
   the 220x120 minimum; `the_panel_is_half_transparent_with_readable_fields`). Status: `AUTOMATED PASS`.
 - Limits: legibility of the note through the panel, and of the panel's text over the note, is a visual check, `NOT
   TESTED`. The narrow-pane gap first noted here (about 3 DIP of query text in the minimum Split) is closed by the
@@ -117,21 +117,23 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
 - Contract: `07_editor_and_ime.md#source-find-replace` (USER decision 2026-10-21: a narrow pane drops the previous/next
   buttons, whose keys remain); feature: 查找与替换.
 - Expected: when the full tier would leave the query less than 40 DIP of text, the panel takes the compact tier:
-  tighter margins, gaps, text insets and label padding, `Aa` and `x` beside the query, Replace and All beside the replacement, no `< >`
-  buttons, painted or hit. Among the tested views the 220x120 and 330x360 Splits are compact; the 520x680 and 1200x900
-  Splits and every Source view keep the full tier. In every view each field leaves at least 20 DIP for its text (the
+  tighter margins, gaps, text insets and label padding, `Aa` and `x` beside the query, Replace and All beside the
+  replacement, no `< >` buttons, painted or hit. Among the tested views the 220x120, 330x360 and 396x360 Splits are
+  compact; the 398x360 Split (Source pane at the 178-DIP threshold, full-tier label room 17 DIP), the 520x680 and
+  1200x900 Splits and every Source view keep the full tier. In every view each field leaves at least 20 DIP for its text (the
   minimum Split: query about 27 DIP, replacement about 21, against 3 and 13 before), each label as Cosmic Text shapes
   it in every installed UI font candidate (FangSong and the Microsoft YaHei fallback, where `Aa` is 16.3 DIP) fits inside
   its button's padding, fields and buttons stay inside the panel without overlapping, and a press on a
   button's center reaches it. Navigation stays on Enter/Shift+Enter, Up/Down and F3/Shift+F3.
 - Automated entry: `cargo test -p stickymd-win --locked -- app::search_runtime`
   (`every_view_leaves_readable_fields_and_whole_button_labels` and `narrow_source_panes_take_the_compact_tier` over
-  the real `preview_runtime::geometry` Source and Split panes at four sizes and four DPIs, both replace states; the
+  the real `preview_runtime::geometry` Source and Split panes at six sizes and four DPIs, both replace states; the
   hand-built 109-DIP pane test is folded into them). The `app` module is `cfg(windows)`: run on Windows, where the
   filter lists four tests. Status: `AUTOMATED PASS`.
-- Limits: how the compact panel reads at the minimum size is a visual check, `NOT TESTED`. Label fit is checked only in
-  the candidates installed on the test machine (`仿宋_GB2312` was not). Source panes narrower than the 220-DIP minimum
-  window's are outside this check.
+- Limits: how the compact panel reads at the minimum size is a visual check, `NOT TESTED`. Label fit compares each
+  label's shaped advance with its label room, not its rasterized ink against the pixel clip, and only in the candidates
+  installed on the test machine (`仿宋_GB2312` was not); a machine with no candidate installed paints with Cosmic Text's
+  own fallback, which is not measured. Source panes narrower than the 220-DIP minimum window's are outside this check.
 
 ## Source buffer initialization
 
