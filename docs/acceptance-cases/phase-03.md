@@ -95,12 +95,17 @@ from the [release checklist](../release-checklist.md).
 - Expected: Replace Current replaces only when the Source selection is exactly the active match. Otherwise the first
   press selects and reveals the active match and changes nothing (text, generation, dirty and Undo unchanged); the next
   press replaces it. Navigation, opening Search, the case toggle and a replacement (Ctrl+Enter or the Replace button)
-  select the active match, so repeated Ctrl+Enter or Replace clicks replace one match per press as before. Replace All
-  is unchanged.
+  select the active match, so repeated Ctrl+Enter or Replace clicks replace one match per press as before. After a
+  replacement (or a replacement equal to the match, which changes nothing) the next active match is the first one
+  starting at or after the end of the inserted text, wrapping to the first: replacing `a` by `aa` in `a b a` moves on
+  to the second `a` instead of growing the first. Replace All is unchanged.
 - Failure signals: a replacement of text that was not selected; a first press after a reload that changes the
   document; a normal replace sequence, by keyboard or by mouse, needing two presses per match.
-- Automated entry: `app::search_controller::tests::replace_current_replaces_only_the_selected_active_match`, in the
-  Rust-owned render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1); the command boundary's
+- Automated entry: `app::search_controller::tests::{replace_current_replaces_only_the_selected_active_match,
+  consecutive_replacements_move_past_text_that_contains_the_query}` (real replacements through `EditorCoordinator`,
+  including a no-op and a normalized `\r\n`) and
+  `interaction::search::tests::the_match_after_a_position_becomes_active_and_wraps_to_the_first`, in the Rust-owned
+  render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1); the command boundary's
   `literal_range_matches` check still rejects a range that is not a match. Status: `AUTOMATED PASS`.
 - Limits: `replace_current_search` applying the decision and selecting the next active match after a replacement, and
   the selection reaching that point unchanged after a reload, conversion or click, are `StickyApp` wiring that these

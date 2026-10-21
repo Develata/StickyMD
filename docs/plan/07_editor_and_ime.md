@@ -99,7 +99,9 @@
   O(n + output bytes)，不得对每个 match 重复 `String::replace_range`。
 - Replace Current 只替换 Source 当前选中的 active match。外部重载、工具栏转换或在正文中点击后，
   选区可能不再是 active match；此时第一次 Replace Current 只选中并显示 active match，不修改文档，
-  再次执行才替换。
+  再次执行才替换。替换并重新扫描后，active match 取插入内容末尾（edit 留下的 caret；replacement 与
+  原文相同的 no-op 取原 match 末尾）处或之后起始的第一个 match，没有则回绕到第一个，并选中它；
+  replacement 含 query 时也不会在原处反复替换。
 - replace 成功后正常触发 dirty/autosave/Preview；零匹配是完整 no-op。IME preedit 期间禁止替换，
   打开控件不得隐式提交、取消或污染 composition。
 - Search 属于 Source pane。切到没有 Source pane 的视图（Preview）时，打开的 Search 被停放：保留

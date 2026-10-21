@@ -10,6 +10,7 @@ use winit::keyboard::KeyCode;
 use super::StickyApp;
 use super::search_runtime::{SearchHit, SearchLayout, search_field_display};
 use crate::config::ViewMode;
+use crate::flow::AppEffect;
 use crate::instruction::{AppIntent, PreviewIntent};
 use crate::interaction::SearchField;
 
@@ -332,14 +333,28 @@ impl StickyApp {
             }
             ReplaceCurrentAction::Replace(range) => range,
         };
-        self.dispatch(AppIntent::ReplaceLiteralMatch {
+        let result = self.coordinator.dispatch(AppIntent::ReplaceLiteralMatch {
             expected_generation: generation,
-            range,
+            range: range.clone(),
             query: self.search.query.clone(),
             replacement: self.search.replacement.clone(),
             options: self.search.options(),
             timestamp_ms: self.timestamp_ms(),
         });
+        match result {
+            Ok(effect) => {
+                let end = replacement_end(&effect, &range);
+                // Applying the change rescans Search against the new text.
+                self.apply_effect(effect);
+                // The next match is searched for after the inserted text, so a replacement that
+                // contains the query is never replaced again in place.
+                self.search.activate_from(end);
+            }
+            Err(error) => {
+                self.diagnostic = Some(error.to_string());
+                self.request_redraw();
+            }
+        }
         // The next active match is selected for the keyboard and the Replace button alike, so
         // each further press replaces one match.
         self.update_search_selection();
@@ -434,6 +449,15 @@ fn replace_current_action(
     }
 }
 
+/// Where the text that replaced `matched` ends: at the caret the edit leaves after it, or, when
+/// the replacement equals the match and nothing changed, at the match's end.
+fn replacement_end(effect: &AppEffect, matched: &Range<usize>) -> usize {
+    match effect {
+        AppEffect::DocumentChanged { selection, .. } => selection.normalized_range().end,
+        _ => matched.end,
+    }
+}
+
 fn replacement_allowed(search: &crate::interaction::SearchSession) -> bool {
     search.replace_visible && !search.is_composing()
 }
@@ -522,6 +546,84 @@ mod tests {
                 "{selected:?}"
             );
         }
+    }
+
+    #[test]
+    fn consecutive_replacements_move_past_text_that_contains_the_query() {
+        use stickymd_core::{DocumentState, LineEnding};
+
+        use crate::flow::{ClipboardError, ClipboardPort, EditorCoordinator};
+        use crate::instruction::LiteralSearchOptions;
+
+        struct NoClipboard;
+        impl ClipboardPort for NoClipboard {
+            fn read_text(&mut self) -> Result<Option<String>, ClipboardError> {
+                Ok(None)
+            }
+            fn write_text(&mut self, _text: &str) -> Result<(), ClipboardError> {
+                Ok(())
+            }
+        }
+
+        // One Replace Current press, as `replace_current_search` performs it.
+        fn press(
+            coordinator: &mut EditorCoordinator<NoClipboard>,
+            search: &mut crate::interaction::SearchSession,
+            replacement: &str,
+        ) -> String {
+            let range = search.active_range().unwrap();
+            let effect = coordinator
+                .dispatch(AppIntent::ReplaceLiteralMatch {
+                    expected_generation: coordinator.view().generation,
+                    range: range.clone(),
+                    query: search.query.clone(),
+                    replacement: replacement.into(),
+                    options: LiteralSearchOptions::default(),
+                    timestamp_ms: 0,
+                })
+                .unwrap();
+            let end = replacement_end(&effect, &range);
+            let view = coordinator.view();
+            search.refresh(view.text, view.generation);
+            search.activate_from(end);
+            view.text.to_owned()
+        }
+
+        let document = DocumentState::loaded("a b a", LineEnding::Lf, None);
+        let mut coordinator = EditorCoordinator::new(document, NoClipboard);
+        let mut search = crate::interaction::SearchSession::default();
+        let view = coordinator.view();
+        search.open(true, Some("a"), view.text, view.generation);
+
+        // The inserted `aa` contains the query; the next press reaches the second original `a`.
+        assert_eq!(press(&mut coordinator, &mut search, "aa"), "aa b a");
+        assert_eq!(search.active_range(), Some(5..6));
+        assert_eq!(press(&mut coordinator, &mut search, "aa"), "aa b aa");
+        // Past the last match, navigation wraps to the first, as Enter does.
+        assert_eq!(search.active_range(), Some(0..1));
+
+        // A replacement equal to the match changes nothing and still moves on.
+        let mut search = crate::interaction::SearchSession::default();
+        let document = DocumentState::loaded("a a", LineEnding::Lf, None);
+        let mut coordinator = EditorCoordinator::new(document, NoClipboard);
+        let view = coordinator.view();
+        search.open(true, Some("a"), view.text, view.generation);
+        let generation = coordinator.view().generation;
+        assert_eq!(press(&mut coordinator, &mut search, "a"), "a a");
+        assert_eq!(coordinator.view().generation, generation);
+        assert_eq!(search.active_range(), Some(2..3));
+
+        // Newlines in the replacement are normalized, so the inserted text is shorter than the
+        // replacement typed: the next match starts right where the caret is (3), not at 4.
+        let mut search = crate::interaction::SearchSession::default();
+        let document = DocumentState::loaded("aaa", LineEnding::Lf, None);
+        let mut coordinator = EditorCoordinator::new(document, NoClipboard);
+        let view = coordinator.view();
+        search.open(true, Some("a"), view.text, view.generation);
+        let replacement = "x\r\ny";
+        assert_eq!(replacement.len(), 4);
+        assert_eq!(press(&mut coordinator, &mut search, replacement), "x\nyaa");
+        assert_eq!(search.active_range(), Some(3..4));
     }
 
     #[test]
