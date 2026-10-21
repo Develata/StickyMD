@@ -77,7 +77,8 @@ from the [release checklist](../release-checklist.md).
   Status: `AUTOMATED PASS`.
 - Limits: the `StickyApp` wiring (`apply_view_mode` deciding before any side effect and applying after the view is
   committed, the selection following the active match on resume, the two `open_search` guards, the key order) is not
-  executed by these tests. Desktop steps, `NOT TESTED`: with Search open and the replacement row expanded, toolbar
+  executed by these tests. Desktop steps, `MANUAL PASS` 2026-10-21 (USER, Release build of `1965c10` in an
+  isolated program directory, all five groups below; T4 with Microsoft Pinyin and WeType): with Search open and the replacement row expanded, toolbar
   Preview then Source, then Ctrl+3 / Ctrl+1 and Ctrl+3 / Ctrl+F and Ctrl+3 / Ctrl+H; in Preview press Esc, type, let
   the window lose focus for 700 ms; with `a X a` and the second `a` active, park, change the file on disk to `a a X`,
   return and press Ctrl+Enter; start a Microsoft Pinyin and a WeType composition in the query field and press
