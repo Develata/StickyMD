@@ -65,6 +65,37 @@ pub(super) fn search_field_display(
     (display, cursor)
 }
 
+/// The panel's widest extent: a narrow strip at the Source pane's top-right, as VS Code's find
+/// widget (plan 07); a narrower pane gets the panel at its full width.
+const PANEL_MAX_WIDTH_DIP: f32 = 300.0;
+
+/// The panel's fill colours. The background lets the note show through it (about half
+/// transparent); fields and buttons stay nearly opaque so typed text reads clearly. They blend
+/// over the note in the frame, so the window's own opacity applies on top and does not change
+/// these ratios.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PanelColors {
+    background: (u8, u8, u8, u8),
+    field: (u8, u8, u8, u8),
+    active: (u8, u8, u8, u8),
+}
+
+fn panel_colors(dark: bool) -> PanelColors {
+    if dark {
+        PanelColors {
+            background: (48, 48, 45, 136),
+            field: (33, 33, 31, 224),
+            active: (74, 91, 112, 232),
+        }
+    } else {
+        PanelColors {
+            background: (244, 241, 232, 136),
+            field: (255, 254, 249, 224),
+            active: (205, 220, 236, 232),
+        }
+    }
+}
+
 impl SearchLayout {
     pub(super) fn new(
         pane: super::preview_runtime::PaneRect,
@@ -76,10 +107,11 @@ impl SearchLayout {
         let row = 28.0 * scale;
         let gap = 4.0 * scale;
         let popup_height = margin * 2.0 + row + if replace_visible { row + gap } else { 0.0 };
+        let popup_width = (pane.width as f32).min(PANEL_MAX_WIDTH_DIP * scale);
         let popup = SearchRect {
-            x: pane.x as f32,
+            x: pane.x as f32 + pane.width as f32 - popup_width,
             y: pane.y as f32,
-            width: pane.width as f32,
+            width: popup_width,
             height: popup_height,
         };
         let inner_width = (popup.width - margin * 2.0).max(1.0);
@@ -190,21 +222,11 @@ pub(super) fn paint_search_overlay(
         return;
     }
     let Some(layout) = layout else { return };
-    let background = if dark {
-        (48, 48, 45, 248)
-    } else {
-        (244, 241, 232, 248)
-    };
-    let field = if dark {
-        (33, 33, 31, 255)
-    } else {
-        (255, 254, 249, 255)
-    };
-    let active = if dark {
-        (74, 91, 112, 255)
-    } else {
-        (205, 220, 236, 255)
-    };
+    let PanelColors {
+        background,
+        field,
+        active,
+    } = panel_colors(dark);
     fill(pixmap, layout.popup, background);
     fill(
         pixmap,
@@ -410,6 +432,86 @@ mod tests {
             assert!(rect.y >= layout.popup.y);
             assert!(rect.x + rect.width <= layout.popup.x + layout.popup.width + 0.01);
             assert!(rect.y + rect.height <= layout.popup.y + layout.popup.height + 0.01);
+        }
+    }
+
+    /// Plan 07: the panel is a strip at the Source pane's top-right, at most 300 DIP wide and
+    /// the pane's full width when the pane is narrower; in every view, size and DPI it stays
+    /// inside the Source pane, so it never meets the Source scrollbar gutter or the Split sync
+    /// button on the divider.
+    #[test]
+    fn the_panel_is_a_narrow_strip_at_the_source_pane_top_right() {
+        use super::super::controls::split_sync_rect;
+        use super::super::preview_runtime::geometry;
+        use crate::config::ViewMode;
+        use winit::dpi::PhysicalSize;
+        for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+            for (width, height) in [
+                (520.0, 680.0),
+                (220.0, 120.0),
+                (330.0, 360.0),
+                (1200.0, 900.0),
+            ] {
+                let size = PhysicalSize::new(
+                    (width * scale).round() as u32,
+                    (height * scale).round() as u32,
+                );
+                for mode in [ViewMode::Source, ViewMode::Split] {
+                    let view = geometry(mode, size, scale);
+                    let pane = view.source.unwrap();
+                    let label = format!("{mode:?} {size:?} at {scale}");
+                    for replace in [false, true] {
+                        let layout = SearchLayout::new(pane, scale, replace);
+                        let popup = layout.popup;
+                        let (left, right) = (pane.x as f32, (pane.x + pane.width) as f32);
+                        assert!(
+                            (popup.x + popup.width - right).abs() < 0.01,
+                            "{label}: right edge"
+                        );
+                        assert!(popup.x >= left - 0.01, "{label}: left edge");
+                        let expected = (pane.width as f32).min(PANEL_MAX_WIDTH_DIP * scale);
+                        assert!((popup.width - expected).abs() < 0.01, "{label}: width");
+                        assert_eq!(popup.y, pane.y as f32, "{label}: top");
+                        if let Some(divider) = view.divider_x {
+                            let sync =
+                                split_sync_rect(divider, view.toolbar_height, f64::from(scale));
+                            assert!(
+                                f64::from(popup.x + popup.width) <= sync.x,
+                                "{label}: the panel meets the sync button {sync:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        // A wide pane leaves the note's left part uncovered.
+        let layout = SearchLayout::new(
+            super::super::preview_runtime::PaneRect {
+                x: 0,
+                y: 34,
+                width: 500,
+                height: 646,
+            },
+            1.0,
+            true,
+        );
+        assert_eq!((layout.popup.x, layout.popup.width), (200.0, 300.0));
+    }
+
+    /// The background is about half transparent; fields, buttons and the focused field are
+    /// nearly opaque and more opaque than it, in both themes.
+    #[test]
+    fn the_panel_is_half_transparent_with_readable_fields() {
+        for dark in [false, true] {
+            let colors = panel_colors(dark);
+            let background = colors.background.3;
+            assert!(
+                (112..=144).contains(&background),
+                "dark {dark}: {background}"
+            );
+            for alpha in [colors.field.3, colors.active.3] {
+                assert!(alpha >= 208 && alpha > background, "dark {dark}: {alpha}");
+            }
         }
     }
 

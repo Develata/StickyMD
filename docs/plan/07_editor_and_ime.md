@@ -121,6 +121,11 @@
 - 输入框 paint、mouse hit、caret 和 `set_ime_cursor_area` 必须来自同一次 Cosmic Text 单行 layout。
   不得用固定 x、文本尾部或源码 editor caret 代替查找框 caret。面板打开时源码原生 caret 停止闪烁/
   绘制；当前字段绘制自己的 caret，并在内容过宽时只做水平 viewport 偏移与裁剪，保证 caret 可见。
+- 面板是 Source pane 右上角的窄条（同 VS Code 查找框）：宽度上限 300 DIP，pane 更窄时占满 pane 宽度；
+  Split 中位于 Source pane（分隔线左侧）的右上角，不越过 Source 滚动条 gutter 与分隔线上的同步按钮。
+  面板背景约半透明、输入框与按钮接近不透明以保证查询文字可读；透明度相对正文、与窗口透明度无关。
+  面板覆盖处的按下归面板（被覆盖的正文可见但不可点），窗口原生 resize 边框与更高层的透明度弹层除外。
+  （USER 决定，2026-10-21。）
 - 鼠标点击输入框必须按该字段的真实 cluster geometry 设置 cursor；找不到安全 cluster boundary 时
   取最近合法 UTF-8 boundary。selection 当前不属于 v1 输入框合同，不得为此引入第二套编辑器。
 - 真实 Microsoft Pinyin / WeChat Input Method 的 composition、commit、cancel、Undo、selection replace、

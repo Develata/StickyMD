@@ -280,15 +280,23 @@ impl StickyApp {
     }
 
     fn focus_search_field_at_pointer(&mut self, field: SearchField, layout: SearchLayout) {
+        // The press lands on the field as it was painted before it: from the start when it was
+        // not focused, scrolled to its cursor when it was.
+        let was_focused = self.search.focused == field;
+        let (display, cursor) = search_field_display(&self.search, field);
         self.search.focused = field;
         let scale = self
             .window
             .as_ref()
             .map_or(1.0, |window| window.scale_factor() as f32);
-        let (display, cursor) = search_field_display(&self.search, field);
         let spec = layout.field_spec(field, scale);
+        let x = self.cursor_position.x as f32;
         let hit = self.projection.as_mut().and_then(|projection| {
-            projection.ui_text_field_hit(&display, cursor, spec, self.cursor_position.x as f32)
+            if was_focused {
+                projection.ui_text_field_hit(&display, cursor, spec, x)
+            } else {
+                projection.ui_text_hit(&display, spec, x)
+            }
         });
         if let Some(hit) = hit {
             let committed_len = match field {
