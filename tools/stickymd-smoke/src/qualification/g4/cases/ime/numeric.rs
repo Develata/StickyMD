@@ -36,7 +36,7 @@ pub(super) fn run(
             window::focus_source_editor(hwnd)?;
             window::press_document_end(hwnd)?;
             if owner == "search" {
-                window::press_find(hwnd)?;
+                open_empty_search(hwnd)?;
             } else if owner == "preview" {
                 window::press_preview_shortcut(hwnd)?;
                 wait_for_config(program, "view_mode = \"preview\"")?;
@@ -123,6 +123,36 @@ fn direct_commit(hwnd: WindowHandle) -> Result<(), String> {
     commit_first_candidate(hwnd)
 }
 
+fn open_empty_search(hwnd: WindowHandle) -> Result<(), String> {
+    window::press_find(hwnd)?;
+    // Closing Search deliberately retains its query. These fixtures use short
+    // queries; move beyond their end and erase them with real field keystrokes.
+    for _ in 0..64 {
+        window::press_arrow_right(hwnd)?;
+    }
+    for _ in 0..64 {
+        window::press_backspace(hwnd)?;
+    }
+    window::press_find(hwnd)?;
+    window::focus_source_editor(hwnd)?;
+    window::press_document_end(hwnd)?;
+    // Negative control: opening this query must not select an existing match.
+    // Otherwise copying a stale Source selection could pass even if no new IME
+    // input reached Search. Close before copying so Search cannot consume Ctrl+C.
+    window::press_find(hwnd)?;
+    window::press_find(hwnd)?;
+    const SENTINEL: &str = "NUMERIC_NO_SELECTED_MATCH";
+    window::set_clipboard_text(SENTINEL)?;
+    window::press_copy(hwnd)?;
+    thread::sleep(IME_COMMIT_SETTLE);
+    if window::clipboard_text()?.is_some_and(|text| !text.is_empty() && text != SENTINEL) {
+        return Err(
+            "numeric Search fixture already selects a match before its IME witness".to_owned(),
+        );
+    }
+    window::press_find(hwnd)
+}
+
 fn copy_is(hwnd: WindowHandle, expected: &str) -> Result<(), String> {
     window::clear_clipboard()?;
     window::press_copy(hwnd)?;
@@ -147,7 +177,7 @@ fn composition_refuses_focus(
         window::focus_source_editor(hwnd)?;
         window::press_document_end(hwnd)?;
         if owner == "search" {
-            window::press_find(hwnd)?;
+            open_empty_search(hwnd)?;
         }
         begin_preedit(program, hwnd, baseline, "zhongguo", ime)?;
         opacity::open(hwnd)?;
