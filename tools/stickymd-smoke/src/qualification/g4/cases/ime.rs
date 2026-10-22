@@ -507,6 +507,17 @@ fn runtime_states_accept_real_ime(
         crate::window_control::press_undo(window)?;
         wait_note(program, |text| text == BASELINE)?;
         ime.record("ime-commit-undo", &[("edge", label)]);
+
+        begin_preedit(program, window, BASELINE, "nihao", ime)?;
+        crate::window_control::press_escape(window)?;
+        thread::sleep(AUTOSAVE_OBSERVATION);
+        assert_note(program, BASELINE, "docked Esc committed the preedit")?;
+        if title_is_dirty(&crate::window_control::title(window)?) {
+            return Err(format!("{label}-dock Esc left the note dirty"));
+        }
+        super::dock::assert_edge(window, edge, false, "IME Esc must not collapse")?;
+        commit_and_undo(program, window, BASELINE, "shijie", ime, label)?;
+        ime.record("ime-escape-keeps-dock", &[("edge", label)]);
     }
 
     crate::window_control::move_to_primary_floating(window)?;

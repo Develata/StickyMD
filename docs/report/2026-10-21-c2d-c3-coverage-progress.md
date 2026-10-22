@@ -239,3 +239,15 @@ close the remaining C2d or C3 tasks.
 - `58-phase00-tray-module-check` caught an injection API name in a Search test
   comment. The comment now describes input insertion without naming the API;
   the governance prohibition itself is unchanged.
+
+- `59-tray-reveal-restoration` passed all 19 declared G4-01 labels on the frozen
+  b40bb0d Release EXE, including native Pin, physical Alt+F4 and the read-only Quit
+  failure/retry. `60-ime-routing-unit-checks` passed 81 app tests (2 ignored).
+  `64-ime-owned-key-fix-preflight` passed all 46 then-declared real Pinyin/WeType
+  labels on the fixed debug EXE. The fixed clean Release build (`61`) completed;
+  its SHA-256 is `0c9babcac3e6ac2121cbdaf7aeee412fccee079457a9ff97b45fce70b67a70d6`.
+- Added the approved D1 filesystem milestones, negative control and recovery Esc
+  guard/positive control to G3-03; added docked composition Esc to G4-06. Check labels
+  are declared before coverage can be credited. No ownership gap is closed merely
+  because this code compiles. `67-crash-and-docked-ime-review` passed clippy; physical
+  execution of these new paths is pending. No runtime crash hook was introduced.

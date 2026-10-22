@@ -521,6 +521,10 @@ pub(crate) fn press_f6(window: WindowHandle) -> Result<(), String> {
     send_physical_key(window, 0x75, 0x40, false)
 }
 
+pub(crate) fn press_f7(window: WindowHandle) -> Result<(), String> {
+    send_physical_key(window, 0x76, 0x41, false)
+}
+
 pub(crate) fn press_shift(window: WindowHandle) -> Result<(), String> {
     send_physical_key(window, 0x10, 0x2A, false)
 }

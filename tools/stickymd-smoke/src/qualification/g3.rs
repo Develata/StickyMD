@@ -21,6 +21,12 @@ const OPERATIONS: [CaseOperation; exact_checks::G3.len()] = [
     cases::g3_05,
 ];
 
+#[test]
+#[ignore = "exclusive Windows desktop and owned-fixture process termination; local EXE only"]
+fn c2d_crash_local_preflight() {
+    super::g4::preflight::run(&exact_checks::G3[2], cases::g3_03);
+}
+
 pub(super) fn run(
     repository: &Path,
     requested_zip: Option<&Path>,

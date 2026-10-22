@@ -362,3 +362,25 @@ Expected：ZIP 字节和去掉时间/命名空间后的 SPDX 语义保持；失�
 Failure Signals：错误变成功、临时文件泄漏、旧文件被覆盖、输出污染 JSON、旧摘要复用或旧人工状态被提升。
 REL-CLI-15..18 的两次调用计数是上一轮基线；当前流程由本行覆盖。性能必须按调用入口与样本分别报告。
 实际数据、失败修正和未验证范围见[阶段路由/流程/CNG 报告](../report/2026-09-30-phase-routing-release-workflows-cng.md)。
+
+### C2d desktop extensions (2026-10-22)
+
+Preconditions: an exclusively available Windows desktop and freshly copied executable;
+each crash scenario owns a separate portable directory. Local preflight runs are diagnostic
+only; the exact G3/G4 command still requires a verified candidate and matching check labels.
+
+Action: G3-03 waits for a complete temporary note plus the acknowledged failed save barrier
+with a read-only canonical note before terminating the owned process; it also terminates
+after observing final image publication or a managed trash entry. A separate negative control
+terminates after an acknowledged edit without requesting save. Recovery Esc uses an expanded
+docked fixture whose read-back temporary mtime is newer than the canonical mtime, then checks
+ordinary Esc after explicitly resolving recovery. G4-06 cancels a real composition on every
+left/right/top dock and verifies the next committed text and Undo.
+
+Expected: complete canonical/recovery bytes, restoration of referenced trash, cleanup only of
+unreferenced managed bytes, read-only attributes restored on every exit path, Esc retaining
+pending recovery or composition ownership, and the post-recovery Esc positive control working.
+Failure Signals: partial data, a raced autosave accepted as the negative control, wrong or
+missing image bytes, unresolved recovery interpreted as success, changed attributes, or one
+IME-owned Esc additionally closing Search/collapsing the window. These tests do not interrupt
+an OS call or simulate power loss. Manual rows remain NOT TESTED.

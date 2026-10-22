@@ -13,7 +13,10 @@ use crate::qualification_environment::{self, QualificationEnvironmentStatus};
 /// No candidate resolver, exact receipt, or success ledger is called here. The
 /// retained fixture and stdout are local preflight diagnostics only. Run serially
 /// with USER authorization and STICKYMD_PREFLIGHT_EXE naming the local executable.
-fn run(case: &exact_checks::DeclaredCase, operation: exact_desktop::CaseOperation) {
+pub(in crate::qualification) fn run(
+    case: &exact_checks::DeclaredCase,
+    operation: exact_desktop::CaseOperation,
+) {
     crate::window_control::enable_per_monitor_v2_dpi_awareness().unwrap();
     let repository =
         crate::governance::find_repository_root(&std::env::current_dir().unwrap()).unwrap();
@@ -128,6 +131,12 @@ fn c2d_ime_local_preflight() {
 #[ignore = "exclusive Windows desktop, tray input and physical Alt+F4; local EXE only"]
 fn c2d_tray_local_preflight() {
     run(&exact_checks::G4[0], super::cases::g4_01);
+}
+
+#[test]
+#[ignore = "exclusive Windows desktop and dock input; local EXE only"]
+fn c2d_dock_local_preflight() {
+    run(&exact_checks::G4[1], super::cases::g4_02);
 }
 
 #[test]

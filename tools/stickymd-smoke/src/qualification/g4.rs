@@ -4,7 +4,7 @@
 
 mod cases;
 #[cfg(test)]
-mod preflight;
+pub(super) mod preflight;
 
 use std::path::Path;
 

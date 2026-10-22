@@ -77,14 +77,23 @@ pub(crate) const G3_02: &[&str] = &[
 ];
 
 pub(crate) const G3_03: &[&str] = &[
+    "kill-after-asset-publication",
+    "kill-after-trash-move",
+    "kill-at-publication-failure",
+    "kill-before-autosave-keeps-old",
     "kill-note-complete:offset=0",
     "kill-note-complete:offset=15",
     "kill-note-complete:offset=250",
     "kill-note-complete:offset=75",
+    "recovery-choice-enables-dock-escape",
+    "recovery-escape-keeps-pending",
+    "restart-after-asset-publication",
+    "restart-flushed-temp",
     "restart-note-complete:offset=0",
     "restart-note-complete:offset=15",
     "restart-note-complete:offset=250",
     "restart-note-complete:offset=75",
+    "restart-referenced-trash",
 ];
 
 pub(crate) const G3_04: &[&str] = &[
@@ -223,6 +232,12 @@ pub(crate) const G4_06: &[&str] = &[
     "ime-composition-no-collapse:edge=right,ime=wetype",
     "ime-composition-no-collapse:edge=top,ime=pinyin",
     "ime-composition-no-collapse:edge=top,ime=wetype",
+    "ime-escape-keeps-dock:edge=left,ime=pinyin",
+    "ime-escape-keeps-dock:edge=left,ime=wetype",
+    "ime-escape-keeps-dock:edge=right,ime=pinyin",
+    "ime-escape-keeps-dock:edge=right,ime=wetype",
+    "ime-escape-keeps-dock:edge=top,ime=pinyin",
+    "ime-escape-keeps-dock:edge=top,ime=wetype",
     "ime-find-no-replace:ime=pinyin",
     "ime-find-no-replace:ime=wetype",
     "ime-find-query-selects-term:ime=pinyin",
@@ -361,7 +376,7 @@ mod tests {
             .chain(G4)
             .map(|case| case.checks.len())
             .sum::<usize>();
-        assert_eq!(total, 161);
+        assert_eq!(total, 176);
     }
 
     #[test]

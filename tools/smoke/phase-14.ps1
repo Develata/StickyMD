@@ -24,6 +24,8 @@
 # Startup retains diagnostic process CPU observations; Zoom and window comparisons share Rust resource rules.
 # Opt-in Rust startup-focus diagnostics observe native focus before any test input; they do not qualify a candidate.
 # Native follow-up checks first input/save/undo and reuses Phase 10 window interactions without changing qualification.
+# G3 crash checks observe failed note publication and image/trash milestones before terminating owned copies.
+# Opt-in local desktop preflights do not emit exact-candidate receipts or alter manual acceptance.
 [CmdletBinding()]
 param(
     [switch]$Ci,

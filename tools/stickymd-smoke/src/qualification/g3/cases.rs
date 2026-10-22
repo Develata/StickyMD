@@ -13,6 +13,9 @@ use super::super::exact_desktop::{
 };
 use super::super::receipt;
 
+mod crash;
+mod crash_assets;
+
 const PNG: &[u8] = &[
     137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0,
     0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 100, 248, 15, 0, 1, 5, 1, 1,
@@ -163,8 +166,9 @@ pub(super) fn g3_02(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     Ok(checked(checks))
 }
 
-pub(super) fn g3_03(_repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
+pub(super) fn g3_03(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
     let mut checks = Checks::default();
+    crash::run(repository, program, &mut checks)?;
     for (index, offset_ms) in [0_u64, 15, 75, 250].into_iter().enumerate() {
         let offset = offset_ms.to_string();
         let offset_param = [("offset", offset.as_str())];
