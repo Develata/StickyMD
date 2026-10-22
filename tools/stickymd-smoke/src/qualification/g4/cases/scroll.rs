@@ -53,20 +53,32 @@ pub(super) fn run(program: &Path, checks: &mut Checks) -> Result<(), String> {
     }
     checks.record("scroll-drag-stops-on-release", &[]);
 
+    let bottom_thumb = input::source_scroll_thumb(hwnd)?;
     let held = input::source_scroll_drag(hwnd, true)?;
-    input::scroll_pointer(hwnd, 0.5, false)?;
-    window::focus_shell_desktop(hwnd)?;
-    // Move back to the top while the physical button is still owned and down.
-    // If Focused(false) did not cancel the drag this would scroll to the start.
-    input::scroll_pointer(hwnd, 0.0, false)?;
-    held.release()?;
-    window::request_window_foreground(hwnd)?;
-    let middle = selected_line(hwnd)?;
-    if !(500..1500).contains(&middle) {
+    input::scroll_pointer(hwnd, 0.5, true)?;
+    let middle_thumb = input::source_scroll_thumb(hwnd)?;
+    if middle_thumb.0 >= bottom_thumb.0 / 2 + 100 {
         return Err(format!(
-            "blur failed to retain the middle viewport: {middle}"
+            "drag did not reach the middle: {bottom_thumb:?} -> {middle_thumb:?}"
         ));
     }
+    window::focus_shell_desktop(hwnd)?;
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    // Focus changes can legitimately reveal the existing caret. Observe the bar
+    // after that transition, without a click or foreground request that could
+    // itself end a still-live gesture or scroll the caret back into view.
+    let blurred_thumb = input::source_scroll_thumb(hwnd)?;
+    // Move back to the top while the physical button is still owned and down.
+    // If Focused(false) did not cancel the drag this would scroll to the start.
+    input::scroll_pointer(hwnd, 0.0, true)?;
+    let moved_thumb = input::source_scroll_thumb(hwnd)?;
+    if moved_thumb != blurred_thumb {
+        return Err(format!(
+            "pointer after blur moved the thumb: {blurred_thumb:?} -> {moved_thumb:?}"
+        ));
+    }
+    held.release()?;
+    window::request_window_foreground(hwnd)?;
     checks.record("scroll-drag-stops-on-blur", &[]);
     let note = instance.join("note/note.md");
     if fs::read_to_string(&note).map_err(io_error)? != text

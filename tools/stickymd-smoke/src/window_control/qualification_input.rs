@@ -115,3 +115,77 @@ pub(crate) fn select_viewport_line(window: WindowHandle) -> Result<(), String> {
     send_physical_key(window, 0x24, 0x47, true)?;
     send_shift_chord(window, 0x23, 0x4F, true)
 }
+
+/// Read only the visible scrollbar's center column; never captures other apps.
+/// This observes an unfocused live drag without sending a click or focus request.
+pub(crate) fn source_scroll_thumb(window: WindowHandle) -> Result<(usize, usize), String> {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetDC(hwnd: isize) -> isize;
+        fn ReleaseDC(hwnd: isize, dc: isize) -> i32;
+    }
+    #[link(name = "gdi32")]
+    unsafe extern "system" {
+        fn GetPixel(dc: isize, x: i32, y: i32) -> u32;
+    }
+    let rect = window_rect(window)?;
+    let scale = f64::from(window_dpi(window)) / 96.0;
+    let x = rect.x + rect.width as i32 - (13.0 * scale).round() as i32;
+    let first = (54.0 * scale).round() as i32;
+    let last = rect.height as i32 - (8.0 * scale).round() as i32;
+    // SAFETY: GetDC(NULL) borrows a screen DC, released below on every result path.
+    let dc = unsafe { GetDC(0) };
+    if dc == 0 {
+        return Err("cannot read the visible scrollbar".to_owned());
+    }
+    let result = (|| {
+        let mut colors = Vec::new();
+        for y in first..last {
+            let point = NativePoint { x, y: rect.y + y };
+            // SAFETY: scalar handles and by-value point only. Check the pixel is
+            // owned by this fixture before reading; no other window is captured.
+            if unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) } != window.0 {
+                return Err("scrollbar was covered during observation".to_owned());
+            }
+            // SAFETY: the borrowed DC is live; no pointer is passed or retained.
+            let color = unsafe { GetPixel(dc, x, rect.y + y) };
+            if color == u32::MAX {
+                return Err("scrollbar pixel read failed".to_owned());
+            }
+            colors.push(color);
+        }
+        let mut counts = std::collections::BTreeMap::new();
+        for color in &colors {
+            *counts.entry(*color).or_insert(0_usize) += 1;
+        }
+        let background = counts
+            .into_iter()
+            .max_by_key(|(_, n)| *n)
+            .map(|(color, _)| color)
+            .ok_or("empty scrollbar column")?;
+        let mut best = (0, 0);
+        let mut start = None;
+        for (index, color) in colors
+            .iter()
+            .chain(std::iter::once(&background))
+            .enumerate()
+        {
+            if *color != background {
+                start.get_or_insert(index);
+            } else if let Some(begin) = start.take()
+                && index - begin > best.1 - best.0
+            {
+                best = (begin, index);
+            }
+        }
+        if best.1 - best.0 < (12.0 * scale) as usize || best.1 - best.0 > colors.len() / 3 {
+            return Err(format!("no bounded scrollbar thumb in column: {best:?}"));
+        }
+        Ok(best)
+    })();
+    // SAFETY: exactly balances the GetDC(NULL) above, including error paths.
+    unsafe {
+        ReleaseDC(0, dc);
+    }
+    result
+}
