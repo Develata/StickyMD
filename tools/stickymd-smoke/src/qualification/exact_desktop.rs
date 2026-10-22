@@ -406,11 +406,21 @@ pub(super) fn seed_note(program: &Path, text: &str) -> Result<(), String> {
 /// of managed assets runs before the editor exists, so checks made afterwards observe this
 /// start's effects; an existing note/config layout alone does not prove the start got there.
 pub(super) fn start_until_editor_ready(executable: &Path) -> Result<ChildGuard, String> {
+    start_until_editor_ready_with_log(executable, None)
+}
+
+pub(super) fn start_until_editor_ready_with_log(
+    executable: &Path,
+    log: Option<&Path>,
+) -> Result<ChildGuard, String> {
     use std::sync::atomic::{AtomicU64, Ordering};
     // Disjoint from the sequences the startup measurements number from zero.
     static SEQUENCE: AtomicU64 = AtomicU64::new(1 << 32);
     let ready = crate::ready_event::ReadyEvent::create(SEQUENCE.fetch_add(1, Ordering::Relaxed))?;
     let mut command = crate::managed_process::gui_command(executable)?;
+    if let Some(log) = log {
+        command.stderr(fs::File::create_new(log).map_err(io_error)?);
+    }
     // Signal only: an inherited exit flag or trace path would change the process under test.
     command
         .env("STICKYMD_DIAGNOSTIC_READY_EVENT", ready.name())

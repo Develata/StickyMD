@@ -1918,11 +1918,15 @@ fn click_client_physically(
     let screen_y = rect.y.saturating_add(i32::from(pixel_u16(client_y)?));
     let mut input_route =
         prepare_physical_input_target(window, screen_x, screen_y, PhysicalCursorKind::Pointer)?;
+    // Restore the routing-only topmost projection before the product handles
+    // the click: Pin or Collapse may legitimately change topmost themselves.
+    // The immediate hit-test below still refuses a newly covered target.
+    input_route.restore()?;
     let button = press_left_on(window)?;
     thread::sleep(Duration::from_millis(25));
     button.release()?;
     thread::sleep(Duration::from_millis(50));
-    input_route.restore()
+    Ok(())
 }
 
 /// The key named by `virtual_key` and `scan_code`.

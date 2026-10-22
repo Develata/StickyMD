@@ -15,15 +15,15 @@ pub(super) fn run(
     hwnd: WindowHandle,
     checks: &mut Checks,
 ) -> Result<(), String> {
-    assert_pin(repository, program, process_id, hwnd, false)?;
+    assert_pin(repository, program, process_id, hwnd, false, "initial")?;
     tray::toggle_topmost(repository, process_id)?;
-    assert_pin(repository, program, process_id, hwnd, true)?;
+    assert_pin(repository, program, process_id, hwnd, true, "tray ON")?;
     window::click_toolbar_physically(hwnd, ToolbarControl::Topmost)?;
-    assert_pin(repository, program, process_id, hwnd, false)?;
+    assert_pin(repository, program, process_id, hwnd, false, "toolbar OFF")?;
     window::click_toolbar_physically(hwnd, ToolbarControl::Topmost)?;
-    assert_pin(repository, program, process_id, hwnd, true)?;
+    assert_pin(repository, program, process_id, hwnd, true, "toolbar ON")?;
     tray::toggle_topmost(repository, process_id)?;
-    assert_pin(repository, program, process_id, hwnd, false)?;
+    assert_pin(repository, program, process_id, hwnd, false, "tray OFF")?;
     checks.record("tray-topmost-controls-sync", &[]);
 
     let edge = window::PrimaryDockEdge::Left;
@@ -43,7 +43,14 @@ pub(super) fn run(
     window::reveal_primary_sensor(hwnd, edge)?;
     super::dock::wait_for_edge(hwnd, edge, false)?;
     window::focus_source_editor(hwnd)?;
-    assert_pin(repository, program, process_id, hwnd, false)?;
+    assert_pin(
+        repository,
+        program,
+        process_id,
+        hwnd,
+        false,
+        "focused sensor reveal",
+    )?;
     checks.record("tray-topmost-sensor-keeps-config", &[]);
     window::move_to_primary_floating(hwnd)?;
     wait_for_config(program, "dock_edge = \"none\"")
@@ -55,10 +62,16 @@ fn assert_pin(
     process_id: u32,
     hwnd: WindowHandle,
     expected: bool,
+    stage: &str,
 ) -> Result<(), String> {
     wait_for_config(program, &format!("always_on_top = {expected}"))?;
+    let mut observed = window::is_topmost(hwnd)?;
     wait_until("Pin reaches the HWND", || {
-        Ok(window::is_topmost(hwnd)? == expected)
+        observed = window::is_topmost(hwnd)?;
+        Ok(observed == expected)
+    })
+    .map_err(|error| {
+        format!("{stage}: expected topmost={expected}, observed={observed}; {error}")
     })?;
     if tray::topmost_checked(repository, process_id)? != expected {
         return Err(format!("tray Pin check state differs from {expected}"));

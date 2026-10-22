@@ -179,3 +179,22 @@ close the remaining C2d or C3 tasks.
   still open. That run stopped at another harness acknowledgement race: it read
   the clipboard before the Copy request completed. The assertion now waits for
   the exact expected copied term; WeType event ordering is still unverified.
+
+- Follow-up: `42-tray-governance` rejected the Automated/NOT TESTED row pair. After
+  the targeted P08-A11 operation passed, the source matrix uses AUTOMATED PASS with
+  that explicitly limited receipt and still says the complete runtime receipt is pending.
+- `43-ime-ack-event-trace` refused its first click because the debug window was not
+  yet the hit-test target. IME startup now waits for the existing editor-ready event,
+  also when stderr capture is enabled; there is no new product test channel.
+- `44-tray-native-state-preflight` got past native menu state, then timed out while
+  config said Pin ON but the HWND lacked topmost. The adapter now names the exact
+  transition in that failure; its root cause is not established.
+- The desktop probe now preserves input-injector refusal errors. Previously the
+  actual abort stub error was discarded into a generic desktop-unavailable boolean;
+  the new error allows a real abort build run to distinguish the two paths.
+
+- Native Pin failure analysis found a harness interference: physical toolbar
+  routing temporarily raised a non-topmost window, then restored NOTOPMOST after
+  the Pin click had legitimately enabled topmost. The routing-only state is now
+  restored before the click; the immediate hit-test still refuses a covered target.
+  A fresh physical run is required to confirm this repair.

@@ -267,7 +267,7 @@ mod windows {
     pub(super) fn inspect() -> Result<EnvironmentFacts, String> {
         let session_id = current_session_id()?;
         let (session_state, session_flags) = session_information(session_id)?;
-        let input_desktop_usable = input_desktop_usable();
+        let input_desktop_usable = input_desktop_usable()?;
         let interactive_shell_present = process_exists_in_session("explorer.exe", session_id)?;
         // SAFETY: GetForegroundWindow and GetSystemMetrics take no pointers and
         // return process-independent snapshots of the current interactive session.
@@ -334,13 +334,13 @@ mod windows {
         Ok((level1.session_state, level1.session_flags))
     }
 
-    fn input_desktop_usable() -> bool {
+    fn input_desktop_usable() -> Result<bool, String> {
         // SAFETY: no borrowed pointers are involved; the returned desktop handle is
         // owned by this function and closed exactly once below when non-null.
         let desktop =
             unsafe { OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_SWITCHDESKTOP) };
         if desktop.is_null() {
-            return false;
+            return Ok(false);
         }
         // SAFETY: desktop is a valid handle returned by OpenInputDesktop and has
         // not been closed yet.
@@ -350,14 +350,14 @@ mod windows {
         // SAFETY: `cursor` is writable POINT storage; GetCursorPos copies the position and
         // retains no pointer.
         if unsafe { GetCursorPos(&raw mut cursor) } == FALSE {
-            return false;
+            return Ok(false);
         }
         // The cursor is placed at the coordinate just read, so the capability probe does not
         // visibly move the pointer. It goes through the injection module like all cursor
-        // placement: a build that cannot inject has no usable input desktop.
-        crate::input_injection::live()
-            .and_then(|injection| injection.place_cursor(cursor.x, cursor.y))
-            .is_ok()
+        // placement. Preserve a refused-build error so reaching the abort stub
+        // cannot be misreported as an unavailable or locked desktop.
+        crate::input_injection::live()?.place_cursor(cursor.x, cursor.y)?;
+        Ok(true)
     }
 
     fn process_exists_in_session(name: &str, expected_session: Dword) -> Result<bool, String> {

@@ -9,8 +9,8 @@ use std::thread;
 use std::time::Duration;
 
 use super::super::super::exact_desktop::{
-    Checks, ChildGuard, copy_directory, io_error, seed_note, wait_for_config, wait_for_layout,
-    wait_note as wait_raw_note, wait_until,
+    Checks, copy_directory, io_error, seed_note, start_until_editor_ready_with_log,
+    wait_for_config, wait_for_layout, wait_note as wait_raw_note, wait_until,
 };
 use crate::window_control::{ImeProfile, ImeProfileGuard, WindowHandle};
 
@@ -193,15 +193,14 @@ fn exercise_profile(
 ) -> Result<Checks, String> {
     seed_note(program, SOURCE_PREFIX)?;
     let executable = program.join("StickyMD.exe");
-    let mut command = crate::managed_process::gui_command(&executable)?;
-    if std::env::var("STICKYMD_LOCAL_PREFLIGHT_DIAGNOSTICS").as_deref() == Ok("1") {
+    let log = if std::env::var("STICKYMD_LOCAL_PREFLIGHT_DIAGNOSTICS").as_deref() == Ok("1") {
         let path = program.join("local-ime-events.log");
-        let file = std::fs::File::create_new(&path)
-            .map_err(|error| format!("cannot create IME diagnostic log: {error}"))?;
-        command.stderr(file);
         println!("LOCAL_PREFLIGHT_IME_LOG={}", path.display());
-    }
-    let mut child = ChildGuard::spawn(&mut command, "start real IME fixture")?;
+        Some(path)
+    } else {
+        None
+    };
+    let mut child = start_until_editor_ready_with_log(&executable, log.as_deref())?;
     wait_for_layout(program)?;
     let window = crate::window_control::visible_window(child.id())?;
     crate::window_control::focus_source_editor(window)?;
