@@ -423,3 +423,17 @@ old PASS to resolve a FAIL. Failure Signals: inferred PASS, skipped instance val
 missing process evidence accepted by import/readiness, changed fixture attributes after
 return, lost legacy FAIL, overwritten old bytes or a wrong monitor arrangement accepted.
 Unit and owned-process tests verify these mechanics; all manual rows remain NOT TESTED.
+
+### D3 scroll application seam (2026-10-22)
+
+Preconditions: real Source and Preview projections of a document with unequal pane heights,
+both scroll drivers, all view modes, sync on/off and current/stale Preview layouts.
+Action: apply fraction and pixel requests through the same projection operation used by
+the shell. Expected: only the driver moves unless Split sync is enabled with a current
+frame; the peer follows semantic source anchors, while session caret, selection and preedit
+remain unchanged. Current-layout detection requires matching generation, width, height,
+scale and theme, while permitting only offset/selection differences. Failure Signals:
+stale or disabled synchronization, changed session state or an old layout offering a bar.
+These owners prove the extracted decisions, not all winit event delivery. Canonical-state,
+gutter-input, complete receipt application and the remaining Preview gesture obligations
+stay named gaps. Source desktop observations do not close unparameterized two-pane duties.

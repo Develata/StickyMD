@@ -324,3 +324,28 @@ close the remaining C2d or C3 tasks.
   harness. Log 117 reaches the explicit injection-refusal stub and exits nonzero before
   physical injection. This diagnostic does not create an exact-candidate receipt.
 - 尚未做跨模型审查. Local implementation/tests do not change NOT_READY or manual NOT TESTED.
+
+### D3 application and mapping checkpoint (2026-10-22)
+
+- The 41 exact obligations with matching implemented assertions are now bound to their
+  explicit labels. Source-only drag observations do not claim the corresponding general
+  Source/Preview obligations. D022 keeps its broader keyboard/IME/event-wiring gaps.
+  `119-coverage-reconciliation.json` records each old and new target; log 120 validates
+  document decomposition, parameter coverage and label ownership.
+- The approved D3 projection application was extracted without changing its calculations:
+  fraction/pixel movement, one-way semantic Split synchronization and session scroll updates
+  are now exercised with real Source/Preview projections. There is no canonical coordinator,
+  mutable Preview frame, worker or filesystem access in the helper. Logs 121/122 pass three
+  application tests and seven Preview tests; 123 passes app all-target clippy.
+- Five further obligations are assigned to these decision owners: Split synchronization,
+  preserving caret/selection/preedit, and current-layout admission. The latter varies each
+  generation/layout field independently. Canonical-state and remaining event/receipt/gutter
+  coverage remain explicit; 19 named gaps remain in this checkpoint.
+- Clean product source `531f88a` built successfully in log 124; frozen Release SHA-256:
+  `fd33925992cf2b97178da5e43e3d3f90f9f3bcb71b248ef1c7cef0b534213850`.
+  The earlier 158 local desktop checks (17 G3-03 + 19 G4-01 + 44 G4-02 + 15 G4-03 +
+  11 G4-05 + 52 G4-06) belong to the fixed `388b034` Release bytes, not this later refactor.
+  The new Release has not had another desktop preflight. No input run is started near the
+  renewed authorization deadline of 2026-10-22 08:26 UTC; headless checks continue afterward.
+- Full final-state baseline results and the hashed patch are kept in the same ignored
+  evidence directory. No exact-candidate or manual receipt is created by this checkpoint.

@@ -504,3 +504,9 @@ Plan 11 `manual-observation-log` → [phase-14](acceptance-cases/phase-14.md) �
 `manual/instance/procedure` 采集 M05/M35 过程证据，`manual_observation/procedure` 在日志、
 导入与 readiness 共用校验，`instances` 共用零／一／二实例判定；M45 由 `instance/set` 持有两个
 独立目录及 Job。旧日志仅在批准重置时兼容读取以携带 FAIL，原字节归档。人工结果仍为 NOT TESTED。
+
+2026-10-22 D3：Plan 09 `vertical-scrollbars` / Plan 06 `split-scroll-sync` →
+[phase-14](acceptance-cases/phase-14.md) 的 D3 scroll application seam。
+`app/scroll_application.rs` 持有只改投影与会话滚动坐标的应用步骤；`preview_runtime` 的
+`current_preview_layout` 持有 generation 与完整布局判定。新增单元 owner 持有分栏同步、
+caret/selection/preedit 保持与当前 frame 判定五项；canonical 状态、其余事件接线仍单列缺口。

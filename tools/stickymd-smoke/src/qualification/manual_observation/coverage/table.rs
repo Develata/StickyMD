@@ -58,17 +58,8 @@ const fn gap(planned: &'static str) -> Target {
 
 // C2b-3 audited every obligation that existing tests seemed to exercise (2026-10-17). Those still
 // gaps say, per obligation, what existing tests already assert and what none does yet.
-const C2_ISOLATION_RUNTIME: &str =
-    "C2 绑定模块收据：P08-A11 copied-Release `-Runtime`（scenario `WindowShell`）的进程与窗口隔离";
 
-const G4_DOCK_COMPOSITION: &str = "G4-06: Right/Top dock 下 composition 不收起";
-const G4_OPACITY_COMMIT: &str = "G4-02: 透明度松开滑块 / Enter / 失焦三种提交";
-const G4_TOPMOST_SYNC: &str = "G4-01: 置顶在托盘与窗口间双向同步，不受临时 sensor topmost 影响";
-const G4_QUIT_SAVE_FAILURE: &str = "G4-01: 退出保存失败时取消退出、保持运行、标题状态";
-/// G4-01 hides the paper with Close; the tray item is only shown to exist.
-const G4_TRAY_HIDE: &str =
-    "G4-01: 窗口可见时经托盘菜单 Hide 隐藏（现只经 Close 隐藏，菜单项只核对存在）";
-const G4_ESC: &str = "G4-02: 真实键盘 Esc 分支";
+const G4_OPACITY_COMMIT: &str = "G4-02 已证明数字 Enter / 窗口失焦提交与不改正文；D022 仍缺其他点击、隐藏、退出提交，按键优先级、重复 Enter、合成键过滤、composition 拒绝聚焦与 IME 同步的完整接线";
 /// The Esc decision with each guard alone (asset reconcile, input disabled while quitting) and
 /// under every modifier; USER 2026-10-15 approved unit-only coverage of these Esc rows.
 const ESC_GUARDS: &[Owner] = &[win("app::escape::tests::each_guard_alone_ignores_esc")];
@@ -148,6 +139,18 @@ const SCROLL_SOURCE_MAPPING: &[Owner] = &[
 const SCROLL_STALE_RECEIPT: &[Owner] = &[win(
     "app::preview_runtime::tests::a_receipt_for_an_older_offset_is_relaid_out_and_never_shown",
 )];
+const SCROLL_SYNC_APPLICATION: &[Owner] = &[win(
+    "app::scroll_application::tests::split_sync_uses_only_the_current_driver_and_requires_the_switch_and_current_frame",
+)];
+const SCROLL_SESSION_APPLICATION: &[Owner] = &[win(
+    "app::scroll_application::tests::pane_scroll_preserves_text_generation_selection_caret_and_preedit",
+)];
+const SCROLL_CURRENT_LAYOUT: &[Owner] = &[
+    VIEW_BARS,
+    win(
+        "app::preview_runtime::tests::current_layout_requires_generation_and_every_layout_field_but_not_offset_or_selection",
+    ),
+];
 /// The slider's 40–100 integer range, the field keeping any input key by key and committing only
 /// an integer, clamped (plan 09, AC-024, USER decision D5), editing like a selected text field,
 /// ending its edit, which keys and IME events the edited field takes, the committing Enter
@@ -181,9 +184,10 @@ const OPACITY_NO_STEPWISE_WRITE: &[Owner] = &[win(
 )];
 /// Scrollbar obligations whose decisions are unit-tested but whose composition in `StickyApp`
 /// (view mode, live state, winit events) is not.
-const SCROLL_DRAG_RUNTIME: &str = "C2b-4：拖动目标、两侧落点与翻页由拖动映射、`preview_offset_at` / `preview_offset_by` 与 Source 映射 / 翻页的单元测试持有；缺指针移动逐次应用到视口（实时定位），以及松开、失焦、切换视图、resize 各自结束拖动的运行时接线；待 exact 层（D3：松开 / 失焦与拖出窗口将由 G4 持有，尚无 exact 用例）";
+const SCROLL_DRAG_RUNTIME: &str = "C2b-4：拖动目标、两侧落点与翻页由拖动映射、`preview_offset_at` / `preview_offset_by` 与 Source 映射 / 翻页的单元测试持有；缺指针移动逐次应用到视口（实时定位），以及松开、失焦、切换视图、resize 各自结束拖动的运行时接线；G4-02 已观察 Source 拖出、松开和失焦；本义务同时包含 Preview，仍缺对应接线与 view/resize 结束路径";
 const SCROLL_VIEWPORT_ONLY: &str = "C2b-3 审计：render projection 测试断言滚动不改投影文本与 generation、编辑与组字后边界正确；缺运行时滚动后文档 text / generation / dirty、会话 caret / selection 与 IME preedit 不变的断言；待新的单元接缝或 exact 层";
-const G4_DRAG_OUTSIDE: &str = "G4: 真实鼠标拖出窗口后完成滚动条拖动";
+const G4_DRAG_OUTSIDE: &str =
+    "G4-02 已观察 Source 真实拖出窗口、松开与失焦；仍缺 Preview 的真实拖出窗口接线";
 
 // Exact owners name the check labels that prove them (`exact_checks`); an obligation without a
 // producer, profile or Pin parameter needs every variant.
@@ -450,13 +454,25 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "P08-M04",
         "composition-no-collapse",
         "edge=right",
-        gap(G4_DOCK_COMPOSITION),
+        exact(
+            "G4-06",
+            &[
+                "ime-composition-no-collapse:edge=right,ime=pinyin",
+                "ime-composition-no-collapse:edge=right,ime=wetype",
+            ],
+        ),
     ),
     o(
         "P08-M04",
         "composition-no-collapse",
         "edge=top",
-        gap(G4_DOCK_COMPOSITION),
+        exact(
+            "G4-06",
+            &[
+                "ime-composition-no-collapse:edge=top,ime=pinyin",
+                "ime-composition-no-collapse:edge=top,ime=wetype",
+            ],
+        ),
     ),
     o(
         "P08-M04",
@@ -468,13 +484,25 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "P08-M04",
         "opacity-ime-commit",
         "opacity=96",
-        gap("G4-06: 96% 透明度下 IME 提交"),
+        exact(
+            "G4-06",
+            &[
+                "ime-commit-undo:ime=pinyin,opacity=96",
+                "ime-commit-undo:ime=wetype,opacity=96",
+            ],
+        ),
     ),
     o(
         "P08-M04",
         "opacity-ime-commit",
         "opacity=100",
-        gap("G4-06: 100% 透明度下 IME 提交"),
+        exact(
+            "G4-06",
+            &[
+                "ime-commit-undo:ime=pinyin,opacity=100",
+                "ime-commit-undo:ime=wetype,opacity=100",
+            ],
+        ),
     ),
     o(
         "P08-M04",
@@ -519,21 +547,56 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "item=show",
         exact("G4-01", TRAY_SHOW),
     ),
-    o("P08-M05", "tray-menu", "item=hide", gap(G4_TRAY_HIDE)),
+    o(
+        "P08-M05",
+        "tray-menu",
+        "item=hide",
+        exact(
+            "G4-01",
+            &[
+                "tray-hide-keeps-process",
+                "tray-hide-show-retains-window-and-source",
+            ],
+        ),
+    ),
     o(
         "P08-M05",
         "tray-menu",
         "item=quit",
         exact("G4-01", TRAY_QUIT),
     ),
-    o("P08-M05", "failed-save-quit", "", gap(G4_QUIT_SAVE_FAILURE)),
+    o(
+        "P08-M05",
+        "failed-save-quit",
+        "",
+        exact(
+            "G4-01",
+            &[
+                "tray-quit-save-failure-keeps-visible-process",
+                "tray-quit-save-failure-retains-text",
+                "tray-quit-save-failure-title",
+                "tray-quit-save-failure-retry",
+            ],
+        ),
+    ),
     o(
         "P08-M05",
         "failed-save-visible-error",
         "",
         m("P12-M05", "exit-save-failure"),
     ),
-    o("P08-M05", "topmost-tray-sync", "", gap(G4_TOPMOST_SYNC)),
+    o(
+        "P08-M05",
+        "topmost-tray-sync",
+        "",
+        exact(
+            "G4-01",
+            &[
+                "tray-topmost-controls-sync",
+                "tray-topmost-sensor-keeps-config",
+            ],
+        ),
+    ),
     // P08-M06: opacity.
     o(
         "P08-M06",
@@ -563,19 +626,19 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "P08-M06",
         "commit-modes",
         "commit=slider-release",
-        gap(G4_OPACITY_COMMIT),
+        exact("G4-02", &["opacity-slider-release-commits"]),
     ),
     o(
         "P08-M06",
         "commit-modes",
         "commit=enter",
-        gap(G4_OPACITY_COMMIT),
+        exact("G4-02", &["opacity-numeric-enter-commits"]),
     ),
     o(
         "P08-M06",
         "commit-modes",
         "commit=blur",
-        gap(G4_OPACITY_COMMIT),
+        exact("G4-02", &["opacity-numeric-blur-commits"]),
     ),
     // P08-M07: theme.
     o(
@@ -637,26 +700,35 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "P08-M08",
         "identity-wake",
         "state=docked",
-        gap("G4-05: dock 收起状态下第二次启动"),
+        exact(
+            "G4-05",
+            &[
+                "collapsed-keeps-note-and-config",
+                "collapsed-second-instance-exits",
+                "collapsed-wake-activates-primary",
+                "collapsed-wakes-primary",
+                "sole-process-after-collapsed-wake",
+            ],
+        ),
     ),
     // P08-M09: two portable copies.
     o(
         "P08-M09",
         "process-window-isolation",
         "",
-        gap(C2_ISOLATION_RUNTIME),
+        exact("G4-05", &["portable-copies-note-config-and-exit-isolated"]),
     ),
     o(
         "P08-M09",
         "note-config-runtime-isolation",
         "",
-        gap("P08-A11: 运行时双向 note/config 不串写"),
+        exact("G4-05", &["portable-copies-note-config-and-exit-isolated"]),
     ),
     o(
         "P08-M09",
         "quit-isolation",
         "",
-        gap("P08-A11: 退出一份不影响另一份"),
+        exact("G4-05", &["portable-copies-note-config-and-exit-isolated"]),
     ),
     o(
         "P08-M09",
@@ -852,25 +924,40 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "",
         exact("G3-02", exact_checks::G3_02),
     ),
-    // G3-03 accepts the old note at every kill point without confirming the edit or the save
-    // began, so a run that never reaches saving passes.
+    // D1: observed publication milestones plus a verified before-save negative control.
     o(
         "P08-M15",
         "crash-reconciliation",
         "point=note-save",
-        gap("G3-03: 确认编辑与持久化阶段后在确定性中断点强杀，并以保存未开始的负对照排除空通过"),
+        exact(
+            "G3-03",
+            &[
+                "kill-at-publication-failure",
+                "kill-before-autosave-keeps-old",
+                "restart-flushed-temp",
+            ],
+        ),
     ),
     o(
         "P08-M15",
         "crash-reconciliation",
         "point=asset-write",
-        gap("G3-03: 资产写入完成后的确定性强杀"),
+        exact(
+            "G3-03",
+            &[
+                "kill-after-asset-publication",
+                "restart-after-asset-publication",
+            ],
+        ),
     ),
     o(
         "P08-M15",
         "crash-reconciliation",
         "point=trash-move",
-        gap("G3-03: 移入 trash 完成后的确定性强杀"),
+        exact(
+            "G3-03",
+            &["kill-after-trash-move", "restart-referenced-trash"],
+        ),
     ),
     // P08-Dxxx: the definition-of-done rows each M row receipt covers.
     o(
@@ -902,7 +989,18 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "",
         m("P12-M46", "topmost-button"),
     ),
-    o("P08-D013", "topmost-tray-sync", "", gap(G4_TOPMOST_SYNC)),
+    o(
+        "P08-D013",
+        "topmost-tray-sync",
+        "",
+        exact(
+            "G4-01",
+            &[
+                "tray-topmost-controls-sync",
+                "tray-topmost-sensor-keeps-config",
+            ],
+        ),
+    ),
     o(
         "P08-D016",
         "live-theme-change",
@@ -968,7 +1066,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "P08-D031",
         "alt-f4",
         "",
-        gap("G4-01: 真实 Alt+F4 隐藏到托盘"),
+        exact("G4-01", &["alt-f4-hides-without-exit"]),
     ),
     o("P08-D039", "left-dock", "", exact("G4-02", DOCK_LEFT)),
     o("P08-D040", "right-dock", "", exact("G4-02", DOCK_RIGHT)),
@@ -1001,13 +1099,25 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "P08-D055",
         "composition-no-collapse",
         "edge=right",
-        gap(G4_DOCK_COMPOSITION),
+        exact(
+            "G4-06",
+            &[
+                "ime-composition-no-collapse:edge=right,ime=pinyin",
+                "ime-composition-no-collapse:edge=right,ime=wetype",
+            ],
+        ),
     ),
     o(
         "P08-D055",
         "composition-no-collapse",
         "edge=top",
-        gap(G4_DOCK_COMPOSITION),
+        exact(
+            "G4-06",
+            &[
+                "ime-composition-no-collapse:edge=top,ime=pinyin",
+                "ime-composition-no-collapse:edge=top,ime=wetype",
+            ],
+        ),
     ),
     // G4-06 composes while focused, and focus alone blocks auto-collapse; the composition
     // guard's own wiring (and blur cancelling preedit) has reducer coverage only (P08-A05).
@@ -1019,13 +1129,12 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
             "C2b-3 审计：app::guards 的投影测试不证明 `StickyApp::window_guards` 传入编辑区与 Search 的组字状态，也不证明失焦取消 preedit 的事件接线；待 exact 层",
         ),
     ),
-    // G4-02 reveals the sensor with a reinforcing window message and no covering window, so
-    // it does not prove a covered strip is reachable by the real mouse.
+    // Native hover with a verified ordinary cover and sensor hit target; no pointer messages.
     o(
         "P08-D068",
         "covered-sensor-hover",
         "",
-        gap("G4-02: Pin OFF 时被其他窗口覆盖的感应条经真实鼠标悬停展开"),
+        exact("G4-02", &["covered-sensor-real-hover"]),
     ),
     o(
         "P08-D070",
@@ -1251,18 +1360,35 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
     o("P08-D138", "sleep-resume", "", m("P12-M41", "sleep-resume")),
     o("P08-D139", "rdp", "", m("P12-M42", "rdp-reconnect")),
     // plan 09: Esc, manual collapse, scrollbars, opacity and quit.
-    o("plan09:esc-1", "popup-close-revert", "", gap(G4_ESC)),
+    o(
+        "plan09:esc-1",
+        "popup-close-revert",
+        "",
+        exact(
+            "G4-02",
+            &[
+                "opacity-escape-cancels-field",
+                "opacity-escape-cancels-drag",
+            ],
+        ),
+    ),
     o(
         "plan09:esc-1",
         "slider-drag-esc",
         "",
-        gap("G4-02: 滑块拖动中 Esc：关闭、回退、之后不提交"),
+        exact("G4-02", &["opacity-escape-cancels-drag"]),
     ),
     o(
         "plan09:esc-2",
         "recovery-pending",
         "",
-        gap("G3-03: 恢复待处理时 Esc 无变化（确定性 fixture 与正向对照）"),
+        exact(
+            "G3-03",
+            &[
+                "recovery-escape-keeps-pending",
+                "recovery-choice-enables-dock-escape",
+            ],
+        ),
     ),
     o(
         "plan09:esc-2",
@@ -1280,30 +1406,68 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:esc-3",
         "composition-cancel",
         "field=editor",
-        gap("G4-06: composition 中 Esc 只取消 preedit"),
+        exact(
+            "G4-06",
+            &[
+                "ime-escape-keeps-dock:edge=left,ime=pinyin",
+                "ime-escape-keeps-dock:edge=left,ime=wetype",
+                "ime-escape-keeps-dock:edge=right,ime=pinyin",
+                "ime-escape-keeps-dock:edge=right,ime=wetype",
+                "ime-escape-keeps-dock:edge=top,ime=pinyin",
+                "ime-escape-keeps-dock:edge=top,ime=wetype",
+                "ime-cancel-non-mutating:ime=pinyin",
+                "ime-cancel-non-mutating:ime=wetype",
+            ],
+        ),
     ),
     o(
         "plan09:esc-3",
         "composition-cancel",
         "field=search",
-        gap("G4-06: Search 字段 composition 中 Esc 只取消 preedit"),
+        exact(
+            "G4-06",
+            &[
+                "ime-search-escape-retains-query:ime=pinyin",
+                "ime-search-escape-retains-query:ime=wetype",
+            ],
+        ),
     ),
-    o("plan09:esc-4", "search-close", "", gap(G4_ESC)),
+    o(
+        "plan09:esc-4",
+        "search-close",
+        "",
+        exact("G4-02", &["escape-search-closes-before-dock"]),
+    ),
     o(
         "plan09:esc-5",
         "preview-selection",
         "selection=present",
-        gap(G4_ESC),
+        exact("G4-02", &["escape-preview-clears-selection"]),
     ),
     o(
         "plan09:esc-5",
         "preview-selection",
         "selection=absent",
-        gap(G4_ESC),
+        exact("G4-02", &["escape-preview-empty-collapses"]),
     ),
-    o("plan09:esc-6", "collapse", "state=docked", gap(G4_ESC)),
-    o("plan09:esc-6", "collapse", "state=floating", gap(G4_ESC)),
-    o("plan09:esc-6", "collapse", "modifier=shift", gap(G4_ESC)),
+    o(
+        "plan09:esc-6",
+        "collapse",
+        "state=docked",
+        exact("G4-02", &["escape-preview-empty-collapses"]),
+    ),
+    o(
+        "plan09:esc-6",
+        "collapse",
+        "state=floating",
+        exact("G4-02", &["escape-floating-keeps-window"]),
+    ),
+    o(
+        "plan09:esc-6",
+        "collapse",
+        "modifier=shift",
+        exact("G4-02", &["escape-shift-collapses"]),
+    ),
     o(
         "plan09:esc-6",
         "collapse",
@@ -1314,13 +1478,13 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:esc-6",
         "collapse",
         "repeat",
-        gap("G4-02: 重复 key-down 逐次独立消费"),
+        exact("G4-02", &["escape-repeat-keydowns-independent"]),
     ),
     o(
         "plan09:manual-collapse",
         "collapse-button",
         "",
-        gap("G4-02: 真实点击收起按钮"),
+        exact("G4-02", &["manual-collapse-button"]),
     ),
     o(
         "plan09:scroll-1",
@@ -1344,9 +1508,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-1",
         "split-sync-switch",
         "",
-        gap(
-            "C2b-4：逐视图的栏由 `view_bars` 的单元测试持有；缺 Split 同步开关开 / 关下滚动一个窗格是否带动另一窗格的断言（`after_pane_scroll` 的同步分支）；待新的单元接缝或 exact 层",
-        ),
+        tests(SCROLL_SYNC_APPLICATION),
     ),
     o(
         "plan09:scroll-2",
@@ -1461,19 +1623,19 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-4",
         "viewport-only",
         "state=caret",
-        gap(SCROLL_VIEWPORT_ONLY),
+        tests(SCROLL_SESSION_APPLICATION),
     ),
     o(
         "plan09:scroll-4",
         "viewport-only",
         "state=selection",
-        gap(SCROLL_VIEWPORT_ONLY),
+        tests(SCROLL_SESSION_APPLICATION),
     ),
     o(
         "plan09:scroll-4",
         "viewport-only",
         "state=preedit",
-        gap(SCROLL_VIEWPORT_ONLY),
+        tests(SCROLL_SESSION_APPLICATION),
     ),
     o(
         "plan09:scroll-4",
@@ -1523,9 +1685,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-6",
         "stale-frame-no-thumb",
         "",
-        gap(
-            "C2b-4 审计：`view_bars` 对非当前帧不给 Preview 滑块已有单元断言；缺 `preview_layout_is_current`（generation 相同且布局相同才算当前）的判定断言；待单元接缝",
-        ),
+        tests(SCROLL_CURRENT_LAYOUT),
     ),
     o(
         "plan09:scroll-6",
@@ -1617,31 +1777,31 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:opacity-3",
         "commit-modes",
         "commit=slider-release",
-        gap(G4_OPACITY_COMMIT),
+        exact("G4-02", &["opacity-slider-release-commits"]),
     ),
     o(
         "plan09:opacity-3",
         "commit-modes",
         "commit=enter",
-        gap(G4_OPACITY_COMMIT),
+        exact("G4-02", &["opacity-numeric-enter-commits"]),
     ),
     o(
         "plan09:opacity-3",
         "commit-modes",
         "commit=blur",
-        gap(G4_OPACITY_COMMIT),
+        exact("G4-02", &["opacity-numeric-blur-commits"]),
     ),
     o(
         "plan09:quit-1",
         "keeps-running",
         "",
-        gap(G4_QUIT_SAVE_FAILURE),
+        exact("G4-01", &["tray-quit-save-failure-keeps-visible-process"]),
     ),
     o(
         "plan09:quit-1",
         "memory-text-kept",
         "",
-        gap(G4_QUIT_SAVE_FAILURE),
+        exact("G4-01", &["tray-quit-save-failure-retains-text"]),
     ),
     o(
         "plan09:quit-1",
@@ -1653,7 +1813,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:quit-2",
         "established-only-by-save-failure",
         "cause=note-save-failure",
-        gap(G4_QUIT_SAVE_FAILURE),
+        exact("G4-01", &["tray-quit-save-failure-title"]),
     ),
     o(
         "plan09:quit-2",
