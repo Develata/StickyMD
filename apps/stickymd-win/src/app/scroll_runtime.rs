@@ -7,11 +7,11 @@ use winit::event::{ElementState, MouseButton};
 use winit::window::CursorIcon;
 
 use super::StickyApp;
+use super::scroll_application::{ScrollApplication, ScrollRequest};
 use super::scrollbar::{
     DragUpdate, PressOutcome, PreviewFacts, ScrollPane, Scrollbar, gutter_at, page_pixels,
-    preview_offset_at, preview_offset_by, view_bars,
+    view_bars,
 };
-use crate::config::ViewMode;
 
 impl StickyApp {
     pub(super) fn scrollbar_geometry(&mut self) -> [Option<Scrollbar>; 2] {
@@ -132,76 +132,29 @@ impl StickyApp {
     }
 
     fn scroll_pane_to_fraction(&mut self, pane: ScrollPane, fraction: f64) {
-        match pane {
-            ScrollPane::Source => {
-                if let Some(projection) = &mut self.projection {
-                    projection.scroll_to_fraction(fraction);
-                }
-            }
-            ScrollPane::Preview => {
-                if let Some(frame) = &self.preview_frame {
-                    self.preview_scroll_y =
-                        preview_offset_at(fraction, frame.document_height(), frame.height());
-                }
-            }
-        }
-        self.after_pane_scroll(pane);
+        self.apply_pane_scroll(pane, ScrollRequest::Fraction(fraction));
     }
 
     pub(super) fn scroll_pane_by(&mut self, pane: ScrollPane, pixels: f32) {
-        match pane {
-            ScrollPane::Source => {
-                if let Some(projection) = &mut self.projection {
-                    projection.scroll_by(pixels);
-                }
-            }
-            ScrollPane::Preview => {
-                self.preview_scroll_y = self.preview_frame.as_ref().map_or(0.0, |frame| {
-                    preview_offset_by(
-                        self.preview_scroll_y,
-                        pixels,
-                        frame.document_height(),
-                        frame.height(),
-                    )
-                });
-            }
-        }
-        self.after_pane_scroll(pane);
+        self.apply_pane_scroll(pane, ScrollRequest::Pixels(pixels));
     }
 
-    fn after_pane_scroll(&mut self, driver: ScrollPane) {
-        let sync = self.config.current().view_mode == ViewMode::Split
-            && self.config.current().split_scroll_sync;
+    fn apply_pane_scroll(&mut self, driver: ScrollPane, request: ScrollRequest) {
         let preview_current = self.preview_layout_is_current();
-        if sync
-            && let (Some(frame), Some(projection)) = (
-                self.preview_frame.as_ref().filter(|_| preview_current),
-                &mut self.projection,
-            )
-        {
-            match driver {
-                ScrollPane::Source => {
-                    if let Some(y) = frame.y_for_scroll_anchor(projection.scroll_anchor()) {
-                        self.preview_scroll_y = y.clamp(
-                            0.0,
-                            (frame.document_height() - frame.height() as f32).max(0.0),
-                        );
-                    }
-                }
-                ScrollPane::Preview => {
-                    if let Some(anchor) = frame.scroll_anchor_at_y(self.preview_scroll_y) {
-                        let _ = projection.scroll_to_anchor(anchor);
-                    }
-                }
-            }
+        let repaint = ScrollApplication {
+            source: self.projection.as_mut(),
+            frame: self.preview_frame.as_ref(),
+            preview_y: &mut self.preview_scroll_y,
+            session: &mut self.session,
         }
-        if let Some(projection) = &self.projection {
-            let scroll = projection.scroll();
-            self.session.scroll.line = scroll.line;
-            self.session.scroll.vertical_px = scroll.vertical;
-            self.session.scroll.horizontal_px = scroll.horizontal;
-        }
-        if driver == ScrollPane::Preview || sync {
+        .apply(
+            driver,
+            request,
+            self.config.current().view_mode,
+            self.config.current().split_scroll_sync,
+            preview_current,
+        );
+        if repaint {
             self.request_preview_paint();
         }
         self.update_ime_area();

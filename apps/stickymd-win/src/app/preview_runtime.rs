@@ -56,6 +56,20 @@ pub(super) fn completion_route(
         }
     }
 }
+
+/// A cached layout may drive scroll anchors while only offset/selection changes.
+/// Missing state, another generation, or any geometry/theme change forbids it.
+pub(super) fn current_preview_layout(
+    frame_generation: Option<Generation>,
+    document_generation: Generation,
+    applied: Option<PreviewViewport>,
+    current: Option<PreviewViewport>,
+) -> bool {
+    frame_generation == Some(document_generation)
+        && applied
+            .zip(current)
+            .is_some_and(|(applied, current)| applied.same_layout(current))
+}
 const SPLIT_DIVIDER_DIP: f32 = 1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -377,13 +391,17 @@ impl StickyApp {
     }
 
     pub(super) fn preview_layout_is_current(&self) -> bool {
-        self.preview_frame.as_ref().is_some_and(|frame| {
-            frame.generation() == self.coordinator.view().generation
-                && self
-                    .preview_frame_viewport
-                    .zip(self.preview_viewport())
-                    .is_some_and(|(applied, current)| applied.same_layout(current))
-        })
+        // Keep the expensive viewport projection lazy when no current frame exists.
+        let generation = self.preview_frame.as_ref().map(|frame| frame.generation());
+        let current = self.coordinator.view().generation;
+        current_preview_layout(
+            generation,
+            current,
+            self.preview_frame_viewport,
+            (generation == Some(current))
+                .then(|| self.preview_viewport())
+                .flatten(),
+        )
     }
 
     fn preview_viewport(&self) -> Option<PreviewViewport> {
@@ -476,6 +494,86 @@ pub(super) fn geometry(mode: ViewMode, size: PhysicalSize<u32>, scale: f32) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_layout_requires_generation_and_every_layout_field_but_not_offset_or_selection() {
+        let old = Generation::initial();
+        let generation = old.checked_next().unwrap();
+        let viewport = PreviewViewport {
+            width_px: 500,
+            height_px: 400,
+            scale: 1.25,
+            scroll_y: 42.0,
+            selection: PreviewSelection::default(),
+            theme: PreviewTheme::Light,
+        };
+        for current in [
+            viewport,
+            PreviewViewport {
+                scroll_y: 1000.0,
+                selection: PreviewSelection::caret(5),
+                ..viewport
+            },
+        ] {
+            assert!(current_preview_layout(
+                Some(generation),
+                generation,
+                Some(viewport),
+                Some(current)
+            ));
+        }
+        for frame_generation in [None, Some(old), Some(generation.checked_next().unwrap())] {
+            assert!(!current_preview_layout(
+                frame_generation,
+                generation,
+                Some(viewport),
+                Some(viewport)
+            ));
+        }
+        assert!(!current_preview_layout(
+            Some(generation),
+            generation,
+            None,
+            Some(viewport)
+        ));
+        assert!(!current_preview_layout(
+            Some(generation),
+            generation,
+            Some(viewport),
+            None
+        ));
+        for stale in [
+            PreviewViewport {
+                width_px: 499,
+                ..viewport
+            },
+            PreviewViewport {
+                height_px: 399,
+                ..viewport
+            },
+            PreviewViewport {
+                scale: 1.5,
+                ..viewport
+            },
+            PreviewViewport {
+                theme: PreviewTheme::Dark,
+                ..viewport
+            },
+        ] {
+            assert!(!current_preview_layout(
+                Some(generation),
+                generation,
+                Some(stale),
+                Some(viewport)
+            ));
+            assert!(!current_preview_layout(
+                Some(generation),
+                generation,
+                Some(viewport),
+                Some(stale)
+            ));
+        }
+    }
 
     /// Only a completion for the current document and viewport is offered for display; the
     /// tray-hidden release wins over every other condition.

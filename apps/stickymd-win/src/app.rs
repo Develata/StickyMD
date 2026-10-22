@@ -51,6 +51,7 @@ mod preview_input;
 mod preview_runtime;
 mod reconciliation_runtime;
 mod recovery_runtime;
+mod scroll_application;
 mod scroll_runtime;
 mod scrollbar;
 mod search_controller;
