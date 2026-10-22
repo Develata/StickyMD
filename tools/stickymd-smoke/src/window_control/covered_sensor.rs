@@ -96,9 +96,14 @@ impl Cover {
                 let _ = done_tx.send(Err(error));
                 return;
             }
-            // SAFETY: move our ordinary window to the top of its own Z-order
-            // band without activating it or changing its bounds.
-            if unsafe { super::SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0013) } == 0 {
+            // A new non-activating helper can remain behind Explorer's desktop.
+            // Cross the topmost band and immediately return to the ordinary band;
+            // the proof below requires its final style and actual hit target.
+            // SAFETY: these are documented Z-order sentinels; only our own HWND
+            // changes, with neither activation nor a bounds change.
+            if unsafe { super::SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0013) } == 0
+                || unsafe { super::SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0013) } == 0
+            {
                 let error = format!(
                     "cannot raise ordinary cover: {}",
                     std::io::Error::last_os_error()
@@ -199,7 +204,11 @@ pub(crate) fn hover(
         let (over_sensor, over_cover) =
             unsafe { (WindowFromPoint(point), WindowFromPoint(adjacent)) };
         let topmost = super::is_topmost(hwnd)?;
-        if over_cover != cover.hwnd || over_sensor != hwnd.0 || !topmost {
+        if over_cover != cover.hwnd
+            || over_sensor != hwnd.0
+            || !topmost
+            || super::is_topmost(WindowHandle(cover.hwnd))?
+        {
             return Err(format!(
                 "ordinary cover or temporary sensor topmost missing: cover={over_cover}/{} sensor={over_sensor}/{} topmost={topmost}",
                 cover.hwnd, hwnd.0
