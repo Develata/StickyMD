@@ -218,3 +218,9 @@ close the remaining C2d or C3 tasks.
 - `50-tray-governance-corrected` found the tray opening marker had moved to the new
   child module. Governance now checks the owning files separately, retaining the
   two-attempt constant, menu acknowledgement, native owner and input-call guards.
+
+- `53-tray-pin-route-preflight` passed the previously failing Pin transition and
+  reached dock restoration. The next physical target had x=-493 (collapsed HWND).
+  Reading the tray menu can lose focus and legitimately collapse the dock; the
+  harness now reveals and focuses it again before the final undock drag. This is
+  a test-sequencing repair, pending a fresh physical run.

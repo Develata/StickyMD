@@ -52,6 +52,11 @@ pub(super) fn run(
         "focused sensor reveal",
     )?;
     checks.record("tray-topmost-sensor-keeps-config", &[]);
+    // Reading the native tray check activates Explorer's tray first. That focus
+    // loss can legitimately collapse the dock again before the next drag.
+    window::reveal_primary_sensor(hwnd, edge)?;
+    super::dock::wait_for_edge(hwnd, edge, false)?;
+    window::focus_source_editor(hwnd)?;
     window::move_to_primary_floating(hwnd)?;
     wait_for_config(program, "dock_edge = \"none\"")
 }
