@@ -224,3 +224,27 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
 - Automated entry: `source::geometry::preedit_tests`, including the failing-before-fix
   150 px pane case and whole-frame caret composition checks. Physical candidate-window
   placement and DPI visual acceptance remain `NOT TESTED`.
+
+## C2d physical Search routing (2026-10-22)
+
+- Contract: plan 07 `source-find-replace`; plan 09 `dock-auto-hide`; plan 11
+  `physical-input-injection` and G4-03/G4-06.
+- Preconditions: isolated portable copies, an exclusive interactive desktop, a
+  known two-match note, and no existing StickyMD process. Each Search scenario
+  starts with a fresh process and empty Search session.
+- Action: use physical Ctrl+F/H, Ctrl+Enter, Ctrl+Shift+Enter, Esc and Ctrl+1/2/3;
+  paste distinguishable fixture strings through the normal clipboard route.
+  Exercise Preview parking/restoration and replace after moving the Source caret.
+- Expected: Find-only accepts neither replacement shortcut; Esc returns input
+  to Source; Preview cannot mutate the document; restoration retains query and
+  replacement; the first replacement after losing the match selection only
+  selects; subsequent replacements advance past inserted query text; each
+  replacement is independently undone. Both durable text and dirty title are
+  observed for negative assertions.
+- Entry: G4-03 `cases/search.rs`; the ignored `c2d_search_local_preflight` test
+  runs the same checks on an explicitly supplied local EXE, with no exact receipt
+  or qualification-ledger update. Local preflight success is not candidate or
+  manual acceptance. Runtime status: `NOT TESTED` until the run is recorded.
+- Failure signals: changed text after a no-op, wrong match replaced, lost field
+  state, Preview mutation, collapsed/hidden target, failed input cleanup, or a
+  missing declared check. Candidate-window appearance remains a manual gate.

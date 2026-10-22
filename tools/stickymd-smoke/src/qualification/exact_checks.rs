@@ -154,6 +154,13 @@ pub(crate) const G4_02: &[&str] = &[
 pub(crate) const G4_03: &[&str] = &[
     "ctrl-insert-copies-selection",
     "preview-ignores-traditional-edits",
+    "search-escape-returns-to-source",
+    "search-find-only-guards",
+    "search-preview-restores-on-replace",
+    "search-replacement-advances-past-insert",
+    "search-replacement-one-undo",
+    "search-select-before-replace",
+    "search-view-shortcuts-retain-session",
     "shift-delete-cuts",
     "shift-insert-dib-publishes-asset",
     "shift-insert-file-drop-publishes-asset",
@@ -182,14 +189,26 @@ pub(crate) const G4_06: &[&str] = &[
     "ime-cancel-non-mutating:ime=wetype",
     "ime-commit-undo:edge=left,ime=pinyin",
     "ime-commit-undo:edge=left,ime=wetype",
+    "ime-commit-undo:edge=right,ime=pinyin",
+    "ime-commit-undo:edge=right,ime=wetype",
+    "ime-commit-undo:edge=top,ime=pinyin",
+    "ime-commit-undo:edge=top,ime=wetype",
     "ime-commit-undo:ime=pinyin,mode=source",
     "ime-commit-undo:ime=pinyin,mode=split",
+    "ime-commit-undo:ime=pinyin,opacity=100",
     "ime-commit-undo:ime=pinyin,opacity=40",
+    "ime-commit-undo:ime=pinyin,opacity=96",
     "ime-commit-undo:ime=wetype,mode=source",
     "ime-commit-undo:ime=wetype,mode=split",
+    "ime-commit-undo:ime=wetype,opacity=100",
     "ime-commit-undo:ime=wetype,opacity=40",
+    "ime-commit-undo:ime=wetype,opacity=96",
     "ime-composition-no-collapse:edge=left,ime=pinyin",
     "ime-composition-no-collapse:edge=left,ime=wetype",
+    "ime-composition-no-collapse:edge=right,ime=pinyin",
+    "ime-composition-no-collapse:edge=right,ime=wetype",
+    "ime-composition-no-collapse:edge=top,ime=pinyin",
+    "ime-composition-no-collapse:edge=top,ime=wetype",
     "ime-find-no-replace:ime=pinyin",
     "ime-find-no-replace:ime=wetype",
     "ime-find-query-selects-term:ime=pinyin",
@@ -206,6 +225,10 @@ pub(crate) const G4_06: &[&str] = &[
     "ime-replace-commit:ime=wetype",
     "ime-replace-undo:ime=pinyin",
     "ime-replace-undo:ime=wetype",
+    "ime-search-composition-blocks-preview:ime=pinyin",
+    "ime-search-composition-blocks-preview:ime=wetype",
+    "ime-search-escape-retains-query:ime=pinyin",
+    "ime-search-escape-retains-query:ime=wetype",
     "ime-selection-commit-one-undo:ime=pinyin",
     "ime-selection-commit-one-undo:ime=wetype",
 ];
@@ -324,7 +347,7 @@ mod tests {
             .chain(G4)
             .map(|case| case.checks.len())
             .sum::<usize>();
-        assert_eq!(total, 124);
+        assert_eq!(total, 147);
     }
 
     #[test]

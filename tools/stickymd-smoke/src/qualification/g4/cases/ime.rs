@@ -385,6 +385,15 @@ fn search_fields_accept_real_ime(
     crate::window_control::press_find(window)?;
     begin_preedit(program, window, &document, "zhongguo", ime)?;
     commit_first_candidate(window)?;
+    // A second composition is cancelled in the existing query. Ctrl+3 must
+    // stay in Source while it is active; Esc must leave the Search open. The
+    // later copied match is a positive witness that the committed query survived.
+    begin_preedit(program, window, &document, "nihao", ime)?;
+    crate::window_control::press_preview_shortcut(window)?;
+    thread::sleep(IME_COMMIT_SETTLE);
+    wait_for_config(program, "view_mode = \"source\"")?;
+    crate::window_control::press_escape(window)?;
+    thread::sleep(IME_COMMIT_SETTLE);
     crate::window_control::press_control_enter(window)?;
     thread::sleep(AUTOSAVE_OBSERVATION);
     assert_note(
@@ -407,6 +416,8 @@ fn search_fields_accept_real_ime(
         ));
     }
     ime.record("ime-find-query-selects-term", &[]);
+    ime.record("ime-search-escape-retains-query", &[]);
+    ime.record("ime-search-composition-blocks-preview", &[]);
 
     crate::window_control::press_replace(window)?;
     begin_preedit(program, window, &document, "nihao", ime)?;
@@ -444,36 +455,37 @@ fn runtime_states_accept_real_ime(
 
     crate::window_control::switch_to_source(process_id)?;
     wait_for_config(program, "view_mode = \"source\"")?;
-    crate::window_control::click_toolbar(window, crate::window_control::ToolbarControl::Opacity)?;
-    crate::window_control::commit_opacity_slider(window, 40)?;
-    wait_for_config(program, "opacity = 40")?;
-    commit_and_undo(program, window, BASELINE, "shijie", ime, "40% opacity")?;
-    ime.record("ime-commit-undo", &[("opacity", "40")]);
+    // Move away from the default 96 before testing it; no default-state PASS.
+    for (opacity, label) in [(40, "40"), (96, "96"), (100, "100")] {
+        crate::window_control::click_toolbar(
+            window,
+            crate::window_control::ToolbarControl::Opacity,
+        )?;
+        crate::window_control::commit_opacity_slider(window, opacity)?;
+        wait_for_config(program, &format!("opacity = {opacity}"))?;
+        commit_and_undo(program, window, BASELINE, "shijie", ime, label)?;
+        ime.record("ime-commit-undo", &[("opacity", label)]);
+    }
 
-    crate::window_control::move_to_primary_edge(
-        window,
-        crate::window_control::PrimaryDockEdge::Left,
-    )?;
-    wait_for_config(program, "dock_edge = \"left\"")?;
-    crate::window_control::focus_source_editor(window)
-        .map_err(|error| format!("left-dock focus: {error}"))?;
-    crate::window_control::press_document_end(window)?;
-    begin_preedit(program, window, BASELINE, "zhongwen", ime)
-        .map_err(|error| format!("left-dock preedit: {error}"))?;
-    super::dock::assert_edge(
-        window,
-        crate::window_control::PrimaryDockEdge::Left,
-        false,
-        "real IME typing guard",
-    )?;
-    ime.record("ime-composition-no-collapse", &[("edge", "left")]);
-    commit_first_candidate(window)?;
-    wait_note(program, |text| {
-        text.strip_prefix(BASELINE).is_some_and(valid_cjk_commit)
-    })?;
-    crate::window_control::press_undo(window)?;
-    wait_note(program, |text| text == BASELINE)?;
-    ime.record("ime-commit-undo", &[("edge", "left")]);
+    use crate::window_control::PrimaryDockEdge::{Left, Right, Top};
+    for (edge, label) in [(Left, "left"), (Right, "right"), (Top, "top")] {
+        crate::window_control::move_to_primary_edge(window, edge)?;
+        wait_for_config(program, &format!("dock_edge = \"{label}\""))?;
+        crate::window_control::focus_source_editor(window)
+            .map_err(|error| format!("{label}-dock focus: {error}"))?;
+        crate::window_control::press_document_end(window)?;
+        begin_preedit(program, window, BASELINE, "zhongwen", ime)
+            .map_err(|error| format!("{label}-dock preedit: {error}"))?;
+        super::dock::assert_edge(window, edge, false, "real IME typing guard")?;
+        ime.record("ime-composition-no-collapse", &[("edge", label)]);
+        commit_first_candidate(window)?;
+        wait_note(program, |text| {
+            text.strip_prefix(BASELINE).is_some_and(valid_cjk_commit)
+        })?;
+        crate::window_control::press_undo(window)?;
+        wait_note(program, |text| text == BASELINE)?;
+        ime.record("ime-commit-undo", &[("edge", label)]);
+    }
 
     crate::window_control::move_to_primary_floating(window)?;
     wait_for_config(program, "dock_edge = \"none\"")?;

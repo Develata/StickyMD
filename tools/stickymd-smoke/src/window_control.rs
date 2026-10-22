@@ -430,6 +430,23 @@ pub(crate) fn press_control_enter(window: WindowHandle) -> Result<(), String> {
     send_control_chord(window, 0x0D, 0x1C, false)
 }
 
+pub(crate) fn press_control_shift_enter(window: WindowHandle) -> Result<(), String> {
+    send_chord(window, &[CONTROL, SHIFT], key(0x0D, 0x1C, false))
+}
+
+/// Native view shortcuts, deliberately preserving the current Source/Search focus.
+pub(crate) fn press_source_shortcut(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, b'1', 0x02, false)
+}
+
+pub(crate) fn press_split_shortcut(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, b'2', 0x03, false)
+}
+
+pub(crate) fn press_preview_shortcut(window: WindowHandle) -> Result<(), String> {
+    send_control_chord(window, b'3', 0x04, false)
+}
+
 pub(crate) fn type_ascii_letters(window: WindowHandle, text: &str) -> Result<(), String> {
     for byte in text.bytes() {
         if !byte.is_ascii_alphabetic() {

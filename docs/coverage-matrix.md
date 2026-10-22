@@ -479,3 +479,12 @@ exact 候选（G4、G5）仍只打开弹层。
 
 2026-10-21 USER 决定（Replace Current 先选中再替换）：Plan 07 `source-find-replace` → [phase-03](acceptance-cases/phase-03.md) 的 2026-10-21 补充。选区不是 active match
 时由纯函数 `app/search_controller.rs::replace_current_action` 判定为只选中，`replace_current_search` 执行，并在替换后经 `replacement_end` 与 `interaction/search.rs::SearchSession::activate_from` 取插入内容之后的下一个 match，为键盘与替换按钮同样选中它；命令边界的 `flow/editor.rs::literal_range_matches` 校验不变。`StickyApp` 接线不由测试执行。
+
+2026-10-22 C2d 验证入口补全：Plan 07 `source-find-replace` / Plan 11 G4-03 →
+[phase-03](acceptance-cases/phase-03.md) 的 C2d physical Search routing。
+`qualification/g4/cases/search.rs` 从真实快捷键检查 Find-only、Esc、Preview 停放与恢复、
+先选中再替换、越过插入内容的下一处匹配及逐次 Undo。G4-06 `cases/ime.rs` 新增 Search
+composition 中拒绝 Preview、Esc 后保留 query，以及 Right/Top 与 96/100% 的真实输入法检查。
+声明总数为 147 个，IME owner 标签集合同步；尚未执行的新桌面场景保持 `NOT TESTED`，
+未以新增入口或标签替换 P08-D022 等仍未补齐的义务。`g4/preflight.rs` 的显式 ignored 测试
+仅产生 local preflight 日志，不写 exact 收据或 last-success ledger；Phase 03/08 薄入口不变。

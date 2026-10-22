@@ -3,6 +3,8 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
 
 mod cases;
+#[cfg(test)]
+mod preflight;
 
 use std::path::Path;
 

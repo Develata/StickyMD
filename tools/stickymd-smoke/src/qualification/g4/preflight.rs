@@ -1,0 +1,109 @@
+//! Opt-in execution of G4 cases against explicitly supplied local build bytes.
+//!
+//! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
+
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use super::super::{exact_checks, exact_desktop, receipt};
+use crate::qualification_environment::{self, QualificationEnvironmentStatus};
+
+/// No candidate resolver, exact receipt, or success ledger is called here. The
+/// retained fixture and stdout are local preflight diagnostics only. Run serially
+/// with USER authorization and STICKYMD_PREFLIGHT_EXE naming the local executable.
+fn run(case: &exact_checks::DeclaredCase, operation: exact_desktop::CaseOperation) {
+    crate::window_control::enable_per_monitor_v2_dpi_awareness().unwrap();
+    let repository =
+        crate::governance::find_repository_root(&std::env::current_dir().unwrap()).unwrap();
+    let status = Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .current_dir(&repository)
+        .output()
+        .unwrap();
+    assert!(status.status.success(), "cannot inspect preflight checkout");
+    assert!(
+        status.stdout.is_empty(),
+        "preflight requires a clean checkout"
+    );
+    let head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&repository)
+        .output()
+        .unwrap();
+    assert!(
+        head.status.success(),
+        "cannot read preflight harness commit"
+    );
+    let source = PathBuf::from(
+        std::env::var_os("STICKYMD_PREFLIGHT_EXE")
+            .expect("set STICKYMD_PREFLIGHT_EXE to the explicitly tested local EXE"),
+    );
+    assert!(
+        source.is_absolute() && source.is_file(),
+        "invalid local EXE"
+    );
+    let environment = qualification_environment::inspect();
+    assert_eq!(
+        environment.status,
+        QualificationEnvironmentStatus::Valid,
+        "{}",
+        environment.summary()
+    );
+    assert!(
+        exact_desktop::running_stickymd_processes()
+            .unwrap()
+            .is_empty(),
+        "close existing StickyMD instances; preflight never terminates them"
+    );
+    crate::input_injection::require_running().unwrap();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "stickymd-c2d-preflight-{}-{nonce}",
+        std::process::id()
+    ));
+    let program = root.join(case.id.to_ascii_lowercase());
+    fs::create_dir_all(&program).unwrap();
+    let copied = program.join("StickyMD.exe");
+    fs::copy(&source, &copied).unwrap();
+    let digest = receipt::sha256(&source).unwrap();
+    assert_eq!(digest, receipt::sha256(&copied).unwrap());
+    println!("LOCAL_PREFLIGHT_CASE={}", case.id);
+    println!(
+        "LOCAL_PREFLIGHT_HARNESS_COMMIT={}",
+        String::from_utf8_lossy(&head.stdout).trim()
+    );
+    println!("LOCAL_PREFLIGHT_EXE_SHA256={digest}");
+    println!("LOCAL_PREFLIGHT_FIXTURE={}", root.display());
+    let outcome = operation(&repository, &program);
+    let cleanup = crate::input_injection::stop_reason();
+    println!("LOCAL_PREFLIGHT_INPUT_CLEANUP={cleanup:?}");
+    let evidence = outcome.unwrap();
+    assert!(cleanup.is_none(), "input cleanup failed: {cleanup:?}");
+    let recorded = evidence.checks.into_sorted();
+    assert_eq!(exact_checks::mismatch(case.checks, &recorded), None);
+    assert!(
+        exact_desktop::running_stickymd_processes()
+            .unwrap()
+            .is_empty()
+    );
+    for check in recorded {
+        println!("LOCAL_PREFLIGHT_CHECK={check}");
+    }
+}
+
+#[test]
+#[ignore = "exclusive Windows desktop; local EXE only, no exact-candidate evidence"]
+fn c2d_search_local_preflight() {
+    run(&exact_checks::G4[2], super::cases::g4_03);
+}
+
+#[test]
+#[ignore = "exclusive Windows desktop and real IMEs; local EXE only"]
+fn c2d_ime_local_preflight() {
+    run(&exact_checks::G4[5], super::cases::g4_06);
+}
