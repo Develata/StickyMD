@@ -7,7 +7,9 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use super::super::super::exact_desktop::{Checks, io_error, wait_for_config, wait_until};
+use super::super::super::exact_desktop::{
+    Checks, io_error, wait_for_config, wait_note, wait_until,
+};
 use crate::window_control::{
     self as window, ToolbarControl, WindowHandle, qualification_input as input,
 };
@@ -62,9 +64,7 @@ pub(super) fn run(program: &Path, hwnd: WindowHandle, checks: &mut Checks) -> Re
     committed(program, hwnd, 96)?;
     window::press_escape(hwnd)?;
     window::press_save(hwnd)?;
-    if fs::read(program.join("note/note.md")).map_err(io_error)? != original {
-        return Err("physical opacity input changed the canonical note".to_owned());
-    }
+    wait_note(program, |text| text.as_bytes() == original)?;
     Ok(())
 }
 

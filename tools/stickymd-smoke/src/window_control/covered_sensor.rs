@@ -1,4 +1,4 @@
-//! An owned native cover proves sensor polling without pointer-message assistance.
+//! An ordinary native cover proves temporary sensor topmost and real hover delivery.
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#dock-auto-hide
 
@@ -66,7 +66,7 @@ impl Cover {
             // or retained caller pointer. This thread owns and destroys the HWND.
             let hwnd = unsafe {
                 CreateWindowExW(
-                    0x0800_0088,
+                    0x0800_0080,
                     class.as_ptr(),
                     title.as_ptr(),
                     0x9000_0000,
@@ -167,11 +167,21 @@ pub(crate) fn hover(
     )?;
     let mut cover = Cover::new(work.x, point.y - 16)?;
     let observed = (|| {
-        // The point must route to our opaque cover before the real hover.
+        // Ordinary windows may cover the edge location, but plan 09 keeps the
+        // sensor above them with temporary topmost. An always-on-top cover would
+        // test an uncontracted global cursor-polling mechanism instead.
         thread::sleep(Duration::from_millis(100));
-        // SAFETY: WindowFromPoint takes a copied coordinate and borrows its result.
-        if unsafe { WindowFromPoint(point) } != cover.hwnd {
-            return Err("owned cover did not obscure the collapsed sensor".to_owned());
+        let adjacent = NativePoint {
+            x: work.x + 8,
+            y: point.y,
+        };
+        // SAFETY: WindowFromPoint takes copied coordinates and borrows its results.
+        let (over_sensor, over_cover) =
+            unsafe { (WindowFromPoint(point), WindowFromPoint(adjacent)) };
+        if over_cover != cover.hwnd || over_sensor != hwnd.0 || !super::is_topmost(hwnd)? {
+            return Err(format!(
+                "ordinary cover or temporary sensor topmost missing: cover={over_cover} sensor={over_sensor}"
+            ));
         }
         super::physical_input::move_physical_cursor(point.x, point.y, "hover the covered sensor")?;
         revealed()

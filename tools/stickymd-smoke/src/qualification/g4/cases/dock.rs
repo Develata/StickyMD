@@ -19,8 +19,10 @@ pub(super) fn g4_02(repository: &Path, program: &Path, checks: &mut Checks) -> R
     seed_note(program, "G4 docking integration\n")?;
     let mut child = start_until_editor_ready(&program.join("StickyMD.exe"))?;
     let window = crate::window_control::visible_window(child.id())?;
-    super::opacity::run(program, window, checks)?;
-    super::escape::run(program, window, checks)?;
+    super::opacity::run(program, window, checks)
+        .map_err(|error| format!("opacity controls: {error}"))?;
+    super::escape::run(program, window, checks)
+        .map_err(|error| format!("Esc controls: {error}"))?;
 
     for (edge, value) in [
         (crate::window_control::PrimaryDockEdge::Left, "left"),

@@ -387,11 +387,12 @@ an OS call or simulate power loss. Manual rows remain NOT TESTED.
 
 The G4-02 extension uses physical slider presses/releases, numeric Enter/blur,
 field/drag cancellation and a two-key-down/one-key-up Esc sequence. Before a covered
-sensor hover, a separate owned opaque native window must be observed at the sensor
-point. That hover sends no pointer messages to StickyMD; the cover has bounded
+sensor hover, a separate owned ordinary native window spans the sensor location;
+its adjacent visible part and the sensor's temporary topmost hit target are read back.
+That hover sends no pointer messages to StickyMD; the cover has bounded
 lifetime and explicit teardown. Expected: Esc consumes only the first applicable
 state, committed alpha/config agree, cancelled edits leave both unchanged, and
-the covered sensor still reveals through normal cursor polling. A failed cover,
+the sensor remains reachable above the ordinary cover and reveals through native hover. A failed cover,
 wrong hit target, unreleased input or missing observable transition fails the case.
 
 Source scrollbar wiring uses a fresh 2,000-line note. A fixed viewport point is clicked
