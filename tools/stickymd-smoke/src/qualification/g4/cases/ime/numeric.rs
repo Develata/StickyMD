@@ -18,14 +18,7 @@ pub(super) fn run(
     replace_document(program, hwnd, &baseline)?;
     // Establish an active Chinese mode before observing disable/re-enable. No
     // profile or IME-control setter is used between field focus and its witness.
-    commit_and_undo(
-        program,
-        hwnd,
-        &baseline,
-        "zhongguo",
-        ime,
-        "numeric baseline",
-    )?;
+    commit_and_undo(program, hwnd, &baseline, "shuxue", ime, "numeric baseline")?;
     let mut previous = 100;
     for owner in ["source", "search", "preview"] {
         for commit in ["enter", "blur"] {
@@ -113,13 +106,13 @@ pub(super) fn run(
             );
         }
     }
-    composition_refuses_focus(program, hwnd, ime, &baseline, term)?;
+    composition_refuses_focus(repository, program, pid, hwnd, ime, &baseline, term)?;
     export_priority(repository, program, pid, hwnd, ime, &baseline)?;
     Ok(())
 }
 
 fn direct_commit(hwnd: WindowHandle) -> Result<(), String> {
-    window::type_ascii_letters(hwnd, "zhongguo")?;
+    window::type_ascii_letters(hwnd, "shuxue")?;
     commit_first_candidate(hwnd)
 }
 
@@ -163,7 +156,9 @@ fn copy_is(hwnd: WindowHandle, expected: &str) -> Result<(), String> {
 }
 
 fn composition_refuses_focus(
+    repository: &Path,
     program: &Path,
+    pid: u32,
     hwnd: WindowHandle,
     ime: &mut RealImeSession<'_>,
     baseline: &str,
@@ -179,11 +174,31 @@ fn composition_refuses_focus(
         if owner == "search" {
             open_empty_search(hwnd)?;
         }
-        begin_preedit(program, hwnd, baseline, "zhongguo", ime)?;
+        // Leave the final letter for after the refused focus request. A query
+        // committed by the click must not masquerade as a preserved composition.
+        begin_preedit(program, hwnd, baseline, "shuxu", ime)?;
         opacity::open(hwnd)?;
         input::opacity_field(hwnd)?;
-        window::press_escape(hwnd)?;
+        super::super::diagnostics::step(
+            repository,
+            program,
+            pid,
+            &format!("numeric-{owner}-composition-refused"),
+        )?;
+        thread::sleep(AUTOSAVE_OBSERVATION);
+        assert_note(
+            program,
+            baseline,
+            "numeric focus committed preedit prematurely",
+        )?;
+        if title_is_dirty(&window::title(hwnd)?) {
+            return Err("numeric focus dirtied the note during preedit".to_owned());
+        }
+        window::type_ascii_letters(hwnd, "e")?;
         commit_first_candidate(hwnd)?;
+        // Toggle the popup closed after the candidate commit. Esc while the
+        // candidate is active would cancel it in the TIP before app routing.
+        opacity::open(hwnd)?;
         if owner == "search" {
             window::press_find(hwnd)?;
             copy_is(hwnd, term)?;

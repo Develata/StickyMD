@@ -3,12 +3,12 @@ title: Rendering Engine Stress Test
 author: Deve-Note QA
 tags:
   - test
-  - violence
+  - stress
   - edge-case
 date: 2026-01-15
 ---
 
-# 🧪 渲染引擎终极暴力测试 (Rendering Stress Test)
+# 🧪 渲染引擎综合压力测试 (Rendering Stress Test)
 
 ![首屏本地压力图](images/stress-top.png)
 
@@ -22,7 +22,7 @@ date: 2026-01-15
 
 ```rust
 // 这里的 $$ 不应触发 Block Math
-fn calculate_danger() {
+fn calculate_example() {
     let price = "$100"; // 这里的 $ 不应触发 Inline Math
     let formula = "E=mc^2";
     println!("Markdown keywords like **bold** or # Header should be ignored inside code.");
@@ -46,7 +46,7 @@ fn calculate_danger() {
 * 嵌套测试：**Bold Math: $\frac{a_i}{b_j}$**（外部加粗应生效，内部公式正常）。
 * 转义测试：\$ Not a math $ (反斜杠转义应生效，显示普通 $ 符号)。
 
-### 1.3 嵌套样式地狱 (Nested Styles)
+### 1.3 嵌套样式组合 (Nested Styles)
 
 * **Bold only**
 * *Italic only*
@@ -89,7 +89,7 @@ fn calculate_danger() {
 | #   | 描述 (Description) | 渲染测试 (Render)   | 备注      |     |
 | --- | ---------------- | --------------- | ------- | --- |
 | 1   | **Inline Math**  | $\sqrt{x^2+y^2}$ | RaTeX   |     |
-| 2   | **Inline Code**  | `rm -rf /`      | Danger  |     |
+| 2   | **Inline Code**  | `cargo fmt`      | Example |     |
 | 3   | **Escaped Pipe** | `a \| b`       | literal |     |
 | 4   | **Mixed**        | ~~Delete~~ **$\alpha+\beta$** | Complex |     |
 

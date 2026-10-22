@@ -584,7 +584,7 @@ mod tests {
                 .unwrap(),
             AppEffect::NoOp
         );
-        coordinator.clipboard.text = Some("中国".to_owned());
+        coordinator.clipboard.text = Some("数学".to_owned());
         coordinator
             .dispatch(AppIntent::PasteClipboard {
                 expected_generation: generation,
@@ -592,7 +592,7 @@ mod tests {
                 timestamp_ms: 2,
             })
             .unwrap();
-        assert_eq!(&*coordinator.snapshot().text, "hello 中国");
+        assert_eq!(&*coordinator.snapshot().text, "hello 数学");
     }
 
     #[test]

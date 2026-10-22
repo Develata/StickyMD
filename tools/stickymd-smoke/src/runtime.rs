@@ -218,7 +218,7 @@ fn run_inner(
             crate::window_control::focus_split_preview(first_window)?;
             wait_for_preview_projection(
                 first_window,
-                &["渲染引擎终极暴力测试", "STICKYMD_RENDERING_STRESS_END"],
+                &["渲染引擎综合压力测试", "STICKYMD_RENDERING_STRESS_END"],
             )?;
             assert_preview_stress_source_unchanged(&first_dir)?;
         }
@@ -242,7 +242,7 @@ fn run_inner(
             crate::window_control::focus_split_preview(second_window)?;
             wait_for_preview_projection(
                 second_window,
-                &["渲染引擎终极暴力测试", "STICKYMD_RENDERING_STRESS_END"],
+                &["渲染引擎综合压力测试", "STICKYMD_RENDERING_STRESS_END"],
             )?;
             assert_preview_stress_source_unchanged(&second_dir)?;
         }
