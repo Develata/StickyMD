@@ -5,8 +5,10 @@
 mod diagnostics;
 mod dock;
 mod editor;
+mod escape;
 mod identity;
 mod ime;
+mod opacity;
 mod search;
 mod tray;
 mod tray_topmost;

@@ -5,8 +5,10 @@ use std::os::windows::ffi::OsStrExt;
 use std::thread;
 use std::time::Duration;
 
+pub(crate) mod covered_sensor;
 mod ime_profile;
 mod physical_input;
+pub(crate) mod qualification_input;
 pub(crate) mod resource_comparison;
 mod routing;
 mod tray_input;

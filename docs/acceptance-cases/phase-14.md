@@ -384,3 +384,12 @@ Failure Signals: partial data, a raced autosave accepted as the negative control
 missing image bytes, unresolved recovery interpreted as success, changed attributes, or one
 IME-owned Esc additionally closing Search/collapsing the window. These tests do not interrupt
 an OS call or simulate power loss. Manual rows remain NOT TESTED.
+
+The G4-02 extension uses physical slider presses/releases, numeric Enter/blur,
+field/drag cancellation and a two-key-down/one-key-up Esc sequence. Before a covered
+sensor hover, a separate owned opaque native window must be observed at the sensor
+point. That hover sends no pointer messages to StickyMD; the cover has bounded
+lifetime and explicit teardown. Expected: Esc consumes only the first applicable
+state, committed alpha/config agree, cancelled edits leave both unchanged, and
+the covered sensor still reveals through normal cursor polling. A failed cover,
+wrong hit target, unreleased input or missing observable transition fails the case.

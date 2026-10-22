@@ -157,6 +157,7 @@ fn assert_refused(injection: &Injection<Scripted>, backend: &Scripted, reason: &
     for refused in [
         injection.tap(A),
         injection.chord(&[SHIFT], A),
+        injection.repeat_key(A, 2),
         injection.click_right(),
         injection.move_absolute(1, 2),
         injection.wheel(120),
@@ -204,6 +205,54 @@ fn a_chord_releases_in_reverse_press_order() {
     injection.click_right().unwrap();
     assert_eq!(backend.inputs()[8..], [right(false), right(true)]);
     assert_eq!(injection.stop_reason(), None);
+}
+
+#[test]
+fn repeated_keydowns_release_once_and_reject_unbounded_counts() {
+    let backend = Scripted::default();
+    let injection = Injection::new(backend.clone());
+    for presses in [0, 1, 17, u8::MAX] {
+        assert!(injection.repeat_key(ESCAPE, presses).is_err());
+    }
+    assert!(backend.inputs().is_empty());
+    injection.repeat_key(ESCAPE, 3).unwrap();
+    assert_eq!(
+        backend.inputs(),
+        [
+            key(ESCAPE, false),
+            key(ESCAPE, false),
+            key(ESCAPE, false),
+            key(ESCAPE, true)
+        ]
+    );
+    assert!(injection.lock().held.is_empty());
+}
+
+#[test]
+fn repeat_failure_and_unwind_release_the_original_press() {
+    for panics in [false, true] {
+        let backend = Scripted::with(|log| {
+            if panics {
+                log.panic_at = vec![1];
+            } else {
+                log.short = vec![1];
+            }
+        });
+        let injection = Injection::new(backend.clone());
+        let result = catch_unwind(AssertUnwindSafe(|| injection.repeat_key(ESCAPE, 3)));
+        if panics {
+            assert!(result.is_err());
+        } else {
+            assert!(result.unwrap().is_err());
+        }
+        assert_eq!(backend.inputs(), [key(ESCAPE, false), key(ESCAPE, true)]);
+        assert!(injection.lock().held.is_empty());
+        assert_eq!(injection.stop_reason().is_some(), panics);
+    }
+    let backend = Scripted::with(|log| log.short = vec![2]);
+    let injection = Injection::new(backend.clone());
+    assert!(injection.repeat_key(ESCAPE, 2).is_err());
+    assert_refused(&injection, &backend, "release");
 }
 
 /// A press that inserts nothing fails, and every key the operation registered before it is

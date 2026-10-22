@@ -251,3 +251,15 @@ close the remaining C2d or C3 tasks.
   are declared before coverage can be credited. No ownership gap is closed merely
   because this code compiles. `67-crash-and-docked-ime-review` passed clippy; physical
   execution of these new paths is pending. No runtime crash hook was introduced.
+
+- `66-ime-fix-release-preflight` passed the 46 existing real-IME checks on the
+  fixed Release bytes. `70-crash-milestones-preflight` passed all 17 G3-03 checks;
+  `71-docked-ime-cancel-release` passed the expanded 52 IME checks, including both
+  profiles' Esc cancellation on all three dock edges. `69-phase00-and-labels`
+  passed governance (the command checks governance; label tests are separate).
+- G4-02 now declares physical opacity/Esc/covered-sensor checks. A single owned
+  key registration permits bounded repeated key-downs and still releases once;
+  short repeat, unwind and release-failure paths are covered by the 22 passing
+  injection tests in `73`. The cover is a separate owned native window with no
+  StickyMD mouse-message reinforcement. Native FFI signature consistency was
+  corrected after `72`; a fresh desktop run of this extension remains required.

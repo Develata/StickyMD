@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use super::super::super::exact_desktop::{
-    Checks, ChildGuard, run_cargo_test, seed_note, wait_for_config, wait_for_layout, wait_until,
+    Checks, run_cargo_test, seed_note, start_until_editor_ready, wait_for_config, wait_until,
 };
 
 pub(super) fn g4_02(repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
@@ -17,9 +17,10 @@ pub(super) fn g4_02(repository: &Path, program: &Path, checks: &mut Checks) -> R
     run_cargo_test(repository, "flow::window")?;
 
     seed_note(program, "G4 docking integration\n")?;
-    let mut child = ChildGuard::start(&program.join("StickyMD.exe"))?;
-    wait_for_layout(program)?;
+    let mut child = start_until_editor_ready(&program.join("StickyMD.exe"))?;
     let window = crate::window_control::visible_window(child.id())?;
+    super::opacity::run(program, window, checks)?;
+    super::escape::run(program, window, checks)?;
 
     for (edge, value) in [
         (crate::window_control::PrimaryDockEdge::Left, "left"),

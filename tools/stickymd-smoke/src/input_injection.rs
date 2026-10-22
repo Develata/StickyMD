@@ -350,6 +350,27 @@ impl<B: Backend> Injection<B> {
         self.chord(&[], key)
     }
 
+    /// Repeated key-downs under one ownership registration, followed by one
+    /// release. No other operation can borrow or release this held key.
+    pub(crate) fn repeat_key(&self, key: Key, presses: u8) -> Result<(), String> {
+        if !(2..=16).contains(&presses) {
+            return Err("repeated key requires 2..=16 presses".to_owned());
+        }
+        let mut guarded = self.operation()?;
+        let operation = guarded.operation;
+        let pressed = guarded
+            .state
+            .press(operation, Held::Key(key))
+            .and_then(|()| {
+                (1..presses).try_for_each(|_| {
+                    guarded.state.backend.sleep(Duration::from_millis(25));
+                    guarded.state.send_one(Held::Key(key).input(false))
+                })
+            });
+        let released = guarded.state.release_operation(operation);
+        pressed.and(released)
+    }
+
     /// Presses the left button and waits for it to read down; the guard releases it.
     pub(crate) fn press_left(&self) -> Result<LeftButton<'_, B>, String> {
         let mut guarded = self.operation()?;

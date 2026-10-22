@@ -140,6 +140,7 @@ pub(crate) const G4_01: &[&str] = &[
 ];
 
 pub(crate) const G4_02: &[&str] = &[
+    "covered-sensor-real-hover",
     "dock-collapse-delay:edge=left,pin=off",
     "dock-collapse-delay:edge=right,pin=off",
     "dock-collapse-delay:edge=right,pin=on",
@@ -164,6 +165,18 @@ pub(crate) const G4_02: &[&str] = &[
     "dock-snap:edge=right,pin=off",
     "dock-snap:edge=right,pin=on",
     "dock-snap:edge=top,pin=off",
+    "escape-floating-keeps-window",
+    "escape-preview-clears-selection",
+    "escape-preview-empty-collapses",
+    "escape-repeat-keydowns-independent",
+    "escape-search-closes-before-dock",
+    "escape-shift-collapses",
+    "manual-collapse-button",
+    "opacity-escape-cancels-drag",
+    "opacity-escape-cancels-field",
+    "opacity-numeric-blur-commits",
+    "opacity-numeric-enter-commits",
+    "opacity-slider-release-commits",
     "pin-off-config",
     "pin-on-reaches-hwnd",
     "pin-survives-autohide",
@@ -376,7 +389,7 @@ mod tests {
             .chain(G4)
             .map(|case| case.checks.len())
             .sum::<usize>();
-        assert_eq!(total, 176);
+        assert_eq!(total, 189);
     }
 
     #[test]
