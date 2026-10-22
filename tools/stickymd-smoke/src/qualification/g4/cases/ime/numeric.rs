@@ -176,6 +176,10 @@ fn composition_refuses_focus(
     // Native TIP surfaces include invisible hit-test margins. Keep both Source
     // and left-pane Search candidates away from the right toolbar/field before
     // starting either composition; never move or dismiss the active candidate.
+    // The small window was centered. Move it inward before widening so the
+    // physical resize endpoint stays on screen at the host's current DPI.
+    let inset = window::dip_pixels(hwnd, 32.0)?;
+    window::move_outer_to_primary_offset(hwnd, inset, inset)?;
     window::resize_to_dip(hwnd, 1200, 680)?;
     for owner in ["source", "search"] {
         println!(
@@ -248,6 +252,7 @@ fn composition_refuses_focus(
     window::press_source_shortcut(hwnd)?;
     wait_for_config(program, "view_mode = \"source\"")?;
     window::resize_to_dip(hwnd, 520, 680)?;
+    window::move_to_primary_floating(hwnd)?;
     Ok(())
 }
 

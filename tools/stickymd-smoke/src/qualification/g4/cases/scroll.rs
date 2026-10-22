@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 
 use super::super::super::exact_desktop::{
-    Checks, io_error, seed_note, start_until_editor_ready, wait_until,
+    Checks, io_error, seed_note, start_until_editor_ready, wait_for_config, wait_until,
 };
 use crate::window_control::{self as window, WindowHandle, qualification_input as input};
 
@@ -20,6 +20,13 @@ pub(super) fn run(program: &Path, checks: &mut Checks) -> Result<(), String> {
     let mut child = start_until_editor_ready(&executable)?;
     let hwnd = window::visible_window(child.id())?;
     window::move_to_primary_floating(hwnd)?;
+    // Screen-pixel thumb observations need an opaque fixture: at the default
+    // 96%, desktop texture can be mistaken for the scrollbar's longest run.
+    window::click_toolbar_physically(hwnd, window::ToolbarControl::Opacity)?;
+    let held = input::opacity_drag(hwnd, 100)?;
+    held.release()?;
+    wait_for_config(&instance, "opacity = 100")?;
+    window::press_escape(hwnd)?;
     window::focus_source_editor(hwnd)?;
     input::document_home(hwnd)?;
     let initial = selected_line(hwnd)?;
