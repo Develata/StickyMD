@@ -10,6 +10,8 @@ mod physical_input;
 pub(crate) mod resource_comparison;
 mod routing;
 mod tray_input;
+mod tray_state;
+pub(crate) use tray_state::tray_item_checked;
 
 pub(crate) use ime_profile::{
     ImeProfile, ImeProfileGuard, set_ime_native_mode, set_ime_open_status,

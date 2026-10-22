@@ -397,23 +397,12 @@ pub(in crate::qualification) fn toggle_topmost(
     invoke(repository, process_id, TOPMOST, "the tray Topmost item")
 }
 
-fn checked_state(output: &str, item: &str) -> Result<bool, String> {
-    let lines = report(output, "tray-item-checked", &["UIA_TRAY_CHECKED"])?;
-    let value = one(&lines, "UIA_TRAY_CHECKED").filter(|_| lines.len() == 1);
-    match value.and_then(|value| value.strip_prefix(item)) {
-        Some(";value=true") => Ok(true),
-        Some(";value=false") => Ok(false),
-        _ => Err(format!("malformed tray-item-checked report: {output:?}")),
-    }
-}
-
 pub(in crate::qualification) fn topmost_checked(
     repository: &Path,
     process_id: u32,
 ) -> Result<bool, String> {
     let opened = open(repository, process_id)?;
-    let observed = helper(repository, "tray-item-checked", process_id, Some(TOPMOST))
-        .and_then(|output| checked_state(&output, TOPMOST));
+    let observed = crate::window_control::tray_item_checked(process_id, "置顶");
     let closing = close(repository, process_id);
     match (observed, closing) {
         (Ok(value), Ok(())) => Ok(value),
@@ -431,26 +420,6 @@ pub(in crate::qualification) fn exit(repository: &Path, process_id: u32) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn check_state_requires_the_named_item_and_a_boolean() {
-        assert_eq!(
-            checked_state("UIA_TRAY_CHECKED=7F6E-9876;value=true", TOPMOST),
-            Ok(true)
-        );
-        assert_eq!(
-            checked_state("UIA_TRAY_CHECKED=7F6E-9876;value=false", TOPMOST),
-            Ok(false)
-        );
-        for report in [
-            "",
-            "UIA_TRAY_CHECKED=7F6E-9876;value=0",
-            "UIA_TRAY_CHECKED=9000-51FA;value=true",
-            "UIA_TRAY_CHECKED=7F6E-9876;value=true\nUIA_TRAY_CHECKED=7F6E-9876;value=false",
-        ] {
-            assert!(checked_state(report, TOPMOST).is_err(), "{report}");
-        }
-    }
 
     #[test]
     fn successful_open_preserves_partial_items_in_later_failures() {

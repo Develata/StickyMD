@@ -157,3 +157,25 @@ close the remaining C2d or C3 tasks.
   mtimes, exits one via its actual tray menu, and edits the survivor. Its expanded
   acceptance row is NOT TESTED until execution. The phase wrapper interface is unchanged.
 - C2d/C3 are incomplete. 尚未做跨模型审查.
+
+## 2026-10-22 native menu and two-copy results
+
+- `36-two-copies-preflight` passed the expanded P08-A11 isolation operation on the
+  retained local Release EXE: two-way note/config edits, peer bytes/mtime, target
+  tray exit and survivor edit. This targeted preflight does not replace a full
+  `WindowShell` runtime receipt or M45 manual observation.
+- `34-tray-owner-preflight` successfully opened the target PID's menu, then failed
+  because the installed .NET UI Automation assembly has no `LegacyIAccessiblePattern`
+  type. The check-state adapter is replaced by read-only, bounded native popup/menu
+  queries with owner checks before and after; no unchecked default is accepted.
+- `31-tray-candidates-checks` had 266 passing tests and two source-digest failures.
+  The decomposition was unchanged; the mistaken raw-file hash is corrected to the
+  normalized-lines hash. `35-reviewed-source-digest` then passed all ten coverage
+  checks. The failed run remains retained.
+- `37-ime-event-trace` refused an absent EXE before desktop input (the Cargo output
+  was named `stickymd-win.exe`). `38-ime-event-trace` used the actual frozen debug
+  build, SHA-256 `1204a176d97e20ff37dc4d7e5c06af85dcbfdec59f3fb2e40f4c95df1cc1bda7`.
+  Microsoft Pinyin's trace shows Esc key-down before empty preedit, with Search
+  still open. That run stopped at another harness acknowledgement race: it read
+  the clipboard before the Copy request completed. The assertion now waits for
+  the exact expected copied term; WeType event ordering is still unverified.

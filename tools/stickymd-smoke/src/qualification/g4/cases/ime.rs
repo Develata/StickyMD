@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use super::super::super::exact_desktop::{
     Checks, ChildGuard, copy_directory, io_error, seed_note, wait_for_config, wait_for_layout,
-    wait_note as wait_raw_note,
+    wait_note as wait_raw_note, wait_until,
 };
 use crate::window_control::{ImeProfile, ImeProfileGuard, WindowHandle};
 
@@ -433,13 +433,11 @@ fn search_fields_accept_real_ime(
     crate::window_control::press_find(window)?;
     crate::window_control::clear_clipboard()?;
     crate::window_control::press_copy(window)?;
-    let selected = crate::window_control::clipboard_text()?.unwrap_or_default();
-    if selected != term {
-        return Err(format!(
-            "{} Search IME query did not select its committed source term: expected={term:?} observed={selected:?}",
-            ime.profile.name()
-        ));
-    }
+    let mut selected = String::new();
+    wait_until("Search IME copied match", || {
+        selected = crate::window_control::clipboard_text()?.unwrap_or_default();
+        Ok(selected == term)
+    }).map_err(|error| format!("{} Search IME query did not select its committed source term: expected={term:?} observed={selected:?}; {error}", ime.profile.name()))?;
     ime.record("ime-find-query-selects-term", &[]);
     ime.record("ime-search-escape-retains-query", &[]);
     ime.record("ime-search-composition-blocks-preview", &[]);
