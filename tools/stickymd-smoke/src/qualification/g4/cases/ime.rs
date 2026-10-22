@@ -192,7 +192,16 @@ fn exercise_profile(
     profile_key: &'static str,
 ) -> Result<Checks, String> {
     seed_note(program, SOURCE_PREFIX)?;
-    let mut child = ChildGuard::start(&program.join("StickyMD.exe"))?;
+    let executable = program.join("StickyMD.exe");
+    let mut command = crate::managed_process::gui_command(&executable)?;
+    if std::env::var("STICKYMD_LOCAL_PREFLIGHT_DIAGNOSTICS").as_deref() == Ok("1") {
+        let path = program.join("local-ime-events.log");
+        let file = std::fs::File::create_new(&path)
+            .map_err(|error| format!("cannot create IME diagnostic log: {error}"))?;
+        command.stderr(file);
+        println!("LOCAL_PREFLIGHT_IME_LOG={}", path.display());
+    }
+    let mut child = ChildGuard::spawn(&mut command, "start real IME fixture")?;
     wait_for_layout(program)?;
     let window = crate::window_control::visible_window(child.id())?;
     crate::window_control::focus_source_editor(window)?;

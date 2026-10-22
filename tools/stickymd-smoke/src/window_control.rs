@@ -21,7 +21,9 @@ use physical_input::{
     move_physical_cursor, move_physical_cursor_with_tolerance, press_left_button,
     release_left_button, scroll_wheel,
 };
-pub(crate) use tray_input::{escape_tray_popup, place_cursor_on_tray_icon, right_click_tray_icon};
+pub(crate) use tray_input::{
+    active_tray_popup_owner, escape_tray_popup, place_cursor_on_tray_icon, right_click_tray_icon,
+};
 
 const WM_MOUSEMOVE: u32 = 0x0200;
 const WM_LBUTTONDOWN: u32 = 0x0201;

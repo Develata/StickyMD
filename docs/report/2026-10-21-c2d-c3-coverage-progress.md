@@ -136,3 +136,24 @@ close the remaining C2d or C3 tasks.
   EXE, including collapsed wake, activation, unchanged note/config and sole primary.
   Input cleanup succeeded and no StickyMD child remained. This is local source/preflight
   evidence, not a promoted-candidate receipt. C2d/C3 remain in progress.
+
+## 2026-10-22 Search confirmation, IME reproduction and portable isolation
+
+- `27-search-ack-preflight` passed all 15 G4-03 checks, using harness `edb3986`
+  (EXE SHA-256 `37a643ac4c5ce17a3ba10876db7dea1c848183f7c9e5a0e489b2e7eb80081f18`)
+  and the unchanged retained local product EXE. No exact-candidate receipt was produced.
+- `28-ime-stage-diagnostic` reproduced the WeType failure. The three retained images
+  show composition before Ctrl+3, composition still present after Ctrl+3, and Search
+  closed after one Esc. The following Ctrl+Enter then changes Source. This violates
+  plan 09's composition-only Esc row. Event ordering remains to be established;
+  debug-only input event metadata (without document/IME strings) and opt-in fixture
+  stderr capture are being used to diagnose it. Release input behavior is unchanged.
+- The tray adapter now enumerates same-name candidates, rereads their geometry after
+  hovering, and accepts only a native popup owner matching the target PID plus that
+  PID's UIA menu items. It closes other popups only if their PID belongs to the two
+  explicitly owned test copies. Unknown owners are rejected without Esc or invocation.
+  Single-instance right-clicks remain capped at two; two-copy enumeration is bounded.
+- P08-A11 now drives edits and config changes in both copies, compares peer bytes and
+  mtimes, exits one via its actual tray menu, and edits the survivor. Its expanded
+  acceptance row is NOT TESTED until execution. The phase wrapper interface is unchanged.
+- C2d/C3 are incomplete. 尚未做跨模型审查.

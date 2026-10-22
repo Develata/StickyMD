@@ -107,6 +107,16 @@ pub(crate) fn right_click_tray_icon(x: i32, y: i32) -> Result<(), String> {
 /// pressing shows only that no StickyMD popup was active at the query, not that the menu is
 /// closed. A query that fails, or a popup whose owner cannot be read, is an error.
 pub(crate) fn escape_tray_popup(process_id: u32) -> Result<bool, String> {
+    if active_tray_popup_owner()? != Some(process_id) {
+        return Ok(false);
+    }
+    input_injection::live()?.tap(ESCAPE)?;
+    Ok(true)
+}
+
+/// Observes the active native popup owner without injecting input. A caller may
+/// close only a popup whose PID belongs to its explicitly owned fixture set.
+pub(crate) fn active_tray_popup_owner() -> Result<Option<u32>, String> {
     let mut info = NativeGuiThreadInfo {
         size: std::mem::size_of::<NativeGuiThreadInfo>() as u32,
         ..NativeGuiThreadInfo::default()
@@ -116,12 +126,12 @@ pub(crate) fn escape_tray_popup(process_id: u32) -> Result<bool, String> {
     if unsafe { GetGUIThreadInfo(0, &raw mut info) } == 0 {
         // A failed query says nothing about the menu; it is not "no menu".
         return Err(format!(
-            "cannot read the foreground thread's GUI state before a tray Esc: {}",
+            "cannot read the foreground thread's GUI state for a tray popup: {}",
             std::io::Error::last_os_error()
         ));
     }
     if info.flags & GUI_POPUPMENUMODE == 0 {
-        return Ok(false);
+        return Ok(None);
     }
     let mut owner = 0_u32;
     let menu_owner = info.menu_owner as isize;
@@ -131,9 +141,5 @@ pub(crate) fn escape_tray_popup(process_id: u32) -> Result<bool, String> {
             "a popup menu is active but its owner window ({menu_owner:#x}) cannot be read"
         ));
     }
-    if owner != process_id {
-        return Ok(false);
-    }
-    input_injection::live()?.tap(ESCAPE)?;
-    Ok(true)
+    Ok(Some(owner))
 }

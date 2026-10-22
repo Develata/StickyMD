@@ -39,6 +39,8 @@ mod startup_attribution;
 mod windows_build;
 pub(crate) mod workspace_tests;
 
+#[cfg(windows)]
+pub(crate) use exact_desktop::tray::exit_owned_copy;
 pub(crate) use module_ledger::fingerprint::verify_product_classification;
 
 /// The unit tests that own manual obligations (plan 11 manual obligation mapping).

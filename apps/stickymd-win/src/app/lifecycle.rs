@@ -155,6 +155,40 @@ impl ApplicationHandler<AppEvent> for StickyApp {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // Debug-only native routing diagnostics; never log document or IME text.
+        #[cfg(debug_assertions)]
+        match &event {
+            WindowEvent::Ime(ime) => {
+                let (kind, len) = match ime {
+                    winit::event::Ime::Enabled => ("enabled", 0),
+                    winit::event::Ime::Disabled => ("disabled", 0),
+                    winit::event::Ime::Preedit(text, _) => ("preedit", text.len()),
+                    winit::event::Ime::Commit(text) => ("commit", text.len()),
+                };
+                eprintln!(
+                    "INPUT_TRACE t={} ime={kind} len={len} search={} composing={}",
+                    self.timestamp_ms(),
+                    self.search.open,
+                    self.search.is_composing()
+                );
+            }
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic,
+                ..
+            } => {
+                eprintln!(
+                    "INPUT_TRACE t={} key={:?} state={:?} repeat={} synthetic={is_synthetic} search={} composing={}",
+                    self.timestamp_ms(),
+                    event.physical_key,
+                    event.state,
+                    event.repeat,
+                    self.search.open,
+                    self.search.is_composing()
+                );
+            }
+            _ => {}
+        }
         match event {
             WindowEvent::CloseRequested => {
                 self.dispatch_window_intent(

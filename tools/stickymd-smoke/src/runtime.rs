@@ -46,6 +46,7 @@ macro_rules! runtime_report {
 #[cfg(test)]
 mod native_diagnostics;
 mod opacity_popup;
+pub(crate) mod portable_isolation;
 pub(crate) mod resources;
 #[cfg(test)]
 mod startup_focus;
@@ -193,10 +194,10 @@ fn run_inner(
     ensure_alive(&mut children[0], "first portable instance")?;
 
     if scenario == RuntimeScenario::WindowShell {
-        return run_window_shell_lifecycle(&first_dir, &first_exe, &mut children[0]);
+        return run_window_shell_lifecycle(repository, &first_dir, &first_exe, &mut children[0]);
     }
     if scenario == RuntimeScenario::Phase10 {
-        return run_phase10_lifecycle(&first_dir, &first_exe, &mut children[0]);
+        return run_phase10_lifecycle(repository, &first_dir, &first_exe, &mut children[0]);
     }
     if scenario == RuntimeScenario::Phase11B {
         return run_phase11b_lifecycle(&first_dir, &mut children[0]);
@@ -853,6 +854,7 @@ fn nearest_rank(samples: &[Duration], percentile: usize) -> Result<Duration, Str
 }
 
 fn run_window_shell_lifecycle(
+    repository: &Path,
     program_directory: &Path,
     executable: &Path,
     primary: &mut Child,
@@ -984,36 +986,11 @@ fn run_window_shell_lifecycle(
         return Err("secondary-instance wake modified durable files".to_owned());
     }
 
-    let smoke_root = program_directory
-        .parent()
-        .ok_or_else(|| "Phase 8 program directory has no smoke root".to_owned())?;
-    let isolated_directory = smoke_root.join("phase8-independent");
-    let isolated_executable = copy_executable(executable, &isolated_directory)?;
-    prepare_isolation_layout(&isolated_directory)?;
-    let mut isolated = start(&isolated_executable)?;
-    let isolated_result = (|| {
-        wait_for_layout(&isolated_directory)?;
-        let isolated_window = crate::window_control::visible_window(isolated.id())?;
-        if isolated_window == window {
-            return Err("different-directory instance reused the first HWND".to_owned());
-        }
-        ensure_alive(primary, "first portable instance during isolation smoke")?;
-        ensure_alive(&mut isolated, "different-directory portable instance")?;
-        let first_note = fs::read(program_directory.join("note/note.md"))
-            .map_err(|error| format!("cannot read first isolated note: {error}"))?;
-        let second_note = fs::read(isolated_directory.join("note/note.md"))
-            .map_err(|error| format!("cannot read second isolated note: {error}"))?;
-        if first_note == second_note {
-            return Err("different-directory notes were not independently seeded".to_owned());
-        }
-        Ok(())
-    })();
-    stop_child(&mut isolated);
-    isolated_result?;
-    Ok(())
+    portable_isolation::run(repository, program_directory, executable, primary, window)
 }
 
 fn run_phase10_lifecycle(
+    repository: &Path,
     program_directory: &Path,
     executable: &Path,
     primary: &mut Child,
@@ -1021,7 +998,7 @@ fn run_phase10_lifecycle(
     let window = crate::window_control::visible_window(primary.id())?;
     let initial_style = wait_for_tool_window_style(window)?;
 
-    run_window_shell_lifecycle(program_directory, executable, primary)?;
+    run_window_shell_lifecycle(repository, program_directory, executable, primary)?;
     let restored_style = wait_for_tool_window_style(window)?;
 
     verify_zoomed_toolbar_alignment(program_directory, primary, window)?;

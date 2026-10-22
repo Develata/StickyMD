@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('capture-window', 'export', 'tray-target', 'tray-menu-items', 'tray-menu-closed', 'tray-invoke', 'tray-item-checked')]
+    [ValidateSet('capture-window', 'export', 'tray-target', 'tray-targets', 'tray-menu-items', 'tray-menu-closed', 'tray-invoke', 'tray-item-checked')]
     [string]$Action,
     [Parameter(Mandatory = $true)]
     [int]$ProcessId,
@@ -139,7 +139,7 @@ function Save-WindowCapture {
     Write-Output ('UIA_WINDOW_CAPTURE=' + $target)
 }
 
-function Find-StickyMdTrayTarget {
+function Find-StickyMdTrayTargets {
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     $name = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::NameProperty,
@@ -174,7 +174,7 @@ function Find-StickyMdTrayTarget {
                     $y = [int]($rect.Y + $rect.Height / 2)
                     if ($x -lt $virtualLeft -or $x -ge $virtualRight -or
                         $y -lt $virtualTop -or $y -ge $virtualBottom) { continue }
-                    return [PSCustomObject]@{
+                    [PSCustomObject]@{
                         X = $x
                         Y = $y
                         Geometry = ('container={0};x={1};y={2};width={3};height={4}' -f
@@ -182,10 +182,13 @@ function Find-StickyMdTrayTarget {
                             [int]$rect.Width, [int]$rect.Height)
                     }
                 }
-            } catch { }
+            } catch { throw "Tray icon enumeration was incomplete: $_" }
         }
     }
-    return $null
+}
+
+function Find-StickyMdTrayTarget {
+    Find-StickyMdTrayTargets | Select-Object -First 1
 }
 
 function Test-TrayOverflowVisible {
@@ -363,6 +366,38 @@ function Write-TrayTarget {
     Write-Output ('UIA_TRAY_GEOMETRY=' + $target.Geometry)
 }
 
+# Enumerate every visible same-name icon. The Rust caller identifies a candidate
+# only from the native popup owner PID, never from its Explorer UIA process ID.
+function Write-TrayTargets {
+    $before = Find-ProcessMenuItems
+    if (-not $before.Observed) {
+        Write-WithPartial 'UIA_TRAY_MENU_UNOBSERVABLE' $before.Items
+        return
+    }
+    $items = @($before.Items)
+    Write-Output ('UIA_TRAY_MENU_ITEMS_BEFORE=' + $items.Count)
+    if ($items.Count -gt 0) {
+        Write-Output ('UIA_TRAY_MENU_OPEN; observed_items=' + (Format-MenuItems $items))
+        return
+    }
+    if ($Item -notmatch '^[12]$') { throw 'tray-targets requires the owned instance count (1 or 2)' }
+    $minimum = [int]$Item
+    $targets = @(Find-StickyMdTrayTargets)
+    if ($targets.Count -lt $minimum) {
+        Open-TrayOverflow
+        $targets = @(Wait-Until {
+            $found = @(Find-StickyMdTrayTargets)
+            if ($found.Count -ge $minimum) { return $found }
+            return $null
+        } 'all owned StickyMD tray icons')
+    }
+    if ($targets.Count -gt 16) { throw 'Too many same-name tray icons for a bounded search' }
+    foreach ($target in $targets) {
+        Write-Output ('UIA_TRAY_TARGET={0},{1}' -f $target.X, $target.Y)
+        Write-Output ('UIA_TRAY_GEOMETRY=' + $target.Geometry)
+    }
+}
+
 function Write-TrayMenuItems {
     $snapshot = Wait-ForProcessMenuItems $TrayMenuOpenTimeoutMilliseconds
     if (-not $snapshot.Observed) {
@@ -433,6 +468,7 @@ switch ($Action) {
     'capture-window' { Save-WindowCapture }
     'export' { Invoke-ExportDialog }
     'tray-target' { Write-TrayTarget }
+    'tray-targets' { Write-TrayTargets }
     'tray-menu-items' { Write-TrayMenuItems }
     'tray-menu-closed' { Wait-TrayMenuClosed }
     'tray-invoke' { Invoke-TrayMenuItem }

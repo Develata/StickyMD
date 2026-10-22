@@ -135,3 +135,30 @@ fn c2d_tray_local_preflight() {
 fn c2d_identity_local_preflight() {
     run(&exact_checks::G4[4], super::cases::g4_05);
 }
+
+#[test]
+#[ignore = "exclusive Windows desktop and two owned tray icons; local EXE only"]
+fn c2d_two_copies_local_preflight() {
+    const CHECK: &str = "portable-copies-note-config-and-exit-isolated";
+    let case = exact_checks::DeclaredCase {
+        id: "P08-A11",
+        checks: &[CHECK],
+    };
+    run(&case, |repository, program| {
+        exact_desktop::seed_note(program, "First portable copy original")?;
+        let executable = program.join("StickyMD.exe");
+        let mut child = exact_desktop::start_until_editor_ready(&executable)?;
+        let window = crate::window_control::visible_window(child.id())?;
+        crate::runtime::portable_isolation::run(
+            repository,
+            program,
+            &executable,
+            &mut child,
+            window,
+        )?;
+        child.kill_and_wait()?;
+        let mut evidence = exact_desktop::CaseEvidence::default();
+        evidence.checks.record(CHECK, &[]);
+        Ok(evidence)
+    });
+}

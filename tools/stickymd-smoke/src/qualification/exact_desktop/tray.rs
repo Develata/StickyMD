@@ -14,6 +14,8 @@ use std::path::Path;
 
 use super::run_uia;
 
+mod multiple;
+
 /// A right-click on the icon is only a request; one retry is allowed (plan 11 G4-01).
 pub(super) const TRAY_MENU_OPEN_ATTEMPTS: usize = 2;
 
@@ -319,75 +321,7 @@ impl Opened {
 /// Opens the menu from observed-closed. Every failure records each attempt and how its cleanup
 /// went.
 fn open(repository: &Path, process_id: u32) -> Result<Opened, String> {
-    let mut attempts: Vec<Attempt> = Vec::new();
-    let failed =
-        |attempts: &[Attempt]| format!("StickyMD tray menu not opened: {}", history(attempts));
-    for _ in 0..TRAY_MENU_OPEN_ATTEMPTS {
-        let mut attempt = Attempt::default();
-        let report =
-            helper(repository, "tray-target", process_id, None).and_then(|output| located(&output));
-        let (x, y) = match report {
-            Ok(Located::Closed { x, y, geometry }) => {
-                attempt.geometry = Some(geometry);
-                (x, y)
-            }
-            Ok(Located::Open(items)) => {
-                // Its opening cannot be observed; close it and count the attempt.
-                let closing = close(repository, process_id);
-                attempt.outcome = match &closing {
-                    Ok(()) => format!("a menu was already open ({items}); closed"),
-                    Err(error) => format!("a menu was already open ({items}): {error}"),
-                };
-                attempts.push(attempt);
-                if closing.is_err() {
-                    return Err(failed(&attempts));
-                }
-                continue;
-            }
-            Err(error) => {
-                attempt.outcome = format!("{error}; no cleanup needed, nothing was clicked");
-                attempts.push(attempt);
-                return Err(failed(&attempts));
-            }
-        };
-        let clicked = crate::window_control::place_cursor_on_tray_icon(x, y, &mut attempt.cursor)
-            .and_then(|()| crate::window_control::right_click_tray_icon(x, y));
-        if let Err(error) = clicked {
-            let (_, cleanup) = cleanup(repository, process_id);
-            attempt.outcome = format!("{error}; {cleanup}");
-            attempts.push(attempt);
-            return Err(failed(&attempts));
-        }
-        let opened = helper(repository, "tray-menu-items", process_id, None)
-            .and_then(|output| items(&output));
-        match opened {
-            Ok(menu) if !menu.items.is_empty() => {
-                return Ok(Opened::observed(menu, attempt, attempts));
-            }
-            Ok(menu) => {
-                // A notification or other input may have taken the click. A StickyMD popup that
-                // opened late is closed first; unless the menu is then observed closed, nothing
-                // more is clicked.
-                let (known_closed, cleanup) = cleanup(repository, process_id);
-                attempt.outcome =
-                    format!("no menu after the right-click{}; {cleanup}", menu.partial);
-                attempts.push(attempt);
-                if !known_closed {
-                    return Err(failed(&attempts));
-                }
-            }
-            Err(error) => {
-                let (_, cleanup) = cleanup(repository, process_id);
-                attempt.outcome = format!("{error}; {cleanup}");
-                attempts.push(attempt);
-                return Err(failed(&attempts));
-            }
-        }
-    }
-    Err(format!(
-        "StickyMD tray menu did not open after {TRAY_MENU_OPEN_ATTEMPTS} attempts: {}",
-        history(&attempts)
-    ))
+    multiple::open(repository, process_id, &[process_id])
 }
 
 /// Opens the menu, reads its items in order and closes it.
@@ -407,6 +341,16 @@ pub(in crate::qualification) fn menu_items(
 
 fn invoke(repository: &Path, process_id: u32, item: &str, label: &str) -> Result<(), String> {
     let opened = open(repository, process_id)?;
+    invoke_opened(repository, process_id, item, label, opened)
+}
+
+fn invoke_opened(
+    repository: &Path,
+    process_id: u32,
+    item: &str,
+    label: &str,
+    opened: Opened,
+) -> Result<(), String> {
     if !opened.items.iter().any(|name| name == item) {
         let (_, cleanup) = cleanup(repository, process_id);
         return Err(opened.failed(
@@ -421,6 +365,21 @@ fn invoke(repository: &Path, process_id: u32, item: &str, label: &str) -> Result
             let (_, cleanup) = cleanup(repository, process_id);
             opened.failed(&format!("{label}: {error}"), &cleanup)
         })
+}
+
+pub(crate) fn exit_owned_copy(
+    repository: &Path,
+    process_id: u32,
+    known: &[u32],
+) -> Result<(), String> {
+    let opened = multiple::open(repository, process_id, known)?;
+    invoke_opened(
+        repository,
+        process_id,
+        EXIT,
+        "the owned copy's tray Exit item",
+        opened,
+    )
 }
 
 pub(in crate::qualification) fn show(repository: &Path, process_id: u32) -> Result<(), String> {
