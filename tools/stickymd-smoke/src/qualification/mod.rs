@@ -9,6 +9,8 @@ mod exact_desktop;
 pub(crate) mod exact_groups;
 mod file_lock;
 #[cfg(windows)]
+mod fixture_readonly;
+#[cfg(windows)]
 mod g3;
 #[cfg(windows)]
 mod g4;

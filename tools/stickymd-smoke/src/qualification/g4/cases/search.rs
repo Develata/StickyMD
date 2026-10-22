@@ -8,7 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::super::super::exact_desktop::{
-    Checks, io_error, seed_note, start_until_editor_ready, wait_for_config, wait_note,
+    Checks, invoke_uia, io_error, seed_note, start_until_editor_ready, wait_for_config, wait_note,
 };
 use crate::window_control::{self as input, WindowHandle};
 
@@ -19,7 +19,7 @@ const OBSERVATION: Duration = Duration::from_millis(800);
 
 type Scenario = fn(&Path, WindowHandle, &mut Checks) -> Result<(), String>;
 
-pub(super) fn run(template: &Path, checks: &mut Checks) -> Result<(), String> {
+pub(super) fn run(repository: &Path, template: &Path, checks: &mut Checks) -> Result<(), String> {
     // Fresh processes avoid retained query/replacement/cursor state between scenarios.
     let scenarios: &[(&str, Scenario)] = &[
         ("find", find_only),
@@ -35,7 +35,14 @@ pub(super) fn run(template: &Path, checks: &mut Checks) -> Result<(), String> {
         let window = input::visible_window(child.id())?;
         input::focus_source_editor(window)?;
         input::press_document_end(window)?;
-        scenario(&program, window, checks).map_err(|error| format!("Search {name}: {error}"))?;
+        if let Err(error) = scenario(&program, window, checks) {
+            let screenshot = program.join("failure.png");
+            let capture = invoke_uia(repository, "capture-window", child.id(), Some(&screenshot));
+            return Err(format!(
+                "Search {name}: {error}; failure capture {}: {capture:?}",
+                screenshot.display()
+            ));
+        }
         child.kill_and_wait()?;
     }
     Ok(())

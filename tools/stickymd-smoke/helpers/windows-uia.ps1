@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('capture-window', 'export', 'tray-target', 'tray-menu-items', 'tray-menu-closed', 'tray-invoke')]
+    [ValidateSet('capture-window', 'export', 'tray-target', 'tray-menu-items', 'tray-menu-closed', 'tray-invoke', 'tray-item-checked')]
     [string]$Action,
     [Parameter(Mandatory = $true)]
     [int]$ProcessId,
@@ -407,6 +407,28 @@ function Invoke-TrayMenuItem {
     Write-Output ('UIA_TRAY_INVOKED=' + $Item)
 }
 
+# Read a native menu item's check state; absence of a supported pattern is an error,
+# never an unchecked observation. Rust owns the expected state and its verdict.
+function Write-TrayItemChecked {
+    if (-not $Item) { throw 'tray-item-checked requires -Item' }
+    $snapshot = Find-ProcessMenuItems
+    if (-not $snapshot.Observed) { throw 'the StickyMD tray menu could not be observed' }
+    $matches = @($snapshot.Items | Where-Object { (Convert-NameToHex $_.Name) -eq $Item })
+    if ($matches.Count -ne 1) { throw "expected one tray item $Item" }
+    $element = $matches[0].Element
+    $pattern = $null
+    if ($element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
+        $state = $pattern.Current.ToggleState
+        if ($state -eq [System.Windows.Automation.ToggleState]::Indeterminate) { throw 'indeterminate tray check state' }
+        $checked = $state -eq [System.Windows.Automation.ToggleState]::On
+    } elseif ($element.TryGetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern, [ref]$pattern)) {
+        $checked = ($pattern.Current.State -band 0x10) -ne 0
+    } else {
+        throw 'native menu provider exposes no check-state pattern'
+    }
+    Write-Output ('UIA_TRAY_CHECKED={0};value={1}' -f $Item, $checked.ToString().ToLowerInvariant())
+}
+
 switch ($Action) {
     'capture-window' { Save-WindowCapture }
     'export' { Invoke-ExportDialog }
@@ -414,4 +436,5 @@ switch ($Action) {
     'tray-menu-items' { Write-TrayMenuItems }
     'tray-menu-closed' { Wait-TrayMenuClosed }
     'tray-invoke' { Invoke-TrayMenuItem }
+    'tray-item-checked' { Write-TrayItemChecked }
 }

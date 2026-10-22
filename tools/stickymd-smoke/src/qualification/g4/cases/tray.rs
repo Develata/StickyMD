@@ -6,8 +6,8 @@ use std::fs;
 use std::path::Path;
 
 use super::super::super::exact_desktop::{
-    Checks, ChildGuard, assert_sole_stickymd_process, io_error, seed_note, tray, wait_for_layout,
-    wait_until,
+    Checks, assert_sole_stickymd_process, io_error, seed_note, start_until_editor_ready, tray,
+    wait_note, wait_until,
 };
 
 pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
@@ -15,8 +15,7 @@ pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> R
     const LATEST: &str = "tray quit latest generation 中文🙂\n";
 
     seed_note(program, "tray initial\n")?;
-    let mut child = ChildGuard::start(&program.join("StickyMD.exe"))?;
-    wait_for_layout(program)?;
+    let mut child = start_until_editor_ready(&program.join("StickyMD.exe"))?;
     let window = crate::window_control::visible_window(child.id())?;
     assert_sole_stickymd_process(child.id())?;
     checks.record("sole-process", &[("stage", "startup")]);
@@ -32,6 +31,7 @@ pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> R
         ));
     }
     checks.record("tray-menu-items", &[]);
+    super::tray_topmost::run(repository, program, child.id(), window, checks)?;
 
     replace_source(window, RETAINED)?;
     crate::window_control::request_close(window)?;
@@ -50,6 +50,32 @@ pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> R
     }
     checks.record("tray-show-retains-source", &[]);
 
+    tray::hide(repository, child.id())?;
+    wait_for_visibility(window, false)?;
+    if !child.is_running()? {
+        return Err("tray Hide terminated the process".to_owned());
+    }
+    checks.record("tray-hide-keeps-process", &[]);
+    tray::show(repository, child.id())?;
+    wait_for_visibility(window, true)?;
+    if crate::window_control::visible_window(child.id())? != window
+        || source_projection(window)? != RETAINED
+    {
+        return Err("tray Hide/Show did not retain the same HWND and text".to_owned());
+    }
+    checks.record("tray-hide-show-retains-window-and-source", &[]);
+
+    crate::window_control::press_alt_f4(window)?;
+    wait_for_visibility(window, false)?;
+    if !child.is_running()? {
+        return Err("physical Alt+F4 terminated the process".to_owned());
+    }
+    checks.record("alt-f4-hides-without-exit", &[]);
+    tray::show(repository, child.id())?;
+    wait_for_visibility(window, true)?;
+    wait_note(program, |text| text == RETAINED)?;
+    quit_save_failure(repository, program, child.id(), window, RETAINED, checks)?;
+
     replace_source(window, LATEST)?;
     assert_sole_stickymd_process(child.id())?;
     checks.record("sole-process", &[("stage", "pre-exit")]);
@@ -61,6 +87,49 @@ pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> R
         return Err("tray Quit exited without durably saving the latest generation".to_owned());
     }
     checks.record("tray-quit-saves-latest", &[]);
+    Ok(())
+}
+
+fn quit_save_failure(
+    repository: &Path,
+    program: &Path,
+    process_id: u32,
+    window: crate::window_control::WindowHandle,
+    original: &str,
+    checks: &mut Checks,
+) -> Result<(), String> {
+    const UNSAVED: &str = "read-only quit must retain this unsaved generation 中文🙂\n";
+    const FAILURE_TITLE: &str = "StickyMD * — 退出已取消：保存失败";
+    let note = program.join("note/note.md");
+    super::super::super::fixture_readonly::with_readonly(&note, || {
+        replace_source(window, UNSAVED)?;
+        if fs::read_to_string(&note).map_err(io_error)? != original {
+            return Err("read-only fixture changed before tray Quit".to_owned());
+        }
+        tray::exit(repository, process_id)?;
+        wait_until("quit cancelled by canonical note save failure", || {
+            Ok(crate::window_control::title(window)? == FAILURE_TITLE)
+        })?;
+        assert_sole_stickymd_process(process_id)?;
+        if !crate::window_control::is_visible(window)? {
+            return Err("failed tray Quit left the paper hidden".to_owned());
+        }
+        checks.record("tray-quit-save-failure-keeps-visible-process", &[]);
+        checks.record("tray-quit-save-failure-title", &[]);
+        if source_projection(window)? != UNSAVED
+            || fs::read_to_string(&note).map_err(io_error)? != original
+        {
+            return Err("failed tray Quit lost unsaved text or changed durable note".to_owned());
+        }
+        checks.record("tray-quit-save-failure-retains-text", &[]);
+        Ok(())
+    })?;
+    crate::window_control::press_save(window)?;
+    wait_note(program, |text| text == UNSAVED)?;
+    wait_until("retry clears quit-save-failure state", || {
+        Ok(crate::window_control::title(window)? == "StickyMD")
+    })?;
+    checks.record("tray-quit-save-failure-retry", &[]);
     Ok(())
 }
 

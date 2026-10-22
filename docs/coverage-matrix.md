@@ -488,3 +488,11 @@ composition 中拒绝 Preview、Esc 后保留 query，以及 Right/Top 与 96/10
 声明总数为 147 个，IME owner 标签集合同步；尚未执行的新桌面场景保持 `NOT TESTED`，
 未以新增入口或标签替换 P08-D022 等仍未补齐的义务。`g4/preflight.rs` 的显式 ignored 测试
 仅产生 local preflight 日志，不写 exact 收据或 last-success ledger；Phase 03/08 薄入口不变。
+
+2026-10-22 C2d shell 第二批：Plan 09 `tray-lifecycle` / `single-instance` →
+[phase-08](acceptance-cases/phase-08.md) 的 C2d shell checks。G4-01 新增实际托盘 Hide、
+真实 Alt+F4、只读 note 导致退出失败后的进程/文本/标题与恢复保存检查；G4-05 新增收起状态
+下 junction 第二次启动的同 HWND、焦点、单进程与零 note/config 写入检查。
+另以菜单原生勾选状态、HWND 置顶状态和 config 三方核对托盘/窗口双向置顶与 sensor 临时状态。
+G3/G4 声明总数现为 161。新入口的真实桌面状态仍为 `NOT TESTED`，覆盖表中的具名缺口
+仍保留，待运行及余下 C2d 项完成后逐项核对，不能仅凭编译关闭。

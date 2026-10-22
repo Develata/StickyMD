@@ -109,16 +109,25 @@ pub(crate) const G3_05: &[&str] = &[
 ];
 
 pub(crate) const G4_01: &[&str] = &[
+    "alt-f4-hides-without-exit",
     "close-hides-window",
     "close-keeps-process",
     "sole-process:stage=pre-exit",
     "sole-process:stage=startup",
+    "tray-hide-keeps-process",
+    "tray-hide-show-retains-window-and-source",
     "tray-icon-present",
     "tray-menu-items",
     "tray-quit-exits",
+    "tray-quit-save-failure-keeps-visible-process",
+    "tray-quit-save-failure-retains-text",
+    "tray-quit-save-failure-retry",
+    "tray-quit-save-failure-title",
     "tray-quit-saves-latest",
     "tray-show-restores-window",
     "tray-show-retains-source",
+    "tray-topmost-controls-sync",
+    "tray-topmost-sensor-keeps-config",
 ];
 
 pub(crate) const G4_02: &[&str] = &[
@@ -178,9 +187,14 @@ pub(crate) const G4_04: &[&str] = &[
 
 pub(crate) const G4_05: &[&str] = &[
     "close-hides-window",
+    "collapsed-keeps-note-and-config",
+    "collapsed-second-instance-exits",
+    "collapsed-wake-activates-primary",
+    "collapsed-wakes-primary",
     "junction-keeps-note-and-config",
     "junction-second-instance-exits",
     "junction-wakes-primary",
+    "sole-process-after-collapsed-wake",
     "sole-process-after-junction",
 ];
 
@@ -347,7 +361,7 @@ mod tests {
             .chain(G4)
             .map(|case| case.checks.len())
             .sum::<usize>();
-        assert_eq!(total, 147);
+        assert_eq!(total, 161);
     }
 
     #[test]

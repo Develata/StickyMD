@@ -151,7 +151,7 @@ fn move_floating(
     wait_for_config(program, "dock_edge = \"none\"")
 }
 
-fn wait_for_edge(
+pub(super) fn wait_for_edge(
     window: crate::window_control::WindowHandle,
     edge: crate::window_control::PrimaryDockEdge,
     collapsed: bool,

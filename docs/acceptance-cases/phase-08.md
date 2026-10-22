@@ -294,3 +294,24 @@ M01-M15 remain `NOT TESTED`; no synthetic or copied-Release smoke may close thos
 
 Shared entry compatibility (parameter scope, routing, failure and caller-state restoration)
 is verified by [P00-A11](phase-00.md); this does not change this phase's manual status.
+
+## C2d shell checks (2026-10-22)
+
+- Preconditions: a clean harness checkout, a copied executable with a recorded digest,
+  exclusive desktop access, and a fixture owned by the harness. Status: `NOT TESTED`
+  until the physical cases run; local preflight is not exact-candidate evidence.
+- Action: G4-01 invokes tray Hide/Show and physical Alt+F4, then makes the fixture note
+  read-only, edits it and invokes tray Quit. Expected: Hide/Show preserves the HWND and
+  text; Alt+F4 hides without exiting; failed Quit leaves the process visible, retains
+  memory text and the original durable note, and sets the exact save-failure title.
+  Restoring attributes and saving must persist the pending text and clear that title.
+- Action: toggle Pin from the tray and physical toolbar in both directions, then collapse
+  and reveal the unpinned window. Expected: the native menu check state, HWND and config
+  agree; the temporary sensor state does not change the user's Pin or durable config.
+- Action: G4-05 collapses the left-docked primary, parks the pointer away and starts
+  the junction alias. Expected: the secondary exits, the same HWND expands and gains
+  focus through IPC, only the primary remains, and note/config bytes and modification
+  times are unchanged. Failure signals include missing focus, duplicate processes,
+  replacement HWNDs, any durable write, or failed fixture-attribute restoration.
+- Entry: the existing Phase 14 G4 routing; explicit ignored preflight tests use the
+  same case functions. Phase 08/14 PowerShell entry parameters are unchanged.

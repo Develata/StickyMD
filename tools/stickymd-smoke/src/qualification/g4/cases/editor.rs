@@ -8,8 +8,7 @@ use std::thread;
 use std::time::Duration;
 
 use super::super::super::exact_desktop::{
-    Checks, ChildGuard, io_error, seed_note, wait_for_config, wait_for_layout, wait_note,
-    wait_until,
+    Checks, io_error, seed_note, start_until_editor_ready, wait_for_config, wait_note, wait_until,
 };
 
 const PNG: &[u8] = &[
@@ -21,8 +20,7 @@ const PNG: &[u8] = &[
 pub(super) fn g4_03(_repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
     const TEXT: &str = "traditional clipboard 中文🙂\nsecond line\n";
     seed_note(program, TEXT)?;
-    let mut child = ChildGuard::start(&program.join("StickyMD.exe"))?;
-    wait_for_layout(program)?;
+    let mut child = start_until_editor_ready(&program.join("StickyMD.exe"))?;
     let window = crate::window_control::visible_window(child.id())?;
     crate::window_control::focus_source_editor(window)?;
 
@@ -139,8 +137,7 @@ pub(super) fn g4_04(_repository: &Path, program: &Path, checks: &mut Checks) -> 
     );
 
     seed_note(program, ORIGINAL)?;
-    let mut child = ChildGuard::start(&program.join("StickyMD.exe"))?;
-    wait_for_layout(program)?;
+    let mut child = start_until_editor_ready(&program.join("StickyMD.exe"))?;
     let window = crate::window_control::visible_window(child.id())?;
     crate::window_control::focus_source_editor(window)?;
     crate::window_control::click_math_conversion(window)?;

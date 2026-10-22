@@ -398,6 +398,12 @@ pub(crate) fn press_escape(window: WindowHandle) -> Result<(), String> {
     send_physical_key(window, 0x1B, 0x01, false)
 }
 
+/// Exclusive desktop only. The shared chord path checks foreground/activation/focus
+/// immediately before injection; USER accepted the remaining focus race (C2d D4).
+pub(crate) fn press_alt_f4(window: WindowHandle) -> Result<(), String> {
+    send_chord(window, &[key(0x12, 0x38, false)], key(0x73, 0x3E, false))
+}
+
 pub(crate) fn press_backspace(window: WindowHandle) -> Result<(), String> {
     send_physical_key(window, 0x08, 0x0E, false)
 }

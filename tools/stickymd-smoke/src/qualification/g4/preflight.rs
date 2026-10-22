@@ -107,3 +107,15 @@ fn c2d_search_local_preflight() {
 fn c2d_ime_local_preflight() {
     run(&exact_checks::G4[5], super::cases::g4_06);
 }
+
+#[test]
+#[ignore = "exclusive Windows desktop, tray input and physical Alt+F4; local EXE only"]
+fn c2d_tray_local_preflight() {
+    run(&exact_checks::G4[0], super::cases::g4_01);
+}
+
+#[test]
+#[ignore = "exclusive Windows desktop and dock/second-launch input; local EXE only"]
+fn c2d_identity_local_preflight() {
+    run(&exact_checks::G4[4], super::cases::g4_05);
+}

@@ -74,3 +74,36 @@ the full C2d Right/Top and 96/100% matrix.
 startup acknowledgement. The seven Search and sixteen IME checks are implemented
 and compiled, but still await physical execution. The implementation does not
 close the remaining C2d or C3 tasks.
+
+## 2026-10-22 shell implementation and first physical runs
+
+- USER renewed exclusive desktop access for three hours at 05:26 UTC. The conservative
+  stop-input deadline is 08:26 UTC. The authorization record is in the new evidence pack.
+- The clean detached checkout at `b40bb0d3947b3761dc0b6b7fcb6d4c88bfcc2a5d` built
+  successfully. Its retained local EXE SHA-256 is
+  `6699300ccf7176da6efe6fbf97f7bc4fe253b1576fe247c7fe0f497824be1db7`.
+  Its base-to-commit diff was independently regenerated and matched
+  `a606b53d799a29acd8db5105e9276b1e5f667a0e3f130babbde5d0f674e0abed`.
+- G4-01 now exercises tray Hide, physical Alt+F4, checked read-only save failure and
+  retry, plus tray/toolbar Pin synchronization using native menu check state, HWND
+  state and config. G4-05 adds collapsed junction wake, strict activation, same HWND,
+  one process and unchanged note/config bytes and timestamps. Fourteen more declared
+  labels bring G3/G4 to 161; physical execution remains required.
+- Fixture permissions are restored and read back after success and error, with an
+  unwind guard. A real filesystem test also makes restoration fail and verifies that
+  a successful operation cannot return success in that case. R7-N1 now has a regression
+  assertion for partial tray observations surviving into later failure diagnostics.
+- Headless qualification tests: 265 passed / 10 ignored (`07-shell-checks`). Governance
+  passed (`10-shell-phase00`). The focused follow-up first caught the deliberately
+  stale Phase 08 source digest after the new acceptance description; review confirmed
+  that all 62 decomposed rows and their clause hashes were unchanged. After updating
+  only that document digest, all 20 focused regressions passed (`15-shell-regressions-reviewed-docs`).
+- Physical Search preflight first refused a click because Explorer covered the target
+  (`12-search-preflight`); a subsequent inspection found that Explorer HWND already gone,
+  so the attempted environment adjustment changed no window. The next run reached the
+  Search parking scenario but timed out waiting for the first replacement's durable
+  text (`14-search-preflight-clear-blocker`). The note remained original and the view
+  returned to Source. Root cause is not yet established; this is not a PASS.
+- The next harness checkpoint adds failure screenshots and waits for editor-ready
+  startup before legacy editor cases. Assertions and deadlines have not been relaxed.
+  Product source remains unchanged. Cross-model review is still pending.

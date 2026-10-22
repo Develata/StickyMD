@@ -8,6 +8,7 @@ mod identity;
 mod ime;
 mod search;
 mod tray;
+mod tray_topmost;
 
 use std::path::Path;
 
@@ -24,7 +25,7 @@ pub(super) fn g4_02(repository: &Path, program: &Path) -> Result<CaseEvidence, S
 pub(super) fn g4_03(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
     checked(|checks| {
         editor::g4_03(repository, program, checks)?;
-        search::run(program, checks)
+        search::run(repository, program, checks)
     })
 }
 

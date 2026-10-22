@@ -19,6 +19,8 @@ pub(super) const TRAY_MENU_OPEN_ATTEMPTS: usize = 2;
 
 /// Menu item names as the helper reports them: UTF-16 code units in hex.
 const SHOW: &str = "663E-793A";
+const HIDE: &str = "9690-85CF";
+const TOPMOST: &str = "7F6E-9876";
 const EXIT: &str = "9000-51FA";
 
 fn helper(
@@ -295,6 +297,15 @@ struct Opened {
 }
 
 impl Opened {
+    fn observed(menu: MenuRead, mut attempt: Attempt, mut attempts: Vec<Attempt>) -> Self {
+        attempt.outcome = format!("opened{}", menu.partial);
+        attempts.push(attempt);
+        Self {
+            items: menu.items,
+            attempts,
+        }
+    }
+
     /// An error for a step after the opening, with its cleanup and the opening's history.
     fn failed(&self, step: &str, cleanup: &str) -> String {
         format!(
@@ -351,12 +362,7 @@ fn open(repository: &Path, process_id: u32) -> Result<Opened, String> {
             .and_then(|output| items(&output));
         match opened {
             Ok(menu) if !menu.items.is_empty() => {
-                attempt.outcome = format!("opened{}", menu.partial);
-                attempts.push(attempt);
-                return Ok(Opened {
-                    items: menu.items,
-                    attempts,
-                });
+                return Ok(Opened::observed(menu, attempt, attempts));
             }
             Ok(menu) => {
                 // A notification or other input may have taken the click. A StickyMD popup that
@@ -421,6 +427,44 @@ pub(in crate::qualification) fn show(repository: &Path, process_id: u32) -> Resu
     invoke(repository, process_id, SHOW, "the tray Show item")
 }
 
+pub(in crate::qualification) fn hide(repository: &Path, process_id: u32) -> Result<(), String> {
+    invoke(repository, process_id, HIDE, "the tray Hide item")
+}
+
+pub(in crate::qualification) fn toggle_topmost(
+    repository: &Path,
+    process_id: u32,
+) -> Result<(), String> {
+    invoke(repository, process_id, TOPMOST, "the tray Topmost item")
+}
+
+fn checked_state(output: &str, item: &str) -> Result<bool, String> {
+    let lines = report(output, "tray-item-checked", &["UIA_TRAY_CHECKED"])?;
+    let value = one(&lines, "UIA_TRAY_CHECKED").filter(|_| lines.len() == 1);
+    match value.and_then(|value| value.strip_prefix(item)) {
+        Some(";value=true") => Ok(true),
+        Some(";value=false") => Ok(false),
+        _ => Err(format!("malformed tray-item-checked report: {output:?}")),
+    }
+}
+
+pub(in crate::qualification) fn topmost_checked(
+    repository: &Path,
+    process_id: u32,
+) -> Result<bool, String> {
+    let opened = open(repository, process_id)?;
+    let observed = helper(repository, "tray-item-checked", process_id, Some(TOPMOST))
+        .and_then(|output| checked_state(&output, TOPMOST));
+    let closing = close(repository, process_id);
+    match (observed, closing) {
+        (Ok(value), Ok(())) => Ok(value),
+        (observed, closing) => Err(opened.failed(
+            &format!("topmost check state: {observed:?}"),
+            &format!("closing: {closing:?}"),
+        )),
+    }
+}
+
 pub(in crate::qualification) fn exit(repository: &Path, process_id: u32) -> Result<(), String> {
     invoke(repository, process_id, EXIT, "the tray Exit item")
 }
@@ -428,6 +472,36 @@ pub(in crate::qualification) fn exit(repository: &Path, process_id: u32) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_state_requires_the_named_item_and_a_boolean() {
+        assert_eq!(
+            checked_state("UIA_TRAY_CHECKED=7F6E-9876;value=true", TOPMOST),
+            Ok(true)
+        );
+        assert_eq!(
+            checked_state("UIA_TRAY_CHECKED=7F6E-9876;value=false", TOPMOST),
+            Ok(false)
+        );
+        for report in [
+            "",
+            "UIA_TRAY_CHECKED=7F6E-9876;value=0",
+            "UIA_TRAY_CHECKED=9000-51FA;value=true",
+            "UIA_TRAY_CHECKED=7F6E-9876;value=true\nUIA_TRAY_CHECKED=7F6E-9876;value=false",
+        ] {
+            assert!(checked_state(report, TOPMOST).is_err(), "{report}");
+        }
+    }
+
+    #[test]
+    fn successful_open_preserves_partial_items_in_later_failures() {
+        let menu = items("UIA_TRAY_ITEM=663E-793A@g\nUIA_TRAY_MENU_PARTIAL; partial_items=earlier")
+            .unwrap();
+        let opened = Opened::observed(menu, Attempt::default(), Vec::new());
+        let error = opened.failed("invoke failed", "closed");
+        assert!(error.contains("opened; partial_items=earlier"), "{error}");
+        assert!(error.contains("663E-793A"), "{error}");
+    }
 
     #[test]
     fn the_target_report_is_read_strictly() {
