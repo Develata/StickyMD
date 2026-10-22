@@ -177,14 +177,28 @@ fn composition_refuses_focus(
         // Leave the final letter for after the refused focus request. A query
         // committed by the click must not masquerade as a preserved composition.
         begin_preedit(program, hwnd, baseline, "shuxu", ime)?;
-        opacity::open(hwnd)?;
-        input::opacity_field(hwnd)?;
+        super::super::diagnostics::step(
+            repository,
+            program,
+            pid,
+            &format!("numeric-{owner}-composition-before-popup"),
+        )?;
+        let open = opacity::open(hwnd);
+        super::super::diagnostics::step(
+            repository,
+            program,
+            pid,
+            &format!("numeric-{owner}-composition-popup"),
+        )?;
+        open.map_err(|error| format!("{owner} composing popup open: {error}"))?;
+        let focus = input::opacity_field(hwnd);
         super::super::diagnostics::step(
             repository,
             program,
             pid,
             &format!("numeric-{owner}-composition-refused"),
         )?;
+        focus.map_err(|error| format!("{owner} composing numeric focus: {error}"))?;
         thread::sleep(AUTOSAVE_OBSERVATION);
         assert_note(
             program,
