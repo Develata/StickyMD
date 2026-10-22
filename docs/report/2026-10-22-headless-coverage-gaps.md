@@ -72,3 +72,11 @@ composition 拒绝聚焦、IME 目标判定、迟到 IME 事件和 Esc/保存/F6
 
 补充：覆盖表“未创建 worker”专指 Preview worker；fixture 确实使用真实 persistence worker，
 其写入和清理均限于自身临时目录。
+
+## Resolution：Release 测试构建兼容（2026-10-22）
+
+首轮固定提交 `92e7ea9` 的完整 CI 已通过工作区测试和全部 owner 核验，但在 Phase 3 Release
+测试构建失败：新断言调用的 `PersistenceWorker::metrics` 原来仅在 `debug_assertions` 可见。
+把该只读 getter 的条件扩展为 `any(debug_assertions, test)`，使 Release 测试也能读取已有计数。
+产品 Release 的条件仍为假，既有 mailbox 计数、线程、I/O 与运行时行为不变。
+证据 13 保留失败状态；修复后的定向 Release 测试和完整复验另存，不覆盖首轮记录。

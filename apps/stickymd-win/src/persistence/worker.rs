@@ -360,7 +360,7 @@ impl PersistenceWorker {
         }
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, test))]
     pub fn metrics(&self) -> WorkerMetrics {
         let (lock, _) = &*self.shared;
         lock.lock()
