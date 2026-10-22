@@ -17,8 +17,14 @@ fn state(program: &Path) -> Result<[(Vec<u8>, std::time::SystemTime); 2], String
 fn replace(program: &Path, window: WindowHandle, text: &str) -> Result<(), String> {
     input::focus_source_editor(window)?;
     input::press_select_all(window)?;
-    input::set_clipboard_text(text)?;
-    input::press_paste(window)?;
+    if text.is_empty() {
+        // Pasting empty text is a product no-op; restoring an empty fixture
+        // requires a real deletion of the selected test text.
+        input::press_backspace(window)?;
+    } else {
+        input::set_clipboard_text(text)?;
+        input::press_paste(window)?;
+    }
     input::press_save(window)?;
     super::wait_for_note(&program.join("note/note.md"), |bytes| {
         bytes == text.as_bytes()

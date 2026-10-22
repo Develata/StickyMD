@@ -145,29 +145,40 @@ fn c2d_identity_local_preflight() {
     run(&exact_checks::G4[4], super::cases::g4_05);
 }
 
+const TWO_COPIES_CHECK: &str = "portable-copies-note-config-and-exit-isolated";
+const TWO_COPIES_CASE: exact_checks::DeclaredCase = exact_checks::DeclaredCase {
+    id: "P08-A11",
+    checks: &[TWO_COPIES_CHECK],
+};
+
+fn check_two_copies(
+    repository: &std::path::Path,
+    program: &std::path::Path,
+    initial_note: &str,
+) -> Result<exact_desktop::CaseEvidence, String> {
+    exact_desktop::seed_note(program, initial_note)?;
+    let executable = program.join("StickyMD.exe");
+    let mut child = exact_desktop::start_until_editor_ready(&executable)?;
+    let window = crate::window_control::visible_window(child.id())?;
+    crate::runtime::portable_isolation::run(repository, program, &executable, &mut child, window)?;
+    child.kill_and_wait()?;
+    let mut evidence = exact_desktop::CaseEvidence::default();
+    evidence.checks.record(TWO_COPIES_CHECK, &[]);
+    Ok(evidence)
+}
+
 #[test]
 #[ignore = "exclusive Windows desktop and two owned tray icons; local EXE only"]
 fn c2d_two_copies_local_preflight() {
-    const CHECK: &str = "portable-copies-note-config-and-exit-isolated";
-    let case = exact_checks::DeclaredCase {
-        id: "P08-A11",
-        checks: &[CHECK],
-    };
-    run(&case, |repository, program| {
-        exact_desktop::seed_note(program, "First portable copy original")?;
-        let executable = program.join("StickyMD.exe");
-        let mut child = exact_desktop::start_until_editor_ready(&executable)?;
-        let window = crate::window_control::visible_window(child.id())?;
-        crate::runtime::portable_isolation::run(
-            repository,
-            program,
-            &executable,
-            &mut child,
-            window,
-        )?;
-        child.kill_and_wait()?;
-        let mut evidence = exact_desktop::CaseEvidence::default();
-        evidence.checks.record(CHECK, &[]);
-        Ok(evidence)
+    run(&TWO_COPIES_CASE, |repository, program| {
+        check_two_copies(repository, program, "First portable copy original")
+    });
+}
+
+#[test]
+#[ignore = "exclusive Windows desktop and two owned tray icons; local EXE only"]
+fn c2d_two_copies_empty_note_local_preflight() {
+    run(&TWO_COPIES_CASE, |repository, program| {
+        check_two_copies(repository, program, "")
     });
 }

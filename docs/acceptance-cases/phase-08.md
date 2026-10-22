@@ -27,6 +27,9 @@ check requires that marker for `MANUAL PASS`, but does not validate receipt cont
 the receipt file was committed. Dynamic candidate identity and readiness need the separate plan 11
 verification; a marker alone is not acceptance evidence.
 
+P08-A11 的双目录隔离回归同时覆盖空白与非空初始便签。结束时通过真实编辑操作恢复原始文本：
+空白目标使用全选后删除，非空目标使用全选后粘贴；保存后仍逐字节检查，并保留同伴便签的 bytes/mtime
+不变断言。空剪贴板粘贴不能作为清空正文的测试操作。当前候选结果由正式 Runtime 收据持有。
 ## Acceptance Task Graph
 
 | ID | Contract / acceptance | Mode | Checked-in evidence | Status |
