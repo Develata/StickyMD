@@ -12,6 +12,10 @@ Preconditions/Action/Expected/Failure Signals follow AC-040; R01 compares pixels
 selection with the prior initializer. R02 includes stale viewport rejection, resize/zoom resets,
 Unicode, links, formulas and images. Automated geometry does not establish R03.
 
+The local Release fixture and human steps for R03 are in the
+[2026-10-22 acceptance report](../report/2026-10-22-preview-resource-acceptance.md#人工验收入口).
+Resource observations do not change the manual status.
+
 > Verification projection for the Markdown semantic pipeline, owned AST and native preview
 > foundation. Automated coverage is owned by the checked-in Phase 5 smoke graph. Visual,
 > real-shell and OS-resource observations require their own applicable receipts; headless tests

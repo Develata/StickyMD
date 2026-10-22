@@ -220,3 +220,12 @@ formula-process-{before,after}-{1..5}.txt、release-worker-validation.txt。
 完成本报告和 coverage/task 状态同步后，Phase 00 governance contracts 与 acceptance
 readiness 均 PASSED（0.762 s）；该 readiness 仅指文档治理检查，不是发布资格化。
 结果保留在 ignored target/governance-validation.txt。实现提交之后没有修改生产代码。
+
+## Resolution（2026-10-22，后续验收准备）
+
+后续已在 clean source `0f4f465` 构建实际 Release EXE，完成 Source/Preview/Split 五轮
+资源采样，另测图片压力 Preview → Source。后者首次在物理鼠标定位阶段中断，保留
+FAILED 后完整复测五轮通过；未关闭该交互中断的归因与重复稳定性缺口。
+结果、精确 EXE/证据哈希、独立人工验收包及未覆盖范围见
+[后续验收报告](2026-10-22-preview-resource-acceptance.md)。
+P05-R03/P06-R03 仍为 NOT TESTED，极端单行延迟边界不变；本节不回改上述历史测量。

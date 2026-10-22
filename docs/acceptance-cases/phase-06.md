@@ -15,6 +15,10 @@ R01 covers a viewport larger than the cache, source copy, stable geometry and re
 R02 records candidate budgets, retained/temporary bytes, timing and measurement limitations; it is
 local optimization evidence and does not replace OS resource or exact-candidate qualification.
 
+The 300% / 100-formula Release fixture and human steps for R03 are in the
+[2026-10-22 acceptance report](../report/2026-10-22-preview-resource-acceptance.md#人工验收入口).
+Its ordinary 20-formula OS resource samples do not qualify this manual observation.
+
 > Verification projection for RaTeX-native math layout, direct tiny-skia painting and bounded
 > formula caches. Automated rows are owned by the checked-in Rust smoke graph. Visual quality and
 > real-DPI appearance remain `NOT TESTED`; repeatable OS resource observations are kept separate
