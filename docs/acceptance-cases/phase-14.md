@@ -393,3 +393,10 @@ lifetime and explicit teardown. Expected: Esc consumes only the first applicable
 state, committed alpha/config agree, cancelled edits leave both unchanged, and
 the covered sensor still reveals through normal cursor polling. A failed cover,
 wrong hit target, unreleased input or missing observable transition fails the case.
+
+Source scrollbar wiring uses a fresh 2,000-line note. A fixed viewport point is clicked
+and its line copied only for observation: dragging outside must reach the document end;
+moving after release must retain that position; moving while still held after focus loss
+must retain the middle position. Canonical bytes/mtime, clean title and the pre-drag copied
+selection are checked separately. This does not establish every Preview, zoom, generation
+or preedit scrollbar obligation; those unproven mappings stay gaps.

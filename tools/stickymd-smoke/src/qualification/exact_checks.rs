@@ -180,6 +180,10 @@ pub(crate) const G4_02: &[&str] = &[
     "pin-off-config",
     "pin-on-reaches-hwnd",
     "pin-survives-autohide",
+    "scroll-drag-outside-finishes",
+    "scroll-drag-stops-on-blur",
+    "scroll-drag-stops-on-release",
+    "scroll-keeps-note-and-selection",
 ];
 
 pub(crate) const G4_03: &[&str] = &[
@@ -389,7 +393,7 @@ mod tests {
             .chain(G4)
             .map(|case| case.checks.len())
             .sum::<usize>();
-        assert_eq!(total, 189);
+        assert_eq!(total, 193);
     }
 
     #[test]

@@ -263,3 +263,11 @@ close the remaining C2d or C3 tasks.
   injection tests in `73`. The cover is a separate owned native window with no
   StickyMD mouse-message reinforcement. Native FFI signature consistency was
   corrected after `72`; a fresh desktop run of this extension remains required.
+
+- `76-native-controls-preflight` passed the initial physical slider commit, then
+  refused the field press because the adapter expected an I-beam. The product's
+  `shell_cursor_icon` deliberately uses Pointer for the entire popup; the adapter
+  now requires that cursor while retaining the HWND/foreground/focus checks.
+- Added the approved D3 fixed-viewport-line observations for Source drag outside,
+  release and blur, plus note/selection invariants. Other scrollbar obligations
+  remain explicit gaps; this small real-input test does not substitute for them.

@@ -19,6 +19,7 @@ const CURSOR_SHOWING: u32 = 0x0001;
 const IDC_IBEAM: usize = 32_513;
 const IDC_SIZENWSE: usize = 32_642;
 const IDC_HAND: usize = 32_649;
+const IDC_ARROW: usize = 32_512;
 
 #[repr(C)]
 #[derive(Default)]
@@ -31,6 +32,7 @@ struct NativeCursorInfo {
 
 #[derive(Clone, Copy)]
 pub(super) enum PhysicalCursorKind {
+    Arrow,
     Text,
     Pointer,
     DragRegion,
@@ -40,6 +42,7 @@ pub(super) enum PhysicalCursorKind {
 impl PhysicalCursorKind {
     fn resource(self) -> usize {
         match self {
+            Self::Arrow => IDC_ARROW,
             Self::Text => IDC_IBEAM,
             Self::Pointer => IDC_HAND,
             Self::DragRegion => IDC_HAND,
@@ -49,6 +52,7 @@ impl PhysicalCursorKind {
 
     pub(super) fn description(self) -> &'static str {
         match self {
+            Self::Arrow => "arrow",
             Self::Text => "text",
             Self::Pointer => "pointer",
             Self::DragRegion => "drag-region",
