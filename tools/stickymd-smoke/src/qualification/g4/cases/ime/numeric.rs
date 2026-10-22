@@ -34,8 +34,10 @@ pub(super) fn run(
                 window::press_preview_shortcut(hwnd)?;
                 wait_for_config(program, "view_mode = \"preview\"")?;
             }
+            wait_ime_open(hwnd, owner != "preview")?;
             opacity::open(hwnd)?;
             input::opacity_field(hwnd)?;
+            wait_ime_open(hwnd, false)?;
             // If IME remained enabled this would be preedit and Backspace would
             // edit that composition. The subsequent digits must become the
             // integer field, never candidate selection, Source or Search input.
@@ -73,6 +75,7 @@ pub(super) fn run(
             )?;
             window::press_escape(hwnd)?;
             thread::sleep(IME_COMMIT_SETTLE);
+            wait_ime_open(hwnd, owner != "preview")?;
             // Real input, no set_ime_allowed/profile/mode repair: this is the
             // positive witness that the native input owner was restored.
             if owner == "search" {
@@ -114,6 +117,12 @@ pub(super) fn run(
 fn direct_commit(hwnd: WindowHandle) -> Result<(), String> {
     window::type_ascii_letters(hwnd, "shuxue")?;
     commit_first_candidate(hwnd)
+}
+
+fn wait_ime_open(hwnd: WindowHandle, expected: bool) -> Result<(), String> {
+    wait_until(&format!("native IME open status {expected}"), || {
+        Ok(window::ime_open_status(hwnd)? == expected)
+    })
 }
 
 fn open_empty_search(hwnd: WindowHandle) -> Result<(), String> {

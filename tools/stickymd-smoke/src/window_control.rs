@@ -17,7 +17,7 @@ mod tray_state;
 pub(crate) use tray_state::tray_item_checked;
 
 pub(crate) use ime_profile::{
-    ImeProfile, ImeProfileGuard, set_ime_native_mode, set_ime_open_status,
+    ImeProfile, ImeProfileGuard, ime_open_status, set_ime_native_mode, set_ime_open_status,
 };
 
 use crate::input_injection::{self, CONTROL, Key, SHIFT};
