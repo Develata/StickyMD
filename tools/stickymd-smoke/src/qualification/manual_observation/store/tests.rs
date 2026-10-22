@@ -225,6 +225,57 @@ fn a_full_log_resets_into_a_context_with_room_to_retest() {
     );
 }
 
+#[test]
+fn approved_reset_keeps_legacy_fail_and_archives_original_bytes() {
+    let scratch = Scratch::new();
+    let old = declared(&scratch.0);
+    record(
+        &scratch.0,
+        &[(
+            0,
+            "P12-M24",
+            "representative-markdown",
+            Current,
+            Status::Fail,
+        )],
+    );
+    record(
+        &scratch.0,
+        &[(1, "P12-M05", "second-launch-hidden", Current, Status::Pass)],
+    );
+    let path = scratch.0.join(OBSERVATION_LOG);
+    let legacy = fs::read_to_string(&path)
+        .unwrap()
+        .replace("\"schema_version\":3", "\"schema_version\":2")
+        .replace("\"instances\":[{", "\"instance\":{")
+        .replace("}],\"carried_from\"", "},\"carried_from\"");
+    // The old schema knew no sampled procedure evidence. A PASS that is no
+    // longer acceptable must not make an unrelated legacy FAIL disappear.
+    let start = legacy.find("\"precondition\":").unwrap();
+    let end = legacy[start..].find(',').unwrap() + start;
+    let legacy = format!("{}{}", &legacy[..start], &legacy[end + 1..]);
+    crate::atomic_evidence::write(&path, legacy.as_bytes()).unwrap();
+    assert!(log::parse(&legacy).is_err());
+    assert!(load(&scratch.0, CANDIDATE).is_err());
+    assert!(reset(&scratch.0, PROMOTED, &promoted, &none).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+    let approval = approval_for_current_log(&scratch.0);
+    reset(&scratch.0, PROMOTED, &promoted, &*approval).unwrap();
+    let context = load(&scratch.0, CANDIDATE).unwrap();
+    assert_eq!(context.log.observations.len(), 1);
+    let carried = &context.log.observations[0];
+    assert_eq!(carried.status, Status::Fail);
+    assert_eq!(carried.carried_from[0].context_id, old);
+    let archived = fs::read_dir(scratch.0.join("dist/evidence/manual-archive"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path()
+        .join(path.file_name().unwrap());
+    assert_eq!(fs::read(archived).unwrap(), legacy.as_bytes());
+}
+
 /// The same log with a well-formed but different registry digest.
 fn other_registry(good: &[u8]) -> Vec<u8> {
     let text = String::from_utf8(good.to_vec()).unwrap();

@@ -82,6 +82,17 @@ pub(in crate::qualification) fn invalidity(
     if !observation.carried_from.is_empty() {
         return None;
     }
+    if let Err(error) = super::procedure::validate(
+        &observation.case,
+        &observation.scenario,
+        observation.status,
+        &observation.declared,
+    ) {
+        return Some(format!(
+            "observation {}#{}: {error}",
+            observation.session, observation.seq
+        ));
+    }
     let case = match super::registry::find(&observation.case) {
         Some(case) => case,
         None => return Some(format!("unknown observation case {}", observation.case)),

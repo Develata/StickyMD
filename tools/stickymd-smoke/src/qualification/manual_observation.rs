@@ -8,6 +8,7 @@ pub(super) mod coverage;
 pub(super) mod environment;
 pub(super) mod instances;
 pub(super) mod log;
+pub(super) mod procedure;
 pub(super) mod reduce;
 pub(super) mod registry;
 pub(super) mod role;

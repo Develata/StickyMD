@@ -573,7 +573,7 @@ fn parsed_log(root: &Path) -> Option<Box<Log>> {
         .ok()
         .flatten()
         .and_then(|bytes| String::from_utf8(bytes).ok())
-        .and_then(|text| log::parse(&text).ok())
+        .and_then(|text| log::parse_for_reset(&text).ok())
         .map(Box::new)
 }
 

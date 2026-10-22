@@ -5,7 +5,7 @@
 //! derives the role (never asked), starts the instance the registry requires and asks for
 //! an explicit status. `NOT TESTED` writes nothing. A PASS or FAIL is committed only when
 //! a second capture equals the first, and a PASS also needs the launched process still
-//! running as the only StickyMD when it lands: checked once to let the observer correct
+//! running as the exact registered set when it lands: checked once to let the observer correct
 //! the answer, and again under the store lock just before the write. The answer is
 //! committed before the optional note is asked, so an interruption after a FAIL never
 //! loses it; the note is its own record.
@@ -27,26 +27,6 @@ use super::super::manual_observation::transfer::Unresolved;
 
 /// Longest declared value the log accepts.
 const MAX_DECLARED_BYTES: usize = 128;
-
-/// Scenarios whose recorder procedure has not landed yet (coverage batch C3): the second
-/// launch needs live precondition checks, the failed quit a read-only note set by the
-/// recorder, and the right/below arrangements recorded monitor rectangles. None of these scenarios is recorded until then, so no observation can claim a procedure the recorder did not run.
-const AWAITING_RECORDER: &[(&str, &str)] = &[
-    ("P12-M05", "second-launch-hidden"),
-    ("P12-M05", "second-launch-minimized"),
-    ("P12-M05", "second-launch-docked"),
-    ("P12-M05", "exit-save-failure"),
-    ("P12-M35", "secondary-right"),
-    ("P12-M35", "secondary-below"),
-];
-
-/// Why `item` cannot be recorded yet, if it cannot. Checked before any prompt, capture or
-/// launch, so a refused scenario costs the observer nothing.
-fn awaiting_recorder(item: &Item) -> Option<&'static str> {
-    AWAITING_RECORDER
-        .contains(&(item.case.id, item.scenario))
-        .then_some("this scenario needs a recorder procedure that has not landed yet")
-}
 
 /// Where a session starts: the targets its roles come from, the log length its PASS answers
 /// resolve FAILs before (`base`), and the unresolved FAILs shown before each retest.
@@ -89,6 +69,18 @@ pub(super) trait Tested {
     fn startup_error(&self) -> Option<&str>;
     /// Whether exactly the recorder's declared process set is still running.
     fn still_exact(&mut self) -> Result<bool, String>;
+    fn prepare(
+        &mut self,
+        item: &Item,
+        input: &mut dyn BufRead,
+        output: &mut dyn Write,
+    ) -> Result<Preparation, String>;
+}
+
+#[derive(Default)]
+pub(super) struct Preparation {
+    pub(super) declared: BTreeMap<String, String>,
+    pub(super) pass_block: Option<String>,
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -176,9 +168,6 @@ impl Recorder<'_> {
         bench: &mut B,
         item: &Item,
     ) -> Result<Next, String> {
-        if let Some(reason) = awaiting_recorder(item) {
-            return self.unrecorded(output, reason);
-        }
         self.show_unresolved(output, item)?;
         loop {
             write!(
@@ -217,7 +206,7 @@ impl Recorder<'_> {
             role.as_str()
         )
         .map_err(io_error)?;
-        let (declared, mut tested) = match item.case.instance {
+        let (mut declared, mut tested) = match item.case.instance {
             InstanceRule::FirstRunDeclared => match first_run_declarations(input, output)? {
                 Some(declared) => (declared, None),
                 None => {
@@ -249,6 +238,24 @@ impl Recorder<'_> {
                 }
             },
         };
+        let preparation = if let Some(tested) = tested.as_mut() {
+            if tested.startup_error().is_some() {
+                Preparation::default()
+            } else {
+                match tested.prepare(item, input, output) {
+                    Ok(prepared) => prepared,
+                    Err(error) => {
+                        return self.unrecorded(
+                            output,
+                            &format!("procedure evidence unavailable: {error}"),
+                        );
+                    }
+                }
+            }
+        } else {
+            Preparation::default()
+        };
+        declared.extend(preparation.declared);
         let status = loop {
             let Some(status) = prompt_status(input, output)? else {
                 return self.unrecorded(output, "NOT TESTED");
@@ -256,6 +263,10 @@ impl Recorder<'_> {
             if status == Status::Pass
                 && let Some(tested) = tested.as_mut()
             {
+                if let Some(reason) = &preparation.pass_block {
+                    writeln!(output, "PASS refused: {reason}. Enter F or N.").map_err(io_error)?;
+                    continue;
+                }
                 if tested.startup_error().is_some() {
                     writeln!(
                         output,
@@ -487,7 +498,7 @@ fn prompt_note(
     }
 }
 
-pub(super) fn read_line(input: &mut impl BufRead) -> Result<String, String> {
+pub(super) fn read_line(input: &mut (impl BufRead + ?Sized)) -> Result<String, String> {
     let mut line = String::new();
     let bytes = input.read_line(&mut line).map_err(io_error)?;
     if bytes == 0 {

@@ -7,6 +7,7 @@ use std::time::Duration;
 
 pub(crate) mod covered_sensor;
 mod ime_profile;
+pub(crate) mod manual_probe;
 mod physical_input;
 pub(crate) mod qualification_input;
 pub(crate) mod resource_comparison;

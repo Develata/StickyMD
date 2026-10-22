@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::io::Cursor;
 use std::rc::Rc;
 
-use super::{Bench, Item, Start, Summary, Tested, run};
+use super::{Bench, Item, Preparation, Start, Summary, Tested, run};
 use crate::qualification::guided::STEPS;
 use crate::qualification::manual_observation::log::{
     Instance, Log, Note, Observation, Status, fixtures,
@@ -30,6 +30,7 @@ struct FakeBench {
     sole: VecDeque<bool>,
     /// The next launched instance starts but does not initialize.
     startup_error: Option<String>,
+    preparation_error: Option<String>,
     next_pid: u32,
     events: Events,
     observations: Vec<Observation>,
@@ -43,6 +44,7 @@ impl FakeBench {
             broken_store: None,
             sole: VecDeque::new(),
             startup_error: None,
+            preparation_error: None,
             next_pid: 1000,
             events: Events::default(),
             observations: Vec::new(),
@@ -56,6 +58,7 @@ impl FakeBench {
 }
 
 struct FakeInstance {
+    preparation_error: Option<String>,
     instances: Vec<Instance>,
     sole: VecDeque<bool>,
     startup_error: Option<String>,
@@ -63,6 +66,24 @@ struct FakeInstance {
 }
 
 impl Tested for FakeInstance {
+    fn prepare(
+        &mut self,
+        item: &Item,
+        _: &mut dyn std::io::BufRead,
+        _: &mut dyn std::io::Write,
+    ) -> Result<Preparation, String> {
+        if let Some(error) = &self.preparation_error {
+            return Err(error.clone());
+        }
+        Ok(Preparation {
+            declared: crate::qualification::manual_observation::procedure::fixture(
+                item.case.id,
+                item.scenario,
+            ),
+            pass_block: None,
+        })
+    }
+
     fn instances(&self) -> &[Instance] {
         &self.instances
     }
@@ -104,6 +125,7 @@ impl Bench for FakeBench {
             .borrow_mut()
             .push(format!("launch {} {fixture:?}", self.next_pid));
         Ok(FakeInstance {
+            preparation_error: self.preparation_error.clone(),
             instances: (0..crate::qualification::manual_observation::instances::count(rule))
                 .map(|index| Instance {
                     exe_sha256: "a".repeat(64),
@@ -421,8 +443,9 @@ fn the_first_run_is_declared_without_an_instance() {
 /// A scenario whose recorder procedure has not landed is refused before any prompt, capture
 /// or launch, so no observation can claim a procedure the recorder did not run.
 #[test]
-fn scenarios_awaiting_their_recorder_are_refused_up_front() {
-    let mut bench = FakeBench::new(Vec::new());
+fn missing_procedure_evidence_is_unrecorded_and_stops_owned_instances() {
+    let mut bench = FakeBench::new(vec![Ok(current()), Ok(current()), Ok(current())]);
+    bench.preparation_error = Some("required precondition missing".to_owned());
     let (result, output) = record(
         &mut bench,
         &context(fixtures::empty()),
@@ -431,19 +454,19 @@ fn scenarios_awaiting_their_recorder_are_refused_up_front() {
             item("P12-M05", "exit-save-failure"),
             item("P12-M35", "secondary-below"),
         ],
-        "",
+        "\n\n\n",
     );
-    assert_eq!(
-        result.unwrap(),
-        Summary {
-            passed: 0,
-            failed: 0,
-            unrecorded: 3
-        }
-    );
+    assert_eq!(result.unwrap().unrecorded, 3);
     assert!(bench.observations.is_empty());
-    assert!(bench.events().is_empty(), "{:?}", bench.events());
-    assert_eq!(output.matches("Not recorded: ").count(), 3, "{output}");
+    assert_eq!(
+        bench
+            .events()
+            .iter()
+            .filter(|event| event.starts_with("stop "))
+            .count(),
+        3
+    );
+    assert_eq!(output.matches("procedure evidence unavailable").count(), 3);
 }
 
 #[test]

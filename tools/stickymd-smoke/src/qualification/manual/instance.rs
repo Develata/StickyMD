@@ -27,6 +27,7 @@ use super::super::manual_observation::log::Instance;
 use super::super::manual_observation::registry::Fixture;
 use super::super::receipt::{self, Candidate};
 use super::fixture;
+mod procedure;
 mod set;
 use crate::managed_process::{Descendants, Job, MANUAL_SESSIONS as SESSIONS, STOP_WAIT};
 pub(super) use set::LaunchedSet;

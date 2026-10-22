@@ -225,6 +225,44 @@ pub(in crate::qualification) fn validate_note(
 
 pub(in crate::qualification) fn parse(text: &str) -> Result<Log, String> {
     let document = json::parse_object(text)?;
+    parse_document(document, false)
+}
+
+/// Read old single-instance logs only to retain FAILs in a USER-approved reset.
+/// The normal reader still refuses schema 2; this never writes or upgrades a file.
+pub(in crate::qualification) fn parse_for_reset(text: &str) -> Result<Log, String> {
+    let mut document = json::parse_object(text)?;
+    let legacy = json::u64_field(&document, "schema_version")? == 2;
+    if legacy {
+        let Value::Object(fields) = &mut document else {
+            unreachable!()
+        };
+        let Some(Value::Array(observations)) = fields.get_mut("observations") else {
+            return Err("legacy observations are not an array".to_owned());
+        };
+        for observation in observations {
+            let Value::Object(fields) = observation else {
+                return Err("legacy observation is not an object".to_owned());
+            };
+            if fields.contains_key("instances") {
+                return Err("legacy observation mixes instance formats".to_owned());
+            }
+            let instance = fields
+                .remove("instance")
+                .ok_or("legacy observation has no instance field")?;
+            let instances = match instance {
+                Value::Null => Vec::new(),
+                value @ Value::Object(_) => vec![value],
+                _ => return Err("legacy instance has an invalid type".to_owned()),
+            };
+            fields.insert("instances".to_owned(), Value::Array(instances));
+        }
+        fields.insert("schema_version".to_owned(), Value::Number("3".to_owned()));
+    }
+    parse_document(document, legacy)
+}
+
+fn parse_document(document: Value, legacy_reset: bool) -> Result<Log, String> {
     json::exact_keys(
         &document,
         &[
@@ -266,7 +304,7 @@ pub(in crate::qualification) fn parse(text: &str) -> Result<Log, String> {
     let mut observations = Vec::with_capacity(objects.len());
     for (index, object) in objects.iter().enumerate() {
         let observation = parse_observation(object)?;
-        validate_observation(&observation, index as u64)?;
+        validate_observation_format(&observation, index as u64, legacy_reset)?;
         if !ids.insert((observation.session.clone(), observation.seq)) {
             return Err(format!(
                 "observation {}#{} is logged twice",
@@ -428,6 +466,14 @@ pub(in crate::qualification) fn validate_observation(
     observation: &Observation,
     index: u64,
 ) -> Result<(), String> {
+    validate_observation_format(observation, index, false)
+}
+
+fn validate_observation_format(
+    observation: &Observation,
+    index: u64,
+    legacy_reset: bool,
+) -> Result<(), String> {
     let label = format!("observation {}#{}", observation.session, observation.seq);
     if !is_context_id(&observation.session) || observation.seq == 0 {
         return Err(format!("{label} has a malformed ID"));
@@ -465,6 +511,17 @@ pub(in crate::qualification) fn validate_observation(
     }
     super::instances::validate(case.instance, &observation.instances, None)
         .map_err(|error| format!("{label}: {error}"))?;
+    // Legacy PASS records are parsed only to preserve the old log's identity and
+    // ordering during reset. The store gives that log no valid binding, so these
+    // PASS records cannot resolve FAILs or become current observations.
+    if !legacy_reset {
+        super::procedure::validate(
+            &observation.case,
+            &observation.scenario,
+            observation.status,
+            &observation.declared,
+        )?;
+    }
     if case.instance == InstanceRule::FirstRunDeclared {
         let [baseline, source, unchanged] = FIRST_RUN_DECLARATIONS;
         if [baseline, source]
@@ -643,7 +700,9 @@ pub(in crate::qualification) mod fixtures {
                     .map(|(key, value)| (key.to_owned(), value.to_owned())),
                 )
             } else {
-                BTreeMap::from([("dpi".to_owned(), "150".to_owned())])
+                let mut declared = super::super::procedure::fixture(case, scenario);
+                declared.insert("dpi".to_owned(), "150".to_owned());
+                declared
             },
             instances: (0..registry::find(case)
                 .map_or(1, |case| super::super::instances::count(case.instance)))

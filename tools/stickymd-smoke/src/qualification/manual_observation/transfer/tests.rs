@@ -168,6 +168,24 @@ fn a_bundle_round_trips() {
 }
 
 #[test]
+fn two_instance_bundle_round_trips_and_rejects_duplicate_processes() {
+    let mut bundle = bundle();
+    bundle.observations[0] = fixtures::observation(
+        1,
+        3,
+        "P12-M45",
+        "tray-identity",
+        Role::Current,
+        Status::Pass,
+    );
+    assert_eq!(parse_bundle(&render_bundle(&bundle)).unwrap(), bundle);
+    let old = render_bundle(&bundle).replace("\"schema_version\":2", "\"schema_version\":1");
+    assert!(parse_bundle(&old).is_err());
+    bundle.observations[0].instances[1].pid = bundle.observations[0].instances[0].pid;
+    assert!(parse_bundle(&render_bundle(&bundle)).is_err());
+}
+
+#[test]
 fn a_bundle_is_one_session_in_order_from_its_base() {
     let cases: Vec<(&str, Change<Bundle>)> = vec![
         ("gap", Box::new(|bundle| bundle.observations[1].seq = 3)),

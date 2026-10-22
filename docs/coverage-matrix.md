@@ -496,3 +496,11 @@ composition 中拒绝 Preview、Esc 后保留 query，以及 Right/Top 与 96/10
 另以菜单原生勾选状态、HWND 置顶状态和 config 三方核对托盘/窗口双向置顶与 sensor 临时状态。
 G3/G4 声明总数现为 161。新入口的真实桌面状态仍为 `NOT TESTED`，覆盖表中的具名缺口
 仍保留，待运行及余下 C2d 项完成后逐项核对，不能仅凭编译关闭。
+
+2026-10-22 C2d/C3 后续：G3/G4 当前声明为 194 个检查标签；固定 Release 的本地预检已覆盖
+G3-03、G4-01/02/03/05/06，具体二进制与日志身份见
+[进展报告](report/2026-10-21-c2d-c3-coverage-progress.md)。这些本地观察不生成正式候选收据。
+Plan 11 `manual-observation-log` → [phase-14](acceptance-cases/phase-14.md) 的 C3 procedure evidence：
+`manual/instance/procedure` 采集 M05/M35 过程证据，`manual_observation/procedure` 在日志、
+导入与 readiness 共用校验，`instances` 共用零／一／二实例判定；M45 由 `instance/set` 持有两个
+独立目录及 Job。旧日志仅在批准重置时兼容读取以携带 FAIL，原字节归档。人工结果仍为 NOT TESTED。

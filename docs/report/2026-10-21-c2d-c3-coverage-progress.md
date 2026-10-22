@@ -294,3 +294,33 @@ close the remaining C2d or C3 tasks.
   all-target clippy passes. These are implementation tests; no manual answers or candidate
   receipts have been created. M05 special procedures and M35 layouts are still pending.
 - 尚未做跨模型审查. No push, tag or release operation was performed.
+
+### C2d / C3 continuation checkpoint (2026-10-22, logs 96–117)
+
+- The ordinary cover now uses the owning thread's physical DPI context and briefly
+  raises its own window before returning to the non-topmost band. Both its actual hit
+  target and the sensor's temporary topmost target are checked before native hover.
+  Failed cover probes 97/101 and independent native diagnostics 102–104 are retained.
+- Log 106 reached scroll blur after the earlier controls passed. Its assertion wrongly
+  required the middle viewport to survive focus loss, although focus legitimately reveals
+  the existing caret. The corrected probe reads only the fixture-owned thumb column after
+  blur and compares it after a held physical move, with no intervening focus/click.
+  Log 114 passes all 44 G4-02 labels with clean harness commit `1c10d99` and Release EXE
+  SHA-256 `0c9babcac3e6ac2121cbdaf7aeee412fccee079457a9ff97b45fce70b67a70d6`.
+- On that same Release, log 108 passes Search's 15 labels and log 110 passes all 11
+  identity/portable-isolation labels. Log 109 safely refuses changed tray coordinates;
+  a new run after settling (111) passes all 19 tray labels. A successful case alone
+  does not establish both normal and overflow tray routes; P14-A83 remains incomplete.
+- C3 implements sampled M05 wake evidence, observer continuity/order attestations,
+  read-only failed-Quit preparation with restoration, and M35 physical monitor rectangles.
+  Procedure facts are checked by the codec and readiness. Missing evidence stays unrecorded;
+  genuine product failures can be reported by the observer. No human answers were supplied
+  by this implementation work and no manual PASS was created.
+- Logs 112/116 pass 101 targeted tests. The added reset regression includes a legacy PASS
+  lacking new procedure fields alongside a FAIL: only the approved reset compatibility
+  reader accepts its structure, retains the FAIL, and archives the exact original bytes.
+  Ordinary readers still reject legacy schema 2. The legacy PASS is not trusted.
+- The isolated optimized abort build in 115 is frozen independently of the unwind test
+  harness. Log 117 reaches the explicit injection-refusal stub and exits nonzero before
+  physical injection. This diagnostic does not create an exact-candidate receipt.
+- 尚未做跨模型审查. Local implementation/tests do not change NOT_READY or manual NOT TESTED.

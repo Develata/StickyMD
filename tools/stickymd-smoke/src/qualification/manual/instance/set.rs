@@ -44,6 +44,15 @@ impl Workshop {
 }
 
 impl Tested for LaunchedSet {
+    fn prepare(
+        &mut self,
+        item: &crate::qualification::manual::flow::Item,
+        input: &mut dyn std::io::BufRead,
+        output: &mut dyn std::io::Write,
+    ) -> Result<crate::qualification::manual::flow::Preparation, String> {
+        super::procedure::prepare(&mut self.processes, item, input, output)
+    }
+
     fn instances(&self) -> &[Instance] {
         &self.instances
     }
