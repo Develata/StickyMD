@@ -198,3 +198,23 @@ close the remaining C2d or C3 tasks.
   the Pin click had legitimately enabled topmost. The routing-only state is now
   restored before the click; the immediate hit-test still refuses a covered target.
   A fresh physical run is required to confirm this repair.
+
+## 2026-10-22 real WeType ordering and abort build
+
+- `51-ime-ready-event-trace` reached both profiles. In WeType the trace records empty
+  preedit, empty commit and IME Disabled at 16637-16638 ms, then Escape key-down at
+  16640 ms with composition already false; that event closes Search. Microsoft
+  Pinyin delivered Escape before ending composition. A further debug-only boolean
+  identifies whether the delayed key is the IME-owned logical Process key; the
+  physical scancode alone may not identify who owns the key.
+- `52-actual-abort-refusal` ran the real optimized panic=abort smoke CLI via
+  `qualification g4 --case=G4-01`, bypassing receipt reuse. It reached the explicit
+  injection refusal stub after opening the input desktop and reading its cursor.
+  Exit 1 is the expected rejection; it is not G4 qualification failure or a PASS
+  receipt. The abort EXE SHA-256 is
+  `9f2de3947c730652f6e4b1848431693d3450eeb4955e662f217c6d5e3fedf451`.
+  The ERROR object's false/zero environment fields are defaults on that error path,
+  not observations that the live desktop disappeared. Full P14-A83 remains open.
+- `50-tray-governance-corrected` found the tray opening marker had moved to the new
+  child module. Governance now checks the owning files separately, retaining the
+  two-attempt constant, menu acknowledgement, native owner and input-call guards.

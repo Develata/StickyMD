@@ -754,13 +754,28 @@ fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
     for marker in [
         "pub(super) const TRAY_MENU_OPEN_ATTEMPTS: usize = 2;",
         "UIA_TRAY_MENU_OPEN",
-        "right_click_tray_icon",
         "escape_tray_popup",
     ] {
         if !tray_driver.contains(marker) {
             return Err(format!(
                 "{} must retain acknowledged tray-menu interaction marker `{marker}`",
                 tray_driver_path.display()
+            ));
+        }
+    }
+
+    let tray_candidates_path =
+        root.join("tools/stickymd-smoke/src/qualification/exact_desktop/tray/multiple.rs");
+    let tray_candidates = read_text(&tray_candidates_path)?;
+    for marker in [
+        "right_click_tray_icon",
+        "TRAY_MENU_OPEN_ATTEMPTS",
+        "active_tray_popup_owner",
+    ] {
+        if !tray_candidates.contains(marker) {
+            return Err(format!(
+                "{} must retain acknowledged tray candidate marker `{marker}`",
+                tray_candidates_path.display()
             ));
         }
     }

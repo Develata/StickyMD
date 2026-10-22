@@ -178,13 +178,15 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 ..
             } => {
                 eprintln!(
-                    "INPUT_TRACE t={} key={:?} state={:?} repeat={} synthetic={is_synthetic} search={} composing={}",
+                    "INPUT_TRACE t={} key={:?} state={:?} repeat={} synthetic={is_synthetic} search={} composing={} ime_processed={}",
                     self.timestamp_ms(),
                     event.physical_key,
                     event.state,
                     event.repeat,
                     self.search.open,
-                    self.search.is_composing()
+                    self.search.is_composing(),
+                    event.logical_key
+                        == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Process)
                 );
             }
             _ => {}
