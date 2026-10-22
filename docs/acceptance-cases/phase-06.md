@@ -9,7 +9,7 @@ superseded by AC-039 and Plan 06 `math-raster-lifecycle`; historical evidence re
 | --- | --- | --- | --- | --- |
 | P06-R01 | AC-039; distinct single-raster and residency limits | Automated | render math/pipeline tests through `tools/smoke/phase-06.ps1` | AUTOMATED PASS |
 | P06-R02 | 10 preview-resource-assessment; budget alternatives | Automated | ignored Release diagnostics through the existing render test target | AUTOMATED PASS |
-| P06-R03 | AC-039 dense formulas at 300%, first/middle/last | Manual | Windows Preview/Split readability observation | BLOCKED |
+| P06-R03 | AC-039 dense formulas at 300%, first/middle/last | Manual | receipt: [2026-10-22 USER matrix](../report/2026-10-22-display-math-horizontal-scroll.md) | MANUAL PASS |
 
 R01 covers a viewport larger than the cache, source copy, stable geometry and release after drawing.
 R02 records candidate budgets, retained/temporary bytes, timing and measurement limitations; it is
@@ -20,10 +20,11 @@ The 300% / 100-formula Release fixture and human steps for R03 are in the
 Its ordinary 20-formula OS resource samples do not qualify this manual observation.
 
 2026-10-22 USER feedback: formula copying, mode/theme/zoom changes and first/middle/last rendering
-passed except that long display formulas were clipped without horizontal access. R03 remains blocked
-on that specific defect; the corrected executable's manual recheck is `NOT TESTED`. Scope, original
-feedback and automated regression are linked from the
-[dated fix report](../report/2026-10-22-display-math-horizontal-scroll.md).
+passed on the original bundle; USER then confirmed the horizontal-access correction in source
+`613e82f` passed the three-item recheck. The local manual matrix, original feedback and exact EXE
+identity are in the [dated fix report](../report/2026-10-22-display-math-horizontal-scroll.md).
+R03 records this maintenance acceptance only; inherited visual/IME/resource and release gates
+retain their own evidence requirements.
 
 > Verification projection for RaTeX-native math layout, direct tiny-skia painting and bounded
 > formula caches. Automated rows are owned by the checked-in Rust smoke graph. Visual quality and
