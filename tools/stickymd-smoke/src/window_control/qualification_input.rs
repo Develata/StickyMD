@@ -24,10 +24,14 @@ pub(crate) fn repeated_enter(window: WindowHandle) -> Result<(), String> {
 
 pub(crate) fn opacity_field(window: WindowHandle) -> Result<(), String> {
     let (x, scale) = opacity_popup_x(window)?;
+    // The field spans y=47..77 DIP. Search's native IME candidate window can
+    // cover its middle, including transparent margins. Click the visible upper
+    // interior without dismissing the candidate or changing composition state;
+    // begin_press still proves that the actual target belongs to StickyMD.
     let button = begin_press(
         window,
         x + 194.5 * scale,
-        62.0 * scale,
+        50.0 * scale,
         PhysicalCursorKind::Pointer,
     )?;
     button.release()?;
