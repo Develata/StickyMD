@@ -70,8 +70,8 @@ pub(in crate::qualification) struct Observation {
     pub(in crate::qualification) observed: Facts,
     /// Scenario parameters the observer declared (DPI, topology, theme, ...).
     pub(in crate::qualification) declared: BTreeMap<String, String>,
-    /// `None` only for the M34 first run, which the tool did not start.
-    pub(in crate::qualification) instance: Option<Instance>,
+    /// Empty only for the M34 first run; exactly two for M45 and one otherwise.
+    pub(in crate::qualification) instances: Vec<Instance>,
     pub(in crate::qualification) carried_from: Vec<Carried>,
     pub(in crate::qualification) recorded_at_unix: u64,
 }
@@ -238,8 +238,11 @@ pub(in crate::qualification) fn parse(text: &str) -> Result<Log, String> {
             "notes",
         ],
     )?;
-    if json::u64_field(&document, "schema_version")? != 2 {
-        return Err("manual observation log schema is not version 2".to_owned());
+    if json::u64_field(&document, "schema_version")? != 3 {
+        return Err(
+            "manual observation log schema is not version 3; the existing file is not converted"
+                .to_owned(),
+        );
     }
     let context_id = json::string_field(&document, "context_id")?;
     if !is_context_id(&context_id) {
@@ -349,7 +352,7 @@ pub(in crate::qualification) fn parse_observation(object: &Value) -> Result<Obse
             "status",
             "observed",
             "declared",
-            "instance",
+            "instances",
             "carried_from",
             "recorded_at_unix",
         ],
@@ -365,16 +368,16 @@ pub(in crate::qualification) fn parse_observation(object: &Value) -> Result<Obse
             "native_machine",
         ],
     )?;
-    let instance = match json::field(object, "instance")? {
-        Value::Null => None,
-        value => {
+    let instances = json::objects(object, "instances")?
+        .iter()
+        .map(|value| {
             json::exact_keys(value, &["exe_sha256", "pid"])?;
-            Some(Instance {
+            Ok(Instance {
                 exe_sha256: sha256_field(value, "exe_sha256")?,
                 pid: u32_field(value, "pid")?,
             })
-        }
-    };
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let mut carried_from = Vec::new();
     for carried in json::objects(object, "carried_from")? {
         json::exact_keys(carried, &["context_id", "index"])?;
@@ -409,7 +412,7 @@ pub(in crate::qualification) fn parse_observation(object: &Value) -> Result<Obse
             native_machine: Machine::parse(&json::string_field(observed, "native_machine")?)?,
         },
         declared,
-        instance,
+        instances,
         carried_from,
         recorded_at_unix: json::u64_field(object, "recorded_at_unix")?,
     })
@@ -460,36 +463,18 @@ pub(in crate::qualification) fn validate_observation(
     {
         return Err(format!("{label} has malformed declared parameters"));
     }
-    match (case.instance, &observation.instance) {
-        (InstanceRule::FirstRunDeclared, None) => {
-            let [baseline, source, unchanged] = FIRST_RUN_DECLARATIONS;
-            if [baseline, source]
-                .iter()
-                .any(|key| observation.declared.get(*key).is_none_or(String::is_empty))
-                || observation.declared.get(unchanged).map(String::as_str) != Some("yes")
-            {
-                return Err(format!(
-                    "{label} lacks the first-run declarations {FIRST_RUN_DECLARATIONS:?}"
-                ));
-            }
-        }
-        (InstanceRule::FirstRunDeclared, Some(_)) => {
+    super::instances::validate(case.instance, &observation.instances, None)
+        .map_err(|error| format!("{label}: {error}"))?;
+    if case.instance == InstanceRule::FirstRunDeclared {
+        let [baseline, source, unchanged] = FIRST_RUN_DECLARATIONS;
+        if [baseline, source]
+            .iter()
+            .any(|key| observation.declared.get(*key).is_none_or(String::is_empty))
+            || observation.declared.get(unchanged).map(String::as_str) != Some("yes")
+        {
             return Err(format!(
-                "{label} is a first-run declaration but names an instance"
+                "{label} lacks the first-run declarations {FIRST_RUN_DECLARATIONS:?}"
             ));
-        }
-        (InstanceRule::TwoCopies(_), _) => {
-            return Err(format!(
-                "{label} observes two copies, which needs the two-instance log format that has not landed yet"
-            ));
-        }
-        (InstanceRule::Launched(_) | InstanceRule::Preserved(_), None) => {
-            return Err(format!("{label} names no recorder-launched instance"));
-        }
-        (InstanceRule::Launched(_) | InstanceRule::Preserved(_), Some(instance)) => {
-            if instance.pid == 0 {
-                return Err(format!("{label} names process 0"));
-            }
         }
     }
     if observation
@@ -530,7 +515,7 @@ pub(in crate::qualification) fn render(log: &Log) -> String {
         .collect::<Vec<_>>()
         .join(",\n");
     format!(
-        "{{\"schema_version\":2,\"context_id\":\"{}\",\"candidate_receipt_sha256\":\"{}\",\"target_sha256\":\"{}\",\"registry_sha256\":\"{}\",\"reset\":{reset},\"observations\":[\n{observations}\n],\"notes\":[\n{notes}\n]}}\n",
+        "{{\"schema_version\":3,\"context_id\":\"{}\",\"candidate_receipt_sha256\":\"{}\",\"target_sha256\":\"{}\",\"registry_sha256\":\"{}\",\"reset\":{reset},\"observations\":[\n{observations}\n],\"notes\":[\n{notes}\n]}}\n",
         header.context_id,
         header.candidate_receipt_sha256,
         header.target_sha256,
@@ -555,15 +540,17 @@ pub(in crate::qualification) fn render_observation(observation: &Observation) ->
         .map(|(key, value)| format!("\"{}\":\"{}\"", json::escape(key), json::escape(value)))
         .collect::<Vec<_>>()
         .join(",");
-    let instance = observation.instance.as_ref().map_or_else(
-        || "null".to_owned(),
-        |instance| {
+    let instances = observation
+        .instances
+        .iter()
+        .map(|instance| {
             format!(
                 "{{\"exe_sha256\":\"{}\",\"pid\":{}}}",
                 instance.exe_sha256, instance.pid
             )
-        },
-    );
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let carried = observation
         .carried_from
         .iter()
@@ -576,7 +563,7 @@ pub(in crate::qualification) fn render_observation(observation: &Observation) ->
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"session\":\"{}\",\"seq\":{},\"base\":{},\"case\":\"{}\",\"scenario\":\"{}\",\"role\":\"{}\",\"status\":\"{}\",\"observed\":{{\"display_version\":\"{}\",\"current_build\":{},\"ubr\":{},\"edition_id\":\"{}\",\"native_machine\":\"{}\"}},\"declared\":{{{declared}}},\"instance\":{instance},\"carried_from\":[{carried}],\"recorded_at_unix\":{}}}",
+        "{{\"session\":\"{}\",\"seq\":{},\"base\":{},\"case\":\"{}\",\"scenario\":\"{}\",\"role\":\"{}\",\"status\":\"{}\",\"observed\":{{\"display_version\":\"{}\",\"current_build\":{},\"ubr\":{},\"edition_id\":\"{}\",\"native_machine\":\"{}\"}},\"declared\":{{{declared}}},\"instances\":[{instances}],\"carried_from\":[{carried}],\"recorded_at_unix\":{}}}",
         observation.session,
         observation.seq,
         observation.base,
@@ -631,7 +618,7 @@ pub(in crate::qualification) mod fixtures {
         role: Role,
         status: Status,
     ) -> Observation {
-        // The M34 first run is declared, with no instance; every other case has one.
+        // The registry owns the required number of instances.
         let first_run = registry::find(case)
             .is_some_and(|case| case.instance == InstanceRule::FirstRunDeclared);
         Observation {
@@ -658,10 +645,13 @@ pub(in crate::qualification) mod fixtures {
             } else {
                 BTreeMap::from([("dpi".to_owned(), "150".to_owned())])
             },
-            instance: (!first_run).then(|| Instance {
-                exe_sha256: EXE.to_owned(),
-                pid: 4242,
-            }),
+            instances: (0..registry::find(case)
+                .map_or(1, |case| super::super::instances::count(case.instance)))
+                .map(|index| Instance {
+                    exe_sha256: EXE.to_owned(),
+                    pid: 4242 + index as u32,
+                })
+                .collect(),
             carried_from: Vec::new(),
             recorded_at_unix: 1_791_900_000,
         }
@@ -681,6 +671,7 @@ mod tests {
             observation(1, 0, "P12-M01", "pinyin-100", Current, Status::Fail),
             observation(2, 0, "P12-M23", "system-to-dark", Previous, Status::Pass),
             observation(3, 0, "P12-M34", "clean-vm-first-run", Current, Status::Pass),
+            observation(4, 0, "P12-M45", "tray-identity", Current, Status::Pass),
         ])
         .unwrap();
         log.annotate(vec![note(1, "candidate window \"clipped\"\nat 150%")])
@@ -737,18 +728,19 @@ mod tests {
     fn instances_follow_the_registry_rule() {
         let mut log = empty();
         let mut declared_only = observation(1, 0, "P12-M05", "restore-tray", Current, Status::Pass);
-        declared_only.instance = None;
+        declared_only.instances.clear();
         let mut launched_first_run =
             observation(1, 0, "P12-M34", "clean-vm-first-run", Current, Status::Pass);
-        launched_first_run.instance =
-            observation(1, 0, "P12-M05", "restore-tray", Current, Status::Pass).instance;
+        launched_first_run.instances =
+            observation(1, 0, "P12-M05", "restore-tray", Current, Status::Pass).instances;
         let mut undeclared_first_run =
             observation(1, 0, "P12-M34", "clean-vm-first-run", Current, Status::Pass);
         undeclared_first_run
             .declared
             .insert("unchanged-since-first-run".to_owned(), "no".to_owned());
-        // Schema 2 holds one instance, so a two-copy observation waits for the next schema.
-        let two_copies = observation(1, 0, "P12-M45", "tray-identity", Current, Status::Pass);
+        // TwoCopies requires both recorded processes, not just the first.
+        let mut two_copies = observation(1, 0, "P12-M45", "tray-identity", Current, Status::Pass);
+        two_copies.instances.pop();
         for bad in [
             declared_only,
             launched_first_run,
@@ -838,7 +830,7 @@ mod tests {
             ),
             ("\"pid\":4242", "\"pid\":0"),
             ("\"dpi\":\"150\"", "\"dpi\":150"),
-            ("\"schema_version\":2", "\"schema_version\":1"),
+            ("\"schema_version\":3", "\"schema_version\":1"),
             ("\"notes\":[", "\"notes\":7,\"x\":["),
         ] {
             let broken = good.replacen(from, to, 1);

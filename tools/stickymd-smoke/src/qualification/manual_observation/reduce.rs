@@ -82,12 +82,18 @@ pub(in crate::qualification) fn invalidity(
     if !observation.carried_from.is_empty() {
         return None;
     }
-    if let Some(instance) = &observation.instance
-        && instance.exe_sha256 != binding.exe_sha256
-    {
+    let case = match super::registry::find(&observation.case) {
+        Some(case) => case,
+        None => return Some(format!("unknown observation case {}", observation.case)),
+    };
+    if let Err(error) = super::instances::validate(
+        case.instance,
+        &observation.instances,
+        Some(binding.exe_sha256),
+    ) {
         return Some(format!(
-            "observation {}#{} observed EXE {}, not the candidate EXE {}",
-            observation.session, observation.seq, instance.exe_sha256, binding.exe_sha256
+            "observation {}#{}: {error}",
+            observation.session, observation.seq
         ));
     }
     match match_role(&observation.observed, binding.target) {
@@ -425,7 +431,7 @@ mod tests {
             (1, "P12-M25", "formulas", Current, Status::Pass),
             (0, "P12-M34", "clean-vm-first-run", Current, Status::Pass),
         ]);
-        log.observations[1].instance.as_mut().unwrap().exe_sha256 = "b".repeat(64);
+        log.observations[1].instances[0].exe_sha256 = "b".repeat(64);
         assert!(matches!(
             verdict(&log, "P12-M25", Current),
             Verdict::Invalid(reason) if reason.contains("not the candidate EXE")

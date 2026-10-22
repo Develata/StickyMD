@@ -271,3 +271,26 @@ close the remaining C2d or C3 tasks.
 - Added the approved D3 fixed-viewport-line observations for Source drag outside,
   release and blur, plus note/selection invariants. Other scrollbar obligations
   remain explicit gaps; this small real-input test does not substitute for them.
+
+### C2d / C3 continuation checkpoint (2026-10-22, logs 81–95)
+
+- The Preview selection probe now waits for a copied rendered frame rather than treating
+  the durable view-mode setting as layout readiness. G4-05 now calls the same portable
+  isolation scenario as Runtime from a separate fresh copy; this adds one exact check.
+- G4-02 remains incomplete at this checkpoint. Logs 82/85 exposed the cover setup;
+  87/90/94 refuse when the owned cover cannot be read back as the hit target. A temporary
+  always-on-top cover had incorrectly required global cursor polling, which plan 09 does
+  not require: the contracted mechanism is temporary sensor topmost over ordinary windows.
+  The acceptance projection now states that scope. No failed run is a qualification PASS.
+- Log 84 saw a file-read error after explicit Save. That probe now waits for acknowledged
+  canonical bytes using the existing bounded note reader instead of reading during publication.
+- C3 first checkpoint implements the approved observation log schema 3 / bundle schema 2:
+  zero instances for M34, two distinct PIDs for M45, one otherwise, and every EXE digest is
+  checked by the same predicate. Existing schema files are not converted or rewritten.
+  The recorder owns separate portable directories and rechecks the exact live PID set under
+  the commit lock. Partial preparation drops owned processes; startup failure can be recorded
+  as FAIL, never PASS. The native Job test now checks that both owned children stop.
+- Logs 91 and 95: 96 targeted manual/observation/readiness tests pass. Log 92: smoke CLI
+  all-target clippy passes. These are implementation tests; no manual answers or candidate
+  receipts have been created. M05 special procedures and M35 layouts are still pending.
+- 尚未做跨模型审查. No push, tag or release operation was performed.

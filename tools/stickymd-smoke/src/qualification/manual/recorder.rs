@@ -67,13 +67,13 @@ mod live {
 
     use super::super::super::manual_observation::log::{Note, Observation};
     use super::super::super::manual_observation::reduce::Binding;
-    use super::super::super::manual_observation::registry::{Fixture, InstanceRule};
+    use super::super::super::manual_observation::registry::InstanceRule;
     use super::super::super::manual_observation::role::Facts;
     use super::super::super::manual_observation::store::Commit;
     use super::super::super::manual_observation::{environment, store, target, transfer};
     use super::super::super::receipt;
     use super::super::flow::{self, Bench, Start, io_error};
-    use super::super::instance::{Launched, Workshop};
+    use super::super::instance::{LaunchedSet, Workshop};
     use super::{Selection, items};
 
     pub(in super::super) fn record(root: &Path, selection: Selection) -> Result<(), String> {
@@ -177,17 +177,17 @@ mod live {
     }
 
     impl Bench for LiveBench<'_> {
-        type Instance = Launched;
+        type Instance = LaunchedSet;
 
         fn capture(&mut self) -> Result<Facts, String> {
             environment::capture()
         }
 
-        fn launch(&mut self, fixture: Fixture) -> Result<Launched, String> {
+        fn launch(&mut self, rule: InstanceRule) -> Result<LaunchedSet, String> {
             self.workshop
                 .as_mut()
                 .ok_or("this session prepared no candidate instance")?
-                .launch(fixture)
+                .launch_set(rule)
         }
 
         fn commit(

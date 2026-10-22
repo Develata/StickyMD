@@ -117,14 +117,14 @@ mod live {
     use crate::qualification_environment::{self, QualificationEnvironmentStatus};
 
     use super::super::super::manual_observation::log::{Note, Observation};
-    use super::super::super::manual_observation::registry::{Fixture, InstanceRule};
+    use super::super::super::manual_observation::registry::InstanceRule;
     use super::super::super::manual_observation::role::Facts;
     use super::super::super::manual_observation::store::{self, Commit};
     use super::super::super::manual_observation::transfer::{self, Bundle, MAX_TASK_BYTES};
     use super::super::super::manual_observation::{environment, target};
     use super::super::super::receipt;
     use super::super::flow::{self, Bench, Start, io_error};
-    use super::super::instance::{Launched, Workshop};
+    use super::super::instance::{LaunchedSet, Workshop};
     use super::super::recorder::items;
     use super::{BundleFile, guard_inside_repository};
 
@@ -220,17 +220,17 @@ mod live {
     }
 
     impl Bench for BundleBench {
-        type Instance = Launched;
+        type Instance = LaunchedSet;
 
         fn capture(&mut self) -> Result<Facts, String> {
             environment::capture()
         }
 
-        fn launch(&mut self, fixture: Fixture) -> Result<Launched, String> {
+        fn launch(&mut self, rule: InstanceRule) -> Result<LaunchedSet, String> {
             self.workshop
                 .as_mut()
                 .ok_or("this session prepared no candidate instance")?
-                .launch(fixture)
+                .launch_set(rule)
         }
 
         fn commit(

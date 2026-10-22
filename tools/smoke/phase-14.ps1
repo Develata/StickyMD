@@ -26,6 +26,7 @@
 # Native follow-up checks first input/save/undo and reuses Phase 10 window interactions without changing qualification.
 # G3 crash checks observe failed note publication and image/trash milestones before terminating owned copies.
 # Opt-in local desktop preflights do not emit exact-candidate receipts or alter manual acceptance.
+# Manual log schema 3 / observation bundle schema 2 bind the complete declared instance set.
 [CmdletBinding()]
 param(
     [switch]$Ci,

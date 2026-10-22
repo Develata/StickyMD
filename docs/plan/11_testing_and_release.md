@@ -322,6 +322,8 @@ PASS 观察；最终 manual PASS 仍额外绑定 Promoted Candidate。
 - **人工项注册表**：工具内声明每项的 ID、tier、必需场景、对被测实例的要求与 waiver 范围，与 `phase-12.md` 的
   Manual 集合精确相等；记录器、校验与 decision key 校验都读取它。注册表变化即新上下文。
 - **观察日志**：`dist/evidence/` 中只追加的日志，头部绑定 candidate receipt 摘要、目标收据摘要与注册表摘要。每条
+  观察在日志 schema 3 / 观察包 schema 2 中使用 `instances` 数组：M34 为零，普通场景为一，M45 为二；PID 非零且互异，
+  每个 EXE 摘要均匹配候选。计数、唯一性与摘要使用共同判定。旧 schema 不自动改写或升级，文件保留；新上下文依既有声明／重置协议建立。
   观察有稳定 ID（会话 ID 与会话内序号）和 `base`（会话开始或观察任务导出时的日志长度），状态只能是 `MANUAL_PASS`
   或 `MANUAL_FAIL`；`NOT_TESTED`、跳过与中止从不写入。某场景的 FAIL 一经观察即落盘（先于可选备注）；备注是追加在其观察之后的
   独立记录，每条观察至多一条，同观察同文本的重复为 no-op、不同文本拒绝。同 ID 同内容

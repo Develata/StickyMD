@@ -298,7 +298,7 @@ pub(in crate::qualification) fn render_bundle(bundle: &Bundle) -> String {
         .collect::<Vec<_>>()
         .join(",\n");
     format!(
-        "{{\"schema_version\":1,\"kind\":\"{BUNDLE_KIND}\",\"task_sha256\":\"{}\",\"context_id\":\"{}\",\"candidate_receipt_sha256\":\"{}\",\"target_sha256\":\"{}\",\"registry_sha256\":\"{}\",\"base\":{},\"session\":\"{}\",\"observations\":[\n{observations}\n],\"notes\":[\n{notes}\n]}}\n",
+        "{{\"schema_version\":2,\"kind\":\"{BUNDLE_KIND}\",\"task_sha256\":\"{}\",\"context_id\":\"{}\",\"candidate_receipt_sha256\":\"{}\",\"target_sha256\":\"{}\",\"registry_sha256\":\"{}\",\"base\":{},\"session\":\"{}\",\"observations\":[\n{observations}\n],\"notes\":[\n{notes}\n]}}\n",
         bundle.task_sha256,
         bundle.context_id,
         bundle.candidate_receipt_sha256,
@@ -330,10 +330,10 @@ pub(in crate::qualification) fn parse_bundle(text: &str) -> Result<Bundle, Strin
             "notes",
         ],
     )?;
-    if json::u64_field(&document, "schema_version")? != 1
+    if json::u64_field(&document, "schema_version")? != 2
         || json::string_field(&document, "kind")? != BUNDLE_KIND
     {
-        return Err("not a schema 1 manual observation bundle".to_owned());
+        return Err("not a schema 2 manual observation bundle".to_owned());
     }
     let context_id = json::string_field(&document, "context_id")?;
     let session = json::string_field(&document, "session")?;

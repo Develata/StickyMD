@@ -27,8 +27,9 @@ use super::super::manual_observation::log::Instance;
 use super::super::manual_observation::registry::Fixture;
 use super::super::receipt::{self, Candidate};
 use super::fixture;
-use super::flow::Tested;
+mod set;
 use crate::managed_process::{Descendants, Job, MANUAL_SESSIONS as SESSIONS, STOP_WAIT};
+pub(super) use set::LaunchedSet;
 
 /// The root's lock; its name never matches the session name pattern.
 const ROOT_LOCK: &str = "sessions.lock";
@@ -73,8 +74,11 @@ impl Workshop {
 
     /// Copies the candidate, seeds `fixture` and starts it; the copy's EXE is hashed
     /// again, so the recorded digest is measured, not assumed.
-    pub(super) fn launch(&mut self, fixture: Fixture) -> Result<Launched, String> {
-        refuse_other_instances()?;
+    fn launch_owned(&mut self, fixture: Fixture, allowed: &[u32]) -> Result<Launched, String> {
+        let running = running_stickymd_processes()?;
+        if running.iter().any(|pid| !allowed.contains(pid)) {
+            return Err(format!("an unowned StickyMD is running: {running:?}"));
+        }
         self.launches += 1;
         // Owns the copy until an instance runs from it; any failure below removes it.
         let mut copy = Copy {
@@ -178,20 +182,6 @@ pub(super) struct Launched {
     program: PathBuf,
     instance: Instance,
     startup_error: Option<String>,
-}
-
-impl Tested for Launched {
-    fn instance(&self) -> &Instance {
-        &self.instance
-    }
-
-    fn startup_error(&self) -> Option<&str> {
-        self.startup_error.as_deref()
-    }
-
-    fn still_sole(&mut self) -> Result<bool, String> {
-        Ok(self.child.is_running()? && running_stickymd_processes()? == [self.instance.pid])
-    }
 }
 
 impl Drop for Launched {
@@ -825,12 +815,16 @@ mod tests {
             ])
             .env(JOB_CHILD_SENTINEL, "1");
         let mut child = ChildGuard::spawn(&mut command, "cannot start the job test child").unwrap();
+        let mut second =
+            ChildGuard::spawn(&mut command, "cannot start the second job test child").unwrap();
         let job = Job::create(Descendants::BreakAway).unwrap();
         job.assign(&child).unwrap();
+        job.assign(&second).unwrap();
         assert!(child.is_running().unwrap());
+        assert!(second.is_running().unwrap());
         drop(job);
         let deadline = Instant::now() + Duration::from_secs(10);
-        while child.is_running().unwrap() {
+        while child.is_running().unwrap() || second.is_running().unwrap() {
             assert!(
                 Instant::now() < deadline,
                 "the job did not stop its process"

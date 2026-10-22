@@ -775,7 +775,7 @@ fn a_bundle_imports_whole_into_its_own_context_once() {
             "not the candidate EXE",
             with(&|bundle| {
                 let mut other = third(Current, 0);
-                other.instance.as_mut().unwrap().exe_sha256 = "b".repeat(64);
+                other.instances[0].exe_sha256 = "b".repeat(64);
                 bundle.observations.push(other);
             }),
         ),

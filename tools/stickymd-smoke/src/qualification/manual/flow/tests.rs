@@ -11,7 +11,7 @@ use crate::qualification::manual_observation::log::{
     Instance, Log, Note, Observation, Status, fixtures,
 };
 use crate::qualification::manual_observation::reduce::Binding;
-use crate::qualification::manual_observation::registry::{self, Fixture};
+use crate::qualification::manual_observation::registry::{self, InstanceRule};
 use crate::qualification::manual_observation::role::{Facts, fixtures::current};
 use crate::qualification::manual_observation::store::{Commit, Context};
 use crate::qualification::manual_observation::target::{self, Role, fixtures::target};
@@ -56,22 +56,22 @@ impl FakeBench {
 }
 
 struct FakeInstance {
-    instance: Instance,
+    instances: Vec<Instance>,
     sole: VecDeque<bool>,
     startup_error: Option<String>,
     events: Events,
 }
 
 impl Tested for FakeInstance {
-    fn instance(&self) -> &Instance {
-        &self.instance
+    fn instances(&self) -> &[Instance] {
+        &self.instances
     }
 
     fn startup_error(&self) -> Option<&str> {
         self.startup_error.as_deref()
     }
 
-    fn still_sole(&mut self) -> Result<bool, String> {
+    fn still_exact(&mut self) -> Result<bool, String> {
         Ok(self.sole.pop_front().unwrap_or(true))
     }
 }
@@ -80,7 +80,7 @@ impl Drop for FakeInstance {
     fn drop(&mut self) {
         self.events
             .borrow_mut()
-            .push(format!("stop {}", self.instance.pid));
+            .push(format!("stop {}", self.instances[0].pid));
     }
 }
 
@@ -92,16 +92,24 @@ impl Bench for FakeBench {
         self.captures.pop_front().expect("scripted capture")
     }
 
-    fn launch(&mut self, fixture: Fixture) -> Result<FakeInstance, String> {
+    fn launch(&mut self, rule: InstanceRule) -> Result<FakeInstance, String> {
+        let fixture = match rule {
+            InstanceRule::Launched(f) | InstanceRule::Preserved(f) | InstanceRule::TwoCopies(f) => {
+                f
+            }
+            InstanceRule::FirstRunDeclared => panic!("first run cannot launch"),
+        };
         self.next_pid += 1;
         self.events
             .borrow_mut()
             .push(format!("launch {} {fixture:?}", self.next_pid));
         Ok(FakeInstance {
-            instance: Instance {
-                exe_sha256: "a".repeat(64),
-                pid: self.next_pid,
-            },
+            instances: (0..crate::qualification::manual_observation::instances::count(rule))
+                .map(|index| Instance {
+                    exe_sha256: "a".repeat(64),
+                    pid: self.next_pid + index as u32,
+                })
+                .collect(),
             sole: std::mem::take(&mut self.sole),
             startup_error: self.startup_error.take(),
             events: Rc::clone(&self.events),
@@ -241,7 +249,7 @@ fn a_fail_is_committed_before_its_note_is_asked() {
     );
     assert_eq!((failed.role, failed.status), (Role::Current, Status::Fail));
     assert_eq!(failed.observed, current());
-    assert_eq!(failed.instance.as_ref().unwrap().pid, 1001);
+    assert_eq!(failed.instances[0].pid, 1001);
 }
 
 #[test]
@@ -373,7 +381,7 @@ fn a_started_candidate_that_does_not_initialize_can_be_failed_not_passed() {
     );
     let failed = &bench.observations[0];
     assert_eq!(failed.status, Status::Fail);
-    assert_eq!(failed.instance.as_ref().unwrap().pid, 1001);
+    assert_eq!(failed.instances[0].pid, 1001);
     assert_eq!(bench.notes[0].text, "no window appeared");
 }
 
@@ -388,7 +396,7 @@ fn the_first_run_is_declared_without_an_instance() {
     );
     assert_eq!(result.unwrap().passed, 1);
     let observed = &bench.observations[0];
-    assert_eq!(observed.instance, None);
+    assert!(observed.instances.is_empty());
     assert_eq!(observed.declared["unchanged-since-first-run"], "yes");
     assert_eq!(observed.declared["package-source"], "browser download");
     assert!(
@@ -422,7 +430,6 @@ fn scenarios_awaiting_their_recorder_are_refused_up_front() {
             item("P12-M05", "second-launch-hidden"),
             item("P12-M05", "exit-save-failure"),
             item("P12-M35", "secondary-below"),
-            item("P12-M45", "tray-identity"),
         ],
         "",
     );
@@ -431,12 +438,37 @@ fn scenarios_awaiting_their_recorder_are_refused_up_front() {
         Summary {
             passed: 0,
             failed: 0,
-            unrecorded: 4
+            unrecorded: 3
         }
     );
     assert!(bench.observations.is_empty());
     assert!(bench.events().is_empty(), "{:?}", bench.events());
-    assert_eq!(output.matches("Not recorded: ").count(), 4, "{output}");
+    assert_eq!(output.matches("Not recorded: ").count(), 3, "{output}");
+}
+
+#[test]
+fn two_copy_pass_requires_both_original_processes_at_commit() {
+    for checks in [vec![true, true], vec![true, false], vec![false]] {
+        let accepted = checks == [true, true];
+        let mut bench = FakeBench::new(vec![Ok(current()), Ok(current())]);
+        bench.sole = checks.into();
+        let (result, _) = record(
+            &mut bench,
+            &context(fixtures::empty()),
+            &[item("P12-M45", "tray-identity")],
+            "\nP\nN\n",
+        );
+        assert_eq!(result.unwrap().passed, usize::from(accepted));
+        if accepted {
+            let observed = &bench.observations[0];
+            assert_eq!(observed.instances.len(), 2);
+            assert_ne!(observed.instances[0].pid, observed.instances[1].pid);
+            crate::qualification::manual_observation::log::validate_observation(observed, 0)
+                .unwrap();
+        } else {
+            assert!(bench.observations.is_empty());
+        }
+    }
 }
 
 /// A guided step that covers several cases asks for each case and scenario on its own.

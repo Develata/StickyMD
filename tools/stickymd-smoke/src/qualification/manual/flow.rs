@@ -19,9 +19,7 @@ use std::io::{self, BufRead, Write};
 use super::super::guided::GuidedStep;
 use super::super::manual_observation::environment::unchanged;
 use super::super::manual_observation::log::{Instance, MAX_NOTE_BYTES, Note, Observation, Status};
-use super::super::manual_observation::registry::{
-    Case, FIRST_RUN_DECLARATIONS, Fixture, InstanceRule,
-};
+use super::super::manual_observation::registry::{Case, FIRST_RUN_DECLARATIONS, InstanceRule};
 use super::super::manual_observation::role::{Facts, match_role};
 use super::super::manual_observation::store::Commit;
 use super::super::manual_observation::target::{Role, Target};
@@ -32,9 +30,7 @@ const MAX_DECLARED_BYTES: usize = 128;
 
 /// Scenarios whose recorder procedure has not landed yet (coverage batch C3): the second
 /// launch needs live precondition checks, the failed quit a read-only note set by the
-/// recorder, and the right/below arrangements recorded monitor rectangles. Two-copy cases
-/// (`InstanceRule::TwoCopies`) wait for the two-instance log format. None of them is recorded
-/// until then, so no observation can claim a procedure the recorder did not run.
+/// recorder, and the right/below arrangements recorded monitor rectangles. None of these scenarios is recorded until then, so no observation can claim a procedure the recorder did not run.
 const AWAITING_RECORDER: &[(&str, &str)] = &[
     ("P12-M05", "second-launch-hidden"),
     ("P12-M05", "second-launch-minimized"),
@@ -44,15 +40,9 @@ const AWAITING_RECORDER: &[(&str, &str)] = &[
     ("P12-M35", "secondary-below"),
 ];
 
-const TWO_COPIES_PENDING: &str =
-    "two-copy scenarios need the two-instance recorder, which has not landed yet";
-
 /// Why `item` cannot be recorded yet, if it cannot. Checked before any prompt, capture or
 /// launch, so a refused scenario costs the observer nothing.
 fn awaiting_recorder(item: &Item) -> Option<&'static str> {
-    if matches!(item.case.instance, InstanceRule::TwoCopies(_)) {
-        return Some(TWO_COPIES_PENDING);
-    }
     AWAITING_RECORDER
         .contains(&(item.case.id, item.scenario))
         .then_some("this scenario needs a recorder procedure that has not landed yet")
@@ -78,7 +68,7 @@ pub(super) trait Bench {
     type Instance: Tested;
     fn capture(&mut self) -> Result<Facts, String>;
     /// Starts a fresh StickyMD seeded with `fixture`.
-    fn launch(&mut self, fixture: Fixture) -> Result<Self::Instance, String>;
+    fn launch(&mut self, rule: InstanceRule) -> Result<Self::Instance, String>;
     /// Appends one observation to the log. `last_check` runs under the store lock just
     /// before the write and may refuse it; an error ends the session.
     fn commit(
@@ -93,12 +83,12 @@ pub(super) trait Bench {
 
 /// A StickyMD process the recorder started; dropping it stops the process.
 pub(super) trait Tested {
-    fn instance(&self) -> &Instance;
+    fn instances(&self) -> &[Instance];
     /// Why the started candidate did not initialize, if it did not; a PASS is then refused
     /// but the observer may record the FAIL.
     fn startup_error(&self) -> Option<&str>;
-    /// Whether this process still runs as the only StickyMD process.
-    fn still_sole(&mut self) -> Result<bool, String>;
+    /// Whether exactly the recorder's declared process set is still running.
+    fn still_exact(&mut self) -> Result<bool, String>;
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -237,31 +227,27 @@ impl Recorder<'_> {
                     );
                 }
             },
-            // Refused by `awaiting_recorder` before the session reaches this point.
-            InstanceRule::TwoCopies(_) => return self.unrecorded(output, TWO_COPIES_PENDING),
-            InstanceRule::Launched(fixture) | InstanceRule::Preserved(fixture) => {
-                match bench.launch(fixture) {
-                    Ok(tested) => {
-                        match tested.startup_error() {
+            rule => match bench.launch(rule) {
+                Ok(tested) => {
+                    match tested.startup_error() {
                             None => writeln!(
                                 output,
-                                "Started StickyMD PID {}; observe only this instance.",
-                                tested.instance().pid
+                                "Started StickyMD PIDs {}; observe only these instances.",
+                                instance_pids(&tested)
                             ),
                             Some(error) => writeln!(
                                 output,
                                 "StickyMD PID {} started but did not initialize: {error}. Record F if the candidate failed, or N; PASS is not accepted.",
-                                tested.instance().pid
+                                instance_pids(&tested)
                             ),
                         }
                         .map_err(io_error)?;
-                        (BTreeMap::new(), Some(tested))
-                    }
-                    Err(error) => {
-                        return self.unrecorded(output, &format!("cannot start StickyMD: {error}"));
-                    }
+                    (BTreeMap::new(), Some(tested))
                 }
-            }
+                Err(error) => {
+                    return self.unrecorded(output, &format!("cannot start StickyMD: {error}"));
+                }
+            },
         };
         let status = loop {
             let Some(status) = prompt_status(input, output)? else {
@@ -274,18 +260,18 @@ impl Recorder<'_> {
                     writeln!(
                         output,
                         "PASS refused: StickyMD PID {} did not initialize. Enter F or N.",
-                        tested.instance().pid
+                        instance_pids(tested)
                     )
                     .map_err(io_error)?;
                     continue;
                 }
-                match tested.still_sole() {
+                match tested.still_exact() {
                     Ok(true) => {}
                     Ok(false) => {
                         writeln!(
                             output,
                             "PASS refused: StickyMD PID {} is no longer running, or another StickyMD runs. Enter F or N.",
-                            tested.instance().pid
+                            instance_pids(tested)
                         )
                         .map_err(io_error)?;
                         continue;
@@ -321,15 +307,18 @@ impl Recorder<'_> {
             status,
             observed: start,
             declared,
-            instance: tested.as_ref().map(|tested| tested.instance().clone()),
+            instances: tested
+                .as_ref()
+                .map(|tested| tested.instances().to_vec())
+                .unwrap_or_default(),
             carried_from: Vec::new(),
             recorded_at_unix: bench.now()?,
         };
         let mut last_check = || match tested.as_mut() {
-            Some(tested) if status == Status::Pass => Ok((!tested.still_sole()?).then(|| {
+            Some(tested) if status == Status::Pass => Ok((!tested.still_exact()?).then(|| {
                 format!(
                     "StickyMD PID {} is no longer running, or another StickyMD runs",
-                    tested.instance().pid
+                    instance_pids(tested)
                 )
             })),
             _ => Ok(None),
@@ -409,9 +398,18 @@ fn rule_hint(rule: InstanceRule) -> &'static str {
             "Answer for the first run in the Clean VM, made before this tool was copied in; the recorder then captures the VM's facts."
         }
         InstanceRule::TwoCopies(_) => {
-            "Two portable copies are observed together; their recorder has not landed yet, so this case is not recorded."
+            "The recorder starts two distinct portable copies. PASS requires exactly these two original processes still running at commit."
         }
     }
+}
+
+fn instance_pids(tested: &impl Tested) -> String {
+    tested
+        .instances()
+        .iter()
+        .map(|instance| instance.pid.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The M34 declarations, or `None` when the VM changed after the first run.

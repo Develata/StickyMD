@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use super::{Report, check, evaluate, render};
 use crate::qualification::decisions::{Decision, WaiverScope};
 use crate::qualification::manual_observation::log::{self, Observation, Status, fixtures};
-use crate::qualification::manual_observation::registry::{CASES, InstanceRule};
+use crate::qualification::manual_observation::registry::CASES;
 use crate::qualification::manual_observation::store::{self, OBSERVATION_LOG};
 use crate::qualification::manual_observation::target::Role::{self, Current, Previous};
 use crate::qualification::manual_observation::target::fixtures::target;
@@ -48,17 +48,13 @@ impl Scratch {
         (Self(root), context)
     }
 
-    /// Records every scenario of every case on both roles as PASS, except `skip` and the
-    /// two-copy case, which the log cannot record until the two-instance format lands.
+    /// Records every scenario of every case on both roles, except explicit skips.
     fn record_all_except(&self, skip: &[(&str, Role)], fail: &[(&str, Role)]) {
         let mut log = store::load(&self.0, &candidate_digest(&self.0))
             .unwrap()
             .log;
         let mut batch: Vec<Observation> = Vec::new();
-        for case in CASES
-            .iter()
-            .filter(|case| !matches!(case.instance, InstanceRule::TwoCopies(_)))
-        {
+        for case in CASES {
             for role in [Current, Previous] {
                 if skip.contains(&(case.id, role)) {
                     continue;
@@ -119,8 +115,7 @@ fn waiver(key: &str, context: &str, cells: &[(&str, Role)]) -> Decision {
     }
 }
 
-/// The case waiver for P12-M45, which cannot be observed until the two-instance recorder
-/// lands; tests that expect READY carry it.
+/// An explicit waiver for deliberately unobserved M45 cells in policy tests.
 fn two_copies_waived(context: &str) -> Decision {
     waiver(
         "WAIVER-P12-M45",
@@ -138,11 +133,7 @@ fn a_fully_observed_context_is_ready_and_still_reports_its_gaps() {
     assert_eq!(report.context_id.as_deref(), Some(context.as_str()));
     assert_eq!(report.rows.len(), CASES.len() * 2);
     for row in &report.rows {
-        let expected = if row.case == "P12-M45" {
-            "USER WAIVED"
-        } else {
-            "MANUAL PASS"
-        };
+        let expected = "MANUAL PASS";
         assert_eq!(row.status, expected, "{}", row.case);
     }
     let json = render(&report);
@@ -155,9 +146,9 @@ fn a_fully_observed_context_is_ready_and_still_reports_its_gaps() {
 }
 
 #[test]
-fn an_unrecordable_two_copy_case_blocks_without_a_waiver() {
+fn an_unobserved_two_copy_case_blocks_without_a_waiver() {
     let (scratch, _) = Scratch::declared();
-    scratch.record_all_except(&[], &[]);
+    scratch.record_all_except(&[("P12-M45", Current), ("P12-M45", Previous)], &[]);
     let (_, blockers) = scratch.check(&[], true);
     assert_eq!(blockers.len(), 2, "{blockers:?}");
     assert!(
