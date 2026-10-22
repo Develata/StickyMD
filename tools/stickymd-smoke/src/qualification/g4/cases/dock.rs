@@ -165,6 +165,12 @@ pub(super) fn wait_for_edge(
             Err(error) => Err(error),
         }
     })
+    .map_err(|error| {
+        format!(
+            "{error}; edge={edge:?} expected_collapsed={collapsed} rect={:?}",
+            crate::window_control::window_rect(window)
+        )
+    })
 }
 
 pub(super) fn assert_edge(

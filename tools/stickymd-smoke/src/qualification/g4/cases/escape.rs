@@ -59,24 +59,28 @@ pub(super) fn run(program: &Path, hwnd: WindowHandle, checks: &mut Checks) -> Re
     }
     checks.record("escape-preview-clears-selection", &[]);
     window::press_escape(hwnd)?;
-    super::dock::wait_for_edge(hwnd, edge, true)?;
+    super::dock::wait_for_edge(hwnd, edge, true)
+        .map_err(|error| format!("empty Preview Esc: {error}"))?;
     checks.record("escape-preview-empty-collapses", &[]);
     reveal(hwnd, edge)?;
     window::click_toolbar_physically(hwnd, ToolbarControl::Collapse)?;
-    super::dock::wait_for_edge(hwnd, edge, true)?;
+    super::dock::wait_for_edge(hwnd, edge, true)
+        .map_err(|error| format!("manual Collapse button: {error}"))?;
     checks.record("manual-collapse-button", &[]);
     // A dedicated adapter owns the covering window; this path adds no mouse messages.
-    window::covered_sensor::hover(hwnd, || super::dock::wait_for_edge(hwnd, edge, false))?;
+    window::covered_sensor::hover(hwnd, || super::dock::wait_for_edge(hwnd, edge, false))
+        .map_err(|error| format!("covered sensor: {error}"))?;
     checks.record("covered-sensor-real-hover", &[]);
     window::focus_window(hwnd)?;
     input::shift_escape(hwnd)?;
-    super::dock::wait_for_edge(hwnd, edge, true)?;
+    super::dock::wait_for_edge(hwnd, edge, true).map_err(|error| format!("Shift+Esc: {error}"))?;
     checks.record("escape-shift-collapses", &[]);
     reveal(hwnd, edge)?;
     window::press_find(hwnd)?; // Preview switches to Source and opens Search.
     wait_for_config(program, "view_mode = \"source\"")?;
     input::repeated_escape(hwnd)?;
-    super::dock::wait_for_edge(hwnd, edge, true)?;
+    super::dock::wait_for_edge(hwnd, edge, true)
+        .map_err(|error| format!("repeated Esc: {error}"))?;
     checks.record("escape-repeat-keydowns-independent", &[]);
     reveal(hwnd, edge)?;
     window::move_to_primary_floating(hwnd)?;
