@@ -60,6 +60,13 @@ impl Cover {
         let (created_tx, created_rx) = mpsc::sync_channel(1);
         let (done_tx, done) = mpsc::sync_channel(1);
         thread::spawn(move || {
+            // DPI awareness is thread-local: coordinates passed by the driver are
+            // physical pixels, so the window-owning thread must use the same context.
+            if let Err(error) = super::enable_per_monitor_v2_dpi_awareness() {
+                let _ = created_tx.send(Err(error.clone()));
+                let _ = done_tx.send(Err(error));
+                return;
+            }
             let class: Vec<u16> = "BUTTON\0".encode_utf16().collect();
             let title: Vec<u16> = "StickyMD owned sensor cover\0".encode_utf16().collect();
             // SAFETY: built-in BUTTON class, live UTF-16 buffers, no parent/menu
