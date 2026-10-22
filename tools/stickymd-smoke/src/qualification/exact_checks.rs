@@ -220,6 +220,7 @@ pub(crate) const G4_05: &[&str] = &[
     "junction-keeps-note-and-config",
     "junction-second-instance-exits",
     "junction-wakes-primary",
+    "portable-copies-note-config-and-exit-isolated",
     "sole-process-after-collapsed-wake",
     "sole-process-after-junction",
 ];
@@ -393,7 +394,7 @@ mod tests {
             .chain(G4)
             .map(|case| case.checks.len())
             .sum::<usize>();
-        assert_eq!(total, 193);
+        assert_eq!(total, 194);
     }
 
     #[test]

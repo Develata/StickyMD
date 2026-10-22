@@ -40,10 +40,13 @@ pub(super) fn run(program: &Path, hwnd: WindowHandle, checks: &mut Checks) -> Re
 
     window::switch_to_preview(hwnd)?;
     wait_for_config(program, "view_mode = \"preview\"")?;
-    window::press_select_all(hwnd)?;
-    window::clear_clipboard()?;
-    window::press_copy(hwnd)?;
+    window::focus_split_preview(hwnd)?;
+    // Config publication does not acknowledge the asynchronous Preview layout.
+    // Retry the read-only selection until the actual frame can be copied.
     wait_until("Preview selection positive copy", || {
+        window::clear_clipboard()?;
+        window::press_select_all(hwnd)?;
+        window::press_copy(hwnd)?;
         Ok(window::clipboard_text()?.is_some_and(|text| text.contains("G4 docking integration")))
     })?;
     window::press_escape(hwnd)?;

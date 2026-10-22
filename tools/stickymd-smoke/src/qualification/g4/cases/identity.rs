@@ -13,7 +13,7 @@ use super::super::super::exact_desktop::{
     start_until_editor_ready, wait_for_config, wait_until,
 };
 
-pub(super) fn g4_05(_repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
+pub(super) fn g4_05(repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
     const SOURCE: &str = "junction identity must remain singular\n";
     seed_note(program, SOURCE)?;
     let mut primary = start_until_editor_ready(&program.join("StickyMD.exe"))?;
@@ -47,7 +47,23 @@ pub(super) fn g4_05(_repository: &Path, program: &Path, checks: &mut Checks) -> 
     collapsed_wake(program, &alias, primary.id(), window, checks)?;
     fs::remove_dir(&alias)
         .map_err(|error| format!("cannot remove G4-05 junction after qualification: {error}"))?;
-    primary.kill_and_wait()
+    primary.kill_and_wait()?;
+    portable_copies(repository, program, checks)
+}
+
+fn portable_copies(repository: &Path, parent: &Path, checks: &mut Checks) -> Result<(), String> {
+    // A fresh portable directory keeps the preceding dock state out of this scenario.
+    let program = parent.join("copies");
+    fs::create_dir(&program).map_err(io_error)?;
+    let executable = program.join("StickyMD.exe");
+    fs::copy(parent.join("StickyMD.exe"), &executable).map_err(io_error)?;
+    seed_note(&program, "First portable copy original")?;
+    let mut child = start_until_editor_ready(&executable)?;
+    let window = crate::window_control::visible_window(child.id())?;
+    crate::runtime::portable_isolation::run(repository, &program, &executable, &mut child, window)?;
+    child.kill_and_wait()?;
+    checks.record("portable-copies-note-config-and-exit-isolated", &[]);
+    Ok(())
 }
 
 fn collapsed_wake(
