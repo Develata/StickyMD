@@ -155,9 +155,11 @@ fn validate_samples(text: &str) -> Result<(), String> {
             || last > 120_500
             || count == 0
             || count > 1202
+            || (count == 1 && first != last)
+            || (count > 1 && last - first < (count - 1) * 100)
             || previous.is_some_and(|prior| first < prior)
             || !matches!(parts[3], "p" | "r" | "a" | "o")
-            || (runs == 0 && (first != 0 || parts[3] != "p"))
+            || (runs == 0 && parts[3] != "p")
         {
             return Err("invalid wake sample chronology or precondition".to_owned());
         }
@@ -248,6 +250,9 @@ mod tests {
     }
     #[test]
     fn topology_and_wake_chronology_are_strict() {
+        validate_samples("7:307:2:p;407:407:1:a;").unwrap();
+        assert!(validate_samples("0:1:2:p;101:101:1:a;").is_err());
+        assert!(validate_samples("0:100:1:p;200:200:1:a;").is_err());
         let mut facts = fixture("P12-M05", "second-launch-hidden");
         let trace = facts.remove("samples-00").unwrap();
         facts.insert("samples-01".to_owned(), trace);

@@ -349,3 +349,10 @@ close the remaining C2d or C3 tasks.
   renewed authorization deadline of 2026-10-22 08:26 UTC; headless checks continue afterward.
 - Full final-state baseline results and the hashed patch are kept in the same ignored
   evidence directory. No exact-candidate or manual receipt is created by this checkpoint.
+
+- Final review corrected the M05 sample clock: the initial native observation and worker
+  now share one monotonic origin, including delayed thread startup. Records preserve the
+  actual initial observation time; malformed run counts/durations are rejected. Log 131
+  passes 102 targeted tests. The preceding full workspace run (127), format (128), clippy
+  (126), governance (129) and coverage listing (130) passed; final follow-up validation is
+  recorded separately, with no further desktop input after the authorization expired.

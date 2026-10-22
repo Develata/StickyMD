@@ -30,11 +30,11 @@ struct Samples {
     timed_out: bool,
 }
 impl Samples {
-    fn new() -> Self {
+    fn new(first_observed_ms: u64) -> Self {
         Self {
             runs: vec![Run {
-                first: 0,
-                last: 0,
+                first: first_observed_ms,
+                last: first_observed_ms,
                 count: 1,
                 state: 'p',
             }],
@@ -79,13 +79,16 @@ impl Sampler {
         hwnd: window::WindowHandle,
         monitors: Vec<manual_probe::Monitor>,
         kind: String,
+        started: Instant,
+        initial_ms: u64,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let worker = thread::spawn(move || {
             window::enable_per_monitor_v2_dpi_awareness()?;
-            let started = Instant::now();
-            let mut samples = Samples::new();
+            // The original native sample and this thread share one monotonic
+            // origin, including any delay before the worker actually starts.
+            let mut samples = Samples::new(initial_ms);
             while !worker_stop.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(100));
                 let elapsed = started.elapsed();
@@ -145,17 +148,19 @@ pub(super) fn run(
         ),
     )?;
     let monitors = manual_probe::monitors()?;
+    let started = Instant::now();
+    let epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_millis();
     if !matches(kind, manual_probe::state(hwnd, &monitors)?) {
         return Err(format!(
             "the original window is not in the required {kind} state"
         ));
     }
-    let epoch = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis();
+    let initial_ms = started.elapsed().as_millis() as u64;
     let marker = format!("MANUAL-WAKE-{}-{epoch}", process.instance.pid);
-    let mut sampler = Sampler::start(hwnd, monitors.clone(), kind.to_owned());
+    let mut sampler = Sampler::start(hwnd, monitors.clone(), kind.to_owned(), started, initial_ms);
     ack(
         input,
         output,
@@ -246,7 +251,7 @@ mod tests {
     use super::*;
     #[test]
     fn sampling_keeps_time_and_count_and_never_discards_state_changes() {
-        let mut samples = Samples::new();
+        let mut samples = Samples::new(0);
         samples.add(100, 'p').unwrap();
         samples.add(200, 'a').unwrap();
         samples.add(300, 'r').unwrap();
@@ -258,5 +263,13 @@ mod tests {
                 .unwrap();
         }
         assert!(samples.add(3300, 'r').is_err());
+    }
+
+    #[test]
+    fn initial_native_sample_retains_its_time_before_worker_start() {
+        let mut samples = Samples::new(7);
+        samples.add(307, 'p').unwrap();
+        samples.add(407, 'a').unwrap();
+        assert_eq!(samples.encoded(), "7:307:2:p;407:407:1:a;");
     }
 }
