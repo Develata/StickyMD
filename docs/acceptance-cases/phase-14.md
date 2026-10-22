@@ -460,3 +460,21 @@ commits, composition refusal, late IME events and Esc/save/F6/F7/busy-export pri
 obligations remain gaps for native input/IME switching and the full recovery/export priority
 chain. Preview native capture/delivery outside the window is the third remaining gap.
 Manual rows stay `NOT TESTED`; no promoted candidate or release readiness is established here.
+
+### Native completion of the three desktop mappings (2026-10-22)
+
+Preconditions / Action / Expected / Failure Signals: the native numeric and Preview
+procedures in [Phase 08](phase-08.md#native-numeric-input-and-preview-capture-2026-10-22),
+with strict G4 label-set validation and process/input/profile cleanup. The numeric
+matrix requires both real IMEs, all three input owners, both commit routes, composition
+refusal in Source/Search and idle export. Preview outside motion requires both Preview
+and Split modes, native capture, both endpoints, release/blur stop and unchanged note.
+The physical target must belong to the fixture; an IME candidate overlay is not clicked
+or dismissed to make a test pass. A wide fixture is prepared before either composition;
+Search uses its left Split pane, leaving the right numeric field clear of candidates.
+
+Five actual application tests additionally own repeat/synthetic-key filtering,
+other-click/blur/hide/quit commits, late IME events, Esc/save/recovery and busy-export
+priority. Their identities join the source-bound headless owner set. This combines
+native observation with deterministic application-state coverage, without changing
+manual observations or substituting local logs for exact-candidate receipts.

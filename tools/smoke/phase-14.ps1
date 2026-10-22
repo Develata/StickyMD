@@ -30,6 +30,8 @@
 # M05/M35 collect bounded procedure facts; missing evidence never creates a manual PASS.
 # Scroll projection application/current-layout owners run under the existing Rust test routing.
 # Windowless StickyApp owners supplement that routing; they never create manual/candidate PASS.
+# G4-02 observes native Preview capture; G4-06 covers both IMEs and numeric input owners.
+# Five opacity application owners complement native cases with synthetic/exceptional states.
 [CmdletBinding()]
 param(
     [switch]$Ci,

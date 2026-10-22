@@ -144,7 +144,7 @@ move-size lifecycle 权威且不新增 runtime dependency。详见
 真实快捷键/projection probe 前建立并验证前台输入目标，并用成对物理 key events 驱动 zoom；Phase 10
 targeted Runtime 与完整 Phase 14 Runtime 均已通过。该变化仅属于资格化工具，不改变产品 runtime。
 
-USER 后续提供的 mixed Markdown/RaTeX 暴力文档已纳入仓库内确定性 fixture；宏包依赖
+USER 后续提供的 mixed Markdown/RaTeX 压力文档已纳入仓库内确定性 fixture；宏包依赖
 仅按当前 RaTeX 支持改写为标准等价表达。Phase 5/6 Rust smoke 现在覆盖全量语义、
 27 个唯一公式布局/raster、窄/宽与高低缩放、深滚动图片懒加载；Phase 5 copied-Release
 Preview/Split runtime 改用该 fixture 并验证 canonical source 字节不变。人眼观感仍留在 G1
