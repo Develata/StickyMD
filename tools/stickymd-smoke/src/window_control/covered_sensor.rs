@@ -60,16 +60,16 @@ impl Cover {
         let (created_tx, created_rx) = mpsc::sync_channel(1);
         let (done_tx, done) = mpsc::sync_channel(1);
         thread::spawn(move || {
-            let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+            let class: Vec<u16> = "BUTTON\0".encode_utf16().collect();
             let title: Vec<u16> = "StickyMD owned sensor cover\0".encode_utf16().collect();
-            // SAFETY: built-in STATIC class, live UTF-16 buffers, no parent/menu
+            // SAFETY: built-in BUTTON class, live UTF-16 buffers, no parent/menu
             // or retained caller pointer. This thread owns and destroys the HWND.
             let hwnd = unsafe {
                 CreateWindowExW(
                     0x0800_0080,
                     class.as_ptr(),
                     title.as_ptr(),
-                    0x9000_0004, // WS_POPUP | WS_VISIBLE | SS_BLACKRECT (not static text)
+                    0x9000_0000, // WS_POPUP | WS_VISIBLE; interactive hit target
                     x,
                     y,
                     16,
@@ -119,7 +119,7 @@ impl Cover {
                 }
                 thread::sleep(Duration::from_millis(5));
             }
-            // SAFETY: the creator thread destroys only its own STATIC window.
+            // SAFETY: the creator thread destroys only its own window.
             let result = if unsafe { DestroyWindow(hwnd) } != 0 {
                 Ok(())
             } else {
