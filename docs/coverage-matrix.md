@@ -5,7 +5,9 @@
 Plan 10 `preview-resource-assessment` → 功能投影“宽内容/数学公式” → AC-039/040/041 →
 [Phase 05](acceptance-cases/phase-05.md)、[Phase 06](acceptance-cases/phase-06.md)、
 [Phase 07](acceptance-cases/phase-07.md)、[Phase 10](acceptance-cases/phase-10.md) 的 R 系列。
-实现与验证正在独立分支进行，新增项初始为 `NOT TESTED`；不继承历史候选的验收身份。
+独立分支已完成实现与自动化验证，R 系列自动项为 `AUTOMATED PASS`，P05-R03/P06-R03
+人工项仍为 `NOT TESTED`；不继承历史候选的验收身份。结果、测量边界及代码职责见
+[2026-10-22 实现验证报告](report/2026-10-22-preview-resource-implementation.md)。
 
 2026-10-08：plan 07 `semantic-math-delimiter-conversion` → 数学 `$` 按钮 →
 [Phase 11-B 等号行连接](acceptance-cases/phase-11-b.md#math-equals-lines) →

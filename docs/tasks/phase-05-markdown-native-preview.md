@@ -6,6 +6,10 @@ In Progress
 
 The original foundation is complete. The USER-approved 2026-10-22 maintenance spans existing
 Phases 05/06/07/10 and uses their existing verification entries; it does not add a runtime layer.
+Maintenance implementation and headless verification are complete. The task stays In Progress
+for the explicit P05-R03/P06-R03 manual observations; those are not inferred from automated tests.
+See the [implementation evidence](../report/2026-10-22-preview-resource-implementation.md) for
+measurements, the retained extreme-single-line latency boundary and remaining qualification scope.
 
 ## 2026-10-22 maintenance execution
 
