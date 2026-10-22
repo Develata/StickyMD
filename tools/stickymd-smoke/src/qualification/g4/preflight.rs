@@ -17,6 +17,14 @@ fn run(case: &exact_checks::DeclaredCase, operation: exact_desktop::CaseOperatio
     crate::window_control::enable_per_monitor_v2_dpi_awareness().unwrap();
     let repository =
         crate::governance::find_repository_root(&std::env::current_dir().unwrap()).unwrap();
+    let compiled_repository =
+        crate::governance::find_repository_root(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+            .unwrap();
+    assert_eq!(
+        fs::canonicalize(&repository).unwrap(),
+        fs::canonicalize(&compiled_repository).unwrap(),
+        "preflight binary was compiled from another checkout; use an isolated target directory"
+    );
     let status = Command::new("git")
         .args(["status", "--porcelain", "--untracked-files=all"])
         .current_dir(&repository)
@@ -73,6 +81,14 @@ fn run(case: &exact_checks::DeclaredCase, operation: exact_desktop::CaseOperatio
     let digest = receipt::sha256(&source).unwrap();
     assert_eq!(digest, receipt::sha256(&copied).unwrap());
     println!("LOCAL_PREFLIGHT_CASE={}", case.id);
+    println!(
+        "LOCAL_PREFLIGHT_COMPILED_CHECKOUT={}",
+        compiled_repository.display()
+    );
+    println!(
+        "LOCAL_PREFLIGHT_HARNESS_EXE_SHA256={}",
+        receipt::sha256(&std::env::current_exe().unwrap()).unwrap()
+    );
     println!(
         "LOCAL_PREFLIGHT_HARNESS_COMMIT={}",
         String::from_utf8_lossy(&head.stdout).trim()

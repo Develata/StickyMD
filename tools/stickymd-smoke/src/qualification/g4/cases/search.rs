@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::super::super::exact_desktop::{
     Checks, invoke_uia, io_error, seed_note, start_until_editor_ready, wait_for_config, wait_note,
+    wait_until,
 };
 use crate::window_control::{self as input, WindowHandle};
 
@@ -55,11 +56,22 @@ fn paste(window: WindowHandle, text: &str) -> Result<(), String> {
 
 fn open_find(window: WindowHandle) -> Result<(), String> {
     input::press_find(window)?;
-    paste(window, "alpha")
+    paste(window, "ALPHA")
 }
 
 fn open_replace(window: WindowHandle) -> Result<(), String> {
     open_find(window)?;
+    // A queued Ctrl+V reads the clipboard when the target handles it, not when
+    // SendInput returns. Wait for a positive copy of the lower-case Source match
+    // before replacing the upper-case query payload with the replacement payload.
+    input::press_escape(window)?;
+    input::press_copy(window)?;
+    wait_until(
+        "Search query selects a Source match before clipboard reuse",
+        || Ok(input::clipboard_text()?.as_deref() == Some("alpha")),
+    )?;
+    // Reopen from that selected match and expand the same Find session.
+    input::press_find(window)?;
     input::press_replace(window)?;
     paste(window, "alphaX")
 }

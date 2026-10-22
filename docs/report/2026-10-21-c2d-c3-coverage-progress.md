@@ -107,3 +107,32 @@ close the remaining C2d or C3 tasks.
 - The next harness checkpoint adds failure screenshots and waits for editor-ready
   startup before legacy editor cases. Assertions and deadlines have not been relaxed.
   Product source remains unchanged. Cross-model review is still pending.
+
+## 2026-10-22 physical diagnostics and harness identity correction
+
+- `18-shell-clean-compile` returned a shared-target test executable whose inventory
+  still had only the two first-batch preflights. `19-search-diagnostic` therefore must
+  not be attributed to `b884b74`; its printed current-directory HEAD did not establish
+  the binary's compile identity. The retained `harness-b884b74.exe` is rejected for
+  that attribution. No PASS or exact receipt was produced by that run.
+- Rebuilding in the separate `target/c2d-harness-b884b74` directory produced the four
+  expected preflights. The frozen `harness-b884b74-isolated.exe` SHA-256 is
+  `156c24b213d03dc19fa936f07bc1b69fb7d54a28cf9e0d08925f0e2e1ab08c70`.
+  Future preflight code checks the compiled checkout against the run directory and
+  emits its own executable SHA-256. Shared build caches are not used for these harnesses.
+- `22-search-diagnostic-isolated` reached the replacement scenario. Its failure image
+  showed query `alphaX` and replacement `alphaX` with zero matches. This confirms a
+  harness clipboard race: the query paste could read the later replacement payload.
+  The repair waits for a positive copy of the lower-case Source match before reusing
+  an upper-case query clipboard payload; it does not extend sleeps or weaken assertions.
+- `16-ime-preflight` failed in the WeType Search scenario after Esc: the following
+  replacement guard changed Source text. The effect of the preceding Ctrl+3 and Esc
+  still needs separate observation. Optional per-step screenshots were added to the
+  harness for this diagnosis; they are not manual acceptance or additional PASS checks.
+- `23-tray-preflight` was refused by the native input guard during tray targeting:
+  icon geometry changed, then a `#32768` popup occupied the requested point. The case
+  made no lifecycle claim. This is retained for the multi-icon targeting work.
+- `25-identity-preflight` passed all ten declared G4-05 checks on the retained local
+  EXE, including collapsed wake, activation, unchanged note/config and sole primary.
+  Input cleanup succeeded and no StickyMD child remained. This is local source/preflight
+  evidence, not a promoted-candidate receipt. C2d/C3 remain in progress.

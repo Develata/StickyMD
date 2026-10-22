@@ -157,7 +157,7 @@ impl Drop for RealImeSession<'_> {
     }
 }
 
-pub(super) fn g4_06(_repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
+pub(super) fn g4_06(repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
     let parent = program.parent().ok_or_else(|| {
         format!(
             "G4-06 program directory has no parent: {}",
@@ -173,7 +173,12 @@ pub(super) fn g4_06(_repository: &Path, program: &Path, checks: &mut Checks) -> 
         // profile's startup state or move its physical input target off-screen.
         let profile_program = parent.join(format!("g4-06-{suffix}"));
         copy_directory(program, &profile_program)?;
-        checks.extend(exercise_profile(&profile_program, profile, key)?);
+        checks.extend(exercise_profile(
+            repository,
+            &profile_program,
+            profile,
+            key,
+        )?);
     }
     Ok(())
 }
@@ -181,6 +186,7 @@ pub(super) fn g4_06(_repository: &Path, program: &Path, checks: &mut Checks) -> 
 /// Runs the functional matrix for `profile`; returns its checks only if every step and
 /// every restore succeeded.
 fn exercise_profile(
+    repository: &Path,
     program: &Path,
     profile: ImeProfile,
     profile_key: &'static str,
@@ -207,7 +213,7 @@ fn exercise_profile(
             .map_err(|error| format!("source cancel: {error}"))?;
         selection_commit_is_one_undo(program, window, &mut ime)
             .map_err(|error| format!("selection commit/Undo: {error}"))?;
-        search_fields_accept_real_ime(program, window, &mut ime, &term)
+        search_fields_accept_real_ime(repository, program, child.id(), window, &mut ime, &term)
             .map_err(|error| format!("Search query/replacement: {error}"))?;
         runtime_states_accept_real_ime(program, window, child.id(), &mut ime)
             .map_err(|error| format!("runtime state matrix: {error}"))
@@ -374,7 +380,9 @@ fn selection_commit_is_one_undo(
 }
 
 fn search_fields_accept_real_ime(
+    repository: &Path,
     program: &Path,
+    process_id: u32,
     window: WindowHandle,
     ime: &mut RealImeSession<'_>,
     term: &str,
@@ -389,11 +397,19 @@ fn search_fields_accept_real_ime(
     // stay in Source while it is active; Esc must leave the Search open. The
     // later copied match is a positive witness that the committed query survived.
     begin_preedit(program, window, &document, "nihao", ime)?;
+    super::diagnostics::step(repository, program, process_id, "search-01-preedit")?;
     crate::window_control::press_preview_shortcut(window)?;
     thread::sleep(IME_COMMIT_SETTLE);
     wait_for_config(program, "view_mode = \"source\"")?;
+    super::diagnostics::step(
+        repository,
+        program,
+        process_id,
+        "search-02-after-preview-shortcut",
+    )?;
     crate::window_control::press_escape(window)?;
     thread::sleep(IME_COMMIT_SETTLE);
+    super::diagnostics::step(repository, program, process_id, "search-03-after-escape")?;
     crate::window_control::press_control_enter(window)?;
     thread::sleep(AUTOSAVE_OBSERVATION);
     assert_note(

@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
 
+mod diagnostics;
 mod dock;
 mod editor;
 mod identity;
