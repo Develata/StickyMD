@@ -164,6 +164,10 @@ fn composition_refuses_focus(
     baseline: &str,
     term: &str,
 ) -> Result<(), String> {
+    // Native TIP surfaces include invisible hit-test margins. Keep both Source
+    // and left-pane Search candidates away from the right toolbar/field before
+    // starting either composition; never move or dismiss the active candidate.
+    window::resize_to_dip(hwnd, 1200, 680)?;
     for owner in ["source", "search"] {
         println!(
             "NUMERIC_COMPOSITION_STEP ime={} owner={owner}",
@@ -175,7 +179,6 @@ fn composition_refuses_focus(
             // field (even its visually exposed top edge). A wide Split fixture
             // leaves the real numeric target on the right, without dismissing
             // candidates or relaxing the native input-target guard.
-            window::resize_to_dip(hwnd, 1000, 680)?;
             window::press_split_shortcut(hwnd)?;
             wait_for_config(program, "view_mode = \"split\"")?;
         }
