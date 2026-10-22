@@ -68,18 +68,18 @@ pub(super) fn run(program: &Path, hwnd: WindowHandle, checks: &mut Checks) -> Re
     Ok(())
 }
 
-fn open(hwnd: WindowHandle) -> Result<(), String> {
+pub(super) fn open(hwnd: WindowHandle) -> Result<(), String> {
     window::click_toolbar_physically(hwnd, ToolbarControl::Opacity)
 }
 
-fn digits(hwnd: WindowHandle, value: u8) -> Result<(), String> {
+pub(super) fn digits(hwnd: WindowHandle, value: u8) -> Result<(), String> {
     for digit in value.to_string().bytes() {
         window::press_digit(hwnd, digit - b'0')?;
     }
     Ok(())
 }
 
-fn committed(program: &Path, hwnd: WindowHandle, opacity: u8) -> Result<(), String> {
+pub(super) fn committed(program: &Path, hwnd: WindowHandle, opacity: u8) -> Result<(), String> {
     wait_for_config(program, &format!("opacity = {opacity}"))?;
     alpha(hwnd, opacity)
 }

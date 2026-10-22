@@ -17,6 +17,11 @@ pub(crate) fn repeated_escape(window: WindowHandle) -> Result<(), String> {
     input_injection::live()?.repeat_key(input_injection::ESCAPE, 2)
 }
 
+pub(crate) fn repeated_enter(window: WindowHandle) -> Result<(), String> {
+    require_keyboard_target(window)?;
+    input_injection::live()?.repeat_key(input_injection::Key::new(0x0D, 0x1C), 4)
+}
+
 pub(crate) fn opacity_field(window: WindowHandle) -> Result<(), String> {
     let (x, scale) = opacity_popup_x(window)?;
     let button = begin_press(
@@ -64,7 +69,7 @@ fn begin_press(
     press_left_on(window)
 }
 
-pub(crate) fn source_scroll_drag(
+pub(crate) fn right_scroll_drag(
     window: WindowHandle,
     bottom: bool,
 ) -> Result<input_injection::LiveLeftButton, String> {
@@ -118,7 +123,7 @@ pub(crate) fn select_viewport_line(window: WindowHandle) -> Result<(), String> {
 
 /// Read only the visible scrollbar's center column; never captures other apps.
 /// This observes an unfocused live drag without sending a click or focus request.
-pub(crate) fn source_scroll_thumb(window: WindowHandle) -> Result<(usize, usize), String> {
+pub(crate) fn right_scroll_thumb(window: WindowHandle) -> Result<(usize, usize, usize), String> {
     #[link(name = "user32")]
     unsafe extern "system" {
         fn GetDC(hwnd: isize) -> isize;
@@ -181,7 +186,7 @@ pub(crate) fn source_scroll_thumb(window: WindowHandle) -> Result<(usize, usize)
         if best.1 - best.0 < (12.0 * scale) as usize || best.1 - best.0 > colors.len() / 3 {
             return Err(format!("no bounded scrollbar thumb in column: {best:?}"));
         }
-        Ok(best)
+        Ok((best.0, best.1, colors.len()))
     })();
     // SAFETY: exactly balances the GetDC(NULL) above, including error paths.
     unsafe {

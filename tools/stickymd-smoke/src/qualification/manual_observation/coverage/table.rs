@@ -318,6 +318,15 @@ const IME_PINYIN: &[&str] = &[
     "ime-search-composition-blocks-preview:ime=pinyin",
     "ime-search-escape-retains-query:ime=pinyin",
     "ime-selection-commit-one-undo:ime=pinyin",
+    "numeric-composition-refuses-focus:ime=pinyin,owner=search",
+    "numeric-composition-refuses-focus:ime=pinyin,owner=source",
+    "numeric-idle-export-priority:ime=pinyin",
+    "numeric-native-commit:commit=blur,ime=pinyin,owner=preview",
+    "numeric-native-commit:commit=blur,ime=pinyin,owner=search",
+    "numeric-native-commit:commit=blur,ime=pinyin,owner=source",
+    "numeric-native-commit:commit=enter,ime=pinyin,owner=preview",
+    "numeric-native-commit:commit=enter,ime=pinyin,owner=search",
+    "numeric-native-commit:commit=enter,ime=pinyin,owner=source",
 ];
 /// The whole G4-06 functional matrix of WeType.
 const IME_WETYPE: &[&str] = &[
@@ -347,6 +356,15 @@ const IME_WETYPE: &[&str] = &[
     "ime-search-composition-blocks-preview:ime=wetype",
     "ime-search-escape-retains-query:ime=wetype",
     "ime-selection-commit-one-undo:ime=wetype",
+    "numeric-composition-refuses-focus:ime=wetype,owner=search",
+    "numeric-composition-refuses-focus:ime=wetype,owner=source",
+    "numeric-idle-export-priority:ime=wetype",
+    "numeric-native-commit:commit=blur,ime=wetype,owner=preview",
+    "numeric-native-commit:commit=blur,ime=wetype,owner=search",
+    "numeric-native-commit:commit=blur,ime=wetype,owner=source",
+    "numeric-native-commit:commit=enter,ime=wetype,owner=preview",
+    "numeric-native-commit:commit=enter,ime=wetype,owner=search",
+    "numeric-native-commit:commit=enter,ime=wetype,owner=source",
 ];
 /// Show, from the exact tray menu, restores the hidden paper with its retained text.
 const TRAY_SHOW: &[&str] = &[

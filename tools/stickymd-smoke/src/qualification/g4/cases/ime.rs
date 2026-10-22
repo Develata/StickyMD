@@ -8,6 +8,8 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
+mod numeric;
+
 use super::super::super::exact_desktop::{
     Checks, copy_directory, io_error, seed_note, start_until_editor_ready_with_log,
     wait_for_config, wait_for_layout, wait_note as wait_raw_note, wait_until,
@@ -224,7 +226,9 @@ fn exercise_profile(
         search_fields_accept_real_ime(repository, program, child.id(), window, &mut ime, &term)
             .map_err(|error| format!("Search query/replacement: {error}"))?;
         runtime_states_accept_real_ime(program, window, child.id(), &mut ime)
-            .map_err(|error| format!("runtime state matrix: {error}"))
+            .map_err(|error| format!("runtime state matrix: {error}"))?;
+        numeric::run(repository, program, child.id(), window, &mut ime, &term)
+            .map_err(|error| format!("numeric field native matrix: {error}"))
     })();
 
     let mode_restore = ime.restore_input_mode();

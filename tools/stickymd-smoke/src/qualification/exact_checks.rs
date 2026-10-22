@@ -180,6 +180,16 @@ pub(crate) const G4_02: &[&str] = &[
     "pin-off-config",
     "pin-on-reaches-hwnd",
     "pin-survives-autohide",
+    "preview-scroll-keeps-note:mode=preview",
+    "preview-scroll-keeps-note:mode=split",
+    "preview-scroll-native-capture:mode=preview",
+    "preview-scroll-native-capture:mode=split",
+    "preview-scroll-outside-both-ends:mode=preview",
+    "preview-scroll-outside-both-ends:mode=split",
+    "preview-scroll-stops-on-blur:mode=preview",
+    "preview-scroll-stops-on-blur:mode=split",
+    "preview-scroll-stops-on-release:mode=preview",
+    "preview-scroll-stops-on-release:mode=split",
     "scroll-drag-outside-finishes",
     "scroll-drag-stops-on-blur",
     "scroll-drag-stops-on-release",
@@ -278,6 +288,24 @@ pub(crate) const G4_06: &[&str] = &[
     "ime-search-escape-retains-query:ime=wetype",
     "ime-selection-commit-one-undo:ime=pinyin",
     "ime-selection-commit-one-undo:ime=wetype",
+    "numeric-composition-refuses-focus:ime=pinyin,owner=search",
+    "numeric-composition-refuses-focus:ime=pinyin,owner=source",
+    "numeric-composition-refuses-focus:ime=wetype,owner=search",
+    "numeric-composition-refuses-focus:ime=wetype,owner=source",
+    "numeric-idle-export-priority:ime=pinyin",
+    "numeric-idle-export-priority:ime=wetype",
+    "numeric-native-commit:commit=blur,ime=pinyin,owner=preview",
+    "numeric-native-commit:commit=blur,ime=pinyin,owner=search",
+    "numeric-native-commit:commit=blur,ime=pinyin,owner=source",
+    "numeric-native-commit:commit=blur,ime=wetype,owner=preview",
+    "numeric-native-commit:commit=blur,ime=wetype,owner=search",
+    "numeric-native-commit:commit=blur,ime=wetype,owner=source",
+    "numeric-native-commit:commit=enter,ime=pinyin,owner=preview",
+    "numeric-native-commit:commit=enter,ime=pinyin,owner=search",
+    "numeric-native-commit:commit=enter,ime=pinyin,owner=source",
+    "numeric-native-commit:commit=enter,ime=wetype,owner=preview",
+    "numeric-native-commit:commit=enter,ime=wetype,owner=search",
+    "numeric-native-commit:commit=enter,ime=wetype,owner=source",
 ];
 
 /// The labels one case run recorded; recording a label again keeps one copy.
@@ -394,7 +422,7 @@ mod tests {
             .chain(G4)
             .map(|case| case.checks.len())
             .sum::<usize>();
-        assert_eq!(total, 194);
+        assert_eq!(total, 222);
     }
 
     #[test]

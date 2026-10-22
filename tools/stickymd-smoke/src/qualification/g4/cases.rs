@@ -9,6 +9,7 @@ mod escape;
 mod identity;
 mod ime;
 mod opacity;
+mod preview_scroll;
 mod scroll;
 mod search;
 mod tray;
@@ -25,7 +26,8 @@ pub(super) fn g4_01(repository: &Path, program: &Path) -> Result<CaseEvidence, S
 pub(super) fn g4_02(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {
     checked(|checks| {
         dock::g4_02(repository, program, checks)?;
-        scroll::run(program, checks)
+        scroll::run(program, checks)?;
+        preview_scroll::run(repository, program, checks)
     })
 }
 
