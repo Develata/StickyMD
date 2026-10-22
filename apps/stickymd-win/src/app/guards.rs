@@ -66,6 +66,51 @@ impl StickyApp {
 mod tests {
     use super::*;
 
+    #[test]
+    fn runtime_guards_read_both_compositions_and_focus_loss_cancels_them() {
+        use crate::app::headless_tests::fixture;
+        use crate::interaction::ImeSignal;
+        for editor in [false, true] {
+            for search in [false, true] {
+                let mut app = fixture("canonical text");
+                let snapshot = app.coordinator.snapshot();
+                app.session.focused = true;
+                if editor {
+                    app.session
+                        .handle_ime(ImeSignal::Enabled, snapshot.generation, 1);
+                    app.session.handle_ime(
+                        ImeSignal::Preedit {
+                            text: "nihao".into(),
+                            cursor: Some(0..5),
+                        },
+                        snapshot.generation,
+                        2,
+                    );
+                }
+                if search {
+                    app.search.open = true;
+                    app.search
+                        .insert("canonical", &snapshot.text, snapshot.generation);
+                    app.search.set_preedit("zhong".into(), Some((0, 5)));
+                }
+                assert_eq!(app.window_guards().ime_composing, editor || search);
+                assert!(app.window_guards().window_focused);
+                app.apply_focus_change(None, false);
+                assert!(!app.session.is_composing());
+                assert!(
+                    !app.search.is_composing(),
+                    "Search composition survived focus loss"
+                );
+                assert!(!app.window_guards().ime_composing);
+                assert!(!app.window_guards().window_focused);
+                assert_eq!(app.search.open, search);
+                assert_eq!(app.search.query, if search { "canonical" } else { "" });
+                assert_eq!(app.coordinator.snapshot(), snapshot);
+                assert!(!app.coordinator.view().dirty);
+            }
+        }
+    }
+
     /// Each fact alone raises exactly the guard it belongs to.
     #[test]
     fn each_fact_maps_to_its_guard() {

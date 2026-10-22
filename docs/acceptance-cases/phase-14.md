@@ -437,3 +437,26 @@ stale or disabled synchronization, changed session state or an old layout offeri
 These owners prove the extracted decisions, not all winit event delivery. Canonical-state,
 gutter-input, complete receipt application and the remaining Preview gesture obligations
 stay named gaps. Source desktop observations do not close unparameterized two-pane duties.
+
+### D3 windowless shell application coverage (2026-10-22)
+
+Preconditions: the real `StickyApp`, canonical coordinator, runtime config and Source/Preview
+projections in an exclusively owned temporary directory; no application window, tray, physical
+input or external diagnostic output. Native size, DPI, key and viewport observations are supplied
+at the adapter boundary. Action: exercise actual scroll application and both-pane drag endings,
+full Preview completion admission, editor/Search focus guards, every window effect and complete
+event-pass settlement. Expected: canonical text/generation/dirty remain unchanged by scrolling;
+gutter geometry is independent of content length/zoom; empty gutters consume presses; every move
+uses cached document height; stale receipts retain frame/offset; both compositions cancel on blur
+without clearing Search query; only failed note Quit establishes its notice and each complete
+pass settles it once after scheduled work using all three persistence barriers.
+Failure Signals: any changed canonical/session state, stale pixels or offset, surviving drag,
+latched Search composition, lost notice while a barrier remains, or settling before scheduling.
+
+These actual application owners replace 16 of the 19 named mapping gaps. Coverage remains
+source-bound and conditional on a complete owner-verifying headless receipt, not manual acceptance.
+Five further opacity tests cover Enter/repeat/synthetic-key routing, other-click/blur/hide/quit
+commits, composition refusal, late IME events and Esc/save/F6/F7/busy-export priority. The two complete P08-D022
+obligations remain gaps for native input/IME switching and the full recovery/export priority
+chain. Preview native capture/delivery outside the window is the third remaining gap.
+Manual rows stay `NOT TESTED`; no promoted candidate or release readiness is established here.

@@ -315,3 +315,20 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   replacement HWNDs, any durable write, or failed fixture-attribute restoration.
 - Entry: the existing Phase 14 G4 routing; explicit ignored preflight tests use the
   same case functions. Phase 08/14 PowerShell entry parameters are unchanged.
+
+### D3 windowless shell application coverage (2026-10-22)
+
+Preconditions: a real `StickyApp` in an exclusively owned temporary directory, with no
+application window or physical input; native geometry and key observations supplied at
+the adapter boundary. Action: run the application-state owners described in
+[Phase 14 D3](phase-14.md#d3-windowless-shell-application-coverage-2026-10-22).
+Expected: both scroll panes preserve canonical text/generation/dirty and session state;
+gutter presses are consumed, each drag update applies, all four drag endings release the
+guard, cached Preview height drives scrolling and stale receipts cannot replace pixels
+or offset. Editor and Search preedit cancel on blur while the query remains. Quit notices
+follow actual effects and settle once after scheduling from the canonical note barriers.
+Failure Signals: any violated invariant, stale composition guard, or notice settled early.
+Sixteen of the 19 named mapping gaps now have actual application unit owners, subject to
+source-bound owner verification. P08-D022 Enter/blur and Preview outside-window native
+capture remain gaps; opacity application tests alone do not prove native delivery or IME
+switching. Manual status remains `NOT TESTED`; overall readiness remains `NOT_READY`.

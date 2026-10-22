@@ -7,6 +7,7 @@ use winit::event::{ElementState, MouseButton};
 use winit::window::CursorIcon;
 
 use super::StickyApp;
+use super::preview_runtime::ViewGeometry;
 use super::scroll_application::{ScrollApplication, ScrollRequest};
 use super::scrollbar::{
     DragUpdate, PressOutcome, PreviewFacts, ScrollPane, Scrollbar, gutter_at, page_pixels,
@@ -24,6 +25,16 @@ impl StickyApp {
             .window
             .as_ref()
             .map_or(1.0, |window| window.scale_factor() as f32);
+        self.scrollbar_geometry_for(geometry, dpi, preview_current)
+    }
+
+    /// Apply native geometry observations to the actual cached projections.
+    fn scrollbar_geometry_for(
+        &mut self,
+        geometry: ViewGeometry,
+        dpi: f32,
+        preview_current: bool,
+    ) -> [Option<Scrollbar>; 2] {
         // Measured only for a pane the view shows.
         let source = geometry
             .source
@@ -68,19 +79,36 @@ impl StickyApp {
             }
             return false;
         }
-        let bars = self.scrollbar_geometry();
+        let Some(geometry) = self.view_geometry() else {
+            return false;
+        };
+        let dpi = self
+            .window
+            .as_ref()
+            .map_or(1.0, |w| w.scale_factor() as f32);
+        self.press_scrollbar_at(geometry, dpi, self.preview_layout_is_current())
+    }
+
+    fn press_scrollbar_at(
+        &mut self,
+        geometry: ViewGeometry,
+        dpi: f32,
+        preview_current: bool,
+    ) -> bool {
+        if !self.window_accepts_editor_mutation() {
+            return false;
+        }
+        let bars = self.scrollbar_geometry_for(geometry, dpi, preview_current);
         if let Some(outcome) = self.scrollbars.press(bars, self.cursor_position) {
             match outcome {
                 PressOutcome::DragStarted => self.refresh_window_guards(None),
                 PressOutcome::Page { pane, direction } => {
                     // The pane height is read only for a confirmed track press.
-                    let height = self
-                        .view_geometry()
-                        .and_then(|geometry| match pane {
-                            ScrollPane::Source => geometry.source,
-                            ScrollPane::Preview => geometry.preview,
-                        })
-                        .map_or(0, |content| content.height);
+                    let height = match pane {
+                        ScrollPane::Source => geometry.source,
+                        ScrollPane::Preview => geometry.preview,
+                    }
+                    .map_or(0, |content| content.height);
                     self.scroll_pane_by(pane, page_pixels(direction, height));
                 }
             }
@@ -88,10 +116,32 @@ impl StickyApp {
             return true;
         }
         // Empty gutter is not an editor click (including while a preview loads).
-        self.scrollbar_gutter_at_cursor().is_some()
+        gutter_at(
+            self.cursor_position,
+            [
+                (ScrollPane::Source, geometry.source),
+                (ScrollPane::Preview, geometry.preview),
+            ],
+            f64::from(dpi),
+        )
+        .is_some()
     }
 
     pub(super) fn handle_scrollbar_cursor(&mut self) -> bool {
+        let geometry = self.view_geometry();
+        let dpi = self
+            .window
+            .as_ref()
+            .map_or(1.0, |w| w.scale_factor() as f32);
+        self.move_scrollbar_at(geometry, dpi, self.preview_layout_is_current())
+    }
+
+    fn move_scrollbar_at(
+        &mut self,
+        geometry: Option<ViewGeometry>,
+        dpi: f32,
+        preview_current: bool,
+    ) -> bool {
         if !self.window_accepts_editor_mutation() {
             self.cancel_scrollbar_drag();
             return false;
@@ -99,8 +149,19 @@ impl StickyApp {
         if self.session.dragging_selection || self.preview_dragging {
             return false;
         }
-        let bars = self.scrollbar_geometry();
-        let gutter = self.scrollbar_gutter_at_cursor();
+        let bars = geometry.map_or([None, None], |g| {
+            self.scrollbar_geometry_for(g, dpi, preview_current)
+        });
+        let gutter = geometry.and_then(|g| {
+            gutter_at(
+                self.cursor_position,
+                [
+                    (ScrollPane::Source, g.source),
+                    (ScrollPane::Preview, g.preview),
+                ],
+                f64::from(dpi),
+            )
+        });
         let outcome = self
             .scrollbars
             .pointer_moved(bars, gutter, self.cursor_position.y);
@@ -161,3 +222,6 @@ impl StickyApp {
         self.request_redraw();
     }
 }
+
+#[cfg(test)]
+mod tests;

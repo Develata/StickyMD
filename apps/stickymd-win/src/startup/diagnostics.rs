@@ -28,6 +28,21 @@ pub struct StartupDiagnostics {
 }
 
 impl StartupDiagnostics {
+    /// Fixtures must never inherit an external trace path or readiness event.
+    #[cfg(test)]
+    pub(crate) fn disabled_for_test() -> Self {
+        Self {
+            started: Instant::now(),
+            ready_event: None,
+            trace_path: None,
+            exit_after_ready: false,
+            milestones: Vec::new(),
+            details: None,
+            finished: false,
+            failed: false,
+        }
+    }
+
     pub fn from_environment() -> Self {
         let ready_event = env::var(READY_EVENT_ENV)
             .ok()

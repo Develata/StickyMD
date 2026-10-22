@@ -102,7 +102,13 @@ impl StickyApp {
         let window = self.window.as_ref()?;
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;
-        Some(geometry(self.config.current().view_mode, size, scale))
+        Some(self.view_geometry_for(size, scale))
+    }
+
+    /// Native size and DPI are observations; mode comes from the actual config.
+    /// Content zoom and document length must not enter shell gutter geometry.
+    pub(super) fn view_geometry_for(&self, size: PhysicalSize<u32>, dpi: f32) -> ViewGeometry {
+        geometry(self.config.current().view_mode, size, dpi)
     }
 
     pub(super) fn preview_visibility(&self) -> PreviewVisibility {
@@ -260,6 +266,18 @@ impl StickyApp {
         let viewport = (!hidden_to_tray && completion.generation == current)
             .then(|| self.preview_viewport())
             .flatten();
+        self.apply_preview_completion(completion, hidden_to_tray, viewport);
+    }
+
+    /// Apply a worker result against current canonical state and observed viewport.
+    /// The native wrapper obtains facts only; all admission and mutation stays here.
+    fn apply_preview_completion(
+        &mut self,
+        completion: PreviewCompletion,
+        hidden_to_tray: bool,
+        viewport: Option<PreviewViewport>,
+    ) {
+        let current = self.coordinator.view().generation;
         match completion_route(
             hidden_to_tray,
             completion.generation,
@@ -425,6 +443,9 @@ impl StickyApp {
         })
     }
 }
+
+#[cfg(test)]
+mod runtime_tests;
 
 fn selection_for_generation(
     previous: Option<Generation>,

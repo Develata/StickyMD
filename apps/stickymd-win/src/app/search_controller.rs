@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 
-use winit::event::{ElementState, Ime, KeyEvent, MouseButton};
+use winit::event::{ElementState, Ime, MouseButton};
 use winit::keyboard::KeyCode;
 
 use super::StickyApp;
@@ -138,7 +138,7 @@ impl StickyApp {
 
     pub(super) fn handle_search_key(
         &mut self,
-        event: &KeyEvent,
+        key_text: Option<&str>,
         code: Option<KeyCode>,
         shortcut: bool,
         shift: bool,
@@ -195,11 +195,11 @@ impl StickyApp {
             _ if !shortcut
                 && !self.modifiers.alt_key()
                 && !self.modifiers.super_key()
-                && event.text.as_ref().is_some_and(|value| {
+                && key_text.is_some_and(|value| {
                     !value.is_empty() && !value.chars().any(char::is_control)
                 }) =>
             {
-                if let Some(inserted) = &event.text {
+                if let Some(inserted) = key_text {
                     let text = self.coordinator.view().text;
                     self.search.insert(inserted, text, generation);
                 }

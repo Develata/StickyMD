@@ -510,3 +510,13 @@ Plan 11 `manual-observation-log` → [phase-14](acceptance-cases/phase-14.md) �
 `app/scroll_application.rs` 持有只改投影与会话滚动坐标的应用步骤；`preview_runtime` 的
 `current_preview_layout` 持有 generation 与完整布局判定。新增单元 owner 持有分栏同步、
 caret/selection/preedit 保持与当前 frame 判定五项；canonical 状态、其余事件接线仍单列缺口。
+
+2026-10-22 D3 无窗口应用测试：Plan 07 `ime-semantics`、Plan 09 `vertical-scrollbars` /
+`tray-lifecycle` → [phase-08](acceptance-cases/phase-08.md) 与
+[phase-14](acceptance-cases/phase-14.md) 的 D3 windowless shell application coverage。
+`app/headless_tests.rs` 创建真实 `StickyApp` 与独占目录，原生事实在适配边界注入；不创建应用窗口。
+`scroll_runtime`、`preview_runtime`、`guards`、`lifecycle`、`window_runtime` 的运行时测试持有
+原 19 项中的 16 项；映射必须经同源码的完整 unit-owner 验证才有效。
+`window_interaction` 五项实际应用测试补足透明度非桌面路径，但完整 D022 的 Enter/blur 两项
+和 Preview 窗外原生鼠标捕获仍为具名缺口。Search 失焦时清理未提交 preedit，保留 query。
+本批不继承旧桌面二进制结果，人工状态仍为 `NOT TESTED`，整体 `NOT_READY`。

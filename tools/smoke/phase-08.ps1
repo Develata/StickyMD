@@ -1,3 +1,5 @@
+# Windowless StickyApp state-application tests run through the existing Rust phase plan.
+# Native key/IME delivery and Preview capture outside the window remain desktop obligations.
 [CmdletBinding()]
 param(
     [switch]$Performance,

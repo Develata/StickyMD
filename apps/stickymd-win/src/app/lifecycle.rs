@@ -44,6 +44,58 @@ impl StickyApp {
     pub(super) fn timestamp_ms(&self) -> u64 {
         self.started.elapsed().as_millis().min(u64::MAX as u128) as u64
     }
+
+    pub(super) fn apply_focus_change(
+        &mut self,
+        event_loop: Option<&ActiveEventLoop>,
+        focused: bool,
+    ) {
+        self.session.focused = focused;
+        if !focused {
+            self.cancel_scrollbar_drag();
+            self.scrollbars.hovered = None;
+            if self.controls.opacity_input_focused {
+                // The field loses focus with the window, which commits it (plan 09).
+                self.commit_opacity_input();
+            }
+            self.session.cancel_preedit();
+            // Focus loss ends either keyboard owner's provisional composition.
+            // Do not depend on a later native Ime::Disabled event to release the guard.
+            self.search.set_preedit(String::new(), None);
+            if self.coordinator.view().dirty {
+                self.dispatch_persistence_intent(
+                    None,
+                    PersistenceIntent::SaveNow(SaveReason::FocusLoss),
+                );
+            }
+        }
+        self.sync_ime_allowed();
+        self.refresh_window_guards(event_loop);
+        self.after_presentation_change();
+    }
+
+    /// Complete the pass before deciding how long the native event loop can sleep.
+    pub(super) fn settle_event_pass(&mut self, now_ms: u64, event_loop: Option<&ActiveEventLoop>) {
+        if let Some(action) = self.persistence.tick_autosave(now_ms) {
+            self.submit_save(action.trigger, None);
+        }
+        if self.persistence.take_external_check(now_ms) {
+            self.worker.inspect_external(self.paths.note_file.clone());
+        }
+        self.tick_preview(now_ms);
+        if self
+            .zoom_config_deadline
+            .is_some_and(|deadline| now_ms >= deadline)
+        {
+            self.zoom_config_deadline = None;
+            self.submit_config_if_needed();
+        }
+        self.dispatch_window_intent(
+            event_loop,
+            crate::flow::window::state::WindowIntent::Tick { now_ms },
+        );
+        self.finish_event_pass();
+    }
 }
 
 impl ApplicationHandler<AppEvent> for StickyApp {
@@ -216,25 +268,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 }
             }
             WindowEvent::Focused(focused) => {
-                self.session.focused = focused;
-                if !focused {
-                    self.cancel_scrollbar_drag();
-                    self.scrollbars.hovered = None;
-                    if self.controls.opacity_input_focused {
-                        // The field loses focus with the window, which commits it (plan 09).
-                        self.commit_opacity_input();
-                    }
-                    self.session.cancel_preedit();
-                    if self.coordinator.view().dirty {
-                        self.dispatch_persistence_intent(
-                            None,
-                            PersistenceIntent::SaveNow(SaveReason::FocusLoss),
-                        );
-                    }
-                }
-                self.sync_ime_allowed();
-                self.refresh_window_guards(Some(event_loop));
-                self.after_presentation_change();
+                self.apply_focus_change(Some(event_loop), focused);
             }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             // winit synthesizes a press for every key held when the window gains focus and a
@@ -245,9 +279,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 is_synthetic,
                 ..
             } => {
-                if !is_synthetic {
-                    self.handle_key(event);
-                }
+                self.handle_key(event, is_synthetic);
             }
             WindowEvent::Ime(event) => {
                 self.handle_ime(event);
@@ -295,25 +327,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now_ms = self.timestamp_ms();
-        if let Some(action) = self.persistence.tick_autosave(now_ms) {
-            self.submit_save(action.trigger, None);
-        }
-        if self.persistence.take_external_check(now_ms) {
-            self.worker.inspect_external(self.paths.note_file.clone());
-        }
-        self.tick_preview(now_ms);
-        if self
-            .zoom_config_deadline
-            .is_some_and(|deadline| now_ms >= deadline)
-        {
-            self.zoom_config_deadline = None;
-            self.submit_config_if_needed();
-        }
-        self.dispatch_window_intent(
-            Some(event_loop),
-            crate::flow::window::state::WindowIntent::Tick { now_ms },
-        );
-        self.finish_event_pass();
+        self.settle_event_pass(now_ms, Some(event_loop));
 
         let now = Instant::now();
         let mut next_wake = None;
@@ -384,6 +398,9 @@ impl ApplicationHandler<AppEvent> for StickyApp {
 fn completes_move_resize(active: bool, state: ElementState, button: MouseButton) -> bool {
     active && state == ElementState::Released && button == MouseButton::Left
 }
+
+#[cfg(test)]
+mod runtime_tests;
 
 #[cfg(test)]
 mod tests {

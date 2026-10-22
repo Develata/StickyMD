@@ -29,6 +29,7 @@
 # Manual log schema 3 / observation bundle schema 2 bind the complete declared instance set.
 # M05/M35 collect bounded procedure facts; missing evidence never creates a manual PASS.
 # Scroll projection application/current-layout owners run under the existing Rust test routing.
+# Windowless StickyApp owners supplement that routing; they never create manual/candidate PASS.
 [CmdletBinding()]
 param(
     [switch]$Ci,

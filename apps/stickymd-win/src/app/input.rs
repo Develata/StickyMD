@@ -14,6 +14,16 @@ use crate::instruction::{
 };
 use crate::interaction::ImeSignal;
 
+/// Only the native key observations consumed by the shell; borrows text without copying.
+#[derive(Clone, Copy)]
+pub(super) struct ShellKey<'a> {
+    pub physical_key: PhysicalKey,
+    pub state: ElementState,
+    pub repeat: bool,
+    pub ime_owned: bool,
+    pub text: Option<&'a str>,
+}
+
 impl StickyApp {
     pub(super) fn handle_ime(&mut self, event: Ime) {
         if self.handle_opacity_ime(&event) || self.handle_search_ime(&event) {
@@ -73,7 +83,23 @@ impl StickyApp {
         );
     }
 
-    pub(super) fn handle_key(&mut self, event: KeyEvent) {
+    pub(super) fn handle_key(&mut self, event: KeyEvent, is_synthetic: bool) {
+        self.apply_key(
+            ShellKey {
+                physical_key: event.physical_key,
+                state: event.state,
+                repeat: event.repeat,
+                ime_owned: event.logical_key == Key::Named(NamedKey::Process),
+                text: event.text.as_deref(),
+            },
+            is_synthetic,
+        );
+    }
+
+    pub(super) fn apply_key(&mut self, event: ShellKey<'_>, is_synthetic: bool) {
+        if is_synthetic {
+            return;
+        }
         // The Enter that ended an opacity field edit keeps its repeats and release (`controls.rs`).
         if self.controls.takes_commit_key_event(
             event.physical_key,
@@ -89,7 +115,7 @@ impl StickyApp {
         // Disabled (observed with WeType Escape). Composition state is then
         // already clear, but VK_PROCESSKEY still belongs exclusively to the IME.
         // Its physical scancode must not close Search, collapse the dock, or edit.
-        if event.logical_key == Key::Named(NamedKey::Process) {
+        if event.ime_owned {
             return;
         }
         let code = match event.physical_key {
@@ -133,7 +159,7 @@ impl StickyApp {
         }
         // The edited opacity field takes every key past this point, before Search and the note.
         if self.controls.takes_keys() {
-            self.handle_opacity_key(&event, code);
+            self.handle_opacity_key(event.physical_key, event.text, code);
             return;
         }
         if shortcut && matches!(code, Some(KeyCode::KeyF | KeyCode::KeyH)) {
@@ -151,7 +177,7 @@ impl StickyApp {
             }
             None => {}
         }
-        if self.search.open && self.handle_search_key(&event, code, shortcut, shift) {
+        if self.search.open && self.handle_search_key(event.text, code, shortcut, shift) {
             return;
         }
 
@@ -250,7 +276,7 @@ impl StickyApp {
             && !text.chars().any(char::is_control)
             && let Some(intent) = self
                 .session
-                .handle_keyboard_text(&text, generation, timestamp_ms)
+                .handle_keyboard_text(text, generation, timestamp_ms)
         {
             self.dispatch(intent);
         }

@@ -3,9 +3,9 @@
 //! plan_ref: docs/plan/09_windows_shell.md#windows-shell-purpose
 
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, Ime, KeyEvent, MouseButton};
+use winit::event::{ElementState, Ime, MouseButton};
 use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::{KeyCode, ModifiersState};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{CursorIcon, ResizeDirection};
 
 use super::StickyApp;
@@ -18,6 +18,9 @@ use crate::instruction::{
 use crate::platform::windows::tray::TrayPlatformEvent;
 
 const RESIZE_BORDER_DIP: f64 = 6.0;
+
+#[cfg(test)]
+mod runtime_tests;
 
 impl StickyApp {
     pub(super) fn handle_tray_event(
@@ -56,13 +59,23 @@ impl StickyApp {
         state: ElementState,
         button: MouseButton,
     ) -> bool {
+        let Some(window) = &self.window else {
+            return false;
+        };
+        self.apply_shell_mouse_button(state, button, window.inner_size(), window.scale_factor())
+    }
+
+    fn apply_shell_mouse_button(
+        &mut self,
+        state: ElementState,
+        button: MouseButton,
+        size: PhysicalSize<u32>,
+        dpi: f64,
+    ) -> bool {
         if button != MouseButton::Left || !self.shell_input_enabled {
             return false;
         }
-        let Some(window) = self.window.as_ref().cloned() else {
-            return false;
-        };
-        let layout = ControlLayout::new(window.inner_size(), window.scale_factor());
+        let layout = ControlLayout::new(size, dpi);
         match state {
             ElementState::Pressed => {
                 // A press outside the open popup closes it below, before the control it hits
@@ -95,19 +108,15 @@ impl StickyApp {
                         }
                     }
                 }
-                if let Some(direction) = resize_direction(
-                    window.inner_size(),
-                    self.cursor_position,
-                    window.scale_factor(),
-                ) {
+                if let Some(direction) = resize_direction(size, self.cursor_position, dpi) {
                     return self.dispatch_window_platform_intent(
                         WindowPlatformIntent::RequestResize(direction),
                     );
                 }
+                let geometry = self.view_geometry_for(size, dpi as f32);
                 if self.config.current().view_mode == ViewMode::Split
-                    && let Some(geometry) = self.view_geometry()
                     && let Some(divider_x) = geometry.divider_x
-                    && split_sync_rect(divider_x, geometry.toolbar_height, window.scale_factor())
+                    && split_sync_rect(divider_x, geometry.toolbar_height, dpi)
                         .contains(self.cursor_position)
                 {
                     let enabled = !self.config.current().split_scroll_sync;
@@ -155,10 +164,15 @@ impl StickyApp {
     /// A key-down while the field is edited. `handle_key` runs it where Search's keys run, so Esc,
     /// F6/F7, save and export keep their window-wide meaning first; every key it reaches is the
     /// field's, and a key the field does not use is dropped, so none edits the note or Search.
-    pub(super) fn handle_opacity_key(&mut self, event: &KeyEvent, code: Option<KeyCode>) {
-        match opacity_key(code, event.text.as_deref(), self.modifiers) {
+    pub(super) fn handle_opacity_key(
+        &mut self,
+        physical_key: PhysicalKey,
+        text: Option<&str>,
+        code: Option<KeyCode>,
+    ) {
+        match opacity_key(code, text, self.modifiers) {
             OpacityKey::Commit => {
-                self.controls.claim_commit_key(event.physical_key);
+                self.controls.claim_commit_key(physical_key);
                 self.commit_opacity_input();
             }
             OpacityKey::Backspace => self.controls.backspace_input(),
@@ -202,13 +216,17 @@ impl StickyApp {
     /// ending. Search counts as drawn where it has a layout (`search_layout`, as it is painted).
     pub(super) fn sync_ime_allowed(&self) {
         if let Some(window) = &self.window {
-            window.set_ime_allowed(ime_allowed(
-                self.session.focused && self.shell_input_enabled,
-                self.controls.takes_keys(),
-                self.search.open && self.search_layout().is_some(),
-                self.preview_focused,
-            ));
+            window.set_ime_allowed(self.ime_allowed_for(self.search_layout().is_some()));
         }
+    }
+
+    fn ime_allowed_for(&self, search_drawn: bool) -> bool {
+        ime_allowed(
+            self.session.focused && self.shell_input_enabled,
+            self.controls.takes_keys(),
+            self.search.open && search_drawn,
+            self.preview_focused,
+        )
     }
 
     pub(super) fn shell_cursor_icon(&self) -> Option<CursorIcon> {

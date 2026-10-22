@@ -53,6 +53,8 @@ pub(super) fn window_title(facts: TitleFacts<'_>) -> std::borrow::Cow<'static, s
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct QuitCancelNotice {
     active: bool,
+    #[cfg(test)]
+    pub(super) settle_count: usize,
 }
 
 impl QuitCancelNotice {
@@ -79,12 +81,16 @@ impl QuitCancelNotice {
 
     /// Runs after a complete main-thread event pass.
     pub(super) fn settle(&mut self, note_barrier_required: bool) {
+        #[cfg(test)]
+        {
+            self.settle_count += 1;
+        }
         self.active &= note_barrier_required;
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     fn facts() -> TitleFacts<'static> {
@@ -180,7 +186,7 @@ mod tests {
 
     /// Every window effect the reducer can emit, one of each variant (each quit barrier for the
     /// barrier-carrying ones). The `match` stops compiling when a variant is added.
-    fn every_effect() -> Vec<WindowEffect> {
+    pub(in crate::app) fn every_effect() -> Vec<WindowEffect> {
         use crate::flow::window::geometry::{PhysicalRect, WindowPlacement};
         use crate::flow::window::state::{DockEdge, WindowSaveReason};
         let barriers = [
@@ -192,11 +198,15 @@ mod tests {
         let mut effects = vec![
             WindowEffect::ApplyFrame(PhysicalRect::new(0, 0, 10, 10)),
             WindowEffect::SetTemporarySensorTopmost(true),
+            WindowEffect::SetTemporarySensorTopmost(false),
             WindowEffect::SetVisible(false),
+            WindowEffect::SetVisible(true),
             WindowEffect::FocusWindow,
             WindowEffect::CancelImePreedit,
             WindowEffect::SetImeAllowed(false),
+            WindowEffect::SetImeAllowed(true),
             WindowEffect::SetEditorInputEnabled(false),
+            WindowEffect::SetEditorInputEnabled(true),
             WindowEffect::RequestNoteSave(WindowSaveReason::Shutdown),
             WindowEffect::RequestNoteSave(WindowSaveReason::HideToTray),
             WindowEffect::RequestSafeAssetGc,
@@ -288,8 +298,9 @@ mod tests {
     }
 
     /// The notice settles once per complete main-thread event pass: `finish_event_pass` is
-    /// called from exactly one place, the end of `about_to_wait`, which winit runs after it has
-    /// delivered every pending event, after the pass's window tick (a lexical guard).
+    /// called from exactly one place in the pass settlement after the window tick.
+    /// Winit's `about_to_wait` delegates to that settlement once (a lexical guard,
+    /// supplemented by lifecycle runtime tests of actual calls and state).
     #[test]
     fn the_notice_settles_at_the_end_of_each_event_pass() {
         let call = ["finish_event", "_pass();"].concat();
@@ -316,16 +327,31 @@ mod tests {
         );
         let (path, offset, text) = &calls[0];
         assert!(path.ends_with("lifecycle.rs"), "{path:?}");
-        let pass = text.find("fn about_to_wait(").expect("about_to_wait");
+        let pass = text
+            .find("fn settle_event_pass(")
+            .expect("settle_event_pass");
         let end = text[pass + 1..]
             .find("\n    fn ")
             .map_or(text.len(), |next| pass + 1 + next);
         let tick = text[pass..end]
             .find("WindowIntent::Tick")
-            .expect("the window tick in about_to_wait");
+            .expect("the window tick in settle_event_pass");
         assert!(
             (pass + tick..end).contains(offset),
-            "finish_event_pass runs in about_to_wait after the window tick"
+            "finish_event_pass runs in settle_event_pass after the window tick"
+        );
+        let native_pass = text
+            .split("fn about_to_wait(")
+            .nth(1)
+            .unwrap()
+            .split("fn user_event(")
+            .next()
+            .unwrap();
+        assert_eq!(
+            native_pass
+                .matches("self.settle_event_pass(now_ms, Some(event_loop));")
+                .count(),
+            1
         );
     }
 

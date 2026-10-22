@@ -59,7 +59,7 @@ const fn gap(planned: &'static str) -> Target {
 // C2b-3 audited every obligation that existing tests seemed to exercise (2026-10-17). Those still
 // gaps say, per obligation, what existing tests already assert and what none does yet.
 
-const G4_OPACITY_COMMIT: &str = "G4-02 已证明数字 Enter / 窗口失焦提交与不改正文；D022 仍缺其他点击、隐藏、退出提交，按键优先级、重复 Enter、合成键过滤、composition 拒绝聚焦与 IME 同步的完整接线";
+const G4_OPACITY_COMMIT: &str = "2026-10-22 无窗口 StickyApp 测试已补 Enter/其他点击/失焦/隐藏/退出提交、Esc/保存/F6/F7 与忙碌导出优先级、重复 Enter、合成键过滤、composition 拒绝聚焦及 IME 目标判定；完整 D022 仍缺原生键消息、空闲导出对话框及实际 IME 开关的组合桌面证据，不能用窗口事实注入冒充真实输入";
 /// The Esc decision with each guard alone (asset reconcile, input disabled while quitting) and
 /// under every modifier; USER 2026-10-15 approved unit-only coverage of these Esc rows.
 const ESC_GUARDS: &[Owner] = &[win("app::escape::tests::each_guard_alone_ignores_esc")];
@@ -182,12 +182,39 @@ const OPACITY_RANGE_AND_INPUT: &[Owner] = &[
 const OPACITY_NO_STEPWISE_WRITE: &[Owner] = &[win(
     "app::controls::phase8_control_tests::phase8_a_slider_drag_commits_at_most_once_on_release",
 )];
-/// Scrollbar obligations whose decisions are unit-tested but whose composition in `StickyApp`
-/// (view mode, live state, winit events) is not.
-const SCROLL_DRAG_RUNTIME: &str = "C2b-4：拖动目标、两侧落点与翻页由拖动映射、`preview_offset_at` / `preview_offset_by` 与 Source 映射 / 翻页的单元测试持有；缺指针移动逐次应用到视口（实时定位），以及松开、失焦、切换视图、resize 各自结束拖动的运行时接线；G4-02 已观察 Source 拖出、松开和失焦；本义务同时包含 Preview，仍缺对应接线与 view/resize 结束路径";
-const SCROLL_VIEWPORT_ONLY: &str = "C2b-3 审计：render projection 测试断言滚动不改投影文本与 generation、编辑与组字后边界正确；缺运行时滚动后文档 text / generation / dirty、会话 caret / selection 与 IME preedit 不变的断言；待新的单元接缝或 exact 层";
-const G4_DRAG_OUTSIDE: &str =
-    "G4-02 已观察 Source 真实拖出窗口、松开与失焦；仍缺 Preview 的真实拖出窗口接线";
+// 2026-10-22: actual StickyApp application paths with real canonical/projection state.
+// Window facts are supplied at the native boundary; these owners do not prove native delivery.
+const RUNTIME_GEOMETRY: &[Owner] = &[win(
+    "app::preview_runtime::runtime_tests::actual_config_geometry_keeps_gutters_across_content_zoom_and_note_lengths",
+)];
+const RUNTIME_GUTTER: &[Owner] = &[win(
+    "app::scroll_runtime::tests::runtime_gutter_press_is_consumed_without_caret_or_selection_mutation",
+)];
+const RUNTIME_SCROLL: &[Owner] = &[win(
+    "app::scroll_runtime::tests::runtime_pointer_moves_apply_each_pane_and_cached_document_height",
+)];
+const RUNTIME_CANONICAL: &[Owner] = &[win(
+    "app::scroll_runtime::tests::runtime_scroll_preserves_canonical_state_and_session_for_clean_and_dirty_notes",
+)];
+const RUNTIME_DRAG_ENDS: &[Owner] = &[win(
+    "app::scroll_runtime::tests::runtime_drag_ends_on_release_blur_view_switch_and_resize_for_both_panes",
+)];
+const RUNTIME_RECEIPT: &[Owner] = &[win(
+    "app::preview_runtime::runtime_tests::receipt_application_rejects_every_stale_viewport_field_without_replacing_frame_or_offset",
+)];
+const RUNTIME_COMPOSITION: &[Owner] = &[win(
+    "app::guards::tests::runtime_guards_read_both_compositions_and_focus_loss_cancels_them",
+)];
+const RUNTIME_QUIT_EFFECT: &[Owner] = &[win(
+    "app::window_runtime::phase8_runtime_tests::runtime_every_window_effect_preserves_notice_except_failed_note_quit",
+)];
+const RUNTIME_EVENT_PASS: &[Owner] = &[
+    win(
+        "app::lifecycle::runtime_tests::runtime_event_pass_reads_all_barriers_once_after_scheduling",
+    ),
+    win("app::title::tests::the_notice_settles_at_the_end_of_each_event_pass"),
+];
+const G4_DRAG_OUTSIDE: &str = "G4-02 已观察 Source 真实拖出窗口、松开与失焦；2026-10-22 无窗口测试已证明两侧越界坐标钳位与拖动保留；仍缺 Preview 窗外原生鼠标消息与捕获的桌面证据";
 
 // Exact owners name the check labels that prove them (`exact_checks`); an obligation without a
 // producer, profile or Pin parameter needs every variant.
@@ -1120,14 +1147,12 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         ),
     ),
     // G4-06 composes while focused, and focus alone blocks auto-collapse; the composition
-    // guard's own wiring (and blur cancelling preedit) has reducer coverage only (P08-A05).
+    // guard wiring and blur cancellation now have actual windowless StickyApp owners.
     o(
         "P08-D055",
         "composition-guard-wiring",
         "",
-        gap(
-            "C2b-3 审计：app::guards 的投影测试不证明 `StickyApp::window_guards` 传入编辑区与 Search 的组字状态，也不证明失焦取消 preedit 的事件接线；待 exact 层",
-        ),
+        tests(RUNTIME_COMPOSITION),
     ),
     // Native hover with a verified ordinary cover and sensor hit target; no pointer messages.
     o(
@@ -1526,25 +1551,19 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-2",
         "short-note",
         "part=keep-gutter",
-        gap(
-            "C2b-4 审计：`geometry()` 在各视图保留窄槽、`view_bars` 对短文不给滑块已有单元断言；缺运行时窄槽宽度与正文长度无关的断言（owner 直接调用 `geometry()`，不经 `view_geometry` 与短文状态）；待单元接缝或 exact 层",
-        ),
+        tests(RUNTIME_GEOMETRY),
     ),
     o(
         "plan09:scroll-2",
         "gutter-runtime",
         "aspect=hit-test",
-        gap(
-            "C2b-4：各视图由 `geometry()` 保留窄槽、`gutter_at` 判定所在窗格已有单元断言；缺窄槽内按下不作为正文点击（不移动 caret、不开始选区）的断言；待补强测试或 exact 层",
-        ),
+        tests(RUNTIME_GUTTER),
     ),
     o(
         "plan09:scroll-2",
         "gutter-runtime",
         "aspect=content-zoom",
-        gap(
-            "C2b-4 审计：`geometry()` 按 DPI 缩放窄槽已有单元断言；缺 Content Zoom 改变时窄槽宽度不变的断言（owner 直接以 DPI 调用 `geometry()`，不经 `view_geometry` 的实际输入）；待单元接缝或 exact 层",
-        ),
+        tests(RUNTIME_GEOMETRY),
     ),
     o(
         "plan09:scroll-3",
@@ -1580,7 +1599,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-3",
         "drag-live-update",
         "",
-        gap(SCROLL_DRAG_RUNTIME),
+        tests(RUNTIME_SCROLL),
     ),
     o(
         "plan09:scroll-3",
@@ -1605,19 +1624,19 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-4",
         "viewport-only",
         "state=text",
-        gap(SCROLL_VIEWPORT_ONLY),
+        tests(RUNTIME_CANONICAL),
     ),
     o(
         "plan09:scroll-4",
         "viewport-only",
         "state=generation",
-        gap(SCROLL_VIEWPORT_ONLY),
+        tests(RUNTIME_CANONICAL),
     ),
     o(
         "plan09:scroll-4",
         "viewport-only",
         "state=dirty",
-        gap(SCROLL_VIEWPORT_ONLY),
+        tests(RUNTIME_CANONICAL),
     ),
     o(
         "plan09:scroll-4",
@@ -1641,25 +1660,25 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-4",
         "drag-exit",
         "end=release",
-        gap(SCROLL_DRAG_RUNTIME),
+        tests(RUNTIME_DRAG_ENDS),
     ),
     o(
         "plan09:scroll-4",
         "drag-exit",
         "end=blur",
-        gap(SCROLL_DRAG_RUNTIME),
+        tests(RUNTIME_DRAG_ENDS),
     ),
     o(
         "plan09:scroll-4",
         "drag-exit",
         "end=view-switch",
-        gap(SCROLL_DRAG_RUNTIME),
+        tests(RUNTIME_DRAG_ENDS),
     ),
     o(
         "plan09:scroll-4",
         "drag-exit",
         "end=resize",
-        gap(SCROLL_DRAG_RUNTIME),
+        tests(RUNTIME_DRAG_ENDS),
     ),
     o(
         "plan09:scroll-4",
@@ -1677,9 +1696,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-5",
         "preview-document-height",
         "",
-        gap(
-            "C2b-4 审计：`view_bars`、`preview_offset_at` / `preview_offset_by` 由给定的 document height 计算滑块与偏移已有单元断言；缺运行时传入缓存帧的 document height（而非视口高度等其他值）且不逐事件重排的断言；待单元接缝",
-        ),
+        tests(RUNTIME_SCROLL),
     ),
     o(
         "plan09:scroll-6",
@@ -1697,9 +1714,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-6",
         "stale-receipt-guard",
         "",
-        gap(
-            "C2b-4 审计：`completion_route` 对只差偏移的旧回执只重排不显示已有单元断言；缺回执入口以完整 `PreviewViewport` 相等（而非 `same_layout`）判定、Relayout 分支提前返回且不改写 frame 与偏移的组合断言；待单元接缝",
-        ),
+        tests(RUNTIME_RECEIPT),
     ),
     o(
         "plan09:scroll-7",
@@ -1819,9 +1834,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:quit-2",
         "established-only-by-save-failure",
         "cause=quit-guard",
-        gap(
-            "C2b-4 审计：`QuitCancelNotice::on_window_effect` 对全部窗口效果的判定（只有保存失败取消的退出建立状态）已有单元断言，另有词法守卫检查产品源码只经该入口；缺 `apply_window_effect` 实际把每个效果先交给该判定、且其他分支不改动状态的运行时断言（词法守卫不证明调用存在或顺序）；待单元接缝或 exact 层",
-        ),
+        tests(RUNTIME_QUIT_EFFECT),
     ),
     o(
         "plan09:quit-2",
@@ -1833,9 +1846,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:quit-2",
         "cleared-after-event-when-barrier-false",
         "",
-        gap(
-            "C2b-4 审计：屏障组成（dirty / 欠持久化 / 保存中）与屏障为假时才清除已有单元断言，另有词法守卫检查 `finish_event_pass` 只出现在 `about_to_wait` 的窗口 tick 文本之后；缺事件结算实际读取该屏障、每次事件处理结束恰运行一次的运行时断言（词法守卫不证明执行次数与顺序）；待单元接缝或 exact 层",
-        ),
+        tests(RUNTIME_EVENT_PASS),
     ),
     o(
         "plan09:quit-2",

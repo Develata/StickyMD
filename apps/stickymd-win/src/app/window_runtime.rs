@@ -541,6 +541,34 @@ mod phase8_runtime_tests {
     use super::*;
 
     #[test]
+    fn runtime_every_window_effect_preserves_notice_except_failed_note_quit() {
+        for active in [false, true] {
+            for effect in crate::app::title::tests::every_effect() {
+                let mut app = crate::app::headless_tests::fixture("saved text");
+                if active {
+                    app.apply_window_effect(
+                        None,
+                        WindowEffect::QuitCancelled(QuitBarrier::NoteSave),
+                    );
+                }
+                let expected =
+                    active || effect == WindowEffect::QuitCancelled(QuitBarrier::NoteSave);
+                let description = format!("{effect:?}");
+                app.apply_window_effect(None, effect);
+                assert_eq!(
+                    app.quit_notice.active(),
+                    expected,
+                    "active={active}, {description}"
+                );
+                assert_eq!(
+                    app.quit_notice.settle_count, 0,
+                    "effect must not settle a partial event pass"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn phase8_tray_icon_is_fully_owned_rgba() {
         let icon = tray_icon();
         assert_eq!(
