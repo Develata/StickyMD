@@ -56,3 +56,31 @@ USER 随后确认原人工步骤 1–7 除此问题外全部通过；逐项反�
 
 日志和治理 JSON 保存在 ignored `target/display-math-scroll-fix/`。生产修改仅涉及
 `preview/layout.rs` 的块资格判定与 `preview/paint.rs` 的背景绘制；不需要 Shell 新逻辑。
+
+## Resolution（2026-10-22，新验收程序）
+
+修复提交 `613e82fe58cfd379a3a1c802b919512620a03e29` 在 clean worktree 以
+`cargo build -p stickymd-win --release --locked` 构建成功。独立目录为
+`dist/formula-scroll-613e82f/`，ZIP 为 `dist/formula-scroll-613e82f.zip`。
+默认 Preview / 300% / 520×720 DIP；沿用经原包哈希验证的 100 个长公式，增加 1 个短公式。
+没有覆盖旧验收目录、用户修改过的便签或其他 session 的 worktree。
+
+| 文件 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| StickyMD.exe | 8,642,048 | C2414C2D274D22BCBC3F76E5379412D4504045076200134623B2976391FBC97B |
+| formula-scroll-613e82f.zip | 4,063,457 | C8563E43776AA79A35FBC41DC81741F5721F3610B7CCB340B9A0B2897B1AD72B |
+
+PE 依赖检查无 developer runtime imports；12 项文件校验和及 ZIP 内全部 13 个文件逐项
+校验通过。`Cargo.lock` 与旧验收包一致，复用对应 runtime notices / 字体许可；新包提供
+独立 `build-identity.json`、原始样例备份、复验说明和待填写记录。原始日志及构建/封包脚本
+留在 `target/display-math-scroll-fix/`；本段之后的纯文档提交不改变 EXE 的 source 身份。
+
+只需 USER 重点复验最后的阻塞项：
+
+1. F001/F050/F100 的滑块、轨道及 Shift+滚轮能到左右首尾，底色固定。
+2. 横移后选区对应可见公式，复制仍为完整公式源码。
+3. 短公式居中无滑块；Split、窗口宽度、100%/300% 与主题变化后仍可正确横移。
+
+新 EXE 的人工复验为 `NOT TESTED`，尚未合并或 push。旧包其余 1–7 的 USER 通过记录
+继续保留；只在本次补验通过后按既有授权处理合并。没有重跑新 EXE 的 OS 资源矩阵，
+上文计数器/局部 Release 诊断与旧 EXE 的 OS 实测严格区分。
