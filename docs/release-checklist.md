@@ -6,9 +6,11 @@
 
 ## v0.1.3 准备中
 
-本次只准备现有 `$` 按钮独立裸等号行连接的补丁版本。版本提交、CI、候选构建和核验，
-以及门槛通过后的 tag 已获 USER 授权；draft/正式 Release 未授权。新 source 必须重新建立
-证据，readiness 未达 `READY` 时不晋升 tag。详见[准备记录](report/2026-10-09-v0.1.3-release-preparation.md)
+本次范围包含已合并的预览资源优化、宽内容横向滚动、查找替换、输入法与窗口交互修复，
+以及现有 `$` 按钮独立裸等号行连接。USER 已授权必要的发布准备提交与推送、CI 全绿后的
+正式候选构建和核验，以及全部验收通过后的 tag；draft/正式 Release 未授权。
+新 source 必须重新建立证据，readiness 未达 `READY` 时不晋升 tag。
+详见[本次准备记录](report/2026-10-22-v0.1.3-candidate-preparation.md)
 和[发布说明](release-notes/0.1.3.md)。以下已发布版本记录保持各自身份。
 
 ## v0.1.2 已发布记录

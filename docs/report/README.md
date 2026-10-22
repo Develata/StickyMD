@@ -19,6 +19,12 @@
 - [阶段路由、发布工作流与哈希](2026-09-30-phase-routing-release-workflows-cng.md)：后续 Rust CLI 收拢及 Windows adapter 边界。
 - [资源场景等价与分批记录](2026-09-30-resource-equivalence-and-batching.md)、[续跑计划](2026-09-30-resource-resume-planning.md)、[实际诊断复审](2026-09-30-resource-live-review.md)：区分完整资格化、定向诊断、历史复用和测量范围。
 
+## v0.1.3 候选准备
+
+- [本次候选准备](2026-10-22-v0.1.3-candidate-preparation.md)：合并后的发布范围、USER 授权、候选验证和人工交付路径。
+- [早期版本准备](2026-10-09-v0.1.3-release-preparation.md)：仅等号转换修复时的历史范围与本地预查。
+- [发布说明](../release-notes/0.1.3.md)：本版本累计改动与验收边界；尚未发布。
+
 ## v0.1.2 发布与资格化记录
 
 - [发布准备与决定](2026-10-02-v0.1.2-release-preparation.md)：exact source、候选身份、USER 特例、公开附件及验证范围。

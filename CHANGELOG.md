@@ -4,6 +4,11 @@ All notable changes are recorded here.
 
 ## Unreleased
 
+- Prepare 0.1.3 with viewport-based formula bitmaps, bounded preview caches, lower image-read
+  allocations, and horizontal scrolling for wide tables, code blocks and display mathematics.
+- Fix Search replacement/navigation, compact Search layout, IME-owned key routing, opacity popup
+  behavior and waking a collapsed dock; improve exact-candidate desktop verification.
+- Extend the math conversion button to join standalone equals lines inside complete display blocks.
 - Refreshed user, contribution, release and governance documentation after the first public release.
 
 ## 0.1.0 - 2026-08-30
