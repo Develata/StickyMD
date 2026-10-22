@@ -125,7 +125,7 @@ fn two_copies_waived(context: &str) -> Decision {
 }
 
 #[test]
-fn a_fully_observed_context_is_ready_and_still_reports_its_gaps() {
+fn a_fully_observed_context_is_ready_and_reports_the_current_mapping() {
     let (scratch, context) = Scratch::declared();
     scratch.record_all_except(&[], &[]);
     let (report, blockers) = scratch.check(&[two_copies_waived(&context)], true);
@@ -138,7 +138,7 @@ fn a_fully_observed_context_is_ready_and_still_reports_its_gaps() {
     }
     let json = render(&report);
     crate::qualification::json::parse_object(&json).unwrap();
-    assert!(json.contains("\"known_gaps\":[\"P08-"), "{json}");
+    assert!(json.contains("\"known_gaps\":[]"), "{json}");
     assert!(
         json.contains("\"retired\":[\"P08-M12 accessibility"),
         "{json}"

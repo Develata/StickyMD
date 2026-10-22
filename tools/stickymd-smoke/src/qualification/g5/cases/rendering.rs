@@ -33,7 +33,7 @@ pub(super) fn run(repository: &Path, program: &Path) -> Result<CaseEvidence, Str
     support::assert_preview_projection(
         window,
         &[
-            "渲染引擎终极暴力测试",
+            "渲染引擎综合压力测试",
             "STICKYMD_RENDERING_STRESS_END",
             "G5_IMAGE_FORMAT_END",
         ],

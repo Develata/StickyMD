@@ -321,6 +321,89 @@ fn unparameterized_exact_owners_claim_every_variant() {
     assert_eq!(owned("P08-M15", "clipboard-producers"), exact_checks::G3_01);
 }
 
+/// The completed desktop duties cannot silently lose an IME, input owner,
+/// Preview mode or their deterministic application-state companion.
+#[test]
+fn numeric_and_outside_drag_owners_require_the_complete_native_matrix() {
+    let owned = |source: &str, assertion: &str, param: &str| {
+        let obligation = OBLIGATIONS
+            .iter()
+            .find(|item| {
+                item.source == source && item.assertion == assertion && item.param == param
+            })
+            .unwrap();
+        let Target::Exact { case, checks } = obligation.target else {
+            panic!("desktop obligation has no exact owner: {obligation:?}");
+        };
+        (
+            case,
+            checks
+                .iter()
+                .map(|label| (*label).to_owned())
+                .collect::<BTreeSet<_>>(),
+        )
+    };
+    for commit in ["enter", "blur"] {
+        let mut expected = BTreeSet::new();
+        for ime in ["pinyin", "wetype"] {
+            for owner in ["source", "search", "preview"] {
+                expected.insert(format!(
+                    "numeric-native-commit:commit={commit},ime={ime},owner={owner}"
+                ));
+            }
+            for owner in ["source", "search"] {
+                expected.insert(format!(
+                    "numeric-composition-refuses-focus:ime={ime},owner={owner}"
+                ));
+            }
+            expected.insert(format!("numeric-idle-export-priority:ime={ime}"));
+        }
+        assert_eq!(
+            owned("P08-D022", "numeric-input", &format!("commit={commit}")),
+            ("G4-06", expected)
+        );
+    }
+    let mut expected = [
+        "scroll-drag-outside-finishes",
+        "scroll-drag-stops-on-blur",
+        "scroll-drag-stops-on-release",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<BTreeSet<_>>();
+    for mode in ["preview", "split"] {
+        for fact in [
+            "keeps-note",
+            "native-capture",
+            "outside-both-ends",
+            "stops-on-blur",
+            "stops-on-release",
+        ] {
+            expected.insert(format!("preview-scroll-{fact}:mode={mode}"));
+        }
+    }
+    assert_eq!(
+        owned("plan09:scroll-4", "drag-outside-window", ""),
+        ("G4-02", expected)
+    );
+    let owners = owners_of(OBLIGATIONS);
+    for test in [
+        "runtime_opacity_enter_keeps_repeats_and_synthetic_release_from_note_and_search",
+        "runtime_opacity_blur_commits_before_other_click_hide_or_quit",
+        "runtime_opacity_refuses_composition_and_routes_late_ime_to_field",
+        "runtime_opacity_key_priority_keeps_escape_and_save_above_field",
+        "runtime_opacity_recovery_and_busy_export_shortcuts_precede_field",
+    ] {
+        let path = format!("app::window_interaction::runtime_tests::{test}");
+        assert!(
+            owners.iter().any(|owner| owner.package == "stickymd-win"
+                && owner.target == OwnerTarget::Bin("stickymd-win")
+                && owner.path == path),
+            "missing companion: {path}"
+        );
+    }
+}
+
 /// The owner checker itself: missing and unauthorized owners are all reported.
 #[test]
 fn the_owner_checker_rejects_missing_and_unauthorized_owners() {

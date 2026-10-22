@@ -37,6 +37,10 @@ pub(in crate::qualification) enum Target {
     /// Retired by the USER decision `decision` (see `RETIREMENTS`).
     Retired { decision: &'static str },
     /// Not owned yet; `planned` names the intended owner.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained for future unowned obligations")
+    )]
     Gap { planned: &'static str },
 }
 

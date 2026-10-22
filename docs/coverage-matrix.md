@@ -534,3 +534,14 @@ caret/selection/preedit 保持与当前 frame 判定五项；canonical 状态、
 `window_interaction` 五项实际应用测试补足透明度非桌面路径，但完整 D022 的 Enter/blur 两项
 和 Preview 窗外原生鼠标捕获仍为具名缺口。Search 失焦时清理未提交 preedit，保留 query。
 本批不继承旧桌面二进制结果，人工状态仍为 `NOT TESTED`，整体 `NOT_READY`。
+
+2026-10-22 原生桌面补强：Plan 07 `ime-semantics`、Plan 09
+`theme-opacity-and-content-zoom` / `vertical-scrollbars` →
+[phase-08](acceptance-cases/phase-08.md#native-numeric-input-and-preview-capture-2026-10-22)
+与 [phase-14](acceptance-cases/phase-14.md#native-completion-of-the-three-desktop-mappings-2026-10-22)。
+G4-06 在两种真实输入法下检查数字框 Enter/失焦提交、正文/Search/Preview 路由、
+组字拒绝转移焦点与空闲导出；G4-02 观察 Preview 与 Split 的原生捕获、窗外拖动、
+松开/失焦停止及正文不变。五个透明度实际应用测试加入 headless owner 集合，
+补充物理输入无法稳定构造的合成键、恢复与忙碌状态。当前测试用词采用数学/中文等中性内容。
+三个原生义务已有实测并绑定完整 owner，当前具名 Gap 为零；固定源码、失败尝试与验证结果见
+[本批桌面报告](report/2026-10-22-desktop-coverage-gaps.md)。本地预检不产生正式候选收据，人工仍为 `NOT TESTED`。

@@ -278,11 +278,11 @@ fn source_commit_and_undo(
     window: WindowHandle,
     ime: &mut RealImeSession<'_>,
 ) -> Result<String, String> {
-    begin_preedit(program, window, SOURCE_PREFIX, "zhongguo", ime)?;
+    begin_preedit(program, window, SOURCE_PREFIX, "shuxue", ime)?;
     crate::window_control::press_arrow_left(window)?;
     crate::window_control::press_arrow_right(window)?;
     crate::window_control::press_backspace(window)?;
-    crate::window_control::type_ascii_letters(window, "o")?;
+    crate::window_control::type_ascii_letters(window, "e")?;
     commit_first_candidate(window)?;
     wait_note(program, |text| {
         text.strip_prefix(SOURCE_PREFIX)
@@ -312,7 +312,7 @@ fn capture_search_fixture_term(
     window: WindowHandle,
     ime: &mut RealImeSession<'_>,
 ) -> Result<String, String> {
-    begin_preedit(program, window, SOURCE_PREFIX, "zhongguo", ime)?;
+    begin_preedit(program, window, SOURCE_PREFIX, "shuxue", ime)?;
     commit_first_candidate(window)?;
     wait_note(program, |text| {
         text.strip_prefix(SOURCE_PREFIX)
@@ -403,7 +403,7 @@ fn search_fields_accept_real_ime(
     replace_document(program, window, &document)?;
 
     crate::window_control::press_find(window)?;
-    begin_preedit(program, window, &document, "zhongguo", ime)?;
+    begin_preedit(program, window, &document, "shuxue", ime)?;
     commit_first_candidate(window)?;
     // A second composition is cancelled in the existing query. Ctrl+3 must
     // stay in Source while it is active; Esc must leave the Search open. The
@@ -761,34 +761,34 @@ mod tests {
     #[test]
     fn a_replacement_is_one_match_replaced_by_a_cjk_commit() {
         assert_eq!(
-            replacement_fragment("你好\n分隔\n中国", "中国"),
+            replacement_fragment("你好\n分隔\n数学", "数学"),
             Some("你好")
         );
         assert_eq!(
-            replacement_fragment("中国\n分隔\n你好", "中国"),
+            replacement_fragment("数学\n分隔\n你好", "数学"),
             Some("你好")
         );
         for rejected in [
-            "\n分隔\n中国",
-            "中国\n分隔\n中国",
+            "\n分隔\n数学",
+            "数学\n分隔\n数学",
             "你好\n分隔\n你好",
-            "nihao\n分隔\n中国",
-            "中国你好\n分隔\n中国",
-            "你\n好\n分隔\n中国",
-            "中国\n分隔\n中国\n你好",
-            "你好中国",
+            "nihao\n分隔\n数学",
+            "数学你好\n分隔\n数学",
+            "你\n好\n分隔\n数学",
+            "数学\n分隔\n数学\n你好",
+            "你好数学",
         ] {
-            assert_eq!(replacement_fragment(rejected, "中国"), None, "{rejected:?}");
+            assert_eq!(replacement_fragment(rejected, "数学"), None, "{rejected:?}");
         }
     }
 
     #[test]
     fn commit_predicate_rejects_romanization_and_accepts_cjk() {
-        assert!(valid_cjk_commit("中国"));
+        assert!(valid_cjk_commit("数学"));
         assert!(valid_cjk_commit("你好🙂"));
         assert!(!valid_cjk_commit(""));
-        assert!(!valid_cjk_commit("zhongguo"));
-        assert!(!valid_cjk_commit("中国a"));
+        assert!(!valid_cjk_commit("shuxue"));
+        assert!(!valid_cjk_commit("数学a"));
     }
 
     #[test]

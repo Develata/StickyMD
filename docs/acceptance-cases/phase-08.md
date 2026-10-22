@@ -332,3 +332,33 @@ Sixteen of the 19 named mapping gaps now have actual application unit owners, su
 source-bound owner verification. P08-D022 Enter/blur and Preview outside-window native
 capture remain gaps; opacity application tests alone do not prove native delivery or IME
 switching. Manual status remains `NOT TESTED`; overall readiness remains `NOT_READY`.
+
+### Native numeric input and Preview capture (2026-10-22)
+
+Preconditions: a clean harness checkout, an identified Release executable copied into
+owned fixture directories, an available desktop, Microsoft Pinyin and WeType. Fixture
+words are neutral (for example, 数学/中文); no user note or input dictionary is changed.
+Action: in Source, Search and Preview, edit the opacity integer with physical keys and
+commit with repeated Enter or native focus loss. While editing, Ctrl+S must not commit
+the pending opacity. Read native IME open status before, during and after field editing;
+Source/Search must be open before/after and closed during editing, while Preview stays
+closed. After the field ends, type a real candidate without resetting the input profile
+or IME mode. In Source/Search, attempt field focus during a partial
+composition, then finish and commit that same composition. Invoke idle export while
+the numeric field is edited. Expected: the native alpha and saved integer agree;
+Source/Search text is unchanged by numeric editing; their restored IME receives the
+candidate, Preview does not accept text, active composition retains the keyboard, and
+export contains the canonical note. A retained Search query is cleared before each
+probe; a negative copy control excludes stale match selections.
+
+Action: in Preview and Split, press the Preview scrollbar thumb with physical input,
+move outside the window to both ends and the middle, release, then repeat with native
+focus loss while held. Expected: native capture and visible thumb movement agree;
+release and blur stop the drag; note bytes, modification time and clean title remain
+unchanged. Failure Signals: a covered/wrong input target, missing capture, incorrect
+thumb endpoints, motion after the drag ends, changed note, lost IME or export mismatch.
+
+Entry: opt-in G4-02/G4-06 and their ignored local preflights, through the existing Rust
+harness; windowless application owners supplement synthetic-key and exceptional-state
+coverage. Local results and exact source identities are recorded separately in the
+dated report. Manual rows remain `NOT TESTED`; these preflights do not qualify a release.

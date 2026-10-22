@@ -18,14 +18,7 @@ pub(super) fn run(
     replace_document(program, hwnd, &baseline)?;
     // Establish an active Chinese mode before observing disable/re-enable. No
     // profile or IME-control setter is used between field focus and its witness.
-    commit_and_undo(
-        program,
-        hwnd,
-        &baseline,
-        "zhongguo",
-        ime,
-        "numeric baseline",
-    )?;
+    commit_and_undo(program, hwnd, &baseline, "shuxue", ime, "numeric baseline")?;
     let mut previous = 100;
     for owner in ["source", "search", "preview"] {
         for commit in ["enter", "blur"] {
@@ -41,8 +34,10 @@ pub(super) fn run(
                 window::press_preview_shortcut(hwnd)?;
                 wait_for_config(program, "view_mode = \"preview\"")?;
             }
+            wait_ime_open(hwnd, owner != "preview")?;
             opacity::open(hwnd)?;
             input::opacity_field(hwnd)?;
+            wait_ime_open(hwnd, false)?;
             // If IME remained enabled this would be preedit and Backspace would
             // edit that composition. The subsequent digits must become the
             // integer field, never candidate selection, Source or Search input.
@@ -80,6 +75,7 @@ pub(super) fn run(
             )?;
             window::press_escape(hwnd)?;
             thread::sleep(IME_COMMIT_SETTLE);
+            wait_ime_open(hwnd, owner != "preview")?;
             // Real input, no set_ime_allowed/profile/mode repair: this is the
             // positive witness that the native input owner was restored.
             if owner == "search" {
@@ -113,14 +109,20 @@ pub(super) fn run(
             );
         }
     }
-    composition_refuses_focus(program, hwnd, ime, &baseline, term)?;
+    composition_refuses_focus(repository, program, pid, hwnd, ime, &baseline, term)?;
     export_priority(repository, program, pid, hwnd, ime, &baseline)?;
     Ok(())
 }
 
 fn direct_commit(hwnd: WindowHandle) -> Result<(), String> {
-    window::type_ascii_letters(hwnd, "zhongguo")?;
+    window::type_ascii_letters(hwnd, "shuxue")?;
     commit_first_candidate(hwnd)
+}
+
+fn wait_ime_open(hwnd: WindowHandle, expected: bool) -> Result<(), String> {
+    wait_until(&format!("native IME open status {expected}"), || {
+        Ok(window::ime_open_status(hwnd)? == expected)
+    })
 }
 
 fn open_empty_search(hwnd: WindowHandle) -> Result<(), String> {
@@ -163,27 +165,76 @@ fn copy_is(hwnd: WindowHandle, expected: &str) -> Result<(), String> {
 }
 
 fn composition_refuses_focus(
+    repository: &Path,
     program: &Path,
+    pid: u32,
     hwnd: WindowHandle,
     ime: &mut RealImeSession<'_>,
     baseline: &str,
     term: &str,
 ) -> Result<(), String> {
+    // Native TIP surfaces include invisible hit-test margins. Keep both Source
+    // and left-pane Search candidates away from the right toolbar/field before
+    // starting either composition; never move or dismiss the active candidate.
+    window::resize_to_dip(hwnd, 1200, 680)?;
     for owner in ["source", "search"] {
         println!(
             "NUMERIC_COMPOSITION_STEP ime={} owner={owner}",
             ime.profile_key
         );
+        if owner == "search" {
+            // Put Search in the left pane before composition begins. In the
+            // narrow Source view the TIP's candidate surface covers the opacity
+            // field (even its visually exposed top edge). A wide Split fixture
+            // leaves the real numeric target on the right, without dismissing
+            // candidates or relaxing the native input-target guard.
+            window::press_split_shortcut(hwnd)?;
+            wait_for_config(program, "view_mode = \"split\"")?;
+        }
         window::focus_source_editor(hwnd)?;
         window::press_document_end(hwnd)?;
         if owner == "search" {
             open_empty_search(hwnd)?;
         }
-        begin_preedit(program, hwnd, baseline, "zhongguo", ime)?;
-        opacity::open(hwnd)?;
-        input::opacity_field(hwnd)?;
-        window::press_escape(hwnd)?;
+        // Leave the final letter for after the refused focus request. A query
+        // committed by the click must not masquerade as a preserved composition.
+        begin_preedit(program, hwnd, baseline, "shuxu", ime)?;
+        super::super::diagnostics::step(
+            repository,
+            program,
+            pid,
+            &format!("numeric-{owner}-composition-before-popup"),
+        )?;
+        let open = opacity::open(hwnd);
+        super::super::diagnostics::step(
+            repository,
+            program,
+            pid,
+            &format!("numeric-{owner}-composition-popup"),
+        )?;
+        open.map_err(|error| format!("{owner} composing popup open: {error}"))?;
+        let focus = input::opacity_field(hwnd);
+        super::super::diagnostics::step(
+            repository,
+            program,
+            pid,
+            &format!("numeric-{owner}-composition-refused"),
+        )?;
+        focus.map_err(|error| format!("{owner} composing numeric focus: {error}"))?;
+        thread::sleep(AUTOSAVE_OBSERVATION);
+        assert_note(
+            program,
+            baseline,
+            "numeric focus committed preedit prematurely",
+        )?;
+        if title_is_dirty(&window::title(hwnd)?) {
+            return Err("numeric focus dirtied the note during preedit".to_owned());
+        }
+        window::type_ascii_letters(hwnd, "e")?;
         commit_first_candidate(hwnd)?;
+        // Toggle the popup closed after the candidate commit. Esc while the
+        // candidate is active would cancel it in the TIP before app routing.
+        opacity::open(hwnd)?;
         if owner == "search" {
             window::press_find(hwnd)?;
             copy_is(hwnd, term)?;
@@ -194,6 +245,9 @@ fn composition_refuses_focus(
         }
         ime.record("numeric-composition-refuses-focus", &[("owner", owner)]);
     }
+    window::press_source_shortcut(hwnd)?;
+    wait_for_config(program, "view_mode = \"source\"")?;
+    window::resize_to_dip(hwnd, 520, 680)?;
     Ok(())
 }
 

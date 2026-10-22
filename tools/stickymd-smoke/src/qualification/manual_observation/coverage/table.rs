@@ -52,14 +52,36 @@ const fn render(path: &'static str) -> Owner {
     }
 }
 
-const fn gap(planned: &'static str) -> Target {
-    Target::Gap { planned }
-}
-
-// C2b-3 audited every obligation that existing tests seemed to exercise (2026-10-17). Those still
-// gaps say, per obligation, what existing tests already assert and what none does yet.
-
-const G4_OPACITY_COMMIT: &str = "2026-10-22 无窗口 StickyApp 测试已补 Enter/其他点击/失焦/隐藏/退出提交、Esc/保存/F6/F7 与忙碌导出优先级、重复 Enter、合成键过滤、composition 拒绝聚焦及 IME 目标判定；完整 D022 仍缺原生键消息、空闲导出对话框及实际 IME 开关的组合桌面证据，不能用窗口事实注入冒充真实输入";
+/// Both real IMEs and all input owners; application-state companions are required
+/// by OPACITY_RANGE_AND_INPUT in the same source-bound headless receipt.
+const G4_NUMERIC_ENTER: &[&str] = &[
+    "numeric-composition-refuses-focus:ime=pinyin,owner=search",
+    "numeric-composition-refuses-focus:ime=pinyin,owner=source",
+    "numeric-composition-refuses-focus:ime=wetype,owner=search",
+    "numeric-composition-refuses-focus:ime=wetype,owner=source",
+    "numeric-idle-export-priority:ime=pinyin",
+    "numeric-idle-export-priority:ime=wetype",
+    "numeric-native-commit:commit=enter,ime=pinyin,owner=preview",
+    "numeric-native-commit:commit=enter,ime=pinyin,owner=search",
+    "numeric-native-commit:commit=enter,ime=pinyin,owner=source",
+    "numeric-native-commit:commit=enter,ime=wetype,owner=preview",
+    "numeric-native-commit:commit=enter,ime=wetype,owner=search",
+    "numeric-native-commit:commit=enter,ime=wetype,owner=source",
+];
+const G4_NUMERIC_BLUR: &[&str] = &[
+    "numeric-composition-refuses-focus:ime=pinyin,owner=search",
+    "numeric-composition-refuses-focus:ime=pinyin,owner=source",
+    "numeric-composition-refuses-focus:ime=wetype,owner=search",
+    "numeric-composition-refuses-focus:ime=wetype,owner=source",
+    "numeric-idle-export-priority:ime=pinyin",
+    "numeric-idle-export-priority:ime=wetype",
+    "numeric-native-commit:commit=blur,ime=pinyin,owner=preview",
+    "numeric-native-commit:commit=blur,ime=pinyin,owner=search",
+    "numeric-native-commit:commit=blur,ime=pinyin,owner=source",
+    "numeric-native-commit:commit=blur,ime=wetype,owner=preview",
+    "numeric-native-commit:commit=blur,ime=wetype,owner=search",
+    "numeric-native-commit:commit=blur,ime=wetype,owner=source",
+];
 /// The Esc decision with each guard alone (asset reconcile, input disabled while quitting) and
 /// under every modifier; USER 2026-10-15 approved unit-only coverage of these Esc rows.
 const ESC_GUARDS: &[Owner] = &[win("app::escape::tests::each_guard_alone_ignores_esc")];
@@ -162,7 +184,8 @@ const SCROLL_CURRENT_LAYOUT: &[Owner] = &[
 /// elsewhere, window focus loss, hiding, quitting), ignoring the keys winit synthesizes on focus
 /// changes, turning the IME off while the field is edited and refusing it focus during a
 /// composition, and keeping keys away from the note while the field is edited stay with the G4
-/// numeric-input obligations (P08-D022, still gaps).
+/// numeric-input obligations (P08-D022). The actual shell application owners below
+/// supplement native cases with states that physical input cannot force reliably.
 const OPACITY_RANGE_AND_INPUT: &[Owner] = &[
     win("app::controls::phase8_control_tests::the_opacity_range_is_40_to_100_in_integer_steps"),
     win("app::controls::phase8_control_tests::the_opacity_field_edits_like_a_selected_text_field"),
@@ -177,6 +200,21 @@ const OPACITY_RANGE_AND_INPUT: &[Owner] = &[
     ),
     win(
         "app::window_interaction::phase8_interaction_tests::the_edited_opacity_field_leaves_the_end_of_a_composition_to_its_owner",
+    ),
+    win(
+        "app::window_interaction::runtime_tests::runtime_opacity_enter_keeps_repeats_and_synthetic_release_from_note_and_search",
+    ),
+    win(
+        "app::window_interaction::runtime_tests::runtime_opacity_blur_commits_before_other_click_hide_or_quit",
+    ),
+    win(
+        "app::window_interaction::runtime_tests::runtime_opacity_refuses_composition_and_routes_late_ime_to_field",
+    ),
+    win(
+        "app::window_interaction::runtime_tests::runtime_opacity_key_priority_keeps_escape_and_save_above_field",
+    ),
+    win(
+        "app::window_interaction::runtime_tests::runtime_opacity_recovery_and_busy_export_shortcuts_precede_field",
     ),
 ];
 const OPACITY_NO_STEPWISE_WRITE: &[Owner] = &[win(
@@ -214,7 +252,21 @@ const RUNTIME_EVENT_PASS: &[Owner] = &[
     ),
     win("app::title::tests::the_notice_settles_at_the_end_of_each_event_pass"),
 ];
-const G4_DRAG_OUTSIDE: &str = "G4-02 已观察 Source 真实拖出窗口、松开与失焦；2026-10-22 无窗口测试已证明两侧越界坐标钳位与拖动保留；仍缺 Preview 窗外原生鼠标消息与捕获的桌面证据";
+const G4_SCROLL_OUTSIDE: &[&str] = &[
+    "preview-scroll-keeps-note:mode=preview",
+    "preview-scroll-keeps-note:mode=split",
+    "preview-scroll-native-capture:mode=preview",
+    "preview-scroll-native-capture:mode=split",
+    "preview-scroll-outside-both-ends:mode=preview",
+    "preview-scroll-outside-both-ends:mode=split",
+    "preview-scroll-stops-on-blur:mode=preview",
+    "preview-scroll-stops-on-blur:mode=split",
+    "preview-scroll-stops-on-release:mode=preview",
+    "preview-scroll-stops-on-release:mode=split",
+    "scroll-drag-outside-finishes",
+    "scroll-drag-stops-on-blur",
+    "scroll-drag-stops-on-release",
+];
 
 // Exact owners name the check labels that prove them (`exact_checks`); an obligation without a
 // producer, profile or Pin parameter needs every variant.
@@ -1087,13 +1139,13 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "P08-D022",
         "numeric-input",
         "commit=enter",
-        gap(G4_OPACITY_COMMIT),
+        exact("G4-06", G4_NUMERIC_ENTER),
     ),
     o(
         "P08-D022",
         "numeric-input",
         "commit=blur",
-        gap(G4_OPACITY_COMMIT),
+        exact("G4-06", G4_NUMERIC_BLUR),
     ),
     o(
         "P08-D027",
@@ -1702,7 +1754,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "plan09:scroll-4",
         "drag-outside-window",
         "",
-        gap(G4_DRAG_OUTSIDE),
+        exact("G4-02", G4_SCROLL_OUTSIDE),
     ),
     o(
         "plan09:scroll-5",

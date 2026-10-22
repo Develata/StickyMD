@@ -215,6 +215,11 @@ pub(crate) fn set_ime_open_status(window: WindowHandle, open: bool) -> Result<()
     Ok(())
 }
 
+/// Read the target thread's native open status without changing profile, focus or mode.
+pub(crate) fn ime_open_status(window: WindowHandle) -> Result<bool, String> {
+    Ok(send_ime_query(default_ime_window(window)?, IMC_GETOPENSTATUS) != 0)
+}
+
 pub(crate) fn set_ime_native_mode(window: WindowHandle, native: bool) -> Result<(), String> {
     let ime_window = default_ime_window(window)?;
     let mode = if native { IME_CMODE_NATIVE } else { 0 };
