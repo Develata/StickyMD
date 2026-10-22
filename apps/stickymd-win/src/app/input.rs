@@ -408,6 +408,12 @@ impl StickyApp {
 
     pub(super) fn handle_mouse_button(&mut self, state: ElementState, button: MouseButton) {
         if state == ElementState::Released
+            && self.preview_horizontal.drag.is_some()
+            && self.handle_horizontal_button(state, button)
+        {
+            return;
+        }
+        if state == ElementState::Released
             && self.scrollbars.drag.is_some()
             && self.handle_scrollbar_button(state, button)
         {
@@ -422,7 +428,9 @@ impl StickyApp {
         if !self.window_accepts_editor_mutation() {
             return;
         }
-        if self.handle_scrollbar_button(state, button) {
+        if self.handle_scrollbar_button(state, button)
+            || self.handle_horizontal_button(state, button)
+        {
             return;
         }
         if button != MouseButton::Left {
@@ -512,7 +520,7 @@ impl StickyApp {
         if self.handle_shell_cursor_moved(position) {
             return;
         }
-        if self.handle_scrollbar_cursor() {
+        if self.handle_horizontal_cursor() || self.handle_scrollbar_cursor() {
             return;
         }
         self.apply_cursor();
@@ -556,6 +564,9 @@ impl StickyApp {
                     (steps.saturating_mul(5)).clamp(i32::from(i16::MIN), i32::from(i16::MAX));
                 self.apply_zoom_command(ZoomCommand::Step(delta as i16), false);
             }
+            return;
+        }
+        if self.scroll_preview_horizontally(delta) {
             return;
         }
         let pixels = match delta {

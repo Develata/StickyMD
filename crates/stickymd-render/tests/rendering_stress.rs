@@ -191,6 +191,61 @@ fn stress_fixture_builds_every_formula_through_native_preview() {
             PreviewTheme::Light,
         )
         .expect("stress preview builds");
+    let mut seen_horizontal = Vec::new();
+    let mut offsets = stickymd_render::preview::PreviewHorizontalOffsets::default();
+    let mut y = 0.0;
+    while y < frame.document_height() {
+        let visible = pipeline
+            .paint(
+                frame.generation(),
+                700,
+                y,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        assert!(
+            visible
+                .index()
+                .boxes()
+                .iter()
+                .all(|item| item.tooltip.is_none())
+        );
+        for local_y in (0..700).step_by(20) {
+            if let Some(target) =
+                visible.horizontal_target_at(450.0, visible.scroll_y() + local_y as f32)
+                && !seen_horizontal.contains(&target.content_rect())
+            {
+                seen_horizontal.push(target.content_rect());
+                let mut x = 0.0_f32;
+                loop {
+                    offsets = offsets.with_offset(target, x.min(target.max_offset()));
+                    pipeline.set_horizontal_offsets(offsets.clone());
+                    let panned = pipeline
+                        .paint(
+                            frame.generation(),
+                            700,
+                            y,
+                            PreviewSelection::default(),
+                            PreviewTheme::Light,
+                        )
+                        .unwrap();
+                    assert!(
+                        panned
+                            .index()
+                            .boxes()
+                            .iter()
+                            .all(|item| item.tooltip.is_none())
+                    );
+                    if x >= target.max_offset() {
+                        break;
+                    }
+                    x += 400.0;
+                }
+            }
+        }
+        y += 500.0;
+    }
     let counters = pipeline.math_counters();
     eprintln!(
         "stress formulas={formula_count} unique={unique_formula_count} parse_layout_calls={} rasterizations={} frame={}x{} boxes={}",

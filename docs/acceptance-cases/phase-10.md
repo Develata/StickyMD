@@ -1,5 +1,18 @@
 # Phase 10 — UX Corrections, Automation Consolidation and RC Requalification
 
+## 2026-10-22 Resource attribution
+
+| ID | Contract | Mode | Entry | Status |
+| --- | --- | --- | --- | --- |
+| P10-R01 | 10 preview-resource-assessment; fixed-scale glyph/math-layout growth | Automated | ignored render Release diagnostics and targeted tests through `tools/smoke/phase-10.ps1` | AUTOMATED PASS |
+
+Preconditions: one fixed scale with successive new CJK/Emoji characters and distinct formulas.
+Action: repeat replacements/scrolling, then release projections. Expected: separately attributed
+glyph/layout/raster/live-reference growth, bounded policies where justified, and no growth from
+retired document projections. Failure signals: misleading map-only accounting, global cache locks,
+or a claimed memory improvement without an actual before/after measurement.
+Font-database heap attribution remains unmeasured; glyph pixel totals are not total font memory.
+
 > Historical source baseline. Phase 10 rows preserve the implementation-time RC state rather than
 > a current release verdict. The later USER-approved Phase 14 startup policy superseded
 > the historical warm-startup blocker for `v0.1.0`; its exact identity and dispositions remain in

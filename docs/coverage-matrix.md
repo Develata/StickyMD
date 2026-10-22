@@ -1,5 +1,12 @@
 # coverage-matrix.md - 契约覆盖矩阵
 
+2026-10-22 Preview 资源与宽内容改进：Plan 04 `preview-view-session`、Plan 06
+`math-raster-lifecycle` / `preview-horizontal-scroll`、Plan 08 `local-image-read-boundary`、
+Plan 10 `preview-resource-assessment` → 功能投影“宽内容/数学公式” → AC-039/040/041 →
+[Phase 05](acceptance-cases/phase-05.md)、[Phase 06](acceptance-cases/phase-06.md)、
+[Phase 07](acceptance-cases/phase-07.md)、[Phase 10](acceptance-cases/phase-10.md) 的 R 系列。
+实现与验证正在独立分支进行，新增项初始为 `NOT TESTED`；不继承历史候选的验收身份。
+
 2026-10-08：plan 07 `semantic-math-delimiter-conversion` → 数学 `$` 按钮 →
 [Phase 11-B 等号行连接](acceptance-cases/phase-11-b.md#math-equals-lines) →
 `stickymd-render/src/math_text{,/tests}.rs` 与 `stickymd-win/src/flow/editor.rs`。

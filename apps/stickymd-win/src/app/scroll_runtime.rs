@@ -186,7 +186,8 @@ impl StickyApp {
     }
 
     pub(super) fn cancel_scrollbar_drag(&mut self) {
-        if self.scrollbars.end_drag() {
+        let horizontal_ended = self.preview_horizontal.drag.take().is_some();
+        if self.scrollbars.end_drag() || horizontal_ended {
             self.refresh_window_guards(None);
             self.request_redraw();
         }

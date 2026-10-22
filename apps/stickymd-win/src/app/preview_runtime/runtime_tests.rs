@@ -7,8 +7,10 @@ use crate::app::headless_tests::fixture;
 use crate::config::ContentZoomPercent;
 use stickymd_render::preview::{PreviewFrame, PreviewPipeline};
 
-fn frame(app: &StickyApp, viewport: PreviewViewport) -> PreviewFrame {
-    PreviewPipeline::new()
+fn frame(app: &StickyApp, viewport: &PreviewViewport) -> PreviewFrame {
+    let mut pipeline = PreviewPipeline::new();
+    pipeline.set_horizontal_offsets(viewport.horizontal.clone());
+    pipeline
         .build(
             &app.coordinator.snapshot(),
             viewport.width_px,
@@ -28,6 +30,7 @@ fn receipt_application_rejects_every_stale_viewport_field_without_replacing_fram
         .update(|c| c.view_mode = ViewMode::Preview)
         .unwrap();
     let current = PreviewViewport {
+        horizontal: Default::default(),
         width_px: 350,
         height_px: 220,
         scale: 1.0,
@@ -39,8 +42,8 @@ fn receipt_application_rejects_every_stale_viewport_field_without_replacing_fram
         theme: PreviewTheme::Light,
     };
     let generation = app.coordinator.view().generation;
-    app.preview_frame = Some(frame(&app, current));
-    app.preview_frame_viewport = Some(current);
+    app.preview_frame = Some(frame(&app, &current));
+    app.preview_frame_viewport = Some(current.clone());
     app.preview_scroll_y = current.scroll_y;
     app.preview_selection = current.selection;
     let canonical = app.coordinator.snapshot();
@@ -48,43 +51,43 @@ fn receipt_application_rejects_every_stale_viewport_field_without_replacing_fram
     let stale = [
         PreviewViewport {
             scroll_y: 0.0,
-            ..current
+            ..current.clone()
         },
         PreviewViewport {
             selection: PreviewSelection::default(),
-            ..current
+            ..current.clone()
         },
         PreviewViewport {
             width_px: 351,
-            ..current
+            ..current.clone()
         },
         PreviewViewport {
             height_px: 221,
-            ..current
+            ..current.clone()
         },
         PreviewViewport {
             scale: 1.5,
-            ..current
+            ..current.clone()
         },
         PreviewViewport {
             theme: PreviewTheme::Dark,
-            ..current
+            ..current.clone()
         },
     ];
     for viewport in stale {
         let before_pixels = app.preview_frame.as_ref().unwrap().rgba().as_ptr();
-        let receipt = frame(&app, viewport);
+        let receipt = frame(&app, &viewport);
         app.apply_preview_completion(
             PreviewCompletion {
                 generation,
-                viewport,
+                viewport: viewport.clone(),
                 result: Ok(receipt),
             },
             false,
-            Some(current),
+            Some(current.clone()),
         );
         assert_eq!(app.preview_scroll_y, current.scroll_y, "{viewport:?}");
-        assert_eq!(app.preview_frame_viewport, Some(current));
+        assert_eq!(app.preview_frame_viewport, Some(current.clone()));
         assert_eq!(app.preview_selection, current.selection);
         assert_eq!(
             app.preview_frame.as_ref().unwrap().rgba().as_ptr(),
@@ -97,18 +100,18 @@ fn receipt_application_rejects_every_stale_viewport_field_without_replacing_fram
     // Positive control: a matching receipt really reaches admission and changes state.
     app.preview_scroll_y = 0.0;
     app.preview_frame = None;
-    let receipt = frame(&app, current);
+    let receipt = frame(&app, &current);
     app.apply_preview_completion(
         PreviewCompletion {
             generation,
-            viewport: current,
+            viewport: current.clone(),
             result: Ok(receipt),
         },
         false,
-        Some(current),
+        Some(current.clone()),
     );
     assert_eq!(app.preview_scroll_y, current.scroll_y);
-    assert_eq!(app.preview_frame_viewport, Some(current));
+    assert_eq!(app.preview_frame_viewport, Some(current.clone()));
     assert!(app.preview_frame.is_some());
 }
 
@@ -167,4 +170,60 @@ fn actual_config_geometry_keeps_gutters_across_content_zoom_and_note_lengths() {
             }
         }
     }
+}
+
+#[test]
+fn horizontal_receipts_cannot_replace_a_newer_requested_offset() {
+    let mut app = fixture(&format!("```\n{}\n```", "wide code ".repeat(80)));
+    let current = PreviewViewport {
+        horizontal: Default::default(),
+        width_px: 320,
+        height_px: 200,
+        scale: 1.0,
+        scroll_y: 0.0,
+        selection: PreviewSelection::default(),
+        theme: PreviewTheme::Light,
+    };
+    let original = frame(&app, &current);
+    let target = original.horizontal_target_at(25.0, 25.0).unwrap();
+    let latest = PreviewViewport {
+        horizontal: current.horizontal.with_offset(target, 96.0),
+        ..current.clone()
+    };
+    let original_pixels = original.rgba().as_ptr();
+    app.preview_frame = Some(original);
+    app.preview_frame_viewport = Some(current.clone());
+    let generation = app.coordinator.view().generation;
+    let canonical = app.coordinator.snapshot();
+    let stale = frame(&app, &current);
+    app.apply_preview_completion(
+        PreviewCompletion {
+            generation,
+            viewport: current.clone(),
+            result: Ok(stale),
+        },
+        false,
+        Some(latest.clone()),
+    );
+    assert_eq!(
+        app.preview_frame.as_ref().unwrap().rgba().as_ptr(),
+        original_pixels
+    );
+    assert_eq!(app.preview_frame_viewport, Some(current));
+    let ready = frame(&app, &latest);
+    assert_eq!(
+        ready.horizontal_target_at(25.0, 25.0).unwrap().offset(),
+        96.0
+    );
+    app.apply_preview_completion(
+        PreviewCompletion {
+            generation,
+            viewport: latest.clone(),
+            result: Ok(ready),
+        },
+        false,
+        Some(latest.clone()),
+    );
+    assert_eq!(app.preview_frame_viewport, Some(latest));
+    assert_eq!(app.coordinator.snapshot(), canonical);
 }

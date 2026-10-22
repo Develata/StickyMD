@@ -153,11 +153,53 @@ fn phase7_image_band_matches_full_layout_pixels_selection_and_anchors() {
         }
     }
     assert_eq!(refreshed.counters().layouts, 1);
-    assert_eq!(refreshed.math_counters(), math);
+    assert_eq!(
+        refreshed.math_counters().parse_layout_calls,
+        math.parse_layout_calls
+    );
+    assert_eq!(
+        refreshed.math_counters().rasterizations,
+        math.rasterizations
+    );
     assert!(Arc::ptr_eq(
         &projection,
         &refreshed.layout.as_ref().unwrap().projection
     ));
+}
+
+#[test]
+fn repeated_image_requests_share_one_read_per_refresh_and_revalidate_next_time() {
+    let images = Images::new();
+    let document = DocumentSnapshot {
+        text: Arc::from("![same](image.png)\n\n".repeat(30)),
+        generation: Generation::initial(),
+        line_ending: LineEnding::Lf,
+    };
+    let mut pipeline = build(&document, &images);
+    assert_eq!(images.inspections.get(), 1);
+    assert_eq!(images.loads.get(), 1);
+    let first = paint(&mut pipeline, &images, 0.0);
+    paint(&mut pipeline, &images, f32::MAX);
+    assert_eq!(images.inspections.get(), 2);
+    assert_eq!(images.loads.get(), 2);
+    *images.bytes.borrow_mut() = Some(image_bytes(64, 64, 40));
+    let updated = paint(&mut pipeline, &images, 0.0);
+    assert_eq!(images.inspections.get(), 3);
+    assert_eq!(images.loads.get(), 3);
+    assert_eq!(first.document_height(), updated.document_height());
+    assert_ne!(first.rgba(), updated.rgba());
+    assert_eq!(pipeline.counters().layouts, 1);
+}
+
+#[test]
+fn equal_image_targets_share_validated_bytes_across_different_container_bounds() {
+    let images = Images::new();
+    let mut pipeline = build(&fixture(), &images);
+    assert_eq!(images.inspections.get(), 1);
+    assert_eq!(images.loads.get(), 1);
+    paint(&mut pipeline, &images, f32::MAX);
+    assert_eq!(images.inspections.get(), 2);
+    assert_eq!(images.loads.get(), 2);
 }
 
 fn assert_matches_full(
@@ -446,4 +488,88 @@ fn phase7_image_band_release_baseline() {
         counters.render_tree_builds
     );
     assert!(pipeline.image_cache_bytes() <= crate::image::IMAGE_CACHE_BUDGET_BYTES);
+}
+
+#[test]
+fn wide_table_images_release_hidden_columns_and_load_new_columns_without_relayout() {
+    struct Columns {
+        bytes: Vec<Vec<u8>>,
+        loads: Cell<usize>,
+    }
+    impl PreviewImageSource for Columns {
+        fn inspect(
+            &self,
+            destination: &str,
+        ) -> Result<Option<crate::image::ImageMetadata>, String> {
+            let index: usize = destination.trim_end_matches(".png").parse().unwrap();
+            Ok(Some(
+                crate::image::inspect_encoded_image(&self.bytes[index]).unwrap(),
+            ))
+        }
+        fn load(&self, destination: &str) -> Result<Option<Vec<u8>>, String> {
+            self.loads.set(self.loads.get() + 1);
+            let index: usize = destination.trim_end_matches(".png").parse().unwrap();
+            Ok(Some(self.bytes[index].clone()))
+        }
+    }
+    let images = Columns {
+        bytes: (0..24).map(|i| image_bytes(64, 64, 100 + i)).collect(),
+        loads: Cell::new(0),
+    };
+    let source = format!(
+        "|{}|\n|{}|\n|{}|\n\n```\n{}\n```",
+        (0..24)
+            .map(|i| format!("C{i}"))
+            .collect::<Vec<_>>()
+            .join("|"),
+        vec!["---"; 24].join("|"),
+        (0..24)
+            .map(|i| format!("![image{i}]({i}.png)"))
+            .collect::<Vec<_>>()
+            .join("|"),
+        "code ".repeat(100)
+    );
+    let document = DocumentSnapshot {
+        text: Arc::from(source),
+        generation: Generation::initial(),
+        line_ending: LineEnding::Lf,
+    };
+    let mut pipeline = build_with_budget(&document, &images, 180_000);
+    let first = paint(&mut pipeline, &images, 0.0);
+    let target = first.horizontal_target_at(25.0, 25.0).unwrap();
+    let table_images = |pipeline: &PreviewPipeline| {
+        pipeline.layout.as_ref().unwrap().blocks[0]
+            .chunks
+            .iter()
+            .filter_map(|chunk| match &chunk.content {
+                super::super::layout::LayoutContent::Image(image) => Some(image.raster.is_some()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let initial = table_images(&pipeline);
+    assert_eq!(
+        initial.len(),
+        24,
+        "offscreen images keep geometry, never budget-error text"
+    );
+    assert!(initial[0] && !initial[23]);
+    assert!(images.loads.get() < 12);
+    pipeline.set_horizontal_offsets(
+        super::super::PreviewHorizontalOffsets::default().with_offset(target, target.max_offset()),
+    );
+    let last = paint(&mut pipeline, &images, 0.0);
+    let final_images = table_images(&pipeline);
+    assert!(!final_images[0] && final_images[23]);
+    assert_eq!(first.text(), last.text());
+    assert_eq!(first.document_height(), last.document_height());
+    assert_eq!(pipeline.counters().layouts, 1);
+    assert!(pipeline.image_cache_bytes() <= 180_000);
+    // Scrolling the separate code block must not reread unrelated table images.
+    let code_y = pipeline.layout.as_ref().unwrap().blocks[1].top + 1.0;
+    let code = last.horizontal_target_at(25.0, code_y).unwrap();
+    let loads = images.loads.get();
+    pipeline.set_horizontal_offsets(pipeline.horizontal_offsets.with_offset(code, 60.0));
+    paint(&mut pipeline, &images, 0.0);
+    assert_eq!(images.loads.get(), loads);
 }

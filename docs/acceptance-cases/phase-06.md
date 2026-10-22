@@ -1,5 +1,20 @@
 # Phase 06 Acceptance Matrix
 
+## 2026-10-22 Formula resource lifecycle amendment
+
+The prior 2026-09-07 pressure expectation (budget exhaustion becomes an error projection) is
+superseded by AC-039 and Plan 06 `math-raster-lifecycle`; historical evidence remains historical.
+
+| ID | Contract | Mode | Entry | Status |
+| --- | --- | --- | --- | --- |
+| P06-R01 | AC-039; distinct single-raster and residency limits | Automated | render math/pipeline tests through `tools/smoke/phase-06.ps1` | AUTOMATED PASS |
+| P06-R02 | 10 preview-resource-assessment; budget alternatives | Automated | ignored Release diagnostics through the existing render test target | AUTOMATED PASS |
+| P06-R03 | AC-039 dense formulas at 300%, first/middle/last | Manual | Windows Preview/Split readability observation | NOT TESTED |
+
+R01 covers a viewport larger than the cache, source copy, stable geometry and release after drawing.
+R02 records candidate budgets, retained/temporary bytes, timing and measurement limitations; it is
+local optimization evidence and does not replace OS resource or exact-candidate qualification.
+
 > Verification projection for RaTeX-native math layout, direct tiny-skia painting and bounded
 > formula caches. Automated rows are owned by the checked-in Rust smoke graph. Visual quality and
 > real-DPI appearance remain `NOT TESTED`; repeatable OS resource observations are kept separate

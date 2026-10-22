@@ -1,5 +1,15 @@
 # Phase 07 Acceptance Matrix
 
+## 2026-10-22 Image request reuse
+
+| ID | Contract | Mode | Entry | Status |
+| --- | --- | --- | --- | --- |
+| P07-R01 | 08 local-image-read-boundary; AC-041 | Automated | render image/pipeline and Windows local-source tests through `tools/smoke/phase-07.ps1` | AUTOMATED PASS |
+
+AC-041 supplies Preconditions/Action/Expected/Failure Signals. Counters distinguish metadata reads,
+encoded reads and decode cache hits. Same-size edits, deletion/recreation and off-screen dimension
+changes must remain observable after the per-refresh reuse scope has ended.
+
 > Verification projection for managed-image ownership, clipboard image transactions, native local
 > image preview, conservative lifecycle reconciliation and source-preserving Markdown export.
 > Headless rows are owned by the checked-in Rust smoke graph. Real clipboard applications, visual

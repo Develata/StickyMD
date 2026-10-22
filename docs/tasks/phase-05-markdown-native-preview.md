@@ -2,7 +2,25 @@
 
 ## Completion State
 
-Completed
+In Progress
+
+The original foundation is complete. The USER-approved 2026-10-22 maintenance spans existing
+Phases 05/06/07/10 and uses their existing verification entries; it does not add a runtime layer.
+
+## 2026-10-22 maintenance execution
+
+1. Update Plans 04/06/08/10, behavior, AC-039/040/041 and phase matrices before implementation.
+2. Capture the same-fixture baseline and candidate math budgets; remove redundant text initialization.
+3. Separate math measurement from raster residency; keep full geometry and use the existing worker
+   for visible drawing, with a bounded transient path when cache admission is unavailable.
+4. Deduplicate image requests within one refresh; measure before deciding on streaming validation.
+5. Implement block horizontal scrolling for tables/code with one paint/hit-test/selection transform.
+6. Attribute fixed-scale font/math-cache growth, apply justified local policies, then run targeted and
+   workspace checks. Record actual performance, memory and remaining manual observations.
+
+Boundary: preserve DocumentState authority, fixed worker count and existing file adapters. No global
+resource manager, cross-thread font lock or general scrolling framework. Runtime changes stay on
+`codex/preview-resource-optimization` in the independent checkout; preserve other sessions' work.
 
 ## Inputs
 

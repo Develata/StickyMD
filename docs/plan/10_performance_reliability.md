@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-30
+- `Last Review`: 2026-10-22
 - `Scope`: 性能约束的性质定义（Target / Measurement Method / Hard Failure Condition / Future Benchmark Entry）与可靠性底线
 
 ---
@@ -53,7 +53,8 @@ Not applicable。测量不得修改产品 authority；缓存清理/隐藏等被�
 ```text
 1. idle CPU 应接近 0：空闲状态不持续 redraw，event loop 进入 wait。
 2. 无永久 redraw loop：动画期间短暂 request redraw，结束后停止。
-3. bounded caches：公式 raster ≤ 8 MiB、解码图片 ≤ 16 MiB，LRU 淘汰。
+3. bounded caches：公式驻留 raster ≤ 8 MiB、解码图片 ≤ 16 MiB，LRU 淘汰；
+   数学的单公式分配保护与缓存驻留预算独立，临时绘制工作集见 06，不漏计外部引用。
 4. bounded undo：256 entries 或 4 MiB，先到先淘汰。
 5. preview worker stale-drop：过期 generation 结果立即丢弃。
 6. 无无界任务/线程增长：固定少量线程（UI / preview worker / I/O worker），
@@ -188,6 +189,32 @@ p95 与不裁剪规则均不改变，`250 ms` 仅保留为非发布门的 rapid-
 
 见各能力章节；优化顺序固定（先查持续 redraw → 重复分配 → 无界 cache → …… → 最后才考虑 allocator），禁止凭感觉优化；
 每项优化必须有 before benchmark / patch / after benchmark / regression test。
+
+<a id="preview-resource-assessment"></a>
+### Preview 资源评估
+
+- 提高总预算前分别测量全文/当前 viewport 的位图需求、缓存实际存活字节、临时分配峰值、
+  进程内存及冷/热布局、滚动和缩放耗时；固定 source、窗口尺寸、字号、DPI 与构建配置。
+- 缓存预算不得兼任单公式限制；不能通过提高预算而继续把缓存满呈现为正常公式错误。
+  预算候选的测量属于开发验证，不新增产品配置或用户操作项。
+- 在可用性满足后，以维护成本、耗时和内存共同决定预算；不以压低数字为理由增加线程、
+  全局资源管理层或第二套布局调度器。允许缓存未接纳资源在有界工作集内直接完成绘制。
+- 长期缓存归因分别观察文字 glyph、字体数据、数学 DisplayList、位图与仍存活的共享引用；
+  cache map 条目数不能代替真实存活字节。固定字号的新 CJK/Emoji 与新公式是独立场景。
+- 确认增长后在已有资源持有者内实现有界回收；字体/字形缓存保持各线程独占，不通过全局锁
+  强行共享。单轮复用索引不得演变为跨 generation 的文档历史缓存。
+
+### 固定字号缓存回收
+
+2026-10-22 维护策略：Source 与 Preview 各自持有的 glyph image cache 在一次绘制结束后
+按像素容量及每条元数据估算检查 8 MiB 驻留目标；只有条目数变化才扫描。超过目标时整体
+释放这个可再生成的局部缓存，下次绘制重建。它不是字体数据库上限，也不是单帧临时分配硬上限。
+不增加跨线程共享、后台清理任务或每 glyph 的 LRU 记账；若今后观察到频繁清空导致延迟回退，
+须带测量证据重新评估。现有换字号与隐藏释放行为保持有效。
+
+数学 DisplayList 缓存同时受 512 条目与 8 MiB 计费容量约束，计费包含 items 的 capacity、
+字体名称、路径命令、公式源码及条目元数据估算。超大单条布局可以临时使用，缓存不接纳不得改变
+语义；单公式源码/几何保护仍由 06 持有。
 
 ## Verification
 

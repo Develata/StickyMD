@@ -8,6 +8,7 @@
 //! mutate the canonical `DocumentState`.
 #![forbid(unsafe_code)]
 
+mod glyph_cache;
 pub mod image;
 mod math;
 pub mod math_text;

@@ -38,14 +38,33 @@ fn representative_fixture_renders_at_least_fifty_native_formulas() {
         .iter()
         .map(|formula| format!("$${formula}$$\n\n"))
         .collect::<String>();
-    let (pipeline, frame) = build(&source, 1.0);
+    let (mut pipeline, frame) = build(&source, 1.0);
     let counters = pipeline.math_counters();
     assert_eq!(counters.parse_layout_calls, formulas.len() as u64);
-    assert!(
-        counters.rasterizations >= 50,
-        "only {} representative formulas rasterized",
-        counters.rasterizations
-    );
+    assert!(counters.rasterizations > 0 && counters.rasterizations < formulas.len() as u64);
+    // Visit the whole fixture to exercise every native painter under viewport admission.
+    let mut y = 0.0;
+    while y < frame.document_height() {
+        let visible = pipeline
+            .paint(
+                frame.generation(),
+                700,
+                y,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        assert!(
+            visible
+                .index()
+                .boxes()
+                .iter()
+                .all(|item| item.tooltip.is_none())
+        );
+        assert_eq!(visible.document_height(), frame.document_height());
+        y += 500.0;
+    }
+    assert!(pipeline.math_counters().rasterizations >= 50);
     assert!(
         frame
             .rgba()

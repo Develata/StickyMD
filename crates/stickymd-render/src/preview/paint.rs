@@ -4,8 +4,13 @@
 
 use std::sync::Arc;
 
-use cosmic_text::{Color, FontSystem, SwashCache};
-use tiny_skia::{Paint, PathBuilder, Pixmap, PixmapPaint, PixmapRef, Rect, Stroke, Transform};
+use cosmic_text::{FontSystem, SwashCache};
+use tiny_skia::{Pixmap, PixmapPaint, PixmapRef, Transform};
+
+mod drawing;
+use super::horizontal::{clip_box, intersect};
+use super::{PreviewHorizontalOffsets, PreviewHorizontalTarget, PreviewRect};
+use drawing::*;
 
 use super::layout::{DecorationRole, LaidOutDocument, LayoutContent, LayoutDecoration};
 use super::{PreviewSelection, PreviewTextIndex};
@@ -27,9 +32,20 @@ pub struct PreviewFrame {
     rgba: Vec<u8>,
     index: Arc<PreviewTextIndex>,
     visible_blocks: usize,
+    horizontal: Vec<PreviewHorizontalTarget>,
 }
 
 impl PreviewFrame {
+    pub fn horizontal_target_at(&self, x: f32, document_y: f32) -> Option<PreviewHorizontalTarget> {
+        self.horizontal.iter().copied().find(|target| {
+            let rect = target.content_rect();
+            x >= rect.x
+                && x < rect.right()
+                && document_y >= rect.y
+                && document_y < target.track().bottom()
+        })
+    }
+
     pub const fn generation(&self) -> stickymd_core::Generation {
         self.generation
     }
@@ -116,17 +132,30 @@ pub enum PreviewPaintError {
     InvalidViewport,
     #[error("preview pixmap allocation failed for {width}x{height}")]
     Allocation { width: u32, height: u32 },
+    #[error("formula rasterization failed: {0}")]
+    Math(String),
+}
+
+pub(super) struct PaintResources<'a> {
+    pub font_system: &'a mut FontSystem,
+    pub swash_cache: &'a mut SwashCache,
+    pub math_engine: &'a mut crate::math::MathEngine,
 }
 
 pub(super) fn paint_document(
-    font_system: &mut FontSystem,
-    swash_cache: &mut SwashCache,
+    resources: PaintResources<'_>,
     document: &mut LaidOutDocument,
     height: u32,
     requested_scroll_y: f32,
     selection: PreviewSelection,
     theme: PreviewTheme,
+    horizontal_offsets: &PreviewHorizontalOffsets,
 ) -> Result<PreviewFrame, PreviewPaintError> {
+    let PaintResources {
+        font_system,
+        swash_cache,
+        math_engine,
+    } = resources;
     if document.width_px == 0 || height == 0 {
         return Err(PreviewPaintError::InvalidViewport);
     }
@@ -147,24 +176,68 @@ pub(super) fn paint_document(
         .blocks
         .partition_point(|block| block.top <= viewport_bottom);
 
+    let viewport = PreviewRect {
+        x: 0.0,
+        y: scroll_y,
+        width: document.width_px as f32,
+        height: height as f32,
+    };
+    let horizontal: Vec<_> = document.blocks[start..end]
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            block.horizontal.map(|layout| {
+                layout.target(
+                    start + index,
+                    document.generation,
+                    document.width_px,
+                    document.scale,
+                    horizontal_offsets,
+                )
+            })
+        })
+        .collect();
     let mut visible_boxes = Vec::new();
-    for block in &document.blocks[start..end] {
+    for (index, block) in document.blocks[start..end].iter().enumerate() {
+        let target = block.horizontal.map(|layout| {
+            layout.target(
+                start + index,
+                document.generation,
+                document.width_px,
+                document.scale,
+                horizontal_offsets,
+            )
+        });
+        let offset = target.map_or(0.0, |target| target.offset());
+        let Some(clip) = target.map_or(Some(viewport), |target| {
+            intersect(target.content_rect(), viewport)
+        }) else {
+            continue;
+        };
         visible_boxes.extend(
             block
                 .boxes
                 .iter()
-                .filter(|item| item.rect.bottom() >= scroll_y && item.rect.y <= viewport_bottom)
-                .cloned(),
+                .cloned()
+                .filter_map(|item| clip_box(item, offset, clip)),
         );
         for chunk in &block.chunks {
+            let (offset, clip) = if chunk.scroll_with_block {
+                (offset, clip)
+            } else {
+                (0.0, viewport)
+            };
             if let LayoutContent::Text(layout) = &chunk.content {
-                visible_boxes.extend(super::text_layout::project_visible_text_boxes(
-                    layout,
-                    chunk.x,
-                    chunk.y,
-                    scroll_y,
-                    viewport_bottom,
-                ));
+                visible_boxes.extend(
+                    super::text_layout::project_text_boxes_in_rect(
+                        layout,
+                        chunk.x - offset,
+                        chunk.y,
+                        clip,
+                    )
+                    .into_iter()
+                    .filter_map(|item| clip_box(item, 0.0, clip)),
+                );
             }
         }
     }
@@ -172,10 +245,29 @@ pub(super) fn paint_document(
         Arc::clone(&document.projection),
         visible_boxes,
     ));
-
-    for block in &document.blocks[start..end] {
+    // At most one viewport-sized alpha mask, reused for every overflow block.
+    let mut mask = None;
+    for (index, block) in document.blocks[start..end].iter().enumerate() {
+        let target = block.horizontal.map(|layout| {
+            layout.target(
+                start + index,
+                document.generation,
+                document.width_px,
+                document.scale,
+                horizontal_offsets,
+            )
+        });
+        let offset = target.map_or(0.0, |target| target.offset());
+        let clip = target.map(|target| target.content_rect());
+        let clip_mask = block_mask(&mut mask, document.width_px, height, clip, scroll_y)?;
         for decoration in &block.decorations {
-            paint_decoration(&mut pixmap, *decoration, scroll_y, palette);
+            let mut decoration = *decoration;
+            if decoration.role == DecorationRole::CodeBackground {
+                paint_decoration(&mut pixmap, decoration, scroll_y, palette, None);
+            } else {
+                decoration.rect.x -= offset;
+                paint_decoration(&mut pixmap, decoration, scroll_y, palette, clip_mask);
+            }
         }
     }
     if !selection.is_collapsed() {
@@ -187,19 +279,48 @@ pub(super) fn paint_document(
                 rectangle.width,
                 rectangle.height,
                 palette.selection,
+                None,
             );
         }
     }
-    for block in &mut document.blocks[start..end] {
+    for (index, block) in document.blocks[start..end].iter_mut().enumerate() {
+        let target = block.horizontal.map(|layout| {
+            layout.target(
+                start + index,
+                document.generation,
+                document.width_px,
+                document.scale,
+                horizontal_offsets,
+            )
+        });
+        let offset = target.map_or(0.0, |target| target.offset());
+        let clip = target.map_or(viewport, |target| target.content_rect());
+        let clip_mask = block_mask(
+            &mut mask,
+            document.width_px,
+            height,
+            target.map(|target| target.content_rect()),
+            scroll_y,
+        )?;
         for chunk in &mut block.chunks {
-            let origin_x = chunk.x.round() as i32;
+            let (offset, clip, clip_mask) = if chunk.scroll_with_block {
+                (offset, clip, clip_mask)
+            } else {
+                (0.0, viewport, None)
+            };
+            let origin_x = (chunk.x - offset).round() as i32;
             let origin_y = (chunk.y - scroll_y).round() as i32;
             match &mut chunk.content {
-                LayoutContent::Text(layout) => layout.draw_visible(
+                LayoutContent::Text(layout) => layout.draw_in_rect(
                     font_system,
                     swash_cache,
                     palette.text,
-                    (scroll_y - chunk.y)..(viewport_bottom - chunk.y),
+                    PreviewRect {
+                        x: clip.x - origin_x as f32,
+                        y: scroll_y - chunk.y,
+                        width: clip.width,
+                        height: height as f32,
+                    },
                     |x, y, width, height, color| {
                         blend_glyph_rect(
                             &mut pixmap,
@@ -208,22 +329,45 @@ pub(super) fn paint_document(
                             width,
                             height,
                             color,
+                            PreviewRect {
+                                y: clip.y - scroll_y,
+                                ..clip
+                            },
                         );
                     },
                 ),
-                LayoutContent::Math(raster) => {
-                    if let Some(source) =
-                        PixmapRef::from_bytes(&raster.pixels, raster.width, raster.height)
+                LayoutContent::Math(formula) => {
+                    if chunk.y + (formula.metrics.height as f32) < scroll_y
+                        || chunk.y > viewport_bottom
+                        || chunk.x - offset + (formula.metrics.width as f32) < clip.x
+                        || chunk.x - offset > clip.right()
                     {
-                        pixmap.draw_pixmap(
-                            origin_x,
-                            origin_y,
-                            source,
-                            &PixmapPaint::default(),
-                            Transform::identity(),
-                            None,
-                        );
+                        continue;
                     }
+                    math_engine
+                        .draw(
+                            Arc::clone(&formula.source),
+                            formula.kind,
+                            formula.font_size,
+                            super::layout::math_foreground(theme),
+                            |raster| {
+                                if let Some(source) = PixmapRef::from_bytes(
+                                    &raster.pixels,
+                                    raster.width,
+                                    raster.height,
+                                ) {
+                                    pixmap.draw_pixmap(
+                                        origin_x,
+                                        origin_y,
+                                        source,
+                                        &PixmapPaint::default(),
+                                        Transform::identity(),
+                                        clip_mask,
+                                    );
+                                }
+                            },
+                        )
+                        .map_err(|error| PreviewPaintError::Math(error.to_string()))?;
                 }
                 LayoutContent::Image(image) => {
                     if let Some(raster) = &image.raster {
@@ -236,7 +380,7 @@ pub(super) fn paint_document(
                                 source,
                                 &PixmapPaint::default(),
                                 Transform::identity(),
-                                None,
+                                clip_mask,
                             );
                         }
                     } else {
@@ -247,6 +391,7 @@ pub(super) fn paint_document(
                             image.width as f32,
                             image.height as f32,
                             palette.code,
+                            clip_mask,
                         );
                     }
                 }
@@ -254,6 +399,22 @@ pub(super) fn paint_document(
         }
     }
 
+    for target in &horizontal {
+        for (rect, color) in [
+            (target.track(), palette.code),
+            (target.thumb(), palette.quote),
+        ] {
+            fill_rect(
+                &mut pixmap,
+                rect.x,
+                rect.y - scroll_y,
+                rect.width,
+                rect.height,
+                color,
+                None,
+            );
+        }
+    }
     Ok(PreviewFrame {
         generation: document.generation,
         width: document.width_px,
@@ -263,189 +424,8 @@ pub(super) fn paint_document(
         rgba: pixmap.take(),
         index,
         visible_blocks: end.saturating_sub(start),
+        horizontal,
     })
-}
-
-#[derive(Clone, Copy)]
-struct Palette {
-    background: tiny_skia::Color,
-    text: Color,
-    selection: tiny_skia::Color,
-    quote: tiny_skia::Color,
-    code: tiny_skia::Color,
-    math: tiny_skia::Color,
-    rule: tiny_skia::Color,
-    table: tiny_skia::Color,
-    table_header: tiny_skia::Color,
-    table_border: tiny_skia::Color,
-    math_error: tiny_skia::Color,
-}
-
-impl Palette {
-    fn for_theme(theme: PreviewTheme) -> Self {
-        match theme {
-            PreviewTheme::Light => Self {
-                background: rgba(248, 246, 239, 255),
-                text: Color::rgb(40, 38, 34),
-                selection: rgba(176, 207, 243, 210),
-                quote: rgba(148, 142, 126, 255),
-                code: rgba(238, 235, 226, 255),
-                math: rgba(243, 239, 228, 255),
-                rule: rgba(180, 176, 164, 255),
-                table: rgba(248, 246, 239, 255),
-                table_header: rgba(235, 232, 222, 255),
-                table_border: rgba(186, 181, 168, 255),
-                math_error: rgba(190, 73, 55, 255),
-            },
-            PreviewTheme::Dark => Self {
-                background: rgba(35, 35, 33, 255),
-                text: Color::rgb(226, 223, 214),
-                selection: rgba(68, 101, 142, 220),
-                quote: rgba(130, 130, 124, 255),
-                code: rgba(48, 48, 45, 255),
-                math: rgba(52, 50, 44, 255),
-                rule: rgba(86, 85, 80, 255),
-                table: rgba(35, 35, 33, 255),
-                table_header: rgba(49, 49, 46, 255),
-                table_border: rgba(87, 86, 80, 255),
-                math_error: rgba(232, 120, 102, 255),
-            },
-        }
-    }
-}
-
-fn paint_decoration(
-    pixmap: &mut Pixmap,
-    decoration: LayoutDecoration,
-    scroll_y: f32,
-    palette: Palette,
-) {
-    let rect = decoration.rect;
-    let y = rect.y - scroll_y;
-    match decoration.role {
-        DecorationRole::QuoteBar => {
-            fill_rect(pixmap, rect.x, y, rect.width, rect.height, palette.quote)
-        }
-        DecorationRole::CodeBackground => {
-            fill_rect(pixmap, rect.x, y, rect.width, rect.height, palette.code)
-        }
-        DecorationRole::MathBackground => {
-            fill_rect(pixmap, rect.x, y, rect.width, rect.height, palette.math)
-        }
-        DecorationRole::MathError => {
-            stroke_rect(
-                pixmap,
-                rect.x,
-                y,
-                rect.width,
-                rect.height,
-                palette.math_error,
-            );
-            // Keep a compact error marker visible even when a long formula
-            // literal makes the subtle border easy to miss.
-            fill_rect(
-                pixmap,
-                rect.right() - 5.0,
-                y + 1.0,
-                4.0,
-                4.0,
-                palette.math_error,
-            );
-        }
-        DecorationRole::Rule => fill_rect(pixmap, rect.x, y, rect.width, rect.height, palette.rule),
-        DecorationRole::TableCell | DecorationRole::TableHeader => {
-            let fill = if decoration.role == DecorationRole::TableHeader {
-                palette.table_header
-            } else {
-                palette.table
-            };
-            fill_rect(pixmap, rect.x, y, rect.width, rect.height, fill);
-            stroke_rect(
-                pixmap,
-                rect.x,
-                y,
-                rect.width,
-                rect.height,
-                palette.table_border,
-            );
-        }
-    }
-}
-
-fn rgba(r: u8, g: u8, b: u8, a: u8) -> tiny_skia::Color {
-    tiny_skia::Color::from_rgba8(r, g, b, a)
-}
-
-fn fill_rect(
-    pixmap: &mut Pixmap,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-    color: tiny_skia::Color,
-) {
-    if width <= 0.0 || height <= 0.0 {
-        return;
-    }
-    let Some(rect) = Rect::from_xywh(x, y, width, height) else {
-        return;
-    };
-    let mut paint = Paint::default();
-    paint.set_color(color);
-    pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-}
-
-fn stroke_rect(
-    pixmap: &mut Pixmap,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-    color: tiny_skia::Color,
-) {
-    if width <= 0.0 || height <= 0.0 {
-        return;
-    }
-    let Some(rect) = Rect::from_xywh(x, y, width, height) else {
-        return;
-    };
-    let mut paint = Paint::default();
-    paint.set_color(color);
-    let stroke = Stroke {
-        width: 1.0,
-        ..Stroke::default()
-    };
-    let path = PathBuilder::from_rect(rect);
-    pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
-}
-
-fn blend_glyph_rect(pixmap: &mut Pixmap, x: i32, y: i32, width: u32, height: u32, color: Color) {
-    let pixmap_width = pixmap.width() as i32;
-    let pixmap_height = pixmap.height() as i32;
-    let source_alpha = color.a() as u32;
-    if source_alpha == 0 {
-        return;
-    }
-    let source = (color.r() as u32, color.g() as u32, color.b() as u32);
-    let data = pixmap.data_mut();
-    for row in y..y.saturating_add(height as i32) {
-        if row < 0 || row >= pixmap_height {
-            continue;
-        }
-        for column in x..x.saturating_add(width as i32) {
-            if column < 0 || column >= pixmap_width {
-                continue;
-            }
-            let offset = ((row * pixmap_width + column) * 4) as usize;
-            let inverse = 255 - source_alpha;
-            data[offset] = ((source.0 * source_alpha + data[offset] as u32 * inverse) / 255) as u8;
-            data[offset + 1] =
-                ((source.1 * source_alpha + data[offset + 1] as u32 * inverse) / 255) as u8;
-            data[offset + 2] =
-                ((source.2 * source_alpha + data[offset + 2] as u32 * inverse) / 255) as u8;
-            data[offset + 3] = 255;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -472,6 +452,7 @@ mod tests {
         let fonts = FontSelection::resolve(&mut font_system);
         let layout = layout_document(
             LayoutResources {
+                horizontal_offsets: &crate::preview::PreviewHorizontalOffsets::default(),
                 font_system: &mut font_system,
                 fonts: &fonts,
                 math_engine: &mut crate::math::MathEngine::new(),
@@ -492,13 +473,17 @@ mod tests {
         let (mut font_system, mut document) = document("paragraph text\n\n", 200);
         let total = document.blocks.len();
         let frame = paint_document(
-            &mut font_system,
-            &mut SwashCache::new(),
+            PaintResources {
+                font_system: &mut font_system,
+                swash_cache: &mut SwashCache::new(),
+                math_engine: &mut crate::math::MathEngine::new(),
+            },
             &mut document,
             180,
             0.0,
             PreviewSelection::default(),
             PreviewTheme::Light,
+            &crate::preview::PreviewHorizontalOffsets::default(),
         )
         .unwrap();
         assert!(frame.visible_blocks() > 0);
@@ -511,23 +496,31 @@ mod tests {
         let (mut font_system, mut document) = document("中文 **bold**\n\n", 40);
         let mut cache = SwashCache::new();
         let first = paint_document(
-            &mut font_system,
-            &mut cache,
+            PaintResources {
+                font_system: &mut font_system,
+                swash_cache: &mut cache,
+                math_engine: &mut crate::math::MathEngine::new(),
+            },
             &mut document,
             200,
             0.0,
             PreviewSelection::default(),
             PreviewTheme::Light,
+            &crate::preview::PreviewHorizontalOffsets::default(),
         )
         .unwrap();
         let second = paint_document(
-            &mut font_system,
-            &mut cache,
+            PaintResources {
+                font_system: &mut font_system,
+                swash_cache: &mut cache,
+                math_engine: &mut crate::math::MathEngine::new(),
+            },
             &mut document,
             200,
             120.0,
             first.index().select_all(),
             PreviewTheme::Dark,
+            &crate::preview::PreviewHorizontalOffsets::default(),
         )
         .unwrap();
         assert_eq!(first.generation(), second.generation());

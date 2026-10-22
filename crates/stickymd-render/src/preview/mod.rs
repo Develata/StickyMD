@@ -7,7 +7,9 @@
 
 mod export;
 mod fonts;
+mod horizontal;
 mod image_layout;
+mod image_requests;
 mod image_resources;
 mod inline_text_layout;
 mod layout;
@@ -49,3 +51,5 @@ pub use semantic_conversion::{
     MathDelimiterConversion, SemanticConversionError, convert_latex_math_delimiters,
 };
 use source_map::SourceMap;
+
+pub use horizontal::{PreviewBlockId, PreviewHorizontalOffsets, PreviewHorizontalTarget};

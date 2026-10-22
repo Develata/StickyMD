@@ -5,7 +5,7 @@
 - `Layer`: Architecture
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-30
+- `Last Review`: 2026-10-22
 - `Scope`: 运行时状态结构、所有权与修改权、authority 划分、generation 语义、核心 invariant
 
 ---
@@ -153,6 +153,15 @@ enum PreviewState {
 
 - Preview 永远是 DocumentState snapshot 的派生 projection，不得反写 source。
 - `result.generation != document.generation` → 结果立即丢弃。
+
+<a id="preview-view-session"></a>
+### Preview view session
+
+块内横向偏移归现有 Editor Session / Preview 交互流程管理，只是视图状态，不属于
+DocumentState 或 Durable Config。偏移按当前 generation 的 block identity 索引；
+文档、布局宽度或有效字号变化后清理/校验。提交给 worker 的偏移快照不可变，返回帧必须
+同时匹配 generation 与完整 viewport（含横向偏移）。滚动不改变文本、undo 或保存状态。
+Render crate 只暴露语义目标与可滚动范围，Shell 不取得内部布局的修改权。
 
 ## SaveState
 

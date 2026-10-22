@@ -656,3 +656,50 @@ Ctrl+F toggle 与 Ctrl+H expand 不创建第二份 session；Find-only 的任何
 搜索 Preview display text 或其他文件；大小写开关错误；stale range 改错文本；全部替换逐项生成
 多条 Undo/卡顿；Unicode 被切断；查找会话成为第二份可写文本 authority；caret 飞出输入框；preedit
 固定追加到字段末尾；Find-only 通过隐藏 Replace 快捷键删除文本。
+
+---
+
+## AC-039 Dense Formula Readability
+
+### Preconditions
+合法公式不超过文档/单公式限制；包含 100 个不同长公式、300% 缩放，以及单屏位图需求超过缓存的场景。
+
+### Action
+从首部滚到底部并往返；切换字号、主题、Source/Preview；对可见公式选择复制。
+
+### Expected
+全部合法公式可逐个阅读；缓存满只影响复用，不产生错误占位。文档高度、基线、锚点与源码复制
+不受回收影响；驻留缓存与单公式临时工作集分别有界，离屏公式不固定持有位图。
+
+### Failure Signals
+底部长期显示预算错误；缓存条目已移除但位图仍被全文引用；滚动改变布局高度；反复重排却无法显示。
+
+## AC-040 Preview Block Horizontal Scrolling
+
+### Preconditions
+Preview/Split 包含宽表、长代码行、表内链接/公式/图片、中文与双向文本。
+
+### Action
+横向滚轮、Shift+滚轮、拖动/点击块内滚动条；选择复制、点击链接；随后编辑、缩放或改变窗口宽度。
+
+### Expected
+宽度只在目标块内溢出；代码保持原始行。像素、选择、命中和提示使用一致的偏移与裁剪，复制保留完整
+内容。新布局校验或重置偏移；旧帧不恢复旧位置；滚动不修改文档或触发全文重排。
+
+### Failure Signals
+内容画到邻块；选择与文字错位；链接点击偏移；旧帧覆盖新偏移；横向滚动改变文档 generation。
+
+## AC-041 Image Refresh Reuse
+
+### Preconditions
+多处引用相同本地图片，含屏幕外图片；图片位图缓存已命中。
+
+### Action
+刷新/滚动；外部改变内容但保持尺寸、改变尺寸、删除及重建图片；重复刷新。
+
+### Expected
+同轮重复引用复用探测/内容结果；后续轮重新校验内容与存在性。上方图片变化后锚点正确更新；缓存
+命中减少重复读取与临时分配，读取仍走受控适配器，临时索引在本轮结束释放。
+
+### Failure Signals
+旧内容长期显示；缺失结果跨轮永久缓存；遗漏离屏尺寸变化；为去重长期保留整篇原编码图片。

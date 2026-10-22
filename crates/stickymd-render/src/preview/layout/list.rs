@@ -82,5 +82,8 @@ pub(super) fn attach_marker(
         item.rect.height = bottom - item.rect.y;
     }
     block.height = block.height.max(marker.height);
+    for chunk in &mut marker.chunks {
+        chunk.scroll_with_block = false;
+    }
     block.chunks.extend(marker.chunks);
 }

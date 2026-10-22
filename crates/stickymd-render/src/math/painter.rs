@@ -17,10 +17,10 @@ use ratex_types::display_item::{DisplayItem, DisplayList};
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Rect, Transform};
 
 use super::cache::ByteLru;
-use super::engine::{DEFAULT_COLOR_SENTINEL, MathRaster};
+use super::engine::{DEFAULT_COLOR_SENTINEL, MathMetrics, MathRaster};
 use super::path_painter::paint_path;
 
-pub(super) const MAX_RASTER_BYTES: usize = 8 * 1024 * 1024;
+pub(super) const MAX_SINGLE_RASTER_BYTES: usize = 8 * 1024 * 1024;
 const MAX_RASTER_SIDE: u32 = 16_384;
 const PADDING_DIP: f32 = 2.0;
 const BASE_FONT_DIP: f32 = 17.0;
@@ -95,8 +95,7 @@ pub(super) fn rasterize(
     Ok(MathRaster {
         width,
         height,
-        baseline: padding_px + display.height as f32 * font_size_px,
-        pixels: Arc::from(pixmap.data()),
+        pixels: pixmap.take(),
     })
 }
 
@@ -112,10 +111,23 @@ pub(super) fn raster_size(
         .checked_mul(height as usize)
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or(MathPaintError::RasterTooLarge)?;
-    if width > MAX_RASTER_SIDE || height > MAX_RASTER_SIDE || bytes > MAX_RASTER_BYTES {
+    if width > MAX_RASTER_SIDE || height > MAX_RASTER_SIDE || bytes > MAX_SINGLE_RASTER_BYTES {
         return Err(MathPaintError::RasterTooLarge);
     }
     Ok((width, height, bytes))
+}
+
+pub(super) fn raster_metrics(
+    display: &DisplayList,
+    font_size_px: f32,
+) -> Result<MathMetrics, MathPaintError> {
+    let (width, height, _) = raster_size(display, font_size_px)?;
+    Ok(MathMetrics {
+        width,
+        height,
+        baseline: PADDING_DIP * (font_size_px / BASE_FONT_DIP)
+            + display.height as f32 * font_size_px,
+    })
 }
 
 fn raster_dimension(em: f64, font_size_px: f32, padding_px: f32) -> Result<u32, MathPaintError> {
@@ -588,7 +600,7 @@ mod tests {
             (
                 raster.width,
                 raster.height,
-                raster.baseline.to_bits(),
+                raster_metrics(&display, 17.0).unwrap().baseline.to_bits(),
                 alpha_coverage,
                 hash,
             )

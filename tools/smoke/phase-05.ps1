@@ -1,3 +1,4 @@
+# 2026-10-22: Preview resource/overflow maintenance uses the existing Rust-owned Phase 05 tests.
 [CmdletBinding()]
 param(
     [switch]$Performance,

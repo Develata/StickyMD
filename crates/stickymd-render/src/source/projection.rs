@@ -59,6 +59,7 @@ pub enum SourceInitializationMilestone {
 pub struct SourceProjection {
     pub(super) font_system: FontSystem,
     pub(super) swash_cache: SwashCache,
+    pub(super) glyph_budget: crate::glyph_cache::GlyphCacheBudget,
     pub(super) buffer: Buffer,
     pub(super) diagnostic_buffer: Buffer,
     pub(super) diagnostic_text: String,
@@ -106,6 +107,7 @@ impl SourceProjection {
         let mut projection = Self {
             font_system,
             swash_cache: SwashCache::new(),
+            glyph_budget: Default::default(),
             buffer,
             diagnostic_buffer,
             diagnostic_text: String::new(),
@@ -459,6 +461,7 @@ impl SourceProjection {
         }
         if self.scale_factor.to_bits() != scale.to_bits() {
             self.swash_cache = SwashCache::new();
+            self.glyph_budget = Default::default();
         }
         self.width_px = width_px;
         self.height_px = height_px;
@@ -632,6 +635,43 @@ mod tests {
             text: Arc::from(text),
             generation: Generation::initial(),
             line_ending: LineEnding::Lf,
+        }
+    }
+
+    #[test]
+    fn phase10_source_glyph_pressure_rebuilds_identical_pixels() {
+        let snapshot = stickymd_core::DocumentSnapshot {
+            text: std::sync::Arc::from("中文 👩‍💻 e\u{301} source"),
+            generation: Generation::initial(),
+            line_ending: stickymd_core::LineEnding::Lf,
+        };
+        let mut projection = SourceProjection::new(&snapshot, 500, 200, 1.0);
+        let mut pixels = tiny_skia::Pixmap::new(500, 200).unwrap();
+        projection
+            .paint(
+                &mut pixels,
+                Selection::caret(0),
+                false,
+                false,
+                None,
+                crate::source::SourceTheme::Light,
+            )
+            .unwrap();
+        let expected = pixels.data().to_vec();
+        projection.glyph_budget = crate::glyph_cache::GlyphCacheBudget::for_test(1);
+        for _ in 0..2 {
+            projection
+                .paint(
+                    &mut pixels,
+                    Selection::caret(0),
+                    false,
+                    false,
+                    None,
+                    crate::source::SourceTheme::Light,
+                )
+                .unwrap();
+            assert_eq!(pixels.data(), expected);
+            assert!(projection.swash_cache.image_cache.is_empty());
         }
     }
 

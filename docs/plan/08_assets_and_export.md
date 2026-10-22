@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-30
+- `Last Review`: 2026-10-22
 - `Scope`: managed/user 资产边界、命名、编码保留、引用追踪、.trash、undo/redo 副作用、启动 reconcile、安全 GC、remote 图片、导出
 
 ---
@@ -188,6 +188,13 @@ destination。相对路径以 `note/` 为基准；绝对路径、`../`、percent
 只打开 seekable reader 读取格式与尺寸元数据；只有图片进入 viewport 上下 300 DIP 邻域后，
 才读取完整 bounded encoded bytes、计算内容哈希并解码缩放 raster。
 
+同一次 layout/viewport refresh 内，同一 destination 的尺寸探测与实际内容读取可以去重；
+临时去重索引在该次操作结束时释放，不建立跨刷新文件事实缓存。位图 key 仍由实际读取内容
+及目标尺寸决定，不能只凭文件名、大小或 mtime 判断内容未变。若引入流式校验，读取仍经过
+同一受控适配器，hash 与实际解码内容必须一致，校验失败不得复用旧图。
+刷新时仍检查所有图片的尺寸/存在性：离屏图片的删除或尺寸变化可能移动后续布局与锚点。
+失败与缺失结果只在本轮共享；下一轮必须允许重新发现恢复的图片。
+
 ## Remote 图片
 
 HTTP/HTTPS 图片：不发起网络请求、不下载、不缓存；Preview 显示 alt text + 可点击链接；
@@ -214,6 +221,8 @@ map entry 后让外部 `Arc` 逃逸预算；预算不足时后续图片保持 pl
 释放并允许淘汰。替换 layout 前先释放旧 raster leases。
 远程图片只产生占位符与安全链接，
 任何 Preview 路径均不得发起网络请求。
+
+宽表横向滚动时，ImageSlots 按块视口释放隐藏列的 raster 引用、加载新进入的图片；首次布局也不解码离屏列。只有含图片块的横向偏移变化才触发该刷新，其他代码块滚动不得引起图片重复读取。横向偏移的 authority 与过期校验仍由 04/06 定义。
 
 ---
 

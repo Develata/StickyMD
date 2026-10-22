@@ -8,5 +8,5 @@ mod painter;
 mod path_painter;
 
 pub(crate) use engine::{
-    MAX_DOCUMENT_FORMULAS, MathEngine, MathEngineCounters, MathError, MathKind, MathRaster,
+    MAX_DOCUMENT_FORMULAS, MathEngine, MathEngineCounters, MathError, MathKind, MathMetrics,
 };

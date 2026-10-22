@@ -310,20 +310,17 @@ fn formula_pressure_keeps_live_layout_bounded_and_preserves_source() {
     );
     let rasterizations = pipeline.math_counters().rasterizations;
     assert!(rasterizations > 0 && rasterizations < formulas.len() as u64);
-    let live_bytes: usize = pipeline
+    let measured_formulas = pipeline
         .layout
         .as_ref()
         .unwrap()
         .blocks
         .iter()
         .flat_map(|block| &block.chunks)
-        .filter_map(|chunk| match &chunk.content {
-            super::super::layout::LayoutContent::Math(raster) => Some(raster.pixels.len()),
-            _ => None,
-        })
-        .sum();
-    assert!(live_bytes <= 8 * 1024 * 1024);
-    assert!(pipeline.math_engine.cache_sizes().2 >= live_bytes);
+        .filter(|chunk| matches!(chunk.content, super::super::layout::LayoutContent::Math(_)))
+        .count();
+    assert_eq!(measured_formulas, formulas.len());
+    assert!(pipeline.math_engine.cache_sizes().2 <= 8 * 1024 * 1024);
     let bottom = pipeline
         .paint(
             Generation::initial(),
@@ -333,11 +330,17 @@ fn formula_pressure_keeps_live_layout_bounded_and_preserves_source() {
             PreviewTheme::Light,
         )
         .unwrap();
-    assert!(bottom.index().boxes().iter().any(|item| {
-        item.tooltip
-            .as_deref()
-            .is_some_and(|tooltip| tooltip.contains("safety budget"))
-    }));
+    assert!(bottom.index().boxes().iter().any(|item| item.atomic));
+    assert!(
+        bottom
+            .index()
+            .boxes()
+            .iter()
+            .all(|item| item.tooltip.is_none())
+    );
+    assert_eq!(bottom.document_height(), frame.document_height());
+    assert!(pipeline.math_counters().rasterizations > rasterizations);
+    let rasterizations = pipeline.math_counters().rasterizations;
     pipeline.release_document_projection();
     assert_eq!(pipeline.math_engine.cache_sizes().2, 0);
     pipeline

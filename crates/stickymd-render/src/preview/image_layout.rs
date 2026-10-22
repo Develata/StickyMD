@@ -4,8 +4,9 @@
 
 use std::sync::Arc;
 
-use crate::image::{DecodedImageCache, PreviewImageSource};
+use crate::image::DecodedImageCache;
 
+use super::image_requests::ImageRequests;
 use super::image_resources::LaidOutImage;
 use super::layout::{BlockBuild, LayoutChunk, LayoutContent};
 use super::{PreviewRect, PreviewTextBox, RenderBlock};
@@ -18,7 +19,7 @@ pub(super) fn layout_image_block(
     width: f32,
     scale: f32,
     selection_text: &mut String,
-    image_source: Option<&dyn PreviewImageSource>,
+    image_source: Option<&mut ImageRequests<'_>>,
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
 ) -> Option<BlockBuild> {
@@ -49,8 +50,14 @@ pub(super) fn layout_image_block(
         height: target_height as f32,
     };
     Some(BlockBuild {
+        horizontal: None,
         height: rect.height.max(1.0),
-        chunks: vec![LayoutChunk { content, x, y }],
+        chunks: vec![LayoutChunk {
+            scroll_with_block: true,
+            content,
+            x,
+            y,
+        }],
         decorations: Vec::new(),
         boxes: vec![PreviewTextBox {
             selection_range: selection_start..selection_end,

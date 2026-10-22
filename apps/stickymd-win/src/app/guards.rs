@@ -47,7 +47,8 @@ impl StickyApp {
             editor_composing: self.session.is_composing(),
             search_composing: self.search.is_composing(),
             move_resize_active: self.move_resize_active,
-            scrollbar_dragging: self.scrollbars.drag.is_some(),
+            scrollbar_dragging: self.scrollbars.drag.is_some()
+                || self.preview_horizontal.drag.is_some(),
             opacity_popup_open: self.controls.opacity_popup_open,
             search_open: self.search.open,
             export_in_flight: self.export_in_flight,

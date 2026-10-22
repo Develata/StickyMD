@@ -886,10 +886,10 @@ fn verify_global_acceptance_sequence(root: &Path) -> Result<(), String> {
             observed.push(number);
         }
     }
-    let expected: Vec<u8> = (1..=38).collect();
+    let expected: Vec<u8> = (1..=41).collect();
     if observed != expected {
         return Err(format!(
-            "global acceptance IDs must be exactly AC-001..AC-038; observed {observed:?}"
+            "global acceptance IDs must be exactly AC-001..AC-041; observed {observed:?}"
         ));
     }
     Ok(())

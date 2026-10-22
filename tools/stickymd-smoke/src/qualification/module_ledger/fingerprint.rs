@@ -366,6 +366,7 @@ const EVERY_SESSION: &[&str] = &[
     "apps/stickymd-win/src/platform/windows/window_topmost.rs",
     "crates/stickymd-core/src/",
     "crates/stickymd-render/src/lib.rs",
+    "crates/stickymd-render/src/glyph_cache.rs",
     "crates/stickymd-render/src/scroll.rs",
     "crates/stickymd-render/src/source/",
 ];

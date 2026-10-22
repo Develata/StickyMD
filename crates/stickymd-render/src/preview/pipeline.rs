@@ -10,7 +10,7 @@ use crate::math::{MathEngine, MathEngineCounters};
 use crate::source::FontSelection;
 
 use super::layout::{LaidOutDocument, LayoutResources, layout_document};
-use super::paint::{PreviewPaintError, paint_document};
+use super::paint::{PaintResources, PreviewPaintError, paint_document};
 use super::{
     PreviewFrame, PreviewParser, PreviewSelection, PreviewTheme, RenderTree, RenderTreeBuilder,
 };
@@ -73,6 +73,7 @@ pub struct PreviewPipeline {
     builder: RenderTreeBuilder,
     font_system: FontSystem,
     swash_cache: SwashCache,
+    glyph_budget: crate::glyph_cache::GlyphCacheBudget,
     fonts: FontSelection,
     math_engine: MathEngine,
     image_cache: DecodedImageCache,
@@ -82,6 +83,8 @@ pub struct PreviewPipeline {
     tree: Option<RenderTree>,
     layout: Option<LaidOutDocument>,
     counters: PreviewPipelineCounters,
+    horizontal_offsets: super::PreviewHorizontalOffsets,
+    image_horizontal: super::PreviewHorizontalOffsets,
 }
 
 impl Default for PreviewPipeline {
@@ -91,6 +94,10 @@ impl Default for PreviewPipeline {
 }
 
 impl PreviewPipeline {
+    pub fn set_horizontal_offsets(&mut self, offsets: super::PreviewHorizontalOffsets) {
+        self.horizontal_offsets = offsets;
+    }
+
     pub fn new() -> Self {
         let mut font_system = FontSystem::new();
         super::fonts::configure_code_font(&mut font_system);
@@ -100,6 +107,7 @@ impl PreviewPipeline {
             builder: RenderTreeBuilder,
             font_system,
             swash_cache: SwashCache::new(),
+            glyph_budget: Default::default(),
             fonts,
             math_engine: MathEngine::new(),
             image_cache: DecodedImageCache::default(),
@@ -109,6 +117,8 @@ impl PreviewPipeline {
             tree: None,
             layout: None,
             counters: PreviewPipelineCounters::default(),
+            horizontal_offsets: super::PreviewHorizontalOffsets::default(),
+            image_horizontal: super::PreviewHorizontalOffsets::default(),
         }
     }
 
@@ -156,6 +166,7 @@ impl PreviewPipeline {
         self.layout = None;
         let layout = layout_document(
             LayoutResources {
+                horizontal_offsets: &self.horizontal_offsets,
                 font_system: &mut self.font_system,
                 fonts: &self.fonts,
                 math_engine: &mut self.math_engine,
@@ -173,6 +184,11 @@ impl PreviewPipeline {
         self.tree = Some(tree);
         self.layout = Some(layout);
         self.image_band = image_band;
+        self.image_horizontal = self.horizontal_offsets.for_layout(
+            self.layout.as_ref().expect("installed layout").generation,
+            width_px,
+            scale,
+        );
         self.layout_has_image_source = image_source.is_some();
         self.paint_with_image_source(
             snapshot.generation,
@@ -251,6 +267,7 @@ impl PreviewPipeline {
         self.layout = None;
         self.layout = Some(layout_document(
             LayoutResources {
+                horizontal_offsets: &self.horizontal_offsets,
                 font_system: &mut self.font_system,
                 fonts: &self.fonts,
                 math_engine: &mut self.math_engine,
@@ -264,6 +281,11 @@ impl PreviewPipeline {
             theme,
         ));
         self.image_band = image_band;
+        self.image_horizontal = self.horizontal_offsets.for_layout(
+            self.layout.as_ref().expect("installed layout").generation,
+            width_px,
+            scale,
+        );
         self.layout_has_image_source = image_source_available;
         self.counters.layouts = self.counters.layouts.saturating_add(1);
         self.paint_with_image_source(
@@ -318,8 +340,20 @@ impl PreviewPipeline {
         let needs_image_source_refresh = self.layout_has_image_source != image_source_available;
         // An adapter is always present in production, including text-only notes.
         // Only semantic local-image nodes need band admission or source refresh.
+        let image_layout = self.layout.as_ref().expect("current layout checked above");
+        let horizontal = self.horizontal_offsets.for_layout(
+            generation,
+            image_layout.width_px,
+            image_layout.scale,
+        );
         let needs_image_band = self.tree_has_local_images
             && (needs_image_source_refresh
+                || (horizontal != self.image_horizontal
+                    && image_layout.image_slots.horizontal_changed(
+                        &image_layout.blocks,
+                        &self.image_horizontal,
+                        &horizontal,
+                    ))
                 || (image_source_available
                     && (effective_scroll_y < self.image_band.0
                         || effective_scroll_y + height_px as f32 > self.image_band.1)));
@@ -340,6 +374,7 @@ impl PreviewPipeline {
                                 source,
                                 &mut self.image_cache,
                                 band,
+                                &horizontal,
                             )
                         })
                 });
@@ -347,6 +382,7 @@ impl PreviewPipeline {
                 self.layout = None;
                 self.layout = Some(layout_document(
                     LayoutResources {
+                        horizontal_offsets: &self.horizontal_offsets,
                         font_system: &mut self.font_system,
                         fonts: &self.fonts,
                         math_engine: &mut self.math_engine,
@@ -378,6 +414,7 @@ impl PreviewPipeline {
             let tree = self.tree.as_ref().ok_or(PreviewPipelineError::NoDocument)?;
             self.layout = Some(layout_document(
                 LayoutResources {
+                    horizontal_offsets: &self.horizontal_offsets,
                     font_system: &mut self.font_system,
                     fonts: &self.fonts,
                     math_engine: &mut self.math_engine,
@@ -397,15 +434,21 @@ impl PreviewPipeline {
             .layout
             .as_mut()
             .ok_or(PreviewPipelineError::NoDocument)?;
+        self.image_horizontal = horizontal;
         let frame = paint_document(
-            &mut self.font_system,
-            &mut self.swash_cache,
+            PaintResources {
+                font_system: &mut self.font_system,
+                swash_cache: &mut self.swash_cache,
+                math_engine: &mut self.math_engine,
+            },
             layout,
             height_px,
             effective_scroll_y,
             selection,
             theme,
+            &self.horizontal_offsets,
         )?;
+        self.glyph_budget.after_paint(&mut self.swash_cache);
         self.counters.paints = self.counters.paints.saturating_add(1);
         Ok(frame)
     }
@@ -425,8 +468,10 @@ impl PreviewPipeline {
     pub fn release_raster_caches(&mut self) {
         self.layout = None;
         self.swash_cache = SwashCache::new();
+        self.glyph_budget = Default::default();
         self.math_engine.release_rasters();
         self.image_cache.clear();
+        self.image_horizontal = Default::default();
     }
 
     /// Drops every document-sized Preview projection while retaining the
@@ -451,6 +496,7 @@ impl PreviewPipeline {
         {
             // Swash keys include effective font size but do not evict old sizes.
             self.swash_cache = SwashCache::new();
+            self.glyph_budget = Default::default();
         }
     }
 
@@ -482,6 +528,10 @@ fn image_band(scroll_y: f32, height_px: u32, scale: f32) -> (f32, f32) {
 #[cfg(test)]
 #[path = "pipeline/audit_tests.rs"]
 mod audit_tests;
+
+#[cfg(test)]
+#[path = "pipeline/resource_tests.rs"]
+mod resource_tests;
 
 #[cfg(test)]
 #[path = "pipeline/image_refresh_tests.rs"]
@@ -1066,7 +1116,7 @@ mod tests {
             })
             .count();
         assert_eq!(image_chunks, 2);
-        assert_eq!(images.loads.get(), 2);
+        assert_eq!(images.loads.get(), 1);
         assert!(frame.index().text().contains("before alt after"));
         assert!(frame.index().text().contains("x table y"));
     }
@@ -1561,6 +1611,7 @@ mod tests {
         let tree = builder.build(&owned);
         let _ = layout_document(
             LayoutResources {
+                horizontal_offsets: &crate::preview::PreviewHorizontalOffsets::default(),
                 font_system: &mut font_system,
                 fonts: &fonts,
                 math_engine: &mut math_engine,
@@ -1584,6 +1635,7 @@ mod tests {
             let layout_started = Instant::now();
             let mut layout = layout_document(
                 LayoutResources {
+                    horizontal_offsets: &crate::preview::PreviewHorizontalOffsets::default(),
                     font_system: &mut font_system,
                     fonts: &fonts,
                     math_engine: &mut math_engine,
@@ -1599,13 +1651,17 @@ mod tests {
             let layout_duration = layout_started.elapsed();
             let paint_started = Instant::now();
             paint_document(
-                &mut font_system,
-                &mut swash_cache,
+                PaintResources {
+                    font_system: &mut font_system,
+                    swash_cache: &mut swash_cache,
+                    math_engine: &mut math_engine,
+                },
                 &mut layout,
                 600,
                 0.0,
                 PreviewSelection::default(),
                 PreviewTheme::Light,
+                &crate::preview::PreviewHorizontalOffsets::default(),
             )
             .unwrap();
             samples.comrak.push(parse.comrak_parse);
@@ -1666,6 +1722,7 @@ mod tests {
             let layout_started = Instant::now();
             let mut layout = layout_document(
                 LayoutResources {
+                    horizontal_offsets: &crate::preview::PreviewHorizontalOffsets::default(),
                     font_system: &mut font_system,
                     fonts: &fonts,
                     math_engine: &mut math_engine,
@@ -1681,13 +1738,17 @@ mod tests {
             let layout_duration = layout_started.elapsed();
             let paint_started = Instant::now();
             paint_document(
-                &mut font_system,
-                &mut swash_cache,
+                PaintResources {
+                    font_system: &mut font_system,
+                    swash_cache: &mut swash_cache,
+                    math_engine: &mut math_engine,
+                },
                 &mut layout,
                 700,
                 0.0,
                 PreviewSelection::default(),
                 PreviewTheme::Light,
+                &crate::preview::PreviewHorizontalOffsets::default(),
             )
             .unwrap();
             samples.comrak.push(parse.comrak_parse);
@@ -1725,3 +1786,6 @@ mod tests {
         samples.iter().copied().max().unwrap_or_default()
     }
 }
+
+#[cfg(test)]
+mod horizontal_tests;

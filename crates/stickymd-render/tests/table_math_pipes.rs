@@ -84,6 +84,28 @@ fn absolute_value_commands_render_a_six_column_table() {
                 PreviewTheme::Light,
             )
             .unwrap();
+        if let Some(target) = frame.horizontal_target_at(25.0, 25.0) {
+            let mut x = 0.0_f32;
+            loop {
+                pipeline.set_horizontal_offsets(
+                    stickymd_render::preview::PreviewHorizontalOffsets::default()
+                        .with_offset(target, x.min(target.max_offset())),
+                );
+                pipeline
+                    .paint(
+                        frame.generation(),
+                        300,
+                        0.0,
+                        PreviewSelection::default(),
+                        PreviewTheme::Light,
+                    )
+                    .unwrap();
+                if x >= target.max_offset() {
+                    break;
+                }
+                x += 400.0;
+            }
+        }
         assert_eq!(pipeline.math_counters().rasterizations, 6);
         assert!(
             frame

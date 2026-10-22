@@ -68,13 +68,17 @@ fn fingerprint(pipeline: &mut PreviewPipeline, document: &mut LaidOutDocument) -
     }
     for scroll in [0.0, document.height_px / 2.0, document.height_px] {
         let frame = paint_document(
-            &mut pipeline.font_system,
-            &mut pipeline.swash_cache,
+            PaintResources {
+                font_system: &mut pipeline.font_system,
+                swash_cache: &mut pipeline.swash_cache,
+                math_engine: &mut pipeline.math_engine,
+            },
             document,
             300,
             scroll,
             PreviewSelection::default(),
             PreviewTheme::Light,
+            &crate::preview::PreviewHorizontalOffsets::default(),
         )
         .unwrap();
         hash.write(frame.rgba());
@@ -102,6 +106,7 @@ fn phase5_preview_release_baseline_text_reuse() {
             let started = Instant::now();
             let document = layout_document(
                 LayoutResources {
+                    horizontal_offsets: &crate::preview::PreviewHorizontalOffsets::default(),
                     font_system: &mut pipeline.font_system,
                     fonts: &pipeline.fonts,
                     math_engine: &mut pipeline.math_engine,

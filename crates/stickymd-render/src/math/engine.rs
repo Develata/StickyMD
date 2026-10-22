@@ -10,12 +10,14 @@ use ratex_types::display_item::DisplayList;
 use ratex_types::math_style::MathStyle;
 use thiserror::Error;
 
-use super::cache::{ByteLru, EntryLru};
-use super::painter::{MAX_RASTER_BYTES, MathPaintError, MathPainter, raster_size, rasterize};
+use super::cache::ByteLru;
+use super::painter::{MathPaintError, MathPainter, raster_metrics, raster_size, rasterize};
 
 pub(crate) const MAX_FORMULA_SOURCE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_DOCUMENT_FORMULAS: usize = 2_000;
 const MAX_LAYOUT_ENTRIES: usize = 512;
+const MAX_LAYOUT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_RASTER_CACHE_BYTES: usize = 8 * 1024 * 1024;
 const RASTER_ENTRY_METADATA_ESTIMATE: usize = 128;
 // A layout-only marker outside the user-facing color domain. RaTeX copies the
 // option color into items that inherit the preview foreground; explicit TeX
@@ -38,12 +40,18 @@ pub(crate) enum MathKind {
     Display,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct MathRaster {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct MathMetrics {
     pub width: u32,
     pub height: u32,
     pub baseline: f32,
-    pub pixels: Arc<[u8]>,
+}
+
+#[derive(Debug)]
+pub(crate) struct MathRaster {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
 }
 
 impl MathRaster {
@@ -62,8 +70,6 @@ pub(crate) enum MathError {
     Parse(String),
     #[error("formula geometry is not finite or non-negative")]
     InvalidGeometry,
-    #[error("formula rasters in the current preview exhausted the 8 MiB safety budget")]
-    RasterBudgetExhausted,
     #[error(transparent)]
     Paint(#[from] MathPaintError),
 }
@@ -97,8 +103,28 @@ struct MathLayout {
     display_list: DisplayList,
 }
 
+impl MathLayout {
+    fn retained_bytes(&self) -> usize {
+        use ratex_types::{display_item::DisplayItem, path_command::PathCommand};
+        std::mem::size_of::<Self>()
+            + self.display_list.items.capacity() * std::mem::size_of::<DisplayItem>()
+            + self
+                .display_list
+                .items
+                .iter()
+                .map(|item| match item {
+                    DisplayItem::GlyphPath { font, .. } => font.capacity(),
+                    DisplayItem::Path { commands, .. } => {
+                        commands.capacity() * std::mem::size_of::<PathCommand>()
+                    }
+                    _ => 0,
+                })
+                .sum::<usize>()
+    }
+}
+
 pub(crate) struct MathEngine {
-    layouts: EntryLru<LayoutKey, Arc<MathLayout>>,
+    layouts: ByteLru<LayoutKey, Arc<MathLayout>>,
     rasters: ByteLru<RasterKey, Arc<MathRaster>>,
     painter: MathPainter,
     counters: MathEngineCounters,
@@ -115,8 +141,8 @@ impl Default for MathEngine {
 impl MathEngine {
     pub(crate) fn new() -> Self {
         Self {
-            layouts: EntryLru::new(MAX_LAYOUT_ENTRIES),
-            rasters: ByteLru::new(MAX_RASTER_BYTES),
+            layouts: ByteLru::with_entry_limit(MAX_LAYOUT_BYTES, MAX_LAYOUT_ENTRIES),
+            rasters: ByteLru::new(MAX_RASTER_CACHE_BYTES),
             painter: MathPainter::new(),
             counters: MathEngineCounters::default(),
             raster_scale_bits: None,
@@ -139,19 +165,41 @@ impl MathEngine {
         self.raster_theme = Some(foreground);
     }
 
-    pub(crate) fn render(
+    /// Measures full-document geometry without allocating or retaining pixels.
+    pub(crate) fn measure(
         &mut self,
         source: impl Into<Arc<str>>,
         kind: MathKind,
         font_size_px: f32,
-        foreground: [u8; 4],
-    ) -> Result<Arc<MathRaster>, MathError> {
-        let source = source.into();
-        if source.len() > MAX_FORMULA_SOURCE_BYTES {
-            return Err(MathError::SourceTooLong);
-        }
+    ) -> Result<MathMetrics, MathError> {
         if !font_size_px.is_finite() || font_size_px <= 0.0 {
             return Err(MathError::InvalidGeometry);
+        }
+        let layout = self.layout_for(source.into(), kind)?;
+        Ok(raster_metrics(&layout.display_list, font_size_px)?)
+    }
+
+    /// Pixel ownership stays in the engine or this call's transient allocation.
+    /// The renderer can draw a borrowed raster but cannot pin it in full layout.
+    pub(crate) fn draw<T>(
+        &mut self,
+        source: Arc<str>,
+        kind: MathKind,
+        font_size_px: f32,
+        foreground: [u8; 4],
+        paint: impl FnOnce(&MathRaster) -> T,
+    ) -> Result<T, MathError> {
+        let raster = self.render(source, kind, font_size_px, foreground)?;
+        Ok(paint(&raster))
+    }
+
+    fn layout_for(
+        &mut self,
+        source: Arc<str>,
+        kind: MathKind,
+    ) -> Result<Arc<MathLayout>, MathError> {
+        if source.len() > MAX_FORMULA_SOURCE_BYTES {
+            return Err(MathError::SourceTooLong);
         }
         let layout_key = LayoutKey {
             source: Arc::clone(&source),
@@ -178,14 +226,33 @@ impl MathEngine {
                 return Err(MathError::InvalidGeometry);
             }
             let layout = Arc::new(MathLayout { display_list });
-            if self.layouts.insert(layout_key.clone(), Arc::clone(&layout)) {
-                self.counters.layout_evictions = self.counters.layout_evictions.saturating_add(1);
-            }
+            let bytes = layout.retained_bytes() + source.len() + 128;
+            let evicted = self.layouts.insert(layout_key, Arc::clone(&layout), bytes);
+            self.counters.layout_evictions = self
+                .counters
+                .layout_evictions
+                .saturating_add(evicted as u64);
             layout
         };
+        Ok(layout)
+    }
 
+    fn render(
+        &mut self,
+        source: impl Into<Arc<str>>,
+        kind: MathKind,
+        font_size_px: f32,
+        foreground: [u8; 4],
+    ) -> Result<Arc<MathRaster>, MathError> {
+        let source = source.into();
+        if !font_size_px.is_finite() || font_size_px <= 0.0 {
+            return Err(MathError::InvalidGeometry);
+        }
         let raster_key = RasterKey {
-            layout: layout_key,
+            layout: LayoutKey {
+                source: Arc::clone(&source),
+                kind,
+            },
             font_size_bits: font_size_px.to_bits(),
             foreground,
         };
@@ -194,6 +261,7 @@ impl MathEngine {
             return Ok(raster);
         }
         self.counters.raster_misses = self.counters.raster_misses.saturating_add(1);
+        let layout = self.layout_for(Arc::clone(&source), kind)?;
         let bytes = raster_size(&layout.display_list, font_size_px)?
             .2
             .saturating_add(source.len())
@@ -206,9 +274,6 @@ impl MathEngine {
             .counters
             .raster_evictions
             .saturating_add((previous_entries - self.rasters.len()) as u64);
-        if !admitted {
-            return Err(MathError::RasterBudgetExhausted);
-        }
         self.counters.rasterizations = self.counters.rasterizations.saturating_add(1);
         let raster = Arc::new(rasterize(
             &mut self.painter,
@@ -220,11 +285,15 @@ impl MathEngine {
             bytes,
             raster.byte_len() + source.len() + RASTER_ENTRY_METADATA_ESTIMATE
         );
-        let evicted = self.rasters.insert(raster_key, Arc::clone(&raster), bytes);
-        self.counters.raster_evictions = self
-            .counters
-            .raster_evictions
-            .saturating_add(evicted as u64);
+        if admitted {
+            let evicted = self.rasters.insert(raster_key, Arc::clone(&raster), bytes);
+            self.counters.raster_evictions = self
+                .counters
+                .raster_evictions
+                .saturating_add(evicted as u64);
+        }
+        // A cache miss/admission failure is not a formula error. The draw callback
+        // drops an uncached raster before requesting the next visible formula.
         Ok(raster)
     }
 
@@ -234,6 +303,16 @@ impl MathEngine {
 
     pub(crate) const fn counters(&self) -> MathEngineCounters {
         self.counters
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_raster_budget_for_test(&mut self, bytes: usize) {
+        self.rasters = ByteLru::new(bytes);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn layout_bytes(&self) -> usize {
+        self.layouts.bytes()
     }
 
     #[cfg(test)]
@@ -277,6 +356,9 @@ mod tests {
             .render(r"\frac{a}{b}", MathKind::Inline, 17.0, BLACK)
             .unwrap();
         for _ in 0..100 {
+            engine
+                .measure(r"\frac{a}{b}", MathKind::Inline, 17.0)
+                .unwrap();
             let repeated = engine
                 .render(r"\frac{a}{b}", MathKind::Inline, 17.0, BLACK)
                 .unwrap();
@@ -312,44 +394,47 @@ mod tests {
             .unwrap();
         let (_, _, accounted_bytes, _) = engine.cache_sizes();
         assert!(accounted_bytes >= raster.byte_len() + source.len());
-        assert!(accounted_bytes <= MAX_RASTER_BYTES);
+        assert!(accounted_bytes <= MAX_RASTER_CACHE_BYTES);
     }
 
     #[test]
-    fn live_formula_rasters_cannot_escape_the_shared_budget() {
-        let mut engine = MathEngine::new();
-        // A small cache makes the same ownership failure reproducible without
-        // allocating a document full of large formula rasters.
-        engine.rasters = ByteLru::new(4_096);
-        let mut live = Vec::new();
-        for index in 0..40 {
-            match engine.render(format!("x_{{{index}}}"), MathKind::Inline, 17.0, BLACK) {
-                Ok(raster) => live.push(raster),
-                Err(error) => assert_eq!(error, MathError::RasterBudgetExhausted),
+    fn cache_pressure_does_not_change_formula_validity_or_geometry() {
+        for budget in [0, 16, 4_096] {
+            let mut engine = MathEngine::new();
+            engine.set_raster_budget_for_test(budget);
+            for index in 0..40 {
+                let source: Arc<str> = Arc::from(format!("x_{{{index}}}"));
+                let measured = engine
+                    .measure(Arc::clone(&source), MathKind::Inline, 17.0)
+                    .unwrap();
+                let rasterizations = engine.counters().rasterizations;
+                engine
+                    .draw(source, MathKind::Inline, 17.0, BLACK, |raster| {
+                        assert_eq!(
+                            (raster.width, raster.height),
+                            (measured.width, measured.height)
+                        );
+                        assert!(raster.pixels.iter().any(|byte| *byte != 0));
+                    })
+                    .unwrap();
+                assert_eq!(engine.counters().rasterizations, rasterizations + 1);
+                assert!(engine.cache_sizes().2 <= budget);
             }
         }
-        let live_bytes: usize = live.iter().map(|raster| raster.byte_len()).sum();
-        eprintln!(
-            "formula raster budget=4096 live_bytes={live_bytes} cache_bytes={}",
-            engine.cache_sizes().2
-        );
-        assert!(
-            live_bytes <= 4_096,
-            "live formula pixels escaped cache accounting: {live_bytes}"
-        );
-        assert!(!live.is_empty());
-        assert!(
-            live.len() < 40,
-            "cache pressure must reject additional leases"
-        );
-        assert_eq!(engine.counters().rasterizations as usize, live.len());
-        let reused = engine
-            .render("x_{0}", MathKind::Inline, 17.0, BLACK)
+    }
+
+    #[test]
+    fn measuring_formulas_never_allocates_rasters_and_keeps_single_formula_guards() {
+        let mut engine = MathEngine::new();
+        engine
+            .measure(r"\frac{a}{b}", MathKind::Display, 51.0)
             .unwrap();
-        assert!(Arc::ptr_eq(&reused, &live[0]));
-        drop(reused);
-        drop(live);
-        assert!(engine.render("y", MathKind::Inline, 17.0, BLACK).is_ok());
+        assert_eq!(engine.counters().rasterizations, 0);
+        assert_eq!(engine.cache_sizes().2, 0);
+        assert!(matches!(
+            engine.measure("x", MathKind::Display, 100_000.0),
+            Err(MathError::Paint(MathPaintError::RasterTooLarge))
+        ));
     }
 
     #[test]
@@ -376,7 +461,7 @@ mod tests {
         }
         let (layouts, _rasters, raster_bytes, outline_bytes) = engine.cache_sizes();
         assert_eq!(layouts, MAX_LAYOUT_ENTRIES);
-        assert!(raster_bytes <= MAX_RASTER_BYTES);
+        assert!(raster_bytes <= MAX_RASTER_CACHE_BYTES);
         assert!(outline_bytes <= 4 * 1024 * 1024);
         assert!(engine.counters().layout_evictions > 0);
     }

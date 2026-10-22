@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.1.0
-- `Last Review`: 2026-08-30
+- `Last Review`: 2026-10-22
 - `Scope`: Markdown 语义权威、数学语义权威、Owned AST、Preview 调度与 generation、渲染桥接、缓存与资源限制
 
 ---
@@ -114,6 +114,7 @@ TeX tokenizer、数学 AST、分数/根号/矩阵布局、可伸缩括号、上�
 | --- | --- |
 | 单个公式源码 | 64 KiB |
 | 单文档公式数量 | 2000 |
+| 单公式位图 | RGBA ≤ 8 MiB、单边 ≤ 16384 px；独立于缓存预算 |
 | 超限行为 | 显示原文及错误提示 |
 | 公式后台任务 | 可丢弃过期 generation |
 | 公式渲染 | 不得阻塞 UI 线程 |
@@ -144,6 +145,8 @@ Arc<str> snapshot
 ### v1 布局策略
 
 - 不实现增量 Markdown parser；每次刷新全量 parse + 全量布局（后台）。
+- 全量布局计算完整尺寸、基线和源码映射；公式位图只在绘制可见内容时生成，不能作为
+  公式尺寸的长期持有对象。离屏公式不持有位图或额外长期 DisplayList 引用。
 - UI 只绘制 viewport 范围内的 block。
 - 旧 preview 在新结果完成前保持可用；generation 不匹配的结果立即释放。
 - 这是用 debounce 换取架构简单与稳定性的明确决策。
@@ -224,7 +227,7 @@ row y / height（由所在 visible row 持有）
 
 生命周期与缓存：
 
-- geometry cache key 至少包含 `generation + viewport width/height + scroll + content scale`；影响
+- geometry cache key 至少包含 `generation + viewport width/height + scroll + block horizontal offsets + content scale`；影响
   shaping 的主题/字体 token 也必须使其失效。selection、hover、clipboard copy 不得触发 relayout
   或重建 cluster map。
 - 构建新 Preview frame 时只投影与 viewport 相交的行和少量既有 overscan；滚动离开后旧 frame
@@ -306,22 +309,52 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
 ## 渲染与缓存
 
 - 代码块：Consolas，不做语法高亮；fenced info string 可作顶部小标签；
-  超长行横向滚动或限宽截断，不得影响窗口布局。
+  保留原始行，超长行在块内横向滚动，不得撑宽窗口或按普通正文自动换行。
 - 表格：GFM alignment、单元格换行、基本边框、行背景轻微交替、宽度不足区域横向滚动；
   不支持列宽拖动与单元格编辑；task checkbox 只读。
-- MathLayoutCache：source + display_mode + foreground → DisplayList；最多 512 entries。
+- MathLayoutCache：source + display_mode → DisplayList；最多 512 entries 且计费容量 ≤ 8 MiB。
+  继承正文的默认颜色保留为逻辑标记，theme foreground 在 raster 阶段解析；显式 TeX 颜色保留。
 - MathRasterCache：layout key + effective font size（已折入 DPI 与 Content Zoom）+ theme foreground → raster；
-  严格预算 ≤ 8 MiB。
+  驻留预算 ≤ 8 MiB，与单公式分配上限分别定义、分别测试。预算值按性能合同实测评估。
+  缓存不接纳时允许当前公式使用一个受单公式限制的临时位图，绘制完立即释放；不得把
+  缓存压力转换为公式语法错误。峰值统计同时计入缓存、临时位图及 painter 分配。
 - painter 的复用 glyph outline 采用独立 ≤ 4 MiB bounded cache；不使用上游无界 outline cache。
 - DecodedImageCache：只缓存 viewport 附近图片；≤ 16 MiB；LRU 淘汰。
 - 单次文档 layout 内允许复用等价文字 shaping；只在第二次出现后 admission，最多 1024 个、
   单 key 文本最多 1024 bytes，layout 完成即释放索引，不跨 generation 保存历史 Preview。
 - 进入纯 Source 或隐藏（tray/dock collapsed）一段时间后：清理解码图片与公式 raster，
   保留小型 layout cache、文档与字体数据库，不保留无必要 framebuffer 副本。
-- Content Zoom 改变时复用已解析的 OwnedDocumentTree/RenderTree，只重新布局可见内容；
+- Content Zoom 改变时复用已解析的 OwnedDocumentTree/RenderTree，重新计算全文尺寸布局、
+  只生成可见内容的位图；
   不重新运行 Comrak，也不推进 Document generation。数学只失效受有效字号影响的 raster，
   保留语义/layout authority；图片按缩放后的布局框请求受 16 MiB 预算约束的 viewport raster，
   不预生成 300% 全文大图。
+
+<a id="preview-horizontal-scroll"></a>
+### 块内横向滚动
+
+- 表格根据单元格内容测量列宽并保留合理换行；总宽度超过内容区时局部横向滚动。
+- 表格与代码块共享最小的块视口、裁剪与坐标转换机制，各自仍拥有各自布局规则。
+- 横向偏移属于 Editor Session 的临时视图状态，按 generation 内的 block identity 定位；
+  source、窗口宽度或有效字号变化后重置/校验，不持久化、不递增 Document generation。
+- 支持指向块内的横向滚轮与 Shift+滚轮；可见的块内滚动条提供鼠标拖动和轨道点击。
+- 渲染、selection、hit-test、link/tooltip 共用同一转换和裁剪；复制读取完整 projection。
+  App 只消费语义滚动目标/范围，不读取 Render crate 内部行、cluster 或布局数组。
+- 视图快照和结果校验包含横向偏移；过期帧不得恢复旧偏移。普通滚动不触发全文重排。
+
+<a id="math-raster-lifecycle"></a>
+### 公式资源生命周期
+
+- MathEngine 独占 RaTeX 布局与栅格化；尺寸测量与位图获取是独立能力。
+- 数学布局驻留缓存同时限制 512 条目与 8 MiB，计费含 DisplayList 动态容量、源码及元数据估算；淘汰后按需重建。
+- 全文布局保存公式源码共享引用、尺寸、基线及 source/selection 映射；DisplayList 复用
+  只属于有界数学布局缓存，不把全部数学布局或位图固定在 LaidOutDocument 中。
+- PreviewPipeline 的现有 worker 在 viewport 绘制时顺序获取公式位图、绘制、释放借用；
+  不增加公式线程、异步任务队列、全局资源协调层或 UI 线程栅格化。
+- 无论全文还是当前一屏的公式位图总和超过缓存预算，单个合法且未超限公式仍可显示；
+  内存上界由驻留缓存加一个单公式临时工作集确定，不以全文公式数量乘位图大小增长。
+- 回收或未命中不得改变文档高度、公式基线、源码复制及滚动锚点。真正的语法、单公式
+  资源或 painter 错误单独传播；原文保持可复制，不通过反复重排重试缓存接纳。
 
 ---
 
@@ -345,6 +378,7 @@ PreviewState 只按 `Dirty → Scheduled → Rendering → Clean/Failed` 推进�
 | --- | --- |
 | 公式解析失败 | 显示原文 + 错误提示，不 panic |
 | 公式超限 | 显示原文 + 提示 |
+| 公式缓存不接纳 | 当前公式按需生成、绘制后释放；不产生公式错误占位 |
 | stale 结果 | 丢弃 |
 | malformed Markdown | 不 panic，按 parser 结果呈现 |
 | remote 图片 | 不下载，显示 alt + link |

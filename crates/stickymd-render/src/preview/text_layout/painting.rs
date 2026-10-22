@@ -7,6 +7,7 @@ use cosmic_text::{Color, FontSystem, LayoutRun, LegacyRenderer, Renderer, SwashC
 use super::TextLayout;
 
 impl TextLayout {
+    #[cfg(test)]
     pub(in crate::preview) fn draw_visible(
         &self,
         font_system: &mut FontSystem,
@@ -15,10 +16,35 @@ impl TextLayout {
         viewport: std::ops::Range<f32>,
         callback: impl FnMut(i32, i32, u32, u32, Color),
     ) {
+        self.draw_in_rect(
+            font_system,
+            cache,
+            color,
+            crate::preview::PreviewRect {
+                x: -f32::MAX / 2.0,
+                y: viewport.start,
+                width: f32::MAX,
+                height: viewport.end - viewport.start,
+            },
+            callback,
+        );
+    }
+
+    pub(in crate::preview) fn draw_in_rect(
+        &self,
+        font_system: &mut FontSystem,
+        cache: &mut SwashCache,
+        color: Color,
+        viewport: crate::preview::PreviewRect,
+        callback: impl FnMut(i32, i32, u32, u32, Color),
+    ) {
+        let horizontal = viewport.x..viewport.right();
+        let viewport = viewport.y..viewport.bottom();
+        let mut font_bounds = std::collections::HashMap::new();
         // Account for shaping offsets before retaining one adjacent row for
         // glyph ink crossing a line box. Combining marks can span many rows.
-        // The locator belongs to this immutable shaped projection; neither the
-        // full document nor all glyphs of a long block are scanned while painting.
+        // The locator visits vertically visible rows only. Unwrapped rows still
+        // scan their glyphs, but off-screen glyph pixels are not painted.
         let viewport = (viewport.start - self.shaped.max_glyph_y_offset)
             ..(viewport.end + self.shaped.max_glyph_y_offset);
         let first = self
@@ -56,6 +82,12 @@ impl TextLayout {
                 line_w: layout.w,
             };
             for glyph in run.glyphs {
+                // Most glyphs are inside the clip and need no extra lookup. For
+                // long unwrapped lines use conservative font ink bounds; color,
+                // bitmap and variable fonts fall back to actual raster placement.
+                if !glyph_intersects(glyph, &horizontal, &mut renderer, &mut font_bounds) {
+                    continue;
+                }
                 renderer.glyph(
                     glyph.physical((0.0, run.line_y), 1.0),
                     glyph.color_opt.unwrap_or(color),
@@ -66,10 +98,128 @@ impl TextLayout {
     }
 }
 
+fn glyph_intersects<F: FnMut(i32, i32, u32, u32, Color)>(
+    glyph: &cosmic_text::LayoutGlyph,
+    horizontal: &std::ops::Range<f32>,
+    renderer: &mut LegacyRenderer<'_, F>,
+    bounds: &mut std::collections::HashMap<
+        (cosmic_text::fontdb::ID, cosmic_text::fontdb::Weight),
+        Option<(f32, f32)>,
+    >,
+) -> bool {
+    let x = glyph.x + glyph.font_size * glyph.x_offset;
+    if x >= horizontal.start && x <= horizontal.end {
+        return true;
+    }
+    let bound = bounds
+        .entry((glyph.font_id, glyph.font_weight))
+        .or_insert_with(|| {
+            let font = renderer
+                .font_system
+                .get_font(glyph.font_id, glyph.font_weight)?;
+            let swash = font.as_swash();
+            if swash.variations().next().is_some()
+                || swash.color_palettes().next().is_some()
+                || swash.color_strikes().next().is_some()
+                || swash.alpha_strikes().next().is_some()
+            {
+                return None;
+            }
+            let metrics = font.metrics();
+            let bbox = metrics.bounds?;
+            if metrics.units_per_em == 0 {
+                return None;
+            }
+            let em = f32::from(metrics.units_per_em);
+            // Cover synthetic italic shear as well as normal outline extents.
+            let shear = bbox.y_min.abs().max(bbox.y_max.abs()) * 0.25;
+            Some(((bbox.x_min - shear) / em, (bbox.x_max + shear) / em))
+        });
+    if let Some((left, right)) = *bound
+        && (x + right * glyph.font_size + 2.0 < horizontal.start
+            || x + left * glyph.font_size - 2.0 > horizontal.end)
+    {
+        return false;
+    }
+    let physical = glyph.physical((0.0, 0.0), 1.0);
+    renderer
+        .cache
+        .get_image(renderer.font_system, physical.cache_key)
+        .as_ref()
+        .is_some_and(|image| {
+            let left = (physical.x + image.placement.left) as f32;
+            left + image.placement.width as f32 >= horizontal.start && left <= horizontal.end
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, UnderlineStyle, Wrap};
+
+    #[test]
+    fn horizontal_clip_matches_full_draw_for_bidi_emoji_italic_and_combining_ink() {
+        let mut fonts = FontSystem::new();
+        let mut cache = SwashCache::new();
+        for scale in [0.75, 1.25, 3.0] {
+            let mut buffer = Buffer::new_empty(Metrics::new(17.0 * scale, 26.0 * scale));
+            buffer.set_wrap(Wrap::None);
+            let text = format!(
+                "{} a{} 中🙂👩‍💻 עברית العربية italic {}",
+                "mixed ".repeat(15),
+                "\u{301}".repeat(60),
+                "end ".repeat(20)
+            );
+            buffer.set_text(
+                &text,
+                &Attrs::new()
+                    .family(Family::Monospace)
+                    .style(cosmic_text::Style::Italic)
+                    .underline(UnderlineStyle::Single),
+                Shaping::Advanced,
+                None,
+            );
+            buffer.shape_until_scroll(&mut fonts, false);
+            let mut layout = TextLayout::new(buffer, Vec::new());
+            for left in [0.0_f32, 137.25, 310.5, 580.75, 900.0] {
+                let mut render = |clipped: bool| {
+                    let mut pixels = vec![0u8; 184 * 160 * 4];
+                    let origin = (-left).round() as i32;
+                    let mut callback = |x: i32, y: i32, w: u32, h: u32, color: Color| {
+                        for py in y.max(0)..(y + h as i32).min(160) {
+                            for px in (x + origin).max(0)..(x + origin + w as i32).min(184) {
+                                let offset = (py as usize * 184 + px as usize) * 4;
+                                pixels[offset..offset + 4].copy_from_slice(&color.as_rgba());
+                            }
+                        }
+                    };
+                    let color = Color::rgb(31, 35, 42);
+                    if clipped {
+                        layout.draw_in_rect(
+                            &mut fonts,
+                            &mut cache,
+                            color,
+                            crate::preview::PreviewRect {
+                                x: -origin as f32,
+                                y: 0.0,
+                                width: 184.0,
+                                height: 160.0,
+                            },
+                            &mut callback,
+                        );
+                    } else {
+                        std::sync::Arc::get_mut(&mut layout.shaped)
+                            .unwrap()
+                            .buffer
+                            .draw(&mut fonts, &mut cache, color, &mut callback);
+                    }
+                    pixels
+                };
+                let full = render(false);
+                assert_eq!(render(true), full, "scale={scale} left={left}");
+            }
+        }
+    }
 
     #[test]
     fn viewport_pixels_include_combining_marks_from_distant_rows() {

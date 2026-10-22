@@ -68,7 +68,7 @@ pub(super) fn current_preview_layout(
     frame_generation == Some(document_generation)
         && applied
             .zip(current)
-            .is_some_and(|(applied, current)| applied.same_layout(current))
+            .is_some_and(|(applied, current)| applied.same_layout(&current))
 }
 const SPLIT_DIVIDER_DIP: f32 = 1.0;
 
@@ -195,6 +195,8 @@ impl StickyApp {
     }
 
     pub(super) fn on_preview_document_changed(&mut self, generation: Generation) {
+        self.cancel_scrollbar_drag();
+        self.preview_horizontal.offsets = Default::default();
         if let Some(action) = self.preview_flow.on_document_changed(
             self.timestamp_ms(),
             generation,
@@ -282,7 +284,9 @@ impl StickyApp {
             hidden_to_tray,
             completion.generation,
             current,
-            viewport.map(|viewport| viewport == completion.viewport),
+            viewport
+                .as_ref()
+                .map(|viewport| viewport == &completion.viewport),
             completion.result.is_ok(),
         ) {
             CompletionRoute::ReleaseHidden => {
@@ -354,6 +358,13 @@ impl StickyApp {
             return;
         };
         let scale = self.document_scale_factor();
+        self.preview_horizontal.offsets = geometry.preview.map_or_else(Default::default, |pane| {
+            self.preview_horizontal.offsets.for_layout(
+                self.coordinator.view().generation,
+                pane.width.max(1),
+                scale,
+            )
+        });
         if let (Some(source), Some(projection)) = (geometry.source, &mut self.projection) {
             projection.set_viewport(source.width.max(1), source.height.max(1), scale);
             if self.source_frame.as_ref().is_none_or(|frame| {
@@ -415,17 +426,22 @@ impl StickyApp {
         current_preview_layout(
             generation,
             current,
-            self.preview_frame_viewport,
+            self.preview_frame_viewport.clone(),
             (generation == Some(current))
                 .then(|| self.preview_viewport())
                 .flatten(),
         )
     }
 
-    fn preview_viewport(&self) -> Option<PreviewViewport> {
+    pub(super) fn preview_viewport(&self) -> Option<PreviewViewport> {
         let pane = self.view_geometry()?.preview?;
         let scale = self.document_scale_factor();
         Some(PreviewViewport {
+            horizontal: self.preview_horizontal.offsets.for_layout(
+                self.coordinator.view().generation,
+                pane.width.max(1),
+                scale,
+            ),
             width_px: pane.width.max(1),
             height_px: pane.height.max(1),
             scale,
@@ -521,6 +537,7 @@ mod tests {
         let old = Generation::initial();
         let generation = old.checked_next().unwrap();
         let viewport = PreviewViewport {
+            horizontal: Default::default(),
             width_px: 500,
             height_px: 400,
             scale: 1.25,
@@ -529,17 +546,17 @@ mod tests {
             theme: PreviewTheme::Light,
         };
         for current in [
-            viewport,
+            viewport.clone(),
             PreviewViewport {
                 scroll_y: 1000.0,
                 selection: PreviewSelection::caret(5),
-                ..viewport
+                ..viewport.clone()
             },
         ] {
             assert!(current_preview_layout(
                 Some(generation),
                 generation,
-                Some(viewport),
+                Some(viewport.clone()),
                 Some(current)
             ));
         }
@@ -547,51 +564,51 @@ mod tests {
             assert!(!current_preview_layout(
                 frame_generation,
                 generation,
-                Some(viewport),
-                Some(viewport)
+                Some(viewport.clone()),
+                Some(viewport.clone())
             ));
         }
         assert!(!current_preview_layout(
             Some(generation),
             generation,
             None,
-            Some(viewport)
+            Some(viewport.clone())
         ));
         assert!(!current_preview_layout(
             Some(generation),
             generation,
-            Some(viewport),
+            Some(viewport.clone()),
             None
         ));
         for stale in [
             PreviewViewport {
                 width_px: 499,
-                ..viewport
+                ..viewport.clone()
             },
             PreviewViewport {
                 height_px: 399,
-                ..viewport
+                ..viewport.clone()
             },
             PreviewViewport {
                 scale: 1.5,
-                ..viewport
+                ..viewport.clone()
             },
             PreviewViewport {
                 theme: PreviewTheme::Dark,
-                ..viewport
+                ..viewport.clone()
             },
         ] {
             assert!(!current_preview_layout(
                 Some(generation),
                 generation,
-                Some(stale),
-                Some(viewport)
+                Some(stale.clone()),
+                Some(viewport.clone())
             ));
             assert!(!current_preview_layout(
                 Some(generation),
                 generation,
-                Some(viewport),
-                Some(stale)
+                Some(viewport.clone()),
+                Some(stale.clone())
             ));
         }
     }
@@ -648,6 +665,7 @@ mod tests {
     fn a_receipt_for_an_older_offset_is_relaid_out_and_never_shown() {
         let generation = Generation::initial().checked_next().unwrap();
         let current = PreviewViewport {
+            horizontal: Default::default(),
             width_px: 500,
             height_px: 646,
             scale: 1.25,
@@ -658,9 +676,9 @@ mod tests {
         for older in [0.0, 600.0, 1199.0, 1199.75, 1200.25, 4000.0] {
             let receipt = PreviewViewport {
                 scroll_y: older,
-                ..current
+                ..current.clone()
             };
-            assert!(receipt.same_layout(current), "{older}");
+            assert!(receipt.same_layout(&current), "{older}");
             assert_ne!(
                 receipt, current,
                 "the offset alone tells them apart: {older}"

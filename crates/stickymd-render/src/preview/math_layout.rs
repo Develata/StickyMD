@@ -6,20 +6,28 @@ use std::sync::Arc;
 
 use cosmic_text::{Align, FontSystem, Metrics};
 
-use crate::image::{DecodedImageCache, PreviewImageSource};
-use crate::math::{MAX_DOCUMENT_FORMULAS, MathEngine, MathError, MathRaster};
+use crate::image::DecodedImageCache;
+use crate::math::{MAX_DOCUMENT_FORMULAS, MathEngine, MathError, MathKind, MathMetrics};
 use crate::source::FontSelection;
 
+use super::image_requests::ImageRequests;
 use super::image_resources::LaidOutImage;
 use super::inline_text_layout::{append_text_pieces, text_piece};
 use super::layout::{
     ChunkBuild, DecorationRole, InlinePiece, LayoutChunk, LayoutContent, LayoutDecoration,
-    math_foreground,
 };
 use super::text_layout::TextLayoutCache;
 use super::{PreviewRect, PreviewTextBox, RenderSpan};
 
 const ATTRIBUTED_TEXT_COALESCE_AFTER_SOURCE_BYTES: usize = 64 * 1024;
+
+/// Full-document geometry never owns pixels or a pinned RaTeX DisplayList.
+pub(super) struct LaidOutMath {
+    pub source: Arc<str>,
+    pub kind: MathKind,
+    pub font_size: f32,
+    pub metrics: MathMetrics,
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_mixed_chunk(
@@ -34,8 +42,8 @@ pub(super) fn make_mixed_chunk(
     align: Align,
     selection_text: &mut String,
     formula_count: &mut usize,
-    theme: super::PreviewTheme,
-    image_source: Option<&dyn PreviewImageSource>,
+    _theme: super::PreviewTheme,
+    mut image_source: Option<&mut ImageRequests<'_>>,
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
     text_layout_cache: &mut TextLayoutCache,
@@ -94,18 +102,20 @@ pub(super) fn make_mixed_chunk(
             let error =
                 (*formula_count > MAX_DOCUMENT_FORMULAS).then_some(MathError::TooManyFormulas);
             let rendered = error.map_or_else(
-                || {
-                    math_engine.render(
-                        Arc::clone(&math.source),
-                        math.kind,
-                        metrics.font_size,
-                        math_foreground(theme),
-                    )
-                },
+                || math_engine.measure(Arc::clone(&math.source), math.kind, metrics.font_size),
                 Err,
             );
             pieces.push(match rendered {
-                Ok(raster) => formula_piece(span, raster, selection_text),
+                Ok(measured) => formula_piece(
+                    span,
+                    LaidOutMath {
+                        source: Arc::clone(&math.source),
+                        kind: math.kind,
+                        font_size: metrics.font_size,
+                        metrics: measured,
+                    },
+                    selection_text,
+                ),
                 Err(error) => error_piece(
                     font_system,
                     fonts,
@@ -138,7 +148,7 @@ pub(super) fn make_mixed_chunk(
                 y,
                 metrics,
                 selection_text,
-                image_source,
+                image_source.as_deref_mut(),
                 image_cache,
                 image_band,
             ) {
@@ -267,7 +277,7 @@ fn image_piece(
     block_y: f32,
     metrics: Metrics,
     selection_text: &mut String,
-    image_source: Option<&dyn PreviewImageSource>,
+    image_source: Option<&mut ImageRequests<'_>>,
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
 ) -> Option<InlinePiece> {
@@ -294,6 +304,7 @@ fn image_piece(
     let height = target_height as f32;
     Some(InlinePiece {
         chunk: LayoutChunk {
+            scroll_with_block: true,
             content,
             x: 0.0,
             y: 0.0,
@@ -322,18 +333,19 @@ fn image_piece(
 
 fn formula_piece(
     span: &RenderSpan,
-    raster: Arc<MathRaster>,
+    formula: LaidOutMath,
     selection_text: &mut String,
 ) -> InlinePiece {
     let selection_start = selection_text.len();
     selection_text.push_str(&span.copy_text);
     let selection_end = selection_text.len();
-    let width = raster.width as f32;
-    let height = raster.height as f32;
-    let baseline = raster.baseline;
+    let width = formula.metrics.width as f32;
+    let height = formula.metrics.height as f32;
+    let baseline = formula.metrics.baseline;
     InlinePiece {
         chunk: LayoutChunk {
-            content: LayoutContent::Math(raster),
+            scroll_with_block: true,
+            content: LayoutContent::Math(formula),
             x: 0.0,
             y: 0.0,
         },

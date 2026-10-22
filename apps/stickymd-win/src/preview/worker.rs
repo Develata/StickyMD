@@ -37,15 +37,16 @@ impl PreviewJob {
         }
     }
 
-    const fn viewport(&self) -> PreviewViewport {
+    fn viewport(&self) -> PreviewViewport {
         match self {
-            Self::Build { viewport, .. } | Self::Relayout { viewport, .. } => *viewport,
+            Self::Build { viewport, .. } | Self::Relayout { viewport, .. } => viewport.clone(),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PreviewViewport {
+    pub horizontal: stickymd_render::preview::PreviewHorizontalOffsets,
     pub width_px: u32,
     pub height_px: u32,
     pub scale: f32,
@@ -57,7 +58,7 @@ pub struct PreviewViewport {
 impl PreviewViewport {
     /// Scroll and selection may change while the same layout is still usable
     /// for document bounds and semantic scroll anchors.
-    pub fn same_layout(self, other: Self) -> bool {
+    pub fn same_layout(&self, other: &Self) -> bool {
         self.width_px == other.width_px
             && self.height_px == other.height_px
             && self.scale == other.scale
@@ -280,6 +281,7 @@ fn execute(
     job: PreviewJob,
     image_source: Option<&LocalImageSource>,
 ) -> Result<PreviewFrame, stickymd_render::preview::PreviewPipelineError> {
+    pipeline.set_horizontal_offsets(job.viewport().horizontal);
     match job {
         PreviewJob::Build { snapshot, viewport } => pipeline.build_with_image_source(
             &snapshot,
@@ -445,6 +447,7 @@ mod tests {
 
     fn viewport(width: u32) -> PreviewViewport {
         PreviewViewport {
+            horizontal: Default::default(),
             width_px: width,
             height_px: 300,
             scale: 1.0,
@@ -567,7 +570,7 @@ mod tests {
                 generation,
                 line_ending: LineEnding::Lf,
             },
-            viewport: requested,
+            viewport: requested.clone(),
         });
         let first = next_completion(&receiver);
         assert_eq!(first.viewport, requested);
@@ -587,23 +590,23 @@ mod tests {
         for stale in [
             PreviewViewport {
                 width_px: 400,
-                ..current
+                ..current.clone()
             },
             PreviewViewport {
                 height_px: 200,
-                ..current
+                ..current.clone()
             },
             PreviewViewport {
                 scale: 1.5,
-                ..current
+                ..current.clone()
             },
             PreviewViewport {
                 theme: PreviewTheme::Dark,
-                ..current
+                ..current.clone()
             },
             PreviewViewport {
                 selection: PreviewSelection::caret(1),
-                ..current
+                ..current.clone()
             },
         ] {
             assert_eq!(stale.scroll_y, current.scroll_y);
@@ -612,14 +615,14 @@ mod tests {
                 "scroll offset alone cannot admit this frame"
             );
         }
-        assert!(current.same_layout(PreviewViewport {
+        assert!(current.same_layout(&PreviewViewport {
             scroll_y: 100.0,
             selection: PreviewSelection::caret(1),
-            ..current
+            ..current.clone()
         }));
-        assert!(!current.same_layout(PreviewViewport {
+        assert!(!current.same_layout(&PreviewViewport {
             scale: 1.5,
-            ..current
+            ..current.clone()
         }));
     }
 
@@ -648,7 +651,7 @@ mod tests {
                 pending,
                 PreviewJob::Relayout {
                     generation,
-                    viewport: latest,
+                    viewport: latest.clone(),
                 },
             );
         }
@@ -665,7 +668,7 @@ mod tests {
                 &mut pipeline,
                 PreviewJob::Relayout {
                     generation,
-                    viewport: latest,
+                    viewport: latest.clone(),
                 },
                 None,
             )
@@ -680,7 +683,7 @@ mod tests {
             &mut pipeline,
             PreviewJob::Relayout {
                 generation,
-                viewport: latest,
+                viewport: latest.clone(),
             },
             None,
         )

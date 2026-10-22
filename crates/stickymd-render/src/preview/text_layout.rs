@@ -57,6 +57,14 @@ impl TextLayout {
         self.shaped.rows.last().map_or(fallback, |row| row.bottom())
     }
 
+    pub(super) fn width(&self) -> f32 {
+        self.shaped
+            .buffer
+            .layout_runs()
+            .map(|run| run.line_w)
+            .fold(0.0, f32::max)
+    }
+
     pub(super) fn first_line_metrics(&self, fallback_baseline: f32) -> (f32, f32) {
         self.shaped
             .buffer
@@ -162,7 +170,7 @@ pub(super) fn make_text_chunk(
         if spans.is_empty() {
             attributed.push((0..1, Attrs::new().metrics(metrics)));
         }
-        let mut buffer = Buffer::new(font_system, metrics);
+        let mut buffer = Buffer::new_empty(metrics);
         buffer.set_size(Some(width), None);
         buffer.set_wrap(wrap);
         let default = Attrs::new().family(Family::Serif).metrics(metrics);
@@ -191,6 +199,7 @@ pub(super) fn make_text_chunk(
     let height = layout.height(metrics.line_height);
     ChunkBuild {
         chunks: vec![LayoutChunk {
+            scroll_with_block: true,
             content: LayoutContent::Text(layout),
             x,
             y,
@@ -289,6 +298,7 @@ fn styled_attrs(
     attrs
 }
 
+#[cfg(test)]
 pub(super) fn project_visible_text_boxes(
     layout: &TextLayout,
     x: f32,
@@ -296,6 +306,27 @@ pub(super) fn project_visible_text_boxes(
     viewport_top: f32,
     viewport_bottom: f32,
 ) -> Vec<PreviewTextBox> {
+    project_text_boxes_in_rect(
+        layout,
+        x,
+        y,
+        super::PreviewRect {
+            x: -f32::MAX / 2.0,
+            y: viewport_top.max(-f32::MAX / 2.0),
+            width: f32::MAX,
+            height: viewport_bottom.min(f32::MAX / 2.0) - viewport_top.max(-f32::MAX / 2.0),
+        },
+    )
+}
+
+pub(super) fn project_text_boxes_in_rect(
+    layout: &TextLayout,
+    x: f32,
+    y: f32,
+    viewport: super::PreviewRect,
+) -> Vec<PreviewTextBox> {
+    let viewport_top = viewport.y;
+    let viewport_bottom = viewport.bottom();
     let buffer = &layout.shaped.buffer;
     let segments = &layout.segments;
     let mut boxes: Vec<PreviewTextBox> = Vec::new();
@@ -364,6 +395,9 @@ pub(super) fn project_visible_text_boxes(
                         (current_left.min(left), current_right.max(right))
                     }),
                 );
+                continue;
+            }
+            if x + right < viewport.x || x + left > viewport.right() {
                 continue;
             }
             let rtl = glyph.level.is_rtl();

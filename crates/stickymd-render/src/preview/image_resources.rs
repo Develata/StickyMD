@@ -4,12 +4,10 @@
 
 use std::sync::Arc;
 
-use crate::image::{
-    DecodedImageCache, DecodedImageRaster, ImageCacheKey, PreviewImageSource,
-    decode_scaled_image_owned, inspect_encoded_image,
-};
+use crate::image::{DecodedImageCache, DecodedImageRaster, PreviewImageSource};
 
 use super::ImageKind;
+use super::image_requests::{ImageRequests, image_target};
 use super::layout::{LaidOutBlock, LayoutContent};
 use super::render_tree::RenderImage;
 
@@ -31,7 +29,7 @@ impl LaidOutImage {
         max_width: u32,
         max_height: u32,
         admission_y: f32,
-        source: Option<&dyn PreviewImageSource>,
+        source: Option<&mut ImageRequests<'_>>,
         cache: &mut DecodedImageCache,
         band: (f32, f32),
     ) -> Option<Box<Self>> {
@@ -42,7 +40,7 @@ impl LaidOutImage {
             return None;
         }
         let source = source?;
-        let metadata = source.inspect(&image.destination).ok().flatten()?;
+        let metadata = source.inspect(&image.destination)?;
         let (width, height) = image_target(&metadata, max_width, max_height);
         let mut slot = Self {
             destination: image.destination.clone().into_boxed_str(),
@@ -70,21 +68,10 @@ impl LaidOutImage {
 
     fn load(
         &self,
-        source: &dyn PreviewImageSource,
+        source: &mut ImageRequests<'_>,
         cache: &mut DecodedImageCache,
     ) -> Option<Arc<DecodedImageRaster>> {
-        let bytes = source.load(&self.destination).ok().flatten()?;
-        let metadata = inspect_encoded_image(&bytes).ok()?;
-        let (width, height) = image_target(&metadata, self.max_width, self.max_height);
-        let key = ImageCacheKey {
-            source_hash: stickymd_core::hash_bytes(&bytes),
-            width,
-            height,
-        };
-        cache.get(&key).or_else(|| {
-            let raster = decode_scaled_image_owned(bytes, width, height).ok()?;
-            cache.insert(key, raster)
-        })
+        source.load(&self.destination, self.max_width, self.max_height, cache)
     }
 }
 
@@ -96,6 +83,20 @@ pub(super) struct ImageSlots {
 }
 
 impl ImageSlots {
+    pub fn horizontal_changed(
+        &self,
+        blocks: &[LaidOutBlock],
+        previous: &super::PreviewHorizontalOffsets,
+        next: &super::PreviewHorizontalOffsets,
+    ) -> bool {
+        self.locations.iter().any(|&(index, _)| {
+            blocks[index].horizontal.is_some_and(|layout| {
+                let maximum = layout.content_width - layout.viewport.width;
+                previous.block_offset(index, maximum) != next.block_offset(index, maximum)
+            })
+        })
+    }
+
     pub fn new(blocks: &[LaidOutBlock], local_image_count: usize) -> Self {
         if local_image_count == 0 {
             return Self {
@@ -131,15 +132,17 @@ impl ImageSlots {
         source: &dyn PreviewImageSource,
         cache: &mut DecodedImageCache,
         band: (f32, f32),
+        horizontal: &super::PreviewHorizontalOffsets,
     ) -> bool {
         if !self.complete {
             return false;
         }
+        let mut source = ImageRequests::new(source);
         // Inspect even off-band images, as full layout does: deletion or a new
         // size above the viewport may shift every subsequent block and anchor.
         for &location in &self.locations {
             let slot = image_at(blocks, location);
-            let Ok(Some(metadata)) = source.inspect(&slot.destination) else {
+            let Some(metadata) = source.inspect(&slot.destination) else {
                 return false;
             };
             if image_target(&metadata, slot.max_width, slot.max_height) != (slot.width, slot.height)
@@ -153,9 +156,10 @@ impl ImageSlots {
             image_at(blocks, location).raster = None;
         }
         for &location in &self.locations {
+            let in_horizontal_view = horizontal_visible(blocks, location, horizontal);
             let slot = image_at(blocks, location);
-            if slot.in_band(band) {
-                let Some(raster) = slot.load(source, cache) else {
+            if slot.in_band(band) && in_horizontal_view {
+                let Some(raster) = slot.load(&mut source, cache) else {
                     return false;
                 };
                 if (raster.width, raster.height) != (slot.width, slot.height) {
@@ -175,16 +179,23 @@ fn image_at(blocks: &mut [LaidOutBlock], (block, chunk): (usize, usize)) -> &mut
     }
 }
 
-fn image_target(
-    metadata: &crate::image::ImageMetadata,
-    max_width: u32,
-    max_height: u32,
-) -> (u32, u32) {
-    let target_scale = (max_width as f64 / metadata.width as f64)
-        .min(max_height as f64 / metadata.height as f64)
-        .min(1.0);
-    (
-        ((metadata.width as f64 * target_scale).floor() as u32).max(1),
-        ((metadata.height as f64 * target_scale).floor() as u32).max(1),
-    )
+fn horizontal_visible(
+    blocks: &[LaidOutBlock],
+    (block_index, chunk_index): (usize, usize),
+    offsets: &super::PreviewHorizontalOffsets,
+) -> bool {
+    let block = &blocks[block_index];
+    let Some(horizontal) = block.horizontal else {
+        return true;
+    };
+    let chunk = &block.chunks[chunk_index];
+    let LayoutContent::Image(image) = &chunk.content else {
+        return false;
+    };
+    let x = chunk.x
+        - offsets.block_offset(
+            block_index,
+            horizontal.content_width - horizontal.viewport.width,
+        );
+    x + image.width as f32 >= horizontal.viewport.x && x <= horizontal.viewport.right()
 }

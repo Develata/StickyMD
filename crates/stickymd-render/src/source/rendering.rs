@@ -102,6 +102,7 @@ impl SourceProjection {
                 );
             },
         );
+        self.glyph_budget.after_paint(&mut self.swash_cache);
     }
 
     /// Paints a single-line editable shell field and its caret from one shaped
@@ -144,6 +145,7 @@ impl SourceProjection {
             caret.height,
             palette.caret,
         );
+        self.glyph_budget.after_paint(&mut self.swash_cache);
         Some(caret)
     }
 
@@ -310,6 +312,7 @@ impl SourceProjection {
         if let Some(message) = diagnostic {
             self.paint_diagnostic(pixmap, message, palette);
         }
+        self.glyph_budget.after_paint(&mut self.swash_cache);
         Ok(())
     }
 

@@ -1,5 +1,17 @@
 # Phase 05 Acceptance Matrix
 
+## 2026-10-22 Preview maintenance
+
+| ID | Contract | Mode | Entry | Status |
+| --- | --- | --- | --- | --- |
+| P05-R01 | 06 native-preview-layout; initial text shaping | Automated | render tests through `tools/smoke/phase-05.ps1` | AUTOMATED PASS |
+| P05-R02 | 06 preview-horizontal-scroll; AC-040 | Automated | render geometry and Windows input/session tests through the Phase 05 entry | AUTOMATED PASS |
+| P05-R03 | AC-040 actual block scrollbar and pointer alignment | Manual | Windows Preview/Split wide-content observation | NOT TESTED |
+
+Preconditions/Action/Expected/Failure Signals follow AC-040; R01 compares pixels, rows, metrics and
+selection with the prior initializer. R02 includes stale viewport rejection, resize/zoom resets,
+Unicode, links, formulas and images. Automated geometry does not establish R03.
+
 > Verification projection for the Markdown semantic pipeline, owned AST and native preview
 > foundation. Automated coverage is owned by the checked-in Phase 5 smoke graph. Visual,
 > real-shell and OS-resource observations require their own applicable receipts; headless tests

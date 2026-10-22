@@ -36,13 +36,18 @@ impl StickyApp {
             let Some(frame) = self
                 .preview_frame
                 .as_ref()
-                .filter(|_| self.preview_layout_is_current())
+                .filter(|_| self.preview_hit_geometry_is_current())
             else {
                 return CursorIcon::Text;
             };
             let x = position.x as f32 - pane.x as f32;
             let y = position.y as f32 - pane.y as f32 + frame.scroll_y();
-            return if frame.action_at(x, y).is_some() {
+            return if frame
+                .horizontal_target_at(x, y)
+                .is_some_and(|target| target.track().contains(x, y))
+            {
+                CursorIcon::Default
+            } else if frame.action_at(x, y).is_some() {
                 CursorIcon::Pointer
             } else {
                 CursorIcon::Text
@@ -120,7 +125,7 @@ impl StickyApp {
     /// demand rather than cached, so a frame, layout, mode or document change cannot leave a
     /// stale error in the title.
     pub(super) fn formula_error_under_pointer(&self) -> Option<&str> {
-        if !self.pointer_inside_window || !self.preview_layout_is_current() {
+        if !self.pointer_inside_window || !self.preview_hit_geometry_is_current() {
             return None;
         }
         // An open opacity popup is painted over the Preview; what it covers is not hovered.
@@ -138,7 +143,7 @@ impl StickyApp {
     }
 
     pub(super) fn press_preview_selection(&mut self) {
-        if !self.preview_layout_is_current() {
+        if !self.preview_hit_geometry_is_current() {
             return;
         }
         let Some((x, y)) = self.preview_at_cursor() else {
@@ -165,7 +170,7 @@ impl StickyApp {
     }
 
     pub(super) fn extend_preview_selection(&mut self, position: PhysicalPosition<f64>) {
-        if !self.preview_layout_is_current() {
+        if !self.preview_hit_geometry_is_current() {
             return;
         }
         let Some(pane) = self.view_geometry().and_then(|geometry| geometry.preview) else {
@@ -191,7 +196,7 @@ impl StickyApp {
         self.preview_dragging = false;
         self.preview_press_position = None;
         let action = self.preview_press_action.take();
-        if self.preview_drag_moved || !self.preview_layout_is_current() {
+        if self.preview_drag_moved || !self.preview_hit_geometry_is_current() {
             return;
         }
         if let Some(action) = action {

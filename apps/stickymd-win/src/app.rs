@@ -49,6 +49,7 @@ mod input;
 mod lifecycle;
 mod persistence_runtime;
 mod presentation;
+mod preview_horizontal;
 mod preview_input;
 mod preview_runtime;
 mod reconciliation_runtime;
@@ -106,6 +107,7 @@ pub struct StickyApp {
     preview_worker: Option<PreviewWorker>,
     preview_flow: PreviewCoordinator,
     preview_selection: PreviewSelection,
+    preview_horizontal: preview_horizontal::HorizontalSession,
     preview_scroll_y: f32,
     scrollbars: scrollbar::ScrollbarInteraction,
     preview_focused: bool,
@@ -185,6 +187,7 @@ impl StickyApp {
             preview_worker: None,
             preview_flow: PreviewCoordinator::default(),
             preview_selection: PreviewSelection::default(),
+            preview_horizontal: preview_horizontal::HorizontalSession::default(),
             preview_scroll_y: 0.0,
             scrollbars: scrollbar::ScrollbarInteraction::default(),
             preview_focused,

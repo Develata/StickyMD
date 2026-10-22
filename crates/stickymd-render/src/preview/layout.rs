@@ -7,11 +7,12 @@ mod list;
 use std::sync::Arc;
 
 use crate::image::{DecodedImageCache, PreviewImageSource};
-use crate::math::{MathEngine, MathRaster};
+use crate::math::MathEngine;
 use crate::source::FontSelection;
 use cosmic_text::{Align, FontSystem, Metrics, Wrap};
 use stickymd_core::Generation;
 
+use super::image_requests::ImageRequests;
 use super::scroll::PreviewScrollAnchor;
 use super::{PreviewRect, PreviewTextBox, RenderBlock, RenderBlockKind, RenderSpan, RenderTree};
 
@@ -29,12 +30,13 @@ pub(super) struct LaidOutDocument {
     pub height_px: f32,
     pub blocks: Vec<LaidOutBlock>,
     pub image_slots: super::image_resources::ImageSlots,
-    pub projection: std::sync::Arc<super::selection::PreviewDocumentProjection>,
+    pub projection: Arc<super::selection::PreviewDocumentProjection>,
     pub scale: f32,
     pub theme: super::PreviewTheme,
 }
 
 pub(super) struct LaidOutBlock {
+    pub horizontal: Option<super::horizontal::HorizontalLayout>,
     pub top: f32,
     pub bottom: f32,
     pub chunks: Vec<LayoutChunk>,
@@ -45,6 +47,7 @@ pub(super) struct LaidOutBlock {
 }
 
 pub(super) struct LayoutChunk {
+    pub scroll_with_block: bool,
     pub content: LayoutContent,
     pub x: f32,
     pub y: f32,
@@ -61,7 +64,7 @@ pub(super) struct InlinePiece {
 
 pub(super) enum LayoutContent {
     Text(super::text_layout::TextLayout),
-    Math(Arc<MathRaster>),
+    Math(super::math_layout::LaidOutMath),
     Image(Box<super::image_resources::LaidOutImage>),
 }
 
@@ -89,6 +92,22 @@ pub(super) struct ChunkBuild {
     pub decorations: Vec<LayoutDecoration>,
 }
 
+impl ChunkBuild {
+    pub fn right_edge(&self) -> f32 {
+        self.chunks
+            .iter()
+            .map(|chunk| {
+                chunk.x
+                    + match &chunk.content {
+                        LayoutContent::Text(text) => text.width(),
+                        LayoutContent::Math(formula) => formula.metrics.width as f32,
+                        LayoutContent::Image(image) => image.width as f32,
+                    }
+            })
+            .fold(0.0, f32::max)
+    }
+}
+
 /// Mutable layout services are grouped as one short-lived capability bundle;
 /// the document inputs remain explicit values.
 pub(super) struct LayoutResources<'a> {
@@ -96,6 +115,7 @@ pub(super) struct LayoutResources<'a> {
     pub fonts: &'a FontSelection,
     pub math_engine: &'a mut MathEngine,
     pub image_source: Option<&'a dyn PreviewImageSource>,
+    pub horizontal_offsets: &'a super::PreviewHorizontalOffsets,
     pub image_cache: &'a mut DecodedImageCache,
     pub image_band: (f32, f32),
 }
@@ -114,6 +134,7 @@ pub(super) fn layout_document(
         image_source,
         image_cache,
         image_band,
+        horizontal_offsets,
     } = resources;
     let scale = scale.max(0.5);
     let padding = PADDING_DIP * scale;
@@ -127,6 +148,8 @@ pub(super) fn layout_document(
     let mut text_layout_cache = super::text_layout::TextLayoutCache::default();
     let foreground = math_foreground(theme);
     math_engine.prepare_projection(scale, foreground);
+    let mut image_requests = image_source.map(ImageRequests::new);
+    let horizontal_offsets = horizontal_offsets.for_layout(tree.generation, width_px, scale);
 
     for (block_index, block) in tree.blocks.iter().enumerate() {
         let top = y;
@@ -146,6 +169,7 @@ pub(super) fn layout_document(
         let block_width = (content_width - marker_width).max(1.0);
         let mut laid_out = match &block.kind {
             RenderBlockKind::Table(table) => super::table_layout::layout_table(
+                horizontal_offsets.block_offset(block_index, f32::MAX),
                 font_system,
                 fonts,
                 math_engine,
@@ -158,7 +182,7 @@ pub(super) fn layout_document(
                 &mut selection_text,
                 &mut formula_count,
                 theme,
-                image_source,
+                image_requests.as_mut(),
                 image_cache,
                 image_band,
                 &mut text_layout_cache,
@@ -166,6 +190,7 @@ pub(super) fn layout_document(
             RenderBlockKind::ThematicBreak => {
                 let height = 13.0 * scale;
                 BlockBuild {
+                    horizontal: None,
                     height,
                     chunks: Vec::new(),
                     decorations: vec![LayoutDecoration {
@@ -193,7 +218,7 @@ pub(super) fn layout_document(
                 &mut selection_text,
                 &mut formula_count,
                 theme,
-                image_source,
+                image_requests.as_mut(),
                 image_cache,
                 image_band,
                 &mut text_layout_cache,
@@ -211,6 +236,7 @@ pub(super) fn layout_document(
             });
         }
         blocks.push(LaidOutBlock {
+            horizontal: laid_out.horizontal,
             top,
             bottom: y,
             chunks: laid_out.chunks,
@@ -231,7 +257,7 @@ pub(super) fn layout_document(
         height_px,
         blocks,
         image_slots,
-        projection: std::sync::Arc::new(super::selection::PreviewDocumentProjection::new(
+        projection: Arc::new(super::selection::PreviewDocumentProjection::new(
             tree.generation,
             selection_text,
             scroll_anchors,
@@ -242,6 +268,7 @@ pub(super) fn layout_document(
 }
 
 pub(super) struct BlockBuild {
+    pub horizontal: Option<super::horizontal::HorizontalLayout>,
     pub height: f32,
     pub chunks: Vec<LayoutChunk>,
     pub decorations: Vec<LayoutDecoration>,
@@ -261,7 +288,7 @@ fn layout_text_block(
     selection_text: &mut String,
     formula_count: &mut usize,
     theme: super::PreviewTheme,
-    image_source: Option<&dyn PreviewImageSource>,
+    mut image_source: Option<&mut ImageRequests<'_>>,
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
     text_layout_cache: &mut super::text_layout::TextLayoutCache,
@@ -280,31 +307,51 @@ fn layout_text_block(
         width,
         scale,
         selection_text,
-        image_source,
+        image_source.as_deref_mut(),
         image_cache,
         image_band,
     ) {
         return image;
     }
     let align = matches!(block.kind, RenderBlockKind::DisplayMath).then_some(Align::Center);
-    let built = make_chunk(
-        font_system,
-        fonts,
-        math_engine,
-        &block.spans,
-        x,
-        y,
-        width,
-        metrics,
-        align.unwrap_or(Align::Left),
-        selection_text,
-        formula_count,
-        theme,
-        image_source,
-        image_cache,
-        image_band,
-        text_layout_cache,
+    let code = matches!(
+        block.kind,
+        RenderBlockKind::CodeBlock { .. } | RenderBlockKind::HtmlLiteral
     );
+    let built = if code {
+        super::text_layout::make_text_chunk(
+            font_system,
+            fonts,
+            &block.spans,
+            x,
+            y,
+            width,
+            metrics,
+            Align::Left,
+            Wrap::None,
+            selection_text,
+            text_layout_cache,
+        )
+    } else {
+        make_chunk(
+            font_system,
+            fonts,
+            math_engine,
+            &block.spans,
+            x,
+            y,
+            width,
+            metrics,
+            align.unwrap_or(Align::Left),
+            selection_text,
+            formula_count,
+            theme,
+            image_source,
+            image_cache,
+            image_band,
+            text_layout_cache,
+        )
+    };
     let height = built.height.max(metrics.line_height);
     let mut decorations = Vec::new();
     match block.kind {
@@ -339,8 +386,21 @@ fn layout_text_block(
         }),
         _ => {}
     }
+    let horizontal = code
+        .then(|| {
+            super::horizontal::HorizontalLayout::new(
+                x,
+                y,
+                width,
+                height,
+                built.right_edge() - x,
+                scale,
+            )
+        })
+        .flatten();
     BlockBuild {
-        height,
+        height: height + horizontal.map_or(0.0, |value| value.bar_height),
+        horizontal,
         chunks: built.chunks,
         decorations: {
             decorations.extend(built.decorations);
@@ -364,7 +424,7 @@ pub(super) fn make_chunk(
     selection_text: &mut String,
     formula_count: &mut usize,
     theme: super::PreviewTheme,
-    image_source: Option<&dyn PreviewImageSource>,
+    image_source: Option<&mut ImageRequests<'_>>,
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
     text_layout_cache: &mut super::text_layout::TextLayoutCache,
@@ -456,6 +516,7 @@ mod tests {
         let fonts = FontSelection::resolve(&mut font_system);
         layout_document(
             LayoutResources {
+                horizontal_offsets: &super::super::PreviewHorizontalOffsets::default(),
                 font_system: &mut font_system,
                 fonts: &fonts,
                 math_engine: &mut MathEngine::new(),
