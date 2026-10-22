@@ -262,7 +262,10 @@ pub(super) fn paint_document(
         let clip_mask = block_mask(&mut mask, document.width_px, height, clip, scroll_y)?;
         for decoration in &block.decorations {
             let mut decoration = *decoration;
-            if decoration.role == DecorationRole::CodeBackground {
+            if matches!(
+                decoration.role,
+                DecorationRole::CodeBackground | DecorationRole::MathBackground
+            ) {
                 paint_decoration(&mut pixmap, decoration, scroll_y, palette, None);
             } else {
                 decoration.rect.x -= offset;

@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- |
 | P05-R01 | 06 native-preview-layout; initial text shaping | Automated | render tests through `tools/smoke/phase-05.ps1` | AUTOMATED PASS |
 | P05-R02 | 06 preview-horizontal-scroll; AC-040 | Automated | render geometry and Windows input/session tests through the Phase 05 entry | AUTOMATED PASS |
-| P05-R03 | AC-040 actual block scrollbar and pointer alignment | Manual | Windows Preview/Split wide-content observation | NOT TESTED |
+| P05-R03 | AC-040 actual block scrollbar and pointer alignment | Manual | Windows Preview/Split wide-content observation | BLOCKED |
 
 Preconditions/Action/Expected/Failure Signals follow AC-040; R01 compares pixels, rows, metrics and
 selection with the prior initializer. R02 includes stale viewport rejection, resize/zoom resets,
@@ -15,6 +15,12 @@ Unicode, links, formulas and images. Automated geometry does not establish R03.
 The local Release fixture and human steps for R03 are in the
 [2026-10-22 acceptance report](../report/2026-10-22-preview-resource-acceptance.md#人工验收入口).
 Resource observations do not change the manual status.
+
+2026-10-22 USER feedback: the original table/code pointer, copy and refresh checks passed on
+`preview-acceptance-0f4f465`; overwide display math had no scrollbar. That newly observed omission
+blocks the expanded AC-040 surface until the corrected executable is manually rechecked. See the
+[dated fix report](../report/2026-10-22-display-math-horizontal-scroll.md); the earlier manual passes
+remain bound to the original bundle and do not establish release qualification.
 
 > Verification projection for the Markdown semantic pipeline, owned AST and native preview
 > foundation. Automated coverage is owned by the checked-in Phase 5 smoke graph. Visual,

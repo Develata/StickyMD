@@ -23,6 +23,139 @@ fn build(pipeline: &mut PreviewPipeline, text: &str, width: u32, scale: f32) -> 
 }
 
 #[test]
+fn long_display_math_scrolls_to_both_ends_with_fixed_background_and_full_copy() {
+    let formula = format!(
+        "$$\\frac{{{}z}}{{1+2+3+4+5+6+7+8+9}}$$",
+        "a+b+c+d+e+f+g+h+".repeat(3)
+    );
+    let source = format!("{formula}\n\nFollowing paragraph");
+    let mut pipeline = PreviewPipeline::new();
+    for (width, scale) in [(320, 1.0), (520, 1.0), (320, 3.0), (520, 3.0)] {
+        let first = build(&mut pipeline, &source, width, scale);
+        let block = &pipeline.layout.as_ref().unwrap().blocks[0];
+        let horizontal = block
+            .horizontal
+            .expect("overwide display math needs a scrollbar");
+        let viewport = horizontal.viewport;
+        let target = first
+            .horizontal_target_at(viewport.x + 1.0, viewport.y + 1.0)
+            .unwrap();
+        assert!(target.max_offset() > 0.0);
+        assert_eq!(target.thumb().x, target.track().x);
+        let first_box = first
+            .index()
+            .boxes()
+            .iter()
+            .find(|item| item.atomic)
+            .unwrap();
+        assert_eq!(
+            first_box.start_x, viewport.x,
+            "overflow begins at the left edge"
+        );
+        let anchor = first.hit_test(first_box.rect.x + 0.1, first_box.rect.y + 1.0);
+        assert_eq!(anchor, first_box.selection_range.start);
+        let counters = pipeline.counters();
+        let math_counters = pipeline.math_counters();
+        let cache_bytes = pipeline.math_engine.cache_sizes().2;
+
+        pipeline.set_horizontal_offsets(
+            PreviewHorizontalOffsets::default().with_offset(target, target.max_offset()),
+        );
+        let end = pipeline
+            .paint(
+                first.generation(),
+                600,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        let end_box = end.index().boxes().iter().find(|item| item.atomic).unwrap();
+        assert!((end_box.end_x - viewport.right()).abs() < 0.01);
+        assert_eq!(end_box.selection_range, first_box.selection_range);
+        assert!(end_box.rect.x >= viewport.x);
+        assert!(end_box.rect.right() <= viewport.right() + 0.01);
+        assert!(end_box.tooltip.is_none());
+        let selection = PreviewSelection {
+            anchor,
+            active: end.hit_test(end_box.rect.right() - 0.1, end_box.rect.y + 1.0),
+        };
+        assert_eq!(end.copy_selection(selection), Some(formula.as_str()));
+        assert_eq!(end.index().selection_rects(selection), vec![end_box.rect]);
+        let end_target = end
+            .horizontal_target_at(viewport.x + 1.0, viewport.y + 1.0)
+            .unwrap();
+        assert!((end_target.thumb().right() - end_target.track().right()).abs() < 0.01);
+        assert_eq!(end.document_height(), first.document_height());
+        assert_eq!(pipeline.counters().parses, counters.parses);
+        assert_eq!(pipeline.counters().layouts, counters.layouts);
+        assert_eq!(
+            pipeline.math_counters().parse_layout_calls,
+            math_counters.parse_layout_calls
+        );
+        assert_eq!(
+            pipeline.math_counters().rasterizations,
+            math_counters.rasterizations
+        );
+        assert_eq!(pipeline.math_engine.cache_sizes().2, cache_bytes);
+        assert_ne!(end.rgba(), first.rgba(), "the visible formula must move");
+
+        // Only this block's content and scrollbar may change. This also catches a
+        // background moving away, or formula pixels leaking outside the viewport.
+        for y in 0..600 {
+            for x in 0..width {
+                let inside = x as f32 >= viewport.x
+                    && (x as f32) < viewport.right()
+                    && y as f32 >= viewport.y
+                    && (y as f32) < target.track().bottom();
+                if !inside {
+                    let offset = ((y * width + x) * 4) as usize;
+                    assert_eq!(
+                        &first.rgba()[offset..offset + 4],
+                        &end.rgba()[offset..offset + 4],
+                        "pixel outside the scrolling area changed at ({x}, {y}), scale={scale}"
+                    );
+                }
+            }
+        }
+        pipeline.set_horizontal_offsets(Default::default());
+        let restored = pipeline
+            .paint(
+                first.generation(),
+                600,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+            )
+            .unwrap();
+        assert_eq!(restored.rgba(), first.rgba());
+    }
+}
+
+#[test]
+fn fitting_display_math_stays_centered_without_a_scrollbar() {
+    let mut pipeline = PreviewPipeline::new();
+    for (width, scale) in [(320, 1.0), (520, 1.0), (320, 3.0), (520, 3.0)] {
+        let frame = build(&mut pipeline, "$$x^2$$", width, scale);
+        let block = &pipeline.layout.as_ref().unwrap().blocks[0];
+        assert!(block.horizontal.is_none());
+        let formula = frame
+            .index()
+            .boxes()
+            .iter()
+            .find(|item| item.atomic)
+            .unwrap();
+        assert!((formula.rect.x + formula.rect.width / 2.0 - width as f32 / 2.0).abs() < 0.01);
+        assert!(
+            frame
+                .horizontal_target_at(formula.rect.x, formula.rect.y)
+                .is_none()
+        );
+        assert_eq!(frame.copy_selection(frame.select_all()), Some("$$x^2$$"));
+    }
+}
+
+#[test]
 fn long_code_scrolls_without_wrapping_or_changing_copy_and_hit_ranges() {
     let mut pipeline = PreviewPipeline::new();
     let line = format!("{}END", "中ab 👩‍💻 e\u{301} ".repeat(60));

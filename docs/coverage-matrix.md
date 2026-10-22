@@ -6,11 +6,13 @@ Plan 10 `preview-resource-assessment` → 功能投影“宽内容/数学公式�
 [Phase 05](acceptance-cases/phase-05.md)、[Phase 06](acceptance-cases/phase-06.md)、
 [Phase 07](acceptance-cases/phase-07.md)、[Phase 10](acceptance-cases/phase-10.md) 的 R 系列。
 独立分支已完成实现与自动化验证，R 系列自动项为 `AUTOMATED PASS`，P05-R03/P06-R03
-人工项仍为 `NOT TESTED`；不继承历史候选的验收身份。结果、测量边界及代码职责见
+人工项因超宽公式缺少横向访问为 `BLOCKED`；不继承历史候选的验收身份。结果、测量边界及代码职责见
 [2026-10-22 实现验证报告](report/2026-10-22-preview-resource-implementation.md)。
 后续本机 Release 资源实测、物理输入中断及完整复测、独立人工验收包见
-[2026-10-22 验收准备报告](report/2026-10-22-preview-resource-acceptance.md)；人工状态不变，
-该报告不构成完整桌面或发布资格化。
+[2026-10-22 验收准备报告](report/2026-10-22-preview-resource-acceptance.md)。USER 已确认原 1–7
+除超宽公式滚动外全部通过；该遗漏的修复与剩余复验见
+[2026-10-22 公式横向滚动报告](report/2026-10-22-display-math-horizontal-scroll.md)。
+这些局部结果不构成完整桌面或发布资格化。
 
 2026-10-08：plan 07 `semantic-math-delimiter-conversion` → 数学 `$` 按钮 →
 [Phase 11-B 等号行连接](acceptance-cases/phase-11-b.md#math-equals-lines) →

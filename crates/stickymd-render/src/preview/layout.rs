@@ -313,7 +313,7 @@ fn layout_text_block(
     ) {
         return image;
     }
-    let align = matches!(block.kind, RenderBlockKind::DisplayMath).then_some(Align::Center);
+    let display_math = matches!(block.kind, RenderBlockKind::DisplayMath);
     let code = matches!(
         block.kind,
         RenderBlockKind::CodeBlock { .. } | RenderBlockKind::HtmlLiteral
@@ -342,7 +342,11 @@ fn layout_text_block(
             y,
             width,
             metrics,
-            align.unwrap_or(Align::Left),
+            if display_math {
+                Align::Center
+            } else {
+                Align::Left
+            },
             selection_text,
             formula_count,
             theme,
@@ -386,7 +390,7 @@ fn layout_text_block(
         }),
         _ => {}
     }
-    let horizontal = code
+    let horizontal = (code || display_math)
         .then(|| {
             super::horizontal::HorizontalLayout::new(
                 x,
