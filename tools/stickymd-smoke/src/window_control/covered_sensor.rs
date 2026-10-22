@@ -69,7 +69,7 @@ impl Cover {
                     0x0800_0080,
                     class.as_ptr(),
                     title.as_ptr(),
-                    0x9000_0000,
+                    0x9000_0004, // WS_POPUP | WS_VISIBLE | SS_BLACKRECT (not static text)
                     x,
                     y,
                     16,
