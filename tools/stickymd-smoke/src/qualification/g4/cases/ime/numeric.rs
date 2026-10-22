@@ -169,6 +169,16 @@ fn composition_refuses_focus(
             "NUMERIC_COMPOSITION_STEP ime={} owner={owner}",
             ime.profile_key
         );
+        if owner == "search" {
+            // Put Search in the left pane before composition begins. In the
+            // narrow Source view the TIP's candidate surface covers the opacity
+            // field (even its visually exposed top edge). A wide Split fixture
+            // leaves the real numeric target on the right, without dismissing
+            // candidates or relaxing the native input-target guard.
+            window::resize_to_dip(hwnd, 1000, 680)?;
+            window::press_split_shortcut(hwnd)?;
+            wait_for_config(program, "view_mode = \"split\"")?;
+        }
         window::focus_source_editor(hwnd)?;
         window::press_document_end(hwnd)?;
         if owner == "search" {
@@ -223,6 +233,9 @@ fn composition_refuses_focus(
         }
         ime.record("numeric-composition-refuses-focus", &[("owner", owner)]);
     }
+    window::press_source_shortcut(hwnd)?;
+    wait_for_config(program, "view_mode = \"source\"")?;
+    window::resize_to_dip(hwnd, 520, 680)?;
     Ok(())
 }
 
