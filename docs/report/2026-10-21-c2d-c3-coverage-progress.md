@@ -224,3 +224,18 @@ close the remaining C2d or C3 tasks.
   Reading the tray menu can lose focus and legitimately collapse the dock; the
   harness now reveals and focuses it again before the final undock drag. This is
   a test-sequencing repair, pending a fresh physical run.
+
+## 2026-10-22 IME key ownership repair
+
+- `57-ime-process-key-trace` reproduced the WeType failure with debug EXE SHA-256
+  `94ab0dc0dd545daa72f4026c4c163bc83f6590fac0a954d4e71f80dc22c1cbfa`.
+  At 16793-16797 ms composition ended; the 16804 ms physical Escape had logical
+  `NamedKey::Process`, and the next event found Search closed. Winit 0.30.13's
+  Windows adapter maps `VK_PROCESSKEY` to this logical key independently of its
+  physical scancode. The key route now refuses IME-owned presses before any
+  physical-key command dispatch. Existing ordinary key-release ownership stays
+  intact. This implements plan 07 composition ownership without a new timer,
+  platform hook or product contract. Fresh real-IME validation is still required.
+- `58-phase00-tray-module-check` caught an injection API name in a Search test
+  comment. The comment now describes input insertion without naming the API;
+  the governance prohibition itself is unchanged.

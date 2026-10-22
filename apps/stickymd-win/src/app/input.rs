@@ -5,7 +5,7 @@
 use stickymd_core::{EditKind, Selection};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 
 use super::StickyApp;
 use crate::config::{ContentZoomPercent, ViewMode};
@@ -83,6 +83,13 @@ impl StickyApp {
             return;
         }
         if event.state != ElementState::Pressed {
+            return;
+        }
+        // Windows can deliver the IME-owned key after empty preedit/commit and
+        // Disabled (observed with WeType Escape). Composition state is then
+        // already clear, but VK_PROCESSKEY still belongs exclusively to the IME.
+        // Its physical scancode must not close Search, collapse the dock, or edit.
+        if event.logical_key == Key::Named(NamedKey::Process) {
             return;
         }
         let code = match event.physical_key {

@@ -62,7 +62,7 @@ fn open_find(window: WindowHandle) -> Result<(), String> {
 fn open_replace(window: WindowHandle) -> Result<(), String> {
     open_find(window)?;
     // A queued Ctrl+V reads the clipboard when the target handles it, not when
-    // SendInput returns. Wait for a positive copy of the lower-case Source match
+    // input insertion returns. Wait for a positive copy of the lower-case Source match
     // before replacing the upper-case query payload with the replacement payload.
     input::press_escape(window)?;
     input::press_copy(window)?;
