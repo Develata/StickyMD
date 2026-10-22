@@ -89,6 +89,19 @@ impl Cover {
                 let _ = done_tx.send(Err(error));
                 return;
             }
+            // SAFETY: move our ordinary window to the top of its own Z-order
+            // band without activating it or changing its bounds.
+            if unsafe { super::SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0013) } == 0 {
+                let error = format!(
+                    "cannot raise ordinary cover: {}",
+                    std::io::Error::last_os_error()
+                );
+                // SAFETY: only the creator thread destroys its owned HWND.
+                unsafe { DestroyWindow(hwnd) };
+                let _ = created_tx.send(Err(error.clone()));
+                let _ = done_tx.send(Err(error));
+                return;
+            }
             let _ = created_tx.send(Ok(hwnd));
             let deadline = Instant::now() + Duration::from_secs(20);
             while !worker_stop.load(Ordering::Acquire) && Instant::now() < deadline {
@@ -178,9 +191,11 @@ pub(crate) fn hover(
         // SAFETY: WindowFromPoint takes copied coordinates and borrows its results.
         let (over_sensor, over_cover) =
             unsafe { (WindowFromPoint(point), WindowFromPoint(adjacent)) };
-        if over_cover != cover.hwnd || over_sensor != hwnd.0 || !super::is_topmost(hwnd)? {
+        let topmost = super::is_topmost(hwnd)?;
+        if over_cover != cover.hwnd || over_sensor != hwnd.0 || !topmost {
             return Err(format!(
-                "ordinary cover or temporary sensor topmost missing: cover={over_cover} sensor={over_sensor}"
+                "ordinary cover or temporary sensor topmost missing: cover={over_cover}/{} sensor={over_sensor}/{} topmost={topmost}",
+                cover.hwnd, hwnd.0
             ));
         }
         super::physical_input::move_physical_cursor(point.x, point.y, "hover the covered sensor")?;
