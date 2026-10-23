@@ -4,14 +4,20 @@
 [`docs/plan/11_testing_and_release.md`](plan/11_testing_and_release.md) 为准；每次发布的 source、artifact、
 收据和 USER authority 必须重新建立，不能从旧版本继承。
 
-## v0.1.3 准备中
+## v0.1.3 已发布记录
 
-本次范围包含已合并的预览资源优化、宽内容横向滚动、查找替换、输入法与窗口交互修复，
-以及现有 `$` 按钮独立裸等号行连接。USER 已授权必要的发布准备提交与推送、CI 全绿后的
-正式候选构建和核验，以及全部验收通过后的 tag；draft/正式 Release 未授权。
-新 source 必须重新建立证据，readiness 未达 `READY` 时不晋升 tag。
-详见[本次准备记录](report/2026-10-22-v0.1.3-candidate-preparation.md)
-和[发布说明](release-notes/0.1.3.md)。以下已发布版本记录保持各自身份。
+- Release：[StickyMD v0.1.3](https://github.com/Develata/StickyMD/releases/tag/v0.1.3)
+- 发布时间：2026-10-23 11:18:57（America/New_York）；正式版，非 draft/prerelease，GitHub latest 指向本版本。
+- Exact source / tag：`1d943497b91b704a34e32b3150a923d5113a5f9d`。
+- Source CI：`39848336424`；candidate workflow：`39848983265` / attempt 1，artifact `12458646214`，均成功。
+- Tag：`39974103329`；draft：`39975953298`；publish：`39977030651`，全部成功。
+- 晋升沿用已验收候选字节；公开三个附件独立下载后的 SHA-256 与原候选一致，来源与 SBOM 证明核验通过。
+- 自动资格化已满足；最终候选的 G4/五类 Resources 实测通过，Runtime/Performance/G3/G5 兼容复用通过。
+- 本机补充检查与 USER 四组实际人工观察通过；另一系统、多屏/混合 DPI、干净 VM 等未测范围及正式人工记录缺口如实保留。
+- USER 已明确批准仅限本版本的 tag、draft 与 publish 例外；技术 readiness 保持 `NOT_READY`。
+
+具体边界、产物摘要与公开核验结果见[发布记录](report/2026-10-22-v0.1.3-candidate-preparation.md)
+和[发布说明](release-notes/0.1.3.md)。以下历史版本保持各自身份；本次例外不改变未来版本的发布合同。
 
 ## v0.1.2 已发布记录
 
