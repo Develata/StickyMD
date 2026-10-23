@@ -130,7 +130,7 @@ candidate/clean harness/isolated-copy 收据合同，但分别写入 `g4-exact-q
 .\tools\smoke\phase-14.ps1 -Readiness -Explain
 ```
 
-剩余 26 项人工事实由 G1/G2 与 Tier B/C receipt 持有；其中 mixed-DPI M11/M12 不因 G4 主屏
+剩余 27 项人工事实由 G1/G2 与 Tier B/C receipt 持有；其中 mixed-DPI M11/M12 不因 G4 主屏
 自动化而被替代。G3/G4 对应的 18 项只有各自 exact receipt 满足 source/harness/clean/EXE/ZIP
 绑定后才解除 `NOT_TESTED` blocker。Tier B/C 未执行项目继续保持
 `NOT TESTED`，任何 waiver 必须由 USER 明确授权，并绑定当前人工观察上下文与明确列出的 `(项, 角色)` 集合

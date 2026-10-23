@@ -7,6 +7,43 @@ use super::*;
 
 const A: Key = Key::new(0x41, 0x1E);
 
+#[test]
+fn modified_wheel_releases_modifiers_after_success_and_failed_wheel() {
+    for fail_wheel in [false, true] {
+        let backend = Scripted::with(|log| {
+            if fail_wheel {
+                log.short.push(1);
+            }
+        });
+        let injection = Injection::new(backend.clone());
+        assert_eq!(
+            injection.modified_wheel(&[CONTROL], -120).is_err(),
+            fail_wheel
+        );
+        let mut expected = vec![key(CONTROL, false)];
+        if !fail_wheel {
+            expected.push(Input::Wheel { delta: -120 });
+        }
+        expected.push(key(CONTROL, true));
+        assert_eq!(backend.inputs(), expected);
+        assert!(injection.stop_reason().is_none());
+    }
+}
+
+#[test]
+fn modified_wheel_unwind_releases_control_and_stops_later_input() {
+    let backend = Scripted::with(|log| log.panic_at.push(1));
+    let injection = Injection::new(backend.clone());
+    assert!(
+        catch_unwind(AssertUnwindSafe(
+            || injection.modified_wheel(&[CONTROL], 120)
+        ))
+        .is_err()
+    );
+    assert_eq!(backend.inputs().last(), Some(&key(CONTROL, true)));
+    assert!(injection.tap(A).is_err());
+}
+
 #[derive(Default)]
 struct Log {
     inputs: Vec<Input>,

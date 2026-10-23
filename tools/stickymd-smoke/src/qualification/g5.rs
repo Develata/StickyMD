@@ -3,6 +3,8 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
 
 mod cases;
+#[cfg(test)]
+mod preflight;
 
 use std::path::Path;
 
@@ -32,7 +34,7 @@ pub(super) fn run(
             cases: exact_checks::G5,
             operations: &OPERATIONS,
             selected_case: selected_case.map(G5Case::as_str),
-            injects_input: false,
+            injects_input: true,
         },
     )
 }

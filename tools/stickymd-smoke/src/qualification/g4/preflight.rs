@@ -113,6 +113,12 @@ pub(in crate::qualification) fn run(
     for check in recorded {
         println!("LOCAL_PREFLIGHT_CHECK={check}");
     }
+    for artifact in evidence.artifacts {
+        println!(
+            "LOCAL_PREFLIGHT_ARTIFACT={} sha256={}",
+            artifact.path, artifact.sha256
+        );
+    }
 }
 
 #[test]

@@ -13,11 +13,14 @@ use super::super::super::exact_desktop::{
     start_until_editor_ready, wait_for_config, wait_until,
 };
 
+mod visibility;
+
 pub(super) fn g4_05(repository: &Path, program: &Path, checks: &mut Checks) -> Result<(), String> {
     const SOURCE: &str = "junction identity must remain singular\n";
     seed_note(program, SOURCE)?;
     let mut primary = start_until_editor_ready(&program.join("StickyMD.exe"))?;
     let window = crate::window_control::visible_window(primary.id())?;
+    visibility::wake(program, primary.id(), window, checks)?;
     crate::window_control::request_close(window)?;
     wait_for_visibility(window, false)?;
     checks.record("close-hides-window", &[]);
@@ -63,6 +66,7 @@ fn portable_copies(repository: &Path, parent: &Path, checks: &mut Checks) -> Res
     crate::runtime::portable_isolation::run(repository, &program, &executable, &mut child, window)?;
     child.kill_and_wait()?;
     checks.record("portable-copies-note-config-and-exit-isolated", &[]);
+    visibility::copies(repository, parent, checks)?;
     Ok(())
 }
 

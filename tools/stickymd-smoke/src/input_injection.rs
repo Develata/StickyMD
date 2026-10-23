@@ -430,6 +430,18 @@ impl<B: Backend> Injection<B> {
         self.operation()?.state.send_one(Input::Wheel { delta })
     }
 
+    /// Keeps modifiers owned until the wheel event, releasing them on every exit.
+    pub(crate) fn modified_wheel(&self, modifiers: &[Key], delta: i32) -> Result<(), String> {
+        let mut guarded = self.operation()?;
+        let operation = guarded.operation;
+        let sent = modifiers
+            .iter()
+            .try_for_each(|&key| guarded.state.press(operation, Held::Key(key)))
+            .and_then(|()| guarded.state.send_one(Input::Wheel { delta }));
+        let released = guarded.state.release_operation(operation);
+        sent.and(released)
+    }
+
     /// Places the cursor at virtual-desktop pixel `(x, y)`.
     pub(crate) fn place_cursor(&self, x: i32, y: i32) -> Result<(), String> {
         if self.operation()?.state.backend.place_cursor(x, y) {

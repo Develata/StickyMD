@@ -784,6 +784,14 @@ SHA-256 写入 exact receipt。截图适配器只采集像素，不得判 PASS�
 mixed-DPI/多屏、System 主题实际切换和首次视觉判断仍由人工 authority 持有；G5 companion evidence
 只能减少重复操作，不能把这些观察静默升级为人工 PASS。G3、G4、G5 必须串行执行。
 
+人工观察前优先复用已有客观检查。G4-05 还应覆盖隐藏与原生最小化后的同 HWND 唤醒、
+无辅助激活的焦点恢复、立即输入与持久文件保持，以及两个受控便携副本各自托盘的显示/隐藏隔离。
+G5-02 验证最小尺寸与恢复尺寸使用实际窗口 DPI；G5-03 验证三种视图的缩放上下限、
+Ctrl+滚轮 5% 步进与重置、窗口几何不随内容缩放，以及 40/70/96/100 四档原生整窗 alpha。
+G4-06 的两种真实输入法同时覆盖上述四档透明度的提交与撤销。
+偏好切换不得改写 Markdown，正常退出后重启必须恢复已提交偏好。以上使用现有 G4/G5
+入口和失败传播，不建立新的人工 PASS 来源；视觉判断和未具备的物理环境仍独立记录。
+
 Phase 14 固定顺序为 Source Freeze → Local/Source Preflight → explicit PUSH authority → remote CI/release
 workflow → download/Promote → Environment → Runtime → Performance → Resources → G3 → G4 → G5 → Manual
 → Readiness。Local Preflight 不生成 final candidate；Promote 前不得执行 final artifact-bound qualification。

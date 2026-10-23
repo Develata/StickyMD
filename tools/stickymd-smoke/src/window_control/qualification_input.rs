@@ -4,6 +4,27 @@
 
 use super::*;
 
+/// Request the native minimized state; callers must observe IsIconic before waking it.
+pub(crate) fn minimize(window: WindowHandle) -> Result<(), String> {
+    post_message(window, 0x0112, 0xF020, 0, "minimize")
+}
+
+pub(crate) fn control_wheel(window: WindowHandle, notches: i32) -> Result<(), String> {
+    let delta = notches.checked_mul(120).ok_or("wheel delta overflow")?;
+    let rect = window_rect(window)?;
+    let point = NativePoint {
+        x: rect.x + (rect.width / 2) as i32,
+        y: rect.y + (rect.height / 2) as i32,
+    };
+    move_physical_cursor(point.x, point.y, "route content zoom wheel")?;
+    require_keyboard_target(window)?;
+    // SAFETY: this copies the root owner under the observed screen point; no pointer is retained.
+    if unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) } != window.0 {
+        return Err("zoom wheel target is covered by another window".to_owned());
+    }
+    input_injection::live()?.modified_wheel(&[CONTROL], delta)
+}
+
 pub(crate) fn shift_escape(window: WindowHandle) -> Result<(), String> {
     send_shift_chord(window, 0x1B, 0x01, false)
 }

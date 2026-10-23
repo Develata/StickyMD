@@ -32,6 +32,7 @@
 # Windowless StickyApp owners supplement that routing; they never create manual/candidate PASS.
 # G4-02 observes native Preview capture; G4-06 covers both IMEs and numeric input owners.
 # Five opacity application owners complement native cases with synthetic/exceptional states.
+# G4 identity adds hidden/minimized wake and per-copy tray visibility; G5 covers preference boundaries/restart.
 [CmdletBinding()]
 param(
     [switch]$Ci,

@@ -386,6 +386,23 @@ pub(in crate::qualification) fn show(repository: &Path, process_id: u32) -> Resu
     invoke(repository, process_id, SHOW, "the tray Show item")
 }
 
+pub(in crate::qualification) fn set_owned_visibility(
+    repository: &Path,
+    process_id: u32,
+    known: &[u32],
+    visible: bool,
+) -> Result<(), String> {
+    let opened = multiple::open(repository, process_id, known)?;
+    let item = if visible { SHOW } else { HIDE };
+    invoke_opened(
+        repository,
+        process_id,
+        item,
+        "owned copy visibility",
+        opened,
+    )
+}
+
 pub(in crate::qualification) fn hide(repository: &Path, process_id: u32) -> Result<(), String> {
     invoke(repository, process_id, HIDE, "the tray Hide item")
 }

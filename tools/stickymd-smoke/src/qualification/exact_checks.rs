@@ -231,6 +231,18 @@ pub(crate) const G4_05: &[&str] = &[
     "junction-second-instance-exits",
     "junction-wakes-primary",
     "portable-copies-note-config-and-exit-isolated",
+    "portable-tray-visibility-isolated:copy=first,visible=false",
+    "portable-tray-visibility-isolated:copy=first,visible=true",
+    "portable-tray-visibility-isolated:copy=second,visible=false",
+    "portable-tray-visibility-isolated:copy=second,visible=true",
+    "second-launch-exits:state=hidden",
+    "second-launch-exits:state=minimized",
+    "second-launch-immediate-input:state=hidden",
+    "second-launch-immediate-input:state=minimized",
+    "second-launch-keeps-durable-files:state=hidden",
+    "second-launch-keeps-durable-files:state=minimized",
+    "second-launch-restores-focused-window:state=hidden",
+    "second-launch-restores-focused-window:state=minimized",
     "sole-process-after-collapsed-wake",
     "sole-process-after-junction",
 ];
@@ -248,11 +260,13 @@ pub(crate) const G4_06: &[&str] = &[
     "ime-commit-undo:ime=pinyin,mode=split",
     "ime-commit-undo:ime=pinyin,opacity=100",
     "ime-commit-undo:ime=pinyin,opacity=40",
+    "ime-commit-undo:ime=pinyin,opacity=70",
     "ime-commit-undo:ime=pinyin,opacity=96",
     "ime-commit-undo:ime=wetype,mode=source",
     "ime-commit-undo:ime=wetype,mode=split",
     "ime-commit-undo:ime=wetype,opacity=100",
     "ime-commit-undo:ime=wetype,opacity=40",
+    "ime-commit-undo:ime=wetype,opacity=70",
     "ime-commit-undo:ime=wetype,opacity=96",
     "ime-composition-no-collapse:edge=left,ime=pinyin",
     "ime-composition-no-collapse:edge=left,ime=wetype",
@@ -422,7 +436,7 @@ mod tests {
             .chain(G4)
             .map(|case| case.checks.len())
             .sum::<usize>();
-        assert_eq!(total, 222);
+        assert_eq!(total, 236);
     }
 
     #[test]

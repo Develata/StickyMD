@@ -482,7 +482,7 @@ fn runtime_states_accept_real_ime(
     crate::window_control::switch_to_source(process_id)?;
     wait_for_config(program, "view_mode = \"source\"")?;
     // Move away from the default 96 before testing it; no default-state PASS.
-    for (opacity, label) in [(40, "40"), (96, "96"), (100, "100")] {
+    for (opacity, label) in [(40, "40"), (70, "70"), (96, "96"), (100, "100")] {
         crate::window_control::click_toolbar(
             window,
             crate::window_control::ToolbarControl::Opacity,
