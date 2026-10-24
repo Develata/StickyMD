@@ -18,13 +18,16 @@ StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown �
 - 纯 portable：解压即用，无安装器，不写 AppData / Registry。
 - 核心本体对象只有：Note、Document Text、Preview、Managed Image Asset、Runtime Config、Window Placement、Editor Session。
 
-当前仓库状态：**`v0.1.2` 已从 exact source
-`e36e61d65536c0cbaa84ee4004f1a289fbcb91dd` 正式发布**。公开 portable ZIP、checksum 与 SBOM
-来自同一份 GitHub Release artifact；候选 CI、精确包及来源证明校验通过。完整桌面资格化
-和人工验收的剩余缺口采用本版本明确的 USER 发布特例，原技术 readiness
+当前仓库状态：**`v0.1.3` 已从 exact source
+`1d943497b91b704a34e32b3150a923d5113a5f9d` 正式发布**（2026-10-23）。公开 portable ZIP、checksum
+与 SBOM 来自候选 run `39848983265` 的同一份 artifact，经 TAG、DRAFT、PUBLISH 三次晋升
+workflow 与来源证明校验，未重新构建。另一 Windows 环境、多屏/混合 DPI、干净 VM 等仍为未测，
+正式人工目标声明与逐场景记录未齐；发布依据是仅限本版本的 USER 例外，原技术 readiness
 仍为 `NOT_READY`，不得表述为完整验收通过。详见
-[`v0.1.2` 发布决定](docs/report/2026-10-02-v0.1.2-release-preparation.md)。
+[`v0.1.3` 候选与发布记录](docs/report/2026-10-22-v0.1.3-candidate-preparation.md)。
 
+`v0.1.2` 的 exact source 仍为 `e36e61d65536c0cbaa84ee4004f1a289fbcb91dd`（同样采用当版 USER 发布特例，
+见 [`v0.1.2` 发布决定](docs/report/2026-10-02-v0.1.2-release-preparation.md)），
 `v0.1.1` 的 exact source 仍为 `9a0a00a1fe143cf25fa4208a54ec5dfea7f3e7c9`，
 `v0.1.0` 仍为 `64690ab8f86f63f3cbfeabbb0961276978c8f26d`；历史报告与
 ignored evidence 保留各自资格化身份。各版本的 tag 和既有资产都不得被后续 `main`
