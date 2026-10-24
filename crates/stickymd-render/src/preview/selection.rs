@@ -164,6 +164,28 @@ impl PreviewTextIndex {
         }
     }
 
+    /// Gives each atomic box whose selection range has an entry in `tooltips` that tooltip.
+    /// Tooltips change no geometry, so the box order and hit rows stay valid and nothing is
+    /// re-sorted or rebuilt; a freshly built index is uniquely owned, so nothing is copied
+    /// either. O(boxes · log tooltips).
+    pub(super) fn set_atomic_tooltips(&mut self, tooltips: &mut [(Range<usize>, Arc<str>)]) {
+        if tooltips.is_empty() {
+            return;
+        }
+        tooltips.sort_unstable_by_key(|(range, _)| (range.start, range.end));
+        for item in Arc::make_mut(&mut self.boxes)
+            .iter_mut()
+            .filter(|item| item.atomic)
+        {
+            let key = (item.selection_range.start, item.selection_range.end);
+            if let Ok(found) =
+                tooltips.binary_search_by_key(&key, |(range, _)| (range.start, range.end))
+            {
+                item.tooltip = Some(Arc::clone(&tooltips[found].1));
+            }
+        }
+    }
+
     pub fn generation(&self) -> Generation {
         self.document.generation
     }
@@ -410,6 +432,48 @@ mod tests {
             })
             .collect();
         PreviewTextIndex::new(Generation::initial(), text.into(), boxes, Vec::new())
+    }
+
+    /// Only atomic boxes whose exact selection range has a tooltip get it, and the boxes keep
+    /// their order and hit rows.
+    #[test]
+    fn atomic_tooltips_go_to_their_own_box_in_place() {
+        let mut index = index();
+        let boxes = Arc::make_mut(&mut index.boxes);
+        // "🙂" (bytes 6..10) and "b" (11..12) are atomic; "a" (10..11) is not.
+        for item in boxes.iter_mut() {
+            item.atomic = matches!(item.selection_range.start, 6 | 11);
+        }
+        let before: Vec<_> = index
+            .boxes()
+            .iter()
+            .map(|item| item.selection_range.clone())
+            .collect();
+        let mut tooltips = vec![
+            (11..12, Arc::<str>::from("b failed")),
+            (10..11, Arc::<str>::from("a is not atomic")),
+            (6..10, Arc::<str>::from("emoji failed")),
+            (6..11, Arc::<str>::from("no box has this range")),
+        ];
+        index.set_atomic_tooltips(&mut tooltips);
+        let tooltip = |start| {
+            index
+                .boxes()
+                .iter()
+                .find(|item| item.selection_range.start == start)
+                .and_then(|item| item.tooltip.as_deref().map(str::to_owned))
+        };
+        assert_eq!(tooltip(6).as_deref(), Some("emoji failed"));
+        assert_eq!(tooltip(11).as_deref(), Some("b failed"));
+        assert_eq!(tooltip(10), None);
+        assert_eq!(tooltip(0), None);
+        let after: Vec<_> = index
+            .boxes()
+            .iter()
+            .map(|item| item.selection_range.clone())
+            .collect();
+        assert_eq!(after, before);
+        assert_eq!(index.hit_test(10.0 + 24.0 + 24.0 + 1.0, 20.0), 6);
     }
 
     #[test]

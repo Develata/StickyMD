@@ -64,7 +64,7 @@ fn owned(owner: u32, known: &[u32]) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "popup belongs to PID {owner}, outside owned test instances {known:?}; no input sent"
+            "popup belongs to PID {owner}, outside owned test instances {known:?}; no further input sent"
         ))
     }
 }
@@ -141,9 +141,11 @@ pub(super) enum Refusal {
 /// `target` about to be clicked must be among the owners.
 ///
 /// Residuals, where the popup is refused by `owned` before any item is invoked: a program
-/// outside `tray-icon` that names its icon StickyMD; a renamed StickyMD whose window is gone
-/// (it is quitting) and whose image path now holds another file; an owner window created, or a
-/// copy started, between the enumeration and the click.
+/// outside `tray-icon` that names its icon StickyMD; an owner window created, or a copy started,
+/// between the enumeration and the click. A renamed copy without its StickyMD window but with
+/// a live tray window would be one too, but the product's exit drops the tray before the
+/// window (`WindowEffect::ExitProcess` in `app/window_runtime.rs`), so it is not expected on
+/// the current shutdown path; an abnormal lifecycle is unverified.
 pub(super) fn exclusivity(
     image_named: &[u32],
     tray_owners: &[u32],
@@ -179,7 +181,10 @@ fn owner_identity(pid: u32) -> Identity {
 
 fn check_exclusive(known: &[u32], target: u32) -> Result<(), String> {
     let refusal = match exclusivity(
-        &crate::managed_process::running_stickymd_pids()?,
+        // Another sign-in's StickyMD has no icon in this session's tray.
+        &crate::managed_process::outside_other_sessions(
+            crate::managed_process::running_stickymd_pids()?,
+        ),
         &crate::window_control::tray_icon_owner_pids()?,
         known,
         target,
@@ -232,6 +237,7 @@ fn check_exclusive(known: &[u32], target: u32) -> Result<(), String> {
     };
     Err(format!("refusing a tray click: {reason}"))
 }
+
 pub(super) fn open(
     repository: &Path,
     target: u32,
@@ -253,6 +259,12 @@ pub(super) fn open(
         TRAY_MENU_OPEN_ATTEMPTS
     } else {
         32
+    };
+    let search = Search {
+        repository,
+        target,
+        known,
+        foreign,
     };
     let run = (|| {
         // At most two enumerations, each with at most sixteen same-name icons.
@@ -280,73 +292,32 @@ pub(super) fn open(
                     geometry: Some(icon.geometry.clone()),
                     ..Attempt::default()
                 };
-                crate::window_control::place_cursor_on_tray_icon(
-                    icon.x,
-                    icon.y,
-                    &mut attempt.cursor,
-                )?;
-                // Hover can remove a dead notification icon and reflow the flyout.
-                // Re-read after hover; never click coordinates from the old layout.
-                match targets(repository, target, known.len())? {
-                    Targets::Icons(refreshed) if refreshed == icons => {}
-                    _ => {
-                        attempt.outcome =
-                            "tray candidates changed after hover; no click sent".to_owned();
+                let step = candidate(&search, icon, &icons, &mut attempt, &mut clicks);
+                match step {
+                    Ok(Candidate::Opened(menu)) => {
+                        return Ok(Opened::observed(
+                            menu,
+                            attempt,
+                            std::mem::take(&mut attempts),
+                        ));
+                    }
+                    Ok(Candidate::Next) => attempts.push(attempt),
+                    Ok(Candidate::Reenumerate) => {
                         attempts.push(attempt);
                         break;
                     }
-                }
-                if let Some(owner) = crate::window_control::active_tray_popup_owner()? {
-                    owned(owner, known)?;
-                    return Err(format!("popup {owner} appeared before candidate click"));
-                }
-                if foreign == Foreign::CheckBeforeEachClick
-                    && let Err(reason) = check_exclusive(known, target)
-                {
-                    attempt.outcome = format!("{reason}; no click sent");
-                    attempts.push(attempt);
-                    return Err(reason);
-                }
-                if let Err(error) = crate::window_control::right_click_tray_icon(icon.x, icon.y) {
-                    attempt.outcome = error.clone();
-                    attempts.push(attempt);
-                    return Err(error);
-                }
-                clicks += 1;
-                let owner = wait_owner()?;
-                if let Some(owner) = owner {
-                    owned(owner, known)?;
-                    if owner == target {
-                        let menu = super::items(&super::helper(
-                            repository,
-                            "tray-menu-items",
-                            target,
-                            None,
-                        )?)?;
-                        if !menu.items.is_empty() {
-                            return Ok(Opened::observed(
-                                menu,
-                                attempt,
-                                std::mem::take(&mut attempts),
-                            ));
-                        }
-                        attempt.outcome =
-                            format!("target popup {owner} had no observed items{}", menu.partial);
-                    } else {
-                        attempt.outcome =
-                            format!("candidate belongs to other owned instance {owner}");
+                    Err(error) => {
+                        // Every exit keeps what this attempt observed (geometry, cursor
+                        // readback, whether the click was sent) in the history.
+                        attempt.outcome = if attempt.outcome.is_empty() {
+                            error.clone()
+                        } else {
+                            format!("{}; then {error}", attempt.outcome)
+                        };
+                        attempts.push(attempt);
+                        return Err(error);
                     }
-                    close_current(repository, known)?;
-                } else {
-                    attempt.outcome = "no native popup owner observed after click".to_owned();
-                    super::closed(&super::helper(
-                        repository,
-                        "tray-menu-closed",
-                        target,
-                        None,
-                    )?)?;
                 }
-                attempts.push(attempt);
                 if clicks >= click_limit {
                     return Err(format!("tray click limit {click_limit} reached"));
                 }
@@ -361,6 +332,85 @@ pub(super) fn open(
             super::history(&attempts)
         )
     })
+}
+
+/// What one candidate icon led to.
+enum Candidate {
+    /// The target's popup opened with observed items.
+    Opened(super::MenuRead),
+    /// Not the target's icon; try the next one.
+    Next,
+    /// The candidates changed after hover; enumerate again.
+    Reenumerate,
+}
+
+/// What every candidate of one `open` shares.
+struct Search<'a> {
+    repository: &'a Path,
+    target: u32,
+    known: &'a [u32],
+    foreign: Foreign,
+}
+
+/// Hovers, rechecks and right-clicks one candidate icon. On an error `attempt.outcome` holds
+/// what happened before it (empty if nothing yet); the caller adds the error and records it.
+fn candidate(
+    search: &Search<'_>,
+    icon: &Icon,
+    icons: &[Icon],
+    attempt: &mut Attempt,
+    clicks: &mut usize,
+) -> Result<Candidate, String> {
+    let Search {
+        repository,
+        target,
+        known,
+        foreign,
+    } = *search;
+    crate::window_control::place_cursor_on_tray_icon(icon.x, icon.y, &mut attempt.cursor)?;
+    // Hover can remove a dead notification icon and reflow the flyout.
+    // Re-read after hover; never click coordinates from the old layout.
+    match targets(repository, target, known.len())? {
+        Targets::Icons(refreshed) if refreshed == icons => {}
+        _ => {
+            attempt.outcome = "tray candidates changed after hover; no click sent".to_owned();
+            return Ok(Candidate::Reenumerate);
+        }
+    }
+    if let Some(owner) = crate::window_control::active_tray_popup_owner()? {
+        owned(owner, known)?;
+        return Err(format!("popup {owner} appeared before candidate click"));
+    }
+    if foreign == Foreign::CheckBeforeEachClick {
+        check_exclusive(known, target).inspect_err(|_| {
+            attempt.outcome = "no click sent".to_owned();
+        })?;
+    }
+    crate::window_control::right_click_tray_icon(icon.x, icon.y)?;
+    *clicks += 1;
+    attempt.outcome = "right-click sent".to_owned();
+    let Some(owner) = wait_owner()? else {
+        attempt.outcome = "no native popup owner observed after click".to_owned();
+        super::closed(&super::helper(
+            repository,
+            "tray-menu-closed",
+            target,
+            None,
+        )?)?;
+        return Ok(Candidate::Next);
+    };
+    owned(owner, known)?;
+    if owner == target {
+        let menu = super::items(&super::helper(repository, "tray-menu-items", target, None)?)?;
+        if !menu.items.is_empty() {
+            return Ok(Candidate::Opened(menu));
+        }
+        attempt.outcome = format!("target popup {owner} had no observed items{}", menu.partial);
+    } else {
+        attempt.outcome = format!("candidate belongs to other owned instance {owner}");
+    }
+    close_current(repository, known)?;
+    Ok(Candidate::Next)
 }
 
 #[cfg(test)]
@@ -390,7 +440,11 @@ mod tests {
     fn unrelated_popup_is_never_authorized_for_cleanup() {
         assert!(owned(11, &[11, 22]).is_ok());
         assert!(owned(22, &[11, 22]).is_ok());
-        assert!(owned(33, &[11, 22]).unwrap_err().contains("no input sent"));
+        assert!(
+            owned(33, &[11, 22])
+                .unwrap_err()
+                .contains("no further input sent")
+        );
     }
 }
 

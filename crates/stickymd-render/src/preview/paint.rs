@@ -241,10 +241,8 @@ pub(super) fn paint_document(
             }
         }
     }
-    let mut index = Arc::new(PreviewTextIndex::from_document(
-        Arc::clone(&document.projection),
-        visible_boxes,
-    ));
+    let mut index =
+        PreviewTextIndex::from_document(Arc::clone(&document.projection), visible_boxes);
     // Formulas the painter could not draw, by their atomic box's selection range, with why.
     let mut failed_formulas: Vec<(std::ops::Range<usize>, Arc<str>)> = Vec::new();
     // At most one viewport-sized alpha mask, reused for every overflow block.
@@ -449,29 +447,10 @@ pub(super) fn paint_document(
             );
         }
     }
-    if !failed_formulas.is_empty() {
-        // The index was built before painting; give each failed formula's own atomic box (matched
-        // by selection range, never by geometry) its reason. Failures are rare and few.
-        let boxes = index
-            .boxes()
-            .iter()
-            .cloned()
-            .map(|mut item| {
-                if item.atomic
-                    && let Some((_, reason)) = failed_formulas
-                        .iter()
-                        .find(|(selection, _)| *selection == item.selection_range)
-                {
-                    item.tooltip = Some(Arc::clone(reason));
-                }
-                item
-            })
-            .collect();
-        index = Arc::new(PreviewTextIndex::from_document(
-            Arc::clone(&document.projection),
-            boxes,
-        ));
-    }
+    // The index was built before painting; give each failed formula's own atomic box (matched
+    // by selection range, never by geometry) its reason, in place.
+    index.set_atomic_tooltips(&mut failed_formulas);
+    let index = Arc::new(index);
     Ok(PreviewFrame {
         generation: document.generation,
         width: document.width_px,

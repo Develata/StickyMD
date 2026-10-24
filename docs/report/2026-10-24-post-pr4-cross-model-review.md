@@ -47,3 +47,22 @@
 
 见本分支提交前的命令输出：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings`、
 `all --ci --ci-shard=tests`（含 owner 核验）与 Phase 0 governance。G4 修改需独占桌面运行，未在本机执行。
+
+## 后续（2026-10-24，PR #5 第二批）
+
+### USER 决定
+
+- **决定 1（公式内存合同的放宽）已由 USER 确认**，原话："为了数学公式放宽要求那个是我定的，因为首要任务是正常显示，另外8mb也太小了，那个放宽我认为是合理的"。
+  plan 06 / plan 10 现行文本保持不变；上文"需要 USER 决定"第 1 项就此关闭。第 2–4 项仍待 USER 决定。
+
+### 第六轮审查与上文"记录但未修"中已处理的项
+
+| 项 | 处理 | 测试 |
+|---|---|---|
+| 第六轮 NEEDS_VERIFICATION：`has_stickymd_window` 无原生正向测试 | 在测试线程建隐藏的 `STATIC` 窗口（标题 `StickyMD * — 外部修改冲突`），断言找到；无关标题、空标题为否，销毁后为否；已销毁句柄读标题报错而非空串。变异：让匹配恒为否时该测试失败（已恢复）。同进程窗口足以抓住"恒答否"；跨进程读取由第六轮审查对照 API 合同确认，并经本机只读探针观察。该测试与 `the_enumeration_completes` 共用测试专用锁：并行测试中窗口在枚举取得句柄后被销毁，枚举会（按设计）报错（第七轮） | `a_hidden_stickymd_titled_window_is_found_and_others_are_not` |
+| 第六轮 NICE：残余说明"正在退出、主窗口已销毁"不准确 | `multiple::exclusivity` 注释改为：产品退出先释放托盘再结束事件循环（`WindowEffect::ExitProcess`），该状态不在当前正常退出路径上，异常生命周期未验证。上文第 3 行的残余说明以本条为准 | — |
+| 托盘排他性检查不按会话过滤 | 新增 `managed_process::session`：仅去掉经 `ProcessIdToSessionId` 证明属于其他会话的映像名 StickyMD；会话读不到则保留（仍拒绝）。托盘宿主窗口的枚举本就只在当前桌面 | `only_a_process_proven_in_another_session_is_dropped`、`this_process_is_in_its_own_session`（断言本进程会话查询成功） |
+| 托盘候选点击在错误出口丢失 attempt | 单个候选抽为 `multiple::candidate`，返回 `Opened / Next / Reenumerate`；任何错误出口都把本次 attempt（几何、光标读回、是否已发右击）记入历史后再返回 | 仅编译与 clippy；需独占桌面运行，未在本机执行 |
+| 公式绘制失败时重建文本索引 | `PreviewTextIndex::set_atomic_tooltips` 就地写入新建、唯一持有的索引：不克隆、不重新排序、不重建命中行；按选区范围二分查找，O(框数 · log 失败数) | `atomic_tooltips_go_to_their_own_box_in_place`，以及原有两项公式失败测试 |
+
+仍未处理：溢出区展开与光标位置不恢复（需新增 helper 命令并在桌面验证）；G4 `NEGATIVE_SETTLE` 仍为 NEEDS_VERIFICATION；上文其余"记录但未修"条目不变。

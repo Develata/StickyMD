@@ -223,15 +223,103 @@ mod tests {
         assert!(complete(found(&[20, 10], None), Some("access denied".into())).is_err());
     }
 
+    /// Serializes the tests that enumerate or create and destroy this process's windows: a
+    /// window destroyed between the enumeration handing out its handle and the class or title
+    /// read is, rightly, an enumeration error.
+    static NATIVE_WINDOWS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn native_windows() -> std::sync::MutexGuard<'static, ()> {
+        NATIVE_WINDOWS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Runs the real enumeration: it completes on any desktop, an empty list included.
     #[test]
     fn the_enumeration_completes() {
+        let _windows = native_windows();
         super::tray_icon_owner_pids().unwrap();
     }
 
-    /// The test process has no StickyMD-titled window; the search completes and says so.
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn CreateWindowExW(
+            ex_style: u32,
+            class: *const u16,
+            title: *const u16,
+            style: u32,
+            x: i32,
+            y: i32,
+            width: i32,
+            height: i32,
+            parent: isize,
+            menu: isize,
+            instance: isize,
+            parameter: *const std::ffi::c_void,
+        ) -> isize;
+        fn DestroyWindow(window: isize) -> i32;
+    }
+
+    /// A hidden top-level window of this process, made on the calling thread (so reading its
+    /// title needs no message loop), destroyed when dropped.
+    struct HiddenWindow(isize);
+
+    impl HiddenWindow {
+        fn titled(title: &str) -> Self {
+            let class: Vec<u16> = "STATIC".encode_utf16().chain([0]).collect();
+            let title: Vec<u16> = title.encode_utf16().chain([0]).collect();
+            // SAFETY: both buffers are NUL-terminated and outlive the call; the system STATIC
+            // class needs no registration; no WS_VISIBLE, no parent, menu or creation data.
+            let window = unsafe {
+                CreateWindowExW(
+                    0,
+                    class.as_ptr(),
+                    title.as_ptr(),
+                    0,
+                    0,
+                    0,
+                    10,
+                    10,
+                    0,
+                    0,
+                    0,
+                    std::ptr::null(),
+                )
+            };
+            assert_ne!(window, 0, "{}", std::io::Error::last_os_error());
+            Self(window)
+        }
+    }
+
+    impl Drop for HiddenWindow {
+        fn drop(&mut self) {
+            // SAFETY: the window was created on this thread and is destroyed once.
+            unsafe { DestroyWindow(self.0) };
+        }
+    }
+
+    /// The positive case against a real window: without it, a search that always answers
+    /// "no" would pass every other test.
     #[test]
-    fn a_process_without_a_stickymd_window_is_told_apart() {
-        assert_eq!(super::has_stickymd_window(std::process::id()), Ok(false));
+    fn a_hidden_stickymd_titled_window_is_found_and_others_are_not() {
+        // Held until every window below is destroyed (the guard drops last).
+        let _windows = native_windows();
+        let pid = std::process::id();
+        let unrelated = HiddenWindow::titled("Clash Verge");
+        let empty = HiddenWindow::titled("");
+        assert_eq!(super::window_title(empty.0), Ok(String::new()));
+        assert_eq!(
+            super::window_title(unrelated.0),
+            Ok("Clash Verge".to_owned())
+        );
+        assert_eq!(super::has_stickymd_window(pid), Ok(false));
+        let stickymd = HiddenWindow::titled("StickyMD * — 外部修改冲突");
+        assert_eq!(super::has_stickymd_window(pid), Ok(true));
+        drop(stickymd);
+        assert_eq!(super::has_stickymd_window(pid), Ok(false));
+        // A destroyed handle is a failed read, not an empty title.
+        let gone = unrelated.0;
+        drop(unrelated);
+        assert!(super::window_title(gone).is_err());
     }
 }

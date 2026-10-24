@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 mod bounded;
 mod job;
 mod product;
+mod session;
 pub(crate) use product::{Product, process_product};
+pub(crate) use session::outside_other_sessions;
 
 pub(crate) use bounded::run_bounded_output;
 pub(crate) use job::{Descendants, Job};
