@@ -12,7 +12,7 @@
 - Source CI：`39848336424`；candidate workflow：`39848983265` / attempt 1，artifact `12458646214`，均成功。
 - Tag：`39974103329`；draft：`39975953298`；publish：`39977030651`，全部成功。
 - 晋升沿用已验收候选字节；公开三个附件独立下载后的 SHA-256 与原候选一致，来源与 SBOM 证明核验通过。
-- 自动资格化已满足；最终候选的 G4/五类 Resources 实测通过，Runtime/Performance/G3/G5 兼容复用通过。
+- 10 个资格化模块均为 RAN_PASS 或 REUSED_PASS：最终候选的 G4/五类 Resources 实测通过，Runtime/Performance/G3/G5 兼容复用通过；P14-A83（物理输入注入的桌面取证）仍为 `NOT TESTED`，不属上述通过范围。
 - 本机补充检查与 USER 四组实际人工观察通过；另一系统、多屏/混合 DPI、干净 VM 等未测范围及正式人工记录缺口如实保留。
 - USER 已明确批准仅限本版本的 tag、draft 与 publish 例外；技术 readiness 保持 `NOT_READY`。
 

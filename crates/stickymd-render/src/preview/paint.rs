@@ -241,12 +241,14 @@ pub(super) fn paint_document(
             }
         }
     }
-    let index = Arc::new(PreviewTextIndex::from_document(
+    let mut index = Arc::new(PreviewTextIndex::from_document(
         Arc::clone(&document.projection),
         visible_boxes,
     ));
+    // Formulas the painter could not draw, by their atomic box's selection range, with why.
+    let mut failed_formulas: Vec<(std::ops::Range<usize>, Arc<str>)> = Vec::new();
     // At most one viewport-sized alpha mask, reused for every overflow block.
-    let mut mask = None;
+    let mut mask = BlockMask::default();
     for (index, block) in document.blocks[start..end].iter().enumerate() {
         let target = block.horizontal.map(|layout| {
             layout.target(
@@ -258,8 +260,18 @@ pub(super) fn paint_document(
             )
         });
         let offset = target.map_or(0.0, |target| target.offset());
-        let clip = target.map(|target| target.content_rect());
-        let clip_mask = block_mask(&mut mask, document.width_px, height, clip, scroll_y)?;
+        // Only a decoration that scrolls with the block needs the clip; code and math
+        // backgrounds stay fixed, so a block with nothing else builds no mask here.
+        let needs_mask = block.decorations.iter().any(|decoration| {
+            !matches!(
+                decoration.role,
+                DecorationRole::CodeBackground | DecorationRole::MathBackground
+            )
+        });
+        let clip = target
+            .map(|target| target.content_rect())
+            .filter(|_| needs_mask);
+        let clip_mask = mask.get(document.width_px, height, clip, scroll_y)?;
         for decoration in &block.decorations {
             let mut decoration = *decoration;
             if matches!(
@@ -298,8 +310,7 @@ pub(super) fn paint_document(
         });
         let offset = target.map_or(0.0, |target| target.offset());
         let clip = target.map_or(viewport, |target| target.content_rect());
-        let clip_mask = block_mask(
-            &mut mask,
+        let clip_mask = mask.get(
             document.width_px,
             height,
             target.map(|target| target.content_rect()),
@@ -347,30 +358,50 @@ pub(super) fn paint_document(
                     {
                         continue;
                     }
-                    math_engine
-                        .draw(
-                            Arc::clone(&formula.source),
-                            formula.kind,
-                            formula.font_size,
-                            super::layout::math_foreground(theme),
-                            |raster| {
-                                if let Some(source) = PixmapRef::from_bytes(
-                                    &raster.pixels,
-                                    raster.width,
-                                    raster.height,
-                                ) {
-                                    pixmap.draw_pixmap(
-                                        origin_x,
-                                        origin_y,
-                                        source,
-                                        &PixmapPaint::default(),
-                                        Transform::identity(),
-                                        clip_mask,
-                                    );
-                                }
+                    let drawn = math_engine.draw(
+                        Arc::clone(&formula.source),
+                        formula.kind,
+                        formula.font_size,
+                        super::layout::math_foreground(theme),
+                        |raster| {
+                            if let Some(source) =
+                                PixmapRef::from_bytes(&raster.pixels, raster.width, raster.height)
+                            {
+                                pixmap.draw_pixmap(
+                                    origin_x,
+                                    origin_y,
+                                    source,
+                                    &PixmapPaint::default(),
+                                    Transform::identity(),
+                                    clip_mask,
+                                );
+                            }
+                        },
+                    );
+                    if let Err(error) = drawn {
+                        // A formula the painter cannot draw stays an error on that formula
+                        // (plan 06 `math-raster-lifecycle`): its box gets the math-error marker
+                        // and the reason as its tooltip, the rest of the frame paints, and its
+                        // source stays copyable. A later repaint tries it again.
+                        let rect = PreviewRect {
+                            x: chunk.x - offset,
+                            y: chunk.y,
+                            width: formula.metrics.width as f32,
+                            height: formula.metrics.height as f32,
+                        };
+                        paint_decoration(
+                            &mut pixmap,
+                            LayoutDecoration {
+                                rect,
+                                role: DecorationRole::MathError,
                             },
-                        )
-                        .map_err(|error| PreviewPaintError::Math(error.to_string()))?;
+                            scroll_y,
+                            palette,
+                            clip_mask,
+                        );
+                        failed_formulas
+                            .push((formula.selection.clone(), Arc::from(error.to_string())));
+                    }
                 }
                 LayoutContent::Image(image) => {
                     if let Some(raster) = &image.raster {
@@ -417,6 +448,29 @@ pub(super) fn paint_document(
                 None,
             );
         }
+    }
+    if !failed_formulas.is_empty() {
+        // The index was built before painting; give each failed formula's own atomic box (matched
+        // by selection range, never by geometry) its reason. Failures are rare and few.
+        let boxes = index
+            .boxes()
+            .iter()
+            .cloned()
+            .map(|mut item| {
+                if item.atomic
+                    && let Some((_, reason)) = failed_formulas
+                        .iter()
+                        .find(|(selection, _)| *selection == item.selection_range)
+                {
+                    item.tooltip = Some(Arc::clone(reason));
+                }
+                item
+            })
+            .collect();
+        index = Arc::new(PreviewTextIndex::from_document(
+            Arc::clone(&document.projection),
+            boxes,
+        ));
     }
     Ok(PreviewFrame {
         generation: document.generation,

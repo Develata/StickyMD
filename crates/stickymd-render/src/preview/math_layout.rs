@@ -27,6 +27,9 @@ pub(super) struct LaidOutMath {
     pub kind: MathKind,
     pub font_size: f32,
     pub metrics: MathMetrics,
+    /// The selection range of this formula's atomic box: its identity when paint reports a
+    /// failure back onto that box.
+    pub selection: std::ops::Range<usize>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -113,6 +116,7 @@ pub(super) fn make_mixed_chunk(
                         kind: math.kind,
                         font_size: metrics.font_size,
                         metrics: measured,
+                        selection: 0..0,
                     },
                     selection_text,
                 ),
@@ -333,12 +337,13 @@ fn image_piece(
 
 fn formula_piece(
     span: &RenderSpan,
-    formula: LaidOutMath,
+    mut formula: LaidOutMath,
     selection_text: &mut String,
 ) -> InlinePiece {
     let selection_start = selection_text.len();
     selection_text.push_str(&span.copy_text);
     let selection_end = selection_text.len();
+    formula.selection = selection_start..selection_end;
     let width = formula.metrics.width as f32;
     let height = formula.metrics.height as f32;
     let baseline = formula.metrics.baseline;

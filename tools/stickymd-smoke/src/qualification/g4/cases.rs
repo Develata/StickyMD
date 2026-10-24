@@ -16,6 +16,14 @@ mod tray;
 mod tray_topmost;
 
 use std::path::Path;
+use std::time::Duration;
+
+/// How long a negative check waits after its input before reading "nothing changed". An immediate
+/// read of the unchanged state proves nothing; this wait (longer than the 140 ms dock animation)
+/// narrows the window in which a wrong but slower reaction reads as PASS. It is not a bound on the
+/// asynchronous work (the config write shares the I/O worker), and one final sample misses a wrong
+/// state that appears and reverts, so these checks still need desktop evidence.
+pub(super) const NEGATIVE_SETTLE: Duration = Duration::from_millis(800);
 
 use super::super::exact_desktop::{CaseEvidence, Checks};
 

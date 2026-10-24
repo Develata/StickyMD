@@ -13,7 +13,9 @@ pub(crate) mod qualification_input;
 pub(crate) mod resource_comparison;
 mod routing;
 mod tray_input;
+mod tray_owners;
 mod tray_state;
+pub(crate) use tray_owners::{has_stickymd_window, tray_icon_owner_pids};
 pub(crate) use tray_state::tray_item_checked;
 
 pub(crate) use ime_profile::{

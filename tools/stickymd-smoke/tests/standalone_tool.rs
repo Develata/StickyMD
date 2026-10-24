@@ -1,7 +1,8 @@
 //! The standalone manual recorder is this tool copied to a tested machine that has only
 //! Windows (plan 11 `manual-observation-log`). Checked on the compiled tool itself, with the
-//! product's import gate: it accepts everything the tool imports except CNG hashing and the
-//! session query, two DLLs that also ship with Windows.
+//! product's import gate: it accepts everything the tool imports except CNG hashing, the
+//! session query and the version-resource reader (a tray owner's ProductName), three DLLs that
+//! also ship with Windows.
 
 #[test]
 fn the_tool_imports_only_dlls_that_ship_with_windows() {
@@ -24,5 +25,9 @@ fn the_tool_imports_only_dlls_that_ship_with_windows() {
         .map(str::to_ascii_lowercase)
         .collect::<Vec<_>>();
     outside.sort();
-    assert_eq!(outside, ["bcrypt.dll", "wtsapi32.dll"], "{stderr}");
+    assert_eq!(
+        outside,
+        ["bcrypt.dll", "version.dll", "wtsapi32.dll"],
+        "{stderr}"
+    );
 }

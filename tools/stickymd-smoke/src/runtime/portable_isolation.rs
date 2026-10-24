@@ -90,6 +90,10 @@ pub(crate) fn run(
     unchanged(&second_program, &second_before)?;
     let first_after = state(program)?;
 
+    // The tray exit right-clicks same-name icons before it can tell whose menu opened; this
+    // runtime has no exclusive-desktop preflight, so before every click the exit proves that
+    // every process that could own a StickyMD tray icon is one of these two copies
+    // (`Foreign::CheckBeforeEachClick`).
     crate::qualification::exit_owned_copy(repository, second.id(), &[primary.id(), second.id()])?;
     let status = super::wait_for_exit(&mut second, super::EXIT_TIMEOUT)?;
     if !status.success() {

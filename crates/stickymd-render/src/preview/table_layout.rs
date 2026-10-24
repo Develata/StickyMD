@@ -53,6 +53,9 @@ pub(super) fn layout_table(
     // Measure each cell at a readable wrap width. Reuse the existing shaper and
     // math engine; this pass owns no selection projection or image pixels.
     let mut widths = vec![64.0 * scale; columns];
+    // The widest measured line of each column, kept as measured: recovering it from the column
+    // width by subtracting the padding can come out one ulp short and re-wrap the last word.
+    let mut inner_widths = vec![0.0_f32; columns];
     let mut scratch = String::new();
     let mut measured_formula_count = *formula_count;
     for row in &table.rows {
@@ -76,6 +79,7 @@ pub(super) fn layout_table(
                 (f32::MAX, f32::MAX),
                 text_layout_cache,
             );
+            inner_widths[column] = inner_widths[column].max(measured.right_edge());
             widths[column] = widths[column].max(measured.right_edge() + cell_padding * 2.0);
         }
     }
@@ -123,7 +127,7 @@ pub(super) fn layout_table(
                 spans,
                 cell_x + cell_padding,
                 row_y + cell_padding,
-                (column_width - cell_padding * 2.0).max(1.0),
+                cell_wrap_width(column_width, cell_padding, inner_widths[column]),
                 metrics,
                 align,
                 selection_text,
@@ -188,5 +192,44 @@ pub(super) fn layout_table(
         chunks,
         decorations,
         boxes,
+    }
+}
+
+/// The width a cell wraps at: its column minus the padding on both sides, but never less than the
+/// widest line measured for the column, so a cell re-laid at its measured width keeps its breaks
+/// (cosmic-text keeps a word that fits exactly) even when `(inner + 2 pad) - 2 pad` rounds below
+/// `inner` in `f32`.
+fn cell_wrap_width(column_width: f32, cell_padding: f32, measured_inner: f32) -> f32 {
+    (column_width - cell_padding * 2.0)
+        .max(measured_inner)
+        .max(1.0)
+}
+
+#[cfg(test)]
+mod wrap_width_tests {
+    use super::cell_wrap_width;
+
+    /// Recovering a measured width from `measured + 2 * pad` can lose a low bit in `f32`; the wrap
+    /// width never falls below the measured line, so the widest cell keeps its line breaks.
+    #[test]
+    fn a_cell_wraps_at_no_less_than_its_measured_line() {
+        let padding = 8.0_f32;
+        let mut lossy = 0;
+        let mut inner = 32.0_f32;
+        while inner < 64.0 {
+            let column = inner + padding * 2.0;
+            if column - padding * 2.0 < inner {
+                lossy += 1;
+            }
+            assert!(cell_wrap_width(column, padding, inner) >= inner, "{inner}");
+            inner = f32::from_bits(inner.to_bits() + 977);
+        }
+        assert!(
+            lossy > 0,
+            "the sweep must include widths the subtraction loses"
+        );
+        // A column widened by distributed slack wraps at its full inner width.
+        assert_eq!(cell_wrap_width(200.0, padding, 50.0), 184.0);
+        assert_eq!(cell_wrap_width(0.0, padding, 0.0), 1.0);
     }
 }

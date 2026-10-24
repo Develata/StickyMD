@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 mod bounded;
 mod job;
+mod product;
+pub(crate) use product::{Product, process_product};
 
 pub(crate) use bounded::run_bounded_output;
 pub(crate) use job::{Descendants, Job};
@@ -225,6 +227,23 @@ fn is_smoke_owned_stickymd(executable: &Path) -> bool {
         })
 }
 
+/// The process IDs of every running StickyMD, whatever its program directory.
+pub(crate) fn running_stickymd_pids() -> Result<Vec<u32>, String> {
+    Ok(running_stickymd_processes()?
+        .into_iter()
+        .map(|process| process.pid)
+        .collect())
+}
+
+/// The StickyMD processes in `running` that this run does not own (`owned`).
+pub(crate) fn foreign_stickymd(running: &[u32], owned: &[u32]) -> Vec<u32> {
+    running
+        .iter()
+        .copied()
+        .filter(|pid| !owned.contains(pid))
+        .collect()
+}
+
 fn running_stickymd_processes() -> Result<Vec<ProcessSnapshot>, String> {
     // SAFETY: CreateToolhelp32Snapshot takes value arguments and returns an
     // owned snapshot handle on success.
@@ -365,6 +384,20 @@ unsafe extern "system" {
 
 #[cfg(test)]
 mod tests {
+
+    /// Only a StickyMD this run owns may have its tray icon clicked: any other running copy
+    /// (the USER's own note) is foreign, and the owned copies are not.
+    #[test]
+    fn running_copies_not_owned_by_the_run_are_foreign() {
+        assert_eq!(
+            super::foreign_stickymd(&[10, 20], &[10, 20]),
+            Vec::<u32>::new()
+        );
+        assert_eq!(super::foreign_stickymd(&[10, 20, 30], &[10, 20]), vec![30]);
+        assert_eq!(super::foreign_stickymd(&[30], &[10, 20]), vec![30]);
+        assert_eq!(super::foreign_stickymd(&[], &[10]), Vec::<u32>::new());
+    }
+
     use std::fs;
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
