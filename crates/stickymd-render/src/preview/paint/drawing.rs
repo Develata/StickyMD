@@ -6,31 +6,134 @@ use super::{DecorationRole, LayoutDecoration, PreviewPaintError, PreviewRect, Pr
 use cosmic_text::Color;
 use tiny_skia::{Mask, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
-pub(super) fn block_mask(
-    mask: &mut Option<Mask>,
-    width: u32,
-    height: u32,
-    clip: Option<PreviewRect>,
-    scroll_y: f32,
-) -> Result<Option<&Mask>, PreviewPaintError> {
-    let Some(clip) = clip else {
-        return Ok(None);
-    };
-    if mask.is_none() {
-        *mask =
-            Some(Mask::new(width, height).ok_or(PreviewPaintError::Allocation { width, height })?);
+/// The one viewport-sized clip mask reused for every overflow block in a frame. Switching to a
+/// block clears only the pixels the previous block filled and fills the new rect; asking again for
+/// the rect already filled (the decoration and chunk passes of one block) does no work.
+#[derive(Default)]
+pub(super) struct BlockMask {
+    mask: Option<Mask>,
+    /// The viewport-space rect currently filled.
+    filled: Option<PreviewRect>,
+}
+
+impl BlockMask {
+    pub(super) fn get(
+        &mut self,
+        width: u32,
+        height: u32,
+        clip: Option<PreviewRect>,
+        scroll_y: f32,
+    ) -> Result<Option<&Mask>, PreviewPaintError> {
+        let Some(clip) = clip else {
+            return Ok(None);
+        };
+        let wanted = PreviewRect {
+            y: clip.y - scroll_y,
+            ..clip
+        };
+        if self.mask.is_none() {
+            self.mask = Some(
+                Mask::new(width, height).ok_or(PreviewPaintError::Allocation { width, height })?,
+            );
+        }
+        let mask = self.mask.as_mut().expect("allocated mask");
+        if self.filled != Some(wanted) {
+            if let Some(previous) = self.filled.take() {
+                clear_rect(mask, previous);
+            }
+            if let Some(rect) = Rect::from_xywh(wanted.x, wanted.y, wanted.width, wanted.height) {
+                mask.fill_path(
+                    &PathBuilder::from_rect(rect),
+                    tiny_skia::FillRule::Winding,
+                    false,
+                    Transform::identity(),
+                );
+            }
+            self.filled = Some(wanted);
+        }
+        Ok(Some(mask))
     }
-    let mask = mask.as_mut().expect("allocated mask");
-    mask.data_mut().fill(0);
-    if let Some(rect) = Rect::from_xywh(clip.x, clip.y - scroll_y, clip.width, clip.height) {
-        mask.fill_path(
-            &PathBuilder::from_rect(rect),
-            tiny_skia::FillRule::Winding,
-            false,
-            Transform::identity(),
-        );
+}
+
+/// Zeroes every mask pixel `rect` can touch (its bounds rounded outward, clamped to the mask).
+fn clear_rect(mask: &mut Mask, rect: PreviewRect) {
+    let (width, height) = (mask.width() as usize, mask.height() as usize);
+    let clamp = |value: f32, limit: usize| (value.max(0.0) as usize).min(limit);
+    let (left, right) = (
+        clamp(rect.x.floor(), width),
+        clamp((rect.x + rect.width).ceil(), width),
+    );
+    let (top, bottom) = (
+        clamp(rect.y.floor(), height),
+        clamp((rect.y + rect.height).ceil(), height),
+    );
+    if left >= right {
+        return;
     }
-    Ok(Some(mask))
+    let data = mask.data_mut();
+    for row in top..bottom {
+        data[row * width + left..row * width + right].fill(0);
+    }
+}
+
+#[cfg(test)]
+mod block_mask_tests {
+    use super::*;
+
+    fn fresh(width: u32, height: u32, rect: PreviewRect) -> Vec<u8> {
+        let mut mask = BlockMask::default();
+        mask.get(width, height, Some(rect), 0.0)
+            .unwrap()
+            .unwrap()
+            .data()
+            .to_vec()
+    }
+
+    /// Reusing the mask across blocks leaves exactly the pixels a fresh mask for the current block
+    /// would have, at fractional and clamped rects, and asking twice for one rect is a no-op.
+    #[test]
+    fn a_reused_mask_matches_a_fresh_one_for_each_block() {
+        let (width, height) = (64, 48);
+        let rects = [
+            PreviewRect {
+                x: 3.5,
+                y: 2.25,
+                width: 30.0,
+                height: 10.5,
+            },
+            PreviewRect {
+                x: 10.0,
+                y: 20.0,
+                width: 12.75,
+                height: 8.0,
+            },
+            PreviewRect {
+                x: -5.0,
+                y: 40.0,
+                width: 90.0,
+                height: 20.0,
+            },
+            PreviewRect {
+                x: 0.5,
+                y: 0.5,
+                width: 1.0,
+                height: 1.0,
+            },
+        ];
+        let mut reused = BlockMask::default();
+        for rect in rects {
+            for _ in 0..2 {
+                let got = reused
+                    .get(width, height, Some(rect), 0.0)
+                    .unwrap()
+                    .unwrap()
+                    .data()
+                    .to_vec();
+                assert_eq!(got, fresh(width, height, rect), "{rect:?}");
+            }
+        }
+        assert!(reused.get(width, height, None, 0.0).unwrap().is_none());
+    }
 }
 
 #[derive(Clone, Copy)]

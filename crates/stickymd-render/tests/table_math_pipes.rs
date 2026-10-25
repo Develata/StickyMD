@@ -76,7 +76,7 @@ fn absolute_value_commands_render_a_six_column_table() {
         let frame = pipeline
             .build(
                 &source,
-                1000,
+                360,
                 300,
                 1.0,
                 0.0,
@@ -84,7 +84,12 @@ fn absolute_value_commands_render_a_six_column_table() {
                 PreviewTheme::Light,
             )
             .unwrap();
-        if let Some(target) = frame.horizontal_target_at(25.0, 25.0) {
+        // 360 px is narrower than six minimum-width columns, so the table scrolls and the sweep
+        // below actually reveals every column.
+        {
+            let target = frame
+                .horizontal_target_at(25.0, 25.0)
+                .expect("the six-column table overflows 360 px");
             let mut x = 0.0_f32;
             loop {
                 pipeline.set_horizontal_offsets(

@@ -82,6 +82,99 @@ fn phase6_preview_resource_formula_budget_diagnostic() {
     }
 }
 
+/// Plan 06 `math-raster-lifecycle`: a formula the painter cannot draw (measured at layout, failing
+/// at paint, e.g. a font the painter cannot load) stays an error on that formula: the frame still
+/// paints, with the math-error marker and the reason as the formula's tooltip, and the text
+/// around it.
+#[test]
+fn a_painter_error_marks_its_formula_and_the_frame_still_paints() {
+    let snapshot = DocumentSnapshot {
+        text: Arc::from("Before $x^2$ after.\n"),
+        generation: stickymd_core::Generation::initial(),
+        line_ending: LineEnding::Lf,
+    };
+    let mut pipeline = PreviewPipeline::new();
+    pipeline.math_engine.fail_draws_for_test("");
+    let frame = pipeline
+        .build(
+            &snapshot,
+            480,
+            200,
+            1.0,
+            0.0,
+            PreviewSelection::default(),
+            PreviewTheme::Light,
+        )
+        .expect("a painter error must not fail the frame");
+    let error = [190_u8, 73, 55];
+    let marked = frame
+        .rgba()
+        .chunks_exact(4)
+        .filter(|pixel| pixel[..3] == error)
+        .count();
+    assert!(marked > 0, "the formula carries the math-error marker");
+    let formula = frame
+        .index()
+        .boxes()
+        .iter()
+        .find(|item| item.atomic)
+        .expect("the formula keeps its atomic box, so its source stays copyable");
+    assert!(
+        formula
+            .tooltip
+            .as_deref()
+            .is_some_and(|reason| !reason.is_empty()),
+        "the formula's tooltip gives why it failed"
+    );
+    assert!(
+        frame.index().boxes().iter().any(|item| !item.atomic),
+        "the text around the formula is laid out"
+    );
+}
+
+/// The reason goes to the failed formula's own box, matched by identity: of two adjacent formulas
+/// only the one that failed carries a tooltip (geometry could make neighbours touch).
+#[test]
+fn a_painter_error_names_only_the_formula_that_failed() {
+    let snapshot = DocumentSnapshot {
+        text: Arc::from(
+            "Before $a$$b$ after.
+",
+        ),
+        generation: stickymd_core::Generation::initial(),
+        line_ending: LineEnding::Lf,
+    };
+    let mut pipeline = PreviewPipeline::new();
+    pipeline.math_engine.fail_draws_for_test("b");
+    let frame = pipeline
+        .build(
+            &snapshot,
+            480,
+            200,
+            1.0,
+            0.0,
+            PreviewSelection::default(),
+            PreviewTheme::Light,
+        )
+        .unwrap();
+    let mut formulas: Vec<_> = frame
+        .index()
+        .boxes()
+        .iter()
+        .filter(|item| item.atomic)
+        .collect();
+    formulas.sort_by_key(|item| item.selection_range.start);
+    assert_eq!(formulas.len(), 2, "two formula boxes");
+    assert!(
+        formulas[0].tooltip.is_none(),
+        "the drawn formula a carries no error"
+    );
+    assert!(
+        formulas[1].tooltip.is_some(),
+        "the failed formula b carries its reason"
+    );
+}
+
 #[test]
 fn a_viewport_larger_than_the_raster_cache_still_displays_every_formula() {
     let snapshot = dense_formulas(6);

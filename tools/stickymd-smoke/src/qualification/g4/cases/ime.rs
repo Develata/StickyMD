@@ -411,7 +411,8 @@ fn search_fields_accept_real_ime(
     begin_preedit(program, window, &document, "nihao", ime)?;
     super::diagnostics::step(repository, program, process_id, "search-01-preedit")?;
     crate::window_control::press_preview_shortcut(window)?;
-    thread::sleep(IME_COMMIT_SETTLE);
+    // The config already reads Source: wait so a wrong switch to Preview has time to be written.
+    thread::sleep(super::NEGATIVE_SETTLE);
     wait_for_config(program, "view_mode = \"source\"")?;
     super::diagnostics::step(
         repository,

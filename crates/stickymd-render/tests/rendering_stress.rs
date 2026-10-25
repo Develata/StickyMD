@@ -246,6 +246,10 @@ fn stress_fixture_builds_every_formula_through_native_preview() {
         }
         y += 500.0;
     }
+    assert!(
+        !seen_horizontal.is_empty(),
+        "the stress note must contain a block that scrolls horizontally, or the sweep tests nothing"
+    );
     let counters = pipeline.math_counters();
     eprintln!(
         "stress formulas={formula_count} unique={unique_formula_count} parse_layout_calls={} rasterizations={} frame={}x{} boxes={}",

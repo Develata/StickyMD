@@ -195,7 +195,14 @@ impl StickyApp {
     }
 
     pub(super) fn on_preview_document_changed(&mut self, generation: Generation) {
-        self.cancel_scrollbar_drag();
+        // A document change resets the horizontal offsets and so ends a horizontal drag (plan 06).
+        // It does not itself end a vertical scrollbar drag (plan 09: release, blur, a view switch,
+        // a resize); a Preview frame it makes stale shows no thumb, which ends that pane's drag at
+        // the next pointer move.
+        if self.preview_horizontal.drag.take().is_some() {
+            self.refresh_window_guards(None);
+            self.request_redraw();
+        }
         self.preview_horizontal.offsets = Default::default();
         if let Some(action) = self.preview_flow.on_document_changed(
             self.timestamp_ms(),

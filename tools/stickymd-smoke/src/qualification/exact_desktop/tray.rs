@@ -321,7 +321,12 @@ impl Opened {
 /// Opens the menu from observed-closed. Every failure records each attempt and how its cleanup
 /// went.
 fn open(repository: &Path, process_id: u32) -> Result<Opened, String> {
-    multiple::open(repository, process_id, &[process_id])
+    multiple::open(
+        repository,
+        process_id,
+        &[process_id],
+        multiple::Foreign::Excluded,
+    )
 }
 
 /// Opens the menu, reads its items in order and closes it.
@@ -372,7 +377,13 @@ pub(crate) fn exit_owned_copy(
     process_id: u32,
     known: &[u32],
 ) -> Result<(), String> {
-    let opened = multiple::open(repository, process_id, known)?;
+    // The only caller is the WindowShell runtime, which has no exclusive-desktop preflight.
+    let opened = multiple::open(
+        repository,
+        process_id,
+        known,
+        multiple::Foreign::CheckBeforeEachClick,
+    )?;
     invoke_opened(
         repository,
         process_id,
@@ -392,7 +403,7 @@ pub(in crate::qualification) fn set_owned_visibility(
     known: &[u32],
     visible: bool,
 ) -> Result<(), String> {
-    let opened = multiple::open(repository, process_id, known)?;
+    let opened = multiple::open(repository, process_id, known, multiple::Foreign::Excluded)?;
     let item = if visible { SHOW } else { HIDE };
     invoke_opened(
         repository,

@@ -12,7 +12,7 @@
 - Source CI：`39848336424`；candidate workflow：`39848983265` / attempt 1，artifact `12458646214`，均成功。
 - Tag：`39974103329`；draft：`39975953298`；publish：`39977030651`，全部成功。
 - 晋升沿用已验收候选字节；公开三个附件独立下载后的 SHA-256 与原候选一致，来源与 SBOM 证明核验通过。
-- 自动资格化已满足；最终候选的 G4/五类 Resources 实测通过，Runtime/Performance/G3/G5 兼容复用通过。
+- 10 个资格化模块均为 RAN_PASS 或 REUSED_PASS：最终候选的 G4/五类 Resources 实测通过，Runtime/Performance/G3/G5 兼容复用通过；P14-A83（物理输入注入的桌面取证）仍为 `NOT TESTED`，不属上述通过范围。
 - 本机补充检查与 USER 四组实际人工观察通过；另一系统、多屏/混合 DPI、干净 VM 等未测范围及正式人工记录缺口如实保留。
 - USER 已明确批准仅限本版本的 tag、draft 与 publish 例外；技术 readiness 保持 `NOT_READY`。
 
@@ -126,6 +126,7 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
 - [ ] 每组 Tier B 有 exact-bound `MANUAL_PASS` 或绑定 version/source 的明确 waiver。
 - [ ] Tier C `NOT TESTED` 已如实记录；任何已观察到的 `MANUAL_FAIL` 仍阻断。
 - [ ] 真实输入法候选窗、视觉、任务栏/Alt+Tab、托盘、dock、主题、透明度、渲染观感按适用矩阵确认。
+- [ ] 中文输入法开启但未组字时，Esc、F6、F7、Ctrl+S 照常生效（`app/input.rs` 丢弃输入法声明的按键；USER 决定 2026-10-25 保留该行为并在人工验收时确认）。
 - [ ] Clean VM、物理多屏、DPI、显示器拔插、RDP 与负坐标按本次发布政策处理。
 - [ ] 人工 receipt 记录 source、EXE、ZIP、version、Windows build、环境、case 和结果。
 
@@ -133,6 +134,7 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
 
 - [ ] `release-readiness.json` 绑定当前 source、EXE、ZIP 与 SBOM。
 - [ ] Readiness 结果严格为 `READY`，无 blocker、identity mismatch 或 schema corruption。
+- [ ] 不使用合同外的整版 `NOT_READY` 发布例外：未满足项按第 4 节逐项（Tier A case/group、Tier B group）取得 USER waiver 后计入 `READY`（USER 决定 2026-10-25）。
 - [ ] Release notes 与 README 说明系统要求、unsigned policy、校验方法和已知验证缺口。
 - [ ] 将要发布的 ZIP 正是已验收 Promoted Candidate，不从本地重新 build。
 

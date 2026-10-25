@@ -44,6 +44,8 @@ pub(super) fn run(program: &Path, hwnd: WindowHandle, checks: &mut Checks) -> Re
     input::opacity_field(hwnd)?;
     digits(hwnd, 73)?;
     window::press_escape(hwnd)?;
+    // The config and alpha already read 64: wait so a wrong commit of 73 has time to land.
+    thread::sleep(super::NEGATIVE_SETTLE);
     committed(program, hwnd, 64)?;
     checks.record("opacity-escape-cancels-field", &[]);
 

@@ -130,6 +130,10 @@ pub(crate) struct MathEngine {
     counters: MathEngineCounters,
     raster_scale_bits: Option<u32>,
     raster_theme: Option<[u8; 4]>,
+    /// Test seam: `draw` fails as a painter error would for formulas whose source matches (every
+    /// formula when it is empty), after layout measured them.
+    #[cfg(test)]
+    fail_draws: Option<Arc<str>>,
 }
 
 impl Default for MathEngine {
@@ -147,6 +151,8 @@ impl MathEngine {
             counters: MathEngineCounters::default(),
             raster_scale_bits: None,
             raster_theme: None,
+            #[cfg(test)]
+            fail_draws: None,
         }
     }
 
@@ -189,6 +195,14 @@ impl MathEngine {
         foreground: [u8; 4],
         paint: impl FnOnce(&MathRaster) -> T,
     ) -> Result<T, MathError> {
+        #[cfg(test)]
+        if self
+            .fail_draws
+            .as_ref()
+            .is_some_and(|only| only.is_empty() || **only == *source)
+        {
+            return Err(MathError::InvalidGeometry);
+        }
         let raster = self.render(source, kind, font_size_px, foreground)?;
         Ok(paint(&raster))
     }
@@ -303,6 +317,12 @@ impl MathEngine {
 
     pub(crate) const fn counters(&self) -> MathEngineCounters {
         self.counters
+    }
+
+    /// Makes `draw` fail for the formula with this source, or for every formula when it is "".
+    #[cfg(test)]
+    pub(crate) fn fail_draws_for_test(&mut self, source: &str) {
+        self.fail_draws = Some(Arc::from(source));
     }
 
     #[cfg(test)]

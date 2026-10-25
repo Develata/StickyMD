@@ -33,6 +33,15 @@ fn runtime_opacity_enter_keeps_repeats_and_synthetic_release_from_note_and_searc
             let mut app = fixture("canonical text text");
             app.session.focused = true;
             app.search.open = search;
+            if search {
+                // A query with matches, so an Enter leaking into Search would move its match.
+                app.search.query = "text".into();
+                let (text, generation) = {
+                    let view = app.coordinator.view();
+                    (view.text.to_owned(), view.generation)
+                };
+                app.search.refresh(&text, generation);
+            }
             focus_field(&mut app);
             assert!(app.controls.takes_keys());
             assert!(!app.ime_allowed_for(search));
@@ -67,6 +76,8 @@ fn runtime_opacity_enter_keeps_repeats_and_synthetic_release_from_note_and_searc
                 state: ElementState::Released,
                 ..key(code, None)
             };
+            let active = app.search.active_range();
+            let selection = app.session.selection;
             for _ in 0..3 {
                 app.apply_key(repeat, false);
             }
@@ -74,7 +85,16 @@ fn runtime_opacity_enter_keeps_repeats_and_synthetic_release_from_note_and_searc
             app.apply_key(release, true);
             app.apply_key(repeat, false);
             assert_eq!(app.coordinator.snapshot(), snapshot);
-            assert_eq!(app.search.query, "");
+            assert_eq!(app.search.query, if search { "text" } else { "" });
+            assert_eq!(
+                app.search.active_range(),
+                active,
+                "a repeat moved the match"
+            );
+            assert_eq!(
+                app.session.selection, selection,
+                "a repeat moved the selection"
+            );
             app.apply_key(release, false);
             if !search {
                 app.apply_key(key(code, None), false);
@@ -193,12 +213,23 @@ fn runtime_opacity_key_priority_keeps_escape_and_save_above_field() {
     let snapshot = app.coordinator.snapshot();
     let initial = app.config.current().opacity;
     app.apply_key(key(KeyCode::Digit7, Some("77")), false);
+    let selection = app.session.selection;
     app.modifiers = ModifiersState::CONTROL;
-    for code in [KeyCode::KeyF, KeyCode::KeyH, KeyCode::Digit1, KeyCode::KeyA] {
+    // Ctrl+2/3 would leave the default Source view and Ctrl+A would select the note, so each
+    // leak shows; Ctrl+1 alone could not (the view already is Source).
+    for code in [
+        KeyCode::KeyF,
+        KeyCode::KeyH,
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::KeyA,
+    ] {
         app.apply_key(key(code, None), false);
     }
     assert!(!app.search.open);
     assert_eq!(app.config.current().view_mode, ViewMode::Source);
+    assert_eq!(app.session.selection, selection, "Ctrl+A reached the note");
     assert_eq!(app.controls.opacity_input, "77");
     let submitted = app.worker.metrics().note_submitted;
     app.apply_key(key(KeyCode::KeyS, None), false);

@@ -290,6 +290,12 @@ impl WindowShellState {
         &self.dock
     }
 
+    /// The guards the coordinator last received, as opposed to the shell's current facts.
+    #[cfg(test)]
+    pub fn guards(&self) -> WindowGuardSnapshot {
+        self.guards
+    }
+
     pub fn frame(&self) -> PhysicalRect {
         self.frame
     }

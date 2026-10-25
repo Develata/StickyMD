@@ -196,6 +196,93 @@ fn runtime_drag_ends_on_release_blur_view_switch_and_resize_for_both_panes() {
     }
 }
 
+/// A real edit (a new generation) does not itself end a vertical scrollbar drag (plan 09 lists
+/// release, blur, view switch and resize): a Source drag keeps scrolling. The edit makes the
+/// Preview frame stale (it was current before, with its applied viewport equal to the current
+/// one), which shows no thumb (`stale-frame-no-thumb`), so a Preview drag ends at the next move
+/// without scrolling the stale frame, and the window guard is released. The fixture has no window,
+/// so the current viewport is the applied one and only the generation can make it stale.
+#[test]
+fn runtime_an_edit_keeps_a_source_drag_and_a_stale_preview_ends_its_own() {
+    for pane in [ScrollPane::Source, ScrollPane::Preview] {
+        let mut app = fixture(&"long paragraph\n\n".repeat(150));
+        let geometry = prepare(&mut app, ViewMode::Split);
+        let preview = geometry.preview.unwrap();
+        let viewport = crate::preview::PreviewViewport {
+            horizontal: Default::default(),
+            width_px: preview.width,
+            height_px: preview.height,
+            scale: 1.0,
+            scroll_y: app.preview_scroll_y,
+            selection: PreviewSelection::default(),
+            theme: PreviewTheme::Light,
+        };
+        app.preview_frame_viewport = Some(viewport.clone());
+        let preview_current = |app: &StickyApp| {
+            crate::app::preview_runtime::current_preview_layout(
+                app.preview_frame.as_ref().map(|frame| frame.generation()),
+                app.coordinator.view().generation,
+                app.preview_frame_viewport.clone(),
+                Some(viewport.clone()),
+            )
+        };
+        assert!(
+            preview_current(&app),
+            "{pane:?}: the Preview frame is current before the edit"
+        );
+        start_drag(&mut app, geometry, pane);
+        let generation = app.coordinator.view().generation;
+        app.dispatch(AppIntent::Edit {
+            expected_generation: generation,
+            selection: Selection::caret(0),
+            inserted: "changed ".into(),
+            kind: EditKind::Typing,
+            timestamp_ms: 1,
+        });
+        assert_ne!(
+            app.coordinator.view().generation,
+            generation,
+            "{pane:?}: no edit"
+        );
+        assert!(
+            app.scrollbars.drag.is_some(),
+            "{pane:?}: the document change itself ended the drag"
+        );
+        let before = offset(&mut app, pane);
+        app.cursor_position.y += 60.0;
+        // What the window coordinator last received, not the guards recomputed from current facts.
+        let delivered = |app: &StickyApp| {
+            app.window_flow
+                .as_ref()
+                .expect("the fixture has a window coordinator")
+                .state()
+                .guards()
+                .dragging
+        };
+        assert!(
+            delivered(&app),
+            "{pane:?}: the drag start reached the window"
+        );
+        let current = preview_current(&app);
+        let moved = app.move_scrollbar_at(Some(geometry), 1.0, current);
+        match pane {
+            ScrollPane::Source => {
+                assert!(moved, "the Source drag stopped scrolling");
+                assert_ne!(offset(&mut app, pane), before);
+                assert!(app.window_guards().dragging);
+                assert!(delivered(&app));
+            }
+            ScrollPane::Preview => {
+                assert!(!current, "the edit left the Preview frame stale");
+                assert_eq!(offset(&mut app, pane), before, "the stale frame scrolled");
+                assert!(app.scrollbars.drag.is_none());
+                assert!(!app.window_guards().dragging);
+                assert!(!delivered(&app), "the drag end did not reach the window");
+            }
+        }
+    }
+}
+
 #[test]
 fn runtime_scroll_preserves_canonical_state_and_session_for_clean_and_dirty_notes() {
     let text = "heading\n\nlong paragraph for scrolling\n\n".repeat(100);

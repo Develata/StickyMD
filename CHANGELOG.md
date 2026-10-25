@@ -4,7 +4,9 @@ All notable changes are recorded here.
 
 ## Unreleased
 
-- Prepare 0.1.3 with viewport-based formula bitmaps, bounded preview caches, lower image-read
+## 0.1.3 - 2026-10-23
+
+- Release 0.1.3 with viewport-based formula bitmaps, bounded preview caches, lower image-read
   allocations, and horizontal scrolling for wide tables, code blocks and display mathematics.
 - Fix Search replacement/navigation, compact Search layout, IME-owned key routing, opacity popup
   behavior and waking a collapsed dock; improve exact-candidate desktop verification.
