@@ -126,6 +126,7 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
 - [ ] 每组 Tier B 有 exact-bound `MANUAL_PASS` 或绑定 version/source 的明确 waiver。
 - [ ] Tier C `NOT TESTED` 已如实记录；任何已观察到的 `MANUAL_FAIL` 仍阻断。
 - [ ] 真实输入法候选窗、视觉、任务栏/Alt+Tab、托盘、dock、主题、透明度、渲染观感按适用矩阵确认。
+- [ ] 中文输入法开启但未组字时，Esc、F6、F7、Ctrl+S 照常生效（`app/input.rs` 丢弃输入法声明的按键；USER 决定 2026-10-25 保留该行为并在人工验收时确认）。
 - [ ] Clean VM、物理多屏、DPI、显示器拔插、RDP 与负坐标按本次发布政策处理。
 - [ ] 人工 receipt 记录 source、EXE、ZIP、version、Windows build、环境、case 和结果。
 
@@ -133,6 +134,7 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
 
 - [ ] `release-readiness.json` 绑定当前 source、EXE、ZIP 与 SBOM。
 - [ ] Readiness 结果严格为 `READY`，无 blocker、identity mismatch 或 schema corruption。
+- [ ] 不使用合同外的整版 `NOT_READY` 发布例外：未满足项按第 4 节逐项（Tier A case/group、Tier B group）取得 USER waiver 后计入 `READY`（USER 决定 2026-10-25）。
 - [ ] Release notes 与 README 说明系统要求、unsigned policy、校验方法和已知验证缺口。
 - [ ] 将要发布的 ZIP 正是已验收 Promoted Candidate，不从本地重新 build。
 

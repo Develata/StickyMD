@@ -66,3 +66,18 @@
 | 公式绘制失败时重建文本索引 | `PreviewTextIndex::set_atomic_tooltips` 就地写入新建、唯一持有的索引：不克隆、不重新排序、不重建命中行；按选区范围二分查找，O(框数 · log 失败数) | `atomic_tooltips_go_to_their_own_box_in_place`，以及原有两项公式失败测试 |
 
 仍未处理：溢出区展开与光标位置不恢复（需新增 helper 命令并在桌面验证）；G4 `NEGATIVE_SETTLE` 仍为 NEEDS_VERIFICATION；上文其余"记录但未修"条目不变。
+
+### USER 决定（2026-10-25）
+
+USER 对上文"需要 USER 决定"第 2–4 项采纳本会话提出的建议，原话："按你的建议推送pr吧"，确认范围："这三项也可以按你的建议来"。
+
+- **决定 2（IME 声明的按键一律丢弃）：保留现行为**，不改 `app/input.rs`。未验证的风险（输入法开启但未组字时也声明按键，使 Esc / F6 / F7 / Ctrl+S 失效）
+  在下次人工验收时确认，已加入 [release checklist](../release-checklist.md) 第 4 节；若观察到失效，再改为只在组字结束后的短窗口内丢弃。
+- **决定 3（D3 改绑）：接受**。`plan09:scroll-4 drag-exit end=release/blur` 继续由单元测试
+  `runtime_drag_ends_on_release_blur_view_switch_and_resize_for_both_panes` 持有。覆盖表的模型每条义务只有一个 owner（`Target` 为单一枚举值），
+  不能同时登记两个；真实接线的补充证据是 G4-02 的 `scroll-drag-stops-on-release` / `scroll-drag-stops-on-blur` 与
+  `preview-scroll-stops-on-{release,blur}:mode={preview,split}` 标签，它们登记在 `plan09:scroll-4 drag-outside-window` 下，覆盖拖出窗口后的松开与失焦。
+  这取代 2026-10-19 D3 中"松开 / 失焦由 G4 持有"的安排；为一条义务登记多个 owner 需要改覆盖模型，本次不做。
+- **决定 4（发布例外机制）：以后发布走 plan 11 已有的逐项 waiver**（Tier A case/group、Tier B group，绑定版本与 exact source，计入 `READY`
+  并注明"符合批准的发布政策"），不再在 `NOT_READY` 下以合同外的整版例外发布；不改 plan。已加入 release checklist 第 5 节。
+  上文第 4 项"若要长期保留，应走 skeleton 级 plan 修改"的表述不完整：plan 11 已有该 waiver 机制，v0.1.1–v0.1.3 未使用它，是因为人工目标声明与逐场景记录未齐，而非缺少机制。
