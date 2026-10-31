@@ -279,7 +279,7 @@ impl StickyApp {
                 ..
             } => {
                 self.diagnostic = Some(
-                    "note.md 过大且无法载入，StickyMD 不会自动挪走它；未执行恢复。恢复选择完成前无法正常退出：请结束 StickyMD 进程，保持 note.md.tmp 不动，移走或改名 note.md 后重新启动，再按 F6 恢复。"
+                    "note.md 过大，未恢复：请结束进程，移走 note.md（保留 .tmp）后重启按 F6。"
                         .into(),
                 );
                 self.recovery.fail_operation();
