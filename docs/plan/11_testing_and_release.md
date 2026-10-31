@@ -219,8 +219,8 @@ Phase 15 按 [提案](../report/2026-10-23-shared-core-thin-platform-shell-archi
 
 | 里程碑 | 交付 | 出口（在下列每批出口之外） |
 | --- | --- | --- |
-| A | plan/projection 已批准；建立 `stickymd-app` 并同时登记其治理、CLI 任务、Linux/Windows 测试选择与资格化指纹归属；迁移 intent、纯 coordinator、配置模型、Search 与会话逻辑 | 原有语义测试随责任迁移并在新 package 下实际执行 |
-| B | 入口依赖：三类无身份 I/O 回执的 Windows 修复已合并（`04` Generation 规则 6）。按保存/恢复、预览、资产/导出、窗口/退出顺序接入 Capability Port，窗口动作按 `04` 的请求、回执与提交 | 每条链的成功/失败/过期回执测试与“隐藏被拒绝”场景 |
+| A | plan/projection 已批准；建立 `stickymd-app` 并同时登记其治理、CLI 任务、Linux/Windows 测试选择与资格化指纹归属；迁移 intent、纯 coordinator、配置模型、Search 与会话逻辑 | `stickymd-app` 在 Windows 与 Linux CI 上真实构建并执行语义测试，不以 `cfg(windows)` 排除主体或测试；原有语义测试随责任迁移并在新 package 下实际执行 |
+| B | 入口依赖：三类无身份 I/O 回执的 Windows 修复已合并（`04` Generation 规则 6），且以下测试通过：身份失配的回执不产生任何副作用；有效的旧 generation 保存回执仍被接受（saved_generation 只推进到实际落盘版本，较新编辑保持 dirty）。按保存/恢复、预览、资产/导出、窗口/退出顺序接入 Capability Port，窗口动作按 `04` 的请求、回执与提交 | 每条链的成功/失败/过期回执测试与“隐藏被拒绝”场景 |
 | C | 建立 `stickymd-desktop` 并同时登记其治理、任务与指纹归属；各 target 显式选择 winit/softbuffer backend features；迁移通用控件、绘制、命中与事件翻译（含 `06` 帧呈现规则） | `stickymd-desktop` 在 Windows 与 Linux CI 上真实构建；`age = 0/1/2` 呈现测试；Windows 桌面定向回归 |
 | D | 迁移剩余业务分支，删除仅为迁移保留的转发 | 依赖与平台泄漏审查、适用 baseline、Windows 验证；未实现平台保持 `NOT TESTED` |
 
@@ -236,7 +236,7 @@ Phase 15 按 [提案](../report/2026-10-23-shared-core-thin-platform-shell-archi
 
 完成标准还包括：编辑、Search、配置、保存、预览、冲突、恢复、资产与退出规则各只有一个共享所有者；Windows 重新验证文件
 替换/冲突/图片安全、IME、托盘可达性、透明度、置顶、贴边、多屏、剪贴板/导出（自动化与人工结果分别记录；剪贴板多格式
-选择的 fixture 与预期读取格式见提案第 9 节第 6 条）。共享层完成、Windows 回归、跨平台应用可用与发布 readiness
+选择按 `08_assets_and_export.md#clipboard-priority-verification`）。共享层完成、Windows 回归、跨平台应用可用与发布 readiness
 分别报告；测试替身只证明接口与共享语义，不证明原生实现正确。
 
 <a id="qualification-process-isolation"></a>

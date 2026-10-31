@@ -468,7 +468,7 @@
 ### Execution Receipt
 
 - **Definition**：Capability Port 执行一次请求后上报的结果：成功、执行失败、暂时不可用或 `Unsupported`，并携带足以判定是否过期的身份（generation、request/transaction/operation id、配置 revision 或请求时的 Durable Fingerprint）。
-- **Authority**：发出请求的 coordinator 依身份裁决是否接受（`04` Generation 规则）。
+- **Authority**：发出请求的 coordinator 依身份裁决是否接受；身份要求及其豁免（不提交任何状态的回执）按 `04` Generation 规则 6。
 - **Not equivalent to**：状态已提交；平台事件或 hint。
 - **Lifetime**：从执行完成到被裁决（接受或丢弃）。
 

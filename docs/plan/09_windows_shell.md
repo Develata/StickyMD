@@ -26,9 +26,9 @@
 - 本章的核心行为契约（平台无关部分）由 Shared Application（窗口与 dock 状态协调、生命周期）与 Shared Desktop
   （控件、绘制、事件翻译）实现；`apps/stickymd-win` 是 Windows 的 Platform Host，只持有原生 adapter 与启动接线
   （`03` 共享实现节）。窗口动作按 `04` 的请求、回执与提交执行。
-- 隐藏到托盘以托盘可达为前提（`04` 窗口动作节）：Windows 的托盘创建失败处理见 Failure Paths；其他平台的托盘事件循环
-  接入与宿主检测（如 Linux 的 GTK 事件循环与 StatusNotifierHost、macOS 的主线程与事件循环时机）以及托盘丢失时的
-  行为，在建立对应宿主时另行批准。
+- Windows 的托盘可达性沿用本章现有合同（托盘生命周期、主窗口身份与可达性、Failure Paths 的托盘创建失败），
+  Phase 15 不改变它。其他平台的托盘事件循环接入与宿主检测（如 Linux 的 GTK 事件循环与 StatusNotifierHost、macOS
+  的主线程与事件循环时机）以及托盘不可达或丢失时的行为，在建立对应宿主时另行批准。
 
 ## Owned Objects
 

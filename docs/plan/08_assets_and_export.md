@@ -82,6 +82,25 @@ stickymd-<20|32|64-lowercase-hex>.<png|jpg|webp|gif>
 3. DIB/DIBV5 或普通 bitmap。
 4. Unicode text。
 
+<a id="clipboard-priority-verification"></a>
+### 多格式剪贴板的验证（Windows）
+
+同一剪贴板可同时提供多种格式，且 Windows 会在 `CF_DIB`、`CF_DIBV5`、`CF_BITMAP` 之间合成格式，发布集合不等于可用集合。
+上述优先级的验证须逐组写明“显式发布的格式”与“预期读取的格式”，以可区分的 payload 或选中格式记录断言来源，不能只断言
+“产生了图片”。实现顺序为 `CF_HDROP → 原编码 PNG/JPEG/WebP（别名顺序 PNG → image/png → JFIF → JPEG → image/jpeg → WebP →
+image/webp）→ CF_DIBV5 → CF_DIB → CF_BITMAP → Unicode text`。至少覆盖：
+
+| 显式发布 | 预期读取 |
+| --- | --- |
+| 合法非空图片文件列表 + PNG + 文本 | `CF_HDROP` 文件列表 |
+| PNG + DIB + 文本 | 原编码 PNG |
+| DIBV5 + DIB + 文本 | 显式 `CF_DIBV5` |
+| 只有 DIB + 文本 | 合成的 `CF_DIBV5` |
+| 只有有效 `CF_BITMAP`（真实 `HBITMAP`）+ 文本 | 合成的 `CF_DIBV5` |
+
+读取位图的组用已知非对称图案检查最终 PNG 的尺寸、像素位置与颜色（防翻转、通道与透明度错误），不要求合成缓冲区与源字节
+相等；文本均不得被插入。现有 G3-01 exact 检查（目前只证明 PNG 优先于文本）保留，其只发布 DIB 的场景补实际读取格式断言。
+
 ### 编码规则
 
 - PNG/JPEG/WebP：保留原始 bytes。
