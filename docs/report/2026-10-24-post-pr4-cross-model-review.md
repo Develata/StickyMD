@@ -123,3 +123,7 @@ USER 对上文"需要 USER 决定"第 2–4 项采纳本会话提出的建议，
 第十二轮审查（DISAGREE，1 项 SHOULD_FIX 与 1 项 NEEDS_VERIFICATION，均已处理）：`Close-TrayOverflowObserved` 原来只在轮询前看一次是否可见，首读无法观察时之后即使一直可见也只空等到超时；现改为在期限内重试，首次观察到可见时切换一次、无法观察时从不切换。`Open-TrayOverflowObserved` 在切换前设置"已尝试打开"标记，新函数 `Open-TrayOverflowUntil` 在之后的任何失败（包括切换生效后才抛错）时观察并收起溢出区，再带上结果重新抛错；从未观察到状态时不切换。PowerShell 测试（加载 helper 源码、脚本化读取与切换）覆盖八种序列；两处变异（回到"只在轮询前切换"、标记移到切换之后）均使测试失败，已恢复。
 
 第十三轮审查 AGREE（无 BLOCKER / SHOULD_FIX；NICE：新 PowerShell 测试未覆盖 `Write-TrayTargets` 对目标结果的完整消费；NEEDS_VERIFICATION：真实 Explorer 上 Invoke 延迟或部分生效，以及首次 G4-02 的行首冒号）。审查后在 Rust 文件逐字节相同（helper 仅行尾为 CRLF）的临时 worktree 上重跑托盘预检，USER 关闭自己的 StickyMD、Clash Verge 运行中：`c2d_tray_failure_restores_local_preflight` PASS（这次还经过一次"悬停后候选变化、重新枚举"，溢出区收起、光标回到 (1407,931)），`c2d_tray_local_preflight`（G4-01）PASS，`c2d_two_copies_local_preflight` PASS。
+
+## 后续（2026-10-31，G4-02 行首冒号）
+
+USER 说明：首次 G4-02 运行期间是 USER 误触键盘，笔记行首多出的半角冒号来自这次人工输入，不是工具或产品行为。该次运行因桌面不独占而作废，既不计为失败证据，也不计为通过证据；G4-02 的通过证据仍是紧接着的重跑（54 项检查 PASS）。上文该项 NEEDS_VERIFICATION 就此关闭，不再追查。
