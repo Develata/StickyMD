@@ -87,8 +87,10 @@ impl StickyApp {
             }
             CanonicalRecoveryPlan::Missing => self.coordinator.reset_to_missing_document(),
             CanonicalRecoveryPlan::Unusable => {
-                self.diagnostic =
-                    Some("当前 note.md 不是有效 UTF-8；只能 F6 恢复有效临时内容。".into());
+                self.diagnostic = Some(
+                    "当前 note.md 无法载入（不是有效 UTF-8 或过大）；只能 F6 恢复有效临时内容。"
+                        .into(),
+                );
                 self.request_redraw();
                 return;
             }

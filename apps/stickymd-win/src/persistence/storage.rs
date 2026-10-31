@@ -100,6 +100,10 @@ pub fn preserve_canonical_if_unchanged(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(PreserveOutcome::Changed(ExternalFileState::Missing));
         }
+        // A link or other non-file object at the canonical name is refused and left in place.
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
+            return Err(NoteStorageError::PreserveCanonical(error));
+        }
         Err(error) => return Err(NoteStorageError::Read(error)),
     };
     let length = file.metadata().map_err(NoteStorageError::Metadata)?.len();

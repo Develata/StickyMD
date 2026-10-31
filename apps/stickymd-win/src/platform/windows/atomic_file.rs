@@ -126,15 +126,26 @@ pub(crate) fn prepare_temporary(
     flush_windows_handle(&file).map_err(AtomicPublishError::TempFlush)
 }
 
-/// Opens `path` for reading and renaming while sharing only reads: until the handle closes,
-/// no other handle can write, delete or rename the file object it names, so a check made through
-/// it still holds when it is renamed through it (`rename_handle_no_replace`). Fails with a
-/// sharing violation while another handle has the file open for writing or deleting.
+/// Opens the regular file at `path` itself for reading and renaming while sharing only reads:
+/// until the handle closes, no other handle can write, delete or rename the file object it names,
+/// so a check made through it still holds when it is renamed through it
+/// (`rename_handle_no_replace`). A link is not followed: a reparse point or any non-file object
+/// is refused (`InvalidInput`), so a rename can never move a link's target out of its directory.
+/// Fails with a sharing violation while another handle has the file open for writing or deleting.
 pub(crate) fn open_for_verified_move(path: &Path) -> std::io::Result<std::fs::File> {
-    OpenOptions::new()
+    let file = OpenOptions::new()
         .access_mode(FILE_GENERIC_READ.0 | DELETE.0)
         .share_mode(SHARE_READ)
-        .open(path)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT_VALUE)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT_VALUE != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "note.md is a link or not a regular file; StickyMD does not move it",
+        ));
+    }
+    Ok(file)
 }
 
 /// Renames the file object `file` names (not whatever its old path names now) to `destination`
@@ -452,6 +463,33 @@ mod tests {
         drop(file);
         assert!(!source.exists());
         assert_eq!(fs::read(&destination).unwrap(), b"pinned");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A link at the canonical name is refused, so neither the link nor its target moves. Creating
+    /// a file symlink needs Developer Mode or the privilege; without it the test has nothing to
+    /// check and says so.
+    #[test]
+    fn a_verified_move_refuses_a_link_and_leaves_its_target() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let target = root.join("external.bin");
+        let link = root.join("note.md");
+        fs::write(&target, b"outside").unwrap();
+        if let Err(error) = std::os::windows::fs::symlink_file(&target, &link) {
+            eprintln!("skipped: cannot create a file symlink here: {error}");
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let error = open_for_verified_move(&link).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read(&target).unwrap(), b"outside");
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
