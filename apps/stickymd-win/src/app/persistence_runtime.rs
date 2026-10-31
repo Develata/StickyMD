@@ -279,7 +279,7 @@ impl StickyApp {
                 ..
             } => {
                 self.diagnostic = Some(
-                    "note.md 过大，无法确认它自启动以来未变；未执行恢复覆盖。请关闭其他程序后重启 StickyMD 再选择。"
+                    "note.md 过大且无法载入，StickyMD 不会自动挪走它；未执行恢复。请手动移走或改名 note.md 后重启 StickyMD 再选择。"
                         .into(),
                 );
                 self.recovery.fail_operation();

@@ -84,8 +84,8 @@ pub enum ExternalFileState {
 }
 
 /// What a recovery restore must still find at the canonical path before moving it aside: the
-/// full-content fingerprint of the unusable canonical it observed, or `Unverifiable` when that
-/// content could not be fingerprinted (then the restore does not move it).
+/// full-content fingerprint of the invalid canonical it observed, or `Unverifiable` for a
+/// too-large canonical, which is never read and so never moved automatically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreserveExpectation {
     Content(DiskFingerprint),

@@ -224,15 +224,25 @@ pub(super) fn g3_03(repository: &Path, program: &Path) -> Result<CaseEvidence, S
             // restored text and the window left the pending state.
             wait_until("recovery restored the temp", || {
                 let text = fs::read_to_string(&note).map_err(io_error)?;
-                Ok(!temporary.exists() && text == *recovered && !pending(restarted_window)?)
+                Ok(!temporary.try_exists().map_err(io_error)?
+                    && text == *recovered
+                    && !pending(restarted_window)?)
             })?;
             recovered.clone()
         } else {
             fs::read_to_string(&note).map_err(io_error)?
         };
-        if recovery_text.is_none() && final_text != old && final_text != new {
+        // Completeness is judged against the two complete texts, never against the temp itself.
+        if final_text != old && final_text != new {
+            if recovery_text.is_none() {
+                return Err(format!(
+                    "kill offset {offset_ms} did not restart from complete text"
+                ));
+            }
+            // A valid but truncated temp is still the USER's recovery choice (plan 05 recovery
+            // 3), but restoring it is not a restart from complete text: report it, never pass.
             return Err(format!(
-                "kill offset {offset_ms} did not restart from complete text"
+                "kill offset {offset_ms} left a valid but incomplete temp, which recovery restored"
             ));
         }
         checks.record("restart-note-complete", &offset_param);

@@ -16,9 +16,9 @@ All notable changes are recorded here.
 - At startup a valid note.md.tmp whose content differs from note.md is always offered for
   recovery, whatever the file times; it is no longer deleted for being older (it can hold the
   only copy of text from a save that failed against an external change). Recovery moves an
-  unusable note.md aside only after fingerprinting its full content under a handle that denies
-  other writers and moving it while that handle is held; a too-large note.md is fingerprinted
-  once at startup within a 256 MiB budget, and one that cannot be verified is never moved.
+  invalid note.md aside only after checking its full content through a handle that shares only
+  reads and renaming that same file through it; a too-large note.md is never read or moved
+  automatically, and recovery asks the USER to move it aside first (USER decision).
 - Make the manual acceptance items that need another machine, a VM or a second display optional:
   the previous Windows 11 role, the Clean VM, dual-monitor, display-disconnect, RDP and
   negative-coordinate cases no longer block a release when untested and need no waiver; an

@@ -13,8 +13,8 @@ use thiserror::Error;
 
 use crate::config::{ConfigWarning, RuntimeConfig, load_config, save_config};
 use crate::persistence::{
-    PersistMode, PersistRequest, PersistResult, inspect_note, persist_note, preserve_fingerprint,
-    quarantine_temporary, remove_temporary,
+    PersistMode, PersistRequest, PersistResult, inspect_note, persist_note, quarantine_temporary,
+    remove_temporary,
 };
 use crate::platform::windows::program_dir::RuntimePaths;
 
@@ -97,16 +97,9 @@ pub fn bootstrap_observed(
                 Some(ExternalFileState::InvalidUtf8 { fingerprint }) => {
                     Some(PreserveExpectation::Content(*fingerprint))
                 }
-                // Fingerprint a too-large canonical once, now, within the preserve budget.
-                Some(ExternalFileState::TooLarge { .. }) => Some(
-                    preserve_fingerprint(&paths.note_file)
-                        .ok()
-                        .flatten()
-                        .map_or(
-                            PreserveExpectation::Unverifiable,
-                            PreserveExpectation::Content,
-                        ),
-                ),
+                // A too-large canonical is not read, so it is never moved automatically; the USER
+                // moves it aside (USER decision 2026-10-31).
+                Some(ExternalFileState::TooLarge { .. }) => Some(PreserveExpectation::Unverifiable),
                 _ => None,
             };
             let document = candidate.canonical.as_ref().map_or_else(

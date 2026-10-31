@@ -138,7 +138,7 @@ impl RecoveryCoordinator {
             return;
         };
         // An invalid canonical's observation already fingerprints its full content; a too-large
-        // one carries only its size, so it cannot be verified until a fresh start fingerprints it.
+        // one carries only its size, so it is never moved automatically.
         let to_preserve = match &observed {
             ExternalFileState::InvalidUtf8 { fingerprint } => {
                 Some(PreserveExpectation::Content(*fingerprint))

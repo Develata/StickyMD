@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Storage::FileSystem::{
-    FlushFileBuffers, MOVEFILE_WRITE_THROUGH, MoveFileExW, REPLACE_FILE_FLAGS, ReplaceFileW,
+    DELETE, FILE_GENERIC_READ, FILE_RENAME_INFO, FileRenameInfo, FlushFileBuffers,
+    MOVEFILE_WRITE_THROUGH, MoveFileExW, REPLACE_FILE_FLAGS, ReplaceFileW,
+    SetFileInformationByHandle,
 };
 use windows::core::PCWSTR;
 
@@ -24,7 +26,6 @@ const ERROR_UNABLE_TO_MOVE_REPLACEMENT_2: u32 = 1177;
 const FILE_ATTRIBUTE_REPARSE_POINT_VALUE: u32 = 0x400;
 const FILE_FLAG_OPEN_REPARSE_POINT_VALUE: u32 = 0x0020_0000;
 const SHARE_READ: u32 = 0x0000_0001;
-const SHARE_READ_DELETE: u32 = 0x0000_0001 | 0x0000_0004;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplaceFailureKind {
@@ -125,14 +126,59 @@ pub(crate) fn prepare_temporary(
     flush_windows_handle(&file).map_err(AtomicPublishError::TempFlush)
 }
 
-/// Opens `path` for reading while denying other writers: only read and delete sharing are
-/// granted, so the content cannot change while the handle is held, yet the file can still be
-/// renamed. Fails with a sharing violation while another handle has it open for writing.
-pub(crate) fn open_write_denied(path: &Path) -> std::io::Result<std::fs::File> {
+/// Opens `path` for reading and renaming while sharing only reads: until the handle closes,
+/// no other handle can write, delete or rename the file object it names, so a check made through
+/// it still holds when it is renamed through it (`rename_handle_no_replace`). Fails with a
+/// sharing violation while another handle has the file open for writing or deleting.
+pub(crate) fn open_for_verified_move(path: &Path) -> std::io::Result<std::fs::File> {
     OpenOptions::new()
-        .read(true)
-        .share_mode(SHARE_READ_DELETE)
+        .access_mode(FILE_GENERIC_READ.0 | DELETE.0)
+        .share_mode(SHARE_READ)
         .open(path)
+}
+
+/// Renames the file object `file` names (not whatever its old path names now) to `destination`
+/// without replacing an existing file. `AlreadyExists` when the name is taken.
+pub(crate) fn rename_handle_no_replace(
+    file: &std::fs::File,
+    destination: &Path,
+) -> std::io::Result<()> {
+    let name: Vec<u16> = destination.as_os_str().encode_wide().collect();
+    let name_bytes = name.len() * std::mem::size_of::<u16>();
+    let header = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+    // The header, the name and a terminating NUL that `FileNameLength` does not count.
+    let size = header + name_bytes + std::mem::size_of::<u16>();
+    let length = u32::try_from(name_bytes)
+        .ok()
+        .zip(u32::try_from(size).ok())
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path too long"))?;
+    // u64 storage aligns the buffer for FILE_RENAME_INFO (align 8) and zeroes it.
+    let mut buffer = vec![0_u64; size.div_ceil(8)];
+    let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // SAFETY: `buffer` is zeroed, 8-aligned and at least `size` bytes, enough for the header
+    // and `name.len() + 1` UTF-16 units starting at `FileName`; the writes stay inside it.
+    unsafe {
+        (*info).Anonymous.ReplaceIfExists = false;
+        (*info).FileNameLength = length.0;
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            std::ptr::addr_of_mut!((*info).FileName).cast::<u16>(),
+            name.len(),
+        );
+    }
+    let handle = HANDLE(file.as_raw_handle());
+    // SAFETY: `handle` is borrowed from the live `File` for this synchronous call, and `info`
+    // points to `length.1` initialized bytes of a FILE_RENAME_INFO with a NULL root directory.
+    unsafe { SetFileInformationByHandle(handle, FileRenameInfo, info.cast(), length.1) }.map_err(
+        |source| {
+            let raw_code = (source.code().0 as u32) & 0xffff;
+            if raw_code == 0 {
+                std::io::Error::other(source)
+            } else {
+                std::io::Error::from_raw_os_error(raw_code as i32)
+            }
+        },
+    )
 }
 
 /// Create, write and flush a caller-selected temporary path only if it does
@@ -380,6 +426,33 @@ mod tests {
 
     fn unique_dir() -> PathBuf {
         unique_temp_path("atomic")
+    }
+
+    /// While the verified-move handle is open, no one else can write, rename or delete the
+    /// file; renaming through the handle moves that file object and never replaces a name.
+    #[test]
+    fn a_verified_move_handle_pins_the_file_and_renames_it() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let source = root.join("note.md");
+        let taken = root.join("taken.md");
+        let destination = root.join("moved.md");
+        fs::write(&source, b"pinned").unwrap();
+        fs::write(&taken, b"occupied").unwrap();
+        let file = open_for_verified_move(&source).unwrap();
+        assert!(fs::OpenOptions::new().write(true).open(&source).is_err());
+        assert!(fs::rename(&source, root.join("elsewhere.md")).is_err());
+        assert!(fs::remove_file(&source).is_err());
+        assert_eq!(
+            rename_handle_no_replace(&file, &taken).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read(&taken).unwrap(), b"occupied");
+        rename_handle_no_replace(&file, &destination).unwrap();
+        drop(file);
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination).unwrap(), b"pinned");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
