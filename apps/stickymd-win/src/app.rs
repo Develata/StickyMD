@@ -202,7 +202,7 @@ impl StickyApp {
             config_persistence_allowed: bootstrap.config_persistence_allowed,
             recovery: RecoveryCoordinator::new(
                 bootstrap.recovery,
-                bootstrap.recovery_canonical_requires_preserve,
+                bootstrap.recovery_canonical_to_preserve,
             ),
             worker,
             watcher: None,

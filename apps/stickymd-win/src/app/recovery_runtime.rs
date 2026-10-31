@@ -52,7 +52,7 @@ impl StickyApp {
             return;
         }
         self.full_projection_resync();
-        if plan.preserve_canonical_first {
+        if let Some(expected) = plan.preserve_canonical {
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |duration| duration.as_secs());
@@ -62,6 +62,7 @@ impl StickyApp {
             self.worker.preserve_canonical(
                 self.paths.note_file.clone(),
                 self.paths.note_dir.join(format!("note.invalid-{stamp}.md")),
+                expected,
                 operation,
             );
         } else {

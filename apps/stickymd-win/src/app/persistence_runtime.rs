@@ -10,7 +10,7 @@ use crate::flow::window::state::{QuitBarrier, WindowIntent};
 use crate::flow::{RecoveryOperation, SaveTrigger};
 use crate::instruction::{PersistenceIntent, SaveReason};
 use crate::persistence::{
-    IoCompletion, PersistMode, PersistRequest, PersistResult, TemporaryCleanup,
+    IoCompletion, PersistMode, PersistRequest, PersistResult, PreserveOutcome, TemporaryCleanup,
 };
 
 impl StickyApp {
@@ -260,7 +260,14 @@ impl StickyApp {
             },
             IoCompletion::CanonicalPreserved { operation, .. }
                 if !self.recovery.accepts(operation) => {}
-            IoCompletion::CanonicalPreserved { result: Ok(()), .. } => {
+            IoCompletion::CanonicalPreserved {
+                result: Ok(PreserveOutcome::Changed(observed)),
+                ..
+            } => self.handle_recovery_save_conflict(observed),
+            IoCompletion::CanonicalPreserved {
+                result: Ok(PreserveOutcome::Preserved),
+                ..
+            } => {
                 let expected = self.recovery.take_restore_guard().unwrap_or(None);
                 self.submit_save(
                     SaveTrigger::KeepLocal,

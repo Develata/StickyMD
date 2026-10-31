@@ -16,7 +16,8 @@ pub enum RecoveryOperation {
 pub struct RestorePlan {
     pub temporary: LoadedDocument,
     pub expected: Option<DiskFingerprint>,
-    pub preserve_canonical_first: bool,
+    /// The canonical observation to preserve before restoring, if it must be preserved.
+    pub preserve_canonical: Option<ExternalFileState>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +30,9 @@ pub enum CanonicalRecoveryPlan {
 #[derive(Debug)]
 pub struct RecoveryCoordinator {
     candidate: Option<RecoveryCandidate>,
-    canonical_requires_preserve: bool,
+    /// The unusable canonical observation (invalid UTF-8 or too large) that must be preserved
+    /// before a restore may publish over it; `None` when no preservation is required.
+    canonical_to_preserve: Option<ExternalFileState>,
     operation: Option<RecoveryOperation>,
     /// Identity of the pending operation; its I/O receipts are accepted only while it is
     /// current (plan 04 generation rules 4–5: stale results are dropped).
@@ -39,10 +42,13 @@ pub struct RecoveryCoordinator {
 }
 
 impl RecoveryCoordinator {
-    pub fn new(candidate: Option<RecoveryCandidate>, canonical_requires_preserve: bool) -> Self {
+    pub fn new(
+        candidate: Option<RecoveryCandidate>,
+        canonical_to_preserve: Option<ExternalFileState>,
+    ) -> Self {
         Self {
             candidate,
-            canonical_requires_preserve,
+            canonical_to_preserve,
             operation: None,
             operation_id: None,
             issued_operations: 0,
@@ -90,7 +96,7 @@ impl RecoveryCoordinator {
         Some(RestorePlan {
             temporary,
             expected,
-            preserve_canonical_first: self.canonical_requires_preserve,
+            preserve_canonical: self.canonical_to_preserve.clone(),
         })
     }
 
@@ -98,7 +104,7 @@ impl RecoveryCoordinator {
         if self.operation.is_some() || self.candidate.is_none() {
             return None;
         }
-        if self.canonical_requires_preserve {
+        if self.canonical_to_preserve.is_some() {
             return Some(CanonicalRecoveryPlan::Unusable);
         }
         self.start(RecoveryOperation::UsingCanonical);
@@ -130,6 +136,11 @@ impl RecoveryCoordinator {
         let Some(candidate) = &mut self.candidate else {
             return;
         };
+        let to_preserve = matches!(
+            observed,
+            ExternalFileState::InvalidUtf8 { .. } | ExternalFileState::TooLarge { .. }
+        )
+        .then(|| observed.clone());
         match observed {
             ExternalFileState::Present(fact) => {
                 candidate.canonical = Some(LoadedDocument {
@@ -138,23 +149,18 @@ impl RecoveryCoordinator {
                     line_ending: fact.line_ending,
                     fingerprint: fact.fingerprint,
                 });
-                self.canonical_requires_preserve = false;
             }
-            ExternalFileState::Missing => {
-                candidate.canonical = None;
-                self.canonical_requires_preserve = false;
-            }
-            ExternalFileState::InvalidUtf8 { .. } | ExternalFileState::TooLarge { .. } => {
-                candidate.canonical = None;
-                self.canonical_requires_preserve = true;
-            }
+            ExternalFileState::Missing
+            | ExternalFileState::InvalidUtf8 { .. }
+            | ExternalFileState::TooLarge { .. } => candidate.canonical = None,
         }
+        self.canonical_to_preserve = to_preserve;
         self.fail_operation();
     }
 
     pub fn finish(&mut self) {
         self.candidate = None;
-        self.canonical_requires_preserve = false;
+        self.canonical_to_preserve = None;
         self.fail_operation();
     }
 }
@@ -178,7 +184,7 @@ mod tests {
                 temporary: loaded("temporary"),
                 temporary_is_newer: true,
             }),
-            false,
+            None,
         );
         let plan = recovery.begin_restore().unwrap();
         assert_eq!(plan.expected, Some(expected));
@@ -194,7 +200,7 @@ mod tests {
             temporary: loaded("temporary"),
             temporary_is_newer: true,
         };
-        let mut recovery = RecoveryCoordinator::new(Some(candidate), false);
+        let mut recovery = RecoveryCoordinator::new(Some(candidate), None);
         assert_eq!(recovery.operation_id(), None);
         recovery.begin_restore().unwrap();
         let first = recovery.operation_id().unwrap();
@@ -222,7 +228,7 @@ mod tests {
                 temporary: loaded("temporary"),
                 temporary_is_newer: true,
             }),
-            false,
+            None,
         );
         recovery.begin_restore().unwrap();
         let newer = hash_bytes(b"new external");

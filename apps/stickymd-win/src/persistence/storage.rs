@@ -85,6 +85,32 @@ pub fn preserve_canonical(source: &Path, destination: &Path) -> Result<(), NoteS
     )))
 }
 
+/// Result of preserving the canonical note before a recovery restore.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreserveOutcome {
+    Preserved,
+    /// The canonical note is no longer the observation that required preserving it; it was
+    /// left in place.
+    Changed(ExternalFileState),
+}
+
+/// Moves the canonical note aside only while it is still `expected`, the observation that
+/// required preserving it. A canonical changed while recovery waited is left in place and
+/// reported, so it becomes a conflict instead of being moved away (plan 05 recovery 8). The
+/// check and the move are separate steps; a change between them is not detected, and a
+/// too-large canonical is compared by its size only.
+pub fn preserve_canonical_if_unchanged(
+    source: &Path,
+    destination: &Path,
+    expected: &ExternalFileState,
+) -> Result<PreserveOutcome, NoteStorageError> {
+    let observed = inspect_note_state_with_retry(source)?;
+    if &observed != expected {
+        return Ok(PreserveOutcome::Changed(observed));
+    }
+    preserve_canonical(source, destination).map(|()| PreserveOutcome::Preserved)
+}
+
 fn suffixed_path(path: &Path, suffix: u16) -> PathBuf {
     if suffix == 0 {
         return path.to_owned();
@@ -628,6 +654,35 @@ mod tests {
             fs::read(root.join("note.invalid-42-1.md")).unwrap(),
             b"new canonical evidence"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_canonical_changed_since_the_recovery_observation_is_left_in_place() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let source = root.join("note.md");
+        let destination = root.join("note.invalid-7.md");
+        fs::write(&source, b"\xff invalid").unwrap();
+        let expected = inspect_note_state_with_retry(&source).unwrap();
+        assert!(matches!(expected, ExternalFileState::InvalidUtf8 { .. }));
+        // An external program made the canonical valid while the recovery choice waited.
+        fs::write(&source, b"valid external text").unwrap();
+        let outcome = preserve_canonical_if_unchanged(&source, &destination, &expected).unwrap();
+        assert!(matches!(
+            outcome,
+            PreserveOutcome::Changed(ExternalFileState::Present(_))
+        ));
+        assert_eq!(fs::read(&source).unwrap(), b"valid external text");
+        assert!(!destination.exists());
+        // Unchanged, it is moved aside.
+        fs::write(&source, b"\xff invalid").unwrap();
+        assert_eq!(
+            preserve_canonical_if_unchanged(&source, &destination, &expected).unwrap(),
+            PreserveOutcome::Preserved
+        );
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination).unwrap(), b"\xff invalid");
         fs::remove_dir_all(root).unwrap();
     }
 

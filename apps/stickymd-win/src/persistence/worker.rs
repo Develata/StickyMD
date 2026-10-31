@@ -21,8 +21,8 @@ use crate::export::{ExportCompletion, ExportError, ExportRequest, export_snapsho
 
 use super::NoteStorageError;
 use super::{
-    PersistRequest, PersistResult, inspect_note_state_with_retry, persist_note, preserve_canonical,
-    remove_temporary,
+    PersistRequest, PersistResult, PreserveOutcome, inspect_note_state_with_retry, persist_note,
+    preserve_canonical_if_unchanged, remove_temporary,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +55,7 @@ pub enum IoCompletion {
     /// Preserving the canonical note for the recovery operation `operation`.
     CanonicalPreserved {
         operation: u64,
-        result: Result<(), NoteStorageError>,
+        result: Result<PreserveOutcome, NoteStorageError>,
     },
     AssetPaste(Result<AssetPasteCompletion, AssetPasteFailure>),
     AssetSync {
@@ -90,6 +90,13 @@ struct NoteJob {
     target: PathBuf,
     temporary: PathBuf,
     request: PersistRequest,
+}
+
+struct PreserveJob {
+    source: PathBuf,
+    destination: PathBuf,
+    expected: ExternalFileState,
+    operation: u64,
 }
 
 struct ConfigJob {
@@ -131,7 +138,7 @@ struct Mailbox {
     external: Option<(PathBuf, Option<DiskFingerprint>)>,
     config: Option<ConfigJob>,
     cleanup_temporary: Option<(PathBuf, TemporaryCleanup)>,
-    preserve_canonical: Option<(PathBuf, PathBuf, u64)>,
+    preserve_canonical: Option<PreserveJob>,
     asset_paste: Option<AssetPasteJob>,
     asset_sync: Option<AssetSyncJob>,
     export: Option<ExportRequest>,
@@ -142,6 +149,15 @@ struct Mailbox {
 
 impl Mailbox {
     fn replace_note(&mut self, job: NoteJob) {
+        // The note job reuses the fixed temp. A conflict-discard cleanup still queued would run
+        // after it and delete what a failed save left there, the only durable copy of newer
+        // text; the note job supersedes it (it replaces or overwrites that temp itself).
+        if matches!(
+            self.cleanup_temporary,
+            Some((_, TemporaryCleanup::ConflictDiscarded))
+        ) {
+            self.cleanup_temporary = None;
+        }
         self.metrics.note_submitted += 1;
         if self.note.replace(job).is_some() {
             self.metrics.note_coalesced += 1;
@@ -219,8 +235,8 @@ impl Mailbox {
             Some(WorkerJob::External(target, requested_base))
         } else if let Some((temporary, purpose)) = self.cleanup_temporary.take() {
             Some(WorkerJob::CleanupTemporary(temporary, purpose))
-        } else if let Some((source, destination, operation)) = self.preserve_canonical.take() {
-            Some(WorkerJob::PreserveCanonical(source, destination, operation))
+        } else if let Some(job) = self.preserve_canonical.take() {
+            Some(WorkerJob::PreserveCanonical(job))
         } else {
             self.config.take().map(WorkerJob::Config)
         }
@@ -310,10 +326,23 @@ impl PersistenceWorker {
         }
     }
 
-    pub fn preserve_canonical(&self, source: PathBuf, destination: PathBuf, operation: u64) {
+    /// Queues moving the canonical note aside for recovery operation `operation`, only while
+    /// it is still `expected` (`preserve_canonical_if_unchanged`).
+    pub fn preserve_canonical(
+        &self,
+        source: PathBuf,
+        destination: PathBuf,
+        expected: ExternalFileState,
+        operation: u64,
+    ) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
-            mailbox.preserve_canonical = Some((source, destination, operation));
+            mailbox.preserve_canonical = Some(PreserveJob {
+                source,
+                destination,
+                expected,
+                operation,
+            });
             ready.notify_one();
         }
     }
@@ -510,9 +539,13 @@ where
                 let result = remove_temporary(&path);
                 on_completion(IoCompletion::TemporaryRemoved { purpose, result });
             }
-            WorkerJob::PreserveCanonical(source, destination, operation) => {
-                let result = preserve_canonical(&source, &destination);
-                on_completion(IoCompletion::CanonicalPreserved { operation, result });
+            WorkerJob::PreserveCanonical(job) => {
+                let result =
+                    preserve_canonical_if_unchanged(&job.source, &job.destination, &job.expected);
+                on_completion(IoCompletion::CanonicalPreserved {
+                    operation: job.operation,
+                    result,
+                });
             }
         }
     }
@@ -523,7 +556,7 @@ enum WorkerJob {
     External(PathBuf, Option<DiskFingerprint>),
     Config(ConfigJob),
     CleanupTemporary(PathBuf, TemporaryCleanup),
-    PreserveCanonical(PathBuf, PathBuf, u64),
+    PreserveCanonical(PreserveJob),
     AssetPaste(AssetPasteJob),
     AssetSync(AssetSyncJob),
     Export(ExportRequest),
@@ -604,6 +637,27 @@ mod tests {
 
         drop(worker);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_newer_note_job_supersedes_only_a_queued_conflict_discard_cleanup() {
+        let mut mailbox = Mailbox {
+            cleanup_temporary: Some(("note.md.tmp".into(), TemporaryCleanup::ConflictDiscarded)),
+            ..Mailbox::default()
+        };
+        mailbox.replace_note(job("newer text"));
+        assert!(mailbox.cleanup_temporary.is_none());
+        // A recovery cleanup stays: recovery blocks ordinary saves, and its receipt ends it.
+        let recovery = TemporaryCleanup::RecoveryResolved { operation: 1 };
+        mailbox.cleanup_temporary = Some(("note.md.tmp".into(), recovery));
+        mailbox.replace_note(job("recovery save"));
+        assert_eq!(
+            mailbox
+                .cleanup_temporary
+                .as_ref()
+                .map(|(_, purpose)| *purpose),
+            Some(recovery)
+        );
     }
 
     #[test]

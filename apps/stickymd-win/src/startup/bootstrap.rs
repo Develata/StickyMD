@@ -23,7 +23,8 @@ pub struct BootstrapOutcome {
     pub config: RuntimeConfig,
     pub config_persistence_allowed: bool,
     pub recovery: Option<RecoveryCandidate>,
-    pub recovery_canonical_requires_preserve: bool,
+    /// The unusable canonical observation a restore must preserve first (plan 05 recovery 5).
+    pub recovery_canonical_to_preserve: Option<ExternalFileState>,
     pub warnings: Vec<String>,
 }
 
@@ -92,13 +93,16 @@ pub fn bootstrap_observed(
 
     match recovery {
         RecoveryDisposition::Candidate(candidate) => {
-            let recovery_canonical_requires_preserve =
-                canonical.as_ref().is_some_and(|observation| {
+            let recovery_canonical_to_preserve = canonical
+                .as_ref()
+                .map(|observation| &observation.state)
+                .filter(|state| {
                     matches!(
-                        observation.state,
+                        state,
                         ExternalFileState::InvalidUtf8 { .. } | ExternalFileState::TooLarge { .. }
                     )
-                });
+                })
+                .cloned();
             let document = candidate.canonical.as_ref().map_or_else(
                 || DocumentState::empty(LineEnding::Crlf),
                 |loaded| {
@@ -114,7 +118,7 @@ pub fn bootstrap_observed(
                 config: config_outcome.config,
                 config_persistence_allowed: config_outcome.persistence_allowed,
                 recovery: Some(candidate),
-                recovery_canonical_requires_preserve,
+                recovery_canonical_to_preserve,
                 warnings,
             })
         }
@@ -126,7 +130,7 @@ pub fn bootstrap_observed(
                 config: config_outcome.config,
                 config_persistence_allowed: config_outcome.persistence_allowed,
                 recovery: None,
-                recovery_canonical_requires_preserve: false,
+                recovery_canonical_to_preserve: None,
                 warnings,
             })
         }
@@ -146,7 +150,7 @@ pub fn bootstrap_observed(
                 config: config_outcome.config,
                 config_persistence_allowed: config_outcome.persistence_allowed,
                 recovery: None,
-                recovery_canonical_requires_preserve: false,
+                recovery_canonical_to_preserve: None,
                 warnings,
             })
         }
@@ -160,7 +164,7 @@ pub fn bootstrap_observed(
                 config: config_outcome.config,
                 config_persistence_allowed: config_outcome.persistence_allowed,
                 recovery: None,
-                recovery_canonical_requires_preserve: false,
+                recovery_canonical_to_preserve: None,
                 warnings,
             })
         }
@@ -337,7 +341,7 @@ mod tests {
         let outcome = bootstrap(&paths).unwrap();
         assert!(outcome.document.text().is_empty());
         assert_eq!(outcome.recovery.unwrap().temporary.text, "临时内容");
-        assert!(!outcome.recovery_canonical_requires_preserve);
+        assert!(outcome.recovery_canonical_to_preserve.is_none());
         assert!(!paths.note_file.exists());
         fs::remove_dir_all(root).unwrap();
     }
@@ -349,7 +353,10 @@ mod tests {
         fs::write(&paths.note_tmp, b"recoverable").unwrap();
         let outcome = bootstrap(&paths).unwrap();
         assert!(outcome.recovery.is_some());
-        assert!(outcome.recovery_canonical_requires_preserve);
+        assert!(matches!(
+            outcome.recovery_canonical_to_preserve,
+            Some(ExternalFileState::InvalidUtf8 { .. })
+        ));
         assert_eq!(fs::read(&paths.note_file).unwrap(), [0xff]);
         assert_eq!(fs::read(&paths.note_tmp).unwrap(), b"recoverable");
         fs::remove_dir_all(root).unwrap();
