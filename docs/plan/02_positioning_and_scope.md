@@ -4,8 +4,8 @@
 
 - `Layer`: Foundation
 - `Status`: Approved Contract
-- `Version`: 0.1.0
-- `Last Review`: 2026-08-30
+- `Version`: 0.2.0
+- `Last Review`: 2026-10-31
 - `Scope`: StickyMD 的存在理由、本体、便签模型、平台与 v1 范围、Non-Goals、优先级与功能拒绝标准
 
 ---
@@ -108,15 +108,23 @@ Editor Session
 - **禁止** fallback 到 AppData、LocalAppData、Documents、Registry 或任何用户配置目录。
   这类 fallback 会破坏“目录就是便签身份”的本体模型。
 
+<a id="platforms"></a>
 ## 平台
 
 ```text
-Windows 11 x64 only
+交付形态：Windows 11 x64 only
+共享实现：面向 Windows、Debian、macOS
 ```
 
-v1 不支持 Windows 10、Linux、macOS、ARM64。
-但平台依赖必须被隔离在平台 adapter 之后，为未来替代留出干净边界
-（见 `09_windows_shell.md`）。
+v1 交付形态不支持 Windows 10、Linux、macOS、ARM64。共享实现（Shared Application、Shared Desktop、
+`stickymd-core`、`stickymd-render`）面向 Windows、Debian、macOS 集中维护，平台依赖隔离在 Platform Host 的
+adapter 之后（`03` 共享实现节、`09_windows_shell.md`）。USER 决定（2026-10-31）：先完成共享实现并接回 Windows 壳，
+另外两端在对应平台实现。
+
+“共享实现面向三端”不等于“已交付三端产品”。以下事项在建立非 Windows 宿主前须另行批准，本节不替其定案：
+Debian 的桌面环境与 X11/Wayland 支持矩阵；macOS 最低版本、CPU 架构、应用身份、菜单栏/窗口行为与签名；
+非 Windows 的便签目录与实例身份（签名 bundle 只读，不能假设可执行文件旁可写）；缺少贴边定位、隐藏或置顶能力时的
+产品行为；两端默认字体、输入法验收矩阵、资源与性能门。在此之前，非 Windows 平台的一切验收保持 `NOT TESTED`。
 
 ---
 

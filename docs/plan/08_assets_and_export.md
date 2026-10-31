@@ -4,8 +4,8 @@
 
 - `Layer`: Capability
 - `Status`: Approved Contract
-- `Version`: 0.1.0
-- `Last Review`: 2026-10-22
+- `Version`: 0.2.0
+- `Last Review`: 2026-10-31
 - `Scope`: managed/user 资产边界、命名、编码保留、引用追踪、.trash、undo/redo 副作用、启动 reconcile、安全 GC、remote 图片、导出
 
 ---
@@ -25,6 +25,10 @@ StickyMD must never automatically delete a file that it cannot prove it owns.
 
 - 资产事务由 AssetCoordinator 编排、单一 I/O 串行执行；UI/Preview 不做文件操作。
 - 图片渲染呈现见 `06`；剪贴板读取的平台细节见 `09`。
+- 所有权证明、safe boundary、引用集合与 GC 裁决是平台无关语义，由 Shared Application 持有；目录与文件稳定性、
+  所有权证明的执行、无覆盖操作与按实际文件执行的移动/删除由 Platform Host 的资产存储 adapter 实现，请求带事务身份，
+  回执带 request/transaction id 与 generation（`04` Generation 规则 6）。不能确认所有权或稳定性时，清理返回
+  deferred/失败，用户文件保持原状。剪贴板 adapter 只把原生格式规范化为文本/图片/文件列表，不决定 canonical edit。
 
 ## Owned Objects
 
@@ -77,6 +81,25 @@ stickymd-<20|32|64-lowercase-hex>.<png|jpg|webp|gif>
 2. 可直接取得的原编码 PNG/JPEG/WebP。
 3. DIB/DIBV5 或普通 bitmap。
 4. Unicode text。
+
+<a id="clipboard-priority-verification"></a>
+### 多格式剪贴板的验证（Windows）
+
+同一剪贴板可同时提供多种格式，且 Windows 会在 `CF_DIB`、`CF_DIBV5`、`CF_BITMAP` 之间合成格式，发布集合不等于可用集合。
+上述优先级的验证须逐组写明“显式发布的格式”与“预期读取的格式”，以可区分的 payload 或选中格式记录断言来源，不能只断言
+“产生了图片”。实现顺序为 `CF_HDROP → 原编码 PNG/JPEG/WebP（别名顺序 PNG → image/png → JFIF → JPEG → image/jpeg → WebP →
+image/webp）→ CF_DIBV5 → CF_DIB → CF_BITMAP → Unicode text`。至少覆盖：
+
+| 显式发布 | 预期读取 |
+| --- | --- |
+| 合法非空图片文件列表 + PNG + 文本 | `CF_HDROP` 文件列表 |
+| PNG + DIB + 文本 | 原编码 PNG |
+| DIBV5 + DIB + 文本 | 显式 `CF_DIBV5` |
+| 只有 DIB + 文本 | 合成的 `CF_DIBV5` |
+| 只有有效 `CF_BITMAP`（真实 `HBITMAP`）+ 文本 | 合成的 `CF_DIBV5` |
+
+读取位图的组用已知非对称图案检查最终 PNG 的尺寸、像素位置与颜色（防翻转、通道与透明度错误），不要求合成缓冲区与源字节
+相等；文本均不得被插入。现有 G3-01 exact 检查（目前只证明 PNG 优先于文本）保留，其只发布 DIB 的场景补实际读取格式断言。
 
 ### 编码规则
 
@@ -292,7 +315,8 @@ Not applicable（无用户配置项；限制为固定保护值）。
 
 ## Extension / Replacement Points
 
-支持的图片格式集合（image crate feature）；编码保留策略。
+支持的图片格式集合（image crate feature）；编码保留策略；Platform Host 的资产存储与剪贴板 adapter
+（下文剪贴板检测优先级是 Windows 的格式顺序，其他平台的原生格式映射在建立对应宿主时另行批准）。
 
 ## Performance Critical Paths
 

@@ -4,8 +4,8 @@
 
 - `Layer`: Foundation
 - `Status`: Governing Rule
-- `Version`: 0.1.0
-- `Last Review`: 2026-08-30
+- `Version`: 0.2.0
+- `Last Review`: 2026-10-31
 - `Scope`: 固定 StickyMD 核心术语的定义、权威来源、等价性边界与生命周期；全仓库文档与代码命名必须使用本表术语
 
 每个术语包含四个字段：
@@ -21,7 +21,7 @@
 
 ### StickyMD
 
-- **Definition**：一个 Windows 11 x64、以 Rust 为主体、无 WebView 的便携式 Markdown 桌面草稿纸程序。一个程序目录即一张便签。
+- **Definition**：一个以 Rust 为主体、无 WebView 的便携式 Markdown 桌面草稿纸程序。一个程序目录即一张便签。当前交付形态为 Windows 11 x64；共享实现面向 Windows、Debian、macOS（`02` 平台节），非 Windows 交付形态须另行批准。
 - **Authority**：`docs/plan/02_positioning_and_scope.md` 的本体定义。
 - **Not equivalent to**：Markdown IDE、通用 Markdown 编辑器、知识管理工具、文档管理器。
 - **Lifetime**：进程启动至退出；其数据身份持久于程序目录。
@@ -431,6 +431,46 @@
 - **Authority**：平台行为的封装；核心逻辑不直接绑定环境细节。
 - **Not equivalent to**：业务层；adapter 不含产品决策。
 - **Lifetime**：进程生命周期。
+
+---
+
+<a id="shared-implementation-terms"></a>
+## 共享实现与平台
+
+### Shared Application
+
+- **Definition**：`stickymd-app` crate。持有 typed intent、应用会话、保存/预览/冲突/恢复/资产/生命周期/窗口状态协调、配置状态、能力接口定义与可共享的执行逻辑；三端共用。
+- **Authority**：`docs/plan/03_system_architecture.md#shared-crates`。
+- **Not equivalent to**：`stickymd-core`（只持有领域模型与纯计算）；平台宿主；某个平台的可执行程序。
+- **Lifetime**：随源码存在；Phase 15 A 阶段建立。
+
+### Shared Desktop
+
+- **Definition**：`stickymd-desktop` crate。持有通用工具栏、Search 控件、选择与滚动交互、窗口事件翻译、Source/Preview/Split 呈现与软件帧缓冲接线；属于 Interaction Shell 的共享部分。
+- **Authority**：`docs/plan/03_system_architecture.md#shared-crates`。
+- **Not equivalent to**：文档权威或业务裁决者；平台原生 adapter。
+- **Lifetime**：随源码存在；Phase 15 C 阶段建立。
+
+### Platform Host
+
+- **Definition**：某个平台的可执行程序 crate（当前只有 `apps/stickymd-win`）：启动接线、原生能力 adapter、资源与 manifest、平台验证探针接入。
+- **Authority**：`docs/plan/03_system_architecture.md#shared-crates` 与该平台的壳层章节（Windows 为 `09`）。
+- **Not equivalent to**：业务规则的所有者；共享 crate 的反向依赖目标。
+- **Lifetime**：随该平台交付形态存在；非 Windows 宿主须另行批准后才建立。
+
+### Capability Port
+
+- **Definition**：Shared Application 定义、Platform Host 实现并注入的能力接口（存储、资产、剪贴板、窗口与显示器、宿主与单实例等），按当前业务需要划分，不是包罗所有系统调用的大接口。
+- **Authority**：Shared Application 的接口定义；语义由对应 plan 章节持有。
+- **Not equivalent to**：一次请求已经成功；平台声明支持某能力。
+- **Lifetime**：随接口定义存在；签名在实现阶段冻结。
+
+### Execution Receipt
+
+- **Definition**：Capability Port 执行一次请求后上报的结果：成功、执行失败、暂时不可用或 `Unsupported`，并携带足以判定是否过期的身份（generation、request/transaction/operation id、配置 revision 或请求时的 Durable Fingerprint）。
+- **Authority**：发出请求的 coordinator 依身份裁决是否接受；身份要求及其豁免（不提交任何状态的回执）按 `04` Generation 规则 6。
+- **Not equivalent to**：状态已提交；平台事件或 hint。
+- **Lifetime**：从执行完成到被裁决（接受或丢弃）。
 
 ---
 

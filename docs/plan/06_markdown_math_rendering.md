@@ -4,8 +4,8 @@
 
 - `Layer`: Capability
 - `Status`: Approved Contract
-- `Version`: 0.1.0
-- `Last Review`: 2026-10-22
+- `Version`: 0.2.0
+- `Last Review`: 2026-10-31
 - `Scope`: Markdown 语义权威、数学语义权威、Owned AST、Preview 调度与 generation、渲染桥接、缓存与资源限制
 
 ---
@@ -329,6 +329,15 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
   不重新运行 Comrak，也不推进 Document generation。数学只失效受有效字号影响的 raster，
   保留语义/layout authority；图片按缩放后的布局框请求受 16 MiB 预算约束的 viewport raster，
   不预生成 300% 全文大图。
+
+<a id="frame-presentation"></a>
+### 帧呈现与平台字体
+
+- 绘制与命中由 `stickymd-render` 与 Shared Desktop 共用；呈现到窗口的方式与成本属于平台。共享绘制只给出 damage 区域，
+  是否局部呈现由 Shared Desktop 依后端缓冲区年龄决定：只有缓冲区就是上一帧（softbuffer `age == 1`）时才只写
+  damage 区，其他年龄（新缓冲 `0`、双缓冲取到更早帧 `≥ 2`）全量填充并完整呈现。不以 Windows 的局部呈现成本
+  代表其他平台（例如 softbuffer 0.4.8 的 macOS 后端每帧新分配缓冲、忽略 damage，按全窗成本单独测量，见 `10`）。
+- 字体选择算法共用；各平台的默认字体候选由 Platform Host 提供，Windows 现有默认（含代码块 Consolas）保持不变。
 
 <a id="preview-horizontal-scroll"></a>
 ### 块内横向滚动

@@ -4,8 +4,8 @@
 
 - `Layer`: Architecture
 - `Status`: Approved Contract
-- `Version`: 0.1.0
-- `Last Review`: 2026-10-22
+- `Version`: 0.2.0
+- `Last Review`: 2026-10-31
 - `Scope`: 运行时状态结构、所有权与修改权、authority 划分、generation 语义、核心 invariant
 
 ---
@@ -250,6 +250,15 @@ struct DockState {
   Search 或 Preview 选区消费，未被消费时才成为该 intent。
 - 焦点或 IME composition 期间：**禁止自动收起**；鼠标临时离开不触发收起。
 
+<a id="window-action-receipts"></a>
+### 窗口动作的请求、回执与提交
+
+显示、隐藏、置顶与定位分三步：coordinator 发出请求 → 平台执行并上报 Execution Receipt → coordinator 依回执提交。
+`VisibilityState` 与依赖它的效果（如隐藏后释放缓存）只在成功回执后推进；执行失败、暂时不可用或 `Unsupported` 时
+保持或恢复原状态，并经诊断上报。动画中的中间态不算已提交。例：隐藏请求被平台拒绝时不得进入 `HiddenToTray`，
+也不得释放隐藏缓存。隐藏后的恢复入口：Windows 沿用 `09` 现有的托盘生命周期、主窗口可达性与托盘创建失败合同；
+其他平台的恢复入口与降级行为在建立对应宿主时另行批准。
+
 ## ImeState
 
 ```rust
@@ -298,6 +307,11 @@ struct ConfigState {
 4. 任务结果携带来源 generation；提交前必须校验 `result.generation == 当前 generation`
    （保存例外：允许合并保存最新 generation，但 saved_generation 只推进到实际落盘版本）。
 5. 不匹配 → 结果直接丢弃，不产生任何副作用。
+6. 不以文档快照为输入的执行回执携带与其语义对应的身份，同样在提交前校验：资产任务用 request/transaction id 加 generation，
+   配置用 revision，恢复操作用 operation id，外部文件观察用请求时的 Durable Fingerprint（已知指纹此后变化即作废并重新
+   观察，不按文档 generation 判定，以免输入期间漏检外部修改）。窗口动作回执见上文窗口动作节。不提交任何状态的回执
+   （成功无副作用、失败只报告持久事实）可以不带身份，但须在代码中说明理由；其排队中的副作用若会被更新的请求取代，
+   由更新的请求撤销。
 
 ---
 

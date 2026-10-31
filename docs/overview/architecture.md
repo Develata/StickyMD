@@ -36,6 +36,21 @@ Object Plane             doc::text、preview::render_tree、asset::managed_image
 
 详见 [`03_system_architecture.md`](../plan/03_system_architecture.md)。
 
+## 共享实现与平台宿主（Phase 15，目标结构）
+
+USER 已批准（2026-10-31）：共享实现面向 Windows、Debian、macOS 集中维护，当前交付仍只有 Windows。
+
+```text
+apps/stickymd-win（Windows 宿主：启动接线、原生 adapter）
+  → stickymd-desktop（共享界面：控件、绘制、事件翻译）
+  → stickymd-app（共享应用：intent、coordinator、配置、能力接口）
+  → stickymd-core（领域模型）；stickymd-render（Markdown/数学/排版）
+```
+
+宿主实现 `stickymd-app` 定义的能力接口并上报执行回执，不复制业务规则。迁移按 Phase 15 的 A–D 进行，
+在完成前代码仍主要位于 `apps/stickymd-win`；细节见 [`03` 共享实现节](../plan/03_system_architecture.md#shared-crates)
+与 [`11` Phase 15 节](../plan/11_testing_and_release.md#phase-15-shared-core-migration)。
+
 ## 关键安全承诺
 
 以下是工程合同要求；当前实现中发现的差异与未验证边界见

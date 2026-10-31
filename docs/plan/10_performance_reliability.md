@@ -4,8 +4,8 @@
 
 - `Layer`: Verification
 - `Status`: Approved Contract
-- `Version`: 0.1.0
-- `Last Review`: 2026-10-22
+- `Version`: 0.2.0
+- `Last Review`: 2026-10-31
 - `Scope`: 性能约束的性质定义（Target / Measurement Method / Hard Failure Condition / Future Benchmark Entry）与可靠性底线
 
 ---
@@ -63,7 +63,24 @@ Not applicable。测量不得修改产品 authority；缓存清理/隐藏等被�
 8. file safety 高于性能：任何性能优化不得绕过原子写入与冲突模型。
 9. IME correctness 高于内存：不得为省内存破坏输入法路径。
 10. 测量必须在 Release build + Windows 11 下进行。
+11. 共享 crate（Shared Application、Shared Desktop）不得在输入、布局、绘制热路径上引入字符串消息总线、
+    通用插件框架或无界队列；跨 crate 边界的输入、delta、快照与帧沿用短借用、所有权移动或 `Arc` 快照。
 ```
+
+<a id="phase-15-migration-gates"></a>
+### Phase 15 迁移的性能判定
+
+Phase 15（`11` Phase 15 节）每批迁移前固定基线 SHA、fixture 与测量口径，迁移后与同一基线比较；新增成本与既有的
+受影响行重建、帧复制分开计量。缺少基线或测量证据时该批不得通过。
+
+| 类别 | 指标 | 判定 |
+| --- | --- | --- |
+| 硬门 | 下文目标表的 Hard Failure Condition（内存与输入延迟失败线，不是 Target 列） | 越线即失败 |
+| 硬门 | 每键全文快照次数、每帧复制字节、每次编辑触发的后台预览/保存构建次数 | 不得超过基线 |
+| 诊断 | 每键分配次数、队列容量 | 增加须在该批记录中说明来源，不单独阻断 |
+
+macOS 的呈现成本（每帧全窗分配与复制）不由 Windows 基线代表；建立 macOS 宿主时须另行给出物理窗口尺寸、DPI、
+每帧分配/复制量与光标闪烁基线。
 
 ---
 
