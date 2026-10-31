@@ -49,7 +49,9 @@ Plan 10 `preview-resource-assessment` → 功能投影“宽内容/数学公式�
 - `00_engineering_constitution.md` 与 `01_terminology.md` 是治理基座，
   不直接映射验收案例；其约束通过上述所有章节间接验证。
 - `03_system_architecture.md` 的层间规则通过 code review、`plan_ref` 审查
-  与各案例的实现结构间接验证。
+  与各案例的实现结构间接验证。其共享实现节（`#shared-crates`，USER 批准 2026-10-31）是 Phase 15 的目标结构，
+  尚无实现；依赖方向、`unsafe` 与平台类型禁令将由 Phase 15 每批迁移同步更新的治理检查覆盖（`11` Phase 15 节），
+  对应的 `phase-15.md` 在首次实施时建立。
 
 ## 2026-09-30 Preview 现状说明与覆盖边界
 

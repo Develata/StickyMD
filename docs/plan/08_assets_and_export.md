@@ -4,8 +4,8 @@
 
 - `Layer`: Capability
 - `Status`: Approved Contract
-- `Version`: 0.1.0
-- `Last Review`: 2026-10-22
+- `Version`: 0.2.0
+- `Last Review`: 2026-10-31
 - `Scope`: managed/user 资产边界、命名、编码保留、引用追踪、.trash、undo/redo 副作用、启动 reconcile、安全 GC、remote 图片、导出
 
 ---
@@ -25,6 +25,10 @@ StickyMD must never automatically delete a file that it cannot prove it owns.
 
 - 资产事务由 AssetCoordinator 编排、单一 I/O 串行执行；UI/Preview 不做文件操作。
 - 图片渲染呈现见 `06`；剪贴板读取的平台细节见 `09`。
+- 所有权证明、safe boundary、引用集合与 GC 裁决是平台无关语义，由 Shared Application 持有；目录与文件稳定性、
+  所有权证明的执行、无覆盖操作与按实际文件执行的移动/删除由 Platform Host 的资产存储 adapter 实现，请求带事务身份，
+  回执带 request/transaction id 与 generation（`04` Generation 规则 6）。不能确认所有权或稳定性时，清理返回
+  deferred/失败，用户文件保持原状。剪贴板 adapter 只把原生格式规范化为文本/图片/文件列表，不决定 canonical edit。
 
 ## Owned Objects
 
@@ -292,7 +296,8 @@ Not applicable（无用户配置项；限制为固定保护值）。
 
 ## Extension / Replacement Points
 
-支持的图片格式集合（image crate feature）；编码保留策略。
+支持的图片格式集合（image crate feature）；编码保留策略；Platform Host 的资产存储与剪贴板 adapter
+（下文剪贴板检测优先级是 Windows 的格式顺序，其他平台的原生格式映射在建立对应宿主时另行批准）。
 
 ## Performance Critical Paths
 

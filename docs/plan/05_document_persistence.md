@@ -4,8 +4,8 @@
 
 - `Layer`: Runtime
 - `Status`: Approved Contract
-- `Version`: 0.1.0
-- `Last Review`: 2026-08-30
+- `Version`: 0.2.0
+- `Last Review`: 2026-10-31
 - `Scope`: note.md 与 config.toml 的编码、换行、原子保存、崩溃恢复、外部修改处理、可写性与单实例身份
 
 ---
@@ -23,6 +23,16 @@
 - 运行时 canonical 文本权威始终是 `DocumentState`；`note.md` 是 durable representation。
 - watcher 事件只是待验证 hint；它和磁盘 bytes 都不能直接修改 Source projection。
 - 保存输入只能来自带 generation 的不可变 Document Snapshot。
+
+<a id="persistence-semantics-vs-platform"></a>
+### 共享语义与平台实现
+
+本章的保存、OCC、恢复、外部修改与冲突规则是平台无关语义，由 Shared Application 持有（`03` 共享实现节）。
+原子发布、真实文件身份、元数据与受保护操作由 Platform Host 的存储 adapter 实现，并以 Execution Receipt 上报；
+Windows 实现见 `09` 实现映射。存储接口须覆盖完整的安全操作边界：带版本/预期指纹的保存、载入、观察与恢复请求，
+普通保存不能被宿主升级为强制覆盖，平台错误码只作诊断，共享逻辑按语义化错误分类裁决。其他平台的原子名称替换
+（如 POSIX `rename`）与目录同步是不同的保证，不能当作 Windows 原子发布的直接别名；非 Windows 存储 adapter 的
+具体保证在建立对应宿主时另行批准。
 
 ## Owned Objects
 
@@ -298,8 +308,8 @@ autosave 650 ms、external check 150 ms、换行检测与 16 MiB 自动载入安
 
 ## Extension / Replacement Points
 
-原子替换、single-instance、watcher 是 Windows adapter；core 只理解 fingerprint、loaded document、
-recovery candidate、external fact 与 conflict 等纯值模型。
+原子替换、single-instance、watcher 是 Platform Host 的 adapter（当前为 Windows）；core 只理解 fingerprint、
+loaded document、recovery candidate、external fact 与 conflict 等纯值模型；协调与结果协议属于 Shared Application。
 
 ## Performance Critical Paths
 

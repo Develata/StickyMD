@@ -4,9 +4,9 @@
 
 - `Layer`: Architecture
 - `Status`: Approved Contract
-- `Version`: 0.1.0
-- `Last Review`: 2026-08-30
-- `Scope`: StickyMD 主骨架：四层调用架构 + Object Plane、层间规则、coordinator 清单、核心调用链
+- `Version`: 0.2.0
+- `Last Review`: 2026-10-31
+- `Scope`: StickyMD 主骨架：四层调用架构 + Object Plane、层间规则、coordinator 清单、核心调用链、共享 crate 与平台宿主的映射
 
 ---
 
@@ -63,6 +63,49 @@ Execution Domain         （第四层：具体能力执行，环境依赖经 ada
   ↔
 Object Plane             （对象层：最小数据元对象，不是第五调用层）
 ```
+
+---
+
+<a id="shared-crates"></a>
+## 共享实现与平台宿主
+
+USER 批准（2026-10-31，[提案](../report/2026-10-23-shared-core-thin-platform-shell-architecture.md)）：
+共享实现面向三端集中维护，平台宿主只提供真实系统能力。crate 划分不取代四层结构，每个 crate 内仍按层分模块。
+
+| crate | 拥有的职责 | 对应层 | 边界 |
+| --- | --- | --- | --- |
+| `stickymd-core` | 文本、编辑 delta、撤销重做、generation、资产引用等领域状态与纯计算 | Execution Domain 的领域能力 + Object Plane 类型 | 不依赖窗口、渲染、Capability Port 实现或磁盘执行 |
+| `stickymd-render` | Markdown/数学投影、排版、绘制、命中与选择映射、布局缓存 | Execution Domain | 不决定保存、冲突或资产删除；环境读取经执行接口 |
+| `stickymd-app`（Shared Application） | typed intent、应用会话、全部 coordinator、配置状态、Capability Port 定义、可共享执行逻辑（worker 调度与结果协议） | Instruction Interface + Flow Coordination + 共享 Execution | 不依赖 winit、softbuffer 或任何平台 API；不向壳暴露可变 DocumentState |
+| `stickymd-desktop`（Shared Desktop） | 通用控件、Search 控件、选择与滚动交互、窗口事件翻译、视图呈现、软件帧缓冲接线 | Interaction Shell（共享部分） | 可使用 winit/softbuffer；不持有保存、冲突、GC、生命周期的业务裁决 |
+| Platform Host（当前 `apps/stickymd-win`） | 启动接线、原生 adapter、资源/manifest、平台验证探针 | Shell 启动接线 + Execution Domain 原生 adapter | 实现 Capability Port 并上报 Execution Receipt；不复制应用规则 |
+
+编译依赖方向（共享库不反向依赖平台宿主）：
+
+```text
+Platform Host ──→ stickymd-desktop ──→ stickymd-app ──→ stickymd-core
+     │                   │                   │
+     │                   └────→ stickymd-render ──→ stickymd-core
+     └── 实现并注入 stickymd-app 定义的 Capability Port
+```
+
+规则：
+
+1. 运行时调用链不变：Shell → Instruction Interface → Flow Coordination → Execution Domain。Platform Host 内的启动
+   接线属于 Shell，原生 adapter 属于 Execution Domain；二者不能因同处一个 crate 而越层调用。
+2. 共享 UI 仍属于 Interaction Shell：集中维护不使它成为文档权威，也不使界面操作获得直接写文件的权限。
+3. Capability Port 按当前业务需要定义（存储、资产、本地图片与导出目标、剪贴板与 Shell launch、窗口与显示器、
+   宿主/单实例/唤醒），不建立包罗所有系统调用的大接口，也不把每个文件操作包装成一个虚函数。
+4. 每次请求的结果是 Execution Receipt，分别表达成功、执行失败、暂时不可用与 `Unsupported`，并携带判定过期所需的身份
+   （`04` Generation 规则）。平台声明支持某能力不等于某次请求已经成功；失败时不得提交虚假的已保存/已隐藏状态。
+5. 文件接口覆盖完整的安全操作边界：不能由共享层先检查路径、再由平台层凭字符串删除或移动文件。
+6. 主线程限定的窗口、菜单与输入法能力不强加 `Send + Sync`；I/O worker 只获得允许跨线程传递的执行对象与不可变请求。
+7. 共享调度使用注入的单调时间或可控时钟，沿用毫秒时间与有界队列语义；Platform Host 负责唤醒，不复制 debounce 与退出顺序。
+8. 共享 crate 禁止 `unsafe`。第三方库可以持有经批准的平台后端；项目手写原生调用仍集中在 Platform Host 的 adapter。
+9. 平台默认字体、快捷键映射与原生菜单约定属于宿主配置/翻译；Windows 现有默认值保持不变。
+
+迁移（Phase 15 A–D，`11` Phase 15 节）期间，尚未迁出的代码仍在 `apps/stickymd-win`，但每批只保留一个生效实现，
+必要转发不保存状态；本节是目标契约，未迁移部分按本节判定为待收敛的 implementation drift，而不是第二套权威。
 
 ---
 
@@ -185,7 +228,7 @@ Config serialization（TOML）
 ### 规则
 
 - 所有环境依赖通过 **adapter** 进入：Win32、剪贴板、显示器枚举、文件系统原子替换。
-- 平台无关 crate 禁止 `unsafe`；平台代码集中在平台 adapter 目录。
+- 平台无关 crate（含 Shared Application、Shared Desktop）禁止 `unsafe`；平台代码集中在 Platform Host 的 adapter 目录。
 - 能力是被动的：被 Flow Coordination 请求后才执行，不自行决定业务流程。
 
 ---
@@ -333,7 +376,8 @@ focus state 变化 / 计时器到期
 - 编辑器后端：cosmic-text 后端与 RichEdit fallback 为平级实现（见 `07_editor_and_ime.md`）。
 - 文本存储：String 实现可替换为 rope，接口不变（见 `04_runtime_state_model.md`）。
 - 数学渲染桥接：上游 API 或项目内薄 painter（见 `06_markdown_math_rendering.md`）。
-- 平台 adapter：Windows 实现可整体替换，核心层不变。
+- 平台 adapter：Windows 实现可整体替换，核心层不变；新的 Platform Host 实现同一组 Capability Port（见共享实现节），
+  其行为差异须按 `02` 平台节另行批准。
 
 ## Performance Critical Paths
 
@@ -345,6 +389,7 @@ focus state 变化 / 计时器到期
 
 - 每条调用链必须可在代码中以“单一入口、逐层向下”被 review 验证。
 - 跨层调用在 CI review 与 `plan_ref` 审查中拒绝。
+- 共享实现节的依赖方向、`unsafe` 禁令与平台类型禁令由治理检查覆盖，检查路径随每批迁移同步更新（`11` Phase 15 节）。
 
 ## Non-Goals
 

@@ -4,8 +4,8 @@
 
 - `Layer`: Verification
 - `Status`: Approved Contract
-- `Version`: 0.1.0
-- `Last Review`: 2026-09-08
+- `Version`: 0.2.0
+- `Last Review`: 2026-10-31
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -186,7 +186,8 @@ docs/acceptance-cases/phase-XX.md
 - 日常 main push / PR 可执行受影响工程模块及其反向依赖；模块注册表、路径归属、依赖闭包、
   检查范围和聚合判定由 Rust CLI 唯一持有。GitHub workflow 只提供事件基线、隔离 runner、
   缓存、参数转发和任务结果，不复制路径分类规则。
-- 工程模块沿用 Cargo 边界：core、render、windows、smoke、两个 Phase 01 实验；与
+- 工程模块沿用 Cargo 边界：core、render、windows、smoke、两个 Phase 01 实验（Phase 15 起增加 app、desktop，见下文
+  Phase 15 节）；与
   Qualification Module Registry 的 Runtime/Performance/Resources/G3/G4/G5 区分。
   显式本地模块入口只运行请求范围；日常 CI 规划器负责补全反向依赖。
 - PR 比较 base commit 与实际被 checkout 的 merge commit；push 比较 before commit 与
@@ -208,6 +209,35 @@ docs/acceptance-cases/phase-XX.md
   同分支被新提交取代的日常 CI 可取消；取消不得被聚合为成功。
 - 验证必须覆盖路径分类、反向依赖、增删/重命名、共享/未知输入、缺失基线、全量并集、
   空矩阵、状态聚合及工作流结构。远程耗时收益须以实际 workflow 数据确认。
+
+<a id="phase-15-shared-core-migration"></a>
+### Phase 15：共享实现迁移
+
+Phase 15 按 [提案](../report/2026-10-23-shared-core-thin-platform-shell-architecture.md) 第 8 节分 A–D 四个里程碑，把
+共享实现迁入 `stickymd-app` 与 `stickymd-desktop` 并接回 Windows（`03` 共享实现节）。首次实施时建立
+`tools/smoke/phase-15.ps1` 与 `docs/acceptance-cases/phase-15.md`。只完成 A 时不得宣称 Windows 已成为完整薄壳。
+
+| 里程碑 | 交付 | 出口（在下列每批出口之外） |
+| --- | --- | --- |
+| A | plan/projection 已批准；建立 `stickymd-app` 并同时登记其治理、CLI 任务、Linux/Windows 测试选择与资格化指纹归属；迁移 intent、纯 coordinator、配置模型、Search 与会话逻辑 | 原有语义测试随责任迁移并在新 package 下实际执行 |
+| B | 入口依赖：三类无身份 I/O 回执的 Windows 修复已合并（`04` Generation 规则 6）。按保存/恢复、预览、资产/导出、窗口/退出顺序接入 Capability Port，窗口动作按 `04` 的请求、回执与提交 | 每条链的成功/失败/过期回执测试与“隐藏被拒绝”场景 |
+| C | 建立 `stickymd-desktop` 并同时登记其治理、任务与指纹归属；各 target 显式选择 winit/softbuffer backend features；迁移通用控件、绘制、命中与事件翻译（含 `06` 帧呈现规则） | `stickymd-desktop` 在 Windows 与 Linux CI 上真实构建；`age = 0/1/2` 呈现测试；Windows 桌面定向回归 |
+| D | 迁移剩余业务分支，删除仅为迁移保留的转发 | 依赖与平台泄漏审查、适用 baseline、Windows 验证；未实现平台保持 `NOT TESTED` |
+
+每批出口（A–D 都适用，不推迟到 D）：
+
+1. **治理随代码移动：** 同一提交内更新受影响的硬编码路径检查（`unsafe` 禁令、窗口协调的平台类型禁令等），新增业务
+   module 带 `plan_ref`；旧路径检查不能因代码迁出而空转。
+2. **测试选择与指纹：** 验证本批新增、移动、删除路径的任务选择结果与全量任务并集；新路径缺规则或旧规则无命中即失败。
+   旧收据保留历史身份，有效性按新指纹重新判断，纯搬迁不视为旧证据仍有效。
+3. **数据字节兼容与回退：** 指定前一已验证检查点；在数据副本上执行无操作启动、保存与恢复，比对 note/config 的路径与
+   预期字节、图片未被改写，再用回退到检查点的版本重新打开同一副本。受影响的 Windows 行为断言列为该批出口。
+4. **性能：** 按 `10_performance_reliability.md#phase-15-migration-gates` 判定。
+
+完成标准还包括：编辑、Search、配置、保存、预览、冲突、恢复、资产与退出规则各只有一个共享所有者；Windows 重新验证文件
+替换/冲突/图片安全、IME、托盘可达性、透明度、置顶、贴边、多屏、剪贴板/导出（自动化与人工结果分别记录；剪贴板多格式
+选择的 fixture 与预期读取格式见提案第 9 节第 6 条）。共享层完成、Windows 回归、跨平台应用可用与发布 readiness
+分别报告；测试替身只证明接口与共享语义，不证明原生实现正确。
 
 <a id="qualification-process-isolation"></a>
 ### GUI qualification process isolation
@@ -921,7 +951,7 @@ SBOM.spdx.json
 
 ### unsafe 边界合同
 
-- `stickymd-core` / `stickymd-render`：`#![forbid(unsafe_code)]`。
+- `stickymd-core` / `stickymd-render` / `stickymd-app` / `stickymd-desktop`：`#![forbid(unsafe_code)]`（后两者自建立起）。
 - `stickymd-win`：`#![deny(unsafe_op_in_unsafe_fn)]`；所有 unsafe 只位于
   `platform/windows/` 或经批准的 RichEdit fallback，紧邻 `SAFETY` 注释，
   不把裸句柄泄漏到核心层。

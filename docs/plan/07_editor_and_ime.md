@@ -4,8 +4,8 @@
 
 - `Layer`: Capability
 - `Status`: Approved Contract
-- `Version`: 0.1.0
-- `Last Review`: 2026-08-30
+- `Version`: 0.2.0
+- `Last Review`: 2026-10-31
 - `Scope`: Source 编辑器职责、IME preedit/commit 语义、字体 run、undo 分组、RichEdit fallback 治理
 
 ---
@@ -18,6 +18,9 @@
 
 - 编辑器后端只产生/消费 TextDelta 与选区状态；文本权威始终是 DocumentState。
 - 本合约不覆盖 Preview 的选择/复制（见 `06`）。
+- Editor、Search 与 preedit 会话属于 Shared Application；原生输入与输入法事件由 Shared Desktop 翻译为规范事件，
+  修饰键与快捷键映射由 Platform Host 提供；候选窗定位留给平台接线。Search 组字期间的视图切换守卫、停放/恢复与
+  替换边界只有一份实现。
 
 ## Owned Objects
 
@@ -177,6 +180,11 @@
 | cancel | 文档保持不变 | — |
 
 - 候选框位置必须通过当前 caret 屏幕坐标更新：`window.set_ime_cursor_area(...)`。
+- 上表是普通组字流程。输入法的范围替换（如 macOS `replacementRange`）与删除周边文本（如 Wayland
+  `DeleteSurroundingText`）若需支持，另成一条路径：adapter 把同一输入法事务（如 Wayland 一次 `done` 内的删除与提交）
+  合成一个带范围的 typed intent，形成一次 canonical edit 与一个 undo entry；只有删除、没有字符串提交的事务同样产生
+  一次编辑。通用 preedit/commit 事件不承诺覆盖这些操作；锁定的 winit 0.30.13 在 macOS 与 Wayland 上丢弃这两类信息，
+  对应平台的输入法验收矩阵须包含它们与“只有删除、没有提交”的场景。
 - IME composition 期间：窗口**绝不自动收起**（typing guard，见 `09`）。
 
 ### 一级验收输入法
