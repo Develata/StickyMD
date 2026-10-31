@@ -110,7 +110,7 @@ fn conflict_diagnostic(conflict: Option<&FileConflict>) -> String {
         Some(ExternalFileState::InvalidUtf8 { .. }) => {
             "外部文件不是有效 UTF-8；F7 保留本地覆盖。".into()
         }
-        Some(ExternalFileState::TooLarge { bytes, .. }) => {
+        Some(ExternalFileState::TooLarge { bytes }) => {
             format!("外部 note.md 过大（{bytes} bytes）；F7 保留本地覆盖。")
         }
         Some(ExternalFileState::Missing) | None => "外部文件状态冲突；F7 保留本地。".into(),

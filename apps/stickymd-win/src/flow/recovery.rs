@@ -3,7 +3,8 @@
 //! plan_ref: docs/plan/05_document_persistence.md#recovery
 
 use stickymd_core::{
-    DiskFingerprint, ExternalFileFact, ExternalFileState, LoadedDocument, RecoveryCandidate,
+    DiskFingerprint, ExternalFileFact, ExternalFileState, LoadedDocument, PreserveExpectation,
+    RecoveryCandidate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +18,7 @@ pub struct RestorePlan {
     pub temporary: LoadedDocument,
     pub expected: Option<DiskFingerprint>,
     /// The canonical observation to preserve before restoring, if it must be preserved.
-    pub preserve_canonical: Option<ExternalFileState>,
+    pub preserve_canonical: Option<PreserveExpectation>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,7 +33,7 @@ pub struct RecoveryCoordinator {
     candidate: Option<RecoveryCandidate>,
     /// The unusable canonical observation (invalid UTF-8 or too large) that must be preserved
     /// before a restore may publish over it; `None` when no preservation is required.
-    canonical_to_preserve: Option<ExternalFileState>,
+    canonical_to_preserve: Option<PreserveExpectation>,
     operation: Option<RecoveryOperation>,
     /// Identity of the pending operation; its I/O receipts are accepted only while it is
     /// current (plan 04 generation rules 4–5: stale results are dropped).
@@ -44,7 +45,7 @@ pub struct RecoveryCoordinator {
 impl RecoveryCoordinator {
     pub fn new(
         candidate: Option<RecoveryCandidate>,
-        canonical_to_preserve: Option<ExternalFileState>,
+        canonical_to_preserve: Option<PreserveExpectation>,
     ) -> Self {
         Self {
             candidate,
@@ -96,7 +97,7 @@ impl RecoveryCoordinator {
         Some(RestorePlan {
             temporary,
             expected,
-            preserve_canonical: self.canonical_to_preserve.clone(),
+            preserve_canonical: self.canonical_to_preserve,
         })
     }
 
@@ -136,11 +137,15 @@ impl RecoveryCoordinator {
         let Some(candidate) = &mut self.candidate else {
             return;
         };
-        let to_preserve = matches!(
-            observed,
-            ExternalFileState::InvalidUtf8 { .. } | ExternalFileState::TooLarge { .. }
-        )
-        .then(|| observed.clone());
+        // An invalid canonical's observation already fingerprints its full content; a too-large
+        // one carries only its size, so it cannot be verified until a fresh start fingerprints it.
+        let to_preserve = match &observed {
+            ExternalFileState::InvalidUtf8 { fingerprint } => {
+                Some(PreserveExpectation::Content(*fingerprint))
+            }
+            ExternalFileState::TooLarge { .. } => Some(PreserveExpectation::Unverifiable),
+            ExternalFileState::Present(_) | ExternalFileState::Missing => None,
+        };
         match observed {
             ExternalFileState::Present(fact) => {
                 candidate.canonical = Some(LoadedDocument {
@@ -191,6 +196,43 @@ mod tests {
         assert_eq!(plan.temporary.text, "temporary");
         assert!(recovery.begin_restore().is_none());
         assert!(recovery.begin_use_canonical().is_none());
+    }
+
+    /// A conflict observed during recovery sets what a later restore must preserve: an invalid
+    /// canonical by its content fingerprint, a too-large one as unverifiable, a usable one not at all.
+    #[test]
+    fn a_conflict_sets_the_next_preserve_expectation() {
+        let mut recovery = RecoveryCoordinator::new(
+            Some(RecoveryCandidate {
+                canonical: None,
+                temporary: loaded("temporary"),
+                temporary_is_newer: true,
+            }),
+            Some(PreserveExpectation::Content(hash_bytes(b"\xff"))),
+        );
+        let invalid = hash_bytes(b"\xfe");
+        for (observed, expected) in [
+            (
+                ExternalFileState::InvalidUtf8 {
+                    fingerprint: invalid,
+                },
+                Some(PreserveExpectation::Content(invalid)),
+            ),
+            (
+                ExternalFileState::TooLarge { bytes: 1 << 30 },
+                Some(PreserveExpectation::Unverifiable),
+            ),
+            (ExternalFileState::Missing, None),
+        ] {
+            recovery.begin_restore().unwrap();
+            recovery.refresh_canonical_after_conflict(observed);
+            assert_eq!(recovery.operation_id(), None);
+            assert_eq!(
+                recovery.begin_restore().unwrap().preserve_canonical,
+                expected
+            );
+            recovery.fail_operation();
+        }
     }
 
     #[test]

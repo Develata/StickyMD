@@ -9,6 +9,7 @@ use std::thread::{self, JoinHandle};
 
 use stickymd_core::{
     AssetEffect, DiskFingerprint, ExternalFileState, Generation, ManagedAssetName,
+    PreserveExpectation,
 };
 
 use crate::assets::{
@@ -95,7 +96,7 @@ struct NoteJob {
 struct PreserveJob {
     source: PathBuf,
     destination: PathBuf,
-    expected: ExternalFileState,
+    expected: PreserveExpectation,
     operation: u64,
 }
 
@@ -332,7 +333,7 @@ impl PersistenceWorker {
         &self,
         source: PathBuf,
         destination: PathBuf,
-        expected: ExternalFileState,
+        expected: PreserveExpectation,
         operation: u64,
     ) {
         let (lock, ready) = &*self.shared;
@@ -541,7 +542,7 @@ where
             }
             WorkerJob::PreserveCanonical(job) => {
                 let result =
-                    preserve_canonical_if_unchanged(&job.source, &job.destination, &job.expected);
+                    preserve_canonical_if_unchanged(&job.source, &job.destination, job.expected);
                 on_completion(IoCompletion::CanonicalPreserved {
                     operation: job.operation,
                     result,

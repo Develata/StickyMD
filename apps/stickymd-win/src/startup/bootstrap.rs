@@ -6,15 +6,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use stickymd_core::{
-    DocumentState, ExternalFileState, LineEnding, RecoveryCandidate, RecoveryDisposition,
-    inspect_recovery,
+    DocumentState, ExternalFileState, LineEnding, PreserveExpectation, RecoveryCandidate,
+    RecoveryDisposition, inspect_recovery,
 };
 use thiserror::Error;
 
 use crate::config::{ConfigWarning, RuntimeConfig, load_config, save_config};
 use crate::persistence::{
-    PersistMode, PersistRequest, PersistResult, inspect_note, persist_note, quarantine_temporary,
-    remove_temporary,
+    PersistMode, PersistRequest, PersistResult, inspect_note, persist_note, preserve_fingerprint,
+    quarantine_temporary, remove_temporary,
 };
 use crate::platform::windows::program_dir::RuntimePaths;
 
@@ -24,7 +24,7 @@ pub struct BootstrapOutcome {
     pub config_persistence_allowed: bool,
     pub recovery: Option<RecoveryCandidate>,
     /// The unusable canonical observation a restore must preserve first (plan 05 recovery 5).
-    pub recovery_canonical_to_preserve: Option<ExternalFileState>,
+    pub recovery_canonical_to_preserve: Option<PreserveExpectation>,
     pub warnings: Vec<String>,
 }
 
@@ -77,7 +77,7 @@ pub fn bootstrap_observed(
             quarantine_temporary(&paths.note_tmp).map_err(StartupError::QuarantineTemporary)?;
         if canonical.is_none() {
             let bytes = temporary.as_ref().map_or(0, |observation| {
-                if let ExternalFileState::TooLarge { bytes, .. } = observation.state {
+                if let ExternalFileState::TooLarge { bytes } = observation.state {
                     bytes
                 } else {
                     0
@@ -93,16 +93,22 @@ pub fn bootstrap_observed(
 
     match recovery {
         RecoveryDisposition::Candidate(candidate) => {
-            let recovery_canonical_to_preserve = canonical
-                .as_ref()
-                .map(|observation| &observation.state)
-                .filter(|state| {
-                    matches!(
-                        state,
-                        ExternalFileState::InvalidUtf8 { .. } | ExternalFileState::TooLarge { .. }
-                    )
-                })
-                .cloned();
+            let recovery_canonical_to_preserve = match canonical.as_ref().map(|o| &o.state) {
+                Some(ExternalFileState::InvalidUtf8 { fingerprint }) => {
+                    Some(PreserveExpectation::Content(*fingerprint))
+                }
+                // Fingerprint a too-large canonical once, now, within the preserve budget.
+                Some(ExternalFileState::TooLarge { .. }) => Some(
+                    preserve_fingerprint(&paths.note_file)
+                        .ok()
+                        .flatten()
+                        .map_or(
+                            PreserveExpectation::Unverifiable,
+                            PreserveExpectation::Content,
+                        ),
+                ),
+                _ => None,
+            };
             let document = candidate.canonical.as_ref().map_or_else(
                 || DocumentState::empty(LineEnding::Crlf),
                 |loaded| {
@@ -204,7 +210,7 @@ fn extract_present(
     match &observation.state {
         ExternalFileState::Present(fact) => Ok(fact.clone()),
         ExternalFileState::InvalidUtf8 { .. } => Err(StartupError::NoteInvalidUtf8),
-        ExternalFileState::TooLarge { bytes, .. } => Err(StartupError::NoteTooLarge(*bytes)),
+        ExternalFileState::TooLarge { bytes } => Err(StartupError::NoteTooLarge(*bytes)),
         ExternalFileState::Missing => Err(StartupError::CanonicalMissingDuringRecovery),
     }
 }
@@ -353,10 +359,12 @@ mod tests {
         fs::write(&paths.note_tmp, b"recoverable").unwrap();
         let outcome = bootstrap(&paths).unwrap();
         assert!(outcome.recovery.is_some());
-        assert!(matches!(
+        assert_eq!(
             outcome.recovery_canonical_to_preserve,
-            Some(ExternalFileState::InvalidUtf8 { .. })
-        ));
+            Some(PreserveExpectation::Content(stickymd_core::hash_bytes(&[
+                0xff
+            ])))
+        );
         assert_eq!(fs::read(&paths.note_file).unwrap(), [0xff]);
         assert_eq!(fs::read(&paths.note_tmp).unwrap(), b"recoverable");
         fs::remove_dir_all(root).unwrap();

@@ -275,6 +275,17 @@ impl StickyApp {
                 );
             }
             IoCompletion::CanonicalPreserved {
+                result: Ok(PreserveOutcome::Unverifiable),
+                ..
+            } => {
+                self.diagnostic = Some(
+                    "note.md 过大，无法确认它自启动以来未变；未执行恢复覆盖。请关闭其他程序后重启 StickyMD 再选择。"
+                        .into(),
+                );
+                self.recovery.fail_operation();
+                self.request_redraw();
+            }
+            IoCompletion::CanonicalPreserved {
                 result: Err(error), ..
             } => {
                 self.diagnostic = Some(format!(

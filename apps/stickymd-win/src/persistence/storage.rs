@@ -11,13 +11,13 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use stickymd_core::{
     DiskFingerprint, ExternalFileState, Generation, LoadedDocument, NoteDecodeError,
-    RecoveryInspection, hash_bytes,
+    PreserveExpectation, RecoveryInspection, hash_bytes,
 };
 use thiserror::Error;
 
 use crate::platform::windows::atomic_file::{
-    AtomicPublishError, move_file_no_replace, prepare_temporary, publish_prepared_existing,
-    publish_prepared_new,
+    AtomicPublishError, move_file_no_replace, open_write_denied, prepare_temporary,
+    publish_prepared_existing, publish_prepared_new,
 };
 use crate::platform::windows::file_identity::{OpenFileObservation, observe_open_file};
 
@@ -91,26 +91,74 @@ pub fn preserve_canonical(source: &Path, destination: &Path) -> Result<(), NoteS
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreserveOutcome {
     Preserved,
-    /// The canonical note is no longer the observation that required preserving it; it was
-    /// left in place.
+    /// The canonical note is no longer the content that required preserving it; it was left in
+    /// place.
     Changed(ExternalFileState),
+    /// The expected content could not be fingerprinted, so it was not moved.
+    Unverifiable,
 }
 
-/// Moves the canonical note aside only while it is still `expected`, the observation that
-/// required preserving it. A canonical changed while recovery waited is left in place and
-/// reported, so it becomes a conflict instead of being moved away (plan 05 recovery 8). Both
-/// unusable states carry a fingerprint of the full content. The check and the move are separate
-/// steps; a change between them is not detected (the small TOCTOU plan 05 accepts for OCC).
+/// Most bytes a preserve fingerprint reads; a larger canonical cannot be verified and is never
+/// moved. Bounds the work at startup and on the worker (plan 05 recovery 5 and 8).
+pub const PRESERVE_FINGERPRINT_LIMIT: u64 = 256 * 1024 * 1024;
+
+/// SHA-256 of the rest of `file` in bounded chunks, or `None` once more than
+/// `PRESERVE_FINGERPRINT_LIMIT` bytes are read. Memory stays O(chunk).
+fn limited_fingerprint(file: &mut fs::File) -> std::io::Result<Option<DiskFingerprint>> {
+    let mut hasher = Sha256::new();
+    let mut total = 0_u64;
+    let mut chunk = vec![0_u8; 64 * 1024];
+    loop {
+        match file.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => {
+                total += read as u64;
+                if total > PRESERVE_FINGERPRINT_LIMIT {
+                    return Ok(None);
+                }
+                hasher.update(&chunk[..read]);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(Some(DiskFingerprint::new(hasher.finalize().into())))
+}
+
+/// Full-content fingerprint of `path` read under a write-denying handle, `None` when it exceeds
+/// `PRESERVE_FINGERPRINT_LIMIT`. Used once at startup for a too-large canonical.
+pub fn preserve_fingerprint(path: &Path) -> Result<Option<DiskFingerprint>, NoteStorageError> {
+    let mut file = open_write_denied(path).map_err(NoteStorageError::Read)?;
+    limited_fingerprint(&mut file).map_err(NoteStorageError::Read)
+}
+
+/// Moves the canonical note aside only while it still has the expected content. The file is
+/// opened denying other writers, fingerprinted within the limit and moved while that handle is
+/// held, so no writer can change it between the check and the move. A changed or missing
+/// canonical is left in place and reported, so a change made while recovery waited becomes a
+/// conflict instead of being moved away (plan 05 recovery 8); an unverifiable one is not moved.
 pub fn preserve_canonical_if_unchanged(
     source: &Path,
     destination: &Path,
-    expected: &ExternalFileState,
+    expected: PreserveExpectation,
 ) -> Result<PreserveOutcome, NoteStorageError> {
-    let observed = inspect_note_state_with_retry(source)?;
-    if &observed != expected {
-        return Ok(PreserveOutcome::Changed(observed));
+    let PreserveExpectation::Content(expected) = expected else {
+        return Ok(PreserveOutcome::Unverifiable);
+    };
+    let mut file = match open_write_denied(source) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PreserveOutcome::Changed(ExternalFileState::Missing));
+        }
+        Err(error) => return Err(NoteStorageError::Read(error)),
+    };
+    if limited_fingerprint(&mut file).map_err(NoteStorageError::Read)? != Some(expected) {
+        drop(file);
+        return inspect_note_state_with_retry(source).map(PreserveOutcome::Changed);
     }
-    preserve_canonical(source, destination).map(|()| PreserveOutcome::Preserved)
+    let moved = preserve_canonical(source, destination);
+    drop(file);
+    moved.map(|()| PreserveOutcome::Preserved)
 }
 
 fn suffixed_path(path: &Path, suffix: u16) -> PathBuf {
@@ -127,27 +175,6 @@ fn suffixed_path(path: &Path, suffix: u16) -> PathBuf {
         file_name.push(extension);
     }
     path.with_file_name(file_name)
-}
-
-/// SHA-256 of `prefix` followed by the rest of `file`, read in bounded chunks, and the total
-/// length. Memory stays O(chunk) whatever the file size.
-fn hash_streamed(file: &mut fs::File, prefix: &[u8]) -> std::io::Result<(DiskFingerprint, u64)> {
-    let mut hasher = Sha256::new();
-    hasher.update(prefix);
-    let mut total = prefix.len() as u64;
-    let mut chunk = vec![0_u8; 64 * 1024];
-    loop {
-        match file.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(read) => {
-                hasher.update(&chunk[..read]);
-                total += read as u64;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Ok((DiskFingerprint::new(hasher.finalize().into()), total))
 }
 
 pub fn inspect_note(path: &Path) -> Result<Option<NoteObservation>, NoteStorageError> {
@@ -174,18 +201,28 @@ fn inspect_note_once(path: &Path) -> Result<Option<NoteObservation>, NoteStorage
         Err(error) => return Err(NoteStorageError::Metadata(error)),
     };
     let before_identity = observe_open_file(&file).map_err(NoteStorageError::Metadata)?;
-    let mut bytes = Vec::new();
-    if before.len() <= MAX_NOTE_LOAD {
-        bytes.reserve(before.len() as usize);
-        file.by_ref()
-            .take(MAX_NOTE_LOAD + 1)
-            .read_to_end(&mut bytes)
-            .map_err(NoteStorageError::Read)?;
+    if before.len() > MAX_NOTE_LOAD {
+        let path_after = stable_path_metadata(path, before_identity)?;
+        if before.len() != path_after.len() || before.modified().ok() != path_after.modified().ok()
+        {
+            return Err(NoteStorageError::ObservationChanged);
+        }
+        return Ok(Some(NoteObservation {
+            state: ExternalFileState::TooLarge {
+                bytes: before.len(),
+            },
+            recovery: RecoveryInspection {
+                bytes: Vec::new(),
+                modified: path_after.modified().ok(),
+            },
+        }));
     }
-    if before.len() > MAX_NOTE_LOAD || bytes.len() as u64 > MAX_NOTE_LOAD {
-        // Too large to load: stream the rest so the observation still names the content.
-        let (fingerprint, total) =
-            hash_streamed(&mut file, &bytes).map_err(NoteStorageError::Read)?;
+    let mut bytes = Vec::with_capacity(before.len().min(MAX_NOTE_LOAD) as usize);
+    file.by_ref()
+        .take(MAX_NOTE_LOAD + 1)
+        .read_to_end(&mut bytes)
+        .map_err(NoteStorageError::Read)?;
+    if bytes.len() as u64 > MAX_NOTE_LOAD {
         let after = file.metadata().map_err(NoteStorageError::Metadata)?;
         let after_identity = observe_open_file(&file).map_err(NoteStorageError::Metadata)?;
         let path_after = stable_path_metadata(path, after_identity)?;
@@ -194,14 +231,12 @@ fn inspect_note_once(path: &Path) -> Result<Option<NoteObservation>, NoteStorage
             || before.modified().ok() != after.modified().ok()
             || after.len() != path_after.len()
             || after.modified().ok() != path_after.modified().ok()
-            || total != after.len()
         {
             return Err(NoteStorageError::ObservationChanged);
         }
         return Ok(Some(NoteObservation {
             state: ExternalFileState::TooLarge {
-                bytes: total,
-                fingerprint,
+                bytes: bytes.len() as u64,
             },
             recovery: RecoveryInspection {
                 bytes: Vec::new(),
@@ -672,82 +707,92 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// The preserve check compares the full content: a change in the first, a middle or the last
+    /// chunk of an equal-length too-large file, a valid file, or a missing file is reported and
+    /// left in place; an unverifiable expectation moves nothing; the same content is moved aside
+    /// byte for byte.
     #[test]
-    fn a_canonical_changed_since_the_recovery_observation_is_left_in_place() {
+    fn preserve_moves_only_the_expected_content() {
         let root = unique_dir();
         fs::create_dir(&root).unwrap();
         let source = root.join("note.md");
         let destination = root.join("note.invalid-7.md");
-        fs::write(&source, b"\xff invalid").unwrap();
-        let expected = inspect_note_state_with_retry(&source).unwrap();
-        assert!(matches!(expected, ExternalFileState::InvalidUtf8 { .. }));
-        // An external program made the canonical valid while the recovery choice waited.
-        fs::write(&source, b"valid external text").unwrap();
-        let outcome = preserve_canonical_if_unchanged(&source, &destination, &expected).unwrap();
+        let large = MAX_NOTE_LOAD as usize + 70 * 1024;
+        let mut original = vec![b'a'; large];
+        original[0] = 0xff;
+        fs::write(&source, &original).unwrap();
         assert!(matches!(
-            outcome,
+            inspect_note_state_with_retry(&source).unwrap(),
+            ExternalFileState::TooLarge { .. }
+        ));
+        let expected = PreserveExpectation::Content(hash_bytes(&original));
+        assert_eq!(
+            preserve_fingerprint(&source).unwrap(),
+            Some(hash_bytes(&original))
+        );
+        for index in [1, large / 2, large - 1] {
+            let mut changed = original.clone();
+            changed[index] = b'b';
+            fs::write(&source, &changed).unwrap();
+            assert!(matches!(
+                preserve_canonical_if_unchanged(&source, &destination, expected).unwrap(),
+                PreserveOutcome::Changed(ExternalFileState::TooLarge { .. })
+            ));
+            assert_eq!(fs::read(&source).unwrap(), changed);
+            assert!(!destination.exists());
+        }
+        fs::write(&source, b"valid external text").unwrap();
+        assert!(matches!(
+            preserve_canonical_if_unchanged(&source, &destination, expected).unwrap(),
             PreserveOutcome::Changed(ExternalFileState::Present(_))
         ));
-        assert_eq!(fs::read(&source).unwrap(), b"valid external text");
-        assert!(!destination.exists());
-        // Unchanged, it is moved aside.
-        fs::write(&source, b"\xff invalid").unwrap();
+        fs::remove_file(&source).unwrap();
         assert_eq!(
-            preserve_canonical_if_unchanged(&source, &destination, &expected).unwrap(),
+            preserve_canonical_if_unchanged(&source, &destination, expected).unwrap(),
+            PreserveOutcome::Changed(ExternalFileState::Missing)
+        );
+        fs::write(&source, &original).unwrap();
+        assert_eq!(
+            preserve_canonical_if_unchanged(
+                &source,
+                &destination,
+                PreserveExpectation::Unverifiable
+            )
+            .unwrap(),
+            PreserveOutcome::Unverifiable
+        );
+        assert_eq!(fs::read(&source).unwrap(), original);
+        assert_eq!(
+            preserve_canonical_if_unchanged(&source, &destination, expected).unwrap(),
             PreserveOutcome::Preserved
         );
         assert!(!source.exists());
-        assert_eq!(fs::read(&destination).unwrap(), b"\xff invalid");
+        assert_eq!(
+            hash_bytes(&fs::read(&destination).unwrap()),
+            hash_bytes(&original)
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// The preserve check compares content, not the kind of state or the length: an equal-length
-    /// invalid or too-large file with other bytes, or a missing file, is reported as changed.
+    /// While another handle may write the canonical, preserve cannot take its write-denying
+    /// handle and moves nothing.
     #[test]
-    fn preserve_compares_the_content_of_unusable_canonicals() {
+    fn preserve_refuses_a_canonical_open_for_writing() {
         let root = unique_dir();
         fs::create_dir(&root).unwrap();
         let source = root.join("note.md");
-        let destination = root.join("note.invalid-9.md");
-        let too_large = MAX_NOTE_LOAD as usize + 1;
-        let mut first = vec![b'a'; too_large];
-        first[0] = 0xff;
-        let mut second = first.clone();
-        second[too_large - 1] = b'b';
-        for (original, replacement) in [
-            (b"\xffA".to_vec(), b"\xffB".to_vec()),
-            (first.clone(), second.clone()),
-        ] {
-            fs::write(&source, &original).unwrap();
-            let expected = inspect_note_state_with_retry(&source).unwrap();
-            assert!(matches!(
-                expected,
-                ExternalFileState::InvalidUtf8 { .. } | ExternalFileState::TooLarge { .. }
-            ));
-            fs::write(&source, &replacement).unwrap();
-            assert!(matches!(
-                preserve_canonical_if_unchanged(&source, &destination, &expected).unwrap(),
-                PreserveOutcome::Changed(_)
-            ));
-            assert_eq!(fs::read(&source).unwrap(), replacement);
-            fs::remove_file(&source).unwrap();
-            assert_eq!(
-                preserve_canonical_if_unchanged(&source, &destination, &expected).unwrap(),
-                PreserveOutcome::Changed(ExternalFileState::Missing)
-            );
-        }
-        // The same too-large content is recognized and moved aside.
-        fs::write(&source, &first).unwrap();
-        let expected = inspect_note_state_with_retry(&source).unwrap();
+        let destination = root.join("note.invalid-8.md");
+        fs::write(&source, b"\xff invalid").unwrap();
+        let expected = PreserveExpectation::Content(hash_bytes(b"\xff invalid"));
+        let writer = fs::OpenOptions::new().write(true).open(&source).unwrap();
+        assert!(preserve_canonical_if_unchanged(&source, &destination, expected).is_err());
+        assert!(source.exists());
+        assert!(!destination.exists());
+        drop(writer);
         assert_eq!(
-            preserve_canonical_if_unchanged(&source, &destination, &expected).unwrap(),
+            preserve_canonical_if_unchanged(&source, &destination, expected).unwrap(),
             PreserveOutcome::Preserved
         );
-        assert_eq!(
-            fs::metadata(&destination).unwrap().len(),
-            first.len() as u64
-        );
-        assert!(!source.exists());
         fs::remove_dir_all(root).unwrap();
     }
 

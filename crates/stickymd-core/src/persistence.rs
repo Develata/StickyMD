@@ -79,15 +79,17 @@ pub struct ExternalFileFact {
 pub enum ExternalFileState {
     Present(ExternalFileFact),
     Missing,
-    InvalidUtf8 {
-        fingerprint: DiskFingerprint,
-    },
-    /// Over the safe load limit; `fingerprint` covers the full bytes (the adapter streams them),
-    /// so two observations are equal only for the same content.
-    TooLarge {
-        bytes: u64,
-        fingerprint: DiskFingerprint,
-    },
+    InvalidUtf8 { fingerprint: DiskFingerprint },
+    TooLarge { bytes: u64 },
+}
+
+/// What a recovery restore must still find at the canonical path before moving it aside: the
+/// full-content fingerprint of the unusable canonical it observed, or `Unverifiable` when that
+/// content could not be fingerprinted (then the restore does not move it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreserveExpectation {
+    Content(DiskFingerprint),
+    Unverifiable,
 }
 
 /// Explicit conflict between dirty runtime text and a newer durable fact.

@@ -24,6 +24,7 @@ const ERROR_UNABLE_TO_MOVE_REPLACEMENT_2: u32 = 1177;
 const FILE_ATTRIBUTE_REPARSE_POINT_VALUE: u32 = 0x400;
 const FILE_FLAG_OPEN_REPARSE_POINT_VALUE: u32 = 0x0020_0000;
 const SHARE_READ: u32 = 0x0000_0001;
+const SHARE_READ_DELETE: u32 = 0x0000_0001 | 0x0000_0004;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplaceFailureKind {
@@ -122,6 +123,16 @@ pub(crate) fn prepare_temporary(
         .map_err(AtomicPublishError::TempWrite)?;
     file.flush().map_err(AtomicPublishError::TempFlush)?;
     flush_windows_handle(&file).map_err(AtomicPublishError::TempFlush)
+}
+
+/// Opens `path` for reading while denying other writers: only read and delete sharing are
+/// granted, so the content cannot change while the handle is held, yet the file can still be
+/// renamed. Fails with a sharing violation while another handle has it open for writing.
+pub(crate) fn open_write_denied(path: &Path) -> std::io::Result<std::fs::File> {
+    OpenOptions::new()
+        .read(true)
+        .share_mode(SHARE_READ_DELETE)
+        .open(path)
 }
 
 /// Create, write and flush a caller-selected temporary path only if it does
