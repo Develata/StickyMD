@@ -10,7 +10,7 @@ use crate::flow::window::state::{QuitBarrier, WindowIntent};
 use crate::flow::{RecoveryOperation, SaveTrigger};
 use crate::instruction::{PersistenceIntent, SaveReason};
 use crate::persistence::{
-    IoCompletion, PersistMode, PersistRequest, PersistResult, TemporaryCleanup,
+    IoCompletion, PersistMode, PersistRequest, PersistResult, PreserveOutcome, TemporaryCleanup,
 };
 
 impl StickyApp {
@@ -36,6 +36,14 @@ impl StickyApp {
         let note_barrier_required = self.window_guards().requires_note_barrier();
         self.quit_notice.settle(note_barrier_required);
         self.update_window_title();
+    }
+
+    /// Queues one durable observation, stamped with the Durable Fingerprint known now so its
+    /// receipt can be checked for staleness.
+    pub(super) fn inspect_external(&self) {
+        let requested_base = self.coordinator.view().base_disk_hash;
+        self.worker
+            .inspect_external(self.paths.note_file.clone(), requested_base);
     }
 
     /// The only writer of the window title (plan 09 title priority).
@@ -178,12 +186,27 @@ impl StickyApp {
                     }
                 }
             }
-            IoCompletion::External(Ok(external)) => {
-                self.reconcile_external(external);
-            }
-            IoCompletion::External(Err(error)) => {
-                self.diagnostic = Some(format!("外部文件读取失败，未改变当前文本：{error}"));
-                self.request_redraw();
+            IoCompletion::External {
+                requested_base,
+                result,
+            } => {
+                let current_base = self.coordinator.view().base_disk_hash;
+                let now_ms = self.timestamp_ms();
+                if !self.persistence.external_observation_current(
+                    requested_base,
+                    current_base,
+                    now_ms,
+                ) {
+                    return;
+                }
+                match result {
+                    Ok(external) => self.reconcile_external(external),
+                    Err(error) => {
+                        self.diagnostic =
+                            Some(format!("外部文件读取失败，未改变当前文本：{error}"));
+                        self.request_redraw();
+                    }
+                }
             }
             IoCompletion::Config { revision, result } => {
                 let succeeded = result.is_ok();
@@ -213,10 +236,16 @@ impl StickyApp {
                     );
                 }
             }
+            IoCompletion::TemporaryRemoved {
+                purpose: TemporaryCleanup::RecoveryResolved { operation },
+                ..
+            } if !self.recovery.accepts(operation) => {}
             IoCompletion::TemporaryRemoved { purpose, result } => match (purpose, result) {
-                (TemporaryCleanup::RecoveryResolved, Ok(())) => self.finish_recovery_cleanup(),
+                (TemporaryCleanup::RecoveryResolved { .. }, Ok(())) => {
+                    self.finish_recovery_cleanup()
+                }
                 (TemporaryCleanup::ConflictDiscarded, Ok(())) => {}
-                (TemporaryCleanup::RecoveryResolved, Err(error)) => {
+                (TemporaryCleanup::RecoveryResolved { .. }, Err(error)) => {
                     self.recovery.fail_operation();
                     self.diagnostic =
                         Some(format!("临时恢复证据无法清理，仍保持恢复状态：{error}"));
@@ -229,14 +258,36 @@ impl StickyApp {
                     self.request_redraw();
                 }
             },
-            IoCompletion::CanonicalPreserved(Ok(())) => {
+            IoCompletion::CanonicalPreserved { operation, .. }
+                if !self.recovery.accepts(operation) => {}
+            IoCompletion::CanonicalPreserved {
+                result: Ok(PreserveOutcome::Changed(observed)),
+                ..
+            } => self.handle_recovery_save_conflict(observed),
+            IoCompletion::CanonicalPreserved {
+                result: Ok(PreserveOutcome::Preserved),
+                ..
+            } => {
                 let expected = self.recovery.take_restore_guard().unwrap_or(None);
                 self.submit_save(
                     SaveTrigger::KeepLocal,
                     Some(PersistMode::Guarded { expected }),
                 );
             }
-            IoCompletion::CanonicalPreserved(Err(error)) => {
+            IoCompletion::CanonicalPreserved {
+                result: Ok(PreserveOutcome::Unverifiable),
+                ..
+            } => {
+                self.diagnostic = Some(
+                    "note.md 过大，未恢复：请结束进程，移走 note.md（保留 .tmp）后重启按 F6。"
+                        .into(),
+                );
+                self.recovery.fail_operation();
+                self.request_redraw();
+            }
+            IoCompletion::CanonicalPreserved {
+                result: Err(error), ..
+            } => {
                 self.diagnostic = Some(format!(
                     "无效的 canonical note.md 无法先行保留；未执行恢复覆盖：{error}"
                 ));
@@ -315,13 +366,14 @@ impl StickyApp {
                 metrics.note_coalesced
             );
         }
-        if matches!(
-            self.recovery.operation(),
-            Some(RecoveryOperation::Restoring | RecoveryOperation::UsingCanonical)
-        ) {
+        if let (
+            Some(RecoveryOperation::Restoring | RecoveryOperation::UsingCanonical),
+            Some(operation),
+        ) = (self.recovery.operation(), self.recovery.operation_id())
+        {
             self.worker.remove_temporary(
                 self.paths.note_tmp.clone(),
-                TemporaryCleanup::RecoveryResolved,
+                TemporaryCleanup::RecoveryResolved { operation },
             );
         } else if self.resolving_keep_local && mode == PersistMode::ForceOverwrite {
             self.resolving_keep_local = false;
@@ -339,7 +391,7 @@ impl StickyApp {
         } else if self.persistence.durability_required() && !completed_required {
             // A recreate hint overlapped a different save. Inspect the durable
             // path before deciding whether a second write is still needed.
-            self.worker.inspect_external(self.paths.note_file.clone());
+            self.inspect_external();
         }
         self.update_window_title();
         if !keep_local_resubmitted {

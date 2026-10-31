@@ -74,6 +74,25 @@ impl PersistenceCoordinator {
         self.external_deadline_ms
     }
 
+    /// Whether an external observation requested while `requested_base` was the known Durable
+    /// Fingerprint still applies now that it is `current_base`. If the known fingerprint
+    /// changed in between (a self-save or an accepted reload), the observation may predate
+    /// that durable change: it is not applied, and a fresh check is scheduled instead, so a
+    /// real external change is still observed.
+    pub fn external_observation_current(
+        &mut self,
+        requested_base: Option<DiskFingerprint>,
+        current_base: Option<DiskFingerprint>,
+        now_ms: u64,
+    ) -> bool {
+        if requested_base == current_base {
+            true
+        } else {
+            self.on_watch_hint(now_ms);
+            false
+        }
+    }
+
     /// Classify one fresh durable observation and advance only the conflict /
     /// durability coordination state. Canonical text replacement remains a
     /// separate typed capability owned by `EditorCoordinator`.
@@ -191,6 +210,19 @@ impl PersistenceCoordinator {
 mod tests {
     use super::*;
     use stickymd_core::{LineEnding, hash_bytes};
+
+    #[test]
+    fn an_observation_requested_before_a_durable_change_is_superseded_and_rechecked() {
+        let mut flow = PersistenceCoordinator::default();
+        let old = Some(hash_bytes(b"old"));
+        let new = Some(hash_bytes(b"new"));
+        assert!(flow.external_observation_current(old, old, 10));
+        assert_eq!(flow.external_deadline(), None);
+        assert!(flow.external_observation_current(None, None, 10));
+        assert!(!flow.external_observation_current(old, new, 10));
+        assert!(!flow.external_observation_current(None, new, 10));
+        assert_eq!(flow.external_deadline(), Some(10 + EXTERNAL_DEBOUNCE_MS));
+    }
 
     #[test]
     fn raw_watch_hints_coalesce_to_one_check() {
