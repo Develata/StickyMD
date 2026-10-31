@@ -109,7 +109,7 @@
 
 ### Recovery Candidate
 
-- **Definition**：启动时发现的、合法 UTF-8 且比 `note.md` 更新的 `note.md.tmp` 内容，供用户选择是否恢复。
+- **Definition**：启动时发现的、合法 UTF-8 且内容与 `note.md` 不同的 `note.md.tmp` 内容（不论修改时间先后），供用户选择是否恢复。修改时间只用于提示哪份较新，不授权删除（`05` 启动恢复第 3 条；USER 决定 2026-10-31）。
 - **Authority**：用户选择。在用户选择前不得覆盖任何文件。
 - **Not equivalent to**：已恢复的 DocumentState；候选只是候选。
 - **Lifetime**：启动检测时产生，用户选择后消亡。

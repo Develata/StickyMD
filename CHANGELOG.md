@@ -13,6 +13,11 @@ All notable changes are recorded here.
   restoring over an unusable note.md now first checks it is still the observation that required
   preserving it, and a note.md changed while recovery waited becomes a conflict instead of being
   moved aside.
+- At startup a valid note.md.tmp whose content differs from note.md is always offered for
+  recovery, whatever the file times; it is no longer deleted for being older (it can hold the
+  only copy of text from a save that failed against an external change). A too-large note.md
+  observation now carries a streamed content fingerprint, so recovery cannot move aside a
+  same-length file that changed while the choice waited.
 - Make the manual acceptance items that need another machine, a VM or a second display optional:
   the previous Windows 11 role, the Clean VM, dual-monitor, display-disconnect, RDP and
   negative-coordinate cases no longer block a release when untested and need no waiver; an

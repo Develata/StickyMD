@@ -77,7 +77,7 @@ pub fn bootstrap_observed(
             quarantine_temporary(&paths.note_tmp).map_err(StartupError::QuarantineTemporary)?;
         if canonical.is_none() {
             let bytes = temporary.as_ref().map_or(0, |observation| {
-                if let ExternalFileState::TooLarge { bytes } = observation.state {
+                if let ExternalFileState::TooLarge { bytes, .. } = observation.state {
                     bytes
                 } else {
                     0
@@ -122,7 +122,7 @@ pub fn bootstrap_observed(
                 warnings,
             })
         }
-        RecoveryDisposition::RedundantTemporary | RecoveryDisposition::StaleTemporary => {
+        RecoveryDisposition::RedundantTemporary => {
             let loaded = load_existing_canonical(canonical.as_ref())?;
             remove_temporary(&paths.note_tmp).map_err(StartupError::RemoveRedundantTemporary)?;
             Ok(BootstrapOutcome {
@@ -204,7 +204,7 @@ fn extract_present(
     match &observation.state {
         ExternalFileState::Present(fact) => Ok(fact.clone()),
         ExternalFileState::InvalidUtf8 { .. } => Err(StartupError::NoteInvalidUtf8),
-        ExternalFileState::TooLarge { bytes } => Err(StartupError::NoteTooLarge(*bytes)),
+        ExternalFileState::TooLarge { bytes, .. } => Err(StartupError::NoteTooLarge(*bytes)),
         ExternalFileState::Missing => Err(StartupError::CanonicalMissingDuringRecovery),
     }
 }
