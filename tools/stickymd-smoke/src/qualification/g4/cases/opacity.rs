@@ -44,9 +44,10 @@ pub(super) fn run(program: &Path, hwnd: WindowHandle, checks: &mut Checks) -> Re
     input::opacity_field(hwnd)?;
     digits(hwnd, 73)?;
     window::press_escape(hwnd)?;
-    // The config and alpha already read 64: wait so a wrong commit of 73 has time to land.
-    thread::sleep(super::NEGATIVE_SETTLE);
-    committed(program, hwnd, 64)?;
+    // The config and alpha already read 64: hold them there so a wrong commit of 73 shows.
+    super::hold("Esc cancels the opacity field", || {
+        unchanged(program, hwnd, 64)
+    })?;
     checks.record("opacity-escape-cancels-field", &[]);
 
     open(hwnd)?;
@@ -88,12 +89,32 @@ pub(super) fn committed(program: &Path, hwnd: WindowHandle, opacity: u8) -> Resu
 
 fn alpha(hwnd: WindowHandle, opacity: u8) -> Result<(), String> {
     wait_until(&format!("native opacity {opacity}"), || {
-        let observed = window::layered_alpha(hwnd)?;
-        let expected = (f64::from(opacity) * 255.0 / 100.0).round() as u8;
-        Ok(if opacity == 100 {
-            !observed.layered && observed.alpha.is_none()
-        } else {
-            observed.layered && observed.alpha == Some(expected)
-        })
+        alpha_is(hwnd, opacity)
     })
+}
+
+fn alpha_is(hwnd: WindowHandle, opacity: u8) -> Result<bool, String> {
+    let observed = window::layered_alpha(hwnd)?;
+    let expected = (f64::from(opacity) * 255.0 / 100.0).round() as u8;
+    Ok(if opacity == 100 {
+        !observed.layered && observed.alpha.is_none()
+    } else {
+        observed.layered && observed.alpha == Some(expected)
+    })
+}
+
+/// One sample of a held "still `opacity`": both the config and the native alpha read it now.
+fn unchanged(program: &Path, hwnd: WindowHandle, opacity: u8) -> Result<(), String> {
+    if !crate::qualification::exact_desktop::config_contains(
+        program,
+        &format!("opacity = {opacity}"),
+    )? {
+        return Err(format!("the config no longer reads opacity = {opacity}"));
+    }
+    if !alpha_is(hwnd, opacity)? {
+        return Err(format!(
+            "the native alpha no longer reads opacity {opacity}"
+        ));
+    }
+    Ok(())
 }

@@ -29,7 +29,8 @@ use physical_input::{
     release_left_button, scroll_wheel,
 };
 pub(crate) use tray_input::{
-    active_tray_popup_owner, escape_tray_popup, place_cursor_on_tray_icon, right_click_tray_icon,
+    active_tray_popup_owner, escape_tray_popup, place_cursor_on_tray_icon, restore_tray_cursor,
+    right_click_tray_icon, tray_cursor_position,
 };
 
 const WM_MOUSEMOVE: u32 = 0x0200;

@@ -82,6 +82,24 @@ pub(crate) fn place_cursor_on_tray_icon(
     Ok(())
 }
 
+/// Where the cursor is now, so a tray step can put it back after it fails.
+pub(crate) fn tray_cursor_position() -> Result<(i32, i32), String> {
+    cursor().map(|point| (point.x, point.y))
+}
+
+/// Puts the cursor back at `(x, y)` through the injection module and reads it back; an error
+/// when it does not read back there.
+pub(crate) fn restore_tray_cursor(x: i32, y: i32) -> Result<(), String> {
+    let mut read_back = None;
+    place_cursor_on_tray_icon(x, y, &mut read_back)?;
+    match read_back {
+        Some(point) if point == (x, y) => Ok(()),
+        other => Err(format!(
+            "the cursor was not restored to ({x},{y}); it reads {other:?}"
+        )),
+    }
+}
+
 /// Right-clicks the tray icon at `(x, y)`, only while the cursor reads back exactly there and
 /// the window under it is Explorer's tray; both are read right before the click. The cursor can
 /// still move between that check and the click.

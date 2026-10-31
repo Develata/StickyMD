@@ -411,9 +411,15 @@ fn search_fields_accept_real_ime(
     begin_preedit(program, window, &document, "nihao", ime)?;
     super::diagnostics::step(repository, program, process_id, "search-01-preedit")?;
     crate::window_control::press_preview_shortcut(window)?;
-    // The config already reads Source: wait so a wrong switch to Preview has time to be written.
-    thread::sleep(super::NEGATIVE_SETTLE);
-    wait_for_config(program, "view_mode = \"source\"")?;
+    // The config already reads Source: hold it there so a wrong switch to Preview shows.
+    super::hold("Ctrl+3 during composition keeps Source", || {
+        if crate::qualification::exact_desktop::config_contains(program, "view_mode = \"source\"")?
+        {
+            Ok(())
+        } else {
+            Err("the config no longer reads view_mode = \"source\"".to_owned())
+        }
+    })?;
     super::diagnostics::step(
         repository,
         program,

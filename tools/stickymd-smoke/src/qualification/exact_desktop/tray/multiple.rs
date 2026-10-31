@@ -2,10 +2,11 @@
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#physical-input-injection
 
+use std::cell::RefCell;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use super::{Attempt, Located, Opened, TRAY_MENU_OPEN_ATTEMPTS};
+use super::{Attempt, Located, Opened, Overflow, Restore, TRAY_MENU_OPEN_ATTEMPTS};
 use crate::managed_process::Product;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -20,7 +21,17 @@ enum Targets {
     Open(String),
 }
 
-fn parse(output: &str) -> Result<Targets, String> {
+/// Whether the helper says this enumeration opened the overflow flyout: its
+/// `UIA_TRAY_OVERFLOW_OPENED`, right after the closed-menu line. Read apart from the candidates,
+/// so a report whose candidates are then rejected still carries the desktop change to undo.
+fn opened_overflow(output: &str) -> bool {
+    let mut lines = output.lines().map(str::trim).filter(|s| !s.is_empty());
+    lines.next() == Some("UIA_TRAY_MENU_ITEMS_BEFORE=0")
+        && lines.next() == Some("UIA_TRAY_OVERFLOW_OPENED")
+}
+
+/// The candidates, and whether this enumeration opened the overflow flyout.
+fn parse(output: &str) -> Result<(Targets, bool), String> {
     let lines: Vec<_> = output
         .lines()
         .map(str::trim)
@@ -28,11 +39,12 @@ fn parse(output: &str) -> Result<Targets, String> {
         .collect();
     if lines.first() != Some(&"UIA_TRAY_MENU_ITEMS_BEFORE=0") {
         return match super::located(output)? {
-            Located::Open(items) => Ok(Targets::Open(items)),
+            Located::Open(items) => Ok((Targets::Open(items), false)),
             _ => Err(format!("malformed tray-targets report: {output:?}")),
         };
     }
-    let pairs = &lines[1..];
+    let overflow_opened = opened_overflow(output);
+    let pairs = &lines[if overflow_opened { 2 } else { 1 }..];
     if pairs.is_empty() || pairs.len() > 32 || !pairs.len().is_multiple_of(2) {
         return Err(format!("invalid tray candidate count: {output:?}"));
     }
@@ -47,16 +59,42 @@ fn parse(output: &str) -> Result<Targets, String> {
         }
         icons.push(Icon { x, y, geometry });
     }
-    Ok(Targets::Icons(icons))
+    Ok((Targets::Icons(icons), overflow_opened))
 }
 
-fn targets(repository: &Path, target: u32, count: usize) -> Result<Targets, String> {
-    parse(&super::helper(
-        repository,
+/// Enumerates the candidates, remembering in `search` whether any enumeration opened the
+/// overflow flyout, so a failed step can close it again.
+fn targets(search: &Search<'_>) -> Result<Targets, String> {
+    let output = super::helper(
+        search.repository,
         "tray-targets",
-        target,
-        Some(&count.to_string()),
-    )?)
+        search.target,
+        Some(&search.known.len().to_string()),
+    )
+    .inspect_err(|_| {
+        // A helper that failed or was ended at its time limit printed no marker; it may have
+        // opened the flyout first, so the change is unknown rather than absent.
+        search.overflow.borrow_mut().note(Overflow::Unknown(
+            "the tray-targets helper did not complete".to_owned(),
+        ));
+    })?;
+    // Before the candidates are validated, so a rejected report still records the opening.
+    if opened_overflow(&output) {
+        search.overflow.borrow_mut().note(Overflow::Opened);
+    }
+    parse(&output).map(|(targets, _)| targets)
+}
+
+/// Whether every owned copy's menu is observed closed, by the helper, for a failure where no
+/// popup owner was active: the foreground thread's popup state says nothing about the other
+/// copy's menu. The first copy that is not observed closed, and why.
+fn owned_menus_closed(repository: &Path, known: &[u32]) -> Result<(), String> {
+    for &pid in known {
+        super::helper(repository, "tray-menu-closed", pid, None)
+            .and_then(|output| super::closed(&output))
+            .map_err(|error| format!("PID {pid}'s menu was not observed closed: {error}"))?;
+    }
+    Ok(())
 }
 
 fn owned(owner: u32, known: &[u32]) -> Result<(), String> {
@@ -260,11 +298,18 @@ pub(super) fn open(
     } else {
         32
     };
+    // Read before anything moves it, to put it back if the step fails.
+    let cursor = crate::window_control::tray_cursor_position()?;
     let search = Search {
         repository,
         target,
         known,
         foreign,
+        overflow: RefCell::new(Overflow::Untouched),
+    };
+    let restore = || Restore {
+        cursor,
+        overflow: search.overflow.borrow().clone(),
     };
     let run = (|| {
         // At most two enumerations, each with at most sixteen same-name icons.
@@ -281,7 +326,7 @@ pub(super) fn open(
                     ..Attempt::default()
                 });
             }
-            let icons = match targets(repository, target, known.len())? {
+            let icons = match targets(&search)? {
                 Targets::Icons(icons) => icons,
                 Targets::Open(items) => {
                     return Err(format!("menu remained open before enumeration: {items}"));
@@ -299,6 +344,7 @@ pub(super) fn open(
                             menu,
                             attempt,
                             std::mem::take(&mut attempts),
+                            restore(),
                         ));
                     }
                     Ok(Candidate::Next) => attempts.push(attempt),
@@ -327,8 +373,16 @@ pub(super) fn open(
     })();
     run.map_err(|error| {
         let cleanup = close_current(repository, known);
+        // No active popup owner is not a menu observed closed: only a closed observation (after
+        // an Esc, or from the helper for every owned copy now) lets the flyout be toggled.
+        let menu_closed = match &cleanup {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => owned_menus_closed(repository, known),
+            Err(error) => Err(error.clone()),
+        };
+        let restored = super::restore(repository, target, &restore(), &menu_closed);
         format!(
-            "{error}; cleanup={cleanup:?}; attempts: {}",
+            "{error}; cleanup={cleanup:?}; menus closed={menu_closed:?}; {restored}; attempts: {}",
             super::history(&attempts)
         )
     })
@@ -350,6 +404,8 @@ struct Search<'a> {
     target: u32,
     known: &'a [u32],
     foreign: Foreign,
+    /// What this `open`'s enumerations did to the overflow flyout.
+    overflow: RefCell<Overflow>,
 }
 
 /// Hovers, rechecks and right-clicks one candidate icon. On an error `attempt.outcome` holds
@@ -366,11 +422,12 @@ fn candidate(
         target,
         known,
         foreign,
+        ..
     } = *search;
     crate::window_control::place_cursor_on_tray_icon(icon.x, icon.y, &mut attempt.cursor)?;
     // Hover can remove a dead notification icon and reflow the flyout.
     // Re-read after hover; never click coordinates from the old layout.
-    match targets(repository, target, known.len())? {
+    match targets(search)? {
         Targets::Icons(refreshed) if refreshed == icons => {}
         _ => {
             attempt.outcome = "tray candidates changed after hover; no click sent".to_owned();
@@ -423,7 +480,32 @@ mod tests {
         let second = "UIA_TRAY_TARGET=3,4\nUIA_TRAY_GEOMETRY=h";
         let prefix = "UIA_TRAY_MENU_ITEMS_BEFORE=0";
         assert!(
-            matches!(parse(&format!("{prefix}\n{pair}\n{second}")).unwrap(), Targets::Icons(icons) if icons.len() == 2)
+            matches!(parse(&format!("{prefix}\n{pair}\n{second}")).unwrap(), (Targets::Icons(icons), false) if icons.len() == 2)
+        );
+        // The opening survives a report whose candidates are rejected (a duplicate here).
+        assert!(opened_overflow(&format!(
+            "{prefix}
+UIA_TRAY_OVERFLOW_OPENED
+{pair}
+{pair}"
+        )));
+        assert!(
+            parse(&format!(
+                "{prefix}
+UIA_TRAY_OVERFLOW_OPENED
+{pair}
+{pair}"
+            ))
+            .is_err()
+        );
+        assert!(!opened_overflow(&format!(
+            "{prefix}
+{pair}"
+        )));
+        assert!(!opened_overflow("UIA_TRAY_OVERFLOW_OPENED"));
+        // The helper says when this enumeration opened the overflow flyout.
+        assert!(
+            matches!(parse(&format!("{prefix}\nUIA_TRAY_OVERFLOW_OPENED\n{pair}")).unwrap(), (Targets::Icons(icons), true) if icons.len() == 1)
         );
         for bad in [
             prefix.to_owned(),

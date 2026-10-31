@@ -480,6 +480,26 @@ pub(super) fn wait_for_config(program: &Path, expected: &str) -> Result<(), Stri
     })
 }
 
+/// Whether the config reads `expected` now, for a check held over time. The config is replaced
+/// atomically, so a read can briefly fail while it is being replaced: a failed read is retried a
+/// few times and only then is an error, never a "no".
+pub(super) fn config_contains(program: &Path, expected: &str) -> Result<bool, String> {
+    let path = program.join("note/config.toml");
+    let mut last = None;
+    for _ in 0..5 {
+        match fs::read_to_string(&path) {
+            Ok(text) => return Ok(text.contains(expected)),
+            Err(error) => last = Some(error),
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Err(format!(
+        "cannot read {}: {}",
+        path.display(),
+        last.map_or_else(String::new, |error| error.to_string())
+    ))
+}
+
 pub(super) fn wait_until(
     label: &str,
     mut accepted: impl FnMut() -> Result<bool, String>,
