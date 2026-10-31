@@ -150,12 +150,9 @@ fn an_unobserved_two_copy_case_blocks_without_a_waiver() {
     let (scratch, _) = Scratch::declared();
     scratch.record_all_except(&[("P12-M45", Current), ("P12-M45", Previous)], &[]);
     let (_, blockers) = scratch.check(&[], true);
-    assert_eq!(blockers.len(), 2, "{blockers:?}");
-    assert!(
-        blockers
-            .iter()
-            .all(|blocker| blocker.contains("Tier A") && blocker.contains("P12-M45"))
-    );
+    // The `previous` cell is optional; the current one is Tier A.
+    assert_eq!(blockers.len(), 1, "{blockers:?}");
+    assert!(blockers[0].contains("Tier A") && blockers[0].contains("P12-M45 (current)"));
 }
 
 #[test]
@@ -190,19 +187,61 @@ fn tiers_decide_what_an_untested_cell_blocks() {
     let (scratch, context) = Scratch::declared();
     scratch.record_all_except(
         &[
+            ("P12-M05", Current),
             ("P12-M05", Previous),
+            ("P12-M38", Current),
             ("P12-M35", Current),
             ("P12-M41", Current),
         ],
         &[],
     );
-    let (_, blockers) = scratch.check(&[two_copies_waived(&context)], true);
+    let (report, blockers) = scratch.check(&[two_copies_waived(&context)], true);
     assert_eq!(blockers.len(), 2, "{blockers:?}");
-    assert!(blockers[0].contains("Tier A") && blockers[0].contains("P12-M05 (previous)"));
-    assert!(blockers[1].contains("Tier B") && blockers[1].contains("P12-M35 (current)"));
+    assert!(blockers[0].contains("Tier A") && blockers[0].contains("P12-M05 (current)"));
+    assert!(blockers[1].contains("Tier B") && blockers[1].contains("P12-M38 (current)"));
+    // Optional cells (Tier O, and every `previous` cell) never block and need no waiver.
+    for (case, role) in [("P12-M35", Current), ("P12-M05", Previous)] {
+        let row = report
+            .rows
+            .iter()
+            .find(|row| row.case == case && row.role == role)
+            .unwrap();
+        assert_eq!(row.status, "NOT TESTED", "{case}");
+        assert!(row.detail.starts_with("optional;"), "{}", row.detail);
+    }
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.contains("READY does not mean those environments were tested"))
+    );
     // Tier C blocks only while automated coverage is incomplete.
     let (_, blockers) = scratch.check(&[], false);
     assert!(blockers.iter().any(|blocker| blocker.contains("Tier C")));
+}
+
+#[test]
+fn an_observed_failure_of_an_optional_cell_still_blocks() {
+    let (scratch, context) = Scratch::declared();
+    scratch.record_all_except(&[], &[("P12-M35", Current), ("P12-M05", Previous)]);
+    let (report, blockers) = scratch.check(&[two_copies_waived(&context)], true);
+    assert_eq!(blockers.len(), 2, "{blockers:?}");
+    assert!(
+        blockers
+            .iter()
+            .any(|blocker| blocker.contains("P12-M05 (previous) failed"))
+    );
+    assert!(
+        blockers
+            .iter()
+            .any(|blocker| blocker.contains("P12-M35 (current) failed"))
+    );
+    assert!(
+        !report
+            .notes
+            .iter()
+            .any(|note| note.contains("READY does not mean"))
+    );
 }
 
 #[test]
@@ -210,25 +249,22 @@ fn waivers_cover_only_their_cells_in_their_context_and_never_a_failure() {
     let (scratch, context) = Scratch::declared();
     scratch.record_all_except(
         &[
-            ("P12-M05", Previous),
-            ("P12-M24", Previous),
-            ("P12-M35", Current),
+            ("P12-M05", Current),
+            ("P12-M24", Current),
+            ("P12-M38", Current),
         ],
-        &[("P12-M26", Previous)],
+        &[("P12-M26", Current)],
     );
     let decisions = vec![
-        waiver(
-            "WAIVER-PROFILE-PREVIOUS-v0.1.4",
-            &context,
-            &[("P12-M05", Previous), ("P12-M26", Previous)],
-        ),
+        waiver("WAIVER-P12-M05", &context, &[("P12-M05", Current)]),
+        waiver("WAIVER-P12-M26", &context, &[("P12-M26", Current)]),
         // Bound to another context: ignored.
         waiver(
             "WAIVER-P12-M24",
             "ffffffffffffffffffffffffffffffff",
-            &[("P12-M24", Previous)],
+            &[("P12-M24", Current)],
         ),
-        waiver("WAIVER-TIER-B-v0.1.4", &context, &[("P12-M35", Current)]),
+        waiver("WAIVER-TIER-B-v0.1.4", &context, &[("P12-M38", Current)]),
         two_copies_waived(&context),
     ];
     let (report, blockers) = scratch.check(&decisions, true);
@@ -240,10 +276,10 @@ fn waivers_cover_only_their_cells_in_their_context_and_never_a_failure() {
             .unwrap()
             .status
     };
-    assert_eq!(status("P12-M05", Previous), "USER WAIVED");
-    assert_eq!(status("P12-M35", Current), "USER WAIVED");
-    assert_eq!(status("P12-M26", Previous), "MANUAL_FAIL");
-    assert_eq!(status("P12-M24", Previous), "NOT TESTED");
+    assert_eq!(status("P12-M05", Current), "USER WAIVED");
+    assert_eq!(status("P12-M38", Current), "USER WAIVED");
+    assert_eq!(status("P12-M26", Current), "MANUAL_FAIL");
+    assert_eq!(status("P12-M24", Current), "NOT TESTED");
     assert!(
         report
             .notes
@@ -254,12 +290,12 @@ fn waivers_cover_only_their_cells_in_their_context_and_never_a_failure() {
     assert!(
         blockers
             .iter()
-            .any(|blocker| blocker.contains("P12-M26 (previous) failed"))
+            .any(|blocker| blocker.contains("P12-M26 (current) failed"))
     );
     assert!(
         blockers
             .iter()
-            .any(|blocker| blocker.contains("P12-M24 (previous)"))
+            .any(|blocker| blocker.contains("P12-M24 (current)"))
     );
 }
 
@@ -267,8 +303,10 @@ fn waivers_cover_only_their_cells_in_their_context_and_never_a_failure() {
 fn a_waiver_edited_past_its_key_waives_nothing() {
     let (scratch, context) = Scratch::declared();
     scratch.record_all_except(&[("P12-M05", Current)], &[]);
-    // A profile waiver may not cover a current cell, whatever its stored cells say.
+    // A Tier B group waiver may not cover a Tier A cell, whatever its stored cells say, and
+    // the retired profile key waives nothing.
     let decisions = vec![
+        waiver("WAIVER-TIER-B-v0.1.4", &context, &[("P12-M05", Current)]),
         waiver(
             "WAIVER-PROFILE-PREVIOUS-v0.1.4",
             &context,
@@ -306,7 +344,7 @@ fn superseded_receipts_and_waivers_are_reported_not_used() {
 #[test]
 fn the_manual_policy_uses_the_callers_decision_snapshot() {
     let (scratch, context) = Scratch::declared();
-    scratch.record_all_except(&[("P12-M05", Previous)], &[]);
+    scratch.record_all_except(&[("P12-M05", Current)], &[]);
     assert!(
         !scratch
             .0
@@ -314,11 +352,7 @@ fn the_manual_policy_uses_the_callers_decision_snapshot() {
             .exists()
     );
     let decisions = vec![
-        waiver(
-            "WAIVER-PROFILE-PREVIOUS-v0.1.4",
-            &context,
-            &[("P12-M05", Previous)],
-        ),
+        waiver("WAIVER-P12-M05", &context, &[("P12-M05", Current)]),
         two_copies_waived(&context),
     ];
     let mut blockers = Vec::new();

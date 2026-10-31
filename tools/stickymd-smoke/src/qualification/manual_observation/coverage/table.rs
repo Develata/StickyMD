@@ -891,13 +891,13 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         "P08-M11",
         "mixed-dpi-dock",
         "edge=left",
-        m("P12-M11", "left-dock-mixed-dpi"),
+        m("P12-M36", "left-dock-sensor"),
     ),
     o(
         "P08-M11",
         "mixed-dpi-dock",
         "edge=right",
-        m("P12-M12", "right-dock-mixed-dpi"),
+        m("P12-M36", "right-dock-sensor"),
     ),
     o(
         "P08-M11",

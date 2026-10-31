@@ -9,6 +9,9 @@ pub(in crate::qualification) enum Tier {
     A,
     B,
     C,
+    /// Optional: needs another machine, a VM or a second display. `NOT TESTED` never
+    /// blocks and needs no waiver; an observed FAIL still blocks (plan 11).
+    Optional,
 }
 
 impl Tier {
@@ -17,6 +20,7 @@ impl Tier {
             Self::A => "A",
             Self::B => "B",
             Self::C => "C",
+            Self::Optional => "O",
         }
     }
 }
@@ -89,7 +93,7 @@ pub(in crate::qualification) struct Case {
 use Fixture::{Blank, Rendering};
 use InstanceRule::{FirstRunDeclared, Launched, Preserved, TwoCopies};
 use ManualSession::{M1, M2, M3, M4, M5};
-use Tier::{A, B, C};
+use Tier::{A, B, C, Optional};
 
 pub(in crate::qualification) const CASES: &[Case] = &[
     Case {
@@ -146,18 +150,18 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         tier: A,
         session: M2,
         action: "把窗口拖到左边缘，再拖离超过 16 DIP",
-        expected: "Left dock 行为正确，混合 DPI 下感应条仍可用；拖离后为 Floating",
+        expected: "Left dock 行为正确；拖离后为 Floating",
         instance: Launched(Rendering),
-        scenarios: &["left-dock-mixed-dpi", "undock-16dip"],
+        scenarios: &["left-dock", "undock-16dip"],
     },
     Case {
         id: "P12-M12",
         tier: A,
         session: M2,
         action: "把窗口拖到右边缘，再拖离超过 16 DIP",
-        expected: "Right dock 行为正确，混合 DPI 下感应条仍可用；拖离后为 Floating",
+        expected: "Right dock 行为正确；拖离后为 Floating",
         instance: Launched(Rendering),
-        scenarios: &["right-dock-mixed-dpi", "undock-16dip"],
+        scenarios: &["right-dock", "undock-16dip"],
     },
     Case {
         id: "P12-M18",
@@ -283,49 +287,6 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         ],
     },
     Case {
-        id: "P12-M34",
-        tier: B,
-        session: M5,
-        action: "在 Clean Windows 11 VM 解压并运行 unsigned ZIP",
-        expected: "无额外 runtime 安装即可启动；信誉提示与 README 描述一致",
-        instance: FirstRunDeclared,
-        scenarios: &["clean-vm-first-run"],
-    },
-    Case {
-        id: "P12-M35",
-        tier: B,
-        session: M4,
-        action: "双显示器同 DPI 拖动、dock、tray restore、主显示器切换，副屏在右侧（顶部对齐）与下方（左侧对齐）",
-        expected: "monitor identity、位置和 dock edge 稳定",
-        instance: Launched(Rendering),
-        scenarios: &[
-            "drag",
-            "dock",
-            "tray-restore",
-            "primary-switch",
-            "secondary-right",
-            "secondary-below",
-        ],
-    },
-    Case {
-        id: "P12-M36",
-        tier: B,
-        session: M4,
-        action: "双显示器 mixed DPI 拖动、dock、IME、Preview（跨屏移动后检查公式与图片）",
-        expected: "DIP/physical conversion、caret candidate 与感应条正确；跨屏后公式与图片按新显示器 scale 重新绘制、清晰",
-        instance: Launched(Rendering),
-        scenarios: &["drag", "dock", "ime", "preview"],
-    },
-    Case {
-        id: "P12-M37",
-        tier: B,
-        session: M4,
-        action: "运行中断开 StickyMD 所在的非主显示器，再重新连接该显示器",
-        expected: "断开后窗口恢复到主显示器且完全可见；重新连接后窗口仍完全可见、不留在不可见坐标",
-        instance: Preserved(Rendering),
-        scenarios: &["disconnect-current-monitor", "reconnect-monitor"],
-    },
-    Case {
         id: "P12-M38",
         tier: B,
         session: M4,
@@ -390,17 +351,58 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         ],
     },
     Case {
-        id: "P12-M41",
-        tier: C,
+        id: "P12-M34",
+        tier: Optional,
         session: M5,
-        action: "Sleep/resume 后继续输入、保存、dock",
-        expected: "display re-enumeration、watcher、IME 与窗口状态恢复",
+        action: "在 Clean Windows 11 VM 解压并运行 unsigned ZIP",
+        expected: "无额外 runtime 安装即可启动；信誉提示与 README 描述一致",
+        instance: FirstRunDeclared,
+        scenarios: &["clean-vm-first-run"],
+    },
+    Case {
+        id: "P12-M35",
+        tier: Optional,
+        session: M4,
+        action: "双显示器同 DPI 拖动、dock、tray restore、主显示器切换，副屏在右侧（顶部对齐）与下方（左侧对齐）",
+        expected: "monitor identity、位置和 dock edge 稳定",
+        instance: Launched(Rendering),
+        scenarios: &[
+            "drag",
+            "dock",
+            "tray-restore",
+            "primary-switch",
+            "secondary-right",
+            "secondary-below",
+        ],
+    },
+    Case {
+        id: "P12-M36",
+        tier: Optional,
+        session: M4,
+        action: "双显示器 mixed DPI 拖动、dock（含左/右 dock 的 3 DIP 感应条）、IME、Preview（跨屏移动后检查公式与图片）",
+        expected: "DIP/physical conversion、caret candidate 与感应条正确；跨屏后公式与图片按新显示器 scale 重新绘制、清晰",
+        instance: Launched(Rendering),
+        scenarios: &[
+            "drag",
+            "dock",
+            "left-dock-sensor",
+            "right-dock-sensor",
+            "ime",
+            "preview",
+        ],
+    },
+    Case {
+        id: "P12-M37",
+        tier: Optional,
+        session: M4,
+        action: "运行中断开 StickyMD 所在的非主显示器，再重新连接该显示器",
+        expected: "断开后窗口恢复到主显示器且完全可见；重新连接后窗口仍完全可见、不留在不可见坐标",
         instance: Preserved(Rendering),
-        scenarios: &["sleep-resume"],
+        scenarios: &["disconnect-current-monitor", "reconnect-monitor"],
     },
     Case {
         id: "P12-M42",
-        tier: C,
+        tier: Optional,
         session: M5,
         action: "RDP reconnect 后继续输入、保存、dock",
         expected: "display/config change 不丢窗口或文本；无环境则 NOT TESTED",
@@ -409,12 +411,21 @@ pub(in crate::qualification) const CASES: &[Case] = &[
     },
     Case {
         id: "P12-M43",
-        tier: C,
+        tier: Optional,
         session: M4,
         action: "物理 negative-coordinate monitor layout",
         expected: "restore/dock/ratio 保存不假设非负坐标",
         instance: Launched(Rendering),
         scenarios: &["secondary-left", "secondary-above"],
+    },
+    Case {
+        id: "P12-M41",
+        tier: C,
+        session: M5,
+        action: "Sleep/resume 后继续输入、保存、dock",
+        expected: "display re-enumeration、watcher、IME 与窗口状态恢复",
+        instance: Preserved(Rendering),
+        scenarios: &["sleep-resume"],
     },
 ];
 
@@ -452,7 +463,7 @@ mod tests {
     use super::{CASES, Fixture, InstanceRule, Tier};
 
     /// SHA-256 of `docs/acceptance-cases/phase-12.md` (lines joined by `\n`) as last reviewed.
-    const PHASE12_SHA256: &str = "e29bb75f523c3035e044440c37b8e73b2525ee8dcc1d3654ee9cd6f15ee68783";
+    const PHASE12_SHA256: &str = "b232ace8a0f00a1abc1e7d3462834b3650707fc092598cbf35900b15d3dd1dc6";
 
     #[test]
     fn registry_equals_the_phase12_manual_rows_with_unique_scenarios() {
@@ -506,7 +517,15 @@ mod tests {
             }
         }
         let count = |tier| CASES.iter().filter(|case| case.tier == tier).count();
-        assert_eq!((count(Tier::A), count(Tier::B), count(Tier::C)), (16, 8, 3));
+        assert_eq!(
+            (
+                count(Tier::A),
+                count(Tier::B),
+                count(Tier::C),
+                count(Tier::Optional)
+            ),
+            (16, 4, 1, 6)
+        );
     }
 
     /// Plan 11: only M34 is observed without a recorder-launched instance, and the
@@ -526,7 +545,7 @@ mod tests {
         );
         assert_eq!(
             with(|rule| matches!(rule, InstanceRule::Preserved(_))),
-            ["P12-M37", "P12-M41", "P12-M42"]
+            ["P12-M37", "P12-M42", "P12-M41"]
         );
         assert_eq!(
             with(|rule| rule == InstanceRule::Launched(Fixture::Blank)),

@@ -118,6 +118,7 @@ fn evaluate(
         target: &context.target,
         exe_sha256: candidate_exe_sha256,
     };
+    let mut optional_untested = false;
     for cell in reduce::reduce(&context.log, binding) {
         let (case, tier, role) = (cell.case.id, cell.case.tier, cell.role);
         let label = format!("{case} ({})", role.as_str());
@@ -144,7 +145,12 @@ fn evaluate(
                         missing.join(", ")
                     )
                 };
-                if let Some(key) = covering_waiver(decisions, &context_id, case, role, version) {
+                if tier == Tier::Optional || role == Role::Previous {
+                    optional_untested = true;
+                    ("NOT TESTED", format!("optional; {missing}"))
+                } else if let Some(key) =
+                    covering_waiver(decisions, &context_id, case, role, version)
+                {
                     ("USER WAIVED", format!("{key}; {missing}"))
                 } else if tier == Tier::C && automated_ok {
                     (
@@ -173,6 +179,11 @@ fn evaluate(
             status,
             detail,
         });
+    }
+    if optional_untested {
+        report.notes.push(
+            "optional cells (another machine, a VM or a second display; every `previous` cell) are NOT TESTED; they do not block, and READY does not mean those environments were tested".to_owned(),
+        );
     }
     if report.rows.iter().any(|row| row.status == "USER WAIVED") {
         report.notes.push(

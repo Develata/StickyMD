@@ -1,7 +1,8 @@
 # Phase 14 Guided Manual Campaign
 
 人工观察写入逐场景、逐目标环境角色的观察日志（plan 11 `#manual-observation-log`）。开始前用
-`stickymd-smoke acceptance manual target` 声明 `current`、`previous` 两个目标环境角色。每个场景：
+`stickymd-smoke acceptance manual target` 声明 `current`、`previous` 两个目标环境角色（`previous` 角色的观察是可选的，
+未测不阻断发布）。每个场景：
 
 1. 按提示准备环境（DPI、显示器、主题等）后按回车；
 2. 记录器读取本机 Windows 版本事实并自动判定角色（不询问角色；不属于任一获准构建则不记录）；
@@ -130,8 +131,8 @@ candidate/clean harness/isolated-copy 收据合同，但分别写入 `g4-exact-q
 .\tools\smoke\phase-14.ps1 -Readiness -Explain
 ```
 
-剩余 27 项人工事实由 G1/G2 与 Tier B/C receipt 持有；其中 mixed-DPI M11/M12 不因 G4 主屏
-自动化而被替代。G3/G4 对应的 18 项只有各自 exact receipt 满足 source/harness/clean/EXE/ZIP
-绑定后才解除 `NOT_TESTED` blocker。Tier B/C 未执行项目继续保持
+剩余 27 项人工事实由 G1/G2 与 Tier B/C/O receipt 持有；混合 DPI 下的左/右 dock 感应条由 M36（Tier O）观察，
+不因 G4 主屏自动化而被替代。G3/G4 对应的 18 项只有各自 exact receipt 满足 source/harness/clean/EXE/ZIP
+绑定后才解除 `NOT_TESTED` blocker。Tier O 与 `previous` 角色是可选项，未测不阻断、不需要 waiver。Tier B/C 未执行项目继续保持
 `NOT TESTED`，任何 waiver 必须由 USER 明确授权，并绑定当前人工观察上下文与明确列出的 `(项, 角色)` 集合
 （plan 11）。

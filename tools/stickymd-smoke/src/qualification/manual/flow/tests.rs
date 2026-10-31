@@ -546,9 +546,9 @@ fn a_guided_step_is_answered_case_by_case() {
     assert_eq!(
         answered,
         [
-            ("P12-M11", "left-dock-mixed-dpi", 1, Status::Pass),
+            ("P12-M11", "left-dock", 1, Status::Pass),
             ("P12-M11", "undock-16dip", 2, Status::Pass),
-            ("P12-M12", "right-dock-mixed-dpi", 3, Status::Fail),
+            ("P12-M12", "right-dock", 3, Status::Fail),
             ("P12-M12", "undock-16dip", 4, Status::Pass),
         ]
     );

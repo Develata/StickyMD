@@ -271,7 +271,14 @@ mod tests {
             verdict(&empty, "P12-M36", Current),
             Verdict::NotTested {
                 covered: Vec::new(),
-                missing: vec!["drag", "dock", "ime", "preview"]
+                missing: vec![
+                    "drag",
+                    "dock",
+                    "left-dock-sensor",
+                    "right-dock-sensor",
+                    "ime",
+                    "preview"
+                ]
             }
         );
         let partial = log_of(&[(0, "P12-M36", "dock", Current, Status::Pass)]);
@@ -279,7 +286,13 @@ mod tests {
             verdict(&partial, "P12-M36", Current),
             Verdict::NotTested {
                 covered: vec!["dock"],
-                missing: vec!["drag", "ime", "preview"]
+                missing: vec![
+                    "drag",
+                    "left-dock-sensor",
+                    "right-dock-sensor",
+                    "ime",
+                    "preview"
+                ]
             }
         );
         // The same observations on the other role cover nothing there.
@@ -290,6 +303,8 @@ mod tests {
         let full = log_of(&[
             (0, "P12-M36", "drag", Current, Status::Pass),
             (0, "P12-M36", "dock", Current, Status::Pass),
+            (0, "P12-M36", "left-dock-sensor", Current, Status::Pass),
+            (0, "P12-M36", "right-dock-sensor", Current, Status::Pass),
             (0, "P12-M36", "ime", Current, Status::Pass),
             (0, "P12-M36", "preview", Current, Status::Pass),
         ]);

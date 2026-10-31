@@ -57,8 +57,8 @@ PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；人�
 | P12-M08 | 从 tray 对 exact EXE 执行显示 | Automated exact candidate | `phase-14.ps1 -G4` / G4-01；同一 HWND 恢复并可立即输入 | NOT TESTED |
 | P12-M09 | 从 tray 对 dirty exact EXE 执行退出 | Automated exact candidate | `phase-14.ps1 -G4` / G4-01；保存、worker join 后进程退出 | NOT TESTED |
 | P12-M10 | 把 exact EXE 拖到顶部边缘 | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；仅 Top dock，失焦/hover/传感区时序符合合同 | NOT TESTED |
-| P12-M11 | 把窗口拖到左边缘，再拖离超过 16 DIP | Manual | Left dock 行为正确，混合 DPI 下感应条仍可用；拖离后为 Floating | NOT TESTED |
-| P12-M12 | 把窗口拖到右边缘，再拖离超过 16 DIP | Manual | Right dock 行为正确，混合 DPI 下感应条仍可用；拖离后为 Floating | NOT TESTED |
+| P12-M11 | 把窗口拖到左边缘，再拖离超过 16 DIP | Manual | Left dock 行为正确；拖离后为 Floating | NOT TESTED |
+| P12-M12 | 把窗口拖到右边缘，再拖离超过 16 DIP | Manual | Right dock 行为正确；拖离后为 Floating | NOT TESTED |
 | P12-M13 | 把 exact EXE 拖向底边 | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；不进入 Bottom dock | NOT TESTED |
 | P12-M14 | 对 exact EXE 实测 24/25 DIP capture threshold | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；24 DIP 吸附，25 DIP 不吸附 | NOT TESTED |
 | P12-M15 | 对 exact EXE 实测 nearest-edge 与 top-left/top-right tie | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；选择最近允许边，精确优先级 `Top > Left > Right` | NOT TESTED |
@@ -87,22 +87,27 @@ PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；人�
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P12-M34 | 在 Clean Windows 11 VM 解压并运行 unsigned ZIP | Manual | 无额外 runtime 安装即可启动；信誉提示与 README 描述一致 | NOT TESTED |
-| P12-M35 | 双显示器同 DPI 拖动、dock、tray restore、主显示器切换，副屏在右侧（顶部对齐）与下方（左侧对齐） | Manual | monitor identity、位置和 dock edge 稳定 | NOT TESTED |
-| P12-M36 | 双显示器 mixed DPI 拖动、dock、IME、Preview（跨屏移动后检查公式与图片） | Manual | DIP/physical conversion、caret candidate 与感应条正确；跨屏后公式与图片按新显示器 scale 重新绘制、清晰 | NOT TESTED |
-| P12-M37 | 运行中断开 StickyMD 所在的非主显示器，再重新连接该显示器 | Manual | 断开后窗口恢复到主显示器且完全可见；重新连接后窗口仍完全可见、不留在不可见坐标 | NOT TESTED |
 | P12-M38 | 在 125% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
 | P12-M39 | 在 150% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
 | P12-M40 | 在 200% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
 | P12-M47 | 在 100% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
+
+## Manual Tier O — optional; needs another machine, a VM or a second display; NOT TESTED never blocks, an observed FAIL does
+
+| ID | Requirement | Mode | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| P12-M34 | 在 Clean Windows 11 VM 解压并运行 unsigned ZIP | Manual | 无额外 runtime 安装即可启动；信誉提示与 README 描述一致 | NOT TESTED |
+| P12-M35 | 双显示器同 DPI 拖动、dock、tray restore、主显示器切换，副屏在右侧（顶部对齐）与下方（左侧对齐） | Manual | monitor identity、位置和 dock edge 稳定 | NOT TESTED |
+| P12-M36 | 双显示器 mixed DPI 拖动、dock（含左/右 dock 的 3 DIP 感应条）、IME、Preview（跨屏移动后检查公式与图片） | Manual | DIP/physical conversion、caret candidate 与感应条正确；跨屏后公式与图片按新显示器 scale 重新绘制、清晰 | NOT TESTED |
+| P12-M37 | 运行中断开 StickyMD 所在的非主显示器，再重新连接该显示器 | Manual | 断开后窗口恢复到主显示器且完全可见；重新连接后窗口仍完全可见、不留在不可见坐标 | NOT TESTED |
+| P12-M42 | RDP reconnect 后继续输入、保存、dock | Manual | display/config change 不丢窗口或文本；无环境则 NOT TESTED | NOT TESTED |
+| P12-M43 | 物理 negative-coordinate monitor layout | Manual | restore/dock/ratio 保存不假设非负坐标 | NOT TESTED |
 
 ## Manual Tier C — NOT TESTED is non-blocking only while automated contract coverage passes
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | P12-M41 | Sleep/resume 后继续输入、保存、dock | Manual | display re-enumeration、watcher、IME 与窗口状态恢复 | NOT TESTED |
-| P12-M42 | RDP reconnect 后继续输入、保存、dock | Manual | display/config change 不丢窗口或文本；无环境则 NOT TESTED | NOT TESTED |
-| P12-M43 | 物理 negative-coordinate monitor layout | Manual | restore/dock/ratio 保存不假设非负坐标 | NOT TESTED |
 | P12-M44 | 从真实 junction 路径启动 exact EXE 第二实例 | Automated exact candidate | `phase-14.ps1 -G4` / G4-05；同一 canonical identity 唤醒原 HWND，第二实例不写 durable file | NOT TESTED |
 
 ## Current readiness
@@ -112,4 +117,5 @@ workflow artifact 晋升后的 Promoted Candidate；G3/G4/G5 自动 exact 行只
 PASS 才解除 blocker。其余 Tier A 仍需人工 PASS 或 USER 明确批准具体
 case/group waiver。Tier B 需要 PASS 或
 绑定 v0.1.0 + exact source 的明确 USER disposition；Tier C 仅在对应自动化合同通过时允许保持
-`NOT TESTED` 而不阻断，任何已观察到的 `MANUAL_FAIL` 仍阻断。
+`NOT TESTED` 而不阻断；Tier O 与 `previous` 角色下的全部项是可选人工项（USER 决定 2026-10-31），`NOT TESTED`
+不阻断、也不需要 waiver。任何已观察到的 `MANUAL_FAIL` 仍阻断。
