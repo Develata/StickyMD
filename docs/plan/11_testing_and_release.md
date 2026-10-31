@@ -236,7 +236,7 @@ Phase 15 按 [提案](../report/2026-10-23-shared-core-thin-platform-shell-archi
 
 完成标准还包括：编辑、Search、配置、保存、预览、冲突、恢复、资产与退出规则各只有一个共享所有者；Windows 重新验证文件
 替换/冲突/图片安全、IME、托盘可达性、透明度、置顶、贴边、多屏、剪贴板/导出（自动化与人工结果分别记录；剪贴板多格式
-选择按 `08_assets_and_export.md#clipboard-priority-verification`）。共享层完成、Windows 回归、跨平台应用可用与发布 readiness
+选择按 [plan 08 剪贴板验证](08_assets_and_export.md#clipboard-priority-verification)）。共享层完成、Windows 回归、跨平台应用可用与发布 readiness
 分别报告；测试替身只证明接口与共享语义，不证明原生实现正确。
 
 <a id="qualification-process-isolation"></a>
