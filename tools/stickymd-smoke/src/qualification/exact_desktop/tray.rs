@@ -292,20 +292,126 @@ fn history(attempts: &[Attempt]) -> String {
         .join("; ")
 }
 
-/// An opened menu: its items and how it was opened.
+/// What a tray step did to the overflow flyout, as far as it knows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum Overflow {
+    /// No enumeration reported opening it.
+    #[default]
+    Untouched,
+    /// An enumeration reported opening it (`UIA_TRAY_OVERFLOW_OPENED`).
+    Opened,
+    /// An enumeration did not complete (failed, or was ended at its time limit), so whether it
+    /// opened the flyout is unknown; why.
+    Unknown(String),
+}
+
+impl Overflow {
+    /// A known opening is never downgraded; an unknown outcome outranks "untouched".
+    fn note(&mut self, next: Overflow) {
+        match (&*self, &next) {
+            (Overflow::Opened, _) | (_, Overflow::Untouched) => {}
+            (Overflow::Unknown(_), Overflow::Unknown(_)) => {}
+            _ => *self = next,
+        }
+    }
+}
+
+/// What opening the menu changed on the desktop besides the menu, to put back if the step
+/// fails: where the cursor was, and what the step did to the overflow flyout.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Restore {
+    cursor: (i32, i32),
+    overflow: Overflow,
+}
+
+/// What a failed step does about the overflow flyout: close it only when the step is known to
+/// have opened it and its menu is observed closed (nothing is toggled under an open menu, or on
+/// a guess); otherwise just say why not.
+fn overflow_plan(overflow: &Overflow, menu_closed: &Result<(), String>) -> Result<(), String> {
+    match (overflow, menu_closed) {
+        (Overflow::Untouched, _) => Err("this step opened no overflow flyout".to_owned()),
+        (Overflow::Unknown(why), _) => Err(format!(
+            "whether this step opened the overflow flyout is unknown ({why}), so it is not toggled"
+        )),
+        (Overflow::Opened, Err(why)) => Err(format!(
+            "the overflow flyout this step opened is left open: its menu was not observed closed ({why})"
+        )),
+        (Overflow::Opened, Ok(())) => Ok(()),
+    }
+}
+
+/// `cleanup`'s verdict as a menu-closed observation for `restore`.
+fn observed_closed(closed: bool) -> Result<(), String> {
+    if closed {
+        Ok(())
+    } else {
+        Err("the cleanup above did not observe it closed".to_owned())
+    }
+}
+
+/// Puts back what a failed tray step changed, after its menu cleanup: closes an overflow flyout
+/// as `overflow_plan` allows, then puts the cursor back through the injection module. A success
+/// path keeps both, as before. The outcome, for the step's error; the step has failed either way.
+fn restore(
+    repository: &Path,
+    process_id: u32,
+    restore: &Restore,
+    menu_closed: &Result<(), String>,
+) -> String {
+    let overflow = match overflow_plan(&restore.overflow, menu_closed) {
+        Err(outcome) => outcome,
+        Ok(()) => match helper(repository, "tray-overflow-close", process_id, None) {
+            Ok(output) if output.trim() == "UIA_TRAY_OVERFLOW_CLOSED" => {
+                "the overflow flyout this step opened is closed".to_owned()
+            }
+            Ok(output) => format!("malformed tray-overflow-close report: {output:?}"),
+            Err(error) => {
+                format!("the overflow flyout this step opened was not closed: {error}")
+            }
+        },
+    };
+    let (x, y) = restore.cursor;
+    let cursor = match crate::window_control::restore_tray_cursor(x, y) {
+        Ok(()) => format!("the cursor is back at ({x},{y})"),
+        Err(error) => format!("the cursor was not put back: {error}"),
+    };
+    format!("restore: {overflow}; {cursor}")
+}
+
+/// An opened menu: its items, how it was opened, and what to put back if a later step fails.
 struct Opened {
     items: Vec<String>,
     attempts: Vec<Attempt>,
+    restore: Restore,
 }
 
 impl Opened {
-    fn observed(menu: MenuRead, mut attempt: Attempt, mut attempts: Vec<Attempt>) -> Self {
+    fn observed(
+        menu: MenuRead,
+        mut attempt: Attempt,
+        mut attempts: Vec<Attempt>,
+        restore: Restore,
+    ) -> Self {
         attempt.outcome = format!("opened{}", menu.partial);
         attempts.push(attempt);
         Self {
             items: menu.items,
             attempts,
+            restore,
         }
+    }
+
+    /// `failed`, after putting back what opening the menu changed.
+    fn failed_restoring(
+        &self,
+        repository: &Path,
+        process_id: u32,
+        step: &str,
+        cleanup: &str,
+        menu_closed: Result<(), String>,
+    ) -> String {
+        let restored = restore(repository, process_id, &self.restore, &menu_closed);
+        self.failed(step, &format!("{cleanup}; {restored}"))
     }
 
     /// An error for a step after the opening, with its cleanup and the opening's history.
@@ -337,9 +443,12 @@ pub(in crate::qualification) fn menu_items(
     let opened = open(repository, process_id)?;
     match close(repository, process_id) {
         Ok(()) => Ok(opened.items),
-        Err(error) => Err(opened.failed(
+        Err(error) => Err(opened.failed_restoring(
+            repository,
+            process_id,
             "the menu items were read but the menu was not closed",
             &format!("closing: {error}"),
+            Err(error),
         )),
     }
 }
@@ -357,18 +466,27 @@ fn invoke_opened(
     opened: Opened,
 ) -> Result<(), String> {
     if !opened.items.iter().any(|name| name == item) {
-        let (_, cleanup) = cleanup(repository, process_id);
-        return Err(opened.failed(
+        let (closed, cleanup) = cleanup(repository, process_id);
+        return Err(opened.failed_restoring(
+            repository,
+            process_id,
             &format!("{label} is absent from the opened StickyMD tray menu"),
             &cleanup,
+            observed_closed(closed),
         ));
     }
     helper(repository, "tray-invoke", process_id, Some(item))
         .and_then(|output| invoked(&output, item))
         .map_err(|error| {
             // Leave no menu open behind a failed invocation.
-            let (_, cleanup) = cleanup(repository, process_id);
-            opened.failed(&format!("{label}: {error}"), &cleanup)
+            let (closed, cleanup) = cleanup(repository, process_id);
+            opened.failed_restoring(
+                repository,
+                process_id,
+                &format!("{label}: {error}"),
+                &cleanup,
+                observed_closed(closed),
+            )
         })
 }
 
@@ -434,11 +552,29 @@ pub(in crate::qualification) fn topmost_checked(
     let closing = close(repository, process_id);
     match (observed, closing) {
         (Ok(value), Ok(())) => Ok(value),
-        (observed, closing) => Err(opened.failed(
+        (observed, closing) => Err(opened.failed_restoring(
+            repository,
+            process_id,
             &format!("topmost check state: {observed:?}"),
             &format!("closing: {closing:?}"),
+            closing.clone(),
         )),
     }
+}
+
+/// Opens the menu and asks for an item no StickyMD menu has, so the step fails after opening:
+/// the local preflight's way to reach a failure's cleanup and restore on a real desktop.
+#[cfg(test)]
+pub(in crate::qualification) fn invoke_absent_item(
+    repository: &Path,
+    process_id: u32,
+) -> Result<(), String> {
+    invoke(
+        repository,
+        process_id,
+        "0021",
+        "an item no StickyMD menu has",
+    )
 }
 
 pub(in crate::qualification) fn exit(repository: &Path, process_id: u32) -> Result<(), String> {
@@ -449,11 +585,47 @@ pub(in crate::qualification) fn exit(repository: &Path, process_id: u32) -> Resu
 mod tests {
     use super::*;
 
+    /// A known opening wins, an unknown outcome outranks "untouched", and the flyout is toggled
+    /// only when the step is known to have opened it and its menu is observed closed.
+    #[test]
+    fn the_overflow_is_closed_only_when_known_opened_and_the_menu_observed_closed() {
+        let unknown = || Overflow::Unknown("helper ended".to_owned());
+        let noted = |steps: &[Overflow]| {
+            let mut overflow = Overflow::Untouched;
+            for step in steps {
+                overflow.note(step.clone());
+            }
+            overflow
+        };
+        assert_eq!(noted(&[]), Overflow::Untouched);
+        assert_eq!(noted(&[unknown()]), unknown());
+        assert_eq!(noted(&[unknown(), Overflow::Opened]), Overflow::Opened);
+        assert_eq!(noted(&[Overflow::Opened, unknown()]), Overflow::Opened);
+        assert_eq!(
+            noted(&[Overflow::Opened, Overflow::Untouched]),
+            Overflow::Opened
+        );
+        let closed = Ok(());
+        let open = Err("PID 2's menu was not observed closed".to_owned());
+        assert_eq!(overflow_plan(&Overflow::Opened, &closed), Ok(()));
+        assert!(
+            overflow_plan(&Overflow::Opened, &open)
+                .unwrap_err()
+                .contains("PID 2")
+        );
+        assert!(
+            overflow_plan(&unknown(), &closed)
+                .unwrap_err()
+                .contains("not toggled")
+        );
+        assert!(overflow_plan(&Overflow::Untouched, &closed).is_err());
+    }
+
     #[test]
     fn successful_open_preserves_partial_items_in_later_failures() {
         let menu = items("UIA_TRAY_ITEM=663E-793A@g\nUIA_TRAY_MENU_PARTIAL; partial_items=earlier")
             .unwrap();
-        let opened = Opened::observed(menu, Attempt::default(), Vec::new());
+        let opened = Opened::observed(menu, Attempt::default(), Vec::new(), Restore::default());
         let error = opened.failed("invoke failed", "closed");
         assert!(error.contains("opened; partial_items=earlier"), "{error}");
         assert!(error.contains("663E-793A"), "{error}");
@@ -508,6 +680,198 @@ mod tests {
             "UIA_TRAY_MENU_OPEN; observed_items=a\nUIA_TRAY_MENU_ITEMS_BEFORE=2",
         ] {
             assert!(located(malformed).is_err(), "{malformed:?}");
+        }
+    }
+
+    /// The helper opens the flyout on one observed state: a visible flyout read after an
+    /// unobservable read is "already open" and untouched, a hidden one is toggled once and
+    /// "opened", and one that stays unobservable toggles nothing and is an error. The helper's
+    /// function is loaded from its source; the UIA reads and the toggle are scripted.
+    #[cfg(windows)]
+    #[test]
+    fn the_helper_opens_the_overflow_only_on_an_observed_hidden_state() {
+        const SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:SMOKE_UIA_HELPER, [ref]$null, [ref]$null)
+foreach ($function in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+    if ($function.Name -eq 'Open-TrayOverflowObserved') { . ([scriptblock]::Create($function.Extent.Text)) }
+}
+$global:reads = @($env:SMOKE_STATES -split ',')
+$global:read = 0
+$global:toggles = 0
+function Get-TrayOverflowState {
+    $state = $global:reads[[Math]::Min($global:read, $global:reads.Count - 1)]
+    $global:read++
+    return $state
+}
+function Invoke-TrayOverflowToggle { $global:toggles++ }
+try { $result = Open-TrayOverflowObserved } catch { $result = 'error' }
+Write-Output ('{0} toggles={1}' -f $result, $global:toggles)
+"#;
+        let helper = Path::new(env!("CARGO_MANIFEST_DIR")).join("helpers/windows-uia.ps1");
+        for (states, expected) in [
+            ("unobservable,visible", "already-open toggles=0"),
+            ("visible", "already-open toggles=0"),
+            ("unobservable,hidden", "opened toggles=1"),
+            ("hidden", "opened toggles=1"),
+            ("unobservable", "error toggles=0"),
+        ] {
+            let mut command = std::process::Command::new("powershell");
+            command
+                .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+                .env("SMOKE_UIA_HELPER", &helper)
+                .env("SMOKE_STATES", states);
+            let output = crate::managed_process::run_bounded_output(
+                &mut command,
+                std::time::Duration::from_secs(60),
+                "the UIA helper overflow probe",
+                1 << 20,
+            )
+            .unwrap();
+            assert!(
+                output.status.success(),
+                "{states}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap().trim(),
+                expected,
+                "{states}"
+            );
+        }
+    }
+
+    /// Closing retries an unobservable read and toggles once on the first visible one, never on an
+    /// unobservable one; opening-then-waiting closes a flyout it may have opened on any failure
+    /// after the toggle was attempted, including a toggle that took effect and then threw, and
+    /// toggles nothing when the flyout was never observed. The helper's functions are loaded from
+    /// its source; the UIA reads and the toggle are scripted.
+    #[cfg(windows)]
+    #[test]
+    fn the_helper_closes_and_compensates_the_overflow_on_observed_states() {
+        const SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:SMOKE_UIA_HELPER, [ref]$null, [ref]$null)
+$wanted = 'Wait-Until', 'Open-TrayOverflowObserved', 'Close-TrayOverflowObserved', 'Close-OpenedTrayOverflow', 'Open-TrayOverflowUntil'
+foreach ($function in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+    if ($wanted -contains $function.Name) { . ([scriptblock]::Create($function.Extent.Text)) }
+}
+$TimeoutSeconds = 1
+$global:reads = @($env:SMOKE_STATES -split ',')
+$global:read = 0
+$global:toggles = 0
+function Get-TrayOverflowState {
+    $state = $global:reads[[Math]::Min($global:read, $global:reads.Count - 1)]
+    $global:read++
+    return $state
+}
+function Invoke-TrayOverflowToggle {
+    $global:toggles++
+    if ($env:SMOKE_TOGGLE -eq 'throw-first' -and $global:toggles -eq 1) { throw 'toggle threw after taking effect' }
+}
+try {
+    if ($env:SMOKE_ACTION -eq 'close') {
+        Close-TrayOverflowObserved
+        $result = 'closed'
+    } else {
+        $outcome = Open-TrayOverflowUntil { if ($env:SMOKE_READY -eq 'yes') { return 'ready' } else { return $null } } 'candidates'
+        $result = 'opened=' + $outcome.Opened
+    }
+} catch { $result = "error: $_" }
+Write-Output ('{0} | toggles={1}' -f $result, $global:toggles)
+"#;
+        let helper = Path::new(env!("CARGO_MANIFEST_DIR")).join("helpers/windows-uia.ps1");
+        // (action, reads, toggle, ready, expected fragments)
+        let cases: &[(&str, &str, &str, &str, &[&str])] = &[
+            (
+                "close",
+                "unobservable,visible,hidden",
+                "count",
+                "",
+                &["closed |", "toggles=1"],
+            ),
+            (
+                "close",
+                "visible,visible,hidden",
+                "count",
+                "",
+                &["closed |", "toggles=1"],
+            ),
+            (
+                "close",
+                "unobservable",
+                "count",
+                "",
+                &["not observed closed", "toggles=0"],
+            ),
+            (
+                "until",
+                "hidden",
+                "count",
+                "yes",
+                &["opened=True |", "toggles=1"],
+            ),
+            (
+                "until",
+                "visible",
+                "count",
+                "yes",
+                &["opened=False |", "toggles=0"],
+            ),
+            (
+                "until",
+                "hidden,visible,hidden",
+                "throw-first",
+                "yes",
+                &["toggle threw", "opened is closed", "toggles=2"],
+            ),
+            (
+                "until",
+                "hidden,visible,hidden",
+                "count",
+                "no",
+                &[
+                    "Timed out waiting for candidates",
+                    "opened is closed",
+                    "toggles=2",
+                ],
+            ),
+            (
+                "until",
+                "unobservable",
+                "count",
+                "yes",
+                &["could not be observed", "toggles=0"],
+            ),
+        ];
+        for (action, states, toggle, ready, expected) in cases {
+            let mut command = std::process::Command::new("powershell");
+            command
+                .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+                .env("SMOKE_UIA_HELPER", &helper)
+                .env("SMOKE_ACTION", action)
+                .env("SMOKE_STATES", states)
+                .env("SMOKE_TOGGLE", toggle)
+                .env("SMOKE_READY", ready);
+            let output = crate::managed_process::run_bounded_output(
+                &mut command,
+                std::time::Duration::from_secs(60),
+                "the UIA helper overflow cleanup probe",
+                1 << 20,
+            )
+            .unwrap();
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(
+                output.status.success(),
+                "{action} {states}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            for fragment in *expected {
+                assert!(
+                    stdout.contains(fragment),
+                    "{action} {states} {toggle}: {stdout}"
+                );
+            }
         }
     }
 

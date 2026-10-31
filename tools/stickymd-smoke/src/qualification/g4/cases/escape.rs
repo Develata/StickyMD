@@ -30,9 +30,10 @@ pub(super) fn run(program: &Path, hwnd: WindowHandle, checks: &mut Checks) -> Re
     window::set_clipboard_text("absent-search-query")?;
     window::press_paste(hwnd)?;
     window::press_escape(hwnd)?;
-    // The window is expanded already: wait so a wrong collapse has time to start.
-    thread::sleep(super::NEGATIVE_SETTLE);
-    super::dock::assert_edge(hwnd, edge, false, "Search consumes its Esc")?;
+    // The window is expanded already: hold it there so a wrong collapse shows.
+    super::hold("Search consumes its Esc", || {
+        super::dock::assert_edge(hwnd, edge, false, "Search consumes its Esc")
+    })?;
     window::set_clipboard_text("ESC-RETURNED-TO-SOURCE")?;
     window::press_paste(hwnd)?;
     wait_note(program, |text| text.ends_with("ESC-RETURNED-TO-SOURCE"))?;
@@ -52,8 +53,9 @@ pub(super) fn run(program: &Path, hwnd: WindowHandle, checks: &mut Checks) -> Re
         Ok(window::clipboard_text()?.is_some_and(|text| text.contains("G4 docking integration")))
     })?;
     window::press_escape(hwnd)?;
-    thread::sleep(super::NEGATIVE_SETTLE);
-    super::dock::assert_edge(hwnd, edge, false, "Preview selection consumes Esc")?;
+    super::hold("Preview selection consumes Esc", || {
+        super::dock::assert_edge(hwnd, edge, false, "Preview selection consumes Esc")
+    })?;
     window::set_clipboard_text("NO-SELECTION-COPY")?;
     window::press_copy(hwnd)?;
     thread::sleep(Duration::from_millis(250));

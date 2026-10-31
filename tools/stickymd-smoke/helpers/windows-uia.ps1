@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('capture-window', 'export', 'tray-target', 'tray-targets', 'tray-menu-items', 'tray-menu-closed', 'tray-invoke')]
+    [ValidateSet('capture-window', 'export', 'tray-target', 'tray-targets', 'tray-menu-items', 'tray-menu-closed', 'tray-invoke', 'tray-overflow-close')]
     [string]$Action,
     [Parameter(Mandatory = $true)]
     [int]$ProcessId,
@@ -235,6 +235,104 @@ function Close-TrayOverflow {
     if (Test-TrayOverflowVisible) { Invoke-TrayOverflowToggle }
 }
 
+# The overflow flyout's state as observed: 'visible', 'hidden' (every flyout window read and none
+# shown), or 'unobservable' (any read failed). Unlike Test-TrayOverflowVisible, a failed read is
+# never taken for closed.
+function Get-TrayOverflowState {
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $class = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ClassNameProperty,
+        'TopLevelWindowForOverflowXamlIsland'
+    )
+    try {
+        foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $class)) {
+            $current = $window.Current
+            $rect = $current.BoundingRectangle
+            if (-not $current.IsOffscreen -and $rect.Width -gt 0 -and $rect.Height -gt 0) {
+                return 'visible'
+            }
+        }
+    } catch {
+        return 'unobservable'
+    }
+    return 'hidden'
+}
+
+# Closes the flyout through UI Automation (no input injection) and waits, bounded, until it is
+# observed hidden; an unobservable state is never success. Within the deadline it toggles once,
+# on the first state observed visible (an unobservable read is retried, not skipped past), and
+# never on an unobservable one. Throws with the last state otherwise.
+function Close-TrayOverflowObserved {
+    $toggled = $false
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $state = Get-TrayOverflowState
+        if ($state -eq 'hidden') { return }
+        if ($state -eq 'visible' -and -not $toggled) {
+            $toggled = $true
+            Invoke-TrayOverflowToggle
+        }
+        Start-Sleep -Milliseconds 50
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "the tray overflow flyout was not observed closed (last state: $state; toggled: $toggled)"
+}
+
+# Opens the flyout on one observed state, which decides both the toggle and the answer:
+# 'opened' (observed hidden, toggled here) or 'already-open' (observed visible, untouched). A
+# state that stays unobservable is retried briefly and then an error; nothing is toggled on a
+# guess.
+function Open-TrayOverflowObserved {
+    $deadline = [DateTime]::UtcNow.AddMilliseconds(2000)
+    do {
+        $state = Get-TrayOverflowState
+        if ($state -ne 'unobservable') { break }
+        Start-Sleep -Milliseconds 50
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($state -eq 'visible') { return 'already-open' }
+    if ($state -eq 'hidden') {
+        # Set before the toggle: one that takes effect and then throws still leaves a flyout to
+        # close (Open-TrayOverflowUntil).
+        $script:overflowToggleAttempted = $true
+        Invoke-TrayOverflowToggle
+        return 'opened'
+    }
+    throw 'the tray overflow flyout could not be observed before opening it; it was not toggled'
+}
+
+# Opens the flyout as Open-TrayOverflowObserved does and waits for $Ready (a Wait-Until probe).
+# Returns whether this opened it, and the probe's result. Any failure after a toggle was
+# attempted, including a toggle that took effect and then threw, closes the flyout (observed)
+# before the error is rethrown with that outcome.
+function Open-TrayOverflowUntil([scriptblock]$Ready, [string]$Label) {
+    $script:overflowToggleAttempted = $false
+    try {
+        $opened = (Open-TrayOverflowObserved) -eq 'opened'
+        $result = @(Wait-Until $Ready $Label)
+        return [PSCustomObject]@{ Opened = $opened; Result = $result }
+    } catch {
+        if ($script:overflowToggleAttempted) { throw "$_; $(Close-OpenedTrayOverflow)" }
+        throw
+    }
+}
+
+# After a failed tray step that opened the flyout (`UIA_TRAY_OVERFLOW_OPENED`), the Rust caller
+# asks for this; `UIA_TRAY_OVERFLOW_CLOSED` only when it is observed hidden.
+function Close-TrayOverflowAndReport {
+    Close-TrayOverflowObserved
+    Write-Output 'UIA_TRAY_OVERFLOW_CLOSED'
+}
+
+# This enumeration's own cleanup before it fails: what happened to the flyout it opened, for the
+# error it rethrows (the opening marker is never printed on that path).
+function Close-OpenedTrayOverflow {
+    try {
+        Close-TrayOverflowObserved
+        return 'the overflow flyout this enumeration opened is closed'
+    } catch {
+        return "the overflow flyout this enumeration opened was not closed: $_"
+    }
+}
+
 function Resolve-StickyMdTrayTarget {
     $target = Find-StickyMdTrayTarget
     if ($null -ne $target) { return $target }
@@ -384,12 +482,20 @@ function Write-TrayTargets {
     $minimum = [int]$Item
     $targets = @(Find-StickyMdTrayTargets)
     if ($targets.Count -lt $minimum) {
-        Open-TrayOverflow
-        $targets = @(Wait-Until {
+        # The Rust caller closes a flyout this opened if its tray step then fails; a failure here
+        # closes it before the error (Open-TrayOverflowUntil). Only a flyout observed hidden and
+        # toggled here counts as opened; the Rust caller treats a failed call as unknown.
+        $outcome = Open-TrayOverflowUntil {
             $found = @(Find-StickyMdTrayTargets)
             if ($found.Count -ge $minimum) { return $found }
             return $null
-        } 'all owned StickyMD tray icons')
+        } 'all owned StickyMD tray icons'
+        $openedOverflow = $outcome.Opened
+        $targets = @($outcome.Result)
+        if ($targets.Count -gt 16 -and $openedOverflow) {
+            throw "Too many same-name tray icons for a bounded search; $(Close-OpenedTrayOverflow)"
+        }
+        if ($openedOverflow) { Write-Output 'UIA_TRAY_OVERFLOW_OPENED' }
     }
     if ($targets.Count -gt 16) { throw 'Too many same-name tray icons for a bounded search' }
     foreach ($target in $targets) {
@@ -452,4 +558,5 @@ switch ($Action) {
     'tray-menu-items' { Write-TrayMenuItems }
     'tray-menu-closed' { Wait-TrayMenuClosed }
     'tray-invoke' { Invoke-TrayMenuItem }
+    'tray-overflow-close' { Close-TrayOverflowAndReport }
 }

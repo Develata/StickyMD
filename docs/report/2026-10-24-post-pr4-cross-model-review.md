@@ -81,3 +81,45 @@ USER 对上文"需要 USER 决定"第 2–4 项采纳本会话提出的建议，
 - **决定 4（发布例外机制）：以后发布走 plan 11 已有的逐项 waiver**（Tier A case/group、Tier B group，绑定版本与 exact source，计入 `READY`
   并注明"符合批准的发布政策"），不再在 `NOT_READY` 下以合同外的整版例外发布；不改 plan。已加入 release checklist 第 5 节。
   上文第 4 项"若要长期保留，应走 skeleton 级 plan 修改"的表述不完整：plan 11 已有该 waiver 机制，v0.1.1–v0.1.3 未使用它，是因为人工目标声明与逐场景记录未齐，而非缺少机制。
+
+## 后续（2026-10-31，桌面项）
+
+### 修改
+
+| 项 | 处理 | 自动化测试 |
+|---|---|---|
+| 托盘步骤失败后不恢复溢出区与光标 | helper 在 `tray-targets` 自己展开溢出区时输出 `UIA_TRAY_OVERFLOW_OPENED`（自身失败时先收起再报错）；`multiple::open` 开始前用 `GetCursorPos` 记下光标，并记下本次是否展开了溢出区（`Restore`）。只在失败路径恢复：菜单清理之后，若菜单已观察到关闭，经新 helper 命令 `tray-overflow-close`（UIA `InvokePattern`，非输入注入）收起本次展开的溢出区，再经注入模块把光标放回并读回核对；结果写入该步骤的错误。成功路径行为不变（光标仍停在图标上，溢出区按原样），因为既有 G4 case 以此资格化。不额外调用 helper，不增加成功路径耗时 | 解析 `UIA_TRAY_OVERFLOW_OPENED` 的单元断言 |
+| G4 负向检查的 800 ms 单次采样 | `cases::hold`：离散采样，从输入后立即开始，每次采样返回后再隔 50 ms（实际间隔还要加上检查自身耗时，`assert_edge` 约多 20 ms），并在 `NEGATIVE_SETTLE`（800 ms）结束时或之后再采一次，任一次不成立即失败。仍存在于某次采样时的错误状态都会失败，包括原单次末端读取漏掉的"出现后又恢复"；短于采样间隔、落在两次采样之间的瞬态，以及窗口之后才开始的错误仍看不到（异步工作没有完成凭据）。opacity、IME（Ctrl+3）与 escape 两处共四个检查改用它；config 读取遇到原子替换中的短暂失败会重试，不当作"未变" | 假时钟测试 `hold_tests`（检查不耗时）：0–800 ms 采样 17 次、间隔 50 ms；晚出现与跨越采样点的瞬态错误都失败；两次采样之间的瞬态与窗口后的错误不可见（已知限制） |
+
+### 独占桌面预检（本地 EXE，非 exact-candidate 证据）
+
+在临时干净 worktree（`a0b3983` + 本批改动的临时提交；Rust 文件逐字节相同，helper 仅行尾为 CRLF）中构建 release `stickymd-win.exe` 与 smoke 测试，经 `STICKYMD_PREFLIGHT_EXE` 逐项串行运行；预检开始前 USER 关闭了自己的 StickyMD，Clash Verge 保持运行。
+
+| 预检 | 结果 |
+|---|---|
+| `c2d_tray_failure_restores_local_preflight`（新增：打开菜单后请求不存在的项） | PASS：错误记录 "the menu is observed closed; restore: the overflow flyout this step opened is closed; the cursor is back at (945,334)"，读回光标与步骤前一致；本机图标在溢出区，溢出区路径实际执行 |
+| `c2d_dock_local_preflight`（G4-02，含 opacity 与 escape 的持续检查） | 第一次 FAIL：在 opacity 段末尾 Ctrl+S 后等待笔记恢复原文超时，现场笔记为 `:G4 docking integration`（行首多一个半角冒号），该次总耗时 332 s；原因未查明（本批改动不发送按键）。立即重跑 PASS（54 项检查，128 s）。记为未解释的偶发失败，不计为通过证据 |
+| `c2d_ime_local_preflight`（G4-06，含 Ctrl+3 的持续检查） | 第一次在首个 source 提交步骤因微软拼音处于英文模式而停止（环境）；USER 切回中文后 PASS（73 项检查，含两种输入法的 `ime-search-composition-blocks-preview`） |
+| `c2d_tray_local_preflight`（G4-01） | PASS（19 项检查） |
+| `c2d_two_copies_local_preflight`（P08-A11，`exit_owned_copy` 与排他性证明） | PASS；Clash Verge（`tray-icon` 宿主窗口的外来 owner）运行中被正确豁免 |
+
+运行间 E: 盘一度被其他程序占满（与本批无关），磁盘闸拦截构建；USER 释放空间后继续。G4 `NEGATIVE_SETTLE` 从"单次采样"收窄为"窗口内持续观察"，窗口之后才发生的错误仍是已知限制。
+
+第九轮审查 DISAGREE，5 项 SHOULD_FIX 均已核实并修复，修复后的桌面预检见下：
+- helper 的溢出区观察改为三态（可见 / 观察到隐藏 / 无法观察），只有观察到隐藏才报告收起，无法观察不再当作已收起；
+- helper 自身失败路径有界确认收起，并把结果并入原错误；
+- 没有活动弹出菜单所有者时，先由 helper 观察到菜单关闭才收起溢出区；
+- "本次展开了溢出区"在候选校验之前读取，候选被拒绝时仍会恢复；
+- `hold` 的说明改为离散采样（上表已改；原表述"窗口内出现的错误状态都会失败"夸大）。
+
+另删除 helper 中不可达的 `tray-overflow-state` 分支。首次 G4-02 失败（行首冒号）仍为 NEEDS_VERIFICATION：未找到本批改动导致它的机制，也无法排除时序影响。
+
+第九轮修复后，在新临时 worktree（Rust 文件与本批逐字节相同；helper 只因 `eol=crlf` 检出为 CRLF，归一行尾后相同）上重跑受 helper 改动影响的托盘预检（USER 再次关闭自己的 StickyMD，Clash Verge 运行中）：`c2d_tray_failure_restores_local_preflight` PASS（溢出区路径实际执行，"the overflow flyout this step opened is closed; the cursor is back at (1242,1158)"），`c2d_tray_local_preflight`（G4-01）PASS，`c2d_two_copies_local_preflight` PASS。G4-02 / G4-06 此轮只改注释，未重跑。
+
+第十轮审查（DISAGREE，3 项 SHOULD_FIX，均已核实并修复）：没有活动弹出菜单所有者时，逐个观察全部自有副本的菜单关闭（不只目标），任一未观察到关闭即不收起溢出区，原因写入错误；菜单关闭观察的原始错误不再丢弃（`menus closed=...`）；溢出区状态改为 `Untouched / Opened / Unknown`：helper 调用失败或超时（可能已展开却来不及输出标记）记为未知，未知时只报告、不切换；helper 的 `Open-TrayOverflow` 移入自身清理范围。另把"代码逐字节相同"改为"Rust 文件逐字节相同、helper 仅行尾不同"。
+
+第十一轮审查（DISAGREE，1 项 SHOULD_FIX，已核实并修复）：helper 曾先读一次状态判定"本次是否展开"，展开时又独立再读，首读无法观察、次读已可见时会误报"本次已展开"，失败时 Rust 会收起原本就展开的溢出区。现由 `Open-TrayOverflowObserved` 以同一次观察同时决定是否切换与返回值（观察到隐藏才切换并返回 opened；观察到可见返回 already-open；持续无法观察则短暂重试后报错、不切换），并以加载 helper 源码、脚本化 UIA 读取的 PowerShell 测试覆盖"首读无法观察→次读可见"等五种序列。
+
+第十二轮审查（DISAGREE，1 项 SHOULD_FIX 与 1 项 NEEDS_VERIFICATION，均已处理）：`Close-TrayOverflowObserved` 原来只在轮询前看一次是否可见，首读无法观察时之后即使一直可见也只空等到超时；现改为在期限内重试，首次观察到可见时切换一次、无法观察时从不切换。`Open-TrayOverflowObserved` 在切换前设置"已尝试打开"标记，新函数 `Open-TrayOverflowUntil` 在之后的任何失败（包括切换生效后才抛错）时观察并收起溢出区，再带上结果重新抛错；从未观察到状态时不切换。PowerShell 测试（加载 helper 源码、脚本化读取与切换）覆盖八种序列；两处变异（回到"只在轮询前切换"、标记移到切换之后）均使测试失败，已恢复。
+
+第十三轮审查 AGREE（无 BLOCKER / SHOULD_FIX；NICE：新 PowerShell 测试未覆盖 `Write-TrayTargets` 对目标结果的完整消费；NEEDS_VERIFICATION：真实 Explorer 上 Invoke 延迟或部分生效，以及首次 G4-02 的行首冒号）。审查后在 Rust 文件逐字节相同（helper 仅行尾为 CRLF）的临时 worktree 上重跑托盘预检，USER 关闭自己的 StickyMD、Clash Verge 运行中：`c2d_tray_failure_restores_local_preflight` PASS（这次还经过一次"悬停后候选变化、重新枚举"，溢出区收起、光标回到 (1407,931)），`c2d_tray_local_preflight`（G4-01）PASS，`c2d_two_copies_local_preflight` PASS。

@@ -173,6 +173,65 @@ fn check_two_copies(
     Ok(evidence)
 }
 
+const TRAY_RESTORE_CHECK: &str = "tray-failure-restores-cursor-and-overflow";
+const TRAY_RESTORE_CASE: exact_checks::DeclaredCase = exact_checks::DeclaredCase {
+    id: "G4-01",
+    checks: &[TRAY_RESTORE_CHECK],
+};
+
+/// A tray step that fails after opening the menu closes the menu, closes an overflow flyout it
+/// opened, and puts the cursor back where it was. Whether the overflow path ran depends on where
+/// the shell shows the icon; the output says which.
+fn check_tray_restore(
+    repository: &std::path::Path,
+    program: &std::path::Path,
+) -> Result<exact_desktop::CaseEvidence, String> {
+    exact_desktop::seed_note(program, "tray restore\n")?;
+    let mut child = exact_desktop::start_until_editor_ready(&program.join("StickyMD.exe"))?;
+    let before = crate::window_control::tray_cursor_position()?;
+    let error = match exact_desktop::tray::invoke_absent_item(repository, child.id()) {
+        Ok(()) => return Err("an item no StickyMD menu has was invoked".to_owned()),
+        Err(error) => error,
+    };
+    println!("LOCAL_PREFLIGHT_TRAY_FAILURE={error}");
+    let after = crate::window_control::tray_cursor_position()?;
+    if after != before {
+        return Err(format!(
+            "the cursor reads {after:?}, not {before:?} as before the step: {error}"
+        ));
+    }
+    let (x, y) = before;
+    for expected in [
+        "the menu is observed closed",
+        &format!("the cursor is back at ({x},{y})"),
+    ] {
+        if !error.contains(expected) {
+            return Err(format!("the failure does not say {expected:?}: {error}"));
+        }
+    }
+    let overflow = if error.contains("the overflow flyout this step opened is closed") {
+        "opened-and-closed"
+    } else if error.contains("this step opened no overflow flyout") {
+        "not-opened"
+    } else {
+        return Err(format!("the overflow outcome is missing: {error}"));
+    };
+    println!("LOCAL_PREFLIGHT_TRAY_OVERFLOW={overflow}");
+    exact_desktop::tray::exit(repository, child.id())?;
+    exact_desktop::wait_until("the tray Exit to end the process", || {
+        Ok(!child.is_running()?)
+    })?;
+    let mut evidence = exact_desktop::CaseEvidence::default();
+    evidence.checks.record(TRAY_RESTORE_CHECK, &[]);
+    Ok(evidence)
+}
+
+#[test]
+#[ignore = "exclusive Windows desktop and tray input; local EXE only"]
+fn c2d_tray_failure_restores_local_preflight() {
+    run(&TRAY_RESTORE_CASE, check_tray_restore);
+}
+
 #[test]
 #[ignore = "exclusive Windows desktop and two owned tray icons; local EXE only"]
 fn c2d_two_copies_local_preflight() {
