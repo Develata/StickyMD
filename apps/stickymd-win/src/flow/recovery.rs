@@ -31,6 +31,10 @@ pub struct RecoveryCoordinator {
     candidate: Option<RecoveryCandidate>,
     canonical_requires_preserve: bool,
     operation: Option<RecoveryOperation>,
+    /// Identity of the pending operation; its I/O receipts are accepted only while it is
+    /// current (plan 04 generation rules 4–5: stale results are dropped).
+    operation_id: Option<u64>,
+    issued_operations: u64,
     restore_guard: Option<Option<DiskFingerprint>>,
 }
 
@@ -40,8 +44,27 @@ impl RecoveryCoordinator {
             candidate,
             canonical_requires_preserve,
             operation: None,
+            operation_id: None,
+            issued_operations: 0,
             restore_guard: None,
         }
+    }
+
+    fn start(&mut self, operation: RecoveryOperation) {
+        self.issued_operations += 1;
+        self.operation = Some(operation);
+        self.operation_id = Some(self.issued_operations);
+    }
+
+    /// The pending operation's identity, carried by its I/O requests.
+    pub fn operation_id(&self) -> Option<u64> {
+        self.operation_id
+    }
+
+    /// Whether a receipt issued for `operation` belongs to the pending operation. A receipt of
+    /// a failed, finished or superseded operation is stale and must change nothing.
+    pub fn accepts(&self, operation: u64) -> bool {
+        self.operation_id == Some(operation)
     }
 
     pub fn is_pending(&self) -> bool {
@@ -61,10 +84,11 @@ impl RecoveryCoordinator {
             .canonical
             .as_ref()
             .map(|canonical| canonical.fingerprint);
-        self.operation = Some(RecoveryOperation::Restoring);
+        let temporary = candidate.temporary.clone();
+        self.start(RecoveryOperation::Restoring);
         self.restore_guard = Some(expected);
         Some(RestorePlan {
-            temporary: candidate.temporary.clone(),
+            temporary,
             expected,
             preserve_canonical_first: self.canonical_requires_preserve,
         })
@@ -77,7 +101,7 @@ impl RecoveryCoordinator {
         if self.canonical_requires_preserve {
             return Some(CanonicalRecoveryPlan::Unusable);
         }
-        self.operation = Some(RecoveryOperation::UsingCanonical);
+        self.start(RecoveryOperation::UsingCanonical);
         Some(
             self.candidate
                 .as_ref()
@@ -98,6 +122,7 @@ impl RecoveryCoordinator {
 
     pub fn fail_operation(&mut self) {
         self.operation = None;
+        self.operation_id = None;
         self.restore_guard = None;
     }
 
@@ -160,6 +185,33 @@ mod tests {
         assert_eq!(plan.temporary.text, "temporary");
         assert!(recovery.begin_restore().is_none());
         assert!(recovery.begin_use_canonical().is_none());
+    }
+
+    #[test]
+    fn receipts_are_accepted_only_for_the_pending_operation() {
+        let candidate = RecoveryCandidate {
+            canonical: Some(loaded("disk")),
+            temporary: loaded("temporary"),
+            temporary_is_newer: true,
+        };
+        let mut recovery = RecoveryCoordinator::new(Some(candidate), false);
+        assert_eq!(recovery.operation_id(), None);
+        recovery.begin_restore().unwrap();
+        let first = recovery.operation_id().unwrap();
+        assert!(recovery.accepts(first));
+        // A failed operation's late receipt is stale, and so is it under the next operation.
+        recovery.fail_operation();
+        assert!(!recovery.accepts(first));
+        assert!(matches!(
+            recovery.begin_use_canonical(),
+            Some(CanonicalRecoveryPlan::Present(_))
+        ));
+        let second = recovery.operation_id().unwrap();
+        assert_ne!(first, second);
+        assert!(!recovery.accepts(first));
+        assert!(recovery.accepts(second));
+        recovery.finish();
+        assert!(!recovery.accepts(second));
     }
 
     #[test]

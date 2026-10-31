@@ -4,6 +4,10 @@ All notable changes are recorded here.
 
 ## Unreleased
 
+- Give the external-file, recovery-cleanup and canonical-preserve I/O receipts an identity:
+  an external observation carries the Durable Fingerprint known when it was requested and is
+  superseded (and re-checked) if that changed, and recovery receipts are accepted only for the
+  pending recovery operation, closing a drift from the plan 04 generation rules.
 - Make the manual acceptance items that need another machine, a VM or a second display optional:
   the previous Windows 11 role, the Clean VM, dual-monitor, display-disconnect, RDP and
   negative-coordinate cases no longer block a release when untested and need no waiver; an
