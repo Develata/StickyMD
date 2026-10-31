@@ -164,7 +164,8 @@ Dock、紧凑窗口与 presentation mechanics 已有对应 exact automation 和�
 每份结果只证明其记录的 candidate，不表示当前源码或新版已完成相同复验。
 Clean VM、真实双屏/混合 DPI、运行中拔屏等未执行环境项的本版本处置
 以 [`v0.1.2` release notes](../release-notes/0.1.2.md) 的精确清单为准；旧版证据不能替代新版验收。
-RDP、sleep/resume 和物理负坐标等 Tier C 项继续遵循 Phase 12 的条件，不因发布特例成为 PASS。
+Sleep/resume（Tier C）以及 Clean VM、多屏、RDP、物理负坐标等可选项（Tier O）继续遵循 Phase 12 的条件，
+不因发布特例或可选而成为 PASS。
 
 ## 文档导航
 

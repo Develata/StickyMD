@@ -72,8 +72,8 @@ pub(super) const STEPS: &[GuidedStep] = &[
         GuidedSession::G2,
         "G2-04",
         &["P12-M11", "P12-M12"],
-        "在真实 mixed-DPI 双屏环境分别验证 Left/Right dock 与 3 DIP 感应条，再拖离超过 16 DIP",
-        "两边 dock、失焦收起、sensor 展开与 DIP/physical conversion 均正确；拖离后为 Floating",
+        "分别验证 Left/Right dock 与 3 DIP 感应条，再拖离超过 16 DIP",
+        "两边 dock、失焦收起与 sensor 展开均正确；拖离后为 Floating",
     ),
     step(
         GuidedSession::G2,

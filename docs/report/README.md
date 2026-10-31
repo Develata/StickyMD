@@ -19,6 +19,10 @@
 - [阶段路由、发布工作流与哈希](2026-09-30-phase-routing-release-workflows-cng.md)：后续 Rust CLI 收拢及 Windows adapter 边界。
 - [资源场景等价与分批记录](2026-09-30-resource-equivalence-and-batching.md)、[续跑计划](2026-09-30-resource-resume-planning.md)、[实际诊断复审](2026-09-30-resource-live-review.md)：区分完整资格化、定向诊断、历史复用和测量范围。
 
+## 发布政策
+
+- [需要额外硬件的人工项改为可选](2026-10-31-optional-hardware-manual-items.md)：`previous` 角色、Clean VM、多屏、RDP 与负坐标不再阻断发布（USER 决定 2026-10-31）。
+
 ## v0.1.3 候选准备
 
 - [PR #4 之后提交的跨模型审查与修复](2026-10-24-post-pr4-cross-model-review.md)：55 个提交的审查结论、已修复项与待 USER 决定事项。

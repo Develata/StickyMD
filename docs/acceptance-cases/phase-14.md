@@ -28,7 +28,7 @@ USER waiver 与仍未执行的极端环境项见
 | P14-A07 | invalid environment（含无法写入物理 cursor position）、identity mismatch、P0/data-safety failure 全局停止 | Automated | qualification environment capability probe + campaign policy unit tests | AUTOMATED PASS |
 | P14-A08 | startup attribution 使用 per-sample milestone intervals；归因记录不自动断言无需产品优化，门槛结果由 Performance receipt 持有 | Automated | attribution parser/classifier tests | AUTOMATED PASS |
 | P14-A09 | Tier A `NOT TESTED` 阻断；PASS 或 explicit waiver 才 eligible | Automated | readiness tests | AUTOMATED PASS |
-| P14-A10 | Tier B group waiver 必须绑定 version/source；Tier C NT 仅在 automation PASS 时 nonblocking | Automated | readiness tests | AUTOMATED PASS |
+| P14-A10 | Tier B group waiver 必须绑定 version/source；Tier C NT 仅在 automation PASS 时 nonblocking；Tier O 与 `previous` 角色的 NT 不阻断、不需要 waiver，已观察到的 FAIL 阻断 | Automated | readiness tests | AUTOMATED PASS |
 | P14-A11 | v0.1.0 waiver 不适用于 v0.1.1 | Automated | readiness version-binding test | AUTOMATED PASS |
 | P14-A12 | 人工观察绑定 exact candidate：日志头绑定 candidate receipt 摘要（其中含 source/EXE/ZIP/version），readiness 与人工命令从同一次读取取得 candidate 与摘要；每条观察记录项、场景、角色与被测环境事实 | Automated | `manual_observation`、`manual_readiness` 测试 | AUTOMATED PASS |
 | P14-A13 | unsigned package 明确记录且不伪造 Authenticode signed fields | Automated | release/package contract tests | AUTOMATED PASS |
@@ -287,6 +287,7 @@ Cargo 工作目录下的配置必须改变缓存身份；不支持的配置禁�
 - Tier A manual facts require exact PASS or explicit case/group waiver。
 - Tier B requires exact PASS or version/source-bound USER disposition。
 - Tier C `NOT TESTED` is nonblocking only while corresponding automated coverage is PASS；FAIL blocks。
+- Optional cells (Tier O and every `previous` cell) are nonblocking when `NOT TESTED` and need no waiver；an observed FAIL blocks。
 - PUSH、TAG、DRAFT-RELEASE、PUBLISH 均不由本矩阵授权。
 
 ## 2026-09-22 release CLI maintenance verification

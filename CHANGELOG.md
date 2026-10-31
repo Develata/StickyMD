@@ -4,6 +4,11 @@ All notable changes are recorded here.
 
 ## Unreleased
 
+- Make the manual acceptance items that need another machine, a VM or a second display optional:
+  the previous Windows 11 role, the Clean VM, dual-monitor, display-disconnect, RDP and
+  negative-coordinate cases no longer block a release when untested and need no waiver; an
+  observed failure still blocks. Left/right dock under mixed DPI moves from M11/M12 to M36.
+
 ## 0.1.3 - 2026-10-23
 
 - Release 0.1.3 with viewport-based formula bitmaps, bounded preview caches, lower image-read

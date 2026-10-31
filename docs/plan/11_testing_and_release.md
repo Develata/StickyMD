@@ -91,7 +91,8 @@ fuzz_text_delta
 - 系统：当前与前一个受支持 Windows 11 版本（目标环境角色 `current`、`previous`，见
   [人工观察记录](#manual-observation-log)）；100/125/150/200% DPI；
   单显示器、双显示器（同 DPI / 混合 DPI / 左侧 / 上方）、运行中断开外接、
-  sleep/resume、RDP reconnect。
+  sleep/resume、RDP reconnect。其中需要额外机器、虚拟机或显示器的部分（`previous` 角色、Clean VM、
+  双显示器与拔插、物理负坐标布局、RDP）是可选人工项：未测不阻断发布，已观察到的 FAIL 仍阻断（见下文人工发布政策）。
 - 输入法：微软拼音、微信输入法（验证项见 `07_editor_and_ime.md`）。真实 profile 的可客观功能事实进入
   exact-candidate 自动化；候选窗位置、遮挡、字体与动画等视觉质量保留人工。
 - 窗口与文件矩阵见 `09_windows_shell.md`、`05_document_persistence.md`。
@@ -291,9 +292,9 @@ USER WAIVED          USER 明确豁免列出的人工 case/group；未列出的 
 Phase 12 source decision template 与 Source Freeze-bound `dist/evidence/release-decisions.json` projection
 只允许 `PENDING`、`USER APPROVED`、`USER REJECTED`、`NOT APPLICABLE`。Rust automation 只能
 记录 USER 已明确给出的决定，不能自行批准；PUSH 决定必须在 remote workflow 前绑定 source identity。
-人工 waiver 只接受具体 `WAIVER-P12-Mxx` key、Tier B 组 key `WAIVER-TIER-B-v{version}` 与目标环境档案 key
-`WAIVER-PROFILE-PREVIOUS-v{version}`，不接受全局 blanket waiver；档案 key 是限定于 `previous` 角色的跨 tier 例外，
-逐项 key 与 Tier B 组 key 不跨 tier。其 source/version identity 来自相同
+人工 waiver 只接受具体 `WAIVER-P12-Mxx` key 与 Tier B 组 key `WAIVER-TIER-B-v{version}`，不接受全局 blanket
+waiver；逐项 key 与 Tier B 组 key 不跨 tier。可选人工项（Tier O 与 `previous` 角色）未测本就不阻断，不需要也不设
+waiver；原目标环境档案 key `WAIVER-PROFILE-PREVIOUS-v{version}` 已退役（USER 决定 2026-10-31），不再被接受。其 source/version identity 来自相同
 Source Freeze；每份人工 waiver 还绑定当前人工观察上下文，并明确列出所处置的 `(项, 角色)` 集合，所有种类使用同一
 校验器，旧格式不迁移。waiver 只处置 `NOT TESTED` 的 `(项, 角色)`，不覆盖 `MANUAL_FAIL` 或无效证据，也不删除已有
 PASS 观察；最终 manual PASS 仍额外绑定 Promoted Candidate。
@@ -309,7 +310,8 @@ PASS 观察；最终 manual PASS 仍额外绑定 Promoted Candidate。
   （`CurrentBuild.UBR`）及其来源与选择日期、允许的 `EditionID`（具体 SKU）与原生架构。选择规则：选择日期时，面向
   通用设备的 General Availability Channel 中仍在服务期的最新与次新功能版本，排除只面向特定新设备的分支。工具
   不联网，不自行推断目标。收据缺失、损坏或含糊时 authority 无效，任何 waiver 都不能替代。两个角色都覆盖完整的
-  人工项注册表，仍按 tier 与 waiver 规则处置。
+  人工项注册表：`current` 按 tier 与 waiver 规则处置；`previous` 需要另一台机器，其全部项为可选人工项（见下文人工
+  发布政策）。
 - **角色匹配**：记录器在被测机器上读取 `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`（64 位视图）的
   `DisplayVersion`、`CurrentBuild`、`EditionID`（`REG_SZ`）与 `UBR`（`REG_DWORD`），以及 `IsWow64Process2` 成功返回
   的 `pNativeMachine`（x64 进程运行于 ARM64 主机不算原生 x64）；采集有超时与输出上限，在每个场景开始与提交时各
@@ -384,7 +386,7 @@ PASS 观察；最终 manual PASS 仍额外绑定 Promoted Candidate。
   即需重新核对分解）、每个断言声明的必需参数集合被同一断言的映射恰好覆盖、目标存在。readiness 无论通过与否都在普通
   输出与 JSON 中列出全部缺口与退役项，不得把人工矩阵表述为完整；映射完整也不等于验收通过。
 - **验证**（实现时进入 Phase 14 矩阵）：角色唯一匹配，以及类型错误、读取失败、两次采集不同、零匹配与多匹配的
-  拒绝；迟到的旧 PASS 与旧 FAIL、重复与冲突 ID；部分覆盖、FAIL 与无效证据优先于 waiver 与 Tier C；上下文失效、日志
+  拒绝；迟到的旧 PASS 与旧 FAIL、重复与冲突 ID；部分覆盖、FAIL 与无效证据优先于 waiver、Tier C 与可选项；上下文失效、日志
   缺失、零字节或损坏与重置（含满额日志的未解除 FAIL 合并带入）、写入失败不留半更新、锁等待有界；FAIL 先于备注落盘，guided step 逐项回答；原进程与原 note 保留、
   M34 例外；观察任务快照一致、无仓库记录、整包导入的拒绝路径；人工义务映射的来源摘要、参数覆盖与目标存在；
   readiness 始终列出缺口与退役项。
@@ -824,9 +826,12 @@ blocking failure，整组仍为 FAIL。完整 Resources 自身不因该策略自
 case/group waiver，否则必须 PASS；Tier B 是环境依赖 gate，可由 USER 对绑定版本与 exact source
 的明确组 waiver 处置；Tier C 的 `NOT TESTED` 在对应自动化合同已 PASS 时不阻断，已观察到的
 `MANUAL_FAIL` 仍阻断。waiver 的绑定与范围见上文 Phase 12 发布资格状态（版本、Source Freeze、人工观察上下文与
-`(项, 角色)` 集合），不跨版本继承。缺 `previous` 角色观察时，
-USER 可用档案 key 处置为 `USER WAIVED` 并计入 READY；汇总逐项逐角色列出，并写明这表示"符合批准的发布政策"，
-不表示技术验收全部完成。
+`(项, 角色)` 集合），不跨版本继承。
+
+可选人工项（USER 决定 2026-10-31）：需要额外机器、虚拟机或显示器才能执行的人工观察不阻断发布，也不需要 waiver。
+它包括 Tier O 的全部项（Clean VM、双显示器同 DPI / 混合 DPI、运行中拔插、RDP、物理负坐标布局），以及 `previous`
+角色下的全部项。可选项的 `NOT TESTED` 计入 READY；已观察到的 `MANUAL_FAIL` 与无效证据仍阻断。汇总逐项逐角色列出
+可选项的 `NOT TESTED`，并写明 READY 不表示这些环境已经测过。单屏改缩放、睡眠唤醒等本机可完成的项不属于可选项。
 
 v0.1.0 允许 unsigned Authenticode distribution；package/receipt 必须明确记录 unsigned，README
 与 release notes 必须说明 Windows reputation warning 及 checksum/attestation 验证方法。自动化

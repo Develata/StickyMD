@@ -23,10 +23,10 @@ pub(in crate::qualification) fn parse_cells(text: &str) -> Result<Cells, String>
         .collect()
 }
 
-/// A waiver key and its cells agree: `WAIVER-P12-Mxx` covers only that case,
-/// `WAIVER-TIER-B-v{version}` only Tier B cases, and `WAIVER-PROFILE-PREVIOUS-v{version}`
-/// only the `previous` role (any tier). Cells are registered, unique and non-empty, and
-/// versioned keys name `version`.
+/// A waiver key and its cells agree: `WAIVER-P12-Mxx` covers only that case and
+/// `WAIVER-TIER-B-v{version}` only Tier B cases. Cells are registered, unique and non-empty,
+/// and the versioned key names `version`. The retired `WAIVER-PROFILE-PREVIOUS-v{version}`
+/// is no longer a waiver key: optional cells never block, so they need none (plan 11).
 pub(in crate::qualification) fn validate(
     key: &str,
     cells: &[(String, Role)],
@@ -65,16 +65,6 @@ pub(in crate::qualification) fn validate(
             None => Ok(()),
         };
     }
-    if let Some(rest) = key.strip_prefix("WAIVER-PROFILE-PREVIOUS-v") {
-        expect_version(key, rest, version)?;
-        return match cells.iter().find(|(_, role)| *role != Role::Previous) {
-            Some((case, role)) => Err(format!(
-                "waiver {key} cannot cover {case}:{}",
-                role.as_str()
-            )),
-            None => Ok(()),
-        };
-    }
     Err(format!("`{key}` is not a manual waiver key"))
 }
 
@@ -109,22 +99,18 @@ mod tests {
         assert!(validate("WAIVER-P12-M03", &cells("P12-M03:current"), version).is_err());
         validate(
             "WAIVER-TIER-B-v0.1.4",
-            &cells("P12-M35:current,P12-M36:previous"),
+            &cells("P12-M38:current,P12-M39:previous"),
             version,
         )
         .unwrap();
         assert!(validate("WAIVER-TIER-B-v0.1.4", &cells("P12-M05:current"), version).is_err());
-        assert!(validate("WAIVER-TIER-B-v0.1.3", &cells("P12-M35:current"), version).is_err());
-        validate(
-            "WAIVER-PROFILE-PREVIOUS-v0.1.4",
-            &cells("P12-M01:previous,P12-M41:previous"),
-            version,
-        )
-        .unwrap();
+        assert!(validate("WAIVER-TIER-B-v0.1.3", &cells("P12-M38:current"), version).is_err());
+        // Optional cases are not Tier B, and the retired profile key waives nothing.
+        assert!(validate("WAIVER-TIER-B-v0.1.4", &cells("P12-M35:current"), version).is_err());
         assert!(
             validate(
                 "WAIVER-PROFILE-PREVIOUS-v0.1.4",
-                &cells("P12-M01:current"),
+                &cells("P12-M01:previous"),
                 version
             )
             .is_err()
