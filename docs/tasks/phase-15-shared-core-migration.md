@@ -62,6 +62,7 @@ B 后的查找偏高不是回退：`source_search.rs` 自 A 起未改；同一�
   效果，winit 的显示与定位没有失败回执，定位又按动画帧发出，需要先决定回执粒度。
 - `AppSession` 未建立：`StickyApp` 仍持有各 coordinator，`NoteIo`、`AssetIo`、`PreviewIo` 按步借用；属于 D。
 - 进入 C 之前要先有逐帧拷贝计数（[plan 10](../plan/10_performance_reliability.md#phase-15-migration-gates)）。
+- 同一副本回退重开（P15-B13）、真实桌面回归（P15-A10）与远程 CI 未执行；`hide_native` 的真实窗口回执只有桌面运行能证明。
 
 ## Out of Scope
 

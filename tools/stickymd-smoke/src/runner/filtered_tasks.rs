@@ -60,25 +60,38 @@ fn runs_ignored(args: &[&str]) -> bool {
 /// The first argument the list check cannot model. A flag that changes which tests run must be
 /// taught to the check, not skipped by it.
 fn unmodelled<'a>(args: &[&'a str], filter: &str) -> Option<&'a str> {
-    const FIXED: [&str; 8] = [
-        "test",
-        "--release",
-        "--locked",
-        "--lib",
-        "--workspace",
-        "--",
-        "--ignored",
-        "--nocapture",
-    ];
-    let mut args = args.iter().copied();
+    let mut args = args.iter().copied().skip(1);
+    let mut harness = false;
     while let Some(arg) = args.next() {
-        if arg == "-p" {
+        let known = if harness {
+            matches!(arg, "--ignored" | "--nocapture" | "--test-threads=1")
+        } else if arg == "--" {
+            harness = true;
+            true
+        } else if arg == "-p" {
             args.next();
-        } else if arg != filter && arg != "--test-threads=1" && !FIXED.contains(&arg) {
+            true
+        } else {
+            arg == filter || matches!(arg, "--release" | "--locked" | "--lib" | "--workspace")
+        };
+        if !known {
             return Some(arg);
         }
     }
     None
+}
+
+/// A name a test command gives the harness itself, after `--`. `selection` sees no filter there,
+/// so such a task would otherwise escape the check.
+fn harness_filter<'a>(args: &[&'a str]) -> Option<&'a str> {
+    if args.first() != Some(&"test") {
+        return None;
+    }
+    args.iter()
+        .copied()
+        .skip_while(|arg| *arg != "--")
+        .skip(1)
+        .find(|arg| !arg.starts_with('-'))
 }
 
 /// Every plan the CLI can build. A module run narrows these tasks to a package that may hold no
@@ -115,6 +128,11 @@ pub(super) fn all() -> Result<Vec<FilteredTask>, String> {
             continue;
         };
         let Some((packages, filter)) = selection(&args) else {
+            if let Some(name) = harness_filter(&args) {
+                return Err(format!(
+                    "`{label}`: the filter check cannot model `{name}` after `--`"
+                ));
+            }
             continue;
         };
         if let Some(arg) = unmodelled(&args, filter) {
@@ -168,6 +186,17 @@ mod tests {
         assert_eq!(unmodelled(&target, "name"), Some("--test"));
         let exact = ["test", "-p", "a", "name", "--", "--exact"];
         assert_eq!(unmodelled(&exact, "name"), Some("--exact"));
+        let tail = ["test", "-p", "a", "name", "--", "test"];
+        assert_eq!(unmodelled(&tail, "name"), Some("test"));
+        assert_eq!(
+            harness_filter(&["test", "-p", "a", "--", "name", "--ignored"]),
+            Some("name")
+        );
+        assert_eq!(
+            harness_filter(&["test", "-p", "a", "--", "--ignored"]),
+            None
+        );
+        assert_eq!(harness_filter(&["run", "--", "name"]), None);
     }
 
     #[test]

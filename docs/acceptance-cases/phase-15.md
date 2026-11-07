@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- |
 | P15-A01 | `stickymd-app` 不含 unsafe，不依赖 winit、softbuffer 或平台 crate，源码无平台类型与 `cfg(windows)`/`target_os` | Automated | `governance.rs` `verify_shared_application_boundary` 与其回归 | AUTOMATED PASS |
 | P15-A02 | 迁移的语义测试在 `stickymd-app` 下实际执行，Linux portable 选择包含该包 | Automated | `cargo test -p stickymd-app --locked`（Windows；WSL Debian 115 passed、2 个 Release 基线 ignored）；`ci` portable 选择回归 | AUTOMATED PASS |
-| P15-A03 | 按名字过滤的 `cargo test` 任务选中其测试：Windows 默认构建的实际测试清单里，任务按其模式（`--ignored`、`--lib`）至少运行所选包的一个测试，所选包之外的产品包没有它该运行的测试；各平台的源码核对覆盖其他平台才编译的测试；Release 或其他 profile 才编译的测试不在核对范围 | Automated | `unit_owners::verify` 的 `verify_filters`（`unit-test owner verification`，Windows 全量）；`runner::test_filters`（各平台）；`runner::filtered_tasks` 拒绝未建模的参数；G4 定向运行以通过数为 0 判失败 | AUTOMATED PASS |
+| P15-A03 | 按名字过滤的 `cargo test` 任务选中其测试：Windows 默认构建的实际测试清单里，任务按其模式（`--ignored`、`--lib`）至少运行所选包的一个测试，所选包之外的产品包没有它该运行的测试；各平台的近似源码核对（同样区分模式）覆盖其他平台才编译的测试；Release 或其他 profile 才编译的测试不在核对范围 | Automated | `unit_owners::verify` 的 `verify_filters`（`unit-test owner verification`，Windows 全量）；`runner::test_filters`（各平台）；`runner::filtered_tasks` 拒绝未建模的参数；G4 定向运行以通过数为 0 判失败 | AUTOMATED PASS |
 | P15-A04 | 新增路径有资格化指纹规则，旧规则无命中或产品根之外的源码即失败 | Automated | `qualification::module_ledger::fingerprint` 分类与回归 | AUTOMATED PASS |
 | P15-A05 | `config.toml` 字节在代码移动前后一致，load 后 save 不改变字节 | Automated | `config::storage::tests::phase15_config_bytes_are_fixed_and_survive_a_load_and_save`（基线提交与迁移后各通过一次；这不等于回退重开同一副本，后者见 P15-B13） | AUTOMATED PASS |
 | P15-A06 | 无操作启动与保存不改变 note、config、图片字节 | Automated | `startup::bootstrap::tests::phase15_a_no_op_start_and_save_leave_the_data_byte_identical`（基线提交与迁移后各通过一次） | AUTOMATED PASS |
