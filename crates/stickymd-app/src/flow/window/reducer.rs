@@ -50,6 +50,7 @@ impl WindowShellCoordinator {
                 lifecycle: LifecycleState::Running,
                 tray_available,
                 hide_save_pending: false,
+                last_window_action: 0,
                 temporary_sensor_topmost: matches!(
                     initial_visibility,
                     StableVisibility::DockedCollapsed(_)
@@ -141,6 +142,9 @@ impl WindowShellCoordinator {
             } => {
                 self.state.guards = guards;
                 self.complete_quit_barrier(barrier, succeeded, &mut effects);
+            }
+            WindowIntent::ActionCompleted { id, outcome } => {
+                self.complete_window_action(id, outcome, &mut effects);
             }
         }
         effects
@@ -249,6 +253,13 @@ impl WindowShellCoordinator {
             VisibilityState::HiddenToTray { .. } => {
                 VisibilityState::HiddenToTray { restore: stable }
             }
+            VisibilityState::HidePending {
+                id, sensor_topmost, ..
+            } => VisibilityState::HidePending {
+                id,
+                restore: stable,
+                sensor_topmost,
+            },
             VisibilityState::AwaitingHideSave { .. } => {
                 VisibilityState::AwaitingHideSave { restore: stable }
             }
@@ -410,6 +421,9 @@ impl WindowShellCoordinator {
         match self.state.visibility {
             VisibilityState::Presented(stable)
             | VisibilityState::AwaitingHideSave { restore: stable }
+            | VisibilityState::HidePending {
+                restore: stable, ..
+            }
             | VisibilityState::HiddenToTray { restore: stable } => stable,
             VisibilityState::Animating(animation) => animation.final_visibility,
         }
@@ -449,6 +463,7 @@ mod phase8_window_tests {
         QuitBarrier, QuitStage, ShowReason, WindowSaveReason,
     };
     use super::*;
+    use crate::ports::FailureKind;
 
     fn monitor(identity: &str, x: i32, scale: f64, primary: bool) -> MonitorGeometry {
         MonitorGeometry::new(
@@ -492,17 +507,146 @@ mod phase8_window_tests {
         ));
         assert_eq!(coordinator.state().lifecycle(), LifecycleState::Running);
         assert!(effects.contains(&WindowEffect::RequestNoteSave(WindowSaveReason::HideToTray)));
-        assert!(!effects.contains(&WindowEffect::SetVisible(false)));
+        assert_eq!(hide_request(&effects), None);
         assert!(!effects.contains(&WindowEffect::RequestSafeAssetGc));
         let effects = coordinator.dispatch(WindowIntent::HideSaveCompleted {
             succeeded: true,
             guards: WindowGuardSnapshot::default(),
         });
+        assert!(hide_request(&effects).is_some());
+        report_hidden(&mut coordinator, &effects);
         assert!(matches!(
             coordinator.state().visibility(),
             VisibilityState::HiddenToTray { .. }
         ));
-        assert!(effects.contains(&WindowEffect::SetVisible(false)));
+    }
+
+    /// The action a host is asked to run to hide the window.
+    fn hide_request(effects: &[WindowEffect]) -> Option<u64> {
+        effects.iter().find_map(|effect| match effect {
+            WindowEffect::HideWindow { id } => Some(*id),
+            _ => None,
+        })
+    }
+
+    /// What a host does after `HideWindow`: reports that the window is hidden.
+    fn report_hidden(
+        coordinator: &mut WindowShellCoordinator,
+        effects: &[WindowEffect],
+    ) -> Vec<WindowEffect> {
+        coordinator.dispatch(WindowIntent::ActionCompleted {
+            id: hide_request(effects).expect("a hide request"),
+            outcome: Ok(()),
+        })
+    }
+
+    /// Closes a clean window, up to the host's report.
+    fn request_clean_hide(coordinator: &mut WindowShellCoordinator) -> u64 {
+        let effects = coordinator.dispatch(WindowIntent::CloseRequested {
+            now_ms: 0,
+            guards: WindowGuardSnapshot {
+                window_focused: true,
+                ..Default::default()
+            },
+        });
+        hide_request(&effects).expect("a clean close hides at once")
+    }
+
+    #[test]
+    fn a_hide_commits_only_on_its_success_receipt() {
+        let mut coordinator = coordinator(StableVisibility::Floating);
+        let id = request_clean_hide(&mut coordinator);
+        assert!(matches!(
+            coordinator.state().visibility(),
+            VisibilityState::HidePending { .. }
+        ));
+        let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+            id,
+            outcome: Ok(()),
+        });
+        assert!(matches!(
+            coordinator.state().visibility(),
+            VisibilityState::HiddenToTray { .. }
+        ));
+        assert_eq!(effects, [WindowEffect::ReleaseHiddenCaches]);
+    }
+
+    /// Plan 04: a rejected hide neither enters `HiddenToTray` nor releases the hidden caches.
+    #[test]
+    fn a_rejected_hide_stays_shown_with_its_input_and_caches() {
+        for kind in [
+            FailureKind::Failed,
+            FailureKind::Unavailable,
+            FailureKind::Unsupported,
+        ] {
+            let mut coordinator = coordinator(StableVisibility::Floating);
+            let id = request_clean_hide(&mut coordinator);
+            let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+                id,
+                outcome: Err(kind),
+            });
+            assert_eq!(
+                coordinator.state().visibility(),
+                VisibilityState::Presented(StableVisibility::Floating)
+            );
+            assert_eq!(
+                effects,
+                [
+                    WindowEffect::SetImeAllowed(true),
+                    WindowEffect::SetEditorInputEnabled(true),
+                    WindowEffect::HideRejected(kind),
+                    WindowEffect::RequestRedraw,
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn a_rejected_hide_returns_the_edge_sensor_to_topmost() {
+        let mut coordinator = coordinator(StableVisibility::Floating);
+        coordinator.state.temporary_sensor_topmost = true;
+        let id = request_clean_hide(&mut coordinator);
+        assert!(!coordinator.state().temporary_sensor_topmost());
+        let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+            id,
+            outcome: Err(FailureKind::Failed),
+        });
+        assert!(coordinator.state().temporary_sensor_topmost());
+        assert!(effects.contains(&WindowEffect::SetTemporarySensorTopmost(true)));
+    }
+
+    #[test]
+    fn a_stale_hide_receipt_changes_nothing() {
+        let mut coordinator = coordinator(StableVisibility::Floating);
+        let id = request_clean_hide(&mut coordinator);
+        let before = coordinator.state().visibility();
+        for outcome in [Ok(()), Err(FailureKind::Failed)] {
+            let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+                id: id + 1,
+                outcome,
+            });
+            assert!(effects.is_empty());
+            assert_eq!(coordinator.state().visibility(), before);
+        }
+    }
+
+    /// A show overtakes a hide still in flight; the hide's late receipt must not hide the window.
+    #[test]
+    fn a_hide_receipt_after_a_show_changes_nothing() {
+        let mut coordinator = coordinator(StableVisibility::Floating);
+        let id = request_clean_hide(&mut coordinator);
+        coordinator.dispatch(WindowIntent::ShowRequested {
+            reason: ShowReason::Tray,
+            now_ms: 1,
+        });
+        let shown = coordinator.state().visibility();
+        assert!(matches!(shown, VisibilityState::Presented(_)));
+        let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+            id,
+            outcome: Ok(()),
+        });
+        assert!(effects.is_empty());
+        assert_eq!(coordinator.state().visibility(), shown);
     }
 
     #[test]
@@ -530,7 +674,7 @@ mod phase8_window_tests {
         );
         assert!(effects.contains(&WindowEffect::HideCancelled));
         assert!(effects.contains(&WindowEffect::SetEditorInputEnabled(true)));
-        assert!(!effects.contains(&WindowEffect::SetVisible(false)));
+        assert_eq!(hide_request(&effects), None);
     }
 
     #[test]
@@ -570,7 +714,7 @@ mod phase8_window_tests {
             coordinator.state().lifecycle(),
             LifecycleState::Quitting(QuitStage::AwaitingAssetGc)
         );
-        assert!(!effects.contains(&WindowEffect::SetVisible(false)));
+        assert_eq!(hide_request(&effects), None);
     }
 
     #[test]
@@ -842,10 +986,11 @@ mod phase8_window_tests {
     #[test]
     fn show_is_ignored_while_quitting() {
         let mut coordinator = coordinator(StableVisibility::Floating);
-        coordinator.dispatch(WindowIntent::CloseRequested {
+        let effects = coordinator.dispatch(WindowIntent::CloseRequested {
             now_ms: 0,
             guards: WindowGuardSnapshot::default(),
         });
+        report_hidden(&mut coordinator, &effects);
         coordinator.dispatch(WindowIntent::TrayQuitRequested {
             guards: WindowGuardSnapshot::default(),
         });
@@ -1337,10 +1482,11 @@ mod phase8_window_tests {
     #[test]
     fn hidden_monitor_recovery_stays_hidden_then_shows_expanded_on_primary() {
         let mut coordinator = coordinator(StableVisibility::DockedCollapsed(DockEdge::Left));
-        coordinator.dispatch(WindowIntent::CloseRequested {
+        let effects = coordinator.dispatch(WindowIntent::CloseRequested {
             now_ms: 0,
             guards: WindowGuardSnapshot::default(),
         });
+        report_hidden(&mut coordinator, &effects);
         let primary = monitor("replacement-primary", 0, 1.25, true);
         coordinator.dispatch(WindowIntent::DisplayTopologyChanged {
             monitors: vec![primary.clone()],
@@ -1358,7 +1504,7 @@ mod phase8_window_tests {
             VisibilityState::Presented(StableVisibility::DockedExpanded(DockEdge::Left))
         );
         assert!(primary.work_area.contains(coordinator.state().frame()));
-        assert!(effects.contains(&WindowEffect::SetVisible(true)));
+        assert!(effects.contains(&WindowEffect::ShowWindow));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 ## Completion State
 
-In Progress。A 的代码迁移与本机验证已完成；B 的笔记、预览、资产/导出/配置链已迁入 `stickymd-app`，窗口/退出链待做；跨模型审查待做；C、D 未开始。
+In Progress。A 的代码迁移与本机验证已完成；B 的笔记、预览、资产/导出/配置链已迁入 `stickymd-app`，隐藏已按请求、回执、提交执行；跨模型审查待做；C、D 未开始。
 
 ## Goal
 
@@ -21,7 +21,7 @@ Debian、macOS 宿主留出真实可用的共享层。Windows 产品行为与数
 | 里程碑 | 状态 | 内容 |
 | --- | --- | --- |
 | A | 本机验证完成 | `stickymd-app`；`instruction/`、`flow/`（含 `flow/window/`）、配置模型、`interaction/`、`source_search.rs` |
-| B | 进行中：笔记、预览、资产/导出/配置链完成；窗口/退出待做 | 执行接口与应用运行时；窗口动作的请求、回执与提交；入口测试见 plan 11 |
+| B | 本机验证完成：笔记、预览、资产/导出/配置链与隐藏回执；显示、置顶、定位的回执未做（P15-B12） | 执行接口与应用运行时；窗口动作的请求、回执与提交；入口测试见 plan 11 |
 | C | 未开始 | `stickymd-desktop`；通用控件、绘制、命中、事件翻译；各 target 的 backend features |
 | D | 未开始 | 迁移剩余业务分支，删除仅为迁移保留的转发，最终审查 |
 

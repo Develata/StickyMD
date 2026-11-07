@@ -946,7 +946,7 @@ fn closing_and_showing_reach_the_window_in_order() {
             "CancelImePreedit",
             "SetImeAllowed(false)",
             "SetEditorInputEnabled(false)",
-            "SetVisible(false)",
+            "HideWindow { id: 1 }",
             "ReleaseHiddenCaches",
         ]
     );
@@ -961,7 +961,7 @@ fn closing_and_showing_reach_the_window_in_order() {
         applied_effects(&mut app),
         [
             "ApplyFrame",
-            "SetVisible(true)",
+            "ShowWindow",
             "FocusWindow",
             "SetImeAllowed(true)",
             "SetEditorInputEnabled(true)",

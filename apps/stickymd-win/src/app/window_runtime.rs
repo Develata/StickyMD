@@ -288,34 +288,32 @@ impl StickyApp {
             WindowEffect::SetTemporarySensorTopmost(temporary) => {
                 self.apply_effective_topmost(temporary);
             }
-            WindowEffect::SetVisible(visible) => {
-                if !visible {
-                    self.scrollbars = super::scrollbar::ScrollbarInteraction::default();
-                    self.controls.opacity_popup_open = false;
-                    self.controls.opacity_dragging = false;
-                    self.controls.opacity_input_focused = false;
-                    self.controls.opacity_preview = self.config.current().opacity;
-                    self.controls.opacity_input = self.config.current().opacity.to_string();
-                }
-                if let Some(window) = &self.window {
-                    window.set_visible(visible);
-                    if visible {
-                        window.set_minimized(false);
-                    }
-                }
-                self.reassert_tool_window_identity_or_restore_taskbar();
-                if let Some(tray) = &self.tray {
-                    tray.set_window_visible(visible);
-                }
-                if visible {
-                    self.configure_viewports();
-                    let generation = self.coordinator.view().generation;
-                    if let Some(action) = self
-                        .preview_flow
-                        .show(generation, self.preview_visibility())
-                    {
-                        self.submit_preview_action(action);
-                    }
+            WindowEffect::HideWindow { id } => {
+                self.scrollbars = super::scrollbar::ScrollbarInteraction::default();
+                self.controls.opacity_popup_open = false;
+                self.controls.opacity_dragging = false;
+                self.controls.opacity_input_focused = false;
+                self.controls.opacity_preview = self.config.current().opacity;
+                self.controls.opacity_input = self.config.current().opacity.to_string();
+                self.set_native_visible(false);
+                // A winit hide cannot fail, so the receipt is always a success here.
+                self.dispatch_window_intent(
+                    event_loop,
+                    WindowIntent::ActionCompleted {
+                        id,
+                        outcome: Ok(()),
+                    },
+                );
+            }
+            WindowEffect::ShowWindow => {
+                self.set_native_visible(true);
+                self.configure_viewports();
+                let generation = self.coordinator.view().generation;
+                if let Some(action) = self
+                    .preview_flow
+                    .show(generation, self.preview_visibility())
+                {
+                    self.submit_preview_action(action);
                 }
             }
             WindowEffect::FocusWindow => {
@@ -399,6 +397,10 @@ impl StickyApp {
                 self.diagnostic = Some("恢复或外部冲突未解决，窗口不会隐藏。".into());
                 self.request_redraw();
             }
+            WindowEffect::HideRejected(kind) => {
+                self.diagnostic = Some(format!("窗口未能隐藏，保持显示（{kind:?}）。"));
+                self.request_redraw();
+            }
             WindowEffect::HideCancelled => {
                 self.diagnostic = Some("保存失败，窗口保持显示，内存文本仍保留。".into());
                 self.request_redraw();
@@ -429,6 +431,19 @@ impl StickyApp {
             return Ok(());
         };
         crate::platform::windows::tool_window::apply_tool_window_identity(window.as_ref())
+    }
+
+    fn set_native_visible(&mut self, visible: bool) {
+        if let Some(window) = &self.window {
+            window.set_visible(visible);
+            if visible {
+                window.set_minimized(false);
+            }
+        }
+        self.reassert_tool_window_identity_or_restore_taskbar();
+        if let Some(tray) = &self.tray {
+            tray.set_window_visible(visible);
+        }
     }
 
     fn reassert_tool_window_identity_or_restore_taskbar(&mut self) {

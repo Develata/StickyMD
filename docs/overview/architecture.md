@@ -43,7 +43,7 @@ USER 已批准（2026-10-31）：共享实现面向 Windows、Debian、macOS 集
 ```text
 apps/stickymd-win（Windows 宿主：启动接线、原生 adapter）
   → stickymd-desktop（共享界面：控件、绘制、事件翻译）
-  → stickymd-app（共享应用：intent、coordinator、配置、能力接口）
+  → stickymd-app（共享应用：intent、coordinator、配置、能力接口 `ports/`、worker 调度 `execution/`）
   → stickymd-core（领域模型）；stickymd-render（Markdown/数学/排版）
 ```
 

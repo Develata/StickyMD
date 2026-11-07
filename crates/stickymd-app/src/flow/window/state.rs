@@ -3,6 +3,7 @@
 //! plan_ref: docs/plan/09_windows_shell.md#windows-shell-purpose
 
 use super::geometry::{MonitorGeometry, PhysicalRect, WindowPlacement};
+use crate::ports::FailureKind;
 
 pub const HOVER_REVEAL_DELAY_MS: u64 = 100;
 pub const HOVER_LEAVE_COLLAPSE_DELAY_MS: u64 = 500;
@@ -67,8 +68,20 @@ impl AnimationState {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum VisibilityState {
     Presented(StableVisibility),
-    AwaitingHideSave { restore: StableVisibility },
-    HiddenToTray { restore: StableVisibility },
+    AwaitingHideSave {
+        restore: StableVisibility,
+    },
+    /// The host was asked to hide the window (action `id`) and has not reported back; nothing that
+    /// depends on the window being hidden is committed yet (plan 04 window-action-receipts).
+    HidePending {
+        id: u64,
+        restore: StableVisibility,
+        /// The edge sensor's topmost state to return to if the hide is rejected.
+        sensor_topmost: bool,
+    },
+    HiddenToTray {
+        restore: StableVisibility,
+    },
     Animating(AnimationState),
 }
 
@@ -236,13 +249,22 @@ pub enum WindowIntent {
         succeeded: bool,
         guards: WindowGuardSnapshot,
     },
+    /// The Execution Receipt of the window action `id`.
+    ActionCompleted {
+        id: u64,
+        outcome: Result<(), FailureKind>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum WindowEffect {
     ApplyFrame(PhysicalRect),
     SetTemporarySensorTopmost(bool),
-    SetVisible(bool),
+    ShowWindow,
+    /// Hide the window and report `WindowIntent::ActionCompleted` with this `id`.
+    HideWindow {
+        id: u64,
+    },
     FocusWindow,
     CancelImePreedit,
     SetImeAllowed(bool),
@@ -259,6 +281,7 @@ pub enum WindowEffect {
     ReportTrayUnavailable,
     HideBlocked,
     HideCancelled,
+    HideRejected(FailureKind),
     QuitBlocked,
     QuitCancelled(QuitBarrier),
     QuitWarning(QuitBarrier),
@@ -278,6 +301,8 @@ pub struct WindowShellState {
     pub(super) tray_available: bool,
     pub(super) hide_save_pending: bool,
     pub(super) temporary_sensor_topmost: bool,
+    /// The identity of the newest window action request.
+    pub(super) last_window_action: u64,
 }
 
 impl WindowShellState {

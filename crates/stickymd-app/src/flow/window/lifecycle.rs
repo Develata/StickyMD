@@ -7,6 +7,7 @@ use super::state::{
     LifecycleState, QuitBarrier, QuitStage, StableVisibility, VisibilityState, WindowEffect,
     WindowSaveReason,
 };
+use crate::ports::FailureKind;
 
 impl WindowShellCoordinator {
     pub(super) fn hide_to_tray(&mut self, effects: &mut Vec<WindowEffect>) {
@@ -24,7 +25,9 @@ impl WindowShellCoordinator {
         }
         if matches!(
             self.state.visibility,
-            VisibilityState::AwaitingHideSave { .. } | VisibilityState::HiddenToTray { .. }
+            VisibilityState::AwaitingHideSave { .. }
+                | VisibilityState::HidePending { .. }
+                | VisibilityState::HiddenToTray { .. }
         ) {
             return;
         }
@@ -51,6 +54,7 @@ impl WindowShellCoordinator {
         }
         let restore = match self.state.visibility {
             VisibilityState::HiddenToTray { restore }
+            | VisibilityState::HidePending { restore, .. }
             | VisibilityState::AwaitingHideSave { restore } => restore,
             _ => {
                 // A visible window resting, or settling, collapsed at its dock edge is restored
@@ -78,7 +82,7 @@ impl WindowShellCoordinator {
             &self.state.dock.monitor,
         );
         effects.push(WindowEffect::ApplyFrame(self.state.frame));
-        effects.push(WindowEffect::SetVisible(true));
+        effects.push(WindowEffect::ShowWindow);
         effects.push(WindowEffect::FocusWindow);
         effects.push(WindowEffect::SetImeAllowed(true));
         effects.push(WindowEffect::SetEditorInputEnabled(true));
@@ -159,11 +163,53 @@ impl WindowShellCoordinator {
     }
 
     fn complete_hide(&mut self, restore: StableVisibility, effects: &mut Vec<WindowEffect>) {
-        self.state.visibility = VisibilityState::HiddenToTray { restore };
+        self.state.last_window_action += 1;
+        let id = self.state.last_window_action;
+        self.state.visibility = VisibilityState::HidePending {
+            id,
+            restore,
+            sensor_topmost: self.state.temporary_sensor_topmost,
+        };
         self.state.hide_save_pending = false;
         self.set_temporary_sensor_topmost(false, effects);
-        effects.push(WindowEffect::SetVisible(false));
-        effects.push(WindowEffect::ReleaseHiddenCaches);
+        effects.push(WindowEffect::HideWindow { id });
+    }
+
+    /// A hide commits only on its own success receipt; a rejected one leaves the window shown,
+    /// with its input back and every hidden-state cache still in place.
+    pub(super) fn complete_window_action(
+        &mut self,
+        id: u64,
+        outcome: Result<(), FailureKind>,
+        effects: &mut Vec<WindowEffect>,
+    ) {
+        let VisibilityState::HidePending {
+            id: pending,
+            restore,
+            sensor_topmost,
+        } = self.state.visibility
+        else {
+            return;
+        };
+        if pending != id {
+            return;
+        }
+        match outcome {
+            Ok(()) => {
+                self.state.visibility = VisibilityState::HiddenToTray { restore };
+                effects.push(WindowEffect::ReleaseHiddenCaches);
+            }
+            Err(kind) => {
+                self.state.visibility = VisibilityState::Presented(restore);
+                self.set_temporary_sensor_topmost(sensor_topmost, effects);
+                effects.push(WindowEffect::SetImeAllowed(
+                    self.state.guards.window_focused,
+                ));
+                effects.push(WindowEffect::SetEditorInputEnabled(true));
+                effects.push(WindowEffect::HideRejected(kind));
+                effects.push(WindowEffect::RequestRedraw);
+            }
+        }
     }
 
     pub(super) fn complete_quit_barrier(

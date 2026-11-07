@@ -33,3 +33,6 @@
 | P15-B08 | Preview worker、任务协议与结果准入在 `stickymd-app`；宿主只注入本地图片读取与唤醒回调 | Automated | `execution::preview_worker::tests`、`flow::preview_io::tests`（Linux 也运行）、`app::preview_runtime::runtime_tests` | AUTOMATED PASS |
 | P15-B09 | 资产、导出、配置回执与 worker 停止的每个分支都已钉住，迁移的每一批都不变 | Automated | `app::phase15_worker_receipt_tests`（`phase 15` 运行） | AUTOMATED PASS |
 | P15-B10 | I/O worker 与邮箱在 `stickymd-app`，经 `IoPorts` 注入的资产、导出、配置端口执行；Windows 只实现端口与注入唤醒回调；资产决策在 `AssetIo` | Automated | `execution::io_worker::tests`（Linux 也运行）、`persistence::wiring_tests`（真实 adapter） | AUTOMATED PASS |
+| P15-B11 | 隐藏分请求、回执、提交：成功回执才进入 `HiddenToTray` 并释放缓存；被拒绝时保持显示、恢复输入与边缘感应置顶并上报；过期回执无副作用；窗口效果的顺序不变 | Automated | `flow::window::reducer` 的 `a_hide_commits_only_on_its_success_receipt`、`a_rejected_hide_stays_shown_with_its_input_and_caches`、`a_stale_hide_receipt_changes_nothing`、`a_hide_receipt_after_a_show_changes_nothing`；`app::phase15_receipt_tests::closing_and_showing_reach_the_window_in_order` | AUTOMATED PASS |
+| P15-B12 | 显示、置顶、定位的请求与回执（plan 04 窗口动作节） | Automated | 未实现：这三类动作仍是单向效果，winit 的显示与定位没有失败回执 | NOT TESTED |
+| P15-B13 | 上一检查点的二进制重新打开迁移后写出的数据副本（plan 11 每批出口 3） | Manual | 需独占桌面；字节 golden 与真实磁盘恢复测试已覆盖无窗口的部分 | NOT TESTED |
