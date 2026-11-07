@@ -6,7 +6,7 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#tray-lifecycle
 
-use crate::flow::window::state::{QuitBarrier, WindowEffect};
+use stickymd_app::flow::window::state::{QuitBarrier, WindowEffect};
 
 pub(super) const PLAIN: &str = "StickyMD";
 pub(super) const DIRTY: &str = "StickyMD *";
@@ -187,8 +187,8 @@ pub(super) mod tests {
     /// Every window effect the reducer can emit, one of each variant (each quit barrier for the
     /// barrier-carrying ones). The `match` stops compiling when a variant is added.
     pub(in crate::app) fn every_effect() -> Vec<WindowEffect> {
-        use crate::flow::window::geometry::{PhysicalRect, WindowPlacement};
-        use crate::flow::window::state::{DockEdge, WindowSaveReason};
+        use stickymd_app::flow::window::geometry::{PhysicalRect, WindowPlacement};
+        use stickymd_app::flow::window::state::{DockEdge, WindowSaveReason};
         let barriers = [
             QuitBarrier::Paste,
             QuitBarrier::NoteSave,

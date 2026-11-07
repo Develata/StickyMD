@@ -3,9 +3,9 @@
 //! plan_ref: docs/plan/09_windows_shell.md#tray-lifecycle
 
 use crate::app::headless_tests::fixture;
-use crate::flow::SaveTrigger;
-use crate::flow::window::state::{QuitBarrier, WindowEffect};
-use crate::instruction::AppIntent;
+use stickymd_app::flow::SaveTrigger;
+use stickymd_app::flow::window::state::{QuitBarrier, WindowEffect};
+use stickymd_app::instruction::AppIntent;
 use stickymd_core::{EditKind, Selection};
 
 #[test]

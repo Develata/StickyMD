@@ -79,6 +79,7 @@ const REQUIRED_FILES: &[&str] = &[
     "docs/report/phase-14-memory-attribution.md",
     "docs/report/phase-14-preview-selection-geometry-design.md",
     "docs/report/phase-14-real-ime-automation-design.md",
+    "docs/tasks/phase-15-shared-core-migration.md",
     "docs/reference/qualification-execution-model.md",
     "tools/manual/phase-14-guide.md",
     "docs/release-notes/0.1.0-draft.md",
@@ -650,6 +651,7 @@ fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
     for relative in [
         "crates/stickymd-core/src/lib.rs",
         "crates/stickymd-render/src/lib.rs",
+        "crates/stickymd-app/src/lib.rs",
     ] {
         let path = root.join(relative);
         if !read_text(&path)?.contains("#![forbid(unsafe_code)]") {
@@ -780,20 +782,7 @@ fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
         }
     }
 
-    let flow_directory = root.join("apps/stickymd-win/src/flow/window");
-    let mut flow_rust = Vec::new();
-    collect_files(&flow_directory, "rs", &mut flow_rust)?;
-    for path in flow_rust {
-        let content = read_text(&path)?;
-        for forbidden in ["winit::", "windows::", "HWND", "HMONITOR"] {
-            if content.contains(forbidden) {
-                return Err(format!(
-                    "{} leaks platform type `{forbidden}` into the pure window domain",
-                    path.display()
-                ));
-            }
-        }
-    }
+    verify_shared_application_boundary(root)?;
 
     let mut production_rust = Vec::new();
     collect_files(&root.join("apps"), "rs", &mut production_rust)?;
@@ -1348,6 +1337,55 @@ fn verify_forbidden_packages(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The Shared Application stays free of platform types, platform conditionals and platform
+/// dependencies (plan 03 `#shared-crates`). The crate must exist: a scan of nothing proves nothing.
+fn verify_shared_application_boundary(root: &Path) -> Result<(), String> {
+    let mut sources = Vec::new();
+    collect_files(&root.join("crates/stickymd-app/src"), "rs", &mut sources)?;
+    if sources.is_empty() {
+        return Err("crates/stickymd-app/src holds no Rust source to check".to_owned());
+    }
+    for path in sources {
+        let content = read_text(&path)?;
+        for forbidden in [
+            "winit::",
+            "windows::",
+            "softbuffer::",
+            "HWND",
+            "HMONITOR",
+            "cfg(windows)",
+            "target_os",
+        ] {
+            if content.contains(forbidden) {
+                return Err(format!(
+                    "{} leaks `{forbidden}` into the Shared Application",
+                    path.display()
+                ));
+            }
+        }
+    }
+    let manifest = read_text(&root.join("crates/stickymd-app/Cargo.toml"))?;
+    for line in manifest.lines().map(str::trim_start) {
+        let name = line.split(['=', '.', ' ']).next().unwrap_or_default();
+        if [
+            "winit",
+            "windows",
+            "softbuffer",
+            "raw-window-handle",
+            "arboard",
+            "tray-icon",
+            "notify",
+        ]
+        .contains(&name)
+        {
+            return Err(format!(
+                "crates/stickymd-app/Cargo.toml depends on platform crate `{name}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn collect_files(
     directory: &Path,
     extension: &str,
@@ -1386,7 +1424,50 @@ fn read_text(path: &Path) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{frozen_trace_ids, is_trace_id, manual_rows, markdown_links, matrix_rows};
+    use super::{
+        frozen_trace_ids, is_trace_id, manual_rows, markdown_links, matrix_rows,
+        verify_shared_application_boundary,
+    };
+
+    /// The real crate passes; a platform type, a platform conditional or a platform dependency
+    /// fails; a missing source tree fails rather than passing on nothing.
+    #[test]
+    fn the_shared_application_boundary_refuses_platform_code() {
+        let repository = crate::governance::find_repository_root(std::path::Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        )))
+        .unwrap();
+        verify_shared_application_boundary(&repository).unwrap();
+
+        let root =
+            std::env::temp_dir().join(format!("stickymd-governance-app-{}", std::process::id()));
+        let source = root.join("crates/stickymd-app/src/lib.rs");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        let manifest = root.join("crates/stickymd-app/Cargo.toml");
+        std::fs::write(&manifest, "[dependencies]\nserde.workspace = true\n").unwrap();
+        std::fs::write(&source, "pub struct Clean;\n").unwrap();
+        verify_shared_application_boundary(&root).unwrap();
+        for bad in [
+            "use winit::window::Window;",
+            "#[cfg(windows)]\nmod a;",
+            "// HWND",
+        ] {
+            std::fs::write(&source, bad).unwrap();
+            assert!(verify_shared_application_boundary(&root).is_err(), "{bad}");
+        }
+        std::fs::write(&source, "pub struct Clean;\n").unwrap();
+        for bad in [
+            "winit.workspace = true",
+            "softbuffer = \"0.4\"",
+            "windows = { version = \"1\" }",
+        ] {
+            std::fs::write(&manifest, format!("[dependencies]\n{bad}\n")).unwrap();
+            assert!(verify_shared_application_boundary(&root).is_err(), "{bad}");
+        }
+        std::fs::remove_file(&source).unwrap();
+        assert!(verify_shared_application_boundary(&root).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn markdown_link_parser_ignores_images() {

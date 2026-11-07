@@ -5,8 +5,8 @@
 use stickymd_core::{ExternalFileState, FileConflict, Selection};
 
 use super::StickyApp;
-use crate::flow::{ReconciliationAction, SaveTrigger};
 use crate::persistence::{PersistMode, TemporaryCleanup};
+use stickymd_app::flow::{ReconciliationAction, SaveTrigger};
 
 impl StickyApp {
     pub(super) fn reconcile_external(&mut self, external: ExternalFileState) {

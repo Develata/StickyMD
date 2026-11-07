@@ -68,7 +68,7 @@ from the [release checklist](../release-checklist.md).
   the round trip; matches kept while parked or stale after the document changed; a selection other than the active
   match after the round trip (Replace Current would then replace an unselected match); a query rewritten by Ctrl+F in
   Preview; a switch to Preview during a Search composition; Ctrl+1/2/3 or zoom swallowed by a non-composing panel.
-- Automated entry: `cargo test -p stickymd-win --locked -- interaction::search app::search_controller app::input`,
+- Automated entry: `cargo test -p stickymd-app -p stickymd-win --locked -- interaction::search app::search_controller app::input`,
   also in the Rust-owned render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1):
   `a_parked_search_comes_back_as_it_was_without_holding_matches`, `a_resumed_search_rescans_the_current_document`,
   `only_an_open_search_is_parked_and_a_preedit_does_not_survive_it`,

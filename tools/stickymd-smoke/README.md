@@ -324,7 +324,7 @@ cargo run --quiet -p stickymd-smoke --locked -- modules run render,windows --mod
 cargo run --quiet -p stickymd-smoke --locked -- modules run all --mode=all --plan
 ```
 
-The six module names are `core`, `render`, `windows`, `smoke`,
+The seven module names are `core`, `render`, `windows`, `smoke`,
 `phase1-markdown-math`, and `phase1-persistence`. The default mode is `tests`;
 `performance` selects the existing headless Release baselines, and `all`
 selects both. Cargo still builds dependencies as needed. Explicit selection
@@ -433,8 +433,8 @@ cargo run --quiet -p stickymd-smoke --locked -- ci plan --full
 The planner compares the supplied base with the actual checkout's HEAD. On PRs
 the base is the target branch commit and HEAD is GitHub's checked-out merge commit;
 on pushes the base is the event's `before` commit. It selects changed modules and
-their reverse dependencies: core selects core/render/windows, render selects
-render/windows, and smoke-only changes select smoke.
+their reverse dependencies: core selects core/render/app/windows, render selects
+render/app/windows, app selects app/windows, and smoke-only changes select smoke.
 
 Shared contracts/build inputs, CI/planner changes, unknown paths, missing or zero
 SHAs, a dirty worktree, failed Git comparisons and Cargo registry drift select

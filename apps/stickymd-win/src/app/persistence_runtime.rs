@@ -6,12 +6,12 @@ use winit::event_loop::ActiveEventLoop;
 
 use super::StickyApp;
 use crate::config::ConfigAck;
-use crate::flow::window::state::{QuitBarrier, WindowIntent};
-use crate::flow::{RecoveryOperation, SaveTrigger};
-use crate::instruction::{PersistenceIntent, SaveReason};
 use crate::persistence::{
     IoCompletion, PersistMode, PersistRequest, PersistResult, PreserveOutcome, TemporaryCleanup,
 };
+use stickymd_app::flow::window::state::{QuitBarrier, WindowIntent};
+use stickymd_app::flow::{RecoveryOperation, SaveTrigger};
+use stickymd_app::instruction::{PersistenceIntent, SaveReason};
 
 impl StickyApp {
     pub(super) fn submit_config_if_needed(&mut self) {

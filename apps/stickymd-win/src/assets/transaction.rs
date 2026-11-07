@@ -16,7 +16,7 @@ use stickymd_render::image::{
 use thiserror::Error;
 
 use super::{AssetStorage, AssetStorageError, StoredAsset};
-use crate::flow::ClipboardPaste;
+use stickymd_app::flow::ClipboardPaste;
 
 const MAX_IMAGE_PASTE_BATCH_BYTES: usize = 128 * 1024 * 1024;
 

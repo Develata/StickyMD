@@ -4,7 +4,7 @@
 //! plan_ref: docs/plan/09_windows_shell.md#dock-auto-hide
 
 use super::StickyApp;
-use crate::flow::window::state::WindowGuardSnapshot;
+use stickymd_app::flow::window::state::WindowGuardSnapshot;
 
 /// The shell state the guards read.
 #[derive(Clone, Copy, Debug, Default)]
@@ -70,7 +70,7 @@ mod tests {
     #[test]
     fn runtime_guards_read_both_compositions_and_focus_loss_cancels_them() {
         use crate::app::headless_tests::fixture;
-        use crate::interaction::ImeSignal;
+        use stickymd_app::interaction::ImeSignal;
         for editor in [false, true] {
             for search in [false, true] {
                 let mut app = fixture("canonical text");

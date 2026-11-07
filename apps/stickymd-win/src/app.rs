@@ -19,12 +19,6 @@ use winit::keyboard::ModifiersState;
 use winit::window::{Theme, Window};
 
 use crate::config::{ConfigCoordinator, ViewMode};
-use crate::flow::window::reducer::WindowShellCoordinator;
-use crate::flow::{
-    AppEffect, EditorCoordinator, PersistenceCoordinator, PreviewCoordinator, RecoveryCoordinator,
-};
-use crate::instruction::AppIntent;
-use crate::interaction::{EditorSession, ParkedSearch, SearchSession};
 use crate::persistence::{IoCompletion, PersistenceWorker};
 use crate::platform::windows::ArboardClipboard;
 use crate::platform::windows::file_watch::NoteDirectoryWatcher;
@@ -36,6 +30,12 @@ use crate::preview::{PreviewCompletion, PreviewViewport, PreviewWorker};
 use crate::startup::BootstrapOutcome;
 use crate::startup::StartupDiagnostics;
 use crate::surface::SoftwareSurface;
+use stickymd_app::flow::window::reducer::WindowShellCoordinator;
+use stickymd_app::flow::{
+    AppEffect, EditorCoordinator, PersistenceCoordinator, PreviewCoordinator, RecoveryCoordinator,
+};
+use stickymd_app::instruction::AppIntent;
+use stickymd_app::interaction::{EditorSession, ParkedSearch, SearchSession};
 
 mod assets_runtime;
 mod caret_runtime;
@@ -347,8 +347,8 @@ mod tests {
     use unicode_segmentation::UnicodeSegmentation;
 
     use super::*;
-    use crate::flow::{ClipboardError, ClipboardPort};
-    use crate::interaction::ImeSignal;
+    use stickymd_app::flow::{ClipboardError, ClipboardPort};
+    use stickymd_app::interaction::ImeSignal;
 
     #[test]
     fn external_reconcile_handler_requires_projection_resync_and_asset_convergence() {

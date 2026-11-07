@@ -43,6 +43,15 @@ const fn win(path: &'static str) -> Owner {
     }
 }
 
+/// A unit test of the `stickymd-app` library.
+const fn app(path: &'static str) -> Owner {
+    Owner {
+        package: "stickymd-app",
+        target: OwnerTarget::Lib,
+        path,
+    }
+}
+
 /// A unit test of the `stickymd-render` library.
 const fn render(path: &'static str) -> Owner {
     Owner {
@@ -115,7 +124,7 @@ const SCROLL_SOURCE_ENDS: &[Owner] = &[
 const QUIT_NOTICE_ONLY_SAVE: &[Owner] = &[win(
     "app::title::tests::only_a_failed_note_save_establishes_the_notice",
 )];
-const QUIT_EXTERNAL_LOAD: &[Owner] = &[win(
+const QUIT_EXTERNAL_LOAD: &[Owner] = &[app(
     "flow::persistence::tests::loading_external_content_discharges_a_superseded_recreate",
 )];
 const QUIT_TITLE_PRIORITY: &[Owner] = &[

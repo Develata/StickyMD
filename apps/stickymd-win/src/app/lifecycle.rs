@@ -15,9 +15,9 @@ use winit::window::{Theme, WindowAttributes, WindowId};
 
 use super::{AppEvent, CARET_BLINK, StickyApp};
 use crate::config::{MIN_WINDOW_HEIGHT_DIP, MIN_WINDOW_WIDTH_DIP, ViewMode};
-use crate::instruction::{PersistenceIntent, SaveReason};
 use crate::platform::windows::file_watch::{FileWatchSignal, NoteDirectoryWatcher};
 use crate::surface::SoftwareSurface;
+use stickymd_app::instruction::{PersistenceIntent, SaveReason};
 
 impl StickyApp {
     pub(super) fn start_watcher(&mut self) {
@@ -92,7 +92,7 @@ impl StickyApp {
         }
         self.dispatch_window_intent(
             event_loop,
-            crate::flow::window::state::WindowIntent::Tick { now_ms },
+            stickymd_app::flow::window::state::WindowIntent::Tick { now_ms },
         );
         self.finish_event_pass();
     }
@@ -247,7 +247,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             WindowEvent::CloseRequested => {
                 self.dispatch_window_intent(
                     Some(event_loop),
-                    crate::flow::window::state::WindowIntent::CloseRequested {
+                    stickymd_app::flow::window::state::WindowIntent::CloseRequested {
                         now_ms: self.timestamp_ms(),
                         guards: self.window_guards(),
                     },
@@ -293,7 +293,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 self.refresh_cursor();
                 self.dispatch_window_intent(
                     Some(event_loop),
-                    crate::flow::window::state::WindowIntent::SensorEntered {
+                    stickymd_app::flow::window::state::WindowIntent::SensorEntered {
                         now_ms: self.timestamp_ms(),
                     },
                 );
@@ -304,7 +304,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 self.scrollbars.hovered = None;
                 self.dispatch_window_intent(
                     Some(event_loop),
-                    crate::flow::window::state::WindowIntent::PointerLeft {
+                    stickymd_app::flow::window::state::WindowIntent::PointerLeft {
                         now_ms: self.timestamp_ms(),
                     },
                 );
@@ -378,8 +378,8 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             AppEvent::ShowRequested => {
                 self.dispatch_window_intent(
                     Some(event_loop),
-                    crate::flow::window::state::WindowIntent::ShowRequested {
-                        reason: crate::flow::window::state::ShowReason::SecondInstance,
+                    stickymd_app::flow::window::state::WindowIntent::ShowRequested {
+                        reason: stickymd_app::flow::window::state::ShowReason::SecondInstance,
                         now_ms: self.timestamp_ms(),
                     },
                 );

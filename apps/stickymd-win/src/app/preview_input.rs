@@ -10,7 +10,7 @@ use winit::window::CursorIcon;
 
 use super::StickyApp;
 use crate::config::ViewMode;
-use crate::instruction::{AppIntent, PersistenceIntent, PreviewIntent, SaveReason};
+use stickymd_app::instruction::{AppIntent, PersistenceIntent, PreviewIntent, SaveReason};
 
 const MEANINGFUL_DRAG_DIP: f64 = 3.0;
 

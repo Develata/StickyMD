@@ -630,6 +630,18 @@ fn every_product_source_has_an_explicit_rule() {
     fs::remove_dir_all(fixture).unwrap();
 }
 
+/// A source of a crate no rule knows about is refused, not silently taken as a global input.
+#[test]
+fn a_source_outside_every_product_root_is_refused() {
+    let fixture = fixture();
+    let path = fixture.join("crates/stickymd-new/src/lib.rs");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "//! new crate").unwrap();
+    let error = super::verify_product_classification(&fixture).unwrap_err();
+    assert!(error.contains("crates/stickymd-new/src/lib.rs"), "{error}");
+    fs::remove_dir_all(fixture).unwrap();
+}
+
 /// Files the G5 cases reach without any G5-specific trigger: the note load, recovery
 /// inspection, autosave after the paste case, reconciliation of that write, and the atomic
 /// configuration publish the view and opacity cases wait for. Each must stay an input of
@@ -639,9 +651,9 @@ fn every_session_persistence_invalidates_every_module() {
     for path in [
         "apps/stickymd-win/src/startup/bootstrap.rs",
         "apps/stickymd-win/src/persistence/storage.rs",
-        "apps/stickymd-win/src/flow/recovery.rs",
-        "apps/stickymd-win/src/flow/save.rs",
-        "apps/stickymd-win/src/flow/reconciliation.rs",
+        "crates/stickymd-app/src/flow/recovery.rs",
+        "crates/stickymd-app/src/flow/save.rs",
+        "crates/stickymd-app/src/flow/reconciliation.rs",
         "apps/stickymd-win/src/config/storage.rs",
         "apps/stickymd-win/src/platform/windows/atomic_file.rs",
         "apps/stickymd-win/src/assets/storage.rs",
@@ -666,9 +678,9 @@ fn performance_baselines_outside_its_features_invalidate_it() {
         "apps/stickymd-win/src/assets/transaction.rs",
         "crates/stickymd-render/src/math/engine.rs",
         "crates/stickymd-render/src/image.rs",
-        "apps/stickymd-win/src/flow/window/reducer.rs",
+        "crates/stickymd-app/src/flow/window/reducer.rs",
         "apps/stickymd-win/src/app/controls.rs",
-        "apps/stickymd-win/src/source_search.rs",
+        "crates/stickymd-app/src/source_search.rs",
     ] {
         assert_ne!(
             path_domains(path) & super::domains(ModuleId::Performance),

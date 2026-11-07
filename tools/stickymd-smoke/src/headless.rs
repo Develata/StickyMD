@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 pub(crate) enum Module {
     Core,
     Render,
+    App,
     Windows,
     Smoke,
     MarkdownMath,
@@ -14,9 +15,10 @@ pub(crate) enum Module {
 }
 
 impl Module {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Core,
         Self::Render,
+        Self::App,
         Self::Windows,
         Self::Smoke,
         Self::MarkdownMath,
@@ -27,6 +29,7 @@ impl Module {
         match self {
             Self::Core => "core",
             Self::Render => "render",
+            Self::App => "app",
             Self::Windows => "windows",
             Self::Smoke => "smoke",
             Self::MarkdownMath => "phase1-markdown-math",
@@ -38,6 +41,7 @@ impl Module {
         match self {
             Self::Core => Some("stickymd-core"),
             Self::Render => Some("stickymd-render"),
+            Self::App => Some("stickymd-app"),
             Self::Windows => Some("stickymd-win"),
             Self::Smoke => Some("stickymd-smoke"),
             Self::MarkdownMath | Self::Persistence => None,
@@ -56,6 +60,7 @@ impl Module {
         match self {
             Self::Core => "crates/stickymd-core/",
             Self::Render => "crates/stickymd-render/",
+            Self::App => "crates/stickymd-app/",
             Self::Windows => "apps/stickymd-win/",
             Self::Smoke => "tools/stickymd-smoke/",
             Self::MarkdownMath => "experiments/phase-01/markdown-math/",
@@ -76,7 +81,8 @@ impl Module {
     pub(crate) const fn dependencies(self) -> &'static [Self] {
         match self {
             Self::Render => &[Self::Core],
-            Self::Windows => &[Self::Core, Self::Render],
+            Self::App => &[Self::Core, Self::Render],
+            Self::Windows => &[Self::Core, Self::Render, Self::App],
             _ => &[],
         }
     }

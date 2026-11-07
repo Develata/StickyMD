@@ -8,10 +8,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
-use super::runtime::{CONFIG_VERSION, RuntimeConfig};
 use crate::platform::windows::atomic_file::{
     AtomicPublishError, atomic_publish, move_file_no_replace,
 };
+use stickymd_app::config::{CONFIG_VERSION, RuntimeConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigWarning {

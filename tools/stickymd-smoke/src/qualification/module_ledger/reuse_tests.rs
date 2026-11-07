@@ -227,6 +227,7 @@ fn real_manifests_release_bump_keeps_every_functional_fingerprint() {
     let members = [
         "crates/stickymd-core",
         "crates/stickymd-render",
+        "crates/stickymd-app",
         "apps/stickymd-win",
         "tools/stickymd-smoke",
     ];

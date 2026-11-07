@@ -3,7 +3,7 @@
 //! plan_ref: docs/plan/09_windows_shell.md#vertical-scrollbars
 
 use super::*;
-use crate::interaction::ImeSignal;
+use stickymd_app::interaction::ImeSignal;
 use stickymd_core::{DocumentState, LineEnding, Selection};
 use stickymd_render::preview::{PreviewPipeline, PreviewSelection, PreviewTheme};
 

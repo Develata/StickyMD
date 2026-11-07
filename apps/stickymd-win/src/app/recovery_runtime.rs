@@ -5,8 +5,8 @@
 use stickymd_core::ExternalFileState;
 
 use super::StickyApp;
-use crate::flow::{CanonicalRecoveryPlan, SaveTrigger};
 use crate::persistence::{PersistMode, TemporaryCleanup};
+use stickymd_app::flow::{CanonicalRecoveryPlan, SaveTrigger};
 
 impl StickyApp {
     pub(super) fn handle_resolution_key(&mut self, primary: bool) -> bool {

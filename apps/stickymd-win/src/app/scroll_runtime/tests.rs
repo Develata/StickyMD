@@ -5,8 +5,8 @@
 use super::*;
 use crate::app::headless_tests::fixture;
 use crate::config::ViewMode;
-use crate::instruction::AppIntent;
-use crate::interaction::ImeSignal;
+use stickymd_app::instruction::AppIntent;
+use stickymd_app::interaction::ImeSignal;
 use stickymd_core::{EditKind, Selection};
 use stickymd_render::preview::{PreviewPipeline, PreviewSelection, PreviewTheme};
 use stickymd_render::source::SourceProjection;
@@ -176,7 +176,7 @@ fn runtime_drag_ends_on_release_blur_view_switch_and_resize_for_both_panes() {
                 "release" => app.handle_mouse_button(ElementState::Released, MouseButton::Left),
                 "blur" => app.apply_focus_change(None, false),
                 "view-switch" => app.dispatch_preview_intent(
-                    crate::instruction::PreviewIntent::SetViewMode(ViewMode::Preview),
+                    stickymd_app::instruction::PreviewIntent::SetViewMode(ViewMode::Preview),
                 ),
                 "resize" => app.resize(PhysicalSize::new(820, 400)),
                 _ => unreachable!(),

@@ -97,11 +97,11 @@ pub(super) fn fixture(text: &str) -> HeadlessApp {
     // The real constructor's directory watcher is unnecessary here: completions
     // are supplied explicitly, and no test is allowed to use native input.
     app.watcher.take();
-    use crate::flow::window::geometry::{
+    use stickymd_app::flow::window::geometry::{
         MonitorGeometry, MonitorIdentity, PhysicalRect, WindowPlacement,
     };
-    use crate::flow::window::reducer::WindowShellCoordinator;
-    use crate::flow::window::state::StableVisibility;
+    use stickymd_app::flow::window::reducer::WindowShellCoordinator;
+    use stickymd_app::flow::window::state::StableVisibility;
     app.window_flow = Some(WindowShellCoordinator::new(
         WindowPlacement::new(900.0, 600.0, None, 0.0, 0.5, 0.5),
         StableVisibility::Floating,

@@ -291,7 +291,6 @@ impl WindowShellState {
     }
 
     /// The guards the coordinator last received, as opposed to the shell's current facts.
-    #[cfg(test)]
     pub fn guards(&self) -> WindowGuardSnapshot {
         self.guards
     }

@@ -7,8 +7,8 @@ use winit::event_loop::ActiveEventLoop;
 
 use super::StickyApp;
 use crate::assets::{AssetPasteCompletion, AssetPasteRequest, AssetReconcileMode};
-use crate::flow::window::state::{QuitBarrier, WindowIntent};
-use crate::flow::{PendingAssetPaste, SaveTrigger};
+use stickymd_app::flow::window::state::{QuitBarrier, WindowIntent};
+use stickymd_app::flow::{PendingAssetPaste, SaveTrigger};
 
 impl StickyApp {
     pub(super) fn submit_asset_paste(&mut self, pending: PendingAssetPaste) {

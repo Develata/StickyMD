@@ -75,7 +75,6 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
         }
     }
 
-    #[cfg(test)]
     pub fn empty(clipboard: C) -> Self {
         Self::new(
             DocumentState::empty(stickymd_core::LineEnding::Crlf),
@@ -89,7 +88,6 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
     }
 
     /// How many O(n) snapshots this coordinator has taken.
-    #[cfg(test)]
     pub fn snapshots_taken(&self) -> u64 {
         self.snapshots_taken.get()
     }

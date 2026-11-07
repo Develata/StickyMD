@@ -11,11 +11,11 @@ use winit::window::{CursorIcon, ResizeDirection};
 use super::StickyApp;
 use super::controls::{ControlId, ControlLayout, PopupHit, split_sync_rect};
 use crate::config::{ThemeMode, ViewMode};
-use crate::flow::window::state::{ShowReason, WindowIntent};
-use crate::instruction::{
+use crate::platform::windows::tray::TrayPlatformEvent;
+use stickymd_app::flow::window::state::{ShowReason, WindowIntent};
+use stickymd_app::instruction::{
     AppIntent, PreviewIntent, WindowPlatformIntent, WindowPreferenceIntent, WindowResizeEdge,
 };
-use crate::platform::windows::tray::TrayPlatformEvent;
 
 const RESIZE_BORDER_DIP: f64 = 6.0;
 

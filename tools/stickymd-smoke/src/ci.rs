@@ -86,7 +86,7 @@ impl Checks {
             portable: full
                 || modules
                     .iter()
-                    .any(|module| matches!(module, Module::Core | Module::Render)),
+                    .any(|module| matches!(module, Module::Core | Module::Render | Module::App)),
         }
     }
 }

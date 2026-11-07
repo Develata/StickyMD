@@ -18,7 +18,7 @@ impl Parameters {
         let phase = match arguments.first().map(String::as_str) {
             Some("all") => None,
             Some(value) => Some(Phase::parse(value)?),
-            None => return Err("phase-entry requires 00..14, 11-b or all".into()),
+            None => return Err("phase-entry requires 00..15, 11-b or all".into()),
         };
         let mut values = BTreeMap::new();
         let mut inactive = BTreeSet::new();
@@ -156,7 +156,7 @@ fn parameter_kind(phase: Option<Phase>, key: &str) -> Result<Kind, String> {
     let (supported, kind) = match key {
         "ci" => (range(P12, P14, true), Kind::Switch),
         "cishard" => (phase.is_none(), Kind::Text),
-        "performance" => (range(P01, P14, true), Kind::Switch),
+        "performance" => (range(P01, P15, true), Kind::Switch),
         "runtime" => (range(P03, P14, true), Kind::Switch),
         "resources" => (range(P05, P14, true), Kind::Switch),
         "release" | "package" => (range(P09, P14, true), Kind::Switch),

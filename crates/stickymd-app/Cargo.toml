@@ -1,0 +1,13 @@
+[package]
+name = "stickymd-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "StickyMD Shared Application: typed intents, coordinators, configuration state and sessions, free of any window system or platform API"
+
+[dependencies]
+stickymd-core = { path = "../stickymd-core", version = "0.1.0" }
+stickymd-render = { path = "../stickymd-render", version = "0.1.0" }
+thiserror.workspace = true
+serde.workspace = true
+unicode-segmentation.workspace = true

@@ -11,9 +11,9 @@ use winit::dpi::PhysicalSize;
 use super::search_controller::{SEARCH_COMPOSING, SearchViewChange, search_on_view_change};
 use super::{AppEvent, StickyApp};
 use crate::config::ViewMode;
-use crate::flow::{PreviewAction, PreviewAdmission, PreviewEffect, PreviewVisibility};
-use crate::instruction::PreviewIntent;
 use crate::preview::{PreviewCompletion, PreviewJob, PreviewViewport, PreviewWorker};
+use stickymd_app::flow::{PreviewAction, PreviewAdmission, PreviewEffect, PreviewVisibility};
+use stickymd_app::instruction::PreviewIntent;
 
 pub(super) const TOOLBAR_HEIGHT_DIP: f32 = 34.0;
 
@@ -155,7 +155,7 @@ impl StickyApp {
         self.session.cancel_preedit();
         self.dispatch_window_intent(
             None,
-            crate::flow::window::state::WindowIntent::SplitModeChanged {
+            stickymd_app::flow::window::state::WindowIntent::SplitModeChanged {
                 split: mode == ViewMode::Split,
             },
         );
@@ -267,7 +267,7 @@ impl StickyApp {
         let hidden_to_tray = self.window_flow.as_ref().is_some_and(|flow| {
             matches!(
                 flow.state().visibility(),
-                crate::flow::window::state::VisibilityState::HiddenToTray { .. }
+                stickymd_app::flow::window::state::VisibilityState::HiddenToTray { .. }
             )
         });
         let current = self.coordinator.view().generation;

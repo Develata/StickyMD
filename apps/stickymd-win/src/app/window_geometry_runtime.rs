@@ -6,9 +6,9 @@ use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::platform::windows::MonitorHandleExtWindows;
 
 use super::StickyApp;
-use crate::flow::window::geometry::{MonitorGeometry, MonitorIdentity, PhysicalRect};
-use crate::flow::window::state::{VisibilityState, WindowIntent};
 use crate::platform::windows::monitor::{enumerate_active_displays, work_area};
+use stickymd_app::flow::window::geometry::{MonitorGeometry, MonitorIdentity, PhysicalRect};
+use stickymd_app::flow::window::state::{VisibilityState, WindowIntent};
 
 impl StickyApp {
     pub(super) fn complete_window_drag(&mut self) {

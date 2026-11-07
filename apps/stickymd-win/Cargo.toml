@@ -14,15 +14,15 @@ LegalCopyright = "Copyright (c) 2026 Develata"
 [dependencies]
 stickymd-core = { path = "../../crates/stickymd-core", version = "0.1.0" }
 stickymd-render = { path = "../../crates/stickymd-render", version = "0.1.0" }
+stickymd-app = { path = "../../crates/stickymd-app", version = "0.1.0" }
 thiserror.workspace = true
 tiny-skia.workspace = true
-unicode-segmentation.workspace = true
-serde.workspace = true
 toml.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
 cosmic-text.workspace = true
+unicode-segmentation.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 arboard.workspace = true

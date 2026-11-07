@@ -10,18 +10,18 @@ use super::StickyApp;
 use super::window_geometry_runtime::{apply_frame, configured_monitor, monitor_geometries};
 use crate::assets::AssetReconcileMode;
 use crate::config::{DockEdge as ConfigDockEdge, ViewMode};
-use crate::flow::window::geometry::WindowPlacement;
-use crate::flow::window::reducer::WindowShellCoordinator;
-use crate::flow::window::state::{
-    DockEdge, QuitBarrier, StableVisibility, WindowEffect, WindowIntent, WindowSaveReason,
-    effective_topmost,
-};
-use crate::flow::{SaveTrigger, WindowPreferenceEffect, coordinate_window_preference};
-use crate::instruction::{WindowPlatformIntent, WindowPreferenceIntent, WindowResizeEdge};
 use crate::platform::windows::tray::{TrayController, TrayIconRgba};
 use crate::platform::windows::window_opacity::set_window_opacity;
 use crate::platform::windows::window_topmost::set_window_topmost_no_activate;
 use crate::startup::StartupDetail;
+use stickymd_app::flow::window::geometry::WindowPlacement;
+use stickymd_app::flow::window::reducer::WindowShellCoordinator;
+use stickymd_app::flow::window::state::{
+    DockEdge, QuitBarrier, StableVisibility, WindowEffect, WindowIntent, WindowSaveReason,
+    effective_topmost,
+};
+use stickymd_app::flow::{SaveTrigger, WindowPreferenceEffect, coordinate_window_preference};
+use stickymd_app::instruction::{WindowPlatformIntent, WindowPreferenceIntent, WindowResizeEdge};
 
 impl StickyApp {
     pub(super) fn dispatch_window_platform_intent(&mut self, intent: WindowPlatformIntent) -> bool {

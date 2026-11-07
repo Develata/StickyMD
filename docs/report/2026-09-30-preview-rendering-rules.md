@@ -51,7 +51,7 @@
 | 视觉语义、文字与表格布局 | [native Preview](../plan/06_markdown_math_rendering.md#native-preview-layout) | [render_tree.rs](../../crates/stickymd-render/src/preview/render_tree.rs)、[layout.rs](../../crates/stickymd-render/src/preview/layout.rs)、[table_layout.rs](../../crates/stickymd-render/src/preview/table_layout.rs) |
 | 数学解析与绘制 | [RaTeX](../plan/06_markdown_math_rendering.md#ratex-native-math) | [math/engine.rs](../../crates/stickymd-render/src/math/engine.rs)、[math_layout.rs](../../crates/stickymd-render/src/preview/math_layout.rs) |
 | 图片读取与安全限制 | [plan 08](../plan/08_assets_and_export.md#local-image-read-boundary) | [image_layout.rs](../../crates/stickymd-render/src/preview/image_layout.rs)、[image.rs](../../crates/stickymd-render/src/image.rs)、[assets/path.rs](../../apps/stickymd-win/src/assets/path.rs) |
-| 调度与完成结果 | [Preview scheduling](../plan/06_markdown_math_rendering.md#preview-scheduling) | [flow/preview.rs](../../apps/stickymd-win/src/flow/preview.rs)、[preview/worker.rs](../../apps/stickymd-win/src/preview/worker.rs)、[pipeline.rs](../../crates/stickymd-render/src/preview/pipeline.rs) |
+| 调度与完成结果 | [Preview scheduling](../plan/06_markdown_math_rendering.md#preview-scheduling) | [flow/preview.rs](../../crates/stickymd-app/src/flow/preview.rs)、[preview/worker.rs](../../apps/stickymd-win/src/preview/worker.rs)、[pipeline.rs](../../crates/stickymd-render/src/preview/pipeline.rs) |
 | 选择与滚动 | [owned projection](../plan/06_markdown_math_rendering.md#owned-ast-projection)、[Split 同步](../plan/06_markdown_math_rendering.md#split-scroll-sync) | [text_layout.rs](../../crates/stickymd-render/src/preview/text_layout.rs)、[scroll.rs](../../crates/stickymd-render/src/scroll.rs) |
 
 审查时 [Cargo.lock](../../Cargo.lock) 固定 Comrak 0.54.0、cosmic-text 0.19.0、
@@ -731,7 +731,7 @@ pipeline 在保留 RenderTree 后收到 `Relayout` 可以复用语义树；但�
 ```
 
 依据为 [`app/preview_runtime.rs`](../../apps/stickymd-win/src/app/preview_runtime.rs)、
-[`flow/preview.rs`](../../apps/stickymd-win/src/flow/preview.rs) 与
+[`flow/preview.rs`](../../crates/stickymd-app/src/flow/preview.rs) 与
 [`pipeline.rs`](../../crates/stickymd-render/src/preview/pipeline.rs)。因此第 12.1 节
 “清除 raster 后恢复显示”描述的是底层能力及其条件，不能推导为当前 UI 切换的免解析承诺。
 同 generation 且仍保有已应用投影时的 Preview ↔ Split、普通 resize/scroll 需分别判断，

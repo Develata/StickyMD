@@ -24,13 +24,13 @@
 | [领域核心](../../crates/stickymd-core/src/lib.rs) | DocumentState、generation、undo、持久化事实类型已独立；禁止 unsafe | 保留其领域边界，不引入窗口或文件系统执行 |
 | [渲染库](../../crates/stickymd-render/src/lib.rs) | Source、Preview、数学、图片与滚动计算已独立；禁止 unsafe | 继续复用渲染与投影，平台字体策略另行注入 |
 | [现有应用入口](../../apps/stickymd-win/src/main.rs) | 大部分应用模块受 `cfg(windows)` 控制，非 Windows 入口只输出平台限制 | 非 Windows 可编译入口不能证明共享应用已可运行 |
-| [协调层](../../apps/stickymd-win/src/flow/mod.rs) | 已有 Editor、Persistence、Preview、Recovery、Save、Window coordinator 与 ClipboardPort | 可以迁移成熟职责和测试，不必重写这些状态机 |
+| [协调层](../../crates/stickymd-app/src/flow/mod.rs) | 已有 Editor、Persistence、Preview、Recovery、Save、Window coordinator 与 ClipboardPort | 可以迁移成熟职责和测试，不必重写这些状态机 |
 | [保存回执处理](../../apps/stickymd-win/src/app/persistence_runtime.rs) | 回执校验、冲突、再次保存、恢复与退出屏障和窗口操作仍在同一运行时对象里 | 必须拆开应用裁决与窗口呈现，单纯移动目录不够 |
 | [视图切换](../../apps/stickymd-win/src/app/preview_runtime.rs) | Search 的组字守卫、配置提交、预览调度与投影刷新混合组织 | 应用规则与共享呈现分别归位 |
 | [文件持久化](../../apps/stickymd-win/src/persistence/storage.rs)、[资产存储](../../apps/stickymd-win/src/assets/storage.rs) | Windows 文件身份、元数据与受保护操作不只出现在 `platform/windows` 目录 | 提取边界不能机械地按现有目录划线 |
 | [字体策略](../../crates/stickymd-render/src/source/fonts.rs) | 现有候选字体侧重 Windows 字体；预览代码字体另有回退 | 可共享字体选择算法，各平台给出默认字体策略 |
 | [CI](../../.github/workflows/ci.yml)、[治理检查](../../tools/stickymd-smoke/src/governance.rs) | 已有 Linux core/render 构建测试配置；部分检查硬编码 Windows 应用源路径：`forbid(unsafe_code)` 只查 core/render 的 `lib.rs`，窗口协调的平台类型禁令只扫 `apps/stickymd-win/src/flow/window` | 必须随每批移动同步迁移检查规则与任务选择，不能保留失效路径或绕过检查 |
-| [窗口隐藏](../../apps/stickymd-win/src/flow/window/lifecycle.rs)、[窗口效果执行](../../apps/stickymd-win/src/app/window_runtime.rs) | `complete_hide` 先把状态设为 `HiddenToTray`，再发出 `SetVisible(false)` 与释放缓存；执行端调用 `set_visible` 后没有失败回执 | 状态机不能原样搬迁：共享层须区分“已请求”与“已执行”，否则无法表达第 5 节第 6 条的失败语义 |
+| [窗口隐藏](../../crates/stickymd-app/src/flow/window/lifecycle.rs)、[窗口效果执行](../../apps/stickymd-win/src/app/window_runtime.rs) | `complete_hide` 先把状态设为 `HiddenToTray`，再发出 `SetVisible(false)` 与释放缓存；执行端调用 `set_visible` 后没有失败回执 | 状态机不能原样搬迁：共享层须区分“已请求”与“已执行”，否则无法表达第 5 节第 6 条的失败语义 |
 | [I/O 回执](../../apps/stickymd-win/src/persistence/worker.rs) | `IoCompletion::External`、`TemporaryRemoved`、`CanonicalPreserved` 不带 generation 或操作身份；正确性依赖当前串行执行与状态守卫 | 与 [AGENTS](../../AGENTS.md) 的 generation 禁令不符的既有偏差；在 Windows 上单独修复，迁移时不能把隐含依赖当作已有版本校验 |
 | [帧缓冲呈现](../../apps/stickymd-win/src/surface.rs) | 局部更新假定 Win32 softbuffer 的单个持久 DIB：只在 `age == 0` 时全量填充，其余情况只写 damage 区 | 共享前须改为只在 `age == 1` 时局部更新；Wayland 双缓冲（`age == 2`）与 macOS（每帧新缓冲、忽略 damage）不满足该假设 |
 | [工作区依赖](../../Cargo.toml) | winit 与 softbuffer 关闭默认 features（winit 仅启用 `rwh_06`），依赖只在 Windows target 下引入 | 共享 desktop 在 Linux 上需显式选择 X11/Wayland backend features，否则无法编译 |

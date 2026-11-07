@@ -12,19 +12,11 @@ mod config;
 #[cfg(windows)]
 mod export;
 #[cfg(windows)]
-mod flow;
-#[cfg(windows)]
-mod instruction;
-#[cfg(windows)]
-mod interaction;
-#[cfg(windows)]
 mod persistence;
 #[cfg(windows)]
 mod platform;
 #[cfg(windows)]
 mod preview;
-#[cfg(windows)]
-mod source_search;
 #[cfg(windows)]
 mod startup;
 #[cfg(windows)]

@@ -249,7 +249,7 @@ fn product_performance_does_not_link_empty_smoke_release_targets() {
         };
         assert_eq!(
             owners(args).unwrap(),
-            [Module::Core, Module::Render, Module::Windows]
+            [Module::Core, Module::Render, Module::App, Module::Windows]
         );
         // Integration targets remain eligible, as do unit tests. Only the empty
         // tooling package is removed; no feature/profile override is introduced.
@@ -264,14 +264,14 @@ fn product_performance_does_not_link_empty_smoke_release_targets() {
 }
 
 #[test]
-fn phase14_search_measurement_reaches_local_and_ci_windows_plans() {
+fn phase14_search_measurement_reaches_local_ci_and_app_module_plans() {
     let filter = "phase14_one_mib_unicode_case_insensitive_search_p95_is_bounded";
     let local = Options::parse(["phase", "14", "--performance"].map(str::to_owned)).unwrap();
     let ci = Options::parse(["all", "--ci", "--ci-shard=performance"].map(str::to_owned)).unwrap();
     for tasks in [
         build_plan(&local).unwrap(),
         build_plan(&ci).unwrap(),
-        plan(&request(&[Module::Windows], Mode::Performance)).unwrap(),
+        plan(&request(&[Module::App], Mode::Performance)).unwrap(),
     ] {
         let selected: Vec<_> = tasks
             .iter()
@@ -286,7 +286,7 @@ fn phase14_search_measurement_reaches_local_and_ci_windows_plans() {
             "the search benchmark must run exactly once"
         );
         let args = selected[0];
-        assert_eq!(owners(args).unwrap(), [Module::Windows]);
+        assert_eq!(owners(args).unwrap(), [Module::App]);
         for required in ["--release", "--locked", "--ignored", "--test-threads=1"] {
             assert!(args.contains(&required), "missing {required}");
         }
@@ -340,7 +340,7 @@ fn plans_are_explicitly_unexecuted_and_cannot_be_candidate_receipts() {
 
 #[test]
 fn workspace_membership_drift_fails_closed() {
-    let listing = "stickymd-core v0.1.0 (path with spaces)\n\nstickymd-render v0.1.0\n\nstickymd-win v0.1.0\n\nstickymd-smoke v0.1.0\n";
+    let listing = "stickymd-core v0.1.0 (path with spaces)\n\nstickymd-render v0.1.0\n\nstickymd-app v0.1.0\n\nstickymd-win v0.1.0\n\nstickymd-smoke v0.1.0\n";
     assert!(verify_workspace_listing(listing).is_ok());
     assert!(verify_workspace_listing("").is_err());
     assert!(verify_workspace_listing(&listing.replace("stickymd-core", "renamed-core")).is_err());
