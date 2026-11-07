@@ -12,4 +12,6 @@ pub use storage::{
     remove_temporary,
 };
 pub(crate) use worker::AssetSyncRequest;
+#[cfg(test)]
+pub use worker::NoteCompletion;
 pub use worker::{IoCompletion, PersistenceWorker, TemporaryCleanup};

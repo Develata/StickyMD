@@ -38,7 +38,7 @@ impl StickyApp {
 
     pub(super) fn handle_asset_paste_completion(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        event_loop: Option<&ActiveEventLoop>,
         result: Result<AssetPasteCompletion, crate::assets::AssetPasteFailure>,
     ) {
         self.asset_paste_pending = false;
@@ -158,7 +158,7 @@ impl StickyApp {
 
     pub(super) fn handle_asset_sync_completion(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        event_loop: Option<&ActiveEventLoop>,
         request_id: u64,
         _generation: Generation,
         result: Result<crate::assets::AssetReconcileReport, crate::assets::AssetStorageError>,
@@ -202,7 +202,7 @@ impl StickyApp {
         }
         if quit_request {
             self.dispatch_window_intent(
-                Some(event_loop),
+                event_loop,
                 WindowIntent::QuitBarrierCompleted {
                     barrier: QuitBarrier::AssetGc,
                     succeeded,
@@ -211,7 +211,7 @@ impl StickyApp {
             );
         } else if matched_request {
             self.dispatch_window_intent(
-                Some(event_loop),
+                event_loop,
                 WindowIntent::PasteSettled {
                     guards: self.window_guards(),
                 },
@@ -220,9 +220,9 @@ impl StickyApp {
         self.request_redraw();
     }
 
-    fn notify_window_paste_settled(&mut self, event_loop: &ActiveEventLoop) {
+    fn notify_window_paste_settled(&mut self, event_loop: Option<&ActiveEventLoop>) {
         self.dispatch_window_intent(
-            Some(event_loop),
+            event_loop,
             WindowIntent::PasteSettled {
                 guards: self.window_guards(),
             },

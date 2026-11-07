@@ -361,7 +361,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
-            AppEvent::Io(completion) => self.handle_io_completion(event_loop, completion),
+            AppEvent::Io(completion) => self.handle_io_completion(Some(event_loop), completion),
             AppEvent::NoteFsHint => {
                 if let Some(watcher) = &self.watcher {
                     watcher.acknowledge_hint();

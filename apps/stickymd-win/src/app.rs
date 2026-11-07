@@ -54,6 +54,8 @@ mod presentation;
 mod preview_horizontal;
 mod preview_input;
 mod preview_runtime;
+#[cfg(test)]
+mod receipt_tests;
 mod reconciliation_runtime;
 mod recovery_runtime;
 mod scroll_application;

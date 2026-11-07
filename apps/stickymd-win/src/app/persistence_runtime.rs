@@ -127,7 +127,7 @@ impl StickyApp {
 
     pub(super) fn handle_io_completion(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        event_loop: Option<&ActiveEventLoop>,
         completion: IoCompletion,
     ) {
         match completion {
@@ -227,7 +227,7 @@ impl StickyApp {
                     && (!self.config.is_dirty() || !succeeded)
                 {
                     self.dispatch_window_intent(
-                        Some(event_loop),
+                        event_loop,
                         WindowIntent::QuitBarrierCompleted {
                             barrier: QuitBarrier::Config,
                             succeeded,
@@ -312,7 +312,7 @@ impl StickyApp {
                 self.asset_sync_request_id = None;
                 self.quit_asset_sync_request_id = None;
                 self.dispatch_window_intent(
-                    Some(event_loop),
+                    event_loop,
                     WindowIntent::HideSaveCompleted {
                         succeeded: false,
                         guards: self.window_guards(),
@@ -325,7 +325,7 @@ impl StickyApp {
                     QuitBarrier::Config,
                 ] {
                     self.dispatch_window_intent(
-                        Some(event_loop),
+                        event_loop,
                         WindowIntent::QuitBarrierCompleted {
                             barrier,
                             succeeded: false,
@@ -340,7 +340,7 @@ impl StickyApp {
 
     fn handle_note_saved(
         &mut self,
-        _event_loop: &ActiveEventLoop,
+        event_loop: Option<&ActiveEventLoop>,
         generation: stickymd_core::Generation,
         fingerprint: stickymd_core::Hash32,
         mode: PersistMode,
@@ -395,7 +395,7 @@ impl StickyApp {
         }
         self.update_window_title();
         if !keep_local_resubmitted {
-            self.complete_window_note_barriers(_event_loop, true);
+            self.complete_window_note_barriers(event_loop, true);
         }
         self.request_redraw();
     }
@@ -414,14 +414,18 @@ impl StickyApp {
         }
     }
 
-    fn complete_window_note_barriers(&mut self, event_loop: &ActiveEventLoop, succeeded: bool) {
+    fn complete_window_note_barriers(
+        &mut self,
+        event_loop: Option<&ActiveEventLoop>,
+        succeeded: bool,
+    ) {
         let guards = self.window_guards();
         self.dispatch_window_intent(
-            Some(event_loop),
+            event_loop,
             WindowIntent::HideSaveCompleted { succeeded, guards },
         );
         self.dispatch_window_intent(
-            Some(event_loop),
+            event_loop,
             WindowIntent::QuitBarrierCompleted {
                 barrier: QuitBarrier::NoteSave,
                 succeeded,

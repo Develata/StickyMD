@@ -361,6 +361,28 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// A failed save can leave newer text in a temp older than an external save: a restart offers
+    /// it as a recovery choice and keeps both files.
+    #[test]
+    fn an_older_different_temporary_survives_a_restart_as_a_recovery_choice() {
+        let (root, paths) = fixture();
+        fs::write(&paths.note_tmp, "本地未保存").unwrap();
+        fs::write(&paths.note_file, "外部保存").unwrap();
+        let older = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        let temporary = fs::OpenOptions::new()
+            .write(true)
+            .open(&paths.note_tmp)
+            .unwrap();
+        temporary.set_modified(older).unwrap();
+        drop(temporary);
+        let candidate = bootstrap(&paths).unwrap().recovery.unwrap();
+        assert_eq!(candidate.temporary.text, "本地未保存");
+        assert!(!candidate.temporary_is_newer);
+        assert_eq!(fs::read_to_string(&paths.note_tmp).unwrap(), "本地未保存");
+        assert_eq!(fs::read_to_string(&paths.note_file).unwrap(), "外部保存");
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn identical_temporary_note_is_removed_only_after_canonical_load() {
         let (root, paths) = fixture();
