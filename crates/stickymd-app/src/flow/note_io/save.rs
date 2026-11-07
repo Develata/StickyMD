@@ -78,11 +78,18 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
         mode: PersistMode,
         effects: &mut NoteEffects,
     ) {
-        let completed_required = self.persistence.note_save_finished(true);
         if let Err(error) = self.editor.acknowledge_persisted(generation, fingerprint) {
+            // Only a broken protocol reaches this: a receipt for a generation the document never
+            // had. It proves nothing about the disk, so it discharges nothing and ends what waits.
+            self.persistence.note_save_finished(false);
+            self.recovery.fail_operation();
+            self.persistence.end_keep_local();
             effects.diagnostic(format!("保存回执无效：{error}"));
+            effects.push(NoteEffect::NoteBarriers { succeeded: false });
+            effects.push(NoteEffect::Redraw);
             return;
         }
+        let completed_required = self.persistence.note_save_finished(true);
         if let (
             Some(RecoveryOperation::Restoring | RecoveryOperation::UsingCanonical),
             Some(operation),

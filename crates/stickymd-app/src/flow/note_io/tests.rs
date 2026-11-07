@@ -217,13 +217,9 @@ fn a_saved_receipt_settles_the_barriers_before_the_redraw() {
     );
 }
 
-/// Pinned as it is: an unreached generation reports and stops, with no barrier and no redraw.
-#[test]
-fn a_receipt_for_an_unreached_generation_only_reports() {
-    let mut note = Note::new("text");
-    note.persistence.note_save_submitted(SaveTrigger::Manual);
+fn receipt_from_the_future(note: &Note) -> NoteReceipt {
     let future = note.generation().checked_next().unwrap();
-    let receipt = NoteReceipt::Save {
+    NoteReceipt::Save {
         generation: future,
         mode: GUARDED,
         result: Ok(PersistResult::Saved {
@@ -231,9 +227,57 @@ fn a_receipt_for_an_unreached_generation_only_reports() {
             fingerprint: hash_bytes(b"saved"),
             durable_bytes: 5,
         }),
-    };
-    assert_eq!(names(note.io().on_receipt(receipt, 0)), ["diagnostic"]);
+    }
+}
+
+/// A receipt for a generation the document never had counts as a failed save.
+#[test]
+fn a_receipt_for_an_unreached_generation_fails_the_save() {
+    let mut note = Note::new("text");
+    note.persistence.note_save_submitted(SaveTrigger::Manual);
+    let receipt = receipt_from_the_future(&note);
+    assert_eq!(
+        names(note.io().on_receipt(receipt, 0)),
+        ["diagnostic", "barriers-failed", "redraw"]
+    );
     assert!(!note.persistence.note_save_in_flight());
+    assert_eq!(note.editor.view().base_disk_hash, None);
+    assert_eq!(note.editor.view().text, "text");
+}
+
+#[test]
+fn a_receipt_for_an_unreached_generation_discharges_nothing() {
+    let mut note = Note::new("text");
+    note.persistence
+        .note_save_submitted(SaveTrigger::RecreateMissing);
+    let receipt = receipt_from_the_future(&note);
+    let _ = note.io().on_receipt(receipt, 0);
+    assert!(!note.persistence.note_save_in_flight());
+    assert!(note.persistence.durability_required());
+}
+
+/// The operations waiting on the save end, and what they were about stays: the recovery candidate
+/// and the conflict are still there to choose from.
+#[test]
+fn a_receipt_for_an_unreached_generation_ends_what_waits_on_it() {
+    let mut note = Note::new("disk");
+    note.offer_recovery(None);
+    let _ = note.io().resolve(true).unwrap();
+    assert!(note.recovery.operation_pending());
+    let receipt = receipt_from_the_future(&note);
+    let _ = note.io().on_receipt(receipt, 0);
+    assert!(!note.recovery.operation_pending());
+    assert!(note.recovery.is_pending());
+
+    let mut note = Note::new("text");
+    note.type_letter();
+    note.enter_conflict();
+    let _ = note.io().resolve(false).unwrap();
+    let receipt = receipt_from_the_future(&note);
+    let effects = note.io().on_receipt(receipt, 0);
+    assert!(!names(effects).contains(&"submit"));
+    assert!(!note.persistence.keep_local_in_progress());
+    assert!(note.persistence.conflict().is_some());
 }
 
 #[test]

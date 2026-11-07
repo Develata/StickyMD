@@ -357,8 +357,8 @@ fn a_forced_receipt_ends_keep_local() {
     );
 }
 
-/// Pinned as it is: this path reports the receipt and leaves the barriers unsettled (see
-/// `the_note_barriers_settle_by_receipt`). A fix is a separate, behaviour-changing commit.
+/// Only a broken protocol reaches this; it counts as a failed save (see
+/// `the_note_barriers_settle_by_receipt`).
 #[test]
 fn a_receipt_for_an_unreached_generation_is_reported() {
     let mut app = edited();
@@ -882,11 +882,7 @@ fn the_note_barriers_settle_by_receipt() {
         (|app| failed(app, GUARDED), Hide::Cancelled, Running),
         (|app| conflicted(app, GUARDED), Hide::Cancelled, Running),
         (mismatched, Hide::Cancelled, Running),
-        (
-            from_the_future,
-            Hide::Waiting,
-            Quitting(QuitStage::AwaitingNoteSave),
-        ),
+        (from_the_future, Hide::Cancelled, Running),
     ];
     for (receipt, hide, quit) in rows {
         let mut app = edited();
