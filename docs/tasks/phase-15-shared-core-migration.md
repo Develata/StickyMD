@@ -41,17 +41,20 @@ A 中 `config/storage.rs` 留在 `apps/stickymd-win`：它依赖 Windows 原子�
 见 [phase-15 验收矩阵](../acceptance-cases/phase-15.md)。每批出口按 plan 11：治理随代码、测试选择与指纹、数据字节兼容与
 回退、性能。
 
-### A 的性能对比
+### 性能对比
 
 基线提交 `b846e83` 与迁移后在同一台机器上、无其他编译任务时运行（Release，p95，单位 ms；数值受机器波动影响，只用于确认
 没有退步）。硬门的计数项见 [P15-A07](../acceptance-cases/phase-15.md)，计数与基线相同。
 
-| 基线项 | 基线 | 迁移后 |
-| --- | --- | --- |
-| 1 MiB 查找 | 14.94 | 12.16 |
-| 窗口 reducer 100k | 4.87 | 3.81 |
-| Source 1 MiB 末尾输入 | 1.73 | 1.73 |
-| Source 1 MiB full resync | 87.0 | 58.8 |
+| 基线项 | 基线 | A 后 | B 后 |
+| --- | --- | --- | --- |
+| 1 MiB 查找 | 14.94 | 12.16 | 15.6–21.0 |
+| 窗口 reducer 100k | 4.87 | 3.81 | 3.77 |
+| Source 1 MiB 末尾输入 | 1.73 | 1.73 | 1.31 |
+| Source 1 MiB full resync | 87.0 | 58.8 | 90.4 |
+
+B 后的查找偏高不是回退：`source_search.rs` 自 A 起未改；同一时段与迁移前提交 `03ba733` 交替运行 4 轮，迁移前 p95 为
+18.4–27.0，迁移后为 15.6–21.0。硬门计数未变（`phase 15 --performance` PASS）。
 
 ## Open Items
 
