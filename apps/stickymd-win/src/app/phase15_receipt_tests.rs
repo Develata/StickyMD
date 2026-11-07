@@ -15,7 +15,7 @@ use stickymd_core::{
 
 use crate::app::headless_tests::{HeadlessApp, fixture, receipt_fixture};
 use crate::app::receipt_tests::{external, offer_recovery, recovering, saves, type_letter};
-use crate::persistence::IoCompletion;
+use stickymd_app::execution::IoCompletion;
 use stickymd_app::ports::{
     FailureKind, NoteReceipt, PersistMode, PersistResult, PreserveOutcome, StorageFailure,
     TemporaryCleanup,

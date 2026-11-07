@@ -3,8 +3,8 @@
 //! plan_ref: docs/plan/08_assets_and_export.md#export
 
 use super::StickyApp;
-use crate::export::{ExportCompletion, ExportRequest};
 use crate::platform::windows::export_dialog::choose_markdown_export;
+use stickymd_app::ports::{ExportCompletion, ExportRequest, StorageFailure};
 
 impl StickyApp {
     pub(super) fn request_export(&mut self) {
@@ -24,7 +24,6 @@ impl StickyApp {
         };
         let request = ExportRequest {
             snapshot: self.coordinator.snapshot(),
-            note_dir: self.paths.note_dir.clone(),
             target,
         };
         if self.worker.submit_export(request) {
@@ -38,8 +37,7 @@ impl StickyApp {
 
     pub(super) fn handle_export_completion(
         &mut self,
-        _generation: stickymd_core::Generation,
-        result: Result<ExportCompletion, crate::export::ExportError>,
+        result: Result<ExportCompletion, StorageFailure>,
     ) {
         self.export_in_flight = false;
         self.diagnostic = Some(match result {

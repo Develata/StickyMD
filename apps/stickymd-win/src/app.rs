@@ -19,7 +19,6 @@ use winit::keyboard::ModifiersState;
 use winit::window::{Theme, Window};
 
 use crate::config::{ConfigCoordinator, ViewMode};
-use crate::persistence::{IoCompletion, PersistenceWorker};
 use crate::platform::windows::ArboardClipboard;
 use crate::platform::windows::file_watch::NoteDirectoryWatcher;
 use crate::platform::windows::native_message::NativeWindowSignal;
@@ -29,7 +28,7 @@ use crate::platform::windows::tray::{TrayController, TrayPlatformEvent};
 use crate::startup::BootstrapOutcome;
 use crate::startup::StartupDiagnostics;
 use crate::surface::SoftwareSurface;
-use stickymd_app::execution::PreviewWorker;
+use stickymd_app::execution::{IoCompletion, PersistenceWorker, PreviewWorker};
 use stickymd_app::flow::window::reducer::WindowShellCoordinator;
 use stickymd_app::flow::{
     AppEffect, EditorCoordinator, PersistenceCoordinator, PreviewCoordinator, RecoveryCoordinator,
@@ -136,12 +135,7 @@ pub struct StickyApp {
     quit_notice: title::QuitCancelNotice,
     /// The title last written to the window, so unchanged projections skip the native call.
     shown_title: String,
-    asset_paste_pending: bool,
-    asset_sync_in_flight: bool,
-    asset_sync_sequence: u64,
-    asset_sync_request_id: Option<u64>,
-    quit_asset_sync_request_id: Option<u64>,
-    asset_reconcile_pending: bool,
+    assets: stickymd_app::flow::AssetFlow,
     export_in_flight: bool,
     session: EditorSession,
     search: SearchSession,
@@ -217,12 +211,7 @@ impl StickyApp {
             _instance: instance,
             quit_notice: title::QuitCancelNotice::default(),
             shown_title: title::PLAIN.to_owned(),
-            asset_paste_pending: false,
-            asset_sync_in_flight: false,
-            asset_sync_sequence: 0,
-            asset_sync_request_id: None,
-            quit_asset_sync_request_id: None,
-            asset_reconcile_pending: false,
+            assets: Default::default(),
             export_in_flight: false,
             session: EditorSession::default(),
             search: SearchSession::default(),
@@ -329,7 +318,7 @@ impl StickyApp {
                             .submit_asset_sync(
                                 self.coordinator.view().generation,
                                 Vec::new(),
-                                Some(crate::assets::AssetReconcileMode::Runtime),
+                                Some(stickymd_app::ports::AssetReconcileMode::Runtime),
                                 false,
                             ),
                     }

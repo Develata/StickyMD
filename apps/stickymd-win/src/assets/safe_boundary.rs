@@ -9,9 +9,10 @@ use std::path::Path;
 
 use stickymd_core::{Hash32, LoadedDocument, ManagedAssetName, scan_managed_asset_references};
 
-use super::{AssetReconcileMode, AssetReconcileReport, AssetStorage, AssetStorageError};
+use super::{AssetStorage, AssetStorageError};
 use crate::persistence::MAX_NOTE_LOAD;
 use crate::platform::windows::managed_file::open_guarded_note_read;
+use stickymd_app::ports::{AssetReconcileMode, AssetReconcileReport};
 
 const FILE_ATTRIBUTE_REPARSE_POINT_VALUE: u32 = 0x400;
 

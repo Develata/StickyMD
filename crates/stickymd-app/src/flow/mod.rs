@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#flow-coordination
 
+mod asset_io;
 mod clipboard;
 mod editor;
 mod note_guard;
@@ -15,6 +16,7 @@ mod recovery;
 mod save;
 pub mod window;
 
+pub use asset_io::{AssetFlow, AssetIo, AssetStep};
 pub use clipboard::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
 pub use editor::{AppEffect, EditorCoordinator};
 pub use note_guard::{PublishVerdict, guarded_publish_verdict};

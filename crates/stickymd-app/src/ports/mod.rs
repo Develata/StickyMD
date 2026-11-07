@@ -4,10 +4,20 @@
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#shared-crates
 
+mod assets;
+mod config;
+mod export;
 mod failure;
 mod note;
 mod preview;
 
+pub use assets::{
+    AssetPasteCompletion, AssetPasteFailure, AssetPasteRequest, AssetPasteRollback,
+    AssetReconcileMode, AssetReconcileReport, AssetSyncRequest, ManagedAssetStore, StoredAsset,
+    StoredAssetDisposition,
+};
+pub use config::ConfigStorage;
+pub use export::{ExportCompletion, ExportRequest, ExportSink};
 pub use failure::{FailureKind, StorageFailure};
 pub use note::{
     NoteReceipt, NoteStorage, PersistMode, PersistRequest, PersistResult, PreserveOutcome,

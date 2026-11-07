@@ -11,10 +11,11 @@ use winit::event_loop::{EventLoop, EventLoopProxy};
 use winit::platform::windows::EventLoopBuilderExtWindows;
 
 use super::{AppEvent, StickyApp};
-use crate::persistence::{IoCompletion, PersistenceWorker, WinNoteStorage};
+use crate::persistence::win_io_ports;
 use crate::platform::windows::program_dir::RuntimePaths;
 use crate::platform::windows::single_instance::{InstanceDisposition, SingleInstanceGuard};
 use crate::startup::{BootstrapOutcome, StartupDiagnostics};
+use stickymd_app::execution::{IoCompletion, PersistenceWorker};
 
 /// The constructor needs an event sink, not a running window or input desktop.
 /// Winit permits one event loop per process. Create its proxy once on an owned
@@ -95,12 +96,7 @@ fn started(
     else {
         panic!("unique fixture must own its instance");
     };
-    let storage = WinNoteStorage {
-        note_file: paths.note_file.clone(),
-        note_tmp: paths.note_tmp.clone(),
-        note_dir: paths.note_dir.clone(),
-    };
-    let worker = PersistenceWorker::start(storage, on_completion).unwrap();
+    let worker = PersistenceWorker::start(win_io_ports(&paths), on_completion).unwrap();
     let mut app = StickyApp::new(
         paths,
         BootstrapOutcome {

@@ -5,9 +5,8 @@
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
-use std::{collections::BTreeSet, collections::HashMap};
 
-use stickymd_core::{Generation, ManagedAssetLocation, Selection};
+use stickymd_core::Generation;
 #[cfg(test)]
 use stickymd_render::image::prepare_encoded_image;
 use stickymd_render::image::{
@@ -15,58 +14,13 @@ use stickymd_render::image::{
 };
 use thiserror::Error;
 
-use super::{AssetStorage, AssetStorageError, StoredAsset};
+use super::{AssetStorage, AssetStorageError};
 use stickymd_app::flow::ClipboardPaste;
+use stickymd_app::ports::{
+    AssetPasteCompletion, AssetPasteRequest, AssetPasteRollback, StoredAsset,
+};
 
 const MAX_IMAGE_PASTE_BATCH_BYTES: usize = 128 * 1024 * 1024;
-
-#[derive(Debug, Clone)]
-pub struct AssetPasteRequest {
-    pub expected_generation: Generation,
-    pub selection: Selection,
-    pub timestamp_ms: u64,
-    pub payload: ClipboardPaste,
-}
-
-#[derive(Debug)]
-pub struct AssetPasteCompletion {
-    pub expected_generation: Generation,
-    pub selection: Selection,
-    pub timestamp_ms: u64,
-    pub markdown: String,
-    pub rollback: AssetPasteRollback,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct AssetPasteRollback {
-    pub stored: Vec<StoredAsset>,
-}
-
-impl AssetPasteRollback {
-    /// Collapse rollback evidence to the latest canonical reference state.
-    /// This is used when a completed paste lost its generation race: replaying
-    /// the old disposition blindly could move a now-referenced asset to trash.
-    pub fn convergence_effects(
-        &self,
-        references: &HashMap<stickymd_core::ManagedAssetName, usize>,
-    ) -> Vec<stickymd_core::AssetEffect> {
-        self.stored
-            .iter()
-            .map(|asset| asset.name.clone())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .map(|name| {
-                let referenced = references.get(&name).copied().unwrap_or(0) > 0;
-                let (from, to) = if referenced {
-                    (ManagedAssetLocation::Trash, ManagedAssetLocation::Images)
-                } else {
-                    (ManagedAssetLocation::Images, ManagedAssetLocation::Trash)
-                };
-                stickymd_core::AssetEffect { name, from, to }
-            })
-            .collect()
-    }
-}
 
 #[derive(Debug, Error)]
 pub enum AssetPasteError {
@@ -94,16 +48,6 @@ pub struct AssetPasteFailure {
     pub expected_generation: Generation,
     pub error: AssetPasteError,
     pub rollback: AssetPasteRollback,
-}
-
-impl AssetPasteFailure {
-    pub fn without_publication(expected_generation: Generation, error: AssetPasteError) -> Self {
-        Self {
-            expected_generation,
-            error,
-            rollback: AssetPasteRollback::default(),
-        }
-    }
 }
 
 pub fn prepare_and_store_paste(
@@ -216,10 +160,12 @@ fn read_file_bounded(path: &PathBuf) -> Result<Vec<u8>, AssetPasteError> {
 mod tests {
     use super::*;
     use crate::test_support::unique_temp_path;
+    use std::collections::HashMap;
     use std::fs;
+    use stickymd_app::ports::StoredAssetDisposition;
     use stickymd_core::{
         CursorSnapshot, DocumentState, EditKind, EditMeta, EditRequest, LineEnding,
-        ManagedAssetName, Selection,
+        ManagedAssetLocation, ManagedAssetName, Selection,
     };
     use stickymd_render::image::{inspect_encoded_image, prepare_rgba_image};
 
@@ -309,7 +255,7 @@ mod tests {
         let rollback = AssetPasteRollback {
             stored: vec![StoredAsset {
                 name: name.clone(),
-                disposition: crate::assets::StoredAssetDisposition::Created,
+                disposition: StoredAssetDisposition::Created,
             }],
         };
         let mut referenced = HashMap::new();

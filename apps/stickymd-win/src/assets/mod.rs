@@ -10,14 +10,5 @@ mod transaction;
 pub(crate) use crate::platform::windows::local_image_file::open as open_local_image;
 pub use path::resolve_local_image;
 pub use safe_boundary::reconcile_safe_boundary;
-#[cfg(test)]
-pub use storage::StoredAssetDisposition;
-pub use storage::{
-    AssetReconcileMode, AssetReconcileReport, AssetStorage, AssetStorageError, StoredAsset,
-};
-#[cfg(test)]
-pub use transaction::AssetPasteRollback;
-pub use transaction::{
-    AssetPasteCompletion, AssetPasteError, AssetPasteFailure, AssetPasteRequest,
-    prepare_and_store_paste,
-};
+pub use storage::{AssetStorage, AssetStorageError};
+pub use transaction::{AssetPasteError, prepare_and_store_paste};

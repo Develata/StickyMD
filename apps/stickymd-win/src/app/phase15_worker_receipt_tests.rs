@@ -9,20 +9,22 @@ use stickymd_core::{Generation, ManagedAssetName, Selection};
 
 use crate::app::headless_tests::{HeadlessApp, fixture};
 use crate::app::receipt_tests::{saves, type_letter};
-use crate::assets::{
-    AssetPasteCompletion, AssetPasteError, AssetPasteFailure, AssetPasteRollback,
-    AssetReconcileReport, AssetStorageError, StoredAsset, StoredAssetDisposition,
+use crate::config::{ConfigRevision, ViewMode};
+use stickymd_app::execution::IoCompletion;
+use stickymd_app::ports::{
+    AssetPasteCompletion, AssetPasteFailure, AssetPasteRollback, AssetReconcileReport,
+    ExportCompletion, FailureKind, StorageFailure, StoredAsset, StoredAssetDisposition,
 };
-use crate::config::{ConfigRevision, ConfigStorageError, ViewMode};
-use crate::export::{ExportCompletion, ExportError};
-use crate::persistence::IoCompletion;
-use crate::platform::windows::atomic_file::AtomicPublishError;
 
 const PASTE_FAILED: &str = "clipboard payload is not an image transaction";
 const SYNC_FAILED: &str = "asset payload exceeds the 64 MiB bound";
 const CONFIG_FAILED: &str =
     "cannot atomically publish config.toml: target and temporary files must share a directory";
 const ASSET: &str = "stickymd-0123456789abcdef0123.png";
+
+fn failure(message: &str) -> StorageFailure {
+    StorageFailure::new(FailureKind::Failed, message)
+}
 
 fn generation(app: &HeadlessApp) -> Generation {
     app.coordinator.view().generation
@@ -44,7 +46,7 @@ fn stored_asset() -> AssetPasteRollback {
 fn paste_failed(app: &HeadlessApp, rollback: AssetPasteRollback) -> IoCompletion {
     IoCompletion::AssetPaste(Err(AssetPasteFailure {
         expected_generation: generation(app),
-        error: AssetPasteError::NotImage,
+        error: failure(PASTE_FAILED),
         rollback,
     }))
 }
@@ -71,20 +73,18 @@ fn sync_failed(request_id: u64) -> IoCompletion {
     IoCompletion::AssetSync {
         request_id,
         generation: Generation::initial(),
-        result: Err(AssetStorageError::TooLarge),
+        result: Err(failure(SYNC_FAILED)),
     }
 }
 
 fn config_failed(revision: ConfigRevision) -> IoCompletion {
     IoCompletion::Config {
         revision,
-        result: Err(ConfigStorageError::Publish(
-            AtomicPublishError::DifferentDirectories,
-        )),
+        result: Err(failure(CONFIG_FAILED)),
     }
 }
 
-fn export_done(result: Result<ExportCompletion, ExportError>) -> IoCompletion {
+fn export_done(result: Result<ExportCompletion, StorageFailure>) -> IoCompletion {
     IoCompletion::Export {
         generation: Generation::initial(),
         result,
@@ -96,7 +96,7 @@ fn syncing() -> (HeadlessApp, u64) {
     let mut app = fixture("start");
     let current = generation(&app);
     app.submit_asset_sync(current, Vec::new(), None, false);
-    let request_id = app.asset_sync_request_id.unwrap();
+    let request_id = app.assets.sync_request_id.unwrap();
     (app, request_id)
 }
 
@@ -123,7 +123,7 @@ fn a_paste_starts_once_and_a_second_is_refused() {
     let mut app = fixture("start");
     let request = pending_paste(&app);
     app.submit_asset_paste(request);
-    assert!(app.asset_paste_pending);
+    assert!(app.assets.paste_pending);
     assert_eq!(diagnostic(&app), "正在准备图片…");
     let request = pending_paste(&app);
     app.submit_asset_paste(request);
@@ -133,11 +133,11 @@ fn a_paste_starts_once_and_a_second_is_refused() {
 #[test]
 fn a_failed_paste_converges_what_it_published() {
     let mut app = fixture("start");
-    app.asset_paste_pending = true;
+    app.assets.paste_pending = true;
     let receipt = paste_failed(&app, stored_asset());
     app.handle_io_completion(None, receipt);
-    assert!(!app.asset_paste_pending);
-    assert!(app.asset_sync_in_flight);
+    assert!(!app.assets.paste_pending);
+    assert!(app.assets.sync_in_flight);
     assert_eq!(
         diagnostic(&app),
         format!("图片粘贴失败；未插入引用，资产正按最新引用状态收敛：{PASTE_FAILED}")
@@ -149,7 +149,7 @@ fn a_failed_paste_with_nothing_published_starts_no_sync() {
     let mut app = fixture("start");
     let receipt = paste_failed(&app, AssetPasteRollback::default());
     app.handle_io_completion(None, receipt);
-    assert!(!app.asset_sync_in_flight);
+    assert!(!app.assets.sync_in_flight);
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn a_paste_for_an_older_generation_inserts_nothing_and_converges() {
     let text = app.coordinator.view().text.to_string();
     app.handle_io_completion(None, pasted(older, Selection::caret(0)));
     assert_eq!(app.coordinator.view().text, text);
-    assert!(app.asset_sync_in_flight);
+    assert!(app.assets.sync_in_flight);
     assert_eq!(
         diagnostic(&app),
         "图片准备期间文档已变化；未插入引用，资产正按最新引用状态收敛。"
@@ -183,7 +183,7 @@ fn a_paste_that_cannot_commit_converges() {
     let current = generation(&app);
     app.handle_io_completion(None, pasted(current, Selection::caret(999)));
     assert_eq!(app.coordinator.view().text, "start");
-    assert!(app.asset_sync_in_flight);
+    assert!(app.assets.sync_in_flight);
     assert!(
         diagnostic(&app).starts_with("图片已准备但文档事务未提交；资产正按最新引用状态收敛："),
         "{}",
@@ -194,13 +194,13 @@ fn a_paste_that_cannot_commit_converges() {
 #[test]
 fn a_settled_paste_moves_the_quit_on() {
     let mut app = fixture("start");
-    app.asset_paste_pending = true;
+    app.assets.paste_pending = true;
     request_quit(&mut app);
     assert_eq!(
         lifecycle(&app),
         LifecycleState::Quitting(QuitStage::AwaitingPaste)
     );
-    app.asset_paste_pending = false;
+    app.assets.paste_pending = false;
     let receipt = paste_failed(&app, AssetPasteRollback::default());
     app.handle_io_completion(None, receipt);
     assert_eq!(
@@ -217,8 +217,8 @@ fn the_sync_report_names_what_it_could_not_do() {
         ..AssetReconcileReport::default()
     };
     app.handle_io_completion(None, sync_done(request_id, report));
-    assert!(!app.asset_sync_in_flight);
-    assert_eq!(app.asset_sync_request_id, None);
+    assert!(!app.assets.sync_in_flight);
+    assert_eq!(app.assets.sync_request_id, None);
     assert_eq!(
         diagnostic(&app),
         "便签磁盘状态正在变化；已保留回收站证据并延后物理清理。"
@@ -249,8 +249,8 @@ fn the_sync_report_names_what_it_could_not_do() {
 fn a_superseded_sync_receipt_keeps_the_newer_request_in_flight() {
     let (mut app, request_id) = syncing();
     app.handle_io_completion(None, sync_failed(request_id + 1));
-    assert!(app.asset_sync_in_flight);
-    assert_eq!(app.asset_sync_request_id, Some(request_id));
+    assert!(app.assets.sync_in_flight);
+    assert_eq!(app.assets.sync_request_id, Some(request_id));
     assert_eq!(
         diagnostic(&app),
         format!("图片整理未完成；用户文件与文档均未删除：{SYNC_FAILED}")
@@ -261,11 +261,11 @@ fn a_superseded_sync_receipt_keeps_the_newer_request_in_flight() {
 fn the_last_sync_after_recovery_enables_watching_and_recreates_a_missing_note() {
     let mut app = fixture("start");
     app.sync_assets_after_recovery();
-    assert!(app.asset_reconcile_pending);
-    let request_id = app.asset_sync_request_id.unwrap();
+    assert!(app.assets.reconcile_pending);
+    let request_id = app.assets.sync_request_id.unwrap();
     let before = saves(&app);
     app.handle_io_completion(None, sync_done(request_id, AssetReconcileReport::default()));
-    assert!(!app.asset_reconcile_pending);
+    assert!(!app.assets.reconcile_pending);
     assert!(app.watcher.is_some());
     assert_eq!(saves(&app), before + 1);
     assert!(app.persistence.durability_required());
@@ -274,10 +274,10 @@ fn the_last_sync_after_recovery_enables_watching_and_recreates_a_missing_note() 
 #[test]
 fn the_sync_sequence_stops_when_it_is_used_up() {
     let mut app = fixture("start");
-    app.asset_sync_sequence = u64::MAX;
+    app.assets.sync_sequence = u64::MAX;
     let current = generation(&app);
     app.submit_asset_sync(current, Vec::new(), None, false);
-    assert!(!app.asset_sync_in_flight);
+    assert!(!app.assets.sync_in_flight);
     assert_eq!(diagnostic(&app), "图片事务序号已耗尽；已停止自动整理。");
 }
 
@@ -291,9 +291,9 @@ fn a_quit_sync_receipt_completes_the_asset_barrier() {
         lifecycle(&app),
         LifecycleState::Quitting(QuitStage::AwaitingAssetGc)
     );
-    let request_id = app.quit_asset_sync_request_id.unwrap();
+    let request_id = app.assets.quit_sync_request_id.unwrap();
     app.handle_io_completion(None, sync_done(request_id, AssetReconcileReport::default()));
-    assert_eq!(app.quit_asset_sync_request_id, None);
+    assert_eq!(app.assets.quit_sync_request_id, None);
     assert_eq!(
         lifecycle(&app),
         LifecycleState::Quitting(QuitStage::ReadyToExit)
@@ -317,7 +317,10 @@ fn an_export_receipt_ends_the_export_and_reports_it() {
     assert_eq!(diagnostic(&app), "导出完成：out.md（2 个本地资源）");
 
     app.export_in_flight = true;
-    app.handle_io_completion(None, export_done(Err(ExportError::MissingParent)));
+    app.handle_io_completion(
+        None,
+        export_done(Err(failure("export target has no parent directory"))),
+    );
     assert!(!app.export_in_flight);
     assert_eq!(
         diagnostic(&app),
@@ -370,7 +373,7 @@ fn the_config_receipt_completes_the_quit() {
         .update(|config| config.view_mode = ViewMode::Split)
         .unwrap();
     request_quit(&mut app);
-    let request_id = app.quit_asset_sync_request_id.unwrap();
+    let request_id = app.assets.quit_sync_request_id.unwrap();
     app.handle_io_completion(None, sync_done(request_id, AssetReconcileReport::default()));
     assert_eq!(
         lifecycle(&app),
@@ -394,15 +397,15 @@ fn a_stopped_worker_fails_every_barrier_and_says_so() {
         lifecycle(&app),
         LifecycleState::Quitting(QuitStage::AwaitingNoteSave)
     );
-    app.asset_sync_in_flight = true;
-    app.asset_sync_request_id = Some(9);
-    app.quit_asset_sync_request_id = Some(9);
-    app.asset_paste_pending = true;
+    app.assets.sync_in_flight = true;
+    app.assets.sync_request_id = Some(9);
+    app.assets.quit_sync_request_id = Some(9);
+    app.assets.paste_pending = true;
     app.handle_io_completion(None, IoCompletion::WorkerStopped);
-    assert!(!app.asset_paste_pending);
-    assert!(!app.asset_sync_in_flight);
-    assert_eq!(app.asset_sync_request_id, None);
-    assert_eq!(app.quit_asset_sync_request_id, None);
+    assert!(!app.assets.paste_pending);
+    assert!(!app.assets.sync_in_flight);
+    assert_eq!(app.assets.sync_request_id, None);
+    assert_eq!(app.assets.quit_sync_request_id, None);
     assert_eq!(lifecycle(&app), LifecycleState::Running);
     assert!(app.quit_notice.active());
     assert_eq!(diagnostic(&app), "退出已取消：NoteSave 未安全完成。");

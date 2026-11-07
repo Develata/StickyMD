@@ -73,7 +73,7 @@ impl StickyApp {
         let context = EscapeContext {
             opacity_popup_open: self.controls.opacity_popup_open,
             recovery_pending: self.recovery.is_pending(),
-            asset_reconcile_pending: self.asset_reconcile_pending,
+            asset_reconcile_pending: self.assets.reconcile_pending,
             accepts_editor_mutation: self.window_accepts_editor_mutation(),
             editor_composing: self.session.is_composing(),
             search_open: self.search.open,

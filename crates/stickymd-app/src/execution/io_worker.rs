@@ -2,42 +2,48 @@
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#autosave-and-save-queue
 
-use std::collections::{BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::collections::BTreeSet;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
-use stickymd_app::ports::{NoteReceipt, NoteStorage, PersistRequest, TemporaryCleanup};
 use stickymd_core::{
-    AssetEffect, DiskFingerprint, Generation, ManagedAssetName, PreserveExpectation,
+    AssetEffect, DiskFingerprint, Generation, ManagedAssetLocation, PreserveExpectation,
 };
 
-use crate::assets::{
-    AssetPasteCompletion, AssetPasteError, AssetPasteFailure, AssetPasteRequest,
-    AssetReconcileMode, AssetReconcileReport, AssetStorage, AssetStorageError,
-    prepare_and_store_paste, reconcile_safe_boundary,
+use crate::config::{ConfigPersistRequest, ConfigRevision};
+use crate::ports::{
+    AssetPasteCompletion, AssetPasteFailure, AssetPasteRequest, AssetReconcileMode,
+    AssetReconcileReport, AssetSyncRequest, ConfigStorage, ExportCompletion, ExportRequest,
+    ExportSink, ManagedAssetStore, NoteReceipt, NoteStorage, PersistRequest, StorageFailure,
+    TemporaryCleanup,
 };
-use crate::config::{ConfigPersistRequest, ConfigRevision, ConfigStorageError, save_config};
-use crate::export::{ExportCompletion, ExportError, ExportRequest, export_snapshot};
 
 #[derive(Debug)]
 pub enum IoCompletion {
     Note(NoteReceipt),
     Config {
         revision: ConfigRevision,
-        result: Result<(), ConfigStorageError>,
+        result: Result<(), StorageFailure>,
     },
     AssetPaste(Result<AssetPasteCompletion, AssetPasteFailure>),
     AssetSync {
         request_id: u64,
         generation: Generation,
-        result: Result<AssetReconcileReport, AssetStorageError>,
+        result: Result<AssetReconcileReport, StorageFailure>,
     },
     Export {
         generation: Generation,
-        result: Result<ExportCompletion, ExportError>,
+        result: Result<ExportCompletion, StorageFailure>,
     },
     WorkerStopped,
+}
+
+/// The capabilities the worker thread owns; all of them move onto it when it starts.
+pub struct IoPorts<N, A, E, C> {
+    pub note: N,
+    pub assets: A,
+    pub export: E,
+    pub config: C,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -54,49 +60,16 @@ struct PreserveJob {
     operation: u64,
 }
 
-struct ConfigJob {
-    target: PathBuf,
-    temporary: PathBuf,
-    request: ConfigPersistRequest,
-}
-
-struct AssetRoots {
-    images: PathBuf,
-    trash: PathBuf,
-}
-struct AssetPasteJob {
-    roots: AssetRoots,
-    request: AssetPasteRequest,
-}
-pub(crate) struct AssetSyncRequest {
-    pub images: PathBuf,
-    pub trash: PathBuf,
-    pub request_id: u64,
-    pub generation: Generation,
-    pub effects: Vec<AssetEffect>,
-    pub references: HashMap<ManagedAssetName, usize>,
-    pub reconcile: Option<AssetReconcileMode>,
-    pub safe_note: Option<(PathBuf, Option<stickymd_core::Hash32>)>,
-}
-struct AssetSyncJob {
-    roots: AssetRoots,
-    request_id: u64,
-    generation: Generation,
-    effects: Vec<AssetEffect>,
-    references: HashMap<ManagedAssetName, usize>,
-    reconcile: Option<AssetReconcileMode>,
-    safe_note: Option<(PathBuf, Option<stickymd_core::Hash32>)>,
-}
 #[derive(Default)]
 struct Mailbox {
     note: Option<PersistRequest>,
     /// A queued observation, with the Durable Fingerprint known when it was requested.
     external: Option<Option<DiskFingerprint>>,
-    config: Option<ConfigJob>,
+    config: Option<ConfigPersistRequest>,
     cleanup_temporary: Option<TemporaryCleanup>,
     preserve_canonical: Option<PreserveJob>,
-    asset_paste: Option<AssetPasteJob>,
-    asset_sync: Option<AssetSyncJob>,
+    asset_paste: Option<AssetPasteRequest>,
+    asset_sync: Option<AssetSyncRequest>,
     export: Option<ExportRequest>,
     shutdown: bool,
     note_blocked_for_ack: bool,
@@ -117,7 +90,7 @@ impl Mailbox {
         }
     }
 
-    fn replace_asset_sync(&mut self, mut job: AssetSyncJob) {
+    fn replace_asset_sync(&mut self, mut job: AssetSyncRequest) {
         if let Some(previous) = self.asset_sync.take() {
             // A single mailbox slot must not lose an earlier logical move when
             // a later text edit has no asset transition of its own. Collapse
@@ -130,15 +103,9 @@ impl Mailbox {
                 .map(|name| {
                     let referenced = job.references.get(&name).copied().unwrap_or(0) > 0;
                     let (from, to) = if referenced {
-                        (
-                            stickymd_core::ManagedAssetLocation::Trash,
-                            stickymd_core::ManagedAssetLocation::Images,
-                        )
+                        (ManagedAssetLocation::Trash, ManagedAssetLocation::Images)
                     } else {
-                        (
-                            stickymd_core::ManagedAssetLocation::Images,
-                            stickymd_core::ManagedAssetLocation::Trash,
-                        )
+                        (ManagedAssetLocation::Images, ManagedAssetLocation::Trash)
                     };
                     AssetEffect { name, from, to }
                 })
@@ -152,7 +119,7 @@ impl Mailbox {
                 (None, None) => None,
             };
             if job.reconcile != Some(AssetReconcileMode::SafeBoundary) {
-                job.safe_note = None;
+                job.safe_expected = None;
             }
         }
         self.asset_sync = Some(job);
@@ -202,10 +169,15 @@ pub struct PersistenceWorker {
 }
 
 impl PersistenceWorker {
-    /// `storage` moves onto the worker thread, its only user.
-    pub fn start<S, F>(storage: S, on_completion: F) -> Result<Self, std::io::Error>
+    pub fn start<N, A, E, C, F>(
+        ports: IoPorts<N, A, E, C>,
+        on_completion: F,
+    ) -> Result<Self, std::io::Error>
     where
-        S: NoteStorage,
+        N: NoteStorage,
+        A: ManagedAssetStore,
+        E: ExportSink,
+        C: ConfigStorage,
         F: Fn(IoCompletion) + Send + Sync + 'static,
     {
         let shared = Arc::new((Mutex::new(Mailbox::default()), Condvar::new()));
@@ -214,7 +186,7 @@ impl PersistenceWorker {
         let thread = thread::Builder::new()
             .name("stickymd-io".into())
             .stack_size(512 * 1024)
-            .spawn(move || run_worker(storage, worker_shared, on_completion))?;
+            .spawn(move || run_worker(ports, worker_shared, on_completion))?;
         Ok(Self {
             shared,
             thread: Some(thread),
@@ -252,19 +224,10 @@ impl PersistenceWorker {
         }
     }
 
-    pub fn submit_config(
-        &self,
-        target: PathBuf,
-        temporary: PathBuf,
-        request: ConfigPersistRequest,
-    ) {
+    pub fn submit_config(&self, request: ConfigPersistRequest) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
-            mailbox.config = Some(ConfigJob {
-                target,
-                temporary,
-                request,
-            });
+            mailbox.config = Some(request);
             ready.notify_one();
         }
     }
@@ -290,21 +253,13 @@ impl PersistenceWorker {
         }
     }
 
-    pub fn submit_asset_paste(
-        &self,
-        images: PathBuf,
-        trash: PathBuf,
-        request: AssetPasteRequest,
-    ) -> bool {
+    pub fn submit_asset_paste(&self, request: AssetPasteRequest) -> bool {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
             if mailbox.asset_paste.is_some() {
                 return false;
             }
-            mailbox.asset_paste = Some(AssetPasteJob {
-                roots: AssetRoots { images, trash },
-                request,
-            });
+            mailbox.asset_paste = Some(request);
             ready.notify_one();
             true
         } else {
@@ -318,18 +273,7 @@ impl PersistenceWorker {
     pub fn submit_asset_sync(&self, request: AssetSyncRequest) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
-            mailbox.replace_asset_sync(AssetSyncJob {
-                roots: AssetRoots {
-                    images: request.images,
-                    trash: request.trash,
-                },
-                request_id: request.request_id,
-                generation: request.generation,
-                effects: request.effects,
-                references: request.references,
-                reconcile: request.reconcile,
-                safe_note: request.safe_note,
-            });
+            mailbox.replace_asset_sync(request);
             ready.notify_one();
         }
     }
@@ -348,7 +292,6 @@ impl PersistenceWorker {
         }
     }
 
-    #[cfg(test)]
     pub fn metrics(&self) -> WorkerMetrics {
         let (lock, _) = &*self.shared;
         lock.lock()
@@ -371,9 +314,15 @@ impl Drop for PersistenceWorker {
     }
 }
 
-fn run_worker<S, F>(mut storage: S, shared: Arc<(Mutex<Mailbox>, Condvar)>, on_completion: Arc<F>)
-where
-    S: NoteStorage,
+fn run_worker<N, A, E, C, F>(
+    mut ports: IoPorts<N, A, E, C>,
+    shared: Arc<(Mutex<Mailbox>, Condvar)>,
+    on_completion: Arc<F>,
+) where
+    N: NoteStorage,
+    A: ManagedAssetStore,
+    E: ExportSink,
+    C: ConfigStorage,
     F: Fn(IoCompletion),
 {
     loop {
@@ -416,7 +365,7 @@ where
 
         match work {
             WorkerJob::Note(request) => {
-                let result = storage.persist(&request);
+                let result = ports.note.persist(&request);
                 if let Ok(mut mailbox) = shared.0.lock() {
                     mailbox.metrics.note_completed += 1;
                 }
@@ -427,41 +376,20 @@ where
                 }));
             }
             WorkerJob::External(requested_base) => {
-                let result = storage.observe();
+                let result = ports.note.observe();
                 on_completion(IoCompletion::Note(NoteReceipt::External {
                     requested_base,
                     result,
                 }));
             }
-            WorkerJob::AssetPaste(job) => {
-                let expected_generation = job.request.expected_generation;
-                let result = AssetStorage::open(&job.roots.images, &job.roots.trash)
-                    .map_err(|error| {
-                        AssetPasteFailure::without_publication(
-                            expected_generation,
-                            AssetPasteError::Storage(error),
-                        )
-                    })
-                    .and_then(|storage| prepare_and_store_paste(&storage, job.request));
-                on_completion(IoCompletion::AssetPaste(result));
+            WorkerJob::AssetPaste(request) => {
+                on_completion(IoCompletion::AssetPaste(ports.assets.paste(request)));
             }
-            WorkerJob::AssetSync(job) => {
-                let result =
-                    AssetStorage::open(&job.roots.images, &job.roots.trash).and_then(|storage| {
-                        for effect in &job.effects {
-                            storage.apply_effect(effect)?;
-                        }
-                        match (job.reconcile, job.safe_note) {
-                            (Some(AssetReconcileMode::SafeBoundary), Some((note, expected))) => {
-                                reconcile_safe_boundary(&storage, &note, expected, &job.references)
-                            }
-                            (Some(mode), _) => storage.reconcile(&job.references, mode),
-                            (None, _) => Ok(AssetReconcileReport::default()),
-                        }
-                    });
+            WorkerJob::AssetSync(request) => {
+                let result = ports.assets.sync(&request);
                 on_completion(IoCompletion::AssetSync {
-                    request_id: job.request_id,
-                    generation: job.generation,
+                    request_id: request.request_id,
+                    generation: request.generation,
                     result,
                 });
             }
@@ -469,23 +397,25 @@ where
                 let generation = request.snapshot.generation;
                 on_completion(IoCompletion::Export {
                     generation,
-                    result: export_snapshot(request),
+                    result: ports.export.export(request),
                 });
             }
-            WorkerJob::Config(job) => {
-                let revision = job.request.revision;
-                let result = save_config(&job.target, &job.temporary, &job.request.config);
-                on_completion(IoCompletion::Config { revision, result });
+            WorkerJob::Config(request) => {
+                let result = ports.config.save(&request.config);
+                on_completion(IoCompletion::Config {
+                    revision: request.revision,
+                    result,
+                });
             }
             WorkerJob::CleanupTemporary(purpose) => {
-                let result = storage.remove_temporary();
+                let result = ports.note.remove_temporary();
                 on_completion(IoCompletion::Note(NoteReceipt::TemporaryRemoved {
                     purpose,
                     result,
                 }));
             }
             WorkerJob::PreserveCanonical(job) => {
-                let result = storage.preserve_canonical(job.expected);
+                let result = ports.note.preserve_canonical(job.expected);
                 on_completion(IoCompletion::Note(NoteReceipt::CanonicalPreserved {
                     operation: job.operation,
                     result,
@@ -498,25 +428,24 @@ where
 enum WorkerJob {
     Note(PersistRequest),
     External(Option<DiskFingerprint>),
-    Config(ConfigJob),
+    Config(ConfigPersistRequest),
     CleanupTemporary(TemporaryCleanup),
     PreserveCanonical(PreserveJob),
-    AssetPaste(AssetPasteJob),
-    AssetSync(AssetSyncJob),
+    AssetPaste(AssetPasteRequest),
+    AssetSync(AssetSyncRequest),
     Export(ExportRequest),
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use stickymd_core::{DocumentSnapshot, LineEnding, ManagedAssetName, Selection};
+
     use super::*;
-    use crate::persistence::WinNoteStorage;
-    use crate::test_support::unique_temp_path;
-    use std::fs;
-    use std::path::Path;
-    use std::sync::{Arc, Barrier, mpsc};
-    use std::time::Duration;
-    use stickymd_app::ports::PersistMode;
-    use stickymd_core::{Generation, LineEnding, hash_bytes};
+    use crate::config::RuntimeConfig;
+    use crate::flow::ClipboardPaste;
+    use crate::ports::PersistMode;
 
     fn job(text: &str) -> PersistRequest {
         PersistRequest {
@@ -527,29 +456,24 @@ mod tests {
         }
     }
 
-    fn storage_in(root: &Path) -> WinNoteStorage {
-        WinNoteStorage {
-            note_file: root.join("note.md"),
-            note_tmp: root.join("note.md.tmp"),
-            note_dir: root.to_path_buf(),
+    fn sync(request_id: u64) -> AssetSyncRequest {
+        AssetSyncRequest {
+            request_id,
+            generation: Generation::initial(),
+            effects: Vec::new(),
+            references: HashMap::new(),
+            reconcile: None,
+            safe_expected: None,
         }
     }
 
     /// The priority is a contract: the note goes first, and a config write never delays anything.
     #[test]
-    fn phase15_the_mailbox_drains_every_job_kind_in_its_priority_order() {
-        let roots = || AssetRoots {
-            images: "images".into(),
-            trash: "trash".into(),
-        };
+    fn the_mailbox_drains_every_job_kind_in_its_priority_order() {
         let mut mailbox = Mailbox {
-            config: Some(ConfigJob {
-                target: "config.toml".into(),
-                temporary: "config.toml.tmp".into(),
-                request: ConfigPersistRequest {
-                    revision: crate::config::ConfigRevision::initial(),
-                    config: Default::default(),
-                },
+            config: Some(ConfigPersistRequest {
+                revision: ConfigRevision::initial(),
+                config: RuntimeConfig::default(),
             }),
             preserve_canonical: Some(PreserveJob {
                 expected: PreserveExpectation::Unverifiable,
@@ -557,31 +481,19 @@ mod tests {
             }),
             external: Some(None),
             export: Some(ExportRequest {
-                snapshot: stickymd_core::DocumentSnapshot {
+                snapshot: DocumentSnapshot {
                     text: "".into(),
                     generation: Generation::initial(),
                     line_ending: LineEnding::Lf,
                 },
-                note_dir: "note".into(),
                 target: "export.md".into(),
             }),
-            asset_sync: Some(AssetSyncJob {
-                roots: roots(),
-                request_id: 1,
-                generation: Generation::initial(),
-                effects: Vec::new(),
-                references: HashMap::new(),
-                reconcile: None,
-                safe_note: None,
-            }),
-            asset_paste: Some(AssetPasteJob {
-                roots: roots(),
-                request: AssetPasteRequest {
-                    expected_generation: Generation::initial(),
-                    selection: stickymd_core::Selection::caret(0),
-                    timestamp_ms: 0,
-                    payload: stickymd_app::flow::ClipboardPaste::EncodedImage(Vec::new()),
-                },
+            asset_sync: Some(sync(1)),
+            asset_paste: Some(AssetPasteRequest {
+                expected_generation: Generation::initial(),
+                selection: Selection::caret(0),
+                timestamp_ms: 0,
+                payload: ClipboardPaste::EncodedImage(Vec::new()),
             }),
             ..Mailbox::default()
         };
@@ -620,49 +532,6 @@ mod tests {
     }
 
     #[test]
-    fn next_note_waits_for_ack_and_stale_base_request_is_discarded() {
-        let root = unique_temp_path("worker-barrier");
-        fs::create_dir(&root).unwrap();
-        let target = root.join("note.md");
-        fs::write(&target, b"base").unwrap();
-
-        let (sender, receiver) = mpsc::channel();
-        let worker = PersistenceWorker::start(storage_in(&root), move |completion| {
-            sender.send(completion).unwrap();
-        })
-        .unwrap();
-        let request = |text: &'static str| PersistRequest {
-            generation: Generation::initial(),
-            text: text.into(),
-            line_ending: LineEnding::Lf,
-            mode: PersistMode::Guarded {
-                expected: Some(hash_bytes(b"base")),
-            },
-        };
-        worker.submit_note(request("first"));
-        let IoCompletion::Note(NoteReceipt::Save { mode, .. }) =
-            receiver.recv_timeout(Duration::from_secs(3)).unwrap()
-        else {
-            panic!("expected a note completion");
-        };
-        assert_eq!(
-            mode,
-            PersistMode::Guarded {
-                expected: Some(hash_bytes(b"base"))
-            }
-        );
-
-        worker.submit_note(request("stale-second"));
-        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
-        worker.acknowledge_note_completion();
-        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
-        assert_eq!(fs::read(&target).unwrap(), b"first");
-
-        drop(worker);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn a_newer_note_job_supersedes_only_a_queued_conflict_discard_cleanup() {
         let mut mailbox = Mailbox {
             cleanup_temporary: Some(TemporaryCleanup::ConflictDiscarded),
@@ -698,125 +567,32 @@ mod tests {
 
     #[test]
     fn asset_sync_coalescing_preserves_old_touches_but_uses_latest_references() {
-        use stickymd_core::ManagedAssetLocation;
-
         let name = ManagedAssetName::parse("stickymd-0123456789abcdef0123.png").unwrap();
-        let roots = || AssetRoots {
-            images: "images".into(),
-            trash: "trash".into(),
-        };
         let mut mailbox = Mailbox::default();
-        mailbox.replace_asset_sync(AssetSyncJob {
-            roots: roots(),
-            request_id: 1,
-            generation: Generation::initial(),
+        mailbox.replace_asset_sync(AssetSyncRequest {
             effects: vec![AssetEffect {
                 name: name.clone(),
                 from: ManagedAssetLocation::Images,
                 to: ManagedAssetLocation::Trash,
             }],
-            references: HashMap::new(),
             reconcile: Some(AssetReconcileMode::SafeBoundary),
-            safe_note: Some(("note.md".into(), None)),
+            safe_expected: Some(None),
+            ..sync(1)
         });
         let mut restored_references = HashMap::new();
         restored_references.insert(name.clone(), 1);
-        mailbox.replace_asset_sync(AssetSyncJob {
-            roots: roots(),
-            request_id: 2,
-            generation: Generation::initial(),
-            effects: Vec::new(),
+        mailbox.replace_asset_sync(AssetSyncRequest {
             references: restored_references,
-            reconcile: None,
-            safe_note: None,
+            ..sync(2)
         });
 
         let combined = mailbox.asset_sync.unwrap();
         assert_eq!(combined.request_id, 2);
         assert_eq!(combined.reconcile, Some(AssetReconcileMode::Runtime));
-        assert!(combined.safe_note.is_none());
+        assert!(combined.safe_expected.is_none());
         assert_eq!(combined.effects.len(), 1);
         assert_eq!(combined.effects[0].name, name);
         assert_eq!(combined.effects[0].from, ManagedAssetLocation::Trash);
         assert_eq!(combined.effects[0].to, ManagedAssetLocation::Images);
-    }
-
-    #[test]
-    fn newer_asset_convergence_runs_after_an_older_sync_has_left_the_mailbox() {
-        use stickymd_core::ManagedAssetLocation;
-        use stickymd_render::image::prepare_rgba_image;
-
-        let root = unique_temp_path("worker-asset-order");
-        let images = root.join("images");
-        let trash = root.join(".trash");
-        fs::create_dir_all(&images).unwrap();
-        fs::create_dir(&trash).unwrap();
-        let storage = AssetStorage::open(&images, &trash).unwrap();
-        let asset = storage
-            .store(&prepare_rgba_image(2, 2, vec![23; 16]).unwrap())
-            .unwrap();
-
-        let (sender, receiver) = mpsc::channel();
-        let first_receipt_gate = Arc::new(Barrier::new(2));
-        let callback_gate = Arc::clone(&first_receipt_gate);
-        let worker = PersistenceWorker::start(storage_in(&root), move |completion| {
-            let block = matches!(completion, IoCompletion::AssetSync { request_id: 1, .. });
-            sender.send(completion).unwrap();
-            if block {
-                callback_gate.wait();
-            }
-        })
-        .unwrap();
-
-        worker.submit_asset_sync(AssetSyncRequest {
-            images: images.clone(),
-            trash: trash.clone(),
-            request_id: 1,
-            generation: Generation::initial(),
-            effects: vec![AssetEffect {
-                name: asset.name.clone(),
-                from: ManagedAssetLocation::Images,
-                to: ManagedAssetLocation::Trash,
-            }],
-            references: HashMap::new(),
-            reconcile: Some(AssetReconcileMode::Runtime),
-            safe_note: None,
-        });
-        assert!(matches!(
-            receiver.recv_timeout(Duration::from_secs(3)).unwrap(),
-            IoCompletion::AssetSync {
-                request_id: 1,
-                result: Ok(_),
-                ..
-            }
-        ));
-        assert!(trash.join(asset.name.as_str()).is_file());
-
-        let mut latest_references = HashMap::new();
-        latest_references.insert(asset.name.clone(), 1);
-        worker.submit_asset_sync(AssetSyncRequest {
-            images: images.clone(),
-            trash: trash.clone(),
-            request_id: 2,
-            generation: Generation::initial().checked_next().unwrap(),
-            effects: Vec::new(),
-            references: latest_references,
-            reconcile: Some(AssetReconcileMode::Runtime),
-            safe_note: None,
-        });
-        first_receipt_gate.wait();
-        assert!(matches!(
-            receiver.recv_timeout(Duration::from_secs(3)).unwrap(),
-            IoCompletion::AssetSync {
-                request_id: 2,
-                result: Ok(_),
-                ..
-            }
-        ));
-        assert!(images.join(asset.name.as_str()).is_file());
-        assert!(!trash.join(asset.name.as_str()).exists());
-
-        drop(worker);
-        fs::remove_dir_all(root).unwrap();
     }
 }

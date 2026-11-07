@@ -14,7 +14,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 
 use crate::app::headless_tests::{HeadlessApp, fixture};
 use crate::app::input::ShellKey;
-use crate::persistence::IoCompletion;
+use stickymd_app::execution::IoCompletion;
 use stickymd_app::ports::{
     NoteReceipt, PersistMode, PersistResult, PreserveOutcome, TemporaryCleanup,
 };

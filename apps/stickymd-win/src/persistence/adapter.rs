@@ -1,14 +1,27 @@
-//! Windows execution of the note storage port.
+//! Windows execution of the storage ports.
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#atomic-save
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use stickymd_app::config::RuntimeConfig;
+use stickymd_app::execution::IoPorts;
 use stickymd_app::ports::{
-    FailureKind, NoteStorage, PersistRequest, PersistResult, PreserveOutcome, StorageFailure,
+    AssetPasteCompletion, AssetPasteFailure, AssetPasteRequest, AssetReconcileMode,
+    AssetReconcileReport, AssetSyncRequest, ConfigStorage, ExportCompletion, ExportRequest,
+    ExportSink, FailureKind, ManagedAssetStore, NoteStorage, PersistRequest, PersistResult,
+    PreserveOutcome, StorageFailure,
 };
 use stickymd_core::{ExternalFileState, PreserveExpectation};
+
+use crate::assets::{
+    AssetPasteError, AssetStorage, AssetStorageError, prepare_and_store_paste,
+    reconcile_safe_boundary,
+};
+use crate::config::{ConfigStorageError, save_config};
+use crate::export::{ExportError, export_snapshot};
+use crate::platform::windows::program_dir::RuntimePaths;
 
 use super::{
     NoteStorageError, inspect_note_state_with_retry, persist_note, preserve_canonical_if_unchanged,
@@ -48,6 +61,142 @@ impl NoteStorage for WinNoteStorage {
             &destination,
             expected,
         )?)
+    }
+}
+
+/// The managed images of this program directory.
+pub struct WinAssetStore {
+    pub images: PathBuf,
+    pub trash: PathBuf,
+    pub note_file: PathBuf,
+}
+
+impl ManagedAssetStore for WinAssetStore {
+    fn paste(
+        &mut self,
+        request: AssetPasteRequest,
+    ) -> Result<AssetPasteCompletion, AssetPasteFailure> {
+        let expected_generation = request.expected_generation;
+        let storage =
+            AssetStorage::open(&self.images, &self.trash).map_err(|error| AssetPasteFailure {
+                expected_generation,
+                error: AssetPasteError::Storage(error).into(),
+                rollback: Default::default(),
+            })?;
+        prepare_and_store_paste(&storage, request).map_err(|failure| AssetPasteFailure {
+            expected_generation: failure.expected_generation,
+            error: failure.error.into(),
+            rollback: failure.rollback,
+        })
+    }
+
+    fn sync(&mut self, request: &AssetSyncRequest) -> Result<AssetReconcileReport, StorageFailure> {
+        let storage = AssetStorage::open(&self.images, &self.trash)?;
+        for effect in &request.effects {
+            storage.apply_effect(effect)?;
+        }
+        Ok(match (request.reconcile, request.safe_expected) {
+            (Some(AssetReconcileMode::SafeBoundary), Some(expected)) => {
+                reconcile_safe_boundary(&storage, &self.note_file, expected, &request.references)?
+            }
+            (Some(mode), _) => storage.reconcile(&request.references, mode)?,
+            (None, _) => AssetReconcileReport::default(),
+        })
+    }
+}
+
+pub struct WinExportSink {
+    pub note_dir: PathBuf,
+}
+
+impl ExportSink for WinExportSink {
+    fn export(&mut self, request: ExportRequest) -> Result<ExportCompletion, StorageFailure> {
+        Ok(export_snapshot(crate::export::ExportRequest {
+            snapshot: request.snapshot,
+            note_dir: self.note_dir.clone(),
+            target: request.target,
+        })?)
+    }
+}
+
+pub struct WinConfigStorage {
+    pub target: PathBuf,
+    pub temporary: PathBuf,
+}
+
+impl ConfigStorage for WinConfigStorage {
+    fn save(&mut self, config: &RuntimeConfig) -> Result<(), StorageFailure> {
+        Ok(save_config(&self.target, &self.temporary, config)?)
+    }
+}
+
+/// The capabilities of this program directory, for the shared I/O worker.
+pub fn win_io_ports(
+    paths: &RuntimePaths,
+) -> IoPorts<WinNoteStorage, WinAssetStore, WinExportSink, WinConfigStorage> {
+    IoPorts {
+        note: WinNoteStorage {
+            note_file: paths.note_file.clone(),
+            note_tmp: paths.note_tmp.clone(),
+            note_dir: paths.note_dir.clone(),
+        },
+        assets: WinAssetStore {
+            images: paths.images_dir.clone(),
+            trash: paths.trash_dir.clone(),
+            note_file: paths.note_file.clone(),
+        },
+        export: WinExportSink {
+            note_dir: paths.note_dir.clone(),
+        },
+        config: WinConfigStorage {
+            target: paths.config_file.clone(),
+            temporary: paths.config_tmp.clone(),
+        },
+    }
+}
+
+impl From<AssetStorageError> for StorageFailure {
+    fn from(error: AssetStorageError) -> Self {
+        let kind = match &error {
+            AssetStorageError::Directory(_) | AssetStorageError::ChangedDuringProof(_) => {
+                FailureKind::Unavailable
+            }
+            AssetStorageError::ReparseDirectory(_)
+            | AssetStorageError::OwnershipNotProven(_)
+            | AssetStorageError::TooLarge
+            | AssetStorageError::Io(_)
+            | AssetStorageError::NameCollisionExhausted
+            | AssetStorageError::MissingAsset(_)
+            | AssetStorageError::AmbiguousCollision(_)
+            | AssetStorageError::InvalidRootLayout => FailureKind::Failed,
+        };
+        Self::new(kind, error.to_string())
+    }
+}
+
+impl From<AssetPasteError> for StorageFailure {
+    fn from(error: AssetPasteError) -> Self {
+        let kind = match &error {
+            AssetPasteError::Read(_) => FailureKind::Unavailable,
+            AssetPasteError::MixedOrUnsupportedFiles
+            | AssetPasteError::Image(_)
+            | AssetPasteError::Storage(_)
+            | AssetPasteError::BatchTooLarge { .. }
+            | AssetPasteError::NotImage => FailureKind::Failed,
+        };
+        Self::new(kind, error.to_string())
+    }
+}
+
+impl From<ExportError> for StorageFailure {
+    fn from(error: ExportError) -> Self {
+        Self::new(FailureKind::Failed, error.to_string())
+    }
+}
+
+impl From<ConfigStorageError> for StorageFailure {
+    fn from(error: ConfigStorageError) -> Self {
+        Self::new(FailureKind::Failed, error.to_string())
     }
 }
 

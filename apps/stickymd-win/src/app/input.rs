@@ -33,7 +33,7 @@ impl StickyApp {
             self.recovery.is_pending(),
             self.preview_focused,
             !self.window_accepts_editor_mutation(),
-            self.asset_reconcile_pending,
+            self.assets.reconcile_pending,
         ) {
             self.session.cancel_preedit();
             self.sync_preedit();
@@ -149,7 +149,7 @@ impl StickyApp {
             self.recovery.is_pending(),
             false,
             !self.window_accepts_editor_mutation(),
-            self.asset_reconcile_pending,
+            self.assets.reconcile_pending,
         ) {
             return;
         }

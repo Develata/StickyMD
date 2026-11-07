@@ -336,6 +336,8 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-app/src/lib.rs",
     "crates/stickymd-app/src/config/",
     "crates/stickymd-app/src/execution/mod.rs",
+    "crates/stickymd-app/src/execution/io_worker.rs",
+    "crates/stickymd-app/src/flow/asset_io.rs",
     "apps/stickymd-win/src/surface.rs",
     "apps/stickymd-win/src/assets/mod.rs",
     "apps/stickymd-win/src/assets/safe_boundary.rs",

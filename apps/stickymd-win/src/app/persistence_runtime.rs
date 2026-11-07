@@ -6,7 +6,7 @@ use winit::event_loop::ActiveEventLoop;
 
 use super::StickyApp;
 use crate::config::ConfigAck;
-use crate::persistence::IoCompletion;
+use stickymd_app::execution::IoCompletion;
 use stickymd_app::flow::SaveTrigger;
 use stickymd_app::flow::window::state::{QuitBarrier, WindowIntent};
 use stickymd_app::instruction::{PersistenceIntent, SaveReason};
@@ -20,11 +20,7 @@ impl StickyApp {
         let Some(request) = self.config.begin_persist() else {
             return;
         };
-        self.worker.submit_config(
-            self.paths.config_file.clone(),
-            self.paths.config_tmp.clone(),
-            request,
-        );
+        self.worker.submit_config(request);
     }
 
     /// The end of a complete main-thread event pass: after this pass's autosave, external check,
@@ -106,10 +102,7 @@ impl StickyApp {
                 ) {
                     self.submit_config_if_needed();
                 }
-                if matches!(acknowledgement, ConfigAck::Applied { .. })
-                    && !self.config.is_saving()
-                    && (!self.config.is_dirty() || !succeeded)
-                {
+                if self.config.settles_quit(acknowledgement, succeeded) {
                     self.dispatch_window_intent(
                         event_loop,
                         WindowIntent::QuitBarrierCompleted {
@@ -124,19 +117,12 @@ impl StickyApp {
                 self.handle_asset_paste_completion(event_loop, result)
             }
             IoCompletion::AssetSync {
-                request_id,
-                generation,
-                result,
-            } => self.handle_asset_sync_completion(event_loop, request_id, generation, result),
-            IoCompletion::Export { generation, result } => {
-                self.handle_export_completion(generation, result)
-            }
+                request_id, result, ..
+            } => self.handle_asset_sync_completion(event_loop, request_id, result),
+            IoCompletion::Export { result, .. } => self.handle_export_completion(result),
             IoCompletion::WorkerStopped => {
                 self.diagnostic = Some("持久化工作线程已停止；不会假装自动保存仍可用。".into());
-                self.asset_paste_pending = false;
-                self.asset_sync_in_flight = false;
-                self.asset_sync_request_id = None;
-                self.quit_asset_sync_request_id = None;
+                self.assets.worker_stopped();
                 self.dispatch_window_intent(
                     event_loop,
                     WindowIntent::HideSaveCompleted {

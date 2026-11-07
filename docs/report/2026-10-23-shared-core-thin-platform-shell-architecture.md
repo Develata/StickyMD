@@ -31,7 +31,7 @@
 | [字体策略](../../crates/stickymd-render/src/source/fonts.rs) | 现有候选字体侧重 Windows 字体；预览代码字体另有回退 | 可共享字体选择算法，各平台给出默认字体策略 |
 | [CI](../../.github/workflows/ci.yml)、[治理检查](../../tools/stickymd-smoke/src/governance.rs) | 已有 Linux core/render 构建测试配置；部分检查硬编码 Windows 应用源路径：`forbid(unsafe_code)` 只查 core/render 的 `lib.rs`，窗口协调的平台类型禁令只扫 `apps/stickymd-win/src/flow/window` | 必须随每批移动同步迁移检查规则与任务选择，不能保留失效路径或绕过检查 |
 | [窗口隐藏](../../crates/stickymd-app/src/flow/window/lifecycle.rs)、[窗口效果执行](../../apps/stickymd-win/src/app/window_runtime.rs) | `complete_hide` 先把状态设为 `HiddenToTray`，再发出 `SetVisible(false)` 与释放缓存；执行端调用 `set_visible` 后没有失败回执 | 状态机不能原样搬迁：共享层须区分“已请求”与“已执行”，否则无法表达第 5 节第 6 条的失败语义 |
-| [I/O 回执](../../apps/stickymd-win/src/persistence/worker.rs) | `IoCompletion::External`、`TemporaryRemoved`、`CanonicalPreserved` 不带 generation 或操作身份；正确性依赖当前串行执行与状态守卫 | 与 [AGENTS](../../AGENTS.md) 的 generation 禁令不符的既有偏差；在 Windows 上单独修复，迁移时不能把隐含依赖当作已有版本校验 |
+| [I/O 回执](../../crates/stickymd-app/src/execution/io_worker.rs) | `IoCompletion::External`、`TemporaryRemoved`、`CanonicalPreserved` 不带 generation 或操作身份；正确性依赖当前串行执行与状态守卫 | 与 [AGENTS](../../AGENTS.md) 的 generation 禁令不符的既有偏差；在 Windows 上单独修复，迁移时不能把隐含依赖当作已有版本校验 |
 | [帧缓冲呈现](../../apps/stickymd-win/src/surface.rs) | 局部更新假定 Win32 softbuffer 的单个持久 DIB：只在 `age == 0` 时全量填充，其余情况只写 damage 区 | 共享前须改为只在 `age == 1` 时局部更新；Wayland 双缓冲（`age == 2`）与 macOS（每帧新缓冲、忽略 damage）不满足该假设 |
 | [工作区依赖](../../Cargo.toml) | winit 与 softbuffer 关闭默认 features（winit 仅启用 `rwh_06`），依赖只在 Windows target 下引入 | 共享 desktop 在 Linux 上需显式选择 X11/Wayland backend features，否则无法编译 |
 

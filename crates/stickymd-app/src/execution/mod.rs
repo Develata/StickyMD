@@ -4,6 +4,8 @@
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#shared-crates
 
+mod io_worker;
 mod preview_worker;
 
+pub use io_worker::{IoCompletion, IoPorts, PersistenceWorker, WorkerMetrics};
 pub use preview_worker::PreviewWorker;
