@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::qualification_environment::{self, QualificationEnvironmentStatus};
+use crate::runner::filtered_run::passed_tests;
 
 pub(super) use crate::managed_process::ChildGuard;
 
@@ -540,15 +541,6 @@ pub(super) fn run_cargo_test(repository: &Path, package: &str, filter: &str) -> 
     }
 }
 
-/// The tests a `cargo test` run reports as passed, over all its test binaries.
-fn passed_tests(stdout: &str) -> u64 {
-    stdout
-        .lines()
-        .filter_map(|line| line.strip_prefix("test result: ok. "))
-        .filter_map(|rest| rest.split(' ').next()?.parse::<u64>().ok())
-        .sum()
-}
-
 pub(super) fn io_error(error: std::io::Error) -> String {
     error.to_string()
 }
@@ -637,10 +629,11 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::{
-        CaseEvidence, Checks, accepted_note, judge, not_run, parse_stickymd_tasklist, passed_tests,
+        CaseEvidence, Checks, accepted_note, judge, not_run, parse_stickymd_tasklist,
         run_bounded_output, with_cleanup,
     };
     use crate::qualification::exact_checks::DeclaredCase;
+    use crate::runner::filtered_run::passed_tests;
 
     #[test]
     fn passed_tests_add_up_over_binaries_and_a_filtered_run_counts_zero() {

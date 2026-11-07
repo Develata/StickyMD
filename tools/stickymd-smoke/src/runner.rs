@@ -1,6 +1,7 @@
 //! Deduplicated task planning and subprocess execution.
 
 mod candidate_input;
+pub(crate) mod filtered_run;
 pub(crate) mod headless;
 mod package;
 mod performance;
@@ -740,7 +741,9 @@ fn run_unit_test_owners(
 fn run_cargo(root: &Path, label: &str, args: &[&str], capture_output: bool) -> Result<(), String> {
     let mut command = Command::new("cargo");
     command.args(args).current_dir(root);
-    if capture_output {
+    if filtered_run::selection(args).is_some() {
+        filtered_run::run(command, label)
+    } else if capture_output {
         run_captured(command, label)
     } else {
         run_inherited(command, label)
