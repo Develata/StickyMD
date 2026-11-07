@@ -182,6 +182,7 @@ impl WindowShellCoordinator {
         } else if matches!(self.current_stable(), StableVisibility::DockedExpanded(_))
             && self.state.deadlines.auto_collapse_ms.is_none()
             && !self.state.lifecycle.is_quitting()
+            && self.may_animate()
         {
             let deadline = now_ms.saturating_add(AUTO_COLLAPSE_DELAY_MS);
             self.state.deadlines.auto_collapse_ms = Some(deadline);
@@ -327,7 +328,19 @@ impl WindowShellCoordinator {
         }
     }
 
+    /// Only a window that stays on screen collapses or expands. A dock animation replaces the
+    /// visibility state, which would lose a hide in progress and the record of a hidden window.
+    fn may_animate(&self) -> bool {
+        matches!(
+            self.state.visibility,
+            VisibilityState::Presented(_) | VisibilityState::Animating(_)
+        )
+    }
+
     fn start_collapse(&mut self, now_ms: u64, effects: &mut Vec<WindowEffect>) {
+        if !self.may_animate() {
+            return;
+        }
         let Some(edge) = self.current_stable().dock_edge() else {
             return;
         };
@@ -355,6 +368,9 @@ impl WindowShellCoordinator {
         hover_revealed: bool,
         effects: &mut Vec<WindowEffect>,
     ) {
+        if !self.may_animate() {
+            return;
+        }
         let Some(edge) = self.current_stable().dock_edge() else {
             return;
         };
@@ -628,6 +644,61 @@ mod phase8_window_tests {
             assert!(effects.is_empty());
             assert_eq!(coordinator.state().visibility(), before);
         }
+    }
+
+    /// Losing focus starts the auto-collapse timer of a docked window on screen. A window being
+    /// hidden, or hidden already, must keep its state: its receipt or the tray still needs it.
+    #[test]
+    fn a_hiding_or_hidden_docked_window_never_collapses() {
+        let unfocused = WindowGuardSnapshot::default();
+        let dirty = WindowGuardSnapshot {
+            note_save_required: true,
+            ..Default::default()
+        };
+        let docked = StableVisibility::DockedExpanded(DockEdge::Left);
+        for hide_receipt in [false, true] {
+            let mut coordinator = coordinator(docked);
+            let id = request_clean_hide(&mut coordinator);
+            if hide_receipt {
+                coordinator.dispatch(WindowIntent::ActionCompleted {
+                    id,
+                    outcome: Ok(()),
+                });
+            }
+            let before = coordinator.state().visibility();
+            coordinator.dispatch(WindowIntent::GuardsChanged {
+                guards: unfocused,
+                now_ms: 1,
+            });
+            coordinator.dispatch(WindowIntent::Tick {
+                now_ms: 1 + AUTO_COLLAPSE_DELAY_MS,
+            });
+            assert_eq!(coordinator.state().visibility(), before);
+            if !hide_receipt {
+                let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+                    id,
+                    outcome: Ok(()),
+                });
+                assert_eq!(effects, [WindowEffect::ReleaseHiddenCaches]);
+            }
+        }
+
+        let mut coordinator = coordinator(docked);
+        coordinator.dispatch(WindowIntent::CloseRequested {
+            now_ms: 0,
+            guards: dirty,
+        });
+        coordinator.dispatch(WindowIntent::GuardsChanged {
+            guards: dirty,
+            now_ms: 1,
+        });
+        coordinator.dispatch(WindowIntent::Tick {
+            now_ms: 1 + AUTO_COLLAPSE_DELAY_MS,
+        });
+        assert!(matches!(
+            coordinator.state().visibility(),
+            VisibilityState::AwaitingHideSave { .. }
+        ));
     }
 
     /// A show overtakes a hide still in flight; the hide's late receipt must not hide the window.
