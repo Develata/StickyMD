@@ -25,13 +25,27 @@ const OWNER_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const TEST_OUTPUT_LIMIT: u64 = 1024 * 1024;
 const FAILURE_TAIL: usize = 4 * 1024;
 
+/// A name-filtered `cargo test` task as Cargo will run it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FilteredTask {
+    pub(crate) label: &'static str,
+    pub(crate) packages: BTreeSet<&'static str>,
+    /// The product packages the task leaves out.
+    pub(crate) unselected: BTreeSet<&'static str>,
+    pub(crate) filter: &'static str,
+    /// `--ignored`: only ignored tests run. Otherwise only the others do.
+    pub(crate) ignored: bool,
+}
+
 /// Verifies `owners` (all in `packages`, or anywhere in the workspace for `None`) and returns
 /// their identities, ascending, only when every owner was listed once, not ignored, and
-/// passed in its own process. No owners means no build at all.
+/// passed in its own process, and every task in `filtered` selects what it should. No owners
+/// means no build at all.
 pub(crate) fn verify(
     root: &Path,
     owners: &BTreeSet<Owner>,
     packages: Option<&[&str]>,
+    filtered: &[FilteredTask],
     identity: &SourceIdentity,
 ) -> Result<Vec<String>, String> {
     if owners.is_empty() {
@@ -39,9 +53,75 @@ pub(crate) fn verify(
     }
     identity.unchanged(root, "before unit-test owner verification")?;
     let artifacts = build(root, packages)?;
-    let verified = verify_built(&artifacts, owners, &mut run_test_executable);
+    let verified = verify_built(&artifacts, owners, &mut run_test_executable).and_then(|owners| {
+        verify_filters(&artifacts, filtered, &mut run_test_executable).map(|()| owners)
+    });
     identity.unchanged(root, "after unit-test owner verification")?;
     verified
+}
+
+/// The tests each package's executables list: all of them, and the ignored ones.
+type PackageTests = BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)>;
+
+/// Whether `package` holds a test the task would run: its path contains the filter, and it is
+/// ignored exactly when the task runs ignored tests.
+fn runs_in(tests: &PackageTests, package: &str, task: &FilteredTask) -> bool {
+    tests.get(package).is_some_and(|(listed, ignored)| {
+        listed.iter().any(|name| {
+            name.contains(task.filter) && ignored.contains(name.as_str()) == task.ignored
+        })
+    })
+}
+
+/// Checks each task against the real test lists: it runs at least one test, and no product
+/// package it leaves out holds a test it would have run.
+fn verify_filters(
+    artifacts: &[TestArtifact],
+    tasks: &[FilteredTask],
+    run: &mut RunTest<'_>,
+) -> Result<(), String> {
+    if tasks.is_empty() {
+        return Ok(());
+    }
+    let mut tests = PackageTests::new();
+    for artifact in artifacts {
+        let (listed, ignored) = tests.entry(artifact.package.clone()).or_default();
+        listed.extend(list(artifact, &["--list"], run)?);
+        ignored.extend(list(artifact, &["--list", "--ignored"], run)?);
+    }
+    let mut problems = Vec::new();
+    for task in tasks {
+        let filter = task.filter;
+        if !task
+            .packages
+            .iter()
+            .any(|package| runs_in(&tests, package, task))
+        {
+            problems.push(format!(
+                "`{}`: `{filter}` runs no test in {:?}",
+                task.label, task.packages
+            ));
+        }
+        let missed = task
+            .unselected
+            .iter()
+            .filter(|package| runs_in(&tests, package, task))
+            .collect::<Vec<_>>();
+        if !missed.is_empty() {
+            problems.push(format!(
+                "`{}`: {missed:?} also hold tests `{filter}` should run",
+                task.label
+            ));
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "name-filtered test verification failed: {}",
+            problems.join("; ")
+        ))
+    }
 }
 
 /// Invokes one test executable with `args`: `(artifact, args, timeout, label)`.
@@ -226,7 +306,7 @@ mod tests {
     use std::process::{ExitStatus, Output};
     use std::time::Duration;
 
-    use super::{TestArtifact, verify_built};
+    use super::{FilteredTask, RunTest, TestArtifact, verify_built, verify_filters};
     use crate::unit_owners::{Owner, OwnerTarget};
 
     const LISTED: &str = "a::one: test\na::two: test\na::off: test\n\n3 tests, 0 benchmarks\n";
@@ -335,5 +415,60 @@ mod tests {
             ..owner("a::one")
         };
         assert!(verify_built(&[artifact()], &BTreeSet::from([lib]), &mut run).is_err());
+    }
+
+    fn filtered(filter: &'static str, ignored: bool) -> FilteredTask {
+        FilteredTask {
+            label: "task",
+            packages: BTreeSet::from(["a"]),
+            unselected: BTreeSet::from(["b"]),
+            filter,
+            ignored,
+        }
+    }
+
+    /// Package `a` holds `m::phase_on` and the ignored `m::phase_off`; package `b` holds
+    /// `n::other` and `n::moved`.
+    fn check(task: FilteredTask) -> Result<(), String> {
+        let package = |name: &str| TestArtifact {
+            package: name.to_owned(),
+            ..artifact()
+        };
+        let artifacts = [package("a"), package("b")];
+        let mut run = |artifact: &TestArtifact, args: &[&str], _: Duration, _: &str| {
+            Ok(output(
+                0,
+                match (artifact.package.as_str(), args.contains(&"--ignored")) {
+                    ("a", false) => {
+                        "m::phase_on: test\nm::phase_off: test\n\n2 tests, 0 benchmarks\n"
+                    }
+                    ("a", true) => "m::phase_off: test\n\n1 test, 0 benchmarks\n",
+                    (_, false) => "n::other: test\nn::moved: test\n\n2 tests, 0 benchmarks\n",
+                    (_, true) => "0 tests, 0 benchmarks\n",
+                },
+            ))
+        };
+        let run: &mut RunTest<'_> = &mut run;
+        verify_filters(&artifacts, &[task], run)
+    }
+
+    #[test]
+    fn a_filter_must_run_a_test_of_the_mode_it_runs_in() {
+        assert!(check(filtered("phase_on", false)).is_ok());
+        assert!(check(filtered("phase_off", true)).is_ok());
+        for task in [
+            filtered("phase_off", false),
+            filtered("phase_on", true),
+            filtered("absent", false),
+        ] {
+            assert!(check(task).unwrap_err().contains("runs no test"));
+        }
+    }
+
+    #[test]
+    fn a_filter_must_not_leave_a_matching_test_in_an_unselected_package() {
+        assert!(check(filtered("m::", false)).is_ok());
+        let error = check(filtered("o", false)).unwrap_err();
+        assert!(error.contains("also hold tests"), "{error}");
     }
 }
