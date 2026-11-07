@@ -49,6 +49,7 @@ mod headless_tests;
 mod hot_path_tests;
 mod input;
 mod lifecycle;
+mod note_effects;
 mod persistence_runtime;
 #[cfg(test)]
 mod phase15_receipt_tests;
@@ -58,8 +59,6 @@ mod preview_input;
 mod preview_runtime;
 #[cfg(test)]
 mod receipt_tests;
-mod reconciliation_runtime;
-mod recovery_runtime;
 mod scroll_application;
 mod scroll_runtime;
 mod scrollbar;
@@ -131,7 +130,6 @@ pub struct StickyApp {
     watcher: Option<NoteDirectoryWatcher>,
     proxy: EventLoopProxy<AppEvent>,
     _instance: SingleInstanceGuard,
-    resolving_keep_local: bool,
     quit_notice: title::QuitCancelNotice,
     /// The title last written to the window, so unchanged projections skip the native call.
     shown_title: String,
@@ -214,7 +212,6 @@ impl StickyApp {
             watcher: None,
             proxy,
             _instance: instance,
-            resolving_keep_local: false,
             quit_notice: title::QuitCancelNotice::default(),
             shown_title: title::PLAIN.to_owned(),
             asset_paste_pending: false,
