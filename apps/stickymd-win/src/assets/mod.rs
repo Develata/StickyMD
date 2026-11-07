@@ -15,6 +15,8 @@ pub use storage::StoredAssetDisposition;
 pub use storage::{
     AssetReconcileMode, AssetReconcileReport, AssetStorage, AssetStorageError, StoredAsset,
 };
+#[cfg(test)]
+pub use transaction::AssetPasteRollback;
 pub use transaction::{
     AssetPasteCompletion, AssetPasteError, AssetPasteFailure, AssetPasteRequest,
     prepare_and_store_paste,

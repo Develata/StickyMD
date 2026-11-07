@@ -51,7 +51,6 @@ impl ConfigCoordinator {
         &self.current
     }
 
-    #[cfg(test)]
     pub const fn revision(&self) -> ConfigRevision {
         self.revision
     }

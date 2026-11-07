@@ -54,6 +54,8 @@ mod note_effects;
 mod persistence_runtime;
 #[cfg(test)]
 mod phase15_receipt_tests;
+#[cfg(test)]
+mod phase15_worker_receipt_tests;
 mod presentation;
 mod preview_horizontal;
 mod preview_input;
