@@ -136,6 +136,9 @@ pub struct StickyApp {
     /// The title last written to the window, so unchanged projections skip the native call.
     shown_title: String,
     assets: stickymd_app::flow::AssetFlow,
+    /// Every window effect applied, in order, for the order tests.
+    #[cfg(test)]
+    applied_window_effects: Vec<String>,
     export_in_flight: bool,
     session: EditorSession,
     search: SearchSession,
@@ -212,6 +215,8 @@ impl StickyApp {
             quit_notice: title::QuitCancelNotice::default(),
             shown_title: title::PLAIN.to_owned(),
             assets: Default::default(),
+            #[cfg(test)]
+            applied_window_effects: Vec::new(),
             export_in_flight: false,
             session: EditorSession::default(),
             search: SearchSession::default(),

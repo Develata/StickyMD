@@ -274,6 +274,8 @@ impl StickyApp {
     }
 
     fn apply_window_effect(&mut self, event_loop: Option<&ActiveEventLoop>, effect: WindowEffect) {
+        #[cfg(test)]
+        self.applied_window_effects.push(format!("{effect:?}"));
         if self.quit_notice.on_window_effect(&effect) {
             self.update_window_title();
         }

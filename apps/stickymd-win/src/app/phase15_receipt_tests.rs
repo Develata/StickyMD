@@ -8,7 +8,9 @@ use std::fs;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use stickymd_app::flow::window::state::{LifecycleState, QuitStage, VisibilityState, WindowIntent};
+use stickymd_app::flow::window::state::{
+    LifecycleState, QuitStage, ShowReason, VisibilityState, WindowIntent,
+};
 use stickymd_core::{
     ExternalFileState, Generation, LineEnding, LoadedDocument, PreserveExpectation, hash_bytes,
 };
@@ -914,4 +916,56 @@ fn a_superseded_keep_local_save_holds_the_barrier_until_the_forced_receipt() {
     let receipt = saved(&app, FORCED);
     app.handle_io_completion(None, receipt);
     assert_eq!(hide_state(&app), Hide::Hidden);
+}
+
+fn applied_effects(app: &mut HeadlessApp) -> Vec<String> {
+    let effects = std::mem::take(&mut app.applied_window_effects);
+    effects
+        .into_iter()
+        .map(|effect| {
+            if effect.starts_with("ApplyFrame") {
+                "ApplyFrame".into()
+            } else {
+                effect
+            }
+        })
+        .collect()
+}
+
+/// The order the native window sees: input goes first, the window hides, and only then are the
+/// caches released; showing places the window before it appears.
+#[test]
+fn closing_and_showing_reach_the_window_in_order() {
+    let mut app = fixture("start");
+    let guards = app.window_guards();
+    app.dispatch_window_intent(None, WindowIntent::CloseRequested { now_ms: 1, guards });
+    assert_eq!(hide_state(&app), Hide::Hidden);
+    assert_eq!(
+        applied_effects(&mut app),
+        [
+            "CancelImePreedit",
+            "SetImeAllowed(false)",
+            "SetEditorInputEnabled(false)",
+            "SetVisible(false)",
+            "ReleaseHiddenCaches",
+        ]
+    );
+    app.dispatch_window_intent(
+        None,
+        WindowIntent::ShowRequested {
+            reason: ShowReason::Tray,
+            now_ms: 2,
+        },
+    );
+    assert_eq!(
+        applied_effects(&mut app),
+        [
+            "ApplyFrame",
+            "SetVisible(true)",
+            "FocusWindow",
+            "SetImeAllowed(true)",
+            "SetEditorInputEnabled(true)",
+            "RequestRedraw",
+        ]
+    );
 }
