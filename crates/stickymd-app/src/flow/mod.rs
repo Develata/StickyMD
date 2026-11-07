@@ -9,6 +9,7 @@ mod note_io;
 mod persistence;
 mod preferences;
 mod preview;
+mod preview_io;
 mod reconciliation;
 mod recovery;
 mod save;
@@ -22,6 +23,9 @@ pub use persistence::{PersistenceCoordinator, ReconciliationAction};
 pub use preferences::{WindowPreferenceEffect, coordinate_window_preference};
 pub use preview::{
     PreviewAction, PreviewAdmission, PreviewCoordinator, PreviewEffect, PreviewVisibility,
+};
+pub use preview_io::{
+    PreviewFacts, PreviewFollowUp, PreviewIo, current_preview_layout, selection_for_generation,
 };
 pub use reconciliation::{ExternalDecision, decide_external_change};
 pub use recovery::{CanonicalRecoveryPlan, RecoveryCoordinator, RecoveryOperation};

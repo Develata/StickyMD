@@ -335,6 +335,7 @@ const EVERY_SESSION: &[&str] = &[
     "apps/stickymd-win/src/config/",
     "crates/stickymd-app/src/lib.rs",
     "crates/stickymd-app/src/config/",
+    "crates/stickymd-app/src/execution/mod.rs",
     "apps/stickymd-win/src/surface.rs",
     "apps/stickymd-win/src/assets/mod.rs",
     "apps/stickymd-win/src/assets/safe_boundary.rs",
@@ -346,6 +347,8 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-app/src/flow/persistence.rs",
     "crates/stickymd-app/src/flow/preferences.rs",
     "crates/stickymd-app/src/flow/preview.rs",
+    "crates/stickymd-app/src/flow/preview_io.rs",
+    "crates/stickymd-app/src/flow/preview_io/",
     "crates/stickymd-app/src/flow/reconciliation.rs",
     "crates/stickymd-app/src/flow/recovery.rs",
     "crates/stickymd-app/src/flow/save.rs",
@@ -422,6 +425,10 @@ const FEATURE_SOURCES: &[(&str, u64)] = &[
     ("apps/stickymd-win/src/export/", EXPORT | ASSETS | IMAGES),
     // The worker starts only when Preview or Split becomes visible.
     ("apps/stickymd-win/src/preview/", PREVIEW | MATH | IMAGES),
+    (
+        "crates/stickymd-app/src/execution/preview_worker.rs",
+        PREVIEW | MATH | IMAGES,
+    ),
     ("crates/stickymd-app/src/interaction/navigation.rs", EDITOR),
     ("crates/stickymd-app/src/source_search.rs", EDITOR),
     // Paste reads encoded images from the clipboard and stages them as managed assets.

@@ -6,9 +6,11 @@
 
 mod failure;
 mod note;
+mod preview;
 
 pub use failure::{FailureKind, StorageFailure};
 pub use note::{
     NoteReceipt, NoteStorage, PersistMode, PersistRequest, PersistResult, PreserveOutcome,
     TemporaryCleanup,
 };
+pub use preview::{PreviewCompletion, PreviewJob, PreviewViewport};

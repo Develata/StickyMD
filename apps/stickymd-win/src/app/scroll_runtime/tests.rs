@@ -208,7 +208,7 @@ fn runtime_an_edit_keeps_a_source_drag_and_a_stale_preview_ends_its_own() {
         let mut app = fixture(&"long paragraph\n\n".repeat(150));
         let geometry = prepare(&mut app, ViewMode::Split);
         let preview = geometry.preview.unwrap();
-        let viewport = crate::preview::PreviewViewport {
+        let viewport = stickymd_app::ports::PreviewViewport {
             horizontal: Default::default(),
             width_px: preview.width,
             height_px: preview.height,
@@ -219,7 +219,7 @@ fn runtime_an_edit_keeps_a_source_drag_and_a_stale_preview_ends_its_own() {
         };
         app.preview_frame_viewport = Some(viewport.clone());
         let preview_current = |app: &StickyApp| {
-            crate::app::preview_runtime::current_preview_layout(
+            stickymd_app::flow::current_preview_layout(
                 app.preview_frame.as_ref().map(|frame| frame.generation()),
                 app.coordinator.view().generation,
                 app.preview_frame_viewport.clone(),

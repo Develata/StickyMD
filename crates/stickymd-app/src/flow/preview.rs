@@ -142,6 +142,15 @@ impl PreviewCoordinator {
         self.applied_generation
     }
 
+    /// What a viewport change needs: a repaint of the applied layout, or the first build.
+    pub fn viewport_action(&self, generation: Generation) -> PreviewAction {
+        if self.applied_generation == Some(generation) {
+            PreviewAction::Relayout(generation)
+        } else {
+            PreviewAction::Build(generation)
+        }
+    }
+
     pub fn release_projection(&mut self) {
         self.applied_generation = None;
         self.scheduled = None;

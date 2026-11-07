@@ -26,16 +26,17 @@ use crate::platform::windows::native_message::NativeWindowSignal;
 use crate::platform::windows::program_dir::RuntimePaths;
 use crate::platform::windows::single_instance::SingleInstanceGuard;
 use crate::platform::windows::tray::{TrayController, TrayPlatformEvent};
-use crate::preview::{PreviewCompletion, PreviewViewport, PreviewWorker};
 use crate::startup::BootstrapOutcome;
 use crate::startup::StartupDiagnostics;
 use crate::surface::SoftwareSurface;
+use stickymd_app::execution::PreviewWorker;
 use stickymd_app::flow::window::reducer::WindowShellCoordinator;
 use stickymd_app::flow::{
     AppEffect, EditorCoordinator, PersistenceCoordinator, PreviewCoordinator, RecoveryCoordinator,
 };
 use stickymd_app::instruction::AppIntent;
 use stickymd_app::interaction::{EditorSession, ParkedSearch, SearchSession};
+use stickymd_app::ports::{PreviewCompletion, PreviewViewport};
 
 mod assets_runtime;
 mod caret_runtime;

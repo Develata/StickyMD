@@ -30,3 +30,4 @@
 | P15-B05 | 邮箱按固定优先级取出 8 类任务；每个 `NoteStorageError` 的消息文本不变 | Automated | `persistence::worker::tests::phase15_the_mailbox_drains_every_job_kind_in_its_priority_order`、`persistence::storage::tests::phase15_every_note_storage_error_keeps_its_message` | AUTOMATED PASS |
 | P15-B06 | 笔记存储经 `NoteStorage` 端口执行，worker 不再持有路径；错误分类穷举且消息逐字不变；守护保存的判定是共享纯函数 | Automated | `persistence::adapter::tests::phase15_every_storage_error_keeps_its_message_and_gets_its_class`、`flow::note_guard::tests::every_observed_state_against_every_expectation` | AUTOMATED PASS |
 | P15-B07 | 保存、外部协调、恢复的决策在 `stickymd-app` 的 `NoteIo`，返回有序副作用；身份失配的回执没有副作用；Windows 只执行副作用，P15-B04 的表格逐行不变 | Automated | `flow::note_io::tests`（Linux 也运行）、`app::phase15_receipt_tests` | AUTOMATED PASS |
+| P15-B08 | Preview worker、任务协议与结果准入在 `stickymd-app`；宿主只注入本地图片读取与唤醒回调 | Automated | `execution::preview_worker::tests`、`flow::preview_io::tests`（Linux 也运行）、`app::preview_runtime::runtime_tests` | AUTOMATED PASS |

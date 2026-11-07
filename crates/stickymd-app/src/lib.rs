@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+pub mod execution;
 pub mod flow;
 pub mod instruction;
 pub mod interaction;
