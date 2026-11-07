@@ -241,6 +241,90 @@ mod tests {
         }
     }
 
+    /// The durable bytes of `RuntimeConfig::default()`, fixed before the config model left this
+    /// crate (Phase 15): a change here changes `config.toml` on disk.
+    const DEFAULT_CONFIG_BYTES: &str = "version = 1
+theme = \"light\"
+opacity = 96
+content_zoom_percent = 100
+split_scroll_sync = true
+always_on_top = false
+view_mode = \"source\"
+
+[window]
+width_dip = 520
+height_dip = 680
+monitor_id = \"\"
+dock_edge = \"none\"
+dock_offset_ratio = 0.5
+floating_x_ratio = 0.5
+floating_y_ratio = 0.25
+";
+
+    /// A config with every field off its default, including a non-ASCII monitor id that needs
+    /// quoting and ratios whose decimal text depends on the f32 formatting.
+    const POPULATED_CONFIG_BYTES: &str = "version = 1
+theme = \"dark\"
+opacity = 83
+content_zoom_percent = 175
+split_scroll_sync = false
+always_on_top = true
+view_mode = \"split\"
+
+[window]
+width_dip = 640
+height_dip = 480
+monitor_id = 'monitor-中\"1'
+dock_edge = \"right\"
+dock_offset_ratio = 0.25
+floating_x_ratio = 0.33333334
+floating_y_ratio = 0.1
+";
+
+    fn populated_config() -> RuntimeConfig {
+        let mut config = RuntimeConfig {
+            theme: ThemeMode::Dark,
+            opacity: 83,
+            content_zoom_percent: ContentZoomPercent::new_clamped(175),
+            split_scroll_sync: false,
+            always_on_top: true,
+            view_mode: crate::config::ViewMode::Split,
+            ..RuntimeConfig::default()
+        };
+        config.window.width_dip = 640;
+        config.window.height_dip = 480;
+        config.window.monitor_id = "monitor-中\"1".to_owned();
+        config.window.dock_edge = crate::config::DockEdge::Right;
+        config.window.dock_offset_ratio = 0.25;
+        config.window.floating_x_ratio = 1.0 / 3.0;
+        config.window.floating_y_ratio = 0.1;
+        config
+    }
+
+    /// Phase 15 byte compatibility: the serialized bytes are fixed, and a load followed by a save
+    /// reproduces them, in this build and in any checkpoint a rollback returns to.
+    #[test]
+    fn phase15_config_bytes_are_fixed_and_survive_a_load_and_save() {
+        let root = unique_dir("bytes");
+        fs::create_dir(&root).unwrap();
+        let path = root.join("config.toml");
+        let temporary = root.join("config.toml.tmp");
+        for (config, bytes) in [
+            (RuntimeConfig::default(), DEFAULT_CONFIG_BYTES),
+            (populated_config(), POPULATED_CONFIG_BYTES),
+        ] {
+            save_config(&path, &temporary, &config).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+            fs::write(&path, bytes).unwrap();
+            let loaded = load_config(&path).unwrap();
+            assert!(loaded.warning.is_none());
+            assert_eq!(loaded.config, config);
+            save_config(&path, &temporary, &loaded.config).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn config_save_is_atomic_and_roundtrips() {
         let root = unique_dir("save");

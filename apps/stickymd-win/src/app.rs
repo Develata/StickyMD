@@ -45,6 +45,8 @@ mod export_runtime;
 mod guards;
 #[cfg(test)]
 mod headless_tests;
+#[cfg(test)]
+mod hot_path_tests;
 mod input;
 mod lifecycle;
 mod persistence_runtime;

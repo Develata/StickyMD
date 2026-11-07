@@ -321,6 +321,46 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Phase 15 byte compatibility on a data copy: a no-op start rewrites nothing, and saving the
+    /// unchanged document reproduces the canonical bytes and leaves the config and images alone.
+    #[test]
+    fn phase15_a_no_op_start_and_save_leave_the_data_byte_identical() {
+        let (root, paths) = fixture();
+        let note = "第一行 mixed\r\n公式 $x=1$\r\n\r\n末行没有换行".as_bytes();
+        let config = b"version = 1\nopacity = 83\ntheme = \"dark\"\n";
+        let image = [0x89, b'P', b'N', b'G', 0, 1, 2, 3];
+        let image_path = paths.images_dir.join("stickymd-0.png");
+        fs::write(&paths.note_file, note).unwrap();
+        fs::write(&paths.config_file, config).unwrap();
+        fs::write(&image_path, image).unwrap();
+
+        let outcome = bootstrap(&paths).unwrap();
+        assert!(outcome.recovery.is_none());
+        assert_eq!(fs::read(&paths.note_file).unwrap(), note);
+        assert_eq!(fs::read(&paths.config_file).unwrap(), config);
+
+        let snapshot = outcome.document.snapshot();
+        let result = persist_note(
+            &paths.note_file,
+            &paths.note_tmp,
+            &PersistRequest {
+                generation: snapshot.generation,
+                text: snapshot.text,
+                line_ending: snapshot.line_ending,
+                mode: PersistMode::Guarded {
+                    expected: outcome.document.base_disk_hash(),
+                },
+            },
+        )
+        .unwrap();
+        assert!(matches!(result, PersistResult::Saved { .. }));
+        assert_eq!(fs::read(&paths.note_file).unwrap(), note);
+        assert!(!paths.note_tmp.exists());
+        assert_eq!(fs::read(&paths.config_file).unwrap(), config);
+        assert_eq!(fs::read(&image_path).unwrap(), image);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn identical_temporary_note_is_removed_only_after_canonical_load() {
         let (root, paths) = fixture();

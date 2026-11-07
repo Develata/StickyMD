@@ -10,6 +10,8 @@ mod resource_progress;
 #[cfg(windows)]
 mod resource_resume;
 mod resource_session;
+#[cfg(test)]
+mod test_filters;
 mod timing;
 
 use std::path::Path;

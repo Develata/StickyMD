@@ -516,13 +516,20 @@ pub(super) fn wait_until(
     }
 }
 
-pub(super) fn run_cargo_test(repository: &Path, filter: &str) -> Result<(), String> {
+/// Runs the tests of `package` whose path contains `filter`. Cargo exits 0 when a filter matches
+/// nothing, so a run that passed no test is a failure.
+pub(super) fn run_cargo_test(repository: &Path, package: &str, filter: &str) -> Result<(), String> {
     let output = Command::new("cargo")
-        .args(["test", "-p", "stickymd-win", "--locked", filter])
+        .args(["test", "-p", package, "--locked", filter])
         .current_dir(repository)
         .output()
         .map_err(|error| format!("cannot start targeted Rust test `{filter}`: {error}"))?;
     if output.status.success() {
+        if passed_tests(&String::from_utf8_lossy(&output.stdout)) == 0 {
+            return Err(format!(
+                "targeted Rust test `{filter}` selected no test in {package}"
+            ));
+        }
         Ok(())
     } else {
         Err(format!(
@@ -531,6 +538,15 @@ pub(super) fn run_cargo_test(repository: &Path, filter: &str) -> Result<(), Stri
             String::from_utf8_lossy(&output.stderr).trim()
         ))
     }
+}
+
+/// The tests a `cargo test` run reports as passed, over all its test binaries.
+fn passed_tests(stdout: &str) -> u64 {
+    stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("test result: ok. "))
+        .filter_map(|rest| rest.split(' ').next()?.parse::<u64>().ok())
+        .sum()
 }
 
 pub(super) fn io_error(error: std::io::Error) -> String {
@@ -614,16 +630,33 @@ fn absolute(repository: &Path, path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
     use std::fs;
     use std::process::Command;
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::{
-        CaseEvidence, Checks, accepted_note, judge, not_run, parse_stickymd_tasklist,
+        CaseEvidence, Checks, accepted_note, judge, not_run, parse_stickymd_tasklist, passed_tests,
         run_bounded_output, with_cleanup,
     };
     use crate::qualification::exact_checks::DeclaredCase;
+
+    #[test]
+    fn passed_tests_add_up_over_binaries_and_a_filtered_run_counts_zero() {
+        let output = [
+            "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out",
+            "running 0 tests",
+            "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+            "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out",
+        ]
+        .join("\n");
+        assert_eq!(passed_tests(&output), 5);
+        assert_eq!(
+            passed_tests("test result: ok. 0 passed; 0 failed; 0 ignored; 7 filtered out"),
+            0
+        );
+    }
 
     /// Input cleanup is judged apart from the assertions (plan 11 physical input injection): a
     /// release that failed during a case fails it and both outcomes are reported, and a case

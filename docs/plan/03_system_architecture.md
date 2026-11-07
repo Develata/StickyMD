@@ -85,9 +85,13 @@ USER 批准（2026-10-31，[提案](../report/2026-10-23-shared-core-thin-platfo
 ```text
 Platform Host ──→ stickymd-desktop ──→ stickymd-app ──→ stickymd-core
      │                   │                   │
-     │                   └────→ stickymd-render ──→ stickymd-core
+     │                   │                   └──→ stickymd-render ──→ stickymd-core
+     │                   └─────────────────────→ stickymd-render
      └── 实现并注入 stickymd-app 定义的 Capability Port
 ```
+
+`stickymd-app` 可调用渲染能力（预览动作类型、语义转换、preedit 投影），这是批准提案的依赖方向；`stickymd-render` 不依赖
+`stickymd-app`，也不决定保存、冲突或资产删除。
 
 规则：
 

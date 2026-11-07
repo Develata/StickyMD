@@ -2,6 +2,8 @@
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#flow-coordination
 
+use std::cell::Cell;
+
 use stickymd_core::{
     AssetEffect, CursorSnapshot, DocumentError, DocumentSnapshot, DocumentState, EditKind,
     EditMeta, EditRequest, ExternalFileFact, Generation, Hash32, Selection, TextDelta,
@@ -60,6 +62,8 @@ pub enum EditorFlowError {
 pub struct EditorCoordinator<C> {
     document: DocumentState,
     clipboard: C,
+    /// O(n) snapshots taken, for the Phase 15 hot-path gate (plan 10).
+    snapshots_taken: Cell<u64>,
 }
 
 impl<C: ClipboardPort> EditorCoordinator<C> {
@@ -67,6 +71,7 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
         Self {
             document,
             clipboard,
+            snapshots_taken: Cell::new(0),
         }
     }
 
@@ -79,7 +84,14 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
     }
 
     pub fn snapshot(&self) -> DocumentSnapshot {
+        self.snapshots_taken.set(self.snapshots_taken.get() + 1);
         self.document.snapshot()
+    }
+
+    /// How many O(n) snapshots this coordinator has taken.
+    #[cfg(test)]
+    pub fn snapshots_taken(&self) -> u64 {
+        self.snapshots_taken.get()
     }
 
     pub fn managed_ref_counts(
