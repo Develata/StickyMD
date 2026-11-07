@@ -10,11 +10,11 @@
 | --- | --- | --- | --- | --- |
 | P15-A01 | `stickymd-app` 不含 unsafe，不依赖 winit、softbuffer 或平台 crate，源码无平台类型与 `cfg(windows)`/`target_os` | Automated | `governance.rs` `verify_shared_application_boundary` 与其回归 | AUTOMATED PASS |
 | P15-A02 | 迁移的语义测试在 `stickymd-app` 下实际执行，Linux portable 选择包含该包 | Automated | `cargo test -p stickymd-app --locked`（Windows；WSL Debian 115 passed、2 个 Release 基线 ignored）；`ci` portable 选择回归 | AUTOMATED PASS |
-| P15-A03 | 按名字过滤的 `cargo test` 任务选中其全部测试：过滤器至少命中一个所选包，且所选包之外的产品包没有匹配测试 | Automated | `runner::test_filters`；G4 定向运行以通过数为 0 判失败 | AUTOMATED PASS |
+| P15-A03 | 按名字过滤的 `cargo test` 任务选中其全部测试：过滤器至少命中所选包的一个 `#[test]`，所选包之外的产品包没有匹配测试，运行时通过数为 0 即失败 | Automated | `runner::test_filters`（静态核对）；`runner::filtered_run`（运行时拒绝零执行）；G4 定向运行同样以通过数为 0 判失败 | AUTOMATED PASS |
 | P15-A04 | 新增路径有资格化指纹规则，旧规则无命中或产品根之外的源码即失败 | Automated | `qualification::module_ledger::fingerprint` 分类与回归 | AUTOMATED PASS |
-| P15-A05 | `config.toml` 字节在代码移动前后一致，load 后 save 不改变字节 | Automated | `config::storage::tests::phase15_config_bytes_are_fixed_and_survive_a_load_and_save`（基线提交与迁移后各通过一次，即回退后可重开同一副本） | AUTOMATED PASS |
+| P15-A05 | `config.toml` 字节在代码移动前后一致，load 后 save 不改变字节 | Automated | `config::storage::tests::phase15_config_bytes_are_fixed_and_survive_a_load_and_save`（基线提交与迁移后各通过一次；这不等于回退重开同一副本，后者见 P15-B13） | AUTOMATED PASS |
 | P15-A06 | 无操作启动与保存不改变 note、config、图片字节 | Automated | `startup::bootstrap::tests::phase15_a_no_op_start_and_save_leave_the_data_byte_identical`（基线提交与迁移后各通过一次） | AUTOMATED PASS |
-| P15-A07 | 每键全文快照次数与每次编辑的后台构建次数不超过基线 | Automated | `app::hot_path_tests::phase15_a_typing_burst_stays_at_the_baseline_snapshot_and_build_counts` | AUTOMATED PASS |
+| P15-A07 | 每键全文快照次数与每次编辑提交给 worker 的后台构建次数不超过基线（`b846e83` 上实测：Source 0、Split 1、Preview 每键 1） | Automated | `app::hot_path_tests::phase15_a_typing_burst_stays_at_the_baseline_snapshot_and_build_counts`（经真实 Preview worker 计数） | AUTOMATED PASS |
 | P15-A08 | 每帧复制字节未被 A 触及 | Automated | `surface.rs` 与 `app/presentation.rs` 均无改动（`git diff`） | AUTOMATED PASS |
 | P15-A09 | Release 基线（Source 流水线、Source 查找、窗口 reducer）不低于基线提交的硬门 | Automated | `phase 15 --performance`；基线与迁移后数字见任务文件 | AUTOMATED PASS |
 | P15-A10 | Windows 真实桌面回归（托盘、贴边、输入法、剪贴板）在 A 后无变化 | Manual | G3/G4 exact 需独占桌面 | NOT TESTED |
@@ -33,5 +33,5 @@
 | P15-B08 | Preview worker、任务协议与结果准入在 `stickymd-app`；宿主只注入本地图片读取与唤醒回调 | Automated | `execution::preview_worker::tests`、`flow::preview_io::tests`（Linux 也运行）、`app::preview_runtime::runtime_tests` | AUTOMATED PASS |
 | P15-B09 | 资产、导出、配置回执与 worker 停止的每个分支都已钉住，迁移的每一批都不变 | Automated | `app::phase15_worker_receipt_tests`（`phase 15` 运行） | AUTOMATED PASS |
 | P15-B10 | I/O worker 与邮箱在 `stickymd-app`，经 `IoPorts` 注入的资产、导出、配置端口执行；Windows 只实现端口与注入唤醒回调；资产决策在 `AssetIo` | Automated | `execution::io_worker::tests`（Linux 也运行）、`persistence::wiring_tests`（真实 adapter） | AUTOMATED PASS |
-| P15-B11 | 隐藏分请求、回执、提交：成功回执才进入 `HiddenToTray` 并释放缓存；被拒绝时保持显示、恢复输入与边缘感应置顶并上报；过期回执无副作用；窗口效果的顺序不变 | Automated | `flow::window::reducer` 的 `a_hide_commits_only_on_its_success_receipt`、`a_rejected_hide_stays_shown_with_its_input_and_caches`、`a_stale_hide_receipt_changes_nothing`、`a_hide_receipt_after_a_show_changes_nothing`；`app::phase15_receipt_tests::closing_and_showing_reach_the_window_in_order` | AUTOMATED PASS |
+| P15-B11 | 隐藏分请求、回执、提交：回执来自窗口的实际状态，成功才进入 `HiddenToTray` 并释放缓存；被拒绝时保持显示、恢复输入与边缘感应置顶并上报；过期回执无副作用；窗口效果的顺序不变；隐藏中、已隐藏与等待隐藏保存的窗口不会自动收起 | Automated | `flow::window::reducer` 的 `a_hide_commits_only_on_its_success_receipt`、`a_rejected_hide_stays_shown_with_its_input_and_caches`、`a_stale_hide_receipt_changes_nothing`、`a_hide_receipt_after_a_show_changes_nothing`、`a_hiding_or_hidden_docked_window_never_collapses`；`app::phase15_receipt_tests::{closing_and_showing_reach_the_window_in_order,a_rejected_hide_keeps_the_window_shown_through_the_shell}`；真实窗口的回执属 P15-A10 | AUTOMATED PASS |
 | P15-B13 | 上一检查点的二进制重新打开迁移后写出的数据副本（plan 11 每批出口 3） | Manual | 需独占桌面；字节 golden 与真实磁盘恢复测试已覆盖无窗口的部分 | NOT TESTED |

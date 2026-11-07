@@ -51,6 +51,10 @@ pub(super) struct ViewGeometry {
 
 impl StickyApp {
     pub(super) fn view_geometry(&self) -> Option<ViewGeometry> {
+        #[cfg(test)]
+        if let Some(size) = self.headless_view {
+            return Some(self.view_geometry_for(size, 1.0));
+        }
         let window = self.window.as_ref()?;
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;

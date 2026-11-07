@@ -112,6 +112,7 @@ fn started(
         closed_proxy(),
         StartupDiagnostics::disabled_for_test(),
     );
+    app.headless_hide = Some(Ok(()));
     // The real constructor's directory watcher is unnecessary here: completions
     // are supplied explicitly, and no test is allowed to use native input.
     app.watcher.take();

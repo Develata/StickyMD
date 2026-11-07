@@ -104,8 +104,7 @@ impl PreviewWorker {
         }
     }
 
-    #[cfg(test)]
-    fn metrics(&self) -> Option<PreviewWorkerMetrics> {
+    pub fn metrics(&self) -> Option<PreviewWorkerMetrics> {
         self.shared.0.lock().ok().map(|mailbox| mailbox.metrics)
     }
 }

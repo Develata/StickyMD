@@ -969,3 +969,26 @@ fn closing_and_showing_reach_the_window_in_order() {
         ]
     );
 }
+
+/// A rejected hide reaches the user, and nothing that depends on a hidden window happens.
+#[test]
+fn a_rejected_hide_keeps_the_window_shown_through_the_shell() {
+    let rejected = [
+        (Some(Err(FailureKind::Failed)), "Failed"),
+        (None, "Unavailable"),
+    ];
+    for (outcome, kind) in rejected {
+        let mut app = fixture("start");
+        app.headless_hide = outcome;
+        let guards = app.window_guards();
+        app.dispatch_window_intent(None, WindowIntent::CloseRequested { now_ms: 1, guards });
+        assert_eq!(hide_state(&app), Hide::Cancelled);
+        assert!(app.shell_input_enabled);
+        let effects = applied_effects(&mut app);
+        assert!(!effects.iter().any(|effect| effect == "ReleaseHiddenCaches"));
+        assert_eq!(
+            app.diagnostic.as_deref(),
+            Some(format!("窗口未能隐藏，保持显示（{kind}）。").as_str())
+        );
+    }
+}

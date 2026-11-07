@@ -22,6 +22,7 @@ use stickymd_app::flow::window::state::{
 use stickymd_app::flow::{SaveTrigger, WindowPreferenceEffect, coordinate_window_preference};
 use stickymd_app::instruction::{WindowPlatformIntent, WindowPreferenceIntent, WindowResizeEdge};
 use stickymd_app::ports::AssetReconcileMode;
+use stickymd_app::ports::FailureKind;
 
 impl StickyApp {
     pub(super) fn dispatch_window_platform_intent(&mut self, intent: WindowPlatformIntent) -> bool {
@@ -295,18 +296,14 @@ impl StickyApp {
                 self.controls.opacity_input_focused = false;
                 self.controls.opacity_preview = self.config.current().opacity;
                 self.controls.opacity_input = self.config.current().opacity.to_string();
-                self.set_native_visible(false);
-                // A winit hide cannot fail, so the receipt is always a success here.
+                let outcome = self.hide_native();
                 self.dispatch_window_intent(
                     event_loop,
-                    WindowIntent::ActionCompleted {
-                        id,
-                        outcome: Ok(()),
-                    },
+                    WindowIntent::ActionCompleted { id, outcome },
                 );
             }
             WindowEffect::ShowWindow => {
-                self.set_native_visible(true);
+                self.show_native();
                 self.configure_viewports();
                 let generation = self.coordinator.view().generation;
                 if let Some(action) = self
@@ -433,16 +430,42 @@ impl StickyApp {
         crate::platform::windows::tool_window::apply_tool_window_identity(window.as_ref())
     }
 
-    fn set_native_visible(&mut self, visible: bool) {
-        if let Some(window) = &self.window {
-            window.set_visible(visible);
-            if visible {
-                window.set_minimized(false);
+    /// Hides the native window and reports what it really did: winit hides synchronously on the
+    /// event loop thread and gives no result, so the window is asked afterwards. Only a confirmed
+    /// hide tells the tray the window is gone.
+    fn hide_native(&mut self) -> Result<(), FailureKind> {
+        #[cfg(test)]
+        if let Some(outcome) = self.headless_hide {
+            return outcome;
+        }
+        let outcome = match &self.window {
+            None => Err(FailureKind::Unavailable),
+            Some(window) => {
+                window.set_visible(false);
+                match window.is_visible() {
+                    Some(false) => Ok(()),
+                    Some(true) => Err(FailureKind::Failed),
+                    None => Err(FailureKind::Unsupported),
+                }
             }
+        };
+        self.reassert_tool_window_identity_or_restore_taskbar();
+        if outcome.is_ok()
+            && let Some(tray) = &self.tray
+        {
+            tray.set_window_visible(false);
+        }
+        outcome
+    }
+
+    fn show_native(&mut self) {
+        if let Some(window) = &self.window {
+            window.set_visible(true);
+            window.set_minimized(false);
         }
         self.reassert_tool_window_identity_or_restore_taskbar();
         if let Some(tray) = &self.tray {
-            tray.set_window_visible(visible);
+            tray.set_window_visible(true);
         }
     }
 

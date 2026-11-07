@@ -8,4 +8,4 @@ mod io_worker;
 mod preview_worker;
 
 pub use io_worker::{IoCompletion, IoPorts, PersistenceWorker, WorkerMetrics};
-pub use preview_worker::PreviewWorker;
+pub use preview_worker::{PreviewWorker, PreviewWorkerMetrics};

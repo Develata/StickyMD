@@ -139,6 +139,12 @@ pub struct StickyApp {
     /// Every window effect applied, in order, for the order tests.
     #[cfg(test)]
     applied_window_effects: Vec<String>,
+    /// The client size a windowless test shell reports, so Preview work reaches its worker.
+    #[cfg(test)]
+    headless_view: Option<winit::dpi::PhysicalSize<u32>>,
+    /// What hiding a windowless test shell reports; `None` takes the real path.
+    #[cfg(test)]
+    headless_hide: Option<Result<(), stickymd_app::ports::FailureKind>>,
     export_in_flight: bool,
     session: EditorSession,
     search: SearchSession,
@@ -217,6 +223,10 @@ impl StickyApp {
             assets: Default::default(),
             #[cfg(test)]
             applied_window_effects: Vec::new(),
+            #[cfg(test)]
+            headless_view: None,
+            #[cfg(test)]
+            headless_hide: None,
             export_in_flight: false,
             session: EditorSession::default(),
             search: SearchSession::default(),
