@@ -31,7 +31,7 @@ use artifacts::{TestArtifact, parse_artifacts};
 #[cfg(windows)]
 use listing::parse_list;
 #[cfg(windows)]
-pub(crate) use verify::{FilteredTask, verify};
+pub(crate) use verify::verify;
 
 /// A libtest target that owns tests: only the default harness, so `--list` and `--exact`
 /// mean what libtest documents (governance keeps `harness = false` to benches).

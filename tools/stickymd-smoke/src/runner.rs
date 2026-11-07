@@ -2,7 +2,7 @@
 
 mod candidate_input;
 #[cfg(any(windows, test))]
-mod filtered_tasks;
+pub(crate) mod filtered_tasks;
 pub(crate) mod headless;
 mod package;
 mod performance;
@@ -12,6 +12,8 @@ mod resource_progress;
 #[cfg(windows)]
 mod resource_resume;
 mod resource_session;
+#[cfg(test)]
+mod test_filters;
 mod timing;
 
 use std::path::Path;

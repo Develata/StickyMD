@@ -14,6 +14,7 @@ use std::time::Duration;
 use super::{Owner, TestArtifact, parse_artifacts, parse_list};
 use crate::evidence::SourceIdentity;
 use crate::managed_process::run_bounded_output;
+use crate::runner::filtered_tasks::FilteredTask;
 
 /// The tests shard has already built the test executables; a cold build still fits.
 const BUILD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -24,18 +25,6 @@ const OWNER_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// `--list` of the largest owner executable is about 30 KiB; one owner's output is small.
 const TEST_OUTPUT_LIMIT: u64 = 1024 * 1024;
 const FAILURE_TAIL: usize = 4 * 1024;
-
-/// A name-filtered `cargo test` task as Cargo will run it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct FilteredTask {
-    pub(crate) label: &'static str,
-    pub(crate) packages: BTreeSet<&'static str>,
-    /// The product packages the task leaves out.
-    pub(crate) unselected: BTreeSet<&'static str>,
-    pub(crate) filter: &'static str,
-    /// `--ignored`: only ignored tests run. Otherwise only the others do.
-    pub(crate) ignored: bool,
-}
 
 /// Verifies `owners` (all in `packages`, or anywhere in the workspace for `None`) and returns
 /// their identities, ascending, only when every owner was listed once, not ignored, and
@@ -60,21 +49,30 @@ pub(crate) fn verify(
     verified
 }
 
-/// The tests each package's executables list: all of them, and the ignored ones.
-type PackageTests = BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)>;
-
-/// Whether `package` holds a test the task would run: its path contains the filter, and it is
-/// ignored exactly when the task runs ignored tests.
-fn runs_in(tests: &PackageTests, package: &str, task: &FilteredTask) -> bool {
-    tests.get(package).is_some_and(|(listed, ignored)| {
-        listed.iter().any(|name| {
-            name.contains(task.filter) && ignored.contains(name.as_str()) == task.ignored
-        })
-    })
+/// One executable's tests: all of them, and the ignored ones.
+struct ListedTests<'a> {
+    artifact: &'a TestArtifact,
+    listed: Vec<String>,
+    ignored: BTreeSet<String>,
 }
 
-/// Checks each task against the real test lists: it runs at least one test, and no product
-/// package it leaves out holds a test it would have run.
+/// Whether `package` holds a test the task would run: in a target the task selects, its path
+/// contains the filter, and it is ignored exactly when the task runs ignored tests.
+fn runs_in(tests: &[ListedTests<'_>], package: &str, task: &FilteredTask) -> bool {
+    tests
+        .iter()
+        .filter(|tests| tests.artifact.package == package)
+        .filter(|tests| !task.lib_only || tests.artifact.kind == ["lib"])
+        .any(|tests| {
+            tests.listed.iter().any(|name| {
+                name.contains(task.filter) && tests.ignored.contains(name) == task.ignored
+            })
+        })
+}
+
+/// Checks each task against the real test lists of the default build: it runs at least one test,
+/// and no product package it leaves out holds a test it would have run. A test compiled only for
+/// another profile or platform is not in these lists.
 fn verify_filters(
     artifacts: &[TestArtifact],
     tasks: &[FilteredTask],
@@ -83,11 +81,15 @@ fn verify_filters(
     if tasks.is_empty() {
         return Ok(());
     }
-    let mut tests = PackageTests::new();
+    let mut tests = Vec::with_capacity(artifacts.len());
     for artifact in artifacts {
-        let (listed, ignored) = tests.entry(artifact.package.clone()).or_default();
-        listed.extend(list(artifact, &["--list"], run)?);
-        ignored.extend(list(artifact, &["--list", "--ignored"], run)?);
+        tests.push(ListedTests {
+            artifact,
+            listed: list(artifact, &["--list"], run)?,
+            ignored: list(artifact, &["--list", "--ignored"], run)?
+                .into_iter()
+                .collect(),
+        });
     }
     let mut problems = Vec::new();
     for task in tasks {
@@ -424,6 +426,7 @@ mod tests {
             unselected: BTreeSet::from(["b"]),
             filter,
             ignored,
+            lib_only: false,
         }
     }
 
@@ -470,5 +473,14 @@ mod tests {
         assert!(check(filtered("m::", false)).is_ok());
         let error = check(filtered("o", false)).unwrap_err();
         assert!(error.contains("also hold tests"), "{error}");
+    }
+
+    #[test]
+    fn a_library_only_task_sees_only_library_tests() {
+        let task = FilteredTask {
+            lib_only: true,
+            ..filtered("phase_on", false)
+        };
+        assert!(check(task).unwrap_err().contains("runs no test"));
     }
 }

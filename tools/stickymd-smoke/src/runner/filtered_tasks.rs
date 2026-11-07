@@ -9,10 +9,23 @@ use std::collections::BTreeSet;
 use super::{Task, build_plan};
 use crate::cli::{Options, Phase};
 use crate::headless::Module;
-use crate::unit_owners::FilteredTask;
+
+/// A name-filtered `cargo test` task as Cargo will run it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FilteredTask {
+    pub(crate) label: &'static str,
+    pub(crate) packages: BTreeSet<&'static str>,
+    /// The product packages the task leaves out.
+    pub(crate) unselected: BTreeSet<&'static str>,
+    pub(crate) filter: &'static str,
+    /// `--ignored`: only ignored tests run. Otherwise only the others do.
+    pub(crate) ignored: bool,
+    /// `--lib`: only the library target runs.
+    pub(crate) lib_only: bool,
+}
 
 /// The packages a Cargo test command selects and its name filter, if it has one.
-fn selection(args: &[&'static str]) -> Option<(BTreeSet<&'static str>, &'static str)> {
+pub(super) fn selection(args: &[&'static str]) -> Option<(BTreeSet<&'static str>, &'static str)> {
     let mut args = args.iter().copied();
     if args.next() != Some("test") {
         return None;
@@ -44,9 +57,33 @@ fn runs_ignored(args: &[&str]) -> bool {
         .any(|arg| *arg == "--ignored")
 }
 
+/// The first argument the list check cannot model. A flag that changes which tests run must be
+/// taught to the check, not skipped by it.
+fn unmodelled<'a>(args: &[&'a str], filter: &str) -> Option<&'a str> {
+    const FIXED: [&str; 8] = [
+        "test",
+        "--release",
+        "--locked",
+        "--lib",
+        "--workspace",
+        "--",
+        "--ignored",
+        "--nocapture",
+    ];
+    let mut args = args.iter().copied();
+    while let Some(arg) = args.next() {
+        if arg == "-p" {
+            args.next();
+        } else if arg != filter && arg != "--test-threads=1" && !FIXED.contains(&arg) {
+            return Some(arg);
+        }
+    }
+    None
+}
+
 /// Every plan the CLI can build. A module run narrows these tasks to a package that may hold no
 /// match, which is why the whole plans are checked and never the projected ones.
-fn plans() -> Result<Vec<Task>, String> {
+pub(super) fn plans() -> Result<Vec<Task>, String> {
     let mut tasks = Vec::new();
     for arguments in [vec!["all", "--ci"], vec!["all", "--performance"]] {
         let options = Options::parse(arguments.into_iter().map(str::to_owned))?;
@@ -80,8 +117,12 @@ pub(super) fn all() -> Result<Vec<FilteredTask>, String> {
         let Some((packages, filter)) = selection(&args) else {
             continue;
         };
+        if let Some(arg) = unmodelled(&args, filter) {
+            return Err(format!("`{label}`: the filter check cannot model `{arg}`"));
+        }
         let ignored = runs_ignored(&args);
-        if seen.insert((packages.clone(), filter, ignored)) {
+        let lib_only = args.contains(&"--lib");
+        if seen.insert((packages.clone(), filter, ignored, lib_only)) {
             let unselected = products.difference(&packages).copied().collect();
             tasks.push(FilteredTask {
                 label,
@@ -89,6 +130,7 @@ pub(super) fn all() -> Result<Vec<FilteredTask>, String> {
                 unselected,
                 filter,
                 ignored,
+                lib_only,
             });
         }
     }
@@ -116,6 +158,16 @@ mod tests {
         assert_eq!(selection(&["test", "--workspace", "--locked"]), None);
         assert_eq!(selection(&["run", "-p", "a", "name"]), None);
         assert!(!runs_ignored(&["test", "--ignored-looking", "name"]));
+    }
+
+    #[test]
+    fn an_argument_the_check_cannot_model_is_named() {
+        let plain = ["test", "--release", "-p", "a", "name", "--", "--ignored"];
+        assert_eq!(unmodelled(&plain, "name"), None);
+        let target = ["test", "-p", "a", "--test", "t", "name"];
+        assert_eq!(unmodelled(&target, "name"), Some("--test"));
+        let exact = ["test", "-p", "a", "name", "--", "--exact"];
+        assert_eq!(unmodelled(&exact, "name"), Some("--exact"));
     }
 
     #[test]
