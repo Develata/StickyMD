@@ -28,6 +28,9 @@ public static class StickyMdSmokeScreen {
 # reads and invokes through UI Automation, and says when it could not observe.
 $TrayMenuOpenTimeoutMilliseconds = 1500
 $TrayMenuCloseTimeoutMilliseconds = 1500
+# A stalled process can spend a whole deadline on its first read; the overflow loops always
+# observe this many times, so a retry is never lost to the clock.
+$MinimumOverflowReads = 3
 $TrayContainerClasses = @('Shell_TrayWnd', 'TopLevelWindowForOverflowXamlIsland')
 
 function Wait-Until([scriptblock]$Probe, [string]$Label) {
@@ -264,16 +267,18 @@ function Get-TrayOverflowState {
 # never on an unobservable one. Throws with the last state otherwise.
 function Close-TrayOverflowObserved {
     $toggled = $false
+    $reads = 0
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
         $state = Get-TrayOverflowState
+        $reads++
         if ($state -eq 'hidden') { return }
         if ($state -eq 'visible' -and -not $toggled) {
             $toggled = $true
             Invoke-TrayOverflowToggle
         }
         Start-Sleep -Milliseconds 50
-    } while ([DateTime]::UtcNow -lt $deadline)
+    } while ([DateTime]::UtcNow -lt $deadline -or $reads -lt $MinimumOverflowReads)
     throw "the tray overflow flyout was not observed closed (last state: $state; toggled: $toggled)"
 }
 
@@ -282,12 +287,14 @@ function Close-TrayOverflowObserved {
 # state that stays unobservable is retried briefly and then an error; nothing is toggled on a
 # guess.
 function Open-TrayOverflowObserved {
+    $reads = 0
     $deadline = [DateTime]::UtcNow.AddMilliseconds(2000)
     do {
         $state = Get-TrayOverflowState
+        $reads++
         if ($state -ne 'unobservable') { break }
         Start-Sleep -Milliseconds 50
-    } while ([DateTime]::UtcNow -lt $deadline)
+    } while ([DateTime]::UtcNow -lt $deadline -or $reads -lt $MinimumOverflowReads)
     if ($state -eq 'visible') { return 'already-open' }
     if ($state -eq 'hidden') {
         # Set before the toggle: one that takes effect and then throws still leaves a flyout to
