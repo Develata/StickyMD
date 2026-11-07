@@ -155,22 +155,25 @@ pub fn win_io_ports(
     }
 }
 
+fn asset_failure_kind(error: &AssetStorageError) -> FailureKind {
+    match error {
+        AssetStorageError::Directory(_) | AssetStorageError::ChangedDuringProof(_) => {
+            FailureKind::Unavailable
+        }
+        AssetStorageError::ReparseDirectory(_)
+        | AssetStorageError::OwnershipNotProven(_)
+        | AssetStorageError::TooLarge
+        | AssetStorageError::Io(_)
+        | AssetStorageError::NameCollisionExhausted
+        | AssetStorageError::MissingAsset(_)
+        | AssetStorageError::AmbiguousCollision(_)
+        | AssetStorageError::InvalidRootLayout => FailureKind::Failed,
+    }
+}
+
 impl From<AssetStorageError> for StorageFailure {
     fn from(error: AssetStorageError) -> Self {
-        let kind = match &error {
-            AssetStorageError::Directory(_) | AssetStorageError::ChangedDuringProof(_) => {
-                FailureKind::Unavailable
-            }
-            AssetStorageError::ReparseDirectory(_)
-            | AssetStorageError::OwnershipNotProven(_)
-            | AssetStorageError::TooLarge
-            | AssetStorageError::Io(_)
-            | AssetStorageError::NameCollisionExhausted
-            | AssetStorageError::MissingAsset(_)
-            | AssetStorageError::AmbiguousCollision(_)
-            | AssetStorageError::InvalidRootLayout => FailureKind::Failed,
-        };
-        Self::new(kind, error.to_string())
+        Self::new(asset_failure_kind(&error), error.to_string())
     }
 }
 
@@ -178,9 +181,9 @@ impl From<AssetPasteError> for StorageFailure {
     fn from(error: AssetPasteError) -> Self {
         let kind = match &error {
             AssetPasteError::Read(_) => FailureKind::Unavailable,
+            AssetPasteError::Storage(storage) => asset_failure_kind(storage),
             AssetPasteError::MixedOrUnsupportedFiles
             | AssetPasteError::Image(_)
-            | AssetPasteError::Storage(_)
             | AssetPasteError::BatchTooLarge { .. }
             | AssetPasteError::NotImage => FailureKind::Failed,
         };
@@ -225,6 +228,20 @@ impl From<NoteStorageError> for StorageFailure {
 mod tests {
     use super::*;
     use crate::platform::windows::atomic_file::AtomicPublishError;
+
+    /// A wrapper adds context to the message and keeps the class of what it wraps.
+    #[test]
+    fn phase15_a_wrapped_storage_error_keeps_its_class() {
+        let unavailable =
+            AssetPasteError::Storage(AssetStorageError::ChangedDuringProof("asset.png".into()));
+        let message = unavailable.to_string();
+        let failure = StorageFailure::from(unavailable);
+        assert_eq!(failure.kind(), FailureKind::Unavailable);
+        assert_eq!(failure.to_string(), message);
+        assert!(message.starts_with("managed image publication failed: "));
+        let failed = AssetPasteError::Storage(AssetStorageError::TooLarge);
+        assert_eq!(StorageFailure::from(failed).kind(), FailureKind::Failed);
+    }
 
     #[test]
     fn phase15_every_storage_error_keeps_its_message_and_gets_its_class() {

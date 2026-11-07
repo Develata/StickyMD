@@ -56,10 +56,21 @@ A 中 `config/storage.rs` 留在 `apps/stickymd-win`：它依赖 Windows 原子�
 B 后的查找偏高不是回退：`source_search.rs` 自 A 起未改；同一时段与迁移前提交 `03ba733` 交替运行 4 轮，迁移前 p95 为
 18.4–27.0，迁移后为 15.6–21.0。硬门计数未变（`phase 15 --performance` PASS）。
 
+### 每次编辑的构建计数
+
+同一 fixture（200 键、900×600 视口），`b846e83` 上用临时补丁加同样的视口与 worker 计数实测，迁移后由
+`app::hot_path_tests` 固定。计数的是提交给 worker 的任务，不含完成回执触发的重建。
+
+| 模式 | 输入时快照 | 收敛时快照 | 保存提交 | Preview 提交 |
+| --- | --- | --- | --- | --- |
+| Source | 0 | 1 | 1 | 0 |
+| Split | 0 | 2 | 1 | 1 |
+| Preview | 200 | 1 | 1 | 200 |
+
 ## Open Items
 
-- 显示、置顶、定位的请求与回执（[plan 04](../plan/04_runtime_state_model.md#window-action-receipts)）未做：这三类动作仍是单向
-  效果，winit 的显示与定位没有失败回执，定位又按动画帧发出，需要先决定回执粒度。
+- 显示、置顶、定位的请求与回执（[plan 04](../plan/04_runtime_state_model.md#window-action-receipts)）未做，方案与桌面观察项见
+  [决定记录](../report/2026-11-07-phase-15-b-decisions.md)；这三类动作现在仍是单向效果。
 - `AppSession` 未建立：`StickyApp` 仍持有各 coordinator，`NoteIo`、`AssetIo`、`PreviewIo` 按步借用；属于 D。
 - 进入 C 之前要先有逐帧拷贝计数（[plan 10](../plan/10_performance_reliability.md#phase-15-migration-gates)）。
 - 同一副本回退重开（P15-B13）、真实桌面回归（P15-A10）与远程 CI 未执行；`hide_native` 的真实窗口回执只有桌面运行能证明。

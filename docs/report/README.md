@@ -25,6 +25,7 @@
 
 ## 发布政策
 
+- [Phase 15 B 的待决项](2026-11-07-phase-15-b-decisions.md)：失败分类、恢复文件名、异常保存回执、性能证据与窗口回执的结论（USER 决定 2026-11-07）。
 - [需要额外硬件的人工项改为可选](2026-10-31-optional-hardware-manual-items.md)：`previous` 角色、Clean VM、多屏、RDP 与负坐标不再阻断发布（USER 决定 2026-10-31）。
 
 ## v0.1.3 候选准备
