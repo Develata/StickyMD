@@ -5,8 +5,8 @@
 use stickymd_core::ExternalFileState;
 
 use super::StickyApp;
-use crate::persistence::{PersistMode, TemporaryCleanup};
 use stickymd_app::flow::{CanonicalRecoveryPlan, SaveTrigger};
+use stickymd_app::ports::{PersistMode, TemporaryCleanup};
 
 impl StickyApp {
     pub(super) fn handle_resolution_key(&mut self, primary: bool) -> bool {
@@ -53,18 +53,10 @@ impl StickyApp {
         }
         self.full_projection_resync();
         if let Some(expected) = plan.preserve_canonical {
-            let stamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_secs());
             let Some(operation) = self.recovery.operation_id() else {
                 return;
             };
-            self.worker.preserve_canonical(
-                self.paths.note_file.clone(),
-                self.paths.note_dir.join(format!("note.invalid-{stamp}.md")),
-                expected,
-                operation,
-            );
+            self.worker.preserve_canonical(expected, operation);
         } else {
             let _ = self.recovery.take_restore_guard();
             self.submit_save(
@@ -115,10 +107,8 @@ impl StickyApp {
         let Some(operation) = self.recovery.operation_id() else {
             return;
         };
-        self.worker.remove_temporary(
-            self.paths.note_tmp.clone(),
-            TemporaryCleanup::RecoveryResolved { operation },
-        );
+        self.worker
+            .remove_temporary(TemporaryCleanup::RecoveryResolved { operation });
         self.diagnostic = Some("正在确认使用当前 note.md…".into());
         self.request_redraw();
     }

@@ -7,9 +7,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
+use stickymd_app::ports::{NoteReceipt, NoteStorage, PersistRequest, TemporaryCleanup};
 use stickymd_core::{
-    AssetEffect, DiskFingerprint, ExternalFileState, Generation, ManagedAssetName,
-    PreserveExpectation,
+    AssetEffect, DiskFingerprint, Generation, ManagedAssetName, PreserveExpectation,
 };
 
 use crate::assets::{
@@ -20,43 +20,12 @@ use crate::assets::{
 use crate::config::{ConfigPersistRequest, ConfigRevision, ConfigStorageError, save_config};
 use crate::export::{ExportCompletion, ExportError, ExportRequest, export_snapshot};
 
-use super::NoteStorageError;
-use super::{
-    PersistRequest, PersistResult, PreserveOutcome, inspect_note_state_with_retry, persist_note,
-    preserve_canonical_if_unchanged, remove_temporary,
-};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TemporaryCleanup {
-    /// Ends the recovery operation `operation` (`RecoveryCoordinator::operation_id`).
-    RecoveryResolved { operation: u64 },
-    /// Follows a loaded external conflict. Its receipt commits no state: success changes
-    /// nothing and a failure reports a durable fact, so it needs no identity.
-    ConflictDiscarded,
-}
-
 #[derive(Debug)]
 pub enum IoCompletion {
-    Note(NoteCompletion),
-    /// One durable observation, requested while `requested_base` was the known Durable
-    /// Fingerprint; `PersistenceCoordinator::external_observation_current` decides whether
-    /// it still applies.
-    External {
-        requested_base: Option<DiskFingerprint>,
-        result: Result<ExternalFileState, NoteStorageError>,
-    },
+    Note(NoteReceipt),
     Config {
         revision: ConfigRevision,
         result: Result<(), ConfigStorageError>,
-    },
-    TemporaryRemoved {
-        purpose: TemporaryCleanup,
-        result: Result<(), NoteStorageError>,
-    },
-    /// Preserving the canonical note for the recovery operation `operation`.
-    CanonicalPreserved {
-        operation: u64,
-        result: Result<PreserveOutcome, NoteStorageError>,
     },
     AssetPaste(Result<AssetPasteCompletion, AssetPasteFailure>),
     AssetSync {
@@ -71,13 +40,6 @@ pub enum IoCompletion {
     WorkerStopped,
 }
 
-#[derive(Debug)]
-pub struct NoteCompletion {
-    pub generation: Generation,
-    pub mode: super::PersistMode,
-    pub result: Result<PersistResult, NoteStorageError>,
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WorkerMetrics {
     pub note_submitted: u64,
@@ -87,15 +49,7 @@ pub struct WorkerMetrics {
     pub external_checks: u64,
 }
 
-struct NoteJob {
-    target: PathBuf,
-    temporary: PathBuf,
-    request: PersistRequest,
-}
-
 struct PreserveJob {
-    source: PathBuf,
-    destination: PathBuf,
     expected: PreserveExpectation,
     operation: u64,
 }
@@ -135,10 +89,11 @@ struct AssetSyncJob {
 }
 #[derive(Default)]
 struct Mailbox {
-    note: Option<NoteJob>,
-    external: Option<(PathBuf, Option<DiskFingerprint>)>,
+    note: Option<PersistRequest>,
+    /// A queued observation, with the Durable Fingerprint known when it was requested.
+    external: Option<Option<DiskFingerprint>>,
     config: Option<ConfigJob>,
-    cleanup_temporary: Option<(PathBuf, TemporaryCleanup)>,
+    cleanup_temporary: Option<TemporaryCleanup>,
     preserve_canonical: Option<PreserveJob>,
     asset_paste: Option<AssetPasteJob>,
     asset_sync: Option<AssetSyncJob>,
@@ -149,18 +104,15 @@ struct Mailbox {
 }
 
 impl Mailbox {
-    fn replace_note(&mut self, job: NoteJob) {
+    fn replace_note(&mut self, request: PersistRequest) {
         // The note job reuses the fixed temp. A conflict-discard cleanup still queued would run
         // after it and delete what a failed save left there, the only durable copy of newer
         // text; the note job supersedes it (it replaces or overwrites that temp itself).
-        if matches!(
-            self.cleanup_temporary,
-            Some((_, TemporaryCleanup::ConflictDiscarded))
-        ) {
+        if self.cleanup_temporary == Some(TemporaryCleanup::ConflictDiscarded) {
             self.cleanup_temporary = None;
         }
         self.metrics.note_submitted += 1;
-        if self.note.replace(job).is_some() {
+        if self.note.replace(request).is_some() {
             self.metrics.note_coalesced += 1;
         }
     }
@@ -231,11 +183,11 @@ impl Mailbox {
             Some(WorkerJob::AssetSync(sync))
         } else if let Some(export) = self.export.take() {
             Some(WorkerJob::Export(export))
-        } else if let Some((target, requested_base)) = self.external.take() {
+        } else if let Some(requested_base) = self.external.take() {
             self.metrics.external_checks += 1;
-            Some(WorkerJob::External(target, requested_base))
-        } else if let Some((temporary, purpose)) = self.cleanup_temporary.take() {
-            Some(WorkerJob::CleanupTemporary(temporary, purpose))
+            Some(WorkerJob::External(requested_base))
+        } else if let Some(purpose) = self.cleanup_temporary.take() {
+            Some(WorkerJob::CleanupTemporary(purpose))
         } else if let Some(job) = self.preserve_canonical.take() {
             Some(WorkerJob::PreserveCanonical(job))
         } else {
@@ -250,8 +202,10 @@ pub struct PersistenceWorker {
 }
 
 impl PersistenceWorker {
-    pub fn start<F>(on_completion: F) -> Result<Self, std::io::Error>
+    /// `storage` moves onto the worker thread, its only user.
+    pub fn start<S, F>(storage: S, on_completion: F) -> Result<Self, std::io::Error>
     where
+        S: NoteStorage,
         F: Fn(IoCompletion) + Send + Sync + 'static,
     {
         let shared = Arc::new((Mutex::new(Mailbox::default()), Condvar::new()));
@@ -260,21 +214,17 @@ impl PersistenceWorker {
         let thread = thread::Builder::new()
             .name("stickymd-io".into())
             .stack_size(512 * 1024)
-            .spawn(move || run_worker(worker_shared, on_completion))?;
+            .spawn(move || run_worker(storage, worker_shared, on_completion))?;
         Ok(Self {
             shared,
             thread: Some(thread),
         })
     }
 
-    pub fn submit_note(&self, target: PathBuf, temporary: PathBuf, request: PersistRequest) {
+    pub fn submit_note(&self, request: PersistRequest) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
-            mailbox.replace_note(NoteJob {
-                target,
-                temporary,
-                request,
-            });
+            mailbox.replace_note(request);
             ready.notify_one();
         }
     }
@@ -294,10 +244,10 @@ impl PersistenceWorker {
     }
 
     /// Queues one durable observation; `requested_base` is the known Durable Fingerprint now.
-    pub fn inspect_external(&self, target: PathBuf, requested_base: Option<DiskFingerprint>) {
+    pub fn inspect_external(&self, requested_base: Option<DiskFingerprint>) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
-            mailbox.external = Some((target, requested_base));
+            mailbox.external = Some(requested_base);
             ready.notify_one();
         }
     }
@@ -319,28 +269,20 @@ impl PersistenceWorker {
         }
     }
 
-    pub fn remove_temporary(&self, path: PathBuf, purpose: TemporaryCleanup) {
+    pub fn remove_temporary(&self, purpose: TemporaryCleanup) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
-            mailbox.cleanup_temporary = Some((path, purpose));
+            mailbox.cleanup_temporary = Some(purpose);
             ready.notify_one();
         }
     }
 
     /// Queues moving the canonical note aside for recovery operation `operation`, only while
-    /// it is still `expected` (`preserve_canonical_if_unchanged`).
-    pub fn preserve_canonical(
-        &self,
-        source: PathBuf,
-        destination: PathBuf,
-        expected: PreserveExpectation,
-        operation: u64,
-    ) {
+    /// it is still `expected`.
+    pub fn preserve_canonical(&self, expected: PreserveExpectation, operation: u64) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
             mailbox.preserve_canonical = Some(PreserveJob {
-                source,
-                destination,
                 expected,
                 operation,
             });
@@ -429,8 +371,9 @@ impl Drop for PersistenceWorker {
     }
 }
 
-fn run_worker<F>(shared: Arc<(Mutex<Mailbox>, Condvar)>, on_completion: Arc<F>)
+fn run_worker<S, F>(mut storage: S, shared: Arc<(Mutex<Mailbox>, Condvar)>, on_completion: Arc<F>)
 where
+    S: NoteStorage,
     F: Fn(IoCompletion),
 {
     loop {
@@ -472,25 +415,23 @@ where
         };
 
         match work {
-            WorkerJob::Note(job) => {
-                let generation = job.request.generation;
-                let mode = job.request.mode;
-                let result = persist_note(&job.target, &job.temporary, &job.request);
+            WorkerJob::Note(request) => {
+                let result = storage.persist(&request);
                 if let Ok(mut mailbox) = shared.0.lock() {
                     mailbox.metrics.note_completed += 1;
                 }
-                on_completion(IoCompletion::Note(NoteCompletion {
-                    generation,
-                    mode,
+                on_completion(IoCompletion::Note(NoteReceipt::Save {
+                    generation: request.generation,
+                    mode: request.mode,
                     result,
                 }));
             }
-            WorkerJob::External(target, requested_base) => {
-                let result = inspect_note_state_with_retry(&target);
-                on_completion(IoCompletion::External {
+            WorkerJob::External(requested_base) => {
+                let result = storage.observe();
+                on_completion(IoCompletion::Note(NoteReceipt::External {
                     requested_base,
                     result,
-                });
+                }));
             }
             WorkerJob::AssetPaste(job) => {
                 let expected_generation = job.request.expected_generation;
@@ -536,27 +477,29 @@ where
                 let result = save_config(&job.target, &job.temporary, &job.request.config);
                 on_completion(IoCompletion::Config { revision, result });
             }
-            WorkerJob::CleanupTemporary(path, purpose) => {
-                let result = remove_temporary(&path);
-                on_completion(IoCompletion::TemporaryRemoved { purpose, result });
+            WorkerJob::CleanupTemporary(purpose) => {
+                let result = storage.remove_temporary();
+                on_completion(IoCompletion::Note(NoteReceipt::TemporaryRemoved {
+                    purpose,
+                    result,
+                }));
             }
             WorkerJob::PreserveCanonical(job) => {
-                let result =
-                    preserve_canonical_if_unchanged(&job.source, &job.destination, job.expected);
-                on_completion(IoCompletion::CanonicalPreserved {
+                let result = storage.preserve_canonical(job.expected);
+                on_completion(IoCompletion::Note(NoteReceipt::CanonicalPreserved {
                     operation: job.operation,
                     result,
-                });
+                }));
             }
         }
     }
 }
 
 enum WorkerJob {
-    Note(NoteJob),
-    External(PathBuf, Option<DiskFingerprint>),
+    Note(PersistRequest),
+    External(Option<DiskFingerprint>),
     Config(ConfigJob),
-    CleanupTemporary(PathBuf, TemporaryCleanup),
+    CleanupTemporary(TemporaryCleanup),
     PreserveCanonical(PreserveJob),
     AssetPaste(AssetPasteJob),
     AssetSync(AssetSyncJob),
@@ -566,23 +509,29 @@ enum WorkerJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::WinNoteStorage;
     use crate::test_support::unique_temp_path;
     use std::fs;
     use std::path::Path;
     use std::sync::{Arc, Barrier, mpsc};
     use std::time::Duration;
+    use stickymd_app::ports::PersistMode;
     use stickymd_core::{Generation, LineEnding, hash_bytes};
 
-    fn job(text: &str) -> NoteJob {
-        NoteJob {
-            target: "note.md".into(),
-            temporary: "note.md.tmp".into(),
-            request: PersistRequest {
-                generation: Generation::initial(),
-                text: text.into(),
-                line_ending: LineEnding::Crlf,
-                mode: super::super::PersistMode::ForceOverwrite,
-            },
+    fn job(text: &str) -> PersistRequest {
+        PersistRequest {
+            generation: Generation::initial(),
+            text: text.into(),
+            line_ending: LineEnding::Crlf,
+            mode: PersistMode::ForceOverwrite,
+        }
+    }
+
+    fn storage_in(root: &Path) -> WinNoteStorage {
+        WinNoteStorage {
+            note_file: root.join("note.md"),
+            note_tmp: root.join("note.md.tmp"),
+            note_dir: root.to_path_buf(),
         }
     }
 
@@ -603,13 +552,10 @@ mod tests {
                 },
             }),
             preserve_canonical: Some(PreserveJob {
-                source: "note.md".into(),
-                destination: "note.invalid.md".into(),
                 expected: PreserveExpectation::Unverifiable,
                 operation: 1,
             }),
-            cleanup_temporary: Some(("note.md.tmp".into(), TemporaryCleanup::ConflictDiscarded)),
-            external: Some(("note.md".into(), None)),
+            external: Some(None),
             export: Some(ExportRequest {
                 snapshot: stickymd_core::DocumentSnapshot {
                     text: "".into(),
@@ -640,9 +586,8 @@ mod tests {
             ..Mailbox::default()
         };
         mailbox.replace_note(job("first"));
-        // Replacing the note drops only a queued conflict discard; restore it to rank it too.
-        mailbox.cleanup_temporary =
-            Some(("note.md.tmp".into(), TemporaryCleanup::ConflictDiscarded));
+        // After the note: a new note job drops a queued conflict discard.
+        mailbox.cleanup_temporary = Some(TemporaryCleanup::ConflictDiscarded);
         let order: Vec<_> = std::iter::from_fn(|| mailbox.take_next_job())
             .map(|job| match job {
                 WorkerJob::Note(_) => "note",
@@ -671,7 +616,7 @@ mod tests {
         }
         assert_eq!(mailbox.metrics.note_submitted, 1000);
         assert_eq!(mailbox.metrics.note_coalesced, 999);
-        assert_eq!(mailbox.note.unwrap().request.text.as_ref(), "999");
+        assert_eq!(mailbox.note.unwrap().text.as_ref(), "999");
     }
 
     #[test]
@@ -679,11 +624,10 @@ mod tests {
         let root = unique_temp_path("worker-barrier");
         fs::create_dir(&root).unwrap();
         let target = root.join("note.md");
-        let temporary = root.join("note.md.tmp");
         fs::write(&target, b"base").unwrap();
 
         let (sender, receiver) = mpsc::channel();
-        let worker = PersistenceWorker::start(move |completion| {
+        let worker = PersistenceWorker::start(storage_in(&root), move |completion| {
             sender.send(completion).unwrap();
         })
         .unwrap();
@@ -691,23 +635,24 @@ mod tests {
             generation: Generation::initial(),
             text: text.into(),
             line_ending: LineEnding::Lf,
-            mode: super::super::PersistMode::Guarded {
+            mode: PersistMode::Guarded {
                 expected: Some(hash_bytes(b"base")),
             },
         };
-        worker.submit_note(target.clone(), temporary.clone(), request("first"));
-        let IoCompletion::Note(completion) = receiver.recv_timeout(Duration::from_secs(3)).unwrap()
+        worker.submit_note(request("first"));
+        let IoCompletion::Note(NoteReceipt::Save { mode, .. }) =
+            receiver.recv_timeout(Duration::from_secs(3)).unwrap()
         else {
             panic!("expected a note completion");
         };
         assert_eq!(
-            completion.mode,
-            super::super::PersistMode::Guarded {
+            mode,
+            PersistMode::Guarded {
                 expected: Some(hash_bytes(b"base"))
             }
         );
 
-        worker.submit_note(target.clone(), temporary.clone(), request("stale-second"));
+        worker.submit_note(request("stale-second"));
         assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
         worker.acknowledge_note_completion();
         assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
@@ -720,22 +665,16 @@ mod tests {
     #[test]
     fn a_newer_note_job_supersedes_only_a_queued_conflict_discard_cleanup() {
         let mut mailbox = Mailbox {
-            cleanup_temporary: Some(("note.md.tmp".into(), TemporaryCleanup::ConflictDiscarded)),
+            cleanup_temporary: Some(TemporaryCleanup::ConflictDiscarded),
             ..Mailbox::default()
         };
         mailbox.replace_note(job("newer text"));
         assert!(mailbox.cleanup_temporary.is_none());
         // A recovery cleanup stays: recovery blocks ordinary saves, and its receipt ends it.
         let recovery = TemporaryCleanup::RecoveryResolved { operation: 1 };
-        mailbox.cleanup_temporary = Some(("note.md.tmp".into(), recovery));
+        mailbox.cleanup_temporary = Some(recovery);
         mailbox.replace_note(job("recovery save"));
-        assert_eq!(
-            mailbox
-                .cleanup_temporary
-                .as_ref()
-                .map(|(_, purpose)| *purpose),
-            Some(recovery)
-        );
+        assert_eq!(mailbox.cleanup_temporary, Some(recovery));
     }
 
     #[test]
@@ -745,11 +684,11 @@ mod tests {
             ..Mailbox::default()
         };
         mailbox.replace_note(job("must-wait"));
-        mailbox.external = Some(("note.md".into(), None));
+        mailbox.external = Some(None);
 
         assert!(matches!(
             mailbox.take_next_job(),
-            Some(WorkerJob::External(path, None)) if path == Path::new("note.md")
+            Some(WorkerJob::External(None))
         ));
         assert!(mailbox.note.is_some());
         assert!(mailbox.note_blocked_for_ack);
@@ -820,7 +759,7 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         let first_receipt_gate = Arc::new(Barrier::new(2));
         let callback_gate = Arc::clone(&first_receipt_gate);
-        let worker = PersistenceWorker::start(move |completion| {
+        let worker = PersistenceWorker::start(storage_in(&root), move |completion| {
             let block = matches!(completion, IoCompletion::AssetSync { request_id: 1, .. });
             sender.send(completion).unwrap();
             if block {

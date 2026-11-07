@@ -12,11 +12,9 @@ use stickymd_core::{
 use thiserror::Error;
 
 use crate::config::{ConfigWarning, RuntimeConfig, load_config, save_config};
-use crate::persistence::{
-    PersistMode, PersistRequest, PersistResult, inspect_note, persist_note, quarantine_temporary,
-    remove_temporary,
-};
+use crate::persistence::{inspect_note, persist_note, quarantine_temporary, remove_temporary};
 use crate::platform::windows::program_dir::RuntimePaths;
+use stickymd_app::ports::{PersistMode, PersistRequest, PersistResult};
 
 pub struct BootstrapOutcome {
     pub document: DocumentState,

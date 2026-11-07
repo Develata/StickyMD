@@ -196,7 +196,7 @@ impl StickyApp {
             if self.coordinator.view().base_disk_hash.is_none() {
                 self.submit_save(
                     SaveTrigger::RecreateMissing,
-                    Some(crate::persistence::PersistMode::Guarded { expected: None }),
+                    Some(stickymd_app::ports::PersistMode::Guarded { expected: None }),
                 );
             }
         }

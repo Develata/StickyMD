@@ -5,8 +5,8 @@
 use stickymd_core::{ExternalFileState, FileConflict, Selection};
 
 use super::StickyApp;
-use crate::persistence::{PersistMode, TemporaryCleanup};
 use stickymd_app::flow::{ReconciliationAction, SaveTrigger};
+use stickymd_app::ports::{PersistMode, TemporaryCleanup};
 
 impl StickyApp {
     pub(super) fn reconcile_external(&mut self, external: ExternalFileState) {
@@ -84,10 +84,8 @@ impl StickyApp {
             Ok(effect) => {
                 self.persistence.accept_external();
                 self.apply_effect(effect);
-                self.worker.remove_temporary(
-                    self.paths.note_tmp.clone(),
-                    TemporaryCleanup::ConflictDiscarded,
-                );
+                self.worker
+                    .remove_temporary(TemporaryCleanup::ConflictDiscarded);
                 self.diagnostic = Some("已载入最新外部内容；撤销历史已清空。".into());
                 self.update_window_title();
             }

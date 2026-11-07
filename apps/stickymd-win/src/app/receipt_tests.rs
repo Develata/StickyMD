@@ -14,8 +14,9 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 
 use crate::app::headless_tests::{HeadlessApp, fixture};
 use crate::app::input::ShellKey;
-use crate::persistence::{
-    IoCompletion, NoteCompletion, PersistMode, PersistResult, PreserveOutcome, TemporaryCleanup,
+use crate::persistence::IoCompletion;
+use stickymd_app::ports::{
+    NoteReceipt, PersistMode, PersistResult, PreserveOutcome, TemporaryCleanup,
 };
 
 fn loaded(text: &str) -> LoadedDocument {
@@ -74,21 +75,21 @@ fn a_recovery_cleanup_receipt_of_another_operation_changes_nothing() {
     let operation = app.recovery.operation_id().unwrap();
     app.handle_io_completion(
         None,
-        IoCompletion::TemporaryRemoved {
+        IoCompletion::Note(NoteReceipt::TemporaryRemoved {
             purpose: TemporaryCleanup::RecoveryResolved {
                 operation: operation + 1,
             },
             result: Ok(()),
-        },
+        }),
     );
     assert!(app.recovery.is_pending());
     assert_eq!(app.recovery.operation_id(), Some(operation));
     app.handle_io_completion(
         None,
-        IoCompletion::TemporaryRemoved {
+        IoCompletion::Note(NoteReceipt::TemporaryRemoved {
             purpose: TemporaryCleanup::RecoveryResolved { operation },
             result: Ok(()),
-        },
+        }),
     );
     assert!(!app.recovery.is_pending());
 }
@@ -102,19 +103,19 @@ fn a_preserve_receipt_of_another_operation_starts_no_save() {
     let before = saves(&app);
     app.handle_io_completion(
         None,
-        IoCompletion::CanonicalPreserved {
+        IoCompletion::Note(NoteReceipt::CanonicalPreserved {
             operation: operation + 1,
             result: Ok(PreserveOutcome::Preserved),
-        },
+        }),
     );
     assert_eq!(saves(&app), before);
     assert_eq!(app.recovery.operation_id(), Some(operation));
     app.handle_io_completion(
         None,
-        IoCompletion::CanonicalPreserved {
+        IoCompletion::Note(NoteReceipt::CanonicalPreserved {
             operation,
             result: Ok(PreserveOutcome::Preserved),
-        },
+        }),
     );
     assert_eq!(saves(&app), before + 1);
 }
@@ -129,12 +130,12 @@ fn a_changed_canonical_becomes_a_conflict_and_the_retry_uses_the_new_expectation
     let changed = hash_bytes(b"\xfe");
     app.handle_io_completion(
         None,
-        IoCompletion::CanonicalPreserved {
+        IoCompletion::Note(NoteReceipt::CanonicalPreserved {
             operation: first,
             result: Ok(PreserveOutcome::Changed(ExternalFileState::InvalidUtf8 {
                 fingerprint: changed,
             })),
-        },
+        }),
     );
     assert!(app.recovery.is_pending());
     assert_eq!(app.recovery.operation_id(), None);
@@ -156,10 +157,10 @@ fn an_unverifiable_canonical_ends_the_operation_without_a_save() {
     let before = saves(&app);
     app.handle_io_completion(
         None,
-        IoCompletion::CanonicalPreserved {
+        IoCompletion::Note(NoteReceipt::CanonicalPreserved {
             operation,
             result: Ok(PreserveOutcome::Unverifiable),
-        },
+        }),
     );
     assert_eq!(saves(&app), before);
     assert!(app.recovery.is_pending());
@@ -177,19 +178,19 @@ fn a_superseded_external_observation_is_rechecked_and_a_current_one_applied() {
     assert_ne!(stale, current);
     app.handle_io_completion(
         None,
-        IoCompletion::External {
+        IoCompletion::Note(NoteReceipt::External {
             requested_base: stale,
             result: Ok(ExternalFileState::Present(external("outside"))),
-        },
+        }),
     );
     assert_eq!(app.coordinator.view().text, "local");
     assert!(app.persistence.external_deadline().is_some());
     app.handle_io_completion(
         None,
-        IoCompletion::External {
+        IoCompletion::Note(NoteReceipt::External {
             requested_base: current,
             result: Ok(ExternalFileState::Present(external("outside"))),
-        },
+        }),
     );
     assert_eq!(app.coordinator.view().text, "outside");
 }
@@ -210,7 +211,7 @@ fn a_valid_older_save_receipt_is_accepted_and_the_newer_edit_stays_dirty() {
     let before = saves(&app);
     app.handle_io_completion(
         None,
-        IoCompletion::Note(NoteCompletion {
+        IoCompletion::Note(NoteReceipt::Save {
             generation: saved,
             mode: PersistMode::Guarded { expected: None },
             result: Ok(PersistResult::Saved {

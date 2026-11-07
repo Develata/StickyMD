@@ -27,7 +27,7 @@ mod test_support;
 #[cfg(windows)]
 fn main() -> std::process::ExitCode {
     use app::{AppEvent, StickyApp};
-    use persistence::{IoCompletion, PersistenceWorker};
+    use persistence::{IoCompletion, PersistenceWorker, WinNoteStorage};
     use platform::windows::program_dir::RuntimePaths;
     use platform::windows::single_instance::{InstanceDisposition, SingleInstanceGuard};
     use startup::StartupDiagnostics;
@@ -123,7 +123,12 @@ fn main() -> std::process::ExitCode {
         fatal_startup(&format!("无法监听第二实例唤醒请求：{error}"));
     }
     let io_proxy = proxy.clone();
-    let worker = match PersistenceWorker::start(move |completion: IoCompletion| {
+    let storage = WinNoteStorage {
+        note_file: paths.note_file.clone(),
+        note_tmp: paths.note_tmp.clone(),
+        note_dir: paths.note_dir.clone(),
+    };
+    let worker = match PersistenceWorker::start(storage, move |completion: IoCompletion| {
         let _ = io_proxy.send_event(AppEvent::Io(completion));
     }) {
         Ok(worker) => worker,

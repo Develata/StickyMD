@@ -36,7 +36,7 @@ pub enum ReplaceFailureKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AtomicStage {
+pub enum AtomicStage {
     BeforeTempCreate,
     BeforeTempWrite,
     AfterTempWrite,

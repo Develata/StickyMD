@@ -6,12 +6,13 @@ use winit::event_loop::ActiveEventLoop;
 
 use super::StickyApp;
 use crate::config::ConfigAck;
-use crate::persistence::{
-    IoCompletion, PersistMode, PersistRequest, PersistResult, PreserveOutcome, TemporaryCleanup,
-};
+use crate::persistence::IoCompletion;
 use stickymd_app::flow::window::state::{QuitBarrier, WindowIntent};
 use stickymd_app::flow::{RecoveryOperation, SaveTrigger};
 use stickymd_app::instruction::{PersistenceIntent, SaveReason};
+use stickymd_app::ports::{
+    NoteReceipt, PersistMode, PersistRequest, PersistResult, PreserveOutcome, TemporaryCleanup,
+};
 
 impl StickyApp {
     pub(super) fn submit_config_if_needed(&mut self) {
@@ -42,8 +43,7 @@ impl StickyApp {
     /// receipt can be checked for staleness.
     pub(super) fn inspect_external(&self) {
         let requested_base = self.coordinator.view().base_disk_hash;
-        self.worker
-            .inspect_external(self.paths.note_file.clone(), requested_base);
+        self.worker.inspect_external(requested_base);
     }
 
     /// The only writer of the window title (plan 09 title priority).
@@ -76,16 +76,12 @@ impl StickyApp {
             snapshot.generation.value()
         );
         self.persistence.note_save_submitted(trigger);
-        self.worker.submit_note(
-            self.paths.note_file.clone(),
-            self.paths.note_tmp.clone(),
-            PersistRequest {
-                generation: snapshot.generation,
-                text: snapshot.text,
-                line_ending: snapshot.line_ending,
-                mode,
-            },
-        );
+        self.worker.submit_note(PersistRequest {
+            generation: snapshot.generation,
+            text: snapshot.text,
+            line_ending: snapshot.line_ending,
+            mode,
+        });
         self.diagnostic = Some(format!(
             "正在保存 generation {}…",
             snapshot.generation.value()
@@ -131,11 +127,13 @@ impl StickyApp {
         completion: IoCompletion,
     ) {
         match completion {
-            IoCompletion::Note(completion) => {
+            IoCompletion::Note(NoteReceipt::Save {
+                generation: completion_generation,
+                mode: completion_mode,
+                result,
+            }) => {
                 self.worker.acknowledge_note_completion();
-                let completion_generation = completion.generation;
-                let completion_mode = completion.mode;
-                match completion.result {
+                match result {
                     Ok(PersistResult::Saved {
                         generation,
                         fingerprint,
@@ -186,10 +184,10 @@ impl StickyApp {
                     }
                 }
             }
-            IoCompletion::External {
+            IoCompletion::Note(NoteReceipt::External {
                 requested_base,
                 result,
-            } => {
+            }) => {
                 let current_base = self.coordinator.view().base_disk_hash;
                 let now_ms = self.timestamp_ms();
                 if !self.persistence.external_observation_current(
@@ -236,48 +234,50 @@ impl StickyApp {
                     );
                 }
             }
-            IoCompletion::TemporaryRemoved {
+            IoCompletion::Note(NoteReceipt::TemporaryRemoved {
                 purpose: TemporaryCleanup::RecoveryResolved { operation },
                 ..
-            } if !self.recovery.accepts(operation) => {}
-            IoCompletion::TemporaryRemoved { purpose, result } => match (purpose, result) {
-                (TemporaryCleanup::RecoveryResolved { .. }, Ok(())) => {
-                    self.finish_recovery_cleanup()
+            }) if !self.recovery.accepts(operation) => {}
+            IoCompletion::Note(NoteReceipt::TemporaryRemoved { purpose, result }) => {
+                match (purpose, result) {
+                    (TemporaryCleanup::RecoveryResolved { .. }, Ok(())) => {
+                        self.finish_recovery_cleanup()
+                    }
+                    (TemporaryCleanup::ConflictDiscarded, Ok(())) => {}
+                    (TemporaryCleanup::RecoveryResolved { .. }, Err(error)) => {
+                        self.recovery.fail_operation();
+                        self.diagnostic =
+                            Some(format!("临时恢复证据无法清理，仍保持恢复状态：{error}"));
+                        self.request_redraw();
+                    }
+                    (TemporaryCleanup::ConflictDiscarded, Err(error)) => {
+                        self.diagnostic = Some(format!(
+                            "外部内容已载入，但本地临时副本无法清理；下次启动可能再次提示恢复：{error}"
+                        ));
+                        self.request_redraw();
+                    }
                 }
-                (TemporaryCleanup::ConflictDiscarded, Ok(())) => {}
-                (TemporaryCleanup::RecoveryResolved { .. }, Err(error)) => {
-                    self.recovery.fail_operation();
-                    self.diagnostic =
-                        Some(format!("临时恢复证据无法清理，仍保持恢复状态：{error}"));
-                    self.request_redraw();
-                }
-                (TemporaryCleanup::ConflictDiscarded, Err(error)) => {
-                    self.diagnostic = Some(format!(
-                        "外部内容已载入，但本地临时副本无法清理；下次启动可能再次提示恢复：{error}"
-                    ));
-                    self.request_redraw();
-                }
-            },
-            IoCompletion::CanonicalPreserved { operation, .. }
+            }
+            IoCompletion::Note(NoteReceipt::CanonicalPreserved { operation, .. })
                 if !self.recovery.accepts(operation) => {}
-            IoCompletion::CanonicalPreserved {
+            IoCompletion::Note(NoteReceipt::CanonicalPreserved {
                 result: Ok(PreserveOutcome::Changed(observed)),
                 ..
-            } => self.handle_recovery_save_conflict(observed),
-            IoCompletion::CanonicalPreserved {
+            }) => self.handle_recovery_save_conflict(observed),
+            IoCompletion::Note(NoteReceipt::CanonicalPreserved {
                 result: Ok(PreserveOutcome::Preserved),
                 ..
-            } => {
+            }) => {
                 let expected = self.recovery.take_restore_guard().unwrap_or(None);
                 self.submit_save(
                     SaveTrigger::KeepLocal,
                     Some(PersistMode::Guarded { expected }),
                 );
             }
-            IoCompletion::CanonicalPreserved {
+            IoCompletion::Note(NoteReceipt::CanonicalPreserved {
                 result: Ok(PreserveOutcome::Unverifiable),
                 ..
-            } => {
+            }) => {
                 self.diagnostic = Some(
                     "note.md 过大，未恢复：请结束进程，移走 note.md（保留 .tmp）后重启按 F6。"
                         .into(),
@@ -285,9 +285,9 @@ impl StickyApp {
                 self.recovery.fail_operation();
                 self.request_redraw();
             }
-            IoCompletion::CanonicalPreserved {
+            IoCompletion::Note(NoteReceipt::CanonicalPreserved {
                 result: Err(error), ..
-            } => {
+            }) => {
                 self.diagnostic = Some(format!(
                     "无效的 canonical note.md 无法先行保留；未执行恢复覆盖：{error}"
                 ));
@@ -371,10 +371,8 @@ impl StickyApp {
             Some(operation),
         ) = (self.recovery.operation(), self.recovery.operation_id())
         {
-            self.worker.remove_temporary(
-                self.paths.note_tmp.clone(),
-                TemporaryCleanup::RecoveryResolved { operation },
-            );
+            self.worker
+                .remove_temporary(TemporaryCleanup::RecoveryResolved { operation });
         } else if self.resolving_keep_local && mode == PersistMode::ForceOverwrite {
             self.resolving_keep_local = false;
             self.persistence.clear_conflict();

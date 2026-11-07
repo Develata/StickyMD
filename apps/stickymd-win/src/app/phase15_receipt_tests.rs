@@ -15,8 +15,9 @@ use stickymd_core::{
 
 use crate::app::headless_tests::{HeadlessApp, fixture, receipt_fixture};
 use crate::app::receipt_tests::{external, offer_recovery, recovering, saves, type_letter};
-use crate::persistence::{
-    IoCompletion, NoteCompletion, NoteStorageError, PersistMode, PersistResult, PreserveOutcome,
+use crate::persistence::IoCompletion;
+use stickymd_app::ports::{
+    FailureKind, NoteReceipt, PersistMode, PersistResult, PreserveOutcome, StorageFailure,
     TemporaryCleanup,
 };
 
@@ -52,6 +53,10 @@ fn settled(diagnostic: impl Into<String>) -> Outcome {
     }
 }
 
+fn unstable() -> StorageFailure {
+    StorageFailure::new(FailureKind::Unavailable, UNSTABLE)
+}
+
 fn saving(app: &HeadlessApp) -> String {
     format!(
         "正在保存 generation {}…",
@@ -84,9 +89,9 @@ fn press(app: &mut HeadlessApp, primary: bool) -> Outcome {
 fn note(
     generation: Generation,
     mode: PersistMode,
-    result: Result<PersistResult, NoteStorageError>,
+    result: Result<PersistResult, StorageFailure>,
 ) -> IoCompletion {
-    IoCompletion::Note(NoteCompletion {
+    IoCompletion::Note(NoteReceipt::Save {
         generation,
         mode,
         result,
@@ -112,11 +117,7 @@ fn saved(app: &HeadlessApp, mode: PersistMode) -> IoCompletion {
 }
 
 fn failed(app: &HeadlessApp, mode: PersistMode) -> IoCompletion {
-    note(
-        app.coordinator.view().generation,
-        mode,
-        Err(NoteStorageError::ObservationChanged),
-    )
+    note(app.coordinator.view().generation, mode, Err(unstable()))
 }
 
 fn conflicted(app: &HeadlessApp, mode: PersistMode) -> IoCompletion {
@@ -152,10 +153,10 @@ fn from_the_future(app: &HeadlessApp) -> IoCompletion {
 }
 
 fn observed(app: &HeadlessApp, state: ExternalFileState) -> IoCompletion {
-    IoCompletion::External {
+    IoCompletion::Note(NoteReceipt::External {
         requested_base: app.coordinator.view().base_disk_hash,
         result: Ok(state),
-    }
+    })
 }
 
 fn edited() -> HeadlessApp {
@@ -205,7 +206,7 @@ fn next(receipts: &Receiver<IoCompletion>) -> IoCompletion {
 
 fn saved_mode(receipt: &IoCompletion) -> PersistMode {
     match receipt {
-        IoCompletion::Note(completion) => completion.mode,
+        IoCompletion::Note(NoteReceipt::Save { mode, .. }) => *mode,
         other => panic!("expected a save receipt, got {other:?}"),
     }
 }
@@ -213,10 +214,10 @@ fn saved_mode(receipt: &IoCompletion) -> PersistMode {
 fn is_recovery_cleanup(receipt: &IoCompletion, expected: u64) -> bool {
     matches!(
         receipt,
-        IoCompletion::TemporaryRemoved {
+        IoCompletion::Note(NoteReceipt::TemporaryRemoved {
             purpose: TemporaryCleanup::RecoveryResolved { operation },
             result: Ok(()),
-        } if *operation == expected
+        }) if *operation == expected
     )
 }
 
@@ -381,7 +382,7 @@ fn a_saved_receipt_inspects_the_disk_while_a_recreate_is_still_owed() {
     let receipt = saved(&app, GUARDED);
     app.handle_io_completion(None, receipt);
     assert!(app.persistence.durability_required());
-    let IoCompletion::External { requested_base, .. } = next(&receipts) else {
+    let IoCompletion::Note(NoteReceipt::External { requested_base, .. }) = next(&receipts) else {
         panic!("expected a durable inspection");
     };
     assert_eq!(requested_base, app.coordinator.view().base_disk_hash);
@@ -393,10 +394,10 @@ fn a_failed_observation_changes_nothing_and_says_so() {
     let requested_base = app.coordinator.view().base_disk_hash;
     let outcome = deliver(
         &mut app,
-        IoCompletion::External {
+        IoCompletion::Note(NoteReceipt::External {
             requested_base,
-            result: Err(NoteStorageError::ObservationChanged),
-        },
+            result: Err(unstable()),
+        }),
     );
     assert_eq!(
         outcome,
@@ -502,10 +503,10 @@ fn a_failed_recovery_cleanup_keeps_the_recovery_open() {
     let operation = app.recovery.operation_id().unwrap();
     let outcome = deliver(
         &mut app,
-        IoCompletion::TemporaryRemoved {
+        IoCompletion::Note(NoteReceipt::TemporaryRemoved {
             purpose: TemporaryCleanup::RecoveryResolved { operation },
-            result: Err(NoteStorageError::ObservationChanged),
-        },
+            result: Err(unstable()),
+        }),
     );
     assert_eq!(
         outcome,
@@ -521,18 +522,18 @@ fn a_conflict_discard_receipt_reports_only_a_failure() {
     let mut app = fixture("start");
     let outcome = deliver(
         &mut app,
-        IoCompletion::TemporaryRemoved {
+        IoCompletion::Note(NoteReceipt::TemporaryRemoved {
             purpose: TemporaryCleanup::ConflictDiscarded,
             result: Ok(()),
-        },
+        }),
     );
     assert_eq!(outcome.diagnostic, None);
     let outcome = deliver(
         &mut app,
-        IoCompletion::TemporaryRemoved {
+        IoCompletion::Note(NoteReceipt::TemporaryRemoved {
             purpose: TemporaryCleanup::ConflictDiscarded,
-            result: Err(NoteStorageError::ObservationChanged),
-        },
+            result: Err(unstable()),
+        }),
     );
     assert_eq!(
         outcome,
@@ -548,10 +549,10 @@ fn a_failed_preservation_stops_the_restore() {
     let operation = app.recovery.operation_id().unwrap();
     let outcome = deliver(
         &mut app,
-        IoCompletion::CanonicalPreserved {
+        IoCompletion::Note(NoteReceipt::CanonicalPreserved {
             operation,
-            result: Err(NoteStorageError::ObservationChanged),
-        },
+            result: Err(unstable()),
+        }),
     );
     assert_eq!(
         outcome,
@@ -577,10 +578,10 @@ fn a_preserved_canonical_starts_the_save_guarded_by_the_restore_plan() {
     let expected = saving(&app);
     let outcome = deliver(
         &mut app,
-        IoCompletion::CanonicalPreserved {
+        IoCompletion::Note(NoteReceipt::CanonicalPreserved {
             operation,
             result: Ok(PreserveOutcome::Preserved),
-        },
+        }),
     );
     assert_eq!(
         outcome,
@@ -663,10 +664,10 @@ fn restoring_over_an_invalid_canonical_moves_it_aside_first() {
     assert!(
         matches!(
             &preserved,
-            IoCompletion::CanonicalPreserved {
+            IoCompletion::Note(NoteReceipt::CanonicalPreserved {
                 operation: seen,
                 result: Ok(PreserveOutcome::Preserved),
-            } if *seen == operation
+            }) if *seen == operation
         ),
         "{preserved:?}"
     );
@@ -761,10 +762,10 @@ fn loading_the_external_side_discards_the_temporary() {
     assert!(
         matches!(
             cleanup,
-            IoCompletion::TemporaryRemoved {
+            IoCompletion::Note(NoteReceipt::TemporaryRemoved {
                 purpose: TemporaryCleanup::ConflictDiscarded,
                 result: Ok(()),
-            }
+            })
         ),
         "{cleanup:?}"
     );
