@@ -52,13 +52,18 @@ impl StickyApp {
             return;
         }
         self.full_projection_resync();
-        if plan.preserve_canonical_first {
+        if let Some(expected) = plan.preserve_canonical {
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |duration| duration.as_secs());
+            let Some(operation) = self.recovery.operation_id() else {
+                return;
+            };
             self.worker.preserve_canonical(
                 self.paths.note_file.clone(),
                 self.paths.note_dir.join(format!("note.invalid-{stamp}.md")),
+                expected,
+                operation,
             );
         } else {
             let _ = self.recovery.take_restore_guard();
@@ -82,8 +87,10 @@ impl StickyApp {
             }
             CanonicalRecoveryPlan::Missing => self.coordinator.reset_to_missing_document(),
             CanonicalRecoveryPlan::Unusable => {
-                self.diagnostic =
-                    Some("当前 note.md 不是有效 UTF-8；只能 F6 恢复有效临时内容。".into());
+                self.diagnostic = Some(
+                    "当前 note.md 无法载入（不是有效 UTF-8 或过大）；只能 F6 恢复有效临时内容。"
+                        .into(),
+                );
                 self.request_redraw();
                 return;
             }
@@ -105,9 +112,12 @@ impl StickyApp {
             );
             return;
         }
+        let Some(operation) = self.recovery.operation_id() else {
+            return;
+        };
         self.worker.remove_temporary(
             self.paths.note_tmp.clone(),
-            TemporaryCleanup::RecoveryResolved,
+            TemporaryCleanup::RecoveryResolved { operation },
         );
         self.diagnostic = Some("正在确认使用当前 note.md…".into());
         self.request_redraw();

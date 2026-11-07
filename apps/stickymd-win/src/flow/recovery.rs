@@ -3,7 +3,8 @@
 //! plan_ref: docs/plan/05_document_persistence.md#recovery
 
 use stickymd_core::{
-    DiskFingerprint, ExternalFileFact, ExternalFileState, LoadedDocument, RecoveryCandidate,
+    DiskFingerprint, ExternalFileFact, ExternalFileState, LoadedDocument, PreserveExpectation,
+    RecoveryCandidate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +17,8 @@ pub enum RecoveryOperation {
 pub struct RestorePlan {
     pub temporary: LoadedDocument,
     pub expected: Option<DiskFingerprint>,
-    pub preserve_canonical_first: bool,
+    /// The canonical observation to preserve before restoring, if it must be preserved.
+    pub preserve_canonical: Option<PreserveExpectation>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,19 +31,47 @@ pub enum CanonicalRecoveryPlan {
 #[derive(Debug)]
 pub struct RecoveryCoordinator {
     candidate: Option<RecoveryCandidate>,
-    canonical_requires_preserve: bool,
+    /// The unusable canonical observation (invalid UTF-8 or too large) that must be preserved
+    /// before a restore may publish over it; `None` when no preservation is required.
+    canonical_to_preserve: Option<PreserveExpectation>,
     operation: Option<RecoveryOperation>,
+    /// Identity of the pending operation; its I/O receipts are accepted only while it is
+    /// current (plan 04 generation rules 4–5: stale results are dropped).
+    operation_id: Option<u64>,
+    issued_operations: u64,
     restore_guard: Option<Option<DiskFingerprint>>,
 }
 
 impl RecoveryCoordinator {
-    pub fn new(candidate: Option<RecoveryCandidate>, canonical_requires_preserve: bool) -> Self {
+    pub fn new(
+        candidate: Option<RecoveryCandidate>,
+        canonical_to_preserve: Option<PreserveExpectation>,
+    ) -> Self {
         Self {
             candidate,
-            canonical_requires_preserve,
+            canonical_to_preserve,
             operation: None,
+            operation_id: None,
+            issued_operations: 0,
             restore_guard: None,
         }
+    }
+
+    fn start(&mut self, operation: RecoveryOperation) {
+        self.issued_operations += 1;
+        self.operation = Some(operation);
+        self.operation_id = Some(self.issued_operations);
+    }
+
+    /// The pending operation's identity, carried by its I/O requests.
+    pub fn operation_id(&self) -> Option<u64> {
+        self.operation_id
+    }
+
+    /// Whether a receipt issued for `operation` belongs to the pending operation. A receipt of
+    /// a failed, finished or superseded operation is stale and must change nothing.
+    pub fn accepts(&self, operation: u64) -> bool {
+        self.operation_id == Some(operation)
     }
 
     pub fn is_pending(&self) -> bool {
@@ -61,12 +91,13 @@ impl RecoveryCoordinator {
             .canonical
             .as_ref()
             .map(|canonical| canonical.fingerprint);
-        self.operation = Some(RecoveryOperation::Restoring);
+        let temporary = candidate.temporary.clone();
+        self.start(RecoveryOperation::Restoring);
         self.restore_guard = Some(expected);
         Some(RestorePlan {
-            temporary: candidate.temporary.clone(),
+            temporary,
             expected,
-            preserve_canonical_first: self.canonical_requires_preserve,
+            preserve_canonical: self.canonical_to_preserve,
         })
     }
 
@@ -74,10 +105,10 @@ impl RecoveryCoordinator {
         if self.operation.is_some() || self.candidate.is_none() {
             return None;
         }
-        if self.canonical_requires_preserve {
+        if self.canonical_to_preserve.is_some() {
             return Some(CanonicalRecoveryPlan::Unusable);
         }
-        self.operation = Some(RecoveryOperation::UsingCanonical);
+        self.start(RecoveryOperation::UsingCanonical);
         Some(
             self.candidate
                 .as_ref()
@@ -98,12 +129,22 @@ impl RecoveryCoordinator {
 
     pub fn fail_operation(&mut self) {
         self.operation = None;
+        self.operation_id = None;
         self.restore_guard = None;
     }
 
     pub fn refresh_canonical_after_conflict(&mut self, observed: ExternalFileState) {
         let Some(candidate) = &mut self.candidate else {
             return;
+        };
+        // An invalid canonical's observation already fingerprints its full content; a too-large
+        // one carries only its size, so it is never moved automatically.
+        let to_preserve = match &observed {
+            ExternalFileState::InvalidUtf8 { fingerprint } => {
+                Some(PreserveExpectation::Content(*fingerprint))
+            }
+            ExternalFileState::TooLarge { .. } => Some(PreserveExpectation::Unverifiable),
+            ExternalFileState::Present(_) | ExternalFileState::Missing => None,
         };
         match observed {
             ExternalFileState::Present(fact) => {
@@ -113,23 +154,18 @@ impl RecoveryCoordinator {
                     line_ending: fact.line_ending,
                     fingerprint: fact.fingerprint,
                 });
-                self.canonical_requires_preserve = false;
             }
-            ExternalFileState::Missing => {
-                candidate.canonical = None;
-                self.canonical_requires_preserve = false;
-            }
-            ExternalFileState::InvalidUtf8 { .. } | ExternalFileState::TooLarge { .. } => {
-                candidate.canonical = None;
-                self.canonical_requires_preserve = true;
-            }
+            ExternalFileState::Missing
+            | ExternalFileState::InvalidUtf8 { .. }
+            | ExternalFileState::TooLarge { .. } => candidate.canonical = None,
         }
+        self.canonical_to_preserve = to_preserve;
         self.fail_operation();
     }
 
     pub fn finish(&mut self) {
         self.candidate = None;
-        self.canonical_requires_preserve = false;
+        self.canonical_to_preserve = None;
         self.fail_operation();
     }
 }
@@ -153,13 +189,77 @@ mod tests {
                 temporary: loaded("temporary"),
                 temporary_is_newer: true,
             }),
-            false,
+            None,
         );
         let plan = recovery.begin_restore().unwrap();
         assert_eq!(plan.expected, Some(expected));
         assert_eq!(plan.temporary.text, "temporary");
         assert!(recovery.begin_restore().is_none());
         assert!(recovery.begin_use_canonical().is_none());
+    }
+
+    /// A conflict observed during recovery sets what a later restore must preserve: an invalid
+    /// canonical by its content fingerprint, a too-large one as unverifiable, a usable one not at all.
+    #[test]
+    fn a_conflict_sets_the_next_preserve_expectation() {
+        let mut recovery = RecoveryCoordinator::new(
+            Some(RecoveryCandidate {
+                canonical: None,
+                temporary: loaded("temporary"),
+                temporary_is_newer: true,
+            }),
+            Some(PreserveExpectation::Content(hash_bytes(b"\xff"))),
+        );
+        let invalid = hash_bytes(b"\xfe");
+        for (observed, expected) in [
+            (
+                ExternalFileState::InvalidUtf8 {
+                    fingerprint: invalid,
+                },
+                Some(PreserveExpectation::Content(invalid)),
+            ),
+            (
+                ExternalFileState::TooLarge { bytes: 1 << 30 },
+                Some(PreserveExpectation::Unverifiable),
+            ),
+            (ExternalFileState::Missing, None),
+        ] {
+            recovery.begin_restore().unwrap();
+            recovery.refresh_canonical_after_conflict(observed);
+            assert_eq!(recovery.operation_id(), None);
+            assert_eq!(
+                recovery.begin_restore().unwrap().preserve_canonical,
+                expected
+            );
+            recovery.fail_operation();
+        }
+    }
+
+    #[test]
+    fn receipts_are_accepted_only_for_the_pending_operation() {
+        let candidate = RecoveryCandidate {
+            canonical: Some(loaded("disk")),
+            temporary: loaded("temporary"),
+            temporary_is_newer: true,
+        };
+        let mut recovery = RecoveryCoordinator::new(Some(candidate), None);
+        assert_eq!(recovery.operation_id(), None);
+        recovery.begin_restore().unwrap();
+        let first = recovery.operation_id().unwrap();
+        assert!(recovery.accepts(first));
+        // A failed operation's late receipt is stale, and so is it under the next operation.
+        recovery.fail_operation();
+        assert!(!recovery.accepts(first));
+        assert!(matches!(
+            recovery.begin_use_canonical(),
+            Some(CanonicalRecoveryPlan::Present(_))
+        ));
+        let second = recovery.operation_id().unwrap();
+        assert_ne!(first, second);
+        assert!(!recovery.accepts(first));
+        assert!(recovery.accepts(second));
+        recovery.finish();
+        assert!(!recovery.accepts(second));
     }
 
     #[test]
@@ -170,7 +270,7 @@ mod tests {
                 temporary: loaded("temporary"),
                 temporary_is_newer: true,
             }),
-            false,
+            None,
         );
         recovery.begin_restore().unwrap();
         let newer = hash_bytes(b"new external");

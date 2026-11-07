@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
-use stickymd_core::{AssetEffect, ExternalFileState, Generation, ManagedAssetName};
+use stickymd_core::{
+    AssetEffect, DiskFingerprint, ExternalFileState, Generation, ManagedAssetName,
+    PreserveExpectation,
+};
 
 use crate::assets::{
     AssetPasteCompletion, AssetPasteError, AssetPasteFailure, AssetPasteRequest,
@@ -19,20 +22,29 @@ use crate::export::{ExportCompletion, ExportError, ExportRequest, export_snapsho
 
 use super::NoteStorageError;
 use super::{
-    PersistRequest, PersistResult, inspect_note_state_with_retry, persist_note, preserve_canonical,
-    remove_temporary,
+    PersistRequest, PersistResult, PreserveOutcome, inspect_note_state_with_retry, persist_note,
+    preserve_canonical_if_unchanged, remove_temporary,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemporaryCleanup {
-    RecoveryResolved,
+    /// Ends the recovery operation `operation` (`RecoveryCoordinator::operation_id`).
+    RecoveryResolved { operation: u64 },
+    /// Follows a loaded external conflict. Its receipt commits no state: success changes
+    /// nothing and a failure reports a durable fact, so it needs no identity.
     ConflictDiscarded,
 }
 
 #[derive(Debug)]
 pub enum IoCompletion {
     Note(NoteCompletion),
-    External(Result<ExternalFileState, NoteStorageError>),
+    /// One durable observation, requested while `requested_base` was the known Durable
+    /// Fingerprint; `PersistenceCoordinator::external_observation_current` decides whether
+    /// it still applies.
+    External {
+        requested_base: Option<DiskFingerprint>,
+        result: Result<ExternalFileState, NoteStorageError>,
+    },
     Config {
         revision: ConfigRevision,
         result: Result<(), ConfigStorageError>,
@@ -41,7 +53,11 @@ pub enum IoCompletion {
         purpose: TemporaryCleanup,
         result: Result<(), NoteStorageError>,
     },
-    CanonicalPreserved(Result<(), NoteStorageError>),
+    /// Preserving the canonical note for the recovery operation `operation`.
+    CanonicalPreserved {
+        operation: u64,
+        result: Result<PreserveOutcome, NoteStorageError>,
+    },
     AssetPaste(Result<AssetPasteCompletion, AssetPasteFailure>),
     AssetSync {
         request_id: u64,
@@ -75,6 +91,13 @@ struct NoteJob {
     target: PathBuf,
     temporary: PathBuf,
     request: PersistRequest,
+}
+
+struct PreserveJob {
+    source: PathBuf,
+    destination: PathBuf,
+    expected: PreserveExpectation,
+    operation: u64,
 }
 
 struct ConfigJob {
@@ -113,10 +136,10 @@ struct AssetSyncJob {
 #[derive(Default)]
 struct Mailbox {
     note: Option<NoteJob>,
-    external: Option<PathBuf>,
+    external: Option<(PathBuf, Option<DiskFingerprint>)>,
     config: Option<ConfigJob>,
     cleanup_temporary: Option<(PathBuf, TemporaryCleanup)>,
-    preserve_canonical: Option<(PathBuf, PathBuf)>,
+    preserve_canonical: Option<PreserveJob>,
     asset_paste: Option<AssetPasteJob>,
     asset_sync: Option<AssetSyncJob>,
     export: Option<ExportRequest>,
@@ -127,6 +150,15 @@ struct Mailbox {
 
 impl Mailbox {
     fn replace_note(&mut self, job: NoteJob) {
+        // The note job reuses the fixed temp. A conflict-discard cleanup still queued would run
+        // after it and delete what a failed save left there, the only durable copy of newer
+        // text; the note job supersedes it (it replaces or overwrites that temp itself).
+        if matches!(
+            self.cleanup_temporary,
+            Some((_, TemporaryCleanup::ConflictDiscarded))
+        ) {
+            self.cleanup_temporary = None;
+        }
         self.metrics.note_submitted += 1;
         if self.note.replace(job).is_some() {
             self.metrics.note_coalesced += 1;
@@ -199,13 +231,13 @@ impl Mailbox {
             Some(WorkerJob::AssetSync(sync))
         } else if let Some(export) = self.export.take() {
             Some(WorkerJob::Export(export))
-        } else if let Some(external) = self.external.take() {
+        } else if let Some((target, requested_base)) = self.external.take() {
             self.metrics.external_checks += 1;
-            Some(WorkerJob::External(external))
+            Some(WorkerJob::External(target, requested_base))
         } else if let Some((temporary, purpose)) = self.cleanup_temporary.take() {
             Some(WorkerJob::CleanupTemporary(temporary, purpose))
-        } else if let Some((source, destination)) = self.preserve_canonical.take() {
-            Some(WorkerJob::PreserveCanonical(source, destination))
+        } else if let Some(job) = self.preserve_canonical.take() {
+            Some(WorkerJob::PreserveCanonical(job))
         } else {
             self.config.take().map(WorkerJob::Config)
         }
@@ -261,10 +293,11 @@ impl PersistenceWorker {
         }
     }
 
-    pub fn inspect_external(&self, target: PathBuf) {
+    /// Queues one durable observation; `requested_base` is the known Durable Fingerprint now.
+    pub fn inspect_external(&self, target: PathBuf, requested_base: Option<DiskFingerprint>) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
-            mailbox.external = Some(target);
+            mailbox.external = Some((target, requested_base));
             ready.notify_one();
         }
     }
@@ -294,10 +327,23 @@ impl PersistenceWorker {
         }
     }
 
-    pub fn preserve_canonical(&self, source: PathBuf, destination: PathBuf) {
+    /// Queues moving the canonical note aside for recovery operation `operation`, only while
+    /// it is still `expected` (`preserve_canonical_if_unchanged`).
+    pub fn preserve_canonical(
+        &self,
+        source: PathBuf,
+        destination: PathBuf,
+        expected: PreserveExpectation,
+        operation: u64,
+    ) {
         let (lock, ready) = &*self.shared;
         if let Ok(mut mailbox) = lock.lock() {
-            mailbox.preserve_canonical = Some((source, destination));
+            mailbox.preserve_canonical = Some(PreserveJob {
+                source,
+                destination,
+                expected,
+                operation,
+            });
             ready.notify_one();
         }
     }
@@ -439,9 +485,12 @@ where
                     result,
                 }));
             }
-            WorkerJob::External(target) => {
-                let completion = inspect_note_state_with_retry(&target);
-                on_completion(IoCompletion::External(completion));
+            WorkerJob::External(target, requested_base) => {
+                let result = inspect_note_state_with_retry(&target);
+                on_completion(IoCompletion::External {
+                    requested_base,
+                    result,
+                });
             }
             WorkerJob::AssetPaste(job) => {
                 let expected_generation = job.request.expected_generation;
@@ -491,9 +540,13 @@ where
                 let result = remove_temporary(&path);
                 on_completion(IoCompletion::TemporaryRemoved { purpose, result });
             }
-            WorkerJob::PreserveCanonical(source, destination) => {
-                let completion = preserve_canonical(&source, &destination);
-                on_completion(IoCompletion::CanonicalPreserved(completion));
+            WorkerJob::PreserveCanonical(job) => {
+                let result =
+                    preserve_canonical_if_unchanged(&job.source, &job.destination, job.expected);
+                on_completion(IoCompletion::CanonicalPreserved {
+                    operation: job.operation,
+                    result,
+                });
             }
         }
     }
@@ -501,10 +554,10 @@ where
 
 enum WorkerJob {
     Note(NoteJob),
-    External(PathBuf),
+    External(PathBuf, Option<DiskFingerprint>),
     Config(ConfigJob),
     CleanupTemporary(PathBuf, TemporaryCleanup),
-    PreserveCanonical(PathBuf, PathBuf),
+    PreserveCanonical(PreserveJob),
     AssetPaste(AssetPasteJob),
     AssetSync(AssetSyncJob),
     Export(ExportRequest),
@@ -588,17 +641,38 @@ mod tests {
     }
 
     #[test]
+    fn a_newer_note_job_supersedes_only_a_queued_conflict_discard_cleanup() {
+        let mut mailbox = Mailbox {
+            cleanup_temporary: Some(("note.md.tmp".into(), TemporaryCleanup::ConflictDiscarded)),
+            ..Mailbox::default()
+        };
+        mailbox.replace_note(job("newer text"));
+        assert!(mailbox.cleanup_temporary.is_none());
+        // A recovery cleanup stays: recovery blocks ordinary saves, and its receipt ends it.
+        let recovery = TemporaryCleanup::RecoveryResolved { operation: 1 };
+        mailbox.cleanup_temporary = Some(("note.md.tmp".into(), recovery));
+        mailbox.replace_note(job("recovery save"));
+        assert_eq!(
+            mailbox
+                .cleanup_temporary
+                .as_ref()
+                .map(|(_, purpose)| *purpose),
+            Some(recovery)
+        );
+    }
+
+    #[test]
     fn unrelated_work_cannot_bypass_the_note_completion_barrier() {
         let mut mailbox = Mailbox {
             note_blocked_for_ack: true,
             ..Mailbox::default()
         };
         mailbox.replace_note(job("must-wait"));
-        mailbox.external = Some("note.md".into());
+        mailbox.external = Some(("note.md".into(), None));
 
         assert!(matches!(
             mailbox.take_next_job(),
-            Some(WorkerJob::External(path)) if path == Path::new("note.md")
+            Some(WorkerJob::External(path, None)) if path == Path::new("note.md")
         ));
         assert!(mailbox.note.is_some());
         assert!(mailbox.note_blocked_for_ack);

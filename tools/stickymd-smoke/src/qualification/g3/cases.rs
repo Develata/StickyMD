@@ -200,26 +200,49 @@ pub(super) fn g3_03(repository: &Path, program: &Path) -> Result<CaseEvidence, S
             ));
         }
         checks.record("kill-note-complete", &offset_param);
-        if temporary.is_file() {
+        // A temp whose bytes differ from the canonical is always a recovery choice (plan 05
+        // recovery 3); one with the canonical's bytes is redundant and removed at startup.
+        let recovery_text = if temporary.is_file() {
             let bytes = fs::read(&temporary).map_err(io_error)?;
-            std::str::from_utf8(&bytes).map_err(|error| {
+            let text = String::from_utf8(bytes).map_err(|error| {
                 format!("kill offset {offset_ms} left invalid recovery UTF-8: {error}")
             })?;
-        }
+            (text.as_bytes() != note_bytes.as_slice()).then_some(text)
+        } else {
+            None
+        };
 
         let mut restarted = ChildGuard::start(&instance.join("StickyMD.exe"))?;
         let restarted_window = crate::window_control::visible_window(restarted.id())?;
-        if crate::window_control::title(restarted_window)?.contains("恢复选择未完成") {
+        let pending = |window| {
+            crate::window_control::title(window).map(|title| title.contains("恢复选择未完成"))
+        };
+        let final_text = if let Some(recovered) = &recovery_text {
+            wait_until("recovery choice offered", || pending(restarted_window))?;
             crate::window_control::press_f6(restarted_window)?;
-            wait_until("recovery resolution", || {
+            // The choice is complete only when the temp is consumed, the canonical holds the
+            // restored text and the window left the pending state.
+            wait_until("recovery restored the temp", || {
                 let text = fs::read_to_string(&note).map_err(io_error)?;
-                Ok(text == new || text == old)
+                Ok(!temporary.try_exists().map_err(io_error)?
+                    && text == *recovered
+                    && !pending(restarted_window)?)
             })?;
-        }
-        let final_text = fs::read_to_string(&note).map_err(io_error)?;
+            recovered.clone()
+        } else {
+            fs::read_to_string(&note).map_err(io_error)?
+        };
+        // Completeness is judged against the two complete texts, never against the temp itself.
         if final_text != old && final_text != new {
+            if recovery_text.is_none() {
+                return Err(format!(
+                    "kill offset {offset_ms} did not restart from complete text"
+                ));
+            }
+            // A valid but truncated temp is still the USER's recovery choice (plan 05 recovery
+            // 3), but restoring it is not a restart from complete text: report it, never pass.
             return Err(format!(
-                "kill offset {offset_ms} did not restart from complete text"
+                "kill offset {offset_ms} left a valid but incomplete temp, which recovery restored"
             ));
         }
         checks.record("restart-note-complete", &offset_param);

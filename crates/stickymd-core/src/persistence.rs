@@ -83,6 +83,15 @@ pub enum ExternalFileState {
     TooLarge { bytes: u64 },
 }
 
+/// What a recovery restore must still find at the canonical path before moving it aside: the
+/// full-content fingerprint of the invalid canonical it observed, or `Unverifiable` for a
+/// too-large canonical, which is never read and so never moved automatically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreserveExpectation {
+    Content(DiskFingerprint),
+    Unverifiable,
+}
+
 /// Explicit conflict between dirty runtime text and a newer durable fact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileConflict {
@@ -111,7 +120,6 @@ pub struct RecoveryCandidate {
 pub enum RecoveryDisposition {
     NoTemporary,
     RedundantTemporary,
-    StaleTemporary,
     InvalidTemporary,
     Candidate(RecoveryCandidate),
 }
@@ -135,15 +143,6 @@ pub fn inspect_recovery(
         .is_some_and(|value| value.fingerprint == decoded_temporary.fingerprint)
     {
         return RecoveryDisposition::RedundantTemporary;
-    }
-
-    if let (Some(_), Some(canonical_modified), Some(temporary_modified)) = (
-        decoded_canonical.as_ref(),
-        canonical.and_then(|value| value.modified),
-        temporary.modified,
-    ) && temporary_modified <= canonical_modified
-    {
-        return RecoveryDisposition::StaleTemporary;
     }
 
     let temporary_is_newer = match (canonical.and_then(|v| v.modified), temporary.modified) {
@@ -218,15 +217,21 @@ mod tests {
         assert_eq!(candidate.temporary.text, "new");
     }
 
+    /// A valid temp whose content differs is always the user's choice, whatever the times: a
+    /// failed save can leave newer text in a temp older than an external save (plan 05 recovery 3).
     #[test]
-    fn older_different_temporary_is_stale_not_a_recovery_choice() {
-        assert_eq!(
-            inspect_recovery(
-                Some(&observed(b"canonical", 2)),
-                Some(&observed(b"old temp", 1))
-            ),
-            RecoveryDisposition::StaleTemporary
-        );
+    fn a_different_temporary_is_a_recovery_choice_whatever_its_time() {
+        for (canonical_time, temporary_time, newer) in [(2, 1, false), (2, 2, false), (1, 2, true)]
+        {
+            let RecoveryDisposition::Candidate(candidate) = inspect_recovery(
+                Some(&observed(b"canonical", canonical_time)),
+                Some(&observed(b"local temp", temporary_time)),
+            ) else {
+                panic!("expected a recovery candidate at {canonical_time}/{temporary_time}");
+            };
+            assert_eq!(candidate.temporary.text, "local temp");
+            assert_eq!(candidate.temporary_is_newer, newer);
+        }
     }
 
     #[test]

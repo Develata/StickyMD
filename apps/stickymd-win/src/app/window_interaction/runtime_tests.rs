@@ -259,7 +259,7 @@ fn runtime_opacity_recovery_and_busy_export_shortcuts_precede_field() {
                 temporary: LoadedDocument::from_durable_bytes(b"temporary").unwrap(),
                 temporary_is_newer: true,
             }),
-            false,
+            None,
         );
         app.persistence.set_recovery_pending(true);
         app.apply_key(key(code, None), false);

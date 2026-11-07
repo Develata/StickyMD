@@ -38,8 +38,8 @@ pub use hash::Hash32;
 pub use line_ending::LineEnding;
 pub use persistence::{
     DiskFingerprint, ExternalFileFact, ExternalFileState, FileConflict, LoadedDocument,
-    NoteDecodeError, RecoveryCandidate, RecoveryDisposition, RecoveryInspection, hash_bytes,
-    inspect_recovery,
+    NoteDecodeError, PreserveExpectation, RecoveryCandidate, RecoveryDisposition,
+    RecoveryInspection, hash_bytes, inspect_recovery,
 };
 pub use selection::{CursorSnapshot, Selection, TextPosition};
 pub use snapshot::DocumentSnapshot;

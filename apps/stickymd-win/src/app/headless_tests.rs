@@ -86,7 +86,7 @@ pub(super) fn fixture(text: &str) -> HeadlessApp {
             config: crate::config::RuntimeConfig::default(),
             config_persistence_allowed: false,
             recovery: None,
-            recovery_canonical_requires_preserve: false,
+            recovery_canonical_to_preserve: None,
             warnings: Vec::new(),
         },
         instance,

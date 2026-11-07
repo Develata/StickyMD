@@ -80,7 +80,7 @@ impl StickyApp {
             self.submit_save(action.trigger, None);
         }
         if self.persistence.take_external_check(now_ms) {
-            self.worker.inspect_external(self.paths.note_file.clone());
+            self.inspect_external();
         }
         self.tick_preview(now_ms);
         if self

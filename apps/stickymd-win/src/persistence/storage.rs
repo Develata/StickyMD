@@ -9,13 +9,13 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use stickymd_core::{
     DiskFingerprint, ExternalFileState, Generation, LoadedDocument, NoteDecodeError,
-    RecoveryInspection, hash_bytes,
+    PreserveExpectation, RecoveryInspection, hash_bytes,
 };
 use thiserror::Error;
 
 use crate::platform::windows::atomic_file::{
-    AtomicPublishError, move_file_no_replace, prepare_temporary, publish_prepared_existing,
-    publish_prepared_new,
+    AtomicPublishError, move_file_no_replace, open_for_verified_move, prepare_temporary,
+    publish_prepared_existing, publish_prepared_new, rename_handle_no_replace,
 };
 use crate::platform::windows::file_identity::{OpenFileObservation, observe_open_file};
 
@@ -70,11 +70,58 @@ fn quarantine_temporary_at(path: &Path, stamp: u64) -> Result<PathBuf, NoteStora
     Err(NoteStorageError::QuarantineNameExhausted)
 }
 
-pub fn preserve_canonical(source: &Path, destination: &Path) -> Result<(), NoteStorageError> {
+/// Result of preserving the canonical note before a recovery restore.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreserveOutcome {
+    Preserved,
+    /// The canonical note is no longer the content that required preserving it; it was left in
+    /// place.
+    Changed(ExternalFileState),
+    /// No content fingerprint exists for it (a too-large canonical), so it is never moved.
+    Unverifiable,
+}
+
+/// Moves the canonical note aside only while it still has the expected content. One handle is
+/// used for both steps: it shares only reads, so no other handle can write, rename or delete the
+/// file while its content is checked, and the rename moves that same file object. A changed or
+/// missing canonical is left in place and reported, so a change made while recovery waited
+/// becomes a conflict instead of being moved away (plan 05 recovery 8). An expected content comes
+/// from an invalid canonical within `MAX_NOTE_LOAD`, so a larger file is a change and is not read.
+pub fn preserve_canonical_if_unchanged(
+    source: &Path,
+    destination: &Path,
+    expected: PreserveExpectation,
+) -> Result<PreserveOutcome, NoteStorageError> {
+    let PreserveExpectation::Content(expected) = expected else {
+        return Ok(PreserveOutcome::Unverifiable);
+    };
+    let mut file = match open_for_verified_move(source) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PreserveOutcome::Changed(ExternalFileState::Missing));
+        }
+        // A link or other non-file object at the canonical name is refused and left in place.
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
+            return Err(NoteStorageError::PreserveCanonical(error));
+        }
+        Err(error) => return Err(NoteStorageError::Read(error)),
+    };
+    let length = file.metadata().map_err(NoteStorageError::Metadata)?.len();
+    let mut bytes = Vec::new();
+    if length <= MAX_NOTE_LOAD {
+        bytes.reserve(length as usize);
+        file.by_ref()
+            .take(MAX_NOTE_LOAD + 1)
+            .read_to_end(&mut bytes)
+            .map_err(NoteStorageError::Read)?;
+    }
+    if length > MAX_NOTE_LOAD || hash_bytes(&bytes) != expected {
+        drop(file);
+        return inspect_note_state_with_retry(source).map(PreserveOutcome::Changed);
+    }
     for suffix in 0..1000u16 {
-        let candidate = suffixed_path(destination, suffix);
-        match move_file_no_replace(source, &candidate) {
-            Ok(()) => return Ok(()),
+        match rename_handle_no_replace(&file, &suffixed_path(destination, suffix)) {
+            Ok(()) => return Ok(PreserveOutcome::Preserved),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(NoteStorageError::PreserveCanonical(error)),
         }
@@ -620,13 +667,117 @@ mod tests {
         fs::write(&source, b"new canonical evidence").unwrap();
         fs::write(&occupied, b"older recovery evidence").unwrap();
 
-        preserve_canonical(&source, &occupied).unwrap();
+        let expected = PreserveExpectation::Content(hash_bytes(b"new canonical evidence"));
+        assert_eq!(
+            preserve_canonical_if_unchanged(&source, &occupied, expected).unwrap(),
+            PreserveOutcome::Preserved
+        );
 
         assert!(!source.exists());
         assert_eq!(fs::read(&occupied).unwrap(), b"older recovery evidence");
         assert_eq!(
             fs::read(root.join("note.invalid-42-1.md")).unwrap(),
             b"new canonical evidence"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The preserve check compares the full content: a change in the first, a middle or the last
+    /// byte of an equal-length invalid file, a valid file, a too-large file or a missing file is
+    /// reported and left in place; an unverifiable expectation moves nothing; the same content is
+    /// moved aside byte for byte.
+    #[test]
+    fn preserve_moves_only_the_expected_content() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let source = root.join("note.md");
+        let destination = root.join("note.invalid-7.md");
+        let original = b"\xff invalid canonical".to_vec();
+        let last = original.len() - 1;
+        fs::write(&source, &original).unwrap();
+        let ExternalFileState::InvalidUtf8 { fingerprint } =
+            inspect_note_state_with_retry(&source).unwrap()
+        else {
+            panic!("expected an invalid canonical");
+        };
+        assert_eq!(fingerprint, hash_bytes(&original));
+        let expected = PreserveExpectation::Content(fingerprint);
+        for index in [1, last / 2, last] {
+            let mut changed = original.clone();
+            changed[index] = b'#';
+            fs::write(&source, &changed).unwrap();
+            assert_eq!(
+                preserve_canonical_if_unchanged(&source, &destination, expected).unwrap(),
+                PreserveOutcome::Changed(ExternalFileState::InvalidUtf8 {
+                    fingerprint: hash_bytes(&changed)
+                })
+            );
+            assert_eq!(fs::read(&source).unwrap(), changed);
+            assert!(!destination.exists());
+        }
+        fs::write(&source, b"valid external text").unwrap();
+        let PreserveOutcome::Changed(ExternalFileState::Present(fact)) =
+            preserve_canonical_if_unchanged(&source, &destination, expected).unwrap()
+        else {
+            panic!("expected a valid canonical to be reported");
+        };
+        assert_eq!(fact.text, "valid external text");
+        let mut large = original.clone();
+        large.resize(MAX_NOTE_LOAD as usize + 1, b'a');
+        fs::write(&source, &large).unwrap();
+        assert_eq!(
+            preserve_canonical_if_unchanged(&source, &destination, expected).unwrap(),
+            PreserveOutcome::Changed(ExternalFileState::TooLarge {
+                bytes: large.len() as u64
+            })
+        );
+        fs::remove_file(&source).unwrap();
+        assert_eq!(
+            preserve_canonical_if_unchanged(&source, &destination, expected).unwrap(),
+            PreserveOutcome::Changed(ExternalFileState::Missing)
+        );
+        fs::write(&source, &original).unwrap();
+        assert_eq!(
+            preserve_canonical_if_unchanged(
+                &source,
+                &destination,
+                PreserveExpectation::Unverifiable
+            )
+            .unwrap(),
+            PreserveOutcome::Unverifiable
+        );
+        assert_eq!(fs::read(&source).unwrap(), original);
+        assert!(!destination.exists());
+        assert_eq!(
+            preserve_canonical_if_unchanged(&source, &destination, expected).unwrap(),
+            PreserveOutcome::Preserved
+        );
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination).unwrap(), original);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// While another handle may write the canonical, preserve cannot take its verified-move
+    /// handle and moves nothing.
+    #[test]
+    fn preserve_refuses_a_canonical_open_for_writing() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let source = root.join("note.md");
+        let destination = root.join("note.invalid-8.md");
+        fs::write(&source, b"\xff invalid").unwrap();
+        let expected = PreserveExpectation::Content(hash_bytes(b"\xff invalid"));
+        let writer = fs::OpenOptions::new().write(true).open(&source).unwrap();
+        assert!(matches!(
+            preserve_canonical_if_unchanged(&source, &destination, expected),
+            Err(NoteStorageError::Read(_))
+        ));
+        assert!(source.exists());
+        assert!(!destination.exists());
+        drop(writer);
+        assert_eq!(
+            preserve_canonical_if_unchanged(&source, &destination, expected).unwrap(),
+            PreserveOutcome::Preserved
         );
         fs::remove_dir_all(root).unwrap();
     }

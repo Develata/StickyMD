@@ -4,6 +4,21 @@ All notable changes are recorded here.
 
 ## Unreleased
 
+- Give the external-file, recovery-cleanup and canonical-preserve I/O receipts an identity:
+  an external observation carries the Durable Fingerprint known when it was requested and is
+  superseded (and re-checked) if that changed, and recovery receipts are accepted only for the
+  pending recovery operation, closing a drift from the plan 04 generation rules.
+- A save submitted after loading external content now supersedes the still-queued cleanup of
+  the fixed temp, so a failed save's temp (the only durable copy of newer text) is not deleted;
+  restoring over an unusable note.md now first checks it is still the observation that required
+  preserving it, and a note.md changed while recovery waited becomes a conflict instead of being
+  moved aside.
+- At startup a valid note.md.tmp whose content differs from note.md is always offered for
+  recovery, whatever the file times; it is no longer deleted for being older (it can hold the
+  only copy of text from a save that failed against an external change). Recovery moves an
+  invalid note.md aside only after checking its full content through a handle that shares only
+  reads and renaming that same file through it; a too-large note.md is never read or moved
+  automatically, and recovery asks the USER to move it aside first (USER decision).
 - Make the manual acceptance items that need another machine, a VM or a second display optional:
   the previous Windows 11 role, the Clean VM, dual-monitor, display-disconnect, RDP and
   negative-coordinate cases no longer block a release when untested and need no waiver; an

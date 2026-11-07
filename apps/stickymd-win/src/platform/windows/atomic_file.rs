@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Storage::FileSystem::{
-    FlushFileBuffers, MOVEFILE_WRITE_THROUGH, MoveFileExW, REPLACE_FILE_FLAGS, ReplaceFileW,
+    DELETE, FILE_GENERIC_READ, FILE_RENAME_INFO, FileRenameInfo, FlushFileBuffers,
+    MOVEFILE_WRITE_THROUGH, MoveFileExW, REPLACE_FILE_FLAGS, ReplaceFileW,
+    SetFileInformationByHandle,
 };
 use windows::core::PCWSTR;
 
@@ -122,6 +124,72 @@ pub(crate) fn prepare_temporary(
         .map_err(AtomicPublishError::TempWrite)?;
     file.flush().map_err(AtomicPublishError::TempFlush)?;
     flush_windows_handle(&file).map_err(AtomicPublishError::TempFlush)
+}
+
+/// Opens the regular file at `path` itself for reading and renaming while sharing only reads:
+/// until the handle closes, no other handle can write, delete or rename the file object it names,
+/// so a check made through it still holds when it is renamed through it
+/// (`rename_handle_no_replace`). A link is not followed: a reparse point or any non-file object
+/// is refused (`InvalidInput`), so a rename can never move a link's target out of its directory.
+/// Fails with a sharing violation while another handle has the file open for writing or deleting.
+pub(crate) fn open_for_verified_move(path: &Path) -> std::io::Result<std::fs::File> {
+    let file = OpenOptions::new()
+        .access_mode(FILE_GENERIC_READ.0 | DELETE.0)
+        .share_mode(SHARE_READ)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT_VALUE)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT_VALUE != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "note.md is a link or not a regular file; StickyMD does not move it",
+        ));
+    }
+    Ok(file)
+}
+
+/// Renames the file object `file` names (not whatever its old path names now) to `destination`
+/// without replacing an existing file. `AlreadyExists` when the name is taken.
+pub(crate) fn rename_handle_no_replace(
+    file: &std::fs::File,
+    destination: &Path,
+) -> std::io::Result<()> {
+    let name: Vec<u16> = destination.as_os_str().encode_wide().collect();
+    let name_bytes = name.len() * std::mem::size_of::<u16>();
+    let header = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+    // The header, the name and a terminating NUL that `FileNameLength` does not count.
+    let size = header + name_bytes + std::mem::size_of::<u16>();
+    let length = u32::try_from(name_bytes)
+        .ok()
+        .zip(u32::try_from(size).ok())
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path too long"))?;
+    // u64 storage aligns the buffer for FILE_RENAME_INFO (align 8) and zeroes it.
+    let mut buffer = vec![0_u64; size.div_ceil(8)];
+    let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // SAFETY: `buffer` is zeroed, 8-aligned and at least `size` bytes, enough for the header
+    // and `name.len() + 1` UTF-16 units starting at `FileName`; the writes stay inside it.
+    unsafe {
+        (*info).Anonymous.ReplaceIfExists = false;
+        (*info).FileNameLength = length.0;
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            std::ptr::addr_of_mut!((*info).FileName).cast::<u16>(),
+            name.len(),
+        );
+    }
+    let handle = HANDLE(file.as_raw_handle());
+    // SAFETY: `handle` is borrowed from the live `File` for this synchronous call, and `info`
+    // points to `length.1` initialized bytes of a FILE_RENAME_INFO with a NULL root directory.
+    unsafe { SetFileInformationByHandle(handle, FileRenameInfo, info.cast(), length.1) }.map_err(
+        |source| {
+            let raw_code = (source.code().0 as u32) & 0xffff;
+            if raw_code == 0 {
+                std::io::Error::other(source)
+            } else {
+                std::io::Error::from_raw_os_error(raw_code as i32)
+            }
+        },
+    )
 }
 
 /// Create, write and flush a caller-selected temporary path only if it does
@@ -369,6 +437,60 @@ mod tests {
 
     fn unique_dir() -> PathBuf {
         unique_temp_path("atomic")
+    }
+
+    /// While the verified-move handle is open, no one else can write, rename or delete the
+    /// file; renaming through the handle moves that file object and never replaces a name.
+    #[test]
+    fn a_verified_move_handle_pins_the_file_and_renames_it() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let source = root.join("note.md");
+        let taken = root.join("taken.md");
+        let destination = root.join("moved.md");
+        fs::write(&source, b"pinned").unwrap();
+        fs::write(&taken, b"occupied").unwrap();
+        let file = open_for_verified_move(&source).unwrap();
+        assert!(fs::OpenOptions::new().write(true).open(&source).is_err());
+        assert!(fs::rename(&source, root.join("elsewhere.md")).is_err());
+        assert!(fs::remove_file(&source).is_err());
+        assert_eq!(
+            rename_handle_no_replace(&file, &taken).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read(&taken).unwrap(), b"occupied");
+        rename_handle_no_replace(&file, &destination).unwrap();
+        drop(file);
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination).unwrap(), b"pinned");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A link at the canonical name is refused, so neither the link nor its target moves. Creating
+    /// a file symlink needs Developer Mode or the privilege; without it the test has nothing to
+    /// check and says so.
+    #[test]
+    fn a_verified_move_refuses_a_link_and_leaves_its_target() {
+        let root = unique_dir();
+        fs::create_dir(&root).unwrap();
+        let target = root.join("external.bin");
+        let link = root.join("note.md");
+        fs::write(&target, b"outside").unwrap();
+        if let Err(error) = std::os::windows::fs::symlink_file(&target, &link) {
+            eprintln!("skipped: cannot create a file symlink here: {error}");
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let error = open_for_verified_move(&link).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read(&target).unwrap(), b"outside");
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
