@@ -654,6 +654,7 @@ fn every_session_persistence_invalidates_every_module() {
         "apps/stickymd-win/src/persistence/adapter.rs",
         "crates/stickymd-app/src/ports/note.rs",
         "crates/stickymd-app/src/flow/note_guard.rs",
+        "crates/stickymd-app/src/flow/note_io/save.rs",
         "crates/stickymd-app/src/flow/recovery.rs",
         "crates/stickymd-app/src/flow/save.rs",
         "crates/stickymd-app/src/flow/reconciliation.rs",

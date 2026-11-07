@@ -342,6 +342,7 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-app/src/flow/mod.rs",
     "crates/stickymd-app/src/flow/editor.rs",
     "crates/stickymd-app/src/flow/note_guard.rs",
+    "crates/stickymd-app/src/flow/note_io/",
     "crates/stickymd-app/src/flow/persistence.rs",
     "crates/stickymd-app/src/flow/preferences.rs",
     "crates/stickymd-app/src/flow/preview.rs",

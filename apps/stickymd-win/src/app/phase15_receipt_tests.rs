@@ -74,7 +74,7 @@ fn step(app: &mut HeadlessApp, action: impl FnOnce(&mut HeadlessApp)) -> Outcome
         operation_pending: app.recovery.operation_pending(),
         conflict: app.persistence.conflict().is_some(),
         dirty: app.coordinator.view().dirty,
-        keep_local: app.resolving_keep_local,
+        keep_local: app.persistence.keep_local_in_progress(),
     }
 }
 
@@ -83,7 +83,7 @@ fn deliver(app: &mut HeadlessApp, receipt: IoCompletion) -> Outcome {
 }
 
 fn press(app: &mut HeadlessApp, primary: bool) -> Outcome {
-    step(app, |app| assert!(app.handle_resolution_key(primary)))
+    step(app, |app| assert!(app.handle_resolution_key(None, primary)))
 }
 
 fn note(
@@ -181,7 +181,7 @@ fn in_conflict() -> HeadlessApp {
 fn keeping_local() -> HeadlessApp {
     let mut app = in_conflict();
     press(&mut app, false);
-    assert!(app.resolving_keep_local);
+    assert!(app.persistence.keep_local_in_progress());
     app
 }
 
@@ -603,8 +603,8 @@ fn a_preserved_canonical_starts_the_save_guarded_by_the_restore_plan() {
 #[test]
 fn the_keys_do_nothing_without_a_recovery_or_a_conflict() {
     let mut app = fixture("start");
-    assert!(!app.handle_resolution_key(true));
-    assert!(!app.handle_resolution_key(false));
+    assert!(!app.handle_resolution_key(None, true));
+    assert!(!app.handle_resolution_key(None, false));
     assert_eq!(app.diagnostic, None);
 }
 
@@ -794,6 +794,7 @@ fn an_unloadable_external_side_leaves_only_keep_local() {
 #[test]
 fn keeping_local_forces_the_save_and_refuses_a_second_choice() {
     let (mut app, receipts) = receipt_fixture("start");
+    fs::write(&app.paths.note_file, "outside").unwrap();
     type_letter(&mut app);
     enter_conflict(&mut app);
     let expected = saving(&app);
@@ -807,7 +808,8 @@ fn keeping_local_forces_the_save_and_refuses_a_second_choice() {
             ..settled(expected)
         }
     );
-    assert_eq!(saved_mode(&next(&receipts)), FORCED);
+    let save = next(&receipts);
+    assert_eq!(saved_mode(&save), FORCED);
     assert_eq!(
         press(&mut app, true),
         Outcome {
@@ -817,6 +819,15 @@ fn keeping_local_forces_the_save_and_refuses_a_second_choice() {
             ..settled("正在保存本地内容，请稍候。")
         }
     );
+    assert_eq!(
+        deliver(&mut app, save),
+        settled("已保留本地内容并覆盖外部文件。")
+    );
+    assert_eq!(
+        fs::read(&app.paths.note_file).unwrap(),
+        app.coordinator.view().text.as_bytes()
+    );
+    assert!(receipts.recv_timeout(Duration::from_millis(200)).is_err());
 }
 
 #[derive(Debug, PartialEq, Eq)]

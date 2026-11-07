@@ -1,4 +1,4 @@
-//! Persistence result submission and reconciliation for the native shell.
+//! Persistence intents and worker receipts of the native shell.
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#external-change-conflict
 
@@ -7,12 +7,10 @@ use winit::event_loop::ActiveEventLoop;
 use super::StickyApp;
 use crate::config::ConfigAck;
 use crate::persistence::IoCompletion;
+use stickymd_app::flow::SaveTrigger;
 use stickymd_app::flow::window::state::{QuitBarrier, WindowIntent};
-use stickymd_app::flow::{RecoveryOperation, SaveTrigger};
 use stickymd_app::instruction::{PersistenceIntent, SaveReason};
-use stickymd_app::ports::{
-    NoteReceipt, PersistMode, PersistRequest, PersistResult, PreserveOutcome, TemporaryCleanup,
-};
+use stickymd_app::ports::NoteReceipt;
 
 impl StickyApp {
     pub(super) fn submit_config_if_needed(&mut self) {
@@ -39,13 +37,6 @@ impl StickyApp {
         self.update_window_title();
     }
 
-    /// Queues one durable observation, stamped with the Durable Fingerprint known now so its
-    /// receipt can be checked for staleness.
-    pub(super) fn inspect_external(&self) {
-        let requested_base = self.coordinator.view().base_disk_hash;
-        self.worker.inspect_external(requested_base);
-    }
-
     /// The only writer of the window title (plan 09 title priority).
     pub(super) fn update_window_title(&mut self) {
         let Some(window) = &self.window else { return };
@@ -62,45 +53,9 @@ impl StickyApp {
         }
     }
 
-    pub(super) fn submit_save(&mut self, trigger: SaveTrigger, override_mode: Option<PersistMode>) {
-        if self.recovery.is_pending() && trigger != SaveTrigger::KeepLocal {
-            return;
-        }
-        let snapshot = self.coordinator.snapshot();
-        let mode = override_mode.unwrap_or(PersistMode::Guarded {
-            expected: self.coordinator.view().base_disk_hash,
-        });
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "save requested generation={} trigger={trigger:?}",
-            snapshot.generation.value()
-        );
-        self.persistence.note_save_submitted(trigger);
-        self.worker.submit_note(PersistRequest {
-            generation: snapshot.generation,
-            text: snapshot.text,
-            line_ending: snapshot.line_ending,
-            mode,
-        });
-        self.diagnostic = Some(format!(
-            "正在保存 generation {}…",
-            snapshot.generation.value()
-        ));
-        self.request_redraw();
-    }
-
-    pub(super) fn request_immediate_save(&mut self, trigger: SaveTrigger) {
-        if let Some(action) = self
-            .persistence
-            .request_save(self.coordinator.view().generation, trigger)
-        {
-            self.submit_save(action.trigger, None);
-        }
-    }
-
     pub(super) fn dispatch_persistence_intent(
         &mut self,
-        _event_loop: Option<&ActiveEventLoop>,
+        event_loop: Option<&ActiveEventLoop>,
         intent: PersistenceIntent,
     ) -> bool {
         match intent {
@@ -109,15 +64,15 @@ impl StickyApp {
                     SaveReason::Manual => SaveTrigger::Manual,
                     SaveReason::FocusLoss => SaveTrigger::FocusLoss,
                 };
-                self.request_immediate_save(trigger);
+                self.request_immediate_save(event_loop, trigger);
                 true
             }
             PersistenceIntent::Export => {
                 self.request_export();
                 true
             }
-            PersistenceIntent::ResolvePrimary => self.handle_resolution_key(true),
-            PersistenceIntent::ResolveSecondary => self.handle_resolution_key(false),
+            PersistenceIntent::ResolvePrimary => self.handle_resolution_key(event_loop, true),
+            PersistenceIntent::ResolveSecondary => self.handle_resolution_key(event_loop, false),
         }
     }
 
@@ -127,84 +82,15 @@ impl StickyApp {
         completion: IoCompletion,
     ) {
         match completion {
-            IoCompletion::Note(NoteReceipt::Save {
-                generation: completion_generation,
-                mode: completion_mode,
-                result,
-            }) => {
-                self.worker.acknowledge_note_completion();
-                match result {
-                    Ok(PersistResult::Saved {
-                        generation,
-                        fingerprint,
-                        ..
-                    }) if generation == completion_generation => {
-                        self.handle_note_saved(event_loop, generation, fingerprint, completion_mode)
-                    }
-                    Ok(PersistResult::Saved { generation, .. }) => {
-                        self.persistence.note_save_finished(false);
-                        self.recovery.fail_operation();
-                        self.resolving_keep_local = false;
-                        self.diagnostic = Some(format!(
-                            "保存回执 generation 不一致：submitted={} result={}",
-                            completion_generation.value(),
-                            generation.value()
-                        ));
-                        self.complete_window_note_barriers(event_loop, false);
-                        self.request_redraw();
-                    }
-                    Ok(PersistResult::Conflict { observed, .. }) => {
-                        self.persistence.note_save_finished(false);
-                        if self.recovery.is_pending() {
-                            self.handle_recovery_save_conflict(observed);
-                        } else {
-                            self.reconcile_external(observed);
-                        }
-                        if !self.resubmit_keep_local_after_superseded_save(completion_mode) {
-                            self.complete_window_note_barriers(event_loop, false);
-                        }
-                    }
-                    Err(error) => {
-                        self.persistence.note_save_finished(false);
-                        self.recovery.fail_operation();
-                        let resubmitted =
-                            self.resubmit_keep_local_after_superseded_save(completion_mode);
-                        if !resubmitted {
-                            self.resolving_keep_local = false;
-                            self.diagnostic = Some(format!(
-                                "保存 generation {} 失败；内存文本仍保留。Ctrl+S 重试：{error}",
-                                completion_generation.value()
-                            ));
-                        }
-                        self.update_window_title();
-                        if !resubmitted {
-                            self.complete_window_note_barriers(event_loop, false);
-                        }
-                        self.request_redraw();
-                    }
+            IoCompletion::Note(receipt) => {
+                // Protocol, not a decision: it takes the queued note job and releases the barrier,
+                // so it must come before a follow-up save is submitted, or that save is dropped.
+                if matches!(receipt, NoteReceipt::Save { .. }) {
+                    self.worker.acknowledge_note_completion();
                 }
-            }
-            IoCompletion::Note(NoteReceipt::External {
-                requested_base,
-                result,
-            }) => {
-                let current_base = self.coordinator.view().base_disk_hash;
                 let now_ms = self.timestamp_ms();
-                if !self.persistence.external_observation_current(
-                    requested_base,
-                    current_base,
-                    now_ms,
-                ) {
-                    return;
-                }
-                match result {
-                    Ok(external) => self.reconcile_external(external),
-                    Err(error) => {
-                        self.diagnostic =
-                            Some(format!("外部文件读取失败，未改变当前文本：{error}"));
-                        self.request_redraw();
-                    }
-                }
+                let effects = self.note_io().on_receipt(receipt, now_ms);
+                self.run_note(event_loop, effects);
             }
             IoCompletion::Config { revision, result } => {
                 let succeeded = result.is_ok();
@@ -233,66 +119,6 @@ impl StickyApp {
                         },
                     );
                 }
-            }
-            IoCompletion::Note(NoteReceipt::TemporaryRemoved {
-                purpose: TemporaryCleanup::RecoveryResolved { operation },
-                ..
-            }) if !self.recovery.accepts(operation) => {}
-            IoCompletion::Note(NoteReceipt::TemporaryRemoved { purpose, result }) => {
-                match (purpose, result) {
-                    (TemporaryCleanup::RecoveryResolved { .. }, Ok(())) => {
-                        self.finish_recovery_cleanup()
-                    }
-                    (TemporaryCleanup::ConflictDiscarded, Ok(())) => {}
-                    (TemporaryCleanup::RecoveryResolved { .. }, Err(error)) => {
-                        self.recovery.fail_operation();
-                        self.diagnostic =
-                            Some(format!("临时恢复证据无法清理，仍保持恢复状态：{error}"));
-                        self.request_redraw();
-                    }
-                    (TemporaryCleanup::ConflictDiscarded, Err(error)) => {
-                        self.diagnostic = Some(format!(
-                            "外部内容已载入，但本地临时副本无法清理；下次启动可能再次提示恢复：{error}"
-                        ));
-                        self.request_redraw();
-                    }
-                }
-            }
-            IoCompletion::Note(NoteReceipt::CanonicalPreserved { operation, .. })
-                if !self.recovery.accepts(operation) => {}
-            IoCompletion::Note(NoteReceipt::CanonicalPreserved {
-                result: Ok(PreserveOutcome::Changed(observed)),
-                ..
-            }) => self.handle_recovery_save_conflict(observed),
-            IoCompletion::Note(NoteReceipt::CanonicalPreserved {
-                result: Ok(PreserveOutcome::Preserved),
-                ..
-            }) => {
-                let expected = self.recovery.take_restore_guard().unwrap_or(None);
-                self.submit_save(
-                    SaveTrigger::KeepLocal,
-                    Some(PersistMode::Guarded { expected }),
-                );
-            }
-            IoCompletion::Note(NoteReceipt::CanonicalPreserved {
-                result: Ok(PreserveOutcome::Unverifiable),
-                ..
-            }) => {
-                self.diagnostic = Some(
-                    "note.md 过大，未恢复：请结束进程，移走 note.md（保留 .tmp）后重启按 F6。"
-                        .into(),
-                );
-                self.recovery.fail_operation();
-                self.request_redraw();
-            }
-            IoCompletion::Note(NoteReceipt::CanonicalPreserved {
-                result: Err(error), ..
-            }) => {
-                self.diagnostic = Some(format!(
-                    "无效的 canonical note.md 无法先行保留；未执行恢复覆盖：{error}"
-                ));
-                self.recovery.fail_operation();
-                self.request_redraw();
             }
             IoCompletion::AssetPaste(result) => {
                 self.handle_asset_paste_completion(event_loop, result)
@@ -336,136 +162,5 @@ impl StickyApp {
                 self.request_redraw();
             }
         }
-    }
-
-    fn handle_note_saved(
-        &mut self,
-        event_loop: Option<&ActiveEventLoop>,
-        generation: stickymd_core::Generation,
-        fingerprint: stickymd_core::Hash32,
-        mode: PersistMode,
-    ) {
-        let completed_required = self.persistence.note_save_finished(true);
-        if let Err(error) = self
-            .coordinator
-            .acknowledge_persisted(generation, fingerprint)
-        {
-            self.diagnostic = Some(format!("保存回执无效：{error}"));
-            return;
-        }
-        #[cfg(debug_assertions)]
-        {
-            let metrics = self.worker.metrics();
-            eprintln!(
-                "save succeeded generation={} hash={} submitted={} started={} completed={} coalesced={}",
-                generation.value(),
-                &fingerprint.to_hex()[..8],
-                metrics.note_submitted,
-                metrics.note_started,
-                metrics.note_completed,
-                metrics.note_coalesced
-            );
-        }
-        if let (
-            Some(RecoveryOperation::Restoring | RecoveryOperation::UsingCanonical),
-            Some(operation),
-        ) = (self.recovery.operation(), self.recovery.operation_id())
-        {
-            self.worker
-                .remove_temporary(TemporaryCleanup::RecoveryResolved { operation });
-        } else if self.resolving_keep_local && mode == PersistMode::ForceOverwrite {
-            self.resolving_keep_local = false;
-            self.persistence.clear_conflict();
-            self.diagnostic = Some("已保留本地内容并覆盖外部文件。".into());
-        } else {
-            self.diagnostic = Some("已保存".into());
-        }
-        let keep_local_resubmitted = self.resubmit_keep_local_after_superseded_save(mode);
-        if keep_local_resubmitted {
-            // The explicit conflict resolution owns the one latest-pending
-            // slot. A generic stale-generation follow-up must not replace it.
-        } else if self.coordinator.view().dirty {
-            self.submit_save(SaveTrigger::Debounce, None);
-        } else if self.persistence.durability_required() && !completed_required {
-            // A recreate hint overlapped a different save. Inspect the durable
-            // path before deciding whether a second write is still needed.
-            self.inspect_external();
-        }
-        self.update_window_title();
-        if !keep_local_resubmitted {
-            self.complete_window_note_barriers(event_loop, true);
-        }
-        self.request_redraw();
-    }
-
-    fn resubmit_keep_local_after_superseded_save(&mut self, completed_mode: PersistMode) -> bool {
-        if keep_local_needs_resubmit(
-            self.resolving_keep_local,
-            self.persistence.conflict().is_some(),
-            completed_mode,
-        ) {
-            self.diagnostic = Some("旧保存任务已完成；正在用最新内存文本执行“保留本地”…".into());
-            self.submit_save(SaveTrigger::KeepLocal, Some(PersistMode::ForceOverwrite));
-            true
-        } else {
-            false
-        }
-    }
-
-    fn complete_window_note_barriers(
-        &mut self,
-        event_loop: Option<&ActiveEventLoop>,
-        succeeded: bool,
-    ) {
-        let guards = self.window_guards();
-        self.dispatch_window_intent(
-            event_loop,
-            WindowIntent::HideSaveCompleted { succeeded, guards },
-        );
-        self.dispatch_window_intent(
-            event_loop,
-            WindowIntent::QuitBarrierCompleted {
-                barrier: QuitBarrier::NoteSave,
-                succeeded,
-                guards: self.window_guards(),
-            },
-        );
-    }
-}
-
-fn keep_local_needs_resubmit(
-    resolving_keep_local: bool,
-    conflict_present: bool,
-    completed_mode: PersistMode,
-) -> bool {
-    resolving_keep_local && conflict_present && completed_mode != PersistMode::ForceOverwrite
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn keep_local_is_satisfied_only_by_a_force_overwrite_receipt() {
-        assert!(keep_local_needs_resubmit(
-            true,
-            true,
-            PersistMode::Guarded { expected: None }
-        ));
-        assert!(!keep_local_needs_resubmit(
-            true,
-            true,
-            PersistMode::ForceOverwrite
-        ));
-        assert!(!keep_local_needs_resubmit(
-            false,
-            true,
-            PersistMode::Guarded { expected: None }
-        ));
-        assert!(!keep_local_needs_resubmit(
-            true,
-            false,
-            PersistMode::Guarded { expected: None }
-        ));
     }
 }

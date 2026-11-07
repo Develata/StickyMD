@@ -29,6 +29,8 @@ pub struct PersistenceCoordinator {
     note_save_in_flight: bool,
     required_write_in_flight: bool,
     durability_required: bool,
+    /// "Keep local" was chosen and its forced write has not finished.
+    keep_local_in_progress: bool,
 }
 
 impl PersistenceCoordinator {
@@ -147,6 +149,18 @@ impl PersistenceCoordinator {
     pub fn clear_conflict(&mut self) {
         self.conflict = None;
         self.refresh_autosave_pause();
+    }
+
+    pub fn begin_keep_local(&mut self) {
+        self.keep_local_in_progress = true;
+    }
+
+    pub fn end_keep_local(&mut self) {
+        self.keep_local_in_progress = false;
+    }
+
+    pub const fn keep_local_in_progress(&self) -> bool {
+        self.keep_local_in_progress
     }
 
     pub fn set_recovery_pending(&mut self, pending: bool) {

@@ -5,6 +5,7 @@
 mod clipboard;
 mod editor;
 mod note_guard;
+mod note_io;
 mod persistence;
 mod preferences;
 mod preview;
@@ -16,6 +17,7 @@ pub mod window;
 pub use clipboard::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
 pub use editor::{AppEffect, EditorCoordinator};
 pub use note_guard::{PublishVerdict, guarded_publish_verdict};
+pub use note_io::{NoteEffect, NoteEffects, NoteIo};
 pub use persistence::{PersistenceCoordinator, ReconciliationAction};
 pub use preferences::{WindowPreferenceEffect, coordinate_window_preference};
 pub use preview::{

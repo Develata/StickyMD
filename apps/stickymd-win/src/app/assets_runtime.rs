@@ -194,10 +194,11 @@ impl StickyApp {
             self.asset_reconcile_pending = false;
             self.start_watcher();
             if self.coordinator.view().base_disk_hash.is_none() {
-                self.submit_save(
+                let effects = self.note_io().submit_save(
                     SaveTrigger::RecreateMissing,
                     Some(stickymd_app::ports::PersistMode::Guarded { expected: None }),
                 );
+                self.run_note(event_loop, effects);
             }
         }
         if quit_request {

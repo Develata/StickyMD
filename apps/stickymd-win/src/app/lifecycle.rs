@@ -76,12 +76,8 @@ impl StickyApp {
 
     /// Complete the pass before deciding how long the native event loop can sleep.
     pub(super) fn settle_event_pass(&mut self, now_ms: u64, event_loop: Option<&ActiveEventLoop>) {
-        if let Some(action) = self.persistence.tick_autosave(now_ms) {
-            self.submit_save(action.trigger, None);
-        }
-        if self.persistence.take_external_check(now_ms) {
-            self.inspect_external();
-        }
+        let effects = self.note_io().tick(now_ms);
+        self.run_note(event_loop, effects);
         self.tick_preview(now_ms);
         if self
             .zoom_config_deadline

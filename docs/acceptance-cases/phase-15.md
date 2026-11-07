@@ -29,3 +29,4 @@
 | P15-B04 | 笔记回执的每个分支（保存、外部观察、清理、保留、F6/F7）的最终诊断、保存次数、恢复与冲突状态、隐藏与退出屏障都已钉住，迁移的每一批都不变；请求经真实 worker 与磁盘核对 | Automated | `app::phase15_receipt_tests`（`phase 15` 运行） | AUTOMATED PASS |
 | P15-B05 | 邮箱按固定优先级取出 8 类任务；每个 `NoteStorageError` 的消息文本不变 | Automated | `persistence::worker::tests::phase15_the_mailbox_drains_every_job_kind_in_its_priority_order`、`persistence::storage::tests::phase15_every_note_storage_error_keeps_its_message` | AUTOMATED PASS |
 | P15-B06 | 笔记存储经 `NoteStorage` 端口执行，worker 不再持有路径；错误分类穷举且消息逐字不变；守护保存的判定是共享纯函数 | Automated | `persistence::adapter::tests::phase15_every_storage_error_keeps_its_message_and_gets_its_class`、`flow::note_guard::tests::every_observed_state_against_every_expectation` | AUTOMATED PASS |
+| P15-B07 | 保存、外部协调、恢复的决策在 `stickymd-app` 的 `NoteIo`，返回有序副作用；身份失配的回执没有副作用；Windows 只执行副作用，P15-B04 的表格逐行不变 | Automated | `flow::note_io::tests`（Linux 也运行）、`app::phase15_receipt_tests` | AUTOMATED PASS |

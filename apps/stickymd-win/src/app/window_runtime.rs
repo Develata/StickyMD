@@ -351,10 +351,11 @@ impl StickyApp {
                 self.sync_ime_allowed();
             }
             WindowEffect::RequestNoteSave(reason) => {
-                self.request_immediate_save(match reason {
+                let trigger = match reason {
                     WindowSaveReason::HideToTray => SaveTrigger::HideToTray,
                     WindowSaveReason::Shutdown => SaveTrigger::Shutdown,
-                });
+                };
+                self.request_immediate_save(event_loop, trigger);
             }
             WindowEffect::RequestSafeAssetGc => self.submit_asset_sync(
                 self.coordinator.view().generation,
