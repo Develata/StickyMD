@@ -586,6 +586,83 @@ mod tests {
         }
     }
 
+    /// The priority is a contract: the note goes first, and a config write never delays anything.
+    #[test]
+    fn phase15_the_mailbox_drains_every_job_kind_in_its_priority_order() {
+        let roots = || AssetRoots {
+            images: "images".into(),
+            trash: "trash".into(),
+        };
+        let mut mailbox = Mailbox {
+            config: Some(ConfigJob {
+                target: "config.toml".into(),
+                temporary: "config.toml.tmp".into(),
+                request: ConfigPersistRequest {
+                    revision: crate::config::ConfigRevision::initial(),
+                    config: Default::default(),
+                },
+            }),
+            preserve_canonical: Some(PreserveJob {
+                source: "note.md".into(),
+                destination: "note.invalid.md".into(),
+                expected: PreserveExpectation::Unverifiable,
+                operation: 1,
+            }),
+            cleanup_temporary: Some(("note.md.tmp".into(), TemporaryCleanup::ConflictDiscarded)),
+            external: Some(("note.md".into(), None)),
+            export: Some(ExportRequest {
+                snapshot: stickymd_core::DocumentSnapshot {
+                    text: "".into(),
+                    generation: Generation::initial(),
+                    line_ending: LineEnding::Lf,
+                },
+                note_dir: "note".into(),
+                target: "export.md".into(),
+            }),
+            asset_sync: Some(AssetSyncJob {
+                roots: roots(),
+                request_id: 1,
+                generation: Generation::initial(),
+                effects: Vec::new(),
+                references: HashMap::new(),
+                reconcile: None,
+                safe_note: None,
+            }),
+            asset_paste: Some(AssetPasteJob {
+                roots: roots(),
+                request: AssetPasteRequest {
+                    expected_generation: Generation::initial(),
+                    selection: stickymd_core::Selection::caret(0),
+                    timestamp_ms: 0,
+                    payload: stickymd_app::flow::ClipboardPaste::EncodedImage(Vec::new()),
+                },
+            }),
+            ..Mailbox::default()
+        };
+        mailbox.replace_note(job("first"));
+        // Replacing the note drops only a queued conflict discard; restore it to rank it too.
+        mailbox.cleanup_temporary =
+            Some(("note.md.tmp".into(), TemporaryCleanup::ConflictDiscarded));
+        let order: Vec<_> = std::iter::from_fn(|| mailbox.take_next_job())
+            .map(|job| match job {
+                WorkerJob::Note(_) => "note",
+                WorkerJob::AssetPaste(_) => "paste",
+                WorkerJob::AssetSync(_) => "sync",
+                WorkerJob::Export(_) => "export",
+                WorkerJob::External(..) => "external",
+                WorkerJob::CleanupTemporary(..) => "cleanup",
+                WorkerJob::PreserveCanonical(_) => "preserve",
+                WorkerJob::Config(_) => "config",
+            })
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "note", "paste", "sync", "export", "external", "cleanup", "preserve", "config"
+            ]
+        );
+    }
+
     #[test]
     fn mailbox_has_at_most_one_latest_pending_note() {
         let mut mailbox = Mailbox::default();

@@ -4,14 +4,14 @@
 
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, mpsc};
 
 use stickymd_core::{DocumentState, LineEnding};
 use winit::event_loop::{EventLoop, EventLoopProxy};
 use winit::platform::windows::EventLoopBuilderExtWindows;
 
 use super::{AppEvent, StickyApp};
-use crate::persistence::PersistenceWorker;
+use crate::persistence::{IoCompletion, PersistenceWorker};
 use crate::platform::windows::program_dir::RuntimePaths;
 use crate::platform::windows::single_instance::{InstanceDisposition, SingleInstanceGuard};
 use crate::startup::{BootstrapOutcome, StartupDiagnostics};
@@ -68,6 +68,21 @@ impl Drop for HeadlessApp {
 }
 
 pub(super) fn fixture(text: &str) -> HeadlessApp {
+    started(text, PersistenceWorker::start(|_| {}).unwrap())
+}
+
+/// A fixture whose worker hands every receipt to the test instead of dropping it, so a test can
+/// see what was really requested and deliver the receipt itself.
+pub(super) fn receipt_fixture(text: &str) -> (HeadlessApp, mpsc::Receiver<IoCompletion>) {
+    let (sender, receiver) = mpsc::channel();
+    let worker = PersistenceWorker::start(move |completion| {
+        let _ = sender.send(completion);
+    })
+    .unwrap();
+    (started(text, worker), receiver)
+}
+
+fn started(text: &str, worker: PersistenceWorker) -> HeadlessApp {
     let root = crate::test_support::unique_temp_path("headless-shell");
     std::fs::create_dir(&root).unwrap();
     let mut owned = HeadlessApp { app: None, root };
@@ -78,7 +93,6 @@ pub(super) fn fixture(text: &str) -> HeadlessApp {
     else {
         panic!("unique fixture must own its instance");
     };
-    let worker = PersistenceWorker::start(|_| {}).unwrap();
     let mut app = StickyApp::new(
         paths,
         BootstrapOutcome {

@@ -456,6 +456,62 @@ mod tests {
         unique_temp_path("storage")
     }
 
+    /// Diagnostics print these messages, so they are product text; Phase 15 carries them across
+    /// the storage port as plain strings and they must arrive unchanged.
+    #[test]
+    fn phase15_every_note_storage_error_keeps_its_message() {
+        let io = || std::io::Error::other("cause");
+        let rows = [
+            (
+                NoteStorageError::InvalidNoteLayout,
+                "note target and temporary paths must share a parent directory",
+            ),
+            (
+                NoteStorageError::UnsafeNoteDirectory("note".into()),
+                "note directory is not a plain directory: note",
+            ),
+            (
+                NoteStorageError::CreateNoteDirectory {
+                    path: "note".into(),
+                    source: io(),
+                },
+                "cannot recreate note directory note: cause",
+            ),
+            (
+                NoteStorageError::Metadata(io()),
+                "cannot inspect note metadata: cause",
+            ),
+            (NoteStorageError::Read(io()), "cannot read note: cause"),
+            (
+                NoteStorageError::ObservationChanged,
+                "note changed while it was being observed",
+            ),
+            (
+                NoteStorageError::Publish(AtomicPublishError::DifferentDirectories),
+                "cannot atomically publish note: target and temporary files must share a directory",
+            ),
+            (
+                NoteStorageError::RemoveTemporary(io()),
+                "cannot remove temporary note: cause",
+            ),
+            (
+                NoteStorageError::QuarantineTemporary(io()),
+                "cannot quarantine invalid temporary note: cause",
+            ),
+            (
+                NoteStorageError::PreserveCanonical(io()),
+                "cannot preserve canonical note before recovery: cause",
+            ),
+            (
+                NoteStorageError::QuarantineNameExhausted,
+                "cannot allocate a unique quarantine name for temporary note",
+            ),
+        ];
+        for (error, message) in rows {
+            assert_eq!(error.to_string(), message);
+        }
+    }
+
     fn request(text: &str, expected: Option<DiskFingerprint>, force: bool) -> PersistRequest {
         PersistRequest {
             generation: Generation::initial(),

@@ -305,7 +305,6 @@ impl WindowShellState {
         self.temporary_sensor_topmost
     }
 
-    #[cfg(test)]
     pub fn lifecycle(&self) -> LifecycleState {
         self.lifecycle
     }

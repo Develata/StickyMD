@@ -26,3 +26,5 @@
 | P15-B01 | 身份失配的回执经真实处理入口不产生任何副作用：其他恢复操作的清理与保留回执、已被取代的外部观察 | Automated | `app::receipt_tests`（去掉身份校验后这些测试失败） | AUTOMATED PASS |
 | P15-B02 | 有效的旧 generation 保存回执仍被接受：记录实际落盘的指纹，较新编辑保持 dirty 并补一次保存 | Automated | `app::receipt_tests::a_valid_older_save_receipt_is_accepted_and_the_newer_edit_stays_dirty` | AUTOMATED PASS |
 | P15-B03 | 较旧但内容不同的 temp 在重启时成为恢复候选，两份文件都保留 | Automated | `startup::bootstrap::tests::an_older_different_temporary_survives_a_restart_as_a_recovery_choice` | AUTOMATED PASS |
+| P15-B04 | 笔记回执的每个分支（保存、外部观察、清理、保留、F6/F7）的最终诊断、保存次数、恢复与冲突状态、隐藏与退出屏障都已钉住，迁移的每一批都不变；请求经真实 worker 与磁盘核对 | Automated | `app::phase15_receipt_tests`（`phase 15` 运行） | AUTOMATED PASS |
+| P15-B05 | 邮箱按固定优先级取出 8 类任务；每个 `NoteStorageError` 的消息文本不变 | Automated | `persistence::worker::tests::phase15_the_mailbox_drains_every_job_kind_in_its_priority_order`、`persistence::storage::tests::phase15_every_note_storage_error_keeps_its_message` | AUTOMATED PASS |

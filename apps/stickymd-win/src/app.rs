@@ -50,6 +50,8 @@ mod hot_path_tests;
 mod input;
 mod lifecycle;
 mod persistence_runtime;
+#[cfg(test)]
+mod phase15_receipt_tests;
 mod presentation;
 mod preview_horizontal;
 mod preview_input;

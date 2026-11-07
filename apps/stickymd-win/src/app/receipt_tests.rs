@@ -22,30 +22,39 @@ fn loaded(text: &str) -> LoadedDocument {
     LoadedDocument::from_durable_bytes(text.as_bytes()).unwrap()
 }
 
-fn external(text: &str) -> ExternalFileFact {
+pub(super) fn external(text: &str) -> ExternalFileFact {
     loaded(text).into_external_fact()
 }
 
-/// A shell waiting for a recovery choice between a canonical note and a temp.
-fn recovering(preserve: Option<PreserveExpectation>) -> HeadlessApp {
-    let mut app = fixture("disk");
+/// Offers a recovery choice between `canonical` and a temp holding "temporary".
+pub(super) fn offer_recovery(
+    app: &mut HeadlessApp,
+    canonical: Option<&str>,
+    preserve: Option<PreserveExpectation>,
+) {
     app.recovery = stickymd_app::flow::RecoveryCoordinator::new(
         Some(RecoveryCandidate {
-            canonical: Some(loaded("disk")),
+            canonical: canonical.map(loaded),
             temporary: loaded("temporary"),
             temporary_is_newer: true,
         }),
         preserve,
     );
     app.persistence.set_recovery_pending(true);
+}
+
+/// A shell waiting for a recovery choice between a canonical note and a temp.
+pub(super) fn recovering(preserve: Option<PreserveExpectation>) -> HeadlessApp {
+    let mut app = fixture("disk");
+    offer_recovery(&mut app, Some("disk"), preserve);
     app
 }
 
-fn saves(app: &HeadlessApp) -> u64 {
+pub(super) fn saves(app: &HeadlessApp) -> u64 {
     app.worker.metrics().note_submitted
 }
 
-fn type_letter(app: &mut HeadlessApp) {
+pub(super) fn type_letter(app: &mut HeadlessApp) {
     app.apply_key(
         ShellKey {
             physical_key: PhysicalKey::Code(KeyCode::KeyA),
