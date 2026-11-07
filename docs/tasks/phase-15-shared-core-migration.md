@@ -21,7 +21,7 @@ Debian、macOS 宿主留出真实可用的共享层。Windows 产品行为与数
 | 里程碑 | 状态 | 内容 |
 | --- | --- | --- |
 | A | 本机验证完成 | `stickymd-app`；`instruction/`、`flow/`（含 `flow/window/`）、配置模型、`interaction/`、`source_search.rs` |
-| B | 本机验证完成：笔记、预览、资产/导出/配置链与隐藏回执；显示、置顶、定位的回执未做（P15-B12） | 执行接口与应用运行时；窗口动作的请求、回执与提交；入口测试见 plan 11 |
+| B | 本机验证完成：笔记、预览、资产/导出/配置链与隐藏回执；显示、置顶、定位的回执未做（见 Open Items） | 执行接口与应用运行时；窗口动作的请求、回执与提交；入口测试见 plan 11 |
 | C | 未开始 | `stickymd-desktop`；通用控件、绘制、命中、事件翻译；各 target 的 backend features |
 | D | 未开始 | 迁移剩余业务分支，删除仅为迁移保留的转发，最终审查 |
 
@@ -52,6 +52,13 @@ A 中 `config/storage.rs` 留在 `apps/stickymd-win`：它依赖 Windows 原子�
 | 窗口 reducer 100k | 4.87 | 3.81 |
 | Source 1 MiB 末尾输入 | 1.73 | 1.73 |
 | Source 1 MiB full resync | 87.0 | 58.8 |
+
+## Open Items
+
+- 显示、置顶、定位的请求与回执（[plan 04](../plan/04_runtime_state_model.md#window-action-receipts)）未做：这三类动作仍是单向
+  效果，winit 的显示与定位没有失败回执，定位又按动画帧发出，需要先决定回执粒度。
+- `AppSession` 未建立：`StickyApp` 仍持有各 coordinator，`NoteIo`、`AssetIo`、`PreviewIo` 按步借用；属于 D。
+- 进入 C 之前要先有逐帧拷贝计数（[plan 10](../plan/10_performance_reliability.md#phase-15-migration-gates)）。
 
 ## Out of Scope
 
