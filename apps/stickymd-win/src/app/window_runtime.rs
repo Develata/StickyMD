@@ -296,6 +296,8 @@ impl StickyApp {
                 self.controls.opacity_input_focused = false;
                 self.controls.opacity_preview = self.config.current().opacity;
                 self.controls.opacity_input = self.config.current().opacity.to_string();
+                // The closed popup no longer holds the window open, whichever way the hide ends.
+                self.refresh_window_guards(event_loop);
                 let outcome = self.hide_native();
                 self.dispatch_window_intent(
                     event_loop,
@@ -413,6 +415,8 @@ impl StickyApp {
             WindowEffect::QuitCancelled(barrier) => {
                 self.diagnostic = Some(format!("退出已取消：{barrier:?} 未安全完成。"));
                 self.request_redraw();
+                // Quitting stopped the dock timers; a window that stays gets them back.
+                self.refresh_window_guards(event_loop);
             }
             WindowEffect::QuitWarning(barrier) => {
                 self.diagnostic = Some(format!("退出前的 {barrier:?} 未完成；证据已保留。"));

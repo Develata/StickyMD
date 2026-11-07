@@ -9,13 +9,14 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use stickymd_app::flow::window::state::{
-    LifecycleState, QuitStage, ShowReason, VisibilityState, WindowIntent,
+    DockEdge, LifecycleState, QuitStage, ShowReason, StableVisibility, VisibilityState,
+    WindowIntent,
 };
 use stickymd_core::{
     ExternalFileState, Generation, LineEnding, LoadedDocument, PreserveExpectation, hash_bytes,
 };
 
-use crate::app::headless_tests::{HeadlessApp, fixture, receipt_fixture};
+use crate::app::headless_tests::{HeadlessApp, fixture, receipt_fixture, window_flow};
 use crate::app::receipt_tests::{external, offer_recovery, recovering, saves, type_letter};
 use stickymd_app::execution::IoCompletion;
 use stickymd_app::ports::{
@@ -991,4 +992,54 @@ fn a_rejected_hide_keeps_the_window_shown_through_the_shell() {
             Some(format!("窗口未能隐藏，保持显示（{kind}）。").as_str())
         );
     }
+}
+
+fn docked(app: &mut HeadlessApp) {
+    let edge = StableVisibility::DockedExpanded(DockEdge::Left);
+    app.window_flow = Some(window_flow(edge));
+}
+
+fn auto_collapse_armed(app: &HeadlessApp) -> bool {
+    let flow = app.window_flow.as_ref().unwrap();
+    flow.state().next_deadline_ms().is_some()
+}
+
+/// A quit cancelled by the save that also failed a hide: the timer the quit held back starts.
+#[test]
+fn a_quit_cancelled_with_a_failed_hide_restarts_the_auto_collapse() {
+    let mut app = edited();
+    docked(&mut app);
+    request_hide(&mut app);
+    let guards = app.window_guards();
+    app.dispatch_window_intent(None, WindowIntent::TrayQuitRequested { guards });
+    assert!(lifecycle(&app).is_quitting());
+    let receipt = failed(&app, GUARDED);
+    app.handle_io_completion(None, receipt);
+    assert_eq!(lifecycle(&app), LifecycleState::Running);
+    assert_eq!(hide_state(&app), Hide::Cancelled);
+    assert!(auto_collapse_armed(&app));
+
+    let mut app = edited();
+    docked(&mut app);
+    request_hide(&mut app);
+    let guards = app.window_guards();
+    app.dispatch_window_intent(None, WindowIntent::TrayQuitRequested { guards });
+    app.handle_io_completion(None, IoCompletion::WorkerStopped);
+    assert_eq!(lifecycle(&app), LifecycleState::Running);
+    assert!(auto_collapse_armed(&app));
+}
+
+/// Hiding closes the opacity popup. A rejected hide must not keep waiting on the popup it closed.
+#[test]
+fn a_rejected_hide_does_not_stay_blocked_by_the_popup_it_closed() {
+    let mut app = fixture("start");
+    docked(&mut app);
+    app.controls.opacity_popup_open = true;
+    app.headless_hide = Some(Err(FailureKind::Failed));
+    let guards = app.window_guards();
+    assert!(guards.popup_open);
+    app.dispatch_window_intent(None, WindowIntent::CloseRequested { now_ms: 1, guards });
+    assert_eq!(hide_state(&app), Hide::Cancelled);
+    assert!(!app.controls.opacity_popup_open);
+    assert!(auto_collapse_armed(&app));
 }
