@@ -128,6 +128,7 @@ impl StickyApp {
                     WindowIntent::HideSaveCompleted {
                         succeeded: false,
                         guards: self.window_guards(),
+                        now_ms: self.timestamp_ms(),
                     },
                 );
                 for barrier in [

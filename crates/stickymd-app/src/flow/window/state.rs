@@ -243,6 +243,7 @@ pub enum WindowIntent {
     HideSaveCompleted {
         succeeded: bool,
         guards: WindowGuardSnapshot,
+        now_ms: u64,
     },
     QuitBarrierCompleted {
         barrier: QuitBarrier,
@@ -253,6 +254,7 @@ pub enum WindowIntent {
     ActionCompleted {
         id: u64,
         outcome: Result<(), FailureKind>,
+        now_ms: u64,
     },
 }
 

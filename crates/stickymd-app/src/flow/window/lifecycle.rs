@@ -138,7 +138,12 @@ impl WindowShellCoordinator {
         }
     }
 
-    pub(super) fn complete_hide_save(&mut self, succeeded: bool, effects: &mut Vec<WindowEffect>) {
+    pub(super) fn complete_hide_save(
+        &mut self,
+        succeeded: bool,
+        now_ms: u64,
+        effects: &mut Vec<WindowEffect>,
+    ) {
         let VisibilityState::AwaitingHideSave { restore } = self.state.visibility else {
             return;
         };
@@ -151,6 +156,7 @@ impl WindowShellCoordinator {
             effects.push(WindowEffect::SetEditorInputEnabled(true));
             effects.push(WindowEffect::HideCancelled);
             effects.push(WindowEffect::RequestRedraw);
+            self.arm_auto_collapse(now_ms, effects);
             return;
         }
         if self.state.guards.paste_pending || self.state.guards.asset_transaction_pending {
@@ -181,6 +187,7 @@ impl WindowShellCoordinator {
         &mut self,
         id: u64,
         outcome: Result<(), FailureKind>,
+        now_ms: u64,
         effects: &mut Vec<WindowEffect>,
     ) {
         let VisibilityState::HidePending {
@@ -208,6 +215,7 @@ impl WindowShellCoordinator {
                 effects.push(WindowEffect::SetEditorInputEnabled(true));
                 effects.push(WindowEffect::HideRejected(kind));
                 effects.push(WindowEffect::RequestRedraw);
+                self.arm_auto_collapse(now_ms, effects);
             }
         }
     }

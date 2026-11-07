@@ -131,9 +131,13 @@ impl WindowShellCoordinator {
                 self.state.guards = guards;
                 self.paste_settled(&mut effects);
             }
-            WindowIntent::HideSaveCompleted { succeeded, guards } => {
+            WindowIntent::HideSaveCompleted {
+                succeeded,
+                guards,
+                now_ms,
+            } => {
                 self.state.guards = guards;
-                self.complete_hide_save(succeeded, &mut effects);
+                self.complete_hide_save(succeeded, now_ms, &mut effects);
             }
             WindowIntent::QuitBarrierCompleted {
                 barrier,
@@ -143,8 +147,12 @@ impl WindowShellCoordinator {
                 self.state.guards = guards;
                 self.complete_quit_barrier(barrier, succeeded, &mut effects);
             }
-            WindowIntent::ActionCompleted { id, outcome } => {
-                self.complete_window_action(id, outcome, &mut effects);
+            WindowIntent::ActionCompleted {
+                id,
+                outcome,
+                now_ms,
+            } => {
+                self.complete_window_action(id, outcome, now_ms, &mut effects);
             }
         }
         effects
@@ -179,9 +187,18 @@ impl WindowShellCoordinator {
             {
                 self.start_expand(now_ms, false, effects);
             }
-        } else if matches!(self.current_stable(), StableVisibility::DockedExpanded(_))
+        } else {
+            self.arm_auto_collapse(now_ms, effects);
+        }
+    }
+
+    /// Starts the auto-collapse timer of a docked window that nothing holds open. A window coming
+    /// back from a failed hide needs this too: its wait could not start the timer.
+    pub(super) fn arm_auto_collapse(&mut self, now_ms: u64, effects: &mut Vec<WindowEffect>) {
+        if matches!(self.current_stable(), StableVisibility::DockedExpanded(_))
             && self.state.deadlines.auto_collapse_ms.is_none()
             && !self.state.lifecycle.is_quitting()
+            && !self.state.guards.blocks_auto_collapse()
             && self.may_animate()
         {
             let deadline = now_ms.saturating_add(AUTO_COLLAPSE_DELAY_MS);
@@ -526,6 +543,7 @@ mod phase8_window_tests {
         assert_eq!(hide_request(&effects), None);
         assert!(!effects.contains(&WindowEffect::RequestSafeAssetGc));
         let effects = coordinator.dispatch(WindowIntent::HideSaveCompleted {
+            now_ms: 0,
             succeeded: true,
             guards: WindowGuardSnapshot::default(),
         });
@@ -551,6 +569,7 @@ mod phase8_window_tests {
         effects: &[WindowEffect],
     ) -> Vec<WindowEffect> {
         coordinator.dispatch(WindowIntent::ActionCompleted {
+            now_ms: 0,
             id: hide_request(effects).expect("a hide request"),
             outcome: Ok(()),
         })
@@ -577,6 +596,7 @@ mod phase8_window_tests {
             VisibilityState::HidePending { .. }
         ));
         let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+            now_ms: 0,
             id,
             outcome: Ok(()),
         });
@@ -598,6 +618,7 @@ mod phase8_window_tests {
             let mut coordinator = coordinator(StableVisibility::Floating);
             let id = request_clean_hide(&mut coordinator);
             let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+                now_ms: 0,
                 id,
                 outcome: Err(kind),
             });
@@ -624,6 +645,7 @@ mod phase8_window_tests {
         let id = request_clean_hide(&mut coordinator);
         assert!(!coordinator.state().temporary_sensor_topmost());
         let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+            now_ms: 0,
             id,
             outcome: Err(FailureKind::Failed),
         });
@@ -638,6 +660,7 @@ mod phase8_window_tests {
         let before = coordinator.state().visibility();
         for outcome in [Ok(()), Err(FailureKind::Failed)] {
             let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+                now_ms: 0,
                 id: id + 1,
                 outcome,
             });
@@ -661,6 +684,7 @@ mod phase8_window_tests {
             let id = request_clean_hide(&mut coordinator);
             if hide_receipt {
                 coordinator.dispatch(WindowIntent::ActionCompleted {
+                    now_ms: 0,
                     id,
                     outcome: Ok(()),
                 });
@@ -676,6 +700,7 @@ mod phase8_window_tests {
             assert_eq!(coordinator.state().visibility(), before);
             if !hide_receipt {
                 let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+                    now_ms: 0,
                     id,
                     outcome: Ok(()),
                 });
@@ -701,6 +726,56 @@ mod phase8_window_tests {
         ));
     }
 
+    /// A window back on screen after a failed hide save or a rejected hide collapses on its own,
+    /// though no timer could start while it waited.
+    #[test]
+    fn a_window_back_from_a_failed_hide_arms_its_auto_collapse() {
+        let unfocused = WindowGuardSnapshot::default();
+        let docked = StableVisibility::DockedExpanded(DockEdge::Left);
+        let collapsing = |coordinator: &mut WindowShellCoordinator, now_ms: u64| {
+            coordinator.dispatch(WindowIntent::Tick {
+                now_ms: now_ms + AUTO_COLLAPSE_DELAY_MS,
+            });
+            matches!(
+                coordinator.state().visibility(),
+                VisibilityState::Animating(_)
+            )
+        };
+
+        let mut saving = coordinator(docked);
+        saving.dispatch(WindowIntent::CloseRequested {
+            now_ms: 0,
+            guards: WindowGuardSnapshot {
+                note_save_required: true,
+                ..Default::default()
+            },
+        });
+        saving.dispatch(WindowIntent::GuardsChanged {
+            guards: unfocused,
+            now_ms: 1,
+        });
+        let effects = saving.dispatch(WindowIntent::HideSaveCompleted {
+            now_ms: 10,
+            succeeded: false,
+            guards: unfocused,
+        });
+        assert!(effects.contains(&WindowEffect::WakeAt(10 + AUTO_COLLAPSE_DELAY_MS)));
+        assert!(collapsing(&mut saving, 10));
+
+        let mut rejected = coordinator(docked);
+        let effects = rejected.dispatch(WindowIntent::CloseRequested {
+            now_ms: 0,
+            guards: unfocused,
+        });
+        let effects = rejected.dispatch(WindowIntent::ActionCompleted {
+            now_ms: 10,
+            id: hide_request(&effects).unwrap(),
+            outcome: Err(FailureKind::Failed),
+        });
+        assert!(effects.contains(&WindowEffect::WakeAt(10 + AUTO_COLLAPSE_DELAY_MS)));
+        assert!(collapsing(&mut rejected, 10));
+    }
+
     /// A show overtakes a hide still in flight; the hide's late receipt must not hide the window.
     #[test]
     fn a_hide_receipt_after_a_show_changes_nothing() {
@@ -713,6 +788,7 @@ mod phase8_window_tests {
         let shown = coordinator.state().visibility();
         assert!(matches!(shown, VisibilityState::Presented(_)));
         let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
+            now_ms: 0,
             id,
             outcome: Ok(()),
         });
@@ -732,6 +808,7 @@ mod phase8_window_tests {
             },
         });
         let effects = coordinator.dispatch(WindowIntent::HideSaveCompleted {
+            now_ms: 0,
             succeeded: false,
             guards: WindowGuardSnapshot {
                 window_focused: true,
@@ -799,6 +876,7 @@ mod phase8_window_tests {
             },
         });
         let effects = coordinator.dispatch(WindowIntent::HideSaveCompleted {
+            now_ms: 0,
             succeeded: true,
             guards: WindowGuardSnapshot {
                 note_save_required: true,

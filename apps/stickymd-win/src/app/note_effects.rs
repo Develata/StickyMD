@@ -87,9 +87,14 @@ impl StickyApp {
         succeeded: bool,
     ) {
         let guards = self.window_guards();
+        let now_ms = self.timestamp_ms();
         self.dispatch_window_intent(
             event_loop,
-            WindowIntent::HideSaveCompleted { succeeded, guards },
+            WindowIntent::HideSaveCompleted {
+                succeeded,
+                guards,
+                now_ms,
+            },
         );
         self.dispatch_window_intent(
             event_loop,

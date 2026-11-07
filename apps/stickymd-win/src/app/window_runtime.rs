@@ -299,7 +299,11 @@ impl StickyApp {
                 let outcome = self.hide_native();
                 self.dispatch_window_intent(
                     event_loop,
-                    WindowIntent::ActionCompleted { id, outcome },
+                    WindowIntent::ActionCompleted {
+                        id,
+                        outcome,
+                        now_ms: self.timestamp_ms(),
+                    },
                 );
             }
             WindowEffect::ShowWindow => {
