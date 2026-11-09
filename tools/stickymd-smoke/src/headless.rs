@@ -10,18 +10,20 @@ pub(crate) enum Module {
     App,
     Desktop,
     Windows,
+    Mac,
     Smoke,
     MarkdownMath,
     Persistence,
 }
 
 impl Module {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::Core,
         Self::Render,
         Self::App,
         Self::Desktop,
         Self::Windows,
+        Self::Mac,
         Self::Smoke,
         Self::MarkdownMath,
         Self::Persistence,
@@ -34,6 +36,7 @@ impl Module {
             Self::App => "app",
             Self::Desktop => "desktop",
             Self::Windows => "windows",
+            Self::Mac => "mac",
             Self::Smoke => "smoke",
             Self::MarkdownMath => "phase1-markdown-math",
             Self::Persistence => "phase1-persistence",
@@ -47,6 +50,7 @@ impl Module {
             Self::App => Some("stickymd-app"),
             Self::Desktop => Some("stickymd-desktop"),
             Self::Windows => Some("stickymd-win"),
+            Self::Mac => Some("stickymd-mac"),
             Self::Smoke => Some("stickymd-smoke"),
             Self::MarkdownMath | Self::Persistence => None,
         }
@@ -67,6 +71,7 @@ impl Module {
             Self::App => "crates/stickymd-app/",
             Self::Desktop => "crates/stickymd-desktop/",
             Self::Windows => "apps/stickymd-win/",
+            Self::Mac => "apps/stickymd-mac/",
             Self::Smoke => "tools/stickymd-smoke/",
             Self::MarkdownMath => "experiments/phase-01/markdown-math/",
             Self::Persistence => "experiments/phase-01/persistence/",
@@ -88,9 +93,27 @@ impl Module {
             Self::Render => &[Self::Core],
             Self::App => &[Self::Core, Self::Render],
             Self::Desktop => &[Self::Core, Self::Render, Self::App],
-            Self::Windows => &[Self::Core, Self::Render, Self::App, Self::Desktop],
+            Self::Windows | Self::Mac => &[Self::Core, Self::Render, Self::App, Self::Desktop],
             _ => &[],
         }
+    }
+
+    /// Whether the Windows lanes (clippy and the headless matrix) cover the module. The macOS
+    /// host compiles to a stub with no tests off macOS, so a green Windows lane would prove
+    /// nothing about it; its own lane is the macOS job (plan 11 Phase 16).
+    pub(crate) const fn windows_lane(self) -> bool {
+        !matches!(self, Self::Mac)
+    }
+
+    /// Whether the module's tests exist only on macOS.
+    pub(crate) const fn needs_macos(self) -> bool {
+        matches!(self, Self::Mac)
+    }
+
+    /// Whether this process can run the module's tests. Only the macOS host has a body to test;
+    /// the Windows host's own constraint is kept where it was.
+    pub(crate) const fn runs_on_this_host(self) -> bool {
+        !self.needs_macos() || cfg!(target_os = "macos")
     }
 }
 

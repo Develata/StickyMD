@@ -207,6 +207,7 @@ crates/stickymd-render/     Markdown、数学、文本布局与原生 Preview
 crates/stickymd-app/        共享应用：intent、coordinator、应用会话、配置与能力接口
 crates/stickymd-desktop/    共享界面：视图几何、标题投影、软件帧路径、控件、滚动条、Search 叠层、按键表与壳 `shell/`
 apps/stickymd-win/          Windows 宿主：启动装配、WinHost、平台 adapter 与存储
+apps/stickymd-mac/          macOS 宿主（二进制 `stickymd`）：只在 macOS 上有测试，`unsafe` 限于 `src/platform/`
 tools/stickymd-smoke/       不进入产品包的 Rust 验收 CLI
 tools/smoke/                各 Phase 的 PowerShell 薄入口
 docs/plan/                  唯一工程合同
@@ -309,6 +310,7 @@ cargo test -p stickymd-render --locked
 cargo test -p stickymd-app --locked
 cargo test -p stickymd-desktop --locked
 cargo test -p stickymd-win --locked
+cargo test -p stickymd-mac --locked  # 仅在 macOS 上执行测试；其他平台是无测试的桩
 cargo test -p stickymd-smoke --locked
 ./tools/smoke/phase-05.ps1
 ./tools/smoke/phase-14.ps1 -Ci

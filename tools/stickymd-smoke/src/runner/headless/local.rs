@@ -20,12 +20,34 @@ pub(crate) struct Description {
 pub(crate) struct LocalPlan {
     tasks: Vec<Task>,
     windows_required: bool,
+    /// Selected modules this host cannot test (the macOS host off macOS). They are reverse
+    /// dependencies of almost every shared change, so unlike the Windows host they do not stop
+    /// the run, but they are named when it starts and are never reported as run.
+    untested: Vec<Module>,
 }
 
 impl LocalPlan {
     pub(crate) fn new(request: &Request, full: bool, checks: &Checks) -> Result<Self, String> {
+        let untested: Vec<Module> = request
+            .modules
+            .iter()
+            .copied()
+            .filter(|module| !module.runs_on_this_host())
+            .collect();
+        let narrowed = Request {
+            modules: request
+                .modules
+                .iter()
+                .copied()
+                .filter(|module| module.runs_on_this_host())
+                .collect(),
+            mode: request.mode,
+            plan_only: request.plan_only,
+        };
+        let request = &narrowed;
         let mut tasks = vec![Task::Governance, super::super::format_check()];
-        if checks.quality {
+        // On the macOS host the lint of the macOS lane is local too, since no other host runs it.
+        if checks.quality || (checks.mac && Module::Mac.runs_on_this_host()) {
             let mut task = super::super::clippy_check();
             if let Task::Cargo { args, .. } = &mut task {
                 // Preserve strict flags while ensuring Cargo cannot update the lockfile.
@@ -76,6 +98,7 @@ impl LocalPlan {
         Ok(Self {
             tasks,
             windows_required: request.modules.contains(&Module::Windows),
+            untested: if full { Vec::new() } else { untested },
         })
     }
 
@@ -90,6 +113,12 @@ impl LocalPlan {
         }
         #[cfg(windows)]
         let _ = self.windows_required;
+        for module in &self.untested {
+            println!(
+                "NOT_TESTED: the {} module requires a macOS host; its tests were not run",
+                module.name()
+            );
+        }
         let mut executable = None;
         let identity = crate::evidence::SourceIdentity::capture(root);
         for (index, task) in self.tasks.iter().enumerate() {
@@ -194,6 +223,42 @@ mod tests {
             &Checks::for_modules(full, modules),
         )
         .unwrap()
+    }
+
+    /// Off macOS the macOS host is left out of the commands and named as untested instead, so a
+    /// change to a shared crate (which always selects it) neither runs its stub nor fails on a
+    /// Windows host; on macOS it is run.
+    #[test]
+    fn local_plan_runs_the_macos_host_only_where_it_has_tests() {
+        let plan = local(&[Module::Core, Module::Mac], false, Mode::Tests);
+        let descriptions = plan.describe().unwrap();
+        let names_mac = descriptions
+            .iter()
+            .any(|check| check.args.contains(&"stickymd-mac"));
+        assert_eq!(names_mac, cfg!(target_os = "macos"));
+        assert_eq!(
+            plan.untested,
+            if cfg!(target_os = "macos") {
+                Vec::new()
+            } else {
+                vec![Module::Mac]
+            }
+        );
+        // The shared crate it builds on is tested either way.
+        assert!(
+            descriptions
+                .iter()
+                .any(|check| check.args.contains(&"stickymd-core"))
+        );
+        // A change confined to the macOS host plans nothing of the Windows lanes.
+        let alone = local(&[Module::Mac], false, Mode::Tests);
+        assert!(
+            !alone
+                .describe()
+                .unwrap()
+                .iter()
+                .any(|check| check.label.contains("Windows"))
+        );
     }
 
     #[test]

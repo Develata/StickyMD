@@ -344,9 +344,53 @@ fn plans_are_explicitly_unexecuted_and_cannot_be_candidate_receipts() {
     assert_eq!(command, CommandLine::Modules(Command::Run(selected)));
 }
 
+/// Asking for the macOS host off macOS is NOT_TESTED, never a run of its stub; asking for
+/// anything else, or asking on macOS, is not refused.
+#[test]
+fn the_macos_host_is_refused_off_macos_and_only_there() {
+    for (modules, macos, refused) in [
+        (vec![Module::Mac], false, true),
+        (vec![Module::Core, Module::Mac], false, true),
+        (Module::ALL.to_vec(), false, true),
+        (vec![Module::Mac], true, false),
+        (vec![Module::Core, Module::Render], false, false),
+        (vec![Module::Windows], false, false),
+    ] {
+        let refusal = host_refusal(&modules, macos);
+        assert_eq!(refusal.is_some(), refused, "{modules:?} macos={macos}");
+        if let Some(message) = refusal {
+            assert!(message.starts_with("NOT_TESTED: "), "{message}");
+        }
+    }
+}
+
+/// `modules run mac` narrows the workspace tests to the macOS host's package alone, and the
+/// reverse dependencies of a shared crate carry it along.
+#[test]
+fn the_macos_host_is_selected_by_package_and_narrows_like_any_module() {
+    let mac = plan(&request(&[Module::Mac], Mode::Tests)).unwrap();
+    let tests = mac
+        .iter()
+        .find_map(|task| match task {
+            Task::Cargo { id, args, .. } if *id == TaskId::WorkspaceTests => Some(args.clone()),
+            _ => None,
+        })
+        .expect("workspace tests are narrowed, not dropped");
+    assert_eq!(tests, ["test", "--locked", "-p", "stickymd-mac"]);
+    assert!(
+        plan(&request(&[Module::Core], Mode::Tests))
+            .unwrap()
+            .iter()
+            .all(|task| match task {
+                Task::Cargo { args, .. } => !args.contains(&"stickymd-mac"),
+                _ => true,
+            })
+    );
+}
+
 #[test]
 fn workspace_membership_drift_fails_closed() {
-    let listing = "stickymd-core v0.1.0 (path with spaces)\n\nstickymd-render v0.1.0\n\nstickymd-app v0.1.0\n\nstickymd-desktop v0.1.0\n\nstickymd-win v0.1.0\n\nstickymd-smoke v0.1.0\n";
+    let listing = "stickymd-core v0.1.0 (path with spaces)\n\nstickymd-render v0.1.0\n\nstickymd-app v0.1.0\n\nstickymd-desktop v0.1.0\n\nstickymd-win v0.1.0\n\nstickymd-mac v0.1.0\n\nstickymd-smoke v0.1.0\n";
     assert!(verify_workspace_listing(listing).is_ok());
     assert!(verify_workspace_listing("").is_err());
     assert!(verify_workspace_listing(&listing.replace("stickymd-core", "renamed-core")).is_err());

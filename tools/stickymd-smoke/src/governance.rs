@@ -2,6 +2,7 @@
 
 mod actions;
 mod input_injection;
+mod mac_host;
 mod manifest_harness;
 
 use std::collections::BTreeSet;
@@ -158,6 +159,7 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_phase14_contract_trace(root)?;
     verify_release_infrastructure(root)?;
     verify_plan_refs(root)?;
+    mac_host::verify(root)?;
     crate::qualification::verify_product_classification(root)?;
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
@@ -822,32 +824,40 @@ fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
         &mut windows_rust,
     )?;
     for path in windows_rust {
-        let content = read_text(&path)?;
-        let lines = content.lines().collect::<Vec<_>>();
-        for (index, line) in lines.iter().enumerate() {
-            if !line.contains("unsafe {") {
-                continue;
-            }
-            let context_start = index.saturating_sub(6);
-            if !lines[context_start..=index]
-                .iter()
-                .any(|candidate| candidate.contains("SAFETY:"))
-            {
-                return Err(format!(
-                    "{}:{} unsafe block has no adjacent SAFETY invariant",
-                    path.display(),
-                    index + 1
-                ));
-            }
+        if let Some(line) = unsafe_block_without_safety(&read_text(&path)?) {
+            return Err(format!(
+                "{}:{line} unsafe block has no adjacent SAFETY invariant",
+                path.display()
+            ));
         }
     }
     Ok(())
 }
 
+/// The 1-based line of the first `unsafe {` with no `SAFETY:` on it or the six lines before it.
+/// Shared by the Windows and macOS hosts, each applied to its own platform directory.
+fn unsafe_block_without_safety(content: &str) -> Option<usize> {
+    let lines = content.lines().collect::<Vec<_>>();
+    lines.iter().enumerate().find_map(|(index, line)| {
+        let context_start = index.saturating_sub(6);
+        (line.contains("unsafe {")
+            && !lines[context_start..=index]
+                .iter()
+                .any(|candidate| candidate.contains("SAFETY:")))
+        .then_some(index + 1)
+    })
+}
+
 pub(crate) fn verify_ready_status(root: &Path, selection: Selection) -> Result<(), String> {
     let phases: Vec<_> = match selection {
         Selection::Phase(phase) => vec![phase],
-        Selection::All => Phase::ALL.to_vec(),
+        // Phase 16 is the macOS host's matrix: its automated rows stay `NOT TESTED` until that
+        // host is done, and the readiness of the Windows release does not depend on it. It is
+        // judged when selected by name.
+        Selection::All => Phase::ALL
+            .into_iter()
+            .filter(|phase| *phase != Phase::P16)
+            .collect(),
     };
     for phase in phases {
         let path = matrix_path(root, phase);
@@ -1148,6 +1158,11 @@ fn frozen_trace_ids(content: &str, path: &Path, prefix: &str) -> Result<Vec<u16>
     Ok(ids)
 }
 
+/// Whether `path` is the Phase 16 (macOS host) acceptance matrix.
+fn is_macos_matrix(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "phase-16.md")
+}
+
 fn read_matrix_rows(path: &Path) -> Result<Vec<MatrixRow>, String> {
     matrix_rows(&read_text(path)?, path)
 }
@@ -1169,6 +1184,11 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
             "Manual" if matches!(status, "MANUAL PASS" | "NOT TESTED" | "BLOCKED") => {}
             "Guided Manual" if matches!(status, "NOT TESTED" | "BLOCKED") => {}
             "Automated exact candidate" if matches!(status, "NOT TESTED" | "BLOCKED") => {}
+            // The macOS matrix is written ahead of the host (plan 11 Phase 16: items not run stay
+            // `NOT TESTED`), so its automated rows may wait, and its one waiver has no mode.
+            // Readiness still refuses a waiting automated row when `phase 16` is judged.
+            "Automated" if status == "NOT TESTED" && is_macos_matrix(path) => {}
+            "—" if status == "USER 豁免" && is_macos_matrix(path) => {}
             _ => {
                 return Err(at(format!(
                     "invalid mode/status pair `{mode}` / `{status}`"
@@ -1569,6 +1589,54 @@ mod tests {
         }
         std::fs::remove_file(&source).unwrap();
         assert!(verify_shared_desktop_boundary(&root).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Only the macOS matrix may hold an automated row that has not run, or a waiver without a
+    /// mode; the same rows in any other matrix stay refused, and `phase 16` still refuses to be
+    /// ready while one waits.
+    #[test]
+    fn the_macos_matrix_alone_may_hold_automated_rows_that_have_not_run() {
+        let header =
+            "| ID | Requirement | Mode | Evidence | Status |\n| --- | --- | --- | --- | --- |\n";
+        let waiting = format!("{header}| P16-S06 | act | Automated | exFAT | NOT TESTED |\n");
+        let waived = format!("{header}| P16-W16 | act | — | USER 2026-11-10 | USER 豁免 |\n");
+        let macos = std::path::Path::new("phase-16.md");
+        let other = std::path::Path::new("phase-15.md");
+        for document in [&waiting, &waived] {
+            assert_eq!(matrix_rows(document, macos).unwrap().len(), 1);
+            assert!(matrix_rows(document, other).is_err());
+        }
+        for bad in [
+            "| P16-S06 | act | Automated | exFAT | MANUAL PASS |",
+            "| P16-S06 | act | Manual | exFAT | USER 豁免 |",
+            "| P16-S06 | act | — | exFAT | NOT TESTED |",
+        ] {
+            assert!(
+                matrix_rows(&format!("{header}{bad}\n"), macos).is_err(),
+                "{bad}"
+            );
+        }
+        let root =
+            std::env::temp_dir().join(format!("stickymd-macos-matrix-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("docs/acceptance-cases")).unwrap();
+        std::fs::write(root.join("docs/acceptance-cases/phase-16.md"), &waiting).unwrap();
+        let error =
+            super::verify_ready_status(&root, crate::cli::Selection::Phase(crate::cli::Phase::P16))
+                .unwrap_err();
+        assert!(error.contains("instead of `AUTOMATED PASS`"), "{error}");
+        // The unfinished macOS matrix does not gate a run of every phase.
+        std::fs::write(root.join("docs/acceptance-cases/phase-16.md"), "garbage").unwrap();
+        for phase in crate::cli::Phase::ALL {
+            if phase != crate::cli::Phase::P16 {
+                std::fs::write(
+                    root.join(format!("docs/acceptance-cases/phase-{}.md", phase.number())),
+                    format!("{header}| X-1 | a | Automated | e | AUTOMATED PASS |\n"),
+                )
+                .unwrap();
+            }
+        }
+        super::verify_ready_status(&root, crate::cli::Selection::All).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 

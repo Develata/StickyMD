@@ -630,6 +630,70 @@ fn every_product_source_has_an_explicit_rule() {
     fs::remove_dir_all(fixture).unwrap();
 }
 
+/// The macOS host is not part of the Windows qualified artifact: one directory rule keeps every
+/// file under it out of every module's fingerprint, so files added later need no rule, while a
+/// crate no rule knows about is still refused and the rule does not reach the Windows host.
+#[test]
+fn the_macos_host_directory_is_no_input_of_any_module() {
+    for path in [
+        "apps/stickymd-mac/Cargo.toml",
+        "apps/stickymd-mac/src/main.rs",
+        "apps/stickymd-mac/src/platform/mod.rs",
+        "apps/stickymd-mac/src/platform/a_file_added_later.rs",
+        "apps/stickymd-mac/packaging/Info.plist",
+        "apps/stickymd-mac/tests/pasteboard.rs",
+    ] {
+        assert_eq!(path_domains(path), 0, "{path}");
+        for module in crate::qualification::module_registry::modules() {
+            assert_eq!(path_domains(path) & super::domains(module), 0, "{path}");
+        }
+    }
+    // The rule is the directory, nothing wider: the Windows host and the shared crates the macOS
+    // host builds on still invalidate modules, and so does the workspace manifest.
+    for path in [
+        "apps/stickymd-win/Cargo.toml",
+        "apps/stickymd-win/src/main.rs",
+        "crates/stickymd-desktop/src/lib.rs",
+        "Cargo.toml",
+        "Cargo.lock",
+    ] {
+        assert_ne!(path_domains(path), 0, "{path}");
+    }
+    assert_ne!(path_domains("apps/stickymd-mac-other/src/main.rs"), 0);
+
+    let fixture = fixture();
+    for path in [
+        "apps/stickymd-mac/src/platform/pasteboard.rs",
+        "apps/stickymd-mac/src/storage.rs",
+    ] {
+        let path = fixture.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "//! new macOS host file").unwrap();
+    }
+    // The fixture holds none of the files the other rules name, so it fails on them (stale
+    // rules) and on nothing else: the macOS host is neither unclassified nor outside a root.
+    let error = super::verify_product_classification(&fixture).unwrap_err();
+    assert!(
+        error.starts_with("product domain rules that match no tracked file"),
+        "{error}"
+    );
+    assert!(!error.contains("stickymd-mac/"), "{error}");
+    // Editing the host changes the workspace-tests identity but no module's fingerprint.
+    let before = calculate(&fixture, ModuleId::Runtime).unwrap();
+    let workspace_before = super::workspace_inputs(&fixture, b"").unwrap();
+    fs::write(
+        fixture.join("apps/stickymd-mac/src/storage.rs"),
+        "//! edited",
+    )
+    .unwrap();
+    assert_eq!(before, calculate(&fixture, ModuleId::Runtime).unwrap());
+    assert_ne!(
+        workspace_before,
+        super::workspace_inputs(&fixture, b"").unwrap()
+    );
+    fs::remove_dir_all(fixture).unwrap();
+}
+
 /// A source of a crate no rule knows about is refused, not silently taken as a global input.
 #[test]
 fn a_source_outside_every_product_root_is_refused() {

@@ -1,0 +1,29 @@
+[package]
+name = "stickymd-mac"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "StickyMD macOS executable: Interaction Shell + macOS platform adapters"
+
+[dependencies]
+stickymd-core = { path = "../../crates/stickymd-core", version = "0.1.0" }
+stickymd-render = { path = "../../crates/stickymd-render", version = "0.1.0" }
+stickymd-app = { path = "../../crates/stickymd-app", version = "0.1.0" }
+thiserror.workspace = true
+sha2.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+stickymd-desktop = { path = "../../crates/stickymd-desktop", version = "0.1.0" }
+winit.workspace = true
+raw-window-handle.workspace = true
+notify = { workspace = true, features = ["macos_fsevent"] }
+tray-icon.workspace = true
+crossbeam-channel.workspace = true
+libc = "0.2.172"
+block2 = "0.6.1"
+objc2 = "0.6.3"
+objc2-foundation = "0.3.2"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+stickymd-desktop = { path = "../../crates/stickymd-desktop", version = "0.1.0", features = ["testing"] }
+image.workspace = true

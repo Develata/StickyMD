@@ -5,7 +5,7 @@ use super::Checks;
 use crate::headless::{Module, parse_modules};
 use std::collections::BTreeMap;
 
-const JOBS: [&str; 7] = [
+const JOBS: [&str; 8] = [
     "plan",
     "smoke",
     "dependency",
@@ -13,6 +13,7 @@ const JOBS: [&str; 7] = [
     "headless",
     "release",
     "portable",
+    "mac",
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -100,6 +101,7 @@ impl Results {
             checks.headless,
             checks.release,
             checks.portable,
+            checks.mac,
         ];
         for ((job, required), actual) in JOBS.iter().zip(required).zip(self.statuses) {
             let expected = if required {
@@ -152,6 +154,7 @@ mod tests {
                 Status::Skipped,
                 Status::Skipped,
                 Status::Skipped,
+                Status::Skipped,
             ],
         };
         assert!(docs.verify().is_ok());
@@ -174,12 +177,45 @@ mod tests {
                 Status::Success,
                 Status::Skipped,
                 Status::Success,
+                Status::Skipped,
             ],
         };
         assert!(core.verify().is_ok());
         for status in [Status::Success, Status::Failure, Status::Cancelled] {
             core.statuses[1] = status;
             assert!(core.verify().is_err(), "{status:?}");
+        }
+    }
+
+    /// A change confined to the macOS host plans the macOS job and no Windows lane: a Windows
+    /// run of its stub that happened to be green must not satisfy, or replace, the macOS job.
+    #[test]
+    fn ci_mac_scope_requires_the_macos_job_and_no_windows_lane() {
+        let mut mac = Results {
+            cancelled: false,
+            full: false,
+            modules: vec![Module::Mac],
+            statuses: [
+                Status::Success,
+                Status::Skipped,
+                Status::Success,
+                Status::Skipped,
+                Status::Skipped,
+                Status::Skipped,
+                Status::Skipped,
+                Status::Success,
+            ],
+        };
+        assert!(mac.verify().is_ok());
+        for status in [Status::Skipped, Status::Failure, Status::Cancelled] {
+            mac.statuses[7] = status;
+            assert!(mac.verify().is_err(), "{status:?}");
+        }
+        mac.statuses[7] = Status::Success;
+        for lane in [3, 4, 5, 6] {
+            mac.statuses[lane] = Status::Success;
+            assert!(mac.verify().is_err(), "{}", JOBS[lane]);
+            mac.statuses[lane] = Status::Skipped;
         }
     }
 
@@ -196,6 +232,7 @@ mod tests {
             "--headless=success",
             "--release=skipped",
             "--portable=skipped",
+            "--mac=skipped",
         ]
         .map(str::to_owned);
         assert!(Results::parse(&args).unwrap().verify().is_ok());

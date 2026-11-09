@@ -6,6 +6,7 @@ members = [
     "crates/stickymd-app",
     "crates/stickymd-desktop",
     "apps/stickymd-win",
+    "apps/stickymd-mac",
     "tools/stickymd-smoke",
 ]
 

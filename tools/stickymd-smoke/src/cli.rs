@@ -19,10 +19,11 @@ pub(crate) enum Phase {
     P13,
     P14,
     P15,
+    P16,
 }
 
 impl Phase {
-    pub(crate) const ALL: [Self; 17] = [
+    pub(crate) const ALL: [Self; 18] = [
         Self::P00,
         Self::P01,
         Self::P02,
@@ -40,6 +41,7 @@ impl Phase {
         Self::P13,
         Self::P14,
         Self::P15,
+        Self::P16,
     ];
 
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
@@ -61,7 +63,8 @@ impl Phase {
             "13" | "phase-13" => Ok(Self::P13),
             "14" | "phase-14" => Ok(Self::P14),
             "15" | "phase-15" => Ok(Self::P15),
-            _ => Err(format!("unknown phase `{value}`; expected 00..15 or 11-b")),
+            "16" | "phase-16" => Ok(Self::P16),
+            _ => Err(format!("unknown phase `{value}`; expected 00..16 or 11-b")),
         }
     }
 
@@ -84,6 +87,7 @@ impl Phase {
             Self::P13 => "13",
             Self::P14 => "14",
             Self::P15 => "15",
+            Self::P16 => "16",
         }
     }
 }
@@ -1034,7 +1038,7 @@ impl Options {
         if options.runtime
             && matches!(
                 selection,
-                Selection::Phase(Phase::P00 | Phase::P01 | Phase::P02 | Phase::P15)
+                Selection::Phase(Phase::P00 | Phase::P01 | Phase::P02 | Phase::P15 | Phase::P16)
             )
         {
             return Err(
@@ -1087,7 +1091,7 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..15|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke dev-check [--plan] [--mode=tests|performance|all]\n       stickymd-smoke timings --input <json-or-log> [--input <path> ...] [--json]\n       stickymd-smoke startup-details --trace <v2-path> --details <sidecar-path> [--json]\n       stickymd-smoke phase-entry[-plan] <00..15|11-b|all> [--Parameter=value]\n       stickymd-smoke release <build-package|generate-sbom|package-inputs|prepare-package|publish-package|workspace-version|verify-promoted|verify-package|verify-workflow|verify-remote-state|notices|checksums|prepare-sbom|publish-sbom|syft-plan|syft-publish|syft-verify> [options]; see tools/stickymd-smoke/README.md"
+        "usage: stickymd-smoke phase <00..16|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke dev-check [--plan] [--mode=tests|performance|all]\n       stickymd-smoke timings --input <json-or-log> [--input <path> ...] [--json]\n       stickymd-smoke startup-details --trace <v2-path> --details <sidecar-path> [--json]\n       stickymd-smoke phase-entry[-plan] <00..16|11-b|all> [--Parameter=value]\n       stickymd-smoke release <build-package|generate-sbom|package-inputs|prepare-package|publish-package|workspace-version|verify-promoted|verify-package|verify-workflow|verify-remote-state|notices|checksums|prepare-sbom|publish-sbom|syft-plan|syft-publish|syft-verify> [options]; see tools/stickymd-smoke/README.md"
     }
 }
 

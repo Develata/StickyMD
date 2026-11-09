@@ -324,12 +324,15 @@ cargo run --quiet -p stickymd-smoke --locked -- modules run render,windows --mod
 cargo run --quiet -p stickymd-smoke --locked -- modules run all --mode=all --plan
 ```
 
-The eight module names are `core`, `render`, `app`, `desktop`, `windows`, `smoke`,
+The nine module names are `core`, `render`, `app`, `desktop`, `windows`, `mac`, `smoke`,
 `phase1-markdown-math`, and `phase1-persistence`. The default mode is `tests`;
 `performance` selects the existing headless Release baselines, and `all`
 selects both. Cargo still builds dependencies as needed. Explicit selection
 does not automatically add dependent modules: callers choose the validation scope.
-The `windows` module requires Windows to execute; plans can be inspected on any host.
+The `windows` module requires Windows to execute and `mac` requires macOS (elsewhere the macOS host is a stub with
+no tests, so a run is reported `NOT_TESTED`); plans can be inspected on any host. `dev-check` names an unrunnable
+`mac` as `NOT_TESTED` and runs the rest. In CI only the `macos-host` job tests `mac`: no Windows or Linux lane runs
+or lints it, and `phase 16` is refused off macOS.
 
 The module adapter narrows the existing full plan's Cargo package selectors.
 It keeps the same filters, profiles, thresholds and test-harness arguments;

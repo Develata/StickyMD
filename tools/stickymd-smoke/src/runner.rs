@@ -70,6 +70,7 @@ enum TaskId {
     Phase15AppTests,
     Phase15DesktopTests,
     Phase15BaselineTests,
+    Phase16MacTests,
     FormatCheck,
     ClippyCheck,
     DependencyPolicy,
@@ -681,6 +682,11 @@ fn run_task(
     capture_output: bool,
     identity: &evidence::SourceIdentity,
 ) -> Result<TaskExecution, String> {
+    if let Task::Cargo { id, .. } = task
+        && let Some(refusal) = refused_on_host(*id, cfg!(target_os = "macos"))
+    {
+        return Err(refusal);
+    }
     match task {
         Task::Governance => {
             governance::verify(root).map(|()| TaskExecution::Passed(TaskEvidence::default()))
@@ -708,6 +714,13 @@ fn run_task(
             run_unit_test_owners(root, packages.as_deref(), identity)
         }
     }
+}
+
+/// Off macOS the host crate compiles to a stub with no tests, so cargo would pass without testing
+/// anything; the task is refused there as NOT_TESTED instead.
+fn refused_on_host(id: TaskId, macos: bool) -> Option<String> {
+    (id == TaskId::Phase16MacTests && !macos)
+        .then(|| "NOT_TESTED: the macOS host tests require a macOS host".to_owned())
 }
 
 /// The owners of the selected packages (all owners for `None`), verified on Windows.
@@ -958,6 +971,9 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 push_unique(&mut tasks, phase15_desktop_tests());
                 push_unique(&mut tasks, phase15_baseline_tests());
             }
+            // Planned on every host and refused off macOS (see `run_task`), so a run elsewhere
+            // is NOT_TESTED rather than a green run of the stub. `all` never plans it.
+            Selection::Phase(Phase::P16) => push_unique(&mut tasks, phase16_mac_tests()),
         }
     }
 
@@ -1061,6 +1077,8 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                     push_unique(&mut tasks, phase8_performance());
                     push_unique(&mut tasks, phase14_search_performance());
                 }
+                // The macOS measurements (P16-R01, P16-R02) are not automated yet.
+                Phase::P16 => {}
             }
         }
     }
@@ -1119,7 +1137,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 push_unique(&mut tasks, runtime_assets());
                 push_unique(&mut tasks, runtime_window_shell());
             }
-            Selection::Phase(Phase::P00 | Phase::P01 | Phase::P02 | Phase::P15) => {
+            Selection::Phase(Phase::P00 | Phase::P01 | Phase::P02 | Phase::P15 | Phase::P16) => {
                 return Err("selected phase has no runtime smoke".to_owned());
             }
         }
@@ -1387,6 +1405,27 @@ fn phase15_baseline_tests() -> Task {
     )
 }
 
+fn phase16_mac_tests() -> Task {
+    cargo(
+        TaskId::Phase16MacTests,
+        "Phase 16 macOS host tests",
+        &[
+            "test",
+            "-p",
+            "stickymd-core",
+            "-p",
+            "stickymd-render",
+            "-p",
+            "stickymd-app",
+            "-p",
+            "stickymd-desktop",
+            "-p",
+            "stickymd-mac",
+            "--locked",
+        ],
+    )
+}
+
 fn phase9_convergence_tests() -> Task {
     cargo(
         TaskId::Phase9ConvergenceTests,
@@ -1532,9 +1571,89 @@ const fn runtime_zoom_resources() -> Task {
 #[cfg(test)]
 mod tests {
     use super::{
-        TaskId, build_plan, captured_failure_detail, requires_full_readiness, tail_at_char_boundary,
+        Task, TaskId, build_plan, captured_failure_detail, refused_on_host,
+        requires_full_readiness, tail_at_char_boundary,
     };
     use crate::cli::{CiShard, Options, ResourceModule, Selection};
+
+    /// `phase 16` plans the macOS host tests (the four shared crates and the host, natively) on
+    /// every host; no `all` plan does, so the Windows runs never carry them.
+    #[test]
+    fn phase_16_plans_the_macos_host_tests_and_no_all_plan_does() {
+        let ids = |arguments: &[&str]| {
+            build_plan(
+                &Options::parse(arguments.iter().map(|argument| (*argument).to_owned())).unwrap(),
+            )
+            .unwrap()
+            .iter()
+            .map(Task::id)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(&["phase", "16"]),
+            [TaskId::Governance, TaskId::Phase16MacTests]
+        );
+        let tests = build_plan(&Options::parse(["phase", "16"].map(str::to_owned)).unwrap())
+            .unwrap()
+            .into_iter()
+            .find_map(|task| match task {
+                Task::Cargo {
+                    id: TaskId::Phase16MacTests,
+                    args,
+                    ..
+                } => Some(args),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            tests,
+            [
+                "test",
+                "-p",
+                "stickymd-core",
+                "-p",
+                "stickymd-render",
+                "-p",
+                "stickymd-app",
+                "-p",
+                "stickymd-desktop",
+                "-p",
+                "stickymd-mac",
+                "--locked"
+            ]
+        );
+        for arguments in [
+            vec!["all", "--ci"],
+            vec!["all", "--ci", "--ci-shard=tests"],
+            vec!["all", "--ci", "--ci-shard=performance"],
+            vec!["all", "--performance"],
+            vec!["phase", "15"],
+            vec!["phase", "14"],
+        ] {
+            assert!(
+                !ids(&arguments).contains(&TaskId::Phase16MacTests),
+                "{arguments:?}"
+            );
+        }
+        // Phase 16 has no runtime smoke.
+        assert!(Options::parse(["phase", "16", "--runtime"].map(str::to_owned)).is_err());
+    }
+
+    /// Off macOS the host crate is a stub that cargo passes without a test: the task is refused
+    /// there as NOT_TESTED, and only that task.
+    #[test]
+    fn the_macos_host_tests_are_refused_off_macos_and_only_there() {
+        let message = refused_on_host(TaskId::Phase16MacTests, false).expect("refused");
+        assert!(message.starts_with("NOT_TESTED: "), "{message}");
+        assert_eq!(refused_on_host(TaskId::Phase16MacTests, true), None);
+        for id in [
+            TaskId::WorkspaceTests,
+            TaskId::Phase15DesktopTests,
+            TaskId::Phase15BaselineTests,
+        ] {
+            assert_eq!(refused_on_host(id, false), None);
+        }
+    }
 
     #[test]
     fn failed_task_replaces_stale_evidence_without_claiming_success() {

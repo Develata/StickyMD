@@ -13,18 +13,18 @@
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P16-S01 | 真实存储通过 `storage_conformance!` 全部行 | Automated | `cargo test -p stickymd-mac` | NOT TESTED |
-| P16-S02 | 已存在目标：guard 不符返回 Conflict，目标不变；`ForceOverwrite` 跳过 guard | Automated | adapter 测试 | NOT TESTED |
-| P16-S03 | 首次创建：目标突然出现时 Conflict，不覆盖 | Automated | adapter 测试 | NOT TESTED |
-| P16-S04 | 目录同步失败报保存失败，保持 dirty；重试不与自己冲突 | Automated | 故障注入 | NOT TESTED |
-| P16-S05 | 保留 canonical：内容未变改名；内容已变移回并报 `Changed`；移回失败报失败，文件不丢 | Automated | adapter 测试 | NOT TESTED |
+| P16-S01 | 真实存储通过 `storage_conformance!` 全部行 | Automated | `persistence::storage_conformance`（5 行全部通过） | AUTOMATED PASS |
+| P16-S02 | 已存在目标：guard 不符返回 Conflict，目标不变；`ForceOverwrite` 跳过 guard | Automated | `persistence::storage::tests` | AUTOMATED PASS |
+| P16-S03 | 首次创建：目标突然出现时 Conflict，不覆盖 | Automated | `persistence::storage::tests` | AUTOMATED PASS |
+| P16-S04 | 目录同步失败报保存失败，保持 dirty；重试不与自己冲突 | Automated | `persistence::storage::tests` | AUTOMATED PASS |
+| P16-S05 | 保留 canonical：内容未变改名；内容已变移回并报 `Changed`；移回失败报失败，文件不丢 | Automated | `persistence::storage::tests` | AUTOMATED PASS |
 | P16-S06 | 卷不支持 `RENAME_EXCL` 时提示后退出，不回退 | Automated | exFAT 映像 | NOT TESTED |
-| P16-S07 | Program Directory：bundle 内取 `.app` 所在目录，开发构建取可执行文件父目录 | Automated | 单元测试 | NOT TESTED |
-| P16-S08 | 同目录第二实例取锁失败，在任何 durable 文件创建前退出 | Automated | 进程测试 | NOT TESTED |
-| P16-S09 | 第二实例经 socket 唤醒第一实例；socket 路径不超过 104 字节 | Automated | 进程测试 | NOT TESTED |
-| P16-S10 | 受管图片：未引用不移动不删除，`sync` 报 deferred | Automated | adapter 测试 | NOT TESTED |
-| P16-S11 | 监视：外部修改产生 hint；`note/` 被移走转 watcher failure | Automated | adapter 测试 | NOT TESTED |
-| P16-S12 | 新建笔记用 LF | Automated | 启动测试 | NOT TESTED |
+| P16-S07 | Program Directory：bundle 内取 `.app` 所在目录，开发构建取可执行文件父目录 | Automated | `paths::tests` | AUTOMATED PASS |
+| P16-S08 | 同目录第二实例取锁失败，在任何 durable 文件创建前退出 | Automated | `platform::macos::instance::tests` | AUTOMATED PASS |
+| P16-S09 | 第二实例经 socket 唤醒第一实例；socket 路径不超过 104 字节 | Automated | `platform::macos::instance::tests` | AUTOMATED PASS |
+| P16-S10 | 受管图片：未引用不移动不删除，`sync` 报 deferred | Automated | `assets::storage::tests` | AUTOMATED PASS |
+| P16-S11 | 监视：外部修改产生 hint；`note/` 被移走转 watcher failure | Automated | `platform::macos::file_watch::tests` | AUTOMATED PASS |
+| P16-S12 | 新建笔记用 LF | Automated | `startup::bootstrap::tests` | AUTOMATED PASS |
 
 ## M2 窗口
 
@@ -42,8 +42,8 @@
 | P16-W10 | 光标闪烁不产生帧；反色可见 | Manual | 人工 | NOT TESTED |
 | P16-W11 | Cmd+Q：干净时退出；保存失败时取消 | Manual | 人工 | NOT TESTED |
 | P16-W12 | 系统终止：`osascript` 退出、注销、导出对话框打开时退出 | Manual | 人工 | NOT TESTED |
-| P16-W13 | 感应条 2 DIP（S8）的几何测试 | Automated | `stickymd-app` 单元测试 | NOT TESTED |
-| P16-W14 | S7 的 reducer 测试：手动收起后恢复焦点不撤销，进入展开路径后撤销 | Automated | `stickymd-app` 单元测试 | NOT TESTED |
+| P16-W13 | 感应条 2 DIP（S8）的几何测试 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
+| P16-W14 | S7 的 reducer 测试：手动收起后恢复焦点不撤销，进入展开路径后撤销 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
 | P16-W15 | Windows 桌面回归（S2、S4、S6、S7） | Manual | 需在 Windows 机器上运行 | NOT TESTED |
 | P16-W16 | Windows 上的 2 DIP（S8） | — | USER 2026-11-10 决定不单独回归 | USER 豁免 |
 
@@ -51,14 +51,14 @@
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P16-K01 | Cmd 键表：保存、导出、剪贴板、撤销重做、查找替换、视图缩放、行首行尾 | Automated | 键表单元测试 | NOT TESTED |
+| P16-K01 | Cmd 键表：保存、导出、剪贴板、撤销重做、查找替换、视图缩放、行首行尾 | Automated | 键表单元测试 | AUTOMATED PASS |
 | P16-K02 | Cmd 键在真实窗口生效 | Manual | 人工 | NOT TESTED |
 | P16-I01 | 系统简体拼音：`07` 的 13 项 | Manual | 人工 | NOT TESTED |
 | P16-I02 | 微信输入法：`07` 的 13 项 | Manual | 人工 | NOT TESTED |
 | P16-I03 | 长按字母不产生重复字符 | Manual | 人工 | NOT TESTED |
-| P16-C01 | 文件 URL + PNG + 文本：读文件 | Automated | pasteboard 测试 | NOT TESTED |
-| P16-C02 | PNG + TIFF + 文本：读原编码 PNG | Automated | pasteboard 测试 | NOT TESTED |
-| P16-C03 | 只有 TIFF + 文本：转 PNG，像素正确 | Automated | pasteboard 测试 | NOT TESTED |
+| P16-C01 | 文件 URL + PNG + 文本：读文件 | Automated | pasteboard 测试 | AUTOMATED PASS |
+| P16-C02 | PNG + TIFF + 文本：读原编码 PNG | Automated | pasteboard 测试 | AUTOMATED PASS |
+| P16-C03 | 只有 TIFF + 文本：转 PNG，像素正确 | Automated | pasteboard 测试 | AUTOMATED PASS |
 | P16-E01 | 保存面板：取消、确定、导出内容正确 | Manual | 人工 | NOT TESTED |
 | P16-F01 | 中文显示 PingFang SC，代码 Menlo | Manual | 人工 | NOT TESTED |
 
@@ -66,7 +66,7 @@
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P16-P01 | 打包脚本产出 ad-hoc 签名的 `.app`，`codesign --verify` 通过 | Automated | 脚本 | NOT TESTED |
+| P16-P01 | 打包脚本产出 ad-hoc 签名的 `.app`，`codesign --verify` 通过 | Automated | 脚本 | AUTOMATED PASS |
 | P16-R01 | `10` macOS 节的内存基线 | Automated | 测量 | NOT TESTED |
 | P16-R02 | 空闲 CPU（含光标闪烁） | Automated | 测量 | NOT TESTED |
 | P16-R03 | 下载的包在 App Translocation 下提示后退出 | Manual | 需要签名身份 | NOT TESTED |

@@ -18,7 +18,8 @@ fn ci_reverse_dependencies_cover_downstream_behavior_without_selecting_unrelated
             Module::Render,
             Module::App,
             Module::Desktop,
-            Module::Windows
+            Module::Windows,
+            Module::Mac
         ]
     );
     assert_eq!(
@@ -27,24 +28,35 @@ fn ci_reverse_dependencies_cover_downstream_behavior_without_selecting_unrelated
             Module::Render,
             Module::App,
             Module::Desktop,
-            Module::Windows
+            Module::Windows,
+            Module::Mac
         ]
     );
     assert_eq!(
         selected(&["crates/stickymd-app/src/flow/save.rs"]).modules,
-        [Module::App, Module::Desktop, Module::Windows]
+        [Module::App, Module::Desktop, Module::Windows, Module::Mac]
     );
     assert_eq!(
         selected(&["crates/stickymd-desktop/src/frame/plan.rs"]).modules,
-        [Module::Desktop, Module::Windows]
+        [Module::Desktop, Module::Windows, Module::Mac]
     );
     assert_eq!(
         selected(&["crates/stickymd-desktop/src/shell/mod.rs"]).modules,
-        [Module::Desktop, Module::Windows]
+        [Module::Desktop, Module::Windows, Module::Mac]
     );
     assert_eq!(
         selected(&["apps/stickymd-win/src/host.rs"]).modules,
         [Module::Windows]
+    );
+    // The macOS host is a leaf like the Windows host: nothing depends on it, and it selects no
+    // other module.
+    assert_eq!(
+        selected(&["apps/stickymd-mac/src/main.rs"]).modules,
+        [Module::Mac]
+    );
+    assert_eq!(
+        selected(&["apps/stickymd-mac/src/platform/macos/file.rs"]).modules,
+        [Module::Mac]
     );
     assert_eq!(
         selected(&["tools/stickymd-smoke/src/package_path.rs"]).modules,
@@ -65,6 +77,7 @@ fn ci_g5_image_fixtures_select_both_consumers_and_their_reverse_dependencies() {
         Module::App,
         Module::Desktop,
         Module::Windows,
+        Module::Mac,
         Module::Smoke,
     ];
     expected.sort_unstable();
@@ -119,7 +132,8 @@ fn ci_documentation_keeps_governance_only_and_never_masks_owned_fixtures() {
             Module::Render,
             Module::App,
             Module::Desktop,
-            Module::Windows
+            Module::Windows,
+            Module::Mac
         ]
     );
     assert!(selected(&[]).modules.is_empty());
@@ -139,6 +153,7 @@ fn ci_union_deduplicates_modules_and_preserves_both_owners_of_a_move() {
             Module::App,
             Module::Desktop,
             Module::Windows,
+            Module::Mac,
             Module::MarkdownMath
         ]
     );

@@ -174,6 +174,9 @@ fn path_domains(path: &str) -> u64 {
     if path.starts_with("dist/evidence/") {
         return 0;
     }
+    if is_unqualified_host(path) {
+        return 0;
+    }
     if is_global_input(path) {
         return GLOBAL;
     }
@@ -196,6 +199,22 @@ fn path_domains(path: &str) -> u64 {
         return ALL_MODULES;
     }
     product_domains(path).unwrap_or_else(|| harness_domains(path))
+}
+
+/// The directories of hosts that are not part of the Windows qualified artifact. The functional
+/// modules run the Windows executable, so nothing under these directories is an input of any of
+/// them: one rule per directory, and a file added there later needs none. The workspace-tests
+/// identity still covers them (it takes every tracked input), and the shared crates they build on
+/// keep their own rules, so a change there still invalidates the modules.
+///
+/// `apps/stickymd-mac/` has no qualification of its own: its acceptance is `phase-16.md`, which
+/// the module ledger neither reads nor records (plan 11 Phase 16).
+const UNQUALIFIED_HOSTS: &[&str] = &["apps/stickymd-mac/"];
+
+fn is_unqualified_host(path: &str) -> bool {
+    UNQUALIFIED_HOSTS
+        .iter()
+        .any(|directory| path.starts_with(directory))
 }
 
 fn is_global_input(path: &str) -> bool {
@@ -456,6 +475,7 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-core/src/",
     "crates/stickymd-render/src/lib.rs",
     "crates/stickymd-render/src/glyph_cache.rs",
+    "crates/stickymd-render/src/system_fonts.rs",
     "crates/stickymd-render/src/scroll.rs",
     "crates/stickymd-render/src/source/",
 ];
@@ -541,7 +561,9 @@ pub(crate) fn verify_product_classification(root: &Path) -> Result<(), String> {
     // A source of a new crate outside every product root would fall to `GLOBAL` without a rule.
     let unrooted = tracked
         .iter()
-        .filter(|path| is_crate_source(path) && product_domains(path).is_none())
+        .filter(|path| {
+            is_crate_source(path) && product_domains(path).is_none() && !is_unqualified_host(path)
+        })
         .collect::<Vec<_>>();
     if !unrooted.is_empty() {
         return Err(format!(

@@ -230,6 +230,7 @@ fn real_manifests_release_bump_keeps_every_functional_fingerprint() {
         "crates/stickymd-app",
         "crates/stickymd-desktop",
         "apps/stickymd-win",
+        "apps/stickymd-mac",
         "tools/stickymd-smoke",
     ];
     for relative in ["Cargo.toml", "Cargo.lock"]

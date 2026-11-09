@@ -2,10 +2,15 @@ use super::*;
 use std::{
     fs,
     path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 struct Repository(PathBuf);
+
+/// Parallel tests can read the same clock value (macOS counts microseconds); the counter keeps
+/// their directories apart.
+static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);
 
 impl Repository {
     fn new() -> Self {
@@ -13,8 +18,11 @@ impl Repository {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("stickymd-ci-git-{}-{nonce}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-ci-git-{}-{nonce}-{}",
+            std::process::id(),
+            NEXT_REPOSITORY.fetch_add(1, Ordering::Relaxed)
+        ));
         fs::create_dir(&root).unwrap();
         let repo = Self(root);
         repo.git(&["init", "--quiet"]);
@@ -79,6 +87,7 @@ fn ci_git_detects_add_delete_and_both_sides_of_a_rename() {
             crate::headless::Module::App,
             crate::headless::Module::Desktop,
             crate::headless::Module::Windows,
+            crate::headless::Module::Mac,
             crate::headless::Module::Persistence
         ]
     );
