@@ -49,6 +49,8 @@ pub enum HostSignal {
     WatchFailed(String),
     /// See `Host::keeps_pointer_after_leave`.
     PointerLeft,
+    /// A requested quit has run longer than the host can wait for it.
+    QuitDeadlinePassed,
 }
 
 /// The tray. It takes `EventSink`, so it lives here and not with the ports in `stickymd-app`.

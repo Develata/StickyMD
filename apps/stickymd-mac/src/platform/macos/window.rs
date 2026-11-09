@@ -124,8 +124,8 @@ impl PointerProbe {
         Some(Self { window })
     }
 
-    /// Whether the window starts at the top of the work area and the pointer is in the bar above
-    /// it, within the window's width.
+    /// Whether the pointer is in the bar above the window, within the window's width. The window
+    /// may still be moving down to the top of the work area: only a window below it is excluded.
     pub fn in_band_above(&self) -> bool {
         // SAFETY: the retained NSWindow and class methods, on the main thread.
         unsafe {
@@ -139,7 +139,7 @@ impl PointerProbe {
             let pointer: NSPoint = msg_send![objc2::class!(NSEvent), mouseLocation];
             let window_top = frame.origin.y + frame.size.height;
             let work_top = visible.origin.y + visible.size.height;
-            (window_top - work_top).abs() <= 1.0
+            window_top >= work_top - 1.0
                 && pointer.x >= frame.origin.x
                 && pointer.x <= frame.origin.x + frame.size.width
                 && pointer.y >= window_top

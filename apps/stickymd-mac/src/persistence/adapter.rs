@@ -2,7 +2,10 @@
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#macos-storage
 
-use std::path::PathBuf;
+use std::fs;
+use std::io;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 
 use stickymd_app::config::RuntimeConfig;
 use stickymd_app::execution::IoPorts;
@@ -46,18 +49,56 @@ impl NoteStorage for MacNoteStorage {
     }
 }
 
+/// The Note Directory the program started with. The note keeps writing through its descriptor when
+/// the directory moves; what is opened by path has to refuse a new directory at the old place, or
+/// a pasted image and the note that refers to it would end up apart.
+struct NoteDirectoryBinding {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+}
+
+impl NoteDirectoryBinding {
+    fn capture(path: &Path) -> io::Result<Self> {
+        let metadata = fs::symlink_metadata(path)?;
+        Ok(Self {
+            path: path.to_owned(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+
+    fn verify(&self) -> io::Result<()> {
+        let metadata = fs::symlink_metadata(&self.path)?;
+        if metadata.dev() == self.device && metadata.ino() == self.inode {
+            Ok(())
+        } else {
+            Err(io::Error::other(
+                "the note directory was replaced while the program ran",
+            ))
+        }
+    }
+}
+
 /// The managed images of this program directory.
 pub struct MacAssetStore {
+    note: NoteDirectoryBinding,
     images: PathBuf,
     trash: PathBuf,
 }
 
 impl MacAssetStore {
-    pub fn new(paths: &RuntimePaths) -> Self {
-        Self {
+    pub fn open(paths: &RuntimePaths) -> io::Result<Self> {
+        Ok(Self {
+            note: NoteDirectoryBinding::capture(&paths.note_dir)?,
             images: paths.images_dir.clone(),
             trash: paths.trash_dir.clone(),
-        }
+        })
+    }
+
+    fn storage(&self) -> Result<AssetStorage, AssetStorageError> {
+        self.note.verify().map_err(AssetStorageError::Directory)?;
+        AssetStorage::open(&self.images, &self.trash)
     }
 }
 
@@ -67,12 +108,11 @@ impl ManagedAssetStore for MacAssetStore {
         request: AssetPasteRequest,
     ) -> Result<AssetPasteCompletion, AssetPasteFailure> {
         let expected_generation = request.expected_generation;
-        let storage =
-            AssetStorage::open(&self.images, &self.trash).map_err(|error| AssetPasteFailure {
-                expected_generation,
-                error: paste_failure(AssetPasteError::Storage(error)),
-                rollback: Default::default(),
-            })?;
+        let storage = self.storage().map_err(|error| AssetPasteFailure {
+            expected_generation,
+            error: paste_failure(AssetPasteError::Storage(error)),
+            rollback: Default::default(),
+        })?;
         prepare_and_store_paste(&storage, request).map_err(|failure| AssetPasteFailure {
             expected_generation: failure.expected_generation,
             error: paste_failure(failure.error),
@@ -81,7 +121,7 @@ impl ManagedAssetStore for MacAssetStore {
     }
 
     fn sync(&mut self, request: &AssetSyncRequest) -> Result<AssetReconcileReport, StorageFailure> {
-        let storage = AssetStorage::open(&self.images, &self.trash)?;
+        let storage = self.storage()?;
         for effect in &request.effects {
             storage.apply_effect(effect)?;
         }
@@ -107,12 +147,14 @@ impl ExportSink for MacExportSink {
 }
 
 pub struct MacConfigStorage {
+    note: NoteDirectoryBinding,
     target: PathBuf,
     temporary: PathBuf,
 }
 
 impl ConfigStorage for MacConfigStorage {
     fn save(&mut self, config: &RuntimeConfig) -> Result<(), StorageFailure> {
+        self.note.verify().map_err(ConfigStorageError::Directory)?;
         Ok(save_config(&self.target, &self.temporary, config)?)
     }
 }
@@ -126,11 +168,13 @@ pub fn mac_io_ports(
         note: MacNoteStorage {
             files: NoteFiles::open(&paths.note_dir)?,
         },
-        assets: MacAssetStore::new(paths),
+        assets: MacAssetStore::open(paths).map_err(AssetStorageError::Directory)?,
         export: MacExportSink {
             note_dir: paths.note_dir.clone(),
         },
         config: MacConfigStorage {
+            note: NoteDirectoryBinding::capture(&paths.note_dir)
+                .map_err(AssetStorageError::Directory)?,
             target: paths.config_file.clone(),
             temporary: paths.config_tmp.clone(),
         },
@@ -204,6 +248,24 @@ impl From<NoteStorageError> for StorageFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_replaced_note_directory_is_refused_and_left_alone() {
+        let root = crate::test_support::unique_temp_path("adapter-replaced");
+        let note = root.join("note");
+        fs::create_dir_all(&note).unwrap();
+        let mut config = MacConfigStorage {
+            note: NoteDirectoryBinding::capture(&note).unwrap(),
+            target: note.join("config.toml"),
+            temporary: note.join("config.toml.tmp"),
+        };
+        config.save(&RuntimeConfig::default()).unwrap();
+        fs::rename(&note, root.join("moved")).unwrap();
+        fs::create_dir(&note).unwrap();
+        config.save(&RuntimeConfig::default()).unwrap_err();
+        assert!(!note.join("config.toml").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn every_note_error_gets_its_class_and_keeps_its_message() {

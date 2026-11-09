@@ -115,6 +115,10 @@ public.file-url（图片文件列表）→ public.png → public.jpeg → org.we
 本章“校验与受约束 rename/delete 绑定同一句柄”在 POSIX 上做不到。macOS adapter 按“不能证明时降级”长期执行：不把未引用的图片移入 `.trash`，不做物理删除，
 `sync` 报 `skipped_untrusted` 与 `physical_delete_deferred`。只保留 `.trash` → `images/` 的恢复，移动用 `RENAME_EXCL` 并在移动后校验。未引用的图片留在 `images/`，由用户手动清理。
 
+本次调用用 `O_EXCL` 新建的私有临时文件（资产发布、导出 staging）失败时可以清理：先比对身份再按名删除，已被占用的名称绝不清理。比对与删除之间的残余窗口接受。
+
+TIFF 转 PNG 前按原编码长度与头部声明的尺寸执行上述限额，不先解码。
+
 ### 编码规则
 
 - PNG/JPEG/WebP：保留原始 bytes。

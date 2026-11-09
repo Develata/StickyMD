@@ -171,7 +171,8 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
         publish_prepared(
             &request.target,
             markdown_temporary
-                .as_deref()
+                .as_ref()
+                .map(|owned: &OwnedStagingFile| owned.path.as_path())
                 .ok_or(ExportError::InvalidTargetName)?,
         )?;
         Ok(ExportCompletion {
@@ -193,7 +194,7 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
     if result.is_err()
         && let Some(markdown_temporary) = &markdown_temporary
     {
-        let _ = fs::remove_file(markdown_temporary);
+        let _ = remove_owned_staging_file(&markdown_temporary.path, markdown_temporary.observation);
     }
     result
 }
@@ -250,7 +251,7 @@ fn prepare_unique_export_temporary(
     parent: &Path,
     target: &Path,
     bytes: &[u8],
-) -> Result<PathBuf, ExportError> {
+) -> Result<OwnedStagingFile, ExportError> {
     for _ in 0..128 {
         let sequence = EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let temporary = parent.join(format!(
@@ -258,7 +259,12 @@ fn prepare_unique_export_temporary(
             std::process::id()
         ));
         match prepare_temporary_exclusive(target, &temporary, bytes) {
-            Ok(()) => return Ok(temporary),
+            Ok(observation) => {
+                return Ok(OwnedStagingFile {
+                    path: temporary,
+                    observation,
+                });
+            }
             Err(AtomicPublishError::TempCreate(error))
                 if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(ExportError::MarkdownPublish(error)),

@@ -256,20 +256,39 @@ impl AssetStorage {
         }
         let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let temporary = format!(".stickymd-asset-{}-{sequence}.tmp", std::process::id());
+        self.publish_through(&temporary, target, bytes)
+    }
+
+    /// A name already taken is not ours: only a file this call created is cleaned up, and only
+    /// while the name still leads to it.
+    fn publish_through(
+        &self,
+        temporary: &str,
+        target: &str,
+        bytes: &[u8],
+    ) -> Result<(), AssetStorageError> {
+        let mut file = self
+            .images
+            .create_new(temporary)
+            .map_err(AssetStorageError::Io)?;
+        let created = FileObservation::of(&file).map_err(AssetStorageError::Io)?;
         let result = (|| {
-            let mut file = self
-                .images
-                .create_new(&temporary)
-                .map_err(AssetStorageError::Io)?;
             file.write_all(bytes).map_err(AssetStorageError::Io)?;
             full_sync(&file).map_err(AssetStorageError::Io)?;
             self.images
-                .rename_no_replace(&temporary, target)
+                .rename_no_replace(temporary, target)
                 .map_err(AssetStorageError::Io)?;
             self.images.sync().map_err(AssetStorageError::Io)
         })();
         if result.is_err() {
-            let _ = self.images.remove_file(&temporary);
+            let still_ours = self
+                .images
+                .open_read(temporary)
+                .and_then(|file| FileObservation::of(&file))
+                .is_ok_and(|now| now.same_file_as(&created));
+            if still_ours {
+                let _ = self.images.remove_file(temporary);
+            }
         }
         result
     }
@@ -312,6 +331,31 @@ mod tests {
 
     fn image(color: u8) -> PreparedImage {
         prepare_rgba_image(2, 2, vec![color; 16]).unwrap()
+    }
+
+    #[test]
+    fn a_temporary_name_already_taken_is_left_alone() {
+        let (root, storage) = fixture("assets-taken-temporary");
+        let taken = root.join("images/.stickymd-asset-taken.tmp");
+        fs::write(&taken, b"user").unwrap();
+        storage
+            .publish_through(".stickymd-asset-taken.tmp", "target.png", b"new")
+            .unwrap_err();
+        assert_eq!(fs::read(&taken).unwrap(), b"user");
+        assert!(!root.join("images/target.png").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_publish_removes_its_own_temporary_and_nothing_else() {
+        let (root, storage) = fixture("assets-own-temporary");
+        fs::write(root.join("images/target.png"), b"old").unwrap();
+        storage
+            .publish_through(".stickymd-asset-own.tmp", "target.png", b"new")
+            .unwrap_err();
+        assert!(!root.join("images/.stickymd-asset-own.tmp").exists());
+        assert_eq!(fs::read(root.join("images/target.png")).unwrap(), b"old");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

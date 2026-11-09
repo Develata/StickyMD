@@ -68,6 +68,8 @@ pub fn save_config(
 
 #[derive(Debug, Error)]
 pub enum ConfigStorageError {
+    #[error("the note directory is unavailable: {0}")]
+    Directory(std::io::Error),
     #[error("cannot serialize config.toml: {0}")]
     Serialize(ConfigSerializeError),
     #[error("cannot atomically publish config.toml: {0}")]

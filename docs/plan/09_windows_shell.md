@@ -227,7 +227,7 @@ USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-de
 | 整窗透明度 | `NSWindow.alphaValue` |
 | 置顶 | winit `AlwaysOnTop`（floating level） |
 | Top 收起 | 窗口保持原尺寸，上移到**屏幕顶边**外露出 2 DIP，层级在菜单栏之上（`mainMenu + 3`）；展开动画结束后降回。其余两边与 Windows 相同 |
-| Top 悬停 | 展开窗口在菜单栏下方，与感应条隔着菜单栏高度。悬停展开期间，窗口上方到屏幕顶边的区域算作窗口内，用 `NSEvent` 全局监听判断，不轮询 |
+| Top 悬停 | 展开窗口在菜单栏下方，与感应条隔着菜单栏高度。悬停展开期间（含展开动画），窗口上方到屏幕顶边的区域算作窗口内，用 `NSEvent` 全局监听判断，不轮询 |
 | 托盘 | `tray-icon` 在事件循环启动后（`NewEvents(Init)`）于主线程创建 |
 | 唤醒 | 第二实例经 socket；再次打开 bundle 经 reopen Apple Event（winit 不上报，宿主注册）；`focus_window` |
 | 单实例 | 目录 fd 的 `flock`（`05` 程序目录身份） |
@@ -235,7 +235,7 @@ USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-de
 | 文件剪贴板 | `NSPasteboard`（`08` macOS 节） |
 | 保存对话框 | `NSSavePanel.runModal`，主线程阻塞 |
 | 链接打开 | `NSWorkspace` |
-| 系统终止 | 宿主给 winit 的 application delegate 补 `applicationShouldTerminate:`，返回 `NSTerminateLater`，走共享退出屏障：成功回 `YES`，保存失败回 `NO`。有模态窗口时先 `abortModal`（导出按取消处理）；屏障超时回 `NO` |
+| 系统终止 | 宿主给 winit 的 application delegate 补 `applicationShouldTerminate:`，返回 `NSTerminateLater`，走共享退出屏障：成功回 `YES`，保存失败回 `NO`。有模态窗口时 `abortModal`（导出按取消处理）并回 `NSTerminateCancel`，退出屏障在对话框退栈后运行，这次注销被中断一次；屏障超时取消共享退出状态并回 `NO` |
 | Cmd+Q | 窗口聚焦时走同一退出屏障（图标不可见时托盘这条路径不存在） |
 | 系统主题 | winit `ThemeChanged` |
 

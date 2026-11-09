@@ -401,6 +401,24 @@ impl WindowShellCoordinator {
         }
     }
 
+    /// The editor goes back to the user, and a barrier that completes later finds nothing waiting
+    /// for it. Once ready to exit there is nothing left to take back.
+    pub(super) fn abandon_quit(&mut self, effects: &mut Vec<WindowEffect>) {
+        let LifecycleState::Quitting(stage) = self.state.lifecycle else {
+            return;
+        };
+        let barrier = match stage {
+            QuitStage::AwaitingPaste => QuitBarrier::Paste,
+            QuitStage::AwaitingNoteSave => QuitBarrier::NoteSave,
+            QuitStage::AwaitingAssetGc => QuitBarrier::AssetGc,
+            QuitStage::AwaitingConfig => QuitBarrier::Config,
+            QuitStage::ReadyToExit => return,
+        };
+        self.state.lifecycle = LifecycleState::Running;
+        self.reproject_input(effects);
+        effects.push(WindowEffect::QuitCancelled(barrier));
+    }
+
     pub(super) fn complete_quit_barrier(
         &mut self,
         barrier: QuitBarrier,

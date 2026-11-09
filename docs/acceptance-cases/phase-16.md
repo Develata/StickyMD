@@ -25,6 +25,9 @@
 | P16-S10 | 受管图片：未引用不移动不删除，`sync` 报 deferred | Automated | `assets::storage::tests` | AUTOMATED PASS |
 | P16-S11 | 监视：外部修改产生 hint；`note/` 被移走转 watcher failure | Automated | `platform::macos::file_watch::tests` | AUTOMATED PASS |
 | P16-S12 | 新建笔记用 LF | Automated | `startup::bootstrap::tests` | AUTOMATED PASS |
+| P16-S13 | 临时文件另有名称（硬链接）时拒绝，正文不被清空 | Automated | `platform::macos::file::tests` | AUTOMATED PASS |
+| P16-S14 | 运行中 `note/` 被换成另一个目录：资产与配置失败，不写入新目录 | Automated | `persistence::adapter::tests` | AUTOMATED PASS |
+| P16-S15 | 资产临时名已被占用时不删除；失败只清理本次创建的文件 | Automated | `assets::storage::tests` | AUTOMATED PASS |
 
 ## M2 窗口
 
@@ -59,6 +62,7 @@
 | P16-C01 | 文件 URL + PNG + 文本：读文件 | Automated | pasteboard 测试 | AUTOMATED PASS |
 | P16-C02 | PNG + TIFF + 文本：读原编码 PNG | Automated | pasteboard 测试 | AUTOMATED PASS |
 | P16-C03 | 只有 TIFF + 文本：转 PNG，像素正确 | Automated | pasteboard 测试 | AUTOMATED PASS |
+| P16-C04 | TIFF 超过长度或尺寸限额时在解码前拒绝 | Automated | pasteboard 测试 | AUTOMATED PASS |
 | P16-E01 | 保存面板：取消、确定、导出内容正确 | Manual | 人工 | NOT TESTED |
 | P16-F01 | 中文显示 PingFang SC，代码 Menlo | Manual | 人工 | NOT TESTED |
 

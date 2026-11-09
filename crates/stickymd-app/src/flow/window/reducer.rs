@@ -134,6 +134,7 @@ impl WindowShellCoordinator {
                     effects.push(WindowEffect::WakeAt(deadline));
                 }
             }
+            WindowIntent::AbandonQuit => self.abandon_quit(&mut effects),
             WindowIntent::GuardsChanged { guards, now_ms } => {
                 self.update_guards(guards, now_ms, &mut effects);
             }
@@ -1100,6 +1101,30 @@ mod phase8_window_tests {
             coordinator.state().lifecycle(),
             LifecycleState::Quitting(QuitStage::ReadyToExit)
         );
+    }
+
+    #[test]
+    fn a_quit_the_host_stopped_waiting_for_gives_the_editor_back() {
+        let mut coordinator = coordinator(StableVisibility::Floating);
+        coordinator.dispatch(WindowIntent::TrayQuitRequested {
+            guards: WindowGuardSnapshot {
+                note_save_required: true,
+                ..Default::default()
+            },
+        });
+        let effects = coordinator.dispatch(WindowIntent::AbandonQuit);
+        assert!(effects.contains(&WindowEffect::SetEditorInputEnabled(true)));
+        assert!(effects.contains(&WindowEffect::QuitCancelled(QuitBarrier::NoteSave)));
+        assert_eq!(coordinator.state().lifecycle(), LifecycleState::Running);
+
+        // The save finishing afterwards must not end a program the user has gone back to.
+        let late = coordinator.dispatch(WindowIntent::QuitBarrierCompleted {
+            barrier: QuitBarrier::NoteSave,
+            succeeded: true,
+            guards: WindowGuardSnapshot::default(),
+        });
+        assert!(late.is_empty());
+        assert!(coordinator.dispatch(WindowIntent::AbandonQuit).is_empty());
     }
 
     #[test]

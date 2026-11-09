@@ -72,8 +72,12 @@ fn main() -> std::process::ExitCode {
         Ok(outcome) => outcome,
         Err(error) => fatal_startup(&format!("StickyMD 无法安全启动：{error}")),
     };
+    let mut startup_assets = match MacAssetStore::open(&paths) {
+        Ok(store) => store,
+        Err(error) => fatal_startup(&format!("无法打开便签目录：{error}")),
+    };
     if let Some(warning) = reconcile_at_startup(
-        &mut MacAssetStore::new(&paths),
+        &mut startup_assets,
         &outcome.document,
         outcome.recovery.is_some(),
     ) {

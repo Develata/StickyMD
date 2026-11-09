@@ -9,7 +9,7 @@ use std::path::Path;
 
 use thiserror::Error;
 
-use super::file::{DirectoryHandle, full_sync, rename_path_no_replace};
+use super::file::{DirectoryHandle, FileObservation, full_sync, rename_path_no_replace};
 
 #[derive(Debug, Error)]
 pub enum AtomicPublishError {
@@ -84,18 +84,21 @@ pub fn atomic_publish(
     publish(&site)
 }
 
-/// Fails with `TempCreate(AlreadyExists)` when the name is taken.
+/// Fails with `TempCreate(AlreadyExists)` when the name is taken. The result identifies the file
+/// for whoever has to clean it up.
 pub fn prepare_temporary_exclusive(
     target: &Path,
     temporary: &Path,
     bytes: &[u8],
-) -> Result<(), AtomicPublishError> {
+) -> Result<FileObservation, AtomicPublishError> {
     let site = site(target, temporary)?;
     let file = site
         .directory
         .create_new(&site.temporary)
         .map_err(AtomicPublishError::TempCreate)?;
-    write_durably(file, bytes)
+    let created = FileObservation::of(&file).map_err(AtomicPublishError::TempCreate)?;
+    write_durably(file, bytes)?;
+    Ok(created)
 }
 
 pub fn publish_prepared(target: &Path, temporary: &Path) -> Result<(), AtomicPublishError> {

@@ -59,11 +59,11 @@ Windows 存储端口当前没有 `Unsupported` 路径。
 
 USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-decision.md)）。下列手段是 macOS adapter 的合同，语义规则仍是本章其余各节。
 
-宿主在启动时持有 Note Directory 的 fd，全部操作走 `*at` 调用；目录在运行中被移动时操作仍落在原目录。每个 `NoteStorage` 调用是宿主内的一个完整事务。
+宿主在启动时持有 Note Directory 的 fd，正文操作走 `*at` 调用；目录在运行中被移动时正文仍落在原目录。资产与配置每次核对启动时的目录身份 `(dev, ino)`，不符时失败，不绑定到同路径的新目录。每个 `NoteStorage` 调用是宿主内的一个完整事务。
 
 | 操作 | macOS adapter | 与 Windows 的差异 |
 | --- | --- | --- |
-| 写 temp | `openat(O_CREAT \| O_TRUNC \| O_NOFOLLOW \| O_NONBLOCK)`，`fstat` 要求普通文件，写入后 `F_FULLFSYNC` | 对等 |
+| 写 temp | `openat(O_CREAT \| O_NOFOLLOW \| O_NONBLOCK)`，`fstat` 要求普通文件且 `st_nlink` 为 1，通过后才截断，写入后 `F_FULLFSYNC` | 对等 |
 | guard | `O_NOFOLLOW` 打开 target，读取并比对指纹 | 对等 |
 | 发布（已存在） | `renameat` 替换，然后对目录 fd `F_FULLFSYNC`。`ForceOverwrite` 跳过 guard | 检查与替换之间的 TOCTOU 与 Windows 相同 |
 | 发布（首次） | `renameatx_np(RENAME_EXCL)`，`EEXIST` 转 Conflict | 对等 |

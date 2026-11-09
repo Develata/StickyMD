@@ -157,8 +157,15 @@ impl DirectoryHandle {
         self.open_at(name, libc::O_RDONLY)
     }
 
+    /// `O_TRUNC` would empty every other name of the file, the note itself if someone linked it
+    /// here, so the check comes before anything is lost.
     pub fn create_or_truncate(&self, name: &str) -> io::Result<File> {
-        self.open_at(name, libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC)
+        let file = self.open_at(name, libc::O_WRONLY | libc::O_CREAT)?;
+        if file.metadata()?.nlink() != 1 {
+            return Err(io::Error::other("the file has another name"));
+        }
+        file.set_len(0)?;
+        Ok(file)
     }
 
     /// Fails with `AlreadyExists` if anything is at `name`.
@@ -278,6 +285,26 @@ mod tests {
                 .file_type()
                 .is_symlink()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A hard link at the temporary's name is the note itself: emptying it would lose the text.
+    #[test]
+    fn a_temporary_with_another_name_is_refused_and_keeps_its_bytes() {
+        let (root, handle) = directory("file-hard-link");
+        fs::write(root.join("note.md"), b"note").unwrap();
+        fs::hard_link(root.join("note.md"), root.join("note.md.tmp")).unwrap();
+        handle.create_or_truncate("note.md.tmp").unwrap_err();
+        assert_eq!(fs::read(root.join("note.md")).unwrap(), b"note");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_stale_temporary_is_emptied() {
+        let (root, handle) = directory("file-stale-temporary");
+        fs::write(root.join("note.md.tmp"), b"old").unwrap();
+        let file = handle.create_or_truncate("note.md.tmp").unwrap();
+        assert_eq!(file.metadata().unwrap().len(), 0);
         fs::remove_dir_all(root).unwrap();
     }
 

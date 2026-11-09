@@ -11,6 +11,8 @@ use objc2_foundation::{NSArray, NSString};
 use stickymd_app::ports::TrayCommand;
 use stickymd_desktop::host::{DesktopEvent, EventSink, HostSignal};
 
+/// `NSTerminateCancel`.
+const TERMINATE_CANCEL: usize = 0;
 /// `NSTerminateLater`.
 const TERMINATE_LATER: usize = 2;
 /// The system gives a logout about two minutes; answer before it stops waiting.
@@ -59,6 +61,11 @@ define_class!(
         #[unsafe(method(screenParametersChanged:))]
         fn screen_parameters_changed(&self, _notification: *mut AnyObject) {
             post(HostSignal::DisplayTopologyChanged);
+        }
+
+        #[unsafe(method(quitDeadlinePassed:))]
+        fn quit_deadline_passed(&self, _ignored: *mut AnyObject) {
+            post(HostSignal::QuitDeadlinePassed);
         }
 
         #[unsafe(method(answerYes:))]
@@ -134,7 +141,7 @@ fn cancel_deadline() {
         msg_send![
             class!(NSObject),
             cancelPreviousPerformRequestsWithTarget: &*bridge,
-            selector: sel!(answerNo:),
+            selector: sel!(quitDeadlinePassed:),
             object: nil
         ]
     };
@@ -171,19 +178,21 @@ extern "C-unwind" fn should_terminate(
     _sender: *mut AnyObject,
 ) -> usize {
     let app = shared_application();
-    // A modal dialog would keep the quit from reaching the shell: the event handler cannot run
-    // while it is on the stack. Cancelling it is what the user asked for by logging out.
     // SAFETY: the shared application on the main thread.
-    unsafe {
-        let modal: *mut AnyObject = msg_send![app, modalWindow];
-        if !modal.is_null() {
-            let _: () = msg_send![app, abortModal];
-        }
+    let modal: *mut AnyObject = unsafe { msg_send![app, modalWindow] };
+    if !modal.is_null() {
+        // The dialog sits on the stack inside the event handler. Answering "later" would start a
+        // nested loop above it, so it could never unwind and the quit could never reach the shell.
+        // The request ends here instead: the quit runs once the dialog has returned.
+        // SAFETY: as above, with a modal session running.
+        let _: () = unsafe { msg_send![app, abortModal] };
+        post(HostSignal::Tray(TrayCommand::Quit));
+        return TERMINATE_CANCEL;
     }
     if !TERMINATION_PENDING.with(Cell::get) {
         TERMINATION_PENDING.with(|pending| pending.set(true));
         post(HostSignal::Tray(TrayCommand::Quit));
-        perform_later(sel!(answerNo:), QUIT_ANSWER_DEADLINE_SECONDS);
+        perform_later(sel!(quitDeadlinePassed:), QUIT_ANSWER_DEADLINE_SECONDS);
     }
     TERMINATE_LATER
 }

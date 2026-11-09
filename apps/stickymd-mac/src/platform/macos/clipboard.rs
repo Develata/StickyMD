@@ -2,14 +2,15 @@
 //!
 //! plan_ref: docs/plan/08_assets_and_export.md#macos-clipboard-and-assets
 
+use std::ffi::c_void;
 use std::path::PathBuf;
 
 use objc2::runtime::{AnyClass, AnyObject, Bool};
 use objc2::{class, msg_send};
 use objc2_foundation::NSString;
 use stickymd_app::flow::{ClipboardError, ClipboardPaste, ClipboardPort};
+use stickymd_render::image::{MAX_ENCODED_IMAGE_BYTES, MAX_IMAGE_PIXELS, MAX_IMAGE_SIDE};
 
-const MAX_CLIPBOARD_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 const TEXT_TYPE: &str = "public.utf8-plain-text";
 /// In the order an image is taken; each is the original encoding.
 const ENCODED_IMAGE_TYPES: [&str; 3] = ["public.png", "public.jpeg", "org.webmproject.webp"];
@@ -20,6 +21,23 @@ const PNG_FILE_TYPE: usize = 4;
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {
     static NSPasteboardURLReadingFileURLsOnlyKey: *const AnyObject;
+}
+
+#[link(name = "ImageIO", kind = "framework")]
+unsafe extern "C" {
+    static kCGImagePropertyPixelWidth: *const AnyObject;
+    static kCGImagePropertyPixelHeight: *const AnyObject;
+    fn CGImageSourceCreateWithData(data: *const c_void, options: *const c_void) -> *const c_void;
+    fn CGImageSourceCopyPropertiesAtIndex(
+        source: *const c_void,
+        index: usize,
+        options: *const c_void,
+    ) -> *const c_void;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+unsafe extern "C" {
+    fn CFRelease(object: *const c_void);
 }
 
 #[derive(Default)]
@@ -46,7 +64,7 @@ fn bytes_of(data: *mut AnyObject) -> Result<Vec<u8>, ClipboardError> {
     // SAFETY: `data` is a live NSData; `bytes` is valid for `length` while it lives.
     unsafe {
         let length: usize = msg_send![data, length];
-        if length > MAX_CLIPBOARD_IMAGE_BYTES {
+        if length > MAX_ENCODED_IMAGE_BYTES {
             return Err(unavailable("clipboard image exceeds the 64 MiB bound"));
         }
         let bytes: *const std::ffi::c_void = msg_send![data, bytes];
@@ -93,9 +111,51 @@ fn file_paths(pasteboard: *mut AnyObject) -> Vec<PathBuf> {
     }
 }
 
+/// The pixel size an image declares, read from its header without decoding it.
+fn declared_size(image: *mut AnyObject) -> Option<(u64, u64)> {
+    // SAFETY: NSData and NSDictionary are toll-free bridged to the Core Foundation types ImageIO
+    // takes and returns. Each object made here is released once, after its last use.
+    unsafe {
+        let source = CGImageSourceCreateWithData(image.cast_const().cast(), std::ptr::null());
+        if source.is_null() {
+            return None;
+        }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, std::ptr::null());
+        CFRelease(source);
+        if properties.is_null() {
+            return None;
+        }
+        let dictionary = properties.cast_mut().cast::<AnyObject>();
+        let width: *mut AnyObject = msg_send![dictionary, objectForKey: kCGImagePropertyPixelWidth];
+        let height: *mut AnyObject =
+            msg_send![dictionary, objectForKey: kCGImagePropertyPixelHeight];
+        let size = (!width.is_null() && !height.is_null()).then(|| {
+            let width: u64 = msg_send![width, unsignedLongLongValue];
+            let height: u64 = msg_send![height, unsignedLongLongValue];
+            (width, height)
+        });
+        CFRelease(properties);
+        size
+    }
+}
+
+fn within_image_limits((width, height): (u64, u64)) -> bool {
+    let side = u64::from(MAX_IMAGE_SIDE);
+    width > 0
+        && height > 0
+        && width <= side
+        && height <= side
+        && width.saturating_mul(height) <= MAX_IMAGE_PIXELS
+}
+
 /// A TIFF has no decoder in the product, and no original encoding worth keeping: screenshots
 /// and bitmaps arrive this way.
 fn tiff_to_png(tiff: *mut AnyObject) -> Result<Vec<u8>, ClipboardError> {
+    // SAFETY: `tiff` is a live NSData.
+    let length: usize = unsafe { msg_send![tiff, length] };
+    if length > MAX_ENCODED_IMAGE_BYTES || !declared_size(tiff).is_some_and(within_image_limits) {
+        return Err(unavailable("the clipboard image is over the size limits"));
+    }
     // SAFETY: AppKit calls with valid objects; the returned objects are autoreleased and used
     // before this function returns.
     unsafe {
@@ -269,14 +329,18 @@ mod tests {
 
     /// A 2x1 uncompressed RGB TIFF: one red pixel, one blue pixel.
     fn small_tiff() -> Vec<u8> {
+        tiff_declaring(2, 1)
+    }
+
+    fn tiff_declaring(width: u32, height: u32) -> Vec<u8> {
         const ENTRIES: u16 = 9;
         let pixels_at = 8 + 2 + u32::from(ENTRIES) * 12 + 4 + 6;
         let bits_at = 8 + 2 + u32::from(ENTRIES) * 12 + 4;
         let mut tiff = vec![b'I', b'I', 42, 0, 8, 0, 0, 0];
         tiff.extend_from_slice(&ENTRIES.to_le_bytes());
         let entries: [(u16, u16, u32, u32); ENTRIES as usize] = [
-            (256, 4, 1, 2),
-            (257, 4, 1, 1),
+            (256, 4, 1, width),
+            (257, 4, 1, height),
             (258, 3, 3, bits_at),
             (259, 3, 1, 1),
             (262, 3, 1, 2),
@@ -297,6 +361,25 @@ mod tests {
         }
         tiff.extend_from_slice(&[255, 0, 0, 0, 0, 255]);
         tiff
+    }
+
+    #[test]
+    fn the_limits_apply_to_each_side_and_to_the_area() {
+        assert!(within_image_limits((16_384, 1)));
+        assert!(!within_image_limits((16_385, 1)));
+        assert!(!within_image_limits((1, 16_385)));
+        assert!(within_image_limits((8_000, 5_000)));
+        assert!(!within_image_limits((8_001, 5_000)));
+        assert!(!within_image_limits((0, 5)));
+    }
+
+    /// P16-C04: the header is enough; the pixels it promises are not even there.
+    #[test]
+    fn a_tiff_declaring_too_many_pixels_is_refused_before_decoding() {
+        let pasteboard = PrivatePasteboard::new();
+        pasteboard.put_data(TIFF_TYPE, &tiff_declaring(10_000, 10_000));
+        pasteboard.put_string(TEXT_TYPE, "ignored");
+        assert!(paste_from(pasteboard.0).is_err());
     }
 
     /// P16-C01.

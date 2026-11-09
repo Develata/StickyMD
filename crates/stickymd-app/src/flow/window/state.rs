@@ -245,6 +245,8 @@ pub enum WindowIntent {
         now_ms: u64,
         guards: WindowGuardSnapshot,
     },
+    /// The host stopped waiting for a quit that has not finished.
+    AbandonQuit,
     TrayQuitRequested {
         guards: WindowGuardSnapshot,
     },
@@ -416,9 +418,9 @@ impl WindowShellState {
         self.visibility
     }
 
-    /// The window is out only because the pointer reached its strip.
-    pub fn hover_revealed(&self) -> bool {
-        self.dock.hover_revealed
+    /// The window is out only because the pointer reached its strip on `edge`.
+    pub fn hover_revealed_at(&self, edge: DockEdge) -> bool {
+        self.dock.hover_revealed && self.dock.edge == Some(edge)
     }
 
     #[cfg(test)]

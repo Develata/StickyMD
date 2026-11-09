@@ -81,6 +81,9 @@ impl<H: Host> DesktopShell<H> {
             }
             HostSignal::Tray(command) => self.handle_tray_command(command),
             HostSignal::DisplayTopologyChanged => self.recover_display_topology(),
+            HostSignal::QuitDeadlinePassed => self.dispatch_window_intent(
+                stickymd_app::flow::window::state::WindowIntent::AbandonQuit,
+            ),
             HostSignal::PointerLeft => {
                 if !self.pointer_inside_window {
                     self.dispatch_window_intent(
