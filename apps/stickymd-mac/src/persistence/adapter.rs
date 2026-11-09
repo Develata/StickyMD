@@ -18,7 +18,7 @@ use crate::assets::{AssetPasteError, AssetStorage, AssetStorageError, prepare_an
 use crate::config::{ConfigStorageError, save_config_in};
 use crate::export::{ExportError, export_snapshot};
 use crate::paths::RuntimePaths;
-use crate::platform::macos::file::SharedDirectory;
+use crate::platform::macos::file::DirectoryHandle;
 
 use super::{NoteFiles, NoteStorageError};
 
@@ -50,7 +50,7 @@ impl NoteStorage for MacNoteStorage {
 
 /// The managed images of this program directory.
 pub struct MacAssetStore {
-    directory: SharedDirectory,
+    directory: DirectoryHandle,
     images: PathBuf,
     trash: PathBuf,
 }
@@ -58,12 +58,12 @@ pub struct MacAssetStore {
 impl MacAssetStore {
     pub fn open(paths: &RuntimePaths) -> io::Result<Self> {
         Ok(Self::in_directory(
-            SharedDirectory::open(&paths.note_dir)?,
+            DirectoryHandle::open(&paths.note_dir)?,
             paths,
         ))
     }
 
-    fn in_directory(directory: SharedDirectory, paths: &RuntimePaths) -> Self {
+    fn in_directory(directory: DirectoryHandle, paths: &RuntimePaths) -> Self {
         Self {
             directory,
             images: paths.images_dir.clone(),
@@ -72,8 +72,7 @@ impl MacAssetStore {
     }
 
     fn storage(&self) -> Result<AssetStorage, AssetStorageError> {
-        self.directory
-            .with(|note| AssetStorage::open_in(note, &self.images, &self.trash))
+        AssetStorage::open_in(&self.directory, &self.images, &self.trash)
     }
 }
 
@@ -122,14 +121,12 @@ impl ExportSink for MacExportSink {
 }
 
 pub struct MacConfigStorage {
-    directory: SharedDirectory,
+    directory: DirectoryHandle,
 }
 
 impl ConfigStorage for MacConfigStorage {
     fn save(&mut self, config: &RuntimeConfig) -> Result<(), StorageFailure> {
-        Ok(self
-            .directory
-            .with(|directory| save_config_in(directory, config))?)
+        Ok(save_config_in(&self.directory, config)?)
     }
 }
 
@@ -138,15 +135,24 @@ pub fn mac_io_ports(
     paths: &RuntimePaths,
 ) -> Result<IoPorts<MacNoteStorage, MacAssetStore, MacExportSink, MacConfigStorage>, StorageFailure>
 {
-    let mut files = NoteFiles::open(&paths.note_dir)?;
-    let directory = files.share().map_err(AssetStorageError::Directory)?;
+    let files = NoteFiles::open(&paths.note_dir)?;
+    let directory = || {
+        files
+            .directory()
+            .try_clone()
+            .map_err(AssetStorageError::Directory)
+    };
+    let assets = MacAssetStore::in_directory(directory()?, paths);
+    let config = MacConfigStorage {
+        directory: directory()?,
+    };
     Ok(IoPorts {
         note: MacNoteStorage { files },
-        assets: MacAssetStore::in_directory(directory.clone(), paths),
+        assets,
         export: MacExportSink {
             note_dir: paths.note_dir.clone(),
         },
-        config: MacConfigStorage { directory },
+        config,
     })
 }
 
@@ -225,7 +231,7 @@ mod tests {
         let note = root.join("note");
         fs::create_dir_all(&note).unwrap();
         let mut config = MacConfigStorage {
-            directory: SharedDirectory::open(&note).unwrap(),
+            directory: DirectoryHandle::open(&note).unwrap(),
         };
         fs::rename(&note, root.join("moved")).unwrap();
         fs::create_dir(&note).unwrap();

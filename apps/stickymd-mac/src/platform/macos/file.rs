@@ -9,7 +9,6 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
 
 fn c_string(value: &OsStr) -> io::Result<CString> {
     CString::new(value.as_bytes())
@@ -120,30 +119,6 @@ impl FileObservation {
 
     pub const fn same_file_as(&self, other: &Self) -> bool {
         self.device == other.device && self.inode == other.inode
-    }
-}
-
-/// The Note Directory, as one descriptor every storage port goes through, so that the note, its
-/// images and the configuration cannot end up in different directories.
-#[derive(Clone, Debug)]
-pub struct SharedDirectory(Arc<Mutex<DirectoryHandle>>);
-
-impl SharedDirectory {
-    pub fn open(path: &Path) -> io::Result<Self> {
-        Ok(Self::new(DirectoryHandle::open(path)?))
-    }
-
-    pub fn new(directory: DirectoryHandle) -> Self {
-        Self(Arc::new(Mutex::new(directory)))
-    }
-
-    pub fn with<R>(&self, use_directory: impl FnOnce(&DirectoryHandle) -> R) -> R {
-        use_directory(&self.0.lock().unwrap_or_else(PoisonError::into_inner))
-    }
-
-    /// The directory was deleted and made again: everyone moves to the new one together.
-    pub fn replace(&self, directory: DirectoryHandle) {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = directory;
     }
 }
 

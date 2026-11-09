@@ -14,7 +14,7 @@ use stickymd_core::{
 };
 use thiserror::Error;
 
-use crate::platform::macos::file::{DirectoryHandle, FileObservation, SharedDirectory, full_sync};
+use crate::platform::macos::file::{DirectoryHandle, FileObservation, full_sync};
 
 pub const MAX_NOTE_LOAD: u64 = 16 * 1024 * 1024;
 pub const NOTE_NAME: &str = "note.md";
@@ -57,8 +57,6 @@ pub enum NoteStorageError {
 pub struct NoteFiles {
     path: PathBuf,
     directory: DirectoryHandle,
-    /// The other storage ports, which follow this directory when it has to be made again.
-    shared: Option<SharedDirectory>,
     /// A publish whose directory flush failed. The disk holds these bytes while the document
     /// still counts as unsaved, so the next guard has to accept them as its own.
     unconfirmed_publish: Option<DiskFingerprint>,
@@ -83,38 +81,33 @@ impl NoteFiles {
         Ok(Self {
             path: path.to_owned(),
             directory: open_directory(path)?,
-            shared: None,
             unconfirmed_publish: None,
         })
     }
 
     /// The directory, for the storage ports that have to stay in it with the note.
-    pub fn share(&mut self) -> io::Result<SharedDirectory> {
-        let shared = SharedDirectory::new(self.directory.try_clone()?);
-        self.shared = Some(shared.clone());
-        Ok(shared)
+    pub fn directory(&self) -> &DirectoryHandle {
+        &self.directory
     }
 
     /// The handle stays valid when the directory moves, but a deleted directory takes no new
     /// entries: it is recreated at its path, as a file or link there is refused.
+    ///
+    /// Only the note follows: its writes are guarded, and what it finds here cannot be proved to
+    /// be the directory just made. The other storage ports write without a guard, so they keep
+    /// their descriptor of the deleted directory and fail until the next start.
     fn recreate_directory(&mut self) -> Result<(), NoteStorageError> {
-        let failed = |source| NoteStorageError::CreateNoteDirectory {
-            path: self.path.clone(),
-            source,
-        };
-        let made_here = match std::fs::create_dir(&self.path) {
-            Ok(()) => true,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
-            Err(source) => return Err(failed(source)),
-        };
-        let directory = open_directory(&self.path)?;
-        // A directory someone else put here is only ever compared against by the note's guard.
-        // The other ports write without one, so they follow only a directory made by this call
-        // and otherwise keep failing on the deleted one.
-        if made_here && let Some(shared) = &self.shared {
-            shared.replace(directory.try_clone().map_err(failed)?);
+        match std::fs::create_dir(&self.path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(source) => {
+                return Err(NoteStorageError::CreateNoteDirectory {
+                    path: self.path.clone(),
+                    source,
+                });
+            }
         }
-        self.directory = directory;
+        self.directory = open_directory(&self.path)?;
         Ok(())
     }
 
@@ -454,29 +447,14 @@ mod tests {
     use stickymd_core::{Generation, LineEnding};
 
     #[test]
-    fn the_other_ports_follow_a_directory_made_again() {
-        let (root, mut files) = fixture("storage-shared-recreate");
-        let shared = files.share().unwrap();
-        fs::remove_dir_all(&root).unwrap();
-        files.recreate_directory().unwrap();
-        shared
-            .with(|directory| directory.create_new("config.toml"))
-            .unwrap();
-        assert!(root.join("config.toml").is_file());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn the_other_ports_do_not_follow_a_directory_someone_else_put_there() {
-        let (root, mut files) = fixture("storage-shared-foreign");
-        let shared = files.share().unwrap();
+    fn the_other_ports_write_nothing_into_whatever_replaces_a_deleted_directory() {
+        let (root, mut files) = fixture("storage-port-deleted");
+        let port = files.directory().try_clone().unwrap();
         fs::remove_dir_all(&root).unwrap();
         fs::create_dir(&root).unwrap();
         fs::write(root.join("config.toml"), b"theirs").unwrap();
         files.recreate_directory().unwrap();
-        shared
-            .with(|directory| directory.create_new("written-by-a-port"))
-            .unwrap_err();
+        port.create_new("written-by-a-port").unwrap_err();
         assert!(!root.join("written-by-a-port").exists());
         assert_eq!(fs::read(root.join("config.toml")).unwrap(), b"theirs");
         fs::remove_dir_all(root).unwrap();

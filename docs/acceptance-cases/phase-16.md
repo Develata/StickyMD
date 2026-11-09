@@ -26,7 +26,7 @@
 | P16-S11 | 监视：外部修改产生 hint；`note/` 被移走转 watcher failure | Automated | `platform::macos::file_watch::tests` | AUTOMATED PASS |
 | P16-S12 | 新建笔记用 LF | Automated | `startup::bootstrap::tests` | AUTOMATED PASS |
 | P16-S13 | 临时文件另有名称（硬链接）时拒绝，正文不被清空 | Automated | `platform::macos::file::tests` | AUTOMATED PASS |
-| P16-S14 | 运行中 `note/` 被换成另一个目录：资产与配置仍落在原目录，不写入新目录；目录被删除重建后三者同用新目录 | Automated | `persistence::adapter::tests` | AUTOMATED PASS |
+| P16-S14 | 运行中 `note/` 被换成另一个目录：资产与配置仍落在原目录，不写入新目录；目录被删除重建后两者保持失败，不写入重建的目录 | Automated | `persistence::adapter::tests` | AUTOMATED PASS |
 | P16-S15 | 资产临时名已被占用时不删除；失败只清理本次创建的文件 | Automated | `assets::storage::tests` | AUTOMATED PASS |
 
 ## M2 窗口
