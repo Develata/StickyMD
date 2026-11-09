@@ -73,6 +73,9 @@ mod search_controller;
 mod shell_effects;
 #[cfg(test)]
 mod shell_pins_tests;
+mod startup;
+#[cfg(test)]
+mod startup_tests;
 #[cfg(any(test, feature = "testing"))]
 pub mod storage_conformance;
 #[cfg(test)]
@@ -139,6 +142,8 @@ pub struct DesktopShell<H: Host> {
     tray_view: TrayView,
     /// The quit barriers finished: the callback that got here ends the event loop.
     exit_pending: bool,
+    /// The startup ended early: the callbacks do nothing more and the exit code reports it.
+    startup_failed: bool,
     shell_input_enabled: bool,
     move_resize_active: bool,
     /// A display change waits for the native message that raised it to return.
@@ -149,6 +154,11 @@ pub struct DesktopShell<H: Host> {
 impl<H: Host> DesktopShell<H> {
     pub fn host(&self) -> &H {
         &self.host
+    }
+
+    /// Whether the startup ended early; the event loop has returned by the time this matters.
+    pub fn startup_failed(&self) -> bool {
+        self.startup_failed
     }
 
     pub fn new(
@@ -211,6 +221,7 @@ impl<H: Host> DesktopShell<H> {
                 always_on_top,
             },
             exit_pending: false,
+            startup_failed: false,
             shell_input_enabled: true,
             move_resize_active: false,
             display_recovery_due: false,

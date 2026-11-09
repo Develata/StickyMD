@@ -14,6 +14,7 @@ mod preview_io;
 mod reconciliation;
 mod recovery;
 mod save;
+pub mod startup;
 pub mod window;
 
 pub use asset_io::{AssetFlow, AssetIo, AssetStep, reconcile_at_startup};

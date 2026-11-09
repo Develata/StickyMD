@@ -456,17 +456,17 @@ fn phase15_a_collapse_due_at_the_placement_deadline_reads_nothing() {
     assert_eq!(app.diagnostic, None);
 }
 
-/// The startup applies the configured value and stops only on a host error, as it always has; a
-/// read-back of any kind is not a startup failure. At runtime the same answer is `Unsupported`.
+/// The startup applies the configured value and only a host error is reported; a read-back of any
+/// kind is not a failure. At runtime the same answer is `Unsupported`.
 #[test]
 fn phase15_the_startup_topmost_ignores_the_read_back() {
     let mut app = fixture("start");
     app.host.topmost_result = Some(Ok(TopmostFact { topmost: None }));
-    assert!(app.apply_startup_topmost());
+    app.apply_startup_topmost();
     assert_eq!(app.diagnostic, None);
 
     app.host.topmost_result = Some(Err(failure("z-order refused")));
-    assert!(!app.apply_startup_topmost());
+    app.apply_startup_topmost();
     assert_eq!(
         app.diagnostic.as_deref(),
         Some("无法应用窗口置顶状态：z-order refused")

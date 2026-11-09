@@ -18,11 +18,12 @@ use super::{CARET_BLINK, DesktopShell};
 use crate::frame::SoftwareSurface;
 use crate::host::{DesktopEvent, Host};
 use stickymd_app::config::{MIN_WINDOW_HEIGHT_DIP, MIN_WINDOW_WIDTH_DIP, ViewMode};
+use stickymd_app::flow::startup::StartupStop;
 
 impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_blink));
-        if self.window.is_some() {
+        if self.window.is_some() || self.startup_failed {
             return;
         }
         let configured_theme = match self.app.config().current().theme {
@@ -47,8 +48,9 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
         let window = match event_loop.create_window(self.host.window_attributes(base)) {
             Ok(window) => Arc::new(window),
             Err(error) => {
-                eprintln!("window creation failed: {error}");
-                event_loop.exit();
+                self.abort_startup(&StartupStop::Window(error.to_string()), || {
+                    event_loop.exit()
+                });
                 return;
             }
         };
@@ -60,8 +62,9 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
         let surface = match SoftwareSurface::new(Arc::clone(&window)) {
             Ok(surface) => surface,
             Err(error) => {
-                eprintln!("surface creation failed: {error}");
-                event_loop.exit();
+                self.abort_startup(&StartupStop::Surface(error.to_string()), || {
+                    event_loop.exit()
+                });
                 return;
             }
         };
@@ -105,12 +108,14 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
             "font selection: CJK={} found={} Latin={} found={}",
             fonts.cjk_family, fonts.cjk_found, fonts.latin_family, fonts.latin_found
         );
-        self.window = Some(window);
+        self.window = Some(Arc::clone(&window));
         self.surface = Some(surface);
         self.sync_control_layout();
         self.projection = Some(projection);
-        if !self.initialize_window_shell() {
-            event_loop.exit();
+        let started =
+            self.initialize_window_shell(|| window.set_visible(true), || window.focus_window());
+        if let Err(stop) = started {
+            self.abort_startup(&stop, || event_loop.exit());
             return;
         }
         self.configure_viewports();
@@ -123,6 +128,9 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if self.startup_failed {
+            return;
+        }
         // Debug-only native routing diagnostics; never log document or IME text.
         #[cfg(debug_assertions)]
         match &event {
@@ -235,6 +243,9 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.startup_failed {
+            return;
+        }
         self.run_deferred_display_recovery();
         let now_ms = self.timestamp_ms();
         self.settle_event_pass(now_ms);
@@ -261,6 +272,9 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: DesktopEvent) {
+        if self.startup_failed {
+            return;
+        }
         match event {
             DesktopEvent::Io(completion) => self.handle_io_completion(completion),
             DesktopEvent::Preview(completion) => self.handle_preview_completion(completion),

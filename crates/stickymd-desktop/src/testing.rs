@@ -8,6 +8,7 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use stickymd_app::flow::window::geometry::PhysicalRect;
@@ -52,13 +53,24 @@ pub enum HostCall {
     AcknowledgeWatch,
     CaretToggled(PhysicalRect),
     CaretReleased,
-    Presented { width: u32, height: u32 },
+    Presented {
+        width: u32,
+        height: u32,
+    },
+    Milestone(&'static str),
+    /// Recorded by a test through `calls`: a step that does not go through the host.
+    WindowRevealed,
+    /// Recorded by a test through `calls`.
+    WindowFocused,
+    /// Recorded by a test through `calls`.
+    EventLoopExited,
 }
 
 /// The answers are public so a test sets what the desktop reports. The defaults are a desktop
 /// where every request works and the window was never placed: no display and no frame to read.
 pub struct FakeHost {
-    pub calls: RefCell<Vec<HostCall>>,
+    /// Shared so that a test can place in the same order what does not go through the host.
+    pub calls: Rc<RefCell<Vec<HostCall>>>,
     /// Whether a watch runs, after `start_watch` and `stop_watch`.
     pub watching: bool,
     pub visibility: Result<Visibility, FailureKind>,
@@ -85,6 +97,8 @@ pub struct FakeHost {
     pub applied_frame: Option<PhysicalRect>,
     pub monitors: Result<MonitorSnapshot, FailureKind>,
     pub identity_result: Result<(), HostFailure>,
+    /// What the next `reassert_identity` calls answer, one per call, before `identity_result`.
+    pub identity_answers: VecDeque<Result<(), HostFailure>>,
     pub tray_result: Result<(), HostFailure>,
     pub open_result: Result<(), HostFailure>,
     pub export_result: Result<Option<PathBuf>, HostFailure>,
@@ -101,7 +115,7 @@ pub struct FakeHost {
 impl Default for FakeHost {
     fn default() -> Self {
         Self {
-            calls: RefCell::default(),
+            calls: Rc::default(),
             watching: false,
             visibility: Ok(Visibility {
                 visible: Some(true),
@@ -120,6 +134,7 @@ impl Default for FakeHost {
             applied_frame: None,
             monitors: Err(FailureKind::Unavailable),
             identity_result: Ok(()),
+            identity_answers: VecDeque::new(),
             tray_result: Ok(()),
             open_result: Ok(()),
             export_result: Ok(None),
@@ -260,7 +275,9 @@ impl WindowHost for FakeHost {
 
     fn reassert_identity(&mut self) -> Result<(), HostFailure> {
         self.record(HostCall::ReassertIdentity);
-        self.identity_result.clone()
+        self.identity_answers
+            .pop_front()
+            .unwrap_or_else(|| self.identity_result.clone())
     }
 
     fn restore_ordinary_entry(&mut self) {
@@ -279,7 +296,11 @@ impl CaretOverlay for FakeHost {
     }
 }
 
-impl StartupProbe for FakeHost {}
+impl StartupProbe for FakeHost {
+    fn milestone(&mut self, name: &'static str) {
+        self.record(HostCall::Milestone(name));
+    }
+}
 
 impl PreviewImages for FakeHost {
     fn preview_images(&self) -> Option<Box<dyn PreviewImageSource + Send>> {

@@ -198,7 +198,7 @@ impl<H: Host> DesktopShell<H> {
                 ledger: surface.ledger_mut(),
             };
             if self.host.after_present(&facts) {
-                event_loop.exit();
+                self.finish_host_probe(|| event_loop.exit());
             }
             true
         };

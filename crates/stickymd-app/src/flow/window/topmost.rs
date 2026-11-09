@@ -98,6 +98,12 @@ impl WindowShellCoordinator {
         self.request_topmost(TopmostSource::Sensor, user, enabled, now_ms, effects);
     }
 
+    /// The startup applies the configured value outside this flow. When that failed, nothing
+    /// proves the native bit, so asking for the configured value again must still reach the host.
+    pub fn mark_native_topmost_unknown(&mut self) {
+        self.state.topmost.native_bit_unknown = true;
+    }
+
     fn request_topmost(
         &mut self,
         source: TopmostSource,
@@ -398,6 +404,41 @@ mod tests {
     /// The request and its reconcile failed, so the native bit may not match the confirmed value:
     /// nothing retries by itself, but an explicit repeat of that value reaches the host, and a
     /// success makes repeats redundant again.
+    #[test]
+    fn a_bit_the_startup_could_not_set_lets_a_repeat_reach_the_host_from_either_source() {
+        fn requests(effects: &[WindowEffect]) -> Vec<TopmostRequest> {
+            effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    WindowEffect::ApplyTopmost(request) => Some(*request),
+                    _ => None,
+                })
+                .collect()
+        }
+        let ask_as_user: fn(&mut WindowShellCoordinator) -> Vec<WindowEffect> =
+            |flow| user(flow, false);
+        let ask_as_sensor: fn(&mut WindowShellCoordinator) -> Vec<WindowEffect> =
+            |flow| sensor(flow, false);
+
+        for (ask, source) in [
+            (ask_as_user, TopmostSource::User),
+            (ask_as_sensor, TopmostSource::Sensor),
+        ] {
+            let mut flow = coordinator(StableVisibility::Floating);
+            assert_eq!(requests(&ask(&mut flow)), [], "known bit, {source:?}");
+
+            flow.mark_native_topmost_unknown();
+            let sent = requests(&ask(&mut flow));
+            assert_eq!(sent.len(), 1, "{source:?}");
+            assert!(!sent[0].desired_effective, "{source:?}");
+            assert_eq!(sent[0].source, source);
+            assert_eq!(requests(&ask(&mut flow)), [], "out already, {source:?}");
+
+            assert_eq!(requests(&receipt(&mut flow, sent[0].id, Ok(()))), []);
+            assert_eq!(requests(&ask(&mut flow)), [], "proved, {source:?}");
+        }
+    }
+
     #[test]
     fn an_explicit_retry_reaches_the_host_after_a_failed_reconcile() {
         let failed_reconcile = |coordinator: &mut WindowShellCoordinator,

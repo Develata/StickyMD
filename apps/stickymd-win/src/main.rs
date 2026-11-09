@@ -93,10 +93,7 @@ fn main() -> std::process::ExitCode {
     });
     let event_loop = match event_loop_builder.build() {
         Ok(event_loop) => event_loop,
-        Err(error) => {
-            eprintln!("event loop creation failed: {error}");
-            std::process::exit(1);
-        }
+        Err(error) => fatal_startup(&format!("无法创建事件循环：{error}")),
     };
     startup_diagnostics.record("event_loop_ready");
     let proxy = event_loop.create_proxy();
@@ -124,11 +121,18 @@ fn main() -> std::process::ExitCode {
     let (session, diagnostic) = bootstrap.into_session(worker, started);
     let host = WinHost::new(paths, instance, startup_diagnostics);
     let mut app = DesktopShell::new(host, session, sink, started, diagnostic);
-    if let Err(error) = event_loop.run_app(&mut app) {
-        eprintln!("application event loop failed: {error}");
-        std::process::exit(1);
+    let outcome = event_loop.run_app(&mut app);
+    let startup_failed = app.startup_failed();
+    let diagnostic_exit_code = app.host().startup_diagnostic_exit_code();
+    // The tray, the worker and the single-instance guard end here, before any notice below.
+    drop(app);
+    if let Err(error) = outcome {
+        fatal_startup(&format!("事件循环异常结束：{error}"));
     }
-    app.host().startup_diagnostic_exit_code()
+    if startup_failed {
+        return std::process::ExitCode::FAILURE;
+    }
+    diagnostic_exit_code
 }
 
 #[cfg(windows)]
