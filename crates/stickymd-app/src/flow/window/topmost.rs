@@ -406,21 +406,37 @@ mod tests {
     /// success makes repeats redundant again.
     #[test]
     fn a_bit_the_startup_could_not_set_lets_a_repeat_reach_the_host_from_either_source() {
-        let mut for_user = coordinator(StableVisibility::Floating);
-        assert_eq!(
-            request(&user(&mut for_user, false), TopmostSource::User),
-            None
-        );
-        for_user.mark_native_topmost_unknown();
-        assert!(request(&user(&mut for_user, false), TopmostSource::User).is_some());
+        fn requests(effects: &[WindowEffect]) -> Vec<TopmostRequest> {
+            effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    WindowEffect::ApplyTopmost(request) => Some(*request),
+                    _ => None,
+                })
+                .collect()
+        }
+        let ask_as_user: fn(&mut WindowShellCoordinator) -> Vec<WindowEffect> =
+            |flow| user(flow, false);
+        let ask_as_sensor: fn(&mut WindowShellCoordinator) -> Vec<WindowEffect> =
+            |flow| sensor(flow, false);
 
-        let mut for_sensor = coordinator(StableVisibility::Floating);
-        assert_eq!(
-            request(&sensor(&mut for_sensor, false), TopmostSource::Sensor),
-            None
-        );
-        for_sensor.mark_native_topmost_unknown();
-        assert!(request(&sensor(&mut for_sensor, false), TopmostSource::Sensor).is_some());
+        for (ask, source) in [
+            (ask_as_user, TopmostSource::User),
+            (ask_as_sensor, TopmostSource::Sensor),
+        ] {
+            let mut flow = coordinator(StableVisibility::Floating);
+            assert_eq!(requests(&ask(&mut flow)), [], "known bit, {source:?}");
+
+            flow.mark_native_topmost_unknown();
+            let sent = requests(&ask(&mut flow));
+            assert_eq!(sent.len(), 1, "{source:?}");
+            assert!(!sent[0].desired_effective, "{source:?}");
+            assert_eq!(sent[0].source, source);
+            assert_eq!(requests(&ask(&mut flow)), [], "out already, {source:?}");
+
+            assert_eq!(requests(&receipt(&mut flow, sent[0].id, Ok(()))), []);
+            assert_eq!(requests(&ask(&mut flow)), [], "proved, {source:?}");
+        }
     }
 
     #[test]

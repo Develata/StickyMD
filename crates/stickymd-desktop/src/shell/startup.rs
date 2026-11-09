@@ -25,7 +25,8 @@ impl<H: Host> DesktopShell<H> {
 
     /// Goes on without something the note can do without. The status line is one line, and each
     /// such failure gets its place on it. The recovery prompt lays out its actions by position,
-    /// so it takes nothing more and the reason is told in a dialog instead of being lost.
+    /// so it takes nothing more and the reason is told in a dialog instead of being lost. The
+    /// startup runs before the first event, so a pending recovery still has the prompt `new` wrote.
     fn startup_degraded(&mut self, degraded: StartupDegraded) {
         let message = degraded.to_string();
         let status_line_taken = self.app.recovery().is_pending();

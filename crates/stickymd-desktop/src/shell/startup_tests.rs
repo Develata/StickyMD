@@ -94,26 +94,29 @@ fn a_healthy_startup_keeps_its_order_and_reports_nothing() {
     let (outcome, calls) = start(&mut app);
 
     assert_eq!(outcome, Ok(()));
-    assert_eq!(milestones(&calls), ALL_MILESTONES);
-    let steps: Vec<_> = calls
-        .iter()
-        .filter(|call| !matches!(call, HostCall::Milestone(_)))
-        .collect();
     assert!(
         matches!(
-            steps.as_slice(),
+            calls.as_slice(),
             [
+                HostCall::Milestone("monitor_ready"),
                 HostCall::TrayCreated(_),
                 HostCall::ReassertIdentity,
                 HostCall::ApplyFrame(_),
+                HostCall::Milestone("tray_ready"),
                 HostCall::WindowRevealed,
                 HostCall::ReassertIdentity,
+                HostCall::Milestone("window_visible"),
                 HostCall::SetOpacity(_),
+                HostCall::Milestone("opacity_ready"),
                 HostCall::SetTopmost(false),
+                HostCall::Milestone("topmost_ready"),
                 HostCall::WindowFocused,
+                HostCall::Milestone("focus_ready"),
+                HostCall::Milestone("guards_ready"),
+                HostCall::Milestone("shell_ready"),
             ]
         ),
-        "{steps:?}"
+        "{calls:?}"
     );
     assert_eq!(app.diagnostic, None);
     assert!(!app.startup_failed());
@@ -336,9 +339,15 @@ fn a_missing_tray_is_told_once_while_the_recovery_prompt_holds_the_status_line()
     let prompt = app.diagnostic.clone();
     app.host.tray_result = Err(failure("no tray"));
 
-    let (_, calls) = start(&mut app);
+    let (outcome, calls) = start(&mut app);
 
-    assert_eq!(dialogs(&calls).len(), 1, "{calls:?}");
+    assert_eq!(outcome, Ok(()));
+    assert_eq!(
+        dialogs(&calls),
+        ["无法创建系统托盘图标；StickyMD 将保持窗口可见，关闭窗口会安全保存并退出。\n\nno tray"]
+    );
+    assert_eq!(milestones(&calls), ALL_MILESTONES);
+    assert_eq!(count(&calls, &HostCall::WindowFocused), 1);
     assert_eq!(app.diagnostic, prompt);
 }
 
