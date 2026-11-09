@@ -1,0 +1,18 @@
+global monitor installed: true
+   0.149 winit Focused(false)
+   1.016 winit CursorEntered
+   1.016 first hit: winit tracking rect
+   1.016 first hit: NSTrackingArea ActiveAlways
+   1.352 parked Top, app_active=false
+   1.363 winit CursorLeft
+  11.566 first hit: mouseLocation poll
+  11.817 revealed, app_active=false (must stay false)
+  11.817 winit CursorEntered
+  11.817 first hit: winit tracking rect
+  11.817 first hit: NSTrackingArea ActiveAlways
+  11.817 winit CursorLeft
+  11.826 winit CursorEntered
+  13.563 winit CursorLeft
+  14.068 left for 500 ms, app_active=false
+  14.068 Top: winit tracking rect=16, NSTrackingArea ActiveAlways=16, NSEvent global monitor=0, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=2
+guided run finished: ["Top: winit tracking rect=16, NSTrackingArea ActiveAlways=16, NSEvent global monitor=0, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=2"]

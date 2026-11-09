@@ -49,6 +49,8 @@ struct App {
     note: Option<Rc<Window>>,
     surfaces: Vec<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     notch: (f64, f64, f64),
+    /// Extra points of the sensor below the notch, so a collapsed note can be seen.
+    lip: f64,
     screen_height: f64,
     stage: Stage,
     next: Instant,
@@ -74,9 +76,26 @@ fn paint(surface: &mut softbuffer::Surface<Rc<Window>, Rc<Window>>, window: &Win
     buffer.present().unwrap();
 }
 
+/// Black where the notch hides it, the note's colour on the lip below.
+fn paint_sensor(surface: &mut softbuffer::Surface<Rc<Window>, Rc<Window>>, window: &Window, notch_height: f64) {
+    let size = window.inner_size();
+    surface.resize(NonZeroU32::new(size.width).unwrap(), NonZeroU32::new(size.height).unwrap()).unwrap();
+    let black_rows = (notch_height * window.scale_factor()).round() as usize;
+    let width = size.width as usize;
+    let mut buffer = surface.buffer_mut().unwrap();
+    for (index, pixel) in buffer.iter_mut().enumerate() {
+        *pixel = if index / width < black_rows { 0x0000_0000 } else { 0x00ff_d60a };
+    }
+    buffer.present().unwrap();
+}
+
 impl App {
     fn at(&self) -> f64 {
         self.started.elapsed().as_secs_f64()
+    }
+
+    fn sensor_height(&self) -> f64 {
+        self.notch.2 + self.lip
     }
 
     fn active(&self) -> bool {
@@ -137,7 +156,7 @@ impl App {
 
     fn reveal(&mut self) {
         let note = self.note.as_ref().unwrap();
-        note.set_outer_position(LogicalPosition::new(self.notch.0 + self.notch.1 / 2.0 - NOTE.0 / 2.0, self.notch.2));
+        note.set_outer_position(LogicalPosition::new(self.notch.0 + self.notch.1 / 2.0 - NOTE.0 / 2.0, self.sensor_height()));
         self.stage = Stage::Revealed;
         self.outside_since = None;
         self.reveals += 1;
@@ -146,7 +165,8 @@ impl App {
 
     fn pointer_outside(&self) -> bool {
         let (x, y) = self.pointer();
-        let (notch_x, width, height) = self.notch;
+        let (notch_x, width, _) = self.notch;
+        let height = self.sensor_height();
         let in_notch = x >= notch_x && x <= notch_x + width && y <= height;
         let left = notch_x + width / 2.0 - NOTE.0 / 2.0;
         let in_note = x >= left && x <= left + NOTE.0 && y >= height && y <= height + NOTE.1;
@@ -165,7 +185,7 @@ impl ApplicationHandler for App {
             event_loop.exit();
             return;
         }
-        let attributes = Window::default_attributes().with_decorations(false).with_inner_size(LogicalSize::new(self.notch.1, self.notch.2));
+        let attributes = Window::default_attributes().with_decorations(false).with_inner_size(LogicalSize::new(self.notch.1, self.sensor_height()));
         let sensor = Rc::new(event_loop.create_window(attributes).unwrap());
         let attributes = Window::default_attributes().with_decorations(false).with_inner_size(LogicalSize::new(NOTE.0, NOTE.1));
         let note = Rc::new(event_loop.create_window(attributes).unwrap());
@@ -173,7 +193,7 @@ impl ApplicationHandler for App {
         note.set_outer_position(LogicalPosition::new(PARKED_X, 200.0));
         let mut sensor_surface = softbuffer::Surface::new(&softbuffer::Context::new(sensor.clone()).unwrap(), sensor.clone()).unwrap();
         let mut note_surface = softbuffer::Surface::new(&softbuffer::Context::new(note.clone()).unwrap(), note.clone()).unwrap();
-        paint(&mut sensor_surface, &sensor, 0x0000_0000);
+        paint_sensor(&mut sensor_surface, &sensor, self.notch.2);
         paint(&mut note_surface, &note, 0x00ff_d60a);
         self.surfaces = vec![sensor_surface, note_surface];
         unsafe {
@@ -278,6 +298,8 @@ impl ApplicationHandler for App {
 
 fn main() {
     let guided = std::env::args().nth(1).as_deref() == Some("guided");
+    // `notch_probe guided lip` leaves 3 points of the sensor showing below the notch.
+    let lip = if std::env::args().nth(2).as_deref() == Some("lip") { 3.0 } else { 0.0 };
     let event_loop = EventLoop::builder().with_activation_policy(ActivationPolicy::Accessory).with_default_menu(false).build().unwrap();
     let now = Instant::now();
     let mut app = App {
@@ -286,6 +308,7 @@ fn main() {
         note: None,
         surfaces: Vec::new(),
         notch: (0.0, 0.0, 0.0),
+        lip,
         screen_height: 0.0,
         stage: Stage::Place,
         next: now,
