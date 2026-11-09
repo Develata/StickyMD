@@ -42,7 +42,7 @@ fn source_initialization_release_baseline() {
     // probe, not an alternate product initialization or an acceptance sample.
     for run in 1..=5 {
         let started = Instant::now();
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let scan = started.elapsed();
         let fonts = FontSelection::resolve(&mut font_system);
         let selected = started.elapsed();

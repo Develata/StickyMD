@@ -30,7 +30,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         Self { font_system, fonts }
     }

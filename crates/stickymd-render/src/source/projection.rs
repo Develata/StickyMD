@@ -90,7 +90,7 @@ impl SourceProjection {
         scale: f32,
         mut observe: impl FnMut(SourceInitializationMilestone),
     ) -> Self {
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         observe(SourceInitializationMilestone::FontSystemReady);
         let metrics = scaled_metrics(scale);

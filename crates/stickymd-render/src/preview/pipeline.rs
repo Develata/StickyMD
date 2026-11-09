@@ -99,7 +99,7 @@ impl PreviewPipeline {
     }
 
     pub fn new() -> Self {
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         super::fonts::configure_code_font(&mut font_system);
         let fonts = FontSelection::resolve(&mut font_system);
         Self {
@@ -1600,7 +1600,7 @@ mod tests {
         let snapshot = snapshot(source, Generation::initial());
         let parser = PreviewParser;
         let builder = RenderTreeBuilder;
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut math_engine = MathEngine::new();
         let mut swash_cache = SwashCache::new();
@@ -1707,7 +1707,7 @@ mod tests {
         let snapshot = snapshot(&source, Generation::initial());
         let parser = PreviewParser;
         let builder = RenderTreeBuilder;
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut math_engine = MathEngine::new();
         let mut swash_cache = SwashCache::new();

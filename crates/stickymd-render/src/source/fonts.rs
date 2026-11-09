@@ -15,7 +15,6 @@ pub const CJK_CANDIDATES: &[&str] = &[
     "FangSong",
     "Microsoft YaHei",
 ];
-const LATIN_CANDIDATES: &[&str] = &["Times New Roman", "Georgia"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptClass {
@@ -39,8 +38,9 @@ pub struct FontSelection {
 
 impl FontSelection {
     pub fn resolve(font_system: &mut FontSystem) -> Self {
-        let (cjk_family, cjk_found) = first_present(font_system, CJK_CANDIDATES);
-        let (latin_family, latin_found) = first_present(font_system, LATIN_CANDIDATES);
+        let defaults = crate::system_fonts::font_defaults();
+        let (cjk_family, cjk_found) = first_present(font_system, defaults.cjk);
+        let (latin_family, latin_found) = first_present(font_system, defaults.latin);
         Self {
             cjk_family,
             cjk_found,

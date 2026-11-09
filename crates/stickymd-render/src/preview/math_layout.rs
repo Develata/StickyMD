@@ -461,7 +461,7 @@ fn flush_line(
 
 #[cfg(test)]
 mod tests {
-    use cosmic_text::{Align, FontSystem, Metrics};
+    use cosmic_text::{Align, Metrics};
 
     use super::make_mixed_chunk;
     use crate::math::{MathEngine, MathKind};
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn phase11_short_adjacent_text_around_math_uses_one_buffer_per_side() {
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut math_engine = MathEngine::new();
         let mut selection_text = String::new();
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn phase11_large_document_policy_coalesces_short_attributed_runs() {
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut math_engine = MathEngine::new();
         let mut selection_text = String::new();

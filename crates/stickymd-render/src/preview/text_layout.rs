@@ -476,7 +476,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use cosmic_text::{Align, FontSystem, Metrics, Wrap};
+    use cosmic_text::{Align, Metrics, Wrap};
     use stickymd_core::Generation;
 
     use super::{TextLayoutCache, make_text_chunk, project_visible_text_boxes};
@@ -509,7 +509,7 @@ mod tests {
 
     #[test]
     fn shaping_cache_reuses_geometry_but_reprojects_source_and_actions() {
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut cache = TextLayoutCache::default();
         let mut selection_text = String::new();
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn multiline_text_boxes_keep_disjoint_selection_ranges() {
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut cache = TextLayoutCache::default();
         let mut selection_text = String::new();
@@ -637,7 +637,7 @@ mod tests {
 
     #[test]
     fn variable_width_clusters_roundtrip_hit_highlight_and_copy() {
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut selection_text = String::new();
         let text: Arc<str> = Arc::from("iiii WWWW 中文 🙂 e\u{301}");
@@ -718,7 +718,7 @@ mod tests {
 
     #[test]
     fn bidi_clusters_preserve_logical_boundary_direction() {
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut selection_text = String::new();
         let text: Arc<str> = Arc::from("abc אבג");
@@ -768,7 +768,7 @@ mod tests {
 
     #[test]
     fn viewport_projection_does_not_retain_offscreen_clusters() {
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut selection_text = String::new();
         let text: Arc<str> = Arc::from(
@@ -816,7 +816,7 @@ mod tests {
     #[test]
     #[ignore = "Release-only Phase 14 viewport selection performance receipt"]
     fn phase14_preview_selection_geometry_release_baseline() {
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut selection_text = String::new();
         let text: Arc<str> = Arc::from(
