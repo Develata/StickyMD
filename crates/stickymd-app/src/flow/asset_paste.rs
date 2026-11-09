@@ -211,10 +211,13 @@ mod tests {
 
         fn read_at_most(&mut self, path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
             self.asked_limits.push(limit);
-            self.files
+            let mut bytes = self
+                .files
                 .get(path)
                 .cloned()
-                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?;
+            bytes.truncate(limit as usize);
+            Ok(bytes)
         }
     }
 
@@ -321,6 +324,73 @@ mod tests {
         let payload = ClipboardPaste::Files(vec!["gone.png".into()]);
         let failure = prepare_and_store_paste(&mut target, request(payload)).unwrap_err();
         assert!(matches!(failure.error, AssetPasteError::Read(_)));
+    }
+
+    fn dib() -> Vec<u8> {
+        let mut bytes = vec![0_u8; 44];
+        bytes[0..4].copy_from_slice(&40_u32.to_le_bytes());
+        bytes[4..8].copy_from_slice(&1_i32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&1_i32.to_le_bytes());
+        bytes[12..14].copy_from_slice(&1_u16.to_le_bytes());
+        bytes[14..16].copy_from_slice(&32_u16.to_le_bytes());
+        bytes[20..24].copy_from_slice(&4_u32.to_le_bytes());
+        bytes[40..44].copy_from_slice(&[50, 100, 200, 255]);
+        bytes
+    }
+
+    #[test]
+    fn a_dib_payload_is_prepared_and_stored() {
+        let mut target = FakeTarget::default();
+        let done =
+            prepare_and_store_paste(&mut target, request(ClipboardPaste::Dib(dib()))).unwrap();
+        assert_eq!(done.markdown, format!("![](images/{})", name(0)));
+    }
+
+    #[test]
+    fn a_broken_dib_is_an_image_error() {
+        let mut target = FakeTarget::default();
+        let failure =
+            prepare_and_store_paste(&mut target, request(ClipboardPaste::Dib(vec![0; 4])))
+                .unwrap_err();
+        assert!(matches!(failure.error, AssetPasteError::Image(_)));
+    }
+
+    #[test]
+    fn every_failure_says_what_it_is() {
+        let cases: [(AssetPasteError<Refused>, &str); 5] = [
+            (
+                AssetPasteError::MixedOrUnsupportedFiles,
+                "clipboard file list contains a non-image or unsupported image",
+            ),
+            (
+                AssetPasteError::Read(std::io::Error::other("cause")),
+                "clipboard image read failed: cause",
+            ),
+            (
+                AssetPasteError::Storage(Refused),
+                "managed image publication failed: the store refused",
+            ),
+            (
+                AssetPasteError::BatchTooLarge { limit: 9 },
+                "image paste payload exceeds the 9 byte transaction bound",
+            ),
+            (
+                AssetPasteError::NotImage,
+                "clipboard payload is not an image transaction",
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(error.to_string(), expected);
+        }
+        let mut target = FakeTarget::default();
+        let payload = ClipboardPaste::EncodedImage(b"not an image".to_vec());
+        let failure = prepare_and_store_paste(&mut target, request(payload)).unwrap_err();
+        assert!(
+            failure
+                .to_string()
+                .starts_with("clipboard image preparation failed: "),
+            "{failure}"
+        );
     }
 
     #[test]

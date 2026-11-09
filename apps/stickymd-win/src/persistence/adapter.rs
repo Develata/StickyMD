@@ -233,6 +233,37 @@ mod tests {
     use super::*;
     use crate::platform::windows::atomic_file::AtomicPublishError;
 
+    #[test]
+    fn phase15_every_paste_error_keeps_its_message_and_gets_its_class() {
+        let rows = [
+            (
+                AssetPasteError::Read(std::io::Error::other("cause")),
+                FailureKind::Unavailable,
+            ),
+            (
+                AssetPasteError::MixedOrUnsupportedFiles,
+                FailureKind::Failed,
+            ),
+            (
+                AssetPasteError::Image(
+                    stickymd_render::image::prepare_encoded_image(b"not an image").unwrap_err(),
+                ),
+                FailureKind::Failed,
+            ),
+            (
+                AssetPasteError::BatchTooLarge { limit: 9 },
+                FailureKind::Failed,
+            ),
+            (AssetPasteError::NotImage, FailureKind::Failed),
+        ];
+        for (error, kind) in rows {
+            let message = error.to_string();
+            let failure = paste_failure(error);
+            assert_eq!(failure.kind(), kind, "{message}");
+            assert_eq!(failure.to_string(), message);
+        }
+    }
+
     /// A wrapper adds context to the message and keeps the class of what it wraps.
     #[test]
     fn phase15_a_wrapped_storage_error_keeps_its_class() {

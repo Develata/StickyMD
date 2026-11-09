@@ -173,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn the_same_source_is_copied_once() {
+    fn a_source_remembers_the_name_it_took() {
         let mut plan = ExportPlan::new("x-assets");
         assert_eq!(plan.name_for_source(Path::new("a.png")), None);
         plan.remember_source("a.png".into(), "n.png".into());
@@ -212,11 +212,12 @@ mod tests {
     }
 
     #[test]
-    fn nothing_counts_as_copied_until_the_host_has_moved_it() {
+    fn asking_for_a_name_records_nothing() {
         let hash = hash_bytes(b"image");
         let plan = ExportPlan::new("x-assets");
-        let first = plan.place_copy(hash, "png").unwrap();
-        assert_eq!(plan.place_copy(hash, "png").unwrap(), first);
+        let expected = CopyPlacement::New(format!("stickymd-{}.png", &hash.to_hex()[..20]));
+        assert_eq!(plan.place_copy(hash, "png").unwrap(), expected);
+        assert_eq!(plan.place_copy(hash, "png").unwrap(), expected);
         assert_eq!(plan.copied_assets(), 0);
     }
 
@@ -243,8 +244,8 @@ mod tests {
     #[test]
     fn references_point_into_the_encoded_asset_directory() {
         let mut plan = ExportPlan::new("my notes-assets");
-        plan.rewrite(occurrence(0, 12), "n.png");
+        plan.rewrite(occurrence(0, 10), "n.png");
         let markdown = plan.rewritten_markdown("![](a.png) tail").unwrap();
-        assert!(markdown.contains("my%20notes-assets/n.png"), "{markdown}");
+        assert_eq!(markdown, "![](my%20notes-assets/n.png) tail");
     }
 }

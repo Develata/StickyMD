@@ -122,7 +122,7 @@
 | P15-E01 | `config.toml` 的解析、版本裁决、序列化、保留文件命名与警告文字在共享层，宿主只读文件、不覆盖地改名和发布；读取失败、解析失败、版本更新、保留失败各有结果 | Automated | `config::document::tests`（Linux 也运行）；`config::storage::tests` 断言不变，含 `config.toml` 字节 | AUTOMATED PASS |
 | P15-E02 | 启动恢复由共享纯函数裁决，宿主观察并执行：每种观察组合的步骤，超限临时文件先隔离，无正文恢复用宿主的换行符（CRLF、LF），无正文首次创建仍用 `Guarded { expected: None }` | Automated | `flow::note_startup::tests`（Linux 也运行）；`startup::bootstrap::tests` 断言不变 | AUTOMATED PASS |
 | P15-E03 | 粘贴批次在共享层：各输入分支、批次上限、失败时返回已发布台账、错误文字与语义分类不变，文件解码失败仍归 `MixedOrUnsupportedFiles` | Automated | `flow::asset_paste::tests`（Linux 也运行）；`assets::transaction::tests` 与 `persistence::adapter` 的分类表断言不变 | AUTOMATED PASS |
-| P15-E04 | 导出规划只返回命名与复用决定：同源只复制一次（键由宿主给出，不折叠大小写），同内容沿用第一个名字，名字前缀冲突时加长；文件操作与顺序留在宿主 | Automated | `flow::export_plan::tests`（Linux 也运行）；`export::tests` 除移走的命名用例外断言不变 | AUTOMATED PASS |
+| P15-E04 | 导出规划只返回命名与复用决定：源记住自己的名字（键由宿主给出，不折叠大小写），同内容沿用第一个名字，名字前缀冲突时加长，询问名字不改变状态。实际复制次数、重复副本删除失败与移动失败时的记录顺序留在宿主，这里没有单独的故障用例 | Automated | `flow::export_plan::tests`（Linux 也运行）；`export::tests` 除移走的命名用例外断言不变 | AUTOMATED PASS |
 | P15-E05 | 百分号解码在共享层，路径语法校验留在宿主 | Automated | `preview::parser::tests`；`assets::path::tests` 断言不变 | AUTOMATED PASS |
 | P15-E06 | 链接 scheme 分类只有一处，宿主打开前用它复核；笔记文件过滤在共享层 | Automated | `preview::parser::tests`；`platform::windows::shell::tests::forged_allowed_kind_cannot_bypass_adapter_reclassification`；`flow::reconciliation::tests::only_the_working_note_and_its_temporary_need_a_reconciliation` | AUTOMATED PASS |
 | P15-E07 | 共享 crate 能编译到 `aarch64-apple-darwin`，依赖策略覆盖该目标 | Automated local | `cargo check --locked --target aarch64-apple-darwin -p stickymd-core -p stickymd-render -p stickymd-app -p stickymd-desktop`；`cargo deny check`。这只是编译，macOS 上没有运行过 | AUTOMATED PASS |

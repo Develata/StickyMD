@@ -275,6 +275,24 @@ mod tests {
         );
     }
 
+    /// The observations disagree, which only a change between two reads can do. The canonical
+    /// note cannot be opened, so the temporary must stay.
+    #[test]
+    fn a_redundant_temporary_is_kept_when_the_canonical_note_cannot_be_opened() {
+        let mut canonical = valid("same");
+        canonical.state = ExternalFileState::InvalidUtf8 {
+            fingerprint: fingerprint(b"same"),
+        };
+        let step = plan(Some(&canonical), Some(&valid("same"))).step;
+        assert!(
+            matches!(
+                step,
+                NoteStartupStep::RemoveRedundantTemporary(Err(NoteRefusal::InvalidUtf8))
+            ),
+            "{step:?}"
+        );
+    }
+
     #[test]
     fn a_different_temporary_is_a_choice_for_the_user() {
         let step = plan(Some(&valid("old")), Some(&valid("new"))).step;
@@ -346,6 +364,20 @@ mod tests {
             matches!(
                 step,
                 NoteStartupStep::QuarantineInvalidTemporary(NoteDocumentPlan::CreateEmpty)
+            ),
+            "{step:?}"
+        );
+    }
+
+    #[test]
+    fn an_invalid_temporary_is_moved_aside_even_when_the_note_is_then_refused() {
+        let step = plan(Some(&too_large(9)), Some(&invalid(&[0xff]))).step;
+        assert!(
+            matches!(
+                step,
+                NoteStartupStep::QuarantineInvalidTemporary(NoteDocumentPlan::Refuse(
+                    NoteRefusal::TooLarge(9)
+                ))
             ),
             "{step:?}"
         );

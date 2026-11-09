@@ -400,6 +400,55 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    fn preserved_temporaries(paths: &RuntimePaths) -> Vec<PathBuf> {
+        fs::read_dir(&paths.note_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("note.invalid-tmp-")
+            })
+            .map(|entry| entry.path())
+            .collect()
+    }
+
+    /// Moving the temporary aside must not end in an empty note standing in for it.
+    #[test]
+    fn oversized_temporary_without_a_note_stops_after_moving_it_aside() {
+        let (root, paths) = fixture();
+        let bytes = crate::persistence::MAX_NOTE_LOAD + 1;
+        fs::File::create(&paths.note_tmp)
+            .unwrap()
+            .set_len(bytes)
+            .unwrap();
+        let error = bootstrap(&paths).err().unwrap();
+        assert!(
+            matches!(error, StartupError::TemporaryTooLarge { bytes: reported, .. } if reported == bytes),
+            "{error}"
+        );
+        assert!(!paths.note_file.exists());
+        assert!(!paths.note_tmp.exists());
+        assert_eq!(preserved_temporaries(&paths).len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_temporary_is_moved_aside_before_an_unusable_note_is_refused() {
+        let (root, paths) = fixture();
+        fs::write(&paths.note_file, [0xfe]).unwrap();
+        fs::write(&paths.note_tmp, [0xff]).unwrap();
+        let error = bootstrap(&paths).err().unwrap();
+        assert!(matches!(error, StartupError::NoteInvalidUtf8), "{error}");
+        assert_eq!(fs::read(&paths.note_file).unwrap(), [0xfe]);
+        assert!(!paths.note_tmp.exists());
+        let preserved = preserved_temporaries(&paths);
+        assert_eq!(preserved.len(), 1);
+        assert_eq!(fs::read(&preserved[0]).unwrap(), [0xff]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn invalid_temporary_without_canonical_is_quarantined_before_empty_create() {
         let (root, paths) = fixture();
