@@ -401,3 +401,27 @@ cd /Users/develata/gitclone/StickyMD/experiments/macos-probes && cargo build --r
 - 窗口聚焦时切换桌面会失去焦点（`Focused(false)`），切回原桌面时 macOS 把焦点还回来（`Focused(true)`，观察到 2 次）。共享层把它当普通失焦：立即保存，贴边窗口 700 ms 后收起。这和点击别的应用一致，建议接受。
 - **焦点还给已收起的细条是一个真实缺口。** 探针里切回原桌面时，细条收到了 `Focused(true)`（读回 `key = true`）。按手动收起时窗口是聚焦的（reducer 的 `ByHandFocused`），之后切走再切回，共享层把这算作一次“获得焦点”，会撤销细条的临时置顶（读源码 `reducer.rs:205`），细条可能被普通窗口盖住。编辑不受影响，收起状态不接受输入。Windows 没有这条路径，修法要动共享层或由宿主拦截，M2 定方案并验收“收起后切走再切回，细条仍能悬停展开”。
 - `Occluded` 在切换中和切换后反复变化，全屏桌面上约 1 s 后常报告被遮挡，普通桌面也有。是否真的被盖住，要看全屏桌面上的人眼确认。共享层不处理这个事件，宿主也不应依赖它判断可见性。
+
+### 刘海作为顶部感应区（同日）
+
+USER 问顶部能否利用刘海。实测（`results/notch_auto.txt`、`notch_guided.txt`）：
+
+- 本机刘海区 185×32 pt。level 27（菜单栏之上）的小窗口**不需要**覆盖 `constrainFrameRect` 就能放到屏幕最顶。
+- 探针运行中真实鼠标进入刘海 3 次，3 次都触发 `CursorEntered`，下方的便签窗口出现，指针移入便签时不断开，应用始终未被激活。
+- 指针会停在屏幕顶边，刘海区没有菜单项，所以避开了菜单栏下方细条的两个问题。
+- 同类产品的配置相同：[boring.notch](https://github.com/TheBoredTeam/boring.notch)（GPL-3.0，只读取其配置事实，不复制代码）用 `mainMenu + 3`、`fullScreenAuxiliary | stationary | canJoinAllSpaces | ignoresCycle`；[DynamicNotchKit](https://github.com/MrKai77/DynamicNotchKit)（MIT）用 `canJoinAllSpaces | stationary`，刘海几何同样取自 `auxiliaryTopLeftArea`、`auxiliaryTopRightArea`、`safeAreaInsets`。
+
+未验证：无刘海显示器、合盖接外屏、菜单栏自动隐藏、全屏桌面上的可见与命中。探针进入即展开，没有验证共享层的“停留 100 ms、提前离开取消”；左右细条的探针同样如此，这段时序由 M2 用真实 reducer 验收。
+
+**Codex 的独立意见**（`gpt-6-astra`，high，原文 `results/codex-top-edge-consult.md`，引用的文件位置已逐条核对）：首版选 A，只做左右贴边，顶部保持普通浮动窗口。要点：
+
+| 项 | 内容 |
+| --- | --- |
+| 刘海不是局部改动 | `02` 写明“一个窗口”，`P08-D048` 要求主窗口兼作 sensor，`collapsed_frame` 只移动主窗口，`WindowHost` 也只面向一个窗口。感应面板需要合同例外和一套收起呈现协议（两个窗口的显示回执、进入离开事件、共享层区分两个区域） |
+| 单窗口变体 | 把主窗口缩到 185×32 低于 220×120 下限，并要处理层级切换和重排，不比感应面板简单 |
+| 无刘海屏 | 系统不提供这块区域，只能降级，合盖接外屏时必须同时撤掉感应面板并恢复主窗口 |
+| A 的实现要求 | S5 必须在 `snap_edge` 求最近边**之前**过滤，否则先选中 Top 再丢弃会漏掉同样合格的 Left；启动、拖放、显示器恢复都要覆盖；旧的 Top 配置恢复成工作区内的 Floating |
+| 焦点缺口的修法 | 不由宿主吞掉 `Focused(true)`。共享 reducer 在手动收起及其动画期间，恢复焦点不撤销 sensor 置顶，也不自动展开；进入展开路径后再撤销。`09` 第 111 行规定“获得焦点必须撤销”，需要先澄清合同。选 A 不改变这项修复 |
+| 单屏结论的边界 | 系统 Dock 放在侧边、相邻显示器接缝处，“指针会停在边缘”不成立 |
+
+**结论与建议：** 刘海技术上可行，不是做不到。首版仍建议只做左右，刘海作为后续单独一步，需批准合同例外（辅助感应窗）和无刘海降级规则。这条建议与 Codex 一致。焦点缺口的修法会动共享 reducer，合入前需要 Windows 桌面回归。
