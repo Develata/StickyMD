@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
+use stickymd_app::ports::ExportCompletion;
 use stickymd_core::{DocumentSnapshot, Hash32, LoadedDocument};
 use stickymd_render::preview::{
     ImageKind, ImageRewrite, PreviewParser, collect_image_occurrences, rewrite_image_occurrences,
@@ -36,13 +37,6 @@ pub struct ExportRequest {
     pub snapshot: DocumentSnapshot,
     pub note_dir: PathBuf,
     pub target: PathBuf,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExportCompletion {
-    pub generation: stickymd_core::Generation,
-    pub target: PathBuf,
-    pub copied_assets: usize,
 }
 
 #[derive(Debug, Error)]

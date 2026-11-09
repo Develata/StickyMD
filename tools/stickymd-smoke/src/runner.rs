@@ -1,6 +1,8 @@
 //! Deduplicated task planning and subprocess execution.
 
 mod candidate_input;
+#[cfg(any(windows, test))]
+pub(crate) mod filtered_tasks;
 pub(crate) mod headless;
 mod package;
 mod performance;
@@ -10,6 +12,8 @@ mod resource_progress;
 #[cfg(windows)]
 mod resource_resume;
 mod resource_session;
+#[cfg(test)]
+mod test_filters;
 mod timing;
 
 use std::path::Path;
@@ -63,6 +67,8 @@ enum TaskId {
     Phase11BPerformance,
     Phase14Performance,
     Phase14SearchPerformance,
+    Phase15AppTests,
+    Phase15BaselineTests,
     FormatCheck,
     ClippyCheck,
     DependencyPolicy,
@@ -714,7 +720,13 @@ fn run_unit_test_owners(
         .into_iter()
         .filter(|owner| packages.is_none_or(|packages| packages.contains(&owner.package)))
         .collect();
-    crate::unit_owners::verify(root, &owners, packages, identity).map(|owners| {
+    // A package run narrows the plans, so only a whole-workspace run can judge the name filters.
+    let filtered = if packages.is_none() {
+        filtered_tasks::all()?
+    } else {
+        Vec::new()
+    };
+    crate::unit_owners::verify(root, &owners, packages, &filtered, identity).map(|owners| {
         TaskExecution::Passed(TaskEvidence {
             owners,
             ..TaskEvidence::default()
@@ -940,6 +952,10 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             Selection::Phase(Phase::P12 | Phase::P13 | Phase::P14) => {
                 push_unique(&mut tasks, workspace_tests());
             }
+            Selection::Phase(Phase::P15) => {
+                push_unique(&mut tasks, phase15_app_tests());
+                push_unique(&mut tasks, phase15_baseline_tests());
+            }
         }
     }
 
@@ -1037,6 +1053,12 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                         push_unique(&mut tasks, phase14_search_performance());
                     }
                 }
+                // The Release baselines of the code Phase 15 moves (plan 10 migration gates).
+                Phase::P15 => {
+                    push_source_performance(&mut tasks);
+                    push_unique(&mut tasks, phase8_performance());
+                    push_unique(&mut tasks, phase14_search_performance());
+                }
             }
         }
     }
@@ -1095,7 +1117,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 push_unique(&mut tasks, runtime_assets());
                 push_unique(&mut tasks, runtime_window_shell());
             }
-            Selection::Phase(Phase::P00 | Phase::P01 | Phase::P02) => {
+            Selection::Phase(Phase::P00 | Phase::P01 | Phase::P02 | Phase::P15) => {
                 return Err("selected phase has no runtime smoke".to_owned());
             }
         }
@@ -1238,6 +1260,8 @@ fn render_win_tests() -> Task {
             "-p",
             "stickymd-render",
             "-p",
+            "stickymd-app",
+            "-p",
             "stickymd-win",
             "--locked",
         ],
@@ -1252,6 +1276,8 @@ fn core_win_tests() -> Task {
             "test",
             "-p",
             "stickymd-core",
+            "-p",
+            "stickymd-app",
             "-p",
             "stickymd-win",
             "--locked",
@@ -1268,6 +1294,8 @@ fn phase5_preview_tests() -> Task {
             "-p",
             "stickymd-render",
             "-p",
+            "stickymd-app",
+            "-p",
             "stickymd-win",
             "--locked",
         ],
@@ -1282,6 +1310,8 @@ fn phase6_math_tests() -> Task {
             "test",
             "-p",
             "stickymd-render",
+            "-p",
+            "stickymd-app",
             "-p",
             "stickymd-win",
             "--locked",
@@ -1301,7 +1331,31 @@ fn phase8_window_tests() -> Task {
     cargo(
         TaskId::Phase8WindowTests,
         "Phase 8 native-window state/geometry/lifecycle tests",
-        &["test", "-p", "stickymd-win", "--locked", "phase8_"],
+        &[
+            "test",
+            "-p",
+            "stickymd-app",
+            "-p",
+            "stickymd-win",
+            "--locked",
+            "phase8_",
+        ],
+    )
+}
+
+fn phase15_app_tests() -> Task {
+    cargo(
+        TaskId::Phase15AppTests,
+        "Phase 15 Shared Application tests",
+        &["test", "-p", "stickymd-app", "--locked"],
+    )
+}
+
+fn phase15_baseline_tests() -> Task {
+    cargo(
+        TaskId::Phase15BaselineTests,
+        "Phase 15 byte-compatibility and hot-path baselines",
+        &["test", "-p", "stickymd-win", "--locked", "phase15_"],
     )
 }
 
@@ -1321,6 +1375,8 @@ fn phase10_ux_tests() -> Task {
             "test",
             "-p",
             "stickymd-render",
+            "-p",
+            "stickymd-app",
             "-p",
             "stickymd-win",
             "--locked",

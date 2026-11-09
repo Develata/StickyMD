@@ -52,7 +52,7 @@ pub(super) fn json(head: &str, base: Option<&str>, dirty: bool, selection: &Sele
     }
     lint.extend(["--all-targets", "--locked", "--", "-D", "warnings"]);
     let mut portable = vec!["--locked"];
-    for module in [Module::Core, Module::Render] {
+    for module in [Module::Core, Module::Render, Module::App] {
         if selection.full || selection.modules.contains(&module) {
             portable.extend(["-p", module.cargo_name()]);
         }
@@ -90,6 +90,9 @@ mod tests {
         assert!(full.contains("\"module\":\"all\",\"mode\":\"tests\",\"full\":true"));
         assert!(full.contains("\"module\":\"all\",\"mode\":\"performance\",\"full\":true"));
         assert!(full.contains("\"lint_args\":[\"clippy\",\"--workspace\","));
+        assert!(full.contains(
+            "\"portable_args\":[\"--locked\",\"-p\",\"stickymd-core\",\"-p\",\"stickymd-render\",\"-p\",\"stickymd-app\"]"
+        ));
         assert!(full.contains("\"smoke_needed\":true"));
         let empty = json(
             &"a".repeat(40),

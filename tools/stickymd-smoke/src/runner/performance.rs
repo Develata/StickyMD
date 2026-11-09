@@ -6,8 +6,17 @@ use super::{Task, TaskId, cargo, push_unique};
 // Keep Cargo's original feature-resolution contexts. A render-only library
 // build is not interchangeable with the Windows product dependency graph.
 const WINDOWS: &[&str] = &["-p", "stickymd-win"];
+const APP: &[&str] = &["-p", "stickymd-app"];
+const APP_WINDOWS: &[&str] = &["-p", "stickymd-app", "-p", "stickymd-win"];
 const RENDER_LIBRARY: &[&str] = &["-p", "stickymd-render", "--lib"];
-const RENDER_WINDOWS: &[&str] = &["-p", "stickymd-render", "-p", "stickymd-win"];
+const RENDER_APP_WINDOWS: &[&str] = &[
+    "-p",
+    "stickymd-render",
+    "-p",
+    "stickymd-app",
+    "-p",
+    "stickymd-win",
+];
 // The smoke CLI has no Phase 6/7 performance cases. Selecting the product
 // packages avoids linking its empty Release test targets (including fat LTO).
 const PRODUCT: &[&str] = &[
@@ -15,6 +24,8 @@ const PRODUCT: &[&str] = &[
     "stickymd-core",
     "-p",
     "stickymd-render",
+    "-p",
+    "stickymd-app",
     "-p",
     "stickymd-win",
 ];
@@ -131,7 +142,7 @@ pub(super) fn phase8_performance() -> Task {
     release_test(
         TaskId::Phase8Performance,
         "Phase 8 native-window Release baseline",
-        WINDOWS,
+        APP_WINDOWS,
         "phase8_",
     )
 }
@@ -140,7 +151,7 @@ pub(super) fn phase10_performance() -> Task {
     release_test(
         TaskId::Phase10Performance,
         "Phase 10 zoom/window Release baseline",
-        RENDER_WINDOWS,
+        RENDER_APP_WINDOWS,
         "phase10_",
     )
 }
@@ -167,7 +178,7 @@ pub(super) fn phase14_search_performance() -> Task {
     release_test(
         TaskId::Phase14SearchPerformance,
         "Phase 14 source-search Release baseline",
-        WINDOWS,
+        APP,
         "phase14_one_mib_unicode_case_insensitive_search_p95_is_bounded",
     )
 }

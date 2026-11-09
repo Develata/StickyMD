@@ -696,6 +696,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:SMOKE_UIA_
 foreach ($function in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
     if ($function.Name -eq 'Open-TrayOverflowObserved') { . ([scriptblock]::Create($function.Extent.Text)) }
 }
+$MinimumOverflowReads = 3
 $global:reads = @($env:SMOKE_STATES -split ',')
 $global:read = 0
 $global:toggles = 0
@@ -756,7 +757,10 @@ $wanted = 'Wait-Until', 'Open-TrayOverflowObserved', 'Close-TrayOverflowObserved
 foreach ($function in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
     if ($wanted -contains $function.Name) { . ([scriptblock]::Create($function.Extent.Text)) }
 }
-$TimeoutSeconds = 1
+# An expired deadline: the sequences must complete on the minimum observations alone, so a
+# stalled machine cannot change the result.
+$TimeoutSeconds = 0
+$MinimumOverflowReads = 3
 $global:reads = @($env:SMOKE_STATES -split ',')
 $global:read = 0
 $global:toggles = 0

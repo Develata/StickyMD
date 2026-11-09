@@ -12,19 +12,11 @@ mod config;
 #[cfg(windows)]
 mod export;
 #[cfg(windows)]
-mod flow;
-#[cfg(windows)]
-mod instruction;
-#[cfg(windows)]
-mod interaction;
-#[cfg(windows)]
 mod persistence;
 #[cfg(windows)]
 mod platform;
 #[cfg(windows)]
 mod preview;
-#[cfg(windows)]
-mod source_search;
 #[cfg(windows)]
 mod startup;
 #[cfg(windows)]
@@ -35,12 +27,13 @@ mod test_support;
 #[cfg(windows)]
 fn main() -> std::process::ExitCode {
     use app::{AppEvent, StickyApp};
-    use persistence::{IoCompletion, PersistenceWorker};
+    use persistence::win_io_ports;
     use platform::windows::program_dir::RuntimePaths;
     use platform::windows::single_instance::{InstanceDisposition, SingleInstanceGuard};
     use startup::StartupDiagnostics;
     use startup::{BootstrapMilestone, bootstrap_observed};
     use std::sync::{Arc, Mutex};
+    use stickymd_app::execution::{IoCompletion, PersistenceWorker};
     use winit::event_loop::{EventLoop, EventLoopProxy};
     use winit::platform::windows::EventLoopBuilderExtWindows;
 
@@ -131,7 +124,8 @@ fn main() -> std::process::ExitCode {
         fatal_startup(&format!("无法监听第二实例唤醒请求：{error}"));
     }
     let io_proxy = proxy.clone();
-    let worker = match PersistenceWorker::start(move |completion: IoCompletion| {
+    let ports = win_io_ports(&paths);
+    let worker = match PersistenceWorker::start(ports, move |completion: IoCompletion| {
         let _ = io_proxy.send_event(AppEvent::Io(completion));
     }) {
         Ok(worker) => worker,

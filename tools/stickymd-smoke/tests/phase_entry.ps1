@@ -35,7 +35,7 @@ function Invoke-PhaseCase([string]$Phase, [hashtable]$Parameters, [string[]]$Exp
     if ($plan.status -cne 'NOT_RUN' -or ($plan.arguments -join '|') -cne ($Expected -join '|')) { throw "Routing drift: $($result[0])" }
 }
 Invoke-PhaseCase '00' @{Verbose=$true} @('phase', '00')
-foreach ($phase in @('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '11-b')) {
+foreach ($phase in @('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '11-b', '15')) {
     Invoke-PhaseCase $phase @{Performance=$true} @('phase', $phase, '--performance')
     Invoke-PhaseCase $phase @{Performance=$false; Verbose=$true} @('phase', $phase)
 }

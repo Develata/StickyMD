@@ -5,8 +5,8 @@
 use super::*;
 use crate::app::headless_tests::fixture;
 use crate::config::ViewMode;
-use crate::instruction::AppIntent;
-use crate::interaction::ImeSignal;
+use stickymd_app::instruction::AppIntent;
+use stickymd_app::interaction::ImeSignal;
 use stickymd_core::{EditKind, Selection};
 use stickymd_render::preview::{PreviewPipeline, PreviewSelection, PreviewTheme};
 use stickymd_render::source::SourceProjection;
@@ -176,7 +176,7 @@ fn runtime_drag_ends_on_release_blur_view_switch_and_resize_for_both_panes() {
                 "release" => app.handle_mouse_button(ElementState::Released, MouseButton::Left),
                 "blur" => app.apply_focus_change(None, false),
                 "view-switch" => app.dispatch_preview_intent(
-                    crate::instruction::PreviewIntent::SetViewMode(ViewMode::Preview),
+                    stickymd_app::instruction::PreviewIntent::SetViewMode(ViewMode::Preview),
                 ),
                 "resize" => app.resize(PhysicalSize::new(820, 400)),
                 _ => unreachable!(),
@@ -208,7 +208,7 @@ fn runtime_an_edit_keeps_a_source_drag_and_a_stale_preview_ends_its_own() {
         let mut app = fixture(&"long paragraph\n\n".repeat(150));
         let geometry = prepare(&mut app, ViewMode::Split);
         let preview = geometry.preview.unwrap();
-        let viewport = crate::preview::PreviewViewport {
+        let viewport = stickymd_app::ports::PreviewViewport {
             horizontal: Default::default(),
             width_px: preview.width,
             height_px: preview.height,
@@ -219,7 +219,7 @@ fn runtime_an_edit_keeps_a_source_drag_and_a_stale_preview_ends_its_own() {
         };
         app.preview_frame_viewport = Some(viewport.clone());
         let preview_current = |app: &StickyApp| {
-            crate::app::preview_runtime::current_preview_layout(
+            stickymd_app::flow::current_preview_layout(
                 app.preview_frame.as_ref().map(|frame| frame.generation()),
                 app.coordinator.view().generation,
                 app.preview_frame_viewport.clone(),

@@ -85,9 +85,13 @@ USER 批准（2026-10-31，[提案](../report/2026-10-23-shared-core-thin-platfo
 ```text
 Platform Host ──→ stickymd-desktop ──→ stickymd-app ──→ stickymd-core
      │                   │                   │
-     │                   └────→ stickymd-render ──→ stickymd-core
+     │                   │                   └──→ stickymd-render ──→ stickymd-core
+     │                   └─────────────────────→ stickymd-render
      └── 实现并注入 stickymd-app 定义的 Capability Port
 ```
+
+`stickymd-app` 可调用渲染能力（预览动作类型、语义转换、preedit 投影），这是批准提案的依赖方向；`stickymd-render` 不依赖
+`stickymd-app`，也不决定保存、冲突或资产删除。
 
 规则：
 
@@ -98,6 +102,9 @@ Platform Host ──→ stickymd-desktop ──→ stickymd-app ──→ sticky
    宿主/单实例/唤醒），不建立包罗所有系统调用的大接口，也不把每个文件操作包装成一个虚函数。
 4. 每次请求的结果是 Execution Receipt，分别表达成功、执行失败、暂时不可用与 `Unsupported`，并携带判定过期所需的身份
    （身份要求及豁免按 `04` Generation 规则 6）。平台声明支持某能力不等于某次请求已经成功；失败时不得提交虚假的已保存/已隐藏状态。
+   失败分类不构成自动重试许可，也不证明执行未产生部分副作用。`Unavailable` 表示当前无法取得所需资源或可信观察，不保证稍后必然
+   成功；`Unsupported` 表示宿主不具备所请求的能力，不用于表示输入格式不合法。仅增加上下文的错误包装保留已有的原因分类。重试、
+   回滚与部分执行状态由对应能力合同规定。
 5. 文件接口覆盖完整的安全操作边界：不能由共享层先检查路径、再由平台层凭字符串删除或移动文件。
 6. 主线程限定的窗口、菜单与输入法能力不强加 `Send + Sync`；I/O worker 只获得允许跨线程传递的执行对象与不可变请求。
 7. 共享调度使用注入的单调时间或可控时钟，沿用毫秒时间与有界队列语义；Platform Host 负责唤醒，不复制 debounce 与退出顺序。

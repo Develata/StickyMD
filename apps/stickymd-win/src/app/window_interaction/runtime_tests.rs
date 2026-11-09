@@ -5,7 +5,7 @@
 use super::*;
 use crate::app::headless_tests::fixture;
 use crate::app::input::ShellKey;
-use crate::interaction::ImeSignal;
+use stickymd_app::interaction::ImeSignal;
 
 fn key(code: KeyCode, text: Option<&str>) -> ShellKey<'_> {
     ShellKey {
@@ -253,7 +253,7 @@ fn runtime_opacity_recovery_and_busy_export_shortcuts_precede_field() {
         let mut app = fixture("original");
         focus_field(&mut app);
         app.apply_key(key(KeyCode::Digit7, Some("77")), false);
-        app.recovery = crate::flow::RecoveryCoordinator::new(
+        app.recovery = stickymd_app::flow::RecoveryCoordinator::new(
             Some(RecoveryCandidate {
                 canonical: Some(LoadedDocument::from_durable_bytes(b"durable").unwrap()),
                 temporary: LoadedDocument::from_durable_bytes(b"temporary").unwrap(),

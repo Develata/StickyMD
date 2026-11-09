@@ -14,7 +14,7 @@ pub(super) fn g4_02(repository: &Path, program: &Path, checks: &mut Checks) -> R
     // Virtual-time reducer and pure geometry are the authority for exact
     // 24/25 DIP, 100/500/700 ms, IME/focus, and Pin invariants. The copied
     // candidate below proves those transitions reach the real HWND.
-    run_cargo_test(repository, "flow::window")?;
+    run_cargo_test(repository, "stickymd-app", "flow::window")?;
 
     seed_note(program, "G4 docking integration\n")?;
     let mut child = start_until_editor_ready(&program.join("StickyMD.exe"))?;

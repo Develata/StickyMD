@@ -524,6 +524,7 @@ mod tests {
             "Cargo.toml",
             "crates/stickymd-core/Cargo.toml",
             "crates/stickymd-render/Cargo.toml",
+            "crates/stickymd-app/Cargo.toml",
             "apps/stickymd-win/Cargo.toml",
             "tools/stickymd-smoke/Cargo.toml",
         ] {

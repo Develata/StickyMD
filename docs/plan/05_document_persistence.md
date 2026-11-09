@@ -34,6 +34,26 @@ Windows 实现见 `09` 实现映射。存储接口须覆盖完整的安全操作
 （如 POSIX `rename`）与目录同步是不同的保证，不能当作 Windows 原子发布的直接别名；非 Windows 存储 adapter 的
 具体保证在建立对应宿主时另行批准。
 
+<a id="storage-failure-classes"></a>
+### 存储回执的失败分类
+
+Windows adapter 把存储错误映射为 `03` 规则 4 的分类。新增错误变体必须显式分类；本表不改变 conflict、恢复候选或部分事务的独立处理协议，
+资产事务与导出行为见 `08`。
+
+| Windows 错误 | 分类 |
+| --- | --- |
+| Note：`Read`、`Metadata`、`ObservationChanged` | `Unavailable` |
+| Note：其余变体 | `Failed` |
+| Asset：`Directory`、`ChangedDuringProof` | `Unavailable` |
+| Asset：其余变体 | `Failed` |
+| Paste：`Read` | `Unavailable` |
+| Paste：`Storage(inner)` | 继承 `inner` 的分类 |
+| Paste：其余变体 | `Failed` |
+| Export：全部变体 | `Failed`（保守的粗分类；按分类区分处理前须先细化） |
+| Config：全部变体 | `Failed` |
+
+Windows 存储端口当前没有 `Unsupported` 路径。
+
 ## Owned Objects
 
 `file::note_md`、`file::config_toml`、`doc::snapshot`（写入输入）。
@@ -189,11 +209,18 @@ TOCTOU 窗口；v1 不通过长期独占文件锁破坏外部编辑能力。
 
 1. 在启动 watcher/autosave 前读取 `note.md` 与 `note.md.tmp` 的 existence、bytes、mtime、hash、UTF-8 状态。
 2. temp 与 canonical hash 相同：canonical 成功加载后才删除冗余 temp。
-3. valid temp 内容不同：产生 `RecoveryCandidate`，显示“恢复临时内容 / 使用当前文件”。
+3. valid temp 内容不同：产生 `RecoveryCandidate`，显示“恢复临时内容 / 使用当前文件”。修改时间只用于提示哪份较新，
+   不授权删除 temp（USER 决定 2026-10-31）。
 4. canonical 不存在但 temp valid：仍由用户决定，不自动恢复。
-5. canonical invalid/过大且 temp valid：不得静默覆盖；恢复前先保留 canonical 证据。
+5. canonical invalid 且 temp valid：不得静默覆盖；恢复前先保留 canonical 证据。保留时用同一个只共享读取的句柄校验完整内容
+   仍是候选检测时的内容并改名，不跟随链接；内容已变时转为 conflict，链接或非普通文件不移动。canonical 过大且 temp valid：
+   不读取也不自动移动它，恢复被拒绝并提示用户手动移走后重启（USER 决定 2026-10-31）。
+   被保留的 invalid canonical 是 Note Directory 内可观察的恢复证据。Windows adapter 使用 `note.invalid-<unix-seconds>.md`；名称已占用时，
+   在扩展名前依次追加 `-1` 至 `-999`。`unix-seconds` 为操作开始时距 Unix epoch 的完整秒数，系统时间早于 epoch 时取 `0`。所有候选均以
+   不覆盖既有目标的方式尝试；名称耗尽或保留失败时拒绝本次恢复覆盖。Shared Application 只提交保留请求及预期内容身份，名称生成、冲突
+   处理与文件操作由宿主 adapter 完成；其他宿主的命名映射在建立该宿主时另行规定。
 6. temp invalid/过大：不得解码成空内容；在创建或复用固定事务 temp 前，先将证据隔离为
-   `note.invalid-tmp-<timestamp>`，再明确警告。隔离失败则阻止启动，不能让后续 autosave
+   `note.invalid-tmp-<unix-seconds>[-<suffix>].md`（后缀省略或为 `1` 至 `999`），再明确警告。隔离失败则阻止启动，不能让后续 autosave
    truncate 该证据。
 7. 用户选择前禁用 autosave/watcher effects并阻止普通编辑。
 8. 选择恢复后，恢复文本在内存中保持 dirty，使用候选检测时的 canonical fingerprint 做

@@ -8,20 +8,21 @@ use winit::window::{ResizeDirection, Theme};
 
 use super::StickyApp;
 use super::window_geometry_runtime::{apply_frame, configured_monitor, monitor_geometries};
-use crate::assets::AssetReconcileMode;
 use crate::config::{DockEdge as ConfigDockEdge, ViewMode};
-use crate::flow::window::geometry::WindowPlacement;
-use crate::flow::window::reducer::WindowShellCoordinator;
-use crate::flow::window::state::{
-    DockEdge, QuitBarrier, StableVisibility, WindowEffect, WindowIntent, WindowSaveReason,
-    effective_topmost,
-};
-use crate::flow::{SaveTrigger, WindowPreferenceEffect, coordinate_window_preference};
-use crate::instruction::{WindowPlatformIntent, WindowPreferenceIntent, WindowResizeEdge};
 use crate::platform::windows::tray::{TrayController, TrayIconRgba};
 use crate::platform::windows::window_opacity::set_window_opacity;
 use crate::platform::windows::window_topmost::set_window_topmost_no_activate;
 use crate::startup::StartupDetail;
+use stickymd_app::flow::window::geometry::WindowPlacement;
+use stickymd_app::flow::window::reducer::WindowShellCoordinator;
+use stickymd_app::flow::window::state::{
+    DockEdge, QuitBarrier, StableVisibility, WindowEffect, WindowIntent, WindowSaveReason,
+    effective_topmost,
+};
+use stickymd_app::flow::{SaveTrigger, WindowPreferenceEffect, coordinate_window_preference};
+use stickymd_app::instruction::{WindowPlatformIntent, WindowPreferenceIntent, WindowResizeEdge};
+use stickymd_app::ports::AssetReconcileMode;
+use stickymd_app::ports::FailureKind;
 
 impl StickyApp {
     pub(super) fn dispatch_window_platform_intent(&mut self, intent: WindowPlatformIntent) -> bool {
@@ -274,6 +275,8 @@ impl StickyApp {
     }
 
     fn apply_window_effect(&mut self, event_loop: Option<&ActiveEventLoop>, effect: WindowEffect) {
+        #[cfg(test)]
+        self.applied_window_effects.push(format!("{effect:?}"));
         if self.quit_notice.on_window_effect(&effect) {
             self.update_window_title();
         }
@@ -286,34 +289,34 @@ impl StickyApp {
             WindowEffect::SetTemporarySensorTopmost(temporary) => {
                 self.apply_effective_topmost(temporary);
             }
-            WindowEffect::SetVisible(visible) => {
-                if !visible {
-                    self.scrollbars = super::scrollbar::ScrollbarInteraction::default();
-                    self.controls.opacity_popup_open = false;
-                    self.controls.opacity_dragging = false;
-                    self.controls.opacity_input_focused = false;
-                    self.controls.opacity_preview = self.config.current().opacity;
-                    self.controls.opacity_input = self.config.current().opacity.to_string();
-                }
-                if let Some(window) = &self.window {
-                    window.set_visible(visible);
-                    if visible {
-                        window.set_minimized(false);
-                    }
-                }
-                self.reassert_tool_window_identity_or_restore_taskbar();
-                if let Some(tray) = &self.tray {
-                    tray.set_window_visible(visible);
-                }
-                if visible {
-                    self.configure_viewports();
-                    let generation = self.coordinator.view().generation;
-                    if let Some(action) = self
-                        .preview_flow
-                        .show(generation, self.preview_visibility())
-                    {
-                        self.submit_preview_action(action);
-                    }
+            WindowEffect::HideWindow { id } => {
+                self.scrollbars = super::scrollbar::ScrollbarInteraction::default();
+                self.controls.opacity_popup_open = false;
+                self.controls.opacity_dragging = false;
+                self.controls.opacity_input_focused = false;
+                self.controls.opacity_preview = self.config.current().opacity;
+                self.controls.opacity_input = self.config.current().opacity.to_string();
+                // The closed popup no longer holds the window open, whichever way the hide ends.
+                self.refresh_window_guards(event_loop);
+                let outcome = self.hide_native();
+                self.dispatch_window_intent(
+                    event_loop,
+                    WindowIntent::ActionCompleted {
+                        id,
+                        outcome,
+                        now_ms: self.timestamp_ms(),
+                    },
+                );
+            }
+            WindowEffect::ShowWindow => {
+                self.show_native();
+                self.configure_viewports();
+                let generation = self.coordinator.view().generation;
+                if let Some(action) = self
+                    .preview_flow
+                    .show(generation, self.preview_visibility())
+                {
+                    self.submit_preview_action(action);
                 }
             }
             WindowEffect::FocusWindow => {
@@ -351,10 +354,11 @@ impl StickyApp {
                 self.sync_ime_allowed();
             }
             WindowEffect::RequestNoteSave(reason) => {
-                self.request_immediate_save(match reason {
+                let trigger = match reason {
                     WindowSaveReason::HideToTray => SaveTrigger::HideToTray,
                     WindowSaveReason::Shutdown => SaveTrigger::Shutdown,
-                });
+                };
+                self.request_immediate_save(event_loop, trigger);
             }
             WindowEffect::RequestSafeAssetGc => self.submit_asset_sync(
                 self.coordinator.view().generation,
@@ -396,6 +400,10 @@ impl StickyApp {
                 self.diagnostic = Some("恢复或外部冲突未解决，窗口不会隐藏。".into());
                 self.request_redraw();
             }
+            WindowEffect::HideRejected(kind) => {
+                self.diagnostic = Some(format!("窗口未能隐藏，保持显示（{kind:?}）。"));
+                self.request_redraw();
+            }
             WindowEffect::HideCancelled => {
                 self.diagnostic = Some("保存失败，窗口保持显示，内存文本仍保留。".into());
                 self.request_redraw();
@@ -407,6 +415,8 @@ impl StickyApp {
             WindowEffect::QuitCancelled(barrier) => {
                 self.diagnostic = Some(format!("退出已取消：{barrier:?} 未安全完成。"));
                 self.request_redraw();
+                // Quitting stopped the dock timers; a window that stays gets them back.
+                self.refresh_window_guards(event_loop);
             }
             WindowEffect::QuitWarning(barrier) => {
                 self.diagnostic = Some(format!("退出前的 {barrier:?} 未完成；证据已保留。"));
@@ -426,6 +436,45 @@ impl StickyApp {
             return Ok(());
         };
         crate::platform::windows::tool_window::apply_tool_window_identity(window.as_ref())
+    }
+
+    /// Hides the native window and reports what it really did: winit hides synchronously on the
+    /// event loop thread and gives no result, so the window is asked afterwards. Only a confirmed
+    /// hide tells the tray the window is gone.
+    fn hide_native(&mut self) -> Result<(), FailureKind> {
+        #[cfg(test)]
+        if let Some(outcome) = self.headless_hide {
+            return outcome;
+        }
+        let outcome = match &self.window {
+            None => Err(FailureKind::Unavailable),
+            Some(window) => {
+                window.set_visible(false);
+                match window.is_visible() {
+                    Some(false) => Ok(()),
+                    Some(true) => Err(FailureKind::Failed),
+                    None => Err(FailureKind::Unsupported),
+                }
+            }
+        };
+        self.reassert_tool_window_identity_or_restore_taskbar();
+        if outcome.is_ok()
+            && let Some(tray) = &self.tray
+        {
+            tray.set_window_visible(false);
+        }
+        outcome
+    }
+
+    fn show_native(&mut self) {
+        if let Some(window) = &self.window {
+            window.set_visible(true);
+            window.set_minimized(false);
+        }
+        self.reassert_tool_window_identity_or_restore_taskbar();
+        if let Some(tray) = &self.tray {
+            tray.set_window_visible(true);
+        }
     }
 
     fn reassert_tool_window_identity_or_restore_taskbar(&mut self) {

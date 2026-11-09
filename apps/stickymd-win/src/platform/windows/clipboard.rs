@@ -19,7 +19,7 @@ use windows::Win32::System::Ole::{CF_BITMAP, CF_DIB, CF_DIBV5, CF_HDROP};
 use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 use windows::core::PCWSTR;
 
-use crate::flow::{ClipboardError, ClipboardPaste, ClipboardPort};
+use stickymd_app::flow::{ClipboardError, ClipboardPaste, ClipboardPort};
 
 const MAX_CLIPBOARD_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_CLIPBOARD_FILES: u32 = 256;

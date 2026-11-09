@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/stickymd-core",
     "crates/stickymd-render",
+    "crates/stickymd-app",
     "apps/stickymd-win",
     "tools/stickymd-smoke",
 ]

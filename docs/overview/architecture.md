@@ -43,12 +43,12 @@ USER 已批准（2026-10-31）：共享实现面向 Windows、Debian、macOS 集
 ```text
 apps/stickymd-win（Windows 宿主：启动接线、原生 adapter）
   → stickymd-desktop（共享界面：控件、绘制、事件翻译）
-  → stickymd-app（共享应用：intent、coordinator、配置、能力接口）
+  → stickymd-app（共享应用：intent、coordinator、配置、能力接口 `ports/`、worker 调度 `execution/`）
   → stickymd-core（领域模型）；stickymd-render（Markdown/数学/排版）
 ```
 
-宿主实现 `stickymd-app` 定义的能力接口并上报执行回执，不复制业务规则。迁移按 Phase 15 的 A–D 进行，
-在完成前代码仍主要位于 `apps/stickymd-win`；细节见 [`03` 共享实现节](../plan/03_system_architecture.md#shared-crates)
+宿主实现 `stickymd-app` 定义的能力接口并上报执行回执，不复制业务规则。迁移按 Phase 15 的 A–D 进行：`stickymd-app`
+已持有 intent、coordinator、配置模型与 Search/编辑会话，运行时裁决和界面仍在 `apps/stickymd-win`；细节见 [`03` 共享实现节](../plan/03_system_architecture.md#shared-crates)
 与 [`11` Phase 15 节](../plan/11_testing_and_release.md#phase-15-shared-core-migration)。
 
 ## 关键安全承诺

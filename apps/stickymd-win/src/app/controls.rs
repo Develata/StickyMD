@@ -5,7 +5,7 @@
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::keyboard::PhysicalKey;
 
-use crate::instruction::WindowPreferenceIntent;
+use stickymd_app::instruction::WindowPreferenceIntent;
 
 pub(super) const TOOLBAR_HEIGHT_DIP: f64 = 34.0;
 const CONTROL_DIP: f64 = 28.0;
@@ -551,7 +551,7 @@ mod phase8_control_tests {
     #[test]
     fn phase8_a_slider_drag_commits_at_most_once_on_release() {
         use crate::config::{ConfigCoordinator, RuntimeConfig};
-        use crate::flow::{WindowPreferenceEffect, coordinate_window_preference};
+        use stickymd_app::flow::{WindowPreferenceEffect, coordinate_window_preference};
 
         let mut config = ConfigCoordinator::loaded(RuntimeConfig::default());
         let mut controls = ControlState::new(96);
@@ -711,8 +711,8 @@ mod phase8_control_tests {
 
         // The preference reducer clamps both previews and commits into the range again.
         use crate::config::{ConfigCoordinator, RuntimeConfig};
-        use crate::flow::{WindowPreferenceEffect, coordinate_window_preference};
-        use crate::instruction::WindowPreferenceIntent;
+        use stickymd_app::flow::{WindowPreferenceEffect, coordinate_window_preference};
+        use stickymd_app::instruction::WindowPreferenceIntent;
         let mut config = ConfigCoordinator::loaded(RuntimeConfig::default());
         for (requested, applied) in [
             (0, 40),

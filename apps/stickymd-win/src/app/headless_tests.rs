@@ -4,17 +4,23 @@
 
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, mpsc};
 
+use stickymd_app::flow::window::geometry::{
+    MonitorGeometry, MonitorIdentity, PhysicalRect, WindowPlacement,
+};
+use stickymd_app::flow::window::reducer::WindowShellCoordinator;
+use stickymd_app::flow::window::state::StableVisibility;
 use stickymd_core::{DocumentState, LineEnding};
 use winit::event_loop::{EventLoop, EventLoopProxy};
 use winit::platform::windows::EventLoopBuilderExtWindows;
 
 use super::{AppEvent, StickyApp};
-use crate::persistence::PersistenceWorker;
+use crate::persistence::win_io_ports;
 use crate::platform::windows::program_dir::RuntimePaths;
 use crate::platform::windows::single_instance::{InstanceDisposition, SingleInstanceGuard};
 use crate::startup::{BootstrapOutcome, StartupDiagnostics};
+use stickymd_app::execution::{IoCompletion, PersistenceWorker};
 
 /// The constructor needs an event sink, not a running window or input desktop.
 /// Winit permits one event loop per process. Create its proxy once on an owned
@@ -67,7 +73,39 @@ impl Drop for HeadlessApp {
     }
 }
 
+/// A coordinator on one fixed monitor, without a native window.
+pub(super) fn window_flow(visibility: StableVisibility) -> WindowShellCoordinator {
+    WindowShellCoordinator::new(
+        WindowPlacement::new(900.0, 600.0, None, 0.0, 0.5, 0.5),
+        visibility,
+        MonitorGeometry::new(
+            MonitorIdentity::new("headless"),
+            PhysicalRect::new(0, 0, 1920, 1080),
+            1.0,
+            true,
+        ),
+        true,
+    )
+}
+
 pub(super) fn fixture(text: &str) -> HeadlessApp {
+    started(text, |_| {})
+}
+
+/// A fixture whose worker hands every receipt to the test instead of dropping it, so a test can
+/// see what was really requested and deliver the receipt itself.
+pub(super) fn receipt_fixture(text: &str) -> (HeadlessApp, mpsc::Receiver<IoCompletion>) {
+    let (sender, receiver) = mpsc::channel();
+    let app = started(text, move |completion| {
+        let _ = sender.send(completion);
+    });
+    (app, receiver)
+}
+
+fn started(
+    text: &str,
+    on_completion: impl Fn(IoCompletion) + Send + Sync + 'static,
+) -> HeadlessApp {
     let root = crate::test_support::unique_temp_path("headless-shell");
     std::fs::create_dir(&root).unwrap();
     let mut owned = HeadlessApp { app: None, root };
@@ -78,7 +116,7 @@ pub(super) fn fixture(text: &str) -> HeadlessApp {
     else {
         panic!("unique fixture must own its instance");
     };
-    let worker = PersistenceWorker::start(|_| {}).unwrap();
+    let worker = PersistenceWorker::start(win_io_ports(&paths), on_completion).unwrap();
     let mut app = StickyApp::new(
         paths,
         BootstrapOutcome {
@@ -94,25 +132,11 @@ pub(super) fn fixture(text: &str) -> HeadlessApp {
         closed_proxy(),
         StartupDiagnostics::disabled_for_test(),
     );
+    app.headless_hide = Some(Ok(()));
     // The real constructor's directory watcher is unnecessary here: completions
     // are supplied explicitly, and no test is allowed to use native input.
     app.watcher.take();
-    use crate::flow::window::geometry::{
-        MonitorGeometry, MonitorIdentity, PhysicalRect, WindowPlacement,
-    };
-    use crate::flow::window::reducer::WindowShellCoordinator;
-    use crate::flow::window::state::StableVisibility;
-    app.window_flow = Some(WindowShellCoordinator::new(
-        WindowPlacement::new(900.0, 600.0, None, 0.0, 0.5, 0.5),
-        StableVisibility::Floating,
-        MonitorGeometry::new(
-            MonitorIdentity::new("headless"),
-            PhysicalRect::new(0, 0, 1920, 1080),
-            1.0,
-            true,
-        ),
-        true,
-    ));
+    app.window_flow = Some(window_flow(StableVisibility::Floating));
     assert!(app.window_accepts_editor_mutation());
     assert!(app.window.is_none());
     assert!(app.tray.is_none());

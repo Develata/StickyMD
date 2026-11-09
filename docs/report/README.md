@@ -19,8 +19,13 @@
 - [阶段路由、发布工作流与哈希](2026-09-30-phase-routing-release-workflows-cng.md)：后续 Rust CLI 收拢及 Windows adapter 边界。
 - [资源场景等价与分批记录](2026-09-30-resource-equivalence-and-batching.md)、[续跑计划](2026-09-30-resource-resume-planning.md)、[实际诊断复审](2026-09-30-resource-live-review.md)：区分完整资格化、定向诊断、历史复用和测量范围。
 
+## 架构
+
+- [三端共享核心与平台薄壳架构提案](2026-10-23-shared-core-thin-platform-shell-architecture.md)：USER 批准（2026-10-31），已写入 `docs/plan/`；Phase 15 的依据与六轮审查记录。
+
 ## 发布政策
 
+- [Phase 15 B 的待决项](2026-11-07-phase-15-b-decisions.md)：失败分类、恢复文件名、异常保存回执、性能证据与窗口回执的结论（USER 决定 2026-11-07）。
 - [需要额外硬件的人工项改为可选](2026-10-31-optional-hardware-manual-items.md)：`previous` 角色、Clean VM、多屏、RDP 与负坐标不再阻断发布（USER 决定 2026-10-31）。
 
 ## v0.1.3 候选准备

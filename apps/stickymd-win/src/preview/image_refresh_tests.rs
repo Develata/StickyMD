@@ -2,9 +2,13 @@
 //!
 //! plan_ref: docs/plan/08_assets_and_export.md#local-image-read-boundary
 
-use super::*;
+use std::path::PathBuf;
 use std::sync::Arc;
-use stickymd_core::LineEnding;
+
+use stickymd_core::{DocumentSnapshot, Generation, LineEnding};
+use stickymd_render::preview::{PreviewPipeline, PreviewSelection, PreviewTheme};
+
+use super::LocalImageSource;
 
 struct Fixture(PathBuf);
 

@@ -136,7 +136,7 @@ impl Default for RuntimeConfig {
 }
 
 impl RuntimeConfig {
-    pub(super) fn is_semantically_valid(&self) -> bool {
+    pub fn is_semantically_valid(&self) -> bool {
         (40..=100).contains(&self.opacity)
             && self.content_zoom_percent.is_valid()
             && (MIN_WINDOW_WIDTH_DIP..=MAX_WINDOW_DIP).contains(&self.window.width_dip)

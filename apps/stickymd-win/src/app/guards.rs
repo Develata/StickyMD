@@ -4,7 +4,7 @@
 //! plan_ref: docs/plan/09_windows_shell.md#dock-auto-hide
 
 use super::StickyApp;
-use crate::flow::window::state::WindowGuardSnapshot;
+use stickymd_app::flow::window::state::WindowGuardSnapshot;
 
 /// The shell state the guards read.
 #[derive(Clone, Copy, Debug, Default)]
@@ -54,8 +54,8 @@ impl StickyApp {
             export_in_flight: self.export_in_flight,
             recovery_pending: self.recovery.is_pending(),
             conflict: self.persistence.conflict().is_some(),
-            paste_pending: self.asset_paste_pending,
-            asset_sync_in_flight: self.asset_sync_in_flight,
+            paste_pending: self.assets.paste_pending,
+            asset_sync_in_flight: self.assets.sync_in_flight,
             dirty: self.coordinator.view().dirty,
             durability_required: self.persistence.durability_required(),
             note_save_in_flight: self.persistence.note_save_in_flight(),
@@ -70,7 +70,7 @@ mod tests {
     #[test]
     fn runtime_guards_read_both_compositions_and_focus_loss_cancels_them() {
         use crate::app::headless_tests::fixture;
-        use crate::interaction::ImeSignal;
+        use stickymd_app::interaction::ImeSignal;
         for editor in [false, true] {
             for search in [false, true] {
                 let mut app = fixture("canonical text");

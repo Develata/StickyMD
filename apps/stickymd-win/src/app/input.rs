@@ -9,10 +9,10 @@ use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 
 use super::StickyApp;
 use crate::config::{ContentZoomPercent, ViewMode};
-use crate::instruction::{
+use stickymd_app::instruction::{
     AppIntent, PersistenceIntent, PreviewIntent, SaveReason, WindowPreferenceIntent,
 };
-use crate::interaction::ImeSignal;
+use stickymd_app::interaction::ImeSignal;
 
 /// Only the native key observations consumed by the shell; borrows text without copying.
 #[derive(Clone, Copy)]
@@ -33,7 +33,7 @@ impl StickyApp {
             self.recovery.is_pending(),
             self.preview_focused,
             !self.window_accepts_editor_mutation(),
-            self.asset_reconcile_pending,
+            self.assets.reconcile_pending,
         ) {
             self.session.cancel_preedit();
             self.sync_preedit();
@@ -77,7 +77,7 @@ impl StickyApp {
     pub(super) fn dispatch_escape_to_window(&mut self) {
         self.dispatch_window_intent(
             None,
-            crate::flow::window::state::WindowIntent::EscapePressed {
+            stickymd_app::flow::window::state::WindowIntent::EscapePressed {
                 now_ms: self.timestamp_ms(),
             },
         );
@@ -149,7 +149,7 @@ impl StickyApp {
             self.recovery.is_pending(),
             false,
             !self.window_accepts_editor_mutation(),
-            self.asset_reconcile_pending,
+            self.assets.reconcile_pending,
         ) {
             return;
         }
@@ -704,7 +704,7 @@ mod recovery_tests {
         zoom_key_command,
     };
     use crate::config::ViewMode;
-    use crate::instruction::{PersistenceIntent, SaveReason};
+    use stickymd_app::instruction::{PersistenceIntent, SaveReason};
     use winit::dpi::PhysicalPosition;
     use winit::event::MouseScrollDelta;
     use winit::keyboard::KeyCode;

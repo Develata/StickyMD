@@ -6,7 +6,7 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#tray-lifecycle
 
-use crate::flow::window::state::{QuitBarrier, WindowEffect};
+use stickymd_app::flow::window::state::{QuitBarrier, WindowEffect};
 
 pub(super) const PLAIN: &str = "StickyMD";
 pub(super) const DIRTY: &str = "StickyMD *";
@@ -187,8 +187,8 @@ pub(super) mod tests {
     /// Every window effect the reducer can emit, one of each variant (each quit barrier for the
     /// barrier-carrying ones). The `match` stops compiling when a variant is added.
     pub(in crate::app) fn every_effect() -> Vec<WindowEffect> {
-        use crate::flow::window::geometry::{PhysicalRect, WindowPlacement};
-        use crate::flow::window::state::{DockEdge, WindowSaveReason};
+        use stickymd_app::flow::window::geometry::{PhysicalRect, WindowPlacement};
+        use stickymd_app::flow::window::state::{DockEdge, WindowSaveReason};
         let barriers = [
             QuitBarrier::Paste,
             QuitBarrier::NoteSave,
@@ -199,8 +199,8 @@ pub(super) mod tests {
             WindowEffect::ApplyFrame(PhysicalRect::new(0, 0, 10, 10)),
             WindowEffect::SetTemporarySensorTopmost(true),
             WindowEffect::SetTemporarySensorTopmost(false),
-            WindowEffect::SetVisible(false),
-            WindowEffect::SetVisible(true),
+            WindowEffect::HideWindow { id: 1 },
+            WindowEffect::ShowWindow,
             WindowEffect::FocusWindow,
             WindowEffect::CancelImePreedit,
             WindowEffect::SetImeAllowed(false),
@@ -220,6 +220,7 @@ pub(super) mod tests {
             WindowEffect::ReportTrayUnavailable,
             WindowEffect::HideBlocked,
             WindowEffect::HideCancelled,
+            WindowEffect::HideRejected(stickymd_app::ports::FailureKind::Failed),
             WindowEffect::QuitBlocked,
             WindowEffect::RequestRedraw,
             WindowEffect::WakeAt(1),
@@ -230,7 +231,8 @@ pub(super) mod tests {
             match effect {
                 WindowEffect::ApplyFrame(_)
                 | WindowEffect::SetTemporarySensorTopmost(_)
-                | WindowEffect::SetVisible(_)
+                | WindowEffect::HideWindow { .. }
+                | WindowEffect::ShowWindow
                 | WindowEffect::FocusWindow
                 | WindowEffect::CancelImePreedit
                 | WindowEffect::SetImeAllowed(_)
@@ -244,6 +246,7 @@ pub(super) mod tests {
                 | WindowEffect::ReportTrayUnavailable
                 | WindowEffect::HideBlocked
                 | WindowEffect::HideCancelled
+                | WindowEffect::HideRejected(_)
                 | WindowEffect::QuitBlocked
                 | WindowEffect::QuitCancelled(_)
                 | WindowEffect::QuitWarning(_)

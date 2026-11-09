@@ -16,6 +16,9 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     ] {
         let mut args = vec![
             "tree",
+            // Without this a workspace member already listed as another member's dependency
+            // prints as `(*)` with no edges of its own.
+            "--no-dedupe",
             "--depth",
             "1",
             "--prefix",

@@ -11,65 +11,17 @@ use winit::dpi::PhysicalSize;
 use super::search_controller::{SEARCH_COMPOSING, SearchViewChange, search_on_view_change};
 use super::{AppEvent, StickyApp};
 use crate::config::ViewMode;
-use crate::flow::{PreviewAction, PreviewAdmission, PreviewEffect, PreviewVisibility};
-use crate::instruction::PreviewIntent;
-use crate::preview::{PreviewCompletion, PreviewJob, PreviewViewport, PreviewWorker};
+use crate::preview::LocalImageSource;
+use stickymd_app::execution::PreviewWorker;
+use stickymd_app::flow::{
+    PreviewAction, PreviewEffect, PreviewFacts, PreviewFollowUp, PreviewIo, PreviewVisibility,
+    current_preview_layout, selection_for_generation,
+};
+use stickymd_app::instruction::PreviewIntent;
+use stickymd_app::ports::{PreviewCompletion, PreviewJob, PreviewViewport};
 
 pub(super) const TOOLBAR_HEIGHT_DIP: f32 = 34.0;
 
-/// What a Preview worker completion may do. Only a build for the current document and viewport
-/// reaches the admission rule, so an old receipt can neither show stale pixels nor move the
-/// view back (plan 09 vertical scrollbars).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum CompletionRoute {
-    /// The paper is hidden to the tray: release the projection; never re-admit it.
-    ReleaseHidden,
-    /// Built for an older document: rebuild the current one.
-    Rebuild,
-    /// There is no viewport to show it in.
-    Drop,
-    /// Built for another viewport: keep the semantic tree if the build succeeded, then relayout.
-    Relayout { reuse_tree: bool },
-    /// For the current document and viewport: offer it to the admission rule.
-    Admit,
-}
-
-/// `viewport_matches` is `None` when there is no current viewport.
-pub(super) fn completion_route(
-    hidden_to_tray: bool,
-    completed: Generation,
-    current: Generation,
-    viewport_matches: Option<bool>,
-    succeeded: bool,
-) -> CompletionRoute {
-    if hidden_to_tray {
-        CompletionRoute::ReleaseHidden
-    } else if completed != current {
-        CompletionRoute::Rebuild
-    } else {
-        match viewport_matches {
-            None => CompletionRoute::Drop,
-            Some(false) => CompletionRoute::Relayout {
-                reuse_tree: succeeded,
-            },
-            Some(true) => CompletionRoute::Admit,
-        }
-    }
-}
-
-/// A cached layout may drive scroll anchors while only offset/selection changes.
-/// Missing state, another generation, or any geometry/theme change forbids it.
-pub(super) fn current_preview_layout(
-    frame_generation: Option<Generation>,
-    document_generation: Generation,
-    applied: Option<PreviewViewport>,
-    current: Option<PreviewViewport>,
-) -> bool {
-    frame_generation == Some(document_generation)
-        && applied
-            .zip(current)
-            .is_some_and(|(applied, current)| applied.same_layout(&current))
-}
 const SPLIT_DIVIDER_DIP: f32 = 1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +51,10 @@ pub(super) struct ViewGeometry {
 
 impl StickyApp {
     pub(super) fn view_geometry(&self) -> Option<ViewGeometry> {
+        #[cfg(test)]
+        if let Some(size) = self.headless_view {
+            return Some(self.view_geometry_for(size, 1.0));
+        }
         let window = self.window.as_ref()?;
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;
@@ -155,7 +111,7 @@ impl StickyApp {
         self.session.cancel_preedit();
         self.dispatch_window_intent(
             None,
-            crate::flow::window::state::WindowIntent::SplitModeChanged {
+            stickymd_app::flow::window::state::WindowIntent::SplitModeChanged {
                 split: mode == ViewMode::Split,
             },
         );
@@ -227,20 +183,10 @@ impl StickyApp {
         if self.preview_visibility() == PreviewVisibility::Hidden {
             return;
         }
-        let generation = self.coordinator.view().generation;
-        if self.preview_flow.applied_generation() == Some(generation) {
-            if let Some(viewport) = self.preview_viewport() {
-                self.ensure_preview_worker();
-                if let Some(worker) = &self.preview_worker {
-                    worker.submit(PreviewJob::Relayout {
-                        generation,
-                        viewport,
-                    });
-                }
-            }
-        } else {
-            self.submit_preview_action(PreviewAction::Build(generation));
-        }
+        let action = self
+            .preview_flow
+            .viewport_action(self.coordinator.view().generation);
+        self.submit_preview_action(action);
     }
 
     pub(super) fn request_preview_paint(&mut self) {
@@ -267,7 +213,7 @@ impl StickyApp {
         let hidden_to_tray = self.window_flow.as_ref().is_some_and(|flow| {
             matches!(
                 flow.state().visibility(),
-                crate::flow::window::state::VisibilityState::HiddenToTray { .. }
+                stickymd_app::flow::window::state::VisibilityState::HiddenToTray { .. }
             )
         });
         let current = self.coordinator.view().generation;
@@ -286,78 +232,37 @@ impl StickyApp {
         hidden_to_tray: bool,
         viewport: Option<PreviewViewport>,
     ) {
-        let current = self.coordinator.view().generation;
-        match completion_route(
+        let facts = PreviewFacts {
             hidden_to_tray,
-            completion.generation,
-            current,
-            viewport
-                .as_ref()
-                .map(|viewport| viewport == &completion.viewport),
-            completion.result.is_ok(),
-        ) {
-            CompletionRoute::ReleaseHidden => {
-                // A build can finish after the tray-hidden release effect. Never
-                // re-admit that document-sized projection while the paper is not
-                // visible; repeat the idempotent worker-owned release.
-                self.preview_frame = None;
-                self.preview_frame_viewport = None;
-                self.preview_flow.release_projection();
+            current: self.coordinator.view().generation,
+            visible: self.preview_visibility() != PreviewVisibility::Hidden,
+            viewport,
+        };
+        let follow_up = PreviewIo {
+            flow: &mut self.preview_flow,
+            frame: &mut self.preview_frame,
+            frame_viewport: &mut self.preview_frame_viewport,
+            scroll_y: &mut self.preview_scroll_y,
+            selection: &mut self.preview_selection,
+        }
+        .on_result(completion, facts);
+        match follow_up {
+            PreviewFollowUp::Nothing => {}
+            PreviewFollowUp::ReleaseProjection => {
                 if let Some(worker) = &self.preview_worker {
                     worker.release_document_projection();
                 }
-                return;
             }
-            CompletionRoute::Rebuild => {
-                if self.preview_visibility() != PreviewVisibility::Hidden {
-                    self.submit_preview_action(PreviewAction::Build(current));
-                }
-                return;
+            PreviewFollowUp::Rebuild(generation) => {
+                self.submit_preview_action(PreviewAction::Build(generation));
             }
-            CompletionRoute::Drop => return,
-            CompletionRoute::Relayout { reuse_tree } => {
-                // The worker owns a valid semantic tree after a successful build,
-                // even when its pixels are already stale. Reuse it for the latest
-                // viewport without displaying or hit-testing the stale frame.
-                if reuse_tree {
-                    self.preview_flow.admit_completion(current, current);
-                }
-                self.request_preview_relayout();
-                return;
+            PreviewFollowUp::Relayout => self.request_preview_relayout(),
+            PreviewFollowUp::Redraw => self.request_redraw(),
+            PreviewFollowUp::Report(message) => {
+                self.diagnostic = Some(message);
+                self.request_redraw();
             }
-            CompletionRoute::Admit => {}
         }
-        let Some(viewport) = viewport else {
-            return;
-        };
-        match completion.result {
-            Ok(frame)
-                if self
-                    .preview_flow
-                    .admit_completion(completion.generation, current)
-                    == PreviewAdmission::Apply =>
-            {
-                self.preview_scroll_y = frame.scroll_y();
-                self.preview_selection = selection_for_generation(
-                    self.preview_frame
-                        .as_ref()
-                        .map(|previous| previous.generation()),
-                    completion.generation,
-                    self.preview_selection,
-                );
-                let text_len = frame.text().len();
-                self.preview_selection.anchor = self.preview_selection.anchor.min(text_len);
-                self.preview_selection.active = self.preview_selection.active.min(text_len);
-                self.preview_frame_viewport = Some(viewport);
-                self.preview_frame = Some(frame);
-            }
-            Ok(_) => {}
-            Err(error) if completion.generation == current => {
-                self.diagnostic = Some(format!("Preview failed: {error}"));
-            }
-            Err(_) => {}
-        }
-        self.request_redraw();
     }
 
     pub(super) fn configure_viewports(&mut self) {
@@ -418,7 +323,8 @@ impl StickyApp {
             return;
         }
         let proxy = self.proxy.clone();
-        match PreviewWorker::start_with_image_base(self.paths.note_dir.clone(), move |completion| {
+        let images = LocalImageSource::new(self.paths.note_dir.clone());
+        match PreviewWorker::start(Some(Box::new(images)), move |completion| {
             let _ = proxy.send_event(AppEvent::Preview(completion));
         }) {
             Ok(worker) => self.preview_worker = Some(worker),
@@ -469,18 +375,6 @@ impl StickyApp {
 
 #[cfg(test)]
 mod runtime_tests;
-
-fn selection_for_generation(
-    previous: Option<Generation>,
-    target: Generation,
-    selection: PreviewSelection,
-) -> PreviewSelection {
-    if previous == Some(target) {
-        selection
-    } else {
-        PreviewSelection::default()
-    }
-}
 
 pub(super) fn geometry(mode: ViewMode, size: PhysicalSize<u32>, scale: f32) -> ViewGeometry {
     let toolbar_height = (TOOLBAR_HEIGHT_DIP * scale.max(0.5)).round().max(1.0) as u32;
@@ -540,185 +434,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_layout_requires_generation_and_every_layout_field_but_not_offset_or_selection() {
-        let old = Generation::initial();
-        let generation = old.checked_next().unwrap();
-        let viewport = PreviewViewport {
-            horizontal: Default::default(),
-            width_px: 500,
-            height_px: 400,
-            scale: 1.25,
-            scroll_y: 42.0,
-            selection: PreviewSelection::default(),
-            theme: PreviewTheme::Light,
-        };
-        for current in [
-            viewport.clone(),
-            PreviewViewport {
-                scroll_y: 1000.0,
-                selection: PreviewSelection::caret(5),
-                ..viewport.clone()
-            },
-        ] {
-            assert!(current_preview_layout(
-                Some(generation),
-                generation,
-                Some(viewport.clone()),
-                Some(current)
-            ));
-        }
-        for frame_generation in [None, Some(old), Some(generation.checked_next().unwrap())] {
-            assert!(!current_preview_layout(
-                frame_generation,
-                generation,
-                Some(viewport.clone()),
-                Some(viewport.clone())
-            ));
-        }
-        assert!(!current_preview_layout(
-            Some(generation),
-            generation,
-            None,
-            Some(viewport.clone())
-        ));
-        assert!(!current_preview_layout(
-            Some(generation),
-            generation,
-            Some(viewport.clone()),
-            None
-        ));
-        for stale in [
-            PreviewViewport {
-                width_px: 499,
-                ..viewport.clone()
-            },
-            PreviewViewport {
-                height_px: 399,
-                ..viewport.clone()
-            },
-            PreviewViewport {
-                scale: 1.5,
-                ..viewport.clone()
-            },
-            PreviewViewport {
-                theme: PreviewTheme::Dark,
-                ..viewport.clone()
-            },
-        ] {
-            assert!(!current_preview_layout(
-                Some(generation),
-                generation,
-                Some(stale.clone()),
-                Some(viewport.clone())
-            ));
-            assert!(!current_preview_layout(
-                Some(generation),
-                generation,
-                Some(viewport.clone()),
-                Some(stale.clone())
-            ));
-        }
-    }
-
-    /// Only a completion for the current document and viewport is offered for display; the
-    /// tray-hidden release wins over every other condition.
-    #[test]
-    fn completion_route_admits_only_the_current_build() {
-        let current = Generation::initial().checked_next().unwrap();
-        let older = Generation::initial();
-        for generation in [current, older] {
-            for viewport in [None, Some(false), Some(true)] {
-                for succeeded in [true, false] {
-                    assert_eq!(
-                        completion_route(true, generation, current, viewport, succeeded),
-                        CompletionRoute::ReleaseHidden
-                    );
-                }
-            }
-        }
-        for viewport in [None, Some(false), Some(true)] {
-            assert_eq!(
-                completion_route(false, older, current, viewport, true),
-                CompletionRoute::Rebuild
-            );
-        }
-        assert_eq!(
-            completion_route(false, current, current, None, true),
-            CompletionRoute::Drop
-        );
-        for succeeded in [true, false] {
-            assert_eq!(
-                completion_route(false, current, current, Some(false), succeeded),
-                CompletionRoute::Relayout {
-                    reuse_tree: succeeded
-                }
-            );
-        }
-        for succeeded in [true, false] {
-            assert_eq!(
-                completion_route(false, current, current, Some(true), succeeded),
-                CompletionRoute::Admit
-            );
-        }
-    }
-
-    /// Plan 09: an old scroll request's background receipt never makes the new position jump
-    /// back. The receipt carries the viewport it was built for (the worker echoes it), which
-    /// differs from the current viewport in its offset alone while its layout is the same; the
-    /// identity sees the difference, so the receipt is only re-laid out for the current
-    /// viewport (reusing its tree when it built one) and never admitted for display. The receipt
-    /// for the current offset is admitted.
-    #[test]
-    fn a_receipt_for_an_older_offset_is_relaid_out_and_never_shown() {
-        let generation = Generation::initial().checked_next().unwrap();
-        let current = PreviewViewport {
-            horizontal: Default::default(),
-            width_px: 500,
-            height_px: 646,
-            scale: 1.25,
-            scroll_y: 1200.0,
-            selection: PreviewSelection::default(),
-            theme: PreviewTheme::Light,
-        };
-        for older in [0.0, 600.0, 1199.0, 1199.75, 1200.25, 4000.0] {
-            let receipt = PreviewViewport {
-                scroll_y: older,
-                ..current.clone()
-            };
-            assert!(receipt.same_layout(&current), "{older}");
-            assert_ne!(
-                receipt, current,
-                "the offset alone tells them apart: {older}"
-            );
-            for succeeded in [true, false] {
-                assert_eq!(
-                    completion_route(
-                        false,
-                        generation,
-                        generation,
-                        Some(receipt == current),
-                        succeeded
-                    ),
-                    CompletionRoute::Relayout {
-                        reuse_tree: succeeded
-                    },
-                    "{older}"
-                );
-            }
-        }
-        assert_eq!(
-            completion_route(
-                false,
-                generation,
-                generation,
-                Some(current == current),
-                true
-            ),
-            CompletionRoute::Admit
-        );
-    }
-
-    #[test]
     fn split_is_fixed_fifty_fifty_while_semantic_scroll_mapping_stays_separate() {
         let geometry = geometry(ViewMode::Split, PhysicalSize::new(901, 700), 1.0);
         let source = geometry.source.unwrap();
@@ -769,23 +484,5 @@ mod tests {
             assert_eq!(left.width + divider + right.width + 2 * gutter, size.width);
             assert!(left.height > 0 && right.height > 0);
         }
-    }
-
-    #[test]
-    fn new_preview_generation_clears_old_selection_but_repaint_keeps_it() {
-        let old = Generation::initial();
-        let new = old.checked_next().unwrap();
-        let selection = PreviewSelection {
-            anchor: 2,
-            active: 8,
-        };
-        assert_eq!(
-            selection_for_generation(Some(old), old, selection),
-            selection
-        );
-        assert_eq!(
-            selection_for_generation(Some(old), new, selection),
-            PreviewSelection::default()
-        );
     }
 }

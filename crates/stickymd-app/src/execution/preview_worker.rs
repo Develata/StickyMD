@@ -2,76 +2,13 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-scheduling
 
-use std::io::{BufReader, Read};
-use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
-use stickymd_core::{DocumentSnapshot, Generation};
-use stickymd_render::image::{
-    ImageMetadata, MAX_ENCODED_IMAGE_BYTES, PreviewImageSource, inspect_image_reader,
-};
-use stickymd_render::preview::{
-    PreviewFrame, PreviewPipeline, PreviewPipelineError, PreviewSelection, PreviewTheme,
-};
+use stickymd_render::image::PreviewImageSource;
+use stickymd_render::preview::{PreviewFrame, PreviewPipeline, PreviewPipelineError};
 
-use crate::assets::{open_local_image, resolve_local_image};
-
-#[derive(Debug)]
-pub enum PreviewJob {
-    Build {
-        snapshot: DocumentSnapshot,
-        viewport: PreviewViewport,
-    },
-    Relayout {
-        generation: Generation,
-        viewport: PreviewViewport,
-    },
-}
-
-impl PreviewJob {
-    pub const fn generation(&self) -> Generation {
-        match self {
-            Self::Build { snapshot, .. } => snapshot.generation,
-            Self::Relayout { generation, .. } => *generation,
-        }
-    }
-
-    fn viewport(&self) -> PreviewViewport {
-        match self {
-            Self::Build { viewport, .. } | Self::Relayout { viewport, .. } => viewport.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct PreviewViewport {
-    pub horizontal: stickymd_render::preview::PreviewHorizontalOffsets,
-    pub width_px: u32,
-    pub height_px: u32,
-    pub scale: f32,
-    pub scroll_y: f32,
-    pub selection: PreviewSelection,
-    pub theme: PreviewTheme,
-}
-
-impl PreviewViewport {
-    /// Scroll and selection may change while the same layout is still usable
-    /// for document bounds and semantic scroll anchors.
-    pub fn same_layout(&self, other: &Self) -> bool {
-        self.width_px == other.width_px
-            && self.height_px == other.height_px
-            && self.scale == other.scale
-            && self.theme == other.theme
-    }
-}
-
-#[derive(Debug)]
-pub struct PreviewCompletion {
-    pub generation: Generation,
-    pub viewport: PreviewViewport,
-    pub result: Result<PreviewFrame, PreviewPipelineError>,
-}
+use crate::ports::{PreviewCompletion, PreviewJob};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PreviewWorkerMetrics {
@@ -117,25 +54,11 @@ pub struct PreviewWorker {
 }
 
 impl PreviewWorker {
-    #[cfg(test)]
-    pub fn start<F>(on_completion: F) -> Result<Self, std::io::Error>
-    where
-        F: Fn(PreviewCompletion) + Send + Sync + 'static,
-    {
-        Self::start_inner(None, on_completion)
-    }
-
-    pub fn start_with_image_base<F>(
-        image_base: PathBuf,
+    /// `image_source` reads the images a document names; without one, images stay placeholders.
+    pub fn start<F>(
+        image_source: Option<Box<dyn PreviewImageSource + Send>>,
         on_completion: F,
     ) -> Result<Self, std::io::Error>
-    where
-        F: Fn(PreviewCompletion) + Send + Sync + 'static,
-    {
-        Self::start_inner(Some(image_base), on_completion)
-    }
-
-    fn start_inner<F>(image_base: Option<PathBuf>, on_completion: F) -> Result<Self, std::io::Error>
     where
         F: Fn(PreviewCompletion) + Send + Sync + 'static,
     {
@@ -145,7 +68,7 @@ impl PreviewWorker {
         let thread = thread::Builder::new()
             .name("stickymd-preview".into())
             .stack_size(512 * 1024)
-            .spawn(move || run_worker(worker_shared, on_completion, image_base))?;
+            .spawn(move || run_worker(worker_shared, on_completion, image_source))?;
         Ok(Self {
             shared,
             thread: Some(thread),
@@ -181,8 +104,7 @@ impl PreviewWorker {
         }
     }
 
-    #[cfg(test)]
-    fn metrics(&self) -> Option<PreviewWorkerMetrics> {
+    pub fn metrics(&self) -> Option<PreviewWorkerMetrics> {
         self.shared.0.lock().ok().map(|mailbox| mailbox.metrics)
     }
 }
@@ -209,12 +131,11 @@ enum WorkerAction {
 fn run_worker<F>(
     shared: Arc<(Mutex<Mailbox>, Condvar)>,
     on_completion: Arc<F>,
-    image_base: Option<PathBuf>,
+    image_source: Option<Box<dyn PreviewImageSource + Send>>,
 ) where
     F: Fn(PreviewCompletion),
 {
     let mut pipeline = PreviewPipeline::new();
-    let image_source = image_base.map(LocalImageSource::new);
     loop {
         let job = {
             let (lock, ready) = &*shared;
@@ -264,7 +185,10 @@ fn run_worker<F>(
         };
         let generation = job.generation();
         let viewport = job.viewport();
-        let result = execute(&mut pipeline, job, image_source.as_ref());
+        let source = image_source
+            .as_deref()
+            .map(|source| source as &dyn PreviewImageSource);
+        let result = execute(&mut pipeline, job, source);
         if let Ok(mut mailbox) = shared.0.lock() {
             mailbox.metrics.completed = mailbox.metrics.completed.saturating_add(1);
         }
@@ -279,8 +203,8 @@ fn run_worker<F>(
 fn execute(
     pipeline: &mut PreviewPipeline,
     job: PreviewJob,
-    image_source: Option<&LocalImageSource>,
-) -> Result<PreviewFrame, stickymd_render::preview::PreviewPipelineError> {
+    image_source: Option<&dyn PreviewImageSource>,
+) -> Result<PreviewFrame, PreviewPipelineError> {
     pipeline.set_horizontal_offsets(job.viewport().horizontal);
     match job {
         PreviewJob::Build { snapshot, viewport } => pipeline.build_with_image_source(
@@ -291,7 +215,7 @@ fn execute(
             viewport.scroll_y,
             viewport.selection,
             viewport.theme,
-            image_source.map(|source| source as &dyn PreviewImageSource),
+            image_source,
         ),
         // The pipeline reuses matching geometry and only paints when width,
         // scale and theme are unchanged. Every request still carries the full
@@ -307,60 +231,8 @@ fn execute(
             viewport.scroll_y,
             viewport.selection,
             viewport.theme,
-            image_source.map(|source| source as &dyn PreviewImageSource),
+            image_source,
         ),
-    }
-}
-
-struct LocalImageSource {
-    base: PathBuf,
-}
-
-impl LocalImageSource {
-    fn new(base: PathBuf) -> Self {
-        Self { base }
-    }
-}
-
-impl PreviewImageSource for LocalImageSource {
-    fn inspect(&self, destination: &str) -> Result<Option<ImageMetadata>, String> {
-        let path =
-            resolve_local_image(&self.base, destination).map_err(|error| error.to_string())?;
-        let file = match open_local_image(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.to_string()),
-        };
-        inspect_image_reader(BufReader::new(file))
-            .map(Some)
-            .map_err(|error| error.to_string())
-    }
-
-    fn load(&self, destination: &str) -> Result<Option<Vec<u8>>, String> {
-        if destination
-            .get(..7)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
-            || destination
-                .get(..8)
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
-        {
-            return Ok(None);
-        }
-        let path =
-            resolve_local_image(&self.base, destination).map_err(|error| error.to_string())?;
-        let file = match open_local_image(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.to_string()),
-        };
-        let mut bytes = Vec::new();
-        file.take((MAX_ENCODED_IMAGE_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        if bytes.len() > MAX_ENCODED_IMAGE_BYTES {
-            return Err("local image exceeds the 64 MiB preview limit".into());
-        }
-        Ok(Some(bytes))
     }
 }
 
@@ -380,10 +252,6 @@ fn coalesce(pending: PreviewJob, incoming: PreviewJob) -> PreviewJob {
 }
 
 #[cfg(test)]
-#[path = "worker/image_refresh_tests.rs"]
-mod image_refresh_tests;
-
-#[cfg(test)]
 mod tests {
     use std::sync::Arc;
     use std::sync::mpsc;
@@ -395,55 +263,8 @@ mod tests {
     };
 
     use super::*;
-
-    #[test]
-    fn phase7_local_image_adapter_reads_png_and_rejects_network_placeholders() {
-        let root = crate::test_support::unique_temp_path("preview-image-中文 空格");
-        std::fs::create_dir(&root).unwrap();
-        let image = stickymd_render::image::prepare_rgba_image(2, 2, vec![255; 16]).unwrap();
-        let bytes = image.bytes();
-        std::fs::write(root.join("数学 图.png"), bytes).unwrap();
-        let source = LocalImageSource::new(root.clone());
-        let path = "%E6%95%B0%E5%AD%A6%20%E5%9B%BE.png";
-        assert!(source.inspect(path).unwrap().is_some());
-        assert_eq!(source.load(path).unwrap().as_deref(), Some(bytes));
-        assert!(source.inspect("missing.png").unwrap().is_none());
-        for remote in [
-            "file://server/share/a.png",
-            "%5c%5cserver/share/a.png",
-            r"\\.\pipe\image",
-        ] {
-            assert!(source.inspect(remote).is_err());
-            assert!(source.load(remote).is_err());
-        }
-        assert!(
-            source
-                .load("https://example.invalid/a.png")
-                .unwrap()
-                .is_none()
-        );
-        let snapshot = DocumentSnapshot {
-            text: Arc::from("![ALT](file://server/share/a.png)"),
-            generation: Generation::initial(),
-            line_ending: LineEnding::Lf,
-        };
-        let mut pipeline = PreviewPipeline::new();
-        let frame = pipeline
-            .build_with_image_source(
-                &snapshot,
-                500,
-                200,
-                1.0,
-                0.0,
-                PreviewSelection::default(),
-                PreviewTheme::Light,
-                Some(&source),
-            )
-            .unwrap();
-        assert_eq!(frame.copy_selection(frame.select_all()), Some("ALT"));
-        assert_eq!(std::fs::read(root.join("数学 图.png")).unwrap(), bytes);
-        std::fs::remove_dir_all(root).unwrap();
-    }
+    use crate::ports::PreviewViewport;
+    use stickymd_render::preview::{PreviewSelection, PreviewTheme};
 
     fn viewport(width: u32) -> PreviewViewport {
         PreviewViewport {
@@ -533,7 +354,7 @@ mod tests {
     #[test]
     fn worker_completion_keeps_generation_and_typed_failure() {
         let (sender, receiver) = mpsc::sync_channel(1);
-        let worker = PreviewWorker::start(move |completion| {
+        let worker = PreviewWorker::start(None, move |completion| {
             let _ = sender.send(completion);
         })
         .unwrap();
@@ -557,7 +378,7 @@ mod tests {
     #[test]
     fn scrollbar_completion_preserves_requested_offset_even_after_clamping() {
         let (sender, receiver) = mpsc::channel();
-        let worker = PreviewWorker::start(move |completion| {
+        let worker = PreviewWorker::start(None, move |completion| {
             let _ = sender.send(completion);
         })
         .unwrap();
@@ -695,7 +516,7 @@ mod tests {
     #[test]
     fn raster_release_keeps_semantic_tree_for_fast_preview_return() {
         let (sender, receiver) = mpsc::sync_channel(2);
-        let worker = PreviewWorker::start(move |completion| {
+        let worker = PreviewWorker::start(None, move |completion| {
             let _ = sender.send(completion);
         })
         .unwrap();
@@ -715,7 +536,7 @@ mod tests {
     #[test]
     fn document_projection_release_forces_the_next_visible_request_to_rebuild() {
         let (sender, receiver) = mpsc::sync_channel(2);
-        let worker = PreviewWorker::start(move |completion| {
+        let worker = PreviewWorker::start(None, move |completion| {
             let _ = sender.send(completion);
         })
         .unwrap();
@@ -750,7 +571,7 @@ mod tests {
         }
         let mut document = DocumentState::loaded(&source, LineEnding::Lf, None);
         let (sender, receiver) = mpsc::sync_channel(1);
-        let worker = PreviewWorker::start(move |completion| {
+        let worker = PreviewWorker::start(None, move |completion| {
             let _ = sender.try_send(completion);
         })
         .unwrap();

@@ -71,7 +71,7 @@ fn local_plan_reuses_path_ownership_and_explains_reverse_dependencies() {
     );
     assert_eq!(
         plan.selection.modules,
-        [Module::Core, Module::Render, Module::Windows]
+        [Module::Core, Module::Render, Module::App, Module::Windows]
     );
     let descriptions = plan.tasks.describe().unwrap();
     let tests = descriptions

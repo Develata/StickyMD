@@ -51,7 +51,6 @@ impl ConfigCoordinator {
         &self.current
     }
 
-    #[cfg(test)]
     pub const fn revision(&self) -> ConfigRevision {
         self.revision
     }
@@ -106,6 +105,16 @@ impl ConfigCoordinator {
         ConfigAck::Applied {
             needs_follow_up: self.is_dirty(),
         }
+    }
+}
+
+impl ConfigCoordinator {
+    /// Whether a receipt ends the quit's config barrier: nothing further is on its way, and the
+    /// configuration either reached the disk or never will.
+    pub const fn settles_quit(&self, ack: ConfigAck, succeeded: bool) -> bool {
+        matches!(ack, ConfigAck::Applied { .. })
+            && !self.is_saving()
+            && (!self.is_dirty() || !succeeded)
     }
 }
 

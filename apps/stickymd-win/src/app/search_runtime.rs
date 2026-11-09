@@ -5,7 +5,7 @@
 use tiny_skia::{Paint, Pixmap, PixmapPaint, Rect, Transform};
 use winit::dpi::PhysicalPosition;
 
-use crate::interaction::SearchField;
+use stickymd_app::interaction::SearchField;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct SearchRect {
@@ -54,7 +54,7 @@ pub(super) enum SearchHit {
 }
 
 pub(super) fn search_field_display(
-    search: &crate::interaction::SearchSession,
+    search: &stickymd_app::interaction::SearchSession,
     field: SearchField,
 ) -> (String, usize) {
     let (mut display, cursor) = search.composed_field(field);
@@ -312,7 +312,7 @@ impl SearchLayout {
 pub(super) fn paint_search_overlay(
     pixmap: &mut Pixmap,
     projection: &mut Option<stickymd_render::source::SourceProjection>,
-    search: &crate::interaction::SearchSession,
+    search: &stickymd_app::interaction::SearchSession,
     layout: Option<SearchLayout>,
     scale: f32,
     dark: bool,
@@ -422,7 +422,7 @@ fn paint_markers(
 fn paint_panel_surface(
     pixmap: &mut Pixmap,
     layout: SearchLayout,
-    search: &crate::interaction::SearchSession,
+    search: &stickymd_app::interaction::SearchSession,
     scale: f32,
     dark: bool,
 ) {
@@ -752,7 +752,7 @@ mod tests {
                         1.0,
                         replace_visible,
                     );
-                    let mut search = crate::interaction::SearchSession::default();
+                    let mut search = stickymd_app::interaction::SearchSession::default();
                     search.open = true;
                     search.replace_visible = replace_visible;
                     search.focused = SearchField::Replacement;

@@ -136,7 +136,7 @@ Preview worker 的 `COMPLETION_DEADLINE = 120 s` 是原 5 s 的 24 倍，在档�
 
 ## 未处理与后续
 
-- 仓库中另有同类固定短时限、但未见失败记录的测试（`apps/stickymd-win/src/persistence/worker.rs` 的 3 s 接收、
+- 仓库中另有同类固定短时限、但未见失败记录的测试（`crates/stickymd-app/src/execution/io_worker.rs` 的 3 s 接收、
   `platform/windows/file_watch.rs` 的 3 s、`platform/windows/single_instance.rs` 的 1 s）。本次按范围未改。
 - 修改的文件进入模块账本指纹，相关模块的既有成功记录将不再复用，下次资格化需重跑。
 

@@ -208,6 +208,7 @@ fn is_global_input(path: &str) -> bool {
             | "apps/stickymd-win/Cargo.toml"
             | "crates/stickymd-core/Cargo.toml"
             | "crates/stickymd-render/Cargo.toml"
+            | "crates/stickymd-app/Cargo.toml"
             | "tools/stickymd-smoke/Cargo.toml"
             | "docs/plan/11_testing_and_release.md"
             | "docs/acceptance-cases/phase-14.md"
@@ -309,6 +310,7 @@ const PRODUCT_ROOTS: &[&str] = &[
     "apps/stickymd-win/src/",
     "crates/stickymd-core/src/",
     "crates/stickymd-render/src/",
+    "crates/stickymd-app/src/",
     "assets/",
 ];
 
@@ -331,23 +333,33 @@ const EVERY_SESSION: &[&str] = &[
     "apps/stickymd-win/src/app/",
     "apps/stickymd-win/src/startup/",
     "apps/stickymd-win/src/config/",
+    "crates/stickymd-app/src/lib.rs",
+    "crates/stickymd-app/src/config/",
+    "crates/stickymd-app/src/execution/mod.rs",
+    "crates/stickymd-app/src/execution/io_worker.rs",
+    "crates/stickymd-app/src/flow/asset_io.rs",
     "apps/stickymd-win/src/surface.rs",
     "apps/stickymd-win/src/assets/mod.rs",
     "apps/stickymd-win/src/assets/safe_boundary.rs",
     "apps/stickymd-win/src/assets/storage.rs",
-    "apps/stickymd-win/src/flow/mod.rs",
-    "apps/stickymd-win/src/flow/editor.rs",
-    "apps/stickymd-win/src/flow/persistence.rs",
-    "apps/stickymd-win/src/flow/preferences.rs",
-    "apps/stickymd-win/src/flow/preview.rs",
-    "apps/stickymd-win/src/flow/reconciliation.rs",
-    "apps/stickymd-win/src/flow/recovery.rs",
-    "apps/stickymd-win/src/flow/save.rs",
-    "apps/stickymd-win/src/flow/window/",
-    "apps/stickymd-win/src/instruction/",
-    "apps/stickymd-win/src/interaction/mod.rs",
-    "apps/stickymd-win/src/interaction/search.rs",
-    "apps/stickymd-win/src/interaction/session.rs",
+    "crates/stickymd-app/src/flow/mod.rs",
+    "crates/stickymd-app/src/flow/editor.rs",
+    "crates/stickymd-app/src/flow/note_guard.rs",
+    "crates/stickymd-app/src/flow/note_io/",
+    "crates/stickymd-app/src/flow/persistence.rs",
+    "crates/stickymd-app/src/flow/preferences.rs",
+    "crates/stickymd-app/src/flow/preview.rs",
+    "crates/stickymd-app/src/flow/preview_io.rs",
+    "crates/stickymd-app/src/flow/preview_io/",
+    "crates/stickymd-app/src/flow/reconciliation.rs",
+    "crates/stickymd-app/src/flow/recovery.rs",
+    "crates/stickymd-app/src/flow/save.rs",
+    "crates/stickymd-app/src/flow/window/",
+    "crates/stickymd-app/src/instruction/",
+    "crates/stickymd-app/src/interaction/mod.rs",
+    "crates/stickymd-app/src/interaction/search.rs",
+    "crates/stickymd-app/src/interaction/session.rs",
+    "crates/stickymd-app/src/ports/",
     "apps/stickymd-win/src/persistence/",
     "apps/stickymd-win/src/platform/mod.rs",
     "apps/stickymd-win/src/platform/windows/mod.rs",
@@ -415,11 +427,15 @@ const FEATURE_SOURCES: &[(&str, u64)] = &[
     ("apps/stickymd-win/src/export/", EXPORT | ASSETS | IMAGES),
     // The worker starts only when Preview or Split becomes visible.
     ("apps/stickymd-win/src/preview/", PREVIEW | MATH | IMAGES),
-    ("apps/stickymd-win/src/interaction/navigation.rs", EDITOR),
-    ("apps/stickymd-win/src/source_search.rs", EDITOR),
+    (
+        "crates/stickymd-app/src/execution/preview_worker.rs",
+        PREVIEW | MATH | IMAGES,
+    ),
+    ("crates/stickymd-app/src/interaction/navigation.rs", EDITOR),
+    ("crates/stickymd-app/src/source_search.rs", EDITOR),
     // Paste reads encoded images from the clipboard and stages them as managed assets.
     (
-        "apps/stickymd-win/src/flow/clipboard.rs",
+        "crates/stickymd-app/src/flow/clipboard.rs",
         EDITOR | ASSETS | IMAGES,
     ),
     (
@@ -445,6 +461,16 @@ pub(crate) fn verify_product_classification(root: &Path) -> Result<(), String> {
             "product files without a domain rule in qualification/module_ledger/fingerprint.rs: {unclassified:?}"
         ));
     }
+    // A source of a new crate outside every product root would fall to `GLOBAL` without a rule.
+    let unrooted = tracked
+        .iter()
+        .filter(|path| is_crate_source(path) && product_domains(path).is_none())
+        .collect::<Vec<_>>();
+    if !unrooted.is_empty() {
+        return Err(format!(
+            "product sources outside PRODUCT_ROOTS in qualification/module_ledger/fingerprint.rs: {unrooted:?}"
+        ));
+    }
     let stale = EVERY_SESSION
         .iter()
         .chain(NOT_YET_NARROWED)
@@ -458,6 +484,12 @@ pub(crate) fn verify_product_classification(root: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn is_crate_source(path: &str) -> bool {
+    (path.starts_with("crates/") || path.starts_with("apps/"))
+        && path.contains("/src/")
+        && path.ends_with(".rs")
 }
 
 fn classified_product_domains(path: &str) -> Option<u64> {

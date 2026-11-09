@@ -43,6 +43,15 @@ const fn win(path: &'static str) -> Owner {
     }
 }
 
+/// A unit test of the `stickymd-app` library.
+const fn app(path: &'static str) -> Owner {
+    Owner {
+        package: "stickymd-app",
+        target: OwnerTarget::Lib,
+        path,
+    }
+}
+
 /// A unit test of the `stickymd-render` library.
 const fn render(path: &'static str) -> Owner {
     Owner {
@@ -115,7 +124,7 @@ const SCROLL_SOURCE_ENDS: &[Owner] = &[
 const QUIT_NOTICE_ONLY_SAVE: &[Owner] = &[win(
     "app::title::tests::only_a_failed_note_save_establishes_the_notice",
 )];
-const QUIT_EXTERNAL_LOAD: &[Owner] = &[win(
+const QUIT_EXTERNAL_LOAD: &[Owner] = &[app(
     "flow::persistence::tests::loading_external_content_discharges_a_superseded_recreate",
 )];
 const QUIT_TITLE_PRIORITY: &[Owner] = &[
@@ -158,8 +167,8 @@ const SCROLL_SOURCE_MAPPING: &[Owner] = &[
         "source::scrollbar::tests::scrollbar_handles_a_single_wrapped_line_and_resized_short_notes",
     ),
 ];
-const SCROLL_STALE_RECEIPT: &[Owner] = &[win(
-    "app::preview_runtime::tests::a_receipt_for_an_older_offset_is_relaid_out_and_never_shown",
+const SCROLL_STALE_RECEIPT: &[Owner] = &[app(
+    "flow::preview_io::tests::a_receipt_for_an_older_offset_is_relaid_out_and_never_shown",
 )];
 const SCROLL_SYNC_APPLICATION: &[Owner] = &[win(
     "app::scroll_application::tests::split_sync_uses_only_the_current_driver_and_requires_the_switch_and_current_frame",
@@ -169,8 +178,8 @@ const SCROLL_SESSION_APPLICATION: &[Owner] = &[win(
 )];
 const SCROLL_CURRENT_LAYOUT: &[Owner] = &[
     VIEW_BARS,
-    win(
-        "app::preview_runtime::tests::current_layout_requires_generation_and_every_layout_field_but_not_offset_or_selection",
+    app(
+        "flow::preview_io::tests::current_layout_requires_generation_and_every_layout_field_but_not_offset_or_selection",
     ),
 ];
 /// The slider's 40–100 integer range, the field keeping any input key by key and committing only

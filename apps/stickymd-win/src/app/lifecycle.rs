@@ -15,9 +15,9 @@ use winit::window::{Theme, WindowAttributes, WindowId};
 
 use super::{AppEvent, CARET_BLINK, StickyApp};
 use crate::config::{MIN_WINDOW_HEIGHT_DIP, MIN_WINDOW_WIDTH_DIP, ViewMode};
-use crate::instruction::{PersistenceIntent, SaveReason};
 use crate::platform::windows::file_watch::{FileWatchSignal, NoteDirectoryWatcher};
 use crate::surface::SoftwareSurface;
+use stickymd_app::instruction::{PersistenceIntent, SaveReason};
 
 impl StickyApp {
     pub(super) fn start_watcher(&mut self) {
@@ -76,12 +76,8 @@ impl StickyApp {
 
     /// Complete the pass before deciding how long the native event loop can sleep.
     pub(super) fn settle_event_pass(&mut self, now_ms: u64, event_loop: Option<&ActiveEventLoop>) {
-        if let Some(action) = self.persistence.tick_autosave(now_ms) {
-            self.submit_save(action.trigger, None);
-        }
-        if self.persistence.take_external_check(now_ms) {
-            self.inspect_external();
-        }
+        let effects = self.note_io().tick(now_ms);
+        self.run_note(event_loop, effects);
         self.tick_preview(now_ms);
         if self
             .zoom_config_deadline
@@ -92,7 +88,7 @@ impl StickyApp {
         }
         self.dispatch_window_intent(
             event_loop,
-            crate::flow::window::state::WindowIntent::Tick { now_ms },
+            stickymd_app::flow::window::state::WindowIntent::Tick { now_ms },
         );
         self.finish_event_pass();
     }
@@ -247,7 +243,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             WindowEvent::CloseRequested => {
                 self.dispatch_window_intent(
                     Some(event_loop),
-                    crate::flow::window::state::WindowIntent::CloseRequested {
+                    stickymd_app::flow::window::state::WindowIntent::CloseRequested {
                         now_ms: self.timestamp_ms(),
                         guards: self.window_guards(),
                     },
@@ -293,7 +289,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 self.refresh_cursor();
                 self.dispatch_window_intent(
                     Some(event_loop),
-                    crate::flow::window::state::WindowIntent::SensorEntered {
+                    stickymd_app::flow::window::state::WindowIntent::SensorEntered {
                         now_ms: self.timestamp_ms(),
                     },
                 );
@@ -304,7 +300,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
                 self.scrollbars.hovered = None;
                 self.dispatch_window_intent(
                     Some(event_loop),
-                    crate::flow::window::state::WindowIntent::PointerLeft {
+                    stickymd_app::flow::window::state::WindowIntent::PointerLeft {
                         now_ms: self.timestamp_ms(),
                     },
                 );
@@ -361,7 +357,7 @@ impl ApplicationHandler<AppEvent> for StickyApp {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
-            AppEvent::Io(completion) => self.handle_io_completion(event_loop, completion),
+            AppEvent::Io(completion) => self.handle_io_completion(Some(event_loop), completion),
             AppEvent::NoteFsHint => {
                 if let Some(watcher) = &self.watcher {
                     watcher.acknowledge_hint();
@@ -378,8 +374,8 @@ impl ApplicationHandler<AppEvent> for StickyApp {
             AppEvent::ShowRequested => {
                 self.dispatch_window_intent(
                     Some(event_loop),
-                    crate::flow::window::state::WindowIntent::ShowRequested {
-                        reason: crate::flow::window::state::ShowReason::SecondInstance,
+                    stickymd_app::flow::window::state::WindowIntent::ShowRequested {
+                        reason: stickymd_app::flow::window::state::ShowReason::SecondInstance,
                         now_ms: self.timestamp_ms(),
                     },
                 );

@@ -10,9 +10,9 @@ use winit::keyboard::KeyCode;
 use super::StickyApp;
 use super::search_runtime::{SearchHit, SearchLayout, search_field_display};
 use crate::config::ViewMode;
-use crate::flow::AppEffect;
-use crate::instruction::{AppIntent, PreviewIntent};
-use crate::interaction::SearchField;
+use stickymd_app::flow::AppEffect;
+use stickymd_app::instruction::{AppIntent, PreviewIntent};
+use stickymd_app::interaction::SearchField;
 
 impl StickyApp {
     pub(super) fn search_layout(&self) -> Option<SearchLayout> {
@@ -465,7 +465,7 @@ fn replacement_end(effect: &AppEffect, matched: &Range<usize>) -> usize {
     }
 }
 
-fn replacement_allowed(search: &crate::interaction::SearchSession) -> bool {
+fn replacement_allowed(search: &stickymd_app::interaction::SearchSession) -> bool {
     search.replace_visible && !search.is_composing()
 }
 
@@ -559,8 +559,8 @@ mod tests {
     fn consecutive_replacements_move_past_text_that_contains_the_query() {
         use stickymd_core::{DocumentState, LineEnding};
 
-        use crate::flow::{ClipboardError, ClipboardPort, EditorCoordinator};
-        use crate::instruction::LiteralSearchOptions;
+        use stickymd_app::flow::{ClipboardError, ClipboardPort, EditorCoordinator};
+        use stickymd_app::instruction::LiteralSearchOptions;
 
         struct NoClipboard;
         impl ClipboardPort for NoClipboard {
@@ -575,7 +575,7 @@ mod tests {
         // One Replace Current press, as `replace_current_search` performs it.
         fn press(
             coordinator: &mut EditorCoordinator<NoClipboard>,
-            search: &mut crate::interaction::SearchSession,
+            search: &mut stickymd_app::interaction::SearchSession,
             replacement: &str,
         ) -> String {
             let range = search.active_range().unwrap();
@@ -598,7 +598,7 @@ mod tests {
 
         let document = DocumentState::loaded("a b a", LineEnding::Lf, None);
         let mut coordinator = EditorCoordinator::new(document, NoClipboard);
-        let mut search = crate::interaction::SearchSession::default();
+        let mut search = stickymd_app::interaction::SearchSession::default();
         let view = coordinator.view();
         search.open(true, Some("a"), view.text, view.generation);
 
@@ -610,7 +610,7 @@ mod tests {
         assert_eq!(search.active_range(), Some(0..1));
 
         // With no later match the wrap lands in the text just inserted, as the contract says.
-        let mut search = crate::interaction::SearchSession::default();
+        let mut search = stickymd_app::interaction::SearchSession::default();
         let document = DocumentState::loaded("a", LineEnding::Lf, None);
         let mut coordinator = EditorCoordinator::new(document, NoClipboard);
         let view = coordinator.view();
@@ -620,7 +620,7 @@ mod tests {
         assert_eq!(press(&mut coordinator, &mut search, "aa"), "aaa");
 
         // A replacement equal to the match changes nothing and still moves on.
-        let mut search = crate::interaction::SearchSession::default();
+        let mut search = stickymd_app::interaction::SearchSession::default();
         let document = DocumentState::loaded("a a", LineEnding::Lf, None);
         let mut coordinator = EditorCoordinator::new(document, NoClipboard);
         let view = coordinator.view();
@@ -632,7 +632,7 @@ mod tests {
 
         // Newlines in the replacement are normalized, so the inserted text is shorter than the
         // replacement typed: the next match starts right where the caret is (3), not at 4.
-        let mut search = crate::interaction::SearchSession::default();
+        let mut search = stickymd_app::interaction::SearchSession::default();
         let document = DocumentState::loaded("aaa", LineEnding::Lf, None);
         let mut coordinator = EditorCoordinator::new(document, NoClipboard);
         let view = coordinator.view();
@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn find_only_and_active_preedit_both_reject_replacement_commands() {
-        let mut search = crate::interaction::SearchSession::default();
+        let mut search = stickymd_app::interaction::SearchSession::default();
         search.open(false, Some("a"), "a", Generation::initial());
         assert!(!replacement_allowed(&search));
 

@@ -8,7 +8,7 @@ use stickymd_render::source::SourceProjection;
 
 use super::scrollbar::{ScrollPane, preview_offset_at, preview_offset_by};
 use crate::config::ViewMode;
-use crate::interaction::EditorSession;
+use stickymd_app::interaction::EditorSession;
 
 #[derive(Clone, Copy)]
 pub(super) enum ScrollRequest {

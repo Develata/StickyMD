@@ -4,6 +4,9 @@ All notable changes are recorded here.
 
 ## Unreleased
 
+- Move the typed intents, coordinators, configuration model and Search and editor sessions into
+  the new platform-free `stickymd-app` crate (Phase 15 A). Behaviour and data formats are
+  unchanged; the moved tests now also run on Linux.
 - Give the external-file, recovery-cleanup and canonical-preserve I/O receipts an identity:
   an external observation carries the Durable Fingerprint known when it was requested and is
   superseded (and re-checked) if that changed, and recovery receipts are accepted only for the

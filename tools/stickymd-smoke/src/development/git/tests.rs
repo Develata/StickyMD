@@ -121,6 +121,7 @@ fn local_git_keeps_old_and_new_owners_for_staged_and_unstaged_renames() {
             selection.modules,
             [
                 crate::headless::Module::Render,
+                crate::headless::Module::App,
                 crate::headless::Module::Windows,
                 crate::headless::Module::Persistence
             ]

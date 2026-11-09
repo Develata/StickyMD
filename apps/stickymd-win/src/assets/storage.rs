@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
+use stickymd_app::ports::{
+    AssetReconcileMode, AssetReconcileReport, StoredAsset, StoredAssetDisposition,
+};
 use stickymd_core::{AssetEffect, ManagedAssetLocation, ManagedAssetName};
 use stickymd_render::image::{MAX_ENCODED_IMAGE_BYTES, PreparedImage};
 use thiserror::Error;
@@ -42,19 +45,6 @@ pub enum AssetLocationProof {
     Trash,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoredAssetDisposition {
-    Created,
-    Reused,
-    Restored,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AssetReconcileMode {
-    Runtime,
-    SafeBoundary,
-}
-
 struct ProvenAsset {
     file: File,
     digest: stickymd_core::Hash32,
@@ -64,22 +54,6 @@ struct ProvenAsset {
 struct BoundAssetRoot {
     _note: File,
     directory: File,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoredAsset {
-    pub name: ManagedAssetName,
-    pub disposition: StoredAssetDisposition,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct AssetReconcileReport {
-    pub restored: usize,
-    pub moved_to_trash: usize,
-    pub deleted_from_trash: usize,
-    pub missing_references: Vec<ManagedAssetName>,
-    pub skipped_untrusted: usize,
-    pub physical_delete_deferred: bool,
 }
 
 #[derive(Debug, Error)]

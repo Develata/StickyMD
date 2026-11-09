@@ -12,11 +12,9 @@ use stickymd_core::{
 use thiserror::Error;
 
 use crate::config::{ConfigWarning, RuntimeConfig, load_config, save_config};
-use crate::persistence::{
-    PersistMode, PersistRequest, PersistResult, inspect_note, persist_note, quarantine_temporary,
-    remove_temporary,
-};
+use crate::persistence::{inspect_note, persist_note, quarantine_temporary, remove_temporary};
 use crate::platform::windows::program_dir::RuntimePaths;
+use stickymd_app::ports::{PersistMode, PersistRequest, PersistResult};
 
 pub struct BootstrapOutcome {
     pub document: DocumentState,
@@ -318,6 +316,68 @@ mod tests {
         let outcome = bootstrap(&paths).unwrap();
         assert!(outcome.recovery.is_some());
         assert!(paths.note_tmp.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Phase 15 byte compatibility on a data copy: a no-op start rewrites nothing, and saving the
+    /// unchanged document reproduces the canonical bytes and leaves the config and images alone.
+    #[test]
+    fn phase15_a_no_op_start_and_save_leave_the_data_byte_identical() {
+        let (root, paths) = fixture();
+        let note = "第一行 mixed\r\n公式 $x=1$\r\n\r\n末行没有换行".as_bytes();
+        let config = b"version = 1\nopacity = 83\ntheme = \"dark\"\n";
+        let image = [0x89, b'P', b'N', b'G', 0, 1, 2, 3];
+        let image_path = paths.images_dir.join("stickymd-0.png");
+        fs::write(&paths.note_file, note).unwrap();
+        fs::write(&paths.config_file, config).unwrap();
+        fs::write(&image_path, image).unwrap();
+
+        let outcome = bootstrap(&paths).unwrap();
+        assert!(outcome.recovery.is_none());
+        assert_eq!(fs::read(&paths.note_file).unwrap(), note);
+        assert_eq!(fs::read(&paths.config_file).unwrap(), config);
+
+        let snapshot = outcome.document.snapshot();
+        let result = persist_note(
+            &paths.note_file,
+            &paths.note_tmp,
+            &PersistRequest {
+                generation: snapshot.generation,
+                text: snapshot.text,
+                line_ending: snapshot.line_ending,
+                mode: PersistMode::Guarded {
+                    expected: outcome.document.base_disk_hash(),
+                },
+            },
+        )
+        .unwrap();
+        assert!(matches!(result, PersistResult::Saved { .. }));
+        assert_eq!(fs::read(&paths.note_file).unwrap(), note);
+        assert!(!paths.note_tmp.exists());
+        assert_eq!(fs::read(&paths.config_file).unwrap(), config);
+        assert_eq!(fs::read(&image_path).unwrap(), image);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A failed save can leave newer text in a temp older than an external save: a restart offers
+    /// it as a recovery choice and keeps both files.
+    #[test]
+    fn an_older_different_temporary_survives_a_restart_as_a_recovery_choice() {
+        let (root, paths) = fixture();
+        fs::write(&paths.note_tmp, "本地未保存").unwrap();
+        fs::write(&paths.note_file, "外部保存").unwrap();
+        let older = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        let temporary = fs::OpenOptions::new()
+            .write(true)
+            .open(&paths.note_tmp)
+            .unwrap();
+        temporary.set_modified(older).unwrap();
+        drop(temporary);
+        let candidate = bootstrap(&paths).unwrap().recovery.unwrap();
+        assert_eq!(candidate.temporary.text, "本地未保存");
+        assert!(!candidate.temporary_is_newer);
+        assert_eq!(fs::read_to_string(&paths.note_tmp).unwrap(), "本地未保存");
+        assert_eq!(fs::read_to_string(&paths.note_file).unwrap(), "外部保存");
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -304,6 +304,7 @@ cargo run --quiet -p stickymd-smoke --locked -- dev-check
 ```powershell
 cargo test -p stickymd-core --locked
 cargo test -p stickymd-render --locked
+cargo test -p stickymd-app --locked
 cargo test -p stickymd-win --locked
 cargo test -p stickymd-smoke --locked
 ./tools/smoke/phase-05.ps1

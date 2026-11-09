@@ -19,23 +19,23 @@ use winit::keyboard::ModifiersState;
 use winit::window::{Theme, Window};
 
 use crate::config::{ConfigCoordinator, ViewMode};
-use crate::flow::window::reducer::WindowShellCoordinator;
-use crate::flow::{
-    AppEffect, EditorCoordinator, PersistenceCoordinator, PreviewCoordinator, RecoveryCoordinator,
-};
-use crate::instruction::AppIntent;
-use crate::interaction::{EditorSession, ParkedSearch, SearchSession};
-use crate::persistence::{IoCompletion, PersistenceWorker};
 use crate::platform::windows::ArboardClipboard;
 use crate::platform::windows::file_watch::NoteDirectoryWatcher;
 use crate::platform::windows::native_message::NativeWindowSignal;
 use crate::platform::windows::program_dir::RuntimePaths;
 use crate::platform::windows::single_instance::SingleInstanceGuard;
 use crate::platform::windows::tray::{TrayController, TrayPlatformEvent};
-use crate::preview::{PreviewCompletion, PreviewViewport, PreviewWorker};
 use crate::startup::BootstrapOutcome;
 use crate::startup::StartupDiagnostics;
 use crate::surface::SoftwareSurface;
+use stickymd_app::execution::{IoCompletion, PersistenceWorker, PreviewWorker};
+use stickymd_app::flow::window::reducer::WindowShellCoordinator;
+use stickymd_app::flow::{
+    AppEffect, EditorCoordinator, PersistenceCoordinator, PreviewCoordinator, RecoveryCoordinator,
+};
+use stickymd_app::instruction::AppIntent;
+use stickymd_app::interaction::{EditorSession, ParkedSearch, SearchSession};
+use stickymd_app::ports::{PreviewCompletion, PreviewViewport};
 
 mod assets_runtime;
 mod caret_runtime;
@@ -45,15 +45,22 @@ mod export_runtime;
 mod guards;
 #[cfg(test)]
 mod headless_tests;
+#[cfg(test)]
+mod hot_path_tests;
 mod input;
 mod lifecycle;
+mod note_effects;
 mod persistence_runtime;
+#[cfg(test)]
+mod phase15_receipt_tests;
+#[cfg(test)]
+mod phase15_worker_receipt_tests;
 mod presentation;
 mod preview_horizontal;
 mod preview_input;
 mod preview_runtime;
-mod reconciliation_runtime;
-mod recovery_runtime;
+#[cfg(test)]
+mod receipt_tests;
 mod scroll_application;
 mod scroll_runtime;
 mod scrollbar;
@@ -125,16 +132,19 @@ pub struct StickyApp {
     watcher: Option<NoteDirectoryWatcher>,
     proxy: EventLoopProxy<AppEvent>,
     _instance: SingleInstanceGuard,
-    resolving_keep_local: bool,
     quit_notice: title::QuitCancelNotice,
     /// The title last written to the window, so unchanged projections skip the native call.
     shown_title: String,
-    asset_paste_pending: bool,
-    asset_sync_in_flight: bool,
-    asset_sync_sequence: u64,
-    asset_sync_request_id: Option<u64>,
-    quit_asset_sync_request_id: Option<u64>,
-    asset_reconcile_pending: bool,
+    assets: stickymd_app::flow::AssetFlow,
+    /// Every window effect applied, in order, for the order tests.
+    #[cfg(test)]
+    applied_window_effects: Vec<String>,
+    /// The client size a windowless test shell reports, so Preview work reaches its worker.
+    #[cfg(test)]
+    headless_view: Option<winit::dpi::PhysicalSize<u32>>,
+    /// What hiding a windowless test shell reports; `None` takes the real path.
+    #[cfg(test)]
+    headless_hide: Option<Result<(), stickymd_app::ports::FailureKind>>,
     export_in_flight: bool,
     session: EditorSession,
     search: SearchSession,
@@ -208,15 +218,15 @@ impl StickyApp {
             watcher: None,
             proxy,
             _instance: instance,
-            resolving_keep_local: false,
             quit_notice: title::QuitCancelNotice::default(),
             shown_title: title::PLAIN.to_owned(),
-            asset_paste_pending: false,
-            asset_sync_in_flight: false,
-            asset_sync_sequence: 0,
-            asset_sync_request_id: None,
-            quit_asset_sync_request_id: None,
-            asset_reconcile_pending: false,
+            assets: Default::default(),
+            #[cfg(test)]
+            applied_window_effects: Vec::new(),
+            #[cfg(test)]
+            headless_view: None,
+            #[cfg(test)]
+            headless_hide: None,
             export_in_flight: false,
             session: EditorSession::default(),
             search: SearchSession::default(),
@@ -323,7 +333,7 @@ impl StickyApp {
                             .submit_asset_sync(
                                 self.coordinator.view().generation,
                                 Vec::new(),
-                                Some(crate::assets::AssetReconcileMode::Runtime),
+                                Some(stickymd_app::ports::AssetReconcileMode::Runtime),
                                 false,
                             ),
                     }
@@ -345,8 +355,8 @@ mod tests {
     use unicode_segmentation::UnicodeSegmentation;
 
     use super::*;
-    use crate::flow::{ClipboardError, ClipboardPort};
-    use crate::interaction::ImeSignal;
+    use stickymd_app::flow::{ClipboardError, ClipboardPort};
+    use stickymd_app::interaction::ImeSignal;
 
     #[test]
     fn external_reconcile_handler_requires_projection_resync_and_asset_convergence() {

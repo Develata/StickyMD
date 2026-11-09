@@ -7,9 +7,11 @@ use std::io::Read;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use stickymd_app::flow::{PublishVerdict, guarded_publish_verdict};
+use stickymd_app::ports::{PersistMode, PersistRequest, PersistResult, PreserveOutcome};
 use stickymd_core::{
-    DiskFingerprint, ExternalFileState, Generation, LoadedDocument, NoteDecodeError,
-    PreserveExpectation, RecoveryInspection, hash_bytes,
+    ExternalFileState, LoadedDocument, NoteDecodeError, PreserveExpectation, RecoveryInspection,
+    hash_bytes,
 };
 use thiserror::Error;
 
@@ -68,17 +70,6 @@ fn quarantine_temporary_at(path: &Path, stamp: u64) -> Result<PathBuf, NoteStora
         }
     }
     Err(NoteStorageError::QuarantineNameExhausted)
-}
-
-/// Result of preserving the canonical note before a recovery restore.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PreserveOutcome {
-    Preserved,
-    /// The canonical note is no longer the content that required preserving it; it was left in
-    /// place.
-    Changed(ExternalFileState),
-    /// No content fingerprint exists for it (a too-large canonical), so it is never moved.
-    Unverifiable,
 }
 
 /// Moves the canonical note aside only while it still has the expected content. One handle is
@@ -257,33 +248,6 @@ fn stable_path_metadata(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PersistMode {
-    Guarded { expected: Option<DiskFingerprint> },
-    ForceOverwrite,
-}
-
-#[derive(Debug, Clone)]
-pub struct PersistRequest {
-    pub generation: Generation,
-    pub text: std::sync::Arc<str>,
-    pub line_ending: stickymd_core::LineEnding,
-    pub mode: PersistMode,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PersistResult {
-    Saved {
-        generation: Generation,
-        fingerprint: DiskFingerprint,
-        durable_bytes: usize,
-    },
-    Conflict {
-        generation: Generation,
-        observed: ExternalFileState,
-    },
-}
-
 pub fn persist_note(
     target: &Path,
     temporary: &Path,
@@ -311,26 +275,16 @@ where
     // this check is the correctness gate even when the watcher is unavailable.
     let publish_existing = if let PersistMode::Guarded { expected } = request.mode {
         let observed = inspect_note_state_with_retry(target)?;
-        let observed_fingerprint = match &observed {
-            ExternalFileState::Present(fact) => Some(fact.fingerprint),
-            ExternalFileState::InvalidUtf8 { fingerprint } => Some(*fingerprint),
-            ExternalFileState::Missing | ExternalFileState::TooLarge { .. } => None,
-        };
-        let allowed = match (&observed, expected) {
-            (ExternalFileState::Missing, None) => true,
-            (ExternalFileState::Present(_), Some(expected))
-            | (ExternalFileState::InvalidUtf8 { .. }, Some(expected)) => {
-                observed_fingerprint == Some(expected)
+        match guarded_publish_verdict(&observed, expected) {
+            PublishVerdict::PublishNew => false,
+            PublishVerdict::ReplaceExisting => true,
+            PublishVerdict::Conflict => {
+                return Ok(PersistResult::Conflict {
+                    generation: request.generation,
+                    observed,
+                });
             }
-            _ => false,
-        };
-        if !allowed {
-            return Ok(PersistResult::Conflict {
-                generation: request.generation,
-                observed,
-            });
         }
-        !matches!(observed, ExternalFileState::Missing)
     } else {
         target.try_exists().map_err(NoteStorageError::Metadata)?
     };
@@ -449,11 +403,68 @@ mod tests {
     use crate::test_support::unique_temp_path;
     use std::path::PathBuf;
     use stickymd_core::{
-        CursorSnapshot, DocumentState, EditKind, EditMeta, EditRequest, LineEnding, hash_bytes,
+        CursorSnapshot, DiskFingerprint, DocumentState, EditKind, EditMeta, EditRequest,
+        Generation, LineEnding, hash_bytes,
     };
 
     fn unique_dir() -> PathBuf {
         unique_temp_path("storage")
+    }
+
+    /// Diagnostics print these messages, so they are product text; Phase 15 carries them across
+    /// the storage port as plain strings and they must arrive unchanged.
+    #[test]
+    fn phase15_every_note_storage_error_keeps_its_message() {
+        let io = || std::io::Error::other("cause");
+        let rows = [
+            (
+                NoteStorageError::InvalidNoteLayout,
+                "note target and temporary paths must share a parent directory",
+            ),
+            (
+                NoteStorageError::UnsafeNoteDirectory("note".into()),
+                "note directory is not a plain directory: note",
+            ),
+            (
+                NoteStorageError::CreateNoteDirectory {
+                    path: "note".into(),
+                    source: io(),
+                },
+                "cannot recreate note directory note: cause",
+            ),
+            (
+                NoteStorageError::Metadata(io()),
+                "cannot inspect note metadata: cause",
+            ),
+            (NoteStorageError::Read(io()), "cannot read note: cause"),
+            (
+                NoteStorageError::ObservationChanged,
+                "note changed while it was being observed",
+            ),
+            (
+                NoteStorageError::Publish(AtomicPublishError::DifferentDirectories),
+                "cannot atomically publish note: target and temporary files must share a directory",
+            ),
+            (
+                NoteStorageError::RemoveTemporary(io()),
+                "cannot remove temporary note: cause",
+            ),
+            (
+                NoteStorageError::QuarantineTemporary(io()),
+                "cannot quarantine invalid temporary note: cause",
+            ),
+            (
+                NoteStorageError::PreserveCanonical(io()),
+                "cannot preserve canonical note before recovery: cause",
+            ),
+            (
+                NoteStorageError::QuarantineNameExhausted,
+                "cannot allocate a unique quarantine name for temporary note",
+            ),
+        ];
+        for (error, message) in rows {
+            assert_eq!(error.to_string(), message);
+        }
     }
 
     fn request(text: &str, expected: Option<DiskFingerprint>, force: bool) -> PersistRequest {
