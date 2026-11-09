@@ -31,6 +31,6 @@ pub use preview::{
 pub use preview_io::{
     PreviewFacts, PreviewFollowUp, PreviewIo, current_preview_layout, selection_for_generation,
 };
-pub use reconciliation::{ExternalDecision, decide_external_change};
+pub use reconciliation::{ExternalDecision, decide_external_change, names_the_working_note};
 pub use recovery::{CanonicalRecoveryPlan, RecoveryCoordinator, RecoveryOperation};
 pub use save::{AutosaveAction, AutosaveScheduler, SaveTrigger};

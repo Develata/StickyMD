@@ -215,7 +215,12 @@ pub(crate) fn hover(
             ));
         }
         super::physical_input::move_physical_cursor(point.x, point.y, "hover the covered sensor")?;
-        revealed()
+        revealed()?;
+        // A hover shows the note; plan 09 leaves the keyboard with whatever has it.
+        if super::activation_facts(hwnd)?.foreground {
+            return Err("the hover reveal took the foreground".to_owned());
+        }
+        Ok(())
     })();
     let cleanup = cover.close();
     match (observed, cleanup) {

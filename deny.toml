@@ -1,7 +1,7 @@
-# Dependency policy for the Windows 11 x64 v1 graph.
+# Dependency policy for the Windows 11 x64 v1 graph and the Apple Silicon macOS host.
 
 [graph]
-targets = ["x86_64-pc-windows-msvc"]
+targets = ["x86_64-pc-windows-msvc", "aarch64-apple-darwin"]
 all-features = true
 
 [advisories]

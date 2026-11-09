@@ -135,6 +135,7 @@ pub(crate) const G4_01: &[&str] = &[
     "tray-quit-saves-latest",
     "tray-show-restores-window",
     "tray-show-retains-source",
+    "tray-show-takes-focus",
     "tray-topmost-controls-sync",
     "tray-topmost-sensor-keeps-config",
 ];
@@ -243,6 +244,10 @@ pub(crate) const G4_05: &[&str] = &[
     "second-launch-keeps-durable-files:state=minimized",
     "second-launch-restores-focused-window:state=hidden",
     "second-launch-restores-focused-window:state=minimized",
+    "second-launch-restores-rect:state=hidden",
+    "second-launch-restores-rect:state=minimized",
+    "second-launch-tray-text:state=hidden",
+    "second-launch-tray-text:state=minimized",
     "sole-process-after-collapsed-wake",
     "sole-process-after-junction",
 ];
@@ -436,7 +441,7 @@ mod tests {
             .chain(G4)
             .map(|case| case.checks.len())
             .sum::<usize>();
-        assert_eq!(total, 236);
+        assert_eq!(total, 241);
     }
 
     #[test]

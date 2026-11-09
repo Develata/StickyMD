@@ -443,7 +443,9 @@ fn table_alignment(alignment: ComrakAlignment) -> TableAlignment {
     }
 }
 
-fn classify_link(destination: &str) -> LinkKind {
+/// What a link's destination is allowed to be. Every host checks a link against this before
+/// opening it, so that a forged kind cannot widen what the Preview classified.
+pub fn classify_link(destination: &str) -> LinkKind {
     let trimmed = destination.trim();
     if trimmed.is_empty() || windows_absolute_path(trimmed) || scheme(trimmed).is_none() {
         return LinkKind::Relative;
