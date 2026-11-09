@@ -11,70 +11,22 @@ use thiserror::Error;
 use crate::platform::windows::atomic_file::{
     AtomicPublishError, atomic_publish, move_file_no_replace,
 };
-use stickymd_app::config::{CONFIG_VERSION, RuntimeConfig};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConfigWarning {
-    CorruptPreserved(PathBuf),
-    CorruptCouldNotBePreserved,
-    UnsupportedNewerVersion(u32),
-    ReadFailed(String),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConfigLoadOutcome {
-    pub config: RuntimeConfig,
-    pub warning: Option<ConfigWarning>,
-    pub should_create_default: bool,
-    /// False when an unreadable, unsupported, or unpreserved file still owns
-    /// the canonical config path and must not be overwritten on close.
-    pub persistence_allowed: bool,
-}
+#[cfg(test)]
+use stickymd_app::config::ConfigWarning;
+use stickymd_app::config::{
+    ConfigLoadOutcome, ConfigSerializeError, PRESERVED_CONFIG_SUFFIXES, RuntimeConfig, config_text,
+    preserved_config_name,
+};
 
 pub fn load_config(path: &Path) -> Result<ConfigLoadOutcome, ConfigStorageError> {
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ConfigLoadOutcome {
-                config: RuntimeConfig::default(),
-                warning: None,
-                should_create_default: true,
-                persistence_allowed: true,
-            });
+            return Ok(ConfigLoadOutcome::absent());
         }
-        Err(error) => {
-            return Ok(ConfigLoadOutcome {
-                config: RuntimeConfig::default(),
-                warning: Some(ConfigWarning::ReadFailed(error.to_string())),
-                should_create_default: false,
-                persistence_allowed: false,
-            });
-        }
+        Err(error) => return Ok(ConfigLoadOutcome::read_failed(error.to_string())),
     };
-
-    let parsed: RuntimeConfig = match toml::from_str(&source) {
-        Ok(parsed) => parsed,
-        Err(_) => return Ok(preserve_corrupt_config(path)),
-    };
-
-    if parsed.version > CONFIG_VERSION {
-        return Ok(ConfigLoadOutcome {
-            config: RuntimeConfig::default(),
-            warning: Some(ConfigWarning::UnsupportedNewerVersion(parsed.version)),
-            should_create_default: false,
-            persistence_allowed: false,
-        });
-    }
-    if parsed.version != CONFIG_VERSION || !parsed.is_semantically_valid() {
-        return Ok(preserve_corrupt_config(path));
-    }
-
-    Ok(ConfigLoadOutcome {
-        config: parsed,
-        warning: None,
-        should_create_default: false,
-        persistence_allowed: true,
-    })
+    Ok(ConfigLoadOutcome::from_text(&source).unwrap_or_else(|| preserve_corrupt_config(path)))
 }
 
 fn preserve_corrupt_config(path: &Path) -> ConfigLoadOutcome {
@@ -85,29 +37,14 @@ fn preserve_corrupt_config(path: &Path) -> ConfigLoadOutcome {
 }
 
 fn preserve_corrupt_config_at(path: &Path, stamp: u64) -> ConfigLoadOutcome {
-    let warning = match rename_corrupt_config(path, stamp) {
-        Ok(preserved) => ConfigWarning::CorruptPreserved(preserved),
-        Err(_) => ConfigWarning::CorruptCouldNotBePreserved,
-    };
-    let should_create_default = matches!(warning, ConfigWarning::CorruptPreserved(_));
-    ConfigLoadOutcome {
-        config: RuntimeConfig::default(),
-        warning: Some(warning),
-        should_create_default,
-        persistence_allowed: should_create_default,
-    }
+    ConfigLoadOutcome::after_preservation(rename_corrupt_config(path, stamp).ok())
 }
 
 fn rename_corrupt_config(path: &Path, stamp: u64) -> std::io::Result<PathBuf> {
     // The no-replace move is the authority gate. A preliminary exists check
     // would be racy and could overwrite older evidence on Windows.
-    for sequence in 0..=1_024_u16 {
-        let suffix = if sequence == 0 {
-            String::new()
-        } else {
-            format!("-{sequence}")
-        };
-        let candidate = path.with_file_name(format!("config.invalid-{stamp}{suffix}.toml"));
+    for sequence in 0..=PRESERVED_CONFIG_SUFFIXES {
+        let candidate = path.with_file_name(preserved_config_name(stamp, sequence));
         match move_file_no_replace(path, &candidate) {
             Ok(()) => return Ok(candidate),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -125,14 +62,14 @@ pub fn save_config(
     temporary: &Path,
     config: &RuntimeConfig,
 ) -> Result<(), ConfigStorageError> {
-    let source = toml::to_string_pretty(config).map_err(ConfigStorageError::Serialize)?;
+    let source = config_text(config).map_err(ConfigStorageError::Serialize)?;
     atomic_publish(target, temporary, source.as_bytes()).map_err(ConfigStorageError::Publish)
 }
 
 #[derive(Debug, Error)]
 pub enum ConfigStorageError {
     #[error("cannot serialize config.toml: {0}")]
-    Serialize(toml::ser::Error),
+    Serialize(ConfigSerializeError),
     #[error("cannot atomically publish config.toml: {0}")]
     Publish(AtomicPublishError),
 }

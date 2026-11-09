@@ -24,19 +24,7 @@ use crate::platform::windows::file_identity::{OpenFileObservation, observe_open_
 pub const MAX_NOTE_LOAD: u64 = 16 * 1024 * 1024;
 const FILE_ATTRIBUTE_REPARSE_POINT_VALUE: u32 = 0x400;
 
-#[derive(Debug, Clone)]
-pub struct NoteObservation {
-    pub state: ExternalFileState,
-    pub recovery: RecoveryInspection,
-}
-
-impl NoteObservation {
-    /// Recovery decoding is meaningful only when the file bytes were actually
-    /// loaded. An over-limit file deliberately has no synthetic empty body.
-    pub fn recovery_inspection(&self) -> Option<&RecoveryInspection> {
-        (!matches!(self.state, ExternalFileState::TooLarge { .. })).then_some(&self.recovery)
-    }
-}
+use stickymd_app::flow::NoteObservation;
 
 pub fn remove_temporary(path: &Path) -> Result<(), NoteStorageError> {
     match fs::remove_file(path) {

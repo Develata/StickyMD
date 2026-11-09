@@ -25,6 +25,7 @@ Debian、macOS 宿主留出真实可用的共享层。Windows 产品行为与数
 | A | 本机验证完成 | `stickymd-app`；`instruction/`、`flow/`（含 `flow/window/`）、配置模型、`interaction/`、`source_search.rs` |
 | B | 本机验证完成：笔记、预览、资产/导出/配置链与隐藏回执；显示（R1）、置顶（R2）、定位（R3）的回执见 R 与 R3 记录，真实桌面观察未做（见 Open Items） | 执行接口与应用运行时；窗口动作的请求、回执与提交；入口测试见 plan 11 |
 | C | 本机验证完成：C1 帧呈现接缝、C2 crate 与登记、C3 控件、滚动、Search、按键表与纯命中、C4 `AppSession`、C5 宿主窄端口与泛型壳、C6 壳迁入 `stickymd-desktop/src/shell/`（`DesktopShell<H>`）；远程 CI 与桌面回归未做 | `stickymd-desktop`；通用控件、绘制、命中、事件翻译；各 target 的 backend features |
+| E | 代码与自动化已完成，桌面回归见“里程碑 E” | 配置文本、启动恢复裁决、粘贴批次、导出规划与百分号解码在 `stickymd-app`/`stickymd-render`；存储事务仍在宿主 |
 | D | 本机验证完成：转发删除、剩余裁决迁入 `AppSession`、`AppSession` 字段在产品构建中收窄、跨模型审查修正与补测；桌面回归未做 | 迁移剩余业务分支，删除仅为迁移保留的转发，最终审查 |
 
 A 中 `config/storage.rs` 留在 `apps/stickymd-win`：它依赖 Windows 原子发布与文件系统，存储能力在 B 进入 Capability Port。
@@ -472,6 +473,15 @@ D 的 Release（`b7b5980` 的产品代码）用仓库自带的本地预检跑真
 USER 用这条分支构建的版本检查了 5 项，都没有问题：置顶时的导出对话框、从隐藏/最小化/贴边收起的托盘唤醒、贴边动画反向、拖动松手与重启、置顶按钮。程序路径与 SHA-256 没有记录。逐项对照见[收据](../report/2026-11-09-phase-15-window-receipt-manual-check.md)：P15-R03、R04、R11、R12 为 `MANUAL PASS`；P15-R01、R02、R09 各有一条没有观察到，保持 `NOT TESTED`。
 
 远程 CI：Develata/StickyMD#11 在 `f9c1813` 上 9 项全部通过。
+
+### 里程碑 E（USER 批准 2026-11-09）
+
+设计、审查结论与修订见[报告](../report/2026-11-09-phase-15-e-shared-startup-logic.md)。最初的“统一文件原语端口”被清点否定，第一版 `StartupStorage` trait 被独立审查否定。现在的切分：共享层只做决定，观察、隔离、删除、首次创建、暂存、改名、发布都留在宿主，顺序不变。
+
+- 移动：`config.toml` 的文本规则与警告，`plan_note_startup`，粘贴批次，`ExportPlan`，百分号解码；D8 的笔记文件过滤与 D9 的链接分类。
+- 留在宿主：存储事务、失败分类（输入是各宿主自己的错误类型）、路径语法校验、`preview/image_source.rs`。
+- 已有问题，这批不改：`remove_temporary`、`quarantine_temporary` 与导出暂存文件的改名都按路径执行，观察之后被其他进程替换的窗口今天就存在。
+- macOS 的具体保证按 `05` 在建立宿主时单独批准。
 
 ### 窗口启动失败（USER 批准方案 A，2026-11-09）
 

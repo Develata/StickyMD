@@ -6,20 +6,24 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use stickymd_core::{
-    DocumentState, ExternalFileState, LineEnding, PreserveExpectation, RecoveryCandidate,
-    RecoveryDisposition, inspect_recovery,
-};
+use stickymd_core::{DocumentState, LineEnding, PreserveExpectation, RecoveryCandidate};
 use thiserror::Error;
 
-use crate::config::{ConfigWarning, load_config, save_config};
+use crate::config::{load_config, save_config};
 use crate::persistence::{inspect_note, persist_note, quarantine_temporary, remove_temporary};
 use crate::platform::windows::ArboardClipboard;
 use crate::platform::windows::program_dir::RuntimePaths;
 use stickymd_app::config::RuntimeConfig;
 use stickymd_app::execution::PersistenceWorker;
+use stickymd_app::flow::{
+    NoteDocumentPlan, NoteRefusal, NoteStartupStep, document_from_fact, invalid_temporary_warning,
+    oversized_temporary_warning, plan_note_startup,
+};
 use stickymd_app::ports::{PersistMode, PersistRequest, PersistResult};
 use stickymd_app::session::{AppSession, InstantClock, SessionParts};
+
+/// The line ending of a note this host creates.
+const NEW_NOTE_LINE_ENDING: LineEnding = LineEnding::Crlf;
 
 pub struct BootstrapOutcome {
     pub document: DocumentState,
@@ -70,7 +74,7 @@ pub fn bootstrap_observed(
     let mut warnings = Vec::new();
     let config_outcome = load_config(&paths.config_file).map_err(StartupError::Config)?;
     if let Some(warning) = &config_outcome.warning {
-        warnings.push(config_warning_message(warning));
+        warnings.push(warning.message());
     }
     if config_outcome.should_create_default
         && let Err(error) = save_config(
@@ -85,113 +89,57 @@ pub fn bootstrap_observed(
 
     let canonical = inspect_note(&paths.note_file).map_err(StartupError::NoteStorage)?;
     let temporary = inspect_note(&paths.note_tmp).map_err(StartupError::TemporaryStorage)?;
-    let recovery = inspect_recovery(
-        canonical
-            .as_ref()
-            .and_then(crate::persistence::NoteObservation::recovery_inspection),
-        temporary
-            .as_ref()
-            .and_then(crate::persistence::NoteObservation::recovery_inspection),
-    );
+    let plan = plan_note_startup(canonical.as_ref(), temporary.as_ref(), NEW_NOTE_LINE_ENDING);
 
-    if temporary
-        .as_ref()
-        .is_some_and(|observation| matches!(observation.state, ExternalFileState::TooLarge { .. }))
-    {
+    if let Some(oversized) = plan.oversized_temporary {
         let preserved =
             quarantine_temporary(&paths.note_tmp).map_err(StartupError::QuarantineTemporary)?;
-        if canonical.is_none() {
-            let bytes = temporary.as_ref().map_or(0, |observation| {
-                if let ExternalFileState::TooLarge { bytes } = observation.state {
-                    bytes
-                } else {
-                    0
-                }
+        if !oversized.canonical_exists {
+            return Err(StartupError::TemporaryTooLarge {
+                bytes: oversized.bytes,
+                preserved,
             });
-            return Err(StartupError::TemporaryTooLarge { bytes, preserved });
         }
-        warnings.push(format!(
-            "note.md.tmp 超过安全载入上限；已隔离保留为 {}。",
-            preserved.display()
-        ));
+        warnings.push(oversized_temporary_warning(&preserved));
     }
 
-    match recovery {
-        RecoveryDisposition::Candidate(candidate) => {
-            let recovery_canonical_to_preserve = match canonical.as_ref().map(|o| &o.state) {
-                Some(ExternalFileState::InvalidUtf8 { fingerprint }) => {
-                    Some(PreserveExpectation::Content(*fingerprint))
-                }
-                // A too-large canonical is not read, so it is never moved automatically; the USER
-                // moves it aside (USER decision 2026-10-31).
-                Some(ExternalFileState::TooLarge { .. }) => Some(PreserveExpectation::Unverifiable),
-                _ => None,
-            };
-            let document = candidate.canonical.as_ref().map_or_else(
-                || DocumentState::empty(LineEnding::Crlf),
-                |loaded| {
-                    DocumentState::loaded(
-                        &loaded.text,
-                        loaded.line_ending,
-                        Some(loaded.fingerprint),
-                    )
-                },
-            );
-            Ok(BootstrapOutcome {
-                document,
-                config: config_outcome.config,
-                config_persistence_allowed: config_outcome.persistence_allowed,
-                recovery: Some(candidate),
-                recovery_canonical_to_preserve,
-                warnings,
-            })
-        }
-        RecoveryDisposition::RedundantTemporary => {
-            let loaded = load_existing_canonical(canonical.as_ref())?;
+    let (document, recovery, recovery_canonical_to_preserve) = match plan.step {
+        NoteStartupStep::Recover {
+            candidate,
+            canonical_to_preserve,
+            document,
+        } => (document, Some(candidate), canonical_to_preserve),
+        NoteStartupStep::RemoveRedundantTemporary(canonical) => {
+            let loaded = canonical?;
             remove_temporary(&paths.note_tmp).map_err(StartupError::RemoveRedundantTemporary)?;
-            Ok(BootstrapOutcome {
-                document: document_from_external(loaded),
-                config: config_outcome.config,
-                config_persistence_allowed: config_outcome.persistence_allowed,
-                recovery: None,
-                recovery_canonical_to_preserve: None,
-                warnings,
-            })
+            (document_from_fact(loaded), None, None)
         }
-        RecoveryDisposition::InvalidTemporary => {
+        NoteStartupStep::QuarantineInvalidTemporary(next) => {
             let preserved =
                 quarantine_temporary(&paths.note_tmp).map_err(StartupError::QuarantineTemporary)?;
-            warnings.push(format!(
-                "note.md.tmp 不是有效 UTF-8；已隔离保留为 {}。",
-                preserved.display()
-            ));
-            let document = match canonical.as_ref() {
-                Some(observation) => document_from_external(extract_present(observation)?),
-                None => create_empty_note(paths)?,
-            };
-            Ok(BootstrapOutcome {
-                document,
-                config: config_outcome.config,
-                config_persistence_allowed: config_outcome.persistence_allowed,
-                recovery: None,
-                recovery_canonical_to_preserve: None,
-                warnings,
-            })
+            warnings.push(invalid_temporary_warning(&preserved));
+            (open_document(paths, next)?, None, None)
         }
-        RecoveryDisposition::NoTemporary => {
-            let document = match canonical.as_ref() {
-                Some(observation) => document_from_external(extract_present(observation)?),
-                None => create_empty_note(paths)?,
-            };
-            Ok(BootstrapOutcome {
-                document,
-                config: config_outcome.config,
-                config_persistence_allowed: config_outcome.persistence_allowed,
-                recovery: None,
-                recovery_canonical_to_preserve: None,
-                warnings,
-            })
-        }
+        NoteStartupStep::Open(next) => (open_document(paths, next)?, None, None),
+    };
+    Ok(BootstrapOutcome {
+        document,
+        config: config_outcome.config,
+        config_persistence_allowed: config_outcome.persistence_allowed,
+        recovery,
+        recovery_canonical_to_preserve,
+        warnings,
+    })
+}
+
+fn open_document(
+    paths: &RuntimePaths,
+    plan: NoteDocumentPlan,
+) -> Result<DocumentState, StartupError> {
+    match plan {
+        NoteDocumentPlan::Load(fact) => Ok(document_from_fact(fact)),
+        NoteDocumentPlan::CreateEmpty => create_empty_note(paths),
+        NoteDocumentPlan::Refuse(refusal) => Err(refusal.into()),
     }
 }
 
@@ -199,7 +147,7 @@ fn create_empty_note(paths: &RuntimePaths) -> Result<DocumentState, StartupError
     let request = PersistRequest {
         generation: stickymd_core::Generation::initial(),
         text: Arc::from(""),
-        line_ending: LineEnding::Crlf,
+        line_ending: NEW_NOTE_LINE_ENDING,
         mode: PersistMode::Guarded { expected: None },
     };
     match persist_note(&paths.note_file, &paths.note_tmp, &request)
@@ -207,49 +155,19 @@ fn create_empty_note(paths: &RuntimePaths) -> Result<DocumentState, StartupError
     {
         PersistResult::Saved { fingerprint, .. } => Ok(DocumentState::loaded(
             "",
-            LineEnding::Crlf,
+            NEW_NOTE_LINE_ENDING,
             Some(fingerprint),
         )),
         PersistResult::Conflict { .. } => Err(StartupError::FirstCreateConflict),
     }
 }
 
-fn load_existing_canonical(
-    canonical: Option<&crate::persistence::NoteObservation>,
-) -> Result<stickymd_core::ExternalFileFact, StartupError> {
-    canonical
-        .ok_or(StartupError::CanonicalMissingDuringRecovery)
-        .and_then(extract_present)
-}
-
-fn extract_present(
-    observation: &crate::persistence::NoteObservation,
-) -> Result<stickymd_core::ExternalFileFact, StartupError> {
-    match &observation.state {
-        ExternalFileState::Present(fact) => Ok(fact.clone()),
-        ExternalFileState::InvalidUtf8 { .. } => Err(StartupError::NoteInvalidUtf8),
-        ExternalFileState::TooLarge { bytes } => Err(StartupError::NoteTooLarge(*bytes)),
-        ExternalFileState::Missing => Err(StartupError::CanonicalMissingDuringRecovery),
-    }
-}
-
-fn document_from_external(fact: stickymd_core::ExternalFileFact) -> DocumentState {
-    DocumentState::loaded(&fact.text, fact.line_ending, Some(fact.fingerprint))
-}
-
-fn config_warning_message(warning: &ConfigWarning) -> String {
-    match warning {
-        ConfigWarning::CorruptPreserved(_) => {
-            "config.toml 已损坏；原文件已保留，当前使用默认配置。".into()
-        }
-        ConfigWarning::CorruptCouldNotBePreserved => {
-            "config.toml 已损坏且无法改名保留；不会覆盖它，当前使用默认配置。".into()
-        }
-        ConfigWarning::UnsupportedNewerVersion(version) => {
-            format!("config.toml 版本 {version} 高于当前程序；文件已保留，当前使用默认配置。")
-        }
-        ConfigWarning::ReadFailed(error) => {
-            format!("config.toml 无法读取；不会覆盖它，当前使用默认配置：{error}")
+impl From<NoteRefusal> for StartupError {
+    fn from(refusal: NoteRefusal) -> Self {
+        match refusal {
+            NoteRefusal::InvalidUtf8 => Self::NoteInvalidUtf8,
+            NoteRefusal::TooLarge(bytes) => Self::NoteTooLarge(bytes),
+            NoteRefusal::Missing => Self::CanonicalMissingDuringRecovery,
         }
     }
 }

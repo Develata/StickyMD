@@ -113,6 +113,20 @@
 | P15-R10 | 置顶读回与请求一致才算成功，读回不符为失败、无法读回为 `Unsupported`；用户值只在成功回执后进入配置、写盘与托盘勾选，失败不写并上报，可重试；感应值分离且不进配置，隐藏保存与恢复读确认值；原生位按单一顺序结算，新请求取代旧请求，过期回执不提交，失败后按确认值再请求一次，原生位未知时同值的显式重试也到达宿主，回执不来时到期结束；启动路径照旧 | Automated | `ports::window::tests::a_topmost_receipt_is_the_read_back_of_the_wanted_bit`；`flow::window::topmost::tests`（Linux 也运行）；`session::decision_tests::{a_topmost_is_written_only_after_the_window_confirmed_it,a_topmost_before_the_window_flow_goes_straight_to_the_configuration,a_sensor_receipt_writes_no_configuration}`；`shell::phase15_host_tests::{phase15_a_rejected_topmost_writes_nothing_and_can_be_retried,phase15_a_sensor_topmost_stays_out_of_the_configuration,phase15_the_startup_topmost_ignores_the_read_back}`；真实窗口的读回属 P15-R09 | AUTOMATED PASS |
 | P15-R17 | R 的 Release 在真实窗口上通过全部本地桌面预检（P15-D09 的用例加 G3-02 导出）；导出对话框由便签窗口拥有，保存或取消关闭后前台回到便签窗口 | Automated local | `STICKYMD_PREFLIGHT_EXE` 的 18 个 ignored 用例逐个通过（任务文件“最终桌面回归”）：17 个在 `9c19544`，修复导出后的 G3-02 在 `b6e2be1`，含取消与两次关闭后的前台断言。这不是 exact-candidate 证据；置顶时对话框在便签之上由 USER 人工确认（receipt: [2026-11-09 人工检查](../report/2026-11-09-phase-15-window-receipt-manual-check.md)） | AUTOMATED PASS |
 
+## Milestone E
+
+不依赖文件语义的裁决移入 `stickymd-app`（[`11` Phase 15 节](../plan/11_testing_and_release.md#phase-15-shared-core-migration)）。设计与审查结论见[报告](../report/2026-11-09-phase-15-e-shared-startup-logic.md)。
+
+| ID | Requirement | Mode | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| P15-E01 | `config.toml` 的解析、版本裁决、序列化、保留文件命名与警告文字在共享层，宿主只读文件、不覆盖地改名和发布；读取失败、解析失败、版本更新、保留失败各有结果 | Automated | `config::document::tests`（Linux 也运行）；`config::storage::tests` 断言不变，含 `config.toml` 字节 | AUTOMATED PASS |
+| P15-E02 | 启动恢复由共享纯函数裁决，宿主观察并执行：每种观察组合的步骤，超限临时文件先隔离，无正文恢复用宿主的换行符（CRLF、LF），无正文首次创建仍用 `Guarded { expected: None }` | Automated | `flow::note_startup::tests`（Linux 也运行）；`startup::bootstrap::tests` 断言不变 | AUTOMATED PASS |
+| P15-E03 | 粘贴批次在共享层：各输入分支、批次上限、失败时返回已发布台账、错误文字与语义分类不变，文件解码失败仍归 `MixedOrUnsupportedFiles` | Automated | `flow::asset_paste::tests`（Linux 也运行）；`assets::transaction::tests` 与 `persistence::adapter` 的分类表断言不变 | AUTOMATED PASS |
+| P15-E04 | 导出规划只返回命名与复用决定：同源只复制一次（键由宿主给出，不折叠大小写），同内容沿用第一个名字，名字前缀冲突时加长；文件操作与顺序留在宿主 | Automated | `flow::export_plan::tests`（Linux 也运行）；`export::tests` 除移走的命名用例外断言不变 | AUTOMATED PASS |
+| P15-E05 | 百分号解码在共享层，路径语法校验留在宿主 | Automated | `preview::parser::tests`；`assets::path::tests` 断言不变 | AUTOMATED PASS |
+| P15-E06 | 链接 scheme 分类只有一处，宿主打开前用它复核；笔记文件过滤在共享层 | Automated | `preview::parser::tests`；`platform::windows::shell::tests::forged_allowed_kind_cannot_bypass_adapter_reclassification`；`flow::reconciliation::tests::only_the_working_note_and_its_temporary_need_a_reconciliation` | AUTOMATED PASS |
+| P15-E07 | 共享 crate 能编译到 `aarch64-apple-darwin`，依赖策略覆盖该目标 | Automated local | `cargo check --locked --target aarch64-apple-darwin -p stickymd-core -p stickymd-render -p stickymd-app -p stickymd-desktop`；`cargo deny check`。这只是编译，macOS 上没有运行过 | AUTOMATED PASS |
+
 ## 窗口启动失败
 
 [`09` Failure Paths](../plan/09_windows_shell.md#windows-shell-failure-paths) 的验证项；USER 批准的方案见[分析报告](../report/2026-11-09-startup-failure-paths.md)。
