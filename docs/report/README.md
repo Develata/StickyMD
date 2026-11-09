@@ -25,6 +25,7 @@
 
 ## 发布政策
 
+- [Phase 15 E 设计](2026-11-09-phase-15-e-shared-startup-logic.md)：把不依赖文件语义的启动、配置、粘贴与导出裁决移到共享层，存储事务留在宿主。
 - [窗口启动失败路径](2026-11-09-startup-failure-paths.md)：现状、方案对比与建议的合同，等待 USER 批准。
 - [Phase 15 窗口回执的人工检查](2026-11-09-phase-15-window-receipt-manual-check.md)：USER 的 5 项检查与对应验收项的结论，多屏与失败路径未测。
 - [Phase 15 D 之后的桌面回归](2026-11-08-phase-15-desktop-regression.md)：本地桌面预检与 USER 人工检查的结果，多屏与混合 DPI 未测。
