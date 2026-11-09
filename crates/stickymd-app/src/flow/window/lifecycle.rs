@@ -2,15 +2,16 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#windows-shell-purpose
 
+use super::geometry::PhysicalRect;
 use super::reducer::WindowShellCoordinator;
 use super::state::{
-    LifecycleState, QuitBarrier, QuitStage, StableVisibility, VisibilityState, WindowEffect,
-    WindowSaveReason,
+    LifecycleState, PendingFocus, QuitBarrier, QuitStage, StableVisibility, VisibilityState,
+    WINDOW_ACTION_RECEIPT_TIMEOUT_MS, WindowEffect, WindowSaveReason,
 };
 use crate::ports::FailureKind;
 
 impl WindowShellCoordinator {
-    pub(super) fn hide_to_tray(&mut self, effects: &mut Vec<WindowEffect>) {
+    pub(super) fn hide_to_tray(&mut self, now_ms: u64, effects: &mut Vec<WindowEffect>) {
         if self.state.lifecycle.is_quitting() {
             return;
         }
@@ -27,6 +28,7 @@ impl WindowShellCoordinator {
             self.state.visibility,
             VisibilityState::AwaitingHideSave { .. }
                 | VisibilityState::HidePending { .. }
+                | VisibilityState::ShowPending { .. }
                 | VisibilityState::HiddenToTray { .. }
         ) {
             return;
@@ -41,7 +43,7 @@ impl WindowShellCoordinator {
         if self.state.guards.note_save_required || self.state.hide_save_pending {
             self.state.visibility = VisibilityState::AwaitingHideSave { restore };
         } else {
-            self.complete_hide(restore, effects);
+            self.complete_hide(restore, now_ms, effects);
         }
         if self.state.guards.note_save_required && !self.state.hide_save_pending {
             effects.push(WindowEffect::RequestNoteSave(WindowSaveReason::HideToTray));
@@ -53,19 +55,82 @@ impl WindowShellCoordinator {
             return;
         }
         let restore = match self.state.visibility {
+            // A newer show replaces one in flight, whose identity dies with it; so does a hide
+            // the show overtakes.
             VisibilityState::HiddenToTray { restore }
             | VisibilityState::HidePending { restore, .. }
-            | VisibilityState::AwaitingHideSave { restore } => restore,
+            | VisibilityState::ShowPending { restore, .. } => restore,
+            VisibilityState::AwaitingHideSave { restore } => {
+                self.cancel_hide_save(restore, now_ms, effects);
+                return;
+            }
             _ => {
                 // A visible window resting, or settling, collapsed at its dock edge is restored
                 // expanded like one shown from the tray (plan 09 single-instance wake).
                 if matches!(self.current_stable(), StableVisibility::DockedCollapsed(_)) {
                     self.start_expand(now_ms, false, effects);
                 }
-                effects.push(WindowEffect::FocusWindow);
+                self.request_focus(now_ms, effects);
                 return;
             }
         };
+        // A show needs its placement's id as well: without it a window hidden while collapsed
+        // would be committed expanded while it still sits at its collapsed rectangle.
+        let id = self
+            .has_action_ids(2)
+            .then(|| self.next_window_action())
+            .flatten();
+        let Some(id) = id else {
+            effects.push(WindowEffect::ShowRejected(FailureKind::Failed));
+            return;
+        };
+        self.state.visibility = VisibilityState::ShowPending {
+            id,
+            restore,
+            deadline_ms: now_ms.saturating_add(WINDOW_ACTION_RECEIPT_TIMEOUT_MS),
+        };
+        // The frame is a request either way (the receipt does not prove it), so it moves now and
+        // the window is in place when it appears.
+        self.state.frame = self.show_frame(restore);
+        self.request_placement(self.state.frame, None, now_ms, effects);
+        effects.push(WindowEffect::ShowWindow { id });
+    }
+
+    /// Where a window restored from `restore` lands: expanded at the dock edge, or floating.
+    fn show_frame(&self, restore: StableVisibility) -> PhysicalRect {
+        super::reducer::effective_expanded_frame(
+            &self.state.placement,
+            restore.dock_edge(),
+            &self.state.dock.monitor,
+        )
+    }
+
+    /// The wake reached a window that never left the screen: nothing native to confirm, so it only
+    /// ends the hide's freeze. The save that was waiting then finds no hide to finish.
+    fn cancel_hide_save(
+        &mut self,
+        restore: StableVisibility,
+        now_ms: u64,
+        effects: &mut Vec<WindowEffect>,
+    ) {
+        // Without an id for the frame the window would be committed where it is not.
+        if !self.has_action_ids(1) {
+            effects.push(WindowEffect::ShowRejected(FailureKind::Failed));
+            return;
+        }
+        self.state.frame = self.show_frame(restore);
+        self.request_placement(self.state.frame, None, now_ms, effects);
+        self.commit_show(restore, now_ms, effects);
+    }
+
+    /// Everything that depends on the window being shown. Quitting has taken the keyboard, so a
+    /// show that lands then records the fact and gives no input and no focus back.
+    fn commit_show(
+        &mut self,
+        restore: StableVisibility,
+        now_ms: u64,
+        effects: &mut Vec<WindowEffect>,
+    ) {
         let restore = match restore {
             StableVisibility::DockedCollapsed(edge) => StableVisibility::DockedExpanded(edge),
             other => other,
@@ -74,19 +139,88 @@ impl WindowShellCoordinator {
         self.state.dock.edge = restore.dock_edge();
         self.state.dock.manually_hidden = false;
         self.state.dock.hover_revealed = false;
-        self.set_temporary_sensor_topmost(false, effects);
+        self.set_temporary_sensor_topmost(false, now_ms, effects);
         self.state.deadlines.clear();
-        self.state.frame = super::reducer::effective_expanded_frame(
-            &self.state.placement,
-            restore.dock_edge(),
-            &self.state.dock.monitor,
-        );
-        effects.push(WindowEffect::ApplyFrame(self.state.frame));
-        effects.push(WindowEffect::ShowWindow);
-        effects.push(WindowEffect::FocusWindow);
-        effects.push(WindowEffect::SetImeAllowed(true));
-        effects.push(WindowEffect::SetEditorInputEnabled(true));
+        effects.push(WindowEffect::WindowShown);
+        if !self.state.lifecycle.is_quitting() {
+            self.request_focus(now_ms, effects);
+            effects.push(WindowEffect::SetImeAllowed(true));
+            effects.push(WindowEffect::SetEditorInputEnabled(true));
+        }
         effects.push(WindowEffect::RequestRedraw);
+    }
+
+    fn request_focus(&mut self, now_ms: u64, effects: &mut Vec<WindowEffect>) {
+        let Some(id) = self.next_window_action() else {
+            effects.push(WindowEffect::ShowRejected(FailureKind::Failed));
+            return;
+        };
+        self.state.focus_pending = Some(PendingFocus {
+            id,
+            deadline_ms: now_ms.saturating_add(WINDOW_ACTION_RECEIPT_TIMEOUT_MS),
+        });
+        effects.push(WindowEffect::FocusWindow { id });
+    }
+
+    /// Whether `count` more action ids exist.
+    fn has_action_ids(&self, count: u64) -> bool {
+        self.state.last_window_action.checked_add(count).is_some()
+    }
+
+    /// The next action id, or `None` once the ids have run out: every caller then fails the way
+    /// its own request fails, and no id is ever reused.
+    pub(super) fn next_window_action(&mut self) -> Option<u64> {
+        let id = self.state.last_window_action.checked_add(1)?;
+        self.state.last_window_action = id;
+        Some(id)
+    }
+
+    /// A request whose receipt never came fails like a rejected one: the id dies and its failure
+    /// handling runs. Today's hosts answer in the same dispatch, so this is for hosts that do not.
+    pub(super) fn expire_window_actions(&mut self, now_ms: u64, effects: &mut Vec<WindowEffect>) {
+        let visibility_action = match self.state.visibility {
+            VisibilityState::HidePending {
+                id, deadline_ms, ..
+            }
+            | VisibilityState::ShowPending {
+                id, deadline_ms, ..
+            } if now_ms >= deadline_ms => Some(id),
+            _ => None,
+        };
+        let focus = self
+            .state
+            .focus_pending
+            .filter(|focus| now_ms >= focus.deadline_ms)
+            .map(|focus| focus.id);
+        let topmost = self.state.topmost.overdue(now_ms);
+        for id in [focus, visibility_action, topmost].into_iter().flatten() {
+            self.complete_window_action(id, Err(FailureKind::Failed), now_ms, effects);
+        }
+    }
+
+    /// Answers the outstanding focus and topmost requests, as a host's same-dispatch receipts do.
+    #[cfg(test)]
+    pub(super) fn answer_pending_receipts(&mut self) {
+        let focus = self.state.focus_pending.map(|focus| focus.id);
+        let topmost = self.state.topmost.in_flight_id();
+        for id in [focus, topmost].into_iter().flatten() {
+            self.dispatch(super::state::WindowIntent::ActionCompleted {
+                id,
+                outcome: Ok(()),
+                now_ms: 0,
+            });
+        }
+    }
+
+    /// Input and the IME follow what the window is now, rather than what it was when the quit
+    /// began: a quit may end while it is hidden, or just after a show landed during it.
+    fn reproject_input(&self, effects: &mut Vec<WindowEffect>) {
+        let takes_input = matches!(
+            self.state.visibility,
+            VisibilityState::Presented(_) | VisibilityState::Animating(_)
+        );
+        effects.push(WindowEffect::SetImeAllowed(takes_input));
+        effects.push(WindowEffect::SetEditorInputEnabled(takes_input));
     }
 
     pub(super) fn request_quit(&mut self, effects: &mut Vec<WindowEffect>) {
@@ -105,6 +239,7 @@ impl WindowShellCoordinator {
     fn advance_quit(&mut self, effects: &mut Vec<WindowEffect>) {
         if self.state.guards.blocks_quit() {
             self.state.lifecycle = LifecycleState::Running;
+            self.reproject_input(effects);
             effects.push(WindowEffect::QuitBlocked);
         } else if self.state.guards.paste_pending || self.state.guards.asset_transaction_pending {
             self.state.lifecycle = LifecycleState::Quitting(QuitStage::AwaitingPaste);
@@ -119,7 +254,7 @@ impl WindowShellCoordinator {
         }
     }
 
-    pub(super) fn paste_settled(&mut self, effects: &mut Vec<WindowEffect>) {
+    pub(super) fn paste_settled(&mut self, now_ms: u64, effects: &mut Vec<WindowEffect>) {
         if matches!(
             self.state.visibility,
             VisibilityState::AwaitingHideSave { .. }
@@ -130,7 +265,7 @@ impl WindowShellCoordinator {
             if self.state.guards.note_save_required {
                 effects.push(WindowEffect::RequestNoteSave(WindowSaveReason::HideToTray));
             } else if let VisibilityState::AwaitingHideSave { restore } = self.state.visibility {
-                self.complete_hide(restore, effects);
+                self.complete_hide(restore, now_ms, effects);
             }
         }
         if self.state.lifecycle == LifecycleState::Quitting(QuitStage::AwaitingPaste) {
@@ -164,25 +299,36 @@ impl WindowShellCoordinator {
         } else if self.state.guards.note_save_required {
             effects.push(WindowEffect::RequestNoteSave(WindowSaveReason::HideToTray));
         } else {
-            self.complete_hide(restore, effects);
+            self.complete_hide(restore, now_ms, effects);
         }
     }
 
-    fn complete_hide(&mut self, restore: StableVisibility, effects: &mut Vec<WindowEffect>) {
-        self.state.last_window_action += 1;
-        let id = self.state.last_window_action;
+    fn complete_hide(
+        &mut self,
+        restore: StableVisibility,
+        now_ms: u64,
+        effects: &mut Vec<WindowEffect>,
+    ) {
+        let sensor_topmost = self.state.topmost.sensor_confirmed;
+        let Some(id) = self.next_window_action() else {
+            self.state.hide_save_pending = false;
+            let failed = Err(FailureKind::Failed);
+            self.complete_hide_action(failed, restore, sensor_topmost, now_ms, effects);
+            return;
+        };
         self.state.visibility = VisibilityState::HidePending {
             id,
             restore,
-            sensor_topmost: self.state.temporary_sensor_topmost,
+            sensor_topmost,
+            deadline_ms: now_ms.saturating_add(WINDOW_ACTION_RECEIPT_TIMEOUT_MS),
         };
         self.state.hide_save_pending = false;
-        self.set_temporary_sensor_topmost(false, effects);
+        self.set_temporary_sensor_topmost(false, now_ms, effects);
         effects.push(WindowEffect::HideWindow { id });
     }
 
-    /// A hide commits only on its own success receipt; a rejected one leaves the window shown,
-    /// with its input back and every hidden-state cache still in place.
+    /// Applies the receipt of action `id` to the action it belongs to. A receipt no action still
+    /// waits for is stale and commits nothing.
     pub(super) fn complete_window_action(
         &mut self,
         id: u64,
@@ -190,17 +336,52 @@ impl WindowShellCoordinator {
         now_ms: u64,
         effects: &mut Vec<WindowEffect>,
     ) {
-        let VisibilityState::HidePending {
-            id: pending,
-            restore,
-            sensor_topmost,
-        } = self.state.visibility
-        else {
-            return;
-        };
-        if pending != id {
+        if self.complete_topmost(id, outcome, now_ms, effects)
+            || self.complete_placement(id, outcome, effects)
+        {
             return;
         }
+        if self.state.focus_pending.is_some_and(|focus| focus.id == id) {
+            self.state.focus_pending = None;
+            if let Err(kind) = outcome {
+                effects.push(WindowEffect::ShowRejected(kind));
+            }
+            return;
+        }
+        match self.state.visibility {
+            VisibilityState::HidePending {
+                id: pending,
+                restore,
+                sensor_topmost,
+                ..
+            } if pending == id => {
+                self.complete_hide_action(outcome, restore, sensor_topmost, now_ms, effects);
+            }
+            VisibilityState::ShowPending {
+                id: pending,
+                restore,
+                ..
+            } if pending == id => match outcome {
+                Ok(()) => self.commit_show(restore, now_ms, effects),
+                Err(kind) => {
+                    self.state.visibility = VisibilityState::HiddenToTray { restore };
+                    effects.push(WindowEffect::ShowRejected(kind));
+                }
+            },
+            _ => {}
+        }
+    }
+
+    /// A hide commits only on its own success receipt; a rejected one leaves the window shown,
+    /// with its input back and every hidden-state cache still in place.
+    fn complete_hide_action(
+        &mut self,
+        outcome: Result<(), FailureKind>,
+        restore: StableVisibility,
+        sensor_topmost: bool,
+        now_ms: u64,
+        effects: &mut Vec<WindowEffect>,
+    ) {
         match outcome {
             Ok(()) => {
                 self.state.visibility = VisibilityState::HiddenToTray { restore };
@@ -208,7 +389,7 @@ impl WindowShellCoordinator {
             }
             Err(kind) => {
                 self.state.visibility = VisibilityState::Presented(restore);
-                self.set_temporary_sensor_topmost(sensor_topmost, effects);
+                self.set_temporary_sensor_topmost(sensor_topmost, now_ms, effects);
                 effects.push(WindowEffect::SetImeAllowed(
                     self.state.guards.window_focused,
                 ));
@@ -242,7 +423,7 @@ impl WindowShellCoordinator {
                     self.advance_quit(effects);
                 } else {
                     self.state.lifecycle = LifecycleState::Running;
-                    effects.push(WindowEffect::SetEditorInputEnabled(true));
+                    self.reproject_input(effects);
                     effects.push(WindowEffect::QuitCancelled(barrier));
                 }
             }

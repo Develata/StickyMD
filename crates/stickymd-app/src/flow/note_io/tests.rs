@@ -1,5 +1,5 @@
-//! The exact effect order of the note decisions, without a host. The Windows shell runs the same
-//! paths end to end in `phase15_receipt_tests`.
+//! The exact effect order of the note decisions, without a host. The desktop shell runs the same
+//! paths end to end in `phase15_receipt_tests` (`stickymd-desktop`).
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#external-change-conflict
 

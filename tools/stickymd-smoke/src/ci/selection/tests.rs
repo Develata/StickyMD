@@ -13,18 +13,37 @@ fn selected(paths: &[&str]) -> Selection {
 fn ci_reverse_dependencies_cover_downstream_behavior_without_selecting_unrelated_experiments() {
     assert_eq!(
         selected(&["crates/stickymd-core/src/undo.rs"]).modules,
-        [Module::Core, Module::Render, Module::App, Module::Windows]
+        [
+            Module::Core,
+            Module::Render,
+            Module::App,
+            Module::Desktop,
+            Module::Windows
+        ]
     );
     assert_eq!(
         selected(&["crates/stickymd-render/tests/table_math_pipes.rs"]).modules,
-        [Module::Render, Module::App, Module::Windows]
+        [
+            Module::Render,
+            Module::App,
+            Module::Desktop,
+            Module::Windows
+        ]
     );
     assert_eq!(
         selected(&["crates/stickymd-app/src/flow/save.rs"]).modules,
-        [Module::App, Module::Windows]
+        [Module::App, Module::Desktop, Module::Windows]
     );
     assert_eq!(
-        selected(&["apps/stickymd-win/src/app.rs"]).modules,
+        selected(&["crates/stickymd-desktop/src/frame/plan.rs"]).modules,
+        [Module::Desktop, Module::Windows]
+    );
+    assert_eq!(
+        selected(&["crates/stickymd-desktop/src/shell/mod.rs"]).modules,
+        [Module::Desktop, Module::Windows]
+    );
+    assert_eq!(
+        selected(&["apps/stickymd-win/src/host.rs"]).modules,
         [Module::Windows]
     );
     assert_eq!(
@@ -41,7 +60,13 @@ fn ci_reverse_dependencies_cover_downstream_behavior_without_selecting_unrelated
 fn ci_g5_image_fixtures_select_both_consumers_and_their_reverse_dependencies() {
     let selection =
         selected(&["crates/stickymd-render/tests/fixtures/qualification-images/g5.png"]);
-    let mut expected = vec![Module::Render, Module::App, Module::Windows, Module::Smoke];
+    let mut expected = vec![
+        Module::Render,
+        Module::App,
+        Module::Desktop,
+        Module::Windows,
+        Module::Smoke,
+    ];
     expected.sort_unstable();
     assert!(!selection.full);
     assert_eq!(selection.modules, expected);
@@ -90,7 +115,12 @@ fn ci_documentation_keeps_governance_only_and_never_masks_owned_fixtures() {
     }
     assert_eq!(
         selected(&["crates/stickymd-render/tests/fixtures/note.md"]).modules,
-        [Module::Render, Module::App, Module::Windows]
+        [
+            Module::Render,
+            Module::App,
+            Module::Desktop,
+            Module::Windows
+        ]
     );
     assert!(selected(&[]).modules.is_empty());
 }
@@ -107,6 +137,7 @@ fn ci_union_deduplicates_modules_and_preserves_both_owners_of_a_move() {
         [
             Module::Render,
             Module::App,
+            Module::Desktop,
             Module::Windows,
             Module::MarkdownMath
         ]

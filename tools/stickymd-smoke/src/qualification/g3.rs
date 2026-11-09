@@ -22,9 +22,33 @@ const OPERATIONS: [CaseOperation; exact_checks::G3.len()] = [
 ];
 
 #[test]
+#[ignore = "exclusive Windows desktop and the real clipboard; local EXE only"]
+fn image_paste_local_preflight() {
+    super::g4::preflight::run(&exact_checks::G3[0], cases::g3_01);
+}
+
+#[test]
+#[ignore = "exclusive Windows desktop and the native save dialog; local EXE only"]
+fn export_local_preflight() {
+    super::g4::preflight::run(&exact_checks::G3[1], cases::g3_02);
+}
+
+#[test]
 #[ignore = "exclusive Windows desktop and owned-fixture process termination; local EXE only"]
 fn c2d_crash_local_preflight() {
     super::g4::preflight::run(&exact_checks::G3[2], cases::g3_03);
+}
+
+#[test]
+#[ignore = "exclusive Windows desktop, tray exit and sole StickyMD ownership; local EXE only"]
+fn user_asset_safety_local_preflight() {
+    super::g4::preflight::run(&exact_checks::G3[3], cases::g3_04);
+}
+
+#[test]
+#[ignore = "exclusive Windows desktop, tray exit and sole StickyMD ownership; local EXE only"]
+fn fake_asset_safety_local_preflight() {
+    super::g4::preflight::run(&exact_checks::G3[4], cases::g3_05);
 }
 
 pub(super) fn run(

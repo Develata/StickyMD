@@ -140,8 +140,8 @@ pub enum ConfigStorageError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ContentZoomPercent, ThemeMode};
     use crate::test_support::unique_temp_path;
+    use stickymd_app::config::{ContentZoomPercent, DockEdge, ThemeMode, ViewMode};
 
     fn unique_dir(label: &str) -> PathBuf {
         unique_temp_path(&format!("config-{label}"))
@@ -288,13 +288,13 @@ floating_y_ratio = 0.1
             content_zoom_percent: ContentZoomPercent::new_clamped(175),
             split_scroll_sync: false,
             always_on_top: true,
-            view_mode: crate::config::ViewMode::Split,
+            view_mode: ViewMode::Split,
             ..RuntimeConfig::default()
         };
         config.window.width_dip = 640;
         config.window.height_dip = 480;
         config.window.monitor_id = "monitor-中\"1".to_owned();
-        config.window.dock_edge = crate::config::DockEdge::Right;
+        config.window.dock_edge = DockEdge::Right;
         config.window.dock_offset_ratio = 0.25;
         config.window.floating_x_ratio = 1.0 / 3.0;
         config.window.floating_y_ratio = 0.1;

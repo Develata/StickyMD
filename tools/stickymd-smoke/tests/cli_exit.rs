@@ -82,13 +82,16 @@ fn uncreated_formal_outputs_reject_win32_trailing_dot_and_space_aliases() {
 }
 
 fn assert_protected_output(receipt: &str, suffix: &str, existing: bool) {
+    // Two tests call this in parallel and can read the same clock value.
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     let root = std::env::temp_dir().join(format!(
-        "stickymd-reserved-output-{}-{nonce}",
-        std::process::id()
+        "stickymd-reserved-output-{}-{nonce}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let destination = root.join(receipt);
     std::fs::create_dir_all(destination.parent().unwrap()).unwrap();

@@ -10,6 +10,6 @@ pub use coordinator::{
 };
 
 pub use runtime::{
-    CONFIG_VERSION, ContentZoomPercent, DockEdge, MIN_WINDOW_HEIGHT_DIP, MIN_WINDOW_WIDTH_DIP,
-    RuntimeConfig, ThemeMode, ViewMode, WindowConfig,
+    CONFIG_VERSION, ContentZoomPercent, DockEdge, MAX_WINDOW_DIP, MIN_WINDOW_HEIGHT_DIP,
+    MIN_WINDOW_WIDTH_DIP, RuntimeConfig, ThemeMode, ViewMode, WindowConfig,
 };

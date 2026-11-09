@@ -77,6 +77,7 @@ fn ci_git_detects_add_delete_and_both_sides_of_a_rename() {
             crate::headless::Module::Core,
             crate::headless::Module::Render,
             crate::headless::Module::App,
+            crate::headless::Module::Desktop,
             crate::headless::Module::Windows,
             crate::headless::Module::Persistence
         ]

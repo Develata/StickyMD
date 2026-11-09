@@ -3,13 +3,15 @@
 //! plan_ref: docs/plan/05_document_persistence.md#atomic-save
 
 mod adapter;
+#[cfg(test)]
+mod phase15_storage_conformance;
 mod storage;
 #[cfg(test)]
 mod wiring_tests;
 
-pub use adapter::win_io_ports;
+pub use adapter::{WinAssetStore, win_io_ports};
 #[cfg(test)]
-pub use adapter::{WinAssetStore, WinConfigStorage, WinExportSink, WinNoteStorage};
+pub use adapter::{WinConfigStorage, WinExportSink, WinNoteStorage};
 pub(crate) use storage::{MAX_NOTE_LOAD, inspect_note_state_with_retry};
 pub use storage::{
     NoteObservation, NoteStorageError, inspect_note, persist_note, preserve_canonical_if_unchanged,

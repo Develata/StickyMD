@@ -6,12 +6,14 @@ use super::geometry::{
     MonitorGeometry, PhysicalRect, WindowPlacement, collapsed_frame, expanded_frame,
     placement_from_frame, recover_placement, should_undock, snap_edge,
 };
+use super::placement::{NO_RECEIPT, PlacementCommit};
 use super::state::{
     ANIMATION_DURATION_MS, ANIMATION_FRAME_MS, AUTO_COLLAPSE_DELAY_MS, AnimationState, DockEdge,
     DockState, HOVER_LEAVE_COLLAPSE_DELAY_MS, HOVER_REVEAL_DELAY_MS, LifecycleState,
     StableVisibility, VisibilityState, WindowEffect, WindowGuardSnapshot, WindowIntent,
     WindowShellState,
 };
+use super::topmost::TopmostState;
 
 pub struct WindowShellCoordinator {
     pub(super) state: WindowShellState,
@@ -43,20 +45,35 @@ impl WindowShellCoordinator {
                     ),
                     hover_revealed: false,
                 },
+                confirmed_placement: placement.clone(),
                 placement,
                 frame,
+                confirmed_dock_edge: edge,
                 guards: WindowGuardSnapshot::default(),
                 deadlines: Default::default(),
                 lifecycle: LifecycleState::Running,
                 tray_available,
                 hide_save_pending: false,
                 last_window_action: 0,
-                temporary_sensor_topmost: matches!(
-                    initial_visibility,
-                    StableVisibility::DockedCollapsed(_)
-                ),
+                focus_pending: None,
+                placement_pending: None,
+                native_move_active: false,
+                topmost: TopmostState {
+                    sensor_confirmed: matches!(
+                        initial_visibility,
+                        StableVisibility::DockedCollapsed(_)
+                    ),
+                    ..Default::default()
+                },
             },
         }
+    }
+
+    /// Takes the user's always-on-top value as confirmed: the startup applies it to the window
+    /// on its own, with no receipt.
+    pub fn with_user_topmost(mut self, on: bool) -> Self {
+        self.state.topmost.user_confirmed = on;
+        self
     }
 
     pub fn state(&self) -> &WindowShellState {
@@ -66,17 +83,22 @@ impl WindowShellCoordinator {
     pub fn dispatch(&mut self, intent: WindowIntent) -> Vec<WindowEffect> {
         let mut effects = Vec::new();
         match intent {
-            WindowIntent::CloseRequested { guards, .. } => {
+            WindowIntent::CloseRequested { now_ms, guards } => {
                 self.state.guards = guards;
-                self.hide_to_tray(&mut effects);
+                self.hide_to_tray(now_ms, &mut effects);
             }
             WindowIntent::ShowRequested { now_ms, .. } => self.show(now_ms, &mut effects),
             WindowIntent::TrayToggleRequested { now_ms, guards } => {
                 self.state.guards = guards;
-                if matches!(self.state.visibility, VisibilityState::HiddenToTray { .. }) {
+                // The tray still says "show" while a show waits for its receipt; asking again
+                // supersedes it, so a receipt that never comes does not hold the wait open.
+                if matches!(
+                    self.state.visibility,
+                    VisibilityState::HiddenToTray { .. } | VisibilityState::ShowPending { .. }
+                ) {
                     self.show(now_ms, &mut effects);
                 } else {
-                    self.hide_to_tray(&mut effects);
+                    self.hide_to_tray(now_ms, &mut effects);
                 }
             }
             WindowIntent::TrayQuitRequested { guards } => {
@@ -120,16 +142,26 @@ impl WindowShellCoordinator {
                 monitor,
                 now_ms,
             } => self.finish_drag(frame, monitor, now_ms, &mut effects),
-            WindowIntent::DisplayTopologyChanged { monitors } => {
-                self.recover_topology(&monitors, &mut effects);
+            WindowIntent::DisplayTopologyChanged { monitors, now_ms } => {
+                self.recover_topology(&monitors, now_ms, &mut effects);
+            }
+            WindowIntent::MoveResizeStarted => self.start_native_move(),
+            WindowIntent::MoveResizeEnded => self.state.native_move_active = false,
+            WindowIntent::PlacementObserved {
+                id,
+                observed,
+                now_ms,
+            } => self.observe_placement(id, observed, now_ms, &mut effects),
+            WindowIntent::UserTopmostRequested { on, now_ms } => {
+                self.request_user_topmost(on, now_ms, &mut effects);
             }
             WindowIntent::SplitModeChanged { split } => {
                 self.update_split_mode(split, &mut effects);
             }
             WindowIntent::Tick { now_ms } => self.tick(now_ms, &mut effects),
-            WindowIntent::PasteSettled { guards } => {
+            WindowIntent::PasteSettled { guards, now_ms } => {
                 self.state.guards = guards;
-                self.paste_settled(&mut effects);
+                self.paste_settled(now_ms, &mut effects);
             }
             WindowIntent::HideSaveCompleted {
                 succeeded,
@@ -171,7 +203,7 @@ impl WindowShellCoordinator {
         let gained_focus = !self.state.guards.window_focused && guards.window_focused;
         self.state.guards = guards;
         if gained_focus {
-            self.set_temporary_sensor_topmost(false, effects);
+            self.set_temporary_sensor_topmost(false, now_ms, effects);
         }
         if guards.blocks_auto_collapse() {
             self.state.deadlines.auto_collapse_ms = None;
@@ -214,7 +246,8 @@ impl WindowShellCoordinator {
         now_ms: u64,
         effects: &mut Vec<WindowEffect>,
     ) {
-        if self.state.lifecycle.is_quitting() {
+        // Only a window on screen can land here: a hide or a show in progress keeps its decision.
+        if self.state.lifecycle.is_quitting() || !self.may_animate() {
             return;
         }
         self.state.deadlines.clear();
@@ -227,16 +260,20 @@ impl WindowShellCoordinator {
         self.state.dock.offset_ratio = self.state.placement.dock_offset_ratio;
         self.state.dock.manually_hidden = false;
         self.state.dock.hover_revealed = false;
-        self.set_temporary_sensor_topmost(false, effects);
+        self.set_temporary_sensor_topmost(false, now_ms, effects);
         self.state.frame =
             effective_expanded_frame(&self.state.placement, edge, &self.state.dock.monitor);
         let stable = edge.map_or(StableVisibility::Floating, StableVisibility::DockedExpanded);
         self.state.visibility = VisibilityState::Presented(stable);
-        effects.push(WindowEffect::ApplyFrame(self.state.frame));
-        effects.push(WindowEffect::CommitPlacement {
-            placement: self.state.placement.clone(),
-            dock_edge: edge,
-        });
+        self.request_placement(
+            self.state.frame,
+            Some(PlacementCommit::FromObserved {
+                monitor: self.state.dock.monitor.clone(),
+                dock_edge: edge,
+            }),
+            now_ms,
+            effects,
+        );
         if edge.is_some() && !self.state.guards.blocks_auto_collapse() {
             let deadline = now_ms.saturating_add(AUTO_COLLAPSE_DELAY_MS);
             self.state.deadlines.auto_collapse_ms = Some(deadline);
@@ -244,7 +281,12 @@ impl WindowShellCoordinator {
         }
     }
 
-    fn recover_topology(&mut self, monitors: &[MonitorGeometry], effects: &mut Vec<WindowEffect>) {
+    fn recover_topology(
+        &mut self,
+        monitors: &[MonitorGeometry],
+        now_ms: u64,
+        effects: &mut Vec<WindowEffect>,
+    ) {
         let prior_stable = self.current_stable();
         let edge = prior_stable.dock_edge();
         let Some((monitor, expanded)) = recover_placement(&self.state.placement, edge, monitors)
@@ -255,6 +297,7 @@ impl WindowShellCoordinator {
         let stable = if hidden_to_tray {
             prior_stable
         } else {
+            // A pending show lands expanded too, so its frame follows the display change here.
             edge.map_or(StableVisibility::Floating, StableVisibility::DockedExpanded)
         };
         self.state.placement.monitor_identity = Some(monitor.identity.clone());
@@ -262,7 +305,7 @@ impl WindowShellCoordinator {
         self.state.dock.edge = edge;
         self.state.dock.hover_revealed = false;
         let sensor_topmost = matches!(stable, StableVisibility::DockedCollapsed(_));
-        self.set_temporary_sensor_topmost(sensor_topmost, effects);
+        self.set_temporary_sensor_topmost(sensor_topmost, now_ms, effects);
         self.state.frame = match stable {
             StableVisibility::DockedCollapsed(edge) => collapsed_frame(expanded, edge, monitor),
             _ => expanded,
@@ -272,27 +315,45 @@ impl WindowShellCoordinator {
                 VisibilityState::HiddenToTray { restore: stable }
             }
             VisibilityState::HidePending {
-                id, sensor_topmost, ..
+                id,
+                sensor_topmost,
+                deadline_ms,
+                ..
             } => VisibilityState::HidePending {
                 id,
                 restore: stable,
                 sensor_topmost,
+                deadline_ms,
             },
             VisibilityState::AwaitingHideSave { .. } => {
                 VisibilityState::AwaitingHideSave { restore: stable }
             }
+            pending @ VisibilityState::ShowPending { .. } => pending,
             _ => VisibilityState::Presented(stable),
         };
         if matches!(
             self.state.visibility,
-            VisibilityState::Presented(_) | VisibilityState::Animating(_)
+            VisibilityState::Presented(_)
+                | VisibilityState::Animating(_)
+                | VisibilityState::ShowPending { .. }
         ) {
-            effects.push(WindowEffect::ApplyFrame(self.state.frame));
+            self.request_placement(
+                self.state.frame,
+                Some(PlacementCommit::AsRequested { dock_edge: edge }),
+                now_ms,
+                effects,
+            );
+        } else {
+            // A hidden or hiding window is not moved, so there is no frame to confirm. What was
+            // waiting cannot be confirmed any more either, and only the monitor it now belongs to
+            // is recorded, on the placement a frame last proved.
+            self.abandon_placement();
+            self.state.confirmed_placement.monitor_identity = Some(monitor.identity.clone());
+            effects.push(WindowEffect::CommitPlacement {
+                placement: self.state.confirmed_placement.clone(),
+                dock_edge: self.state.confirmed_dock_edge,
+            });
         }
-        effects.push(WindowEffect::CommitPlacement {
-            placement: self.state.placement.clone(),
-            dock_edge: edge,
-        });
     }
 
     fn update_split_mode(&mut self, _split: bool, _effects: &mut Vec<WindowEffect>) {
@@ -301,13 +362,21 @@ impl WindowShellCoordinator {
     }
 
     fn tick(&mut self, now_ms: u64, effects: &mut Vec<WindowEffect>) {
+        self.tick_placement(now_ms, effects);
+        self.expire_window_actions(now_ms, effects);
         if let VisibilityState::Animating(mut animation) = self.state.visibility {
             self.state.frame = animation.frame_at(now_ms);
-            effects.push(WindowEffect::ApplyFrame(self.state.frame));
-            effects.push(WindowEffect::RequestRedraw);
             if now_ms >= animation.end_ms {
+                self.request_placement(self.state.frame, None, now_ms, effects);
+                effects.push(WindowEffect::RequestRedraw);
                 self.state.visibility = VisibilityState::Presented(animation.final_visibility);
             } else {
+                effects.push(WindowEffect::ApplyFrame {
+                    id: NO_RECEIPT,
+                    target: self.state.frame,
+                    last: false,
+                });
+                effects.push(WindowEffect::RequestRedraw);
                 animation.next_frame_ms = now_ms
                     .saturating_add(ANIMATION_FRAME_MS)
                     .min(animation.end_ms);
@@ -367,7 +436,7 @@ impl WindowShellCoordinator {
         self.state.deadlines.clear();
         self.state.dock.edge = Some(edge);
         self.state.dock.hover_revealed = false;
-        self.set_temporary_sensor_topmost(true, effects);
+        self.set_temporary_sensor_topmost(true, now_ms, effects);
         let expanded =
             effective_expanded_frame(&self.state.placement, Some(edge), &self.state.dock.monitor);
         let target = collapsed_frame(expanded, edge, &self.state.dock.monitor);
@@ -401,6 +470,7 @@ impl WindowShellCoordinator {
         self.state.dock.manually_hidden = false;
         self.set_temporary_sensor_topmost(
             hover_revealed && !self.state.guards.window_focused,
+            now_ms,
             effects,
         );
         let target =
@@ -424,6 +494,8 @@ impl WindowShellCoordinator {
             VisibilityState::Animating(animation) => animation.frame_at(now_ms),
             _ => self.state.frame,
         };
+        // The animation's own last frame is the placement that counts now.
+        self.abandon_placement();
         let end_ms = now_ms.saturating_add(ANIMATION_DURATION_MS);
         let next_frame_ms = now_ms.saturating_add(ANIMATION_FRAME_MS).min(end_ms);
         self.state.frame = from;
@@ -439,22 +511,14 @@ impl WindowShellCoordinator {
         effects.push(WindowEffect::WakeAt(next_frame_ms));
     }
 
-    pub(super) fn set_temporary_sensor_topmost(
-        &mut self,
-        enabled: bool,
-        effects: &mut Vec<WindowEffect>,
-    ) {
-        if self.state.temporary_sensor_topmost != enabled {
-            self.state.temporary_sensor_topmost = enabled;
-            effects.push(WindowEffect::SetTemporarySensorTopmost(enabled));
-        }
-    }
-
     pub(super) fn current_stable(&self) -> StableVisibility {
         match self.state.visibility {
             VisibilityState::Presented(stable)
             | VisibilityState::AwaitingHideSave { restore: stable }
             | VisibilityState::HidePending {
+                restore: stable, ..
+            }
+            | VisibilityState::ShowPending {
                 restore: stable, ..
             }
             | VisibilityState::HiddenToTray { restore: stable } => stable,
@@ -493,9 +557,10 @@ mod phase8_window_tests {
     use super::super::geometry::MonitorIdentity;
     use super::super::state::{
         DockEdge, HOVER_LEAVE_COLLAPSE_DELAY_MS, HOVER_REVEAL_DELAY_MS, LifecycleState,
-        QuitBarrier, QuitStage, ShowReason, WindowSaveReason,
+        QuitBarrier, QuitStage, ShowReason, TopmostRequest, TopmostSource, WindowSaveReason,
     };
     use super::*;
+    use crate::flow::window::placement::tests::observe_at_target;
     use crate::ports::FailureKind;
 
     fn monitor(identity: &str, x: i32, scale: f64, primary: bool) -> MonitorGeometry {
@@ -505,6 +570,20 @@ mod phase8_window_tests {
             scale,
             primary,
         )
+    }
+
+    /// Whether `effects` ask the host to take the window's bit to `on`, for the edge sensor.
+    fn asks_sensor_topmost(effects: &[WindowEffect], on: bool) -> bool {
+        effects.iter().any(|effect| {
+            matches!(
+                effect,
+                WindowEffect::ApplyTopmost(TopmostRequest {
+                    desired_effective,
+                    source: TopmostSource::Sensor,
+                    ..
+                }) if *desired_effective == on
+            )
+        })
     }
 
     fn coordinator(visibility: StableVisibility) -> WindowShellCoordinator {
@@ -641,7 +720,7 @@ mod phase8_window_tests {
     #[test]
     fn a_rejected_hide_returns_the_edge_sensor_to_topmost() {
         let mut coordinator = coordinator(StableVisibility::Floating);
-        coordinator.state.temporary_sensor_topmost = true;
+        coordinator.state.topmost.sensor_confirmed = true;
         let id = request_clean_hide(&mut coordinator);
         assert!(!coordinator.state().temporary_sensor_topmost());
         let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
@@ -650,7 +729,7 @@ mod phase8_window_tests {
             outcome: Err(FailureKind::Failed),
         });
         assert!(coordinator.state().temporary_sensor_topmost());
-        assert!(effects.contains(&WindowEffect::SetTemporarySensorTopmost(true)));
+        assert!(asks_sensor_topmost(&effects, true));
     }
 
     #[test]
@@ -786,7 +865,7 @@ mod phase8_window_tests {
             now_ms: 1,
         });
         let shown = coordinator.state().visibility();
-        assert!(matches!(shown, VisibilityState::Presented(_)));
+        assert!(matches!(shown, VisibilityState::ShowPending { .. }));
         let effects = coordinator.dispatch(WindowIntent::ActionCompleted {
             now_ms: 0,
             id,
@@ -931,6 +1010,7 @@ mod phase8_window_tests {
                 note_save_required: true,
                 ..Default::default()
             },
+            now_ms: 3,
         });
         assert_eq!(
             effects,
@@ -1055,6 +1135,7 @@ mod phase8_window_tests {
         assert_eq!(
             effects,
             vec![
+                WindowEffect::SetImeAllowed(true),
                 WindowEffect::SetEditorInputEnabled(true),
                 WindowEffect::QuitCancelled(QuitBarrier::NoteSave),
             ]
@@ -1255,11 +1336,13 @@ mod phase8_window_tests {
             coordinator.state().visibility(),
             VisibilityState::Animating(_)
         ));
-        coordinator.dispatch(WindowIntent::Tick { now_ms: 240 });
+        let effects = coordinator.dispatch(WindowIntent::Tick { now_ms: 240 });
         assert_eq!(
             coordinator.state().visibility(),
             VisibilityState::Presented(StableVisibility::DockedCollapsed(DockEdge::Top))
         );
+        observe_at_target(&mut coordinator, &effects);
+        coordinator.answer_pending_receipts();
         assert_eq!(coordinator.state().next_deadline_ms(), None);
     }
 
@@ -1328,7 +1411,12 @@ mod phase8_window_tests {
                     reason: ShowReason::SecondInstance,
                     now_ms: now,
                 });
-                assert!(effects.contains(&WindowEffect::FocusWindow), "{label}");
+                assert!(
+                    effects
+                        .iter()
+                        .any(|effect| matches!(effect, WindowEffect::FocusWindow { .. })),
+                    "{label}"
+                );
                 assert!(
                     !coordinator.state().temporary_sensor_topmost(),
                     "{label}: the sensor's temporary topmost ends with the wake"
@@ -1344,7 +1432,7 @@ mod phase8_window_tests {
                     ),
                     "{label}"
                 );
-                coordinator.dispatch(WindowIntent::Tick {
+                let effects = coordinator.dispatch(WindowIntent::Tick {
                     now_ms: now + ANIMATION_DURATION_MS,
                 });
                 assert_eq!(
@@ -1353,6 +1441,8 @@ mod phase8_window_tests {
                     "{label}"
                 );
                 assert_eq!(coordinator.state().frame(), expanded, "{label}");
+                observe_at_target(&mut coordinator, &effects);
+                coordinator.answer_pending_receipts();
                 assert_eq!(coordinator.state().next_deadline_ms(), None, "{label}");
                 assert!(coordinator.state().accepts_editor_mutation(), "{label}");
                 // The focus the wake requested keeps it expanded.
@@ -1414,7 +1504,7 @@ mod phase8_window_tests {
     fn temporary_sensor_topmost_survives_hover_reveal_until_focus() {
         let mut coordinator = coordinator(StableVisibility::DockedExpanded(DockEdge::Left));
         let effects = coordinator.dispatch(WindowIntent::ManualCollapse { now_ms: 100 });
-        assert!(effects.contains(&WindowEffect::SetTemporarySensorTopmost(true)));
+        assert!(asks_sensor_topmost(&effects, true));
         coordinator.dispatch(WindowIntent::Tick { now_ms: 240 });
         assert!(coordinator.state().temporary_sensor_topmost());
 
@@ -1433,7 +1523,7 @@ mod phase8_window_tests {
             },
             now_ms: 600,
         });
-        assert!(effects.contains(&WindowEffect::SetTemporarySensorTopmost(false)));
+        assert!(asks_sensor_topmost(&effects, false));
         assert!(!coordinator.state().temporary_sensor_topmost());
     }
 
@@ -1456,7 +1546,7 @@ mod phase8_window_tests {
             },
             now_ms: 101,
         });
-        assert!(!repeated_guard_effects.contains(&WindowEffect::SetTemporarySensorTopmost(false)));
+        assert!(!asks_sensor_topmost(&repeated_guard_effects, false));
         coordinator.dispatch(WindowIntent::Tick { now_ms: 240 });
         assert!(coordinator.state().temporary_sensor_topmost());
 
@@ -1464,7 +1554,7 @@ mod phase8_window_tests {
         let expand_effects = coordinator.dispatch(WindowIntent::Tick {
             now_ms: 300 + HOVER_REVEAL_DELAY_MS,
         });
-        assert!(expand_effects.contains(&WindowEffect::SetTemporarySensorTopmost(false)));
+        assert!(asks_sensor_topmost(&expand_effects, false));
         assert!(!coordinator.state().temporary_sensor_topmost());
     }
 
@@ -1476,7 +1566,7 @@ mod phase8_window_tests {
             now_ms: 0,
             guards: WindowGuardSnapshot::default(),
         });
-        assert!(effects.contains(&WindowEffect::SetTemporarySensorTopmost(false)));
+        assert!(asks_sensor_topmost(&effects, false));
         assert!(!coordinator.state().temporary_sensor_topmost());
     }
 
@@ -1491,6 +1581,7 @@ mod phase8_window_tests {
             now_ms: 0,
         });
         assert_eq!(coordinator.state().dock().edge, Some(DockEdge::Left));
+        let effects = observe_at_target(&mut coordinator, &effects);
         assert_eq!(
             effects
                 .iter()
@@ -1556,6 +1647,7 @@ mod phase8_window_tests {
                     coordinator.state().visibility(),
                     VisibilityState::Presented(StableVisibility::DockedExpanded(expected_edge))
                 );
+                let effects = observe_at_target(&mut coordinator, &effects);
                 assert_eq!(
                     coordinator.state().next_deadline_ms(),
                     Some(10 + AUTO_COLLAPSE_DELAY_MS)
@@ -1577,6 +1669,7 @@ mod phase8_window_tests {
         let primary = monitor("new-primary", 0, 2.0, true);
         let effects = coordinator.dispatch(WindowIntent::DisplayTopologyChanged {
             monitors: vec![primary.clone()],
+            now_ms: 0,
         });
         assert_eq!(
             coordinator.state().dock().monitor.identity,
@@ -1591,6 +1684,7 @@ mod phase8_window_tests {
             coordinator.state().visibility(),
             VisibilityState::Presented(StableVisibility::DockedExpanded(DockEdge::Right))
         );
+        let effects = observe_at_target(&mut coordinator, &effects);
         assert!(
             effects
                 .iter()
@@ -1616,7 +1710,7 @@ mod phase8_window_tests {
             now_ms: 0,
         });
         let frame = PhysicalRect::new(monitor.work_area.x, monitor.work_area.y + 100, 780, 900);
-        coordinator.dispatch(WindowIntent::DragEnded {
+        let effects = coordinator.dispatch(WindowIntent::DragEnded {
             frame,
             monitor,
             now_ms: 10,
@@ -1625,6 +1719,7 @@ mod phase8_window_tests {
             coordinator.state().visibility(),
             VisibilityState::Presented(StableVisibility::DockedExpanded(DockEdge::Left))
         );
+        observe_at_target(&mut coordinator, &effects);
         assert_eq!(coordinator.state().next_deadline_ms(), None);
     }
 
@@ -1639,6 +1734,7 @@ mod phase8_window_tests {
         let primary = monitor("replacement-primary", 0, 1.25, true);
         coordinator.dispatch(WindowIntent::DisplayTopologyChanged {
             monitors: vec![primary.clone()],
+            now_ms: 0,
         });
         assert!(matches!(
             coordinator.state().visibility(),
@@ -1648,12 +1744,23 @@ mod phase8_window_tests {
             reason: ShowReason::Tray,
             now_ms: 1,
         });
+        let id = effects
+            .iter()
+            .find_map(|effect| match effect {
+                WindowEffect::ShowWindow { id } => Some(*id),
+                _ => None,
+            })
+            .expect("a show request");
+        coordinator.dispatch(WindowIntent::ActionCompleted {
+            now_ms: 1,
+            id,
+            outcome: Ok(()),
+        });
         assert_eq!(
             coordinator.state().visibility(),
             VisibilityState::Presented(StableVisibility::DockedExpanded(DockEdge::Left))
         );
         assert!(primary.work_area.contains(coordinator.state().frame()));
-        assert!(effects.contains(&WindowEffect::ShowWindow));
     }
 
     #[test]
@@ -1697,8 +1804,10 @@ mod phase8_window_tests {
     #[test]
     fn phase11b_pin_is_orthogonal_to_every_auto_hide_reducer_transition() {
         for edge in [DockEdge::Left, DockEdge::Top, DockEdge::Right] {
-            let mut unpinned = coordinator(StableVisibility::DockedExpanded(edge));
-            let mut pinned = coordinator(StableVisibility::DockedExpanded(edge));
+            let mut unpinned =
+                coordinator(StableVisibility::DockedExpanded(edge)).with_user_topmost(false);
+            let mut pinned =
+                coordinator(StableVisibility::DockedExpanded(edge)).with_user_topmost(true);
             let intents = [
                 WindowIntent::GuardsChanged {
                     guards: WindowGuardSnapshot::default(),
@@ -1748,11 +1857,28 @@ mod phase8_window_tests {
                 },
             ];
 
+            // The topmost effects and fields are the one thing Pin may change.
+            let without_topmost = |effects: Vec<WindowEffect>| -> Vec<WindowEffect> {
+                effects
+                    .into_iter()
+                    .filter(|effect| !matches!(effect, WindowEffect::ApplyTopmost(_)))
+                    .collect()
+            };
+            assert!(pinned.state.topmost.user_confirmed);
+            assert!(!unpinned.state.topmost.user_confirmed);
             for intent in intents {
                 let unpinned_effects = unpinned.dispatch(intent.clone());
                 let pinned_effects = pinned.dispatch(intent);
-                assert_eq!(unpinned_effects, pinned_effects);
-                assert_eq!(unpinned.state(), pinned.state());
+                assert_eq!(
+                    without_topmost(unpinned_effects),
+                    without_topmost(pinned_effects)
+                );
+                assert_eq!(unpinned.state().visibility(), pinned.state().visibility());
+                assert_eq!(unpinned.state().dock(), pinned.state().dock());
+                assert_eq!(
+                    unpinned.state().next_deadline_ms(),
+                    pinned.state().next_deadline_ms()
+                );
                 assert_eq!(
                     super::super::state::effective_topmost(
                         false,

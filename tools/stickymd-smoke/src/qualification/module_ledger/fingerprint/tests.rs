@@ -673,6 +673,67 @@ fn every_session_persistence_invalidates_every_module() {
     }
 }
 
+/// The frame path, the view geometry and the title run in every session wherever they live, so
+/// moving them out of the host must not narrow them.
+#[test]
+fn every_session_shared_desktop_code_invalidates_every_module() {
+    for path in [
+        "crates/stickymd-desktop/src/lib.rs",
+        "crates/stickymd-desktop/src/geometry.rs",
+        "crates/stickymd-desktop/src/host.rs",
+        "crates/stickymd-desktop/src/testing.rs",
+        "crates/stickymd-desktop/src/testing/portable_disk.rs",
+        "crates/stickymd-desktop/src/shell/mod.rs",
+        "crates/stickymd-desktop/src/shell/lifecycle.rs",
+        "crates/stickymd-desktop/src/shell/storage_conformance.rs",
+        "crates/stickymd-desktop/src/title.rs",
+        "apps/stickymd-win/src/host.rs",
+        "apps/stickymd-win/src/host/monitor_source.rs",
+        "apps/stickymd-win/src/host/window.rs",
+        "crates/stickymd-desktop/src/frame/mod.rs",
+        "crates/stickymd-desktop/src/frame/convert.rs",
+        "crates/stickymd-desktop/src/frame/ledger.rs",
+        "crates/stickymd-desktop/src/frame/plan.rs",
+        "crates/stickymd-desktop/src/frame/surface.rs",
+    ] {
+        for module in crate::qualification::module_registry::modules() {
+            assert_ne!(
+                path_domains(path) & super::domains(module),
+                0,
+                "{path}: {module:?}"
+            );
+        }
+    }
+}
+
+/// The application session and the rules it applies run in every event of every session.
+#[test]
+fn every_session_application_session_invalidates_every_module() {
+    for path in [
+        "crates/stickymd-app/src/interaction/rules.rs",
+        "crates/stickymd-app/src/interaction/rules/tests.rs",
+        "crates/stickymd-app/src/session/mod.rs",
+        "crates/stickymd-app/src/session/assets.rs",
+        "crates/stickymd-app/src/session/clock.rs",
+        "crates/stickymd-app/src/session/document.rs",
+        "crates/stickymd-app/src/session/effects.rs",
+        "crates/stickymd-app/src/session/events.rs",
+        "crates/stickymd-app/src/session/io.rs",
+        "crates/stickymd-app/src/session/note.rs",
+        "crates/stickymd-app/src/session/tests.rs",
+        "crates/stickymd-app/src/session/turns.rs",
+        "crates/stickymd-app/src/session/window.rs",
+    ] {
+        for module in crate::qualification::module_registry::modules() {
+            assert_ne!(
+                path_domains(path) & super::domains(module),
+                0,
+                "{path}: {module:?}"
+            );
+        }
+    }
+}
+
 /// The formal Performance plan runs Release unit baselines by name filter wherever they live
 /// (for example `phase7_export_release_baseline` in `export/mod.rs` and the Phase 8 window
 /// reducer and control-layout baselines), so the files holding them are its inputs.
@@ -684,7 +745,7 @@ fn performance_baselines_outside_its_features_invalidate_it() {
         "crates/stickymd-render/src/math/engine.rs",
         "crates/stickymd-render/src/image.rs",
         "crates/stickymd-app/src/flow/window/reducer.rs",
-        "apps/stickymd-win/src/app/controls.rs",
+        "crates/stickymd-desktop/src/controls/tests.rs",
         "crates/stickymd-app/src/source_search.rs",
     ] {
         assert_ne!(

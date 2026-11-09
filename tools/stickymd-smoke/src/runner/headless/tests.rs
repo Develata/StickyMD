@@ -86,11 +86,11 @@ fn owner_verification_projects_onto_the_selected_owning_packages() {
         .into_iter()
         .map(|owner| owner.package)
         .collect::<BTreeSet<_>>();
-    assert!(owning.contains("stickymd-win"), "{owning:?}");
+    assert!(owning.contains("stickymd-desktop"), "{owning:?}");
     assert_eq!(
-        project(full.clone(), &[Module::Windows, Module::Core]).unwrap(),
+        project(full.clone(), &[Module::Desktop, Module::Core]).unwrap(),
         Some(Task::UnitTestOwners {
-            packages: Some(vec!["stickymd-win"])
+            packages: Some(vec!["stickymd-desktop"])
         })
     );
     for module in Module::ALL {
@@ -249,7 +249,13 @@ fn product_performance_does_not_link_empty_smoke_release_targets() {
         };
         assert_eq!(
             owners(args).unwrap(),
-            [Module::Core, Module::Render, Module::App, Module::Windows]
+            [
+                Module::Core,
+                Module::Render,
+                Module::App,
+                Module::Desktop,
+                Module::Windows
+            ]
         );
         // Integration targets remain eligible, as do unit tests. Only the empty
         // tooling package is removed; no feature/profile override is introduced.
@@ -340,7 +346,7 @@ fn plans_are_explicitly_unexecuted_and_cannot_be_candidate_receipts() {
 
 #[test]
 fn workspace_membership_drift_fails_closed() {
-    let listing = "stickymd-core v0.1.0 (path with spaces)\n\nstickymd-render v0.1.0\n\nstickymd-app v0.1.0\n\nstickymd-win v0.1.0\n\nstickymd-smoke v0.1.0\n";
+    let listing = "stickymd-core v0.1.0 (path with spaces)\n\nstickymd-render v0.1.0\n\nstickymd-app v0.1.0\n\nstickymd-desktop v0.1.0\n\nstickymd-win v0.1.0\n\nstickymd-smoke v0.1.0\n";
     assert!(verify_workspace_listing(listing).is_ok());
     assert!(verify_workspace_listing("").is_err());
     assert!(verify_workspace_listing(&listing.replace("stickymd-core", "renamed-core")).is_err());

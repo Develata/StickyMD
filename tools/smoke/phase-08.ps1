@@ -1,4 +1,4 @@
-# Windowless StickyApp state-application tests run through the existing Rust phase plan.
+# Windowless DesktopShell state-application tests run through the existing Rust phase plan.
 # Native key/IME delivery and Preview capture use opt-in Rust G4-02/G4-06 cases.
 # Local preflights keep manual rows NOT TESTED and do not qualify a candidate.
 [CmdletBinding()]

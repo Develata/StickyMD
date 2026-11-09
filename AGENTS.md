@@ -204,8 +204,9 @@ docs/reference/            ← 外部技术参考
 docs/coverage-matrix.md    ← plan ↔ feature ↔ acceptance ↔ code 对照
 crates/stickymd-core/      ← 领域模型（文本、generation、撤销、持久化事实）
 crates/stickymd-render/    ← Markdown/数学投影、排版、绘制
-crates/stickymd-app/       ← Shared Application（intent、coordinator、配置、会话、Capability Port、worker；无平台 API）
-apps/stickymd-win/         ← Windows 宿主（运行时、界面、原生 adapter；Phase 15 继续迁出）
+crates/stickymd-app/       ← Shared Application（intent、coordinator、配置、`AppSession`、Capability Port、worker；无平台 API）
+crates/stickymd-desktop/   ← Shared Desktop（视图几何、标题投影、软件帧路径、控件、滚动条、Search 叠层、按键表、`shell/` 的 `DesktopShell<H>`；可用 winit/softbuffer，无原生 API）
+apps/stickymd-win/         ← Windows 宿主（启动装配、`WinHost`、原生 adapter、存储）
 tools/stickymd-smoke/      ← std-only 阶段验证 CLI（不进入产品 runtime）
 tools/smoke/               ← 稳定的逐 Phase PowerShell 薄入口
 ```

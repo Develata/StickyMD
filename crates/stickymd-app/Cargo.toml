@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "StickyMD Shared Application: typed intents, coordinators, configuration state and sessions, free of any window system or platform API"
 
+[features]
+# Opens `AppSession`'s state to the test builds of the crates above it; never part of a product
+# build.
+testing = []
+
 [dependencies]
 stickymd-core = { path = "../stickymd-core", version = "0.1.0" }
 stickymd-render = { path = "../stickymd-render", version = "0.1.0" }

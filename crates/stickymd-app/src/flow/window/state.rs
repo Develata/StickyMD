@@ -3,13 +3,28 @@
 //! plan_ref: docs/plan/09_windows_shell.md#windows-shell-purpose
 
 use super::geometry::{MonitorGeometry, PhysicalRect, WindowPlacement};
-use crate::ports::FailureKind;
+use super::placement::PendingPlacement;
+use super::topmost::TopmostState;
+use crate::ports::{FailureKind, FrameFact};
 
 pub const HOVER_REVEAL_DELAY_MS: u64 = 100;
 pub const HOVER_LEAVE_COLLAPSE_DELAY_MS: u64 = 500;
 pub const AUTO_COLLAPSE_DELAY_MS: u64 = 700;
 pub const ANIMATION_DURATION_MS: u64 = 140;
 pub(crate) const ANIMATION_FRAME_MS: u64 = 16;
+/// How far an observed frame may be from its target on each edge and still be that target. A
+/// measurement on a single display at 100%: 20 of 20 settled targets matched exactly. Mixed DPI is
+/// unmeasured (P15-D10), so this may change.
+pub const PLACEMENT_TOLERANCE_PX: u32 = 0;
+/// How long a placement may take to be confirmed. In the same measurement, which looked 250 ms
+/// out, 19 of 20 confirmations arrived within 100 ms; 500 ms leaves room for a loaded machine
+/// without leaving a failed placement unreported for long.
+pub const PLACEMENT_CONFIRM_TIMEOUT_MS: u64 = 500;
+/// How long a show, hide, focus or topmost request may go without its receipt before it counts as
+/// failed. Today's hosts answer these within the same dispatch, so this only ends a wait for a
+/// host that does not: long enough not to cut off a slow compositor, short enough that a window
+/// that never answers does not hold input off for long.
+pub const WINDOW_ACTION_RECEIPT_TIMEOUT_MS: u64 = 2_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DockEdge {
@@ -78,9 +93,18 @@ pub enum VisibilityState {
         restore: StableVisibility,
         /// The edge sensor's topmost state to return to if the hide is rejected.
         sensor_topmost: bool,
+        deadline_ms: u64,
     },
     HiddenToTray {
         restore: StableVisibility,
+    },
+    /// The host was asked to show the window (action `id`) and has not reported back; nothing that
+    /// depends on the window being shown is committed yet (plan 04 window-action-receipts).
+    /// `restore` is what the window was hidden from; a rejection goes back to it unchanged.
+    ShowPending {
+        id: u64,
+        restore: StableVisibility,
+        deadline_ms: u64,
     },
     Animating(AnimationState),
 }
@@ -190,6 +214,23 @@ pub enum WindowSaveReason {
     Shutdown,
 }
 
+/// Who wants the window on top. The window's bit is the two together (`effective_topmost`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopmostSource {
+    User,
+    Sensor,
+    /// Asking for the confirmed values again after a request failed left the bit unknown.
+    Reconcile,
+}
+
+/// A request for the window's topmost bit, whose receipt carries `id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TopmostRequest {
+    pub id: u64,
+    pub desired_effective: bool,
+    pub source: TopmostSource,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum WindowIntent {
     CloseRequested {
@@ -223,6 +264,11 @@ pub enum WindowIntent {
         guards: WindowGuardSnapshot,
         now_ms: u64,
     },
+    /// The user asked to change the always-on-top preference to `on`.
+    UserTopmostRequested {
+        on: bool,
+        now_ms: u64,
+    },
     DragEnded {
         frame: PhysicalRect,
         monitor: MonitorGeometry,
@@ -230,6 +276,17 @@ pub enum WindowIntent {
     },
     DisplayTopologyChanged {
         monitors: Vec<MonitorGeometry>,
+        now_ms: u64,
+    },
+    /// A native drag or resize began: the window is under the user's hand from now.
+    MoveResizeStarted,
+    /// That native drag or resize is over, whether or not a `DragEnded` follows.
+    MoveResizeEnded,
+    /// What the host saw of the window while placement `id` was waiting.
+    PlacementObserved {
+        id: u64,
+        observed: Result<FrameFact, FailureKind>,
+        now_ms: u64,
     },
     SplitModeChanged {
         split: bool,
@@ -239,6 +296,7 @@ pub enum WindowIntent {
     },
     PasteSettled {
         guards: WindowGuardSnapshot,
+        now_ms: u64,
     },
     HideSaveCompleted {
         succeeded: bool,
@@ -260,14 +318,41 @@ pub enum WindowIntent {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum WindowEffect {
-    ApplyFrame(PhysicalRect),
-    SetTemporarySensorTopmost(bool),
-    ShowWindow,
+    /// Move the window to `target`. With `last` it is a placement that gets a verdict, under
+    /// `id`; otherwise it is an animation frame, a presentation request with no receipt.
+    ApplyFrame {
+        id: u64,
+        target: PhysicalRect,
+        last: bool,
+    },
+    /// Report where the window is now, for placement `id`.
+    ObservePlacement {
+        id: u64,
+    },
+    PlacementFailed(FailureKind),
+    /// Apply `desired_effective` to the window and report `WindowIntent::ActionCompleted`.
+    ApplyTopmost(TopmostRequest),
+    /// The window took the user's value: it is the configuration's now.
+    CommitAlwaysOnTop(bool),
+    TopmostRejected {
+        source: TopmostSource,
+        kind: FailureKind,
+    },
+    /// Show the window and report `WindowIntent::ActionCompleted` with this `id`.
+    ShowWindow {
+        id: u64,
+    },
+    /// The show committed: the tray says so and the view comes back.
+    WindowShown,
     /// Hide the window and report `WindowIntent::ActionCompleted` with this `id`.
     HideWindow {
         id: u64,
     },
-    FocusWindow,
+    /// Ask for focus and report whether the window is reachable. A success is not focus: only a
+    /// real focus event proves that.
+    FocusWindow {
+        id: u64,
+    },
     CancelImePreedit,
     SetImeAllowed(bool),
     SetEditorInputEnabled(bool),
@@ -284,11 +369,19 @@ pub enum WindowEffect {
     HideBlocked,
     HideCancelled,
     HideRejected(FailureKind),
+    ShowRejected(FailureKind),
     QuitBlocked,
     QuitCancelled(QuitBarrier),
     QuitWarning(QuitBarrier),
     RequestRedraw,
     WakeAt(u64),
+}
+
+/// A focus request not yet reported on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PendingFocus {
+    pub(super) id: u64,
+    pub(super) deadline_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -302,9 +395,20 @@ pub struct WindowShellState {
     pub(super) lifecycle: LifecycleState,
     pub(super) tray_available: bool,
     pub(super) hide_save_pending: bool,
-    pub(super) temporary_sensor_topmost: bool,
+    pub(super) topmost: TopmostState,
     /// The identity of the newest window action request.
     pub(super) last_window_action: u64,
+    /// The newest focus request not yet reported on. A focus has no state of its own to commit,
+    /// so this is what tells its receipt from a stale one.
+    pub(super) focus_pending: Option<PendingFocus>,
+    /// The placement and dock edge whose window frames were last confirmed. Only these reach the
+    /// configuration when no frame can be confirmed (a topology change while hidden).
+    pub(super) confirmed_placement: WindowPlacement,
+    pub(super) confirmed_dock_edge: Option<DockEdge>,
+    /// The placement waiting for its verdict.
+    pub(super) placement_pending: Option<PendingPlacement>,
+    /// A native drag or resize is running: no frame can be judged until it ends.
+    pub(super) native_move_active: bool,
 }
 
 impl WindowShellState {
@@ -326,10 +430,16 @@ impl WindowShellState {
         self.frame
     }
 
-    /// Whether the edge sensor needs an effective topmost projection without
-    /// changing the user's configured always-on-top preference.
+    /// Whether the edge sensor wants the effective topmost projection, as last requested, without
+    /// changing the user's configured always-on-top preference. The value a receipt has proved is
+    /// not this one until that receipt comes in.
     pub fn temporary_sensor_topmost(&self) -> bool {
-        self.temporary_sensor_topmost
+        self.topmost.sensor_target()
+    }
+
+    /// The placement still waiting for its verdict, which is when the window is observed.
+    pub fn pending_placement_id(&self) -> Option<u64> {
+        self.placement_pending.as_ref().map(PendingPlacement::id)
     }
 
     pub fn lifecycle(&self) -> LifecycleState {
@@ -343,10 +453,27 @@ impl WindowShellState {
             }
             _ => None,
         };
-        [self.deadlines.next(), animation]
-            .into_iter()
-            .flatten()
-            .min()
+        let placement = self
+            .placement_pending
+            .as_ref()
+            .map(PendingPlacement::deadline_ms);
+        let visibility_action = match self.visibility {
+            VisibilityState::HidePending { deadline_ms, .. }
+            | VisibilityState::ShowPending { deadline_ms, .. } => Some(deadline_ms),
+            _ => None,
+        };
+        let focus = self.focus_pending.map(|focus| focus.deadline_ms);
+        [
+            self.deadlines.next(),
+            animation,
+            placement,
+            visibility_action,
+            focus,
+            self.topmost.deadline_ms(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     pub fn accepts_editor_mutation(&self) -> bool {

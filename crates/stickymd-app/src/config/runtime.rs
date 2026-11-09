@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const CONFIG_VERSION: u32 = 1;
-const MAX_WINDOW_DIP: u32 = 16_384;
+pub const MAX_WINDOW_DIP: u32 = 16_384;
 pub const MIN_WINDOW_WIDTH_DIP: u32 = 220;
 pub const MIN_WINDOW_HEIGHT_DIP: u32 = 120;
 

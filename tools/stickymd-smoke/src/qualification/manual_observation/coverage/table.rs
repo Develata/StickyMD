@@ -34,19 +34,19 @@ const fn tests(owners: &'static [Owner]) -> Target {
     Target::Test(owners)
 }
 
-/// A unit test of the `stickymd-win` binary.
-const fn win(path: &'static str) -> Owner {
-    Owner {
-        package: "stickymd-win",
-        target: OwnerTarget::Bin("stickymd-win"),
-        path,
-    }
-}
-
 /// A unit test of the `stickymd-app` library.
 const fn app(path: &'static str) -> Owner {
     Owner {
         package: "stickymd-app",
+        target: OwnerTarget::Lib,
+        path,
+    }
+}
+
+/// A unit test of the `stickymd-desktop` library.
+const fn desktop(path: &'static str) -> Owner {
+    Owner {
+        package: "stickymd-desktop",
         target: OwnerTarget::Lib,
         path,
     }
@@ -93,24 +93,26 @@ const G4_NUMERIC_BLUR: &[&str] = &[
 ];
 /// The Esc decision with each guard alone (asset reconcile, input disabled while quitting) and
 /// under every modifier; USER 2026-10-15 approved unit-only coverage of these Esc rows.
-const ESC_GUARDS: &[Owner] = &[win("app::escape::tests::each_guard_alone_ignores_esc")];
-const ESC_MODIFIERS: &[Owner] = &[win("app::escape::tests::modifiers_never_change_esc")];
+const ESC_GUARDS: &[Owner] = &[desktop(
+    "input::escape::tests::each_guard_alone_ignores_esc",
+)];
+const ESC_MODIFIERS: &[Owner] = &[desktop("input::escape::tests::modifiers_never_change_esc")];
 /// Scrollbar decisions (plan 09 vertical scrollbars) a single test, or tests together, prove.
-const SCROLL_EMPHASIS_DRAG: &[Owner] = &[win(
-    "app::scrollbar::tests::hovering_or_dragging_a_bar_emphasizes_only_that_bar",
+const SCROLL_EMPHASIS_DRAG: &[Owner] = &[desktop(
+    "scroll::scrollbar::tests::hovering_or_dragging_a_bar_emphasizes_only_that_bar",
 )];
 const SCROLL_EMPHASIS_HOVER: &[Owner] = &[
-    win("app::scrollbar::tests::the_gutter_is_the_band_right_of_each_pane"),
-    win("app::scrollbar::tests::hovering_or_dragging_a_bar_emphasizes_only_that_bar"),
+    desktop("scroll::scrollbar::tests::the_gutter_is_the_band_right_of_each_pane"),
+    desktop("scroll::scrollbar::tests::hovering_or_dragging_a_bar_emphasizes_only_that_bar"),
 ];
-const SCROLL_EMPHASIS_PAINT: &[Owner] = &[win(
-    "app::scrollbar::tests::scrollbar_paints_inside_gutter_and_avoids_resize_border_at_each_dpi",
+const SCROLL_EMPHASIS_PAINT: &[Owner] = &[desktop(
+    "scroll::scrollbar::tests::scrollbar_paints_inside_gutter_and_avoids_resize_border_at_each_dpi",
 )];
-const SCROLL_DRAG_MAPPING: &[Owner] = &[win(
-    "app::scrollbar::tests::scrollbar_drag_keeps_grab_offset_and_clamps_outside_window",
+const SCROLL_DRAG_MAPPING: &[Owner] = &[desktop(
+    "scroll::scrollbar::tests::scrollbar_drag_keeps_grab_offset_and_clamps_outside_window",
 )];
-const SCROLL_TRACK_HIT: &[Owner] = &[win(
-    "app::scrollbar::tests::a_track_press_pages_toward_the_click_by_most_of_the_pane",
+const SCROLL_TRACK_HIT: &[Owner] = &[desktop(
+    "scroll::scrollbar::tests::a_track_press_pages_toward_the_click_by_most_of_the_pane",
 )];
 const SCROLL_SOURCE_ENDS: &[Owner] = &[
     render(
@@ -121,37 +123,37 @@ const SCROLL_SOURCE_ENDS: &[Owner] = &[
     ),
 ];
 /// The quit-cancelled notice and the title (plan 09 tray lifecycle).
-const QUIT_NOTICE_ONLY_SAVE: &[Owner] = &[win(
-    "app::title::tests::only_a_failed_note_save_establishes_the_notice",
+const QUIT_NOTICE_ONLY_SAVE: &[Owner] = &[desktop(
+    "title::tests::only_a_failed_note_save_establishes_the_notice",
 )];
 const QUIT_EXTERNAL_LOAD: &[Owner] = &[app(
     "flow::persistence::tests::loading_external_content_discharges_a_superseded_recreate",
 )];
 const QUIT_TITLE_PRIORITY: &[Owner] = &[
-    win("app::title::tests::each_state_has_its_title_and_higher_states_win"),
-    win("app::title::tests::the_title_has_one_native_writer"),
+    desktop("title::tests::each_state_has_its_title_and_higher_states_win"),
+    desktop("shell::title::tests::the_title_has_one_native_writer"),
 ];
-/// C2b-4 owners (2026-10-19): the scrollbar decisions extracted from `StickyApp` into pure
+/// C2b-4 owners (2026-10-19): the scrollbar decisions extracted from `DesktopShell` into pure
 /// functions (`view_bars`, `preview_offset_at`, `preview_offset_by`), the gutter geometry, the
 /// Preview receipt identity and the opacity drag.
 const VIEW_BARS: Owner =
-    win("app::scrollbar::tests::each_view_has_a_bar_for_exactly_its_shown_panes");
-const GUTTER_GEOMETRY: Owner = win(
-    "app::window_interaction::phase8_interaction_tests::every_view_reserves_the_gutter_clear_of_the_resize_border_and_sync_button",
+    desktop("scroll::scrollbar::tests::each_view_has_a_bar_for_exactly_its_shown_panes");
+const GUTTER_GEOMETRY: Owner = desktop(
+    "controls::tests::every_view_reserves_the_gutter_clear_of_the_resize_border_and_sync_button",
 );
-const PREVIEW_POSITIONS: Owner = win(
-    "app::scrollbar::tests::the_preview_offset_follows_the_fraction_and_pages_within_the_document",
+const PREVIEW_POSITIONS: Owner = desktop(
+    "scroll::scrollbar::tests::the_preview_offset_follows_the_fraction_and_pages_within_the_document",
 );
 const SCROLL_VIEW_BARS_OWNED: &[Owner] = &[VIEW_BARS];
 const SCROLL_GUTTER_GEOMETRY: &[Owner] = &[GUTTER_GEOMETRY];
-const SCROLL_THUMB_GEOMETRY: &[Owner] = &[win(
-    "app::scrollbar::tests::the_thumb_is_the_visible_share_with_a_grabbable_minimum",
+const SCROLL_THUMB_GEOMETRY: &[Owner] = &[desktop(
+    "scroll::scrollbar::tests::the_thumb_is_the_visible_share_with_a_grabbable_minimum",
 )];
 const SCROLL_PREVIEW_ENDS: &[Owner] = &[PREVIEW_POSITIONS];
 /// A track press pages by most of the pane (`a_track_press…`), applied to Preview by
 /// `preview_offset_by` and to Source by `scroll_by`, both within the document.
 const SCROLL_TRACK_PAGING: &[Owner] = &[
-    win("app::scrollbar::tests::a_track_press_pages_toward_the_click_by_most_of_the_pane"),
+    desktop("scroll::scrollbar::tests::a_track_press_pages_toward_the_click_by_most_of_the_pane"),
     PREVIEW_POSITIONS,
     render(
         "source::scrollbar::tests::a_source_page_moves_the_viewport_by_its_pixels_within_the_document",
@@ -170,11 +172,11 @@ const SCROLL_SOURCE_MAPPING: &[Owner] = &[
 const SCROLL_STALE_RECEIPT: &[Owner] = &[app(
     "flow::preview_io::tests::a_receipt_for_an_older_offset_is_relaid_out_and_never_shown",
 )];
-const SCROLL_SYNC_APPLICATION: &[Owner] = &[win(
-    "app::scroll_application::tests::split_sync_uses_only_the_current_driver_and_requires_the_switch_and_current_frame",
+const SCROLL_SYNC_APPLICATION: &[Owner] = &[desktop(
+    "shell::scroll_application::tests::split_sync_uses_only_the_current_driver_and_requires_the_switch_and_current_frame",
 )];
-const SCROLL_SESSION_APPLICATION: &[Owner] = &[win(
-    "app::scroll_application::tests::pane_scroll_preserves_text_generation_selection_caret_and_preedit",
+const SCROLL_SESSION_APPLICATION: &[Owner] = &[desktop(
+    "shell::scroll_application::tests::pane_scroll_preserves_text_generation_selection_caret_and_preedit",
 )];
 const SCROLL_CURRENT_LAYOUT: &[Owner] = &[
     VIEW_BARS,
@@ -196,70 +198,66 @@ const SCROLL_CURRENT_LAYOUT: &[Owner] = &[
 /// numeric-input obligations (P08-D022). The actual shell application owners below
 /// supplement native cases with states that physical input cannot force reliably.
 const OPACITY_RANGE_AND_INPUT: &[Owner] = &[
-    win("app::controls::phase8_control_tests::the_opacity_range_is_40_to_100_in_integer_steps"),
-    win("app::controls::phase8_control_tests::the_opacity_field_edits_like_a_selected_text_field"),
-    win(
-        "app::controls::phase8_control_tests::the_opacity_field_takes_keys_while_edited_and_commits_when_it_ends",
+    desktop("controls::tests::the_opacity_range_is_40_to_100_in_integer_steps"),
+    desktop("controls::tests::the_opacity_field_edits_like_a_selected_text_field"),
+    desktop("controls::tests::the_opacity_field_takes_keys_while_edited_and_commits_when_it_ends"),
+    desktop("controls::tests::the_key_that_ends_an_edit_keeps_its_repeats_and_release"),
+    desktop(
+        "shell::opacity_field::phase8_interaction_tests::the_edited_opacity_field_types_only_plain_text",
     ),
-    win(
-        "app::controls::phase8_control_tests::the_key_that_ends_an_edit_keeps_its_repeats_and_release",
+    desktop(
+        "shell::opacity_field::phase8_interaction_tests::the_edited_opacity_field_leaves_the_end_of_a_composition_to_its_owner",
     ),
-    win(
-        "app::window_interaction::phase8_interaction_tests::the_edited_opacity_field_types_only_plain_text",
+    desktop(
+        "shell::window_interaction::runtime_tests::runtime_opacity_enter_keeps_repeats_and_synthetic_release_from_note_and_search",
     ),
-    win(
-        "app::window_interaction::phase8_interaction_tests::the_edited_opacity_field_leaves_the_end_of_a_composition_to_its_owner",
+    desktop(
+        "shell::window_interaction::runtime_tests::runtime_opacity_blur_commits_before_other_click_hide_or_quit",
     ),
-    win(
-        "app::window_interaction::runtime_tests::runtime_opacity_enter_keeps_repeats_and_synthetic_release_from_note_and_search",
+    desktop(
+        "shell::window_interaction::runtime_tests::runtime_opacity_refuses_composition_and_routes_late_ime_to_field",
     ),
-    win(
-        "app::window_interaction::runtime_tests::runtime_opacity_blur_commits_before_other_click_hide_or_quit",
+    desktop(
+        "shell::window_interaction::runtime_tests::runtime_opacity_key_priority_keeps_escape_and_save_above_field",
     ),
-    win(
-        "app::window_interaction::runtime_tests::runtime_opacity_refuses_composition_and_routes_late_ime_to_field",
-    ),
-    win(
-        "app::window_interaction::runtime_tests::runtime_opacity_key_priority_keeps_escape_and_save_above_field",
-    ),
-    win(
-        "app::window_interaction::runtime_tests::runtime_opacity_recovery_and_busy_export_shortcuts_precede_field",
+    desktop(
+        "shell::window_interaction::runtime_tests::runtime_opacity_recovery_and_busy_export_shortcuts_precede_field",
     ),
 ];
-const OPACITY_NO_STEPWISE_WRITE: &[Owner] = &[win(
-    "app::controls::phase8_control_tests::phase8_a_slider_drag_commits_at_most_once_on_release",
+const OPACITY_NO_STEPWISE_WRITE: &[Owner] = &[desktop(
+    "controls::tests::phase8_a_slider_drag_commits_at_most_once_on_release",
 )];
-// 2026-10-22: actual StickyApp application paths with real canonical/projection state.
+// 2026-10-22: actual DesktopShell application paths with real canonical/projection state.
 // Window facts are supplied at the native boundary; these owners do not prove native delivery.
-const RUNTIME_GEOMETRY: &[Owner] = &[win(
-    "app::preview_runtime::runtime_tests::actual_config_geometry_keeps_gutters_across_content_zoom_and_note_lengths",
+const RUNTIME_GEOMETRY: &[Owner] = &[desktop(
+    "shell::preview_runtime::runtime_tests::actual_config_geometry_keeps_gutters_across_content_zoom_and_note_lengths",
 )];
-const RUNTIME_GUTTER: &[Owner] = &[win(
-    "app::scroll_runtime::tests::runtime_gutter_press_is_consumed_without_caret_or_selection_mutation",
+const RUNTIME_GUTTER: &[Owner] = &[desktop(
+    "shell::scroll_runtime::tests::runtime_gutter_press_is_consumed_without_caret_or_selection_mutation",
 )];
-const RUNTIME_SCROLL: &[Owner] = &[win(
-    "app::scroll_runtime::tests::runtime_pointer_moves_apply_each_pane_and_cached_document_height",
+const RUNTIME_SCROLL: &[Owner] = &[desktop(
+    "shell::scroll_runtime::tests::runtime_pointer_moves_apply_each_pane_and_cached_document_height",
 )];
-const RUNTIME_CANONICAL: &[Owner] = &[win(
-    "app::scroll_runtime::tests::runtime_scroll_preserves_canonical_state_and_session_for_clean_and_dirty_notes",
+const RUNTIME_CANONICAL: &[Owner] = &[desktop(
+    "shell::scroll_runtime::tests::runtime_scroll_preserves_canonical_state_and_session_for_clean_and_dirty_notes",
 )];
-const RUNTIME_DRAG_ENDS: &[Owner] = &[win(
-    "app::scroll_runtime::tests::runtime_drag_ends_on_release_blur_view_switch_and_resize_for_both_panes",
+const RUNTIME_DRAG_ENDS: &[Owner] = &[desktop(
+    "shell::scroll_runtime::tests::runtime_drag_ends_on_release_blur_view_switch_and_resize_for_both_panes",
 )];
-const RUNTIME_RECEIPT: &[Owner] = &[win(
-    "app::preview_runtime::runtime_tests::receipt_application_rejects_every_stale_viewport_field_without_replacing_frame_or_offset",
+const RUNTIME_RECEIPT: &[Owner] = &[desktop(
+    "shell::preview_runtime::runtime_tests::receipt_application_rejects_every_stale_viewport_field_without_replacing_frame_or_offset",
 )];
-const RUNTIME_COMPOSITION: &[Owner] = &[win(
-    "app::guards::tests::runtime_guards_read_both_compositions_and_focus_loss_cancels_them",
+const RUNTIME_COMPOSITION: &[Owner] = &[desktop(
+    "shell::guards::tests::runtime_guards_read_both_compositions_and_focus_loss_cancels_them",
 )];
-const RUNTIME_QUIT_EFFECT: &[Owner] = &[win(
-    "app::window_runtime::phase8_runtime_tests::runtime_every_window_effect_preserves_notice_except_failed_note_quit",
+const RUNTIME_QUIT_EFFECT: &[Owner] = &[desktop(
+    "shell::window_runtime::phase8_runtime_tests::runtime_every_window_effect_preserves_notice_except_failed_note_quit",
 )];
 const RUNTIME_EVENT_PASS: &[Owner] = &[
-    win(
-        "app::lifecycle::runtime_tests::runtime_event_pass_reads_all_barriers_once_after_scheduling",
+    desktop(
+        "shell::lifecycle::runtime_tests::runtime_event_pass_reads_all_barriers_once_after_scheduling",
     ),
-    win("app::title::tests::the_notice_settles_at_the_end_of_each_event_pass"),
+    desktop("shell::title::tests::the_notice_settles_at_the_end_of_each_event_pass"),
 ];
 const G4_SCROLL_OUTSIDE: &[&str] = &[
     "preview-scroll-keeps-note:mode=preview",
@@ -1228,7 +1226,7 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         ),
     ),
     // G4-06 composes while focused, and focus alone blocks auto-collapse; the composition
-    // guard wiring and blur cancellation now have actual windowless StickyApp owners.
+    // guard wiring and blur cancellation now have actual windowless DesktopShell owners.
     o(
         "P08-D055",
         "composition-guard-wiring",

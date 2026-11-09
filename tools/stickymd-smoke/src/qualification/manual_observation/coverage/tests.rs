@@ -394,11 +394,13 @@ fn numeric_and_outside_drag_owners_require_the_complete_native_matrix() {
         "runtime_opacity_key_priority_keeps_escape_and_save_above_field",
         "runtime_opacity_recovery_and_busy_export_shortcuts_precede_field",
     ] {
-        let path = format!("app::window_interaction::runtime_tests::{test}");
+        let path = format!("shell::window_interaction::runtime_tests::{test}");
         assert!(
-            owners.iter().any(|owner| owner.package == "stickymd-win"
-                && owner.target == OwnerTarget::Bin("stickymd-win")
-                && owner.path == path),
+            owners
+                .iter()
+                .any(|owner| owner.package == "stickymd-desktop"
+                    && owner.target == OwnerTarget::Lib
+                    && owner.path == path),
             "missing companion: {path}"
         );
     }

@@ -68,7 +68,7 @@ from the [release checklist](../release-checklist.md).
   the round trip; matches kept while parked or stale after the document changed; a selection other than the active
   match after the round trip (Replace Current would then replace an unselected match); a query rewritten by Ctrl+F in
   Preview; a switch to Preview during a Search composition; Ctrl+1/2/3 or zoom swallowed by a non-composing panel.
-- Automated entry: `cargo test -p stickymd-app -p stickymd-win --locked -- interaction::search app::search_controller app::input`,
+- Automated entry: `cargo test -p stickymd-app -p stickymd-desktop -p stickymd-win --locked -- interaction::search interaction::rules app::search_controller input::keymap`,
   also in the Rust-owned render/app tests through [`phase-03.ps1`](../../tools/smoke/phase-03.ps1):
   `a_parked_search_comes_back_as_it_was_without_holding_matches`, `a_resumed_search_rescans_the_current_document`,
   `only_an_open_search_is_parked_and_a_preedit_does_not_survive_it`,
@@ -104,7 +104,7 @@ from the [release checklist](../release-checklist.md).
   retained matches, as navigation does. Replace All is unchanged.
 - Failure signals: a replacement of text that was not selected; a first press after a reload that changes the
   document; a normal replace sequence, by keyboard or by mouse, needing two presses per match.
-- Automated entry: `app::search_controller::tests::{replace_current_replaces_only_the_selected_active_match,
+- Automated entry: `interaction::rules::tests::{replace_current_replaces_only_the_selected_active_match,
   consecutive_replacements_move_past_text_that_contains_the_query}` (real replacements through `EditorCoordinator`,
   including a no-op and a normalized `\r\n`) and
   `interaction::search::tests::the_match_after_a_position_becomes_active_and_wraps_to_the_first`, in the Rust-owned
@@ -133,7 +133,7 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   focused field scrolls both ways to keep its caret visible: an overflowing right-to-left line with the cursor at its
   end lays out left of the field (`a_focused_right_to_left_field_reveals_a_caret_left_of_it`, caret inside the field
   and its press mapping back to the cursor at the end, start and middle).
-- Automated entry: `cargo test -p stickymd-win --locked -- app::search_runtime` and `cargo test -p stickymd-render --lib
+- Automated entry: `cargo test -p stickymd-desktop --locked -- search::` and `cargo test -p stickymd-render --lib
   --locked -- an_unfocused_field_hit_reads_the_painted_layout a_focused_right_to_left_field_reveals_a_caret_left_of_it`
   (`the_panel_is_a_narrow_strip_at_the_source_pane_top_right` over Source and Split at four DPIs and six sizes including
   the 220x120 minimum; `the_panel_surface_has_one_fixed_opacity`, which reads the background, a field and the focused
@@ -158,8 +158,10 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   it in every installed UI font candidate (FangSong and the Microsoft YaHei fallback, where `Aa` is 16.3 DIP) fits inside
   its button's padding, fields and buttons stay inside the panel without overlapping, and a press on a
   button's center reaches it. Navigation stays on Enter/Shift+Enter, Up/Down and F3/Shift+F3.
-- Automated entry: `cargo test -p stickymd-win --locked -- app::search_runtime`
-  (`every_view_leaves_readable_fields_and_whole_button_labels` and `narrow_source_panes_take_the_compact_tier` over
+- Automated entry: `cargo test -p stickymd-desktop --locked -- search::` and
+  `cargo test -p stickymd-win --locked -- app::search_runtime`
+  (`every_view_leaves_readable_fields_and_reachable_buttons`, `every_button_label_fits_in_each_installed_ui_font` and
+  `narrow_source_panes_take_the_compact_tier` over
   the real `preview_runtime::geometry` Source and Split panes at six sizes and four DPIs, both replace states; the
   hand-built 109-DIP pane test is folded into them). The `app` module is `cfg(windows)`: run on Windows, where the
   filter lists four tests. Status: `AUTOMATED PASS`.

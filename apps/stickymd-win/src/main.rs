@@ -4,37 +4,41 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-#[cfg(windows)]
-mod app;
 mod assets;
 #[cfg(windows)]
 mod config;
 #[cfg(windows)]
 mod export;
 #[cfg(windows)]
+mod host;
+#[cfg(windows)]
 mod persistence;
 #[cfg(windows)]
 mod platform;
 #[cfg(windows)]
 mod preview;
+#[cfg(all(windows, test))]
+mod search_label_fonts;
 #[cfg(windows)]
 mod startup;
-#[cfg(windows)]
-mod surface;
 #[cfg(test)]
 mod test_support;
 
 #[cfg(windows)]
 fn main() -> std::process::ExitCode {
-    use app::{AppEvent, StickyApp};
-    use persistence::win_io_ports;
+    use host::WinHost;
+    use persistence::{WinAssetStore, win_io_ports};
     use platform::windows::program_dir::RuntimePaths;
     use platform::windows::single_instance::{InstanceDisposition, SingleInstanceGuard};
     use startup::StartupDiagnostics;
     use startup::{BootstrapMilestone, bootstrap_observed};
     use std::sync::{Arc, Mutex};
+    use std::time::Instant;
     use stickymd_app::execution::{IoCompletion, PersistenceWorker};
-    use winit::event_loop::{EventLoop, EventLoopProxy};
+    use stickymd_app::flow::reconcile_at_startup;
+    use stickymd_desktop::host::{DesktopEvent, EventSink, HostSignal};
+    use stickymd_desktop::shell::DesktopShell;
+    use winit::event_loop::EventLoop;
     use winit::platform::windows::EventLoopBuilderExtWindows;
 
     let mut startup_diagnostics = StartupDiagnostics::from_environment();
@@ -66,42 +70,24 @@ fn main() -> std::process::ExitCode {
         Err(error) => fatal_startup(&format!("StickyMD 无法安全启动：{error}")),
     };
     startup_diagnostics.record("document_ready");
-    // A normal startup is a quiescent destructive-GC boundary: no editor or
-    // worker exists yet, so the reference snapshot cannot become stale while
-    // reconciliation is deleting proven unreferenced trash. Recovery choices
-    // perform the same barrier before re-enabling input.
-    if bootstrap.recovery.is_none() {
-        match assets::AssetStorage::open(&paths.images_dir, &paths.trash_dir).and_then(|storage| {
-            assets::reconcile_safe_boundary(
-                &storage,
-                &paths.note_file,
-                bootstrap.document.base_disk_hash(),
-                bootstrap.document.managed_ref_counts(),
-            )
-        }) {
-            Ok(report) if !report.missing_references.is_empty() => {
-                bootstrap.warnings.push(format!(
-                    "有 {} 个受管图片引用缺少文件；Markdown 未修改。",
-                    report.missing_references.len()
-                ))
-            }
-            Ok(_) => {}
-            Err(error) => bootstrap.warnings.push(format!(
-                "启动图片整理未完成；用户文件与文档均未删除：{error}"
-            )),
-        }
+    if let Some(warning) = reconcile_at_startup(
+        &mut WinAssetStore::new(&paths),
+        &bootstrap.document,
+        bootstrap.recovery.is_some(),
+    ) {
+        bootstrap.warnings.push(warning);
     }
 
-    let native_proxy: Arc<Mutex<Option<EventLoopProxy<AppEvent>>>> = Arc::new(Mutex::new(None));
-    let native_proxy_for_hook = Arc::clone(&native_proxy);
-    let mut event_loop_builder = EventLoop::<AppEvent>::with_user_event();
+    let native_sink: Arc<Mutex<Option<EventSink>>> = Arc::new(Mutex::new(None));
+    let native_sink_for_hook = Arc::clone(&native_sink);
+    let mut event_loop_builder = EventLoop::<DesktopEvent>::with_user_event();
     event_loop_builder.with_msg_hook(move |message| {
         let action = platform::windows::native_message::handle_message(message);
         if let Some(signal) = action.signal
-            && let Ok(proxy) = native_proxy_for_hook.lock()
-            && let Some(proxy) = proxy.as_ref()
+            && let Ok(sink) = native_sink_for_hook.lock()
+            && let Some(sink) = sink.as_ref()
         {
-            let _ = proxy.send_event(AppEvent::Native(signal));
+            sink.post(DesktopEvent::Host(signal));
         }
         action.handled
     });
@@ -114,36 +100,35 @@ fn main() -> std::process::ExitCode {
     };
     startup_diagnostics.record("event_loop_ready");
     let proxy = event_loop.create_proxy();
-    if let Ok(mut slot) = native_proxy.lock() {
-        *slot = Some(proxy.clone());
+    let sink = EventSink::new(move |event| {
+        let _ = proxy.send_event(event);
+    });
+    if let Ok(mut slot) = native_sink.lock() {
+        *slot = Some(sink.clone());
     }
-    let wake_proxy = proxy.clone();
+    let wake_sink = sink.clone();
     if let Err(error) = instance.start_listener(move || {
-        let _ = wake_proxy.send_event(AppEvent::ShowRequested);
+        wake_sink.post(DesktopEvent::Host(HostSignal::ShowRequested));
     }) {
         fatal_startup(&format!("无法监听第二实例唤醒请求：{error}"));
     }
-    let io_proxy = proxy.clone();
+    let io_sink = sink.clone();
     let ports = win_io_ports(&paths);
     let worker = match PersistenceWorker::start(ports, move |completion: IoCompletion| {
-        let _ = io_proxy.send_event(AppEvent::Io(completion));
+        io_sink.post(DesktopEvent::Io(completion));
     }) {
         Ok(worker) => worker,
         Err(error) => fatal_startup(&format!("无法启动持久化工作线程：{error}")),
     };
-    let mut app = StickyApp::new(
-        paths,
-        bootstrap,
-        instance,
-        worker,
-        proxy,
-        startup_diagnostics,
-    );
+    let started = Instant::now();
+    let (session, diagnostic) = bootstrap.into_session(worker, started);
+    let host = WinHost::new(paths, instance, startup_diagnostics);
+    let mut app = DesktopShell::new(host, session, sink, started, diagnostic);
     if let Err(error) = event_loop.run_app(&mut app) {
         eprintln!("application event loop failed: {error}");
         std::process::exit(1);
     }
-    app.startup_diagnostic_exit_code()
+    app.host().startup_diagnostic_exit_code()
 }
 
 #[cfg(windows)]

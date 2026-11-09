@@ -87,7 +87,7 @@ pub enum PersistenceIntent {
 /// Read-only Preview instructions emitted by the interaction shell.
 ///
 /// Preview instructions never mutate canonical Markdown text. Link targets
-/// still pass through Flow Coordination before the Windows adapter is called.
+/// still pass through Flow Coordination before the host's launcher is called.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreviewIntent {
     SetViewMode(ViewMode),

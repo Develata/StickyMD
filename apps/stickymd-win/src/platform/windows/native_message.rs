@@ -4,20 +4,16 @@
 
 use std::ffi::c_void;
 
+use stickymd_desktop::host::HostSignal;
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::{
     MSG, PBT_APMRESUMEAUTOMATIC, SendMessageW, WM_DISPLAYCHANGE, WM_NCLBUTTONDOWN,
     WM_POWERBROADCAST,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NativeWindowSignal {
-    DisplayTopologyChanged,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NativeMessageAction {
-    pub signal: Option<NativeWindowSignal>,
+    pub signal: Option<HostSignal>,
     pub handled: bool,
 }
 
@@ -63,11 +59,11 @@ pub fn handle_message(message: *const c_void) -> NativeMessageAction {
     }
 }
 
-fn translate_message(message: &MSG) -> Option<NativeWindowSignal> {
+fn translate_message(message: &MSG) -> Option<HostSignal> {
     match message.message {
-        WM_DISPLAYCHANGE => Some(NativeWindowSignal::DisplayTopologyChanged),
+        WM_DISPLAYCHANGE => Some(HostSignal::DisplayTopologyChanged),
         WM_POWERBROADCAST if message.wParam.0 as u32 == PBT_APMRESUMEAUTOMATIC => {
-            Some(NativeWindowSignal::DisplayTopologyChanged)
+            Some(HostSignal::DisplayTopologyChanged)
         }
         _ => None,
     }
@@ -112,7 +108,7 @@ mod phase8_native_message_tests {
         assert_eq!(translate_message(&finish), None);
         assert_eq!(
             translate_message(&topology),
-            Some(NativeWindowSignal::DisplayTopologyChanged)
+            Some(HostSignal::DisplayTopologyChanged)
         );
         assert_eq!(
             handle_message(std::ptr::null()),

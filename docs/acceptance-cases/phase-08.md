@@ -226,18 +226,18 @@ This supplements the frozen rows above; their statuses are unchanged.
   editor or Search composition, Search open, Preview with and without a selection) with every modifier combination; a
   quit cancelled by a failed note save, by a guard and by an unsettled paste; a recreate obligation followed by
   "load external".
-- Expected: one pure decision (`app::escape::escape_action`) applies the plan 09 order and Esc routing ignores
+- Expected: one pure decision (`stickymd_desktop::input::escape_action`) applies the plan 09 order and Esc routing ignores
   modifiers; the title text comes from one function (`app::title::window_title`) with the priority recovery → quit
   cancelled → conflict → dirty → formula hover → plain, and a formula hover never hides unsaved text; the only native
   write is `update_window_title` (a source guard rejects any other `set_title`); only a failed note save
   establishes the quit-cancelled notice, which clears after an event pass once the note no longer needs the quit
   barrier; accepting external content discharges a superseded recreate obligation.
 - Automated entry: `cargo test -p stickymd-win --locked -- escape title persistence`. Status: `AUTOMATED PASS`.
-- Also: the opacity pointer decisions (`app::controls`), checked through the real preference reducer: every slider step
+- Also: the opacity pointer decisions (`stickymd_desktop::controls`), checked through the real preference reducer: every slider step
   is a `PreviewOpacity` the reducer does not persist, a valid release yields one `CommitOpacity` (persisted when the
   value changed) and a release after Esc yields nothing; the runtime's config submission is not exercised; the window guards are one projection
-  (`app::guards`) in which an editor or a Search-field composition alone blocks auto-collapse. Automated entry:
-  `cargo test -p stickymd-win --locked -- phase8_a_slider guards`.
+  (`interaction::rules::guard_snapshot`) in which an editor or a Search-field composition alone blocks auto-collapse. Automated entry:
+  `cargo test -p stickymd-win --locked -- phase8_a_slider guards` and `cargo test -p stickymd-app --locked -- interaction::rules`.
 - Not covered here: real keyboard delivery (G4-02), the read-only-note quit failure (G4-01), the end-of-pass hook in the
   live event loop and the winit wiring of the pointer and focus events remain coverage gaps owned by the exact layer.
 

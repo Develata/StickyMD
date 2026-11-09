@@ -109,7 +109,7 @@ unsafe extern "system" fn collect_owner(window: isize, parameter: isize) -> i32 
     1
 }
 
-/// Every StickyMD window title starts with this (`apps/stickymd-win/src/app/title.rs`), and the
+/// Every StickyMD window title starts with this (`crates/stickymd-desktop/src/title.rs`), and the
 /// window is created with it before the tray icon.
 const STICKYMD_TITLE_PREFIX: &str = "StickyMD";
 

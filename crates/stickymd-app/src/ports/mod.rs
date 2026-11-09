@@ -8,8 +8,11 @@ mod assets;
 mod config;
 mod export;
 mod failure;
+mod monitor;
 mod note;
 mod preview;
+mod shell;
+mod window;
 
 pub use assets::{
     AssetPasteCompletion, AssetPasteFailure, AssetPasteRequest, AssetPasteRollback,
@@ -18,9 +21,12 @@ pub use assets::{
 };
 pub use config::ConfigStorage;
 pub use export::{ExportCompletion, ExportRequest, ExportSink};
-pub use failure::{FailureKind, StorageFailure};
+pub use failure::{FailureKind, HostFailure, StorageFailure};
+pub use monitor::{MonitorSnapshot, MonitorSource};
 pub use note::{
     NoteReceipt, NoteStorage, PersistMode, PersistRequest, PersistResult, PreserveOutcome,
     TemporaryCleanup,
 };
-pub use preview::{PreviewCompletion, PreviewJob, PreviewViewport};
+pub use preview::{PreviewCompletion, PreviewImages, PreviewJob, PreviewViewport};
+pub use shell::{ExportTargetPicker, FatalNotice, ShellLauncher, TrayCommand, TrayView};
+pub use window::{FrameFact, TopmostFact, Visibility, WindowHost};

@@ -52,7 +52,7 @@ pub(super) fn json(head: &str, base: Option<&str>, dirty: bool, selection: &Sele
     }
     lint.extend(["--all-targets", "--locked", "--", "-D", "warnings"]);
     let mut portable = vec!["--locked"];
-    for module in [Module::Core, Module::Render, Module::App] {
+    for module in [Module::Core, Module::Render, Module::App, Module::Desktop] {
         if selection.full || selection.modules.contains(&module) {
             portable.extend(["-p", module.cargo_name()]);
         }
@@ -91,7 +91,7 @@ mod tests {
         assert!(full.contains("\"module\":\"all\",\"mode\":\"performance\",\"full\":true"));
         assert!(full.contains("\"lint_args\":[\"clippy\",\"--workspace\","));
         assert!(full.contains(
-            "\"portable_args\":[\"--locked\",\"-p\",\"stickymd-core\",\"-p\",\"stickymd-render\",\"-p\",\"stickymd-app\"]"
+            "\"portable_args\":[\"--locked\",\"-p\",\"stickymd-core\",\"-p\",\"stickymd-render\",\"-p\",\"stickymd-app\",\"-p\",\"stickymd-desktop\"]"
         ));
         assert!(full.contains("\"smoke_needed\":true"));
         let empty = json(
@@ -105,6 +105,20 @@ mod tests {
         assert!(empty.contains("\"smoke_needed\":false"));
         assert!(empty.contains("\"status\":\"NOT_RUN\""));
         assert!(!empty.contains("PASSED"));
+    }
+
+    /// A change in the Shared Desktop reaches Linux through the portable lane, alone: it is not
+    /// a dependency of the crates below it.
+    #[test]
+    fn the_portable_lane_builds_the_shared_desktop_when_it_changes() {
+        let plan = json(
+            &"a".repeat(40),
+            Some(&"b".repeat(40)),
+            false,
+            &super::super::selection::select(&["crates/stickymd-desktop/src/lib.rs".to_owned()]),
+        );
+        assert!(plan.contains("\"portable_needed\":true"));
+        assert!(plan.contains("\"portable_args\":[\"--locked\",\"-p\",\"stickymd-desktop\"]"));
     }
 
     #[test]

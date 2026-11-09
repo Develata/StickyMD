@@ -2,9 +2,12 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#windows-adapter-mapping
 
+use std::ffi::c_void;
 use std::path::PathBuf;
 
+use raw_window_handle::{HandleError, HasWindowHandle, RawWindowHandle};
 use thiserror::Error;
+use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     CoTaskMemFree, CoUninitialize,
@@ -18,6 +21,10 @@ const RPC_E_CHANGED_MODE: HRESULT = HRESULT(0x8001_0106_u32 as i32);
 
 #[derive(Debug, Error)]
 pub enum ExportDialogError {
+    #[error("window handle is unavailable: {0}")]
+    Handle(#[from] HandleError),
+    #[error("window handle is not a Win32 HWND")]
+    UnsupportedHandle,
     #[error("cannot initialize the Windows dialog apartment: {0}")]
     Initialize(windows::core::Error),
     #[error("cannot create or operate the Windows save dialog: {0}")]
@@ -38,13 +45,24 @@ impl Drop for ApartmentGuard {
     }
 }
 
-/// Show the native save picker. Cancellation is a normal `Ok(None)` result.
-pub fn choose_markdown_export() -> Result<Option<PathBuf>, ExportDialogError> {
+/// Show the native save picker, modal to `owner`. Cancellation is a normal `Ok(None)` result.
+///
+/// The owner keeps the dialog above a topmost note and is what Windows activates when the dialog
+/// closes; without one the foreground goes to whichever window Windows picks next.
+pub fn choose_markdown_export(
+    owner: &impl HasWindowHandle,
+) -> Result<Option<PathBuf>, ExportDialogError> {
+    let handle = owner.window_handle()?;
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return Err(ExportDialogError::UnsupportedHandle);
+    };
+    let owner = HWND(handle.hwnd.get() as *mut c_void);
     // SAFETY: the reserved pointer is null and apartment initialization is
     // performed and balanced on this UI thread. An existing apartment with a
     // different model may still use the already-initialized COM environment.
     let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-    let guard = if initialized.is_ok() {
+    // Declared before every COM object below, so each is released before the apartment ends.
+    let _apartment = if initialized.is_ok() {
         ApartmentGuard(true)
     } else if initialized == RPC_E_CHANGED_MODE {
         ApartmentGuard(false)
@@ -82,10 +100,10 @@ pub fn choose_markdown_export() -> Result<Option<PathBuf>, ExportDialogError> {
             .SetOkButtonLabel(w!("导出"))
             .map_err(ExportDialogError::Dialog)?;
     }
-    // SAFETY: no owner handle is supplied; Show is synchronous and the dialog
-    // object remains alive for the duration of the call.
-    if let Err(error) = unsafe { dialog.Show(None) } {
-        drop(guard);
+    // SAFETY: `owner` is a live window of this UI thread, borrowed by the caller
+    // for this whole function and so past the dialog's use and release; Show is
+    // synchronous and the dialog object remains alive for the duration of the call.
+    if let Err(error) = unsafe { dialog.Show(Some(owner)) } {
         return if error.code() == ERROR_CANCELLED_HRESULT {
             Ok(None)
         } else {
@@ -103,6 +121,5 @@ pub fn choose_markdown_export() -> Result<Option<PathBuf>, ExportDialogError> {
     // SAFETY: the pointer was allocated by the Shell with CoTaskMem and is freed
     // exactly once after conversion; no later access occurs.
     unsafe { CoTaskMemFree(Some(display.0.cast())) };
-    drop(guard);
     path.map(|value| Some(PathBuf::from(value)))
 }

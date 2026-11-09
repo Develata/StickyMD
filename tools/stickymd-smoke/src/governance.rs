@@ -652,6 +652,7 @@ fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
         "crates/stickymd-core/src/lib.rs",
         "crates/stickymd-render/src/lib.rs",
         "crates/stickymd-app/src/lib.rs",
+        "crates/stickymd-desktop/src/lib.rs",
     ] {
         let path = root.join(relative);
         if !read_text(&path)?.contains("#![forbid(unsafe_code)]") {
@@ -667,23 +668,33 @@ fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
         return Err("Phase 8 must not introduce registry or auto-start capability".to_owned());
     }
 
-    let lifecycle_path = root.join("apps/stickymd-win/src/app/lifecycle.rs");
-    let lifecycle = read_text(&lifecycle_path)?;
-    for marker in [
-        ".with_decorations(false)",
-        ".with_undecorated_shadow(true)",
-        "CornerPreference::RoundSmall",
-        "ControlFlow::Wait",
+    // The shell chooses the frameless, event-driven window; the host adds what only Windows has.
+    for (relative, markers) in [
+        (
+            "crates/stickymd-desktop/src/shell/handler.rs",
+            [".with_decorations(false)", "ControlFlow::Wait"],
+        ),
+        (
+            "apps/stickymd-win/src/host.rs",
+            [
+                ".with_undecorated_shadow(true)",
+                "CornerPreference::RoundSmall",
+            ],
+        ),
     ] {
-        if !lifecycle.contains(marker) {
-            return Err(format!(
-                "{} is missing native shell marker `{marker}`",
-                lifecycle_path.display()
-            ));
+        let path = root.join(relative);
+        let source = read_text(&path)?;
+        for marker in markers {
+            if !source.contains(marker) {
+                return Err(format!(
+                    "{} is missing native shell marker `{marker}`",
+                    path.display()
+                ));
+            }
         }
     }
 
-    let window_projection_path = root.join("apps/stickymd-win/src/app/window_geometry_runtime.rs");
+    let window_projection_path = root.join("apps/stickymd-win/src/host/monitor_source.rs");
     let window_projection = read_text(&window_projection_path)?;
     if window_projection
         .matches("enumerate_active_displays()")
@@ -783,6 +794,7 @@ fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
     }
 
     verify_shared_application_boundary(root)?;
+    verify_shared_desktop_boundary(root)?;
 
     let mut production_rust = Vec::new();
     collect_files(&root.join("apps"), "rs", &mut production_rust)?;
@@ -1337,17 +1349,52 @@ fn verify_forbidden_packages(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The Shared Application stays free of platform types, platform conditionals and platform
-/// dependencies (plan 03 `#shared-crates`). The crate must exist: a scan of nothing proves nothing.
-fn verify_shared_application_boundary(root: &Path) -> Result<(), String> {
+/// One crate's boundary: no listed text in its sources, no listed dependency in its manifest. The
+/// crate must exist: a scan of nothing proves nothing.
+fn verify_crate_boundary(
+    root: &Path,
+    crate_name: &str,
+    layer: &str,
+    forbidden_source: &[&str],
+    forbidden_dependencies: &[&str],
+) -> Result<(), String> {
+    let directory = format!("crates/{crate_name}");
     let mut sources = Vec::new();
-    collect_files(&root.join("crates/stickymd-app/src"), "rs", &mut sources)?;
+    collect_files(&root.join(&directory).join("src"), "rs", &mut sources)?;
     if sources.is_empty() {
-        return Err("crates/stickymd-app/src holds no Rust source to check".to_owned());
+        return Err(format!("{directory}/src holds no Rust source to check"));
     }
     for path in sources {
         let content = read_text(&path)?;
-        for forbidden in [
+        for forbidden in forbidden_source {
+            if content.contains(forbidden) {
+                return Err(format!(
+                    "{} leaks `{forbidden}` into the {layer}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    let manifest = read_text(&root.join(&directory).join("Cargo.toml"))?;
+    for line in manifest.lines().map(str::trim_start) {
+        let name = line.split(['=', '.', ' ']).next().unwrap_or_default();
+        if forbidden_dependencies.contains(&name) {
+            return Err(format!(
+                "{directory}/Cargo.toml depends on platform crate `{name}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The Shared Application stays free of platform types, platform conditionals and platform
+/// dependencies (plan 03 `#shared-crates`).
+fn verify_shared_application_boundary(root: &Path) -> Result<(), String> {
+    verify_crate_boundary(
+        root,
+        "stickymd-app",
+        "Shared Application",
+        &[
             "winit::",
             "windows::",
             "softbuffer::",
@@ -1355,19 +1402,8 @@ fn verify_shared_application_boundary(root: &Path) -> Result<(), String> {
             "HMONITOR",
             "cfg(windows)",
             "target_os",
-        ] {
-            if content.contains(forbidden) {
-                return Err(format!(
-                    "{} leaks `{forbidden}` into the Shared Application",
-                    path.display()
-                ));
-            }
-        }
-    }
-    let manifest = read_text(&root.join("crates/stickymd-app/Cargo.toml"))?;
-    for line in manifest.lines().map(str::trim_start) {
-        let name = line.split(['=', '.', ' ']).next().unwrap_or_default();
-        if [
+        ],
+        &[
             "winit",
             "windows",
             "softbuffer",
@@ -1375,15 +1411,29 @@ fn verify_shared_application_boundary(root: &Path) -> Result<(), String> {
             "arboard",
             "tray-icon",
             "notify",
-        ]
-        .contains(&name)
-        {
-            return Err(format!(
-                "crates/stickymd-app/Cargo.toml depends on platform crate `{name}`"
-            ));
-        }
-    }
-    Ok(())
+        ],
+    )
+}
+
+/// The Shared Desktop may use winit and softbuffer but nothing native (plan 03 `#shared-crates`):
+/// no platform type, no platform conditional, no winit platform extension, no reach into a host's
+/// adapters. Per-target backend features are the one exception, and they live in its manifest.
+fn verify_shared_desktop_boundary(root: &Path) -> Result<(), String> {
+    verify_crate_boundary(
+        root,
+        "stickymd-desktop",
+        "Shared Desktop",
+        &[
+            "windows::",
+            "HWND",
+            "HMONITOR",
+            "cfg(windows)",
+            "target_os",
+            "crate::platform",
+            "winit::platform::",
+        ],
+        &["windows", "arboard", "tray-icon", "notify"],
+    )
 }
 
 fn collect_files(
@@ -1426,7 +1476,7 @@ fn read_text(path: &Path) -> Result<String, String> {
 mod tests {
     use super::{
         frozen_trace_ids, is_trace_id, manual_rows, markdown_links, matrix_rows,
-        verify_shared_application_boundary,
+        verify_shared_application_boundary, verify_shared_desktop_boundary,
     };
 
     /// The real crate passes; a platform type, a platform conditional or a platform dependency
@@ -1466,6 +1516,59 @@ mod tests {
         }
         std::fs::remove_file(&source).unwrap();
         assert!(verify_shared_application_boundary(&root).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The real crate passes; winit and softbuffer are allowed; a native type, a platform
+    /// conditional, a winit platform extension, a reach into a host's adapters or a platform
+    /// dependency fails; a missing source tree fails rather than passing on nothing.
+    #[test]
+    fn the_shared_desktop_boundary_refuses_native_code() {
+        let repository = crate::governance::find_repository_root(std::path::Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        )))
+        .unwrap();
+        verify_shared_desktop_boundary(&repository).unwrap();
+
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-governance-desktop-{}",
+            std::process::id()
+        ));
+        let source = root.join("crates/stickymd-desktop/src/lib.rs");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        let manifest = root.join("crates/stickymd-desktop/Cargo.toml");
+        let clean_manifest = "[dependencies]\nwinit.workspace = true\nsoftbuffer.workspace = true\n\n\
+                              [target.'cfg(all(unix, not(target_os = \"macos\")))'.dependencies]\n\
+                              winit = { workspace = true, features = [\"x11\"] }\n";
+        std::fs::write(&manifest, clean_manifest).unwrap();
+        let clean = "use softbuffer::Surface;\nuse winit::window::Window;\n";
+        std::fs::write(&source, clean).unwrap();
+        verify_shared_desktop_boundary(&root).unwrap();
+        for bad in [
+            "use windows::Win32::Foundation::RECT;",
+            "// HWND",
+            "// HMONITOR",
+            "#[cfg(windows)]\nmod a;",
+            "#[cfg(target_os = \"linux\")]\nmod a;",
+            "use crate::platform::windows;",
+            "use winit::platform::windows::WindowExtWindows;",
+        ] {
+            std::fs::write(&source, bad).unwrap();
+            assert!(verify_shared_desktop_boundary(&root).is_err(), "{bad}");
+        }
+        std::fs::write(&source, clean).unwrap();
+        for bad in [
+            "windows = { version = \"1\" }",
+            "windows.workspace = true",
+            "arboard.workspace = true",
+            "tray-icon.workspace = true",
+            "notify = \"8\"",
+        ] {
+            std::fs::write(&manifest, format!("[dependencies]\n{bad}\n")).unwrap();
+            assert!(verify_shared_desktop_boundary(&root).is_err(), "{bad}");
+        }
+        std::fs::remove_file(&source).unwrap();
+        assert!(verify_shared_desktop_boundary(&root).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 

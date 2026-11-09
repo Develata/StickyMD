@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('capture-window', 'export', 'tray-target', 'tray-targets', 'tray-menu-items', 'tray-menu-closed', 'tray-invoke', 'tray-overflow-close')]
+    [ValidateSet('capture-window', 'export', 'export-cancel', 'tray-target', 'tray-targets', 'tray-menu-items', 'tray-menu-closed', 'tray-invoke', 'tray-overflow-close')]
     [string]$Action,
     [Parameter(Mandatory = $true)]
     [int]$ProcessId,
@@ -47,19 +47,6 @@ function Wait-Until([scriptblock]$Probe, [string]$Label) {
     throw "Timed out waiting for $Label"
 }
 
-function Find-ProcessTopLevel([int]$OwnerPid, [string]$ExpectedName) {
-    $root = [System.Windows.Automation.AutomationElement]::RootElement
-    $condition = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
-        $OwnerPid
-    )
-    $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
-    foreach ($window in $windows) {
-        if (-not $ExpectedName -or $window.Current.Name -eq $ExpectedName) { return $window }
-    }
-    return $null
-}
-
 function Find-StickyMdPaperWindow([int]$OwnerPid) {
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     $condition = New-Object System.Windows.Automation.PropertyCondition(
@@ -72,10 +59,57 @@ function Find-StickyMdPaperWindow([int]$OwnerPid) {
     return $null
 }
 
+# UI Automation lists an owned window under its owner, so finding the dialog here also proves that
+# the paper window owns it: an ownerless dialog sits under the desktop root and is not found.
+function Find-OwnedDialog([int]$OwnerPid, [string]$ExpectedName) {
+    $paper = Find-StickyMdPaperWindow $OwnerPid
+    if ($null -eq $paper) { return $null }
+    $condition = New-Object System.Windows.Automation.AndCondition(
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+            $OwnerPid
+        )),
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Window
+        )),
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::NameProperty,
+            $ExpectedName
+        ))
+    )
+    return $paper.FindFirst([System.Windows.Automation.TreeScope]::Children, $condition)
+}
+
+$ExportLabel = ([string][char]0x5bfc) + ([string][char]0x51fa)
+
+function Wait-ExportDialog {
+    return Wait-Until { Find-OwnedDialog $ProcessId $ExportLabel } 'native export dialog owned by StickyMD'
+}
+
+function Invoke-ExportCancel {
+    $dialog = Wait-ExportDialog
+    # The standard dialog's IDCANCEL, whatever the display language calls it.
+    $cancelCondition = New-Object System.Windows.Automation.AndCondition(
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Button
+        )),
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
+            '2'
+        ))
+    )
+    $button = $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cancelCondition)
+    if ($null -eq $button) { throw 'Native export dialog has no cancel button' }
+    $invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    $invoke.Invoke()
+    Write-Output 'UIA_EXPORT_CANCELLED'
+}
+
 function Invoke-ExportDialog {
     if (-not $Path) { throw 'export action requires -Path' }
-    $exportLabel = ([string][char]0x5bfc) + ([string][char]0x51fa)
-    $dialog = Wait-Until { Find-ProcessTopLevel $ProcessId $exportLabel } 'native export dialog'
+    $dialog = Wait-ExportDialog
     $editCondition = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::Edit
@@ -560,6 +594,7 @@ function Invoke-TrayMenuItem {
 switch ($Action) {
     'capture-window' { Save-WindowCapture }
     'export' { Invoke-ExportDialog }
+    'export-cancel' { Invoke-ExportCancel }
     'tray-target' { Write-TrayTarget }
     'tray-targets' { Write-TrayTargets }
     'tray-menu-items' { Write-TrayMenuItems }

@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use stickymd_core::{
     DocumentState, ExternalFileState, LineEnding, PreserveExpectation, RecoveryCandidate,
@@ -11,10 +12,14 @@ use stickymd_core::{
 };
 use thiserror::Error;
 
-use crate::config::{ConfigWarning, RuntimeConfig, load_config, save_config};
+use crate::config::{ConfigWarning, load_config, save_config};
 use crate::persistence::{inspect_note, persist_note, quarantine_temporary, remove_temporary};
+use crate::platform::windows::ArboardClipboard;
 use crate::platform::windows::program_dir::RuntimePaths;
+use stickymd_app::config::RuntimeConfig;
+use stickymd_app::execution::PersistenceWorker;
 use stickymd_app::ports::{PersistMode, PersistRequest, PersistResult};
+use stickymd_app::session::{AppSession, InstantClock, SessionParts};
 
 pub struct BootstrapOutcome {
     pub document: DocumentState,
@@ -24,6 +29,28 @@ pub struct BootstrapOutcome {
     /// The unusable canonical observation a restore must preserve first (plan 05 recovery 5).
     pub recovery_canonical_to_preserve: Option<PreserveExpectation>,
     pub warnings: Vec<String>,
+}
+
+impl BootstrapOutcome {
+    /// The session this startup found, with its clock at `started`, and the warning that goes on
+    /// the status line.
+    pub fn into_session(
+        self,
+        worker: PersistenceWorker,
+        started: Instant,
+    ) -> (AppSession, Option<String>) {
+        let session = AppSession::new(SessionParts {
+            document: self.document,
+            clipboard: Box::new(ArboardClipboard::new()),
+            config: self.config,
+            config_persistence_allowed: self.config_persistence_allowed,
+            recovery: self.recovery,
+            recovery_canonical_to_preserve: self.recovery_canonical_to_preserve,
+            worker,
+            clock: Box::new(InstantClock::starting_at(started)),
+        });
+        (session, self.warnings.last().cloned())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
