@@ -425,3 +425,7 @@ USER 问顶部能否利用刘海。实测（`results/notch_auto.txt`、`notch_gu
 | 单屏结论的边界 | 系统 Dock 放在侧边、相邻显示器接缝处，“指针会停在边缘”不成立 |
 
 **结论与建议：** 刘海技术上可行，不是做不到。首版仍建议只做左右，刘海作为后续单独一步，需批准合同例外（辅助感应窗）和无刘海降级规则。这条建议与 Codex 一致。焦点缺口的修法会动共享 reducer，合入前需要 Windows 桌面回归。
+
+### 全屏桌面可见性（2026-11-10）
+
+USER 目视确认：切到全屏应用的桌面时，黄色窗口（`canJoinAllSpaces | fullScreenAuxiliary`，浮动层级）看得见，且很明显。同一次运行中，全屏桌面上 `occlusionState` 约 1 s 后报告被遮挡（`results/spaces_probe-run2.txt`），所以不能用这个状态判断窗口是否可见。全屏桌面上的悬停命中仍未测。
