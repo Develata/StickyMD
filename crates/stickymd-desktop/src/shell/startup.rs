@@ -3,8 +3,6 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#windows-shell-failure-paths
 
-use winit::window::Window;
-
 use super::DesktopShell;
 use crate::host::{Host, StartupDetail};
 use stickymd_app::config::ViewMode;
@@ -26,36 +24,39 @@ impl<H: Host> DesktopShell<H> {
     }
 
     /// Goes on without something the note can do without. The status line is one line, and each
-    /// such failure gets its place on it. What loading the note found stays alone: it matters more
-    /// than how the window looks, and the recovery prompt lays out its actions by position.
+    /// such failure gets its place on it. The recovery prompt lays out its actions by position,
+    /// so it takes nothing more and the reason is told in a dialog instead of being lost.
     fn startup_degraded(&mut self, degraded: StartupDegraded) {
         let message = degraded.to_string();
-        if degraded.needs_dialog() {
+        let status_line_taken = self.app.recovery().is_pending();
+        if degraded.needs_dialog() || status_line_taken {
             self.host.show_error("StickyMD", &message);
+        }
+        if status_line_taken {
+            return;
         }
         let line = message.replace("\n\n", " ");
         match &mut self.diagnostic {
-            None => {
-                self.diagnostic = Some(line);
-                self.diagnostic_is_startup_notice = true;
+            Some(earlier) => {
+                earlier.push('；');
+                earlier.push_str(&line);
             }
-            Some(notice) if self.diagnostic_is_startup_notice => {
-                notice.push('；');
-                notice.push_str(&line);
-            }
-            Some(_) => {}
+            None => self.diagnostic = Some(line),
         }
     }
 
-    /// `window` is passed in because `self` is borrowed mutably throughout; the two calls on it
-    /// are what the windowless tests cannot make.
-    pub(super) fn initialize_window_shell(&mut self, window: &Window) -> Result<(), StartupStop> {
+    /// `reveal` and `focus` are the two steps only a real window can take.
+    pub(super) fn initialize_window_shell(
+        &mut self,
+        reveal: impl FnOnce(),
+        focus: impl FnOnce(),
+    ) -> Result<(), StartupStop> {
         self.prepare_window_shell()?;
         self.host.detail(StartupDetail::WindowShowBegin);
-        window.set_visible(true);
+        reveal();
         self.host.detail(StartupDetail::WindowShowEnd);
         self.settle_shown_window()?;
-        window.focus_window();
+        focus();
         self.host.milestone("focus_ready");
         self.refresh_window_guards();
         self.host.milestone("guards_ready");
@@ -64,7 +65,7 @@ impl<H: Host> DesktopShell<H> {
     }
 
     /// Everything before the window is shown.
-    pub(super) fn prepare_window_shell(&mut self) -> Result<(), StartupStop> {
+    fn prepare_window_shell(&mut self) -> Result<(), StartupStop> {
         let monitors = self
             .host
             .snapshot()
@@ -105,7 +106,7 @@ impl<H: Host> DesktopShell<H> {
     }
 
     /// Everything after the window is shown that can still fail.
-    pub(super) fn settle_shown_window(&mut self) -> Result<(), StartupStop> {
+    fn settle_shown_window(&mut self) -> Result<(), StartupStop> {
         self.host.detail(StartupDetail::ToolIdentityBegin);
         self.host
             .reassert_identity()

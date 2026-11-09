@@ -112,7 +112,9 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
         self.surface = Some(surface);
         self.sync_control_layout();
         self.projection = Some(projection);
-        if let Err(stop) = self.initialize_window_shell(&window) {
+        let started =
+            self.initialize_window_shell(|| window.set_visible(true), || window.focus_window());
+        if let Err(stop) = started {
             self.abort_startup(&stop, || event_loop.exit());
             return;
         }

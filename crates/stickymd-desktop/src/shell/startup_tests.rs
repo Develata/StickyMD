@@ -1,17 +1,20 @@
 //! A startup's failures through the real shell on `FakeHost`: what each does and in which order.
-//! The two winit calls between the phases need a window and are not reached here (plan 11: a test
-//! double proves the interface, not the implementation).
+//! The event loop's callbacks need a real loop and are not reached here (plan 11: a test double
+//! proves the interface, not the implementation).
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#windows-shell-failure-paths
 
-use std::cell::Cell;
+use std::rc::Rc;
 
-use crate::shell::headless_tests::{HeadlessApp, fixture, recovering_at_start};
-use crate::testing::HostCall;
+use crate::shell::headless_tests::{HeadlessApp, fixture, fixture_on, recovering_at_start};
+use crate::testing::{FakeHost, HostCall};
 use stickymd_app::flow::startup::StartupStop;
 use stickymd_app::flow::window::geometry::{MonitorGeometry, MonitorIdentity, PhysicalRect};
 use stickymd_app::instruction::WindowPreferenceIntent;
 use stickymd_app::ports::{FailureKind, HostFailure, MonitorSnapshot};
+
+const TRAY_LINE: &str =
+    "无法创建系统托盘图标；StickyMD 将保持窗口可见，关闭窗口会安全保存并退出。 no tray";
 
 fn failure(detail: &str) -> HostFailure {
     HostFailure::new(FailureKind::Failed, detail)
@@ -30,6 +33,17 @@ fn on_a_display(mut app: HeadlessApp) -> HeadlessApp {
     });
     app.host.take_calls();
     app
+}
+
+/// Runs the whole startup, with the steps only a window can take recorded in their place.
+fn start(app: &mut HeadlessApp) -> (Result<(), StartupStop>, Vec<HostCall>) {
+    let reveal = Rc::clone(&app.host.calls);
+    let focus = Rc::clone(&app.host.calls);
+    let outcome = app.initialize_window_shell(
+        || reveal.borrow_mut().push(HostCall::WindowRevealed),
+        || focus.borrow_mut().push(HostCall::WindowFocused),
+    );
+    (outcome, app.host.take_calls())
 }
 
 fn milestones(calls: &[HostCall]) -> Vec<&'static str> {
@@ -52,56 +66,55 @@ fn dialogs(calls: &[HostCall]) -> Vec<&str> {
         .collect()
 }
 
-/// Runs both phases, which must finish, and returns the host's calls in order.
-fn run_both_phases(app: &mut HeadlessApp) -> Vec<HostCall> {
-    app.prepare_window_shell().unwrap();
-    app.settle_shown_window().unwrap();
-    app.host.take_calls()
+fn count(calls: &[HostCall], wanted: &HostCall) -> usize {
+    calls.iter().filter(|call| *call == wanted).count()
 }
+
+fn position(calls: &[HostCall], wanted: &HostCall) -> usize {
+    calls
+        .iter()
+        .position(|call| call == wanted)
+        .unwrap_or_else(|| panic!("no {wanted:?} in {calls:?}"))
+}
+
+const ALL_MILESTONES: [&str; 8] = [
+    "monitor_ready",
+    "tray_ready",
+    "window_visible",
+    "opacity_ready",
+    "topmost_ready",
+    "focus_ready",
+    "guards_ready",
+    "shell_ready",
+];
 
 #[test]
 fn a_healthy_startup_keeps_its_order_and_reports_nothing() {
     let mut app = on_a_display(fixture("start"));
-    let calls = run_both_phases(&mut app);
+    let (outcome, calls) = start(&mut app);
 
-    assert_eq!(
-        milestones(&calls),
-        [
-            "monitor_ready",
-            "tray_ready",
-            "window_visible",
-            "opacity_ready",
-            "topmost_ready"
-        ]
-    );
-    let native: Vec<_> = calls
+    assert_eq!(outcome, Ok(()));
+    assert_eq!(milestones(&calls), ALL_MILESTONES);
+    let steps: Vec<_> = calls
         .iter()
-        .filter(|call| {
-            matches!(
-                call,
-                HostCall::TrayCreated(_)
-                    | HostCall::ReassertIdentity
-                    | HostCall::ApplyFrame(_)
-                    | HostCall::SetOpacity(_)
-                    | HostCall::SetTopmost(_)
-            )
-        })
+        .filter(|call| !matches!(call, HostCall::Milestone(_)))
         .collect();
     assert!(
         matches!(
-            native.as_slice(),
+            steps.as_slice(),
             [
                 HostCall::TrayCreated(_),
                 HostCall::ReassertIdentity,
                 HostCall::ApplyFrame(_),
+                HostCall::WindowRevealed,
                 HostCall::ReassertIdentity,
                 HostCall::SetOpacity(_),
                 HostCall::SetTopmost(false),
+                HostCall::WindowFocused,
             ]
         ),
-        "{native:?}"
+        "{steps:?}"
     );
-    assert!(dialogs(&calls).is_empty());
     assert_eq!(app.diagnostic, None);
     assert!(!app.startup_failed());
 }
@@ -111,8 +124,10 @@ fn without_a_display_the_startup_stops_before_it_creates_anything() {
     let mut app = fixture("start");
     app.host.take_calls();
 
-    assert_eq!(app.prepare_window_shell(), Err(StartupStop::NoDisplay));
-    assert_eq!(app.host.take_calls(), []);
+    let (outcome, calls) = start(&mut app);
+
+    assert_eq!(outcome, Err(StartupStop::NoDisplay));
+    assert_eq!(calls, []);
 }
 
 #[test]
@@ -120,15 +135,17 @@ fn an_identity_refused_before_the_show_stops_the_startup_before_the_window_is_pl
     let mut app = on_a_display(fixture("start"));
     app.host.identity_result = Err(failure("style refused"));
 
+    let (outcome, calls) = start(&mut app);
+
     assert_eq!(
-        app.prepare_window_shell(),
+        outcome,
         Err(StartupStop::ToolIdentity {
             shown: false,
             cause: failure("style refused"),
         })
     );
-    let calls = app.host.take_calls();
     assert!(!calls.iter().any(|c| matches!(c, HostCall::ApplyFrame(_))));
+    assert_eq!(count(&calls, &HostCall::WindowRevealed), 0);
 }
 
 #[test]
@@ -136,16 +153,18 @@ fn an_identity_lost_after_the_show_stops_the_startup_before_the_window_is_styled
     let mut app = on_a_display(fixture("start"));
     app.host.identity_answers = [Ok(()), Err(failure("style lost"))].into();
 
-    app.prepare_window_shell().unwrap();
+    let (outcome, calls) = start(&mut app);
+
     assert_eq!(
-        app.settle_shown_window(),
+        outcome,
         Err(StartupStop::ToolIdentity {
             shown: true,
             cause: failure("style lost"),
         })
     );
-    let calls = app.host.take_calls();
+    assert_eq!(count(&calls, &HostCall::WindowRevealed), 1);
     assert!(!calls.iter().any(|c| matches!(c, HostCall::SetOpacity(_))));
+    assert_eq!(count(&calls, &HostCall::WindowFocused), 0);
     assert!(!milestones(&calls).contains(&"window_visible"));
 }
 
@@ -167,18 +186,20 @@ fn a_stopped_startup_removes_the_tray_then_explains_then_exits_and_is_recorded()
     ] {
         let mut app = fixture("start");
         app.host.take_calls();
-        let exits = Cell::new(0);
+        let record = Rc::clone(&app.host.calls);
 
-        app.abort_startup(&stop, || exits.set(exits.get() + 1));
+        app.abort_startup(&stop, || {
+            record.borrow_mut().push(HostCall::EventLoopExited)
+        });
 
         assert_eq!(
             app.host.take_calls(),
             [
                 HostCall::TrayDestroyed,
-                HostCall::ShowError(stop.to_string())
+                HostCall::ShowError(stop.to_string()),
+                HostCall::EventLoopExited,
             ]
         );
-        assert_eq!(exits.get(), 1);
         assert!(app.startup_failed());
     }
 }
@@ -189,10 +210,11 @@ fn a_refused_opacity_is_reported_and_the_startup_goes_on() {
     let mut app = on_a_display(fixture("start"));
     app.host.opacity_result = Err(failure("alpha refused"));
 
-    let calls = run_both_phases(&mut app);
+    let (outcome, calls) = start(&mut app);
 
-    assert!(milestones(&calls).contains(&"topmost_ready"));
-    assert!(calls.iter().any(|c| matches!(c, HostCall::SetTopmost(_))));
+    assert_eq!(outcome, Ok(()));
+    assert_eq!(milestones(&calls), ALL_MILESTONES);
+    assert_eq!(count(&calls, &HostCall::WindowFocused), 1);
     assert!(dialogs(&calls).is_empty());
     assert_eq!(
         app.diagnostic.as_deref(),
@@ -201,16 +223,18 @@ fn a_refused_opacity_is_reported_and_the_startup_goes_on() {
     assert!(!app.startup_failed());
 }
 
-/// A desktop may have no way to keep a window on top at all. The configured value stays, and
-/// asking for it again reaches the host, as after a failure at runtime.
+/// A desktop may have no way to keep a window on top at all. The configured value and the tray
+/// stay, and asking for the value again reaches the host once; after that it is proved.
 #[test]
-fn a_refused_topmost_is_reported_and_can_be_retried() {
+fn a_refused_topmost_is_reported_and_can_be_retried_once() {
     let mut app = on_a_display(fixture("start"));
     app.host.topmost_result = Some(Err(failure("z-order refused")));
 
-    let calls = run_both_phases(&mut app);
+    let (outcome, calls) = start(&mut app);
 
-    assert!(milestones(&calls).contains(&"topmost_ready"));
+    assert_eq!(outcome, Ok(()));
+    assert_eq!(milestones(&calls), ALL_MILESTONES);
+    assert_eq!(count(&calls, &HostCall::SetTopmost(false)), 1);
     assert!(dialogs(&calls).is_empty());
     assert_eq!(
         app.diagnostic.as_deref(),
@@ -220,28 +244,37 @@ fn a_refused_topmost_is_reported_and_can_be_retried() {
 
     app.host.topmost_result = None;
     app.dispatch_window_preference_intent(WindowPreferenceIntent::SetAlwaysOnTop(false));
-    assert!(app.host.take_calls().contains(&HostCall::SetTopmost(false)));
+    let calls = app.host.take_calls();
+    assert_eq!(count(&calls, &HostCall::SetTopmost(false)), 1, "{calls:?}");
+    assert!(!calls.iter().any(|c| matches!(c, HostCall::TrayUpdated(_))));
+    assert!(!app.app.config().current().always_on_top);
+
+    app.dispatch_window_preference_intent(WindowPreferenceIntent::SetAlwaysOnTop(false));
+    assert_eq!(
+        count(&app.host.take_calls(), &HostCall::SetTopmost(false)),
+        0
+    );
 }
 
 /// Without a tray the user is told at once, because closing the window now ends the program; the
-/// taskbar entry is the way back and no tool-window identity is asserted.
+/// taskbar entry is the way back, in place before the window shows.
 #[test]
 fn a_missing_tray_interrupts_once_and_the_startup_goes_on_with_a_taskbar_entry() {
     let mut app = on_a_display(fixture("start"));
     app.host.tray_result = Err(failure("no tray"));
 
-    app.prepare_window_shell().unwrap();
-    let calls = app.host.take_calls();
+    let (outcome, calls) = start(&mut app);
 
-    let message =
-        "无法创建系统托盘图标；StickyMD 将保持窗口可见，关闭窗口会安全保存并退出。\n\nno tray";
-    assert_eq!(dialogs(&calls), [message]);
-    assert!(calls.contains(&HostCall::RestoreOrdinaryEntry));
-    assert!(!calls.contains(&HostCall::ReassertIdentity));
+    assert_eq!(outcome, Ok(()));
     assert_eq!(
-        app.diagnostic.as_deref(),
-        Some("无法创建系统托盘图标；StickyMD 将保持窗口可见，关闭窗口会安全保存并退出。 no tray")
+        dialogs(&calls),
+        ["无法创建系统托盘图标；StickyMD 将保持窗口可见，关闭窗口会安全保存并退出。\n\nno tray"]
     );
+    let shown = position(&calls, &HostCall::WindowRevealed);
+    assert!(position(&calls, &HostCall::RestoreOrdinaryEntry) < shown);
+    assert_eq!(count(&calls, &HostCall::ReassertIdentity), 1);
+    assert!(position(&calls, &HostCall::ReassertIdentity) > shown);
+    assert_eq!(app.diagnostic.as_deref(), Some(TRAY_LINE));
     assert!(!app.startup_failed());
 }
 
@@ -252,58 +285,94 @@ fn every_survived_failure_of_a_startup_has_its_place_on_the_one_status_line() {
     app.host.opacity_result = Err(failure("alpha refused"));
     app.host.topmost_result = Some(Err(failure("z-order refused")));
 
-    run_both_phases(&mut app);
+    assert_eq!(start(&mut app).0, Ok(()));
 
     assert_eq!(
-        app.diagnostic.as_deref(),
-        Some(
-            "无法创建系统托盘图标；StickyMD 将保持窗口可见，关闭窗口会安全保存并退出。 no tray；\
-             无法应用窗口透明度：alpha refused；无法应用窗口置顶状态：z-order refused"
-        )
+        app.diagnostic,
+        Some(format!(
+            "{TRAY_LINE}；无法应用窗口透明度：alpha refused；无法应用窗口置顶状态：z-order refused"
+        ))
     );
 }
 
-/// The event loop still delivers what it buffered after `exit`, and `ApplicationHandler` needs a
-/// real event loop, so what each callback does first is pinned in the source.
+/// A diagnostic from before the window existed is kept, with the failure after it.
 #[test]
-fn every_callback_returns_at_once_after_a_failed_startup() {
+fn a_survived_failure_joins_what_the_status_line_already_says() {
+    let host = FakeHost {
+        watch_result: Err(failure("no watch")),
+        ..FakeHost::default()
+    };
+    let mut app = on_a_display(fixture_on(host, "start"));
+    let earlier = app.diagnostic.clone().expect("the watcher's diagnostic");
+    app.host.opacity_result = Err(failure("alpha refused"));
+
+    assert_eq!(start(&mut app).0, Ok(()));
+
+    assert_eq!(
+        app.diagnostic,
+        Some(format!("{earlier}；无法应用窗口透明度：alpha refused"))
+    );
+}
+
+/// The recovery prompt lays out its actions by position, so it takes nothing more; the reason is
+/// told in a dialog and not lost.
+#[test]
+fn a_survived_failure_goes_to_a_dialog_while_the_recovery_prompt_holds_the_status_line() {
+    let mut app = on_a_display(recovering_at_start());
+    let prompt = app.diagnostic.clone();
+    assert!(prompt.as_deref().is_some_and(|text| text.contains("[F7")));
+    app.host.opacity_result = Err(failure("alpha refused"));
+
+    let (outcome, calls) = start(&mut app);
+
+    assert_eq!(outcome, Ok(()));
+    assert_eq!(dialogs(&calls), ["无法应用窗口透明度：alpha refused"]);
+    assert_eq!(app.diagnostic, prompt);
+}
+
+#[test]
+fn a_missing_tray_is_told_once_while_the_recovery_prompt_holds_the_status_line() {
+    let mut app = on_a_display(recovering_at_start());
+    let prompt = app.diagnostic.clone();
+    app.host.tray_result = Err(failure("no tray"));
+
+    let (_, calls) = start(&mut app);
+
+    assert_eq!(dialogs(&calls).len(), 1, "{calls:?}");
+    assert_eq!(app.diagnostic, prompt);
+}
+
+/// The event loop still delivers what it buffered after `exit`, and `ApplicationHandler` needs a
+/// real event loop, so what each callback does first is pinned in the source. That the guard
+/// keeps buffered input out of the note is P15-S06.
+#[test]
+fn every_callback_starts_by_returning_after_a_failed_startup() {
     let source = include_str!("handler.rs");
     for callback in ["fn window_event(", "fn about_to_wait(", "fn user_event("] {
         let mut lines = source.lines().skip_while(|line| !line.contains(callback));
         lines
             .find(|line| line.trim_end().ends_with('{'))
             .unwrap_or_else(|| panic!("no body for {callback}"));
+        let first: Vec<_> = lines.take(3).map(str::trim).collect();
         assert_eq!(
-            lines.next().map(str::trim),
-            Some("if self.startup_failed {"),
+            first,
+            ["if self.startup_failed {", "return;", "}"],
             "{callback}"
         );
     }
-}
-
-/// What loading the note found is worth more than how the window looks, and the recovery prompt
-/// lays out its actions by position, so nothing is added to it.
-#[test]
-fn a_degraded_startup_does_not_replace_what_loading_the_note_found() {
-    let mut app = on_a_display(recovering_at_start());
-    let found = app.diagnostic.clone();
-    assert!(found.is_some());
-    app.host.opacity_result = Err(failure("alpha refused"));
-
-    run_both_phases(&mut app);
-
-    assert_eq!(app.diagnostic, found);
 }
 
 #[test]
 fn a_measuring_hosts_exit_removes_the_tray_first() {
     let mut app = fixture("start");
     app.host.take_calls();
-    let exited = Cell::new(false);
+    let record = Rc::clone(&app.host.calls);
 
-    app.finish_host_probe(|| exited.set(true));
+    app.finish_host_probe(|| record.borrow_mut().push(HostCall::EventLoopExited));
 
-    assert_eq!(app.host.take_calls(), [HostCall::TrayDestroyed]);
-    assert!(exited.get());
+    assert_eq!(
+        app.host.take_calls(),
+        [HostCall::TrayDestroyed, HostCall::EventLoopExited]
+    );
     assert!(!app.startup_failed());
 }

@@ -405,6 +405,25 @@ mod tests {
     /// nothing retries by itself, but an explicit repeat of that value reaches the host, and a
     /// success makes repeats redundant again.
     #[test]
+    fn a_bit_the_startup_could_not_set_lets_a_repeat_reach_the_host_from_either_source() {
+        let mut for_user = coordinator(StableVisibility::Floating);
+        assert_eq!(
+            request(&user(&mut for_user, false), TopmostSource::User),
+            None
+        );
+        for_user.mark_native_topmost_unknown();
+        assert!(request(&user(&mut for_user, false), TopmostSource::User).is_some());
+
+        let mut for_sensor = coordinator(StableVisibility::Floating);
+        assert_eq!(
+            request(&sensor(&mut for_sensor, false), TopmostSource::Sensor),
+            None
+        );
+        for_sensor.mark_native_topmost_unknown();
+        assert!(request(&sensor(&mut for_sensor, false), TopmostSource::Sensor).is_some());
+    }
+
+    #[test]
     fn an_explicit_retry_reaches_the_host_after_a_failed_reconcile() {
         let failed_reconcile = |coordinator: &mut WindowShellCoordinator,
                                 effects: &[WindowEffect]| {

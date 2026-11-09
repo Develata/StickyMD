@@ -8,6 +8,7 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use stickymd_app::flow::window::geometry::PhysicalRect;
@@ -52,14 +53,24 @@ pub enum HostCall {
     AcknowledgeWatch,
     CaretToggled(PhysicalRect),
     CaretReleased,
-    Presented { width: u32, height: u32 },
+    Presented {
+        width: u32,
+        height: u32,
+    },
     Milestone(&'static str),
+    /// Recorded by a test through `calls`: a step that does not go through the host.
+    WindowRevealed,
+    /// Recorded by a test through `calls`.
+    WindowFocused,
+    /// Recorded by a test through `calls`.
+    EventLoopExited,
 }
 
 /// The answers are public so a test sets what the desktop reports. The defaults are a desktop
 /// where every request works and the window was never placed: no display and no frame to read.
 pub struct FakeHost {
-    pub calls: RefCell<Vec<HostCall>>,
+    /// Shared so that a test can place in the same order what does not go through the host.
+    pub calls: Rc<RefCell<Vec<HostCall>>>,
     /// Whether a watch runs, after `start_watch` and `stop_watch`.
     pub watching: bool,
     pub visibility: Result<Visibility, FailureKind>,
@@ -104,7 +115,7 @@ pub struct FakeHost {
 impl Default for FakeHost {
     fn default() -> Self {
         Self {
-            calls: RefCell::default(),
+            calls: Rc::default(),
             watching: false,
             visibility: Ok(Visibility {
                 visible: Some(true),
