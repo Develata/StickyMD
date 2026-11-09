@@ -4,8 +4,8 @@
 
 - `Layer`: Verification
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-10
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -187,7 +187,7 @@ docs/acceptance-cases/phase-XX.md
   检查范围和聚合判定由 Rust CLI 唯一持有。GitHub workflow 只提供事件基线、隔离 runner、
   缓存、参数转发和任务结果，不复制路径分类规则。
 - 工程模块沿用 Cargo 边界：core、render、windows、smoke、两个 Phase 01 实验（Phase 15 起增加 app、desktop，见下文
-  Phase 15 节）；与
+  Phase 15 节；Phase 16 增加 mac）；与
   Qualification Module Registry 的 Runtime/Performance/Resources/G3/G4/G5 区分。
   显式本地模块入口只运行请求范围；日常 CI 规划器负责补全反向依赖。
 - PR 比较 base commit 与实际被 checkout 的 merge commit；push 比较 before commit 与
@@ -242,6 +242,21 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 替换/冲突/图片安全、IME、托盘可达性、透明度、置顶、贴边、多屏、剪贴板/导出（自动化与人工结果分别记录；剪贴板多格式
 选择按 [plan 08 剪贴板验证](08_assets_and_export.md#clipboard-priority-verification)）。共享层完成、Windows 回归、跨平台应用可用与发布 readiness
 分别报告；测试替身只证明接口与共享语义，不证明原生实现正确。
+
+<a id="phase-16-macos-host"></a>
+### Phase 16：macOS 宿主
+
+依据 [决定报告](../report/2026-11-09-macos-platform-decision.md) 与 `02` macOS 节。验收见 `docs/acceptance-cases/phase-16.md`，自动化由 Rust CLI 持有，`tools/smoke/phase-16.ps1` 是稳定入口。
+
+| 里程碑 | 交付 | 出口 |
+| --- | --- | --- |
+| M0 | 基线：macOS 移除没有 `head` 表的字体 | 四个共享 crate 的测试在 macOS 全部通过 |
+| M1 | 建立 `apps/stickymd-mac` 并同时登记 `unsafe` 治理、CI 选择与指纹归属；存储、单实例、监视、启动 | 真实存储通过 `storage_conformance!`；`05` macOS 节的失败路径有测试 |
+| M2 | 窗口、托盘、唤醒、光标图层、系统终止；共享层 S2、S4、S6、S7、S8 | Windows 现有断言不变（S7、S8 按批准的新行为更新）；真实桌面项按验收表人工确认 |
+| M3 | 输入、剪贴板、导出；共享层 S3 | `08` macOS 节的格式验证；基线测量 |
+| M4 | `.app` 打包脚本、ad-hoc 签名、人工验收清单 | 未运行项保持 `NOT TESTED` |
+
+共享层改动的 Windows 桌面回归只能在 Windows 机器上运行；S8 按 USER 决定不单独回归，验收表记为 USER 豁免。
 
 <a id="qualification-process-isolation"></a>
 ### GUI qualification process isolation

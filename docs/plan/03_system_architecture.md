@@ -4,8 +4,8 @@
 
 - `Layer`: Architecture
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-10
 - `Scope`: StickyMD 主骨架：四层调用架构 + Object Plane、层间规则、coordinator 清单、核心调用链、共享 crate 与平台宿主的映射
 
 ---
@@ -78,7 +78,7 @@ USER 批准（2026-10-31，[提案](../report/2026-10-23-shared-core-thin-platfo
 | `stickymd-render` | Markdown/数学投影、排版、绘制、命中与选择映射、布局缓存 | Execution Domain | 不决定保存、冲突或资产删除；环境读取经执行接口 |
 | `stickymd-app`（Shared Application） | typed intent、应用会话、全部 coordinator、配置状态、Capability Port 定义、可共享执行逻辑（worker 调度与结果协议）、不依赖文件语义的裁决（配置文本规则、启动恢复裁决、粘贴批次、导出命名与引用改写） | Instruction Interface + Flow Coordination + 共享 Execution | 不依赖 winit、softbuffer 或任何平台 API；不向壳暴露可变 DocumentState |
 | `stickymd-desktop`（Shared Desktop） | 通用控件、Search 控件、选择与滚动交互、窗口事件翻译、视图呈现、软件帧缓冲接线 | Interaction Shell（共享部分） | 可使用 winit/softbuffer；不持有保存、冲突、GC、生命周期的业务裁决 |
-| Platform Host（当前 `apps/stickymd-win`） | 启动接线、原生 adapter、资源/manifest、平台验证探针 | Shell 启动接线 + Execution Domain 原生 adapter | 实现 Capability Port 并上报 Execution Receipt；不复制应用规则 |
+| Platform Host（`apps/stickymd-win`、`apps/stickymd-mac`） | 启动接线、原生 adapter、资源/manifest、平台验证探针 | Shell 启动接线 + Execution Domain 原生 adapter | 实现 Capability Port 并上报 Execution Receipt；不复制应用规则 |
 
 编译依赖方向（共享库不反向依赖平台宿主）：
 
@@ -109,7 +109,8 @@ Platform Host ──→ stickymd-desktop ──→ stickymd-app ──→ sticky
 6. 主线程限定的窗口、菜单与输入法能力不强加 `Send + Sync`；I/O worker 只获得允许跨线程传递的执行对象与不可变请求。
 7. 共享调度使用注入的单调时间或可控时钟，沿用毫秒时间与有界队列语义；Platform Host 负责唤醒，不复制 debounce 与退出顺序。
 8. 共享 crate 禁止 `unsafe`。第三方库可以持有经批准的平台后端；项目手写原生调用仍集中在 Platform Host 的 adapter。
-9. 平台默认字体、快捷键映射与原生菜单约定属于宿主配置/翻译；Windows 现有默认值保持不变。
+9. 平台默认字体、快捷键映射与原生菜单约定属于宿主配置/翻译；Windows 现有默认值保持不变。键表由完整修饰键得出语义命令
+   （撤销/重做、查找/替换、行首行尾与文首文末、缩放、视图、保存、导出、退出），共享壳只消费语义命令，不判断具体修饰键。
 
 迁移（Phase 15 A–D，`11` Phase 15 节）期间，尚未迁出的代码仍在 `apps/stickymd-win`，但每批只保留一个生效实现，
 必要转发不保存状态；本节是目标契约，未迁移部分按本节判定为待收敛的 implementation drift，而不是第二套权威。
@@ -227,7 +228,7 @@ Asset move/delete
 Clipboard read/write
 File watch
 Monitor query
-Window platform adaptation（winit + Win32 adapter）
+Window platform adaptation（winit + 平台 adapter）
 Shell launch（链接/文件交给系统）
 Config serialization（TOML）
 ```
@@ -360,7 +361,7 @@ focus state 变化 / 计时器到期
 - **State change**：WindowState: DockedExpanded → Animating → DockedCollapsed；config 的 dock 状态投影更新。
 - **Failure**：guard 命中（正在输入/IME composition/拖动/有冲突 banner）→ 取消收起；动画被打断 → 以最终目标状态收敛，不卡在中间态。
 - **Authority**：WindowState；typing guard 规则高于自动收起计时器。
-- **Output**：窗口收起为 3 DIP 感应条。
+- **Output**：窗口收起为 2 DIP 感应条。
 
 ---
 

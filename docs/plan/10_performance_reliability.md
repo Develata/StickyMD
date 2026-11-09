@@ -4,8 +4,8 @@
 
 - `Layer`: Verification
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-10
 - `Scope`: 性能约束的性质定义（Target / Measurement Method / Hard Failure Condition / Future Benchmark Entry）与可靠性底线
 
 ---
@@ -83,8 +83,21 @@ Phase 15（`11` Phase 15 节）每批迁移前固定基线 SHA、fixture 与测�
 | 硬门 | 每键全文快照次数、每帧复制字节、每次编辑触发的后台预览/保存构建次数 | 不得超过基线 |
 | 诊断 | 每键分配次数、队列容量 | 增加须在该批记录中说明来源，不单独阻断 |
 
-macOS 的呈现成本（每帧全窗分配与复制）不由 Windows 基线代表；建立 macOS 宿主时须另行给出物理窗口尺寸、DPI、
-每帧分配/复制量与光标闪烁基线。
+<a id="macos-gates"></a>
+### macOS 门（USER 批准 2026-11-10）
+
+macOS 的呈现成本不由 Windows 基线代表。探针基线（scale 2）：默认窗口 1040×1360 每帧堆分配 5.66 MB、`present` p50 2.4 ms；Split 1800×1360 为 9.79 MB、3.9 ms；光标闪烁整窗提交 CPU 1.94%，`CALayer` 开关 0.037%。
+
+内存口径为 `phys_footprint`，Release，scale 2，启动后等待 30 s，≥5 次取中位与最大。Windows 内存门不适用（Retina 帧面积是 100% DPI 的 4 倍）。
+
+| 场景 | 临时硬门（估算，首次实测后由 USER 定最终值） |
+| --- | --- |
+| Source 20 KiB | > 72 MiB |
+| Preview 20 KiB + 20 公式 | > 96 MiB |
+| Split 同上 | > 128 MiB |
+| Hidden to tray | > 48 MiB |
+
+空闲 CPU（含光标闪烁）、启动、输入延迟、预览构建沿用下表的数值，在 macOS 上单独测量。结构性约束 10（测量环境）在 macOS 宿主上读作 Release build + macOS 27。
 
 ---
 

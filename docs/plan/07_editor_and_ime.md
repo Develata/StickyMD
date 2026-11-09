@@ -4,8 +4,8 @@
 
 - `Layer`: Capability
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-10
 - `Scope`: Source 编辑器职责、IME preedit/commit 语义、字体 run、undo 分组、RichEdit fallback 治理
 
 ---
@@ -189,7 +189,7 @@
 
 ### 一级验收输入法
 
-微软拼音、微信输入法。验证项至少包括：
+Windows：微软拼音、微信输入法。macOS：系统简体拼音、微信输入法（`docs/acceptance-cases/phase-16.md`）。验证项至少包括：
 
 1. 中文连续输入。
 2. 中英文混输。
@@ -204,6 +204,13 @@
 11. 整窗透明度 40–100 时输入正常。
 12. 失焦/重新聚焦后 composition 状态正确。
 13. 输入期间绝不自动收起。
+
+<a id="macos-input"></a>
+### macOS 输入（USER 批准 2026-11-10）
+
+- 锁定的 winit 0.30.13 丢弃 `replacementRange`，不提供上下文读取。v1 不支持依赖它们的功能（听写改写、文本替换、输入法修改已提交文本）。一级输入法基本组字失败时停止实现，按 `AGENTS.md` 写 RISK 报告。
+- 宿主关闭本进程的 `ApplePressAndHoldEnabled`，避免长按产生重复字符；代价是没有重音弹窗。
+- 键表（语义相同，只换按键）：保存 / 导出 Cmd+S / Cmd+Shift+S；复制、剪切、粘贴、全选 Cmd+C/X/V/A；撤销 / 重做 Cmd+Z / Cmd+Shift+Z；查找 / 替换 Cmd+F / Cmd+Option+F；视图与缩放 Cmd+1/2/3、Cmd+=/-/0；行首行尾 Cmd+←/→ 与 Home/End；文首文末 Cmd+↑/↓；退出 Cmd+Q（`09`）。Ctrl 组合键不绑定，没有 Insert 别名，Windows 也没有的按词移动不做。
 
 ---
 

@@ -4,8 +4,8 @@
 
 - `Layer`: Capability
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-10
 - `Scope`: managed/user 资产边界、命名、编码保留、引用追踪、.trash、undo/redo 副作用、启动 reconcile、安全 GC、remote 图片、导出
 
 ---
@@ -100,6 +100,20 @@ image/webp）→ CF_DIBV5 → CF_DIB → CF_BITMAP → Unicode text`。至少覆
 
 读取位图的组用已知非对称图案检查最终 PNG 的尺寸、像素位置与颜色（防翻转、通道与透明度错误），不要求合成缓冲区与源字节
 相等；文本均不得被插入。现有 G3-01 exact 检查（目前只证明 PNG 优先于文本）保留，其只发布 DIB 的场景补实际读取格式断言。
+
+<a id="macos-clipboard-and-assets"></a>
+### macOS 剪贴板与受管图片（USER 批准 2026-11-10）
+
+宿主直接读 `NSPasteboard`，不经 arboard（其读图只取 TIFF，违反“保留原编码”）。优先级：
+
+```text
+public.file-url（图片文件列表）→ public.png → public.jpeg → org.webmproject.webp → public.tiff（转 PNG）→ public.utf8-plain-text
+```
+
+验证同上一节的方法，逐组写明发布格式与预期读取格式。
+
+本章“校验与受约束 rename/delete 绑定同一句柄”在 POSIX 上做不到。macOS adapter 按“不能证明时降级”长期执行：不把未引用的图片移入 `.trash`，不做物理删除，
+`sync` 报 `skipped_untrusted` 与 `physical_delete_deferred`。只保留 `.trash` → `images/` 的恢复，移动用 `RENAME_EXCL` 并在移动后校验。未引用的图片留在 `images/`，由用户手动清理。
 
 ### 编码规则
 
