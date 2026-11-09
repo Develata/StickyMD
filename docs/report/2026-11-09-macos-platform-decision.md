@@ -9,7 +9,7 @@
 1. **可以建 macOS 宿主，不需要 WebView、async runtime 或换框架。** 窗口定位、隐藏、唤醒、置顶、透明度、菜单栏图标都在本机跑通了读回。
 2. **基线没有全绿：** 2 个失败加 1 个不终止，同一根因，是 macOS 自带的一个位图字体让 cosmic-text 算出 `inf`。这也是产品缺陷：代码块里出现中文就会触发。修法见“共享层改动”S1。
 3. **建议的形态：** macOS 27+、仅 arm64、`StickyMD.app` 放在一个普通目录里，**目录是便签身份**，`note/` 与 `.app` 同级，不进 bundle。本机 ad-hoc 签名，暂不公开分发。
-4. **存储用普通 `rename` 发布，语义与 `05` 已接受的 TOCTOU 相同，要求卷支持 `RENAME_EXCL`（APFS）。** 比 Windows 弱的有三处，需要逐项批准：持有旧句柄的写者的写入会丢失；保留 invalid canonical 变成“移动后核对”；受管图片不做物理删除。
+4. **存储用普通 `rename` 发布，语义与 `05` 已接受的 TOCTOU 相同，要求卷支持 `RENAME_EXCL`（APFS）。** 比 Windows 弱的有三处，需要逐项批准：持有旧句柄的写者的写入会丢失；保留 invalid canonical 变成“移动后核对”；受管图片不做自动移动和物理删除。
 5. **光标闪烁必须走原生图层：** 整窗提交每次闪烁 5.66 MB、CPU 1.94%，约为空闲硬门 0.1% 的 19 倍；`CALayer` 开关 0.037%。
 6. **两项风险靠人工定案：** 未聚焦时 3 pt 感应条能否收到悬停，输入法（`replacementRange` 被 winit 丢弃）。探针已备好，见“人工项”。
 7. **winit 没有接系统退出：** 注销和关机不经过保存屏障，需要宿主补接线（S4）。
@@ -88,18 +88,18 @@ cargo test --locked --no-fail-fast -p stickymd-core -p stickymd-render -p sticky
 | 写 temp | `FlushFileBuffers` | `openat(O_NOFOLLOW)`，写入，`F_FULLFSYNC` | 对等。20 KiB 中位 3.9 ms（`fsync` 0.05 ms 不保证落盘），在 I/O worker |
 | 发布（已存在） | guard 后 `ReplaceFileW` | guard（`O_NOFOLLOW` 读并比对指纹）后 `renameat`，再对目录 `F_FULLFSYNC`。`ForceOverwrite` 跳过 guard | 检查与替换之间的 TOCTOU 与 `05` 已声明的相同 |
 | 发布（首次） | `MoveFileExW` 不覆盖 | `RENAME_EXCL`，`EEXIST` 转 Conflict | 对等（已验证） |
-| 目录同步失败 | 无对应步骤 | 名称已切换，返回 `Saved` 并写 `crash.log`。不能报失败：重试的 guard 会把自己刚写的内容判成外部修改 | `05` 不承诺绝对掉电语义（推断） |
+| 目录同步失败 | 无对应步骤 | 名称已切换但持久性未确认：按 `05` 报 `SaveFailed`，文本保持 dirty，退出被取消。adapter 记住这次已发布的指纹，下一次 guard 把它也视为预期，重试时不会与自己冲突 | 期间 watcher 可能把这次发布报成外部修改，进入冲突提示；内容不丢。路径罕见，M1 用故障注入验收（推断） |
 | 外部写者持有旧文件 | 共享模式使替换失败 | **无法阻止，其写入丢失且不报错**（已验证）。`O_EXLOCK` 是建议锁，不拦写者、改名、删除（已验证） | **更弱**，见下 |
 | 符号链接 | 拒绝 reparse point | `O_NOFOLLOW`（`ELOOP`），路径含链接时 `O_NOFOLLOW_ANY` / `RENAME_NOFOLLOW_ANY`（已验证）。另加 `O_NONBLOCK` 防 FIFO 阻塞、`fstat` 要求普通文件（推断） | 对等 |
 | 校验后移动（保留 invalid canonical） | 同一句柄：排斥写者、按句柄改名 | `O_NOFOLLOW` 打开并哈希，`RENAME_EXCL` 改名（改名不毁任何内容），再比对 `(dev, ino)` 并重新哈希。不符时用 `RENAME_EXCL` 移回，成功报 `Changed`；移回失败（原名已被占）报失败并指明文件所在，拒绝本次恢复 | **更弱**：竞争时会短暂移动 `05` 第 5 条要求不移动的文件，但内容不丢 |
-| 物理删除受管图片 | 句柄验证后按句柄删除 | **v1 不做**，始终 `physical_delete_deferred`。`images/` 与 `.trash/` 之间的可逆移动照常，移动用 `RENAME_EXCL` | **更弱**：`.trash/` 只增不减，需手动清理 |
+| 受管图片的移动与删除 | 同一句柄校验后按句柄改名、删除 | **v1 不做自动移动，也不做物理删除。** 未引用的图片留在 `images/`，`sync` 报 `skipped_untrusted` 与 `physical_delete_deferred`。只保留 `.trash/` 到 `images/` 的恢复，移动后校验 | **更弱**：被删除引用的图片不会清理，需手动处理 |
 | 观察身份 | 卷序列号 + 文件 ID | `(st_dev, st_ino, size, mtime_ns, ctime_ns)`；inode 跨改名不变，替换后变化，fd 可读旧内容（已验证） | 对等 |
 
 **三处弱点要分别批准。**
 
 1. **持有旧句柄的写者：** `05` 已声明“v1 不通过长期独占文件锁破坏外部编辑能力”，OCC 本来就是主要防线。macOS 没有共享模式的对等物，无法靠实现补足，应写入 `05`。
-2. **保留 canonical：** 只在外部程序恰好在哈希与改名之间替换文件时触发。替代是在 macOS 上拒绝这类恢复，让用户手动移走文件。建议接受移动后核对，因为改名不毁内容。
-3. **物理删除：** POSIX 没有按句柄删除，验证后 `unlinkat` 可能删掉刚被替换成的用户文件，而 `08` 禁止删除用户文件。`08` 允许不能证明时降级为 deferred，这里长期走这条路径。
+2. **保留 canonical：** 这不满足 `05` 第 5 条与 `PreserveOutcome::Changed` 现在的语义（变化了的内容留在原处），批准后要一起修改合同。文件在哈希之后被替换或原地改写，就会被移动；移动后、移回前崩溃，或移回失败，文件会一直留在 `note.invalid-*`，内容不丢但位置变了。替代是在 macOS 上拒绝这类恢复，让用户手动移走文件。建议接受移动后核对，因为改名不毁内容，且只发生在 canonical 已无效、用户主动选择恢复时。
+3. **受管图片：** `08` 要求校验与改名、删除绑定同一句柄，POSIX 做不到。`RENAME_EXCL` 只保护目标，不保护源：校验后外部把源路径换成用户文件，移动的就是用户文件；`unlinkat` 则可能直接删掉它。`08` 允许不能证明时降级，这里长期降级。备选是“移动后核对再移回”，代价同第 2 条，等确有需要再议。
 
 **否决的方案：`RENAME_SWAP` 发布后核对被换下的内容，不符再换回。** 初稿曾建议它，独立审查指出两个问题，核实成立：
 
@@ -141,7 +141,9 @@ cargo test --locked --no-fail-fast -p stickymd-core -p stickymd-render -p sticky
 
 **退出入口（与 Windows 的差异，需批准）。** `09` 规定真正退出只来自托盘，但图标不可见时用户就只能强杀进程。建议 macOS 上窗口聚焦时 Cmd+Q 走同一条退出屏障。
 
-**系统终止。** 不建默认菜单并不能阻止系统退出：注销、关机仍会终止进程。winit 只实现了 `applicationWillTerminate:`，没有 `applicationShouldTerminate:`（读源码 `app_state.rs:69`），未保存内容拦不住退出，违反 `05` 的 session shutdown 立即保存点。建议宿主用与顶部夹取相同的方式给 winit 的 delegate 补 `applicationShouldTerminate:`：返回 `NSTerminateLater`，投递退出信号走共享屏障，成功回 `YES`，保存失败回 `NO` 并保持运行。需要 S4。真实注销未验证，列入 M2 验收。
+**系统终止。** 不建默认菜单并不能阻止系统退出：注销、关机仍会终止进程。winit 只实现了 `applicationWillTerminate:`，没有 `applicationShouldTerminate:`（读源码 `app_state.rs:69`），未保存内容拦不住退出，违反 `05` 的 session shutdown 立即保存点。建议宿主用与顶部夹取相同的方式给 winit 的 delegate 补 `applicationShouldTerminate:`：返回 `NSTerminateLater`，投递退出信号走共享屏障，成功回 `YES`，保存失败回 `NO` 并保持运行。需要 S4。
+
+有模态窗口时要先结束它：winit 在 handler 占用期间不派发用户事件（读源码 `app_state.rs:378`，探针也测到 0 个），信号进不了共享屏障。所以先 `abortModal`（导出按取消处理），再走屏障。系统对注销、关机的答复有约两分钟期限（Apple 文档），屏障超时回 `NO`。这一段都未实测，M2 验收覆盖：普通退出、保存失败、导出对话框打开时退出、`osascript` 退出、真实注销。
 
 ### 5. 输入
 
@@ -247,7 +249,7 @@ public.file-url（图片文件列表）→ public.png → public.jpeg → org.we
 | S1 | `stickymd-render` 统一构造 `FontSystem`，`cfg(target_os = "macos")` 时移除没有 `head` 表的 face；用到 `FontSystem::new` 的测试一并换用。census 约 8–9 ms，可接受 | 无（cfg） |
 | S2 | `Keymap` 改为由完整修饰键得出语义命令：快捷键判定、撤销/重做、查找/替换入口、行首行尾与文首文末 | `ctrl_standard` 行为不变，现有断言不改，并补测试钉住现状 |
 | S3 | 默认字体候选由宿主提供（`03` 规则 9） | 值不变，只换来源 |
-| S4 | 宿主接收退出屏障的结果（成功或取消），用于回答系统的终止请求；Cmd+Q 进入同一屏障 | 默认实现为空，Windows 不变 |
+| S4 | 宿主接收退出屏障的结果（成功或取消），用于回答系统的终止请求，含模态窗口与超时处理；Cmd+Q 进入同一屏障 | 默认实现为空，Windows 不变 |
 
 没有 `Unsupported` 分支的改动：这些能力 macOS 都有，Debian 报告里的能力分支不需要。
 
@@ -257,8 +259,8 @@ public.file-url（图片文件列表）→ public.png → public.jpeg → org.we
 | --- | --- |
 | `02` | 平台节写入 macOS 27+/arm64、目录身份方案 A |
 | `03` | Platform Host 增加 `apps/stickymd-mac`；S2、S3 |
-| `05` | macOS 存储映射、卷要求、三处弱点的声明、实例身份、新建 LF |
-| `07` / `08` | 输入法矩阵与 `replacementRange` 决定；pasteboard 优先级 |
+| `05` | macOS 存储映射、卷要求、三处弱点的声明、实例身份、新建 LF；`PreserveOutcome` 语义 |
+| `07` / `08` | 输入法矩阵与 `replacementRange` 决定；pasteboard 优先级；macOS 不做受管图片的自动移动与物理删除 |
 | `09` | macOS 实现映射、顶部夹取、reopen、托盘不可用行为、Cmd+Q 与系统终止 |
 | `10` | 口径、临时硬门、呈现基线 |
 | `11` | 新 Phase（macOS 宿主）与验收表；未测项保持 `NOT TESTED` |
@@ -294,7 +296,7 @@ public.file-url（图片文件列表）→ public.png → public.jpeg → org.we
 ## 待批准
 
 1. 第 1、2 节：版本、身份、目录方案 A、实例身份。
-2. 第 3 节：普通 `rename` 发布、卷要求 `RENAME_EXCL`；三处弱点逐项批准（持有句柄的写者、保留 canonical 的移动后核对、不做物理删除）。
+2. 第 3 节：普通 `rename` 发布、卷要求 `RENAME_EXCL`；三处弱点逐项批准（持有句柄的写者、保留 canonical 的移动后核对、受管图片不做自动移动与物理删除）。
 3. 第 4 节：顶部补 `constrainFrameRect`、托盘规则、Cmd+Q 退出、系统终止接线、所有 Space 可见。
 4. 第 5 节：Cmd 映射、字体、输入法方案 A、pasteboard 优先级。
 5. 第 6、7 节：`CALayer` 光标、临时硬门。
@@ -317,7 +319,16 @@ public.file-url（图片文件列表）→ public.png → public.jpeg → org.we
 | 9 | 待核 | 基线日志和诊断补丁没有随附 | 已放入 `results/`；补打模态结束后的送达数 |
 | 10 | 次要 | 字体耗时与随附结果不符 | 改用随附结果 |
 
-审查未覆盖故障注入、掉电、多进程竞争实跑、输入法人工验收和多屏。修订后的存储协议尚未写成代码，竞争结论来自推理。
+第二轮（同模型，审 `530eb21` 的修订）结论仍不通过，4 条发现核实后成立，正文已修订；socket 协议与 `caret_cost` 没有发现问题。
+
+| # | 级别 | 发现 | 处理 |
+| --- | --- | --- | --- |
+| 1 | 阻断 | 目录同步失败返回 `Saved` 违反 `05` 的 SaveFailed | 改报失败，adapter 记住已发布指纹 |
+| 2 | 阻断 | `RENAME_EXCL` 不保护源文件身份，可能移动用户文件 | macOS 不做自动移动 |
+| 3 | 次要 | 对保留 canonical 的弱化描述偏轻 | 写明永久位移与合同修改 |
+| 4 | 待核 | 模态期间到来的系统终止无法进入屏障 | 先 `abortModal`，加超时，列入验收 |
+
+第二轮的修订没有再送审。两轮审查都未覆盖故障注入、掉电、多进程竞争实跑、输入法人工验收和多屏。修订后的存储协议尚未写成代码，竞争结论来自推理。
 
 ## 复现
 
