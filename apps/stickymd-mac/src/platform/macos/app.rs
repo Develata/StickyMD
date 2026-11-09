@@ -231,12 +231,15 @@ pub fn install_hooks(sink: EventSink) {
         if !delegate.is_null() {
             let class = object_getClass(delegate.cast_const());
             let imp: Imp = std::mem::transmute(should_terminate as *const ());
-            class_addMethod(
+            let added = class_addMethod(
                 class,
                 sel!(applicationShouldTerminate:),
                 imp,
                 c"Q@:@".as_ptr(),
             );
+            if !added.as_bool() {
+                eprintln!("cannot intercept system termination: the delegate already handles it");
+            }
         }
     }
 }

@@ -98,26 +98,23 @@ impl NoteFiles {
     /// The handle stays valid when the directory moves, but a deleted directory takes no new
     /// entries: it is recreated at its path, as a file or link there is refused.
     fn recreate_directory(&mut self) -> Result<(), NoteStorageError> {
-        match std::fs::create_dir(&self.path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(source) => {
-                return Err(NoteStorageError::CreateNoteDirectory {
-                    path: self.path.clone(),
-                    source,
-                });
-            }
+        let failed = |source| NoteStorageError::CreateNoteDirectory {
+            path: self.path.clone(),
+            source,
+        };
+        let made_here = match std::fs::create_dir(&self.path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
+            Err(source) => return Err(failed(source)),
+        };
+        let directory = open_directory(&self.path)?;
+        // A directory someone else put here is only ever compared against by the note's guard.
+        // The other ports write without one, so they follow only a directory made by this call
+        // and otherwise keep failing on the deleted one.
+        if made_here && let Some(shared) = &self.shared {
+            shared.replace(directory.try_clone().map_err(failed)?);
         }
-        self.directory = open_directory(&self.path)?;
-        if let Some(shared) = &self.shared {
-            let made_again = self.directory.try_clone().map_err(|source| {
-                NoteStorageError::CreateNoteDirectory {
-                    path: self.path.clone(),
-                    source,
-                }
-            })?;
-            shared.replace(made_again);
-        }
+        self.directory = directory;
         Ok(())
     }
 
@@ -466,6 +463,22 @@ mod tests {
             .with(|directory| directory.create_new("config.toml"))
             .unwrap();
         assert!(root.join("config.toml").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_other_ports_do_not_follow_a_directory_someone_else_put_there() {
+        let (root, mut files) = fixture("storage-shared-foreign");
+        let shared = files.share().unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("config.toml"), b"theirs").unwrap();
+        files.recreate_directory().unwrap();
+        shared
+            .with(|directory| directory.create_new("written-by-a-port"))
+            .unwrap_err();
+        assert!(!root.join("written-by-a-port").exists());
+        assert_eq!(fs::read(root.join("config.toml")).unwrap(), b"theirs");
         fs::remove_dir_all(root).unwrap();
     }
 

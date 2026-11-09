@@ -235,7 +235,7 @@ USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-de
 | 文件剪贴板 | `NSPasteboard`（`08` macOS 节） |
 | 保存对话框 | `NSSavePanel.runModal`，主线程阻塞 |
 | 链接打开 | `NSWorkspace` |
-| 系统终止 | 宿主给 winit 的 application delegate 补 `applicationShouldTerminate:`，返回 `NSTerminateLater`，走共享退出屏障：成功回 `YES`，保存失败回 `NO`。有模态窗口时 `abortModal`（导出按取消处理）并回 `NSTerminateCancel`，退出屏障在对话框退栈后运行，这次注销被中断一次；屏障超时：笔记尚未安全时取消共享退出状态并回 `NO`；已安全时剩余的尽力项记为失败，退出继续 |
+| 系统终止 | 宿主给 winit 的 application delegate 补 `applicationShouldTerminate:`，返回 `NSTerminateLater`，走共享退出屏障：成功回 `YES`，保存失败回 `NO`。有模态窗口时 `abortModal`（导出按取消处理）并回 `NSTerminateCancel`，退出屏障在对话框退栈后运行，这次注销被中断一次；屏障超时：笔记尚未安全时取消共享退出状态并回 `NO`；已安全时剩余的尽力项记为失败，立即退出 |
 | Cmd+Q | 窗口聚焦时走同一退出屏障（图标不可见时托盘这条路径不存在） |
 | 系统主题 | winit `ThemeChanged` |
 

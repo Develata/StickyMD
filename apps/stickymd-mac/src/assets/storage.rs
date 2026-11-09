@@ -65,24 +65,28 @@ impl AssetStorage {
         })
     }
 
-    /// Finds both directories inside `note`; their paths only name them in messages.
+    /// Finds both directories inside `note`, wherever it is now: of `images` and `trash` only
+    /// the last component counts.
     pub fn open_in(
         note: &DirectoryHandle,
         images: &Path,
         trash: &Path,
     ) -> Result<Self, AssetStorageError> {
+        let base = note.current_path().map_err(AssetStorageError::Directory)?;
         let child = |path: &Path| {
             let name = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .ok_or_else(|| io::Error::other("the directory has no usable name"))?;
-            note.open_child(name)
+            Ok((base.join(name), note.open_child(name)?))
         };
+        let (images_path, images) = child(images).map_err(AssetStorageError::Directory)?;
+        let (trash_path, trash) = child(trash).map_err(AssetStorageError::Directory)?;
         Ok(Self {
-            images_path: images.to_owned(),
-            trash_path: trash.to_owned(),
-            images: child(images).map_err(AssetStorageError::Directory)?,
-            trash: child(trash).map_err(AssetStorageError::Directory)?,
+            images_path,
+            trash_path,
+            images,
+            trash,
         })
     }
 
@@ -353,6 +357,23 @@ mod tests {
 
     fn image(color: u8) -> PreparedImage {
         prepare_rgba_image(2, 2, vec![color; 16]).unwrap()
+    }
+
+    #[test]
+    fn a_moved_note_directory_keeps_its_images_reachable_by_path() {
+        let root = unique_temp_path("assets-moved-note");
+        let note = root.join("note");
+        fs::create_dir_all(note.join("images")).unwrap();
+        fs::create_dir(note.join(".trash")).unwrap();
+        let handle = DirectoryHandle::open(&note).unwrap();
+        let moved = root.join("moved");
+        fs::rename(&note, &moved).unwrap();
+        fs::create_dir(&note).unwrap();
+        let storage =
+            AssetStorage::open_in(&handle, &note.join("images"), &note.join(".trash")).unwrap();
+        assert_eq!(storage.images_path, moved.join("images"));
+        assert_eq!(storage.trash_path, moved.join(".trash"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

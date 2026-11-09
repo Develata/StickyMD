@@ -402,8 +402,8 @@ impl WindowShellCoordinator {
     }
 
     /// While the note is not safe the editor goes back to the user, and a barrier that completes
-    /// later finds nothing waiting for it. Once it is safe, what is left is best effort: it counts
-    /// as failed and the quit goes on.
+    /// later finds nothing waiting for it. Once it is safe, what is left is best effort and gets
+    /// no more time: going through the barriers again could wait on the very work that is stuck.
     pub(super) fn abandon_quit(&mut self, effects: &mut Vec<WindowEffect>) {
         let LifecycleState::Quitting(stage) = self.state.lifecycle else {
             return;
@@ -414,14 +414,16 @@ impl WindowShellCoordinator {
                 self.reproject_input(effects);
                 effects.push(WindowEffect::QuitTimedOut);
             }
-            QuitStage::AwaitingAssetGc => {
-                self.complete_quit_barrier(QuitBarrier::AssetGc, false, effects);
-            }
-            QuitStage::AwaitingConfig => {
-                self.complete_quit_barrier(QuitBarrier::Config, false, effects);
-            }
+            QuitStage::AwaitingAssetGc => self.exit_without(QuitBarrier::AssetGc, effects),
+            QuitStage::AwaitingConfig => self.exit_without(QuitBarrier::Config, effects),
             QuitStage::ReadyToExit => {}
         }
+    }
+
+    fn exit_without(&mut self, barrier: QuitBarrier, effects: &mut Vec<WindowEffect>) {
+        effects.push(WindowEffect::QuitWarning(barrier));
+        self.state.lifecycle = LifecycleState::Quitting(QuitStage::ReadyToExit);
+        effects.push(WindowEffect::ExitProcess);
     }
 
     pub(super) fn complete_quit_barrier(

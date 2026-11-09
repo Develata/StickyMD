@@ -1103,21 +1103,29 @@ mod phase8_window_tests {
         );
     }
 
-    /// The note is safe by then: going back to the editor would only strand the cleanup still
-    /// running, so the remaining best-effort steps count as failed and the quit goes on.
+    /// The note is safe by then. The cleanup that is stuck counts as a pending asset transaction,
+    /// so going through the barriers again would wait on it with nothing left to end the wait.
     #[test]
-    fn a_quit_abandoned_after_the_note_is_safe_still_ends() {
-        let mut coordinator = coordinator(StableVisibility::Floating);
-        coordinator.state.lifecycle = LifecycleState::Quitting(QuitStage::AwaitingAssetGc);
-        let effects = coordinator.dispatch(WindowIntent::AbandonQuit);
-        assert!(effects.contains(&WindowEffect::QuitWarning(QuitBarrier::AssetGc)));
-        assert!(effects.contains(&WindowEffect::RequestConfigFlush));
-        assert_eq!(
-            coordinator.state().lifecycle(),
-            LifecycleState::Quitting(QuitStage::AwaitingConfig)
-        );
-        let effects = coordinator.dispatch(WindowIntent::AbandonQuit);
-        assert!(effects.contains(&WindowEffect::ExitProcess));
+    fn a_quit_abandoned_after_the_note_is_safe_ends_at_once() {
+        for (stage, barrier) in [
+            (QuitStage::AwaitingAssetGc, QuitBarrier::AssetGc),
+            (QuitStage::AwaitingConfig, QuitBarrier::Config),
+        ] {
+            let mut coordinator = coordinator(StableVisibility::Floating);
+            coordinator.state.guards.asset_transaction_pending = true;
+            coordinator.state.lifecycle = LifecycleState::Quitting(stage);
+            assert_eq!(
+                coordinator.dispatch(WindowIntent::AbandonQuit),
+                vec![
+                    WindowEffect::QuitWarning(barrier),
+                    WindowEffect::ExitProcess
+                ]
+            );
+            assert_eq!(
+                coordinator.state().lifecycle(),
+                LifecycleState::Quitting(QuitStage::ReadyToExit)
+            );
+        }
     }
 
     #[test]

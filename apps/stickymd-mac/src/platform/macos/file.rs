@@ -186,6 +186,25 @@ impl DirectoryHandle {
         })
     }
 
+    /// Where the directory is now, after any move.
+    pub fn current_path(&self) -> io::Result<std::path::PathBuf> {
+        let mut path = [0_u8; libc::PATH_MAX as usize];
+        // SAFETY: F_GETPATH writes a NUL-terminated path of at most PATH_MAX bytes to the buffer,
+        // which outlives the call; the descriptor is valid while `self` lives.
+        check(unsafe {
+            libc::fcntl(
+                self.directory.as_raw_fd(),
+                libc::F_GETPATH,
+                path.as_mut_ptr(),
+            )
+        })?;
+        let length = path
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(path.len());
+        Ok(OsStr::from_bytes(&path[..length]).into())
+    }
+
     pub fn try_clone(&self) -> io::Result<Self> {
         Ok(Self {
             directory: self.directory.try_clone()?,
