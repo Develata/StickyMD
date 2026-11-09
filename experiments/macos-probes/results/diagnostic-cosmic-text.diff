@@ -1,0 +1,18 @@
+--- <registry>/cosmic-text-0.19.0/src/font/system.rs	2006-07-24 09:21:28
++++ <scratch>/patched/cosmic-text-0.19.0/src/font/system.rs	2026-11-09 22:06:39
+@@ -215,6 +215,15 @@
+         db: fontdb::Database,
+         impl_fallback: impl Fallback + 'static,
+     ) -> Self {
++        let mut db = db;
++        let bitmap: Vec<_> = db
++            .faces()
++            .filter(|face| face.post_script_name.contains("GB18030"))
++            .map(|face| face.id)
++            .collect();
++        for id in bitmap {
++            db.remove_face(id);
++        }
+         let mut monospace_font_ids = db
+             .faces()
+             .filter(|face_info| {

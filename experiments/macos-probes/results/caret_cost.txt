@@ -1,0 +1,3 @@
+idle, timer loop only: cpu=0.020% blinks=0 rust_heap_per_blink=0 committed_ticks=0 footprint 27.6->27.6 MiB
+caret as full frames: cpu=1.938% blinks=57 rust_heap_per_blink=5657600 committed_ticks=0 footprint 27.6->33.2 MiB
+caret as sublayer toggle: cpu=0.037% blinks=57 rust_heap_per_blink=0 committed_ticks=56 footprint 33.2->33.2 MiB

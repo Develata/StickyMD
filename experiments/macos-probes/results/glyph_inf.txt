@@ -1,5 +1,5 @@
-FontSystem::new median 8.9 ms max 26.8 ms
-faces=971 without head table=["GB18030Bitmap"], census took 9.3 ms
+FontSystem::new median 5.9 ms max 87.1 ms
+faces=971 without head table=["GB18030Bitmap"], census took 8.0 ms
 BAD[monospace italic] start=213 ch="中" id=3623 font=GB18030Bitmap x=951.8423 w=inf x_off=NaN y_off=NaN size=17 
 BAD[monospace italic] start=216 ch="🙂" id=2165 font=AppleColorEmoji x=inf w=17 x_off=0 y_off=0 size=17 
 BAD[monospace italic] start=220 ch="👩\u{200d}💻" id=1438 font=AppleColorEmoji x=inf w=17 x_off=0 y_off=0 size=17 

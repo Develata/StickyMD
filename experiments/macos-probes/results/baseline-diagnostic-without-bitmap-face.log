@@ -1,0 +1,417 @@
+     Locking 1 package to latest compatible version
+      Adding cosmic-text v0.19.0 (<scratch>/patched/cosmic-text-0.19.0)
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling typenum v1.20.1
+   Compiling siphasher v1.0.3
+   Compiling libc v0.2.189
+   Compiling version_check v0.9.5
+   Compiling cfg-if v1.0.4
+   Compiling libm v0.2.16
+   Compiling tinyvec_macros v0.1.1
+   Compiling serde_core v1.0.229
+   Compiling tinyvec v1.12.0
+   Compiling const-oid v0.10.2
+   Compiling serde v1.0.229
+   Compiling rand_core v0.6.4
+   Compiling slotmap v1.1.1
+   Compiling rand v0.8.7
+   Compiling generic-array v0.14.7
+   Compiling phf_shared v0.11.3
+   Compiling unicase v2.9.0
+   Compiling memchr v2.8.3
+   Compiling same-file v1.0.6
+   Compiling mime_guess v2.0.5
+   Compiling walkdir v2.5.0
+   Compiling hybrid-array v0.4.14
+   Compiling phf_generator v0.11.3
+   Compiling log v0.4.33
+   Compiling aho-corasick v1.1.5
+   Compiling phf_shared v0.13.1
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling crc32fast v1.5.0
+   Compiling zmij v1.0.23
+   Compiling cpufeatures v0.3.0
+   Compiling memmap2 v0.9.11
+   Compiling autocfg v1.5.1
+   Compiling core_maths v0.1.1
+   Compiling syn v3.0.3
+   Compiling syn v2.0.119
+   Compiling ttf-parser v0.25.1
+   Compiling mime v0.3.17
+   Compiling regex-syntax v0.8.11
+   Compiling digest v0.11.3
+   Compiling fastrand v2.5.0
+   Compiling thiserror v1.0.69
+   Compiling sha2 v0.11.0
+   Compiling simd-adler32 v0.3.10
+   Compiling phf_generator v0.13.1
+   Compiling num-traits v0.2.19
+   Compiling rust-embed-utils v8.12.0
+   Compiling unicode-normalization v0.1.25
+   Compiling sys-locale v0.3.2
+   Compiling bitflags v2.13.1
+   Compiling bit-vec v0.8.0
+   Compiling once_cell v1.21.4
+   Compiling serde_json v1.0.151
+   Compiling adler2 v2.0.1
+   Compiling miniz_oxide v0.8.9
+   Compiling bit-set v0.8.0
+   Compiling phf_codegen v0.13.1
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling entities v1.0.1
+   Compiling smallvec v1.15.2
+   Compiling jetscii v0.5.3
+   Compiling itoa v1.0.18
+   Compiling regex-automata v0.4.18
+   Compiling fontdb v0.23.0
+   Compiling thiserror v2.0.20
+   Compiling comrak v0.54.0
+   Compiling system-fonts v0.1.2
+   Compiling bytemuck_derive v1.12.0
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.20
+   Compiling owned_ttf_parser v0.25.1
+   Compiling flate2 v1.1.9
+   Compiling digest v0.10.7
+   Compiling fdeflate v0.3.7
+   Compiling cpufeatures v0.2.17
+   Compiling yazi v0.2.1
+   Compiling weezl v0.1.12
+   Compiling zune-core v0.5.3
+   Compiling pxfm v0.1.30
+   Compiling bytemuck v1.25.2
+   Compiling regex-lite v0.1.9
+   Compiling phf_macros v0.11.3
+   Compiling thiserror-impl v1.0.69
+   Compiling rust-embed-impl v8.12.0
+   Compiling rustc-hash v2.1.3
+   Compiling zeno v0.3.3
+   Compiling ab_glyph_rasterizer v0.1.10
+   Compiling quick-error v2.0.1
+   Compiling byteorder-lite v0.1.0
+   Compiling arrayref v0.3.9
+   Compiling strict-num v0.1.1
+   Compiling color_quant v1.1.0
+   Compiling image-webp v0.2.4
+   Compiling ab_glyph v0.2.32
+   Compiling phf v0.11.3
+   Compiling font-types v0.12.3
+   Compiling font-types v0.11.3
+   Compiling rust-embed v8.12.0
+   Compiling regex v1.13.1
+   Compiling fancy-regex v0.14.0
+   Compiling read-fonts v0.37.0
+   Compiling read-fonts v0.41.0
+   Compiling tiny-skia-path v0.12.0
+   Compiling gif v0.14.2
+   Compiling ratex-katex-fonts v0.1.14
+   Compiling zune-jpeg v0.5.15
+   Compiling moxcms v0.8.1
+   Compiling png v0.18.1
+   Compiling phf v0.13.1
+   Compiling sha2 v0.10.9
+   Compiling ratex-unicode-font v0.1.14
+   Compiling caseless v0.2.2
+   Compiling rangemap v1.8.0
+   Compiling unicode-script v0.5.8
+   Compiling smol_str v0.3.6
+   Compiling unicode-linebreak v0.1.5
+   Compiling arrayvec v0.7.8
+   Compiling ratex-types v0.1.14
+   Compiling linebender_resource_handle v0.1.1
+   Compiling unicode-segmentation v1.13.3
+   Compiling self_cell v1.3.0
+   Compiling finl_unicode v1.4.0
+   Compiling typed-arena v2.0.2
+   Compiling unicode-bidi v0.3.18
+   Compiling tiny-skia v0.12.0
+   Compiling stickymd-core v0.1.3 (/Users/develata/gitclone/StickyMD/crates/stickymd-core)
+   Compiling ratex-font v0.1.14
+   Compiling ratex-lexer v0.1.14
+   Compiling ratex-parser v0.1.14
+   Compiling ratex-font-loader v0.1.14
+   Compiling image v0.25.10
+   Compiling ratex-layout v0.1.14
+   Compiling harfrust v0.5.2
+   Compiling skrifa v0.40.0
+   Compiling skrifa v0.44.0
+   Compiling swash v0.2.10
+   Compiling cosmic-text v0.19.0 (<scratch>/patched/cosmic-text-0.19.0)
+   Compiling stickymd-render v0.1.3 (/Users/develata/gitclone/StickyMD/crates/stickymd-render)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.33s
+     Running unittests src/lib.rs (<scratch>/target-patched/debug/deps/stickymd_render-c2a0c4db5cf1d9f3)
+
+running 205 tests
+test image::tests::phase7_image_decode_release_baseline ... ignored, Release-only Phase 7 image decode timing baseline
+test image::tests::oversized_dimensions_fail_before_allocation ... ok
+test image::tests::orientation_metadata_matches_post_decode_dimensions ... ok
+test image::tests::phase7_corrupt_and_all_size_limits_fail_closed ... ok
+test image::cache::tests::reinserting_a_leased_key_reuses_the_accounted_raster ... ok
+test image::cache::tests::live_layout_rasters_remain_accounted_and_prevent_overcommit ... ok
+test image::cache::tests::cache_never_exceeds_budget_and_counts_hits_misses_and_evictions ... ok
+test image::tests::bitmap_normalizes_to_valid_png ... ok
+test math::cache::tests::byte_lru_also_caps_entries_and_moves_hits ... ok
+test math::cache::tests::byte_lru_hit_protects_the_entry_from_the_next_eviction ... ok
+test math::cache::tests::byte_lru_never_exceeds_its_budget ... ok
+test image::tests::owned_stable_format_keeps_exact_input_bytes ... ok
+test image::tests::phase7_dib_and_alpha_decode_are_safe_and_premultiplied ... ok
+test image::tests::preserved_png_keeps_exact_bytes ... ok
+test math::cache::tests::byte_lru_clock_rollover_preserves_leases_and_accounting ... ok
+test math::engine::tests::phase6_formula_release_baseline ... ignored, Release-only Phase 6 formula performance receipt
+test image::tests::jpeg_exif_orientation_is_applied_to_metadata_and_raster ... ok
+test math::engine::tests::malformed_and_oversized_sources_are_isolated_errors ... ok
+test image::tests::phase7_stable_formats_are_preserved_and_bmp_ico_normalize_to_png ... ok
+test image::tests::scaled_decode_never_upscales ... ok
+test image::cache::tests::cache_metadata_count_is_bounded_for_tiny_images ... ok
+test math::painter::tests::allocation_guard_rejects_pathological_geometry_before_allocating ... ok
+test math::engine::tests::measuring_formulas_never_allocates_rasters_and_keeps_single_formula_guards ... ok
+test image::tests::phase9_owned_decode_matches_borrowed_decode ... ok
+test math_text::tests::phase11b_equals_lines_join_chains_and_preserve_other_bytes ... ok
+test math::engine::tests::raster_budget_accounts_for_source_and_entry_metadata ... ok
+test math_text::tests::phase11b_equals_lines_map_retained_bytes_and_removed_whitespace ... ok
+test math_text::tests::phase11b_equals_lines_scope_requires_a_complete_block ... ok
+test math_text::tests::phase11b_equals_lines_preserve_plain_inline_escaped_and_incomplete_inputs ... ok
+test math_text::tests::phase11b_equals_lines_skip_markdown_code_and_literal_contexts ... ok
+test math_text::tests::phase11b_equals_lines_skip_tex_comments_breaks_and_environments ... ok
+test preview::export::tests::only_real_image_nodes_are_collected_and_reference_occurrence_is_localized ... ok
+test math::engine::tests::render_tree_and_formula_caches_share_the_source_allocation ... ok
+test preview::layout::tests::layout_produces_selectable_native_text_and_source_ranges ... ok
+test math::engine::tests::theme_foreground_does_not_override_explicit_tex_color ... ok
+test math::painter::tests::painter_covers_every_display_item_variant_without_png_roundtrip ... ok
+test math::engine::tests::repeated_formula_hits_both_bounded_cache_levels ... ok
+test math::engine::tests::scale_or_theme_change_releases_only_raster_cache ... ok
+test math::engine::tests::mixed_cjk_text_formula_is_safe_without_a_platform_cjk_font ... ok
+test preview::paint::drawing::block_mask_tests::a_reused_mask_matches_a_fresh_one_for_each_block ... ok
+test preview::fonts::tests::phase5_code_font_missing_keeps_existing_monospace_fallback ... ok
+test math::painter::tests::embedded_font_raster_golden_covers_core_display_geometry ... ok
+test preview::parser::tests::adversarial_large_constructs_remain_bounded_and_semantic ... ok
+test preview::parser::tests::all_four_math_delimiters_come_from_comrak_and_code_is_literal ... ok
+test preview::parser::tests::arena_is_not_exposed_and_owned_tree_keeps_snapshot_source ... ok
+test preview::parser::tests::classifies_allowed_and_blocked_destinations_without_executing_them ... ok
+test preview::parser::tests::dialect_enables_only_approved_extensions ... ok
+test preview::parser::tests::parses_gfm_html_links_images_and_lists ... ok
+test preview::parser::tests::preserves_ordered_nested_lists_break_kinds_and_thematic_rules ... ok
+test preview::layout::tests::narrower_width_reflows_without_changing_generation_or_text_projection ... ok
+test preview::parser::tests::source_ranges_roundtrip_unicode_literals ... ok
+test preview::layout::tests::wrapped_visual_rows_map_to_disjoint_selectable_byte_ranges ... ok
+test preview::layout::tests::rendered_copy_uses_one_newline_between_blocks ... ok
+test preview::pipeline::audit_tests::local_image_detection_uses_semantics_including_table_cells ... ok
+test math::engine::tests::cache_pressure_does_not_change_formula_validity_or_geometry ... ok
+test preview::pipeline::audit_tests::phase5_preview_release_baseline_image_adapter_scroll ... ignored, Release-only production-adapter scrolling benchmark
+test preview::pipeline::audit_tests::phase5_preview_release_baseline_long_code_scroll ... ignored, Release-only long-block viewport painting benchmark
+test preview::math_layout::tests::phase11_short_adjacent_text_around_math_uses_one_buffer_per_side ... ok
+test preview::math_layout::tests::phase11_large_document_policy_coalesces_short_attributed_runs ... ok
+test preview::paint::tests::paint_culls_blocks_outside_the_viewport ... ok
+test preview::layout::tests::table_layout_keeps_cells_bounded_inside_document_width ... ok
+test preview::paint::tests::scroll_and_theme_paint_keep_generation_and_index ... ok
+test preview::pipeline::horizontal_tests::fitting_display_math_stays_centered_without_a_scrollbar ... ok
+test preview::pipeline::horizontal_tests::list_marker_stays_fixed_while_its_code_block_scrolls ... ok
+test preview::pipeline::horizontal_tests::phase5_preview_release_baseline_horizontal_long_line ... ignored, Release long-code horizontal paint diagnostic
+test preview::parser::tests::resource_limits_fail_closed ... ok
+test preview::pipeline::audit_tests::preview_zoom_does_not_accumulate_obsolete_glyph_rasters ... ok
+test preview::pipeline::audit_tests::releasing_preview_rasters_also_releases_text_glyphs ... ok
+test preview::pipeline::horizontal_tests::wide_table_clips_hidden_actions_and_scrolls_math_and_links_together ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_admission_failure_keeps_budget_and_retries_unresolved_images ... ok
+test preview::pipeline::audit_tests::formula_pressure_keeps_live_layout_bounded_and_preserves_source ... ok
+test math::engine::tests::unique_formulas_keep_both_caches_bounded ... ok
+test preview::pipeline::image_refresh_tests::equal_image_targets_share_validated_bytes_across_different_container_bounds ... ok
+test preview::pipeline::horizontal_tests::long_display_math_scrolls_to_both_ends_with_fixed_background_and_full_copy ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_release_baseline ... ignored, release-only image-band benchmark; run serially with --nocapture
+test preview::parser::tests::ten_thousand_deterministic_malformed_inputs_never_panic ... ok
+test preview::pipeline::audit_tests::scrolling_without_local_images_never_relayouts_with_an_image_adapter ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_drops_old_raster_leases_before_cache_admission ... ok
+test preview::pipeline::image_refresh_tests::repeated_image_requests_share_one_read_per_refresh_and_revalidate_next_time ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_rejects_wrong_generation_before_io_or_raster_release ... ok
+test preview::pipeline::resource_tests::a_painter_error_marks_its_formula_and_the_frame_still_paints ... ok
+test preview::pipeline::resource_tests::a_painter_error_names_only_the_formula_that_failed ... ok
+test preview::pipeline::resource_tests::phase10_glyph_pressure_purge_rebuilds_identical_pixels_without_layout_work ... ok
+test preview::pipeline::resource_tests::phase10_preview_resource_cache_retention_diagnostic ... ignored, local retained-allocation attribution, not latency or desktop qualification
+test preview::pipeline::resource_tests::phase10_preview_resource_glyph_growth_diagnostic ... ignored, local Release fixed-scale cache attribution; run serially with --nocapture
+test preview::pipeline::resource_tests::phase6_preview_resource_formula_budget_diagnostic ... ignored, local Release formula budget comparison; run serially with --nocapture
+test preview::pipeline::image_refresh_tests::phase7_image_band_refreshes_same_size_content_without_geometry_changes ... ok
+test preview::pipeline::image_refresh_tests::wide_table_images_release_hidden_columns_and_load_new_columns_without_relayout ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_source_availability_changes_relayout ... ok
+test preview::pipeline::tests::document_projection_release_requires_a_fresh_build ... ok
+test preview::pipeline::tests::hard_break_places_following_formula_on_the_next_visual_line ... ok
+test preview::pipeline::tests::generation_mismatch_fails_without_replacing_current_projection ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_matches_full_layout_pixels_selection_and_anchors ... ok
+test preview::pipeline::tests::local_image_is_decoded_on_worker_projection_and_remote_never_loads ... ok
+test preview::pipeline::tests::phase10_zoom_release_baseline ... ignored, Release-only Phase 10 zoom relayout performance receipt
+test preview::pipeline::tests::phase10_zoom_reuses_sufficient_image_rasters_and_never_exceeds_pane_width ... ok
+test preview::pipeline::tests::painting_culls_blocks_outside_the_viewport ... ok
+test preview::pipeline::tests::phase11_identical_relayout_only_repaints_but_image_source_change_rebuilds ... ok
+test preview::pipeline::resource_tests::phase10_large_formula_layouts_obey_byte_budget_and_rebuild_the_same_metrics ... ok
+test preview::pipeline::tests::phase5_preview_release_baseline ... ignored, Release-only Phase 5 performance receipt
+test preview::pipeline::tests::phase6_math_document_release_baseline ... ignored, Release-only Phase 6 math-document performance receipt
+test preview::pipeline::tests::phase11_overscroll_decodes_images_at_the_clamped_bottom_viewport ... ok
+test preview::pipeline::resource_tests::a_viewport_larger_than_the_raster_cache_still_displays_every_formula ... ok
+test preview::pipeline::tests::phase7_local_images_remain_native_when_mixed_with_text_and_table_cells ... ok
+test preview::pipeline::tests::phase7_corrupt_or_missing_image_isolated_and_lazy_band_keeps_decode_cache_small ... ok
+test preview::pipeline::tests::phase11_large_fixture_retains_absolute_source_offsets ... ok
+test preview::pipeline::tests::logical_geometry_scales_at_100_125_150_and_200_percent ... ok
+test preview::pipeline::text_reuse_tests::phase5_preview_release_baseline_text_reuse ... ignored, Release-only shaping reuse measurement; run serially with --nocapture
+test preview::render_tree::tests::blocked_links_remain_visible_but_are_not_openable ... ok
+test preview::render_tree::tests::identical_visual_and_clipboard_text_share_one_allocation ... ok
+test preview::render_tree::tests::image_placeholder_shows_path_but_copies_only_alt_text ... ok
+test preview::render_tree::tests::separates_semantics_from_flat_render_blocks ... ok
+test preview::render_tree::tests::tables_keep_rows_cells_and_alignment ... ok
+test preview::scroll::tests::semantic_scroll_mapping_uses_source_ranges_instead_of_height_ratio ... ok
+test preview::selection::tests::atomic_formula_hit_selection_and_tooltip_use_the_whole_object ... ok
+test preview::selection::tests::atomic_tooltips_go_to_their_own_box_in_place ... ok
+test preview::selection::tests::hit_test_always_returns_a_utf8_grapheme_boundary ... ok
+test preview::selection::tests::hit_testing_uses_only_the_binary_selected_visual_row ... ok
+test preview::selection::tests::reverse_selection_copies_and_clips_without_touching_source ... ok
+test preview::selection::tests::selection_geometry_uses_exact_cluster_widths ... ok
+test preview::selection::tests::viewport_selection_geometry_only_visits_visible_rows ... ok
+test preview::semantic_conversion::tests::phase11b_converts_semantic_inline_and_display_latex_delimiters ... ok
+test preview::semantic_conversion::tests::phase11b_invalid_scope_is_rejected_without_parsing ... ok
+test preview::semantic_conversion::tests::phase11b_leaves_dollars_code_plain_text_and_malformed_delimiters_unchanged ... ok
+test preview::semantic_conversion::tests::phase11b_multiline_display_formula_preserves_body_bytes_exactly ... ok
+test preview::semantic_conversion::tests::phase11b_overlapping_projection_ranges_fail_before_building_text ... ok
+test preview::semantic_conversion::tests::phase11b_performance_one_mib_with_one_thousand_math_nodes ... ignored, Release-only Phase 11-B semantic conversion receipt
+test preview::semantic_conversion::tests::phase11b_position_mapping_preserves_body_and_later_offsets ... ok
+test preview::semantic_conversion::tests::phase11b_selection_converts_only_fully_contained_semantic_nodes ... ok
+test preview::source_map::tests::converts_ascii_cjk_emoji_and_multiline_byte_columns ... ok
+test preview::source_map::tests::invalid_or_non_boundary_position_is_unknown ... ok
+test preview::source_map::tests::table_positions_are_restored_before_utf8_validation_and_stay_in_the_cell ... ok
+test preview::table_layout::wrap_width_tests::a_cell_wraps_at_no_less_than_its_measured_line ... ok
+test preview::pipeline::tests::stale_relayout_and_paint_preserve_the_current_projection ... ok
+test preview::pipeline::tests::viewport_sized_image_margin_avoids_relayout_on_nearby_scroll ... ok
+test preview::pipeline::tests::selection_copy_covers_math_image_table_code_and_html_literals ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_rechecks_actual_bytes_and_decode_failure_after_inspection ... ok
+test preview::text_layout::painting::tests::viewport_pixels_include_combining_marks_from_distant_rows ... ok
+test preview::text_layout::reuse_tests::phase5_text_reuse_keeps_layout_keys_and_attribution_boundaries_distinct ... ok
+test preview::text_layout::reuse_tests::phase5_text_reuse_shares_geometry_without_sharing_source_actions_or_tooltips ... ok
+test preview::text_layout::painting::tests::horizontal_clip_matches_full_draw_for_bidi_emoji_italic_and_combining_ink ... ok
+test preview::text_layout::tests::phase14_preview_selection_geometry_release_baseline ... ignored, Release-only Phase 14 viewport selection performance receipt
+test preview::text_layout::reuse_tests::phase5_text_reuse_keeps_admission_bounded_and_does_not_reuse_another_layout ... ok
+test preview::text_layout::tests::bidi_clusters_preserve_logical_boundary_direction ... ok
+test preview::text_layout::tests::shaping_cache_reuses_geometry_but_reprojects_source_and_actions ... ok
+test source::fonts::tests::leading_neutral_uses_the_first_explicit_script ... ok
+test source::fonts::tests::mixed_script_runs_keep_punctuation_with_adjacent_text ... ok
+test preview::pipeline::tests::phase10_one_hundred_zoom_relayouts_reuse_markdown_and_math_semantics ... ok
+test preview::text_layout::tests::multiline_text_boxes_keep_disjoint_selection_ranges ... ok
+test source::fonts::tests::neutral_only_input_is_one_linear_run ... ok
+test preview::text_layout::tests::viewport_projection_does_not_retain_offscreen_clusters ... ok
+test preview::text_layout::tests::variable_width_clusters_roundtrip_hit_highlight_and_copy ... ok
+test source::geometry::preedit_tests::invalid_preedit_replacement_remains_failure_atomic ... ok
+test source::paint::tests::transient_ui_glyphs_are_clipped_to_their_field ... ok
+test source::projection::initialization_tests::source_defaults_preserve_generic_fallback_when_preferred_latin_is_unavailable ... ok
+test source::geometry::preedit_tests::long_preedit_keeps_candidate_caret_inside_source_viewport ... ok
+test preview::text_layout::painting::tests::viewport_pixels_match_full_buffer_draw_at_wrap_and_fractional_boundaries ... ok
+test source::projection::startup_tests::source_initialization_release_baseline ... ignored, Release-only Source/font initialization investigation; no GUI or qualification receipt
+test source::geometry::preedit_tests::wrapped_replacement_caret_remains_available ... ok
+test source::projection::initialization_tests::source_defaults_survive_edits_and_snapshot_resynchronization ... ok
+test source::projection::tests::caret_overlay_changes_only_the_cached_frame_projection ... ok
+test source::projection::tests::caret_overlay_rejects_non_utf8_boundary ... ok
+test source::projection::tests::deleting_newline_merges_adjacent_projection_lines ... ok
+test source::projection::tests::hit_test_returns_grapheme_boundary_for_mixed_text ... ok
+test source::projection::tests::document_resync_preserves_source_scroll ... ok
+test source::projection::tests::hit_test_roundtrips_line_edges_mixed_fonts_and_wrapped_lines ... ok
+test source::projection::tests::ime_candidate_rect_follows_cursor_inside_preedit ... ok
+test source::projection::tests::insertion_after_trailing_newline_materializes_empty_projection_line ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_relayouts_changed_missing_or_corrupt_files_and_recovers ... ok
+test source::projection::tests::mismatched_incremental_delta_is_rejected_without_projection_mutation ... ok
+test source::geometry::preedit_tests::preedit_matches_eager_buffer_pixels_selection_and_candidate_geometry ... ok
+test source::projection::tests::line_structure_delta_keeps_the_same_scrolled_content_visible ... ok
+test source::projection::tests::newline_delta_splits_only_the_affected_projection_line ... ok
+test preview::pipeline::tests::formula_resize_scroll_release_scale_and_theme_obey_cache_boundaries ... ok
+test source::projection::tests::older_snapshot_cannot_overwrite_newer_projection ... ok
+test source::projection::tests::paint_rejects_invalid_selection_without_panicking ... ok
+test source::projection::tests::phase11_equal_viewport_does_not_repeat_source_layout ... ok
+test source::projection::tests::phase10_source_glyph_pressure_rebuilds_identical_pixels ... ok
+test source::projection::tests::phase10_content_zoom_relayouts_without_claiming_document_authority ... ok
+test source::projection::tests::phase9_source_initialization_preserves_logical_line_endings ... ok
+test source::projection::tests::phase9_source_initialization_reports_ordered_milestones ... ok
+test source::projection::tests::projection_is_generation_tagged_and_resyncs_from_snapshot ... ok
+test source::projection::tests::resize_does_not_change_projected_generation_or_text ... ok
+test source::projection::tests::semantic_range_anchor_maps_inside_a_tall_source_block ... ok
+test source::projection::tests::preedit_paints_without_changing_projected_text_or_generation ... ok
+test source::projection::tests::single_line_delta_updates_only_the_affected_projection_line ... ok
+test source::projection::tests::whole_document_math_conversion_updates_the_source_projection_before_repaint ... ok
+test source::projection::tests::source_zoom_releases_obsolete_glyph_rasters_but_resize_reuses_them ... ok
+test source::rendering::tests::a_focused_right_to_left_field_reveals_a_caret_left_of_it ... ok
+test source::rendering::tests::an_unfocused_field_hit_reads_the_painted_layout ... ok
+test source::rendering::tests::shell_text_field_uses_one_layout_for_caret_hit_and_horizontal_reveal ... ok
+test source::rendering::tests::same_line_selection_does_not_paint_unselected_lines ... ok
+test source::scrollbar::tests::scrollbar_release_baseline ... ignored, Release-only 1 MiB scrollbar jump and source paint timing
+test source::scrollbar::tests::scrollbar_bounds_follow_edits_and_preserve_composition ... ok
+test source::scrollbar::tests::scrollbar_jumps_to_both_ends_without_shaping_intervening_lines ... ok
+test preview::pipeline::audit_tests::offscreen_code_glyphs_are_not_rasterized ... ok
+test source::scrollbar::tests::a_source_page_moves_the_viewport_by_its_pixels_within_the_document ... ok
+test source::scrollbar::tests::scrollbar_metrics_do_not_change_visible_text_or_scroll ... ok
+test math::engine::tests::ten_thousand_deterministic_formula_inputs_never_panic ... ok
+test source::scrollbar::tests::the_source_maps_wrapped_offsets_and_measures_only_the_tail_once ... ok
+test source::scrollbar::tests::scrollbar_handles_a_single_wrapped_line_and_resized_short_notes ... ok
+test source::projection::initialization_tests::source_initialization_matches_eager_buffers_for_pixels_carets_and_auxiliary_text ... ok
+test source::geometry::preedit_tests::preedit_reveal_paints_at_candidate_and_clips_without_mutating_source ... ok
+test preview::pipeline::horizontal_tests::long_code_scrolls_without_wrapping_or_changing_copy_and_hit_ranges ... ok
+test preview::pipeline::tests::resize_relayouts_without_reparsing_and_scroll_only_repaints ... ok
+
+test result: ok. 188 passed; 0 failed; 17 ignored; 0 measured; 0 filtered out; finished in 5.11s
+
+     Running tests/phase5_semantics.rs (<scratch>/target-patched/debug/deps/phase5_semantics-6dd8fcdda82abbe4)
+
+running 5 tests
+test golden_outline_is_independent_of_checkout_newlines ... ok
+test owned_ast_golden_is_stable_and_arena_free ... ok
+test phase5_list_table_keeps_cells_and_selection_text ... ok
+test phase5_list_markers_and_content_keep_distinct_hit_targets ... ok
+test phase5_list_first_blocks_keep_semantics_and_nested_markers ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/phase6_math.rs (<scratch>/target-patched/debug/deps/phase6_math-fd72a3b41184abb2)
+
+running 6 tests
+test malformed_formula_is_atomic_and_does_not_fail_the_document ... ok
+test all_four_delimiters_copy_exact_source_while_code_stays_literal ... ok
+test math_in_markdown_containers_and_overwide_formula_remain_bounded ... ok
+test dpi_scales_formula_once_and_display_math_is_centered ... ok
+test representative_fixture_renders_at_least_fifty_native_formulas ... ok
+test formula_limit_and_source_limit_render_errors_without_aborting_preview ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/qualification_images.rs (<scratch>/target-patched/debug/deps/qualification_images-d4198feafc0073fd)
+
+running 1 test
+test phase7_g5_images_decode_and_contain_visible_color_regions ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rendering_stress.rs (<scratch>/target-patched/debug/deps/rendering_stress-b46302dfb25d29c0)
+
+running 6 tests
+test stress_fixture_preserves_markdown_priority_and_literal_boundaries ... ok
+test stress_fixture_formulas_match_current_ratex_baseline ... ok
+test stress_fixture_bottom_image_is_admitted_after_scroll_clamps ... ok
+test stress_fixture_preview_selection_stays_on_one_logical_code_line ... ok
+test stress_fixture_builds_every_formula_through_native_preview ... ok
+test stress_fixture_survives_narrow_wide_zoom_theme_and_overscroll_rasters ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.86s
+
+     Running tests/table_math_pipes.rs (<scratch>/target-patched/debug/deps/table_math_pipes-5805c5783fe01ac0)
+
+running 7 tests
+test unescaped_math_pipes_follow_gfm_table_column_rules ... ok
+test backslash_runs_do_not_shift_following_math_ranges ... ok
+test delimiter_conversion_after_escaped_pipes_preserves_surrounding_source ... ok
+test escaped_pipes_preserve_inline_code_emphasis_and_link_ranges ... ok
+test image_export_after_escaped_pipes_rewrites_only_the_image ... ok
+test escaped_pipes_preserve_all_math_delimiters_and_following_unicode_ranges ... ok
+test absolute_value_commands_render_a_six_column_table ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+   Doc-tests stickymd_render
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

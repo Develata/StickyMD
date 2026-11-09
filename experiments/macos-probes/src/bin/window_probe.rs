@@ -386,6 +386,7 @@ impl App {
                 let _ = self.proxy.send_event(Probe::RunModal);
             }
             19 => {
+                println!("modal: worker events delivered once it ended: {} of 6", self.worker_delivered);
                 window.set_outer_position(LogicalPosition::new(200.0, 160.0));
                 let _ = window.request_inner_size(LogicalSize::new(520.0, 680.0));
                 self.next = Instant::now() + Duration::from_millis(500);
