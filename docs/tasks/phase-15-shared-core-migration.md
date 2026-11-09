@@ -2,7 +2,7 @@
 
 ## Completion State
 
-In Progress。A 的代码迁移与本机验证已完成；B 的笔记、预览、资产/导出/配置链已迁入 `stickymd-app`，隐藏已按请求、回执、提交执行，显示（R1）与置顶（R2）同样，见 R 记录；C 的 C1–C6 已完成（`stickymd-desktop` 已建立，纯叶子已迁入，`AppSession` 在 `stickymd-app`，壳经窄端口使用宿主并对宿主泛型，壳已是 `stickymd-desktop` 的 `DesktopShell<H>`，测试在 Linux 也运行）；D 的代码收口与跨模型审查修正已本机验证（见 D 记录）。显示、置顶、定位的回执见 R 与 R3 记录；单屏的本地桌面预检已全部通过（见“最终桌面回归”），回执的人工检查与这条分支的远程 CI 见“回执的人工检查”；剩余的人工项、多屏与混合 DPI 未做（见 Open Items）。
+In Progress。A 的代码迁移与本机验证已完成；B 的笔记、预览、资产/导出/配置链已迁入 `stickymd-app`，隐藏已按请求、回执、提交执行，显示（R1）与置顶（R2）同样，见 R 记录；C 的 C1–C6 已完成（`stickymd-desktop` 已建立，纯叶子已迁入，`AppSession` 在 `stickymd-app`，壳经窄端口使用宿主并对宿主泛型，壳已是 `stickymd-desktop` 的 `DesktopShell<H>`，测试在 Linux 也运行）；D 的代码收口与跨模型审查修正已本机验证（见 D 记录）。显示、置顶、定位的回执见 R 与 R3 记录；单屏的本地桌面预检已全部通过（见“最终桌面回归”），回执的人工检查见“回执的人工检查”，共享裁决的移动见“里程碑 E”；失败路径的真实运行、多屏与混合 DPI 未做（见 Open Items）。
 
 本文件与 phase-15 验收表引用的短提交号都是 squash 之前的：A、B 在 `origin/feat/phase-15-a-shared-app`（末端 `ae09b67`）；C、D、R 的末端是 `edbfdb9`，只保留在本地分支 `archive/phase-15-c-pre-squash`。
 
@@ -25,6 +25,7 @@ Debian、macOS 宿主留出真实可用的共享层。Windows 产品行为与数
 | A | 本机验证完成 | `stickymd-app`；`instruction/`、`flow/`（含 `flow/window/`）、配置模型、`interaction/`、`source_search.rs` |
 | B | 本机验证完成：笔记、预览、资产/导出/配置链与隐藏回执；显示（R1）、置顶（R2）、定位（R3）的回执见 R 与 R3 记录，真实桌面观察未做（见 Open Items） | 执行接口与应用运行时；窗口动作的请求、回执与提交；入口测试见 plan 11 |
 | C | 本机验证完成：C1 帧呈现接缝、C2 crate 与登记、C3 控件、滚动、Search、按键表与纯命中、C4 `AppSession`、C5 宿主窄端口与泛型壳、C6 壳迁入 `stickymd-desktop/src/shell/`（`DesktopShell<H>`）；远程 CI 与桌面回归未做 | `stickymd-desktop`；通用控件、绘制、命中、事件翻译；各 target 的 backend features |
+| E | 代码与自动化已完成，桌面回归见“里程碑 E” | 配置文本、启动恢复裁决、粘贴批次、导出规划与百分号解码在 `stickymd-app`/`stickymd-render`；存储事务仍在宿主 |
 | D | 本机验证完成：转发删除、剩余裁决迁入 `AppSession`、`AppSession` 字段在产品构建中收窄、跨模型审查修正与补测；桌面回归未做 | 迁移剩余业务分支，删除仅为迁移保留的转发，最终审查 |
 
 A 中 `config/storage.rs` 留在 `apps/stickymd-win`：它依赖 Windows 原子发布与文件系统，存储能力在 B 进入 Capability Port。
@@ -473,6 +474,20 @@ USER 用这条分支构建的版本检查了 5 项，都没有问题：置顶时
 
 远程 CI：Develata/StickyMD#11 在 `f9c1813` 上 9 项全部通过。
 
+### 里程碑 E（USER 批准 2026-11-09）
+
+设计、审查结论与修订见[报告](../report/2026-11-09-phase-15-e-shared-startup-logic.md)。最初的“统一文件原语端口”被清点否定，第一版 `StartupStorage` trait 被独立审查否定。现在的切分：共享层只做决定，观察、隔离、删除、首次创建、暂存、改名、发布都留在宿主，顺序不变。
+
+- 移动：`config.toml` 的文本规则与警告，`plan_note_startup`，粘贴批次，`ExportPlan`，百分号解码；D8 的笔记文件过滤与 D9 的链接分类。
+- 留在宿主：存储事务、失败分类（输入是各宿主自己的错误类型）、路径语法校验、`preview/image_source.rs`。
+- 已有问题，这批不改：`remove_temporary`、`quarantine_temporary` 与导出暂存文件的改名都按路径执行，观察之后被其他进程替换的窗口今天就存在。
+- macOS 的具体保证按 `05` 在建立宿主时单独批准。
+- 桌面（`35d3c25` 的 Release，sha256 `d1e9b1fb1ddbd689874709a3923f5aadd280d6d07f7fe681ebde5eacc18434c9`，单屏）：全部 18 个本地预检通过，见 P15-E08。真实启动退出码 0，trace 27 行。之后的提交只改测试脚本。这是本地诊断，不是 exact-candidate 证据。
+- 回归中修了一处脚本竞态：恢复替换 `note.md` 时轮询读到瞬时的文件不存在，脚本立即判失败；现在和 `wait_note` 一样重试到期限。
+- 同一轮把 P15-R01、R02、R09 没观察到的条款改成脚本断言：托盘 Show 取得焦点、第二实例唤醒后矩形不变、托盘文字正确。
+- 回归暴露的已有问题：保存时在临时文件已创建、还没写入的瞬间被强杀，会留下空的 `note.md.tmp`，下次启动提示恢复，选 F6 得到空笔记。USER 2026-11-09 决定修改：正文可用时 0 字节 temp 按冗余移除（`05` 启动恢复第 2 条）。代价是清空全文的那次保存恰好被打断时，旧内容保留。修改后 G3-03 在 `62b1f9b` 的 Release（sha256 `920c9e010d33fcfbc80aa25a7b5ac725e2d8d44c008cc2181dede27c67860bfc`）上连续 10 次通过，用户资产与单实例身份也通过，其余 15 项没有重跑。
+- D7 增加了 `aarch64-apple-darwin` 的依赖策略目标，D8 的笔记文件过滤与 D9 的链接分类已共享；D10 保持现状。
+
 ### 窗口启动失败（USER 批准方案 A，2026-11-09）
 
 合同是 `09` 的 Failure Paths，分析见[报告](../report/2026-11-09-startup-failure-paths.md)。
@@ -489,7 +504,7 @@ USER 用这条分支构建的版本检查了 5 项，都没有问题：置顶时
 
 ## Open Items
 
-- 人工观察的剩余项：P15-R01 托盘路径的焦点事件，P15-R02 的矩形与托盘文字，P15-R09 感应期间的原生位与层级，P15-R05、R06、R15 的失败路径（需要能制造失败的环境），R13、R14 的多屏。
+- 人工观察的剩余项：P15-R05、R06、R15 的失败路径（需要能制造失败的环境），R13、R14 的多屏。
 - 不同步答复的宿主（M1、F4）：回执期限与“tick 处理期限后的回执被忽略”只在 reducer 测试中运行过；这样的宿主必须保证取消或顺序（端口文档），恢复一律用新 id。
 - 回执期限（M1）只在 reducer 测试中运行过：现有宿主同步答复，这条路径要等到不同步答复的宿主才有真实运行。
 - 定位的容差是单屏实测（原生 100%）：混合 DPI 未测（P15-D10、P15-R14），系统跨屏改变窗口尺寸时这次定位会以诊断结束且不写入，取值可能变更。

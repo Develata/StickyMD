@@ -24,6 +24,8 @@ const SHOW: &str = "663E-793A";
 const HIDE: &str = "9690-85CF";
 const TOPMOST: &str = "7F6E-9876";
 const EXIT: &str = "9000-51FA";
+/// The menu of a window that is on screen, in order.
+pub(in crate::qualification) const VISIBLE_WINDOW_MENU: [&str; 3] = [HIDE, TOPMOST, EXIT];
 
 fn helper(
     repository: &Path,

@@ -223,6 +223,7 @@ Phase 15 按 [提案](../report/2026-10-23-shared-core-thin-platform-shell-archi
 | B | 入口依赖：三类无身份 I/O 回执的 Windows 修复已合并（`04` Generation 规则 6），且以下测试通过：身份失配的回执不产生任何副作用；有效的旧 generation 保存回执仍被接受（saved_generation 只推进到实际落盘版本，较新编辑保持 dirty）。按保存/恢复、预览、资产/导出、窗口/退出顺序接入 Capability Port，窗口动作按 `04` 的请求、回执与提交 | 每条链的成功/失败/过期回执测试与“隐藏被拒绝”场景 |
 | C | 建立 `stickymd-desktop` 并同时登记其治理、任务与指纹归属；各 target 显式选择 winit/softbuffer backend features；迁移通用控件、绘制、命中与事件翻译（含 `06` 帧呈现规则） | `stickymd-desktop` 在 Windows 与 Linux CI 上真实构建；`age = 0/1/2` 呈现测试；Windows 桌面定向回归 |
 | D | 迁移剩余业务分支，删除仅为迁移保留的转发 | 依赖与平台泄漏审查、适用 baseline、Windows 验证；未实现平台保持 `NOT TESTED` |
+| E | 把不依赖文件语义的裁决移入 `stickymd-app`：配置文本规则、启动恢复裁决、粘贴批次、导出命名与引用改写。存储事务仍由宿主按 `05` 执行（USER 批准 2026-11-09） | Windows 现有测试断言不变；共享裁决测试在 Linux 也运行；Windows 桌面回归 |
 
 C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，C 的出口回执与 D 的业务裁决迁出无法分先后。C 的 Linux 构建与
 `age` 呈现测试在各自批次成立；Windows 桌面回归在 D 之后执行一次（USER 决定 2026-11-07）。

@@ -2395,6 +2395,7 @@ dependencies = [
  "stickymd-core",
  "stickymd-render",
  "thiserror 2.0.20",
+ "toml",
  "unicode-segmentation",
 ]
 
@@ -2461,7 +2462,6 @@ dependencies = [
  "stickymd-desktop",
  "stickymd-render",
  "thiserror 2.0.20",
- "toml",
  "tray-icon",
  "windows",
  "winit",

@@ -90,12 +90,12 @@ impl ManagedAssetStore for WinAssetStore {
         let storage =
             AssetStorage::open(&self.images, &self.trash).map_err(|error| AssetPasteFailure {
                 expected_generation,
-                error: AssetPasteError::Storage(error).into(),
+                error: paste_failure(AssetPasteError::Storage(error)),
                 rollback: Default::default(),
             })?;
         prepare_and_store_paste(&storage, request).map_err(|failure| AssetPasteFailure {
             expected_generation: failure.expected_generation,
-            error: failure.error.into(),
+            error: paste_failure(failure.error),
             rollback: failure.rollback,
         })
     }
@@ -183,18 +183,16 @@ impl From<AssetStorageError> for StorageFailure {
     }
 }
 
-impl From<AssetPasteError> for StorageFailure {
-    fn from(error: AssetPasteError) -> Self {
-        let kind = match &error {
-            AssetPasteError::Read(_) => FailureKind::Unavailable,
-            AssetPasteError::Storage(storage) => asset_failure_kind(storage),
-            AssetPasteError::MixedOrUnsupportedFiles
-            | AssetPasteError::Image(_)
-            | AssetPasteError::BatchTooLarge { .. }
-            | AssetPasteError::NotImage => FailureKind::Failed,
-        };
-        Self::new(kind, error.to_string())
-    }
+fn paste_failure(error: AssetPasteError) -> StorageFailure {
+    let kind = match &error {
+        AssetPasteError::Read(_) => FailureKind::Unavailable,
+        AssetPasteError::Storage(storage) => asset_failure_kind(storage),
+        AssetPasteError::MixedOrUnsupportedFiles
+        | AssetPasteError::Image(_)
+        | AssetPasteError::BatchTooLarge { .. }
+        | AssetPasteError::NotImage => FailureKind::Failed,
+    };
+    StorageFailure::new(kind, error.to_string())
 }
 
 impl From<ExportError> for StorageFailure {
@@ -235,6 +233,37 @@ mod tests {
     use super::*;
     use crate::platform::windows::atomic_file::AtomicPublishError;
 
+    #[test]
+    fn phase15_every_paste_error_keeps_its_message_and_gets_its_class() {
+        let rows = [
+            (
+                AssetPasteError::Read(std::io::Error::other("cause")),
+                FailureKind::Unavailable,
+            ),
+            (
+                AssetPasteError::MixedOrUnsupportedFiles,
+                FailureKind::Failed,
+            ),
+            (
+                AssetPasteError::Image(
+                    stickymd_render::image::prepare_encoded_image(b"not an image").unwrap_err(),
+                ),
+                FailureKind::Failed,
+            ),
+            (
+                AssetPasteError::BatchTooLarge { limit: 9 },
+                FailureKind::Failed,
+            ),
+            (AssetPasteError::NotImage, FailureKind::Failed),
+        ];
+        for (error, kind) in rows {
+            let message = error.to_string();
+            let failure = paste_failure(error);
+            assert_eq!(failure.kind(), kind, "{message}");
+            assert_eq!(failure.to_string(), message);
+        }
+    }
+
     /// A wrapper adds context to the message and keeps the class of what it wraps.
     #[test]
     fn phase15_a_wrapped_storage_error_keeps_its_class() {
@@ -252,7 +281,7 @@ mod tests {
         for (storage, kind) in rows {
             let wrapped = AssetPasteError::Storage(storage);
             let message = wrapped.to_string();
-            let failure = StorageFailure::from(wrapped);
+            let failure = paste_failure(wrapped);
             assert_eq!(failure.kind(), kind, "{message}");
             assert_eq!(failure.to_string(), message);
             assert!(message.starts_with("managed image publication failed: "));

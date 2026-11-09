@@ -20,7 +20,7 @@ pub(super) fn g4_05(repository: &Path, program: &Path, checks: &mut Checks) -> R
     seed_note(program, SOURCE)?;
     let mut primary = start_until_editor_ready(&program.join("StickyMD.exe"))?;
     let window = crate::window_control::visible_window(primary.id())?;
-    visibility::wake(program, primary.id(), window, checks)?;
+    visibility::wake(repository, program, primary.id(), window, checks)?;
     crate::window_control::request_close(window)?;
     wait_for_visibility(window, false)?;
     checks.record("close-hides-window", &[]);

@@ -443,7 +443,48 @@ fn table_alignment(alignment: ComrakAlignment) -> TableAlignment {
     }
 }
 
-fn classify_link(destination: &str) -> LinkKind {
+/// Why a percent-encoded destination could not be decoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestinationDecodeError {
+    InvalidEncoding,
+    InvalidUtf8,
+}
+
+/// Decodes the percent escapes of a link or image destination. What the result means as a path is
+/// the host's to say.
+pub fn decode_destination(value: &str) -> Result<String, DestinationDecodeError> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let pair = bytes
+                .get(index + 1..index + 3)
+                .ok_or(DestinationDecodeError::InvalidEncoding)?;
+            let high = hex_digit(pair[0]).ok_or(DestinationDecodeError::InvalidEncoding)?;
+            let low = hex_digit(pair[1]).ok_or(DestinationDecodeError::InvalidEncoding)?;
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).map_err(|_| DestinationDecodeError::InvalidUtf8)
+}
+
+const fn hex_digit(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// What a link's destination is allowed to be. Every host checks a link against this before
+/// opening it, so that a forged kind cannot widen what the Preview classified.
+pub fn classify_link(destination: &str) -> LinkKind {
     let trimmed = destination.trim();
     if trimmed.is_empty() || windows_absolute_path(trimmed) || scheme(trimmed).is_none() {
         return LinkKind::Relative;
@@ -658,6 +699,19 @@ mod tests {
 
     #[test]
     fn classifies_allowed_and_blocked_destinations_without_executing_them() {
+        assert_eq!(decode_destination("a%20b%C3%A9"), Ok("a bé".to_owned()));
+        assert_eq!(
+            decode_destination("a%2"),
+            Err(DestinationDecodeError::InvalidEncoding)
+        );
+        assert_eq!(
+            decode_destination("a%zz"),
+            Err(DestinationDecodeError::InvalidEncoding)
+        );
+        assert_eq!(
+            decode_destination("%FF"),
+            Err(DestinationDecodeError::InvalidUtf8)
+        );
         assert_eq!(classify_link("HTTP://example.com"), LinkKind::Http);
         assert_eq!(classify_link("mailto:a@example.com"), LinkKind::Mailto);
         assert_eq!(classify_link("file:///C:/a.md"), LinkKind::File);

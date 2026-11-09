@@ -208,8 +208,8 @@ TOCTOU 窗口；v1 不通过长期独占文件锁破坏外部编辑能力。
 ## 启动恢复（note.md.tmp）
 
 1. 在启动 watcher/autosave 前读取 `note.md` 与 `note.md.tmp` 的 existence、bytes、mtime、hash、UTF-8 状态。
-2. temp 与 canonical hash 相同：canonical 成功加载后才删除冗余 temp。
-3. valid temp 内容不同：产生 `RecoveryCandidate`，显示“恢复临时内容 / 使用当前文件”。修改时间只用于提示哪份较新，
+2. temp 与 canonical hash 相同：canonical 成功加载后才删除冗余 temp。0 字节的 temp 不携带任何内容（保存在写入前被打断），canonical 可用时同样按冗余处理；canonical 不存在或不可用时仍按第 4、5 条（USER 决定 2026-11-09）。
+3. valid temp 内容不同且不属于第 2 条：产生 `RecoveryCandidate`，显示“恢复临时内容 / 使用当前文件”。修改时间只用于提示哪份较新，
    不授权删除 temp（USER 决定 2026-10-31）。
 4. canonical 不存在但 temp valid：仍由用户决定，不自动恢复。
 5. canonical invalid 且 temp valid：不得静默覆盖；恢复前先保留 canonical 证据。保留时用同一个只共享读取的句柄校验完整内容

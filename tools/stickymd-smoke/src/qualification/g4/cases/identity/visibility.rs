@@ -13,6 +13,7 @@ use crate::qualification::exact_desktop::{
 use crate::window_control::{self as window, WindowHandle};
 
 pub(super) fn wake(
+    repository: &Path,
     program: &Path,
     process_id: u32,
     hwnd: WindowHandle,
@@ -23,6 +24,7 @@ pub(super) fn wake(
     let original = fs::read_to_string(&note).map_err(|e| e.to_string())?;
     let monitors = window::manual_probe::monitors()?;
     for state in ["hidden", "minimized"] {
+        let placed = window::window_rect(hwnd)?;
         if state == "hidden" {
             window::request_close(hwnd)?;
             wait_for_visibility(hwnd, false)?;
@@ -49,6 +51,13 @@ pub(super) fn wake(
         }
         assert_sole_stickymd_process(process_id)?;
         checks.record("second-launch-restores-focused-window", &[("state", state)]);
+        let woken = window::window_rect(hwnd)?;
+        if woken != placed {
+            return Err(format!(
+                "{state} wake moved the window: {placed:?} to {woken:?}"
+            ));
+        }
+        checks.record("second-launch-restores-rect", &[("state", state)]);
         if before != (file_stamp(&note)?, file_stamp(&config)?) {
             return Err(format!(
                 "{state} second launch changed note/config bytes or mtime"
@@ -63,6 +72,13 @@ pub(super) fn wake(
         checks.record("second-launch-immediate-input", &[("state", state)]);
         window::press_undo(hwnd)?;
         wait_note(program, |text| text == original)?;
+        let items = tray::menu_items(repository, process_id)?;
+        if items != tray::VISIBLE_WINDOW_MENU {
+            return Err(format!("{state} wake left the tray menu at {items:?}"));
+        }
+        checks.record("second-launch-tray-text", &[("state", state)]);
+        // Reading the menu activates Explorer's tray; the next round starts from the window.
+        window::focus_source_editor(hwnd)?;
     }
     Ok(())
 }

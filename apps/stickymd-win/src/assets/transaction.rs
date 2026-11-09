@@ -1,159 +1,65 @@
-//! All-or-nothing clipboard preparation and managed-asset publication.
+//! A clipboard paste against the managed asset store: the host's half of the shared batch.
 //!
 //! plan_ref: docs/plan/08_assets_and_export.md#paste
 
 use std::fs::File;
 use std::io::Read;
+use std::path::Path;
+#[cfg(test)]
 use std::path::PathBuf;
 
-use stickymd_core::Generation;
 #[cfg(test)]
-use stickymd_render::image::prepare_encoded_image;
-use stickymd_render::image::{
-    MAX_ENCODED_IMAGE_BYTES, PreparedImage, prepare_dib_image, prepare_encoded_image_owned,
-};
-use thiserror::Error;
+use stickymd_app::flow::ClipboardPaste;
+use stickymd_app::flow::{self, PasteTarget};
+#[cfg(test)]
+use stickymd_app::ports::AssetPasteRollback;
+use stickymd_app::ports::{AssetPasteCompletion, AssetPasteRequest, StoredAsset};
+#[cfg(test)]
+use stickymd_core::Generation;
+use stickymd_render::image::PreparedImage;
+#[cfg(test)]
+use stickymd_render::image::{MAX_ENCODED_IMAGE_BYTES, prepare_encoded_image};
 
 use super::{AssetStorage, AssetStorageError};
-use stickymd_app::flow::ClipboardPaste;
-use stickymd_app::ports::{
-    AssetPasteCompletion, AssetPasteRequest, AssetPasteRollback, StoredAsset,
-};
 
-const MAX_IMAGE_PASTE_BATCH_BYTES: usize = 128 * 1024 * 1024;
+pub type AssetPasteError = flow::AssetPasteError<AssetStorageError>;
+pub type AssetPasteFailure = flow::PasteFailure<AssetStorageError>;
 
-#[derive(Debug, Error)]
-pub enum AssetPasteError {
-    #[error("clipboard file list contains a non-image or unsupported image")]
-    MixedOrUnsupportedFiles,
-    #[error("clipboard image read failed: {0}")]
-    Read(std::io::Error),
-    #[error("clipboard image preparation failed: {0}")]
-    Image(stickymd_render::image::ImageAssetError),
-    #[error("managed image publication failed: {0}")]
-    Storage(AssetStorageError),
-    #[error("image paste payload exceeds the {limit} byte transaction bound")]
-    BatchTooLarge { limit: usize },
-    #[error("clipboard payload is not an image transaction")]
-    NotImage,
+struct StoragePasteTarget<'a>(&'a AssetStorage);
+
+impl PasteTarget for StoragePasteTarget<'_> {
+    type Error = AssetStorageError;
+
+    fn store(&mut self, image: &PreparedImage) -> Result<StoredAsset, AssetStorageError> {
+        self.0.store(image)
+    }
+
+    fn read_at_most(&mut self, path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+        read_at_most(path, limit)
+    }
 }
 
-/// A failed preparation still returns every asset publication it performed.
-/// Only the main coordinator can compare this ledger with the latest canonical
-/// references and request a safe convergence; the worker must never replay an
-/// old rollback decision by itself.
-#[derive(Debug, Error)]
-#[error("{error}")]
-pub struct AssetPasteFailure {
-    pub expected_generation: Generation,
-    pub error: AssetPasteError,
-    pub rollback: AssetPasteRollback,
+fn read_at_most(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    File::open(path)?.take(limit).read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 pub fn prepare_and_store_paste(
     storage: &AssetStorage,
     request: AssetPasteRequest,
 ) -> Result<AssetPasteCompletion, AssetPasteFailure> {
-    let expected_generation = request.expected_generation;
-    let mut stored = Vec::new();
-    let mut total_bytes = 0usize;
-    let result = match request.payload {
-        ClipboardPaste::EncodedImage(bytes) => add_batch_bytes(&mut total_bytes, bytes.len())
-            .and_then(|()| {
-                prepare_encoded_image_owned(bytes)
-                    .map_err(AssetPasteError::Image)
-                    .and_then(|image| store_prepared(storage, image, &mut stored))
-            }),
-        ClipboardPaste::Dib(bytes) => {
-            add_batch_bytes(&mut total_bytes, bytes.len()).and_then(|()| {
-                prepare_dib_image(&bytes)
-                    .map_err(AssetPasteError::Image)
-                    .and_then(|image| store_prepared(storage, image, &mut stored))
-            })
-        }
-        ClipboardPaste::Rgba {
-            width,
-            height,
-            bytes,
-        } => add_batch_bytes(&mut total_bytes, bytes.len()).and_then(|()| {
-            stickymd_render::image::prepare_rgba_image(width, height, bytes)
-                .map_err(AssetPasteError::Image)
-                .and_then(|image| store_prepared(storage, image, &mut stored))
-        }),
-        ClipboardPaste::Files(paths) if !paths.is_empty() => {
-            let mut result = Ok(());
-            for path in paths {
-                let next = read_file_bounded(&path)
-                    .and_then(|bytes| {
-                        add_batch_bytes(&mut total_bytes, bytes.len())?;
-                        prepare_encoded_image_owned(bytes)
-                            .map_err(|_| AssetPasteError::MixedOrUnsupportedFiles)
-                    })
-                    .and_then(|image| store_prepared(storage, image, &mut stored));
-                if let Err(error) = next {
-                    result = Err(error);
-                    break;
-                }
-            }
-            result
-        }
-        ClipboardPaste::Files(_) | ClipboardPaste::Text(_) => Err(AssetPasteError::NotImage),
-    };
-    if let Err(error) = result {
-        return Err(AssetPasteFailure {
-            expected_generation,
-            error,
-            rollback: AssetPasteRollback { stored },
-        });
-    }
-    let markdown = stored
-        .iter()
-        .map(|asset| format!("![](images/{})", asset.name))
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    Ok(AssetPasteCompletion {
-        expected_generation: request.expected_generation,
-        selection: request.selection,
-        timestamp_ms: request.timestamp_ms,
-        markdown,
-        rollback: AssetPasteRollback { stored },
-    })
+    flow::prepare_and_store_paste(&mut StoragePasteTarget(storage), request)
 }
 
+#[cfg(test)]
+fn read_file_bounded(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
+    read_at_most(path.as_ref(), (MAX_ENCODED_IMAGE_BYTES + 1) as u64)
+}
+
+#[cfg(test)]
 fn add_batch_bytes(total: &mut usize, bytes: usize) -> Result<(), AssetPasteError> {
-    *total = total
-        .checked_add(bytes)
-        .ok_or(AssetPasteError::BatchTooLarge {
-            limit: MAX_IMAGE_PASTE_BATCH_BYTES,
-        })?;
-    if *total > MAX_IMAGE_PASTE_BATCH_BYTES {
-        Err(AssetPasteError::BatchTooLarge {
-            limit: MAX_IMAGE_PASTE_BATCH_BYTES,
-        })
-    } else {
-        Ok(())
-    }
-}
-
-fn store_prepared(
-    storage: &AssetStorage,
-    image: PreparedImage,
-    stored: &mut Vec<StoredAsset>,
-) -> Result<(), AssetPasteError> {
-    stored.push(storage.store(&image).map_err(AssetPasteError::Storage)?);
-    Ok(())
-}
-
-fn read_file_bounded(path: &PathBuf) -> Result<Vec<u8>, AssetPasteError> {
-    let file = File::open(path).map_err(AssetPasteError::Read)?;
-    let mut bytes = Vec::new();
-    file.take((MAX_ENCODED_IMAGE_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(AssetPasteError::Read)?;
-    if bytes.len() > MAX_ENCODED_IMAGE_BYTES {
-        return Err(AssetPasteError::MixedOrUnsupportedFiles);
-    }
-    Ok(bytes)
+    flow::add_batch_bytes(total, bytes)
 }
 
 #[cfg(test)]

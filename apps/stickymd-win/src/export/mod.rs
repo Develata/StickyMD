@@ -2,18 +2,16 @@
 //!
 //! plan_ref: docs/plan/08_assets_and_export.md#export
 
-use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
+use stickymd_app::flow::{CopyPlacement, ExportNameCollision, ExportPlan, export_asset_extension};
 use stickymd_app::ports::ExportCompletion;
 use stickymd_core::{DocumentSnapshot, Hash32, LoadedDocument};
-use stickymd_render::preview::{
-    ImageKind, ImageRewrite, PreviewParser, collect_image_occurrences, rewrite_image_occurrences,
-};
+use stickymd_render::preview::{ImageKind, PreviewParser, collect_image_occurrences};
 use thiserror::Error;
 
 use crate::assets::{open_local_image, resolve_local_image};
@@ -68,8 +66,8 @@ pub enum ExportError {
     AssetPublish(std::io::Error),
     #[error("cannot publish exported Markdown: {0}")]
     MarkdownPublish(#[from] AtomicPublishError),
-    #[error("export asset hash-prefix collision could not be represented safely")]
-    AssetNameCollision,
+    #[error("{0}")]
+    AssetNameCollision(#[from] ExportNameCollision),
 }
 
 /// Export one immutable snapshot. Local files are staged and published before
@@ -109,19 +107,15 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
         .and_then(|value| value.to_str())
         .ok_or(ExportError::InvalidTargetName)?
         .to_owned();
-    let markdown_asset_leaf = encode_markdown_path_segment(&asset_leaf);
+    let mut plan = ExportPlan::new(&asset_leaf);
 
     let mut owned_staging_files = Vec::new();
     let result = (|| {
-        let mut rewrites = Vec::with_capacity(local.len());
-        let mut copied = HashMap::<Hash32, String>::new();
-        let mut occupied_names = HashMap::<String, Hash32>::new();
-        let mut resolved_sources = HashMap::<PathBuf, String>::new();
         for (index, occurrence) in local.into_iter().enumerate() {
             let source = resolve_local_image(&request.note_dir, &occurrence.destination)
                 .map_err(|error| ExportError::UnsupportedLocalPath(error.to_string()))?;
-            let output_name = if let Some(existing) = resolved_sources.get(&source) {
-                existing.clone()
+            let output_name = if let Some(existing) = plan.name_for_source(&source) {
+                existing.to_owned()
             } else {
                 let staged_temporary = staging
                     .as_ref()
@@ -132,49 +126,45 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
                     path: staged_temporary.clone(),
                     observation,
                 });
-                let name = if let Some(existing) = copied.get(&hash) {
-                    remove_owned_staging_file(&staged_temporary, observation).map_err(
-                        |source| ExportError::LocalImage {
-                            path: staged_temporary.clone(),
-                            source,
-                        },
-                    )?;
-                    existing.clone()
-                } else {
-                    let name = choose_export_asset_name(hash, &extension, &occupied_names)?;
-                    let staged_final = staging
-                        .as_ref()
-                        .ok_or(ExportError::InvalidTargetName)?
-                        .join(&name);
-                    move_file_no_replace(&staged_temporary, &staged_final).map_err(|source| {
-                        ExportError::LocalImage {
-                            path: staged_temporary.clone(),
-                            source,
-                        }
-                    })?;
-                    if let Some(owned) = owned_staging_files.last_mut() {
-                        owned.path = staged_final;
+                let name = match plan.place_copy(hash, &extension)? {
+                    CopyPlacement::Duplicate(existing) => {
+                        remove_owned_staging_file(&staged_temporary, observation).map_err(
+                            |source| ExportError::LocalImage {
+                                path: staged_temporary.clone(),
+                                source,
+                            },
+                        )?;
+                        existing
                     }
-                    copied.insert(hash, name.clone());
-                    occupied_names.insert(name.clone(), hash);
-                    name
+                    CopyPlacement::New(name) => {
+                        let staged_final = staging
+                            .as_ref()
+                            .ok_or(ExportError::InvalidTargetName)?
+                            .join(&name);
+                        move_file_no_replace(&staged_temporary, &staged_final).map_err(
+                            |source| ExportError::LocalImage {
+                                path: staged_temporary.clone(),
+                                source,
+                            },
+                        )?;
+                        if let Some(owned) = owned_staging_files.last_mut() {
+                            owned.path = staged_final;
+                        }
+                        plan.confirm_new(hash, name.clone());
+                        name
+                    }
                 };
-                resolved_sources.insert(source, name.clone());
+                plan.remember_source(source, name.clone());
                 name
             };
-            rewrites.push(ImageRewrite {
-                source_range: occurrence.source_range,
-                destination: format!("{markdown_asset_leaf}/{output_name}"),
-                title: occurrence.title,
-                alt: occurrence.alt,
-            });
+            plan.rewrite(occurrence, &output_name);
         }
 
-        let markdown = rewrite_image_occurrences(&request.snapshot.text, rewrites)?;
+        let markdown = plan.rewritten_markdown(&request.snapshot.text)?;
         let durable = LoadedDocument::encode_runtime(&markdown, request.snapshot.line_ending);
         let prepared = prepare_unique_export_temporary(parent, &request.target, &durable)?;
         markdown_temporary = Some(prepared);
-        if !copied.is_empty() {
+        if plan.copied_assets() != 0 {
             move_file_no_replace(
                 staging.as_ref().ok_or(ExportError::InvalidTargetName)?,
                 &asset_directory,
@@ -190,7 +180,7 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
         Ok(ExportCompletion {
             generation: request.snapshot.generation,
             target: request.target.clone(),
-            copied_assets: copied.len(),
+            copied_assets: plan.copied_assets(),
         })
     })();
     // Never recursively delete a path inside a user-selected destination.
@@ -280,38 +270,6 @@ fn prepare_unique_export_temporary(
     Err(ExportError::InvalidTargetName)
 }
 
-fn choose_export_asset_name(
-    hash: Hash32,
-    extension: &str,
-    occupied: &HashMap<String, Hash32>,
-) -> Result<String, ExportError> {
-    let hex = hash.to_hex();
-    for length in [20usize, 32, 64] {
-        let name = format!("stickymd-{}.{}", &hex[..length], extension);
-        match occupied.get(&name) {
-            None => return Ok(name),
-            Some(existing) if *existing == hash => return Ok(name),
-            Some(_) => {}
-        }
-    }
-    Err(ExportError::AssetNameCollision)
-}
-
-fn encode_markdown_path_segment(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            output.push(char::from(byte));
-        } else {
-            const HEX: &[u8; 16] = b"0123456789ABCDEF";
-            output.push('%');
-            output.push(char::from(HEX[(byte >> 4) as usize]));
-            output.push(char::from(HEX[(byte & 0x0f) as usize]));
-        }
-    }
-    output
-}
-
 fn choose_asset_directory(parent: &Path, stem: &str) -> Result<PathBuf, ExportError> {
     for suffix in 1_u32..=10_000 {
         let leaf = if suffix == 1 {
@@ -374,19 +332,9 @@ fn copy_and_hash(
             path: destination.to_owned(),
             source: source_error,
         })?;
-    let extension = source
-        .extension()
-        .and_then(|value| value.to_str())
-        .filter(|value| {
-            !value.is_empty()
-                && value.len() <= 10
-                && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
-        })
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_else(|| "img".to_owned());
     Ok((
         Hash32::new(digest.finalize().into()),
-        extension,
+        export_asset_extension(source),
         observation,
     ))
 }
@@ -690,19 +638,6 @@ mod tests {
         let resolved = resolve_local_image(&out, &occurrence.destination).unwrap();
         assert!(resolved.is_file());
         fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn export_asset_name_expands_when_twenty_hex_prefix_is_occupied() {
-        let mut first = [0_u8; 32];
-        first[10] = 1;
-        let mut second = [0_u8; 32];
-        second[10] = 2;
-        let first = Hash32::new(first);
-        let second = Hash32::new(second);
-        let occupied = HashMap::from([(format!("stickymd-{}.png", &first.to_hex()[..20]), first)]);
-        let name = choose_export_asset_name(second, "png", &occupied).unwrap();
-        assert_eq!(name, format!("stickymd-{}.png", &second.to_hex()[..32]));
     }
 
     #[test]

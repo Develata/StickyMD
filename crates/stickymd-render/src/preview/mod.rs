@@ -36,8 +36,8 @@ pub use model::{
 };
 pub use paint::{PreviewFrame, PreviewPaintError, PreviewTheme};
 pub use parser::{
-    MAX_OWNED_NODES, MAX_PARSE_DEPTH, MAX_PREVIEW_SOURCE_BYTES, PreviewParseError,
-    PreviewParseMetrics, PreviewParser,
+    DestinationDecodeError, MAX_OWNED_NODES, MAX_PARSE_DEPTH, MAX_PREVIEW_SOURCE_BYTES,
+    PreviewParseError, PreviewParseMetrics, PreviewParser, classify_link, decode_destination,
 };
 pub use pipeline::{
     PreviewMathCounters, PreviewPipeline, PreviewPipelineCounters, PreviewPipelineError,

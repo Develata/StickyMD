@@ -15,4 +15,5 @@ stickymd-core = { path = "../stickymd-core", version = "0.1.0" }
 stickymd-render = { path = "../stickymd-render", version = "0.1.0" }
 thiserror.workspace = true
 serde.workspace = true
+toml.workspace = true
 unicode-segmentation.workspace = true

@@ -5,7 +5,7 @@
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 
-use stickymd_render::preview::LinkKind;
+use stickymd_render::preview::{LinkKind, classify_link};
 use thiserror::Error;
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -25,7 +25,7 @@ pub fn open_target(
     note_dir: &Path,
 ) -> Result<(), ShellOpenError> {
     let destination = destination.trim();
-    if classify_target(destination) != kind {
+    if classify_link(destination) != kind {
         return Err(ShellOpenError::BlockedScheme);
     }
     let mut destination = match kind {
@@ -61,43 +61,6 @@ pub fn open_target(
     }
 }
 
-fn classify_target(destination: &str) -> LinkKind {
-    if windows_absolute_path(destination) {
-        return LinkKind::Relative;
-    }
-    let Some(colon) = destination.find(':') else {
-        return LinkKind::Relative;
-    };
-    let scheme = &destination[..colon];
-    if scheme.is_empty()
-        || !scheme.as_bytes()[0].is_ascii_alphabetic()
-        || !scheme
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
-    {
-        return LinkKind::Relative;
-    }
-    if scheme.eq_ignore_ascii_case("http") {
-        LinkKind::Http
-    } else if scheme.eq_ignore_ascii_case("https") {
-        LinkKind::Https
-    } else if scheme.eq_ignore_ascii_case("mailto") {
-        LinkKind::Mailto
-    } else if scheme.eq_ignore_ascii_case("file") {
-        LinkKind::File
-    } else {
-        LinkKind::Blocked
-    }
-}
-
-fn windows_absolute_path(destination: &str) -> bool {
-    let bytes = destination.as_bytes();
-    bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && matches!(bytes[2], b'/' | b'\\')
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,7 +87,7 @@ mod tests {
             ),
             Err(ShellOpenError::BlockedScheme)
         ));
-        assert_eq!(classify_target("C:\\note\\local.md"), LinkKind::Relative);
-        assert_eq!(classify_target("HTTPS://example.com"), LinkKind::Https);
+        assert_eq!(classify_link("C:\\note\\local.md"), LinkKind::Relative);
+        assert_eq!(classify_link("HTTPS://example.com"), LinkKind::Https);
     }
 }

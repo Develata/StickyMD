@@ -24,10 +24,10 @@ pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> R
     // in Explorer's tray, so an opened menu proves the icon.
     let items = tray::menu_items(repository, child.id())?;
     checks.record("tray-icon-present", &[]);
-    let expected = ["9690-85CF", "7F6E-9876", "9000-51FA"];
-    if items != expected {
+    if items != tray::VISIBLE_WINDOW_MENU {
         return Err(format!(
-            "tray menu items are {items:?}, expected only {expected:?} in order"
+            "tray menu items are {items:?}, expected only {:?} in order",
+            tray::VISIBLE_WINDOW_MENU
         ));
     }
     checks.record("tray-menu-items", &[]);
@@ -45,6 +45,12 @@ pub(super) fn g4_01(repository: &Path, program: &Path, checks: &mut Checks) -> R
     tray::show(repository, child.id())?;
     wait_for_visibility(window, true)?;
     checks.record("tray-show-restores-window", &[]);
+    // Before anything here clicks the window, which would take the focus on its own.
+    wait_until("tray Show gives the window the keyboard", || {
+        let facts = crate::window_control::activation_facts(window)?;
+        Ok(facts.foreground && facts.active && facts.focused)
+    })?;
+    checks.record("tray-show-takes-focus", &[]);
     if source_projection(window)? != RETAINED {
         return Err("tray Show did not restore the same retained source text".to_owned());
     }

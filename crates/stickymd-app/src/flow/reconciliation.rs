@@ -2,7 +2,18 @@
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#external-change-conflict
 
+use std::path::Path;
+
 use stickymd_core::{DiskFingerprint, ExternalFileFact, ExternalFileState};
+
+/// Whether a changed path is the working note or its save temporary, the only files in the note
+/// directory whose changes can need a reconciliation. A false positive costs one extra read, so
+/// ASCII case is ignored on every file system.
+pub fn names_the_working_note(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        name.eq_ignore_ascii_case("note.md") || name.eq_ignore_ascii_case("note.md.tmp")
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExternalDecision {
@@ -36,6 +47,15 @@ pub fn decide_external_change(
 mod tests {
     use super::*;
     use stickymd_core::{LineEnding, hash_bytes};
+
+    #[test]
+    fn only_the_working_note_and_its_temporary_need_a_reconciliation() {
+        assert!(names_the_working_note(Path::new("/x/note.md")));
+        assert!(names_the_working_note(Path::new("/x/NOTE.MD.TMP")));
+        assert!(!names_the_working_note(Path::new("/x/config.toml")));
+        assert!(!names_the_working_note(Path::new("/x/image.png")));
+        assert!(!names_the_working_note(Path::new("/")));
+    }
 
     fn external(text: &str) -> ExternalFileFact {
         ExternalFileFact {

@@ -216,14 +216,14 @@ pub(super) fn g3_03(repository: &Path, program: &Path) -> Result<CaseEvidence, S
             ));
         }
         checks.record("kill-note-complete", &offset_param);
-        // A temp whose bytes differ from the canonical is always a recovery choice (plan 05
-        // recovery 3); one with the canonical's bytes is redundant and removed at startup.
+        // A temp whose bytes differ from the canonical is a recovery choice (plan 05 recovery 3);
+        // one with the canonical's bytes, or none at all, is redundant and removed at startup.
         let recovery_text = if temporary.is_file() {
             let bytes = fs::read(&temporary).map_err(io_error)?;
             let text = String::from_utf8(bytes).map_err(|error| {
                 format!("kill offset {offset_ms} left invalid recovery UTF-8: {error}")
             })?;
-            (text.as_bytes() != note_bytes.as_slice()).then_some(text)
+            (!text.is_empty() && text.as_bytes() != note_bytes.as_slice()).then_some(text)
         } else {
             None
         };
@@ -239,7 +239,11 @@ pub(super) fn g3_03(repository: &Path, program: &Path) -> Result<CaseEvidence, S
             // The choice is complete only when the temp is consumed, the canonical holds the
             // restored text and the window left the pending state.
             wait_until("recovery restored the temp", || {
-                let text = fs::read_to_string(&note).map_err(io_error)?;
+                // The restore replaces the file, and a reader can land in the instant it is not
+                // there; like `wait_note`, keep asking until the deadline.
+                let Ok(text) = fs::read_to_string(&note) else {
+                    return Ok(false);
+                };
                 Ok(!temporary.try_exists().map_err(io_error)?
                     && text == *recovered
                     && !pending(restarted_window)?)

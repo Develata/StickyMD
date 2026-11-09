@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use stickymd_render::preview::{DestinationDecodeError, decode_destination};
 use thiserror::Error;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -72,35 +73,12 @@ fn validate_destination(value: &str) -> Result<(), LocalImagePathError> {
 }
 
 fn percent_decode(value: &str) -> Result<String, LocalImagePathError> {
-    let bytes = value.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let pair = bytes
-                .get(index + 1..index + 3)
-                .ok_or_else(|| LocalImagePathError::InvalidPercentEncoding(value.to_owned()))?;
-            let high = hex(pair[0])
-                .ok_or_else(|| LocalImagePathError::InvalidPercentEncoding(value.to_owned()))?;
-            let low = hex(pair[1])
-                .ok_or_else(|| LocalImagePathError::InvalidPercentEncoding(value.to_owned()))?;
-            decoded.push((high << 4) | low);
-            index += 3;
-        } else {
-            decoded.push(bytes[index]);
-            index += 1;
+    decode_destination(value).map_err(|error| match error {
+        DestinationDecodeError::InvalidEncoding => {
+            LocalImagePathError::InvalidPercentEncoding(value.to_owned())
         }
-    }
-    String::from_utf8(decoded).map_err(|_| LocalImagePathError::InvalidUtf8(value.to_owned()))
-}
-
-const fn hex(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
+        DestinationDecodeError::InvalidUtf8 => LocalImagePathError::InvalidUtf8(value.to_owned()),
+    })
 }
 
 #[cfg(test)]

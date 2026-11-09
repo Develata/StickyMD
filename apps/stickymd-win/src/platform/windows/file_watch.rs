@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
+use stickymd_app::flow::names_the_working_note;
 use thiserror::Error;
 
 pub struct NoteDirectoryWatcher {
@@ -30,7 +31,7 @@ impl NoteDirectoryWatcher {
         let mut watcher = RecommendedWatcher::new(
             move |result: notify::Result<Event>| match result {
                 Ok(event)
-                    if event.paths.iter().any(|path| is_relevant(path))
+                    if event.paths.iter().any(|path| names_the_working_note(path))
                         && claim_hint(&callback_pending) =>
                 {
                     on_signal(FileWatchSignal::NoteHint);
@@ -63,12 +64,6 @@ fn claim_hint(pending: &AtomicBool) -> bool {
         .is_ok()
 }
 
-fn is_relevant(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| {
-        name.eq_ignore_ascii_case("note.md") || name.eq_ignore_ascii_case("note.md.tmp")
-    })
-}
-
 #[derive(Debug, Error)]
 pub enum FileWatchError {
     #[error("cannot create the filesystem watcher: {0}")]
@@ -84,14 +79,6 @@ mod tests {
     use std::fs;
     use std::sync::mpsc;
     use std::time::Duration;
-
-    #[test]
-    fn watch_filter_is_narrow() {
-        assert!(is_relevant(Path::new("C:\\x\\note.md")));
-        assert!(is_relevant(Path::new("C:\\x\\NOTE.MD.TMP")));
-        assert!(!is_relevant(Path::new("C:\\x\\config.toml")));
-        assert!(!is_relevant(Path::new("C:\\x\\image.png")));
-    }
 
     #[test]
     fn only_one_hint_can_be_pending_until_acknowledged() {
