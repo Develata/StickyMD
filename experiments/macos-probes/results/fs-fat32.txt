@@ -1,0 +1,6 @@
+rename_excl onto existing: errno 17 (File exists (os error 17)) (b=B)
+rename_excl to free name: errno 45 (Operation not supported (os error 45)) (missing=<No such file or directory (os error 2)>)
+
+thread 'main' (1161212) panicked at src/bin/fs_semantics.rs:102:30:
+called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

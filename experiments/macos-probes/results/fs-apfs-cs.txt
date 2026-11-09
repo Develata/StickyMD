@@ -1,0 +1,31 @@
+rename_excl onto existing: errno 17 (File exists (os error 17)) (b=B)
+rename_excl to free name: ok (missing=A)
+rename_swap both exist: ok (a=B b=A)
+rename_swap target missing: errno 2 (No such file or directory (os error 2))
+open O_NOFOLLOW on final symlink: Err("errno 62 (Too many levels of symbolic links (os error 62))")
+open O_NOFOLLOW through parent symlink: Ok("opened")
+open O_NOFOLLOW_ANY through parent symlink: Err("errno 62 (Too many levels of symbolic links (os error 62))")
+rename onto symlink name (plain): replaces the link, target intact: ok, link_is_symlink=false a=B
+renamex NOFOLLOW_ANY through parent symlink: errno 62 (Too many levels of symbolic links (os error 62))
+ino survives rename: true
+F_GETPATH follows a renamed fd: true
+replace changes ino to the temporary's: true
+held fd reads the replaced file: "one"
+held fd after unlink: fstat nlink=0
+openat via dirfd after directory moved: ok, landed_in_moved=true
+flock(EX|NB) on directory fd: ok
+second description flock(EX|NB): errno 35 (Resource temporarily unavailable (os error 35))
+after first closes, flock(EX|NB): ok
+O_EXLOCK held; unlocked writer: Ok(Ok(())), content=written
+O_EXLOCK held; rename by path: ok, unlink: ok
+swap-then-verify catches a late replace: swap=ok displaced="external" caught=true undo=ok note=external
+in-place writer holding the old file after publish: Ok("write returned ok"), note=mine (its write is lost)
+fsync 20 KiB: median 0.09 ms, max 0.11 ms
+F_FULLFSYNC 20 KiB: median 7.97 ms, max 9.12 ms
+fsync 1 MiB: median 0.42 ms, max 12.15 ms
+F_FULLFSYNC 1 MiB: median 8.93 ms, max 23.79 ms
+fsync on directory fd: ok
+F_FULLFSYNC on directory fd: ok
+case-insensitive lookup: false
+normalization-insensitive lookup: true
+stored bytes of NFC name: [8]

@@ -1,0 +1,40 @@
+FontSystem::new median 8.9 ms max 26.8 ms
+faces=971 without head table=["GB18030Bitmap"], census took 9.3 ms
+BAD[monospace italic] start=213 ch="中" id=3623 font=GB18030Bitmap x=951.8423 w=inf x_off=NaN y_off=NaN size=17 
+BAD[monospace italic] start=216 ch="🙂" id=2165 font=AppleColorEmoji x=inf w=17 x_off=0 y_off=0 size=17 
+BAD[monospace italic] start=220 ch="👩\u{200d}💻" id=1438 font=AppleColorEmoji x=inf w=17 x_off=0 y_off=0 size=17 
+BAD[monospace italic] start=231 ch=" " id=3 font=Menlo-Regular x=inf w=10.234863 x_off=0 y_off=0 size=17 
+BAD[monospace italic] start=255 ch="ة" id=916 font=CourierNewPSMT x=inf w=10.20166 x_off=0 y_off=0 size=17 
+BAD[monospace italic] start=253 ch="ي" id=1012 font=CourierNewPSMT x=inf w=10.20166 x_off=0 y_off=0 size=17 
+BAD[monospace italic] start=251 ch="ب" id=913 font=CourierNewPSMT x=inf w=10.20166 x_off=0 y_off=0 size=17 
+BAD[monospace italic] start=249 ch="ر" id=942 font=CourierNewPSMT x=inf w=10.20166 x_off=0 y_off=0 size=17 
+[monospace italic] glyphs=257 bad=105 fonts={"AppleColorEmoji", "CourierNewPS-ItalicMT", "CourierNewPSMT", "GB18030Bitmap", "Menlo-Regular"}
+BAD[monospace] start=213 ch="中" id=3623 font=GB18030Bitmap x=951.8423 w=inf x_off=NaN y_off=NaN size=17 
+BAD[monospace] start=216 ch="🙂" id=2165 font=AppleColorEmoji x=inf w=17 x_off=0 y_off=0 size=17 
+BAD[monospace] start=220 ch="👩\u{200d}💻" id=1438 font=AppleColorEmoji x=inf w=17 x_off=0 y_off=0 size=17 
+BAD[monospace] start=231 ch=" " id=3 font=Menlo-Regular x=inf w=10.234863 x_off=0 y_off=0 size=17 
+BAD[monospace] start=255 ch="ة" id=916 font=CourierNewPSMT x=inf w=10.20166 x_off=0 y_off=0 size=17 
+BAD[monospace] start=253 ch="ي" id=1012 font=CourierNewPSMT x=inf w=10.20166 x_off=0 y_off=0 size=17 
+BAD[monospace] start=251 ch="ب" id=913 font=CourierNewPSMT x=inf w=10.20166 x_off=0 y_off=0 size=17 
+BAD[monospace] start=249 ch="ر" id=942 font=CourierNewPSMT x=inf w=10.20166 x_off=0 y_off=0 size=17 
+[monospace] glyphs=257 bad=105 fonts={"AppleColorEmoji", "CourierNewPS-ItalicMT", "CourierNewPSMT", "GB18030Bitmap", "Menlo-Regular"}
+bitmap faces: [(ID(InnerId(279v1)), [("GB18030 Bitmap", English_UnitedStates), ("GB18030 Bitmap", Unknown)], true)]
+without bitmap faces: glyphs=257 bad=0; 中 -> PingFangSC-Regular w=17
+family "Times New Roman": 4 faces
+family "Georgia": 4 faces
+family "Songti SC": 4 faces
+family "STSong": 1 faces
+family "STFangsong": 0 faces
+family "FangSong": 0 faces
+family "仿宋": 0 faces
+family "仿宋_GB2312": 0 faces
+family "Hiragino Sans GB": 2 faces
+family "PingFang SC": 6 faces
+family "Heiti SC": 2 faces
+family "Kaiti SC": 3 faces
+family "Menlo": 4 faces
+family "SF Mono": 0 faces
+family "Monaco": 1 faces
+family "Courier New": 4 faces
+family "Consolas": 0 faces
+total faces: 970

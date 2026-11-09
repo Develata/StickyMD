@@ -1,0 +1,51 @@
+<work>/bundle/A/Probe.app: replacing existing signature
+<work>/bundle/B/Probe.app: replacing existing signature
+verify fresh bundle: 0
+<work>/bundle/A/Probe.app: rejected
+after open A: processes=1
+after open A again: processes=1
+after open B (same id, other path): processes=2
+after direct exec of A: processes=3
+after open -n A: processes=4
+--- <work>/bundle/A/probe-37073.log
+pid 37073 exe <work>/bundle/A/Probe.app/Contents/MacOS/bundle_probe
+canonical exe <work>/bundle/A/Probe.app/Contents/MacOS/bundle_probe
+program dir <work>/bundle/A
+cwd /
+args ["<work>/bundle/A/Probe.app/Contents/MacOS/bundle_probe"]
+handler installed at Init
+focused: false
+focused: true
+apple event: reopen
+focused: false
+--- <work>/bundle/A/probe-37100.log
+pid 37100 exe <work>/bundle/A/Probe.app/Contents/MacOS/bundle_probe
+canonical exe <work>/bundle/A/Probe.app/Contents/MacOS/bundle_probe
+program dir <work>/bundle/A
+cwd /Users/develata/gitclone/StickyMD/experiments/macos-probes
+args ["<work>/bundle/A/Probe.app/Contents/MacOS/bundle_probe"]
+handler installed at Init
+focused: false
+focused: true
+focused: false
+--- <work>/bundle/A/probe-37131.log
+pid 37131 exe <work>/bundle/A/Probe.app/Contents/MacOS/bundle_probe
+canonical exe <work>/bundle/A/Probe.app/Contents/MacOS/bundle_probe
+program dir <work>/bundle/A
+cwd /
+args ["<work>/bundle/A/Probe.app/Contents/MacOS/bundle_probe"]
+handler installed at Init
+focused: false
+focused: true
+--- <work>/bundle/B/probe-37092.log
+pid 37092 exe <work>/bundle/B/Probe.app/Contents/MacOS/bundle_probe
+canonical exe <work>/bundle/B/Probe.app/Contents/MacOS/bundle_probe
+program dir <work>/bundle/B
+cwd /
+args ["<work>/bundle/B/Probe.app/Contents/MacOS/bundle_probe"]
+handler installed at Init
+focused: false
+focused: true
+focused: false
+<work>/bundle/A/Probe.app: a sealed resource is missing or invalid
+verify after writing inside the bundle: 1

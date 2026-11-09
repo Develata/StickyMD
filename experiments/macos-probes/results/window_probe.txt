@@ -1,0 +1,29 @@
+tray at Init: created, rect=Some(Rect { size: PhysicalSize { width: 68, height: 0 }, position: PhysicalPosition { x: 0.0, y: 1964.0 } })
+window: scale=2 inner=PhysicalSize { width: 1040, height: 1360 } outer=PhysicalSize { width: 1040, height: 1360 } monitor=Some("Monitor #41057") activationPolicy=1
+screen 0: frame=(0,0 1512x982) visible=(0,90 1512x859) scale=2
+place on screen: requested=(100,120) winit_read=(100.0,120.0) ns_frame=origin(100.0,182.0) size(520.0,680.0)
+place off left leaving 3: requested=(-517,120) winit_read=(-517.0,120.0) ns_frame=origin(-517.0,182.0) size(520.0,680.0)
+place off right leaving 3: requested=(1509,120) winit_read=(1509.0,120.0) ns_frame=origin(1509.0,182.0) size(520.0,680.0)
+place off top leaving 3: requested=(300,-677) winit_read=(300.0,33.0) ns_frame=origin(300.0,269.0) size(520.0,680.0)
+place under the menu bar y=0: requested=(300,0) winit_read=(300.0,33.0) ns_frame=origin(300.0,269.0) size(520.0,680.0)
+place off bottom leaving 3: requested=(300,979) winit_read=(300.0,979.0) ns_frame=origin(300.0,-677.0) size(520.0,680.0)
+level: normal=0 always_on_top=3 back=0
+visibility: before=(true, Some(true)) hidden=(false, Some(false)) shown=(true,Some(true)) minimized=Some(false)
+alpha: set 0.4 read 0.4 isOpaque=true back=1
+focus_window: (app_active, key) before=(true, true) immediately_after=(true, true)
+focus_window: after 800 ms=(true, true) focus_events=[(false, 0.061152833), (true, 0.072876708), (false, 4.094006125), (true, 4.094006458)]
+collectionBehavior default=0x0
+collectionBehavior canJoinAllSpaces|fullScreenAuxiliary read=0x101
+hidesOnDeactivate=false
+tray rect: Some(Rect { size: PhysicalSize { width: 68, height: 66 }, position: PhysicalPosition { x: 1758.0, y: 0.0 } })
+footprint with window shown: 31.4 MiB
+modal returned -1001
+modal: no panic; worker events delivered during the modal=0 (before+during total 0)
+frames default 520x680: physical=1040x1360 expected_buffer=5657600 B heap_per_frame=5657634 B allocs_per_frame=1.1 age_sum=0 buffer_mut p50=0.029 p95=0.048 ms present p50=2.459 p95=2.912 ms footprint 39.5->45.0 MiB
+frames split 900x680: physical=1800x1360 expected_buffer=9792000 B heap_per_frame=9792034 B allocs_per_frame=1.1 age_sum=0 buffer_mut p50=0.060 p95=0.210 ms present p50=4.002 p95=4.601 ms footprint 45.0->77.1 MiB
+frames back to default: physical=1040x1360 expected_buffer=5657600 B heap_per_frame=5657633 B allocs_per_frame=1.2 age_sum=0 buffer_mut p50=0.100 p95=0.194 ms present p50=2.669 p95=6.018 ms footprint 77.1->73.0 MiB
+cpu idle: 0.067%
+cpu caret as full frames: 1.584% blinks=23 heap_bytes_per_blink=5657600 footprint 72.6->47.5 MiB
+cpu caret as sublayer toggle: 0.009% blinks=23 heap_bytes_per_blink=0
+elapsed: 47.7 s
+tray at the end: rect=Some(Rect { size: PhysicalSize { width: 68, height: 66 }, position: PhysicalPosition { x: 1758.0, y: 0.0 } })
