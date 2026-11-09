@@ -791,6 +791,7 @@ name = "macos-probes"
 version = "0.0.0"
 dependencies = [
  "arboard",
+ "block2 0.6.2",
  "cosmic-text",
  "libc",
  "notify",

@@ -1,0 +1,44 @@
+global monitor installed: true
+   0.147 winit Focused(false)
+   1.357 parked Left, app_active=false
+   1.357 warp into strip: 0
+   1.359 first hit: mouseLocation poll
+   1.756 revealed, app_active=false (must stay false)
+   2.919 left for 500 ms, app_active=false
+   2.919 Left: winit tracking rect=0, NSTrackingArea ActiveAlways=0, NSEvent global monitor=0, mouseLocation poll=18
+   3.336 parked Right, app_active=false
+   3.337 warp into strip: 0
+   3.338 first hit: mouseLocation poll
+   3.742 revealed, app_active=false (must stay false)
+   4.902 left for 500 ms, app_active=false
+   4.902 Right: winit tracking rect=0, NSTrackingArea ActiveAlways=0, NSEvent global monitor=0, mouseLocation poll=19
+   5.311 parked Top, app_active=false
+   5.313 warp into strip: 0
+   5.314 first hit: mouseLocation poll
+   5.715 revealed, app_active=false (must stay false)
+   5.747 first hit: NSEvent global monitor
+   6.869 left for 500 ms, app_active=false
+   6.869 Top: winit tracking rect=0, NSTrackingArea ActiveAlways=0, NSEvent global monitor=1, mouseLocation poll=16
+  10.797 winit CursorEntered
+  10.797 first hit: winit tracking rect
+  10.797 first hit: NSTrackingArea ActiveAlways
+  11.195 winit CursorLeft
+  15.528 winit CursorEntered
+  16.078 winit Focused(true)
+  16.394 winit CursorLeft
+  18.658 winit Focused(false)
+poll at 20 Hz: cpu=0.834%
+  35.578 winit CursorEntered
+  35.578 winit CursorLeft
+  35.639 winit CursorEntered
+  36.086 winit CursorLeft
+  36.086 winit CursorEntered
+  37.103 winit CursorLeft
+  43.519 winit CursorEntered
+  43.734 winit Focused(true)
+  44.714 winit CursorLeft
+  44.719 winit CursorEntered
+  44.827 winit CursorLeft
+  45.302 winit Focused(false)
+poll at 10 Hz: cpu=0.547%
+auto run finished: ["Left: winit tracking rect=0, NSTrackingArea ActiveAlways=0, NSEvent global monitor=0, mouseLocation poll=18", "Right: winit tracking rect=0, NSTrackingArea ActiveAlways=0, NSEvent global monitor=0, mouseLocation poll=19", "Top: winit tracking rect=0, NSTrackingArea ActiveAlways=0, NSEvent global monitor=1, mouseLocation poll=16"]

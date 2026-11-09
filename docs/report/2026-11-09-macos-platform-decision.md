@@ -337,3 +337,34 @@ cd /Users/develata/gitclone/StickyMD/experiments/macos-probes && cargo build --r
 ```
 
 `run_fs_matrix.sh`（APFS、大小写敏感 APFS、HFS+、exFAT、FAT32，用临时磁盘映像）、`run_bundle_matrix.sh`、`window_probe`、`window_extra`、`notify_probe`、`glyph_inf`。exFAT、FAT32 的探针在 `RENAME_EXCL` 返回 `ENOTSUP` 后中止，属预期。
+
+## Resolution
+
+2026-11-09，USER 的答复。其余建议未表态，视为未批准，`docs/plan` 不变。
+
+- **中文字体：** 用 macOS 默认字体，不用仿宋。本机中文回退选中的是 PingFang SC（`results/glyph_inf.txt`），候选取它。S3 仍需要，因为现有候选全是 Windows 字体名，找不到时取第一个名字（`source/fonts.rs`）。
+- **快捷键：** 换成 Cmd。
+- **多屏：** 跳过，保持 `NOT TESTED`。
+- **悬停：** 优先贴边。实现不了时再考虑刘海区域、固定贴边或别的方法，届时调研同类产品。
+- **多桌面：** 要求测试切换时是否出错。
+
+### 悬停实测（2026-11-09，真实鼠标，另一应用在前台）
+
+| 边 | 结果 |
+| --- | --- |
+| 右边缘 3 pt 细条 | **通过。** winit `CursorEntered`、`NSTrackingArea`、全局监听同一时刻触发；展开和收回时 `app_active` 一直为 false，不抢焦点 |
+| 左边缘 | 没有数据：等待 240 s，指针没有进入细条 |
+| 菜单栏下方 | 没有数据：同上。无法区分“没去碰”和“穿过去没落在 3 pt 内”；探针已加接近距离记录 |
+
+结论：贴边悬停可以用 winit 已有事件实现，不需要新机制。刘海区域、固定贴边与同类产品调研暂不启动，除非菜单栏下方补测不通过，届时只影响顶部贴边。
+
+替代检测方案的代价：`mouseLocation` 轮询 20 Hz 为 0.834%、10 Hz 为 0.547%（这段时间鼠标也在动，数字偏高），超过 0.1% 的空闲硬门，不采用。`CGWarpMouseCursorPosition` 不产生跟踪事件，自动化测不了悬停（`results/hover_auto.txt`）。
+
+### 多桌面实测（同日，只完成一部分）
+
+只捕获到一次切换：全屏应用桌面（Space 154，type 4）→ 普通桌面（Space 1）。窗口设为 `canJoinAllSpaces | fullScreenAuxiliary`。
+
+- 两个桌面上 `isOnActiveSpace`、`isVisible` 都为 true，位置不变，没有 `Moved`、`Resized`。
+- 切换中 `Occluded` 变 true 又变 false，约 100 ms。共享层没有处理 `Occluded`，不影响行为。
+
+未测：窗口聚焦时切换、切换后隐藏再显示、切换后唤醒、贴边细条切换、默认行为对比，以及全屏桌面上是否肉眼可见（`occlusionState` 报告可见，未经人眼确认）。原始记录：`results/hover_guided-run1.txt`、`results/spaces_probe-run1.txt`。

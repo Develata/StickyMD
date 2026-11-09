@@ -1,0 +1,18 @@
+   0.031 === phase 1: joins all Spaces, floating, needs 4 switches
+   0.033 [phase start] space=154 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+   0.035 event Resized(PhysicalSize { width: 640, height: 480 })
+   0.035 event ScaleFactorChanged { scale_factor: 2.0, inner_size_writer: InnerSizeWriter { new_inner_size: (Weak) } }
+   0.035 event Resized(PhysicalSize { width: 640, height: 480 })
+   0.035 event Focused(false)
+   0.035 event Moved(PhysicalPosition { x: 840, y: 520 })
+   0.046 event Focused(true)
+   0.059 event Occluded(false)
+   1.603 event Focused(false)
+ 216.828 event Occluded(true)
+ 216.931 event Occluded(false)
+ 218.293 --- space change 1 in phase 1
+ 218.293 [at change] space=1 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+ 218.733 [+0.4 s] space=1 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+ 219.496 [+1.2 s] space=1 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+ 300.004 gave up in phase 1
+ 300.004 event Destroyed
