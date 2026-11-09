@@ -81,6 +81,15 @@ impl<H: Host> DesktopShell<H> {
             }
             HostSignal::Tray(command) => self.handle_tray_command(command),
             HostSignal::DisplayTopologyChanged => self.recover_display_topology(),
+            HostSignal::PointerLeft => {
+                if !self.pointer_inside_window {
+                    self.dispatch_window_intent(
+                        stickymd_app::flow::window::state::WindowIntent::PointerLeft {
+                            now_ms: self.timestamp_ms(),
+                        },
+                    );
+                }
+            }
         }
     }
 }

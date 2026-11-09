@@ -47,6 +47,8 @@ pub enum HostSignal {
     DisplayTopologyChanged,
     NoteDirectoryChanged,
     WatchFailed(String),
+    /// See `Host::keeps_pointer_after_leave`.
+    PointerLeft,
 }
 
 /// The tray. It takes `EventSink`, so it lives here and not with the ports in `stickymd-app`.
@@ -135,6 +137,16 @@ pub trait Host:
     fn caret_overlay(&mut self) -> Option<&mut dyn CaretOverlay> {
         None
     }
+
+    /// The pointer left the window but still counts as over it, in an area of the desktop only
+    /// the host can see. The host posts `HostSignal::PointerLeft` when it really has left.
+    fn keeps_pointer_after_leave(&mut self) -> bool {
+        false
+    }
+
+    /// A requested quit will not happen: it was blocked, or its barrier failed. A host that answered
+    /// the system's termination request with "later" has to take that answer back.
+    fn quit_abandoned(&mut self) {}
 
     /// For a host's verification probe; `true` ends the event loop.
     fn after_present(&mut self, _facts: &PresentFacts<'_>) -> bool {

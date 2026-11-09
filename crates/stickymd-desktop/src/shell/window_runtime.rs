@@ -241,10 +241,12 @@ impl<H: Host> DesktopShell<H> {
             WindowEffect::QuitBlocked => {
                 self.diagnostic = Some("退出前必须先解决恢复或外部修改冲突。".into());
                 self.request_redraw();
+                self.host.quit_abandoned();
             }
             WindowEffect::QuitCancelled(barrier) => {
                 self.diagnostic = Some(format!("退出已取消：{barrier:?} 未安全完成。"));
                 self.request_redraw();
+                self.host.quit_abandoned();
                 // Quitting stopped the dock timers; a window that stays gets them back.
                 self.refresh_window_guards();
             }

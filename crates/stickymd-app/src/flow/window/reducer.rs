@@ -197,12 +197,15 @@ impl WindowShellCoordinator {
         effects: &mut Vec<WindowEffect>,
     ) {
         // Guards are refreshed for IME, persistence, and drag facts too. Only
-        // a real focus acquisition may revoke the collapsed sensor's temporary
-        // z-order; replaying an unchanged focused snapshot after manual hide
-        // must not make the 3-DIP recovery path unreachable.
+        // a real focus acquisition may revoke the sensor's temporary z-order,
+        // and not while the window is or is becoming a strip: focus handed back
+        // to it (returning to its desktop) must not make the 2-DIP recovery
+        // path unreachable. The expansion that follows revokes it (plan 09).
         let gained_focus = !self.state.guards.window_focused && guards.window_focused;
         self.state.guards = guards;
-        if gained_focus {
+        let staying_collapsed =
+            matches!(self.current_stable(), StableVisibility::DockedCollapsed(_));
+        if gained_focus && !staying_collapsed {
             self.set_temporary_sensor_topmost(false, now_ms, effects);
         }
         if guards.blocks_auto_collapse() {
@@ -1525,6 +1528,52 @@ mod phase8_window_tests {
         });
         assert!(asks_sensor_topmost(&effects, false));
         assert!(!coordinator.state().temporary_sensor_topmost());
+    }
+
+    /// Plan 09: returning to the desktop hands focus back to a window that is a strip by now.
+    #[test]
+    fn focus_handed_back_to_a_strip_keeps_it_on_top_and_does_not_expand_it() {
+        let guards = |window_focused, now_ms| WindowIntent::GuardsChanged {
+            guards: WindowGuardSnapshot {
+                window_focused,
+                ..Default::default()
+            },
+            now_ms,
+        };
+        let mut coordinator = coordinator(StableVisibility::DockedExpanded(DockEdge::Top));
+        coordinator.dispatch(guards(true, 0));
+        coordinator.dispatch(WindowIntent::ManualCollapse { now_ms: 100 });
+        coordinator.dispatch(WindowIntent::Tick { now_ms: 240 });
+        assert!(coordinator.state().temporary_sensor_topmost());
+        assert!(matches!(
+            coordinator.state().visibility,
+            VisibilityState::Presented(StableVisibility::DockedCollapsed(DockEdge::Top))
+        ));
+
+        coordinator.dispatch(guards(false, 300));
+        let effects = coordinator.dispatch(guards(true, 400));
+
+        assert!(!asks_sensor_topmost(&effects, false));
+        assert!(coordinator.state().temporary_sensor_topmost());
+        assert!(matches!(
+            coordinator.state().visibility,
+            VisibilityState::Presented(StableVisibility::DockedCollapsed(DockEdge::Top))
+        ));
+    }
+
+    #[test]
+    fn focus_arriving_during_the_collapse_animation_keeps_the_strip_on_top() {
+        let guards = |window_focused, now_ms| WindowIntent::GuardsChanged {
+            guards: WindowGuardSnapshot {
+                window_focused,
+                ..Default::default()
+            },
+            now_ms,
+        };
+        let mut coordinator = coordinator(StableVisibility::DockedExpanded(DockEdge::Left));
+        coordinator.dispatch(WindowIntent::ManualCollapse { now_ms: 100 });
+        let effects = coordinator.dispatch(guards(true, 120));
+        assert!(!asks_sensor_topmost(&effects, false));
     }
 
     #[test]

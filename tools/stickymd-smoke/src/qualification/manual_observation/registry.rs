@@ -290,8 +290,8 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         id: "P12-M38",
         tier: B,
         session: M4,
-        action: "在 125% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条",
-        expected: "geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
+        action: "在 125% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 2 DIP 感应条展开）、滚动条",
+        expected: "geometry、caret、selection、公式与图片正确；dock 与 2 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
         instance: Launched(Rendering),
         scenarios: &[
             "input",
@@ -306,8 +306,8 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         id: "P12-M39",
         tier: B,
         session: M4,
-        action: "在 150% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条",
-        expected: "geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
+        action: "在 150% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 2 DIP 感应条展开）、滚动条",
+        expected: "geometry、caret、selection、公式与图片正确；dock 与 2 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
         instance: Launched(Rendering),
         scenarios: &[
             "input",
@@ -322,8 +322,8 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         id: "P12-M40",
         tier: B,
         session: M4,
-        action: "在 200% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条",
-        expected: "geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
+        action: "在 200% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 2 DIP 感应条展开）、滚动条",
+        expected: "geometry、caret、selection、公式与图片正确；dock 与 2 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
         instance: Launched(Rendering),
         scenarios: &[
             "input",
@@ -338,8 +338,8 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         id: "P12-M47",
         tier: B,
         session: M4,
-        action: "在 100% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条",
-        expected: "geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
+        action: "在 100% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 2 DIP 感应条展开）、滚动条",
+        expected: "geometry、caret、selection、公式与图片正确；dock 与 2 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字",
         instance: Launched(Rendering),
         scenarios: &[
             "input",
@@ -379,7 +379,7 @@ pub(in crate::qualification) const CASES: &[Case] = &[
         id: "P12-M36",
         tier: Optional,
         session: M4,
-        action: "双显示器 mixed DPI 拖动、dock（含左/右 dock 的 3 DIP 感应条）、IME、Preview（跨屏移动后检查公式与图片）",
+        action: "双显示器 mixed DPI 拖动、dock（含左/右 dock 的 2 DIP 感应条）、IME、Preview（跨屏移动后检查公式与图片）",
         expected: "DIP/physical conversion、caret candidate 与感应条正确；跨屏后公式与图片按新显示器 scale 重新绘制、清晰",
         instance: Launched(Rendering),
         scenarios: &[
@@ -463,7 +463,7 @@ mod tests {
     use super::{CASES, Fixture, InstanceRule, Tier};
 
     /// SHA-256 of `docs/acceptance-cases/phase-12.md` (lines joined by `\n`) as last reviewed.
-    const PHASE12_SHA256: &str = "b232ace8a0f00a1abc1e7d3462834b3650707fc092598cbf35900b15d3dd1dc6";
+    const PHASE12_SHA256: &str = "77c5826bd0ec32480eaae566b9e4ba46f0eaef53f7a6e37e0c8b67180a966610";
 
     #[test]
     fn registry_equals_the_phase12_manual_rows_with_unique_scenarios() {

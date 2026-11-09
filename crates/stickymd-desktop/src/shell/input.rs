@@ -8,12 +8,13 @@ use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 
 use super::DesktopShell;
 use crate::host::Host;
-use crate::input::{ClipboardAlias, WindowKey, ZoomCommand, is_escape};
+use crate::input::{ClipboardAlias, KeyCommand, WindowKey, ZoomCommand, is_escape};
 use stickymd_app::config::ContentZoomPercent;
 use stickymd_app::instruction::{
     AppIntent, PersistenceIntent, PreviewIntent, WindowPreferenceIntent,
 };
 use stickymd_app::interaction::ImeSignal;
+use stickymd_app::ports::TrayCommand;
 use stickymd_app::session::ZoomInput;
 
 /// Only the native key observations consumed by the shell; borrows text without copying.
@@ -133,7 +134,12 @@ impl<H: Host> DesktopShell<H> {
         };
         let timestamp_ms = self.timestamp_ms();
         let shift = self.modifiers.shift_key();
-        let shortcut = self.modifiers.control_key() && !self.modifiers.alt_key();
+        let shortcut = (self.host.keymap().shortcut_held)(self.modifiers);
+        let command = (self.host.keymap().command_key)(code, self.modifiers);
+        if command == Some(KeyCommand::Quit) {
+            self.handle_tray_command(TrayCommand::Quit);
+            return;
+        }
 
         if code == Some(KeyCode::F6)
             && self.dispatch_persistence_intent(PersistenceIntent::ResolvePrimary)
@@ -160,8 +166,8 @@ impl<H: Host> DesktopShell<H> {
             self.handle_opacity_key(event.physical_key, event.text, code);
             return;
         }
-        if shortcut && matches!(code, Some(KeyCode::KeyF | KeyCode::KeyH)) {
-            self.open_search(code == Some(KeyCode::KeyH));
+        if let Some(KeyCommand::OpenFind | KeyCommand::OpenReplace) = command {
+            self.open_search(command == Some(KeyCommand::OpenReplace));
             return;
         }
         match (self.host.keymap().window_key)(code, shortcut, self.app.search.is_composing()) {
@@ -189,7 +195,30 @@ impl<H: Host> DesktopShell<H> {
             return;
         }
 
-        if shortcut && self.handle_shortcut(code, generation, text_len, timestamp_ms, shift) {
+        match command {
+            Some(KeyCommand::Undo) => {
+                self.undo_or_cancel(true);
+                return;
+            }
+            Some(KeyCommand::Redo) => {
+                self.undo_or_cancel(false);
+                return;
+            }
+            Some(KeyCommand::DocumentBoundary { end }) => {
+                self.app.editor.move_document_boundary(text_len, end, shift);
+                self.after_presentation_change();
+                return;
+            }
+            Some(KeyCommand::LineBoundary { end }) => {
+                let (editor, text) = self.app.editor_over_text();
+                editor.move_line_boundary(text, end, shift);
+                self.after_presentation_change();
+                return;
+            }
+            _ => {}
+        }
+
+        if shortcut && self.handle_shortcut(code, generation, text_len, timestamp_ms) {
             return;
         }
 
@@ -326,7 +355,6 @@ impl<H: Host> DesktopShell<H> {
         generation: stickymd_core::Generation,
         text_len: usize,
         timestamp_ms: u64,
-        shift: bool,
     ) -> bool {
         match code {
             Some(KeyCode::KeyA) => {
@@ -352,14 +380,6 @@ impl<H: Host> DesktopShell<H> {
                     selection: self.app.editor.selection,
                     timestamp_ms,
                 });
-            }
-            Some(KeyCode::KeyZ) => self.undo_or_cancel(true),
-            Some(KeyCode::KeyY) => self.undo_or_cancel(false),
-            Some(KeyCode::Home) | Some(KeyCode::End) => {
-                self.app
-                    .editor
-                    .move_document_boundary(text_len, code == Some(KeyCode::End), shift);
-                self.after_presentation_change();
             }
             _ => return false,
         }

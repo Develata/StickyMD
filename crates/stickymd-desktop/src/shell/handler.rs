@@ -220,11 +220,17 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
             WindowEvent::CursorLeft { .. } => {
                 self.pointer_inside_window = false;
                 self.scrollbars.hovered = None;
-                self.dispatch_window_intent(
-                    stickymd_app::flow::window::state::WindowIntent::PointerLeft {
-                        now_ms: self.timestamp_ms(),
-                    },
-                );
+                let hover_revealed = self
+                    .app
+                    .window_flow()
+                    .is_some_and(|flow| flow.state().hover_revealed());
+                if !(hover_revealed && self.host.keeps_pointer_after_leave()) {
+                    self.dispatch_window_intent(
+                        stickymd_app::flow::window::state::WindowIntent::PointerLeft {
+                            now_ms: self.timestamp_ms(),
+                        },
+                    );
+                }
                 self.request_redraw();
             }
             WindowEvent::MouseInput { state, button, .. } => {

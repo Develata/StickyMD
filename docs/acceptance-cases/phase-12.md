@@ -62,7 +62,7 @@ PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；人�
 | P12-M13 | 把 exact EXE 拖向底边 | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；不进入 Bottom dock | NOT TESTED |
 | P12-M14 | 对 exact EXE 实测 24/25 DIP capture threshold | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；24 DIP 吸附，25 DIP 不吸附 | NOT TESTED |
 | P12-M15 | 对 exact EXE 实测 nearest-edge 与 top-left/top-right tie | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；选择最近允许边，精确优先级 `Top > Left > Right` | NOT TESTED |
-| P12-M16 | 通过 exact EXE 的 3 DIP sensor hover 展开、离开 | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；100 ms reveal、500 ms leave collapse 边界 | NOT TESTED |
+| P12-M16 | 通过 exact EXE 的 2 DIP sensor hover 展开、离开 | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；100 ms reveal、500 ms leave collapse 边界 | NOT TESTED |
 | P12-M17 | Exact EXE Docked 时分别 Pin ON/OFF 后失焦并重复 sensor 流程 | Automated exact candidate | `phase-14.ps1 -G4` / G4-02；Pin 与 700/100/500 ms auto-hide 语义正交 | NOT TESTED |
 | P12-M18 | 220×120 Source 模式输入与滚动 | Manual | 内容可用、caret/selection/IME 不被工具栏遮挡 | NOT TESTED |
 | P12-M19 | 220×120 Preview 模式滚动/选择/链接 | Manual | viewport、selection 与控制区可用 | NOT TESTED |
@@ -87,10 +87,10 @@ PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；人�
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P12-M38 | 在 125% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
-| P12-M39 | 在 150% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
-| P12-M40 | 在 200% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
-| P12-M47 | 在 100% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 3 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 3 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
+| P12-M38 | 在 125% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 2 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 2 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
+| P12-M39 | 在 150% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 2 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 2 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
+| P12-M40 | 在 200% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 2 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 2 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
+| P12-M47 | 在 100% DPI 完成输入、Preview、左/右/上 dock（拖到边缘、失焦收起，另一窗口在前台时悬停 2 DIP 感应条展开）、滚动条 | Manual | geometry、caret、selection、公式与图片正确；dock 与 2 DIP 感应条正确，悬停展开不抢前台焦点；滚动条可抓取且不遮字 | NOT TESTED |
 
 ## Manual Tier O — optional; needs another machine, a VM or a second display; NOT TESTED never blocks, an observed FAIL does
 
@@ -98,7 +98,7 @@ PowerShell 5.1/7 自动回归已通过，映射 [REL-CLI-16](phase-14.md)；人�
 | --- | --- | --- | --- | --- |
 | P12-M34 | 在 Clean Windows 11 VM 解压并运行 unsigned ZIP | Manual | 无额外 runtime 安装即可启动；信誉提示与 README 描述一致 | NOT TESTED |
 | P12-M35 | 双显示器同 DPI 拖动、dock、tray restore、主显示器切换，副屏在右侧（顶部对齐）与下方（左侧对齐） | Manual | monitor identity、位置和 dock edge 稳定 | NOT TESTED |
-| P12-M36 | 双显示器 mixed DPI 拖动、dock（含左/右 dock 的 3 DIP 感应条）、IME、Preview（跨屏移动后检查公式与图片） | Manual | DIP/physical conversion、caret candidate 与感应条正确；跨屏后公式与图片按新显示器 scale 重新绘制、清晰 | NOT TESTED |
+| P12-M36 | 双显示器 mixed DPI 拖动、dock（含左/右 dock 的 2 DIP 感应条）、IME、Preview（跨屏移动后检查公式与图片） | Manual | DIP/physical conversion、caret candidate 与感应条正确；跨屏后公式与图片按新显示器 scale 重新绘制、清晰 | NOT TESTED |
 | P12-M37 | 运行中断开 StickyMD 所在的非主显示器，再重新连接该显示器 | Manual | 断开后窗口恢复到主显示器且完全可见；重新连接后窗口仍完全可见、不留在不可见坐标 | NOT TESTED |
 | P12-M42 | RDP reconnect 后继续输入、保存、dock | Manual | display/config change 不丢窗口或文本；无环境则 NOT TESTED | NOT TESTED |
 | P12-M43 | 物理 negative-coordinate monitor layout | Manual | restore/dock/ratio 保存不假设非负坐标 | NOT TESTED |

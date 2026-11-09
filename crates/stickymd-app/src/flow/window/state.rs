@@ -416,6 +416,11 @@ impl WindowShellState {
         self.visibility
     }
 
+    /// The window is out only because the pointer reached its strip.
+    pub fn hover_revealed(&self) -> bool {
+        self.dock.hover_revealed
+    }
+
     #[cfg(test)]
     pub fn dock(&self) -> &DockState {
         &self.dock

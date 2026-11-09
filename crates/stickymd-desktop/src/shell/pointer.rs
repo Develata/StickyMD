@@ -164,7 +164,7 @@ impl<H: Host> DesktopShell<H> {
     }
 
     pub(super) fn handle_scroll(&mut self, delta: MouseScrollDelta) {
-        if self.modifiers.control_key() && !self.modifiers.alt_key() {
+        if (self.host.keymap().shortcut_held)(self.modifiers) {
             let dpi = self
                 .window
                 .as_ref()

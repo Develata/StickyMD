@@ -197,12 +197,12 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "phase08:document",
         62,
-        "89a5cf03530e0c50bf99b387850e1c4b5c187aeb0468cd7e35927ef0863b2e3e",
+        "4cb4edd49760341a46979e81c8c4caf6e6f86d6639f22691876edf65a7385435",
     ),
     (
         "plan09:dock",
         15,
-        "61eaa593a1f9ec7b8fd1e78eeb71933de2c53aa4b5e6e357c5972d46c6098c7e",
+        "96e03f6dee2fce6a18b3e94498642af1f91c1ca2f536547ac60ccbdb8879c49e",
     ),
     (
         "plan09:scrollbars",
@@ -217,12 +217,12 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "plan09:tray",
         7,
-        "12a552a2eaea96e0e4199442bb4510a9edb35573183722917861b38fc81e7709",
+        "bf4580d3f45b1ee457440afe46cb180864a0e1593c46d24cdc73c85d5603d026",
     ),
     (
         "plan09:document",
         32,
-        "f26d11b4c46721c84b05f678a87c53245cd0bbb328b731e4e5612a91bec603b4",
+        "c6090f8d235f8ce269eecdc40be0de0d8f76fb129c33fdf1b73ac77d7d209a37",
     ),
 ];
 
@@ -279,7 +279,7 @@ const CLAUSES: &[(&str, &str)] = &[
     ("P08-D126", "532cf5fa2df78d8e"),
     ("P08-D127", "876c52d089c0952c"),
     ("P08-D128", "59a4a2e682a610ff"),
-    ("P08-D129", "fda7f600652f2fc2"),
+    ("P08-D129", "f7b46f365d7a0472"),
     ("P08-D130", "5a37e6c1562767b1"),
     ("P08-D131", "707119b6b340a92c"),
     ("P08-D132", "28d99f39044843d7"),

@@ -223,6 +223,7 @@ USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-de
 | 主窗口身份 | `ActivationPolicy::Accessory` + `LSUIElement`，对应 Tool Window；托盘创建失败时切回 `Regular`（`restore_ordinary_entry`） |
 | 多桌面 | `canJoinAllSpaces \| fullScreenAuxiliary`。默认行为下在别的桌面唤醒，窗口取得焦点但不可见，禁止使用 |
 | 工作区 | `NSScreen.visibleFrame`；显示器身份 `CGDisplayCreateUUIDFromDisplayID` |
+| 显示器变化 | `NSApplicationDidChangeScreenParametersNotification` 转 `DisplayTopologyChanged`。全部显示器休眠时读到的列表为空，`MonitorSource` 报不可用，窗口保持原位，醒来后再次恢复；此时启动按“没有可用的显示器”停止 |
 | 整窗透明度 | `NSWindow.alphaValue` |
 | 置顶 | winit `AlwaysOnTop`（floating level） |
 | Top 收起 | 窗口保持原尺寸，上移到**屏幕顶边**外露出 2 DIP，层级在菜单栏之上（`mainMenu + 3`）；展开动画结束后降回。其余两边与 Windows 相同 |

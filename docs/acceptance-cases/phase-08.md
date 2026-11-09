@@ -119,7 +119,7 @@ environment-sensitive behavior is never relabelled automated merely because a sy
 | P08-D042 | bottom dock is absent | Automated | A03 edge-enum tests PASS | AUTOMATED PASS |
 | P08-D043 | snap threshold is 24 DIP | Automated | A03 exact-boundary tests PASS | AUTOMATED PASS |
 | P08-D044 | detach threshold is greater than 16 DIP | Automated | A03 exact-boundary tests PASS | AUTOMATED PASS |
-| P08-D045 | collapsed sensor is 3 DIP | Automated | A03 DPI geometry tests PASS | AUTOMATED PASS |
+| P08-D045 | collapsed sensor is 2 DIP | Automated | A03 DPI geometry tests PASS | AUTOMATED PASS |
 | P08-D046 | top sensor retains window width | Automated | A03 geometry tests PASS | AUTOMATED PASS |
 | P08-D047 | left/right sensor retains window height | Automated | A03 geometry tests PASS | AUTOMATED PASS |
 | P08-D048 | primary architecture uses one window as sensor | Automated | A06/A13 architecture tests PASS | AUTOMATED PASS |
@@ -203,7 +203,7 @@ environment-sensitive behavior is never relabelled automated merely because a sy
 | P08-D126 | Left Dock visual | Manual | real receipt required by M01 | NOT TESTED |
 | P08-D127 | Right Dock visual | Manual | real receipt required by M02 | NOT TESTED |
 | P08-D128 | Top Dock visual | Manual | real receipt required by M03 | NOT TESTED |
-| P08-D129 | 3-DIP sensor visual | Manual | real receipt required by M01-M03 | NOT TESTED |
+| P08-D129 | 2-DIP sensor visual | Manual | real receipt required by M01-M03 | NOT TESTED |
 | P08-D130 | hover no-focus visual | Manual | real receipt required by M01-M03 | NOT TESTED |
 | P08-D131 | tray visual and menu | Manual | real receipt required by M05 | NOT TESTED |
 | P08-D132 | native Export dialog | Manual | inherited real receipt required by M15 | NOT TESTED |

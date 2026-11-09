@@ -797,7 +797,7 @@ desktop jitter 成功率。GitHub-hosted CI 只运行该 harness 的无界面 pa
 spot check，但标准 clipboard 格式的 exact-EXE 集成结果才是该组可重复的 release evidence。
 
 G4 tray/dock/editor-compatibility/identity/real-IME 路径复用同一 exact-candidate 生命周期与收据合同，并保持
-六个高内聚组：G4-01 tray 菜单、close/show/dirty quit；G4-02 主屏 Left/Top/Right、3 DIP 感应条、
+六个高内聚组：G4-01 tray 菜单、close/show/dirty quit；G4-02 主屏 Left/Top/Right、2 DIP 感应条、
 24/25 DIP capture、`Top > Left > Right`、700/100/500 ms 与 focus/IME/Pin guard；G4-03 legacy
 clipboard shortcuts、Preview 只读与 Source Search 的键盘查找/替换、视图停放恢复；G4-04 真实 toolbar 数学分隔符转换、源码即时投影、literal
 safety 与单次 Undo；G4-05 真实 junction canonical identity、同 HWND 唤醒与第二实例零 durable write；
