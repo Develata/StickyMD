@@ -194,7 +194,7 @@ jobs:
         run: cargo run --quiet -p stickymd-smoke --locked -- qualification native-runtime --exe=target/release/stickymd-win.exe
 
   portable-core:
-    name: Linux portable-core build (core + render + app)
+    name: Linux portable-core build (core + render + app + desktop)
     needs: plan
     if: needs.plan.outputs.portable_needed == 'true'
     runs-on: ubuntu-latest

@@ -38,6 +38,13 @@ pub(crate) use verify::verify;
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum OwnerTarget {
     Lib,
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "no owner is a binary's test since the shell left the Windows binary (Phase 15 C6); a host binary may own one again"
+        )
+    )]
     Bin(&'static str),
 }
 

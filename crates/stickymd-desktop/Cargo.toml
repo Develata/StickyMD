@@ -1,0 +1,31 @@
+[package]
+name = "stickymd-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "StickyMD Shared Desktop: view geometry, title projection and the software frame path over winit and softbuffer, free of any native platform API"
+
+[features]
+# Test support for a Platform Host's own test build; never part of a product build.
+testing = ["stickymd-app/testing"]
+
+[dependencies]
+stickymd-core = { path = "../stickymd-core", version = "0.1.0" }
+stickymd-render = { path = "../stickymd-render", version = "0.1.0" }
+stickymd-app = { path = "../stickymd-app", version = "0.1.0" }
+thiserror.workspace = true
+tiny-skia.workspace = true
+winit.workspace = true
+softbuffer.workspace = true
+raw-window-handle.workspace = true
+
+[dev-dependencies]
+# The shell tests read and set the session's state directly.
+stickymd-app = { path = "../stickymd-app", version = "0.1.0", features = ["testing"] }
+unicode-segmentation.workspace = true
+
+# winit stops with `compile_error!` on these targets until a backend is chosen. Both backends load
+# their system libraries at run time; `kms` and `wayland-csd-adwaita` stay off.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+winit = { workspace = true, features = ["x11", "wayland", "wayland-dlopen"] }
+softbuffer = { workspace = true, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }

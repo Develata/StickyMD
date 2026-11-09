@@ -5,5 +5,5 @@
 mod bootstrap;
 mod diagnostics;
 
-pub use bootstrap::{BootstrapMilestone, BootstrapOutcome, bootstrap_observed};
-pub use diagnostics::{StartupDetail, StartupDiagnostics};
+pub use bootstrap::{BootstrapMilestone, bootstrap_observed};
+pub use diagnostics::StartupDiagnostics;

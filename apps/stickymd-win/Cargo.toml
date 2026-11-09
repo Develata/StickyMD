@@ -16,18 +16,19 @@ stickymd-core = { path = "../../crates/stickymd-core", version = "0.1.0" }
 stickymd-render = { path = "../../crates/stickymd-render", version = "0.1.0" }
 stickymd-app = { path = "../../crates/stickymd-app", version = "0.1.0" }
 thiserror.workspace = true
-tiny-skia.workspace = true
 toml.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
 cosmic-text.workspace = true
-unicode-segmentation.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+stickymd-desktop = { path = "../../crates/stickymd-desktop", version = "0.1.0", features = ["testing"] }
 
 [target.'cfg(windows)'.dependencies]
+stickymd-desktop = { path = "../../crates/stickymd-desktop", version = "0.1.0" }
 arboard.workspace = true
 raw-window-handle.workspace = true
-softbuffer.workspace = true
 winit.workspace = true
 notify.workspace = true
 tray-icon.workspace = true

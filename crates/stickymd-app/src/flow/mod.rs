@@ -16,15 +16,16 @@ mod recovery;
 mod save;
 pub mod window;
 
-pub use asset_io::{AssetFlow, AssetIo, AssetStep};
+pub use asset_io::{AssetFlow, AssetIo, AssetStep, reconcile_at_startup};
 pub use clipboard::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
-pub use editor::{AppEffect, EditorCoordinator};
+pub use editor::{AppEffect, EditorCoordinator, EditorFlowError};
 pub use note_guard::{PublishVerdict, guarded_publish_verdict};
 pub use note_io::{NoteEffect, NoteEffects, NoteIo};
 pub use persistence::{PersistenceCoordinator, ReconciliationAction};
 pub use preferences::{WindowPreferenceEffect, coordinate_window_preference};
 pub use preview::{
-    PreviewAction, PreviewAdmission, PreviewCoordinator, PreviewEffect, PreviewVisibility,
+    PreviewAction, PreviewAdmission, PreviewCoordinator, PreviewEffect, PreviewFlowError,
+    PreviewVisibility,
 };
 pub use preview_io::{
     PreviewFacts, PreviewFollowUp, PreviewIo, current_preview_layout, selection_for_generation,

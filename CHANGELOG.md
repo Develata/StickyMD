@@ -4,6 +4,53 @@ All notable changes are recorded here.
 
 ## Unreleased
 
+- While a display change is waiting to be applied no placement is confirmed, a topmost value whose
+  native bit is unknown can be retried explicitly, and running out of action ids sends no frame.
+- Close the review findings on the window receipts: a display-scale change is recovered and read
+  only after the native message returns; a placement is read only when one is waiting; a topmost
+  read-back failure is an unobservable bit, not a startup failure. Every show, hide, focus and
+  topmost request now has a deadline for a host that does not answer, always-on-top settles the
+  native bit in one order, a topology change while hidden keeps an unconfirmed drag out of the
+  saved placement, and a cancelled quit re-projects input from the window's current state.
+- A window placement is now confirmed by reading the window back: a drag's end and a recovery from
+  a display change reach the configuration only once the window is seen at the target (within a
+  tolerance of 0 pixels, measured on one display at 100%; mixed DPI is unmeasured). A placement
+  that fails or is not confirmed within 500 ms shows a diagnostic and writes nothing. Animation
+  frames are not read back.
+- A window show now commits only after the window reads back as visible and not minimized: the
+  tray text, input, the IME and the Preview come back on success, and a rejected show keeps the
+  window hidden, reports why and can be retried. Always-on-top reaches the configuration, its
+  write and the tray check only after the window's topmost bit reads back; the edge sensor's
+  temporary value stays out of the configuration. Neither receipt claims focus, covering or z-order
+  against other windows.
+- Close the Phase 15 move (D): the session now runs Search's replace transactions, decides when a
+  zoom is written, which window step the tray's show/hide command takes, the Preview's scheduling
+  and the startup asset boundary; a view change can only be committed as it was allowed. Outside
+  test builds the shell reads the session's state only through read-only views, so it cannot step
+  around the session's transactions. Behaviour and data formats are unchanged.
+- Move the shell out of the Windows crate into `stickymd-desktop` as `DesktopShell<H>`, with the
+  winit callbacks in `shell/handler.rs` (Phase 15 C6). The session now decides view changes, when a
+  window preference is written, the startup display and how Search opens. The shell's tests run
+  on a portable test disk and an in-memory clipboard, also on Linux; the rows that read and write
+  the note's files run once on that disk and once on the Windows storage. Behaviour and data
+  formats are unchanged.
+- Move the toolbar controls, scrollbars, Search layout and paint, Esc order, key table and
+  window-independent pointer hit tests into `stickymd-desktop` (Phase 15 C3), and make
+  `ControlLayout` the one geometry for paint, hover and press. The old second hit test of the view
+  buttons is gone; no press at an integer position reached it.
+- A selected toolbar button no longer paints its background into the resize band, the toolbar blank
+  shows the normal arrow instead of the hand, and at 125% the Split sync button is painted on
+  the rectangle it hit-tests.
+- Put every native capability the shell uses behind narrow ports and make the shell generic over
+  its host, with `WinHost` as the Windows implementation and `FakeHost` for tests (Phase 15 C5).
+  Behaviour and data formats are unchanged.
+- Move the shared application state and its business decisions into `AppSession` in
+  `stickymd-app`, and the pure interaction rules into `interaction/rules.rs` (Phase 15 C4). The
+  shell asks and answers through an ordered effect buffer, and a finished quit ends the event loop
+  at the end of its callback. Behaviour and data formats are unchanged.
+- Add the `stickymd-desktop` crate and move the view geometry, the title projection and the
+  software frame path into it (Phase 15 C). Behaviour and data formats are unchanged; these
+  tests now also run on Linux, where the crate selects its winit and softbuffer backends.
 - Move the typed intents, coordinators, configuration model and Search and editor sessions into
   the new platform-free `stickymd-app` crate (Phase 15 A). Behaviour and data formats are
   unchanged; the moved tests now also run on Linux.

@@ -43,6 +43,9 @@ impl fmt::Display for StorageFailure {
 
 impl std::error::Error for StorageFailure {}
 
+/// A failed request to the desktop host, with the same shape: the status line shows `detail`.
+pub type HostFailure = StorageFailure;
+
 #[cfg(test)]
 mod tests {
     use super::*;

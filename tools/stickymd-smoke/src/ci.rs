@@ -84,9 +84,12 @@ impl Checks {
             headless: full || !modules.is_empty(),
             release: full || modules.contains(&Module::Windows),
             portable: full
-                || modules
-                    .iter()
-                    .any(|module| matches!(module, Module::Core | Module::Render | Module::App)),
+                || modules.iter().any(|module| {
+                    matches!(
+                        module,
+                        Module::Core | Module::Render | Module::App | Module::Desktop
+                    )
+                }),
         }
     }
 }

@@ -209,6 +209,7 @@ fn is_global_input(path: &str) -> bool {
             | "crates/stickymd-core/Cargo.toml"
             | "crates/stickymd-render/Cargo.toml"
             | "crates/stickymd-app/Cargo.toml"
+            | "crates/stickymd-desktop/Cargo.toml"
             | "tools/stickymd-smoke/Cargo.toml"
             | "docs/plan/11_testing_and_release.md"
             | "docs/acceptance-cases/phase-14.md"
@@ -311,6 +312,7 @@ const PRODUCT_ROOTS: &[&str] = &[
     "crates/stickymd-core/src/",
     "crates/stickymd-render/src/",
     "crates/stickymd-app/src/",
+    "crates/stickymd-desktop/src/",
     "assets/",
 ];
 
@@ -322,15 +324,18 @@ const PRODUCT_ROOTS: &[&str] = &[
 ///   default view), the caret overlay and the shared core;
 /// - the persistence that follows any edit or preference change: autosave, reconciliation of
 ///   the app's own writes, and the atomic publish used for the note and the configuration;
-/// - the `StickyApp` state machine (`app.rs`, `app/`): its files share one mutable state that
+/// - the `DesktopShell` state machine (`crates/stickymd-desktop/src/shell/`, one rule per file, so a
+///   new file there is classified on purpose) and the Search label check that reads its fonts:
+///   the shell's files share one mutable state that
 ///   per-turn code reads (for example `export_in_flight` and `asset_paste_pending` feed the
 ///   window guards), so even a feature handler there changes every-turn behaviour.
 ///
 /// A pattern ending in `/` names a directory; any other pattern names one file.
 const EVERY_SESSION: &[&str] = &[
     "apps/stickymd-win/src/main.rs",
-    "apps/stickymd-win/src/app.rs",
-    "apps/stickymd-win/src/app/",
+    "apps/stickymd-win/src/search_label_fonts.rs",
+    "apps/stickymd-win/src/host.rs",
+    "apps/stickymd-win/src/host/",
     "apps/stickymd-win/src/startup/",
     "apps/stickymd-win/src/config/",
     "crates/stickymd-app/src/lib.rs",
@@ -338,7 +343,70 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-app/src/execution/mod.rs",
     "crates/stickymd-app/src/execution/io_worker.rs",
     "crates/stickymd-app/src/flow/asset_io.rs",
-    "apps/stickymd-win/src/surface.rs",
+    "crates/stickymd-app/src/flow/asset_io/",
+    "crates/stickymd-desktop/src/lib.rs",
+    "crates/stickymd-desktop/src/controls/",
+    "crates/stickymd-desktop/src/geometry.rs",
+    "crates/stickymd-desktop/src/host.rs",
+    "crates/stickymd-desktop/src/input/",
+    "crates/stickymd-desktop/src/preview/",
+    "crates/stickymd-desktop/src/scroll/",
+    "crates/stickymd-desktop/src/search/",
+    "crates/stickymd-desktop/src/shell/caret_runtime.rs",
+    "crates/stickymd-desktop/src/shell/escape.rs",
+    "crates/stickymd-desktop/src/shell/export_runtime.rs",
+    "crates/stickymd-desktop/src/shell/guards.rs",
+    "crates/stickymd-desktop/src/shell/handler.rs",
+    "crates/stickymd-desktop/src/shell/headless_tests.rs",
+    "crates/stickymd-desktop/src/shell/hot_path_tests.rs",
+    "crates/stickymd-desktop/src/shell/input.rs",
+    "crates/stickymd-desktop/src/shell/lifecycle.rs",
+    "crates/stickymd-desktop/src/shell/lifecycle/runtime_tests.rs",
+    "crates/stickymd-desktop/src/shell/mod.rs",
+    "crates/stickymd-desktop/src/shell/opacity_field.rs",
+    "crates/stickymd-desktop/src/shell/persistence_runtime.rs",
+    "crates/stickymd-desktop/src/shell/phase15_host_tests.rs",
+    "crates/stickymd-desktop/src/shell/phase15_receipt_tests.rs",
+    "crates/stickymd-desktop/src/shell/phase15_session_tests.rs",
+    "crates/stickymd-desktop/src/shell/phase15_worker_receipt_tests.rs",
+    "crates/stickymd-desktop/src/shell/pointer.rs",
+    "crates/stickymd-desktop/src/shell/presentation.rs",
+    "crates/stickymd-desktop/src/shell/preview_horizontal.rs",
+    "crates/stickymd-desktop/src/shell/preview_horizontal/tests.rs",
+    "crates/stickymd-desktop/src/shell/preview_input.rs",
+    "crates/stickymd-desktop/src/shell/preview_runtime.rs",
+    "crates/stickymd-desktop/src/shell/preview_runtime/runtime_tests.rs",
+    "crates/stickymd-desktop/src/shell/receipt_tests.rs",
+    "crates/stickymd-desktop/src/shell/render.rs",
+    "crates/stickymd-desktop/src/shell/scroll_application.rs",
+    "crates/stickymd-desktop/src/shell/scroll_application/tests.rs",
+    "crates/stickymd-desktop/src/shell/scroll_runtime.rs",
+    "crates/stickymd-desktop/src/shell/scroll_runtime/tests.rs",
+    "crates/stickymd-desktop/src/shell/search_controller.rs",
+    "crates/stickymd-desktop/src/shell/shell_effects.rs",
+    "crates/stickymd-desktop/src/shell/shell_pins/hover.txt",
+    "crates/stickymd-desktop/src/shell/shell_pins/press-centres.txt",
+    "crates/stickymd-desktop/src/shell/shell_pins/press-edges.txt",
+    "crates/stickymd-desktop/src/shell/shell_pins/press-integer.txt",
+    "crates/stickymd-desktop/src/shell/shell_pins/rectangles.txt",
+    "crates/stickymd-desktop/src/shell/shell_pins/scrollbars.txt",
+    "crates/stickymd-desktop/src/shell/shell_pins/search.txt",
+    "crates/stickymd-desktop/src/shell/shell_pins/toolbar.txt",
+    "crates/stickymd-desktop/src/shell/shell_pins_tests.rs",
+    "crates/stickymd-desktop/src/shell/storage_conformance.rs",
+    "crates/stickymd-desktop/src/shell/title.rs",
+    "crates/stickymd-desktop/src/shell/window_geometry_runtime.rs",
+    "crates/stickymd-desktop/src/shell/window_interaction.rs",
+    "crates/stickymd-desktop/src/shell/window_interaction/runtime_tests.rs",
+    "crates/stickymd-desktop/src/shell/window_runtime.rs",
+    "crates/stickymd-desktop/src/testing.rs",
+    "crates/stickymd-desktop/src/testing/",
+    "crates/stickymd-desktop/src/title.rs",
+    "crates/stickymd-desktop/src/frame/mod.rs",
+    "crates/stickymd-desktop/src/frame/convert.rs",
+    "crates/stickymd-desktop/src/frame/ledger.rs",
+    "crates/stickymd-desktop/src/frame/plan.rs",
+    "crates/stickymd-desktop/src/frame/surface.rs",
     "apps/stickymd-win/src/assets/mod.rs",
     "apps/stickymd-win/src/assets/safe_boundary.rs",
     "apps/stickymd-win/src/assets/storage.rs",
@@ -357,9 +425,12 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-app/src/flow/window/",
     "crates/stickymd-app/src/instruction/",
     "crates/stickymd-app/src/interaction/mod.rs",
+    "crates/stickymd-app/src/interaction/rules.rs",
+    "crates/stickymd-app/src/interaction/rules/",
     "crates/stickymd-app/src/interaction/search.rs",
     "crates/stickymd-app/src/interaction/session.rs",
     "crates/stickymd-app/src/ports/",
+    "crates/stickymd-app/src/session/",
     "apps/stickymd-win/src/persistence/",
     "apps/stickymd-win/src/platform/mod.rs",
     "apps/stickymd-win/src/platform/windows/mod.rs",

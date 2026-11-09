@@ -128,6 +128,12 @@ fn c2d_search_local_preflight() {
 }
 
 #[test]
+#[ignore = "exclusive Windows desktop and toolbar input; local EXE only"]
+fn math_conversion_local_preflight() {
+    run(&exact_checks::G4[3], super::cases::g4_04);
+}
+
+#[test]
 #[ignore = "exclusive Windows desktop and real IMEs; local EXE only"]
 fn c2d_ime_local_preflight() {
     run(&exact_checks::G4[5], super::cases::g4_06);

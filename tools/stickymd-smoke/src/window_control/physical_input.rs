@@ -45,7 +45,7 @@ impl PhysicalCursorKind {
             Self::Arrow => IDC_ARROW,
             Self::Text => IDC_IBEAM,
             Self::Pointer => IDC_HAND,
-            Self::DragRegion => IDC_HAND,
+            Self::DragRegion => IDC_ARROW,
             Self::SouthEastResize => IDC_SIZENWSE,
         }
     }

@@ -2,10 +2,14 @@ use super::*;
 use std::{
     fs,
     path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 struct Repository(PathBuf);
+
+/// Parallel tests can read the same clock value; the counter keeps their directories apart.
+static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);
 
 impl Repository {
     fn new() -> Self {
@@ -14,8 +18,9 @@ impl Repository {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "stickymd-local-git 中文 space-{}-{nonce}",
-            std::process::id()
+            "stickymd-local-git 中文 space-{}-{nonce}-{}",
+            std::process::id(),
+            NEXT_REPOSITORY.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
         let repo = Self(root);
@@ -122,6 +127,7 @@ fn local_git_keeps_old_and_new_owners_for_staged_and_unstaged_renames() {
             [
                 crate::headless::Module::Render,
                 crate::headless::Module::App,
+                crate::headless::Module::Desktop,
                 crate::headless::Module::Windows,
                 crate::headless::Module::Persistence
             ]

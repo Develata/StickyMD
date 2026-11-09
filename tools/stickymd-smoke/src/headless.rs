@@ -8,6 +8,7 @@ pub(crate) enum Module {
     Core,
     Render,
     App,
+    Desktop,
     Windows,
     Smoke,
     MarkdownMath,
@@ -15,10 +16,11 @@ pub(crate) enum Module {
 }
 
 impl Module {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::Core,
         Self::Render,
         Self::App,
+        Self::Desktop,
         Self::Windows,
         Self::Smoke,
         Self::MarkdownMath,
@@ -30,6 +32,7 @@ impl Module {
             Self::Core => "core",
             Self::Render => "render",
             Self::App => "app",
+            Self::Desktop => "desktop",
             Self::Windows => "windows",
             Self::Smoke => "smoke",
             Self::MarkdownMath => "phase1-markdown-math",
@@ -42,6 +45,7 @@ impl Module {
             Self::Core => Some("stickymd-core"),
             Self::Render => Some("stickymd-render"),
             Self::App => Some("stickymd-app"),
+            Self::Desktop => Some("stickymd-desktop"),
             Self::Windows => Some("stickymd-win"),
             Self::Smoke => Some("stickymd-smoke"),
             Self::MarkdownMath | Self::Persistence => None,
@@ -61,6 +65,7 @@ impl Module {
             Self::Core => "crates/stickymd-core/",
             Self::Render => "crates/stickymd-render/",
             Self::App => "crates/stickymd-app/",
+            Self::Desktop => "crates/stickymd-desktop/",
             Self::Windows => "apps/stickymd-win/",
             Self::Smoke => "tools/stickymd-smoke/",
             Self::MarkdownMath => "experiments/phase-01/markdown-math/",
@@ -82,7 +87,8 @@ impl Module {
         match self {
             Self::Render => &[Self::Core],
             Self::App => &[Self::Core, Self::Render],
-            Self::Windows => &[Self::Core, Self::Render, Self::App],
+            Self::Desktop => &[Self::Core, Self::Render, Self::App],
+            Self::Windows => &[Self::Core, Self::Render, Self::App, Self::Desktop],
             _ => &[],
         }
     }

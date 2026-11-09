@@ -324,7 +324,7 @@ cargo run --quiet -p stickymd-smoke --locked -- modules run render,windows --mod
 cargo run --quiet -p stickymd-smoke --locked -- modules run all --mode=all --plan
 ```
 
-The seven module names are `core`, `render`, `windows`, `smoke`,
+The eight module names are `core`, `render`, `app`, `desktop`, `windows`, `smoke`,
 `phase1-markdown-math`, and `phase1-persistence`. The default mode is `tests`;
 `performance` selects the existing headless Release baselines, and `all`
 selects both. Cargo still builds dependencies as needed. Explicit selection
@@ -338,7 +338,7 @@ are run once per request. Governance runs for every request. Workspace membershi
 comes from Cargo; an unregistered member or task target fails closed.
 
 Release test recipes share one Rust implementation in `runner/performance.rs`.
-Phase 6/7 select the three product packages, keeping unit and integration targets
+Phase 6/7 select the product packages, keeping unit and integration targets
 eligible while avoiding the smoke tool's empty Release test programs. Standalone
 render-library recipes retain their original feature context and `--lib` scope;
 they are not widened to the Windows graph. Every measurement still uses the locked
@@ -433,8 +433,9 @@ cargo run --quiet -p stickymd-smoke --locked -- ci plan --full
 The planner compares the supplied base with the actual checkout's HEAD. On PRs
 the base is the target branch commit and HEAD is GitHub's checked-out merge commit;
 on pushes the base is the event's `before` commit. It selects changed modules and
-their reverse dependencies: core selects core/render/app/windows, render selects
-render/app/windows, app selects app/windows, and smoke-only changes select smoke.
+their reverse dependencies: core selects core/render/app/desktop/windows, render selects
+render/app/desktop/windows, app selects app/desktop/windows, desktop selects
+desktop/windows, and smoke-only changes select smoke.
 
 Shared contracts/build inputs, CI/planner changes, unknown paths, missing or zero
 SHAs, a dirty worktree, failed Git comparisons and Cargo registry drift select

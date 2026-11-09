@@ -118,9 +118,16 @@ pub(super) fn g3_02(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     wait_for_layout(program)?;
     let window = crate::window_control::visible_window(child.id())?;
     crate::window_control::press_export(window)?;
+    invoke_uia(repository, "export-cancel", child.id(), None)?;
+    wait_for_owner_foreground(window)?;
+    if !regular_files(&export_parent)?.is_empty() {
+        return Err("a cancelled export wrote a file".to_owned());
+    }
+    crate::window_control::press_export(window)?;
     invoke_uia(repository, "export", child.id(), Some(&target))?;
     wait_until("export publication", || Ok(target.is_file()))?;
     checks.record("export-publishes-file", &[]);
+    wait_for_owner_foreground(window)?;
     let exported = fs::read_to_string(&target)
         .map_err(|error| format!("cannot read exported Markdown: {error}"))?;
     let copied = regular_files(&export_parent.join("g3-export-assets"))?;
@@ -164,6 +171,15 @@ pub(super) fn g3_02(repository: &Path, program: &Path) -> Result<CaseEvidence, S
     checks.record("export-leaves-working-note", &[]);
     child.kill_and_wait()?;
     Ok(checked(checks))
+}
+
+/// The note gets the foreground back when the dialog it owns closes. Checked here because the
+/// next click would activate the note from any ordinary foreground window and hide a loss.
+fn wait_for_owner_foreground(window: crate::window_control::WindowHandle) -> Result<(), String> {
+    wait_until("the foreground to return to the note", || {
+        let facts = crate::window_control::activation_facts(window)?;
+        Ok(facts.foreground && facts.active && facts.focused)
+    })
 }
 
 pub(super) fn g3_03(repository: &Path, program: &Path) -> Result<CaseEvidence, String> {

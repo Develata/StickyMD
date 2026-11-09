@@ -730,7 +730,7 @@ pipeline 在保留 RenderTree 后收到 `Relayout` 可以复用语义树；但�
   → 提交当前 snapshot → pipeline.build() 再次 parse
 ```
 
-依据为 [`app/preview_runtime.rs`](../../apps/stickymd-win/src/app/preview_runtime.rs)、
+依据为 [`app/preview_runtime.rs`](../../crates/stickymd-desktop/src/shell/preview_runtime.rs)、
 [`flow/preview.rs`](../../crates/stickymd-app/src/flow/preview.rs) 与
 [`pipeline.rs`](../../crates/stickymd-render/src/preview/pipeline.rs)。因此第 12.1 节
 “清除 raster 后恢复显示”描述的是底层能力及其条件，不能推导为当前 UI 切换的免解析承诺。

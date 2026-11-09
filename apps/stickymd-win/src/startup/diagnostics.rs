@@ -6,13 +6,15 @@ use std::env;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::Instant;
+use stickymd_desktop::frame::FrameLedger;
 
 mod details;
-pub use details::StartupDetail;
+use stickymd_desktop::host::StartupDetail;
 
 const READY_EVENT_ENV: &str = "STICKYMD_DIAGNOSTIC_READY_EVENT";
 const TRACE_PATH_ENV: &str = "STICKYMD_DIAGNOSTIC_STARTUP_TRACE";
 const EXIT_AFTER_READY_ENV: &str = "STICKYMD_DIAGNOSTIC_EXIT_AFTER_READY";
+const FRAME_LEDGER_ENV: &str = "STICKYMD_DIAGNOSTIC_FRAME_LEDGER";
 
 /// Disabled by default; records only monotonic durations and fixed milestone names.
 /// It never records note text, paths, clipboard data, or other user content.
@@ -28,21 +30,6 @@ pub struct StartupDiagnostics {
 }
 
 impl StartupDiagnostics {
-    /// Fixtures must never inherit an external trace path or readiness event.
-    #[cfg(test)]
-    pub(crate) fn disabled_for_test() -> Self {
-        Self {
-            started: Instant::now(),
-            ready_event: None,
-            trace_path: None,
-            exit_after_ready: false,
-            milestones: Vec::new(),
-            details: None,
-            finished: false,
-            failed: false,
-        }
-    }
-
     pub fn from_environment() -> Self {
         let ready_event = env::var(READY_EVENT_ENV)
             .ok()
@@ -115,6 +102,29 @@ impl StartupDiagnostics {
     /// An explicitly requested diagnostic exit survives a capture failure.
     pub fn exit_requested(&self) -> bool {
         self.finished && self.exit_after_ready
+    }
+
+    /// Whether this run measures the frame path. It then exits only once any Preview pane has a
+    /// real frame, so a Preview frame is part of what is counted.
+    pub fn measures_frames(&self) -> bool {
+        self.frame_ledger_path().is_some()
+    }
+
+    /// Writes the frame counters for the comparison in plan 10; a failed write only loses them.
+    pub fn record_frames(&self, size: winit::dpi::PhysicalSize<u32>, ledger: &FrameLedger) {
+        if let Some(path) = self.frame_ledger_path() {
+            let line = format!("size={}x{} {ledger}\n", size.width, size.height);
+            if let Err(error) = std::fs::write(path, line) {
+                eprintln!("frame ledger failed: {error}");
+            }
+        }
+    }
+
+    fn frame_ledger_path(&self) -> Option<std::ffi::OsString> {
+        self.exit_after_ready
+            .then(|| env::var_os(FRAME_LEDGER_ENV))
+            .flatten()
+            .filter(|value| !value.is_empty())
     }
 
     /// Return from main normally so app/worker guards are dropped before exit.

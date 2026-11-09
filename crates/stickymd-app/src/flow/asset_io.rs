@@ -2,13 +2,46 @@
 //!
 //! plan_ref: docs/plan/08_assets_and_export.md#state-changes
 
-use stickymd_core::{AssetEffect, Generation};
+use stickymd_core::{AssetEffect, DocumentState, Generation};
 
 use super::{AppEffect, ClipboardPort, EditorCoordinator};
 use crate::ports::{
     AssetPasteCompletion, AssetPasteFailure, AssetReconcileMode, AssetReconcileReport,
-    AssetSyncRequest, StorageFailure,
+    AssetSyncRequest, ManagedAssetStore, StorageFailure,
 };
+
+/// A normal startup is a quiescent destructive-GC boundary: no editor or worker exists yet, so the
+/// reference snapshot cannot become stale while reconciliation deletes proven unreferenced trash.
+/// A startup that offers recovery skips it; the recovery choice runs the same boundary before
+/// input returns (`AssetIo::sync_after_recovery`). Returns the warning for the status line.
+pub fn reconcile_at_startup(
+    store: &mut impl ManagedAssetStore,
+    document: &DocumentState,
+    recovery_pending: bool,
+) -> Option<String> {
+    if recovery_pending {
+        return None;
+    }
+    // Outside the worker there is no sync sequence; the store does not read the id.
+    let request = AssetSyncRequest {
+        request_id: 0,
+        generation: document.generation(),
+        effects: Vec::new(),
+        references: document.managed_ref_counts().clone(),
+        reconcile: Some(AssetReconcileMode::SafeBoundary),
+        safe_expected: Some(document.base_disk_hash()),
+    };
+    match store.sync(&request) {
+        Ok(report) if !report.missing_references.is_empty() => Some(format!(
+            "有 {} 个受管图片引用缺少文件；Markdown 未修改。",
+            report.missing_references.len()
+        )),
+        Ok(_) => None,
+        Err(error) => Some(format!(
+            "启动图片整理未完成；用户文件与文档均未删除：{error}"
+        )),
+    }
+}
 
 /// What is in flight on the asset side of the worker.
 #[derive(Debug, Default)]
@@ -235,3 +268,6 @@ impl<'a, C: ClipboardPort> AssetIo<'a, C> {
         steps
     }
 }
+
+#[cfg(test)]
+mod startup_tests;

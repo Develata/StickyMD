@@ -71,6 +71,16 @@ pub struct WinAssetStore {
     pub note_file: PathBuf,
 }
 
+impl WinAssetStore {
+    pub fn new(paths: &RuntimePaths) -> Self {
+        Self {
+            images: paths.images_dir.clone(),
+            trash: paths.trash_dir.clone(),
+            note_file: paths.note_file.clone(),
+        }
+    }
+}
+
 impl ManagedAssetStore for WinAssetStore {
     fn paste(
         &mut self,
@@ -140,11 +150,7 @@ pub fn win_io_ports(
             note_tmp: paths.note_tmp.clone(),
             note_dir: paths.note_dir.clone(),
         },
-        assets: WinAssetStore {
-            images: paths.images_dir.clone(),
-            trash: paths.trash_dir.clone(),
-            note_file: paths.note_file.clone(),
-        },
+        assets: WinAssetStore::new(paths),
         export: WinExportSink {
             note_dir: paths.note_dir.clone(),
         },
@@ -232,15 +238,25 @@ mod tests {
     /// A wrapper adds context to the message and keeps the class of what it wraps.
     #[test]
     fn phase15_a_wrapped_storage_error_keeps_its_class() {
-        let unavailable =
-            AssetPasteError::Storage(AssetStorageError::ChangedDuringProof("asset.png".into()));
-        let message = unavailable.to_string();
-        let failure = StorageFailure::from(unavailable);
-        assert_eq!(failure.kind(), FailureKind::Unavailable);
-        assert_eq!(failure.to_string(), message);
-        assert!(message.starts_with("managed image publication failed: "));
-        let failed = AssetPasteError::Storage(AssetStorageError::TooLarge);
-        assert_eq!(StorageFailure::from(failed).kind(), FailureKind::Failed);
+        let rows = [
+            (
+                AssetStorageError::Directory(std::io::Error::other("cause")),
+                FailureKind::Unavailable,
+            ),
+            (
+                AssetStorageError::ChangedDuringProof("asset.png".into()),
+                FailureKind::Unavailable,
+            ),
+            (AssetStorageError::TooLarge, FailureKind::Failed),
+        ];
+        for (storage, kind) in rows {
+            let wrapped = AssetPasteError::Storage(storage);
+            let message = wrapped.to_string();
+            let failure = StorageFailure::from(wrapped);
+            assert_eq!(failure.kind(), kind, "{message}");
+            assert_eq!(failure.to_string(), message);
+            assert!(message.starts_with("managed image publication failed: "));
+        }
     }
 
     #[test]

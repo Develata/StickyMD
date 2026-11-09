@@ -56,7 +56,7 @@ const fn is_activating_tool_window(style: isize) -> bool {
         && style & WS_EX_NOACTIVATE.0 as isize == 0
 }
 
-fn read_extended_style(hwnd: HWND) -> Result<isize, ToolWindowError> {
+pub(super) fn read_extended_style(hwnd: HWND) -> Result<isize, ToolWindowError> {
     // SAFETY: `hwnd` is a live winit-owned top-level window. Zero is a valid
     // style, so last-error is cleared and checked around the getter.
     unsafe { SetLastError(WIN32_ERROR(0)) };

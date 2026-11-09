@@ -4,5 +4,9 @@
 
 pub mod geometry;
 mod lifecycle;
+mod placement;
 pub mod reducer;
+#[cfg(test)]
+mod show_receipt_tests;
 pub mod state;
+mod topmost;

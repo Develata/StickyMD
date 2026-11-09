@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Sender, bounded, select_biased};
+use stickymd_app::ports::TrayCommand;
 use thiserror::Error;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -16,14 +17,6 @@ const ALWAYS_ON_TOP_ID: &str = "stickymd.tray.always-on-top";
 const QUIT_ID: &str = "stickymd.tray.quit";
 
 static TRAY_INSTANCE_ACTIVE: AtomicBool = AtomicBool::new(false);
-
-/// The only platform facts emitted by the v1 tray adapter.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TrayPlatformEvent {
-    ShowHideRequested,
-    AlwaysOnTopToggled,
-    QuitRequested,
-}
 
 /// Vendor-neutral RGBA input for the tray icon.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,7 +43,7 @@ pub enum TrayAdapterError {
 /// Owns the native icon and its exactly-three-item context menu.
 ///
 /// Creation and mutation must happen on the UI thread. Event handlers only
-/// translate vendor events to `TrayPlatformEvent`; they never mutate app state.
+/// translate vendor events to `TrayCommand`; they never mutate app state.
 pub struct TrayController {
     tray_icon: Option<TrayIcon>,
     show_hide: MenuItem,
@@ -67,7 +60,7 @@ impl TrayController {
         callback: F,
     ) -> Result<Self, TrayAdapterError>
     where
-        F: Fn(TrayPlatformEvent) + Send + Sync + 'static,
+        F: Fn(TrayCommand) + Send + Sync + 'static,
     {
         if TRAY_INSTANCE_ACTIVE
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -88,7 +81,7 @@ impl TrayController {
         icon: TrayIconRgba,
         window_visible: bool,
         always_on_top: bool,
-        callback: Arc<dyn Fn(TrayPlatformEvent) + Send + Sync>,
+        callback: Arc<dyn Fn(TrayCommand) + Send + Sync>,
     ) -> Result<Self, TrayAdapterError> {
         let icon = Icon::from_rgba(icon.rgba, icon.width, icon.height)?;
         let menu = Menu::new();
@@ -169,12 +162,41 @@ impl Drop for TrayController {
     }
 }
 
-fn translate_menu_event(event: &MenuEvent) -> Option<TrayPlatformEvent> {
+fn translate_menu_event(event: &MenuEvent) -> Option<TrayCommand> {
     match event.id().0.as_str() {
-        SHOW_HIDE_ID => Some(TrayPlatformEvent::ShowHideRequested),
-        ALWAYS_ON_TOP_ID => Some(TrayPlatformEvent::AlwaysOnTopToggled),
-        QUIT_ID => Some(TrayPlatformEvent::QuitRequested),
+        SHOW_HIDE_ID => Some(TrayCommand::ToggleVisibility),
+        ALWAYS_ON_TOP_ID => Some(TrayCommand::ToggleAlwaysOnTop),
+        QUIT_ID => Some(TrayCommand::Quit),
         _ => None,
+    }
+}
+
+/// The StickyMD icon, a sheet with three lines of ink.
+pub fn tray_icon() -> TrayIconRgba {
+    let width = 32;
+    let height = 32;
+    let mut rgba = vec![0; width * height * 4];
+    for y in 2..30 {
+        for x in 3..29 {
+            let index = (y * width + x) * 4;
+            let border = x == 3 || x == 28 || y == 2 || y == 29;
+            let ink = (7..=24).contains(&x)
+                && ((6..=9).contains(&y) || (14..=17).contains(&y) || (23..=26).contains(&y))
+                && (x <= 12 || x >= 19 || (14..=17).contains(&y));
+            let color = if border {
+                [120, 96, 38, 255]
+            } else if ink {
+                [54, 48, 36, 255]
+            } else {
+                [250, 238, 188, 255]
+            };
+            rgba[index..index + 4].copy_from_slice(&color);
+        }
+    }
+    TrayIconRgba {
+        rgba,
+        width: width as u32,
+        height: height as u32,
     }
 }
 
@@ -207,16 +229,23 @@ mod tests {
 
         assert_eq!(
             translate_menu_event(&show_hide),
-            Some(TrayPlatformEvent::ShowHideRequested)
+            Some(TrayCommand::ToggleVisibility)
         );
         assert_eq!(
             translate_menu_event(&always_on_top),
-            Some(TrayPlatformEvent::AlwaysOnTopToggled)
+            Some(TrayCommand::ToggleAlwaysOnTop)
         );
-        assert_eq!(
-            translate_menu_event(&quit),
-            Some(TrayPlatformEvent::QuitRequested)
-        );
+        assert_eq!(translate_menu_event(&quit), Some(TrayCommand::Quit));
         assert_eq!(translate_menu_event(&unrelated), None);
+    }
+
+    #[test]
+    fn phase8_tray_icon_is_fully_owned_rgba() {
+        let icon = tray_icon();
+        assert_eq!(
+            icon.rgba.len(),
+            icon.width as usize * icon.height as usize * 4
+        );
+        assert!(icon.rgba.chunks_exact(4).any(|pixel| pixel[3] == 255));
     }
 }

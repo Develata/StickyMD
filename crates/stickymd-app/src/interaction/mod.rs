@@ -3,6 +3,7 @@
 //! plan_ref: docs/plan/07_editor_and_ime.md#ime-semantics
 
 mod navigation;
+pub mod rules;
 mod search;
 mod session;
 

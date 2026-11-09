@@ -3,17 +3,9 @@
 
 use std::{fmt::Write as _, path::PathBuf};
 
-const DETAILS_PATH_ENV: &str = "STICKYMD_DIAGNOSTIC_STARTUP_DETAILS";
+use stickymd_desktop::host::StartupDetail;
 
-#[derive(Clone, Copy)]
-pub enum StartupDetail {
-    SplitModeBegin,
-    SplitModeEnd,
-    WindowShowBegin,
-    WindowShowEnd,
-    ToolIdentityBegin,
-    ToolIdentityEnd,
-}
+const DETAILS_PATH_ENV: &str = "STICKYMD_DIAGNOSTIC_STARTUP_DETAILS";
 
 const NAMES: [&str; 6] = [
     "split_mode_begin",

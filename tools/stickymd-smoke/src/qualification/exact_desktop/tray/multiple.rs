@@ -182,7 +182,7 @@ pub(super) enum Refusal {
 /// outside `tray-icon` that names its icon StickyMD; an owner window created, or a copy started,
 /// between the enumeration and the click. A renamed copy without its StickyMD window but with
 /// a live tray window would be one too, but the product's exit drops the tray before the
-/// window (`WindowEffect::ExitProcess` in `app/window_runtime.rs`), so it is not expected on
+/// window (`ShellEffect::Exit` in `app/shell_effects.rs`), so it is not expected on
 /// the current shutdown path; an abnormal lifecycle is unverified.
 pub(super) fn exclusivity(
     image_named: &[u32],

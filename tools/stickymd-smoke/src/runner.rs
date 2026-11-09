@@ -68,6 +68,7 @@ enum TaskId {
     Phase14Performance,
     Phase14SearchPerformance,
     Phase15AppTests,
+    Phase15DesktopTests,
     Phase15BaselineTests,
     FormatCheck,
     ClippyCheck,
@@ -954,6 +955,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             }
             Selection::Phase(Phase::P15) => {
                 push_unique(&mut tasks, phase15_app_tests());
+                push_unique(&mut tasks, phase15_desktop_tests());
                 push_unique(&mut tasks, phase15_baseline_tests());
             }
         }
@@ -1262,6 +1264,8 @@ fn render_win_tests() -> Task {
             "-p",
             "stickymd-app",
             "-p",
+            "stickymd-desktop",
+            "-p",
             "stickymd-win",
             "--locked",
         ],
@@ -1278,6 +1282,8 @@ fn core_win_tests() -> Task {
             "stickymd-core",
             "-p",
             "stickymd-app",
+            "-p",
+            "stickymd-desktop",
             "-p",
             "stickymd-win",
             "--locked",
@@ -1296,6 +1302,8 @@ fn phase5_preview_tests() -> Task {
             "-p",
             "stickymd-app",
             "-p",
+            "stickymd-desktop",
+            "-p",
             "stickymd-win",
             "--locked",
         ],
@@ -1312,6 +1320,8 @@ fn phase6_math_tests() -> Task {
             "stickymd-render",
             "-p",
             "stickymd-app",
+            "-p",
+            "stickymd-desktop",
             "-p",
             "stickymd-win",
             "--locked",
@@ -1336,6 +1346,8 @@ fn phase8_window_tests() -> Task {
             "-p",
             "stickymd-app",
             "-p",
+            "stickymd-desktop",
+            "-p",
             "stickymd-win",
             "--locked",
             "phase8_",
@@ -1351,11 +1363,27 @@ fn phase15_app_tests() -> Task {
     )
 }
 
+fn phase15_desktop_tests() -> Task {
+    cargo(
+        TaskId::Phase15DesktopTests,
+        "Phase 15 Shared Desktop tests",
+        &["test", "-p", "stickymd-desktop", "--locked"],
+    )
+}
+
 fn phase15_baseline_tests() -> Task {
     cargo(
         TaskId::Phase15BaselineTests,
         "Phase 15 byte-compatibility and hot-path baselines",
-        &["test", "-p", "stickymd-win", "--locked", "phase15_"],
+        &[
+            "test",
+            "-p",
+            "stickymd-desktop",
+            "-p",
+            "stickymd-win",
+            "--locked",
+            "phase15_",
+        ],
     )
 }
 
@@ -1377,6 +1405,8 @@ fn phase10_ux_tests() -> Task {
             "stickymd-render",
             "-p",
             "stickymd-app",
+            "-p",
+            "stickymd-desktop",
             "-p",
             "stickymd-win",
             "--locked",

@@ -224,6 +224,9 @@ Phase 15 按 [提案](../report/2026-10-23-shared-core-thin-platform-shell-archi
 | C | 建立 `stickymd-desktop` 并同时登记其治理、任务与指纹归属；各 target 显式选择 winit/softbuffer backend features；迁移通用控件、绘制、命中与事件翻译（含 `06` 帧呈现规则） | `stickymd-desktop` 在 Windows 与 Linux CI 上真实构建；`age = 0/1/2` 呈现测试；Windows 桌面定向回归 |
 | D | 迁移剩余业务分支，删除仅为迁移保留的转发 | 依赖与平台泄漏审查、适用 baseline、Windows 验证；未实现平台保持 `NOT TESTED` |
 
+C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，C 的出口回执与 D 的业务裁决迁出无法分先后。C 的 Linux 构建与
+`age` 呈现测试在各自批次成立；Windows 桌面回归在 D 之后执行一次（USER 决定 2026-11-07）。
+
 每批出口（A–D 都适用，不推迟到 D）：
 
 1. **治理随代码移动：** 同一提交内更新受影响的硬编码路径检查（`unsafe` 禁令、窗口协调的平台类型禁令等），新增业务

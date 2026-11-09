@@ -3,6 +3,7 @@
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-scheduling
 
 use stickymd_core::{DocumentSnapshot, Generation};
+use stickymd_render::image::PreviewImageSource;
 use stickymd_render::preview::{
     PreviewFrame, PreviewHorizontalOffsets, PreviewPipelineError, PreviewSelection, PreviewTheme,
 };
@@ -54,6 +55,12 @@ impl PreviewViewport {
             && self.scale == other.scale
             && self.theme == other.theme
     }
+}
+
+/// What reads the images a note names, for the Preview worker the shell starts.
+pub trait PreviewImages {
+    /// Without a source, images stay placeholders.
+    fn preview_images(&self) -> Option<Box<dyn PreviewImageSource + Send>>;
 }
 
 /// One finished job, with the generation and viewport it was built for: its identity.
