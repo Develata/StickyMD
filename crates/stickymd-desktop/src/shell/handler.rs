@@ -23,7 +23,7 @@ use stickymd_app::flow::startup::StartupStop;
 impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_blink));
-        if self.window.is_some() {
+        if self.window.is_some() || self.startup_failed {
             return;
         }
         let configured_theme = match self.app.config().current().theme {
@@ -126,6 +126,9 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if self.startup_failed {
+            return;
+        }
         // Debug-only native routing diagnostics; never log document or IME text.
         #[cfg(debug_assertions)]
         match &event {
@@ -238,6 +241,9 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.startup_failed {
+            return;
+        }
         self.run_deferred_display_recovery();
         let now_ms = self.timestamp_ms();
         self.settle_event_pass(now_ms);
@@ -264,6 +270,9 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: DesktopEvent) {
+        if self.startup_failed {
+            return;
+        }
         match event {
             DesktopEvent::Io(completion) => self.handle_io_completion(completion),
             DesktopEvent::Preview(completion) => self.handle_preview_completion(completion),

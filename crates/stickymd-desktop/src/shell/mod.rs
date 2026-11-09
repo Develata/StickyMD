@@ -142,8 +142,10 @@ pub struct DesktopShell<H: Host> {
     tray_view: TrayView,
     /// The quit barriers finished: the callback that got here ends the event loop.
     exit_pending: bool,
-    /// The startup ended early, which the process reports as its exit code.
+    /// The startup ended early: the callbacks do nothing more and the exit code reports it.
     startup_failed: bool,
+    /// `diagnostic` was written by a startup step that failed and was survived.
+    diagnostic_is_startup_notice: bool,
     shell_input_enabled: bool,
     move_resize_active: bool,
     /// A display change waits for the native message that raised it to return.
@@ -222,6 +224,7 @@ impl<H: Host> DesktopShell<H> {
             },
             exit_pending: false,
             startup_failed: false,
+            diagnostic_is_startup_notice: false,
             shell_input_enabled: true,
             move_resize_active: false,
             display_recovery_due: false,

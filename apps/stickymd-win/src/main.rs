@@ -121,13 +121,18 @@ fn main() -> std::process::ExitCode {
     let (session, diagnostic) = bootstrap.into_session(worker, started);
     let host = WinHost::new(paths, instance, startup_diagnostics);
     let mut app = DesktopShell::new(host, session, sink, started, diagnostic);
-    if let Err(error) = event_loop.run_app(&mut app) {
+    let outcome = event_loop.run_app(&mut app);
+    let startup_failed = app.startup_failed();
+    let diagnostic_exit_code = app.host().startup_diagnostic_exit_code();
+    // The tray, the worker and the single-instance guard end here, before any notice below.
+    drop(app);
+    if let Err(error) = outcome {
         fatal_startup(&format!("事件循环异常结束：{error}"));
     }
-    if app.startup_failed() {
+    if startup_failed {
         return std::process::ExitCode::FAILURE;
     }
-    app.host().startup_diagnostic_exit_code()
+    diagnostic_exit_code
 }
 
 #[cfg(windows)]

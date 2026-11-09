@@ -238,11 +238,51 @@ fn a_missing_tray_interrupts_once_and_the_startup_goes_on_with_a_taskbar_entry()
     assert_eq!(dialogs(&calls), [message]);
     assert!(calls.contains(&HostCall::RestoreOrdinaryEntry));
     assert!(!calls.contains(&HostCall::ReassertIdentity));
-    assert_eq!(app.diagnostic.as_deref(), Some(message));
+    assert_eq!(
+        app.diagnostic.as_deref(),
+        Some("无法创建系统托盘图标；StickyMD 将保持窗口可见，关闭窗口会安全保存并退出。 no tray")
+    );
     assert!(!app.startup_failed());
 }
 
-/// What loading the note found is worth more than how the window looks.
+#[test]
+fn every_survived_failure_of_a_startup_has_its_place_on_the_one_status_line() {
+    let mut app = on_a_display(fixture("start"));
+    app.host.tray_result = Err(failure("no tray"));
+    app.host.opacity_result = Err(failure("alpha refused"));
+    app.host.topmost_result = Some(Err(failure("z-order refused")));
+
+    run_both_phases(&mut app);
+
+    assert_eq!(
+        app.diagnostic.as_deref(),
+        Some(
+            "无法创建系统托盘图标；StickyMD 将保持窗口可见，关闭窗口会安全保存并退出。 no tray；\
+             无法应用窗口透明度：alpha refused；无法应用窗口置顶状态：z-order refused"
+        )
+    );
+}
+
+/// The event loop still delivers what it buffered after `exit`, and `ApplicationHandler` needs a
+/// real event loop, so what each callback does first is pinned in the source.
+#[test]
+fn every_callback_returns_at_once_after_a_failed_startup() {
+    let source = include_str!("handler.rs");
+    for callback in ["fn window_event(", "fn about_to_wait(", "fn user_event("] {
+        let mut lines = source.lines().skip_while(|line| !line.contains(callback));
+        lines
+            .find(|line| line.trim_end().ends_with('{'))
+            .unwrap_or_else(|| panic!("no body for {callback}"));
+        assert_eq!(
+            lines.next().map(str::trim),
+            Some("if self.startup_failed {"),
+            "{callback}"
+        );
+    }
+}
+
+/// What loading the note found is worth more than how the window looks, and the recovery prompt
+/// lays out its actions by position, so nothing is added to it.
 #[test]
 fn a_degraded_startup_does_not_replace_what_loading_the_note_found() {
     let mut app = on_a_display(recovering_at_start());

@@ -12,25 +12,39 @@ use stickymd_app::flow::startup::{StartupDegraded, StartupStop};
 use stickymd_app::flow::window::state::{WindowIntent, effective_topmost};
 
 impl<H: Host> DesktopShell<H> {
-    /// Ends a startup that cannot go on. The tray goes before the notice, so that no icon offers
-    /// commands while the notice waits for the user.
+    /// Ends a startup that cannot go on. The event loop still delivers what it buffered after
+    /// `exit`, so the failure is recorded first and every callback returns at once from then on:
+    /// nothing typed behind the notice reaches the note. The tray goes before the notice, so that
+    /// no icon offers commands while the notice waits for the user.
     pub(super) fn abort_startup(&mut self, stop: &StartupStop, exit: impl FnOnce()) {
+        self.startup_failed = true;
         let message = stop.to_string();
         eprintln!("{message}");
         self.host.destroy();
         self.host.show_error("StickyMD", &message);
-        self.startup_failed = true;
         exit();
     }
 
-    /// Goes on without something the note can do without. A diagnostic already there stays: it
-    /// comes from loading the note, which matters more than how the window looks.
+    /// Goes on without something the note can do without. The status line is one line, and each
+    /// such failure gets its place on it. What loading the note found stays alone: it matters more
+    /// than how the window looks, and the recovery prompt lays out its actions by position.
     fn startup_degraded(&mut self, degraded: StartupDegraded) {
         let message = degraded.to_string();
         if degraded.needs_dialog() {
             self.host.show_error("StickyMD", &message);
         }
-        self.diagnostic.get_or_insert(message);
+        let line = message.replace("\n\n", " ");
+        match &mut self.diagnostic {
+            None => {
+                self.diagnostic = Some(line);
+                self.diagnostic_is_startup_notice = true;
+            }
+            Some(notice) if self.diagnostic_is_startup_notice => {
+                notice.push('；');
+                notice.push_str(&line);
+            }
+            Some(_) => {}
+        }
     }
 
     /// `window` is passed in because `self` is borrowed mutably throughout; the two calls on it
