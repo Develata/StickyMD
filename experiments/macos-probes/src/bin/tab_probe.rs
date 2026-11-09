@@ -70,6 +70,7 @@ enum Stage {
 struct App {
     edge: bool,
     strip: bool,
+    thickness: f64,
     styles: &'static [(&'static str, f64, f64)],
     window: Option<Rc<Window>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
@@ -113,7 +114,7 @@ impl App {
 
     fn collapsed_rect(&self) -> Rect {
         if self.strip {
-            return Rect { x: EXPANDED.x, y: 3.0 - EXPANDED.h, w: EXPANDED.w, h: EXPANDED.h };
+            return Rect { x: EXPANDED.x, y: self.thickness - EXPANDED.h, w: EXPANDED.w, h: EXPANDED.h };
         }
         let (_, w, h) = self.styles[self.style];
         Rect { x: EXPANDED.x + (EXPANDED.w - w) / 2.0, y: if self.edge { 0.0 } else { EXPANDED.y }, w, h }
@@ -307,9 +308,12 @@ fn main() {
     let mode = std::env::args().nth(1);
     let strip = mode.as_deref() == Some("strip");
     let edge = strip || mode.as_deref() == Some("edge");
+    // `tab_probe strip 2` leaves 2 points showing.
+    let thickness = std::env::args().nth(2).and_then(|value| value.parse().ok()).unwrap_or(3.0);
     let mut app = App {
         edge,
         strip,
+        thickness,
         styles: if strip {
             &STRIP_STYLES
         } else if edge {
