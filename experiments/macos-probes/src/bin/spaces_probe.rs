@@ -254,6 +254,7 @@ impl ApplicationHandler for App {
             self.phase += 1;
             if self.phase == PHASES.len() {
                 println!("{:8.3} finished", self.at());
+                self.phase_ends = None;
                 event_loop.exit();
                 return;
             }

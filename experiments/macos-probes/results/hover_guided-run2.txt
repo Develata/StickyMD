@@ -1,0 +1,36 @@
+global monitor installed: true
+   0.171 winit Focused(false)
+   0.313 winit CursorEntered
+   0.313 first hit: winit tracking rect
+   0.313 first hit: NSTrackingArea ActiveAlways
+   0.317 winit CursorLeft
+   1.376 parked Left, app_active=false
+  12.101 winit CursorEntered
+  12.101 first hit: winit tracking rect
+  12.101 first hit: NSTrackingArea ActiveAlways
+  12.101 first hit: NSEvent global monitor
+  12.101 first hit: mouseLocation poll
+  12.353 revealed, app_active=false (must stay false)
+  12.353 winit CursorLeft
+  12.380 winit CursorEntered
+  13.033 winit CursorLeft
+  13.534 left for 500 ms, app_active=false
+  13.534 Left: winit tracking rect=13, NSTrackingArea ActiveAlways=13, NSEvent global monitor=25, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=0
+  13.947 parked Top, app_active=false
+  26.985 winit CursorEntered
+  26.985 first hit: winit tracking rect
+  26.985 first hit: NSTrackingArea ActiveAlways
+  26.985 first hit: NSEvent global monitor
+  26.985 first hit: mouseLocation poll
+  27.236 revealed, app_active=false (must stay false)
+  27.236 winit CursorLeft
+  27.247 winit CursorEntered
+  27.397 winit CursorLeft
+  27.893 left for 500 ms, app_active=false
+  27.893 Top: winit tracking rect=6, NSTrackingArea ActiveAlways=5, NSEvent global monitor=1, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=2
+guided run finished: ["Left: winit tracking rect=13, NSTrackingArea ActiveAlways=13, NSEvent global monitor=25, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=0", "Top: winit tracking rect=6, NSTrackingArea ActiveAlways=5, NSEvent global monitor=1, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=2"]
+  27.895 left for 500 ms, app_active=false
+
+thread 'main' (1337474) panicked at src/bin/hover_probe.rs:253:30:
+index out of bounds: the len is 2 but the index is 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

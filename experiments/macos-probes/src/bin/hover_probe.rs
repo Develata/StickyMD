@@ -270,6 +270,7 @@ impl App {
             self.cpu = cpu_seconds();
         } else {
             println!("guided run finished: {:?}", self.results);
+            self.stage = Stage::Done;
             event_loop.exit();
         }
     }
