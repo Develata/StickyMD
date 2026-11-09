@@ -275,6 +275,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_empty_temporary_beside_a_usable_note_is_redundant() {
+        let canonical = valid("text");
+        let step = plan(Some(&canonical), Some(&valid(""))).step;
+        assert!(
+            matches!(&step, NoteStartupStep::RemoveRedundantTemporary(Ok(fact)) if *fact == fact_of(&canonical)),
+            "{step:?}"
+        );
+    }
+
     /// The observations disagree, which only a change between two reads can do. The canonical
     /// note cannot be opened, so the temporary must stay.
     #[test]

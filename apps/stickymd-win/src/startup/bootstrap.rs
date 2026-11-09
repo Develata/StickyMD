@@ -450,6 +450,19 @@ mod tests {
     }
 
     #[test]
+    fn empty_temporary_beside_a_usable_note_is_removed_without_a_prompt() {
+        let (root, paths) = fixture();
+        fs::write(&paths.note_file, b"text").unwrap();
+        fs::write(&paths.note_tmp, b"").unwrap();
+        let outcome = bootstrap(&paths).unwrap();
+        assert_eq!(outcome.document.text(), "text");
+        assert!(outcome.recovery.is_none());
+        assert_eq!(fs::read(&paths.note_file).unwrap(), b"text");
+        assert!(!paths.note_tmp.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn invalid_temporary_without_canonical_is_quarantined_before_empty_create() {
         let (root, paths) = fixture();
         fs::write(&paths.note_tmp, [0xff]).unwrap();

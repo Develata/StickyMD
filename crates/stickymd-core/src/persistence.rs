@@ -138,10 +138,11 @@ pub fn inspect_recovery(
 
     let decoded_canonical =
         canonical.and_then(|value| LoadedDocument::from_durable_bytes(&value.bytes).ok());
-    if decoded_canonical
-        .as_ref()
-        .is_some_and(|value| value.fingerprint == decoded_temporary.fingerprint)
-    {
+    // An empty temporary was interrupted before its bytes were written: beside a usable note it
+    // has nothing to offer, and restoring it would only empty the note.
+    if decoded_canonical.as_ref().is_some_and(|value| {
+        value.fingerprint == decoded_temporary.fingerprint || temporary.bytes.is_empty()
+    }) {
         return RecoveryDisposition::RedundantTemporary;
     }
 
@@ -166,6 +167,28 @@ mod tests {
         RecoveryInspection {
             bytes: bytes.to_vec(),
             modified: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)),
+        }
+    }
+
+    #[test]
+    fn an_empty_temporary_has_nothing_to_offer_beside_a_usable_note() {
+        assert_eq!(
+            inspect_recovery(Some(&observed(b"text", 1)), Some(&observed(b"", 2))),
+            RecoveryDisposition::RedundantTemporary
+        );
+    }
+
+    #[test]
+    fn an_empty_temporary_stays_a_choice_without_a_usable_note() {
+        let invalid = observed(&[0xff], 1);
+        for canonical in [None, Some(&invalid)] {
+            assert!(
+                matches!(
+                    inspect_recovery(canonical, Some(&observed(b"", 2))),
+                    RecoveryDisposition::Candidate(_)
+                ),
+                "{canonical:?}"
+            );
         }
     }
 

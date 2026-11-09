@@ -216,14 +216,14 @@ pub(super) fn g3_03(repository: &Path, program: &Path) -> Result<CaseEvidence, S
             ));
         }
         checks.record("kill-note-complete", &offset_param);
-        // A temp whose bytes differ from the canonical is always a recovery choice (plan 05
-        // recovery 3); one with the canonical's bytes is redundant and removed at startup.
+        // A temp whose bytes differ from the canonical is a recovery choice (plan 05 recovery 3);
+        // one with the canonical's bytes, or none at all, is redundant and removed at startup.
         let recovery_text = if temporary.is_file() {
             let bytes = fs::read(&temporary).map_err(io_error)?;
             let text = String::from_utf8(bytes).map_err(|error| {
                 format!("kill offset {offset_ms} left invalid recovery UTF-8: {error}")
             })?;
-            (text.as_bytes() != note_bytes.as_slice()).then_some(text)
+            (!text.is_empty() && text.as_bytes() != note_bytes.as_slice()).then_some(text)
         } else {
             None
         };
