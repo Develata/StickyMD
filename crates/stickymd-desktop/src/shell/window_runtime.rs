@@ -243,6 +243,12 @@ impl<H: Host> DesktopShell<H> {
                 self.request_redraw();
                 self.host.quit_abandoned();
             }
+            WindowEffect::QuitTimedOut => {
+                self.diagnostic = Some("退出等待超时，已取消；保存可能仍在进行。".to_owned());
+                self.request_redraw();
+                self.host.quit_abandoned();
+                self.refresh_window_guards();
+            }
             WindowEffect::QuitCancelled(barrier) => {
                 self.diagnostic = Some(format!("退出已取消：{barrier:?} 未安全完成。"));
                 self.request_redraw();

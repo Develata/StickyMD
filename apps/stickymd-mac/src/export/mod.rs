@@ -97,6 +97,11 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
     let staging = (!local.is_empty())
         .then(|| create_unique_export_staging(parent))
         .transpose()?;
+    let staging_identity = staging
+        .as_deref()
+        .map(FileObservation::of_path)
+        .transpose()
+        .map_err(ExportError::StagingCreate)?;
     let mut markdown_temporary = None;
     let asset_directory = choose_asset_directory(parent, stem)?;
     let asset_leaf = asset_directory
@@ -188,7 +193,9 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
     for owned in owned_staging_files.into_iter().rev() {
         let _ = remove_owned_staging_file(&owned.path, owned.observation);
     }
-    if let Some(staging) = &staging {
+    if let (Some(staging), Some(identity)) = (&staging, &staging_identity)
+        && FileObservation::of_path(staging).is_ok_and(|now| now.same_file_as(identity))
+    {
         let _ = fs::remove_dir(staging);
     }
     if result.is_err()
@@ -345,8 +352,7 @@ fn copy_and_hash(
 /// The file is identified by what it is, not by the moment it was seen: moving it into place
 /// changed its metadata but not its identity.
 fn remove_owned_staging_file(path: &Path, expected: FileObservation) -> std::io::Result<()> {
-    let file = fs::File::open(path)?;
-    if !FileObservation::of(&file)?.same_file_as(&expected) {
+    if !FileObservation::of_path(path)?.same_file_as(&expected) {
         return Err(std::io::Error::other(
             "export staging identity changed before cleanup",
         ));

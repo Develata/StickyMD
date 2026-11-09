@@ -9,8 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 use crate::platform::macos::atomic_file::{
-    AtomicPublishError, atomic_publish, move_file_no_replace,
+    AtomicPublishError, atomic_publish, atomic_publish_in, move_file_no_replace,
 };
+use crate::platform::macos::file::DirectoryHandle;
 #[cfg(test)]
 use stickymd_app::config::ConfigWarning;
 use stickymd_app::config::{
@@ -66,10 +67,23 @@ pub fn save_config(
     atomic_publish(target, temporary, source.as_bytes()).map_err(ConfigStorageError::Publish)
 }
 
+/// Publishes inside the Note Directory the program is working in, wherever it is now.
+pub fn save_config_in(
+    directory: &DirectoryHandle,
+    config: &RuntimeConfig,
+) -> Result<(), ConfigStorageError> {
+    let source = config_text(config).map_err(ConfigStorageError::Serialize)?;
+    atomic_publish_in(
+        directory,
+        "config.toml",
+        "config.toml.tmp",
+        source.as_bytes(),
+    )
+    .map_err(ConfigStorageError::Publish)
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigStorageError {
-    #[error("the note directory is unavailable: {0}")]
-    Directory(std::io::Error),
     #[error("cannot serialize config.toml: {0}")]
     Serialize(ConfigSerializeError),
     #[error("cannot atomically publish config.toml: {0}")]

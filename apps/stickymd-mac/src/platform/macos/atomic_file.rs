@@ -61,13 +61,15 @@ fn write_durably(mut file: fs::File, bytes: &[u8]) -> Result<(), AtomicPublishEr
     full_sync(&file).map_err(AtomicPublishError::TempFlush)
 }
 
-fn publish(site: &Site) -> Result<(), AtomicPublishError> {
-    site.directory
-        .replace(&site.temporary, &site.target)
+fn publish(
+    directory: &DirectoryHandle,
+    temporary: &str,
+    target: &str,
+) -> Result<(), AtomicPublishError> {
+    directory
+        .replace(temporary, target)
         .map_err(AtomicPublishError::Replace)?;
-    site.directory
-        .sync()
-        .map_err(AtomicPublishError::DirectoryFlush)
+    directory.sync().map_err(AtomicPublishError::DirectoryFlush)
 }
 
 pub fn atomic_publish(
@@ -76,12 +78,21 @@ pub fn atomic_publish(
     bytes: &[u8],
 ) -> Result<(), AtomicPublishError> {
     let site = site(target, temporary)?;
-    let file = site
-        .directory
-        .create_or_truncate(&site.temporary)
+    atomic_publish_in(&site.directory, &site.target, &site.temporary, bytes)
+}
+
+/// The same inside a directory already held open, by name.
+pub fn atomic_publish_in(
+    directory: &DirectoryHandle,
+    target: &str,
+    temporary: &str,
+    bytes: &[u8],
+) -> Result<(), AtomicPublishError> {
+    let file = directory
+        .create_or_truncate(temporary)
         .map_err(AtomicPublishError::TempCreate)?;
     write_durably(file, bytes)?;
-    publish(&site)
+    publish(directory, temporary, target)
 }
 
 /// Fails with `TempCreate(AlreadyExists)` when the name is taken. The result identifies the file
@@ -102,7 +113,8 @@ pub fn prepare_temporary_exclusive(
 }
 
 pub fn publish_prepared(target: &Path, temporary: &Path) -> Result<(), AtomicPublishError> {
-    publish(&site(target, temporary)?)
+    let site = site(target, temporary)?;
+    publish(&site.directory, &site.temporary, &site.target)
 }
 
 pub fn move_file_no_replace(from: &Path, to: &Path) -> io::Result<()> {

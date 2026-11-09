@@ -9,6 +9,7 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::sync::{Arc, Mutex, PoisonError};
 
 fn c_string(value: &OsStr) -> io::Result<CString> {
     CString::new(value.as_bytes())
@@ -95,14 +96,22 @@ pub struct FileObservation {
 
 impl FileObservation {
     pub fn of(file: &File) -> io::Result<Self> {
-        let metadata = file.metadata()?;
-        Ok(Self {
+        Ok(Self::from_metadata(&file.metadata()?))
+    }
+
+    /// What is at `path` itself: a symbolic link there is observed as the link, not its target.
+    pub fn of_path(path: &Path) -> io::Result<Self> {
+        Ok(Self::from_metadata(&std::fs::symlink_metadata(path)?))
+    }
+
+    fn from_metadata(metadata: &std::fs::Metadata) -> Self {
+        Self {
             device: metadata.dev(),
             inode: metadata.ino(),
             size: metadata.len(),
             modified: (metadata.mtime(), metadata.mtime_nsec()),
             changed: (metadata.ctime(), metadata.ctime_nsec()),
-        })
+        }
     }
 
     pub const fn size(&self) -> u64 {
@@ -111,6 +120,30 @@ impl FileObservation {
 
     pub const fn same_file_as(&self, other: &Self) -> bool {
         self.device == other.device && self.inode == other.inode
+    }
+}
+
+/// The Note Directory, as one descriptor every storage port goes through, so that the note, its
+/// images and the configuration cannot end up in different directories.
+#[derive(Clone, Debug)]
+pub struct SharedDirectory(Arc<Mutex<DirectoryHandle>>);
+
+impl SharedDirectory {
+    pub fn open(path: &Path) -> io::Result<Self> {
+        Ok(Self::new(DirectoryHandle::open(path)?))
+    }
+
+    pub fn new(directory: DirectoryHandle) -> Self {
+        Self(Arc::new(Mutex::new(directory)))
+    }
+
+    pub fn with<R>(&self, use_directory: impl FnOnce(&DirectoryHandle) -> R) -> R {
+        use_directory(&self.0.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// The directory was deleted and made again: everyone moves to the new one together.
+    pub fn replace(&self, directory: DirectoryHandle) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = directory;
     }
 }
 
@@ -134,6 +167,28 @@ impl DirectoryHandle {
         };
         Ok(Self {
             directory: file_from(descriptor)?,
+        })
+    }
+
+    /// Opens a directory inside this one; a symbolic link at `name` is refused.
+    pub fn open_child(&self, name: &str) -> io::Result<Self> {
+        let name = c_string(OsStr::new(name))?;
+        // SAFETY: the descriptor is valid while `self` lives; `name` outlives the call.
+        let descriptor = unsafe {
+            libc::openat(
+                self.directory.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        Ok(Self {
+            directory: file_from(descriptor)?,
+        })
+    }
+
+    pub fn try_clone(&self) -> io::Result<Self> {
+        Ok(Self {
+            directory: self.directory.try_clone()?,
         })
     }
 

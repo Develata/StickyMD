@@ -373,6 +373,8 @@ pub enum WindowEffect {
     HideRejected(FailureKind),
     ShowRejected(FailureKind),
     QuitBlocked,
+    /// The host stopped waiting while the note was not safe yet.
+    QuitTimedOut,
     QuitCancelled(QuitBarrier),
     QuitWarning(QuitBarrier),
     RequestRedraw,

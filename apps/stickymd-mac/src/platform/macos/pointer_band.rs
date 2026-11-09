@@ -15,8 +15,10 @@ use stickymd_desktop::host::{DesktopEvent, EventSink, HostSignal};
 
 use super::window::PointerProbe;
 
-/// `NSEventMaskMouseMoved`.
-const MOUSE_MOVED: u64 = 1 << 5;
+/// `NSEventMaskMouseMoved`, the three `Dragged` masks and the three `Up` masks: a drag out of the
+/// strip moves no mouse in AppKit's terms, and it may end with no further movement.
+const POINTER_EVENTS: u64 =
+    (1 << 5) | (1 << 6) | (1 << 7) | (1 << 27) | (1 << 2) | (1 << 4) | (1 << 26);
 
 /// The installed monitor, shared with its own handler so that the handler can remove it.
 type MonitorSlot = Rc<RefCell<Option<Retained<AnyObject>>>>;
@@ -48,7 +50,7 @@ impl PointerBandWatch {
         let monitor: Option<Retained<AnyObject>> = unsafe {
             msg_send![
                 class!(NSEvent),
-                addGlobalMonitorForEventsMatchingMask: MOUSE_MOVED,
+                addGlobalMonitorForEventsMatchingMask: POINTER_EVENTS,
                 handler: &*block
             ]
         };

@@ -401,22 +401,27 @@ impl WindowShellCoordinator {
         }
     }
 
-    /// The editor goes back to the user, and a barrier that completes later finds nothing waiting
-    /// for it. Once ready to exit there is nothing left to take back.
+    /// While the note is not safe the editor goes back to the user, and a barrier that completes
+    /// later finds nothing waiting for it. Once it is safe, what is left is best effort: it counts
+    /// as failed and the quit goes on.
     pub(super) fn abandon_quit(&mut self, effects: &mut Vec<WindowEffect>) {
         let LifecycleState::Quitting(stage) = self.state.lifecycle else {
             return;
         };
-        let barrier = match stage {
-            QuitStage::AwaitingPaste => QuitBarrier::Paste,
-            QuitStage::AwaitingNoteSave => QuitBarrier::NoteSave,
-            QuitStage::AwaitingAssetGc => QuitBarrier::AssetGc,
-            QuitStage::AwaitingConfig => QuitBarrier::Config,
-            QuitStage::ReadyToExit => return,
-        };
-        self.state.lifecycle = LifecycleState::Running;
-        self.reproject_input(effects);
-        effects.push(WindowEffect::QuitCancelled(barrier));
+        match stage {
+            QuitStage::AwaitingPaste | QuitStage::AwaitingNoteSave => {
+                self.state.lifecycle = LifecycleState::Running;
+                self.reproject_input(effects);
+                effects.push(WindowEffect::QuitTimedOut);
+            }
+            QuitStage::AwaitingAssetGc => {
+                self.complete_quit_barrier(QuitBarrier::AssetGc, false, effects);
+            }
+            QuitStage::AwaitingConfig => {
+                self.complete_quit_barrier(QuitBarrier::Config, false, effects);
+            }
+            QuitStage::ReadyToExit => {}
+        }
     }
 
     pub(super) fn complete_quit_barrier(

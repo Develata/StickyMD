@@ -55,12 +55,34 @@ struct ProvenAsset {
 }
 
 impl AssetStorage {
+    #[cfg(test)]
     pub fn open(images: &Path, trash: &Path) -> Result<Self, AssetStorageError> {
         Ok(Self {
             images_path: images.to_owned(),
             trash_path: trash.to_owned(),
             images: DirectoryHandle::open(images).map_err(AssetStorageError::Directory)?,
             trash: DirectoryHandle::open(trash).map_err(AssetStorageError::Directory)?,
+        })
+    }
+
+    /// Finds both directories inside `note`; their paths only name them in messages.
+    pub fn open_in(
+        note: &DirectoryHandle,
+        images: &Path,
+        trash: &Path,
+    ) -> Result<Self, AssetStorageError> {
+        let child = |path: &Path| {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| io::Error::other("the directory has no usable name"))?;
+            note.open_child(name)
+        };
+        Ok(Self {
+            images_path: images.to_owned(),
+            trash_path: trash.to_owned(),
+            images: child(images).map_err(AssetStorageError::Directory)?,
+            trash: child(trash).map_err(AssetStorageError::Directory)?,
         })
     }
 

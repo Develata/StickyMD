@@ -1103,6 +1103,23 @@ mod phase8_window_tests {
         );
     }
 
+    /// The note is safe by then: going back to the editor would only strand the cleanup still
+    /// running, so the remaining best-effort steps count as failed and the quit goes on.
+    #[test]
+    fn a_quit_abandoned_after_the_note_is_safe_still_ends() {
+        let mut coordinator = coordinator(StableVisibility::Floating);
+        coordinator.state.lifecycle = LifecycleState::Quitting(QuitStage::AwaitingAssetGc);
+        let effects = coordinator.dispatch(WindowIntent::AbandonQuit);
+        assert!(effects.contains(&WindowEffect::QuitWarning(QuitBarrier::AssetGc)));
+        assert!(effects.contains(&WindowEffect::RequestConfigFlush));
+        assert_eq!(
+            coordinator.state().lifecycle(),
+            LifecycleState::Quitting(QuitStage::AwaitingConfig)
+        );
+        let effects = coordinator.dispatch(WindowIntent::AbandonQuit);
+        assert!(effects.contains(&WindowEffect::ExitProcess));
+    }
+
     #[test]
     fn a_quit_the_host_stopped_waiting_for_gives_the_editor_back() {
         let mut coordinator = coordinator(StableVisibility::Floating);
@@ -1114,7 +1131,7 @@ mod phase8_window_tests {
         });
         let effects = coordinator.dispatch(WindowIntent::AbandonQuit);
         assert!(effects.contains(&WindowEffect::SetEditorInputEnabled(true)));
-        assert!(effects.contains(&WindowEffect::QuitCancelled(QuitBarrier::NoteSave)));
+        assert!(effects.contains(&WindowEffect::QuitTimedOut));
         assert_eq!(coordinator.state().lifecycle(), LifecycleState::Running);
 
         // The save finishing afterwards must not end a program the user has gone back to.

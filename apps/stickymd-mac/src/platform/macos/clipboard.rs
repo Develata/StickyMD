@@ -82,6 +82,16 @@ fn data_for(pasteboard: *mut AnyObject, kind: &str) -> *mut AnyObject {
     unsafe { msg_send![pasteboard, dataForType: &*kind] }
 }
 
+/// The contents can change between looking at the formats and reading one.
+fn chosen_data(pasteboard: *mut AnyObject, kind: &str) -> Result<*mut AnyObject, ClipboardError> {
+    let data = data_for(pasteboard, kind);
+    if data.is_null() {
+        Err(unavailable("the clipboard changed while it was being read"))
+    } else {
+        Ok(data)
+    }
+}
+
 fn file_paths(pasteboard: *mut AnyObject) -> Vec<PathBuf> {
     // SAFETY: Foundation and AppKit calls with valid objects, on the main thread. The class is
     // passed as an object, which is what `NSArray` stores.
@@ -254,9 +264,11 @@ fn paste_from(pasteboard: *mut AnyObject) -> Result<Option<ClipboardPaste>, Clip
     Ok(Some(match choice {
         Choice::Files => classify_files(files),
         Choice::Encoded(kind) => {
-            ClipboardPaste::EncodedImage(bytes_of(data_for(pasteboard, kind))?)
+            ClipboardPaste::EncodedImage(bytes_of(chosen_data(pasteboard, kind)?)?)
         }
-        Choice::Tiff => ClipboardPaste::EncodedImage(tiff_to_png(data_for(pasteboard, TIFF_TYPE))?),
+        Choice::Tiff => {
+            ClipboardPaste::EncodedImage(tiff_to_png(chosen_data(pasteboard, TIFF_TYPE)?)?)
+        }
         Choice::Text => return Ok(text_from(pasteboard).map(ClipboardPaste::Text)),
     }))
 }
