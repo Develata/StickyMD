@@ -25,6 +25,7 @@
 
 ## 发布政策
 
+- [Phase 15 窗口回执的人工检查](2026-11-09-phase-15-window-receipt-manual-check.md)：USER 的 5 项检查与对应验收项的结论，多屏与失败路径未测。
 - [Phase 15 D 之后的桌面回归](2026-11-08-phase-15-desktop-regression.md)：本地桌面预检与 USER 人工检查的结果，多屏与混合 DPI 未测。
 - [Phase 15 C/D 设计](2026-11-07-phase-15-c-design.md)：`stickymd-desktop`、`AppSession` 与宿主端口的拆分方案和批次，USER 批准（2026-11-07）。
 - [Phase 15 B 的待决项](2026-11-07-phase-15-b-decisions.md)：失败分类、恢复文件名、异常保存回执、性能证据与窗口回执的结论（USER 决定 2026-11-07）。
