@@ -50,6 +50,13 @@ impl AppSession {
         frame
     }
 
+    /// The startup could not apply the configured always-on-top value.
+    pub fn startup_topmost_failed(&mut self) {
+        if let Some(flow) = &mut self.window_flow {
+            flow.mark_native_topmost_unknown();
+        }
+    }
+
     pub fn dispatch_window_intent(&mut self, intent: WindowIntent, out: &mut ShellEffects) {
         let Some(flow) = &mut self.window_flow else {
             return;

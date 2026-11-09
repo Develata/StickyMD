@@ -98,6 +98,12 @@ impl WindowShellCoordinator {
         self.request_topmost(TopmostSource::Sensor, user, enabled, now_ms, effects);
     }
 
+    /// The startup applies the configured value outside this flow. When that failed, nothing
+    /// proves the native bit, so asking for the configured value again must still reach the host.
+    pub fn mark_native_topmost_unknown(&mut self) {
+        self.state.topmost.native_bit_unknown = true;
+    }
+
     fn request_topmost(
         &mut self,
         source: TopmostSource,

@@ -46,6 +46,12 @@ impl<H: Host> DesktopShell<H> {
         }
     }
 
+    /// The exit a measuring host asked for after a frame. The tray goes first, as on every exit.
+    pub(super) fn finish_host_probe(&mut self, exit: impl FnOnce()) {
+        self.host.destroy();
+        exit();
+    }
+
     /// Complete the pass before deciding how long the native event loop can sleep.
     pub(super) fn settle_event_pass(&mut self, now_ms: u64) {
         self.with_session(|app, _, out| app.settle(now_ms, out));

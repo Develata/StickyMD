@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Last Review`: 2026-11-09
 - `Scope`: 窗口生命周期、托盘、置顶、透明度、主题、dock 状态机、多显示器、DPI、单实例唤醒；Windows 实现细节与核心行为契约分离
 
 ---
@@ -228,6 +228,7 @@ floating_x_ratio、floating_y_ratio
 WindowDockCoordinator/LifecycleCoordinator 是窗口业务状态的 mutation owner；Shell 只提交
 事件并呈现结果，Windows adapter 只执行已批准的窗口/IPC/monitor 操作并返回结果。
 
+<a id="windows-shell-failure-paths"></a>
 ## Failure Paths
 
 | 场景 | 行为 |
@@ -237,6 +238,8 @@ WindowDockCoordinator/LifecycleCoordinator 是窗口业务状态的 mutation own
 | 托盘创建失败 | 记录错误并保持窗口可用；关闭按钮降级为同一安全保存/GC/config 退出屏障 |
 | 唤醒 IPC 失败 | 第二实例安全退出，不启动重复会话 |
 | DPI 异常 | 按 100% 兜底，窗口仍完全可见 |
+| 窗口启动无法完成（事件循环、窗口或绘制表面无法创建，没有可用显示器，工具窗口身份无法建立） | 提示原因，先移除托盘图标，进程以失败退出码结束；笔记不变 |
+| 启动时透明度或置顶无法应用 | 窗口继续可用，状态行说明原因；置顶的原生位记为未知，按运行时的失败规则可重试 |
 
 ## Configuration
 

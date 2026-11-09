@@ -18,6 +18,7 @@ use super::{CARET_BLINK, DesktopShell};
 use crate::frame::SoftwareSurface;
 use crate::host::{DesktopEvent, Host};
 use stickymd_app::config::{MIN_WINDOW_HEIGHT_DIP, MIN_WINDOW_WIDTH_DIP, ViewMode};
+use stickymd_app::flow::startup::StartupStop;
 
 impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -47,8 +48,9 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
         let window = match event_loop.create_window(self.host.window_attributes(base)) {
             Ok(window) => Arc::new(window),
             Err(error) => {
-                eprintln!("window creation failed: {error}");
-                event_loop.exit();
+                self.abort_startup(&StartupStop::Window(error.to_string()), || {
+                    event_loop.exit()
+                });
                 return;
             }
         };
@@ -60,8 +62,9 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
         let surface = match SoftwareSurface::new(Arc::clone(&window)) {
             Ok(surface) => surface,
             Err(error) => {
-                eprintln!("surface creation failed: {error}");
-                event_loop.exit();
+                self.abort_startup(&StartupStop::Surface(error.to_string()), || {
+                    event_loop.exit()
+                });
                 return;
             }
         };
@@ -105,12 +108,12 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
             "font selection: CJK={} found={} Latin={} found={}",
             fonts.cjk_family, fonts.cjk_found, fonts.latin_family, fonts.latin_found
         );
-        self.window = Some(window);
+        self.window = Some(Arc::clone(&window));
         self.surface = Some(surface);
         self.sync_control_layout();
         self.projection = Some(projection);
-        if !self.initialize_window_shell() {
-            event_loop.exit();
+        if let Err(stop) = self.initialize_window_shell(&window) {
+            self.abort_startup(&stop, || event_loop.exit());
             return;
         }
         self.configure_viewports();

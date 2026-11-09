@@ -112,3 +112,15 @@
 | P15-R09 | 用户置顶与临时感应置顶在真实窗口上：原生置顶位、与普通窗口的层级、不抢焦点；配置与临时状态分离 | Manual | 部分运行。用户置顶：USER 2026-11-09 确认压在普通窗口之上且不抢焦点（receipt: [2026-11-09 人工检查](../report/2026-11-09-phase-15-window-receipt-manual-check.md)），本地预检 G4-01、G4-02 读回原生位（`9c19544`）。感应置顶：G4-01 的 `tray-topmost-sensor-keeps-config` 确认不改配置与托盘勾选（`9c19544`）；感应期间的原生位与层级未观察 | NOT TESTED |
 | P15-R10 | 置顶读回与请求一致才算成功，读回不符为失败、无法读回为 `Unsupported`；用户值只在成功回执后进入配置、写盘与托盘勾选，失败不写并上报，可重试；感应值分离且不进配置，隐藏保存与恢复读确认值；原生位按单一顺序结算，新请求取代旧请求，过期回执不提交，失败后按确认值再请求一次，原生位未知时同值的显式重试也到达宿主，回执不来时到期结束；启动路径照旧 | Automated | `ports::window::tests::a_topmost_receipt_is_the_read_back_of_the_wanted_bit`；`flow::window::topmost::tests`（Linux 也运行）；`session::decision_tests::{a_topmost_is_written_only_after_the_window_confirmed_it,a_topmost_before_the_window_flow_goes_straight_to_the_configuration,a_sensor_receipt_writes_no_configuration}`；`shell::phase15_host_tests::{phase15_a_rejected_topmost_writes_nothing_and_can_be_retried,phase15_a_sensor_topmost_stays_out_of_the_configuration,phase15_the_startup_topmost_ignores_the_read_back}`；真实窗口的读回属 P15-R09 | AUTOMATED PASS |
 | P15-R17 | R 的 Release 在真实窗口上通过全部本地桌面预检（P15-D09 的用例加 G3-02 导出）；导出对话框由便签窗口拥有，保存或取消关闭后前台回到便签窗口 | Automated local | `STICKYMD_PREFLIGHT_EXE` 的 18 个 ignored 用例逐个通过（任务文件“最终桌面回归”）：17 个在 `9c19544`，修复导出后的 G3-02 在 `b6e2be1`，含取消与两次关闭后的前台断言。这不是 exact-candidate 证据；置顶时对话框在便签之上由 USER 人工确认（receipt: [2026-11-09 人工检查](../report/2026-11-09-phase-15-window-receipt-manual-check.md)） | AUTOMATED PASS |
+
+## 窗口启动失败
+
+[`09` Failure Paths](../plan/09_windows_shell.md#windows-shell-failure-paths) 的验证项；USER 批准的方案见[分析报告](../report/2026-11-09-startup-failure-paths.md)。
+
+| ID | Requirement | Mode | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| P15-S01 | 窗口无法使用或无法安全放置时结束启动：窗口、绘制表面、无显示器、工具窗口身份（显示前后）走同一条路径，先移除托盘，再提示原因，再结束事件循环，并记录失败 | Automated | `shell::startup_tests::{a_stopped_startup_removes_the_tray_then_explains_then_exits_and_is_recorded,without_a_display_the_startup_stops_before_it_creates_anything,an_identity_refused_before_the_show_stops_the_startup_before_the_window_is_placed,an_identity_lost_after_the_show_stops_the_startup_before_the_window_is_styled}`；`flow::startup::tests::every_stop_says_why_with_the_platform_text`（Linux 也运行） | AUTOMATED PASS |
+| P15-S02 | 透明度或置顶无法应用时启动继续：状态行说明，不弹窗，其后的步骤照常；置顶的原生位记为未知，同值重试能到达宿主 | Automated | `shell::startup_tests::{a_refused_opacity_is_reported_and_the_startup_goes_on,a_refused_topmost_is_reported_and_can_be_retried}` | AUTOMATED PASS |
+| P15-S03 | 托盘创建失败仍然弹窗一次并继续，恢复任务栏入口；载入笔记时产生的提示不被外观失败覆盖 | Automated | `shell::startup_tests::{a_missing_tray_interrupts_once_and_the_startup_goes_on_with_a_taskbar_entry,a_degraded_startup_does_not_replace_what_loading_the_note_found}`；`flow::startup::tests::only_a_missing_tray_interrupts_a_startup_that_goes_on` | AUTOMATED PASS |
+| P15-S04 | 正常启动的里程碑与原生调用顺序不变，不提示、不记录失败；诊断探针的退出先移除托盘 | Automated | `shell::startup_tests::{a_healthy_startup_keeps_its_order_and_reports_nothing,a_measuring_hosts_exit_removes_the_tray_first}` | AUTOMATED PASS |
+| P15-S05 | 真实进程：上述终止路径的提示可见、托盘消失、退出码非 0；事件循环创建或运行失败走 `fatal_startup` | Manual | 未运行；这些失败在真实桌面上难以制造，`main.rs` 读取失败标记的一行没有测试 | NOT TESTED |

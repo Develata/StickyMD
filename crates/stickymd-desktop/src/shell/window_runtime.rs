@@ -8,13 +8,10 @@ use winit::window::{ResizeDirection, Theme};
 use super::DesktopShell;
 #[cfg(test)]
 use super::shell_pins_tests::PressRoute;
-use crate::host::{Host, StartupDetail};
-use stickymd_app::config::ViewMode;
+use crate::host::Host;
 use stickymd_app::flow::WindowPreferenceEffect;
 use stickymd_app::flow::window::geometry::PhysicalRect;
-use stickymd_app::flow::window::state::{
-    TopmostRequest, WindowEffect, WindowIntent, effective_topmost,
-};
+use stickymd_app::flow::window::state::{TopmostRequest, WindowEffect, WindowIntent};
 use stickymd_app::instruction::{WindowPlatformIntent, WindowPreferenceIntent, WindowResizeEdge};
 use stickymd_app::ports::{FailureKind, TrayView, Visibility};
 #[cfg(test)]
@@ -98,107 +95,6 @@ impl<H: Host> DesktopShell<H> {
                 self.request_preview_relayout();
                 self.update_ime_area();
                 self.app.defer_zoom_config();
-            }
-        }
-    }
-
-    pub(super) fn initialize_window_shell(&mut self) -> bool {
-        let Some(window) = self.window.as_ref().cloned() else {
-            return false;
-        };
-        let monitors = self
-            .host
-            .snapshot()
-            .map(|snapshot| snapshot.displays)
-            .unwrap_or_default();
-        let Some(monitor) = self.app.startup_display(&monitors) else {
-            self.diagnostic = Some("没有可用的显示器；无法安全放置窗口。".into());
-            return false;
-        };
-        self.host.milestone("monitor_ready");
-        let tray_available = match self.host.create(self.tray_view, self.sink.clone()) {
-            Ok(()) => true,
-            Err(error) => {
-                let message = format!(
-                    "无法创建系统托盘图标；StickyMD 将保持窗口可见，关闭窗口会安全保存并退出。\n\n{error}"
-                );
-                self.host.show_error("StickyMD", &message);
-                self.diagnostic = Some(message);
-                false
-            }
-        };
-        if tray_available {
-            if let Err(error) = self.host.reassert_identity() {
-                self.host.show_error(
-                    "StickyMD",
-                    &format!(
-                        "无法建立安全的工具窗口身份；StickyMD 不会显示无恢复入口的窗口。\n\n{error}"
-                    ),
-                );
-                self.host.destroy();
-                return false;
-            }
-        } else {
-            // A tool-window-only lifecycle without a tray recovery path is
-            // forbidden. Restore ordinary taskbar reachability before show.
-            self.host.restore_ordinary_entry();
-        }
-        let frame = self.app.start_window_flow(monitor, tray_available);
-        let _ = self.host.apply_frame(frame);
-        self.host.milestone("tray_ready");
-        self.host.detail(StartupDetail::SplitModeBegin);
-        self.dispatch_window_intent(WindowIntent::SplitModeChanged {
-            split: self.app.config().current().view_mode == ViewMode::Split,
-        });
-        self.host.detail(StartupDetail::SplitModeEnd);
-        self.host.detail(StartupDetail::WindowShowBegin);
-        window.set_visible(true);
-        self.host.detail(StartupDetail::WindowShowEnd);
-        self.host.detail(StartupDetail::ToolIdentityBegin);
-        if let Err(error) = self.host.reassert_identity() {
-            self.host.show_error(
-                "StickyMD",
-                &format!("窗口显示后无法保持安全的工具窗口身份；StickyMD 将停止启动。\n\n{error}"),
-            );
-            return false;
-        }
-        self.host.detail(StartupDetail::ToolIdentityEnd);
-        self.host.milestone("window_visible");
-        // Winit may refresh native extended styles while making the window
-        // visible. Apply layered alpha and z-order after that transition so
-        // the configured projection is the final native fact.
-        if let Err(error) = self.host.set_opacity(self.app.config().current().opacity) {
-            self.diagnostic = Some(format!("无法应用窗口透明度：{error}"));
-            return false;
-        }
-        self.host.milestone("opacity_ready");
-        if !self.apply_startup_topmost() {
-            return false;
-        }
-        self.host.milestone("topmost_ready");
-        window.focus_window();
-        self.host.milestone("focus_ready");
-        self.refresh_window_guards();
-        self.host.milestone("guards_ready");
-        self.host.milestone("shell_ready");
-        true
-    }
-
-    /// Applies the configured value with no receipt: only a host error stops the startup, and a
-    /// read-back of any kind does not.
-    pub(super) fn apply_startup_topmost(&mut self) -> bool {
-        let effective = effective_topmost(
-            self.app.config().current().always_on_top,
-            self.app
-                .window_flow()
-                .as_ref()
-                .is_some_and(|flow| flow.state().temporary_sensor_topmost()),
-        );
-        match self.host.set_topmost(effective) {
-            Ok(_) => true,
-            Err(error) => {
-                self.diagnostic = Some(format!("无法应用窗口置顶状态：{error}"));
-                false
             }
         }
     }

@@ -53,6 +53,7 @@ pub enum HostCall {
     CaretToggled(PhysicalRect),
     CaretReleased,
     Presented { width: u32, height: u32 },
+    Milestone(&'static str),
 }
 
 /// The answers are public so a test sets what the desktop reports. The defaults are a desktop
@@ -85,6 +86,8 @@ pub struct FakeHost {
     pub applied_frame: Option<PhysicalRect>,
     pub monitors: Result<MonitorSnapshot, FailureKind>,
     pub identity_result: Result<(), HostFailure>,
+    /// What the next `reassert_identity` calls answer, one per call, before `identity_result`.
+    pub identity_answers: VecDeque<Result<(), HostFailure>>,
     pub tray_result: Result<(), HostFailure>,
     pub open_result: Result<(), HostFailure>,
     pub export_result: Result<Option<PathBuf>, HostFailure>,
@@ -120,6 +123,7 @@ impl Default for FakeHost {
             applied_frame: None,
             monitors: Err(FailureKind::Unavailable),
             identity_result: Ok(()),
+            identity_answers: VecDeque::new(),
             tray_result: Ok(()),
             open_result: Ok(()),
             export_result: Ok(None),
@@ -260,7 +264,9 @@ impl WindowHost for FakeHost {
 
     fn reassert_identity(&mut self) -> Result<(), HostFailure> {
         self.record(HostCall::ReassertIdentity);
-        self.identity_result.clone()
+        self.identity_answers
+            .pop_front()
+            .unwrap_or_else(|| self.identity_result.clone())
     }
 
     fn restore_ordinary_entry(&mut self) {
@@ -279,7 +285,11 @@ impl CaretOverlay for FakeHost {
     }
 }
 
-impl StartupProbe for FakeHost {}
+impl StartupProbe for FakeHost {
+    fn milestone(&mut self, name: &'static str) {
+        self.record(HostCall::Milestone(name));
+    }
+}
 
 impl PreviewImages for FakeHost {
     fn preview_images(&self) -> Option<Box<dyn PreviewImageSource + Send>> {
