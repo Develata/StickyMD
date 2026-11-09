@@ -127,7 +127,7 @@
 | P15-E06 | 链接 scheme 分类只有一处，宿主打开前用它复核；笔记文件过滤在共享层 | Automated | `preview::parser::tests`；`platform::windows::shell::tests::forged_allowed_kind_cannot_bypass_adapter_reclassification`；`flow::reconciliation::tests::only_the_working_note_and_its_temporary_need_a_reconciliation` | AUTOMATED PASS |
 | P15-E07 | 共享 crate 能编译到 `aarch64-apple-darwin`，依赖策略覆盖该目标 | Automated local | `cargo check --locked --target aarch64-apple-darwin -p stickymd-core -p stickymd-render -p stickymd-app -p stickymd-desktop`；`cargo deny check`。这只是编译，macOS 上没有运行过 | AUTOMATED PASS |
 | P15-E09 | 正文可用时 0 字节的 `note.md.tmp` 按冗余移除，不提示恢复；正文不存在或不可用时仍是恢复选择 | Automated | `stickymd_core` 的 `an_empty_temporary_has_nothing_to_offer_beside_a_usable_note`、`an_empty_temporary_stays_a_choice_without_a_usable_note`；`flow::note_startup::tests::an_empty_temporary_beside_a_usable_note_is_redundant`；`startup::bootstrap::tests::empty_temporary_beside_a_usable_note_is_removed_without_a_prompt` | AUTOMATED PASS |
-| P15-E08 | Release 在真实窗口上通过全部本地桌面预检 | Automated local | `STICKYMD_PREFLIGHT_EXE` 的 18 个 ignored 用例（`35d3c25` 的 Release，单屏）：托盘 20、托盘失败恢复 1、单实例 27、贴边 54、Search 15、公式转换 4、双副本 1+1、微软拼音与微信输入法 72、图片粘贴 13、崩溃恢复 17、用户资产 11、受管资产 4、导出 4、G5 四组。崩溃恢复修掉脚本竞态后连跑 6 次通过 5 次，另 1 次命中保存前的空临时文件窗口，见任务文件 Open Items。这不是 exact-candidate 证据 | AUTOMATED PASS |
+| P15-E08 | Release 在真实窗口上通过全部本地桌面预检 | Automated local | `STICKYMD_PREFLIGHT_EXE` 的 18 个 ignored 用例（`35d3c25` 的 Release，单屏）：托盘 20、托盘失败恢复 1、单实例 27、贴边 54、Search 15、公式转换 4、双副本 1+1、微软拼音与微信输入法 72、图片粘贴 13、崩溃恢复 17、用户资产 11、受管资产 4、导出 4、G5 四组。崩溃恢复在修掉脚本竞态并加入空临时文件规则后，`62b1f9b` 的 Release 上连续 10 次通过，同一 Release 上用户资产 11、单实例 27 也通过，其余 15 项没有在它上面重跑。这不是 exact-candidate 证据 | AUTOMATED PASS |
 
 ## 窗口启动失败
 
