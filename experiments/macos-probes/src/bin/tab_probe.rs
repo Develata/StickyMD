@@ -22,6 +22,8 @@ const EXPANDED: Rect = Rect { x: 400.0, y: 33.0, w: 320.0, h: 240.0 };
 const STYLES: [(&str, f64, f64); 2] = [("narrow bar", 120.0, 6.0), ("small square", 28.0, 28.0)];
 // `tab_probe edge`: touching the top screen edge, above the menu bar, and translucent.
 const EDGE_STYLES: [(&str, f64, f64); 2] = [("translucent top-edge bar", 120.0, 6.0), ("translucent top-edge square", 33.0, 33.0)];
+// `tab_probe strip`: as on Windows. The window keeps its size and moves up until 3 points show.
+const STRIP_STYLES: [(&str, f64, f64); 2] = [("full-width top-edge strip", EXPANDED.w, 3.0), ("full-width top-edge strip", EXPANDED.w, 3.0)];
 const COLLAPSED_ALPHA: f64 = 0.35;
 const ABOVE_MENU_BAR: isize = 27;
 const FLOATING: isize = 3;
@@ -67,6 +69,7 @@ enum Stage {
 
 struct App {
     edge: bool,
+    strip: bool,
     styles: &'static [(&'static str, f64, f64)],
     window: Option<Rc<Window>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
@@ -109,6 +112,9 @@ impl App {
     }
 
     fn collapsed_rect(&self) -> Rect {
+        if self.strip {
+            return Rect { x: EXPANDED.x, y: 3.0 - EXPANDED.h, w: EXPANDED.w, h: EXPANDED.h };
+        }
         let (_, w, h) = self.styles[self.style];
         Rect { x: EXPANDED.x + (EXPANDED.w - w) / 2.0, y: if self.edge { 0.0 } else { EXPANDED.y }, w, h }
     }
@@ -220,7 +226,7 @@ impl ApplicationHandler for App {
                 let eased = 1.0 - (1.0 - t).powi(3);
                 let step = Instant::now();
                 self.apply(self.from.lerp(self.to, eased));
-                if self.edge {
+                if self.edge && !self.strip {
                     let collapsed = if self.stage == Stage::Collapsing { eased } else { 1.0 - eased };
                     self.set_alpha(1.0 + (COLLAPSED_ALPHA - 1.0) * collapsed);
                 }
@@ -298,10 +304,19 @@ impl ApplicationHandler for App {
 fn main() {
     let event_loop = EventLoop::builder().with_activation_policy(ActivationPolicy::Accessory).with_default_menu(false).build().unwrap();
     let now = Instant::now();
-    let edge = std::env::args().nth(1).as_deref() == Some("edge");
+    let mode = std::env::args().nth(1);
+    let strip = mode.as_deref() == Some("strip");
+    let edge = strip || mode.as_deref() == Some("edge");
     let mut app = App {
         edge,
-        styles: if edge { &EDGE_STYLES } else { &STYLES },
+        strip,
+        styles: if strip {
+            &STRIP_STYLES
+        } else if edge {
+            &EDGE_STYLES
+        } else {
+            &STYLES
+        },
         window: None,
         surface: None,
         screen_height: 0.0,
