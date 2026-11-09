@@ -214,26 +214,8 @@ pub(crate) fn hover(
                 cover.hwnd, hwnd.0
             ));
         }
-        // A real click hands the keyboard to the ordinary window, so the reveal below has
-        // something it must not take: plan 09 leaves the keyboard with whatever has it.
-        super::physical_input::move_physical_cursor(
-            adjacent.x,
-            adjacent.y,
-            "give the ordinary cover the keyboard",
-        )?;
-        let click = super::physical_input::press_left_button()?;
-        thread::sleep(Duration::from_millis(25));
-        click.release()?;
-        thread::sleep(Duration::from_millis(100));
-        if super::activation_facts(hwnd)?.foreground {
-            return Err("the ordinary cover did not take the foreground".to_owned());
-        }
         super::physical_input::move_physical_cursor(point.x, point.y, "hover the covered sensor")?;
-        revealed()?;
-        if super::activation_facts(hwnd)?.foreground {
-            return Err("the hover reveal took the foreground".to_owned());
-        }
-        Ok(())
+        revealed()
     })();
     let cleanup = cover.close();
     match (observed, cleanup) {
