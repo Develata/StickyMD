@@ -284,18 +284,26 @@ fn text_from(pasteboard: *mut AnyObject) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Held by every test that talks to the pasteboard server. The product reads the pasteboard
+    /// only on the main thread; tests run on worker threads, and in parallel one of them
+    /// occasionally saw the formats of a pasteboard it had just written as incomplete.
+    static PASTEBOARD_SERVER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// A pasteboard of its own, so a test run leaves the user's clipboard alone.
-    struct PrivatePasteboard(*mut AnyObject);
+    struct PrivatePasteboard(*mut AnyObject, std::sync::MutexGuard<'static, ()>);
 
     impl PrivatePasteboard {
         fn new() -> Self {
+            let serial = PASTEBOARD_SERVER
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             // SAFETY: class and instance methods without preconditions; the pasteboard is released
             // in `drop`.
             unsafe {
                 let pasteboard: *mut AnyObject =
                     msg_send![class!(NSPasteboard), pasteboardWithUniqueName];
                 let _: isize = msg_send![pasteboard, clearContents];
-                Self(pasteboard)
+                Self(pasteboard, serial)
             }
         }
 
