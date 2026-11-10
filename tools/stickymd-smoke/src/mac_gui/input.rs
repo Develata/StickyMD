@@ -1,6 +1,7 @@
 //! Single-owner input stream: register before pressing, release in reverse on error/unwind.
 //! A failed release permanently stops later operations, including later scenarios.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
+
 use super::model::Point;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 pub(super) const CMD: u16 = 55;
