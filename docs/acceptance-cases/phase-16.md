@@ -42,7 +42,7 @@
 | P16-W07 | 隐藏到托盘后再次打开 `.app`，窗口显示并取得焦点 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
 | P16-W08 | 托盘：显示/隐藏、置顶、退出 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
 | P16-W09 | 透明度 40–100 生效 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-W10 | 光标闪烁不产生帧；反色可见 | Manual | 人工 | NOT TESTED |
+| P16-W10 | 光标闪烁不产生帧；反色可见 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的 USER 确认（2026-11-11，`0fa8754` 的 release，本机桌面）：光标可见、闪烁正常。不产生帧由同一二进制在 VM 中的唤醒测量佐证（约每 30 s 一次） | MANUAL PASS |
 | P16-W11 | Cmd+Q：干净时退出；保存失败时取消 | Manual | 人工。VM 外部观察：干净时退出通过；保存失败时取消未测（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
 | P16-W12 | 系统终止：`osascript` 退出、注销、导出对话框打开时退出 | Manual | 人工 | NOT TESTED |
 | P16-W13 | 感应条 2 DIP（S8）的几何测试 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
@@ -73,7 +73,7 @@
 | --- | --- | --- | --- | --- |
 | P16-P01 | 打包脚本产出 ad-hoc 签名的 `.app`，`codesign --verify` 通过 | Automated | 脚本 | AUTOMATED PASS |
 | P16-R01 | `10` macOS 节的内存基线 | Automated | `mac-resources`（VM）：Source、Preview、Split 中位 47.1、50.4、50.4 MiB，均低于临时硬门；Hidden 未测（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-R02 | 空闲 CPU（含光标闪烁） | Automated | `mac-resources`（VM）：按周期开关光标图层时 Split 中位 0.103%，超过 `10` 的 0.1% 硬门。闪烁改由系统合成器播放后，Source、Preview、Split 中位 0.001%、0.002%、0.001%（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)）。光标是否可见并在闪，需 P16-W10 人工确认后才能判定 | NOT TESTED |
+| P16-R02 | 空闲 CPU（含光标闪烁） | Automated | `mac-resources`（VM）：按周期开关光标图层时 Split 中位 0.103%，超过 `10` 的 0.1% 硬门。闪烁改由系统合成器播放后，`0fa8754` 的 release 在 Source、Preview、Split 中位 0.001%、0.002%、0.001%，低于 0.05% 目标；同一二进制的光标可见与闪烁已由 P16-W10 确认（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | AUTOMATED PASS |
 | P16-R03 | 下载的包在 App Translocation 下提示后退出 | Manual | 需要签名身份 | NOT TESTED |
 
 多屏与混合 DPI 按 USER 决定跳过，保持 `NOT TESTED`。
