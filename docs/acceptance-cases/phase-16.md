@@ -49,6 +49,7 @@
 | P16-W14 | S7 的 reducer 测试：手动收起后恢复焦点不撤销，进入展开路径后撤销 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
 | P16-W15 | Windows 桌面回归（S2、S4、S6、S7；S9 透明度弹窗内容随 DPI 缩放，只影响 >100% DPI） | Manual | 需在 Windows 机器上运行 | NOT TESTED |
 | P16-W16 | Windows 上的 2 DIP（S8） | — | USER 2026-11-10 决定不单独回归 | USER 豁免 |
+| P16-W17 | 光标图层自带闪烁时 shell 不按闪烁周期唤醒；图层失败后改由 shell 与帧闪烁；没有自带闪烁的宿主（Windows）照旧 | Automated | `shell::phase15_host_tests::phase16_an_overlay_that_blinks_itself_needs_no_blink_wake` | AUTOMATED PASS |
 
 ## M3 输入、剪贴板、导出
 
@@ -72,7 +73,7 @@
 | --- | --- | --- | --- | --- |
 | P16-P01 | 打包脚本产出 ad-hoc 签名的 `.app`，`codesign --verify` 通过 | Automated | 脚本 | AUTOMATED PASS |
 | P16-R01 | `10` macOS 节的内存基线 | Automated | `mac-resources`（VM）：Source、Preview、Split 中位 47.1、50.4、50.4 MiB，均低于临时硬门；Hidden 未测（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-R02 | 空闲 CPU（含光标闪烁） | Automated | `mac-resources`（VM）：Split 中位 0.103%，超过 `10` 的 0.1% 硬门；Source 0.073%，超过 0.05% 目标；Preview 0.001%（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)）。测量对象为 `a332aae` 的 release，当前源码未复测 | BLOCKED |
+| P16-R02 | 空闲 CPU（含光标闪烁） | Automated | `mac-resources`（VM）：按周期开关光标图层时 Split 中位 0.103%，超过 `10` 的 0.1% 硬门。闪烁改由系统合成器播放后，Source、Preview、Split 中位 0.001%、0.002%、0.001%（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)）。光标是否可见并在闪，需 P16-W10 人工确认后才能判定 | NOT TESTED |
 | P16-R03 | 下载的包在 App Translocation 下提示后退出 | Manual | 需要签名身份 | NOT TESTED |
 
 多屏与混合 DPI 按 USER 决定跳过，保持 `NOT TESTED`。

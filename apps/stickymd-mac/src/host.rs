@@ -150,6 +150,11 @@ impl CaretOverlay for MacHost {
     fn release(&mut self) {
         self.caret.release();
     }
+
+    /// The layer carries a compositor animation (`caret_layer::blink_animation`).
+    fn blinks_itself(&self) -> bool {
+        true
+    }
 }
 
 impl PreviewImages for MacHost {

@@ -8,7 +8,7 @@
 //! all canonical mutations flow through `EditorCoordinator::dispatch`.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use stickymd_render::preview::{PreviewFrame, PreviewSelection, SpanAction};
 use stickymd_render::source::SourceProjection;
@@ -84,7 +84,7 @@ mod window_geometry_runtime;
 mod window_interaction;
 mod window_runtime;
 
-const CARET_BLINK: Duration = Duration::from_millis(550);
+use crate::host::CARET_BLINK;
 
 pub struct DesktopShell<H: Host> {
     window: Option<Arc<Window>>,
@@ -133,6 +133,8 @@ pub struct DesktopShell<H: Host> {
     next_blink: Instant,
     native_caret_overlay: Option<PhysicalRect>,
     native_caret_failed: bool,
+    /// The host's overlay blinks by itself (`CaretOverlay::blinks_itself`).
+    overlay_blinks: bool,
     diagnostic: Option<String>,
     system_theme: Theme,
     controls: ControlState,
@@ -173,6 +175,9 @@ impl<H: Host> DesktopShell<H> {
         let opacity = config.opacity;
         let always_on_top = config.always_on_top;
         let caret_in_frame = host.caret_overlay().is_none();
+        let overlay_blinks = host
+            .caret_overlay()
+            .is_some_and(|overlay| overlay.blinks_itself());
         let mut app = Self {
             window: None,
             surface: None,
@@ -212,6 +217,7 @@ impl<H: Host> DesktopShell<H> {
             next_blink: clock_origin + CARET_BLINK,
             native_caret_overlay: None,
             native_caret_failed: caret_in_frame,
+            overlay_blinks,
             diagnostic,
             system_theme: Theme::Light,
             controls: ControlState::new(opacity),

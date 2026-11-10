@@ -21,6 +21,12 @@ impl<H: Host> DesktopShell<H> {
         }
     }
 
+    /// Whether the shell wakes every `CARET_BLINK` to blink the caret. Not when the host's overlay
+    /// blinks by itself, unless the overlay failed and the frame draws the caret.
+    pub(super) fn shell_blinks_caret(&self) -> bool {
+        self.caret_animation_active() && (self.native_caret_failed || !self.overlay_blinks)
+    }
+
     pub(super) fn advance_caret_blink(&mut self) {
         self.app.editor.caret_visible = !self.app.editor.caret_visible;
         if self.native_caret_failed {

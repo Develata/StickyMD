@@ -261,7 +261,7 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
             .app
             .next_deadline()
             .map(|deadline| self.clock_origin + Duration::from_millis(deadline));
-        if self.caret_animation_active() {
+        if self.shell_blinks_caret() {
             if now >= self.next_blink {
                 self.next_blink = now + CARET_BLINK;
                 self.advance_caret_blink();

@@ -3,6 +3,7 @@
 //! plan_ref: docs/plan/03_system_architecture.md#shared-crates
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use stickymd_app::execution::IoCompletion;
 use stickymd_app::flow::window::geometry::PhysicalRect;
@@ -69,6 +70,9 @@ pub trait TrayHost {
     fn destroy(&mut self);
 }
 
+/// How long the caret stays shown, and then hidden, in each blink.
+pub const CARET_BLINK: Duration = Duration::from_millis(550);
+
 /// A native way to blink the caret without a new frame. Without one (`Host::caret_overlay`) the
 /// shell draws the caret into the frame.
 pub trait CaretOverlay {
@@ -77,6 +81,14 @@ pub trait CaretOverlay {
 
     /// A present replaced the pixels, so no inverted rectangle is left on the screen.
     fn release(&mut self) {}
+
+    /// Whether an inverted rectangle blinks by itself, `CARET_BLINK` shown and `CARET_BLINK`
+    /// hidden, starting shown each time it is inverted. The shell then neither wakes nor toggles
+    /// for each blink (plan 10: macOS plays it as a system compositor animation). By default the
+    /// shell toggles it.
+    fn blinks_itself(&self) -> bool {
+        false
+    }
 }
 
 /// The substeps of the startup a host measures separately, in the order they happen.

@@ -86,7 +86,7 @@ Phase 15（`11` Phase 15 节）每批迁移前固定基线 SHA、fixture 与测�
 <a id="macos-gates"></a>
 ### macOS 门（USER 批准 2026-11-10）
 
-macOS 的呈现成本不由 Windows 基线代表。探针基线（scale 2）：默认窗口 1040×1360 每帧堆分配 5.66 MB、`present` p50 2.4 ms；Split 1800×1360 为 9.79 MB、3.9 ms；光标闪烁整窗提交 CPU 1.94%，`CALayer` 开关 0.037%。
+macOS 的呈现成本不由 Windows 基线代表。探针基线（scale 2）：默认窗口 1040×1360 每帧堆分配 5.66 MB、`present` p50 2.4 ms；Split 1800×1360 为 9.79 MB、3.9 ms；光标闪烁整窗提交 CPU 1.94%，`CALayer` 开关 0.037%。虚拟机里按周期开关图层时 Split 空闲 CPU 为 0.103%，超过硬门，因此闪烁改由系统合成器的动画播放，app 不再按闪烁周期唤醒（USER 批准 2026-11-10，见 `09` macOS 节）。
 
 内存口径为 `phys_footprint`，Release，scale 2，启动后等待 30 s，≥5 次取中位与最大。Windows 内存门不适用（Retina 帧面积是 100% DPI 的 4 倍）。
 

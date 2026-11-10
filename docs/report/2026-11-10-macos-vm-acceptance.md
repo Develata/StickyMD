@@ -110,3 +110,22 @@ app 为 `a332aae` 的 release 包（可执行文件 SHA-256 `daab657592f110c1bd7
 | `stickymd-win` 没有构建证据 | 属实 | 无法在 macOS 上处理，仍需 Windows 或 CI |
 
 按新规则重跑（driver 构建 SHA-256 前缀 `cc4a1d24`，app 同上）：PASS 8、FAIL 0、NOT_TESTED 12。W03 悬停后 256 ms 到达静止位置（期限 304 ms），离开后 650 ms 收回到位（期限 727 ms）；W04 分别为 250 ms（期限 327 ms）与 666 ms（期限 732 ms）。证据 SHA-256 `525850f36de1b21eea8215e0af3a7d70218c57f4fc80a65d2bc548411529ff65`，保存在 `dist/evidence/mac-vm-2026-11-10/mac-gui-r6/`。
+
+## Resolution：光标闪烁改由系统合成器播放（2026-11-11）
+
+USER 批准按上文建议修改（`09` macOS 节、`10` macOS 门已记录）。共享层给 `CaretOverlay` 加 `blinks_itself()`，默认 `false`，Windows 不变；macOS 返回 `true`，shell 不再按 550 ms 唤醒，光标层显示时挂离散的不透明度关键帧动画（亮、灭各 550 ms），由系统合成器播放，每次显示从“亮”开始。
+
+同一虚拟机（自动下载已按 USER 决定关闭），未提交的工作区构建，app 可执行文件 SHA-256 `240d104b2a82a741743a830b812e0e8eaf3357bd32f6aaa61bbdbc7692cff41f`：
+
+- debug 构建以 Split 运行 25 s，进程存活，stderr 只有字体日志，没有 Objective-C 类型或异常错误。
+- `mac-resources`，每种视图 5 次，均有效（证据 SHA-256 `e27dd4b8d6b615dd91973444d0c66af005afb8bf33458cbbfa1630eb5a6d05a2`，保存在 `dist/evidence/mac-vm-2026-11-10/mac-resources-r2/`）：
+
+| 视图 | 内存 中位 / 最大 | 空闲 CPU 中位 / 最大 | 中断唤醒 中位（次/秒） |
+| --- | --- | --- | --- |
+| Source | 47.24 / 47.28 MiB | 0.001% / 0.002% | 0.033 |
+| Preview | 50.53 / 50.77 MiB | 0.002% / 0.002% | 0.033 |
+| Split | 50.58 / 50.64 MiB | 0.001% / 0.001% | 0.033 |
+
+- `mac-gui` 整套：PASS 8、FAIL 0、NOT_TESTED 12（证据 SHA-256 `34b355e46388b064d31ceefa10b4e63899d769cb778ee600950b5cbfab2c5088`，`dist/evidence/mac-vm-2026-11-10/mac-gui-r7/`）。
+
+未验证：光标是否真的可见且在闪。虚拟机没有录屏权限，外部观察看不到图层内容；空闲 CPU 低同样可能是光标没有显示。P16-R02 因此改为 `NOT TESTED`，待 W10 人工确认光标可见、按约 0.55 s 闪烁后再判定。

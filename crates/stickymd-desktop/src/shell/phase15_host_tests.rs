@@ -923,6 +923,30 @@ fn phase15_a_host_without_an_overlay_draws_the_caret_in_the_frame() {
     assert_eq!(app.diagnostic, None);
 }
 
+/// An overlay that blinks by itself takes the blink off the shell: no wake and no toggle per blink
+/// while the caret is active. A failed overlay hands the blink back to the shell and the frame.
+/// Without `blinks_itself` (Windows) the shell keeps blinking as before.
+#[test]
+fn phase16_an_overlay_that_blinks_itself_needs_no_blink_wake() {
+    let host = FakeHost {
+        caret_blinks: true,
+        ..FakeHost::default()
+    };
+    let mut app = fixture_on(host, "start");
+    app.app.editor.focused = true;
+    assert!(app.caret_animation_active());
+    assert!(!app.shell_blinks_caret());
+    app.native_caret_failed = true;
+    assert!(app.shell_blinks_caret());
+
+    let mut toggling = fixture("start");
+    toggling.app.editor.focused = true;
+    assert!(toggling.caret_animation_active());
+    assert!(toggling.shell_blinks_caret());
+    toggling.app.editor.focused = false;
+    assert!(!toggling.shell_blinks_caret());
+}
+
 /// Sees, when the host drops, whether the worker's thread had already ended and let go of its end.
 struct WorkerProbe {
     completions: mpsc::Receiver<IoCompletion>,

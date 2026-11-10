@@ -231,7 +231,7 @@ USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-de
 | 托盘 | `tray-icon` 在事件循环启动后（`NewEvents(Init)`）于主线程创建 |
 | 唤醒 | 第二实例经 socket；再次打开 bundle 经 reopen Apple Event（winit 不上报，宿主注册）；`focus_window` |
 | 单实例 | 目录 fd 的 `flock`（`05` 程序目录身份） |
-| 光标闪烁 | `CaretOverlay` 实现为 `CALayer` sublayer，闪烁不产生帧；普通帧继续用 softbuffer |
+| 光标闪烁 | `CaretOverlay` 实现为 `CALayer` sublayer，闪烁不产生帧；普通帧继续用 softbuffer。显示时给图层挂离散的不透明度关键帧动画（亮、灭各 550 ms，无限循环），由系统合成器播放，app 不按闪烁周期唤醒；每次显示从“亮”重新开始（USER 批准 2026-11-10） |
 | 文件剪贴板 | `NSPasteboard`（`08` macOS 节） |
 | 保存对话框 | `NSSavePanel.runModal`，主线程阻塞 |
 | 链接打开 | `NSWorkspace` |

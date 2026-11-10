@@ -105,6 +105,8 @@ pub struct FakeHost {
     pub watch_result: Result<(), HostFailure>,
     /// Whether this host has a caret overlay at all.
     pub caret_overlay: bool,
+    /// Whether that overlay blinks by itself (`CaretOverlay::blinks_itself`).
+    pub caret_blinks: bool,
     pub caret_result: Result<(), HostFailure>,
     pub exit_after_present: bool,
     pub keymap: Keymap,
@@ -140,6 +142,7 @@ impl Default for FakeHost {
             export_result: Ok(None),
             watch_result: Ok(()),
             caret_overlay: true,
+            caret_blinks: false,
             caret_result: Ok(()),
             exit_after_present: false,
             keymap: Keymap::ctrl_standard(),
@@ -293,6 +296,10 @@ impl CaretOverlay for FakeHost {
 
     fn release(&mut self) {
         self.record(HostCall::CaretReleased);
+    }
+
+    fn blinks_itself(&self) -> bool {
+        self.caret_blinks
     }
 }
 
