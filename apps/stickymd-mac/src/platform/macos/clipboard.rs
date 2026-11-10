@@ -290,7 +290,14 @@ mod tests {
     static PASTEBOARD_SERVER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// A pasteboard of its own, so a test run leaves the user's clipboard alone.
-    struct PrivatePasteboard(*mut AnyObject, std::sync::MutexGuard<'static, ()>);
+    struct PrivatePasteboard(
+        *mut AnyObject,
+        #[expect(
+            dead_code,
+            reason = "held only so its drop releases `PASTEBOARD_SERVER`"
+        )]
+        std::sync::MutexGuard<'static, ()>,
+    );
 
     impl PrivatePasteboard {
         fn new() -> Self {
