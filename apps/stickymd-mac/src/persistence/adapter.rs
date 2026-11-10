@@ -107,8 +107,8 @@ impl ManagedAssetStore for MacAssetStore {
 }
 
 pub struct MacExportSink {
-    /// Where the note is saved now: the guard against exporting over the working note and the
-    /// relative images both follow a moved directory, as the note does.
+    /// The directory the note is saved in: the guard against exporting over the working note and
+    /// the relative images use it directly, so both follow a moved directory, as the note does.
     directory: DirectoryHandle,
 }
 
@@ -116,9 +116,7 @@ impl ExportSink for MacExportSink {
     fn export(&mut self, request: ExportRequest) -> Result<ExportCompletion, StorageFailure> {
         Ok(export_snapshot(crate::export::ExportRequest {
             snapshot: request.snapshot,
-            note_dir: self.directory.current_path().map_err(|error| {
-                StorageFailure::new(FailureKind::Unavailable, error.to_string())
-            })?,
+            note_directory: &self.directory,
             target: request.target,
         })?)
     }
@@ -134,11 +132,15 @@ impl ConfigStorage for MacConfigStorage {
     }
 }
 
-/// The capabilities of this program directory, for the shared I/O worker.
-pub fn mac_io_ports(
-    paths: &RuntimePaths,
-) -> Result<IoPorts<MacNoteStorage, MacAssetStore, MacExportSink, MacConfigStorage>, StorageFailure>
-{
+/// The capabilities of this program directory: the shared I/O worker's ports and Preview's
+/// directory, all opened from one descriptor, so they name the same Note Directory even if its
+/// path is replaced while the program starts.
+pub struct MacPorts {
+    pub io: IoPorts<MacNoteStorage, MacAssetStore, MacExportSink, MacConfigStorage>,
+    pub preview_directory: DirectoryHandle,
+}
+
+pub fn mac_io_ports(paths: &RuntimePaths) -> Result<MacPorts, StorageFailure> {
     let files = NoteFiles::open(&paths.note_dir)?;
     let directory = || {
         files
@@ -153,11 +155,15 @@ pub fn mac_io_ports(
     let config = MacConfigStorage {
         directory: directory()?,
     };
-    Ok(IoPorts {
-        note: MacNoteStorage { files },
-        assets,
-        export,
-        config,
+    let preview_directory = directory()?;
+    Ok(MacPorts {
+        io: IoPorts {
+            note: MacNoteStorage { files },
+            assets,
+            export,
+            config,
+        },
+        preview_directory,
     })
 }
 

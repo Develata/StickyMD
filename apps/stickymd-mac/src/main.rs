@@ -108,8 +108,9 @@ fn main() -> std::process::ExitCode {
         Ok(ports) => ports,
         Err(error) => fatal_startup(&format!("无法打开便签目录：{error}")),
     };
+    let note_directory = ports.preview_directory;
     let io_sink = sink.clone();
-    let worker = match PersistenceWorker::start(ports, move |completion: IoCompletion| {
+    let worker = match PersistenceWorker::start(ports.io, move |completion: IoCompletion| {
         io_sink.post(DesktopEvent::Io(completion));
     }) {
         Ok(worker) => worker,
@@ -127,10 +128,6 @@ fn main() -> std::process::ExitCode {
         worker,
         clock: Box::new(InstantClock::starting_at(started)),
     });
-    let note_directory = match platform::macos::file::DirectoryHandle::open(&paths.note_dir) {
-        Ok(directory) => directory,
-        Err(error) => fatal_startup(&format!("无法打开便签目录：{error}")),
-    };
     let host = MacHost::new(paths, note_directory, instance, sink.clone());
     let mut app = DesktopShell::new(host, session, sink, started, diagnostic);
     let run = event_loop.run_app(&mut app);

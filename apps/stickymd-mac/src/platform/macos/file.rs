@@ -56,15 +56,17 @@ pub fn rename_path_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     check(unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) })
 }
 
-/// Opens an image the note refers to: read-only, regular file, no symbolic link anywhere in the
-/// path, and on this machine rather than a network volume.
-pub fn open_local_image(path: &Path) -> io::Result<File> {
+/// An image the note refers to, `path` relative to `base` or absolute: read-only, regular file,
+/// no symbolic link anywhere in the path, and on this machine rather than a network volume.
+fn open_local_image_at(base: libc::c_int, path: &Path) -> io::Result<File> {
     // No libc constant yet; from <sys/fcntl.h>.
     const O_NOFOLLOW_ANY: libc::c_int = 0x2000_0000;
     let c_path = c_string(path.as_os_str())?;
-    // SAFETY: `c_path` is NUL-terminated and outlives the call.
+    // SAFETY: `c_path` is NUL-terminated and outlives the call; `base` is a descriptor its
+    // caller keeps open for the call.
     let descriptor = unsafe {
-        libc::open(
+        libc::openat(
+            base,
             c_path.as_ptr(),
             libc::O_RDONLY | O_NOFOLLOW_ANY | libc::O_NONBLOCK | libc::O_CLOEXEC,
         )
@@ -101,6 +103,11 @@ impl FileObservation {
     /// What is at `path` itself: a symbolic link there is observed as the link, not its target.
     pub fn of_path(path: &Path) -> io::Result<Self> {
         Ok(Self::from_metadata(&std::fs::symlink_metadata(path)?))
+    }
+
+    /// What `path` names after following any symbolic link.
+    pub fn of_followed_path(path: &Path) -> io::Result<Self> {
+        Ok(Self::from_metadata(&std::fs::metadata(path)?))
     }
 
     fn from_metadata(metadata: &std::fs::Metadata) -> Self {
@@ -178,6 +185,17 @@ impl DirectoryHandle {
             .position(|byte| *byte == 0)
             .unwrap_or(path.len());
         Ok(OsStr::from_bytes(&path[..length]).into())
+    }
+
+    /// The directory itself, wherever it is: compare with [`FileObservation::same_file_as`].
+    pub fn observation(&self) -> io::Result<FileObservation> {
+        FileObservation::of(&self.directory)
+    }
+
+    /// An image the note refers to (see `open_local_image_at` for what is refused); a relative
+    /// `path` starts here, not at a path that may now name another directory.
+    pub fn open_local_image(&self, path: &Path) -> io::Result<File> {
+        open_local_image_at(self.directory.as_raw_fd(), path)
     }
 
     pub fn try_clone(&self) -> io::Result<Self> {
@@ -293,17 +311,53 @@ mod tests {
 
     #[test]
     fn a_local_image_is_opened_only_along_a_path_without_links() {
-        let (root, _handle) = directory("file-image");
+        let (root, handle) = directory("file-image");
         let real_root = fs::canonicalize(&root).unwrap();
         fs::write(real_root.join("a.png"), b"x").unwrap();
         std::os::unix::fs::symlink(real_root.join("a.png"), real_root.join("link.png")).unwrap();
         fs::create_dir(real_root.join("real")).unwrap();
         fs::write(real_root.join("real/b.png"), b"x").unwrap();
         std::os::unix::fs::symlink(real_root.join("real"), real_root.join("linked")).unwrap();
-        assert!(open_local_image(&real_root.join("a.png")).is_ok());
-        assert!(open_local_image(&real_root.join("link.png")).is_err());
-        assert!(open_local_image(&real_root.join("linked/b.png")).is_err());
-        assert!(open_local_image(&real_root.join("real")).is_err());
+        let open = |path: &Path| handle.open_local_image(path);
+        assert!(open(&real_root.join("a.png")).is_ok());
+        assert!(open(&real_root.join("link.png")).is_err());
+        assert!(open(&real_root.join("linked/b.png")).is_err());
+        assert!(open(&real_root.join("real")).is_err());
+        assert!(open(Path::new("linked/b.png")).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Relative to the handle, after the directory moved and another took its old path; links
+    /// stay refused, a parent step and an absolute path still work.
+    #[test]
+    fn a_relative_image_is_opened_from_the_held_directory() {
+        let root = unique_temp_path("file-image-at");
+        let note = root.join("note");
+        fs::create_dir_all(note.join("images")).unwrap();
+        fs::write(note.join("images/a.png"), b"original").unwrap();
+        fs::write(root.join("shared.png"), b"shared").unwrap();
+        std::os::unix::fs::symlink(note.join("images/a.png"), note.join("link.png")).unwrap();
+        let handle = DirectoryHandle::open(&note).unwrap();
+        let moved = root.join("moved");
+        fs::rename(&note, &moved).unwrap();
+        fs::create_dir_all(note.join("images")).unwrap();
+        fs::write(note.join("images/a.png"), b"impostor").unwrap();
+        let read = |path: &str| {
+            let mut bytes = Vec::new();
+            io::Read::read_to_end(&mut handle.open_local_image(Path::new(path))?, &mut bytes)?;
+            io::Result::Ok(bytes)
+        };
+        assert_eq!(read("images/a.png").unwrap(), b"original");
+        assert_eq!(read("../shared.png").unwrap(), b"shared");
+        assert!(read("link.png").is_err());
+        let absolute = fs::canonicalize(&moved).unwrap().join("images/a.png");
+        assert_eq!(read(absolute.to_str().unwrap()).unwrap(), b"original");
+        assert!(
+            handle
+                .observation()
+                .unwrap()
+                .same_file_as(&FileObservation::of_path(&moved).unwrap())
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

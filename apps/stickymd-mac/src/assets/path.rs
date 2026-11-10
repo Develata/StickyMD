@@ -2,7 +2,9 @@
 //!
 //! plan_ref: docs/plan/08_assets_and_export.md#local-image-read-boundary
 
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use stickymd_render::preview::{DestinationDecodeError, decode_destination};
 use thiserror::Error;
@@ -17,14 +19,21 @@ pub enum LocalImagePathError {
     NonLocalPath(String),
 }
 
-/// Resolves a Comrak image destination for read-only local access. Relative paths stay relative
-/// to `note/`; a `file:` URL names a path on this machine. This never grants write or
-/// managed-asset ownership authority; the adapter that opens the file refuses links and network
-/// volumes.
+/// Where a destination points, as a path under `note_dir`: what the tests compare.
+#[cfg(test)]
 pub fn resolve_local_image(
     note_dir: &Path,
     destination: &str,
 ) -> Result<PathBuf, LocalImagePathError> {
+    Ok(note_dir.join(local_image_destination(destination)?))
+}
+
+/// Decodes a Comrak image destination for read-only local access. A relative path stays relative,
+/// to be opened from the Note Directory's handle, so a moved directory is followed with no path
+/// resolved in between; a `file:` URL names a path on this machine. This never grants write or
+/// managed-asset ownership authority; the adapter that opens the file refuses links and network
+/// volumes.
+pub fn local_image_destination(destination: &str) -> Result<PathBuf, LocalImagePathError> {
     let destination = destination.trim();
     let decoded = if destination
         .get(..8)
@@ -40,12 +49,7 @@ pub fn resolve_local_image(
         percent_decode(destination).unwrap_or_else(|_| destination.to_owned())
     };
     validate_destination(&decoded)?;
-    let path = PathBuf::from(decoded);
-    Ok(if path.is_absolute() {
-        path
-    } else {
-        note_dir.join(path)
-    })
+    Ok(PathBuf::from(decoded))
 }
 
 fn has_uri_scheme(value: &str) -> bool {

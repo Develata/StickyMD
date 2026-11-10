@@ -2,62 +2,49 @@
 //!
 //! plan_ref: docs/plan/08_assets_and_export.md#local-image-read-boundary
 
+use std::fs::File;
 use std::io::{BufReader, Read};
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::PathBuf;
 
 use stickymd_render::image::{
     ImageMetadata, MAX_ENCODED_IMAGE_BYTES, PreviewImageSource, inspect_image_reader,
 };
 
-use crate::assets::{open_local_image, resolve_local_image};
+use crate::assets::local_image_destination;
 use crate::platform::macos::file::DirectoryHandle;
 
-/// Where relative destinations start.
-enum Base {
-    #[cfg(test)]
-    Fixed(PathBuf),
-    /// The Note Directory the note is saved in, wherever it has moved since the start: a new
-    /// directory at the old path is not the note's.
-    Following(DirectoryHandle),
-}
-
 pub struct LocalImageSource {
-    base: Base,
+    /// The Note Directory the note is saved in, wherever it has moved since the start: relative
+    /// destinations are opened from it, so a new directory at the old path is never read.
+    directory: DirectoryHandle,
 }
 
 impl LocalImageSource {
     #[cfg(test)]
     pub fn new(base: PathBuf) -> Self {
-        Self {
-            base: Base::Fixed(base),
-        }
+        Self::following(DirectoryHandle::open(&base).expect("test image directory"))
     }
 
     pub fn following(directory: DirectoryHandle) -> Self {
-        Self {
-            base: Base::Following(directory),
-        }
+        Self { directory }
     }
 
-    fn resolve(&self, destination: &str) -> Result<PathBuf, String> {
-        let base = match &self.base {
-            #[cfg(test)]
-            Base::Fixed(path) => path.clone(),
-            Base::Following(directory) => directory
-                .current_path()
-                .map_err(|error| error.to_string())?,
-        };
-        resolve_local_image(Path::new(&base), destination).map_err(|error| error.to_string())
+    /// What `destination` names; a missing file is `None`.
+    fn open(&self, destination: &str) -> Result<Option<File>, String> {
+        let path = local_image_destination(destination).map_err(|error| error.to_string())?;
+        match self.directory.open_local_image(&path) {
+            Ok(file) => Ok(Some(file)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
     }
 }
 
 impl PreviewImageSource for LocalImageSource {
     fn inspect(&self, destination: &str) -> Result<Option<ImageMetadata>, String> {
-        let path = self.resolve(destination)?;
-        let file = match open_local_image(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.to_string()),
+        let Some(file) = self.open(destination)? else {
+            return Ok(None);
         };
         inspect_image_reader(BufReader::new(file))
             .map(Some)
@@ -74,11 +61,8 @@ impl PreviewImageSource for LocalImageSource {
         {
             return Ok(None);
         }
-        let path = self.resolve(destination)?;
-        let file = match open_local_image(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.to_string()),
+        let Some(file) = self.open(destination)? else {
+            return Ok(None);
         };
         let mut bytes = Vec::new();
         file.take((MAX_ENCODED_IMAGE_BYTES + 1) as u64)
@@ -113,8 +97,8 @@ mod tests {
         std::fs::create_dir(&note).unwrap();
         std::fs::write(note.join("a.png"), b"impostor").unwrap();
         assert_eq!(
-            source.resolve("a.png").unwrap(),
-            root.join("moved").join("a.png")
+            source.load("a.png").unwrap().as_deref(),
+            Some(&b"original"[..])
         );
         std::fs::remove_dir_all(root).unwrap();
     }

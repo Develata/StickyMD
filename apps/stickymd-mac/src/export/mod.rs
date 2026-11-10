@@ -14,11 +14,11 @@ use stickymd_core::{DocumentSnapshot, Hash32, LoadedDocument};
 use stickymd_render::preview::{ImageKind, PreviewParser, collect_image_occurrences};
 use thiserror::Error;
 
-use crate::assets::{open_local_image, resolve_local_image};
+use crate::assets::local_image_destination;
 use crate::platform::macos::atomic_file::{
     AtomicPublishError, move_file_no_replace, prepare_temporary_exclusive, publish_prepared,
 };
-use crate::platform::macos::file::FileObservation;
+use crate::platform::macos::file::{DirectoryHandle, FileObservation};
 
 static EXPORT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -27,10 +27,12 @@ struct OwnedStagingFile {
     observation: FileObservation,
 }
 
+/// Borrows the Note Directory for one export: the guard and the relative images use the held
+/// directory itself, never a path to it.
 #[derive(Debug)]
-pub struct ExportRequest {
+pub struct ExportRequest<'a> {
     pub snapshot: DocumentSnapshot,
-    pub note_dir: PathBuf,
+    pub note_directory: &'a DirectoryHandle,
     pub target: PathBuf,
 }
 
@@ -78,8 +80,7 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
         .ok_or(ExportError::InvalidTargetName)?;
-    let working_note = request.note_dir.join("note.md");
-    if is_working_note_target(&request.note_dir, &working_note, &request.target)? {
+    if is_working_note_target(request.note_directory, &request.target)? {
         return Err(ExportError::WorkingNoteTarget);
     }
     let tree = PreviewParser.parse(&request.snapshot)?;
@@ -114,7 +115,7 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
     let mut owned_staging_files = Vec::new();
     let result = (|| {
         for (index, occurrence) in local.into_iter().enumerate() {
-            let source = resolve_local_image(&request.note_dir, &occurrence.destination)
+            let source = local_image_destination(&occurrence.destination)
                 .map_err(|error| ExportError::UnsupportedLocalPath(error.to_string()))?;
             let output_name = if let Some(existing) = plan.name_for_source(&source) {
                 existing.to_owned()
@@ -123,7 +124,8 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
                     .as_ref()
                     .ok_or(ExportError::InvalidTargetName)?
                     .join(format!("asset-{index}.tmp"));
-                let (hash, extension, observation) = copy_and_hash(&source, &staged_temporary)?;
+                let (hash, extension, observation) =
+                    copy_and_hash(request.note_directory, &source, &staged_temporary)?;
                 owned_staging_files.push(OwnedStagingFile {
                     path: staged_temporary.clone(),
                     observation,
@@ -229,29 +231,39 @@ fn create_unique_export_staging_with_sequence(
     Err(ExportError::StagingNameExhausted)
 }
 
-fn is_working_note_target(
-    note_dir: &Path,
-    working_note: &Path,
-    target: &Path,
-) -> Result<bool, ExportError> {
-    if working_note
-        .try_exists()
-        .map_err(ExportError::TargetInspection)?
-        && target.try_exists().map_err(ExportError::TargetInspection)?
-        && same_existing_file(working_note, target).map_err(ExportError::TargetInspection)?
-    {
-        return Ok(true);
-    }
+/// Whether `target` is the working note: the note's name in the note's directory, or the note file
+/// itself under another name. Both compare the held directory and its file, not paths, so a
+/// directory moved and replaced while the panel was open is still recognised.
+fn is_working_note_target(directory: &DirectoryHandle, target: &Path) -> Result<bool, ExportError> {
     let Some(parent) = target.parent() else {
         return Ok(false);
     };
-    let canonical_note_dir = fs::canonicalize(note_dir).map_err(ExportError::TargetInspection)?;
-    let canonical_parent = fs::canonicalize(parent).map_err(ExportError::TargetInspection)?;
-    Ok(canonical_note_dir == canonical_parent
-        && target
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("note.md")))
+    let named_note = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("note.md"));
+    let note_directory = directory
+        .observation()
+        .map_err(ExportError::TargetInspection)?;
+    if named_note
+        && FileObservation::of_followed_path(parent)
+            .map_err(ExportError::TargetInspection)?
+            .same_file_as(&note_directory)
+    {
+        return Ok(true);
+    }
+    let target = match FileObservation::of_followed_path(target) {
+        Ok(target) => target,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(ExportError::TargetInspection(error)),
+    };
+    match directory.open_read("note.md") {
+        Ok(note) => Ok(FileObservation::of(&note)
+            .map_err(ExportError::TargetInspection)?
+            .same_file_as(&target)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(ExportError::TargetInspection(error)),
+    }
 }
 
 fn prepare_unique_export_temporary(
@@ -296,13 +308,16 @@ fn choose_asset_directory(parent: &Path, stem: &str) -> Result<PathBuf, ExportEr
 }
 
 fn copy_and_hash(
+    note_directory: &DirectoryHandle,
     source: &Path,
     destination: &Path,
 ) -> Result<(Hash32, String, FileObservation), ExportError> {
-    let mut input = open_local_image(source).map_err(|source_error| ExportError::LocalImage {
-        path: source.to_owned(),
-        source: source_error,
-    })?;
+    let mut input = note_directory
+        .open_local_image(source)
+        .map_err(|source_error| ExportError::LocalImage {
+            path: source.to_owned(),
+            source: source_error,
+        })?;
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -360,15 +375,10 @@ fn remove_owned_staging_file(path: &Path, expected: FileObservation) -> std::io:
     fs::remove_file(path)
 }
 
-/// Two names for one file: the same inode on the same volume.
-fn same_existing_file(first: &Path, second: &Path) -> std::io::Result<bool> {
-    use std::os::unix::fs::MetadataExt;
-    let (first, second) = (fs::metadata(first)?, fs::metadata(second)?);
-    Ok(first.dev() == second.dev() && first.ino() == second.ino())
-}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::resolve_local_image;
     use crate::test_support::unique_temp_path;
     use std::sync::Arc;
     use stickymd_core::{
@@ -407,7 +417,8 @@ mod tests {
         let staging = root.join("asset.tmp");
         let original = root.join("original-owned.tmp");
         fs::write(&source, b"owned export bytes").unwrap();
-        let (_, _, observation) = copy_and_hash(&source, &staging).unwrap();
+        let directory = DirectoryHandle::open(&root).unwrap();
+        let (_, _, observation) = copy_and_hash(&directory, &source, &staging).unwrap();
         fs::rename(&staging, &original).unwrap();
         fs::write(&staging, b"external replacement").unwrap();
 
@@ -453,7 +464,7 @@ mod tests {
                 generation: Generation::initial(),
                 line_ending: LineEnding::Lf,
             },
-            note_dir: note,
+            note_directory: &DirectoryHandle::open(&note).unwrap(),
             target: out.join("copy.md"),
         })
         .unwrap();
@@ -477,7 +488,7 @@ mod tests {
                 generation: Generation::initial(),
                 line_ending: LineEnding::Lf,
             },
-            note_dir: root.clone(),
+            note_directory: &DirectoryHandle::open(&root).unwrap(),
             target: target.clone(),
         });
         assert!(matches!(result, Err(ExportError::LocalImage { .. })));
@@ -510,7 +521,7 @@ mod tests {
             };
             let result = export_snapshot(ExportRequest {
                 snapshot,
-                note_dir: root.clone(),
+                note_directory: &DirectoryHandle::open(&root).unwrap(),
                 target: target.clone(),
             });
             assert!(
@@ -548,7 +559,7 @@ mod tests {
                 generation: Generation::initial(),
                 line_ending: LineEnding::Lf,
             },
-            note_dir: note,
+            note_directory: &DirectoryHandle::open(&note).unwrap(),
             target: out.join("copy.md"),
         })
         .unwrap();
@@ -572,7 +583,7 @@ mod tests {
                 generation: Generation::initial(),
                 line_ending: LineEnding::Lf,
             },
-            note_dir: root.clone(),
+            note_directory: &DirectoryHandle::open(&root).unwrap(),
             target: root.join("copy.md"),
         })
         .unwrap();
@@ -599,7 +610,7 @@ mod tests {
                     generation: Generation::initial(),
                     line_ending: LineEnding::Lf,
                 },
-                note_dir: note.clone(),
+                note_directory: &DirectoryHandle::open(&note).unwrap(),
                 target,
             });
             assert!(matches!(result, Err(ExportError::WorkingNoteTarget)));
@@ -614,11 +625,56 @@ mod tests {
                 generation: Generation::initial(),
                 line_ending: LineEnding::Lf,
             },
-            note_dir: note.clone(),
+            note_directory: &DirectoryHandle::open(&note).unwrap(),
             target: note.join("NOTE.MD"),
         });
         assert!(matches!(absent_result, Err(ExportError::WorkingNoteTarget)));
         assert!(!note.join("NOTE.MD").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The directory moved and another took its old path after the handle was opened: the guard
+    /// still finds the working note where it went, and the impostor is an ordinary target.
+    #[test]
+    fn export_recognises_the_working_note_after_its_directory_moved() {
+        let root = fixture();
+        let note = root.join("note");
+        let moved = root.join("moved");
+        fs::create_dir(&note).unwrap();
+        fs::write(note.join("note.md"), b"durable working note").unwrap();
+        fs::write(note.join("a.png"), b"original image").unwrap();
+        let directory = DirectoryHandle::open(&note).unwrap();
+        fs::rename(&note, &moved).unwrap();
+        fs::create_dir(&note).unwrap();
+        fs::write(note.join("a.png"), b"impostor image").unwrap();
+        let snapshot = |text: &str| DocumentSnapshot {
+            text: Arc::from(text),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        };
+        for target in [moved.join("note.md"), moved.join("Note.MD")] {
+            let result = export_snapshot(ExportRequest {
+                snapshot: snapshot("replacement"),
+                note_directory: &directory,
+                target,
+            });
+            assert!(matches!(result, Err(ExportError::WorkingNoteTarget)));
+        }
+        assert_eq!(
+            fs::read(moved.join("note.md")).unwrap(),
+            b"durable working note"
+        );
+        export_snapshot(ExportRequest {
+            snapshot: snapshot("![a](a.png)"),
+            note_directory: &directory,
+            target: note.join("note.md"),
+        })
+        .unwrap();
+        let copied = fs::read_dir(note.join("note-assets"))
+            .unwrap()
+            .map(|entry| fs::read(entry.unwrap().path()).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(copied, [b"original image".to_vec()]);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -637,7 +693,7 @@ mod tests {
                 generation: Generation::initial(),
                 line_ending: LineEnding::Lf,
             },
-            note_dir: note,
+            note_directory: &DirectoryHandle::open(&note).unwrap(),
             target: target.clone(),
         })
         .unwrap();
@@ -681,7 +737,7 @@ mod tests {
 
         export_snapshot(ExportRequest {
             snapshot: document.snapshot(),
-            note_dir: root.clone(),
+            note_directory: &DirectoryHandle::open(&root).unwrap(),
             target: root.join("copy.md"),
         })
         .unwrap();
@@ -733,7 +789,7 @@ mod tests {
             let started = Instant::now();
             let completion = export_snapshot(ExportRequest {
                 snapshot: snapshot.clone(),
-                note_dir: note.clone(),
+                note_directory: &DirectoryHandle::open(&note).unwrap(),
                 target: out.join(format!("copy-{index}.md")),
             })
             .unwrap();

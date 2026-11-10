@@ -15,7 +15,7 @@ fn macos_storage(root: &Path, on_completion: Completion) -> StorageSite {
     std::fs::write(&executable, b"").unwrap();
     let paths = RuntimePaths::from_executable(&executable).unwrap();
     paths.ensure_layout().unwrap();
-    let worker = PersistenceWorker::start(mac_io_ports(&paths).unwrap(), on_completion).unwrap();
+    let worker = PersistenceWorker::start(mac_io_ports(&paths).unwrap().io, on_completion).unwrap();
     StorageSite {
         worker,
         paths: StoragePaths {

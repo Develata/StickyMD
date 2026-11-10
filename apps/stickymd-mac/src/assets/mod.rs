@@ -6,7 +6,8 @@ mod path;
 mod storage;
 mod transaction;
 
-pub(crate) use crate::platform::macos::file::open_local_image;
+pub use path::local_image_destination;
+#[cfg(test)]
 pub use path::resolve_local_image;
 pub use storage::{AssetStorage, AssetStorageError};
 pub use transaction::{AssetPasteError, prepare_and_store_paste};
