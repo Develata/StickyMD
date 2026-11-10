@@ -3,28 +3,57 @@
 //! plan_ref: docs/plan/08_assets_and_export.md#local-image-read-boundary
 
 use std::io::{BufReader, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use stickymd_render::image::{
     ImageMetadata, MAX_ENCODED_IMAGE_BYTES, PreviewImageSource, inspect_image_reader,
 };
 
 use crate::assets::{open_local_image, resolve_local_image};
+use crate::platform::macos::file::DirectoryHandle;
+
+/// Where relative destinations start.
+enum Base {
+    #[cfg(test)]
+    Fixed(PathBuf),
+    /// The Note Directory the note is saved in, wherever it has moved since the start: a new
+    /// directory at the old path is not the note's.
+    Following(DirectoryHandle),
+}
 
 pub struct LocalImageSource {
-    base: PathBuf,
+    base: Base,
 }
 
 impl LocalImageSource {
+    #[cfg(test)]
     pub fn new(base: PathBuf) -> Self {
-        Self { base }
+        Self {
+            base: Base::Fixed(base),
+        }
+    }
+
+    pub fn following(directory: DirectoryHandle) -> Self {
+        Self {
+            base: Base::Following(directory),
+        }
+    }
+
+    fn resolve(&self, destination: &str) -> Result<PathBuf, String> {
+        let base = match &self.base {
+            #[cfg(test)]
+            Base::Fixed(path) => path.clone(),
+            Base::Following(directory) => directory
+                .current_path()
+                .map_err(|error| error.to_string())?,
+        };
+        resolve_local_image(Path::new(&base), destination).map_err(|error| error.to_string())
     }
 }
 
 impl PreviewImageSource for LocalImageSource {
     fn inspect(&self, destination: &str) -> Result<Option<ImageMetadata>, String> {
-        let path =
-            resolve_local_image(&self.base, destination).map_err(|error| error.to_string())?;
+        let path = self.resolve(destination)?;
         let file = match open_local_image(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -45,8 +74,7 @@ impl PreviewImageSource for LocalImageSource {
         {
             return Ok(None);
         }
-        let path =
-            resolve_local_image(&self.base, destination).map_err(|error| error.to_string())?;
+        let path = self.resolve(destination)?;
         let file = match open_local_image(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -71,6 +99,25 @@ mod tests {
     use stickymd_render::preview::{PreviewPipeline, PreviewSelection, PreviewTheme};
 
     use super::*;
+
+    /// A note directory moved away and replaced at its old path: images come from the moved one,
+    /// where the note is still saved.
+    #[test]
+    fn images_come_from_the_directory_the_note_is_in() {
+        let root = crate::test_support::unique_temp_path("preview-following");
+        let note = root.join("note");
+        std::fs::create_dir_all(&note).unwrap();
+        std::fs::write(note.join("a.png"), b"original").unwrap();
+        let source = LocalImageSource::following(DirectoryHandle::open(&note).unwrap());
+        std::fs::rename(&note, root.join("moved")).unwrap();
+        std::fs::create_dir(&note).unwrap();
+        std::fs::write(note.join("a.png"), b"impostor").unwrap();
+        assert_eq!(
+            source.resolve("a.png").unwrap(),
+            root.join("moved").join("a.png")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn local_image_adapter_reads_png_and_rejects_network_placeholders() {

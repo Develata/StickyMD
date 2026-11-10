@@ -107,14 +107,18 @@ impl ManagedAssetStore for MacAssetStore {
 }
 
 pub struct MacExportSink {
-    note_dir: PathBuf,
+    /// Where the note is saved now: the guard against exporting over the working note and the
+    /// relative images both follow a moved directory, as the note does.
+    directory: DirectoryHandle,
 }
 
 impl ExportSink for MacExportSink {
     fn export(&mut self, request: ExportRequest) -> Result<ExportCompletion, StorageFailure> {
         Ok(export_snapshot(crate::export::ExportRequest {
             snapshot: request.snapshot,
-            note_dir: self.note_dir.clone(),
+            note_dir: self.directory.current_path().map_err(|error| {
+                StorageFailure::new(FailureKind::Unavailable, error.to_string())
+            })?,
             target: request.target,
         })?)
     }
@@ -143,15 +147,16 @@ pub fn mac_io_ports(
             .map_err(AssetStorageError::Directory)
     };
     let assets = MacAssetStore::in_directory(directory()?, paths);
+    let export = MacExportSink {
+        directory: directory()?,
+    };
     let config = MacConfigStorage {
         directory: directory()?,
     };
     Ok(IoPorts {
         note: MacNoteStorage { files },
         assets,
-        export: MacExportSink {
-            note_dir: paths.note_dir.clone(),
-        },
+        export,
         config,
     })
 }

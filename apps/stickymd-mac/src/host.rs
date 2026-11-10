@@ -22,6 +22,7 @@ use crate::paths::RuntimePaths;
 use crate::platform::macos::app::{install_hooks, termination_abandoned, termination_finished};
 use crate::platform::macos::caret_layer::CaretLayer;
 use crate::platform::macos::dialog::{choose_markdown_export, show_error};
+use crate::platform::macos::file::DirectoryHandle;
 use crate::platform::macos::file_watch::{FileWatchSignal, NoteDirectoryWatcher};
 use crate::platform::macos::instance::InstanceGuard;
 use crate::platform::macos::pointer_band::PointerBandWatch;
@@ -38,6 +39,8 @@ const KEYMAP: Keymap = Keymap::cmd_standard();
 
 pub struct MacHost {
     paths: RuntimePaths,
+    /// The Note Directory as the note's storage holds it, for the reads that must follow it.
+    note_directory: DirectoryHandle,
     sink: EventSink,
     watcher: Option<NoteDirectoryWatcher>,
     _instance: InstanceGuard,
@@ -51,9 +54,15 @@ pub struct MacHost {
 }
 
 impl MacHost {
-    pub fn new(paths: RuntimePaths, instance: InstanceGuard, sink: EventSink) -> Self {
+    pub fn new(
+        paths: RuntimePaths,
+        note_directory: DirectoryHandle,
+        instance: InstanceGuard,
+        sink: EventSink,
+    ) -> Self {
         Self {
             paths,
+            note_directory,
             sink,
             watcher: None,
             _instance: instance,
@@ -145,7 +154,8 @@ impl CaretOverlay for MacHost {
 
 impl PreviewImages for MacHost {
     fn preview_images(&self) -> Option<Box<dyn PreviewImageSource + Send>> {
-        Some(Box::new(LocalImageSource::new(self.paths.note_dir.clone())))
+        let directory = self.note_directory.try_clone().ok()?;
+        Some(Box::new(LocalImageSource::following(directory)))
     }
 }
 

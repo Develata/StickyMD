@@ -358,6 +358,16 @@ mod tests {
     }
 
     #[test]
+    fn the_current_path_follows_a_moved_directory() {
+        let (root, handle) = directory("file-current-path");
+        assert_eq!(handle.current_path().unwrap(), root);
+        let moved = root.with_extension("moved");
+        fs::rename(&root, &moved).unwrap();
+        assert_eq!(handle.current_path().unwrap(), moved);
+        fs::remove_dir_all(moved).unwrap();
+    }
+
+    #[test]
     fn operations_follow_a_moved_directory() {
         let (root, handle) = directory("file-moved");
         let moved = root.with_extension("moved");

@@ -125,7 +125,11 @@ fn main() -> std::process::ExitCode {
         worker,
         clock: Box::new(InstantClock::starting_at(started)),
     });
-    let host = MacHost::new(paths, instance, sink.clone());
+    let note_directory = match platform::macos::file::DirectoryHandle::open(&paths.note_dir) {
+        Ok(directory) => directory,
+        Err(error) => fatal_startup(&format!("无法打开便签目录：{error}")),
+    };
+    let host = MacHost::new(paths, note_directory, instance, sink.clone());
     let mut app = DesktopShell::new(host, session, sink, started, diagnostic);
     let run = event_loop.run_app(&mut app);
     let startup_failed = app.startup_failed();
