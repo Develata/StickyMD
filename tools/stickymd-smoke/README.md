@@ -7,6 +7,42 @@ release package.
 
 ## Stable entry points
 
+The standalone macOS resource command is opt-in and opens copied app instances.
+Run it later in an unlocked test VM with the display on and no interaction:
+
+```bash
+cargo run --quiet --locked -p stickymd-smoke -- mac-resources --app dist/macos/StickyMD.app --out dist/evidence/mac-resources
+cargo run --quiet --locked -p stickymd-smoke -- mac-resources --help
+```
+
+Supply a Release bundle. Each Source/Preview/Split run uses `ditto` to copy it into
+a fresh private program directory with a deterministic 20 KiB, 20-formula note.
+The copied executable hash must match the input. `CGWindowListCopyWindowInfo`
+checks the child's PID and a content-sized on-screen window, without titles or
+screen capture. This is window readiness, not proof of rendered formula correctness.
+The tool then warms up for 30 seconds, samples `proc_pid_rusage` V4 footprint,
+and measures CPU and wake-ups over at least 60 seconds of monotonic elapsed time.
+Mach ticks use the recorded timebase; 100% CPU means one logical CPU.
+The default and minimum is five runs per visible scenario; `--repetitions N`
+can increase it. SIGTERM has a three-second grace period, followed by SIGKILL
+and a three-second reap deadline. Unreaped children prevent directory removal
+and stop the campaign. Cleanup checks the created directory's device/inode and
+canonical path and never follows a replacement root symlink.
+
+`mac-resources.json` is checkpointed atomically after each run and includes
+environment/display dimensions, executable and fixture SHA-256, raw counters,
+observed early-exit time/status, and median/max for memory, CPU and wake-ups.
+macOS uses its built-in `/usr/bin/shasum` for SHA-256. Failed and early-exit runs
+remain in evidence but never supply derived metrics. The visible scenarios pass
+only if every requested run is valid and their footprint maxima are at most
+72/96/128 MiB. CPU and wake-ups are reported without gates under this task's
+authorization. Hidden is `NOT_TESTED` (48 MiB), pending a menu-bar GUI driver.
+Exit 0 covers visible scenarios only; full acceptance remains incomplete, and
+P16-R01/P16-R02 are not updated by this command. Off macOS, measurement refuses
+with `NOT_TESTED` and a nonzero exit. Help and unit tests do not open windows.
+Release provenance, screen lock/occlusion and actual render completion are not
+attested by this tool; use the contract's macOS/scale-2 test environment.
+
 ```powershell
 ./tools/smoke/phase-00.ps1
 ./tools/smoke/phase-01.ps1 -Performance

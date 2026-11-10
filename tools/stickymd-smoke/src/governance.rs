@@ -3,6 +3,7 @@
 mod actions;
 mod input_injection;
 mod mac_host;
+mod mac_resources;
 mod manifest_harness;
 
 use std::collections::BTreeSet;
@@ -160,6 +161,7 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_release_infrastructure(root)?;
     verify_plan_refs(root)?;
     mac_host::verify(root)?;
+    mac_resources::verify(root)?;
     crate::qualification::verify_product_classification(root)?;
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;

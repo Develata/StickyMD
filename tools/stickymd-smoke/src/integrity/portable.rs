@@ -15,7 +15,7 @@ const DIGEST_LIMIT: Duration = Duration::from_secs(60);
 const REAP_LIMIT: Duration = Duration::from_secs(5);
 
 /// Digest bytes the caller already holds, so it validates and hashes one snapshot. The
-/// bytes go to an exclusively created, owner-only file that `sha256sum` reads, so no
+/// bytes go to an exclusively created, owner-only file that the digest utility reads, so no
 /// pipe or helper thread can block, and the external process runs under a deadline.
 pub(super) fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
     let snapshot = Snapshot::create(bytes)?;
@@ -23,12 +23,16 @@ pub(super) fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
 }
 
 pub(super) fn sha256(path: &Path) -> Result<String, String> {
-    let output = run_bounded(
-        Command::new("sha256sum").arg("--").arg(path),
-        DIGEST_LIMIT,
-        REAP_LIMIT,
-    )
-    .map_err(|error| format!("cannot hash {}: {error}", path.display()))?;
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("/usr/bin/shasum");
+        command.args(["-a", "256"]);
+        command
+    };
+    #[cfg(not(target_os = "macos"))]
+    let mut command = Command::new("sha256sum");
+    let output = run_bounded(command.arg("--").arg(path), DIGEST_LIMIT, REAP_LIMIT)
+        .map_err(|error| format!("cannot hash {}: {error}", path.display()))?;
     let text = String::from_utf8_lossy(&output);
     // GNU sha256sum prefixes an escaped filename record with a backslash.
     let hash = text
@@ -51,34 +55,34 @@ fn run_bounded(command: &mut Command, limit: Duration, reap: Duration) -> Result
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|error| format!("cannot start sha256sum: {error}"))?;
+        .map_err(|error| format!("cannot start SHA-256 utility: {error}"))?;
     let status = match wait_until(&mut child, Instant::now() + limit) {
         Ok(Some(status)) => status,
         Ok(None) => {
             return Err(stop(
                 &mut child,
-                format!("sha256sum exceeded {} ms", limit.as_millis()),
+                format!("SHA-256 utility exceeded {} ms", limit.as_millis()),
                 reap,
             ));
         }
         Err(error) => {
             return Err(stop(
                 &mut child,
-                format!("cannot wait for sha256sum: {error}"),
+                format!("cannot wait for SHA-256 utility: {error}"),
                 reap,
             ));
         }
     };
     if !status.success() {
-        return Err(format!("sha256sum exited with {status}"));
+        return Err(format!("SHA-256 utility exited with {status}"));
     }
     let mut output = Vec::new();
     child
         .stdout
         .take()
-        .ok_or("sha256sum stdout is unavailable")?
+        .ok_or("SHA-256 utility stdout is unavailable")?
         .read_to_end(&mut output)
-        .map_err(|error| format!("cannot read sha256sum output: {error}"))?;
+        .map_err(|error| format!("cannot read SHA-256 utility output: {error}"))?;
     Ok(output)
 }
 
@@ -101,15 +105,15 @@ fn wait_until(child: &mut Child, deadline: Instant) -> std::io::Result<Option<Ex
 fn stop(child: &mut Child, problem: String, reap: Duration) -> String {
     let mut message = problem;
     if let Err(error) = child.kill() {
-        message.push_str(&format!("; stopping sha256sum failed: {error}"));
+        message.push_str(&format!("; stopping SHA-256 utility failed: {error}"));
     }
     match wait_until(child, Instant::now() + reap) {
         Ok(Some(_)) => {}
         Ok(None) => message.push_str(&format!(
-            "; sha256sum was not reaped within {} ms",
+            "; SHA-256 utility was not reaped within {} ms",
             reap.as_millis()
         )),
-        Err(error) => message.push_str(&format!("; reaping sha256sum failed: {error}")),
+        Err(error) => message.push_str(&format!("; reaping SHA-256 utility failed: {error}")),
     }
     message
 }
