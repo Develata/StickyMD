@@ -3,16 +3,17 @@
 
 use super::{
     Options,
-    lifecycle::Session,
     model::{self, Run},
     native,
     report::{Evidence, quote},
 };
-use std::path::{Path, PathBuf};
+use crate::mac_common::{
+    fixture::{contained_executable, copy_fixture},
+    session::Session,
+};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-const EXECUTABLE: &str = "Contents/MacOS/StickyMD";
 
 pub(super) fn execute(options: &Options) -> Result<(), String> {
     let app = options
@@ -74,17 +75,6 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     }
 }
 
-fn contained_executable(app: &Path) -> Result<PathBuf, String> {
-    let executable = app
-        .join(EXECUTABLE)
-        .canonicalize()
-        .map_err(|e| format!("bundle executable: {e}"))?;
-    if !executable.starts_with(app) || !executable.is_file() {
-        return Err("Bundle executable must be a file inside the bundle".into());
-    }
-    Ok(executable)
-}
-
 fn one_run(
     app: &Path,
     fixture: &str,
@@ -124,31 +114,7 @@ fn prepare(
     mode: &str,
     hash: &str,
 ) -> Result<(), String> {
-    let copied = session.path().join("StickyMD.app");
-    session.spawn(
-        Command::new("/usr/bin/ditto")
-            .arg(app)
-            .arg(&copied)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit()),
-    )?;
-    let status = session
-        .wait_until(Instant::now() + Duration::from_secs(120))?
-        .ok_or("ditto exceeded 120 seconds")?;
-    session.stop()?;
-    if !status.success() {
-        return Err(format!("ditto failed: {status}"));
-    }
-    let executable = contained_executable(&copied)?;
-    if crate::integrity::sha256(&executable)? != hash {
-        return Err("Copied executable SHA-256 changed".into());
-    }
-    crate::atomic_evidence::write(&session.path().join("note/note.md"), fixture.as_bytes())?;
-    crate::atomic_evidence::write(
-        &session.path().join("note/config.toml"),
-        model::config(mode).as_bytes(),
-    )?;
+    let executable = copy_fixture(session, app, fixture, &model::config(mode), hash)?;
     session.spawn(
         Command::new(executable)
             .current_dir(session.path())

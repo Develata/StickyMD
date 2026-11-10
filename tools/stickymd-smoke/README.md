@@ -905,3 +905,90 @@ The persistent result for each phase lives in
 `AUTOMATED PASS` only when their checked-in runner passes. Manual checks stay
 `NOT TESTED` until a durable receipt is checked in; terminal output from a
 one-off run is not such a receipt.
+
+## macOS GUI evidence in a dedicated VM
+
+`mac-gui` is a std-only Rust, external-observation driver. It must run in the
+dedicated Tart macOS 27.2 VM, with auto-login and an unlocked desktop, **never on
+the owner's desktop**. Only the built bundle and driver are needed in the VM;
+there is no repository lookup or product control channel. Select the ABC/US
+input source and a main display of at least 800×600 DIP. Do not interact with
+the VM during a run. The clipboard is used by K02.
+
+Build the tool without starting any GUI:
+
+```sh
+CARGO_PROFILE_RELEASE_PANIC=unwind cargo build --locked --release -p stickymd-smoke
+```
+
+Copy that binary and `StickyMD.app` into the VM, then run there from the logged-in
+user's session (SSH is suitable only when that user's GUI session is available):
+
+```sh
+./stickymd-smoke mac-gui --app "$PWD/StickyMD.app" --out "$PWD/gui-evidence"
+./stickymd-smoke mac-gui --app "$PWD/StickyMD.app" --out "$PWD/gui-evidence-W03" --only W03,W04
+```
+
+The driver reads `sysctl -n kern.hv_vmm_present` first. Anything other than `1`
+refuses before touching the app/output paths or calling a GUI API. `--allow-host`
+is an explicit escape hatch for separately authorized machines; it is not
+authorized for this owner's Mac. `--help` bypasses execution. Release builds
+with the repository's default `panic=abort` are refused; use the unwind build
+above. Permission checks never request access or open Settings. Grant access
+to the driver in the VM, then rerun after a refusal.
+
+| Scenarios | Required permission | Optional permission |
+| --- | --- | --- |
+| W01 | Accessibility (`AXIsProcessTrusted`), including Dock inspection | — |
+| W02/W03/W04/W07/W08/W09/W11/K02/E01 | Accessibility and PostEvent (`CGPreflightPostEventAccess`) | — |
+| F01 | None for stderr font selection | Screen Recording (`CGPreflightScreenCaptureAccess`) for screenshot |
+| Deferred rows | None; no app launch for those rows | — |
+
+Every runnable scenario copies the bundle into a fresh private temporary Program
+Directory. Note/config fixtures are atomically written **before** launch; the
+driver never writes them while the app is alive. The shared `mac_common` owner
+handles child termination/reaping, bounded helper commands, and directory identity
+checks before cleanup. It is also used by `mac-resources`. Each injected press is
+registered before posting and released in reverse order on success, error and
+unwind. Failed injection stops all later input/scenario launches. SIGINT/SIGTERM
+request cooperative cancellation and cleanup; SIGKILL, power loss and process
+abort cannot run destructors. CGEventPost has no delivery receipt: release state
+and product observations are evidence, not proof of delivery for each event.
+
+`mac-gui.json` is atomically checkpointed after every scenario. It records OS,
+VM/override/permission/display facts, fixed config, executable SHA-256, a sorted
+bundle-content manifest SHA-256 (including Info.plist; excluding xattrs), PID,
+fixture hash, timestamped requests, individual injected events, observations,
+checks and row verdicts. Copies are rehashed before launch. Stderr is retained as
+`<ID>-stderr.log`; F01 optionally writes `F01.ppm`. Use a new output directory per
+run to avoid confusing old screenshots/logs with the current JSON. Any FAIL exits
+1; NOT_TESTED alone exits 0. A row aggregates FAIL first, then NOT_TESTED, then
+PASS. The acceptance matrix and qualification ledgers are never updated.
+
+| Row | External oracle | Limits |
+| --- | --- | --- |
+| W01 | `lsappinfo` UIElement + Dock AX item titles | Cmd+Tab pixels remain NOT_TESTED; row remains incomplete |
+| W02 | Drag input; CG window bounds/layer/on-screen; persisted `window.dock_edge` | Main display only; 2 DIP ±0.75, top layer >24; no pixel-level strip rendering assertion |
+| W03 | Finder PID from AX remains unchanged; short dwell cancellation; window movement onset and settled bounds | Pre-100ms observation, onset 90–350ms, settled ≤700ms include scheduling/140ms animation; missed pre-threshold observations are NOT_TESTED |
+| W04 | Top-band point, expanded bounds after 850ms; collapse after leaving | Checks no collapse at 350ms and settled collapse at 490–1100ms; no Spaces/mixed-DPI evidence |
+| W07 | AX hide, `open` copied bundle; same owned PID alive, visible window and AX frontmost PID | Does not prove all launch-service/translocation paths |
+| W08 | Exactly three AX menu items; show/hide bounds, topmost layer/config, quit process and saved note | Layer is a system fact, not a visual occlusion test |
+| W09 | Toolbar numeric field at layout-derived DIP offsets; CG alpha 40/70/100 and config | Alpha tolerance ±0.015; no full composited-pixel comparison |
+| W11 | Cmd+Q, successful child exit and unchanged clean note | Save-failure cancellation NOT_TESTED pending fault injection; row incomplete |
+| K02 | Real Cmd keys, quiet note bytes, `pbpaste`, persisted view/zoom | ABC/US assumption; not IME evidence; save timing is not a durability/power-loss test |
+| E01 | AX native panel cancel/dismiss, folder/name/save; exact exported Markdown bytes | No managed-image export fixture in this batch |
+| F01 | `font selection` stderr, optional CGWindowListCreateImage screenshot | Per-glyph visual review NOT_TESTED; row incomplete |
+
+K02 covers typing, Cmd+S/Z/Shift+Z/A/C/X/V, Cmd+arrows, find and replace,
+Cmd+1/2/3 and Cmd+=/-/0. Saved text is read after at least 1500ms and 1000ms of
+unchanged bytes, with a bounded deadline. W05/W06/W10/W12/W15, I01/I02/I03 and R03
+remain NOT_TESTED with explicit reasons. These are also documented in the module
+comment. No native GUI code is exercised by the unit tests.
+
+**VM first-run gaps:** AX status-item actions/save-panel identifiers and actual
+CGEvent routing are unverified. Missing or ambiguous AX nodes produce a bounded
+tree diagnostic rather than guessed clicks. The local SDK marks the requested
+`CGWindowListCreateImage` obsolete since macOS 15; its behavior on the target
+27.2 VM remains unverified. Capture errors are recorded, and no replacement
+capture framework is silently introduced. Pure tests and compilation are not
+real GUI acceptance evidence.

@@ -53,7 +53,6 @@ struct Rect {
 unsafe extern "C" {
     fn proc_pid_rusage(pid: c_int, flavor: c_int, buffer: *mut *mut c_void) -> c_int;
     fn mach_timebase_info(info: *mut Timebase) -> c_int;
-    fn kill(pid: c_int, signal: c_int) -> c_int;
     fn sysctlbyname(
         name: *const c_char,
         old: *mut c_void,
@@ -116,19 +115,6 @@ pub(super) fn sample(pid: u32, started: Instant) -> Result<Sample, String> {
         pkg_idle_wakeups: info.pkg_idle_wkups,
         interrupt_wakeups: info.interrupt_wkups,
     })
-}
-
-/// The caller owns an unreaped Child, so its PID cannot have been reused.
-pub(super) fn terminate(pid: u32) -> Result<(), String> {
-    let pid = c_int::try_from(pid).map_err(|_| "PID is out of range")?;
-    if pid <= 0 {
-        return Err("Refusing to signal a process group".into());
-    }
-    // SAFETY: positive PID names only the caller-owned child; SIGTERM is 15 on Darwin.
-    if unsafe { kill(pid, 15) } != 0 {
-        return Err(format!("SIGTERM: {}", std::io::Error::last_os_error()));
-    }
-    Ok(())
 }
 
 /// No titles or images are requested. Exclude the tiny status-item window.

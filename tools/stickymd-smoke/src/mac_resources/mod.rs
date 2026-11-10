@@ -1,8 +1,6 @@
 //! macOS resource measurement command; no product or qualification authority.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
-#[cfg(target_os = "macos")]
-mod lifecycle;
 #[cfg(any(target_os = "macos", test))]
 mod model;
 #[cfg(target_os = "macos")]

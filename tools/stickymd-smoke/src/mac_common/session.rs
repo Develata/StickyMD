@@ -8,7 +8,7 @@ use std::process::{Child, Command, ExitStatus};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub(super) struct Session {
+pub(crate) struct Session {
     path: PathBuf,
     device: u64,
     inode: u64,
@@ -25,7 +25,7 @@ impl Session {
             .map_err(|e| e.to_string())?
             .as_nanos();
         let path = parent.join(format!(
-            "stickymd-mac-resources-{}-{nonce}-{}",
+            "stickymd-mac-session-{}-{nonce}-{}",
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
@@ -84,7 +84,7 @@ impl Session {
             self.child = None;
             return Ok(());
         }
-        let term = super::native::terminate(child.id());
+        let term = crate::mac_common::native::terminate(child.id());
         if self
             .wait_until(Instant::now() + Duration::from_secs(3))?
             .is_none()
@@ -140,7 +140,7 @@ fn validate_directory(path: &Path, device: u64, inode: u64) -> Result<(), String
 impl Drop for Session {
     fn drop(&mut self) {
         if let Err(error) = self.cleanup() {
-            eprintln!("mac-resources cleanup: {error}");
+            eprintln!("macOS session cleanup: {error}");
         }
     }
 }

@@ -94,6 +94,7 @@ impl Phase {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandLine {
+    MacGui(crate::mac_gui::Options),
     MacResources(crate::mac_resources::Options),
     PhaseEntryPlan(Vec<String>),
     Release(crate::release::Command),
@@ -443,6 +444,7 @@ impl CommandLine {
             Some("modules") => crate::headless::Command::parse(&args[1..]).map(Self::Modules),
             Some("ci") => crate::ci::Command::parse(&args[1..]).map(Self::Ci),
             Some("dev-check") => crate::development::Command::parse(&args[1..]).map(Self::Development),
+            Some("mac-gui") => crate::mac_gui::parse(&args[1..]).map(Self::MacGui),
             Some("mac-resources") => crate::mac_resources::parse(&args[1..]).map(Self::MacResources),
             Some("timings") => crate::timing_summary::parse(&args[1..]).map(Self::Timings),
             Some("startup-details") => crate::startup_details::parse(&args[1..]).map(Self::StartupDetails),

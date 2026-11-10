@@ -26,6 +26,67 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
     if !entry.contains("#[cfg(target_os = \"macos\")]\nmod native;") {
         return Err("mac-resources native adapter must remain macOS-only".into());
     }
+    verify_gui(root)
+}
+
+fn verify_gui(root: &Path) -> Result<(), String> {
+    let base = root.join("tools/stickymd-smoke/src");
+    for directory in ["mac_gui", "mac_common"] {
+        let mut files = Vec::new();
+        super::collect_files(&base.join(directory), "rs", &mut files)?;
+        for path in files {
+            let relative = path.strip_prefix(&base).map_err(|e| e.to_string())?;
+            let name = relative.to_string_lossy().replace('\\', "/");
+            check_gui(&name, &super::read_text(&path)?).map_err(|e| format!("{name}: {e}"))?;
+        }
+    }
+    for (path, declaration) in [
+        ("main.rs", "mod mac_common;"),
+        ("mac_gui/mod.rs", "mod native;"),
+    ] {
+        if !super::read_text(&base.join(path))?
+            .contains(&format!("#[cfg(target_os = \"macos\")]\n{declaration}"))
+        {
+            return Err(format!("{path}: {declaration} must remain macOS-only"));
+        }
+    }
+    Ok(())
+}
+
+fn check_gui(path: &str, source: &str) -> Result<(), String> {
+    let links: &[&str] = match path {
+        "mac_common/native.rs" => &["System"],
+        "mac_gui/native/events.rs" => &["CoreGraphics", "System"],
+        "mac_gui/native/windows.rs" => &["CoreGraphics"],
+        "mac_gui/native/cf.rs" => &["CoreFoundation"],
+        "mac_gui/native/accessibility.rs" => &["ApplicationServices"],
+        "mac_gui/native/permissions.rs" => &["ApplicationServices", "CoreGraphics"],
+        _ => &[],
+    };
+    if !source
+        .lines()
+        .any(|s| s == "//! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host")
+    {
+        return Err("missing exact Phase 16 plan_ref".into());
+    }
+    if links.is_empty() {
+        return check("orchestration.rs", source);
+    }
+    if let Some(line) = super::unsafe_block_without_safety(source) {
+        return Err(format!("line {line}: unsafe block needs SAFETY invariant"));
+    }
+    for line in source.lines().filter(|s| s.trim().starts_with("#[link(")) {
+        if !links.iter().any(|name| {
+            let expected = if *name == "System" {
+                format!("#[link(name = \"{name}\")]")
+            } else {
+                format!("#[link(name = \"{name}\", kind = \"framework\")]")
+            };
+            line.trim() == expected
+        }) {
+            return Err("framework not allowed for this native concern".into());
+        }
+    }
     Ok(())
 }
 
@@ -68,6 +129,40 @@ fn check(name: &str, source: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gui_ffi_is_path_and_framework_specific() {
+        let prefix = "//! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host\n";
+        let source = format!("{prefix}// SAFETY: SDK storage.\nunsafe {{ call() }}");
+        assert!(super::check_gui("mac_gui/native/events.rs", &source).is_ok());
+        for path in [
+            "mac_gui/scenarios.rs",
+            "mac_gui/nested/native.rs",
+            "mac_common/session.rs",
+        ] {
+            assert!(super::check_gui(path, &source).is_err());
+        }
+        assert!(
+            super::check_gui(
+                "mac_gui/native/events.rs",
+                &format!("{prefix}#[link(name = \"AppKit\", kind = \"framework\")]")
+            )
+            .is_err()
+        );
+        assert!(
+            super::check_gui(
+                "mac_gui/native/windows.rs",
+                &format!("{prefix}#[link(name = \"ApplicationServices\", kind = \"framework\")]")
+            )
+            .is_err()
+        );
+        assert!(
+            super::check_gui(
+                "mac_gui/native/permissions.rs",
+                &format!("{prefix}unsafe {{ call() }}")
+            )
+            .is_err()
+        );
+    }
     #[test]
     fn native_permission_is_narrow_and_requires_safety_comments() {
         let prefix = "//! plan_ref: docs/plan/10_performance_reliability.md#macos-gates\n";
