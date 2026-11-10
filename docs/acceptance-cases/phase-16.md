@@ -33,17 +33,17 @@
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P16-W01 | 无 Dock 图标、不在 Cmd+Tab | Manual | 人工 | NOT TESTED |
-| P16-W02 | 左、右、上贴边收起留 2 DIP，上边贴屏幕顶边 | Manual | 人工 | NOT TESTED |
-| P16-W03 | 悬停 100 ms 展开，不抢焦点；提前离开取消 | Manual | 人工 | NOT TESTED |
-| P16-W04 | Top 悬停展开后鼠标停在顶边不收回，离开该区域 500 ms 收回 | Manual | 人工 | NOT TESTED |
+| P16-W01 | 无 Dock 图标、不在 Cmd+Tab | Manual | 人工。VM 外部观察：`UIElement`、Dock 无此项；Cmd+Tab 画面未查（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
+| P16-W02 | 左、右、上贴边收起留 2 DIP，上边贴屏幕顶边 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
+| P16-W03 | 悬停 100 ms 展开，不抢焦点；提前离开取消 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
+| P16-W04 | Top 悬停展开后鼠标停在顶边不收回，离开该区域 500 ms 收回 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
 | P16-W05 | 切换桌面、全屏桌面：位置不变、可见，重绘正常 | Manual | 人工 | NOT TESTED |
 | P16-W06 | 手动收起后切走再切回，细条仍在最上层、能悬停展开（S7） | Manual | 人工 | NOT TESTED |
-| P16-W07 | 隐藏到托盘后再次打开 `.app`，窗口显示并取得焦点 | Manual | 人工 | NOT TESTED |
-| P16-W08 | 托盘：显示/隐藏、置顶、退出 | Manual | 人工 | NOT TESTED |
-| P16-W09 | 透明度 40–100 生效 | Manual | 人工 | NOT TESTED |
+| P16-W07 | 隐藏到托盘后再次打开 `.app`，窗口显示并取得焦点 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
+| P16-W08 | 托盘：显示/隐藏、置顶、退出 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
+| P16-W09 | 透明度 40–100 生效 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
 | P16-W10 | 光标闪烁不产生帧；反色可见 | Manual | 人工 | NOT TESTED |
-| P16-W11 | Cmd+Q：干净时退出；保存失败时取消 | Manual | 人工 | NOT TESTED |
+| P16-W11 | Cmd+Q：干净时退出；保存失败时取消 | Manual | 人工。VM 外部观察：干净时退出通过；保存失败时取消未测（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
 | P16-W12 | 系统终止：`osascript` 退出、注销、导出对话框打开时退出 | Manual | 人工 | NOT TESTED |
 | P16-W13 | 感应条 2 DIP（S8）的几何测试 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
 | P16-W14 | S7 的 reducer 测试：手动收起后恢复焦点不撤销，进入展开路径后撤销 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
@@ -55,7 +55,7 @@
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | P16-K01 | Cmd 键表：保存、导出、剪贴板、撤销重做、查找替换、视图缩放、行首行尾 | Automated | 键表单元测试 | AUTOMATED PASS |
-| P16-K02 | Cmd 键在真实窗口生效 | Manual | 人工 | NOT TESTED |
+| P16-K02 | Cmd 键在真实窗口生效 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
 | P16-I01 | 系统简体拼音：`07` 的 13 项 | Manual | 人工 | NOT TESTED |
 | P16-I02 | 微信输入法：`07` 的 13 项 | Manual | 人工 | NOT TESTED |
 | P16-I03 | 长按字母：不弹重音菜单，按系统设置连发，没有替换残留的多余字符 | Manual | 人工 | NOT TESTED |
@@ -63,16 +63,16 @@
 | P16-C02 | PNG + TIFF + 文本：读原编码 PNG | Automated | pasteboard 测试 | AUTOMATED PASS |
 | P16-C03 | 只有 TIFF + 文本：转 PNG，像素正确 | Automated | pasteboard 测试 | AUTOMATED PASS |
 | P16-C04 | TIFF 超过长度或尺寸限额时在解码前拒绝 | Automated | pasteboard 测试 | AUTOMATED PASS |
-| P16-E01 | 保存面板：取消、确定、导出内容正确 | Manual | 人工 | NOT TESTED |
-| P16-F01 | 中文显示 PingFang SC，代码 Menlo | Manual | 人工 | NOT TESTED |
+| P16-E01 | 保存面板：取消、确定、导出内容正确 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
+| P16-F01 | 中文显示 PingFang SC，代码 Menlo | Manual | 人工。VM 字体日志为 PingFang SC 与 Times New Roman；日志不报代码字体（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
 
 ## M4 打包与资源
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | P16-P01 | 打包脚本产出 ad-hoc 签名的 `.app`，`codesign --verify` 通过 | Automated | 脚本 | AUTOMATED PASS |
-| P16-R01 | `10` macOS 节的内存基线 | Automated | 测量 | NOT TESTED |
-| P16-R02 | 空闲 CPU（含光标闪烁） | Automated | 测量 | NOT TESTED |
+| P16-R01 | `10` macOS 节的内存基线 | Automated | `mac-resources`（VM）：Source、Preview、Split 中位 47.1、50.4、50.4 MiB，均低于临时硬门；Hidden 未测（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
+| P16-R02 | 空闲 CPU（含光标闪烁） | Automated | `mac-resources`（VM）：Split 中位 0.103%，超过 `10` 的 0.1% 硬门；Source 0.073%，超过 0.05% 目标；Preview 0.001%（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | BLOCKED |
 | P16-R03 | 下载的包在 App Translocation 下提示后退出 | Manual | 需要签名身份 | NOT TESTED |
 
 多屏与混合 DPI 按 USER 决定跳过，保持 `NOT TESTED`。
