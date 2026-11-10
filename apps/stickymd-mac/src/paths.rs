@@ -189,7 +189,7 @@ mod tests {
                 "-fs".as_ref(),
                 "ExFAT".as_ref(),
                 "-volname".as_ref(),
-                "StickyMDProbe".as_ref(),
+                "SMDPROBE".as_ref(),
                 image.as_os_str(),
             ],
         );

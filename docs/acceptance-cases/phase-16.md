@@ -18,7 +18,7 @@
 | P16-S03 | 首次创建：目标突然出现时 Conflict，不覆盖 | Automated | `persistence::storage::tests` | AUTOMATED PASS |
 | P16-S04 | 目录同步失败报保存失败，保持 dirty；重试不与自己冲突 | Automated | `persistence::storage::tests` | AUTOMATED PASS |
 | P16-S05 | 保留 canonical：内容未变改名；内容已变移回并报 `Changed`；移回失败报失败，文件不丢 | Automated | `persistence::storage::tests` | AUTOMATED PASS |
-| P16-S06 | 卷不支持 `RENAME_EXCL` 时提示后退出，不回退 | Automated | exFAT 映像 | NOT TESTED |
+| P16-S06 | 卷不支持 `RENAME_EXCL` 时提示后退出，不回退 | Automated | exFAT 映像 | AUTOMATED PASS |
 | P16-S07 | Program Directory：bundle 内取 `.app` 所在目录，开发构建取可执行文件父目录 | Automated | `paths::tests` | AUTOMATED PASS |
 | P16-S08 | 同目录第二实例取锁失败，在任何 durable 文件创建前退出 | Automated | `platform::macos::instance::tests` | AUTOMATED PASS |
 | P16-S09 | 第二实例经 socket 唤醒第一实例；socket 路径不超过 104 字节 | Automated | `platform::macos::instance::tests` | AUTOMATED PASS |
@@ -47,7 +47,7 @@
 | P16-W12 | 系统终止：`osascript` 退出、注销、导出对话框打开时退出 | Manual | 人工 | NOT TESTED |
 | P16-W13 | 感应条 2 DIP（S8）的几何测试 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
 | P16-W14 | S7 的 reducer 测试：手动收起后恢复焦点不撤销，进入展开路径后撤销 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
-| P16-W15 | Windows 桌面回归（S2、S4、S6、S7） | Manual | 需在 Windows 机器上运行 | NOT TESTED |
+| P16-W15 | Windows 桌面回归（S2、S4、S6、S7；S9 透明度弹窗内容随 DPI 缩放，只影响 >100% DPI） | Manual | 需在 Windows 机器上运行 | NOT TESTED |
 | P16-W16 | Windows 上的 2 DIP（S8） | — | USER 2026-11-10 决定不单独回归 | USER 豁免 |
 
 ## M3 输入、剪贴板、导出
