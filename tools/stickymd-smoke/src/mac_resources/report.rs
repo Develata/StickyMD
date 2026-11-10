@@ -35,8 +35,8 @@ fn run_json(run: &Run) -> String {
         || "null".into(),
         |m| {
             format!(
-                "{{\"footprint_bytes\":{},\"idle_cpu_percent\":{},\"wakeups_per_second\":{}}}",
-                m.footprint_bytes, m.idle_cpu_percent, m.wakeups_per_second
+                "{{\"footprint_bytes\":{},\"idle_cpu_percent\":{},\"interrupt_wakeups_per_second\":{},\"idle_wakeups_per_second\":{}}}",
+                m.footprint_bytes, m.idle_cpu_percent, m.interrupt_wakeups_per_second, m.idle_wakeups_per_second
             )
         },
     );
@@ -79,16 +79,17 @@ impl Evidence {
             } else {
                 "INCOMPLETE_OR_FAILED"
             };
-            scenarios.push(format!("{{\"scenario\":{},\"config\":{},\"status\":{},\"valid_runs\":{},\"memory_limit_bytes\":{},\"footprint_bytes\":{},\"idle_cpu_percent\":{},\"wakeups_per_second\":{},\"runs\":[{}]}}",
+            scenarios.push(format!("{{\"scenario\":{},\"config\":{},\"status\":{},\"valid_runs\":{},\"memory_limit_bytes\":{},\"footprint_bytes\":{},\"idle_cpu_percent\":{},\"interrupt_wakeups_per_second\":{},\"idle_wakeups_per_second\":{},\"runs\":[{}]}}",
                 quote(mode), quote(&model::config(mode)), quote(status), valid().count(), limit,
                 summary(model::summarize(valid().map(|m| m.footprint_bytes as f64))),
                 summary(model::summarize(valid().map(|m| m.idle_cpu_percent))),
-                summary(model::summarize(valid().map(|m| m.wakeups_per_second))),
+                summary(model::summarize(valid().map(|m| m.interrupt_wakeups_per_second))),
+                summary(model::summarize(valid().map(|m| m.idle_wakeups_per_second))),
                 runs.iter().map(run_json).collect::<Vec<_>>().join(",")));
         }
         scenarios.push(format!("{{\"scenario\":\"hidden\",\"status\":\"NOT_TESTED\",\"reason\":{},\"memory_limit_bytes\":50331648,\"runs\":[]}}", quote(model::HIDDEN_REASON)));
         format!(
-            "{{\"schema_version\":1,\"status\":\"{}\",\"acceptance_status\":\"INCOMPLETE\",\"environment\":{},\"app_executable_sha256\":{},\"fixture_sha256\":{},\"fixture_bytes\":20480,\"formula_count\":20,\"repetitions\":{},\"warmup_seconds\":{},\"idle_seconds\":{},\"mach_timebase\":{{\"numer\":{},\"denom\":{}}},\"cpu_gate\":null,\"wakeups_gate\":null,\"cpu_normalization\":\"one logical CPU = 100 percent\",\"scenarios\":[{}]}}\n",
+            "{{\"schema_version\":2,\"status\":\"{}\",\"acceptance_status\":\"INCOMPLETE\",\"environment\":{},\"app_executable_sha256\":{},\"fixture_sha256\":{},\"fixture_bytes\":20480,\"formula_count\":20,\"repetitions\":{},\"warmup_seconds\":{},\"idle_seconds\":{},\"mach_timebase\":{{\"numer\":{},\"denom\":{}}},\"cpu_gate\":null,\"wakeups_gate\":null,\"cpu_normalization\":\"one logical CPU = 100 percent\",\"scenarios\":[{}]}}\n",
             if self.passed() {
                 "VISIBLE_SCENARIOS_PASS"
             } else {
@@ -116,14 +117,16 @@ impl Evidence {
             };
             let memory = model::summarize(valid().map(|m| m.footprint_bytes as f64 / 1048576.0));
             let cpu = model::summarize(valid().map(|m| m.idle_cpu_percent));
-            let wakeups = model::summarize(valid().map(|m| m.wakeups_per_second));
+            let idle_wakeups = model::summarize(valid().map(|m| m.idle_wakeups_per_second));
+            let wakeups = model::summarize(valid().map(|m| m.interrupt_wakeups_per_second));
             println!(
-                "{mode}: {} valid runs; footprint median/max={} MiB (limit {} MiB); idle CPU median/max={}%; wake-ups median/max={}/s; {}",
+                "{mode}: {} valid runs; footprint median/max={} MiB (limit {} MiB); idle CPU median/max={}%; interrupt wake-ups median/max={}/s; idle wake-ups median/max={}/s; {}",
                 valid().count(),
                 readable(memory),
                 limit / 1048576,
                 readable(cpu),
                 readable(wakeups),
+                readable(idle_wakeups),
                 if model::passed(runs, self.repetitions, *limit) {
                     "PASS"
                 } else {

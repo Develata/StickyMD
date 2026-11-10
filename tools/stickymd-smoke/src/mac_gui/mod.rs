@@ -12,6 +12,9 @@
 mod editing;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod hover;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod input;
 #[cfg(target_os = "macos")]
 mod live;
@@ -20,6 +23,9 @@ mod live;
 mod model;
 #[cfg(target_os = "macos")]
 mod native;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod observation;
 mod options;
 #[cfg(target_os = "macos")]
 mod runner;

@@ -20,7 +20,8 @@ fn valid_run(repetition: usize, footprint_bytes: u64) -> Run {
     run.metrics = Some(Metrics {
         footprint_bytes,
         idle_cpu_percent: 100.0,
-        wakeups_per_second: 100.0,
+        interrupt_wakeups_per_second: 100.0,
+        idle_wakeups_per_second: 25.0,
     });
     run
 }
@@ -83,10 +84,12 @@ fn memory_gate_includes_boundary_but_never_ignores_failed_or_missing_runs() {
 #[test]
 fn cpu_uses_actual_elapsed_time_and_mach_conversion_without_overflow() {
     let before = sample(30.0, 9_000, 10);
-    let after = sample(150.0, 1_500_009_000, 130);
+    let mut after = sample(150.0, 1_500_009_000, 130);
+    after.pkg_idle_wakeups = 40;
     let values = metrics(&before, &after, 125, 3).unwrap();
     assert!((values.idle_cpu_percent - 104.16666666666667).abs() < 1e-9);
-    assert_eq!(values.wakeups_per_second, 2.0);
+    assert_eq!(values.interrupt_wakeups_per_second, 1.0);
+    assert_eq!(values.idle_wakeups_per_second, 0.25);
     assert_eq!(values.footprint_bytes, 1024);
     assert!(metrics(&before, &sample(90.0, 0, 130), 1, 1).is_err());
     assert!(metrics(&before, &sample(89.0, 10_000, 130), 1, 1).is_err());
@@ -178,6 +181,12 @@ fn json_preserves_failure_details_and_hidden_never_becomes_a_pass() {
             .collect(),
     };
     assert!(evidence.passed());
+    let text = evidence.json();
+    assert!(!text.contains("\"wakeups_per_second\""));
+    assert!(text.contains("\"interrupt_wakeups_per_second\":100"));
+    assert!(text.contains("\"idle_wakeups_per_second\":25"));
+    assert!(text.contains("\"interrupt_wakeups_per_second\":{\"median\":100,\"max\":100}"));
+    assert!(text.contains("\"idle_wakeups_per_second\":{\"median\":25,\"max\":25}"));
     let json = crate::release::json::parse(&evidence.json()).unwrap();
     assert_eq!(
         json.field("acceptance_status").unwrap().string().unwrap(),

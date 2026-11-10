@@ -7,8 +7,7 @@ use super::{
 };
 pub(super) fn keys<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     d.op(Op::Activate)?;
-    d.type_text("alpha beta")?;
-    d.chord(&[CMD, 1])?;
+    manual_save(d, "alpha beta")?;
     d.note("alpha beta")?;
     d.chord(&[CMD, 6])?;
     d.note("")?;
@@ -65,6 +64,41 @@ pub(super) fn keys<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     d.note("DLalpha replacedR\nsecondE")?;
     Ok(())
 }
+pub(super) fn manual_save<B: Backend>(d: &mut Driver<'_, B>, expected: &str) -> Result<(), String> {
+    use super::scenarios::Value;
+    let Value::Time(last_key) = d.op(Op::Text(expected.into()))? else {
+        return Err("typing did not supply the last key timestamp".into());
+    };
+    let sent = d.backend.now();
+    d.chord(&[CMD, 1])?;
+    let returned = d.backend.now();
+    let deadline = last_key + 550; // 100ms before the product's 650ms autosave debounce.
+    loop {
+        let now = d.backend.now();
+        // Read directly: quiet_note deliberately waits beyond the debounce.
+        let content = if now <= deadline {
+            Some(d.text(Op::NoteNow)?)
+        } else {
+            None
+        };
+        let observed = d.backend.now();
+        let evidence = format!(
+            "last_key={last_key}ms; Cmd+S sent={sent}ms returned={returned}ms; observed={observed}ms; deadline={deadline}ms; actual={content:?}"
+        );
+        if observed <= deadline && content.as_deref() == Some(expected) {
+            d.row.check("Cmd+S before autosave", true, evidence);
+            return Ok(());
+        }
+        if observed >= deadline {
+            d.row.skip(
+                "Cmd+S before autosave",
+                &format!("{evidence}; slow VM or missing binding cannot be distinguished"),
+            );
+            return Ok(());
+        }
+        d.wait(20.min(deadline - observed))?;
+    }
+}
 pub(super) fn opacity<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     d.op(Op::Activate)?;
     let r = d.window()?.bounds;
@@ -106,7 +140,9 @@ pub(super) fn export<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     d.chord(&[CMD, SHIFT, 1])?;
     d.op(Op::Panel(false))?;
     d.wait(250)?;
-    let open = matches!(d.op(Op::PanelOpen)?, super::scenarios::Value::Bool(true));
+    let super::scenarios::Value::Bool(open) = d.op(Op::PanelOpen)? else {
+        return Err("save panel inspection returned no boolean observation".into());
+    };
     d.row.check(
         "cancel dismisses save panel",
         !open,

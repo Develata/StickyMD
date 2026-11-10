@@ -31,6 +31,10 @@ impl Drop for Owned {
     }
 }
 impl Owned {
+    pub(super) fn is_type(&self, expected: usize) -> bool {
+        // SAFETY: Owned always holds a live, non-null CF reference.
+        unsafe { CFGetTypeID(self.0) == expected }
+    }
     pub(super) fn same(&self, other: &Self) -> bool {
         // SAFETY: both live CF references remain retained during equality comparison.
         unsafe { CFEqual(self.0, other.0) }

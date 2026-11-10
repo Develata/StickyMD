@@ -72,15 +72,6 @@ fn band_includes_screen_top_but_not_outside_the_window_width() {
     }
 }
 #[test]
-fn timing_has_closed_bounds_and_rejects_late_observations() {
-    assert!(timing(100, 90, 700));
-    assert!(timing(700, 90, 700));
-    assert!(!timing(89, 90, 700));
-    assert!(!timing(701, 90, 700));
-    assert!(timing(640, 490, 1100));
-    assert!(!timing(350, 490, 1100));
-}
-#[test]
 fn vm_interlock_is_strict_and_permissions_are_per_scenario() {
     for output in [
         "0",
@@ -322,6 +313,7 @@ struct HoverBackend {
     focused: u32,
     steals: bool,
     expand_at: u64,
+    leave_at: u64,
 }
 impl HoverBackend {
     fn new() -> Self {
@@ -331,12 +323,14 @@ impl HoverBackend {
             left: None,
             focused: 42,
             steals: false,
-            expand_at: 240,
+            expand_at: 100,
+            leave_at: 500,
         }
     }
     fn expanded(&self) -> bool {
-        self.entered.is_some_and(|t| self.now - t >= self.expand_at)
-            || self.left.is_some_and(|t| self.now - t < 640)
+        self.entered
+            .is_some_and(|t| self.now - t >= self.expand_at + 140)
+            || self.left.is_some_and(|t| self.now - t < self.leave_at)
     }
 }
 impl Backend for HoverBackend {
@@ -349,11 +343,20 @@ impl Backend for HoverBackend {
                 self.now += ms;
                 Value::Unit
             }
-            Op::Window => Value::Window(if self.expanded() {
-                window(rect(460.0, 28.0, 520.0, 480.0), 0)
-            } else {
-                window(rect(460.0, -478.0, 520.0, 480.0), 27)
-            }),
+            Op::Window => Value::Window(
+                if self.entered.is_some_and(|t| {
+                    (self.expand_at..self.expand_at + 140).contains(&(self.now - t))
+                }) || self
+                    .left
+                    .is_some_and(|t| (self.leave_at..self.leave_at + 140).contains(&(self.now - t)))
+                {
+                    window(rect(460.0, -200.0, 520.0, 480.0), 27)
+                } else if self.expanded() {
+                    window(rect(460.0, 28.0, 520.0, 480.0), 0)
+                } else {
+                    window(rect(460.0, -478.0, 520.0, 480.0), 27)
+                },
+            ),
             Op::Screen => Value::Rect(rect(0.0, 0.0, 1440.0, 900.0)),
             Op::Front => Value::Pid(if self.steals && self.expanded() {
                 42
@@ -418,5 +421,155 @@ fn hover_orchestration_checks_band_cancellation_timing_and_focus() {
     assert_eq!(
         aggregate(&hover_row(&mut early, "W03").checks),
         Verdict::Fail
+    );
+}
+
+#[test]
+fn ax_only_unsupported_and_no_value_mean_absent() {
+    use super::observation::ax_attribute_present;
+    assert_eq!(ax_attribute_present(0), Ok(true));
+    for status in [-25205, -25212] {
+        assert_eq!(ax_attribute_present(status), Ok(false));
+    }
+    for status in [-25204, -25202, -25208, -25200, 1, -1] {
+        assert!(
+            ax_attribute_present(status)
+                .unwrap_err()
+                .contains(&status.to_string())
+        );
+    }
+}
+
+#[test]
+fn transition_brackets_reject_early_late_and_coarse_samples() {
+    use super::observation::{Bracket, transition};
+    for target in [100, 500] {
+        let judge = |old_ms, new_ms| transition(Bracket { old_ms, new_ms }, target);
+        assert_eq!(judge(target - 10, target + 10), Verdict::Pass);
+        assert_eq!(judge(target + 50, target + 70), Verdict::Pass);
+        assert_eq!(judge(target - 40, target - 20), Verdict::Fail);
+        assert_eq!(judge(target + 80, target + 100), Verdict::Fail);
+        assert_eq!(judge(target - 10, target + 51), Verdict::NotTested);
+        assert_eq!(judge(target - 20, target), Verdict::NotTested);
+        assert_eq!(judge(target + 60, target + 80), Verdict::NotTested);
+        assert_eq!(judge(target + 10, target), Verdict::NotTested);
+    }
+}
+
+#[test]
+fn three_hundred_ms_dwell_and_four_hundred_ms_leave_cannot_pass() {
+    let mut late = HoverBackend::new();
+    late.expand_at = 300;
+    assert_ne!(
+        aggregate(&hover_row(&mut late, "W03").checks),
+        Verdict::Pass
+    );
+    let mut early = HoverBackend::new();
+    early.leave_at = 400;
+    assert_eq!(
+        aggregate(&hover_row(&mut early, "W04").checks),
+        Verdict::Fail
+    );
+}
+
+struct SaveBackend {
+    now: u64,
+    saved_at: u64,
+    read_delay: u64,
+    command_delay: u64,
+}
+impl Backend for SaveBackend {
+    fn now(&self) -> u64 {
+        self.now
+    }
+    fn perform(&mut self, op: Op) -> Result<Value, String> {
+        Ok(match op {
+            Op::Text(_) => {
+                self.now = 80;
+                Value::Time(0)
+            }
+            Op::Chord(keys) => {
+                assert_eq!(keys, [CMD, 1]);
+                self.now += self.command_delay;
+                Value::Unit
+            }
+            Op::NoteNow => {
+                self.now += self.read_delay;
+                Value::Text(
+                    if self.now >= self.saved_at {
+                        "alpha beta"
+                    } else {
+                        "old"
+                    }
+                    .into(),
+                )
+            }
+            Op::Wait(ms) => {
+                self.now += ms;
+                Value::Unit
+            }
+            _ => panic!("manual save must not use quiet_note: {op:?}"),
+        })
+    }
+}
+#[test]
+fn manual_save_pass_requires_direct_bytes_before_550ms_not_autosave() {
+    for (saved_at, read_delay, command_delay, expected) in [
+        (150, 0, 60, Verdict::Pass),
+        (550, 0, 60, Verdict::Pass),
+        (551, 0, 60, Verdict::NotTested),
+        (650, 0, 60, Verdict::NotTested),
+        (150, 600, 60, Verdict::NotTested),
+        (150, 0, 600, Verdict::NotTested),
+    ] {
+        let mut fake = SaveBackend {
+            now: 0,
+            saved_at,
+            read_delay,
+            command_delay,
+        };
+        let mut row = Row::new("K02");
+        super::editing::manual_save(
+            &mut Driver {
+                backend: &mut fake,
+                row: &mut row,
+                pid: 42,
+            },
+            "alpha beta",
+        )
+        .unwrap();
+        assert_eq!(aggregate(&row.checks), expected, "{}", row.json());
+        assert!(row.json().contains("last_key=0ms"));
+        assert!(row.json().contains("deadline=550ms"));
+    }
+}
+
+struct PanelFailure;
+impl Backend for PanelFailure {
+    fn now(&self) -> u64 {
+        0
+    }
+    fn perform(&mut self, op: Op) -> Result<Value, String> {
+        match op {
+            Op::PanelOpen => Err("AX attribute error -25202; inspection incomplete".into()),
+            Op::Note => Ok(Value::Text("# Export\nplain bytes".into())),
+            _ => Ok(Value::Unit),
+        }
+    }
+}
+#[test]
+fn incomplete_cancel_tree_never_records_panel_closed_pass() {
+    let mut row = Row::new("E01");
+    let error = super::editing::export(&mut Driver {
+        backend: &mut PanelFailure,
+        row: &mut row,
+        pid: 42,
+    })
+    .unwrap_err();
+    assert!(error.contains("-25202"));
+    assert!(
+        !row.checks
+            .iter()
+            .any(|c| c.name == "cancel dismisses save panel" && c.verdict == Verdict::Pass)
     );
 }

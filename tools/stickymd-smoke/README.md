@@ -32,6 +32,10 @@ canonical path and never follows a replacement root symlink.
 `mac-resources.json` is checkpointed atomically after each run and includes
 environment/display dimensions, executable and fixture SHA-256, raw counters,
 observed early-exit time/status, and median/max for memory, CPU and wake-ups.
+Schema version 2 reports `interrupt_wakeups_per_second` (total interrupt wake-ups)
+and `idle_wakeups_per_second` (package-idle wake-ups, Activity Monitor's "Idle Wake Ups")
+separately in metrics and summaries. Package-idle wake-ups are a subset of interrupt
+wake-ups in XNU; they are never added. The old summed `wakeups_per_second` is removed.
 macOS uses its built-in `/usr/bin/shasum` for SHA-256. Failed and early-exit runs
 remain in evidence but never supply derived metrics. The visible scenarios pass
 only if every requested run is valid and their footprint maxima are at most
@@ -948,7 +952,13 @@ Every runnable scenario copies the bundle into a fresh private temporary Program
 Directory. Note/config fixtures are atomically written **before** launch; the
 driver never writes them while the app is alive. The shared `mac_common` owner
 handles child termination/reaping, bounded helper commands, and directory identity
-checks before cleanup. It is also used by `mac-resources`. Each injected press is
+checks before cleanup. It is also used by `mac-resources`. Before opening the
+fixture bundle, its owned child must still be running. After `open`, and again at
+cleanup, a bounded same-UID process scan checks the exact private executable path.
+Foreign PIDs receive SIGTERM, then SIGKILL after 3 seconds, with another 3 seconds
+to confirm absence. The audit watches for delayed LaunchServices launches for at
+least 3 seconds. Uncertain enumeration/exit retains the fixture and stops the run;
+the retained path and reason are recorded in the cleanup evidence. Each injected press is
 registered before posting and released in reverse order on success, error and
 unwind. Failed injection stops all later input/scenario launches. SIGINT/SIGTERM
 request cooperative cancellation and cleanup; SIGKILL, power loss and process
@@ -969,8 +979,8 @@ PASS. The acceptance matrix and qualification ledgers are never updated.
 | --- | --- | --- |
 | W01 | `lsappinfo` UIElement + Dock AX item titles | Cmd+Tab pixels remain NOT_TESTED; row remains incomplete |
 | W02 | Drag input; CG window bounds/layer/on-screen; persisted `window.dock_edge` | Main display only; 2 DIP ±0.75, top layer >24; no pixel-level strip rendering assertion |
-| W03 | Finder PID from AX remains unchanged; short dwell cancellation; window movement onset and settled bounds | Pre-100ms observation, onset 90–350ms, settled ≤700ms include scheduling/140ms animation; missed pre-threshold observations are NOT_TESTED |
-| W04 | Top-band point, expanded bounds after 850ms; collapse after leaving | Checks no collapse at 350ms and settled collapse at 490–1100ms; no Spaces/mixed-DPI evidence |
+| W03 | Finder PID from AX remains unchanged; short dwell cancellation; window movement onset and settled bounds | Pre-100ms observation; onset bracket within 90–170ms, sampled every 20ms; gaps >60ms or boundary overlap are NOT_TESTED; completion within earliest bracket onset +140ms +70ms |
+| W04 | Top-band point, expanded bounds after 850ms; collapse after leaving | Leave onset bracket within 490–570ms; same resolution/completion limits as W03; no Spaces/mixed-DPI evidence |
 | W07 | AX hide, `open` copied bundle; same owned PID alive, visible window and AX frontmost PID | Does not prove all launch-service/translocation paths |
 | W08 | Exactly three AX menu items; show/hide bounds, topmost layer/config, quit process and saved note | Layer is a system fact, not a visual occlusion test |
 | W09 | Toolbar numeric field at layout-derived DIP offsets; CG alpha 40/70/100 and config | Alpha tolerance ±0.015; no full composited-pixel comparison |
@@ -980,14 +990,21 @@ PASS. The acceptance matrix and qualification ledgers are never updated.
 | F01 | `font selection` stderr, optional CGWindowListCreateImage screenshot | Per-glyph visual review NOT_TESTED; row incomplete |
 
 K02 covers typing, Cmd+S/Z/Shift+Z/A/C/X/V, Cmd+arrows, find and replace,
-Cmd+1/2/3 and Cmd+=/-/0. Saved text is read after at least 1500ms and 1000ms of
-unchanged bytes, with a bounded deadline. W05/W06/W10/W12/W15, I01/I02/I03 and R03
+Cmd+1/2/3 and Cmd+=/-/0. Cmd+S polls `note/note.md` directly until 550ms after the
+last typed key-down (100ms before autosave's 650ms debounce). Only bytes observed
+by that deadline pass; a missed deadline is NOT_TESTED, with key/command/read
+timestamps, because a slow VM and a missing binding cannot be distinguished.
+Other saved-text checks retain the 1500ms wait and 1000ms quiet-byte requirement. W05/W06/W10/W12/W15, I01/I02/I03 and R03
 remain NOT_TESTED with explicit reasons. These are also documented in the module
 comment. No native GUI code is exercised by the unit tests.
 
 **VM first-run gaps:** AX status-item actions/save-panel identifiers and actual
 CGEvent routing are unverified. Missing or ambiguous AX nodes produce a bounded
-tree diagnostic rather than guessed clicks. The local SDK marks the requested
+tree diagnostic rather than guessed clicks. Only AX AttributeUnsupported (-25205)
+and NoValue (-25212) mean an optional attribute is absent. Other AX errors, wrong
+types, or tree budget exhaustion fail the observation; a cancel check passes only
+on a complete tree without the save panel. Invalid-element races currently FAIL
+with the AX status rather than retrying or assuming dismissal. The local SDK marks the requested
 `CGWindowListCreateImage` obsolete since macOS 15; its behavior on the target
 27.2 VM remains unverified. Capture errors are recorded, and no replacement
 capture framework is silently introduced. Pure tests and compilation are not

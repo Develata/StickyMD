@@ -90,9 +90,6 @@ pub(super) fn top_band(p: Point, window: Rect, screen: Rect) -> bool {
         && p.y >= screen.origin.y
         && p.y < window.origin.y
 }
-pub(super) fn timing(elapsed: u64, min: u64, max: u64) -> bool {
-    (min..=max).contains(&elapsed)
-}
 pub(super) fn vm_value(output: &str) -> bool {
     output.trim() == "1"
 }

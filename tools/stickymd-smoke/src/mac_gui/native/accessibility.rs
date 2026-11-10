@@ -5,6 +5,7 @@ use super::cf::{Cf, Owned, kCFBooleanTrue};
 use std::time::{Duration, Instant};
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
+    fn AXUIElementGetTypeID() -> usize;
     fn AXUIElementCreateApplication(pid: i32) -> Cf;
     fn AXUIElementCreateSystemWide() -> Cf;
     fn AXUIElementCopyAttributeValue(element: Cf, name: Cf, out: *mut Cf) -> i32;
@@ -23,21 +24,32 @@ fn app(pid: u32) -> Result<Owned, String> {
         Ok(root)
     }
 }
-fn attribute(node: &Owned, name: &str) -> Result<Owned, String> {
+fn optional_attribute(node: &Owned, name: &str) -> Result<Option<Owned>, String> {
+    // SAFETY: the SDK type ID query has no arguments or ownership effects.
+    if !node.is_type(unsafe { AXUIElementGetTypeID() }) {
+        return Err(format!(
+            "{name}: expected AXUIElement; inspection incomplete"
+        ));
+    }
     let name = Owned::string(name)?;
     let mut out = std::ptr::null();
     // SAFETY: AX object and CFString live through call; initialized out receives Copy-rule value.
     let status = unsafe { AXUIElementCopyAttributeValue(node.0, name.0, &mut out) };
-    if status != 0 {
-        return Err(format!("AX attribute error {status}"));
+    if !crate::mac_gui::observation::ax_attribute_present(status)? {
+        return Ok(None);
     }
-    Owned::take(out)
+    Owned::take(out).map(Some)
 }
-fn text(node: &Owned, name: &str) -> String {
-    attribute(node, name)
-        .ok()
-        .and_then(|v| v.text())
-        .unwrap_or_default()
+fn attribute(node: &Owned, name: &str) -> Result<Owned, String> {
+    optional_attribute(node, name)?.ok_or_else(|| format!("required AX attribute {name} absent"))
+}
+fn text(node: &Owned, name: &str) -> Result<String, String> {
+    match optional_attribute(node, name)? {
+        None => Ok(String::new()),
+        Some(v) => v
+            .text()
+            .ok_or_else(|| format!("{name}: expected readable CFString; inspection incomplete")),
+    }
 }
 fn action(node: &Owned, name: &str) -> Result<(), String> {
     let name = Owned::string(name)?;
@@ -82,7 +94,9 @@ fn tree(root: Owned) -> Result<Vec<Node>, String> {
         if nodes.len() >= 512 || depth > 12 || Instant::now() > deadline {
             return Err("AX tree budget exceeded; inspection incomplete".into());
         }
-        let role = text(&element, "AXRole");
+        let role = attribute(&element, "AXRole")?
+            .text()
+            .ok_or("AXRole: expected CFString")?;
         // App extras menu bar is not always in AXChildren. Fetch it explicitly, not all attrs.
         let attrs: &[&str] = if depth == 0 {
             &["AXChildren", "AXExtrasMenuBar"]
@@ -90,7 +104,7 @@ fn tree(root: Owned) -> Result<Vec<Node>, String> {
             &["AXChildren"]
         };
         for attr in attrs {
-            if let Ok(children) = attribute(&element, attr) {
+            if let Some(children) = optional_attribute(&element, attr)? {
                 if *attr == "AXExtrasMenuBar" {
                     pending.push((children, depth + 1));
                 } else {
@@ -102,9 +116,9 @@ fn tree(root: Owned) -> Result<Vec<Node>, String> {
         }
         nodes.push(Node {
             role,
-            title: text(&element, "AXTitle"),
-            description: text(&element, "AXDescription"),
-            identifier: text(&element, "AXIdentifier"),
+            title: text(&element, "AXTitle")?,
+            description: text(&element, "AXDescription")?,
+            identifier: text(&element, "AXIdentifier")?,
             element,
         });
     }
@@ -265,7 +279,9 @@ pub(in crate::mac_gui) fn folder(pid: u32, path: &str) -> Result<String, String>
     // Cmd+Shift+G's focused field belongs to the PID's native go-to-folder sheet.
     let root = app(pid)?;
     let focused = attribute(&root, "AXFocusedUIElement")?;
-    let role = text(&focused, "AXRole");
+    let role = attribute(&focused, "AXRole")?
+        .text()
+        .ok_or("AXRole: expected CFString")?;
     if !matches!(role.as_str(), "AXTextField" | "AXComboBox") {
         return Err(format!("Go to Folder focus is {role}; {}", dump(&nodes)));
     }

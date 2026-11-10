@@ -44,7 +44,8 @@ pub(super) struct Sample {
 pub(super) struct Metrics {
     pub footprint_bytes: u64,
     pub idle_cpu_percent: f64,
-    pub wakeups_per_second: f64,
+    pub interrupt_wakeups_per_second: f64,
+    pub idle_wakeups_per_second: f64,
 }
 
 #[derive(Debug)]
@@ -106,12 +107,16 @@ pub(super) fn metrics(
     let delta = |a: u64, b: u64| b.checked_sub(a).ok_or("Resource counter decreased");
     let cpu = u128::from(delta(before.user_ticks, after.user_ticks)?)
         + u128::from(delta(before.system_ticks, after.system_ticks)?);
-    let wakeups = u128::from(delta(before.pkg_idle_wakeups, after.pkg_idle_wakeups)?)
-        + u128::from(delta(before.interrupt_wakeups, after.interrupt_wakeups)?);
+    // XNU credits package-idle wakeups inside the interrupt branch of thread_unblock:
+    // idle is a subset, not an additional source to add to the total.
     Ok(Metrics {
         footprint_bytes: before.footprint_bytes,
         idle_cpu_percent: cpu as f64 * f64::from(numer) / f64::from(denom) / 1e9 / seconds * 100.0,
-        wakeups_per_second: wakeups as f64 / seconds,
+        interrupt_wakeups_per_second: delta(before.interrupt_wakeups, after.interrupt_wakeups)?
+            as f64
+            / seconds,
+        idle_wakeups_per_second: delta(before.pkg_idle_wakeups, after.pkg_idle_wakeups)? as f64
+            / seconds,
     })
 }
 

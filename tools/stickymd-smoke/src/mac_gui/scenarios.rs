@@ -18,6 +18,7 @@ pub(super) enum Op {
     Menu(String),
     Config,
     Note,
+    NoteNow,
     Alive,
     Clipboard,
     Reopen,
@@ -32,6 +33,7 @@ pub(super) enum Op {
 #[derive(Clone, Debug)]
 pub(super) enum Value {
     Unit,
+    Time(u64),
     Text(String),
     Window(Window),
     Rect(Rect),
@@ -165,7 +167,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, id: &str) -> Result<(), Str
                 dock(d, edge)?;
             }
         }
-        "W03" | "W04" => hover(d, id == "W04")?,
+        "W03" | "W04" => super::hover::run(d, id == "W04")?,
         "W07" => {
             d.op(Op::Menu("隐藏".into()))?;
             d.wait(300)?;
@@ -257,7 +259,10 @@ fn quit<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
         d.wait(50)?;
     }
 }
-fn dock<B: Backend>(d: &mut Driver<'_, B>, edge: Edge) -> Result<(Rect, Window), String> {
+pub(super) fn dock<B: Backend>(
+    d: &mut Driver<'_, B>,
+    edge: Edge,
+) -> Result<(Rect, Window), String> {
     d.op(Op::Activate)?;
     d.wait(350)?;
     let w = d.window()?;
@@ -296,107 +301,4 @@ fn dock<B: Backend>(d: &mut Driver<'_, B>, edge: Edge) -> Result<(Rect, Window),
     );
     d.config("window", "dock_edge", &format!("\"{}\"", edge.name()))?;
     Ok((s, w))
-}
-fn hover<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), String> {
-    let (s, w) = dock(d, Edge::Top)?;
-    let strip = Point {
-        x: w.bounds.center().x,
-        y: s.origin.y + 1.0,
-    };
-    let away = Point {
-        x: s.right() - 20.0,
-        y: s.bottom() - 100.0,
-    };
-    let front = d.front()?;
-    d.row.check(
-        "Finder frontmost before hover",
-        front != d.pid,
-        format!("front={front}, app={}", d.pid),
-    );
-    let early_start = d.backend.now();
-    d.op(Op::Move(strip))?;
-    d.wait(35)?;
-    d.op(Op::Move(away))?;
-    let early_dwell = d.backend.now() - early_start;
-    if early_dwell >= 100 {
-        d.row.skip(
-            "early-leave timing",
-            "scheduler delay prevented a sub-100ms dwell",
-        );
-    }
-    d.wait(350)?;
-    let w = d.window()?;
-    d.row.check(
-        "early leave cancels",
-        collapsed(&w, s, Edge::Top),
-        format!("{w:?}"),
-    );
-    let start = d.backend.now();
-    d.op(Op::Move(strip))?;
-    d.wait(65)?;
-    let early = d.window()?;
-    let early_elapsed = d.backend.now() - start;
-    if early_elapsed < 100 {
-        d.row.check(
-            "no expansion before 100ms",
-            collapsed(&early, s, Edge::Top),
-            format!("{early_elapsed}ms; {early:?}"),
-        );
-    } else {
-        d.row.skip(
-            "pre-100ms observation",
-            "scheduler delay missed the observation window",
-        );
-    }
-    let (moving, _) = d.until(350, |w| !collapsed(w, s, Edge::Top))?;
-    let onset = d.backend.now() - start;
-    d.row.check(
-        "hover movement onset",
-        !collapsed(&moving, s, Edge::Top) && timing(onset, 90, 350),
-        format!("onset={onset}ms; {moving:?}"),
-    );
-    let (w, _) = d.until(700, |w| expanded(w, s))?;
-    let elapsed = d.backend.now() - start;
-    let after = d.front()?;
-    d.row.check(
-        "hover expands without focus",
-        expanded(&w, s) && after == front && timing(elapsed, 90, 700),
-        format!(
-            "settled={elapsed}ms (100ms delay + 140ms animation); front={front}->{after}; {w:?}"
-        ),
-    );
-    if band {
-        let p = Point {
-            x: w.bounds.center().x,
-            y: s.origin.y,
-        };
-        d.row.check(
-            "pointer in top band",
-            top_band(p, w.bounds, s),
-            format!("{p:?}"),
-        );
-        d.op(Op::Move(p))?;
-        d.wait(850)?;
-        let stay = d.window()?;
-        d.row.check(
-            "top band holds past 500ms",
-            expanded(&stay, s),
-            format!("{stay:?}"),
-        );
-    }
-    d.op(Op::Move(away))?;
-    d.wait(350)?;
-    let before = d.window()?;
-    d.row.check(
-        "does not collapse before 500ms",
-        expanded(&before, s),
-        format!("{before:?}"),
-    );
-    let (w, elapsed) = d.until(750, |w| collapsed(w, s, Edge::Top))?;
-    d.row.check(
-        "leave collapses within about 1s",
-        collapsed(&w, s, Edge::Top) && timing(elapsed + 350, 490, 1100),
-        format!("{}ms; {w:?}", elapsed + 350),
-    );
-    Ok(())
 }

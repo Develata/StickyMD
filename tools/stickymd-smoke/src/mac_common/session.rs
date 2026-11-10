@@ -14,6 +14,8 @@ pub(crate) struct Session {
     inode: u64,
     pub child: Option<Child>,
     cleaned: bool,
+    opened_executable: Option<PathBuf>,
+    retained: Option<String>,
 }
 
 impl Session {
@@ -40,6 +42,8 @@ impl Session {
             inode: metadata.ino(),
             child: None,
             cleaned: false,
+            opened_executable: None,
+            retained: None,
         })
     }
 
@@ -61,6 +65,49 @@ impl Session {
             .ok_or("Session has no child")?
             .try_wait()
             .map_err(|e| format!("try_wait: {e}"))
+    }
+
+    pub fn open_bundle(
+        &mut self,
+        open: impl FnOnce(&Path) -> Result<String, String>,
+    ) -> Result<String, String> {
+        if let Some(status) = self.poll()? {
+            return Err(format!(
+                "refused open: owned child already exited: {status}"
+            ));
+        }
+        let pid = self.child.as_ref().ok_or("missing owned child")?.id();
+        // Freeze the same canonical executable used at spawn, including an allowed
+        // bundle-internal symlink; do not resolve a possibly changed path at cleanup.
+        self.opened_executable = Some(super::fixture::contained_executable(
+            &self.path.join("StickyMD.app"),
+        )?);
+        // Also retain on unwind between open and audit, when a new PID may exist.
+        self.retained = Some("open process audit did not complete".into());
+        let result = open(&self.path.join("StickyMD.app"));
+        let foreign = self.audit_processes(pid)?;
+        if !foreign.is_empty() {
+            return Err(format!(
+                "open created foreign fixture PIDs {foreign:?}; terminated and confirmed gone; open result={result:?}"
+            ));
+        }
+        result
+    }
+
+    fn audit_processes(&mut self, owned: u32) -> Result<Vec<u32>, String> {
+        let executable = self
+            .opened_executable
+            .as_ref()
+            .ok_or("missing opened executable")?;
+        let result = super::processes::drain(
+            &mut super::processes::Native {
+                executable,
+                started: Instant::now(),
+            },
+            owned,
+        );
+        self.retained = result.as_ref().err().cloned();
+        result
     }
 
     pub fn wait_until(&mut self, deadline: Instant) -> Result<Option<ExitStatus>, String> {
@@ -113,6 +160,16 @@ impl Session {
             return Ok(());
         }
         self.stop()?;
+        if self.retained.is_none() && self.opened_executable.is_some() {
+            // The child is reaped now, so every remaining matching PID is foreign.
+            let _ = self.audit_processes(0);
+        }
+        if let Some(reason) = &self.retained {
+            return Err(format!(
+                "{reason}; retained fixture {}; stop the whole run",
+                self.path.display()
+            ));
+        }
         validate_directory(&self.path, self.device, self.inode)?;
         fs::remove_dir_all(&self.path)
             .map_err(|e| format!("remove {}: {e}", self.path.display()))?;
@@ -148,6 +205,35 @@ impl Drop for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_refuses_an_exited_child_without_invoking_launch_services() {
+        let mut session = Session::new().unwrap();
+        session.spawn(&mut Command::new("/usr/bin/true")).unwrap();
+        assert!(
+            session
+                .wait_until(Instant::now() + Duration::from_secs(3))
+                .unwrap()
+                .is_some()
+        );
+        let error = session
+            .open_bundle(|_| panic!("must not invoke open"))
+            .unwrap_err();
+        assert!(error.contains("already exited"));
+        session.cleanup().unwrap();
+    }
+
+    #[test]
+    fn uncertain_foreign_process_retains_fixture_even_on_drop() {
+        let mut session = Session::new().unwrap();
+        let path = session.path.clone();
+        session.retained = Some("foreign PID not confirmed gone".into());
+        let error = session.cleanup().unwrap_err();
+        assert!(error.contains("retained fixture") && error.contains("stop the whole run"));
+        drop(session);
+        assert!(path.exists());
+        fs::remove_dir(&path).unwrap(); // Reclaim only this test's empty fixture.
+    }
 
     #[test]
     fn cleanup_refuses_a_replaced_root_and_does_not_follow_child_symlinks() {

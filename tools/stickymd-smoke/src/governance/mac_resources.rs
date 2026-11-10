@@ -15,9 +15,11 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
     }
     for path in files {
         check(
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default(),
+            &path
+                .strip_prefix(directory.parent().ok_or("missing source root")?)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .replace('\\', "/"),
             &super::read_text(&path)?,
         )
         .map_err(|error| format!("{}: {error}", path.display()))?;
@@ -69,25 +71,7 @@ fn check_gui(path: &str, source: &str) -> Result<(), String> {
     {
         return Err("missing exact Phase 16 plan_ref".into());
     }
-    if links.is_empty() {
-        return check("orchestration.rs", source);
-    }
-    if let Some(line) = super::unsafe_block_without_safety(source) {
-        return Err(format!("line {line}: unsafe block needs SAFETY invariant"));
-    }
-    for line in source.lines().filter(|s| s.trim().starts_with("#[link(")) {
-        if !links.iter().any(|name| {
-            let expected = if *name == "System" {
-                format!("#[link(name = \"{name}\")]")
-            } else {
-                format!("#[link(name = \"{name}\", kind = \"framework\")]")
-            };
-            line.trim() == expected
-        }) {
-            return Err("framework not allowed for this native concern".into());
-        }
-    }
-    Ok(())
+    check_native(path, source, links)
 }
 
 fn check(name: &str, source: &str) -> Result<(), String> {
@@ -97,38 +81,218 @@ fn check(name: &str, source: &str) -> Result<(), String> {
     {
         return Err("missing plan_ref".into());
     }
-    if name == "native.rs" {
-        if let Some(line) = super::unsafe_block_without_safety(source) {
-            return Err(format!("line {line}: unsafe block needs SAFETY invariant"));
+    let links: &[&str] = if name == "mac_resources/native.rs" {
+        &["System", "CoreGraphics", "CoreFoundation"]
+    } else {
+        &[]
+    };
+    check_native(name, source, links)
+}
+
+fn check_native(path: &str, source: &str, links: &[&str]) -> Result<(), String> {
+    let tokens = tokens(source)?;
+    if links.is_empty() && tokens.iter().any(|t| matches!(*t, "unsafe" | "extern")) {
+        return Err(format!(
+            "{path}: native calls require an exact allowed native path"
+        ));
+    }
+    if let Some(line) = super::unsafe_block_without_safety(source) {
+        return Err(format!("line {line}: unsafe block needs SAFETY invariant"));
+    }
+    for (i, token) in tokens.iter().enumerate() {
+        if *token != "#" || tokens.get(i + 1) != Some(&"[") {
+            continue;
         }
-        for line in source
-            .lines()
-            .filter(|line| line.trim().starts_with("#[link("))
-        {
-            if ![
-                "#[link(name = \"System\")]",
-                "#[link(name = \"CoreGraphics\", kind = \"framework\")]",
-                "#[link(name = \"CoreFoundation\", kind = \"framework\")]",
-            ]
-            .contains(&line.trim())
+        if tokens.get(i + 2) == Some(&"path") {
+            return Err("#[path] can escape the scanned source trees".into());
+        }
+        if tokens.get(i + 2) == Some(&"cfg_attr") {
+            let end = tokens[i..]
+                .iter()
+                .position(|t| *t == "]")
+                .ok_or("unclosed conditional attribute")?
+                + i;
+            if tokens[i..=end]
+                .iter()
+                .any(|t| matches!(*t, "link" | "path"))
             {
-                return Err("only libSystem, CoreGraphics and CoreFoundation are allowed".into());
+                return Err("conditional native link/path attributes are not allowed".into());
             }
         }
-    } else if source.lines().any(|line| {
-        line.split("//")
-            .next()
-            .unwrap_or_default()
-            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-            .any(|word| word == "unsafe" || word == "extern")
-    }) {
-        return Err("native calls belong only in mac_resources/native.rs".into());
+        if tokens.get(i + 2) != Some(&"link") {
+            continue;
+        }
+        let end = tokens[i..]
+            .iter()
+            .position(|t| *t == "]")
+            .ok_or("unclosed link attribute")?
+            + i;
+        let attribute = tokens[i..=end].concat();
+        if !links.iter().any(|name| {
+            attribute
+                == if *name == "System" {
+                    format!("#[link(name=\"{name}\")]")
+                } else {
+                    format!("#[link(name=\"{name}\",kind=\"framework\")]")
+                }
+        }) {
+            return Err(format!("{path}: native link is not allowed: {attribute}"));
+        }
     }
     Ok(())
 }
 
+// Keep strings indivisible: comment markers inside them cannot hide later code.
+// Nested block comments and line comments carry no native permissions.
+fn tokens(source: &str) -> Result<Vec<&str>, String> {
+    let bytes = source.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        if bytes[i..].starts_with(b"//") {
+            i += bytes[i..]
+                .iter()
+                .position(|b| *b == b'\n')
+                .unwrap_or(bytes.len() - i);
+            continue;
+        }
+        if bytes[i..].starts_with(b"/*") {
+            i += 2;
+            let mut depth = 1;
+            while i < bytes.len() && depth > 0 {
+                if bytes[i..].starts_with(b"/*") {
+                    depth += 1;
+                    i += 2;
+                } else if bytes[i..].starts_with(b"*/") {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            if depth != 0 {
+                return Err("unterminated block comment".into());
+            }
+            continue;
+        }
+        let start = i;
+        if bytes[i] == b'\'' {
+            let mut end = i + 1;
+            if bytes.get(end) == Some(&b'\\') {
+                end += 2;
+                if bytes.get(end - 1) == Some(&b'u') && bytes.get(end) == Some(&b'{') {
+                    end += source[end..].find('}').ok_or("unclosed char escape")? + 1;
+                } else if bytes.get(end - 1) == Some(&b'x') {
+                    end += 2;
+                }
+            } else if let Some(c) = source[end..].chars().next() {
+                end += c.len_utf8();
+            }
+            if bytes.get(end) == Some(&b'\'') {
+                i = end + 1;
+                out.push(&source[start..i]);
+                continue;
+            }
+        }
+        let raw = i + usize::from(matches!(bytes[i], b'b' | b'c'));
+        if bytes.get(raw) == Some(&b'r') {
+            let mut quote = raw + 1;
+            while bytes.get(quote) == Some(&b'#') {
+                quote += 1;
+            }
+            if bytes.get(quote) == Some(&b'"') {
+                let terminator = format!("\"{}", "#".repeat(quote - raw - 1));
+                i = quote
+                    + 1
+                    + source[quote + 1..]
+                        .find(&terminator)
+                        .ok_or("unterminated raw string")?
+                    + terminator.len();
+                out.push(&source[start..i]);
+                continue;
+            }
+        }
+        if bytes[i] == b'"' {
+            i += 1;
+            loop {
+                match bytes.get(i) {
+                    Some(b'\\') => i += 2,
+                    Some(b'"') => {
+                        i += 1;
+                        break;
+                    }
+                    Some(_) => i += 1,
+                    None => return Err("unterminated string".into()),
+                }
+            }
+        } else if bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' {
+            i += 1;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+        } else {
+            i += source[i..]
+                .chars()
+                .next()
+                .ok_or("missing character")?
+                .len_utf8();
+        }
+        out.push(&source[start..i]);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rejects_nested_native_inline_links_and_path_escapes() {
+        let prefix = "//! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host\n";
+        let native = format!("{prefix}// SAFETY: SDK storage.\nunsafe {{ call() }}");
+        assert!(super::check("mac_resources/nested/native.rs", &native).is_err());
+        for path in [
+            "mac_resources/native.rs",
+            "mac_gui/native/events.rs",
+            "mac_common/native.rs",
+        ] {
+            let check = |s: &str| {
+                if path.starts_with("mac_resources/") {
+                    super::check(path, &format!("{prefix}{s}"))
+                } else {
+                    super::check_gui(path, &format!("{prefix}{s}"))
+                }
+            };
+            for bad in [
+                "mod x { #[link(name = \"Foo\")] extern \"C\" {} }",
+                "#[link(name = \"System\")] #[link(name = \"Foo\")] extern \"C\" {}",
+                "#[path = \"../../elsewhere.rs\"] mod outside;",
+                "#[ /* comment */ path = \"../../elsewhere.rs\"] mod outside;",
+                "let x = \"/*\"; #[link(name = \"Foo\")] extern \"C\" {}",
+                "#[cfg_attr(target_os = \"macos\", path = \"escape.rs\")] mod outside;",
+                "#[cfg_attr(target_os = \"macos\", link(name = \"Foo\"))] extern \"C\" {}",
+                "let s = br#\"\\\" //\"#; #[link(name = \"Foo\")] extern \"C\" {}",
+            ] {
+                assert!(check(bad).is_err(), "{path}: {bad}");
+            }
+            assert!(
+                check("// #[link(name = \"Foo\")]\n/* #[path = \"foo\"] /* nested */ */").is_ok()
+            );
+            assert!(check("mod x { #[link(name = \"System\")] extern \"C\" {} }").is_ok());
+            assert!(check("let c = '\"'; #[link(name = \"Foo\")] extern \"C\" {}").is_err());
+        }
+        for path in ["mac_gui/scenarios.rs", "mac_common/session.rs"] {
+            assert!(
+                super::check_gui(
+                    path,
+                    &format!("{prefix}#[path = \"escape.rs\"] mod outside;")
+                )
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn gui_ffi_is_path_and_framework_specific() {
         let prefix = "//! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host\n";
@@ -167,9 +331,21 @@ mod tests {
     fn native_permission_is_narrow_and_requires_safety_comments() {
         let prefix = "//! plan_ref: docs/plan/10_performance_reliability.md#macos-gates\n";
         let native = format!("{prefix}// SAFETY: valid SDK storage.\nunsafe {{ call() }}");
-        assert!(super::check("native.rs", &native).is_ok());
+        assert!(super::check("mac_resources/native.rs", &native).is_ok());
         assert!(super::check("runner.rs", &native).is_err());
-        assert!(super::check("native.rs", &format!("{prefix}unsafe {{ call() }}")).is_err());
-        assert!(super::check("native.rs", &format!("{prefix}#[link(name = \"AppKit\")]")).is_err());
+        assert!(
+            super::check(
+                "mac_resources/native.rs",
+                &format!("{prefix}unsafe {{ call() }}")
+            )
+            .is_err()
+        );
+        assert!(
+            super::check(
+                "mac_resources/native.rs",
+                &format!("{prefix}#[link(name = \"AppKit\")]")
+            )
+            .is_err()
+        );
     }
 }

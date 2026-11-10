@@ -84,12 +84,13 @@ impl Live<'_> {
             }
         }
     }
-    fn open(&self) -> Result<String, String> {
-        let bundle = self.session.path().join("StickyMD.app");
-        command(
-            "/usr/bin/open",
-            &[bundle.to_str().ok_or("non UTF-8 bundle path")?],
-        )
+    fn open(&mut self) -> Result<String, String> {
+        self.session.open_bundle(|bundle| {
+            command(
+                "/usr/bin/open",
+                &[bundle.to_str().ok_or("non UTF-8 bundle path")?],
+            )
+        })
     }
     fn panel(&mut self, confirm: bool) -> Result<String, String> {
         events::wait(300)?;
@@ -128,6 +129,9 @@ impl Backend for Live<'_> {
             Op::Screen => Value::Rect(windows::screen()),
             Op::Front => Value::Pid(ax::front()?),
             Op::Finder => {
+                if let Some(status) = self.session.poll()? {
+                    return Err(format!("refused open Finder: owned child exited: {status}"));
+                }
                 command("/usr/bin/open", &["-a", "Finder"])?;
                 events::wait(200)?;
                 let finder = command("/usr/bin/pgrep", &["-x", "Finder"])?;
@@ -169,12 +173,18 @@ impl Backend for Live<'_> {
             }
             Op::Text(s) => {
                 self.input.text(&s)?;
+                let last_key = self
+                    .input
+                    .backend
+                    .last_key_ms
+                    .ok_or("no typed key timestamp")?;
                 events::wait(60)?;
-                Value::Unit
+                Value::Time(last_key)
             }
             Op::Menu(label) => Value::Text(ax::menu(self.pid, &label)?),
             Op::Config => Value::Text(self.read("note/config.toml")?),
             Op::Note => Value::Text(self.quiet_note()?),
+            Op::NoteNow => Value::Text(self.read("note/note.md")?),
             Op::Alive => match self.session.poll()? {
                 None => Value::Bool(true),
                 Some(status) if status.success() => Value::Bool(false),
