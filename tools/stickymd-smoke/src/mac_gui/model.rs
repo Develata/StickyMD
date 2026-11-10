@@ -55,29 +55,6 @@ pub(super) struct Window {
     pub layer: i32,
     pub onscreen: bool,
 }
-/// One on-screen window, as CoreGraphics lists them: front to back.
-#[derive(Clone, Debug)]
-pub(super) struct Hit {
-    pub pid: u32,
-    pub owner: String,
-    pub layer: i32,
-    pub bounds: Rect,
-}
-/// `kCGCursorWindowLevel`: the pointer itself, drawn above everything and never hit.
-pub(super) const CURSOR_LAYER: i32 = 2_147_483_630;
-/// The front window under `p`, which a press there reaches. The Dock's full-screen window lies
-/// above normal windows but passes clicks through outside the Dock, so it is skipped, and so is
-/// the pointer.
-pub(super) fn front_hit(front_to_back: &[Hit], p: Point) -> Option<&Hit> {
-    front_to_back.iter().find(|w| {
-        w.owner != "Dock"
-            && w.layer != CURSOR_LAYER
-            && p.x >= w.bounds.origin.x
-            && p.x < w.bounds.right()
-            && p.y >= w.bounds.origin.y
-            && p.y < w.bounds.bottom()
-    })
-}
 /// Picks the product window among the PID's content-sized windows. A window number must match
 /// exactly one of them, hidden or not (W07/W08 hide it). Without a number only on-screen windows
 /// count: AppKit attaches windows that are never ordered in to the PID (macOS 27.2 shows one

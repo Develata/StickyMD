@@ -84,24 +84,21 @@ impl Live<'_> {
             }
         }
     }
-    /// Plan 11 (physical input): a press goes only where the product's window is the front
-    /// window under the point. A covering window (Tips, a system dialog) would take the press
-    /// and make the product look unresponsive. Stacking can still change between this check and
-    /// the press, so the product's observed reaction stays the evidence.
+    /// Plan 11 (physical input): a press goes only where the system's hit test finds the
+    /// product. A covering window (Tips, a system dialog) would take the press and make the
+    /// product look unresponsive. Stacking can still change between this check and the press,
+    /// so the product's observed reaction stays the evidence.
     fn require_target(&self, p: Point) -> Result<(), String> {
-        let hits = windows::on_screen()?;
-        match front_hit(&hits, p) {
-            Some(hit) if hit.pid == self.pid => Ok(()),
-            Some(hit) => Err(format!(
-                "press at ({}, {}) would reach {:?} (PID {}), not the product; the desktop is \
-                 obstructed and no press was injected",
-                p.x, p.y, hit.owner, hit.pid
-            )),
-            None => Err(format!(
-                "no window under ({}, {}); no press was injected",
-                p.x, p.y
-            )),
+        let owner = ax::pid_at(p.x, p.y)?;
+        if owner == self.pid {
+            return Ok(());
         }
+        let name = windows::owner_name(owner).unwrap_or_default();
+        Err(format!(
+            "press at ({}, {}) would reach PID {owner} {name:?}, not the product (PID {}); \
+             the desktop is obstructed and no press was injected",
+            p.x, p.y, self.pid
+        ))
     }
     fn open(&mut self) -> Result<String, String> {
         self.session.open_bundle(|bundle| {

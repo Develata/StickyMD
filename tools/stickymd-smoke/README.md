@@ -974,12 +974,20 @@ menu tracking; that open is recorded as unconfirmed, and the menu-item tree and
 the command's observed effect decide the check. Any other AX action error fails.
 `lsappinfo info` does not accept `pid=N` on macOS 27.2, so the driver resolves the
 application's ASN with `lsappinfo find pid=N` first. Before each click or drag start,
-the front on-screen window under the point (skipping the Dock's full-screen overlay
-and the pointer) must belong to the product; otherwise no press is injected and the
-scenario fails naming the covering window. A VM run once lost W02/W04/W09 to a Tips
-window that macOS opened mid-run; keep the VM desktop clear of other app windows.
-A drag holds the press for 60ms before moving: the product starts the native window
-drag when it handles the press, from wherever the pointer is by then.
+the system's own hit test (`AXUIElementCopyElementAtPosition`) must find an element of
+the product's PID at the point; otherwise no press is injected and the scenario fails
+naming the process that would receive it. Stacking can still change between the check
+and the press. A VM run once lost W02/W04/W09 to a Tips window that macOS opened
+mid-run; keep the VM desktop clear of other app windows. A drag holds the press for
+60ms before moving. Without the hold the VM twice stopped the window one 25 DIP step
+short of the edge; the cause (the native drag starting from wherever the pointer is
+when the product handles the press) is inferred, and a fast drag stays undiagnosed.
+
+Polled effects count only when a sample that satisfies them returned by the deadline;
+a success first seen later is late. Hover animation completion (W03/W04) is dated
+retrospectively: sampling continues 200ms past the deadline, the last sample is the
+rest position, and completion is the first sample from which every later one equals
+it. Being fully on screen is not completion.
 
 `mac-gui.json` is atomically checkpointed after every scenario. It records OS,
 VM/override/permission/display facts, fixed config, executable SHA-256, a sorted

@@ -2,7 +2,7 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::{
     model::*,
-    observation::{Bracket, LATE_MS, transition},
+    observation::{Bracket, LATE_MS, REST_MS, completion_verdict, rest_from, transition},
     scenarios::{Backend, Driver, Op},
 };
 pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), String> {
@@ -185,19 +185,28 @@ fn completion<B: Backend>(
     };
     // Earliest possible onset bounds the completion deadline conservatively.
     let deadline = onset.old_ms + 140 + LATE_MS;
-    loop {
+    let end = deadline + REST_MS;
+    let mut samples = Vec::new();
+    let rest = loop {
         let w = d.window()?;
         let observed = d.backend.now() - start;
-        if settled(&w) || observed >= deadline {
-            d.row.check(
-                name,
-                settled(&w) && observed <= deadline,
-                format!(
-                    "onset={onset:?}; settled observed={observed}ms; deadline={deadline}ms; {w:?}"
-                ),
-            );
-            return Ok(w);
+        samples.push((observed, w.bounds));
+        if observed >= end {
+            break w;
         }
-        d.wait(20.min(deadline - observed))?;
-    }
+        d.wait(20.min(end - observed))?;
+    };
+    let (first_at, before) = rest_from(&samples).ok_or("no completion samples")?;
+    let verdict = completion_verdict(settled(&rest), first_at, before, deadline);
+    record(
+        d,
+        name,
+        verdict,
+        format!(
+            "onset={onset:?}; at rest from {first_at}ms (sample before {before:?}ms); \
+             deadline={deadline}ms; {} samples; rest {rest:?}",
+            samples.len()
+        ),
+    );
+    Ok(rest)
 }

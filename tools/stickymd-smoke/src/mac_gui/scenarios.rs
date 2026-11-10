@@ -114,17 +114,21 @@ impl<B: Backend> Driver<'_, B> {
         );
         Ok(())
     }
+    /// Polls every 20 ms until `predicate` holds or `max_ms` passes. Returns the last sample,
+    /// the time it returned, and whether it was met: only a sample that holds and returned
+    /// within `max_ms` counts, so a success first seen after the deadline is late.
     pub fn until(
         &mut self,
         max_ms: u64,
         predicate: impl Fn(&Window) -> bool,
-    ) -> Result<(Window, u64), String> {
+    ) -> Result<(Window, u64, bool), String> {
         let start = self.backend.now();
         loop {
             let w = self.window()?;
             let elapsed = self.backend.now().saturating_sub(start);
-            if predicate(&w) || elapsed >= max_ms {
-                return Ok((w, elapsed));
+            let holds = predicate(&w);
+            if holds || elapsed >= max_ms {
+                return Ok((w, elapsed, holds && elapsed <= max_ms));
             }
             self.wait(20)?;
         }
@@ -177,17 +181,19 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, id: &str) -> Result<(), Str
         "W03" | "W04" => super::hover::run(d, id == "W04")?,
         "W07" => {
             d.op(Op::Menu("隐藏".into()))?;
-            let (w, ms) = d.until(MENU_EFFECT_MS, |w| !w.onscreen)?;
-            d.row
-                .check("hidden", !w.onscreen, format!("after {ms}ms: {w:?}"));
+            let (w, ms, met) = d.until(MENU_EFFECT_MS, |w| !w.onscreen)?;
+            d.row.check("hidden", met, format!("after {ms}ms: {w:?}"));
             d.op(Op::Reopen)?;
-            let (w, _) = d.until(3000, |w| w.onscreen)?;
+            let (w, ms, shown) = d.until(3000, |w| w.onscreen)?;
             let front = d.front()?;
             let alive = matches!(d.op(Op::Alive)?, Value::Bool(true));
             d.row.check(
                 "reopen retains PID and focuses",
-                alive && w.onscreen && front == d.pid,
-                format!("owned pid={}, front={front}, alive={alive}, {w:?}", d.pid),
+                alive && shown && front == d.pid,
+                format!(
+                    "owned pid={}, front={front}, alive={alive}, after {ms}ms: {w:?}",
+                    d.pid
+                ),
             );
         }
         "W08" => {
@@ -198,30 +204,29 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, id: &str) -> Result<(), Str
             let settled =
                 |w: &Window| w.onscreen && w.alpha == before.alpha && w.bounds == before.bounds;
             d.op(Op::Menu("隐藏".into()))?;
-            let (w, ms) = d.until(MENU_EFFECT_MS, |w| !w.onscreen)?;
-            d.row
-                .check("隐藏", !w.onscreen, format!("after {ms}ms: {w:?}"));
+            let (w, ms, met) = d.until(MENU_EFFECT_MS, |w| !w.onscreen)?;
+            d.row.check("隐藏", met, format!("after {ms}ms: {w:?}"));
             d.op(Op::Menu("显示".into()))?;
-            let (w, ms) = d.until(MENU_EFFECT_MS, settled)?;
+            let (w, ms, met) = d.until(MENU_EFFECT_MS, settled)?;
             d.row.check(
                 "显示",
-                settled(&w),
+                met,
                 format!("after {ms}ms: {w:?}; before {before:?}"),
             );
             let normal = w;
             d.op(Op::Menu("置顶".into()))?;
-            let (top, ms) = d.until(MENU_EFFECT_MS, |w| w.layer > normal.layer)?;
+            let (top, ms, met) = d.until(MENU_EFFECT_MS, |w| w.layer > normal.layer)?;
             d.row.check(
                 "topmost layer rises",
-                top.layer > normal.layer,
+                met,
                 format!("after {ms}ms: normal={}, top={}", normal.layer, top.layer),
             );
             d.config("", "always_on_top", "true")?;
             d.op(Op::Menu("置顶".into()))?;
-            let (restored, ms) = d.until(MENU_EFFECT_MS, |w| w.layer == normal.layer)?;
+            let (restored, ms, met) = d.until(MENU_EFFECT_MS, |w| w.layer == normal.layer)?;
             d.row.check(
                 "topmost layer restored",
-                restored.layer == normal.layer,
+                met,
                 format!("after {ms}ms: {restored:?}"),
             );
             d.op(Op::Activate)?;
@@ -312,10 +317,10 @@ pub(super) fn dock<B: Backend>(
         y: s.bottom() - 100.0,
     }))?;
     d.op(Op::Finder)?;
-    let (w, elapsed) = d.until(1800, |w| collapsed(w, s, edge))?;
+    let (w, elapsed, met) = d.until(1800, |w| collapsed(w, s, edge))?;
     d.row.check(
         &format!("{} 2 DIP collapse", edge.name()),
-        collapsed(&w, s, edge),
+        met,
         format!("elapsed={elapsed}ms; {w:?}; screen={s:?}"),
     );
     d.config("window", "dock_edge", &format!("\"{}\"", edge.name()))?;

@@ -314,6 +314,8 @@ struct HoverBackend {
     steals: bool,
     expand_at: u64,
     leave_at: u64,
+    /// How long the window stays on screen but short of its rest after the 140 ms animation.
+    short_of_rest: u64,
 }
 impl HoverBackend {
     fn new() -> Self {
@@ -325,6 +327,7 @@ impl HoverBackend {
             steals: false,
             expand_at: 100,
             leave_at: 500,
+            short_of_rest: 0,
         }
     }
     fn expanded(&self) -> bool {
@@ -351,6 +354,11 @@ impl Backend for HoverBackend {
                     .is_some_and(|t| (self.leave_at..self.leave_at + 140).contains(&(self.now - t)))
                 {
                     window(rect(460.0, -200.0, 520.0, 480.0), 27)
+                } else if self.entered.is_some_and(|t| {
+                    let rest = self.expand_at + 140;
+                    (rest..rest + self.short_of_rest).contains(&(self.now - t))
+                }) {
+                    window(rect(460.0, 12.0, 520.0, 480.0), 27)
                 } else if self.expanded() {
                     window(rect(460.0, 28.0, 520.0, 480.0), 0)
                 } else {
@@ -632,35 +640,94 @@ fn lsappinfo_asn_and_type_parse_the_macos_27_output() {
 }
 
 #[test]
-fn a_press_reaches_the_front_window_under_it_past_the_dock_overlay() {
-    let hit = |pid, owner: &str, bounds| Hit {
-        pid,
-        owner: owner.into(),
-        layer: 0,
-        bounds,
-    };
-    let screen = rect(0.0, 0.0, 1024.0, 768.0);
-    // Front to back, as the VM listed them while Tips covered the product.
-    let stack = [
-        hit(160, "Window Server", rect(0.0, 0.0, 1024.0, 30.0)),
-        hit(338, "Dock", screen),
-        hit(3542, "Tips", rect(82.0, 30.0, 904.0, 680.0)),
-        hit(3536, "StickyMD", rect(252.0, 80.0, 520.0, 480.0)),
+fn hover_completion_is_dated_by_the_rest_position_not_by_entering_the_screen() {
+    // On screen 16 DIP short of rest for 200 ms after the animation: not finished in time.
+    let mut lagging = HoverBackend::new();
+    lagging.short_of_rest = 200;
+    let row = hover_row(&mut lagging, "W03");
+    let completion = row
+        .checks
+        .iter()
+        .find(|c| c.name == "hover expansion completion")
+        .unwrap();
+    assert_eq!(completion.verdict, Verdict::Fail, "{}", row.json());
+    // A brief settle within the deadline still passes.
+    let mut settling = HoverBackend::new();
+    settling.short_of_rest = 20;
+    assert_eq!(
+        aggregate(&hover_row(&mut settling, "W03").checks),
+        Verdict::Pass
+    );
+}
+
+#[test]
+fn rest_dating_and_completion_verdicts() {
+    use super::observation::{completion_verdict, rest_from};
+    let samples = [
+        (100, -200),
+        (120, 12),
+        (140, 28),
+        (160, 12),
+        (180, 28),
+        (200, 28),
     ];
-    let pid_at = |stack: &[Hit], x, y| front_hit(stack, Point { x, y }).map(|h| h.pid);
-    assert_eq!(pid_at(&stack, 689.0, 98.0), Some(3542));
-    assert_eq!(pid_at(&stack, 512.0, 10.0), Some(160));
-    assert_eq!(pid_at(&stack[3..], 689.0, 98.0), Some(3536));
-    let uncovered = [stack[0].clone(), stack[1].clone(), stack[3].clone()];
-    assert_eq!(pid_at(&uncovered, 689.0, 98.0), Some(3536));
-    // Edges: the right and bottom edges are outside; nothing under a point is None.
-    assert_eq!(pid_at(&uncovered, 772.0, 98.0), None);
-    assert_eq!(pid_at(&uncovered, 252.0, 80.0), Some(3536));
-    // The pointer drawn over the press point is not a window that takes the press.
-    let cursor = Hit {
-        layer: CURSOR_LAYER,
-        ..hit(160, "Window Server", rect(662.0, 138.0, 28.0, 40.0))
-    };
-    let pointed = [cursor, stack[3].clone()];
-    assert_eq!(pid_at(&pointed, 667.5, 142.0), Some(3536));
+    assert_eq!(rest_from(&samples), Some((180, Some(160))));
+    assert_eq!(rest_from(&[(5, 1), (25, 1)]), Some((5, None)));
+    assert_eq!(rest_from::<i32>(&[]), None);
+    assert_eq!(completion_verdict(true, 300, Some(280), 304), Verdict::Pass);
+    assert_eq!(completion_verdict(true, 304, Some(284), 304), Verdict::Pass);
+    assert_eq!(completion_verdict(true, 320, Some(300), 304), Verdict::Fail);
+    assert_eq!(
+        completion_verdict(true, 380, Some(290), 304),
+        Verdict::NotTested
+    );
+    assert_eq!(completion_verdict(true, 380, Some(310), 304), Verdict::Fail);
+    assert_eq!(
+        completion_verdict(false, 200, Some(180), 304),
+        Verdict::Fail
+    );
+}
+
+/// A window whose observation takes 30 ms and which goes off screen at `hidden_at`.
+struct SlowWindow {
+    now: u64,
+    hidden_at: u64,
+}
+impl Backend for SlowWindow {
+    fn now(&self) -> u64 {
+        self.now
+    }
+    fn perform(&mut self, op: Op) -> Result<Value, String> {
+        Ok(match op {
+            Op::Wait(ms) => {
+                self.now += ms;
+                Value::Unit
+            }
+            Op::Window => {
+                self.now += 30;
+                let mut w = window(rect(0.0, 0.0, 520.0, 480.0), 0);
+                w.onscreen = self.now < self.hidden_at;
+                Value::Window(w)
+            }
+            _ => return Err(format!("unexpected fake operation {op:?}")),
+        })
+    }
+}
+
+#[test]
+fn a_success_first_seen_after_the_deadline_is_late() {
+    for (hidden_at, met) in [(100, true), (1_950, true), (1_990, false), (5_000, false)] {
+        let mut fake = SlowWindow { now: 0, hidden_at };
+        let mut row = Row::new("W07");
+        let mut d = Driver {
+            backend: &mut fake,
+            row: &mut row,
+            pid: 42,
+        };
+        let (_, elapsed, observed) = d.until(2_000, |w| !w.onscreen).unwrap();
+        assert_eq!(
+            observed, met,
+            "hidden at {hidden_at}, returned at {elapsed}"
+        );
+    }
 }

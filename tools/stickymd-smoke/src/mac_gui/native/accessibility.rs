@@ -14,6 +14,7 @@ unsafe extern "C" {
     fn AXUIElementCopyActionNames(element: Cf, out: *mut Cf) -> i32;
     fn AXUIElementGetPid(element: Cf, pid: *mut i32) -> i32;
     fn AXUIElementSetMessagingTimeout(element: Cf, seconds: f32) -> i32;
+    fn AXUIElementCopyElementAtPosition(element: Cf, x: f32, y: f32, out: *mut Cf) -> i32;
 }
 fn app(pid: u32) -> Result<Owned, String> {
     let pid = i32::try_from(pid).map_err(|_| "invalid AX PID")?;
@@ -167,6 +168,29 @@ pub(in crate::mac_gui) fn front() -> Result<u32, String> {
     // SAFETY: focused AX application is live; writable i32 PID storage.
     if unsafe { AXUIElementGetPid(focused.0, &mut pid) } != 0 || pid <= 0 {
         return Err("AX frontmost PID unavailable".into());
+    }
+    Ok(pid as u32)
+}
+/// The process that owns the element under `(x, y)` (global top-left points), found by the
+/// system's own hit test: windows that pass clicks through, such as the Dock's full-screen
+/// overlay outside its tiles, and the pointer are not hits.
+pub(in crate::mac_gui) fn pid_at(x: f64, y: f64) -> Result<u32, String> {
+    // SAFETY: Create-rule systemwide AX object, with a finite per-request timeout.
+    let system = Owned::take(unsafe { AXUIElementCreateSystemWide() })?;
+    // SAFETY: live systemwide element.
+    unsafe { AXUIElementSetMessagingTimeout(system.0, 0.5) };
+    let mut out = std::ptr::null();
+    // SAFETY: live element; the initialized output receives a Copy-rule AX element.
+    let status =
+        unsafe { AXUIElementCopyElementAtPosition(system.0, x as f32, y as f32, &mut out) };
+    if status != 0 {
+        return Err(format!("AX hit test at ({x}, {y}) error {status}"));
+    }
+    let element = Owned::take(out)?;
+    let mut pid = 0;
+    // SAFETY: the element is live; writable i32 PID storage.
+    if unsafe { AXUIElementGetPid(element.0, &mut pid) } != 0 || pid <= 0 {
+        return Err(format!("AX hit test at ({x}, {y}) has no owning process"));
     }
     Ok(pid as u32)
 }

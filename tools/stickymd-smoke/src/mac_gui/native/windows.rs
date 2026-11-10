@@ -1,6 +1,6 @@
 //! CoreGraphics window facts and optional normalized PPM screenshot, never product state.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
-use super::super::model::{Hit, Rect, Window, select_window};
+use super::super::model::{Rect, Window, select_window};
 use super::cf::{Cf, Owned};
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -61,30 +61,17 @@ pub(in crate::mac_gui) fn window(pid: u32, id: Option<u32>) -> Result<Window, St
         format!("expected one PID {pid}{scope} content window (id={id:?}), found {found}")
     })
 }
-/// Every on-screen window, front to back, with its owner; no titles or image capture.
-pub(in crate::mac_gui) fn on_screen() -> Result<Vec<Hit>, String> {
+/// The owner name of an on-screen window of `pid`, to name what covers the product in a
+/// diagnostic; no titles or image capture.
+pub(in crate::mac_gui) fn owner_name(pid: u32) -> Option<String> {
     // SAFETY: OnScreenOnly | ExcludeDesktopElements; owned Create-rule array.
-    let array = Owned::take(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
-    let mut hits = Vec::new();
-    for dict in array.array()? {
-        let b = dict.get("kCGWindowBounds")?;
-        let mut bounds = Rect::default();
-        // SAFETY: SDK output storage matches CGRect; b is a live bounds dictionary.
-        if !unsafe { CGRectMakeWithDictionaryRepresentation(b.0, &mut bounds) } {
-            return Err("unreadable window bounds; hit test incomplete".into());
-        }
-        hits.push(Hit {
-            pid: dict.get("kCGWindowOwnerPID")?.number()? as u32,
-            layer: dict.get("kCGWindowLayer")?.number()? as i32,
-            owner: dict
-                .get("kCGWindowOwnerName")
-                .ok()
-                .and_then(|v| v.text())
-                .unwrap_or_default(),
-            bounds,
-        });
-    }
-    Ok(hits)
+    let array = Owned::take(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) }).ok()?;
+    array.array().ok()?.iter().find_map(|dict| {
+        let owner = dict.get("kCGWindowOwnerPID").ok()?.number().ok()?;
+        (owner == f64::from(pid))
+            .then(|| dict.get("kCGWindowOwnerName").ok()?.text())
+            .flatten()
+    })
 }
 pub(in crate::mac_gui) fn screenshot(w: &Window) -> Result<Vec<u8>, String> {
     // SAFETY: caller has preflighted capture permission. IncludingWindow=8 restricts capture

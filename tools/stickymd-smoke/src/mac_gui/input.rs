@@ -179,9 +179,10 @@ impl<B: Sender> Injection<B> {
                 dragging: false,
             })?;
             s.press(Held::Left)?;
-            // The product starts the native window drag when it handles the press, from wherever
-            // the pointer is by then. Moving at once let one 25 DIP step pass before that in the
-            // VM, so the window stopped short of the edge; a person also holds before moving.
+            // Hold before moving. Without the hold the VM twice stopped the window exactly one
+            // 25 DIP step short of the edge. Inferred, not proven: the product starts the native
+            // window drag when it handles the press, from wherever the pointer is by then. A fast
+            // drag without the hold remains undiagnosed and may still reveal a product delay.
             s.backend.pause(60);
             for step in 1..=20 {
                 s.at = Point {
