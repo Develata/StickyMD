@@ -6,11 +6,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use stickymd_core::{DocumentState, LineEnding, PreserveExpectation, RecoveryCandidate};
+use stickymd_core::{DocumentState, PreserveExpectation, RecoveryCandidate};
 use thiserror::Error;
 
 use crate::config::{load_config, save_config};
-use crate::persistence::{inspect_note, persist_note, quarantine_temporary, remove_temporary};
+use crate::persistence::{
+    NEW_NOTE_LINE_ENDING, inspect_note, persist_note, quarantine_temporary, remove_temporary,
+};
 use crate::platform::windows::ArboardClipboard;
 use crate::platform::windows::program_dir::RuntimePaths;
 use stickymd_app::config::RuntimeConfig;
@@ -23,8 +25,6 @@ use stickymd_app::ports::{PersistMode, PersistRequest, PersistResult};
 use stickymd_app::session::{AppSession, InstantClock, SessionParts};
 
 /// The line ending of a note this host creates.
-const NEW_NOTE_LINE_ENDING: LineEnding = LineEnding::Crlf;
-
 pub struct BootstrapOutcome {
     pub document: DocumentState,
     pub config: RuntimeConfig,
@@ -205,6 +205,7 @@ mod tests {
     use crate::test_support::unique_temp_path;
     use std::fs;
     use std::path::PathBuf;
+    use stickymd_core::LineEnding;
 
     fn fixture() -> (PathBuf, RuntimePaths) {
         let root = unique_temp_path("bootstrap");

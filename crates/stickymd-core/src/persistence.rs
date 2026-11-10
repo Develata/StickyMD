@@ -32,10 +32,11 @@ pub struct LoadedDocument {
 impl LoadedDocument {
     /// Decode UTF-8 (optionally BOM-prefixed), detect line endings, and normalize
     /// CRLF to the runtime representation. Invalid UTF-8 is rejected, never lost.
-    pub fn from_durable_bytes(bytes: &[u8]) -> Result<Self, NoteDecodeError> {
+    /// `new_note` is the host's first-creation style, which a tie resolves to.
+    pub fn from_durable_bytes(bytes: &[u8], new_note: LineEnding) -> Result<Self, NoteDecodeError> {
         let without_bom = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
         let durable = std::str::from_utf8(without_bom).map_err(|_| NoteDecodeError::InvalidUtf8)?;
-        let line_ending = LineEnding::detect(durable);
+        let line_ending = LineEnding::detect(durable, new_note);
         Ok(Self {
             text: LineEnding::to_internal(durable),
             line_ending,
@@ -113,6 +114,8 @@ pub struct RecoveryCandidate {
     pub canonical: Option<LoadedDocument>,
     pub temporary: LoadedDocument,
     pub temporary_is_newer: bool,
+    /// The host's first-creation style: what a missing canonical note is recreated with.
+    pub new_note: LineEnding,
 }
 
 /// Pure startup classification; adapters decide only how to read or delete files.
@@ -124,20 +127,23 @@ pub enum RecoveryDisposition {
     Candidate(RecoveryCandidate),
 }
 
-/// Inspect canonical and temporary durable observations without mutating either.
+/// Inspect canonical and temporary durable observations without mutating either. `new_note` is
+/// the host's first-creation style.
 pub fn inspect_recovery(
     canonical: Option<&RecoveryInspection>,
     temporary: Option<&RecoveryInspection>,
+    new_note: LineEnding,
 ) -> RecoveryDisposition {
     let Some(temporary) = temporary else {
         return RecoveryDisposition::NoTemporary;
     };
-    let Ok(decoded_temporary) = LoadedDocument::from_durable_bytes(&temporary.bytes) else {
+    let Ok(decoded_temporary) = LoadedDocument::from_durable_bytes(&temporary.bytes, new_note)
+    else {
         return RecoveryDisposition::InvalidTemporary;
     };
 
     let decoded_canonical =
-        canonical.and_then(|value| LoadedDocument::from_durable_bytes(&value.bytes).ok());
+        canonical.and_then(|value| LoadedDocument::from_durable_bytes(&value.bytes, new_note).ok());
     // An empty temporary was interrupted before its bytes were written: beside a usable note it
     // has nothing to offer, and restoring it would only empty the note.
     if decoded_canonical.as_ref().is_some_and(|value| {
@@ -155,6 +161,7 @@ pub fn inspect_recovery(
         canonical: decoded_canonical,
         temporary: decoded_temporary,
         temporary_is_newer,
+        new_note,
     })
 }
 
@@ -173,7 +180,11 @@ mod tests {
     #[test]
     fn an_empty_temporary_has_nothing_to_offer_beside_a_usable_note() {
         assert_eq!(
-            inspect_recovery(Some(&observed(b"text", 1)), Some(&observed(b"", 2))),
+            inspect_recovery(
+                Some(&observed(b"text", 1)),
+                Some(&observed(b"", 2)),
+                LineEnding::Crlf
+            ),
             RecoveryDisposition::RedundantTemporary
         );
     }
@@ -184,7 +195,7 @@ mod tests {
         for canonical in [None, Some(&invalid)] {
             assert!(
                 matches!(
-                    inspect_recovery(canonical, Some(&observed(b"", 2))),
+                    inspect_recovery(canonical, Some(&observed(b"", 2)), LineEnding::Crlf),
                     RecoveryDisposition::Candidate(_)
                 ),
                 "{canonical:?}"
@@ -194,7 +205,8 @@ mod tests {
 
     #[test]
     fn durable_decode_accepts_bom_and_emits_bomless_runtime_text() {
-        let loaded = LoadedDocument::from_durable_bytes(b"\xef\xbb\xbfA\r\nB").unwrap();
+        let loaded =
+            LoadedDocument::from_durable_bytes(b"\xef\xbb\xbfA\r\nB", LineEnding::Crlf).unwrap();
         assert_eq!(loaded.text, "A\nB");
         assert_eq!(loaded.line_ending, LineEnding::Crlf);
         assert_eq!(
@@ -206,17 +218,18 @@ mod tests {
     #[test]
     fn durable_decode_rejects_invalid_utf8() {
         assert_eq!(
-            LoadedDocument::from_durable_bytes(&[0xff]),
+            LoadedDocument::from_durable_bytes(&[0xff], LineEnding::Crlf),
             Err(NoteDecodeError::InvalidUtf8)
         );
     }
 
     #[test]
     fn mixed_newline_majority_and_isolated_cr_are_preserved() {
-        let crlf = LoadedDocument::from_durable_bytes(b"a\r\nb\r\nc\nd\r").unwrap();
+        let crlf =
+            LoadedDocument::from_durable_bytes(b"a\r\nb\r\nc\nd\r", LineEnding::Crlf).unwrap();
         assert_eq!(crlf.line_ending, LineEnding::Crlf);
         assert_eq!(crlf.text, "a\nb\nc\nd\r");
-        let lf = LoadedDocument::from_durable_bytes(b"a\nb\nc\r\nd").unwrap();
+        let lf = LoadedDocument::from_durable_bytes(b"a\nb\nc\r\nd", LineEnding::Crlf).unwrap();
         assert_eq!(lf.line_ending, LineEnding::Lf);
     }
 
@@ -224,15 +237,15 @@ mod tests {
     fn recovery_classifies_same_invalid_and_newer_temporary() {
         let note = observed(b"old", 1);
         assert_eq!(
-            inspect_recovery(Some(&note), Some(&observed(b"old", 2))),
+            inspect_recovery(Some(&note), Some(&observed(b"old", 2)), LineEnding::Crlf),
             RecoveryDisposition::RedundantTemporary
         );
         assert_eq!(
-            inspect_recovery(Some(&note), Some(&observed(&[0xff], 2))),
+            inspect_recovery(Some(&note), Some(&observed(&[0xff], 2)), LineEnding::Crlf),
             RecoveryDisposition::InvalidTemporary
         );
         let RecoveryDisposition::Candidate(candidate) =
-            inspect_recovery(Some(&note), Some(&observed(b"new", 2)))
+            inspect_recovery(Some(&note), Some(&observed(b"new", 2)), LineEnding::Crlf)
         else {
             panic!("expected recovery candidate")
         };
@@ -249,6 +262,7 @@ mod tests {
             let RecoveryDisposition::Candidate(candidate) = inspect_recovery(
                 Some(&observed(b"canonical", canonical_time)),
                 Some(&observed(b"local temp", temporary_time)),
+                LineEnding::Crlf,
             ) else {
                 panic!("expected a recovery candidate at {canonical_time}/{temporary_time}");
             };
@@ -262,7 +276,8 @@ mod tests {
         assert!(matches!(
             inspect_recovery(
                 Some(&observed(&[0xff], 2)),
-                Some(&observed(b"recoverable", 1))
+                Some(&observed(b"recoverable", 1)),
+                LineEnding::Crlf,
             ),
             RecoveryDisposition::Candidate(_)
         ));
@@ -270,12 +285,29 @@ mod tests {
 
     #[test]
     fn missing_note_with_valid_temporary_is_recoverable() {
-        let RecoveryDisposition::Candidate(candidate) =
-            inspect_recovery(None, Some(&observed("临时".as_bytes(), 1)))
-        else {
-            panic!("expected recovery candidate")
-        };
-        assert!(candidate.canonical.is_none());
-        assert!(candidate.temporary_is_newer);
+        for new_note in [LineEnding::Crlf, LineEnding::Lf] {
+            let RecoveryDisposition::Candidate(candidate) =
+                inspect_recovery(None, Some(&observed("临时".as_bytes(), 1)), new_note)
+            else {
+                panic!("expected recovery candidate")
+            };
+            assert!(candidate.canonical.is_none());
+            assert!(candidate.temporary_is_newer);
+            // A temporary without line breaks takes, and the candidate keeps, the host's style.
+            assert_eq!(candidate.temporary.line_ending, new_note);
+            assert_eq!(candidate.new_note, new_note);
+        }
+    }
+
+    #[test]
+    fn a_body_without_line_breaks_takes_the_hosts_first_creation_style() {
+        for new_note in [LineEnding::Crlf, LineEnding::Lf] {
+            for bytes in [&b""[..], b"one line", b"\xef\xbb\xbfone line"] {
+                let loaded = LoadedDocument::from_durable_bytes(bytes, new_note).unwrap();
+                assert_eq!(loaded.line_ending, new_note, "{bytes:?}");
+            }
+            let tie = LoadedDocument::from_durable_bytes(b"a\r\nb\nc", new_note).unwrap();
+            assert_eq!(tie.line_ending, new_note);
+        }
     }
 }

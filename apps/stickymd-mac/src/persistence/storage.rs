@@ -170,7 +170,7 @@ impl NoteFiles {
                 },
             }));
         }
-        let state = match LoadedDocument::from_durable_bytes(&bytes) {
+        let state = match LoadedDocument::from_durable_bytes(&bytes, super::NEW_NOTE_LINE_ENDING) {
             Ok(loaded) => ExternalFileState::Present(loaded.into_external_fact()),
             Err(NoteDecodeError::InvalidUtf8) => ExternalFileState::InvalidUtf8 {
                 fingerprint: hash_bytes(&bytes),

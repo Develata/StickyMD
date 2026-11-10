@@ -150,9 +150,12 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
             .map_err(Into::into)
     }
 
-    pub fn reset_to_missing_document(&mut self) -> Result<Generation, EditorFlowError> {
+    pub fn reset_to_missing_document(
+        &mut self,
+        new_note: stickymd_core::LineEnding,
+    ) -> Result<Generation, EditorFlowError> {
         self.document
-            .reset_to_missing_document()
+            .reset_to_missing_document(new_note)
             .map_err(Into::into)
     }
 

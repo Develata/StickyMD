@@ -3,8 +3,8 @@
 //! plan_ref: docs/plan/05_document_persistence.md#recovery
 
 use stickymd_core::{
-    DiskFingerprint, ExternalFileFact, ExternalFileState, LoadedDocument, PreserveExpectation,
-    RecoveryCandidate,
+    DiskFingerprint, ExternalFileFact, ExternalFileState, LineEnding, LoadedDocument,
+    PreserveExpectation, RecoveryCandidate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +24,8 @@ pub struct RestorePlan {
 #[derive(Debug, Clone)]
 pub enum CanonicalRecoveryPlan {
     Present(ExternalFileFact),
-    Missing,
+    /// Recreate the note empty, in the host's first-creation style.
+    Missing(LineEnding),
     Unusable,
 }
 
@@ -109,14 +110,13 @@ impl RecoveryCoordinator {
             return Some(CanonicalRecoveryPlan::Unusable);
         }
         self.start(RecoveryOperation::UsingCanonical);
-        Some(
-            self.candidate
-                .as_ref()
-                .and_then(|candidate| candidate.canonical.clone())
-                .map_or(CanonicalRecoveryPlan::Missing, |canonical| {
-                    CanonicalRecoveryPlan::Present(canonical.into_external_fact())
-                }),
-        )
+        let candidate = self.candidate.as_ref()?;
+        Some(match &candidate.canonical {
+            Some(canonical) => {
+                CanonicalRecoveryPlan::Present(canonical.clone().into_external_fact())
+            }
+            None => CanonicalRecoveryPlan::Missing(candidate.new_note),
+        })
     }
 
     pub fn take_restore_guard(&mut self) -> Option<Option<DiskFingerprint>> {
@@ -176,7 +176,8 @@ mod tests {
     use stickymd_core::{LineEnding, hash_bytes};
 
     fn loaded(text: &str) -> LoadedDocument {
-        LoadedDocument::from_durable_bytes(text.as_bytes()).unwrap()
+        LoadedDocument::from_durable_bytes(text.as_bytes(), stickymd_core::LineEnding::Crlf)
+            .unwrap()
     }
 
     #[test]
@@ -188,6 +189,7 @@ mod tests {
                 canonical: Some(canonical),
                 temporary: loaded("temporary"),
                 temporary_is_newer: true,
+                new_note: stickymd_core::LineEnding::Crlf,
             }),
             None,
         );
@@ -207,6 +209,7 @@ mod tests {
                 canonical: None,
                 temporary: loaded("temporary"),
                 temporary_is_newer: true,
+                new_note: stickymd_core::LineEnding::Crlf,
             }),
             Some(PreserveExpectation::Content(hash_bytes(b"\xff"))),
         );
@@ -241,6 +244,7 @@ mod tests {
             canonical: Some(loaded("disk")),
             temporary: loaded("temporary"),
             temporary_is_newer: true,
+            new_note: stickymd_core::LineEnding::Crlf,
         };
         let mut recovery = RecoveryCoordinator::new(Some(candidate), None);
         assert_eq!(recovery.operation_id(), None);
@@ -269,6 +273,7 @@ mod tests {
                 canonical: Some(loaded("old")),
                 temporary: loaded("temporary"),
                 temporary_is_newer: true,
+                new_note: stickymd_core::LineEnding::Crlf,
             }),
             None,
         );
@@ -283,5 +288,39 @@ mod tests {
         let retried = recovery.begin_restore().unwrap();
         assert_eq!(retried.expected, Some(newer));
         assert_eq!(retried.temporary.text, "temporary");
+    }
+
+    /// A note missing at startup, or deleted during recovery, is recreated in the host's
+    /// first-creation style, whatever the temporary or the vanished canonical used (plan 05).
+    #[test]
+    fn using_a_missing_canonical_recreates_it_in_the_hosts_style() {
+        for new_note in [LineEnding::Crlf, LineEnding::Lf] {
+            let missing_at_startup = RecoveryCandidate {
+                canonical: None,
+                temporary: loaded("temporary"),
+                temporary_is_newer: true,
+                new_note,
+            };
+            let mut recovery = RecoveryCoordinator::new(Some(missing_at_startup.clone()), None);
+            assert!(matches!(
+                recovery.begin_use_canonical(),
+                Some(CanonicalRecoveryPlan::Missing(style)) if style == new_note
+            ));
+
+            let mut recovery = RecoveryCoordinator::new(
+                Some(RecoveryCandidate {
+                    canonical: Some(loaded("disk\r\nlines")),
+                    ..missing_at_startup
+                }),
+                None,
+            );
+            recovery.begin_restore().unwrap();
+            recovery.refresh_canonical_after_conflict(ExternalFileState::Missing);
+            recovery.fail_operation();
+            assert!(matches!(
+                recovery.begin_use_canonical(),
+                Some(CanonicalRecoveryPlan::Missing(style)) if style == new_note
+            ));
+        }
     }
 }

@@ -11,16 +11,14 @@ use stickymd_app::flow::{
     oversized_temporary_warning, plan_note_startup,
 };
 use stickymd_app::ports::{PersistMode, PersistRequest, PersistResult};
-use stickymd_core::{DocumentState, LineEnding, PreserveExpectation, RecoveryCandidate};
+use stickymd_core::{DocumentState, PreserveExpectation, RecoveryCandidate};
 use thiserror::Error;
 
 use crate::config::{ConfigStorageError, load_config, save_config};
 use crate::paths::RuntimePaths;
-use crate::persistence::{NoteFiles, NoteStorageError};
+use crate::persistence::{NEW_NOTE_LINE_ENDING, NoteFiles, NoteStorageError};
 
 /// The line ending of a note this host creates (plan 05).
-const NEW_NOTE_LINE_ENDING: LineEnding = LineEnding::Lf;
-
 pub struct BootstrapOutcome {
     pub document: DocumentState,
     pub config: RuntimeConfig,
@@ -168,6 +166,7 @@ mod tests {
     use super::*;
     use crate::test_support::unique_temp_path;
     use std::fs;
+    use stickymd_core::LineEnding;
 
     fn fixture() -> (PathBuf, RuntimePaths) {
         let root = unique_temp_path("bootstrap");
@@ -189,6 +188,18 @@ mod tests {
         assert!(paths.note_file.is_file());
         assert!(paths.config_file.is_file());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Without line breaks there is no style to keep, so the note takes this host's (plan 05).
+    #[test]
+    fn an_existing_note_without_line_breaks_takes_lf() {
+        for bytes in [&b""[..], b"one line", b"a\r\nb\nc"] {
+            let (root, paths) = fixture();
+            fs::write(&paths.note_file, bytes).unwrap();
+            let outcome = bootstrap(&paths).unwrap();
+            assert_eq!(outcome.document.line_ending(), LineEnding::Lf, "{bytes:?}");
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]

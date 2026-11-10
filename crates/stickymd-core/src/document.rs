@@ -342,14 +342,18 @@ impl DocumentState {
     /// discards temporary recovery evidence. The empty replacement stays dirty
     /// until the coordinator publishes it through the normal guarded create
     /// path; recovery evidence must not be deleted before that receipt arrives.
-    pub fn reset_to_missing_document(&mut self) -> Result<Generation, DocumentError> {
+    /// `new_note` is the host's first-creation style (plan 05).
+    pub fn reset_to_missing_document(
+        &mut self,
+        new_note: LineEnding,
+    ) -> Result<Generation, DocumentError> {
         let next_generation = self
             .generation
             .checked_next()
             .ok_or(DocumentError::GenerationExhausted)?;
         self.store.replace_all(String::new());
         self.managed_ref_counts.clear();
-        self.line_ending = LineEnding::Crlf;
+        self.line_ending = new_note;
         self.undo.clear();
         self.generation = next_generation;
         self.base_disk_hash = None;
@@ -789,18 +793,24 @@ mod tests {
 
     #[test]
     fn discarding_recovery_for_missing_note_requires_an_empty_publish_receipt() {
-        let mut doc = DocumentState::empty(LineEnding::Crlf);
-        doc.replace_from_unpersisted_recovery("temporary", LineEnding::Lf)
-            .unwrap();
-        let generation = doc.reset_to_missing_document().unwrap();
-        assert_eq!(doc.text(), "");
-        assert!(doc.is_dirty());
-        assert_eq!(doc.base_disk_hash(), None);
-        assert_eq!(doc.line_ending(), LineEnding::Crlf);
+        for (temporary, new_note) in [
+            (LineEnding::Lf, LineEnding::Crlf),
+            (LineEnding::Crlf, LineEnding::Lf),
+        ] {
+            let mut doc = DocumentState::empty(new_note);
+            doc.replace_from_unpersisted_recovery("temporary", temporary)
+                .unwrap();
+            let generation = doc.reset_to_missing_document(new_note).unwrap();
+            assert_eq!(doc.text(), "");
+            assert!(doc.is_dirty());
+            assert_eq!(doc.base_disk_hash(), None);
+            // The recreated note takes the host's first-creation style, not the temporary's.
+            assert_eq!(doc.line_ending(), new_note);
 
-        doc.acknowledge_persisted(generation, hash(11)).unwrap();
-        assert!(!doc.is_dirty());
-        assert_eq!(doc.base_disk_hash(), Some(hash(11)));
+            doc.acknowledge_persisted(generation, hash(11)).unwrap();
+            assert!(!doc.is_dirty());
+            assert_eq!(doc.base_disk_hash(), Some(hash(11)));
+        }
     }
 
     #[test]

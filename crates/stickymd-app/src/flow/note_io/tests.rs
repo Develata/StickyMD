@@ -79,6 +79,7 @@ impl Note {
                 canonical: Some(loaded("disk")),
                 temporary: loaded("temporary"),
                 temporary_is_newer: true,
+                new_note: stickymd_core::LineEnding::Crlf,
             }),
             preserve,
         );
@@ -106,7 +107,7 @@ impl Note {
 }
 
 fn loaded(text: &str) -> LoadedDocument {
-    LoadedDocument::from_durable_bytes(text.as_bytes()).unwrap()
+    LoadedDocument::from_durable_bytes(text.as_bytes(), stickymd_core::LineEnding::Crlf).unwrap()
 }
 
 fn fact(text: &str) -> ExternalFileFact {

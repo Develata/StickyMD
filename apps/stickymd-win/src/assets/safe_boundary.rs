@@ -53,7 +53,9 @@ pub fn reconcile_safe_boundary(
     {
         return reconcile_deferred(storage, runtime_references);
     }
-    let Ok(durable) = LoadedDocument::from_durable_bytes(&bytes) else {
+    let Ok(durable) =
+        LoadedDocument::from_durable_bytes(&bytes, crate::persistence::NEW_NOTE_LINE_ENDING)
+    else {
         return reconcile_deferred(storage, runtime_references);
     };
     if durable.fingerprint != expected {

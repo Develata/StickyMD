@@ -116,8 +116,13 @@ pub(super) fn fixture(text: &str) -> HeadlessApp {
 pub(super) fn recovering_at_start() -> HeadlessApp {
     let candidate = RecoveryCandidate {
         canonical: None,
-        temporary: LoadedDocument::from_durable_bytes(b"temporary").unwrap(),
+        temporary: LoadedDocument::from_durable_bytes(
+            b"temporary",
+            stickymd_core::LineEnding::Crlf,
+        )
+        .unwrap(),
         temporary_is_newer: true,
+        new_note: stickymd_core::LineEnding::Crlf,
     };
     started("disk", Some(candidate), |_| {})
 }
@@ -265,7 +270,7 @@ fn started_on_clock(
 }
 
 pub(super) fn loaded(text: &str) -> LoadedDocument {
-    LoadedDocument::from_durable_bytes(text.as_bytes()).unwrap()
+    LoadedDocument::from_durable_bytes(text.as_bytes(), stickymd_core::LineEnding::Crlf).unwrap()
 }
 
 pub(super) fn external(text: &str) -> ExternalFileFact {
@@ -283,6 +288,7 @@ pub(super) fn offer_recovery(
             canonical: canonical.map(loaded),
             temporary: loaded("temporary"),
             temporary_is_newer: true,
+            new_note: stickymd_core::LineEnding::Crlf,
         }),
         preserve,
     );

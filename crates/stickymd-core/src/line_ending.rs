@@ -4,15 +4,15 @@
 //!
 //! Internal text is always UTF-8 + `\n`; conversion to the recorded style
 //! happens only at save time. Detection follows the persistence contract:
-//! majority wins, and a tie resolves to CRLF.
+//! majority wins, and a tie, including a body without line breaks, resolves to
+//! the host's first-creation style (CRLF on Windows, LF on macOS).
 
 use std::fmt;
 
 /// Line ending style recorded for a document on disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LineEnding {
-    /// Windows default; used for first creation and for mixed files with
-    /// equal CRLF/LF counts.
+    /// Windows default; the Windows host's first-creation style.
     #[default]
     Crlf,
     Lf,
@@ -27,9 +27,9 @@ impl LineEnding {
         }
     }
 
-    /// Detect the dominant line ending of a document body. Equal counts resolve
-    /// to CRLF per the persistence contract.
-    pub fn detect(text: &str) -> Self {
+    /// Detect the dominant line ending of a document body. Equal counts, including
+    /// none, resolve to `new_note`, the host's first-creation style (plan 05).
+    pub fn detect(text: &str, new_note: LineEnding) -> Self {
         let mut crlf = 0usize;
         let mut lf = 0usize;
         let bytes = text.as_bytes();
@@ -44,10 +44,10 @@ impl LineEnding {
             }
             i += 1;
         }
-        if lf > crlf {
-            LineEnding::Lf
-        } else {
-            LineEnding::Crlf
+        match lf.cmp(&crlf) {
+            std::cmp::Ordering::Greater => LineEnding::Lf,
+            std::cmp::Ordering::Less => LineEnding::Crlf,
+            std::cmp::Ordering::Equal => new_note,
         }
     }
 
@@ -100,11 +100,19 @@ mod tests {
 
     #[test]
     fn line_ending_detection_majority_wins() {
-        assert_eq!(LineEnding::detect("a\r\nb\r\nc\n"), LineEnding::Crlf);
-        assert_eq!(LineEnding::detect("a\nb\nc\r\n"), LineEnding::Lf);
-        // Equal counts -> CRLF per contract.
-        assert_eq!(LineEnding::detect("a\r\nb\n"), LineEnding::Crlf);
-        assert_eq!(LineEnding::detect("no newlines"), LineEnding::Crlf);
+        for new_note in [LineEnding::Crlf, LineEnding::Lf] {
+            assert_eq!(
+                LineEnding::detect("a\r\nb\r\nc\n", new_note),
+                LineEnding::Crlf
+            );
+            assert_eq!(LineEnding::detect("a\nb\nc\r\n", new_note), LineEnding::Lf);
+            // Equal counts, including none, -> the host's first-creation style.
+            assert_eq!(LineEnding::detect("a\r\nb\n", new_note), new_note);
+            assert_eq!(LineEnding::detect("no newlines", new_note), new_note);
+            assert_eq!(LineEnding::detect("", new_note), new_note);
+            // An isolated carriage return is content, not evidence.
+            assert_eq!(LineEnding::detect("a\rb", new_note), new_note);
+        }
     }
 
     #[test]

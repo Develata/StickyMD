@@ -24,7 +24,7 @@
 | P16-S09 | 第二实例经 socket 唤醒第一实例；socket 路径不超过 104 字节 | Automated | `platform::macos::instance::tests` | AUTOMATED PASS |
 | P16-S10 | 受管图片：未引用不移动不删除，`sync` 报 deferred | Automated | `assets::storage::tests` | AUTOMATED PASS |
 | P16-S11 | 监视：外部修改产生 hint；`note/` 被移走转 watcher failure | Automated | `platform::macos::file_watch::tests` | AUTOMATED PASS |
-| P16-S12 | 新建笔记用 LF | Automated | `startup::bootstrap::tests` | AUTOMATED PASS |
+| P16-S12 | 新建笔记、没有换行或两种换行一样多的已有笔记用 LF；放弃恢复后重建的缺失笔记也用 LF（`05` 2026-11-10 修订） | Automated | `startup::bootstrap::tests`；`stickymd-core` 的 `line_ending`、`persistence`、`document` 测试；`stickymd-app` 的 `flow::recovery::tests` | AUTOMATED PASS |
 | P16-S13 | 临时文件另有名称（硬链接）时拒绝，正文不被清空 | Automated | `platform::macos::file::tests` | AUTOMATED PASS |
 | P16-S14 | 运行中 `note/` 被换成另一个目录：资产与配置仍落在原目录，不写入新目录；目录被删除重建后两者保持失败，不写入重建的目录 | Automated | `persistence::adapter::tests` | AUTOMATED PASS |
 | P16-S15 | 资产临时名已被占用时不删除；失败只清理本次创建的文件 | Automated | `assets::storage::tests` | AUTOMATED PASS |

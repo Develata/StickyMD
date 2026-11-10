@@ -86,6 +86,7 @@ pub fn plan_note_startup(
     let recovery = inspect_recovery(
         canonical.and_then(NoteObservation::recovery_inspection),
         temporary.and_then(NoteObservation::recovery_inspection),
+        new_note,
     );
     let oversized_temporary = temporary.and_then(|observation| match observation.state {
         ExternalFileState::TooLarge { bytes } => Some(OversizedTemporary {
@@ -179,7 +180,7 @@ mod tests {
     }
 
     fn valid(text: &str) -> NoteObservation {
-        let loaded = LoadedDocument::from_durable_bytes(text.as_bytes()).unwrap();
+        let loaded = LoadedDocument::from_durable_bytes(text.as_bytes(), LineEnding::Crlf).unwrap();
         NoteObservation {
             state: ExternalFileState::Present(ExternalFileFact {
                 fingerprint: loaded.fingerprint,
