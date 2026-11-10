@@ -4,7 +4,7 @@
 //! plan_ref: docs/plan/03_system_architecture.md#interaction-shell
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use stickymd_render::source::{SourceInitializationMilestone, SourceProjection};
 use winit::application::ApplicationHandler;
@@ -13,8 +13,8 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Theme, WindowAttributes, WindowId};
 
+use super::DesktopShell;
 use super::window_geometry_runtime::geometry_event;
-use super::{CARET_BLINK, DesktopShell};
 use crate::frame::SoftwareSurface;
 use crate::host::{DesktopEvent, Host};
 use stickymd_app::config::{MIN_WINDOW_HEIGHT_DIP, MIN_WINDOW_WIDTH_DIP, ViewMode};
@@ -256,20 +256,7 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
         let now_ms = self.timestamp_ms();
         self.settle_event_pass(now_ms);
 
-        let now = Instant::now();
-        let mut next_wake = self
-            .app
-            .next_deadline()
-            .map(|deadline| self.clock_origin + Duration::from_millis(deadline));
-        if self.shell_blinks_caret() {
-            if now >= self.next_blink {
-                self.next_blink = now + CARET_BLINK;
-                self.advance_caret_blink();
-            }
-            next_wake =
-                Some(next_wake.map_or(self.next_blink, |current| current.min(self.next_blink)));
-        }
-        if let Some(next_wake) = next_wake {
+        if let Some(next_wake) = self.advance_and_next_wake(Instant::now()) {
             event_loop.set_control_flow(ControlFlow::WaitUntil(next_wake));
         } else {
             event_loop.set_control_flow(ControlFlow::Wait);

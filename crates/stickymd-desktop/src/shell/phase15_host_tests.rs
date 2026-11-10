@@ -7,7 +7,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 
-use crate::host::HostSignal;
+use crate::host::{CARET_BLINK, HostSignal};
 use crate::input::WindowKey;
 use crate::testing::{FakeHost, HostCall};
 use stickymd_app::execution::IoCompletion;
@@ -945,6 +945,43 @@ fn phase16_an_overlay_that_blinks_itself_needs_no_blink_wake() {
     assert!(toggling.shell_blinks_caret());
     toggling.app.editor.focused = false;
     assert!(!toggling.shell_blinks_caret());
+}
+
+/// What the event loop actually schedules: a due blink is advanced and the next one awaited only
+/// when the shell blinks; a self-blinking overlay is never toggled and no blink is awaited.
+#[test]
+fn phase16_the_event_loop_waits_for_blinks_only_when_the_shell_blinks() {
+    for (blinks, failed) in [(true, false), (false, false), (true, true)] {
+        let host = FakeHost {
+            caret_blinks: blinks,
+            ..FakeHost::default()
+        };
+        let mut app = fixture_on(host, "start");
+        app.app.editor.focused = true;
+        app.native_caret_failed = failed;
+        app.native_caret_overlay = Some(CARET);
+        app.host.take_calls();
+        let due = app.next_blink;
+        let now = due + CARET_BLINK;
+        let wake = app.advance_and_next_wake(now);
+        let deadline = app
+            .app
+            .next_deadline()
+            .map(|ms| app.clock_origin + std::time::Duration::from_millis(ms));
+        let shell_blinks = !blinks || failed;
+        if shell_blinks {
+            assert_eq!(app.next_blink, now + CARET_BLINK, "{blinks} {failed}");
+            assert_eq!(
+                wake,
+                Some(deadline.map_or(app.next_blink, |d| d.min(app.next_blink)))
+            );
+        } else {
+            assert_eq!(app.next_blink, due, "the blink is not advanced");
+            assert_eq!(wake, deadline, "no blink is awaited");
+            assert!(app.host.take_calls().is_empty(), "nothing is toggled");
+            assert_eq!(app.native_caret_overlay, Some(CARET));
+        }
+    }
 }
 
 /// Sees, when the host drops, whether the worker's thread had already ended and let go of its end.
