@@ -85,17 +85,30 @@ pub fn shared_application() -> *mut AnyObject {
     unsafe { msg_send![class!(NSApplication), sharedApplication] }
 }
 
-/// A key held down keeps repeating instead of opening the accent popup, which would need the
-/// replacement range winit drops (plan 07). Registered defaults live only in this process.
-pub fn disable_press_and_hold() {
-    // SAFETY: Foundation calls with valid objects, on the main thread before the event loop.
+const PRESS_AND_HOLD: &str = "ApplePressAndHoldEnabled";
+
+/// A key held down repeats as the keyboard settings say instead of opening the accent popup,
+/// whose replacement needs the range winit drops (plan 07). The value goes into the argument
+/// domain, which outranks the user's own and global settings and is never written to disk.
+/// Returns whether the popup is now off, read back as AppKit will read it.
+pub fn disable_press_and_hold() -> bool {
+    let key = NSString::from_str(PRESS_AND_HOLD);
+    let argument_domain = NSString::from_str("NSArgumentDomain");
+    // SAFETY: Foundation calls with valid objects. `mutableCopy` and `new` return owned objects,
+    // which `Retained` releases.
     unsafe {
-        let key = NSString::from_str("ApplePressAndHoldEnabled");
-        let value: *mut AnyObject = msg_send![class!(NSNumber), numberWithBool: Bool::NO];
         let defaults: *mut AnyObject = msg_send![class!(NSUserDefaults), standardUserDefaults];
-        let entries: *mut AnyObject =
-            msg_send![class!(NSDictionary), dictionaryWithObject: value, forKey: &*key];
-        let _: () = msg_send![defaults, registerDefaults: entries];
+        let current: *mut AnyObject = msg_send![defaults, volatileDomainForName: &*argument_domain];
+        let domain: Retained<AnyObject> = if current.is_null() {
+            msg_send![class!(NSMutableDictionary), new]
+        } else {
+            msg_send![current, mutableCopy]
+        };
+        let off: *mut AnyObject = msg_send![class!(NSNumber), numberWithBool: Bool::NO];
+        let _: () = msg_send![&*domain, setObject: off, forKey: &*key];
+        let _: () = msg_send![defaults, setVolatileDomain: &*domain, forName: &*argument_domain];
+        let enabled: bool = msg_send![defaults, boolForKey: &*key];
+        !enabled
     }
 }
 
@@ -240,6 +253,34 @@ pub fn install_hooks(sink: EventSink) {
             if !added.as_bool() {
                 eprintln!("cannot intercept system termination: the delegate already handles it");
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A value registered or passed on the command line before stays where it was; ours wins.
+    #[test]
+    fn press_and_hold_is_off_whatever_was_registered() {
+        let key = NSString::from_str(PRESS_AND_HOLD);
+        let other = NSString::from_str("StickyMDProbeArgument");
+        let argument_domain = NSString::from_str("NSArgumentDomain");
+        // SAFETY: Foundation calls with valid objects; only volatile, in-process domains change.
+        unsafe {
+            let defaults: *mut AnyObject = msg_send![class!(NSUserDefaults), standardUserDefaults];
+            let on: *mut AnyObject = msg_send![class!(NSNumber), numberWithBool: Bool::YES];
+            let registered: *mut AnyObject =
+                msg_send![class!(NSDictionary), dictionaryWithObject: on, forKey: &*key];
+            let _: () = msg_send![defaults, registerDefaults: registered];
+            let arguments: *mut AnyObject =
+                msg_send![class!(NSDictionary), dictionaryWithObject: on, forKey: &*other];
+            let _: () =
+                msg_send![defaults, setVolatileDomain: arguments, forName: &*argument_domain];
+            assert!(disable_press_and_hold());
+            let kept: bool = msg_send![defaults, boolForKey: &*other];
+            assert!(kept);
         }
     }
 }

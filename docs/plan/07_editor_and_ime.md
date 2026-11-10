@@ -209,7 +209,7 @@ Windows：微软拼音、微信输入法。macOS：系统简体拼音、微信�
 ### macOS 输入（USER 批准 2026-11-10）
 
 - 锁定的 winit 0.30.13 丢弃 `replacementRange`，不提供上下文读取。v1 不支持依赖它们的功能（听写改写、文本替换、输入法修改已提交文本）。一级输入法基本组字失败时停止实现，按 `AGENTS.md` 写 RISK 报告。
-- 宿主关闭本进程的 `ApplePressAndHoldEnabled`，避免长按产生重复字符；代价是没有重音弹窗。
+- 宿主在本进程的参数域关闭 `ApplePressAndHoldEnabled`（优先于用户与全局设置，不写盘）：长按按系统键盘设置连发，不弹重音菜单，也就不会因替换范围丢失而多出字符；代价是没有重音弹窗。
 - 键表（语义相同，只换按键）：保存 / 导出 Cmd+S / Cmd+Shift+S；复制、剪切、粘贴、全选 Cmd+C/X/V/A；撤销 / 重做 Cmd+Z / Cmd+Shift+Z；查找 / 替换 Cmd+F / Cmd+Option+F；视图与缩放 Cmd+1/2/3、Cmd+=/-/0；行首行尾 Cmd+←/→ 与 Home/End；文首文末 Cmd+↑/↓；退出 Cmd+Q（`09`）。Ctrl 组合键不绑定，没有 Insert 别名，Windows 也没有的按词移动不做。
 
 ---

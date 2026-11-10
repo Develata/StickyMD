@@ -58,7 +58,7 @@
 | P16-K02 | Cmd 键在真实窗口生效 | Manual | 人工 | NOT TESTED |
 | P16-I01 | 系统简体拼音：`07` 的 13 项 | Manual | 人工 | NOT TESTED |
 | P16-I02 | 微信输入法：`07` 的 13 项 | Manual | 人工 | NOT TESTED |
-| P16-I03 | 长按字母不产生重复字符 | Manual | 人工 | NOT TESTED |
+| P16-I03 | 长按字母：不弹重音菜单，按系统设置连发，没有替换残留的多余字符 | Manual | 人工 | NOT TESTED |
 | P16-C01 | 文件 URL + PNG + 文本：读文件 | Automated | pasteboard 测试 | AUTOMATED PASS |
 | P16-C02 | PNG + TIFF + 文本：读原编码 PNG | Automated | pasteboard 测试 | AUTOMATED PASS |
 | P16-C03 | 只有 TIFF + 文本：转 PNG，像素正确 | Automated | pasteboard 测试 | AUTOMATED PASS |

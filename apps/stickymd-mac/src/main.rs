@@ -44,7 +44,9 @@ fn main() -> std::process::ExitCode {
     use winit::event_loop::EventLoop;
     use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 
-    disable_press_and_hold();
+    if !disable_press_and_hold() {
+        eprintln!("the accent popup could not be turned off; holding a key may add characters");
+    }
     set_font_defaults(FontDefaults::MACOS);
     let paths = match RuntimePaths::resolve_current() {
         Ok(paths) => paths,
