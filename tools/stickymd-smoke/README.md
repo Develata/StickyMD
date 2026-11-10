@@ -965,6 +965,16 @@ request cooperative cancellation and cleanup; SIGKILL, power loss and process
 abort cannot run destructors. CGEventPost has no delivery receipt: release state
 and product observations are evidence, not proof of delivery for each event.
 
+Launch readiness waits for exactly one on-screen, content-sized window owned by the
+child PID; later lookups use that window number, hidden or not. AppKit attaches
+windows that are never shown to the PID (macOS 27.2 shows one 500×500 off-screen
+window), so off-screen windows do not count at launch. Opening the status-item
+menu with `AXPress` returns CannotComplete (-25204) because the reply waits for
+menu tracking; that open is recorded as unconfirmed, and the menu-item tree and
+the command's observed effect decide the check. Any other AX action error fails.
+`lsappinfo info` does not accept `pid=N` on macOS 27.2, so the driver resolves the
+application's ASN with `lsappinfo find pid=N` first.
+
 `mac-gui.json` is atomically checkpointed after every scenario. It records OS,
 VM/override/permission/display facts, fixed config, executable SHA-256, a sorted
 bundle-content manifest SHA-256 (including Info.plist; excluding xattrs), PID,
@@ -981,13 +991,13 @@ PASS. The acceptance matrix and qualification ledgers are never updated.
 | W02 | Drag input; CG window bounds/layer/on-screen; persisted `window.dock_edge` | Main display only; 2 DIP ±0.75, top layer >24; no pixel-level strip rendering assertion |
 | W03 | Finder PID from AX remains unchanged; short dwell cancellation; window movement onset and settled bounds | Pre-100ms observation; onset bracket within 90–170ms, sampled every 20ms; gaps >60ms or boundary overlap are NOT_TESTED; completion within earliest bracket onset +140ms +70ms |
 | W04 | Top-band point, expanded bounds after 850ms; collapse after leaving | Leave onset bracket within 490–570ms; same resolution/completion limits as W03; no Spaces/mixed-DPI evidence |
-| W07 | AX hide, `open` copied bundle; same owned PID alive, visible window and AX frontmost PID | Does not prove all launch-service/translocation paths |
-| W08 | Exactly three AX menu items; show/hide bounds, topmost layer/config, quit process and saved note | Layer is a system fact, not a visual occlusion test |
+| W07 | AX hide, `open` copied bundle; same owned PID alive, visible window and AX frontmost PID | Menu effects polled up to 2000ms, elapsed time recorded; does not prove all launch-service/translocation paths |
+| W08 | Exactly three AX menu items; show back at the same bounds and opacity, topmost layer/config, quit process and saved note | Menu effects polled up to 2000ms, elapsed time recorded; layer is a system fact, not a visual occlusion test |
 | W09 | Toolbar numeric field at layout-derived DIP offsets; CG alpha 40/70/100 and config | Alpha tolerance ±0.015; no full composited-pixel comparison |
 | W11 | Cmd+Q, successful child exit and unchanged clean note | Save-failure cancellation NOT_TESTED pending fault injection; row incomplete |
 | K02 | Real Cmd keys, quiet note bytes, `pbpaste`, persisted view/zoom | ABC/US assumption; not IME evidence; save timing is not a durability/power-loss test |
 | E01 | AX native panel cancel/dismiss, folder/name/save; exact exported Markdown bytes | No managed-image export fixture in this batch |
-| F01 | `font selection` stderr, optional CGWindowListCreateImage screenshot | Per-glyph visual review NOT_TESTED; row incomplete |
+| F01 | `font selection` stderr names PingFang SC and Times New Roman (plan 02 defaults); optional CGWindowListCreateImage screenshot | The log does not name the code face, so Menlo and per-glyph review are NOT_TESTED; row incomplete |
 
 K02 covers typing, Cmd+S/Z/Shift+Z/A/C/X/V, Cmd+arrows, find and replace,
 Cmd+1/2/3 and Cmd+=/-/0. Cmd+S polls `note/note.md` directly until 550ms after the

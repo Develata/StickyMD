@@ -55,6 +55,21 @@ pub(super) struct Window {
     pub layer: i32,
     pub onscreen: bool,
 }
+/// Picks the product window among the PID's content-sized windows. A window number must match
+/// exactly one of them, hidden or not (W07/W08 hide it). Without a number only on-screen windows
+/// count: AppKit attaches windows that are never ordered in to the PID (macOS 27.2 shows one
+/// 500×500 off-screen window), and at launch the product's own window is the one on screen.
+/// `Err` carries the number of matching windows.
+pub(super) fn select_window(candidates: Vec<Window>, id: Option<u32>) -> Result<Window, usize> {
+    let mut matching: Vec<Window> = candidates
+        .into_iter()
+        .filter(|w| id.map_or(w.onscreen, |id| w.id == id))
+        .collect();
+    match matching.len() {
+        1 => Ok(matching.remove(0)),
+        n => Err(n),
+    }
+}
 pub(super) fn collapsed(w: &Window, screen: Rect, edge: Edge) -> bool {
     let r = w.bounds;
     let strip = match edge {

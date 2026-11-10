@@ -191,15 +191,17 @@ impl Backend for Live<'_> {
                 Some(status) => return Err(format!("product exited unsuccessfully: {status}")),
             },
             Op::Reopen => Value::Text(self.open()?),
-            Op::AppType => Value::Text(command(
-                "/usr/bin/lsappinfo",
-                &[
-                    "info",
-                    "-only",
-                    "ApplicationType",
-                    &format!("pid={}", self.pid),
-                ],
-            )?),
+            Op::AppType => {
+                let found = command(
+                    "/usr/bin/lsappinfo",
+                    &["find", &format!("pid={}", self.pid)],
+                )?;
+                let asn = super::observation::lsappinfo_asn(&found)?;
+                Value::Text(command(
+                    "/usr/bin/lsappinfo",
+                    &["info", "-only", "ApplicationType", &asn],
+                )?)
+            }
             Op::Dock => {
                 let pid = command("/usr/bin/pgrep", &["-x", "Dock"])?
                     .trim()

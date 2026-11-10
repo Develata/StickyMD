@@ -573,3 +573,60 @@ fn incomplete_cancel_tree_never_records_panel_closed_pass() {
             .any(|c| c.name == "cancel dismisses save panel" && c.verdict == Verdict::Pass)
     );
 }
+#[test]
+fn launch_discovery_ignores_off_screen_windows_but_lookup_by_number_does_not() {
+    let shown = window(rect(252.0, 30.0, 520.0, 680.0), 0);
+    let mut never_shown = window(rect(0.0, 268.0, 500.0, 500.0), 0);
+    never_shown.id = 8;
+    never_shown.onscreen = false;
+    let both = || vec![never_shown.clone(), shown.clone()];
+    assert_eq!(select_window(both(), None).map(|w| w.id), Ok(7));
+    assert_eq!(select_window(both(), Some(8)).map(|w| w.id), Ok(8));
+    assert_eq!(select_window(both(), Some(9)).map(|w| w.id), Err(0));
+    let mut hidden = shown.clone();
+    hidden.onscreen = false;
+    assert_eq!(
+        select_window(vec![hidden.clone()], None).map(|w| w.id),
+        Err(0)
+    );
+    assert_eq!(select_window(vec![hidden], Some(7)).map(|w| w.id), Ok(7));
+    let mut twin = shown.clone();
+    twin.id = 9;
+    assert_eq!(select_window(vec![shown, twin], None).map(|w| w.id), Err(2));
+}
+
+#[test]
+fn ax_actions_tolerate_only_cannot_complete_as_unconfirmed() {
+    use super::observation::ax_action_confirmed;
+    assert_eq!(ax_action_confirmed("AXPress", 0), Ok(true));
+    assert_eq!(ax_action_confirmed("AXShowMenu", -25204), Ok(false));
+    for status in [-25205, -25202, -25200, 1] {
+        let err = ax_action_confirmed("AXPress", status).unwrap_err();
+        assert!(err.contains("AXPress") && err.contains(&status.to_string()));
+    }
+}
+
+#[test]
+fn lsappinfo_asn_and_type_parse_the_macos_27_output() {
+    use super::observation::{lsappinfo_asn, lsappinfo_type};
+    assert_eq!(
+        lsappinfo_asn("ASN:0x0-0x9e09e-\"StickyMD\":\n").as_deref(),
+        Ok("ASN:0x0-0x9e09e")
+    );
+    for bad in [
+        "",
+        "ASN:0x0-0x9e09e-\"a\":\nASN:0x0-0x1-\"b\":",
+        "ASN:0x0",
+        "0x0-0x1",
+        "ASN:0xg-0x1-\"a\"",
+    ] {
+        assert!(lsappinfo_asn(bad).is_err(), "{bad:?}");
+    }
+    let info = "[ NULL ]  [ NULL ]  \n    bundleID=[ NULL ] \n !cgsConnection !signalled type=\"UIElement\" flavor=[ NULL ]  Version=[ NULL ]\n";
+    assert_eq!(lsappinfo_type(info), Some("UIElement"));
+    assert_eq!(
+        lsappinfo_type("filetype=\"APPL\" type=\"Foreground\""),
+        Some("Foreground")
+    );
+    assert_eq!(lsappinfo_type(""), None);
+}

@@ -51,15 +51,27 @@ fn text(node: &Owned, name: &str) -> Result<String, String> {
             .ok_or_else(|| format!("{name}: expected readable CFString; inspection incomplete")),
     }
 }
-fn action(node: &Owned, name: &str) -> Result<(), String> {
+fn action_status(node: &Owned, name: &str) -> Result<i32, String> {
     let name = Owned::string(name)?;
     // SAFETY: live AX element and CFString action name; API does not retain borrowed arguments.
-    let status = unsafe { AXUIElementPerformAction(node.0, name.0) };
-    if status == 0 {
-        Ok(())
-    } else {
-        Err(format!("AX action error {status}"))
+    Ok(unsafe { AXUIElementPerformAction(node.0, name.0) })
+}
+fn action(node: &Owned, name: &str) -> Result<(), String> {
+    match action_status(node, name)? {
+        0 => Ok(()),
+        status => Err(format!("AX {name} error {status}")),
     }
+}
+/// Performs a menu action whose effect the caller observes afterwards; see
+/// `ax_action_confirmed` for why CannotComplete is reported as unconfirmed.
+fn menu_action(node: &Owned, name: &str) -> Result<&'static str, String> {
+    let status = action_status(node, name)?;
+    Ok(
+        match crate::mac_gui::observation::ax_action_confirmed(name, status)? {
+            true => "confirmed",
+            false => "unconfirmed (-25204)",
+        },
+    )
 }
 fn set(node: &Owned, name: &str, value: &Owned) -> Result<(), String> {
     let name = Owned::string(name)?;
@@ -196,13 +208,13 @@ pub(in crate::mac_gui) fn menu(pid: u32, label: &str) -> Result<String, String> 
         .iter()
         .filter_map(Owned::text)
         .collect::<Vec<_>>();
-    if actions.iter().any(|a| a == "AXShowMenu") {
-        action(&item.element, "AXShowMenu")?;
+    let open = if actions.iter().any(|a| a == "AXShowMenu") {
+        menu_action(&item.element, "AXShowMenu")?
     } else if actions.iter().any(|a| a == "AXPress") {
-        action(&item.element, "AXPress")?;
+        menu_action(&item.element, "AXPress")?
     } else {
         return Err(format!("status item has no menu action: {actions:?}"));
-    }
+    };
     super::events::wait(150)?;
     let nodes = tree(app(pid)?)?;
     let titles = nodes
@@ -221,8 +233,11 @@ pub(in crate::mac_gui) fn menu(pid: u32, label: &str) -> Result<String, String> 
         ));
     }
     let item = unique(&nodes, |n| n.role == "AXMenuItem" && n.title == label)?;
-    action(&item.element, "AXPress")?;
-    Ok(format!("status actions={actions:?}\n{}", dump(&nodes)))
+    let press = menu_action(&item.element, "AXPress")?;
+    Ok(format!(
+        "status actions={actions:?}; open {open}; press {label} {press}\n{}",
+        dump(&nodes)
+    ))
 }
 fn panel_tree(pid: u32) -> Result<Vec<Node>, String> {
     let start = Instant::now();

@@ -130,6 +130,9 @@ impl<B: Backend> Driver<'_, B> {
         }
     }
 }
+/// Bound for a status-menu command's effect: the menu blinks and fades before AppKit sends the
+/// action, and hiding or showing the window animates. The elapsed time is kept as evidence.
+const MENU_EFFECT_MS: u64 = 2000;
 pub(super) fn skipped(id: &str) -> Option<&'static str> {
     match id {
         "I01" | "I02" => {
@@ -153,7 +156,11 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, id: &str) -> Result<(), Str
     match id {
         "W01" => {
             let kind = d.text(Op::AppType)?;
-            d.row.check("UIElement", kind.contains("UIElement"), kind);
+            d.row.check(
+                "UIElement",
+                super::observation::lsappinfo_type(&kind) == Some("UIElement"),
+                kind,
+            );
             let dock = d.text(Op::Dock)?;
             d.row
                 .check("no Dock tile", !dock.lines().any(|s| s == "StickyMD"), dock);
@@ -170,9 +177,9 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, id: &str) -> Result<(), Str
         "W03" | "W04" => super::hover::run(d, id == "W04")?,
         "W07" => {
             d.op(Op::Menu("隐藏".into()))?;
-            d.wait(300)?;
-            let w = d.window()?;
-            d.row.check("hidden", !w.onscreen, format!("{w:?}"));
+            let (w, ms) = d.until(MENU_EFFECT_MS, |w| !w.onscreen)?;
+            d.row
+                .check("hidden", !w.onscreen, format!("after {ms}ms: {w:?}"));
             d.op(Op::Reopen)?;
             let (w, _) = d.until(3000, |w| w.onscreen)?;
             let front = d.front()?;
@@ -186,29 +193,36 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, id: &str) -> Result<(), Str
         "W08" => {
             d.op(Op::Activate)?;
             d.type_text("quit barrier evidence")?;
-            for (label, visible) in [("隐藏", false), ("显示", true)] {
-                d.op(Op::Menu(label.into()))?;
-                d.wait(400)?;
-                let w = d.window()?;
-                d.row.check(label, w.onscreen == visible, format!("{w:?}"));
-            }
-            let normal = d.window()?;
+            let before = d.window()?;
+            // Shown means back where it was at its opacity, after the show animation.
+            let settled =
+                |w: &Window| w.onscreen && w.alpha == before.alpha && w.bounds == before.bounds;
+            d.op(Op::Menu("隐藏".into()))?;
+            let (w, ms) = d.until(MENU_EFFECT_MS, |w| !w.onscreen)?;
+            d.row
+                .check("隐藏", !w.onscreen, format!("after {ms}ms: {w:?}"));
+            d.op(Op::Menu("显示".into()))?;
+            let (w, ms) = d.until(MENU_EFFECT_MS, settled)?;
+            d.row.check(
+                "显示",
+                settled(&w),
+                format!("after {ms}ms: {w:?}; before {before:?}"),
+            );
+            let normal = w;
             d.op(Op::Menu("置顶".into()))?;
-            d.wait(300)?;
-            let top = d.window()?;
+            let (top, ms) = d.until(MENU_EFFECT_MS, |w| w.layer > normal.layer)?;
             d.row.check(
                 "topmost layer rises",
                 top.layer > normal.layer,
-                format!("normal={}, top={}", normal.layer, top.layer),
+                format!("after {ms}ms: normal={}, top={}", normal.layer, top.layer),
             );
             d.config("", "always_on_top", "true")?;
             d.op(Op::Menu("置顶".into()))?;
-            d.wait(300)?;
-            let restored = d.window()?;
+            let (restored, ms) = d.until(MENU_EFFECT_MS, |w| w.layer == normal.layer)?;
             d.row.check(
                 "topmost layer restored",
                 restored.layer == normal.layer,
-                format!("{restored:?}"),
+                format!("after {ms}ms: {restored:?}"),
             );
             d.op(Op::Activate)?;
             d.type_text(" final")?;
@@ -231,10 +245,15 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, id: &str) -> Result<(), Str
         "E01" => super::editing::export(d)?,
         "F01" => {
             let log = d.text(Op::Fonts)?;
+            // Plan 02's macOS defaults; the log names the CJK and Latin faces, not the code face.
             d.row.check(
                 "font selection log",
-                log.contains("CJK=PingFang SC found=true Latin=Menlo found=true"),
+                log.contains("CJK=PingFang SC found=true Latin=Times New Roman found=true"),
                 log,
+            );
+            d.row.skip(
+                "code face Menlo",
+                "the font log does not name the code face; Menlo needs the screenshot's visual review",
             );
             let screenshot = d.text(Op::Screenshot)?;
             d.row.trace.push(Trace {

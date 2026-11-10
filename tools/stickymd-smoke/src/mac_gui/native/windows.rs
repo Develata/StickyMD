@@ -1,6 +1,6 @@
 //! CoreGraphics window facts and optional normalized PPM screenshot, never product state.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
-use super::super::model::{Rect, Window};
+use super::super::model::{Rect, Window, select_window};
 use super::cf::{Cf, Owned};
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -36,9 +36,6 @@ pub(in crate::mac_gui) fn window(pid: u32, id: Option<u32>) -> Result<Window, St
             continue;
         }
         let number = dict.get("kCGWindowNumber")?.number()? as u32;
-        if id.is_some_and(|id| id != number) {
-            continue;
-        }
         let b = dict.get("kCGWindowBounds")?;
         let mut bounds = Rect::default();
         // SAFETY: SDK output storage matches CGRect; b is a live bounds dictionary.
@@ -59,13 +56,10 @@ pub(in crate::mac_gui) fn window(pid: u32, id: Option<u32>) -> Result<Window, St
                 .unwrap_or(false),
         });
     }
-    if windows.len() != 1 {
-        return Err(format!(
-            "expected one PID {pid} content window (id={id:?}), found {}",
-            windows.len()
-        ));
-    }
-    Ok(windows.remove(0))
+    select_window(windows, id).map_err(|found| {
+        let scope = if id.is_some() { "" } else { " on-screen" };
+        format!("expected one PID {pid}{scope} content window (id={id:?}), found {found}")
+    })
 }
 pub(in crate::mac_gui) fn screenshot(w: &Window) -> Result<Vec<u8>, String> {
     // SAFETY: caller has preflighted capture permission. IncludingWindow=8 restricts capture
