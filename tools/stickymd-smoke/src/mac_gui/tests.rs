@@ -630,3 +630,37 @@ fn lsappinfo_asn_and_type_parse_the_macos_27_output() {
     );
     assert_eq!(lsappinfo_type(""), None);
 }
+
+#[test]
+fn a_press_reaches_the_front_window_under_it_past_the_dock_overlay() {
+    let hit = |pid, owner: &str, bounds| Hit {
+        pid,
+        owner: owner.into(),
+        layer: 0,
+        bounds,
+    };
+    let screen = rect(0.0, 0.0, 1024.0, 768.0);
+    // Front to back, as the VM listed them while Tips covered the product.
+    let stack = [
+        hit(160, "Window Server", rect(0.0, 0.0, 1024.0, 30.0)),
+        hit(338, "Dock", screen),
+        hit(3542, "Tips", rect(82.0, 30.0, 904.0, 680.0)),
+        hit(3536, "StickyMD", rect(252.0, 80.0, 520.0, 480.0)),
+    ];
+    let pid_at = |stack: &[Hit], x, y| front_hit(stack, Point { x, y }).map(|h| h.pid);
+    assert_eq!(pid_at(&stack, 689.0, 98.0), Some(3542));
+    assert_eq!(pid_at(&stack, 512.0, 10.0), Some(160));
+    assert_eq!(pid_at(&stack[3..], 689.0, 98.0), Some(3536));
+    let uncovered = [stack[0].clone(), stack[1].clone(), stack[3].clone()];
+    assert_eq!(pid_at(&uncovered, 689.0, 98.0), Some(3536));
+    // Edges: the right and bottom edges are outside; nothing under a point is None.
+    assert_eq!(pid_at(&uncovered, 772.0, 98.0), None);
+    assert_eq!(pid_at(&uncovered, 252.0, 80.0), Some(3536));
+    // The pointer drawn over the press point is not a window that takes the press.
+    let cursor = Hit {
+        layer: CURSOR_LAYER,
+        ..hit(160, "Window Server", rect(662.0, 138.0, 28.0, 40.0))
+    };
+    let pointed = [cursor, stack[3].clone()];
+    assert_eq!(pid_at(&pointed, 667.5, 142.0), Some(3536));
+}

@@ -179,6 +179,10 @@ impl<B: Sender> Injection<B> {
                 dragging: false,
             })?;
             s.press(Held::Left)?;
+            // The product starts the native window drag when it handles the press, from wherever
+            // the pointer is by then. Moving at once let one 25 DIP step pass before that in the
+            // VM, so the window stopped short of the edge; a person also holds before moving.
+            s.backend.pause(60);
             for step in 1..=20 {
                 s.at = Point {
                     x: from.x + (to.x - from.x) * f64::from(step) / 20.0,

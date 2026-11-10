@@ -973,7 +973,13 @@ menu with `AXPress` returns CannotComplete (-25204) because the reply waits for
 menu tracking; that open is recorded as unconfirmed, and the menu-item tree and
 the command's observed effect decide the check. Any other AX action error fails.
 `lsappinfo info` does not accept `pid=N` on macOS 27.2, so the driver resolves the
-application's ASN with `lsappinfo find pid=N` first.
+application's ASN with `lsappinfo find pid=N` first. Before each click or drag start,
+the front on-screen window under the point (skipping the Dock's full-screen overlay
+and the pointer) must belong to the product; otherwise no press is injected and the
+scenario fails naming the covering window. A VM run once lost W02/W04/W09 to a Tips
+window that macOS opened mid-run; keep the VM desktop clear of other app windows.
+A drag holds the press for 60ms before moving: the product starts the native window
+drag when it handles the press, from wherever the pointer is by then.
 
 `mac-gui.json` is atomically checkpointed after every scenario. It records OS,
 VM/override/permission/display facts, fixed config, executable SHA-256, a sorted

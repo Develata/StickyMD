@@ -84,6 +84,25 @@ impl Live<'_> {
             }
         }
     }
+    /// Plan 11 (physical input): a press goes only where the product's window is the front
+    /// window under the point. A covering window (Tips, a system dialog) would take the press
+    /// and make the product look unresponsive. Stacking can still change between this check and
+    /// the press, so the product's observed reaction stays the evidence.
+    fn require_target(&self, p: Point) -> Result<(), String> {
+        let hits = windows::on_screen()?;
+        match front_hit(&hits, p) {
+            Some(hit) if hit.pid == self.pid => Ok(()),
+            Some(hit) => Err(format!(
+                "press at ({}, {}) would reach {:?} (PID {}), not the product; the desktop is \
+                 obstructed and no press was injected",
+                p.x, p.y, hit.owner, hit.pid
+            )),
+            None => Err(format!(
+                "no window under ({}, {}); no press was injected",
+                p.x, p.y
+            )),
+        }
+    }
     fn open(&mut self) -> Result<String, String> {
         self.session.open_bundle(|bundle| {
             command(
@@ -159,10 +178,12 @@ impl Backend for Live<'_> {
                 Value::Unit
             }
             Op::Drag(a, b) => {
+                self.require_target(a)?;
                 self.input.drag(a, b)?;
                 Value::Unit
             }
             Op::Click(p) => {
+                self.require_target(p)?;
                 self.input.click(p)?;
                 Value::Unit
             }
