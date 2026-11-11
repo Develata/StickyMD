@@ -49,7 +49,7 @@
 | P16-W12 | 系统终止：`osascript` 退出、注销、导出对话框打开时退出 | Manual | 人工 | NOT TESTED |
 | P16-W13 | 感应条 2 DIP（S8）的几何测试 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
 | P16-W14 | S7 的 reducer 测试：手动收起后恢复焦点不撤销，进入展开路径后撤销 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
-| P16-W15 | Windows 桌面回归（S2、S4、S6、S7；S9 透明度弹窗内容随 DPI 缩放，只影响 >100% DPI；宿主共享第一步移动的导出（含图片）、配置保存、预览图片、托盘菜单） | Manual | 需在 Windows 机器上运行 | NOT TESTED |
+| P16-W15 | Windows 桌面回归（S2、S4、S6、S7；S9 透明度弹窗内容随 DPI 缩放，只影响 >100% DPI；宿主共享第一步移动的导出（含图片）、配置保存、预览图片、托盘菜单） | — | `0653d2e` 的 release（100% DPI）在 Windows 11 25H2 上跑本地桌面 preflight G4-01、G4-02、G4-03、G3-02，全部通过：S2 的撤销/重做与剪贴板键、S4、S6（本机 `work.y` 等于显示器顶边）、S9 的 100%、导出含图片、配置写入、托盘菜单。其余（S7、S9 高 DPI、配置失败路径、预览图片等）USER 2026-11-11 决定不测，遇到问题再测（[Windows 回归](../report/2026-11-11-windows-p16-w15-regression.md)） | USER 豁免 |
 | P16-W16 | Windows 上的 2 DIP（S8） | — | USER 2026-11-10 决定不单独回归 | USER 豁免 |
 | P16-W17 | 光标图层自带闪烁时 shell 不按闪烁周期唤醒；图层失败后改由 shell 与帧闪烁；没有自带闪烁的宿主（Windows）照旧 | Automated | `shell::phase15_host_tests::phase16_an_overlay_that_blinks_itself_needs_no_blink_wake`、`phase16_the_event_loop_waits_for_blinks_only_when_the_shell_blinks`（事件循环实际等待的时刻与是否翻转） | AUTOMATED PASS |
 
