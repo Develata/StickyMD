@@ -166,6 +166,12 @@ fn translate_menu_event(event: &MenuEvent) -> Option<TrayCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stickymd_desktop::testing::contracts;
+
+    #[test]
+    fn show_hide_label_describes_the_action() {
+        contracts::tray_show_hide_label_describes_the_action();
+    }
 
     #[test]
     fn only_the_three_menu_items_translate_to_platform_events() {
@@ -190,5 +196,10 @@ mod tests {
         );
         assert_eq!(translate_menu_event(&quit), Some(TrayCommand::Quit));
         assert_eq!(translate_menu_event(&unrelated), None);
+    }
+
+    #[test]
+    fn tray_icon_is_fully_owned_rgba() {
+        contracts::tray_icon_is_fully_owned_rgba();
     }
 }

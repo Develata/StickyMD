@@ -71,12 +71,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn show_hide_label_describes_the_action() {
-        assert_eq!(show_hide_label(true), "隐藏");
-        assert_eq!(show_hide_label(false), "显示");
-    }
-
-    #[test]
     fn only_the_three_menu_items_translate_to_commands() {
         assert_eq!(
             command_for_menu_id(SHOW_HIDE_ID),
@@ -88,15 +82,5 @@ mod tests {
         );
         assert_eq!(command_for_menu_id(QUIT_ID), Some(TrayCommand::Quit));
         assert_eq!(command_for_menu_id("other.menu.item"), None);
-    }
-
-    #[test]
-    fn tray_icon_is_fully_owned_rgba() {
-        let icon = tray_icon();
-        assert_eq!(
-            icon.rgba.len(),
-            icon.width as usize * icon.height as usize * 4
-        );
-        assert!(icon.rgba.chunks_exact(4).any(|pixel| pixel[3] == 255));
     }
 }

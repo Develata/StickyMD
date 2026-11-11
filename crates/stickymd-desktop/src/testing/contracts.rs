@@ -4,6 +4,23 @@
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#shared-crates
 
+/// The tray's show/hide item names the action it takes (plan 09 tray lifecycle).
+pub fn tray_show_hide_label_describes_the_action() {
+    use crate::tray::show_hide_label;
+    assert_eq!(show_hide_label(true), "隐藏");
+    assert_eq!(show_hide_label(false), "显示");
+}
+
+/// The tray icon is owned RGBA of the stated size with visible pixels.
+pub fn tray_icon_is_fully_owned_rgba() {
+    let icon = crate::tray::tray_icon();
+    assert_eq!(
+        icon.rgba.len(),
+        icon.width as usize * icon.height as usize * 4
+    );
+    assert!(icon.rgba.chunks_exact(4).any(|pixel| pixel[3] == 255));
+}
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
