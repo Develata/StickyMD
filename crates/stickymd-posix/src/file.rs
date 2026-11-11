@@ -10,17 +10,11 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
+use crate::sys::{self, check};
+
 fn c_string(value: &OsStr) -> io::Result<CString> {
     CString::new(value.as_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains a NUL byte"))
-}
-
-fn check(result: libc::c_int) -> io::Result<()> {
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
 }
 
 fn file_from(descriptor: libc::c_int) -> io::Result<File> {
@@ -44,39 +38,27 @@ fn regular(file: File) -> io::Result<File> {
 
 /// Asks the drive itself to reach stable storage; `fsync` stops at the drive's cache.
 pub fn full_sync(file: &File) -> io::Result<()> {
-    // SAFETY: the descriptor is valid for the lifetime of `file`; F_FULLFSYNC takes no argument.
-    check(unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) }.min(0))
+    sys::full_sync(file.as_raw_fd())
 }
 
 /// Moves `from` to `to` only if nothing is at `to`.
 pub fn rename_path_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     let from = c_string(from.as_os_str())?;
     let to = c_string(to.as_os_str())?;
-    // SAFETY: both pointers are NUL-terminated strings that outlive the call.
-    check(unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) })
+    sys::rename_no_replace(&from, &to)
 }
 
 /// An image the note refers to, `path` relative to `base` or absolute: read-only, regular file,
 /// no symbolic link anywhere in the path, and on this machine rather than a network volume.
 fn open_local_image_at(base: libc::c_int, path: &Path) -> io::Result<File> {
-    // No libc constant yet; from <sys/fcntl.h>.
-    const O_NOFOLLOW_ANY: libc::c_int = 0x2000_0000;
     let c_path = c_string(path.as_os_str())?;
-    // SAFETY: `c_path` is NUL-terminated and outlives the call; `base` is a descriptor its
-    // caller keeps open for the call.
-    let descriptor = unsafe {
-        libc::openat(
-            base,
-            c_path.as_ptr(),
-            libc::O_RDONLY | O_NOFOLLOW_ANY | libc::O_NONBLOCK | libc::O_CLOEXEC,
-        )
-    };
+    let descriptor = sys::open_no_links_at(
+        base,
+        &c_path,
+        libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC,
+    );
     let file = regular(file_from(descriptor)?)?;
-    // SAFETY: a zeroed statfs is a valid value for fstatfs to overwrite.
-    let mut volume: libc::statfs = unsafe { std::mem::zeroed() };
-    // SAFETY: the descriptor is valid and `volume` is writable.
-    check(unsafe { libc::fstatfs(file.as_raw_fd(), &mut volume) })?;
-    if volume.f_flags & libc::MNT_LOCAL as u32 == 0 {
+    if !sys::on_local_volume(file.as_raw_fd())? {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "images on network volumes are not read",
@@ -170,21 +152,7 @@ impl DirectoryHandle {
 
     /// Where the directory is now, after any move.
     pub fn current_path(&self) -> io::Result<std::path::PathBuf> {
-        let mut path = [0_u8; libc::PATH_MAX as usize];
-        // SAFETY: F_GETPATH writes a NUL-terminated path of at most PATH_MAX bytes to the buffer,
-        // which outlives the call; the descriptor is valid while `self` lives.
-        check(unsafe {
-            libc::fcntl(
-                self.directory.as_raw_fd(),
-                libc::F_GETPATH,
-                path.as_mut_ptr(),
-            )
-        })?;
-        let length = path
-            .iter()
-            .position(|byte| *byte == 0)
-            .unwrap_or(path.len());
-        Ok(OsStr::from_bytes(&path[..length]).into())
+        sys::descriptor_path(self.directory.as_raw_fd())
     }
 
     /// The directory itself, wherever it is: compare with [`FileObservation::same_file_as`].
@@ -253,16 +221,13 @@ impl DirectoryHandle {
     pub fn rename_no_replace_into(&self, from: &str, target: &Self, to: &str) -> io::Result<()> {
         let from = c_string(OsStr::new(from))?;
         let to = c_string(OsStr::new(to))?;
-        // SAFETY: both descriptors are valid while their handles live; both names outlive the call.
-        check(unsafe {
-            libc::renameatx_np(
-                self.directory.as_raw_fd(),
-                from.as_ptr(),
-                target.directory.as_raw_fd(),
-                to.as_ptr(),
-                libc::RENAME_EXCL,
-            )
-        })
+        // Both descriptors stay open while their handles live, which outlasts the call.
+        sys::rename_no_replace_at(
+            self.directory.as_raw_fd(),
+            &from,
+            target.directory.as_raw_fd(),
+            &to,
+        )
     }
 
     pub fn rename_no_replace(&self, from: &str, to: &str) -> io::Result<()> {

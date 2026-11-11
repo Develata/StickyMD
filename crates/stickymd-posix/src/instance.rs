@@ -3,11 +3,9 @@
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#program-directory-identity
 
-use std::ffi::OsString;
 use std::fs::File;
 use std::io;
 use std::os::fd::AsRawFd;
-use std::os::unix::ffi::OsStringExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -118,28 +116,9 @@ fn identity(directory: &File) -> Result<[u8; 8], InstanceError> {
     Ok(identity)
 }
 
-/// `$TMPDIR` can be overridden by whoever starts the process, and two copies with different values
-/// would never find each other; `confstr` answers per user regardless.
-fn user_temp_dir() -> Option<PathBuf> {
-    let mut buffer = vec![0_u8; libc::PATH_MAX as usize];
-    // SAFETY: the buffer is writable for the length passed.
-    let needed = unsafe {
-        libc::confstr(
-            libc::_CS_DARWIN_USER_TEMP_DIR,
-            buffer.as_mut_ptr().cast(),
-            buffer.len(),
-        )
-    };
-    if needed == 0 || needed > buffer.len() {
-        return None;
-    }
-    buffer.truncate(needed - 1);
-    Some(PathBuf::from(OsString::from_vec(buffer)))
-}
-
 fn socket_path_for(identity: &[u8; 8]) -> Option<PathBuf> {
     let hex: String = identity.iter().map(|byte| format!("{byte:02x}")).collect();
-    let path = user_temp_dir()?.join(format!("stickymd-{hex}.sock"));
+    let path = crate::sys::user_runtime_dir()?.join(format!("stickymd-{hex}.sock"));
     (path.as_os_str().len() <= SOCKET_PATH_LIMIT).then_some(path)
 }
 
@@ -181,7 +160,7 @@ mod tests {
         let path = socket_path_for(&[0xab; 8]).unwrap();
         assert!(path.as_os_str().len() <= SOCKET_PATH_LIMIT, "{path:?}");
         assert!(path.ends_with("stickymd-abababababababab.sock"));
-        assert_eq!(path.parent(), user_temp_dir().as_deref());
+        assert_eq!(path.parent(), crate::sys::user_runtime_dir().as_deref());
     }
 
     #[test]

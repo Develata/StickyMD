@@ -14,5 +14,7 @@ pub mod atomic_file;
 pub mod file;
 #[cfg(target_os = "macos")]
 pub mod instance;
+#[cfg(target_os = "macos")]
+mod sys;
 #[cfg(all(test, target_os = "macos"))]
 mod test_support;
