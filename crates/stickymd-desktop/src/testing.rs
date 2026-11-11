@@ -24,6 +24,7 @@ use winit::window::{Window, WindowAttributes};
 use crate::host::{CaretOverlay, EventSink, Host, PresentFacts, StartupProbe, TrayHost};
 use crate::input::Keymap;
 
+pub mod contracts;
 mod portable_disk;
 
 pub use portable_disk::{PortableDiskPorts, unique_temp_dir};

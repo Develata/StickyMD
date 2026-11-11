@@ -2,11 +2,12 @@
 //!
 //! plan_ref: docs/plan/08_assets_and_export.md#local-image-read-boundary
 
-use std::io::{BufReader, Read};
+use std::io::BufReader;
 use std::path::PathBuf;
 
 use stickymd_render::image::{
-    ImageMetadata, MAX_ENCODED_IMAGE_BYTES, PreviewImageSource, inspect_image_reader,
+    ImageMetadata, PreviewImageSource, inspect_image_reader, is_network_destination,
+    read_encoded_image,
 };
 
 use crate::assets::{open_local_image, resolve_local_image};
@@ -36,13 +37,7 @@ impl PreviewImageSource for LocalImageSource {
     }
 
     fn load(&self, destination: &str) -> Result<Option<Vec<u8>>, String> {
-        if destination
-            .get(..7)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
-            || destination
-                .get(..8)
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
-        {
+        if is_network_destination(destination) {
             return Ok(None);
         }
         let path =
@@ -52,72 +47,19 @@ impl PreviewImageSource for LocalImageSource {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.to_string()),
         };
-        let mut bytes = Vec::new();
-        file.take((MAX_ENCODED_IMAGE_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        if bytes.len() > MAX_ENCODED_IMAGE_BYTES {
-            return Err("local image exceeds the 64 MiB preview limit".into());
-        }
-        Ok(Some(bytes))
+        read_encoded_image(file).map(Some)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use stickymd_core::{DocumentSnapshot, Generation, LineEnding};
-    use stickymd_render::preview::{PreviewPipeline, PreviewSelection, PreviewTheme};
-
     use super::*;
 
     #[test]
     fn phase7_local_image_adapter_reads_png_and_rejects_network_placeholders() {
-        let root = crate::test_support::unique_temp_path("preview-image-中文 空格");
-        std::fs::create_dir(&root).unwrap();
-        let image = stickymd_render::image::prepare_rgba_image(2, 2, vec![255; 16]).unwrap();
-        let bytes = image.bytes();
-        std::fs::write(root.join("数学 图.png"), bytes).unwrap();
-        let source = LocalImageSource::new(root.clone());
-        let path = "%E6%95%B0%E5%AD%A6%20%E5%9B%BE.png";
-        assert!(source.inspect(path).unwrap().is_some());
-        assert_eq!(source.load(path).unwrap().as_deref(), Some(bytes));
-        assert!(source.inspect("missing.png").unwrap().is_none());
-        for remote in [
-            "file://server/share/a.png",
-            "%5c%5cserver/share/a.png",
-            r"\\.\pipe\image",
-        ] {
-            assert!(source.inspect(remote).is_err());
-            assert!(source.load(remote).is_err());
-        }
-        assert!(
-            source
-                .load("https://example.invalid/a.png")
-                .unwrap()
-                .is_none()
+        stickymd_desktop::testing::contracts::local_image_source_contract(
+            crate::test_support::unique_temp_path("preview-image-中文 空格"),
+            LocalImageSource::new,
         );
-        let snapshot = DocumentSnapshot {
-            text: Arc::from("![ALT](file://server/share/a.png)"),
-            generation: Generation::initial(),
-            line_ending: LineEnding::Lf,
-        };
-        let mut pipeline = PreviewPipeline::new();
-        let frame = pipeline
-            .build_with_image_source(
-                &snapshot,
-                500,
-                200,
-                1.0,
-                0.0,
-                PreviewSelection::default(),
-                PreviewTheme::Light,
-                Some(&source),
-            )
-            .unwrap();
-        assert_eq!(frame.copy_selection(frame.select_all()), Some("ALT"));
-        assert_eq!(std::fs::read(root.join("数学 图.png")).unwrap(), bytes);
-        std::fs::remove_dir_all(root).unwrap();
     }
 }
