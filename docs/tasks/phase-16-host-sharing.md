@@ -4,6 +4,14 @@
 
 In Progress。USER 2026-11-11 批准把 [宿主共享执行报告](../report/2026-11-10-host-shared-execution.md) 的两步一次完成；`stickymd-posix` 只放 macOS 实现，Linux 分支留到 Debian。
 
+代码已完成（2026-11-11）：第二步 `663b996`（搬移与登记）、`1991344`（`sys` 接缝）；第一步托盘 `168b747`、图片读取 `904a83b`、配置 `6dea3be`、导出 `f86e603`。与计划的出入：
+- 托盘放在 `stickymd-desktop::tray`；图片读取的两个纯函数放在 `stickymd-render::image`，与 `MAX_ENCODED_IMAGE_BYTES` 同处；配置与导出放在 `stickymd-app`；共享场景在 `stickymd-desktop::testing::contracts`。
+- 导出的错误类型共享后，宿主各自的 `From<ExportError> for StorageFailure` 违反孤儿规则，转换随之移入 `stickymd-app`，两宿主原本相同。
+- 粘贴未动：两宿主各有两个与 `stickymd-app` 重复的纯函数测试，删去会改变 Windows 测试名，收益小，保留。
+- 每一步的 Windows 测试由 CI 运行；Windows 桌面回归加入 P16-W15。
+
+尚待：虚拟机里用最终二进制重跑、codex-reviewer 审查全部范围、P16-W15。
+
 ## Goal
 
 同一个修复不再在两个（以后三个）宿主里各维护一份；Windows 产品行为不变；macOS 的原生 POSIX 代码搬到 Debian 能直接复用的位置。
