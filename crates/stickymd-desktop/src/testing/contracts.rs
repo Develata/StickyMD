@@ -12,9 +12,16 @@ use stickymd_app::config::{
     ConfigLoadOutcome, ConfigWarning, ContentZoomPercent, DockEdge, RuntimeConfig, ThemeMode,
     ViewMode,
 };
-use stickymd_core::{DocumentSnapshot, Generation, LineEnding};
+use stickymd_app::flow::ExportError;
+use stickymd_app::ports::ExportCompletion;
+use stickymd_core::{
+    CursorSnapshot, DocumentSnapshot, DocumentState, EditKind, EditMeta, EditRequest, Generation,
+    LineEnding,
+};
 use stickymd_render::image::PreviewImageSource;
-use stickymd_render::preview::{PreviewPipeline, PreviewSelection, PreviewTheme};
+use stickymd_render::preview::{
+    PreviewParser, PreviewPipeline, PreviewSelection, PreviewTheme, collect_image_occurrences,
+};
 
 /// A host's local image source over a note directory (plan 08 local image read boundary): it reads
 /// a percent-encoded Unicode name, reports a missing file as `None`, refuses network shares and
@@ -288,5 +295,312 @@ pub fn zoom_and_split_sync_roundtrip_and_missing_zoom_defaults(host: ConfigStora
     let migrated = (host.load)(&path);
     assert_eq!(migrated.config.content_zoom_percent.value(), 100);
     assert!(migrated.config.split_scroll_sync);
+    fs::remove_dir_all(root).unwrap();
+}
+
+// Export scenarios (plan 08): `root` is the host's empty fixture directory. The host
+// builds its request and retains every file operation and safety guarantee. The path
+// resolution scenario also uses the host's resolver to check its exported destination.
+
+pub fn export_copies_only_real_local_images_and_preserves_other_source<P: std::fmt::Debug>(
+    root: PathBuf,
+    export_snapshot: impl Fn(
+        &Path,
+        DocumentSnapshot,
+        PathBuf,
+    ) -> Result<ExportCompletion, ExportError<P>>,
+) {
+    let note = root.join("note");
+    let out = root.join("out");
+    fs::create_dir(&note).unwrap();
+    fs::create_dir(&out).unwrap();
+    fs::write(note.join("a.png"), b"local-image").unwrap();
+    let source = "before\n\n![x](a.png \"T\")\n\n![remote](https://example/a.png)\n\n`![code](missing.png)`\n";
+    let result = export_snapshot(
+        &note,
+        DocumentSnapshot {
+            text: Arc::from(source),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        },
+        out.join("copy.md"),
+    )
+    .unwrap();
+    assert_eq!(result.copied_assets, 1);
+    let markdown = fs::read_to_string(out.join("copy.md")).unwrap();
+    assert!(markdown.contains("![x](copy-assets/stickymd-"));
+    assert!(markdown.contains("![remote](https://example/a.png)"));
+    assert!(markdown.contains("`![code](missing.png)`"));
+    assert_eq!(fs::read_dir(out.join("copy-assets")).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+pub fn export_missing_local_image_fails_before_any_publish<P: std::fmt::Debug>(
+    root: PathBuf,
+    export_snapshot: impl Fn(
+        &Path,
+        DocumentSnapshot,
+        PathBuf,
+    ) -> Result<ExportCompletion, ExportError<P>>,
+) {
+    let target = root.join("copy.md");
+    fs::write(root.join("present.png"), b"present").unwrap();
+    let result = export_snapshot(
+        &root,
+        DocumentSnapshot {
+            text: Arc::from("![ok](present.png)\n\n![x](missing.png)"),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        },
+        target.clone(),
+    );
+    assert!(matches!(result, Err(ExportError::LocalImage { .. })));
+    assert!(!target.exists());
+    assert!(!root.join("copy-assets").exists());
+    assert!(fs::read_dir(&root).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".stickymd-export-")
+    }));
+    fs::remove_dir_all(root).unwrap();
+}
+
+pub fn export_denied_local_paths_preserve_existing_output<P: std::fmt::Debug>(
+    root: PathBuf,
+    export_snapshot: impl Fn(
+        &Path,
+        DocumentSnapshot,
+        PathBuf,
+    ) -> Result<ExportCompletion, ExportError<P>>,
+) {
+    let target = root.join("copy.md");
+    fs::write(&target, b"previous export").unwrap();
+    for destination in [
+        "file://server/share/a.png",
+        "%5c%5cserver/share/a.png",
+        "%5c%5c.%5cpipe%5cimage",
+    ] {
+        let snapshot = DocumentSnapshot {
+            text: Arc::from(format!("![ALT]({destination})")),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        };
+        let result = export_snapshot(&root, snapshot, target.clone());
+        assert!(
+            matches!(result, Err(ExportError::UnsupportedLocalPath(_))),
+            "{destination}: {result:?}"
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"previous export");
+        assert!(!root.join("copy-assets").exists());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+pub fn export_deduplicates_sources_suffixes_existing_assets_and_replaces_markdown<
+    P: std::fmt::Debug,
+>(
+    root: PathBuf,
+    export_snapshot: impl Fn(
+        &Path,
+        DocumentSnapshot,
+        PathBuf,
+    ) -> Result<ExportCompletion, ExportError<P>>,
+) {
+    let note = root.join("note");
+    let out = root.join("out");
+    fs::create_dir(&note).unwrap();
+    fs::create_dir(&out).unwrap();
+    let first = note.join("first.png");
+    let second = note.join("second.png");
+    fs::write(&first, b"identical bytes").unwrap();
+    fs::write(&second, b"identical bytes").unwrap();
+    fs::create_dir(out.join("copy-assets")).unwrap();
+    fs::write(out.join("copy-assets/user.txt"), b"keep").unwrap();
+    fs::write(out.join("copy.md"), b"old").unwrap();
+    let absolute = second.to_string_lossy().replace('\\', "/");
+    let source = format!(
+        "prefix\n\n![one](first.png)\n\n![two]({absolute})\n\n![again](first.png)\n\nsuffix\n"
+    );
+    let completion = export_snapshot(
+        &note,
+        DocumentSnapshot {
+            text: Arc::from(source),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        },
+        out.join("copy.md"),
+    )
+    .unwrap();
+    assert_eq!(completion.copied_assets, 1);
+    assert_eq!(fs::read(out.join("copy-assets/user.txt")).unwrap(), b"keep");
+    assert_eq!(fs::read_dir(out.join("copy-assets-2")).unwrap().count(), 1);
+    let markdown = fs::read_to_string(out.join("copy.md")).unwrap();
+    assert_eq!(markdown.matches("copy-assets-2/stickymd-").count(), 3);
+    assert!(markdown.starts_with("prefix\n\n"));
+    assert!(markdown.ends_with("\n\nsuffix\n"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+pub fn export_without_images_preserves_markdown_bytes_and_creates_no_asset_dir<
+    P: std::fmt::Debug,
+>(
+    root: PathBuf,
+    export_snapshot: impl Fn(
+        &Path,
+        DocumentSnapshot,
+        PathBuf,
+    ) -> Result<ExportCompletion, ExportError<P>>,
+) {
+    let source = "# Exact\n\n`code`  \n\nraw <x>\n";
+    export_snapshot(
+        &root,
+        DocumentSnapshot {
+            text: Arc::from(source),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        },
+        root.join("copy.md"),
+    )
+    .unwrap();
+    assert_eq!(fs::read(root.join("copy.md")).unwrap(), source.as_bytes());
+    assert!(!root.join("copy-assets").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+pub fn export_rejects_the_working_note_and_hard_link_alias_without_modifying_either<
+    P: std::fmt::Debug,
+>(
+    root: PathBuf,
+    export_snapshot: impl Fn(
+        &Path,
+        DocumentSnapshot,
+        PathBuf,
+    ) -> Result<ExportCompletion, ExportError<P>>,
+) {
+    let note = root.join("note");
+    let out = root.join("out");
+    fs::create_dir(&note).unwrap();
+    fs::create_dir(&out).unwrap();
+    let working = note.join("note.md");
+    let alias = out.join("alias.md");
+    fs::write(&working, b"durable working note").unwrap();
+    fs::hard_link(&working, &alias).unwrap();
+    for target in [working.clone(), alias.clone()] {
+        let result = export_snapshot(
+            &note,
+            DocumentSnapshot {
+                text: Arc::from("replacement"),
+                generation: Generation::initial(),
+                line_ending: LineEnding::Lf,
+            },
+            target,
+        );
+        assert!(matches!(result, Err(ExportError::WorkingNoteTarget)));
+        assert_eq!(fs::read(&working).unwrap(), b"durable working note");
+        assert_eq!(fs::read(&alias).unwrap(), b"durable working note");
+    }
+    fs::remove_file(&alias).unwrap();
+    fs::remove_file(&working).unwrap();
+    let absent_result = export_snapshot(
+        &note,
+        DocumentSnapshot {
+            text: Arc::from("replacement"),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        },
+        note.join("NOTE.MD"),
+    );
+    assert!(matches!(absent_result, Err(ExportError::WorkingNoteTarget)));
+    assert!(!note.join("NOTE.MD").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+pub fn export_percent_encodes_asset_directory_and_remains_parseable_and_resolvable<
+    P: std::fmt::Debug,
+    E: std::fmt::Debug,
+>(
+    root: PathBuf,
+    export_snapshot: impl Fn(
+        &Path,
+        DocumentSnapshot,
+        PathBuf,
+    ) -> Result<ExportCompletion, ExportError<P>>,
+    resolve_local_image: impl Fn(&Path, &str) -> Result<PathBuf, E>,
+) {
+    let note = root.join("note");
+    let out = root.join("out");
+    fs::create_dir(&note).unwrap();
+    fs::create_dir(&out).unwrap();
+    fs::write(note.join("source.png"), b"asset bytes").unwrap();
+    let target = out.join("my note.md");
+    export_snapshot(
+        &note,
+        DocumentSnapshot {
+            text: Arc::from("before ![alt](source.png) after"),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        },
+        target.clone(),
+    )
+    .unwrap();
+    let markdown = fs::read_to_string(&target).unwrap();
+    assert!(markdown.contains("my%20note-assets/stickymd-"));
+    let parsed = PreviewParser
+        .parse(&DocumentSnapshot {
+            text: Arc::from(markdown),
+            generation: Generation::initial(),
+            line_ending: LineEnding::Lf,
+        })
+        .unwrap();
+    let occurrence = collect_image_occurrences(&parsed).unwrap().remove(0);
+    let resolved = resolve_local_image(&out, &occurrence.destination).unwrap();
+    assert!(resolved.is_file());
+    fs::remove_dir_all(root).unwrap();
+}
+
+pub fn export_snapshot_cannot_mutate_document_authority_or_history<P: std::fmt::Debug>(
+    root: PathBuf,
+    export_snapshot: impl Fn(
+        &Path,
+        DocumentSnapshot,
+        PathBuf,
+    ) -> Result<ExportCompletion, ExportError<P>>,
+) {
+    let mut document = DocumentState::loaded("before", LineEnding::Lf, None);
+    document
+        .edit(EditRequest::new(
+            document.generation(),
+            6..6,
+            " after",
+            CursorSnapshot::caret(6),
+            CursorSnapshot::caret(12),
+            EditMeta::new(EditKind::Typing, 0),
+        ))
+        .unwrap();
+    let before = (
+        document.text().to_owned(),
+        document.generation(),
+        document.saved_generation(),
+        document.is_dirty(),
+        document.can_undo(),
+        document.can_redo(),
+    );
+
+    export_snapshot(&root, document.snapshot(), root.join("copy.md")).unwrap();
+
+    assert_eq!(
+        (
+            document.text().to_owned(),
+            document.generation(),
+            document.saved_generation(),
+            document.is_dirty(),
+            document.can_undo(),
+            document.can_redo(),
+        ),
+        before
+    );
     fs::remove_dir_all(root).unwrap();
 }

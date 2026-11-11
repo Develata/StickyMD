@@ -3,16 +3,17 @@
 //! plan_ref: docs/plan/08_assets_and_export.md#export
 
 use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sha2::{Digest, Sha256};
-use stickymd_app::flow::{CopyPlacement, ExportNameCollision, ExportPlan, export_asset_extension};
+use stickymd_app::flow::{
+    CopyFailure, CopyPlacement, EXPORT_ASSET_DIRECTORY_LIMIT, ExportPlan, copy_hashing,
+    export_asset_directory_leaf, export_asset_extension, export_staging_name,
+    export_temporary_name,
+};
 use stickymd_app::ports::ExportCompletion;
 use stickymd_core::{DocumentSnapshot, Hash32, LoadedDocument};
 use stickymd_render::preview::{ImageKind, PreviewParser, collect_image_occurrences};
-use thiserror::Error;
 
 use crate::assets::local_image_destination;
 use crate::platform::macos::atomic_file::{
@@ -36,38 +37,7 @@ pub struct ExportRequest<'a> {
     pub target: PathBuf,
 }
 
-#[derive(Debug, Error)]
-pub enum ExportError {
-    #[error("export target has no parent directory")]
-    MissingParent,
-    #[error("export target has no usable file stem")]
-    InvalidTargetName,
-    #[error("export target is the canonical working note")]
-    WorkingNoteTarget,
-    #[error("cannot inspect export target identity: {0}")]
-    TargetInspection(std::io::Error),
-    #[error("cannot parse Markdown for export: {0}")]
-    Parse(#[from] stickymd_render::preview::PreviewParseError),
-    #[error("cannot project Markdown images for export: {0}")]
-    Projection(#[from] stickymd_render::preview::ExportProjectionError),
-    #[error("local image path is unsupported: {0}")]
-    UnsupportedLocalPath(String),
-    #[error("referenced local image is unavailable: {path}: {source}")]
-    LocalImage {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    #[error("cannot create export staging directory: {0}")]
-    StagingCreate(std::io::Error),
-    #[error("cannot allocate a unique export staging directory name")]
-    StagingNameExhausted,
-    #[error("cannot publish export asset directory: {0}")]
-    AssetPublish(std::io::Error),
-    #[error("cannot publish exported Markdown: {0}")]
-    MarkdownPublish(#[from] AtomicPublishError),
-    #[error("{0}")]
-    AssetNameCollision(#[from] ExportNameCollision),
-}
+pub type ExportError = stickymd_app::flow::ExportError<AtomicPublishError>;
 
 /// Export one immutable snapshot. Local files are staged and published before
 /// the Markdown file; a failure can therefore never publish Markdown whose
@@ -181,7 +151,8 @@ pub fn export_snapshot(request: ExportRequest) -> Result<ExportCompletion, Expor
                 .as_ref()
                 .map(|owned: &OwnedStagingFile| owned.path.as_path())
                 .ok_or(ExportError::InvalidTargetName)?,
-        )?;
+        )
+        .map_err(ExportError::MarkdownPublish)?;
         Ok(ExportCompletion {
             generation: request.snapshot.generation,
             target: request.target.clone(),
@@ -218,10 +189,7 @@ fn create_unique_export_staging_with_sequence(
 ) -> Result<PathBuf, ExportError> {
     for _ in 0..128 {
         let sequence = sequence.fetch_add(1, Ordering::Relaxed);
-        let staging = parent.join(format!(
-            ".stickymd-export-{}-{sequence}.staging",
-            std::process::id()
-        ));
+        let staging = parent.join(export_staging_name(std::process::id(), sequence));
         match fs::create_dir(&staging) {
             Ok(()) => return Ok(staging),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -273,10 +241,7 @@ fn prepare_unique_export_temporary(
 ) -> Result<OwnedStagingFile, ExportError> {
     for _ in 0..128 {
         let sequence = EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let temporary = parent.join(format!(
-            ".stickymd-export-{}-{sequence}.tmp",
-            std::process::id()
-        ));
+        let temporary = parent.join(export_temporary_name(std::process::id(), sequence));
         match prepare_temporary_exclusive(target, &temporary, bytes) {
             Ok(observation) => {
                 return Ok(OwnedStagingFile {
@@ -293,12 +258,8 @@ fn prepare_unique_export_temporary(
 }
 
 fn choose_asset_directory(parent: &Path, stem: &str) -> Result<PathBuf, ExportError> {
-    for suffix in 1_u32..=10_000 {
-        let leaf = if suffix == 1 {
-            format!("{stem}-assets")
-        } else {
-            format!("{stem}-assets-{suffix}")
-        };
+    for suffix in 1..=EXPORT_ASSET_DIRECTORY_LIMIT {
+        let leaf = export_asset_directory_leaf(stem, suffix);
         let candidate = parent.join(leaf);
         if !candidate.try_exists().map_err(ExportError::StagingCreate)? {
             return Ok(candidate);
@@ -326,26 +287,17 @@ fn copy_and_hash(
             path: destination.to_owned(),
             source: source_error,
         })?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = input
-            .read(&mut buffer)
-            .map_err(|source_error| ExportError::LocalImage {
-                path: source.to_owned(),
-                source: source_error,
-            })?;
-        if read == 0 {
-            break;
+    // A read failure names the source image, a write failure the copy.
+    let hash = copy_hashing(&mut input, &mut output).map_err(|failure| {
+        let (path, source_error) = match failure {
+            CopyFailure::Read(error) => (source, error),
+            CopyFailure::Write(error) => (destination, error),
+        };
+        ExportError::LocalImage {
+            path: path.to_owned(),
+            source: source_error,
         }
-        digest.update(&buffer[..read]);
-        output
-            .write_all(&buffer[..read])
-            .map_err(|source_error| ExportError::LocalImage {
-                path: destination.to_owned(),
-                source: source_error,
-            })?;
-    }
+    })?;
     output
         .sync_all()
         .map_err(|source_error| ExportError::LocalImage {
@@ -357,11 +309,7 @@ fn copy_and_hash(
             path: destination.to_owned(),
             source: source_error,
         })?;
-    Ok((
-        Hash32::new(digest.finalize().into()),
-        export_asset_extension(source),
-        observation,
-    ))
+    Ok((hash, export_asset_extension(source), observation))
 }
 
 /// The file is identified by what it is, not by the moment it was seen: moving it into place
@@ -381,9 +329,8 @@ mod tests {
     use crate::assets::resolve_local_image;
     use crate::test_support::unique_temp_path;
     use std::sync::Arc;
-    use stickymd_core::{
-        CursorSnapshot, DocumentState, EditKind, EditMeta, EditRequest, Generation, LineEnding,
-    };
+    use stickymd_core::{Generation, LineEnding};
+    use stickymd_desktop::testing::contracts;
 
     fn fixture() -> PathBuf {
         let root = unique_temp_path("export");
@@ -451,186 +398,86 @@ mod tests {
 
     #[test]
     fn export_copies_only_real_local_images_and_preserves_other_source() {
-        let root = fixture();
-        let note = root.join("note");
-        let out = root.join("out");
-        fs::create_dir(&note).unwrap();
-        fs::create_dir(&out).unwrap();
-        fs::write(note.join("a.png"), b"local-image").unwrap();
-        let source = "before\n\n![x](a.png \"T\")\n\n![remote](https://example/a.png)\n\n`![code](missing.png)`\n";
-        let result = export_snapshot(ExportRequest {
-            snapshot: DocumentSnapshot {
-                text: Arc::from(source),
-                generation: Generation::initial(),
-                line_ending: LineEnding::Lf,
+        contracts::export_copies_only_real_local_images_and_preserves_other_source(
+            fixture(),
+            |note_dir, snapshot, target| {
+                export_snapshot(ExportRequest {
+                    snapshot,
+                    note_directory: &DirectoryHandle::open(note_dir).unwrap(),
+                    target,
+                })
             },
-            note_directory: &DirectoryHandle::open(&note).unwrap(),
-            target: out.join("copy.md"),
-        })
-        .unwrap();
-        assert_eq!(result.copied_assets, 1);
-        let markdown = fs::read_to_string(out.join("copy.md")).unwrap();
-        assert!(markdown.contains("![x](copy-assets/stickymd-"));
-        assert!(markdown.contains("![remote](https://example/a.png)"));
-        assert!(markdown.contains("`![code](missing.png)`"));
-        assert_eq!(fs::read_dir(out.join("copy-assets")).unwrap().count(), 1);
-        fs::remove_dir_all(root).unwrap();
+        );
     }
 
     #[test]
     fn export_missing_local_image_fails_before_any_publish() {
-        let root = fixture();
-        let target = root.join("copy.md");
-        fs::write(root.join("present.png"), b"present").unwrap();
-        let result = export_snapshot(ExportRequest {
-            snapshot: DocumentSnapshot {
-                text: Arc::from("![ok](present.png)\n\n![x](missing.png)"),
-                generation: Generation::initial(),
-                line_ending: LineEnding::Lf,
+        contracts::export_missing_local_image_fails_before_any_publish(
+            fixture(),
+            |note_dir, snapshot, target| {
+                export_snapshot(ExportRequest {
+                    snapshot,
+                    note_directory: &DirectoryHandle::open(note_dir).unwrap(),
+                    target,
+                })
             },
-            note_directory: &DirectoryHandle::open(&root).unwrap(),
-            target: target.clone(),
-        });
-        assert!(matches!(result, Err(ExportError::LocalImage { .. })));
-        assert!(!target.exists());
-        assert!(!root.join("copy-assets").exists());
-        assert!(fs::read_dir(&root).unwrap().all(|entry| {
-            !entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".stickymd-export-")
-        }));
-        fs::remove_dir_all(root).unwrap();
+        );
     }
 
     #[test]
     fn export_denied_local_paths_preserve_existing_output() {
-        let root = fixture();
-        let target = root.join("copy.md");
-        fs::write(&target, b"previous export").unwrap();
-        for destination in [
-            "file://server/share/a.png",
-            "%5c%5cserver/share/a.png",
-            "%5c%5c.%5cpipe%5cimage",
-        ] {
-            let snapshot = DocumentSnapshot {
-                text: Arc::from(format!("![ALT]({destination})")),
-                generation: Generation::initial(),
-                line_ending: LineEnding::Lf,
-            };
-            let result = export_snapshot(ExportRequest {
-                snapshot,
-                note_directory: &DirectoryHandle::open(&root).unwrap(),
-                target: target.clone(),
-            });
-            assert!(
-                matches!(result, Err(ExportError::UnsupportedLocalPath(_))),
-                "{destination}: {result:?}"
-            );
-            assert_eq!(fs::read(&target).unwrap(), b"previous export");
-            assert!(!root.join("copy-assets").exists());
-            assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
-        }
-        fs::remove_dir_all(root).unwrap();
+        contracts::export_denied_local_paths_preserve_existing_output(
+            fixture(),
+            |note_dir, snapshot, target| {
+                export_snapshot(ExportRequest {
+                    snapshot,
+                    note_directory: &DirectoryHandle::open(note_dir).unwrap(),
+                    target,
+                })
+            },
+        );
     }
 
     #[test]
     fn export_deduplicates_sources_suffixes_existing_assets_and_replaces_markdown() {
-        let root = fixture();
-        let note = root.join("note");
-        let out = root.join("out");
-        fs::create_dir(&note).unwrap();
-        fs::create_dir(&out).unwrap();
-        let first = note.join("first.png");
-        let second = note.join("second.png");
-        fs::write(&first, b"identical bytes").unwrap();
-        fs::write(&second, b"identical bytes").unwrap();
-        fs::create_dir(out.join("copy-assets")).unwrap();
-        fs::write(out.join("copy-assets/user.txt"), b"keep").unwrap();
-        fs::write(out.join("copy.md"), b"old").unwrap();
-        let absolute = second.to_string_lossy().replace('\\', "/");
-        let source = format!(
-            "prefix\n\n![one](first.png)\n\n![two]({absolute})\n\n![again](first.png)\n\nsuffix\n"
-        );
-        let completion = export_snapshot(ExportRequest {
-            snapshot: DocumentSnapshot {
-                text: Arc::from(source),
-                generation: Generation::initial(),
-                line_ending: LineEnding::Lf,
+        contracts::export_deduplicates_sources_suffixes_existing_assets_and_replaces_markdown(
+            fixture(),
+            |note_dir, snapshot, target| {
+                export_snapshot(ExportRequest {
+                    snapshot,
+                    note_directory: &DirectoryHandle::open(note_dir).unwrap(),
+                    target,
+                })
             },
-            note_directory: &DirectoryHandle::open(&note).unwrap(),
-            target: out.join("copy.md"),
-        })
-        .unwrap();
-        assert_eq!(completion.copied_assets, 1);
-        assert_eq!(fs::read(out.join("copy-assets/user.txt")).unwrap(), b"keep");
-        assert_eq!(fs::read_dir(out.join("copy-assets-2")).unwrap().count(), 1);
-        let markdown = fs::read_to_string(out.join("copy.md")).unwrap();
-        assert_eq!(markdown.matches("copy-assets-2/stickymd-").count(), 3);
-        assert!(markdown.starts_with("prefix\n\n"));
-        assert!(markdown.ends_with("\n\nsuffix\n"));
-        fs::remove_dir_all(root).unwrap();
+        );
     }
 
     #[test]
     fn export_without_images_preserves_markdown_bytes_and_creates_no_asset_dir() {
-        let root = fixture();
-        let source = "# Exact\n\n`code`  \n\nraw <x>\n";
-        export_snapshot(ExportRequest {
-            snapshot: DocumentSnapshot {
-                text: Arc::from(source),
-                generation: Generation::initial(),
-                line_ending: LineEnding::Lf,
+        contracts::export_without_images_preserves_markdown_bytes_and_creates_no_asset_dir(
+            fixture(),
+            |note_dir, snapshot, target| {
+                export_snapshot(ExportRequest {
+                    snapshot,
+                    note_directory: &DirectoryHandle::open(note_dir).unwrap(),
+                    target,
+                })
             },
-            note_directory: &DirectoryHandle::open(&root).unwrap(),
-            target: root.join("copy.md"),
-        })
-        .unwrap();
-        assert_eq!(fs::read(root.join("copy.md")).unwrap(), source.as_bytes());
-        assert!(!root.join("copy-assets").exists());
-        fs::remove_dir_all(root).unwrap();
+        );
     }
 
     #[test]
     fn export_rejects_the_working_note_and_hard_link_alias_without_modifying_either() {
-        let root = fixture();
-        let note = root.join("note");
-        let out = root.join("out");
-        fs::create_dir(&note).unwrap();
-        fs::create_dir(&out).unwrap();
-        let working = note.join("note.md");
-        let alias = out.join("alias.md");
-        fs::write(&working, b"durable working note").unwrap();
-        fs::hard_link(&working, &alias).unwrap();
-        for target in [working.clone(), alias.clone()] {
-            let result = export_snapshot(ExportRequest {
-                snapshot: DocumentSnapshot {
-                    text: Arc::from("replacement"),
-                    generation: Generation::initial(),
-                    line_ending: LineEnding::Lf,
-                },
-                note_directory: &DirectoryHandle::open(&note).unwrap(),
-                target,
-            });
-            assert!(matches!(result, Err(ExportError::WorkingNoteTarget)));
-            assert_eq!(fs::read(&working).unwrap(), b"durable working note");
-            assert_eq!(fs::read(&alias).unwrap(), b"durable working note");
-        }
-        fs::remove_file(&alias).unwrap();
-        fs::remove_file(&working).unwrap();
-        let absent_result = export_snapshot(ExportRequest {
-            snapshot: DocumentSnapshot {
-                text: Arc::from("replacement"),
-                generation: Generation::initial(),
-                line_ending: LineEnding::Lf,
+        contracts::export_rejects_the_working_note_and_hard_link_alias_without_modifying_either(
+            fixture(),
+            |note_dir, snapshot, target| {
+                export_snapshot(ExportRequest {
+                    snapshot,
+                    note_directory: &DirectoryHandle::open(note_dir).unwrap(),
+                    target,
+                })
             },
-            note_directory: &DirectoryHandle::open(&note).unwrap(),
-            target: note.join("NOTE.MD"),
-        });
-        assert!(matches!(absent_result, Err(ExportError::WorkingNoteTarget)));
-        assert!(!note.join("NOTE.MD").exists());
-        fs::remove_dir_all(root).unwrap();
+        );
     }
 
     /// The directory moved and another took its old path after the handle was opened: the guard
@@ -680,80 +527,31 @@ mod tests {
 
     #[test]
     fn export_percent_encodes_asset_directory_and_remains_parseable_and_resolvable() {
-        let root = fixture();
-        let note = root.join("note");
-        let out = root.join("out");
-        fs::create_dir(&note).unwrap();
-        fs::create_dir(&out).unwrap();
-        fs::write(note.join("source.png"), b"asset bytes").unwrap();
-        let target = out.join("my note.md");
-        export_snapshot(ExportRequest {
-            snapshot: DocumentSnapshot {
-                text: Arc::from("before ![alt](source.png) after"),
-                generation: Generation::initial(),
-                line_ending: LineEnding::Lf,
+        contracts::export_percent_encodes_asset_directory_and_remains_parseable_and_resolvable(
+            fixture(),
+            |note_dir, snapshot, target| {
+                export_snapshot(ExportRequest {
+                    snapshot,
+                    note_directory: &DirectoryHandle::open(note_dir).unwrap(),
+                    target,
+                })
             },
-            note_directory: &DirectoryHandle::open(&note).unwrap(),
-            target: target.clone(),
-        })
-        .unwrap();
-        let markdown = fs::read_to_string(&target).unwrap();
-        assert!(markdown.contains("my%20note-assets/stickymd-"));
-        let parsed = PreviewParser
-            .parse(&DocumentSnapshot {
-                text: Arc::from(markdown),
-                generation: Generation::initial(),
-                line_ending: LineEnding::Lf,
-            })
-            .unwrap();
-        let occurrence = collect_image_occurrences(&parsed).unwrap().remove(0);
-        let resolved = resolve_local_image(&out, &occurrence.destination).unwrap();
-        assert!(resolved.is_file());
-        fs::remove_dir_all(root).unwrap();
+            resolve_local_image,
+        );
     }
 
     #[test]
     fn export_snapshot_cannot_mutate_document_authority_or_history() {
-        let root = fixture();
-        let mut document = DocumentState::loaded("before", LineEnding::Lf, None);
-        document
-            .edit(EditRequest::new(
-                document.generation(),
-                6..6,
-                " after",
-                CursorSnapshot::caret(6),
-                CursorSnapshot::caret(12),
-                EditMeta::new(EditKind::Typing, 0),
-            ))
-            .unwrap();
-        let before = (
-            document.text().to_owned(),
-            document.generation(),
-            document.saved_generation(),
-            document.is_dirty(),
-            document.can_undo(),
-            document.can_redo(),
+        contracts::export_snapshot_cannot_mutate_document_authority_or_history(
+            fixture(),
+            |note_dir, snapshot, target| {
+                export_snapshot(ExportRequest {
+                    snapshot,
+                    note_directory: &DirectoryHandle::open(note_dir).unwrap(),
+                    target,
+                })
+            },
         );
-
-        export_snapshot(ExportRequest {
-            snapshot: document.snapshot(),
-            note_directory: &DirectoryHandle::open(&root).unwrap(),
-            target: root.join("copy.md"),
-        })
-        .unwrap();
-
-        assert_eq!(
-            (
-                document.text().to_owned(),
-                document.generation(),
-                document.saved_generation(),
-                document.is_dirty(),
-                document.can_undo(),
-                document.can_redo(),
-            ),
-            before
-        );
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

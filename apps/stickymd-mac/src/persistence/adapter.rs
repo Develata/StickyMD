@@ -16,7 +16,7 @@ use stickymd_core::{ExternalFileState, PreserveExpectation};
 
 use crate::assets::{AssetPasteError, AssetStorage, AssetStorageError, prepare_and_store_paste};
 use crate::config::{ConfigStorageError, save_config_in};
-use crate::export::{ExportError, export_snapshot};
+use crate::export::export_snapshot;
 use crate::paths::RuntimePaths;
 use crate::platform::macos::file::DirectoryHandle;
 
@@ -196,12 +196,6 @@ fn paste_failure(error: AssetPasteError) -> StorageFailure {
         | AssetPasteError::NotImage => FailureKind::Failed,
     };
     StorageFailure::new(kind, error.to_string())
-}
-
-impl From<ExportError> for StorageFailure {
-    fn from(error: ExportError) -> Self {
-        Self::new(FailureKind::Failed, error.to_string())
-    }
 }
 
 impl From<ConfigStorageError> for StorageFailure {
