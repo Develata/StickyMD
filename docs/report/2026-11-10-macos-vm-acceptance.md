@@ -141,3 +141,21 @@ USER 批准按上文建议修改（`09` macOS 节、`10` macOS 门已记录）�
 ## 人工收据：光标闪烁（2026-11-11）
 
 USER 在本机桌面运行 `dist/macos/StickyMD.app`（`0fa8754` 的 release，可执行文件 SHA-256 `240d104b2a82a741743a830b812e0e8eaf3357bd32f6aaa61bbdbc7692cff41f`，与上文 VM 资源测量为同一二进制），点进正文后确认：光标可见，闪烁正常。据此 P16-W10 记 `MANUAL PASS`；P16-R02 的 VM 读数（0.001%–0.002%）对应的是在闪的光标，记 `AUTOMATED PASS`。`04d7396` 只把唤醒计算提为方法并补测，行为不变，未再做人工复查。
+
+## Resolution：宿主共享后的最终二进制复跑（2026-11-11）
+
+对象：`10127b2` 的 release。用 `apps/stickymd-mac/packaging/build-app.sh` 在干净工作区重新打包，与 `dist/macos/StickyMD.app` 逐字节相同（`diff -r` 无差异）。可执行文件 SHA-256 为 `b13088953a90e4df8ed57f5835f5ddd14641c6774e0bc096035df94e98060b56`。驱动程序为 unwind 构建，SHA-256 前缀 `c7b22bb4fe0eef59a1dc`。用的是同一台虚拟机，自动下载已关闭。
+
+主机连不上虚拟机是因为 macOS 的“本地网络”隐私权限：路由和 ARP 都正常，但从 Claude Code 进程发出的连接被内核以 `No route to host` 拒绝；同一时刻由 launchd 启动的 `nc` 能连通 22 端口。按 USER 的要求，SSH 主连接改由 Terminal.app 打开，测试命令只复用它的本地套接字。这与产品无关。
+
+- `mac-resources`：每种视图 5 次，全部有效，结论 `VISIBLE_SCENARIOS_PASS`（`acceptance_status` 仍为 `INCOMPLETE`，与上一轮相同）。证据 SHA-256 `aa20c4e02dbe8fcf6611eda981e134ae6375dc46b2330facbe683e065a942dfb`，保存在 `dist/evidence/mac-vm-2026-11-10/mac-resources-r3/`。
+
+| 视图 | 内存 中位 / 最大（上限） | 空闲 CPU 中位 / 最大 | 中断唤醒 中位 / 最大（次/秒） |
+| --- | --- | --- | --- |
+| Source | 46.96 / 47.16 MiB（72） | 0.001% / 0.001% | 0.033 / 0.050 |
+| Preview | 50.19 / 50.39 MiB（96） | 0.001% / 0.001% | 0.033 / 0.033 |
+| Split | 50.36 / 50.52 MiB（128） | 0.001% / 0.001% | 0.033 / 0.033 |
+
+- `mac-gui` 整套：PASS 8（W02、W03、W04、W07、W08、W09、K02、E01）、FAIL 0、NOT_TESTED 12。W03 悬停后 261 ms 到达静止位置（期限 305 ms），离开后 654 ms 收回到位（期限 730 ms）；W04 分别为 279 ms（期限 325 ms）与 664 ms（期限 727 ms）。证据 SHA-256 `036b3529bd971931fc63f93b78768557528c4fe1b8cc2528fd66c64928e3511c`，保存在 `dist/evidence/mac-vm-2026-11-10/mac-gui-r8/`。
+
+结论：宿主共享的两步没有改变本轮虚拟机能观察到的 macOS 行为，资源读数与 `0fa8754` 那一轮持平。这不覆盖 Windows；Windows 桌面回归仍是 P16-W15。

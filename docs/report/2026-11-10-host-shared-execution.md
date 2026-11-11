@@ -65,3 +65,18 @@ macOS 与 Linux 的差异集中在少数调用，适合同一个 POSIX 实现加
 1. 第一步：纯流程与契约测试移入 `stickymd-app`。
 2. 现在就在 macOS 宿主内把 POSIX 通用部分与 macOS 专有部分分开（不移动文件）。
 3. 第二步（`stickymd-posix`）原则同意，开始 Debian 时再单独批准。
+
+## Resolution：批准、执行与验收（2026-11-11）
+
+USER 2026-11-11 批准两步一次完成，不再按上文第 3 项等到开始 Debian 时单独批准；`stickymd-posix` 只放 macOS 实现，Linux 分支留到 Debian。执行设计、提交与出入记录在 [宿主共享任务](../tasks/phase-16-host-sharing.md)。
+
+codex-reviewer 第 8 轮审查 `ad3f6c3..8f1a514`：
+
+| 发现 | 核实 | 处理 |
+| --- | --- | --- |
+| BLOCKER：托盘一步把 Windows 的 `phase8_show_hide_label_describes_the_action`、`phase8_tray_icon_is_fully_owned_rgba` 移进共享层并去掉前缀，Phase 8 按 `phase8_` 过滤，两项不再运行 | 属实，违反“测试名不变” | `10127b2`：两宿主按原名恢复，函数体调用共享场景；Windows 135 个测试名与 `ad3f6c3` 逐一相同 |
+| NEEDS_VERIFICATION：最终二进制的桌面回归未做 | 属实 | macOS：虚拟机用 `10127b2` 的 release 复跑 `mac-resources` 与 `mac-gui`，全部可运行场景通过，见 [macOS 虚拟机验收](2026-11-10-macos-vm-acceptance.md) 末节。Windows：P16-W15 仍 `NOT TESTED` |
+
+第 9 轮审查 `10127b2`：PASS，无阻断。复核了测试身份、Phase 8 的选择、断言、`testing` 特性不进入产品构建。它要求的执行证据：CI 运行 `42970125576`（`10127b2`）全部通过，其中 “Windows x64 headless (all, tests)” 日志显示 `platform::windows::tray::tests::phase8_show_hide_label_describes_the_action ... ok` 与 `phase8_tray_icon_is_fully_owned_rgba ... ok`；Windows 格式与 lint、macOS 测试与 lint 同在该运行中通过。
+
+未实证：Windows 桌面上的托盘、导出、配置保存与预览图片行为，待 P16-W15 在 Windows 机器上运行。

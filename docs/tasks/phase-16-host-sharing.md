@@ -2,7 +2,7 @@
 
 ## Completion State
 
-In Progress。USER 2026-11-11 批准把 [宿主共享执行报告](../report/2026-11-10-host-shared-execution.md) 的两步一次完成；`stickymd-posix` 只放 macOS 实现，Linux 分支留到 Debian。
+Completed（2026-11-11，Exit 三项满足）；Windows 桌面回归 P16-W15 仍 `NOT TESTED`，需在 Windows 机器上运行。USER 2026-11-11 批准把 [宿主共享执行报告](../report/2026-11-10-host-shared-execution.md) 的两步一次完成；`stickymd-posix` 只放 macOS 实现，Linux 分支留到 Debian。
 
 代码已完成（2026-11-11）：第二步 `663b996`（搬移与登记）、`1991344`（`sys` 接缝）；第一步托盘 `168b747`、图片读取 `904a83b`、配置 `6dea3be`、导出 `f86e603`。与计划的出入：
 - 托盘放在 `stickymd-desktop::tray`；图片读取的两个纯函数放在 `stickymd-render::image`，与 `MAX_ENCODED_IMAGE_BYTES` 同处；配置与导出放在 `stickymd-app`；共享场景在 `stickymd-desktop::testing::contracts`。
@@ -10,7 +10,7 @@ In Progress。USER 2026-11-11 批准把 [宿主共享执行报告](../report/202
 - 粘贴未动：两宿主各有两个与 `stickymd-app` 重复的纯函数测试，删去会改变 Windows 测试名，收益小，保留。
 - 每一步的 Windows 测试由 CI 运行；Windows 桌面回归加入 P16-W15。
 
-尚待：虚拟机里用最终二进制重跑、codex-reviewer 审查全部范围、P16-W15。
+审查第 8 轮的阻断（两项 Windows 托盘测试改名后 Phase 8 不再运行）由 `10127b2` 修复，第 9 轮复核通过；虚拟机用 `10127b2` 的 release 复跑，`mac-resources` 全部通过，`mac-gui` 可运行的 8 项全部通过（其余 12 项仍为 NOT_TESTED）。核实与证据见 [宿主共享执行报告](../report/2026-11-10-host-shared-execution.md) 末节与 [macOS 虚拟机验收](../report/2026-11-10-macos-vm-acceptance.md) 末节。
 
 ## Goal
 
