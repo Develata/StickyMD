@@ -627,7 +627,11 @@ fn keys_go_only_to_the_focused_target_window() {
     // The Go to Folder sheet is not a Dialog target: its Return has its own check.
     assert!(key_target(Ok(42), window("", "GoToWindow"), 42, KeyTarget::Dialog).is_err());
     // Focus taken by another application after activation: nothing is injected.
-    assert!(key_target(Ok(7), note(), 42, KeyTarget::Note).unwrap_err().contains("PID 7"));
+    assert!(
+        key_target(Ok(7), note(), 42, KeyTarget::Note)
+            .unwrap_err()
+            .contains("PID 7")
+    );
     // The product is frontmost but another of its windows has focus.
     assert!(key_target(Ok(42), dialog(), 42, KeyTarget::Note).is_err());
     assert!(key_target(Ok(42), note(), 42, KeyTarget::Dialog).is_err());
@@ -636,7 +640,15 @@ fn keys_go_only_to_the_focused_target_window() {
     assert!(key_target(Ok(42), window("Other", ""), 42, KeyTarget::Dialog).is_err());
     // Unreadable focus injects nothing.
     assert!(key_target(Err("AX error -25204".into()), note(), 42, KeyTarget::Note).is_err());
-    assert!(key_target(Ok(42), Err("AXFocusedWindow absent".into()), 42, KeyTarget::Note).is_err());
+    assert!(
+        key_target(
+            Ok(42),
+            Err("AXFocusedWindow absent".into()),
+            42,
+            KeyTarget::Note
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -659,7 +671,10 @@ fn an_unreadable_title_at_the_deadline_is_not_a_failed_cancel() {
         "{}",
         row.json()
     );
-    assert_eq!(verdict(&row, "Cmd+Q: process keeps running"), Some(Verdict::Pass));
+    assert_eq!(
+        verdict(&row, "Cmd+Q: process keeps running"),
+        Some(Verdict::Pass)
+    );
 }
 
 #[test]
@@ -669,10 +684,16 @@ fn the_export_check_is_about_the_file_the_dialog_was_aimed_at() {
     assert_eq!(verdict(&row, name), Some(Verdict::Pass), "{}", row.json());
     let mut exporting = Quitting::new();
     exporting.exports_on_end = true;
-    assert_eq!(verdict(&run(&mut exporting, "W12"), name), Some(Verdict::Fail));
+    assert_eq!(
+        verdict(&run(&mut exporting, "W12"), name),
+        Some(Verdict::Fail)
+    );
     let mut unaimed = Quitting::new();
     unaimed.aim_fails = true;
-    assert_eq!(verdict(&run(&mut unaimed, "W12"), name), Some(Verdict::NotTested));
+    assert_eq!(
+        verdict(&run(&mut unaimed, "W12"), name),
+        Some(Verdict::NotTested)
+    );
 }
 
 #[test]
@@ -683,11 +704,38 @@ fn return_goes_only_to_the_go_to_folder_path_field() {
     assert!(goto_field(Ok(42), Ok(true), field("AXTextField", path), 42, path).is_ok());
     assert!(goto_field(Ok(42), Ok(true), field("AXComboBox", path), 42, path).is_ok());
     // The sheet already gone with the save dialog focused: Return would confirm the export.
-    assert!(goto_field(Ok(42), Ok(false), field("AXTextField", "export.md"), 42, path).is_err());
+    assert!(
+        goto_field(
+            Ok(42),
+            Ok(false),
+            field("AXTextField", "export.md"),
+            42,
+            path
+        )
+        .is_err()
+    );
     // The sheet open but focus on another control or another value.
     assert!(goto_field(Ok(42), Ok(true), field("AXButton", ""), 42, path).is_err());
-    assert!(goto_field(Ok(42), Ok(true), field("AXTextField", "/elsewhere"), 42, path).is_err());
+    assert!(
+        goto_field(
+            Ok(42),
+            Ok(true),
+            field("AXTextField", "/elsewhere"),
+            42,
+            path
+        )
+        .is_err()
+    );
     assert!(goto_field(Ok(7), Ok(true), field("AXTextField", path), 42, path).is_err());
-    assert!(goto_field(Ok(42), Err("AX -25204".into()), field("AXTextField", path), 42, path).is_err());
+    assert!(
+        goto_field(
+            Ok(42),
+            Err("AX -25204".into()),
+            field("AXTextField", path),
+            42,
+            path
+        )
+        .is_err()
+    );
     assert!(goto_field(Ok(42), Ok(true), Err("no focus".into()), 42, path).is_err());
 }

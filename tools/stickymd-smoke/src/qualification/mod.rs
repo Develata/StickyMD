@@ -295,7 +295,9 @@ pub(crate) fn validate_public_evidence_path(root: &Path, path: &Path) -> Result<
         );
     }
     if reserved_paths::is_mac_ledger_path(root, path) {
-        return Err("the macOS GUI ledger is owned by mac-ledger; use a diagnostic evidence path".into());
+        return Err(
+            "the macOS GUI ledger is owned by mac-ledger; use a diagnostic evidence path".into(),
+        );
     }
     if reserved_paths::is_manual_store_path(root, path) || decisions::is_internal_path(root, path) {
         return Err(

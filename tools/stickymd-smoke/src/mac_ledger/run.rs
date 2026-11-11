@@ -214,7 +214,11 @@ mod tests {
         let directory = crate::mac_common::session::Session::new().unwrap();
         let ledger = directory.path().join("records.jsonl");
         let first = super::lock(&ledger).unwrap();
-        assert!(super::lock(&ledger).unwrap_err().contains("another mac-ledger writer"));
+        assert!(
+            super::lock(&ledger)
+                .unwrap_err()
+                .contains("another mac-ledger writer")
+        );
         drop(first);
         assert!(super::lock(&ledger).is_ok());
     }
