@@ -23,3 +23,4 @@ pub mod shell;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod title;
+pub mod tray;

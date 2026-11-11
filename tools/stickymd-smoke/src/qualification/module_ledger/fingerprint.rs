@@ -424,6 +424,7 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-desktop/src/testing.rs",
     "crates/stickymd-desktop/src/testing/",
     "crates/stickymd-desktop/src/title.rs",
+    "crates/stickymd-desktop/src/tray.rs",
     "crates/stickymd-desktop/src/frame/mod.rs",
     "crates/stickymd-desktop/src/frame/convert.rs",
     "crates/stickymd-desktop/src/frame/ledger.rs",

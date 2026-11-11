@@ -27,9 +27,10 @@ use crate::platform::macos::file_watch::{FileWatchSignal, NoteDirectoryWatcher};
 use crate::platform::macos::instance::InstanceGuard;
 use crate::platform::macos::pointer_band::PointerBandWatch;
 use crate::platform::macos::shell::open_target;
-use crate::platform::macos::tray::{TrayController, tray_icon};
+use crate::platform::macos::tray::TrayController;
 use crate::platform::macos::window::{PointerProbe, join_all_desktops};
 use crate::preview::LocalImageSource;
+use stickymd_desktop::tray::tray_icon;
 
 mod monitor_source;
 mod window;

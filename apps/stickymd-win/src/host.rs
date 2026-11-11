@@ -28,9 +28,10 @@ use crate::platform::windows::message_box;
 use crate::platform::windows::program_dir::RuntimePaths;
 use crate::platform::windows::shell::open_target;
 use crate::platform::windows::single_instance::SingleInstanceGuard;
-use crate::platform::windows::tray::{TrayController, tray_icon};
+use crate::platform::windows::tray::TrayController;
 use crate::preview::LocalImageSource;
 use crate::startup::StartupDiagnostics;
+use stickymd_desktop::tray::tray_icon;
 
 mod monitor_source;
 mod window;
