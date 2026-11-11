@@ -50,3 +50,30 @@
   - 关机；
   - 10 s 之后的行为；
   - Automation 授权在其他环境里会不会弹窗。本虚拟机里，我们没有授予过 Automation，但授权历史没有核实；每次调用都在约 0.1 s 内返回 `true`。
+
+## Resolution：按方案 A 修复（2026-11-12）
+
+USER 原话：“按方案 A 修”。改动如下：
+
+- `apps/stickymd-mac/src/platform/macos/dialog.rs` 在 `runModal` 前把保存面板的 `preventsApplicationTerminationWhenModal` 设为 `NO`。
+- `09` macOS 映射“系统终止”一行补上这一机制说明。
+- `tools/stickymd-smoke/src/qualification/manual_observation/coverage/sources.rs` 更新 plan 09 的整份文档摘要（受约束的各节都没有变）。
+
+修复后的 release 可执行文件 SHA-256 为 `5cd37a465990f295e9a47fbe751c23b969bdcaaed0fbc273cd081550494bc792`。
+
+虚拟机复验，证据在 `dist/evidence/mac-vm-2026-11-12/`：
+
+- `mac-gui-r13`（驱动 `7848baa9…`）：W12 能自动化的检查全部通过。请求一到对话框立即关闭，程序随即退出；对准的会话中 `export.md` 没有生成；请求前磁盘上是旧字节，退出后是新文本。
+- `mac-gui-r13-w12-e01`（最终驱动 `a1bc2a7f…`，`mac-gui.json` SHA-256 `771c1fe4bfd777b9cef0c5a3a8aae1973ba4c4db80c1f8773b75be912374a839`）：W12 结果同上，E01 也通过。
+
+codex-reviewer 审查（第 5 轮）没有发现阻断项，并核实了：
+
+- objc2 调用的选择子与类型都正确；
+- 模态分支的执行顺序是 `abortModal`、投递退出、回 `NSTerminateCancel`，再在对话框退栈后运行退出屏障；
+- Cmd+Q 与托盘退出不受影响；
+- Windows 没有改动。
+
+仍未覆盖：
+
+- 真实注销与关机；
+- `show_error` 用的 `NSAlert`。它的窗口是否同样阻止终止没有核实：有些信息型提示默认就不阻止终止，而且致命启动错误可能出现在终止钩子安装之前。这不在本次批准范围内，留作后续。
