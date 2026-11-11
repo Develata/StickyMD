@@ -2,7 +2,7 @@
 
 ## Completion State
 
-Completed（2026-11-11，Exit 三项满足）；Windows 桌面回归 P16-W15 仍 `NOT TESTED`，需在 Windows 机器上运行。USER 2026-11-11 批准把 [宿主共享执行报告](../report/2026-11-10-host-shared-execution.md) 的两步一次完成；`stickymd-posix` 只放 macOS 实现，Linux 分支留到 Debian。
+Completed（2026-11-11，Exit 三项满足）；Windows 桌面回归 P16-W15 已于 2026-11-11 在 Windows 上运行（`0653d2e` 的 release，桌面 preflight 全部通过，未发现回归；未测部分 USER 豁免，见 [Windows 回归](../report/2026-11-11-windows-p16-w15-regression.md)）。USER 2026-11-11 批准把 [宿主共享执行报告](../report/2026-11-10-host-shared-execution.md) 的两步一次完成；`stickymd-posix` 只放 macOS 实现，Linux 分支留到 Debian。
 
 代码已完成（2026-11-11）：第二步 `663b996`（搬移与登记）、`1991344`（`sys` 接缝）；第一步托盘 `168b747`、图片读取 `904a83b`、配置 `6dea3be`、导出 `f86e603`。与计划的出入：
 - 托盘放在 `stickymd-desktop::tray`；图片读取的两个纯函数放在 `stickymd-render::image`，与 `MAX_ENCODED_IMAGE_BYTES` 同处；配置与导出放在 `stickymd-app`；共享场景在 `stickymd-desktop::testing::contracts`。

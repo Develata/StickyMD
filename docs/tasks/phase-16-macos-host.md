@@ -60,4 +60,4 @@ cargo run --quiet --locked -p stickymd-smoke -- mac-resources --app dist/macos/S
 
 GUI 驱动只在专用 Tart macOS 27.2 VM（自动登录、解锁桌面、ABC/US 输入源）内运行：先用 `CARGO_PROFILE_RELEASE_PANIC=unwind cargo build --locked --release -p stickymd-smoke` 构建，将该 CLI 与 `StickyMD.app` 复制进 VM，再以登录用户执行 `./stickymd-smoke mac-gui --app "$PWD/StickyMD.app" --out "$PWD/gui-evidence"`（可加 `--only W03,W04`）。VM 检测先于路径访问，缺少 Accessibility/PostEvent 时明确拒绝，Screen Recording 仅用于可选截图；不得在主人的 Mac 上运行，也不得用 `--allow-host` 绕过本次限制。每场景使用独立程序目录，原子输出 `mac-gui.json`，子检查缺口保留 `NOT_TESTED`；具体权限、外部 oracle 与 VM 首跑待验证项见 [smoke README](../../tools/stickymd-smoke/README.md#macos-gui-evidence-in-a-dedicated-vm)。当前只实现并验证无 GUI 的驱动逻辑，首次真实运行等待 VM 就绪，验收矩阵不改为通过。
 
-共享层改动的 Windows 桌面回归（S2、S4、S6、S7）只能在 Windows 机器上运行；S8 按 USER 决定不单独回归。
+共享层改动的 Windows 桌面回归（S2、S4、S6、S7）只能在 Windows 机器上运行；S8 按 USER 决定不单独回归。2026-11-11 已在 Windows 上运行 P16-W15，未发现回归，未测部分 USER 豁免（[Windows 回归](../report/2026-11-11-windows-p16-w15-regression.md)）。

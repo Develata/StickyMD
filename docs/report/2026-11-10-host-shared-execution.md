@@ -80,3 +80,7 @@ codex-reviewer 第 8 轮审查 `ad3f6c3..8f1a514`：
 第 9 轮审查 `10127b2`：PASS，无阻断。复核了测试身份、Phase 8 的选择、断言、`testing` 特性不进入产品构建。它要求的执行证据：CI 运行 `42970125576`（`10127b2`）全部通过，其中 “Windows x64 headless (all, tests)” 日志显示 `platform::windows::tray::tests::phase8_show_hide_label_describes_the_action ... ok` 与 `phase8_tray_icon_is_fully_owned_rgba ... ok`；Windows 格式与 lint、macOS 测试与 lint 同在该运行中通过。
 
 未实证：Windows 桌面上的托盘、导出、配置保存与预览图片行为，待 P16-W15 在 Windows 机器上运行。
+
+## Resolution：Windows 桌面回归（2026-11-11）
+
+P16-W15 已在 Windows 11 25H2（100% DPI）上用 `0653d2e` 的 release 运行：phase 00、07、08、15 通过；桌面 preflight G4-01 托盘（20/20）、G3-02 导出含图片（4/4）、G4-02 贴边与透明度弹窗（53/53）、G4-03 键位与查找（15/15）全部通过，未发现回归。上节“未实证”中的托盘与导出由此覆盖，配置只验证了写入；预览图片、配置失败路径、S7 与 S9 高 DPI 未测，USER 豁免，遇到问题再测。详见 [Windows 回归](2026-11-11-windows-p16-w15-regression.md)。
