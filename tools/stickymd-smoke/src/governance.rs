@@ -837,7 +837,7 @@ fn verify_phase8_shell_artifacts(root: &Path) -> Result<(), String> {
 }
 
 /// The 1-based line of the first `unsafe {` with no `SAFETY:` on it or the six lines before it.
-/// Shared by the Windows and macOS hosts, each applied to its own platform directory.
+/// Shared by the Windows/macOS platform directories and the POSIX native crate.
 fn unsafe_block_without_safety(content: &str) -> Option<usize> {
     let lines = content.lines().collect::<Vec<_>>();
     lines.iter().enumerate().find_map(|(index, line)| {

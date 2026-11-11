@@ -86,6 +86,22 @@ fn ci_g5_image_fixtures_select_both_consumers_and_their_reverse_dependencies() {
 }
 
 #[test]
+fn posix_sources_select_the_macos_host_without_windows_or_portable_lanes() {
+    for path in [
+        "crates/stickymd-posix/src/lib.rs",
+        "crates/stickymd-posix/src/file.rs",
+        "crates/stickymd-posix/src/sys/macos.rs",
+    ] {
+        let selection = selected(&[path]);
+        assert!(!selection.full);
+        assert_eq!(selection.modules, [Module::Posix, Module::Mac]);
+        let checks = crate::ci::Checks::for_modules(false, &selection.modules);
+        assert!(checks.mac && checks.dependency);
+        assert!(!checks.quality && !checks.headless && !checks.release && !checks.portable);
+    }
+}
+
+#[test]
 fn ci_shared_and_unknown_inputs_choose_full_even_alongside_known_changes() {
     for path in [
         "Cargo.toml",

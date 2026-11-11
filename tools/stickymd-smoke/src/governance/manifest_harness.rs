@@ -526,7 +526,9 @@ mod tests {
             "crates/stickymd-render/Cargo.toml",
             "crates/stickymd-app/Cargo.toml",
             "crates/stickymd-desktop/Cargo.toml",
+            "crates/stickymd-posix/Cargo.toml",
             "apps/stickymd-win/Cargo.toml",
+            "apps/stickymd-mac/Cargo.toml",
             "tools/stickymd-smoke/Cargo.toml",
         ] {
             let manifest = std::fs::read_to_string(root.join(relative)).unwrap();

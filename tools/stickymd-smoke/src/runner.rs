@@ -1420,6 +1420,8 @@ fn phase16_mac_tests() -> Task {
             "-p",
             "stickymd-desktop",
             "-p",
+            "stickymd-posix",
+            "-p",
             "stickymd-mac",
             "--locked",
         ],
@@ -1617,6 +1619,8 @@ mod tests {
                 "stickymd-app",
                 "-p",
                 "stickymd-desktop",
+                "-p",
+                "stickymd-posix",
                 "-p",
                 "stickymd-mac",
                 "--locked"

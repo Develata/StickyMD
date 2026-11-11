@@ -350,6 +350,8 @@ fn plans_are_explicitly_unexecuted_and_cannot_be_candidate_receipts() {
 fn the_macos_host_is_refused_off_macos_and_only_there() {
     for (modules, macos, refused) in [
         (vec![Module::Mac], false, true),
+        (vec![Module::Posix], false, true),
+        (vec![Module::Posix], true, false),
         (vec![Module::Core, Module::Mac], false, true),
         (Module::ALL.to_vec(), false, true),
         (vec![Module::Mac], true, false),
@@ -389,8 +391,25 @@ fn the_macos_host_is_selected_by_package_and_narrows_like_any_module() {
 }
 
 #[test]
+fn the_posix_module_narrows_tests_to_its_package() {
+    let tasks = plan(&request(&[Module::Posix], Mode::Tests)).unwrap();
+    let tests = tasks
+        .iter()
+        .find_map(|task| match task {
+            Task::Cargo {
+                id: TaskId::WorkspaceTests,
+                args,
+                ..
+            } => Some(args),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(tests, &["test", "--locked", "-p", "stickymd-posix"]);
+}
+
+#[test]
 fn workspace_membership_drift_fails_closed() {
-    let listing = "stickymd-core v0.1.0 (path with spaces)\n\nstickymd-render v0.1.0\n\nstickymd-app v0.1.0\n\nstickymd-desktop v0.1.0\n\nstickymd-win v0.1.0\n\nstickymd-mac v0.1.0\n\nstickymd-smoke v0.1.0\n";
+    let listing = "stickymd-core v0.1.0 (path with spaces)\n\nstickymd-render v0.1.0\n\nstickymd-app v0.1.0\n\nstickymd-desktop v0.1.0\n\nstickymd-win v0.1.0\n\nstickymd-mac v0.1.0\n\nstickymd-posix v0.1.0\n\nstickymd-smoke v0.1.0\n";
     assert!(verify_workspace_listing(listing).is_ok());
     assert!(verify_workspace_listing("").is_err());
     assert!(verify_workspace_listing(&listing.replace("stickymd-core", "renamed-core")).is_err());

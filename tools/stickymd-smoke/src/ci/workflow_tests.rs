@@ -64,6 +64,12 @@ fn ci_workflow_wires_all_selected_lanes_and_fails_closed_at_the_aggregate_gate()
     assert!(mac.contains("@($env:CI_MAC_LINT_ARGS | ConvertFrom-Json -ErrorAction Stop)"));
     assert!(mac.contains("@($env:CI_MAC_TEST_ARGS | ConvertFrom-Json -ErrorAction Stop)"));
     assert!(!mac.contains("continue-on-error"));
+    for package in ["stickymd-mac", "stickymd-posix"] {
+        assert!(
+            !mac.contains(package),
+            "macOS packages must come from projected args"
+        );
+    }
     for output in ["mac_needed", "mac_lint_args", "mac_test_args"] {
         assert!(plan.contains(&format!("{output}: ${{{{ steps.plan.outputs.{output} }}}}")));
         assert!(plan.contains(&format!("'{output}'")));
@@ -76,6 +82,7 @@ fn ci_workflow_wires_all_selected_lanes_and_fails_closed_at_the_aggregate_gate()
         "portable-core",
     ] {
         assert!(!job(&workflow, name).contains("stickymd-mac"), "{name}");
+        assert!(!job(&workflow, name).contains("stickymd-posix"), "{name}");
     }
     let headless = job(&workflow, "windows-headless");
     assert!(headless.contains("matrix: ${{ fromJSON(needs.plan.outputs.windows_matrix) }}"));

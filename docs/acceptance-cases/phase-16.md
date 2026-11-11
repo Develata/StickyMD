@@ -2,6 +2,8 @@
 
 本矩阵验证 macOS 宿主（[`11` Phase 16 节](../plan/11_testing_and_release.md#phase-16-macos-host)，[`02` macOS 节](../plan/02_positioning_and_scope.md#macos-host)）。它不是资格化 suite，不产生 exact-candidate 证据。未运行的项保持 `NOT TESTED`。
 
+原生 POSIX 层位于 `crates/stickymd-posix`；`phase 16` 同时运行它与 macOS 宿主的测试。登记、原生边界与 CI 投影由 `stickymd-smoke` 测试和 `phase 00` 检查。
+
 ## M0 基线
 
 | ID | Requirement | Mode | Evidence | Status |
@@ -20,12 +22,12 @@
 | P16-S05 | 保留 canonical：内容未变改名；内容已变移回并报 `Changed`；移回失败报失败，文件不丢 | Automated | `persistence::storage::tests` | AUTOMATED PASS |
 | P16-S06 | 卷不支持 `RENAME_EXCL` 时提示后退出，不回退 | Automated | exFAT 映像 | AUTOMATED PASS |
 | P16-S07 | Program Directory：bundle 内取 `.app` 所在目录，开发构建取可执行文件父目录 | Automated | `paths::tests` | AUTOMATED PASS |
-| P16-S08 | 同目录第二实例取锁失败，在任何 durable 文件创建前退出 | Automated | `platform::macos::instance::tests` | AUTOMATED PASS |
-| P16-S09 | 第二实例经 socket 唤醒第一实例；socket 路径不超过 104 字节 | Automated | `platform::macos::instance::tests` | AUTOMATED PASS |
+| P16-S08 | 同目录第二实例取锁失败，在任何 durable 文件创建前退出 | Automated | `stickymd-posix::instance::tests` | AUTOMATED PASS |
+| P16-S09 | 第二实例经 socket 唤醒第一实例；socket 路径不超过 104 字节 | Automated | `stickymd-posix::instance::tests` | AUTOMATED PASS |
 | P16-S10 | 受管图片：未引用不移动不删除，`sync` 报 deferred | Automated | `assets::storage::tests` | AUTOMATED PASS |
 | P16-S11 | 监视：外部修改产生 hint；`note/` 被移走转 watcher failure | Automated | `platform::macos::file_watch::tests` | AUTOMATED PASS |
 | P16-S12 | 新建笔记、没有换行或两种换行一样多的已有笔记用 LF；放弃恢复后重建的缺失笔记也用 LF（`05` 2026-11-10 修订） | Automated | `startup::bootstrap::tests`；`stickymd-core` 的 `line_ending`、`persistence`、`document` 测试；`stickymd-app` 的 `flow::recovery::tests` | AUTOMATED PASS |
-| P16-S13 | 临时文件另有名称（硬链接）时拒绝，正文不被清空 | Automated | `platform::macos::file::tests` | AUTOMATED PASS |
+| P16-S13 | 临时文件另有名称（硬链接）时拒绝，正文不被清空 | Automated | `stickymd-posix::file::tests` | AUTOMATED PASS |
 | P16-S14 | 运行中 `note/` 被换成另一个目录：资产与配置仍落在原目录，不写入新目录；目录被删除重建后两者保持失败，不写入重建的目录 | Automated | `persistence::adapter::tests` | AUTOMATED PASS |
 | P16-S15 | 资产临时名已被占用时不删除；失败只清理本次创建的文件 | Automated | `assets::storage::tests` | AUTOMATED PASS |
 

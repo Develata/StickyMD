@@ -251,7 +251,7 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 | 里程碑 | 交付 | 出口 |
 | --- | --- | --- |
 | M0 | 基线：macOS 移除没有 `head` 表的字体 | 四个共享 crate 的测试在 macOS 全部通过 |
-| M1 | 建立 `apps/stickymd-mac` 并同时登记 `unsafe` 治理、CI 选择与指纹归属；存储、单实例、监视、启动 | 真实存储通过 `storage_conformance!`；`05` macOS 节的失败路径有测试 |
+| M1 | 建立 `apps/stickymd-mac` 与原生 POSIX 层 `crates/stickymd-posix`，同时登记 `unsafe` 治理、CI 选择与指纹归属；存储、单实例、监视、启动 | 真实存储通过 `storage_conformance!`；`05` macOS 节的失败路径有测试；macOS 测试与 clippy 显式包含两个 crate |
 | M2 | 窗口、托盘、唤醒、光标图层、系统终止；共享层 S2、S4、S6、S7、S8 | Windows 现有断言不变（S7、S8 按批准的新行为更新）；真实桌面项按验收表人工确认 |
 | M3 | 输入、剪贴板、导出；共享层 S3 | `08` macOS 节的格式验证；基线测量 |
 | M4 | `.app` 打包脚本、ad-hoc 签名、人工验收清单 | 未运行项保持 `NOT TESTED` |

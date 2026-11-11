@@ -208,8 +208,9 @@ fn path_domains(path: &str) -> u64 {
 /// keep their own rules, so a change there still invalidates the modules.
 ///
 /// `apps/stickymd-mac/` has no qualification of its own: its acceptance is `phase-16.md`, which
-/// the module ledger neither reads nor records (plan 11 Phase 16).
-const UNQUALIFIED_HOSTS: &[&str] = &["apps/stickymd-mac/"];
+/// the module ledger neither reads nor records (plan 11 Phase 16). `crates/stickymd-posix/` is the
+/// native POSIX layer of the macOS (later the Debian) host and is empty on Windows.
+const UNQUALIFIED_HOSTS: &[&str] = &["apps/stickymd-mac/", "crates/stickymd-posix/"];
 
 fn is_unqualified_host(path: &str) -> bool {
     UNQUALIFIED_HOSTS

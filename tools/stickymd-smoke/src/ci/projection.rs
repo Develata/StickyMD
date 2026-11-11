@@ -60,21 +60,28 @@ pub(super) fn json(head: &str, base: Option<&str>, dirty: bool, selection: &Sele
         }
     }
     // The macOS job owns the macOS host and runs the shared crates it is built on, natively:
-    // off macOS the host is a stub without tests (plan 11 Phase 16).
+    // off macOS the host and POSIX layer have no tests (plan 11 Phase 16). Include POSIX tests
+    // whenever the host runs: testing a dependent package does not run its dependency's tests.
     let mut mac_test = vec!["test", "--locked"];
     for module in [
         Module::Core,
         Module::Render,
         Module::App,
         Module::Desktop,
+        Module::Posix,
         Module::Mac,
     ] {
-        if selection.full || selection.modules.contains(&module) {
+        if selection.full
+            || selection.modules.contains(&module)
+            || (module == Module::Posix && selection.modules.contains(&Module::Mac))
+        {
             mac_test.extend(["-p", module.cargo_name()]);
         }
     }
     let mac_lint = [
         "clippy",
+        "-p",
+        Module::Posix.cargo_name(),
         "-p",
         Module::Mac.cargo_name(),
         "--all-targets",
@@ -169,8 +176,31 @@ mod tests {
             "\"release_needed\":false",
             "\"portable_needed\":false",
             "\"mac_needed\":true",
-            "\"mac_lint_args\":[\"clippy\",\"-p\",\"stickymd-mac\",\"--all-targets\",\"--locked\",\"--\",\"-D\",\"warnings\"]",
-            "\"mac_test_args\":[\"test\",\"--locked\",\"-p\",\"stickymd-mac\"]",
+            "\"mac_lint_args\":[\"clippy\",\"-p\",\"stickymd-posix\",\"-p\",\"stickymd-mac\",\"--all-targets\",\"--locked\",\"--\",\"-D\",\"warnings\"]",
+            "\"mac_test_args\":[\"test\",\"--locked\",\"-p\",\"stickymd-posix\",\"-p\",\"stickymd-mac\"]",
+        ] {
+            assert!(plan.contains(fragment), "{fragment}: {plan}");
+        }
+    }
+
+    #[test]
+    fn a_posix_change_projects_both_native_packages_and_no_windows_jobs() {
+        let plan = json(
+            &"a".repeat(40),
+            Some(&"b".repeat(40)),
+            false,
+            &super::super::selection::select(&["crates/stickymd-posix/src/file.rs".to_owned()]),
+        );
+        for fragment in [
+            "\"modules\":[\"posix\",\"mac\"]",
+            "\"windows_matrix\":{\"include\":[]}",
+            "\"quality_needed\":false",
+            "\"headless_needed\":false",
+            "\"release_needed\":false",
+            "\"portable_needed\":false",
+            "\"mac_needed\":true",
+            "\"mac_lint_args\":[\"clippy\",\"-p\",\"stickymd-posix\",\"-p\",\"stickymd-mac\",\"--all-targets\",\"--locked\",\"--\",\"-D\",\"warnings\"]",
+            "\"mac_test_args\":[\"test\",\"--locked\",\"-p\",\"stickymd-posix\",\"-p\",\"stickymd-mac\"]",
         ] {
             assert!(plan.contains(fragment), "{fragment}: {plan}");
         }
@@ -178,7 +208,7 @@ mod tests {
 
     /// A change below the macOS host reaches it through the reverse dependency: the macOS job
     /// tests the changed shared crate and everything built on it, the Windows lanes keep their
-    /// own packages, and the full plan names all five packages.
+    /// own packages, and the full plan names all six packages.
     #[test]
     fn a_shared_crate_change_reaches_the_macos_job_and_keeps_the_windows_lanes_without_the_host() {
         let plan = json(
@@ -189,7 +219,7 @@ mod tests {
         );
         assert!(plan.contains("\"mac_needed\":true"), "{plan}");
         assert!(
-            plan.contains("\"mac_test_args\":[\"test\",\"--locked\",\"-p\",\"stickymd-app\",\"-p\",\"stickymd-desktop\",\"-p\",\"stickymd-mac\"]"),
+            plan.contains("\"mac_test_args\":[\"test\",\"--locked\",\"-p\",\"stickymd-app\",\"-p\",\"stickymd-desktop\",\"-p\",\"stickymd-posix\",\"-p\",\"stickymd-mac\"]"),
             "{plan}"
         );
         assert!(
@@ -205,7 +235,7 @@ mod tests {
         );
         assert!(full.contains("\"mac_needed\":true"));
         assert!(full.contains(
-            "\"mac_test_args\":[\"test\",\"--locked\",\"-p\",\"stickymd-core\",\"-p\",\"stickymd-render\",\"-p\",\"stickymd-app\",\"-p\",\"stickymd-desktop\",\"-p\",\"stickymd-mac\"]"
+            "\"mac_test_args\":[\"test\",\"--locked\",\"-p\",\"stickymd-core\",\"-p\",\"stickymd-render\",\"-p\",\"stickymd-app\",\"-p\",\"stickymd-desktop\",\"-p\",\"stickymd-posix\",\"-p\",\"stickymd-mac\"]"
         ));
     }
 

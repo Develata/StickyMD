@@ -71,7 +71,7 @@ fn host_refusal(modules: &[Module], macos: bool) -> Option<String> {
     modules
         .iter()
         .any(|module| module.needs_macos() && !macos)
-        .then(|| "NOT_TESTED: the mac module requires a macOS host".to_owned())
+        .then(|| "NOT_TESTED: the mac and posix modules require a macOS host".to_owned())
 }
 
 fn verify_workspace(root: &Path) -> Result<(), String> {

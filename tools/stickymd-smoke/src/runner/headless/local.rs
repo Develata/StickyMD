@@ -230,18 +230,26 @@ mod tests {
     /// Windows host; on macOS it is run.
     #[test]
     fn local_plan_runs_the_macos_host_only_where_it_has_tests() {
-        let plan = local(&[Module::Core, Module::Mac], false, Mode::Tests);
+        let plan = local(
+            &[Module::Core, Module::Posix, Module::Mac],
+            false,
+            Mode::Tests,
+        );
         let descriptions = plan.describe().unwrap();
         let names_mac = descriptions
             .iter()
             .any(|check| check.args.contains(&"stickymd-mac"));
         assert_eq!(names_mac, cfg!(target_os = "macos"));
+        let names_posix = descriptions
+            .iter()
+            .any(|check| check.args.contains(&"stickymd-posix"));
+        assert_eq!(names_posix, cfg!(target_os = "macos"));
         assert_eq!(
             plan.untested,
             if cfg!(target_os = "macos") {
                 Vec::new()
             } else {
-                vec![Module::Mac]
+                vec![Module::Posix, Module::Mac]
             }
         );
         // The shared crate it builds on is tested either way.

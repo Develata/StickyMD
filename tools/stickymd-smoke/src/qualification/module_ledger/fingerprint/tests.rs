@@ -642,6 +642,12 @@ fn the_macos_host_directory_is_no_input_of_any_module() {
         "apps/stickymd-mac/src/platform/a_file_added_later.rs",
         "apps/stickymd-mac/packaging/Info.plist",
         "apps/stickymd-mac/tests/pasteboard.rs",
+        "crates/stickymd-posix/Cargo.toml",
+        "crates/stickymd-posix/src/lib.rs",
+        "crates/stickymd-posix/src/file.rs",
+        "crates/stickymd-posix/src/atomic_file.rs",
+        "crates/stickymd-posix/src/instance.rs",
+        "crates/stickymd-posix/src/sys/a_file_added_later.rs",
     ] {
         assert_eq!(path_domains(path), 0, "{path}");
         for module in crate::qualification::module_registry::modules() {
@@ -660,11 +666,13 @@ fn the_macos_host_directory_is_no_input_of_any_module() {
         assert_ne!(path_domains(path), 0, "{path}");
     }
     assert_ne!(path_domains("apps/stickymd-mac-other/src/main.rs"), 0);
+    assert_ne!(path_domains("crates/stickymd-posix-other/src/lib.rs"), 0);
 
     let fixture = fixture();
     for path in [
         "apps/stickymd-mac/src/platform/pasteboard.rs",
         "apps/stickymd-mac/src/storage.rs",
+        "crates/stickymd-posix/src/file.rs",
     ] {
         let path = fixture.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -678,11 +686,23 @@ fn the_macos_host_directory_is_no_input_of_any_module() {
         "{error}"
     );
     assert!(!error.contains("stickymd-mac/"), "{error}");
+    assert!(!error.contains("stickymd-posix/"), "{error}");
     // Editing the host changes the workspace-tests identity but no module's fingerprint.
     let before = calculate(&fixture, ModuleId::Runtime).unwrap();
     let workspace_before = super::workspace_inputs(&fixture, b"").unwrap();
     fs::write(
         fixture.join("apps/stickymd-mac/src/storage.rs"),
+        "//! edited",
+    )
+    .unwrap();
+    assert_eq!(before, calculate(&fixture, ModuleId::Runtime).unwrap());
+    assert_ne!(
+        workspace_before,
+        super::workspace_inputs(&fixture, b"").unwrap()
+    );
+    let workspace_before = super::workspace_inputs(&fixture, b"").unwrap();
+    fs::write(
+        fixture.join("crates/stickymd-posix/src/file.rs"),
         "//! edited",
     )
     .unwrap();

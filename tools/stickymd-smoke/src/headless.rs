@@ -9,6 +9,7 @@ pub(crate) enum Module {
     Render,
     App,
     Desktop,
+    Posix,
     Windows,
     Mac,
     Smoke,
@@ -17,11 +18,12 @@ pub(crate) enum Module {
 }
 
 impl Module {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 10] = [
         Self::Core,
         Self::Render,
         Self::App,
         Self::Desktop,
+        Self::Posix,
         Self::Windows,
         Self::Mac,
         Self::Smoke,
@@ -35,6 +37,7 @@ impl Module {
             Self::Render => "render",
             Self::App => "app",
             Self::Desktop => "desktop",
+            Self::Posix => "posix",
             Self::Windows => "windows",
             Self::Mac => "mac",
             Self::Smoke => "smoke",
@@ -49,6 +52,7 @@ impl Module {
             Self::Render => Some("stickymd-render"),
             Self::App => Some("stickymd-app"),
             Self::Desktop => Some("stickymd-desktop"),
+            Self::Posix => Some("stickymd-posix"),
             Self::Windows => Some("stickymd-win"),
             Self::Mac => Some("stickymd-mac"),
             Self::Smoke => Some("stickymd-smoke"),
@@ -70,6 +74,7 @@ impl Module {
             Self::Render => "crates/stickymd-render/",
             Self::App => "crates/stickymd-app/",
             Self::Desktop => "crates/stickymd-desktop/",
+            Self::Posix => "crates/stickymd-posix/",
             Self::Windows => "apps/stickymd-win/",
             Self::Mac => "apps/stickymd-mac/",
             Self::Smoke => "tools/stickymd-smoke/",
@@ -93,7 +98,14 @@ impl Module {
             Self::Render => &[Self::Core],
             Self::App => &[Self::Core, Self::Render],
             Self::Desktop => &[Self::Core, Self::Render, Self::App],
-            Self::Windows | Self::Mac => &[Self::Core, Self::Render, Self::App, Self::Desktop],
+            Self::Windows => &[Self::Core, Self::Render, Self::App, Self::Desktop],
+            Self::Mac => &[
+                Self::Core,
+                Self::Render,
+                Self::App,
+                Self::Desktop,
+                Self::Posix,
+            ],
             _ => &[],
         }
     }
@@ -102,12 +114,13 @@ impl Module {
     /// host compiles to a stub with no tests off macOS, so a green Windows lane would prove
     /// nothing about it; its own lane is the macOS job (plan 11 Phase 16).
     pub(crate) const fn windows_lane(self) -> bool {
-        !matches!(self, Self::Mac)
+        // POSIX is empty on Windows, so only the macOS lane tests its native implementation.
+        !matches!(self, Self::Mac | Self::Posix)
     }
 
     /// Whether the module's tests exist only on macOS.
     pub(crate) const fn needs_macos(self) -> bool {
-        matches!(self, Self::Mac)
+        matches!(self, Self::Mac | Self::Posix)
     }
 
     /// Whether this process can run the module's tests. Only the macOS host has a body to test;

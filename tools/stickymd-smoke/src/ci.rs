@@ -95,7 +95,7 @@ impl Checks {
                         Module::Core | Module::Render | Module::App | Module::Desktop
                     )
                 }),
-            mac: full || modules.contains(&Module::Mac),
+            mac: full || modules.iter().any(|module| module.needs_macos()),
         }
     }
 }

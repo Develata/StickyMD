@@ -79,6 +79,7 @@ USER 批准（2026-10-31，[提案](../report/2026-10-23-shared-core-thin-platfo
 | `stickymd-app`（Shared Application） | typed intent、应用会话、全部 coordinator、配置状态、Capability Port 定义、可共享执行逻辑（worker 调度与结果协议）、不依赖文件语义的裁决（配置文本规则、启动恢复裁决、粘贴批次、导出命名与引用改写） | Instruction Interface + Flow Coordination + 共享 Execution | 不依赖 winit、softbuffer 或任何平台 API；不向壳暴露可变 DocumentState |
 | `stickymd-desktop`（Shared Desktop） | 通用控件、Search 控件、选择与滚动交互、窗口事件翻译、视图呈现、软件帧缓冲接线 | Interaction Shell（共享部分） | 可使用 winit/softbuffer；不持有保存、冲突、GC、生命周期的业务裁决 |
 | Platform Host（`apps/stickymd-win`、`apps/stickymd-mac`） | 启动接线、原生 adapter、资源/manifest、平台验证探针 | Shell 启动接线 + Execution Domain 原生 adapter | 实现 Capability Port 并上报 Execution Receipt；不复制应用规则 |
+| `stickymd-posix` | macOS 宿主的原生 POSIX 层，未来供 Debian 复用：目录句柄、文件身份、原子发布、单实例与 socket 唤醒 | Execution Domain 原生 adapter | 与平台 adapter 同样可持有 `unsafe` 与原生绑定；无业务逻辑；当前仅实现 macOS，其他目标为空 |
 
 编译依赖方向（共享库不反向依赖平台宿主）：
 
@@ -92,6 +93,8 @@ Platform Host ──→ stickymd-desktop ──→ stickymd-app ──→ sticky
 
 `stickymd-app` 可调用渲染能力（预览动作类型、语义转换、preedit 投影），这是批准提案的依赖方向；`stickymd-render` 不依赖
 `stickymd-app`，也不决定保存、冲突或资产删除。
+
+macOS 宿主依赖 `stickymd-posix`；平台无关共享 crate 不依赖它（USER 2026-11-11 批准，[宿主共享任务](../tasks/phase-16-host-sharing.md) 第二步）。
 
 规则：
 
@@ -108,7 +111,7 @@ Platform Host ──→ stickymd-desktop ──→ stickymd-app ──→ sticky
 5. 文件接口覆盖完整的安全操作边界：不能由共享层先检查路径、再由平台层凭字符串删除或移动文件。
 6. 主线程限定的窗口、菜单与输入法能力不强加 `Send + Sync`；I/O worker 只获得允许跨线程传递的执行对象与不可变请求。
 7. 共享调度使用注入的单调时间或可控时钟，沿用毫秒时间与有界队列语义；Platform Host 负责唤醒，不复制 debounce 与退出顺序。
-8. 共享 crate 禁止 `unsafe`。第三方库可以持有经批准的平台后端；项目手写原生调用仍集中在 Platform Host 的 adapter。
+8. 平台无关共享 crate 禁止 `unsafe`。第三方库可以持有经批准的平台后端；项目手写原生调用集中在 Platform Host 的 adapter 或 `stickymd-posix/src/`。后者属于原生 adapter，crate root 必须保留 `#![deny(unsafe_op_in_unsafe_fn)]`，每个 `unsafe` block 有 `SAFETY` 说明，每个非测试源文件有 `plan_ref`。
 9. 平台默认字体、快捷键映射与原生菜单约定属于宿主配置/翻译；Windows 现有默认值保持不变。键表由完整修饰键得出语义命令
    （撤销/重做、查找/替换、行首行尾与文首文末、缩放、视图、保存、导出、退出），共享壳只消费语义命令，不判断具体修饰键。
 
@@ -236,7 +239,7 @@ Config serialization（TOML）
 ### 规则
 
 - 所有环境依赖通过 **adapter** 进入：Win32、剪贴板、显示器枚举、文件系统原子替换。
-- 平台无关 crate（含 Shared Application、Shared Desktop）禁止 `unsafe`；平台代码集中在 Platform Host 的 adapter 目录。
+- 平台无关 crate（含 Shared Application、Shared Desktop）禁止 `unsafe`；平台代码集中在 Platform Host 的 adapter 目录或 `stickymd-posix/src/`。
 - 能力是被动的：被 Flow Coordination 请求后才执行，不自行决定业务流程。
 
 ---

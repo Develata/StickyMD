@@ -1,6 +1,7 @@
 //! The macOS host (`apps/stickymd-mac`) confines `unsafe` and the native macOS bindings to its
-//! `platform/` directory, keeps `#![deny(unsafe_op_in_unsafe_fn)]` on every crate root, gives
-//! every unsafe block a `SAFETY` comment, and gives every non-test source a `plan_ref`
+//! `platform/` directory; `crates/stickymd-posix` is entirely a native adapter. Both keep
+//! `#![deny(unsafe_op_in_unsafe_fn)]` on every crate root, give every unsafe block a `SAFETY`
+//! comment, and give every non-test source a `plan_ref`
 //! (plan 11 Phase 16, plan 03). It is the macOS counterpart of the Windows host's checks and
 //! scans nothing of the Windows host.
 //!
@@ -14,7 +15,8 @@ use std::path::Path;
 
 /// The crate, relative to the repository.
 const CRATE: &str = "apps/stickymd-mac";
-/// The one directory under `src/` that may hold `unsafe` and native bindings.
+const POSIX: &str = "crates/stickymd-posix";
+/// Within the macOS host, only this directory may hold `unsafe` and native bindings.
 const PLATFORM: &str = "platform/";
 /// Crate roots: each is a separate crate and needs the lint itself.
 const ROOTS: [&str; 2] = ["main.rs", "lib.rs"];
@@ -42,14 +44,14 @@ fn is_test_source(relative: &str) -> bool {
 }
 
 /// The first violation of the host rules in one source, `relative` to the crate's `src/`.
-fn violation(relative: &str, content: &str) -> Option<String> {
-    let in_platform = relative.starts_with(PLATFORM);
+fn violation(crate_path: &str, relative: &str, content: &str) -> Option<String> {
+    let in_platform = crate_path == POSIX || relative.starts_with(PLATFORM);
     if !in_platform {
         for (index, line) in content.lines().enumerate() {
             for word in identifiers(line) {
                 if word == "unsafe" || is_native_binding(word) {
                     return Some(format!(
-                        "{CRATE}/src/{relative}:{} names `{word}` outside src/{PLATFORM}",
+                        "{crate_path}/src/{relative}:{} names `{word}` outside src/{PLATFORM}",
                         index + 1
                     ));
                 }
@@ -57,11 +59,11 @@ fn violation(relative: &str, content: &str) -> Option<String> {
         }
     } else if let Some(line) = super::unsafe_block_without_safety(content) {
         return Some(format!(
-            "{CRATE}/src/{relative}:{line} unsafe block has no adjacent SAFETY invariant"
+            "{crate_path}/src/{relative}:{line} unsafe block has no adjacent SAFETY invariant"
         ));
     }
     if ROOTS.contains(&relative) && !content.contains(DENY) {
-        return Some(format!("{CRATE}/src/{relative} must retain {DENY}"));
+        return Some(format!("{crate_path}/src/{relative} must retain {DENY}"));
     }
     if !is_test_source(relative)
         && !content
@@ -69,34 +71,41 @@ fn violation(relative: &str, content: &str) -> Option<String> {
             .any(|line| line.trim().starts_with("//! plan_ref: "))
     {
         return Some(format!(
-            "{CRATE}/src/{relative} declares no `//! plan_ref:` (test sources are exempt)"
+            "{crate_path}/src/{relative} declares no `//! plan_ref:` (test sources are exempt)"
         ));
     }
     None
 }
 
 pub(super) fn verify(root: &Path) -> Result<(), String> {
-    let source = root.join(CRATE).join("src");
+    verify_crate(root, CRATE)?;
+    verify_crate(root, POSIX)
+}
+
+fn verify_crate(root: &Path, crate_path: &str) -> Result<(), String> {
+    let source = root.join(crate_path).join("src");
     let mut files = Vec::new();
     super::collect_files(&source, "rs", &mut files)?;
     // A scan of nothing proves nothing.
     if files.is_empty() {
-        return Err(format!("{CRATE}/src holds no Rust source to check"));
+        return Err(format!("{crate_path}/src holds no Rust source to check"));
     }
     let mut roots = 0;
     for path in files {
         let relative = path
             .strip_prefix(&source)
-            .map_err(|_| format!("{} lies outside {CRATE}/src", path.display()))?
+            .map_err(|_| format!("{} lies outside {crate_path}/src", path.display()))?
             .to_string_lossy()
             .replace('\\', "/");
         roots += usize::from(ROOTS.contains(&relative.as_str()));
-        if let Some(message) = violation(&relative, &super::read_text(&path)?) {
+        if let Some(message) = violation(crate_path, &relative, &super::read_text(&path)?) {
             return Err(message);
         }
     }
     if roots == 0 {
-        return Err(format!("{CRATE}/src has no crate root (main.rs or lib.rs)"));
+        return Err(format!(
+            "{crate_path}/src has no crate root (main.rs or lib.rs)"
+        ));
     }
     Ok(())
 }
@@ -107,17 +116,58 @@ mod tests {
 
     const SAFE: &str = "//! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host\n";
 
+    #[test]
+    fn posix_native_sources_keep_safety_lints_and_plan_refs_everywhere() {
+        let root =
+            std::env::temp_dir().join(format!("stickymd-governance-posix-{}", std::process::id()));
+        let source = root.join(POSIX).join("src");
+        std::fs::create_dir_all(source.join("sys")).unwrap();
+        assert!(verify_crate(&root, POSIX).is_err());
+        std::fs::write(source.join("lib.rs"), format!("{SAFE}{DENY}\n")).unwrap();
+        for relative in [
+            "lib.rs",
+            "main.rs",
+            "file.rs",
+            "sys/macos.rs",
+            "test_support.rs",
+        ] {
+            let valid = format!(
+                "{SAFE}{DENY}\nuse libc::flock;\n// SAFETY: valid descriptor.\nunsafe {{ call() }}\n"
+            );
+            std::fs::write(source.join(relative), &valid).unwrap();
+            verify_crate(&root, POSIX).unwrap();
+            std::fs::write(source.join(relative), valid.replace("SAFETY:", "reason:")).unwrap();
+            let error = verify_crate(&root, POSIX).unwrap_err();
+            assert!(error.contains("no adjacent SAFETY invariant"), "{error}");
+            assert!(error.contains(relative), "{error}");
+            if ROOTS.contains(&relative) {
+                std::fs::write(source.join(relative), valid.replace(DENY, "")).unwrap();
+                let error = verify_crate(&root, POSIX).unwrap_err();
+                assert!(error.contains(DENY), "{error}");
+            }
+            std::fs::write(source.join(relative), valid.replace(SAFE, "")).unwrap();
+            if is_test_source(relative) {
+                verify_crate(&root, POSIX).unwrap();
+            } else {
+                let error = verify_crate(&root, POSIX).unwrap_err();
+                assert!(error.contains("plan_ref"), "{error}");
+            }
+            std::fs::write(source.join(relative), valid).unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// `unsafe` and the native bindings are refused outside `platform/` as whole words, in code
     /// and not in comments; inside it they are allowed, with the SAFETY rule.
     #[test]
     fn unsafe_and_native_bindings_are_confined_to_the_platform_directory() {
         let clean = format!("{SAFE}#![deny(unsafe_op_in_unsafe_fn)]\nfn main() {{}}\n");
-        assert_eq!(violation("main.rs", &clean), None);
+        assert_eq!(violation(CRATE, "main.rs", &clean), None);
         // Words that merely contain the forbidden ones, and comments, are not violations.
         let words = format!(
             "{SAFE}#![deny(unsafe_op_in_unsafe_fn)]\n// unsafe libc objc2\nlet unsafe_code = 1; // block2\nlet libcx = 2;\n"
         );
-        assert_eq!(violation("main.rs", &words), None);
+        assert_eq!(violation(CRATE, "main.rs", &words), None);
         for bad in [
             "unsafe { f() }",
             "unsafe fn f() {}",
@@ -129,7 +179,7 @@ mod tests {
         ] {
             for relative in ["main.rs", "host/window.rs", "storage.rs"] {
                 let source = format!("{SAFE}#![deny(unsafe_op_in_unsafe_fn)]\n{bad}\n");
-                let message = violation(relative, &source)
+                let message = violation(CRATE, relative, &source)
                     .unwrap_or_else(|| panic!("{relative} accepted `{bad}`"));
                 assert!(message.contains("outside src/platform/"), "{message}");
             }
@@ -144,14 +194,28 @@ mod tests {
         ] {
             let source = format!("{SAFE}{allowed}\n");
             assert_eq!(
-                violation("platform/pasteboard.rs", &source),
+                violation(CRATE, "platform/pasteboard.rs", &source),
                 None,
                 "{allowed}"
             );
         }
         // A directory merely named like it is not it.
-        assert!(violation("platform_x/a.rs", &format!("{SAFE}unsafe fn f() {{}}\n")).is_some());
-        assert!(violation("host/platform/a.rs", &format!("{SAFE}use libc::c_int;\n")).is_some());
+        assert!(
+            violation(
+                CRATE,
+                "platform_x/a.rs",
+                &format!("{SAFE}unsafe fn f() {{}}\n")
+            )
+            .is_some()
+        );
+        assert!(
+            violation(
+                CRATE,
+                "host/platform/a.rs",
+                &format!("{SAFE}use libc::c_int;\n")
+            )
+            .is_some()
+        );
     }
 
     #[test]
@@ -163,11 +227,11 @@ mod tests {
             )
         };
         assert_eq!(
-            violation("platform/a.rs", &block("// SAFETY: ok\n", 0)),
+            violation(CRATE, "platform/a.rs", &block("// SAFETY: ok\n", 0)),
             None
         );
         assert_eq!(
-            violation("platform/a.rs", &block("// SAFETY: ok\n", 5)),
+            violation(CRATE, "platform/a.rs", &block("// SAFETY: ok\n", 5)),
             None
         );
         for source in [
@@ -175,7 +239,7 @@ mod tests {
             block("// no invariant\n", 0),
             block("// SAFETY: ok\n", 7),
         ] {
-            let message = violation("platform/a.rs", &source).expect("missing SAFETY");
+            let message = violation(CRATE, "platform/a.rs", &source).expect("missing SAFETY");
             assert!(
                 message.contains("no adjacent SAFETY invariant"),
                 "{message}"
@@ -186,13 +250,13 @@ mod tests {
     #[test]
     fn crate_roots_keep_the_deny_lint_and_business_sources_declare_a_plan_ref() {
         for root in ["main.rs", "lib.rs"] {
-            let message = violation(root, SAFE).expect("root without the lint");
+            let message = violation(CRATE, root, SAFE).expect("root without the lint");
             assert!(message.contains(DENY), "{message}");
-            assert_eq!(violation(root, &format!("{SAFE}{DENY}\n")), None);
+            assert_eq!(violation(CRATE, root, &format!("{SAFE}{DENY}\n")), None);
         }
-        let message = violation("storage.rs", "fn f() {}\n").expect("no plan_ref");
+        let message = violation(CRATE, "storage.rs", "fn f() {}\n").expect("no plan_ref");
         assert!(message.contains("plan_ref"), "{message}");
-        assert_eq!(violation("storage.rs", SAFE), None);
+        assert_eq!(violation(CRATE, "storage.rs", SAFE), None);
         for exempt in [
             "tests.rs",
             "storage/tests.rs",
@@ -200,13 +264,13 @@ mod tests {
             "tests/pasteboard.rs",
             "test_support.rs",
         ] {
-            assert_eq!(violation(exempt, "fn f() {}\n"), None, "{exempt}");
+            assert_eq!(violation(CRATE, exempt, "fn f() {}\n"), None, "{exempt}");
         }
     }
 
     /// The real crate passes; a missing source tree or root fails rather than passing on nothing.
     #[test]
-    fn the_macos_host_passes_and_an_empty_tree_does_not() {
+    fn the_macos_host_and_posix_pass_and_an_empty_tree_does_not() {
         let repository = crate::governance::find_repository_root(std::path::Path::new(env!(
             "CARGO_MANIFEST_DIR"
         )))
@@ -217,19 +281,19 @@ mod tests {
             std::env::temp_dir().join(format!("stickymd-governance-mac-{}", std::process::id()));
         let source = root.join("apps/stickymd-mac/src");
         std::fs::create_dir_all(&source).unwrap();
-        assert!(verify(&root).is_err());
+        assert!(verify_crate(&root, CRATE).is_err());
         std::fs::write(source.join("storage.rs"), SAFE).unwrap();
-        let message = verify(&root).unwrap_err();
+        let message = verify_crate(&root, CRATE).unwrap_err();
         assert!(message.contains("no crate root"), "{message}");
         std::fs::write(source.join("main.rs"), format!("{SAFE}{DENY}\n")).unwrap();
-        verify(&root).unwrap();
+        verify_crate(&root, CRATE).unwrap();
         std::fs::create_dir_all(source.join("platform")).unwrap();
         std::fs::write(
             source.join("platform/mod.rs"),
             format!("{SAFE}unsafe {{ f() }}\n"),
         )
         .unwrap();
-        let message = verify(&root).unwrap_err();
+        let message = verify_crate(&root, CRATE).unwrap_err();
         assert!(message.contains("platform/mod.rs:2"), "{message}");
         std::fs::remove_dir_all(root).unwrap();
     }

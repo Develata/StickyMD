@@ -229,6 +229,7 @@ fn real_manifests_release_bump_keeps_every_functional_fingerprint() {
         "crates/stickymd-render",
         "crates/stickymd-app",
         "crates/stickymd-desktop",
+        "crates/stickymd-posix",
         "apps/stickymd-win",
         "apps/stickymd-mac",
         "tools/stickymd-smoke",

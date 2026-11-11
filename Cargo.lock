@@ -2449,10 +2449,20 @@ dependencies = [
  "stickymd-app",
  "stickymd-core",
  "stickymd-desktop",
+ "stickymd-posix",
  "stickymd-render",
  "thiserror 2.0.20",
  "tray-icon",
  "winit",
+]
+
+[[package]]
+name = "stickymd-posix"
+version = "0.1.3"
+dependencies = [
+ "libc",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
