@@ -51,6 +51,16 @@ impl Session {
         &self.path
     }
 
+    /// The created directory's identity, for code that must act inside it without holding the
+    /// session (a guard that runs while the session is borrowed or unwinding).
+    pub fn anchor(&self) -> Anchor {
+        Anchor {
+            path: self.path.clone(),
+            device: self.device,
+            inode: self.inode,
+        }
+    }
+
     pub fn spawn(&mut self, command: &mut Command) -> Result<(), String> {
         if self.child.is_some() {
             return Err("A session already owns a child".into());
@@ -175,6 +185,25 @@ impl Session {
             .map_err(|e| format!("remove {}: {e}", self.path.display()))?;
         self.cleaned = true;
         Ok(())
+    }
+}
+
+/// The session directory as created: its path and the device and inode it had then.
+#[derive(Clone, Debug)]
+pub(crate) struct Anchor {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+}
+
+impl Anchor {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Refuses a directory that was replaced, moved or linked since the session created it.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_directory(&self.path, self.device, self.inode)
     }
 }
 

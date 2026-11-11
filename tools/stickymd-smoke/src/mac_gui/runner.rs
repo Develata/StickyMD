@@ -197,11 +197,16 @@ fn one(
     row: &mut Row,
 ) -> Result<(), String> {
     let mut session = Session::new()?;
+    // A save fault left in place would make cleanup fail and stop every later scenario. Declared
+    // after the session, the guard drops first, on unwind too.
+    let mut fault =
+        super::fault::RestoreOnDrop::new(matches!(id, "W11" | "W12").then(|| session.anchor()));
     let result = (|| {
-        let note = if id == "F01" {
-            "中文字体验证\n\n`Menlo code 012345`\n"
-        } else {
-            ""
+        let note = match id {
+            "F01" => "中文字体验证\n\n`Menlo code 012345`\n",
+            // Old bytes a save that truncates before it fails would destroy.
+            "W11" | "W12" => super::lifecycle::DURABLE,
+            _ => "",
         };
         let executable = copy_fixture(&mut session, app, note, CONFIG, &hash.executable)?;
         if bundle_hash(&session.path().join("StickyMD.app"))? != hash.bundle {
@@ -262,6 +267,7 @@ fn one(
         )
     })();
     let release = input.release();
+    let writable = fault.restore();
     // Capture stderr even on scenario failure, before owned temporary-directory cleanup.
     let log = match fs::read(session.path().join("stderr.log")) {
         Ok(bytes) => crate::atomic_evidence::write(&out.join(format!("{id}-stderr.log")), &bytes),
@@ -276,7 +282,7 @@ fn one(
     if cleanup.is_err() {
         input.stopped = Some("child/directory cleanup failed; no more scenarios may launch".into());
     }
-    let errors = [result, release, log, cleanup]
+    let errors = [result, release, writable, log, cleanup]
         .into_iter()
         .filter_map(Result::err)
         .collect::<Vec<_>>();

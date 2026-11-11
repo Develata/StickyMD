@@ -101,7 +101,9 @@ fn vm_interlock_is_strict_and_permissions_are_per_scenario() {
         )
         .is_ok()
     );
-    assert!(permission_error(&["F01".into(), "W05".into()], Permissions::default()).is_ok());
+    assert!(permission_error(&["W05".into(), "R03".into()], Permissions::default()).is_ok());
+    // F01 now switches to Preview with a real key press before reading the mapped fonts.
+    assert!(permission_error(&["F01".into()], Permissions::default()).is_err());
 }
 #[test]
 fn failure_dominates_skips_and_json_escapes_observations() {

@@ -204,6 +204,21 @@ pub(in crate::mac_gui) fn activate(pid: u32) -> Result<(), String> {
     }
     Ok(())
 }
+/// The AX title of the PID's focused window; an application without one is an error.
+pub(in crate::mac_gui) fn focused_window_title(pid: u32) -> Result<String, String> {
+    text(&attribute(&app(pid)?, "AXFocusedWindow")?, "AXTitle")
+}
+/// The AX titles of the PID's windows, one per line (empty when it reports no windows).
+pub(in crate::mac_gui) fn window_titles(pid: u32) -> Result<String, String> {
+    let Some(windows) = optional_attribute(&app(pid)?, "AXWindows")? else {
+        return Ok(String::new());
+    };
+    let mut titles = Vec::new();
+    for window in windows.array()? {
+        titles.push(text(&window, "AXTitle")?);
+    }
+    Ok(titles.join("\n"))
+}
 pub(in crate::mac_gui) fn dock_titles(pid: u32) -> Result<String, String> {
     let nodes = tree(app(pid)?)?;
     if !nodes.iter().any(|n| n.role == "AXList") || !nodes.iter().any(|n| n.role == "AXDockItem") {

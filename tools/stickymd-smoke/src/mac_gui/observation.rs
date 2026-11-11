@@ -12,6 +12,44 @@ pub(super) fn ax_attribute_present(status: i32) -> Result<bool, String> {
     }
 }
 
+/// The window a key is meant for: the note window, or the export dialog it opened.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum KeyTarget {
+    Note,
+    Dialog,
+}
+
+/// Every title plan 09's title function gives the note window starts with this.
+pub(super) const NOTE_TITLE: &str = "StickyMD";
+
+/// Plan 11: a key goes only to a target window that is frontmost and focused. `front` is the
+/// system's focused application and `focused` the title of that application's focused window; an
+/// unreadable one injects nothing either.
+pub(super) fn key_target(
+    front: Result<u32, String>,
+    focused: Result<String, String>,
+    pid: u32,
+    target: KeyTarget,
+) -> Result<(), String> {
+    let front =
+        front.map_err(|e| format!("focused application unreadable ({e}); no key was injected"))?;
+    if front != pid {
+        return Err(format!(
+            "keys would reach PID {front}, not the product (PID {pid}); no key was injected"
+        ));
+    }
+    let title =
+        focused.map_err(|e| format!("focused window unreadable ({e}); no key was injected"))?;
+    let note = title.starts_with(NOTE_TITLE);
+    if note == (target == KeyTarget::Note) {
+        Ok(())
+    } else {
+        Err(format!(
+            "focused window {title:?} is not the {target:?} window; no key was injected"
+        ))
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Bracket {
     pub old_ms: u64,

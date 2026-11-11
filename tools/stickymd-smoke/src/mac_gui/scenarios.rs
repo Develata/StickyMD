@@ -1,6 +1,5 @@
 //! Scenario orchestration depends only on external observations supplied by Backend.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
-use super::input::CMD;
 use super::model::*;
 #[derive(Clone, Debug)]
 pub(super) enum Op {
@@ -29,6 +28,18 @@ pub(super) enum Op {
     Export,
     Fonts,
     Screenshot,
+    /// Remove (`true`) or restore (`false`) write permission on the fixture's note directory.
+    Fault(bool),
+    /// The product windows' AX titles, one per line.
+    Title,
+    /// The system's termination request (`NSRunningApplication.terminate`) to the owned PID.
+    Terminate,
+    /// Make the product frontmost through AX only, without reopening the bundle.
+    Focus,
+    /// Files the product has memory-mapped (`lsof -d txt`).
+    Mapped,
+    /// Point the open save dialog at the session's `export.md` without answering it.
+    PanelTarget,
 }
 #[derive(Clone, Debug)]
 pub(super) enum Value {
@@ -146,11 +157,7 @@ pub(super) fn skipped(id: &str) -> Option<&'static str> {
             Some("requires controlled system repeat settings and sustained physical key semantics")
         }
         "W05" => Some("requires Spaces/full-screen desktop orchestration"),
-        "W06" => Some("S7 manual-collapse/focus-cycle scenario deferred by scope"),
         "W10" => Some("requires caret visual and compositor frame instrumentation"),
-        "W12" => {
-            Some("requires disposable logout session, modal termination and save-failure injection")
-        }
         "R03" => Some("requires quarantined downloaded signed artifact / App Translocation"),
         "W15" => Some("requires Windows regression machine"),
         _ => None,
@@ -236,49 +243,36 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, id: &str) -> Result<(), Str
             d.note("quit barrier evidence final")?;
         }
         "W09" => super::editing::opacity(d)?,
-        "W11" => {
-            d.op(Op::Activate)?;
-            d.chord(&[CMD, 12])?;
-            quit(d)?;
-            d.note("")?;
-            d.row.skip(
-                "save failure cancels quit",
-                "requires approved save fault injection; no runtime note/config writes",
-            );
-        }
+        "W06" => super::focus::run(d)?,
+        "W11" => super::lifecycle::command_quit(d)?,
+        "W12" => super::lifecycle::system_termination(d)?,
         "K02" => super::editing::keys(d)?,
         "E01" => super::editing::export(d)?,
-        "F01" => {
-            let log = d.text(Op::Fonts)?;
-            // Plan 02's macOS defaults; the log names the CJK and Latin faces, not the code face.
-            d.row.check(
-                "font selection log",
-                log.contains("CJK=PingFang SC found=true Latin=Times New Roman found=true"),
-                log,
-            );
-            d.row.skip(
-                "code face Menlo",
-                "the font log does not name the code face; Menlo needs the screenshot's visual review",
-            );
-            let screenshot = d.text(Op::Screenshot)?;
-            d.row.trace.push(Trace {
-                ms: d.backend.now(),
-                event: screenshot,
-            });
-            d.row.skip("glyph visual review","font log and optional screenshot need visual review; they do not prove per-glyph font selection");
-        }
+        "F01" => super::editing::fonts(d)?,
         _ => return Err(format!("unknown executable scenario {id}")),
     }
     Ok(())
 }
-fn quit<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
+pub(super) fn quit<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
+    let (exited, ms) = exits_within(d, 5000)?;
+    d.row.check(
+        "process exited",
+        exited,
+        format!("alive={} after {ms}ms", !exited),
+    );
+    Ok(())
+}
+/// Polls every 50 ms; an exit first seen after `max_ms` is late.
+pub(super) fn exits_within<B: Backend>(
+    d: &mut Driver<'_, B>,
+    max_ms: u64,
+) -> Result<(bool, u64), String> {
     let start = d.backend.now();
     loop {
         let alive = matches!(d.op(Op::Alive)?, Value::Bool(true));
-        if !alive || d.backend.now() - start >= 5000 {
-            d.row
-                .check("process exited", !alive, format!("alive={alive}"));
-            return Ok(());
+        let elapsed = d.backend.now().saturating_sub(start);
+        if !alive || elapsed >= max_ms {
+            return Ok((!alive && elapsed <= max_ms, elapsed));
         }
         d.wait(50)?;
     }

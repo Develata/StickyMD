@@ -1,4 +1,6 @@
-//! External-only backend. Fixtures are frozen before launch; runtime files are read only.
+//! External-only backend. Fixtures are frozen before launch; runtime files are read only. The one
+//! change is W11/W12's save fault (USER 2026-11-11): the fixture's note directory loses its write
+//! permission, and the runner gives it back before cleanup on every path.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::{
     input::{CMD, Injection, SHIFT},
@@ -8,6 +10,7 @@ use super::{
         events::{self, Events},
         windows,
     },
+    observation::KeyTarget,
     scenarios::{Backend, Op, Value},
 };
 use crate::mac_common::session::Session;
@@ -100,6 +103,35 @@ impl Live<'_> {
             p.x, p.y, self.pid
         ))
     }
+    /// Plan 11 (physical input): keys go only to a target window that is frontmost and focused.
+    /// Checked before every key press, typed text included; a mismatch or an unreadable focus
+    /// injects nothing.
+    fn require_key_target(&self, target: KeyTarget) -> Result<(), String> {
+        super::observation::key_target(
+            ax::front(),
+            ax::focused_window_title(self.pid),
+            self.pid,
+            target,
+        )
+    }
+    /// Points the open save dialog at `<session>/export.md` without answering it.
+    fn target_panel(&mut self) -> Result<String, String> {
+        self.require_key_target(KeyTarget::Dialog)?;
+        self.input.chord(&[CMD, SHIFT, 5])?;
+        events::wait(300)?;
+        let mut log = ax::folder(
+            self.pid,
+            self.session
+                .path()
+                .to_str()
+                .ok_or("non UTF-8 export path")?,
+        )?;
+        self.require_key_target(KeyTarget::Dialog)?;
+        self.input.chord(&[36])?;
+        events::wait(400)?;
+        log.push_str(&ax::filename(self.pid, "export.md")?);
+        Ok(log)
+    }
     fn open(&mut self) -> Result<String, String> {
         self.session.open_bundle(|bundle| {
             command(
@@ -113,18 +145,7 @@ impl Live<'_> {
         if !confirm {
             return ax::panel_button(self.pid, false);
         }
-        self.input.chord(&[CMD, SHIFT, 5])?;
-        events::wait(300)?;
-        let mut log = ax::folder(
-            self.pid,
-            self.session
-                .path()
-                .to_str()
-                .ok_or("non UTF-8 export path")?,
-        )?;
-        self.input.chord(&[36])?;
-        events::wait(400)?;
-        log.push_str(&ax::filename(self.pid, "export.md")?);
+        let mut log = self.target_panel()?;
         log.push_str(&ax::panel_button(self.pid, true)?);
         Ok(log)
     }
@@ -185,12 +206,17 @@ impl Backend for Live<'_> {
                 Value::Unit
             }
             Op::Chord(keys) => {
+                self.require_key_target(KeyTarget::Note)?;
                 self.input.chord(&keys)?;
                 events::wait(60)?;
                 Value::Unit
             }
             Op::Text(s) => {
-                self.input.text(&s)?;
+                // Checked before each character: focus taken mid-text stops the rest.
+                for character in s.chars() {
+                    self.require_key_target(KeyTarget::Note)?;
+                    self.input.text(character.encode_utf8(&mut [0; 4]))?;
+                }
                 let last_key = self
                     .input
                     .backend
@@ -229,6 +255,10 @@ impl Backend for Live<'_> {
             }
             Op::Clipboard => Value::Text(command("/usr/bin/pbpaste", &["-Prefer", "txt"])?),
             Op::Panel(confirm) => Value::Text(self.panel(confirm)?),
+            Op::PanelTarget => {
+                events::wait(300)?;
+                Value::Text(self.target_panel()?)
+            }
             Op::PanelOpen => Value::Bool(ax::panel_open(self.pid)?),
             Op::Export => {
                 let path = self.session.path().join("export.md");
@@ -239,6 +269,46 @@ impl Backend for Live<'_> {
                 })
             }
             Op::Fonts => Value::Text(self.read("stderr.log")?),
+            Op::Fault(on) => {
+                super::fault::note_writable(&self.session.anchor(), !on)?;
+                Value::Unit
+            }
+            Op::Title => Value::Text(ax::window_titles(self.pid)?),
+            Op::Terminate => {
+                if let Some(status) = self.session.poll()? {
+                    return Err(format!("refused terminate: owned child exited: {status}"));
+                }
+                // The request goes to the owned PID, so it cannot start another copy as a request by
+                // name could. That it needs no Automation consent is only observed (no prompt in the
+                // test VM), not established for every environment.
+                let script = format!(
+                    "ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationWithProcessIdentifier({}).terminate",
+                    self.pid
+                );
+                Value::Text(command(
+                    "/usr/bin/osascript",
+                    &["-l", "JavaScript", "-e", &script],
+                )?)
+            }
+            Op::Focus => {
+                // No wait here: W06 samples the window from the moment focus is asked for.
+                ax::activate(self.pid)?;
+                Value::Unit
+            }
+            Op::Mapped => Value::Text(command(
+                "/usr/sbin/lsof",
+                &[
+                    "-n",
+                    "-P",
+                    "-a",
+                    "-p",
+                    &self.pid.to_string(),
+                    "-d",
+                    "txt",
+                    "-F",
+                    "n",
+                ],
+            )?),
             Op::Screenshot => {
                 if !self.permissions.screen {
                     Value::Text("NOT_TESTED screenshot: Screen Recording (CGPreflightScreenCaptureAccess) not granted".into())

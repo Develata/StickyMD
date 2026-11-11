@@ -13,8 +13,10 @@ VM ONLY by default: kern.hv_vmm_present must be 1, checked before app/output acc
 --out default: dist/evidence/mac-gui; mac-gui.json is written atomically.
 Permissions (preflight only, no prompts):
   W01: Accessibility (Dock tree).
-  W02/W03/W04/W07/W08/W09/W11/K02/E01: Accessibility + PostEvent.
-  F01: no required permission; Screen Recording enables its optional screenshot.
+  W02/W03/W04/W06/W07/W08/W09/W11/W12/K02/E01/F01: Accessibility + PostEvent.
+  F01: Screen Recording additionally enables its optional screenshot.
+W11/W12 remove write permission from the fixture's own note directory to make the save fail,
+and give it back before cleanup.
 Missing required permissions refuse before copying/launching. Use an unlocked dedicated
 macOS VM, US/ABC keyboard input source, and an unwind build.
 PASS/FAIL/NOT_TESTED per row and subcheck; FAIL exits 1, NOT_TESTED alone exits 0.

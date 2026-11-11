@@ -127,7 +127,8 @@ pub(super) struct Permissions {
 pub(super) fn required(id: &str) -> (bool, bool) {
     match id {
         "W01" => (true, false),
-        "W02" | "W03" | "W04" | "W07" | "W08" | "W09" | "W11" | "K02" | "E01" => (true, true),
+        "W02" | "W03" | "W04" | "W06" | "W07" | "W08" | "W09" | "W11" | "W12" | "K02" | "E01"
+        | "F01" => (true, true),
         _ => (false, false),
     }
 }

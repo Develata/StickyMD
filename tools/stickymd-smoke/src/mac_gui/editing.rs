@@ -133,6 +133,67 @@ pub(super) fn opacity<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     d.chord(&[53])?;
     Ok(())
 }
+/// F01. Plan 02's macOS faces: the log names the CJK and Latin faces, not the code face. A font
+/// file is mapped into the process once cosmic-text loads one of its faces, for shaping or for a
+/// fallback coverage check, and stays mapped (the font cache keeps it). Menlo absent in Source and
+/// present after Preview shapes the code span shows that Preview loads Menlo; it does not show
+/// that the code glyphs use it, so the face choice and the glyph review stay manual.
+pub(super) fn fonts<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
+    use super::model::Trace;
+    let log = d.text(Op::Fonts)?;
+    d.row.check(
+        "font selection log",
+        log.contains("CJK=PingFang SC found=true Latin=Times New Roman found=true"),
+        log,
+    );
+    let name = "Menlo loaded once Preview shapes the code span (not proof of selection)";
+    let before = d.text(Op::Mapped)?;
+    if maps_menlo(&before) {
+        d.row.skip(
+            name,
+            &format!(
+                "Menlo was mapped in Source already, so the mapping cannot be tied to the code span: {}",
+                font_files(&before)
+            ),
+        );
+    } else {
+        d.op(Op::Activate)?;
+        d.chord(&[CMD, 20])?;
+        d.config("", "view_mode", "\"preview\"")?;
+        let after = d.text(Op::Mapped)?;
+        d.row.check(
+            name,
+            maps_menlo(&after),
+            format!(
+                "Source: {}; Preview: {}",
+                font_files(&before),
+                font_files(&after)
+            ),
+        );
+    }
+    let screenshot = d.text(Op::Screenshot)?;
+    d.row.trace.push(Trace {
+        ms: d.backend.now(),
+        event: screenshot,
+    });
+    d.row.skip(
+        "glyph visual review",
+        "a mapped face and an optional screenshot do not prove per-glyph font selection",
+    );
+    Ok(())
+}
+/// `lsof -F n` prints each mapped file as a line starting with `n`.
+pub(super) fn maps_menlo(lsof: &str) -> bool {
+    lsof.lines()
+        .any(|l| l.starts_with('n') && l.contains("/Menlo."))
+}
+fn font_files(lsof: &str) -> String {
+    lsof.lines()
+        .filter(|l| l.starts_with('n') && l.contains("/Fonts/"))
+        .map(|l| &l[1..])
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 pub(super) fn export<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     d.op(Op::Activate)?;
     d.type_text("# Export\nplain bytes")?;
