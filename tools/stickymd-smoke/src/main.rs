@@ -14,6 +14,7 @@ mod integrity;
 #[cfg(target_os = "macos")]
 mod mac_common;
 mod mac_gui;
+mod mac_ledger;
 mod mac_resources;
 #[cfg(windows)]
 mod managed_process;
@@ -79,6 +80,7 @@ fn run() -> Result<(), String> {
     match command {
         cli::CommandLine::MacGui(options) => mac_gui::execute(&options),
         cli::CommandLine::MacResources(options) => mac_resources::execute(&options),
+        cli::CommandLine::MacLedger(options) => mac_ledger::execute(&options, &root),
         cli::CommandLine::PhaseEntryPlan(arguments) => {
             phase_entry::print_plan(&arguments);
             Ok(())

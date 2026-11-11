@@ -46,6 +46,16 @@ mod scenarios;
 #[cfg(test)]
 mod tests;
 pub(crate) use options::{Options, parse};
+/// The rows `mac-gui` executes; the rest are deferred by design and always NOT_TESTED.
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn executable_ids() -> Vec<&'static str> {
+    options::IDS
+        .iter()
+        .copied()
+        .filter(|id| scenarios::skipped(id).is_none())
+        .collect()
+}
 pub(crate) fn execute(options: &Options) -> Result<(), String> {
     if options.help {
         println!("{}", options::HELP);

@@ -96,6 +96,7 @@ impl Phase {
 pub(crate) enum CommandLine {
     MacGui(crate::mac_gui::Options),
     MacResources(crate::mac_resources::Options),
+    MacLedger(crate::mac_ledger::Options),
     PhaseEntryPlan(Vec<String>),
     Release(crate::release::Command),
     Smoke(Options),
@@ -446,6 +447,7 @@ impl CommandLine {
             Some("dev-check") => crate::development::Command::parse(&args[1..]).map(Self::Development),
             Some("mac-gui") => crate::mac_gui::parse(&args[1..]).map(Self::MacGui),
             Some("mac-resources") => crate::mac_resources::parse(&args[1..]).map(Self::MacResources),
+            Some("mac-ledger") => crate::mac_ledger::parse(&args[1..]).map(Self::MacLedger),
             Some("timings") => crate::timing_summary::parse(&args[1..]).map(Self::Timings),
             Some("startup-details") => crate::startup_details::parse(&args[1..]).map(Self::StartupDetails),
             Some("acceptance") => match args.get(1).map(String::as_str) {

@@ -1,4 +1,5 @@
-//! The manual observation store's files and its lock. Every public evidence writer, the
+//! The manual observation store's files and its lock, and the macOS GUI ledger's directory.
+//! Every public evidence writer, the
 //! release outputs and Promote consult this module, so it is an input of every module that
 //! writes evidence; the store's own logic (`manual_observation::store`) is not.
 //!
@@ -13,6 +14,8 @@ pub(super) const OBSERVATION_LOG: &str = "dist/evidence/manual-observations.json
 pub(super) const TARGET_RECEIPT: &str = "dist/evidence/manual-targets.json";
 pub(super) const MANUAL_LOCK: &str = "dist/evidence/manual.lock";
 pub(super) const MANUAL_ARCHIVE: &str = "dist/evidence/manual-archive";
+/// The macOS GUI ledger (`mac-ledger`); only that command appends to it.
+pub(crate) const MAC_GUI_LEDGER: &str = "dist/evidence/mac-gui-ledger";
 
 /// Exclusive for any change to the store or to the candidate it is bound to (Promote,
 /// Source Freeze); shared for reading a consistent target and log. Taken before the
@@ -32,4 +35,10 @@ pub(super) fn is_manual_store_path(root: &Path, path: &Path) -> bool {
     [OBSERVATION_LOG, TARGET_RECEIPT, MANUAL_LOCK, MANUAL_ARCHIVE]
         .iter()
         .any(|reserved| path_identity::reaches(root, path, reserved))
+}
+
+/// Whether `path` names the macOS GUI ledger directory or anything below it. Public writers
+/// refuse it: a suite report written there would replace the ledger's history.
+pub(super) fn is_mac_ledger_path(root: &Path, path: &Path) -> bool {
+    path_identity::reaches(root, path, MAC_GUI_LEDGER)
 }

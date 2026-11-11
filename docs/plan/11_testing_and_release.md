@@ -258,6 +258,13 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 
 共享层改动的 Windows 桌面回归只能在 Windows 机器上运行；S8 按 USER 决定不单独回归，验收表记为 USER 豁免。
 
+`mac-gui` 的结果按行记入账本 `dist/evidence/mac-gui-ledger/records.jsonl`，由 `stickymd-smoke mac-ledger` 管理（USER 批准 2026-11-12，[复用提案](../report/2026-11-11-macos-gui-rerun-reuse.md)）。
+
+- **记录**：账本只追加。每次追加都在排他锁下读取、校验，再原子发布，公共证据写入口不得写入账本目录。`record` 从同一次读取的证据字节中，记下一次运行的每一行，连同以下身份：app 可执行文件与 bundle 清单的 SHA-256、驱动的 SHA-256（由 `mac-gui` 写进证据；运行期间不得替换驱动）、虚拟机的 `sw_vers`，以及运行者传入的镜像 digest。一个 digest 只能对应一个系统版本。
+- **复用**：`plan` 只读账本，不启动被测程序，需要传入目标虚拟机运行前的 `sw_vers`。某行在账本里已有 PASS，且 app、bundle、驱动、镜像、系统五项与当前完全一致时，复用这次 PASS；如果同一身份下后来又记过非 PASS，一并提示。其余行列入要运行的 `--only` 清单。FAIL 与 NOT_TESTED 从不复用。
+- **人工收据**：`receipt` 按行记录 USER 的确认，绑定 app 可执行文件的 SHA-256。app 变了，收据不再成立，`plan` 会列出待重新确认的人工行。I01–I03 与 R03 从不沿用收据。
+- **范围**：不按产品模块复用，这一级留待 Windows RC3-B 解决之后。这一节不改变 Phase 16 不是资格化 suite 的性质。
+
 <a id="qualification-process-isolation"></a>
 ### GUI qualification process isolation
 

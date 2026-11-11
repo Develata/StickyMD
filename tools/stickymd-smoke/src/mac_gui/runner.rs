@@ -26,6 +26,8 @@ const CONFIG: &str = "version = 1\nview_mode = \"source\"\nopacity = 100\nalways
 struct AppHash {
     executable: String,
     bundle: String,
+    /// This driver's own executable, so the ledger can tell which driver produced the evidence.
+    driver: String,
 }
 pub(super) fn execute(options: &Options) -> Result<(), String> {
     // This must precede app canonicalization, TCC checks, output creation and native GUI APIs.
@@ -64,6 +66,9 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     }
     let hash = AppHash {
         executable: crate::integrity::sha256(&contained_executable(&app)?)?,
+        driver: crate::integrity::sha256(
+            &std::env::current_exe().map_err(|e| format!("driver path: {e}"))?,
+        )?,
         bundle: bundle_hash(&app)?,
     };
     // Prevent output from ever targeting the supplied bundle or its canonical note directory.
@@ -180,9 +185,10 @@ fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
 }
 fn save(out: &Path, environment: &str, hash: &AppHash, rows: &[Row]) -> Result<(), String> {
     let json = format!(
-        "{{\"schema_version\":1,\"acceptance_status\":\"INCOMPLETE\",\"environment\":{environment},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"scenarios\":[{}]}}\n",
+        "{{\"schema_version\":1,\"acceptance_status\":\"INCOMPLETE\",\"environment\":{environment},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"scenarios\":[{}]}}\n",
         quote(&hash.executable),
         quote(&hash.bundle),
+        quote(&hash.driver),
         rows.iter().map(Row::json).collect::<Vec<_>>().join(",")
     );
     crate::atomic_evidence::write(&out.join("mac-gui.json"), json.as_bytes())
