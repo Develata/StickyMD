@@ -58,7 +58,7 @@
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | P16-K01 | Cmd 键表：保存、导出、剪贴板、撤销重做、查找替换、视图缩放、行首行尾 | Automated | 键表单元测试 | AUTOMATED PASS |
-| P16-K02 | Cmd 键在真实窗口生效 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
+| P16-K02 | Cmd 键在真实窗口生效 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”及其补记（USER 2026-11-11，`10127b2` 的 release，本机桌面，含 Cmd+Shift+Z 与 Cmd+Option+F）。此前：人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | MANUAL PASS |
 | P16-I01 | 系统简体拼音：`07` 的 13 项 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面） | MANUAL PASS |
 | P16-I02 | 微信输入法：`07` 的 13 项 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面） | MANUAL PASS |
 | P16-I03 | 长按字母：不弹重音菜单，按系统设置连发，没有替换残留的多余字符 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面） | MANUAL PASS |
