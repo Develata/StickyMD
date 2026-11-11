@@ -144,29 +144,30 @@ fn alive<B: Backend>(d: &mut Driver<'_, B>) -> Result<bool, String> {
     Ok(matches!(d.op(Op::Alive)?, Value::Bool(true)))
 }
 
-fn titled(title: &str) -> bool {
+fn has_title(title: &str) -> bool {
     title.lines().any(|t| !t.trim().is_empty())
 }
 
 /// Whether AX reports a window title at all; without one (or with a failed read) the title checks
 /// cannot be made.
 fn title_observable<B: Backend>(d: &mut Driver<'_, B>) -> Result<bool, String> {
-    Ok(matches!(d.op(Op::Title), Ok(Value::Text(t)) if titled(&t)))
+    Ok(matches!(d.op(Op::Title), Ok(Value::Text(t)) if has_title(&t)))
 }
 
 /// The quit is cancelled: the title shows it within `CANCEL_MS` (when AX reports titles), the
 /// process is still running `STAY_MS` later, and the old bytes are still on disk. A title read can
-/// fail while the barrier holds the main thread: polling continues, and only a title read at the
-/// deadline without the cancelled state fails; an unreadable one at the deadline is not tested.
+/// fail while the barrier holds the main thread: polling continues, and only a readable title at
+/// the deadline without the cancelled state fails; none observed by then is not tested.
 fn stays_up<B: Backend>(d: &mut Driver<'_, B>, titled: bool, via: &str) -> Result<(), String> {
     let start = d.backend.now();
     let mut title = Err(String::from("not read"));
     let mut seen = None;
     if titled {
         loop {
+            // A read that returns no title at all is as unobserved as a failed one.
             title = match d.op(Op::Title) {
-                Ok(Value::Text(t)) => Ok(t),
-                Ok(v) => Err(format!("unexpected {v:?}")),
+                Ok(Value::Text(t)) if has_title(&t) => Ok(t),
+                Ok(v) => Err(format!("no readable title: {v:?}")),
                 Err(e) => Err(e),
             };
             let elapsed = d.backend.now().saturating_sub(start);
@@ -216,7 +217,7 @@ fn cleared<B: Backend>(d: &mut Driver<'_, B>, titled_before: bool) -> Result<(),
         return Ok(());
     }
     match d.op(Op::Title) {
-        Ok(Value::Text(title)) if titled(&title) => {
+        Ok(Value::Text(title)) if has_title(&title) => {
             d.row
                 .check(name, !title.contains(QUIT_CANCELLED), format!("{title:?}"));
         }

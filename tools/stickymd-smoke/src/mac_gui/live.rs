@@ -107,29 +107,48 @@ impl Live<'_> {
     /// Checked before every key press, typed text included; a mismatch or an unreadable focus
     /// injects nothing.
     fn require_key_target(&self, target: KeyTarget) -> Result<(), String> {
-        super::observation::key_target(
-            ax::front(),
-            ax::focused_window_title(self.pid),
-            self.pid,
-            target,
-        )
+        super::observation::key_target(ax::front(), ax::focused_window(self.pid), self.pid, target)
     }
-    /// Points the open save dialog at `<session>/export.md` without answering it.
+    /// Points the open save dialog at `<session>/export.md` without answering it, and reads the
+    /// destination back: the name field holds `export.md`, the location popup names the session
+    /// directory, and the Go to Folder sheet is gone. Anything else is an error, not an aim.
     fn target_panel(&mut self) -> Result<String, String> {
         self.require_key_target(KeyTarget::Dialog)?;
         self.input.chord(&[CMD, SHIFT, 5])?;
         events::wait(300)?;
-        let mut log = ax::folder(
+        let path = self
+            .session
+            .path()
+            .to_str()
+            .ok_or("non UTF-8 export path")?
+            .to_owned();
+        let mut log = ax::folder(self.pid, &path)?;
+        // Return confirms whatever has focus: only the Go to Folder path field may get it.
+        super::observation::goto_field(
+            ax::front(),
+            ax::goto_sheet_open(self.pid),
+            ax::focused_element(self.pid),
             self.pid,
-            self.session
-                .path()
-                .to_str()
-                .ok_or("non UTF-8 export path")?,
+            &path,
         )?;
-        self.require_key_target(KeyTarget::Dialog)?;
         self.input.chord(&[36])?;
         events::wait(400)?;
         log.push_str(&ax::filename(self.pid, "export.md")?);
+        events::wait(200)?;
+        let directory = self
+            .session
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("non UTF-8 session directory")?;
+        let (name, location, sheet) = ax::panel_destination(self.pid)?;
+        if name != "export.md" || location != directory || sheet {
+            return Err(format!(
+                "dialog not aimed: name={name:?}, location={location:?} (want {directory:?}), \
+                 go-to sheet open={sheet}"
+            ));
+        }
+        log.push_str(&format!("\naimed at {directory}/{name}"));
         Ok(log)
     }
     fn open(&mut self) -> Result<String, String> {

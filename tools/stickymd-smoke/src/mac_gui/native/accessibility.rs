@@ -204,9 +204,38 @@ pub(in crate::mac_gui) fn activate(pid: u32) -> Result<(), String> {
     }
     Ok(())
 }
-/// The AX title of the PID's focused window; an application without one is an error.
-pub(in crate::mac_gui) fn focused_window_title(pid: u32) -> Result<String, String> {
-    text(&attribute(&app(pid)?, "AXFocusedWindow")?, "AXTitle")
+/// The AX title and identifier of the PID's focused window; an application without one is an
+/// error.
+pub(in crate::mac_gui) fn focused_window(pid: u32) -> Result<(String, String), String> {
+    let window = attribute(&app(pid)?, "AXFocusedWindow")?;
+    Ok((text(&window, "AXTitle")?, text(&window, "AXIdentifier")?))
+}
+/// The role and value of the PID's focused UI element.
+pub(in crate::mac_gui) fn focused_element(pid: u32) -> Result<(String, String), String> {
+    let element = attribute(&app(pid)?, "AXFocusedUIElement")?;
+    let role = attribute(&element, "AXRole")?
+        .text()
+        .ok_or("AXRole: expected CFString")?;
+    Ok((role, text(&element, "AXValue")?))
+}
+/// Whether the save dialog's Go to Folder sheet is open.
+pub(in crate::mac_gui) fn goto_sheet_open(pid: u32) -> Result<bool, String> {
+    Ok(tree(app(pid)?)?
+        .iter()
+        .any(|n| n.identifier == "GoToWindow"))
+}
+/// Where the open save dialog would write: the name field's value, the location popup's value,
+/// and whether the Go to Folder sheet is still open.
+pub(in crate::mac_gui) fn panel_destination(pid: u32) -> Result<(String, String, bool), String> {
+    let nodes = panel_tree(pid)?;
+    let value = |id: &str| -> Result<String, String> {
+        text(&unique(&nodes, |n| n.identifier == id)?.element, "AXValue")
+    };
+    Ok((
+        value("saveAsNameTextField")?,
+        value("where popup")?,
+        nodes.iter().any(|n| n.identifier == "GoToWindow"),
+    ))
 }
 /// The AX titles of the PID's windows, one per line (empty when it reports no windows).
 pub(in crate::mac_gui) fn window_titles(pid: u32) -> Result<String, String> {

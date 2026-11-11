@@ -61,6 +61,8 @@ struct Quitting {
     cancel_ignored: bool,
     /// Title reads fail once the quit was cancelled, though the product did cancel it.
     title_fails_after_quit: bool,
+    /// Title reads return no title once the quit was cancelled.
+    title_empty_after_quit: bool,
     /// The dialog cannot be aimed at the session's export file.
     aim_fails: bool,
     aimed: bool,
@@ -92,6 +94,7 @@ impl Quitting {
             saved: false,
             cancel_ignored: false,
             title_fails_after_quit: false,
+            title_empty_after_quit: false,
             aim_fails: false,
             aimed: false,
             exports_on_end: false,
@@ -193,6 +196,9 @@ impl Backend for Quitting {
             }
             Op::Title if self.title_fails_after_quit && self.cancelled_at.is_some() => {
                 return Err("AX attribute error -25204; inspection incomplete".into());
+            }
+            Op::Title if self.title_empty_after_quit && self.cancelled_at.is_some() => {
+                Value::Text(String::new())
             }
             Op::Title if self.title_fails_after_save && self.saved => {
                 return Err("AX attribute error -25204; inspection incomplete".into());
@@ -613,15 +619,21 @@ fn f01_ties_menlo_to_the_preview_code_span_with_a_negative_control() {
 #[test]
 fn keys_go_only_to_the_focused_target_window() {
     use super::observation::{KeyTarget, key_target};
-    let note = || Ok("StickyMD *".to_string());
-    let dialog = || Ok("存储".to_string());
+    let window = |title: &str, id: &str| Ok((title.to_string(), id.to_string()));
+    let note = || window("StickyMD *", "");
+    let dialog = || window("保存", "save-panel");
     assert!(key_target(Ok(42), note(), 42, KeyTarget::Note).is_ok());
     assert!(key_target(Ok(42), dialog(), 42, KeyTarget::Dialog).is_ok());
+    // The Go to Folder sheet is not a Dialog target: its Return has its own check.
+    assert!(key_target(Ok(42), window("", "GoToWindow"), 42, KeyTarget::Dialog).is_err());
     // Focus taken by another application after activation: nothing is injected.
     assert!(key_target(Ok(7), note(), 42, KeyTarget::Note).unwrap_err().contains("PID 7"));
     // The product is frontmost but another of its windows has focus.
     assert!(key_target(Ok(42), dialog(), 42, KeyTarget::Note).is_err());
     assert!(key_target(Ok(42), note(), 42, KeyTarget::Dialog).is_err());
+    // A window recognized as neither target, an untitled one included, is not the dialog.
+    assert!(key_target(Ok(42), window("", ""), 42, KeyTarget::Dialog).is_err());
+    assert!(key_target(Ok(42), window("Other", ""), 42, KeyTarget::Dialog).is_err());
     // Unreadable focus injects nothing.
     assert!(key_target(Err("AX error -25204".into()), note(), 42, KeyTarget::Note).is_err());
     assert!(key_target(Ok(42), Err("AXFocusedWindow absent".into()), 42, KeyTarget::Note).is_err());
@@ -632,6 +644,15 @@ fn an_unreadable_title_at_the_deadline_is_not_a_failed_cancel() {
     let mut unreadable = Quitting::new();
     unreadable.title_fails_after_quit = true;
     let row = run(&mut unreadable, "W11");
+    assert_eq!(
+        verdict(&row, "Cmd+Q: title shows the cancelled quit"),
+        Some(Verdict::NotTested),
+        "{}",
+        row.json()
+    );
+    let mut empty = Quitting::new();
+    empty.title_empty_after_quit = true;
+    let row = run(&mut empty, "W11");
     assert_eq!(
         verdict(&row, "Cmd+Q: title shows the cancelled quit"),
         Some(Verdict::NotTested),
@@ -652,4 +673,21 @@ fn the_export_check_is_about_the_file_the_dialog_was_aimed_at() {
     let mut unaimed = Quitting::new();
     unaimed.aim_fails = true;
     assert_eq!(verdict(&run(&mut unaimed, "W12"), name), Some(Verdict::NotTested));
+}
+
+#[test]
+fn return_goes_only_to_the_go_to_folder_path_field() {
+    use super::observation::goto_field;
+    let path = "/tmp/session";
+    let field = |role: &str, value: &str| Ok((role.to_string(), value.to_string()));
+    assert!(goto_field(Ok(42), Ok(true), field("AXTextField", path), 42, path).is_ok());
+    assert!(goto_field(Ok(42), Ok(true), field("AXComboBox", path), 42, path).is_ok());
+    // The sheet already gone with the save dialog focused: Return would confirm the export.
+    assert!(goto_field(Ok(42), Ok(false), field("AXTextField", "export.md"), 42, path).is_err());
+    // The sheet open but focus on another control or another value.
+    assert!(goto_field(Ok(42), Ok(true), field("AXButton", ""), 42, path).is_err());
+    assert!(goto_field(Ok(42), Ok(true), field("AXTextField", "/elsewhere"), 42, path).is_err());
+    assert!(goto_field(Ok(7), Ok(true), field("AXTextField", path), 42, path).is_err());
+    assert!(goto_field(Ok(42), Err("AX -25204".into()), field("AXTextField", path), 42, path).is_err());
+    assert!(goto_field(Ok(42), Ok(true), Err("no focus".into()), 42, path).is_err());
 }

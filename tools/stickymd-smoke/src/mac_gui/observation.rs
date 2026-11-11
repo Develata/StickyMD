@@ -21,13 +21,42 @@ pub(super) enum KeyTarget {
 
 /// Every title plan 09's title function gives the note window starts with this.
 pub(super) const NOTE_TITLE: &str = "StickyMD";
+/// AppKit's AX identifier of the save dialog (macOS 27.2).
+pub(super) const DIALOG_ID: &str = "save-panel";
+
+/// The Return that confirms Go to Folder goes only to that sheet's path field: the sheet is open
+/// and the focused element is a text field holding exactly the path just set. Anything else (the
+/// sheet gone and the save dialog focused, where Return would confirm the export) injects nothing.
+pub(super) fn goto_field(
+    front: Result<u32, String>,
+    sheet_open: Result<bool, String>,
+    focused: Result<(String, String), String>,
+    pid: u32,
+    path: &str,
+) -> Result<(), String> {
+    let refuse = |why: String| Err(format!("{why}; no Return was injected"));
+    match (front, sheet_open, focused) {
+        (Err(e), ..) | (_, Err(e), _) | (.., Err(e)) => refuse(format!("focus unreadable ({e})")),
+        (Ok(front), ..) if front != pid => refuse(format!("PID {front} is frontmost, not {pid}")),
+        (_, Ok(false), _) => refuse("the Go to Folder sheet is not open".into()),
+        (_, _, Ok((role, value)))
+            if matches!(role.as_str(), "AXTextField" | "AXComboBox") && value == path =>
+        {
+            Ok(())
+        }
+        (_, _, Ok((role, value))) => refuse(format!(
+            "focused {role} holds {value:?}, not the path field with {path:?}"
+        )),
+    }
+}
 
 /// Plan 11: a key goes only to a target window that is frontmost and focused. `front` is the
-/// system's focused application and `focused` the title of that application's focused window; an
-/// unreadable one injects nothing either.
+/// system's focused application and `focused` the (title, AX identifier) of that application's
+/// focused window. Each target is recognized positively: the note window by its title, the dialog
+/// by its identifier; a window recognized as neither, or an unreadable one, injects nothing.
 pub(super) fn key_target(
     front: Result<u32, String>,
-    focused: Result<String, String>,
+    focused: Result<(String, String), String>,
     pid: u32,
     target: KeyTarget,
 ) -> Result<(), String> {
@@ -38,14 +67,18 @@ pub(super) fn key_target(
             "keys would reach PID {front}, not the product (PID {pid}); no key was injected"
         ));
     }
-    let title =
+    let (title, identifier) =
         focused.map_err(|e| format!("focused window unreadable ({e}); no key was injected"))?;
-    let note = title.starts_with(NOTE_TITLE);
-    if note == (target == KeyTarget::Note) {
+    let is_target = match target {
+        KeyTarget::Note => title.starts_with(NOTE_TITLE) && identifier.is_empty(),
+        KeyTarget::Dialog => identifier == DIALOG_ID,
+    };
+    if is_target {
         Ok(())
     } else {
         Err(format!(
-            "focused window {title:?} is not the {target:?} window; no key was injected"
+            "focused window title={title:?} id={identifier:?} is not the {target:?} window; \
+             no key was injected"
         ))
     }
 }
