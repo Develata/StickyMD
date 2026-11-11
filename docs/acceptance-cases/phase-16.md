@@ -35,18 +35,18 @@
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P16-W01 | 无 Dock 图标、不在 Cmd+Tab | Manual | 人工。VM 外部观察：`UIElement`、Dock 无此项；Cmd+Tab 画面未查（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-W02 | 左、右、上贴边收起留 2 DIP，上边贴屏幕顶边 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-W03 | 悬停 100 ms 展开，不抢焦点；提前离开取消 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-W04 | Top 悬停展开后鼠标停在顶边不收回，离开该区域 500 ms 收回 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-W05 | 切换桌面、全屏桌面：位置不变、可见，重绘正常 | Manual | 人工 | NOT TESTED |
-| P16-W06 | 手动收起后切走再切回，细条仍在最上层、能悬停展开（S7） | Manual | 人工 | NOT TESTED |
-| P16-W07 | 隐藏到托盘后再次打开 `.app`，窗口显示并取得焦点 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-W08 | 托盘：显示/隐藏、置顶、退出 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-W09 | 透明度 40–100 生效 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
+| P16-W01 | 无 Dock 图标、不在 Cmd+Tab | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面）。此前：人工。VM 外部观察：`UIElement`、Dock 无此项；Cmd+Tab 画面未查（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | MANUAL PASS |
+| P16-W02 | 左、右、上贴边收起留 2 DIP，上边贴屏幕顶边 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面）。此前：人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | MANUAL PASS |
+| P16-W03 | 悬停 100 ms 展开，不抢焦点；提前离开取消 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面）。此前：人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | MANUAL PASS |
+| P16-W04 | Top 悬停展开后鼠标停在顶边不收回，离开该区域 500 ms 收回 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面）。此前：人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | MANUAL PASS |
+| P16-W05 | 切换桌面、全屏桌面：位置不变、可见，重绘正常 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面） | MANUAL PASS |
+| P16-W06 | 手动收起后切走再切回，细条仍在最上层、能悬停展开（S7） | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面） | MANUAL PASS |
+| P16-W07 | 隐藏到托盘后再次打开 `.app`，窗口显示并取得焦点 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面）。此前：人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | MANUAL PASS |
+| P16-W08 | 托盘：显示/隐藏、置顶、退出 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面）。此前：人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | MANUAL PASS |
+| P16-W09 | 透明度 40–100 生效 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面）。此前：人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | MANUAL PASS |
 | P16-W10 | 光标闪烁不产生帧；反色可见 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的 USER 确认（2026-11-11，`0fa8754` 的 release，本机桌面）：光标可见、闪烁正常。不产生帧由同一二进制在 VM 中的唤醒测量佐证（约每 30 s 一次） | MANUAL PASS |
-| P16-W11 | Cmd+Q：干净时退出；保存失败时取消 | Manual | 人工。VM 外部观察：干净时退出通过；保存失败时取消未测（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-W12 | 系统终止：`osascript` 退出、注销、导出对话框打开时退出 | Manual | 人工 | NOT TESTED |
+| P16-W11 | Cmd+Q：干净时退出；保存失败时取消 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面）。此前：人工。VM 外部观察：干净时退出通过；保存失败时取消未测（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | MANUAL PASS |
+| P16-W12 | 系统终止：`osascript` 退出、注销、导出对话框打开时退出 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面） | MANUAL PASS |
 | P16-W13 | 感应条 2 DIP（S8）的几何测试 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
 | P16-W14 | S7 的 reducer 测试：手动收起后恢复焦点不撤销，进入展开路径后撤销 | Automated | `stickymd-app` 单元测试 | AUTOMATED PASS |
 | P16-W15 | Windows 桌面回归（S2、S4、S6、S7；S9 透明度弹窗内容随 DPI 缩放，只影响 >100% DPI；宿主共享第一步移动的导出（含图片）、配置保存、预览图片、托盘菜单） | — | `0653d2e` 的 release（100% DPI）在 Windows 11 25H2 上跑本地桌面 preflight G4-01、G4-02、G4-03、G3-02，全部通过：S2 的撤销/重做与剪贴板键、S4、S6（本机 `work.y` 等于显示器顶边）、S9 的 100%、导出含图片、配置写入、托盘菜单。其余（S7、S9 高 DPI、配置失败路径、预览图片等）USER 2026-11-11 决定不测，遇到问题再测（[Windows 回归](../report/2026-11-11-windows-p16-w15-regression.md)） | USER 豁免 |
@@ -59,15 +59,15 @@
 | --- | --- | --- | --- | --- |
 | P16-K01 | Cmd 键表：保存、导出、剪贴板、撤销重做、查找替换、视图缩放、行首行尾 | Automated | 键表单元测试 | AUTOMATED PASS |
 | P16-K02 | Cmd 键在真实窗口生效 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-I01 | 系统简体拼音：`07` 的 13 项 | Manual | 人工 | NOT TESTED |
-| P16-I02 | 微信输入法：`07` 的 13 项 | Manual | 人工 | NOT TESTED |
-| P16-I03 | 长按字母：不弹重音菜单，按系统设置连发，没有替换残留的多余字符 | Manual | 人工 | NOT TESTED |
+| P16-I01 | 系统简体拼音：`07` 的 13 项 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面） | MANUAL PASS |
+| P16-I02 | 微信输入法：`07` 的 13 项 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面） | MANUAL PASS |
+| P16-I03 | 长按字母：不弹重音菜单，按系统设置连发，没有替换残留的多余字符 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面） | MANUAL PASS |
 | P16-C01 | 文件 URL + PNG + 文本：读文件 | Automated | pasteboard 测试 | AUTOMATED PASS |
 | P16-C02 | PNG + TIFF + 文本：读原编码 PNG | Automated | pasteboard 测试 | AUTOMATED PASS |
 | P16-C03 | 只有 TIFF + 文本：转 PNG，像素正确 | Automated | pasteboard 测试 | AUTOMATED PASS |
 | P16-C04 | TIFF 超过长度或尺寸限额时在解码前拒绝 | Automated | pasteboard 测试 | AUTOMATED PASS |
-| P16-E01 | 保存面板：取消、确定、导出内容正确 | Manual | 人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
-| P16-F01 | 中文显示 PingFang SC，代码 Menlo | Manual | 人工。VM 字体日志为 PingFang SC 与 Times New Roman；日志不报代码字体（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | NOT TESTED |
+| P16-E01 | 保存面板：取消、确定、导出内容正确 | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面）。此前：人工。VM 外部观察通过（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | MANUAL PASS |
+| P16-F01 | 中文显示 PingFang SC，代码 Menlo | Manual | receipt: [2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md) 的“人工收据：macOS 桌面人工项”（USER 2026-11-11，`10127b2` 的 release，本机桌面）。此前：人工。VM 字体日志为 PingFang SC 与 Times New Roman；日志不报代码字体（[2026-11-10 VM 验收](../report/2026-11-10-macos-vm-acceptance.md)） | MANUAL PASS |
 
 ## M4 打包与资源
 
