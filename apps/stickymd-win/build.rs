@@ -26,7 +26,20 @@ fn main() {
     let output_dir = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo always sets OUT_DIR"));
     let icon_path = output_dir.join("StickyMD.ico");
     fs::write(&icon_path, build_icon()).expect("failed to write deterministic application icon");
+    compile_resources(&manifest_dir, &icon_path);
+}
 
+/// The resource compiler exists only on a Windows host. Elsewhere a Windows target is only
+/// type-checked (`cargo check`/`clippy`), which links nothing and needs no resources.
+#[cfg(not(windows))]
+fn compile_resources(_manifest_dir: &std::path::Path, _icon_path: &std::path::Path) {
+    println!(
+        "cargo:warning=not a Windows host: Windows resources skipped; check only, do not ship"
+    );
+}
+
+#[cfg(windows)]
+fn compile_resources(manifest_dir: &std::path::Path, icon_path: &std::path::Path) {
     let mut resource = winresource::WindowsResource::new();
     resource
         .set_manifest_file(manifest_dir.join(MANIFEST_FILE).to_string_lossy().as_ref())
