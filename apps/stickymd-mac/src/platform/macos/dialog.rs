@@ -41,6 +41,11 @@ pub fn choose_markdown_export() -> Option<PathBuf> {
                 msg_send![class!(NSArray), arrayWithObject: markdown];
             let _: () = msg_send![&*panel, setAllowedContentTypes: &*types];
         }
+        // A save panel blocks termination by default, and AppKit then never asks the delegate: a
+        // logout or a quit request would leave the dialog up and the app running. Allowing it lets
+        // the request reach `should_terminate`, which ends the dialog as a cancel and quits once it
+        // has returned (`09` macOS mapping, report RISK-macos-modal-termination).
+        let _: () = msg_send![&*panel, setPreventsApplicationTerminationWhenModal: Bool::NO];
         let response: isize = msg_send![&*panel, runModal];
         if response != MODAL_RESPONSE_OK {
             return None;
