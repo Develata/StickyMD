@@ -294,3 +294,39 @@ r13 之后，真实注销暴露了另一个问题：loginwindow 过了不可撤�
 - **VM 变慢**：r16 之后，这台 VM 的保存对话框从约 0.3 s 变成约 0.8–1.3 s 才出现，退出请求的处理也慢了几倍。原因没有查明。
 
 **人工收据**：产品又改动了，按复用规则，所有人工行都要在 `4e19774d…` 上重新确认。
+
+## 人工收据：W12 真实注销（2026-11-12）
+
+USER 让 Claude 直接操控 VM 完成 W12 的注销检查（“你直接操控 vm 就好了”），看过结果后批准记为通过（“Record as pass”）。所以这份收据是 USER 认可的脚本化观察，不是 USER 亲手操作。被测程序 `4e19774d9ccb9f1542ad0e69a165466e777df688915add029eb36783c6ebc793`，Tart 虚拟机（macOS 27.2，26B123）。
+
+**做法：**
+
+- 脚本 `w12-case.sh` 经 SSH 运行，注销后 SSH 会话仍在。
+- 每种情况用一个新的程序目录，用 `open` 启动，与 Finder 走同一条 LaunchServices 路径；再打开一次 `.app`，让窗口取得焦点（W07 的行为）。
+- 用辅助程序 `w12keys` 经 CoreGraphics 发按键，注入方式与 `mac-gui` 驱动相同。
+- 然后向 loginwindow 发注销请求，事后读系统日志与文件。
+- 每种情况之前重启 VM，以取得新的图形会话。
+
+| 情况 | 系统日志 | 磁盘 |
+| --- | --- | --- |
+| 输入后立刻注销 | 08:55:11.715 loginwindow 发退出请求；3 ms 后程序开始处理，+127 ms 回复 `YES`；launchd 记为 `(0, 0, 0)` | 注销请求前仍是旧字节，之后是输入的文本 |
+| 导出对话框打开时注销 | 08:59:15.249 发请求；3 ms 后 `applicationShouldTerminate:` 回 `NSTerminateCancel`（对话框按取消结束），注销照常继续；屏障随后保存，约 0.21 s 时 launchd 记为 `(0, 0, 0)` | 两行都已落盘；没有生成导出文件 |
+| 保存失败（笔记目录只读）时注销 | 09:04:16.111 发请求；`NSTerminateLater`，8 ms 后回 `NO`，程序继续运行。09:04:17.387 launchd 移除服务（推断此时发 SIGTERM，被忽略）；09:04:18.395 记为 `(2, 9, 9)`，被 SIGKILL 结束 | 仍是此前保存的内容，完整，笔记目录里没有残留的临时文件；故障期间输入的那行丢失，这无法避免 |
+
+**证据：** `dist/evidence/mac-vm-2026-11-12/w12-logout-manual/`，SHA-256：
+
+- `w12-case.sh`：`d58086cfce469b5516e7ec3c8f1b07e8fe4962e4d54994da95f888b906b49c73`
+- `main.rs`（`w12keys` 的源码）：`0ad4897fa6f20bc99166e0d9a49ed4805da159856becfd60ee962a7cd4755e0a`
+- `w12keys`：`b11c33b7f2cbee00c877624bf4bf6a13533e24f6acfdca6391820f5b834d6dd8`
+- `text/system-show.log`：`b40c2ebe8610867192b5d17bab022b3dd6dbe574675e307986b1a692c9e3d731`
+- `dialog/system-show.log`：`cef3407b7d280e6585069639934bf052cdac5179531745f5215b0bcc59d55b89`
+- `fault/system-show.log`：`bf397acbd405a07fbb445a750a69d83a8059438192575e7e81eec5136e27e883`
+
+**没有观察的：**
+
+- 窗口标题：没有人看，所以保存失败时有没有显示“退出已取消：保存失败”不知道。直接发 SIGTERM 时的标题由 `mac-gui` 的 W12 检查覆盖。
+- `osascript` 退出与导出对话框打开时的系统退出请求，由 `mac-gui` r17、r19、r20 的 W12 自动化覆盖。
+
+**账本：** `mac-ledger receipt` 只会把环境记为“USER desktop”，与这次不符，所以这份收据没有写入账本，只记在这里。
+
+**附带：** 第一次尝试用 `osascript` 经 System Events 发按键，在 VM 里弹出了自动化权限提示。提示被关掉，没有回答，既没有授予也没有拒绝。
