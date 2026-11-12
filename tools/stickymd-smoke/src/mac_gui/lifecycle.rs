@@ -339,7 +339,7 @@ fn panel_closes<B: Backend>(d: &mut Driver<'_, B>) -> Result<(bool, u64), String
 
 /// While the dialog is being presented its modal loop holds the main thread, and an AX read can
 /// end as CannotComplete; such a sample is unobserved, not closed, and polling continues.
-fn panel_opens<B: Backend>(d: &mut Driver<'_, B>) -> Result<(bool, u64), String> {
+pub(super) fn panel_opens<B: Backend>(d: &mut Driver<'_, B>) -> Result<(bool, u64), String> {
     let start = d.backend.now();
     loop {
         let open = matches!(d.op(Op::PanelOpen), Ok(Value::Bool(true)));

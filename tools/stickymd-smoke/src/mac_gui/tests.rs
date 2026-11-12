@@ -554,13 +554,20 @@ fn manual_save_pass_requires_direct_bytes_before_550ms_not_autosave() {
     }
 }
 
-struct PanelFailure;
+/// The dialog is seen open once; every later inspection is incomplete.
+struct PanelFailure {
+    seen_open: bool,
+}
 impl Backend for PanelFailure {
     fn now(&self) -> u64 {
         0
     }
     fn perform(&mut self, op: Op) -> Result<Value, String> {
         match op {
+            Op::PanelOpen if !self.seen_open => {
+                self.seen_open = true;
+                Ok(Value::Bool(true))
+            }
             Op::PanelOpen => Err("AX attribute error -25202; inspection incomplete".into()),
             Op::Note => Ok(Value::Text("# Export\nplain bytes".into())),
             _ => Ok(Value::Unit),
@@ -571,7 +578,7 @@ impl Backend for PanelFailure {
 fn incomplete_cancel_tree_never_records_panel_closed_pass() {
     let mut row = Row::new("E01");
     let error = super::editing::export(&mut Driver {
-        backend: &mut PanelFailure,
+        backend: &mut PanelFailure { seen_open: false },
         row: &mut row,
         pid: 42,
     })
@@ -581,6 +588,93 @@ fn incomplete_cancel_tree_never_records_panel_closed_pass() {
         !row.checks
             .iter()
             .any(|c| c.name == "cancel dismisses save panel" && c.verdict == Verdict::Pass)
+    );
+}
+/// A dialog whose presentation holds the main thread: for `busy_ms` after each Cmd+Shift+S every
+/// inspection and button press ends as CannotComplete, as seen in the VM; then it is open until
+/// a button ends it.
+struct SlowPanel {
+    clock: u64,
+    busy_ms: u64,
+    busy_until: u64,
+    open: bool,
+    exported: bool,
+}
+impl Backend for SlowPanel {
+    fn now(&self) -> u64 {
+        self.clock
+    }
+    fn perform(&mut self, op: Op) -> Result<Value, String> {
+        let busy = self.clock < self.busy_until;
+        let cannot = || Err("AX attribute error -25204; inspection incomplete".into());
+        match op {
+            Op::Wait(ms) => {
+                self.clock += ms;
+                Ok(Value::Unit)
+            }
+            Op::Chord(keys) if keys == [CMD, super::input::SHIFT, 1] => {
+                self.open = true;
+                self.busy_until = self.clock + self.busy_ms;
+                Ok(Value::Unit)
+            }
+            Op::PanelOpen if busy => cannot(),
+            Op::PanelOpen => Ok(Value::Bool(self.open)),
+            Op::Panel(_) if busy => cannot(),
+            Op::Panel(confirm) => {
+                self.open = false;
+                self.exported |= confirm;
+                Ok(Value::Text(String::new()))
+            }
+            Op::Export if self.exported => Ok(Value::Text("# Export\nplain bytes".into())),
+            Op::Export => Ok(Value::Text("<absent>".into())),
+            Op::Note => Ok(Value::Text("# Export\nplain bytes".into())),
+            _ => Ok(Value::Unit),
+        }
+    }
+}
+fn slow_export(busy_ms: u64) -> Row {
+    let mut row = Row::new("E01");
+    let mut backend = SlowPanel {
+        clock: 0,
+        busy_ms,
+        busy_until: 0,
+        open: false,
+        exported: false,
+    };
+    super::editing::export(&mut Driver {
+        backend: &mut backend,
+        row: &mut row,
+        pid: 42,
+    })
+    .unwrap();
+    row
+}
+#[test]
+fn export_waits_for_a_slow_dialog_before_pressing_its_buttons() {
+    let row = slow_export(1300);
+    assert_eq!(aggregate(&row.checks), Verdict::Pass, "{}", row.json());
+    for name in [
+        "save panel opens",
+        "save panel opens again",
+        "export exact bytes",
+    ] {
+        assert!(
+            row.checks
+                .iter()
+                .any(|c| c.name == name && c.verdict == Verdict::Pass),
+            "{name}: {}",
+            row.json()
+        );
+    }
+}
+#[test]
+fn export_fails_when_the_dialog_is_never_seen_open() {
+    let row = slow_export(10_000);
+    assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+    assert!(
+        !row.checks
+            .iter()
+            .any(|c| c.name == "cancel dismisses save panel")
     );
 }
 #[test]

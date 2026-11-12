@@ -199,6 +199,9 @@ pub(super) fn export<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     d.type_text("# Export\nplain bytes")?;
     d.note("# Export\nplain bytes")?;
     d.chord(&[CMD, SHIFT, 1])?;
+    if !opened(d, "save panel opens")? {
+        return Ok(());
+    }
     d.op(Op::Panel(false))?;
     d.wait(250)?;
     let super::scenarios::Value::Bool(open) = d.op(Op::PanelOpen)? else {
@@ -216,6 +219,9 @@ pub(super) fn export<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
         cancelled,
     );
     d.chord(&[CMD, SHIFT, 1])?;
+    if !opened(d, "save panel opens again")? {
+        return Ok(());
+    }
     d.op(Op::Panel(true))?;
     d.wait(600)?;
     let exported = d.text(Op::Export)?;
@@ -226,4 +232,13 @@ pub(super) fn export<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     );
     d.note("# Export\nplain bytes")?;
     Ok(())
+}
+
+/// Presenting the dialog can hold the main thread past any fixed wait (about 1 s was seen in the
+/// VM, where reading its buttons after 300 ms ended as CannotComplete), so its buttons are read
+/// only once it is seen open. One not seen open within the bound fails and ends the scenario.
+fn opened<B: Backend>(d: &mut Driver<'_, B>, name: &str) -> Result<bool, String> {
+    let (open, ms) = super::lifecycle::panel_opens(d)?;
+    d.row.check(name, open, format!("after {ms}ms"));
+    Ok(open)
 }
