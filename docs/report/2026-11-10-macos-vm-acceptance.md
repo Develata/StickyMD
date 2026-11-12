@@ -436,3 +436,15 @@ USER 让 Claude 直接操控 VM 完成 W12 的注销检查（“你直接操控 
 **收据状态：** P16-W12 在新身份下仍为 `NOT TESTED`，等 USER 认可这次观察后再登记收据（`mac-ledger receipt`）并更新验收表。
 
 **USER 认可（2026-11-13）：** USER 看过上面三种情况后回复“记为通过”。已用 `mac-ledger receipt --app dist/macos/StickyMD.app --rows W12 --quote "记为通过"` 登记到 `4ce8a226…`，P16-W12 改为 `MANUAL PASS`，此前的收据保留为“此前”。与前两份一样，这是 USER 认可的脚本化观察，不是 USER 亲手操作。
+
+## 人工收据：macOS 桌面人工项（`4ce8a226…`，2026-11-13）
+
+USER 在本机桌面运行 `/Users/develata/gitclone/StickyMD/dist/macos/StickyMD.app`，即 `74b3d74` 的 release，可执行文件 SHA-256 `4ce8a2268b9bc26ae5a87b489c74cb7b68fa020f09b270730a4a931706affd50`，签名校验通过。本机系统为 macOS 27.2.1（26B7131）。
+
+验完 `mac-ledger plan` 列出的人工行后，USER 回复：“macos pass，没什么问题”。
+
+- **覆盖的行：** W01–W06、W10、I01–I03、F01，行定义见 `docs/acceptance-cases/phase-16.md` 第 38–43、47、62–64、70 行。
+- **不在其中：** R03 需要签名身份，仍为 `NOT TESTED`。
+- **登记：** 已用 `mac-ledger receipt --app dist/macos/StickyMD.app --rows W01,W02,W03,W04,W05,W06,W10,I01,I02,I03,F01 --quote "macos pass，没什么问题"` 登记。
+- **验收表：** 这些行改为 `MANUAL PASS`，此前的收据保留为“此前”。
+- **账本复核：** 登记后 `mac-ledger plan` 仍列出 I01–I03、R03。这符合账本规则：`tools/stickymd-smoke/src/mac_ledger/decide.rs` 的 `NEVER_REUSED` 规定，这几行的每次确认只代表那一次操作，以后不复用，与 Windows 相同。本次收据对 `4ce8a226…` 有效；下次 USER 确认时，这几行仍要重新做。
