@@ -448,3 +448,61 @@ USER 在本机桌面运行 `/Users/develata/gitclone/StickyMD/dist/macos/StickyM
 - **登记：** 已用 `mac-ledger receipt --app dist/macos/StickyMD.app --rows W01,W02,W03,W04,W05,W06,W10,I01,I02,I03,F01 --quote "macos pass，没什么问题"` 登记。
 - **验收表：** 这些行改为 `MANUAL PASS`，此前的收据保留为“此前”。
 - **账本复核：** 登记后 `mac-ledger plan` 仍列出 I01–I03、R03。这符合账本规则：`tools/stickymd-smoke/src/mac_ledger/decide.rs` 的 `NEVER_REUSED` 规定，这几行的每次确认只代表那一次操作，以后不复用，与 Windows 相同。本次收据对 `4ce8a226…` 有效；下次 USER 确认时，这几行仍要重新做。
+
+## R01 Hidden 与 R03（2026-11-13）
+
+以下都在同一个程序 `4ce8a226…`（`74b3d74` 的 release）上运行，虚拟机为 macOS 27.2（26B123），scale 2。
+
+### R03：App Translocation
+
+做法见 [`tools/manual/macos-r03-translocation.md`](../../tools/manual/macos-r03-translocation.md)。证据在 `dist/evidence/mac-vm-2026-11-13/r03-translocation/`。
+
+- **准备：** 把 ad-hoc 签名的包打成 zip，加上隔离标记（`0083;…;Safari;`），用“归档实用工具”解压；解出的包也带上了同一隔离标记。虚拟机的 Gatekeeper 评估是关闭的。
+- **启动：** 不移动包，直接用 `open` 从下载目录启动。进程路径为 `/private/var/folders/…/AppTranslocation/94D4445C-…/d/StickyMD.app/Contents/MacOS/StickyMD`，系统挂载了一个只读的 nullfs。
+- **提示：** 约 5 秒后（期间系统在做 AMFI 与 TCC 检查），stderr 写出“当前目录不可写，请先用访达把 StickyMD.app 移到别处。”与“cannot create a file: Read-only file system (os error 30)”。同时屏幕上出现 StickyMD 拥有的提示窗口（模态面板层级，410×439）。
+- **关掉提示：** 从 SSH 启动时 StickyMD 不会自动成为前台程序，按回车不起作用。再 `open` 一次同一个包后，系统激活了已在运行的实例，没有起第二个进程；按回车后进程退出，launchd 记为 `(0, 0, 256)`，即退出码 1。
+- **磁盘：** 下载目录前后一致，没有任何写入，也没有 `note/`。
+- **限制：** 只观察了 Gatekeeper 评估关闭的情况。
+  - 打开时 ad-hoc 包会先被拦下，要选“仍要打开”；之后的行为未验证。
+  - 从访达双击启动时，提示框是否自动到前台，也未观察。
+- **证据 SHA-256：**
+  - `r03-case.sh`：`a1aa1e215da7de1ec36ede23ae78d987fe93bee032728e2a89c1b2f5ffacb9a2`
+  - `stderr.log`：`8ea92cfcaff8e90ec3a30785ccd22eed9bcd78169abca2554de9b94984cae0c3`
+  - `system-show-final.log`：`2a91356192944a10ddb5f2965463b4b9173306eddf4046c21cd03142f38dd3f4`
+- **状态：** P16-R03 是人工行，这次观察要由 USER 认可，才能作为收据。在那之前保持 `NOT TESTED`。
+
+### R01：Hidden 内存
+
+`mac-resources` 现在会测 Hidden（`c7df8f6`，审查后修正于 `360d140`）：
+
+- 以 Source 打开；
+- 经辅助功能选择菜单栏的“隐藏”，等窗口离开屏幕；
+- 从那时起预热 30 秒，再像可见场景一样采样；
+- 两次采样时都复查窗口仍在屏幕外。
+
+| 运行 | 驱动 | Source | Preview | Split | Hidden |
+| --- | --- | --- | --- | --- | --- |
+| r9 | `01bd8c6c…`（`c7df8f6`） | 47.0 / 47.1 | 50.4 / 50.4 | 50.5 / 53.3 | 53.0 / 53.1 |
+| r10 | `6e18c9fa…`（`360d140`） | 47.0 / 47.2 | 50.1 / 50.5 | 52.8 / 53.0 | 55.4 / 55.7 |
+
+单位 MiB，中位 / 最大，每种 5 次，全部有效。
+
+- **证据：** r9 SHA-256 `f38a3eaff689bdfd77f8eb6ee560a4655e3000cd3762dece6d180f4bee9fe3b7`，r10 SHA-256 `3cb02e577317385e000007b61ae284efbf3f1dc9954dd5e12908bbbd3573e8f9`，都保存在 `dist/evidence/mac-vm-2026-11-13/`。
+- **对照探针：** 用一个未提交的工具构建，把“隐藏”换成两次“置顶”：同样经辅助功能打开菜单，但窗口一直可见。Source 升到 53.3 / 53.5 MiB。证据在 `probe-menu-only/`，SHA-256 `87dde39047eac378cad4face2f49f571bbad1b28bec8f10d435562c3aebe53aa`。
+
+**结论：**
+
+- Hidden 比 `10` 的临时硬门 48 MiB 高 5–8 MiB。
+- 增量主要来自打开菜单：AppKit 的菜单与辅助功能对象留在进程里。隐藏窗口本身不释放内存。
+- 用鼠标打开菜单时会少多少，没有分开测量：虚拟机里新构建的辅助程序没有发事件的权限。
+
+`10` 规定，临时硬门在首次实测后由 USER 定最终值。在 USER 决定之前，P16-R01 记为 `BLOCKED`。
+
+### 同一轮的 `mac-gui`
+
+r23（驱动 `81110f45…`）与 r24（驱动 `6e18c9fa…`）都是 PASS 9、FAIL 0、NOT_TESTED 11，逐行与 r22 相同。两次都已写入账本。证据 SHA-256：
+
+- r23：`ffca2b10e784e7305328886bdcd23dfbb48f0f9fe341bd1e205164bb1db329b4`
+- r24：`96f40413d6776ae8dec2dc14ec45b3bfe8bd650861549c0300934222510c9554`
+
+验收表的六个自动化行改引 r24。

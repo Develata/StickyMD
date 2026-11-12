@@ -598,3 +598,13 @@ USER 在 macOS 上发现透明度弹窗的数字只有一半大、挤在输入�
 
 - “系统终止”一段说，系统对注销、关机的答复有约两分钟期限。对 StickyMD 这样的 UI Element 应用，注销根本不等答复：loginwindow 过了不可撤销点才发退出请求，随后 launchd 对仍在运行的进程发 SIGTERM。
 - 审查表中导出面板一行说，代价是“这次注销被中断一次，再次注销即可”。实际上回 `NSTerminateCancel` 中断不了注销，导出对话框打开时注销照常完成。
+
+## 更正：App Translocation 不需要签名身份（2026-11-13）
+
+上文推断“ad-hoc 包会被 Gatekeeper 拒绝，本机无法走到随机化路径”，由此 P16-R03 一直记为“需要签名身份”。2026-11-13 在 Tart 虚拟机里实测，这个推断不成立。
+
+- **做法：** 把 ad-hoc 签名的 `StickyMD.app`（`4ce8a226…`）打成 zip，给 zip 加上浏览器下载时的隔离标记（`com.apple.quarantine`），再用“归档实用工具”解压，然后用 `open` 从解压目录启动，与从下载目录双击走同一条 LaunchServices 路径。虚拟机的 Gatekeeper 评估是关闭的。
+- **结果：** 程序运行在 `/private/var/folders/…/AppTranslocation/<UUID>/d/StickyMD.app`（只读 nullfs 挂载）。
+- **结论：** 随机化取决于隔离标记，以及包有没有被访达移动过，与签名无关。
+
+Apple 开发者账号（每年 99 美元）的 Developer ID 签名与公证，只影响别人下载后能否不经警告直接打开；测 R03 不需要它。详见 [VM 验收](2026-11-10-macos-vm-acceptance.md) 的“R03”一节。
