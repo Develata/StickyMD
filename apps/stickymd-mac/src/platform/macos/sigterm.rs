@@ -1,5 +1,5 @@
 //! SIGTERM as a quit request. A logout asks StickyMD to quit without waiting for it, and launchd
-//! sends SIGTERM to an instance it manages (launched by Finder or `open`) still running about 1 s
+//! sends SIGTERM to an instance it manages (launched by Finder or `open`) still running 1 to 3 s
 //! later (report RISK-macos-logout-ui-element); at its default disposition the signal ends it,
 //! whatever the quit barrier has left to save. A dispatch source on the main queue delivers the
 //! signal instead, and once it is registered the disposition becomes "ignore". The main run loop

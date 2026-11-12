@@ -77,3 +77,7 @@ codex-reviewer 审查（第 5 轮）没有发现阻断项，并核实了：
 
 - 真实注销与关机；
 - `show_error` 用的 `NSAlert`。它的窗口是否同样阻止终止没有核实：有些信息型提示默认就不阻止终止，而且致命启动错误可能出现在终止钩子安装之前。这不在本次批准范围内，留作后续。
+
+## 更正（2026-11-12）
+
+“可选路径”表中方案 C 的代价写着“注销会被打断”，这不成立：StickyMD 是 UI Element 应用，注销时 loginwindow 发退出请求，但不等回复，回 `NSTerminateCancel` 拦不住注销。方案 A 一行说“注销走的也是退出 Apple Event”，这一点已在 VM 中证实，StickyMD 处理了这个 Apple Event。详见 [RISK：注销时 launchd 结束仍在运行的 StickyMD](RISK-macos-logout-ui-element.md)。

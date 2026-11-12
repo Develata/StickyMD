@@ -20,7 +20,7 @@ const TERMINATE_LATER: usize = 2;
 /// RISK-macos-logout-ui-element).
 const QUIT_ANSWER_DEADLINE_SECONDS: f64 = 100.0;
 /// A quit that SIGTERM started has this long before the barrier's timeout applies. At a logout
-/// SIGKILL followed launchd's SIGTERM about 1 s later (one VM sample, report
+/// SIGKILL followed launchd's SIGTERM about 1 s later (two VM samples, report
 /// RISK-macos-logout-ui-element), so this bounds a SIGTERM that nothing follows, such as `kill`.
 const SIGNAL_QUIT_DEADLINE_SECONDS: f64 = 5.0;
 /// `kCoreEventClass` and `kAEReopenApplication`.
@@ -217,7 +217,7 @@ fn abort_modal() -> bool {
 }
 
 /// SIGTERM: at a logout launchd sends it to an instance it manages (launched by Finder or `open`)
-/// still running about 1 s after the quit request, which is not waited for (report
+/// still running 1 to 3 s after the quit request, which is not waited for (report
 /// RISK-macos-logout-ui-element); a user can send it too. The same quit as a system request, with
 /// no answer to give. A running dialog ends as a cancel first and the quit runs once it returned.
 ///

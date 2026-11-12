@@ -591,3 +591,10 @@ USER 在 macOS 上发现透明度弹窗的数字只有一半大、挤在输入�
 推翻上文“‘数量相等用 CRLF’是共享规则，不动”。在 Tart 虚拟机（macOS 27.2）里，K02 与 E01 预先放一个空的 `note.md`，按 Return 后保存的是 CRLF：空文件两种换行都是 0 个，按原规则算作平局。macOS 上任何还没有换行的已有笔记都会这样。USER 选择改为平台风格：数量相等（含没有换行）时用该平台的首次创建换行，Windows 仍为 CRLF，行为不变。
 
 同时修正一处偏离 `05` 的实现：恢复时放弃临时内容、note 已缺失，重建的空 note 原先固定写 CRLF。现在由恢复候选携带宿主的首次创建换行（`RecoveryCandidate::new_note`），读文件、启动检查与重建都用宿主传入的同一个值（`NEW_NOTE_LINE_ENDING`）。
+
+### 更正：注销时的系统终止（2026-11-12）
+
+上文有两处说法与 VM 实测不符，以 [RISK：注销时 launchd 结束仍在运行的 StickyMD](RISK-macos-logout-ui-element.md) 为准：
+
+- “系统终止”一段说，系统对注销、关机的答复有约两分钟期限。对 StickyMD 这样的 UI Element 应用，注销根本不等答复：loginwindow 过了不可撤销点才发退出请求，随后 launchd 对仍在运行的进程发 SIGTERM。
+- 审查表中导出面板一行说，代价是“这次注销被中断一次，再次注销即可”。实际上回 `NSTerminateCancel` 中断不了注销，导出对话框打开时注销照常完成。
