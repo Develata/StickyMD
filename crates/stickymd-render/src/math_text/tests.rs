@@ -312,9 +312,18 @@ fn phase11b_equals_lines_reject_positions_that_disagree_with_the_formula() {
     // A definition in its own paragraph shifts nothing after it.
     assert_conversion("[x]: u\n\n\\[a\n=\nb\\]", "[x]: u\n\n\\[a=b\\]");
     assert_conversion("[x]: u\n\n$$a\n=\nb$$", "[x]: u\n\n$$a=b$$");
+    // A list marker needs a space or the line end, and at most nine digits;
+    // anything else is text and stays protected inside a detached title.
+    for line in ["-x", "1234567890.", "-=", "="] {
+        let source = format!("[x]: u \"$$a\n{line}\n=\nb$$\"");
+        assert!(
+            join_math_equals_lines(&source, None).is_none(),
+            "{source:?}"
+        );
+    }
     // An empty block quote or list item inside a `$$` pair is markup, not a
     // detached definition, so the pair still joins.
-    for marker in [">", "-", "1.", "> -"] {
+    for marker in [">", "-", "1.", "> -", "- >", "- -", "1. >", "> - >", ">>"] {
         for newline in ["\n", "\r\n"] {
             let source = format!(
                 "[x]: u{newline}{newline}$$a{newline}={newline}b{newline}{newline}{marker}{newline}{newline}c$$"

@@ -297,20 +297,32 @@ fn protect_detached_lines<'a>(
     }
 }
 
-/// A line with nothing but container markup: block quote `>`s, then at most
-/// one list marker, and spaces. It carries no text a title could hold.
+/// A line with nothing but nested container markup and spaces: block quote
+/// `>`s and list markers (`-`, `*`, `+`, or one to nine digits then `.` or
+/// `)`, each followed by a space or the line end) in any order, as in `- >`.
+/// It never holds a bare `=`, so leaving it unprotected cannot open a join
+/// inside a definition title.
 fn markup_only(line: &str) -> bool {
     let mut rest = line.trim_start();
-    while let Some(after) = rest.strip_prefix('>') {
+    while !rest.is_empty() {
+        let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+        let (width, list) = if rest.starts_with('>') {
+            (1, false)
+        } else if rest.starts_with(['-', '*', '+']) {
+            (1, true)
+        } else if (1..=9).contains(&digits) && rest[digits..].starts_with(['.', ')']) {
+            (digits + 1, true)
+        } else {
+            return false;
+        };
+        let after = &rest[width..];
+        // A list marker must be followed by a space or end the line.
+        if list && !(after.is_empty() || after.starts_with(char::is_whitespace)) {
+            return false;
+        }
         rest = after.trim_start();
     }
-    let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-    let rest = match rest.strip_prefix(['-', '*', '+']) {
-        Some(after) => after,
-        None if digits > 0 => rest[digits..].strip_prefix(['.', ')']).unwrap_or(rest),
-        None => rest,
-    };
-    rest.trim().is_empty()
+    true
 }
 
 /// Line starts of the scanned source; Comrak lines and columns are 1-based
