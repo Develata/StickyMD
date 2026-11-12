@@ -392,3 +392,12 @@ USER 让 Claude 直接操控 VM 完成 W12 的注销检查（“你直接操控 
 **收据状态：** 人工收据绑定 app 的 SHA-256，所以 P16-W12 在新身份下要由 USER 认可这次脚本化观察后，才能改为 `a9f4354b…` 的收据；在那之前，表中保留 `4e19774d…` 的收据。
 
 **USER 认可（2026-11-12）：** USER 看过上面三种情况的结果后回复“记为通过”。P16-W12 改用 `a9f4354b…` 的这份收据，`4e19774d…` 的收据保留为“此前”。与上一份一样，这是 USER 认可的脚本化观察，不是 USER 亲手操作；`mac-ledger receipt` 只能把环境记为“USER desktop”，所以没有写入账本，只记在这里。
+
+## 更正：人工行状态与 W12 账本（2026-11-12 复审）
+
+- **人工行状态。** codex 复审指出，W01–W06、W10、I01–I03、F01 的收据都来自旧的 app 身份（`10127b2` 等），表中却仍是 `MANUAL PASS`。依据有两条：[plan 11](../plan/11_testing_and_release.md) Phase 16 规定“app 变了，收据不再成立”；`MANUAL PASS` 的定义是“当前候选上”已执行。所以这些行现改为 `NOT TESTED`，旧收据保留为“此前”，等 USER 在 `a9f4354b…` 上确认。
+- **W12 账本。** 上文说 `mac-ledger receipt` 只能把环境记为“USER desktop”，所以没有登记，这个判断不对。按 `tools/stickymd-smoke/src/mac_ledger/run.rs` 的说明，环境字段只记录在哪台机器上登记，不证明 USER 在那里测试；测试范围以收据原话为准。
+  - 现已用 `mac-ledger receipt --app dist/macos/StickyMD.app --rows W12 --quote "记为通过"` 登记。
+  - 登记内容：app `a9f4354b…`，环境“USER desktop, recorded on macOS 27.2.1 (26B7131)”，即登记所在的这台 Mac。被测的是上文所述的 VM 脚本化注销。
+  - 登记后 `mac-ledger plan` 不再要求确认 W12。
+- **修复提交之后。** 复审修复改了产品代码，W07、W08、W09、W11、K02、E01 与 W12 的证据仍对应 `a9f4354b…`，按 plan 11 改为 `NOT TESTED`，原证据保留为“此前”。新构建在 VM 中重跑、W12 由 USER 重新确认后再更新。

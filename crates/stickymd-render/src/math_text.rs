@@ -243,11 +243,74 @@ fn scan_formulas(source: &str) -> Option<FormulaScan> {
             _ => {}
         }
     }
+    if may_shift {
+        protect_detached_lines(source, root, &lines, &mut protected);
+    }
     protected.sort_unstable_by_key(|range| range.start);
     Some(FormulaScan {
         protected,
         formulas,
     })
+}
+
+/// Comrak detaches a paragraph that held only link reference definitions, so
+/// its lines, a multiline title included, belong to no node. With the lines of
+/// every leaf block marked, each line left over that carries text is protected
+/// whole, so the dollar-pair scan cannot join inside a definition title: any
+/// join needs a bare `=` line, and that line is never blank or bare markup.
+/// Lines of an empty block quote or list item (`>`, `-`, `1.`) are left alone.
+/// A block type not listed here leaves its lines protected, which fails closed.
+fn protect_detached_lines<'a>(
+    source: &str,
+    root: &'a AstNode<'a>,
+    lines: &Lines,
+    protected: &mut Vec<Range<usize>>,
+) {
+    let count = lines.starts.len();
+    let mut covered = vec![false; count + 1];
+    for node in root.descendants() {
+        let data = node.data.borrow();
+        if matches!(
+            data.value,
+            NodeValue::Paragraph
+                | NodeValue::Heading(_)
+                | NodeValue::CodeBlock(_)
+                | NodeValue::HtmlBlock(_)
+                | NodeValue::ThematicBreak
+                | NodeValue::Table(_)
+        ) {
+            let first = data.sourcepos.start.line.max(1);
+            let last = data.sourcepos.end.line.min(count);
+            if let Some(lines) = covered.get_mut(first..=last) {
+                lines.fill(true);
+            }
+        }
+    }
+    for (line, &covered) in covered.iter().enumerate().skip(1) {
+        if let (false, Some(start), Some(end)) = (covered, lines.start(line), lines.end(line))
+            && source
+                .get(start..end)
+                .is_some_and(|text| !markup_only(text))
+        {
+            protected.push(start..end);
+        }
+    }
+}
+
+/// A line with nothing but container markup: block quote `>`s, then at most
+/// one list marker, and spaces. It carries no text a title could hold.
+fn markup_only(line: &str) -> bool {
+    let mut rest = line.trim_start();
+    while let Some(after) = rest.strip_prefix('>') {
+        rest = after.trim_start();
+    }
+    let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    let rest = match rest.strip_prefix(['-', '*', '+']) {
+        Some(after) => after,
+        None if digits > 0 => rest[digits..].strip_prefix(['.', ')']).unwrap_or(rest),
+        None => rest,
+    };
+    rest.trim().is_empty()
 }
 
 /// Line starts of the scanned source; Comrak lines and columns are 1-based

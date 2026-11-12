@@ -1017,6 +1017,8 @@ mod tests {
         for source in [
             "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",
             "[x]: u \"\\(a\\)\"\n12345678\\(c\\)",
+            // A paragraph of definitions only: Comrak detaches it.
+            "[x]: u \"$$a\n=\nb$$\"\n\n[x]",
         ] {
             refuses(source);
         }

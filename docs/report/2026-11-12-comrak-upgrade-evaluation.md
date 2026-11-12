@@ -191,3 +191,9 @@ USER 选择“A 先升 0.59”。USER 另外说明：StickyMD 自己的 1.0.0 �
 
 - **Windows x64 上的实际运行。** 0.59 新增的 `memchr-n` / `fearless_simd` 有运行时 SIMD 分派，Apple Silicon 的运行和交叉 `cargo check` 都覆盖不到 SSE/AVX 路径。需要在 Windows 机器上运行新增回归、表格 source-map 与数学按钮测试，并记录 CPU 与构建身份。这与 `2febab1` 要求的 Windows 回归合并进行。
 - 真实笔记中 autolink 变化带来的预览差异，只有现有测试覆盖。
+
+## 补充：复审后的更正（2026-11-12）
+
+- **plan 06 漏改。** codex 复审指出，`docs/plan/06_markdown_math_rendering.md` 要求“升级 Comrak 时方言选项需重新核验并更新本章”，升级时没有做。现已补上：记下当前版本 0.59.0；方言选项不变、其它扩展保持关闭；并列出随版本改变、由 Comrak 决定的解析结果（自动链接的识别，以及源码位置）。
+- **授权依据。** 预览中自动链接的变化，本报告上文已列为已知行为变化，USER 在此基础上选择了方案 A。
+- **Windows x64 实机运行。** 仍待在 Windows 机器上验证。

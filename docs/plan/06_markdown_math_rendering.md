@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Last Review`: 2026-11-12
 - `Scope`: Markdown 语义权威、数学语义权威、Owned AST、Preview 调度与 generation、渲染桥接、缓存与资源限制
 
 ---
@@ -56,6 +56,11 @@ inline code、fenced/indented code block、链接、自动链接、图片、表�
 - code span / code block 中的公式标记不得被解释。
 - `\$` 按 parser 结果处理。
 - 不改变 Markdown parser 语义；升级 Comrak 时方言选项需重新核验并更新本章。
+- 当前版本 Comrak 0.59.0（2026-11-12 由 0.54.0 升级，USER 批准，见
+  [升级评估](../report/2026-11-12-comrak-upgrade-evaluation.md)）。已核验：上述方言选项不变，
+  其它扩展保持关闭。随版本改变、由 Comrak 决定的解析结果：自动链接按 cmark-gfm 识别，
+  `http://localhost/x` 这类短域名与大写 scheme（如 `HTTP://www.example.com/`）现在成为链接；
+  多行行内节点、表格行与 CRLF 段落的源码位置更准确。
 
 ---
 

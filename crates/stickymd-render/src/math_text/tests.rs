@@ -300,8 +300,31 @@ fn phase11b_equals_lines_reject_positions_that_disagree_with_the_formula() {
     ] {
         assert!(join_math_equals_lines(source, None).is_none(), "{source:?}");
     }
+    // A paragraph of definitions only is detached by Comrak: its lines,
+    // titles included, are protected, inside containers too.
+    for source in [
+        "[x]: u \"$$a\n=\nb$$\"\n\n[x]",
+        "[x]: u \"$$a\n=\nb$$\"",
+        "- [x]: u \"$$a\n  =\n  b$$\"\n\n  [x]",
+    ] {
+        assert!(join_math_equals_lines(source, None).is_none(), "{source:?}");
+    }
     // A definition in its own paragraph shifts nothing after it.
     assert_conversion("[x]: u\n\n\\[a\n=\nb\\]", "[x]: u\n\n\\[a=b\\]");
+    assert_conversion("[x]: u\n\n$$a\n=\nb$$", "[x]: u\n\n$$a=b$$");
+    // An empty block quote or list item inside a `$$` pair is markup, not a
+    // detached definition, so the pair still joins.
+    for marker in [">", "-", "1.", "> -"] {
+        for newline in ["\n", "\r\n"] {
+            let source = format!(
+                "[x]: u{newline}{newline}$$a{newline}={newline}b{newline}{newline}{marker}{newline}{newline}c$$"
+            );
+            let expected = format!(
+                "[x]: u{newline}{newline}$$a=b{newline}{newline}{marker}{newline}{newline}c$$"
+            );
+            assert_conversion(&source, &expected);
+        }
+    }
     // A link whose destination and title span lines also ends early in
     // Comrak's report; without any `]:` no definition can have shifted it.
     assert_conversion("\\(a\n=\nb\\)\n[x](u\n\"t\")", "\\(a=b\\)\n[x](u\n\"t\")");

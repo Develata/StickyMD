@@ -13,7 +13,8 @@ use stickymd_core::DocumentSnapshot;
 
 use crate::math_text::{EqualsLineConversion, join_math_equals_lines};
 use crate::preview::{
-    MathDelimiterConversion, SemanticConversionError, convert_latex_math_delimiters,
+    MAX_PREVIEW_SOURCE_BYTES, MathDelimiterConversion, PreviewParseError, SemanticConversionError,
+    convert_latex_math_delimiters,
 };
 
 /// The result of one pass that changed the text.
@@ -59,6 +60,15 @@ pub fn run_math_action(
     snapshot: &DocumentSnapshot,
     scope: Option<Range<usize>>,
 ) -> Result<Option<MathActionPass>, SemanticConversionError> {
+    // Step 2 refuses such a source before it parses; step 1 must not parse
+    // it first.
+    if snapshot.text.len() > MAX_PREVIEW_SOURCE_BYTES {
+        return Err(PreviewParseError::SourceTooLarge {
+            actual: snapshot.text.len(),
+            limit: MAX_PREVIEW_SOURCE_BYTES,
+        }
+        .into());
+    }
     let joined = join_math_equals_lines(&snapshot.text, scope.clone());
     let joined_snapshot = joined.as_ref().map(|joined| DocumentSnapshot {
         text: joined.text().into(),
@@ -129,6 +139,25 @@ mod tests {
             samples[samples.len() * 95 / 100],
             samples[samples.len() - 1],
         )
+    }
+
+    #[test]
+    fn phase11b_math_action_refuses_an_oversized_source_before_joining() {
+        // One byte over the limit, and back under it once the join removes
+        // two newlines: only a check before step 1 refuses it.
+        let mut text = "x".repeat(super::MAX_PREVIEW_SOURCE_BYTES - 10);
+        text.push_str("\n\n$$a\n=\nb$$");
+        assert_eq!(text.len(), super::MAX_PREVIEW_SOURCE_BYTES + 1);
+        let result = run_math_action(&snapshot(&text), None);
+        assert!(
+            matches!(
+                result,
+                Err(super::SemanticConversionError::Parse(
+                    super::PreviewParseError::SourceTooLarge { .. }
+                ))
+            ),
+            "{result:?}"
+        );
     }
 
     #[test]
