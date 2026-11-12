@@ -401,3 +401,36 @@ USER 让 Claude 直接操控 VM 完成 W12 的注销检查（“你直接操控 
   - 登记内容：app `a9f4354b…`，环境“USER desktop, recorded on macOS 27.2.1 (26B7131)”，即登记所在的这台 Mac。被测的是上文所述的 VM 脚本化注销。
   - 登记后 `mac-ledger plan` 不再要求确认 W12。
 - **修复提交之后。** 复审修复改了产品代码，W07、W08、W09、W11、K02、E01 与 W12 的证据仍对应 `a9f4354b…`，按 plan 11 改为 `NOT TESTED`，原证据保留为“此前”。新构建在 VM 中重跑、W12 由 USER 重新确认后再更新。
+
+## 重跑：`74b3d74` 的 release（2026-11-13）
+
+复审修复（`9088c57`、`74b3d74`）改了产品代码，所以在新身份下重跑一遍。做法与“重跑：`320f785` 的 release”相同：同一镜像、同一系统（macOS 27.2，26B123），`tart run --no-graphics`，每次运行前等负载降到 1.0 以下。
+
+- **app：** 在干净工作区用 `build-app.sh` 打包，可执行文件 SHA-256 `4ce8a2268b9bc26ae5a87b489c74cb7b68fa020f09b270730a4a931706affd50`。
+- **驱动：** 没有变化，仍为 `7232899214933b8a084a8fb8e7b10328227971762faa1d9797e8af3d640162ac`。
+- **`mac-gui` r22：** PASS 9、FAIL 0、NOT_TESTED 11，逐行与 r21 相同。
+  - W12 的 23 项检查中 22 项通过，只有 `logout` 未测。
+  - 证据 SHA-256 `7408b06c0561ea53542c01cdbdaa3f8bec77f55178d9a987b1dccb55cb0b85ff`，保存在 `dist/evidence/mac-vm-2026-11-12/mac-gui-r22/`。
+  - 已写入账本。
+  - W07、W08、W09、W11、K02、E01 依 r22 恢复为 `AUTOMATED PASS`。
+- **`mac-resources-r8`：** 每种视图 5 次，全部有效。
+  - Source、Preview、Split 的内存中位为 47.0、50.0、50.2 MiB，空闲 CPU 中位为 0.0007%、0.0009%、0.0007%，与 r7 持平。
+  - 证据 SHA-256 `fb534d0fb01109a3029474dd56998aed965043f50fb58e3474eaad49abf73da1`，保存在 `dist/evidence/mac-vm-2026-11-13/mac-resources-r8/`。
+
+### W12 真实注销（`4ce8a226…`，待 USER 认可）
+
+| 情况 | 系统日志 | 磁盘 |
+| --- | --- | --- |
+| 输入后立刻注销 | 16:20:47.094 发请求；3 ms 后开始处理，+130 ms 回复 `YES`；launchd 记为 `(0, 0, 0)` | 注销请求前是旧字节，之后是输入的文本 |
+| 导出对话框打开时注销 | 16:22:46.390 发请求；7 ms 后回 `NSTerminateCancel`，注销照常继续；约 0.24 s 时 launchd 记为 `(0, 0, 0)` | 两行都已落盘；没有生成导出文件 |
+| 保存失败时注销 | 16:24:34.853 发请求；`NSTerminateLater`，8 ms 后回 `NO`；16:24:35.993 launchd 移除服务（推断发 SIGTERM，被忽略）；16:24:37.001 记为 `(2, 9, 9)` | 仍是此前保存的内容；`.trash` 为空，没有残留的临时文件 |
+
+三种情况与 `a9f4354b…`、`4e19774d…` 上的结果一致。
+
+**证据：** `dist/evidence/mac-vm-2026-11-13/w12-logout-4ce8/`。`w12-case.sh`、`main.rs`、`w12keys` 的 SHA-256 与前两次相同；三个系统日志的 SHA-256：
+
+- text：`189a5d27acd6f3d3ae6255a5ec7643e0dcce67af248f32a2b58161e566db7efe`
+- dialog：`b6c713b129336e3a092914823fc1bdd050ce9b411565159da02c2b2314218ed5`
+- fault：`2fec963783e42c237dfda15347d45befd08ed77715cd0ae20b7c55b22f02fc31`
+
+**收据状态：** P16-W12 在新身份下仍为 `NOT TESTED`，等 USER 认可这次观察后再登记收据（`mac-ledger receipt`）并更新验收表。
