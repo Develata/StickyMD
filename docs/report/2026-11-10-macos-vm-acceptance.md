@@ -434,3 +434,5 @@ USER 让 Claude 直接操控 VM 完成 W12 的注销检查（“你直接操控 
 - fault：`2fec963783e42c237dfda15347d45befd08ed77715cd0ae20b7c55b22f02fc31`
 
 **收据状态：** P16-W12 在新身份下仍为 `NOT TESTED`，等 USER 认可这次观察后再登记收据（`mac-ledger receipt`）并更新验收表。
+
+**USER 认可（2026-11-13）：** USER 看过上面三种情况后回复“记为通过”。已用 `mac-ledger receipt --app dist/macos/StickyMD.app --rows W12 --quote "记为通过"` 登记到 `4ce8a226…`，P16-W12 改为 `MANUAL PASS`，此前的收据保留为“此前”。与前两份一样，这是 USER 认可的脚本化观察，不是 USER 亲手操作。
