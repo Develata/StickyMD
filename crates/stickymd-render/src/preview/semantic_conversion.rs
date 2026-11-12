@@ -110,7 +110,12 @@ pub fn convert_latex_math_delimiters(
     validate_scope(&snapshot.text, scope.as_ref())?;
     let tree = PreviewParser.parse(snapshot)?;
     let mut replacements = Vec::new();
-    collect_blocks(&tree.blocks, scope.as_ref(), &mut replacements);
+    collect_blocks(
+        &tree.blocks,
+        scope.as_ref(),
+        &tree.shifted_blocks,
+        &mut replacements,
+    );
     replacements.sort_unstable_by_key(|replacement| replacement.range.start);
     replacements.dedup_by_key(|replacement| replacement.range);
     if replacements.is_empty() {
@@ -171,30 +176,36 @@ fn validate_scope(
     Ok(())
 }
 
+/// `shifted` holds the spans of blocks whose inline positions Comrak 0.54
+/// reports shifted (`OwnedDocumentTree::shifted_blocks`): a formula reported
+/// inside one
+/// is not converted, since its range may name other text, such as a link
+/// reference title.
 fn collect_blocks(
     blocks: &[BlockNode],
     scope: Option<&Range<usize>>,
+    shifted: &[Range<usize>],
     output: &mut Vec<DelimiterReplacement>,
 ) {
     for block in blocks {
         match block {
             BlockNode::Paragraph { content, .. } | BlockNode::Heading { content, .. } => {
-                collect_inlines(content, scope, output);
+                collect_inlines(content, scope, shifted, output);
             }
-            BlockNode::BlockQuote { blocks, .. } => collect_blocks(blocks, scope, output),
+            BlockNode::BlockQuote { blocks, .. } => collect_blocks(blocks, scope, shifted, output),
             BlockNode::List(list) => {
                 for item in &list.items {
-                    collect_blocks(&item.blocks, scope, output);
+                    collect_blocks(&item.blocks, scope, shifted, output);
                 }
             }
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        collect_inlines(&cell.content, scope, output);
+                        collect_inlines(&cell.content, scope, shifted, output);
                     }
                 }
             }
-            BlockNode::DisplayMath(math) => collect_math(math, scope, output),
+            BlockNode::DisplayMath(math) => collect_math(math, scope, shifted, output),
             BlockNode::CodeBlock(_)
             | BlockNode::ThematicBreak { .. }
             | BlockNode::HtmlLiteral { .. } => {}
@@ -205,6 +216,7 @@ fn collect_blocks(
 fn collect_inlines(
     inlines: &[InlineNode],
     scope: Option<&Range<usize>>,
+    shifted: &[Range<usize>],
     output: &mut Vec<DelimiterReplacement>,
 ) {
     for inline in inlines {
@@ -212,8 +224,10 @@ fn collect_inlines(
             InlineNode::Emphasis { children, .. }
             | InlineNode::Strong { children, .. }
             | InlineNode::Strikethrough { children, .. }
-            | InlineNode::Link { children, .. } => collect_inlines(children, scope, output),
-            InlineNode::InlineMath(math) => collect_math(math, scope, output),
+            | InlineNode::Link { children, .. } => {
+                collect_inlines(children, scope, shifted, output)
+            }
+            InlineNode::InlineMath(math) => collect_math(math, scope, shifted, output),
             InlineNode::Text { .. }
             | InlineNode::Code { .. }
             | InlineNode::Image { .. }
@@ -227,11 +241,20 @@ fn collect_inlines(
 fn collect_math(
     math: &MathNode,
     scope: Option<&Range<usize>>,
+    shifted: &[Range<usize>],
     output: &mut Vec<DelimiterReplacement>,
 ) {
     let Some(range) = math.source_range else {
         return;
     };
+    // Spans are disjoint and in document order.
+    let span = shifted.partition_point(|span| span.end < range.start);
+    if shifted
+        .get(span)
+        .is_some_and(|span| span.start <= range.start)
+    {
+        return;
+    }
     if scope.is_some_and(|scope| range.start < scope.start || range.end > scope.end) {
         return;
     }
@@ -361,6 +384,44 @@ mod tests {
             apply_replacements("abcdefgh", &replacements),
             Err(SemanticConversionError::OverlappingSourceRanges)
         );
+    }
+
+    #[test]
+    fn phase11b_conversion_skips_blocks_shifted_by_reference_definitions() {
+        // Comrak 0.54 reports every inline in these blocks shifted up by the
+        // removed definition lines; converting them would rewrite the title.
+        for source in [
+            "[x]: u \"\\(a\\)\"\n12345678\\(c\\)",
+            // A trailing inline whose shifted end column runs past its line.
+            "[x]: u \"\\(a\\)\"\n12345678\\(c\\) tail",
+            "[x]: u \"\\(abc\\)\"\n12345678$$c=d$$",
+            "[x]: u \"\\(a\\)\"\nbar \\(c\\)\n===",
+            "[x]: u \"\\[t\\]\"\n\\[a\\]",
+            // Known conservative limit: with a `]:` anywhere, a paragraph that
+            // ends in a multiline link title also reads as shifted.
+            "\\(a\\)\n[x](u\n\"t\")\n\n```\n]:\n```",
+        ] {
+            assert!(converted(source, None).is_none(), "{source:?}");
+        }
+        for (source, expected) in [
+            ("[x]: u\n\n12345678\\(c\\)", "[x]: u\n\n12345678$c$"),
+            ("foo\n===\n\\(c\\)", "foo\n===\n$c$"),
+            ("# a \\(c\\) ##", "# a $c$ ##"),
+            ("bar \\(c\\)  \nnext  ", "bar $c$  \nnext  "),
+            ("> quote \\(c\\)\nlazy", "> quote $c$\nlazy"),
+            // A later inline whose misreported end has no byte range does not
+            // make the paragraph look shifted.
+            ("\\(a\\)\n  `b\nc`", "$a$\n  `b\nc`"),
+            // Without `]:` no definition can have shifted a paragraph that ends
+            // in a link whose destination and title span lines.
+            ("\\(a\\)\n[x](u\n\"t\")", "$a$\n[x](u\n\"t\")"),
+        ] {
+            assert_eq!(
+                converted(source, None).map(MathDelimiterConversion::into_text),
+                Some(expected.to_owned()),
+                "{source:?}"
+            );
+        }
     }
 
     #[test]

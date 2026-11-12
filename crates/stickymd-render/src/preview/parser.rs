@@ -10,7 +10,7 @@ use comrak::{Arena, Options, parse_document};
 use stickymd_core::DocumentSnapshot;
 use thiserror::Error;
 
-use super::source_map::TableCellSourceMap;
+use super::source_map::{TableCellSourceMap, shifted_block_spans};
 use super::{
     BlockNode, CodeBlockNode, ImageKind, InlineNode, LinkKind, ListItem, ListNode, MathNode,
     OwnedDocumentTree, SourceMap, SourceRange, TableAlignment, TableCell, TableNode, TableRow,
@@ -31,7 +31,7 @@ pub enum PreviewParseError {
 }
 
 /// Exact Phase 5 Markdown dialect. Comrak remains the only semantic parser.
-fn markdown_options() -> Options<'static> {
+pub(crate) fn markdown_options() -> Options<'static> {
     let mut options = Options::default();
     options.extension.strikethrough = true;
     options.extension.table = true;
@@ -78,8 +78,9 @@ impl PreviewParser {
         let root = parse_document(&arena, &snapshot.text, &markdown_options());
         let comrak_parse = parse_started.elapsed();
         let conversion_started = Instant::now();
-        let (blocks, node_count) = {
+        let (blocks, node_count, shifted_blocks) = {
             let source_map = SourceMap::new(&snapshot.text);
+            let shifted_blocks = shifted_block_spans(root, &snapshot.text, &source_map);
             let mut context = ConvertContext {
                 source: &snapshot.text,
                 source_map: &source_map,
@@ -87,7 +88,7 @@ impl PreviewParser {
                 table_cell_map: None,
             };
             let blocks = context.convert_blocks(root, 0)?;
-            (blocks, context.node_count)
+            (blocks, context.node_count, shifted_blocks)
         };
         let owned_conversion = conversion_started.elapsed();
 
@@ -97,6 +98,7 @@ impl PreviewParser {
                 source: Arc::clone(&snapshot.text),
                 blocks,
                 node_count,
+                shifted_blocks,
             },
             PreviewParseMetrics {
                 comrak_parse,

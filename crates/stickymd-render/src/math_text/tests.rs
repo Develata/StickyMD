@@ -1,11 +1,11 @@
 use std::ops::Range;
 
-use super::join_display_math_equals;
+use super::join_math_equals_lines;
 
 fn assert_conversion(source: &str, expected: &str) {
-    let conversion = join_display_math_equals(source, None).expect(source);
+    let conversion = join_math_equals_lines(source, None).expect(source);
     assert_eq!(conversion.text(), expected, "{source:?}");
-    assert!(join_display_math_equals(conversion.text(), None).is_none());
+    assert!(join_math_equals_lines(conversion.text(), None).is_none());
     assert_eq!(conversion.map_position(source.len()), expected.len());
     for position in (0..=source.len()).filter(|&position| source.is_char_boundary(position)) {
         assert!(expected.is_char_boundary(conversion.map_position(position)));
@@ -41,9 +41,6 @@ fn phase11b_equals_lines_join_chains_and_preserve_other_bytes() {
 fn phase11b_equals_lines_preserve_plain_inline_escaped_and_incomplete_inputs() {
     for source in [
         "a\n=\nb",
-        "$a\n=\nb$",
-        "\\(a\n=\nb\\)",
-        "\\[a\n=\nb\\]",
         "$$a\n\\=\nb$$",
         "$$\n\\=\n$$",
         "$$\\={a}$$",
@@ -67,10 +64,7 @@ fn phase11b_equals_lines_preserve_plain_inline_escaped_and_incomplete_inputs() {
         "$$a\n=$$\n\n$$b\n=\nc",
         "$$a % $$ dollars inside a comment\n=\nb$$",
     ] {
-        assert!(
-            join_display_math_equals(source, None).is_none(),
-            "{source:?}"
-        );
+        assert!(join_math_equals_lines(source, None).is_none(), "{source:?}");
     }
 }
 
@@ -89,7 +83,7 @@ fn phase11b_equals_lines_skip_markdown_code_and_literal_contexts() {
         format!("[{formula}](https://example.com)"),
     ] {
         assert!(
-            join_display_math_equals(&protected, None).is_none(),
+            join_math_equals_lines(&protected, None).is_none(),
             "{protected:?}"
         );
         assert_conversion(
@@ -102,10 +96,7 @@ fn phase11b_equals_lines_skip_markdown_code_and_literal_contexts() {
         "$$a\n\n```\n=\n```\n\nb$$",
         "$$a\n\n`code`\n\nc\n=\nd$$",
     ] {
-        assert!(
-            join_display_math_equals(source, None).is_none(),
-            "{source:?}"
-        );
+        assert!(join_math_equals_lines(source, None).is_none(), "{source:?}");
     }
 }
 
@@ -126,7 +117,7 @@ fn phase11b_equals_lines_skip_tex_comments_breaks_and_environments() {
     ] {
         let source = format!("$${content}$$");
         assert!(
-            join_display_math_equals(&source, None).is_none(),
+            join_math_equals_lines(&source, None).is_none(),
             "{source:?}"
         );
         assert_conversion(
@@ -152,7 +143,7 @@ fn phase11b_equals_lines_skip_tex_comments_breaks_and_environments() {
     ] {
         let source = format!("$$\\begin{{{environment}}}\na\n=\nb\n\\end{{{environment}}}$$");
         assert!(
-            join_display_math_equals(&source, None).is_none(),
+            join_math_equals_lines(&source, None).is_none(),
             "{source:?}"
         );
     }
@@ -163,7 +154,7 @@ fn phase11b_equals_lines_scope_requires_a_complete_block() {
     let source = "前 $$a\n=\nb$$ 中 $$甲\n=\n乙$$ 后";
     let start = source.find("$$甲").unwrap();
     let end = source.find(" 后").unwrap();
-    let conversion = join_display_math_equals(source, Some(start..end)).unwrap();
+    let conversion = join_math_equals_lines(source, Some(start..end)).unwrap();
     assert_eq!(conversion.text(), "前 $$a\n=\nb$$ 中 $$甲=乙$$ 后");
     for scope in [
         start + 2..end,
@@ -172,19 +163,19 @@ fn phase11b_equals_lines_scope_requires_a_complete_block() {
         1..source.len(),
         0..source.len() + 1,
     ] {
-        assert!(join_display_math_equals(source, Some(scope)).is_none());
+        assert!(join_math_equals_lines(source, Some(scope)).is_none());
     }
     let reversed = Range {
         start: end,
         end: start,
     };
-    assert!(join_display_math_equals(source, Some(reversed)).is_none());
+    assert!(join_math_equals_lines(source, Some(reversed)).is_none());
 }
 
 #[test]
 fn phase11b_equals_lines_map_retained_bytes_and_removed_whitespace() {
     let source = "$$\n甲 \r\n \t= \r\n  乙\n$$ tail";
-    let conversion = join_display_math_equals(source, None).unwrap();
+    let conversion = join_math_equals_lines(source, None).unwrap();
     let expected = "$$\n甲=乙\n$$ tail";
     assert_eq!(conversion.text(), expected);
     for retained in ["甲", "=", "乙", "tail"] {
@@ -206,4 +197,131 @@ fn phase11b_equals_lines_map_retained_bytes_and_removed_whitespace() {
             expected.find('乙').unwrap()
         );
     }
+}
+
+#[test]
+fn phase11b_equals_lines_join_inside_latex_and_single_dollar_formulas() {
+    for (source, expected) in [
+        (
+            "\\[\n\\rho'(g^{op})(y)\n=\n\\rho(g^{op})(y).\n\\]",
+            "\\[\n\\rho'(g^{op})(y)=\\rho(g^{op})(y).\n\\]",
+        ),
+        ("\\[a\n=\nb\\]", "\\[a=b\\]"),
+        ("\\(a\n=\nb\\)", "\\(a=b\\)"),
+        ("$a\n=\nb$", "$a=b$"),
+        ("文中 \\(a\n=\nb\n=\nc\\) 后", "文中 \\(a=b=c\\) 后"),
+        ("\\[\r\n a \r\n =\t\r\n b\r\n\\]", "\\[\r\n a=b\r\n\\]"),
+        ("- \\[a\n  =\n  b\\]", "- \\[a=b\\]"),
+        ("$$x\n=\ny$$ 与 \\[a\n=\nb\\]", "$$x=y$$ 与 \\[a=b\\]"),
+        // The same physical join seen from the `$$` pair and the inner
+        // formula is applied once.
+        ("$$x \\[a\n=\nb\\] y$$", "$$x \\[a=b\\] y$$"),
+    ] {
+        assert_conversion(source, expected);
+    }
+}
+
+#[test]
+fn phase11b_equals_lines_leave_text_outside_formulas_and_unsafe_formulas() {
+    for source in [
+        "标题\n=\n正文",
+        "\\[\n=\nb\n\\]",
+        "\\[\na\n=\n\\]",
+        "\\[\na\n\n=\nb\n\\]",
+        "\\[\na\n=\n=\nb\n\\]",
+        "\\\\[a\n=\nb\\\\]",
+        "> \\[\n> a\n> =\n> b\n> \\]",
+        "[\\(a\n=\nb\\)](https://example.com)",
+        "`\\[a\n=\nb\\]`",
+        "\\[a % comment\n=\nb\\]",
+        "\\[a\\\\\n=\nb\\]",
+        "\\[\\begin{aligned}a\n=\nb\\end{aligned}\\]",
+        "\\(a\n=\nb",
+    ] {
+        assert!(join_math_equals_lines(source, None).is_none(), "{source:?}");
+    }
+}
+
+#[test]
+fn phase11b_equals_lines_scope_requires_a_complete_latex_formula() {
+    let source = "前 \\[a\n=\nb\\] 中 \\(甲\n=\n乙\\) 后";
+    let start = source.find("\\(甲").unwrap();
+    let end = source.find(" 后").unwrap();
+    let conversion = join_math_equals_lines(source, Some(start..end)).unwrap();
+    assert_eq!(conversion.text(), "前 \\[a\n=\nb\\] 中 \\(甲=乙\\) 后");
+    for scope in [start + 1..end, start..end - 1, start..start] {
+        assert!(join_math_equals_lines(source, Some(scope)).is_none());
+    }
+}
+
+#[test]
+fn phase11b_equals_lines_locate_misreported_multiline_formula_ends() {
+    // Comrak 0.54 misreports the end column of a multiline inline that starts
+    // after its block's first line (fixed upstream in kivikakk/comrak#855).
+    // The end is taken from the end line instead, so nothing past the real
+    // closer joins and display-dollar ends are never read.
+    for (source, expected) in [
+        ("Lead\n  \\(a\n=\nb\\)", "Lead\n  \\(a=b\\)"),
+        (
+            "Lead\n    \\(a\n  =\n b\\) tail",
+            "Lead\n    \\(a=b\\) tail",
+        ),
+        ("Lead\n$a\n       =\nb$\nx\n=\ny$", "Lead\n$a=b$\nx\n=\ny$"),
+        ("Lead\n$$a\n   =\nb$$", "Lead\n$$a=b$$"),
+        (
+            "\\(a\n=\n  b\\) \\(c\n  =\nd\\) tail",
+            "\\(a=b\\) \\(c=d\\) tail",
+        ),
+        (
+            "Lead\n\\[a\n   =\nb \\$ c\\] x\\]",
+            "Lead\n\\[a=b \\$ c\\] x\\]",
+        ),
+        ("Lead\n$a\n   =\nb\\$c$ d$", "Lead\n$a=b\\$c$ d$"),
+    ] {
+        assert_conversion(source, expected);
+    }
+}
+
+#[test]
+fn phase11b_equals_lines_reject_positions_that_disagree_with_the_formula() {
+    for source in [
+        // A paragraph that starts with a link reference definition has every
+        // inline position Comrak 0.54 reports in it shifted up, so it is left
+        // alone whole: its title is never joined, even when it repeats the
+        // real formula, and its real formulas wait for a sound position.
+        "[x]: u \"\\(a\n=\nb\\)\"\n12345678$$c\n=\nd$$",
+        "[x]: u \"a\n=\nb$\"\n1234567890123$c\n=\nd$",
+        "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",
+        "[x]: u\n\\[a\n=\nb\\]",
+        // Lazy continuation lines put the quote marker inside the range.
+        "> $a\n=\n> b$",
+        "> \\(a\n=\n> b\\)",
+        "> \\[a\n=\n> b\\]",
+    ] {
+        assert!(join_math_equals_lines(source, None).is_none(), "{source:?}");
+    }
+    // A definition in its own paragraph shifts nothing after it.
+    assert_conversion("[x]: u\n\n\\[a\n=\nb\\]", "[x]: u\n\n\\[a=b\\]");
+    // A link whose destination and title span lines also ends early in
+    // Comrak's report; without any `]:` no definition can have shifted it.
+    assert_conversion("\\(a\n=\nb\\)\n[x](u\n\"t\")", "\\(a=b\\)\n[x](u\n\"t\")");
+    // Deeply nested quotes are walked once, with no per-node ancestor scan.
+    let deep = format!("{}\\[a\n=\nb\\]", "> ".repeat(20_000));
+    assert_conversion(&deep, &format!("{}\\[a=b\\]", "> ".repeat(20_000)));
+}
+
+#[test]
+fn phase11b_equals_lines_leave_tables_whole() {
+    for source in [
+        "| \\[a | b |\n| --- | --- |\n=\nc\\]",
+        "| $$a | b |\n| --- | --- |\n=\nc$$",
+    ] {
+        assert!(join_math_equals_lines(source, None).is_none(), "{source:?}");
+    }
+    // Cells with `\|` shift Comrak's inline columns; the table is skipped
+    // whole and formulas outside it still join.
+    assert_conversion(
+        "| \\(x\\|y\\) | `b\\|c` |\n| --- | --- |\n\n\\[x\n=\ny\\]",
+        "| \\(x\\|y\\) | `b\\|c` |\n| --- | --- |\n\n\\[x=y\\]",
+    );
 }

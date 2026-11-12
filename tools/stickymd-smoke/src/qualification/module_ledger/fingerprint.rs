@@ -519,6 +519,11 @@ const FEATURE_SOURCES: &[(&str, u64)] = &[
         "crates/stickymd-render/src/math_text/",
         PREVIEW | EDITOR | MATH | IMAGES | EXPORT,
     ),
+    // The math action composes the equals join with the preview's delimiter conversion.
+    (
+        "crates/stickymd-render/src/math_action.rs",
+        PREVIEW | EDITOR | MATH | IMAGES | EXPORT,
+    ),
     // Image paste staging and local image paths; the storage itself runs every session.
     (
         "apps/stickymd-win/src/assets/",

@@ -20,6 +20,15 @@ Plan 10 `preview-resource-assessment` → 功能投影“宽内容/数学公式�
 独立纯文本转换与原分隔符转换共用一次编辑事务；自动化入口沿用 `phase11b_`。
 不改变 Markdown/RaTeX/Preview 语义，人工与 exact-candidate evidence 状态不变。
 
+2026-11-12：plan 07 `semantic-math-delimiter-conversion`（等号行连接改为第一步并扩到
+`\[`、`\(`、`$` 公式）→ 数学 `$` 按钮 →
+[Phase 11-B 先连接等号行](acceptance-cases/phase-11-b.md#math-equals-first) →
+`stickymd-render/src/math_text{,/tests}.rs`、`math_action.rs`、
+`preview/semantic_conversion.rs`（引用定义位置错位，见
+[RISK 报告](report/RISK-comrak-054-inline-positions.md)）与 `stickymd-app/src/flow/editor.rs`。
+自动化入口沿用 `phase11b_`，Release 基线沿用 `phase11b_performance_`；
+Windows 与 macOS 的真实按钮仍为 `NOT TESTED`。
+
 > Plan Contract ↔ Feature Projection ↔ Acceptance Case ↔ Code Area ↔ Current Evidence。
 > `Current Evidence` 只描述已验证范围；不得用模块存在代替端到端验收。
 >

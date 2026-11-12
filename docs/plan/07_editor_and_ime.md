@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.3.0
-- `Last Review`: 2026-11-10
+- `Last Review`: 2026-11-12
 - `Scope`: Source 编辑器职责、IME preedit/commit 语义、字体 run、undo 分组、RichEdit fallback 治理
 
 ---
@@ -52,32 +52,55 @@
 
 - 顶部工具栏提供一个紧凑的 `Convert AI math delimiters` typed action；Interaction Shell
   使用紧凑、清晰的 `$` 标识；Interaction Shell 只能发出 intent，不得直接改写 `DocumentState`。
-- action 的第一步必须从当前 generation 的 `DocumentSnapshot` 经现有 Comrak semantic pipeline
+- action 分两步，顺序固定：先等号行连接，后分隔符转换。分隔符转换必须从等号连接后的文本
+  （未连接时即当前 generation 的 `DocumentSnapshot`）经现有 Comrak semantic pipeline
   识别真正的 math node，只转换原始 delimiter 为 `\(...\)` 或 `\[...\]` 的节点；不得用
   regex、全局 replace、自有 math parser、stale Preview AST 或 code/literal 猜测替代 Comrak。
 - `\(SOURCE\)` 转为 `$SOURCE$`；`\[SOURCE\]` 转为 `$$SOURCE$$`。只替换 delimiter bytes，
   inner source（含空白、换行、Unicode 与 escape）必须 byte-for-byte 保持；既有 dollar math、
   inline/fenced code、普通讨论文本与 malformed delimiter 不变。此约束属于分隔符转换步骤。
-- 分隔符转换后，显式调用独立的纯文本等号行连接能力；它不进入 Markdown/RaTeX 或自动
-  Preview 管线，不与分隔符转换实现互相依赖，可独立移除或用于其它显式文本动作。
-  仅处理完整、未转义的 `$$...$$` 对：中间行 trim 后恰为裸 `=`，上下紧邻行均非空且
-  不是另一个孤立 `=` 时，删除等号两侧连接处的换行及空白。`a\n=\nb\n=\nc` 可变为
-  `a=b=c`；其它换行、块首尾孤立等号、连续等号行、`\=` 和其它运算符保持原文。
-- 等号连接用 Comrak 识别代码、HTML、链接及非 display-dollar 数学的保护范围；仅此文本
-  动作的临时扫描关闭 Setext 识别，以免独占 `=` 抢先切断代码/数学范围。现有 parser
-  选项与 Preview 语义不变。定位完整 `$$` 对后不跨块或空行连接；未闭合块不改写。
-  含未转义 `%` 注释、显式换行（`\\`、`\cr`、`\crcr`、`\newline`、`\linebreak`、
-  `\displaybreak`）、反斜杠空白或 `\begin`/`\end` 环境命令的块整体跳过。
-- Source/Split 存在非空 Source selection 时，只转换 source range 完全包含于 normalized
-  selection 的 math node；部分相交与 selection 外节点不动。Source selection 为空或纯
-  Preview 模式时转换整篇当前 canonical document。等号连接沿用完整块包含规则；两步之间
-  必须映射 selection/scope，最终 caret/selection 也映射到转换后的 UTF-8 byte boundary。
-- 分隔符步骤一次 parse；等号步骤只在存在候选标记/等号行时做独立的保护范围扫描。
-  每步收集互不重叠修改，顺序构造结果，不逐公式修改 canonical document；
+- 第一步显式调用独立的纯文本等号行连接能力；它不进入 Markdown/RaTeX 或自动
+  Preview 管线，不与分隔符转换实现互相依赖，可独立移除或用于其它显式文本动作。它是
+  Comrak 按块解析 display math（kivikakk/comrak#880）之前的补丁；上游支持并升级后重新
+  评估是否保留。只处理两类公式范围：完整、未转义的 `$$...$$` 对；以及临时扫描中 Comrak
+  识别为公式、原始 delimiter 为 `\[...\]`、`\(...\)` 或 `$...$` 的节点（链接或图片文本内的
+  除外；紧贴另一个 `$` 的 `$...$` 视为残缺的 `$$` 对而跳过）。范围内中间行 trim 后恰为裸
+  `=`，上下紧邻行均非空且不是另一个孤立 `=` 时，删除等号两侧连接处的换行及空白。
+  `a\n=\nb\n=\nc` 可变为 `a=b=c`；公式外的文本、其它换行、块首尾孤立等号、连续等号行、
+  `\=` 和其它运算符保持原文。
+- 等号连接用 Comrak 识别代码、HTML、链接、表格及非 display-dollar 数学的保护范围，并识别
+  上述三种公式节点；临时扫描使用 Preview 的 Markdown 方言，仅此文本动作关闭 Setext 识别，
+  以免独占 `=` 抢先切断代码/数学范围。表格按整行保护，表格内的公式不连接。现有 parser
+  选项与 Preview 语义不变。定位完整 `$$` 对后不跨块或空行连接；未闭合
+  块不改写；其它三种公式只在 Comrak 节点范围内连接。Comrak 报告的位置须与节点一致：
+  opener 位于所报起始行且与节点类型相符，范围内除 ASCII 空白外恰为节点内容；多行公式的
+  结束位置取自所报结束行上 Comrak 匹配的 closer，不取所报列号。位置不一致的 display 公式
+  跳过；行内公式不一致时整个等号步骤放弃（它们也是 `$$` 扫描的保护范围）。含未转义 `%`
+  注释、显式换行（`\\`、`\cr`、`\crcr`、`\newline`、`\linebreak`、`\displaybreak`）、反斜杠空白
+  或 `\begin`/`\end` 环境命令的公式整体跳过。
+- Comrak 0.54 删除段首的链接引用定义后不调整该段的起始行，段内所有行内位置随之上移
+  （上游 1.0 已修）。两步都把“行内节点的最大结束行早于段落结束行”（Setext 标题为早于下划线
+  的上一行）的段落或标题视为位置不可信：第一步把这样的段落按整行保护、不处理其中公式；
+  第二步在 Preview 的同一次 parse 中取得这些块，不转换起点落在其中的公式。只有含 `]:` 的
+  源码才可能有引用定义，其余源码不做这项检查。已知的保守误报：段末链接的目标或标题跨行时，
+  Comrak 报告的结束行同样偏早，文中含 `]:` 时该段也被跳过。升级到修复版本后重新评估是否
+  保留。
+- Source/Split 存在非空 Source selection 时，两步都只处理 source range 完全包含于
+  normalized selection 的公式；部分相交与 selection 外的不动。第一步按原 selection 判定，
+  第二步按映射后的 selection 判定。Source selection 为空或纯 Preview 模式时处理整篇当前
+  canonical document。两步之间必须映射 selection/scope，最终 caret/selection 也映射到
+  结果的 UTF-8 byte boundary。
+- 一次处理为：等号步骤只在存在裸 `=` 行与公式标记时做一次独立扫描，分隔符步骤一次
+  parse；两步由 `stickymd-render` 的纯文本组合函数依次执行，Flow 只负责 generation、事务与
+  selection。每步收集互不重叠修改，顺序构造结果，不逐公式修改 canonical document；
   最终只经单一 canonical mutation gateway 提交一次用户事务：generation 最多递增一次，
   两步的任意数量修改共用一个 Undo/Redo step，并正常触发 dirty/autosave/Preview。零匹配必须是
-  完整 no-op（text/generation/undo/dirty 均不变）。
-- 1 MiB / 1000 math-node Release smoke 的 p95 engineering check 为 `< 50 ms`；超过时先审计
+  完整 no-op（text/generation/undo/dirty 均不变）。提交前对结果按映射后的 scope 再做一次
+  完整处理；若仍会改变文本（例如未闭合的 `$$` 与第二步写出的 `$$` 重新配对，或第二步在
+  内层 closer 处结束外层公式而留下新公式），整个 action 保守拒绝，同样为完整 no-op，保证
+  再次点击不再改动。最坏情况下两步各 parse 两次。
+- 1 MiB / 1000 math-node Release smoke（含提交前的再次处理）的 p95 engineering check 为
+  `< 50 ms`；超过时先审计
   重复 parse、全文 clone 与逐 formula mutation，不引入增量 Markdown parser 或后台 runtime。
 
 <a id="source-find-replace"></a>

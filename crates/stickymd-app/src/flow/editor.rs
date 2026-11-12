@@ -8,8 +8,8 @@ use stickymd_core::{
     AssetEffect, CursorSnapshot, DocumentError, DocumentSnapshot, DocumentState, EditKind,
     EditMeta, EditRequest, ExternalFileFact, Generation, Hash32, Selection, TextDelta,
 };
-use stickymd_render::math_text::join_display_math_equals;
-use stickymd_render::preview::{SemanticConversionError, convert_latex_math_delimiters};
+use stickymd_render::math_action::run_math_action;
+use stickymd_render::preview::SemanticConversionError;
 use thiserror::Error;
 
 use super::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
@@ -328,28 +328,30 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
     ) -> Result<AppEffect, EditorFlowError> {
         self.require_generation(expected_generation)?;
         let snapshot = self.document.snapshot();
+        // Step 1 joins equals lines first: a lone `=` line would otherwise make
+        // the line above a Setext heading and hide the formula from step 2.
         let scope = scope_to_selection.then(|| selection.normalized_range());
-        let mut selection_after = selection;
-        let mut text = convert_latex_math_delimiters(&snapshot, scope)?.map(|conversion| {
-            selection_after = Selection::new(
-                conversion.map_position(selection.anchor.byte),
-                conversion.map_position(selection.active.byte),
-            );
-            conversion.into_text()
-        });
-        let scope = scope_to_selection.then(|| selection_after.normalized_range());
-        if let Some(conversion) =
-            join_display_math_equals(text.as_deref().unwrap_or(&snapshot.text), scope)
-        {
-            selection_after = Selection::new(
-                conversion.map_position(selection_after.anchor.byte),
-                conversion.map_position(selection_after.active.byte),
-            );
-            text = Some(conversion.into_text());
-        }
-        let Some(text) = text else {
+        let Some(pass) = run_math_action(&snapshot, scope)? else {
             return Ok(AppEffect::NoOp);
         };
+        let selection_after = Selection::new(
+            pass.map_position(selection.anchor.byte),
+            pass.map_position(selection.active.byte),
+        );
+        let text = pass.into_text();
+        // A result the action would change again (an unclosed `$$` pairing
+        // with one step 2 wrote, or a closer step 2 left behind) is refused
+        // whole, so a second click stays a no-op. The check parses an
+        // uncommitted projection of this generation, never a document state.
+        let result = DocumentSnapshot {
+            text: text.as_str().into(),
+            generation: snapshot.generation,
+            line_ending: snapshot.line_ending,
+        };
+        let scope = scope_to_selection.then(|| selection_after.normalized_range());
+        if run_math_action(&result, scope)?.is_some() {
+            return Ok(AppEffect::NoOp);
+        }
         let cursor_after = CursorSnapshot::new(selection_after);
         let request = EditRequest::new(
             expected_generation,
@@ -911,6 +913,152 @@ mod tests {
         ));
         coordinator.dispatch(AppIntent::Undo).unwrap();
         assert_eq!(coordinator.view().text, source);
+    }
+
+    #[test]
+    fn phase11b_math_button_joins_equals_before_recognizing_latex_formulas() {
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        // A lone `=` line makes the line above a Setext heading, so the
+        // delimiter step alone cannot see the first two formulas. Text
+        // outside formulas keeps its heading.
+        let source = "\\[\n\\rho'(g^{op})(y)\n=\n\\rho(g^{op})(y).\n\\]\n\n\
+                      文中 \\(a\n=\nb\\) 后\n\n标题\n=\n正文\n\n\
+                      \\(c\n=\n  d\\) \\(e\n  =\nf\\) 尾";
+        let expected = "$$\n\\rho'(g^{op})(y)=\\rho(g^{op})(y).\n$$\n\n\
+                        文中 $a=b$ 后\n\n标题\n=\n正文\n\n$c=d$ $e=f$ 尾";
+        edit(&mut coordinator, source);
+        let before_generation = coordinator.view().generation;
+        let effect = coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: before_generation,
+                selection: Selection::caret(source.find("后").unwrap()),
+                scope_to_selection: false,
+                timestamp_ms: 10,
+            })
+            .unwrap();
+        assert_eq!(coordinator.view().text, expected);
+        assert!(matches!(
+            effect,
+            AppEffect::DocumentChanged { selection, .. }
+                if selection == Selection::caret(expected.find("后").unwrap())
+        ));
+        assert_eq!(
+            coordinator.view().generation.value(),
+            before_generation.value() + 1
+        );
+        let after = coordinator.snapshot();
+        let again = coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: after.generation,
+                selection: Selection::caret(0),
+                scope_to_selection: false,
+                timestamp_ms: 11,
+            })
+            .unwrap();
+        assert_eq!(again, AppEffect::NoOp);
+        assert_eq!(coordinator.snapshot(), after);
+        coordinator.dispatch(AppIntent::Undo).unwrap();
+        assert_eq!(coordinator.view().text, source);
+        coordinator.dispatch(AppIntent::Redo).unwrap();
+        assert_eq!(coordinator.view().text, expected);
+    }
+
+    #[test]
+    fn phase11b_math_button_maps_scope_through_equals_then_delimiters() {
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        let source = "\\[a\n=\nb\\] 中 \\(甲\n=\n乙\\) 后";
+        let expected = "\\[a\n=\nb\\] 中 $甲=乙$ 后";
+        edit(&mut coordinator, source);
+        let before = coordinator.snapshot();
+        let start = source.find("\\(甲").unwrap();
+        let end = source.find(" 后").unwrap();
+        let partial = coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: before.generation,
+                selection: Selection::new(end - 1, start),
+                scope_to_selection: true,
+                timestamp_ms: 10,
+            })
+            .unwrap();
+        assert_eq!(partial, AppEffect::NoOp);
+        assert_eq!(coordinator.snapshot(), before);
+        let effect = coordinator
+            .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                expected_generation: before.generation,
+                selection: Selection::new(end, start),
+                scope_to_selection: true,
+                timestamp_ms: 11,
+            })
+            .unwrap();
+        assert_eq!(coordinator.view().text, expected);
+        assert!(matches!(
+            effect,
+            AppEffect::DocumentChanged { selection, .. }
+                if selection == Selection::new(expected.find(" 后").unwrap(), start)
+        ));
+        coordinator.dispatch(AppIntent::Undo).unwrap();
+        assert_eq!(coordinator.view().text, source);
+    }
+
+    #[test]
+    fn phase11b_math_button_refuses_a_result_it_would_change_again() {
+        // `$$a…\[b\]`: the `$$` step 2 writes pairs with the unclosed one on
+        // the next click. `\( a…\(b\) c\)`: step 2 ends the outer formula at
+        // the inner closer and leaves `\(b$ c\)` for the next click.
+        for source in ["$$a\n=\nc \\[b\\]", "\\( a\n=\n\\(b\\) c\\)"] {
+            refuses(source);
+        }
+    }
+
+    #[test]
+    fn phase11b_math_button_leaves_paragraphs_shifted_by_reference_definitions() {
+        // Comrak 0.54 shifts every inline position in a paragraph that starts
+        // with a link reference definition; neither step may touch the title.
+        for source in [
+            "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",
+            "[x]: u \"\\(a\\)\"\n12345678\\(c\\)",
+        ] {
+            refuses(source);
+        }
+        // Only Setext parsing makes these definition paragraphs: step 1 still
+        // joins the `$$` pair, and step 2 leaves the title alone, also when a
+        // trailing inline's shifted end runs past its line.
+        for tail in ["", " tail"] {
+            let source = format!("foo\n=\n[x]: u \"\\(abc\\)\"\n12345678$$c\n=\nd$${tail}");
+            let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+            edit(&mut coordinator, &source);
+            coordinator
+                .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                    expected_generation: coordinator.view().generation,
+                    selection: Selection::caret(0),
+                    scope_to_selection: false,
+                    timestamp_ms: 10,
+                })
+                .unwrap();
+            assert_eq!(
+                coordinator.view().text,
+                format!("foo\n=\n[x]: u \"\\(abc\\)\"\n12345678$$c=d$${tail}")
+            );
+        }
+    }
+
+    /// Two clicks on `source` both leave the document untouched.
+    fn refuses(source: &str) {
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        edit(&mut coordinator, source);
+        let before = coordinator.snapshot();
+        for timestamp_ms in [10, 11] {
+            let effect = coordinator
+                .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                    expected_generation: before.generation,
+                    selection: Selection::caret(0),
+                    scope_to_selection: false,
+                    timestamp_ms,
+                })
+                .unwrap();
+            assert_eq!(effect, AppEffect::NoOp, "{source:?}");
+            assert_eq!(coordinator.snapshot(), before, "{source:?}");
+        }
     }
 
     #[test]
