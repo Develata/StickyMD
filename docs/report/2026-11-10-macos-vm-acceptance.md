@@ -330,3 +330,63 @@ USER 让 Claude 直接操控 VM 完成 W12 的注销检查（“你直接操控 
 **账本：** `mac-ledger receipt` 只会把环境记为“USER desktop”，与这次不符，所以这份收据没有写入账本，只记在这里。
 
 **附带：** 第一次尝试用 `osascript` 经 System Events 发按键，在 VM 里弹出了自动化权限提示。提示被关掉，没有回答，既没有授予也没有拒绝。
+
+## 重跑：`320f785` 的 release（2026-11-12）
+
+`2febab1`（数学按钮）与 `320f785`（Comrak 0.59）都改了产品代码，因此在新身份下重跑。
+
+**构建与身份。** 都在干净工作区构建：
+
+- app：用 `apps/stickymd-mac/packaging/build-app.sh` 打包，可执行文件 SHA-256 `a9f4354b80c56a9434a36aca4351707f257c1bb950fdf4d617b4d73404ec9996`。
+- 驱动：`CARGO_PROFILE_RELEASE_PANIC=unwind CARGO_TARGET_DIR=target/unwind cargo build --locked --release -p stickymd-smoke`，SHA-256 `7232899214933b8a084a8fb8e7b10328227971762faa1d9797e8af3d640162ac`。
+
+**环境。** Tart 虚拟机 `mac-test`：
+
+- 镜像 `ghcr.io/cirruslabs/macos-golden-gate-vanilla@sha256:b35695ce30453bcc1db961a476740be72a44c2a2e464b73ece1ff0fcac12a873`；
+- 系统 macOS 27.2（26B123）；
+- 以 `tart run --no-graphics` 启动，每次运行前等 1 分钟负载降到 1.0 以下。
+
+### `mac-gui` r21
+
+结果是 PASS 9、FAIL 0、NOT_TESTED 11。证据 `dist/evidence/mac-vm-2026-11-12/mac-gui-r21/`，SHA-256 `59ffd5ed22c1d9ee829a7b571ba0b4f0f0593489fabb24dede4cd07009396e08`。
+
+- **PASS：** W02、W03、W04、W07、W08、W09、W11、K02、E01。与 r19 比，只有 W03 由 FAIL 变为 PASS；r19 那次是计时超出期限 2 ms，见上文。
+- **W12：** 23 项检查中 22 项通过；只有 `logout` 为 NOT_TESTED，按设计由下文的真实注销覆盖。
+- **账本：** 已写入账本（`mac-ledger record`，20 行）。`mac-ledger plan` 显示，W07、W08、W09、W11、K02、E01 等自动化行在当前身份下由 r21 的 PASS 判定；需要 USER 的人工行为 W01–W06、W10、W12、I01–I03、F01、R03。
+- **验收表：** 已据此更新六个自动化行。
+
+### 资源 `mac-resources-r7`
+
+每种视图 5 次，全部有效；Hidden 仍未测。证据 SHA-256 `7bc08d677eea0217e900f1bb48a0d5fdc5a62993e198197af3fdf32e6a5c8cab`。
+
+| 视图 | 内存中位 | 空闲 CPU 中位 | `4e19774d` 的 r6 |
+| --- | --- | --- | --- |
+| Source | 47.1 MiB | 0.0004% | 47.1 MiB，0.0007% |
+| Preview | 50.4 MiB | 0.0013% | 50.3 MiB，0.0019% |
+| Split | 50.3 MiB | 0.0005% | 50.3 MiB，0.0008% |
+
+与修改前持平。按工具说明，这只是观察，不更新 R01、R02。
+
+### W12 真实注销（`a9f4354b…`，待 USER 认可）
+
+做法与上节“人工收据：W12 真实注销”相同：
+
+- 同一个 `w12-case.sh` 与 `w12keys`（SHA-256 与上节一致）；
+- 每种情况前重启虚拟机；
+- 用 `open` 启动后再打开一次 `.app` 取得焦点，用 CoreGraphics 发键，再向 loginwindow 发注销请求。
+
+| 情况 | 系统日志 | 磁盘 |
+| --- | --- | --- |
+| 输入后立刻注销 | 14:40:07.742 loginwindow 发退出请求；不到 1 ms 程序开始处理，+68 ms 回复 `YES`；launchd 记为 `(0, 0, 0)` | 注销请求前仍是旧字节，之后是输入的文本 |
+| 导出对话框打开时注销 | 14:42:14.788 发请求；1.5 ms 后 `applicationShouldTerminate:` 回 `NSTerminateCancel`（对话框按取消结束），注销照常继续；约 0.39 s 时 launchd 记为 `(0, 0, 0)` | 两行都已落盘；没有生成导出文件 |
+| 保存失败（笔记目录只读）时注销 | 14:44:37.990 发请求；`NSTerminateLater`，14 ms 后回 `NO`，程序继续运行；14:44:39.280 launchd 移除服务（推断此时发 SIGTERM，被忽略）；14:44:40.289 记为 `(2, 9, 9)`，被 SIGKILL 结束 | 仍是此前保存的内容，完整；`.trash` 为空，笔记目录里没有残留的临时文件；故障期间输入的那行丢失，这无法避免 |
+
+三种情况的行为与 `4e19774d…` 上的收据一致。
+
+**证据：** `dist/evidence/mac-vm-2026-11-12/w12-logout-a9f4/`，SHA-256：
+
+- `text/system-show.log`：`eae064996d6d74285e518aa4ca60595742c0bac6e2fbcfdfcbcd34fd3737d05d`
+- `dialog/system-show.log`：`3f2dcb490893883b85d69d10d5517fcf27731a137209cbe697efc2bd7561f1ff`
+- `fault/system-show.log`：`ebd5132fd7adf37378c1933bcf3484863d1afb656d4fef9e1d11fe93a2ed7a0b`
+
+**收据状态：** 人工收据绑定 app 的 SHA-256，所以 P16-W12 在新身份下要由 USER 认可这次脚本化观察后，才能改为 `a9f4354b…` 的收据；在那之前，表中保留 `4e19774d…` 的收据。
