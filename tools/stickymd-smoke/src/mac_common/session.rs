@@ -69,6 +69,17 @@ impl Session {
         Ok(())
     }
 
+    /// SIGTERM to the owned child while it runs, as launchd sends it at a logout; the child is
+    /// left to answer it. A child already gone is refused rather than signalling a reused PID.
+    pub fn signal_terminate(&mut self) -> Result<(), String> {
+        if let Some(status) = self.poll()? {
+            return Err(format!("refused SIGTERM: owned child exited: {status}"));
+        }
+        crate::mac_common::native::terminate(
+            self.child.as_ref().ok_or("Session has no child")?.id(),
+        )
+    }
+
     pub fn poll(&mut self) -> Result<Option<ExitStatus>, String> {
         self.child
             .as_mut()

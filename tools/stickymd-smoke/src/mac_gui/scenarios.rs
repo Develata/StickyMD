@@ -40,6 +40,10 @@ pub(super) enum Op {
     Mapped,
     /// Point the open save dialog at the session's `export.md` without answering it.
     PanelTarget,
+    /// Start the product again in the same fixture after it quit; answers its new PID.
+    Relaunch,
+    /// SIGTERM to the owned product, as launchd sends it at a logout.
+    Sigterm,
 }
 #[derive(Clone, Debug)]
 pub(super) enum Value {

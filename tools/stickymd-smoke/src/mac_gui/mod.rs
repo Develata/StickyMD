@@ -1,8 +1,10 @@
 //! External GUI acceptance only; no app control channel or qualification authority.
 //! I01/I02 need configured real IMEs and composition assertions; I03 needs system repeat
 //! settings. W05 and W06's Space switch need Spaces/full-screen orchestration; W10 needs
-//! compositor/caret instrumentation; W12's logout needs a disposable session. R03 needs a
-//! quarantined downloaded signed artifact; W15 needs Windows. These are never inferred PASS.
+//! compositor/caret instrumentation. W12's logout is not driven: it ends the VM's GUI session,
+//! and loginwindow ends this driver with it; W12 sends the product the quit request and the
+//! SIGTERM a logout brings directly instead. R03 needs a quarantined downloaded signed
+//! artifact; W15 needs Windows. These are never inferred PASS.
 //! W11/W12 inject the save failure by taking write permission from the fixture's note directory
 //! (USER 2026-11-11).
 //! Off macOS the shared modules compile only for their unit tests; the live backend that reads

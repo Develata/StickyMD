@@ -27,6 +27,8 @@ pub(super) struct Live<'a> {
     pub window_id: u32,
     pub out: &'a Path,
     pub permissions: Permissions,
+    /// The copied product, for a scenario that starts it again after it quit.
+    pub executable: std::path::PathBuf,
 }
 pub(super) fn command(program: &str, args: &[&str]) -> Result<String, String> {
     // Reuse the same owned child/timeout/identity cleanup for helper processes too.
@@ -308,6 +310,26 @@ impl Backend for Live<'_> {
                     "/usr/bin/osascript",
                     &["-l", "JavaScript", "-e", &script],
                 )?)
+            }
+            Op::Relaunch => {
+                match self.session.poll()? {
+                    Some(status) if status.success() => {}
+                    Some(status) => {
+                        return Err(format!("refused relaunch: product exited {status}"));
+                    }
+                    None => return Err("refused relaunch: the product is still running".into()),
+                }
+                self.session.stop()?;
+                let (pid, window) = super::runner::launch(self.session, &self.executable, true)?;
+                self.pid = pid;
+                self.window_id = window.id;
+                Value::Pid(pid)
+            }
+            // What launchd sends at a logout to an instance still running
+            // (RISK-macos-logout-ui-element).
+            Op::Sigterm => {
+                self.session.signal_terminate()?;
+                Value::Unit
             }
             Op::Focus => {
                 // No wait here: W06 samples the window from the moment focus is asked for.

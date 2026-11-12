@@ -158,6 +158,45 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         Ok(())
     }
 }
+/// Starts the copied product in the session directory and waits for its one on-screen window.
+/// The first launch creates `stderr.log`; a relaunch appends to it.
+pub(super) fn launch(
+    session: &mut Session,
+    executable: &Path,
+    relaunch: bool,
+) -> Result<(u32, Window), String> {
+    let stderr = fs::OpenOptions::new()
+        .append(relaunch)
+        .write(true)
+        .create_new(!relaunch)
+        .open(session.path().join("stderr.log"))
+        .map_err(|e| e.to_string())?;
+    session.spawn(
+        Command::new(executable)
+            .current_dir(session.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(stderr),
+    )?;
+    let pid = session.child.as_ref().ok_or("missing child")?.id();
+    let start = Instant::now();
+    let window = loop {
+        if let Some(status) = session.poll()? {
+            return Err(format!("product exited before ready: {status}"));
+        }
+        if let Ok(w) = windows::window(pid, None)
+            && w.onscreen
+        {
+            break w;
+        }
+        if start.elapsed() > Duration::from_secs(20) {
+            return Err("no unique on-screen product window within 20s".into());
+        }
+        events::wait(100)?;
+    };
+    events::wait(500)?;
+    Ok((pid, window))
+}
 fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
     let absolute = std::path::absolute(path).map_err(|e| e.to_string())?;
     if absolute
@@ -218,19 +257,7 @@ fn one(
         if bundle_hash(&session.path().join("StickyMD.app"))? != hash.bundle {
             return Err("copied bundle manifest changed; refused before launch".into());
         }
-        let stderr = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(session.path().join("stderr.log"))
-            .map_err(|e| e.to_string())?;
-        session.spawn(
-            Command::new(executable)
-                .current_dir(session.path())
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(stderr),
-        )?;
-        let pid = session.child.as_ref().ok_or("missing child")?.id();
+        let (pid, window) = launch(&mut session, &executable, false)?;
         row.trace.push(Trace {
             ms: input.backend.started.elapsed().as_millis() as u64,
             event: format!(
@@ -239,22 +266,6 @@ fn one(
                 crate::integrity::sha256_bytes(note.as_bytes())?
             ),
         });
-        let start = Instant::now();
-        let window = loop {
-            if let Some(status) = session.poll()? {
-                return Err(format!("product exited before ready: {status}"));
-            }
-            if let Ok(w) = windows::window(pid, None)
-                && w.onscreen
-            {
-                break w;
-            }
-            if start.elapsed() > Duration::from_secs(20) {
-                return Err("no unique on-screen product window within 20s".into());
-            }
-            events::wait(100)?;
-        };
-        events::wait(500)?;
         let mut live = Live {
             session: &mut session,
             input,
@@ -262,6 +273,7 @@ fn one(
             window_id: window.id,
             out,
             permissions,
+            executable,
         };
         scenarios::run(
             &mut Driver {

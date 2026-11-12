@@ -69,6 +69,13 @@ struct Quitting {
     /// The defect: the dialog ended by the quit exports anyway.
     exports_on_end: bool,
     export: Option<String>,
+    pid: u32,
+    /// The defect SIGTERM handling removes: the signal kills the app without saving.
+    sigterm_kills: bool,
+    /// A cancelled title that a successful save leaves in place.
+    title_sticks: bool,
+    /// SIGTERM that does nothing at all.
+    sigterm_ignored: bool,
 }
 impl Quitting {
     fn new() -> Self {
@@ -99,6 +106,10 @@ impl Quitting {
             aimed: false,
             exports_on_end: false,
             export: None,
+            pid: 42,
+            sigterm_kills: false,
+            title_sticks: false,
+            sigterm_ignored: false,
         }
     }
     fn modal_quit(&mut self) {
@@ -158,7 +169,9 @@ impl Backend for Quitting {
             Op::Chord(keys) if keys == [CMD, 1] => {
                 if !self.fault {
                     self.disk = self.memory.clone();
-                    self.cancelled_at = None;
+                    if !self.title_sticks {
+                        self.cancelled_at = None;
+                    }
                     self.titles &= !self.titles_vanish_after_save;
                     self.saved = true;
                 }
@@ -186,6 +199,28 @@ impl Backend for Quitting {
                     }
                 }
                 Value::Text("cancelled".into())
+            }
+            Op::Relaunch => {
+                if self.alive() {
+                    return Err("refused relaunch: the product is still running".into());
+                }
+                (self.exit_at, self.cancelled_at, self.panel) = (None, None, false);
+                self.memory = self.disk.clone();
+                self.pid += 1;
+                Value::Pid(self.pid)
+            }
+            Op::Sigterm if self.sigterm_ignored && !self.panel => Value::Unit,
+            Op::Sigterm if self.sigterm_kills => {
+                self.exit_at = Some(self.now);
+                Value::Unit
+            }
+            Op::Sigterm => {
+                if self.panel {
+                    self.modal_quit();
+                } else {
+                    self.quit();
+                }
+                Value::Unit
             }
             Op::PanelTarget if self.aim_fails => {
                 return Err("Go to Folder focus is AXButton".into());
@@ -314,7 +349,7 @@ fn w12_covers_the_refused_and_the_modal_termination_but_not_logout() {
     );
     assert_eq!(verdict(&row, "logout"), Some(Verdict::NotTested));
     assert_eq!(
-        verdict(&row, "the quit exits once the dialog is gone"),
+        verdict(&row, "termination: the quit exits once the dialog is gone"),
         Some(Verdict::Pass)
     );
 
@@ -323,7 +358,7 @@ fn w12_covers_the_refused_and_the_modal_termination_but_not_logout() {
     presenting.busy_panel_reads = 3;
     let row = run(&mut presenting, "W12");
     assert_eq!(
-        verdict(&row, "export dialog open"),
+        verdict(&row, "termination: export dialog open"),
         Some(Verdict::Pass),
         "{}",
         row.json()
@@ -331,7 +366,10 @@ fn w12_covers_the_refused_and_the_modal_termination_but_not_logout() {
     let mut unanswered = Quitting::new();
     unanswered.busy_panel_reads = u32::MAX;
     let row = run(&mut unanswered, "W12");
-    assert_eq!(verdict(&row, "export dialog open"), Some(Verdict::Fail));
+    assert_eq!(
+        verdict(&row, "termination: export dialog open"),
+        Some(Verdict::Fail)
+    );
 
     // A product that defers the request until the dialog closes passes the exit check only. (On
     // macOS 27.2 the VM showed the request lost; see RISK-macos-modal-termination.)
@@ -339,11 +377,11 @@ fn w12_covers_the_refused_and_the_modal_termination_but_not_logout() {
     deferred.deferred_in_dialog = true;
     let row = run(&mut deferred, "W12");
     assert_eq!(
-        verdict(&row, "the request ends the export dialog"),
+        verdict(&row, "termination: the request ends the export dialog"),
         Some(Verdict::Fail)
     );
     assert_eq!(
-        verdict(&row, "the quit exits once the dialog is gone"),
+        verdict(&row, "termination: the quit exits once the dialog is gone"),
         Some(Verdict::Pass),
         "{}",
         row.json()
@@ -355,7 +393,7 @@ fn w12_covers_the_refused_and_the_modal_termination_but_not_logout() {
     sticky.cancel_ignored = true;
     let row = run(&mut sticky, "W12");
     assert_eq!(
-        verdict(&row, "the quit exits once the dialog is gone"),
+        verdict(&row, "termination: the quit exits once the dialog is gone"),
         Some(Verdict::NotTested),
         "{}",
         row.json()
@@ -365,7 +403,7 @@ fn w12_covers_the_refused_and_the_modal_termination_but_not_logout() {
     stuck.modal_quit_after = 60_000;
     let row = run(&mut stuck, "W12");
     assert_eq!(
-        verdict(&row, "the quit exits once the dialog is gone"),
+        verdict(&row, "termination: the quit exits once the dialog is gone"),
         Some(Verdict::Fail)
     );
 
@@ -381,7 +419,7 @@ fn w12_covers_the_refused_and_the_modal_termination_but_not_logout() {
     assert_eq!(
         verdict(
             &row,
-            "text unsaved before the request is on disk after the exit"
+            "termination: text unsaved before the request is on disk after the exit"
         ),
         Some(Verdict::NotTested),
         "{}",
@@ -391,7 +429,7 @@ fn w12_covers_the_refused_and_the_modal_termination_but_not_logout() {
     assert_eq!(
         verdict(
             &row,
-            "text unsaved before the request is on disk after the exit"
+            "termination: text unsaved before the request is on disk after the exit"
         ),
         Some(Verdict::Pass)
     );
@@ -679,7 +717,7 @@ fn an_unreadable_title_at_the_deadline_is_not_a_failed_cancel() {
 
 #[test]
 fn the_export_check_is_about_the_file_the_dialog_was_aimed_at() {
-    let name = "the ended dialog exports nothing to the file it was aimed at";
+    let name = "termination: the ended dialog exports nothing to the file it was aimed at";
     let row = run(&mut Quitting::new(), "W12");
     assert_eq!(verdict(&row, name), Some(Verdict::Pass), "{}", row.json());
     let mut exporting = Quitting::new();
@@ -738,4 +776,52 @@ fn return_goes_only_to_the_go_to_folder_path_field() {
         .is_err()
     );
     assert!(goto_field(Ok(42), Ok(true), Err("no focus".into()), 42, path).is_err());
+}
+
+#[test]
+fn w12_drives_sigterm_like_a_termination_request() {
+    let row = run(&mut Quitting::new(), "W12");
+    for name in [
+        "SIGTERM: process keeps running",
+        "SIGTERM: title shows the cancelled quit",
+        "SIGTERM: old bytes still on disk",
+        "SIGTERM: the request ends the export dialog",
+        "SIGTERM: the quit exits once the dialog is gone",
+        "SIGTERM: text unsaved before the request is on disk after the exit",
+    ] {
+        assert_eq!(
+            verdict(&row, name),
+            Some(Verdict::Pass),
+            "{name}: {}",
+            row.json()
+        );
+    }
+    assert_eq!(verdict(&row, "logout"), Some(Verdict::NotTested));
+}
+
+#[test]
+fn an_app_that_sigterm_kills_fails_w12() {
+    let mut killed = Quitting::new();
+    killed.sigterm_kills = true;
+    let row = run(&mut killed, "W12");
+    assert_eq!(
+        verdict(&row, "SIGTERM: process keeps running"),
+        Some(Verdict::Fail),
+        "{}",
+        row.json()
+    );
+}
+
+#[test]
+fn a_leftover_cancelled_title_cannot_stand_for_sigterms_refusal() {
+    let mut leftover = Quitting::new();
+    leftover.title_sticks = true;
+    leftover.sigterm_ignored = true;
+    let row = run(&mut leftover, "W12");
+    assert_eq!(
+        verdict(&row, "title clears once the save succeeds"),
+        Some(Verdict::Fail),
+        "{}",
+        row.json()
+    );
 }
