@@ -205,3 +205,22 @@ USER 的要求（原话）：
 - Windows 上的 Phase 11-B Release 基线：本机 p95 21.4 ms，若 Windows 机器慢一倍以上，可能接近 50 ms。
 - macOS 新版本的 VM 自动化行重跑，以及真实按钮的人工确认。
 - Comrak 0.54 其余位置缺陷的穷尽排查。例如带缩进差异的多行行内代码，它的保护范围是旧行为，本次未改。
+
+## Release 基线（提交 `2febab10f43a0324b365efd9210cf57ef3e10b55`，2026-11-12）
+
+在该提交的干净工作树上运行（Apple M6，macOS 27.2.1，rustc 1.97.1）：
+
+```text
+cargo test --locked --release -p stickymd-render --lib phase11b_performance_ -- --ignored --nocapture
+phase11b semantic_conversion_1mib_1000_math median=2.200291ms p95=3.767792ms max=3.799ms
+phase11b math_action_1mib_1000_math median=21.950417ms p95=26.724916ms max=33.362625ms
+phase11b math_action_1mib_shifted_paragraphs parse_median=13.21225ms median=68.7905ms p95=96.401083ms max=96.401083ms
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 216 filtered out; finished in 0.79s
+```
+
+退出码 0。各项结果：
+
+- **plan 规定的工作量（`math_action_1mib_1000_math`）：** p95 26.7 ms，低于 50 ms。
+- **线性检查（`math_action_1mib_shifted_paragraphs`）：** 中位数 68.8 ms，约为单次解析 13.2 ms 的 5.2 倍，低于 12 倍。
+
+几次运行之间的波动来自本机负载：提交前的一次运行分别是 21.4 ms、41.0 ms 和 9.0 ms。同一提交上的工作区测试、clippy、fmt 与 Phase 00 都已通过（见 Resolution 中的命令）。
