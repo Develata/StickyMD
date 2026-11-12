@@ -506,3 +506,5 @@ r23（驱动 `81110f45…`）与 r24（驱动 `6e18c9fa…`）都是 PASS 9、FA
 - r24：`96f40413d6776ae8dec2dc14ec45b3bfe8bd650861549c0300934222510c9554`
 
 验收表的六个自动化行改引 r24。
+
+**R03 收据（2026-11-13）：** USER 看过上面 R03 的观察后回复“记为通过”。已用 `mac-ledger receipt --app dist/macos/StickyMD.app --rows R03 --quote "记为通过"` 登记到 `4ce8a226…`，P16-R03 改为 `MANUAL PASS`，限 Gatekeeper 评估关闭的条件。R03 的确认每次只代表那一次（`NEVER_REUSED`），下次仍要重新确认。
