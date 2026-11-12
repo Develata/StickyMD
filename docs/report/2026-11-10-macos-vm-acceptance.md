@@ -508,3 +508,14 @@ r23（驱动 `81110f45…`）与 r24（驱动 `6e18c9fa…`）都是 PASS 9、FA
 验收表的六个自动化行改引 r24。
 
 **R03 收据（2026-11-13）：** USER 看过上面 R03 的观察后回复“记为通过”。已用 `mac-ledger receipt --app dist/macos/StickyMD.app --rows R03 --quote "记为通过"` 登记到 `4ce8a226…`，P16-R03 改为 `MANUAL PASS`，限 Gatekeeper 评估关闭的条件。R03 的确认每次只代表那一次（`NEVER_REUSED`），下次仍要重新确认。
+
+## 更正：R01 的“隐藏不释放内存”（2026-11-13）
+
+上文“R01：Hidden 内存”的结论有两处不准确，以 [内存去向与优化方案](2026-11-13-macos-memory-optimization.md) 为准：
+
+- **隐藏其实释放了内存。** 隐藏回执后，Source 面板缓冲（4.94 MiB）已经释放。但 macOS 的 malloc 把它留成 `Malloc Large (empty)` 区，仍计入 `phys_footprint`，所以读数不降。
+- **“只开菜单”的探针并没有只开菜单。** 那个探针是两次“置顶”切换。干净的对照是新报告里的“隐藏后再显示”：它与 Hidden 在每个类别上都相同。打开菜单后多出的约 6 MiB 分布如下：
+  - Malloc Small 多约 4.25 MiB；
+  - 框架数据多约 1.4 MiB。
+
+P16-R01 仍为 `BLOCKED`，临时门未改。
