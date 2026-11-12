@@ -11,6 +11,7 @@ pub mod file_watch;
 pub mod monitor;
 pub mod pointer_band;
 pub mod shell;
+pub mod sigterm;
 pub mod tray;
 pub mod window;
 

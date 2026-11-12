@@ -235,7 +235,7 @@ USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-de
 | 文件剪贴板 | `NSPasteboard`（`08` macOS 节） |
 | 保存对话框 | `NSSavePanel.runModal`，主线程阻塞 |
 | 链接打开 | `NSWorkspace` |
-| 系统终止 | 宿主给 winit 的 application delegate 补 `applicationShouldTerminate:`，返回 `NSTerminateLater`，走共享退出屏障：成功回 `YES`，保存失败回 `NO`。有模态窗口时 `abortModal`（导出按取消处理）并回 `NSTerminateCancel`，退出屏障在对话框退栈后运行，这次注销被中断一次。保存对话框弹出前须把 `preventsApplicationTerminationWhenModal` 设为 `NO`：它默认为 `YES`，此时 AppKit 不询问 delegate，请求到不了这里（USER 批准 2026-11-12，见 [RISK](../report/RISK-macos-modal-termination.md)）；屏障超时：笔记尚未安全时取消共享退出状态并回 `NO`；已安全时剩余的尽力项记为失败，立即退出 |
+| 系统终止 | 宿主给 winit 的 application delegate 补 `applicationShouldTerminate:`，返回 `NSTerminateLater`，走共享退出屏障：成功回 `YES`，保存失败回 `NO`。有模态窗口时 `abortModal`（导出按取消处理）并回 `NSTerminateCancel`，退出屏障在对话框退栈后运行。保存对话框弹出前须把 `preventsApplicationTerminationWhenModal` 设为 `NO`：它默认为 `YES`，此时 AppKit 不询问 delegate，请求到不了这里（USER 批准 2026-11-12，见 [RISK](../report/RISK-macos-modal-termination.md)）。注销与关机时，loginwindow 过了不可撤销点才向 UI Element 应用发这个请求，且不等回复，回 `NO` 或 `NSTerminateCancel` 都拦不住注销；随后 launchd 对仍在运行的进程发 SIGTERM，约 1 s 后发 SIGKILL（VM 注销实测；关机未测）。宿主把 SIGTERM 的处置设为忽略，改由主队列上的信号源在主线程接收，按同一路径处理（有模态窗口时先 `abortModal`，再走退出屏障），没有回复要发。SIGTERM 发起的退出期限为 5 s，约束的是没有 SIGKILL 跟进的 SIGTERM（如 `kill`）：每次退出只设一次，已有系统请求的期限时不另设，退出结束时撤销（USER 批准 2026-11-12，见 [RISK](../report/RISK-macos-logout-ui-element.md)）；屏障超时：笔记尚未安全时取消共享退出状态（系统请求另回 `NO`）；已安全时剩余的尽力项记为失败，立即退出 |
 | Cmd+Q | 窗口聚焦时走同一退出屏障（图标不可见时托盘这条路径不存在） |
 | 系统主题 | winit `ThemeChanged` |
 

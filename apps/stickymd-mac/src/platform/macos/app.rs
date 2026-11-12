@@ -15,8 +15,14 @@ use stickymd_desktop::host::{DesktopEvent, EventSink, HostSignal};
 const TERMINATE_CANCEL: usize = 0;
 /// `NSTerminateLater`.
 const TERMINATE_LATER: usize = 2;
-/// The system gives a logout about two minutes; answer before it stops waiting.
+/// Apple gives a logout, restart or shutdown two minutes for a later answer; this app answers
+/// any request before that. A logout does not wait for a UI Element app at all (report
+/// RISK-macos-logout-ui-element).
 const QUIT_ANSWER_DEADLINE_SECONDS: f64 = 100.0;
+/// A quit that SIGTERM started has this long before the barrier's timeout applies. At a logout
+/// SIGKILL followed launchd's SIGTERM about 1 s later (one VM sample, report
+/// RISK-macos-logout-ui-element), so this bounds a SIGTERM that nothing follows, such as `kill`.
+const SIGNAL_QUIT_DEADLINE_SECONDS: f64 = 5.0;
 /// `kCoreEventClass` and `kAEReopenApplication`.
 const CORE_EVENT_CLASS: u32 = u32::from_be_bytes(*b"aevt");
 const REOPEN_APPLICATION: u32 = u32::from_be_bytes(*b"rapp");
@@ -27,6 +33,8 @@ thread_local! {
     static BRIDGE: OnceCell<Retained<AppBridge>> = const { OnceCell::new() };
     static SINK: OnceCell<EventSink> = const { OnceCell::new() };
     static TERMINATION_PENDING: Cell<bool> = const { Cell::new(false) };
+    /// A deadline from SIGTERM is scheduled; it is cancelled when that quit ends either way.
+    static SIGNAL_DEADLINE: Cell<bool> = const { Cell::new(false) };
 }
 
 unsafe extern "C" {
@@ -65,6 +73,7 @@ define_class!(
 
         #[unsafe(method(quitDeadlinePassed:))]
         fn quit_deadline_passed(&self, _ignored: *mut AnyObject) {
+            SIGNAL_DEADLINE.with(|scheduled| scheduled.set(false));
             post(HostSignal::QuitDeadlinePassed);
         }
 
@@ -174,14 +183,52 @@ fn answer_termination(terminate: bool) {
 /// The answer that lets the process end. It is sent after the event handler has returned, because
 /// ending re-enters winit, which refuses to run inside its own handler.
 pub fn termination_finished() {
+    cancel_signal_deadline();
     if TERMINATION_PENDING.with(Cell::get) {
         perform_later(sel!(answerYes:), 0.0);
     }
 }
 
 pub fn termination_abandoned() {
+    cancel_signal_deadline();
     if TERMINATION_PENDING.with(Cell::get) {
         perform_later(sel!(answerNo:), 0.0);
+    }
+}
+
+/// A SIGTERM deadline outliving its quit would cut short a later one.
+fn cancel_signal_deadline() {
+    if SIGNAL_DEADLINE.with(|scheduled| scheduled.replace(false)) {
+        cancel_deadline();
+    }
+}
+
+/// Ends a running modal dialog as a cancel. The dialog sits on the stack inside the event
+/// handler, so a quit can reach the shell only once it has returned. Answers whether one ran.
+fn abort_modal() -> bool {
+    let app = shared_application();
+    // SAFETY: the shared application on the main thread.
+    let modal: *mut AnyObject = unsafe { msg_send![app, modalWindow] };
+    if !modal.is_null() {
+        // SAFETY: as above, with a modal session running.
+        let _: () = unsafe { msg_send![app, abortModal] };
+    }
+    !modal.is_null()
+}
+
+/// SIGTERM: at a logout launchd sends it to an instance it manages (launched by Finder or `open`)
+/// still running about 1 s after the quit request, which is not waited for (report
+/// RISK-macos-logout-ui-element); a user can send it too. The same quit as a system request, with
+/// no answer to give. A running dialog ends as a cancel first and the quit runs once it returned.
+///
+/// The barrier's timeout applies as for a system request: one deadline per quit, not pushed back
+/// by a repeated signal, and none of its own when a system request already set one.
+pub fn quit_requested_by_signal() {
+    abort_modal();
+    post(HostSignal::Tray(TrayCommand::Quit));
+    let pending = TERMINATION_PENDING.with(Cell::get);
+    if !pending && !SIGNAL_DEADLINE.with(|scheduled| scheduled.replace(true)) {
+        perform_later(sel!(quitDeadlinePassed:), SIGNAL_QUIT_DEADLINE_SECONDS);
     }
 }
 
@@ -190,15 +237,9 @@ extern "C-unwind" fn should_terminate(
     _selector: Sel,
     _sender: *mut AnyObject,
 ) -> usize {
-    let app = shared_application();
-    // SAFETY: the shared application on the main thread.
-    let modal: *mut AnyObject = unsafe { msg_send![app, modalWindow] };
-    if !modal.is_null() {
-        // The dialog sits on the stack inside the event handler. Answering "later" would start a
-        // nested loop above it, so it could never unwind and the quit could never reach the shell.
-        // The request ends here instead: the quit runs once the dialog has returned.
-        // SAFETY: as above, with a modal session running.
-        let _: () = unsafe { msg_send![app, abortModal] };
+    if abort_modal() {
+        // Answering "later" would start a nested loop above the dialog, so it could never unwind
+        // and the quit could never reach the shell. The request ends here instead.
         post(HostSignal::Tray(TrayCommand::Quit));
         return TERMINATE_CANCEL;
     }

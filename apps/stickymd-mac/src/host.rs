@@ -176,6 +176,9 @@ impl Host for MacHost {
         join_all_desktops(window);
         self.window = Some(Arc::clone(window));
         install_hooks(self.sink.clone());
+        if let Err(error) = crate::platform::macos::sigterm::install() {
+            eprintln!("SIGTERM stays fatal; a logout may end StickyMD before it saves: {error}");
+        }
     }
 
     fn keymap(&self) -> &Keymap {
