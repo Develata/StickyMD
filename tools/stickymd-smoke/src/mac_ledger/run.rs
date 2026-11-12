@@ -220,6 +220,15 @@ mod tests {
                 .contains("another mac-ledger writer")
         );
         drop(first);
-        assert!(super::lock(&ledger).is_ok());
+        // Other tests fork children concurrently; one forked while the lock was open shares it
+        // until its exec closes the descriptor, so the release may lag briefly.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while super::lock(&ledger).is_err() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the lock was not released"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }
