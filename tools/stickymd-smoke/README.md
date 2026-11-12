@@ -32,17 +32,22 @@ canonical path and never follows a replacement root symlink.
 `mac-resources.json` is checkpointed atomically after each run and includes
 environment/display dimensions, executable and fixture SHA-256, raw counters,
 observed early-exit time/status, and median/max for memory, CPU and wake-ups.
-Schema version 2 reports `interrupt_wakeups_per_second` (total interrupt wake-ups)
+Schema version 3 (version 2 plus Hidden's per-run `hidden_seconds`, each scenario's
+`hidden_through_menu_bar`, and the top-level status `SCENARIOS_PASS`, formerly
+`VISIBLE_SCENARIOS_PASS`) reports `interrupt_wakeups_per_second` (total interrupt wake-ups)
 and `idle_wakeups_per_second` (package-idle wake-ups, Activity Monitor's "Idle Wake Ups")
 separately in metrics and summaries. Package-idle wake-ups are a subset of interrupt
 wake-ups in XNU; they are never added. The old summed `wakeups_per_second` is removed.
 macOS uses its built-in `/usr/bin/shasum` for SHA-256. Failed and early-exit runs
-remain in evidence but never supply derived metrics. The visible scenarios pass
-only if every requested run is valid and their footprint maxima are at most
-72/96/128 MiB. CPU and wake-ups are reported without gates under this task's
+remain in evidence but never supply derived metrics. The scenarios pass only if
+every requested run is valid and their footprint maxima are at most
+72/96/128/48 MiB. CPU and wake-ups are reported without gates under this task's
 authorization. Hidden (48 MiB) opens in Source, then chooses the menu-bar item
 `隐藏` through Accessibility (the `mac-gui` helper; this binary needs the
-permission) and waits until the window is off screen before measuring.
+permission, checked before any run) and waits until the window is off screen.
+Its 30 s warm-up starts from then, and the window must still be off screen at
+both samples (`NOT_HIDDEN` otherwise). The menu is opened through Accessibility,
+not a mouse click; that path's own cost is part of the reading.
 Exit 0 covers all four scenarios; full acceptance remains incomplete, and
 P16-R01/P16-R02 are not updated by this command. Off macOS, measurement refuses
 with `NOT_TESTED` and a nonzero exit. Help and unit tests do not open windows.

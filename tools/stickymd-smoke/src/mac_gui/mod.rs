@@ -4,7 +4,8 @@
 //! compositor/caret instrumentation. W12's logout is not driven: it ends the VM's GUI session,
 //! and loginwindow ends this driver with it; W12 sends the product the quit request and the
 //! SIGTERM a logout brings directly instead. R03 needs a quarantined download opened through
-//! LaunchServices (an ad-hoc signature suffices; probed by script); W15 needs Windows. These are never inferred PASS.
+//! LaunchServices; in the test VM with Gatekeeper assessments off, an ad-hoc signature was
+//! enough (tools/manual/macos-r03-translocation.md). W15 needs Windows. These are never inferred PASS.
 //! W11/W12 inject the save failure by taking write permission from the fixture's note directory
 //! (USER 2026-11-11).
 //! Off macOS the shared modules compile only for their unit tests; the live backend that reads
@@ -53,6 +54,11 @@ pub(crate) use options::{Options, parse};
 #[cfg(target_os = "macos")]
 pub(crate) fn choose_status_menu_item(pid: u32, label: &str) -> Result<String, String> {
     native::accessibility::menu(pid, label)
+}
+/// Whether this binary may use Accessibility, by the same nonprompting preflight as `mac-gui`.
+#[cfg(target_os = "macos")]
+pub(crate) fn accessibility_trusted() -> bool {
+    native::permissions::check().ax
 }
 /// The rows `mac-gui` executes; the rest are deferred by design and always NOT_TESTED.
 #[cfg(any(target_os = "macos", test))]

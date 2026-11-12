@@ -24,6 +24,12 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         return Err("--app must name a .app directory".into());
     }
     let executable = contained_executable(&app)?;
+    // Hidden needs Accessibility; say so before any run rather than after the visible ones.
+    if model::SCENARIOS.iter().any(|scenario| scenario.hidden)
+        && !crate::mac_gui::accessibility_trusted()
+    {
+        return Err("Accessibility permission missing: Hidden chooses the menu-bar item through Accessibility; grant it to this binary, then measure".into());
+    }
     let fixture = model::fixture();
     let mut evidence = Evidence {
         environment: environment()?,
@@ -210,11 +216,17 @@ fn measure(
     {
         return Ok(());
     }
+    if hidden {
+        stays_hidden(run, pid)?;
+    }
     let deadline = started
         + Duration::from_secs_f64(run.samples[0].elapsed_seconds)
         + Duration::from_secs(crate::resource_plan::CPU_SECONDS);
     if !wait(session, run, started, deadline)? || !capture(session, run, started)? {
         return Ok(());
+    }
+    if hidden {
+        stays_hidden(run, pid)?;
     }
     run.metrics = Some(model::metrics(
         &run.samples[0],
@@ -229,7 +241,12 @@ fn measure(
 /// Hides the ready window through the menu-bar menu, as a person would, and waits until it is off
 /// screen. False means the product exited meanwhile, recorded in `run`.
 fn hide(session: &mut Session, run: &mut Run, pid: u32, started: Instant) -> Result<bool, String> {
-    crate::mac_gui::choose_status_menu_item(pid, model::HIDE_ITEM)?;
+    let chosen = crate::mac_gui::choose_status_menu_item(pid, model::HIDE_ITEM);
+    // An Accessibility error can mean the product exited meanwhile; record that exit first.
+    if exited(session, run, started)? {
+        return Ok(false);
+    }
+    chosen?;
     let deadline = Instant::now() + Duration::from_secs(model::HIDE_SECONDS);
     while native::window_ready(pid)? {
         if Instant::now() >= deadline {
@@ -251,6 +268,16 @@ fn hide(session: &mut Session, run: &mut Run, pid: u32, started: Instant) -> Res
     }
     run.hidden_seconds = Some(started.elapsed().as_secs_f64());
     Ok(true)
+}
+
+/// A hidden run's samples count only while its content window is still off screen: one off-screen
+/// observation before the warm-up does not prove the window stayed hidden.
+fn stays_hidden(run: &mut Run, pid: u32) -> Result<(), String> {
+    if native::window_ready(pid)? {
+        run.status = "NOT_HIDDEN";
+        return Err("The content window was on screen again at a hidden sample".into());
+    }
+    Ok(())
 }
 
 fn environment() -> Result<String, String> {

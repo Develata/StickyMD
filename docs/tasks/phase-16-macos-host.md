@@ -56,7 +56,7 @@ cargo run --quiet --locked -p stickymd-smoke -- mac-resources --app dist/macos/S
 
 资源 CLI 只在测试 VM 的解锁桌面运行；每个场景至少 5 次，等待窗口出现后预热 30 秒、空闲采样 60 秒，
 原始样本与汇总写入 `mac-resources.json`。Hidden（2026-11-13 起）以 Source 打开，经辅助功能选择菜单栏
-“隐藏”、等窗口离开屏幕后再测量，内存门 48 MiB；退出码 0 表示四个场景本次采样完整且未越内存门，
+“隐藏”、等窗口离开屏幕后从那时起预热 30 秒再测量，两次采样时窗口都须仍在屏幕外，内存门 48 MiB；退出码 0 表示四个场景本次采样完整且未越内存门，
 不代表完整验收。
 
 GUI 驱动只在专用 Tart macOS 27.2 VM（自动登录、解锁桌面、ABC/US 输入源）内运行：先用 `CARGO_PROFILE_RELEASE_PANIC=unwind cargo build --locked --release -p stickymd-smoke` 构建，将该 CLI 与 `StickyMD.app` 复制进 VM，再以登录用户执行 `./stickymd-smoke mac-gui --app "$PWD/StickyMD.app" --out "$PWD/gui-evidence"`（可加 `--only W03,W04`）。VM 检测先于路径访问，缺少 Accessibility/PostEvent 时明确拒绝，Screen Recording 仅用于可选截图；不得在主人的 Mac 上运行，也不得用 `--allow-host` 绕过本次限制。每场景使用独立程序目录，原子输出 `mac-gui.json`，子检查缺口保留 `NOT_TESTED`；具体权限、外部 oracle 与 VM 首跑待验证项见 [smoke README](../../tools/stickymd-smoke/README.md#macos-gui-evidence-in-a-dedicated-vm)。当前只实现并验证无 GUI 的驱动逻辑，首次真实运行等待 VM 就绪，验收矩阵不改为通过。

@@ -14,9 +14,10 @@ macOS only. Requires an unlocked test desktop with its display on.
 Source, Preview, Split: wait for a PID-owned on-screen window, warm up 30 s,
 then measure 60 s of idle CPU and wake-ups. Hidden opens in Source, waits for
 the window, chooses the menu-bar item 隐藏 through Accessibility (this binary
-needs the permission), waits until the window is off screen, then measures the
-same way. Memory maxima must be within 72/96/128/48 MiB. CPU and wake-ups are
-observations, with no gate.
+needs the permission; checked before any run), waits until the window is off
+screen, warms up 30 s from then and measures the same way; the window must
+still be off screen at both samples. Memory maxima must be within
+72/96/128/48 MiB. CPU and wake-ups are observations, with no gate.
 Exit 0 means all requested runs are valid and within their memory gates;
 it does not mean full P16-R01/P16-R02 acceptance or release readiness.
 Off macOS, measurement exits non-zero with NOT_TESTED.
