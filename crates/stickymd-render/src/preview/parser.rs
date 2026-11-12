@@ -571,6 +571,25 @@ mod tests {
     }
 
     #[test]
+    fn autolinked_emails_do_not_overflow_the_preview_worker_stack() {
+        // Comrak 0.54 recursed once per autolinked email and aborted the whole
+        // process on the preview worker's 512 KB stack at about 3000 of them
+        // (GHSA-xg9p-p4jc-c46g, fixed in 0.55). The worker's stack is the same.
+        let text = "a@b.co ".repeat(3_000);
+        let parsed = std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                PreviewParser
+                    .parse(&snapshot(&text))
+                    .map(|tree| tree.node_count)
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(matches!(parsed, Ok(nodes) if nodes >= 3_000), "{parsed:?}");
+    }
+
+    #[test]
     fn arena_is_not_exposed_and_owned_tree_keeps_snapshot_source() {
         let snapshot = snapshot("# 标题\n\nparagraph");
         let tree = PreviewParser.parse(&snapshot).expect("parse");

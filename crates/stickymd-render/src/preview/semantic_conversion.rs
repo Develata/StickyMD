@@ -176,7 +176,7 @@ fn validate_scope(
     Ok(())
 }
 
-/// `shifted` holds the spans of blocks whose inline positions Comrak 0.54
+/// `shifted` holds the spans of blocks whose inline positions Comrak 0.59
 /// reports shifted (`OwnedDocumentTree::shifted_blocks`): a formula reported
 /// inside one
 /// is not converted, since its range may name other text, such as a link
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn phase11b_conversion_skips_blocks_shifted_by_reference_definitions() {
-        // Comrak 0.54 reports every inline in these blocks shifted up by the
+        // Comrak 0.59 reports every inline in these blocks shifted up by the
         // removed definition lines; converting them would rewrite the title.
         for source in [
             "[x]: u \"\\(a\\)\"\n12345678\\(c\\)",

@@ -256,10 +256,10 @@ fn phase11b_equals_lines_scope_requires_a_complete_latex_formula() {
 
 #[test]
 fn phase11b_equals_lines_locate_misreported_multiline_formula_ends() {
-    // Comrak 0.54 misreports the end column of a multiline inline that starts
-    // after its block's first line (fixed upstream in kivikakk/comrak#855).
-    // The end is taken from the end line instead, so nothing past the real
-    // closer joins and display-dollar ends are never read.
+    // Before 0.56, Comrak misreported the end column of a multiline inline
+    // that starts after its block's first line (kivikakk/comrak#855). The end
+    // is still taken from the end line, so nothing past the real closer joins
+    // and display-dollar ends are never read, whatever the column says.
     for (source, expected) in [
         ("Lead\n  \\(a\n=\nb\\)", "Lead\n  \\(a=b\\)"),
         (
@@ -286,7 +286,7 @@ fn phase11b_equals_lines_locate_misreported_multiline_formula_ends() {
 fn phase11b_equals_lines_reject_positions_that_disagree_with_the_formula() {
     for source in [
         // A paragraph that starts with a link reference definition has every
-        // inline position Comrak 0.54 reports in it shifted up, so it is left
+        // inline position Comrak 0.59 reports in it shifted up, so it is left
         // alone whole: its title is never joined, even when it repeats the
         // real formula, and its real formulas wait for a sound position.
         "[x]: u \"\\(a\n=\nb\\)\"\n12345678$$c\n=\nd$$",

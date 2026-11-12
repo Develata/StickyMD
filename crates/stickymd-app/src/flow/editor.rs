@@ -1012,7 +1012,7 @@ mod tests {
 
     #[test]
     fn phase11b_math_button_leaves_paragraphs_shifted_by_reference_definitions() {
-        // Comrak 0.54 shifts every inline position in a paragraph that starts
+        // Comrak 0.59 shifts every inline position in a paragraph that starts
         // with a link reference definition; neither step may touch the title.
         for source in [
             "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",

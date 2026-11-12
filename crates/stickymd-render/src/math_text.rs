@@ -296,11 +296,12 @@ enum Located {
 }
 
 /// Locates a math node and checks the place against the node itself. Comrak
-/// 0.54 can misreport positions: the end column of an inline that spans lines
-/// and starts after its block's first line (fixed upstream in
-/// kivikakk/comrak#855), and every inline position in a paragraph that began
-/// with link reference definitions, whose removed lines it still counts. So
-/// the opener must sit on the reported start line and match the node's kind,
+/// has misreported positions: before 0.56 the end column of an inline that
+/// spans lines and starts after its block's first line (kivikakk/comrak#855),
+/// and up to 0.59 every inline position in a paragraph that began with link
+/// reference definitions, whose removed lines it still counts (that paragraph
+/// is skipped earlier, but the checks stay as a guard). So the opener must
+/// sit on the reported start line and match the node's kind,
 /// and the body must hold exactly the node's content apart from ASCII
 /// whitespace (Comrak normalizes only that). A misplaced range, or one that
 /// takes in a container marker such as `>`, fails these checks.

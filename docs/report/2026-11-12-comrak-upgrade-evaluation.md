@@ -141,3 +141,53 @@ rc.1 的 9 个失败分两类：
 
 1. 采用 A、B、C 中的哪一个（建议 A）。
 2. 采用 A 时，是否同意第二步等 Comrak 1.0.0 正式版发布后另行评估。
+
+## Resolution：USER 选择方案 A（2026-11-12）
+
+USER 选择“A 先升 0.59”。USER 另外说明：StickyMD 自己的 1.0.0 正式版，在 USER 主动提出之前不考虑。这一点不影响上游依赖；第二步仍按原计划，在 Comrak 1.0 正式版发布后另行评估。
+
+### 改动
+
+- `Cargo.toml`：`comrak = { version = "=0.59.0", default-features = false }`；`Cargo.lock` 用 `cargo update -p comrak` 更新，依赖变化与上文一致。产品代码不变。
+- 版本说法按 0.59 的事实更正：
+  - 涉及：plan 07、Phase 11-B 验收，以及 `preview/{model,source_map,semantic_conversion}.rs`、`math_text.rs` 及其测试、`flow/editor.rs` 中的注释。
+  - 内容：#855 在 0.56 已修，结束行上找 closer 的逻辑作为保守核对保留；引用定义错位与表格 `\|` 列号在 0.59 仍存在，上游 1.0.0-rc.1 起修复。
+- 新增回归测试 `autolinked_emails_do_not_overflow_the_preview_worker_stack`（`crates/stickymd-render/src/preview/parser.rs`）。在 512 KB 栈上解析 3000 个 email：0.54 上 SIGABRT，0.59 上通过（本机两种版本都实际运行过）。
+
+### 验证（本机，提交前的工作树）
+
+- `cargo fmt --all --check`、`cargo clippy --workspace --exclude stickymd-win --all-targets --locked -- -D warnings` 通过。
+- `cargo test --workspace --exclude stickymd-win --locked`：1600 个通过、0 失败。
+- `cargo deny check`：advisories、bans、licenses、sources 均 ok。
+- `cargo check --locked --target x86_64-pc-windows-msvc --workspace --all-targets` 通过。
+- `stickymd-smoke phase-entry 00` PASS。
+- Release 基线（`cargo test --locked --release -p stickymd-render --lib <过滤词> -- --ignored`）：Phase 5、6、11-B、14 全部通过。
+
+| 基线 | 结果 |
+| --- | --- |
+| Phase 5 预览 1 MiB（median / p95） | 21.3 / 24.6 ms |
+| Phase 11-B 分隔符转换 p95 | 0.95 ms |
+| Phase 11-B 按钮 p95 | 9.9 ms |
+| 23,717 个引用定义段落 | 按钮中位数 31.3 ms，单次解析 5.9 ms |
+
+### 审查（codex-reviewer，effort high，只读）
+
+结论：PASS，无 BLOCKER。核实了以下几点：
+
+- 两处绕行代码在 0.59 上仍然必要且正确：引用定义仍只删内容、不调整起始行；表格仍报告缩短后的列号。
+- email 回归测试确实命中旧版的崩溃路径。
+- 新增依赖都来自 crates.io，许可证都在白名单内，没有新增重复依赖族。
+
+指出的待验证项与已知行为变化，已写入下文。
+
+### 已知的预览行为变化（0.56 起与 cmark-gfm 对齐，符合“由 Comrak 决定”的契约）
+
+- `http://localhost/x`、`HTTP://www.example.com/` 由普通文本变为自动链接。
+  - 由此，若公式紧贴在这类 URL 之后（源码推断，未单独运行），例如 `HTTP://example.com/\(x\)`，这段会整段成为链接，`$` 按钮不再转换其中的公式。
+- 链接文字里带裸 URL、外面再套一层链接时，0.54 会让 URL 吞掉外层语法，0.59 改为正确的外层链接（上游 kivikakk/comrak#843）。
+- 多行行内代码、引用块内表格、CRLF 段落、列表中的缩进代码围栏，位置或字面内容得到修正。
+
+### 未验证
+
+- **Windows x64 上的实际运行。** 0.59 新增的 `memchr-n` / `fearless_simd` 有运行时 SIMD 分派，Apple Silicon 的运行和交叉 `cargo check` 都覆盖不到 SSE/AVX 路径。需要在 Windows 机器上运行新增回归、表格 source-map 与数学按钮测试，并记录 CPU 与构建身份。这与 `2febab1` 要求的 Windows 回归合并进行。
+- 真实笔记中 autolink 变化带来的预览差异，只有现有测试覆盖。
