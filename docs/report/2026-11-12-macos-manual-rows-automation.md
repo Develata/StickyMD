@@ -81,3 +81,14 @@ W02、W03、W04 虽然也已全自动，但断言的是窗口几何与动画时�
 
 1. 采用 A、B、C 中的哪一个（建议 B）。
 2. 采用 A 或 B 时，同意按上文修改 `11` Phase 16 的出口条件与账本一节。
+
+## Resolution：USER 批准方案 B（2026-11-12）
+
+USER 选择方案 B（“Option B”）。已落盘：
+
+- `docs/acceptance-cases/phase-16.md`：W07、W08、W09、W11、K02、E01 改为 `Automated`，状态为 `AUTOMATED PASS`，依据是程序 `4e19774d…`、驱动 `47e39456…` 的 r19（E01 另有 r20）。原有收据保留为“此前（Manual）”。
+- `docs/plan/11_testing_and_release.md` Phase 16：
+  - M2 出口改为：Mode 为 `Manual` 的真实桌面项人工确认，Mode 为 `Automated` 的由 VM 中的 `mac-gui` 判定；
+  - 账本一节新增“自动化行”。
+
+`11` 是 Windows 模块账本指纹的全局输入。它在 `5e57b5a`（2026-11-12）已经改过，晚于最近一次 Windows 运行，所以 Windows 模块收据本来就要重跑，这次修改没有增加新的重跑。

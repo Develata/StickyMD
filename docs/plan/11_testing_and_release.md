@@ -252,7 +252,7 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 | --- | --- | --- |
 | M0 | 基线：macOS 移除没有 `head` 表的字体 | 四个共享 crate 的测试在 macOS 全部通过 |
 | M1 | 建立 `apps/stickymd-mac` 与原生 POSIX 层 `crates/stickymd-posix`，同时登记 `unsafe` 治理、CI 选择与指纹归属；存储、单实例、监视、启动 | 真实存储通过 `storage_conformance!`；`05` macOS 节的失败路径有测试；macOS 测试与 clippy 显式包含两个 crate |
-| M2 | 窗口、托盘、唤醒、光标图层、系统终止；共享层 S2、S4、S6、S7、S8 | Windows 现有断言不变（S7、S8 按批准的新行为更新）；真实桌面项按验收表人工确认 |
+| M2 | 窗口、托盘、唤醒、光标图层、系统终止；共享层 S2、S4、S6、S7、S8 | Windows 现有断言不变（S7、S8 按批准的新行为更新）；验收表中 Mode 为 `Manual` 的真实桌面项人工确认，Mode 为 `Automated` 的由虚拟机中的 `mac-gui` 判定（见下文账本的“自动化行”） |
 | M3 | 输入、剪贴板、导出；共享层 S3 | `08` macOS 节的格式验证；基线测量 |
 | M4 | `.app` 打包脚本、ad-hoc 签名、人工验收清单 | 未运行项保持 `NOT TESTED` |
 
@@ -263,6 +263,7 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 - **记录**：账本只追加。每次追加都在排他锁下读取、校验，再原子发布，公共证据写入口不得写入账本目录。`record` 从同一次读取的证据字节中，记下一次运行的每一行，连同以下身份：app 可执行文件与 bundle 清单的 SHA-256、驱动的 SHA-256（由 `mac-gui` 写进证据；运行期间不得替换驱动）、虚拟机的 `sw_vers`，以及运行者传入的镜像 digest。一个 digest 只能对应一个系统版本。
 - **复用**：`plan` 只读账本，不启动被测程序，需要传入目标虚拟机运行前的 `sw_vers`。某行在账本里已有 PASS，且 app、bundle、驱动、镜像、系统五项与当前完全一致时，复用这次 PASS；如果同一身份下后来又记过非 PASS，一并提示。其余行列入要运行的 `--only` 清单。FAIL 与 NOT_TESTED 从不复用。
 - **人工收据**：`receipt` 按行记录 USER 的确认，绑定 app 可执行文件的 SHA-256。app 变了，收据不再成立，`plan` 会列出待重新确认的人工行。I01–I03 与 R03 从不沿用收据。
+- **自动化行**：验收表中 Mode 为 `Automated`、由 `mac-gui` 执行的行，只认账本里与当前 app、bundle、驱动、镜像、系统五项一致的 PASS，不需要人工收据。app 变了，这些行要在新身份下重新运行（`plan` 会列出）；还没有这样的 PASS 时状态为 `NOT TESTED`。哪些行改为 `Automated`，只限断言与显示硬件无关的行，按行经 USER 批准（2026-11-12，[提案](../report/2026-11-12-macos-manual-rows-automation.md)）。
 - **范围**：不按产品模块复用，这一级留待 Windows RC3-B 解决之后。这一节不改变 Phase 16 不是资格化 suite 的性质。
 
 <a id="qualification-process-isolation"></a>
