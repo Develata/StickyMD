@@ -1,13 +1,47 @@
 //! Deterministic inputs, raw observations, and resource calculations.
 //! plan_ref: docs/plan/10_performance_reliability.md#macos-gates
 
-pub(super) const SCENARIOS: [(&str, u64); 3] = [
-    ("source", 72 * 1024 * 1024),
-    ("preview", 96 * 1024 * 1024),
-    ("split", 128 * 1024 * 1024),
+/// One measured scenario: the view the note opens in, its memory gate, and whether the window is
+/// hidden through the menu-bar menu before the warm-up.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Scenario {
+    pub name: &'static str,
+    pub mode: &'static str,
+    pub limit: u64,
+    pub hidden: bool,
+}
+
+pub(super) const SCENARIOS: [Scenario; 4] = [
+    Scenario {
+        name: "source",
+        mode: "source",
+        limit: 72 * 1024 * 1024,
+        hidden: false,
+    },
+    Scenario {
+        name: "preview",
+        mode: "preview",
+        limit: 96 * 1024 * 1024,
+        hidden: false,
+    },
+    Scenario {
+        name: "split",
+        mode: "split",
+        limit: 128 * 1024 * 1024,
+        hidden: false,
+    },
+    // `10`: "Hidden to tray", 48 MiB. It opens in Source, as a first launch does.
+    Scenario {
+        name: "hidden",
+        mode: "source",
+        limit: 48 * 1024 * 1024,
+        hidden: true,
+    },
 ];
-pub(super) const HIDDEN_REASON: &str =
-    "A later GUI driver must use the menu-bar menu to hide the window";
+/// The menu-bar item that hides the window.
+pub(super) const HIDE_ITEM: &str = "隐藏";
+/// How long the window may stay on screen after the menu-bar command.
+pub(super) const HIDE_SECONDS: u64 = 5;
 
 pub(super) fn fixture() -> String {
     let mut note = String::from("# Resource fixture / 资源测量\n\n");
@@ -55,6 +89,8 @@ pub(super) struct Run {
     pub status: &'static str,
     pub reason: String,
     pub ready_seconds: Option<f64>,
+    /// When the window was first seen off screen after the menu-bar command (Hidden only).
+    pub hidden_seconds: Option<f64>,
     pub exit_seconds: Option<f64>,
     pub exit_status: Option<String>,
     pub samples: Vec<Sample>,
@@ -70,6 +106,7 @@ impl Run {
             status: "ERROR",
             reason: String::new(),
             ready_seconds: None,
+            hidden_seconds: None,
             exit_seconds: None,
             exit_status: None,
             samples: Vec::new(),

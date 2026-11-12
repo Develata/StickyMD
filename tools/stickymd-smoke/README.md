@@ -40,8 +40,10 @@ macOS uses its built-in `/usr/bin/shasum` for SHA-256. Failed and early-exit run
 remain in evidence but never supply derived metrics. The visible scenarios pass
 only if every requested run is valid and their footprint maxima are at most
 72/96/128 MiB. CPU and wake-ups are reported without gates under this task's
-authorization. Hidden is `NOT_TESTED` (48 MiB), pending a menu-bar GUI driver.
-Exit 0 covers visible scenarios only; full acceptance remains incomplete, and
+authorization. Hidden (48 MiB) opens in Source, then chooses the menu-bar item
+`隐藏` through Accessibility (the `mac-gui` helper; this binary needs the
+permission) and waits until the window is off screen before measuring.
+Exit 0 covers all four scenarios; full acceptance remains incomplete, and
 P16-R01/P16-R02 are not updated by this command. Off macOS, measurement refuses
 with `NOT_TESTED` and a nonzero exit. Help and unit tests do not open windows.
 Release provenance, screen lock/occlusion and actual render completion are not

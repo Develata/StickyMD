@@ -3,7 +3,7 @@
 
 use super::{
     Options,
-    model::{self, Run},
+    model::{self, Run, Scenario},
     native,
     report::{Evidence, quote},
 };
@@ -35,22 +35,23 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     };
     let output = options.out.join("mac-resources.json");
     crate::atomic_evidence::write(&output, evidence.json().as_bytes())?;
-    for (mode, _) in model::SCENARIOS {
+    for scenario in model::SCENARIOS {
+        let name = scenario.name;
         evidence.scenarios.push(Vec::new());
         for repetition in 1..=options.repetitions {
             println!(
-                "{mode} run {repetition}/{}: starting isolated measurement",
+                "{name} run {repetition}/{}: starting isolated measurement",
                 options.repetitions
             );
             let run = one_run(
                 &app,
                 &fixture,
-                mode,
+                scenario,
                 repetition,
                 &evidence.app_hash,
                 evidence.timebase,
             );
-            println!("{mode} run {repetition}: {} {}", run.status, run.reason);
+            println!("{name} run {repetition}: {} {}", run.status, run.reason);
             let cleanup_error = run.cleanup_error.clone();
             evidence
                 .scenarios
@@ -71,14 +72,14 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     if evidence.passed() {
         Ok(())
     } else {
-        Err("Visible scenarios incomplete or failed: every requested run must be valid and within its memory gate; see mac-resources.json".into())
+        Err("Scenarios incomplete or failed: every requested run must be valid and within its memory gate; see mac-resources.json".into())
     }
 }
 
 fn one_run(
     app: &Path,
     fixture: &str,
-    mode: &str,
+    scenario: Scenario,
     repetition: usize,
     hash: &str,
     timebase: (u32, u32),
@@ -91,8 +92,8 @@ fn one_run(
             return run;
         }
     };
-    let result = prepare(&mut session, app, fixture, mode, hash)
-        .and_then(|()| measure(&mut session, &mut run, timebase));
+    let result = prepare(&mut session, app, fixture, scenario.mode, hash)
+        .and_then(|()| measure(&mut session, &mut run, timebase, scenario.hidden));
     if let Err(error) = result {
         run.reason = error;
     }
@@ -167,7 +168,12 @@ fn capture(session: &mut Session, run: &mut Run, started: Instant) -> Result<boo
     Ok(true)
 }
 
-fn measure(session: &mut Session, run: &mut Run, timebase: (u32, u32)) -> Result<(), String> {
+fn measure(
+    session: &mut Session,
+    run: &mut Run,
+    timebase: (u32, u32),
+    hidden: bool,
+) -> Result<(), String> {
     let started = Instant::now();
     let pid = session.child.as_ref().ok_or("Missing child")?.id();
     run.pid = Some(pid);
@@ -192,6 +198,9 @@ fn measure(session: &mut Session, run: &mut Run, timebase: (u32, u32)) -> Result
         }
     }
     run.ready_seconds = Some(started.elapsed().as_secs_f64());
+    if hidden && !hide(session, run, pid, started)? {
+        return Ok(());
+    }
     if !wait(
         session,
         run,
@@ -215,6 +224,33 @@ fn measure(session: &mut Session, run: &mut Run, timebase: (u32, u32)) -> Result
     )?);
     run.status = "VALID";
     Ok(())
+}
+
+/// Hides the ready window through the menu-bar menu, as a person would, and waits until it is off
+/// screen. False means the product exited meanwhile, recorded in `run`.
+fn hide(session: &mut Session, run: &mut Run, pid: u32, started: Instant) -> Result<bool, String> {
+    crate::mac_gui::choose_status_menu_item(pid, model::HIDE_ITEM)?;
+    let deadline = Instant::now() + Duration::from_secs(model::HIDE_SECONDS);
+    while native::window_ready(pid)? {
+        if Instant::now() >= deadline {
+            run.status = "HIDE_TIMEOUT";
+            return Err(format!(
+                "The window stayed on screen {} s after the menu-bar {}",
+                model::HIDE_SECONDS,
+                model::HIDE_ITEM
+            ));
+        }
+        if !wait(
+            session,
+            run,
+            started,
+            Instant::now() + Duration::from_millis(100),
+        )? {
+            return Ok(false);
+        }
+    }
+    run.hidden_seconds = Some(started.elapsed().as_secs_f64());
+    Ok(true)
 }
 
 fn environment() -> Result<String, String> {
@@ -253,7 +289,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let mut run = super::Run::new(1);
-        super::measure(&mut session, &mut run, (1, 1)).unwrap();
+        super::measure(&mut session, &mut run, (1, 1), false).unwrap();
         assert_eq!(run.status, "EXITED_EARLY");
         assert!(run.samples.is_empty() && run.metrics.is_none());
         assert!(run.exit_status.as_deref().unwrap().contains('1'));

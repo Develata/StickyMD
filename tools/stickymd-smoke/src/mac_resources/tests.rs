@@ -35,12 +35,32 @@ fn fixture_has_exact_size_twenty_formulas_and_stable_mixed_text() {
     assert!(note.contains("中文") && note.contains("Latin text"));
     assert_eq!(note, fixture());
     assert!(note.ends_with('\n'));
-    for (mode, _) in SCENARIOS {
+    for scenario in SCENARIOS {
+        let mode = scenario.mode;
         assert_eq!(
             config(mode),
             format!("version = 1\nview_mode = \"{mode}\"\n")
         );
     }
+}
+
+#[test]
+fn scenarios_cover_the_four_macos_gates_and_hide_only_hidden() {
+    // `10` macOS gates: Source 72, Preview 96, Split 128, Hidden to tray 48 MiB.
+    let gates = SCENARIOS
+        .iter()
+        .map(|s| (s.name, s.mode, s.limit / 1024 / 1024, s.hidden))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        gates,
+        [
+            ("source", "source", 72, false),
+            ("preview", "preview", 96, false),
+            ("split", "split", 128, false),
+            ("hidden", "source", 48, true),
+        ]
+    );
+    assert_eq!(HIDE_ITEM, "隐藏");
 }
 
 #[test]
@@ -65,7 +85,7 @@ fn aggregation_sorts_and_averages_middle_pair_for_even_cohorts() {
 
 #[test]
 fn memory_gate_includes_boundary_but_never_ignores_failed_or_missing_runs() {
-    for (_, limit) in SCENARIOS {
+    for limit in SCENARIOS.map(|scenario| scenario.limit) {
         let mut runs = (1..=6).map(|i| valid_run(i, limit)).collect::<Vec<_>>();
         assert!(passed(&runs, 6, limit));
         assert!(!passed(&runs, 5, limit));
@@ -168,7 +188,7 @@ fn cli_parses_paths_defaults_equals_help_and_rejects_incomplete_or_ambiguous_opt
 }
 
 #[test]
-fn json_preserves_failure_details_and_hidden_never_becomes_a_pass() {
+fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
     let mut evidence = Evidence {
         environment: "{}".into(),
         app_hash: "a".repeat(64),
@@ -177,7 +197,7 @@ fn json_preserves_failure_details_and_hidden_never_becomes_a_pass() {
         timebase: (125, 3),
         scenarios: SCENARIOS
             .iter()
-            .map(|(_, limit)| (1..=5).map(|i| valid_run(i, *limit)).collect())
+            .map(|scenario| (1..=5).map(|i| valid_run(i, scenario.limit)).collect())
             .collect(),
     };
     assert!(evidence.passed());
@@ -192,11 +212,29 @@ fn json_preserves_failure_details_and_hidden_never_becomes_a_pass() {
         json.field("acceptance_status").unwrap().string().unwrap(),
         "INCOMPLETE"
     );
+    assert_eq!(
+        json.field("status").unwrap().string().unwrap(),
+        "SCENARIOS_PASS"
+    );
     let hidden = &json.field("scenarios").unwrap().array().unwrap()[3];
     assert_eq!(
-        hidden.field("status").unwrap().string().unwrap(),
-        "NOT_TESTED"
+        hidden.field("scenario").unwrap().string().unwrap(),
+        "hidden"
     );
+    assert_eq!(hidden.field("status").unwrap().string().unwrap(), "PASS");
+    assert_eq!(
+        hidden.field("config").unwrap().string().unwrap(),
+        "version = 1\nview_mode = \"source\"\n"
+    );
+    assert_eq!(
+        hidden.field("hidden_through_menu_bar").unwrap(),
+        &crate::release::json::Value::Bool(true)
+    );
+    // A hidden run over its own 48 MiB gate fails, though it is within Source's 72 MiB.
+    evidence.scenarios[3][0] = valid_run(1, 48 * 1024 * 1024 + 1);
+    assert!(!evidence.passed());
+    evidence.scenarios[3][0] = valid_run(1, 48 * 1024 * 1024);
+    assert!(evidence.passed());
     evidence.scenarios[0][0].exited(0.1, "signal: 9\n\"test\"".into());
     assert!(!evidence.passed());
     let json = crate::release::json::parse(&evidence.json()).unwrap();

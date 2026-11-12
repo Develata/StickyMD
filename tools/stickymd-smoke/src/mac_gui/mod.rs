@@ -48,6 +48,12 @@ mod scenarios;
 #[cfg(test)]
 mod tests;
 pub(crate) use options::{Options, parse};
+/// Chooses `label` in the product's menu-bar menu through Accessibility, as the GUI scenarios
+/// do. `mac-resources` uses it to reach the hidden state.
+#[cfg(target_os = "macos")]
+pub(crate) fn choose_status_menu_item(pid: u32, label: &str) -> Result<String, String> {
+    native::accessibility::menu(pid, label)
+}
 /// The rows `mac-gui` executes; the rest are deferred by design and always NOT_TESTED.
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

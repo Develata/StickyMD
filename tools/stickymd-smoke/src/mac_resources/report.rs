@@ -1,4 +1,4 @@
-//! JSON evidence and a short visible-scenario summary; incomplete acceptance stays explicit.
+//! JSON evidence and a short per-scenario summary; incomplete acceptance stays explicit.
 //! plan_ref: docs/plan/10_performance_reliability.md#macos-gates
 
 use super::model::{self, Run, Summary};
@@ -41,12 +41,13 @@ fn run_json(run: &Run) -> String {
         },
     );
     format!(
-        "{{\"repetition\":{},\"pid\":{},\"status\":{},\"reason\":{},\"ready_seconds\":{},\"exit_observed_seconds\":{},\"exit_status\":{},\"samples\":[{}],\"metrics\":{},\"cleanup_error\":{}}}",
+        "{{\"repetition\":{},\"pid\":{},\"status\":{},\"reason\":{},\"ready_seconds\":{},\"hidden_seconds\":{},\"exit_observed_seconds\":{},\"exit_status\":{},\"samples\":[{}],\"metrics\":{},\"cleanup_error\":{}}}",
         run.repetition,
         optional(run.pid),
         quote(run.status),
         quote(&run.reason),
         optional(run.ready_seconds),
+        optional(run.hidden_seconds),
         optional(run.exit_seconds),
         optional(run.exit_status.as_deref().map(quote)),
         samples,
@@ -62,36 +63,35 @@ impl Evidence {
                 .scenarios
                 .iter()
                 .zip(model::SCENARIOS)
-                .all(|(runs, (_, limit))| model::passed(runs, self.repetitions, limit))
+                .all(|(runs, scenario)| model::passed(runs, self.repetitions, scenario.limit))
     }
 
     pub fn json(&self) -> String {
         let mut scenarios = Vec::new();
-        for (index, (mode, limit)) in model::SCENARIOS.iter().enumerate() {
+        for (index, scenario) in model::SCENARIOS.iter().enumerate() {
             let runs = self.scenarios.get(index).map(Vec::as_slice).unwrap_or(&[]);
             let valid = || {
                 runs.iter()
                     .filter(|r| r.status == "VALID" && r.cleanup_error.is_none())
                     .filter_map(|r| r.metrics.as_ref())
             };
-            let status = if model::passed(runs, self.repetitions, *limit) {
+            let status = if model::passed(runs, self.repetitions, scenario.limit) {
                 "PASS"
             } else {
                 "INCOMPLETE_OR_FAILED"
             };
-            scenarios.push(format!("{{\"scenario\":{},\"config\":{},\"status\":{},\"valid_runs\":{},\"memory_limit_bytes\":{},\"footprint_bytes\":{},\"idle_cpu_percent\":{},\"interrupt_wakeups_per_second\":{},\"idle_wakeups_per_second\":{},\"runs\":[{}]}}",
-                quote(mode), quote(&model::config(mode)), quote(status), valid().count(), limit,
+            scenarios.push(format!("{{\"scenario\":{},\"config\":{},\"hidden_through_menu_bar\":{},\"status\":{},\"valid_runs\":{},\"memory_limit_bytes\":{},\"footprint_bytes\":{},\"idle_cpu_percent\":{},\"interrupt_wakeups_per_second\":{},\"idle_wakeups_per_second\":{},\"runs\":[{}]}}",
+                quote(scenario.name), quote(&model::config(scenario.mode)), scenario.hidden, quote(status), valid().count(), scenario.limit,
                 summary(model::summarize(valid().map(|m| m.footprint_bytes as f64))),
                 summary(model::summarize(valid().map(|m| m.idle_cpu_percent))),
                 summary(model::summarize(valid().map(|m| m.interrupt_wakeups_per_second))),
                 summary(model::summarize(valid().map(|m| m.idle_wakeups_per_second))),
                 runs.iter().map(run_json).collect::<Vec<_>>().join(",")));
         }
-        scenarios.push(format!("{{\"scenario\":\"hidden\",\"status\":\"NOT_TESTED\",\"reason\":{},\"memory_limit_bytes\":50331648,\"runs\":[]}}", quote(model::HIDDEN_REASON)));
         format!(
-            "{{\"schema_version\":2,\"status\":\"{}\",\"acceptance_status\":\"INCOMPLETE\",\"environment\":{},\"app_executable_sha256\":{},\"fixture_sha256\":{},\"fixture_bytes\":20480,\"formula_count\":20,\"repetitions\":{},\"warmup_seconds\":{},\"idle_seconds\":{},\"mach_timebase\":{{\"numer\":{},\"denom\":{}}},\"cpu_gate\":null,\"wakeups_gate\":null,\"cpu_normalization\":\"one logical CPU = 100 percent\",\"scenarios\":[{}]}}\n",
+            "{{\"schema_version\":3,\"status\":\"{}\",\"acceptance_status\":\"INCOMPLETE\",\"environment\":{},\"app_executable_sha256\":{},\"fixture_sha256\":{},\"fixture_bytes\":20480,\"formula_count\":20,\"repetitions\":{},\"warmup_seconds\":{},\"idle_seconds\":{},\"mach_timebase\":{{\"numer\":{},\"denom\":{}}},\"cpu_gate\":null,\"wakeups_gate\":null,\"cpu_normalization\":\"one logical CPU = 100 percent\",\"scenarios\":[{}]}}\n",
             if self.passed() {
-                "VISIBLE_SCENARIOS_PASS"
+                "SCENARIOS_PASS"
             } else {
                 "INCOMPLETE_OR_FAILED"
             },
@@ -108,7 +108,8 @@ impl Evidence {
     }
 
     pub fn print_summary(&self) {
-        for (index, (mode, limit)) in model::SCENARIOS.iter().enumerate() {
+        for (index, scenario) in model::SCENARIOS.iter().enumerate() {
+            let (mode, limit) = (scenario.name, &scenario.limit);
             let runs = self.scenarios.get(index).map(Vec::as_slice).unwrap_or(&[]);
             let valid = || {
                 runs.iter()
@@ -134,10 +135,6 @@ impl Evidence {
                 }
             );
         }
-        println!(
-            "hidden: NOT_TESTED (limit 48 MiB): {}",
-            model::HIDDEN_REASON
-        );
         println!("CPU and wake-ups are observations only. Full acceptance remains INCOMPLETE.");
     }
 }

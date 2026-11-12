@@ -7,15 +7,17 @@ pub(super) const HELP: &str =
     "usage: stickymd-smoke mac-resources --app <StickyMD.app> [--out <dir>] [--repetitions N]
   --app          Release bundle to copy into a fresh program directory per run
   --out          Evidence directory (default: dist/evidence/mac-resources)
-  --repetitions  Runs per visible scenario, at least 5 (default: 5)
+  --repetitions  Runs per scenario, at least 5 (default: 5)
   --help         Print help without measuring or launching anything
 
 macOS only. Requires an unlocked test desktop with its display on.
 Source, Preview, Split: wait for a PID-owned on-screen window, warm up 30 s,
-then measure 60 s of idle CPU and wake-ups. Memory maxima must be within
-72/96/128 MiB. CPU and wake-ups are observations, with no gate.
-Hidden: NOT_TESTED; a later GUI driver must use the menu-bar menu (48 MiB gate).
-Exit 0 means all requested visible runs are valid and within their memory gates;
+then measure 60 s of idle CPU and wake-ups. Hidden opens in Source, waits for
+the window, chooses the menu-bar item 隐藏 through Accessibility (this binary
+needs the permission), waits until the window is off screen, then measures the
+same way. Memory maxima must be within 72/96/128/48 MiB. CPU and wake-ups are
+observations, with no gate.
+Exit 0 means all requested runs are valid and within their memory gates;
 it does not mean full P16-R01/P16-R02 acceptance or release readiness.
 Off macOS, measurement exits non-zero with NOT_TESTED.
 Writes mac-resources.json atomically; no acceptance matrix is updated.";
