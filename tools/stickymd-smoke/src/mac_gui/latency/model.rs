@@ -9,13 +9,17 @@ pub(super) struct Key {
     pub seen: u64,
 }
 
-/// One presented frame: when `present` returned, when its transaction committed (0 = never seen
-/// to commit) and how long drawing it took.
+/// One presented frame: when `present` returned and how long drawing it took.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Frame {
     pub presented: u64,
-    pub committed: u64,
     pub drawn: u64,
+}
+
+impl Frame {
+    fn draw_start(self) -> u64 {
+        self.presented.saturating_sub(self.drawn)
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -26,11 +30,11 @@ pub(super) struct Recording {
     pub dropped_frames: u64,
 }
 
-/// Reads the product's file (`stickymd-input-latency 2`). Anything else is an error, not a guess.
+/// Reads the product's file (`stickymd-input-latency 3`). Anything else is an error, not a guess.
 pub(super) fn parse(text: &str) -> Result<Recording, String> {
     let mut lines = text.lines();
-    if lines.next() != Some("stickymd-input-latency 2") {
-        return Err("not a version 2 input-latency recording".into());
+    if lines.next() != Some("stickymd-input-latency 3") {
+        return Err("not a version 3 input-latency recording".into());
     }
     let mut recording = Recording::default();
     for line in lines {
@@ -50,10 +54,9 @@ pub(super) fn parse(text: &str) -> Result<Recording, String> {
                 event: number(1)?,
                 seen: number(2)?,
             }),
-            (Some("frame"), 4) => recording.frames.push(Frame {
+            (Some("frame"), 3) => recording.frames.push(Frame {
                 presented: number(1)?,
-                committed: number(2)?,
-                drawn: number(3)?,
+                drawn: number(2)?,
             }),
             _ => return Err(format!("bad recording line: {line}")),
         }
@@ -61,7 +64,8 @@ pub(super) fn parse(text: &str) -> Result<Recording, String> {
     Ok(recording)
 }
 
-/// Per-key stage durations in nanoseconds.
+/// Per-key stage durations in nanoseconds. What follows `present` (commit, compositor, display)
+/// is not measured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Sample {
     /// Event timestamp to the main thread seeing it.
@@ -71,63 +75,59 @@ pub(super) struct Sample {
     pub wait: u64,
     /// Drawing the frame through `present` returning: painting, converting, presenting.
     pub draw: u64,
-    /// `present` returned to the transaction's commit; `None` when the commit was not seen.
-    pub commit: Option<u64>,
-    /// Event to commit (or to `present` when the commit was not seen).
+    /// Event to `present` returned: `queue + wait + draw`.
     pub total: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Paired {
     pub samples: Vec<Sample>,
-    /// Keys in the window with no frame presented after them.
+    /// Keys in the window with no frame drawn after them.
     pub unpaired: usize,
-    /// Keys whose frame never reported a commit.
-    pub uncommitted: usize,
+    /// Keys whose timestamps are out of order (seen before the event).
+    pub disordered: usize,
 }
 
-/// Pairs each key whose event lies in `[from, to]` with the first frame presented at or after the
-/// main thread saw it.
+/// Pairs each key whose event lies in `[from, to]` with the first frame whose drawing started at
+/// or after the main thread saw the key. A frame already being drawn cannot hold a key seen
+/// during it: winit defers an event that arrives while it is drawing.
 ///
 /// Pre: frames are in recording order, which is presentation order (the main thread appends
-/// them). Post: one sample per paired key; every key in the window is counted exactly once, as
-/// a sample or as unpaired. A frame whose drawing started before the key was seen still carries
-/// it (the key arrived mid-draw and waits zero). O((k + f) log f).
+/// them), so their draw starts are ordered too. Post: every key in the window is counted exactly
+/// once, as a sample, as unpaired or as disordered, and each sample's stages add up to its total.
+/// O((k + f) log f).
 pub(super) fn pair(recording: &Recording, from: u64, to: u64) -> Paired {
     let frames = &recording.frames;
-    debug_assert!(frames.windows(2).all(|w| w[0].presented <= w[1].presented));
+    debug_assert!(
+        frames
+            .windows(2)
+            .all(|w| w[0].draw_start() <= w[1].draw_start())
+    );
     let mut paired = Paired {
         samples: Vec::new(),
         unpaired: 0,
-        uncommitted: 0,
+        disordered: 0,
     };
     for key in recording
         .keys
         .iter()
         .filter(|key| (from..=to).contains(&key.event))
     {
-        let index = frames.partition_point(|frame| frame.presented < key.seen);
+        if key.seen < key.event {
+            paired.disordered += 1;
+            continue;
+        }
+        let index = frames.partition_point(|frame| frame.draw_start() < key.seen);
         let Some(frame) = frames.get(index) else {
             paired.unpaired += 1;
             continue;
         };
-        let commit =
-            (frame.committed != 0).then(|| frame.committed.saturating_sub(frame.presented));
-        if commit.is_none() {
-            paired.uncommitted += 1;
-        }
-        let end = if frame.committed != 0 {
-            frame.committed
-        } else {
-            frame.presented
-        };
-        let draw_start = frame.presented.saturating_sub(frame.drawn);
+        let (queue, wait) = (key.seen - key.event, frame.draw_start() - key.seen);
         paired.samples.push(Sample {
-            queue: key.seen.saturating_sub(key.event),
-            wait: draw_start.saturating_sub(key.seen),
+            queue,
+            wait,
             draw: frame.drawn,
-            commit,
-            total: end.saturating_sub(key.event),
+            total: queue + wait + frame.drawn,
         });
     }
     paired
@@ -173,11 +173,10 @@ pub(super) fn stats_json(stats: Option<Stats>) -> String {
 /// The stages of a set of samples, as JSON.
 pub(super) fn stages_json(samples: &[Sample]) -> String {
     format!(
-        "{{\"queue\":{},\"wait\":{},\"draw\":{},\"commit\":{},\"total\":{}}}",
+        "{{\"queue\":{},\"wait\":{},\"draw\":{},\"total\":{}}}",
         stats_json(stats(samples.iter().map(|s| s.queue).collect())),
         stats_json(stats(samples.iter().map(|s| s.wait).collect())),
         stats_json(stats(samples.iter().map(|s| s.draw).collect())),
-        stats_json(stats(samples.iter().filter_map(|s| s.commit).collect())),
         stats_json(stats(samples.iter().map(|s| s.total).collect())),
     )
 }
@@ -203,18 +202,13 @@ mod tests {
 
     const MS: u64 = 1_000_000;
 
-    fn frame(presented: u64, committed: u64, drawn: u64) -> Frame {
-        Frame {
-            presented,
-            committed,
-            drawn,
-        }
+    fn frame(presented: u64, drawn: u64) -> Frame {
+        Frame { presented, drawn }
     }
 
     #[test]
     fn the_recording_parses_and_rejects_anything_else() {
-        let text =
-            "stickymd-input-latency 2\ndropped 0 2\nkey 10 12\nframe 20 25 3\nframe 30 0 4\n";
+        let text = "stickymd-input-latency 3\ndropped 0 2\nkey 10 12\nframe 20 3\nframe 30 4\n";
         let recording = parse(text).unwrap();
         assert_eq!(
             recording.keys,
@@ -223,67 +217,42 @@ mod tests {
                 seen: 12
             }]
         );
-        assert_eq!(recording.frames, [frame(20, 25, 3), frame(30, 0, 4)]);
+        assert_eq!(recording.frames, [frame(20, 3), frame(30, 4)]);
         assert_eq!((recording.dropped_keys, recording.dropped_frames), (0, 2));
-        assert!(parse("stickymd-input-latency 1\n").is_err());
-        assert!(parse("stickymd-input-latency 2\nframe 1 2\n").is_err());
-        assert!(parse("stickymd-input-latency 2\nnote x y\n").is_err());
+        assert!(parse("stickymd-input-latency 2\n").is_err());
+        assert!(parse("stickymd-input-latency 3\nframe 1 2 3\n").is_err());
+        assert!(parse("stickymd-input-latency 3\nnote x y\n").is_err());
     }
 
     #[test]
-    fn each_key_in_the_window_meets_the_first_frame_after_it() {
+    fn each_key_meets_the_first_frame_drawn_after_it() {
+        let key = |event, seen| Key { event, seen };
         let recording = Recording {
             keys: vec![
-                // Before the window.
-                Key {
-                    event: MS,
-                    seen: 2 * MS,
-                },
-                // Frame drawn 12..14 ms.
-                Key {
-                    event: 10 * MS,
-                    seen: 11 * MS,
-                },
-                // Seen mid-draw of that frame: it waits zero.
-                Key {
-                    event: 12 * MS,
-                    seen: 13 * MS,
-                },
-                // Frame presented at 21, never committed.
-                Key {
-                    event: 20 * MS,
-                    seen: 21 * MS,
-                },
-                // No frame after it.
-                Key {
-                    event: 30 * MS,
-                    seen: 31 * MS,
-                },
+                key(MS, 2 * MS),       // before the window
+                key(10 * MS, 11 * MS), // frame drawn 12..14 ms
+                key(12 * MS, 13 * MS), // seen while that frame is drawn: the next frame
+                key(20 * MS, 19 * MS), // seen before its event: disordered
+                key(30 * MS, 31 * MS), // no frame after it
             ],
             frames: vec![
-                frame(5 * MS, 6 * MS, MS),
-                frame(14 * MS, 16 * MS, 2 * MS),
-                frame(21 * MS, 0, MS),
+                frame(5 * MS, MS),
+                frame(14 * MS, 2 * MS),
+                frame(21 * MS, MS),
             ],
             ..Recording::default()
         };
         let paired = pair(&recording, 5 * MS, 40 * MS);
-        assert_eq!(paired.unpaired, 1);
-        assert_eq!(paired.uncommitted, 1);
-        let sample = |queue, wait, draw, commit, total| Sample {
+        assert_eq!((paired.unpaired, paired.disordered), (1, 1));
+        let sample = |queue, wait, draw| Sample {
             queue,
             wait,
             draw,
-            commit,
-            total,
+            total: queue + wait + draw,
         };
         assert_eq!(
             paired.samples,
-            [
-                sample(MS, MS, 2 * MS, Some(2 * MS), 6 * MS),
-                sample(MS, 0, 2 * MS, Some(2 * MS), 4 * MS),
-                sample(MS, 0, MS, None, MS),
-            ]
+            [sample(MS, MS, 2 * MS), sample(MS, 7 * MS, MS)]
         );
     }
 

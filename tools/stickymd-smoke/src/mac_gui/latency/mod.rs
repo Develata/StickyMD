@@ -1,9 +1,10 @@
 //! `mac-latency`: end-to-end input latency of the real app in the test VM, a diagnostic beside
 //! plan 10's edit benchmark (which stays the gate). It launches a copied bundle with the product's
 //! opt-in recorder (`STICKYMD_DIAGNOSTIC_INPUT_LATENCY`), types through CGEvent, asks the app to
-//! write its timestamps (SIGUSR1), and pairs every key with the first frame presented after the
-//! app saw it. Stages: event to main thread, main thread to `present` returned, `present` to
-//! Core Animation's commit. Several `--app` values are interleaved run by run, for A/B.
+//! write its timestamps (SIGUSR1), and pairs every key with the first frame whose drawing started
+//! after the app saw it. Stages: event to main thread, main thread to the start of drawing,
+//! drawing through `present` returned. What follows `present` is not measured. Several `--app`
+//! values are interleaved run by run, for A/B.
 //! plan_ref: docs/plan/10_performance_reliability.md#macos-gates
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -20,10 +21,12 @@ VM ONLY by default (kern.hv_vmm_present = 1). Needs Accessibility + PostEvent, a
 an unlocked desktop and the US/ABC input source.
 Each repetition runs every app (in the order given) through four cases: Source view, typing 'x'
 at the end of a 100 KiB and of a 1 MiB note, as a sustained burst (--keys at --interval-ms,
-defaults 120 at 40) and after idle gaps (--idle-keys at --idle-ms, defaults 10 at 3000).
+defaults 120 at 40, at least 40: each key's down/up takes about 25 ms) and after idle gaps
+(--idle-keys at --idle-ms, defaults 10 at 3000). Keys are sent only while the app is frontmost.
 --repetitions defaults to 3. Evidence: <out>/mac-latency.json (default dist/evidence/mac-latency).
 A run is VALID only when injected keys = recorded keys = characters added to the note and every
-key found its frame. Latency is an observation; plan 10's edit benchmark stays the gate.";
+key found its frame. Raw recordings are kept under <out>/raw. A cancel or a failed cleanup stops
+the campaign. Latency is an observation; plan 10's edit benchmark stays the gate.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Options {
@@ -76,7 +79,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
                     "--out" => options.out = value.into(),
                     "--repetitions" => options.repetitions = number(1, 50)? as usize,
                     "--keys" => options.keys = number(1, 2000)? as usize,
-                    "--interval-ms" => options.interval_ms = number(10, 1000)?,
+                    "--interval-ms" => options.interval_ms = number(40, 1000)?,
                     "--idle-keys" => options.idle_keys = number(1, 200)? as usize,
                     "--idle-ms" => options.idle_ms = number(100, 60_000)?,
                     _ => return Err(format!("unknown mac-latency option: {key}")),
@@ -117,7 +120,7 @@ mod tests {
             [PathBuf::from("a.app"), PathBuf::from("b.app")]
         );
         assert_eq!((options.keys, options.repetitions), (50, 3));
-        assert!(parse(&args(&["--app", "a.app", "--interval-ms", "5"])).is_err());
+        assert!(parse(&args(&["--app", "a.app", "--interval-ms", "39"])).is_err());
         assert!(parse(&args(&["--app", "a.app", "--keys", "1", "--keys", "2"])).is_err());
         assert!(
             parse(&args(&["--keys", "5"])).is_err(),

@@ -6,6 +6,7 @@ use super::{
     Options,
     model::{self, Sample},
 };
+use crate::mac_common::uptime_ns as now_ns;
 use crate::mac_common::{
     fixture::{bundle_hash, contained_executable, copy_fixture},
     session::Session,
@@ -15,6 +16,7 @@ use crate::mac_gui::{
     model::{quote, require_vm},
     native::{accessibility as ax, events, events::Events, permissions, windows},
 };
+use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -24,7 +26,7 @@ use std::time::{Duration, Instant};
 const ENV: &str = "STICKYMD_DIAGNOSTIC_INPUT_LATENCY";
 const CONFIG: &str = "version = 1\nview_mode = \"source\"\n";
 const DOWN_ARROW: u16 = 125;
-/// After the last key, before the flush: lets the last frames commit.
+/// After the last key, before the flush: lets the last frames present.
 const SETTLE_MS: u64 = 1500;
 
 #[derive(Clone, Copy, Debug)]
@@ -79,11 +81,15 @@ struct Run {
     added: Option<usize>,
     clock_offset_ns: Option<i64>,
     dropped: (u64, u64),
-    uncommitted: usize,
+    disordered: usize,
+    /// Achieved gaps between injected keys, in nanoseconds.
+    gaps: Vec<u64>,
+    /// Sustained keys injected more than half an interval after their due time.
+    late: usize,
     samples: Vec<Sample>,
+    /// The raw recording and injection times, kept beside the evidence.
+    raw: Option<String>,
 }
-
-use crate::mac_common::uptime_ns as now_ns;
 
 /// A deterministic Source fixture of exactly `bytes` bytes, mixed CJK and Latin prose, ending in
 /// a newline. It contains no `x`, so the typed suffix is unambiguous.
@@ -129,7 +135,8 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     let driver = crate::integrity::sha256(
         &std::env::current_exe().map_err(|e| format!("driver path: {e}"))?,
     )?;
-    fs::create_dir_all(&options.out).map_err(|e| e.to_string())?;
+    let raw_dir = options.out.join("raw");
+    fs::create_dir_all(&raw_dir).map_err(|e| e.to_string())?;
     let output = options.out.join("mac-latency.json");
     let sw_vers = Command::new("/usr/bin/sw_vers")
         .output()
@@ -138,32 +145,44 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     events::install_cancel()?;
     let mut input = Injection::new(Events::new());
     let mut runs = Vec::new();
-    for repetition in 1..=options.repetitions {
+    let mut stopped = None;
+    'campaign: for repetition in 1..=options.repetitions {
         for (index, app) in apps.iter().enumerate() {
             for case in CASES {
-                println!(
-                    "rep {repetition} app {} {}: starting",
+                // A cancel or a failed cleanup ends the campaign before another copy launches.
+                if let Err(reason) = events::running().and_then(|()| input.require_running()) {
+                    stopped = Some(reason);
+                    break 'campaign;
+                }
+                let label = format!(
+                    "rep {repetition} app {} {}",
                     &app.executable[..8],
                     case.name
                 );
-                let run = one_run(app, index, case, repetition, options, &mut input);
-                println!(
-                    "rep {repetition} app {} {}: {}",
-                    &app.executable[..8],
-                    case.name,
-                    run.reason.as_deref().unwrap_or("VALID")
-                );
+                println!("{label}: starting");
+                let (mut run, fatal) = one_run(app, index, case, repetition, options, &mut input);
+                println!("{label}: {}", run.reason.as_deref().unwrap_or("VALID"));
+                if let Some(raw) = run.raw.take() {
+                    let name = format!("{repetition}-{index}-{}.txt", case.name);
+                    crate::atomic_evidence::write(&raw_dir.join(name), raw.as_bytes())?;
+                }
                 runs.push(run);
-                let json = evidence(options, &apps, &driver, &sw_vers, &runs);
+                let json = evidence(options, &apps, &driver, &sw_vers, &runs, stopped.as_deref());
                 crate::atomic_evidence::write(&output, json.as_bytes())?;
-                if input.stopped.is_some() {
-                    return Err(format!("input stopped: {:?}", input.stopped));
+                if let Some(reason) = fatal {
+                    stopped = Some(reason);
+                    break 'campaign;
                 }
             }
         }
     }
+    let json = evidence(options, &apps, &driver, &sw_vers, &runs, stopped.as_deref());
+    crate::atomic_evidence::write(&output, json.as_bytes())?;
     summary(&apps, &runs);
     println!("Evidence: {}", output.display());
+    if let Some(reason) = stopped {
+        return Err(format!("campaign stopped: {reason}"));
+    }
     if runs.iter().all(|run| run.reason.is_none()) {
         Ok(())
     } else {
@@ -171,6 +190,8 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     }
 }
 
+/// One isolated run. The second value is a reason to stop the whole campaign: a failed cleanup
+/// or input release may leave a process or a held key behind.
 fn one_run(
     app: &App,
     index: usize,
@@ -178,7 +199,7 @@ fn one_run(
     repetition: usize,
     options: &Options,
     input: &mut Injection<Events>,
-) -> Run {
+) -> (Run, Option<String>) {
     let mut run = Run {
         app: index,
         case,
@@ -189,19 +210,33 @@ fn one_run(
         added: None,
         clock_offset_ns: None,
         dropped: (0, 0),
-        uncommitted: 0,
+        disordered: 0,
+        gaps: Vec::new(),
+        late: 0,
         samples: Vec::new(),
+        raw: None,
     };
     let mut session = match Session::new() {
         Ok(session) => session,
         Err(error) => {
-            run.reason = Some(error);
-            return run;
+            run.reason = Some(error.clone());
+            return (run, Some(error));
         }
     };
     let result = measure(&mut session, app, case, options, input, &mut run);
     let release = input.release();
+    // The product's stderr, kept before the session directory goes.
+    if let Ok(stderr) = fs::read_to_string(session.path().join("stderr.log"))
+        && !stderr.is_empty()
+    {
+        let raw = run.raw.get_or_insert_with(String::new);
+        let _ = write!(raw, "\nstderr:\n{stderr}");
+    }
     let cleanup = session.cleanup();
+    let fatal = match (&release, &cleanup) {
+        (Err(error), _) | (_, Err(error)) => Some(error.clone()),
+        _ => None,
+    };
     let errors = [result, release, cleanup]
         .into_iter()
         .filter_map(Result::err)
@@ -209,7 +244,7 @@ fn one_run(
     if !errors.is_empty() {
         run.reason = Some(errors.join("; "));
     }
-    run
+    (run, fatal)
 }
 
 fn measure(
@@ -223,13 +258,14 @@ fn measure(
     let note = fixture(case.bytes);
     let executable = copy_fixture(session, &app.path, &note, CONFIG, &app.executable)?;
     let recording = session.path().join("latency.txt");
+    let stderr = fs::File::create(session.path().join("stderr.log")).map_err(|e| e.to_string())?;
     session.spawn(
         Command::new(&executable)
             .current_dir(session.path())
             .env(ENV, &recording)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null()),
+            .stderr(stderr),
     )?;
     let pid = session.child.as_ref().ok_or("missing child")?.id();
     let started = Instant::now();
@@ -248,9 +284,7 @@ fn measure(
     events::wait(1000)?;
     ax::activate(pid)?;
     events::wait(300)?;
-    if ax::front()? != pid {
-        return Err("product did not acquire focus".into());
-    }
+    require_focus(pid)?;
     input.chord(&[CMD, DOWN_ARROW])?;
     events::wait(500)?;
 
@@ -262,9 +296,12 @@ fn measure(
             let begin = Instant::now();
             for key in 0..options.keys {
                 let due = begin + interval * key as u32;
-                if let Some(rest) = due.checked_duration_since(Instant::now()) {
-                    std::thread::sleep(rest);
+                match due.checked_duration_since(Instant::now()) {
+                    Some(rest) => std::thread::sleep(rest),
+                    None if Instant::now() - due > interval / 2 => run.late += 1,
+                    None => {}
                 }
+                require_focus(pid)?;
                 injected.push(now_ns());
                 input.text("x")?;
             }
@@ -272,6 +309,7 @@ fn measure(
         Pattern::AfterIdle => {
             for _ in 0..options.idle_keys {
                 events::wait(options.idle_ms)?;
+                require_focus(pid)?;
                 injected.push(now_ns());
                 input.text("x")?;
             }
@@ -280,9 +318,8 @@ fn measure(
     events::wait(SETTLE_MS)?;
     let to = now_ns();
     run.injected = injected.len();
-    if ax::front()? != pid {
-        return Err("focus left the product while typing".into());
-    }
+    run.gaps = injected.windows(2).map(|w| w[1] - w[0]).collect();
+    require_focus(pid)?;
 
     session.signal_flush()?;
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -293,6 +330,12 @@ fn measure(
         events::wait(50)?;
     }
     let text = fs::read_to_string(&recording).map_err(|e| e.to_string())?;
+    let mut raw = format!("window {from} {to}\ninjected");
+    for time in &injected {
+        let _ = write!(raw, " {time}");
+    }
+    let _ = write!(raw, "\n{text}");
+    run.raw = Some(raw);
     let parsed = model::parse(&text)?;
     run.dropped = (parsed.dropped_keys, parsed.dropped_frames);
     let window_events = parsed
@@ -304,7 +347,7 @@ fn measure(
     run.recorded = window_events.len();
     run.clock_offset_ns = model::clock_offset(&window_events, &injected);
     let paired = model::pair(&parsed, from, to);
-    run.uncommitted = paired.uncommitted;
+    run.disordered = paired.disordered;
     run.samples = paired.samples;
 
     // Quit through the product's own SIGTERM path, which saves the note, then read it back.
@@ -335,8 +378,11 @@ fn measure(
             run.added, run.injected
         ));
     }
-    if paired.unpaired != 0 {
-        problems.push(format!("{} keys without a frame", paired.unpaired));
+    if paired.unpaired != 0 || paired.disordered != 0 {
+        problems.push(format!(
+            "{} keys without a frame, {} out of order",
+            paired.unpaired, paired.disordered
+        ));
     }
     if run.dropped != (0, 0) {
         problems.push(format!("recorder dropped {:?}", run.dropped));
@@ -352,7 +398,23 @@ fn measure(
     }
 }
 
-fn evidence(options: &Options, apps: &[App], driver: &str, sw_vers: &str, runs: &[Run]) -> String {
+/// Keys go only to the product: a key for another application cannot be taken back.
+fn require_focus(pid: u32) -> Result<(), String> {
+    if ax::front()? == pid {
+        Ok(())
+    } else {
+        Err("the product is not frontmost; no key was sent".into())
+    }
+}
+
+fn evidence(
+    options: &Options,
+    apps: &[App],
+    driver: &str,
+    sw_vers: &str,
+    runs: &[Run],
+    stopped: Option<&str>,
+) -> String {
     let apps_json = apps
         .iter()
         .map(|app| {
@@ -369,7 +431,7 @@ fn evidence(options: &Options, apps: &[App], driver: &str, sw_vers: &str, runs: 
         .iter()
         .map(|run| {
             format!(
-                "{{\"app\":{},\"case\":{},\"repetition\":{},\"status\":{},\"reason\":{},\"injected\":{},\"recorded\":{},\"added\":{},\"clock_offset_ns\":{},\"dropped\":[{},{}],\"uncommitted\":{},\"stages\":{}}}",
+                "{{\"app\":{},\"case\":{},\"repetition\":{},\"status\":{},\"reason\":{},\"injected\":{},\"recorded\":{},\"added\":{},\"clock_offset_ns\":{},\"dropped\":[{},{}],\"disordered\":{},\"late_keys\":{},\"gap\":{},\"stages\":{}}}",
                 run.app,
                 quote(run.case.name),
                 run.repetition,
@@ -381,7 +443,9 @@ fn evidence(options: &Options, apps: &[App], driver: &str, sw_vers: &str, runs: 
                 run.clock_offset_ns.map_or("null".into(), |n| n.to_string()),
                 run.dropped.0,
                 run.dropped.1,
-                run.uncommitted,
+                run.disordered,
+                run.late,
+                model::stats_json(model::stats(run.gaps.clone())),
                 model::stages_json(&run.samples)
             )
         })
@@ -401,9 +465,10 @@ fn evidence(options: &Options, apps: &[App], driver: &str, sw_vers: &str, runs: 
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"schema_version\":1,\"kind\":\"diagnostic\",\"gate\":\"none; plan 10's edit benchmark is the input-latency gate\",\"system\":{},\"driver_sha256\":{},\"options\":{{\"repetitions\":{},\"keys\":{},\"interval_ms\":{},\"idle_keys\":{},\"idle_ms\":{}}},\"stages\":\"queue = event to main thread; wait = main thread to the start of drawing its frame; draw = drawing through present returned; commit = present to Core Animation commit; total = event to commit\",\"apps\":[{apps_json}],\"pooled\":[{pooled}],\"runs\":[{runs_json}]}}\n",
+        "{{\"schema_version\":2,\"kind\":\"diagnostic\",\"gate\":\"none; plan 10's edit benchmark is the input-latency gate\",\"system\":{},\"driver_sha256\":{},\"stopped\":{},\"options\":{{\"repetitions\":{},\"keys\":{},\"interval_ms\":{},\"idle_keys\":{},\"idle_ms\":{}}},\"stages\":\"queue = event to main thread; wait = main thread to the start of drawing the first frame drawn after it; draw = drawing through present returned; total = event to present returned. Commit, compositor and display are not measured.\",\"apps\":[{apps_json}],\"pooled\":[{pooled}],\"runs\":[{runs_json}]}}\n",
         quote(sw_vers.trim()),
         quote(driver),
+        stopped.map_or("null".into(), quote),
         options.repetitions,
         options.keys,
         options.interval_ms,
@@ -437,7 +502,7 @@ fn summary(apps: &[App], runs: &[Run]) {
                 None => format!("{name} -"),
             };
             println!(
-                "{} {} ({} valid runs, {} keys): {}; {}; {}; {}",
+                "{} {} ({} valid runs, {} keys): {}; {}; {}",
                 &app.executable[..8],
                 case.name,
                 valid_runs(runs, index, case.name),
@@ -445,7 +510,6 @@ fn summary(apps: &[App], runs: &[Run]) {
                 line("total", samples.iter().map(|s| s.total).collect()),
                 line("wait", samples.iter().map(|s| s.wait).collect()),
                 line("draw", samples.iter().map(|s| s.draw).collect()),
-                line("commit", samples.iter().filter_map(|s| s.commit).collect()),
             );
         }
     }

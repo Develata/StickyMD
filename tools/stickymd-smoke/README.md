@@ -12,10 +12,12 @@ gate stays the edit benchmark). It launches copied bundles with the product's op
 (`STICKYMD_DIAGNOSTIC_INPUT_LATENCY`), types `x` through CGEvent at the end of a 100 KiB and a
 1 MiB Source note (a sustained burst, and single keys after idle gaps), sends SIGUSR1 so the app
 writes its timestamps, quits through SIGTERM and checks injected = recorded = characters added.
-Each key is paired with the first frame presented after the app saw it; stages are event to
-main thread, main thread to the start of drawing, drawing through `present`, and `present` to the
-Core Animation commit. Several `--app` values run interleaved for A/B; run the same app twice
-for an A/A bound first. It needs Accessibility, PostEvent and an unwind build:
+Each key is paired with the first frame whose drawing started after the app saw it; stages are
+event to main thread, main thread to the start of drawing, and drawing through `present`. What
+follows `present` (commit, compositor, display) is not measured. Raw recordings are kept under
+`<out>/raw`; a cancel or a failed cleanup stops the campaign. Several `--app` values run
+interleaved for A/B; run the same app twice for an A/A bound first, on an otherwise idle host.
+It needs Accessibility, PostEvent and an unwind build:
 
 ```bash
 CARGO_PROFILE_RELEASE_PANIC=unwind cargo build --release --locked -p stickymd-smoke --target-dir target/unwind

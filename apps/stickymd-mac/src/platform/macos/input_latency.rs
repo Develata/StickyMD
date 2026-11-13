@@ -4,19 +4,23 @@
 //!
 //! - every key-down: the event's own timestamp, and when the main thread saw it (a local event
 //!   monitor runs before AppKit dispatches the event);
-//! - every presented frame: how long drawing it took, when `present` returned, and when Core
-//!   Animation finished committing that transaction (its completion block).
+//! - every presented frame: when `present` returned, and how long drawing it took.
 //!
-//! The buffers are allocated once; a full buffer counts what it drops and never grows, so the key
-//! path does no I/O and no allocation. SIGUSR1 writes the file on the main thread, atomically;
-//! nothing is written at exit. Times are nanoseconds of `CLOCK_UPTIME_RAW`, the
-//! `mach_absolute_time` clock event timestamps use too.
+//! What happens after `present` (Core Animation's commit, the compositor, the display) is not
+//! measured: a transaction completion block waits for the caret's endless blink animation, so it
+//! marks the next frame, not this one.
+//!
+//! The buffers are allocated once; a full buffer counts what it drops and never grows, so neither
+//! the key path nor the frame path does I/O or allocates. SIGUSR1 writes the file on the main
+//! thread, atomically; nothing is written at exit. Times are nanoseconds of `CLOCK_UPTIME_RAW`,
+//! the `mach_absolute_time` clock event timestamps use too.
 //!
 //! plan_ref: docs/plan/10_performance_reliability.md#macos-gates
 
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::PathBuf;
 
 use block2::RcBlock;
@@ -35,9 +39,8 @@ struct Recorder {
     path: PathBuf,
     /// `(event, seen)` per key-down.
     keys: Vec<(u64, u64)>,
-    /// `(presented, committed, drawn)` per frame: `committed` is 0 until the commit is seen,
-    /// `drawn` is the drawing time in nanoseconds.
-    frames: Vec<(u64, u64, u64)>,
+    /// `(presented, drawn)` per frame; `drawn` is the drawing time in nanoseconds.
+    frames: Vec<(u64, u64)>,
     dropped_keys: u64,
     dropped_frames: u64,
     /// Kept alive for the process: removing it would stop the recording.
@@ -45,8 +48,7 @@ struct Recorder {
 }
 
 thread_local! {
-    /// Main thread only: the monitor, `after_present`, the completion blocks and the signal
-    /// handler all run there.
+    /// Main thread only: the monitor, `after_present` and the signal handler all run there.
     static RECORDER: RefCell<Option<Recorder>> = const { RefCell::new(None) };
 }
 
@@ -117,42 +119,17 @@ pub fn install_from_environment() {
     }
 }
 
-/// A frame reached the window: its present time now, its commit time when Core Animation has
-/// committed the transaction it belongs to.
+/// A frame reached the window, `draw` after its drawing started.
 pub fn frame_presented(draw: std::time::Duration) {
     RECORDER.with(|cell| {
-        let mut borrowed = cell.borrow_mut();
-        let Some(recorder) = borrowed.as_mut() else {
-            return;
-        };
-        if recorder.frames.len() >= CAPACITY {
-            recorder.dropped_frames += 1;
-            return;
+        if let Some(recorder) = cell.borrow_mut().as_mut() {
+            if recorder.frames.len() < CAPACITY {
+                let drawn = u64::try_from(draw.as_nanos()).unwrap_or(u64::MAX);
+                recorder.frames.push((now_ns(), drawn));
+            } else {
+                recorder.dropped_frames += 1;
+            }
         }
-        recorder.frames.push((
-            now_ns(),
-            0,
-            u64::try_from(draw.as_nanos()).unwrap_or(u64::MAX),
-        ));
-        drop(borrowed);
-        let block = RcBlock::new(move || {
-            let committed = now_ns();
-            RECORDER.with(|cell| {
-                if let Some(recorder) = cell.borrow_mut().as_mut() {
-                    // One transaction can carry several frames, and only its last completion
-                    // block runs: every frame still waiting is committed now.
-                    for frame in recorder.frames.iter_mut().rev() {
-                        if frame.1 != 0 {
-                            break;
-                        }
-                        frame.1 = committed;
-                    }
-                }
-            });
-        });
-        // SAFETY: a class method on the current (implicit) transaction, on the main thread; the
-        // transaction copies the block.
-        let _: () = unsafe { msg_send![class!(CATransaction), setCompletionBlock: &*block] };
     });
 }
 
@@ -162,8 +139,8 @@ fn write_file() {
         let Some(recorder) = borrowed.as_ref() else {
             return;
         };
-        let mut text = String::with_capacity(64 * (recorder.keys.len() + recorder.frames.len()));
-        let _ = writeln!(text, "stickymd-input-latency 2");
+        let mut text = String::with_capacity(48 * (recorder.keys.len() + recorder.frames.len()));
+        let _ = writeln!(text, "stickymd-input-latency 3");
         let _ = writeln!(
             text,
             "dropped {} {}",
@@ -172,16 +149,37 @@ fn write_file() {
         for (event, seen) in &recorder.keys {
             let _ = writeln!(text, "key {event} {seen}");
         }
-        for (presented, committed, drawn) in &recorder.frames {
-            let _ = writeln!(text, "frame {presented} {committed} {drawn}");
+        for (presented, drawn) in &recorder.frames {
+            let _ = writeln!(text, "frame {presented} {drawn}");
         }
-        let temporary = recorder.path.with_extension("partial");
-        let result = std::fs::write(&temporary, text.as_bytes())
-            .and_then(|()| std::fs::rename(&temporary, &recorder.path));
-        if let Err(error) = result {
+        if let Err(error) = publish(&recorder.path, text.as_bytes()) {
             eprintln!("input latency diagnostic not written: {error}");
         }
     });
+}
+
+/// Writes a new, uniquely named file beside `path`, syncs it and renames it over `path`. The
+/// temporary file is created exclusively, so no existing file (or link) is ever written into, and
+/// only a file this call created is removed on failure.
+fn publish(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("output path has no file name"))?;
+    let mut temporary_name = name.to_os_string();
+    temporary_name.push(format!(".{}.{}.tmp", std::process::id(), now_ns()));
+    let temporary = path.with_file_name(temporary_name);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let written = file
+        .write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
 }
 
 unsafe extern "C" {
@@ -197,6 +195,10 @@ unsafe extern "C" {
         source: *mut c_void,
         handler: extern "C" fn(*mut c_void),
     );
+    fn dispatch_source_set_registration_handler_f(
+        source: *mut c_void,
+        handler: extern "C" fn(*mut c_void),
+    );
     fn dispatch_resume(object: *mut c_void);
 }
 
@@ -204,12 +206,22 @@ extern "C" fn on_flush(_context: *mut c_void) {
     write_file();
 }
 
-/// SIGUSR1, delivered through a dispatch source on the main queue, writes the file. The default
-/// action (terminate) is ignored only once the source exists.
+/// The source is registered: from now on SIGUSR1 reaches `on_flush`, so its default action
+/// (terminate) can be ignored. A signal sent before this still ends the process, visibly.
+extern "C" fn on_registered(_context: *mut c_void) {
+    // SAFETY: sets this process's disposition for SIGUSR1; no other preconditions.
+    if unsafe { libc::signal(libc::SIGUSR1, libc::SIG_IGN) } == libc::SIG_ERR {
+        eprintln!(
+            "input latency diagnostic: SIGUSR1 stays fatal: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+}
+
+/// SIGUSR1, delivered through a dispatch source on the main queue, writes the file.
 fn install_flush_signal() -> Result<(), String> {
-    // SAFETY: creates a signal source on the main queue with a plain C handler; the source lives
-    // for the process. Ignoring the signal's default action only after it exists means a signal
-    // sent before still ends the process as before.
+    // SAFETY: creates a signal source on the main queue with plain C handlers; the source lives
+    // for the process.
     unsafe {
         let source = dispatch_source_create(
             &raw const _dispatch_source_type_signal,
@@ -221,10 +233,8 @@ fn install_flush_signal() -> Result<(), String> {
             return Err("dispatch_source_create failed for SIGUSR1".into());
         }
         dispatch_source_set_event_handler_f(source, on_flush);
+        dispatch_source_set_registration_handler_f(source, on_registered);
         dispatch_resume(source);
-        if libc::signal(libc::SIGUSR1, libc::SIG_IGN) == libc::SIG_ERR {
-            return Err(std::io::Error::last_os_error().to_string());
-        }
     }
     Ok(())
 }

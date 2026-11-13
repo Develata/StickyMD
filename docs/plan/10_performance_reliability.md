@@ -116,8 +116,9 @@ macOS 的呈现成本不由 Windows 基线代表。探针基线（scale 2）：�
 - **诊断。** `stickymd-smoke mac-latency` 在 VM 中注入按键，宿主的 opt-in 记录器分阶段记时：
   - 记录器由 `STICKYMD_DIAGNOSTIC_INPUT_LATENCY` 开启，默认关闭；
   - 只记时间戳，缓冲区预先分配，SIGUSR1 时才原子写出；
-  - 阶段为：事件 → 主线程、主线程 → 开始绘制、绘制 → present 返回、present → Core Animation 提交。
+  - 阶段为：事件 → 主线程、主线程 → 开始绘制、绘制 → present 返回。每个键配给它被主线程看到之后才开始绘制的第一帧。
   - 绘制耗时由共享层经 `PresentFacts.draw` 交给宿主。
+  - present 之后的提交、合成与显示不测：事务的 completion block 要等光标的无限闪烁动画，标出的是下一帧。
 - **用途。** 它用于分配器、呈现路径等取舍的对照，不作门。对照须先做 A/A 得出重复性界限，各变体交替运行；一次运行只有在注入键数、记录键数与笔记新增字符数三者相等，且每个键都配到帧时才有效。
 
 ---
