@@ -262,7 +262,18 @@ pub(in crate::mac_gui) fn dock_titles(pid: u32) -> Result<String, String> {
 }
 pub(in crate::mac_gui) fn menu(pid: u32, label: &str) -> Result<String, String> {
     let root = app(pid)?;
-    let extras = attribute(&root, "AXExtrasMenuBar")?;
+    // The status item reaches the app's AX tree some time after launch; a window that appears
+    // first must not turn that wait into a failure. Absent only after five seconds is absent.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let extras = loop {
+        if let Some(extras) = optional_attribute(&root, "AXExtrasMenuBar")? {
+            break extras;
+        }
+        if Instant::now() >= deadline {
+            return Err("required AX attribute AXExtrasMenuBar absent after 5 s".into());
+        }
+        super::events::wait(100)?;
+    };
     let nodes = tree(extras)?;
     let item = unique(&nodes, |n| n.role == "AXMenuBarItem")?;
     let mut actions = std::ptr::null();
