@@ -378,6 +378,7 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-desktop/src/shell/guards.rs",
     "crates/stickymd-desktop/src/shell/handler.rs",
     "crates/stickymd-desktop/src/shell/headless_tests.rs",
+    "crates/stickymd-desktop/src/shell/hidden_frames_tests.rs",
     "crates/stickymd-desktop/src/shell/hot_path_tests.rs",
     "crates/stickymd-desktop/src/shell/input.rs",
     "crates/stickymd-desktop/src/shell/lifecycle.rs",

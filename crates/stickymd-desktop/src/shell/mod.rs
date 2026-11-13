@@ -46,6 +46,8 @@ mod handler;
 #[cfg(any(test, feature = "testing"))]
 mod headless_tests;
 #[cfg(test)]
+mod hidden_frames_tests;
+#[cfg(test)]
 mod hot_path_tests;
 mod input;
 mod lifecycle;
@@ -92,6 +94,9 @@ pub struct DesktopShell<H: Host> {
     projection: Option<SourceProjection>,
     source_frame: Option<Pixmap>,
     source_paint_key: Option<render::SourcePaintKey>,
+    /// The frame storage is released while the window is hidden (`Host::releases_hidden_frames`):
+    /// no frame is painted and nothing window-sized is allocated until the show rebuilds it.
+    frames_released: bool,
     pending_redraw: presentation::PendingRedraw,
     preview_frame: Option<PreviewFrame>,
     preview_frame_viewport: Option<PreviewViewport>,
@@ -184,6 +189,7 @@ impl<H: Host> DesktopShell<H> {
             projection: None,
             source_frame: None,
             source_paint_key: None,
+            frames_released: false,
             pending_redraw: presentation::PendingRedraw::None,
             preview_frame: None,
             preview_frame_viewport: None,

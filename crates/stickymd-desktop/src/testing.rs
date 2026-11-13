@@ -58,6 +58,7 @@ pub enum HostCall {
         width: u32,
         height: u32,
     },
+    HiddenFramesReleased(bool),
     Milestone(&'static str),
     /// Recorded by a test through `calls`: a step that does not go through the host.
     WindowRevealed,
@@ -110,6 +111,8 @@ pub struct FakeHost {
     pub caret_blinks: bool,
     pub caret_result: Result<(), HostFailure>,
     pub exit_after_present: bool,
+    /// Whether this host asks the shell to release frames while hidden (macOS does).
+    pub releases_hidden_frames: bool,
     pub keymap: Keymap,
     /// Goes when the host goes: a test's probe of the drop order.
     pub dropped_with_host: Option<Box<dyn Any>>,
@@ -146,6 +149,7 @@ impl Default for FakeHost {
             caret_blinks: false,
             caret_result: Ok(()),
             exit_after_present: false,
+            releases_hidden_frames: false,
             keymap: Keymap::ctrl_standard(),
             dropped_with_host: None,
         }
@@ -352,6 +356,14 @@ impl Host for FakeHost {
             height: facts.height,
         });
         self.exit_after_present
+    }
+
+    fn releases_hidden_frames(&self) -> bool {
+        self.releases_hidden_frames
+    }
+
+    fn hidden_frames_released(&mut self, released: bool) {
+        self.record(HostCall::HiddenFramesReleased(released));
     }
 }
 

@@ -3,6 +3,13 @@
 //! plan_ref: docs/plan/09_windows_shell.md#macos-adapter-mapping
 #![deny(unsafe_op_in_unsafe_fn)]
 
+/// Large blocks are their own mappings, so a frame freed on hide leaves the footprint at once
+/// (`10` macOS gates).
+#[cfg(target_os = "macos")]
+#[global_allocator]
+static ALLOCATOR: stickymd_posix::allocator::LargeMappedAllocator =
+    stickymd_posix::allocator::LargeMappedAllocator;
+
 #[cfg(target_os = "macos")]
 mod assets;
 #[cfg(target_os = "macos")]

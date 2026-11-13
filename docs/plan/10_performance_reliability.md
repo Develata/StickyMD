@@ -97,6 +97,17 @@ macOS 的呈现成本不由 Windows 基线代表。探针基线（scale 2）：�
 | Split 同上 | > 128 MiB |
 | Hidden to tray | > 48 MiB |
 
+**macOS 内存策略（USER 批准 2026-11-13，[内存报告](../report/2026-11-13-macos-memory-optimization.md)）：**
+
+- **大块分配：** 宿主进程装 `stickymd-posix` 的大块分配器。≥ 1 MiB、对齐不超过 4 KiB 的分配各自 `mmap`，释放时 `munmap`；其余交给系统 malloc。
+  - **原因：** macOS 的 malloc 把释放的整帧留作 `Malloc Large (empty)`，仍计入 `phys_footprint`，`malloc_zone_pressure_relief` 收不回。
+  - **复用：** 分配器保留最近释放的一块作备用，给下一个同页数的分配，免得 softbuffer 0.4.8 逐帧分配时每帧都触发缺页。宿主在帧存储释放期间关闭复用，备用块随即归还。
+- **隐藏时的帧存储：** 成功隐藏回执后（`04`），整窗画布与呈现表面缩为 1×1 并提交一次，替换图层内容，CoreAnimation 的副本随之释放。
+  - 隐藏期间不绘制、不提交预览任务，也不因尺寸或布局变化重建帧存储或面板缓冲；显示时按当前 generation 重新构建预览。
+  - 显示前按窗口当前尺寸重建，完整绘制并提交一帧，再让窗口可见。这一帧失败时显示照常进行（拒绝显示会让便签不可达），并立即请求重绘。
+  - 显示失败时窗口仍算隐藏，重建的存储再次释放。
+- **验证：** 每帧分配耗时用 `stickymd-posix` 的 `frame_allocation` 基准，与系统 malloc 对比；内存用 `mac-resources`。
+
 空闲 CPU（含光标闪烁）、启动、输入延迟、预览构建沿用下表的数值，在 macOS 上单独测量。结构性约束 10（测量环境）在 macOS 宿主上读作 Release build + macOS 27。
 
 ---
@@ -162,7 +173,7 @@ Phase 10 还必须测量 50/100/300% zoom 的 Source/Preview/Split、数学/图�
 - RaTeX 字体按需加载；Source-only 模式不主动初始化数学字体。
 - Preview 不可见时释放图片 decode cache；Hidden 状态释放公式 raster。
 - 不缓存完整历史 preview；新结果替换旧结果后立即释放旧树。
-- 不使用通用线程池；不引入自定义 allocator，除非基准证明明确收益。
+- 不使用通用线程池。可以引入自定义 allocator（USER 2026-11-13），与其他优化一样须有 before/patch/after 基准与回归测试；macOS 宿主的大块分配器见上文 macOS 门。
 - 不在每次按键复制整个文档；preview worker snapshot 时产生一次 `Arc<str>`。
 - 空闲时不持续轮询。
 
@@ -221,7 +232,7 @@ p95 与不裁剪规则均不改变，`250 ms` 仅保留为非发布门的 rapid-
 
 ## Performance Critical Paths
 
-见各能力章节；优化顺序固定（先查持续 redraw → 重复分配 → 无界 cache → …… → 最后才考虑 allocator），禁止凭感觉优化；
+见各能力章节；排查顺序固定（先查持续 redraw → 重复分配 → 无界 cache → ……），分配器是受基准驱动的替换点（USER 2026-11-13 起不再限定为最后手段），禁止凭感觉优化；
 每项优化必须有 before benchmark / patch / after benchmark / regression test。
 
 <a id="preview-resource-assessment"></a>

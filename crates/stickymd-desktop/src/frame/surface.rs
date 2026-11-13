@@ -73,6 +73,15 @@ impl SoftwareSurface {
         Ok(())
     }
 
+    /// Gives up the window-sized storage while the window is hidden: the canvas and the
+    /// presenter shrink to one pixel, and presenting that pixel replaces the layer's image, so
+    /// the presenter's buffer and the compositor's copy of it go too. `resize` to the window's
+    /// size brings it back; the caller repaints before showing the window.
+    pub fn release_frames(&mut self) -> Result<(), SurfaceError> {
+        self.resize(1, 1)?;
+        self.present()
+    }
+
     pub fn pixmap_mut(&mut self) -> &mut Pixmap {
         &mut self.pixmap
     }

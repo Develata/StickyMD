@@ -178,9 +178,11 @@ impl<H: Host> DesktopShell<H> {
         });
         if let (Some(source), Some(projection)) = (geometry.source, &mut self.projection) {
             projection.set_viewport(source.width.max(1), source.height.max(1), scale);
-            if self.source_frame.as_ref().is_none_or(|frame| {
-                frame.width() != source.width || frame.height() != source.height
-            }) {
+            if !self.frames_released
+                && self.source_frame.as_ref().is_none_or(|frame| {
+                    frame.width() != source.width || frame.height() != source.height
+                })
+            {
                 self.source_frame = Pixmap::new(source.width.max(1), source.height.max(1));
                 self.source_paint_key = None;
             }
@@ -188,6 +190,12 @@ impl<H: Host> DesktopShell<H> {
     }
 
     pub(super) fn submit_preview_action(&mut self, action: PreviewAction) {
+        // Released frames mean a hidden window: a job now would lay out and paint a window-sized
+        // pane for nothing. The show asks again for the current generation
+        // (`show_preview_action`), and the schedule keeps no in-flight state to unblock.
+        if self.frames_released {
+            return;
+        }
         match action {
             PreviewAction::Build(generation) => {
                 let snapshot = self.app.coordinator().snapshot();

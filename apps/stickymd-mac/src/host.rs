@@ -232,4 +232,15 @@ impl Host for MacHost {
         self.pointer_band.start(probe, self.sink.clone());
         true
     }
+
+    /// A hidden window keeps no frame storage: Retina frames are megabytes each (`10` macOS gates).
+    fn releases_hidden_frames(&self) -> bool {
+        true
+    }
+
+    /// While the frames are released the allocator keeps no spare block, so what the shell, the
+    /// presenter and the compositor free leaves the footprint at once.
+    fn hidden_frames_released(&mut self, released: bool) {
+        stickymd_posix::allocator::set_block_reuse(!released);
+    }
 }

@@ -166,6 +166,16 @@ pub trait Host:
     fn after_present(&mut self, _facts: &PresentFacts<'_>) -> bool {
         false
     }
+
+    /// Whether the shell gives up its frame storage while the window is hidden and rebuilds it
+    /// before the window shows again (`09` macOS mapping). A host that keeps it, as Windows does,
+    /// leaves this `false`.
+    fn releases_hidden_frames(&self) -> bool {
+        false
+    }
+
+    /// The shell has just released (`true`) or is about to rebuild (`false`) its frame storage.
+    fn hidden_frames_released(&mut self, _released: bool) {}
 }
 
 #[cfg(test)]
