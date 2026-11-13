@@ -41,6 +41,7 @@ pub(super) const SCENARIOS: [Scenario; 4] = [
 /// The menu-bar item that hides the window.
 pub(super) const HIDE_ITEM: &str = "隐藏";
 /// How long the window may stay on screen after the menu-bar command.
+#[cfg(target_os = "macos")]
 pub(super) const HIDE_SECONDS: u64 = 5;
 
 pub(super) fn fixture() -> String {
