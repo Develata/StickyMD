@@ -49,9 +49,10 @@ canonical path and never follows a replacement root symlink.
 `mac-resources.json` is checkpointed atomically after each run and includes
 environment/display dimensions, executable and fixture SHA-256, raw counters,
 observed early-exit time/status, and median/max for memory, CPU and wake-ups.
-Schema version 3 (version 2 plus Hidden's per-run `hidden_seconds`, each scenario's
-`hidden_through_menu_bar`, and the top-level status `SCENARIOS_PASS`, formerly
-`VISIBLE_SCENARIOS_PASS`) reports `interrupt_wakeups_per_second` (total interrupt wake-ups)
+Schema version 4 (version 3 plus Hidden's per-run `status_item_wait_seconds`: how long the
+status item took to appear in the AX tree, up to five seconds, before the hide; version 3 added
+Hidden's per-run `hidden_seconds`, each scenario's `hidden_through_menu_bar`, and the top-level
+status `SCENARIOS_PASS`, formerly `VISIBLE_SCENARIOS_PASS`) reports `interrupt_wakeups_per_second` (total interrupt wake-ups)
 and `idle_wakeups_per_second` (package-idle wake-ups, Activity Monitor's "Idle Wake Ups")
 separately in metrics and summaries. Package-idle wake-ups are a subset of interrupt
 wake-ups in XNU; they are never added. The old summed `wakeups_per_second` is removed.
@@ -1029,8 +1030,8 @@ PASS. The acceptance matrix and qualification ledgers are never updated.
 | W02 | Drag input; CG window bounds/layer/on-screen; persisted `window.dock_edge` | Main display only; 2 DIP ±0.75, top layer >24; no pixel-level strip rendering assertion |
 | W03 | Finder PID from AX remains unchanged; short dwell cancellation; window movement onset and settled bounds | Pre-100ms observation; onset bracket within 90–170ms, sampled every 20ms; gaps >60ms or boundary overlap are NOT_TESTED; completion within earliest bracket onset +140ms +70ms |
 | W04 | Top-band point, expanded bounds after 850ms; collapse after leaving | Leave onset bracket within 490–570ms; same resolution/completion limits as W03; no Spaces/mixed-DPI evidence |
-| W07 | AX hide, `open` copied bundle; same owned PID alive, visible window and AX frontmost PID | Menu effects polled up to 2000ms, elapsed time recorded; does not prove all launch-service/translocation paths |
-| W08 | Exactly three AX menu items; show back at the same bounds and opacity, topmost layer/config, quit process and saved note | Menu effects polled up to 2000ms, elapsed time recorded; layer is a system fact, not a visual occlusion test |
+| W07 | AX hide, `open` copied bundle; same owned PID alive, visible window and AX frontmost PID | Status item awaited in the AX tree up to 5 s, wait recorded; menu effects polled up to 2000ms, elapsed time recorded; does not prove all launch-service/translocation paths |
+| W08 | Exactly three AX menu items; show back at the same bounds and opacity, topmost layer/config, quit process and saved note | Status item awaited in the AX tree up to 5 s, wait recorded; menu effects polled up to 2000ms, elapsed time recorded; layer is a system fact, not a visual occlusion test |
 | W09 | Toolbar numeric field at layout-derived DIP offsets; CG alpha 40/70/100 and config | Alpha tolerance ±0.015; no full composited-pixel comparison |
 | W11 | Cmd+Q, successful child exit and unchanged clean note | Save-failure cancellation NOT_TESTED pending fault injection; row incomplete |
 | K02 | Real Cmd keys, quiet note bytes, `pbpaste`, persisted view/zoom | ABC/US assumption; not IME evidence; save timing is not a durability/power-loss test |

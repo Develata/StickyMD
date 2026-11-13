@@ -33,15 +33,18 @@ pub(super) struct Recording {
 }
 
 /// Reads the product's file (`stickymd-input-latency 4`, or 3 from builds before plan B).
-/// Anything else is an error, not a guess.
+/// Anything else is an error, not a guess: each version has exactly one `dropped` line, version 4
+/// exactly one `presenter` line and version 3 none.
 pub(super) fn parse(text: &str) -> Result<Recording, String> {
     let mut lines = text.lines();
-    // Version 3 is the same without the presenter's counters (builds before plan B).
-    let version = lines.next();
-    if version != Some("stickymd-input-latency 4") && version != Some("stickymd-input-latency 3") {
-        return Err("not a version 3 or 4 input-latency recording".into());
-    }
+    let with_presenter = match lines.next() {
+        Some("stickymd-input-latency 4") => true,
+        // The same without the presenter's counters (builds before plan B).
+        Some("stickymd-input-latency 3") => false,
+        _ => return Err("not a version 3 or 4 input-latency recording".into()),
+    };
     let mut recording = Recording::default();
+    let mut dropped_lines = 0;
     for line in lines {
         let fields = line.split(' ').collect::<Vec<_>>();
         let number = |index: usize| -> Result<u64, String> {
@@ -51,10 +54,11 @@ pub(super) fn parse(text: &str) -> Result<Recording, String> {
                 .ok_or_else(|| format!("bad recording line: {line}"))
         };
         match (fields.first().copied(), fields.len()) {
-            (Some("presenter"), 5) => {
+            (Some("presenter"), 5) if with_presenter && recording.presenter.is_none() => {
                 recording.presenter = Some([number(1)?, number(2)?, number(3)?, number(4)?]);
             }
-            (Some("dropped"), 3) => {
+            (Some("dropped"), 3) if dropped_lines == 0 => {
+                dropped_lines += 1;
                 recording.dropped_keys = number(1)?;
                 recording.dropped_frames = number(2)?;
             }
@@ -68,6 +72,9 @@ pub(super) fn parse(text: &str) -> Result<Recording, String> {
             }),
             _ => return Err(format!("bad recording line: {line}")),
         }
+    }
+    if dropped_lines == 0 || with_presenter != recording.presenter.is_some() {
+        return Err("the recording lacks its dropped or presenter line".into());
     }
     Ok(recording)
 }
@@ -229,11 +236,22 @@ mod tests {
         assert_eq!((recording.dropped_keys, recording.dropped_frames), (0, 2));
         assert!(parse("stickymd-input-latency 2\n").is_err());
         assert_eq!(
-            parse("stickymd-input-latency 3\nkey 1 2\n")
+            parse("stickymd-input-latency 3\ndropped 0 0\nkey 1 2\n")
                 .unwrap()
                 .presenter,
             None
         );
+        // Each count exactly once, and the presenter's only in version 4.
+        for text in [
+            "stickymd-input-latency 4\ndropped 0 0\n",
+            "stickymd-input-latency 4\npresenter 1 0 1 0\n",
+            "stickymd-input-latency 4\ndropped 0 0\npresenter 1 0 1 0\npresenter 1 0 1 9\n",
+            "stickymd-input-latency 4\ndropped 0 0\ndropped 0 1\npresenter 1 0 1 0\n",
+            "stickymd-input-latency 3\ndropped 0 0\npresenter 1 0 1 0\n",
+            "stickymd-input-latency 3\nkey 1 2\n",
+        ] {
+            assert!(parse(text).is_err(), "{text}");
+        }
         assert_eq!(recording.presenter, Some([5, 1, 3, 0]));
         assert!(parse("stickymd-input-latency 4\nframe 1 2 3\n").is_err());
         assert!(parse("stickymd-input-latency 4\nnote x y\n").is_err());

@@ -260,11 +260,14 @@ pub(in crate::mac_gui) fn dock_titles(pid: u32) -> Result<String, String> {
         .collect::<Vec<_>>()
         .join("\n"))
 }
-pub(in crate::mac_gui) fn menu(pid: u32, label: &str) -> Result<String, String> {
+/// Chooses `label` in the status item's menu. Returns how long the status item took to appear in
+/// the AX tree, so a slow status item stays visible in the evidence, and what was pressed.
+pub(in crate::mac_gui) fn menu(pid: u32, label: &str) -> Result<(Duration, String), String> {
     let root = app(pid)?;
     // The status item reaches the app's AX tree some time after launch; a window that appears
     // first must not turn that wait into a failure. Absent only after five seconds is absent.
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let waiting = Instant::now();
+    let deadline = waiting + Duration::from_secs(5);
     let extras = loop {
         if let Some(extras) = optional_attribute(&root, "AXExtrasMenuBar")? {
             break extras;
@@ -274,6 +277,7 @@ pub(in crate::mac_gui) fn menu(pid: u32, label: &str) -> Result<String, String> 
         }
         super::events::wait(100)?;
     };
+    let waited = waiting.elapsed();
     let nodes = tree(extras)?;
     let item = unique(&nodes, |n| n.role == "AXMenuBarItem")?;
     let mut actions = std::ptr::null();
@@ -313,9 +317,12 @@ pub(in crate::mac_gui) fn menu(pid: u32, label: &str) -> Result<String, String> 
     }
     let item = unique(&nodes, |n| n.role == "AXMenuItem" && n.title == label)?;
     let press = menu_action(&item.element, "AXPress")?;
-    Ok(format!(
-        "status actions={actions:?}; open {open}; press {label} {press}\n{}",
-        dump(&nodes)
+    Ok((
+        waited,
+        format!(
+            "status actions={actions:?}; open {open}; press {label} {press}\n{}",
+            dump(&nodes)
+        ),
     ))
 }
 fn panel_tree(pid: u32) -> Result<Vec<Node>, String> {

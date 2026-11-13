@@ -90,6 +90,8 @@ pub(super) struct Run {
     pub status: &'static str,
     pub reason: String,
     pub ready_seconds: Option<f64>,
+    /// How long the status item took to appear in the AX tree before the hide (Hidden only).
+    pub status_item_wait_seconds: Option<f64>,
     /// When the window was first seen off screen after the menu-bar command (Hidden only).
     pub hidden_seconds: Option<f64>,
     pub exit_seconds: Option<f64>,
@@ -107,6 +109,7 @@ impl Run {
             status: "ERROR",
             reason: String::new(),
             ready_seconds: None,
+            status_item_wait_seconds: None,
             hidden_seconds: None,
             exit_seconds: None,
             exit_status: None,

@@ -41,12 +41,13 @@ fn run_json(run: &Run) -> String {
         },
     );
     format!(
-        "{{\"repetition\":{},\"pid\":{},\"status\":{},\"reason\":{},\"ready_seconds\":{},\"hidden_seconds\":{},\"exit_observed_seconds\":{},\"exit_status\":{},\"samples\":[{}],\"metrics\":{},\"cleanup_error\":{}}}",
+        "{{\"repetition\":{},\"pid\":{},\"status\":{},\"reason\":{},\"ready_seconds\":{},\"status_item_wait_seconds\":{},\"hidden_seconds\":{},\"exit_observed_seconds\":{},\"exit_status\":{},\"samples\":[{}],\"metrics\":{},\"cleanup_error\":{}}}",
         run.repetition,
         optional(run.pid),
         quote(run.status),
         quote(&run.reason),
         optional(run.ready_seconds),
+        optional(run.status_item_wait_seconds),
         optional(run.hidden_seconds),
         optional(run.exit_seconds),
         optional(run.exit_status.as_deref().map(quote)),
@@ -89,7 +90,7 @@ impl Evidence {
                 runs.iter().map(run_json).collect::<Vec<_>>().join(",")));
         }
         format!(
-            "{{\"schema_version\":3,\"status\":\"{}\",\"acceptance_status\":\"INCOMPLETE\",\"environment\":{},\"app_executable_sha256\":{},\"fixture_sha256\":{},\"fixture_bytes\":20480,\"formula_count\":20,\"repetitions\":{},\"warmup_seconds\":{},\"idle_seconds\":{},\"mach_timebase\":{{\"numer\":{},\"denom\":{}}},\"cpu_gate\":null,\"wakeups_gate\":null,\"cpu_normalization\":\"one logical CPU = 100 percent\",\"scenarios\":[{}]}}\n",
+            "{{\"schema_version\":4,\"status\":\"{}\",\"acceptance_status\":\"INCOMPLETE\",\"environment\":{},\"app_executable_sha256\":{},\"fixture_sha256\":{},\"fixture_bytes\":20480,\"formula_count\":20,\"repetitions\":{},\"warmup_seconds\":{},\"idle_seconds\":{},\"mach_timebase\":{{\"numer\":{},\"denom\":{}}},\"cpu_gate\":null,\"wakeups_gate\":null,\"cpu_normalization\":\"one logical CPU = 100 percent\",\"scenarios\":[{}]}}\n",
             if self.passed() {
                 "SCENARIOS_PASS"
             } else {

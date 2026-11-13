@@ -246,7 +246,13 @@ impl Backend for Live<'_> {
                 events::wait(60)?;
                 Value::Time(last_key)
             }
-            Op::Menu(label) => Value::Text(ax::menu(self.pid, &label)?),
+            Op::Menu(label) => {
+                let (waited, detail) = ax::menu(self.pid, &label)?;
+                Value::Text(format!(
+                    "status item in AX after {} ms; {detail}",
+                    waited.as_millis()
+                ))
+            }
             Op::Config => Value::Text(self.read("note/config.toml")?),
             Op::Note => Value::Text(self.quiet_note()?),
             Op::NoteNow => Value::Text(self.read("note/note.md")?),

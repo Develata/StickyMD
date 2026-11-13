@@ -246,7 +246,7 @@ fn hide(session: &mut Session, run: &mut Run, pid: u32, started: Instant) -> Res
     if exited(session, run, started)? {
         return Ok(false);
     }
-    chosen?;
+    run.status_item_wait_seconds = Some(chosen?.as_secs_f64());
     let deadline = Instant::now() + Duration::from_secs(model::HIDE_SECONDS);
     while native::window_ready(pid)? {
         if Instant::now() >= deadline {

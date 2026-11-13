@@ -51,10 +51,14 @@ mod scenarios;
 mod tests;
 pub(crate) use options::{Options, parse};
 /// Chooses `label` in the product's menu-bar menu through Accessibility, as the GUI scenarios
-/// do. `mac-resources` uses it to reach the hidden state.
+/// do. `mac-resources` uses it to reach the hidden state. Returns how long the status item took
+/// to appear in the AX tree.
 #[cfg(target_os = "macos")]
-pub(crate) fn choose_status_menu_item(pid: u32, label: &str) -> Result<String, String> {
-    native::accessibility::menu(pid, label)
+pub(crate) fn choose_status_menu_item(
+    pid: u32,
+    label: &str,
+) -> Result<std::time::Duration, String> {
+    native::accessibility::menu(pid, label).map(|(waited, _)| waited)
 }
 /// Whether this binary may use Accessibility, by the same nonprompting preflight as `mac-gui`.
 #[cfg(target_os = "macos")]
