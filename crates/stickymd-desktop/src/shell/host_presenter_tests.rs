@@ -112,6 +112,119 @@ fn a_failed_frame_is_reported_and_not_retried() {
     assert_eq!(app.present_retry_at, None);
 }
 
+/// Defers one frame, then answers the next draw with `then` before the retry is due.
+fn deferred_then(then: PresentOutcome) -> (HeadlessApp, Instant) {
+    let mut app = presenting();
+    app.host.present_answers.push_back(PresentOutcome::Deferred);
+    app.host.present_answers.push_back(then);
+    app.pending_redraw = PendingRedraw::Full;
+    assert!(!app.draw_frame(None));
+    let retry = app.present_retry_at.expect("one retry");
+    // Another event draws before the retry is due.
+    app.pending_redraw = PendingRedraw::Full;
+    (app, retry)
+}
+
+/// What a retry that is still pending would do once due: ask for a redraw.
+fn retry_fires(app: &mut HeadlessApp, retry: Instant) -> bool {
+    app.pending_redraw = PendingRedraw::None;
+    app.advance_and_next_wake(retry + Duration::from_millis(1));
+    app.pending_redraw != PendingRedraw::None
+}
+
+#[test]
+fn a_failure_after_a_deferral_ends_the_wait() {
+    let (mut app, retry) = deferred_then(PresentOutcome::Failed("lost".into()));
+    assert!(!app.draw_frame(None));
+    assert_eq!(app.diagnostic.as_deref(), Some("lost"));
+    assert_eq!(app.present_retry_at, None, "a failed frame is not retried");
+    assert!(!retry_fires(&mut app, retry));
+}
+
+#[test]
+fn a_frame_presented_before_the_retry_is_due_ends_the_wait() {
+    let (mut app, retry) = deferred_then(PresentOutcome::Presented);
+    assert!(app.draw_frame(None));
+    assert_eq!(app.present_retry_at, None);
+    assert!(!retry_fires(&mut app, retry));
+}
+
+#[test]
+fn a_resize_while_deferred_presents_the_new_size_once() {
+    let mut app = presenting();
+    app.host.present_answers.push_back(PresentOutcome::Deferred);
+    app.pending_redraw = PendingRedraw::Full;
+    assert!(!app.draw_frame(None));
+    let wider = PhysicalSize::new(1000, 600);
+    app.headless_view = Some((wider, 1.0));
+    app.resize(wider);
+    assert!(app.draw_frame(None));
+    assert_eq!(
+        frames(&app),
+        [
+            FULL,
+            HostCall::PresentedFrame {
+                width: 1000,
+                height: 600
+            },
+            HostCall::Presented {
+                width: 1000,
+                height: 600
+            }
+        ]
+    );
+    assert_eq!(app.present_retry_at, None);
+}
+
+#[test]
+fn only_a_presented_frame_touches_the_caret_overlay() {
+    let caret_calls = |app: &HeadlessApp| {
+        app.host
+            .calls
+            .borrow()
+            .iter()
+            .filter(|call| matches!(call, HostCall::CaretReleased | HostCall::CaretToggled(_)))
+            .count()
+    };
+    let mut app = presenting();
+    app.host.present_answers.push_back(PresentOutcome::Deferred);
+    app.host
+        .present_answers
+        .push_back(PresentOutcome::Failed("lost".into()));
+    for _ in 0..2 {
+        app.pending_redraw = PendingRedraw::Full;
+        assert!(!app.draw_frame(None));
+    }
+    assert_eq!(caret_calls(&app), 0, "the old frame and its caret stay");
+    app.pending_redraw = PendingRedraw::Full;
+    assert!(app.draw_frame(None));
+    assert!(
+        caret_calls(&app) > 0,
+        "new pixels replace the overlay's caret"
+    );
+}
+
+#[test]
+fn a_show_whose_frame_fails_reports_it_and_waits_for_no_retry() {
+    let mut app = presenting();
+    let guards = app.window_guards();
+    app.dispatch_window_intent(WindowIntent::CloseRequested { now_ms: 1, guards });
+    assert!(app.frames_released);
+    app.host
+        .present_answers
+        .push_back(PresentOutcome::Failed("no surface".into()));
+    app.dispatch_window_intent(WindowIntent::ShowRequested {
+        reason: ShowReason::Tray,
+        now_ms: 2,
+    });
+    assert!(
+        !app.frames_released,
+        "the storage is back for the next draw"
+    );
+    assert_eq!(app.diagnostic.as_deref(), Some("no surface"));
+    assert_eq!(app.present_retry_at, None);
+}
+
 #[test]
 fn a_caret_only_redraw_goes_to_the_host_as_a_whole_frame() {
     let mut app = presenting();

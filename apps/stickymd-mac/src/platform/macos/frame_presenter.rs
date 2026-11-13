@@ -80,8 +80,9 @@ impl Drop for Surface {
 }
 
 impl Surface {
-    /// A BGRA surface of `width` × `height` with the device RGB colour space, or `None`.
-    fn new(width: u32, height: u32) -> Option<Self> {
+    /// A BGRA surface of `width` × `height` with the device RGB colour space, or why not. A
+    /// surface without that colour space is never used.
+    fn new(width: u32, height: u32) -> Result<Self, String> {
         let number = |value: u32| -> Retained<AnyObject> {
             // SAFETY: a class method returning an autoreleased NSNumber, retained here.
             unsafe { msg_send![class!(NSNumber), numberWithUnsignedInt: value] }
@@ -111,29 +112,34 @@ impl Surface {
                 forKeys: key_pointers.as_ptr(),
                 count: keys.len()
             ];
-            NonNull::new(IOSurfaceCreate((&*dictionary as *const AnyObject).cast()))?
+            NonNull::new(IOSurfaceCreate((&*dictionary as *const AnyObject).cast()))
+                .ok_or("IOSurfaceCreate failed")?
         };
+        // On error the new surface is released here; the caller keeps showing the old one.
         let surface = Self(surface);
-        surface.set_device_rgb();
+        surface.set_device_rgb()?;
         CREATED.fetch_add(1, Ordering::Relaxed);
-        Some(surface)
+        Ok(surface)
     }
 
-    fn set_device_rgb(&self) {
-        // SAFETY: Create/Copy results are released once; the surface copies the value it is set.
+    fn set_device_rgb(&self) -> Result<(), String> {
+        // SAFETY: Create/Copy results are released once each; the surface keeps its own copy of
+        // the value it is set.
         unsafe {
             let space = CGColorSpaceCreateDeviceRGB();
             if space.is_null() {
-                return;
+                return Err("CGColorSpaceCreateDeviceRGB failed".into());
             }
             let list = CGColorSpaceCopyPropertyList(space);
-            if !list.is_null() {
-                let key = NSString::from_str("IOSurfaceColorSpace");
-                IOSurfaceSetValue(self.0.as_ptr(), (&*key as *const NSString).cast(), list);
-                CFRelease(list);
-            }
             CGColorSpaceRelease(space);
+            if list.is_null() {
+                return Err("the device RGB colour space has no property list".into());
+            }
+            let key = NSString::from_str("IOSurfaceColorSpace");
+            IOSurfaceSetValue(self.0.as_ptr(), (&*key as *const NSString).cast(), list);
+            CFRelease(list);
         }
+        Ok(())
     }
 
     fn in_use(&self) -> bool {
@@ -218,15 +224,11 @@ pub struct FramePresenter {
 }
 
 impl FramePresenter {
-    fn layer(&mut self, window: &Window) -> Option<Retained<AnyObject>> {
+    /// The frame layer, made once as a sublayer of `root`.
+    fn layer(&mut self, root: &AnyObject) -> Retained<AnyObject> {
         if self.layer.is_none() {
-            let view = ns_view(window)?;
-            // SAFETY: AppKit and Core Animation calls on live objects, on the main thread.
+            // SAFETY: Core Animation calls on live objects, on the main thread.
             unsafe {
-                let root: *mut AnyObject = msg_send![view, layer];
-                if root.is_null() {
-                    return None;
-                }
                 let layer: Retained<AnyObject> = msg_send![class!(CALayer), new];
                 // The canvas's origin is its top-left corner, as softbuffer's layer has it.
                 let _: () = msg_send![&*layer, setAnchorPoint: NSPoint::new(0.0, 0.0)];
@@ -238,12 +240,15 @@ impl FramePresenter {
                 self.layer = Some(layer);
             }
         }
-        self.layer.clone()
+        self.layer.clone().expect("made above")
     }
 
     /// Shows `frame` as the window's contents, or defers it, or reports why it cannot.
     pub fn present(&mut self, window: &Window, frame: &Pixmap) -> PresentOutcome {
-        let outcome = self.try_present(window, frame);
+        let outcome = match root_layer(window) {
+            Some(root) => self.present_into(&root, frame),
+            None => PresentOutcome::Failed("the window has no layer for frames".into()),
+        };
         match &outcome {
             PresentOutcome::Presented => PRESENTED.fetch_add(1, Ordering::Relaxed),
             PresentOutcome::Deferred => DEFERRED.fetch_add(1, Ordering::Relaxed),
@@ -252,20 +257,20 @@ impl FramePresenter {
         outcome
     }
 
-    fn try_present(&mut self, window: &Window, frame: &Pixmap) -> PresentOutcome {
-        let Some(layer) = self.layer(window) else {
-            return PresentOutcome::Failed("the window has no layer for frames".into());
-        };
+    /// `present` into a sublayer of the window's root layer `root`.
+    fn present_into(&mut self, root: &AnyObject, frame: &Pixmap) -> PresentOutcome {
+        let layer = self.layer(root);
         let size = (frame.width(), frame.height());
         if size != self.size {
             // A new size: build and fill the new surface first; the old contents stay meanwhile.
-            let Some(fresh) = Surface::new(size.0, size.1) else {
-                return PresentOutcome::Failed("IOSurfaceCreate failed".into());
+            let fresh = match Surface::new(size.0, size.1) {
+                Ok(fresh) => fresh,
+                Err(error) => return PresentOutcome::Failed(error),
             };
             if let Err(error) = fresh.write(frame) {
                 return PresentOutcome::Failed(error);
             }
-            show(window, &layer, &fresh);
+            show(root, &layer, &fresh);
             self.pool = vec![fresh];
             self.front = Some(0);
             self.size = size;
@@ -275,10 +280,10 @@ impl FramePresenter {
         let index = match choose(&in_use, self.front, CAPACITY) {
             Choice::Write(index) => index,
             Choice::Create => {
-                let Some(surface) = Surface::new(size.0, size.1) else {
-                    return PresentOutcome::Failed("IOSurfaceCreate failed".into());
-                };
-                self.pool.push(surface);
+                match Surface::new(size.0, size.1) {
+                    Ok(surface) => self.pool.push(surface),
+                    Err(error) => return PresentOutcome::Failed(error),
+                }
                 self.pool.len() - 1
             }
             Choice::Defer => return PresentOutcome::Deferred,
@@ -286,7 +291,7 @@ impl FramePresenter {
         if let Err(error) = self.pool[index].write(frame) {
             return PresentOutcome::Failed(error);
         }
-        show(window, &layer, &self.pool[index]);
+        show(root, &layer, &self.pool[index]);
         self.front = Some(index);
         PresentOutcome::Presented
     }
@@ -309,24 +314,26 @@ impl FramePresenter {
     }
 }
 
-/// Makes `surface` the layer's contents, with the layer matching its window's root layer.
-fn show(window: &Window, layer: &AnyObject, surface: &Surface) {
-    let Some(view) = ns_view(window) else {
-        return;
-    };
+/// The window view's root layer, which the frame layer sits in.
+fn root_layer(window: &Window) -> Option<Retained<AnyObject>> {
+    let view = ns_view(window)?;
+    // SAFETY: the view belongs to the live winit window, on the main thread; `layer` is a
+    // getter whose result is retained here, and nil maps to `None`.
+    unsafe { msg_send![view, layer] }
+}
+
+/// Makes `surface` the layer's contents, with the layer matching the root layer.
+fn show(root: &AnyObject, layer: &AnyObject, surface: &Surface) {
     // SAFETY: live layers and surface on the main thread. `CALayer.contents` accepts an
     // IOSurfaceRef (CALayer.h), and keeps its own strong reference. The transaction stops the
     // implicit fade.
     unsafe {
-        let root: *mut AnyObject = msg_send![view, layer];
         let _: () = msg_send![class!(CATransaction), begin];
         let _: () = msg_send![class!(CATransaction), setDisableActions: Bool::YES];
-        if !root.is_null() {
-            let bounds: NSRect = msg_send![root, bounds];
-            let scale: f64 = msg_send![root, contentsScale];
-            let _: () = msg_send![layer, setFrame: bounds];
-            let _: () = msg_send![layer, setContentsScale: scale];
-        }
+        let bounds: NSRect = msg_send![root, bounds];
+        let scale: f64 = msg_send![root, contentsScale];
+        let _: () = msg_send![layer, setFrame: bounds];
+        let _: () = msg_send![layer, setContentsScale: scale];
         let contents = surface.0.as_ptr().cast::<AnyObject>();
         let _: () = msg_send![layer, setContents: contents];
         let _: () = msg_send![class!(CATransaction), commit];
@@ -385,7 +392,184 @@ mod tests {
     }
 
     #[test]
-    fn a_surface_that_cannot_be_made_is_none_not_a_crash() {
-        assert!(Surface::new(0, 0).is_none());
+    fn a_surface_that_cannot_be_made_is_an_error_not_a_crash() {
+        assert_eq!(
+            Surface::new(0, 0).err().as_deref(),
+            Some("IOSurfaceCreate failed")
+        );
+    }
+
+    #[link(name = "IOSurface", kind = "framework")]
+    unsafe extern "C" {
+        fn IOSurfaceIncrementUseCount(surface: *mut c_void);
+        fn IOSurfaceDecrementUseCount(surface: *mut c_void);
+        fn IOSurfaceCopyValue(surface: *mut c_void, key: *const c_void) -> *const c_void;
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGColorSpaceCreateWithPropertyList(list: *const c_void) -> *mut c_void;
+        fn CGColorSpaceCreateWithName(name: *const c_void) -> *mut c_void;
+        fn CGColorCreate(space: *mut c_void, components: *const f64) -> *mut c_void;
+        fn CGColorCreateCopyByMatchingToColorSpace(
+            space: *mut c_void,
+            intent: i32,
+            color: *mut c_void,
+            options: *const c_void,
+        ) -> *mut c_void;
+        fn CGColorGetComponents(color: *mut c_void) -> *const f64;
+        fn CGColorRelease(color: *mut c_void);
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFRetain(object: *const c_void) -> *const c_void;
+    }
+
+    fn contents(layer: &AnyObject) -> *mut c_void {
+        // SAFETY: a getter on a live layer; the pointer is only compared.
+        let contents: *mut AnyObject = unsafe { msg_send![layer, contents] };
+        contents.cast()
+    }
+
+    fn surface_of(presenter: &FramePresenter, index: usize) -> *mut c_void {
+        presenter.pool[index].0.as_ptr()
+    }
+
+    /// The whole presenter on a standalone root layer: no window, no compositor. A surface is
+    /// marked busy with the public use count, as the compositor marks the ones it reads.
+    #[test]
+    fn a_presenter_writes_only_free_surfaces_defers_when_none_is_free_and_lets_all_go() {
+        // SAFETY: Core Animation objects used on this thread only.
+        let root: Retained<AnyObject> = unsafe { msg_send![class!(CALayer), new] };
+        let mut presenter = FramePresenter::default();
+        let frame = Pixmap::new(4, 3).unwrap();
+
+        assert_eq!(
+            presenter.present_into(&root, &frame),
+            PresentOutcome::Presented
+        );
+        let layer = presenter.layer.clone().unwrap();
+        assert_eq!(contents(&layer), surface_of(&presenter, 0));
+        assert_eq!(
+            presenter.present_into(&root, &frame),
+            PresentOutcome::Presented
+        );
+        assert_eq!((presenter.pool.len(), presenter.front), (2, Some(1)));
+        assert_eq!(contents(&layer), surface_of(&presenter, 1));
+
+        // Surface 0 is read by the compositor: the frame goes into a third one.
+        let busy = surface_of(&presenter, 0);
+        // SAFETY: a live surface; the count is taken back below, while the surface lives.
+        unsafe { IOSurfaceIncrementUseCount(busy) };
+        assert_eq!(
+            presenter.present_into(&root, &frame),
+            PresentOutcome::Presented
+        );
+        assert_eq!((presenter.pool.len(), presenter.front), (3, Some(2)));
+
+        // Surfaces 0 and 1 busy, 2 shown, the pool full: deferred, the contents unchanged.
+        let also_busy = surface_of(&presenter, 1);
+        // SAFETY: as above.
+        unsafe { IOSurfaceIncrementUseCount(also_busy) };
+        assert_eq!(
+            presenter.present_into(&root, &frame),
+            PresentOutcome::Deferred
+        );
+        assert_eq!(presenter.pool.len(), CAPACITY);
+        assert_eq!(contents(&layer), surface_of(&presenter, 2));
+
+        // Free again: the frame goes into surface 0.
+        // SAFETY: the count taken above.
+        unsafe { IOSurfaceDecrementUseCount(busy) };
+        assert_eq!(
+            presenter.present_into(&root, &frame),
+            PresentOutcome::Presented
+        );
+        assert_eq!(presenter.front, Some(0));
+
+        // A new size replaces the pool with one surface; surface 1 is still busy, so the
+        // test keeps its own reference, as the compositor would.
+        // SAFETY: +1 on a live surface, released below.
+        unsafe { CFRetain(also_busy) };
+        let wider = Pixmap::new(6, 3).unwrap();
+        assert_eq!(
+            presenter.present_into(&root, &wider),
+            PresentOutcome::Presented
+        );
+        assert_eq!((presenter.pool.len(), presenter.size), (1, (6, 3)));
+        assert_eq!(contents(&layer), surface_of(&presenter, 0));
+
+        // Released: no surface kept, nothing shown; the next present starts again.
+        presenter.release();
+        assert!(presenter.pool.is_empty());
+        assert!(contents(&layer).is_null());
+        assert_eq!(
+            presenter.present_into(&root, &frame),
+            PresentOutcome::Presented
+        );
+        assert_eq!(presenter.pool.len(), 1);
+        // SAFETY: the test's count and reference taken above.
+        unsafe {
+            IOSurfaceDecrementUseCount(also_busy);
+            CFRelease(also_busy);
+        }
+    }
+
+    /// Colour: softbuffer gave its images the device RGB colour space; the surfaces carry the
+    /// colour space that device RGB serializes to. Colour matching must treat both alike, into
+    /// that space and into a wide-gamut display's.
+    #[test]
+    fn surface_colours_match_as_device_rgb_does() {
+        let surface = Surface::new(1, 1).unwrap();
+        let key = NSString::from_str("IOSurfaceColorSpace");
+        let p3_name = NSString::from_str("kCGColorSpaceDisplayP3");
+        // SAFETY: Create/Copy results are released once each, after their last use.
+        unsafe {
+            let list = IOSurfaceCopyValue(surface.0.as_ptr(), (&*key as *const NSString).cast());
+            assert!(!list.is_null(), "the surface carries a colour space");
+            let tagged = CGColorSpaceCreateWithPropertyList(list);
+            CFRelease(list);
+            assert!(!tagged.is_null());
+            let device = CGColorSpaceCreateDeviceRGB();
+            let p3 = CGColorSpaceCreateWithName((&*p3_name as *const NSString).cast());
+            assert!(!device.is_null() && !p3.is_null());
+            let samples = [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.2, 0.5, 0.9],
+                [0.93, 0.93, 0.93],
+                [0.1, 0.1, 0.12],
+            ];
+            for [r, g, b] in samples {
+                for target in [tagged, p3] {
+                    let matched = |space| {
+                        let color = CGColorCreate(space, [r, g, b, 1.0].as_ptr());
+                        let out = CGColorCreateCopyByMatchingToColorSpace(
+                            target,
+                            0,
+                            color,
+                            std::ptr::null(),
+                        );
+                        CGColorRelease(color);
+                        assert!(!out.is_null());
+                        let c = std::slice::from_raw_parts(CGColorGetComponents(out), 3).to_vec();
+                        CGColorRelease(out);
+                        c
+                    };
+                    let (from_device, from_tagged) = (matched(device), matched(tagged));
+                    for (a, b) in from_device.iter().zip(&from_tagged) {
+                        assert!(
+                            (a - b).abs() < 0.5 / 255.0,
+                            "{r} {g} {b}: device {from_device:?} tagged {from_tagged:?}"
+                        );
+                    }
+                }
+            }
+            CGColorSpaceRelease(p3);
+            CGColorSpaceRelease(device);
+            CGColorSpaceRelease(tagged);
+        }
     }
 }

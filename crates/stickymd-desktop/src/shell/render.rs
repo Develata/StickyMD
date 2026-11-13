@@ -210,6 +210,8 @@ impl<H: Host> DesktopShell<H> {
                 Err(error) => PresentOutcome::Failed(error.to_string()),
             }
         };
+        // Only a deferred frame waits for a retry; a presented or failed one ends any wait.
+        self.present_retry_at = None;
         let presented = if let PresentOutcome::Failed(error) = outcome {
             self.diagnostic = Some(error);
             false
@@ -219,7 +221,6 @@ impl<H: Host> DesktopShell<H> {
             self.present_retry_at = Some(std::time::Instant::now() + PRESENT_RETRY);
             false
         } else {
-            self.present_retry_at = None;
             let facts = PresentFacts {
                 width: surface_size.width,
                 height: surface_size.height,
