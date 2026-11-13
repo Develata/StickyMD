@@ -60,6 +60,9 @@ fn run() -> Result<(), String> {
     if let cli::CommandLine::MacGui(options) = &command {
         return mac_gui::execute(options);
     }
+    if let cli::CommandLine::MacLatency(options) = &command {
+        return mac_gui::latency::execute(options);
+    }
     if let cli::CommandLine::MacResources(options) = &command {
         return mac_resources::execute(options);
     }
@@ -79,6 +82,7 @@ fn run() -> Result<(), String> {
     )?;
     match command {
         cli::CommandLine::MacGui(options) => mac_gui::execute(&options),
+        cli::CommandLine::MacLatency(options) => mac_gui::latency::execute(&options),
         cli::CommandLine::MacResources(options) => mac_resources::execute(&options),
         cli::CommandLine::MacLedger(options) => mac_ledger::execute(&options, &root),
         cli::CommandLine::PhaseEntryPlan(arguments) => {

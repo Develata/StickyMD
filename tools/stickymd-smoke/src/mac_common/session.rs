@@ -80,6 +80,14 @@ impl Session {
         )
     }
 
+    /// SIGUSR1 to the owned child: the product's latency recorder writes its file. A child
+    /// already gone is refused rather than signalling a reused PID.
+    pub fn signal_flush(&mut self) -> Result<(), String> {
+        if let Some(status) = self.poll()? {
+            return Err(format!("refused SIGUSR1: owned child exited: {status}"));
+        }
+        crate::mac_common::native::user1(self.child.as_ref().ok_or("Session has no child")?.id())
+    }
     pub fn poll(&mut self) -> Result<Option<ExitStatus>, String> {
         self.child
             .as_mut()

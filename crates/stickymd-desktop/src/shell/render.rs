@@ -63,6 +63,7 @@ impl<H: Host> DesktopShell<H> {
         &mut self,
         event_loop: Option<&winit::event_loop::ActiveEventLoop>,
     ) -> bool {
+        let draw_started = std::time::Instant::now();
         let pending = std::mem::replace(&mut self.pending_redraw, PendingRedraw::None);
         let Some(geometry) = self.view_geometry() else {
             return false;
@@ -210,6 +211,7 @@ impl<H: Host> DesktopShell<H> {
                 height: surface_size.height,
                 view_complete: geometry.preview.is_none() || self.preview_frame.is_some(),
                 ledger: surface.ledger_mut(),
+                draw: draw_started.elapsed(),
             };
             if self.host.after_present(&facts) {
                 match event_loop {

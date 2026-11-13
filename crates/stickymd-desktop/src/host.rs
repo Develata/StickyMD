@@ -115,6 +115,8 @@ pub struct PresentFacts<'a> {
     /// Every pane of the view shows a real frame, not a placeholder.
     pub view_complete: bool,
     pub ledger: &'a FrameLedger,
+    /// From the start of drawing this frame to `present` returning.
+    pub draw: std::time::Duration,
 }
 
 /// Everything the shell uses of a host, as one bound: it adds no business of its own. The host is

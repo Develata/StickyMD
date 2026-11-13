@@ -11,7 +11,7 @@ use stickymd_app::ports::{
     TrayView,
 };
 use stickymd_desktop::host::{
-    CaretOverlay, DesktopEvent, EventSink, Host, HostSignal, StartupProbe, TrayHost,
+    CaretOverlay, DesktopEvent, EventSink, Host, HostSignal, PresentFacts, StartupProbe, TrayHost,
 };
 use stickymd_desktop::input::Keymap;
 use stickymd_render::image::PreviewImageSource;
@@ -179,6 +179,7 @@ impl Host for MacHost {
         if let Err(error) = crate::platform::macos::sigterm::install() {
             eprintln!("SIGTERM stays fatal; a logout may end StickyMD before it saves: {error}");
         }
+        crate::platform::macos::input_latency::install_from_environment();
     }
 
     fn keymap(&self) -> &Keymap {
@@ -231,6 +232,12 @@ impl Host for MacHost {
         }
         self.pointer_band.start(probe, self.sink.clone());
         true
+    }
+
+    /// Feeds the opt-in input-latency diagnostic; it never ends the event loop.
+    fn after_present(&mut self, facts: &PresentFacts<'_>) -> bool {
+        crate::platform::macos::input_latency::frame_presented(facts.draw);
+        false
     }
 
     /// A hidden window keeps no frame storage: Retina frames are megabytes each (`10` macOS gates).

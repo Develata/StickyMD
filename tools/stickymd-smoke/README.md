@@ -7,6 +7,21 @@ release package.
 
 ## Stable entry points
 
+`mac-latency` is a VM-only end-to-end input-latency diagnostic (plan 10 macOS gates; the
+gate stays the edit benchmark). It launches copied bundles with the product's opt-in recorder
+(`STICKYMD_DIAGNOSTIC_INPUT_LATENCY`), types `x` through CGEvent at the end of a 100 KiB and a
+1 MiB Source note (a sustained burst, and single keys after idle gaps), sends SIGUSR1 so the app
+writes its timestamps, quits through SIGTERM and checks injected = recorded = characters added.
+Each key is paired with the first frame presented after the app saw it; stages are event to
+main thread, main thread to the start of drawing, drawing through `present`, and `present` to the
+Core Animation commit. Several `--app` values run interleaved for A/B; run the same app twice
+for an A/A bound first. It needs Accessibility, PostEvent and an unwind build:
+
+```bash
+CARGO_PROFILE_RELEASE_PANIC=unwind cargo build --release --locked -p stickymd-smoke --target-dir target/unwind
+target/unwind/release/stickymd-smoke mac-latency --app dist/macos/StickyMD.app --app dist/macos/StickyMD.app --out dist/evidence/mac-latency
+```
+
 The standalone macOS resource command is opt-in and opens copied app instances.
 Run it later in an unlocked test VM with the display on and no interaction:
 

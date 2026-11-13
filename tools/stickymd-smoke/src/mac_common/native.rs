@@ -1,4 +1,4 @@
-//! Owned child termination only.
+//! Owned child signals (termination, the latency recorder's flush) and the uptime clock.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use std::{
     ffi::{c_int, c_void},
@@ -11,18 +11,33 @@ unsafe extern "C" {
     fn getuid() -> u32;
     fn proc_listpids(kind: u32, info: u32, buffer: *mut c_void, bytes: c_int) -> c_int;
     fn proc_pidpath(pid: c_int, buffer: *mut c_void, bytes: u32) -> c_int;
+    fn clock_gettime_nsec_np(clock: u32) -> u64;
 }
 /// The caller owns an unreaped Child, so its PID cannot have been reused.
 pub(super) fn terminate(pid: u32) -> Result<(), String> {
+    signal(pid, 15, "SIGTERM")
+}
+/// SIGUSR1 (30 on Darwin), which makes the product's opt-in latency recorder write its file.
+/// Same ownership precondition as `terminate`.
+pub(super) fn user1(pid: u32) -> Result<(), String> {
+    signal(pid, 30, "SIGUSR1")
+}
+fn signal(pid: u32, number: c_int, name: &str) -> Result<(), String> {
     let pid = c_int::try_from(pid).map_err(|_| "PID is out of range")?;
     if pid <= 0 {
         return Err("Refusing to signal a process group".into());
     }
-    // SAFETY: positive PID names only the caller-owned child; SIGTERM is 15 on Darwin.
-    if unsafe { kill(pid, 15) } != 0 {
-        return Err(format!("SIGTERM: {}", std::io::Error::last_os_error()));
+    // SAFETY: positive PID names only the caller-owned child; the number is a Darwin signal.
+    if unsafe { kill(pid, number) } != 0 {
+        return Err(format!("{name}: {}", std::io::Error::last_os_error()));
     }
     Ok(())
+}
+/// Nanoseconds of `CLOCK_UPTIME_RAW` (8 on Darwin): the clock of `mach_absolute_time` and of
+/// event timestamps, so the driver's times compare with the product's.
+pub(crate) fn uptime_ns() -> u64 {
+    // SAFETY: reads a monotonic clock by its id; no preconditions.
+    unsafe { clock_gettime_nsec_np(8) }
 }
 
 fn executable(pid: i32) -> Result<Option<Vec<u8>>, String> {

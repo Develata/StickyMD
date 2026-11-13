@@ -510,6 +510,7 @@ mod tests {
             height: 600,
             view_complete: true,
             ledger: &ledger,
+            draw: std::time::Duration::ZERO,
         };
         let mut host = FakeHost::default();
         assert!(!host.after_present(&facts));

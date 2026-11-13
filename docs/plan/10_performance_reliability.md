@@ -110,6 +110,16 @@ macOS 的呈现成本不由 Windows 基线代表。探针基线（scale 2）：�
 
 空闲 CPU（含光标闪烁）、启动、输入延迟、预览构建沿用下表的数值，在 macOS 上单独测量。结构性约束 10（测量环境）在 macOS 宿主上读作 Release build + macOS 27。
 
+**macOS 端到端输入延迟诊断（USER 2026-11-13，“先搭延迟测量”）：**
+
+- **门不变。** 输入延迟的门仍是编辑基准（`stickymd-desktop` 的 `phase3_source_pipeline_release_baseline`），在 macOS Release 上单独运行。编辑基准只量编辑流水线，不经过 present 与系统事件。
+- **诊断。** `stickymd-smoke mac-latency` 在 VM 中注入按键，宿主的 opt-in 记录器分阶段记时：
+  - 记录器由 `STICKYMD_DIAGNOSTIC_INPUT_LATENCY` 开启，默认关闭；
+  - 只记时间戳，缓冲区预先分配，SIGUSR1 时才原子写出；
+  - 阶段为：事件 → 主线程、主线程 → 开始绘制、绘制 → present 返回、present → Core Animation 提交。
+  - 绘制耗时由共享层经 `PresentFacts.draw` 交给宿主。
+- **用途。** 它用于分配器、呈现路径等取舍的对照，不作门。对照须先做 A/A 得出重复性界限，各变体交替运行；一次运行只有在注入键数、记录键数与笔记新增字符数三者相等，且每个键都配到帧时才有效。
+
 ---
 
 <a id="initial-engineering-targets"></a>
