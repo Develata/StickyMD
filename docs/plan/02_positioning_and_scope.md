@@ -4,8 +4,8 @@
 
 - `Layer`: Foundation
 - `Status`: Approved Contract
-- `Version`: 0.3.0
-- `Last Review`: 2026-11-10
+- `Version`: 0.4.0
+- `Last Review`: 2026-11-14
 - `Scope`: StickyMD 的存在理由、本体、便签模型、平台与 v1 范围、Non-Goals、优先级与功能拒绝标准
 
 ---
@@ -164,6 +164,7 @@ USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-de
 13. 文件可靠性：UTF-8（兼容 BOM 读取）、换行风格保留、temp 恢复、外部修改 reconcile、脏冲突 banner、无效 UTF-8 安全处理。
 14. Phase 10 交互修订：Windows 传统剪贴板快捷键；Source/Preview/Split 共享 50–300% Content Zoom；220×120 DIP 最小窗口；主窗口采用可聚焦的 Tool Window 身份；24 DIP 最近合格边缘 dock 捕获。
 15. Phase 14 USER 批准的候选冻结前修订：当前 Source 文档纯文本查找/替换（大小写开关、无正则）；数学分隔符转换控件使用紧凑、清晰的 `$` 标识。
+16. Phase 17（USER 批准 2026-11-14；下一版本实现，此前发布的版本不含）：复制按“起止点所见即所得”统一（`#copy-what-you-see`、`06` #preview-copy-semantics）；代码块与块级公式的复制侧条（`06` #preview-copy-rail）；提示分级与统一提示条（`04` #notice-state、`09` #notices）；Preview 文末留白（`09` #vertical-scrollbars）。Phase 17 落地前，现行条款继续有效；各章 Phase 17 小节写明它取代哪些条款。
 
 详细契约见 `docs/plan/05..11`；用户可见行为投影见 `docs/features/`；
 验收见 `docs/acceptance-cases/`。
@@ -240,6 +241,23 @@ Initial Engineering Targets，未经实测不得对外宣传。
 - 每个新增能力都必须通过宪法 3.13 的三层判定，否则拒绝。
 
 “极简”**不是**指实现粗糙：数据安全、原子写入、IME 正确性、错误路径一个都不能省。
+
+<a id="copy-what-you-see"></a>
+### 复制：起止点所见即所得（Phase 17，USER 批准 2026-11-14）
+
+复制的范围由用户看到的起点与终点决定。Source、Preview 与复制侧条遵循同一条用户规则；取文本的路径各自实现，
+细则见 `06` #preview-copy-semantics。
+
+- **起止点都落在同一个公式或代码块的内容里：只复制内容**，不带分隔符或围栏。要复制一个公式或一段代码，用户要的是里面的东西；
+  不带包装的内容也是各种粘贴目标（LaTeX 文档、公式编辑器、其他 Markdown 工具）都能接受的最小公分母，怎么包装由目标决定。
+- **范围超出单个对象：保留 Markdown 渲染符号。** 这些符号是通用的，粘贴到 Markdown 环境中多数仍能被渲染；去掉它们，
+  只会留下只能用肉眼读的文字。
+- **诚实的边界：**
+  - 选区切开粗体、链接等行内结构时，复制整个结构，会比高亮多出几个字；
+  - 引用式链接、表格片段等结构单独粘贴后不一定还能渲染。
+
+所见即所得指起止点，而不是 Preview 的像素。这顺应“复制一个东西就得到那个东西”的习惯，省去额外的心智负担；
+一条规则覆盖两种视图与复制侧条，用户不必分别记忆。
 
 ---
 

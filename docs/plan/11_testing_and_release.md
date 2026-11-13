@@ -4,8 +4,8 @@
 
 - `Layer`: Verification
 - `Status`: Approved Contract
-- `Version`: 0.3.0
-- `Last Review`: 2026-11-10
+- `Version`: 0.4.0
+- `Last Review`: 2026-11-14
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -274,6 +274,26 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 - **人工收据**：`receipt` 按行记录 USER 的确认，绑定 app 可执行文件的 SHA-256。app 变了，收据不再成立，`plan` 会列出待重新确认的人工行。I01–I03 与 R03 从不沿用收据。
 - **自动化行**：验收表中 Mode 为 `Automated`、由 `mac-gui` 执行的行，只认账本里与当前 app、bundle、驱动、镜像、系统五项一致的 PASS，不需要人工收据。app 变了，这些行要在新身份下重新运行（`plan` 会列出）；还没有这样的 PASS 时状态为 `NOT TESTED`。哪些行改为 `Automated`，只限断言与显示硬件无关的行，按行经 USER 批准（2026-11-12，[提案](../report/2026-11-12-macos-manual-rows-automation.md)）。
 - **范围**：不按产品模块复用，这一级留待 Windows RC3-B 解决之后。这一节不改变 Phase 16 不是资格化 suite 的性质。
+
+<a id="phase-17-copy-and-notices"></a>
+### Phase 17：复制语义、复制侧条、提示条与文末留白（下一版本）
+
+- **依据：** [提议报告](../report/2026-11-14-copy-semantics-rail-notices.md)，USER 批准 2026-11-14。
+- **时机：** 设计于 macOS 版本发布之后合入；代码在下一版本实现。在此之前，任何发布版本都不含这些能力。
+- **验收：** 见 `docs/acceptance-cases/phase-17.md`，未运行的项保持 `NOT TESTED`。
+- **自动化：** 由 Rust CLI 持有；首次实施时建立 `tools/smoke/phase-17.ps1`。
+
+| 里程碑 | 交付 | 出口 |
+| --- | --- | --- |
+| M1 | 提示条（`04` #notice-state、`09` #notices）：两层模型、类别与时长、Shared Desktop 浮层、例行自动保存静默、按类别给按钮 | 每个类别的时长与优先级测试；到期回执按 id 校验；待决定与持续故障在覆盖后恢复；现有发出点按附录归类 |
+| M2 | Preview 文末留白（`09` #vertical-scrollbars） | 绘制、滚轮、滑块与同步共用一个末端函数的测试；短文阈值两侧的行为 |
+| M3 | Preview 复制语义第一期（`06` #preview-copy-semantics） | 规则 1–6 的单元测试与两条不变式（每个字节取自该帧源码快照并保持顺序；对象内容取自对象文本）；随机选区测试；位置上移段落、转义与实体、列表序号、引用内代码、表格、陈旧帧 |
+| M4 | 复制侧条（`06` #preview-copy-rail） | 命中、阈值、降级与可见区间测试；侧条宽度在视觉验收后固定 |
+
+- **每个里程碑的共同出口：**
+  - Preview 帧时间、Source 输入延迟与内存基准不劣于改动前（`10`）；
+  - macOS 在 `mac-test` 虚拟机中做视觉验收，Windows 宿主另测。
+- **落地时同步更新：** 落地时取代的现行条款、验收行与测试，列在 `phase-17.md` 的“落地时更新”一节。
 
 <a id="qualification-process-isolation"></a>
 ### GUI qualification process isolation

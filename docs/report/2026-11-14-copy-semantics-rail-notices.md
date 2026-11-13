@@ -120,7 +120,7 @@ USER 在 2026-11-14 提出“给代码块与公式加复制键”，讨论后收
   - **代码块与 Raw HTML 原文块：** 恰好是被选中的那部分代码文本，不带围栏，也不带引用或列表前缀。
   - **图片：** 保持现行的 alt 文本，`contracts.rs:92` 不变。要改成复制源码，需要能表达零长度原子对象的选区，不在本提议范围内。
 - **R2 源码切片。** 其他情况，把两个端点映射为该 Preview 帧所属 generation 的源码字节位置，复制这段源码。
-  `**`、`#`、`[文字](链接)`、`- `、`> `、`![alt](路径)` 都随之带上。
+  `**`、`#`、链接语法、`- `、`> `、图片语法都随之带上。
 - **R3 被切开的结构：** 见待定 1。
 - **R4 读帧自己的快照。** Preview 复制读取该帧 generation 的源码快照（`Arc<str>`），不读当前文档。
   陈旧帧上复制的也就是屏幕上看到的内容。陈旧帧上可以做哪些操作，见待定 2。
@@ -142,7 +142,7 @@ USER 在 2026-11-14 提出“给代码块与公式加复制键”，讨论后收
 ### 后果
 
 - 只选中一个行内公式按 Ctrl+C，即得不带分隔符的 TeX，取代被放弃的“行内公式复制键”。
-- 带图片的范围复制成 `![alt](assets/…)`。相对路径粘贴到别处会失效，与 Source 复制一致。
+- 带图片的范围复制成图片的 Markdown 引用，其中的 `assets/…` 相对路径粘贴到别处会失效，与 Source 复制一致。
 
 ### 新工作（推断）
 
@@ -396,3 +396,58 @@ USER 提出：允许滚动到文末之后再多滚约半屏或约 10 行，单�
 ### 审查状态
 
 以下内容写于 codex 审查之后，尚未复审：原状态转换草案、本节的两层模型、图片保持 alt、侧条降级规则、Preview 短文规则。
+
+## Resolution：USER 批准（2026-11-14）
+
+USER 原话：“我也 prefer A，就按你的建议来做。另外，你提到的那些建议都可以，按你的建议来做。先做设计，不改代码，下个版本再改代码，这个版本先发 macos 版本”；
+设计落点选择“独立分支（推荐）”。
+
+### 落定的决定
+
+- **P1：** 采用方案 A，分两期。
+  - **第一期：**
+    - R1、R2、R4、R5、R6；
+    - 切开的围栏代码块，复制开、闭围栏行加选中的行；
+    - 切开的行内结构，复制时扩到整个结构。
+  - **第二期（另行批准）：** 用结构自己的定界符只包住选中部分。
+  - 单独选中图片仍复制 alt；陈旧显示帧上允许复制与点击侧条；表格单元格内按源码切片。
+- **P2：** 外形与规则照提议；宽度暂定 8 内容 DIP，视觉验收后固定；放不下时不画。
+- **P3：** 采用“补充”一节的两层模型，例行自动保存静默。
+  - 瞬时三类：成功 3 s、提醒 5 s、重要提醒 30 s；
+  - 持续三类：待决定、持续故障、进行中；
+  - 持久化工作线程停止并入 `SaveState::Failed`。
+- **P4：**
+  - **Preview：** 留白 `R = max(视口高 / 2, 提示条高)`；文档高 ≤ 视口高 − 提示条高时不滚动。
+  - **Source：** 不加留白，接受瞬时提示暂时盖住最后一行；待决定提示与现状相同，会持续盖住。
+- **设计落点：** 分支 `design/phase-17-copy-notices`。macOS 版本发布后再合入；代码在下一版本实现。
+
+### 落盘位置
+
+- **Plan：**
+  - `02` v1 Scope 第 16 条与 `#copy-what-you-see`；
+  - `04` `#notice-state`；
+  - `06` `#preview-copy-semantics`、`#preview-copy-rail`；
+  - `07` 复制反馈；
+  - `09` `#notices` 与 `#vertical-scrollbars`；
+  - `11` `#phase-17-copy-and-notices`。
+- **投影：** 功能文档“下一版本”一节、`docs/acceptance-cases/phase-17.md`、`docs/coverage-matrix.md`。
+
+## 附录：现有提示发出点的归类（`f6bb473`）
+
+- 路径相对 `crates/`，`apps/` 开头的除外。
+- 归类依据 `09` #notices。持续层的提示由状态派生，原发出点在 Phase 17 中改为更新状态，或者不再单独发提示。
+
+| 类别 | 发出点 |
+| --- | --- |
+| 成功 3 s | `stickymd-app/src/flow/note_io/save.rs:104`、`:106`（只限手动保存）；`reconcile.rs:27`；`stickymd-app/src/session/io.rs:88`（导出完成）；新增：已复制、已替换 N 处、已转换 N 处 |
+| 提醒 5 s | `note_io/reconcile.rs:49`、`:80`；`note_io/mod.rs:98`、`:109`；`asset_io.rs:240`；`session/view.rs:44`；`session/search.rs:34`、`:49`、`:165`；`session/assets.rs:23`、`:39`；`session/events.rs:74`、`:90`；`session/document.rs:51`；`stickymd-desktop/src/shell/preview_runtime.rs:40`、`:45`；`shell/export_runtime.rs:19`；`shell/opacity_field.rs:59`；`shell/search_controller.rs:108`；`shell/window_runtime.rs:52`、`:82`、`:135`、`:140`、`:228`、`:232`、`:236`、`:249`、`:357` |
+| 重要提醒 30 s | `note_io/receipts.rs:112`、`:131`、`:135`、`:159`、`:166`；`note_io/recovery.rs:21`、`:65`；`note_io/reconcile.rs:53`、`:83`；`stickymd-app/src/flow/asset_io.rs:127`、`:174`、`:197`、`:213`、`:245`、`:251`；`session/io.rs:58`、导出失败（`io.rs:88` 的 Err 分支）；`session/view.rs:63`；`session/preferences.rs:53`；`session/window.rs:159`；`shell/lifecycle.rs:15`、`:69`；`shell/preview_runtime.rs:161`、`:237`；`shell/shell_effects.rs:99`；`shell/presentation.rs:136`；`shell/caret_runtime.rs:69`、`:116`、`:120`；`shell/render.rs:117`、`:169`、`:214`、`:244`；`shell/window_runtime.rs:224`、`:245`、`:254`、`:260`、`:267`、`:383`、`:405`、`:424`；`shell/startup.rs:36-44`（启动降级）；`apps/stickymd-{mac,win}` 启动警告、配置警告、默认配置保存失败、临时文件隔离与启动图片整理 |
+| 持续故障（派生自 `SaveState::Failed`） | `note_io/receipts.rs:56`、`:81`；`note_io/save.rs:87`；`session/io.rs:101`（持久化工作线程停止） |
+| 待决定（派生自 `ConflictState`、`RecoveryState`） | 冲突：`note_io/reconcile.rs:59` 至 `:109`（`Present` 两个按钮，其余只有 F7 一个）、`:69`（只有 F7）。恢复：`stickymd-desktop/src/shell/mod.rs:249`（两个按钮）、`note_io/recovery.rs:56`（只有 F6）、`:106`（两个按钮） |
+| 进行中（派生） | `note_io/save.rs:70`（只限“保留本地”与手动保存，例行自动保存不显示）、`:136`；`note_io/recovery.rs:87`、`:95`；`session/assets.rs:37`；`session/events.rs:88` |
+
+现状补充：
+
+- 产品代码中没有任何清除提示的路径。
+- 只有 `shell/mod.rs:250` 与 `reconcile.rs:101` 两条文字含 `[F7`。所以 `reconcile.rs:104/107/109` 与 `recovery.rs:56/106` 虽然要求选择，现在也不画按钮。
+- 以上由一次只读的全仓检索得出，不保证穷尽。P17-N09 落地时须用测试确认没有遗漏的发出点。

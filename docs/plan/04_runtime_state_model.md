@@ -4,8 +4,8 @@
 
 - `Layer`: Architecture
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-14
 - `Scope`: 运行时状态结构、所有权与修改权、authority 划分、generation 语义、核心 invariant
 
 ---
@@ -69,6 +69,8 @@ struct AppState {
     ime:         ImeState,
     config:      ConfigState,
     window:      WindowState,
+    export:      ExportState,       // Phase 17 起作为具名事实
+    notice:      NoticeState,       // Phase 17，见 #notice-state
 }
 ```
 
@@ -87,6 +89,8 @@ struct AppState {
 | WindowState / DockState | WindowDockCoordinator + LifecycleCoordinator | 仅窗口/dock 流程 | 编辑与保存流程 |
 | ImeState | 编辑器后端（经 Shell 事件） | 仅 IME 事件处理 | 保存、预览流程 |
 | ConfigState | 配置管理（经 Set* intent） | 仅 SetTheme/SetOpacity/SetAlwaysOnTop 等 intent 与启动载入 | 后台任务 |
+| ExportState（Phase 17） | 导出流程（Shared Application） | 仅导出提交与导出回执 | Shell、Preview |
+| NoticeState（Phase 17） | 提示流程（Shared Application） | 仅提示效果与到期回执；持续层只由下列状态派生 | Shell（只读绘制）、Preview、后台任务 |
 
 ---
 
@@ -178,6 +182,9 @@ enum SaveState {
 
 - `saved_generation` 只更新到实际落盘的 generation。
 - 保存失败不静默：必须进入 Failed 并呈现给用户，内存文本保留。
+- Phase 17：持久化工作线程停止时，进入 `Failed { error: WorkerUnavailable }`，不再只靠一条提示文字表达。
+  `Failed` 在之后有保存成功时离开。它是 #notice-state 持续故障的唯一权威；
+  `09` 的“退出已取消：保存失败”窗口状态与标题函数不变，不另立“保存失败”权威。
 
 ## ConflictState
 
@@ -203,6 +210,46 @@ enum RecoveryState {
 ```
 
 - 用户选择前：不覆盖任何文件、暂停 autosave、内存只保留最小必要数据。
+
+<a id="notice-state"></a>
+## NoticeState（Phase 17，USER 批准 2026-11-14）
+
+Phase 17 落地前，用户可见提示仍是现行的单一诊断文字。落地后由本节取代。依据见
+[提议报告](../report/2026-11-14-copy-semantics-rail-notices.md)，呈现与时长见 `09` #notices。
+
+```rust
+// 伪类型
+enum ExportState { Idle, InFlight }
+
+struct NoticeState {
+    transient: Option<TransientNotice>,   // 瞬时层：唯一存储的提示
+    persistent_text_collapsed: bool,      // 持续故障文字是否已收起
+}
+
+struct TransientNotice {
+    id:       NoticeId,                   // 单调递增；到期回执按 id 校验
+    class:    TransientClass,             // Success | Reminder | Important
+    text:     String,
+    deadline: Instant,                    // 来自注入时钟
+}
+```
+
+### 两层规则
+
+- **持续层不存储，由权威状态派生。** 优先级从高到低：
+  1. **待决定：** `ConflictState` 不为 `None`，或 `RecoveryState` 为 `Candidate`。按可用选项给出按钮，只有一个选项时只给一个按钮。
+  2. **持续故障：** `SaveState::Failed`。
+  3. **进行中：** 依次为恢复操作进行中、保存进行中（只限“保留本地”与手动保存）、图片准备中（`AssetState`）、
+     `ExportState::InFlight`。例行自动保存的进行中不派生提示。
+- **瞬时层覆盖在持续层之上。**
+  - 到期或被替换后，露出持续层当时派生出的提示。
+  - 新的瞬时提示替换旧的；但成功不替换正在显示的提醒或重要提醒（沿用 `07` 复制反馈规则）。
+  - 到期回执的 id 与当前瞬时提示不一致时，直接忽略。
+- **持续故障的文字最长显示 30 s，之后收起：**
+  - 收起后只剩工具栏标记；标记保留到 `SaveState` 离开 `Failed`。
+  - 点击标记重新显示文字，再计 30 s。
+  - 进入新的 `Failed` 原因时，文字重新显示。
+- **Shell 只读：** 它绘制当前提示、命中按钮与标记，并把到期与点击作为输入交回；它不决定类别、时长或优先级。
 
 ## AssetState
 
