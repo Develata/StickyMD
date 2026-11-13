@@ -25,6 +25,8 @@
 | P17-N13 | 外部冲突中选“保留本地”且写入失败：故障原因显示 30 s，同时保留 F6/F7 按钮；之后回到冲突提示 | Automated | 待建 | NOT TESTED |
 | P17-N14 | 故障展示期间故障原因改变：开始新的一段并换新 id，旧段的到期回执被忽略 | Automated | 待建 | NOT TESTED |
 | P17-N15 | 提示条高 34 窗口 DIP，不随 Content Zoom 缩放；最小窗口 × 300% 缩放时仍不超过内容视口 | Automated | 待建 | NOT TESTED |
+| P17-N16 | 冲突待决定时，上方显示任何一类定时提示，F6/F7 按钮都保留并可点击 | Automated | 待建 | NOT TESTED |
+| P17-N17 | 同一种保存失败重试再失败（提示文字中的 generation 不同），不重新开始故障展示；失败种类改变时重新开始 | Automated | 待建 | NOT TESTED |
 | P17-N12 | 视觉：浮层位置与对比度；Light/Dark；40% 透明度；Source 的最后一行可被瞬时提示暂时盖住（USER 接受） | Manual | macOS 在 `mac-test` 虚拟机中，Windows 在宿主上 | NOT TESTED |
 
 ## M2 Preview 文末留白
@@ -53,6 +55,7 @@
 | P17-C11 | 复制成功显示“已复制”3 s；正在显示提醒、重要提醒或故障展示时不显示；复制失败显示提醒；均不修改文档或选区 | Automated | 待建 | NOT TESTED |
 | P17-C13 | 两端都在同一行内结构内：只取里面的文字（`**abcd**` 中选 `bc` 得 `bc`）；嵌套结构被切开时逐层外扩至没有被切开的结构 | Automated | 待建：精确字符串案例 | NOT TESTED |
 | P17-C14 | 起点在标题、列表项、引用的首个可见位置时，带上 `# `、`- `、`> ` 前缀（取首个可见位置相同的最外层块）；终点同理；不补源码中不存在的包装 | Automated | 待建：精确字符串案例 | NOT TESTED |
+| P17-C15 | 行内结构边缘端点算作在外：`x **abcd** y` 中选 `abcd` 得 `**abcd**`，选 `x abcd` 得 `x **abcd**`，选 `abcd y` 得 `**abcd** y`；行内代码同样处理 | Automated | 待建：精确字符串案例 | NOT TESTED |
 | P17-C12 | 资源：复制映射带来的 Preview 构建时间与内存变化在 `10` 的预算之内 | Automated | 待建：基线与新包对比 | NOT TESTED |
 
 ## M4 复制侧条
