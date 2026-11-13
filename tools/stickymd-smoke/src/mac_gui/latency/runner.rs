@@ -147,13 +147,10 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         std::process::id()
     );
     let raw_dir = options.out.join(&campaign);
-    fs::create_dir(options.out.join("raw"))
-        .or_else(|e| match e.kind() {
-            std::io::ErrorKind::AlreadyExists => Ok(()),
-            _ => Err(e),
-        })
+    // The campaign directory itself is created exclusively: an existing one is an error.
+    fs::create_dir_all(options.out.join("raw"))
         .and_then(|()| fs::create_dir(&raw_dir))
-        .map_err(|e| format!("raw directory: {e}"))?;
+        .map_err(|e| format!("raw directory {}: {e}", raw_dir.display()))?;
     let output = options.out.join("mac-latency.json");
     let sw_vers = Command::new("/usr/bin/sw_vers")
         .output()
