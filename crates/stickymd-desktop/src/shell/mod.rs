@@ -48,6 +48,8 @@ mod headless_tests;
 #[cfg(test)]
 mod hidden_frames_tests;
 #[cfg(test)]
+mod host_presenter_tests;
+#[cfg(test)]
 mod hot_path_tests;
 mod input;
 mod lifecycle;
@@ -94,6 +96,9 @@ pub struct DesktopShell<H: Host> {
     projection: Option<SourceProjection>,
     source_frame: Option<Pixmap>,
     source_paint_key: Option<render::SourcePaintKey>,
+    /// When to draw again after the host deferred a frame (`PresentOutcome::Deferred`): one
+    /// outstanding wake, cleared by a presented frame and by a hide.
+    present_retry_at: Option<Instant>,
     /// The frame storage is released while the window is hidden (`Host::releases_hidden_frames`):
     /// no frame is painted and nothing window-sized is allocated until the show rebuilds it.
     frames_released: bool,
@@ -190,6 +195,7 @@ impl<H: Host> DesktopShell<H> {
             source_frame: None,
             source_paint_key: None,
             frames_released: false,
+            present_retry_at: None,
             pending_redraw: presentation::PendingRedraw::None,
             preview_frame: None,
             preview_frame_viewport: None,

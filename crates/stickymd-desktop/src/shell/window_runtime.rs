@@ -374,6 +374,7 @@ impl<H: Host> DesktopShell<H> {
             return;
         }
         self.frames_released = true;
+        self.present_retry_at = None;
         self.source_frame = None;
         self.source_paint_key = None;
         if let Some(surface) = &mut self.surface
@@ -394,7 +395,8 @@ impl<H: Host> DesktopShell<H> {
         }
         self.frames_released = false;
         self.host.hidden_frames_released(false);
-        let size = self.window.as_ref().map(|window| window.inner_size());
+        // The window's size (the headless view in tests).
+        let size = self.shell_view().map(|(size, _)| size);
         if let (Some(size), Some(surface)) = (size, &mut self.surface)
             && size.width > 0
             && size.height > 0

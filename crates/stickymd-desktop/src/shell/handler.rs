@@ -59,7 +59,12 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
         window.set_ime_allowed(self.app.config().current().view_mode != ViewMode::Preview);
         self.system_theme = window.theme().unwrap_or(Theme::Light);
         let size = window.inner_size();
-        let surface = match SoftwareSurface::new(Arc::clone(&window)) {
+        let created = if self.host.presents_frames() {
+            SoftwareSurface::for_host(size.width, size.height)
+        } else {
+            SoftwareSurface::new(Arc::clone(&window))
+        };
+        let surface = match created {
             Ok(surface) => surface,
             Err(error) => {
                 self.abort_startup(&StartupStop::Surface(error.to_string()), || {

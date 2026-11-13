@@ -342,6 +342,14 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
   是否局部呈现由 Shared Desktop 依后端缓冲区年龄决定：只有缓冲区就是上一帧（softbuffer `age == 1`）时才只写
   damage 区，其他年龄（新缓冲 `0`、双缓冲取到更早帧 `≥ 2`）全量填充并完整呈现。不以 Windows 的局部呈现成本
   代表其他平台（例如 softbuffer 0.4.8 的 macOS 后端每帧新分配缓冲、忽略 damage，按全窗成本单独测量，见 `10`）。
+- **宿主呈现（macOS，USER 批准 2026-11-14，[方案 B 报告](../report/2026-11-14-macos-plan-b-iosurface.md)）：**
+  - **谁来提交。** `Host::presents_frames` 为真的宿主自己提交帧：Shared Desktop 只持有画布（`SoftwareSurface::for_host`），不创建 softbuffer 表面，把完成的整帧交给 `Host::present_frame`。
+  - **macOS 的做法。** 宿主把整帧写进 IOSurface，设为子图层内容，CoreAnimation 不再复制。Windows 不实现这个能力，呈现不变。
+  - **三种结果：**
+    - **已提交：** 只有这种才算帧到达窗口，才走 `after_present` 与光标同步。
+    - **暂缓：** 呈现缓冲都在用，窗口保留上一帧；整帧在 `PRESENT_RETRY`（8 ms）后重画。只保留一个等待中的唤醒，成功提交或隐藏时取消。
+    - **失败：** 报告诊断，不重试，上一帧保留。
+  - **不做局部提交。** 宿主呈现总是整帧，光标的局部提交在这时改走整帧。
 - 字体选择算法共用；各平台的默认字体候选由 Platform Host 提供，Windows 现有默认（含代码块 Consolas）保持不变。
 
 <a id="preview-horizontal-scroll"></a>

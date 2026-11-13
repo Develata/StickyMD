@@ -28,13 +28,15 @@ pub(super) struct Recording {
     pub frames: Vec<Frame>,
     pub dropped_keys: u64,
     pub dropped_frames: u64,
+    /// The product's frame presenter, `[presented, deferred, surfaces created, failed]`.
+    pub presenter: Option<[u64; 4]>,
 }
 
-/// Reads the product's file (`stickymd-input-latency 3`). Anything else is an error, not a guess.
+/// Reads the product's file (`stickymd-input-latency 4`). Anything else is an error, not a guess.
 pub(super) fn parse(text: &str) -> Result<Recording, String> {
     let mut lines = text.lines();
-    if lines.next() != Some("stickymd-input-latency 3") {
-        return Err("not a version 3 input-latency recording".into());
+    if lines.next() != Some("stickymd-input-latency 4") {
+        return Err("not a version 4 input-latency recording".into());
     }
     let mut recording = Recording::default();
     for line in lines {
@@ -46,6 +48,9 @@ pub(super) fn parse(text: &str) -> Result<Recording, String> {
                 .ok_or_else(|| format!("bad recording line: {line}"))
         };
         match (fields.first().copied(), fields.len()) {
+            (Some("presenter"), 5) => {
+                recording.presenter = Some([number(1)?, number(2)?, number(3)?, number(4)?]);
+            }
             (Some("dropped"), 3) => {
                 recording.dropped_keys = number(1)?;
                 recording.dropped_frames = number(2)?;
@@ -208,7 +213,7 @@ mod tests {
 
     #[test]
     fn the_recording_parses_and_rejects_anything_else() {
-        let text = "stickymd-input-latency 3\ndropped 0 2\nkey 10 12\nframe 20 3\nframe 30 4\n";
+        let text = "stickymd-input-latency 4\ndropped 0 2\npresenter 5 1 3 0\nkey 10 12\nframe 20 3\nframe 30 4\n";
         let recording = parse(text).unwrap();
         assert_eq!(
             recording.keys,
@@ -219,9 +224,11 @@ mod tests {
         );
         assert_eq!(recording.frames, [frame(20, 3), frame(30, 4)]);
         assert_eq!((recording.dropped_keys, recording.dropped_frames), (0, 2));
-        assert!(parse("stickymd-input-latency 2\n").is_err());
-        assert!(parse("stickymd-input-latency 3\nframe 1 2 3\n").is_err());
-        assert!(parse("stickymd-input-latency 3\nnote x y\n").is_err());
+        assert!(parse("stickymd-input-latency 3\n").is_err());
+        assert_eq!(recording.presenter, Some([5, 1, 3, 0]));
+        assert!(parse("stickymd-input-latency 4\nframe 1 2 3\n").is_err());
+        assert!(parse("stickymd-input-latency 4\nnote x y\n").is_err());
+        assert!(parse("stickymd-input-latency 4\npresenter 1 2\n").is_err());
     }
 
     #[test]

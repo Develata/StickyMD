@@ -9,7 +9,7 @@ use winit::dpi::PhysicalSize;
 use super::DesktopShell;
 use super::presentation::PendingRedraw;
 use crate::controls::{ToolbarVisual, paint_toolbar};
-use crate::host::{Host, PresentFacts};
+use crate::host::{Host, PRESENT_RETRY, PresentFacts, PresentOutcome};
 use crate::search::paint_search_overlay;
 use stickymd_app::config::ContentZoomPercent;
 
@@ -202,10 +202,24 @@ impl<H: Host> DesktopShell<H> {
         if let Some(layout) = &self.control_layout {
             paint_toolbar(surface.pixmap_mut(), geometry, layout, toolbar_visual);
         }
-        let presented = if let Err(error) = surface.present() {
-            self.diagnostic = Some(error.to_string());
+        let outcome = if surface.presented_by_host() {
+            self.host.present_frame(surface.pixmap())
+        } else {
+            match surface.present() {
+                Ok(()) => PresentOutcome::Presented,
+                Err(error) => PresentOutcome::Failed(error.to_string()),
+            }
+        };
+        let presented = if let PresentOutcome::Failed(error) = outcome {
+            self.diagnostic = Some(error);
+            false
+        } else if outcome == PresentOutcome::Deferred {
+            // Nothing reached the window: draw the whole frame again shortly.
+            self.pending_redraw = PendingRedraw::Full;
+            self.present_retry_at = Some(std::time::Instant::now() + PRESENT_RETRY);
             false
         } else {
+            self.present_retry_at = None;
             let facts = PresentFacts {
                 width: surface_size.width,
                 height: surface_size.height,

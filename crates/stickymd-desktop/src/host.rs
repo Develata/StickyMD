@@ -108,6 +108,21 @@ pub trait StartupProbe {
     fn detail(&mut self, _detail: StartupDetail) {}
 }
 
+/// What became of a frame a host presents itself (`Host::present_frame`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PresentOutcome {
+    /// The frame is the window's contents now.
+    Presented,
+    /// No presentation buffer is free yet; the window keeps its previous contents and the shell
+    /// draws again shortly (`PRESENT_RETRY`).
+    Deferred,
+    /// The frame could not be shown; the previous contents stay.
+    Failed(String),
+}
+
+/// How soon a deferred frame is drawn again: about half a 60 Hz refresh, one wake per attempt.
+pub const PRESENT_RETRY: Duration = Duration::from_millis(8);
+
 /// A full frame reached the window. It only borrows: `after_present` runs on every frame.
 pub struct PresentFacts<'a> {
     pub width: u32,
@@ -178,6 +193,19 @@ pub trait Host:
 
     /// The shell has just released (`true`) or is about to rebuild (`false`) its frame storage.
     fn hidden_frames_released(&mut self, _released: bool) {}
+
+    /// Whether this host shows finished frames itself (`present_frame`) rather than through the
+    /// software surface's own presenter (`06` frame presentation). Asked once, before the surface
+    /// exists; Windows keeps the software surface.
+    fn presents_frames(&self) -> bool {
+        false
+    }
+
+    /// Shows a finished frame (premultiplied RGBA, the canvas's own size). Called only when
+    /// `presents_frames`; only `Presented` counts as a frame that reached the window.
+    fn present_frame(&mut self, _frame: &tiny_skia::Pixmap) -> PresentOutcome {
+        PresentOutcome::Failed("this host does not present frames".into())
+    }
 }
 
 #[cfg(test)]

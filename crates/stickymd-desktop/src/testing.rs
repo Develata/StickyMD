@@ -59,6 +59,10 @@ pub enum HostCall {
         height: u32,
     },
     HiddenFramesReleased(bool),
+    PresentedFrame {
+        width: u32,
+        height: u32,
+    },
     Milestone(&'static str),
     /// Recorded by a test through `calls`: a step that does not go through the host.
     WindowRevealed,
@@ -113,6 +117,10 @@ pub struct FakeHost {
     pub exit_after_present: bool,
     /// Whether this host asks the shell to release frames while hidden (macOS does).
     pub releases_hidden_frames: bool,
+    /// Whether this host presents frames itself (macOS does).
+    pub presents_frames: bool,
+    /// What the next `present_frame` calls answer, one per call, before `Presented`.
+    pub present_answers: VecDeque<crate::host::PresentOutcome>,
     pub keymap: Keymap,
     /// Goes when the host goes: a test's probe of the drop order.
     pub dropped_with_host: Option<Box<dyn Any>>,
@@ -150,6 +158,8 @@ impl Default for FakeHost {
             caret_result: Ok(()),
             exit_after_present: false,
             releases_hidden_frames: false,
+            presents_frames: false,
+            present_answers: VecDeque::new(),
             keymap: Keymap::ctrl_standard(),
             dropped_with_host: None,
         }
@@ -364,6 +374,20 @@ impl Host for FakeHost {
 
     fn hidden_frames_released(&mut self, released: bool) {
         self.record(HostCall::HiddenFramesReleased(released));
+    }
+
+    fn presents_frames(&self) -> bool {
+        self.presents_frames
+    }
+
+    fn present_frame(&mut self, frame: &tiny_skia::Pixmap) -> crate::host::PresentOutcome {
+        self.record(HostCall::PresentedFrame {
+            width: frame.width(),
+            height: frame.height(),
+        });
+        self.present_answers
+            .pop_front()
+            .unwrap_or(crate::host::PresentOutcome::Presented)
     }
 }
 

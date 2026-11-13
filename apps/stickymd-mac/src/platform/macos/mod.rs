@@ -8,6 +8,7 @@ pub mod caret_layer;
 pub mod clipboard;
 pub mod dialog;
 pub mod file_watch;
+pub mod frame_presenter;
 pub mod input_latency;
 pub mod monitor;
 pub mod pointer_band;

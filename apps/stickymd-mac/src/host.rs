@@ -11,7 +11,8 @@ use stickymd_app::ports::{
     TrayView,
 };
 use stickymd_desktop::host::{
-    CaretOverlay, DesktopEvent, EventSink, Host, HostSignal, PresentFacts, StartupProbe, TrayHost,
+    CaretOverlay, DesktopEvent, EventSink, Host, HostSignal, PresentFacts, PresentOutcome,
+    StartupProbe, TrayHost,
 };
 use stickymd_desktop::input::Keymap;
 use stickymd_render::image::PreviewImageSource;
@@ -49,6 +50,8 @@ pub struct MacHost {
     tray_view: TrayView,
     window: Option<Arc<Window>>,
     caret: CaretLayer,
+    /// Shows the shell's finished frames (`06` frame presentation, macOS).
+    presenter: crate::platform::macos::frame_presenter::FramePresenter,
     pointer_band: PointerBandWatch,
     /// What the user chose, apart from the level a window over the menu bar has to take.
     wants_topmost: bool,
@@ -74,6 +77,7 @@ impl MacHost {
             },
             window: None,
             caret: CaretLayer::default(),
+            presenter: Default::default(),
             pointer_band: PointerBandWatch::default(),
             wants_topmost: false,
         }
@@ -245,9 +249,25 @@ impl Host for MacHost {
         true
     }
 
-    /// While the frames are released the allocator keeps no spare block, so what the shell, the
-    /// presenter and the compositor free leaves the footprint at once.
+    /// While the frames are released the presenter keeps no surface and the allocator no spare
+    /// block, so what the shell and the compositor free leaves the footprint at once.
     fn hidden_frames_released(&mut self, released: bool) {
+        if released {
+            self.presenter.release();
+        }
         stickymd_posix::allocator::set_block_reuse(!released);
+    }
+
+    /// Frames go through IOSurfaces, not softbuffer's CGImage, which Core Animation copies on
+    /// every present (USER approved plan B 2026-11-14).
+    fn presents_frames(&self) -> bool {
+        true
+    }
+
+    fn present_frame(&mut self, frame: &tiny_skia::Pixmap) -> PresentOutcome {
+        match self.window.clone() {
+            Some(window) => self.presenter.present(&window, frame),
+            None => PresentOutcome::Failed("no window to present into".into()),
+        }
     }
 }

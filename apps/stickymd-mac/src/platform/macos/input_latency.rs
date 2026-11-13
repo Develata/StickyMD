@@ -140,12 +140,14 @@ fn write_file() {
             return;
         };
         let mut text = String::with_capacity(48 * (recorder.keys.len() + recorder.frames.len()));
-        let _ = writeln!(text, "stickymd-input-latency 3");
+        let _ = writeln!(text, "stickymd-input-latency 4");
         let _ = writeln!(
             text,
             "dropped {} {}",
             recorder.dropped_keys, recorder.dropped_frames
         );
+        let [presented, deferred, created, failed] = super::frame_presenter::counters();
+        let _ = writeln!(text, "presenter {presented} {deferred} {created} {failed}");
         for (event, seen) in &recorder.keys {
             let _ = writeln!(text, "key {event} {seen}");
         }

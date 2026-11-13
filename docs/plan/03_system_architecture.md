@@ -77,7 +77,7 @@ USER 批准（2026-10-31，[提案](../report/2026-10-23-shared-core-thin-platfo
 | `stickymd-core` | 文本、编辑 delta、撤销重做、generation、资产引用等领域状态与纯计算 | Execution Domain 的领域能力 + Object Plane 类型 | 不依赖窗口、渲染、Capability Port 实现或磁盘执行 |
 | `stickymd-render` | Markdown/数学投影、排版、绘制、命中与选择映射、布局缓存 | Execution Domain | 不决定保存、冲突或资产删除；环境读取经执行接口 |
 | `stickymd-app`（Shared Application） | typed intent、应用会话、全部 coordinator、配置状态、Capability Port 定义、可共享执行逻辑（worker 调度与结果协议）、不依赖文件语义的裁决（配置文本规则、启动恢复裁决、粘贴批次、导出命名与引用改写） | Instruction Interface + Flow Coordination + 共享 Execution | 不依赖 winit、softbuffer 或任何平台 API；不向壳暴露可变 DocumentState |
-| `stickymd-desktop`（Shared Desktop） | 通用控件、Search 控件、选择与滚动交互、窗口事件翻译、视图呈现、软件帧缓冲接线 | Interaction Shell（共享部分） | 可使用 winit/softbuffer；不持有保存、冲突、GC、生命周期的业务裁决 |
+| `stickymd-desktop`（Shared Desktop） | 通用控件、Search 控件、选择与滚动交互、窗口事件翻译、视图呈现、软件帧缓冲接线（Windows 经 softbuffer；呈现帧的宿主只拿画布，见 `06` 帧呈现） | Interaction Shell（共享部分） | 可使用 winit/softbuffer；不持有保存、冲突、GC、生命周期的业务裁决 |
 | Platform Host（`apps/stickymd-win`、`apps/stickymd-mac`） | 启动接线、原生 adapter、资源/manifest、平台验证探针 | Shell 启动接线 + Execution Domain 原生 adapter | 实现 Capability Port 并上报 Execution Receipt；不复制应用规则 |
 | `stickymd-posix` | macOS 宿主的原生 POSIX 层，未来供 Debian 复用：目录句柄、文件身份、原子发布、单实例与 socket 唤醒、宿主的大块分配器（`10` macOS 门） | Execution Domain 原生 adapter | 与平台 adapter 同样可持有 `unsafe` 与原生绑定；无业务逻辑；当前仅实现 macOS，其他目标为空 |
 

@@ -21,6 +21,7 @@ notify = { workspace = true, features = ["macos_fsevent"] }
 tray-icon.workspace = true
 crossbeam-channel.workspace = true
 libc = "0.2.172"
+tiny-skia.workspace = true
 block2 = "0.6.1"
 objc2 = "0.6.3"
 objc2-foundation = "0.3.2"

@@ -231,14 +231,15 @@ USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-de
 | 托盘 | `tray-icon` 在事件循环启动后（`NewEvents(Init)`）于主线程创建 |
 | 唤醒 | 第二实例经 socket；再次打开 bundle 经 reopen Apple Event（winit 不上报，宿主注册）；`focus_window` |
 | 单实例 | 目录 fd 的 `flock`（`05` 程序目录身份） |
-| 光标闪烁 | `CaretOverlay` 实现为 `CALayer` sublayer，闪烁不产生帧；普通帧继续用 softbuffer。显示时给图层挂离散的不透明度关键帧动画（亮、灭各 550 ms，无限循环），由系统合成器播放，app 不按闪烁周期唤醒；每次显示从“亮”重新开始（USER 批准 2026-11-10） |
+| 光标闪烁 | `CaretOverlay` 实现为 `CALayer` sublayer，闪烁不产生帧；普通帧由下行的 IOSurface 呈现器提交。显示时给图层挂离散的不透明度关键帧动画（亮、灭各 550 ms，无限循环），由系统合成器播放，app 不按闪烁周期唤醒；每次显示从“亮”重新开始（USER 批准 2026-11-10） |
 | 文件剪贴板 | `NSPasteboard`（`08` macOS 节） |
 | 保存对话框 | `NSSavePanel.runModal`，主线程阻塞 |
 | 链接打开 | `NSWorkspace` |
 | 系统终止 | 宿主给 winit 的 application delegate 补 `applicationShouldTerminate:`，返回 `NSTerminateLater`，走共享退出屏障：成功回 `YES`，保存失败回 `NO`。有模态窗口时 `abortModal`（导出按取消处理）并回 `NSTerminateCancel`，退出屏障在对话框退栈后运行。保存对话框弹出前须把 `preventsApplicationTerminationWhenModal` 设为 `NO`：它默认为 `YES`，此时 AppKit 不询问 delegate，请求到不了这里（USER 批准 2026-11-12，见 [RISK](../report/RISK-macos-modal-termination.md)）。注销与关机时，loginwindow 过了不可撤销点才向 UI Element 应用发这个请求，且不等回复，回 `NO` 或 `NSTerminateCancel` 都拦不住注销；随后 launchd 对仍在运行的进程发 SIGTERM，约 1 s 后发 SIGKILL（VM 注销实测；关机未测）。宿主把 SIGTERM 的处置设为忽略，改由主队列上的信号源在主线程接收，按同一路径处理（有模态窗口时先 `abortModal`，再走退出屏障），没有回复要发。SIGTERM 发起的退出期限为 5 s，约束的是没有 SIGKILL 跟进的 SIGTERM（如 `kill`）：每次退出只设一次，已有系统请求的期限时不另设，退出结束时撤销（USER 批准 2026-11-12，见 [RISK](../report/RISK-macos-logout-ui-element.md)）；屏障超时：笔记尚未安全时取消共享退出状态（系统请求另回 `NO`）；已安全时剩余的尽力项记为失败，立即退出 |
 | Cmd+Q | 窗口聚焦时走同一退出屏障（图标不可见时托盘这条路径不存在） |
 | 系统主题 | winit `ThemeChanged` |
-| 隐藏时的帧存储 | `Host::releases_hidden_frames` 为真：`ReleaseHiddenCaches` 之后整窗画布与 softbuffer 表面缩为 1×1 并提交一次（图层换成 1×1 图像），`hidden_frames_released(true)` 让分配器停用备用块；隐藏期间不绘制、不提交预览任务（已在 worker 中的任务见 `10`）、不重建帧存储；`ShowWindow` 先 `hidden_frames_released(false)`，按窗口尺寸重建并尝试完整提交一帧（失败仍显示，并请求重绘），再 `show`；显示失败（回到 `HiddenToTray`）的 `ShowRejected` 再次释放，聚焦失败的不释放。Windows 不释放（USER 批准 2026-11-13，`10` macOS 门，[报告](../report/2026-11-13-macos-memory-optimization.md)） |
+| 帧呈现 | `Host::presents_frames` 为真（`06` 帧呈现）。宿主在窗口根图层下建一个子图层：锚点 (0,0)、`geometryFlipped`、左上对齐、不透明，每次提交时同步根图层的 bounds 与缩放。整帧转成 BGRA 写进 IOSurface，再设为子图层内容。缓冲规则如下：<br>• 最多 3 个，色彩空间为 softbuffer 原用的 deviceRGB；<br>• 只写既不是当前内容、也不在合成器使用中（`IOSurfaceIsInUse`）的一个；<br>• 没有可写的且已满 3 个时，本帧暂缓；<br>• 换尺寸时先建好并写好新缓冲，再替换内容；<br>• 创建或加锁失败报告为失败，不崩溃。<br>（USER 批准 2026-11-14，[方案 B 报告](../report/2026-11-14-macos-plan-b-iosurface.md)） |
+| 隐藏时的帧存储 | `Host::releases_hidden_frames` 为真：`ReleaseHiddenCaches` 之后整窗画布缩为 1×1，`hidden_frames_released(true)` 让呈现器释放全部 IOSurface、清空图层内容，并让分配器停用备用块；隐藏期间不绘制、不提交预览任务（已在 worker 中的任务见 `10`）、不重建帧存储；`ShowWindow` 先 `hidden_frames_released(false)`，按窗口尺寸重建并尝试完整提交一帧（失败仍显示，并请求重绘），再 `show`；显示失败（回到 `HiddenToTray`）的 `ShowRejected` 再次释放，聚焦失败的不释放。Windows 不释放（USER 批准 2026-11-13，`10` macOS 门，[报告](../report/2026-11-13-macos-memory-optimization.md)） |
 
 **托盘不可用：** 创建失败时走无托盘路径（Failure Paths），策略切回 `Regular`。创建成功但图标被系统或用户隐藏时无法可靠发现，隐藏仍然允许，因为再次打开 `.app` 能发出 reopen。
 

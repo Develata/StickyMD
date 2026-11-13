@@ -32,10 +32,21 @@ impl<H: Host> DesktopShell<H> {
     /// What the event loop waits for: the session's next deadline and, when the shell blinks the
     /// caret, the next blink, which it advances first when `now` has reached it.
     pub(super) fn advance_and_next_wake(&mut self, now: Instant) -> Option<Instant> {
+        // A deferred frame is drawn again once its retry is due; until then it is one more wake.
+        if let Some(retry) = self.present_retry_at
+            && now >= retry
+        {
+            self.present_retry_at = None;
+            self.request_redraw();
+        }
         let next_wake = self
             .app
             .next_deadline()
             .map(|deadline| self.clock_origin + Duration::from_millis(deadline));
+        let next_wake = match (next_wake, self.present_retry_at) {
+            (Some(wake), Some(retry)) => Some(wake.min(retry)),
+            (wake, retry) => wake.or(retry),
+        };
         if !self.shell_blinks_caret() {
             return next_wake;
         }
@@ -65,6 +76,14 @@ impl<H: Host> DesktopShell<H> {
         geometry: ViewGeometry,
         source_theme: stickymd_render::source::SourceTheme,
     ) -> bool {
+        // A host presenter shows whole frames: the caret goes with the next full frame.
+        if self
+            .surface
+            .as_ref()
+            .is_some_and(crate::frame::SoftwareSurface::presented_by_host)
+        {
+            return false;
+        }
         let Some(pane) = geometry.source else {
             return false;
         };

@@ -2474,6 +2474,7 @@ dependencies = [
  "stickymd-posix",
  "stickymd-render",
  "thiserror 2.0.20",
+ "tiny-skia",
  "tray-icon",
  "winit",
 ]

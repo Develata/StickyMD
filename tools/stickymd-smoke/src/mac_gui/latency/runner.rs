@@ -82,6 +82,8 @@ struct Run {
     clock_offset_ns: Option<i64>,
     dropped: (u64, u64),
     disordered: usize,
+    /// The presenter's counters at the flush: `[presented, deferred, created, failed]`.
+    presenter: Option<[u64; 4]>,
     /// Achieved gaps between injected keys, in nanoseconds.
     gaps: Vec<u64>,
     /// Sustained keys sent more than half an interval after their due time.
@@ -229,6 +231,7 @@ fn one_run(
         clock_offset_ns: None,
         dropped: (0, 0),
         disordered: 0,
+        presenter: None,
         gaps: Vec::new(),
         late: 0,
         samples: Vec::new(),
@@ -369,6 +372,7 @@ fn measure(
     run.clock_offset_ns = model::clock_offset(&window_events, &injected);
     let paired = model::pair(&parsed, from, to);
     run.disordered = paired.disordered;
+    run.presenter = parsed.presenter;
     run.samples = paired.samples;
 
     // Quit through the product's own SIGTERM path, which saves the note, then read it back.
@@ -452,7 +456,7 @@ fn evidence(
         .iter()
         .map(|run| {
             format!(
-                "{{\"app\":{},\"case\":{},\"repetition\":{},\"status\":{},\"reason\":{},\"injected\":{},\"recorded\":{},\"added\":{},\"clock_offset_ns\":{},\"dropped\":[{},{}],\"disordered\":{},\"late_keys\":{},\"gap\":{},\"raw\":{},\"stages\":{}}}",
+                "{{\"app\":{},\"case\":{},\"repetition\":{},\"status\":{},\"reason\":{},\"injected\":{},\"recorded\":{},\"added\":{},\"clock_offset_ns\":{},\"dropped\":[{},{}],\"disordered\":{},\"presenter\":{},\"late_keys\":{},\"gap\":{},\"raw\":{},\"stages\":{}}}",
                 run.app,
                 quote(run.case.name),
                 run.repetition,
@@ -465,6 +469,9 @@ fn evidence(
                 run.dropped.0,
                 run.dropped.1,
                 run.disordered,
+                run.presenter.map_or("null".into(), |[presented, deferred, created, failed]| format!(
+                    "{{\"presented\":{presented},\"deferred\":{deferred},\"created\":{created},\"failed\":{failed}}}"
+                )),
                 run.late,
                 model::stats_json(model::stats(run.gaps.clone())),
                 run.raw_file.as_ref().map_or("null".into(), |(path, hash)| format!(
