@@ -7,8 +7,8 @@
 //! - every presented frame: when `present` returned, and how long drawing it took.
 //!
 //! What happens after `present` (Core Animation's commit, the compositor, the display) is not
-//! measured: a transaction completion block waits for the caret's endless blink animation, so it
-//! marks the next frame, not this one.
+//! measured: a transaction completion block follows the animations' lifetime (the caret's blink
+//! animation delays it), so there is no reliable per-frame commit or display receipt yet.
 //!
 //! The buffers are allocated once; a full buffer counts what it drops and never grows, so neither
 //! the key path nor the frame path does I/O or allocates. SIGUSR1 writes the file on the main

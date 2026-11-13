@@ -84,11 +84,13 @@ struct Run {
     disordered: usize,
     /// Achieved gaps between injected keys, in nanoseconds.
     gaps: Vec<u64>,
-    /// Sustained keys injected more than half an interval after their due time.
+    /// Sustained keys sent more than half an interval after their due time.
     late: usize,
     samples: Vec<Sample>,
     /// The raw recording and injection times, kept beside the evidence.
     raw: Option<String>,
+    /// Where this run's raw record went, relative to `--out`, and its SHA-256.
+    raw_file: Option<(String, String)>,
 }
 
 /// A deterministic Source fixture of exactly `bytes` bytes, mixed CJK and Latin prose, ending in
@@ -135,8 +137,23 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     let driver = crate::integrity::sha256(
         &std::env::current_exe().map_err(|e| format!("driver path: {e}"))?,
     )?;
-    let raw_dir = options.out.join("raw");
-    fs::create_dir_all(&raw_dir).map_err(|e| e.to_string())?;
+    // One directory per campaign: a reused --out never mixes an earlier campaign's records in.
+    let campaign = format!(
+        "raw/{}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_secs(),
+        std::process::id()
+    );
+    let raw_dir = options.out.join(&campaign);
+    fs::create_dir(options.out.join("raw"))
+        .or_else(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => Ok(()),
+            _ => Err(e),
+        })
+        .and_then(|()| fs::create_dir(&raw_dir))
+        .map_err(|e| format!("raw directory: {e}"))?;
     let output = options.out.join("mac-latency.json");
     let sw_vers = Command::new("/usr/bin/sw_vers")
         .output()
@@ -164,7 +181,11 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
                 println!("{label}: {}", run.reason.as_deref().unwrap_or("VALID"));
                 if let Some(raw) = run.raw.take() {
                     let name = format!("{repetition}-{index}-{}.txt", case.name);
-                    crate::atomic_evidence::write(&raw_dir.join(name), raw.as_bytes())?;
+                    crate::atomic_evidence::write(&raw_dir.join(&name), raw.as_bytes())?;
+                    run.raw_file = Some((
+                        format!("{campaign}/{name}"),
+                        crate::integrity::sha256_bytes(raw.as_bytes())?,
+                    ));
                 }
                 runs.push(run);
                 let json = evidence(options, &apps, &driver, &sw_vers, &runs, stopped.as_deref());
@@ -215,6 +236,7 @@ fn one_run(
         late: 0,
         samples: Vec::new(),
         raw: None,
+        raw_file: None,
     };
     let mut session = match Session::new() {
         Ok(session) => session,
@@ -296,12 +318,14 @@ fn measure(
             let begin = Instant::now();
             for key in 0..options.keys {
                 let due = begin + interval * key as u32;
-                match due.checked_duration_since(Instant::now()) {
-                    Some(rest) => std::thread::sleep(rest),
-                    None if Instant::now() - due > interval / 2 => run.late += 1,
-                    None => {}
+                if let Some(rest) = due.checked_duration_since(Instant::now()) {
+                    std::thread::sleep(rest);
                 }
                 require_focus(pid)?;
+                // Judged at the send: a long sleep or a slow focus query makes a key late too.
+                if Instant::now().saturating_duration_since(due) > interval / 2 {
+                    run.late += 1;
+                }
                 injected.push(now_ns());
                 input.text("x")?;
             }
@@ -431,7 +455,7 @@ fn evidence(
         .iter()
         .map(|run| {
             format!(
-                "{{\"app\":{},\"case\":{},\"repetition\":{},\"status\":{},\"reason\":{},\"injected\":{},\"recorded\":{},\"added\":{},\"clock_offset_ns\":{},\"dropped\":[{},{}],\"disordered\":{},\"late_keys\":{},\"gap\":{},\"stages\":{}}}",
+                "{{\"app\":{},\"case\":{},\"repetition\":{},\"status\":{},\"reason\":{},\"injected\":{},\"recorded\":{},\"added\":{},\"clock_offset_ns\":{},\"dropped\":[{},{}],\"disordered\":{},\"late_keys\":{},\"gap\":{},\"raw\":{},\"stages\":{}}}",
                 run.app,
                 quote(run.case.name),
                 run.repetition,
@@ -446,6 +470,11 @@ fn evidence(
                 run.disordered,
                 run.late,
                 model::stats_json(model::stats(run.gaps.clone())),
+                run.raw_file.as_ref().map_or("null".into(), |(path, hash)| format!(
+                    "{{\"path\":{},\"sha256\":{}}}",
+                    quote(path),
+                    quote(hash)
+                )),
                 model::stages_json(&run.samples)
             )
         })
@@ -465,7 +494,7 @@ fn evidence(
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"schema_version\":2,\"kind\":\"diagnostic\",\"gate\":\"none; plan 10's edit benchmark is the input-latency gate\",\"system\":{},\"driver_sha256\":{},\"stopped\":{},\"options\":{{\"repetitions\":{},\"keys\":{},\"interval_ms\":{},\"idle_keys\":{},\"idle_ms\":{}}},\"stages\":\"queue = event to main thread; wait = main thread to the start of drawing the first frame drawn after it; draw = drawing through present returned; total = event to present returned. Commit, compositor and display are not measured.\",\"apps\":[{apps_json}],\"pooled\":[{pooled}],\"runs\":[{runs_json}]}}\n",
+        "{{\"schema_version\":3,\"kind\":\"diagnostic\",\"gate\":\"none; plan 10's edit benchmark is the input-latency gate\",\"system\":{},\"driver_sha256\":{},\"stopped\":{},\"options\":{{\"repetitions\":{},\"keys\":{},\"interval_ms\":{},\"idle_keys\":{},\"idle_ms\":{}}},\"stages\":\"queue = event to main thread; wait = main thread to the start of drawing the first frame drawn after it; draw = drawing through present returned; total = event to present returned. Commit, compositor and display are not measured. Scope: typed x through CGEvent with the US/ABC source; IME composition and caret-only damage frames are not covered.\",\"apps\":[{apps_json}],\"pooled\":[{pooled}],\"runs\":[{runs_json}]}}\n",
         quote(sw_vers.trim()),
         quote(driver),
         stopped.map_or("null".into(), quote),
