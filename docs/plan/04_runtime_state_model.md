@@ -90,7 +90,7 @@ struct AppState {
 | ImeState | 编辑器后端（经 Shell 事件） | 仅 IME 事件处理 | 保存、预览流程 |
 | ConfigState | 配置管理（经 Set* intent） | 仅 SetTheme/SetOpacity/SetAlwaysOnTop 等 intent 与启动载入 | 后台任务 |
 | ExportState（Phase 17） | 导出流程（Shared Application） | 仅导出提交与导出回执 | Shell、Preview |
-| NoticeState（Phase 17） | 提示流程（Shared Application） | 仅提示效果与到期回执；持续层只由下列状态派生 | Shell（只读绘制）、Preview、后台任务 |
+| NoticeState（Phase 17） | 提示流程（Shared Application） | 仅提示效果、到期回执与标记点击；派生层只由下文所列状态派生 | Shell（只读绘制）、Preview、后台任务 |
 
 ---
 
@@ -182,9 +182,11 @@ enum SaveState {
 
 - `saved_generation` 只更新到实际落盘的 generation。
 - 保存失败不静默：必须进入 Failed 并呈现给用户，内存文本保留。
-- Phase 17：持久化工作线程停止时，进入 `Failed { error: WorkerUnavailable }`，不再只靠一条提示文字表达。
-  `Failed` 在之后有保存成功时离开。它是 #notice-state 持续故障的唯一权威；
-  `09` 的“退出已取消：保存失败”窗口状态与标题函数不变，不另立“保存失败”权威。
+- Phase 17：SaveState 另带一个与上面枚举正交的事实 `unresolved_failure: Option<SaveError>`：
+  - 任何一次保存失败都会设置它，持久化工作线程停止（`WorkerUnavailable`）也算；
+  - 只有之后某次保存成功才清除它；重试期间进入 `Scheduled` 或 `Saving` 不清除。
+  - 它是 #notice-state 中保存故障的唯一权威；
+  - `09` 的“退出已取消：保存失败”窗口状态与标题函数不变，不另立“保存失败”权威。
 
 ## ConflictState
 
@@ -199,6 +201,8 @@ enum ConflictState {
 - 用户选择“载入外部”：丢弃未保存 buffer、载入、清空 undo、更新 hash、reconcile assets。
 - 用户选择“保留本地”：原子覆盖外部文件、更新 hash、保留 undo、恢复 autosave。
 - 冲突期间允许继续输入，但 autosave 暂停。
+- Phase 17：用户已选择、选择尚在执行（“保留本地”的写入尚未回执）时，冲突仍未解除（`05` external-change-conflict）。
+  这一“已选择、执行中”的事实具名为 `conflict_choice_in_flight`，供 #notice-state 区分“待决定”与“进行中”。
 
 ## RecoveryState
 
@@ -210,6 +214,8 @@ enum RecoveryState {
 ```
 
 - 用户选择前：不覆盖任何文件、暂停 autosave、内存只保留最小必要数据。
+- Phase 17：`Candidate` 另带 `operation: Option<RecoveryOperation>`，表示用户已选择、恢复正在执行。
+  恢复完成或失败时 `operation` 回到 `None`，candidate 何时清除不变。
 
 <a id="notice-state"></a>
 ## NoticeState（Phase 17，USER 批准 2026-11-14）
@@ -222,34 +228,48 @@ Phase 17 落地前，用户可见提示仍是现行的单一诊断文字。落�
 enum ExportState { Idle, InFlight }
 
 struct NoticeState {
-    transient: Option<TransientNotice>,   // 瞬时层：唯一存储的提示
-    persistent_text_collapsed: bool,      // 持续故障文字是否已收起
+    timed: Option<TimedNotice>,           // 唯一存储的提示
 }
 
-struct TransientNotice {
+struct TimedNotice {
     id:       NoticeId,                   // 单调递增；到期回执按 id 校验
-    class:    TransientClass,             // Success | Reminder | Important
-    text:     String,
-    deadline: Instant,                    // 来自注入时钟
+    class:    TimedClass,                 // Success | Reminder | Important | FaultDisplay
+    text:     Option<String>,             // FaultDisplay 为 None：文字在呈现时取自 SaveState.unresolved_failure
+    deadline: Instant,                    // 来自注入时钟；按墙钟计，被遮挡时不暂停
 }
 ```
 
-### 两层规则
+### 规则
 
-- **持续层不存储，由权威状态派生。** 优先级从高到低：
-  1. **待决定：** `ConflictState` 不为 `None`，或 `RecoveryState` 为 `Candidate`。按可用选项给出按钮，只有一个选项时只给一个按钮。
-  2. **持续故障：** `SaveState::Failed`。
-  3. **进行中：** 依次为恢复操作进行中、保存进行中（只限“保留本地”与手动保存）、图片准备中（`AssetState`）、
-     `ExportState::InFlight`。例行自动保存的进行中不派生提示。
-- **瞬时层覆盖在持续层之上。**
-  - 到期或被替换后，露出持续层当时派生出的提示。
-  - 新的瞬时提示替换旧的；但成功不替换正在显示的提醒或重要提醒（沿用 `07` 复制反馈规则）。
-  - 到期回执的 id 与当前瞬时提示不一致时，直接忽略。
-- **持续故障的文字最长显示 30 s，之后收起：**
-  - 收起后只剩工具栏标记；标记保留到 `SaveState` 离开 `Failed`。
-  - 点击标记重新显示文字，再计 30 s。
-  - 进入新的 `Failed` 原因时，文字重新显示。
-- **Shell 只读：** 它绘制当前提示、命中按钮与标记，并把到期与点击作为输入交回；它不决定类别、时长或优先级。
+- **两层叠放。** 定时提示在上，派生层在下；定时提示到期或被清除后，露出派生层当时的提示。
+- **派生层不存储，由权威状态派生。** 优先级从高到低：
+  1. **待决定：**
+     - `ConflictState` 不为 `None`，且没有 `conflict_choice_in_flight`；
+     - 或者 `RecoveryState` 为 `Candidate`，且 `operation` 为 `None`。
+
+     按可用选项给出按钮；只有一个选项时，只给一个按钮。
+  2. **进行中：**
+     - 恢复执行中（`operation` 为 `Some`）；
+     - “保留本地”写入进行中（`conflict_choice_in_flight`）；
+     - 手动保存进行中；
+     - 图片准备中（`AssetState`）；
+     - `ExportState::InFlight`。
+
+     同时成立时，按上列顺序取第一个。例行自动保存不派生进度。
+- **定时提示的等级：** `Success` 0；`Reminder` 1；`Important` 与 `FaultDisplay` 都是 2。
+  - 新提示的等级不低于当前提示时，替换当前提示；否则丢弃新提示。
+  - 所以成功提示不会替换正在显示的提醒、重要提醒或故障展示（`07` 复制反馈规则）。
+  - 成功提示可以暂时盖住派生层的待决定或进行中提示，到期后它们自动回来。
+- **到期。** 只有 id 与当前定时提示一致的到期回执才清除它；其余到期回执忽略。
+- **保存故障。** 权威是 `SaveState.unresolved_failure`。
+  - **故障展示：** 以下三种情况各开始一段新的 `FaultDisplay`（新 id，30 s）：
+    - `unresolved_failure` 从 `None` 变为 `Some`；
+    - 故障原因改变；
+    - 用户点击工具栏标记。
+  - 故障展示期间，派生层若有待决定，提示条仍给出它的按钮，F6/F7 照常可用。
+    所以“保留本地”写入失败时，故障原因与冲突选择同时可见。
+  - **标记：** `unresolved_failure` 为 `Some` 时始终显示工具栏标记，直到之后某次保存成功。
+- **Shell 只读：** 它绘制当前提示、按钮与标记，并把到期与点击作为输入交回；它不决定类别、时长或优先级。
 
 ## AssetState
 
