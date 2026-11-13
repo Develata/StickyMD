@@ -234,8 +234,11 @@ impl<H: Host> DesktopShell<H> {
             }
             WindowEffect::ShowRejected(kind) => {
                 self.diagnostic = Some(format!("窗口未能显示（{kind:?}）。"));
-                // The window counts as hidden again, so what the show rebuilt goes again.
-                self.release_hidden_frames();
+                // A failed show leaves the window hidden, so what the show rebuilt goes again. A
+                // failed focus reports the same effect on a shown window, which keeps its frames.
+                if self.app.hidden_to_tray() {
+                    self.release_hidden_frames();
+                }
                 self.request_redraw();
             }
             WindowEffect::HideCancelled => {

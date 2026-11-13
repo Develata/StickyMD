@@ -139,7 +139,7 @@ fn no_preview_job_runs_while_the_frames_are_released() {
         hide(&mut app);
         assert!(app.frames_released);
         let before = preview_jobs(&app);
-        app.headless_view = Some((PhysicalSize::new(800, 500), 2.0));
+        app.headless_view = Some((PhysicalSize::new(800, 500), 1.0));
         app.resize(PhysicalSize::new(800, 500));
         app.request_preview_relayout();
         app.settle_event_pass(u64::MAX / 2);
@@ -175,4 +175,37 @@ fn a_rejected_show_releases_the_frames_again() {
     show(&mut app);
     assert!(!app.frames_released);
     assert!(app.source_frame.is_some());
+}
+
+/// A failed focus is reported as a rejected show too, but the window stays shown: its frames stay,
+/// whether the window was already shown or the show itself worked.
+#[test]
+fn a_failed_focus_keeps_the_frames_of_a_shown_window() {
+    let mut shown_window = shown(true);
+    shown_window
+        .host
+        .focus_answers
+        .push_back(Err(FailureKind::Failed));
+    show(&mut shown_window);
+    assert!(!shown_window.frames_released);
+    assert!(shown_window.source_frame.is_some());
+
+    let mut was_hidden = shown(true);
+    hide(&mut was_hidden);
+    was_hidden
+        .host
+        .focus_answers
+        .push_back(Err(FailureKind::Failed));
+    show(&mut was_hidden);
+    assert!(!was_hidden.frames_released);
+    assert!(was_hidden.source_frame.is_some());
+    assert_eq!(
+        release_calls(&was_hidden),
+        [
+            HostCall::Hide,
+            HostCall::HiddenFramesReleased(true),
+            HostCall::HiddenFramesReleased(false),
+            HostCall::Show,
+        ]
+    );
 }
