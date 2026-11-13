@@ -32,11 +32,14 @@ pub(super) struct Recording {
     pub presenter: Option<[u64; 4]>,
 }
 
-/// Reads the product's file (`stickymd-input-latency 4`). Anything else is an error, not a guess.
+/// Reads the product's file (`stickymd-input-latency 4`, or 3 from builds before plan B).
+/// Anything else is an error, not a guess.
 pub(super) fn parse(text: &str) -> Result<Recording, String> {
     let mut lines = text.lines();
-    if lines.next() != Some("stickymd-input-latency 4") {
-        return Err("not a version 4 input-latency recording".into());
+    // Version 3 is the same without the presenter's counters (builds before plan B).
+    let version = lines.next();
+    if version != Some("stickymd-input-latency 4") && version != Some("stickymd-input-latency 3") {
+        return Err("not a version 3 or 4 input-latency recording".into());
     }
     let mut recording = Recording::default();
     for line in lines {
@@ -224,7 +227,13 @@ mod tests {
         );
         assert_eq!(recording.frames, [frame(20, 3), frame(30, 4)]);
         assert_eq!((recording.dropped_keys, recording.dropped_frames), (0, 2));
-        assert!(parse("stickymd-input-latency 3\n").is_err());
+        assert!(parse("stickymd-input-latency 2\n").is_err());
+        assert_eq!(
+            parse("stickymd-input-latency 3\nkey 1 2\n")
+                .unwrap()
+                .presenter,
+            None
+        );
         assert_eq!(recording.presenter, Some([5, 1, 3, 0]));
         assert!(parse("stickymd-input-latency 4\nframe 1 2 3\n").is_err());
         assert!(parse("stickymd-input-latency 4\nnote x y\n").is_err());
