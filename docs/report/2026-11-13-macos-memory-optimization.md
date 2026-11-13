@@ -370,3 +370,37 @@ codex 还提了一个变体：空闲时保留映射，用 `MADV_FREE_REUSABLE` �
 - 记录器自身开销没有做开/关对照；
 - 没有覆盖输入法组字，也没有覆盖只提交光标区域的帧；
 - 宿主机真机上的数字没有测，GUI 测试只在 VM 里做。
+
+## 绘制耗时拆解（2026-11-13，USER：“接着拆绘制耗时”）
+
+**方法。**
+
+- 用不剥符号的同源构建（`f6ed229`，可执行文件 SHA-256 记在证据目录的 `binaries.sha256`）在 VM 里跑 `mac-latency`，持续输入 400 键、间隔 40 ms。
+- 打字期间对 app 进程运行 `sample`：10 秒、1 ms 间隔，100 KiB 和 1 MiB 各一次。
+- 证据在 `dist/evidence/mac-vm-2026-11-13/draw-profile-f6ed229/`，`sample-100k.txt` 的 SHA-256 为 `26aab2b8482c4a3427e4531932acd76d5926b6318d2c8d78b307783a64e57a74`，`sample-1m.txt` 为 `e14199a784adcf57d60967e2234a6be48c09ca252ce4a4b755741dabf56f9b1c`。
+- 汇总脚本是同目录的 `sample_tree.py`。
+- 采样期间绘制 p50 为 6.7 ms（100 KiB）和 7.9 ms（1 MiB）。`sample` 本身有开销，这只能代表比例，不代表绝对值。
+
+**`draw_frame` 的构成**（100 KiB 共 859 个样本 / 1 MiB 共 1254 个样本）：
+
+| 部分 | 100 KiB | 1 MiB |
+| --- | --- | --- |
+| softbuffer `present` 里 CoreAnimation 的同步提交（`CA::Transaction::commit`） | 66% | 70% |
+| `present` 的其余部分：RGBA → BGRA 转换写进 softbuffer 缓冲，以及备用块清零 | 约 9% | 约 7% |
+| 整窗填充、面板拼接（`draw_frame` 自身与 `memmove`） | 约 12% | 约 14% |
+| 源码文字、光标图层、IME 区域、工具栏 | 各不到 1% | 各不到 1% |
+
+**CoreAnimation 那部分是在把整帧再渲染一遍。** 调用链是 `prepare_contents → copy_image → create_image_by_rendering → CGContextDrawImage`，其中：
+
+- 约 76–80% 是经 CGDataProvider 把 5.4 MB 像素读进自己的缓冲（`img_raw_read → CGDataProviderDirectGetBytesAtPositionInternal`）；
+- 约 20% 是 argb32 拷贝；
+- 还要新分配一块整帧大小的缓冲。
+
+这就是内存拆解里那份常驻的 5.4 MiB CoreAnimation 副本。softbuffer 0.4.8 每次 present 都在显式事务里设 `CALayer.contents = CGImage` 并立即提交，所以这份复制在 `present` 内同步发生。上游 master 的注释也说 QuartzCore 会在内部复制。
+
+**结论：**
+
+- **按键延迟的大头是 CoreAnimation 对 CGImage 内容的整帧复制。** 每帧在 VM 里约 4–5 ms，占绘制时间三分之二以上。编辑流水线、文字绘制和光标都很小。
+- **同一处还占着常驻内存。** CoreAnimation 副本 5.4 MiB，softbuffer 逐帧分配的缓冲 5.4 MiB。
+- **只改 StickyMD 自己的绘制改不掉它。** 用 CGImage 作图层内容，复制就由系统完成。要去掉它，得换呈现方式，例如 IOSurface 作图层内容（即方案 B），或者让上游 softbuffer 提供这样的后端（上游 IOSurface PR #329 尚未合并，它用三缓冲）。
+- **局限：** 这是 VM 里的比例。VM 的图形是半虚拟化的，真机上 CoreAnimation 的这份复制可能更便宜。GUI 测试只在 VM 里做，真机比例没有测。
