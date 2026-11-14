@@ -206,8 +206,8 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     ),
     (
         "plan09:scrollbars",
-        7,
-        "3bbe303f08dab13c1be10f7ca0352e0bac91502ae59df304f2c175a153a1d90d",
+        8,
+        "6c0c707cc947eaab86cbe841706e33bdcfa124e55e927511d23a576d4c3f7b71",
     ),
     (
         "plan09:opacity",
@@ -217,12 +217,12 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "plan09:tray",
         7,
-        "bf4580d3f45b1ee457440afe46cb180864a0e1593c46d24cdc73c85d5603d026",
+        "1bdea5c4bad0a669bb65c5af0a22a5da6602e3a1b72221808ff775247cd1cf83",
     ),
     (
         "plan09:document",
-        32,
-        "37a4cb0b430059e1d58b353f0e4be050329632c8ddfc266e6133d961349ca841",
+        33,
+        "15eae5942c6217d8a88929e82374c4916846088f8b17a2fa866a1239c0e5cc69",
     ),
 ];
 
@@ -304,12 +304,13 @@ const CLAUSES: &[(&str, &str)] = &[
     ("plan09:scroll-5", "eb917ee6f5b45456"),
     ("plan09:scroll-6", "2fac9349e573b234"),
     ("plan09:scroll-7", "d11282587cc14247"),
+    ("plan09:scroll-8", "8bdf872e44a7810d"),
     ("plan09:opacity-1", "a6a6078483506833"),
     ("plan09:opacity-2", "eb300362cab34743"),
     ("plan09:opacity-3", "af424a602e1d8223"),
     ("plan09:quit-1", "437b4ce76fd3b1b1"),
     ("plan09:quit-2", "7ade9c382b14821d"),
-    ("plan09:quit-3", "039815986c36c8b6"),
+    ("plan09:quit-3", "9a768193f2b139cb"),
 ];
 
 /// Compares a decomposition with the reviewed one; the error lists every current value.

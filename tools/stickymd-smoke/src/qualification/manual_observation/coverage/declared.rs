@@ -313,6 +313,7 @@ pub(super) const ASSERTIONS: &[Assertion] = &[
         "grab-no-overlap-visual",
         &["dpi=100", "dpi=125", "dpi=150", "dpi=200", "theme"],
     ),
+    a("plan09:scroll-8", "preview-end-room", NONE),
     a("plan09:opacity-1", "whole-window", OPACITY),
     a("plan09:opacity-2", "range-and-input", NONE),
     a("plan09:opacity-3", "live-preview", NONE),

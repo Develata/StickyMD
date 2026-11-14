@@ -1826,6 +1826,14 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
         m("P12-M23", "scrollbars"),
     ),
     o(
+        "plan09:scroll-8",
+        "preview-end-room",
+        "",
+        Target::Gap {
+            planned: "Phase 17 M2 (P17-E01..E04): the shared Preview end function, not implemented yet",
+        },
+    ),
+    o(
         "plan09:opacity-1",
         "whole-window",
         "opacity=40",

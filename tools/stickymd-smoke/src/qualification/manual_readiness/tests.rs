@@ -138,7 +138,11 @@ fn a_fully_observed_context_is_ready_and_reports_the_current_mapping() {
     }
     let json = render(&report);
     crate::qualification::json::parse_object(&json).unwrap();
-    assert!(json.contains("\"known_gaps\":[]"), "{json}");
+    // The one open gap is Phase 17's Preview end room, mapped before its code exists.
+    assert!(
+        json.contains("\"known_gaps\":[\"plan09:scroll-8 preview-end-room: Phase 17 M2"),
+        "{json}"
+    );
     assert!(
         json.contains("\"retired\":[\"P08-M12 accessibility"),
         "{json}"
