@@ -24,6 +24,32 @@ pub const IMAGE_CACHE_ENTRY_OVERHEAD_BYTES: usize = 128;
 mod cache;
 pub use cache::{DecodedImageCache, ImageCacheCounters, ImageCacheKey};
 
+/// Whether `destination` is an `http(s)` image, which the Preview shows as a placeholder and never
+/// reads (no network I/O).
+pub fn is_network_destination(destination: &str) -> bool {
+    destination
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
+        || destination
+            .get(..8)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
+}
+
+/// The encoded bytes of a local image, read through `reader` but never more than
+/// `MAX_ENCODED_IMAGE_BYTES`: a longer image is refused, not truncated.
+pub fn read_encoded_image(reader: impl std::io::Read) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    reader
+        .take((MAX_ENCODED_IMAGE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_ENCODED_IMAGE_BYTES {
+        return Err("local image exceeds the 64 MiB preview limit".into());
+    }
+    Ok(bytes)
+}
+
 /// Read-only execution-domain source used by the preview worker. Implementors
 /// may read local files but must never perform network I/O.
 pub trait PreviewImageSource {
@@ -391,6 +417,25 @@ mod tests {
             out.extend_from_slice(&color);
         }
         out
+    }
+    #[test]
+    fn network_destinations_and_the_encoded_limit_are_decided_once_for_every_host() {
+        for remote in ["http://a/b.png", "HTTPS://a/b.png", "Http://x"] {
+            assert!(is_network_destination(remote), "{remote}");
+        }
+        for local in ["a.png", "http:a.png", "file://server/a.png", "", "https:/"] {
+            assert!(!is_network_destination(local), "{local}");
+        }
+        let at_limit = vec![0_u8; MAX_ENCODED_IMAGE_BYTES];
+        assert_eq!(
+            read_encoded_image(at_limit.as_slice()).unwrap().len(),
+            MAX_ENCODED_IMAGE_BYTES
+        );
+        let over = std::io::Read::take(std::io::repeat(0), (MAX_ENCODED_IMAGE_BYTES + 1) as u64);
+        assert_eq!(
+            read_encoded_image(over).unwrap_err(),
+            "local image exceeds the 64 MiB preview limit"
+        );
     }
     #[test]
     fn bitmap_normalizes_to_valid_png() {

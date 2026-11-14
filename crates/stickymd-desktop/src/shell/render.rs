@@ -9,7 +9,7 @@ use winit::dpi::PhysicalSize;
 use super::DesktopShell;
 use super::presentation::PendingRedraw;
 use crate::controls::{ToolbarVisual, paint_toolbar};
-use crate::host::{Host, PresentFacts};
+use crate::host::{Host, PRESENT_RETRY, PresentFacts, PresentOutcome};
 use crate::search::paint_search_overlay;
 use stickymd_app::config::ContentZoomPercent;
 
@@ -49,9 +49,24 @@ pub(super) struct SourcePaintKey {
 
 impl<H: Host> DesktopShell<H> {
     pub(super) fn render(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        // Hidden with its storage released: nothing to paint into, and nothing on screen.
+        if self.frames_released {
+            return;
+        }
+        self.draw_frame(Some(event_loop));
+    }
+
+    /// Paints and presents one frame; `true` when a full frame reached the window. Without an
+    /// event loop (the frame drawn before a show), a host probe that asks to end is asked again on
+    /// the next ordinary frame.
+    pub(super) fn draw_frame(
+        &mut self,
+        event_loop: Option<&winit::event_loop::ActiveEventLoop>,
+    ) -> bool {
+        let draw_started = std::time::Instant::now();
         let pending = std::mem::replace(&mut self.pending_redraw, PendingRedraw::None);
         let Some(geometry) = self.view_geometry() else {
-            return;
+            return false;
         };
         let dpi = self
             .window
@@ -65,7 +80,7 @@ impl<H: Host> DesktopShell<H> {
             stickymd_render::source::SourceTheme::Light
         };
         if pending == PendingRedraw::CaretOnly && self.render_caret_damage(geometry, source_theme) {
-            return;
+            return true;
         }
         let preedit = self.app.editor.preedit_visual();
         if let (Some(_pane), Some(projection), Some(source_frame)) = (
@@ -125,7 +140,7 @@ impl<H: Host> DesktopShell<H> {
         let search_layout = self.search_layout();
         let scrollbars = self.scrollbar_geometry();
         let Some(surface) = &mut self.surface else {
-            return;
+            return false;
         };
         surface.pixmap_mut().fill(tiny_skia::Color::from_rgba8(
             if dark { 31 } else { 248 },
@@ -187,8 +202,23 @@ impl<H: Host> DesktopShell<H> {
         if let Some(layout) = &self.control_layout {
             paint_toolbar(surface.pixmap_mut(), geometry, layout, toolbar_visual);
         }
-        let presented = if let Err(error) = surface.present() {
-            self.diagnostic = Some(error.to_string());
+        let outcome = if surface.presented_by_host() {
+            self.host.present_frame(surface.pixmap())
+        } else {
+            match surface.present() {
+                Ok(()) => PresentOutcome::Presented,
+                Err(error) => PresentOutcome::Failed(error.to_string()),
+            }
+        };
+        // Only a deferred frame waits for a retry; a presented or failed one ends any wait.
+        self.present_retry_at = None;
+        let presented = if let PresentOutcome::Failed(error) = outcome {
+            self.diagnostic = Some(error);
+            false
+        } else if outcome == PresentOutcome::Deferred {
+            // Nothing reached the window: draw the whole frame again shortly.
+            self.pending_redraw = PendingRedraw::Full;
+            self.present_retry_at = Some(std::time::Instant::now() + PRESENT_RETRY);
             false
         } else {
             let facts = PresentFacts {
@@ -196,9 +226,13 @@ impl<H: Host> DesktopShell<H> {
                 height: surface_size.height,
                 view_complete: geometry.preview.is_none() || self.preview_frame.is_some(),
                 ledger: surface.ledger_mut(),
+                draw: draw_started.elapsed(),
             };
             if self.host.after_present(&facts) {
-                self.finish_host_probe(|| event_loop.exit());
+                match event_loop {
+                    Some(event_loop) => self.finish_host_probe(|| event_loop.exit()),
+                    None => self.request_redraw(),
+                }
             }
             true
         };
@@ -213,6 +247,7 @@ impl<H: Host> DesktopShell<H> {
             }
         }
         self.update_ime_area();
+        presented
     }
 }
 

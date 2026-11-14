@@ -2,9 +2,50 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#owned-ast-projection
 
-use comrak::nodes::Sourcepos;
+use std::ops::Range;
+
+use comrak::nodes::{AstNode, NodeValue, Sourcepos};
 
 use super::SourceRange;
+
+/// Comrak 0.59 drops link reference definitions from the start of a paragraph
+/// (or of the text a Setext underline turns into a heading) without moving its
+/// start line, so every inline position in that block is reported shifted up
+/// by the removed lines (fixed upstream in 1.0.0-rc.1). Reported lines stay
+/// exact, and a block's own end line is right: its last inline ends on it, or
+/// one line above a Setext underline. A block whose inlines end earlier is
+/// shifted.
+pub(crate) fn inlines_shifted<'a>(block: &'a AstNode<'a>) -> bool {
+    let data = block.data.borrow();
+    let text_end = match &data.value {
+        NodeValue::Paragraph => data.sourcepos.end.line,
+        NodeValue::Heading(heading) if heading.setext => data.sourcepos.end.line.saturating_sub(1),
+        _ => return false,
+    };
+    block
+        .descendants()
+        .skip(1)
+        .map(|inline| inline.data.borrow().sourcepos.end.line)
+        .max()
+        .is_some_and(|last| last < text_end)
+}
+
+/// Byte spans, by whole lines and in document order, of the blocks under
+/// `root` whose inline positions are shifted. Only a source holding `]:` can
+/// contain a link reference definition, so any other source is not walked.
+pub(super) fn shifted_block_spans<'a>(
+    root: &'a AstNode<'a>,
+    source: &str,
+    map: &SourceMap,
+) -> Vec<Range<usize>> {
+    if !source.contains("]:") {
+        return Vec::new();
+    }
+    root.descendants()
+        .filter(|&node| inlines_shifted(node))
+        .filter_map(|node| map.whole_lines(node.data.borrow().sourcepos))
+        .collect()
+}
 
 /// Immutable line index for the exact canonical snapshot parsed by Comrak.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +87,17 @@ impl SourceMap {
             .then_some(range)
     }
 
+    /// Whole lines from a block's first line to its last, before that line's
+    /// `\n`.
+    fn whole_lines(&self, position: Sourcepos) -> Option<Range<usize>> {
+        let start = *self.line_starts.get(position.start.line.checked_sub(1)?)?;
+        let end = self
+            .line_starts
+            .get(position.end.line)
+            .map_or(self.source_len, |next| next - 1);
+        (start <= end).then_some(start..end)
+    }
+
     pub(super) fn table_cell(
         &self,
         source: &str,
@@ -56,7 +108,8 @@ impl SourceMap {
     }
 }
 
-/// Inverse byte-coordinate projection for Comrak 0.54's table-cell preprocessing.
+/// Inverse byte-coordinate projection for Comrak 0.59's table-cell preprocessing
+/// (upstream reports canonical columns from 1.0.0-rc.1).
 /// Comrak removes the backslash in `\|` before parsing inlines, but reports their
 /// columns in that shortened input. Cell boundaries still address canonical text.
 /// This runs only on Comrak-confirmed cells: it never recognizes Markdown or math.

@@ -95,12 +95,14 @@ fn observe_note(path: &Path) -> Result<ExternalFileState, StorageFailure> {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(ExternalFileState::Missing),
         Err(error) => return Err(failed("read", path, error)),
     };
-    Ok(match LoadedDocument::from_durable_bytes(&bytes) {
-        Ok(document) => ExternalFileState::Present(document.into_external_fact()),
-        Err(_) => ExternalFileState::InvalidUtf8 {
-            fingerprint: hash_bytes(&bytes),
+    Ok(
+        match LoadedDocument::from_durable_bytes(&bytes, stickymd_core::LineEnding::Crlf) {
+            Ok(document) => ExternalFileState::Present(document.into_external_fact()),
+            Err(_) => ExternalFileState::InvalidUtf8 {
+                fingerprint: hash_bytes(&bytes),
+            },
         },
-    })
+    )
 }
 
 impl NoteStorage for PortableDiskPorts {

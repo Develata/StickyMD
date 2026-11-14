@@ -319,7 +319,7 @@ Ctrl+Shift+S 导出到目标目录。
 松手；随后 hover 感应条；失焦等待。
 
 ### Expected
-吸附并向左缩入，留 3 DIP 感应条（高度=窗高）；hover 100 ms 展开；
+吸附并向左缩入，留 2 DIP 感应条（高度=窗高）；hover 100 ms 展开；
 失焦 700 ms 收起；拖离 >16 DIP 恢复浮动。
 
 ### Failure Signals
@@ -484,7 +484,7 @@ System 不跟随；重启后主题丢失。
 在两屏间拖动窗口、dock、输入中文、渲染公式。
 
 ### Expected
-scale 正确重算；3 DIP 感应条按显示器缩放；IME 候选框位置正确；
+scale 正确重算；2 DIP 感应条按显示器缩放；IME 候选框位置正确；
 公式清晰（cache key 含 DPI）；无模糊/错位。
 
 ### Failure Signals

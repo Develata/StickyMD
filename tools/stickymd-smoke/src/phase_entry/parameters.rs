@@ -18,7 +18,7 @@ impl Parameters {
         let phase = match arguments.first().map(String::as_str) {
             Some("all") => None,
             Some(value) => Some(Phase::parse(value)?),
-            None => return Err("phase-entry requires 00..15, 11-b or all".into()),
+            None => return Err("phase-entry requires 00..16, 11-b or all".into()),
         };
         let mut values = BTreeMap::new();
         let mut inactive = BTreeSet::new();

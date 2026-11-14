@@ -6,6 +6,7 @@ mod asset_io;
 mod asset_paste;
 mod clipboard;
 mod editor;
+mod export;
 mod export_plan;
 mod note_guard;
 mod note_io;
@@ -27,6 +28,10 @@ pub use asset_paste::{
 };
 pub use clipboard::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
 pub use editor::{AppEffect, EditorCoordinator, EditorFlowError};
+pub use export::{
+    CopyFailure, EXPORT_ASSET_DIRECTORY_LIMIT, ExportError, copy_hashing,
+    export_asset_directory_leaf, export_staging_name, export_temporary_name,
+};
 pub use export_plan::{CopyPlacement, ExportNameCollision, ExportPlan, export_asset_extension};
 pub use note_guard::{PublishVerdict, guarded_publish_verdict};
 pub use note_io::{NoteEffect, NoteEffects, NoteIo};

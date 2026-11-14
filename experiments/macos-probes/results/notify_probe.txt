@@ -1,0 +1,8 @@
+stale events right after watch: first_event=None count=0 []
+external in-place write: first_event=Some(11.585083ms) count=4 ["Create(File) [\"note.md\"]", "Modify(Metadata(Any)) [\"note.md\"]", "Modify(Metadata(Extended)) [\"note.md\"]", "Modify(Data(Content)) [\"note.md\"]"]
+atomic replace by rename: first_event=Some(11.272542ms) count=10 ["Create(File) [\"note.md.tmp\"]", "Modify(Name(Any)) [\"note.md.tmp\"]", "Modify(Metadata(Extended)) [\"note.md.tmp\"]", "Modify(Data(Content)) [\"note.md.tmp\"]", "Modify(Name(Any)) [\"note.md\"]", "Create(File) [\"note.md\"]", "Modify(Name(Any)) [\"note.md\"]", "Modify(Metadata(Any)) [\"note.md\"]", "Modify(Metadata(Extended)) [\"note.md\"]", "Modify(Data(Content)) [\"note.md\"]"]
+swap then remove temporary: first_event=Some(12.01475ms) count=11 ["Modify(Name(Any)) [\"note.md\"]", "Modify(Name(Any)) [\"note.md\"]", "Create(File) [\"note.md.tmp\"]", "Modify(Name(Any)) [\"note.md.tmp\"]", "Modify(Metadata(Extended)) [\"note.md.tmp\"]", "Modify(Data(Content)) [\"note.md.tmp\"]", "Create(File) [\"note.md.tmp\"]", "Remove(File) [\"note.md.tmp\"]", "Modify(Name(Any)) [\"note.md.tmp\"]", "Modify(Metadata(Extended)) [\"note.md.tmp\"]", "Modify(Data(Content)) [\"note.md.tmp\"]"]
+write in images/ (non-recursive watch): first_event=None count=0 []
+note removed: first_event=Some(12.822542ms) count=2 ["Remove(File) [\"note.md\"]", "Modify(Name(Any)) [\"note.md\"]"]
+watched directory moved away: first_event=Some(3.914917ms) count=3 ["Create(Folder) [\"note\"]", "Modify(Name(Any)) [\"note\"]", "Modify(Metadata(Extended)) [\"note\"]"]
+write in moved directory: first_event=None count=0 []

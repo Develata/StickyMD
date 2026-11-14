@@ -10,7 +10,7 @@ use comrak::{Arena, Options, parse_document};
 use stickymd_core::DocumentSnapshot;
 use thiserror::Error;
 
-use super::source_map::TableCellSourceMap;
+use super::source_map::{TableCellSourceMap, shifted_block_spans};
 use super::{
     BlockNode, CodeBlockNode, ImageKind, InlineNode, LinkKind, ListItem, ListNode, MathNode,
     OwnedDocumentTree, SourceMap, SourceRange, TableAlignment, TableCell, TableNode, TableRow,
@@ -31,7 +31,7 @@ pub enum PreviewParseError {
 }
 
 /// Exact Phase 5 Markdown dialect. Comrak remains the only semantic parser.
-fn markdown_options() -> Options<'static> {
+pub(crate) fn markdown_options() -> Options<'static> {
     let mut options = Options::default();
     options.extension.strikethrough = true;
     options.extension.table = true;
@@ -78,8 +78,9 @@ impl PreviewParser {
         let root = parse_document(&arena, &snapshot.text, &markdown_options());
         let comrak_parse = parse_started.elapsed();
         let conversion_started = Instant::now();
-        let (blocks, node_count) = {
+        let (blocks, node_count, shifted_blocks) = {
             let source_map = SourceMap::new(&snapshot.text);
+            let shifted_blocks = shifted_block_spans(root, &snapshot.text, &source_map);
             let mut context = ConvertContext {
                 source: &snapshot.text,
                 source_map: &source_map,
@@ -87,7 +88,7 @@ impl PreviewParser {
                 table_cell_map: None,
             };
             let blocks = context.convert_blocks(root, 0)?;
-            (blocks, context.node_count)
+            (blocks, context.node_count, shifted_blocks)
         };
         let owned_conversion = conversion_started.elapsed();
 
@@ -97,6 +98,7 @@ impl PreviewParser {
                 source: Arc::clone(&snapshot.text),
                 blocks,
                 node_count,
+                shifted_blocks,
             },
             PreviewParseMetrics {
                 comrak_parse,
@@ -566,6 +568,25 @@ mod tests {
         assert!(!options.extension.math_code);
         assert!(!options.extension.wikilinks_title_after_pipe);
         assert!(!options.extension.description_lists);
+    }
+
+    #[test]
+    fn autolinked_emails_do_not_overflow_the_preview_worker_stack() {
+        // Comrak 0.54 recursed once per autolinked email and aborted the whole
+        // process on the preview worker's 512 KB stack at about 3000 of them
+        // (GHSA-xg9p-p4jc-c46g, fixed in 0.55). The worker's stack is the same.
+        let text = "a@b.co ".repeat(3_000);
+        let parsed = std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                PreviewParser
+                    .parse(&snapshot(&text))
+                    .map(|tree| tree.node_count)
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(matches!(parsed, Ok(nodes) if nodes >= 3_000), "{parsed:?}");
     }
 
     #[test]

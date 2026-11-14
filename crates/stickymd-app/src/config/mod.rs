@@ -13,7 +13,7 @@ pub use coordinator::{
 
 pub use document::{
     ConfigLoadOutcome, ConfigSerializeError, ConfigWarning, PRESERVED_CONFIG_SUFFIXES, config_text,
-    preserved_config_name,
+    load_config_from, preserve_with, preserved_config_name,
 };
 
 pub use runtime::{

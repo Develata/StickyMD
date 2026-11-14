@@ -2,10 +2,12 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#windows-adapter-mapping
 
+use std::time::{Duration, Instant};
+
 use tiny_skia::Pixmap;
 
-use super::DesktopShell;
 use super::presentation::PendingRedraw;
+use super::{CARET_BLINK, DesktopShell};
 use crate::frame::DamageRect;
 use crate::geometry::{PaneRect, ViewGeometry};
 use crate::host::Host;
@@ -19,6 +21,40 @@ impl<H: Host> DesktopShell<H> {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+
+    /// Whether the shell wakes every `CARET_BLINK` to blink the caret. Not when the host's overlay
+    /// blinks by itself, unless the overlay failed and the frame draws the caret.
+    pub(super) fn shell_blinks_caret(&self) -> bool {
+        self.caret_animation_active() && (self.native_caret_failed || !self.overlay_blinks)
+    }
+
+    /// What the event loop waits for: the session's next deadline and, when the shell blinks the
+    /// caret, the next blink, which it advances first when `now` has reached it.
+    pub(super) fn advance_and_next_wake(&mut self, now: Instant) -> Option<Instant> {
+        // A deferred frame is drawn again once its retry is due; until then it is one more wake.
+        if let Some(retry) = self.present_retry_at
+            && now >= retry
+        {
+            self.present_retry_at = None;
+            self.request_redraw();
+        }
+        let next_wake = self
+            .app
+            .next_deadline()
+            .map(|deadline| self.clock_origin + Duration::from_millis(deadline));
+        let next_wake = match (next_wake, self.present_retry_at) {
+            (Some(wake), Some(retry)) => Some(wake.min(retry)),
+            (wake, retry) => wake.or(retry),
+        };
+        if !self.shell_blinks_caret() {
+            return next_wake;
+        }
+        if now >= self.next_blink {
+            self.next_blink = now + CARET_BLINK;
+            self.advance_caret_blink();
+        }
+        Some(next_wake.map_or(self.next_blink, |current| current.min(self.next_blink)))
     }
 
     pub(super) fn advance_caret_blink(&mut self) {
@@ -40,6 +76,14 @@ impl<H: Host> DesktopShell<H> {
         geometry: ViewGeometry,
         source_theme: stickymd_render::source::SourceTheme,
     ) -> bool {
+        // A host presenter shows whole frames: the caret goes with the next full frame.
+        if self
+            .surface
+            .as_ref()
+            .is_some_and(crate::frame::SoftwareSurface::presented_by_host)
+        {
+            return false;
+        }
         let Some(pane) = geometry.source else {
             return false;
         };

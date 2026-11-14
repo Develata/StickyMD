@@ -4,8 +4,8 @@
 
 - `Layer`: Verification
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-10
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -187,7 +187,7 @@ docs/acceptance-cases/phase-XX.md
   检查范围和聚合判定由 Rust CLI 唯一持有。GitHub workflow 只提供事件基线、隔离 runner、
   缓存、参数转发和任务结果，不复制路径分类规则。
 - 工程模块沿用 Cargo 边界：core、render、windows、smoke、两个 Phase 01 实验（Phase 15 起增加 app、desktop，见下文
-  Phase 15 节）；与
+  Phase 15 节；Phase 16 增加 mac）；与
   Qualification Module Registry 的 Runtime/Performance/Resources/G3/G4/G5 区分。
   显式本地模块入口只运行请求范围；日常 CI 规划器负责补全反向依赖。
 - PR 比较 base commit 与实际被 checkout 的 merge commit；push 比较 before commit 与
@@ -242,6 +242,38 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 替换/冲突/图片安全、IME、托盘可达性、透明度、置顶、贴边、多屏、剪贴板/导出（自动化与人工结果分别记录；剪贴板多格式
 选择按 [plan 08 剪贴板验证](08_assets_and_export.md#clipboard-priority-verification)）。共享层完成、Windows 回归、跨平台应用可用与发布 readiness
 分别报告；测试替身只证明接口与共享语义，不证明原生实现正确。
+
+<a id="phase-16-macos-host"></a>
+### Phase 16：macOS 宿主
+
+依据 [决定报告](../report/2026-11-09-macos-platform-decision.md) 与 `02` macOS 节。验收见 `docs/acceptance-cases/phase-16.md`，自动化由 Rust CLI 持有，`tools/smoke/phase-16.ps1` 是稳定入口。
+
+| 里程碑 | 交付 | 出口 |
+| --- | --- | --- |
+| M0 | 基线：macOS 移除没有 `head` 表的字体 | 四个共享 crate 的测试在 macOS 全部通过 |
+| M1 | 建立 `apps/stickymd-mac` 与原生 POSIX 层 `crates/stickymd-posix`，同时登记 `unsafe` 治理、CI 选择与指纹归属；存储、单实例、监视、启动 | 真实存储通过 `storage_conformance!`；`05` macOS 节的失败路径有测试；macOS 测试与 clippy 显式包含两个 crate |
+| M2 | 窗口、托盘、唤醒、光标图层、系统终止；共享层 S2、S4、S6、S7、S8 | Windows 现有断言不变（S7、S8 按批准的新行为更新）；验收表中 Mode 为 `Manual` 的真实桌面项人工确认，Mode 为 `Automated` 的由虚拟机中的 `mac-gui` 判定（见下文账本的“自动化行”） |
+| M3 | 输入、剪贴板、导出；共享层 S3 | `08` macOS 节的格式验证；基线测量 |
+| M4 | `.app` 打包脚本、ad-hoc 签名、人工验收清单 | 未运行项保持 `NOT TESTED` |
+
+共享层改动的 Windows 桌面回归只能在 Windows 机器上运行；S8 按 USER 决定不单独回归，验收表记为 USER 豁免。
+
+**macOS 帧呈现（方案 B，USER 批准 2026-11-14，[报告](../report/2026-11-14-macos-plan-b-iosurface.md)）的出口：**
+
+- **自动化：**
+  - 宿主呈现路径的共享层测试：三种结果、暂缓重试、光标降级、隐藏释放与再显示；
+  - 呈现器的单元测试：缓冲选择、BGRA 写入与行跨度、创建失败不崩溃；
+  - 虚拟机里同一批次基线与新包交替跑 `mac-latency` 与 `mac-resources`，以及 `mac-gui`。
+- **人工：** USER 把新包与正式包并排目视比较颜色、方向和撕裂。
+- **Windows：** 共享层 `render.rs`、`frame/surface.rs` 的改动需要 Windows 桌面回归。
+
+`mac-gui` 的结果按行记入账本 `dist/evidence/mac-gui-ledger/records.jsonl`，由 `stickymd-smoke mac-ledger` 管理（USER 批准 2026-11-12，[复用提案](../report/2026-11-11-macos-gui-rerun-reuse.md)）。
+
+- **记录**：账本只追加。每次追加都在排他锁下读取、校验，再原子发布，公共证据写入口不得写入账本目录。`record` 从同一次读取的证据字节中，记下一次运行的每一行，连同以下身份：app 可执行文件与 bundle 清单的 SHA-256、驱动的 SHA-256（由 `mac-gui` 写进证据；运行期间不得替换驱动）、虚拟机的 `sw_vers`，以及运行者传入的镜像 digest。一个 digest 只能对应一个系统版本。
+- **复用**：`plan` 只读账本，不启动被测程序，需要传入目标虚拟机运行前的 `sw_vers`。某行在账本里已有 PASS，且 app、bundle、驱动、镜像、系统五项与当前完全一致时，复用这次 PASS；如果同一身份下后来又记过非 PASS，一并提示。其余行列入要运行的 `--only` 清单。FAIL 与 NOT_TESTED 从不复用。
+- **人工收据**：`receipt` 按行记录 USER 的确认，绑定 app 可执行文件的 SHA-256。app 变了，收据不再成立，`plan` 会列出待重新确认的人工行。I01–I03 与 R03 从不沿用收据。
+- **自动化行**：验收表中 Mode 为 `Automated`、由 `mac-gui` 执行的行，只认账本里与当前 app、bundle、驱动、镜像、系统五项一致的 PASS，不需要人工收据。app 变了，这些行要在新身份下重新运行（`plan` 会列出）；还没有这样的 PASS 时状态为 `NOT TESTED`。哪些行改为 `Automated`，只限断言与显示硬件无关的行，按行经 USER 批准（2026-11-12，[提案](../report/2026-11-12-macos-manual-rows-automation.md)）。
+- **范围**：不按产品模块复用，这一级留待 Windows RC3-B 解决之后。这一节不改变 Phase 16 不是资格化 suite 的性质。
 
 <a id="qualification-process-isolation"></a>
 ### GUI qualification process isolation
@@ -782,7 +814,7 @@ desktop jitter 成功率。GitHub-hosted CI 只运行该 harness 的无界面 pa
 spot check，但标准 clipboard 格式的 exact-EXE 集成结果才是该组可重复的 release evidence。
 
 G4 tray/dock/editor-compatibility/identity/real-IME 路径复用同一 exact-candidate 生命周期与收据合同，并保持
-六个高内聚组：G4-01 tray 菜单、close/show/dirty quit；G4-02 主屏 Left/Top/Right、3 DIP 感应条、
+六个高内聚组：G4-01 tray 菜单、close/show/dirty quit；G4-02 主屏 Left/Top/Right、2 DIP 感应条、
 24/25 DIP capture、`Top > Left > Right`、700/100/500 ms 与 focus/IME/Pin guard；G4-03 legacy
 clipboard shortcuts、Preview 只读与 Source Search 的键盘查找/替换、视图停放恢复；G4-04 真实 toolbar 数学分隔符转换、源码即时投影、literal
 safety 与单次 Undo；G4-05 真实 junction canonical identity、同 HWND 唤醒与第二实例零 durable write；

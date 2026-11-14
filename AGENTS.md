@@ -206,7 +206,9 @@ crates/stickymd-core/      ← 领域模型（文本、generation、撤销、持
 crates/stickymd-render/    ← Markdown/数学投影、排版、绘制
 crates/stickymd-app/       ← Shared Application（intent、coordinator、配置、`AppSession`、Capability Port、worker；无平台 API）
 crates/stickymd-desktop/   ← Shared Desktop（视图几何、标题投影、软件帧路径、控件、滚动条、Search 叠层、按键表、`shell/` 的 `DesktopShell<H>`；可用 winit/softbuffer，无原生 API）
+crates/stickymd-posix/     ← macOS 宿主的原生 POSIX 层（未来供 Debian 复用；可持有 `unsafe` 与原生绑定，无业务逻辑；非 macOS 为空）
 apps/stickymd-win/         ← Windows 宿主（启动装配、`WinHost`、原生 adapter、存储）
+apps/stickymd-mac/         ← macOS 宿主（二进制 `stickymd`；宿主内的 `unsafe` 与原生绑定只在 `src/platform/`，POSIX 原语由 `stickymd-posix` 提供；非 macOS 编译为桩，验收见 phase-16）
 tools/stickymd-smoke/      ← std-only 阶段验证 CLI（不进入产品 runtime）
 tools/smoke/               ← 稳定的逐 Phase PowerShell 薄入口
 ```

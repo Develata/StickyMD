@@ -484,7 +484,7 @@ mod tests {
         };
         let owned = PreviewParser.parse(&snapshot).unwrap();
         let tree = RenderTreeBuilder.build(&owned);
-        let mut font_system = FontSystem::new();
+        let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let layout = layout_document(
             LayoutResources {

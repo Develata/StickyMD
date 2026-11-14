@@ -4,7 +4,7 @@
 //! plan_ref: docs/plan/03_system_architecture.md#interaction-shell
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use stickymd_render::source::{SourceInitializationMilestone, SourceProjection};
 use winit::application::ApplicationHandler;
@@ -13,8 +13,8 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Theme, WindowAttributes, WindowId};
 
+use super::DesktopShell;
 use super::window_geometry_runtime::geometry_event;
-use super::{CARET_BLINK, DesktopShell};
 use crate::frame::SoftwareSurface;
 use crate::host::{DesktopEvent, Host};
 use stickymd_app::config::{MIN_WINDOW_HEIGHT_DIP, MIN_WINDOW_WIDTH_DIP, ViewMode};
@@ -59,7 +59,12 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
         window.set_ime_allowed(self.app.config().current().view_mode != ViewMode::Preview);
         self.system_theme = window.theme().unwrap_or(Theme::Light);
         let size = window.inner_size();
-        let surface = match SoftwareSurface::new(Arc::clone(&window)) {
+        let created = if self.host.presents_frames() {
+            SoftwareSurface::for_host(size.width, size.height)
+        } else {
+            SoftwareSurface::new(Arc::clone(&window))
+        };
+        let surface = match created {
             Ok(surface) => surface,
             Err(error) => {
                 self.abort_startup(&StartupStop::Surface(error.to_string()), || {
@@ -220,11 +225,17 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
             WindowEvent::CursorLeft { .. } => {
                 self.pointer_inside_window = false;
                 self.scrollbars.hovered = None;
-                self.dispatch_window_intent(
-                    stickymd_app::flow::window::state::WindowIntent::PointerLeft {
-                        now_ms: self.timestamp_ms(),
-                    },
-                );
+                let hover_revealed = self.app.window_flow().is_some_and(|flow| {
+                    flow.state()
+                        .hover_revealed_at(stickymd_app::flow::window::state::DockEdge::Top)
+                });
+                if !(hover_revealed && self.host.keeps_pointer_after_leave()) {
+                    self.dispatch_window_intent(
+                        stickymd_app::flow::window::state::WindowIntent::PointerLeft {
+                            now_ms: self.timestamp_ms(),
+                        },
+                    );
+                }
                 self.request_redraw();
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -250,20 +261,7 @@ impl<H: Host> ApplicationHandler<DesktopEvent> for DesktopShell<H> {
         let now_ms = self.timestamp_ms();
         self.settle_event_pass(now_ms);
 
-        let now = Instant::now();
-        let mut next_wake = self
-            .app
-            .next_deadline()
-            .map(|deadline| self.clock_origin + Duration::from_millis(deadline));
-        if self.caret_animation_active() {
-            if now >= self.next_blink {
-                self.next_blink = now + CARET_BLINK;
-                self.advance_caret_blink();
-            }
-            next_wake =
-                Some(next_wake.map_or(self.next_blink, |current| current.min(self.next_blink)));
-        }
-        if let Some(next_wake) = next_wake {
+        if let Some(next_wake) = self.advance_and_next_wake(Instant::now()) {
             event_loop.set_control_flow(ControlFlow::WaitUntil(next_wake));
         } else {
             event_loop.set_control_flow(ControlFlow::Wait);

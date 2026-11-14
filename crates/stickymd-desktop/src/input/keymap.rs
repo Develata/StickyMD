@@ -5,13 +5,16 @@
 
 use stickymd_app::config::ViewMode;
 use stickymd_app::instruction::{PersistenceIntent, SaveReason};
-use winit::keyboard::KeyCode;
+use winit::keyboard::{KeyCode, ModifiersState};
 
-/// What each key means, as data a Platform Host chooses (plan 03, rule 9). `shortcut` is Ctrl
-/// without Alt. `window_key` decides zoom and view keys through `zoom_key_command` and
+/// What each key means, as data a Platform Host chooses (plan 03, rule 9). `shortcut_held` says
+/// whether the held modifiers make a key a shortcut; `command_key` names the commands whose keys
+/// differ between desktops. `window_key` decides zoom and view keys through `zoom_key_command` and
 /// `view_key_mode`, so a table that changes either supplies its own `window_key` too.
 #[derive(Clone, Copy)]
 pub struct Keymap {
+    pub shortcut_held: fn(ModifiersState) -> bool,
+    pub command_key: fn(Option<KeyCode>, ModifiersState) -> Option<KeyCommand>,
     pub clipboard_alias: fn(Option<KeyCode>, bool, bool) -> Option<ClipboardAlias>,
     pub window_key: fn(Option<KeyCode>, bool, bool) -> Option<WindowKey>,
     pub view_key_mode: fn(Option<KeyCode>) -> Option<ViewMode>,
@@ -23,6 +26,8 @@ impl Keymap {
     /// The table with Ctrl as the shortcut modifier: the Windows keys, unchanged.
     pub const fn ctrl_standard() -> Self {
         Self {
+            shortcut_held: ctrl_shortcut_held,
+            command_key: ctrl_command_key,
             clipboard_alias,
             window_key,
             view_key_mode,
@@ -30,6 +35,82 @@ impl Keymap {
             global_persistence_shortcut,
         }
     }
+
+    /// The table with Cmd as the shortcut modifier (plan 07, macOS input).
+    pub const fn cmd_standard() -> Self {
+        Self {
+            shortcut_held: cmd_shortcut_held,
+            command_key: cmd_command_key,
+            clipboard_alias: no_clipboard_alias,
+            window_key,
+            view_key_mode,
+            zoom_key_command,
+            global_persistence_shortcut,
+        }
+    }
+}
+
+/// A key's meaning where desktops disagree about which key means it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyCommand {
+    OpenFind,
+    OpenReplace,
+    Undo,
+    Redo,
+    LineBoundary { end: bool },
+    DocumentBoundary { end: bool },
+    Quit,
+}
+
+fn ctrl_shortcut_held(modifiers: ModifiersState) -> bool {
+    modifiers.control_key() && !modifiers.alt_key()
+}
+
+fn ctrl_command_key(code: Option<KeyCode>, modifiers: ModifiersState) -> Option<KeyCommand> {
+    if !ctrl_shortcut_held(modifiers) {
+        return None;
+    }
+    match code {
+        Some(KeyCode::KeyF) => Some(KeyCommand::OpenFind),
+        Some(KeyCode::KeyH) => Some(KeyCommand::OpenReplace),
+        Some(KeyCode::KeyZ) => Some(KeyCommand::Undo),
+        Some(KeyCode::KeyY) => Some(KeyCommand::Redo),
+        Some(KeyCode::Home) => Some(KeyCommand::DocumentBoundary { end: false }),
+        Some(KeyCode::End) => Some(KeyCommand::DocumentBoundary { end: true }),
+        _ => None,
+    }
+}
+
+fn cmd_shortcut_held(modifiers: ModifiersState) -> bool {
+    modifiers.super_key() && !modifiers.control_key() && !modifiers.alt_key()
+}
+
+fn cmd_command_key(code: Option<KeyCode>, modifiers: ModifiersState) -> Option<KeyCommand> {
+    if code == Some(KeyCode::KeyF)
+        && modifiers.super_key()
+        && modifiers.alt_key()
+        && !modifiers.control_key()
+    {
+        return Some(KeyCommand::OpenReplace);
+    }
+    if !cmd_shortcut_held(modifiers) {
+        return None;
+    }
+    match (code, modifiers.shift_key()) {
+        (Some(KeyCode::KeyF), false) => Some(KeyCommand::OpenFind),
+        (Some(KeyCode::KeyZ), false) => Some(KeyCommand::Undo),
+        (Some(KeyCode::KeyZ), true) => Some(KeyCommand::Redo),
+        (Some(KeyCode::KeyQ), false) => Some(KeyCommand::Quit),
+        (Some(KeyCode::ArrowLeft), _) => Some(KeyCommand::LineBoundary { end: false }),
+        (Some(KeyCode::ArrowRight), _) => Some(KeyCommand::LineBoundary { end: true }),
+        (Some(KeyCode::ArrowUp), _) => Some(KeyCommand::DocumentBoundary { end: false }),
+        (Some(KeyCode::ArrowDown), _) => Some(KeyCommand::DocumentBoundary { end: true }),
+        _ => None,
+    }
+}
+
+fn no_clipboard_alias(_: Option<KeyCode>, _: bool, _: bool) -> Option<ClipboardAlias> {
+    None
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +295,76 @@ mod tests {
         );
         assert_eq!(
             global_persistence_shortcut(Some(KeyCode::KeyS), false, false),
+            None
+        );
+    }
+
+    /// Pins the Windows keys now that they come from a table.
+    #[test]
+    fn the_ctrl_table_keeps_the_windows_commands() {
+        let table = Keymap::ctrl_standard();
+        let ctrl = ModifiersState::CONTROL;
+        for (code, command) in [
+            (KeyCode::KeyF, KeyCommand::OpenFind),
+            (KeyCode::KeyH, KeyCommand::OpenReplace),
+            (KeyCode::KeyZ, KeyCommand::Undo),
+            (KeyCode::KeyY, KeyCommand::Redo),
+            (KeyCode::Home, KeyCommand::DocumentBoundary { end: false }),
+            (KeyCode::End, KeyCommand::DocumentBoundary { end: true }),
+        ] {
+            assert_eq!((table.command_key)(Some(code), ctrl), Some(command));
+            // Ctrl+Shift+Z has always undone, and Ctrl+Alt is not a shortcut at all.
+            assert_eq!(
+                (table.command_key)(Some(code), ctrl | ModifiersState::SHIFT),
+                Some(command)
+            );
+            assert_eq!(
+                (table.command_key)(Some(code), ctrl | ModifiersState::ALT),
+                None
+            );
+            assert_eq!(
+                (table.command_key)(Some(code), ModifiersState::empty()),
+                None
+            );
+        }
+        assert!((table.shortcut_held)(ctrl));
+        assert!(!(table.shortcut_held)(ctrl | ModifiersState::ALT));
+        assert!(!(table.shortcut_held)(ModifiersState::SUPER));
+        assert_eq!((table.command_key)(Some(KeyCode::KeyQ), ctrl), None);
+        assert_eq!((table.command_key)(Some(KeyCode::ArrowLeft), ctrl), None);
+    }
+
+    #[test]
+    fn the_cmd_table_follows_macos_conventions() {
+        let table = Keymap::cmd_standard();
+        let cmd = ModifiersState::SUPER;
+        let key = |code, modifiers| (table.command_key)(Some(code), modifiers);
+        assert_eq!(key(KeyCode::KeyF, cmd), Some(KeyCommand::OpenFind));
+        assert_eq!(
+            key(KeyCode::KeyF, cmd | ModifiersState::ALT),
+            Some(KeyCommand::OpenReplace)
+        );
+        assert_eq!(key(KeyCode::KeyZ, cmd), Some(KeyCommand::Undo));
+        assert_eq!(
+            key(KeyCode::KeyZ, cmd | ModifiersState::SHIFT),
+            Some(KeyCommand::Redo)
+        );
+        assert_eq!(key(KeyCode::KeyQ, cmd), Some(KeyCommand::Quit));
+        assert_eq!(
+            key(KeyCode::ArrowRight, cmd | ModifiersState::SHIFT),
+            Some(KeyCommand::LineBoundary { end: true })
+        );
+        assert_eq!(
+            key(KeyCode::ArrowUp, cmd),
+            Some(KeyCommand::DocumentBoundary { end: false })
+        );
+        // Cmd+H belongs to macOS, Ctrl is not a shortcut, and there is no Insert key.
+        assert_eq!(key(KeyCode::KeyH, cmd), None);
+        assert_eq!(key(KeyCode::KeyZ, ModifiersState::CONTROL), None);
+        assert!((table.shortcut_held)(cmd));
+        assert!(!(table.shortcut_held)(ModifiersState::CONTROL));
+        assert_eq!(
+            (table.clipboard_alias)(Some(KeyCode::Insert), true, false),
             None
         );
     }

@@ -7,6 +7,71 @@ release package.
 
 ## Stable entry points
 
+`mac-latency` is a VM-only end-to-end input-latency diagnostic (plan 10 macOS gates; the
+gate stays the edit benchmark). It launches copied bundles with the product's opt-in recorder
+(`STICKYMD_DIAGNOSTIC_INPUT_LATENCY`), types `x` through CGEvent at the end of a 100 KiB and a
+1 MiB Source note (a sustained burst, and single keys after idle gaps), sends SIGUSR1 so the app
+writes its timestamps, quits through SIGTERM and checks injected = recorded = characters added.
+Each key is paired with the first frame whose drawing started after the app saw it; stages are
+event to main thread, main thread to the start of drawing, and drawing through `present`. What
+follows `present` (commit, compositor, display) is not measured. Raw recordings are kept under
+`<out>/raw`; a cancel or a failed cleanup stops the campaign. Several `--app` values run
+interleaved for A/B; run the same app twice for an A/A bound first, on an otherwise idle host.
+It needs Accessibility, PostEvent and an unwind build:
+
+```bash
+CARGO_PROFILE_RELEASE_PANIC=unwind cargo build --release --locked -p stickymd-smoke --target-dir target/unwind
+target/unwind/release/stickymd-smoke mac-latency --app dist/macos/StickyMD.app --app dist/macos/StickyMD.app --out dist/evidence/mac-latency
+```
+
+The standalone macOS resource command is opt-in and opens copied app instances.
+Run it later in an unlocked test VM with the display on and no interaction:
+
+```bash
+cargo run --quiet --locked -p stickymd-smoke -- mac-resources --app dist/macos/StickyMD.app --out dist/evidence/mac-resources
+cargo run --quiet --locked -p stickymd-smoke -- mac-resources --help
+```
+
+Supply a Release bundle. Each Source/Preview/Split run uses `ditto` to copy it into
+a fresh private program directory with a deterministic 20 KiB, 20-formula note.
+The copied executable hash must match the input. `CGWindowListCopyWindowInfo`
+checks the child's PID and a content-sized on-screen window, without titles or
+screen capture. This is window readiness, not proof of rendered formula correctness.
+The tool then warms up for 30 seconds, samples `proc_pid_rusage` V4 footprint,
+and measures CPU and wake-ups over at least 60 seconds of monotonic elapsed time.
+Mach ticks use the recorded timebase; 100% CPU means one logical CPU.
+The default and minimum is five runs per visible scenario; `--repetitions N`
+can increase it. SIGTERM has a three-second grace period, followed by SIGKILL
+and a three-second reap deadline. Unreaped children prevent directory removal
+and stop the campaign. Cleanup checks the created directory's device/inode and
+canonical path and never follows a replacement root symlink.
+
+`mac-resources.json` is checkpointed atomically after each run and includes
+environment/display dimensions, executable and fixture SHA-256, raw counters,
+observed early-exit time/status, and median/max for memory, CPU and wake-ups.
+Schema version 4 (version 3 plus Hidden's per-run `status_item_wait_seconds`: how long the
+status item took to appear in the AX tree, up to five seconds, before the hide; version 3 added
+Hidden's per-run `hidden_seconds`, each scenario's `hidden_through_menu_bar`, and the top-level
+status `SCENARIOS_PASS`, formerly `VISIBLE_SCENARIOS_PASS`) reports `interrupt_wakeups_per_second` (total interrupt wake-ups)
+and `idle_wakeups_per_second` (package-idle wake-ups, Activity Monitor's "Idle Wake Ups")
+separately in metrics and summaries. Package-idle wake-ups are a subset of interrupt
+wake-ups in XNU; they are never added. The old summed `wakeups_per_second` is removed.
+macOS uses its built-in `/usr/bin/shasum` for SHA-256. Failed and early-exit runs
+remain in evidence but never supply derived metrics. The scenarios pass only if
+every requested run is valid and their footprint maxima are at most
+72/96/128/48 MiB. CPU and wake-ups are reported without gates under this task's
+authorization. Hidden (48 MiB) opens in Source, then chooses the menu-bar item
+`隐藏` through Accessibility (the `mac-gui` helper; this binary needs the
+permission, checked before any run) and waits until the window is off screen.
+Its 30 s warm-up starts from then, and the window must still be off screen at
+both samples (`NOT_HIDDEN` otherwise). The menu is opened through Accessibility,
+not a mouse click; that path's own cost is part of the reading.
+Exit 0 covers all four scenarios; full acceptance remains incomplete, and
+P16-R01/P16-R02 are not updated by this command. Off macOS, measurement refuses
+with `NOT_TESTED` and a nonzero exit. Help and unit tests do not open windows.
+Release provenance, screen lock/occlusion and actual render completion are not
+attested by this tool; use the contract's macOS/scale-2 test environment.
+
 ```powershell
 ./tools/smoke/phase-00.ps1
 ./tools/smoke/phase-01.ps1 -Performance
@@ -324,12 +389,15 @@ cargo run --quiet -p stickymd-smoke --locked -- modules run render,windows --mod
 cargo run --quiet -p stickymd-smoke --locked -- modules run all --mode=all --plan
 ```
 
-The eight module names are `core`, `render`, `app`, `desktop`, `windows`, `smoke`,
+The nine module names are `core`, `render`, `app`, `desktop`, `windows`, `mac`, `smoke`,
 `phase1-markdown-math`, and `phase1-persistence`. The default mode is `tests`;
 `performance` selects the existing headless Release baselines, and `all`
 selects both. Cargo still builds dependencies as needed. Explicit selection
 does not automatically add dependent modules: callers choose the validation scope.
-The `windows` module requires Windows to execute; plans can be inspected on any host.
+The `windows` module requires Windows to execute and `mac` requires macOS (elsewhere the macOS host is a stub with
+no tests, so a run is reported `NOT_TESTED`); plans can be inspected on any host. `dev-check` names an unrunnable
+`mac` as `NOT_TESTED` and runs the rest. In CI only the `macos-host` job tests `mac`: no Windows or Linux lane runs
+or lints it, and `phase 16` is refused off macOS.
 
 The module adapter narrows the existing full plan's Cargo package selectors.
 It keeps the same filters, profiles, thresholds and test-harness arguments;
@@ -866,3 +934,127 @@ The persistent result for each phase lives in
 `AUTOMATED PASS` only when their checked-in runner passes. Manual checks stay
 `NOT TESTED` until a durable receipt is checked in; terminal output from a
 one-off run is not such a receipt.
+
+## macOS GUI evidence in a dedicated VM
+
+`mac-gui` is a std-only Rust, external-observation driver. It must run in the
+dedicated Tart macOS 27.2 VM, with auto-login and an unlocked desktop, **never on
+the owner's desktop**. Only the built bundle and driver are needed in the VM;
+there is no repository lookup or product control channel. Select the ABC/US
+input source and a main display of at least 800×600 DIP. Do not interact with
+the VM during a run. The clipboard is used by K02.
+
+Build the tool without starting any GUI:
+
+```sh
+CARGO_PROFILE_RELEASE_PANIC=unwind cargo build --locked --release -p stickymd-smoke
+```
+
+Copy that binary and `StickyMD.app` into the VM, then run there from the logged-in
+user's session (SSH is suitable only when that user's GUI session is available):
+
+```sh
+./stickymd-smoke mac-gui --app "$PWD/StickyMD.app" --out "$PWD/gui-evidence"
+./stickymd-smoke mac-gui --app "$PWD/StickyMD.app" --out "$PWD/gui-evidence-W03" --only W03,W04
+```
+
+The driver reads `sysctl -n kern.hv_vmm_present` first. Anything other than `1`
+refuses before touching the app/output paths or calling a GUI API. `--allow-host`
+is an explicit escape hatch for separately authorized machines; it is not
+authorized for this owner's Mac. `--help` bypasses execution. Release builds
+with the repository's default `panic=abort` are refused; use the unwind build
+above. Permission checks never request access or open Settings. Grant access
+to the driver in the VM, then rerun after a refusal.
+
+| Scenarios | Required permission | Optional permission |
+| --- | --- | --- |
+| W01 | Accessibility (`AXIsProcessTrusted`), including Dock inspection | — |
+| W02/W03/W04/W07/W08/W09/W11/K02/E01 | Accessibility and PostEvent (`CGPreflightPostEventAccess`) | — |
+| F01 | None for stderr font selection | Screen Recording (`CGPreflightScreenCaptureAccess`) for screenshot |
+| Deferred rows | None; no app launch for those rows | — |
+
+Every runnable scenario copies the bundle into a fresh private temporary Program
+Directory. Note/config fixtures are atomically written **before** launch; the
+driver never writes them while the app is alive. The shared `mac_common` owner
+handles child termination/reaping, bounded helper commands, and directory identity
+checks before cleanup. It is also used by `mac-resources`. Before opening the
+fixture bundle, its owned child must still be running. After `open`, and again at
+cleanup, a bounded same-UID process scan checks the exact private executable path.
+Foreign PIDs receive SIGTERM, then SIGKILL after 3 seconds, with another 3 seconds
+to confirm absence. The audit watches for delayed LaunchServices launches for at
+least 3 seconds. Uncertain enumeration/exit retains the fixture and stops the run;
+the retained path and reason are recorded in the cleanup evidence. Each injected press is
+registered before posting and released in reverse order on success, error and
+unwind. Failed injection stops all later input/scenario launches. SIGINT/SIGTERM
+request cooperative cancellation and cleanup; SIGKILL, power loss and process
+abort cannot run destructors. CGEventPost has no delivery receipt: release state
+and product observations are evidence, not proof of delivery for each event.
+
+Launch readiness waits for exactly one on-screen, content-sized window owned by the
+child PID; later lookups use that window number, hidden or not. AppKit attaches
+windows that are never shown to the PID (macOS 27.2 shows one 500×500 off-screen
+window), so off-screen windows do not count at launch. Opening the status-item
+menu with `AXPress` returns CannotComplete (-25204) because the reply waits for
+menu tracking; that open is recorded as unconfirmed, and the menu-item tree and
+the command's observed effect decide the check. Any other AX action error fails.
+`lsappinfo info` does not accept `pid=N` on macOS 27.2, so the driver resolves the
+application's ASN with `lsappinfo find pid=N` first. Before each click or drag start,
+the system's own hit test (`AXUIElementCopyElementAtPosition`) must find an element of
+the product's PID at the point; otherwise no press is injected and the scenario fails
+naming the process that would receive it. Stacking can still change between the check
+and the press. A VM run once lost W02/W04/W09 to a Tips window that macOS opened
+mid-run; keep the VM desktop clear of other app windows. A drag holds the press for
+60ms before moving. Without the hold the VM twice stopped the window one 25 DIP step
+short of the edge; the cause (the native drag starting from wherever the pointer is
+when the product handles the press) is inferred, and a fast drag stays undiagnosed.
+
+Polled effects count only when a sample that satisfies them returned by the deadline;
+a success first seen later is late. Hover animation completion (W03/W04) is dated
+retrospectively: sampling continues 200ms past the deadline, the last sample is the
+rest position, and completion is the first sample from which every later one equals
+it. Being fully on screen is not completion.
+
+`mac-gui.json` is atomically checkpointed after every scenario. It records OS,
+VM/override/permission/display facts, fixed config, executable SHA-256, a sorted
+bundle-content manifest SHA-256 (including Info.plist; excluding xattrs), PID,
+fixture hash, timestamped requests, individual injected events, observations,
+checks and row verdicts. Copies are rehashed before launch. Stderr is retained as
+`<ID>-stderr.log`; F01 optionally writes `F01.ppm`. Use a new output directory per
+run to avoid confusing old screenshots/logs with the current JSON. Any FAIL exits
+1; NOT_TESTED alone exits 0. A row aggregates FAIL first, then NOT_TESTED, then
+PASS. The acceptance matrix and qualification ledgers are never updated.
+
+| Row | External oracle | Limits |
+| --- | --- | --- |
+| W01 | `lsappinfo` UIElement + Dock AX item titles | Cmd+Tab pixels remain NOT_TESTED; row remains incomplete |
+| W02 | Drag input; CG window bounds/layer/on-screen; persisted `window.dock_edge` | Main display only; 2 DIP ±0.75, top layer >24; no pixel-level strip rendering assertion |
+| W03 | Finder PID from AX remains unchanged; short dwell cancellation; window movement onset and settled bounds | Pre-100ms observation; onset bracket within 90–170ms, sampled every 20ms; gaps >60ms or boundary overlap are NOT_TESTED; completion within earliest bracket onset +140ms +70ms |
+| W04 | Top-band point, expanded bounds after 850ms; collapse after leaving | Leave onset bracket within 490–570ms; same resolution/completion limits as W03; no Spaces/mixed-DPI evidence |
+| W07 | AX hide, `open` copied bundle; same owned PID alive, visible window and AX frontmost PID | Status item awaited in the AX tree up to 5 s, wait recorded; menu effects polled up to 2000ms, elapsed time recorded; does not prove all launch-service/translocation paths |
+| W08 | Exactly three AX menu items; show back at the same bounds and opacity, topmost layer/config, quit process and saved note | Status item awaited in the AX tree up to 5 s, wait recorded; menu effects polled up to 2000ms, elapsed time recorded; layer is a system fact, not a visual occlusion test |
+| W09 | Toolbar numeric field at layout-derived DIP offsets; CG alpha 40/70/100 and config | Alpha tolerance ±0.015; no full composited-pixel comparison |
+| W11 | Cmd+Q, successful child exit and unchanged clean note | Save-failure cancellation NOT_TESTED pending fault injection; row incomplete |
+| K02 | Real Cmd keys, quiet note bytes, `pbpaste`, persisted view/zoom | ABC/US assumption; not IME evidence; save timing is not a durability/power-loss test |
+| E01 | AX native panel cancel/dismiss, folder/name/save; exact exported Markdown bytes | No managed-image export fixture in this batch |
+| F01 | `font selection` stderr names PingFang SC and Times New Roman (plan 02 defaults); optional CGWindowListCreateImage screenshot | The log does not name the code face, so Menlo and per-glyph review are NOT_TESTED; row incomplete |
+
+K02 covers typing, Cmd+S/Z/Shift+Z/A/C/X/V, Cmd+arrows, find and replace,
+Cmd+1/2/3 and Cmd+=/-/0. Cmd+S polls `note/note.md` directly until 550ms after the
+last typed key-down (100ms before autosave's 650ms debounce). Only bytes observed
+by that deadline pass; a missed deadline is NOT_TESTED, with key/command/read
+timestamps, because a slow VM and a missing binding cannot be distinguished.
+Other saved-text checks retain the 1500ms wait and 1000ms quiet-byte requirement. W05/W06/W10/W12/W15, I01/I02/I03 and R03
+remain NOT_TESTED with explicit reasons. These are also documented in the module
+comment. No native GUI code is exercised by the unit tests.
+
+**VM first-run gaps:** AX status-item actions/save-panel identifiers and actual
+CGEvent routing are unverified. Missing or ambiguous AX nodes produce a bounded
+tree diagnostic rather than guessed clicks. Only AX AttributeUnsupported (-25205)
+and NoValue (-25212) mean an optional attribute is absent. Other AX errors, wrong
+types, or tree budget exhaustion fail the observation; a cancel check passes only
+on a complete tree without the save panel. Invalid-element races currently FAIL
+with the AX status rather than retrying or assuming dismissal. The local SDK marks the requested
+`CGWindowListCreateImage` obsolete since macOS 15; its behavior on the target
+27.2 VM remains unverified. Capture errors are recorded, and no replacement
+capture framework is silently introduced. Pure tests and compilation are not
+real GUI acceptance evidence.

@@ -1,0 +1,28 @@
+screen 1512x982 visible top 33; safeArea.top=32 auxLeft=(0,950 663.5x32) auxRight=(848.5,950 663.5x32) notch x=663.5 width=185
+   0.156 sensor Focused(false)
+   0.156 note Focused(false)
+   1.069 [placed at y=0, no override] top_gap=0.0 x=663.0 size=185.0x35.0 level=27 on_active_space=true occlusion_visible=true app_active=false
+   1.372 [final placement] top_gap=0.0 x=663.0 size=185.0x35.0 level=27 on_active_space=true occlusion_visible=true app_active=false
+   1.372 waiting for the pointer at the notch
+  40.966 sensor CursorEntered
+  40.966 reveal 1: app_active=false (must stay false)
+  43.114 sensor CursorLeft
+  43.114 note CursorEntered
+  43.197 note CursorLeft
+  43.697 hidden after 500 ms outside: app_active=false
+  43.697 [sensor after hide] top_gap=0.0 x=663.0 size=185.0x35.0 level=27 on_active_space=true occlusion_visible=true app_active=false
+  80.998 sensor CursorEntered
+  80.998 reveal 2: app_active=false (must stay false)
+  81.418 sensor CursorLeft
+  81.418 note CursorEntered
+  81.510 note CursorLeft
+  82.013 hidden after 500 ms outside: app_active=false
+  82.013 [sensor after hide] top_gap=0.0 x=663.0 size=185.0x35.0 level=27 on_active_space=true occlusion_visible=true app_active=false
+  82.368 sensor CursorEntered
+  82.368 reveal 3: app_active=false (must stay false)
+  82.638 sensor CursorLeft
+  82.638 note CursorEntered
+  82.687 note CursorLeft
+  83.189 hidden after 500 ms outside: app_active=false
+  83.189 [sensor after hide] top_gap=0.0 x=663.0 size=185.0x35.0 level=27 on_active_space=true occlusion_visible=true app_active=false
+  83.189 finished

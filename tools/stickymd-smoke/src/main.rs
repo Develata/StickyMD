@@ -11,6 +11,11 @@ mod headless;
 #[cfg(any(windows, test))]
 mod input_injection;
 mod integrity;
+#[cfg(target_os = "macos")]
+mod mac_common;
+mod mac_gui;
+mod mac_ledger;
+mod mac_resources;
 #[cfg(windows)]
 mod managed_process;
 mod package_path;
@@ -52,6 +57,15 @@ fn run() -> Result<(), String> {
     #[cfg(windows)]
     window_control::enable_per_monitor_v2_dpi_awareness()?;
     let command = cli::CommandLine::parse(std::env::args().skip(1))?;
+    if let cli::CommandLine::MacGui(options) = &command {
+        return mac_gui::execute(options);
+    }
+    if let cli::CommandLine::MacLatency(options) = &command {
+        return mac_gui::latency::execute(options);
+    }
+    if let cli::CommandLine::MacResources(options) = &command {
+        return mac_resources::execute(options);
+    }
     if let cli::CommandLine::Timings(options) = &command {
         return timing_summary::execute(options);
     }
@@ -67,6 +81,10 @@ fn run() -> Result<(), String> {
             .map_err(|error| format!("cannot read current directory: {error}"))?,
     )?;
     match command {
+        cli::CommandLine::MacGui(options) => mac_gui::execute(&options),
+        cli::CommandLine::MacLatency(options) => mac_gui::latency::execute(&options),
+        cli::CommandLine::MacResources(options) => mac_resources::execute(&options),
+        cli::CommandLine::MacLedger(options) => mac_ledger::execute(&options, &root),
         cli::CommandLine::PhaseEntryPlan(arguments) => {
             phase_entry::print_plan(&arguments);
             Ok(())

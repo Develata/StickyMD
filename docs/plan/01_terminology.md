@@ -4,8 +4,8 @@
 
 - `Layer`: Foundation
 - `Status`: Governing Rule
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-10
 - `Scope`: 固定 StickyMD 核心术语的定义、权威来源、等价性边界与生命周期；全仓库文档与代码命名必须使用本表术语
 
 每个术语包含四个字段：
@@ -221,14 +221,14 @@
 
 ### Docked
 
-- **Definition**：窗口吸附到屏幕左/右/上边缘的状态。收起时仅保留 3 DIP 感应条。
+- **Definition**：窗口吸附到屏幕左/右/上边缘的状态。收起时仅保留 2 DIP 感应条。
 - **Authority**：WindowState（DockState），durable projection 为 config.toml 的 dock 字段。
 - **Not equivalent to**：被最小化；dock 窗口仍然存在并可被 hover 展开。
 - **Lifetime**：从吸附到被拖离边缘超过阈值。
 
 ### Collapsed
 
-- **Definition**：dock 窗口的收起形态：主体缩出屏幕，保留 3 DIP 感应条。
+- **Definition**：dock 窗口的收起形态：主体缩出屏幕，保留 2 DIP 感应条。
 - **Authority**：WindowState。
 - **Not equivalent to**：Hidden to tray（完全不可见、仅托盘可达）。
 - **Lifetime**：失焦超时/Esc/手动收起后开始，hover 展开或取消 dock 时结束。

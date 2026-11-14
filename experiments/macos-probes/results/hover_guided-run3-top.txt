@@ -1,0 +1,47 @@
+global monitor installed: true
+   0.300 winit Focused(false)
+   1.377 winit CursorEntered
+   1.377 first hit: winit tracking rect
+   1.377 first hit: NSTrackingArea ActiveAlways
+   1.499 parked Top, app_active=false
+   1.515 winit CursorLeft
+   4.559 winit CursorEntered
+   4.559 first hit: winit tracking rect
+   4.559 first hit: NSTrackingArea ActiveAlways
+   4.559 first hit: NSEvent global monitor
+   4.559 first hit: mouseLocation poll
+   4.809 revealed, app_active=false (must stay false)
+   4.811 winit CursorLeft
+   4.821 winit CursorEntered
+   5.010 winit Focused(true)
+   5.596 winit CursorLeft
+   6.092 left for 500 ms, app_active=true
+   6.092 Top: winit tracking rect=35, NSTrackingArea ActiveAlways=32, NSEvent global monitor=1, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=1
+   6.124 winit Focused(false)
+   6.495 parked Top, app_active=false
+   7.560 first hit: mouseLocation poll
+   7.812 revealed, app_active=false (must stay false)
+   7.812 first hit: NSEvent global monitor
+   7.812 winit CursorEntered
+   7.812 first hit: winit tracking rect
+   7.812 first hit: NSTrackingArea ActiveAlways
+   7.812 winit CursorLeft
+   7.812 winit CursorEntered
+   8.530 winit CursorLeft
+   9.041 left for 500 ms, app_active=false
+   9.041 Top: winit tracking rect=22, NSTrackingArea ActiveAlways=22, NSEvent global monitor=3, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=0
+   9.449 parked Top, app_active=false
+  15.116 winit CursorEntered
+  15.116 first hit: winit tracking rect
+  15.116 first hit: NSTrackingArea ActiveAlways
+  15.116 first hit: NSEvent global monitor
+  15.116 first hit: mouseLocation poll
+  15.367 revealed, app_active=false (must stay false)
+  15.367 winit CursorLeft
+  15.371 winit CursorEntered
+  16.668 winit Focused(true)
+  17.546 winit CursorLeft
+  17.926 winit Focused(false)
+  18.044 left for 500 ms, app_active=false
+  18.044 Top: winit tracking rect=94, NSTrackingArea ActiveAlways=53, NSEvent global monitor=1, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=1
+guided run finished: ["Top: winit tracking rect=35, NSTrackingArea ActiveAlways=32, NSEvent global monitor=1, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=1", "Top: winit tracking rect=22, NSTrackingArea ActiveAlways=22, NSEvent global monitor=3, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=0", "Top: winit tracking rect=94, NSTrackingArea ActiveAlways=53, NSEvent global monitor=1, mouseLocation poll=1; closest_pt=0.0 crossed_without_landing=1"]

@@ -245,6 +245,8 @@ pub enum WindowIntent {
         now_ms: u64,
         guards: WindowGuardSnapshot,
     },
+    /// The host stopped waiting for a quit that has not finished.
+    AbandonQuit,
     TrayQuitRequested {
         guards: WindowGuardSnapshot,
     },
@@ -371,6 +373,8 @@ pub enum WindowEffect {
     HideRejected(FailureKind),
     ShowRejected(FailureKind),
     QuitBlocked,
+    /// The host stopped waiting while the note was not safe yet.
+    QuitTimedOut,
     QuitCancelled(QuitBarrier),
     QuitWarning(QuitBarrier),
     RequestRedraw,
@@ -414,6 +418,11 @@ pub struct WindowShellState {
 impl WindowShellState {
     pub fn visibility(&self) -> VisibilityState {
         self.visibility
+    }
+
+    /// The window is out only because the pointer reached its strip on `edge`.
+    pub fn hover_revealed_at(&self, edge: DockEdge) -> bool {
+        self.dock.hover_revealed && self.dock.edge == Some(edge)
     }
 
     #[cfg(test)]

@@ -1,0 +1,119 @@
+   0.054 === phase 1: joins all Spaces, floating, needs 4 switches
+   0.055 [phase start] space=1 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+   0.058 event Resized(PhysicalSize { width: 640, height: 480 })
+   0.058 event ScaleFactorChanged { scale_factor: 2.0, inner_size_writer: InnerSizeWriter { new_inner_size: (Weak) } }
+   0.058 event Resized(PhysicalSize { width: 640, height: 480 })
+   0.058 event Focused(false)
+   0.058 event Moved(PhysicalPosition { x: 840, y: 520 })
+   0.070 event Focused(true)
+   0.089 event Occluded(false)
+   1.368 event Occluded(true)
+   6.510 event Occluded(false)
+  10.344 event Occluded(true)
+  11.198 --- space change 1 in phase 1
+  11.198 [at change] space=154 on_active_space=true visible=true key=true app_active=true origin=(420,482) occlusion_visible=false
+  11.206 event Focused(false)
+  11.210 event Occluded(false)
+  11.611 [+0.4 s] space=154 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+  12.345 event Occluded(true)
+  12.447 [+1.2 s] space=154 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  13.322 --- space change 2 in phase 1
+  13.322 [at change] space=119 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  13.329 event Occluded(false)
+  13.752 [+0.4 s] space=119 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+  13.822 event Occluded(true)
+  14.534 [+1.2 s] space=119 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  14.661 [hidden] space=119 on_active_space=true visible=false key=false app_active=false origin=(420,482) occlusion_visible=false
+  14.662 [shown again on this Space] space=119 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  14.799 --- space change 3 in phase 1
+  14.799 [at change] space=79 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  14.803 event Occluded(false)
+  15.028 event Occluded(true)
+  15.232 [+0.4 s] space=79 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  15.808 --- space change 4 in phase 1
+  15.808 [at change] space=119 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  15.813 event Occluded(false)
+  16.029 [+1.2 s] space=119 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+  16.178 event Occluded(true)
+  16.229 [+0.4 s] space=119 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  16.331 [before focus_window] space=119 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  16.339 event Focused(true)
+  17.029 [+1.2 s] space=119 on_active_space=true visible=true key=true app_active=true origin=(420,482) occlusion_visible=false
+  17.147 event Focused(false)
+  17.150 event Occluded(false)
+  17.151 --- space change 5 in phase 1
+  17.151 [at change] space=154 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+  17.540 [+1.2 s after focus_window] space=154 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+  17.551 [+0.4 s] space=154 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+  17.887 event Occluded(true)
+  18.028 event Occluded(false)
+  18.383 [+1.2 s] space=154 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+  18.866 --- space change 6 in phase 1
+  18.866 [at change] space=1 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+  19.270 [+0.4 s] space=1 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+  20.082 [+1.2 s] space=1 on_active_space=true visible=true key=false app_active=false origin=(420,482) occlusion_visible=true
+  20.256 event Focused(true)
+  21.870 === phase 2: joins all Spaces, docked strip, needs 2 switches
+  21.870 [phase start] space=1 on_active_space=true visible=true key=true app_active=true origin=(-317,442) occlusion_visible=true
+  21.870 event Moved(PhysicalPosition { x: -634, y: 600 })
+  28.881 event Occluded(true)
+  29.858 event Focused(false)
+  29.861 event Occluded(false)
+  29.861 --- space change 1 in phase 2
+  29.861 [at change] space=154 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=true
+  30.269 [+0.4 s] space=154 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=true
+  31.027 event Occluded(true)
+  31.078 [+1.2 s] space=154 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=false
+  31.986 event Occluded(false)
+  31.986 --- space change 2 in phase 2
+  31.986 [at change] space=119 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=true
+  32.435 [+0.4 s] space=119 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=true
+  32.740 event Occluded(true)
+  33.198 [+1.2 s] space=119 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=false
+  33.676 event Occluded(false)
+  33.676 --- space change 3 in phase 2
+  33.676 [at change] space=79 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=true
+  34.107 [+0.4 s] space=79 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=true
+  34.664 event Occluded(true)
+  34.918 [+1.2 s] space=79 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=false
+  35.604 --- space change 4 in phase 2
+  35.604 [at change] space=81 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=false
+  35.610 event Occluded(false)
+  35.771 event Occluded(true)
+  36.029 [+0.4 s] space=81 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=false
+  36.144 event Occluded(false)
+  36.495 event Occluded(true)
+  36.852 [+1.2 s] space=81 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=false
+  38.318 --- space change 5 in phase 2
+  38.318 [at change] space=1 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=false
+  38.322 event Occluded(false)
+  38.749 [+0.4 s] space=1 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=true
+  39.527 [+1.2 s] space=1 on_active_space=true visible=true key=false app_active=false origin=(-317,442) occlusion_visible=true
+  40.182 event Focused(true)
+  41.321 === phase 3: default behaviour, needs 2 switches
+  41.323 [phase start] space=1 on_active_space=true visible=true key=true app_active=true origin=(420,482) occlusion_visible=true
+  41.323 event Moved(PhysicalPosition { x: 840, y: 520 })
+  44.227 event Occluded(true)
+  45.078 event Focused(false)
+  45.080 --- space change 1 in phase 3
+  45.080 [at change] space=154 on_active_space=false visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  45.486 [+0.4 s] space=154 on_active_space=false visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  46.299 [+1.2 s] space=154 on_active_space=false visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  46.627 [before focus_window] space=154 on_active_space=false visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  46.635 event Focused(true)
+  47.880 [+1.2 s after focus_window] space=154 on_active_space=false visible=true key=true app_active=true origin=(420,482) occlusion_visible=false
+  48.841 event Focused(false)
+  48.849 --- space change 2 in phase 3
+  48.849 [at change] space=119 on_active_space=false visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  49.258 [+0.4 s] space=119 on_active_space=false visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  50.073 [+1.2 s] space=119 on_active_space=false visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  50.088 --- space change 3 in phase 3
+  50.089 [at change] space=79 on_active_space=false visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  50.536 [+0.4 s] space=79 on_active_space=false visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  51.297 [+1.2 s] space=79 on_active_space=false visible=true key=false app_active=false origin=(420,482) occlusion_visible=false
+  53.109 finished
+  53.110 event Destroyed
+
+thread 'main' (1338751) panicked at src/bin/spaces_probe.rs:128:31:
+index out of bounds: the len is 3 but the index is 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

@@ -4,7 +4,8 @@
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#config-persistence
 
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use super::{CONFIG_VERSION, RuntimeConfig};
 
@@ -25,6 +26,45 @@ pub fn preserved_config_name(stamp: u64, sequence: u16) -> String {
 
 pub fn config_text(config: &RuntimeConfig) -> Result<String, ConfigSerializeError> {
     toml::to_string_pretty(config)
+}
+
+/// Decides what a host's read means. Only corrupt text invokes preservation; missing,
+/// unreadable and newer-version files keep their existing outcomes without a move attempt.
+pub fn load_config_from(
+    read: io::Result<String>,
+    preserve: impl FnOnce() -> Option<PathBuf>,
+) -> ConfigLoadOutcome {
+    let source = match read {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return ConfigLoadOutcome::absent();
+        }
+        Err(error) => return ConfigLoadOutcome::read_failed(error.to_string()),
+    };
+    ConfigLoadOutcome::from_text(&source)
+        .unwrap_or_else(|| ConfigLoadOutcome::after_preservation(preserve()))
+}
+
+/// Tries bounded preservation names using the host's move that never replaces a destination.
+pub fn preserve_with(
+    path: &Path,
+    stamp: u64,
+    mut move_no_replace: impl FnMut(&Path, &Path) -> io::Result<()>,
+) -> io::Result<PathBuf> {
+    // The no-replace move is the authority gate. A preliminary exists check
+    // would be racy and could overwrite older evidence on Windows.
+    for sequence in 0..=PRESERVED_CONFIG_SUFFIXES {
+        let candidate = path.with_file_name(preserved_config_name(stamp, sequence));
+        match move_no_replace(path, &candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "all corrupt config preservation names are occupied",
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +175,118 @@ mod tests {
             ..RuntimeConfig::default()
         })
         .unwrap()
+    }
+
+    #[test]
+    fn load_preserves_neither_missing_unreadable_valid_nor_newer_files() {
+        let partial = "version = 1\nopacity = 85\n";
+        let newer = text_with_version(CONFIG_VERSION + 1);
+        for (read, expected) in [
+            (
+                Err(io::Error::from(io::ErrorKind::NotFound)),
+                ConfigLoadOutcome::absent(),
+            ),
+            (
+                Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied")),
+                ConfigLoadOutcome::read_failed("denied".into()),
+            ),
+            (
+                Ok(partial.into()),
+                ConfigLoadOutcome::from_text(partial).unwrap(),
+            ),
+            (
+                Ok(newer.clone()),
+                ConfigLoadOutcome::from_text(&newer).unwrap(),
+            ),
+        ] {
+            assert_eq!(
+                load_config_from(read, || panic!("this file must not be moved")),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn load_preserves_corrupt_text_once_and_reports_whether_it_moved() {
+        for source in [
+            "not = [valid",
+            "version = 0\n",
+            "version = 1\ntheme = \"purple\"\n",
+            "version = 1\nopacity = 1\n",
+        ] {
+            for preserved in [Some(PathBuf::from("kept.toml")), None] {
+                let expected = ConfigLoadOutcome::after_preservation(preserved.clone());
+                let mut calls = 0;
+                let outcome = load_config_from(Ok(source.into()), || {
+                    calls += 1;
+                    preserved
+                });
+                assert_eq!(calls, 1);
+                assert_eq!(outcome, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn preservation_tries_the_plain_name_first_and_stops_on_success() {
+        let path = Path::new("note/config.toml");
+        for collisions in [0, 2, PRESERVED_CONFIG_SUFFIXES] {
+            let mut calls = 0;
+            let preserved = preserve_with(path, 42, |source, candidate| {
+                assert_eq!(source, path);
+                assert_eq!(
+                    candidate,
+                    path.with_file_name(preserved_config_name(42, calls))
+                );
+                let sequence = calls;
+                calls += 1;
+                if sequence < collisions {
+                    Err(io::ErrorKind::AlreadyExists.into())
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap();
+            assert_eq!(calls, collisions + 1);
+            assert_eq!(
+                preserved,
+                path.with_file_name(preserved_config_name(42, collisions))
+            );
+        }
+    }
+
+    #[test]
+    fn preservation_stops_on_other_errors_and_keeps_the_original_error() {
+        let mut calls = 0;
+        let error = preserve_with(Path::new("config.toml"), 42, |_, _| {
+            calls += 1;
+            Err(io::Error::from_raw_os_error(13))
+        })
+        .unwrap_err();
+        assert_eq!(calls, 1);
+        assert_eq!(error.raw_os_error(), Some(13));
+    }
+
+    #[test]
+    fn preservation_exhaustion_is_bounded_and_keeps_the_error_text() {
+        let path = Path::new("note/config.toml");
+        let mut calls = 0;
+        let error = preserve_with(path, 42, |source, candidate| {
+            assert_eq!(source, path);
+            assert_eq!(
+                candidate,
+                path.with_file_name(preserved_config_name(42, calls))
+            );
+            calls += 1;
+            Err(io::ErrorKind::AlreadyExists.into())
+        })
+        .unwrap_err();
+        assert_eq!(calls, PRESERVED_CONFIG_SUFFIXES + 1);
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            error.to_string(),
+            "all corrupt config preservation names are occupied"
+        );
     }
 
     #[test]

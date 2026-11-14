@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn horizontal_clip_matches_full_draw_for_bidi_emoji_italic_and_combining_ink() {
-        let mut fonts = FontSystem::new();
+        let mut fonts = crate::system_fonts::new_font_system();
         let mut cache = SwashCache::new();
         for scale in [0.75, 1.25, 3.0] {
             let mut buffer = Buffer::new_empty(Metrics::new(17.0 * scale, 26.0 * scale));
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn viewport_pixels_include_combining_marks_from_distant_rows() {
-        let mut fonts = FontSystem::new();
+        let mut fonts = crate::system_fonts::new_font_system();
         let mut cache = SwashCache::new();
         let mut buffer = Buffer::new(&mut fonts, Metrics::new(17.0, 26.0));
         buffer.set_size(Some(260.0), None);
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn viewport_pixels_match_full_buffer_draw_at_wrap_and_fractional_boundaries() {
-        let mut fonts = FontSystem::new();
+        let mut fonts = crate::system_fonts::new_font_system();
         let mut cache = SwashCache::new();
         for scale in [0.75, 1.0, 1.25, 2.0] {
             let width = (260.0 * scale) as u32;

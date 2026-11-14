@@ -109,3 +109,43 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
 - Automated entry：`tools/smoke/phase-11-b.ps1` 已有 Rust `phase11b_` selector 包含新增
   `math_text` 与 `flow/editor` 回归；无需改动薄 wrapper 或另建验证框架。
 - Manual：真实按钮/IME/DPI 仍为 `NOT TESTED`；本次定向检查不提升人工或发布资格化状态。
+
+<a id="math-equals-first"></a>
+## 2026-11-12 数学按钮先连接等号行
+
+- Plan / feature：plan 07 `semantic-math-delimiter-conversion`（USER 2026-11-12 批准，见
+  [报告](../report/2026-11-12-math-button-equals-first.md)）→ 数学公式 `$` 按钮。上一节的
+  步骤顺序与“仅 `$$` 块”范围由本节取代，其余预期不变。
+- Preconditions：USER 的 `\[` / `\rho'(g^{op})(y)` / `=` / `\rho(g^{op})(y).` / `\]` 原文；多行
+  `\(...\)` 与 `$...$`；列表内公式；公式外的 `标题\n=\n正文`；被空行切断的 `\[`；引用块、
+  链接、代码、表格内的公式；紧贴另一个 `$` 的 `\$$a\n=\nb$$`；从块的第二行起、各行缩进不同的
+  多行公式（Comrak 0.56 之前会报错结束列）；同一行的两个多行公式；段首有链接引用定义、位置
+  整体错位的段落；引用块的 lazy continuation；未闭合 `$$` 之后的 `\[...\]`；反向选区与部分
+  选区。
+- Action：点击 `$` action；先执行等号行连接，再执行分隔符转换；重复操作，然后 Undo/Redo。
+- Expected：四种公式内符合条件的等号行被连接，随后 `\[...\]` / `\(...\)` 转为 `$$...$$` /
+  `$...$`；公式外文本与反例逐字保留，表格内不连接等号行（分隔符转换照旧）。仅处理完整
+  落在选区内的公式，选区按两步映射；整个 action 只增加一次 generation 和一个撤销记录；
+  第二次操作为 no-op；结果仍会被第一步改变时整个 action 为 no-op。
+- Failure signals：公式外的 `=` 被连接；链接标题、代码、引用块标记、表格内的等号行被改写；
+  Setext 仍使公式漏转；第二次点击仍改动文本；panic；光标落在非法 byte；多次撤销才能恢复。
+- Automated entry：`phase11b_` selector 已包含新增回归：`math_text` 的
+  `phase11b_equals_lines_join_inside_latex_and_single_dollar_formulas`、
+  `phase11b_equals_lines_leave_text_outside_formulas_and_unsafe_formulas`、
+  `phase11b_equals_lines_scope_requires_a_complete_latex_formula`、
+  `phase11b_equals_lines_locate_misreported_multiline_formula_ends`、
+  `phase11b_equals_lines_reject_positions_that_disagree_with_the_formula`、
+  `phase11b_equals_lines_leave_tables_whole`，`semantic_conversion` 的
+  `phase11b_conversion_skips_blocks_shifted_by_reference_definitions`，以及 `flow/editor` 的
+  `phase11b_math_button_joins_equals_before_recognizing_latex_formulas`（含两次点击）、
+  `phase11b_math_button_maps_scope_through_equals_then_delimiters`、
+  `phase11b_math_button_refuses_a_result_it_would_change_again`、
+  `phase11b_math_button_leaves_paragraphs_shifted_by_reference_definitions`。Release-only 的
+  `math_action` 的 `phase11b_performance_math_action_one_mib`（1 MiB、1000 个需两步的公式，
+  每个单元另含公式外的裸 `=` 行与一个段首有引用定义的段落；计时为 Flow 调用的同一函数：
+  一次处理加提交前的再次处理，不含提交；p95 `< 50 ms`）与
+  `phase11b_performance_math_action_stays_linear_in_shifted_paragraphs`（23,717 个段首有
+  引用定义的段落；整个按钮须小于同一文档单次 Comrak 解析的 12 倍）由现有 Phase 11-B
+  Release 基线任务运行；实测值连同所用提交与原始
+  输出记录在[报告](../report/2026-11-12-math-button-equals-first.md)末节。
+- Manual：真实按钮在 Windows 与 macOS 上仍为 `NOT TESTED`；Windows 需桌面回归。

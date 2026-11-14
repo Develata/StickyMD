@@ -4,6 +4,9 @@ All notable changes are recorded here.
 
 ## Unreleased
 
+- Add a macOS host (`apps/stickymd-mac`, arm64, macOS 27 and later) with the note storage, window docking, menu-bar icon, pasteboard, Cmd key table and quit barrier of the Windows host. It is built locally with `apps/stickymd-mac/packaging/build-app.sh` and is not distributed.
+- The collapsed dock sensor is now 2 DIP on every host, and focus returning to a collapsed strip no longer revokes its temporary topmost.
+
 - While a display change is waiting to be applied no placement is confirmed, a topmost value whose
   native bit is unknown can be retried explicitly, and running out of action ids sends no frame.
 - Close the review findings on the window receipts: a display-scale change is recovered and read

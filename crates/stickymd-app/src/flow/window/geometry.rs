@@ -7,7 +7,7 @@ use super::state::DockEdge;
 pub const SNAP_DISTANCE_DIP: f64 = 24.0;
 pub const SNAP_TIE_EPSILON_DIP: f64 = 1.0;
 pub const UNDOCK_DISTANCE_DIP: f64 = 16.0;
-pub const SENSOR_THICKNESS_DIP: f64 = 3.0;
+pub const SENSOR_THICKNESS_DIP: f64 = 2.0;
 pub const MIN_WINDOW_WIDTH_DIP: f64 = 220.0;
 pub const MIN_WINDOW_HEIGHT_DIP: f64 = 120.0;
 
@@ -66,6 +66,9 @@ pub struct MonitorGeometry {
     pub work_area: PhysicalRect,
     pub scale_factor: f64,
     pub primary: bool,
+    /// Where a window docked to the top edge leaves its sensor. It is the top of the work area
+    /// unless the desktop keeps a bar there that the pointer has to cross (plan 09, macOS).
+    pub top_sensor_edge: i32,
 }
 
 impl MonitorGeometry {
@@ -77,10 +80,16 @@ impl MonitorGeometry {
     ) -> Self {
         Self {
             identity,
+            top_sensor_edge: work_area.y,
             work_area,
             scale_factor: valid_scale(scale_factor),
             primary,
         }
+    }
+
+    pub const fn with_top_sensor_edge(mut self, y: i32) -> Self {
+        self.top_sensor_edge = y;
+        self
     }
 }
 
@@ -198,7 +207,7 @@ pub fn collapsed_frame(
         DockEdge::Right => (work.right() - sensor, i64::from(expanded.y)),
         DockEdge::Top => (
             i64::from(expanded.x),
-            i64::from(work.y) - i64::from(expanded.height) + sensor,
+            i64::from(monitor.top_sensor_edge) - i64::from(expanded.height) + sensor,
         ),
     };
     PhysicalRect::new(
@@ -422,14 +431,37 @@ mod phase8_window_tests {
         let monitor = monitor("primary", -1920, 2.0, true);
         let expanded = expanded_frame(&placement(None), Some(DockEdge::Left), &monitor);
         let collapsed = collapsed_frame(expanded, DockEdge::Left, &monitor);
-        assert_eq!(collapsed.right() - i64::from(monitor.work_area.x), 6);
+        assert_eq!(collapsed.right() - i64::from(monitor.work_area.x), 4);
         assert_eq!(collapsed.height, expanded.height);
         let right = collapsed_frame(expanded, DockEdge::Right, &monitor);
-        assert_eq!(monitor.work_area.right() - i64::from(right.x), 6);
+        assert_eq!(monitor.work_area.right() - i64::from(right.x), 4);
         assert_eq!(right.height, expanded.height);
         let top = collapsed_frame(expanded, DockEdge::Top, &monitor);
-        assert_eq!(top.bottom() - i64::from(monitor.work_area.y), 6);
+        assert_eq!(top.bottom() - i64::from(monitor.work_area.y), 4);
         assert_eq!(top.width, expanded.width);
+    }
+
+    /// macOS keeps a menu bar above the work area, and the pointer stops at the screen edge.
+    #[test]
+    fn a_top_sensor_edge_above_the_work_area_only_moves_the_top_strip() {
+        let plain = monitor("primary", 0, 2.0, true);
+        let raised = plain.clone().with_top_sensor_edge(plain.work_area.y - 66);
+        let expanded = expanded_frame(&placement(None), Some(DockEdge::Top), &raised);
+        assert_eq!(
+            expanded,
+            expanded_frame(&placement(None), Some(DockEdge::Top), &plain),
+            "only the strip moves, the expanded window stays under the bar"
+        );
+        let top = collapsed_frame(expanded, DockEdge::Top, &raised);
+        assert_eq!(top.bottom() - i64::from(raised.top_sensor_edge), 4);
+        assert_eq!(top.width, expanded.width);
+        assert_eq!(top.height, expanded.height);
+        for edge in [DockEdge::Left, DockEdge::Right] {
+            assert_eq!(
+                collapsed_frame(expanded, edge, &raised),
+                collapsed_frame(expanded, edge, &plain)
+            );
+        }
     }
 
     #[test]

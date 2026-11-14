@@ -22,7 +22,8 @@ impl<H: Host> DesktopShell<H> {
         text: Option<&str>,
         code: Option<KeyCode>,
     ) {
-        match opacity_key(code, text, self.modifiers) {
+        let shortcut = (self.host.keymap().shortcut_held)(self.modifiers);
+        match opacity_key(code, text, self.modifiers, shortcut) {
             OpacityKey::Commit => {
                 self.controls.claim_commit_key(physical_key);
                 self.commit_opacity_input();
@@ -106,8 +107,8 @@ fn opacity_key<'a>(
     code: Option<KeyCode>,
     text: Option<&'a str>,
     modifiers: ModifiersState,
+    shortcut: bool,
 ) -> OpacityKey<'a> {
-    let shortcut = modifiers.control_key() && !modifiers.alt_key();
     match code {
         Some(KeyCode::Enter | KeyCode::NumpadEnter) if !shortcut => OpacityKey::Commit,
         Some(KeyCode::Backspace) => OpacityKey::Backspace,
@@ -173,12 +174,17 @@ mod phase8_interaction_tests {
             (KeyCode::Digit5, Some(""), none, Drop),
         ] {
             assert_eq!(
-                opacity_key(Some(code), text, modifiers),
+                opacity_key(
+                    Some(code),
+                    text,
+                    modifiers,
+                    modifiers.control_key() && !modifiers.alt_key()
+                ),
                 expected,
                 "{code:?} {modifiers:?}"
             );
         }
-        assert_eq!(opacity_key(None, None, none), Drop);
+        assert_eq!(opacity_key(None, None, none, false), Drop);
     }
 
     /// The edited field takes a commit or a composition but never the end of one or `Enabled`,

@@ -128,7 +128,9 @@ impl<H: Host> DesktopShell<H> {
             return;
         }
         self.cancel_scrollbar_drag();
-        if let Some(surface) = &mut self.surface
+        // Released storage stays released; the show rebuilds it at the size it reads then.
+        if !self.frames_released
+            && let Some(surface) = &mut self.surface
             && let Err(error) = surface.resize(size.width, size.height)
         {
             self.diagnostic = Some(error.to_string());

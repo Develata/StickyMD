@@ -35,6 +35,11 @@ pub struct OwnedDocumentTree {
     pub source: Arc<str>,
     pub blocks: Vec<BlockNode>,
     pub node_count: usize,
+    /// Whole-line byte spans of the paragraphs and Setext headings whose
+    /// inline source ranges Comrak 0.59 reports shifted up after it removed
+    /// leading link reference definitions; ranges reported inside them may
+    /// name other text. In document order and disjoint.
+    pub shifted_blocks: Vec<Range<usize>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

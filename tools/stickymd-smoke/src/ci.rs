@@ -32,7 +32,7 @@ impl Command {
             [command, rest @ ..] if command == "verify" => {
                 results::Results::parse(rest).map(Self::Verify)
             }
-            _ => Err("usage: stickymd-smoke ci plan <--full|--base=<commit>> | ci verify --cancelled=<bool> --full=<bool> --modules=<list> --plan=<status> --smoke=<status> --dependency=<status> --quality=<status> --headless=<status> --release=<status> --portable=<status>".to_owned()),
+            _ => Err("usage: stickymd-smoke ci plan <--full|--base=<commit>> | ci verify --cancelled=<bool> --full=<bool> --modules=<list> --plan=<status> --smoke=<status> --dependency=<status> --quality=<status> --headless=<status> --release=<status> --portable=<status> --mac=<status>".to_owned()),
         }
     }
 }
@@ -73,15 +73,20 @@ pub(crate) struct Checks {
     pub(crate) headless: bool,
     pub(crate) release: bool,
     pub(crate) portable: bool,
+    pub(crate) mac: bool,
 }
 
 impl Checks {
+    /// The Windows lanes (`quality`, `headless`) follow the modules they cover
+    /// (`Module::windows_lane`), so a change confined to the macOS host selects no Windows job
+    /// rather than a Windows run of its stub.
     pub(crate) fn for_modules(full: bool, modules: &[Module]) -> Self {
+        let windows = || modules.iter().filter(|module| module.windows_lane());
         Self {
             smoke: full || modules.contains(&Module::Smoke),
             dependency: full || !modules.is_empty(),
-            quality: full || modules.iter().any(|module| module.package().is_some()),
-            headless: full || !modules.is_empty(),
+            quality: full || windows().any(|module| module.package().is_some()),
+            headless: full || windows().next().is_some(),
             release: full || modules.contains(&Module::Windows),
             portable: full
                 || modules.iter().any(|module| {
@@ -90,6 +95,7 @@ impl Checks {
                         Module::Core | Module::Render | Module::App | Module::Desktop
                     )
                 }),
+            mac: full || modules.iter().any(|module| module.needs_macos()),
         }
     }
 }

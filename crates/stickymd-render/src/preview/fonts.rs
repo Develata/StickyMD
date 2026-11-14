@@ -6,12 +6,13 @@ use cosmic_text::FontSystem;
 use cosmic_text::fontdb::{Family, Query};
 
 pub(super) fn configure_code_font(fonts: &mut FontSystem) {
+    let code = crate::system_fonts::font_defaults().code;
     let query = Query {
-        families: &[Family::Name("Consolas")],
+        families: &[Family::Name(code)],
         ..Query::default()
     };
     if fonts.db().query(&query).is_some() {
-        fonts.db_mut().set_monospace_family("Consolas");
+        fonts.db_mut().set_monospace_family(code);
     }
     // Missing fonts retain the platform's existing monospace fallback. No font
     // download, embedded proprietary font, or change to Source's database.
@@ -41,7 +42,7 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn phase5_code_shaping_selects_real_consolas_faces() {
-        let mut fonts = FontSystem::new();
+        let mut fonts = crate::system_fonts::new_font_system();
         configure_code_font(&mut fonts);
         let faces = code_faces(&mut fonts);
         assert!(!faces.is_empty());
@@ -60,7 +61,7 @@ mod tests {
 
     #[test]
     fn phase5_code_font_missing_keeps_existing_monospace_fallback() {
-        let mut db = FontSystem::new().db().clone();
+        let mut db = crate::system_fonts::new_font_system().db().clone();
         let removed: Vec<_> = db
             .faces()
             .filter(|face| face.families.iter().any(|(name, _)| name == "Consolas"))

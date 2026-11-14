@@ -264,9 +264,17 @@ fn runtime_opacity_recovery_and_busy_export_shortcuts_precede_field() {
         app.apply_key(key(KeyCode::Digit7, Some("77")), false);
         app.app.recovery = stickymd_app::flow::RecoveryCoordinator::new(
             Some(RecoveryCandidate {
-                canonical: Some(LoadedDocument::from_durable_bytes(b"durable").unwrap()),
-                temporary: LoadedDocument::from_durable_bytes(b"temporary").unwrap(),
+                canonical: Some(
+                    LoadedDocument::from_durable_bytes(b"durable", stickymd_core::LineEnding::Crlf)
+                        .unwrap(),
+                ),
+                temporary: LoadedDocument::from_durable_bytes(
+                    b"temporary",
+                    stickymd_core::LineEnding::Crlf,
+                )
+                .unwrap(),
                 temporary_is_newer: true,
+                new_note: stickymd_core::LineEnding::Crlf,
             }),
             None,
         );

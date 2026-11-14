@@ -18,7 +18,7 @@ fn ci_workflow_wires_all_selected_lanes_and_fails_closed_at_the_aggregate_gate()
     assert!(!workflow.contains("continue-on-error"));
     let result = job(&workflow, "result");
     assert!(result.contains("if: always()"));
-    assert!(result.contains("needs: [plan, linux-smoke, dependency-policy, windows-quality, windows-headless, windows-release, portable-core]"));
+    assert!(result.contains("needs: [plan, linux-smoke, dependency-policy, windows-quality, windows-headless, windows-release, portable-core, macos-host]"));
     assert!(result.contains("-- ci verify"));
     assert!(result.contains("if: cancelled()"));
     assert!(
@@ -32,6 +32,7 @@ fn ci_workflow_wires_all_selected_lanes_and_fails_closed_at_the_aggregate_gate()
         ("windows-headless", "headless"),
         ("windows-release", "release"),
         ("portable-core", "portable"),
+        ("macos-host", "mac"),
     ] {
         let lane = job(&workflow, name);
         assert!(lane.contains("needs: plan"), "{name}");
@@ -55,6 +56,34 @@ fn ci_workflow_wires_all_selected_lanes_and_fails_closed_at_the_aggregate_gate()
     assert!(smoke.contains("cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings"));
     assert!(smoke.contains("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"));
     assert!(smoke.contains("cargo test -p stickymd-smoke --locked\n          exit $LASTEXITCODE"));
+    let mac = job(&workflow, "macos-host");
+    assert!(mac.contains("runs-on: macos-latest"));
+    assert!(mac.contains("lane: macos-host"));
+    assert!(mac.contains("CI_MAC_LINT_ARGS: ${{ needs.plan.outputs.mac_lint_args }}"));
+    assert!(mac.contains("CI_MAC_TEST_ARGS: ${{ needs.plan.outputs.mac_test_args }}"));
+    assert!(mac.contains("@($env:CI_MAC_LINT_ARGS | ConvertFrom-Json -ErrorAction Stop)"));
+    assert!(mac.contains("@($env:CI_MAC_TEST_ARGS | ConvertFrom-Json -ErrorAction Stop)"));
+    assert!(!mac.contains("continue-on-error"));
+    for package in ["stickymd-mac", "stickymd-posix"] {
+        assert!(
+            !mac.contains(package),
+            "macOS packages must come from projected args"
+        );
+    }
+    for output in ["mac_needed", "mac_lint_args", "mac_test_args"] {
+        assert!(plan.contains(&format!("{output}: ${{{{ steps.plan.outputs.{output} }}}}")));
+        assert!(plan.contains(&format!("'{output}'")));
+    }
+    // No other lane builds or tests the macOS host: on Windows and Linux it is a stub.
+    for name in [
+        "windows-quality",
+        "windows-headless",
+        "windows-release",
+        "portable-core",
+    ] {
+        assert!(!job(&workflow, name).contains("stickymd-mac"), "{name}");
+        assert!(!job(&workflow, name).contains("stickymd-posix"), "{name}");
+    }
     let headless = job(&workflow, "windows-headless");
     assert!(headless.contains("matrix: ${{ fromJSON(needs.plan.outputs.windows_matrix) }}"));
     assert!(headless.contains("fail-fast: false"));

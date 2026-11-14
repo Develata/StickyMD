@@ -3,6 +3,7 @@
 //! plan_ref: docs/plan/03_system_architecture.md#shared-crates
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use stickymd_app::execution::IoCompletion;
 use stickymd_app::flow::window::geometry::PhysicalRect;
@@ -47,6 +48,10 @@ pub enum HostSignal {
     DisplayTopologyChanged,
     NoteDirectoryChanged,
     WatchFailed(String),
+    /// See `Host::keeps_pointer_after_leave`.
+    PointerLeft,
+    /// A requested quit has run longer than the host can wait for it.
+    QuitDeadlinePassed,
 }
 
 /// The tray. It takes `EventSink`, so it lives here and not with the ports in `stickymd-app`.
@@ -65,6 +70,9 @@ pub trait TrayHost {
     fn destroy(&mut self);
 }
 
+/// How long the caret stays shown, and then hidden, in each blink.
+pub const CARET_BLINK: Duration = Duration::from_millis(550);
+
 /// A native way to blink the caret without a new frame. Without one (`Host::caret_overlay`) the
 /// shell draws the caret into the frame.
 pub trait CaretOverlay {
@@ -73,6 +81,14 @@ pub trait CaretOverlay {
 
     /// A present replaced the pixels, so no inverted rectangle is left on the screen.
     fn release(&mut self) {}
+
+    /// Whether an inverted rectangle blinks by itself, `CARET_BLINK` shown and `CARET_BLINK`
+    /// hidden, starting shown each time it is inverted. The shell then neither wakes nor toggles
+    /// for each blink (plan 10: macOS plays it as a system compositor animation). By default the
+    /// shell toggles it.
+    fn blinks_itself(&self) -> bool {
+        false
+    }
 }
 
 /// The substeps of the startup a host measures separately, in the order they happen.
@@ -92,6 +108,21 @@ pub trait StartupProbe {
     fn detail(&mut self, _detail: StartupDetail) {}
 }
 
+/// What became of a frame a host presents itself (`Host::present_frame`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PresentOutcome {
+    /// The frame is the window's contents now.
+    Presented,
+    /// No presentation buffer is free yet; the window keeps its previous contents and the shell
+    /// draws again shortly (`PRESENT_RETRY`).
+    Deferred,
+    /// The frame could not be shown; the previous contents stay.
+    Failed(String),
+}
+
+/// How soon a deferred frame is drawn again: about half a 60 Hz refresh, one wake per attempt.
+pub const PRESENT_RETRY: Duration = Duration::from_millis(8);
+
 /// A full frame reached the window. It only borrows: `after_present` runs on every frame.
 pub struct PresentFacts<'a> {
     pub width: u32,
@@ -99,6 +130,8 @@ pub struct PresentFacts<'a> {
     /// Every pane of the view shows a real frame, not a placeholder.
     pub view_complete: bool,
     pub ledger: &'a FrameLedger,
+    /// From the start of drawing this frame to `present` returning.
+    pub draw: std::time::Duration,
 }
 
 /// Everything the shell uses of a host, as one bound: it adds no business of its own. The host is
@@ -136,9 +169,42 @@ pub trait Host:
         None
     }
 
+    /// The pointer left the window but still counts as over it, in an area of the desktop only
+    /// the host can see. The host posts `HostSignal::PointerLeft` when it really has left.
+    fn keeps_pointer_after_leave(&mut self) -> bool {
+        false
+    }
+
+    /// A requested quit will not happen: it was blocked, or its barrier failed. A host that answered
+    /// the system's termination request with "later" has to take that answer back.
+    fn quit_abandoned(&mut self) {}
+
     /// For a host's verification probe; `true` ends the event loop.
     fn after_present(&mut self, _facts: &PresentFacts<'_>) -> bool {
         false
+    }
+
+    /// Whether the shell gives up its frame storage while the window is hidden and rebuilds it
+    /// before the window shows again (`09` macOS mapping). A host that keeps it, as Windows does,
+    /// leaves this `false`.
+    fn releases_hidden_frames(&self) -> bool {
+        false
+    }
+
+    /// The shell has just released (`true`) or is about to rebuild (`false`) its frame storage.
+    fn hidden_frames_released(&mut self, _released: bool) {}
+
+    /// Whether this host shows finished frames itself (`present_frame`) rather than through the
+    /// software surface's own presenter (`06` frame presentation). Asked once, before the surface
+    /// exists; Windows keeps the software surface.
+    fn presents_frames(&self) -> bool {
+        false
+    }
+
+    /// Shows a finished frame (premultiplied RGBA, the canvas's own size). Called only when
+    /// `presents_frames`; only `Presented` counts as a frame that reached the window.
+    fn present_frame(&mut self, _frame: &tiny_skia::Pixmap) -> PresentOutcome {
+        PresentOutcome::Failed("this host does not present frames".into())
     }
 }
 

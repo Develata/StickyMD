@@ -441,6 +441,7 @@ fn ci_aggregate_process_distinguishes_success_cancelled_and_missing_jobs() {
         "--release=skipped",
         "--portable=skipped",
         "--smoke=success",
+        "--mac=skipped",
     ];
     for (index, job) in [(8, "headless"), (11, "smoke")] {
         for status in ["success", "failure", "cancelled", "skipped"] {

@@ -4,8 +4,8 @@
 
 - `Layer`: Foundation
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-10
 - `Scope`: StickyMD 的存在理由、本体、便签模型、平台与 v1 范围、Non-Goals、优先级与功能拒绝标准
 
 ---
@@ -112,19 +112,36 @@ Editor Session
 ## 平台
 
 ```text
-交付形态：Windows 11 x64 only
+交付形态：Windows 11 x64（portable ZIP）；macOS 27+ arm64（本机构建，暂不公开分发）
 共享实现：面向 Windows、Debian、macOS
 ```
 
-v1 交付形态不支持 Windows 10、Linux、macOS、ARM64。共享实现（Shared Application、Shared Desktop、
+不支持 Windows 10、Windows ARM64、Linux 交付形态、Intel Mac。共享实现（Shared Application、Shared Desktop、
 `stickymd-core`、`stickymd-render`）面向 Windows、Debian、macOS 集中维护，平台依赖隔离在 Platform Host 的
 adapter 之后（`03` 共享实现节、`09_windows_shell.md`）。USER 决定（2026-10-31）：先完成共享实现并接回 Windows 壳，
 另外两端在对应平台实现。
 
-“共享实现面向三端”不等于“已交付三端产品”。以下事项在建立非 Windows 宿主前须另行批准，本节不替其定案：
-Debian 的桌面环境与 X11/Wayland 支持矩阵；macOS 最低版本、CPU 架构、应用身份、菜单栏/窗口行为与签名；
-非 Windows 的便签目录与实例身份（签名 bundle 只读，不能假设可执行文件旁可写）；缺少贴边定位、隐藏或置顶能力时的
-产品行为；两端默认字体、输入法验收矩阵、资源与性能门。在此之前，非 Windows 平台的一切验收保持 `NOT TESTED`。
+“共享实现面向三端”不等于“已交付三端产品”。Debian 的桌面环境与 X11/Wayland 支持矩阵、便签目录与实例身份、缺少贴边定位、
+隐藏或置顶能力时的产品行为、默认字体、输入法验收矩阵、资源与性能门，在建立 Debian 宿主前须另行批准，本节不替其定案；
+在此之前 Debian 的一切验收保持 `NOT TESTED`。
+
+<a id="macos-host"></a>
+### macOS 宿主
+
+USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-decision.md)）。
+
+| 项 | 合同 |
+| --- | --- |
+| 版本与架构 | macOS 27 及以上，仅 `aarch64-apple-darwin`；不打 x86_64 或 universal 包 |
+| 应用身份 | `StickyMD.app`，`io.github.develata.stickymd`，`LSUIElement`，无 Dock 图标，不启用沙盒 |
+| 签名与分发 | 本机 ad-hoc 签名；公开分发需 Developer ID 与公证，另行决定 |
+| 便签目录 | 包含 `StickyMD.app` 的目录是 Program Directory，数据在 `<dir>/note/`，不进 bundle；复制整个目录得到第二张便签 |
+| 卷要求 | 卷须支持不覆盖改名（`RENAME_EXCL`），否则提示后退出（`05` macOS 节） |
+| 默认字体 | 中文 PingFang SC；西文 Times New Roman → Georgia；代码 Menlo；数学不变 |
+| 快捷键 | Cmd 替代 Ctrl（`07` macOS 节） |
+| 窗口行为 | `09` macOS 实现映射；多屏保持 `NOT TESTED` |
+
+未在对应环境运行的 macOS 验收项保持 `NOT TESTED`。v1 Scope 中的字体、输入法、托盘等条目以 Windows 为描述对象，macOS 的对应差异以本节及所引章节为准。
 
 ---
 
@@ -181,8 +198,8 @@ AI 写作/总结/补全、遥测、Analytics、崩溃自动上传、远程图片
 
 ### 系统扩展
 
-MSI/MSIX、Microsoft Store、Windows 10、ARM64 v1、Linux/macOS app v1、
-自动开机启动 v1、全局快捷键 v1。
+MSI/MSIX、Microsoft Store、Windows 10、Windows ARM64 v1、Linux app v1、Intel Mac、
+Mac App Store、自动开机启动 v1、全局快捷键 v1。
 
 ---
 

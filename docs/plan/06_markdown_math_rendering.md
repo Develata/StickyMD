@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Last Review`: 2026-11-12
 - `Scope`: Markdown 语义权威、数学语义权威、Owned AST、Preview 调度与 generation、渲染桥接、缓存与资源限制
 
 ---
@@ -56,6 +56,11 @@ inline code、fenced/indented code block、链接、自动链接、图片、表�
 - code span / code block 中的公式标记不得被解释。
 - `\$` 按 parser 结果处理。
 - 不改变 Markdown parser 语义；升级 Comrak 时方言选项需重新核验并更新本章。
+- 当前版本 Comrak 0.59.0（2026-11-12 由 0.54.0 升级，USER 批准，见
+  [升级评估](../report/2026-11-12-comrak-upgrade-evaluation.md)）。已核验：上述方言选项不变，
+  其它扩展保持关闭。随版本改变、由 Comrak 决定的解析结果：自动链接按 cmark-gfm 识别，
+  `http://localhost/x` 这类短域名与大写 scheme（如 `HTTP://www.example.com/`）现在成为链接；
+  多行行内节点、表格行与 CRLF 段落的源码位置更准确。
 
 ---
 
@@ -337,6 +342,14 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
   是否局部呈现由 Shared Desktop 依后端缓冲区年龄决定：只有缓冲区就是上一帧（softbuffer `age == 1`）时才只写
   damage 区，其他年龄（新缓冲 `0`、双缓冲取到更早帧 `≥ 2`）全量填充并完整呈现。不以 Windows 的局部呈现成本
   代表其他平台（例如 softbuffer 0.4.8 的 macOS 后端每帧新分配缓冲、忽略 damage，按全窗成本单独测量，见 `10`）。
+- **宿主呈现（macOS，USER 批准 2026-11-14，[方案 B 报告](../report/2026-11-14-macos-plan-b-iosurface.md)）：**
+  - **谁来提交。** `Host::presents_frames` 为真的宿主自己提交帧：Shared Desktop 只持有画布（`SoftwareSurface::for_host`），不创建 softbuffer 表面，把完成的整帧交给 `Host::present_frame`。
+  - **macOS 的做法。** 宿主把整帧写进 IOSurface，设为子图层内容，CoreAnimation 不再复制。Windows 不实现这个能力，呈现不变。
+  - **三种结果：**
+    - **已提交：** 只有这种才算帧到达窗口，才走 `after_present` 与光标同步。
+    - **暂缓：** 呈现缓冲都在用，窗口保留上一帧；整帧在 `PRESENT_RETRY`（8 ms）后重画。只保留一个等待中的唤醒，成功提交或隐藏时取消。
+    - **失败：** 报告诊断，不重试，上一帧保留。
+  - **不做局部提交。** 宿主呈现总是整帧，光标的局部提交在这时改走整帧。
 - 字体选择算法共用；各平台的默认字体候选由 Platform Host 提供，Windows 现有默认（含代码块 Consolas）保持不变。
 
 <a id="preview-horizontal-scroll"></a>

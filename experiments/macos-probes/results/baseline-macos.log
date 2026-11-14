@@ -1,0 +1,978 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/stickymd_app-a64b743f53323b95)
+
+running 329 tests
+test config::coordinator::phase8_config_tests::phase8_config_equal_update_is_a_no_op ... ok
+test config::coordinator::phase8_config_tests::phase8_config_in_flight_write_coalesces_to_latest_follow_up ... ok
+test config::coordinator::phase8_config_tests::phase8_config_failed_or_stale_ack_never_clears_dirty ... ok
+test config::coordinator::phase8_config_tests::phase8_preference_updates_cannot_change_document_generation ... ok
+test config::document::tests::only_a_file_moved_aside_may_be_replaced ... ok
+test config::document::tests::a_missing_file_is_created_and_an_unreadable_one_is_left_alone ... ok
+test config::document::tests::every_warning_says_what_happened_to_the_file ... ok
+test config::document::tests::preserved_names_are_numbered_after_the_plain_one ... ok
+test config::runtime::tests::phase10_zoom_defaults_and_bounds_are_stable ... ok
+test config::runtime::tests::config_defaults_keep_phase10_and_phase14_preferences_stable ... ok
+test execution::io_worker::tests::a_newer_note_job_supersedes_only_a_queued_conflict_discard_cleanup ... ok
+test execution::io_worker::tests::asset_sync_coalescing_preserves_old_touches_but_uses_latest_references ... ok
+test config::document::tests::text_that_is_not_a_current_configuration_is_corrupt ... ok
+test config::document::tests::a_newer_version_keeps_its_file_and_runs_on_defaults ... ok
+test config::document::tests::the_current_version_is_used_as_written ... ok
+test execution::io_worker::tests::unrelated_work_cannot_bypass_the_note_completion_barrier ... ok
+test execution::io_worker::tests::the_mailbox_drains_every_job_kind_in_its_priority_order ... ok
+test execution::preview_worker::tests::newer_build_supersedes_viewport_updates ... ok
+test execution::preview_worker::tests::older_jobs_never_replace_a_newer_pending_generation ... ok
+test execution::preview_worker::tests::phase6_source_edit_during_math_build_release_baseline ... ignored, Release-only Phase 6 source latency while math worker is busy
+test execution::io_worker::tests::mailbox_has_at_most_one_latest_pending_note ... ok
+test execution::preview_worker::tests::mailbox_is_bounded_to_one_latest_pending_generation ... ok
+test execution::preview_worker::tests::scrollbar_viewport_identity_rejects_same_offset_with_stale_geometry_or_selection ... ok
+test flow::asset_io::startup_tests::a_startup_that_offers_recovery_leaves_the_assets_to_the_recovery_choice ... ok
+test flow::asset_io::startup_tests::a_normal_startup_runs_one_safe_boundary_over_the_loaded_references ... ok
+test flow::asset_io::startup_tests::missing_references_and_a_failed_boundary_go_on_the_status_line ... ok
+test flow::asset_paste::tests::a_broken_dib_is_an_image_error ... ok
+test flow::asset_paste::tests::an_undecodable_payload_is_an_image_error_not_a_file_error ... ok
+test flow::asset_paste::tests::a_dib_payload_is_prepared_and_stored ... ok
+test flow::asset_paste::tests::a_success_inserts_a_reference_for_each_asset_and_keeps_the_ledger ... ok
+test flow::asset_paste::tests::the_batch_limit_counts_every_part_and_survives_overflow ... ok
+test flow::asset_paste::tests::what_is_not_an_image_is_refused_without_touching_the_store ... ok
+test flow::asset_paste::tests::every_failure_says_what_it_is ... ok
+test flow::clipboard::tests::a_boxed_clipboard_keeps_the_hosts_own_paste ... ok
+test flow::asset_paste::tests::a_failure_part_way_returns_what_was_already_published ... ok
+test flow::editor::tests::copy_failure_leaves_canonical_state_unchanged ... ok
+test flow::editor::tests::copy_reads_canonical_selection ... ok
+test flow::editor::tests::cut_clipboard_failure_is_state_atomic ... ok
+test flow::asset_paste::tests::several_files_become_references_separated_by_a_blank_line ... ok
+test flow::editor::tests::cut_success_copies_then_deletes_and_can_be_undone ... ok
+test flow::editor::tests::external_runtime_reload_emits_projection_and_asset_reconcile_effect ... ok
+test flow::editor::tests::paste_empty_is_noop_and_paste_text_replaces_selection ... ok
+test flow::editor::tests::paste_read_failure_is_state_atomic ... ok
+test flow::editor::tests::phase11b_math_delimiter_batch_is_one_generation_and_one_undo_step ... ok
+test flow::editor::tests::phase14_literal_replace_all_is_one_generation_and_one_undo_step ... ok
+test flow::editor::tests::phase11b_math_delimiter_selection_scope_and_no_match_are_transactional ... ok
+test flow::editor::tests::phase11b_math_button_cleans_dollars_without_a_delimiter_match ... ok
+test flow::editor::tests::phase11b_math_button_maps_reverse_scope_after_delimiters_and_equals ... ok
+test flow::editor::tests::phase11b_math_button_composes_both_steps_in_one_undo_and_is_idempotent ... ok
+test flow::editor::tests::phase14_literal_replace_is_stale_safe_and_undoable ... ok
+test flow::editor::tests::stale_copy_is_rejected_before_clipboard_access ... ok
+test flow::editor::tests::typed_edit_flows_through_coordinator_and_normalizes_newlines ... ok
+test flow::editor::tests::undo_and_redo_return_incremental_deltas ... ok
+test flow::editor::tests::phase7_image_paste_is_deferred_and_stale_commit_is_rejected ... ok
+test flow::export_plan::tests::a_source_remembers_the_name_it_took ... ok
+test flow::export_plan::tests::asking_for_a_name_records_nothing ... ok
+test flow::export_plan::tests::a_taken_prefix_grows_and_running_out_is_an_error ... ok
+test flow::export_plan::tests::sources_differing_only_in_case_stay_different ... ok
+test flow::export_plan::tests::references_point_into_the_encoded_asset_directory ... ok
+test flow::export_plan::tests::the_extension_is_short_ascii_in_lower_case_or_img ... ok
+test flow::export_plan::tests::the_same_bytes_under_another_extension_reuse_the_first_name ... ok
+test flow::note_guard::tests::every_observed_state_against_every_expectation ... ok
+test flow::note_io::tests::a_clean_reload_applies_the_document_before_reporting_it ... ok
+test flow::note_io::tests::a_receipt_for_an_unreached_generation_discharges_nothing ... ok
+test flow::note_io::tests::a_keep_local_handover_holds_the_barriers ... ok
+test flow::note_io::tests::a_save_is_guarded_by_the_known_fingerprint ... ok
+test flow::note_io::tests::a_receipt_for_an_unreached_generation_ends_what_waits_on_it ... ok
+test flow::note_io::tests::a_saved_receipt_settles_the_barriers_before_the_redraw ... ok
+test flow::note_io::tests::a_receipt_for_an_unreached_generation_fails_the_save ... ok
+test flow::note_io::tests::a_superseded_observation_only_schedules_a_recheck ... ok
+test flow::note_io::tests::a_stale_identity_changes_nothing ... ok
+test flow::note_io::tests::an_idle_tick_has_no_effects_and_allocates_nothing ... ok
+test flow::note_io::tests::finishing_recovery_converges_the_assets_first ... ok
+test flow::note_io::tests::a_valid_older_save_receipt_keeps_the_newer_edit_dirty_and_saves_it ... ok
+test flow::note_io::tests::keep_local_is_satisfied_only_by_a_force_overwrite_receipt ... ok
+test flow::note_io::tests::loading_the_external_side_applies_it_before_discarding_the_temporary ... ok
+test flow::note_io::tests::the_keys_are_not_consumed_without_a_recovery_or_a_conflict ... ok
+test flow::note_io::tests::restoring_resyncs_before_saving_or_preserving ... ok
+test flow::note_startup::tests::a_different_temporary_is_a_choice_for_the_user ... ok
+test flow::note_io::tests::recovery_blocks_every_save_except_its_own ... ok
+test flow::note_startup::tests::a_recovery_with_no_canonical_note_uses_the_hosts_line_ending ... ok
+test flow::note_startup::tests::a_restore_must_preserve_an_unusable_canonical_note_first ... ok
+test flow::note_startup::tests::a_redundant_temporary_is_kept_when_the_canonical_note_cannot_be_opened ... ok
+test flow::note_startup::tests::an_invalid_temporary_is_moved_aside_even_when_the_note_is_then_refused ... ok
+test flow::note_startup::tests::an_identical_temporary_is_redundant ... ok
+test flow::note_startup::tests::an_invalid_temporary_is_moved_aside_then_the_note_opens_as_usual ... ok
+test flow::note_startup::tests::an_unusable_canonical_note_is_refused_and_never_replaced ... ok
+test flow::note_startup::tests::the_warnings_name_where_the_temporary_went ... ok
+test flow::note_startup::tests::an_oversized_temporary_is_moved_aside_before_the_note_is_opened ... ok
+test flow::note_startup::tests::an_empty_temporary_beside_a_usable_note_is_redundant ... ok
+test flow::note_startup::tests::with_no_temporary_the_canonical_note_opens_or_a_new_one_is_created ... ok
+test flow::persistence::tests::an_observation_requested_before_a_durable_change_is_superseded_and_rechecked ... ok
+test flow::persistence::tests::known_base_and_missing_observations_clear_stale_conflicts ... ok
+test flow::persistence::tests::loading_external_content_discharges_a_superseded_recreate ... ok
+test flow::persistence::tests::raw_watch_hints_coalesce_to_one_check ... ok
+test flow::persistence::tests::recovery_and_conflict_pause_are_independent ... ok
+test flow::persistence::tests::unrelated_save_receipt_cannot_satisfy_required_recreate ... ok
+test flow::preferences::phase8_preference_tests::phase10_content_zoom_uses_the_config_authority ... ok
+test flow::preferences::phase8_preference_tests::phase10_opacity_clamps_to_the_new_forty_percent_floor ... ok
+test flow::preferences::phase8_preference_tests::phase14_split_scroll_sync_uses_config_authority_and_can_be_disabled ... ok
+test flow::preferences::phase8_preference_tests::phase8_committed_preferences_have_one_config_authority ... ok
+test flow::preferences::phase8_preference_tests::phase8_preview_opacity_is_clamped_without_mutating_config ... ok
+test flow::preview::tests::clean_preview_relayouts_when_a_visible_mode_change_alters_its_viewport ... ok
+test flow::preview::tests::hidden_edits_remain_dirty_until_preview_is_shown ... ok
+test flow::preview::tests::link_activation_is_validated_before_shell_effects_are_emitted ... ok
+test flow::preview::tests::one_hundred_rapid_split_edits_emit_only_the_latest_build ... ok
+test flow::preview::tests::preview_entry_and_preview_visible_changes_are_immediate ... ok
+test flow::preview::tests::releasing_projection_drops_applied_and_scheduled_state_but_keeps_dirty_work ... ok
+test flow::preview::tests::split_resets_fixed_one_second_debounce ... ok
+test flow::preview::tests::stale_completion_cannot_replace_current_preview ... ok
+test flow::preview_io::tests::a_receipt_for_an_older_offset_is_relaid_out_and_never_shown ... ok
+test flow::preview_io::tests::completion_route_admits_only_the_current_build ... ok
+test flow::preview_io::tests::current_layout_requires_generation_and_every_layout_field_but_not_offset_or_selection ... ok
+test flow::preview_io::tests::new_preview_generation_clears_old_selection_but_repaint_keeps_it ... ok
+test flow::reconciliation::tests::clean_external_change_reloads_but_dirty_change_conflicts ... ok
+test flow::reconciliation::tests::known_self_write_is_ignored_by_hash ... ok
+test flow::reconciliation::tests::missing_recreates_and_invalid_utf8_never_reloads ... ok
+test flow::reconciliation::tests::only_the_working_note_and_its_temporary_need_a_reconciliation ... ok
+test flow::recovery::tests::a_conflict_sets_the_next_preserve_expectation ... ok
+test flow::recovery::tests::conflict_refreshes_the_next_guard_without_losing_temporary_evidence ... ok
+test flow::recovery::tests::receipts_are_accepted_only_for_the_pending_operation ... ok
+test flow::save::tests::conflict_pause_discards_normal_autosave ... ok
+test flow::recovery::tests::restore_uses_canonical_fingerprint_and_blocks_parallel_choices ... ok
+test flow::save::tests::edit_debounce_resets_and_fires_only_at_650ms ... ok
+test flow::save::tests::immediate_triggers_bypass_and_cancel_debounce ... ok
+test flow::save::tests::one_thousand_continuous_edits_coalesce_to_one_autosave ... ok
+test flow::startup::tests::a_degraded_startup_names_what_is_missing ... ok
+test flow::startup::tests::every_stop_says_why_with_the_platform_text ... ok
+test flow::startup::tests::only_a_missing_tray_interrupts_a_startup_that_goes_on ... ok
+test flow::window::geometry::phase8_window_tests::collapsed_frames_leave_exact_scaled_sensor_strip ... ok
+test flow::window::geometry::phase8_window_tests::missing_monitor_falls_back_to_primary_and_stays_visible ... ok
+test flow::window::geometry::phase8_window_tests::phase10_snap_uses_nearest_edge_and_only_tie_breaks_within_one_dip ... ok
+test flow::window::geometry::phase8_window_tests::placement_sanitizes_non_finite_ratios_size_and_scale ... ok
+test flow::window::geometry::phase8_window_tests::snap_and_undock_thresholds_are_dip_scaled ... ok
+test flow::window::placement::tests::a_confirmed_drag_writes_what_was_observed ... ok
+test flow::window::placement::tests::a_drag_commits_nothing_until_the_frame_is_confirmed ... ok
+test flow::window::placement::tests::a_failed_apply_ends_the_wait_without_commit ... ok
+test flow::window::placement::tests::a_failed_placement_can_be_retried ... ok
+test flow::window::placement::tests::a_failed_final_frame_ends_no_animation_forever ... ok
+test flow::window::placement::tests::a_hidden_topology_recovery_commits_at_once ... ok
+test flow::window::placement::tests::a_host_that_cannot_observe_ends_the_wait_at_once ... ok
+test flow::window::placement::tests::a_newer_placement_supersedes_the_older_receipt ... ok
+test flow::window::placement::tests::a_physical_drag_abandons_a_waiting_placement ... ok
+test flow::window::placement::tests::a_placement_after_a_drag_is_judged_as_usual ... ok
+test flow::window::placement::tests::a_placement_confirms_without_any_move_event ... ok
+test flow::window::placement::tests::a_placement_never_waits_forever ... ok
+test flow::window::placement::tests::a_quit_ignores_a_waiting_placement ... ok
+test flow::window::placement::tests::a_show_supersedes_a_waiting_placement ... ok
+test flow::window::geometry::phase8_window_tests::deterministic_geometry_property_keeps_recovered_frame_inside_work_area ... ok
+test flow::window::placement::tests::a_stale_observation_commits_nothing ... ok
+test flow::window::placement::tests::a_topology_change_during_a_drag_starts_no_wait ... ok
+test flow::window::placement::tests::a_topology_recovery_commits_its_placement_only_when_confirmed ... ok
+test flow::window::placement::tests::a_topology_change_while_hidden_keeps_an_unconfirmed_drag_out_of_the_commit ... ok
+test flow::window::placement::tests::an_animation_supersedes_a_waiting_placement ... ok
+test flow::window::placement::tests::an_exhausted_placement_sends_no_frame_and_ends_the_old_one ... ok
+test flow::window::placement::tests::an_observation_past_the_deadline_that_does_not_match_fails_without_commit ... ok
+test flow::window::placement::tests::an_unavailable_observation_waits_for_the_deadline ... ok
+test flow::window::placement::tests::only_the_last_animation_frame_is_judged ... ok
+test flow::window::placement::tests::the_deadline_asks_once_more_and_can_still_confirm ... ok
+test flow::window::placement::tests::the_tolerance_is_exact_on_every_edge ... ok
+test flow::window::reducer::phase8_window_tests::a_hide_commits_only_on_its_success_receipt ... ok
+test flow::window::reducer::phase8_window_tests::a_hide_receipt_after_a_show_changes_nothing ... ok
+test flow::window::reducer::phase8_window_tests::a_hiding_or_hidden_docked_window_never_collapses ... ok
+test flow::window::reducer::phase8_window_tests::a_rejected_hide_returns_the_edge_sensor_to_topmost ... ok
+test flow::window::reducer::phase8_window_tests::a_rejected_hide_stays_shown_with_its_input_and_caches ... ok
+test flow::window::reducer::phase8_window_tests::a_stale_hide_receipt_changes_nothing ... ok
+test flow::window::reducer::phase8_window_tests::a_second_instance_expands_a_collapsed_dock ... ok
+test flow::window::reducer::phase8_window_tests::a_window_back_from_a_failed_hide_arms_its_auto_collapse ... ok
+test flow::window::reducer::phase8_window_tests::animation_finishes_at_140ms_and_stops_requesting_wakes ... ok
+test flow::window::reducer::phase8_window_tests::asset_gc_failure_warns_but_continues_to_config_barrier ... ok
+test flow::window::reducer::phase8_window_tests::cancelled_hover_deadline_cannot_reveal_from_a_stale_tick ... ok
+test flow::window::reducer::phase8_window_tests::close_defers_save_until_pending_paste_and_asset_convergence_settle ... ok
+test flow::window::reducer::phase8_window_tests::collapsed_and_unfocused_hover_reveal_never_accept_editor_mutation ... ok
+test flow::window::reducer::phase8_window_tests::config_failure_warns_but_reaches_ready_to_exit ... ok
+test flow::window::reducer::phase8_window_tests::direct_drag_between_dock_edges_redocks_in_one_transition ... ok
+test flow::window::reducer::phase8_window_tests::dirty_close_freezes_until_latest_save_succeeds_then_hides_without_gc ... ok
+test flow::window::reducer::phase8_window_tests::dirty_close_save_failure_keeps_window_visible_and_reenables_input ... ok
+test flow::window::reducer::phase8_window_tests::drag_snap_and_undock_update_one_durable_placement ... ok
+test flow::window::reducer::phase8_window_tests::escape_collapses_only_a_docked_window_without_delay ... ok
+test flow::window::reducer::phase8_window_tests::every_edge_auto_collapse_uses_exact_700ms_boundary_and_focus_guard ... ok
+test flow::window::reducer::phase8_window_tests::focused_manual_collapse_keeps_sensor_topmost_until_expansion_starts ... ok
+test flow::window::reducer::phase8_window_tests::hidden_monitor_recovery_stays_hidden_then_shows_expanded_on_primary ... ok
+test flow::window::reducer::phase8_window_tests::hidden_to_tray_never_keeps_temporary_sensor_topmost ... ok
+test flow::window::reducer::phase8_window_tests::hover_reveal_and_leave_delays_are_exact ... ok
+test flow::window::reducer::phase8_window_tests::note_save_failure_cancels_quit_and_reenables_input ... ok
+test flow::window::reducer::phase8_window_tests::phase10_focused_dock_release_stays_expanded_without_collapse_deadline ... ok
+test flow::window::reducer::phase8_window_tests::phase10_split_keeps_the_user_selected_compact_width ... ok
+test flow::window::reducer::phase8_window_tests::phase8_performance_window_reducer_and_geometry ... ignored, Release-only Phase 8 state and geometry performance receipt
+test flow::window::reducer::phase8_window_tests::phase9_conflict_blocks_tray_quit_before_any_destructive_barrier ... ok
+test flow::window::reducer::phase8_window_tests::phase11b_pin_is_orthogonal_to_every_auto_hide_reducer_transition ... ok
+test flow::window::reducer::phase8_window_tests::recovery_or_conflict_blocks_hide_without_freezing_editor ... ok
+test flow::window::reducer::phase8_window_tests::show_is_ignored_while_quitting ... ok
+test flow::window::reducer::phase8_window_tests::stale_hide_save_receipt_requests_latest_dirty_generation_before_hiding ... ok
+test flow::window::reducer::phase8_window_tests::temporary_sensor_topmost_survives_hover_reveal_until_focus ... ok
+test flow::window::reducer::phase8_window_tests::topology_recovery_preserves_edge_on_primary_with_negative_coordinates ... ok
+test flow::window::reducer::phase8_window_tests::tray_quit_obeys_paste_save_gc_config_order ... ok
+test flow::window::reducer::phase8_window_tests::tray_unavailable_close_uses_the_safe_quit_barrier ... ok
+test flow::window::show_receipt_tests::a_cancelled_hide_save_needs_an_id_for_its_placement ... ok
+test flow::window::show_receipt_tests::a_cancelled_quit_leaves_a_hidden_window_without_input ... ok
+test flow::window::show_receipt_tests::a_cancelled_quit_restores_input_for_a_show_that_landed_during_it ... ok
+test flow::window::show_receipt_tests::a_committed_show_claims_no_focus ... ok
+test flow::window::show_receipt_tests::a_drag_end_cannot_overwrite_a_hide_in_progress ... ok
+test flow::window::show_receipt_tests::a_focus_request_commits_nothing_and_reports_a_rejection ... ok
+test flow::window::show_receipt_tests::a_drag_end_cannot_replace_a_pending_show ... ok
+test flow::window::show_receipt_tests::a_focus_with_no_receipt_is_reported_at_its_deadline ... ok
+test flow::window::show_receipt_tests::a_hide_request_waits_out_a_pending_show ... ok
+test flow::window::show_receipt_tests::a_hide_with_no_receipt_is_rejected_at_its_deadline ... ok
+test flow::window::show_receipt_tests::a_newer_show_supersedes_the_older_receipt ... ok
+test flow::window::show_receipt_tests::a_pending_show_holds_no_collapse_deadline ... ok
+test flow::window::show_receipt_tests::a_quit_overrides_the_input_a_pending_show_would_restore ... ok
+test flow::window::show_receipt_tests::a_rejected_show_after_an_overtaken_hide_rests_hidden ... ok
+test flow::window::show_receipt_tests::a_rejected_show_can_be_retried ... ok
+test flow::window::show_receipt_tests::a_rejected_show_holds_no_deadline_and_keeps_the_guards ... ok
+test flow::window::show_receipt_tests::a_rejected_show_keeps_the_window_hidden_and_input_off ... ok
+test flow::window::show_receipt_tests::a_rejected_show_restores_the_prior_record_exactly ... ok
+test flow::window::show_receipt_tests::a_request_after_the_last_id_fails_alone ... ok
+test flow::window::show_receipt_tests::a_show_during_a_hide_save_cancels_the_freeze_without_a_show_action ... ok
+test flow::window::show_receipt_tests::a_show_from_collapsed_commits_expanded ... ok
+test flow::window::show_receipt_tests::a_show_needs_an_id_for_its_placement_too ... ok
+test flow::window::show_receipt_tests::a_show_only_asks_until_its_receipt ... ok
+test flow::window::show_receipt_tests::a_show_with_no_receipt_ends_hidden_with_input_off ... ok
+test flow::window::show_receipt_tests::a_stale_show_receipt_changes_nothing ... ok
+test flow::window::show_receipt_tests::a_success_after_the_expiry_tick_commits_nothing_and_a_retry_works ... ok
+test flow::window::show_receipt_tests::a_success_past_the_deadline_but_before_the_expiry_tick_commits ... ok
+test flow::window::show_receipt_tests::a_success_receipt_commits_the_show_and_what_depends_on_it ... ok
+test flow::window::show_receipt_tests::a_topology_change_keeps_the_pending_show_and_moves_its_frame ... ok
+test flow::window::show_receipt_tests::exhausted_action_ids_fail_every_request_without_reuse ... ok
+test flow::window::state::phase8_window_tests::all_auto_collapse_guards_are_explicit ... ok
+test flow::window::state::phase8_window_tests::cubic_ease_out_has_exact_endpoints_and_advances_quickly ... ok
+test flow::window::state::phase8_window_tests::effective_topmost_keeps_configured_and_sensor_authorities_separate ... ok
+test flow::window::topmost::tests::a_bit_the_startup_could_not_set_lets_a_repeat_reach_the_host_from_either_source ... ok
+test flow::window::topmost::tests::a_composed_bit_settles_in_one_order ... ok
+test flow::window::topmost::tests::a_failed_sensor_request_carrying_an_unconfirmed_user_value_is_reported_as_user ... ok
+test flow::window::topmost::tests::a_hide_saves_the_confirmed_sensor_value ... ok
+test flow::window::topmost::tests::a_newer_request_supersedes_the_older_receipt ... ok
+test flow::window::topmost::tests::a_rejected_hide_restores_the_sensor_value_it_saved ... ok
+test flow::window::topmost::tests::a_rejected_sensor_request_keeps_its_confirmed_value_and_reports ... ok
+test flow::window::topmost::tests::a_rejected_user_request_can_be_retried ... ok
+test flow::window::topmost::tests::a_rejected_user_request_keeps_the_value_reports_and_reconciles_once ... ok
+test flow::window::topmost::tests::a_sensor_request_stays_separate_from_the_user_value ... ok
+test flow::window::topmost::tests::a_sensor_success_carries_the_users_pending_value ... ok
+test flow::window::topmost::tests::a_stale_topmost_receipt_commits_nothing ... ok
+test flow::window::topmost::tests::a_topmost_receipt_never_settles_a_visibility_action ... ok
+test flow::window::topmost::tests::a_topmost_request_with_no_receipt_ends_at_its_deadline ... ok
+test flow::window::topmost::tests::a_user_request_carries_the_effective_value_and_commits_on_success ... ok
+test flow::window::topmost::tests::a_value_already_held_or_pending_asks_for_nothing ... ok
+test flow::window::topmost::tests::an_explicit_retry_reaches_the_host_after_a_failed_reconcile ... ok
+test flow::window::topmost::tests::the_configured_value_seeds_the_flow ... ok
+test flow::window::topmost::tests::the_request_is_the_effective_of_both_sources ... ok
+test interaction::navigation::tests::invalid_mid_codepoint_positions_are_clamped_without_panicking ... ok
+test interaction::navigation::tests::arrows_step_over_complete_graphemes ... ok
+test interaction::navigation::tests::logical_line_bounds_exclude_newline ... ok
+test interaction::rules::tests::a_clamped_selection_stays_in_the_text_on_character_boundaries ... ok
+test interaction::rules::tests::a_composition_in_either_field_blocks_auto_collapse ... ok
+test interaction::rules::tests::a_conversion_scopes_to_a_selection_the_note_shows ... ok
+test interaction::rules::tests::a_placement_rounds_and_stays_inside_the_window_limits ... ok
+test interaction::rules::tests::a_view_without_a_source_pane_parks_search_and_one_with_it_resumes_it ... ok
+test interaction::rules::tests::ctrl_f_toggles_and_ctrl_h_expands_one_search_session ... ok
+test interaction::rules::tests::each_fact_maps_to_its_guard ... ok
+test interaction::rules::tests::find_only_and_active_preedit_both_reject_replacement_commands ... ok
+test interaction::rules::tests::consecutive_replacements_move_past_text_that_contains_the_query ... ok
+test interaction::rules::tests::input_changes_the_note_only_with_every_gate_open ... ok
+test interaction::rules::tests::quit_and_asset_reconcile_freeze_keyboard_and_ime_mutations ... ok
+test interaction::rules::tests::recovery_pending_rejects_ime_commits_and_preedit ... ok
+test interaction::rules::tests::replace_current_replaces_only_the_selected_active_match ... ok
+test interaction::rules::tests::the_note_barrier_is_dirty_or_owed_or_in_flight ... ok
+test interaction::rules::tests::the_theme_goes_light_system_dark_and_back ... ok
+test interaction::search::tests::a_parked_search_comes_back_as_it_was_without_holding_matches ... ok
+test interaction::search::tests::a_resumed_search_rescans_the_current_document ... ok
+test interaction::search::tests::only_an_open_search_is_parked_and_a_preedit_does_not_survive_it ... ok
+test interaction::search::tests::preedit_is_projected_at_the_field_cursor_without_mutating_committed_text ... ok
+test interaction::search::tests::replace_expansion_reuses_the_same_query_and_match_projection ... ok
+test interaction::search::tests::query_edits_are_grapheme_safe_and_replacement_is_independent ... ok
+test interaction::search::tests::search_session_defaults_to_case_insensitive_matching ... ok
+test interaction::search::tests::search_session_invalidates_generation_and_wraps_navigation ... ok
+test interaction::search::tests::the_match_after_a_position_becomes_active_and_wraps_to_the_first ... ok
+test interaction::session::tests::backspace_and_delete_remove_complete_graphemes ... ok
+test interaction::session::tests::empty_preedit_cancels_without_intent ... ok
+test interaction::session::tests::keyboard_text_after_commit_is_not_guessed_to_be_a_duplicate ... ok
+test interaction::session::tests::movement_preserves_or_extends_selection_direction ... ok
+test interaction::session::tests::preedit_updates_only_session_and_commit_emits_one_intent ... ok
+test ports::failure::tests::a_failure_shows_exactly_the_host_message ... ok
+test ports::window::tests::a_show_succeeds_only_when_both_read_backs_are_right ... ok
+test ports::window::tests::a_topmost_receipt_is_the_read_back_of_the_wanted_bit ... ok
+test session::decision_tests::a_composing_search_keeps_the_view_that_has_its_pane ... ok
+test session::decision_tests::a_composition_refuses_opening_search ... ok
+test session::decision_tests::a_drag_is_written_only_after_its_frame_was_observed ... ok
+test session::decision_tests::a_replacement_containing_the_query_is_not_replaced_again_in_place ... ok
+test session::decision_tests::a_sensor_receipt_writes_no_configuration ... ok
+test session::decision_tests::a_shown_zoom_is_written_once_it_has_been_still ... ok
+test session::decision_tests::a_topmost_before_the_window_flow_goes_straight_to_the_configuration ... ok
+test session::decision_tests::a_preference_is_shown_and_written_unless_it_is_previewed_or_a_zoom ... ok
+test session::decision_tests::a_topmost_is_written_only_after_the_window_confirmed_it ... ok
+test session::decision_tests::a_view_change_ends_the_composition_and_keeps_a_closed_search ... ok
+test session::decision_tests::a_view_without_a_source_pane_parks_search_and_the_way_back_resumes_it ... ok
+test session::decision_tests::a_zoom_written_now_drops_its_settle_deadline ... ok
+test session::decision_tests::replace_all_with_an_empty_query_does_nothing ... ok
+test session::decision_tests::replace_current_first_selects_an_unselected_match ... ok
+test session::decision_tests::replace_current_replaces_the_selected_match_and_selects_the_next ... ok
+test session::decision_tests::search_from_preview_waits_for_the_source_view ... ok
+test session::decision_tests::replacing_is_refused_while_it_is_not_allowed ... ok
+test session::decision_tests::search_opens_on_the_selected_text_and_selects_its_match ... ok
+test session::decision_tests::the_shortcut_closes_an_open_search_or_shows_its_replacement_row ... ok
+test session::decision_tests::the_tray_toggles_a_shown_window_and_shows_a_hidden_one ... ok
+test session::decision_tests::the_view_shown_does_not_change_again ... ok
+test session::decision_tests::the_window_flow_starts_where_the_configuration_put_the_window ... ok
+test session::document::tests::external_reconcile_handler_requires_projection_resync_and_asset_convergence ... ok
+test session::decision_tests::the_window_opens_on_the_configured_display_else_the_primary_else_any ... ok
+test session::tests::a_barrier_turn_reads_the_view_at_its_turn ... ok
+test session::tests::a_nested_frame_runs_before_the_rest_of_its_parent ... ok
+test session::tests::a_document_change_asks_in_the_order_of_the_fan_out ... ok
+test session::tests::exit_appears_only_after_the_last_barrier ... ok
+test session::tests::focus_loss_ends_the_shells_part_first_and_saves_a_dirty_note ... ok
+test session::tests::the_next_deadline_is_the_earliest_of_all ... ok
+test session::tests::the_shell_sees_no_save_gc_flush_or_placement ... ok
+test source_search::tests::invalid_expansion_match_does_not_hide_later_boundary_aligned_match ... ok
+test source_search::tests::literal_search_handles_unicode_case_and_char_boundaries ... ok
+test source_search::tests::lowercase_expansion_never_creates_a_mid_codepoint_source_range ... ok
+test source_search::tests::phase14_one_mib_unicode_case_insensitive_search_p95_is_bounded ... ignored, Release-only one MiB literal-search performance receipt
+test source_search::tests::replace_all_is_one_linear_projection_and_preserves_unmatched_bytes ... ok
+test session::tests::typing_does_not_grow_the_buffer ... ok
+test flow::asset_paste::tests::a_file_that_is_no_image_or_too_big_is_unsupported_and_a_read_error_is_a_read_error ... ok
+test interaction::search::tests::closed_search_releases_match_projection_and_ignores_document_refreshes ... ok
+test source_search::tests::replace_all_does_not_require_retaining_match_ranges ... ok
+test execution::preview_worker::tests::worker_completion_keeps_generation_and_typed_failure ... ok
+test execution::preview_worker::tests::scrollbar_completion_preserves_requested_offset_even_after_clamping ... ok
+test execution::preview_worker::tests::document_projection_release_forces_the_next_visible_request_to_rebuild ... ok
+test execution::preview_worker::tests::raster_release_keeps_semantic_tree_for_fast_preview_return ... ok
+test execution::preview_worker::tests::scrollbar_coalesces_resize_zoom_and_reverse_drag_without_reparsing ... ok
+
+test result: ok. 326 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running unittests src/lib.rs (target/debug/deps/stickymd_core-1c36a22a9ef32759)
+
+running 53 tests
+test assets::tests::phase7_managed_scan_release_baseline ... ignored, Release-only Phase 7 managed-reference scan timing baseline
+test assets::tests::strict_name_parser_rejects_lookalikes ... ok
+test assets::tests::conservative_scanner_counts_literals_in_every_markdown_context ... ok
+test assets::tests::incremental_window_handles_cjk_without_invalid_slicing ... ok
+test document::tests::discarding_recovery_for_missing_note_requires_an_empty_publish_receipt ... ok
+test document::tests::empty_history_returns_typed_errors ... ok
+test assets::tests::incremental_window_detects_name_formed_across_edit_boundary ... ok
+test document::tests::edit_rejects_stale_generation_without_state_change ... ok
+test document::tests::first_generation_zero_persist_establishes_base_hash ... ok
+test document::tests::generation_exhaustion_fails_before_mutation ... ok
+test document::tests::deleting_only_one_of_multiple_managed_references_does_not_trash ... ok
+test document::tests::grouped_undo_reverses_asset_effects_in_transaction_order ... ok
+test document::tests::invalid_cursor_after_is_failure_atomic ... ok
+test document::tests::managed_reference_transitions_are_coupled_to_undo_and_redo ... ok
+test document::tests::no_op_changes_nothing_and_preserves_redo ... ok
+test document::tests::persisted_acknowledgement_never_marks_newer_edits_clean ... ok
+test document::tests::reconciliation_is_the_only_external_replacement_gate ... ok
+test document::tests::recovery_evidence_is_dirty_until_a_real_persist_receipt ... ok
+test document::tests::reverse_selection_is_valid_for_replacement ... ok
+test document::tests::same_generation_rewrite_refreshes_durable_base_hash ... ok
+test document::tests::snapshot_includes_line_ending_and_remains_immutable ... ok
+test document::tests::undo_and_redo_advance_generation_and_restore_cursor ... ok
+test document::tests::undo_failure_keeps_history_and_generation_unchanged ... ok
+test document::tests::unicode_is_not_normalized ... ok
+test generation::tests::checked_next_advances_without_wrapping ... ok
+test hash::tests::hash32_hex_is_lowercase_64 ... ok
+test hash::tests::hash32_roundtrip_and_reject ... ok
+test line_ending::tests::adjacent_newline_does_not_consume_an_isolated_carriage_return ... ok
+test line_ending::tests::line_ending_detection_majority_wins ... ok
+test line_ending::tests::line_ending_roundtrip ... ok
+test line_ending::tests::to_internal_preserves_isolated_carriage_return ... ok
+test persistence::tests::a_different_temporary_is_a_recovery_choice_whatever_its_time ... ok
+test persistence::tests::an_empty_temporary_has_nothing_to_offer_beside_a_usable_note ... ok
+test persistence::tests::an_empty_temporary_stays_a_choice_without_a_usable_note ... ok
+test persistence::tests::durable_decode_accepts_bom_and_emits_bomless_runtime_text ... ok
+test persistence::tests::durable_decode_rejects_invalid_utf8 ... ok
+test persistence::tests::missing_note_with_valid_temporary_is_recoverable ... ok
+test persistence::tests::mixed_newline_majority_and_isolated_cr_are_preserved ... ok
+test persistence::tests::recovery_classifies_same_invalid_and_newer_temporary ... ok
+test persistence::tests::valid_temporary_survives_an_invalid_newer_canonical ... ok
+test selection::tests::positions_reject_mid_codepoint_offsets ... ok
+test selection::tests::reverse_selection_preserves_direction_and_normalizes_range ... ok
+test text_store::tests::replace_is_failure_atomic_for_invalid_utf8_boundaries ... ok
+test document::tests::history_entry_limit_evicts_oldest ... ok
+test undo::tests::backspace_group_preserves_original_cursor_and_deleted_order ... ok
+test undo::tests::combined_undo_redo_payload_is_counted_once ... ok
+test undo::tests::delete_forward_group_preserves_deleted_order ... ok
+test undo::tests::deleting_newlines_never_merges_across_undo_steps ... ok
+test undo::tests::merge_window_boundary_starts_a_new_undo_entry ... ok
+test undo::tests::reverse_selection_never_groups_as_plain_typing ... ok
+test undo::tests::typing_within_window_groups_and_preserves_initial_cursor ... ok
+test undo::tests::oversized_entry_clears_history_and_is_not_recorded ... ok
+test document::tests::oversized_edit_succeeds_without_recording_history ... ok
+
+test result: ok. 52 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/property.rs (target/debug/deps/property-3cca9e9ecd717138)
+
+running 5 tests
+test non_boundary_edit_is_rejected_without_mutation ... ok
+test cjk_emoji_and_combining_sequences_remain_byte_exact ... ok
+test deterministic_unicode_edits_roundtrip_without_grouping ... ok
+test one_mebibyte_common_edits_stay_below_smoke_threshold ... ok
+test deterministic_unicode_edits_roundtrip_with_grouping ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/stickymd_desktop-366dd9aab17033a0)
+
+running 253 tests
+test controls::tests::cancelling_the_opacity_popup_ends_every_edit_and_restores_the_committed_value ... ok
+test controls::tests::phase10_compact_layout_keeps_every_control_inside_without_overlap ... ok
+test controls::tests::phase8_performance_control_layout_and_hit_test ... ignored, Release-only Phase 8 control-layout performance receipt
+test controls::tests::a_hit_is_the_first_of_popup_border_split_control_button_and_toolbar ... ok
+test controls::tests::phase14_split_sync_hit_target_is_centered_on_divider ... ok
+test controls::tests::phase8_resize_hit_test_prioritizes_all_eight_border_regions ... ok
+test controls::tests::phase8_controls_share_layout_between_hit_testing_and_painting ... ok
+test controls::tests::phase8_opacity_slider_and_input_clamp_only_on_commit ... ok
+test controls::tests::the_key_that_ends_an_edit_keeps_its_repeats_and_release ... ok
+test controls::tests::phase8_a_slider_drag_commits_at_most_once_on_release ... ok
+test controls::tests::the_opacity_field_edits_like_a_selected_text_field ... ok
+test controls::tests::the_opacity_field_takes_keys_while_edited_and_commits_when_it_ends ... ok
+test controls::tests::every_view_reserves_the_gutter_clear_of_the_resize_border_and_sync_button ... ok
+test controls::tests::the_open_popup_takes_every_press_inside_it ... ok
+test controls::toolbar_paint::tests::a_long_entry_shows_its_last_characters ... ok
+test frame::convert::tests::a_length_mismatch_is_an_error_at_every_age ... ok
+test frame::convert::tests::age_one_writes_only_the_damage ... ok
+test frame::convert::tests::every_other_age_fills_the_whole_buffer ... ok
+test frame::convert::tests::phase9_caret_damage_conversion_does_not_touch_other_pixels ... ok
+test frame::convert::tests::the_age_decides_before_the_damage_is_clipped ... ok
+test frame::ledger::tests::the_ledger_prints_every_counter ... ok
+test geometry::tests::phase10_minimum_window_keeps_all_modes_operable_and_split_is_fifty_fifty ... ok
+test geometry::tests::split_is_fixed_fifty_fifty_while_semantic_scroll_mapping_stays_separate ... ok
+test geometry::tests::the_toolbar_height_keeps_its_rounding_and_its_exact_widening ... ok
+test geometry::tests::toolbar_is_reserved_in_every_view_mode ... ok
+test host::tests::a_host_without_a_tray_says_so ... ok
+test host::tests::every_clone_of_a_sink_posts_to_the_same_place ... ok
+test input::escape::tests::an_editor_preedit_owns_esc_even_with_preview_focused ... ok
+test input::escape::tests::each_guard_alone_ignores_esc ... ok
+test input::escape::tests::modifiers_never_change_esc ... ok
+test input::escape::tests::preview_without_a_selection_reaches_the_window ... ok
+test input::escape::tests::the_first_applicable_row_wins_in_plan_order ... ok
+test input::keymap::tests::phase10_clipboard_aliases_are_unambiguous ... ok
+test input::keymap::tests::phase10_zoom_keys_are_deterministic ... ok
+test input::keymap::tests::phase14_save_and_export_shortcuts_remain_global_with_search_focus ... ok
+test input::keymap::tests::the_standard_table_answers_as_its_functions_do ... ok
+test input::keymap::tests::view_and_zoom_shortcuts_take_no_key_that_search_binds ... ok
+test input::keymap::tests::window_keys_pass_an_open_search_but_not_its_composition ... ok
+test preview::input::tests::a_position_is_local_to_the_pane_it_lies_on ... ok
+test preview::input::tests::each_part_of_the_view_shows_its_cursor ... ok
+test preview::input::tests::link_click_tolerates_jitter_but_selection_drag_crosses_dip_threshold ... ok
+test scroll::scrollbar::tests::a_drag_whose_bar_vanishes_ends ... ok
+test scroll::scrollbar::tests::a_drag_follows_the_pointer_live_and_any_end_stops_it ... ok
+test controls::tests::the_opacity_range_is_40_to_100_in_integer_steps ... ok
+test scroll::scrollbar::tests::each_view_has_a_bar_for_exactly_its_shown_panes ... ok
+test scroll::scrollbar::tests::hovering_or_dragging_a_bar_emphasizes_only_that_bar ... ok
+test scroll::scrollbar::tests::nothing_is_operable_without_input_or_with_a_stale_preview ... ok
+test scroll::scrollbar::tests::scrollbar_drag_keeps_grab_offset_and_clamps_outside_window ... ok
+test scroll::scrollbar::tests::the_gutter_is_the_band_right_of_each_pane ... ok
+test scroll::scrollbar::tests::the_preview_offset_follows_the_fraction_and_pages_within_the_document ... ok
+test search::layout_paint::tests::narrow_source_panes_take_the_compact_tier ... ok
+test search::layout_paint::tests::the_panel_is_a_narrow_strip_at_the_source_pane_top_right ... ok
+test shell::caret_runtime::tests::phase11_offscreen_caret_is_not_a_native_overlay_failure ... ok
+test shell::caret_runtime::tests::phase9_caret_damage_is_clipped_to_the_source_pane ... ok
+test shell::handler::tests::real_winit_left_release_completes_only_an_active_native_move_resize ... ok
+test controls::toolbar_paint::tests::the_split_control_is_painted_on_its_hit_rectangle_at_125_percent ... ok
+test shell::guards::tests::runtime_guards_read_both_compositions_and_focus_loss_cancels_them ... ok
+test controls::toolbar_paint::tests::a_selected_background_stays_out_of_the_resize_border ... ok
+test shell::opacity_field::phase8_interaction_tests::the_edited_opacity_field_leaves_the_end_of_a_composition_to_its_owner ... ok
+test shell::opacity_field::phase8_interaction_tests::the_edited_opacity_field_types_only_plain_text ... ok
+test shell::phase15_host_tests::phase15_a_collapse_due_at_the_placement_deadline_reads_nothing ... ok
+test shell::phase15_host_tests::phase15_a_drag_is_saved_once_the_window_is_observed_there ... ok
+test shell::phase15_host_tests::phase15_a_failed_overlay_falls_back_to_the_frame ... ok
+test shell::phase15_host_tests::phase15_a_host_without_an_overlay_draws_the_caret_in_the_frame ... ok
+test shell::phase15_host_tests::phase15_a_focus_request_on_a_visible_window_reports_a_bad_read_back ... ok
+test shell::phase15_host_tests::phase15_a_key_means_what_the_hosts_table_says ... ok
+test scroll::scrollbar::tests::the_thumb_is_the_visible_share_with_a_grabbable_minimum ... ok
+test shell::phase15_host_tests::phase15_a_link_goes_to_the_launcher_and_its_failure_to_the_status_line ... ok
+test shell::phase15_host_tests::phase15_a_lost_identity_restores_the_taskbar_entry_and_says_so ... ok
+test shell::phase15_host_tests::phase15_a_native_drag_reads_nothing_and_a_failed_placement_can_be_retried ... ok
+test shell::phase15_host_tests::phase15_a_recovery_with_no_placement_observes_the_waiting_one_after ... ok
+test shell::phase15_host_tests::phase15_a_rejected_hide_tells_the_tray_nothing ... ok
+test shell::phase15_host_tests::phase15_a_scale_change_is_recovered_only_on_the_next_event_turn ... ok
+test shell::lifecycle::runtime_tests::runtime_event_pass_reads_all_barriers_once_after_scheduling ... ok
+test shell::phase15_host_tests::phase15_a_second_start_shows_the_window ... ok
+test shell::phase15_host_tests::phase15_a_rejected_topmost_writes_nothing_and_can_be_retried ... ok
+test shell::phase15_host_tests::phase15_a_sensor_topmost_stays_out_of_the_configuration ... ok
+test shell::phase15_host_tests::phase15_a_rejected_show_changes_nothing_but_the_status_line ... ok
+test shell::phase15_host_tests::phase15_a_timed_out_placement_is_reported_and_writes_nothing ... ok
+test shell::phase15_host_tests::phase15_a_show_can_be_retried_after_a_rejection ... ok
+test shell::phase15_host_tests::phase15_a_topology_change_reads_the_displays_when_there_are_any ... ok
+test shell::phase15_host_tests::phase15_a_topology_change_during_a_drag_reports_nothing ... ok
+test shell::phase15_host_tests::phase15_a_tray_quit_starts_the_quit_and_keeps_the_tray_for_now ... ok
+test shell::phase15_host_tests::phase15_a_watch_that_cannot_start_is_reported_and_the_note_stays_open ... ok
+test shell::phase15_host_tests::phase15_a_window_event_with_no_pending_placement_reads_nothing ... ok
+test shell::phase15_host_tests::phase15_an_animation_observes_the_window_only_at_its_last_frame ... ok
+test shell::phase15_host_tests::phase15_an_export_goes_where_the_picker_says ... ok
+test shell::phase15_host_tests::phase15_hiding_and_showing_reach_the_host_in_order ... ok
+test shell::phase15_host_tests::phase15_the_deferred_display_recovery_runs_in_about_to_wait ... ok
+test shell::phase15_host_tests::phase15_moved_and_resized_events_can_confirm_after_a_mismatch ... ok
+test shell::phase15_host_tests::phase15_opacity_and_its_failure_reach_the_host ... ok
+test shell::phase15_host_tests::phase15_no_observation_settles_a_placement_while_recovery_is_due ... ok
+test shell::phase15_host_tests::phase15_the_overlay_inverts_back_what_it_inverted ... ok
+test shell::phase15_host_tests::phase15_the_tray_toggle_hides_a_shown_window_and_shows_a_hidden_one ... ok
+test shell::phase15_host_tests::phase15_the_startup_topmost_ignores_the_read_back ... ok
+test shell::phase15_host_tests::phase15_the_worker_stops_before_the_host_drops ... ok
+test shell::phase15_host_tests::phase15_topmost_and_its_failure_reach_the_host_and_the_tray ... ok
+test shell::phase15_host_tests::phase15_watch_signals_reach_the_host ... ok
+test shell::phase15_receipt_tests::a_conflict_discard_receipt_reports_only_a_failure ... ok
+test shell::phase15_receipt_tests::a_failed_observation_changes_nothing_and_says_so ... ok
+test shell::phase15_receipt_tests::a_failed_preservation_stops_the_restore ... ok
+test shell::phase15_receipt_tests::a_failed_save_ends_a_recovery_operation_but_not_the_candidate ... ok
+test shell::phase15_receipt_tests::a_failed_save_keeps_the_text_and_says_so ... ok
+test shell::phase15_receipt_tests::a_failed_recovery_cleanup_keeps_the_recovery_open ... ok
+test search::layout_paint::tests::every_view_leaves_readable_fields_and_reachable_buttons ... ok
+test shell::phase15_receipt_tests::a_forced_receipt_ends_keep_local ... ok
+test shell::phase15_receipt_tests::a_missing_note_is_recreated_guarded_on_absence ... ok
+test shell::phase15_receipt_tests::a_mismatched_result_generation_saves_nothing_and_ends_the_operations ... ok
+test shell::phase15_receipt_tests::a_preserved_canonical_starts_the_save_guarded_by_the_restore_plan ... ok
+test shell::phase15_receipt_tests::a_quit_cancelled_with_a_failed_hide_restarts_the_auto_collapse ... ok
+test shell::phase15_receipt_tests::a_receipt_for_an_unreached_generation_is_reported ... ok
+test shell::phase15_receipt_tests::a_save_conflict_during_recovery_asks_for_a_new_choice ... ok
+test shell::phase15_receipt_tests::a_recovery_operation_in_progress_refuses_the_keys ... ok
+test shell::phase15_receipt_tests::a_rejected_hide_does_not_stay_blocked_by_the_popup_it_closed ... ok
+test shell::phase15_receipt_tests::a_rejected_hide_keeps_the_window_shown_through_the_shell ... ok
+test shell::phase15_receipt_tests::a_save_conflict_enters_the_conflict ... ok
+test shell::phase15_receipt_tests::a_superseded_keep_local_save_holds_the_barrier_until_the_forced_receipt ... ok
+test shell::phase15_receipt_tests::an_external_edit_reloads_a_clean_document ... ok
+test shell::phase15_receipt_tests::a_saved_receipt_inspects_the_disk_while_a_recreate_is_still_owed ... ok
+test shell::phase15_receipt_tests::an_observation_during_recovery_changes_nothing ... ok
+test shell::phase15_receipt_tests::an_unusable_canonical_cannot_be_used ... ok
+test shell::phase15_receipt_tests::an_unloadable_external_side_leaves_only_keep_local ... ok
+test shell::phase15_receipt_tests::closing_and_showing_reach_the_window_in_order ... ok
+test shell::phase15_receipt_tests::an_older_receipt_during_keep_local_submits_the_forced_save ... ok
+test shell::phase15_receipt_tests::loading_the_external_side_discards_the_temporary ... ok
+test shell::phase15_receipt_tests::every_conflicting_external_state_names_its_way_out ... ok
+test shell::phase15_receipt_tests::the_keys_do_nothing_without_a_recovery_or_a_conflict ... ok
+test shell::phase15_receipt_tests::saved_clears_the_edit ... ok
+test shell::phase15_receipt_tests::restoring_publishes_the_temporary_and_then_removes_the_evidence ... ok
+test shell::phase15_receipt_tests::the_known_file_returning_ends_the_conflict_and_saves_the_edit ... ok
+test shell::phase15_receipt_tests::restoring_over_an_invalid_canonical_moves_it_aside_first ... ok
+test shell::phase15_receipt_tests::using_the_canonical_removes_the_temporary_without_a_save ... ok
+test shell::phase15_receipt_tests::using_a_missing_canonical_publishes_it_before_removing_the_temporary ... ok
+test shell::phase15_session_tests::a_shell_without_a_window_flow_takes_no_edit ... ok
+test shell::phase15_session_tests::a_committed_placement_stays_inside_the_window_limits ... ok
+test shell::phase15_session_tests::exit_comes_after_the_tray_is_destroyed ... ok
+test search::layout_paint::tests::the_panel_surface_has_one_fixed_opacity ... ok
+test shell::phase15_session_tests::exit_does_not_appear_while_a_barrier_is_unsettled ... ok
+test shell::phase15_receipt_tests::the_note_barriers_settle_by_receipt ... ok
+test shell::phase15_session_tests::the_event_pass_flushes_the_zoom_only_at_its_deadline ... ok
+test shell::phase15_session_tests::losing_focus_saves_a_dirty_note_and_nothing_else_does ... ok
+test shell::phase15_worker_receipt_tests::a_failed_config_write_reports_and_keeps_the_change_dirty ... ok
+test shell::phase15_session_tests::no_watcher_starts_while_a_recovery_choice_waits ... ok
+test shell::phase15_worker_receipt_tests::a_failed_paste_converges_what_it_published ... ok
+test shell::phase15_worker_receipt_tests::a_failed_paste_with_nothing_published_starts_no_sync ... ok
+test shell::phase15_worker_receipt_tests::a_newer_config_is_submitted_after_the_receipt ... ok
+test shell::phase15_worker_receipt_tests::a_paste_for_an_older_generation_inserts_nothing_and_converges ... ok
+test shell::phase15_worker_receipt_tests::a_paste_starts_once_and_a_second_is_refused ... ok
+test shell::phase15_worker_receipt_tests::a_paste_that_cannot_commit_converges ... ok
+test shell::phase15_worker_receipt_tests::a_prepared_paste_is_committed_to_the_document ... ok
+test shell::phase15_worker_receipt_tests::a_quit_sync_receipt_completes_the_asset_barrier ... ok
+test shell::phase15_worker_receipt_tests::a_settled_paste_moves_the_quit_on ... ok
+test shell::phase15_worker_receipt_tests::a_superseded_sync_receipt_keeps_the_newer_request_in_flight ... ok
+test shell::phase15_worker_receipt_tests::an_export_receipt_ends_the_export_and_reports_it ... ok
+test shell::phase15_worker_receipt_tests::a_stopped_worker_fails_every_barrier_and_says_so ... ok
+test shell::phase15_worker_receipt_tests::the_config_receipt_completes_the_quit ... ok
+test shell::phase15_worker_receipt_tests::the_last_sync_after_recovery_enables_watching_and_recreates_a_missing_note ... ok
+test shell::phase15_worker_receipt_tests::the_sync_sequence_stops_when_it_is_used_up ... ok
+test shell::pointer::wheel_tests::phase10_high_resolution_wheel_is_deterministic ... ok
+test shell::phase15_worker_receipt_tests::the_sync_report_names_what_it_could_not_do ... ok
+test shell::preview_horizontal::tests::horizontal_wheel_preserves_vertical_intent_and_shift_uses_the_vertical_axis ... ok
+test shell::preview_input::tests::preview_shortcuts_are_read_only_and_reserve_copy_select_all_and_save ... ok
+test shell::preview_runtime::runtime_tests::actual_config_geometry_keeps_gutters_across_content_zoom_and_note_lengths ... ok
+test shell::phase15_session_tests::an_ime_commit_edits_the_note_only_with_every_gate_open ... ok
+test shell::phase15_session_tests::a_keyboard_save_passes_preview_focus_and_every_other_gate_stops_it ... ok
+test shell::receipt_tests::a_changed_canonical_becomes_a_conflict_and_the_retry_uses_the_new_expectation ... ok
+test shell::receipt_tests::a_preserve_receipt_of_another_operation_starts_no_save ... ok
+test shell::receipt_tests::a_recovery_cleanup_receipt_of_another_operation_changes_nothing ... ok
+test shell::receipt_tests::a_superseded_external_observation_is_rechecked_and_a_current_one_applied ... ok
+test shell::receipt_tests::a_valid_older_save_receipt_is_accepted_and_the_newer_edit_stays_dirty ... ok
+test shell::receipt_tests::an_unverifiable_canonical_ends_the_operation_without_a_save ... ok
+test scroll::scrollbar::tests::a_track_press_pages_toward_the_click_by_most_of_the_pane ... ok
+test shell::render::tests::phase10_content_zoom_keeps_toolbar_paint_and_hit_test_aligned ... ok
+test scroll::scrollbar::tests::scrollbar_paints_inside_gutter_and_avoids_resize_border_at_each_dpi ... ok
+test shell::hot_path_tests::phase15_d_receipt_driven_preview_jobs_stay_at_the_baseline ... ok
+test shell::phase15_session_tests::the_event_pass_runs_the_note_the_preview_and_the_window_ticks ... ok
+test shell::hot_path_tests::phase15_d_ime_search_and_ticked_typing_stay_at_the_baseline ... ok
+test shell::hot_path_tests::phase15_a_typing_burst_stays_at_the_baseline_snapshot_and_build_counts ... ok
+test shell::preview_horizontal::tests::horizontal_session_never_mutates_note_or_vertical_offset_and_releases_drag_guard ... ok
+test shell::phase15_receipt_tests::keeping_local_forces_the_save_and_refuses_a_second_choice ... ok
+test shell::search_controller::tests::only_preview_has_no_source_pane ... ok
+test shell::scroll_application::tests::preview_scroll_uses_cached_document_height_and_missing_frames_keep_existing_rules ... ok
+test shell::shell_pins_tests::phase15_a_failed_drag_or_resize_is_consumed ... ok
+test shell::shell_pins_tests::phase15_a_fractional_point_under_the_toolbar_at_125_percent_stays_pinned ... ok
+test shell::shell_pins_tests::phase15_a_press_on_the_popup_blank_does_not_fall_through ... ok
+test shell::shell_pins_tests::phase15_no_press_acts_while_shell_input_is_off ... ok
+test shell::scroll_application::tests::pane_scroll_preserves_text_generation_selection_caret_and_preedit ... ok
+test shell::shell_pins_tests::phase15_the_control_rectangles_stay_pinned ... ok
+test shell::scroll_application::tests::split_sync_uses_only_the_current_driver_and_requires_the_switch_and_current_frame ... ok
+test shell::shell_pins_tests::phase15_a_press_that_closes_the_popup_acts_once ... ok
+test shell::shell_pins_tests::phase15_the_layout_follows_the_size_the_dpi_and_the_view ... ok
+test shell::shell_pins_tests::phase15_the_routed_press_map_on_rectangle_edges_stays_pinned ... ok
+test shell::scroll_runtime::tests::runtime_an_edit_keeps_a_source_drag_and_a_stale_preview_ends_its_own ... ok
+test shell::scroll_runtime::tests::runtime_scroll_preserves_canonical_state_and_session_for_clean_and_dirty_notes ... ok
+test shell::shell_pins_tests::phase15_the_toolbar_blank_shows_the_arrow ... ok
+test shell::scroll_runtime::tests::runtime_pointer_moves_apply_each_pane_and_cached_document_height ... ok
+test shell::startup_tests::a_healthy_startup_keeps_its_order_and_reports_nothing ... ok
+test shell::startup_tests::a_measuring_hosts_exit_removes_the_tray_first ... ok
+test shell::startup_tests::a_missing_tray_interrupts_once_and_the_startup_goes_on_with_a_taskbar_entry ... ok
+test shell::startup_tests::a_missing_tray_is_told_once_while_the_recovery_prompt_holds_the_status_line ... ok
+test shell::startup_tests::a_refused_opacity_is_reported_and_the_startup_goes_on ... ok
+test shell::startup_tests::a_refused_topmost_is_reported_and_can_be_retried_once ... ok
+test shell::startup_tests::a_stopped_startup_removes_the_tray_then_explains_then_exits_and_is_recorded ... ok
+test shell::startup_tests::a_survived_failure_goes_to_a_dialog_while_the_recovery_prompt_holds_the_status_line ... ok
+test shell::startup_tests::a_survived_failure_joins_what_the_status_line_already_says ... ok
+test shell::startup_tests::an_identity_lost_after_the_show_stops_the_startup_before_the_window_is_styled ... ok
+test shell::startup_tests::an_identity_refused_before_the_show_stops_the_startup_before_the_window_is_placed ... ok
+test shell::startup_tests::every_callback_starts_by_returning_after_a_failed_startup ... ok
+test shell::startup_tests::every_survived_failure_of_a_startup_has_its_place_on_the_one_status_line ... ok
+test shell::startup_tests::without_a_display_the_startup_stops_before_it_creates_anything ... ok
+test shell::preview_runtime::runtime_tests::horizontal_receipts_cannot_replace_a_newer_requested_offset ... ok
+test shell::tests::ime_commit_replaces_collapsed_forward_reverse_cjk_and_emoji_selections ... ok
+test shell::tests::phase3_source_pipeline_release_baseline ... ignored, release-only Phase 3 latency baseline
+test shell::tests::synthetic_ime_pipeline_mutates_only_on_commit ... ok
+test shell::title::tests::the_notice_settles_at_the_end_of_each_event_pass ... ok
+test shell::title::tests::the_title_has_one_native_writer ... ok
+test shell::window_interaction::phase8_interaction_tests::the_ime_follows_whoever_takes_the_keyboard ... ok
+test shell::window_interaction::phase8_interaction_tests::the_opacity_button_closes_the_popup_it_finds_open ... ok
+test shell::window_interaction::runtime_tests::runtime_opacity_blur_commits_before_other_click_hide_or_quit ... ok
+test shell::window_interaction::runtime_tests::runtime_opacity_enter_keeps_repeats_and_synthetic_release_from_note_and_search ... ok
+test shell::window_interaction::runtime_tests::runtime_opacity_key_priority_keeps_escape_and_save_above_field ... ok
+test shell::window_interaction::runtime_tests::runtime_opacity_recovery_and_busy_export_shortcuts_precede_field ... ok
+test shell::window_interaction::runtime_tests::runtime_opacity_refuses_composition_and_routes_late_ime_to_field ... ok
+test shell::tests::deterministic_editor_sequence_keeps_projection_and_authority_synchronized ... ok
+test shell::window_runtime::phase8_runtime_tests::runtime_every_window_effect_preserves_notice_except_failed_note_quit ... ok
+test testing::portable_disk::tests::a_guarded_save_publishes_only_over_what_it_expected_and_keeps_the_temporary_otherwise ... ok
+test testing::tests::a_failed_watch_start_leaves_no_watch_and_a_running_one_stays ... ok
+test testing::tests::a_host_may_have_no_caret_overlay ... ok
+test testing::tests::a_present_tells_the_host_and_the_host_may_end_the_loop ... ok
+test testing::tests::a_read_back_is_what_the_test_set ... ok
+test testing::tests::a_strict_host_fails_an_unplanned_observation - should panic ... ok
+test testing::tests::by_default_nothing_says_where_the_window_is ... ok
+test testing::tests::every_call_is_recorded_in_order_and_taking_them_starts_anew ... ok
+test testing::tests::observe_frame_echoes_the_applied_frame_unless_told_otherwise ... ok
+test testing::tests::set_topmost_echoes_unless_answers_or_a_result_are_set ... ok
+test testing::tests::show_and_focus_answers_change_per_call_then_fall_back ... ok
+test title::tests::a_formula_error_never_hides_unsaved_text ... ok
+test title::tests::each_state_has_its_title_and_higher_states_win ... ok
+test title::tests::only_a_failed_note_save_establishes_the_notice ... ok
+test title::tests::only_a_quit_cancelled_by_a_failed_save_changes_the_notice ... ok
+test title::tests::the_notice_clears_only_when_the_note_no_longer_needs_the_barrier ... ok
+test testing::portable_disk::tests::an_invalid_canonical_moves_aside_only_while_it_is_what_was_expected ... ok
+test title::tests::the_notice_has_one_entry_for_effects ... ok
+test controls::toolbar_paint::tests::the_focused_field_paints_its_typed_text ... ok
+test shell::preview_runtime::runtime_tests::receipt_application_rejects_every_stale_viewport_field_without_replacing_frame_or_offset ... ok
+test shell::scroll_runtime::tests::runtime_gutter_press_is_consumed_without_caret_or_selection_mutation ... ok
+test shell::shell_pins_tests::phase15_the_hover_map_stays_pinned ... ok
+test shell::scroll_runtime::tests::runtime_drag_ends_on_release_blur_view_switch_and_resize_for_both_panes ... ok
+test shell::shell_pins_tests::phase15_the_toolbar_pixels_stay_pinned ... ok
+test shell::shell_pins_tests::phase15_the_search_overlay_pixels_stay_pinned ... ok
+test shell::shell_pins_tests::phase15_the_scrollbar_pixels_stay_pinned ... ok
+test shell::shell_pins_tests::phase15_the_routed_press_map_on_the_integer_grid_stays_pinned ... ok
+test shell::shell_pins_tests::phase15_the_routed_press_map_on_pixel_centres_stays_pinned ... ok
+
+test result: ok. 251 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 3.44s
+
+     Running unittests src/lib.rs (target/debug/deps/stickymd_render-a21f9f1a0fc204f9)
+
+running 205 tests
+test image::tests::phase7_image_decode_release_baseline ... ignored, Release-only Phase 7 image decode timing baseline
+test image::tests::oversized_dimensions_fail_before_allocation ... ok
+test image::tests::orientation_metadata_matches_post_decode_dimensions ... ok
+test image::cache::tests::reinserting_a_leased_key_reuses_the_accounted_raster ... ok
+test image::cache::tests::live_layout_rasters_remain_accounted_and_prevent_overcommit ... ok
+test image::tests::phase7_corrupt_and_all_size_limits_fail_closed ... ok
+test image::cache::tests::cache_never_exceeds_budget_and_counts_hits_misses_and_evictions ... ok
+test image::tests::bitmap_normalizes_to_valid_png ... ok
+test image::tests::owned_stable_format_keeps_exact_input_bytes ... ok
+test image::tests::phase7_dib_and_alpha_decode_are_safe_and_premultiplied ... ok
+test image::tests::preserved_png_keeps_exact_bytes ... ok
+test math::cache::tests::byte_lru_also_caps_entries_and_moves_hits ... ok
+test math::cache::tests::byte_lru_clock_rollover_preserves_leases_and_accounting ... ok
+test math::cache::tests::byte_lru_hit_protects_the_entry_from_the_next_eviction ... ok
+test math::cache::tests::byte_lru_never_exceeds_its_budget ... ok
+test math::engine::tests::phase6_formula_release_baseline ... ignored, Release-only Phase 6 formula performance receipt
+test image::tests::jpeg_exif_orientation_is_applied_to_metadata_and_raster ... ok
+test image::tests::phase7_stable_formats_are_preserved_and_bmp_ico_normalize_to_png ... ok
+test math::engine::tests::malformed_and_oversized_sources_are_isolated_errors ... ok
+test image::tests::scaled_decode_never_upscales ... ok
+test math::engine::tests::measuring_formulas_never_allocates_rasters_and_keeps_single_formula_guards ... ok
+test image::tests::phase9_owned_decode_matches_borrowed_decode ... ok
+test image::cache::tests::cache_metadata_count_is_bounded_for_tiny_images ... ok
+test math::painter::tests::allocation_guard_rejects_pathological_geometry_before_allocating ... ok
+test math_text::tests::phase11b_equals_lines_join_chains_and_preserve_other_bytes ... ok
+test math_text::tests::phase11b_equals_lines_map_retained_bytes_and_removed_whitespace ... ok
+test math::engine::tests::repeated_formula_hits_both_bounded_cache_levels ... ok
+test math_text::tests::phase11b_equals_lines_preserve_plain_inline_escaped_and_incomplete_inputs ... ok
+test math::engine::tests::raster_budget_accounts_for_source_and_entry_metadata ... ok
+test math_text::tests::phase11b_equals_lines_scope_requires_a_complete_block ... ok
+test preview::export::tests::only_real_image_nodes_are_collected_and_reference_occurrence_is_localized ... ok
+test math_text::tests::phase11b_equals_lines_skip_markdown_code_and_literal_contexts ... ok
+test math_text::tests::phase11b_equals_lines_skip_tex_comments_breaks_and_environments ... ok
+test math::engine::tests::render_tree_and_formula_caches_share_the_source_allocation ... ok
+test preview::layout::tests::rendered_copy_uses_one_newline_between_blocks ... ok
+test preview::layout::tests::layout_produces_selectable_native_text_and_source_ranges ... ok
+test math::engine::tests::theme_foreground_does_not_override_explicit_tex_color ... ok
+test math::engine::tests::scale_or_theme_change_releases_only_raster_cache ... ok
+test math::painter::tests::painter_covers_every_display_item_variant_without_png_roundtrip ... ok
+test math::engine::tests::mixed_cjk_text_formula_is_safe_without_a_platform_cjk_font ... ok
+test preview::paint::drawing::block_mask_tests::a_reused_mask_matches_a_fresh_one_for_each_block ... ok
+test preview::fonts::tests::phase5_code_font_missing_keeps_existing_monospace_fallback ... ok
+test math::painter::tests::embedded_font_raster_golden_covers_core_display_geometry ... ok
+test preview::parser::tests::all_four_math_delimiters_come_from_comrak_and_code_is_literal ... ok
+test preview::parser::tests::arena_is_not_exposed_and_owned_tree_keeps_snapshot_source ... ok
+test preview::parser::tests::classifies_allowed_and_blocked_destinations_without_executing_them ... ok
+test preview::parser::tests::dialect_enables_only_approved_extensions ... ok
+test preview::parser::tests::parses_gfm_html_links_images_and_lists ... ok
+test preview::parser::tests::preserves_ordered_nested_lists_break_kinds_and_thematic_rules ... ok
+test preview::parser::tests::adversarial_large_constructs_remain_bounded_and_semantic ... ok
+test preview::parser::tests::source_ranges_roundtrip_unicode_literals ... ok
+test math::engine::tests::cache_pressure_does_not_change_formula_validity_or_geometry ... ok
+test preview::layout::tests::table_layout_keeps_cells_bounded_inside_document_width ... ok
+test preview::pipeline::audit_tests::local_image_detection_uses_semantics_including_table_cells ... ok
+test preview::layout::tests::wrapped_visual_rows_map_to_disjoint_selectable_byte_ranges ... ok
+test preview::pipeline::audit_tests::phase5_preview_release_baseline_image_adapter_scroll ... ignored, Release-only production-adapter scrolling benchmark
+test preview::pipeline::audit_tests::phase5_preview_release_baseline_long_code_scroll ... ignored, Release-only long-block viewport painting benchmark
+test preview::math_layout::tests::phase11_large_document_policy_coalesces_short_attributed_runs ... ok
+test preview::layout::tests::narrower_width_reflows_without_changing_generation_or_text_projection ... ok
+test preview::math_layout::tests::phase11_short_adjacent_text_around_math_uses_one_buffer_per_side ... ok
+test preview::paint::tests::paint_culls_blocks_outside_the_viewport ... ok
+test preview::paint::tests::scroll_and_theme_paint_keep_generation_and_index ... ok
+test preview::pipeline::horizontal_tests::fitting_display_math_stays_centered_without_a_scrollbar ... ok
+test preview::pipeline::horizontal_tests::list_marker_stays_fixed_while_its_code_block_scrolls ... ok
+test preview::pipeline::horizontal_tests::phase5_preview_release_baseline_horizontal_long_line ... ignored, Release long-code horizontal paint diagnostic
+test preview::pipeline::audit_tests::preview_zoom_does_not_accumulate_obsolete_glyph_rasters ... ok
+test preview::pipeline::audit_tests::formula_pressure_keeps_live_layout_bounded_and_preserves_source ... ok
+test preview::parser::tests::resource_limits_fail_closed ... ok
+test preview::pipeline::audit_tests::releasing_preview_rasters_also_releases_text_glyphs ... ok
+test preview::pipeline::horizontal_tests::wide_table_clips_hidden_actions_and_scrolls_math_and_links_together ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_admission_failure_keeps_budget_and_retries_unresolved_images ... ok
+test preview::pipeline::image_refresh_tests::equal_image_targets_share_validated_bytes_across_different_container_bounds ... ok
+test preview::pipeline::audit_tests::offscreen_code_glyphs_are_not_rasterized ... ok
+test math::engine::tests::unique_formulas_keep_both_caches_bounded ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_release_baseline ... ignored, release-only image-band benchmark; run serially with --nocapture
+test preview::pipeline::image_refresh_tests::phase7_image_band_drops_old_raster_leases_before_cache_admission ... ok
+test preview::pipeline::horizontal_tests::long_display_math_scrolls_to_both_ends_with_fixed_background_and_full_copy ... ok
+test preview::parser::tests::ten_thousand_deterministic_malformed_inputs_never_panic ... ok
+test preview::pipeline::audit_tests::scrolling_without_local_images_never_relayouts_with_an_image_adapter ... ok
+test preview::pipeline::image_refresh_tests::repeated_image_requests_share_one_read_per_refresh_and_revalidate_next_time ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_rejects_wrong_generation_before_io_or_raster_release ... ok
+test preview::pipeline::resource_tests::a_painter_error_names_only_the_formula_that_failed ... ok
+test preview::pipeline::resource_tests::a_painter_error_marks_its_formula_and_the_frame_still_paints ... ok
+test preview::pipeline::resource_tests::phase10_preview_resource_cache_retention_diagnostic ... ignored, local retained-allocation attribution, not latency or desktop qualification
+test preview::pipeline::resource_tests::phase10_preview_resource_glyph_growth_diagnostic ... ignored, local Release fixed-scale cache attribution; run serially with --nocapture
+test preview::pipeline::resource_tests::phase6_preview_resource_formula_budget_diagnostic ... ignored, local Release formula budget comparison; run serially with --nocapture
+test preview::pipeline::resource_tests::phase10_glyph_pressure_purge_rebuilds_identical_pixels_without_layout_work ... ok
+test preview::pipeline::tests::document_projection_release_requires_a_fresh_build ... ok
+test preview::pipeline::horizontal_tests::long_code_scrolls_without_wrapping_or_changing_copy_and_hit_ranges ... FAILED
+test preview::pipeline::image_refresh_tests::phase7_image_band_source_availability_changes_relayout ... ok
+test preview::pipeline::tests::generation_mismatch_fails_without_replacing_current_projection ... ok
+test preview::pipeline::tests::hard_break_places_following_formula_on_the_next_visual_line ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_refreshes_same_size_content_without_geometry_changes ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_matches_full_layout_pixels_selection_and_anchors ... ok
+test preview::pipeline::tests::phase10_zoom_release_baseline ... ignored, Release-only Phase 10 zoom relayout performance receipt
+test preview::pipeline::tests::local_image_is_decoded_on_worker_projection_and_remote_never_loads ... ok
+test preview::pipeline::tests::painting_culls_blocks_outside_the_viewport ... ok
+test preview::pipeline::image_refresh_tests::wide_table_images_release_hidden_columns_and_load_new_columns_without_relayout ... ok
+test preview::pipeline::tests::phase10_zoom_reuses_sufficient_image_rasters_and_never_exceeds_pane_width ... ok
+test preview::pipeline::tests::phase5_preview_release_baseline ... ignored, Release-only Phase 5 performance receipt
+test preview::pipeline::tests::phase6_math_document_release_baseline ... ignored, Release-only Phase 6 math-document performance receipt
+test preview::pipeline::tests::phase11_identical_relayout_only_repaints_but_image_source_change_rebuilds ... ok
+test preview::pipeline::tests::phase11_overscroll_decodes_images_at_the_clamped_bottom_viewport ... ok
+test preview::pipeline::tests::phase7_corrupt_or_missing_image_isolated_and_lazy_band_keeps_decode_cache_small ... ok
+test preview::pipeline::tests::phase7_local_images_remain_native_when_mixed_with_text_and_table_cells ... ok
+test preview::pipeline::tests::phase11_large_fixture_retains_absolute_source_offsets ... ok
+test preview::pipeline::resource_tests::phase10_large_formula_layouts_obey_byte_budget_and_rebuild_the_same_metrics ... ok
+test preview::pipeline::text_reuse_tests::phase5_preview_release_baseline_text_reuse ... ignored, Release-only shaping reuse measurement; run serially with --nocapture
+test preview::render_tree::tests::blocked_links_remain_visible_but_are_not_openable ... ok
+test preview::render_tree::tests::identical_visual_and_clipboard_text_share_one_allocation ... ok
+test preview::render_tree::tests::image_placeholder_shows_path_but_copies_only_alt_text ... ok
+test preview::render_tree::tests::separates_semantics_from_flat_render_blocks ... ok
+test preview::render_tree::tests::tables_keep_rows_cells_and_alignment ... ok
+test preview::scroll::tests::semantic_scroll_mapping_uses_source_ranges_instead_of_height_ratio ... ok
+test preview::selection::tests::atomic_formula_hit_selection_and_tooltip_use_the_whole_object ... ok
+test preview::selection::tests::atomic_tooltips_go_to_their_own_box_in_place ... ok
+test preview::selection::tests::hit_test_always_returns_a_utf8_grapheme_boundary ... ok
+test preview::selection::tests::hit_testing_uses_only_the_binary_selected_visual_row ... ok
+test preview::selection::tests::reverse_selection_copies_and_clips_without_touching_source ... ok
+test preview::selection::tests::selection_geometry_uses_exact_cluster_widths ... ok
+test preview::selection::tests::viewport_selection_geometry_only_visits_visible_rows ... ok
+test preview::semantic_conversion::tests::phase11b_converts_semantic_inline_and_display_latex_delimiters ... ok
+test preview::semantic_conversion::tests::phase11b_invalid_scope_is_rejected_without_parsing ... ok
+test preview::semantic_conversion::tests::phase11b_leaves_dollars_code_plain_text_and_malformed_delimiters_unchanged ... ok
+test preview::semantic_conversion::tests::phase11b_multiline_display_formula_preserves_body_bytes_exactly ... ok
+test preview::semantic_conversion::tests::phase11b_overlapping_projection_ranges_fail_before_building_text ... ok
+test preview::semantic_conversion::tests::phase11b_performance_one_mib_with_one_thousand_math_nodes ... ignored, Release-only Phase 11-B semantic conversion receipt
+test preview::semantic_conversion::tests::phase11b_position_mapping_preserves_body_and_later_offsets ... ok
+test preview::semantic_conversion::tests::phase11b_selection_converts_only_fully_contained_semantic_nodes ... ok
+test preview::source_map::tests::converts_ascii_cjk_emoji_and_multiline_byte_columns ... ok
+test preview::source_map::tests::invalid_or_non_boundary_position_is_unknown ... ok
+test preview::source_map::tests::table_positions_are_restored_before_utf8_validation_and_stay_in_the_cell ... ok
+test preview::table_layout::wrap_width_tests::a_cell_wraps_at_no_less_than_its_measured_line ... ok
+test preview::pipeline::tests::stale_relayout_and_paint_preserve_the_current_projection ... ok
+test preview::pipeline::tests::selection_copy_covers_math_image_table_code_and_html_literals ... ok
+test preview::pipeline::tests::viewport_sized_image_margin_avoids_relayout_on_nearby_scroll ... ok
+test preview::pipeline::tests::logical_geometry_scales_at_100_125_150_and_200_percent ... ok
+test preview::pipeline::resource_tests::a_viewport_larger_than_the_raster_cache_still_displays_every_formula ... ok
+test preview::text_layout::painting::tests::viewport_pixels_include_combining_marks_from_distant_rows ... ok
+test preview::text_layout::painting::tests::horizontal_clip_matches_full_draw_for_bidi_emoji_italic_and_combining_ink ... FAILED
+test preview::text_layout::reuse_tests::phase5_text_reuse_shares_geometry_without_sharing_source_actions_or_tooltips ... ok
+test preview::text_layout::tests::phase14_preview_selection_geometry_release_baseline ... ignored, Release-only Phase 14 viewport selection performance receipt
+test preview::text_layout::tests::bidi_clusters_preserve_logical_boundary_direction ... ok
+test preview::text_layout::tests::multiline_text_boxes_keep_disjoint_selection_ranges ... ok
+test preview::text_layout::reuse_tests::phase5_text_reuse_keeps_layout_keys_and_attribution_boundaries_distinct ... ok
+test source::fonts::tests::leading_neutral_uses_the_first_explicit_script ... ok
+test source::fonts::tests::mixed_script_runs_keep_punctuation_with_adjacent_text ... ok
+test preview::text_layout::tests::shaping_cache_reuses_geometry_but_reprojects_source_and_actions ... ok
+test source::fonts::tests::neutral_only_input_is_one_linear_run ... ok
+test preview::text_layout::reuse_tests::phase5_text_reuse_keeps_admission_bounded_and_does_not_reuse_another_layout ... ok
+test preview::text_layout::tests::variable_width_clusters_roundtrip_hit_highlight_and_copy ... ok
+test preview::text_layout::tests::viewport_projection_does_not_retain_offscreen_clusters ... ok
+test preview::pipeline::image_refresh_tests::phase7_image_band_rechecks_actual_bytes_and_decode_failure_after_inspection ... ok
+test source::paint::tests::transient_ui_glyphs_are_clipped_to_their_field ... ok
+test source::projection::initialization_tests::source_defaults_preserve_generic_fallback_when_preferred_latin_is_unavailable ... ok
+test source::geometry::preedit_tests::invalid_preedit_replacement_remains_failure_atomic ... ok
+test source::geometry::preedit_tests::long_preedit_keeps_candidate_caret_inside_source_viewport ... ok
+test source::projection::startup_tests::source_initialization_release_baseline ... ignored, Release-only Source/font initialization investigation; no GUI or qualification receipt
+test preview::pipeline::tests::phase10_one_hundred_zoom_relayouts_reuse_markdown_and_math_semantics ... ok
+test source::geometry::preedit_tests::wrapped_replacement_caret_remains_available ... ok
+test source::projection::initialization_tests::source_defaults_survive_edits_and_snapshot_resynchronization ... ok
+test source::projection::tests::caret_overlay_changes_only_the_cached_frame_projection ... ok
+test source::projection::tests::caret_overlay_rejects_non_utf8_boundary ... ok
+test preview::text_layout::painting::tests::viewport_pixels_match_full_buffer_draw_at_wrap_and_fractional_boundaries ... ok
+test source::projection::tests::deleting_newline_merges_adjacent_projection_lines ... ok
+test source::projection::tests::document_resync_preserves_source_scroll ... ok
+test source::projection::tests::hit_test_roundtrips_line_edges_mixed_fonts_and_wrapped_lines ... ok
+test source::projection::tests::hit_test_returns_grapheme_boundary_for_mixed_text ... ok
+test source::projection::tests::insertion_after_trailing_newline_materializes_empty_projection_line ... ok
+test source::projection::tests::ime_candidate_rect_follows_cursor_inside_preedit ... ok
+test source::projection::tests::mismatched_incremental_delta_is_rejected_without_projection_mutation ... ok
+test source::projection::tests::newline_delta_splits_only_the_affected_projection_line ... ok
+test source::projection::tests::paint_rejects_invalid_selection_without_panicking ... ok
+test source::projection::tests::line_structure_delta_keeps_the_same_scrolled_content_visible ... ok
+test source::projection::tests::older_snapshot_cannot_overwrite_newer_projection ... ok
+test source::projection::tests::phase10_content_zoom_relayouts_without_claiming_document_authority ... ok
+test source::projection::tests::phase9_source_initialization_reports_ordered_milestones ... ok
+test source::projection::tests::phase9_source_initialization_preserves_logical_line_endings ... ok
+test source::projection::tests::phase11_equal_viewport_does_not_repeat_source_layout ... ok
+test preview::pipeline::tests::formula_resize_scroll_release_scale_and_theme_obey_cache_boundaries ... ok
+test source::projection::tests::phase10_source_glyph_pressure_rebuilds_identical_pixels ... ok
+test source::geometry::preedit_tests::preedit_matches_eager_buffer_pixels_selection_and_candidate_geometry ... ok
+test source::projection::tests::preedit_paints_without_changing_projected_text_or_generation ... ok
+test source::projection::tests::resize_does_not_change_projected_generation_or_text ... ok
+test source::projection::tests::projection_is_generation_tagged_and_resyncs_from_snapshot ... ok
+test source::projection::tests::whole_document_math_conversion_updates_the_source_projection_before_repaint ... ok
+test source::projection::tests::semantic_range_anchor_maps_inside_a_tall_source_block ... ok
+test source::projection::tests::single_line_delta_updates_only_the_affected_projection_line ... ok
+test source::rendering::tests::a_focused_right_to_left_field_reveals_a_caret_left_of_it ... ok
+test source::projection::tests::source_zoom_releases_obsolete_glyph_rasters_but_resize_reuses_them ... ok
+test source::rendering::tests::an_unfocused_field_hit_reads_the_painted_layout ... ok
+test source::rendering::tests::shell_text_field_uses_one_layout_for_caret_hit_and_horizontal_reveal ... ok
+test source::scrollbar::tests::scrollbar_release_baseline ... ignored, Release-only 1 MiB scrollbar jump and source paint timing
+test preview::pipeline::image_refresh_tests::phase7_image_band_relayouts_changed_missing_or_corrupt_files_and_recovers ... ok
+test source::scrollbar::tests::scrollbar_bounds_follow_edits_and_preserve_composition ... ok
+test source::scrollbar::tests::scrollbar_jumps_to_both_ends_without_shaping_intervening_lines ... ok
+test source::rendering::tests::same_line_selection_does_not_paint_unselected_lines ... ok
+test source::scrollbar::tests::a_source_page_moves_the_viewport_by_its_pixels_within_the_document ... ok
+test source::scrollbar::tests::scrollbar_metrics_do_not_change_visible_text_or_scroll ... ok
+test source::scrollbar::tests::the_source_maps_wrapped_offsets_and_measures_only_the_tail_once ... ok
+test source::scrollbar::tests::scrollbar_handles_a_single_wrapped_line_and_resized_short_notes ... ok
+test math::engine::tests::ten_thousand_deterministic_formula_inputs_never_panic ... ok
+test source::projection::initialization_tests::source_initialization_matches_eager_buffers_for_pixels_carets_and_auxiliary_text ... ok
+test source::geometry::preedit_tests::preedit_reveal_paints_at_candidate_and_clips_without_mutating_source ... ok
+test preview::pipeline::tests::resize_relayouts_without_reparsing_and_scroll_only_repaints ... ok
+
+failures:
+
+---- preview::pipeline::horizontal_tests::long_code_scrolls_without_wrapping_or_changing_copy_and_hit_ranges stdout ----
+
+thread 'preview::pipeline::horizontal_tests::long_code_scrolls_without_wrapping_or_changing_copy_and_hit_ranges' (1064435) panicked at /Users/develata/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cosmic-text-0.19.0/src/glyph_cache.rs:100:18:
+attempt to add with overflow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- preview::text_layout::painting::tests::horizontal_clip_matches_full_draw_for_bidi_emoji_italic_and_combining_ink stdout ----
+
+thread 'preview::text_layout::painting::tests::horizontal_clip_matches_full_draw_for_bidi_emoji_italic_and_combining_ink' (1064544) panicked at /Users/develata/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cosmic-text-0.19.0/src/glyph_cache.rs:100:18:
+attempt to add with overflow
+
+
+failures:
+    preview::pipeline::horizontal_tests::long_code_scrolls_without_wrapping_or_changing_copy_and_hit_ranges
+    preview::text_layout::painting::tests::horizontal_clip_matches_full_draw_for_bidi_emoji_italic_and_combining_ink
+
+test result: FAILED. 186 passed; 2 failed; 17 ignored; 0 measured; 0 filtered out; finished in 4.85s
+
+error: test failed, to rerun pass `-p stickymd-render --lib`
+     Running tests/phase5_semantics.rs (target/debug/deps/phase5_semantics-03e61e7ac9d76489)
+
+running 5 tests
+test golden_outline_is_independent_of_checkout_newlines ... ok
+test owned_ast_golden_is_stable_and_arena_free ... ok
+test phase5_list_table_keeps_cells_and_selection_text ... ok
+test phase5_list_markers_and_content_keep_distinct_hit_targets ... ok
+test phase5_list_first_blocks_keep_semantics_and_nested_markers ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/phase6_math.rs (target/debug/deps/phase6_math-ab4f343766b2c728)
+
+running 6 tests
+test all_four_delimiters_copy_exact_source_while_code_stays_literal ... ok
+test math_in_markdown_containers_and_overwide_formula_remain_bounded ... ok
+test malformed_formula_is_atomic_and_does_not_fail_the_document ... ok
+test dpi_scales_formula_once_and_display_math_is_centered ... ok
+test representative_fixture_renders_at_least_fifty_native_formulas ... ok
+test formula_limit_and_source_limit_render_errors_without_aborting_preview ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/qualification_images.rs (target/debug/deps/qualification_images-d71d209cb3acd6e2)
+
+running 1 test
+test phase7_g5_images_decode_and_contain_visible_color_regions ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rendering_stress.rs (target/debug/deps/rendering_stress-62d311c9cbf27f16)
+
+running 6 tests
+test stress_fixture_preserves_markdown_priority_and_literal_boundaries ... ok
+test stress_fixture_formulas_match_current_ratex_baseline ... ok
+test stress_fixture_bottom_image_is_admitted_after_scroll_clamps ... ok
+test stress_fixture_preview_selection_stays_on_one_logical_code_line ... ok
+test stress_fixture_survives_narrow_wide_zoom_theme_and_overscroll_rasters ... ok
+test stress_fixture_builds_every_formula_through_native_preview has been running for over 60 seconds
+error: test failed, to rerun pass `-p stickymd-render --test rendering_stress`
+
+Caused by:
+  process didn't exit successfully: `/Users/develata/gitclone/StickyMD/target/debug/deps/rendering_stress-62d311c9cbf27f16` (signal: 15, SIGTERM: termination signal)
+     Running tests/table_math_pipes.rs (target/debug/deps/table_math_pipes-006223d17e31d8d2)
+
+running 7 tests
+test unescaped_math_pipes_follow_gfm_table_column_rules ... ok
+test backslash_runs_do_not_shift_following_math_ranges ... ok
+test escaped_pipes_preserve_inline_code_emphasis_and_link_ranges ... ok
+test delimiter_conversion_after_escaped_pipes_preserves_surrounding_source ... ok
+test image_export_after_escaped_pipes_rewrites_only_the_image ... ok
+test escaped_pipes_preserve_all_math_delimiters_and_following_unicode_ranges ... ok
+test absolute_value_commands_render_a_six_column_table ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+   Doc-tests stickymd_app
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests stickymd_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests stickymd_desktop
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests stickymd_render
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: 2 targets failed:
+    `-p stickymd-render --lib`
+    `-p stickymd-render --test rendering_stress`

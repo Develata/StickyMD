@@ -76,7 +76,8 @@ fn local_plan_reuses_path_ownership_and_explains_reverse_dependencies() {
             Module::Render,
             Module::App,
             Module::Desktop,
-            Module::Windows
+            Module::Windows,
+            Module::Mac
         ]
     );
     let descriptions = plan.tasks.describe().unwrap();

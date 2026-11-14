@@ -4,8 +4,8 @@
 
 - `Layer`: Capability
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-11-09
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-10
 - `Scope`: 窗口生命周期、托盘、置顶、透明度、主题、dock 状态机、多显示器、DPI、单实例唤醒；Windows 实现细节与核心行为契约分离
 
 ---
@@ -89,7 +89,7 @@
 
 - 支持边缘：左、右、上。**不支持底部**（避免任务栏冲突）。
 - 吸附：松手时根据释放窗口 rect 与候选显示器工作区计算 Left/Right/Top 三个合格边缘
-  的 DIP 距离；最近合格边缘 ≤ 24 DIP → `DockedExpanded(edge)`，保留 3 DIP 感应条
+  的 DIP 距离；最近合格边缘 ≤ 24 DIP → `DockedExpanded(edge)`，保留 2 DIP 感应条
   （顶部吸附时条宽=窗宽；左右吸附时条高=窗高）。
 - Bottom 永不参与候选，也不得因为它更近而阻止合格的 Left/Right/Top。
 - 只有候选距离相差 ≤ 1 DIP 时使用 `Top > Left > Right` 决胜；非 tie 必须由最近边缘胜出。
@@ -109,7 +109,8 @@
   6. 其余情况：按本节 dock 规则立即收起；Floating 窗口不因 Esc 触发边缘收起。
 - 动画：展开/收起 140 ms ease-out。
 - 感应条收起与未聚焦 hover 展开期间可使用独立的临时 topmost；它不得改变用户配置的
-  Always-on-top，也不得写入 config。获得焦点、拖动、隐藏到托盘时必须撤销临时状态。
+  Always-on-top，也不得写入 config。进入展开路径时已聚焦、拖动、隐藏到托盘时必须撤销临时状态。手动收起状态及其收起动画期间恢复焦点（如切回原桌面）
+  不撤销，也不因此自动展开（USER 批准 2026-11-10）。
 - Always-on-top / Pin 与 Dock reveal/collapse 状态严格正交。configured topmost、temporary
   sensor topmost 与 effective Windows topmost 只决定 Z-order，禁止进入 auto-hide predicate。
   在相同 focus、IME、drag、resize、popup、pointer 与 timer 输入下，Pin ON/OFF 的
@@ -125,7 +126,7 @@
 - 纸张窗口关闭按钮 = Hide to tray，不退出进程。
 - dirty Close 必须先冻结编辑并保存最新 generation；保存成功后才隐藏，失败则保持窗口
   可见并恢复编辑。图片粘贴/资产事务未收敛时必须等待其完成后再保存。
-- 真正退出仅来自托盘“退出”：先等待/收敛资产粘贴事务 → 保存最新 canonical generation
+- 真正退出来自托盘“退出”；macOS 另有聚焦时 Cmd+Q 与系统终止请求（注销、关机），走同一退出屏障（macOS 实现映射）。屏障：先等待/收敛资产粘贴事务 → 保存最新 canonical generation
   → 安全 GC → 保存配置 → 释放 mutex → 清理已确认无用的临时文件。
 - 退出保存失败：显示明确错误、保持运行、不静默退出、不丢内存文本。
 - 退出因 canonical note 保存失败而取消时，窗口进入"退出已取消：保存失败"状态，只由这一结果建立（退出被守卫阻止、粘贴
@@ -149,7 +150,7 @@
   adapter 必须在这些 winit 操作完成后重新断言 Tool Window 身份并读回验证；失败时恢复
   普通任务栏入口，禁止留下不可恢复的隐藏窗口。
 - Tool Window 身份是固定平台不变量，不进入 ConfigState/WindowState。
-- 窗口必须始终可由当前可见窗口、3-DIP sensor、托盘和同目录第二实例唤醒四条路径恢复；
+- 窗口必须始终可由当前可见窗口、2-DIP sensor、托盘和同目录第二实例唤醒四条路径恢复；
   在采用不可从任务栏恢复的身份前，托盘可达性必须已建立。Tool Window 不改变 Close/Quit
   生命周期、dock、topmost、透明度或焦点规则。
 
@@ -190,7 +191,7 @@ floating_x_ratio、floating_y_ratio
 
 - manifest 声明 PerMonitorV2。
 - 跨显示器移动重算 scale；公式 cache key 含 DPI；图片按设备像素绘制；
-  IME 候选 rect 用物理坐标；docking 存 DIP；3 DIP 感应条按显示器 scale 转换。
+  IME 候选 rect 用物理坐标；docking 存 DIP；2 DIP 感应条按显示器 scale 转换。
 
 ---
 
@@ -211,6 +212,38 @@ floating_x_ratio、floating_y_ratio
 | 外部文件监听 | notify 的 Windows backend；回调只发轻量事件 |
 
 这些手段是实现选择；更换实现不改核心契约。
+
+<a id="macos-adapter-mapping"></a>
+## macOS 实现映射
+
+USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-decision.md)）。平台：`02` macOS 节。
+
+| 契约能力 | 手段 |
+| --- | --- |
+| 主窗口身份 | `ActivationPolicy::Accessory` + `LSUIElement`，对应 Tool Window；托盘创建失败时切回 `Regular`（`restore_ordinary_entry`） |
+| 多桌面 | `canJoinAllSpaces \| fullScreenAuxiliary`。默认行为下在别的桌面唤醒，窗口取得焦点但不可见，禁止使用 |
+| 工作区 | `NSScreen.visibleFrame`；显示器身份 `CGDisplayCreateUUIDFromDisplayID` |
+| 显示器变化 | `NSApplicationDidChangeScreenParametersNotification` 转 `DisplayTopologyChanged`。全部显示器休眠时读到的列表为空，`MonitorSource` 报不可用，窗口保持原位，醒来后再次恢复；此时启动按“没有可用的显示器”停止 |
+| 整窗透明度 | `NSWindow.alphaValue` |
+| 置顶 | winit `AlwaysOnTop`（floating level） |
+| Top 收起 | 窗口保持原尺寸，上移到**屏幕顶边**外露出 2 DIP，层级在菜单栏之上（`mainMenu + 3`）；展开动画结束后降回。其余两边与 Windows 相同 |
+| Top 悬停 | 展开窗口在菜单栏下方，与感应条隔着菜单栏高度。悬停展开期间（含展开动画），窗口上方到屏幕顶边的区域算作窗口内，用 `NSEvent` 全局监听判断，不轮询 |
+| 托盘 | `tray-icon` 在事件循环启动后（`NewEvents(Init)`）于主线程创建 |
+| 唤醒 | 第二实例经 socket；再次打开 bundle 经 reopen Apple Event（winit 不上报，宿主注册）；`focus_window` |
+| 单实例 | 目录 fd 的 `flock`（`05` 程序目录身份） |
+| 光标闪烁 | `CaretOverlay` 实现为 `CALayer` sublayer，闪烁不产生帧；普通帧由下行的 IOSurface 呈现器提交。显示时给图层挂离散的不透明度关键帧动画（亮、灭各 550 ms，无限循环），由系统合成器播放，app 不按闪烁周期唤醒；每次显示从“亮”重新开始（USER 批准 2026-11-10） |
+| 文件剪贴板 | `NSPasteboard`（`08` macOS 节） |
+| 保存对话框 | `NSSavePanel.runModal`，主线程阻塞 |
+| 链接打开 | `NSWorkspace` |
+| 系统终止 | 宿主给 winit 的 application delegate 补 `applicationShouldTerminate:`，返回 `NSTerminateLater`，走共享退出屏障：成功回 `YES`，保存失败回 `NO`。有模态窗口时 `abortModal`（导出按取消处理）并回 `NSTerminateCancel`，退出屏障在对话框退栈后运行。保存对话框弹出前须把 `preventsApplicationTerminationWhenModal` 设为 `NO`：它默认为 `YES`，此时 AppKit 不询问 delegate，请求到不了这里（USER 批准 2026-11-12，见 [RISK](../report/RISK-macos-modal-termination.md)）。注销与关机时，loginwindow 过了不可撤销点才向 UI Element 应用发这个请求，且不等回复，回 `NO` 或 `NSTerminateCancel` 都拦不住注销；随后 launchd 对仍在运行的进程发 SIGTERM，约 1 s 后发 SIGKILL（VM 注销实测；关机未测）。宿主把 SIGTERM 的处置设为忽略，改由主队列上的信号源在主线程接收，按同一路径处理（有模态窗口时先 `abortModal`，再走退出屏障），没有回复要发。SIGTERM 发起的退出期限为 5 s，约束的是没有 SIGKILL 跟进的 SIGTERM（如 `kill`）：每次退出只设一次，已有系统请求的期限时不另设，退出结束时撤销（USER 批准 2026-11-12，见 [RISK](../report/RISK-macos-logout-ui-element.md)）；屏障超时：笔记尚未安全时取消共享退出状态（系统请求另回 `NO`）；已安全时剩余的尽力项记为失败，立即退出 |
+| Cmd+Q | 窗口聚焦时走同一退出屏障（图标不可见时托盘这条路径不存在） |
+| 系统主题 | winit `ThemeChanged` |
+| 帧呈现 | `Host::presents_frames` 为真（`06` 帧呈现）。宿主在窗口根图层下建一个子图层：锚点 (0,0)、`geometryFlipped`、左上对齐、不透明，每次提交时同步根图层的 bounds 与缩放。整帧转成 BGRA 写进 IOSurface，再设为子图层内容。缓冲规则如下：<br>• 最多 3 个；色彩空间取 deviceRGB 的属性表（本机序列化为 sRGB），颜色匹配与 softbuffer 图像的 deviceRGB 一致，由单元测试固定；<br>• 只写既不是当前内容、也不在合成器使用中（`IOSurfaceIsInUse`）的一个；<br>• 没有可写的且已满 3 个时，本帧暂缓；<br>• 换尺寸时先建好并写好新缓冲，再替换内容；<br>• 创建、设置色彩空间或加锁失败都报告为失败，不崩溃，旧内容保留。<br>（USER 批准 2026-11-14，[方案 B 报告](../report/2026-11-14-macos-plan-b-iosurface.md)） |
+| 隐藏时的帧存储 | `Host::releases_hidden_frames` 为真：`ReleaseHiddenCaches` 之后整窗画布缩为 1×1，`hidden_frames_released(true)` 让呈现器释放全部 IOSurface、清空图层内容，并让分配器停用备用块；隐藏期间不绘制、不提交预览任务（已在 worker 中的任务见 `10`）、不重建帧存储；`ShowWindow` 先 `hidden_frames_released(false)`，按窗口尺寸重建并尝试完整提交一帧（失败仍显示，并请求重绘），再 `show`；显示失败（回到 `HiddenToTray`）的 `ShowRejected` 再次释放，聚焦失败的不释放。Windows 不释放（USER 批准 2026-11-13，`10` macOS 门，[报告](../report/2026-11-13-macos-memory-optimization.md)） |
+
+**托盘不可用：** 创建失败时走无托盘路径（Failure Paths），策略切回 `Regular`。创建成功但图标被系统或用户隐藏时无法可靠发现，隐藏仍然允许，因为再次打开 `.app` 能发出 reopen。
+
+**备选：** 顶部贴边出现兼容性问题或不好的遮挡关系时，改成收起为半透明小方块（USER 2026-11-10）。收起半透明另行细调，当前不实现。
 
 ---
 
@@ -244,7 +277,7 @@ WindowDockCoordinator/LifecycleCoordinator 是窗口业务状态的 mutation own
 ## Configuration
 
 窗口/主题/透明度/置顶 → ConfigState（见 `04`）；24 DIP 捕获、1 DIP tie、16 DIP
-detach、3 DIP sensor 与 100/700/500/140 ms 时间常量为固定内部参数。
+detach、2 DIP sensor 与 100/700/500/140 ms 时间常量为固定内部参数。
 
 ## Lifecycle
 

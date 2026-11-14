@@ -134,6 +134,7 @@ impl WindowShellCoordinator {
                     effects.push(WindowEffect::WakeAt(deadline));
                 }
             }
+            WindowIntent::AbandonQuit => self.abandon_quit(&mut effects),
             WindowIntent::GuardsChanged { guards, now_ms } => {
                 self.update_guards(guards, now_ms, &mut effects);
             }
@@ -197,12 +198,15 @@ impl WindowShellCoordinator {
         effects: &mut Vec<WindowEffect>,
     ) {
         // Guards are refreshed for IME, persistence, and drag facts too. Only
-        // a real focus acquisition may revoke the collapsed sensor's temporary
-        // z-order; replaying an unchanged focused snapshot after manual hide
-        // must not make the 3-DIP recovery path unreachable.
+        // a real focus acquisition may revoke the sensor's temporary z-order,
+        // and not while the window is or is becoming a strip: focus handed back
+        // to it (returning to its desktop) must not make the 2-DIP recovery
+        // path unreachable. The expansion that follows revokes it (plan 09).
         let gained_focus = !self.state.guards.window_focused && guards.window_focused;
         self.state.guards = guards;
-        if gained_focus {
+        let staying_collapsed =
+            matches!(self.current_stable(), StableVisibility::DockedCollapsed(_));
+        if gained_focus && !staying_collapsed {
             self.set_temporary_sensor_topmost(false, now_ms, effects);
         }
         if guards.blocks_auto_collapse() {
@@ -1099,6 +1103,55 @@ mod phase8_window_tests {
         );
     }
 
+    /// The note is safe by then. The cleanup that is stuck counts as a pending asset transaction,
+    /// so going through the barriers again would wait on it with nothing left to end the wait.
+    #[test]
+    fn a_quit_abandoned_after_the_note_is_safe_ends_at_once() {
+        for (stage, barrier) in [
+            (QuitStage::AwaitingAssetGc, QuitBarrier::AssetGc),
+            (QuitStage::AwaitingConfig, QuitBarrier::Config),
+        ] {
+            let mut coordinator = coordinator(StableVisibility::Floating);
+            coordinator.state.guards.asset_transaction_pending = true;
+            coordinator.state.lifecycle = LifecycleState::Quitting(stage);
+            assert_eq!(
+                coordinator.dispatch(WindowIntent::AbandonQuit),
+                vec![
+                    WindowEffect::QuitWarning(barrier),
+                    WindowEffect::ExitProcess
+                ]
+            );
+            assert_eq!(
+                coordinator.state().lifecycle(),
+                LifecycleState::Quitting(QuitStage::ReadyToExit)
+            );
+        }
+    }
+
+    #[test]
+    fn a_quit_the_host_stopped_waiting_for_gives_the_editor_back() {
+        let mut coordinator = coordinator(StableVisibility::Floating);
+        coordinator.dispatch(WindowIntent::TrayQuitRequested {
+            guards: WindowGuardSnapshot {
+                note_save_required: true,
+                ..Default::default()
+            },
+        });
+        let effects = coordinator.dispatch(WindowIntent::AbandonQuit);
+        assert!(effects.contains(&WindowEffect::SetEditorInputEnabled(true)));
+        assert!(effects.contains(&WindowEffect::QuitTimedOut));
+        assert_eq!(coordinator.state().lifecycle(), LifecycleState::Running);
+
+        // The save finishing afterwards must not end a program the user has gone back to.
+        let late = coordinator.dispatch(WindowIntent::QuitBarrierCompleted {
+            barrier: QuitBarrier::NoteSave,
+            succeeded: true,
+            guards: WindowGuardSnapshot::default(),
+        });
+        assert!(late.is_empty());
+        assert!(coordinator.dispatch(WindowIntent::AbandonQuit).is_empty());
+    }
+
     #[test]
     fn note_save_failure_cancels_quit_and_reenables_input() {
         let mut coordinator = coordinator(StableVisibility::Floating);
@@ -1525,6 +1578,52 @@ mod phase8_window_tests {
         });
         assert!(asks_sensor_topmost(&effects, false));
         assert!(!coordinator.state().temporary_sensor_topmost());
+    }
+
+    /// Plan 09: returning to the desktop hands focus back to a window that is a strip by now.
+    #[test]
+    fn focus_handed_back_to_a_strip_keeps_it_on_top_and_does_not_expand_it() {
+        let guards = |window_focused, now_ms| WindowIntent::GuardsChanged {
+            guards: WindowGuardSnapshot {
+                window_focused,
+                ..Default::default()
+            },
+            now_ms,
+        };
+        let mut coordinator = coordinator(StableVisibility::DockedExpanded(DockEdge::Top));
+        coordinator.dispatch(guards(true, 0));
+        coordinator.dispatch(WindowIntent::ManualCollapse { now_ms: 100 });
+        coordinator.dispatch(WindowIntent::Tick { now_ms: 240 });
+        assert!(coordinator.state().temporary_sensor_topmost());
+        assert!(matches!(
+            coordinator.state().visibility,
+            VisibilityState::Presented(StableVisibility::DockedCollapsed(DockEdge::Top))
+        ));
+
+        coordinator.dispatch(guards(false, 300));
+        let effects = coordinator.dispatch(guards(true, 400));
+
+        assert!(!asks_sensor_topmost(&effects, false));
+        assert!(coordinator.state().temporary_sensor_topmost());
+        assert!(matches!(
+            coordinator.state().visibility,
+            VisibilityState::Presented(StableVisibility::DockedCollapsed(DockEdge::Top))
+        ));
+    }
+
+    #[test]
+    fn focus_arriving_during_the_collapse_animation_keeps_the_strip_on_top() {
+        let guards = |window_focused, now_ms| WindowIntent::GuardsChanged {
+            guards: WindowGuardSnapshot {
+                window_focused,
+                ..Default::default()
+            },
+            now_ms,
+        };
+        let mut coordinator = coordinator(StableVisibility::DockedExpanded(DockEdge::Left));
+        coordinator.dispatch(WindowIntent::ManualCollapse { now_ms: 100 });
+        let effects = coordinator.dispatch(guards(true, 120));
+        assert!(!asks_sensor_topmost(&effects, false));
     }
 
     #[test]

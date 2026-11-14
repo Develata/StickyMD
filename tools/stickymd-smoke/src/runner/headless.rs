@@ -33,6 +33,9 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
     if request.modules.contains(&Module::Windows) {
         return Err("NOT_TESTED: the windows module requires a Windows host".to_owned());
     }
+    if let Some(refusal) = host_refusal(&request.modules, cfg!(target_os = "macos")) {
+        return Err(refusal);
+    }
     let scope = request
         .modules
         .iter()
@@ -60,6 +63,15 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
         request.mode.name()
     );
     Ok(())
+}
+
+/// Off macOS the macOS host is a stub without tests; running it would be a green result that
+/// tested nothing.
+fn host_refusal(modules: &[Module], macos: bool) -> Option<String> {
+    modules
+        .iter()
+        .any(|module| module.needs_macos() && !macos)
+        .then(|| "NOT_TESTED: the mac and posix modules require a macOS host".to_owned())
 }
 
 fn verify_workspace(root: &Path) -> Result<(), String> {

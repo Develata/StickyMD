@@ -1,0 +1,30 @@
+   0.126 Focused(false)
+   1.032 collapsing to translucent top-edge bar
+   1.179 Collapsing done: frames=54 slowest_step=0.87 ms read=(500,0 120x6) app_active=false
+   2.581 CursorEntered in Collapsed
+   2.683 translucent top-edge bar reveal 1: waited 1.5 s, crossed_without_landing=0, app_active=false
+   2.830 Expanding done: frames=67 slowest_step=0.90 ms read=(400,33 320x240) app_active=false
+   3.054 CursorEntered in Expanded
+   3.145 CursorLeft in Expanded
+   3.649 collapsing to translucent top-edge bar
+   3.796 Collapsing done: frames=52 slowest_step=3.19 ms read=(500,0 120x6) app_active=false
+   4.004 CursorEntered in Collapsed
+   4.110 translucent top-edge bar reveal 2: waited 0.3 s, crossed_without_landing=0, app_active=false
+   4.255 Expanding done: frames=60 slowest_step=0.87 ms read=(400,33 320x240) app_active=false
+   4.439 CursorEntered in Expanded
+   4.512 CursorLeft in Expanded
+   5.015 collapsing to translucent top-edge square
+   5.163 Collapsing done: frames=54 slowest_step=0.50 ms read=(543,0 33x33) app_active=false
+   5.474 CursorEntered in Collapsed
+   5.578 translucent top-edge square reveal 1: waited 0.4 s, crossed_without_landing=0, app_active=false
+   5.718 Expanding done: frames=63 slowest_step=2.54 ms read=(400,33 320x240) app_active=false
+   5.783 CursorEntered in Expanded
+   5.912 CursorLeft in Expanded
+   6.407 collapsing to translucent top-edge square
+   6.555 Collapsing done: frames=53 slowest_step=1.15 ms read=(543,0 33x33) app_active=false
+   8.124 CursorEntered in Collapsed
+   8.227 translucent top-edge square reveal 2: waited 1.7 s, crossed_without_landing=0, app_active=false
+   8.374 Expanding done: frames=64 slowest_step=1.79 ms read=(400,33 320x240) app_active=false
+   8.606 CursorEntered in Expanded
+   8.729 CursorLeft in Expanded
+   9.228 finished

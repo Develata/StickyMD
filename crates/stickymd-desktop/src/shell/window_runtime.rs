@@ -157,6 +157,7 @@ impl<H: Host> DesktopShell<H> {
                 });
             }
             WindowEffect::ShowWindow { id } => {
+                self.restore_hidden_frames();
                 let outcome = self.show_native();
                 self.dispatch_window_intent(WindowIntent::ActionCompleted {
                     id,
@@ -217,6 +218,7 @@ impl<H: Host> DesktopShell<H> {
                 self.app.release_hidden_preview();
                 self.source_frame = None;
                 self.source_paint_key = None;
+                self.release_hidden_frames();
             }
             WindowEffect::ReportTrayUnavailable => {
                 self.diagnostic = Some("系统托盘不可用；窗口未隐藏。".into());
@@ -232,6 +234,11 @@ impl<H: Host> DesktopShell<H> {
             }
             WindowEffect::ShowRejected(kind) => {
                 self.diagnostic = Some(format!("窗口未能显示（{kind:?}）。"));
+                // A failed show leaves the window hidden, so what the show rebuilt goes again. A
+                // failed focus reports the same effect on a shown window, which keeps its frames.
+                if self.app.hidden_to_tray() {
+                    self.release_hidden_frames();
+                }
                 self.request_redraw();
             }
             WindowEffect::HideCancelled => {
@@ -241,10 +248,18 @@ impl<H: Host> DesktopShell<H> {
             WindowEffect::QuitBlocked => {
                 self.diagnostic = Some("退出前必须先解决恢复或外部修改冲突。".into());
                 self.request_redraw();
+                self.host.quit_abandoned();
+            }
+            WindowEffect::QuitTimedOut => {
+                self.diagnostic = Some("退出等待超时，已取消；保存可能仍在进行。".to_owned());
+                self.request_redraw();
+                self.host.quit_abandoned();
+                self.refresh_window_guards();
             }
             WindowEffect::QuitCancelled(barrier) => {
                 self.diagnostic = Some(format!("退出已取消：{barrier:?} 未安全完成。"));
                 self.request_redraw();
+                self.host.quit_abandoned();
                 // Quitting stopped the dock timers; a window that stays gets them back.
                 self.refresh_window_guards();
             }
@@ -350,6 +365,52 @@ impl<H: Host> DesktopShell<H> {
         let outcome = self.host.show().and_then(Visibility::show_outcome);
         self.keep_window_identity();
         outcome
+    }
+
+    /// After a committed hide, a host that asks for it gets the frame storage released (`09`
+    /// macOS mapping). A failed present still counts as released: the show rebuilds either way.
+    fn release_hidden_frames(&mut self) {
+        if self.frames_released || !self.host.releases_hidden_frames() {
+            return;
+        }
+        self.frames_released = true;
+        self.present_retry_at = None;
+        self.source_frame = None;
+        self.source_paint_key = None;
+        if let Some(surface) = &mut self.surface
+            && let Err(error) = surface.release_frames()
+        {
+            self.diagnostic = Some(error.to_string());
+        }
+        self.host.hidden_frames_released(true);
+    }
+
+    /// Before the window shows, the released storage comes back at the window's size and one full
+    /// frame is presented, so the window does not show the one-pixel image. If that frame fails
+    /// the show still goes ahead (refusing it would leave the note unreachable) and a redraw is
+    /// asked for at once. A show that then fails releases the storage again (`ShowRejected`).
+    fn restore_hidden_frames(&mut self) {
+        if !self.frames_released {
+            return;
+        }
+        self.frames_released = false;
+        self.host.hidden_frames_released(false);
+        // The window's size (the headless view in tests).
+        let size = self.shell_view().map(|(size, _)| size);
+        if let (Some(size), Some(surface)) = (size, &mut self.surface)
+            && size.width > 0
+            && size.height > 0
+            && let Err(error) = surface.resize(size.width, size.height)
+        {
+            self.diagnostic = Some(error.to_string());
+        }
+        self.sync_control_layout();
+        self.configure_viewports();
+        // A full frame, whatever was pending: a caret-only redraw would leave the rest unpainted.
+        self.pending_redraw = super::presentation::PendingRedraw::Full;
+        if !self.draw_frame(None) {
+            self.request_redraw();
+        }
     }
 
     fn update_tray(&mut self, view: TrayView) {

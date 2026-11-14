@@ -24,6 +24,7 @@ use winit::window::{Window, WindowAttributes};
 use crate::host::{CaretOverlay, EventSink, Host, PresentFacts, StartupProbe, TrayHost};
 use crate::input::Keymap;
 
+pub mod contracts;
 mod portable_disk;
 
 pub use portable_disk::{PortableDiskPorts, unique_temp_dir};
@@ -54,6 +55,11 @@ pub enum HostCall {
     CaretToggled(PhysicalRect),
     CaretReleased,
     Presented {
+        width: u32,
+        height: u32,
+    },
+    HiddenFramesReleased(bool),
+    PresentedFrame {
         width: u32,
         height: u32,
     },
@@ -105,8 +111,16 @@ pub struct FakeHost {
     pub watch_result: Result<(), HostFailure>,
     /// Whether this host has a caret overlay at all.
     pub caret_overlay: bool,
+    /// Whether that overlay blinks by itself (`CaretOverlay::blinks_itself`).
+    pub caret_blinks: bool,
     pub caret_result: Result<(), HostFailure>,
     pub exit_after_present: bool,
+    /// Whether this host asks the shell to release frames while hidden (macOS does).
+    pub releases_hidden_frames: bool,
+    /// Whether this host presents frames itself (macOS does).
+    pub presents_frames: bool,
+    /// What the next `present_frame` calls answer, one per call, before `Presented`.
+    pub present_answers: VecDeque<crate::host::PresentOutcome>,
     pub keymap: Keymap,
     /// Goes when the host goes: a test's probe of the drop order.
     pub dropped_with_host: Option<Box<dyn Any>>,
@@ -140,8 +154,12 @@ impl Default for FakeHost {
             export_result: Ok(None),
             watch_result: Ok(()),
             caret_overlay: true,
+            caret_blinks: false,
             caret_result: Ok(()),
             exit_after_present: false,
+            releases_hidden_frames: false,
+            presents_frames: false,
+            present_answers: VecDeque::new(),
             keymap: Keymap::ctrl_standard(),
             dropped_with_host: None,
         }
@@ -294,6 +312,10 @@ impl CaretOverlay for FakeHost {
     fn release(&mut self) {
         self.record(HostCall::CaretReleased);
     }
+
+    fn blinks_itself(&self) -> bool {
+        self.caret_blinks
+    }
 }
 
 impl StartupProbe for FakeHost {
@@ -344,6 +366,28 @@ impl Host for FakeHost {
             height: facts.height,
         });
         self.exit_after_present
+    }
+
+    fn releases_hidden_frames(&self) -> bool {
+        self.releases_hidden_frames
+    }
+
+    fn hidden_frames_released(&mut self, released: bool) {
+        self.record(HostCall::HiddenFramesReleased(released));
+    }
+
+    fn presents_frames(&self) -> bool {
+        self.presents_frames
+    }
+
+    fn present_frame(&mut self, frame: &tiny_skia::Pixmap) -> crate::host::PresentOutcome {
+        self.record(HostCall::PresentedFrame {
+            width: frame.width(),
+            height: frame.height(),
+        });
+        self.present_answers
+            .pop_front()
+            .unwrap_or(crate::host::PresentOutcome::Presented)
     }
 }
 
@@ -490,6 +534,7 @@ mod tests {
             height: 600,
             view_complete: true,
             ledger: &ledger,
+            draw: std::time::Duration::ZERO,
         };
         let mut host = FakeHost::default();
         assert!(!host.after_present(&facts));

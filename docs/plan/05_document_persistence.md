@@ -4,8 +4,8 @@
 
 - `Layer`: Runtime
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-10
 - `Scope`: note.md 与 config.toml 的编码、换行、原子保存、崩溃恢复、外部修改处理、可写性与单实例身份
 
 ---
@@ -53,6 +53,32 @@ Windows adapter 把存储错误映射为 `03` 规则 4 的分类。新增错误�
 | Config：全部变体 | `Failed` |
 
 Windows 存储端口当前没有 `Unsupported` 路径。
+
+<a id="macos-storage"></a>
+### macOS 存储映射
+
+USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-decision.md)）。下列手段是 macOS adapter 的合同，语义规则仍是本章其余各节。
+
+宿主在启动时持有 Note Directory 的 fd，正文、资产、配置、导出与 Preview 共用它（Preview 拿到的是同一个 fd 的副本，不按路径重开），全部操作走 `*at` 调用。导出的工作笔记保护比较 fd 与目标的设备号和 inode，不比较路径；相对图片以 `openat` 从该 fd 读取（`O_NOFOLLOW_ANY`）。资产的占用检查与枚举仍用 fd 的当前位置（`F_GETPATH`）得出的路径；它们只读，目录恰在其间被替换时最多误判占用或计数，写入与移动仍经 fd。目录在运行中被移动时这些操作仍落在原目录，同路径的新目录不被使用。目录被删除后由正文保存重建，正文写入受 guard 保护；资产与配置无 guard，继续持有已删除目录的 fd 并报失败，重启后恢复。每个 `NoteStorage` 调用是宿主内的一个完整事务。
+
+| 操作 | macOS adapter | 与 Windows 的差异 |
+| --- | --- | --- |
+| 写 temp | `openat(O_CREAT \| O_NOFOLLOW \| O_NONBLOCK)`，`fstat` 要求普通文件且 `st_nlink` 为 1，通过后才截断，写入后 `F_FULLFSYNC` | 对等 |
+| guard | `O_NOFOLLOW` 打开 target，读取并比对指纹 | 对等 |
+| 发布（已存在） | `renameat` 替换，然后对目录 fd `F_FULLFSYNC`。`ForceOverwrite` 跳过 guard | 检查与替换之间的 TOCTOU 与 Windows 相同 |
+| 发布（首次） | `renameatx_np(RENAME_EXCL)`，`EEXIST` 转 Conflict | 对等 |
+| 目录同步失败 | 名称已切换但持久性未确认：报保存失败，文本保持 dirty，退出被取消。adapter 记住这次已发布的指纹，下一次 guard 将其视为预期 | 无对应步骤 |
+| 观察身份 | `(st_dev, st_ino, size, mtime_ns, ctime_ns)` | 对等 |
+
+比 Windows 弱的保证，USER 已逐项接受：
+
+1. **持有旧句柄的外部写者：** 发布后，其写入落在已解除名称关联的文件上，内容丢失且不报错。POSIX 没有共享模式，无法阻止。
+2. **保留 invalid canonical（恢复第 5 条）：** 无法用同一句柄校验并改名。macOS adapter `O_NOFOLLOW` 打开并哈希，`RENAME_EXCL` 移到保留名，再比对 `(dev, ino)` 并重新哈希。不符时用 `RENAME_EXCL` 移回，成功报 `Changed`；移回失败报失败并指明文件所在，拒绝本次恢复。外部程序在哈希之后替换或原地改写该文件、或流程中途崩溃，文件可能留在保留名下，内容不丢。
+3. **受管图片：** 见 `08` macOS 节。
+
+**卷要求：** 可写检查增加一次真实的 `RENAME_EXCL`；不支持（exFAT、FAT32 上为 `ENOTSUP`）时显示“当前卷不支持安全保存，请将程序移到 APFS 卷”并退出，不回退到普通 `rename`。验收目标只有 APFS。
+
+失败分类沿用上表的语义：读取、元数据与观察竞争为 `Unavailable`，其余为 `Failed`。macOS 存储端口没有 `Unsupported` 路径。
 
 ## Owned Objects
 
@@ -108,6 +134,11 @@ create-new、写 sentinel、flush、删除；删除失败也视为环境不可�
 - 同目录：第一个实例持有 named mutex；第二个实例通知第一个显示并激活，自己退出。
 - 不同目录：哈希不同，可并行运行，互不干扰。
 - 真实 canonical 路径继续用于 I/O；仅 identity key 归一化大小写，lower-case key 不得反向成为 I/O 路径。
+- macOS：Program Directory 由 `current_exe` → `canonicalize` 得出，路径形如 `<X>/*.app/Contents/MacOS/<exe>` 时为 `<X>`，否则为可执行文件的
+  父目录（开发构建）。实例身份不用路径字符串，用该目录的 `(st_dev, st_ino)`：对目录 fd 取 `flock(LOCK_EX | LOCK_NB)`，不创建任何文件；取锁失败
+  即第二实例。唤醒走 `<DARWIN_USER_TEMP_DIR>/stickymd-<16 位十六进制>.sock`（`confstr` 取目录，不用 `$TMPDIR`；十六进制取自 `(dev, ino)` 的 SHA-256 前
+  64 位）：持锁者 `unlink` 残留 socket 后 `bind` + `listen`；第二实例 `connect` 失败按 50/150/300 ms 重试，最终失败仍退出。同一 bundle 再次打开由系统投递
+  reopen Apple Event，宿主转成同一唤醒信号。
 
 ---
 
@@ -119,9 +150,10 @@ create-new、写 sentinel、flush、删除；删除失败也视为环境不可�
 | 磁盘编码 | UTF-8 without BOM |
 | 读取 | 兼容 UTF-8 BOM（剥除）；不得使用 lossy decode |
 | 非 UTF-8 文件 | 不允许静默覆盖 |
-| 首次创建换行 | CRLF |
+| 首次创建换行 | CRLF（Windows）；LF（macOS） |
 | 已存在文件 | 保留原有主要换行风格 |
-| 混合换行 | 按多数风格统一；数量相等用 CRLF |
+| 混合换行 | 按多数风格统一；数量相等（含没有换行）时用该平台的首次创建换行 |
+| 恢复时 note 缺失 | 放弃临时内容后重建的空 note 用该平台的首次创建换行 |
 | 孤立 `\r` | 保留为普通字符 |
 | 内部表示 | UTF-8 + `\n`，仅在 load/save 边界转换 |
 
@@ -233,7 +265,7 @@ TOCTOU 窗口；v1 不通过长期独占文件锁破坏外部编辑能力。
 <a id="external-file-watch"></a>
 ## 外部文件监听
 
-`notify` Windows backend 只非递归监听 `note/`；callback 只上报 `NoteFsHint` 或 watcher failure。
+`notify` 的平台 backend（Windows 默认后端、macOS FSEvents）只非递归监听 `note/`；callback 只上报 `NoteFsHint` 或 watcher failure。macOS 上 `note/` 自身被移走时转成 watcher failure（degraded）。
 相关 raw events 以约 150 ms 合并，再重新读取 bytes 与 hash。event 与 mtime 都不是内容事实。
 
 watcher 初始化/运行时失败可进入明确 degraded mode，但保存仍可用；publish 前 OCC guard 仍会

@@ -8,7 +8,7 @@
 //! all canonical mutations flow through `EditorCoordinator::dispatch`.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use stickymd_render::preview::{PreviewFrame, PreviewSelection, SpanAction};
 use stickymd_render::source::SourceProjection;
@@ -45,6 +45,10 @@ mod guards;
 mod handler;
 #[cfg(any(test, feature = "testing"))]
 mod headless_tests;
+#[cfg(test)]
+mod hidden_frames_tests;
+#[cfg(test)]
+mod host_presenter_tests;
 #[cfg(test)]
 mod hot_path_tests;
 mod input;
@@ -84,7 +88,7 @@ mod window_geometry_runtime;
 mod window_interaction;
 mod window_runtime;
 
-const CARET_BLINK: Duration = Duration::from_millis(550);
+use crate::host::CARET_BLINK;
 
 pub struct DesktopShell<H: Host> {
     window: Option<Arc<Window>>,
@@ -92,6 +96,12 @@ pub struct DesktopShell<H: Host> {
     projection: Option<SourceProjection>,
     source_frame: Option<Pixmap>,
     source_paint_key: Option<render::SourcePaintKey>,
+    /// When to draw again after the host deferred a frame (`PresentOutcome::Deferred`): one
+    /// outstanding wake, cleared by a presented frame and by a hide.
+    present_retry_at: Option<Instant>,
+    /// The frame storage is released while the window is hidden (`Host::releases_hidden_frames`):
+    /// no frame is painted and nothing window-sized is allocated until the show rebuilds it.
+    frames_released: bool,
     pending_redraw: presentation::PendingRedraw,
     preview_frame: Option<PreviewFrame>,
     preview_frame_viewport: Option<PreviewViewport>,
@@ -133,6 +143,8 @@ pub struct DesktopShell<H: Host> {
     next_blink: Instant,
     native_caret_overlay: Option<PhysicalRect>,
     native_caret_failed: bool,
+    /// The host's overlay blinks by itself (`CaretOverlay::blinks_itself`).
+    overlay_blinks: bool,
     diagnostic: Option<String>,
     system_theme: Theme,
     controls: ControlState,
@@ -173,12 +185,17 @@ impl<H: Host> DesktopShell<H> {
         let opacity = config.opacity;
         let always_on_top = config.always_on_top;
         let caret_in_frame = host.caret_overlay().is_none();
+        let overlay_blinks = host
+            .caret_overlay()
+            .is_some_and(|overlay| overlay.blinks_itself());
         let mut app = Self {
             window: None,
             surface: None,
             projection: None,
             source_frame: None,
             source_paint_key: None,
+            frames_released: false,
+            present_retry_at: None,
             pending_redraw: presentation::PendingRedraw::None,
             preview_frame: None,
             preview_frame_viewport: None,
@@ -212,6 +229,7 @@ impl<H: Host> DesktopShell<H> {
             next_blink: clock_origin + CARET_BLINK,
             native_caret_overlay: None,
             native_caret_failed: caret_in_frame,
+            overlay_blinks,
             diagnostic,
             system_theme: Theme::Light,
             controls: ControlState::new(opacity),

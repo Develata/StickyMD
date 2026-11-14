@@ -129,6 +129,7 @@ fn local_git_keeps_old_and_new_owners_for_staged_and_unstaged_renames() {
                 crate::headless::Module::App,
                 crate::headless::Module::Desktop,
                 crate::headless::Module::Windows,
+                crate::headless::Module::Mac,
                 crate::headless::Module::Persistence
             ]
         );

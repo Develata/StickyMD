@@ -1,0 +1,12 @@
+top, clamp in place: winit=(300.0,33.0) ns_origin=(300.0,269.0)
+class_addMethod constrainFrameRect on NSKVONotifying_WinitWindow: true
+top after overriding constrainFrameRect: winit=(300.0,-677.0) ns_origin=(300.0,979.0)
+3 below a 33 pt menu bar: winit=(300.0,-644.0) ns_origin=(300.0,946.0)
+before Finder: (true, true)
+Finder frontmost: (app_active,key)=(false, false)
+focus_window immediate: (false, false)
+focus_window after 1 s, from background: (true, true) events=[false, true, false, true]
+could not create image from rect
+screencapture -plain: Ok(ExitStatus(unix_wait_status(256))) region=200,160,520,120 exists=false
+could not create image from rect
+screencapture -inverted: Ok(ExitStatus(unix_wait_status(256))) region=200,160,520,120 exists=false

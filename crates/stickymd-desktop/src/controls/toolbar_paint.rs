@@ -350,23 +350,27 @@ fn paint_opacity_popup(pixmap: &mut Pixmap, layout: &ControlLayout, visual: Tool
     } else {
         (47, 104, 166, 255)
     };
+    // The popup's rectangles already follow the display scale; what is drawn inside them has to
+    // follow it too, or a 2x display shows it at half size in a corner.
+    let display_scale = layout.scale();
+    let scale = display_scale as f32;
     fill_control_rect(pixmap, layout.opacity_popup, background);
     let slider = layout.opacity_slider;
     fill_rect(
         pixmap,
         slider.x as f32,
-        (slider.y + slider.height / 2.0 - 1.5) as f32,
+        (slider.y + slider.height / 2.0 - 1.5 * display_scale) as f32,
         slider.width as f32,
-        3.0,
+        3.0 * scale,
         track,
     );
     let ratio = f64::from(visual.opacity.saturating_sub(40)) / 60.0;
     let thumb_x = slider.x + ratio * slider.width;
     fill_rect(
         pixmap,
-        (thumb_x - 4.0) as f32,
+        (thumb_x - 4.0 * display_scale) as f32,
         slider.y as f32,
-        8.0,
+        8.0 * scale,
         slider.height as f32,
         accent,
     );
@@ -377,42 +381,64 @@ fn paint_opacity_popup(pixmap: &mut Pixmap, layout: &ControlLayout, visual: Tool
         (45, 43, 39, 255)
     };
     let (x, y) = (
-        layout.opacity_input.x as f32 + 5.0,
-        layout.opacity_input.y as f32 + 5.0,
+        layout.opacity_input.x as f32 + 5.0 * scale,
+        layout.opacity_input.y as f32 + 5.0 * scale,
     );
     match visual.opacity_field {
         Some(field) => {
             let room = (layout.opacity_input.x + layout.opacity_input.width) as f32 - x;
-            paint_field_text(pixmap, visible_tail(field.text(), room), x, y, ink);
+            let shown = visible_tail(field.text(), room / scale);
+            paint_field_text(pixmap, shown, x, y, scale, ink);
         }
-        None => paint_number(pixmap, visual.opacity, x, y, ink),
+        None => paint_number(pixmap, visual.opacity, x, y, scale, ink),
     }
 }
 
-/// Width of one painted field glyph, gap included.
+/// Width of one painted field glyph, gap included, at scale 1.
 const GLYPH_ADVANCE: f32 = 9.0;
 
-/// The trailing characters of `text` that fit in `room` pixels: the end of a long entry stays
-/// visible while it is typed.
+/// The trailing characters of `text` that fit in `room` pixels at scale 1: the end of a long
+/// entry stays visible while it is typed.
 fn visible_tail(text: &[u8], room: f32) -> &[u8] {
     let fits = (room / GLYPH_ADVANCE).floor().max(0.0) as usize;
     &text[text.len().saturating_sub(fits)..]
 }
 
-fn paint_field_text(pixmap: &mut Pixmap, text: &[u8], mut x: f32, y: f32, color: (u8, u8, u8, u8)) {
+fn paint_field_text(
+    pixmap: &mut Pixmap,
+    text: &[u8],
+    mut x: f32,
+    y: f32,
+    scale: f32,
+    color: (u8, u8, u8, u8),
+) {
     for &character in text {
         match character {
-            b'0'..=b'9' => paint_digit(pixmap, character - b'0', x, y, color),
-            b'-' => paint_segments(pixmap, MINUS, x, y, color),
-            b'.' => fill_rect(pixmap, x + 3.0, y + 12.0, 1.5, 1.5, color),
+            b'0'..=b'9' => paint_digit(pixmap, character - b'0', x, y, scale, color),
+            b'-' => paint_segments(pixmap, MINUS, x, y, scale, color),
+            b'.' => fill_rect(
+                pixmap,
+                x + 3.0 * scale,
+                y + 12.0 * scale,
+                1.5 * scale,
+                1.5 * scale,
+                color,
+            ),
             // `?`: any other character (`OpacityField`), so a non-integer entry shows as one.
-            _ => paint_segments(pixmap, OTHER, x, y, color),
+            _ => paint_segments(pixmap, OTHER, x, y, scale, color),
         }
-        x += GLYPH_ADVANCE;
+        x += GLYPH_ADVANCE * scale;
     }
 }
 
-fn paint_number(pixmap: &mut Pixmap, value: u8, mut x: f32, y: f32, color: (u8, u8, u8, u8)) {
+fn paint_number(
+    pixmap: &mut Pixmap,
+    value: u8,
+    mut x: f32,
+    y: f32,
+    scale: f32,
+    color: (u8, u8, u8, u8),
+) {
     let digits = if value >= 100 {
         [Some(value / 100), Some((value / 10) % 10), Some(value % 10)]
     } else if value >= 10 {
@@ -421,8 +447,8 @@ fn paint_number(pixmap: &mut Pixmap, value: u8, mut x: f32, y: f32, color: (u8, 
         [None, None, Some(value)]
     };
     for digit in digits.into_iter().flatten() {
-        paint_digit(pixmap, digit, x, y, color);
-        x += GLYPH_ADVANCE;
+        paint_digit(pixmap, digit, x, y, scale, color);
+        x += GLYPH_ADVANCE * scale;
     }
 }
 
@@ -432,34 +458,56 @@ const MINUS: u8 = 0x40;
 /// lower left), which no digit uses.
 const OTHER: u8 = 0x53;
 
-fn paint_digit(pixmap: &mut Pixmap, digit: u8, x: f32, y: f32, color: (u8, u8, u8, u8)) {
+fn paint_digit(
+    pixmap: &mut Pixmap,
+    digit: u8,
+    x: f32,
+    y: f32,
+    scale: f32,
+    color: (u8, u8, u8, u8),
+) {
     const MASKS: [u8; 10] = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f];
     paint_segments(
         pixmap,
         MASKS.get(digit as usize).copied().unwrap_or(0),
         x,
         y,
+        scale,
         color,
     );
 }
 
-fn paint_segments(pixmap: &mut Pixmap, mask: u8, x: f32, y: f32, color: (u8, u8, u8, u8)) {
+/// Segment offsets and sizes are in pixels at scale 1, where the result is unchanged.
+fn paint_segments(
+    pixmap: &mut Pixmap,
+    mask: u8,
+    x: f32,
+    y: f32,
+    scale: f32,
+    color: (u8, u8, u8, u8),
+) {
     let segments = [
-        (x + 1.0, y, 5.0, 1.5),
-        (x + 6.0, y + 1.0, 1.5, 5.0),
-        (x + 6.0, y + 7.0, 1.5, 5.0),
-        (x + 1.0, y + 12.0, 5.0, 1.5),
-        (x, y + 7.0, 1.5, 5.0),
-        (x, y + 1.0, 1.5, 5.0),
-        (x + 1.0, y + 6.0, 5.0, 1.5),
+        (1.0, 0.0, 5.0, 1.5),
+        (6.0, 1.0, 1.5, 5.0),
+        (6.0, 7.0, 1.5, 5.0),
+        (1.0, 12.0, 5.0, 1.5),
+        (0.0, 7.0, 1.5, 5.0),
+        (0.0, 1.0, 1.5, 5.0),
+        (1.0, 6.0, 5.0, 1.5),
     ];
-    for (index, (sx, sy, width, height)) in segments.into_iter().enumerate() {
+    for (index, (dx, dy, width, height)) in segments.into_iter().enumerate() {
         if mask & (1 << index) != 0 {
-            fill_rect(pixmap, sx, sy, width, height, color);
+            fill_rect(
+                pixmap,
+                x + dx * scale,
+                y + dy * scale,
+                width * scale,
+                height * scale,
+                color,
+            );
         }
     }
 }
-
 fn fill_rect(
     pixmap: &mut Pixmap,
     x: f32,
@@ -597,6 +645,43 @@ mod tests {
     }
 
     /// The field shows the end of a long entry: as many trailing characters as fit.
+    /// The value fills the same share of its field at every display scale.
+    #[test]
+    fn the_value_grows_with_the_display_scale() {
+        let ink_height = |scale: f64| {
+            let size = PhysicalSize::new((520.0 * scale) as u32, (680.0 * scale) as u32);
+            let layout = ControlLayout::new(ViewMode::Source, size, scale);
+            let visual = ToolbarVisual {
+                mode: ViewMode::Source,
+                topmost: false,
+                dark: false,
+                system_theme: false,
+                diagnostic: false,
+                emphasized: true,
+                opacity_popup: true,
+                opacity: 95,
+                opacity_field: None,
+                split_scroll_sync: false,
+            };
+            let mut pixmap = Pixmap::new(size.width, size.height).unwrap();
+            paint_opacity_popup(&mut pixmap, &layout, visual);
+            let rows: Vec<u32> = (0..size.height)
+                .filter(|&y| {
+                    (0..size.width).any(|x| {
+                        let color = pixmap.pixel(x, y).unwrap();
+                        (color.red(), color.green(), color.blue()) == (45, 43, 39)
+                    })
+                })
+                .collect();
+            rows.last().unwrap() - rows.first().unwrap() + 1
+        };
+        let (single, double) = (ink_height(1.0), ink_height(2.0));
+        assert!(
+            double >= 2 * single - 2 && double <= 2 * single + 2,
+            "{single} at 1x, {double} at 2x"
+        );
+    }
+
     #[test]
     fn a_long_entry_shows_its_last_characters() {
         assert_eq!(visible_tail(b"12345", 45.0), b"12345");

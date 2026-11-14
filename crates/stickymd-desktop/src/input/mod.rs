@@ -7,4 +7,4 @@ mod escape;
 mod keymap;
 
 pub use escape::{EscapeAction, EscapeContext, escape_action, is_escape};
-pub use keymap::{ClipboardAlias, Keymap, WindowKey, ZoomCommand};
+pub use keymap::{ClipboardAlias, KeyCommand, Keymap, WindowKey, ZoomCommand};

@@ -46,10 +46,12 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
         let Some(plan) = self.recovery.begin_use_canonical() else {
             return;
         };
-        let canonical_was_missing = matches!(&plan, CanonicalRecoveryPlan::Missing);
+        let canonical_was_missing = matches!(&plan, CanonicalRecoveryPlan::Missing(_));
         let restore_result = match &plan {
             CanonicalRecoveryPlan::Present(canonical) => self.editor.reconcile_external(canonical),
-            CanonicalRecoveryPlan::Missing => self.editor.reset_to_missing_document(),
+            CanonicalRecoveryPlan::Missing(new_note) => {
+                self.editor.reset_to_missing_document(*new_note)
+            }
             CanonicalRecoveryPlan::Unusable => {
                 effects.diagnostic(
                     "当前 note.md 无法载入（不是有效 UTF-8 或过大）；只能 F6 恢复有效临时内容。",

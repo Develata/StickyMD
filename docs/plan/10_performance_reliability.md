@@ -4,8 +4,8 @@
 
 - `Layer`: Verification
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-10
 - `Scope`: 性能约束的性质定义（Target / Measurement Method / Hard Failure Condition / Future Benchmark Entry）与可靠性底线
 
 ---
@@ -83,8 +83,49 @@ Phase 15（`11` Phase 15 节）每批迁移前固定基线 SHA、fixture 与测�
 | 硬门 | 每键全文快照次数、每帧复制字节、每次编辑触发的后台预览/保存构建次数 | 不得超过基线 |
 | 诊断 | 每键分配次数、队列容量 | 增加须在该批记录中说明来源，不单独阻断 |
 
-macOS 的呈现成本（每帧全窗分配与复制）不由 Windows 基线代表；建立 macOS 宿主时须另行给出物理窗口尺寸、DPI、
-每帧分配/复制量与光标闪烁基线。
+<a id="macos-gates"></a>
+### macOS 门（USER 批准 2026-11-10）
+
+macOS 的呈现成本不由 Windows 基线代表。探针基线（scale 2）：默认窗口 1040×1360 每帧堆分配 5.66 MB、`present` p50 2.4 ms；Split 1800×1360 为 9.79 MB、3.9 ms；光标闪烁整窗提交 CPU 1.94%，`CALayer` 开关 0.037%。虚拟机里按周期开关图层时 Split 空闲 CPU 为 0.103%，超过硬门，因此闪烁改由系统合成器的动画播放，app 不再按闪烁周期唤醒（USER 批准 2026-11-10，见 `09` macOS 节）。
+
+内存口径为 `phys_footprint`，Release，scale 2，启动后等待 30 s，≥5 次取中位与最大。Windows 内存门不适用（Retina 帧面积是 100% DPI 的 4 倍）。
+
+| 场景 | 临时硬门（估算，首次实测后由 USER 定最终值） |
+| --- | --- |
+| Source 20 KiB | > 72 MiB |
+| Preview 20 KiB + 20 公式 | > 96 MiB |
+| Split 同上 | > 128 MiB |
+| Hidden to tray | > 48 MiB |
+
+**macOS 内存策略（USER 批准 2026-11-13，[内存报告](../report/2026-11-13-macos-memory-optimization.md)）：**
+
+- **大块分配：** 宿主进程装 `stickymd-posix` 的大块分配器。≥ 1 MiB、对齐不超过 4 KiB 的分配各自 `mmap`，释放时 `munmap`；其余交给系统 malloc。
+  - **原因：** macOS 的 malloc 把释放的整帧留作 `Malloc Large (empty)`，仍计入 `phys_footprint`，`malloc_zone_pressure_relief` 收不回。
+  - **复用：** 分配器保留最近释放的一块作备用，给下一个同页数的分配，原本是为了 softbuffer 0.4.8 逐帧分配时不必每帧缺页。宿主在帧存储释放期间关闭复用，备用块随即归还。方案 B 之后 macOS 不再经 softbuffer 呈现，备用块只服务于其他大块分配，是否保留另行评估。
+- **隐藏时的帧存储：** 成功隐藏回执后（`04`），整窗画布缩为 1×1；呈现器释放全部 IOSurface 并清空图层内容（`09` 帧呈现）。
+  - 隐藏期间不绘制、不提交预览任务，也不因尺寸或布局变化重建帧存储或面板缓冲；显示时按当前 generation 重新构建预览。预览 worker 不是同步停下的：在释放请求登记进 worker 之前，它可能完成正在执行的任务，再取出已排队的那一个；登记之后，已取出的任务仍会跑完，其间可能因图片刷新再排版一次。这些结果在处理时若窗口仍隐藏就丢弃，若已再次显示则按当前 generation 与 viewport 准入。随后释放文档投影与相关位图；字体数据库与有界的数学布局缓存保留。
+  - 显示前按窗口当前尺寸重建，完整绘制并提交一帧，再让窗口可见。这一帧失败时显示照常进行（拒绝显示会让便签不可达），并立即请求重绘。
+  - 显示失败时窗口仍算隐藏（`HiddenToTray`），重建的存储再次释放；聚焦失败同样报告为显示被拒，但窗口仍显示，不释放。
+- **验证：** 每帧分配耗时用 `stickymd-posix` 的 `frame_allocation` 基准，与系统 malloc 对比；内存用 `mac-resources`。
+- **帧呈现（USER 批准 2026-11-14，[方案 B 报告](../report/2026-11-14-macos-plan-b-iosurface.md)）：** macOS 经 IOSurface 呈现（`06`、`09`），不再有 CoreAnimation 的整帧副本和逐帧缓冲分配。
+  - **原型实测（VM）：** 持续输入时每帧绘制 p50 约从 8.7 ms 降到 3.5 ms；可见各态常驻约少 10.7 MiB。
+  - **正式实现的验收：**
+    - 同一批次里，基线与新包交替跑 `mac-latency` 与 `mac-resources`；
+    - 证据里记录呈现器的计数：已提交、暂缓、新建、失败。
+
+空闲 CPU（含光标闪烁）、启动、输入延迟、预览构建沿用下表的数值，在 macOS 上单独测量。结构性约束 10（测量环境）在 macOS 宿主上读作 Release build + macOS 27。
+
+**macOS 端到端输入延迟诊断（USER 2026-11-13，“先搭延迟测量”）：**
+
+- **门不变。** 输入延迟的门仍是编辑基准（`stickymd-desktop` 的 `phase3_source_pipeline_release_baseline`），在 macOS Release 上单独运行。编辑基准只量编辑流水线，不经过 present 与系统事件。
+- **诊断。** `stickymd-smoke mac-latency` 在 VM 中注入按键，宿主的 opt-in 记录器分阶段记时：
+  - 记录器由 `STICKYMD_DIAGNOSTIC_INPUT_LATENCY` 开启，默认关闭；
+  - 只记时间戳，缓冲区预先分配，SIGUSR1 时才原子写出；
+  - 阶段为：事件 → 主线程、主线程 → 开始绘制、绘制 → present 返回。每个键配给它被主线程看到之后才开始绘制的第一帧。
+  - 绘制耗时由共享层经 `PresentFacts.draw` 交给宿主。
+  - present 之后的提交、合成与显示不测：事务的 completion block 受动画生命周期影响（光标的闪烁动画就会推迟它），目前没有可靠的逐帧提交或显示回执。
+  - 范围：经 CGEvent、US/ABC 输入源注入的 `x`；不覆盖输入法组字，也不覆盖只提交光标区域的帧。
+- **用途。** 它用于分配器、呈现路径等取舍的对照，不作门。对照须先做 A/A 得出重复性界限，各变体交替运行；一次运行只有在注入键数、记录键数与笔记新增字符数三者相等，且每个键都配到帧时才有效。
 
 ---
 
@@ -149,7 +190,7 @@ Phase 10 还必须测量 50/100/300% zoom 的 Source/Preview/Split、数学/图�
 - RaTeX 字体按需加载；Source-only 模式不主动初始化数学字体。
 - Preview 不可见时释放图片 decode cache；Hidden 状态释放公式 raster。
 - 不缓存完整历史 preview；新结果替换旧结果后立即释放旧树。
-- 不使用通用线程池；不引入自定义 allocator，除非基准证明明确收益。
+- 不使用通用线程池。可以引入自定义 allocator（USER 2026-11-13），与其他优化一样须有 before/patch/after 基准与回归测试；macOS 宿主的大块分配器见上文 macOS 门。
 - 不在每次按键复制整个文档；preview worker snapshot 时产生一次 `Arc<str>`。
 - 空闲时不持续轮询。
 
@@ -208,7 +249,7 @@ p95 与不裁剪规则均不改变，`250 ms` 仅保留为非发布门的 rapid-
 
 ## Performance Critical Paths
 
-见各能力章节；优化顺序固定（先查持续 redraw → 重复分配 → 无界 cache → …… → 最后才考虑 allocator），禁止凭感觉优化；
+见各能力章节；排查顺序固定（先查持续 redraw → 重复分配 → 无界 cache → ……），分配器是受基准驱动的替换点（USER 2026-11-13 起不再限定为最后手段），禁止凭感觉优化；
 每项优化必须有 before benchmark / patch / after benchmark / regression test。
 
 <a id="preview-resource-assessment"></a>

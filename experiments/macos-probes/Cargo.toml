@@ -1,0 +1,22 @@
+# One-shot macOS probes for docs/report/2026-11-09-macos-platform-decision.md.
+# Not part of the product workspace: the empty [workspace] keeps it out, and nothing depends on it.
+[package]
+name = "macos-probes"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+cosmic-text = { version = "=0.19.0", default-features = false, features = ["std", "swash"] }
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
+softbuffer = { version = "=0.4.8", default-features = false }
+tray-icon = { version = "=0.24.2", default-features = false }
+notify = { version = "=8.2.0", default-features = false, features = ["macos_fsevent"] }
+arboard = { version = "=3.6.1", default-features = false, features = ["image-data"] }
+libc = "0.2"
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"

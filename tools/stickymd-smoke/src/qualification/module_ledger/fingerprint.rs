@@ -174,6 +174,9 @@ fn path_domains(path: &str) -> u64 {
     if path.starts_with("dist/evidence/") {
         return 0;
     }
+    if is_unqualified_host(path) {
+        return 0;
+    }
     if is_global_input(path) {
         return GLOBAL;
     }
@@ -196,6 +199,23 @@ fn path_domains(path: &str) -> u64 {
         return ALL_MODULES;
     }
     product_domains(path).unwrap_or_else(|| harness_domains(path))
+}
+
+/// The directories of hosts that are not part of the Windows qualified artifact. The functional
+/// modules run the Windows executable, so nothing under these directories is an input of any of
+/// them: one rule per directory, and a file added there later needs none. The workspace-tests
+/// identity still covers them (it takes every tracked input), and the shared crates they build on
+/// keep their own rules, so a change there still invalidates the modules.
+///
+/// `apps/stickymd-mac/` has no qualification of its own: its acceptance is `phase-16.md`, which
+/// the module ledger neither reads nor records (plan 11 Phase 16). `crates/stickymd-posix/` is the
+/// native POSIX layer of the macOS (later the Debian) host and is empty on Windows.
+const UNQUALIFIED_HOSTS: &[&str] = &["apps/stickymd-mac/", "crates/stickymd-posix/"];
+
+fn is_unqualified_host(path: &str) -> bool {
+    UNQUALIFIED_HOSTS
+        .iter()
+        .any(|directory| path.starts_with(directory))
 }
 
 fn is_global_input(path: &str) -> bool {
@@ -358,6 +378,8 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-desktop/src/shell/guards.rs",
     "crates/stickymd-desktop/src/shell/handler.rs",
     "crates/stickymd-desktop/src/shell/headless_tests.rs",
+    "crates/stickymd-desktop/src/shell/hidden_frames_tests.rs",
+    "crates/stickymd-desktop/src/shell/host_presenter_tests.rs",
     "crates/stickymd-desktop/src/shell/hot_path_tests.rs",
     "crates/stickymd-desktop/src/shell/input.rs",
     "crates/stickymd-desktop/src/shell/lifecycle.rs",
@@ -404,6 +426,7 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-desktop/src/testing.rs",
     "crates/stickymd-desktop/src/testing/",
     "crates/stickymd-desktop/src/title.rs",
+    "crates/stickymd-desktop/src/tray.rs",
     "crates/stickymd-desktop/src/frame/mod.rs",
     "crates/stickymd-desktop/src/frame/convert.rs",
     "crates/stickymd-desktop/src/frame/ledger.rs",
@@ -424,6 +447,7 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-app/src/flow/reconciliation.rs",
     "crates/stickymd-app/src/flow/recovery.rs",
     "crates/stickymd-app/src/flow/asset_paste.rs",
+    "crates/stickymd-app/src/flow/export.rs",
     "crates/stickymd-app/src/flow/export_plan.rs",
     "crates/stickymd-app/src/flow/note_startup.rs",
     "crates/stickymd-app/src/flow/save.rs",
@@ -456,6 +480,7 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-core/src/",
     "crates/stickymd-render/src/lib.rs",
     "crates/stickymd-render/src/glyph_cache.rs",
+    "crates/stickymd-render/src/system_fonts.rs",
     "crates/stickymd-render/src/scroll.rs",
     "crates/stickymd-render/src/source/",
 ];
@@ -494,6 +519,11 @@ const FEATURE_SOURCES: &[(&str, u64)] = &[
     ),
     (
         "crates/stickymd-render/src/math_text/",
+        PREVIEW | EDITOR | MATH | IMAGES | EXPORT,
+    ),
+    // The math action composes the equals join with the preview's delimiter conversion.
+    (
+        "crates/stickymd-render/src/math_action.rs",
         PREVIEW | EDITOR | MATH | IMAGES | EXPORT,
     ),
     // Image paste staging and local image paths; the storage itself runs every session.
@@ -541,7 +571,9 @@ pub(crate) fn verify_product_classification(root: &Path) -> Result<(), String> {
     // A source of a new crate outside every product root would fall to `GLOBAL` without a rule.
     let unrooted = tracked
         .iter()
-        .filter(|path| is_crate_source(path) && product_domains(path).is_none())
+        .filter(|path| {
+            is_crate_source(path) && product_domains(path).is_none() && !is_unqualified_host(path)
+        })
         .collect::<Vec<_>>();
     if !unrooted.is_empty() {
         return Err(format!(

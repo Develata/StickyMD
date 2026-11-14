@@ -1,0 +1,70 @@
+Analysis of sampling rendering_stress-62d311c9cbf27f16 (pid 25025) every 1 millisecond
+Process:         rendering_stress-62d311c9cbf27f16 [25025]
+Path:            /Users/USER/*/rendering_stress-62d311c9cbf27f16
+Load Address:    0x102d2c000
+Identifier:      rendering_stress-62d311c9cbf27f16
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  cargo [24984]
+Target Type:     live task
+
+Date/Time:       2026-11-09 22:03:04.658 +0800
+Launch Time:     2026-11-09 21:52:01.860 +0800
+OS Version:      macOS 27.2 (26B7124)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+
+Physical footprint:         50.3M
+Physical footprint (peak):  53.8M
+Idle exit:                  untracked
+----
+
+Call graph:
+    2421 Thread_1064815   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 2421 start  (in dyld) + 6652  [0x18b682054]
+    +   2421 main  (in rendering_stress-62d311c9cbf27f16) + 36  [0x102d33308]
+    +     2421 _RINvNtCsa9BKTri5B3M_3std2rt10lang_startuECsaNw0r0hwOA1_16rendering_stress  (in rendering_stress-62d311c9cbf27f16) + 84  [0x1
+    +       2421 _RNvNtCsa9BKTri5B3M_3std2rt19lang_start_internal  (in rendering_stress-62d311c9cbf27f16) + 952  [0x103a5a070]
+    +         2421 _RNCINvNtCsa9BKTri5B3M_3std2rt10lang_startuE0CsaNw0r0hwOA1_16rendering_stress  (in rendering_stress-62d311c9cbf27f16) + 2
+    +           2421 _RINvNtNtCsa9BKTri5B3M_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsaNw0r0hwOA1_16rendering_stress  (in rend
+    +             2421 _RNvYFEuINtNtNtCsgtPOCBgevO_4core3ops8function6FnOnceuE9call_onceCsaNw0r0hwOA1_16rendering_stress  (in rendering_stre
+    +               2421 _RNvCsaNw0r0hwOA1_16rendering_stress4main  (in rendering_stress-62d311c9cbf27f16) + 28  [0x102d30d74]  rendering_st
+    +                 2421 _RNvCs3O4ZRUMviTO_4test16test_main_static  (in rendering_stress-62d311c9cbf27f16) + 300  [0x102d4cab4]
+    +                   2421 _RNvNtCs3O4ZRUMviTO_4test7console17run_tests_console  (in rendering_stress-62d311c9cbf27f16) + 5840  [0x102d5c9
+    +                     2421 _RNvMs1_NtNtNtCsa9BKTri5B3M_3std4sync4mpmc4listINtB5_7ChannelNtNtCs3O4ZRUMviTO_4test5event13CompletedTestE4re
+    +                       2421 _RNCNvMs1_NtNtNtCsa9BKTri5B3M_3std4sync4mpmc4listINtB7_7ChannelNtNtCs3O4ZRUMviTO_4test5event13CompletedTest
+    +                         2421 _RNvMs_NtNtCsa9BKTri5B3M_3std6thread6threadNtB4_6Thread4park  (in rendering_stress-62d311c9cbf27f16) + 48
+    +                           2421 _dispatch_semaphore_wait_slow  (in libdispatch.dylib) + 132  [0x190635938]
+    +                             2421 _dispatch_sema4_wait  (in libdispatch.dylib) + 28  [0x1906352e0]
+    +                               2421 semaphore_wait_trap  (in libsystem_kernel.dylib) + 8  [0x18b70eb90]
+    2421 Thread_1064823: stress_fixture_builds_every_formula_through_native_preview
+    + 2417 thread_start  (in libsystem_pthread.dylib) + 8  [0x18b74ec28]
+    + ! 2417 _pthread_start  (in libsystem_pthread.dylib) + 116  [0x18b753a3c]
+    + !   2417 _RNvNvMs0_NtNtNtCsa9BKTri5B3M_3std3sys6thread4unixNtB7_6Thread3new12thread_start  (in rendering_stress-62d311c9cbf27f16) + 40
+    + !     2417 _RNSNvYNCINvNtNtCsa9BKTri5B3M_3std6thread9lifecycle15spawn_uncheckedNCNvCs3O4ZRUMviTO_4test8run_tests_0uEs_0INtNtNtCsgtPOCB
+    + !       2417 _RINvNtNtCsa9BKTri5B3M_3std3sys9backtrace28___rust_begin_short_backtraceNCNvCs3O4ZRUMviTO_4test8run_tests_0uEB1b_  (in re
+    + !         2417 _RNCNvCs3O4ZRUMviTO_4test8run_test0B3_  (in rendering_stress-62d311c9cbf27f16) + 908  [0x102d48ff4]
+    + !           2417 _RINvCs3O4ZRUMviTO_4test28___rust_begin_short_backtraceINtNtCsgtPOCBgevO_4core6result6ResultuNtNtCslJsSqIQKwiA_5alloc
+    + !             2417 _RNvYNCNvCsaNw0r0hwOA1_16rendering_stress58stress_fixture_builds_every_formula_through_native_preview0INtNtNtCsgtPO
+    + !               2417 _RNCNvCsaNw0r0hwOA1_16rendering_stress58stress_fixture_builds_every_formula_through_native_preview0B3_  (in rende
+    + !                 2415 _RNvCsaNw0r0hwOA1_16rendering_stresss_58stress_fixture_builds_every_formula_through_native_preview  (in renderi
+    + !                 : 2415 _RNvMs0_NtNtCsb5ghMl5lCaF_15stickymd_render7preview8pipelineNtB5_15PreviewPipeline5paint  (in rendering_stres
+    + !                 :   2415 _RNvMs0_NtNtCsb5ghMl5lCaF_15stickymd_render7preview8pipelineNtB5_15PreviewPipeline23paint_with_image_source
+    + !                 :     1142 _RNvNtNtCsb5ghMl5lCaF_15stickymd_render7preview5paint14paint_document  (in rendering_stress-62d311c9cbf27
+    + !                 :     | 1102 _RINvMNtNtNtCsb5ghMl5lCaF_15stickymd_render7preview11text_layout8paintingNtB5_10TextLayout12draw_in_rec
+    + !                 :     | + 1102 _RNvXNtCslrZtpeIGKwV_11cosmic_text6renderINtB2_14LegacyRendererNCNvNtNtCsb5ghMl5lCaF_15stickymd_rende
+    + !                 :     | +   870 _RINvMs_NtCslrZtpeIGKwV_11cosmic_text5swashNtB5_10SwashCache11with_pixelsNCNvXNtB7_6renderINtB1d_14L
+    + !                 :     | +   ! 808 _RNCNvXNtCslrZtpeIGKwV_11cosmic_text6renderINtB4_14LegacyRendererNCNvNtNtCsb5ghMl5lCaF_15stickymd_
+    + !                 :     | +   ! : 687 _RNCNvNtNtCsb5ghMl5lCaF_15stickymd_render7preview5paint14paint_documentsf_0B7_  (in rendering_st
+    + !                 :     | +   ! : | 266 _RNvNtNtNtCsb5ghMl5lCaF_15stickymd_render7preview5paint7drawing16blend_glyph_rect  (in renderi
+    + !                 :     | +   ! : | 101 _RNvNtNtNtCsb5ghMl5lCaF_15stickymd_render7preview5paint7drawing16blend_glyph_rect  (in renderi
+    + !                 :     | +   ! : | + 92 _RNvXs4_NtNtCsgtPOCBgevO_4core4iter5rangeINtNtNtB9_3ops5range5RangelENtNtNtB7_6traits8iterato
+    + !                 :     | +   ! : | + ! 65 _RNvXs3_NtNtCsgtPOCBgevO_4core4iter5rangeINtNtNtB9_3ops5range5RangelENtB5_17RangeIteratorIm
+    + !                 :     | +   ! : | + ! 27 _RNvXs3_NtNtCsgtPOCBgevO_4core4iter5rangeINtNtNtB9_3ops5range5RangelENtB5_17RangeIteratorIm
+    + !                 :     | +   ! : | + !   27 _RNvXsI_NtNtCsgtPOCBgevO_4core4iter5rangelNtB5_4Step17forward_uncheckedCs4BdVqCWpRh_4pxfm
+    + !                 :     | +   ! : | + 9 _RNvXs4_NtNtCsgtPOCBgevO_4core4iter5rangeINtNtNtB9_3ops5range5RangelENtNtNtB7_6traits8iterator
+    + !                 :     | +   ! : | 70 _RNvNtNtNtCsb5ghMl5lCaF_15stickymd_render7preview5paint7drawing16blend_glyph_rect  (in renderin
+    + !                 :     | +   ! : | + 63 _RNvXs4_NtNtCsgtPOCBgevO_4core4iter5rangeINtNtNtB9_3ops5range5RangelENtNtNtB7_6traits8iterato
+    + !                 :     | +   ! : | + ! 45 _RNvXs3_NtNtCsgtPOCBgevO_4core4iter5rangeINtNtNtB9_3ops5range5RangelENtB5_17RangeIteratorIm
+    + !                 :     | +   ! : | + ! 18 _RNvXs3_NtNtCsgtPOCBgevO_4core4iter5rangeINtNtNtB9_3ops5range5RangelENtB5_17RangeIteratorIm

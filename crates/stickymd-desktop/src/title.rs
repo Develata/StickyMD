@@ -161,6 +161,7 @@ pub mod testing {
             WindowEffect::HideRejected(FailureKind::Failed),
             WindowEffect::ShowRejected(FailureKind::Failed),
             WindowEffect::QuitBlocked,
+            WindowEffect::QuitTimedOut,
             WindowEffect::RequestRedraw,
             WindowEffect::WakeAt(1),
         ];
@@ -193,6 +194,7 @@ pub mod testing {
                 | WindowEffect::HideRejected(_)
                 | WindowEffect::ShowRejected(_)
                 | WindowEffect::QuitBlocked
+                | WindowEffect::QuitTimedOut
                 | WindowEffect::QuitCancelled(_)
                 | WindowEffect::QuitWarning(_)
                 | WindowEffect::RequestRedraw

@@ -1,0 +1,5 @@
+screen 1512x982 visible top 33; safeArea.top=32 auxLeft=(0,950 663.5x32) auxRight=(848.5,950 663.5x32) notch x=663.5 width=185
+   0.145 sensor Focused(false)
+   0.145 note Focused(false)
+   1.052 [placed at y=0, no override] top_gap=0.0 x=663.0 size=185.0x32.0 level=27 on_active_space=true occlusion_visible=true app_active=false
+   1.352 [final placement] top_gap=0.0 x=663.0 size=185.0x32.0 level=27 on_active_space=true occlusion_visible=true app_active=false

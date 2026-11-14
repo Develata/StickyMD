@@ -27,14 +27,59 @@ impl HasDisplayHandle for WindowHandleSource {
     }
 }
 
+/// Where a finished frame goes: softbuffer's surface, or the host's own presenter, which takes
+/// the canvas itself (`Host::presents_frames`, plan 06 frame presentation).
+enum Output {
+    Softbuffer {
+        _context: Context<WindowHandleSource>,
+        surface: Surface<WindowHandleSource, WindowHandleSource>,
+    },
+    Host,
+}
+
+/// The softbuffer surface, borrowing only `output` so the canvas and ledger stay usable beside it.
+fn softbuffer(
+    output: &mut Output,
+) -> Result<&mut Surface<WindowHandleSource, WindowHandleSource>, SurfaceError> {
+    match output {
+        Output::Softbuffer { surface, .. } => Ok(surface),
+        Output::Host => Err(SurfaceError::Present(
+            "the host presents this canvas".into(),
+        )),
+    }
+}
+
 pub struct SoftwareSurface {
-    _context: Context<WindowHandleSource>,
-    surface: Surface<WindowHandleSource, WindowHandleSource>,
+    output: Output,
     pixmap: Pixmap,
     ledger: FrameLedger,
 }
 
 impl SoftwareSurface {
+    /// Only the canvas: the host presents what is drawn into it. Needs no window.
+    pub fn for_host(width: u32, height: u32) -> Result<Self, SurfaceError> {
+        if width == 0 || height == 0 {
+            return Err(SurfaceError::ZeroSize);
+        }
+        let pixmap =
+            Pixmap::new(width, height).ok_or(SurfaceError::PixmapAllocation { width, height })?;
+        Ok(Self {
+            output: Output::Host,
+            pixmap,
+            ledger: FrameLedger::default(),
+        })
+    }
+
+    /// Whether the host presents this surface's canvas (`for_host`).
+    pub fn presented_by_host(&self) -> bool {
+        matches!(self.output, Output::Host)
+    }
+
+    /// The canvas, for a host that presents it.
+    pub fn pixmap(&self) -> &Pixmap {
+        &self.pixmap
+    }
+
     pub fn new(window: Arc<Window>) -> Result<Self, SurfaceError> {
         let size = window.inner_size();
         let context = Context::new(WindowHandleSource(Arc::clone(&window)))
@@ -52,8 +97,10 @@ impl SoftwareSurface {
                 height: size.height,
             })?;
         Ok(Self {
-            _context: context,
-            surface,
+            output: Output::Softbuffer {
+                _context: context,
+                surface,
+            },
             pixmap,
             ledger: FrameLedger::default(),
         })
@@ -62,15 +109,30 @@ impl SoftwareSurface {
     pub fn resize(&mut self, width: u32, height: u32) -> Result<(), SurfaceError> {
         let width_nonzero = NonZeroU32::new(width).ok_or(SurfaceError::ZeroSize)?;
         let height_nonzero = NonZeroU32::new(height).ok_or(SurfaceError::ZeroSize)?;
-        self.surface
-            .resize(width_nonzero, height_nonzero)
-            .map_err(|error| SurfaceError::Surface(error.to_string()))?;
+        if let Output::Softbuffer { surface, .. } = &mut self.output {
+            surface
+                .resize(width_nonzero, height_nonzero)
+                .map_err(|error| SurfaceError::Surface(error.to_string()))?;
+        }
         if self.pixmap.width() != width || self.pixmap.height() != height {
             self.pixmap = Pixmap::new(width, height)
                 .ok_or(SurfaceError::PixmapAllocation { width, height })?;
             self.ledger.pixmap_allocs += 1;
         }
         Ok(())
+    }
+
+    /// Gives up the window-sized storage while the window is hidden: the canvas and the
+    /// presenter shrink to one pixel, and presenting that pixel replaces the layer's image, so
+    /// the presenter's buffer and the compositor's copy of it go too. A host presenter releases
+    /// its own buffers (`Host::hidden_frames_released`); only the canvas shrinks here. `resize`
+    /// to the window's size brings it back; the caller repaints before showing the window.
+    pub fn release_frames(&mut self) -> Result<(), SurfaceError> {
+        self.resize(1, 1)?;
+        if self.presented_by_host() {
+            return Ok(());
+        }
+        self.present()
     }
 
     pub fn pixmap_mut(&mut self) -> &mut Pixmap {
@@ -82,8 +144,7 @@ impl SoftwareSurface {
     }
 
     pub fn present(&mut self) -> Result<(), SurfaceError> {
-        let mut buffer = self
-            .surface
+        let mut buffer = softbuffer(&mut self.output)?
             .buffer_mut()
             .map_err(|error| SurfaceError::Surface(error.to_string()))?;
         if buffer.len().checked_mul(4) != Some(self.pixmap.data().len()) {
@@ -102,8 +163,7 @@ impl SoftwareSurface {
     /// blinking can update a few dozen pixels instead of converting and
     /// copying the entire window. Any other buffer is populated in full.
     pub fn present_damage(&mut self, damage: DamageRect) -> Result<(), SurfaceError> {
-        let mut buffer = self
-            .surface
+        let mut buffer = softbuffer(&mut self.output)?
             .buffer_mut()
             .map_err(|error| SurfaceError::Surface(error.to_string()))?;
         let (width, height) = (self.pixmap.width(), self.pixmap.height());

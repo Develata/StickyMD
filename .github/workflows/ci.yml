@@ -36,8 +36,11 @@ jobs:
       headless_needed: ${{ steps.plan.outputs.headless_needed }}
       release_needed: ${{ steps.plan.outputs.release_needed }}
       portable_needed: ${{ steps.plan.outputs.portable_needed }}
+      mac_needed: ${{ steps.plan.outputs.mac_needed }}
       lint_args: ${{ steps.plan.outputs.lint_args }}
       portable_args: ${{ steps.plan.outputs.portable_args }}
+      mac_lint_args: ${{ steps.plan.outputs.mac_lint_args }}
+      mac_test_args: ${{ steps.plan.outputs.mac_test_args }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -68,7 +71,7 @@ jobs:
           Write-Output $json
           $json | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'ci-plan.json') -Encoding utf8
           $plan = $json | ConvertFrom-Json -ErrorAction Stop
-          foreach ($key in @('full', 'modules', 'windows_matrix', 'smoke_needed', 'dependency_needed', 'quality_needed', 'headless_needed', 'release_needed', 'portable_needed', 'lint_args', 'portable_args')) {
+          foreach ($key in @('full', 'modules', 'windows_matrix', 'smoke_needed', 'dependency_needed', 'quality_needed', 'headless_needed', 'release_needed', 'portable_needed', 'mac_needed', 'lint_args', 'portable_args', 'mac_lint_args', 'mac_test_args')) {
             $value = ConvertTo-Json -InputObject $plan.$key -Depth 10 -Compress
             "$key=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           }
@@ -219,10 +222,39 @@ jobs:
           & cargo test @arguments
           exit $LASTEXITCODE
 
+  # The macOS host compiles to a stub with no tests on Windows and Linux, so only this job tests
+  # it: a green Windows or Linux lane never stands in for it, and the aggregate gate requires it.
+  macos-host:
+    name: macOS host (lint + tests)
+    needs: plan
+    if: needs.plan.outputs.mac_needed == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      CI_MAC_LINT_ARGS: ${{ needs.plan.outputs.mac_lint_args }}
+      CI_MAC_TEST_ARGS: ${{ needs.plan.outputs.mac_test_args }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-cache
+        with:
+          lane: macos-host
+      - name: clippy for the macOS host
+        run: |
+          $arguments = @($env:CI_MAC_LINT_ARGS | ConvertFrom-Json -ErrorAction Stop)
+          & cargo @arguments
+          exit $LASTEXITCODE
+      - name: Test the shared crates and the macOS host
+        run: |
+          $arguments = @($env:CI_MAC_TEST_ARGS | ConvertFrom-Json -ErrorAction Stop)
+          & cargo @arguments
+          exit $LASTEXITCODE
+
   result:
     name: CI result
     if: always()
-    needs: [plan, linux-smoke, dependency-policy, windows-quality, windows-headless, windows-release, portable-core]
+    needs: [plan, linux-smoke, dependency-policy, windows-quality, windows-headless, windows-release, portable-core, macos-host]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -248,6 +280,7 @@ jobs:
           CI_HEADLESS: ${{ needs.windows-headless.result }}
           CI_RELEASE: ${{ needs.windows-release.result }}
           CI_PORTABLE: ${{ needs.portable-core.result }}
+          CI_MAC: ${{ needs.macos-host.result }}
         run: |
-          & cargo run --quiet -p stickymd-smoke --locked -- ci verify "--cancelled=$env:CI_CANCELLED" "--full=$env:CI_FULL" "--modules=$env:CI_MODULES" "--plan=$env:CI_PLAN" "--smoke=$env:CI_SMOKE" "--dependency=$env:CI_DEPENDENCY" "--quality=$env:CI_QUALITY" "--headless=$env:CI_HEADLESS" "--release=$env:CI_RELEASE" "--portable=$env:CI_PORTABLE"
+          & cargo run --quiet -p stickymd-smoke --locked -- ci verify "--cancelled=$env:CI_CANCELLED" "--full=$env:CI_FULL" "--modules=$env:CI_MODULES" "--plan=$env:CI_PLAN" "--smoke=$env:CI_SMOKE" "--dependency=$env:CI_DEPENDENCY" "--quality=$env:CI_QUALITY" "--headless=$env:CI_HEADLESS" "--release=$env:CI_RELEASE" "--portable=$env:CI_PORTABLE" "--mac=$env:CI_MAC"
           exit $LASTEXITCODE
