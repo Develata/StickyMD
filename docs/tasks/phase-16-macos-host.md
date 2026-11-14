@@ -2,8 +2,10 @@
 
 ## Completion State
 
-In Progress。M0–M4 的代码与自动化已完成；真实桌面、输入法与资源基线的人工项见
-[phase-16 验收矩阵](../acceptance-cases/phase-16.md)，保持 `NOT TESTED` 直到实际运行。
+In Progress。M0–M4 与方案 B（M5）的代码与自动化已完成；macOS 的人工项已在 `b2b9aea` 的 release
+（`2906076…`）上由 USER 确认（2026-11-15，见 [phase-16 验收矩阵](../acceptance-cases/phase-16.md)）。
+只剩 P16-V05：共享层 `render.rs`、`frame/surface.rs` 改动后的 Windows 桌面回归，待在 Windows 设备上运行，
+保持 `NOT TESTED`。多屏与混合 DPI 按 USER 决定跳过。
 
 ## Goal
 

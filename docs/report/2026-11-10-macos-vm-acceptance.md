@@ -677,3 +677,15 @@ PASS 8、FAIL 0、NOT_TESTED 12，证据 SHA-256 `b9d7835f6ec010387e271ce93d2d50
 - **测试修改没有改变程序身份。** 加强测试后，产品代码与 `b2b9aea` 逐字节相同，重建的可执行文件仍是 `2906076…`。所以上一节的 VM 证据与账本记录仍然适用。
 
 细节见[方案 B 报告](2026-11-14-macos-plan-b-iosurface.md)的“复审”一节。
+
+## 人工收据：方案 B 的 macOS 桌面人工项（`2906076…`，2026-11-15）
+
+USER 在本机桌面运行 `/Users/develata/gitclone/StickyMD/dist/macos/StickyMD.app`，即 `b2b9aea` 的 release（方案 B），可执行文件 SHA-256 `2906076176e0c890124a691c8d3b2bf96e2634d8a03fa0035f54ebeeaeaae0af`。本机系统为 macOS 27.2.1（26B7131）。`b2b9aea` 之后到 `f23fa16` 的源码改动只在测试模块与文档里，产品代码不变（`git diff b2b9aea f23fa16 -- apps crates Cargo.toml Cargo.lock` 只改了 `frame_presenter.rs` 的 `#[cfg(test)]` 部分），所以这个包就是当前 `main` 的程序。
+
+USER 回复：“人工确认已完成，可以合并”。随后确认这次只做了 macOS 项，V05 留给 Windows 设备。
+
+- **覆盖的行：** W01–W06、W10、W12、I01–I03、F01、R03、V04，行定义见 `docs/acceptance-cases/phase-16.md` 第 38–43、47、49、62–64、70、79、90 行。
+- **不在其中：** V05（Windows 桌面回归）只能在 Windows 机器上做，仍为 `NOT TESTED`。多屏与混合 DPI 按 USER 决定跳过。
+- **登记：** 已用 `stickymd-smoke mac-ledger receipt --app dist/macos/StickyMD.app --rows W01,W02,W03,W04,W05,W06,W10,W12,I01,I02,I03,F01,R03,V04 --quote "人工确认已完成，可以合并"` 登记，账本追加 14 条 `MANUAL PASS`，都绑定 `2906076…`。
+- **验收表：** 这些行改为 `MANUAL PASS`，此前的记录保留为“此前”。
+- **未复核：** 这次没有运行 `mac-ledger plan`：final3 的驱动 `f84eea76…` 没有留在本机，`plan` 需要它。按 `NEVER_REUSED`，I01–I03、R03 的收据只代表这一次确认。
