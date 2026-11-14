@@ -680,9 +680,13 @@ PASS 8、FAIL 0、NOT_TESTED 12，证据 SHA-256 `b9d7835f6ec010387e271ce93d2d50
 
 ## 人工收据：方案 B 的 macOS 桌面人工项（`2906076…`，2026-11-15）
 
-USER 在本机桌面运行 `/Users/develata/gitclone/StickyMD/dist/macos/StickyMD.app`，即 `b2b9aea` 的 release（方案 B），可执行文件 SHA-256 `2906076176e0c890124a691c8d3b2bf96e2634d8a03fa0035f54ebeeaeaae0af`。本机系统为 macOS 27.2.1（26B7131）。`b2b9aea` 之后到 `f23fa16` 的源码改动只在测试模块与文档里，产品代码不变（`git diff b2b9aea f23fa16 -- apps crates Cargo.toml Cargo.lock` 只改了 `frame_presenter.rs` 的 `#[cfg(test)]` 部分），所以这个包就是当前 `main` 的程序。
+USER 在本机桌面完成确认，本机系统为 macOS 27.2.1（26B7131）。
 
-USER 回复：“人工确认已完成，可以合并”。随后确认这次只做了 macOS 项，V05 留给 Windows 设备。
+- **被测程序（推断）：** USER 没有说明运行的是哪个包。本机唯一的方案 B 包是 `/Users/develata/gitclone/StickyMD/dist/macos/StickyMD.app`，即 `b2b9aea` 的 release，可执行文件 SHA-256 `2906076176e0c890124a691c8d3b2bf96e2634d8a03fa0035f54ebeeaeaae0af`；收据按它登记。
+- **佐证有限（已核实）：** 该可执行文件的访问时间是 2026-11-14 16:28，晚于 04:14 的构建。同目录 `note/note.md` 的修改时间仍是 2026-11-13 01:10，所以输入类检查若在这个包上做，用的是另一个程序目录（例如复制出的包）。
+- **V04 的基线：** USER 没有指明并排比较用的基线包。`b2b9aea` 之后到 `f23fa16` 的源码改动只在测试模块与文档里，产品代码不变（`git diff b2b9aea f23fa16 -- apps crates Cargo.toml Cargo.lock` 只改了 `frame_presenter.rs` 的 `#[cfg(test)]` 部分），所以这个包就是当前 `main` 的程序。
+
+USER 回复：“人工确认已完成，可以合并”。随后确认这次只做了 macOS 项，V05 留给 Windows 设备。若上述推断与实际不符（被测包不同，或 W12、R03 并非这次在本机桌面完成），以 USER 更正为准：账本只追加，届时追加新收据，并改写本节与验收表。
 
 - **覆盖的行：** W01–W06、W10、W12、I01–I03、F01、R03、V04，行定义见 `docs/acceptance-cases/phase-16.md` 第 38–43、47、49、62–64、70、79、90 行。
 - **不在其中：** V05（Windows 桌面回归）只能在 Windows 机器上做，仍为 `NOT TESTED`。多屏与混合 DPI 按 USER 决定跳过。

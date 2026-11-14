@@ -95,3 +95,4 @@ Phase 17 落地时，下列现行条款、验收行与测试随之改写。在�
   - `crates/stickymd-desktop/src/scroll/scrollbar.rs:471-484`、`:527-531`：Preview 末端与滑块比例改用新的末端函数；文档高等于视口高时可以滚动；
   - 断言单一诊断槽位内容的测试（`shell/phase15_*_tests.rs` 等），改为断言提示状态；其中关于数据安全的断言（保存失败可见、内存文本保留）保持不变；
   - Preview 复制与剪贴板反馈的现有测试（`phase-03`、`phase-05`、`phase-10` P10-A10、`phase-14` P14-A28 所引）逐项复核。
+  - 人工义务映射：`tools/stickymd-smoke/src/qualification/manual_observation/coverage/table.rs` 中 `plan09:scroll-8`（Preview 文末留白）现为具名缺口（`cc4cdb6`）。落地时按参数拆分 `declared.rs` 里单一的 `preview-end-room` 断言，绑定到实际执行的测试，并改回 `manual_readiness/tests.rs` 中 `known_gaps` 的期望。
