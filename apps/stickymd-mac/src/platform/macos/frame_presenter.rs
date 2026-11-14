@@ -227,7 +227,8 @@ impl FramePresenter {
     /// The frame layer, made once as a sublayer of `root`.
     fn layer(&mut self, root: &AnyObject) -> Retained<AnyObject> {
         if self.layer.is_none() {
-            // SAFETY: Core Animation calls on live objects, on the main thread.
+            // SAFETY: Core Animation calls on live objects, on the main thread for a window's
+            // root layer, or on the one test thread that owns a standalone root layer.
             unsafe {
                 let layer: Retained<AnyObject> = msg_send![class!(CALayer), new];
                 // The canvas's origin is its top-left corner, as softbuffer's layer has it.
@@ -299,7 +300,8 @@ impl FramePresenter {
     /// While hidden: the layer shows nothing and no surface is kept.
     pub fn release(&mut self) {
         if let Some(layer) = &self.layer {
-            // SAFETY: clearing a live layer's contents on the main thread, without animation.
+            // SAFETY: clearing a live layer's contents without animation, on the thread that
+            // owns the layer (the main thread for a window's).
             unsafe {
                 let _: () = msg_send![class!(CATransaction), begin];
                 let _: () = msg_send![class!(CATransaction), setDisableActions: Bool::YES];
@@ -324,7 +326,8 @@ fn root_layer(window: &Window) -> Option<Retained<AnyObject>> {
 
 /// Makes `surface` the layer's contents, with the layer matching the root layer.
 fn show(root: &AnyObject, layer: &AnyObject, surface: &Surface) {
-    // SAFETY: live layers and surface on the main thread. `CALayer.contents` accepts an
+    // SAFETY: live layers and surface, on the thread that owns the layers (the main thread
+    // for a window's, the test thread for a standalone root). `CALayer.contents` accepts an
     // IOSurfaceRef (CALayer.h), and keeps its own strong reference. The transaction stops the
     // implicit fade.
     unsafe {
@@ -436,83 +439,157 @@ mod tests {
         presenter.pool[index].0.as_ptr()
     }
 
-    /// The whole presenter on a standalone root layer: no window, no compositor. A surface is
-    /// marked busy with the public use count, as the compositor marks the ones it reads.
+    /// A frame whose every pixel is `(tag, 255 - tag, tag / 2, 255)`, so each frame is told apart.
+    fn frame(width: u32, height: u32, tag: u8) -> Pixmap {
+        let mut frame = Pixmap::new(width, height).unwrap();
+        for pixel in frame.data_mut().chunks_exact_mut(4) {
+            pixel.copy_from_slice(&[tag, 255 - tag, tag / 2, 255]);
+        }
+        frame
+    }
+
+    /// Which frame a surface holds: the tag of its first pixel, read back as BGRA.
+    fn tag_of(surface: *mut c_void) -> u8 {
+        // SAFETY: a live surface, locked read-only (1) around the read of its first pixel.
+        unsafe {
+            assert_eq!(IOSurfaceLock(surface, 1, std::ptr::null_mut()), 0);
+            let pixel = std::slice::from_raw_parts(IOSurfaceGetBaseAddress(surface), 4).to_vec();
+            assert_eq!(IOSurfaceUnlock(surface, 1, std::ptr::null_mut()), 0);
+            assert_eq!(pixel[1], 255 - pixel[2], "a whole frame, not stale bytes");
+            pixel[2]
+        }
+    }
+
+    /// The compositor's hold on a surface, as the test plays it: a reference and a use count,
+    /// both given back on drop, also when an assertion fails.
+    struct Held(*mut c_void);
+
+    impl Held {
+        fn new(surface: *mut c_void) -> Self {
+            // SAFETY: a live surface; +1 reference and +1 use count, both undone in `drop`.
+            unsafe {
+                CFRetain(surface);
+                IOSurfaceIncrementUseCount(surface);
+            }
+            Self(surface)
+        }
+    }
+
+    impl Drop for Held {
+        fn drop(&mut self) {
+            // SAFETY: undoes `new`; the test's reference keeps the surface alive until here.
+            unsafe {
+                IOSurfaceDecrementUseCount(self.0);
+                CFRelease(self.0);
+            }
+        }
+    }
+
+    /// The whole presenter on a standalone root layer owned by this test thread: no window, no
+    /// compositor. Every frame carries its own tag, read back from the surfaces, so a frame
+    /// written into the wrong surface, or not written, fails the test.
     #[test]
     fn a_presenter_writes_only_free_surfaces_defers_when_none_is_free_and_lets_all_go() {
-        // SAFETY: Core Animation objects used on this thread only.
-        let root: Retained<AnyObject> = unsafe { msg_send![class!(CALayer), new] };
+        // SAFETY: Core Animation objects created and used on this thread only.
+        let root: Retained<AnyObject> = unsafe {
+            let root: Retained<AnyObject> = msg_send![class!(CALayer), new];
+            let bounds = NSRect::new(
+                NSPoint::new(0.0, 0.0),
+                objc2_foundation::NSSize::new(20.0, 15.0),
+            );
+            let _: () = msg_send![&*root, setBounds: bounds];
+            let _: () = msg_send![&*root, setContentsScale: 2.0f64];
+            root
+        };
         let mut presenter = FramePresenter::default();
-        let frame = Pixmap::new(4, 3).unwrap();
 
         assert_eq!(
-            presenter.present_into(&root, &frame),
+            presenter.present_into(&root, &frame(4, 3, 1)),
             PresentOutcome::Presented
         );
         let layer = presenter.layer.clone().unwrap();
         assert_eq!(contents(&layer), surface_of(&presenter, 0));
+        assert_eq!(tag_of(surface_of(&presenter, 0)), 1);
+        // SAFETY: getters on the live frame layer.
+        let (frame_rect, scale): (NSRect, f64) =
+            unsafe { (msg_send![&*layer, frame], msg_send![&*layer, contentsScale]) };
         assert_eq!(
-            presenter.present_into(&root, &frame),
+            (frame_rect.size.width, frame_rect.size.height, scale),
+            (20.0, 15.0, 2.0)
+        );
+
+        assert_eq!(
+            presenter.present_into(&root, &frame(4, 3, 2)),
             PresentOutcome::Presented
         );
         assert_eq!((presenter.pool.len(), presenter.front), (2, Some(1)));
         assert_eq!(contents(&layer), surface_of(&presenter, 1));
-
-        // Surface 0 is read by the compositor: the frame goes into a third one.
-        let busy = surface_of(&presenter, 0);
-        // SAFETY: a live surface; the count is taken back below, while the surface lives.
-        unsafe { IOSurfaceIncrementUseCount(busy) };
+        assert_eq!(tag_of(surface_of(&presenter, 1)), 2);
         assert_eq!(
-            presenter.present_into(&root, &frame),
+            tag_of(surface_of(&presenter, 0)),
+            1,
+            "the old front is not rewritten"
+        );
+
+        // Surface 0 is read by the compositor: the frame goes into a third one, 0 untouched.
+        let busy = Held::new(surface_of(&presenter, 0));
+        assert_eq!(
+            presenter.present_into(&root, &frame(4, 3, 3)),
             PresentOutcome::Presented
         );
         assert_eq!((presenter.pool.len(), presenter.front), (3, Some(2)));
+        assert_eq!(tag_of(surface_of(&presenter, 2)), 3);
+        assert_eq!(tag_of(busy.0), 1, "a busy surface is never written");
 
-        // Surfaces 0 and 1 busy, 2 shown, the pool full: deferred, the contents unchanged.
-        let also_busy = surface_of(&presenter, 1);
-        // SAFETY: as above.
-        unsafe { IOSurfaceIncrementUseCount(also_busy) };
+        // Surfaces 0 and 1 busy, 2 shown, the pool full: deferred, nothing written or shown.
+        let also_busy = Held::new(surface_of(&presenter, 1));
         assert_eq!(
-            presenter.present_into(&root, &frame),
+            presenter.present_into(&root, &frame(4, 3, 4)),
             PresentOutcome::Deferred
         );
         assert_eq!(presenter.pool.len(), CAPACITY);
         assert_eq!(contents(&layer), surface_of(&presenter, 2));
+        let tags = (0..CAPACITY)
+            .map(|i| tag_of(surface_of(&presenter, i)))
+            .collect::<Vec<_>>();
+        assert_eq!(tags, [1, 2, 3]);
 
-        // Free again: the frame goes into surface 0.
-        // SAFETY: the count taken above.
-        unsafe { IOSurfaceDecrementUseCount(busy) };
+        // Surface 0 is free again: the frame goes into it, and 1 (still busy) is untouched.
+        drop(busy);
         assert_eq!(
-            presenter.present_into(&root, &frame),
+            presenter.present_into(&root, &frame(4, 3, 5)),
             PresentOutcome::Presented
         );
         assert_eq!(presenter.front, Some(0));
+        assert_eq!(contents(&layer), surface_of(&presenter, 0));
+        assert_eq!(tag_of(surface_of(&presenter, 0)), 5);
+        assert_eq!(tag_of(also_busy.0), 2);
 
-        // A new size replaces the pool with one surface; surface 1 is still busy, so the
-        // test keeps its own reference, as the compositor would.
-        // SAFETY: +1 on a live surface, released below.
-        unsafe { CFRetain(also_busy) };
-        let wider = Pixmap::new(6, 3).unwrap();
+        // A new size replaces the pool with one new surface holding the new frame; the busy old
+        // surface lives on through the compositor's (the test's) hold and is not written.
         assert_eq!(
-            presenter.present_into(&root, &wider),
+            presenter.present_into(&root, &frame(6, 3, 6)),
             PresentOutcome::Presented
         );
         assert_eq!((presenter.pool.len(), presenter.size), (1, (6, 3)));
         assert_eq!(contents(&layer), surface_of(&presenter, 0));
+        assert_eq!(tag_of(surface_of(&presenter, 0)), 6);
+        assert_eq!(tag_of(also_busy.0), 2);
 
         // Released: no surface kept, nothing shown; the next present starts again.
         presenter.release();
         assert!(presenter.pool.is_empty());
         assert!(contents(&layer).is_null());
         assert_eq!(
-            presenter.present_into(&root, &frame),
+            presenter.present_into(&root, &frame(4, 3, 7)),
             PresentOutcome::Presented
         );
         assert_eq!(presenter.pool.len(), 1);
-        // SAFETY: the test's count and reference taken above.
+        assert_eq!(tag_of(surface_of(&presenter, 0)), 7);
+        drop(also_busy);
+        // SAFETY: commits the implicit transaction the layers' creation opened on this thread.
         unsafe {
-            IOSurfaceDecrementUseCount(also_busy);
-            CFRelease(also_busy);
+            let _: () = msg_send![class!(CATransaction), flush];
         }
     }
 
