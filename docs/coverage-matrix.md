@@ -1,5 +1,14 @@
 # coverage-matrix.md - 契约覆盖矩阵
 
+2026-11-14 Phase 17 设计（下一版本，尚未实现）：
+
+- **Plan：** `02` `copy-what-you-see`、`04` `notice-state`、`06` `preview-copy-semantics` / `preview-copy-rail`、
+  `09` `notices` / `vertical-scrollbars`（Preview 文末留白）、`07` 复制反馈、`11` `phase-17-copy-and-notices`。
+- **功能投影：** 功能文档的“下一版本（Phase 17）”一节。
+- **验收：** [Phase 17](acceptance-cases/phase-17.md) 的 N、E、C、R 系列，全部 `NOT TESTED`。
+- **代码：** 尚无实现。
+- **依据：** [提议报告](report/2026-11-14-copy-semantics-rail-notices.md)。设计于 macOS 版本发布后合入。
+
 2026-10-22 Preview 资源与宽内容改进：Plan 04 `preview-view-session`、Plan 06
 `math-raster-lifecycle` / `preview-horizontal-scroll`、Plan 08 `local-image-read-boundary`、
 Plan 10 `preview-resource-assessment` → 功能投影“宽内容/数学公式” → AC-039/040/041 →

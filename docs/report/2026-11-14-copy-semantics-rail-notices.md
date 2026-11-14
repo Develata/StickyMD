@@ -396,3 +396,99 @@ USER 提出：允许滚动到文末之后再多滚约半屏或约 10 行，单�
 ### 审查状态
 
 以下内容写于 codex 审查之后，尚未复审：原状态转换草案、本节的两层模型、图片保持 alt、侧条降级规则、Preview 短文规则。
+
+## Resolution：USER 批准（2026-11-14）
+
+USER 原话：“我也 prefer A，就按你的建议来做。另外，你提到的那些建议都可以，按你的建议来做。先做设计，不改代码，下个版本再改代码，这个版本先发 macos 版本”；
+设计落点选择“独立分支（推荐）”。
+
+### 落定的决定
+
+- **P1：** 采用方案 A，分两期。
+  - **第一期：**
+    - R1、R2、R4、R5、R6；
+    - 切开的围栏代码块，复制开、闭围栏行加选中的行；
+    - 切开的行内结构，复制时扩到整个结构。
+  - **第二期（另行批准）：** 用结构自己的定界符只包住选中部分。
+  - 单独选中图片仍复制 alt；陈旧显示帧上允许复制与点击侧条；表格单元格内按源码切片。
+- **P2：** 外形与规则照提议；宽度暂定 8 内容 DIP，视觉验收后固定；放不下时不画。
+- **P3：** 采用“补充”一节的两层模型，例行自动保存静默。
+  - 瞬时三类：成功 3 s、提醒 5 s、重要提醒 30 s；
+  - 持续三类：待决定、持续故障、进行中；
+  - 持久化工作线程停止并入 `SaveState::Failed`。
+- **P4：**
+  - **Preview：** 留白 `R = max(视口高 / 2, 提示条高)`；文档高 ≤ 视口高 − 提示条高时不滚动。
+  - **Source：** 不加留白，接受瞬时提示暂时盖住最后一行；待决定提示与现状相同，会持续盖住。
+- **设计落点：** 分支 `design/phase-17-copy-notices`。macOS 版本发布后再合入；代码在下一版本实现。
+
+### 落盘位置
+
+- **Plan：**
+  - `02` v1 Scope 第 16 条与 `#copy-what-you-see`；
+  - `04` `#notice-state`；
+  - `06` `#preview-copy-semantics`、`#preview-copy-rail`；
+  - `07` 复制反馈；
+  - `09` `#notices` 与 `#vertical-scrollbars`；
+  - `11` `#phase-17-copy-and-notices`。
+- **投影：** 功能文档“下一版本”一节、`docs/acceptance-cases/phase-17.md`、`docs/coverage-matrix.md`。
+
+## 附录：现有提示发出点的归类（`f6bb473`）
+
+- 路径相对 `crates/`，`apps/` 开头的除外。
+- 归类依据 `09` #notices。持续层的提示由状态派生，原发出点在 Phase 17 中改为更新状态，或者不再单独发提示。
+
+| 类别 | 发出点 |
+| --- | --- |
+| 成功 3 s | `stickymd-app/src/flow/note_io/save.rs:104`、`:106`（只限手动保存）；`reconcile.rs:27`；`stickymd-app/src/session/io.rs:88`（导出完成）；新增：已复制、已替换 N 处、已转换 N 处 |
+| 提醒 5 s | `note_io/reconcile.rs:49`、`:80`；`note_io/mod.rs:98`、`:109`；`asset_io.rs:240`；`session/view.rs:44`；`session/search.rs:34`、`:49`、`:165`；`session/assets.rs:23`、`:39`；`session/events.rs:74`、`:90`；`session/document.rs:51`；`stickymd-desktop/src/shell/preview_runtime.rs:40`、`:45`；`shell/export_runtime.rs:19`；`shell/opacity_field.rs:59`；`shell/search_controller.rs:108`；`shell/window_runtime.rs:52`、`:82`、`:135`、`:140`、`:228`、`:232`、`:236`、`:249`、`:357` |
+| 重要提醒 30 s | `note_io/receipts.rs:112`、`:131`、`:135`、`:159`、`:166`；`note_io/recovery.rs:21`、`:65`；`note_io/reconcile.rs:53`、`:83`；`stickymd-app/src/flow/asset_io.rs:127`、`:174`、`:197`、`:213`、`:245`、`:251`；`session/io.rs:58`、导出失败（`io.rs:88` 的 Err 分支）；`session/view.rs:63`；`session/preferences.rs:53`；`session/window.rs:159`；`shell/lifecycle.rs:15`、`:69`；`shell/preview_runtime.rs:161`、`:237`；`shell/shell_effects.rs:99`；`shell/presentation.rs:136`；`shell/caret_runtime.rs:69`、`:116`、`:120`；`shell/render.rs:117`、`:169`、`:214`、`:244`；`shell/window_runtime.rs:224`、`:245`、`:254`、`:260`、`:267`、`:383`、`:405`、`:424`；`shell/startup.rs:36-44`（启动降级）；`apps/stickymd-{mac,win}` 启动警告、配置警告、默认配置保存失败、临时文件隔离与启动图片整理 |
+| 持续故障（派生自 `SaveState::Failed`） | `note_io/receipts.rs:56`、`:81`；`note_io/save.rs:87`；`session/io.rs:101`（持久化工作线程停止） |
+| 待决定（派生自 `ConflictState`、`RecoveryState`） | 冲突：`note_io/reconcile.rs:59` 至 `:109`（`Present` 两个按钮，其余只有 F7 一个）、`:69`（只有 F7）。恢复：`stickymd-desktop/src/shell/mod.rs:249`（两个按钮）、`note_io/recovery.rs:56`（只有 F6）、`:106`（两个按钮） |
+| 进行中（派生） | `note_io/save.rs:70`（只限“保留本地”与手动保存，例行自动保存不显示）、`:136`；`note_io/recovery.rs:87`、`:95`；`session/assets.rs:37`；`session/events.rs:88` |
+
+现状补充：
+
+- 产品代码中没有任何清除提示的路径。
+- 只有 `shell/mod.rs:250` 与 `reconcile.rs:101` 两条文字含 `[F7`。所以 `reconcile.rs:104/107/109` 与 `recovery.rs:56/106` 虽然要求选择，现在也不画按钮。
+- 以上由一次只读的全仓检索得出，不保证穷尽。P17-N09 落地时须用测试确认没有遗漏的发出点。
+
+## 勘误与第二轮审查（2026-11-14）
+
+codex-reviewer 对设计提交 `62dab75` 做了第二轮对抗审查，提出 1 个阻断项、10 个应修项与 1 个小问题。核对后均已改入 plan 与投影：
+
+- **阻断项：待决定提示会永久盖住保存失败。** 例如外部冲突中选“保留本地”而写入失败。修法：
+  - 保存故障改为 `SaveState.unresolved_failure`，与保存枚举正交；
+  - 新故障或点击标记时开始一段 30 s 的“故障展示”，盖在待决定之上，同时保留其按钮（`04` #notice-state）。
+- **应修项与修法：**
+  - **派生条件：** 恢复与冲突增加“已选择、执行中”的具名事实，以区分待决定与进行中。
+  - **故障展示：** 带 id 与墙钟期限，被遮挡时不暂停。
+  - **替换规则：** 改为等级替换，使 `07` 与 `04` 一致。
+  - **R3：** 限定为“恰好一个端点在结构内”，两端都在内时只取文字，嵌套时逐层外扩。
+  - **R2：** 增加块首、块尾端点取最外层块边界的规则。
+  - **统一的说法：** 收窄为“同一条用户规则、各自取文”，结构外扩只用于 Preview。
+  - **提示条：** 改为 34 窗口 DIP，不随内容缩放。
+  - **文末留白：** 简化为 `R = 视口高 / 2`；修正功能文档里的短文表述。
+  - **“落地时更新”：** 补上 `horizontal_tests.rs:83`、`phase15_session_tests.rs:46`、`scroll/scrollbar.rs:471-484`、`:527-531`。
+  - **归类规则：** 移入 `09` #notices，作为规范；上文附录只作对照。
+- **附录勘误：**
+  - `save.rs:104` 是“保留本地”成功（`keep_local_in_progress` 加 `ForceOverwrite` 的分支），不是手动保存；归为成功，与手动保存的 `:106` 分开。
+  - 附录中“持续故障”一行，对应 plan 中的“故障展示”与 `unresolved_failure`。
+
+## 第三轮审查（2026-11-14）
+
+codex-reviewer 对 `62dab75..c814170` 再审，提出 1 个阻断项、6 个应修项、2 个待核实项与 1 个小问题。核对后均已改入：
+
+- **阻断项：** 等级替换会丢掉复制失败等必须可见的提示。
+  - 修法：定时提示改为栈，失败与拒绝总是压到栈顶，不丢弃；成功只在栈空或栈顶是成功时显示。
+- **故障解除：** 保存成功时，从栈中移除所有故障展示。
+- **持久化工作线程停止：** 终结所有未回执的持久化操作，派生层回到待决定；之后需要持久化的选项立即报“持久化不可用”。
+- **R3：** 外扩结果须以结构自己的闭定界符结束，否则吸附整段。Comrak 0.59 对 URL 与 `)` 之间有换行的链接，报出的终点停在 URL 末尾。
+- **R2：** 明确参与外扩的块类型。列表的项目符号是可选中的生成文字，从项目符号选起才带 `- `。
+- **验收：**
+  - N13 加前置条件；
+  - N14、N17 给出具体的失败种类；
+  - 补上 `scroll_application/tests.rs:163`；
+  - 新增 N18–N20、C16–C17，C14 改为精确字符串案例。
+- **故障种类：** 取端口现有的粗分类（`Failed`、`Unavailable`、`Unsupported`），外加 `WorkerUnavailable`。
+- **行内代码：** 被 Comrak 规范化的行内代码按“不一一对应”处理；执行顺序定为 1 → 6 → 3 → 2。
+- **小问题：** R3 列举的对象补上图片。

@@ -4,8 +4,8 @@
 
 - `Layer`: Capability
 - `Status`: Approved Contract
-- `Version`: 0.3.0
-- `Last Review`: 2026-11-12
+- `Version`: 0.4.0
+- `Last Review`: 2026-11-14
 - `Scope`: Source 编辑器职责、IME preedit/commit 语义、字体 run、undo 分组、RichEdit fallback 治理
 
 ---
@@ -40,6 +40,10 @@
 - 剪贴板文本（文件列表剪贴板由平台层补充）。
 - 成功复制只更新剪贴板，不在源码内容上覆盖成功诊断条，也不替换已有错误提示；
   复制失败仍给出可见诊断，不修改文档或选区。Preview 复制经同一剪贴板写入回执时遵守同一反馈规则。
+- Phase 17（USER 批准 2026-11-14）：复制成功改为显示“已复制”成功提示（3 s，`09` #notices），不修改文档或选区。
+  - 正在显示提醒、重要提醒或故障展示时，不显示“已复制”（`04` #notice-state 的入栈规则）；复制失败总会显示。
+  - 上一条中“成功复制不显示”的部分被取代。Source 复制仍原样切片，
+  Preview 复制按 `06` #preview-copy-semantics，两者共同遵守 `02` #copy-what-you-see。
 - 字符/脚本级字体 run（见下）。
 - 向 Flow Coordination 发出 dirty/autosave 事件。
 - 不做完整语法高亮；Markdown marker 不额外着色；当前行可有极轻背景提示。

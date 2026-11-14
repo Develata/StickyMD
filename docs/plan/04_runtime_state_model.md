@@ -4,8 +4,8 @@
 
 - `Layer`: Architecture
 - `Status`: Approved Contract
-- `Version`: 0.2.0
-- `Last Review`: 2026-10-31
+- `Version`: 0.3.0
+- `Last Review`: 2026-11-14
 - `Scope`: 运行时状态结构、所有权与修改权、authority 划分、generation 语义、核心 invariant
 
 ---
@@ -69,6 +69,8 @@ struct AppState {
     ime:         ImeState,
     config:      ConfigState,
     window:      WindowState,
+    export:      ExportState,       // Phase 17 起作为具名事实
+    notice:      NoticeState,       // Phase 17，见 #notice-state
 }
 ```
 
@@ -87,6 +89,8 @@ struct AppState {
 | WindowState / DockState | WindowDockCoordinator + LifecycleCoordinator | 仅窗口/dock 流程 | 编辑与保存流程 |
 | ImeState | 编辑器后端（经 Shell 事件） | 仅 IME 事件处理 | 保存、预览流程 |
 | ConfigState | 配置管理（经 Set* intent） | 仅 SetTheme/SetOpacity/SetAlwaysOnTop 等 intent 与启动载入 | 后台任务 |
+| ExportState（Phase 17） | 导出流程（Shared Application） | 仅导出提交与导出回执 | Shell、Preview |
+| NoticeState（Phase 17） | 提示流程（Shared Application） | 仅提示效果、到期回执与标记点击；派生层只由下文所列状态派生 | Shell（只读绘制）、Preview、后台任务 |
 
 ---
 
@@ -178,6 +182,11 @@ enum SaveState {
 
 - `saved_generation` 只更新到实际落盘的 generation。
 - 保存失败不静默：必须进入 Failed 并呈现给用户，内存文本保留。
+- Phase 17：SaveState 另带一个与上面枚举正交的事实 `unresolved_failure: Option<SaveError>`：
+  - 任何一次保存失败都会设置它，持久化工作线程停止（`WorkerUnavailable`）也算；
+  - 只有之后某次保存成功才清除它；重试期间进入 `Scheduled` 或 `Saving` 不清除。
+  - 它是 #notice-state 中保存故障的唯一权威；
+  - `09` 的“退出已取消：保存失败”窗口状态与标题函数不变，不另立“保存失败”权威。
 
 ## ConflictState
 
@@ -192,6 +201,8 @@ enum ConflictState {
 - 用户选择“载入外部”：丢弃未保存 buffer、载入、清空 undo、更新 hash、reconcile assets。
 - 用户选择“保留本地”：原子覆盖外部文件、更新 hash、保留 undo、恢复 autosave。
 - 冲突期间允许继续输入，但 autosave 暂停。
+- Phase 17：用户已选择、选择尚在执行（“保留本地”的写入尚未回执）时，冲突仍未解除（`05` external-change-conflict）。
+  这一“已选择、执行中”的事实具名为 `conflict_choice_in_flight`，供 #notice-state 区分“待决定”与“进行中”。
 
 ## RecoveryState
 
@@ -203,6 +214,76 @@ enum RecoveryState {
 ```
 
 - 用户选择前：不覆盖任何文件、暂停 autosave、内存只保留最小必要数据。
+- Phase 17：`Candidate` 另带 `operation: Option<RecoveryOperation>`，表示用户已选择、恢复正在执行。
+  恢复完成或失败时 `operation` 回到 `None`，candidate 何时清除不变。
+
+<a id="notice-state"></a>
+## NoticeState（Phase 17，USER 批准 2026-11-14）
+
+Phase 17 落地前，用户可见提示仍是现行的单一诊断文字。落地后由本节取代。依据见
+[提议报告](../report/2026-11-14-copy-semantics-rail-notices.md)，呈现与时长见 `09` #notices。
+
+```rust
+// 伪类型
+enum ExportState { Idle, InFlight }
+
+struct NoticeState {
+    timed: Vec<TimedNotice>,              // 定时提示栈，栈顶显示；最多 8 条，超出时丢弃最旧的
+}
+
+struct TimedNotice {
+    id:       NoticeId,                   // 单调递增；到期回执按 id 校验
+    class:    TimedClass,                 // Success | Reminder | Important | FaultDisplay
+    text:     Option<String>,             // FaultDisplay 为 None：文字在呈现时取自 SaveState.unresolved_failure
+    deadline: Instant,                    // 来自注入时钟；按墙钟计，被遮挡时不暂停
+}
+```
+
+### 规则
+
+- **两层叠放。** 定时提示栈的栈顶显示在上，派生层在下；栈空时露出派生层当时的提示。
+- **派生层不存储，由权威状态派生。** 优先级从高到低：
+  1. **待决定：**
+     - `ConflictState` 不为 `None`，且没有 `conflict_choice_in_flight`；
+     - 或者 `RecoveryState` 为 `Candidate`，且 `operation` 为 `None`。
+
+     按可用选项给出按钮；只有一个选项时，只给一个按钮。
+  2. **进行中：**
+     - 恢复执行中（`operation` 为 `Some`）；
+     - “保留本地”写入进行中（`conflict_choice_in_flight`）；
+     - 手动保存进行中；
+     - 图片准备中（`AssetState`）；
+     - `ExportState::InFlight`。
+
+     同时成立时，按上列顺序取第一个。例行自动保存不派生进度。
+- **入栈：**
+  - **失败与拒绝不丢弃。** 新的 `Reminder`、`Important`、`FaultDisplay` 总是压到栈顶并立即显示。
+  - **成功按条件显示。** 新的 `Success` 只在两种情况下显示：
+    - 栈为空，压入；
+    - 栈顶是 `Success`，替换它。
+
+    其他情况丢弃，所以成功不盖住正在显示的失败（`07` 复制反馈规则）。成功可以暂时盖住派生层，到期后派生层自动回来。
+- **到期。**
+  - 只有 id 与栈顶一致的到期回执才弹出栈顶，其余到期回执忽略。
+  - 弹出后，丢弃栈中已过期限的条目（期限按墙钟计），显示下一条仍在期限内的提示；栈空则露出派生层。
+  - 被盖住的失败不会丢失，只会因被遮挡而少显示一段时间。
+- **持久化工作线程停止。** 它终结所有尚未回执的持久化操作：`conflict_choice_in_flight`、恢复的 `operation` 与手动保存进行中都被清除。
+  - 冲突、恢复候选与内存文本保持不变，派生层因此回到待决定；
+  - 之后选择需要持久化的选项时，立即得到重要提醒“持久化不可用”。
+- **保存故障。** 权威是 `SaveState.unresolved_failure`。
+  - **故障展示：** 以下三种情况各开始一段新的 `FaultDisplay`（新 id，30 s）：
+    - `unresolved_failure` 从 `None` 变为 `Some`；
+    - 故障原因改变；
+    - 用户点击工具栏标记。
+  - “故障原因改变”按种类判断，不比较提示文字。
+    - 种类只取现有端口的粗分类（`StorageFailure` 的 `Failed`、`Unavailable`、`Unsupported`），外加 `WorkerUnavailable`；更细的原因只在文字里。
+    - 例：两次 `Failed`（如先是建目录失败、再是发布失败）不重新开始展示；从 `Failed` 变成 `WorkerUnavailable` 则重新开始。
+  - **故障解除。** 保存成功回执清除 `unresolved_failure` 时，同一步从栈中移除所有 `FaultDisplay`，保留其余条目，再处理这次的成功提示（只限手动保存）。
+    旧的到期回执照常按 id 忽略。
+- **待决定的按钮。** 派生层有待决定时，无论上方是哪一类定时提示，提示条都保留它的按钮，F6/F7 照常可用。
+  所以“保留本地”写入失败时，故障原因与冲突选择同时可见。
+  - **标记：** `unresolved_failure` 为 `Some` 时始终显示工具栏标记，直到之后某次保存成功。
+- **Shell 只读：** 它绘制当前提示、按钮与标记，并把到期与点击作为输入交回；它不决定类别、时长或优先级。
 
 ## AssetState
 
