@@ -227,8 +227,7 @@ impl FramePresenter {
     /// The frame layer, made once as a sublayer of `root`.
     fn layer(&mut self, root: &AnyObject) -> Retained<AnyObject> {
         if self.layer.is_none() {
-            // SAFETY: Core Animation calls on live objects, on the main thread for a window's
-            // root layer, or on the one test thread that owns a standalone root layer.
+            // SAFETY: Core Animation calls on live objects, on the main thread.
             unsafe {
                 let layer: Retained<AnyObject> = msg_send![class!(CALayer), new];
                 // The canvas's origin is its top-left corner, as softbuffer's layer has it.
@@ -300,8 +299,7 @@ impl FramePresenter {
     /// While hidden: the layer shows nothing and no surface is kept.
     pub fn release(&mut self) {
         if let Some(layer) = &self.layer {
-            // SAFETY: clearing a live layer's contents without animation, on the thread that
-            // owns the layer (the main thread for a window's).
+            // SAFETY: clearing a live layer's contents on the main thread, without animation.
             unsafe {
                 let _: () = msg_send![class!(CATransaction), begin];
                 let _: () = msg_send![class!(CATransaction), setDisableActions: Bool::YES];
@@ -326,8 +324,7 @@ fn root_layer(window: &Window) -> Option<Retained<AnyObject>> {
 
 /// Makes `surface` the layer's contents, with the layer matching the root layer.
 fn show(root: &AnyObject, layer: &AnyObject, surface: &Surface) {
-    // SAFETY: live layers and surface, on the thread that owns the layers (the main thread
-    // for a window's, the test thread for a standalone root). `CALayer.contents` accepts an
+    // SAFETY: live layers and surface on the main thread. `CALayer.contents` accepts an
     // IOSurfaceRef (CALayer.h), and keeps its own strong reference. The transaction stops the
     // implicit fade.
     unsafe {
@@ -344,6 +341,9 @@ fn show(root: &AnyObject, layer: &AnyObject, surface: &Surface) {
 }
 
 #[cfg(test)]
+/// The SAFETY notes above say "on the main thread": that is the window's path. These tests
+/// drive the same code on a standalone root layer that only the test thread creates and uses,
+/// which Core Animation allows; the thread that owns the layers is what matters.
 mod tests {
     use super::*;
 
