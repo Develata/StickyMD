@@ -217,12 +217,12 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "plan09:tray",
         7,
-        "1bdea5c4bad0a669bb65c5af0a22a5da6602e3a1b72221808ff775247cd1cf83",
+        "8ff32d916e0c8ca6d878d09fed1d6c24b78242d0148146d7e5182b3c7477c2cf",
     ),
     (
         "plan09:document",
         33,
-        "15eae5942c6217d8a88929e82374c4916846088f8b17a2fa866a1239c0e5cc69",
+        "456f594f7dabdf38d2488e87445a824f287d82fe0efe261a8a5cad9330a6515e",
     ),
 ];
 
@@ -310,7 +310,7 @@ const CLAUSES: &[(&str, &str)] = &[
     ("plan09:opacity-3", "af424a602e1d8223"),
     ("plan09:quit-1", "437b4ce76fd3b1b1"),
     ("plan09:quit-2", "7ade9c382b14821d"),
-    ("plan09:quit-3", "9a768193f2b139cb"),
+    ("plan09:quit-3", "12114d4638e64f76"),
 ];
 
 /// Compares a decomposition with the reviewed one; the error lists every current value.
@@ -395,7 +395,7 @@ fn edits_to_the_raw_markdown_are_detected() {
         (
             "a new tray clause",
             phase08.clone(),
-            insert_after(&plan09, "  因果。", "- 退出后另有要求。"),
+            insert_after(&plan09, "  自动化判定退出取消的因果", "- 退出后另有要求。"),
         ),
         (
             "a scrollbar sub-heading",

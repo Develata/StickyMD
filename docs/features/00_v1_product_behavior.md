@@ -25,7 +25,7 @@
 - Ctrl+Z / Ctrl+Y 撤销重做；Ctrl+C/X/V 复制/剪切/粘贴。
 - Windows 传统快捷键也等价可用：Ctrl+Insert 复制、Shift+Delete 剪切、Shift+Insert
   粘贴；Shift+Insert 与 Ctrl+V 使用同一文本/图片剪贴板优先级。
-- 复制成功不在正文上覆盖提示条；复制失败仍显示错误信息。（下一版本起改变，见[文末](#next-version-phase-17)。）
+- 复制成功显示“已复制”3 秒，正在显示失败或提醒时不显示；复制失败总会显示原因。两者都不改动文本或选区（见[文末](#next-version-phase-17)的提示条）。
 
 ## 三种视图
 
@@ -146,9 +146,9 @@
   可见位置，不会跑到屏幕外。
 
 <a id="next-version-phase-17"></a>
-## 下一版本（Phase 17，已批准，尚未实现）
+## 下一版本（Phase 17，已批准）
 
-以下行为在下一版本实现；目前发布的版本都不含。契约见 `docs/plan/02` #copy-what-you-see、`06` #preview-copy-semantics /
+以下行为属于下一版本；目前发布的版本都不含。标注“已实现”的小节已在代码中落地，随下一版本发布。契约见 `docs/plan/02` #copy-what-you-see、`06` #preview-copy-semantics /
 #preview-copy-rail、`04` #notice-state、`09` #notices。
 
 ### 复制
@@ -171,7 +171,7 @@
 - 鼠标移上去时侧条变亮；在侧条上按住拖动不会复制。
 - 窗口很窄或缩放很大、侧条放不下时，不显示侧条，用选区复制即可。
 
-### 提示条
+### 提示条（已实现）
 
 - 提示显示在窗口底部，源码、预览、分栏三种视图都看得到，并会自动消失：
   - 成功（例如“已复制”、手动保存后的“已保存”）3 秒；

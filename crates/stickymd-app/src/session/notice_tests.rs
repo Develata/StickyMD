@@ -309,6 +309,7 @@ fn a_stopped_worker_returns_the_conflict_to_its_choice() {
 #[test]
 fn a_copy_says_copied_unless_a_failure_shows() {
     let (mut session, _) = clocked("text");
+    let before = (generation(&session), session.editor.selection);
     run(&mut session, |session, out| {
         session.dispatch(
             AppIntent::WriteClipboard {
@@ -320,6 +321,11 @@ fn a_copy_says_copied_unless_a_failure_shows() {
     assert_eq!(
         shown(&session),
         Some(("已复制".into(), NoticeTone::Success))
+    );
+    assert_eq!(
+        (generation(&session), session.editor.selection),
+        before,
+        "a copy changes neither the document nor the selection"
     );
 
     let (mut session, _) = clocked("text");
@@ -336,4 +342,40 @@ fn a_copy_says_copied_unless_a_failure_shows() {
         shown(&session).map(|(_, tone)| tone),
         Some(NoticeTone::Important)
     );
+}
+
+/// P17-N13: the first write of "keep local" fails: the failure shows for 30 s with the
+/// conflict's buttons kept, and then the conflict waits again.
+#[test]
+fn a_failed_keep_local_shows_its_reason_with_the_choices_kept() {
+    let (mut session, now) = clocked("local");
+    session.persistence.enter_conflict(FileConflict {
+        external: ExternalFileState::Present(ExternalFileFact {
+            fingerprint: hash_bytes(b"outside"),
+            text: "outside".into(),
+            line_ending: LineEnding::Lf,
+            durable_len: 7,
+        }),
+        detected_at_generation: generation(&session),
+        previous_disk_fingerprint: None,
+    });
+    run(&mut session, |session, out| {
+        assert!(session.resolve(false, out));
+    });
+    let failed = IoCompletion::Note(NoteReceipt::Save {
+        generation: generation(&session),
+        mode: PersistMode::ForceOverwrite,
+        result: Err(StorageFailure::new(FailureKind::Failed, "disk full")),
+    });
+    deliver(&mut session, failed);
+    let (text, tone) = shown(&session).expect("the failure");
+    assert_eq!(tone, NoticeTone::Fault);
+    assert!(text.contains("disk full"), "{text}");
+    assert_eq!(buttons(&session), [Choice::LoadExternal, Choice::KeepLocal]);
+    settle(&mut session, &now, 30_000);
+    assert_eq!(
+        shown(&session),
+        Some(("文件已在外部修改".into(), NoticeTone::Pending))
+    );
+    assert_eq!(buttons(&session), [Choice::LoadExternal, Choice::KeepLocal]);
 }

@@ -220,7 +220,7 @@ enum RecoveryState {
 <a id="notice-state"></a>
 ## NoticeState（Phase 17，USER 批准 2026-11-14）
 
-Phase 17 落地前，用户可见提示仍是现行的单一诊断文字。落地后由本节取代。依据见
+Phase 17 M1 起，用户可见提示由本节定义，取代原先的单一诊断文字。依据见
 [提议报告](../report/2026-11-14-copy-semantics-rail-notices.md)，呈现与时长见 `09` #notices。
 
 ```rust
