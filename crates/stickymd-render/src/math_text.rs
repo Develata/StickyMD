@@ -22,9 +22,11 @@ pub struct EqualsLineConversion {
 }
 
 impl EqualsLineConversion {
-    /// How many equals lines the step joined.
+    /// How many equals lines the step joined. Invariant: `collect_joins` removes two ranges per
+    /// joined line, the line break before the `=` and the one after it.
     pub fn joined_lines(&self) -> usize {
-        self.removed.len()
+        debug_assert!(self.removed.len().is_multiple_of(2));
+        self.removed.len() / 2
     }
 
     pub fn text(&self) -> &str {

@@ -319,3 +319,34 @@ fn a_press_on_the_bar_reaches_nothing_under_it() {
     press_at(&mut app, under.x, under.y);
     assert_eq!(app.app.coordinator.view().text, "a a a\n");
 }
+
+/// The scrollbars stay grabbable over the bar: at the end of a long note the thumb lies under the
+/// bar, and a press on it starts a drag (plan 09: a resident, grabbable thumb).
+#[test]
+fn a_thumb_under_the_bar_can_still_be_grabbed() {
+    let mut app = fixture(&"line\n".repeat(400));
+    app.host.presents_frames = true;
+    app.headless_view = Some((VIEW, 1.0));
+    app.surface = Some(SoftwareSurface::for_host(VIEW.width, VIEW.height).unwrap());
+    let snapshot = app.app.coordinator.snapshot();
+    app.projection = Some(SourceProjection::new(&snapshot, VIEW.width, VIEW.height, 1.0));
+    app.configure_viewports();
+    app.sync_control_layout();
+    app.projection.as_mut().unwrap().scroll_to_fraction(1.0);
+    app.notify(Notice::ExportBusy);
+    let bar = app.notice_bar_layout().expect("the notice").bar;
+    let thumb = app
+        .scrollbar_geometry()
+        .into_iter()
+        .flatten()
+        .next()
+        .expect("the Source scrollbar");
+    let press = PhysicalPosition::new(
+        f64::from(thumb.track.x + 2),
+        thumb.thumb_top + thumb.thumb_height - 2.0,
+    );
+    assert!(bar.contains(press.x, press.y), "the thumb is not under the bar");
+    app.cursor_position = press;
+    app.handle_mouse_button(ElementState::Pressed, MouseButton::Left);
+    assert!(app.scrollbars.drag.is_some(), "the bar took the press");
+}

@@ -33,7 +33,8 @@ impl<H: Host> DesktopShell<H> {
             return false;
         };
         let (x, y) = (self.cursor_position.x, self.cursor_position.y);
-        if !layout.bar.contains(x, y) {
+        // A scrollbar's gutter is the scrollbar's, over the bar too.
+        if !layout.bar.contains(x, y) || self.scrollbar_gutter_at_cursor().is_some() {
             return false;
         }
         if left && let Some(choice) = layout.choice_at(x, y) {
@@ -50,6 +51,9 @@ impl<H: Host> DesktopShell<H> {
     pub(super) fn notice_bar_cursor(&self) -> Option<winit::window::CursorIcon> {
         let layout = self.notice_bar_layout()?;
         let (x, y) = (self.cursor_position.x, self.cursor_position.y);
+        if self.scrollbar_gutter_at_cursor().is_some() {
+            return None;
+        }
         layout.bar.contains(x, y).then(|| {
             if layout.choice_at(x, y).is_some() {
                 winit::window::CursorIcon::Pointer

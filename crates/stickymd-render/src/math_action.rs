@@ -97,6 +97,29 @@ pub fn run_math_action(
 
 #[cfg(test)]
 mod tests {
+    /// The notice counts one place per joined equals line when that is all a pass did, and one
+    /// per converted formula otherwise.
+    #[test]
+    fn a_pass_counts_joined_lines_or_converted_formulas() {
+        let pass = |text: &str| {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            super::run_math_action(&snapshot, None)
+                .unwrap()
+                .expect("the pass changes the text")
+        };
+        assert_eq!(pass("$$a\n=\nb$$").change_count(), 1);
+        assert_eq!(pass("$$a\n=\nb\n=\nc$$").change_count(), 2);
+        assert_eq!(
+            pass("$$a\n=\nb$$\n\n$$c\n=\nd$$").change_count(),
+            2
+        );
+        assert_eq!(pass("\\(x\\) and \\(y\\)").change_count(), 2);
+    }
+
     use std::time::{Duration, Instant};
 
     use comrak::{Arena, parse_document};

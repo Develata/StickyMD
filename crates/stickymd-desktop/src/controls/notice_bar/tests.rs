@@ -77,6 +77,9 @@ fn a_button_per_offered_choice_and_none_without_a_decision() {
     );
     assert_eq!(layout.choice_at(f64::from(left.x + 1.0), y), None);
 
+    // The buttons end before the rightmost scrollbar gutter, which stays the scrollbar's.
+    assert!(right.x + right.width <= 400.0 - 20.0);
+
     let layout = NoticeBarLayout::new(size, 1.0, None);
     assert_eq!(layout.buttons, [None, None]);
     assert!(layout.text.x + layout.text.width > 400.0 * ACTIONS_START);

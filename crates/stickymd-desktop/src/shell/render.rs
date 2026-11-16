@@ -178,13 +178,6 @@ impl<H: Host> DesktopShell<H> {
                 paint_preview_pending(surface.pixmap_mut(), pane, dark);
             }
         }
-        for bar in scrollbars.into_iter().flatten() {
-            bar.paint(
-                surface.pixmap_mut(),
-                self.scrollbars.emphasized(bar.pane),
-                dark,
-            );
-        }
         paint_search_overlay(
             surface.pixmap_mut(),
             &mut self.projection,
@@ -200,6 +193,14 @@ impl<H: Host> DesktopShell<H> {
             let size = PhysicalSize::new(pixmap.width(), pixmap.height());
             let layout = NoticeBarLayout::new(size, scales.shell as f32, view.choices);
             paint_notice_bar(pixmap, &mut self.projection, &layout, &view, dark);
+        }
+        // The scrollbars stay visible and grabbable over the bar (plan 09: a resident thumb).
+        for bar in scrollbars.into_iter().flatten() {
+            bar.paint(
+                surface.pixmap_mut(),
+                self.scrollbars.emphasized(bar.pane),
+                dark,
+            );
         }
         let surface_size = {
             let pixmap = surface.pixmap_mut();

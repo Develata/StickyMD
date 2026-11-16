@@ -11,6 +11,8 @@ use winit::dpi::PhysicalSize;
 use stickymd_app::flow::notice::{Choice, Choices, NoticeTone, NoticeView};
 use stickymd_render::source::{SourceProjection, UiTextSpec};
 
+use crate::geometry::GUTTER_DIP;
+
 /// The bar's height in window DIP (plan 09 #notices): the same as the toolbar.
 pub const NOTICE_BAR_HEIGHT_DIP: f32 = 34.0;
 /// Where the buttons start, as a share of the window's width.
@@ -65,8 +67,10 @@ impl NoticeBarLayout {
             width,
             height,
         };
-        let actions_start = width * ACTIONS_START;
-        let slot = (width - actions_start) * 0.5;
+        // The buttons end before the rightmost pane's scrollbar gutter, which stays the scrollbar's.
+        let actions_end = (width - (GUTTER_DIP * scale).round()).max(0.0);
+        let actions_start = (width * ACTIONS_START).min(actions_end);
+        let slot = (actions_end - actions_start) * 0.5;
         let inset = BUTTON_INSET_DIP * scale;
         let button = |index: usize, choice: Option<Choice>| {
             choice.map(|choice| {
@@ -88,7 +92,7 @@ impl NoticeBarLayout {
         let text_right = if buttons.iter().any(Option::is_some) {
             actions_start
         } else {
-            width
+            actions_end
         };
         let text_x = TEXT_INSET_DIP * scale;
         Self {

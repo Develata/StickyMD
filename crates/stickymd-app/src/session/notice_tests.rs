@@ -435,6 +435,25 @@ fn a_replace_all_and_a_conversion_say_how_many_places_changed() {
         shown(&session),
         Some(("已转换 2 处".into(), NoticeTone::Success))
     );
+
+    let (mut session, _) = clocked("$$a\n=\nb$$");
+    let expected_generation = generation(&session);
+    run(&mut session, |session, out| {
+        session.dispatch(
+            AppIntent::ConvertLatexMathDelimiters {
+                expected_generation,
+                selection: Selection::new(0, 0),
+                scope_to_selection: false,
+                timestamp_ms: 0,
+            },
+            out,
+        );
+    });
+    assert_eq!(session.coordinator.view().text, "$$a=b$$");
+    assert_eq!(
+        shown(&session),
+        Some(("已转换 1 处".into(), NoticeTone::Success))
+    );
 }
 
 /// P17-N08: a manual save that a conflict answers no longer shows as saving; once the conflict is

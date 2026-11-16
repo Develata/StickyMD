@@ -258,6 +258,7 @@ const END_ROOM_ONE_END: &[Owner] = &[
     desktop(
         "shell::scroll_runtime::tests::runtime_pointer_moves_apply_each_pane_and_the_frames_end",
     ),
+    app("execution::preview_worker::tests::a_view_change_paints_at_the_new_frames_end"),
 ];
 const END_ROOM_SPLIT: &[Owner] = &[desktop(
     "shell::scroll_application::tests::split_sync_keeps_the_end_room_and_the_source_within_its_end",
