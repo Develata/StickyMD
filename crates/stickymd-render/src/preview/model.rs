@@ -107,6 +107,8 @@ pub struct CodeBlockNode {
     pub literal: String,
     pub info: String,
     pub fenced: bool,
+    /// Comrak's `closed`: a fenced block that ends in its close fence.
+    pub closed: bool,
     pub source_range: Option<SourceRange>,
 }
 

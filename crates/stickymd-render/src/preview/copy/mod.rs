@@ -113,6 +113,10 @@ impl CopyMap {
             return Ok(CopySource::Slices(Vec::new()));
         };
         let (start, end) = self.settle(start, end)?;
+        let (start, end) = (
+            self.start_after_settling(start),
+            self.end_after_settling(end),
+        );
         self.slices(start, end).map(CopySource::Slices)
     }
 
@@ -158,8 +162,16 @@ impl CopyMap {
         }
         ranges.push(from..to);
         if let Some(fence) = end.fence() {
-            if !self.source[..to].ends_with('\n')
-                && let Some(newline) = self.source[to..fence.close_line.start].find('\n')
+            // The rest of the end's line is left out but not its newline, before the close fence.
+            let between = self
+                .source
+                .get(to..fence.close_line.start)
+                .ok_or(PreviewCopyError::Unmapped)?;
+            if !self
+                .source
+                .get(..to)
+                .is_some_and(|before| before.ends_with('\n'))
+                && let Some(newline) = between.find('\n')
             {
                 ranges.push(to + newline..to + newline + 1);
             }
@@ -189,31 +201,14 @@ pub(crate) struct Fence {
     pub close_line: Range<usize>,
 }
 
-/// The fence lines of the fenced code block at `block`, or `None` when it has no close fence;
-/// then a cut through it copies a plain slice (rule 3). The open line must be a run of at least
-/// three backticks or tildes after indentation; the last line must end in a run of the same
-/// character at least as long, with only indentation and quote markers before it.
+/// The fence lines of the closed fenced code block at `block`: the first line, and the last line
+/// with its container prefix. Whether the block is closed is Comrak's to say, never guessed here.
+/// `None` when the block has no line after its first.
 pub(crate) fn fence(source: &str, block: Range<usize>) -> Option<Fence> {
     let text = source.get(block.clone())?;
     let open_end = text.find('\n')? + 1;
-    let open = text[..open_end].trim_start_matches([' ', '\t']);
-    let marker = open
-        .chars()
-        .next()
-        .filter(|&mark| mark == '`' || mark == '~')?;
-    let length = open.chars().take_while(|&mark| mark == marker).count();
     let close_start = text.trim_end_matches('\n').rfind('\n')? + 1;
-    if length < 3 || close_start < open_end {
-        return None;
-    }
-    let close = text[close_start..].trim_end();
-    let run = close
-        .chars()
-        .rev()
-        .take_while(|&mark| mark == marker)
-        .count();
-    let prefix = &close[..close.len() - run];
-    (run >= length && prefix.chars().all(|mark| matches!(mark, ' ' | '\t' | '>'))).then(|| Fence {
+    (close_start >= open_end).then(|| Fence {
         open_line: block.start..block.start + open_end,
         close_line: block.start + close_start..block.end,
     })

@@ -53,7 +53,17 @@ impl Piece {
     pub(crate) const fn source(self) -> Range<usize> {
         self.source_start as usize..self.source_end as usize
     }
+
+    /// Whether Comrak gave it a usable source range. An object keeps its piece without one, since
+    /// rule 1 reads only its display text or TeX; nothing maps through it to the source.
+    pub(crate) const fn has_source(self) -> bool {
+        self.source_start != NO_SOURCE
+    }
 }
+
+/// The source offsets of a piece with no source range. `SelectionText::finish` marks a map whose
+/// source reaches `u32::MAX` inconsistent, so no real offset collides with it.
+const NO_SOURCE: u32 = u32::MAX;
 
 /// The display extent of one render block: `start..content` holds its list markers and
 /// `content..end` its own text. Text between leaves (the `\n` that separates them) is in none.
@@ -149,8 +159,8 @@ impl SelectionText {
                 self.pieces.push(Piece {
                     start: offset(start),
                     end: offset(end),
-                    source_start: 0,
-                    source_end: 0,
+                    source_start: NO_SOURCE,
+                    source_end: NO_SOURCE,
                     kind: PieceKind::Marker(ordinal),
                 });
                 return;
@@ -169,15 +179,16 @@ impl SelectionText {
                 }
             }
         };
-        let Some(source) = span.source_range else {
-            return;
+        let (source_start, source_end) = match span.source_range {
+            Some(source) => (offset(source.start), offset(source.end)),
+            None if kind.is_object() => (NO_SOURCE, NO_SOURCE),
+            None => return,
         };
-        let (source_start, source_end) = (offset(source.start), offset(source.end));
-        // Layout splits a long text span into word tokens that each carry the whole span's
-        // range; they merge back here, so exactness is judged on the whole span (rule 6).
+        // Layout splits a long text or inline code span into word tokens that each carry the whole
+        // span's range; they merge back here, so exactness is judged on the whole span (rule 6).
         if let Some(last) = self.pieces.last_mut()
             && last.kind == kind
-            && matches!(kind, PieceKind::Text)
+            && matches!(kind, PieceKind::Text | PieceKind::InlineCode)
             && last.end == offset(start)
             && (last.source_start, last.source_end) == (source_start, source_end)
         {

@@ -103,6 +103,9 @@ fn a_formula_alone_copies_its_tex() {
     assert_eq!(copy("a $x+1$ b", "$x+1$"), "x+1");
     assert_eq!(copy_all("$$\\notacommand{x}$$"), "\\notacommand{x}");
     assert_eq!(copy("a $\\frac{$ b", "$\\frac{$"), "\\frac{");
+    // Comrak shifts this paragraph's positions past the definition, so the formula has no
+    // source range; it is still an object.
+    assert_eq!(copy("[中]: /x\n$x$", "x"), "x");
 }
 
 /// P17-C02: inside a code or Raw HTML block, the selected code without fences or prefixes.
@@ -158,6 +161,9 @@ fn a_cut_fenced_code_block_keeps_its_fence_lines() {
     );
     let unclosed = "para\n\n```\nl1\nl2\n";
     assert_eq!(copy(unclosed, "ara\nl1\nl"), "ara\n\n```\nl1\nl");
+    // Indented four spaces, the last line is code, not a close fence: Comrak says unclosed.
+    let indented = "p\n\n~~~\nx\n    ~~~";
+    assert_eq!(copy(indented, "p\nx\n    ~~"), "p\n\n~~~\nx\n    ~~");
 }
 
 /// P17-C06: a cut inline structure copies whole.
@@ -209,6 +215,9 @@ fn untrusted_positions_round_outward() {
     assert_eq!(copy("one\ntwo", " tw"), "\ntw");
     assert_eq!(copy("- a\n- b", " b"), "- b");
     assert_eq!(copy("1. a\n2. b", ". b"), "2. b");
+    // Rounding to a span on the block's edge puts the endpoint on that edge (rule 6, then 2).
+    assert_eq!(copy("# a&amp;b", "&"), "# a&amp;b");
+    assert_eq!(copy("> x &amp; y", "&"), "> x &amp; y");
     assert_eq!(copy("- [x] done", "☑ done"), "- [x] done");
     assert_eq!(copy("- [x] done", "done"), "done");
     assert_eq!(copy("-\n- b", "• \n• b"), "-\n- b");
@@ -287,6 +296,10 @@ fn normalized_inline_code_rounds_to_its_edges() {
     assert_eq!(copy("x ` a ` y", "a"), "` a `");
     assert_eq!(copy("x `a\nb` y", "a"), "`a\nb`");
     assert_eq!(copy("x `abcd` y", "bc"), "bc");
+    // A formula in the paragraph makes layout split long code into words; they map as one.
+    let long = "`abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ` $x$";
+    assert_eq!(copy(long, "bc"), "bc");
+    assert_eq!(copy(long, "xyz ABC"), "xyz ABC");
 }
 
 /// P17-C10: for fixed-seed random selections over documents mixing every construct, slices
@@ -294,7 +307,7 @@ fn normalized_inline_code_rounds_to_its_edges() {
 /// or the selected display text; nothing fails.
 #[test]
 fn random_selections_copy_ordered_snapshot_bytes() {
-    const CORPUS: [&str; 4] = [
+    const CORPUS: [&str; 5] = [
         "# Head *em* ###\n\nPara **bold *nest* x** `code` [link](http://a) \\* &amp; $x^2$ \
          ![alt](p.png) é中\n\n> quote\nlazy\n\n- one\n- two\n  - deep\n\n1. [ ] task\n\n\
          | a | b |\n| - | - |\n| `c` | $d$ |\n\n```rust\nfn x() {}\n```\n\n    indented\n\n\
@@ -304,6 +317,8 @@ fn random_selections_copy_ordered_snapshot_bytes() {
         "Setext\n======\n\nsee [a](http://x\n) end ` a ` ``b`` ~~s~~ <span>i</span> www.auto.com \
          <http://angle>\n\n1. one\n   2. two\n\n   para\n\n$$\nx\n$$\n",
         "中文**粗体**与`代码`和$\\alpha$。\n\n> 引用 **跨\n> 行** 文字\n\n- 列表 [链接](http://a)\n",
+        "[中]: /x\n$x$ `abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ` $y$\n\n# a&amp;b\n\n\
+         p\n\n~~~\nx\n    ~~~",
     ];
     let mut state = 0x9E37_79B9_7F4A_7C15_u64;
     let mut next = move || {

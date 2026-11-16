@@ -18,8 +18,10 @@ pub(crate) enum OutlineKind {
     List,
     ListItem,
     Table,
+    /// `closed` is Comrak's: a fenced block that ends in its close fence.
     CodeBlock {
         fenced: bool,
+        closed: bool,
     },
     /// Display math, a Raw HTML block, a thematic break: no block-edge expansion of its own.
     Other,

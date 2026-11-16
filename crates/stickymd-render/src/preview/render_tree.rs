@@ -258,6 +258,7 @@ impl RenderTreeBuilder {
                     output.outline.leaf(
                         OutlineKind::CodeBlock {
                             fenced: code.fenced,
+                            closed: code.closed,
                         },
                         code.source_range,
                         leaf,

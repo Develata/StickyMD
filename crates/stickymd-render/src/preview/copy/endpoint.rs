@@ -221,7 +221,7 @@ impl CopyMap {
         let leaf_index = u32::try_from(leaf).map_err(|_| PreviewCopyError::Unmapped)?;
         let Some(piece) = self
             .piece_at(byte)
-            .filter(|piece| content.contains(&(piece.start as usize)))
+            .filter(|piece| piece.has_source() && content.contains(&(piece.start as usize)))
         else {
             // Generated text inside a leaf (a table's cell and row separators, an empty cell):
             // the start moves on to the next piece, the end back to the previous one.
@@ -256,35 +256,101 @@ impl CopyMap {
             }
             PieceKind::Block => {
                 let range = piece.source();
-                let fenced = matches!(
-                    self.outline
-                        .blocks
-                        .get(owner as usize)
-                        .map(|block| block.kind),
-                    Some(super::OutlineKind::CodeBlock { fenced: true })
-                );
+                let (fenced, closed) = match self
+                    .outline
+                    .blocks
+                    .get(owner as usize)
+                    .map(|block| block.kind)
+                {
+                    Some(super::OutlineKind::CodeBlock { fenced, closed }) => (fenced, closed),
+                    _ => (false, false),
+                };
                 let at = block_position(text, &self.source, piece, fenced, boundary, side)
                     .unwrap_or_else(|| round(range.clone(), side));
+                // Only a block Comrak closed has a close fence to copy (rule 3).
                 Endpoint::InBlock {
                     at,
-                    fence: fenced.then(|| fence(&self.source, range)).flatten(),
+                    fence: (fenced && closed)
+                        .then(|| fence(&self.source, range))
+                        .flatten(),
                 }
             }
         })
     }
 
-    /// The nearest piece of `content` after `byte` (for a start) or before it (for an end).
+    /// The nearest piece of `content` with a source range after `byte` (for a start) or before it
+    /// (for an end).
     fn neighbour(&self, content: Range<usize>, byte: usize, side: Side) -> Option<Piece> {
         let after = self
             .pieces
             .partition_point(|piece| piece.start as usize <= byte);
+        self.sourced(content, after, side)
+    }
+
+    /// From piece `from`, the first piece of `content` with a source range: forward for a start,
+    /// backward from the one before `from` for an end.
+    fn sourced(&self, content: Range<usize>, from: usize, side: Side) -> Option<Piece> {
+        let inside = |piece: &&Piece| content.contains(&(piece.start as usize));
         match side {
-            Side::Start => self.pieces.get(after).copied(),
-            Side::End => after
-                .checked_sub(1)
-                .and_then(|index| self.pieces.get(index).copied()),
+            Side::Start => self
+                .pieces
+                .get(from..)?
+                .iter()
+                .take_while(inside)
+                .find(|piece| piece.has_source()),
+            Side::End => self
+                .pieces
+                .get(..from)?
+                .iter()
+                .rev()
+                .take_while(inside)
+                .find(|piece| piece.has_source()),
         }
-        .filter(|piece| content.contains(&(piece.start as usize)))
+        .copied()
+    }
+
+    /// Rule 2 after rules 6 and 3, at a start: an inline endpoint that rounding or a cut structure
+    /// moved to its leaf's first text is at the leaf's first visible position, so the block-edge
+    /// rule applies there too.
+    pub(super) fn start_after_settling(&self, endpoint: Endpoint) -> Endpoint {
+        self.edge_after_settling(endpoint, Side::Start)
+    }
+
+    /// The same at an end, with the leaf's last text and last visible position.
+    pub(super) fn end_after_settling(&self, endpoint: Endpoint) -> Endpoint {
+        self.edge_after_settling(endpoint, Side::End)
+    }
+
+    fn edge_after_settling(&self, endpoint: Endpoint, side: Side) -> Endpoint {
+        let Endpoint::Inline { at, leaf } = endpoint else {
+            return endpoint;
+        };
+        let (Some(text), Some(owner)) = (
+            self.leaves.get(leaf as usize),
+            self.outline.owner(leaf as usize),
+        ) else {
+            return endpoint;
+        };
+        let content = text.content as usize..text.end as usize;
+        let from = self
+            .pieces
+            .partition_point(|piece| (piece.start as usize) < content.start);
+        let to = self
+            .pieces
+            .partition_point(|piece| (piece.start as usize) < content.end);
+        let edge = match side {
+            Side::Start => self
+                .sourced(content, from, side)
+                .filter(|first| at <= first.source_start as usize)
+                .and_then(|_| self.start_edge(owner))
+                .map(|edge| edge.min(at)),
+            Side::End => self
+                .sourced(content, to, side)
+                .filter(|last| at >= last.source_end as usize)
+                .and_then(|_| self.end_edge(owner))
+                .map(|edge| edge.max(at)),
+        };
+        edge.map_or(endpoint, Endpoint::Fixed)
     }
 
     /// The text between the backtick runs of the inline code `piece` belongs to.
