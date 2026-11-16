@@ -237,6 +237,20 @@ fn untrusted_positions_round_outward() {
     );
 }
 
+/// P17-C09: where Comrak gives a block no range or one cut short, an endpoint that cannot map
+/// through it rounds outward to the neighbouring blocks, so select all never fails.
+#[test]
+fn blocks_without_a_trustworthy_range_round_outward() {
+    // An unclosed fence followed by blank lines: no range at all.
+    assert_eq!(copy_all("a\n\n```\ncode\n\n"), "a\n\n```\ncode\n\n");
+    assert_eq!(copy("a\n\n```\ncode\n\n", "a\ncod"), "a\n\n```\ncode\n\n");
+    assert_eq!(copy("a\n\n```\ncode\n\n", "od"), "od");
+    // An unclosed fence in a list item at the end: the list, item and block all end at `- \``.
+    assert_eq!(copy_all("- ```\n  x\n\n"), "- ```\n  x\n\n");
+    // An empty item shows only its marker; nothing is lost, so its range holds.
+    assert_eq!(copy_all("- \n\n"), "- ");
+}
+
 /// P17-C13: both endpoints inside one inline structure copy only its text; cut nested structures
 /// expand level by level.
 #[test]
@@ -307,7 +321,7 @@ fn normalized_inline_code_rounds_to_its_edges() {
 /// or the selected display text; nothing fails.
 #[test]
 fn random_selections_copy_ordered_snapshot_bytes() {
-    const CORPUS: [&str; 5] = [
+    const CORPUS: [&str; 19] = [
         "# Head *em* ###\n\nPara **bold *nest* x** `code` [link](http://a) \\* &amp; $x^2$ \
          ![alt](p.png) é中\n\n> quote\nlazy\n\n- one\n- two\n  - deep\n\n1. [ ] task\n\n\
          | a | b |\n| - | - |\n| `c` | $d$ |\n\n```rust\nfn x() {}\n```\n\n    indented\n\n\
@@ -319,6 +333,20 @@ fn random_selections_copy_ordered_snapshot_bytes() {
         "中文**粗体**与`代码`和$\\alpha$。\n\n> 引用 **跨\n> 行** 文字\n\n- 列表 [链接](http://a)\n",
         "[中]: /x\n$x$ `abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ` $y$\n\n# a&amp;b\n\n\
          p\n\n~~~\nx\n    ~~~",
+        "a\n\n```\ncode\n\n",
+        "a\n\n    indented\n\n\n",
+        "a\n\n<div>\nx\n\n",
+        "a\n\n$$\nx\n",
+        "| a |\n| - |\n| b |\n\n\n",
+        "> - q\n>\n\n\n",
+        "- a\n\n  b\n\n\n",
+        "1. one\n   - two\n\n   three\n\n",
+        "- \n\n",
+        "# h\n\n---\n\n",
+        "```\n",
+        "> ```\n> x\n",
+        "- ```\n  x\n\n",
+        "| | b |\n| - | - |\n| | |\n",
     ];
     let mut state = 0x9E37_79B9_7F4A_7C15_u64;
     let mut next = move || {
@@ -334,6 +362,8 @@ fn random_selections_copy_ordered_snapshot_bytes() {
         let boundaries: Vec<usize> = (0..=display.len())
             .filter(|&index| display.is_char_boundary(index))
             .collect();
+        // Select all first: before M3 it could not fail, and it must not now.
+        assert!(map.resolve(display, 0..display.len()).is_ok(), "{source:?}");
         for _ in 0..2000 {
             let a = boundaries[(next() % boundaries.len() as u64) as usize];
             let b = boundaries[(next() % boundaries.len() as u64) as usize];

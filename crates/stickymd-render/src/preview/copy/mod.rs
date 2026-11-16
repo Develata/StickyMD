@@ -8,7 +8,9 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-copy-semantics
 
+mod block;
 mod display;
+mod edges;
 mod endpoint;
 mod outline;
 mod structures;
@@ -114,8 +116,8 @@ impl CopyMap {
         };
         let (start, end) = self.settle(start, end)?;
         let (start, end) = (
-            self.start_after_settling(start),
-            self.end_after_settling(end),
+            self.start_after_settling(text, start),
+            self.end_after_settling(text, end),
         );
         self.slices(start, end).map(CopySource::Slices)
     }
