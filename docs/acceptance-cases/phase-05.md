@@ -67,6 +67,8 @@ from the [release checklist](../release-checklist.md).
 | P05-M08 | inherited Phase 3 real IME gate | Manual | [`phase-03 manual IME checklist`](../report/phase-03-manual-ime-checklist.md) | NOT TESTED |
 | P05-M09 | inherited Phase 4 external/recovery/platform conditions | Manual | [`phase-04 matrix`](phase-04.md) | NOT TESTED |
 
+- Phase 17 M3: what Ctrl+C copies from a Preview selection now follows `06` #preview-copy-semantics ([P17-C01..C17](phase-17.md)). A formula selected alone copies its TeX without delimiters; a selection reaching beyond one object copies source slices. Selection geometry, hit testing, Ctrl+A/C routing and the clipboard boundary of P05-A12 are unchanged; its tests that read the selected display text now call `selected_text`. P05-M02 still needs its manual receipt.
+
 ## 2026-09-30 implementation review scope
 
 [Current Preview rules and differences](../report/2026-09-30-preview-rendering-rules.md)
@@ -117,6 +119,7 @@ This supplements P05-A03/A05/A12 and AC-013/014 under the existing GFM and sourc
 - Action: preview and copy the formula; convert LaTeX delimiters; export an image occurrence. Repeat in table headers/body rows, blockquotes and lists, with CRLF, whitespace and consecutive backslashes.
 - Expected: `\lvert...\rvert`, `\left\lvert...\right\rvert` and table-escaped `\|...\|` produce the same six-column structure; source ranges preserve complete canonical formula/image markup. Conversion and export change only their intended source ranges. Unescaped pipes retain standard GFM column behavior.
 - Failure signals: lost formula delimiters, ranges landing inside UTF-8 characters, altered neighboring text, or corrections leaking into another cell/paragraph.
+- Phase 17 M3: a formula copied alone now omits its delimiters by design (`06` #preview-copy-semantics rule 1); "lost formula delimiters" applies to source ranges, conversion, export, and copies that reach beyond the formula.
 - Entry: `cargo test -p stickymd-render --locked --test table_math_pipes`; the existing Rust Phase 05 runner includes this target through the render crate tests. Invalid coordinate rejection is additionally covered by the `preview::source_map` unit tests. Native window appearance remains `NOT TESTED` for this maintenance change.
 
 ## 2026-09-25 vertical scrollbar maintenance

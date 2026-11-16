@@ -223,14 +223,12 @@ row y / height（由所在 visible row 持有）
   安全细分时遵循 Cosmic Text 的 cluster boundary/fallback，不自行猜测 GDEF、ligature caret 或
   grapheme 比例。
 - byte range → selection rectangles 与 point → byte boundary 必须消费同一份 cluster map；跨行、
-  BiDi 或不连续视觉范围允许产生多个矩形。复制只按最终 byte range 读取完整 document projection，
-  不能从蓝框、glyph 或 source AST 重新拼文本。
-- 公式和图片是 atomic selectable object：选择公式时绘制公式矩形，Ctrl+C 复制原始数学源码与
-  delimiter；选择图片时复制 alt text，不复制 bitmap。它们不得伪造成普通等宽文本 cluster。
-- `PreviewFrame` 只向 App 暴露 `hit_test`、`selection_rects`、`copy_selection`、`action_at`、
+  BiDi 或不连续视觉范围允许产生多个矩形。复制取什么文本由 #preview-copy-semantics 规定，
+  不能从蓝框或 glyph 重新拼文本。
+- 公式和图片是 atomic selectable object：选择公式时绘制公式矩形，选择图片时绘制图片矩形；
+  复制结果见 #preview-copy-semantics，图片不复制 bitmap。它们不得伪造成普通等宽文本 cluster。
+- `PreviewFrame` 只向 App 暴露 `hit_test`、`selection_rects`、`copy_text`、`action_at`、
   `tooltip_at` 等语义方法；App 不读取 cluster 数组，不依赖 Cosmic Text 类型。
-- Phase 17 起，复制取什么文本由 #preview-copy-semantics 规定：本列表中“复制只按最终 byte range 读取完整
-  document projection”与“Ctrl+C 复制原始数学源码与 delimiter”两句被取代。选择几何、命中与蓝框规则不变。
 
 生命周期与缓存：
 
@@ -256,11 +254,8 @@ row y / height（由所在 visible row 持有）
 <a id="preview-copy-semantics"></a>
 ### Preview 复制语义（Phase 17，USER 批准 2026-11-14）
 
-依据 [提议报告](../report/2026-11-14-copy-semantics-rail-notices.md) 与 `02` #copy-what-you-see。Phase 17 落地前，上文的复制条款继续有效。
-
-**本节取代：**
-- 上文“Preview 文本选择”规则中复制读取显示投影、公式复制带分隔符的两句；
-- “块内横向滚动”一节中的“复制读取完整 projection”。
+依据 [提议报告](../report/2026-11-14-copy-semantics-rail-notices.md) 与 `02` #copy-what-you-see。
+上文“Preview 文本选择”与“块内横向滚动”中原先的复制条款（复制读取显示投影、公式复制带分隔符）已按本节改写（Phase 17 M3）。
 
 **不变：** 选择几何、命中与蓝框；单独选中图片时复制 alt 文本。
 
@@ -450,7 +445,7 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
 - 横向偏移属于 Editor Session 的临时视图状态，按 generation 内的 block identity 定位；
   source、窗口宽度或有效字号变化后重置/校验，不持久化、不递增 Document generation。
 - 支持指向块内的横向滚轮与 Shift+滚轮；可见的块内滚动条提供鼠标拖动和轨道点击。
-- 渲染、selection、hit-test、link/tooltip 共用同一转换和裁剪；复制读取完整 projection。
+- 渲染、selection、hit-test、link/tooltip 共用同一转换和裁剪；复制按 #preview-copy-semantics 读取该帧的源码快照，与横向偏移无关。
   App 只消费语义滚动目标/范围，不读取 Render crate 内部行、cluster 或布局数组。
 - 视图快照和结果校验包含横向偏移；过期帧不得恢复旧偏移。普通滚动不触发全文重排。
 
