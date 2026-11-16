@@ -348,3 +348,34 @@ fn random_selections_copy_ordered_snapshot_bytes() {
         }
     }
 }
+
+/// P17-C12 (in-process part): the copy map's heap on the Phase 5 benchmark document, against the
+/// display text it maps. Process memory is measured by the resource runs.
+#[test]
+fn the_copy_map_stays_linear_in_the_document() {
+    let seed = include_str!("../../../../../tests/fixtures/performance/typical-note-seed.md");
+    for bytes in [20 * 1024, 1024 * 1024] {
+        let mut source = seed.repeat(bytes / seed.len() + 1);
+        let mut boundary = bytes;
+        while !source.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        source.truncate(boundary);
+        let projection = project(&source);
+        let map = projection.copy_map();
+        let heap = map.heap_bytes();
+        println!(
+            "copy_map source={bytes} display={} pieces={} blocks={} structures={} heap={heap} \
+             per_source_byte={:.2}",
+            projection.text().len(),
+            map.pieces.len(),
+            map.outline.blocks.len(),
+            map.outline.structures.len(),
+            heap as f64 / bytes as f64,
+        );
+        assert!(
+            heap <= bytes * 4,
+            "{heap} heap bytes for {bytes} source bytes"
+        );
+    }
+}

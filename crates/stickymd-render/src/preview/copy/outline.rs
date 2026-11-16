@@ -81,6 +81,15 @@ pub(crate) struct CopyOutline {
 }
 
 impl CopyOutline {
+    #[cfg(test)]
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use std::mem::size_of;
+        self.blocks.capacity() * size_of::<OutlineBlock>()
+            + self.leaf_owner.capacity() * size_of::<u32>()
+            + self.structures.capacity() * size_of::<Structure>()
+            + self.shifted.capacity() * size_of::<Range<usize>>()
+    }
+
     pub(crate) fn block(&self, index: u32) -> &OutlineBlock {
         &self.blocks[index as usize]
     }
@@ -256,6 +265,10 @@ impl OutlineBuilder {
 
     pub(crate) fn finish(mut self, shifted: Vec<Range<usize>>) -> CopyOutline {
         debug_assert!(self.open.is_empty());
+        // The outline lives as long as the tree and its layouts: drop the growth slack.
+        self.outline.blocks.shrink_to_fit();
+        self.outline.leaf_owner.shrink_to_fit();
+        self.outline.structures.shrink_to_fit();
         self.outline.shifted = shifted;
         self.outline
     }

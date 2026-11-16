@@ -72,6 +72,17 @@ impl CopyMap {
         }
     }
 
+    /// The heap bytes this map keeps beyond the shared snapshot and formula sources: what a
+    /// layout pays for copying (plan 06: O(span + structure + object)).
+    #[cfg(test)]
+    pub(crate) fn heap_bytes(&self) -> usize {
+        std::mem::size_of_val(&*self.pieces)
+            + std::mem::size_of_val(&*self.formulas)
+            + std::mem::size_of_val(&*self.leaves)
+            + std::mem::size_of_val(&*self.visible)
+            + self.outline.heap_bytes()
+    }
+
     pub(crate) fn source(&self) -> &str {
         &self.source
     }
