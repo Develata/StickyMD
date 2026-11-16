@@ -8,7 +8,11 @@ Completed（2026-11-16）。M0–M4 与方案 B（M5）的出口均已满足，�
 - Windows 回归 P16-V05：在 `f8f56a3` 的 release 上通过，USER 目视交互无问题（2026-11-16，[Windows 回归 P16-V05](../report/2026-11-16-windows-p16-v05-regression.md)）。
   `f8f56a3` 与合入时的 `main`（`85eae42`）之间，`crates/`、`apps/`、`Cargo.toml`、`Cargo.lock` 无差异。
 
-仍未覆盖：多屏与混合 DPI 按 USER 决定跳过；Windows 高 DPI 未测。
+仍未覆盖：
+
+- 多屏与混合 DPI 按 USER 决定跳过。
+- P16-W15 的未测部分（S7、S9 高 DPI 等）与 P16-W16（S8）是 USER 豁免，不是已完成的验收。
+- P16-V05 只在 100% DPI 上测过，Windows 高 DPI 未测。
 
 ## Goal
 
