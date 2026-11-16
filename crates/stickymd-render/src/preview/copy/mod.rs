@@ -16,6 +16,7 @@ mod outline;
 mod structures;
 #[cfg(test)]
 mod tests;
+mod untrusted;
 
 use std::ops::Range;
 use std::sync::Arc;

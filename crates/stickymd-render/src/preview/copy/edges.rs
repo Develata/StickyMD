@@ -66,8 +66,19 @@ impl CopyMap {
     }
 
     fn edge_after_settling(&self, text: &str, endpoint: Endpoint, side: Side) -> Endpoint {
-        let Endpoint::Inline { at, leaf } = endpoint else {
-            return endpoint;
+        let (at, leaf) = match endpoint {
+            Endpoint::Inline { at, leaf } => (at, leaf),
+            // Already on its block's edge or outside it: rule 2 applies without a test.
+            Endpoint::AtBlockEdge { at, leaf } => {
+                let Some(owner) = self.outline.owner(leaf as usize) else {
+                    return Endpoint::Fixed(at);
+                };
+                return Endpoint::Fixed(match side {
+                    Side::Start => self.start_edge(owner).map_or(at, |edge| edge.min(at)),
+                    Side::End => self.end_edge(owner).map_or(at, |edge| edge.max(at)),
+                });
+            }
+            Endpoint::Fixed(_) | Endpoint::InBlock { .. } => return endpoint,
         };
         let (Some(span), Some(owner)) = (
             self.leaves.get(leaf as usize),

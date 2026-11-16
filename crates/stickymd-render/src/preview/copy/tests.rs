@@ -218,6 +218,12 @@ fn untrusted_positions_round_outward() {
     // Rounding to a span on the block's edge puts the endpoint on that edge (rule 6, then 2).
     assert_eq!(copy("# a&amp;b", "&"), "# a&amp;b");
     assert_eq!(copy("> x &amp; y", "&"), "> x &amp; y");
+    // So does snapping a shifted paragraph to its lines: the quote around it starts a line earlier.
+    let shifted_in_quote = ">\n> [r]: /x\n> a&amp;b";
+    assert_eq!(copy(shifted_in_quote, "&"), shifted_in_quote);
+    // A hard break shows a newline for `  \n`: an endpoint in it rounds to its edges.
+    assert_eq!(copy("a  \nb", "a\n"), "a  \n");
+    assert_eq!(copy("a  \nb", "\nb"), "  \nb");
     assert_eq!(copy("- [x] done", "☑ done"), "- [x] done");
     assert_eq!(copy("- [x] done", "done"), "done");
     assert_eq!(copy("-\n- b", "• \n• b"), "-\n- b");
@@ -249,6 +255,59 @@ fn blocks_without_a_trustworthy_range_round_outward() {
     assert_eq!(copy_all("- ```\n  x\n\n"), "- ```\n  x\n\n");
     // An empty item shows only its marker; nothing is lost, so its range holds.
     assert_eq!(copy_all("- \n\n"), "- ");
+    // Select all on documents whose last block Comrak leaves open or ends with blank lines: from
+    // the first block's start to the last block's end, nothing shown left out. A thematic break
+    // shows no text, so a selection cannot end on it.
+    for (source, expected) in [
+        ("a\n\n    indented\n\n\n", "a\n\n    indented"),
+        ("a\n\n<div>\nx\n\n", "a\n\n<div>\nx\n"),
+        ("a\n\n$$\nx\n", "a\n\n$$\nx"),
+        ("| a |\n| - |\n| b |\n\n\n", "| a |\n| - |\n| b |"),
+        ("> - q\n>\n\n\n", "> - q\n>"),
+        ("- a\n\n  b\n\n\n", "- a\n\n  b"),
+        (
+            "1. one\n   - two\n\n   three\n\n",
+            "1. one\n   - two\n\n   three",
+        ),
+        ("# h\n\n---\n\n", "# h"),
+        ("```\n", ""),
+        ("> ```\n> x\n", "x\n"),
+        ("| | b |\n| - | - |\n| | |\n", "| | b |\n| - | - |\n| | |"),
+    ] {
+        assert_eq!(copy_all(source), expected, "{source:?}");
+    }
+}
+
+/// P17-C09: shown text whose source cannot be reached is rounded past outward, never skipped:
+/// here the formula's range is withdrawn from a real map, as Comrak sometimes withholds one.
+#[test]
+fn text_that_cannot_be_mapped_is_rounded_past() {
+    let source = "a $x$ b";
+    let projection = project(source);
+    let display = projection.text();
+    let mut map = projection.copy_map().clone();
+    let mut pieces = map.pieces.to_vec();
+    for piece in &mut pieces {
+        if matches!(piece.kind, super::display::PieceKind::Formula(_)) {
+            piece.source_start = u32::MAX;
+            piece.source_end = u32::MAX;
+        }
+    }
+    map.pieces = pieces.into();
+    let slices = |range: Range<usize>| match map.resolve(display, range).unwrap() {
+        CopySource::Slices(slices) => slices
+            .into_iter()
+            .map(|slice| &source[slice])
+            .collect::<String>(),
+        CopySource::Object(text) => panic!("object {text:?}"),
+    };
+    assert_eq!(slices(find(display, "x$ b")), "$x$ b");
+    assert_eq!(slices(find(display, "a $x")), "a $x$");
+    // Alone, it is still an object.
+    assert_eq!(
+        map.resolve(display, find(display, "$x$")).unwrap(),
+        CopySource::Object("x")
+    );
 }
 
 /// P17-C13: both endpoints inside one inline structure copy only its text; cut nested structures
@@ -291,6 +350,9 @@ fn an_endpoint_on_a_structure_edge_is_outside_it() {
 fn an_unclosed_expansion_snaps_to_whole_lines() {
     let source = "see [a](http://x\n) end";
     assert_eq!(copy(source, "e a"), "e [a](http://x\n) end");
+    // The snapped endpoint is on its block's edge, so the quote around it still counts (rule 2).
+    let in_quote = ">\n> x <http://a.io> y";
+    assert_eq!(copy(in_quote, "ttp://a.io y"), in_quote);
     // Autolinks end in neither `)` nor `]`, so a cut through one snaps too, as plan 06 words the
     // check today.
     assert_eq!(

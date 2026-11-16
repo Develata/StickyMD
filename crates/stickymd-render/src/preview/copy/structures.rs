@@ -29,7 +29,10 @@ impl CopyMap {
                         leaf,
                     }
                 } else {
-                    Endpoint::Fixed(self.whole_lines(leaf)?.0)
+                    Endpoint::AtBlockEdge {
+                        at: self.whole_lines(leaf)?.0,
+                        leaf,
+                    }
                 };
                 moved = true;
             }
@@ -42,7 +45,10 @@ impl CopyMap {
                         leaf,
                     }
                 } else {
-                    Endpoint::Fixed(self.whole_lines(leaf)?.1)
+                    Endpoint::AtBlockEdge {
+                        at: self.whole_lines(leaf)?.1,
+                        leaf,
+                    }
                 };
                 moved = true;
             }

@@ -24,12 +24,19 @@ pub(super) enum Endpoint {
     /// In a code or Raw HTML block's text, with the fence lines when it cuts a closed fenced code
     /// block (rule 3).
     InBlock { at: usize, fence: Option<Fence> },
+    /// On the edge of leaf `leaf`'s block or outside it, put there by rounding where positions
+    /// cannot be trusted (rule 6) or by a failed closer check (rule 3): whole lines, or past text
+    /// that cannot be mapped. No structure moves it, but rule 2 still applies.
+    AtBlockEdge { at: usize, leaf: u32 },
 }
 
 impl Endpoint {
     pub(super) fn at(&self) -> usize {
         match self {
-            Self::Fixed(at) | Self::Inline { at, .. } | Self::InBlock { at, .. } => *at,
+            Self::Fixed(at)
+            | Self::Inline { at, .. }
+            | Self::InBlock { at, .. }
+            | Self::AtBlockEdge { at, .. } => *at,
         }
     }
 
@@ -179,9 +186,14 @@ impl CopyMap {
         side: Side,
     ) -> Result<Endpoint, PreviewCopyError> {
         let block = self.block_source(owner);
+        let leaf_index = u32::try_from(leaf).map_err(|_| PreviewCopyError::Unmapped)?;
+        let edge = |at| Endpoint::AtBlockEdge {
+            at,
+            leaf: leaf_index,
+        };
         if let Some(lines) = block.and_then(|range| self.outline.shifted_lines(range)) {
             // Comrak's inline positions in this block may name other text: whole lines (rule 6).
-            return Ok(Endpoint::Fixed(match side {
+            return Ok(edge(match side {
                 Side::Start => lines.start,
                 Side::End => lines.end,
             }));
@@ -191,30 +203,16 @@ impl CopyMap {
             Side::End => boundary - 1,
         };
         let content = self.leaves[leaf].content as usize..self.leaves[leaf].end as usize;
-        let leaf_index = u32::try_from(leaf).map_err(|_| PreviewCopyError::Unmapped)?;
-        let Some(piece) = self.piece_at(byte).filter(|piece| {
-            content.contains(&(piece.start as usize)) && self.trusted(text, *piece, owner)
-        }) else {
-            // Generated text inside a leaf (a table's cell and row separators, an empty cell):
-            // the start moves on to the next piece, the end back to the previous one.
-            return Ok(match self.neighbour(text, leaf, byte, side) {
-                Some(piece) => Endpoint::Inline {
-                    at: match side {
-                        Side::Start => piece.source_start as usize,
-                        Side::End => piece.source_end as usize,
-                    },
-                    leaf: leaf_index,
-                },
-                // Nothing in the leaf to map through: before the block when it is trustworthy,
-                // otherwise outward to the neighbouring blocks Comrak placed (rule 6).
-                None if self.leaf_trusted(text, leaf) => {
-                    Endpoint::Fixed(block.ok_or(PreviewCopyError::Unmapped)?.start)
-                }
-                None => Endpoint::Fixed(match side {
-                    Side::Start => block.map_or_else(|| self.start_gap(leaf), |range| range.start),
-                    Side::End => self.end_gap(leaf),
-                }),
-            });
+        let shown = self
+            .piece_at(byte)
+            .filter(|piece| content.contains(&(piece.start as usize)));
+        let piece = match shown {
+            Some(piece) if self.trusted(text, piece, owner) => piece,
+            // Shown text whose source cannot be reached (an object without a range, a block
+            // reported cut short): round outward past it (rule 6), to the trusted text around it
+            // or to the block's edges, so nothing shown is left out.
+            Some(_) => return Ok(self.round_past(text, leaf, leaf_index, block, byte, side)),
+            None => return self.across_generated(text, leaf, leaf_index, block, byte, side),
         };
         let offset = boundary - piece.start as usize;
         let inline = |at| Endpoint::Inline {
@@ -259,7 +257,13 @@ impl CopyMap {
     }
 
     /// The nearest trusted piece of leaf `leaf` after `byte` (for a start) or before it (for an end).
-    fn neighbour(&self, text: &str, leaf: usize, byte: usize, side: Side) -> Option<Piece> {
+    pub(super) fn neighbour(
+        &self,
+        text: &str,
+        leaf: usize,
+        byte: usize,
+        side: Side,
+    ) -> Option<Piece> {
         let after = self
             .pieces
             .partition_point(|piece| piece.start as usize <= byte);
@@ -296,56 +300,6 @@ impl CopyMap {
                 .find(trusted),
         }
         .copied()
-    }
-
-    /// Whether leaf `leaf`'s own text can be mapped through: it shows no piece at all (only
-    /// markers or separators, so nothing of it can be lost), or some piece of it is trusted.
-    fn leaf_trusted(&self, text: &str, leaf: usize) -> bool {
-        let Some(span) = self.leaves.get(leaf) else {
-            return false;
-        };
-        let from = self
-            .pieces
-            .partition_point(|piece| (piece.start as usize) < span.content as usize);
-        let shows_a_piece = self
-            .pieces
-            .get(from)
-            .is_some_and(|piece| (piece.start as usize) < span.end as usize);
-        !shows_a_piece || self.sourced(text, leaf, from, Side::Start).is_some()
-    }
-
-    /// A piece the source can be reached through: one with a source range, which for a code or
-    /// Raw HTML block must hold at least the lines it shows.
-    fn trusted(&self, text: &str, piece: Piece, owner: u32) -> bool {
-        piece.has_source()
-            && (piece.kind != PieceKind::Block
-                || super::block::holds_its_lines(text, &self.source, piece, self.fenced(owner)))
-    }
-
-    fn fenced(&self, owner: u32) -> bool {
-        matches!(
-            self.outline
-                .blocks
-                .get(owner as usize)
-                .map(|block| block.kind),
-            Some(super::OutlineKind::CodeBlock { fenced: true, .. })
-        )
-    }
-
-    /// Where a start rounds outward to when its leaf has nothing to map through: the end of the
-    /// nearest earlier leaf Comrak gave a range, or the document start (rule 6). O(leaves) at worst.
-    fn start_gap(&self, leaf: usize) -> usize {
-        (0..leaf)
-            .rev()
-            .find_map(|index| self.block_source(self.outline.owner(index)?))
-            .map_or(0, |range| range.end)
-    }
-
-    /// The same for an end: the start of the nearest later leaf with a range, or the document end.
-    fn end_gap(&self, leaf: usize) -> usize {
-        (leaf + 1..self.leaves.len())
-            .find_map(|index| self.block_source(self.outline.owner(index)?))
-            .map_or(self.source.len(), |range| range.start)
     }
 
     /// The text between the backtick runs of the inline code `piece` belongs to.
