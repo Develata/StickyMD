@@ -142,8 +142,8 @@ fn phase7_image_band_matches_full_layout_pixels_selection_and_anchors() {
             expected.scroll_anchor_at_y(scroll)
         );
         assert_eq!(
-            frame.copy_selection(frame.select_all()),
-            expected.copy_selection(expected.select_all())
+            frame.selected_text(frame.select_all()),
+            expected.selected_text(expected.select_all())
         );
         for x in [24.0, 50.0, 200.0, 600.0] {
             assert_eq!(

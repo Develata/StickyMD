@@ -144,6 +144,23 @@ impl ConvertContext<'_> {
         self.source_map.range(self.source, position)
     }
 
+    /// Comrak 0.59 leaves end column 0 on a list item whose last child is a nested list followed
+    /// by a blank line: its own repair of zero end columns (`fix_zero_end_columns`) does not reach
+    /// that level. The item then ends where its last child block ends, as that repair computes.
+    fn zero_end_item_range<'arena>(
+        &self,
+        item: &'arena AstNode<'arena>,
+        blocks: &[BlockNode],
+    ) -> Option<SourceRange> {
+        let mut position = item.data.borrow().sourcepos;
+        if position.end.column != 0 {
+            return None;
+        }
+        position.end = position.start;
+        let start = self.source_map.range(self.source, position)?.start;
+        SourceRange::new(start, blocks.last()?.source_range()?.end)
+    }
+
     fn convert_blocks<'arena>(
         &mut self,
         parent: &'arena AstNode<'arena>,
@@ -199,10 +216,14 @@ impl ConvertContext<'_> {
                         NodeValue::Item(_) => None,
                         _ => None,
                     };
+                    let blocks = self.convert_blocks(item, depth + 1)?;
+                    let source_range = self
+                        .source_range(item)
+                        .or_else(|| self.zero_end_item_range(item, &blocks));
                     items.push(ListItem {
                         checked,
-                        blocks: self.convert_blocks(item, depth + 1)?,
-                        source_range: self.source_range(item),
+                        blocks,
+                        source_range,
                     });
                 }
                 output.push(BlockNode::List(ListNode {

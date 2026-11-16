@@ -69,6 +69,8 @@ mod phase15_session_tests;
 mod phase15_worker_receipt_tests;
 mod pointer;
 mod presentation;
+#[cfg(test)]
+mod preview_copy_tests;
 mod preview_horizontal;
 mod preview_input;
 mod preview_runtime;

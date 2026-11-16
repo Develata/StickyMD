@@ -1402,7 +1402,10 @@ mod tests {
                 PreviewTheme::Light,
             )
             .unwrap();
-        let copied = frame.index().copy(frame.index().select_all()).unwrap();
+        let copied = frame
+            .index()
+            .selected_text(frame.index().select_all())
+            .unwrap();
         for expected in [
             "Heading",
             "quote",

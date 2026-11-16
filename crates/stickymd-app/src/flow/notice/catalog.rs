@@ -51,6 +51,8 @@ pub enum Notice {
     OpenTargetFailed(String),
     ExportPickerFailed(String),
     ClipboardFailed(String),
+    /// A Preview selection that does not map onto its source (plan 06 rule 6): nothing copied.
+    CopyUnmapped,
     SearchReplaceFailed(String),
 
     // Reminder, information: something changed that the user should know of.
@@ -133,6 +135,7 @@ impl Notice {
             | Self::OpenTargetFailed(_)
             | Self::ExportPickerFailed(_)
             | Self::ClipboardFailed(_)
+            | Self::CopyUnmapped
             | Self::SearchReplaceFailed(_)
             | Self::ExternalLoaded
             | Self::ExternalReloadedHistoryCleared
@@ -229,6 +232,7 @@ impl fmt::Display for Notice {
             Self::HideFailed(kind) => write!(f, "窗口未能隐藏，保持显示（{kind}）。"),
             Self::ShowFailed(kind) => write!(f, "窗口未能显示（{kind}）。"),
             Self::ExportPickerFailed(error) => write!(f, "无法打开导出位置选择器：{error}"),
+            Self::CopyUnmapped => f.write_str("复制失败：选区无法对应到源码，剪贴板未改动。"),
             Self::OpenTargetFailed(error)
             | Self::ClipboardFailed(error)
             | Self::SearchReplaceFailed(error)

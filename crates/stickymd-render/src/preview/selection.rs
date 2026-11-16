@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::scroll::ScrollAnchor;
 use stickymd_core::Generation;
 
+use super::copy::{CopyMap, CopySource, PreviewCopyError};
 use super::scroll::{PreviewScrollAnchor, PreviewScrollIndex};
 use super::{SourceRange, SpanAction};
 
@@ -85,20 +86,44 @@ pub struct PreviewTextBox {
 pub(super) struct PreviewDocumentProjection {
     generation: Generation,
     text: Arc<str>,
+    /// The frame's source snapshot and how the display text maps onto it.
+    copy: CopyMap,
     scroll: PreviewScrollIndex,
 }
 
 impl PreviewDocumentProjection {
     pub(super) fn new(
         generation: Generation,
-        text: String,
+        (text, copy): (String, CopyMap),
         scroll_anchors: Vec<PreviewScrollAnchor>,
     ) -> Self {
         Self {
             generation,
             text: Arc::from(text),
+            copy,
             scroll: PreviewScrollIndex::new(scroll_anchors),
         }
+    }
+
+    /// What Ctrl+C copies for `selection` (plan 06 #preview-copy-semantics).
+    pub(super) fn copy_text(
+        &self,
+        selection: PreviewSelection,
+    ) -> Result<String, PreviewCopyError> {
+        Ok(
+            match self.copy.resolve(&self.text, selection.normalized())? {
+                CopySource::Object(text) => text.to_owned(),
+                CopySource::Slices(ranges) => {
+                    let source = self.copy.source();
+                    let mut text =
+                        String::with_capacity(ranges.iter().map(ExactSizeIterator::len).sum());
+                    for range in ranges {
+                        text.push_str(&source[range]);
+                    }
+                    text
+                }
+            },
+        )
     }
 
     #[cfg(test)]
@@ -109,6 +134,11 @@ impl PreviewDocumentProjection {
     #[cfg(test)]
     pub(super) fn text(&self) -> &str {
         &self.text
+    }
+
+    #[cfg(test)]
+    pub(super) const fn copy_map(&self) -> &CopyMap {
+        &self.copy
     }
 }
 
@@ -139,7 +169,7 @@ impl PreviewTextIndex {
         Self::from_document(
             Arc::new(PreviewDocumentProjection::new(
                 generation,
-                text,
+                (text, CopyMap::unmapped()),
                 scroll_anchors,
             )),
             boxes,
@@ -215,9 +245,15 @@ impl PreviewTextIndex {
         }
     }
 
-    pub fn copy(&self, selection: PreviewSelection) -> Option<&str> {
-        let range = selection.normalized();
-        self.document.text.get(range)
+    /// The display text the selection covers, as painted; Ctrl+C copies `copy_text` instead.
+    pub fn selected_text(&self, selection: PreviewSelection) -> Option<&str> {
+        self.document.text.get(selection.normalized())
+    }
+
+    /// What Ctrl+C copies for `selection`, read from this frame's own source snapshot (plan 06
+    /// #preview-copy-semantics). A selection that does not map fails closed.
+    pub fn copy_text(&self, selection: PreviewSelection) -> Result<String, PreviewCopyError> {
+        self.document.copy_text(selection)
     }
 
     /// Hit test in document coordinates, returning a valid UTF-8 boundary in
@@ -499,7 +535,7 @@ mod tests {
             anchor: index.text().len(),
             active: "中文".len(),
         };
-        assert_eq!(index.copy(selection), Some("🙂abc"));
+        assert_eq!(index.selected_text(selection), Some("🙂abc"));
         let rects = index.selection_rects(selection);
         assert_eq!(rects.len(), 1);
         assert!(rects[0].width > 0.0 && rects[0].width < 100.0);

@@ -64,6 +64,7 @@ fn rule(notice: &Notice) -> Rule {
         | Notice::OpenTargetFailed(_)
         | Notice::ExportPickerFailed(_)
         | Notice::ClipboardFailed(_)
+        | Notice::CopyUnmapped
         | Notice::SearchReplaceFailed(_) => Rule::RetryableFailure,
 
         Notice::ExternalLoaded
@@ -144,6 +145,7 @@ fn every_notice() -> Vec<Notice> {
         Notice::OpenTargetFailed(text()),
         Notice::ExportPickerFailed(text()),
         Notice::ClipboardFailed(text()),
+        Notice::CopyUnmapped,
         Notice::SearchReplaceFailed(text()),
         Notice::ExternalLoaded,
         Notice::ExternalReloadedHistoryCleared,

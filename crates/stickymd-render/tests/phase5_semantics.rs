@@ -195,7 +195,7 @@ fn phase5_list_table_keeps_cells_and_selection_text() {
             )
             .unwrap();
         assert_eq!(
-            frame.copy_selection(frame.select_all()),
+            frame.selected_text(frame.select_all()),
             Some("• a\tb\nx\ty")
         );
     }
@@ -249,7 +249,7 @@ fn phase5_list_first_blocks_keep_semantics_and_nested_markers() {
             )
             .unwrap();
         assert_eq!(
-            frame.copy_selection(frame.select_all()),
+            frame.selected_text(frame.select_all()),
             Some(expected),
             "{source}"
         );

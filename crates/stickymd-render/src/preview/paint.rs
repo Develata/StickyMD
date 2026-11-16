@@ -91,8 +91,18 @@ impl PreviewFrame {
         self.index.select_all()
     }
 
-    pub fn copy_selection(&self, selection: PreviewSelection) -> Option<&str> {
-        self.index.copy(selection)
+    /// The display text the selection covers, as painted.
+    pub fn selected_text(&self, selection: PreviewSelection) -> Option<&str> {
+        self.index.selected_text(selection)
+    }
+
+    /// What Ctrl+C copies for `selection` (plan 06 #preview-copy-semantics): read from this
+    /// frame's own source snapshot, so a frame that lags the document copies what it shows.
+    pub fn copy_text(
+        &self,
+        selection: PreviewSelection,
+    ) -> Result<String, super::PreviewCopyError> {
+        self.index.copy_text(selection)
     }
 
     pub fn hit_test(&self, x: f32, document_y: f32) -> usize {

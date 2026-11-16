@@ -12,6 +12,7 @@ use cosmic_text::{
 
 use crate::source::{FontSelection, ScriptClass, segment_script_runs};
 
+use super::copy::SelectionText;
 use super::layout::{ChunkBuild, LayoutChunk, LayoutContent};
 use super::{PreviewRect, PreviewTextBox, RenderSpan, RenderStyle, SpanAction};
 
@@ -113,7 +114,7 @@ pub(super) fn make_text_chunk(
     metrics: Metrics,
     align: Align,
     wrap: Wrap,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     cache: &mut TextLayoutCache,
 ) -> ChunkBuild {
     let mut visual = String::new();
@@ -123,12 +124,10 @@ pub(super) fn make_text_chunk(
         let visual_start = visual.len();
         visual.push_str(&span.text);
         let visual_end = visual.len();
-        let selection_start = selection_text.len();
-        selection_text.push_str(&span.copy_text);
-        let selection_end = selection_text.len();
+        let selection = selection_text.push_span(span);
         segments.push(TextSegment {
             visual_range: visual_start..visual_end,
-            selection_range: selection_start..selection_end,
+            selection_range: selection.clone(),
             source_range: span.source_range,
             action: span.action.clone().map(std::sync::Arc::new),
             atomic: false,
@@ -472,6 +471,7 @@ fn selection_range_for_visual_cluster(segment: &TextSegment, visual: Range<usize
 
 #[cfg(test)]
 mod tests {
+    use crate::preview::copy::SelectionText;
     use std::mem::size_of;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -512,7 +512,7 @@ mod tests {
         let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut cache = TextLayoutCache::default();
-        let mut selection_text = String::new();
+        let mut selection_text = SelectionText::default();
         let first = linked_span("https://first.example", 0);
         let second = linked_span("https://second.example", 100);
 
@@ -544,7 +544,7 @@ mod tests {
         );
 
         assert_eq!(cache.shapes.len(), 1);
-        assert_eq!(selection_text, "linklink");
+        assert_eq!(selection_text.as_str(), "linklink");
         let LayoutContent::Text(layout) = &built.chunks[0].content else {
             panic!("text chunk expected");
         };
@@ -565,7 +565,7 @@ mod tests {
         let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut cache = TextLayoutCache::default();
-        let mut selection_text = String::new();
+        let mut selection_text = SelectionText::default();
         let text: Arc<str> = Arc::from("alpha\nbeta\ngamma");
         let span = RenderSpan {
             text: Arc::clone(&text),
@@ -595,7 +595,7 @@ mod tests {
             &mut cache,
         );
 
-        assert_eq!(selection_text, "alpha\nbeta\ngamma");
+        assert_eq!(selection_text.as_str(), "alpha\nbeta\ngamma");
         let LayoutContent::Text(layout) = &built.chunks[0].content else {
             panic!("text chunk expected");
         };
@@ -622,7 +622,12 @@ mod tests {
                 15..16,
             ]
         );
-        let index = PreviewTextIndex::new(Generation::initial(), selection_text, boxes, Vec::new());
+        let index = PreviewTextIndex::new(
+            Generation::initial(),
+            selection_text.as_str().to_owned(),
+            boxes,
+            Vec::new(),
+        );
         assert_eq!(
             index
                 .selection_rects(PreviewSelection {
@@ -639,7 +644,7 @@ mod tests {
     fn variable_width_clusters_roundtrip_hit_highlight_and_copy() {
         let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
-        let mut selection_text = String::new();
+        let mut selection_text = SelectionText::default();
         let text: Arc<str> = Arc::from("iiii WWWW 中文 🙂 e\u{301}");
         let span = RenderSpan {
             text: Arc::clone(&text),
@@ -682,7 +687,7 @@ mod tests {
         );
         let index = PreviewTextIndex::new(
             Generation::initial(),
-            selection_text,
+            selection_text.as_str().to_owned(),
             boxes.clone(),
             Vec::new(),
         );
@@ -700,7 +705,7 @@ mod tests {
                 active: item.selection_range.end,
             };
             assert_eq!(
-                index.copy(selection),
+                index.selected_text(selection),
                 index.text().get(item.selection_range.clone())
             );
             assert_eq!(index.selection_rects(selection), vec![item.rect]);
@@ -720,7 +725,7 @@ mod tests {
     fn bidi_clusters_preserve_logical_boundary_direction() {
         let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
-        let mut selection_text = String::new();
+        let mut selection_text = SelectionText::default();
         let text: Arc<str> = Arc::from("abc אבג");
         let span = RenderSpan {
             text: Arc::clone(&text),
@@ -754,7 +759,12 @@ mod tests {
             .find(|item| item.start_x > item.end_x)
             .expect("Hebrew fixture must expose an RTL cluster")
             .clone();
-        let index = PreviewTextIndex::new(Generation::initial(), selection_text, boxes, Vec::new());
+        let index = PreviewTextIndex::new(
+            Generation::initial(),
+            selection_text.as_str().to_owned(),
+            boxes,
+            Vec::new(),
+        );
         let toward_end = (rtl.end_x - rtl.start_x).signum() * 0.1;
         assert_eq!(
             index.hit_test(rtl.start_x + toward_end, rtl.rect.y + 1.0),
@@ -770,7 +780,7 @@ mod tests {
     fn viewport_projection_does_not_retain_offscreen_clusters() {
         let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
-        let mut selection_text = String::new();
+        let mut selection_text = SelectionText::default();
         let text: Arc<str> = Arc::from(
             (0..500)
                 .map(|row| format!("row-{row}\n"))
@@ -818,7 +828,7 @@ mod tests {
     fn phase14_preview_selection_geometry_release_baseline() {
         let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
-        let mut selection_text = String::new();
+        let mut selection_text = SelectionText::default();
         let text: Arc<str> = Arc::from(
             (0..5_000)
                 .map(|row| format!("row-{row:04} iiii WWWW 中文 🙂 e\u{301}\n"))
@@ -873,7 +883,12 @@ mod tests {
         projection_samples.sort_unstable();
         let projection_p95 = projection_samples[projection_samples.len() * 95 / 100];
 
-        let index = PreviewTextIndex::new(Generation::initial(), selection_text, boxes, Vec::new());
+        let index = PreviewTextIndex::new(
+            Generation::initial(),
+            selection_text.as_str().to_owned(),
+            boxes,
+            Vec::new(),
+        );
         let hit_started = Instant::now();
         for sample in 0..10_000 {
             let x = (sample % 600) as f32;

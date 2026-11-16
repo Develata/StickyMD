@@ -42,7 +42,8 @@ impl Fixture {
         cache: &mut TextLayoutCache,
         prefix: &str,
     ) -> (TextLayout, String) {
-        let mut copied = prefix.to_owned();
+        let mut copied = crate::preview::copy::SelectionText::default();
+        copied.push_generated(prefix);
         let built = make_text_chunk(
             &mut self.font_system,
             &self.fonts,
@@ -59,7 +60,7 @@ impl Fixture {
         let LayoutContent::Text(layout) = built.chunks.into_iter().next().unwrap().content else {
             panic!("text expected")
         };
-        (layout, copied)
+        (layout, copied.as_str().to_owned())
     }
 }
 

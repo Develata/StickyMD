@@ -2,7 +2,10 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#owned-ast-projection
 
-use super::{ListNode, RenderBlock, RenderBlockKind, RenderStyle, RenderTreeBuilder, span};
+use super::{
+    ListNode, OutlineKind, Output, RenderBlock, RenderBlockKind, RenderStyle, RenderTreeBuilder,
+    span,
+};
 
 impl RenderTreeBuilder {
     pub(super) fn append_list(
@@ -10,8 +13,12 @@ impl RenderTreeBuilder {
         list: &ListNode,
         indent: u16,
         quoted: bool,
-        output: &mut Vec<RenderBlock>,
+        output: &mut Output<'_>,
     ) {
+        let list_block =
+            output
+                .outline
+                .open(OutlineKind::List, list.source_range, output.blocks.len());
         for (index, item) in list.items.iter().enumerate() {
             let marker = match item.checked {
                 Some(true) => "☑ ".to_owned(),
@@ -19,10 +26,14 @@ impl RenderTreeBuilder {
                 None if list.ordered => format!("{}. ", list.start + index),
                 None => "• ".to_owned(),
             };
-            let before = output.len();
+            let before = output.blocks.len();
+            let item_block = output
+                .outline
+                .open(OutlineKind::ListItem, item.source_range, before);
             self.append_blocks(&item.blocks, indent.saturating_add(1), quoted, output);
-            if output.len() == before {
-                output.push(RenderBlock {
+            if output.blocks.len() == before {
+                output.outline.placeholder(before);
+                output.blocks.push(RenderBlock {
                     kind: RenderBlockKind::ListItem,
                     spans: Vec::new(),
                     indent: indent.saturating_add(1),
@@ -30,7 +41,8 @@ impl RenderTreeBuilder {
                     list_markers: Vec::new(),
                 });
             }
-            if let Some(first) = output.get_mut(before) {
+            output.outline.close(item_block, output.blocks.len());
+            if let Some(first) = output.blocks.get_mut(before) {
                 if matches!(first.kind, RenderBlockKind::Paragraph) {
                     first.kind = RenderBlockKind::ListItem;
                 }
@@ -52,5 +64,6 @@ impl RenderTreeBuilder {
                 );
             }
         }
+        output.outline.close(list_block, output.blocks.len());
     }
 }
