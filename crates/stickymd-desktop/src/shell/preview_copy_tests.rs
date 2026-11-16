@@ -71,6 +71,14 @@ fn a_copy_reads_the_shown_frames_snapshot() {
         Some("old **text** here")
     );
     assert_eq!(app.app.timed_notice_texts(), ["已复制"]);
+    // Copying reads the frame; the selection, and so the painted blue box, stay as they were.
+    assert_eq!(
+        app.preview_selection,
+        PreviewSelection {
+            anchor: 0,
+            active: "old text here".len(),
+        }
+    );
 }
 
 /// P17-C01 through the shell: a formula alone copies its TeX.
