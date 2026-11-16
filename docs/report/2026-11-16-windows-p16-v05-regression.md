@@ -17,11 +17,11 @@
 | 系统 | Windows 11 家庭版 中文版 25H2，10.0.26200 |
 | CPU | 12th Gen Intel Core i7-12700H（x86_64） |
 | 工具链 | rustc / cargo 1.97.1，host `x86_64-pc-windows-msvc` |
-| 显示 | 单显示器 2560×1440，100%，工作区 `y = 0`（任务栏在底部） |
+| 显示 | 单显示器 2560×1440，`GetDpiForSystem` = 96（100%），工作区 `0,0 2560×1392`（任务栏在底部） |
 | 被测 exe | `cargo build --locked --release -p stickymd-win`，`target\release\stickymd-win.exe` SHA-256 `f8c6874ab9b88345179810bd2cde46e5abfadaa4b2d31c0fc6ab3ba8fff079ae` |
-| 对照 exe | USER 本机的 `v0.1.3` 发布程序，SHA-256 `b6777837bcf18e07d9cb029c5216d6e764b68e7fd4d9d8679f1b685b9f488340` |
+| 对照 exe | USER 本机安装的 StickyMD，SHA-256 `b6777837bcf18e07d9cb029c5216d6e764b68e7fd4d9d8679f1b685b9f488340`，与 [`v0.1.3` 发布记录](2026-10-22-v0.1.3-candidate-preparation.md)中的 EXE SHA-256 相同 |
 | 桌面驱动 | `stickymd-smoke` 的本地 preflight（`#[ignore]` 测试，`STICKYMD_PREFLIGHT_EXE` 指向被测 exe）。harness 要求干净 checkout，主 checkout 有一个与本次无关的未跟踪文件，所以在 `f8f56a3` 的干净 detached worktree 中编译运行。harness 测试二进制 SHA-256 `db44ef8a01515adcaebee1a1313fda7546909e79785b132b0e1a612c33596b78`。每项把 exe 复制进 `%TEMP%\stickymd-c2d-preflight-*` 的新目录后运行，不碰 USER 的便签目录 |
-| 运行方式 | 前台工具调用，独占桌面；USER 运行前关闭了自己的 StickyMD，运行期间未碰鼠标键盘 |
+| 运行方式 | 前台工具调用。USER 运行前确认已关闭自己的 StickyMD；运行期间不碰键鼠是按请求，未另行确认。各项输入清理均为 `None` |
 
 ## 自动化（主 checkout，PowerShell）
 
@@ -82,7 +82,7 @@ Comrak 0.59 新增的 `memchr-n` / `fearless_simd` 在运行时选 SIMD 分支�
 - **G5-03 的 alpha 读取错误。** 新包和 `v0.1.3` 交替运行。新包第 1 次失败，之后 5 次全部通过；`v0.1.3` 第 1 次通过、第 2 次失败、后 2 次通过。错误文字完全相同。这是早于本分支就存在的间歇失败。
   - 推断：harness 调 `GetLayeredWindowAttributes` 时，窗口恰好不在可读状态（例如透明度刚切到 100%、layered 属性被去掉）。未核实。
 - **G5-04 的截图不稳定。** 新包与 `v0.1.3` 都在第一张截图 `preview-top` 处超时，两边的截图内容相同。
-  - 推断：窗口半透明，后面的桌面（含正在刷新的 Claude 窗口）在变，导致截图一直不收敛。未核实。
+  - 原因未定位。可能与背景有关：G5-03 中不透明帧的窗口内部在两次运行间逐像素相同，半透明帧却大面积不同，说明透过窗口看到的背景（壁纸与桌面图标）在两次运行间有变化。G5-04 窗口同样半透明，背景变化可能让截图一直不收敛（推断，未核实）。
   - G5-04 后续的截图与检查两边都没有跑到，属于未测。
 
 ### 帧内容的逐像素比对（V05）
@@ -104,7 +104,7 @@ V05 关心共享帧路径改动后画出来的内容。上面的 preflight 只�
 | 检查项 | 结论 | 依据 |
 | --- | --- | --- |
 | P16-V05 静止帧内容 | 通过 | G5-03 逐像素比对、G5-01/02 截图目视，以及 G4-01/02 的隐藏/显示、收起/展开、滚动全部通过 |
-| P16-V05 交互中的撕裂、闪烁、残影 | 未测 | preflight 不在打字、滚动、拖动时连续取帧；需要 USER 在本机目视，或由 USER 决定豁免 |
+| P16-V05 交互中的撕裂、闪烁、残影 | 通过（USER 目视） | preflight 不在打字、滚动、拖动时连续取帧，因此由 USER 目视。被测 exe 复制到 `%TEMP%\stickymd-v05-visual\`（SHA-256 同上），笔记为 `crates/stickymd-render/tests/fixtures/rendering-stress.md`（图片文件未复制，显示为占位）。USER 在三种视图中打字、滚动、拖动缩放、切换视图，回复“No issues” |
 | P16-V05 高 DPI | 未测 | 本机只有 100% |
 | Comrak 0.59 在 x64 上的运行 | 通过 | 工作区测试、email 栈回归（debug + release）、Phase 5/6/11-B/14 release 基线 |
 | 编辑器修复（`2febab1`、`9088c57`、`74b3d74`） | 通过（自动化） | `math_text`、`semantic_conversion` 单测，G4-04 桌面数学按钮与撤销 |
@@ -115,4 +115,4 @@ V05 关心共享帧路径改动后画出来的内容。上面的 preflight 只�
 - 模块收据（`qualification modules`）与 exact-candidate 证据：本地 preflight 不产生它们。
 - G4-05（身份与第二实例）、G4-06（输入法）、G3 其余长流程：不在本次范围内，未运行。
 - 没有修改产品代码，没有发现回归。
-- preflight 截图与 G5 证据留在临时 worktree 的 `dist\evidence\g5-artifacts\`，没有提交。
+- preflight 截图与 G5 证据曾在临时 worktree 的 `dist\evidence\g5-artifacts\`。USER 决定不保留，已随 worktree 删除；本报告的比对结论无法再从这些文件复核。

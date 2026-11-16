@@ -373,6 +373,7 @@ codex 只读复审了 `git diff 159b9b7 c113088`（模型 `gpt-6-astra`，effort
 P16-V05 已在 Windows 11 上用 `f8f56a3` 的 release 跑过桌面 preflight，未发现回归。
 
 - 截图比对：不透明帧去掉窗口边与标题栏后，与 `v0.1.3` 逐像素相同。
-- 未测：交互中的撕裂/闪烁/残影与高 DPI，所以 V05 仍记 NOT TESTED。
+- 交互中的撕裂/闪烁/残影：USER 在本机目视无问题，V05 记 MANUAL PASS。
+- 未测：高 DPI。
 
 详见 [Windows 回归 P16-V05](2026-11-16-windows-p16-v05-regression.md)。
