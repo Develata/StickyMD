@@ -15,10 +15,14 @@ use super::tests::{run, session};
 use super::{AppSession, MonotonicClock, ViewFacts};
 use crate::execution::IoCompletion;
 use crate::flow::notice::{Choice, Notice, NoticeTone};
+use crate::flow::{ClipboardError, ClipboardPort, EditorCoordinator};
+use crate::instruction::LiteralSearchOptions;
 use crate::instruction::{AppIntent, SaveReason};
 use crate::ports::{
-    ExportCompletion, FailureKind, NoteReceipt, PersistMode, PersistResult, StorageFailure,
+    AssetPasteFailure, AssetPasteRollback, ExportCompletion, FailureKind, NoteReceipt, PersistMode,
+    PersistResult, StorageFailure,
 };
+use stickymd_core::{DocumentState, Selection};
 
 struct ManualClock(Rc<Cell<u64>>);
 
@@ -378,4 +382,208 @@ fn a_failed_keep_local_shows_its_reason_with_the_choices_kept() {
         Some(("文件已在外部修改".into(), NoticeTone::Pending))
     );
     assert_eq!(buttons(&session), [Choice::LoadExternal, Choice::KeepLocal]);
+}
+
+fn present(text: &str) -> ExternalFileState {
+    ExternalFileState::Present(ExternalFileFact {
+        fingerprint: hash_bytes(text.as_bytes()),
+        text: text.into(),
+        line_ending: LineEnding::Lf,
+        durable_len: text.len(),
+    })
+}
+
+/// A Replace All and a delimiter conversion say how many places they changed (plan 09 #notices:
+/// the replacement and conversion counts are success notices).
+#[test]
+fn a_replace_all_and_a_conversion_say_how_many_places_changed() {
+    let (mut session, _) = clocked("a a a");
+    let expected_generation = generation(&session);
+    run(&mut session, |session, out| {
+        session.dispatch(
+            AppIntent::ReplaceAllLiteral {
+                expected_generation,
+                query: "a".into(),
+                replacement: "b".into(),
+                options: LiteralSearchOptions::default(),
+                timestamp_ms: 0,
+            },
+            out,
+        );
+    });
+    assert_eq!(session.coordinator.view().text, "b b b");
+    assert_eq!(
+        shown(&session),
+        Some(("已替换 3 处".into(), NoticeTone::Success))
+    );
+
+    let (mut session, _) = clocked("\\(x\\) and \\(y\\)");
+    let expected_generation = generation(&session);
+    run(&mut session, |session, out| {
+        session.dispatch(
+            AppIntent::ConvertLatexMathDelimiters {
+                expected_generation,
+                selection: Selection::new(0, 0),
+                scope_to_selection: false,
+                timestamp_ms: 0,
+            },
+            out,
+        );
+    });
+    assert_eq!(session.coordinator.view().text, "$x$ and $y$");
+    assert_eq!(
+        shown(&session),
+        Some(("已转换 2 处".into(), NoticeTone::Success))
+    );
+}
+
+/// P17-N08: a manual save that a conflict answers no longer shows as saving; once the conflict is
+/// resolved and its notice ends, nothing is in progress.
+#[test]
+fn a_manual_save_answered_by_a_conflict_is_no_longer_in_progress() {
+    let (mut session, now) = clocked("local");
+    // An edit makes the note dirty, so the conflict waits for a choice.
+    let intent = super::tests::edit(&session);
+    run(&mut session, |session, out| session.dispatch(intent, out));
+    save_manually(&mut session);
+    let receipt = IoCompletion::Note(NoteReceipt::Save {
+        generation: generation(&session),
+        mode: PersistMode::Guarded { expected: None },
+        result: Ok(PersistResult::Conflict {
+            generation: generation(&session),
+            observed: present("outside"),
+        }),
+    });
+    deliver(&mut session, receipt);
+    assert_eq!(session.persistence.manual_save(), None);
+    assert_eq!(buttons(&session), [Choice::LoadExternal, Choice::KeepLocal]);
+    run(&mut session, |session, out| {
+        assert!(session.resolve(true, out));
+    });
+    settle(&mut session, &now, 60_000);
+    assert_eq!(shown(&session), None);
+}
+
+/// P17-N08 and P17-N20: a stopped worker ends the image check after a recovery, which gave the
+/// note back to editing; an image sync asked of it later fails at once instead of waiting.
+#[test]
+fn a_stopped_worker_ends_the_image_check_and_fails_a_later_sync() {
+    let (mut session, _) = clocked("text");
+    session.assets.reconcile_pending = true;
+    session.assets.sync_in_flight = true;
+    assert_eq!(
+        shown(&session).map(|(_, tone)| tone),
+        Some(NoticeTone::InProgress)
+    );
+    let seen = deliver(&mut session, IoCompletion::WorkerStopped);
+    assert!(!session.assets.reconcile_pending);
+    assert!(
+        seen.iter().any(|effect| effect == "StartWatcher"),
+        "{seen:?}"
+    );
+    assert_eq!(
+        shown(&session).map(|(_, tone)| tone),
+        Some(NoticeTone::Fault)
+    );
+
+    let generation = generation(&session);
+    run(&mut session, |session, out| {
+        session.submit_asset_sync(generation, Vec::new(), None, false, out);
+    });
+    assert!(!session.assets.sync_in_flight);
+    assert!(
+        session
+            .timed_notice_texts()
+            .first()
+            .is_some_and(|text| text.starts_with("图片整理未完成")),
+        "{:?}",
+        session.timed_notice_texts()
+    );
+}
+
+/// P17-N08: preparing images shows until the paste's own receipt settles it.
+#[test]
+fn preparing_images_is_settled_by_the_pastes_receipt() {
+    let (mut session, _) = clocked("text");
+    session.assets.paste_pending = true;
+    assert_eq!(
+        shown(&session),
+        Some(("正在准备图片…".into(), NoticeTone::InProgress))
+    );
+    let failure = AssetPasteFailure {
+        expected_generation: generation(&session),
+        error: StorageFailure::new(FailureKind::Failed, "disk full"),
+        rollback: AssetPasteRollback::default(),
+    };
+    deliver(&mut session, IoCompletion::AssetPaste(Err(failure)));
+    assert!(!session.assets.paste_pending);
+    assert_eq!(
+        shown(&session).map(|(_, tone)| tone),
+        Some(NoticeTone::Important)
+    );
+}
+
+/// P17-N17: failures of one kind for different generations and texts start no new segment.
+#[test]
+fn failures_of_one_kind_for_other_generations_start_no_new_segment() {
+    let (mut session, now) = clocked("text");
+    let first = generation(&session);
+    let second = first.checked_next().unwrap();
+    let failed = |generation| {
+        IoCompletion::Note(NoteReceipt::Save {
+            generation,
+            mode: PersistMode::Guarded { expected: None },
+            result: Err(StorageFailure::new(FailureKind::Failed, "mkdir failed")),
+        })
+    };
+    deliver(&mut session, failed(first));
+    let text = session.timed_notice_texts();
+    deliver(&mut session, failed(second));
+    assert_eq!(session.timed_notice_texts().len(), 1);
+    assert_ne!(
+        session.timed_notice_texts(),
+        text,
+        "the text follows the latest failure"
+    );
+    settle(&mut session, &now, 30_000);
+    deliver(&mut session, failed(first));
+    assert!(session.timed_notice_texts().is_empty());
+    assert!(session.save_fault_marked());
+}
+
+struct FailingClipboard;
+
+impl ClipboardPort for FailingClipboard {
+    fn read_text(&mut self) -> Result<Option<String>, ClipboardError> {
+        Err(ClipboardError::Unavailable("busy".into()))
+    }
+
+    fn write_text(&mut self, _text: &str) -> Result<(), ClipboardError> {
+        Err(ClipboardError::Unavailable("busy".into()))
+    }
+}
+
+/// P17-C11: a failed copy always shows, as a reminder, and changes neither the document nor the
+/// selection.
+#[test]
+fn a_failed_copy_shows_and_changes_nothing() {
+    let (mut session, _) = clocked("text");
+    session.coordinator = EditorCoordinator::new(
+        DocumentState::loaded("text", LineEnding::Lf, None),
+        Box::new(FailingClipboard),
+    );
+    session.notify(Notice::ExportFailed("disk".into()));
+    let before = (generation(&session), session.editor.selection);
+    run(&mut session, |session, out| {
+        session.dispatch(
+            AppIntent::WriteClipboard {
+                text: "text".into(),
+            },
+            out,
+        );
+    });
+    let (text, tone) = shown(&session).expect("the failure");
+    assert_eq!(tone, NoticeTone::Reminder);
+    assert!(text.contains("busy"), "{text}");
+    assert_eq!((generation(&session), session.editor.selection), before);
 }

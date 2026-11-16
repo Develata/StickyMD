@@ -7,7 +7,7 @@ use crate::flow::window::state::{QuitBarrier, WindowIntent};
 use crate::flow::{AssetIo, AssetStep, PendingAssetPaste, SaveTrigger};
 use crate::ports::{
     AssetPasteCompletion, AssetPasteFailure, AssetPasteRequest, AssetReconcileMode,
-    AssetReconcileReport, PersistMode, StorageFailure,
+    AssetReconcileReport, FailureKind, PersistMode, StorageFailure,
 };
 use stickymd_core::{AssetEffect, Generation};
 
@@ -90,6 +90,13 @@ impl AppSession {
         out: &mut ShellEffects,
     ) {
         match step {
+            AssetStep::SubmitSync(request) if !self.persistence.worker_available() => {
+                // Nothing reaches a stopped worker: the sync fails now, as its receipt would,
+                // so what waits on it (the hide, the quit, a paste) is settled.
+                let failure =
+                    StorageFailure::new(FailureKind::Unavailable, "persistence worker stopped");
+                self.on_asset_sync(request.request_id, Err(failure), out);
+            }
             AssetStep::SubmitSync(request) => self.worker.submit_asset_sync(request),
             AssetStep::ApplyDocument(effect) => self.apply_app_effect(effect, out),
             AssetStep::Notice(notice) => self.show_notice(notice, out),

@@ -27,6 +27,15 @@ pub enum MathActionPass {
 }
 
 impl MathActionPass {
+    /// How many places the pass changed, for the notice that reports it: the formulas whose
+    /// delimiters it converted, or the equals lines it joined when that is all it did.
+    pub fn change_count(&self) -> usize {
+        match self {
+            Self::Joined(joined) => joined.joined_lines(),
+            Self::Converted(_, converted) => converted.replacement_count(),
+        }
+    }
+
     pub fn text(&self) -> &str {
         match self {
             Self::Joined(joined) => joined.text(),

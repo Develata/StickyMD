@@ -68,6 +68,8 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
             }
             Ok(PersistResult::Conflict { observed, .. }) => {
                 self.persistence.note_save_finished(false);
+                // The conflict answered the save: nothing is saving any more.
+                self.persistence.cancel_manual_save();
                 if self.recovery.is_pending() {
                     self.on_recovery_conflict(observed, effects);
                 } else {

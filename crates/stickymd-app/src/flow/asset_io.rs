@@ -57,12 +57,15 @@ pub struct AssetFlow {
 }
 
 impl AssetFlow {
-    /// The worker is gone: nothing it was doing will ever report back.
-    pub fn worker_stopped(&mut self) {
+    /// The worker is gone: nothing it was doing will ever report back. Returns whether the
+    /// image check after a recovery was waiting on it: that check ends here as failed, so editing
+    /// and the watcher come back (the documents and assets stay as they are).
+    pub fn worker_stopped(&mut self) -> bool {
         self.paste_pending = false;
         self.sync_in_flight = false;
         self.sync_request_id = None;
         self.quit_sync_request_id = None;
+        std::mem::take(&mut self.reconcile_pending)
     }
 }
 

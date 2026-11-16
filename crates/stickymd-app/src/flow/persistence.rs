@@ -106,6 +106,11 @@ impl PersistenceCoordinator {
         }
     }
 
+    /// The manual save ended without saving (a conflict answered it).
+    pub fn cancel_manual_save(&mut self) {
+        self.manual_save = None;
+    }
+
     pub const fn manual_save(&self) -> Option<Generation> {
         self.manual_save
     }

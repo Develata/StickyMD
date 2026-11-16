@@ -35,7 +35,9 @@ fn rule(notice: &Notice) -> Rule {
         | Notice::KeptLocal
         | Notice::ConflictClearedByRestore
         | Notice::Exported { .. }
-        | Notice::Copied => Rule::FinishedOffScreen,
+        | Notice::Copied
+        | Notice::Replaced(_)
+        | Notice::Converted(_) => Rule::FinishedOffScreen,
 
         Notice::ImeComposingInSearch
         | Notice::ImeComposingBeforeSearch
@@ -116,6 +118,8 @@ fn every_notice() -> Vec<Notice> {
             assets: 2,
         },
         Notice::Copied,
+        Notice::Replaced(4),
+        Notice::Converted(2),
         Notice::ImeComposingInSearch,
         Notice::ImeComposingBeforeSearch,
         Notice::ImeComposingInOpacity,

@@ -33,15 +33,16 @@ impl<H: Host> DesktopShell<H> {
         if self.handle_shell_mouse_button(state, button) {
             return;
         }
-        if self.handle_search_mouse_button(state, button) {
-            return;
-        }
-        // The bar's buttons answer a waiting decision before any pane sees the press, as F6 and
-        // F7 do before the edit guards.
+        // The bar is drawn over Search and the panes, under the toolbar's popup, so its buttons
+        // take a press in that order; they answer a waiting decision before the edit guards, as
+        // F6 and F7 do.
         if state == ElementState::Pressed
             && button == MouseButton::Left
             && self.press_notice_button()
         {
+            return;
+        }
+        if self.handle_search_mouse_button(state, button) {
             return;
         }
         if !self.window_accepts_editor_mutation() {

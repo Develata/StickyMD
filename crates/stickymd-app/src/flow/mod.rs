@@ -28,7 +28,7 @@ pub use asset_paste::{
     prepare_and_store_paste,
 };
 pub use clipboard::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
-pub use editor::{AppEffect, EditorCoordinator, EditorFlowError};
+pub use editor::{AppEffect, ChangeCount, EditorCoordinator, EditorFlowError};
 pub use export::{
     CopyFailure, EXPORT_ASSET_DIRECTORY_LIMIT, ExportError, copy_hashing,
     export_asset_directory_leaf, export_staging_name, export_temporary_name,

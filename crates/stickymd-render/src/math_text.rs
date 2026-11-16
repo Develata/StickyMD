@@ -22,6 +22,11 @@ pub struct EqualsLineConversion {
 }
 
 impl EqualsLineConversion {
+    /// How many equals lines the step joined.
+    pub fn joined_lines(&self) -> usize {
+        self.removed.len()
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }

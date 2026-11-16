@@ -154,9 +154,18 @@ impl<H: Host> DesktopShell<H> {
             .projection
             .as_ref()
             .and_then(|projection| projection.caret_rect(self.app.editor.selection.active.byte));
+        // The overlay inverts the pixels under it, the bar's too: under the bar it stays off.
         let desired_overlay = desired
             .then(|| caret_overlay_damage(pane, caret))
             .flatten()
+            .filter(|damage| {
+                !self.notice_bar_covers(NoticeRect {
+                    x: damage.x as f32,
+                    y: damage.y as f32,
+                    width: damage.width as f32,
+                    height: damage.height as f32,
+                })
+            })
             .map(caret_overlay_rect)
             .transpose()?;
         if desired_overlay == self.native_caret_overlay {

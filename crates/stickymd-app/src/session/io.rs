@@ -105,7 +105,9 @@ impl AppSession {
         }
         self.recovery.fail_operation();
         self.export_in_flight = false;
-        self.assets.worker_stopped();
+        if self.assets.worker_stopped() {
+            out.push(ShellEffect::StartWatcher);
+        }
         self.dispatch_window_intent(
             WindowIntent::HideSaveCompleted {
                 succeeded: false,

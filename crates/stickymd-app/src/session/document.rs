@@ -4,6 +4,7 @@
 //! plan_ref: docs/plan/03_system_architecture.md#flow-coordination
 
 use crate::flow::AppEffect;
+use crate::flow::ChangeCount;
 use crate::flow::notice::Notice;
 use crate::instruction::AppIntent;
 use crate::interaction::rules::clamp_selection;
@@ -59,7 +60,14 @@ impl AppSession {
                 selection,
                 delta,
                 asset_effects,
+                count,
             } => {
+                // A Replace All or a conversion may change places off screen: it says how many.
+                match count {
+                    Some(ChangeCount::Replaced(count)) => self.notify(Notice::Replaced(count)),
+                    Some(ChangeCount::Converted(count)) => self.notify(Notice::Converted(count)),
+                    None => {}
+                }
                 self.persistence
                     .on_document_changed(self.now_ms(), generation);
                 out.push(ShellEffect::PreviewDocumentChanged(generation));

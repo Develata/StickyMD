@@ -21,6 +21,8 @@ pub enum Notice {
         assets: usize,
     },
     Copied,
+    Replaced(usize),
+    Converted(usize),
 
     // Reminder, refusal: a precondition does not hold.
     ImeComposingInSearch,
@@ -103,7 +105,9 @@ impl Notice {
             | Self::KeptLocal
             | Self::ConflictClearedByRestore
             | Self::Exported { .. }
-            | Self::Copied => MessageClass::Success,
+            | Self::Copied
+            | Self::Replaced(_)
+            | Self::Converted(_) => MessageClass::Success,
 
             Self::ImeComposingInSearch
             | Self::ImeComposingBeforeSearch
@@ -197,6 +201,8 @@ impl fmt::Display for Notice {
                 write!(f, "导出完成：{target}（{assets} 个本地资源）")
             }
             Self::Copied => f.write_str("已复制"),
+            Self::Replaced(count) => write!(f, "已替换 {count} 处"),
+            Self::Converted(count) => write!(f, "已转换 {count} 处"),
 
             Self::ImeComposingInSearch => f.write_str(crate::interaction::rules::SEARCH_COMPOSING),
             Self::ImeComposingBeforeSearch => f.write_str("请先完成当前输入法组合，再打开查找。"),

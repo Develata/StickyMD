@@ -183,7 +183,7 @@ pub(super) fn run(
     seen
 }
 
-fn edit(session: &AppSession) -> AppIntent {
+pub(super) fn edit(session: &AppSession) -> AppIntent {
     AppIntent::Edit {
         expected_generation: session.coordinator.view().generation,
         selection: Selection::caret(0),
