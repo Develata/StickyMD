@@ -72,13 +72,9 @@ pub fn paint_toolbar(
         paint_control_icon(pixmap, id, rect, ink, visual);
     }
     if visual.fault_marker {
-        // Centred in its slot; a window too narrow for the slot keeps the marker at the right
-        // edge, where it shows but cannot be clicked.
-        let x = layout
-            .fault_marker
-            .map_or((pixmap.width() as f32 - 10.0 * scale).max(0.0), |slot| {
-                (slot.x + slot.width / 2.0) as f32 - 2.0 * scale
-            });
+        // Centred in the slot every width keeps for it.
+        let slot = layout.fault_marker;
+        let x = (slot.x + slot.width / 2.0) as f32 - 2.0 * scale;
         fill_rect(
             pixmap,
             x,
@@ -618,13 +614,15 @@ mod tests {
             let border = (6.0 * scale).ceil() as u32;
             let bottom = (source.y + source.height).floor() as u32 - 1;
             let right = (source.x + source.width).floor() as u32 - 1;
+            // A compact button may start below the border; its first whole row is then its own.
+            let top = border.max(source.y.ceil() as u32);
             assert_ne!(color(right, border - 1), selected, "{size:?}: the top band");
             assert_ne!(
                 color(border - 1, bottom),
                 selected,
                 "{size:?}: the left band"
             );
-            assert_eq!(color(right, border), selected, "{size:?}: the top row left");
+            assert_eq!(color(right, top), selected, "{size:?}: the top row left");
             assert_eq!(
                 color(border, bottom),
                 selected,

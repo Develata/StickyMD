@@ -25,12 +25,11 @@ impl<H: Host> DesktopShell<H> {
     }
 
     /// Goes on without something the note can do without. Each such failure is its own important
-    /// notice, above a waiting recovery, which keeps its buttons. While the recovery waits, the
-    /// reason also goes to a dialog, as plan 09's failure table asks; so does a failure that asks
-    /// for one.
+    /// notice, above a waiting recovery, which keeps its buttons (plan 09 failure table). Only a
+    /// failure that asks for a dialog gets one.
     fn startup_degraded(&mut self, degraded: StartupDegraded) {
         let message = degraded.to_string();
-        if degraded.needs_dialog() || self.app.recovery().is_pending() {
+        if degraded.needs_dialog() {
             self.host.show_error("StickyMD", &message);
         }
         self.app

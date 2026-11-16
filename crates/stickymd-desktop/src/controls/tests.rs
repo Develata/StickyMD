@@ -488,6 +488,9 @@ fn the_opacity_field_takes_keys_while_edited_and_commits_when_it_ends() {
     );
 }
 
+/// At the 220 DIP minimum the nine buttons share the width with the fault marker's slot (USER
+/// 2026-11-17: the slot is kept at every width), so each is about 21.8 DIP, still a usable target;
+/// none overlaps another or the slot.
 #[test]
 fn phase10_compact_layout_keeps_every_control_inside_without_overlap() {
     for scale in [1.0, 1.25, 1.5, 2.0] {
@@ -510,7 +513,13 @@ fn phase10_compact_layout_keeps_every_control_inside_without_overlap() {
             ControlId::Close,
         ] {
             let rect = layout.rect(id);
-            assert!(rect.width / scale >= 23.0);
+            assert!(rect.width / scale >= 21.7);
+            let slot = layout.fault_marker;
+            assert!(
+                rect.x + rect.width <= slot.x + f64::EPSILON * 256.0
+                    || rect.x + f64::EPSILON * 256.0 >= slot.x + slot.width,
+                "{id:?} overlaps the marker's slot"
+            );
             assert!(rect.x + f64::EPSILON * 256.0 >= previous_right);
             assert!(rect.x + rect.width <= f64::from(width) + f64::EPSILON);
             previous_right = rect.x + rect.width;

@@ -158,8 +158,8 @@ fn a_click_on_the_marker_shows_the_failure_again() {
     let slot = app
         .control_layout
         .as_ref()
-        .and_then(|layout| layout.fault_marker)
-        .expect("the default window has room for the marker");
+        .map(|layout| layout.fault_marker)
+        .expect("the toolbar is laid out");
     let (x, y) = (slot.x + slot.width / 2.0, slot.y + slot.height / 2.0);
     press_at(&mut app, x, y);
     assert!(app.app.timed_notice_texts().is_empty());
@@ -173,6 +173,48 @@ fn a_click_on_the_marker_shows_the_failure_again() {
         app.app.notice_view().map(|view| view.tone),
         Some(NoticeTone::Fault)
     );
+}
+
+/// P17-N11 at the narrowest window: the slot is kept at every width (USER 2026-11-17), so the
+/// marker is clicked there and never through the Close button.
+#[test]
+fn the_marker_is_clickable_in_the_narrowest_window() {
+    for dpi in [1.0_f64, 1.5, 2.0] {
+        let size = PhysicalSize::new((220.0 * dpi) as u32, (120.0 * dpi) as u32);
+        let mut app = fixture("start\n");
+        app.host.presents_frames = true;
+        app.headless_view = Some((size, dpi));
+        app.surface = Some(SoftwareSurface::for_host(size.width, size.height).unwrap());
+        let snapshot = app.app.coordinator.snapshot();
+        app.projection = Some(SourceProjection::new(
+            &snapshot,
+            size.width,
+            size.height,
+            dpi as f32,
+        ));
+        app.configure_viewports();
+        app.sync_control_layout();
+        app.app
+            .persistence
+            .record_save_failure(SaveFaultKind::Failed, "保存失败：disk full".into());
+        let layout = app.control_layout.clone().expect("the toolbar is laid out");
+        let slot = layout.fault_marker;
+        let close = layout.rect(crate::controls::ControlId::Close);
+        assert!(
+            slot.x + slot.width <= close.x,
+            "{dpi}: the slot meets Close"
+        );
+        press_at(
+            &mut app,
+            slot.x + slot.width / 2.0,
+            slot.y + slot.height / 2.0,
+        );
+        assert_eq!(
+            app.app.timed_notice_texts(),
+            ["保存失败：disk full"],
+            "{dpi}"
+        );
+    }
 }
 
 /// The caret's partial redraw would paint over the bar where they meet: there the caret goes with
