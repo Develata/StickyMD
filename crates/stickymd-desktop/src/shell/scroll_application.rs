@@ -52,18 +52,12 @@ impl ScrollApplication<'_> {
             ScrollPane::Preview => match request {
                 ScrollRequest::Fraction(fraction) => {
                     if let Some(frame) = self.frame {
-                        *self.preview_y =
-                            preview_offset_at(fraction, frame.document_height(), frame.height());
+                        *self.preview_y = preview_offset_at(fraction, frame.end());
                     }
                 }
                 ScrollRequest::Pixels(pixels) => {
                     *self.preview_y = self.frame.map_or(0.0, |frame| {
-                        preview_offset_by(
-                            *self.preview_y,
-                            pixels,
-                            frame.document_height(),
-                            frame.height(),
-                        )
+                        preview_offset_by(*self.preview_y, pixels, frame.end())
                     });
                 }
             },
@@ -76,10 +70,7 @@ impl ScrollApplication<'_> {
             match driver {
                 ScrollPane::Source => {
                     if let Some(y) = frame.y_for_scroll_anchor(source.scroll_anchor()) {
-                        *self.preview_y = y.clamp(
-                            0.0,
-                            (frame.document_height() - frame.height() as f32).max(0.0),
-                        );
+                        *self.preview_y = frame.end().clamp(y);
                     }
                 }
                 ScrollPane::Preview => {

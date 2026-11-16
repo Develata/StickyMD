@@ -5,6 +5,7 @@
 //! Every value in this module is derived from an immutable `DocumentSnapshot`.
 //! No preview type exposes a source mutation or persistence API.
 
+mod end_room;
 mod export;
 mod fonts;
 mod horizontal;
@@ -26,6 +27,7 @@ mod source_map;
 mod table_layout;
 mod text_layout;
 
+pub use end_room::PreviewEnd;
 pub use export::{
     ExportProjectionError, ImageOccurrence, ImageRewrite, collect_image_occurrences,
     rewrite_image_occurrences,

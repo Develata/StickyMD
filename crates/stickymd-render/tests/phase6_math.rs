@@ -149,7 +149,7 @@ fn formula_limit_and_source_limit_render_errors_without_aborting_preview() {
             .map(|text| text.matches("$$x$$").count()),
         Some(2_001)
     );
-    let maximum_scroll = (frame.document_height() - frame.height() as f32).max(0.0);
+    let maximum_scroll = frame.end().max_scroll;
     for scroll in [0.0, maximum_scroll * 0.5, maximum_scroll] {
         let viewport = pipeline
             .paint(

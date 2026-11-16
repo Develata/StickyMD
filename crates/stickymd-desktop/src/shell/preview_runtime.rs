@@ -262,6 +262,9 @@ impl<H: Host> DesktopShell<H> {
             height_px: pane.height.max(1),
             scale,
             scroll_y: self.preview_scroll_y,
+            // The bar is laid out in window DIP, whatever the Content Zoom (plan 09 #notices).
+            notice_bar_px: crate::controls::NOTICE_BAR_HEIGHT_DIP
+                * self.shell_dpi().unwrap_or(1.0) as f32,
             selection: selection_for_generation(
                 self.preview_frame.as_ref().map(|frame| frame.generation()),
                 self.app.coordinator().view().generation,

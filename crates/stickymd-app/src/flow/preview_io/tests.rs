@@ -16,6 +16,7 @@ fn current_layout_requires_generation_and_every_layout_field_but_not_offset_or_s
         height_px: 400,
         scale: 1.25,
         scroll_y: 42.0,
+        notice_bar_px: 0.0,
         selection: PreviewSelection::default(),
         theme: PreviewTheme::Light,
     };
@@ -23,6 +24,7 @@ fn current_layout_requires_generation_and_every_layout_field_but_not_offset_or_s
         viewport.clone(),
         PreviewViewport {
             scroll_y: 1000.0,
+            notice_bar_px: 0.0,
             selection: PreviewSelection::caret(5),
             ..viewport.clone()
         },
@@ -144,12 +146,14 @@ fn a_receipt_for_an_older_offset_is_relaid_out_and_never_shown() {
         height_px: 646,
         scale: 1.25,
         scroll_y: 1200.0,
+        notice_bar_px: 0.0,
         selection: PreviewSelection::default(),
         theme: PreviewTheme::Light,
     };
     for older in [0.0, 600.0, 1199.0, 1199.75, 1200.25, 4000.0] {
         let receipt = PreviewViewport {
             scroll_y: older,
+            notice_bar_px: 0.0,
             ..current.clone()
         };
         assert!(receipt.same_layout(&current), "{older}");

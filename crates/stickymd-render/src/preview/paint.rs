@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#native-preview-layout
 
+use super::end_room::PreviewEnd;
 use std::sync::Arc;
 
 use cosmic_text::{FontSystem, SwashCache};
@@ -28,6 +29,8 @@ pub struct PreviewFrame {
     width: u32,
     height: u32,
     document_height: f32,
+    /// Where scrolling this frame ends (plan 09 #vertical-scrollbars).
+    end: PreviewEnd,
     scroll_y: f32,
     rgba: Vec<u8>,
     index: Arc<PreviewTextIndex>,
@@ -60,6 +63,12 @@ impl PreviewFrame {
 
     pub const fn document_height(&self) -> f32 {
         self.document_height
+    }
+
+    /// The scroll end every reader of this frame shares: painting clamped to it, and the wheel,
+    /// the thumb, a view change and Split sync read it here (plan 09 #vertical-scrollbars).
+    pub const fn end(&self) -> PreviewEnd {
+        self.end
     }
 
     pub const fn scroll_y(&self) -> f32 {
@@ -142,11 +151,13 @@ pub(super) struct PaintResources<'a> {
     pub math_engine: &'a mut crate::math::MathEngine,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn paint_document(
     resources: PaintResources<'_>,
     document: &mut LaidOutDocument,
     height: u32,
     requested_scroll_y: f32,
+    notice_bar_px: f32,
     selection: PreviewSelection,
     theme: PreviewTheme,
     horizontal_offsets: &PreviewHorizontalOffsets,
@@ -166,8 +177,8 @@ pub(super) fn paint_document(
         })?;
     let palette = Palette::for_theme(theme);
     pixmap.fill(palette.background);
-    let max_scroll = (document.height_px - height as f32).max(0.0);
-    let scroll_y = requested_scroll_y.clamp(0.0, max_scroll);
+    let scroll_end = PreviewEnd::new(document.height_px, height as f32, notice_bar_px);
+    let scroll_y = scroll_end.clamp(requested_scroll_y);
     let viewport_bottom = scroll_y + height as f32;
     let start = document
         .blocks
@@ -456,6 +467,7 @@ pub(super) fn paint_document(
         width: document.width_px,
         height,
         document_height: document.height_px,
+        end: scroll_end,
         scroll_y,
         rgba: pixmap.take(),
         index,
@@ -517,6 +529,7 @@ mod tests {
             &mut document,
             180,
             0.0,
+            0.0,
             PreviewSelection::default(),
             PreviewTheme::Light,
             &crate::preview::PreviewHorizontalOffsets::default(),
@@ -540,6 +553,7 @@ mod tests {
             &mut document,
             200,
             0.0,
+            0.0,
             PreviewSelection::default(),
             PreviewTheme::Light,
             &crate::preview::PreviewHorizontalOffsets::default(),
@@ -554,6 +568,7 @@ mod tests {
             &mut document,
             200,
             120.0,
+            0.0,
             first.index().select_all(),
             PreviewTheme::Dark,
             &crate::preview::PreviewHorizontalOffsets::default(),

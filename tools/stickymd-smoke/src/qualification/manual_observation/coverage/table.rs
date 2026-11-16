@@ -142,7 +142,7 @@ const GUTTER_GEOMETRY: Owner = desktop(
     "controls::tests::every_view_reserves_the_gutter_clear_of_the_resize_border_and_sync_button",
 );
 const PREVIEW_POSITIONS: Owner = desktop(
-    "scroll::scrollbar::tests::the_preview_offset_follows_the_fraction_and_pages_within_the_document",
+    "scroll::scrollbar::tests::the_preview_offset_follows_the_fraction_and_pages_within_the_end",
 );
 const SCROLL_VIEW_BARS_OWNED: &[Owner] = &[VIEW_BARS];
 const SCROLL_GUTTER_GEOMETRY: &[Owner] = &[GUTTER_GEOMETRY];
@@ -236,7 +236,31 @@ const RUNTIME_GUTTER: &[Owner] = &[desktop(
     "shell::scroll_runtime::tests::runtime_gutter_press_is_consumed_without_caret_or_selection_mutation",
 )];
 const RUNTIME_SCROLL: &[Owner] = &[desktop(
-    "shell::scroll_runtime::tests::runtime_pointer_moves_apply_each_pane_and_cached_document_height",
+    "shell::scroll_runtime::tests::runtime_pointer_moves_apply_each_pane_and_the_frames_end",
+)];
+/// Phase 17 M2: the Preview end room (plan 09 #vertical-scrollbars).
+const END_ROOM_FITS: &[Owner] = &[
+    render("preview::end_room::tests::a_document_that_fits_above_the_bar_does_not_scroll"),
+    desktop("scroll::scrollbar::tests::each_view_has_a_bar_for_exactly_its_shown_panes"),
+];
+const END_ROOM_ROOM: &[Owner] = &[
+    render(
+        "preview::end_room::tests::past_the_threshold_the_end_is_half_a_viewport_past_the_last_line",
+    ),
+    render("preview::end_room::tests::the_room_is_never_less_than_the_bar"),
+];
+const END_ROOM_ONE_END: &[Owner] = &[
+    render("preview::end_room::tests::a_frame_is_painted_at_its_own_end"),
+    PREVIEW_POSITIONS,
+    desktop(
+        "shell::scroll_application::tests::preview_scroll_uses_the_frames_end_and_missing_frames_keep_existing_rules",
+    ),
+    desktop(
+        "shell::scroll_runtime::tests::runtime_pointer_moves_apply_each_pane_and_the_frames_end",
+    ),
+];
+const END_ROOM_SPLIT: &[Owner] = &[desktop(
+    "shell::scroll_application::tests::split_sync_keeps_the_end_room_and_the_source_within_its_end",
 )];
 const RUNTIME_CANONICAL: &[Owner] = &[desktop(
     "shell::scroll_runtime::tests::runtime_scroll_preserves_canonical_state_and_session_for_clean_and_dirty_notes",
@@ -1828,10 +1852,26 @@ pub(super) const OBLIGATIONS: &[Obligation] = &[
     o(
         "plan09:scroll-8",
         "preview-end-room",
-        "",
-        Target::Gap {
-            planned: "Phase 17 M2 (P17-E01..E04): the shared Preview end function, not implemented yet",
-        },
+        "fits-above-bar",
+        tests(END_ROOM_FITS),
+    ),
+    o(
+        "plan09:scroll-8",
+        "preview-end-room",
+        "half-viewport-room",
+        tests(END_ROOM_ROOM),
+    ),
+    o(
+        "plan09:scroll-8",
+        "preview-end-room",
+        "one-end",
+        tests(END_ROOM_ONE_END),
+    ),
+    o(
+        "plan09:scroll-8",
+        "preview-end-room",
+        "split-sync",
+        tests(END_ROOM_SPLIT),
     ),
     o(
         "plan09:opacity-1",

@@ -27,6 +27,7 @@ use crate::scroll::{PreviewFacts, view_bars};
 use crate::search::{SearchHit, SearchLayout, paint_search_overlay};
 use stickymd_app::instruction::{WindowPlatformIntent, WindowPreferenceIntent};
 use stickymd_app::interaction::{SearchField, SearchSession};
+use stickymd_render::preview::PreviewEnd;
 use stickymd_render::source::SourceScrollMetrics;
 use tiny_skia::Pixmap;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -304,8 +305,13 @@ fn phase15_the_scrollbar_pixels_stay_pinned() {
                 viewport_fraction: 0.2,
             };
             let height = view.preview.map_or(1, |pane| pane.height) as f32;
+            // The bars' pixels at given positions and lengths, not where scrolling ends: an end
+            // at the last line keeps the pinned fractions.
             let preview = PreviewFacts {
-                document_height: height * 5.0,
+                end: PreviewEnd {
+                    max_scroll: height * 4.0,
+                    scrollable_height: height * 5.0,
+                },
                 scroll_y: height * 4.0 * fraction as f32,
                 current: true,
             };

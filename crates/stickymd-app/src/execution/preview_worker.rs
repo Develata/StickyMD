@@ -206,6 +206,7 @@ fn execute(
     image_source: Option<&dyn PreviewImageSource>,
 ) -> Result<PreviewFrame, PreviewPipelineError> {
     pipeline.set_horizontal_offsets(job.viewport().horizontal);
+    pipeline.set_notice_bar_height(job.viewport().notice_bar_px);
     match job {
         PreviewJob::Build { snapshot, viewport } => pipeline.build_with_image_source(
             &snapshot,
@@ -273,6 +274,7 @@ mod tests {
             height_px: 300,
             scale: 1.0,
             scroll_y: 0.0,
+            notice_bar_px: 0.0,
             selection: PreviewSelection::default(),
             theme: PreviewTheme::Light,
         }
@@ -438,6 +440,7 @@ mod tests {
         }
         assert!(current.same_layout(&PreviewViewport {
             scroll_y: 100.0,
+            notice_bar_px: 0.0,
             selection: PreviewSelection::caret(1),
             ..current.clone()
         }));

@@ -42,6 +42,9 @@ pub struct PreviewViewport {
     pub height_px: u32,
     pub scale: f32,
     pub scroll_y: f32,
+    /// The notice bar's height over the viewport's bottom, in pixels: a document that fits
+    /// above it does not scroll (plan 09 #vertical-scrollbars).
+    pub notice_bar_px: f32,
     pub selection: PreviewSelection,
     pub theme: PreviewTheme,
 }
