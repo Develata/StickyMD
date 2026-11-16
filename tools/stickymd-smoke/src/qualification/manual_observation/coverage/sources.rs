@@ -207,7 +207,7 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "plan09:scrollbars",
         8,
-        "6c0c707cc947eaab86cbe841706e33bdcfa124e55e927511d23a576d4c3f7b71",
+        "3b114a281117d3b1c37f9ab3df36989c57b817feff6609e8f999e8a48756af0e",
     ),
     (
         "plan09:opacity",
@@ -222,7 +222,7 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "plan09:document",
         33,
-        "456f594f7dabdf38d2488e87445a824f287d82fe0efe261a8a5cad9330a6515e",
+        "bcb87625383ab3e2db81d9803b76e91cdee6dd37bf2f8467c36814ad05dbde97",
     ),
 ];
 
@@ -304,7 +304,7 @@ const CLAUSES: &[(&str, &str)] = &[
     ("plan09:scroll-5", "eb917ee6f5b45456"),
     ("plan09:scroll-6", "2fac9349e573b234"),
     ("plan09:scroll-7", "d11282587cc14247"),
-    ("plan09:scroll-8", "8bdf872e44a7810d"),
+    ("plan09:scroll-8", "dab8f4230cc5b447"),
     ("plan09:opacity-1", "a6a6078483506833"),
     ("plan09:opacity-2", "eb300362cab34743"),
     ("plan09:opacity-3", "af424a602e1d8223"),
