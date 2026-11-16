@@ -25,19 +25,37 @@ impl<H: Host> DesktopShell<H> {
         Some(NoticeBarLayout::new(size, dpi as f32, view.choices))
     }
 
-    /// A left press on a button of the bar gives that choice, as F6 or F7 would. Returns whether
-    /// the press was taken; a press elsewhere on the bar goes on to the pane under it.
-    pub(super) fn press_notice_button(&mut self) -> bool {
-        let Some(choice) = self
-            .notice_bar_layout()
-            .and_then(|layout| layout.choice_at(self.cursor_position.x, self.cursor_position.y))
-        else {
+    /// A press on the bar is the bar's: it floats over what it covers (Search, a pane, a link),
+    /// so nothing under it takes the press. A left press on a button gives that choice, as F6 or
+    /// F7 would. Returns whether the press landed on the bar.
+    pub(super) fn press_notice_bar(&mut self, left: bool) -> bool {
+        let Some(layout) = self.notice_bar_layout() else {
             return false;
         };
-        self.dispatch_persistence_intent(if choice.is_primary() {
-            PersistenceIntent::ResolvePrimary
-        } else {
-            PersistenceIntent::ResolveSecondary
+        let (x, y) = (self.cursor_position.x, self.cursor_position.y);
+        if !layout.bar.contains(x, y) {
+            return false;
+        }
+        if left && let Some(choice) = layout.choice_at(x, y) {
+            self.dispatch_persistence_intent(if choice.is_primary() {
+                PersistenceIntent::ResolvePrimary
+            } else {
+                PersistenceIntent::ResolveSecondary
+            });
+        }
+        true
+    }
+
+    /// The cursor over the bar: a pointer on its buttons, the arrow elsewhere on it.
+    pub(super) fn notice_bar_cursor(&self) -> Option<winit::window::CursorIcon> {
+        let layout = self.notice_bar_layout()?;
+        let (x, y) = (self.cursor_position.x, self.cursor_position.y);
+        layout.bar.contains(x, y).then(|| {
+            if layout.choice_at(x, y).is_some() {
+                winit::window::CursorIcon::Pointer
+            } else {
+                winit::window::CursorIcon::Default
+            }
         })
     }
 

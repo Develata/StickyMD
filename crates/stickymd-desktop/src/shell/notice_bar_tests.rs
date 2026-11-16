@@ -289,3 +289,33 @@ fn the_native_caret_stays_off_the_bar() {
         "the caret did not come back"
     );
 }
+
+/// The bar floats over what it covers: a press on it outside its buttons reaches nothing under
+/// it, Search's Replace All included, whatever notice shows.
+#[test]
+fn a_press_on_the_bar_reaches_nothing_under_it() {
+    const SHORT: PhysicalSize<u32> = PhysicalSize::new(520, 120);
+    let mut app = fixture("a a a\n");
+    app.host.presents_frames = true;
+    app.headless_view = Some((SHORT, 1.0));
+    app.surface = Some(SoftwareSurface::for_host(SHORT.width, SHORT.height).unwrap());
+    let snapshot = app.app.coordinator.snapshot();
+    app.projection = Some(SourceProjection::new(&snapshot, SHORT.width, SHORT.height, 1.0));
+    app.configure_viewports();
+    app.sync_control_layout();
+    app.open_search(true);
+    app.app.search.query = "a".into();
+    app.app.search.replacement = "b".into();
+    let search = app.search_layout().expect("Search is open");
+    app.notify(Notice::ExportBusy);
+    let bar = app.notice_bar_layout().expect("the notice").bar;
+    let under = (0..bar.width as u32)
+        .flat_map(|dx| (0..bar.height as u32).map(move |dy| (dx, dy)))
+        .map(|(dx, dy)| {
+            PhysicalPosition::new(f64::from(bar.x) + f64::from(dx), f64::from(bar.y) + f64::from(dy))
+        })
+        .find(|position| search.hit(*position, true) == Some(SearchHit::ReplaceAll))
+        .expect("Replace All lies under the bar in a short window");
+    press_at(&mut app, under.x, under.y);
+    assert_eq!(app.app.coordinator.view().text, "a a a\n");
+}

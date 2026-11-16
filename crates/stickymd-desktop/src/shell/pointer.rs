@@ -33,13 +33,10 @@ impl<H: Host> DesktopShell<H> {
         if self.handle_shell_mouse_button(state, button) {
             return;
         }
-        // The bar is drawn over Search and the panes, under the toolbar's popup, so its buttons
-        // take a press in that order; they answer a waiting decision before the edit guards, as
-        // F6 and F7 do.
-        if state == ElementState::Pressed
-            && button == MouseButton::Left
-            && self.press_notice_button()
-        {
+        // The bar is drawn over Search and the panes, under the toolbar's popup, so it takes a
+        // press in that order; its buttons answer a waiting decision before the edit guards, as F6
+        // and F7 do.
+        if state == ElementState::Pressed && self.press_notice_bar(button == MouseButton::Left) {
             return;
         }
         if self.handle_search_mouse_button(state, button) {
@@ -108,6 +105,7 @@ impl<H: Host> DesktopShell<H> {
     /// The cursor for what lies under the pointer.
     pub(super) fn cursor_at_pointer(&self) -> winit::window::CursorIcon {
         self.shell_cursor_icon()
+            .or_else(|| self.notice_bar_cursor())
             .or_else(|| {
                 self.scrollbar_gutter_at_cursor()
                     .map(|_| winit::window::CursorIcon::Default)

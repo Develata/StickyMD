@@ -321,8 +321,8 @@ fn a_survived_failure_lands_over_what_was_already_said() {
     );
 }
 
-/// A failure shows above the waiting recovery, which keeps its buttons, so the reason needs no
-/// dialog (P17-N16).
+/// A failure shows above the waiting recovery, which keeps its buttons (P17-N16); the reason also
+/// goes to a dialog while the recovery waits (plan 09 failure table).
 #[test]
 fn a_survived_failure_shows_above_the_recovery_prompt_that_keeps_its_buttons() {
     let mut app = on_a_display(recovering_at_start());
@@ -337,7 +337,7 @@ fn a_survived_failure_shows_above_the_recovery_prompt_that_keeps_its_buttons() {
     let (outcome, calls) = start(&mut app);
 
     assert_eq!(outcome, Ok(()));
-    assert!(dialogs(&calls).is_empty());
+    assert_eq!(dialogs(&calls), ["无法应用窗口透明度：alpha refused"]);
     assert_eq!(
         app.notice_text().as_deref(),
         Some("无法应用窗口透明度：alpha refused")
