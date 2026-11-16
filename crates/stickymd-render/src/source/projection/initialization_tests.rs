@@ -12,8 +12,6 @@ fn eager_reference(snapshot: &DocumentSnapshot) -> SourceProjection {
     // Recreate the old eager initialization with the same actual font database.
     // Only the reference performs the discarded empty shaping calls.
     reference.buffer = Buffer::new(&mut reference.font_system, scaled_metrics(1.0));
-    reference.diagnostic_buffer = Buffer::new(&mut reference.font_system, Metrics::new(13.0, 20.0));
-    reference.diagnostic_buffer.set_wrap(Wrap::None);
     reference.ui_buffer = Buffer::new(&mut reference.font_system, Metrics::new(13.0, 20.0));
     reference.ui_buffer.set_wrap(Wrap::None);
     reference.rebuild_buffer(snapshot);
@@ -64,7 +62,7 @@ fn source_initialization_matches_eager_buffers_for_pixels_carets_and_auxiliary_t
             for projection in [&mut actual, &mut reference] {
                 projection.set_viewport(width, height, scale);
             }
-            for diagnostic in [None, Some(""), Some("保存失败 [F6 重试] [F7 取消]")] {
+            {
                 let mut actual_pixels = Pixmap::new(width, height).unwrap();
                 let mut expected_pixels = actual_pixels.clone();
                 for (projection, pixels) in [
@@ -77,16 +75,11 @@ fn source_initialization_matches_eager_buffers_for_pixels_carets_and_auxiliary_t
                             Selection::new(0, text.len()),
                             true,
                             true,
-                            diagnostic,
                             SourceTheme::Light,
                         )
                         .unwrap();
                 }
-                assert_eq!(
-                    actual_pixels.data(),
-                    expected_pixels.data(),
-                    "{text:?} {diagnostic:?}"
-                );
+                assert_eq!(actual_pixels.data(), expected_pixels.data(), "{text:?}");
             }
             for byte in text
                 .char_indices()

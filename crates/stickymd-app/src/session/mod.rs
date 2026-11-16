@@ -13,6 +13,9 @@ mod effects;
 mod events;
 mod io;
 mod note;
+mod notice;
+#[cfg(test)]
+mod notice_tests;
 mod preferences;
 mod preview;
 mod search;
@@ -34,6 +37,7 @@ use stickymd_core::{DocumentState, PreserveExpectation, RecoveryCandidate};
 
 use crate::config::{ConfigCoordinator, RuntimeConfig, ViewMode};
 use crate::execution::{PersistenceWorker, PreviewWorker};
+use crate::flow::notice::NoticeState;
 use crate::flow::window::reducer::WindowShellCoordinator;
 use crate::flow::window::state::{VisibilityState, WindowGuardSnapshot};
 use crate::flow::{
@@ -125,6 +129,8 @@ pub struct AppSession {
     pub zoom_config_deadline: Option<u64>,
     #[cfg(not(any(test, feature = "testing")))]
     zoom_config_deadline: Option<u64>,
+    /// What the notice bar shows (plan 04 #notice-state); the shell only reads it.
+    notices: NoticeState,
     clock: Box<dyn MonotonicClock>,
 }
 
@@ -149,6 +155,7 @@ impl AppSession {
             parked_search: None,
             window_flow: None,
             zoom_config_deadline: None,
+            notices: NoticeState::default(),
             clock: parts.clock,
         };
         if session.recovery.is_pending() {
@@ -211,6 +218,7 @@ impl AppSession {
                 .as_ref()
                 .and_then(|flow| flow.state().next_deadline_ms()),
             self.zoom_config_deadline,
+            self.notice_deadline(),
         ]
         .into_iter()
         .flatten()

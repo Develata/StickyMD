@@ -81,7 +81,9 @@ impl AppSession {
                     succeeded,
                 });
             }
-            NoteEffect::Diagnostic(message) => out.push(ShellEffect::Diagnostic(message)),
+            NoteEffect::Notice(notice) => self.show_notice(notice, out),
+            NoteEffect::FaultDisplayStarted => self.start_fault_display(out),
+            NoteEffect::FaultResolved => self.notices.clear_fault_displays(),
             NoteEffect::RefreshTitle => out.push(ShellEffect::TitleDirty),
             NoteEffect::Redraw => out.push(ShellEffect::RedrawNeeded),
         }

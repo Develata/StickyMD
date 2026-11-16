@@ -3,10 +3,12 @@
 //!
 //! plan_ref: docs/plan/04_runtime_state_model.md#notice-state
 
+mod catalog;
 mod derived;
 mod state;
 mod timed;
 
+pub use catalog::Notice;
 pub use derived::{
     Choice, Choices, ConflictSide, DerivedFacts, InProgress, PendingDecision, RecoveryFacts,
 };

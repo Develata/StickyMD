@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#windows-shell-purpose
 
+use stickymd_app::flow::notice::Notice;
 use winit::error::ExternalError;
 use winit::window::{ResizeDirection, Theme};
 
@@ -49,8 +50,7 @@ impl<H: Host> DesktopShell<H> {
                 true
             }
             Err(error) => {
-                self.diagnostic = Some(format!("无法开始窗口拖动或缩放：{error}"));
-                self.request_redraw();
+                self.notify(Notice::MoveResizeFailed(error.to_string()));
                 true
             }
         }
@@ -79,7 +79,8 @@ impl<H: Host> DesktopShell<H> {
             WindowPreferenceEffect::ApplyOpacity { opacity, .. } => {
                 let opacity = self.controls.preview(opacity);
                 if let Err(error) = self.host.set_opacity(opacity) {
-                    self.diagnostic = Some(format!("无法预览透明度：{error}"));
+                    self.app
+                        .notify(Notice::OpacityPreviewFailed(error.to_string()));
                 }
             }
             // The window took it before the configuration did: only the tray is left to tell.
@@ -132,13 +133,11 @@ impl<H: Host> DesktopShell<H> {
                 }
             }
             WindowEffect::PlacementFailed(kind) => {
-                self.diagnostic = Some(format!("窗口未能到达目标位置（{kind:?}）。"));
-                self.request_redraw();
+                self.notify(Notice::PlacementMissed(format!("{kind:?}")));
             }
             WindowEffect::ApplyTopmost(request) => self.apply_topmost(request),
             WindowEffect::TopmostRejected { kind, .. } => {
-                self.diagnostic = Some(format!("无法应用窗口置顶状态（{kind:?}）。"));
-                self.request_redraw();
+                self.notify(Notice::TopmostFailed(format!("{kind:?}")));
             }
             WindowEffect::HideWindow { id } => {
                 self.scrollbars = Default::default();
@@ -221,19 +220,16 @@ impl<H: Host> DesktopShell<H> {
                 self.release_hidden_frames();
             }
             WindowEffect::ReportTrayUnavailable => {
-                self.diagnostic = Some("系统托盘不可用；窗口未隐藏。".into());
-                self.request_redraw();
+                self.notify(Notice::TrayUnavailable);
             }
             WindowEffect::HideBlocked => {
-                self.diagnostic = Some("恢复或外部冲突未解决，窗口不会隐藏。".into());
-                self.request_redraw();
+                self.notify(Notice::HideNeedsDecision);
             }
             WindowEffect::HideRejected(kind) => {
-                self.diagnostic = Some(format!("窗口未能隐藏，保持显示（{kind:?}）。"));
-                self.request_redraw();
+                self.notify(Notice::HideFailed(format!("{kind:?}")));
             }
             WindowEffect::ShowRejected(kind) => {
-                self.diagnostic = Some(format!("窗口未能显示（{kind:?}）。"));
+                self.app.notify(Notice::ShowFailed(format!("{kind:?}")));
                 // A failed show leaves the window hidden, so what the show rebuilt goes again. A
                 // failed focus reports the same effect on a shown window, which keeps its frames.
                 if self.app.hidden_to_tray() {
@@ -242,29 +238,26 @@ impl<H: Host> DesktopShell<H> {
                 self.request_redraw();
             }
             WindowEffect::HideCancelled => {
-                self.diagnostic = Some("保存失败，窗口保持显示，内存文本仍保留。".into());
-                self.request_redraw();
+                self.notify(Notice::HideCancelledSaveFailed);
             }
             WindowEffect::QuitBlocked => {
-                self.diagnostic = Some("退出前必须先解决恢复或外部修改冲突。".into());
-                self.request_redraw();
+                self.notify(Notice::QuitNeedsDecision);
                 self.host.quit_abandoned();
             }
             WindowEffect::QuitTimedOut => {
-                self.diagnostic = Some("退出等待超时，已取消；保存可能仍在进行。".to_owned());
-                self.request_redraw();
+                self.notify(Notice::QuitTimedOut);
                 self.host.quit_abandoned();
                 self.refresh_window_guards();
             }
             WindowEffect::QuitCancelled(barrier) => {
-                self.diagnostic = Some(format!("退出已取消：{barrier:?} 未安全完成。"));
-                self.request_redraw();
+                self.notify(Notice::QuitCancelled(format!("{barrier:?}")));
                 self.host.quit_abandoned();
                 // Quitting stopped the dock timers; a window that stays gets them back.
                 self.refresh_window_guards();
             }
             WindowEffect::QuitWarning(barrier) => {
-                self.diagnostic = Some(format!("退出前的 {barrier:?} 未完成；证据已保留。"));
+                self.app
+                    .notify(Notice::QuitBarrierUnfinished(format!("{barrier:?}")));
             }
             WindowEffect::RequestRedraw => self.request_redraw(),
             WindowEffect::WakeAt(_) => {}
@@ -354,8 +347,7 @@ impl<H: Host> DesktopShell<H> {
             now_ms: self.timestamp_ms(),
         });
         if let Err(failure) = answer {
-            self.diagnostic = Some(format!("无法应用窗口置顶状态：{failure}"));
-            self.request_redraw();
+            self.notify(Notice::TopmostRefused(failure.to_string()));
         }
     }
 
@@ -380,7 +372,7 @@ impl<H: Host> DesktopShell<H> {
         if let Some(surface) = &mut self.surface
             && let Err(error) = surface.release_frames()
         {
-            self.diagnostic = Some(error.to_string());
+            self.app.notify(Notice::RenderFailed(error.to_string()));
         }
         self.host.hidden_frames_released(true);
     }
@@ -402,7 +394,7 @@ impl<H: Host> DesktopShell<H> {
             && size.height > 0
             && let Err(error) = surface.resize(size.width, size.height)
         {
-            self.diagnostic = Some(error.to_string());
+            self.app.notify(Notice::RenderFailed(error.to_string()));
         }
         self.sync_control_layout();
         self.configure_viewports();
@@ -421,10 +413,7 @@ impl<H: Host> DesktopShell<H> {
     fn keep_window_identity(&mut self) {
         if let Err(error) = self.host.reassert_identity() {
             self.host.restore_ordinary_entry();
-            self.diagnostic = Some(format!(
-                "无法保持工具窗口身份；已恢复任务栏入口以避免窗口不可达：{error}"
-            ));
-            self.request_redraw();
+            self.notify(Notice::ToolWindowFailed(error.to_string()));
         }
     }
 }

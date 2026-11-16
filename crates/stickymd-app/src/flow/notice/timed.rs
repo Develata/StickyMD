@@ -97,6 +97,11 @@ impl TimedNotices {
         self.top().map(TimedNotice::deadline_ms)
     }
 
+    /// The notices from the bottom of the stack to the one shown.
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &TimedNotice> {
+        self.stack.iter()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.stack.is_empty()
     }

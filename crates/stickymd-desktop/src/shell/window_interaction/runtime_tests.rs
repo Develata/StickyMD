@@ -297,7 +297,7 @@ fn runtime_opacity_recovery_and_busy_export_shortcuts_precede_field() {
     app.app.export_in_flight = true; // Stops at the real busy-export branch; opens no native dialog.
     app.modifiers = ModifiersState::CONTROL | ModifiersState::SHIFT;
     app.apply_key(key(KeyCode::KeyS, None), false);
-    assert_eq!(app.diagnostic.as_deref(), Some("已有导出任务正在进行。"));
+    assert_eq!(app.notice_text().as_deref(), Some("已有导出任务正在进行。"));
     assert!(app.controls.takes_keys());
     assert_eq!(app.app.coordinator.view().text, "canonical text");
 }

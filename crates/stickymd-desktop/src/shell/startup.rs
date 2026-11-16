@@ -6,6 +6,7 @@
 use super::DesktopShell;
 use crate::host::{Host, StartupDetail};
 use stickymd_app::config::ViewMode;
+use stickymd_app::flow::notice::Notice;
 use stickymd_app::flow::startup::{StartupDegraded, StartupStop};
 use stickymd_app::flow::window::state::{WindowIntent, effective_topmost};
 
@@ -23,27 +24,16 @@ impl<H: Host> DesktopShell<H> {
         exit();
     }
 
-    /// Goes on without something the note can do without. The status line is one line, and each
-    /// such failure gets its place on it. The recovery prompt lays out its actions by position,
-    /// so it takes nothing more and the reason is told in a dialog instead of being lost. The
-    /// startup runs before the first event, so a pending recovery still has the prompt `new` wrote.
+    /// Goes on without something the note can do without. Each such failure is its own important
+    /// notice; a waiting recovery keeps its buttons below it, so nothing is lost and no dialog is
+    /// needed for that. A failure that asks for a dialog still gets one.
     fn startup_degraded(&mut self, degraded: StartupDegraded) {
         let message = degraded.to_string();
-        let status_line_taken = self.app.recovery().is_pending();
-        if degraded.needs_dialog() || status_line_taken {
+        if degraded.needs_dialog() {
             self.host.show_error("StickyMD", &message);
         }
-        if status_line_taken {
-            return;
-        }
-        let line = message.replace("\n\n", " ");
-        match &mut self.diagnostic {
-            Some(earlier) => {
-                earlier.push('；');
-                earlier.push_str(&line);
-            }
-            None => self.diagnostic = Some(line),
-        }
+        self.app
+            .notify(Notice::StartupDegraded(message.replace("\n\n", " ")));
     }
 
     /// `reveal` and `focus` are the two steps only a real window can take.

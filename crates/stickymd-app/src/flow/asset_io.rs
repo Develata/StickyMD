@@ -4,6 +4,7 @@
 
 use stickymd_core::{AssetEffect, DocumentState, Generation};
 
+use super::notice::Notice;
 use super::{AppEffect, ClipboardPort, EditorCoordinator};
 use crate::ports::{
     AssetPasteCompletion, AssetPasteFailure, AssetReconcileMode, AssetReconcileReport,
@@ -70,8 +71,8 @@ impl AssetFlow {
 pub enum AssetStep {
     SubmitSync(AssetSyncRequest),
     ApplyDocument(AppEffect),
-    /// Replaces the status line; the last one in a list is the one that stays.
-    Diagnostic(String),
+    /// A timed notice to show.
+    Notice(Notice),
     Redraw,
     StartWatcher,
     /// Publish the note the recovery left without a durable file.
@@ -124,9 +125,7 @@ impl<'a, C: ClipboardPort> AssetIo<'a, C> {
         steps: &mut Vec<AssetStep>,
     ) {
         let Some(request_id) = self.assets.sync_sequence.checked_add(1) else {
-            steps.push(AssetStep::Diagnostic(
-                "图片事务序号已耗尽；已停止自动整理。".into(),
-            ));
+            steps.push(AssetStep::Notice(Notice::AssetSequenceExhausted));
             steps.push(AssetStep::Redraw);
             return;
         };
@@ -171,9 +170,8 @@ impl<'a, C: ClipboardPort> AssetIo<'a, C> {
                 if !effects.is_empty() {
                     self.converge(effects, &mut steps);
                 }
-                steps.push(AssetStep::Diagnostic(format!(
-                    "图片粘贴失败；未插入引用，资产正按最新引用状态收敛：{}",
-                    failure.error
+                steps.push(AssetStep::Notice(Notice::ImagePasteFailed(
+                    failure.error.to_string(),
                 )));
                 steps.push(AssetStep::Redraw);
             }
@@ -194,9 +192,7 @@ impl<'a, C: ClipboardPort> AssetIo<'a, C> {
         if self.editor.view().generation != expected_generation {
             let effects = rollback.convergence_effects(&self.editor.managed_ref_counts());
             self.converge(effects, steps);
-            steps.push(AssetStep::Diagnostic(
-                "图片准备期间文档已变化；未插入引用，资产正按最新引用状态收敛。".into(),
-            ));
+            steps.push(AssetStep::Notice(Notice::ImageDocumentChanged));
             steps.push(AssetStep::Redraw);
             return;
         }
@@ -210,8 +206,8 @@ impl<'a, C: ClipboardPort> AssetIo<'a, C> {
             Err(error) => {
                 let effects = rollback.convergence_effects(&self.editor.managed_ref_counts());
                 self.converge(effects, steps);
-                steps.push(AssetStep::Diagnostic(format!(
-                    "图片已准备但文档事务未提交；资产正按最新引用状态收敛：{error}"
+                steps.push(AssetStep::Notice(Notice::ImageCommitFailed(
+                    error.to_string(),
                 )));
                 steps.push(AssetStep::Redraw);
             }
@@ -237,23 +233,22 @@ impl<'a, C: ClipboardPort> AssetIo<'a, C> {
         match result {
             Ok(report) => {
                 if report.physical_delete_deferred {
-                    steps.push(AssetStep::Diagnostic(
-                        "便签磁盘状态正在变化；已保留回收站证据并延后物理清理。".into(),
-                    ));
+                    steps.push(AssetStep::Notice(Notice::AssetCleanupDeferred));
                 }
                 if !report.missing_references.is_empty() {
-                    steps.push(AssetStep::Diagnostic(format!(
-                        "有 {} 个受管图片引用缺少文件；Markdown 未修改。",
-                        report.missing_references.len()
+                    steps.push(AssetStep::Notice(Notice::ManagedImagesMissing(
+                        report.missing_references.len(),
                     )));
                 }
             }
-            Err(error) => steps.push(AssetStep::Diagnostic(format!(
-                "图片整理未完成；用户文件与文档均未删除：{error}"
+            Err(error) => steps.push(AssetStep::Notice(Notice::AssetReconcileFailed(
+                error.to_string(),
             ))),
         }
         if self.assets.reconcile_pending && !self.assets.sync_in_flight {
             self.assets.reconcile_pending = false;
+            // The derived "checking images" ends with it.
+            steps.push(AssetStep::Redraw);
             steps.push(AssetStep::StartWatcher);
             if self.editor.view().base_disk_hash.is_none() {
                 steps.push(AssetStep::RecreateNote);

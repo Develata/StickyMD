@@ -18,8 +18,8 @@ use crate::shell::headless_tests::{
 };
 use crate::shell::receipt_tests::recovering;
 use crate::shell::storage_conformance::{
-    FORCED, GUARDED, Outcome, deliver, enter_conflict, next, observed, press, saved_mode, saving,
-    settled,
+    FORCED, GUARDED, KEEPING_LOCAL, Outcome, deliver, enter_conflict, next, observed, press,
+    saved_mode, settled,
 };
 use stickymd_app::execution::IoCompletion;
 use stickymd_app::ports::{
@@ -28,7 +28,8 @@ use stickymd_app::ports::{
 };
 
 const UNSTABLE: &str = "note changed while it was being observed";
-const CONFLICT: &str = "文件已在外部修改  |  [F6 载入外部]  [F7 保留本地]";
+/// The waiting conflict as the derived layer shows it; its F6/F7 buttons are drawn apart.
+const CONFLICT: &str = "文件已在外部修改";
 
 fn unstable() -> StorageFailure {
     StorageFailure::new(FailureKind::Unavailable, UNSTABLE)
@@ -133,11 +134,18 @@ fn restoring(preserve: Option<PreserveExpectation>) -> HeadlessApp {
     app
 }
 
+/// A routine save shows nothing when it lands (P17-N05).
 #[test]
 fn saved_clears_the_edit() {
     let mut app = edited();
     let receipt = saved(&app, GUARDED);
-    assert_eq!(deliver(&mut app, receipt), settled("已保存"));
+    assert_eq!(
+        deliver(&mut app, receipt),
+        Outcome {
+            diagnostic: None,
+            ..settled("")
+        }
+    );
 }
 
 #[test]
@@ -219,8 +227,8 @@ fn a_failed_save_ends_a_recovery_operation_but_not_the_candidate() {
     assert!(!outcome.operation_pending);
 }
 
-/// Keep local must be satisfied by a forced write, so any older receipt submits one and the
-/// status line ends on that save.
+/// Keep local must be satisfied by a forced write, so any older receipt submits one; the bar
+/// shows "keep local" in progress, under the fault display when the older save failed.
 #[test]
 fn an_older_receipt_during_keep_local_submits_the_forced_save() {
     type Receipt = fn(&HeadlessApp, PersistMode) -> IoCompletion;
@@ -228,9 +236,19 @@ fn an_older_receipt_during_keep_local_submits_the_forced_save() {
     for (receipt, dirty) in rows {
         let mut app = keeping_local();
         let completion = receipt(&app, GUARDED);
-        let expected = saving(&app);
+        let failed_save = dirty && app.app.persistence.unresolved_failure().is_none();
+        let outcome = deliver(&mut app, completion);
+        let fault = app
+            .app
+            .persistence
+            .unresolved_failure()
+            .map(|fault| fault.text.clone());
+        let expected = match fault {
+            Some(text) if failed_save => text,
+            _ => KEEPING_LOCAL.to_owned(),
+        };
         assert_eq!(
-            deliver(&mut app, completion),
+            outcome,
             Outcome {
                 saves: 1,
                 conflict: true,
@@ -335,12 +353,13 @@ fn an_external_edit_reloads_a_clean_document() {
 fn a_missing_note_is_recreated_guarded_on_absence() {
     let (mut app, receipts) = receipt_fixture("start");
     let receipt = observed(&app, ExternalFileState::Missing);
-    let expected = saving(&app);
+    // Recreating the note is a routine save: no progress shows (P17-N05).
     assert_eq!(
         deliver(&mut app, receipt),
         Outcome {
+            diagnostic: None,
             saves: 1,
-            ..settled(expected)
+            ..settled("")
         }
     );
     assert_eq!(saved_mode(&next(&receipts)), GUARDED);
@@ -358,11 +377,11 @@ fn every_conflicting_external_state_names_its_way_out() {
             ExternalFileState::InvalidUtf8 {
                 fingerprint: hash_bytes(b"\xff"),
             },
-            "外部文件不是有效 UTF-8；F7 保留本地覆盖。".to_string(),
+            "外部文件不是有效 UTF-8；只能保留本地并覆盖。".to_string(),
         ),
         (
             ExternalFileState::TooLarge { bytes: 7 },
-            "外部 note.md 过大（7 bytes）；F7 保留本地覆盖。".into(),
+            "外部 note.md 过大（7 bytes）；只能保留本地并覆盖。".into(),
         ),
     ];
     for (state, diagnostic) in rows {
@@ -379,8 +398,8 @@ fn every_conflicting_external_state_names_its_way_out() {
     }
 }
 
-/// The known file coming back ends the conflict; the edit it held back is then saved, and the
-/// status line ends on that save.
+/// The known file coming back ends the conflict, which is said; the edit it held back is then
+/// saved without a word, as every routine save is.
 #[test]
 fn the_known_file_returning_ends_the_conflict_and_saves_the_edit() {
     let mut app = edited();
@@ -390,13 +409,12 @@ fn the_known_file_returning_ends_the_conflict_and_saves_the_edit() {
     type_letter(&mut app);
     enter_conflict(&mut app);
     let receipt = observed(&app, ExternalFileState::Present(external(&known)));
-    let expected = saving(&app);
     assert_eq!(
         deliver(&mut app, receipt),
         Outcome {
             saves: 1,
             dirty: true,
-            ..settled(expected)
+            ..settled("外部文件已恢复为已知版本，冲突已解除。")
         }
     );
 }
@@ -406,7 +424,8 @@ fn an_observation_during_recovery_changes_nothing() {
     let mut app = recovering(None);
     let receipt = observed(&app, ExternalFileState::Present(external("outside")));
     let outcome = deliver(&mut app, receipt);
-    assert_eq!(outcome.diagnostic, None);
+    // Only the waiting recovery shows, as before the observation.
+    assert_eq!(outcome.diagnostic.as_deref(), Some("发现未完成保存的内容"));
     assert!(!outcome.conflict);
     assert_eq!(app.app.coordinator.view().text, "disk");
 }
@@ -490,7 +509,6 @@ fn a_preserved_canonical_starts_the_save_guarded_by_the_restore_plan() {
     );
     app.app.recovery.begin_restore().unwrap();
     let operation = app.app.recovery.operation_id().unwrap();
-    let expected = saving(&app);
     let outcome = deliver(
         &mut app,
         IoCompletion::Note(NoteReceipt::CanonicalPreserved {
@@ -504,7 +522,7 @@ fn a_preserved_canonical_starts_the_save_guarded_by_the_restore_plan() {
             saves: 1,
             recovery_pending: true,
             operation_pending: true,
-            ..settled(expected)
+            ..settled("正在恢复临时内容…")
         }
     );
     assert_eq!(
@@ -520,7 +538,7 @@ fn the_keys_do_nothing_without_a_recovery_or_a_conflict() {
     let mut app = fixture("start");
     assert!(!app.handle_resolution_key(true));
     assert!(!app.handle_resolution_key(false));
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
 }
 
 #[test]
@@ -744,7 +762,7 @@ fn a_rejected_hide_keeps_the_window_shown_through_the_shell() {
         let effects = applied_effects(&mut app);
         assert!(!effects.iter().any(|effect| effect == "ReleaseHiddenCaches"));
         assert_eq!(
-            app.diagnostic.as_deref(),
+            app.notice_text().as_deref(),
             Some(format!("窗口未能隐藏，保持显示（{kind}）。").as_str())
         );
     }

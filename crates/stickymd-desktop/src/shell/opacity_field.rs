@@ -3,6 +3,7 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#theme-opacity-and-content-zoom
 
+use stickymd_app::flow::notice::Notice;
 use winit::event::Ime;
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 
@@ -56,7 +57,7 @@ impl<H: Host> DesktopShell<H> {
     pub(super) fn focus_opacity_input(&mut self) {
         press_probe!(self, PressRoute::PopupField);
         if self.app.editor.is_composing() || self.app.search.is_composing() {
-            self.diagnostic = Some("请先完成当前输入法组合。".into());
+            self.app.notify(Notice::ImeComposingInOpacity);
         } else {
             self.controls.focus_input();
             self.sync_ime_allowed();

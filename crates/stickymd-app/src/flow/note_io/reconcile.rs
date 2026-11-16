@@ -2,9 +2,10 @@
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#external-change-conflict
 
-use stickymd_core::{ExternalFileState, FileConflict};
+use stickymd_core::ExternalFileState;
 
 use super::{NoteEffect, NoteEffects, NoteIo};
+use crate::flow::notice::Notice;
 use crate::flow::{ClipboardPort, ReconciliationAction, SaveTrigger};
 use crate::ports::{PersistMode, TemporaryCleanup};
 
@@ -24,7 +25,7 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
         {
             ReconciliationAction::IgnoreKnown => {
                 if had_conflict {
-                    effects.diagnostic("外部文件已恢复为已知版本，冲突已解除。");
+                    effects.notice(Notice::ConflictClearedByRestore);
                     if dirty {
                         self.submit(SaveTrigger::Debounce, None, effects);
                     }
@@ -46,17 +47,20 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
                     Ok(effect) => {
                         self.persistence.accept_external();
                         effects.push(NoteEffect::ApplyDocument(effect));
-                        effects.diagnostic("已载入外部修改。");
+                        effects.notice(Notice::ExternalLoaded);
                         effects.push(NoteEffect::RefreshTitle);
                         effects.push(NoteEffect::Redraw);
                     }
-                    Err(error) => effects.diagnostic(format!("外部内容协调失败：{error}")),
+                    Err(error) => {
+                        effects.notice(Notice::ExternalReconcileFailed(error.to_string()));
+                        effects.push(NoteEffect::Redraw);
+                    }
                 }
                 return;
             }
             ReconciliationAction::ConflictChanged => {}
         }
-        effects.diagnostic(conflict_diagnostic(self.persistence.conflict()));
+        // The conflict itself shows in the derived layer, with a button per available choice.
         effects.push(NoteEffect::RefreshTitle);
         effects.push(NoteEffect::Redraw);
     }
@@ -66,7 +70,8 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
             return;
         };
         let ExternalFileState::Present(fact) = &conflict.external else {
-            effects.diagnostic("外部文件不可载入；只能 F7 保留本地覆盖。");
+            effects.notice(Notice::ExternalNotLoadable);
+            effects.push(NoteEffect::Redraw);
             return;
         };
         let fact = fact.clone();
@@ -77,10 +82,10 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
                 effects.push(NoteEffect::RemoveTemporary(
                     TemporaryCleanup::ConflictDiscarded,
                 ));
-                effects.diagnostic("已载入最新外部内容；撤销历史已清空。");
+                effects.notice(Notice::ExternalReloadedHistoryCleared);
                 effects.push(NoteEffect::RefreshTitle);
             }
-            Err(error) => effects.diagnostic(format!("载入外部内容失败：{error}")),
+            Err(error) => effects.notice(Notice::ExternalLoadFailed(error.to_string())),
         }
         effects.push(NoteEffect::Redraw);
     }
@@ -92,20 +97,5 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
             Some(PersistMode::ForceOverwrite),
             effects,
         );
-    }
-}
-
-fn conflict_diagnostic(conflict: Option<&FileConflict>) -> String {
-    match conflict.map(|value| &value.external) {
-        Some(ExternalFileState::Present(_)) => {
-            "文件已在外部修改  |  [F6 载入外部]  [F7 保留本地]".into()
-        }
-        Some(ExternalFileState::InvalidUtf8 { .. }) => {
-            "外部文件不是有效 UTF-8；F7 保留本地覆盖。".into()
-        }
-        Some(ExternalFileState::TooLarge { bytes }) => {
-            format!("外部 note.md 过大（{bytes} bytes）；F7 保留本地覆盖。")
-        }
-        Some(ExternalFileState::Missing) | None => "外部文件状态冲突；F7 保留本地。".into(),
     }
 }

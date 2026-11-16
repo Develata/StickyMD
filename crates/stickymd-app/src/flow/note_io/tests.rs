@@ -10,9 +10,10 @@ use stickymd_core::{
 
 use super::save::keep_local_needs_resubmit;
 use super::{NoteEffect, NoteEffects, NoteIo};
+use crate::flow::notice::Notice;
 use crate::flow::{
     ClipboardError, ClipboardPort, EditorCoordinator, PersistenceCoordinator, RecoveryCoordinator,
-    SaveTrigger,
+    SaveFaultKind, SaveTrigger,
 };
 use crate::instruction::AppIntent;
 use crate::ports::{
@@ -130,8 +131,13 @@ fn failure() -> StorageFailure {
 }
 
 fn names(effects: NoteEffects) -> Vec<&'static str> {
+    names_of(&effects)
+}
+
+fn names_of(effects: &NoteEffects) -> Vec<&'static str> {
     effects
-        .into_iter()
+        .0
+        .iter()
         .map(|effect| match effect {
             NoteEffect::SubmitSave(_) => "submit",
             NoteEffect::InspectExternal { .. } => "inspect",
@@ -142,16 +148,18 @@ fn names(effects: NoteEffects) -> Vec<&'static str> {
             NoteEffect::AssetsAfterRecovery => "assets",
             NoteEffect::NoteBarriers { succeeded: true } => "barriers-ok",
             NoteEffect::NoteBarriers { succeeded: false } => "barriers-failed",
-            NoteEffect::Diagnostic(_) => "diagnostic",
+            NoteEffect::Notice(_) => "notice",
+            NoteEffect::FaultDisplayStarted => "fault",
+            NoteEffect::FaultResolved => "fault-resolved",
             NoteEffect::RefreshTitle => "title",
             NoteEffect::Redraw => "redraw",
         })
         .collect()
 }
 
-fn last_diagnostic(effects: NoteEffects) -> Option<String> {
+fn last_notice(effects: NoteEffects) -> Option<Notice> {
     effects.0.into_iter().rev().find_map(|effect| match effect {
-        NoteEffect::Diagnostic(message) => Some(message),
+        NoteEffect::Notice(notice) => Some(notice),
         _ => None,
     })
 }
@@ -203,7 +211,7 @@ fn recovery_blocks_every_save_except_its_own() {
     assert!(!note.persistence.note_save_in_flight());
     assert_eq!(
         names(note.io().submit_save(SaveTrigger::KeepLocal, None)),
-        ["submit", "diagnostic", "redraw"]
+        ["submit", "redraw"]
     );
 }
 
@@ -214,7 +222,7 @@ fn a_saved_receipt_settles_the_barriers_before_the_redraw() {
     let receipt = note.saved_receipt(GUARDED);
     assert_eq!(
         names(note.io().on_receipt(receipt, 0)),
-        ["diagnostic", "title", "barriers-ok", "redraw"]
+        ["title", "barriers-ok", "redraw"]
     );
 }
 
@@ -239,7 +247,7 @@ fn a_receipt_for_an_unreached_generation_fails_the_save() {
     let receipt = receipt_from_the_future(&note);
     assert_eq!(
         names(note.io().on_receipt(receipt, 0)),
-        ["diagnostic", "barriers-failed", "redraw"]
+        ["fault", "barriers-failed", "redraw"]
     );
     assert!(!note.persistence.note_save_in_flight());
     assert_eq!(note.editor.view().base_disk_hash, None);
@@ -289,15 +297,7 @@ fn a_valid_older_save_receipt_keeps_the_newer_edit_dirty_and_saves_it() {
     note.type_letter();
     assert_eq!(
         names(note.io().on_receipt(receipt, 0)),
-        [
-            "diagnostic",
-            "submit",
-            "diagnostic",
-            "redraw",
-            "title",
-            "barriers-ok",
-            "redraw"
-        ]
+        ["submit", "redraw", "title", "barriers-ok", "redraw"]
     );
     let view = note.editor.view();
     assert!(view.dirty);
@@ -319,21 +319,12 @@ fn a_keep_local_handover_holds_the_barriers() {
     };
     assert_eq!(
         names(note.io().on_receipt(receipt, 0)),
-        [
-            "diagnostic",
-            "submit",
-            "diagnostic",
-            "redraw",
-            "title",
-            "redraw"
-        ]
+        ["fault", "submit", "redraw", "title", "redraw"]
     );
     let receipt = note.saved_receipt(PersistMode::ForceOverwrite);
     let effects = note.io().on_receipt(receipt, 0);
-    assert_eq!(
-        last_diagnostic(effects).as_deref(),
-        Some("已保留本地内容并覆盖外部文件。")
-    );
+    assert_eq!(names_of(&effects).first(), Some(&"fault-resolved"));
+    assert_eq!(last_notice(effects), Some(Notice::KeptLocal));
     assert!(!note.persistence.keep_local_in_progress());
     assert!(note.persistence.conflict().is_none());
 }
@@ -387,7 +378,7 @@ fn a_clean_reload_applies_the_document_before_reporting_it() {
     let receipt = observed(&note, present("outside"));
     assert_eq!(
         names(note.io().on_receipt(receipt, 0)),
-        ["apply-document", "diagnostic", "title", "redraw"]
+        ["apply-document", "notice", "title", "redraw"]
     );
     assert_eq!(note.editor.view().text, "outside");
 }
@@ -402,7 +393,7 @@ fn loading_the_external_side_applies_it_before_discarding_the_temporary() {
         [
             "apply-document",
             "remove-temporary",
-            "diagnostic",
+            "notice",
             "title",
             "redraw"
         ]
@@ -416,7 +407,7 @@ fn restoring_resyncs_before_saving_or_preserving() {
     note.offer_recovery(None);
     assert_eq!(
         names(note.io().resolve(true).unwrap()),
-        ["resync", "submit", "diagnostic", "redraw"]
+        ["resync", "submit", "redraw"]
     );
 
     let mut note = Note::new("disk");
@@ -439,7 +430,7 @@ fn finishing_recovery_converges_the_assets_first() {
     };
     assert_eq!(
         names(note.io().on_receipt(receipt, 0)),
-        ["assets", "diagnostic", "title", "redraw"]
+        ["assets", "title", "redraw"]
     );
     assert!(!note.recovery.is_pending());
 }
@@ -449,4 +440,103 @@ fn the_keys_are_not_consumed_without_a_recovery_or_a_conflict() {
     let mut note = Note::new("text");
     assert!(note.io().resolve(true).is_none());
     assert!(note.io().resolve(false).is_none());
+}
+
+/// P17-N05: only a manual save shows "saved"; a routine autosave shows neither progress nor
+/// success.
+#[test]
+fn only_a_manual_save_shows_saved() {
+    let mut note = Note::new("text");
+    note.type_letter();
+    assert_eq!(
+        names(note.io().submit_save(SaveTrigger::Debounce, None)),
+        ["submit", "redraw"]
+    );
+    assert_eq!(note.persistence.manual_save(), None);
+    let receipt = note.saved_receipt(GUARDED);
+    assert_eq!(last_notice(note.io().on_receipt(receipt, 0)), None);
+
+    note.type_letter();
+    let _ = note.io().submit_save(SaveTrigger::Manual, None);
+    assert_eq!(note.persistence.manual_save(), Some(note.generation()));
+    let receipt = note.saved_receipt(GUARDED);
+    assert_eq!(
+        last_notice(note.io().on_receipt(receipt, 0)),
+        Some(Notice::Saved)
+    );
+    assert_eq!(note.persistence.manual_save(), None);
+}
+
+/// P17-N06: a failed save sets the unresolved failure with its kind; a later success resolves
+/// it before its own notice.
+#[test]
+fn a_failed_save_is_unresolved_until_a_later_save_succeeds() {
+    let mut note = Note::new("text");
+    note.type_letter();
+    let _ = note.io().submit_save(SaveTrigger::Manual, None);
+    let receipt = NoteReceipt::Save {
+        generation: note.generation(),
+        mode: GUARDED,
+        result: Err(failure()),
+    };
+    let effects = note.io().on_receipt(receipt, 0);
+    assert_eq!(names(effects).first(), Some(&"fault"));
+    assert_eq!(
+        note.persistence
+            .unresolved_failure()
+            .map(|fault| fault.kind),
+        Some(SaveFaultKind::Unavailable)
+    );
+    assert_eq!(note.persistence.manual_save(), None);
+
+    let _ = note.io().submit_save(SaveTrigger::Manual, None);
+    assert!(
+        note.persistence.unresolved_failure().is_some(),
+        "a retry keeps it"
+    );
+    let receipt = note.saved_receipt(GUARDED);
+    let effects = note.io().on_receipt(receipt, 0);
+    assert_eq!(names_of(&effects).first(), Some(&"fault-resolved"));
+    assert_eq!(last_notice(effects), Some(Notice::Saved));
+    assert!(note.persistence.unresolved_failure().is_none());
+}
+
+/// P17-N20: once the worker stopped, a save the user asked for is refused aloud, a hide or quit
+/// waiting on a save ends at once, a routine autosave does nothing, and so does a choice that
+/// must write; loading the external side still works.
+#[test]
+fn a_stopped_worker_refuses_what_would_need_it() {
+    let mut note = Note::new("text");
+    note.type_letter();
+    assert!(note.persistence.worker_stopped("stopped".into()));
+    let effects = note.io().submit_save(SaveTrigger::Manual, None);
+    assert_eq!(names_of(&effects), ["notice", "redraw"]);
+    assert_eq!(last_notice(effects), Some(Notice::PersistenceUnavailable));
+    assert_eq!(note.persistence.manual_save(), None);
+    for trigger in [SaveTrigger::HideToTray, SaveTrigger::Shutdown] {
+        assert_eq!(
+            names(note.io().submit_save(trigger, None)),
+            ["barriers-failed"]
+        );
+    }
+    for trigger in [SaveTrigger::Debounce, SaveTrigger::FocusLoss] {
+        assert!(names(note.io().submit_save(trigger, None)).is_empty());
+    }
+    assert!(!note.persistence.note_save_in_flight());
+
+    note.enter_conflict();
+    let effects = note.io().resolve(false).unwrap();
+    assert_eq!(last_notice(effects), Some(Notice::PersistenceUnavailable));
+    assert!(!note.persistence.keep_local_in_progress());
+    let effects = note.io().resolve(true).unwrap();
+    assert!(names(effects).contains(&"apply-document"));
+
+    let mut note = Note::new("disk");
+    note.offer_recovery(None);
+    assert!(note.persistence.worker_stopped("stopped".into()));
+    for primary in [true, false] {
+        let effects = note.io().resolve(primary).unwrap();
+        assert_eq!(last_notice(effects), Some(Notice::PersistenceUnavailable));
+        assert!(!note.recovery.operation_pending());
+    }
 }

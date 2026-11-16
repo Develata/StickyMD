@@ -4,12 +4,13 @@
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#source-find-replace
 
+use crate::flow::notice::Notice;
 use stickymd_core::Selection;
 
 use crate::config::ViewMode;
 use crate::instruction::AppIntent;
 use crate::interaction::rules::{
-    ReplaceCurrentAction, SEARCH_COMPOSING, SearchOpenAction, SearchPlace, replace_current_action,
+    ReplaceCurrentAction, SearchOpenAction, SearchPlace, replace_current_action,
     replacement_allowed, replacement_end, search_open_action,
 };
 
@@ -31,8 +32,7 @@ impl AppSession {
     /// an open one or shows its replacement row; a composition in the note or in Search refuses it.
     pub fn open_search(&mut self, replace: bool, out: &mut ShellEffects) -> SearchOpenStep {
         if self.search.open && self.search.is_composing() {
-            out.push(ShellEffect::Diagnostic(SEARCH_COMPOSING.into()));
-            out.push(ShellEffect::RedrawNeeded);
+            self.show_notice(Notice::ImeComposingInSearch, out);
             return SearchOpenStep::Done;
         }
         let replace = match search_open_action(self.search.open, replace) {
@@ -46,10 +46,7 @@ impl AppSession {
             SearchOpenAction::Open { replace } => replace,
         };
         if self.editor.is_composing() {
-            out.push(ShellEffect::Diagnostic(
-                "请先完成当前输入法组合，再打开查找。".into(),
-            ));
-            out.push(ShellEffect::RedrawNeeded);
+            self.show_notice(Notice::ImeComposingBeforeSearch, out);
             return SearchOpenStep::Done;
         }
         if self.config.current().view_mode == ViewMode::Preview {
@@ -162,8 +159,7 @@ impl AppSession {
                 out.turn(Turn::MatchReplaced { end });
             }
             Err(error) => {
-                out.push(ShellEffect::Diagnostic(error.to_string()));
-                out.push(ShellEffect::RedrawNeeded);
+                self.show_notice(Notice::editor_failure(&error), out);
                 // The active match is selected for the keyboard and the Replace button alike.
                 self.select_active_match(out);
             }

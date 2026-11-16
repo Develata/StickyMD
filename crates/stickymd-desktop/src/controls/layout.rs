@@ -17,6 +17,8 @@ const EDGE_DIP: f64 = 5.0;
 const COMPACT_EDGE_DIP: f64 = 6.0;
 const COMPACT_GAP_DIP: f64 = 0.0;
 const RESIZE_BORDER_DIP: f64 = 6.0;
+/// The save-failure marker's slot, left of the right-hand buttons (plan 09 #notices).
+const FAULT_MARKER_SLOT_DIP: f64 = 12.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlId {
@@ -64,6 +66,9 @@ pub enum ControlHit {
     Resize(WindowResizeEdge),
     SplitSync,
     Button(ControlId),
+    /// The save-failure marker's slot. It is a target only while the marker shows; otherwise
+    /// the shell treats it as the toolbar.
+    FaultMarker,
     /// The toolbar outside its buttons, which moves the window.
     DragWindow,
 }
@@ -80,6 +85,9 @@ pub struct ControlLayout {
     pub opacity_input: ControlRect,
     /// In a Split, the control on the divider.
     pub split_sync: Option<ControlRect>,
+    /// Where the save-failure marker shows and is clicked: left of the right-hand buttons, when
+    /// the toolbar leaves room for it there. A window too narrow for it has none.
+    pub fault_marker: Option<ControlRect>,
 }
 
 impl ControlLayout {
@@ -143,6 +151,15 @@ impl ControlLayout {
                 },
             );
         }
+        let left_end = edge + 4.0 * control + 3.0 * gap;
+        let marker_width = FAULT_MARKER_SLOT_DIP * scale;
+        let fault_marker =
+            (right_origin - left_end - 2.0 * gap.max(scale) >= marker_width).then(|| ControlRect {
+                x: right_origin - gap.max(scale) - marker_width,
+                y,
+                width: marker_width,
+                height: control,
+            });
         let popup_width = (230.0 * scale).min(size.width as f64);
         let popup_height = 58.0 * scale;
         let opacity = controls
@@ -187,6 +204,7 @@ impl ControlLayout {
             opacity_slider,
             opacity_input,
             split_sync,
+            fault_marker,
         }
     }
 
@@ -204,6 +222,9 @@ impl ControlLayout {
         }
         if let Some(id) = self.control_at(point) {
             return Some(ControlHit::Button(id));
+        }
+        if self.fault_marker.is_some_and(|rect| rect.contains(point)) {
+            return Some(ControlHit::FaultMarker);
         }
         self.toolbar
             .contains(point)

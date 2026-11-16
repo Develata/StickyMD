@@ -14,7 +14,6 @@ use crate::host::Host;
 use crate::input::ZoomCommand;
 use crate::preview::{meaningful_preview_drag, pane_local};
 use crate::scroll::ScrollPane;
-use stickymd_app::instruction::PersistenceIntent;
 use stickymd_app::session::ZoomInput;
 
 impl<H: Host> DesktopShell<H> {
@@ -35,6 +34,14 @@ impl<H: Host> DesktopShell<H> {
             return;
         }
         if self.handle_search_mouse_button(state, button) {
+            return;
+        }
+        // The bar's buttons answer a waiting decision before any pane sees the press, as F6 and
+        // F7 do before the edit guards.
+        if state == ElementState::Pressed
+            && button == MouseButton::Left
+            && self.press_notice_button()
+        {
             return;
         }
         if !self.window_accepts_editor_mutation() {
@@ -67,18 +74,6 @@ impl<H: Host> DesktopShell<H> {
                 self.preview_focused = false;
                 self.sync_ime_allowed();
                 self.app.editor.cancel_preedit();
-                let diagnostic_action = self.projection.as_ref().and_then(|projection| {
-                    projection.diagnostic_action_at(source_position.0, source_position.1)
-                });
-                if let Some(primary) = diagnostic_action
-                    && self.dispatch_persistence_intent(if primary {
-                        PersistenceIntent::ResolvePrimary
-                    } else {
-                        PersistenceIntent::ResolveSecondary
-                    })
-                {
-                    return;
-                }
                 let Some(projection) = &self.projection else {
                     return;
                 };

@@ -253,7 +253,7 @@ fn started_on_clock(
     });
     // There is no event loop: what a worker posts here is dropped.
     let sink = EventSink::new(|_| {});
-    let mut app = DesktopShell::new(host, session, sink, started_at, None);
+    let mut app = DesktopShell::new(host, session, sink, started_at, Vec::new());
     #[cfg(test)]
     {
         app.headless_window_gesture = Some(true);

@@ -4,8 +4,9 @@
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-scheduling
 
 use crate::config::ViewMode;
+use crate::flow::notice::Notice;
 use crate::flow::window::state::WindowIntent;
-use crate::interaction::rules::{SEARCH_COMPOSING, SearchViewChange, search_on_view_change};
+use crate::interaction::rules::{SearchViewChange, search_on_view_change};
 
 use super::{AppSession, ShellEffect, ShellEffects};
 
@@ -28,9 +29,9 @@ impl PreparedViewChange {
 
 impl AppSession {
     /// Whether the view may change to `mode`, and what that does to Search; `None` leaves the view
-    /// as it is, and a refusal is on the status line.
+    /// as it is, and a refusal is shown as a notice.
     pub fn begin_view_change(
-        &self,
+        &mut self,
         mode: ViewMode,
         out: &mut ShellEffects,
     ) -> Option<PreparedViewChange> {
@@ -41,8 +42,7 @@ impl AppSession {
         // refusal leaves the view untouched; applied only once the new view is committed.
         let search = search_on_view_change(mode, self.search_place());
         if search == SearchViewChange::Refuse {
-            out.push(ShellEffect::Diagnostic(SEARCH_COMPOSING.into()));
-            out.push(ShellEffect::RedrawNeeded);
+            self.show_notice(Notice::ImeComposingInSearch, out);
             return None;
         }
         Some(PreparedViewChange { mode, search })
@@ -60,7 +60,7 @@ impl AppSession {
             out,
         );
         if let Err(error) = self.config.update(|config| config.view_mode = mode) {
-            out.push(ShellEffect::Diagnostic(error.to_string()));
+            self.show_notice(Notice::ConfigFailed(error.to_string()), out);
             return;
         }
         if mode == ViewMode::Source {

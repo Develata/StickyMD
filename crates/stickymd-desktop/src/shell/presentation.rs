@@ -3,6 +3,7 @@
 //! plan_ref: docs/plan/03_system_architecture.md#interaction-shell
 
 use std::time::Instant;
+use stickymd_app::flow::notice::Notice;
 
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 
@@ -133,7 +134,7 @@ impl<H: Host> DesktopShell<H> {
             && let Some(surface) = &mut self.surface
             && let Err(error) = surface.resize(size.width, size.height)
         {
-            self.diagnostic = Some(error.to_string());
+            self.app.notify(Notice::RenderFailed(error.to_string()));
         } else {
             self.sync_control_layout();
         }

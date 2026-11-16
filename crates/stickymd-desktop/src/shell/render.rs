@@ -3,12 +3,13 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#frame-presentation
 
+use stickymd_app::flow::notice::Notice;
 use tiny_skia::{Paint, Pixmap, Rect, Transform};
 use winit::dpi::PhysicalSize;
 
 use super::DesktopShell;
 use super::presentation::PendingRedraw;
-use crate::controls::{ToolbarVisual, paint_toolbar};
+use crate::controls::{NoticeBarLayout, ToolbarVisual, paint_notice_bar, paint_toolbar};
 use crate::host::{Host, PRESENT_RETRY, PresentFacts, PresentOutcome};
 use crate::search::paint_search_overlay;
 use stickymd_app::config::ContentZoomPercent;
@@ -37,7 +38,6 @@ pub(super) struct SourcePaintKey {
     generation: stickymd_core::Generation,
     selection: stickymd_core::Selection,
     preedit: Option<stickymd_render::source::PreeditVisual>,
-    diagnostic: Option<String>,
     theme: stickymd_render::source::SourceTheme,
     width: u32,
     height: u32,
@@ -93,7 +93,6 @@ impl<H: Host> DesktopShell<H> {
                 generation: projection.projected_generation(),
                 selection: self.app.editor.selection,
                 preedit,
-                diagnostic: self.diagnostic.clone(),
                 theme: source_theme,
                 width: source_frame.width(),
                 height: source_frame.height(),
@@ -108,13 +107,12 @@ impl<H: Host> DesktopShell<H> {
                     self.app.editor.selection,
                     self.app.editor.focused,
                     false,
-                    self.diagnostic.as_deref(),
                     source_theme,
                 ) {
                     Ok(()) => self.source_paint_key = Some(paint_key),
                     Err(error) => {
                         self.source_paint_key = None;
-                        self.diagnostic = Some(error.to_string());
+                        self.app.notify(Notice::RenderFailed(error.to_string()));
                     }
                 }
             }
@@ -127,7 +125,7 @@ impl<H: Host> DesktopShell<H> {
             dark,
             system_theme: self.app.config().current().theme
                 == stickymd_app::config::ThemeMode::System,
-            diagnostic: self.diagnostic.is_some(),
+            fault_marker: self.app.save_fault_marked(),
             emphasized: self.app.editor.focused
                 || self.pointer_inside_window
                 || self.controls.opacity_popup_open,
@@ -166,7 +164,7 @@ impl<H: Host> DesktopShell<H> {
                 source_theme,
             )
         {
-            self.diagnostic = Some(error.to_string());
+            self.app.notify(Notice::RenderFailed(error.to_string()));
         }
         if let Some(pane) = geometry.preview {
             if let Some(frame) = &self.preview_frame
@@ -195,6 +193,14 @@ impl<H: Host> DesktopShell<H> {
             scales.shell as f32,
             dark,
         );
+        // Over every pane and under the toolbar's popup: the bar is laid out on the frame it
+        // paints, in window DIP.
+        if let Some(view) = self.app.notice_view() {
+            let pixmap = surface.pixmap_mut();
+            let size = PhysicalSize::new(pixmap.width(), pixmap.height());
+            let layout = NoticeBarLayout::new(size, scales.shell as f32, view.choices);
+            paint_notice_bar(pixmap, &mut self.projection, &layout, &view, dark);
+        }
         let surface_size = {
             let pixmap = surface.pixmap_mut();
             PhysicalSize::new(pixmap.width(), pixmap.height())
@@ -213,7 +219,7 @@ impl<H: Host> DesktopShell<H> {
         // Only a deferred frame waits for a retry; a presented or failed one ends any wait.
         self.present_retry_at = None;
         let presented = if let PresentOutcome::Failed(error) = outcome {
-            self.diagnostic = Some(error);
+            self.app.notify(Notice::RenderFailed(error));
             false
         } else if outcome == PresentOutcome::Deferred {
             // Nothing reached the window: draw the whole frame again shortly.
@@ -242,8 +248,9 @@ impl<H: Host> DesktopShell<H> {
                 && let Err(error) = self.sync_native_caret_overlay()
             {
                 self.native_caret_failed = true;
-                self.diagnostic = Some(format!("caret overlay unavailable: {error}"));
-                self.request_redraw();
+                self.notify(Notice::RenderFailed(format!(
+                    "caret overlay unavailable: {error}"
+                )));
             }
         }
         self.update_ime_area();
@@ -361,7 +368,7 @@ mod tests {
                     topmost: false,
                     dark: false,
                     system_theme: false,
-                    diagnostic: false,
+                    fault_marker: false,
                     emphasized: true,
                     opacity_popup: false,
                     opacity: 96,

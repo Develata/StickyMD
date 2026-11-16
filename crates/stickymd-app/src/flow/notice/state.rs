@@ -51,6 +51,11 @@ impl NoticeState {
         self.timed.remove_fault_displays();
     }
 
+    /// The timed notices, newest first: the shown one, then those it covers.
+    pub fn timed(&self) -> impl Iterator<Item = &super::timed::TimedNotice> {
+        self.timed.iter().rev()
+    }
+
     /// When the shown timed notice ends.
     pub fn deadline_ms(&self) -> Option<u64> {
         self.timed.deadline_ms()

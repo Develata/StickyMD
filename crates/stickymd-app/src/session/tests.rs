@@ -149,7 +149,7 @@ fn label(effect: &ShellEffect) -> String {
         ShellEffect::Preference(effect) => format!("{effect:?}"),
         ShellEffect::TitleDirty => "TitleDirty".to_owned(),
         ShellEffect::RedrawNeeded => "RedrawNeeded".to_owned(),
-        ShellEffect::Diagnostic(message) => message.clone(),
+
         ShellEffect::StartWatcher => "StartWatcher".to_owned(),
         ShellEffect::FocusLost => "FocusLost".to_owned(),
         ShellEffect::Exit => "Exit".to_owned(),
@@ -278,7 +278,9 @@ fn focus_loss_ends_the_shells_part_first_and_saves_a_dirty_note() {
         session.on_focus_changed(false, out);
     });
     assert_eq!(seen[0], "FocusLost");
-    assert!(seen[1].starts_with("正在保存 generation"), "{seen:?}");
+    assert_eq!(seen[1], "RedrawNeeded");
+    // A routine save shows no progress (P17-N05).
+    assert!(session.notice_view().is_none());
     assert_eq!(session.worker.metrics().note_submitted, 1);
     assert!(!session.editor.focused);
 
