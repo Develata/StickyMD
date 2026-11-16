@@ -197,3 +197,13 @@ USER 选择“A 先升 0.59”。USER 另外说明：StickyMD 自己的 1.0.0 �
 - **plan 06 漏改。** codex 复审指出，`docs/plan/06_markdown_math_rendering.md` 要求“升级 Comrak 时方言选项需重新核验并更新本章”，升级时没有做。现已补上：记下当前版本 0.59.0；方言选项不变、其它扩展保持关闭；并列出随版本改变、由 Comrak 决定的解析结果（自动链接的识别，以及源码位置）。
 - **授权依据。** 预览中自动链接的变化，本报告上文已列为已知行为变化，USER 在此基础上选择了方案 A。
 - **Windows x64 实机运行。** 仍待在 Windows 机器上验证。
+
+## 补充：Windows x64 实机运行（2026-11-16）
+
+在 Windows 11 25H2、i7-12700H 上，对 `f8f56a3` 运行了以下各项，全部通过：
+
+- `cargo test --workspace --locked`，含 email 栈回归，debug 与 release 各一次；
+- Phase 5、6、11-B、14 的 release 基线；
+- 本地桌面 preflight G4-04（数学按钮与撤销）。
+
+上文“未验证”中的“Windows x64 上的实际运行”就此关闭。Windows 模块收据仍未生成。真实笔记中 autolink 变化带来的差异，仍只有现有测试覆盖。详见 [Windows 回归 P16-V05](2026-11-16-windows-p16-v05-regression.md)。

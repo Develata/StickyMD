@@ -367,3 +367,12 @@ codex 只读复审了 `git diff 159b9b7 c113088`（模型 `gpt-6-astra`，effort
 4. **CPU 上界写低了（可改，已核实）。** 上文“新包空闲 CPU 中位都不超过 0.001%”不对。final3 里新包 Preview 的中位是 0.00136%，final3b 是 0.00182%。这不影响“低于 0.05% 目标”的结论，验收表 P16-R02 已改为四位小数。
 
 复审还确认了一点：真实呈现链路（IOSurface → CALayer → 合成器 → 屏幕）与 Windows 出口都没有关闭，P16-V04、V05 保持 NOT TESTED 是对的。
+
+## 补充：Windows 出口（2026-11-16）
+
+P16-V05 已在 Windows 11 上用 `f8f56a3` 的 release 跑过桌面 preflight，未发现回归。
+
+- 截图比对：不透明帧去掉窗口边与标题栏后，与 `v0.1.3` 逐像素相同。
+- 未测：交互中的撕裂/闪烁/残影与高 DPI，所以 V05 仍记 NOT TESTED。
+
+详见 [Windows 回归 P16-V05](2026-11-16-windows-p16-v05-regression.md)。
