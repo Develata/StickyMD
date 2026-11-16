@@ -1165,6 +1165,13 @@ fn is_macos_matrix(path: &Path) -> bool {
     path.file_name().is_some_and(|name| name == "phase-16.md")
 }
 
+/// Whether `path` is a matrix written ahead of its code: Phase 16 (the macOS host) and Phase 17
+/// (plan 11 #phase-17-copy-and-notices: items not run stay `NOT TESTED`).
+fn written_ahead_of_code(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name == "phase-16.md" || name == "phase-17.md")
+}
+
 fn read_matrix_rows(path: &Path) -> Result<Vec<MatrixRow>, String> {
     matrix_rows(&read_text(path)?, path)
 }
@@ -1186,10 +1193,10 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
             "Manual" if matches!(status, "MANUAL PASS" | "NOT TESTED" | "BLOCKED") => {}
             "Guided Manual" if matches!(status, "NOT TESTED" | "BLOCKED") => {}
             "Automated exact candidate" if matches!(status, "NOT TESTED" | "BLOCKED") => {}
-            // The macOS matrix is written ahead of the host (plan 11 Phase 16: items not run stay
-            // `NOT TESTED`), so its automated rows may wait, and its one waiver has no mode.
-            // Readiness still refuses a waiting automated row when `phase 16` is judged.
-            "Automated" if status == "NOT TESTED" && is_macos_matrix(path) => {}
+            // A matrix written ahead of its code may hold automated rows that wait (plan 11: items
+            // not run stay `NOT TESTED`); the macOS matrix also holds one waiver without a mode.
+            // Readiness still refuses a waiting automated row when its phase is judged.
+            "Automated" if status == "NOT TESTED" && written_ahead_of_code(path) => {}
             "—" if status == "USER 豁免" && is_macos_matrix(path) => {}
             _ => {
                 return Err(at(format!(
@@ -1594,21 +1601,24 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// Only the macOS matrix may hold an automated row that has not run, or a waiver without a
-    /// mode; the same rows in any other matrix stay refused, and `phase 16` still refuses to be
-    /// ready while one waits.
+    /// Only the matrices written ahead of their code (Phase 16 and 17) may hold an automated row
+    /// that has not run, and only the macOS matrix a waiver without a mode; the same rows in any
+    /// other matrix stay refused, and `phase 16` still refuses to be ready while one waits.
     #[test]
-    fn the_macos_matrix_alone_may_hold_automated_rows_that_have_not_run() {
+    fn only_matrices_written_ahead_of_their_code_may_hold_automated_rows_that_have_not_run() {
         let header =
             "| ID | Requirement | Mode | Evidence | Status |\n| --- | --- | --- | --- | --- |\n";
         let waiting = format!("{header}| P16-S06 | act | Automated | exFAT | NOT TESTED |\n");
         let waived = format!("{header}| P16-W16 | act | — | USER 2026-11-10 | USER 豁免 |\n");
         let macos = std::path::Path::new("phase-16.md");
+        let ahead = std::path::Path::new("phase-17.md");
         let other = std::path::Path::new("phase-15.md");
         for document in [&waiting, &waived] {
             assert_eq!(matrix_rows(document, macos).unwrap().len(), 1);
             assert!(matrix_rows(document, other).is_err());
         }
+        assert_eq!(matrix_rows(&waiting, ahead).unwrap().len(), 1);
+        assert!(matrix_rows(&waived, ahead).is_err());
         for bad in [
             "| P16-S06 | act | Automated | exFAT | MANUAL PASS |",
             "| P16-S06 | act | Manual | exFAT | USER 豁免 |",
