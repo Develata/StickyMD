@@ -300,7 +300,12 @@ fn a_press_on_the_bar_reaches_nothing_under_it() {
     app.headless_view = Some((SHORT, 1.0));
     app.surface = Some(SoftwareSurface::for_host(SHORT.width, SHORT.height).unwrap());
     let snapshot = app.app.coordinator.snapshot();
-    app.projection = Some(SourceProjection::new(&snapshot, SHORT.width, SHORT.height, 1.0));
+    app.projection = Some(SourceProjection::new(
+        &snapshot,
+        SHORT.width,
+        SHORT.height,
+        1.0,
+    ));
     app.configure_viewports();
     app.sync_control_layout();
     app.open_search(true);
@@ -312,7 +317,10 @@ fn a_press_on_the_bar_reaches_nothing_under_it() {
     let under = (0..bar.width as u32)
         .flat_map(|dx| (0..bar.height as u32).map(move |dy| (dx, dy)))
         .map(|(dx, dy)| {
-            PhysicalPosition::new(f64::from(bar.x) + f64::from(dx), f64::from(bar.y) + f64::from(dy))
+            PhysicalPosition::new(
+                f64::from(bar.x) + f64::from(dx),
+                f64::from(bar.y) + f64::from(dy),
+            )
         })
         .find(|position| search.hit(*position, true) == Some(SearchHit::ReplaceAll))
         .expect("Replace All lies under the bar in a short window");
@@ -329,7 +337,12 @@ fn a_thumb_under_the_bar_can_still_be_grabbed() {
     app.headless_view = Some((VIEW, 1.0));
     app.surface = Some(SoftwareSurface::for_host(VIEW.width, VIEW.height).unwrap());
     let snapshot = app.app.coordinator.snapshot();
-    app.projection = Some(SourceProjection::new(&snapshot, VIEW.width, VIEW.height, 1.0));
+    app.projection = Some(SourceProjection::new(
+        &snapshot,
+        VIEW.width,
+        VIEW.height,
+        1.0,
+    ));
     app.configure_viewports();
     app.sync_control_layout();
     app.projection.as_mut().unwrap().scroll_to_fraction(1.0);
@@ -345,7 +358,10 @@ fn a_thumb_under_the_bar_can_still_be_grabbed() {
         f64::from(thumb.track.x + 2),
         thumb.thumb_top + thumb.thumb_height - 2.0,
     );
-    assert!(bar.contains(press.x, press.y), "the thumb is not under the bar");
+    assert!(
+        bar.contains(press.x, press.y),
+        "the thumb is not under the bar"
+    );
     app.cursor_position = press;
     app.handle_mouse_button(ElementState::Pressed, MouseButton::Left);
     assert!(app.scrollbars.drag.is_some(), "the bar took the press");

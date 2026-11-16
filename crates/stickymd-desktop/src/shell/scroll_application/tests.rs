@@ -241,7 +241,10 @@ fn split_sync_keeps_the_end_room_and_the_source_within_its_end() {
         apply(&mut source, &mut preview_y, ScrollPane::Preview, request);
         assert_eq!(preview_y, end.max_scroll, "step {step}");
         let fraction = source.scroll_metrics().fraction;
-        assert!(fraction > 0.99 && fraction <= 1.0, "step {step}: {fraction}");
+        assert!(
+            fraction > 0.99 && fraction <= 1.0,
+            "step {step}: {fraction}"
+        );
     }
     let source_end = source.scroll();
     apply(
@@ -251,7 +254,10 @@ fn split_sync_keeps_the_end_room_and_the_source_within_its_end() {
         ScrollRequest::Pixels(50.0),
     );
     assert_eq!(source.scroll(), source_end, "the Source is at its end");
-    assert_eq!(preview_y, end.max_scroll, "the Preview stays in its end room");
+    assert_eq!(
+        preview_y, end.max_scroll,
+        "the Preview stays in its end room"
+    );
     apply(
         &mut source,
         &mut preview_y,

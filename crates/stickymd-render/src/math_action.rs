@@ -113,10 +113,7 @@ mod tests {
         };
         assert_eq!(pass("$$a\n=\nb$$").change_count(), 1);
         assert_eq!(pass("$$a\n=\nb\n=\nc$$").change_count(), 2);
-        assert_eq!(
-            pass("$$a\n=\nb$$\n\n$$c\n=\nd$$").change_count(),
-            2
-        );
+        assert_eq!(pass("$$a\n=\nb$$\n\n$$c\n=\nd$$").change_count(), 2);
         assert_eq!(pass("\\(x\\) and \\(y\\)").change_count(), 2);
     }
 
