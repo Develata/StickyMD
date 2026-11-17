@@ -48,6 +48,7 @@ pub(super) enum PressRoute {
     Preference(WindowPreferenceIntent),
     Search(SearchHit),
     Scroll,
+    CopyRail,
     Preview,
     Source,
 }

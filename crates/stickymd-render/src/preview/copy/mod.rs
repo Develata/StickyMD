@@ -123,6 +123,28 @@ impl CopyMap {
         self.slices(start, end).map(CopySource::Slices)
     }
 
+    /// The whole content of render block `leaf`'s object, by rule 1 only: what its copy rail
+    /// copies (plan 06 #preview-copy-rail). Never a source slice, so never its fences or
+    /// container prefixes. Empty for a block that shows nothing, such as an empty code block;
+    /// `Unmapped` when its content is not one object.
+    pub(crate) fn object<'a>(
+        &'a self,
+        text: &'a str,
+        leaf: usize,
+    ) -> Result<&'a str, PreviewCopyError> {
+        let leaf = self
+            .leaves
+            .get(leaf)
+            .filter(|_| self.consistent)
+            .ok_or(PreviewCopyError::Unmapped)?;
+        let content = leaf.content as usize..leaf.end as usize;
+        if content.is_empty() {
+            return Ok("");
+        }
+        self.object_text(text, &content)
+            .ok_or(PreviewCopyError::Unmapped)
+    }
+
     /// Rule 1: a selection inside one object's display text copies the object's own text: a
     /// formula's TeX without delimiters, or the selected code, Raw HTML or alt text.
     fn object_text<'a>(&'a self, text: &'a str, selection: &Range<usize>) -> Option<&'a str> {

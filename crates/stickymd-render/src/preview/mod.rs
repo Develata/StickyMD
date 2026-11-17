@@ -6,6 +6,7 @@
 //! No preview type exposes a source mutation or persistence API.
 
 mod copy;
+mod copy_rail;
 mod end_room;
 mod export;
 mod fonts;
@@ -29,6 +30,7 @@ mod table_layout;
 mod text_layout;
 
 pub use copy::PreviewCopyError;
+pub use copy_rail::{COPY_RAIL_WIDTH_DIP, PreviewCopyRail};
 pub use end_room::PreviewEnd;
 pub use export::{
     ExportProjectionError, ImageOccurrence, ImageRewrite, collect_image_occurrences,

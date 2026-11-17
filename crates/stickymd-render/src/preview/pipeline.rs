@@ -1805,3 +1805,6 @@ mod tests {
 
 #[cfg(test)]
 mod horizontal_tests;
+
+#[cfg(test)]
+mod copy_rail_tests;

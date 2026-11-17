@@ -69,6 +69,9 @@ mod phase15_session_tests;
 mod phase15_worker_receipt_tests;
 mod pointer;
 mod presentation;
+mod preview_copy_rail;
+#[cfg(test)]
+mod preview_copy_rail_tests;
 #[cfg(test)]
 mod preview_copy_tests;
 mod preview_horizontal;
@@ -120,6 +123,7 @@ pub struct DesktopShell<H: Host> {
     preview_drag_moved: bool,
     preview_press_position: Option<PhysicalPosition<f64>>,
     preview_press_action: Option<SpanAction>,
+    copy_rail: preview_copy_rail::CopyRailInteraction,
     app: AppSession,
     /// The output of session steps, reused from event to event (`shell_effects.rs`).
     effects: ShellEffects,
@@ -213,6 +217,7 @@ impl<H: Host> DesktopShell<H> {
             preview_drag_moved: false,
             preview_press_position: None,
             preview_press_action: None,
+            copy_rail: preview_copy_rail::CopyRailInteraction::default(),
             app: session,
             effects: ShellEffects::default(),
             host,

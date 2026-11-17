@@ -18,6 +18,17 @@ use stickymd_app::session::ZoomInput;
 
 impl<H: Host> DesktopShell<H> {
     pub(super) fn handle_mouse_button(&mut self, state: ElementState, button: MouseButton) {
+        // A rail press owns the pointer until its release, whatever lies under it by then.
+        if state == ElementState::Released
+            && button == MouseButton::Left
+            && self.release_copy_rail()
+        {
+            return;
+        }
+        // A press whose release never arrived is dropped, so no later release copies for it.
+        if state == ElementState::Pressed && button == MouseButton::Left {
+            self.copy_rail.press = None;
+        }
         if state == ElementState::Released
             && self.preview_horizontal.drag.is_some()
             && self.handle_horizontal_button(state, button)
@@ -57,10 +68,21 @@ impl<H: Host> DesktopShell<H> {
         match state {
             ElementState::Pressed => {
                 if self.preview_at_cursor().is_some() {
-                    press_probe!(self, PressRoute::Preview);
+                    // A rail takes the press before a selection can start (plan 06
+                    // #preview-copy-rail); either way the press gives Preview the keyboard.
+                    press_probe!(
+                        self,
+                        if self.copy_rail_under_pointer().is_some() {
+                            PressRoute::CopyRail
+                        } else {
+                            PressRoute::Preview
+                        }
+                    );
                     self.preview_focused = true;
                     self.sync_ime_allowed();
-                    self.press_preview_selection();
+                    if !self.press_copy_rail() {
+                        self.press_preview_selection();
+                    }
                     return;
                 }
                 // Only a press on the Source pane gives the note the keyboard; one that lands on no
@@ -110,6 +132,10 @@ impl<H: Host> DesktopShell<H> {
                 self.scrollbar_gutter_at_cursor()
                     .map(|_| winit::window::CursorIcon::Default)
             })
+            .or_else(|| {
+                self.copy_rail_under_pointer()
+                    .map(|_| winit::window::CursorIcon::Pointer)
+            })
             .unwrap_or_else(|| self.cursor_icon_for_position(self.cursor_position))
     }
 
@@ -123,6 +149,14 @@ impl<H: Host> DesktopShell<H> {
 
     pub(super) fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
         self.cursor_position = position;
+        self.track_cursor_moved(position);
+        // After every other reaction to the move, so the hover reads the state they left.
+        self.refresh_copy_rail_hover();
+    }
+
+    fn track_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
+        // First, so no handler below that ends the move early can hide a drag past the threshold.
+        let rail_press = self.move_copy_rail_press(position);
         if self.handle_shell_cursor_moved(position) {
             return;
         }
@@ -130,6 +164,9 @@ impl<H: Host> DesktopShell<H> {
             return;
         }
         self.apply_cursor();
+        if rail_press {
+            return;
+        }
         // The formula-error hover title is derived from the pointer and the current frame when
         // the event pass ends (`update_window_title`), so it cannot outlive either.
         if self.preview_dragging {

@@ -126,6 +126,11 @@ impl PreviewDocumentProjection {
         )
     }
 
+    /// What the copy rail of render block `block` copies (plan 06 #preview-copy-rail).
+    pub(super) fn copy_object(&self, block: usize) -> Result<&str, PreviewCopyError> {
+        self.copy.object(&self.text, block)
+    }
+
     #[cfg(test)]
     pub(super) const fn generation(&self) -> Generation {
         self.generation
@@ -254,6 +259,11 @@ impl PreviewTextIndex {
     /// #preview-copy-semantics). A selection that does not map fails closed.
     pub fn copy_text(&self, selection: PreviewSelection) -> Result<String, PreviewCopyError> {
         self.document.copy_text(selection)
+    }
+
+    /// What the copy rail of render block `block` copies, from the same snapshot.
+    pub(super) fn copy_object(&self, block: usize) -> Result<&str, PreviewCopyError> {
+        self.document.copy_object(block)
     }
 
     /// Hit test in document coordinates, returning a valid UTF-8 boundary in

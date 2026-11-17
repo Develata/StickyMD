@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#native-preview-layout
 
+use super::copy_rail::{CopyRails, PreviewCopyRail};
 use super::end_room::PreviewEnd;
 use std::sync::Arc;
 
@@ -36,6 +37,7 @@ pub struct PreviewFrame {
     index: Arc<PreviewTextIndex>,
     visible_blocks: usize,
     horizontal: Vec<PreviewHorizontalTarget>,
+    rails: CopyRails,
 }
 
 impl PreviewFrame {
@@ -47,6 +49,43 @@ impl PreviewFrame {
                 && document_y >= rect.y
                 && document_y < target.track().bottom()
         })
+    }
+
+    /// The copy rails this frame shows, in document coordinates (plan 06 #preview-copy-rail).
+    pub fn copy_rails(&self) -> &[PreviewCopyRail] {
+        self.rails.all()
+    }
+
+    pub fn copy_rail_at(&self, x: f32, document_y: f32) -> Option<PreviewCopyRail> {
+        self.rails.at(x, document_y)
+    }
+
+    /// What a click on `rail` copies: its object's whole content by rule 1 of plan 06
+    /// #preview-copy-semantics, read from this frame's own snapshot. `None` when `rail` is not
+    /// one of this frame's.
+    pub fn copy_rail_text(&self, rail: PreviewCopyRail) -> Option<String> {
+        if !self.rails.owns(rail) {
+            return None;
+        }
+        self.index.copy_object(rail.block()).ok().map(str::to_owned)
+    }
+
+    /// Paints this frame's rails over it once blitted at `(origin_x, origin_y)`, `hovered`
+    /// brighter. The rails are not in `rgba`, so hovering repaints only them.
+    pub fn paint_copy_rails(
+        &self,
+        target: &mut Pixmap,
+        origin_x: u32,
+        origin_y: u32,
+        hovered: Option<PreviewCopyRail>,
+    ) {
+        self.rails.paint(
+            target,
+            (origin_x, origin_y),
+            (self.width, self.height),
+            self.scroll_y,
+            hovered,
+        );
     }
 
     pub const fn generation(&self) -> stickymd_core::Generation {
@@ -472,6 +511,15 @@ pub(super) fn paint_document(
     // by selection range, never by geometry) its reason, in place.
     index.set_atomic_tooltips(&mut failed_formulas);
     let index = Arc::new(index);
+    let rails = CopyRails::new(
+        &document.blocks[start..end],
+        start,
+        document.generation,
+        document.width_px,
+        document.scale,
+        theme,
+        |block| index.copy_object(block).is_ok(),
+    );
     Ok(PreviewFrame {
         generation: document.generation,
         width: document.width_px,
@@ -483,6 +531,7 @@ pub(super) fn paint_document(
         index,
         visible_blocks: end.saturating_sub(start),
         horizontal,
+        rails,
     })
 }
 

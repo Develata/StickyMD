@@ -137,6 +137,8 @@ impl<H: Host> DesktopShell<H> {
         let caret_animation_active = self.caret_animation_active();
         let search_layout = self.search_layout();
         let scrollbars = self.scrollbar_geometry();
+        let hovered_rail = self.copy_rail_under_pointer();
+        self.copy_rail.hovered = hovered_rail;
         let Some(surface) = &mut self.surface else {
             return false;
         };
@@ -174,6 +176,8 @@ impl<H: Host> DesktopShell<H> {
                 surface.ledger_mut().pane_blit_preview_bytes +=
                     u64::from(pane.width) * u64::from(pane.height) * 4;
                 frame.blit_to(surface.pixmap_mut(), pane.x, pane.y);
+                // Over the frame and under everything drawn over the Preview, as if in it.
+                frame.paint_copy_rails(surface.pixmap_mut(), pane.x, pane.y, hovered_rail);
             } else {
                 paint_preview_pending(surface.pixmap_mut(), pane, dark);
             }
