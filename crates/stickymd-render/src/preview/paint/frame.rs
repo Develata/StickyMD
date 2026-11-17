@@ -155,10 +155,14 @@ impl PreviewFrame {
         self.visible_blocks
     }
 
-    /// O(viewport pixels) clipped copy into the shared software framebuffer.
+    /// O(viewport pixels) copy into the shared software framebuffer, clipped to it: a frame placed
+    /// wholly outside the target copies nothing.
     pub fn blit_to(&self, target: &mut Pixmap, origin_x: u32, origin_y: u32) {
         let copy_width = self.width.min(target.width().saturating_sub(origin_x));
         let copy_height = self.height.min(target.height().saturating_sub(origin_y));
+        if copy_width == 0 || copy_height == 0 {
+            return;
+        }
         let target_stride = target.width() as usize * 4;
         let source_stride = self.width as usize * 4;
         let row_bytes = copy_width as usize * 4;

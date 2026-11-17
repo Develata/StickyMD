@@ -90,8 +90,9 @@ pub(super) fn paint_document(
         height: height as f32,
     };
     // The horizontal target of the visible block at `index` in `start..end`, for the box,
-    // decoration and content passes and the frame. Constant time and allocation-free, so each pass
-    // derives it again instead of keeping a per-frame list.
+    // decoration and content passes and the frame. Allocation-free and cheap (O(1) without stored
+    // offsets, else one O(log n) lookup in the offset map), so each pass derives it again instead
+    // of keeping a per-frame list.
     let (generation, width_px, scale) = (document.generation, document.width_px, document.scale);
     let target_of = |index: usize, block: &LaidOutBlock| {
         block.horizontal.map(|layout| {
@@ -420,6 +421,39 @@ mod tests {
         assert!(frame.visible_blocks() > 0);
         assert!(frame.visible_blocks() < total);
         assert_eq!(frame.rgba().len(), 520 * 180 * 4);
+    }
+
+    /// A blit is clipped to its target: placed wholly to the right of it or below it, it copies
+    /// nothing; placed across its edge, only the overlap.
+    #[test]
+    fn a_blit_copies_only_what_lands_on_its_target() {
+        let (mut font_system, mut document) = document("paragraph text\n\n", 4);
+        let frame = paint_document(
+            PaintResources {
+                font_system: &mut font_system,
+                swash_cache: &mut SwashCache::new(),
+                math_engine: &mut crate::math::MathEngine::new(),
+            },
+            &mut document,
+            120,
+            0.0,
+            0.0,
+            PreviewSelection::default(),
+            PreviewTheme::Light,
+            &crate::preview::PreviewHorizontalOffsets::default(),
+        )
+        .unwrap();
+        let untouched = Pixmap::new(1, 1).unwrap();
+        for (x, y) in [(2, 0), (0, 2), (1, 1)] {
+            let mut target = untouched.clone();
+            frame.blit_to(&mut target, x, y);
+            assert_eq!(target.data(), untouched.data(), "placed at ({x}, {y})");
+        }
+        let mut target = Pixmap::new(10, 10).unwrap();
+        frame.blit_to(&mut target, 6, 7);
+        let painted = |x: u32, y: u32| target.pixel(x, y).unwrap().alpha() != 0;
+        assert!(painted(6, 7) && painted(9, 9));
+        assert!(!painted(5, 9) && !painted(9, 6));
     }
 
     #[test]
