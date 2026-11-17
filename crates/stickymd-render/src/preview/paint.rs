@@ -16,7 +16,9 @@ use super::{PreviewHorizontalOffsets, PreviewHorizontalTarget, PreviewRect};
 use drawing::*;
 pub use frame::PreviewFrame;
 
-use super::layout::{DecorationRole, LaidOutDocument, LayoutContent, LayoutDecoration};
+use super::layout::{
+    DecorationRole, LaidOutBlock, LaidOutDocument, LayoutContent, LayoutDecoration,
+};
 use super::{PreviewSelection, PreviewTextIndex};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -87,25 +89,24 @@ pub(super) fn paint_document(
         width: document.width_px as f32,
         height: height as f32,
     };
-    // Each visible block's horizontal target, by position in `start..end`: computed once, read by
-    // the box, decoration and content passes and kept by the frame.
-    let targets: Vec<Option<PreviewHorizontalTarget>> = document.blocks[start..end]
-        .iter()
-        .enumerate()
-        .map(|(index, block)| {
-            block.horizontal.map(|layout| {
-                layout.target(
-                    start + index,
-                    document.generation,
-                    document.width_px,
-                    document.scale,
-                    horizontal_offsets,
-                )
-            })
+    // The horizontal target of the visible block at `index` in `start..end`, for the box,
+    // decoration and content passes and the frame. Constant time and allocation-free, so each pass
+    // derives it again instead of keeping a per-frame list.
+    let (generation, width_px, scale) = (document.generation, document.width_px, document.scale);
+    let target_of = |index: usize, block: &LaidOutBlock| {
+        block.horizontal.map(|layout| {
+            layout.target(
+                start + index,
+                generation,
+                width_px,
+                scale,
+                horizontal_offsets,
+            )
         })
-        .collect();
+    };
     let mut visible_boxes = Vec::new();
-    for (block, &target) in document.blocks[start..end].iter().zip(&targets) {
+    for (index, block) in document.blocks[start..end].iter().enumerate() {
+        let target = target_of(index, block);
         let offset = target.map_or(0.0, |target| target.offset());
         let Some(clip) = target.map_or(Some(viewport), |target| {
             intersect(target.content_rect(), viewport)
@@ -145,7 +146,8 @@ pub(super) fn paint_document(
     let mut failed_formulas: Vec<(std::ops::Range<usize>, Arc<str>)> = Vec::new();
     // At most one viewport-sized alpha mask, reused for every overflow block.
     let mut mask = BlockMask::default();
-    for (block, &target) in document.blocks[start..end].iter().zip(&targets) {
+    for (index, block) in document.blocks[start..end].iter().enumerate() {
+        let target = target_of(index, block);
         let offset = target.map_or(0.0, |target| target.offset());
         // Only a decoration that scrolls with the block needs the clip; code and math
         // backgrounds stay fixed, so a block with nothing else builds no mask here.
@@ -180,7 +182,8 @@ pub(super) fn paint_document(
             );
         }
     }
-    for (block, &target) in document.blocks[start..end].iter_mut().zip(&targets) {
+    for (index, block) in document.blocks[start..end].iter_mut().enumerate() {
+        let target = target_of(index, block);
         let offset = target.map_or(0.0, |target| target.offset());
         let clip = target.map_or(viewport, |target| target.content_rect());
         let clip_mask = mask.get(
@@ -306,7 +309,11 @@ pub(super) fn paint_document(
         }
     }
 
-    let horizontal: Vec<PreviewHorizontalTarget> = targets.into_iter().flatten().collect();
+    let horizontal: Vec<PreviewHorizontalTarget> = document.blocks[start..end]
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| target_of(index, block))
+        .collect();
     for target in &horizontal {
         for (rect, color) in [
             (target.track(), palette.code),
