@@ -395,6 +395,8 @@ const EVERY_SESSION: &[&str] = &[
     "crates/stickymd-desktop/src/shell/phase15_worker_receipt_tests.rs",
     "crates/stickymd-desktop/src/shell/pointer.rs",
     "crates/stickymd-desktop/src/shell/presentation.rs",
+    "crates/stickymd-desktop/src/shell/preview_copy_rail.rs",
+    "crates/stickymd-desktop/src/shell/preview_copy_rail_tests.rs",
     "crates/stickymd-desktop/src/shell/preview_copy_tests.rs",
     "crates/stickymd-desktop/src/shell/preview_horizontal.rs",
     "crates/stickymd-desktop/src/shell/preview_horizontal/tests.rs",
