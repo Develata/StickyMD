@@ -10,6 +10,7 @@ use winit::dpi::PhysicalSize;
 use super::DesktopShell;
 use super::presentation::PendingRedraw;
 use crate::controls::{NoticeBarLayout, ToolbarVisual, paint_notice_bar, paint_toolbar};
+use crate::geometry::PaneRect;
 use crate::host::{Host, PRESENT_RETRY, PresentFacts, PresentOutcome};
 use crate::search::paint_search_overlay;
 use stickymd_app::config::ContentZoomPercent;
@@ -175,8 +176,7 @@ impl<H: Host> DesktopShell<H> {
         }
         if let Some(pane) = geometry.preview {
             if let Some(frame) = &self.preview_frame
-                && frame.width() == pane.width
-                && frame.height() == pane.height
+                && fills_pane(frame, pane)
             {
                 surface.ledger_mut().pane_blit_preview_bytes +=
                     u64::from(pane.width) * u64::from(pane.height) * 4;
@@ -268,6 +268,12 @@ impl<H: Host> DesktopShell<H> {
     }
 }
 
+/// Whether `frame` is the one drawn into `pane`: a frame of another size waits behind the pending
+/// fill until its replacement arrives. Everything that reads the Preview on screen asks this.
+pub(super) fn fills_pane(frame: &stickymd_render::preview::PreviewFrame, pane: PaneRect) -> bool {
+    frame.width() == pane.width && frame.height() == pane.height
+}
+
 fn pixmap_bytes(pixmap: &Pixmap) -> u64 {
     u64::from(pixmap.width()) * u64::from(pixmap.height()) * 4
 }
@@ -288,7 +294,7 @@ fn blit_pixmap(source: &Pixmap, target: &mut Pixmap, origin_x: u32, origin_y: u3
     }
 }
 
-fn paint_preview_pending(pixmap: &mut Pixmap, pane: crate::geometry::PaneRect, dark: bool) {
+fn paint_preview_pending(pixmap: &mut Pixmap, pane: PaneRect, dark: bool) {
     fill_rect(
         pixmap,
         pane.x as f32,

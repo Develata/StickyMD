@@ -138,7 +138,7 @@ fn a_drag_from_a_rail_neither_copies_nor_selects() {
 }
 
 /// P17-R04: entering and leaving a rail each ask for one redraw, moving within it none; the rail
-/// is painted brighter while hovered and the cursor is the hand.
+/// is painted with more contrast while hovered and the cursor is the hand.
 #[test]
 fn hovering_a_rail_repaints_only_on_entering_and_leaving() {
     let mut app = shown("```\ncode\n```\n");
@@ -166,7 +166,10 @@ fn hovering_a_rail_repaints_only_on_entering_and_leaving() {
     assert_eq!(app.cursor_at_pointer(), CursorIcon::Pointer);
     app.draw_frame(None);
     let hovered = pixel(&app);
-    assert_ne!(hovered, at_rest, "the hovered rail is painted brighter");
+    assert_ne!(
+        hovered, at_rest,
+        "the hovered rail is painted with more contrast"
+    );
     app.pending_redraw = PendingRedraw::None;
 
     let at = on_rail(&app, 1.0, 3.0);

@@ -84,6 +84,14 @@ pub(super) enum DecorationRole {
     TableHeader,
 }
 
+impl DecorationRole {
+    /// A code or math background: it stays fixed under horizontal scroll, and a copy rail stands
+    /// on its right edge (plan 06 #preview-copy-rail).
+    pub(super) const fn is_block_background(self) -> bool {
+        matches!(self, Self::CodeBackground | Self::MathBackground)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct LayoutDecoration {
     pub rect: PreviewRect,

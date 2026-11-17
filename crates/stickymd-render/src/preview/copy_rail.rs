@@ -8,8 +8,8 @@
 use stickymd_core::Generation;
 use tiny_skia::{Color, Paint, Pixmap, Rect, Transform};
 
-use super::layout::{DecorationRole, LaidOutBlock};
-use super::{PreviewRect, PreviewTheme};
+use super::PreviewRect;
+use super::layout::LaidOutBlock;
 
 /// The rail's width in content DIP, scaled with the content; provisional until visual acceptance.
 pub const COPY_RAIL_WIDTH_DIP: f32 = 8.0;
@@ -33,11 +33,18 @@ impl PreviewCopyRail {
     }
 }
 
-/// The rails one frame shows, and the theme it was painted in.
-#[derive(Debug, Clone, Default)]
+/// A rail's colours in one theme, kept in the Preview palette (`paint::drawing::Palette`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct RailColors {
+    pub rest: Color,
+    pub hovered: Color,
+}
+
+/// The rails one frame shows, in the colours of the theme it was painted in.
+#[derive(Debug, Clone)]
 pub(super) struct CopyRails {
     rails: Vec<PreviewCopyRail>,
-    theme: PreviewTheme,
+    colors: RailColors,
 }
 
 impl CopyRails {
@@ -45,13 +52,16 @@ impl CopyRails {
     /// background: the background's right edge out to the rail width, at the background's height
     /// (so never beside the horizontal track below it). A rail is kept only when all of it lies in
     /// `0..width_px` and its object can be copied (`copyable`). O(visible blocks · decorations).
+    ///
+    /// Postcondition: the rails are in display order and pairwise disjoint, at most one per block,
+    /// since each stands beside its own block's background.
     pub(super) fn new(
         blocks: &[LaidOutBlock],
         first: usize,
         generation: Generation,
         width_px: u32,
         scale: f32,
-        theme: PreviewTheme,
+        colors: RailColors,
         copyable: impl Fn(usize) -> bool,
     ) -> Self {
         let width = COPY_RAIL_WIDTH_DIP * scale;
@@ -59,12 +69,10 @@ impl CopyRails {
             .iter()
             .enumerate()
             .filter_map(|(offset, block)| {
-                let background = block.decorations.iter().find(|decoration| {
-                    matches!(
-                        decoration.role,
-                        DecorationRole::CodeBackground | DecorationRole::MathBackground
-                    )
-                })?;
+                let background = block
+                    .decorations
+                    .iter()
+                    .find(|decoration| decoration.role.is_block_background())?;
                 let rect = PreviewRect {
                     x: background.rect.right(),
                     y: background.rect.y,
@@ -81,14 +89,15 @@ impl CopyRails {
                 )
             })
             .collect();
-        Self { rails, theme }
+        Self { rails, colors }
     }
 
     pub(super) fn all(&self) -> &[PreviewCopyRail] {
         &self.rails
     }
 
-    /// The rail at document position `(x, y)`: its visible rectangle, half-open.
+    /// The rail at document position `(x, y)`: its visible rectangle, half-open. A linear scan,
+    /// since a frame holds at most one rail per visible code or math block.
     pub(super) fn at(&self, x: f32, y: f32) -> Option<PreviewCopyRail> {
         self.rails.iter().copied().find(|rail| {
             let rect = rail.rect;
@@ -101,7 +110,7 @@ impl CopyRails {
     }
 
     /// Paints the rails over a frame of `width` × `height` pixels blitted at `origin`, scrolled to
-    /// `scroll_y`, clipped to the frame; `hovered` is painted brighter.
+    /// `scroll_y`, clipped to the frame; `hovered` is painted with more contrast.
     pub(super) fn paint(
         &self,
         target: &mut Pixmap,
@@ -122,20 +131,12 @@ impl CopyRails {
                 continue;
             };
             let mut paint = Paint::default();
-            paint.set_color(rail_color(self.theme, hovered == Some(*rail)));
+            paint.set_color(if hovered == Some(*rail) {
+                self.colors.hovered
+            } else {
+                self.colors.rest
+            });
             target.fill_rect(clipped, &paint, Transform::identity(), None);
         }
     }
-}
-
-/// Low contrast against the code and math backgrounds (`paint::drawing::Palette`): at rest it
-/// reads as a slightly thicker right edge of the box; hovered it stands out more.
-fn rail_color(theme: PreviewTheme, hovered: bool) -> Color {
-    let (r, g, b) = match (theme, hovered) {
-        (PreviewTheme::Light, false) => (224, 220, 209),
-        (PreviewTheme::Light, true) => (198, 193, 180),
-        (PreviewTheme::Dark, false) => (64, 63, 59),
-        (PreviewTheme::Dark, true) => (92, 91, 86),
-    };
-    Color::from_rgba8(r, g, b, 255)
 }

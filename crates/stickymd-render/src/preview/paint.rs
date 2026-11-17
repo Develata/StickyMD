@@ -2,7 +2,7 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#native-preview-layout
 
-use super::copy_rail::{CopyRails, PreviewCopyRail};
+use super::copy_rail::CopyRails;
 use super::end_room::PreviewEnd;
 use std::sync::Arc;
 
@@ -10,9 +10,11 @@ use cosmic_text::{FontSystem, SwashCache};
 use tiny_skia::{Pixmap, PixmapPaint, PixmapRef, Transform};
 
 mod drawing;
+mod frame;
 use super::horizontal::{clip_box, intersect};
 use super::{PreviewHorizontalOffsets, PreviewHorizontalTarget, PreviewRect};
 use drawing::*;
+pub use frame::PreviewFrame;
 
 use super::layout::{DecorationRole, LaidOutDocument, LayoutContent, LayoutDecoration};
 use super::{PreviewSelection, PreviewTextIndex};
@@ -22,166 +24,6 @@ pub enum PreviewTheme {
     #[default]
     Light,
     Dark,
-}
-
-#[derive(Debug, Clone)]
-pub struct PreviewFrame {
-    generation: stickymd_core::Generation,
-    width: u32,
-    height: u32,
-    document_height: f32,
-    /// Where scrolling this frame ends (plan 09 #vertical-scrollbars).
-    end: PreviewEnd,
-    scroll_y: f32,
-    rgba: Vec<u8>,
-    index: Arc<PreviewTextIndex>,
-    visible_blocks: usize,
-    horizontal: Vec<PreviewHorizontalTarget>,
-    rails: CopyRails,
-}
-
-impl PreviewFrame {
-    pub fn horizontal_target_at(&self, x: f32, document_y: f32) -> Option<PreviewHorizontalTarget> {
-        self.horizontal.iter().copied().find(|target| {
-            let rect = target.content_rect();
-            x >= rect.x
-                && x < rect.right()
-                && document_y >= rect.y
-                && document_y < target.track().bottom()
-        })
-    }
-
-    /// The copy rails this frame shows, in document coordinates (plan 06 #preview-copy-rail).
-    pub fn copy_rails(&self) -> &[PreviewCopyRail] {
-        self.rails.all()
-    }
-
-    pub fn copy_rail_at(&self, x: f32, document_y: f32) -> Option<PreviewCopyRail> {
-        self.rails.at(x, document_y)
-    }
-
-    /// What a click on `rail` copies: its object's whole content by rule 1 of plan 06
-    /// #preview-copy-semantics, read from this frame's own snapshot. `None` when `rail` is not
-    /// one of this frame's.
-    pub fn copy_rail_text(&self, rail: PreviewCopyRail) -> Option<String> {
-        if !self.rails.owns(rail) {
-            return None;
-        }
-        self.index.copy_object(rail.block()).ok().map(str::to_owned)
-    }
-
-    /// Paints this frame's rails over it once blitted at `(origin_x, origin_y)`, `hovered`
-    /// brighter. The rails are not in `rgba`, so hovering repaints only them.
-    pub fn paint_copy_rails(
-        &self,
-        target: &mut Pixmap,
-        origin_x: u32,
-        origin_y: u32,
-        hovered: Option<PreviewCopyRail>,
-    ) {
-        self.rails.paint(
-            target,
-            (origin_x, origin_y),
-            (self.width, self.height),
-            self.scroll_y,
-            hovered,
-        );
-    }
-
-    pub const fn generation(&self) -> stickymd_core::Generation {
-        self.generation
-    }
-
-    pub const fn width(&self) -> u32 {
-        self.width
-    }
-
-    pub const fn height(&self) -> u32 {
-        self.height
-    }
-
-    pub const fn document_height(&self) -> f32 {
-        self.document_height
-    }
-
-    /// The scroll end every reader of this frame shares: painting clamped to it, and the wheel,
-    /// the thumb, a view change and Split sync read it here (plan 09 #vertical-scrollbars).
-    pub const fn end(&self) -> PreviewEnd {
-        self.end
-    }
-
-    pub const fn scroll_y(&self) -> f32 {
-        self.scroll_y
-    }
-
-    pub fn rgba(&self) -> &[u8] {
-        &self.rgba
-    }
-
-    pub fn index(&self) -> &Arc<PreviewTextIndex> {
-        &self.index
-    }
-
-    pub fn text(&self) -> &str {
-        self.index.text()
-    }
-
-    pub fn select_all(&self) -> PreviewSelection {
-        self.index.select_all()
-    }
-
-    /// The display text the selection covers, as painted.
-    pub fn selected_text(&self, selection: PreviewSelection) -> Option<&str> {
-        self.index.selected_text(selection)
-    }
-
-    /// What Ctrl+C copies for `selection` (plan 06 #preview-copy-semantics): read from this
-    /// frame's own source snapshot, so a frame that lags the document copies what it shows.
-    pub fn copy_text(
-        &self,
-        selection: PreviewSelection,
-    ) -> Result<String, super::PreviewCopyError> {
-        self.index.copy_text(selection)
-    }
-
-    pub fn hit_test(&self, x: f32, document_y: f32) -> usize {
-        self.index.hit_test(x, document_y)
-    }
-
-    pub fn action_at(&self, x: f32, document_y: f32) -> Option<&super::SpanAction> {
-        self.index.action_at(x, document_y)
-    }
-
-    pub fn tooltip_at(&self, x: f32, document_y: f32) -> Option<&str> {
-        self.index.tooltip_at(x, document_y)
-    }
-
-    pub fn scroll_anchor_at_y(&self, document_y: f32) -> Option<crate::scroll::ScrollAnchor> {
-        self.index.scroll_anchor_at_y(document_y)
-    }
-
-    pub fn y_for_scroll_anchor(&self, anchor: crate::scroll::ScrollAnchor) -> Option<f32> {
-        self.index.y_for_scroll_anchor(anchor)
-    }
-
-    pub const fn visible_blocks(&self) -> usize {
-        self.visible_blocks
-    }
-
-    /// O(viewport pixels) clipped copy into the shared software framebuffer.
-    pub fn blit_to(&self, target: &mut Pixmap, origin_x: u32, origin_y: u32) {
-        let copy_width = self.width.min(target.width().saturating_sub(origin_x));
-        let copy_height = self.height.min(target.height().saturating_sub(origin_y));
-        let target_stride = target.width() as usize * 4;
-        let source_stride = self.width as usize * 4;
-        let row_bytes = copy_width as usize * 4;
-        for row in 0..copy_height as usize {
-            let source_start = row * source_stride;
-            let target_start = (origin_y as usize + row) * target_stride + origin_x as usize * 4;
-            target.data_mut()[target_start..target_start + row_bytes]
-                .copy_from_slice(&self.rgba[source_start..source_start + row_bytes]);
-        }
-    }
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
@@ -245,10 +87,12 @@ pub(super) fn paint_document(
         width: document.width_px as f32,
         height: height as f32,
     };
-    let horizontal: Vec<_> = document.blocks[start..end]
+    // Each visible block's horizontal target, by position in `start..end`: computed once, read by
+    // the box, decoration and content passes and kept by the frame.
+    let targets: Vec<Option<PreviewHorizontalTarget>> = document.blocks[start..end]
         .iter()
         .enumerate()
-        .filter_map(|(index, block)| {
+        .map(|(index, block)| {
             block.horizontal.map(|layout| {
                 layout.target(
                     start + index,
@@ -261,16 +105,7 @@ pub(super) fn paint_document(
         })
         .collect();
     let mut visible_boxes = Vec::new();
-    for (index, block) in document.blocks[start..end].iter().enumerate() {
-        let target = block.horizontal.map(|layout| {
-            layout.target(
-                start + index,
-                document.generation,
-                document.width_px,
-                document.scale,
-                horizontal_offsets,
-            )
-        });
+    for (block, &target) in document.blocks[start..end].iter().zip(&targets) {
         let offset = target.map_or(0.0, |target| target.offset());
         let Some(clip) = target.map_or(Some(viewport), |target| {
             intersect(target.content_rect(), viewport)
@@ -310,35 +145,21 @@ pub(super) fn paint_document(
     let mut failed_formulas: Vec<(std::ops::Range<usize>, Arc<str>)> = Vec::new();
     // At most one viewport-sized alpha mask, reused for every overflow block.
     let mut mask = BlockMask::default();
-    for (index, block) in document.blocks[start..end].iter().enumerate() {
-        let target = block.horizontal.map(|layout| {
-            layout.target(
-                start + index,
-                document.generation,
-                document.width_px,
-                document.scale,
-                horizontal_offsets,
-            )
-        });
+    for (block, &target) in document.blocks[start..end].iter().zip(&targets) {
         let offset = target.map_or(0.0, |target| target.offset());
         // Only a decoration that scrolls with the block needs the clip; code and math
         // backgrounds stay fixed, so a block with nothing else builds no mask here.
-        let needs_mask = block.decorations.iter().any(|decoration| {
-            !matches!(
-                decoration.role,
-                DecorationRole::CodeBackground | DecorationRole::MathBackground
-            )
-        });
+        let needs_mask = block
+            .decorations
+            .iter()
+            .any(|decoration| !decoration.role.is_block_background());
         let clip = target
             .map(|target| target.content_rect())
             .filter(|_| needs_mask);
         let clip_mask = mask.get(document.width_px, height, clip, scroll_y)?;
         for decoration in &block.decorations {
             let mut decoration = *decoration;
-            if matches!(
-                decoration.role,
-                DecorationRole::CodeBackground | DecorationRole::MathBackground
-            ) {
+            if decoration.role.is_block_background() {
                 paint_decoration(&mut pixmap, decoration, scroll_y, palette, None);
             } else {
                 decoration.rect.x -= offset;
@@ -359,16 +180,7 @@ pub(super) fn paint_document(
             );
         }
     }
-    for (index, block) in document.blocks[start..end].iter_mut().enumerate() {
-        let target = block.horizontal.map(|layout| {
-            layout.target(
-                start + index,
-                document.generation,
-                document.width_px,
-                document.scale,
-                horizontal_offsets,
-            )
-        });
+    for (block, &target) in document.blocks[start..end].iter_mut().zip(&targets) {
         let offset = target.map_or(0.0, |target| target.offset());
         let clip = target.map_or(viewport, |target| target.content_rect());
         let clip_mask = mask.get(
@@ -494,6 +306,7 @@ pub(super) fn paint_document(
         }
     }
 
+    let horizontal: Vec<PreviewHorizontalTarget> = targets.into_iter().flatten().collect();
     for target in &horizontal {
         for (rect, color) in [
             (target.track(), palette.code),
@@ -520,7 +333,7 @@ pub(super) fn paint_document(
         document.generation,
         document.width_px,
         document.scale,
-        theme,
+        palette.rail,
         |block| index.copy_object(block).is_ok(),
     );
     Ok(PreviewFrame {

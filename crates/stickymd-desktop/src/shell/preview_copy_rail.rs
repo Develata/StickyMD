@@ -13,6 +13,7 @@ use stickymd_render::preview::{PreviewCopyRail, PreviewFrame};
 use winit::dpi::PhysicalPosition;
 
 use super::DesktopShell;
+use super::render::fills_pane;
 use crate::geometry::PaneRect;
 use crate::host::Host;
 use crate::preview::{meaningful_preview_drag, pane_local};
@@ -37,18 +38,22 @@ pub(super) struct RailPress {
 
 impl<H: Host> DesktopShell<H> {
     /// The Preview frame on screen and the pane it is blitted into: the frame the window draws,
-    /// whatever its generation (`render.rs`).
+    /// whatever its generation (`render::fills_pane`).
     fn shown_preview_frame(&self) -> Option<(&PreviewFrame, PaneRect)> {
         let pane = self.view_geometry()?.preview?;
         self.preview_frame
             .as_ref()
-            .filter(|frame| frame.width() == pane.width && frame.height() == pane.height)
+            .filter(|frame| fills_pane(frame, pane))
             .map(|frame| (frame, pane))
     }
 
     /// The rail under the pointer, if nothing drawn over the Preview covers it, no other drag owns
     /// the pointer and the window takes presses on its panes (`handle_mouse_button`). Derived on
     /// demand, so a new frame, a scroll or a layout change cannot leave a stale answer.
+    ///
+    /// Asked on every pointer move and paint, so the checks run cheapest first: the shell's own
+    /// state, then whether the frame shows any rail at all (most do not), and only then the view
+    /// geometry, which reads the window size, and the overlays drawn over the Preview.
     pub(super) fn copy_rail_under_pointer(&self) -> Option<PreviewCopyRail> {
         if !self.pointer_inside_window
             || !self.window_accepts_editor_mutation()
@@ -56,14 +61,16 @@ impl<H: Host> DesktopShell<H> {
             || self.app.editor.dragging_selection
             || self.preview_horizontal.drag.is_some()
             || self.scrollbars.drag.is_some()
-            || self.shell_cursor_icon().is_some()
-            || self.notice_bar_cursor().is_some()
+            || self.preview_frame.as_ref()?.copy_rails().is_empty()
         {
             return None;
         }
         let (frame, pane) = self.shown_preview_frame()?;
         let (x, y) = pane_local(pane, self.cursor_position)?;
-        frame.copy_rail_at(x, y + frame.scroll_y())
+        let rail = frame.copy_rail_at(x, y + frame.scroll_y())?;
+        // The toolbar, its popup and the notice bar are drawn over the Preview and take the
+        // pointer first (`cursor_at_pointer`, `handle_mouse_button`).
+        (self.shell_cursor_icon().is_none() && self.notice_bar_cursor().is_none()).then_some(rail)
     }
 
     /// Takes a left press on a rail before it can start a selection. `true` when it did.

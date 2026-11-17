@@ -3,6 +3,7 @@
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-horizontal-scroll
 
 use super::{DecorationRole, LayoutDecoration, PreviewPaintError, PreviewRect, PreviewTheme};
+use crate::preview::copy_rail::RailColors;
 use cosmic_text::Color;
 use tiny_skia::{Mask, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
@@ -149,6 +150,9 @@ pub(super) struct Palette {
     pub(super) table_header: tiny_skia::Color,
     pub(super) table_border: tiny_skia::Color,
     pub(super) math_error: tiny_skia::Color,
+    /// Low contrast against `code` and `math`: at rest the rail reads as a slightly thicker right
+    /// edge of the box; hovered it stands out more (plan 06 #preview-copy-rail).
+    pub(super) rail: RailColors,
 }
 
 impl Palette {
@@ -166,6 +170,10 @@ impl Palette {
                 table_header: rgba(235, 232, 222, 255),
                 table_border: rgba(186, 181, 168, 255),
                 math_error: rgba(190, 73, 55, 255),
+                rail: RailColors {
+                    rest: rgba(224, 220, 209, 255),
+                    hovered: rgba(198, 193, 180, 255),
+                },
             },
             PreviewTheme::Dark => Self {
                 background: rgba(35, 35, 33, 255),
@@ -179,6 +187,10 @@ impl Palette {
                 table_header: rgba(49, 49, 46, 255),
                 table_border: rgba(87, 86, 80, 255),
                 math_error: rgba(232, 120, 102, 255),
+                rail: RailColors {
+                    rest: rgba(64, 63, 59, 255),
+                    hovered: rgba(92, 91, 86, 255),
+                },
             },
         }
     }

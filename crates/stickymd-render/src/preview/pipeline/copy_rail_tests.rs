@@ -58,12 +58,7 @@ fn backgrounds(pipeline: &PreviewPipeline) -> Vec<Option<PreviewRect>> {
             block
                 .decorations
                 .iter()
-                .find(|decoration| {
-                    matches!(
-                        decoration.role,
-                        DecorationRole::CodeBackground | DecorationRole::MathBackground
-                    )
-                })
+                .find(|decoration| decoration.role.is_block_background())
                 .map(|decoration| decoration.rect)
         })
         .collect()
@@ -416,7 +411,6 @@ fn a_background_that_alone_reaches_the_viewport_keeps_its_rail() {
     }
 }
 
-/// The Light theme's code background (`paint::drawing::Palette`) and rail at rest
-/// (`copy_rail::rail_color`).
+/// The Light theme's code background and rail at rest (`paint::drawing::Palette`).
 const CODE_BACKGROUND: (u8, u8, u8) = (238, 235, 226);
 const RAIL_AT_REST: (u8, u8, u8) = (224, 220, 209);
