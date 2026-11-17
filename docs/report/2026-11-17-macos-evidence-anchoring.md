@@ -54,7 +54,7 @@ Windows 的资格化模块已经用 B（[#module-success-ledger](../plan/11_test
 - 修改 plan 11 #phase-16-macos-host 的“记录”“复用”“人工收据”“自动化行”四条：身份由可执行文件哈希改为产品输入指纹（加驱动、镜像、系统），
   可执行文件与 bundle 哈希改为审计字段。
 - 修改 #module-success-ledger：说明 macOS 域，以及内部依赖只写 `path` 后的 manifest 规则。
-- 工具：`stickymd-smoke mac-ledger` 的 `record`、`plan`、`receipt` 改用指纹；记录格式升级版本号，旧格式只读。
+- 工具：`stickymd-smoke mac-ledger` 的 `record`、`plan`、`receipt` 改用指纹；新记录多一个 `app_inputs` 字段，没有它的旧记录只读、不复用（实现中未另设格式版本号）。
 - 不影响 Windows 发布包的 exact-byte 校验：发布出去的 ZIP 仍按字节绑定已验收的候选。
 
 ## 需要 USER 决定
@@ -83,3 +83,21 @@ USER：“按建议实施，三项都同意”。据此：
 - 旧账本记录（263 行）照常可读，作为历史保留，不参与复用。
 
 plan 11 #phase-16-macos-host 与 #module-success-ledger 已按此改写。
+
+## 跨模型审查（codex `gpt-6-astra`，effort high，`origin/main..2853071`）
+
+Windows 指纹的算法逐项比较后兼容：相同输入下，workspace-tests（v1）与各功能模块（v2）的序列化逐字节不变。
+本分支改了 member manifest、plan 11 与指纹实现，这些都是全局输入，所以合并后 Windows 模块的实际指纹会变一次，旧证据随之失效；这是输入变化，不是算法变化。
+
+三个 BLOCKER 与一个 SHOULD_FIX 均已核实并修正：
+
+1. **从另一份 checkout 调用 `build-app.sh`：** smoke 工具按当前目录找仓库，A 的程序可能写入 B 的指纹。现在指纹在 `$repo` 中计算；
+   从别的目录调用已实测，得到与仓库内相同的指纹。
+2. **构建身份不完整：** `CARGO_PROFILE_*`、`RUSTFLAGS`、外部 Cargo 配置、编译器 wrapper、部署目标、SDK 与链接器都可改变产物而不改变指纹。
+   现在这些环境变量一经设置即拒绝（实测 `CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true` 被拒），仓库外的 Cargo 配置文件与 Xcode 工具身份
+   （`xcode-select -p`、SDK 路径、`clang --version`、`ld -v`）并入构建身份。依赖的 build script 读取的其他环境与外部文件没有穷尽核查。
+3. **复制了别的目录里的旧程序：** 构建可被 `CARGO_TARGET_DIR` 或外部配置重定向，脚本却固定从 `$repo/target` 复制。现在构建显式指定 `--target-dir "$repo/target"`。
+4. **第二次检查早于读取 Info.plist 模板（SHOULD_FIX）：** 现在在生成 staging 之后、签名之前检查；两次之间改动又改回的情况仍无法发现，已写明。
+
+另两项：`deny.toml` 的注释改为准确描述 `allow-wildcard-paths` 的范围（放行不发布 crate 声明的无版本 path 依赖，不检查路径是否属于工作区；
+git 来源仍由 `unknown-git` 约束）。记录格式没有版本字段，迁移依据是 `app_inputs` 字段是否存在；`dist/` 已列入 plan 的排除清单。

@@ -19,10 +19,12 @@ if [ -z "$version" ]; then
 fi
 
 # The product input fingerprint binds acceptance evidence to what decides the app's behaviour,
-# not to its bytes (plan 11 #phase-16-macos-host). Taken before and after the build, so a change
-# to the checkout during the build is refused rather than recorded.
+# not to its bytes (plan 11 #phase-16-macos-host). It is taken in this repository, whatever the
+# caller's directory, and refuses a build environment it cannot record. Taken again after the
+# bundle is staged, so a change to the inputs between the two is refused; a change undone in
+# between is not detected.
 inputs() {
-    cargo run --quiet --manifest-path "$repo/Cargo.toml" -p stickymd-smoke --locked -- mac-ledger inputs
+    (cd "$repo" && cargo run --quiet --locked -p stickymd-smoke -- mac-ledger inputs)
 }
 inputs_before=$(inputs)
 case "$inputs_before" in
@@ -36,12 +38,9 @@ if [ "${#inputs_before}" -ne 64 ]; then
     exit 1
 fi
 
-cargo build --manifest-path "$repo/Cargo.toml" -p stickymd-mac --release --locked --target "$target"
-
-if [ "$(inputs)" != "$inputs_before" ]; then
-    echo "the checkout changed during the build; build again" >&2
-    exit 1
-fi
+# The target directory is fixed, so the executable copied below is the one this build produced.
+cargo build --manifest-path "$repo/Cargo.toml" -p stickymd-mac --release --locked --target "$target" \
+    --target-dir "$repo/target"
 
 mkdir -p "$output"
 bundle="$output/StickyMD.app"
@@ -51,6 +50,14 @@ mkdir -p "$staging/Contents/MacOS"
 cp "$repo/target/$target/release/stickymd-mac" "$staging/Contents/MacOS/StickyMD"
 sed -e "s/@VERSION@/$version/g" -e "s/@INPUTS@/$inputs_before/g" "$packaging_dir/Info.plist" >"$staging/Contents/Info.plist"
 plutil -lint "$staging/Contents/Info.plist" >/dev/null
+
+# Every input has now been read: the sources by the build, the Info.plist template just above.
+inputs_after=$(inputs)
+if [ "$inputs_after" != "$inputs_before" ]; then
+    echo "the product inputs changed during the build; build again" >&2
+    rm -rf "$staging"
+    exit 1
+fi
 
 codesign --force --sign - --timestamp=none "$staging"
 codesign --verify --strict "$staging"

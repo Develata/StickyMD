@@ -6,6 +6,9 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod build;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod decide;
 mod options;
 #[cfg(any(target_os = "macos", test))]

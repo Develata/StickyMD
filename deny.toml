@@ -28,7 +28,9 @@ confidence-threshold = 0.8
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
-# Workspace crates are not published (`publish = false`) and refer to each other by path only.
+# Allows path dependencies without a version in crates that are not published (all workspace
+# members are `publish = false` and refer to each other by path only). It does not check that
+# the path is a workspace member; git sources stay governed by `unknown-git`.
 allow-wildcard-paths = true
 highlight = "simplest-path"
 deny = [

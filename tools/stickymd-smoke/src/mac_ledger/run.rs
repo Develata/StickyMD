@@ -3,7 +3,7 @@
 //! read, check and publish, and rewrites the ledger atomically with the old bytes verbatim.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::{
-    decide,
+    build, decide,
     options::{Command, Options},
     record::{self, Built, Identity, Record},
 };
@@ -94,8 +94,17 @@ fn built(app: &Path) -> Result<Built, String> {
 }
 
 /// The product input fingerprint of this checkout as `build-app.sh` builds it: the tracked inputs
-/// of the macOS app, then the toolchain (`rustc -vV`), the SDK, the target and the profile.
+/// of the macOS app, then the build identity (toolchain, Xcode tools, Cargo configuration outside
+/// the repository). A build environment the fingerprint cannot record is refused.
 fn inputs(root: &Path) -> Result<String, String> {
+    let refused = build::refused(std::env::vars());
+    if !refused.is_empty() {
+        return Err(format!(
+            "unset {}: they change the app's build but are not part of its input fingerprint",
+            refused.join(", ")
+        ));
+    }
+    // Both streams: `ld -v` reports its version on stderr.
     let output = |program: &str, args: &[&str]| -> Result<String, String> {
         let output = std::process::Command::new(program)
             .args(args)
@@ -105,14 +114,31 @@ fn inputs(root: &Path) -> Result<String, String> {
         if !output.status.success() {
             return Err(format!("{program} {} failed", args.join(" ")));
         }
-        String::from_utf8(output.stdout).map_err(|e| format!("{program}: {e}"))
+        let mut text = String::from_utf8(output.stdout).map_err(|e| format!("{program}: {e}"))?;
+        text.push_str(&String::from_utf8(output.stderr).map_err(|e| format!("{program}: {e}"))?);
+        Ok(text)
     };
-    let build = format!(
-        "rustc\n{}sdk\n{}target\naarch64-apple-darwin\nprofile\nrelease --locked\n",
-        output("rustc", &["-vV"])?,
-        output("/usr/bin/xcrun", &["--show-sdk-version"])?,
-    );
-    crate::qualification::mac_app_inputs(root, build.as_bytes())
+    let xcrun = "/usr/bin/xcrun";
+    let tools = [
+        ("rustc -vV", output("rustc", &["-vV"])?),
+        ("xcode-select -p", output("/usr/bin/xcode-select", &["-p"])?),
+        ("sdk path", output(xcrun, &["--show-sdk-path"])?),
+        ("sdk version", output(xcrun, &["--show-sdk-version"])?),
+        ("clang --version", output(xcrun, &["clang", "--version"])?),
+        ("ld -v", output(xcrun, &["ld", "-v"])?),
+    ];
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")))
+        .ok_or("neither CARGO_HOME nor HOME is set")?;
+    let configs = build::outside_cargo_configs(root, &cargo_home)
+        .into_iter()
+        .map(|path| {
+            let content = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            Ok((path, content))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    crate::qualification::mac_app_inputs(root, &build::identity(&tools, &configs))
 }
 
 fn now() -> Result<u64, String> {
