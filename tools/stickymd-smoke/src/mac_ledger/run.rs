@@ -94,8 +94,9 @@ fn built(app: &Path) -> Result<Built, String> {
 }
 
 /// The product input fingerprint of this checkout as `build-app.sh` builds it: the tracked inputs
-/// of the macOS app, then the build identity (toolchain, Xcode tools, Cargo configuration outside
-/// the repository). A build environment the fingerprint cannot record is refused.
+/// of the macOS app, then the build identity (the Cargo and Rust toolchain, the Xcode tools). A
+/// variable or a Cargo configuration outside the repository that could change the build
+/// unrecorded is refused; `build-app.sh` runs this with a clean environment.
 fn inputs(root: &Path) -> Result<String, String> {
     let refused = build::refused(std::env::vars());
     if !refused.is_empty() {
@@ -119,7 +120,26 @@ fn inputs(root: &Path) -> Result<String, String> {
         Ok(text)
     };
     let xcrun = "/usr/bin/xcrun";
+    let cwd = std::env::current_dir().map_err(|e| format!("current directory: {e}"))?;
+    let cargo_home = build::cargo_home(
+        std::env::var_os("CARGO_HOME"),
+        std::env::var_os("HOME"),
+        &cwd,
+    )
+    .ok_or("neither CARGO_HOME nor HOME is set")?;
+    let outside = build::outside_cargo_configs(root, &cargo_home);
+    if !outside.is_empty() {
+        return Err(format!(
+            "remove or move {}: Cargo configuration outside the repository can change the build but is not part of its input fingerprint",
+            outside
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     let tools = [
+        ("cargo -V", output("cargo", &["-V"])?),
         ("rustc -vV", output("rustc", &["-vV"])?),
         ("xcode-select -p", output("/usr/bin/xcode-select", &["-p"])?),
         ("sdk path", output(xcrun, &["--show-sdk-path"])?),
@@ -127,18 +147,7 @@ fn inputs(root: &Path) -> Result<String, String> {
         ("clang --version", output(xcrun, &["clang", "--version"])?),
         ("ld -v", output(xcrun, &["ld", "-v"])?),
     ];
-    let cargo_home = std::env::var_os("CARGO_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")))
-        .ok_or("neither CARGO_HOME nor HOME is set")?;
-    let configs = build::outside_cargo_configs(root, &cargo_home)
-        .into_iter()
-        .map(|path| {
-            let content = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            Ok((path, content))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    crate::qualification::mac_app_inputs(root, &build::identity(&tools, &configs))
+    crate::qualification::mac_app_inputs(root, &build::identity(&tools))
 }
 
 fn now() -> Result<u64, String> {

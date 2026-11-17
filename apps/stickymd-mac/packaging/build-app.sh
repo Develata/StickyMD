@@ -19,12 +19,21 @@ if [ -z "$version" ]; then
 fi
 
 # The product input fingerprint binds acceptance evidence to what decides the app's behaviour,
-# not to its bytes (plan 11 #phase-16-macos-host). It is taken in this repository, whatever the
-# caller's directory, and refuses a build environment it cannot record. Taken again after the
-# bundle is staged, so a change to the inputs between the two is refused; a change undone in
-# between is not detected.
+# not to its bytes (plan 11 #phase-16-macos-host). The fingerprint and the build both run in this
+# repository with a clean environment: only HOME and a fixed PATH (the directory of the caller's
+# cargo, then the system directories), so no variable can change the build without changing
+# the fingerprint. Taken again after the bundle is staged, so a change to the inputs between the
+# two is refused; a change undone in between is not detected.
+cargo_path=$(command -v cargo) || {
+    echo "cargo is not on PATH" >&2
+    exit 1
+}
+cargo_dir=$(CDPATH= cd -- "$(dirname -- "$cargo_path")" && pwd)
+clean() {
+    (cd "$repo" && env -i HOME="$HOME" PATH="$cargo_dir:/usr/bin:/bin:/usr/sbin:/sbin" "$@")
+}
 inputs() {
-    (cd "$repo" && cargo run --quiet --locked -p stickymd-smoke -- mac-ledger inputs)
+    clean cargo run --quiet --locked -p stickymd-smoke -- mac-ledger inputs
 }
 inputs_before=$(inputs)
 case "$inputs_before" in
@@ -39,8 +48,7 @@ if [ "${#inputs_before}" -ne 64 ]; then
 fi
 
 # The target directory is fixed, so the executable copied below is the one this build produced.
-cargo build --manifest-path "$repo/Cargo.toml" -p stickymd-mac --release --locked --target "$target" \
-    --target-dir "$repo/target"
+clean cargo build -p stickymd-mac --release --locked --target "$target" --target-dir "$repo/target"
 
 mkdir -p "$output"
 bundle="$output/StickyMD.app"

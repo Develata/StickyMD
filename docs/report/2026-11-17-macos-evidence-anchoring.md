@@ -101,3 +101,24 @@ Windows 指纹的算法逐项比较后兼容：相同输入下，workspace-tests
 
 另两项：`deny.toml` 的注释改为准确描述 `allow-wildcard-paths` 的范围（放行不发布 crate 声明的无版本 path 依赖，不检查路径是否属于工作区；
 git 来源仍由 `unknown-git` 约束）。记录格式没有版本字段，迁移依据是 `app_inputs` 字段是否存在；`dist/` 已列入 plan 的排除清单。
+
+## 更正：第二轮跨模型审查（codex `gpt-6-astra`，effort high，`2853071..1c86ee0`）
+
+上一节说三个 BLOCKER 都已修正，这不准确：复制旧程序与 Info.plist 检查时序两项确已修正，另两项只修了一部分。第二轮审查又给出四个 BLOCKER：
+
+1. 构建本身仍在调用者目录运行，会读到调用者目录下的 Cargo 配置；
+2. 外部 Cargo 配置的 `include` 未展开，空的 `CARGO_HOME` 处理与 Cargo 不同；
+3. `CARGO_RESOLVER_LOCKFILE_PATH` 可换用未进指纹的 lockfile；
+4. 探测到的 `rustc`、clang、ld 不一定是 Cargo 配置实际调用的工具。
+
+逐项补拒绝名单永远补不完，因此改为白名单：
+
+- `build-app.sh` 在仓库根目录、只含 `HOME` 与固定 `PATH` 的干净环境里，同时计算指纹与构建，调用者的环境变量进不了构建；
+- 仓库外只要存在 Cargo 会合并的配置文件，指纹即拒绝（不再试图记录其内容）；`CARGO_HOME` 的空值与相对路径按 Cargo 的规则处理；
+- `cargo -V` 并入构建身份；直接调用 `inputs` 时，拒绝名单另加 `CARGO_RESOLVER_*`。
+
+实测：在调用者环境设 `RUSTFLAGS` 与 `CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true`，从仓库外目录调用 `build-app.sh`，构建成功、签名有效，
+写入的指纹与在干净环境中直接计算的一致。`deny.toml` 注释补上了 dev-dependency 也被放行这一点。
+
+仍未覆盖、已写入 plan 11：仓库内被跟踪的 Cargo 配置若指向仓库外的程序，程序本身的变化不进指纹；依赖的 build script 读取仓库外文件的情况没有穷尽核查。
+另：上文“对规格的影响”一节中关于记录格式的一句是直接改写的，按本目录规则本应追加更正；原句为“记录格式升级版本号，旧格式只读”。

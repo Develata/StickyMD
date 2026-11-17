@@ -273,10 +273,13 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 - **产品输入指纹**：`stickymd-smoke mac-ledger inputs` 在仓库根目录对能进入 `build-app.sh` 所建 app 的全部 tracked 文件计算，与功能模块指纹共用同一算法，
   根 `Cargo.toml` 与 `Cargo.lock` 的发布版本同样规范化。除列为不能进入 app 的目录与文件（Windows 宿主、`tools/`、`docs/`、`.github/`、`experiments/`、
   根 `tests/`、`assets/`、`dist/`、根目录的说明文档与 `deny.toml`）外，任何文件都是输入；新文件只会导致重跑，不会导致误复用。
-- **构建身份**：指纹最后接上目标 `aarch64-apple-darwin`、`--release --locked`、`rustc -vV`、`xcode-select -p`、SDK 路径与版本、`clang --version`、`ld -v`，
-  以及仓库之外 Cargo 会合并的配置文件（各级祖先目录与 `CARGO_HOME` 中的 `config`/`config.toml`）的路径与内容。
-  会改变构建结果却无法记录的环境变量（`RUSTFLAGS`、`RUSTC` 与各种 wrapper、`CARGO_PROFILE_*`、`CARGO_BUILD_*`、`CARGO_TARGET_*`、
-  `CARGO_ENCODED_RUSTFLAGS`、`MACOSX_DEPLOYMENT_TARGET`、`SDKROOT`、C 工具链的 `CC`/`CFLAGS`/`LDFLAGS` 等）一经设置，`inputs` 即拒绝。
+- **构建身份**：指纹最后接上目标 `aarch64-apple-darwin`、`--release --locked`、`cargo -V`、`rustc -vV`、`xcode-select -p`、SDK 路径与版本、
+  `clang --version`、`ld -v`。
+- **干净的构建环境**：`build-app.sh` 在仓库根目录、以只含 `HOME` 与固定 `PATH`（调用者 `cargo` 所在目录，再接系统目录）的环境计算指纹并构建，
+  所以调用者的环境变量进不了构建。仓库之外存在 Cargo 会合并的配置文件（各级祖先目录与 Cargo home 中的 `config`/`config.toml`）时，`inputs` 拒绝；
+  直接调用 `inputs` 时，`RUSTFLAGS`、`RUSTC` 与各种 wrapper、`CARGO_PROFILE_*`、`CARGO_BUILD_*`、`CARGO_TARGET_*`、`CARGO_RESOLVER_*`、
+  `MACOSX_DEPLOYMENT_TARGET`、`SDKROOT`、C 工具链的 `CC`/`CFLAGS`/`LDFLAGS` 等变量也会被拒绝。
+- **未覆盖的输入**：仓库内被跟踪的 Cargo 配置若指向仓库外的程序，程序本身的变化不进指纹；依赖的 build script 读取仓库外文件的情况没有穷尽核查。
 - **写入 bundle**：`build-app.sh` 先算指纹，以固定的 `--target-dir` 构建并从同一目录复制可执行文件，生成 Info.plist（指纹写进 `StickyMDInputs`）后再算一次，
   两次不同即拒绝，相同才签名。两次检查之间被改动又改回的输入无法发现。
 

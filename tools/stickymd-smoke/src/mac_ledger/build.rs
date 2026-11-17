@@ -1,7 +1,8 @@
-//! The build a product input fingerprint stands for (plan 11 #phase-16-macos-host): the variables
-//! that would change what `build-app.sh` builds without being recorded are refused, and what is
-//! recorded besides the tracked files (toolchain, Xcode tools, Cargo configuration outside the
-//! repository) is serialized here.
+//! The build a product input fingerprint stands for (plan 11 #phase-16-macos-host).
+//! `build-app.sh` builds with a clean environment (only HOME and a fixed PATH); a fingerprint
+//! taken anywhere else still refuses the variables and the Cargo configuration outside the
+//! repository that could change the build unrecorded. What is recorded besides the tracked files
+//! (the Cargo and Rust toolchain, the Xcode tools) is serialized here.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use std::path::{Path, PathBuf};
 
@@ -24,13 +25,14 @@ const REFUSED: &[&str] = &[
     "SDKROOT",
 ];
 
-/// Families of the same: Cargo's profile, build and per-target configuration (which includes
-/// `CARGO_TARGET_DIR`), unstable flags, and the C toolchain variables a build script reads per
-/// target.
+/// Families of the same: Cargo's profile, build, resolver (an alternative lockfile) and per-target
+/// configuration (which includes `CARGO_TARGET_DIR`), unstable flags, and the C toolchain
+/// variables a build script reads per target.
 const REFUSED_PREFIXES: &[&str] = &[
     "AR_",
     "CARGO_BUILD_",
     "CARGO_PROFILE_",
+    "CARGO_RESOLVER_",
     "CARGO_TARGET_",
     "CARGO_UNSTABLE_",
     "CC_",
@@ -56,8 +58,9 @@ pub(super) fn refused(variables: impl IntoIterator<Item = (String, String)>) -> 
     names
 }
 
-/// The Cargo configuration files Cargo merges into a build run in `root` that are not tracked
-/// there: those of `root`'s ancestors and of `cargo_home`, in the order Cargo reads them.
+/// The Cargo configuration files Cargo would merge into a build run in `root` that are not tracked
+/// there: those of `root`'s ancestors and of `cargo_home`. Their effect (includes, compilers,
+/// wrappers, linkers, lockfile paths) cannot be recorded, so any of them refuses the fingerprint.
 pub(super) fn outside_cargo_configs(root: &Path, cargo_home: &Path) -> Vec<PathBuf> {
     let mut directories: Vec<PathBuf> = root
         .ancestors()
@@ -77,9 +80,9 @@ pub(super) fn outside_cargo_configs(root: &Path, cargo_home: &Path) -> Vec<PathB
     files
 }
 
-/// The bytes appended to the tracked inputs: each recorded tool output and configuration file as
-/// a length-prefixed label and value, after the fixed target and profile.
-pub(super) fn identity(tools: &[(&str, String)], configs: &[(PathBuf, Vec<u8>)]) -> Vec<u8> {
+/// The bytes appended to the tracked inputs: each recorded tool output as a length-prefixed label
+/// and value, after the fixed target and profile.
+pub(super) fn identity(tools: &[(&str, String)]) -> Vec<u8> {
     let mut bytes = Vec::new();
     let mut field = |label: &[u8], value: &[u8]| {
         bytes.extend_from_slice(&(label.len() as u64).to_le_bytes());
@@ -92,16 +95,28 @@ pub(super) fn identity(tools: &[(&str, String)], configs: &[(PathBuf, Vec<u8>)])
     for (label, value) in tools {
         field(label.as_bytes(), value.as_bytes());
     }
-    for (path, content) in configs {
-        field(path.to_string_lossy().as_bytes(), content);
-    }
     bytes
+}
+
+/// Cargo's home as Cargo resolves it: `CARGO_HOME` when set and non-empty (relative to `cwd`),
+/// otherwise `.cargo` in the home directory.
+pub(super) fn cargo_home(
+    cargo_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+    cwd: &Path,
+) -> Option<PathBuf> {
+    match cargo_home.filter(|value| !value.is_empty()) {
+        Some(value) => Some(cwd.join(value)),
+        None => home
+            .filter(|value| !value.is_empty())
+            .map(|home| PathBuf::from(home).join(".cargo")),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{identity, outside_cargo_configs, refused};
-    use std::path::PathBuf;
+    use super::{cargo_home, identity, outside_cargo_configs, refused};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn variables_that_change_the_build_are_refused_and_others_pass() {
@@ -112,6 +127,7 @@ mod tests {
             "CARGO_BUILD_TARGET_DIR",
             "CC_aarch64-apple-darwin",
             "MACOSX_DEPLOYMENT_TARGET",
+            "CARGO_RESOLVER_LOCKFILE_PATH",
             "CARGO_HOME",
             "CARGO_TERM_COLOR",
             "CARGO_PKG_NAME",
@@ -126,6 +142,7 @@ mod tests {
             [
                 "CARGO_BUILD_TARGET_DIR",
                 "CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS",
+                "CARGO_RESOLVER_LOCKFILE_PATH",
                 "CARGO_TARGET_DIR",
                 "CC_aarch64-apple-darwin",
                 "MACOSX_DEPLOYMENT_TARGET",
@@ -163,22 +180,35 @@ mod tests {
     }
 
     #[test]
-    fn every_recorded_tool_and_configuration_byte_changes_the_identity() {
+    fn every_recorded_tool_byte_changes_the_identity() {
         let tools = |ld: &str| {
             vec![
                 ("rustc -vV", "rustc 1.97.1".to_owned()),
                 ("ld -v", ld.to_owned()),
             ]
         };
-        let configs =
-            |text: &[u8]| vec![(PathBuf::from("/home/.cargo/config.toml"), text.to_vec())];
-        let base = identity(&tools("ld-1"), &configs(b"[build]"));
-        assert_eq!(base, identity(&tools("ld-1"), &configs(b"[build]")));
-        assert_ne!(base, identity(&tools("ld-2"), &configs(b"[build]")));
-        assert_ne!(
-            base,
-            identity(&tools("ld-1"), &configs(b"[build]\njobs = 1"))
+        let base = identity(&tools("ld-1"));
+        assert_eq!(base, identity(&tools("ld-1")));
+        assert_ne!(base, identity(&tools("ld-2")));
+        assert_ne!(base, identity(&tools("ld-1")[..1]));
+    }
+
+    #[test]
+    fn cargo_home_follows_cargo_for_unset_empty_and_relative_values() {
+        let cwd = Path::new("/work/repo");
+        let home = || Some("/Users/me".into());
+        assert_eq!(
+            cargo_home(None, home(), cwd),
+            Some(PathBuf::from("/Users/me/.cargo"))
         );
-        assert_ne!(base, identity(&tools("ld-1"), &[]));
+        assert_eq!(
+            cargo_home(Some("".into()), home(), cwd),
+            Some(PathBuf::from("/Users/me/.cargo"))
+        );
+        assert_eq!(
+            cargo_home(Some("cargo-home".into()), home(), cwd),
+            Some(PathBuf::from("/work/repo/cargo-home"))
+        );
+        assert_eq!(cargo_home(None, None, cwd), None);
     }
 }
