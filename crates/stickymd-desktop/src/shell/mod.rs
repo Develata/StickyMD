@@ -145,6 +145,9 @@ pub struct DesktopShell<H: Host> {
     /// See `press_probe!`.
     #[cfg(test)]
     press_probe: shell_pins_tests::PressProbe,
+    /// How many times `refresh_cursor` set the cursor: a windowless shell has none to read.
+    #[cfg(test)]
+    cursor_refreshes: std::cell::Cell<usize>,
     modifiers: ModifiersState,
     cursor_position: PhysicalPosition<f64>,
     pointer_inside_window: bool,
@@ -232,6 +235,8 @@ impl<H: Host> DesktopShell<H> {
             headless_window_gesture: None,
             #[cfg(test)]
             press_probe: Default::default(),
+            #[cfg(test)]
+            cursor_refreshes: Default::default(),
             modifiers: ModifiersState::default(),
             cursor_position: PhysicalPosition::new(0.0, 0.0),
             pointer_inside_window: false,

@@ -289,7 +289,16 @@ fn a_frame_change_under_a_still_pointer_updates_the_hover() {
         .unwrap();
     assert!(scrolled.scroll_y() > 0.0);
     app.preview_frame = Some(scrolled);
+    let refreshes = app.cursor_refreshes.get();
     app.draw_frame(None);
     assert_eq!(app.copy_rail.hovered, None);
+    assert_eq!(
+        app.cursor_refreshes.get(),
+        refreshes + 1,
+        "the paint sets the cursor once"
+    );
     assert_ne!(app.cursor_at_pointer(), CursorIcon::Pointer);
+    // A paint that finds the same rail, or none again, leaves the cursor alone.
+    app.draw_frame(None);
+    assert_eq!(app.cursor_refreshes.get(), refreshes + 1);
 }

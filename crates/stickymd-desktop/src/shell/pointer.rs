@@ -120,6 +120,8 @@ impl<H: Host> DesktopShell<H> {
     /// belongs to the window under the pointer (Microsoft `SetCursor`).
     pub(super) fn refresh_cursor(&self) {
         if self.pointer_inside_window {
+            #[cfg(test)]
+            self.cursor_refreshes.set(self.cursor_refreshes.get() + 1);
             self.apply_cursor();
         }
     }

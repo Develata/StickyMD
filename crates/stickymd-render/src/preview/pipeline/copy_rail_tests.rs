@@ -77,7 +77,7 @@ const WIDE_LINE: &str = "let overflow = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 1
 
 fn corpus() -> String {
     format!(
-        "# Title\n\nA paragraph with $x$ inline.\n\n    indented code\n\n```rust\nfn main() {{}}\n```\n\n$$x^2$$\n\n\
+        "# Title\n\nA paragraph with $x$ inline.\n\n![a picture](missing.png)\n\n    indented code\n\n```rust\nfn main() {{}}\n```\n\n$$x^2$$\n\n\
          <div>\nraw html\n</div>\n\n> ```\n> quoted\n> ```\n\n- item\n\n  ```\n  listed\n  ```\n\n\
          | a | b |\n|---|---|\n| 1 | 2 |\n\n```\n{WIDE_LINE}\n```\n\n\
          $$\\frac{{{}z}}{{2}}$$\n\n```\n```\n\nThe end.\n",
@@ -161,6 +161,16 @@ fn a_rail_overlaps_nothing_and_is_left_out_when_it_does_not_fit() {
                 } else {
                     hidden += 1;
                 }
+            }
+            if text.starts_with("# Title") {
+                let display = frame.index().text();
+                assert!(
+                    frame.index().boxes().iter().any(|item| {
+                        item.atomic
+                            && display.get(item.selection_range.clone()) == Some("a picture")
+                    }),
+                    "the image is in the frame, so the rails are checked against it"
+                );
             }
             let mut occupied: Vec<PreviewRect> =
                 frame.index().boxes().iter().map(|item| item.rect).collect();
@@ -381,5 +391,32 @@ fn a_background_that_alone_reaches_the_viewport_keeps_its_rail() {
             .unwrap_or_else(|| panic!("no rail at scroll {scroll_y}"));
         let x = rail.rect().x + 1.0;
         assert_eq!(frame.copy_rail_at(x, at_y), Some(rail));
+
+        // The pixel row that shows `at_y`: the background on its text-free left, then the rail.
+        let row = (at_y - frame.scroll_y()).floor() as u32;
+        let background = pipeline.layout.as_ref().unwrap().blocks[index]
+            .decorations
+            .iter()
+            .find(|decoration| decoration.role == DecorationRole::CodeBackground)
+            .unwrap()
+            .rect;
+        let mut pixmap = tiny_skia::Pixmap::new(frame.width(), frame.height()).unwrap();
+        frame.blit_to(&mut pixmap, 0, 0);
+        frame.paint_copy_rails(&mut pixmap, 0, 0, None);
+        let rgb = |x: f32| {
+            let pixel = pixmap.pixel(x as u32, row).unwrap();
+            (pixel.red(), pixel.green(), pixel.blue())
+        };
+        assert_eq!(
+            rgb(background.x + 3.0),
+            CODE_BACKGROUND,
+            "scroll {scroll_y}"
+        );
+        assert_eq!(rgb(rail.rect().x + 4.0), RAIL_AT_REST, "scroll {scroll_y}");
     }
 }
+
+/// The Light theme's code background (`paint::drawing::Palette`) and rail at rest
+/// (`copy_rail::rail_color`).
+const CODE_BACKGROUND: (u8, u8, u8) = (238, 235, 226);
+const RAIL_AT_REST: (u8, u8, u8) = (224, 220, 209);
