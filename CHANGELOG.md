@@ -4,6 +4,8 @@ All notable changes are recorded here.
 
 ## Unreleased
 
+- Prepare 0.2.0: the shared application and desktop layers move out of the Windows program (Phase 15), a macOS host can be
+  built locally (Phase 16), and Comrak goes from 0.54 to 0.59. Internal crates now require `0.2.0` of each other.
 - Add a macOS host (`apps/stickymd-mac`, arm64, macOS 27 and later) with the note storage, window docking, menu-bar icon, pasteboard, Cmd key table and quit barrier of the Windows host. It is built locally with `apps/stickymd-mac/packaging/build-app.sh` and is not distributed.
 - The collapsed dock sensor is now 2 DIP on every host, and focus returning to a collapsed strip no longer revokes its temporary topmost.
 

@@ -34,6 +34,11 @@
 - [Phase 15 B 的待决项](2026-11-07-phase-15-b-decisions.md)：失败分类、恢复文件名、异常保存回执、性能证据与窗口回执的结论（USER 决定 2026-11-07）。
 - [需要额外硬件的人工项改为可选](2026-10-31-optional-hardware-manual-items.md)：`previous` 角色、Clean VM、多屏、RDP 与负坐标不再阻断发布（USER 决定 2026-10-31）。
 
+## v0.2.0 候选准备
+
+- [本次候选准备](2026-11-17-v0.2.0-candidate-preparation.md)：发布范围、USER 授权与其适用条件、macOS 与 Windows 会话的分工、macOS 构建的验收身份。
+- [发布说明](../release-notes/0.2.0.md)：本版本累计改动；冻结前写成，验收结果发布时补全。
+
 ## v0.1.3 候选准备
 
 - [PR #4 之后提交的跨模型审查与修复](2026-10-24-post-pr4-cross-model-review.md)：55 个提交的审查结论、已修复项与待 USER 决定事项。
