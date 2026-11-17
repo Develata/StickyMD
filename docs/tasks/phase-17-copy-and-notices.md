@@ -5,18 +5,18 @@
 In Progress。2026-11-16 开工，分支 `feat/phase-17-copy-notices`。
 
 - **M1 提示条：** 代码 `d9ea9c1`，审查修正 `3018ced`。[验收矩阵](../acceptance-cases/phase-17.md)中 N01–N11、N13–N20 与 C11（复制反馈）已在 macOS 本机通过；N11 在 USER 决定后（`cd90d4b`）通过。
-  - 未完成：
-    - P17-N12 视觉验收。
+  - 未完成：P17-N12 在 Windows 宿主上的视觉验收。macOS 部分 USER 在 `mac-test` 中确认“都通过”（2026-11-18，[收据](../report/2026-11-18-phase-17-macos-vm-acceptance.md)）。
   - Windows：分支 CI `43907342450` 在 `270cf95` 通过（Windows 发布构建、格式与 lint、headless 测试与性能任务、macOS 宿主），覆盖 M1 与 M2。
 - **M2 文末留白：** 代码 `4d459a7`。E01–E04 已在 macOS 本机通过；人工义务 `plan09:scroll-8` 已绑定到这些测试，readiness 不再列出缺口。
-  - 未完成：macOS 与 Windows 的视觉确认（随 N12 一起）。
+  - 未完成：macOS 与 Windows 的视觉确认。2026-11-18 macOS 的 N12 确认没有专门检查文末留白（检查清单里没有这一项），所以 macOS 部分仍算未做。
 - **M3 复制语义：** 代码 `82fb340`、`472cae8`、`bff9f92`；两轮审查的修正 `825e304`、`051ca85`、`6250387`。C01–C11、C13–C17 已在 macOS 本机通过。
   - 未完成：
     - P17-C12：构建时间与复制映射的堆占用已测，进程内存门未运行，保持 `NOT TESTED`；
     - `stickymd-smoke phase 17` 的测试任务全部通过，就绪检查要等 C12 与 M4 的自动化行完成才能通过。
 - **M4 复制侧条：** 代码 `89dbba2`；自查修正 `c1826a5`，审查修正 `db32e61`、`e4cdaae`，模块账本归类 `358a4a8`，打磨 `b3805ed`、`57f12d3`，第三轮审查修正 `3f549d9`、`7b21465`。R01–R05 已在 macOS 本机通过。
   - `stickymd-smoke phase 17` 的测试任务通过；就绪检查现在只停在 P17-C12（进程内存门未运行）。
-  - 未完成：P17-R06 视觉验收（宽度、配色、Light/Dark、40% 透明度、隐藏），宽度与配色随之固定。
+  - 未完成：P17-R06 在 Windows 宿主上的视觉验收（宽度、配色、Light/Dark、40% 透明度、隐藏），之后宽度与配色固定。
+    macOS 部分 USER 在 `mac-test` 中确认“都通过”（2026-11-18，同一收据）。
   - Windows：分支 CI `44113614349` 在 `b4ccd6b` 通过（Windows 发布构建、格式与 lint、headless 测试与性能任务、macOS 宿主），覆盖 M3 与 M4。
 
 ### USER 决定（2026-11-17）
