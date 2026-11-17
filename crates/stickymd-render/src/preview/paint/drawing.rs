@@ -200,7 +200,7 @@ pub(super) fn paint_decoration(
     pixmap: &mut Pixmap,
     decoration: LayoutDecoration,
     scroll_y: f32,
-    palette: Palette,
+    palette: &Palette,
     mask: Option<&Mask>,
 ) {
     let rect = decoration.rect;

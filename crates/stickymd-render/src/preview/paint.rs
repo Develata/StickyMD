@@ -163,10 +163,10 @@ pub(super) fn paint_document(
         for decoration in &block.decorations {
             let mut decoration = *decoration;
             if decoration.role.is_block_background() {
-                paint_decoration(&mut pixmap, decoration, scroll_y, palette, None);
+                paint_decoration(&mut pixmap, decoration, scroll_y, &palette, None);
             } else {
                 decoration.rect.x -= offset;
-                paint_decoration(&mut pixmap, decoration, scroll_y, palette, clip_mask);
+                paint_decoration(&mut pixmap, decoration, scroll_y, &palette, clip_mask);
             }
         }
     }
@@ -273,7 +273,7 @@ pub(super) fn paint_document(
                                 role: DecorationRole::MathError,
                             },
                             scroll_y,
-                            palette,
+                            &palette,
                             clip_mask,
                         );
                         failed_formulas
