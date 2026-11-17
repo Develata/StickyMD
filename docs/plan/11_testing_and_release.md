@@ -275,11 +275,16 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
   根 `tests/`、`assets/`、`dist/`、根目录的说明文档与 `deny.toml`）外，任何文件都是输入；新文件只会导致重跑，不会导致误复用。
 - **构建身份**：指纹最后接上目标 `aarch64-apple-darwin`、`--release --locked`、`cargo -V`、`rustc -vV`、`xcode-select -p`、SDK 路径与版本、
   `clang --version`、`ld -v`。
-- **干净的构建环境**：`build-app.sh` 在仓库根目录、以只含 `HOME` 与固定 `PATH`（调用者 `cargo` 所在目录，再接系统目录）的环境计算指纹并构建，
-  所以调用者的环境变量进不了构建。仓库之外存在 Cargo 会合并的配置文件（各级祖先目录与 Cargo home 中的 `config`/`config.toml`）时，`inputs` 拒绝；
+- **干净的构建环境**：`build-app.sh` 在仓库根目录、以只含 `HOME` 与固定 `PATH`（先系统目录，链接驱动因此是系统的 `cc`，再接调用者 `cargo` 所在目录）的环境
+  计算指纹并构建，所以调用者的其他环境变量进不了构建。仓库之外存在 Cargo 会合并的配置文件（各级祖先目录与 Cargo home 中的 `config`/`config.toml`）时，
+  `inputs` 拒绝；Cargo home 按脚本以参数传入的 `HOME` 定位，Cargo 配置的 `[env]` 改不了它。需要非空的 `HOME`；
   直接调用 `inputs` 时，`RUSTFLAGS`、`RUSTC` 与各种 wrapper、`CARGO_PROFILE_*`、`CARGO_BUILD_*`、`CARGO_TARGET_*`、`CARGO_RESOLVER_*`、
   `MACOSX_DEPLOYMENT_TARGET`、`SDKROOT`、C 工具链的 `CC`/`CFLAGS`/`LDFLAGS` 等变量也会被拒绝。
-- **未覆盖的输入**：仓库内被跟踪的 Cargo 配置若指向仓库外的程序，程序本身的变化不进指纹；依赖的 build script 读取仓库外文件的情况没有穷尽核查。
+- **信任假设（不进指纹的输入）**：
+  - 仓库内被跟踪的 Cargo 配置若 `include` 仓库外的文件，或指向仓库外的程序、lockfile 与路径依赖，这些外部内容的变化不进指纹（现有配置只有 Windows 的 rustflags）；
+  - 保留下来的 `HOME`（rustup 的 `settings.toml` 与工具链目录、`~/.cargo` 中的依赖缓存）与调用者 `cargo` 所在目录：工具版本输出相同、内容不同的工具链或标准库不会被发现；
+  - Xcode 选中的开发目录中，同路径、同版本的工具被替换不会被发现；
+  - 依赖的 build script 读取仓库外文件、系统工具读取用户目录下配置的情况，没有穷尽核查。
 - **写入 bundle**：`build-app.sh` 先算指纹，以固定的 `--target-dir` 构建并从同一目录复制可执行文件，生成 Info.plist（指纹写进 `StickyMDInputs`）后再算一次，
   两次不同即拒绝，相同才签名。两次检查之间被改动又改回的输入无法发现。
 

@@ -122,3 +122,23 @@ git 来源仍由 `unknown-git` 约束）。记录格式没有版本字段，迁�
 
 仍未覆盖、已写入 plan 11：仓库内被跟踪的 Cargo 配置若指向仓库外的程序，程序本身的变化不进指纹；依赖的 build script 读取仓库外文件的情况没有穷尽核查。
 另：上文“对规格的影响”一节中关于记录格式的一句是直接改写的，按本目录规则本应追加更正；原句为“记录格式升级版本号，旧格式只读”。
+
+## 更正：第三轮跨模型审查（`1c86ee0..abd500c`）
+
+第二轮的 1（构建与指纹的工作目录不同）与 3（调用者环境中的 `CARGO_RESOLVER_LOCKFILE_PATH`）确认已修；2、4 只修了一部分。新的两个 BLOCKER 已修正：
+
+1. 外部 Cargo 配置可以用 `[env]` 改写 `HOME`，辅助程序因此到别处找 Cargo home、漏掉真正生效的配置。现在由 `build-app.sh` 把原始 `HOME` 以 `--home` 参数传入，按它定位 Cargo home。
+2. `PATH` 中调用者 `cargo` 所在目录排在系统目录之前，那里的 `cc` 包装程序会被当作链接驱动。现在系统目录在前，`env` 用 `/usr/bin/env`。
+
+其余意见：信任假设已在 plan 11 写全（仓库配置 `include` 或指向的外部文件、lockfile 与路径依赖；保留的 `HOME` 与 `cargo` 目录中工具链、标准库的内容；
+Xcode 开发目录中同路径、同版本的工具替换；build script 与系统工具读取的外部文件）；需要非空的 `HOME`，不复刻 Cargo 在 `HOME` 缺失时的回退。
+
+运行记录（macOS 27.2.1，`sh -x` 摘录）：在调用者环境设 `RUSTFLAGS="-Cdebug-assertions=on"` 与 `CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true`，
+从仓库外目录调用 `build-app.sh`，实际执行的是
+
+```text
+/usr/bin/env -i HOME=/Users/develata PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/opt/rustup/bin cargo run --quiet --locked -p stickymd-smoke -- mac-ledger inputs --home /Users/develata
+/usr/bin/env -i HOME=/Users/develata PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/opt/rustup/bin cargo build -p stickymd-mac --release --locked --target aarch64-apple-darwin --target-dir /Users/develata/gitclone/StickyMD/target
+```
+
+退出码 0，`codesign --verify --strict` 通过，写入的 `StickyMDInputs` 为 `15e56d6f…2c22`。上一节的同类运行（`abd500c`，指纹 `ea3b73da…6dcc`）与在干净环境中直接计算的指纹一致。

@@ -4,8 +4,10 @@ use std::path::PathBuf;
 
 pub(super) const HELP: &str =
     "usage: stickymd-smoke mac-ledger <inputs|plan|record|receipt> [options]
-  inputs  Prints the product input fingerprint of this checkout and toolchain; build-app.sh
-          writes it into the bundle's Info.plist.
+  inputs  [--home <dir>]
+          Prints the product input fingerprint of this checkout and toolchain; build-app.sh
+          writes it into the bundle's Info.plist. --home is the caller's home directory, given
+          by the caller so that a Cargo configuration cannot redirect where it is looked for.
   plan    --app <StickyMD.app> --driver <stickymd-smoke> --image <digest> --system <file>
           Lists the mac-gui rows to run, the rows whose PASS is reused (same product inputs,
           driver, VM image and VM system), and the manual rows without a USER receipt for these
@@ -31,6 +33,8 @@ pub(crate) struct Options {
     pub command: Option<Command>,
     pub ledger: Option<PathBuf>,
     pub app: Option<PathBuf>,
+    /// For `inputs`: the home directory whose `.cargo` is Cargo's home, as the caller saw it.
+    pub home: Option<PathBuf>,
     pub driver: Option<PathBuf>,
     pub image: Option<String>,
     pub system: Option<PathBuf>,
@@ -70,6 +74,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
         match key.as_str() {
             "--ledger" => result.ledger = Some(value.into()),
             "--app" => result.app = Some(value.into()),
+            "--home" => result.home = Some(value.into()),
             "--driver" => result.driver = Some(value.into()),
             "--image" => result.image = Some(value.clone()),
             "--system" => result.system = Some(value.into()),

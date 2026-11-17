@@ -20,20 +20,22 @@ fi
 
 # The product input fingerprint binds acceptance evidence to what decides the app's behaviour,
 # not to its bytes (plan 11 #phase-16-macos-host). The fingerprint and the build both run in this
-# repository with a clean environment: only HOME and a fixed PATH (the directory of the caller's
-# cargo, then the system directories), so no variable can change the build without changing
-# the fingerprint. Taken again after the bundle is staged, so a change to the inputs between the
-# two is refused; a change undone in between is not detected.
+# repository with a clean environment: only HOME and a fixed PATH (the system directories first,
+# so the linker driver is the system's, then the directory of the caller's cargo), so no variable
+# can change the build without changing the fingerprint. The caller's HOME is also passed as an
+# argument, which a Cargo configuration cannot rewrite. Taken again after the bundle is staged,
+# so a change to the inputs between the two is refused; a change undone in between is not
+# detected.
 cargo_path=$(command -v cargo) || {
     echo "cargo is not on PATH" >&2
     exit 1
 }
 cargo_dir=$(CDPATH= cd -- "$(dirname -- "$cargo_path")" && pwd)
 clean() {
-    (cd "$repo" && env -i HOME="$HOME" PATH="$cargo_dir:/usr/bin:/bin:/usr/sbin:/sbin" "$@")
+    (cd "$repo" && /usr/bin/env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin:$cargo_dir" "$@")
 }
 inputs() {
-    clean cargo run --quiet --locked -p stickymd-smoke -- mac-ledger inputs
+    clean cargo run --quiet --locked -p stickymd-smoke -- mac-ledger inputs --home "$HOME"
 }
 inputs_before=$(inputs)
 case "$inputs_before" in

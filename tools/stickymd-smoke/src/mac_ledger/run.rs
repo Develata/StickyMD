@@ -18,7 +18,7 @@ const MATRIX: &str = "docs/acceptance-cases/phase-16.md";
 
 pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
     if options.command == Some(Command::Inputs) {
-        println!("{}", inputs(root)?);
+        println!("{}", inputs(root, options.home.as_deref())?);
         return Ok(());
     }
     let ledger = options.ledger.clone().unwrap_or_else(|| {
@@ -97,7 +97,7 @@ fn built(app: &Path) -> Result<Built, String> {
 /// of the macOS app, then the build identity (the Cargo and Rust toolchain, the Xcode tools). A
 /// variable or a Cargo configuration outside the repository that could change the build
 /// unrecorded is refused; `build-app.sh` runs this with a clean environment.
-fn inputs(root: &Path) -> Result<String, String> {
+fn inputs(root: &Path, home: Option<&Path>) -> Result<String, String> {
     let refused = build::refused(std::env::vars());
     if !refused.is_empty() {
         return Err(format!(
@@ -120,13 +120,17 @@ fn inputs(root: &Path) -> Result<String, String> {
         Ok(text)
     };
     let xcrun = "/usr/bin/xcrun";
-    let cwd = std::env::current_dir().map_err(|e| format!("current directory: {e}"))?;
-    let cargo_home = build::cargo_home(
-        std::env::var_os("CARGO_HOME"),
-        std::env::var_os("HOME"),
-        &cwd,
-    )
-    .ok_or("neither CARGO_HOME nor HOME is set")?;
+    // A home given by the caller wins over this process's environment, which a Cargo
+    // configuration's `[env]` can rewrite before this program starts.
+    let cargo_home = match home {
+        Some(home) => home.join(".cargo"),
+        None => build::cargo_home(
+            std::env::var_os("CARGO_HOME"),
+            std::env::var_os("HOME"),
+            &std::env::current_dir().map_err(|e| format!("current directory: {e}"))?,
+        )
+        .ok_or("neither CARGO_HOME nor a non-empty HOME is set")?,
+    };
     let outside = build::outside_cargo_configs(root, &cargo_home);
     if !outside.is_empty() {
         return Err(format!(
