@@ -65,3 +65,21 @@ Windows 的资格化模块已经用 B（[#module-success-ledger](../plan/11_test
 
 验证计划：指纹在“只改版本号”“只改文档”时不变、在共享 crate 或 macOS 宿主源码改动时改变的单元测试；`plan` 在新旧格式账本上的复用判定测试；
 治理检查覆盖新域。
+
+## Resolution — USER 批准（2026-11-17）
+
+USER：“按建议实施，三项都同意”。据此：
+
+1. 人工收据改为绑定产品输入指纹；I01–I03 与 R03 照旧不沿用。
+2. 内部 crate 互相只按 `path` 引用，各 member 设 `publish = false`；`deny.toml` 加 `allow-wildcard-paths = true`
+   （去掉这一项时 cargo-deny 把这些路径依赖报为通配符依赖，已验证）。
+3. 切换后自动化行在 `mac-test` 重跑一次，人工行由 USER 重新确认一次；在下一次 macOS 相关改动或下一版本前做。
+
+实现与本报告的差异：
+
+- 指纹不单独建域规则，而是“除列出的目录与文件外全部算输入”，与报告的保守原则一致，规则更短。
+- `xcrun --show-sdk-version` 已并入构建身份（报告“风险”一节的建议）。
+- 指纹写进 Info.plist 的 `StickyMDInputs`；`build-app.sh` 在构建前后各算一次，不一致即拒绝。
+- 旧账本记录（263 行）照常可读，作为历史保留，不参与复用。
+
+plan 11 #phase-16-macos-host 与 #module-success-ledger 已按此改写。

@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::ModuleId;
 use crate::cli::ResourceModule;
 
+mod mac;
 mod normalize;
 mod stream;
 pub(in crate::qualification) use stream::Batch;
@@ -75,7 +76,11 @@ impl PlanningInputs {
     ) -> Result<Batch, String> {
         stream::calculate(
             root,
-            &modules.iter().copied().map(Some).collect::<Vec<_>>(),
+            &modules
+                .iter()
+                .copied()
+                .map(stream::Target::Module)
+                .collect::<Vec<_>>(),
             &self.tracked,
             &[],
         )
@@ -95,9 +100,24 @@ fn calculate_from(
     tracked: &[String],
     extra: &[u8],
 ) -> Result<String, String> {
-    Ok(stream::calculate(root, &[module], tracked, extra)?
+    Ok(stream::calculate(root, &[module.into()], tracked, extra)?
         .digests
         .remove(0))
+}
+
+/// The macOS app's product input fingerprint (plan 11 #phase-16-macos-host): every tracked file
+/// that can reach the app `build-app.sh` builds, with the release version normalized as for the
+/// functional modules, followed by `build_identity` (toolchain, SDK, target, profile).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn mac_app_inputs(root: &Path, build_identity: &[u8]) -> Result<String, String> {
+    Ok(stream::calculate(
+        root,
+        &[stream::Target::MacApp],
+        &tracked_files(root)?,
+        build_identity,
+    )?
+    .digests
+    .remove(0))
 }
 
 fn domains(module: ModuleId) -> u64 {

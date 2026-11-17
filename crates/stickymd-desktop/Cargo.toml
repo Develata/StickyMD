@@ -3,6 +3,7 @@ name = "stickymd-desktop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "StickyMD Shared Desktop: view geometry, title projection and the software frame path over winit and softbuffer, free of any native platform API"
 
 [features]
@@ -10,9 +11,9 @@ description = "StickyMD Shared Desktop: view geometry, title projection and the 
 testing = ["stickymd-app/testing"]
 
 [dependencies]
-stickymd-core = { path = "../stickymd-core", version = "0.2.0" }
-stickymd-render = { path = "../stickymd-render", version = "0.2.0" }
-stickymd-app = { path = "../stickymd-app", version = "0.2.0" }
+stickymd-core = { path = "../stickymd-core" }
+stickymd-render = { path = "../stickymd-render" }
+stickymd-app = { path = "../stickymd-app" }
 thiserror.workspace = true
 tiny-skia.workspace = true
 winit.workspace = true
@@ -21,7 +22,7 @@ raw-window-handle.workspace = true
 
 [dev-dependencies]
 # The shell tests read and set the session's state directly.
-stickymd-app = { path = "../stickymd-app", version = "0.2.0", features = ["testing"] }
+stickymd-app = { path = "../stickymd-app", features = ["testing"] }
 unicode-segmentation.workspace = true
 
 # winit stops with `compile_error!` on these targets until a backend is chosen. Both backends load

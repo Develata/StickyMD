@@ -268,11 +268,18 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 - **Windows：** 共享层 `render.rs`、`frame/surface.rs` 的改动需要 Windows 桌面回归。
 
 `mac-gui` 的结果按行记入账本 `dist/evidence/mac-gui-ledger/records.jsonl`，由 `stickymd-smoke mac-ledger` 管理（USER 批准 2026-11-12，[复用提案](../report/2026-11-11-macos-gui-rerun-reuse.md)）。
+证据的锚点是**产品输入指纹**，不是 app 的字节（USER 批准 2026-11-17，[锚定提案](../report/2026-11-17-macos-evidence-anchoring.md)）：
 
-- **记录**：账本只追加。每次追加都在排他锁下读取、校验，再原子发布，公共证据写入口不得写入账本目录。`record` 从同一次读取的证据字节中，记下一次运行的每一行，连同以下身份：app 可执行文件与 bundle 清单的 SHA-256、驱动的 SHA-256（由 `mac-gui` 写进证据；运行期间不得替换驱动）、虚拟机的 `sw_vers`，以及运行者传入的镜像 digest。一个 digest 只能对应一个系统版本。
-- **复用**：`plan` 只读账本，不启动被测程序，需要传入目标虚拟机运行前的 `sw_vers`。某行在账本里已有 PASS，且 app、bundle、驱动、镜像、系统五项与当前完全一致时，复用这次 PASS；如果同一身份下后来又记过非 PASS，一并提示。其余行列入要运行的 `--only` 清单。FAIL 与 NOT_TESTED 从不复用。
-- **人工收据**：`receipt` 按行记录 USER 的确认，绑定 app 可执行文件的 SHA-256。app 变了，收据不再成立，`plan` 会列出待重新确认的人工行。I01–I03 与 R03 从不沿用收据。
-- **自动化行**：验收表中 Mode 为 `Automated`、由 `mac-gui` 执行的行，只认账本里与当前 app、bundle、驱动、镜像、系统五项一致的 PASS，不需要人工收据。app 变了，这些行要在新身份下重新运行（`plan` 会列出）；还没有这样的 PASS 时状态为 `NOT TESTED`。哪些行改为 `Automated`，只限断言与显示硬件无关的行，按行经 USER 批准（2026-11-12，[提案](../report/2026-11-12-macos-manual-rows-automation.md)）。
+- **产品输入指纹**：`stickymd-smoke mac-ledger inputs` 对能进入 `build-app.sh` 所建 app 的全部 tracked 文件计算，与功能模块指纹共用同一算法，
+  根 `Cargo.toml` 与 `Cargo.lock` 的发布版本同样规范化，最后接上构建身份（`rustc -vV`、`xcrun --show-sdk-version`、目标 `aarch64-apple-darwin`、
+  `--release --locked`）。除列为不能进入 app 的目录与文件（Windows 宿主、`tools/`、`docs/`、`.github/`、`experiments/`、根 `tests/`、`assets/`、
+  根目录的说明文档与 `deny.toml`）外，任何文件都是输入；新文件只会导致重跑，不会导致误复用。
+- **写入 bundle**：`build-app.sh` 在构建前后各算一次指纹，两次不同即拒绝；指纹写进 Info.plist 的 `StickyMDInputs`，再签名。
+
+- **记录**：账本只追加。每次追加都在排他锁下读取、校验，再原子发布，公共证据写入口不得写入账本目录。`record` 从同一次读取的证据字节中，记下一次运行的每一行，连同以下身份：app 的产品输入指纹（`mac-gui` 从 bundle 读出写进证据）、驱动的 SHA-256（由 `mac-gui` 写进证据；运行期间不得替换驱动）、虚拟机的 `sw_vers`，以及运行者传入的镜像 digest；app 可执行文件与 bundle 清单的 SHA-256 一并记下，只供审计。一个 digest 只能对应一个系统版本。
+- **复用**：`plan` 只读账本，不启动被测程序，需要传入目标虚拟机运行前的 `sw_vers`。某行在账本里已有 PASS，且产品输入指纹、驱动、镜像、系统四项与当前完全一致时，复用这次 PASS；如果同一身份下后来又记过非 PASS，一并提示；这次 PASS 记录的 app 字节与当前不同时，作为审计信息列出。没有产品输入指纹的 app 或记录（指纹引入之前的）不参与复用。其余行列入要运行的 `--only` 清单。FAIL 与 NOT_TESTED 从不复用。
+- **人工收据**：`receipt` 按行记录 USER 的确认，绑定 app 的产品输入指纹（app 可执行文件的 SHA-256 只供审计）；没有指纹的 app 不能记收据。指纹变了，收据不再成立，`plan` 会列出待重新确认的人工行。I01–I03 与 R03 从不沿用收据。
+- **自动化行**：验收表中 Mode 为 `Automated`、由 `mac-gui` 执行的行，只认账本里与当前产品输入指纹、驱动、镜像、系统四项一致的 PASS，不需要人工收据。指纹变了，这些行要在新身份下重新运行（`plan` 会列出）；还没有这样的 PASS 时状态为 `NOT TESTED`。哪些行改为 `Automated`，只限断言与显示硬件无关的行，按行经 USER 批准（2026-11-12，[提案](../report/2026-11-12-macos-manual-rows-automation.md)）。
 - **范围**：不按产品模块复用，这一级留待 Windows RC3-B 解决之后。这一节不改变 Phase 16 不是资格化 suite 的性质。
 
 <a id="phase-17-copy-and-notices"></a>
@@ -617,6 +624,8 @@ core），以及任何编辑或偏好变化之后的持久化（autosave、自�
 `dependencies` 的重复；dotted/inline key、多行字符串、未知表、member 缺失或重复、带版本的 member 依赖引用、
 lock 与 manifest 版本不一致、lock 未被跟踪），两份文件都回退为原始字节；只有与判定时逐字节相同的内容才使用
 规范化形式。规范化算法版本写入指纹头；Source Freeze、workspace-tests identity 与 exact-byte 门始终使用原始字节。
+工作区内部 crate 互相只按 `path` 引用、不写版本要求，并设 `publish = false`（cargo-deny 以 `allow-wildcard-paths` 放行；USER 批准 2026-11-17），
+所以升发布版本只改上述两个文件，member manifest 不变。
 发布说明、README/CHANGELOG/CONTRIBUTING/SECURITY、AGENTS 指南、coverage matrix、release checklist、
 `docs/{adr,overview,features}/`、README 图片与许可证文本，以及人工验收代码（记录器、人工项注册表、观察存储、归约
 与 readiness 人工汇总）和 `tools/manual/` 指南，不是任何功能模块执行或读取的输入，不使功能模块失效（workspace

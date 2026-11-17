@@ -25,7 +25,7 @@
 
 ## 发布政策
 
-- [macOS 验收证据改按产品输入指纹锚定](2026-11-17-macos-evidence-anchoring.md)：证据身份由可执行文件哈希改为产品输入指纹的细化设计，USER 同意方向（2026-11-17），三项细节待决定。
+- [macOS 验收证据改按产品输入指纹锚定](2026-11-17-macos-evidence-anchoring.md)：证据身份由可执行文件哈希改为产品输入指纹，USER 批准（2026-11-17），已写入 plan 11 并实现。
 - [Phase 15 E 设计](2026-11-09-phase-15-e-shared-startup-logic.md)：把不依赖文件语义的启动、配置、粘贴与导出裁决移到共享层，存储事务留在宿主。
 - [Debian 13 平台决定](2026-11-09-debian-platform-decision.md)：能力矩阵、后端方案、缺能力时的规则与实测探针，等待 USER 批准。
 - [窗口启动失败路径](2026-11-09-startup-failure-paths.md)：现状、方案对比与建议的合同，等待 USER 批准。

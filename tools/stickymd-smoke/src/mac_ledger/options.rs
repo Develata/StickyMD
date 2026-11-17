@@ -2,21 +2,25 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use std::path::PathBuf;
 
-pub(super) const HELP: &str = "usage: stickymd-smoke mac-ledger <plan|record|receipt> [options]
+pub(super) const HELP: &str =
+    "usage: stickymd-smoke mac-ledger <inputs|plan|record|receipt> [options]
+  inputs  Prints the product input fingerprint of this checkout and toolchain; build-app.sh
+          writes it into the bundle's Info.plist.
   plan    --app <StickyMD.app> --driver <stickymd-smoke> --image <digest> --system <file>
-          Lists the mac-gui rows to run, the rows whose PASS is reused (same app, bundle,
-          driver, VM image and VM system), and the manual rows without a USER receipt for this
-          app. It writes no ledger and launches no app.
+          Lists the mac-gui rows to run, the rows whose PASS is reused (same product inputs,
+          driver, VM image and VM system), and the manual rows without a USER receipt for these
+          inputs. It writes no ledger and launches no app.
   record  --evidence <mac-gui.json> --image <digest>
           Appends every row of a finished run; the evidence must name its driver.
   receipt --app <StickyMD.app> --rows <ids> --quote <the USER's words>
-          Appends a USER receipt per row for this app on this desktop.
+          Appends a USER receipt per row for the app's product inputs on this desktop.
   --ledger <file> defaults to dist/evidence/mac-gui-ledger/records.jsonl under the repository.
   --image is the Tart image digest the VM was cloned from (the VM cannot see it).
   --system is a file holding the target VM's sw_vers output, taken just before the run.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Command {
+    Inputs,
     Plan,
     Record,
     Receipt,
@@ -40,6 +44,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
     let mut result = Options::default();
     let mut rest = args.iter();
     match rest.next().map(String::as_str) {
+        Some("inputs") => result.command = Some(Command::Inputs),
         Some("plan") => result.command = Some(Command::Plan),
         Some("record") => result.command = Some(Command::Record),
         Some("receipt") => result.command = Some(Command::Receipt),
@@ -88,6 +93,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
     }
     let missing = |name: &str| format!("mac-ledger needs {name}\n{HELP}");
     match result.command {
+        Some(Command::Inputs) => {}
         Some(Command::Plan) => {
             result.app.as_ref().ok_or_else(|| missing("--app"))?;
             result.driver.as_ref().ok_or_else(|| missing("--driver"))?;

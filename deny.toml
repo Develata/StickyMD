@@ -28,6 +28,8 @@ confidence-threshold = 0.8
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Workspace crates are not published (`publish = false`) and refer to each other by path only.
+allow-wildcard-paths = true
 highlight = "simplest-path"
 deny = [
     "async-std",

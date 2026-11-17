@@ -3,18 +3,19 @@ name = "stickymd-mac"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "StickyMD macOS executable: Interaction Shell + macOS platform adapters"
 
 [dependencies]
-stickymd-core = { path = "../../crates/stickymd-core", version = "0.2.0" }
-stickymd-render = { path = "../../crates/stickymd-render", version = "0.2.0" }
-stickymd-app = { path = "../../crates/stickymd-app", version = "0.2.0" }
+stickymd-core = { path = "../../crates/stickymd-core" }
+stickymd-render = { path = "../../crates/stickymd-render" }
+stickymd-app = { path = "../../crates/stickymd-app" }
 thiserror.workspace = true
 sha2.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-stickymd-posix = { path = "../../crates/stickymd-posix", version = "0.2.0" }
-stickymd-desktop = { path = "../../crates/stickymd-desktop", version = "0.2.0" }
+stickymd-posix = { path = "../../crates/stickymd-posix" }
+stickymd-desktop = { path = "../../crates/stickymd-desktop" }
 winit.workspace = true
 raw-window-handle.workspace = true
 notify = { workspace = true, features = ["macos_fsevent"] }
@@ -27,5 +28,5 @@ objc2 = "0.6.3"
 objc2-foundation = "0.3.2"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-stickymd-desktop = { path = "../../crates/stickymd-desktop", version = "0.2.0", features = ["testing"] }
+stickymd-desktop = { path = "../../crates/stickymd-desktop", features = ["testing"] }
 image.workspace = true
