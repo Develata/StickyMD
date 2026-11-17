@@ -11,10 +11,10 @@ In Progress。2026-11-16 开工，分支 `feat/phase-17-copy-notices`。
   - 未完成：macOS 与 Windows 的视觉确认。2026-11-18 macOS 的 N12 确认没有专门检查文末留白（检查清单里没有这一项），所以 macOS 部分仍算未做。
 - **M3 复制语义：** 代码 `82fb340`、`472cae8`、`bff9f92`；两轮审查的修正 `825e304`、`051ca85`、`6250387`。C01–C11、C13–C17 已在 macOS 本机通过。
   - 未完成：
-    - P17-C12：构建时间与复制映射的堆占用已测，进程内存门未运行，保持 `NOT TESTED`；
+    - P17-C12：构建时间、复制映射的堆占用与 macOS 进程内存门已测（2026-11-18，[虚拟机验收](../report/2026-11-18-phase-17-macos-vm-acceptance.md)）；Windows 资源运行未做，保持 `NOT TESTED`；
     - `stickymd-smoke phase 17` 的测试任务全部通过，就绪检查要等 C12 与 M4 的自动化行完成才能通过。
 - **M4 复制侧条：** 代码 `89dbba2`；自查修正 `c1826a5`，审查修正 `db32e61`、`e4cdaae`，模块账本归类 `358a4a8`，打磨 `b3805ed`、`57f12d3`，第三轮审查修正 `3f549d9`、`7b21465`。R01–R05 已在 macOS 本机通过。
-  - `stickymd-smoke phase 17` 的测试任务通过；就绪检查现在只停在 P17-C12（进程内存门未运行）。
+  - `stickymd-smoke phase 17` 的测试任务通过；就绪检查现在只停在 P17-C12（Windows 资源运行未做）。
   - 未完成：P17-R06 在 Windows 宿主上的视觉验收（宽度、配色、Light/Dark、40% 透明度、隐藏），之后宽度与配色固定。
     macOS 部分 USER 在 `mac-test` 中确认“都通过”（2026-11-18，同一收据）。
   - Windows：分支 CI `44113614349` 在 `b4ccd6b` 通过（Windows 发布构建、格式与 lint、headless 测试与性能任务、macOS 宿主），覆盖 M3 与 M4。
@@ -141,6 +141,8 @@ In Progress。2026-11-16 开工，分支 `feat/phase-17-copy-notices`。
   - 复制映射的堆占用（`copy/tests.rs` 的 `the_copy_map_stays_linear_in_the_document`）：20 KiB 文档 58 KiB，1 MiB 文档 2.9 MiB，每源码字节 2.89 字节。
     构建结束时去掉大纲的增长余量，否则约 3.45 字节。
   - 进程内存门（plan 10）没有运行。20 KiB 文档多出约 58 KiB，远小于预览模式 40 MiB 的目标，仍待资源运行确认。
+  - 2026-11-18 补测 macOS 进程内存门（`mac-test` 虚拟机，`806c03ec…` 对基线 `0841524`，两批 8 轮）：四个场景都在临时硬门内；
+    分层后被测比基线高约 0.1 MiB，与同版本两轮之差同量级，来源未定位（Hidden 也高）。见[虚拟机验收](../report/2026-11-18-phase-17-macos-vm-acceptance.md)。Windows 资源运行未做。
 - **跨模型审查（codex `gpt-6-astra`，effort high，`270cf95..3b29ff4`）：** 一个 BLOCKER、四个 SHOULD_FIX、一个待核实。
   逐条用测试复现核实后：
   - 已修正（`825e304`）：

@@ -6,7 +6,7 @@
   `09` `notices` / `vertical-scrollbars`（Preview 文末留白）、`07` 复制反馈、`11` `phase-17-copy-and-notices`。
 - **功能投影：** 功能文档的“下一版本（Phase 17）”一节。
 - **验收：** [Phase 17](acceptance-cases/phase-17.md) 的 N、E、C、R 系列；自动行在 macOS 本机通过，
-  人工行 P17-N12、P17-R06（macOS 部分已有 USER 收据，Windows 未测）与资源行 P17-C12 仍为 `NOT TESTED`；分支 Windows CI `44113614349` 在 `b4ccd6b` 构建并通过测试（M1–M4）。
+  人工行 P17-N12、P17-R06（macOS 部分已有 USER 收据，Windows 未测）与资源行 P17-C12（macOS 进程内存门已测，Windows 资源运行未做）仍为 `NOT TESTED`；分支 Windows CI `44113614349` 在 `b4ccd6b` 构建并通过测试（M1–M4）。
 - **代码：** 提示条 `crates/stickymd-app/src/flow/notice/` 与 `crates/stickymd-desktop/src/controls/notice_bar.rs`；
   文末留白 `crates/stickymd-render/src/preview/end_room.rs`；复制语义 `crates/stickymd-render/src/preview/copy/`；
   复制侧条 `crates/stickymd-render/src/preview/copy_rail.rs` 与 `crates/stickymd-desktop/src/shell/preview_copy_rail.rs`。
