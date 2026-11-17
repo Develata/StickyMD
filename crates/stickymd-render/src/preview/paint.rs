@@ -229,12 +229,15 @@ pub(super) fn paint_document(
     let scroll_end = PreviewEnd::new(document.height_px, height as f32, notice_bar_px);
     let scroll_y = scroll_end.clamp(requested_scroll_y);
     let viewport_bottom = scroll_y + height as f32;
+    // A block counts as visible while its background does: it reaches past the block's top and
+    // bottom, and its copy rail with it.
+    let outset = super::layout::BACKGROUND_OUTSET_DIP * document.scale;
     let start = document
         .blocks
-        .partition_point(|block| block.bottom < scroll_y);
+        .partition_point(|block| block.bottom + outset < scroll_y);
     let end = document
         .blocks
-        .partition_point(|block| block.top <= viewport_bottom);
+        .partition_point(|block| block.top - outset <= viewport_bottom);
 
     let viewport = PreviewRect {
         x: 0.0,

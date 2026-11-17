@@ -322,3 +322,64 @@ fn rails_paint_only_their_visible_part_and_brighten_when_hovered() {
     let (x, y) = (origin_x + (rect.x + rect.width / 2.0) as u32, origin_y + 5);
     assert_ne!(rest.pixel(x, y), hovered.pixel(x, y));
 }
+
+/// A code block whose background alone reaches into the viewport, at the bottom edge (the
+/// background starts 4 DIP above the block) or at the top edge (it ends 4 DIP below), is still
+/// painted with its rail, cut to what shows.
+#[test]
+fn a_background_that_alone_reaches_the_viewport_keeps_its_rail() {
+    let text = format!(
+        "{}```\ncode\n```\n\n{}",
+        "para\n\n".repeat(20),
+        "para\n\n".repeat(40)
+    );
+    let mut pipeline = PreviewPipeline::new();
+    build(
+        &mut pipeline,
+        &text,
+        Generation::initial(),
+        (520, 200),
+        1.0,
+        0.0,
+    );
+    let (index, block) = pipeline
+        .layout
+        .as_ref()
+        .unwrap()
+        .blocks
+        .iter()
+        .enumerate()
+        .find(|(_, block)| {
+            block
+                .decorations
+                .iter()
+                .any(|decoration| decoration.role == DecorationRole::CodeBackground)
+        })
+        .map(|(index, block)| (index, (block.top, block.bottom)))
+        .unwrap();
+    let (top, bottom) = block;
+    for (scroll_y, at_y) in [
+        // The viewport ends 2 DIP above the block, inside the background's top.
+        (top - 2.0 - 200.0, top - 3.0),
+        // The viewport starts 2 DIP below the block, inside the background's bottom.
+        (bottom + 2.0, bottom + 3.0),
+    ] {
+        let frame = build(
+            &mut pipeline,
+            &text,
+            Generation::initial(),
+            (520, 200),
+            1.0,
+            scroll_y,
+        );
+        assert_eq!(frame.scroll_y(), scroll_y);
+        let rail = frame
+            .copy_rails()
+            .iter()
+            .find(|rail| rail.block() == index)
+            .copied()
+            .unwrap_or_else(|| panic!("no rail at scroll {scroll_y}"));
+        let x = rail.rect().x + 1.0;
+        assert_eq!(frame.copy_rail_at(x, at_y), Some(rail));
+    }
+}

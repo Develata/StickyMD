@@ -138,7 +138,12 @@ impl<H: Host> DesktopShell<H> {
         let search_layout = self.search_layout();
         let scrollbars = self.scrollbar_geometry();
         let hovered_rail = self.copy_rail_under_pointer();
-        self.copy_rail.hovered = hovered_rail;
+        if hovered_rail != self.copy_rail.hovered {
+            self.copy_rail.hovered = hovered_rail;
+            // A still pointer gets no move to set the cursor when a new frame, a scroll or the
+            // notice bar puts a rail under it or takes it away.
+            self.refresh_cursor();
+        }
         let Some(surface) = &mut self.surface else {
             return false;
         };

@@ -199,6 +199,8 @@ impl<H: Host> DesktopShell<H> {
                 self.shell_input_enabled = enabled;
                 if !enabled {
                     self.scrollbars = Default::default();
+                    // A rail press does not survive a hide or a quit: its release copies nothing.
+                    self.copy_rail.press = None;
                     if self.controls.opacity_input_focused {
                         // Hiding or quitting takes the keyboard from the field, which commits it
                         // (plan 09) before the hide clears the popup or the quit flushes config.

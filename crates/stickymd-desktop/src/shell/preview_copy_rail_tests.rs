@@ -5,6 +5,7 @@
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-copy-rail
 
 use stickymd_app::config::ViewMode;
+use stickymd_app::flow::window::state::WindowEffect;
 use stickymd_app::instruction::AppIntent;
 use stickymd_core::{EditKind, Selection};
 use stickymd_render::preview::{PreviewPipeline, PreviewSelection, PreviewTheme};
@@ -238,5 +239,57 @@ fn a_window_that_takes_no_presses_offers_no_rail() {
 
     app.shell_input_enabled = false;
     assert_eq!(app.copy_rail_under_pointer(), None);
+    assert_ne!(app.cursor_at_pointer(), CursorIcon::Pointer);
+}
+
+/// A hide or a quit takes input away mid-press: the press ends there, and the release that
+/// follows writes nothing to the clipboard.
+#[test]
+fn input_going_away_ends_a_rail_press_without_a_copy() {
+    let mut app = shown("```\ncode\n```\n");
+    let at = on_rail(&app, 0.0, 0.0);
+    press(&mut app, at);
+    assert!(app.copy_rail.press.is_some());
+
+    app.apply_window_effect(WindowEffect::SetEditorInputEnabled(false));
+    assert!(app.copy_rail.press.is_none());
+    release(&mut app);
+    assert_eq!(clipboard(&mut app), None);
+
+    // A release that arrives while input is away, with the press still held, copies nothing.
+    app.apply_window_effect(WindowEffect::SetEditorInputEnabled(true));
+    press(&mut app, at);
+    app.shell_input_enabled = false;
+    release(&mut app);
+    assert_eq!(clipboard(&mut app), None);
+}
+
+/// With the pointer still, a new frame that moves the rail away (a wheel scroll) clears the hover
+/// on the next paint, which also sets the cursor again.
+#[test]
+fn a_frame_change_under_a_still_pointer_updates_the_hover() {
+    let text = format!("```\ncode\n```\n\n{}", "para\n\n".repeat(60));
+    let mut app = shown(&text);
+    let at = on_rail(&app, 0.0, 0.0);
+    app.handle_cursor_moved(at);
+    app.draw_frame(None);
+    assert!(app.copy_rail.hovered.is_some());
+
+    let pane = app.view_geometry().unwrap().preview.unwrap();
+    let scrolled = PreviewPipeline::new()
+        .build(
+            &app.app.coordinator.snapshot(),
+            pane.width,
+            pane.height,
+            1.0,
+            200.0,
+            PreviewSelection::default(),
+            PreviewTheme::Light,
+        )
+        .unwrap();
+    assert!(scrolled.scroll_y() > 0.0);
+    app.preview_frame = Some(scrolled);
+    app.draw_frame(None);
+    assert_eq!(app.copy_rail.hovered, None);
     assert_ne!(app.cursor_at_pointer(), CursorIcon::Pointer);
 }

@@ -24,6 +24,10 @@ const CODE_LINE_DIP: f32 = 23.0;
 const PADDING_DIP: f32 = 24.0;
 const BLOCK_GAP_DIP: f32 = 12.0;
 const INDENT_DIP: f32 = 16.0;
+/// How far a code or math background reaches above and below its block's text, the largest of
+/// them (code; math reaches 3). Painting culls blocks with this margin, so a background whose
+/// block lies just outside the viewport is still painted where it reaches in.
+pub(super) const BACKGROUND_OUTSET_DIP: f32 = 4.0;
 
 pub(super) struct LaidOutDocument {
     pub generation: Generation,
@@ -379,9 +383,9 @@ fn layout_text_block(
             decorations.push(LayoutDecoration {
                 rect: PreviewRect {
                     x: x - 7.0 * scale,
-                    y: y - 4.0 * scale,
+                    y: y - BACKGROUND_OUTSET_DIP * scale,
                     width: width + 14.0 * scale,
-                    height: height + 8.0 * scale,
+                    height: height + 2.0 * BACKGROUND_OUTSET_DIP * scale,
                 },
                 role: DecorationRole::CodeBackground,
             });

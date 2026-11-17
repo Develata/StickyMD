@@ -93,13 +93,14 @@ impl<H: Host> DesktopShell<H> {
         true
     }
 
-    /// Ends a rail press; a click that stayed within the threshold copies. `true` when a rail
-    /// press was ended.
+    /// Ends a rail press; a click that stayed within the threshold copies, while the window still
+    /// takes input. `true` when a rail press was ended.
     pub(super) fn release_copy_rail(&mut self) -> bool {
         let Some(press) = self.copy_rail.press.take() else {
             return false;
         };
         if !press.moved
+            && self.window_accepts_editor_mutation()
             && let Some(text) = press.text
         {
             self.dispatch(AppIntent::WriteClipboard { text });
