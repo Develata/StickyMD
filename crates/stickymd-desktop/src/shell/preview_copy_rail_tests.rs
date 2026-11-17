@@ -226,3 +226,17 @@ fn a_frame_that_is_not_shown_has_no_rail_to_hit() {
     release(&mut app);
     assert_eq!(clipboard(&mut app), None);
 }
+
+/// While the window takes no presses on its panes, a rail is neither hovered nor shown as
+/// clickable, since a press could not reach it.
+#[test]
+fn a_window_that_takes_no_presses_offers_no_rail() {
+    let mut app = shown("```\ncode\n```\n");
+    let at = on_rail(&app, 0.0, 0.0);
+    app.handle_cursor_moved(at);
+    assert!(app.copy_rail_under_pointer().is_some());
+
+    app.shell_input_enabled = false;
+    assert_eq!(app.copy_rail_under_pointer(), None);
+    assert_ne!(app.cursor_at_pointer(), CursorIcon::Pointer);
+}

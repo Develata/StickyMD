@@ -46,11 +46,12 @@ impl<H: Host> DesktopShell<H> {
             .map(|frame| (frame, pane))
     }
 
-    /// The rail under the pointer, if nothing drawn over the Preview covers it and no other drag
-    /// owns the pointer. Derived on demand, so a new frame, a scroll or a layout change cannot
-    /// leave a stale answer.
+    /// The rail under the pointer, if nothing drawn over the Preview covers it, no other drag owns
+    /// the pointer and the window takes presses on its panes (`handle_mouse_button`). Derived on
+    /// demand, so a new frame, a scroll or a layout change cannot leave a stale answer.
     pub(super) fn copy_rail_under_pointer(&self) -> Option<PreviewCopyRail> {
         if !self.pointer_inside_window
+            || !self.window_accepts_editor_mutation()
             || self.preview_dragging
             || self.app.editor.dragging_selection
             || self.preview_horizontal.drag.is_some()
