@@ -1,12 +1,15 @@
 # coverage-matrix.md - 契约覆盖矩阵
 
-2026-11-14 Phase 17 设计（下一版本，尚未实现）：
+2026-11-14 Phase 17 设计；2026-11-16 起在分支 `feat/phase-17-copy-notices` 实现（下一版本，尚未发布）：
 
 - **Plan：** `02` `copy-what-you-see`、`04` `notice-state`、`06` `preview-copy-semantics` / `preview-copy-rail`、
   `09` `notices` / `vertical-scrollbars`（Preview 文末留白）、`07` 复制反馈、`11` `phase-17-copy-and-notices`。
 - **功能投影：** 功能文档的“下一版本（Phase 17）”一节。
-- **验收：** [Phase 17](acceptance-cases/phase-17.md) 的 N、E、C、R 系列，全部 `NOT TESTED`。
-- **代码：** 尚无实现。
+- **验收：** [Phase 17](acceptance-cases/phase-17.md) 的 N、E、C、R 系列；自动行在 macOS 本机通过，
+  人工行 P17-N12、P17-R06 与资源行 P17-C12 仍为 `NOT TESTED`，Windows 宿主待构建。
+- **代码：** 提示条 `crates/stickymd-app/src/flow/notice/` 与 `crates/stickymd-desktop/src/controls/notice_bar.rs`；
+  文末留白 `crates/stickymd-render/src/preview/end_room.rs`；复制语义 `crates/stickymd-render/src/preview/copy/`；
+  复制侧条 `crates/stickymd-render/src/preview/copy_rail.rs` 与 `crates/stickymd-desktop/src/shell/preview_copy_rail.rs`。
 - **依据：** [提议报告](report/2026-11-14-copy-semantics-rail-notices.md)。设计于 macOS 版本发布后合入。
 
 2026-10-22 Preview 资源与宽内容改进：Plan 04 `preview-view-session`、Plan 06
