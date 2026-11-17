@@ -55,7 +55,7 @@ Evidence 列加上本收据（macOS 部分）。
 **结论：**
 
 - **门：** 两个版本在 8 轮里每场景各 20 次运行全部有效，最大 `phys_footprint` 都在 plan 10 macOS 临时硬门内，余量至少 16 MiB。
-- **与基线比：** 按缓冲档位分层后，被测程序比基线 `0841524` 高约 0.1 MiB。这与同一版本两轮之间的差同量级，每个版本只有两轮，分不开；描述性上界约 0.2 MiB。
+- **与基线比：** 按缓冲档位分层后，被测程序比基线 `0841524` 高约 0.1 MiB。这与同一版本两轮之间的差同量级，每个版本只有两轮，分不开。完整分层里至多 +0.15 MiB，稀疏分层最高 +0.24 MiB。
 - **验收表：** C12 仍为 `NOT TESTED`，因为 Windows 资源运行没有做。
 
 **做法：**
@@ -66,12 +66,15 @@ Evidence 列加上本收据（macOS 部分）。
   - 批次 1，16:06–18:09，顺序基线、被测、被测、基线（r1–r4）；
   - 批次 2，18:24–20:27，顺序被测、基线、基线、被测（r5–r8）。
 - 两批之间（18:13–18:24）做了 9 对背靠背探针：同一场景先后启动两个版本，30 s 后取 `footprint` 与 `vmmap --summary`。夹具哈希与上面相同。
-- **运行条件（已核实）：**
-  - 视觉验收的实例与屏幕共享都在批次开始前结束：屏幕共享 16:04:24 断开，r1 在 16:06:01 开始。
-  - `pmset -g`：`sleep 0`、`displaysleep 0`。
-  - 统一日志里，16:06–20:28 的 `powerd`、`loginwindow`、`screensharingd` 没有睡眠、熄屏、锁屏或连接事件。
-    `powerd` 在 16:09:21 把用户活动记为 inactive，之后没有变化；每小时一次 darkwake 查询只持有 20 s 的断言，没有进入睡眠。
+- **运行条件：**
+  - 已核实：视觉验收的实例在批次前停掉（16:05 `pkill` 后 `pgrep` 无结果）；屏幕共享 16:04:24 断开；r1 在 16:06:01 开始。
+  - 已核实：`pmset -g` 为 `sleep 0`、`displaysleep 0`。
+  - 已核实：统一日志里，16:06–20:28 的 `powerd`、`loginwindow`、`screensharingd`、`WindowServer` 没有睡眠、熄屏或屏幕共享连接事件。
+    每小时一次的 darkwake 查询只持有 20 s 的断言，没有进入睡眠。
+  - `powerd` 在 16:09:21 随用户活动级别变化记下 `Device is locked/inactive`，之后没有变化。这条字样不区分锁屏与无人操作。
+    推断不是锁屏：8 轮的 40 次 Hidden 运行都经菜单栏隐藏（`hidden_through_menu_bar`），全部有效。
   - JSON 里的 `release_build`、`desktop_conditions` 由调用方声明，驱动不核实，以上即本次的核实。
+    命令与匹配到的日志行存于证据目录的 `analysis/run-conditions.txt`；原始日志摘录没有保留。
 
 **门（每版本每场景 20 次，单位 MiB）：**
 
@@ -136,6 +139,7 @@ Evidence 列加上本收据（macOS 部分）。
   - r6 基线 `93c3608dc68d8e3c153f1dc8d7aea4a7b78813de9f2da6b4a209260a943642f9`
   - r7 基线 `8cce706307820de09c07fcb15c917016a1ca2692902c8329b97fcedbb895fbd3`
   - r8 被测 `e54fc3f6817c8763df64481e3e15a1e8ef0c6d7d8dea66d92b5e3887ac81b3ee`
+- `p17-c12/analysis/`：本节表格所用的脚本 `c12_all.py`（逐轮汇总）、`c12_strata.py`（8 轮两因素分层）、`c12_batch2.py`（第三缓冲次数与批次 2 分层），以及 `run-conditions.txt`。
 - `p17-c12-probe/`：每对探针的 `footprint` 与 `vmmap` 输出，以及 `probe.sh`、`pairs.sh`、`fixture.md`。汇总 `summary.txt` 的 SHA-256 为 `e09a88048b08f8c02472c83d86652351fa5dc460725c4804a99217a69f6e16a1`。
 
 **验收表：**
