@@ -83,8 +83,9 @@ impl CopyMap {
     }
 
     /// Whether the structure's source range ends in its own closing delimiter: emphasis the same
-    /// run it opens with, a link or image `)` or `]`, inline code a backtick run as long as its
-    /// opening one.
+    /// run it opens with, a link or image `)` or `]`, an autolink `>` after its opening `<`, inline
+    /// code a backtick run as long as its opening one. A bare autolink has no delimiters: its
+    /// range must be exactly its text.
     fn closes(&self, structure: &Structure) -> bool {
         let Some(text) = structure.source.text(&self.source) else {
             return false;
@@ -98,7 +99,17 @@ impl CopyMap {
                         && text.ends_with(open)
                 })
             }
-            StructureKind::Link | StructureKind::Image => text.ends_with([')', ']']),
+            StructureKind::Link => {
+                text.ends_with([')', ']'])
+                    || structure.content.is_some_and(|content| {
+                        let angled = content.start == structure.source.start + 1
+                            && content.end + 1 == structure.source.end
+                            && text.starts_with('<')
+                            && text.ends_with('>');
+                        angled || content == structure.source
+                    })
+            }
+            StructureKind::Image => text.ends_with([')', ']']),
             StructureKind::Code => structure.content.is_some(),
         }
     }

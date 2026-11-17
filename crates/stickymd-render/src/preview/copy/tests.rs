@@ -351,18 +351,23 @@ fn an_unclosed_expansion_snaps_to_whole_lines() {
     let source = "see [a](http://x\n) end";
     assert_eq!(copy(source, "e a"), "e [a](http://x\n) end");
     // The snapped endpoint is on its block's edge, so the quote around it still counts (rule 2).
-    let in_quote = ">\n> x <http://a.io> y";
-    assert_eq!(copy(in_quote, "ttp://a.io y"), in_quote);
-    // Autolinks end in neither `)` nor `]`, so a cut through one snaps too, as plan 06 words the
-    // check today.
-    assert_eq!(
-        copy("x www.auto.com y\nz", "x www.au"),
-        "x www.auto.com y\nz"
-    );
+    let in_quote = ">\n> see [a](http://x\n> ) end";
+    assert_eq!(copy(in_quote, "a end"), in_quote);
+    // An autolink closes with its own `>`, and a bare one has no delimiters to check: a cut through
+    // either copies the whole link (USER decision 2026-11-17).
+    assert_eq!(copy("x www.auto.com y\nz", "x www.au"), "x www.auto.com");
     assert_eq!(
         copy("x <http://a.io> y\nz", "x http://a"),
-        "x <http://a.io> y\nz"
+        "x <http://a.io>"
     );
+    assert_eq!(
+        copy("see <http://a.io> now", "http://a.io"),
+        "<http://a.io>"
+    );
+    assert_eq!(copy("x <a@b.c> y", "b.c y"), "<a@b.c> y");
+    assert_eq!(copy("x a@b.co y", "x a@"), "x a@b.co");
+    // Trailing punctuation is not part of a bare autolink, so it is not pulled in.
+    assert_eq!(copy("x https://a.com. y", "x https://a"), "x https://a.com");
 }
 
 /// P17-C17: normalized inline code rounds to its content edges, then takes its backticks;
