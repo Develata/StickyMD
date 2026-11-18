@@ -56,7 +56,7 @@ Evidence 列加上本收据（macOS 部分）。
 
 - **门：** 两个版本在 8 轮里每场景各 20 次运行全部有效，最大 `phys_footprint` 都在 plan 10 macOS 临时硬门内，余量至少 16 MiB。
 - **与基线比：** 按缓冲档位分层后，被测程序比基线 `0841524` 高约 0.1 MiB。这与同一版本两轮之间的差同量级，每个版本只有两轮，分不开。完整分层里至多 +0.15 MiB，稀疏分层最高 +0.24 MiB。
-- **验收表：** C12 仍为 `NOT TESTED`，因为 Windows 资源运行没有做。
+- **验收表：** Windows 资源运行没有做。USER 随后豁免了这一部分（见本节末），C12 改为 `AUTOMATED PASS`。
 
 **做法：**
 
@@ -144,5 +144,8 @@ Evidence 列加上本收据（macOS 部分）。
 
 **验收表：**
 
-- C12 的 Mode 是 `Automated`，覆盖两个宿主。macOS 的进程内存门已通过；Windows 资源运行没有做，所以 Status 保持 `NOT TESTED`。
+- C12 的 Mode 是 `Automated`，覆盖两个宿主。macOS 的进程内存门已通过；Windows 资源运行没有做。
 - Evidence 列补上 macOS 部分。
+
+**USER 豁免（2026-11-18）：** USER 原话“豁免 Windows 部分”。豁免的是 `10` 目标表在 Windows 上的进程内存资源运行，它没有运行。
+C12 因此改为 `AUTOMATED PASS`，Evidence 列注明豁免；先例是 P10-A30 的 USER 豁免（`docs/acceptance-cases/phase-10.md:56`，冷启动 300 ms 原门被豁免、400 ms 门通过）。

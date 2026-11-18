@@ -5,7 +5,7 @@
 
 - 契约：`02` #copy-what-you-see、`04` #notice-state、`06` #preview-copy-semantics 与 #preview-copy-rail、`09` #notices 与 #vertical-scrollbars。
 - 依据：[提议报告](../report/2026-11-14-copy-semantics-rail-notices.md)，USER 批准 2026-11-14。
-- 实施进度见 [Phase 17 任务](../tasks/phase-17-copy-and-notices.md)。M1、M2 与 M3 的自动化行已通过（P17-C12 的进程内存门除外），其余未运行的行保持 `NOT TESTED`。它不是资格化 suite，不产生 exact-candidate 证据。
+- 实施进度见 [Phase 17 任务](../tasks/phase-17-copy-and-notices.md)。M1–M4 的自动化行已通过（P17-C12 的 Windows 资源运行由 USER 豁免），其余未运行的行保持 `NOT TESTED`。它不是资格化 suite，不产生 exact-candidate 证据。
 
 ## M1 提示条
 
@@ -61,7 +61,7 @@
 | P17-C15 | 行内结构边缘端点算作在外：`x **abcd** y` 中选 `abcd` 得 `**abcd**`，选 `x abcd` 得 `x **abcd**`，选 `abcd y` 得 `**abcd** y`；行内代码同样处理 | Automated | `crates/stickymd-render/src/preview/copy/tests.rs:340` `an_endpoint_on_a_structure_edge_is_outside_it`（macOS 本机，`6250387`；Windows CI `44113614349` 在 `b4ccd6b` 构建并通过测试） | AUTOMATED PASS |
 | P17-C16 | 外扩校验：Comrak 0.59 对 URL 与 `)` 之间有换行的链接报出的终点不以 `)` 结束，此时端点吸附到所在块的整行范围，不复制未闭合的链接 | Automated | `crates/stickymd-render/src/preview/copy/tests.rs:350` `an_unclosed_expansion_snaps_to_whole_lines`（吸附后仍按块边缘外扩到外层引用；自动链接按 USER 决定 2026-11-17 以自己的 `<`、`>` 定界或无定界符，切开时复制整条链接，末尾标点不带上）（macOS 本机，`f23a901`；Windows CI `44113614349` 在 `b4ccd6b` 构建并通过测试） | AUTOMATED PASS |
 | P17-C17 | 规范化的行内代码（跨行、首尾空格被去掉）按不一一对应处理：内部端点取整到内容边缘，再按边缘规则带上反引号；未规范化的行内代码逐字节映射 | Automated | `crates/stickymd-render/src/preview/copy/tests.rs:376` `normalized_inline_code_rounds_to_its_edges`（含排版拆成单词的长行内代码）（macOS 本机，`6250387`；Windows CI `44113614349` 在 `b4ccd6b` 构建并通过测试） | AUTOMATED PASS |
-| P17-C12 | 资源：复制映射带来的 Preview 构建时间与内存变化在 `10` 的预算之内 | Automated | 已测：`crates/stickymd-render/src/preview/copy/tests.rs:467` `the_copy_map_stays_linear_in_the_document`（复制映射堆占用：20 KiB 文档 58 KiB、1 MiB 文档 2.9 MiB，每源码字节 2.89 字节，`6250387` 复测不变）；Release 基准，改动前 `270cf95` 与 `3b29ff4` 交替各两轮：1 MiB Preview 构建总耗时中位 17.87、17.86 ms 对 17.91、17.72 ms；1 MiB + 500 公式 17.21、16.56 ms 对 16.55、16.42 ms；20 KiB 缩放重排持平（数值见任务文档）。进程内存门 macOS：`mac-resources`（`mac-test` 虚拟机，程序 `806c03ec…`（`b4ccd6b` 的产品代码），基线 `bf1ec9c0…`（`0841524`），驱动 `025f1424…`，2026-11-18）两批共 8 轮、两种顺序，每版本每场景 20 次全部有效，每轮 `SCENARIOS_PASS`：被测 Source、Preview、Split、Hidden 最大 46.5、49.3、52.7、31.4 MiB，均在 `10` 的临时硬门 72、96、128、48 MiB 内；按缓冲档位分层后比基线高约 0.1 MiB，与同版本两轮之差同量级（[2026-11-18 macOS 虚拟机验收](../report/2026-11-18-phase-17-macos-vm-acceptance.md)的 P17-C12 一节）。未测：Windows 资源运行，所以本行仍为 NOT TESTED（macOS 本机，`6250387`；Windows CI `44113614349` 在 `b4ccd6b` 构建并通过测试） | NOT TESTED |
+| P17-C12 | 资源：复制映射带来的 Preview 构建时间与内存变化在 `10` 的预算之内 | Automated | 已测：`crates/stickymd-render/src/preview/copy/tests.rs:467` `the_copy_map_stays_linear_in_the_document`（复制映射堆占用：20 KiB 文档 58 KiB、1 MiB 文档 2.9 MiB，每源码字节 2.89 字节，`6250387` 复测不变）；Release 基准，改动前 `270cf95` 与 `3b29ff4` 交替各两轮：1 MiB Preview 构建总耗时中位 17.87、17.86 ms 对 17.91、17.72 ms；1 MiB + 500 公式 17.21、16.56 ms 对 16.55、16.42 ms；20 KiB 缩放重排持平（数值见任务文档）。进程内存门 macOS：`mac-resources`（`mac-test` 虚拟机，程序 `806c03ec…`（`b4ccd6b` 的产品代码），基线 `bf1ec9c0…`（`0841524`），驱动 `025f1424…`，2026-11-18）两批共 8 轮、两种顺序，每版本每场景 20 次全部有效，每轮 `SCENARIOS_PASS`：被测 Source、Preview、Split、Hidden 最大 46.5、49.3、52.7、31.4 MiB，均在 `10` 的临时硬门 72、96、128、48 MiB 内；按缓冲档位分层后比基线高约 0.1 MiB，与同版本两轮之差同量级（[2026-11-18 macOS 虚拟机验收](../report/2026-11-18-phase-17-macos-vm-acceptance.md)的 P17-C12 一节）。Windows 进程内存门（`10` 目标表的 Private Working Set 资源运行）：USER 豁免（2026-11-18，“豁免 Windows 部分”），未运行（macOS 本机，`6250387`；Windows CI `44113614349` 在 `b4ccd6b` 构建并通过测试） | AUTOMATED PASS |
 
 ## M4 复制侧条
 
