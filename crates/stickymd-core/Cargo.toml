@@ -3,6 +3,7 @@ name = "stickymd-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "StickyMD platform-independent core: document model, persistence contracts, state model"
 
 [dependencies]

@@ -3,6 +3,7 @@ name = "stickymd-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "StickyMD Shared Application: typed intents, coordinators, configuration state and sessions, free of any window system or platform API"
 
 [features]
@@ -11,8 +12,8 @@ description = "StickyMD Shared Application: typed intents, coordinators, configu
 testing = []
 
 [dependencies]
-stickymd-core = { path = "../stickymd-core", version = "0.2.0" }
-stickymd-render = { path = "../stickymd-render", version = "0.2.0" }
+stickymd-core = { path = "../stickymd-core" }
+stickymd-render = { path = "../stickymd-render" }
 sha2.workspace = true
 thiserror.workspace = true
 serde.workspace = true

@@ -41,6 +41,8 @@ pub(crate) mod workspace_tests;
 
 #[cfg(windows)]
 pub(crate) use exact_desktop::tray::exit_owned_copy;
+#[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
+pub(crate) use module_ledger::fingerprint::mac_app_inputs;
 pub(crate) use module_ledger::fingerprint::verify_product_classification;
 
 /// The unit tests that own manual obligations (plan 11 manual obligation mapping).

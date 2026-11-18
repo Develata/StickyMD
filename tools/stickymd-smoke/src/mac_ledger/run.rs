@@ -3,11 +3,11 @@
 //! read, check and publish, and rewrites the ledger atomically with the old bytes verbatim.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::{
-    decide,
+    build, decide,
     options::{Command, Options},
-    record::{self, Identity, Record},
+    record::{self, Built, Identity, Record},
 };
-use crate::mac_common::fixture::{bundle_hash, contained_executable};
+use crate::mac_common::fixture::{app_inputs, bundle_hash, contained_executable};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -17,6 +17,10 @@ use std::{
 const MATRIX: &str = "docs/acceptance-cases/phase-16.md";
 
 pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
+    if options.command == Some(Command::Inputs) {
+        println!("{}", inputs(root, options.home.as_deref())?);
+        return Ok(());
+    }
     let ledger = options.ledger.clone().unwrap_or_else(|| {
         root.join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
             .join("records.jsonl")
@@ -36,7 +40,7 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
     let new = match command {
         Command::Record => recorded(options)?,
         Command::Receipt => receipts(options, &manual)?,
-        Command::Plan => unreachable!("planned above"),
+        Command::Plan | Command::Inputs => unreachable!("handled above"),
     };
     let all: Vec<Record> = existing.iter().chain(&new).cloned().collect();
     decide::check_system(&all)?;
@@ -81,12 +85,73 @@ fn lock(ledger: &Path) -> Result<fs::File, String> {
     Ok(file)
 }
 
-fn app_hashes(app: &Path) -> Result<(String, String), String> {
+fn built(app: &Path) -> Result<Built, String> {
     let app = app.canonicalize().map_err(|e| format!("app path: {e}"))?;
-    Ok((
-        crate::integrity::sha256(&contained_executable(&app)?)?,
-        bundle_hash(&app)?,
-    ))
+    Ok(Built {
+        executable: crate::integrity::sha256(&contained_executable(&app)?)?,
+        bundle: bundle_hash(&app)?,
+    })
+}
+
+/// The product input fingerprint of this checkout as `build-app.sh` builds it: the tracked inputs
+/// of the macOS app, then the build identity (the Cargo and Rust toolchain, the Xcode tools). A
+/// variable or a Cargo configuration outside the repository that could change the build
+/// unrecorded is refused; `build-app.sh` runs this with a clean environment.
+fn inputs(root: &Path, home: Option<&Path>) -> Result<String, String> {
+    let refused = build::refused(std::env::vars());
+    if !refused.is_empty() {
+        return Err(format!(
+            "unset {}: they change the app's build but are not part of its input fingerprint",
+            refused.join(", ")
+        ));
+    }
+    // Both streams: `ld -v` reports its version on stderr.
+    let output = |program: &str, args: &[&str]| -> Result<String, String> {
+        let output = std::process::Command::new(program)
+            .args(args)
+            .current_dir(root)
+            .output()
+            .map_err(|e| format!("{program}: {e}"))?;
+        if !output.status.success() {
+            return Err(format!("{program} {} failed", args.join(" ")));
+        }
+        let mut text = String::from_utf8(output.stdout).map_err(|e| format!("{program}: {e}"))?;
+        text.push_str(&String::from_utf8(output.stderr).map_err(|e| format!("{program}: {e}"))?);
+        Ok(text)
+    };
+    let xcrun = "/usr/bin/xcrun";
+    // A home given by the caller wins over this process's environment, which a Cargo
+    // configuration's `[env]` can rewrite before this program starts.
+    let cargo_home = match home {
+        Some(home) => home.join(".cargo"),
+        None => build::cargo_home(
+            std::env::var_os("CARGO_HOME"),
+            std::env::var_os("HOME"),
+            &std::env::current_dir().map_err(|e| format!("current directory: {e}"))?,
+        )
+        .ok_or("neither CARGO_HOME nor a non-empty HOME is set")?,
+    };
+    let outside = build::outside_cargo_configs(root, &cargo_home);
+    if !outside.is_empty() {
+        return Err(format!(
+            "remove or move {}: Cargo configuration outside the repository can change the build but is not part of its input fingerprint",
+            outside
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    let tools = [
+        ("cargo -V", output("cargo", &["-V"])?),
+        ("rustc -vV", output("rustc", &["-vV"])?),
+        ("xcode-select -p", output("/usr/bin/xcode-select", &["-p"])?),
+        ("sdk path", output(xcrun, &["--show-sdk-path"])?),
+        ("sdk version", output(xcrun, &["--show-sdk-version"])?),
+        ("clang --version", output(xcrun, &["clang", "--version"])?),
+        ("ld -v", output(xcrun, &["ld", "-v"])?),
+    ];
+    crate::qualification::mac_app_inputs(root, &build::identity(&tools))
 }
 
 fn now() -> Result<u64, String> {
@@ -115,10 +180,9 @@ fn plan(options: &Options, existing: &[Record], manual: &[String]) -> Result<(),
     let app = options.app.as_deref().ok_or("--app missing")?;
     let driver = options.driver.as_deref().ok_or("--driver missing")?;
     let system_file = options.system.as_deref().ok_or("--system missing")?;
-    let (app_executable, app_bundle) = app_hashes(app)?;
+    let built = built(app)?;
     let identity = Identity {
-        app_executable,
-        app_bundle,
+        inputs: app_inputs(&app.canonicalize().map_err(|e| format!("app path: {e}"))?)?,
         driver: crate::integrity::sha256(driver)?,
         image: options.image.clone().ok_or("--image missing")?,
         system: record::system(
@@ -127,10 +191,16 @@ fn plan(options: &Options, existing: &[Record], manual: &[String]) -> Result<(),
         ),
     };
     let executable = crate::mac_gui::executable_ids();
-    let plan = decide::plan(existing, &executable, manual, &identity);
+    let plan = decide::plan(existing, &executable, manual, &identity, &built);
     println!(
-        "app executable {}\ndriver {}\nimage {}\nsystem {}",
-        identity.app_executable, identity.driver, identity.image, identity.system
+        "app inputs {}\napp executable {} (audit)\ndriver {}\nimage {}\nsystem {}",
+        identity.inputs.as_deref().unwrap_or(
+            "none: this bundle was built without its input fingerprint; rebuild it with build-app.sh to reuse anything"
+        ),
+        built.executable,
+        identity.driver,
+        identity.image,
+        identity.system
     );
     for reuse in &plan.reused {
         println!(
@@ -144,6 +214,12 @@ fn plan(options: &Options, existing: &[Record], manual: &[String]) -> Result<(),
                 ""
             }
         );
+        if reuse.other_bytes {
+            println!(
+                "  audit P16-{}: that PASS was recorded for other app bytes built from the same inputs",
+                reuse.row
+            );
+        }
     }
     if plan.run.is_empty() {
         println!("run: nothing; every executable row has a PASS for this identity");
@@ -154,11 +230,11 @@ fn plan(options: &Options, existing: &[Record], manual: &[String]) -> Result<(),
         );
     }
     for (row, environment) in &plan.confirmed {
-        println!("manual P16-{row}: USER receipt for this app ({environment})");
+        println!("manual P16-{row}: USER receipt for these inputs ({environment})");
     }
     if !plan.unconfirmed.is_empty() {
         println!(
-            "manual rows needing the USER for this app: {} ({} are never carried over)",
+            "manual rows needing the USER for these inputs: {} ({} are never carried over)",
             plan.unconfirmed.join(","),
             decide::NEVER_REUSED.join(",")
         );
@@ -186,7 +262,10 @@ fn receipts(options: &Options, manual: &[String]) -> Result<Vec<Record>, String>
             "P16-{row} is not a Manual row of the Phase 16 matrix"
         ));
     }
-    let (app_executable, _) = app_hashes(options.app.as_deref().ok_or("--app missing")?)?;
+    let app = options.app.as_deref().ok_or("--app missing")?;
+    let app_executable = built(app)?.executable;
+    let inputs = app_inputs(&app.canonicalize().map_err(|e| format!("app path: {e}"))?)?
+        .ok_or("this bundle carries no input fingerprint; rebuild it with build-app.sh before recording a receipt")?;
     let environment = desktop()?;
     let quote = options.quote.clone().ok_or("--quote missing")?;
     let recorded_unix = now()?;
@@ -195,6 +274,7 @@ fn receipts(options: &Options, manual: &[String]) -> Result<Vec<Record>, String>
         .iter()
         .map(|row| Record::Manual {
             row: row.clone(),
+            inputs: Some(inputs.clone()),
             app_executable: app_executable.clone(),
             environment: environment.clone(),
             quote: quote.clone(),

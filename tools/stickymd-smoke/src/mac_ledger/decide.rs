@@ -1,7 +1,7 @@
 //! Pure planning over the ledger: which rows run, which reuse a recorded PASS, which manual rows
 //! still need the USER for this app.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
-use super::record::{Identity, Record};
+use super::record::{Built, Identity, Record};
 
 /// Manual rows never carried over by a receipt, as on Windows: each confirmation stands for one
 /// sitting (the IME checks, App Translocation of a downloaded package).
@@ -14,6 +14,8 @@ pub(super) struct Reuse {
     pub evidence_sha256: String,
     /// A FAIL or NOT_TESTED under the same identity was recorded after this PASS.
     pub later_non_pass: bool,
+    /// The PASS was recorded for other app bytes built from the same inputs; reported for audit.
+    pub other_bytes: bool,
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -22,26 +24,29 @@ pub(super) struct Plan {
     pub run: Vec<String>,
     /// Executable rows whose latest PASS under this identity is reused.
     pub reused: Vec<Reuse>,
-    /// Manual rows with a USER receipt for this app executable, with its environment.
+    /// Manual rows with a USER receipt for these product inputs, with its environment.
     pub confirmed: Vec<(String, String)>,
     /// Manual rows without one, and the never-reused rows.
     pub unconfirmed: Vec<String>,
 }
 
 /// `executable` are the rows `mac-gui` can run; `manual` the matrix rows whose mode is Manual.
-/// Only a PASS recorded under exactly `identity` is reused (an earlier success stays evidence of
-/// itself, as for the Windows last-success receipts); a later non-PASS is reported with it.
+/// Only a PASS recorded under exactly `identity` (product inputs, driver, image, system) is reused
+/// (an earlier success stays evidence of itself, as for the Windows last-success receipts); a
+/// later non-PASS is reported with it. `built` is the app at hand, compared for audit only. An app
+/// without inputs reuses nothing and has no confirmed manual rows.
 pub(super) fn plan(
     records: &[Record],
     executable: &[&str],
     manual: &[String],
     identity: &Identity,
+    built: &Built,
 ) -> Plan {
     let mut result = Plan::default();
     for &row in executable {
         let same = |r: &&Record| {
             matches!(r, Record::Automated { row: r_row, identity: r_identity, .. }
-                if r_row == row && r_identity == identity)
+                if r_row == row && r_identity.reusable_for(identity))
         };
         let latest_pass = records.iter().enumerate().rev().find(|(_, r)| {
             same(r) && matches!(r, Record::Automated { verdict, .. } if verdict == "PASS")
@@ -52,6 +57,7 @@ pub(super) fn plan(
                 Record::Automated {
                     evidence,
                     evidence_sha256,
+                    built: recorded,
                     ..
                 },
             )) => result.reused.push(Reuse {
@@ -59,6 +65,7 @@ pub(super) fn plan(
                 evidence: evidence.clone(),
                 evidence_sha256: evidence_sha256.clone(),
                 later_non_pass: records[at + 1..].iter().any(|r| same(&r)),
+                other_bytes: recorded != built,
             }),
             _ => result.run.push(row.to_owned()),
         }
@@ -67,10 +74,10 @@ pub(super) fn plan(
         let receipt = records.iter().rev().find_map(|r| match r {
             Record::Manual {
                 row: r_row,
-                app_executable,
+                inputs: Some(inputs),
                 environment,
                 ..
-            } if r_row == row && *app_executable == identity.app_executable => {
+            } if r_row == row && identity.inputs.as_ref() == Some(inputs) => {
                 Some(environment.clone())
             }
             _ => None,

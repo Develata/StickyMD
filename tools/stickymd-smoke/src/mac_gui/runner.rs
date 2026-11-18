@@ -26,6 +26,8 @@ const CONFIG: &str = "version = 1\nview_mode = \"source\"\nopacity = 100\nalways
 struct AppHash {
     executable: String,
     bundle: String,
+    /// The product inputs the bundle was built from, when `build-app.sh` recorded them.
+    inputs: Option<String>,
     /// This driver's own executable, so the ledger can tell which driver produced the evidence.
     driver: String,
 }
@@ -70,6 +72,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             &std::env::current_exe().map_err(|e| format!("driver path: {e}"))?,
         )?,
         bundle: bundle_hash(&app)?,
+        inputs: crate::mac_common::fixture::app_inputs(&app)?,
     };
     // Prevent output from ever targeting the supplied bundle or its canonical note directory.
     let out = output_path(&options.out)?;
@@ -224,7 +227,13 @@ fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
 }
 fn save(out: &Path, environment: &str, hash: &AppHash, rows: &[Row]) -> Result<(), String> {
     let json = format!(
-        "{{\"schema_version\":1,\"acceptance_status\":\"INCOMPLETE\",\"environment\":{environment},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"scenarios\":[{}]}}\n",
+        "{{\"schema_version\":1,\"acceptance_status\":\"INCOMPLETE\",\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"scenarios\":[{}]}}\n",
+        hash.inputs
+            .as_ref()
+            .map_or_else(String::new, |inputs| format!(
+                ",\"app_inputs\":{}",
+                quote(inputs)
+            )),
         quote(&hash.executable),
         quote(&hash.bundle),
         quote(&hash.driver),
