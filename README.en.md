@@ -60,9 +60,31 @@ scratchpad.
 3. Move the shortcut into the Startup folder. StickyMD will open at the next Windows sign-in.
 
 This is an optional Windows-managed shortcut; StickyMD does not register itself in the Registry or
-create an autorun task. Recreate the shortcut after moving the program directory. Local Release
-measurements put common steady views around 20 MB, making StickyMD suitable as a lightweight desktop
-scratchpad; actual usage varies with the view, document, images, and Windows environment.
+create an autorun task. Recreate the shortcut after moving the program directory. With a Scoop
+install, point the shortcut at `scoop\apps\stickymd\current\StickyMD.exe` so it survives updates.
+Local Release measurements put common steady views around 20 MB, making StickyMD suitable as a
+lightweight desktop scratchpad; actual usage varies with the view, document, images, and Windows
+environment.
+
+### Optional: install with Scoop
+
+If you already use [Scoop](https://scoop.sh):
+
+```pwsh
+scoop bucket add develata https://github.com/Develata/scoop-bucket
+scoop install develata/stickymd
+```
+
+Start it from the `StickyMD` Start menu shortcut. Scoop installs the same portable ZIP, and the note
+still lives in `note/` next to the program. Scoop keeps one directory per version, so `scoop update`
+and `scoop uninstall` first copy `note/` to `scoop\persist\stickymd\note` (the copy before it stays
+in `note.previous`), and installing the next version copies it back.
+
+- Quit StickyMD from its tray menu before updating or uninstalling; the copy refuses to run while
+  StickyMD is running.
+- After an update, start StickyMD only from the Start menu; edits made by running `StickyMD.exe` in
+  an older version's directory are not carried over.
+- `scoop uninstall --purge stickymd` also deletes the saved copy.
 
 <a id="use-cases"></a>
 
