@@ -4,6 +4,29 @@
 [`docs/plan/11_testing_and_release.md`](plan/11_testing_and_release.md) 为准；每次发布的 source、artifact、
 收据和 USER authority 必须重新建立，不能从旧版本继承。
 
+## v0.2.0 已发布记录
+
+- Release：[StickyMD v0.2.0](https://github.com/Develata/StickyMD/releases/tag/v0.2.0)，release id `450091881`
+- 发布时间：`2026-11-18T14:25:15Z`；正式版，非 draft/prerelease，GitHub latest 指向本版本。
+- Exact source / tag：`fc97e83adfc6dcd3d29b42f924d9476a120647ac`。
+- Source CI：`44044061626`；candidate workflow：`44046334056` / attempt 1，artifact `14313335997`，均成功。
+- ZIP SHA-256：`8d35e2f188073c6f3ee91de577990e016f8f982797547e823b4c739ba6b70361`
+- EXE SHA-256：`1b60231af5099608ea6e323a0a2506e64fa7195e237bdcd16b162ce204a599b1`
+- SBOM SHA-256：`0fdabd2346471fbc8a056115fc95dac56102cd4ad404c345c83a3c55a49e2165`
+- Tag：`44322899347`；draft：`44323187556`；publish：`44323864385`，全部成功。
+  两个会话并行 dispatch，另有 tag 校验 `44323004943` 与重传相同字节的 draft `44323282286`，均成功；经过见发布记录。
+- 晋升沿用已验收候选字节；公开三个附件不带认证下载后与原候选逐字节一致；ZIP/SBOM provenance 与 ZIP SPDX 证明核验通过。
+- Readiness `READY`（Windows 11 25H2 26200.9974，Windows 会话运行）：
+  - 10 个资格化模块在本候选上 `RAN_PASS`；
+  - Tier A 15 项 `MANUAL_PASS`，P12-M05 由 USER 按场景豁免；
+  - Tier B 单屏 DPI 组由 USER 按组豁免；
+  - previous 目标（24H2）、Tier O 与 Tier C 保持 `NOT TESTED`。
+  - 没有使用整版 `NOT_READY` 例外。
+- macOS 版本机构建，不提供下载；Phase 16 的验收绑定发布前的构建，0.2.0 构建没有重跑。
+
+具体边界、产物摘要与公开核验结果见[候选准备与发布记录](report/2026-11-17-v0.2.0-candidate-preparation.md)
+和[发布说明](release-notes/0.2.0.md)。
+
 ## v0.1.3 已发布记录
 
 - Release：[StickyMD v0.1.3](https://github.com/Develata/StickyMD/releases/tag/v0.1.3)
