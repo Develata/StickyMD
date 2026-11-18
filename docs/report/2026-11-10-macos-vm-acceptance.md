@@ -718,6 +718,7 @@ USER 回复：“人工确认已完成，可以合并”。随后确认这次只
   W09 第二、三次运行同样失败（`gui-evidence-W09`、`gui-evidence-W09b`）；第三次之前重启了 Notification Center 进程，它把这条通知重新显示出来。
   随后经辅助功能对这条通知执行它自己的 Close 动作（`nc-close.js`，以 JXA 调 AX C API）；没有选“Install Tonight”，系统版本前后不变。
   第四次运行 W09 通过（`gui-evidence-W09c`，SHA-256 `056737c0…a7d3`）。W09 在此前 11 次运行中全部通过。
+  此前先试过用 `osascript` 经 System Events 读通知，它卡住超过 60 s：经 SSH 调 System Events 需要“自动化”授权，系统随之弹出授权框（`UserNotificationCenter`）。已结束该 `osascript` 并结束 `UserNotificationCenter` 以收起授权框，没有授予这项权限。
 - **登记：** 四次运行都按时间顺序 `mac-ledger record` 进账本，三次 FAIL 也如实记下。
   账本从 263 行增至 279 行，SHA-256 `fb248bfb…5d88`。之后的 `plan` 复用这 9 行 PASS：W02、W03、W04、W07、W08、W09、W11、K02、E01。
 - **证据：** 已忽略的 `dist/evidence/mac-vm-2026-11-19-anchor/`，含运行前后的 `sw_vers`、两次 `plan` 的输出、四份 `mac-gui.json` 与各行 stderr，以及关通知的脚本与输出。
@@ -727,4 +728,4 @@ USER 回复：“人工确认已完成，可以合并”。随后确认这次只
 - Mode 为 `Automated` 的 W07、W08、W09、W11、K02、E01 在新身份下 PASS，Evidence 列改为本次运行。
 - Mode 为 `Manual` 的 W01–W06、W10、W12、I01–I03、F01、R03、V04 的收据仍绑定 `2906076…`，对新身份不成立；`plan` 列出它们待重新确认。
   USER 2026-11-19 要求以后把人工行尽量减少：先程序自动化，其次由 agent 截图判定，最后才是极少的人工。所以这次没有请 USER 逐行确认，
-  这些行的状态与收据暂不改动，先就每一行改用什么方式另提方案。V05 仍只能在 Windows 机器上做。
+  这些行按方案 A 失效时的先例（`01a2ce5`）改为 `NOT TESTED`，旧收据保留为“此前”；每一行改用什么方式见[人工行缩减提案](2026-11-19-macos-manual-rows-reduction.md)。V05 仍只能在 Windows 机器上做。
