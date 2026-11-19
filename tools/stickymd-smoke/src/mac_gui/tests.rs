@@ -1276,7 +1276,7 @@ fn a_success_first_seen_after_the_deadline_is_late() {
 /// R03 from observations: the bad samples a check must refuse, and what it cannot tell.
 #[test]
 fn translocation_checks_refuse_bad_samples() {
-    use super::translocation::{Observed, judge};
+    use super::translocation::{EXIT_ONE, GENERIC_ADVICE, Observed, TRANSLOCATED_ADVICE, judge};
     let good = || Observed {
         quarantine: Some("00c3;6afec4a5;Safari;".into()),
         path: Some(
@@ -1293,7 +1293,9 @@ fn translocation_checks_refuse_bad_samples() {
         stderr: "当前目录不可写，请先用访达把 StickyMD.app 移到别处。\n\ncannot create a file: \
                  Read-only file system (os error 30)\n"
             .into(),
+        unanswered: None,
         exited: Some(true),
+        termination: Some(EXIT_ONE.into()),
         before: vec!["StickyMD.app".into(), "StickyMD.zip".into()],
         after: vec!["StickyMD.app".into(), "StickyMD.zip".into()],
     };
@@ -1304,9 +1306,10 @@ fn translocation_checks_refuse_bad_samples() {
     };
     let (v, row) = verdict(good());
     assert_eq!(v, Verdict::Pass, "{}", row.json());
-    assert_eq!(row.checks.len(), 5);
-    // Bad samples: gone before a prompt, a prompt about something else, still running after
-    // Return, a file written beside the package.
+    assert_eq!(row.checks.len(), 6);
+    // Bad samples: gone before a prompt, a prompt about something else, the advice for any other
+    // unwritable folder, still running after Return, another exit, a file written beside the
+    // package.
     for bad in [
         Observed {
             window: None,
@@ -1320,7 +1323,18 @@ fn translocation_checks_refuse_bad_samples() {
             ..good()
         },
         Observed {
+            stderr: format!(
+                "当前目录不可写，{GENERIC_ADVICE}。\n\ncannot create a file: Read-only file system \
+                 (os error 30)\n"
+            ),
+            ..good()
+        },
+        Observed {
             exited: Some(false),
+            ..good()
+        },
+        Observed {
+            termination: Some("(2, 9, 9)".into()),
             ..good()
         },
         Observed {
@@ -1350,10 +1364,57 @@ fn translocation_checks_refuse_bad_samples() {
             exited: None,
             ..good()
         },
+        // The prompt in words this driver does not know.
+        Observed {
+            stderr: "当前目录不可写，请换个地方。\n\ncannot create a file: Read-only file system \
+                     (os error 30)\n"
+                .into(),
+            ..good()
+        },
+        // Seen but not answered: the process went, or the window did, before Return.
+        Observed {
+            unanswered: Some("the process ended before Return was posted".into()),
+            exited: None,
+            termination: None,
+            ..good()
+        },
+        // Answered and gone, but no termination record in the log.
+        Observed {
+            termination: None,
+            ..good()
+        },
     ] {
         let (v, row) = verdict(unknown);
         assert_eq!(v, Verdict::NotTested, "{}", row.json());
     }
+    // The advices are the product's own words (main.rs now, paths.rs after Phase 18), and the
+    // generic one never reads as the move advice.
+    let product = [
+        include_str!("../../../../apps/stickymd-mac/src/main.rs"),
+        include_str!("../../../../apps/stickymd-mac/src/paths.rs"),
+    ]
+    .concat();
+    assert!(
+        TRANSLOCATED_ADVICE
+            .iter()
+            .any(|a| product.contains("当前目录不可写，") && product.contains(a)),
+        "the product no longer gives a known move advice; update TRANSLOCATED_ADVICE"
+    );
+    assert!(product.contains(&format!("当前目录不可写，{GENERIC_ADVICE}。")));
+    assert!(
+        TRANSLOCATED_ADVICE
+            .iter()
+            .all(|a| !GENERIC_ADVICE.contains(a))
+    );
+    // Phase 18's wording passes too.
+    let (v, row) = verdict(Observed {
+        stderr:
+            "当前目录不可写，请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，或把整个 StickyMD \
+                 文件夹移到别处。\n\ncannot create a file: Read-only file system (os error 30)\n"
+                .into(),
+        ..good()
+    });
+    assert_eq!(v, Verdict::Pass, "{}", row.json());
 }
 
 fn image(width: usize, height: usize, fill: [u8; 3]) -> super::pixels::Image {
@@ -1561,163 +1622,375 @@ fn press_and_hold_judge_refuses_bad_samples() {
     assert_eq!(appeared(&before, &after), vec![(5, 9, "X".to_string())]);
 }
 
-/// W12's logout cases: the facts the system log gives, and each case's bad samples.
+/// W12's logout cases: the facts the system log gives (real lines of the p4 VM run), and each
+/// case's bad samples.
 #[test]
 fn logout_cases_judge_the_log_and_the_note() {
-    use super::logout::check::{Facts, LOST, SAVED, TYPED, UNSAVED, from_log, judge};
-    let log = "08:55:11.718 localhost StickyMD[1242]: (AppKit) [com.apple.AppKit:Application] Handling Quit AppleEvent\n\
-               08:55:11.720 localhost StickyMD[1242]: (AppKit) [com.apple.AppKit:Application] applicationShouldTerminate: NSTerminateLater\n\
-               08:55:11.841 localhost StickyMD[1242]: (AppKit) [com.apple.AppKit:Application] replyToApplicationShouldTerminate:YES\n\
-               08:55:11.923 localhost runningboardd[176]: (RunningBoard) [app<application.io.github.develata.stickymd(501)>:1242] termination reported by launchd (0, 0, 0)\n\
-               08:55:12.000 localhost StickyMD[9999]: (AppKit) [com.apple.AppKit:Application] replyToApplicationShouldTerminate:NO\n";
-    let mut facts = Facts::default();
-    from_log(log, 1242, &mut facts);
-    assert!(facts.quit_event);
-    assert_eq!(facts.decision.as_deref(), Some("NSTerminateLater"));
+    use super::logout::check::{
+        Facts, LOST, Logged, NOTE, Note, SAVED, TYPED, UNSAVED, from_log, judge, log_time,
+    };
     assert_eq!(
-        facts.reply.as_deref(),
-        Some("YES"),
+        log_time("2026-11-19 12:51:39.066088+0000  localhost x"),
+        Some(1_795_092_699_066_088)
+    );
+    assert_eq!(log_time("1970-01-01 00:00:00+0000 x"), Some(0));
+    assert_eq!(
+        log_time("2000-03-01 08:00:00.5+0800 x"),
+        Some(951_868_800_500_000)
+    );
+    assert_eq!(log_time("1969-12-31 23:59:59.999999+0000 x"), Some(-1));
+    for bad in [
+        "08:55:11.718 localhost",
+        "2026-13-01 00:00:00+0000 x",
+        "2026-11-19 24:00:00+0000 x",
+        "2026-11-19 12:51:39.066088 x",
+        "2026-11-19 12:51:39.1234567890+0000 x",
+        "2026-11-19-1 12:51:39+0000 x",
+        "",
+    ] {
+        assert_eq!(log_time(bad), None, "{bad}");
+    }
+    let quit = "2026-11-19 12:51:39.066088+0000  localhost StickyMD[991]: (AppKit) [com.apple.AppKit:Application] Handling Quit AppleEvent";
+    let later = "2026-11-19 12:51:39.066255+0000  localhost StickyMD[991]: (AppKit) [com.apple.AppKit:Application] applicationShouldTerminate: NSTerminateLater";
+    let yes = "2026-11-19 12:51:39.198758+0000  localhost StickyMD[991]: (AppKit) [com.apple.AppKit:Application] replyToApplicationShouldTerminate:YES";
+    let ended = "2026-11-19 12:51:39.300215+0000  localhost runningboardd[175]: (RunningBoard) [com.apple.runningboard:ttl] [app<application.io.github.develata.stickymd.516736.516741.2DBA30AC-C083-4C8B-B538-31068C90C401(501)>:991] termination reported by launchd (0, 0, 0)";
+    let other = "2026-11-19 12:51:39.100000+0000  localhost StickyMD[9991]: (AppKit) [com.apple.AppKit:Application] replyToApplicationShouldTerminate:NO";
+    let early = "2026-11-19 12:51:38.000000+0000  localhost StickyMD[991]: (AppKit) [com.apple.AppKit:Application] applicationShouldTerminate: NSTerminateNow";
+    let mut facts = Facts::default();
+    from_log(
+        &[early, quit, later, other, yes, ended].join("\n"),
+        991,
+        &mut facts,
+    );
+    assert_eq!(
+        facts.quit,
+        Some(Logged {
+            line: 1,
+            at: log_time(quit),
+            value: String::new()
+        })
+    );
+    let seen = |l: &Option<Logged>| l.as_ref().map(|l| (l.line, l.value.clone()));
+    assert_eq!(
+        seen(&facts.decision),
+        Some((2, "NSTerminateLater".into())),
+        "a decision before the quit event does not answer it"
+    );
+    assert_eq!(
+        seen(&facts.reply),
+        Some((4, "YES".into())),
         "another PID's reply is not ours"
     );
-    assert_eq!(facts.termination.as_deref(), Some("(0, 0, 0)"));
+    assert_eq!(seen(&facts.termination), Some((5, "(0, 0, 0)".into())));
+
     let run = |case: &str, f: Facts| {
         let mut row = Row::new("W12-logout");
         judge(case, &f, &mut row);
-        (aggregate(&row.checks), row)
+        aggregate(&row.checks)
+    };
+    let at = log_time(quit).unwrap();
+    let note = |text: &str, modified: i64| -> Result<Note, String> {
+        Ok(Note {
+            text: text.into(),
+            modified,
+        })
+    };
+    let logged = |line: usize, value: &str| {
+        Some(Logged {
+            line,
+            at: Some(at),
+            value: value.into(),
+        })
     };
     let base = || Facts {
         logged_out: true,
         gone: true,
-        quit_event: true,
+        quit: logged(1, ""),
         ..Facts::default()
     };
-    // text: saved and a normal exit; not saved, or killed, fails.
+    let unread = || -> Result<Note, String> { Err("denied".into()) };
+
+    // text: unsaved at the request, saved by it, later then yes, a normal exit.
     let text = || Facts {
-        before: "before logout\n".into(),
-        after: TYPED.into(),
-        decision: Some("NSTerminateLater".into()),
-        reply: Some("YES".into()),
-        termination: Some("(0, 0, 0)".into()),
+        before: note(NOTE, at - 5_000_000),
+        after: note(TYPED, at + 100_000),
+        decision: logged(2, "NSTerminateLater"),
+        reply: logged(3, "YES"),
+        termination: logged(4, "(0, 0, 0)"),
         ..base()
     };
-    assert_eq!(run("text", text()).0, Verdict::Pass);
-    assert_eq!(
-        run(
-            "text",
+    assert_eq!(run("text", text()), Verdict::Pass);
+    let samples: Vec<(Facts, Verdict, &str)> = vec![
+        (
             Facts {
-                after: "before logout\n".into(),
+                after: note(TYPED, at - 1),
                 ..text()
-            }
-        )
-        .0,
-        Verdict::Fail
-    );
-    assert_eq!(
-        run(
-            "text",
+            },
+            Verdict::NotTested,
+            "saved before the request",
+        ),
+        (
             Facts {
-                termination: Some("(2, 9, 9)".into()),
+                before: note(TYPED, at - 1),
                 ..text()
-            }
-        )
-        .0,
-        Verdict::Fail
-    );
-    // dialog: cancelled, saved, nothing exported.
-    let dialog = || Facts {
-        after: format!("{SAVED}\n{UNSAVED}"),
-        decision: Some("NSTerminateCancel".into()),
-        termination: Some("(0, 0, 0)".into()),
-        ..base()
-    };
-    assert_eq!(run("dialog", dialog()).0, Verdict::Pass);
-    assert_eq!(
-        run(
-            "dialog",
+            },
+            Verdict::NotTested,
+            "already on disk",
+        ),
+        (
             Facts {
-                exported: vec!["/x.md".into()],
-                ..dialog()
-            }
-        )
-        .0,
-        Verdict::Fail
-    );
-    assert_eq!(
-        run(
-            "dialog",
-            Facts {
-                decision: Some("NSTerminateLater".into()),
-                ..dialog()
-            }
-        )
-        .0,
-        Verdict::Fail
-    );
-    // fault: refuses, old bytes stay, killed by the system.
-    let fault = || Facts {
-        before: SAVED.into(),
-        after: SAVED.into(),
-        reply: Some("NO".into()),
-        termination: Some("(2, 9, 9)".into()),
-        ..base()
-    };
-    assert_eq!(run("fault", fault()).0, Verdict::Pass);
-    assert_eq!(
-        run(
-            "fault",
-            Facts {
-                reply: Some("YES".into()),
-                ..fault()
-            }
-        )
-        .0,
-        Verdict::Fail
-    );
-    assert_eq!(
-        run(
-            "fault",
-            Facts {
-                after: format!("{SAVED}\n{LOST}"),
-                ..fault()
-            }
-        )
-        .0,
-        Verdict::Fail
-    );
-    assert_eq!(
-        run(
-            "fault",
-            Facts {
-                termination: Some("(0, 0, 0)".into()),
-                ..fault()
-            }
-        )
-        .0,
-        Verdict::Fail
-    );
-    // No logout, or no termination record: cannot tell.
-    assert_eq!(
-        run(
-            "text",
-            Facts {
-                logged_out: false,
+                before: unread(),
                 ..text()
-            }
-        )
-        .0,
-        Verdict::NotTested
-    );
-    assert_eq!(
-        run(
-            "text",
+            },
+            Verdict::NotTested,
+            "before unread",
+        ),
+        (
+            Facts {
+                after: unread(),
+                ..text()
+            },
+            Verdict::NotTested,
+            "after unread",
+        ),
+        (
+            Facts {
+                after: note(NOTE, at - 5_000_000),
+                ..text()
+            },
+            Verdict::Fail,
+            "not saved",
+        ),
+        (
+            Facts {
+                after: note(&format!("{TYPED}\n"), at + 1),
+                ..text()
+            },
+            Verdict::Fail,
+            "other bytes",
+        ),
+        (
+            Facts {
+                decision: logged(2, "NSTerminateNow"),
+                ..text()
+            },
+            Verdict::Fail,
+            "barrier skipped",
+        ),
+        (
+            Facts {
+                reply: logged(3, "NO"),
+                ..text()
+            },
+            Verdict::Fail,
+            "refused",
+        ),
+        (
+            Facts {
+                decision: logged(5, "NSTerminateLater"),
+                ..text()
+            },
+            Verdict::Fail,
+            "answered before the decision",
+        ),
+        (
+            Facts {
+                termination: logged(4, "(2, 9, 9)"),
+                ..text()
+            },
+            Verdict::Fail,
+            "killed",
+        ),
+        (
+            Facts {
+                termination: logged(4, "(2, 15, 15)"),
+                ..text()
+            },
+            Verdict::Fail,
+            "SIGTERM default death",
+        ),
+        (
             Facts {
                 termination: None,
                 ..text()
-            }
-        )
-        .0,
-        Verdict::NotTested
-    );
+            },
+            Verdict::NotTested,
+            "no termination record",
+        ),
+        (
+            Facts {
+                quit: None,
+                ..text()
+            },
+            Verdict::NotTested,
+            "no quit event",
+        ),
+        (
+            Facts {
+                logged_out: false,
+                ..text()
+            },
+            Verdict::NotTested,
+            "no logout",
+        ),
+    ];
+    for (facts, verdict, why) in samples {
+        assert_eq!(run("text", facts), verdict, "text: {why}");
+    }
+
+    // dialog: the request meets the open dialog, the second line is saved by it, nothing lands at
+    // the aimed destination, a normal exit.
+    let dialog = || Facts {
+        before: note(SAVED, at - 3_000_000),
+        after: note(&format!("{SAVED}\n{UNSAVED}"), at + 200_000),
+        exported: Ok(false),
+        decision: logged(2, "NSTerminateCancel"),
+        reply: logged(3, "NO"),
+        termination: logged(4, "(0, 0, 0)"),
+        ..base()
+    };
+    assert_eq!(run("dialog", dialog()), Verdict::Pass);
+    let samples: Vec<(Facts, Verdict, &str)> = vec![
+        (
+            Facts {
+                exported: Ok(true),
+                ..dialog()
+            },
+            Verdict::Fail,
+            "exported",
+        ),
+        (
+            Facts {
+                exported: Err("denied".into()),
+                ..dialog()
+            },
+            Verdict::NotTested,
+            "destination unreadable",
+        ),
+        (
+            Facts {
+                decision: logged(2, "NSTerminateLater"),
+                ..dialog()
+            },
+            Verdict::Fail,
+            "dialog not taken",
+        ),
+        (
+            Facts {
+                after: note(SAVED, at - 3_000_000),
+                ..dialog()
+            },
+            Verdict::Fail,
+            "second line lost",
+        ),
+        (
+            Facts {
+                before: note(&format!("{SAVED}\n{UNSAVED}"), at - 1),
+                ..dialog()
+            },
+            Verdict::NotTested,
+            "second line on disk before",
+        ),
+        (
+            Facts {
+                termination: logged(4, "(2, 9, 9)"),
+                ..dialog()
+            },
+            Verdict::Fail,
+            "killed",
+        ),
+        (
+            Facts {
+                termination: None,
+                ..dialog()
+            },
+            Verdict::NotTested,
+            "no termination record",
+        ),
+    ];
+    for (facts, verdict, why) in samples {
+        assert_eq!(run("dialog", facts), verdict, "dialog: {why}");
+    }
+
+    // fault: later then no, the old bytes untouched, ended by SIGKILL only.
+    let fault = || Facts {
+        before: note(SAVED, at - 4_000_000),
+        after: note(SAVED, at - 4_000_000),
+        decision: logged(2, "NSTerminateLater"),
+        reply: logged(3, "NO"),
+        termination: logged(4, "(2, 9, 9)"),
+        ..base()
+    };
+    assert_eq!(run("fault", fault()), Verdict::Pass);
+    let samples: Vec<(Facts, Verdict, &str)> = vec![
+        (
+            Facts {
+                reply: logged(3, "YES"),
+                ..fault()
+            },
+            Verdict::Fail,
+            "accepted",
+        ),
+        (
+            Facts {
+                after: note(&format!("{SAVED}\n{LOST}"), at + 1),
+                ..fault()
+            },
+            Verdict::Fail,
+            "new bytes",
+        ),
+        (
+            Facts {
+                after: note(SAVED, at + 1),
+                ..fault()
+            },
+            Verdict::Fail,
+            "rewritten",
+        ),
+        (
+            Facts {
+                before: note(NOTE, at - 4_000_000),
+                ..fault()
+            },
+            Verdict::NotTested,
+            "saved line missing",
+        ),
+        (
+            Facts {
+                after: unread(),
+                ..fault()
+            },
+            Verdict::NotTested,
+            "after unread",
+        ),
+        (
+            Facts {
+                termination: logged(4, "(2, 15, 15)"),
+                ..fault()
+            },
+            Verdict::Fail,
+            "SIGTERM default death",
+        ),
+        (
+            Facts {
+                termination: logged(4, "(0, 0, 0)"),
+                ..fault()
+            },
+            Verdict::Fail,
+            "normal exit",
+        ),
+        (
+            Facts {
+                termination: None,
+                ..fault()
+            },
+            Verdict::NotTested,
+            "no termination record",
+        ),
+    ];
+    for (facts, verdict, why) in samples {
+        assert_eq!(run("fault", facts), verdict, "fault: {why}");
+    }
 }
 
 #[test]
@@ -1728,6 +2001,11 @@ fn mac_logout_options() {
     assert_eq!(
         (o.case.as_str(), o.batch.as_deref()),
         ("dialog", Some("b1"))
+    );
+    assert_eq!(o.out, None, "one directory of its own per run unless given");
+    assert_eq!(
+        parse(&args("--app a.app --case text --out d")).unwrap().out,
+        Some("d".into())
     );
     assert!(parse(&args("--app a.app --case logout")).is_err());
     assert!(parse(&args("--app a.app")).is_err());

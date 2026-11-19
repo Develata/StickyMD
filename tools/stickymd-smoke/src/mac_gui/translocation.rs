@@ -8,12 +8,16 @@
 //! The prompt is shown before the application has finished launching, so its Accessibility
 //! requests do not complete (macOS 27.2 VM: `kAXErrorCannotComplete`) and it owns no AX window.
 //! The prompt is therefore judged from what the system does report: a fully shown window of the
-//! process (alpha at least 0.9, at least 200×150 pt) on screen at the modal-panel level or above, and the message on its stderr, which the product
-//! writes just before showing the same text. It is answered as the manual procedure does:
-//! LaunchServices is asked to open the copy again, which activates the running instance, and
-//! Return is posted to that process alone, so no other application can receive it.
-//! A system that does not translocate, or a prompt window not seen while the process runs, is
-//! NOT_TESTED; a FAIL needs an observed violation.
+//! process (alpha at least 0.9, at least 200×150 pt) on screen at the modal-panel level or above,
+//! and the message on its stderr, which the product writes just before showing the same text
+//! (`fatal_startup`, one string for both); the window's image is kept with the evidence. The
+//! message must be the translocation advice, not the advice for any other unwritable folder.
+//! It is answered as the manual procedure does: LaunchServices is asked to open the copy again,
+//! which activates the running instance; then, only if that same process still shows that same
+//! window, Return is posted to that process alone, so no other application can receive it. The
+//! exit status comes from runningboard's termination record for the PID.
+//! A system that does not translocate, a prompt window not seen while the process runs, or a
+//! prompt that could not be answered is NOT_TESTED; a FAIL needs an observed violation.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::model::{Row, Verdict};
 
@@ -22,6 +26,20 @@ use super::model::{Row, Verdict};
 pub(super) const QUARANTINE_FLAGS: &str = "00c3";
 /// The start of the product's prompt in a directory it cannot write.
 pub(super) const PROMPT: &str = "当前目录不可写";
+/// The advice to move the app out, which a translocated bundle must get: today's wording
+/// (`apps/stickymd-mac/src/main.rs`) and the phrase Phase 18 keeps for every unwritable portable
+/// bundle (`apps/stickymd-mac/src/paths.rs`, Phase 18 session 2026-11-19). The advice for a
+/// folder a development build cannot write, which a translocated bundle must not get. A unit test
+/// holds them to the product's sources.
+pub(super) const TRANSLOCATED_ADVICE: [&str; 2] = [
+    "请先用访达把 StickyMD.app 移到别处",
+    "把整个 StickyMD 文件夹移到别处",
+];
+pub(super) const GENERIC_ADVICE: &str = "请将程序移动到有写权限的文件夹";
+/// runningboard's termination record for an exit with status 1 (the prompt's `exit(1)`): the
+/// third field is the raw wait status, `1 << 8`. A probe app in the macOS 27.2 VM exiting with 0
+/// and with 1 gave `(0, 0, 0)` and `(0, 0, 256)` (2026-11-19).
+pub(super) const EXIT_ONE: &str = "(0, 0, 256)";
 /// The cause the prompt carries on a read-only translocation.
 pub(super) const CAUSE: &str = "Read-only file system";
 /// `NSModalPanelWindowLevel`: an alert run modally sits at this level or above.
@@ -42,8 +60,12 @@ pub(super) struct Observed {
     pub window: Option<String>,
     /// The process's stderr when the prompt window was seen (or when the wait ended).
     pub stderr: String,
+    /// Why Return was not posted, when the prompt was seen but could not be answered.
+    pub unanswered: Option<String>,
     /// After Return: whether the process ended within the wait.
     pub exited: Option<bool>,
+    /// runningboard's termination record for the PID, e.g. `(0, 0, 0)`.
+    pub termination: Option<String>,
     /// The download directory's entries before the start and after the exit.
     pub before: Vec<String>,
     pub after: Vec<String>,
@@ -99,17 +121,26 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
     );
     if !(preset && translocated) {
         for name in [
-            "prompt names the read-only directory",
-            "exits after the prompt",
+            "prompt asks to move the translocated app",
+            "exits after the prompt is answered",
+            "exit status 1",
             "nothing written beside the package",
         ] {
             row.skip(name, "not started under App Translocation");
         }
         return;
     }
-    let shown = prompted(o);
-    let verdict = if shown {
+    let translocated_advice = TRANSLOCATED_ADVICE.iter().any(|a| o.stderr.contains(a));
+    let generic_advice = o.stderr.contains(GENERIC_ADVICE);
+    let seen = o.window.is_some() || o.exited_early;
+    let prompt = if prompted(o) && translocated_advice {
         Verdict::Pass
+    } else if generic_advice && seen {
+        // The advice for any unwritable folder: moving the app out is not asked for.
+        Verdict::Fail
+    } else if prompted(o) {
+        // The prompt, worded in a way this driver does not know: the product's text changed.
+        Verdict::NotTested
     } else if o.exited_early || (o.window.is_some() && !o.stderr.contains(PROMPT)) {
         // Gone without a prompt, or a prompt about something else.
         Verdict::Fail
@@ -119,22 +150,44 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
     };
     record(
         row,
-        "prompt names the read-only directory",
-        verdict,
+        "prompt asks to move the translocated app",
+        prompt,
         format!(
             "window={:?}; exited before a prompt {}; stderr={:?}",
             o.window, o.exited_early, o.stderr
         ),
     );
+    let answered = prompt == Verdict::Pass && o.unanswered.is_none();
     record(
         row,
-        "exits after the prompt",
-        match (shown, o.exited) {
-            (true, Some(true)) => Verdict::Pass,
-            (true, Some(false)) => Verdict::Fail,
-            _ => Verdict::NotTested,
+        "exits after the prompt is answered",
+        if !answered {
+            Verdict::NotTested
+        } else {
+            match o.exited {
+                Some(true) => Verdict::Pass,
+                Some(false) => Verdict::Fail,
+                None => Verdict::NotTested,
+            }
         },
-        format!("ended within the wait after Return: {:?}", o.exited),
+        format!(
+            "not answered: {:?}; ended within the wait after Return: {:?}",
+            o.unanswered, o.exited
+        ),
+    );
+    record(
+        row,
+        "exit status 1",
+        if !(answered && o.exited == Some(true)) {
+            Verdict::NotTested
+        } else {
+            match o.termination.as_deref() {
+                Some(t) if t == EXIT_ONE => Verdict::Pass,
+                Some(_) => Verdict::Fail,
+                None => Verdict::NotTested,
+            }
+        },
+        format!("termination record {:?}", o.termination),
     );
     let ended = o.exited_early || o.exited == Some(true);
     record(
@@ -159,7 +212,7 @@ mod live {
     use super::{MODAL_LEVEL, Observed, QUARANTINE_FLAGS, judge, prompted};
     use crate::mac_gui::{
         live::command,
-        model::{Row, Trace},
+        model::{Row, Trace, Window},
         native::{events, windows},
     };
     use std::{
@@ -199,6 +252,36 @@ mod live {
             }
         }
         Ok(out)
+    }
+
+    /// runningboard's termination record for `pid` (e.g. `(0, 0, 0)`), from the system log; the
+    /// log is kept beside the stderr. The record can trail the exit, so the log is read up to
+    /// three times.
+    fn termination(pid: u32, dir: &Path) -> Result<Option<String>, String> {
+        let marker = format!(":{pid}] termination reported by launchd ");
+        for _ in 0..3 {
+            events::wait(1000)?;
+            let log = command(
+                "/usr/bin/log",
+                &[
+                    "show",
+                    "--last",
+                    "2m",
+                    "--style",
+                    "syslog",
+                    "--predicate",
+                    "process == \"runningboardd\" AND eventMessage CONTAINS \"termination reported by launchd\"",
+                ],
+            )?;
+            if let Some(record) = log
+                .lines()
+                .find_map(|l| l.split(&marker).nth(1).map(|r| r.trim().to_owned()))
+            {
+                fs::write(dir.join("system.log"), &log).map_err(|e| e.to_string())?;
+                return Ok(Some(record));
+            }
+        }
+        Ok(None)
     }
 
     /// Runs R03 in `dir` (the scenario's session directory) for the app under test, whose
@@ -297,23 +380,23 @@ mod live {
             })
             .map(str::to_owned);
         // The prompt: up to 15 s for its window and its message.
+        let modal = |w: &Window| {
+            // A fully shown alert, not one still fading or scaling in.
+            w.onscreen
+                && w.layer >= MODAL_LEVEL
+                && w.alpha >= 0.9
+                && w.bounds.size.width >= 200.0
+                && w.bounds.size.height >= 150.0
+        };
         let start = Instant::now();
+        let mut shown = None;
         while start.elapsed().as_secs() < 15 {
             if !alive()? {
                 o.exited_early = true;
                 break;
             }
-            o.window = windows::all(pid)?
-                .into_iter()
-                .find(|w| {
-                    // A fully shown alert, not one still fading or scaling in.
-                    w.onscreen
-                        && w.layer >= MODAL_LEVEL
-                        && w.alpha >= 0.9
-                        && w.bounds.size.width >= 200.0
-                        && w.bounds.size.height >= 150.0
-                })
-                .map(|w| format!("{w:?}"));
+            shown = windows::all(pid)?.into_iter().find(|w| modal(w));
+            o.window = shown.as_ref().map(|w| format!("{w:?}"));
             o.stderr = read_stderr();
             if prompted(&o) {
                 break;
@@ -325,36 +408,79 @@ mod live {
             row,
             format!("window {:?}; exited early {}", o.window, o.exited_early),
         );
-        if prompted(&o) {
-            // Activate the running instance as the manual procedure does, then answer it.
+        if let (true, Some(window)) = (prompted(&o), &shown) {
+            match windows::screenshot(window) {
+                Ok(ppm) => fs::write(dir.join("prompt.ppm"), ppm).map_err(|e| e.to_string())?,
+                Err(e) => note(row, format!("prompt image not captured: {e}")),
+            }
+            // Activate the running instance as the manual procedure does, then answer it, but
+            // only while that same process still shows that same window.
             command("/usr/bin/open", &[&text(&copy)])?;
             events::wait(1500)?;
             let others: Vec<_> = products()?.into_iter().filter(|(q, _)| *q != pid).collect();
-            if !others.is_empty() {
-                note(
-                    row,
-                    format!("reopening started another process: {others:?}"),
-                );
-            }
-            events::key_to_pid(pid, RETURN)?;
-            let start = Instant::now();
-            let mut ended = false;
-            while start.elapsed().as_secs() < 5 {
-                if !alive()? {
-                    ended = true;
-                    break;
+            let same = windows::all(pid)
+                .map(|all| all.iter().any(|w| w.id == window.id && modal(w)))
+                .unwrap_or(false);
+            o.unanswered = if !others.is_empty() {
+                Some(format!("reopening started another process: {others:?}"))
+            } else if !alive()? {
+                Some("the process ended before Return was posted".into())
+            } else if !same {
+                Some(format!("window {} was gone before Return", window.id))
+            } else {
+                None
+            };
+            if o.unanswered.is_none() {
+                events::key_to_pid(pid, RETURN)?;
+                let start = Instant::now();
+                let mut ended = false;
+                while start.elapsed().as_secs() < 5 {
+                    if !alive()? {
+                        ended = true;
+                        break;
+                    }
+                    events::wait(100)?;
                 }
+                o.exited = Some(ended);
+                if ended {
+                    o.termination = termination(pid, dir)?;
+                }
+            }
+        }
+        // Leave nothing of this run running: the PID it started and anything else started from
+        // this copy (its translocated mount or the copy itself), never another StickyMD.
+        let mountpoint = o.mount.as_deref().and_then(|m| {
+            m.split_once(" on ")
+                .and_then(|(_, rest)| rest.split_once(" ("))
+                .map(|(point, _)| point.to_owned())
+        });
+        let ours = |path: &str| {
+            path.starts_with(&text(&copy))
+                || mountpoint
+                    .as_deref()
+                    .is_some_and(|point| path.starts_with(&format!("{point}/")))
+        };
+        let own = || -> Result<Vec<u32>, String> {
+            Ok(products()?
+                .into_iter()
+                .filter(|(q, path)| *q == pid || ours(path))
+                .map(|(q, _)| q)
+                .collect())
+        };
+        for signal in ["-TERM", "-KILL"] {
+            for q in own()? {
+                let _ = command("/bin/kill", &[signal, &q.to_string()]);
+            }
+            let start = Instant::now();
+            while !own()?.is_empty() && start.elapsed().as_secs() < 3 {
                 events::wait(100)?;
             }
-            o.exited = Some(ended && others.is_empty());
         }
-        // Leave nothing running: a product that did not exit is stopped here.
-        for (q, _) in products()? {
-            let _ = command("/bin/kill", &["-TERM", &q.to_string()]);
-        }
-        events::wait(500)?;
-        for (q, _) in products()? {
-            let _ = command("/bin/kill", &["-KILL", &q.to_string()]);
+        let left = own()?;
+        if !left.is_empty() {
+            return Err(format!(
+                "this run's StickyMD processes did not end: {left:?}"
+            ));
         }
         o.after = entries(&download)?;
         // macOS detaches the translocation after the process ends; wait for it before cleanup.

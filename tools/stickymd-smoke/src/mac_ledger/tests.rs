@@ -761,3 +761,21 @@ fn w12_is_complete_only_with_all_its_logout_parts() {
         Err(vec!["W12".to_string()])
     );
 }
+
+/// The printed commands carry the batch being planned, so a row run by them counts for it; the
+/// logout cases each get a command of their own.
+#[test]
+fn printed_commands_keep_the_batch() {
+    use super::decide::commands;
+    let gui = ["I03", "R03"];
+    let logout = ["W12-logout-text", "W12-logout-fault"];
+    let printed = commands(&gui, &logout, Some("b1"));
+    assert_eq!(printed.len(), 3);
+    assert!(printed[0].contains("mac-gui") && printed[0].contains("--only I03,R03 --batch b1"));
+    assert!(printed[1].contains("--case text --batch b1"));
+    assert!(printed[2].contains("--case fault --batch b1"));
+    let printed = commands(&gui, &[], None);
+    assert_eq!(printed.len(), 1);
+    assert!(!printed[0].contains("--batch"));
+    assert!(commands(&[], &[], Some("b1")).is_empty());
+}

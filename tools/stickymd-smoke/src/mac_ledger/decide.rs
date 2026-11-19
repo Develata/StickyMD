@@ -46,6 +46,27 @@ pub(super) struct Plan {
     pub unconfirmed: Vec<String>,
 }
 
+/// The commands that run the rows still to run: `mac-gui` rows together, each logout case in a
+/// boot of its own (with an evidence directory of its own by default). The batch being planned
+/// goes into each command, so what it records counts for that batch.
+pub(super) fn commands(gui: &[&str], logout: &[&str], batch: Option<&str>) -> Vec<String> {
+    let batch = batch.map_or_else(String::new, |b| format!(" --batch {b}"));
+    let mut out = Vec::new();
+    if !gui.is_empty() {
+        out.push(format!(
+            "run: stickymd-smoke mac-gui --app <the same app> --only {}{batch}",
+            gui.join(",")
+        ));
+    }
+    for row in logout {
+        out.push(format!(
+            "run: stickymd-smoke mac-logout --app <the same app> --case {}{batch} (each case in a fresh VM boot)",
+            row.trim_start_matches("W12-logout-")
+        ));
+    }
+    out
+}
+
 /// A row that counts only together with parts run apart from it: W12 with its three real
 /// logout cases (`mac-logout`, one fresh VM boot each; plan 11).
 pub(super) fn composite() -> (&'static str, Vec<String>) {

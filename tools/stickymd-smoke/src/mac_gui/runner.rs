@@ -246,7 +246,9 @@ pub(super) fn launch(
     events::wait(500)?;
     Ok((pid, window))
 }
-fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
+/// `path` made absolute with its existing part canonical; `..` is refused. W12's logout cases use
+/// it too.
+pub(super) fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
     let absolute = std::path::absolute(path).map_err(|e| e.to_string())?;
     if absolute
         .components()
@@ -362,12 +364,15 @@ fn one(
     })();
     let release = input.release();
     let writable = fault.restore();
-    // Capture stderr even on scenario failure, before owned temporary-directory cleanup.
-    let log = match fs::read(session.path().join("stderr.log")) {
-        Ok(bytes) => crate::atomic_evidence::write(&out.join(format!("{id}-stderr.log")), &bytes),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.to_string()),
-    };
+    // Capture stderr (and R03's prompt image and termination log) even on scenario failure,
+    // before owned temporary-directory cleanup.
+    let log = ["stderr.log", "prompt.ppm", "system.log"]
+        .into_iter()
+        .try_for_each(|name| match fs::read(session.path().join(name)) {
+            Ok(bytes) => crate::atomic_evidence::write(&out.join(format!("{id}-{name}")), &bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        });
     let cleanup = session.cleanup();
     row.trace.push(Trace {
         ms: input.backend.started.elapsed().as_millis() as u64,

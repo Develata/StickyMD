@@ -226,16 +226,9 @@ fn plan(options: &Options, existing: &[Record], rows: &Rows) -> Result<(), Strin
     if plan.run.is_empty() {
         println!("run: nothing; every executable row has a PASS for this identity");
     }
-    if !gui_runs.is_empty() {
-        println!(
-            "run: stickymd-smoke mac-gui --app <the same app> --only {}",
-            gui_runs
-                .iter()
-                .map(|r| r.as_str())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-    }
+    let gui: Vec<&str> = gui_runs.iter().map(|r| r.as_str()).collect();
+    let cases: Vec<&str> = logout_runs.iter().map(|r| r.as_str()).collect();
+    let commands = decide::commands(&gui, &cases, batch);
     let (parent, parts) = decide::composite();
     match decide::complete(&plan, parent, &parts) {
         Ok(()) => println!(
@@ -247,11 +240,8 @@ fn plan(options: &Options, existing: &[Record], rows: &Rows) -> Result<(), Strin
             missing.join(", ")
         ),
     }
-    for row in logout_runs {
-        println!(
-            "run: stickymd-smoke mac-logout --app <the same app> --case {} (each case in a fresh VM boot)",
-            row.trim_start_matches("W12-logout-")
-        );
+    for command in commands {
+        println!("{command}");
     }
     for (row, environment) in &plan.confirmed {
         println!("manual P16-{row}: USER receipt for these inputs ({environment})");

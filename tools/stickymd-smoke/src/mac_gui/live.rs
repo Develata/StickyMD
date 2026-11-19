@@ -30,6 +30,44 @@ pub(super) struct Live<'a> {
     /// The copied product, for a scenario that starts it again after it quit.
     pub executable: std::path::PathBuf,
 }
+/// Points the product's open save dialog at `dir/export.md` without answering it, and reads the
+/// destination back (E01, and W12's logout with the dialog open). The dialog must already be the
+/// focused key target.
+pub(super) fn aim_panel(
+    input: &mut Injection<Events>,
+    pid: u32,
+    dir: &Path,
+) -> Result<String, String> {
+    input.chord(&[CMD, SHIFT, 5])?;
+    events::wait(300)?;
+    let path = dir.to_str().ok_or("non UTF-8 export path")?.to_owned();
+    let mut log = ax::folder(pid, &path)?;
+    // Return confirms whatever has focus: only the Go to Folder path field may get it.
+    super::observation::goto_field(
+        ax::front(),
+        ax::goto_sheet_open(pid),
+        ax::focused_element(pid),
+        pid,
+        &path,
+    )?;
+    input.chord(&[36])?;
+    events::wait(400)?;
+    log.push_str(&ax::filename(pid, "export.md")?);
+    events::wait(200)?;
+    let directory = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("non UTF-8 session directory")?;
+    let (name, location, sheet) = ax::panel_destination(pid)?;
+    if name != "export.md" || location != directory || sheet {
+        return Err(format!(
+            "dialog not aimed: name={name:?}, location={location:?} (want {directory:?}), go-to \
+             sheet open={sheet}"
+        ));
+    }
+    log.push_str(&format!("\naimed at {directory}/{name}"));
+    Ok(log)
+}
 pub(super) fn command(program: &str, args: &[&str]) -> Result<String, String> {
     // Reuse the same owned child/timeout/identity cleanup for helper processes too.
     let mut session = Session::new()?;
@@ -218,42 +256,8 @@ impl Live<'_> {
     /// directory, and the Go to Folder sheet is gone. Anything else is an error, not an aim.
     fn target_panel(&mut self) -> Result<String, String> {
         self.require_key_target(KeyTarget::Dialog)?;
-        self.input.chord(&[CMD, SHIFT, 5])?;
-        events::wait(300)?;
-        let path = self
-            .session
-            .path()
-            .to_str()
-            .ok_or("non UTF-8 export path")?
-            .to_owned();
-        let mut log = ax::folder(self.pid, &path)?;
-        // Return confirms whatever has focus: only the Go to Folder path field may get it.
-        super::observation::goto_field(
-            ax::front(),
-            ax::goto_sheet_open(self.pid),
-            ax::focused_element(self.pid),
-            self.pid,
-            &path,
-        )?;
-        self.input.chord(&[36])?;
-        events::wait(400)?;
-        log.push_str(&ax::filename(self.pid, "export.md")?);
-        events::wait(200)?;
-        let directory = self
-            .session
-            .path()
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or("non UTF-8 session directory")?;
-        let (name, location, sheet) = ax::panel_destination(self.pid)?;
-        if name != "export.md" || location != directory || sheet {
-            return Err(format!(
-                "dialog not aimed: name={name:?}, location={location:?} (want {directory:?}), \
-                 go-to sheet open={sheet}"
-            ));
-        }
-        log.push_str(&format!("\naimed at {directory}/{name}"));
-        Ok(log)
+        let dir = self.session.path().to_path_buf();
+        aim_panel(self.input, self.pid, &dir)
     }
     fn open(&mut self) -> Result<String, String> {
         self.session.open_bundle(|bundle| {
