@@ -153,7 +153,7 @@
 
 ## 跨阶段验证与风险
 
-- [公式按钮性能检查的采样容错](2026-11-19-math-action-p95-tolerance.md)：14 次 CI 的实测；USER 决定门槛仍为 50 ms，改为预热 3 次、计时 100 次、最多 5 个样本可超出，已写入 plan 07。
+- [公式按钮性能检查的采样容错](2026-11-19-math-action-p95-tolerance.md)：14 次 CI 的实测；USER 决定改为与同一文档解析之比不超过 10 倍（防退化）加 p95 < 100 ms（流畅上界，100 个样本中最多 5 个可超出），已写入 plan 07。
 - [表格公式源码范围](2026-09-08-table-math-source-ranges.md)：GFM 分列与公式复制/导出坐标。
 - [运行时审查](2026-09-07-runtime-audit.md)、[垂直滚动条维护](2026-09-25-vertical-scrollbars.md)：按日期记录实现与复审。
 - [发布规则迁移](2026-09-22-release-cli-migration.md)、[输出收尾](2026-09-25-release-output-finalization.md)：Rust 规则权威与 PowerShell 适配。

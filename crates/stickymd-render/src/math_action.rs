@@ -170,15 +170,17 @@ mod tests {
         started.elapsed()
     }
 
-    /// Plan 07's check: three untimed clicks, then 100 timed ones whose
-    /// nearest-rank p95 (the 95th sample) stays under 50 ms. Up to five
-    /// samples may exceed it, so a stall of a shared CI host that slows two or
-    /// three clicks does not fail the check, while a slowdown of every click
-    /// still does. Samples print in run order to show such stalls.
+    /// Plan 07's two checks, after three untimed rounds, over 100 timed
+    /// clicks that each follow a timed parse of the same document (so a stall
+    /// slows both alike):
     ///
-    /// A parse of the same document precedes each click, so a stall slows
-    /// both alike. The ratio of their medians, which removes the host's
-    /// speed, only prints for now: it is the baseline for a ratio check.
+    /// - regression: the click median is at most 10 parse medians. The ratio
+    ///   removes the host's speed, so a fast machine catches waste too;
+    /// - fluency: the nearest-rank p95 (the 95th sample) stays under 100 ms.
+    ///   Up to five samples may exceed it, so a stall of a shared CI host that
+    ///   slows two or three clicks does not fail it.
+    ///
+    /// Samples print in run order to show such stalls.
     #[test]
     #[ignore = "Release-only Phase 11-B math button receipt"]
     fn phase11b_performance_math_action_one_mib() {
@@ -209,7 +211,8 @@ mod tests {
             "phase11b math_action_1mib_1000_math parse_median={parse:?} median_over_parse={:.2}",
             median.as_secs_f64() / parse.as_secs_f64()
         );
-        assert!(p95 < Duration::from_millis(50), "p95={p95:?}");
+        assert!(median <= parse * 10, "median={median:?} parse={parse:?}");
+        assert!(p95 < Duration::from_millis(100), "p95={p95:?}");
     }
 
     #[test]
@@ -217,7 +220,7 @@ mod tests {
     fn phase11b_performance_math_action_stays_linear_in_shifted_paragraphs() {
         // 23,717 paragraphs that start with a definition, under the Preview's
         // node limit. Parsing so many blocks takes far longer than one large
-        // paragraph, so this guards the shape, not the 50 ms budget: the
+        // paragraph, so this guards the shape, not the 100 ms bound: the
         // button parses four times, while a per-node search over past
         // shifted paragraphs would cost hundreds of parses.
         let source = workload("[r]: u\nplain text filler plain text filler\n\n");

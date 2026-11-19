@@ -105,10 +105,14 @@
   完整处理；若仍会改变文本（例如未闭合的 `$$` 与第二步写出的 `$$` 重新配对，或第二步在
   内层 closer 处结束外层公式而留下新公式），整个 action 保守拒绝，同样为完整 no-op，保证
   再次点击不再改动。最坏情况下两步各 parse 两次。
-- 1 MiB / 1000 math-node Release smoke（含提交前的再次处理）的 p95 engineering check 为
-  `< 50 ms`：先不计时运行 3 次，再计时 100 次，取 nearest-rank p95（排序后第 95 个样本）。
-  因此最多 5 个样本可以超出，共享 CI 主机上 2–3 个样本的短暂卡顿不判失败，每次点击都变慢
-  仍会失败。超过时先审计
+- 1 MiB / 1000 math-node Release smoke（含提交前的再次处理）有两项 engineering check。先不计时
+  运行 3 轮，再计时 100 轮；每轮先计时一次同一文档的单次 Comrak 解析，再计时一次按钮，使主机
+  的短暂卡顿同时影响两者：
+  - 防退化：按钮中位数不超过解析中位数的 10 倍。比值去掉了机器快慢，快机器上同样能发现浪费；
+  - 流畅上界：按钮的 nearest-rank p95（排序后第 95 个样本）`< 100 ms`。最多 5 个样本可以超出，
+    共享 CI 主机上 2–3 个样本的短暂卡顿不判失败。
+
+  任一项超过时先审计
   重复 parse、全文 clone 与逐 formula mutation，不引入增量 Markdown parser 或后台 runtime。
 
 <a id="source-find-replace"></a>
