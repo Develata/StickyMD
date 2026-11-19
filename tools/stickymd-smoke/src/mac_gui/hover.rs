@@ -235,9 +235,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
             Verdict::NotTested
         } else if early_motion || (moved.is_some() && dwell < 100) {
             Verdict::Fail
-        } else if dwell >= 100 {
-            Verdict::NotTested
-        } else if !ended || gap > MAX_GAP_MS {
+        } else if dwell >= 100 || !ended || gap > MAX_GAP_MS {
             Verdict::NotTested
         } else {
             Verdict::Pass
