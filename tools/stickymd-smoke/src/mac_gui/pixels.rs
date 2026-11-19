@@ -91,11 +91,17 @@ pub(super) fn strip_visible(composite: &Image, alone: &Image, below: &Image) -> 
 /// Half a blink period must lie in this range (ms); macOS blinks the caret about every 550 ms.
 const HALF_PERIOD_MS: (u64, u64) = (300, 900);
 
-/// W10: frames of one window region at increasing times. The caret blinks when some pixels
-/// alternate between two states that are each other's inverse (反色), the caret is seen both
-/// shown and hidden at least twice, and each complete half period lies in `HALF_PERIOD_MS`.
-/// A steady caret (nothing alternates), or one that alternates with colours that are not inverse,
-/// fails; a frame gap too long to time a half period, or other pixels changing, is NOT_TESTED.
+/// The caret's shape on a 2x display (px): about 1–2 pt wide, one line tall.
+const CARET_WIDTH_PX: usize = 8;
+const CARET_HEIGHT_PX: (usize, usize) = (16, 120);
+
+/// W10: frames of one window region at increasing times. The pixels that alternate between two
+/// states must form one caret-shaped region (at most `CARET_WIDTH_PX` wide, a line tall, mostly
+/// filled), each pixel's two states must be each other's inverse (反色), the caret must be seen
+/// shown and hidden at least twice, and each complete half period must lie in `HALF_PERIOD_MS`.
+/// A steady or absent caret, an alternating region that is not caret-shaped (a whole layer
+/// flipping), or alternation in colours that are not inverse fails; pixels that change through
+/// more than two states, or a frame gap too long to time a half period, are NOT_TESTED.
 pub(super) fn caret_blinks(frames: &[(u64, Image)]) -> (Verdict, String) {
     let Some((_, first)) = frames.first() else {
         return (Verdict::NotTested, "no frames".into());
@@ -111,8 +117,8 @@ pub(super) fn caret_blinks(frames: &[(u64, Image)]) -> (Verdict, String) {
         .map(|w| w[1].0.saturating_sub(w[0].0))
         .max()
         .unwrap_or(u64::MAX);
-    // Pixels that change across the frames, with the two states of the alternating ones.
-    let (mut toggling, mut other, mut not_inverse) = (Vec::new(), 0usize, 0usize);
+    // Pixels that change across the frames: two-state ones (inverse or not), and the others.
+    let (mut alternating, mut other) = (Vec::new(), 0usize);
     for i in 0..first.width * first.height {
         let (x, y) = (i % first.width, i / first.width);
         let a = first.pixel(x, y);
@@ -126,21 +132,32 @@ pub(super) fn caret_blinks(frames: &[(u64, Image)]) -> (Verdict, String) {
             far(p, a, TOLERANCE) && far(p, b, TOLERANCE)
         }) {
             other += 1;
-        } else if far(b, inverse(a), TOLERANCE * 2) {
-            not_inverse += 1;
         } else {
-            toggling.push((x, y, a));
+            alternating.push((x, y, a, !far(b, inverse(a), TOLERANCE * 2)));
         }
     }
+    let not_inverse = alternating.iter().filter(|p| !p.3).count();
+    let (width, height) = match (
+        alternating.iter().map(|p| p.0).min(),
+        alternating.iter().map(|p| p.0).max(),
+        alternating.iter().map(|p| p.1).min(),
+        alternating.iter().map(|p| p.1).max(),
+    ) {
+        (Some(x0), Some(x1), Some(y0), Some(y1)) => (x1 - x0 + 1, y1 - y0 + 1),
+        _ => (0, 0),
+    };
+    let caret_shaped = width <= CARET_WIDTH_PX
+        && (CARET_HEIGHT_PX.0..=CARET_HEIGHT_PX.1).contains(&height)
+        && alternating.len() * 2 >= width * height;
     // Per frame: the share of alternating pixels in their first-frame state.
     let states: Vec<(u64, bool)> = frames
         .iter()
         .map(|(t, f)| {
-            let same = toggling
+            let same = alternating
                 .iter()
-                .filter(|(x, y, a)| !far(f.pixel(*x, *y), *a, TOLERANCE))
+                .filter(|(x, y, a, _)| !far(f.pixel(*x, *y), *a, TOLERANCE))
                 .count();
-            (*t, same * 2 >= toggling.len())
+            (*t, same * 2 >= alternating.len())
         })
         .collect();
     let changes: Vec<u64> = states
@@ -150,17 +167,23 @@ pub(super) fn caret_blinks(frames: &[(u64, Image)]) -> (Verdict, String) {
         .collect();
     let halves: Vec<u64> = changes.windows(2).map(|w| w[1] - w[0]).collect();
     let detail = format!(
-        "{} frames, longest gap {longest}ms; {} alternating inverse pixels, {not_inverse} \
-         alternating non-inverse, {other} other changing; state changes at {changes:?}ms, half \
-         periods {halves:?}ms",
+        "{} frames, longest gap {longest}ms; {} alternating pixels in a {width}x{height} px \
+         region ({not_inverse} not inverse), {other} other changing; state changes at \
+         {changes:?}ms, half periods {halves:?}ms",
         frames.len(),
-        toggling.len()
+        alternating.len()
     );
-    let verdict = if not_inverse > 0 {
+    let verdict = if alternating.is_empty() {
+        if other > 0 {
+            Verdict::NotTested
+        } else {
+            Verdict::Fail
+        }
+    } else if !caret_shaped || not_inverse > 0 {
         Verdict::Fail
     } else if other > 0 || longest > HALF_PERIOD_MS.0 / 2 {
         Verdict::NotTested
-    } else if toggling.is_empty() || changes.len() < 4 {
+    } else if changes.len() < 4 {
         Verdict::Fail
     } else if halves
         .iter()

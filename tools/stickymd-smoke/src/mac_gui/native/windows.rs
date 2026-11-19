@@ -67,6 +67,27 @@ pub(in crate::mac_gui) fn all(pid: u32) -> Result<Vec<Window>, String> {
     }
     Ok(windows)
 }
+/// The on-screen windows in front of window `id` (`kCGWindowListOptionOnScreenAboveWindow`,
+/// desktop elements excluded): owner name and bounds.
+pub(in crate::mac_gui) fn above(id: u32) -> Result<Vec<(String, Rect)>, String> {
+    // SAFETY: OnScreenAboveWindow | ExcludeDesktopElements relative to `id`; owned array.
+    let array = Owned::take(unsafe { CGWindowListCopyWindowInfo(2 | 16, id) })?;
+    let mut out = Vec::new();
+    for dict in array.array()? {
+        let mut bounds = Rect::default();
+        let b = dict.get("kCGWindowBounds")?;
+        // SAFETY: SDK output storage matches CGRect; b is a live bounds dictionary.
+        if unsafe { CGRectMakeWithDictionaryRepresentation(b.0, &mut bounds) } {
+            let name = dict
+                .get("kCGWindowOwnerName")
+                .ok()
+                .and_then(|n| n.text())
+                .unwrap_or_default();
+            out.push((name, bounds));
+        }
+    }
+    Ok(out)
+}
 /// The on-screen windows (desktop elements excluded): number, owner PID, owner name.
 pub(in crate::mac_gui) fn on_screen() -> Result<Vec<(u32, u32, String)>, String> {
     // SAFETY: OnScreenOnly | ExcludeDesktopElements; owned Create-rule array.
@@ -103,7 +124,8 @@ pub(in crate::mac_gui) fn capture(rect: Rect, shot: Shot, id: u32) -> Result<Ima
     let (list, window) = match shot {
         Shot::Alone => (8, id),
         Shot::Composite => (1, 0),
-        Shot::Below => (2, id),
+        // kCGWindowListOptionOnScreenBelowWindow is 1 << 2 (1 << 1 is the scene above).
+        Shot::Below => (4, id),
     };
     // SAFETY: caller has preflighted capture permission. Create-rule image/context/space are each
     // released once; the context writes only into `rgba`, which outlives it.

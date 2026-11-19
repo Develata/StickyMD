@@ -55,6 +55,8 @@ pub(super) enum Op {
     Hold(u16, usize, u64),
     /// The on-screen windows as (number, owner PID, owner name).
     OnScreen,
+    /// The on-screen windows in front of the product window, as (owner name, bounds).
+    Above,
     /// I03's TextEdit control: the same hold in a scratch TextEdit document. Answers the windows
     /// that appeared and the document's text, or `Text` with the reason the control could not run.
     Control,
@@ -65,6 +67,7 @@ pub(super) enum Value {
     Image(super::pixels::Image),
     Counters([u64; 4]),
     Windows(Vec<super::hold::OnScreen>),
+    Covering(Vec<(String, Rect)>),
     Control(Vec<super::hold::OnScreen>, u32, String),
     Time(u64),
     Text(String),

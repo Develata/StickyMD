@@ -82,12 +82,8 @@ pub(super) fn system_termination<B: Backend>(d: &mut Driver<'_, B>) -> Result<()
     } else {
         quit_with_dialog(d, Request::Sigterm, QUIT_TEXT, SIGNAL_TEXT)?;
     }
-    d.row.skip(
-        "logout",
-        "not driven: a logout ends the VM's GUI session and this driver; it reaches the app as \
-         the termination request and then the SIGTERM driven above \
-         (RISK-macos-logout-ui-element)",
-    );
+    // The real logout ends the VM's GUI session and this driver with it; `mac-logout` runs its
+    // three cases in fresh boots, and W12 counts only with them (plan 11).
     Ok(())
 }
 

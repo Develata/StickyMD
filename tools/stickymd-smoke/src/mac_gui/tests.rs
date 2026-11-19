@@ -1415,9 +1415,11 @@ fn frames_of(
 #[test]
 fn caret_blink_judge_refuses_bad_samples() {
     use super::pixels::caret_blinks;
-    let off = image(20, 20, [248, 246, 239]);
-    let on = paint(off.clone(), 4..6, 3..15, [7, 9, 16]);
-    let fixed = paint(off.clone(), 4..6, 3..15, [32, 79, 143]);
+    let off = image(40, 60, [248, 246, 239]);
+    let on = paint(off.clone(), 4..6, 3..43, [7, 9, 16]);
+    let fixed = paint(off.clone(), 4..6, 3..43, [32, 79, 143]);
+    // A whole layer flipping to its inverse: alternating, inverse, but not a caret.
+    let flipped = paint(off.clone(), 0..40, 0..60, [7, 9, 16]);
     let alternate = |half: u64, a: &super::pixels::Image, b: &super::pixels::Image| {
         let (a, b) = (a.clone(), b.clone());
         move |t: u64| {
@@ -1443,6 +1445,10 @@ fn caret_blink_judge_refuses_bad_samples() {
     );
     assert_eq!(
         caret_blinks(&frames_of(60, alternate(550, &fixed, &off))).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        caret_blinks(&frames_of(60, alternate(550, &flipped, &off))).0,
         Verdict::Fail
     );
     assert_eq!(

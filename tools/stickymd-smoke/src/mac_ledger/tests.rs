@@ -725,3 +725,39 @@ fn public_evidence_writers_refuse_the_ledger() {
     let other = std::path::Path::new("dist/evidence/mac-gui-r14/mac-gui.json");
     assert!(crate::qualification::validate_public_evidence_path(&root, other).is_ok());
 }
+
+/// W12 counts only with its three logout cases: complete when all four are reused; a missing,
+/// failed or revoked part leaves it incomplete.
+#[test]
+fn w12_is_complete_only_with_all_its_logout_parts() {
+    use super::decide::{complete, composite};
+    let (parent, parts) = composite();
+    assert_eq!(parent, "W12");
+    let rows: Vec<&str> = std::iter::once(parent)
+        .chain(parts.iter().map(String::as_str))
+        .collect();
+    let all: Vec<Record> = rows
+        .iter()
+        .map(|row| run(row, "PASS", identity(), 'e'))
+        .collect();
+    let result = plan(&all, &rows, &[], &identity(), &built(), None);
+    assert_eq!(complete(&result, parent, &parts), Ok(()));
+    // One part missing.
+    let result = plan(&all[..3], &rows, &[], &identity(), &built(), None);
+    assert_eq!(
+        complete(&result, parent, &parts),
+        Err(vec!["W12-logout-fault".to_string()])
+    );
+    // One part also failed once, or revoked.
+    let mut failed = all.clone();
+    failed.push(run("W12-logout-dialog", "FAIL", identity(), 'f'));
+    let result = plan(&failed, &rows, &[], &identity(), &built(), None);
+    assert!(complete(&result, parent, &parts).is_err());
+    let mut revoked = all.clone();
+    revoked.push(revoke("W12", Revoked::Evidence(hex('e'))));
+    let result = plan(&revoked, &rows, &[], &identity(), &built(), None);
+    assert_eq!(
+        complete(&result, parent, &parts),
+        Err(vec!["W12".to_string()])
+    );
+}

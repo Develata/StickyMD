@@ -46,6 +46,26 @@ pub(super) struct Plan {
     pub unconfirmed: Vec<String>,
 }
 
+/// A row that counts only together with parts run apart from it: W12 with its three real
+/// logout cases (`mac-logout`, one fresh VM boot each; plan 11).
+pub(super) fn composite() -> (&'static str, Vec<String>) {
+    ("W12", crate::mac_gui::logout::rows())
+}
+
+/// Whether `parent` is complete in `plan`: it and every part have a reusable PASS. Otherwise the
+/// rows of the group that still have to run (or were set aside).
+pub(super) fn complete(plan: &Plan, parent: &str, parts: &[String]) -> Result<(), Vec<String>> {
+    let missing: Vec<String> = std::iter::once(parent.to_owned())
+        .chain(parts.iter().cloned())
+        .filter(|row| !plan.reused.iter().any(|r| &r.row == row))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(missing)
+    }
+}
+
 /// Whether a record of a never-reused row belongs to the batch being planned.
 fn in_batch(row: &str, record_batch: Option<&String>, batch: Option<&str>) -> bool {
     !NEVER_REUSED.contains(&row) || (batch.is_some() && record_batch.map(String::as_str) == batch)

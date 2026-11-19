@@ -228,10 +228,15 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
             .find(|x| !same_place(&x.window, &reference))
             .map(|x| (x.ret - early.zero, x.window.bounds, x.window.onscreen));
         let gap = watch.gap(early.before + 1, watch.last());
-        verdict = if !is_collapsed(&reference) || dwell >= 100 {
+        // Motion already seen before 90 ms is early whatever the dwell became: a long dwell
+        // only excuses motion that may have followed 100 ms on the strip.
+        let early_motion = moved.is_some_and(|(at, ..)| at < 90);
+        verdict = if !is_collapsed(&reference) {
             Verdict::NotTested
-        } else if moved.is_some() {
+        } else if early_motion || (moved.is_some() && dwell < 100) {
             Verdict::Fail
+        } else if dwell >= 100 {
+            Verdict::NotTested
         } else if !ended || gap > MAX_GAP_MS {
             Verdict::NotTested
         } else {

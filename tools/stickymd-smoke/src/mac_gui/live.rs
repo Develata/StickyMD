@@ -413,23 +413,38 @@ impl Backend for Live<'_> {
                 self.session.signal_terminate()?;
                 Value::Unit
             }
+            // An observation that fails is no observation of the product: the checks that need
+            // it are NOT_TESTED (the reason travels as `Text`), never an execution FAIL.
             Op::Capture(rect, shot) => {
                 if self.permissions.screen {
-                    Value::Image(windows::capture(rect, shot, self.window_id)?)
+                    match windows::capture(rect, shot, self.window_id) {
+                        Ok(image) => Value::Image(image),
+                        Err(error) => Value::Text(format!("capture failed: {error}")),
+                    }
                 } else {
                     Value::Text(
                         "Screen Recording (CGPreflightScreenCaptureAccess) not granted".into(),
                     )
                 }
             }
-            Op::Presenter => Value::Counters(self.presenter()?),
+            Op::Presenter => match self.presenter() {
+                Ok(counters) => Value::Counters(counters),
+                Err(error) => Value::Text(format!("presenter diagnostic unavailable: {error}")),
+            },
+            Op::Above => match windows::above(self.window_id) {
+                Ok(list) => Value::Covering(list),
+                Err(error) => Value::Text(format!("window list unavailable: {error}")),
+            },
             Op::Hold(code, repeats, every) => {
                 self.require_key_target(KeyTarget::Note)?;
                 self.input.hold(code, repeats, every)?;
                 events::wait(60)?;
                 Value::Unit
             }
-            Op::OnScreen => Value::Windows(windows::on_screen()?),
+            Op::OnScreen => match windows::on_screen() {
+                Ok(list) => Value::Windows(list),
+                Err(error) => Value::Text(format!("window list unavailable: {error}")),
+            },
             Op::Control => self.control()?,
             Op::Focus => {
                 // No wait here: W06 samples the window from the moment focus is asked for.

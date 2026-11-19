@@ -56,6 +56,26 @@ pub(super) fn strip<B: Backend>(
             .skip(&name, "the collapsed window does not meet the screen");
         return Ok(());
     };
+    // Occlusion from the window list, independent of the pixels: a window in front that meets
+    // the strip (a notification, or one of the same colour) covers it.
+    match d.op(Op::Above)? {
+        Value::Covering(list) => {
+            let covering: Vec<_> = list
+                .iter()
+                .filter(|(_, b)| intersect(*b, rect).is_some())
+                .collect();
+            if !covering.is_empty() {
+                d.row
+                    .skip(&name, &format!("{rect:?} is covered by {covering:?}"));
+                return Ok(());
+            }
+        }
+        Value::Text(reason) => {
+            d.row.skip(&name, &reason);
+            return Ok(());
+        }
+        v => return Err(format!("expected the windows in front, got {v:?}")),
+    }
     let mut images = Vec::new();
     for shot in [Shot::Composite, Shot::Alone, Shot::Below] {
         match capture(d, rect, shot)? {
@@ -71,9 +91,11 @@ pub(super) fn strip<B: Backend>(
     Ok(())
 }
 
-fn counters<B: Backend>(d: &mut Driver<'_, B>) -> Result<[u64; 4], String> {
+/// The presenter counters, or the reason they could not be read.
+fn counters<B: Backend>(d: &mut Driver<'_, B>) -> Result<Result<[u64; 4], String>, String> {
     match d.op(Op::Presenter)? {
-        Value::Counters(c) => Ok(c),
+        Value::Counters(c) => Ok(Ok(c)),
+        Value::Text(reason) => Ok(Err(reason)),
         v => Err(format!("expected presenter counters, got {v:?}")),
     }
 }
@@ -96,15 +118,23 @@ pub(super) fn caret<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
         x: s.right() - 20.0,
         y: s.bottom() - 100.0,
     }))?;
-    let before_edit = counters(d)?;
+    // A snapshot that cannot be read leaves the idle check NOT_TESTED with its reason.
+    let mut unavailable = None;
+    let mut snapshot = |d: &mut Driver<'_, B>| -> Result<[u64; 4], String> {
+        Ok(counters(d)?.unwrap_or_else(|reason| {
+            unavailable.get_or_insert(reason);
+            [0; 4]
+        }))
+    };
+    let before_edit = snapshot(d)?;
     d.type_text("x")?;
     // Past the autosave's 650 ms debounce and its save.
     d.wait(1500)?;
-    let after_edit = counters(d)?;
+    let after_edit = snapshot(d)?;
     let mut still = (after_edit, after_edit);
     for _ in 0..QUIET_TRIES {
         d.wait(300)?;
-        still = (still.1, counters(d)?);
+        still = (still.1, snapshot(d)?);
         if still.0 == still.1 {
             break;
         }
@@ -135,7 +165,7 @@ pub(super) fn caret<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
         }
         d.wait(EVERY_MS)?;
     }
-    let idle_end = counters(d)?;
+    let idle_end = snapshot(d)?;
     if !frames.is_empty() {
         let (verdict, detail) = pixels::caret_blinks(&frames);
         record(
@@ -145,8 +175,12 @@ pub(super) fn caret<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
             format!("{region:?}; {detail}"),
         );
     }
-    let (verdict, detail) =
-        pixels::idle_presents_nothing((before_edit, after_edit), still, (idle_start, idle_end));
+    let (verdict, detail) = match unavailable {
+        Some(reason) => (Verdict::NotTested, reason),
+        None => {
+            pixels::idle_presents_nothing((before_edit, after_edit), still, (idle_start, idle_end))
+        }
+    };
     record(d, "caret blinking presents no frame", verdict, detail);
     Ok(())
 }

@@ -236,6 +236,17 @@ fn plan(options: &Options, existing: &[Record], rows: &Rows) -> Result<(), Strin
                 .join(",")
         );
     }
+    let (parent, parts) = decide::composite();
+    match decide::complete(&plan, parent, &parts) {
+        Ok(()) => println!(
+            "composite P16-{parent}: complete; {parent} and {} all have a reusable PASS",
+            parts.join(", ")
+        ),
+        Err(missing) => println!(
+            "composite P16-{parent}: incomplete; still needs {}",
+            missing.join(", ")
+        ),
+    }
     for row in logout_runs {
         println!(
             "run: stickymd-smoke mac-logout --app <the same app> --case {} (each case in a fresh VM boot)",
