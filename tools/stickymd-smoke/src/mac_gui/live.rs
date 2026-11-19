@@ -69,6 +69,16 @@ pub(super) fn aim_panel(
     Ok(log)
 }
 pub(super) fn command(program: &str, args: &[&str]) -> Result<String, String> {
+    command_within(program, args, Duration::from_secs(10))
+}
+
+/// `command` with its own time limit, for a helper that may take longer than 10 s (a `log show`
+/// over the system log: the VM's W12 fault case once needed more, run p7).
+pub(super) fn command_within(
+    program: &str,
+    args: &[&str],
+    limit: Duration,
+) -> Result<String, String> {
     // Reuse the same owned child/timeout/identity cleanup for helper processes too.
     let mut session = Session::new()?;
     let stdout = session.path().join("stdout");
@@ -91,8 +101,8 @@ pub(super) fn command(program: &str, args: &[&str]) -> Result<String, String> {
             .stderr(err),
     )?;
     let status = session
-        .wait_until(Instant::now() + Duration::from_secs(10))?
-        .ok_or_else(|| format!("{program} timed out"))?;
+        .wait_until(Instant::now() + limit)?
+        .ok_or_else(|| format!("{program} timed out after {} s", limit.as_secs()))?;
     let text = fs::read_to_string(stdout).map_err(|e| e.to_string())?;
     let error = fs::read_to_string(stderr).map_err(|e| e.to_string())?;
     session.cleanup()?;

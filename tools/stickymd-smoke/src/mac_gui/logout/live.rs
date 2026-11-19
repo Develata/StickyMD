@@ -5,7 +5,7 @@ use super::check::{Facts, LOST, NOTE, Note, SAVED, TYPED, UNSAVED, from_log, jud
 use crate::mac_common::{end_fixture_processes, fixture, fixture_processes, session::Session};
 use crate::mac_gui::{
     input::{CMD, Injection, SHIFT},
-    live::{aim_panel, command},
+    live::{aim_panel, command, command_within},
     model::{Permissions, Row, Verdict, aggregate, quote},
     native::{accessibility as ax, events, permissions, windows},
     observation::{KeyTarget, key_target},
@@ -402,19 +402,27 @@ fn coordinate(options: &Options) -> Result<(), String> {
                 Err(e) => Err(e.to_string()),
             };
         }
-        let minutes = clock.elapsed().as_secs() / 60 + 2;
+        // The log from just before this case started, with time to read it: an open-ended
+        // `--last` window over a busy log outran 10 s once (run p7).
         let log = command(
-            "/usr/bin/log",
-            &[
-                "show",
-                "--last",
-                &format!("{minutes}m"),
-                "--style",
-                "syslog",
-                "--predicate",
-                "process == \"StickyMD\" OR eventMessage CONTAINS[c] \"stickymd\"",
-            ],
-        );
+            "/bin/date",
+            &["-r", &(started - 5).to_string(), "+%Y-%m-%d %H:%M:%S"],
+        )
+        .and_then(|since| {
+            command_within(
+                "/usr/bin/log",
+                &[
+                    "show",
+                    "--start",
+                    since.trim(),
+                    "--style",
+                    "syslog",
+                    "--predicate",
+                    "process == \"StickyMD\" OR eventMessage CONTAINS[c] \"stickymd\"",
+                ],
+                Duration::from_secs(120),
+            )
+        });
         match &log {
             Ok(log) => {
                 crate::atomic_evidence::write(

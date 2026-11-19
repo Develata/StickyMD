@@ -211,7 +211,7 @@ pub(super) use live::run;
 mod live {
     use super::{MODAL_LEVEL, Observed, QUARANTINE_FLAGS, judge, prompted};
     use crate::mac_gui::{
-        live::command,
+        live::{command, command_within},
         model::{Row, Trace, Window},
         native::{events, windows},
     };
@@ -261,17 +261,18 @@ mod live {
         let marker = format!(":{pid}] termination reported by launchd ");
         for _ in 0..3 {
             events::wait(1000)?;
-            let log = command(
+            let log = command_within(
                 "/usr/bin/log",
                 &[
                     "show",
                     "--last",
-                    "2m",
+                    "1m",
                     "--style",
                     "syslog",
                     "--predicate",
                     "process == \"runningboardd\" AND eventMessage CONTAINS \"termination reported by launchd\"",
                 ],
+                std::time::Duration::from_secs(60),
             )?;
             if let Some(record) = log
                 .lines()
