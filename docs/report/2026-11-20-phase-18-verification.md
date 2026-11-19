@@ -86,14 +86,16 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
    比报告批准的“改了的门在同一字节上重跑”更保守。反方向上，复审指出 `release-macos` 跑的工具测试会读 `ci.yml`、`scheduled.yml` 与本地
    cache action，它们按批准的排除表不算输入，只改它们会改变候选的测试结论而不改变指纹。两处都是“构建输入”与“候选上跑的验证”如何划界，
    需要你定：保持现状、把这些文件纳入，或明确哪些验证在 R 上独立重跑。
-2. **两份 MIT 回退文本的署名（已按版本处理，剩重建文本待你接受）：** 回退改为按 (crate, 版本) 取上游原文，来源逐行记在
+2. **两份 MIT 回退文本的署名（已按版本处理；USER 2026-11-20 接受重建文本）：** 回退改为按 (crate, 版本) 取上游原文，来源逐行记在
    `assets/licenses/fallback-provenance.md`：9 个 crate 版本照录其上游修订根目录的 MIT 原文（Steven Sheldon）；10 个较新的版本照录上游
    `LICENSE.md`，另附重建的 `objc2-MIT.txt`（上游那些修订没有 MIT 全文）；`dispatch` 0.2.0 上游没有许可证文件，仍用重建的 `dispatch-MIT.txt`。
-   两份重建文本的署名是否完整上游无法确认（objc2 #826），`dispatch2` 还列有作者 Mary；首个公开 macOS 包之前由你决定是否接受。
+   两份重建文本的署名是否完整上游无法确认（objc2 #826），`dispatch2` 还列有作者 Mary；USER 已接受用于首个公开 macOS 包。
 3. **Windows 本地 Promote 按 id 下载（已做）：** 先向 GitHub 核对收据记录的 artifact id 的名称、未过期、所属 run 与 head，再按该 id 下载；
    `11` 与发布清单已同步。按 attempt 收紧 Windows 仍按 `11` 另行决定。
-4. **push 与 dispatch：** 什么时候 push 本分支，以及 `release`、`release-macos`、`promote-release` 的 dispatch，都等你授权。
-5. **PUBLISH 的写入约束（workflow 部分已做，仓库设置等你）：** 不自动改回草稿；公开前后按 release id 复读并核对版本 tag 仍指向 R，
+4. **push 与 dispatch（顺序已同意，每一步仍单独授权）：** USER 2026-11-20 同意与 Codex 一致的顺序：push 分支并开 PR 让 CI 跑（含
+   Windows PowerShell 5.1 的两个测试）→ 合入 Phase 17、完成 M5、升版本号，对集成后的最终状态做一次窄范围跨模型复审 → 冻结 R 并进入 main →
+   并行 dispatch `release` 与 `release-macos`（两边 S=R）→ 两边本地 Promote 并验收 → 依次授权 TAG、DRAFT、PUBLISH。
+5. **PUBLISH 的写入约束（workflow 部分已做；USER 同意，tag ruleset 尚未建立）：** 不自动改回草稿；公开前后按 release id 复读并核对版本 tag 仍指向 R，
    不符即失败。`11` 发布晋升第 5 条与发布清单写明你在授权 PUBLISH 时的保证：仓库 ruleset 禁止更新与删除 `refs/tags/v*`（需要你在仓库设置里
    建立），列清能写 release 的人、App、token 与 workflow 并暂停其他自动写入，PUBLISH 运行期间不手动改草稿与 tag。
 

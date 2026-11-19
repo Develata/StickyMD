@@ -39,7 +39,9 @@
 | `objc2-MIT.txt` | 重建：MIT 全文，版权行取 `4fc083f1` 的 Steven Sheldon 与 `madsmtm/objc2` 主线 `8a5abac` 的 `LICENSE-MIT.txt` 的 Mads Marquart | — |
 | `dispatch-MIT.txt` | 重建：MIT 全文，版权行取 `rust-dispatch` 0.2.0 Cargo.toml 的作者 | — |
 
-## 未决
+## 决定
 
 - 两份重建文本的署名是否完整，上游无法确认（`madsmtm/objc2` #826）。`dispatch2` 0.3.1 的 Cargo.toml 还列有作者 Mary（其前身项目
-  `marysaka/dispatch2` 的 MIT 文本没有版权行），证据不足以自行加入版权人。首个公开 macOS 包之前由 USER 决定是否接受。
+  `marysaka/dispatch2` 的 MIT 文本没有版权行），证据不足以自行加入版权人。
+- **USER 2026-11-20 接受**两份重建文本用于首个公开 macOS 包。上游日后给出这些版本的原文或明确说明时，按版本替换并更新本表；
+  依赖升级到未列出的版本时，生成失败，重新审查。
