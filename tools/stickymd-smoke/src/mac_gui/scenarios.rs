@@ -44,10 +44,18 @@ pub(super) enum Op {
     Relaunch,
     /// SIGTERM to the owned product, as launchd sends it at a logout.
     Sigterm,
+    /// A capture of a rectangle (global points); a backend without Screen Recording answers
+    /// `Text` with the reason instead of an image.
+    Capture(Rect, super::pixels::Shot),
+    /// The product's frame presenter counters `[presented, deferred, created, failed]` from a
+    /// freshly published diagnostic (the product must have been started with it).
+    Presenter,
 }
 #[derive(Clone, Debug)]
 pub(super) enum Value {
     Unit,
+    Image(super::pixels::Image),
+    Counters([u64; 4]),
     Time(u64),
     Text(String),
     Window(Window),
@@ -161,7 +169,6 @@ pub(super) fn skipped(id: &str) -> Option<&'static str> {
             Some("requires controlled system repeat settings and sustained physical key semantics")
         }
         "W05" => Some("requires Spaces/full-screen desktop orchestration"),
-        "W10" => Some("requires caret visual and compositor frame instrumentation"),
         "W15" => Some("requires Windows regression machine"),
         _ => None,
     }
@@ -185,9 +192,11 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, id: &str) -> Result<(), Str
         }
         "W02" => {
             for edge in [Edge::Left, Edge::Right, Edge::Top] {
-                dock(d, edge)?;
+                let (s, w, _) = dock(d, edge)?;
+                super::visual::strip(d, edge, s, &w)?;
             }
         }
+        "W10" => super::visual::caret(d)?,
         "W03" | "W04" => super::hover::run(d, id == "W04")?,
         "W07" => {
             d.op(Op::Menu("隐藏".into()))?;

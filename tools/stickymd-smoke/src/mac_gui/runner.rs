@@ -195,12 +195,17 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         Ok(())
     }
 }
+/// The product's input-latency diagnostic file in the session directory (W10 reads its
+/// presenter counters).
+pub(super) const DIAGNOSTIC: &str = "latency.txt";
 /// Starts the copied product in the session directory and waits for its one on-screen window.
-/// The first launch creates `stderr.log`; a relaunch appends to it.
+/// The first launch creates `stderr.log`; a relaunch appends to it. With `diagnostic` the
+/// product records frames and publishes them to `DIAGNOSTIC` on SIGUSR1.
 pub(super) fn launch(
     session: &mut Session,
     executable: &Path,
     relaunch: bool,
+    diagnostic: bool,
 ) -> Result<(u32, Window), String> {
     let stderr = fs::OpenOptions::new()
         .append(relaunch)
@@ -208,8 +213,15 @@ pub(super) fn launch(
         .create_new(!relaunch)
         .open(session.path().join("stderr.log"))
         .map_err(|e| e.to_string())?;
+    let mut command = Command::new(executable);
+    if diagnostic {
+        command.env(
+            super::latency::DIAGNOSTIC_ENV,
+            session.path().join(DIAGNOSTIC),
+        );
+    }
     session.spawn(
-        Command::new(executable)
+        command
             .current_dir(session.path())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -321,7 +333,7 @@ fn one(
         if bundle_hash(&session.path().join("StickyMD.app"))? != hash.bundle {
             return Err("copied bundle manifest changed; refused before launch".into());
         }
-        let (pid, window) = launch(&mut session, &executable, false)?;
+        let (pid, window) = launch(&mut session, &executable, false, id == "W10")?;
         row.trace.push(Trace {
             ms: input.backend.started.elapsed().as_millis() as u64,
             event: format!(

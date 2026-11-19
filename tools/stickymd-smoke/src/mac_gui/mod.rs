@@ -1,8 +1,8 @@
 //! External GUI acceptance only; no app control channel or qualification authority.
 //! I01/I02 need configured real IMEs and composition assertions; I03 needs system repeat
-//! settings. W05 and W06's Space switch need Spaces/full-screen orchestration; W10 needs
-//! compositor/caret instrumentation. W12's logout is not driven: it ends the VM's GUI session,
-//! and loginwindow ends this driver with it; W12 sends the product the quit request and the
+//! settings. W05 and W06's Space switch need Spaces/full-screen orchestration. W10 reads the
+//! presenter diagnostic and captures the window (`visual`). W12's logout is not driven: it ends
+//! the VM's GUI session, and loginwindow ends this driver with it; W12 sends the product the quit request and the
 //! SIGTERM a logout brings directly instead. R03 opens a quarantined copy through LaunchServices
 //! with the user-approved quarantine bit preset (USER 2026-11-19; `translocation`). W15 needs
 //! Windows. These are never inferred PASS.
@@ -40,6 +40,9 @@ mod native;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod observation;
 mod options;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod pixels;
 #[cfg(target_os = "macos")]
 mod runner;
 #[cfg(test)]
@@ -52,6 +55,9 @@ mod tests;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod translocation;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod visual;
 pub(crate) use options::{Options, parse};
 /// Chooses `label` in the product's menu-bar menu through Accessibility, as the GUI scenarios
 /// do. `mac-resources` uses it to reach the hidden state. Returns how long the status item took

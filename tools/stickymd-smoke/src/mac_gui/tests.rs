@@ -1355,3 +1355,139 @@ fn translocation_checks_refuse_bad_samples() {
         assert_eq!(v, Verdict::NotTested, "{}", row.json());
     }
 }
+
+fn image(width: usize, height: usize, fill: [u8; 3]) -> super::pixels::Image {
+    super::pixels::Image {
+        width,
+        height,
+        rgba: std::iter::repeat_n([fill[0], fill[1], fill[2], 255], width * height)
+            .flatten()
+            .collect(),
+    }
+}
+fn paint(
+    mut i: super::pixels::Image,
+    xs: std::ops::Range<usize>,
+    ys: std::ops::Range<usize>,
+    c: [u8; 3],
+) -> super::pixels::Image {
+    for y in ys {
+        for x in xs.clone() {
+            let k = (y * i.width + x) * 4;
+            i.rgba[k..k + 3].copy_from_slice(&c);
+        }
+    }
+    i
+}
+
+/// W02: a strip that nothing covers and that changes the screen passes; a covered strip cannot
+/// be judged; a strip that changes nothing fails.
+#[test]
+fn strip_visibility_needs_an_uncovered_strip_that_changes_the_screen() {
+    use super::pixels::strip_visible;
+    let strip = image(1040, 4, [248, 246, 239]);
+    let desktop = image(1040, 4, [40, 70, 120]);
+    assert_eq!(strip_visible(&strip, &strip, &desktop).0, Verdict::Pass);
+    let menu_over = paint(strip.clone(), 0..1040, 0..4, [230, 230, 230]);
+    assert_eq!(
+        strip_visible(&menu_over, &strip, &desktop).0,
+        Verdict::NotTested
+    );
+    assert_eq!(strip_visible(&desktop, &desktop, &desktop).0, Verdict::Fail);
+    assert_eq!(
+        strip_visible(&strip, &image(10, 4, [0, 0, 0]), &desktop).0,
+        Verdict::NotTested
+    );
+}
+
+/// Frames every `every` ms over 3.6 s: `shown(t)` decides which image a frame at `t` is.
+fn frames_of(
+    every: u64,
+    shown: impl Fn(u64) -> super::pixels::Image,
+) -> Vec<(u64, super::pixels::Image)> {
+    (0..3600 / every)
+        .map(|k| (k * every, shown(k * every)))
+        .collect()
+}
+
+/// W10: an inverse caret alternating every ~550 ms passes; a steady caret, no caret, a caret in a
+/// fixed colour, or one blinking far too fast fails; other changes or long frame gaps cannot tell.
+#[test]
+fn caret_blink_judge_refuses_bad_samples() {
+    use super::pixels::caret_blinks;
+    let off = image(20, 20, [248, 246, 239]);
+    let on = paint(off.clone(), 4..6, 3..15, [7, 9, 16]);
+    let fixed = paint(off.clone(), 4..6, 3..15, [32, 79, 143]);
+    let alternate = |half: u64, a: &super::pixels::Image, b: &super::pixels::Image| {
+        let (a, b) = (a.clone(), b.clone());
+        move |t: u64| {
+            if (t / half).is_multiple_of(2) {
+                a.clone()
+            } else {
+                b.clone()
+            }
+        }
+    };
+    assert_eq!(
+        caret_blinks(&frames_of(60, alternate(550, &on, &off))).0,
+        Verdict::Pass
+    );
+    // Steady, absent, fixed-colour, far too fast.
+    assert_eq!(
+        caret_blinks(&frames_of(60, |_| on.clone())).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        caret_blinks(&frames_of(60, |_| off.clone())).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        caret_blinks(&frames_of(60, alternate(550, &fixed, &off))).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        caret_blinks(&frames_of(40, alternate(120, &on, &off))).0,
+        Verdict::Fail
+    );
+    // Something else changing (three states in one pixel), or frames too far apart.
+    let blink = alternate(550, &on, &off);
+    let noisy = |t: u64| paint(blink(t), 15..16, 15..16, [((t / 60) % 3 * 100) as u8, 0, 0]);
+    assert_eq!(caret_blinks(&frames_of(60, noisy)).0, Verdict::NotTested);
+    assert_eq!(
+        caret_blinks(&frames_of(400, alternate(550, &on, &off))).0,
+        Verdict::NotTested
+    );
+}
+
+/// W10: the counters must be live (an edit presents) and a snapshot must present nothing itself
+/// before an idle stretch is judged.
+#[test]
+fn idle_counters_need_live_counters_and_quiet_snapshots() {
+    use super::pixels::idle_presents_nothing;
+    let a = [10, 2, 1, 0];
+    let b = [11, 2, 1, 0];
+    assert_eq!(
+        idle_presents_nothing((a, b), (b, b), (b, b)).0,
+        Verdict::Pass
+    );
+    assert_eq!(
+        idle_presents_nothing((a, b), (b, b), (b, [12, 2, 1, 0])).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        idle_presents_nothing((a, b), (b, b), (b, [11, 3, 1, 0])).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        idle_presents_nothing((a, b), (b, b), (b, [11, 2, 1, 1])).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        idle_presents_nothing((a, a), (a, a), (a, a)).0,
+        Verdict::NotTested
+    );
+    assert_eq!(
+        idle_presents_nothing((a, b), (b, [12, 2, 1, 0]), (b, b)).0,
+        Verdict::NotTested
+    );
+}

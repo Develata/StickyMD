@@ -969,7 +969,7 @@ to the driver in the VM, then rerun after a refusal.
 | Scenarios | Required permission | Optional permission |
 | --- | --- | --- |
 | W01 | Accessibility (`AXIsProcessTrusted`), including Dock inspection | — |
-| W02/W03/W04/W07/W08/W09/W11/K02/E01 | Accessibility and PostEvent (`CGPreflightPostEventAccess`) | — |
+| W02/W03/W04/W07/W08/W09/W10/W11/K02/E01 | Accessibility and PostEvent (`CGPreflightPostEventAccess`) | Screen Recording for the W02 strip and W10 caret captures (without it those checks are NOT_TESTED) |
 | F01 | None for stderr font selection | Screen Recording (`CGPreflightScreenCaptureAccess`) for screenshot |
 | R03 | PostEvent, for the Return posted to the product process alone (`CGEventPostToPid`); no Accessibility | — |
 | Deferred rows | None; no app launch for those rows | — |
@@ -1054,7 +1054,8 @@ PASS. The acceptance matrix and qualification ledgers are never updated.
 | Row | External oracle | Limits |
 | --- | --- | --- |
 | W01 | `lsappinfo` UIElement + Dock AX item titles | Cmd+Tab pixels remain NOT_TESTED; row remains incomplete |
-| W02 | Drag input; CG window bounds/layer/on-screen; persisted `window.dock_edge` | Main display only; 2 DIP ±0.75, top layer >24; no pixel-level strip rendering assertion |
+| W02 | Drag input; CG window bounds/layer/on-screen; persisted `window.dock_edge`; per edge, the strip rectangle (window ∩ screen) captured three ways: the on-screen composite must equal the window alone (nothing covers it) and differ from the scene below the window in at least half of its pixels (it changes the screen) | Main display only; 2 DIP ±0.75, top layer >24; colour tolerance 6 per channel; a covered strip is NOT_TESTED (the scene), a strip that changes nothing fails |
+| W10 | Launched with the product's input-latency diagnostic; after focus and one typed `x` (the presenter must count it), two back-to-back snapshots must be equal; then the window's first text lines are captured alone about every 60ms for 3.6s and the snapshot after must show presented, deferred and failed unchanged; the alternating pixels must be the inverse of what they cover, with each half period in 300–900ms and at least four state changes | A steady, absent or fixed-colour caret fails; any other changing pixel or a frame gap over 150ms is NOT_TESTED; the run sets `STICKYMD_DIAGNOSTIC_INPUT_LATENCY`, which the default configuration does not |
 | W03 | Finder (the PID verified in front when docking) stays frontmost and StickyMD never is, read with every window sample from just before the first move onto the strip through the hover completion; StickyMD in front fails, another app in front is NOT_TESTED. An early leave after about 35ms moves nothing; hover onset bracket and settled bounds | Any change of place before 90ms fails; onset bracket within 90–170ms; a gap over 60ms or boundary overlap is NOT_TESTED; an early-leave trial the sampling cannot resolve (a dwell of 100ms or more, or a gap over 60ms) is repeated, at most 3 trials, and motion in any trial fails (the focus check covers the last trial and the hover; StickyMD seen in front in a repeated trial still fails); the hover starts only after the window has rested on the strip for 100ms with no gap over 60ms in that run (else the rest is NOT_TESTED); completion PASS by earliest onset +140ms +70ms, FAIL only if still moving when requested after latest onset +140ms +70ms |
 | W04 | Top-band point held 850ms from the move: the sample before the move and every sample after it on screen at the settled expanded bounds (±0.5pt), StickyMD never frontmost; collapse after leaving | A collapsed, partly retracted or hidden sample fails even if the window returns; not at the settled place just before the move is NOT_TESTED; a gap over 60ms or a cut watch is NOT_TESTED; leave onset (any change of place) within 490–570ms; same completion limits as W03; no Spaces/mixed-DPI evidence |
 | W07 | AX hide, `open` copied bundle; same owned PID alive, visible window and AX frontmost PID | Status item awaited in the AX tree up to 5 s, wait recorded; menu effects polled up to 2000ms, elapsed time recorded; does not prove all launch-service/translocation paths |
@@ -1071,7 +1072,7 @@ Cmd+1/2/3 and Cmd+=/-/0. Cmd+S polls `note/note.md` directly until 550ms after t
 last typed key-down (100ms before autosave's 650ms debounce). Only bytes observed
 by that deadline pass; a missed deadline is NOT_TESTED, with key/command/read
 timestamps, because a slow VM and a missing binding cannot be distinguished.
-Other saved-text checks retain the 1500ms wait and 1000ms quiet-byte requirement. W05/W06/W10/W12/W15 and I01/I02/I03
+Other saved-text checks retain the 1500ms wait and 1000ms quiet-byte requirement. W05/W06/W12/W15 and I01/I02/I03
 remain NOT_TESTED with explicit reasons. These are also documented in the module
 comment. No native GUI code is exercised by the unit tests.
 

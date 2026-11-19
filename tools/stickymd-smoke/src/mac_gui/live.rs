@@ -65,6 +65,29 @@ pub(super) fn command(program: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 impl Live<'_> {
+    /// Asks the product (started with the diagnostic) to publish it, waits for a new file (the
+    /// product renames a fresh file over the old one) and reads the presenter counters from it.
+    fn presenter(&mut self) -> Result<[u64; 4], String> {
+        use std::os::unix::fs::MetadataExt;
+        let path = self.session.path().join(super::runner::DIAGNOSTIC);
+        let before = fs::metadata(&path).ok().map(|m| (m.ino(), m.mtime_nsec()));
+        self.session.signal_flush()?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let now = fs::metadata(&path).ok().map(|m| (m.ino(), m.mtime_nsec()));
+            if now.is_some() && now != before {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("the product published no new diagnostic within 5 s".into());
+            }
+            events::wait(20)?;
+        }
+        let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        super::latency::model::parse(&text)?
+            .presenter
+            .ok_or_else(|| "the diagnostic has no presenter counters".into())
+    }
     fn read(&self, path: &str) -> Result<String, String> {
         fs::read_to_string(self.session.path().join(path)).map_err(|e| format!("{path}: {e}"))
     }
@@ -326,7 +349,8 @@ impl Backend for Live<'_> {
                     None => return Err("refused relaunch: the product is still running".into()),
                 }
                 self.session.stop()?;
-                let (pid, window) = super::runner::launch(self.session, &self.executable, true)?;
+                let (pid, window) =
+                    super::runner::launch(self.session, &self.executable, true, false)?;
                 self.pid = pid;
                 self.window_id = window.id;
                 Value::Pid(pid)
@@ -337,6 +361,16 @@ impl Backend for Live<'_> {
                 self.session.signal_terminate()?;
                 Value::Unit
             }
+            Op::Capture(rect, shot) => {
+                if self.permissions.screen {
+                    Value::Image(windows::capture(rect, shot, self.window_id)?)
+                } else {
+                    Value::Text(
+                        "Screen Recording (CGPreflightScreenCaptureAccess) not granted".into(),
+                    )
+                }
+            }
+            Op::Presenter => Value::Counters(self.presenter()?),
             Op::Focus => {
                 // No wait here: W06 samples the window from the moment focus is asked for.
                 ax::activate(self.pid)?;
