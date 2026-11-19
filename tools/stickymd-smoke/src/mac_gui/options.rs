@@ -6,11 +6,13 @@ pub(super) const IDS: &[&str] = &[
     "K02", "I01", "I02", "I03", "E01", "F01", "R03",
 ];
 pub(super) const HELP: &str =
-    "usage: stickymd-smoke mac-gui --app <StickyMD.app> [--out <dir>] [--only <ids>] [--allow-host]
+    "usage: stickymd-smoke mac-gui --app <StickyMD.app> [--out <dir>] [--only <ids>] [--batch <name>] [--allow-host]
 VM ONLY by default: kern.hv_vmm_present must be 1, checked before app/output access.
 --allow-host bypasses only the VM interlock; NEVER use on the owner's desktop.
 --only comma-separated W01..W12,W15,K02,I01,I02,I03,E01,F01,R03 (P16- prefix accepted).
 --out default: dist/evidence/mac-gui; mac-gui.json is written atomically.
+--batch names the acceptance batch this run is for (1-64 of A-Z a-z 0-9 . _ -); it is written
+        into mac-gui.json, and mac-ledger counts I01-I03 and R03 only for the batch named there.
 Permissions (preflight only, no prompts):
   W01: Accessibility (Dock tree).
   W02/W03/W04/W06/W07/W08/W09/W11/W12/K02/E01/F01: Accessibility + PostEvent.
@@ -26,6 +28,7 @@ pub(crate) struct Options {
     pub app: PathBuf,
     pub out: PathBuf,
     pub only: Vec<String>,
+    pub batch: Option<String>,
     pub allow_host: bool,
     pub help: bool,
 }
@@ -34,6 +37,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
         app: PathBuf::new(),
         out: "dist/evidence/mac-gui".into(),
         only: Vec::new(),
+        batch: None,
         allow_host: false,
         help: false,
     };
@@ -46,7 +50,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
         match key.as_str() {
             "--help" | "-h" => result.help = true,
             "--allow-host" => result.allow_host = true,
-            "--app" | "--out" | "--only" => {
+            "--app" | "--out" | "--only" | "--batch" => {
                 let value = iter
                     .next()
                     .filter(|v| !v.starts_with("--"))
@@ -54,6 +58,12 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
                 match key.as_str() {
                     "--app" => result.app = value.into(),
                     "--out" => result.out = value.into(),
+                    "--batch" if crate::mac_ledger::is_batch(value) => {
+                        result.batch = Some(value.clone());
+                    }
+                    "--batch" => {
+                        return Err(format!("--batch {value:?} is not 1-64 of [A-Za-z0-9._-]"));
+                    }
                     _ => {
                         for id in value.split(',') {
                             let id = id.strip_prefix("P16-").unwrap_or(id);

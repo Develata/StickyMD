@@ -25,7 +25,7 @@ mod run;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use options::{Options, parse};
+pub(crate) use options::{Options, is_batch, parse};
 
 pub(crate) fn execute(options: &Options, root: &std::path::Path) -> Result<(), String> {
     if options.help {

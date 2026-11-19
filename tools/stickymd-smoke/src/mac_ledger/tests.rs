@@ -426,7 +426,7 @@ fn evidence(scenarios: &str, environment: &str) -> String {
 }
 fn evidence_marked(scenarios: &str, environment: &str, finished: &str) -> String {
     format!(
-        "{{\"schema_version\":1{finished},\"environment\":{{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\nBuildVersion:\\t26B123\\n\"{environment}}},\"app_inputs\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"driver_sha256\":\"{}\",\"scenarios\":[{scenarios}]}}",
+        "{{\"schema_version\":2{finished},\"environment\":{{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\nBuildVersion:\\t26B123\\n\"{environment}}},\"app_inputs\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"driver_sha256\":\"{}\",\"scenarios\":[{scenarios}]}}",
         hex('1'),
         hex('a'),
         hex('b'),
@@ -440,9 +440,13 @@ const WAITED: &str = "{\"id\":\"P16-W05\",\"verdict\":\"NOT_TESTED\",\"checks\":
 
 #[test]
 fn evidence_is_recorded_from_one_read_of_a_vm_run_with_consistent_rows() {
-    let bytes = evidence(&format!("{PASSED},{WAITED}"), VM);
-    let records =
-        from_evidence(bytes.as_bytes(), "/e.json", "sha256:image", Some("b1"), 3).unwrap();
+    // The batch is the one the driver wrote into the evidence when the run started.
+    let bytes = evidence_marked(
+        &format!("{PASSED},{WAITED}"),
+        VM,
+        ",\"finished\":true,\"batch\":\"b1\"",
+    );
+    let records = from_evidence(bytes.as_bytes(), "/e.json", "sha256:image", 3).unwrap();
     assert_eq!(records.len(), 2);
     let expected_sha = crate::integrity::sha256_bytes(bytes.as_bytes()).unwrap();
     assert!(matches!(
@@ -450,9 +454,26 @@ fn evidence_is_recorded_from_one_read_of_a_vm_run_with_consistent_rows() {
         Record::Automated { row, verdict, identity: id, evidence_sha256, run_unix: Some(42), batch: Some(b), .. }
             if row == "W02" && verdict == "PASS" && *id == identity() && *evidence_sha256 == expected_sha && b == "b1"
     ));
-    let refused = |bytes: String| {
-        from_evidence(bytes.as_bytes(), "/e.json", "sha256:image", None, 3).is_err()
-    };
+    let refused =
+        |bytes: String| from_evidence(bytes.as_bytes(), "/e.json", "sha256:image", 3).is_err();
+    // Without a batch in the evidence the run belongs to no batch.
+    let records = from_evidence(
+        evidence(PASSED, VM).as_bytes(),
+        "/e.json",
+        "sha256:image",
+        3,
+    )
+    .unwrap();
+    assert!(matches!(&records[0], Record::Automated { batch: None, .. }));
+    assert!(refused(evidence_marked(
+        PASSED,
+        VM,
+        ",\"finished\":true,\"batch\":\"no spaces\""
+    )));
+    // Schema 1 drivers could mark a cut-short run finished and cannot name a batch.
+    assert!(refused(
+        evidence(PASSED, VM).replace("\"schema_version\":2", "\"schema_version\":1")
+    ));
     // Not a VM run, or one that allowed a host.
     assert!(refused(evidence(PASSED, &VM.replace("\"1\"", "\"0\""))));
     assert!(refused(evidence(PASSED, &VM.replace("false", "true"))));
@@ -487,7 +508,7 @@ fn evidence_is_recorded_from_one_read_of_a_vm_run_with_consistent_rows() {
     assert!(refused(evidence(&format!("{PASSED},{unstarted}"), VM)));
     // Upper-case digests in the evidence are stored in lower case.
     let upper = evidence(PASSED, VM).replace(&hex('d'), &hex('D'));
-    let records = from_evidence(upper.as_bytes(), "/e.json", "sha256:image", None, 3).unwrap();
+    let records = from_evidence(upper.as_bytes(), "/e.json", "sha256:image", 3).unwrap();
     assert!(
         matches!(&records[0], Record::Automated { identity, .. } if identity.driver == hex('d'))
     );
@@ -501,7 +522,7 @@ fn evidence_is_recorded_from_one_read_of_a_vm_run_with_consistent_rows() {
     ));
     // Evidence from a bundle built without its inputs is recorded, as history only.
     let legacy = evidence(PASSED, VM).replace(&format!("\"app_inputs\":\"{}\",", hex('1')), "");
-    let records = from_evidence(legacy.as_bytes(), "/e.json", "sha256:image", None, 3).unwrap();
+    let records = from_evidence(legacy.as_bytes(), "/e.json", "sha256:image", 3).unwrap();
     assert!(matches!(
         &records[0],
         Record::Automated {

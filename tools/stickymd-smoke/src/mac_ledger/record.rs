@@ -447,11 +447,22 @@ pub(super) fn from_evidence(
     bytes: &[u8],
     evidence: &str,
     image: &str,
-    batch: Option<&str>,
     recorded_unix: u64,
 ) -> Result<Vec<Record>, String> {
     let text = std::str::from_utf8(bytes).map_err(|e| format!("evidence is not UTF-8: {e}"))?;
     let value = json::parse(text)?;
+    // Schema 2 is the first whose `finished` only the current rules set and that names the batch
+    // the run was started for; an older file cannot say either, so it is rerun, not recorded.
+    if !matches!(
+        value.field("schema_version").and_then(Value::unsigned),
+        Ok(2)
+    ) {
+        return Err("the evidence is not schema 2 (an older driver); it cannot be recorded".into());
+    }
+    let batch = optional_text(&value, "batch")?;
+    if let Some(name) = batch.as_deref().filter(|b| !super::options::is_batch(b)) {
+        return Err(format!("the evidence names an invalid batch {name:?}"));
+    }
     let field =
         |v: &Value, key: &str| -> Result<String, String> { Ok(v.field(key)?.string()?.to_owned()) };
     let driver = field(&value, "driver_sha256")
@@ -540,7 +551,7 @@ pub(super) fn from_evidence(
             evidence: evidence.to_owned(),
             evidence_sha256: evidence_sha256.clone(),
             run_unix: Some(run_unix),
-            batch: batch.map(str::to_owned),
+            batch: batch.clone(),
             recorded_unix,
         };
         record.validate()?;

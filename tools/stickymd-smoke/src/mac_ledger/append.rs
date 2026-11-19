@@ -47,7 +47,6 @@ pub(super) fn recorded(options: &Options) -> Result<Vec<Record>, String> {
         &bytes,
         &evidence.display().to_string(),
         options.image.as_deref().ok_or("--image missing")?,
-        options.batch.as_deref(),
         now()?,
     )
 }

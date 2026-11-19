@@ -165,22 +165,30 @@ pub(super) fn rest_index<T: PartialEq>(states: &[T]) -> Option<usize> {
     )
 }
 
-/// Completion verdict: the rest must be the expected end state, first reached by `deadline`.
-/// A first rest sample after the deadline is late unless the gap before it exceeds 60 ms and
-/// straddles the deadline, in which case the sampling cannot tell.
+/// Completion verdict, in ms from the move. `early` and `late` are the deadlines from the earliest
+/// and the latest possible onset. The rest (the last sample, requested at `last_req`) must be the
+/// expected end state; a PASS needs the first rest sample returned by `early`; a FAIL needs an
+/// observed violation: a sample still moving, or a wrong rest, requested at or after `late`.
+/// Anything between cannot tell.
 pub(super) fn completion_verdict(
     rest_is_end_state: bool,
-    first_at: u64,
-    before: Option<u64>,
-    deadline: u64,
+    last_req: u64,
+    first_rest: u64,
+    moving_req: Option<u64>,
+    early: u64,
+    late: u64,
 ) -> Verdict {
     if !rest_is_end_state {
-        Verdict::Fail
-    } else if first_at <= deadline {
+        if last_req >= late {
+            Verdict::Fail
+        } else {
+            Verdict::NotTested
+        }
+    } else if first_rest <= early {
         Verdict::Pass
-    } else if before.is_some_and(|b| b < deadline && first_at - b > 60) {
-        Verdict::NotTested
-    } else {
+    } else if moving_req.is_some_and(|m| m >= late) {
         Verdict::Fail
+    } else {
+        Verdict::NotTested
     }
 }

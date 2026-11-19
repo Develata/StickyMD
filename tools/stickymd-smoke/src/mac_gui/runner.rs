@@ -109,7 +109,14 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             row
         })
         .collect::<Vec<_>>();
-    save(&out, &environment, &hash, &rows, false)?;
+    save(
+        &out,
+        &environment,
+        &hash,
+        &rows,
+        false,
+        options.batch.as_deref(),
+    )?;
     events::install_cancel()?;
     let mut input = Injection::new(Events::new());
     // A run cut short (cancelled, or stopped after a panic or a failed cleanup) is never marked
@@ -145,10 +152,24 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         row.trace.sort_by_key(|t| t.ms);
         println!("{id}: {}", aggregate(&row.checks).name());
         rows[index] = row;
-        save(&out, &environment, &hash, &rows, false)?;
+        save(
+            &out,
+            &environment,
+            &hash,
+            &rows,
+            false,
+            options.batch.as_deref(),
+        )?;
     }
     cut_short |= input.stopped.is_some() || events::running().is_err();
-    save(&out, &environment, &hash, &rows, !cut_short)?;
+    save(
+        &out,
+        &environment,
+        &hash,
+        &rows,
+        !cut_short,
+        options.batch.as_deref(),
+    )?;
     if cut_short {
         println!(
             "the run was cut short; its evidence is not marked finished and cannot be recorded"
@@ -240,15 +261,19 @@ fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
 }
 /// Writes the evidence; `finished` is true only on the write after the last row, so a checkpoint
 /// of an interrupted run is never taken for a finished one (mac-ledger records only finished runs).
+/// Schema 2 is the first whose `finished` only this driver's rules set, and the first that names
+/// the batch the run was started for; mac-ledger records no older schema.
 fn save(
     out: &Path,
     environment: &str,
     hash: &AppHash,
     rows: &[Row],
     finished: bool,
+    batch: Option<&str>,
 ) -> Result<(), String> {
+    let batch = batch.map_or_else(String::new, |b| format!(",\"batch\":{}", quote(b)));
     let json = format!(
-        "{{\"schema_version\":1,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"scenarios\":[{}]}}\n",
+        "{{\"schema_version\":2,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished}{batch},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"scenarios\":[{}]}}\n",
         hash.inputs
             .as_ref()
             .map_or_else(String::new, |inputs| format!(

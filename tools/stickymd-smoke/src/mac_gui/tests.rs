@@ -127,11 +127,16 @@ fn standalone_parser_never_needs_an_existing_app() {
     let o = parse(&["--app", "/nonexistent.app", "--only", "P16-W01,K02"]).unwrap();
     assert_eq!(o.only, ["W01", "K02"]);
     assert!(!o.allow_host);
+    assert_eq!(o.batch, None);
+    let o = parse(&["--app", "x", "--batch", "rel-0.3.0"]).unwrap();
+    assert_eq!(o.batch.as_deref(), Some("rel-0.3.0"));
     for args in [
         vec!["--app"],
         vec!["--app", "x", "--only", "W99"],
         vec!["--app", "x", "--only", "W01,W01"],
         vec!["--allow-host", "--allow-host"],
+        vec!["--app", "x", "--batch", "no spaces"],
+        vec!["--app", "x", "--batch"],
     ] {
         assert!(parse(&args).is_err());
     }
@@ -333,6 +338,17 @@ struct HoverBackend {
     slow_window: Option<(bool, u64, u64)>,
     /// Once: the same for a frontmost-app query, since the pointer entered.
     slow_front: Option<(u64, u64)>,
+    /// Since the pointer left: when the window moves inside the screen (to y = 9).
+    leave_dip: Option<(u64, u64)>,
+    /// The n-th window query of the scenario (from 0) takes this many ms.
+    slow_nth: Option<(usize, u64)>,
+    /// Window queries so far.
+    windows: usize,
+    /// On the fake clock: when StickyMD is frontmost, when another app (PID 77) is, and when
+    /// the window is not on screen.
+    flash_abs: Option<(u64, u64)>,
+    other_abs: Option<(u64, u64)>,
+    hidden_abs: Option<(u64, u64)>,
 }
 impl HoverBackend {
     fn new() -> Self {
@@ -352,7 +368,16 @@ impl HoverBackend {
             other_front: None,
             slow_window: None,
             slow_front: None,
+            leave_dip: None,
+            slow_nth: None,
+            windows: 0,
+            flash_abs: None,
+            other_abs: None,
+            hidden_abs: None,
         }
+    }
+    fn at(&self, range: Option<(u64, u64)>) -> bool {
+        range.is_some_and(|(from, to)| (from..to).contains(&self.now))
     }
     /// Spends a slow query's time when this query is the one it applies to.
     fn slow(&mut self, window: bool) {
@@ -375,6 +400,11 @@ impl HoverBackend {
     fn window_now(&self) -> Window {
         let mut w = if self.within(self.dip) {
             window(rect(460.0, self.dip_y, 520.0, 480.0), 27)
+        } else if self.leave_dip.is_some_and(|(from, to)| {
+            self.left
+                .is_some_and(|t| (from..to).contains(&(self.now - t)))
+        }) {
+            window(rect(460.0, 9.0, 520.0, 480.0), 0)
         } else if self
             .entered
             .is_some_and(|t| (self.expand_at..self.expand_at + 140).contains(&(self.now - t)))
@@ -393,7 +423,7 @@ impl HoverBackend {
         } else {
             window(rect(460.0, -478.0, 520.0, 480.0), 27)
         };
-        w.onscreen = !self.within(self.hidden);
+        w.onscreen = !self.within(self.hidden) && !self.at(self.hidden_abs);
         w
     }
     fn within(&self, range: Option<(u64, u64)>) -> bool {
@@ -419,6 +449,10 @@ impl Backend for HoverBackend {
                 Value::Unit
             }
             Op::Window => {
+                if self.slow_nth.is_some_and(|(n, _)| n == self.windows) {
+                    self.now += self.slow_nth.map_or(0, |(_, cost)| cost);
+                }
+                self.windows += 1;
                 self.slow(true);
                 Value::Window(self.window_now())
             }
@@ -426,9 +460,12 @@ impl Backend for HoverBackend {
             Op::Front => {
                 self.slow(false);
                 Value::Pid(
-                    if (self.steals && self.expanded()) || self.within(self.flash_focus) {
+                    if (self.steals && self.expanded())
+                        || self.within(self.flash_focus)
+                        || self.at(self.flash_abs)
+                    {
                         42
-                    } else if self.within(self.other_front) {
+                    } else if self.within(self.other_front) || self.at(self.other_abs) {
                         77
                     } else {
                         self.focused
@@ -615,6 +652,94 @@ fn hover_tracks_leave_no_unobserved_stretch() {
         Verdict::NotTested,
         "{}",
         row.json()
+    );
+    assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
+}
+
+/// The fake-clock time and the index (from 0) of the window query read just before the move
+/// to `y` with the given ordinal (0 = first such move), from an undisturbed run of `id`.
+fn query_before_move(id: &str, y: f64, ordinal: usize) -> (u64, usize) {
+    let row = hover_row(&mut HoverBackend::new(), id);
+    let mut windows = 0;
+    let mut last = None;
+    let mut seen = 0;
+    for t in &row.trace {
+        if t.event == "request Window" {
+            last = Some((t.ms, windows));
+            windows += 1;
+        } else if t.event.starts_with("request Move(") && t.event.contains(&format!("y: {y:?} }}"))
+        {
+            if seen == ordinal {
+                return last.expect("a window read before the move");
+            }
+            seen += 1;
+        }
+    }
+    panic!("no move to y={y} #{ordinal} in {}", row.json());
+}
+
+/// Round 5 of the codex review: motion inside the screen, the seams between phases, the deadline
+/// boundary, a moving window passing through the strip, and the Finder precondition.
+#[test]
+fn hover_watch_is_one_stream_and_motion_is_any_change_of_place() {
+    // The leave starts inside the screen at 400 ms and crosses the edge on time: early motion.
+    let mut early_leave = HoverBackend::new();
+    early_leave.leave_dip = Some((400, 500));
+    let row = hover_row(&mut early_leave, "W03");
+    assert_eq!(
+        check(&row, "leave movement onset"),
+        Verdict::Fail,
+        "{}",
+        row.json()
+    );
+    // The read before the band move takes 120 ms while StickyMD takes focus and gives it back:
+    // the seam between hover and band is inside the watch.
+    let (t, n) = query_before_move("W04", 0.0, 0);
+    let mut seam = HoverBackend::new();
+    seam.slow_nth = Some((n, 120));
+    seam.flash_abs = Some((t + 20, t + 100));
+    let row = hover_row(&mut seam, "W04");
+    assert_eq!(
+        check(&row, "top band dwell keeps focus away"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    // Hidden in the read just before the band move: the band cannot start from the rest.
+    let mut hidden_before = HoverBackend::new();
+    hidden_before.hidden_abs = Some((t, t + 1));
+    let row = hover_row(&mut hidden_before, "W04");
+    assert_eq!(
+        check(&row, "top band holds past 500ms"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    // An early dwell long enough to expand fully: the formal hover starts only once the window
+    // has rested on the strip again, and then passes.
+    let mut expanded_early = HoverBackend::new();
+    expanded_early.slow_window = Some((false, 20, 250));
+    let row = hover_row(&mut expanded_early, "W03");
+    assert_eq!(
+        check(&row, "early leave cancels"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    for name in [
+        "hover movement onset",
+        "hover expansion completion",
+        "leave movement onset",
+    ] {
+        assert_eq!(check(&row, name), Verdict::Pass, "{name}: {}", row.json());
+    }
+    // Another app in front since docking: the scene changed, which cannot pass or fail.
+    let mut other = HoverBackend::new();
+    other.other_abs = Some((0, u64::MAX));
+    let row = hover_row(&mut other, "W03");
+    assert_eq!(
+        check(&row, "Finder frontmost before hover"),
+        Verdict::NotTested
     );
     assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
 }
@@ -947,17 +1072,21 @@ fn rest_dating_and_completion_verdicts() {
     assert_eq!(rest_index(&[-200, 12, 28, 12, 28, 28]), Some(4));
     assert_eq!(rest_index(&[1, 1]), Some(0));
     assert_eq!(rest_index::<i32>(&[]), None);
-    assert_eq!(completion_verdict(true, 300, Some(280), 304), Verdict::Pass);
-    assert_eq!(completion_verdict(true, 304, Some(284), 304), Verdict::Pass);
-    assert_eq!(completion_verdict(true, 320, Some(300), 304), Verdict::Fail);
+    // (end state, last request, first rest return, moving request, early, late deadline)
+    let judge = |end, first, moving| completion_verdict(end, 500, first, moving, 304, 320);
+    assert_eq!(judge(true, 300, Some(280)), Verdict::Pass);
+    assert_eq!(judge(true, 304, Some(284)), Verdict::Pass);
+    // Moving at 300, at rest by 320: arriving at 303 fits both, so it cannot tell.
+    assert_eq!(judge(true, 320, Some(300)), Verdict::NotTested);
+    assert_eq!(judge(true, 380, Some(290)), Verdict::NotTested);
+    // Still moving when requested at the latest deadline or after: late.
+    assert_eq!(judge(true, 380, Some(320)), Verdict::Fail);
+    assert_eq!(judge(true, 340, None), Verdict::NotTested);
+    // A wrong rest fails only when observed at or after the latest deadline.
+    assert_eq!(judge(false, 200, Some(180)), Verdict::Fail);
     assert_eq!(
-        completion_verdict(true, 380, Some(290), 304),
+        completion_verdict(false, 310, 200, Some(180), 304, 320),
         Verdict::NotTested
-    );
-    assert_eq!(completion_verdict(true, 380, Some(310), 304), Verdict::Fail);
-    assert_eq!(
-        completion_verdict(false, 200, Some(180), 304),
-        Verdict::Fail
     );
 }
 

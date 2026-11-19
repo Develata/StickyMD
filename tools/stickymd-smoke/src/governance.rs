@@ -1207,6 +1207,13 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
         if rows.iter().any(|seen: &MatrixRow| seen.id == row.id) {
             return Err(at(format!("{} appears twice", row.id)));
         }
+        // A macOS row with another phase's prefix would be valid here yet dropped by the ledger.
+        if is_macos_matrix(path) && !row.id.starts_with("P16-") {
+            return Err(at(format!(
+                "{} in the macOS matrix must start with P16-",
+                row.id
+            )));
+        }
         // The macOS matrix uses only the modes of the acceptance ladder (plan 01, Acceptance
         // Ladder) and the dash of its waiver; other phases' modes would drop out of its plans.
         if is_macos_matrix(path)
@@ -1684,6 +1691,11 @@ mod tests {
         }
         let twice = format!("{ladder}| P16-W05 | act | Manual | again | NOT TESTED |\n");
         assert!(matrix_rows(&twice, macos).is_err(), "an ID appears once");
+        let prefix = format!("{ladder}| P15-I02 | act | Manual | waits | NOT TESTED |\n");
+        assert!(
+            matrix_rows(&prefix, macos).is_err(),
+            "a macOS row is a P16 row"
+        );
         let root =
             std::env::temp_dir().join(format!("stickymd-macos-matrix-{}", std::process::id()));
         std::fs::create_dir_all(root.join("docs/acceptance-cases")).unwrap();

@@ -284,10 +284,12 @@ pub(super) fn exits_within<B: Backend>(
         d.wait(50)?;
     }
 }
+/// Docks the window at `edge` and makes Finder frontmost; returns the screen, the collapsed
+/// window and the Finder PID the backend verified in front.
 pub(super) fn dock<B: Backend>(
     d: &mut Driver<'_, B>,
     edge: Edge,
-) -> Result<(Rect, Window), String> {
+) -> Result<(Rect, Window, u32), String> {
     d.op(Op::Activate)?;
     d.wait(350)?;
     let w = d.window()?;
@@ -317,7 +319,10 @@ pub(super) fn dock<B: Backend>(
         x: s.right() - 20.0,
         y: s.bottom() - 100.0,
     }))?;
-    d.op(Op::Finder)?;
+    let finder = match d.op(Op::Finder)? {
+        Value::Pid(pid) => pid,
+        v => return Err(format!("expected the Finder PID, got {v:?}")),
+    };
     let (w, elapsed, met) = d.until(1800, |w| collapsed(w, s, edge))?;
     d.row.check(
         &format!("{} 2 DIP collapse", edge.name()),
@@ -325,5 +330,5 @@ pub(super) fn dock<B: Backend>(
         format!("elapsed={elapsed}ms; {w:?}; screen={s:?}"),
     );
     d.config("window", "dock_edge", &format!("\"{}\"", edge.name()))?;
-    Ok((s, w))
+    Ok((s, w, finder))
 }

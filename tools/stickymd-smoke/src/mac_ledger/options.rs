@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// A batch name: 1–64 ASCII letters, digits, `.`, `_` or `-`. Here, not in the record module,
 /// because the parser is compiled on every host.
-pub(super) fn is_batch(s: &str) -> bool {
+pub(crate) fn is_batch(s: &str) -> bool {
     (1..=64).contains(&s.len())
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
@@ -20,7 +20,7 @@ pub(super) const HELP: &str =
           Lists the mac-gui rows to run, the rows whose PASS is reused (same product inputs,
           driver, VM image and VM system), and the rows the USER or agents still have to judge
           for these inputs. It writes no ledger and launches no app.
-  record  --evidence <mac-gui.json> --image <digest> [--batch <name>]
+  record  --evidence <mac-gui.json> --image <digest>
           Appends every row of a finished run in the VM. The same evidence is never recorded
           twice for a row. Records are not ordered by time: any FAIL, NOT_TESTED or revoked PASS
           of a row under an identity stops reuse of that row under it.
@@ -35,7 +35,8 @@ pub(super) const HELP: &str =
   --image is the Tart image digest the VM was cloned from (the VM cannot see it).
   --system is a file holding the target VM's sw_vers output, taken just before the run.
   --batch names the acceptance batch (1-64 of A-Z a-z 0-9 . _ -). I01-I03 and R03 count only
-          results of the batch being planned; every other row ignores it.
+          results of the batch being planned; every other row ignores it. A run's batch is the one
+          mac-gui --batch wrote into its evidence; record takes it from there.
   --quote <words> refuses words that start with -- or are -h; write --quote=<words> to pass
           such words verbatim.";
 
@@ -66,7 +67,7 @@ impl Command {
             Self::Plan => &[
                 "--ledger", "--app", "--driver", "--image", "--system", "--batch",
             ],
-            Self::Record => &["--ledger", "--evidence", "--image", "--batch"],
+            Self::Record => &["--ledger", "--evidence", "--image"],
             Self::Receipt => &["--ledger", "--app", "--rows", "--quote", "--batch"],
             Self::Revoke => &[
                 "--ledger",
