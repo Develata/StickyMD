@@ -452,6 +452,7 @@ const fn symbolic_link_loop() -> i32 {
     62
 }
 
+#[cfg(test)]
 fn open_directory(path: &Path) -> Result<DirectoryHandle, NoteStorageError> {
     DirectoryHandle::open(path).map_err(|error| {
         if error.raw_os_error() == Some(symbolic_link_loop())
