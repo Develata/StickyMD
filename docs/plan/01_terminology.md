@@ -478,10 +478,10 @@
 
 ### Acceptance Ladder（验收阶梯）
 
-- **Definition**：Phase 16 验收表判定一行的方式，按优先顺序为：程序断言、agent 自行操作、agent 判定截图、程序截图交 USER、程序录屏交 USER、USER 亲手验收。对应 Mode 为 `Automated`、`Agent`、`Review`、`Manual`。
-- **Authority**：`11` Phase 16 节；各行用哪一级按行经 USER 批准。
-- **Not equivalent to**：资格化 suite；Windows 的人工验收矩阵。
-- **Lifetime**：随 Phase 16 验收表存在。
+- **Definition**：选择验收方式的优先顺序，适用于每张验收表的每一行（必要时拆为子项）：程序断言、agent 自行操作、agent 判定截图、程序截图交 USER、程序录屏交 USER、USER 亲手验收。用第一个可行的级别；可行指它的检查能拒绝事先准备的坏样本。Phase 16 验收表以 `Automated`、`Agent`、`Review`、`Manual` 四种 Mode 表达六级；其他验收表沿用各自的 Mode，这一顺序只决定自动化做到哪一步。
+- **Authority**：`11` 验收矩阵节（全部验收表，USER 2026-11-20 推广）与 Phase 16 节（判定细则）；各行改 Mode 按行经 USER 批准。
+- **Not equivalent to**：资格化 suite 的 exact-candidate 规则；正式人工矩阵的收据与就绪规则（两者不因这一顺序改变）。
+- **Lifetime**：长期；新增、复审或重新确认验收行时都按它审视。
 
 ### Agent Judgement（agent 判定）
 

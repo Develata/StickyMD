@@ -14,6 +14,9 @@
 - 状态只允许 `AUTOMATED PASS`、`MANUAL PASS`、`NOT TESTED`、`BLOCKED`；Phase 16 矩阵另可用
   `AGENT PASS`（见 `docs/plan/11_testing_and_release.md` Phase 16 节）。不得使用无证据的裸 `PASS`
   或 `CONDITIONAL`。
+- 新增、复审或重新确认一行之前，先阅读 `docs/plan/11_testing_and_release.md` 的“验收矩阵”节
+  （验收阶梯），按其顺序选第一个可行级，并审视人工行能否上移；不能上移的写明原因；改 Mode 须
+  USER 批准。
 - 人工项没有当前提交的正式矩阵收据时必须保持 `NOT TESTED`；一次性终端记录、旧报告、
   未提交脚本或自动化替代动作均不能算人工验收。
 - 对按 `docs/plan/11_testing_and_release.md` 写入 ignored `dist/evidence/` 的动态 exact-candidate
