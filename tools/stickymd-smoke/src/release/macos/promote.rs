@@ -112,8 +112,7 @@ impl Receipt {
 /// `release` must be a full SHA contained in `origin/main`, as the release authorization names it.
 fn check_release(root: &Path, release: &str) -> Result<(), String> {
     integrity::validate_hex(release, 40, "release commit")?;
-    let contained = Command::new("git")
-        .current_dir(root)
+    let contained = crate::release::platform_inputs::git(root)
         .args(["merge-base", "--is-ancestor", release, "origin/main"])
         .status()
         .map_err(|error| format!("cannot run git: {error}"))?;
@@ -166,9 +165,8 @@ pub(crate) fn check_set(
     content::validate_sbom(&sbom, &facts.members)?;
     let source = facts.source_commit.clone();
     let reuse = verify_reuse(root, Platform::MacOsArm64, &source, release)?;
-    let lock = Command::new("git")
-        .current_dir(root)
-        .args(["show", &format!("{source}:Cargo.lock")])
+    let lock = crate::release::platform_inputs::git(root)
+        .args(["cat-file", "blob", &format!("{source}:Cargo.lock")])
         .output()
         .map_err(|error| format!("cannot read Cargo.lock at {source}: {error}"))?;
     if !lock.status.success() {
@@ -340,18 +338,34 @@ pub(crate) fn promote(root: &Path, request: &Request<'_>) -> Result<String, Stri
     let staged = prepare(root, &set, &receipt)?;
     let json = receipt.json();
     let record = match &reuse {
-        Reuse::Ancestor { fingerprint } => Some(format!(
-            "{{\"schema_version\":1,\"platform\":\"macos-arm64\",\"build_source\":\"{}\",\"release_source\":\"{}\",\"build_inputs\":\"{}\",\"release_inputs\":\"{fingerprint}\",\"algorithm\":\"v1\",\"candidate_receipt_sha256\":\"{}\"}}\n",
-            receipt.source,
-            request.release.to_ascii_lowercase(),
-            receipt.build_inputs,
-            integrity::sha256_bytes(json.as_bytes())?
+        Reuse::Ancestor { fingerprint } => Some(reuse_record(
+            &receipt.source,
+            request.release,
+            &receipt.build_inputs,
+            fingerprint,
+            &integrity::sha256_bytes(json.as_bytes())?,
         )),
         Reuse::SameCommit => None,
     };
     install(root, &staged, record.as_deref(), &json)?;
-    download.close()?;
+    if let Err(error) = download.close() {
+        eprintln!("warning: promoted; the download directory was not removed: {error}");
+    }
     Ok(json)
+}
+
+/// The reuse record Promote writes beside the receipt and the resolver compares byte for byte.
+fn reuse_record(
+    build: &str,
+    release: &str,
+    build_inputs: &str,
+    release_inputs: &str,
+    receipt_sha256: &str,
+) -> String {
+    format!(
+        "{{\"schema_version\":1,\"platform\":\"macos-arm64\",\"build_source\":\"{build}\",\"release_source\":\"{}\",\"build_inputs\":\"{build_inputs}\",\"release_inputs\":\"{release_inputs}\",\"algorithm\":\"v1\",\"candidate_receipt_sha256\":\"{receipt_sha256}\"}}\n",
+        release.to_ascii_lowercase(),
+    )
 }
 
 /// Copies the checked set into a private directory under `dist/` with the bundle extracted, and
@@ -393,65 +407,95 @@ fn prepare(root: &Path, set: &Path, receipt: &Receipt) -> Result<PathBuf, String
     Ok(staging)
 }
 
-/// Swaps the prepared candidate in. The old candidate directory, receipt and record are kept
-/// until the new receipt is written, and restored if any step fails.
+/// One change `install` made, undone in reverse order if a later step fails.
+enum Step {
+    ReceiptRetired(Vec<u8>),
+    RecordRetired(Vec<u8>),
+    OldSetAside,
+    NewInPlace,
+    RecordWritten,
+}
+
+/// The bytes at `path`, `None` only when nothing is there; any other error stops the caller
+/// before it changes anything.
+fn existing(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+    }
+}
+
+/// Swaps the prepared candidate in. The receipt is retired first, so from then on the resolver
+/// refuses the staging directory; the old candidate is kept aside; the new one moves in, then
+/// the reuse record, and the receipt last: writing it is the commit. A failure before that
+/// undoes every step in reverse order (the old receipt last) and reports any step it could not
+/// undo. After the commit, leftover cleanup is only reported: the new candidate stands.
 fn install(root: &Path, staged: &Path, record: Option<&str>, receipt: &str) -> Result<(), String> {
     let target = root.join(STAGING);
     let receipt_path = root.join(RECEIPT);
     let record_path = root.join(REUSE_RECORD);
-    let old_receipt = fs::read(&receipt_path).ok();
-    let old_record = fs::read(&record_path).ok();
     let aside = root.join(format!(
         "dist/.exact-candidate-macos-old-{}",
         std::process::id()
     ));
-    let restore = |moved_old: bool| {
-        let _ = fs::remove_file(&receipt_path);
-        let _ = fs::remove_file(&record_path);
-        if moved_old {
-            let _ = fs::remove_dir_all(&target);
-            let _ = fs::rename(&aside, &target);
+    let old_receipt = existing(&receipt_path)?;
+    let old_record = existing(&record_path)?;
+    let mut done = Vec::new();
+    let io = |what: &str, error: std::io::Error| format!("cannot {what}: {error}");
+    let outcome = (|| {
+        if let Some(bytes) = old_receipt {
+            fs::remove_file(&receipt_path).map_err(|error| io("retire the receipt", error))?;
+            done.push(Step::ReceiptRetired(bytes));
         }
-        if let Some(bytes) = &old_receipt {
-            let _ = atomic_evidence::write(&receipt_path, bytes);
+        if let Some(bytes) = old_record {
+            fs::remove_file(&record_path).map_err(|error| io("retire the reuse record", error))?;
+            done.push(Step::RecordRetired(bytes));
         }
-        if let Some(bytes) = &old_record {
-            let _ = atomic_evidence::write(&record_path, bytes);
+        if target.exists() {
+            fs::rename(&target, &aside)
+                .map_err(|error| io("set the old candidate aside", error))?;
+            done.push(Step::OldSetAside);
         }
-    };
-    // Retire the receipt first: from here on a missing receipt makes the resolver refuse.
-    for path in [&receipt_path, &record_path] {
-        match fs::remove_file(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                restore(false);
-                let _ = fs::remove_dir_all(staged);
-                return Err(format!("cannot retire {}: {error}", path.display()));
+        fs::rename(staged, &target).map_err(|error| io("move the candidate into place", error))?;
+        done.push(Step::NewInPlace);
+        if let Some(record) = record {
+            atomic_evidence::write(&record_path, record.as_bytes())?;
+            done.push(Step::RecordWritten);
+        }
+        atomic_evidence::write(&receipt_path, receipt.as_bytes())
+    })();
+    if let Err(error) = outcome {
+        let mut failures = Vec::new();
+        for step in done.into_iter().rev() {
+            let undone = match step {
+                Step::RecordWritten => fs::remove_file(&record_path).map_err(|e| e.to_string()),
+                Step::NewInPlace => fs::remove_dir_all(&target).map_err(|e| e.to_string()),
+                Step::OldSetAside => fs::rename(&aside, &target).map_err(|e| e.to_string()),
+                Step::RecordRetired(bytes) => atomic_evidence::write(&record_path, &bytes),
+                Step::ReceiptRetired(bytes) => atomic_evidence::write(&receipt_path, &bytes),
+            };
+            if let Err(failure) = undone {
+                failures.push(failure);
             }
         }
-    }
-    let moved_old = target.exists();
-    if moved_old && let Err(error) = fs::rename(&target, &aside) {
-        restore(false);
         let _ = fs::remove_dir_all(staged);
-        return Err(format!("cannot set the old candidate aside: {error}"));
+        return Err(if failures.is_empty() {
+            format!("{error}; the previous candidate is back in place")
+        } else {
+            format!(
+                "{error}; the previous candidate could not be fully restored: {}",
+                failures.join("; ")
+            )
+        });
     }
-    let installed = fs::rename(staged, &target)
-        .map_err(|error| format!("cannot move the candidate into place: {error}"))
-        .and_then(|()| match record {
-            Some(record) => atomic_evidence::write(&record_path, record.as_bytes()),
-            None => Ok(()),
-        })
-        .and_then(|()| atomic_evidence::write(&receipt_path, receipt.as_bytes()));
-    if let Err(error) = installed {
-        restore(moved_old);
-        let _ = fs::remove_dir_all(staged);
-        return Err(error);
-    }
-    if moved_old {
-        fs::remove_dir_all(&aside)
-            .map_err(|error| format!("the old candidate stays at {}: {error}", aside.display()))?;
+    if aside.exists()
+        && let Err(error) = fs::remove_dir_all(&aside)
+    {
+        eprintln!(
+            "warning: promoted; the previous candidate stays at {}: {error}",
+            aside.display()
+        );
     }
     Ok(())
 }
@@ -476,13 +520,23 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<PathBuf, String> {
     {
         return Err("the macOS candidate receipt is not a complete schema 1 receipt".to_owned());
     }
-    for name in ["workflow_run_id", "workflow_attempt", "artifact_id"] {
+    for name in ["workflow_run_id", "artifact_id"] {
         receipt.field(name)?.unsigned()?;
     }
-    field("artifact_name")?;
+    let attempt = receipt.field("workflow_attempt")?.unsigned()?;
+    if field("artifact_name")? != format!("{ARTIFACT_PREFIX}{attempt}") {
+        return Err("the receipt's artifact is not named for its attempt".to_owned());
+    }
+    for name in ["cargo_lock_sha256", "app_inputs"] {
+        integrity::validate_sha256(&field(name)?, name)?;
+    }
+    let version = repository::workspace_version(root)?;
+    if field("version")? != version {
+        return Err(format!("the receipt is for another version than {version}"));
+    }
     let staging = root.join(STAGING);
     let zip_name = field("zip_name")?;
-    if zip_name != Platform::MacOsArm64.archive_name(&repository::workspace_version(root)?) {
+    if zip_name != Platform::MacOsArm64.archive_name(&version) {
         return Err(format!(
             "the receipt names {zip_name}, not this version's package"
         ));
@@ -514,21 +568,43 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<PathBuf, String> {
         return Err("the build source's inputs differ from the receipt".to_owned());
     }
     check_release(root, release)?;
-    if let Reuse::Ancestor { fingerprint } =
-        verify_reuse(root, Platform::MacOsArm64, &source, release)?
-    {
-        let record = fs::read(root.join(REUSE_RECORD))
-            .map_err(|error| format!("no reuse record for {source} on {release}: {error}"))?;
-        let record = json::parse(std::str::from_utf8(&record).map_err(|_| "not UTF-8")?)?;
-        let matches = record.field("build_source")?.string()? == source
-            && record.field("release_source")?.string()? == release.to_ascii_lowercase()
-            && record.field("release_inputs")?.string()? == fingerprint
-            && record.field("candidate_receipt_sha256")?.string()?
-                == integrity::sha256_bytes(&bytes)?;
-        if !matches {
-            return Err(format!(
-                "the reuse record does not cover {source} on {release}"
-            ));
+    // The record must be exactly the one Promote writes for this judgement and receipt, and
+    // absent when the candidate was built on R itself.
+    let record_path = root.join(REUSE_RECORD);
+    let recorded = match fs::symlink_metadata(&record_path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("cannot inspect the reuse record: {error}")),
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err("the reuse record is not a regular file".to_owned());
+        }
+        Ok(_) => Some(fs::read(&record_path).map_err(|error| error.to_string())?),
+    };
+    match (
+        verify_reuse(root, Platform::MacOsArm64, &source, release)?,
+        recorded,
+    ) {
+        (Reuse::SameCommit, None) => {}
+        (Reuse::SameCommit, Some(_)) => {
+            return Err(
+                "a reuse record lies beside a candidate built on the release commit".to_owned(),
+            );
+        }
+        (Reuse::Ancestor { .. }, None) => {
+            return Err(format!("no reuse record for {source} on {release}"));
+        }
+        (Reuse::Ancestor { fingerprint }, Some(record)) => {
+            let expected = reuse_record(
+                &source,
+                release,
+                &field("build_inputs")?,
+                &fingerprint,
+                &integrity::sha256_bytes(&bytes)?,
+            );
+            if record != expected.as_bytes() {
+                return Err(format!(
+                    "the reuse record does not cover {source} on {release}"
+                ));
+            }
         }
     }
     Ok(app)
@@ -598,6 +674,24 @@ mod tests {
                 Some("old record".into())
             )
         );
+    }
+
+    #[test]
+    fn an_unreadable_receipt_stops_install_before_any_change() {
+        let scratch = TemporaryDirectory::new("macos-install-unreadable").unwrap();
+        let root = scratch.path();
+        tree(root, "old", "old receipt", None);
+        fs::remove_file(root.join(RECEIPT)).unwrap();
+        // A directory where the receipt belongs cannot be read as one, nor taken as absent.
+        fs::create_dir(root.join(RECEIPT)).unwrap();
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(&staged).unwrap();
+        assert!(install(root, &staged, None, "new receipt").is_err());
+        assert_eq!(
+            fs::read_to_string(root.join(STAGING).join("marker")).unwrap(),
+            "old"
+        );
+        assert!(staged.exists());
     }
 
     #[test]

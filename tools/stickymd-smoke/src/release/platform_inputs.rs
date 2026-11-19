@@ -76,12 +76,44 @@ fn is_input_path(platform: Platform, path: &[u8]) -> bool {
     })
 }
 
-/// Git on `root` reading the objects as stored: a replacement ref cannot substitute another
-/// commit, tree or blob for the one a SHA names.
-fn git(root: &Path) -> Command {
+/// Git on `root` reading the history as committed: a replacement ref cannot substitute another
+/// commit, tree or blob for the one a SHA names, and a graft file cannot give a commit other
+/// parents (the null device is an empty graft file). Every release and qualification query of
+/// commits, trees, blobs and ancestry goes through this.
+pub(crate) fn git(root: &Path) -> Command {
     let mut command = Command::new("git");
-    command.current_dir(root).env("GIT_NO_REPLACE_OBJECTS", "1");
     command
+        .current_dir(root)
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env(
+            "GIT_GRAFT_FILE",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        );
+    command
+}
+
+/// `commit` must be a full lowercase SHA naming a commit object of this repository: an
+/// annotated tag's own id would peel to a commit, and a tree id would list a tree, under a
+/// name that claims a commit.
+pub(crate) fn require_commit(root: &Path, label: &str, commit: &str) -> Result<(), String> {
+    if commit.len() != 40
+        || !commit
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(format!(
+            "{label} must be a full lowercase commit SHA: {commit}"
+        ));
+    }
+    let is_commit = git(root)
+        .args(["cat-file", "-t", commit])
+        .output()
+        .is_ok_and(|output| output.status.success() && output.stdout == b"commit\n");
+    if is_commit {
+        Ok(())
+    } else {
+        Err(format!("{commit} is not a commit in this repository"))
+    }
 }
 
 fn own_workflow(platform: Platform) -> &'static str {
@@ -140,6 +172,7 @@ fn tree(root: &Path, commit: &str) -> Result<Vec<Entry>, String> {
 /// The SHA-256 of `platform`'s build inputs in `commit`: a stream of the algorithm version and
 /// platform, then for every input path in byte order its path, mode, length and content.
 pub(crate) fn fingerprint(root: &Path, platform: Platform, commit: &str) -> Result<String, String> {
+    require_commit(root, "the fingerprinted commit", commit)?;
     let mut inputs = Vec::new();
     for entry in tree(root, commit)? {
         if !is_input_path(platform, &entry.path) {
@@ -267,30 +300,8 @@ pub(crate) fn verify_reuse(
     build: &str,
     release: &str,
 ) -> Result<Reuse, String> {
-    for (label, commit) in [("build source", build), ("release commit", release)] {
-        if commit.len() != 40
-            || !commit
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-        {
-            return Err(format!(
-                "{label} must be a full lowercase commit SHA: {commit}"
-            ));
-        }
-    }
-    // The object the SHA names must itself be a commit: `<sha>^{commit}` would also accept an
-    // annotated tag and silently judge the commit it points to.
-    let is_commit = |commit: &str| {
-        git(root)
-            .args(["cat-file", "-t", commit])
-            .output()
-            .is_ok_and(|output| output.status.success() && output.stdout == b"commit\n")
-    };
-    for commit in [build, release] {
-        if !is_commit(commit) {
-            return Err(format!("{commit} is not a commit in this repository"));
-        }
-    }
+    require_commit(root, "build source", build)?;
+    require_commit(root, "release commit", release)?;
     if build == release {
         return Ok(Reuse::SameCommit);
     }
@@ -503,6 +514,31 @@ mod tests {
         assert_ne!(&tag, first);
         let error = verify_reuse(root, win, &tag, &tag).unwrap_err();
         assert!(error.contains("not a commit"), "{error}");
+        // The fingerprint command alone refuses it too, and a tree id.
+        assert!(fingerprint(root, win, &tag).is_err());
+        let tree = git(root, &["rev-parse", &format!("{first}^{{tree}}")]);
+        assert!(fingerprint(root, win, &tree).is_err());
+        // A graft cannot make a non-ancestor an ancestor: X, a document change beside the main
+        // line, has the Windows inputs of `doc_change` but is not its ancestor until a graft
+        // names X as `doc_change`'s parent. The graft file is ignored.
+        git(root, &["checkout", "-q", "-b", "side", first]);
+        std::fs::write(root.join("docs/plan/a.md"), "side").unwrap();
+        git(root, &["commit", "-q", "-am", "side"]);
+        let side = git(root, &["rev-parse", "HEAD"]);
+        assert!(verify_reuse(root, win, &side, doc_change).is_err());
+        std::fs::write(
+            root.join(".git/info/grafts"),
+            format!("{doc_change} {side}\n"),
+        )
+        .unwrap();
+        let plain = Command::new("git")
+            .current_dir(root)
+            .args(["merge-base", "--is-ancestor", &side, doc_change])
+            .status()
+            .unwrap();
+        assert!(plain.success(), "plain Git follows the graft");
+        let error = verify_reuse(root, win, &side, doc_change).unwrap_err();
+        assert!(error.contains("not an ancestor"), "{error}");
         // Each host's manifest reaches the other platform: features merge, and the macOS bundle
         // records a fingerprint that reads every manifest.
         let error = verify_reuse(root, win, win_change, mac_manifest).unwrap_err();

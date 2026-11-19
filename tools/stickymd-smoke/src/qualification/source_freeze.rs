@@ -44,9 +44,7 @@ pub(super) fn create(root: &Path) -> Result<SourceFreeze, String> {
 /// a checkout that converted line endings would otherwise give the same commit another digest,
 /// and a candidate promoted under two freezes of one commit two receipts.
 fn committed_lock_sha256(root: &Path, commit: &str) -> Result<String, String> {
-    let output = std::process::Command::new("git")
-        .current_dir(root)
-        .env("GIT_NO_REPLACE_OBJECTS", "1")
+    let output = crate::release::platform_inputs::git(root)
         .args(["cat-file", "blob", &format!("{commit}:Cargo.lock")])
         .output()
         .map_err(|error| format!("cannot read the committed Cargo.lock: {error}"))?;
@@ -104,7 +102,9 @@ pub(super) fn validate_against_repository(
     if receipt::workspace_version(root)? != freeze.version {
         return Err("STALE RECEIPT: Source Freeze version differs from Cargo.toml".to_owned());
     }
-    if receipt::sha256(&root.join("Cargo.lock"))? != freeze.cargo_lock_sha256 {
+    // The committed bytes, as at creation: a freeze written by an older tool from converted
+    // worktree bytes no longer matches and must be made again.
+    if committed_lock_sha256(root, &freeze.source_commit)? != freeze.cargo_lock_sha256 {
         return Err("STALE RECEIPT: Source Freeze Cargo.lock hash changed".to_owned());
     }
     if receipt::command_text(root, "rustc", &["--version", "--verbose"])? != freeze.rustc {

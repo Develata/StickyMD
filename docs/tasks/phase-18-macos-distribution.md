@@ -25,8 +25,8 @@ Windows 的产品行为、发布文件名与字节不变。
 | --- | --- | --- |
 | M1 | 完成（两轮审查修正） | 合同落盘：plan 01、02、04、05、08、09、11；`AGENTS.md`、overview、features、coverage matrix；Phase 18 矩阵与入口 |
 | M2 | 完成（审查修正） | 安装版：`apps/stickymd-mac` 的位置判定、键、启动与持久化；`crates/stickymd-posix` 的家目录查询、Note Root 句柄链与加锁 |
-| M3 | 代码完成，workflow 未 dispatch | `release-macos.yml`、按平台的第三方声明、macOS SBOM 与 checksum、候选收据与本地晋升、`promote-release.yml` 的完整附件比对、平台构建输入指纹与沿用 |
-| M4 | 待开始 | 本机 fmt、clippy、测试；`mac-test` 中的 `mac-gui`；候选包上的下载路径 |
+| M3 | 代码完成（两轮审查修正），workflow 未 dispatch | `release-macos.yml`、按平台的第三方声明、macOS SBOM 与 checksum、候选收据与本地晋升、`promote-release.yml` 的完整附件比对、平台构建输入指纹与沿用 |
+| M4 | 本机基线与 `mac-test` 完成，候选包上的验证等 dispatch（[验证记录](../report/2026-11-20-phase-18-verification.md)） | 本机 fmt、clippy、测试；`mac-test` 中的 `mac-gui`；候选包上的下载路径 |
 | M5 | 待开始 | macOS 就绪核对（`11` #macos-release-gate），下一版本发布前完成 |
 
 ## Deliverables

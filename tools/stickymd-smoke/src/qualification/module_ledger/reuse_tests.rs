@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::status::success_status;
-use super::{Lookup, ModuleId, compatible_success, lookup, record_success_at};
+use super::{Lookup, ModuleId, compatible_success, lookup, record_success, record_success_at};
 use crate::qualification::module_evidence::fixtures::valid_document;
 use crate::qualification::module_evidence::g5_companions;
 use crate::qualification::module_registry::modules;
@@ -610,6 +610,46 @@ fn lookup_all_profile() {
             snapshot.modules.len()
         );
     }
+}
+
+/// The production entry registers only the run on the checkout's HEAD: after a
+/// documentation-only commit R that may still carry the candidate built on S, a receipt of the
+/// run on S is refused at R, and the receipt of the run on R is registered.
+#[test]
+fn production_registration_takes_only_the_run_on_head() {
+    let clone = ReleaseClone::new();
+    let source = head(&clone.main);
+    let mut built = candidate("0.1.0", "c", "d");
+    built.source_commit = source.clone();
+    let module = ModuleId::G4;
+    write_valid_evidence(&clone.main, module, &built);
+    record_success(&clone.main, module, &built).expect("the run on S, registered at S");
+    write(&clone.main, "docs/report/2026-11-20-later.md", "later\n");
+    commit(&clone.main);
+    let release = head(&clone.main);
+    write_valid_evidence(&clone.main, module, &built);
+    let error = record_success(&clone.main, module, &built).expect_err("the run on S, at R");
+    assert!(error.contains("registration"), "{error}");
+    let path = clone.main.join(module.receipt());
+    let from = format!("\"harness_commit\":\"{source}\"");
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains(&from), "{text}");
+    fs::write(
+        &path,
+        text.replace(&from, &format!("\"harness_commit\":\"{release}\"")),
+    )
+    .unwrap();
+    record_success(&clone.main, module, &built).expect("the run on R, registered at R");
+}
+
+fn head(root: &Path) -> String {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()
+        .expect("start git");
+    assert!(output.status.success());
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
 fn write_valid_evidence(root: &Path, module: ModuleId, candidate: &Candidate) {

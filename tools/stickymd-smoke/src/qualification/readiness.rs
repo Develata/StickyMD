@@ -12,21 +12,17 @@ use super::{automated_readiness, decisions, json, manual_readiness, remote, reus
 
 const READINESS_RECEIPT: &str = "dist/evidence/release-readiness.json";
 
-/// The bytes of the receipts Source Freeze and Promote replace under the manual store lock.
-fn qualification_identity(root: &Path) -> [Option<Vec<u8>>; 3] {
-    [
-        source_freeze::SOURCE_FREEZE_RECEIPT,
-        receipt::CANDIDATE_RECEIPT,
-        reuse::REUSE_RECORD,
-    ]
-    .map(|path| std::fs::read(root.join(path)).ok())
-}
-
 pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
     let mut blockers = Vec::new();
-    // Read before anything is judged; compared again under the lock before the receipt is
-    // written, so a Source Freeze or Promote in between cannot yield a READY for other files.
-    let evaluated = qualification_identity(root);
+    // Source Freeze and Promote replace the freeze, the candidate and the reuse record under the
+    // manual store lock. Holding it (shared) from before the first read until the receipt is
+    // written makes the identity judged here the one the receipt describes. Lock order: the
+    // manual store first, then decisions; holding it while the one decision snapshot is read
+    // also pins the manual context to that moment.
+    let manual_guard = store::lock(root, false);
+    if let Err(error) = &manual_guard {
+        blockers.push(format!("mandatory manual acceptance: {error}"));
+    }
     let (source, source_current) = read_source(root, &mut blockers);
     // One read: the candidate and the digest its manual context must be bound to.
     let (candidate, candidate_digest) = match receipt::read_candidate_snapshot(root) {
@@ -46,12 +42,6 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
         check_source_identity(root, source, candidate, digest, &mut blockers);
     }
 
-    // Lock order: the manual store first, then decisions. Holding the manual lock while
-    // the one decision snapshot is read pins the manual context to that same moment.
-    let manual_guard = store::lock(root, false);
-    if let Err(error) = &manual_guard {
-        blockers.push(format!("mandatory manual acceptance: {error}"));
-    }
     let release_decisions = source
         .as_ref()
         .map(|source| decisions::read_consistent(root, source))
@@ -99,12 +89,6 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
         );
     }
     manual.set_unit_owner_proof(unit_owners_proven);
-    if qualification_identity(root) != evaluated {
-        blockers.push(
-            "STALE RECEIPT: the Source Freeze, candidate or reuse record changed while readiness was evaluated"
-                .to_owned(),
-        );
-    }
     let document = render_readiness(candidate.as_ref(), &blockers, &manual);
     // The summary is printed even if the receipt cannot be written; the error follows.
     let written = receipt::write_receipt(root, READINESS_RECEIPT, &document);

@@ -167,8 +167,7 @@ pub(crate) fn check_manifest_names(manifest: &str, names: &[&str]) -> Result<(),
 /// R must be on the main line: every promotion operation starts from a commit `origin/main`
 /// reaches, whatever ref the workflow was dispatched from.
 fn on_main(root: &Path, release: &str) -> Result<(), String> {
-    let status = Command::new("git")
-        .current_dir(root)
+    let status = super::platform_inputs::git(root)
         .args(["merge-base", "--is-ancestor", release, "origin/main"])
         .status()
         .map_err(|error| format!("cannot run git: {error}"))?;

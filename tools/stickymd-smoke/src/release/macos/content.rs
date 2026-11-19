@@ -85,18 +85,12 @@ pub(crate) fn readme(version: &str, commit: &str, exact_candidate: bool) -> Stri
     )
 }
 
-/// The packaged files an SBOM must describe: the executable, the notices and the licenses.
+/// The packaged files an SBOM must describe: every regular file of the package.
 pub(crate) fn sbom_members() -> Vec<&'static str> {
     FILES
         .iter()
         .map(|(name, _)| *name)
-        .filter(|name| !name.ends_with("README.txt") && !name.ends_with("LICENSE.txt"))
-        .chain(
-            APP_FILES
-                .iter()
-                .copied()
-                .filter(|name| name.contains("/MacOS/")),
-        )
+        .chain(APP_FILES.iter().copied())
         .collect()
 }
 
@@ -108,52 +102,78 @@ pub(crate) fn member_hashes(extracted: &Path) -> Result<BTreeMap<&'static str, S
         .collect()
 }
 
-/// The SPDX document must be SPDX 2.x, list packages, and describe every SBOM member with the
-/// SHA-256 of the bytes actually packaged (`hashes`), as Syft names files of a directory source.
+/// The SPDX version Syft 1.50.0 writes (observed 2026-11-19); another version is another
+/// generator and is reviewed before it is accepted.
+const SPDX_VERSION: &str = "SPDX-2.3";
+
+/// The SPDX document must be the expected SPDX version, list packages, and describe every
+/// packaged file exactly once, as SPDX 2.3 requires of a file (an `SPDXRef-` identifier and a
+/// SHA-1), with the SHA-256 of the bytes actually packaged (`hashes`). Syft 1.50.0 on macOS
+/// names a directory source's files relative to it (`package/...`, observed 2026-11-19); a
+/// leading `/` is accepted as the same name.
 pub(crate) fn validate_sbom(
     text: &str,
     hashes: &BTreeMap<&'static str, String>,
 ) -> Result<(), String> {
     let document = json::parse(text)?;
-    if !document
-        .field("spdxVersion")?
-        .string()?
-        .to_ascii_uppercase()
-        .starts_with("SPDX-2.")
-    {
-        return Err("Generated document is not an SPDX 2.x JSON SBOM".to_owned());
+    let version = document.field("spdxVersion")?.string()?;
+    if version != SPDX_VERSION {
+        return Err(format!(
+            "Generated document is {version}, expected an {SPDX_VERSION} JSON SBOM"
+        ));
     }
     if document.field("packages")?.array()?.is_empty() {
         return Err("Generated SBOM contains no packages".to_owned());
     }
     let files = document.field("files")?.array()?;
-    // Syft 1.50.0 on macOS names a directory source's files relative to it (`package/...`,
-    // observed 2026-11-19); a leading `/` is accepted as the same name.
     for member in sbom_members() {
         let required = format!("package/{member}");
-        let entry = files
+        let entries = files
             .iter()
-            .find(|file| {
+            .filter(|file| {
                 file.field("fileName")
                     .and_then(|name| name.string())
                     .is_ok_and(|name| name.strip_prefix('/').unwrap_or(name) == required)
             })
-            .ok_or_else(|| format!("Generated SBOM does not cover packaged file {required}"))?;
+            .collect::<Vec<_>>();
+        let [entry] = entries.as_slice() else {
+            return Err(format!(
+                "Generated SBOM describes packaged file {required} {} times, expected once",
+                entries.len()
+            ));
+        };
+        if !entry
+            .field("SPDXID")
+            .and_then(|id| id.string())
+            .is_ok_and(|id| id.len() > "SPDXRef-".len() && id.starts_with("SPDXRef-"))
+        {
+            return Err(format!("{required} has no SPDX file identifier"));
+        }
+        let checksums = entry.field("checksums")?.array()?;
+        let values = |algorithm: &str| {
+            checksums
+                .iter()
+                .filter(|checksum| {
+                    checksum
+                        .field("algorithm")
+                        .and_then(|value| value.string())
+                        .is_ok_and(|value| value == algorithm)
+                })
+                .map(|checksum| checksum.field("checksumValue")?.string())
+                .collect::<Result<Vec<_>, _>>()
+        };
+        match values("SHA1")?.as_slice() {
+            [sha1] if sha1.len() == 40 && sha1.bytes().all(|byte| byte.is_ascii_hexdigit()) => {}
+            other => {
+                return Err(format!(
+                    "{required} must carry one SHA-1 as SPDX requires, found {other:?}"
+                ));
+            }
+        }
         let expected = hashes
             .get(member)
             .ok_or_else(|| format!("no packaged hash for {member}"))?;
-        let described = entry
-            .field("checksums")?
-            .array()?
-            .iter()
-            .filter(|checksum| {
-                checksum
-                    .field("algorithm")
-                    .and_then(|algorithm| algorithm.string())
-                    .is_ok_and(|algorithm| algorithm == "SHA256")
-            })
-            .map(|checksum| checksum.field("checksumValue")?.string())
-            .collect::<Result<Vec<_>, _>>()?;
+        let described = values("SHA256")?;
         if described.as_slice() != [expected.as_str()] {
             return Err(format!(
                 "the SBOM describes {required} with SHA-256 {described:?}, the package holds {expected}"
@@ -288,7 +308,9 @@ mod tests {
             .iter()
             .map(|(name, hash)| {
                 format!(
-                    "{{\"fileName\":\"{name}\",\"checksums\":[{{\"algorithm\":\"SHA1\",\"checksumValue\":\"00\"}},{{\"algorithm\":\"SHA256\",\"checksumValue\":\"{hash}\"}}]}}"
+                    "{{\"SPDXID\":\"SPDXRef-File-{}\",\"fileName\":\"{name}\",\"checksums\":[{{\"algorithm\":\"SHA1\",\"checksumValue\":\"{}\"}},{{\"algorithm\":\"SHA256\",\"checksumValue\":\"{hash}\"}}]}}",
+                    name.len(),
+                    "0".repeat(40)
                 )
             })
             .collect::<Vec<_>>()
@@ -338,5 +360,20 @@ mod tests {
         let error = validate_sbom(&document(&other), &hashes).unwrap_err();
         assert!(error.contains("SHA-256"), "{error}");
         assert!(validate_sbom(&document(&all).replace("SPDX-2.3", "SPDX-3.0"), &hashes).is_err());
+        // A member described twice, without an identifier, or without a full SHA-1.
+        let mut twice = all.clone();
+        twice.push(all[0]);
+        assert!(validate_sbom(&document(&twice), &hashes).is_err());
+        let text = document(&all);
+        let first_id = text.find("\"SPDXID\"").unwrap();
+        let without_id = format!("{}\"X\"{}", &text[..first_id], &text[first_id + 8..]);
+        assert!(validate_sbom(&without_id, &hashes).is_err());
+        let short_sha1 = text.replacen(&"0".repeat(40), "00", 1);
+        assert!(validate_sbom(&short_sha1, &hashes).is_err());
+        // LICENSE.txt and README.txt are members like the rest.
+        let members = sbom_members();
+        assert!(
+            members.contains(&"StickyMD/LICENSE.txt") && members.contains(&"StickyMD/README.txt")
+        );
     }
 }

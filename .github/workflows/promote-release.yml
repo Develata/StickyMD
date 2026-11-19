@@ -82,6 +82,20 @@ jobs:
           ref: ${{ inputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: The checkout is the release commit on main
+        # Only the runner's Git runs here: nothing from the checked-out commit (actions, scripts,
+        # Cargo) runs before R is known to be on the main line.
+        shell: pwsh
+        env:
+          RELEASE_SHA: ${{ inputs.source_sha }}
+        run: |
+          if ($env:RELEASE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'source_sha must be a full lowercase commit SHA' }
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:RELEASE_SHA) { throw "the checkout is $head, not $env:RELEASE_SHA" }
+          $env:GIT_NO_REPLACE_OBJECTS = '1'
+          $env:GIT_GRAFT_FILE = 'NUL'
+          git merge-base --is-ancestor $env:RELEASE_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'The release commit is not contained in origin/main' }
       - uses: ./.github/actions/verify-release-candidates
         with:
           source_sha: ${{ inputs.source_sha }}
@@ -131,6 +145,20 @@ jobs:
           ref: ${{ inputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: The checkout is the release commit on main
+        # Only the runner's Git runs here: nothing from the checked-out commit (actions, scripts,
+        # Cargo) runs before R is known to be on the main line.
+        shell: pwsh
+        env:
+          RELEASE_SHA: ${{ inputs.source_sha }}
+        run: |
+          if ($env:RELEASE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'source_sha must be a full lowercase commit SHA' }
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:RELEASE_SHA) { throw "the checkout is $head, not $env:RELEASE_SHA" }
+          $env:GIT_NO_REPLACE_OBJECTS = '1'
+          $env:GIT_GRAFT_FILE = 'NUL'
+          git merge-base --is-ancestor $env:RELEASE_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'The release commit is not contained in origin/main' }
       - name: Verify tag identity
         shell: pwsh
         env:
@@ -175,16 +203,22 @@ jobs:
           ATTACHMENTS: ${{ inputs.attachments }}
         run: |
           function Get-DraftSnapshot {
-            $text = & gh api "repos/$env:GH_REPO/releases?per_page=100"
+            $text = (& gh api --paginate --slurp "repos/$env:GH_REPO/releases?per_page=100") -join "`n"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $releases = @(($text -join "`n") | ConvertFrom-Json)
-            if ($releases.Count -ge 100) { throw 'more than 99 releases: the listing would need paging' }
+            if (-not $text.Trim()) { throw 'the release listing is empty' }
+            $releases = @($text | ConvertFrom-Json | ForEach-Object { $_ })
+            foreach ($release in $releases) {
+              foreach ($field in 'id', 'tag_name', 'draft', 'assets') { if ($release.PSObject.Properties.Name -cnotcontains $field) { throw "a listed release has no $field" } }
+              foreach ($asset in @($release.assets)) {
+                foreach ($field in 'id', 'name', 'size') { if ($asset.PSObject.Properties.Name -cnotcontains $field) { throw "an asset of release $($release.id) has no $field" } }
+              }
+            }
             $matching = @($releases | Where-Object { $_.tag_name -ceq $env:RELEASE_TAG })
             if ($matching.Count -eq 0) { return $null }
             if ($matching.Count -ne 1) { throw "$($matching.Count) releases carry $env:RELEASE_TAG" }
             $release = $matching[0]
-            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)|$($_.updated_at)" })
-            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($release.draft)|$($assets -join ';')" }
+            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)" })
+            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($assets -join ';')" }
           }
           $draft = Get-DraftSnapshot
           if ($null -ne $draft) {
@@ -207,7 +241,7 @@ jobs:
           $tag = $env:RELEASE_TAG
           $notes = Join-Path $env:RUNNER_TEMP 'release-notes.txt'
           $text = "StickyMD $tag draft: Windows x64 portable (unsigned) and macOS arm64 portable (ad-hoc signed, not notarized).`n" +
-            "Windows built from $env:WINDOWS_BUILD_SHA (release run $env:WINDOWS_RUN_ID, attempt $env:WINDOWS_RUN_ATTEMPT).`n" +
+            "Windows built from $env:WINDOWS_BUILD_SHA (release run $env:WINDOWS_RUN_ID, latest attempt $env:WINDOWS_RUN_ATTEMPT when checked).`n" +
             "macOS built from $env:MACOS_BUILD_SHA (release-macos run $env:MACOS_RUN_ID, attempt $env:MACOS_RUN_ATTEMPT).`n" +
             "Verify SHA256SUMS.txt, SHA256SUMS-macos-arm64.txt and the attestations before separately authorizing publish.`n"
           [IO.File]::WriteAllText($notes, $text, [Text.UTF8Encoding]::new($false))
@@ -255,6 +289,20 @@ jobs:
           ref: ${{ inputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: The checkout is the release commit on main
+        # Only the runner's Git runs here: nothing from the checked-out commit (actions, scripts,
+        # Cargo) runs before R is known to be on the main line.
+        shell: pwsh
+        env:
+          RELEASE_SHA: ${{ inputs.source_sha }}
+        run: |
+          if ($env:RELEASE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'source_sha must be a full lowercase commit SHA' }
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:RELEASE_SHA) { throw "the checkout is $head, not $env:RELEASE_SHA" }
+          $env:GIT_NO_REPLACE_OBJECTS = '1'
+          $env:GIT_GRAFT_FILE = 'NUL'
+          git merge-base --is-ancestor $env:RELEASE_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'The release commit is not contained in origin/main' }
       - uses: ./.github/actions/verify-release-candidates
         with:
           source_sha: ${{ inputs.source_sha }}
@@ -271,16 +319,22 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           function Get-DraftSnapshot {
-            $text = & gh api "repos/$env:GH_REPO/releases?per_page=100"
+            $text = (& gh api --paginate --slurp "repos/$env:GH_REPO/releases?per_page=100") -join "`n"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $releases = @(($text -join "`n") | ConvertFrom-Json)
-            if ($releases.Count -ge 100) { throw 'more than 99 releases: the listing would need paging' }
+            if (-not $text.Trim()) { throw 'the release listing is empty' }
+            $releases = @($text | ConvertFrom-Json | ForEach-Object { $_ })
+            foreach ($release in $releases) {
+              foreach ($field in 'id', 'tag_name', 'draft', 'assets') { if ($release.PSObject.Properties.Name -cnotcontains $field) { throw "a listed release has no $field" } }
+              foreach ($asset in @($release.assets)) {
+                foreach ($field in 'id', 'name', 'size') { if ($asset.PSObject.Properties.Name -cnotcontains $field) { throw "an asset of release $($release.id) has no $field" } }
+              }
+            }
             $matching = @($releases | Where-Object { $_.tag_name -ceq $env:RELEASE_TAG })
             if ($matching.Count -eq 0) { return $null }
             if ($matching.Count -ne 1) { throw "$($matching.Count) releases carry $env:RELEASE_TAG" }
             $release = $matching[0]
-            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)|$($_.updated_at)" })
-            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($release.draft)|$($assets -join ';')" }
+            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)" })
+            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($assets -join ';')" }
           }
           $draft = Get-DraftSnapshot
           if ($null -eq $draft -or -not $draft.draft) { throw "no draft release carries $env:RELEASE_TAG" }
@@ -311,19 +365,33 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           function Get-DraftSnapshot {
-            $text = & gh api "repos/$env:GH_REPO/releases?per_page=100"
+            $text = (& gh api --paginate --slurp "repos/$env:GH_REPO/releases?per_page=100") -join "`n"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $releases = @(($text -join "`n") | ConvertFrom-Json)
-            if ($releases.Count -ge 100) { throw 'more than 99 releases: the listing would need paging' }
+            if (-not $text.Trim()) { throw 'the release listing is empty' }
+            $releases = @($text | ConvertFrom-Json | ForEach-Object { $_ })
+            foreach ($release in $releases) {
+              foreach ($field in 'id', 'tag_name', 'draft', 'assets') { if ($release.PSObject.Properties.Name -cnotcontains $field) { throw "a listed release has no $field" } }
+              foreach ($asset in @($release.assets)) {
+                foreach ($field in 'id', 'name', 'size') { if ($asset.PSObject.Properties.Name -cnotcontains $field) { throw "an asset of release $($release.id) has no $field" } }
+              }
+            }
             $matching = @($releases | Where-Object { $_.tag_name -ceq $env:RELEASE_TAG })
             if ($matching.Count -eq 0) { return $null }
             if ($matching.Count -ne 1) { throw "$($matching.Count) releases carry $env:RELEASE_TAG" }
             $release = $matching[0]
-            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)|$($_.updated_at)" })
-            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($release.draft)|$($assets -join ';')" }
+            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)" })
+            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($assets -join ';')" }
           }
           $draft = Get-DraftSnapshot
           $before = [IO.File]::ReadAllText((Join-Path $env:RUNNER_TEMP 'draft-snapshot.txt'))
-          if ($null -eq $draft -or $draft.text -cne $before) { throw "the draft of $env:RELEASE_TAG changed after it was checked" }
+          if ($null -eq $draft -or -not $draft.draft -or $draft.text -cne $before) { throw "the draft of $env:RELEASE_TAG changed after it was checked" }
           gh api --method PATCH "repos/$env:GH_REPO/releases/$($draft.id)" -F draft=false | Out-Null
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # GitHub has no conditional update, so a writer outside this workflow could still act
+          # between the check above and the PATCH. The release is read once more: if it is not the
+          # checked release and assets, it goes back to draft and the job fails.
+          $after = Get-DraftSnapshot
+          if ($null -eq $after -or $after.draft -or $after.text -cne $before) {
+            gh api --method PATCH "repos/$env:GH_REPO/releases/$($draft.id)" -F draft=true | Out-Null
+            throw "the release of $env:RELEASE_TAG changed while it was published; it was returned to draft"
+          }

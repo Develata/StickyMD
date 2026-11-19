@@ -40,15 +40,22 @@ pub(crate) fn verify_named_run(
 }
 
 /// The run was started by `event` from the workflow file `path`. A display name can be shared by
-/// two workflow files; the file cannot. GitHub may report the file with an `@<ref>` suffix.
+/// two workflow files; the file cannot. GitHub may report the file with an `@<ref>` suffix; a
+/// suffix that is itself a workflow file name (`release.yml@x.yml`) names another file.
 pub(crate) fn verify_origin(
     document: &super::json::Value,
     path: &str,
     event: &str,
 ) -> Result<(), String> {
     let observed = document.field("path")?.string()?;
-    let file = observed.split_once('@').map_or(observed, |(file, _)| file);
-    if file != path {
+    let same_file = match observed.strip_prefix(path) {
+        Some("") => true,
+        Some(rest) => rest.strip_prefix('@').is_some_and(|reference| {
+            !reference.is_empty() && !reference.ends_with(".yml") && !reference.ends_with(".yaml")
+        }),
+        None => false,
+    };
+    if !same_file {
         return Err(format!("the run is of {observed}, expected {path}"));
     }
     let observed = document.field("event")?.string()?;
@@ -136,6 +143,11 @@ mod tests {
                 ".github/workflows/release-macos.yml.bak",
                 "workflow_dispatch",
             ),
+            (
+                ".github/workflows/release-macos.yml@x.yml",
+                "workflow_dispatch",
+            ),
+            (".github/workflows/release-macos.yml@", "workflow_dispatch"),
         ] {
             assert!(verify_origin(&run(path, event), file, "workflow_dispatch").is_err());
         }

@@ -38,6 +38,7 @@ runs:
       env:
         ARTIFACT_RUN_ID: ${{ inputs.windows_run_id }}
       run: |
+        if ($env:ARTIFACT_RUN_ID -cnotmatch '^[1-9][0-9]{0,18}$') { throw 'windows_run_id must be a positive integer' }
         $observation = & gh api "repos/$env:GH_REPO/actions/runs/$env:ARTIFACT_RUN_ID"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         $head = (($observation -join "`n") | ConvertFrom-Json).head_sha
@@ -57,6 +58,10 @@ runs:
       run: |
         $ErrorActionPreference = 'Stop'
         Set-StrictMode -Version Latest
+        # Every id and the attempt are positive integers before any of them reaches a URL or path.
+        foreach ($name in 'WINDOWS_RUN_ID', 'WINDOWS_ARTIFACT_ID', 'MACOS_RUN_ID', 'MACOS_RUN_ATTEMPT', 'MACOS_ARTIFACT_ID') {
+          if ((Get-Item "env:$name").Value -cnotmatch '^[1-9][0-9]{0,18}$') { throw "$name must be a positive integer" }
+        }
         function Invoke-Checked { param([scriptblock]$Command) & $Command; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
         function Get-Json { param([string]$Endpoint) $text = & gh api $Endpoint; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; $text -join "`n" }
         function Save-Artifact {
@@ -73,14 +78,19 @@ runs:
         function Assert-Artifact {
           param([string]$Id, [string]$RunId, [string]$Name)
           $artifact = (Get-Json "repos/$env:GH_REPO/actions/artifacts/$Id") | ConvertFrom-Json
+          if ("$($artifact.id)" -cne $Id) { throw "GitHub answered for artifact $($artifact.id), not $Id" }
           if ("$($artifact.workflow_run.id)" -cne $RunId) { throw "artifact $Id does not belong to run $RunId" }
           if ($artifact.name -cne $Name) { throw "artifact $Id is $($artifact.name), expected $Name" }
           if ($artifact.expired) { throw "artifact $Id has expired" }
         }
-        # Windows: the artifact of the run whose identity the previous step checked.
+        # Windows: the artifact of the run, the run checked again on the very observation whose
+        # head and attempt are used below.
         Assert-Artifact $env:WINDOWS_ARTIFACT_ID $env:WINDOWS_RUN_ID 'stickymd-windows-x64-release'
-        $windowsRun = (Get-Json "repos/$env:GH_REPO/actions/runs/$env:WINDOWS_RUN_ID") | ConvertFrom-Json
+        $windowsRunText = Get-Json "repos/$env:GH_REPO/actions/runs/$env:WINDOWS_RUN_ID"
+        $windowsRun = $windowsRunText | ConvertFrom-Json
         $windowsHead = $windowsRun.head_sha
+        Invoke-Checked { $windowsRunText | cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow "--source-sha=$windowsHead" --workflow release --workflow-path .github/workflows/release.yml --event workflow_dispatch --workflow-json - }
+        if ("$($windowsRun.run_attempt)" -cnotmatch '^[1-9][0-9]{0,18}$') { throw 'the Windows run reports no attempt' }
         # macOS: the artifact named for the attempt, the attempt a successful dispatch of release-macos.
         Assert-Artifact $env:MACOS_ARTIFACT_ID $env:MACOS_RUN_ID "stickymd-macos-arm64-release-$env:MACOS_RUN_ATTEMPT"
         $macosAttempt = Get-Json "repos/$env:GH_REPO/actions/runs/$env:MACOS_RUN_ID/attempts/$env:MACOS_RUN_ATTEMPT"
@@ -105,8 +115,9 @@ runs:
         Invoke-Checked { ./tools/release/verify-promoted-artifact.ps1 -ArtifactDirectory dist/promoted/windows `
           -SourceSha $env:RELEASE_SHA -BuildSha $windowsHead `
           -ExpectedZipSha256 $hash[$zip] -ExpectedSbomSha256 $hash['SBOM.spdx.json'] -ReleaseTag $env:RELEASE_TAG }
-        # The release notes name each platform's build source, run and attempt (for Windows, the
-        # run's latest attempt, whose success the identity check required).
+        # The release notes name each platform's build source, run and attempt. Windows binds its
+        # artifact to the run (plan 11 leaves attempt binding for Windows to a later decision), so
+        # its attempt is the run's latest, whose success was checked on the same observation.
         "WINDOWS_BUILD_SHA=$windowsHead" >> $env:GITHUB_ENV
         "WINDOWS_RUN_ATTEMPT=$($windowsRun.run_attempt)" >> $env:GITHUB_ENV
         "MACOS_BUILD_SHA=$macosHead" >> $env:GITHUB_ENV
