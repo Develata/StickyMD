@@ -114,9 +114,14 @@ pub(crate) fn validate_sbom(text: &str) -> Result<(), String> {
                 .copied()
                 .filter(|name| name.contains("/MacOS/")),
         );
+    // Syft 1.50.0 on macOS names a directory source's files relative to it (`package/...`,
+    // observed 2026-11-19); a leading `/` is accepted as the same name.
     for member in required {
-        let required = format!("/package/{member}");
-        if !names.contains(&required.as_str()) {
+        let required = format!("package/{member}");
+        if !names
+            .iter()
+            .any(|name| name.strip_prefix('/').unwrap_or(name) == required)
+        {
             return Err(format!(
                 "Generated SBOM does not cover packaged file {required}"
             ));
@@ -259,10 +264,10 @@ mod tests {
     #[test]
     fn the_sbom_must_cover_the_executable_notices_and_licenses() {
         let covered = [
-            "/package/StickyMD/StickyMD.app/Contents/MacOS/StickyMD",
+            "package/StickyMD/StickyMD.app/Contents/MacOS/StickyMD",
             "/package/StickyMD/THIRD_PARTY_NOTICES.txt",
-            "/package/StickyMD/licenses/SIL-OFL-1.1.txt",
-            "/package/StickyMD/licenses/KaTeX-fonts-NOTICE.txt",
+            "package/StickyMD/licenses/SIL-OFL-1.1.txt",
+            "package/StickyMD/licenses/KaTeX-fonts-NOTICE.txt",
         ];
         validate_sbom(&document(&covered)).unwrap();
         for missing in covered {
@@ -272,7 +277,7 @@ mod tests {
                 .filter(|name| *name != missing)
                 .collect::<Vec<_>>();
             let error = validate_sbom(&document(&rest)).unwrap_err();
-            assert!(error.contains(missing), "{error}");
+            assert!(error.contains(missing.trim_start_matches('/')), "{error}");
         }
         assert!(validate_sbom(&document(&covered).replace("SPDX-2.3", "SPDX-3.0")).is_err());
     }
