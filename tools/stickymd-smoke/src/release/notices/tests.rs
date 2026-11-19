@@ -121,7 +121,24 @@ fn notices_are_stably_sorted_normalized_and_missing_license_information_refuses_
             .unwrap_err()
             .contains("no reviewed fallback")
     );
+    // A fallback is bound to the versions reviewed: the same crate at another version is refused.
+    let unreviewed = metadata
+        .replace("a-transitive", "clipboard-win")
+        .replace("z-normal", "harfrust");
+    assert!(
+        render(root, &unreviewed, Platform::WindowsX64)
+            .unwrap_err()
+            .contains("no reviewed fallback")
+    );
     let fallback_metadata = metadata
+        .replace(
+            r#""name":"a-transitive","version":"1.0.0""#,
+            r#""name":"clipboard-win","version":"5.4.1""#,
+        )
+        .replace(
+            r#""name":"z-normal","version":"1.0.0""#,
+            r#""name":"harfrust","version":"0.5.2""#,
+        )
         .replace("a-transitive", "clipboard-win")
         .replace("z-normal", "harfrust");
     assert!(

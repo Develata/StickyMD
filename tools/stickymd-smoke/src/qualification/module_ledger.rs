@@ -218,6 +218,7 @@ fn verify(
         exe_sha256: &record.origin_exe_sha256,
         zip_sha256: &record.origin_zip_sha256,
         input_fingerprint: current,
+        run_commit: None,
     };
     for companion in module_evidence::validate(module, document, &origin)? {
         let archived = store.artifact(&companion.sha256)?;
@@ -240,27 +241,48 @@ fn verify(
     })
 }
 
+/// Record the worktree receipt of `module` as the success of `candidate`, for a run on this
+/// checkout's HEAD.
 pub(super) fn record_success(
     root: &Path,
     module: ModuleId,
     candidate: &Candidate,
+) -> Result<(), String> {
+    record_success_at(root, module, candidate, &head(root)?)
+}
+
+/// [`record_success`] for a run on `run_commit`, the commit whose inputs this checkout holds.
+pub(super) fn record_success_at(
+    root: &Path,
+    module: ModuleId,
+    candidate: &Candidate,
+    run_commit: &str,
 ) -> Result<(), String> {
     record_success_for_input(
         root,
         module,
         candidate,
         &fingerprint::calculate(root, module)?,
+        run_commit,
     )
 }
 
+/// The checkout's HEAD: the commit a registered run must have run on.
+pub(super) fn head(root: &Path) -> Result<String, String> {
+    receipt::command_text(root, "git", &["rev-parse", "HEAD"])
+}
+
 /// Record the worktree receipt of `module` as the success of `candidate` for inputs
-/// `current`, a digest the caller computed after the run finished. Registration applies
-/// the same evidence contract as lookup, so an incomplete or foreign receipt fails here.
+/// `current`, a digest the caller computed after the run finished, of a run on `run_commit`.
+/// Registration applies the same evidence contract as lookup, so an incomplete or foreign
+/// receipt fails here; it also requires the evidence to be the run on `run_commit`, so an
+/// earlier run that merely reuses the same candidate cannot take these inputs' fingerprint.
 pub(super) fn record_success_for_input(
     root: &Path,
     module: ModuleId,
     candidate: &Candidate,
     current: &str,
+    run_commit: &str,
 ) -> Result<(), String> {
     // Read the receipt once: the same bytes are validated, hashed and archived, so a
     // concurrent rewrite of the worktree receipt cannot be published as this success.
@@ -281,6 +303,7 @@ pub(super) fn record_success_for_input(
         exe_sha256: &candidate.exe_sha256,
         zip_sha256: &candidate.zip_sha256,
         input_fingerprint: current,
+        run_commit: Some(run_commit),
     };
     let companions = module_evidence::validate(module, document, &origin)?;
     let record = LedgerRecord {

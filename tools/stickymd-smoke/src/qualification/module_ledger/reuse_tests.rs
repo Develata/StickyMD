@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::status::success_status;
-use super::{Lookup, ModuleId, compatible_success, lookup, record_success};
+use super::{Lookup, ModuleId, compatible_success, lookup, record_success_at};
 use crate::qualification::module_evidence::fixtures::valid_document;
 use crate::qualification::module_evidence::g5_companions;
 use crate::qualification::module_registry::modules;
@@ -116,7 +116,7 @@ fn release_shaped_change_reuses_every_functional_module_from_a_linked_worktree()
     let first = candidate("0.1.0", "c", "d");
     for module in modules() {
         write_valid_evidence(&clone.main, module, &first);
-        record_success(&clone.main, module, &first)
+        record_success_at(&clone.main, module, &first, &first.source_commit)
             .unwrap_or_else(|error| panic!("record {module:?}: {error}"));
     }
     clone.release_bump("0.1.0", "0.1.1");
@@ -154,7 +154,7 @@ fn g5_screenshots_are_verified_from_the_store_in_a_linked_worktree() {
     let clone = ReleaseClone::new();
     let first = candidate("0.1.0", "c", "d");
     write_valid_evidence(&clone.main, ModuleId::G5, &first);
-    record_success(&clone.main, ModuleId::G5, &first).unwrap();
+    record_success_at(&clone.main, ModuleId::G5, &first, &first.source_commit).unwrap();
     let document = fs::read_to_string(clone.main.join(ModuleId::G5.receipt())).unwrap();
     let screenshot = &g5_companions(&document).unwrap()[0];
     let linked = clone.add_linked_worktree();
@@ -165,7 +165,7 @@ fn g5_screenshots_are_verified_from_the_store_in_a_linked_worktree() {
 
     // A screenshot whose bytes no longer match its listed hash cannot be recorded.
     write(&clone.main, &screenshot.path, "tampered");
-    assert!(record_success(&clone.main, ModuleId::G5, &first).is_err());
+    assert!(record_success_at(&clone.main, ModuleId::G5, &first, &first.source_commit).is_err());
 }
 
 /// Normalization is decided for the manifest set as a whole: once the lockfile
@@ -198,7 +198,7 @@ fn records_with_different_inputs_coexist_instead_of_replacing_each_other() {
     let clone = ReleaseClone::new();
     let first = candidate("0.1.0", "c", "d");
     write_valid_evidence(&clone.main, ModuleId::G4, &first);
-    record_success(&clone.main, ModuleId::G4, &first).unwrap();
+    record_success_at(&clone.main, ModuleId::G4, &first, &first.source_commit).unwrap();
     // Another worktree qualifies different harness inputs and records its own success.
     let linked = clone.add_linked_worktree();
     write(
@@ -207,7 +207,7 @@ fn records_with_different_inputs_coexist_instead_of_replacing_each_other() {
         "// newer harness\n",
     );
     write_valid_evidence(linked, ModuleId::G4, &first);
-    record_success(linked, ModuleId::G4, &first).unwrap();
+    record_success_at(linked, ModuleId::G4, &first, &first.source_commit).unwrap();
     assert!(compatible_success(linked, ModuleId::G4).unwrap().is_some());
     // The original inputs still find their own record.
     assert!(
@@ -297,7 +297,7 @@ fn g5_reuse_verifies_archived_screenshots_and_the_record_origin() {
     let clone = ReleaseClone::new();
     let first = candidate("0.1.0", "c", "d");
     write_valid_evidence(&clone.main, ModuleId::G5, &first);
-    record_success(&clone.main, ModuleId::G5, &first).unwrap();
+    record_success_at(&clone.main, ModuleId::G5, &first, &first.source_commit).unwrap();
     clone.release_bump("0.1.0", "0.1.1");
     let linked = clone.add_linked_worktree();
     assert!(matches!(
@@ -333,7 +333,7 @@ fn g5_reuse_verifies_archived_screenshots_and_the_record_origin() {
         unreachable!()
     };
     assert!(reason.contains("archived companion"), "{reason}");
-    record_success(&clone.main, ModuleId::G5, &first).unwrap();
+    record_success_at(&clone.main, ModuleId::G5, &first, &first.source_commit).unwrap();
     assert!(matches!(
         lookup(linked, ModuleId::G5).unwrap(),
         Lookup::Valid(_)
@@ -345,7 +345,7 @@ fn artifact_cleanup_keeps_screenshots_of_cases_unknown_to_this_tool() {
     let clone = ReleaseClone::new();
     let first = candidate("0.1.0", "c", "d");
     write_valid_evidence(&clone.main, ModuleId::G5, &first);
-    record_success(&clone.main, ModuleId::G5, &first).unwrap();
+    record_success_at(&clone.main, ModuleId::G5, &first, &first.source_commit).unwrap();
     // A newer tool recorded a success (under other inputs) with a case this tool does
     // not know; this tool cannot validate it, but cleanup must keep its screenshot.
     let store = super::LedgerStore::for_repository(&clone.main).unwrap();
@@ -383,14 +383,14 @@ fn artifact_cleanup_keeps_screenshots_of_cases_unknown_to_this_tool() {
         crate::atomic_evidence::write(&path, bytes).unwrap();
     }
     // Another success for this tool's inputs triggers cleanup; the screenshot stays.
-    record_success(&clone.main, ModuleId::G5, &first).unwrap();
+    record_success_at(&clone.main, ModuleId::G5, &first, &first.source_commit).unwrap();
     assert!(store.artifact(&future_sha).unwrap().is_file());
     // Malformed artifact entries are not "no artifacts": recording fails closed.
     let document = fs::read_to_string(clone.main.join(ModuleId::G5.receipt())).unwrap();
     let sha256 = g5_companions(&document).unwrap()[0].sha256.clone();
     let malformed = document.replace(&sha256, "not-a-digest");
     receipt::write_receipt(&clone.main, ModuleId::G5.receipt(), &malformed).unwrap();
-    assert!(record_success(&clone.main, ModuleId::G5, &first).is_err());
+    assert!(record_success_at(&clone.main, ModuleId::G5, &first, &first.source_commit).is_err());
 }
 
 #[test]
@@ -555,7 +555,7 @@ fn a_link_below_the_store_root_makes_the_store_refuse_to_operate() {
     let clone = ReleaseClone::new();
     let first = candidate("0.1.0", "c", "d");
     write_valid_evidence(&clone.main, ModuleId::G4, &first);
-    record_success(&clone.main, ModuleId::G4, &first).unwrap();
+    record_success_at(&clone.main, ModuleId::G4, &first, &first.source_commit).unwrap();
     let store = super::LedgerStore::for_repository(&clone.main).unwrap();
     let evidence = store.root().join("evidence");
     let real = clone.main.parent().unwrap().join("evidence-elsewhere");
@@ -570,7 +570,7 @@ fn a_link_below_the_store_root_makes_the_store_refuse_to_operate() {
     assert!(status.success(), "create junction");
     // Reads and writes both fail closed while the redirected subdirectory exists.
     assert!(compatible_success(&clone.main, ModuleId::G4).is_err());
-    assert!(record_success(&clone.main, ModuleId::G4, &first).is_err());
+    assert!(record_success_at(&clone.main, ModuleId::G4, &first, &first.source_commit).is_err());
     drop(clone);
     let _ = fs::remove_dir_all(&real);
 }
@@ -585,7 +585,7 @@ fn lookup_all_profile() {
     let first = candidate("0.1.0", "c", "d");
     for module in modules() {
         write_valid_evidence(&clone.main, module, &first);
-        record_success(&clone.main, module, &first).unwrap();
+        record_success_at(&clone.main, module, &first, &first.source_commit).unwrap();
     }
     for round in 1..=3 {
         let started = std::time::Instant::now();

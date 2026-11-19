@@ -163,6 +163,7 @@ impl Campaign {
             ModuleId::Resource(group),
             &self.candidate,
             &current,
+            &module_ledger::head(root)?,
         )
     }
 

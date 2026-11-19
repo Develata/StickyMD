@@ -41,10 +41,16 @@ pub(crate) fn check_listing(listing: &str) -> Result<(), String> {
     content::check_files(&files)
 }
 
+/// Checks the archive's own member list (before anything is extracted, so a name stored twice
+/// cannot hide behind one extracted file).
+pub(crate) fn check_archive(zip: &Path) -> Result<(), String> {
+    let listing = tar(&["-tf".as_ref(), zip.as_os_str()])?;
+    check_listing(std::str::from_utf8(&listing).map_err(|_| "the ZIP listing is not UTF-8")?)
+}
+
 /// The archive's inventory and the source commit its README names.
 pub(crate) fn verify_archive(zip: &Path) -> Result<String, String> {
-    let listing = tar(&["-tf".as_ref(), zip.as_os_str()])?;
-    check_listing(std::str::from_utf8(&listing).map_err(|_| "the ZIP listing is not UTF-8")?)?;
+    check_archive(zip)?;
     let readme = tar(&["-xOf".as_ref(), zip.as_os_str(), README.as_ref()])?;
     content::source_commit(std::str::from_utf8(&readme).map_err(|_| "the README is not UTF-8")?)
 }

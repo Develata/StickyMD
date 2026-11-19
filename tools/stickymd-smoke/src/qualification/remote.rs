@@ -170,8 +170,9 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
         // A manual observation commits only for the candidate it re-reads under this lock,
         // so replacing the candidate under it keeps a commit and a Promote from interleaving.
         let manual_store = super::reserved_paths::lock_manual_store(root, true)?;
+        // The candidate receipt is the commit marker: everything it depends on is written
+        // first, so a failure on the way leaves no receipt and the resolver refuses the staging.
         promote_staging(root, &temporary)?;
-        receipt::write_candidate(root, &candidate)?;
         reuse::write_record(
             root,
             &reuse,
@@ -180,6 +181,7 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
             &crate::integrity::sha256_bytes(receipt::render_candidate(&candidate).as_bytes())?,
         )?;
         write_downloaded(root, &candidate)?;
+        receipt::write_candidate(root, &candidate)?;
         drop(manual_store);
         println!("PROMOTED_CANDIDATE_SOURCE={}", candidate.source_commit);
         println!("PROMOTED_CANDIDATE_EXE_SHA256={}", candidate.exe_sha256);

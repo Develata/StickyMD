@@ -56,6 +56,7 @@ fn origin(candidate: &Candidate) -> Origin<'_> {
         exe_sha256: &candidate.exe_sha256,
         zip_sha256: &candidate.zip_sha256,
         input_fingerprint: INPUT,
+        run_commit: None,
     }
 }
 
@@ -260,6 +261,18 @@ fn a_run_commit_counts_when_the_candidate_source_is_reusable_on_it() {
         let error = run_on(&repository.windows).expect_err("Windows input changed");
         assert!(error.contains("apps/stickymd-win/src/main.rs"), "{error}");
     }
+    // A registration is for the run on its HEAD: another commit reusing the candidate is refused.
+    let registering = Origin {
+        repository: &repository.root,
+        run_commit: Some(&repository.mac),
+        ..self::origin(&candidate)
+    };
+    let from = format!("\"commit\":\"{}\"", repository.first);
+    let on = |commit: &str| smoke_run.replacen(&from, &format!("\"commit\":\"{commit}\""), 1);
+    validate(ModuleId::Runtime, &on(&repository.mac), &registering).expect("the run on HEAD");
+    let error = validate(ModuleId::Runtime, &on(&repository.document), &registering)
+        .expect_err("a run on another reusing commit");
+    assert!(error.contains("registration"), "{error}");
 }
 
 #[test]

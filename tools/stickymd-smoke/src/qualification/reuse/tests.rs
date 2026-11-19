@@ -97,10 +97,14 @@ fn the_same_commit_is_accepted_without_git() {
         candidate_source_matches(&nowhere, commit, commit),
         Ok(Reuse::SameCommit)
     );
-    // The fast path compares strings; any other spelling goes to the rule and its form check.
-    let error = candidate_source_matches(&nowhere, commit, &commit.to_ascii_uppercase())
-        .expect_err("an uppercase spelling is refused");
-    assert!(error.contains("lowercase"), "{error}");
+    // The form is checked before the comparison: one spelling only, on both sides.
+    let upper = commit.to_ascii_uppercase();
+    for (build, release) in [(commit, upper.as_str()), (upper.as_str(), upper.as_str())] {
+        let error = candidate_source_matches(&nowhere, build, release)
+            .expect_err("an uppercase spelling is refused");
+        assert!(error.contains("lowercase"), "{error}");
+    }
+    assert!(candidate_source_matches(&nowhere, "not a commit", "not a commit").is_err());
 }
 
 #[test]

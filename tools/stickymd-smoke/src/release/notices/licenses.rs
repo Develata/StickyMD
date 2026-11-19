@@ -44,36 +44,35 @@ pub(super) fn select(root: &Path, package: &Package) -> Result<Vec<PathBuf>, Str
         )
     });
     if files.is_empty() {
-        let fallback = match package.name.as_str() {
-            "clipboard-win" => "Boost-1.0.txt",
-            "harfrust" => "HarfRust-MIT.txt",
-            "ratex-font" | "ratex-font-loader" | "ratex-katex-fonts" | "ratex-layout"
-            | "ratex-lexer" | "ratex-parser" | "ratex-types" | "ratex-unicode-font" => {
-                "RaTeX-MIT.txt"
-            }
-            // The macOS host's graph (2026-11-19). github.com/madsmtm/objc2 publishes these crates
-            // without a license file: `objc2`, `block2`, `objc2-foundation`, `objc2-encode` (and
-            // `objc-sys` from the same repository) are MIT, the rest Zlib OR Apache-2.0 OR MIT,
-            // of which MIT is taken. The text is the repository's MIT text at tag objc2-0.5.2
-            // ("Copyright (c) Steven Sheldon") with the holder of its current LICENSE-MIT.txt
-            // added ("Copyright 2026 Mads Marquart", main at 8a5abac).
-            "objc2"
-            | "objc-sys"
-            | "objc2-encode"
-            | "block2"
-            | "objc2-foundation"
-            | "objc2-app-kit"
-            | "objc2-core-data"
-            | "objc2-core-foundation"
-            | "objc2-core-graphics"
-            | "objc2-core-image"
-            | "objc2-io-surface"
-            | "objc2-metal"
-            | "objc2-quartz-core"
-            | "dispatch2" => "objc2-MIT.txt",
-            // github.com/SSheldon/rust-dispatch declares MIT in Cargo.toml and ships no license
-            // text; this is the MIT text with the author its Cargo.toml names.
-            "dispatch" => "dispatch-MIT.txt",
+        // Each fallback was reviewed for the exact versions listed; a new version is reviewed
+        // again rather than inheriting the text.
+        let fallback = match (package.name.as_str(), package.version.as_str()) {
+            ("clipboard-win", "5.4.1") => "Boost-1.0.txt",
+            ("harfrust", "0.5.2") => "HarfRust-MIT.txt",
+            (
+                "ratex-font" | "ratex-font-loader" | "ratex-katex-fonts" | "ratex-layout"
+                | "ratex-lexer" | "ratex-parser" | "ratex-types" | "ratex-unicode-font",
+                "0.1.14",
+            ) => "RaTeX-MIT.txt",
+            // The macOS host's graph (reviewed 2026-11-20 against each crate's Cargo.toml).
+            // github.com/madsmtm/objc2 publishes these crates without a license file. MIT alone:
+            // objc2 0.5.2/0.6.4, objc-sys 0.3.5, objc2-encode 4.1.0, block2 0.5.1/0.6.2,
+            // objc2-foundation 0.2.2/0.3.2 and the 0.2.2 framework crates. Zlib OR Apache-2.0 OR
+            // MIT, of which MIT is taken: the 0.3.2 framework crates and dispatch2 0.3.1. The text
+            // is the repository's MIT text at tag objc2-0.5.2 ("Copyright (c) Steven Sheldon")
+            // with the holder of its current LICENSE-MIT.txt added ("Copyright 2026 Mads
+            // Marquart", main at 8a5abac).
+            ("objc2", "0.5.2" | "0.6.4")
+            | ("objc-sys", "0.3.5")
+            | ("objc2-encode", "4.1.0")
+            | ("block2", "0.5.1" | "0.6.2")
+            | ("objc2-foundation" | "objc2-app-kit" | "objc2-quartz-core", "0.2.2" | "0.3.2")
+            | ("objc2-core-data" | "objc2-core-image" | "objc2-metal", "0.2.2")
+            | ("objc2-core-foundation" | "objc2-core-graphics" | "objc2-io-surface", "0.3.2")
+            | ("dispatch2", "0.3.1") => "objc2-MIT.txt",
+            // github.com/SSheldon/rust-dispatch 0.2.0 declares MIT in Cargo.toml and ships no
+            // license text; this is the MIT text with the author its Cargo.toml names.
+            ("dispatch", "0.2.0") => "dispatch-MIT.txt",
             _ => {
                 return Err(format!(
                     "Runtime package {} {} contains no license notice and has no reviewed fallback",

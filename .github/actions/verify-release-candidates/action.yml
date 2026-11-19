@@ -32,6 +32,17 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Verify original candidate workflow identity
+      # The Windows run: a successful dispatch of .github/workflows/release.yml.
+      shell: pwsh
+      env:
+        ARTIFACT_RUN_ID: ${{ inputs.windows_run_id }}
+      run: |
+        $observation = & gh api "repos/$env:GH_REPO/actions/runs/$env:ARTIFACT_RUN_ID"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $head = (($observation -join "`n") | ConvertFrom-Json).head_sha
+        $observation | & cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow "--source-sha=$head" --workflow release --workflow-path .github/workflows/release.yml --event workflow_dispatch --workflow-json -
+        exit $LASTEXITCODE
     - name: Check, download and compare both candidates
       shell: pwsh
       env:
@@ -62,32 +73,31 @@ runs:
         function Assert-Artifact {
           param([string]$Id, [string]$RunId, [string]$Name)
           $artifact = (Get-Json "repos/$env:GH_REPO/actions/artifacts/$Id") | ConvertFrom-Json
-          if ("$($artifact.workflow_run.id)" -ne $RunId) { throw "artifact $Id does not belong to run $RunId" }
-          if ($artifact.name -ne $Name) { throw "artifact $Id is $($artifact.name), expected $Name" }
+          if ("$($artifact.workflow_run.id)" -cne $RunId) { throw "artifact $Id does not belong to run $RunId" }
+          if ($artifact.name -cne $Name) { throw "artifact $Id is $($artifact.name), expected $Name" }
           if ($artifact.expired) { throw "artifact $Id has expired" }
         }
-        # Windows: the artifact of the run, the run a successful `release`.
+        # Windows: the artifact of the run whose identity the previous step checked.
         Assert-Artifact $env:WINDOWS_ARTIFACT_ID $env:WINDOWS_RUN_ID 'stickymd-windows-x64-release'
-        $windowsRun = Get-Json "repos/$env:GH_REPO/actions/runs/$env:WINDOWS_RUN_ID"
-        $windowsHead = ($windowsRun | ConvertFrom-Json).head_sha
-        Invoke-Checked { $windowsRun | cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow "--source-sha=$windowsHead" --workflow release --workflow-json - }
-        # macOS: the artifact named for the attempt, the attempt a successful `release-macos`.
+        $windowsRun = (Get-Json "repos/$env:GH_REPO/actions/runs/$env:WINDOWS_RUN_ID") | ConvertFrom-Json
+        $windowsHead = $windowsRun.head_sha
+        # macOS: the artifact named for the attempt, the attempt a successful dispatch of release-macos.
         Assert-Artifact $env:MACOS_ARTIFACT_ID $env:MACOS_RUN_ID "stickymd-macos-arm64-release-$env:MACOS_RUN_ATTEMPT"
         $macosAttempt = Get-Json "repos/$env:GH_REPO/actions/runs/$env:MACOS_RUN_ID/attempts/$env:MACOS_RUN_ATTEMPT"
         $macosHead = ($macosAttempt | ConvertFrom-Json).head_sha
-        Invoke-Checked { $macosAttempt | cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow "--source-sha=$macosHead" --workflow release-macos --attempt $env:MACOS_RUN_ATTEMPT --workflow-json - }
+        Invoke-Checked { $macosAttempt | cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow "--source-sha=$macosHead" --workflow release-macos --attempt $env:MACOS_RUN_ATTEMPT --workflow-path .github/workflows/release-macos.yml --event workflow_dispatch --workflow-json - }
         Save-Artifact $env:WINDOWS_ARTIFACT_ID 'dist/promoted/windows'
         Save-Artifact $env:MACOS_ARTIFACT_ID 'dist/promoted/macos'
         # Both sets against the approved six files, the checksum files, SBOMs, the macOS
-        # inventory, and each README's build source against R by the reuse rule.
+        # inventory, R on the main line, and each README's build source against R by the reuse rule.
         $set = & cargo run --quiet -p stickymd-smoke --locked -- release verify-release-set `
           --release-source $env:RELEASE_SHA --release-tag $env:RELEASE_TAG `
           --attachments $env:ATTACHMENTS `
           --windows-directory dist/promoted/windows --macos-directory dist/promoted/macos
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         $set = ($set -join "`n") | ConvertFrom-Json
-        if ($set.'windows-x64'.build_source -ne $windowsHead) { throw "the Windows package names $($set.'windows-x64'.build_source), its run head is $windowsHead" }
-        if ($set.'macos-arm64'.build_source -ne $macosHead) { throw "the macOS package names $($set.'macos-arm64'.build_source), its attempt head is $macosHead" }
+        if ($set.'windows-x64'.build_source -cne $windowsHead) { throw "the Windows package names $($set.'windows-x64'.build_source), its run head is $windowsHead" }
+        if ($set.'macos-arm64'.build_source -cne $macosHead) { throw "the macOS package names $($set.'macos-arm64'.build_source), its attempt head is $macosHead" }
         # The Windows package's own checks, with its build source.
         $hash = @{}
         foreach ($item in $env:ATTACHMENTS.Split(',')) { $pair = $item.Trim().Split('='); $hash[$pair[0]] = $pair[1] }
@@ -95,5 +105,8 @@ runs:
         Invoke-Checked { ./tools/release/verify-promoted-artifact.ps1 -ArtifactDirectory dist/promoted/windows `
           -SourceSha $env:RELEASE_SHA -BuildSha $windowsHead `
           -ExpectedZipSha256 $hash[$zip] -ExpectedSbomSha256 $hash['SBOM.spdx.json'] -ReleaseTag $env:RELEASE_TAG }
+        # The release notes name each platform's build source, run and attempt (for Windows, the
+        # run's latest attempt, whose success the identity check required).
         "WINDOWS_BUILD_SHA=$windowsHead" >> $env:GITHUB_ENV
+        "WINDOWS_RUN_ATTEMPT=$($windowsRun.run_attempt)" >> $env:GITHUB_ENV
         "MACOS_BUILD_SHA=$macosHead" >> $env:GITHUB_ENV

@@ -707,7 +707,9 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
   发布物，当且仅当 S 是 R 的祖先，且该平台的 Platform Build Input Fingerprint（`01`）在 S 与 R 上相同。两个平台对称适用：修 macOS 不重建 Windows，
   反之亦然。同一提交上一侧偶发失败时只重跑那一侧的 workflow。
 - **指纹（算法 v1）：** 在提交的 Git tree 上，对每个输入路径按路径字节排序，依次写入路径、文件模式、内容长度与内容本身，连同平台名与算法版本
-  计算一个 SHA-256；不读工作树。两个 SHA 只有都是本仓库中的提交时才参与判定。发布 workflow 不得调用仓库内的 action（governance 检查），
+  计算一个 SHA-256；不读工作树，也不使用 Git 的替换对象。输入路径上的条目必须是普通文件（模式 `100644` 或 `100755`），符号链接与子模块
+  使指纹失败（链接的 blob 只是目标路径名，目标内容会漏出指纹）。两个 SHA 只有都是本仓库中的提交（对象本身的类型为 commit，注解 tag 不算）
+  时才参与判定。发布 workflow 不得调用仓库内的 action（governance 检查），
   否则那些 action 也要计入。
 - **排除表**（逐项理由；其余路径，包括未分类的新路径，都是输入）：
   - 两个平台共同：`docs/`（文档不进入发布物，也不参与构建）；根目录的 `AGENTS.md`、`CHANGELOG.md`、`CONTRIBUTING.md`、`README.md`、

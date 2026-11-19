@@ -17,6 +17,8 @@ assets/licenses/*.txt text eol=lf
 crates/stickymd-render/tests/fixtures/*.txt text eol=lf
 crates/stickymd-desktop/src/shell/shell_pins/*.txt text eol=lf
 tools/stickymd-smoke/tests/fixtures/*.trace text eol=lf
+# Embedded with include_str! into the macOS package README, which must not carry CR.
+tools/stickymd-smoke/src/release/macos/package_readme.txt text eol=lf
 *.ps1 text eol=crlf
 *.bat text eol=crlf
 

@@ -62,6 +62,10 @@ jobs:
         run: |
           set -eu
           app="$RUNNER_TEMP/app/StickyMD.app"
+          # Computed first: a failing command in an assignment stops the step under `set -e`,
+          # where inside `echo "$(...)"` it would leave an empty value.
+          product_inputs=$(plutil -extract StickyMDInputs raw "$app/Contents/Info.plist")
+          platform_inputs=$(cargo run --quiet -p stickymd-smoke --locked -- release platform-inputs --platform macos-arm64 --commit "$GITHUB_SHA")
           {
             echo "## macOS build record"
             echo '```text'
@@ -73,8 +77,8 @@ jobs:
             xcrun --sdk macosx --show-sdk-version
             cargo -V
             rustc -vV
-            echo "product inputs: $(plutil -extract StickyMDInputs raw "$app/Contents/Info.plist")"
-            echo "platform build inputs: $(cargo run --quiet -p stickymd-smoke --locked -- release platform-inputs --platform macos-arm64 --commit "$GITHUB_SHA")"
+            echo "product inputs: $product_inputs"
+            echo "platform build inputs: $platform_inputs"
             codesign -dv --verbose=2 "$app" 2>&1
             lipo -archs "$app/Contents/MacOS/StickyMD"
             otool -l "$app/Contents/MacOS/StickyMD" | grep -A4 LC_BUILD_VERSION

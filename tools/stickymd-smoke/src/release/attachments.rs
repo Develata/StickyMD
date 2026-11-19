@@ -143,6 +143,63 @@ impl ReleaseSet {
     }
 }
 
+/// Every name a checksum manifest lists must be spelled exactly as one of `names`: the
+/// attestation takes its subject names from these lines, so a name that only matches
+/// case-insensitively would attest a file that is not the attachment.
+pub(crate) fn check_manifest_names(manifest: &str, names: &[&str]) -> Result<(), String> {
+    for line in manifest
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+    {
+        let (_, name) = line
+            .split_once(" *")
+            .ok_or_else(|| format!("Invalid checksum line: {line}"))?;
+        if !names.contains(&name) {
+            return Err(format!(
+                "the checksum manifest names {name}, which is not spelled as an attachment"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// R must be on the main line: every promotion operation starts from a commit `origin/main`
+/// reaches, whatever ref the workflow was dispatched from.
+fn on_main(root: &Path, release: &str) -> Result<(), String> {
+    let status = Command::new("git")
+        .current_dir(root)
+        .args(["merge-base", "--is-ancestor", release, "origin/main"])
+        .status()
+        .map_err(|error| format!("cannot run git: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the release commit {release} is not on origin/main"
+        ))
+    }
+}
+
+/// The SHA-256 of each SBOM member of a macOS ZIP, from a `tar` extraction into a scratch
+/// directory (after `listing::verify_archive` has checked the member list).
+fn macos_member_hashes(zip: &Path) -> Result<BTreeMap<&'static str, String>, String> {
+    let scratch = super::temporary::TemporaryDirectory::new("release-set-macos")?;
+    let status = Command::new("tar")
+        .arg("-xf")
+        .arg(zip)
+        .arg("-C")
+        .arg(scratch.path())
+        .status()
+        .map_err(|error| format!("cannot run tar: {error}"))?;
+    if !status.success() {
+        return Err(format!("cannot extract {}", zip.display()));
+    }
+    let hashes = content::member_hashes(scratch.path())?;
+    scratch.close()?;
+    Ok(hashes)
+}
+
 /// The README a platform's ZIP carries, read with `tar` (bsdtar reads ZIP on every runner).
 fn readme_of(zip: &Path) -> Result<String, String> {
     let output = Command::new("tar")
@@ -175,6 +232,7 @@ pub(crate) fn verify_release_set(
             "checked-out HEAD {head} is not the release commit {release}"
         ));
     }
+    on_main(root, release)?;
     let approved = parse_spec(spec, &version)?;
     let mut build_sources = Vec::new();
     for platform in Platform::ALL {
@@ -198,6 +256,7 @@ pub(crate) fn verify_release_set(
                 (sbom_name.as_str(), approved[&sbom_name].as_str()),
             ],
         )?;
+        check_manifest_names(&manifest, &[&zip_name, &sbom_name])?;
         let zip = directory.join(&zip_name);
         let sbom = fs::read_to_string(directory.join(&sbom_name))
             .map_err(|error| format!("cannot read {sbom_name}: {error}"))?;
@@ -207,8 +266,9 @@ pub(crate) fn verify_release_set(
                 content::source_commit(&readme_of(&zip)?)?
             }
             Platform::MacOsArm64 => {
-                content::validate_sbom(&sbom)?;
-                listing::verify_archive(&zip)?
+                let source = listing::verify_archive(&zip)?;
+                content::validate_sbom(&sbom, &macos_member_hashes(&zip)?)?;
+                source
             }
         };
         let reuse = verify_reuse(root, platform, &source, release)?;
@@ -255,6 +315,18 @@ mod tests {
             spec("0.3.0", None, None)
         );
         assert!(parse_spec(&twice, "0.3.0").is_err());
+    }
+
+    #[test]
+    fn checksum_names_must_be_spelled_as_the_attachments() {
+        let hash = "a".repeat(64);
+        let names = [
+            "StickyMD-0.3.0-macos-arm64.zip",
+            "SBOM-macos-arm64.spdx.json",
+        ];
+        let manifest = |sbom: &str| format!("{hash} *{}\n{hash} *{sbom}\n", names[0]);
+        check_manifest_names(&manifest(names[1]), &names).unwrap();
+        assert!(check_manifest_names(&manifest("sbom-macos-arm64.spdx.json"), &names).is_err());
     }
 
     #[test]

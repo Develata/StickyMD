@@ -2,8 +2,10 @@
 //! on a Windows runner checks the same list the macOS packager writes.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-release-artifact
 
+use crate::integrity;
 use crate::release::json;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 /// Where a file beside the app comes from.
 pub(crate) enum Source {
@@ -83,9 +85,35 @@ pub(crate) fn readme(version: &str, commit: &str, exact_candidate: bool) -> Stri
     )
 }
 
-/// The SPDX document must be SPDX 2.x, list packages, and name every packaged file the notices
-/// and executable depend on, as Syft names files of a directory source (`/package/...`).
-pub(crate) fn validate_sbom(text: &str) -> Result<(), String> {
+/// The packaged files an SBOM must describe: the executable, the notices and the licenses.
+pub(crate) fn sbom_members() -> Vec<&'static str> {
+    FILES
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !name.ends_with("README.txt") && !name.ends_with("LICENSE.txt"))
+        .chain(
+            APP_FILES
+                .iter()
+                .copied()
+                .filter(|name| name.contains("/MacOS/")),
+        )
+        .collect()
+}
+
+/// The SHA-256 of each SBOM member under `extracted` (an extracted package root).
+pub(crate) fn member_hashes(extracted: &Path) -> Result<BTreeMap<&'static str, String>, String> {
+    sbom_members()
+        .into_iter()
+        .map(|member| Ok((member, integrity::sha256(&extracted.join(member))?)))
+        .collect()
+}
+
+/// The SPDX document must be SPDX 2.x, list packages, and describe every SBOM member with the
+/// SHA-256 of the bytes actually packaged (`hashes`), as Syft names files of a directory source.
+pub(crate) fn validate_sbom(
+    text: &str,
+    hashes: &BTreeMap<&'static str, String>,
+) -> Result<(), String> {
     let document = json::parse(text)?;
     if !document
         .field("spdxVersion")?
@@ -98,32 +126,37 @@ pub(crate) fn validate_sbom(text: &str) -> Result<(), String> {
     if document.field("packages")?.array()?.is_empty() {
         return Err("Generated SBOM contains no packages".to_owned());
     }
-    let names = document
-        .field("files")?
-        .array()?
-        .iter()
-        .map(|file| file.field("fileName")?.string())
-        .collect::<Result<Vec<_>, _>>()?;
-    let required = FILES
-        .iter()
-        .map(|(name, _)| *name)
-        .filter(|name| !name.ends_with("README.txt") && !name.ends_with("LICENSE.txt"))
-        .chain(
-            APP_FILES
-                .iter()
-                .copied()
-                .filter(|name| name.contains("/MacOS/")),
-        );
+    let files = document.field("files")?.array()?;
     // Syft 1.50.0 on macOS names a directory source's files relative to it (`package/...`,
     // observed 2026-11-19); a leading `/` is accepted as the same name.
-    for member in required {
+    for member in sbom_members() {
         let required = format!("package/{member}");
-        if !names
+        let entry = files
             .iter()
-            .any(|name| name.strip_prefix('/').unwrap_or(name) == required)
-        {
+            .find(|file| {
+                file.field("fileName")
+                    .and_then(|name| name.string())
+                    .is_ok_and(|name| name.strip_prefix('/').unwrap_or(name) == required)
+            })
+            .ok_or_else(|| format!("Generated SBOM does not cover packaged file {required}"))?;
+        let expected = hashes
+            .get(member)
+            .ok_or_else(|| format!("no packaged hash for {member}"))?;
+        let described = entry
+            .field("checksums")?
+            .array()?
+            .iter()
+            .filter(|checksum| {
+                checksum
+                    .field("algorithm")
+                    .and_then(|algorithm| algorithm.string())
+                    .is_ok_and(|algorithm| algorithm == "SHA256")
+            })
+            .map(|checksum| checksum.field("checksumValue")?.string())
+            .collect::<Result<Vec<_>, _>>()?;
+        if described.as_slice() != [expected.as_str()] {
             return Err(format!(
-                "Generated SBOM does not cover packaged file {required}"
+                "the SBOM describes {required} with SHA-256 {described:?}, the package holds {expected}"
             ));
         }
     }
@@ -250,10 +283,14 @@ mod tests {
         assert!(source_commit("Source commit: abc\n").is_err());
     }
 
-    fn document(files: &[&str]) -> String {
+    fn document(files: &[(&str, &str)]) -> String {
         let files = files
             .iter()
-            .map(|name| format!("{{\"fileName\":\"{name}\"}}"))
+            .map(|(name, hash)| {
+                format!(
+                    "{{\"fileName\":\"{name}\",\"checksums\":[{{\"algorithm\":\"SHA1\",\"checksumValue\":\"00\"}},{{\"algorithm\":\"SHA256\",\"checksumValue\":\"{hash}\"}}]}}"
+                )
+            })
             .collect::<Vec<_>>()
             .join(",");
         format!(
@@ -262,23 +299,44 @@ mod tests {
     }
 
     #[test]
-    fn the_sbom_must_cover_the_executable_notices_and_licenses() {
-        let covered = [
-            "package/StickyMD/StickyMD.app/Contents/MacOS/StickyMD",
-            "/package/StickyMD/THIRD_PARTY_NOTICES.txt",
-            "package/StickyMD/licenses/SIL-OFL-1.1.txt",
-            "package/StickyMD/licenses/KaTeX-fonts-NOTICE.txt",
-        ];
-        validate_sbom(&document(&covered)).unwrap();
-        for missing in covered {
-            let rest = covered
+    fn the_sbom_must_describe_each_member_with_the_packaged_bytes() {
+        let hashes = sbom_members()
+            .into_iter()
+            .enumerate()
+            .map(|(index, member)| (member, format!("{index:064x}")))
+            .collect::<BTreeMap<_, _>>();
+        let names = sbom_members()
+            .into_iter()
+            .enumerate()
+            .map(|(index, member)| {
+                // Syft's relative names, with one leading slash accepted as the same.
+                let name = if index == 1 {
+                    format!("/package/{member}")
+                } else {
+                    format!("package/{member}")
+                };
+                (name, hashes[member].clone())
+            })
+            .collect::<Vec<_>>();
+        let all = names
+            .iter()
+            .map(|(name, hash)| (name.as_str(), hash.as_str()))
+            .collect::<Vec<_>>();
+        validate_sbom(&document(&all), &hashes).unwrap();
+        for skip in 0..all.len() {
+            let rest = all
                 .iter()
-                .copied()
-                .filter(|name| *name != missing)
+                .enumerate()
+                .filter(|(index, _)| *index != skip)
+                .map(|(_, entry)| *entry)
                 .collect::<Vec<_>>();
-            let error = validate_sbom(&document(&rest)).unwrap_err();
-            assert!(error.contains(missing.trim_start_matches('/')), "{error}");
+            assert!(validate_sbom(&document(&rest), &hashes).is_err());
         }
-        assert!(validate_sbom(&document(&covered).replace("SPDX-2.3", "SPDX-3.0")).is_err());
+        // The same path with other bytes: an SBOM of another build.
+        let mut other = all.clone();
+        other[0].1 = "f".repeat(64).leak();
+        let error = validate_sbom(&document(&other), &hashes).unwrap_err();
+        assert!(error.contains("SHA-256"), "{error}");
+        assert!(validate_sbom(&document(&all).replace("SPDX-2.3", "SPDX-3.0"), &hashes).is_err());
     }
 }

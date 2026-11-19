@@ -47,7 +47,16 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
             input,
             workflow,
             attempt,
-        } => workflow::verify_named_input(source, input, workflow, *attempt),
+            origin,
+        } => workflow::verify_named_input(
+            source,
+            input,
+            workflow,
+            *attempt,
+            origin
+                .as_ref()
+                .map(|(path, event)| (path.as_str(), event.as_str())),
+        ),
         Command::VerifyAttachments {
             directory,
             attachments,

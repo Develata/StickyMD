@@ -184,7 +184,13 @@ impl Fixture {
             &document[1..]
         );
         receipt::write_receipt(&self.root, GROUP.receipt(), &document).unwrap();
-        module_ledger::record_success(&self.root, ModuleId::Resource(GROUP), origin).unwrap();
+        module_ledger::record_success_at(
+            &self.root,
+            ModuleId::Resource(GROUP),
+            origin,
+            &origin.source_commit,
+        )
+        .unwrap();
     }
 }
 

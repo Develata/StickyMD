@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use super::json;
@@ -22,17 +22,15 @@ const PLATFORM: Platform = Platform::WindowsX64;
 const ALGORITHM: &str = "v1";
 
 /// Whether the Windows artifact built on `build_source` (S) may stand for `release_source` (R).
-/// Identical strings are the same commit and need no Git; anything else must be two full
-/// lowercase commit ids the reuse rule accepts, so one commit is never spelled two ways in
-/// the receipts that compare them.
+/// Both must be full lowercase commit ids, so one commit is never spelled two ways in the
+/// receipts that compare them. The same id needs no Git: every caller holds an R it has already
+/// checked as a commit (the Source Freeze HEAD, or a run commit compared with it); anything else
+/// goes to the reuse rule, which checks both objects.
 pub(super) fn candidate_source_matches(
     root: &Path,
     build_source: &str,
     release_source: &str,
 ) -> Result<Reuse, String> {
-    if build_source == release_source {
-        return Ok(Reuse::SameCommit);
-    }
     for (label, commit) in [
         ("build source", build_source),
         ("release commit", release_source),
@@ -47,7 +45,14 @@ pub(super) fn candidate_source_matches(
             ));
         }
     }
-    let key = (build_source.to_owned(), release_source.to_owned());
+    if build_source == release_source {
+        return Ok(Reuse::SameCommit);
+    }
+    let key = (
+        root.to_path_buf(),
+        build_source.to_owned(),
+        release_source.to_owned(),
+    );
     // The guard is a temporary of this statement: Git never runs under the lock.
     let cached = judged().get(&key).cloned();
     if let Some(fingerprint) = cached {
@@ -60,13 +65,16 @@ pub(super) fn candidate_source_matches(
     Ok(reuse)
 }
 
-/// Accepted judgements of two distinct commits in this process: (S, R) to the fingerprint.
-/// Commit ids name their history and trees, and the input table is compiled in, so an accepted
-/// answer cannot change; a refusal is never kept, since Git itself may have failed. Readiness
-/// asks the same question for the resolver and for every module's evidence, and each answer
-/// otherwise costs a merge-base and two full-tree fingerprints.
-fn judged() -> MutexGuard<'static, HashMap<(String, String), String>> {
-    static JUDGED: OnceLock<Mutex<HashMap<(String, String), String>>> = OnceLock::new();
+/// Accepted judgements of two distinct commits in this process: (repository, S, R) to the
+/// fingerprint. In one repository, commit ids name their history and trees and the input table
+/// is compiled in, so an accepted answer cannot change; another repository is asked again, as it
+/// may not hold those objects. A refusal is never kept, since Git itself may have failed.
+/// Readiness asks the same question for the resolver and for every module's evidence, and each
+/// answer otherwise costs a merge-base and two full-tree fingerprints.
+type Judged = HashMap<(PathBuf, String, String), String>;
+
+fn judged() -> MutexGuard<'static, Judged> {
+    static JUDGED: OnceLock<Mutex<Judged>> = OnceLock::new();
     JUDGED
         .get_or_init(Mutex::default)
         .lock()
@@ -118,10 +126,16 @@ pub(super) fn check_record(
     candidate_receipt_sha256: &str,
 ) -> Result<(), String> {
     let path = root.join(REUSE_RECORD);
-    let recorded = match fs::read(&path) {
-        Ok(bytes) => Some(bytes),
+    // The directory entry itself decides presence: a dangling link is not "no record".
+    let recorded = match fs::symlink_metadata(&path) {
         Err(error) if error.kind() == ErrorKind::NotFound => None,
-        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+        Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(format!("{} is not a regular file", path.display()));
+        }
+        Ok(_) => Some(
+            fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?,
+        ),
     };
     match (reuse, recorded) {
         (Reuse::SameCommit, None) => Ok(()),

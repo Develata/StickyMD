@@ -41,8 +41,10 @@ $callerLocation = (Get-Location).Path
 $env:RUNNER_TEMP = $env:STICKYMD_TEST_DIRECTORY
 $env:GH_REPO = 'owner/StickyMD'
 $env:APPROVED_SOURCE_SHA = 'a' * 40
-New-Item -ItemType Directory -Path 'dist/promoted' -Force | Out-Null
-[IO.File]::WriteAllText((Join-Path $env:STICKYMD_TEST_DIRECTORY 'dist/promoted/StickyMD-test-windows-x64-portable.zip'), 'test fixture')
+foreach ($platform in @('windows', 'macos')) {
+    New-Item -ItemType Directory -Path "dist/promoted/$platform" -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $env:STICKYMD_TEST_DIRECTORY "dist/promoted/$platform/StickyMD-test-$platform-portable.zip"), 'test fixture')
+}
 $workflow = [IO.File]::ReadAllText((Join-Path $env:STICKYMD_TEST_ROOT '.github/workflows/promote-release.yml')).Replace("`r`n", "`n")
 $steps = @(
     @('Create or verify exact source tag', '', 'tag'),

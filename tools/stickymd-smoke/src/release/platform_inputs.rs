@@ -48,25 +48,40 @@ const MEMBER_MANIFESTS: &[&str] = &[
 /// Whether `path` (repository-relative, `/`-separated) is an input of `platform`'s artifact.
 /// Anything not listed as excluded is an input, a new path included.
 pub(crate) fn is_input(platform: Platform, path: &str) -> bool {
-    if let Some(rest) = path.strip_prefix(".github/") {
+    is_input_path(platform, path.as_bytes())
+}
+
+/// [`is_input`] on the raw path bytes Git stores, so an excluded path is excluded whatever its
+/// encoding.
+fn is_input_path(platform: Platform, path: &[u8]) -> bool {
+    if let Some(rest) = path.strip_prefix(b".github/") {
         // Only the platform's own release workflow builds; CI, schedules and promotion do not.
-        return rest == own_workflow(platform);
+        return rest == own_workflow(platform).as_bytes();
     }
-    if MEMBER_MANIFESTS.contains(&path) {
+    let listed = |names: &[&str]| names.iter().any(|name| name.as_bytes() == path);
+    let under = |prefixes: &[&str]| {
+        prefixes
+            .iter()
+            .any(|prefix| path.starts_with(prefix.as_bytes()))
+    };
+    if listed(MEMBER_MANIFESTS) {
         return true;
     }
-    if COMMON_EXCLUDED_FILES.contains(&path)
-        || COMMON_EXCLUDED_PREFIXES
-            .iter()
-            .any(|prefix| path.starts_with(prefix))
-    {
+    if listed(COMMON_EXCLUDED_FILES) || under(COMMON_EXCLUDED_PREFIXES) {
         return false;
     }
-    let excluded = match platform {
+    !under(match platform {
         Platform::WindowsX64 => WINDOWS_EXCLUDED_PREFIXES,
         Platform::MacOsArm64 => MACOS_EXCLUDED_PREFIXES,
-    };
-    !excluded.iter().any(|prefix| path.starts_with(prefix))
+    })
+}
+
+/// Git on `root` reading the objects as stored: a replacement ref cannot substitute another
+/// commit, tree or blob for the one a SHA names.
+fn git(root: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(root).env("GIT_NO_REPLACE_OBJECTS", "1");
+    command
 }
 
 fn own_workflow(platform: Platform) -> &'static str {
@@ -78,14 +93,14 @@ fn own_workflow(platform: Platform) -> &'static str {
 
 struct Entry {
     mode: String,
+    kind: String,
     object: String,
     path: Vec<u8>,
 }
 
-/// The tree of `commit`, every entry with its mode and blob id, sorted by path bytes.
+/// The tree of `commit`, every entry with its mode, kind and object id, sorted by path bytes.
 fn tree(root: &Path, commit: &str) -> Result<Vec<Entry>, String> {
-    let output = Command::new("git")
-        .current_dir(root)
+    let output = git(root)
         .args(["ls-tree", "-r", "-z", "--full-tree", commit])
         .output()
         .map_err(|error| format!("cannot run git ls-tree: {error}"))?;
@@ -111,15 +126,9 @@ fn tree(root: &Path, commit: &str) -> Result<Vec<Entry>, String> {
         else {
             return Err(format!("malformed git ls-tree header `{header}`"));
         };
-        if kind != "blob" {
-            // A submodule's content is not in this repository's tree.
-            return Err(format!(
-                "unsupported {kind} entry in {commit}: {}",
-                String::from_utf8_lossy(&record[tab + 1..])
-            ));
-        }
         entries.push(Entry {
             mode: mode.to_owned(),
+            kind: kind.to_owned(),
             object: object.to_owned(),
             path: record[tab + 1..].to_vec(),
         });
@@ -133,11 +142,21 @@ fn tree(root: &Path, commit: &str) -> Result<Vec<Entry>, String> {
 pub(crate) fn fingerprint(root: &Path, platform: Platform, commit: &str) -> Result<String, String> {
     let mut inputs = Vec::new();
     for entry in tree(root, commit)? {
-        let path = std::str::from_utf8(&entry.path)
-            .map_err(|_| format!("a path in {commit} is not UTF-8"))?;
-        if is_input(platform, path) {
-            inputs.push(entry);
+        if !is_input_path(platform, &entry.path) {
+            continue;
         }
+        // An input is a regular file. A symbolic link's blob is only its target's name, so the
+        // target's bytes would escape the fingerprint; a submodule's content is not in this tree.
+        if entry.kind != "blob" || !matches!(entry.mode.as_str(), "100644" | "100755") {
+            return Err(format!(
+                "{} input {} in {commit} is a {} of mode {}, not a regular file",
+                platform.label(),
+                String::from_utf8_lossy(&entry.path),
+                entry.kind,
+                entry.mode
+            ));
+        }
+        inputs.push(entry);
     }
     let scratch = TemporaryDirectory::new("platform-inputs")?;
     let stream_path = scratch.path().join("stream");
@@ -161,8 +180,7 @@ pub(crate) fn fingerprint(root: &Path, platform: Platform, commit: &str) -> Resu
 /// Streams every entry's content from one `git cat-file --batch`, writing the ids from another
 /// thread so neither pipe can fill while the other waits.
 fn write_blobs(root: &Path, entries: &[Entry], stream: &mut impl Write) -> Result<(), String> {
-    let mut child = Command::new("git")
-        .current_dir(root)
+    let mut child = git(root)
         .args(["cat-file", "--batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -213,10 +231,15 @@ fn write_blobs(root: &Path, entries: &[Entry], stream: &mut impl Write) -> Resul
         }
         Ok(())
     })();
+    drop(output);
+    if result.is_err() {
+        // Git may be blocked writing to the pipe just closed while the writer thread waits for
+        // Git to read: stop Git first, so the join below cannot wait forever.
+        let _ = child.kill();
+    }
     let written = writer
         .join()
         .map_err(|_| "the git cat-file writer panicked")?;
-    drop(output);
     let status = child
         .wait()
         .map_err(|error| format!("cannot wait for git cat-file: {error}"))?;
@@ -245,27 +268,33 @@ pub(crate) fn verify_reuse(
     release: &str,
 ) -> Result<Reuse, String> {
     for (label, commit) in [("build source", build), ("release commit", release)] {
-        if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(format!("{label} must be a full commit SHA: {commit}"));
+        if commit.len() != 40
+            || !commit
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return Err(format!(
+                "{label} must be a full lowercase commit SHA: {commit}"
+            ));
         }
     }
-    let exists = |commit: &str| {
-        Command::new("git")
-            .current_dir(root)
-            .args(["cat-file", "-e", &format!("{commit}^{{commit}}")])
-            .status()
-            .is_ok_and(|status| status.success())
+    // The object the SHA names must itself be a commit: `<sha>^{commit}` would also accept an
+    // annotated tag and silently judge the commit it points to.
+    let is_commit = |commit: &str| {
+        git(root)
+            .args(["cat-file", "-t", commit])
+            .output()
+            .is_ok_and(|output| output.status.success() && output.stdout == b"commit\n")
     };
     for commit in [build, release] {
-        if !exists(commit) {
+        if !is_commit(commit) {
             return Err(format!("{commit} is not a commit in this repository"));
         }
     }
-    if build.eq_ignore_ascii_case(release) {
+    if build == release {
         return Ok(Reuse::SameCommit);
     }
-    let ancestor = Command::new("git")
-        .current_dir(root)
+    let ancestor = git(root)
         .args(["merge-base", "--is-ancestor", build, release])
         .status()
         .map_err(|error| format!("cannot run git merge-base: {error}"))?;
@@ -300,8 +329,7 @@ fn changed_inputs(
     from: &str,
     to: &str,
 ) -> Result<Vec<String>, String> {
-    let output = Command::new("git")
-        .current_dir(root)
+    let output = git(root)
         .args(["diff", "--name-only", "--no-renames", "-z", from, to])
         .output()
         .map_err(|error| format!("cannot run git diff: {error}"))?;
@@ -466,13 +494,39 @@ mod tests {
             fingerprint(root, mac, first).unwrap()
         );
         assert!(verify_reuse(root, win, "short", first).is_err());
+        assert!(verify_reuse(root, win, &first.to_ascii_uppercase(), first).is_err());
         let unknown = "0".repeat(40);
         assert!(verify_reuse(root, win, &unknown, &unknown).is_err());
+        // An annotated tag's own object is not a commit, though it peels to one.
+        git(root, &["tag", "-a", "-m", "t", "annotated", first]);
+        let tag = git(root, &["rev-parse", "annotated"]);
+        assert_ne!(&tag, first);
+        let error = verify_reuse(root, win, &tag, &tag).unwrap_err();
+        assert!(error.contains("not a commit"), "{error}");
         // Each host's manifest reaches the other platform: features merge, and the macOS bundle
         // records a fingerprint that reads every manifest.
         let error = verify_reuse(root, win, win_change, mac_manifest).unwrap_err();
         assert!(error.contains("apps/stickymd-mac/Cargo.toml"), "{error}");
         let error = verify_reuse(root, mac, mac_manifest, win_manifest).unwrap_err();
         assert!(error.contains("apps/stickymd-win/Cargo.toml"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symbolic_link_among_the_inputs_fails_the_fingerprint() {
+        let repository = repository();
+        let root = repository.directory.path();
+        std::os::unix::fs::symlink("plan/a.md", root.join("docs/link.md")).unwrap();
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-q", "-m", "excluded link"]);
+        let excluded = git(root, &["rev-parse", "HEAD"]);
+        fingerprint(root, Platform::WindowsX64, &excluded).unwrap();
+        std::fs::create_dir_all(root.join("crates")).unwrap();
+        std::os::unix::fs::symlink("../docs/plan/a.md", root.join("crates/input.md")).unwrap();
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-q", "-m", "input link"]);
+        let linked = git(root, &["rev-parse", "HEAD"]);
+        let error = fingerprint(root, Platform::WindowsX64, &linked).unwrap_err();
+        assert!(error.contains("crates/input.md"), "{error}");
     }
 }

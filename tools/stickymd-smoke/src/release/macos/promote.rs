@@ -151,7 +151,8 @@ pub(crate) fn check_set(
         ));
     }
     let zip = directory.join(&zip_name);
-    let zip_sha256 = integrity::sha256(&zip)?;
+    let facts = package::verify(&zip, None, &version)?;
+    let zip_sha256 = facts.zip_sha256.clone();
     let sbom_sha256 = integrity::sha256(&directory.join(&sbom_name))?;
     let manifest =
         fs::read_to_string(directory.join(&checksums_name)).map_err(|error| error.to_string())?;
@@ -159,9 +160,10 @@ pub(crate) fn check_set(
         &manifest,
         &[(&zip_name, &zip_sha256), (&sbom_name, &sbom_sha256)],
     )?;
+    super::super::attachments::check_manifest_names(&manifest, &[&zip_name, &sbom_name])?;
     let sbom = fs::read_to_string(directory.join(&sbom_name)).map_err(|error| error.to_string())?;
-    content::validate_sbom(&sbom)?;
-    let facts = package::verify(&zip, None, &version)?;
+    // The SBOM must describe the bytes of this very package, not only its file names.
+    content::validate_sbom(&sbom, &facts.members)?;
     let source = facts.source_commit.clone();
     let reuse = verify_reuse(root, Platform::MacOsArm64, &source, release)?;
     let lock = Command::new("git")
@@ -190,11 +192,35 @@ pub(crate) fn check_set(
     Ok((receipt, reuse))
 }
 
-/// The whole promotion. The previous candidate and its receipt are retired before the new
-/// staging takes its place, and the receipt is written last, so any failure leaves either the
-/// old candidate untouched or no receipt at all, which the resolver refuses.
-pub(crate) fn promote(root: &Path, request: &Request<'_>) -> Result<String, String> {
-    check_release(root, request.release)?;
+/// One promotion at a time: the lock file is created exclusively and removed when dropped.
+struct PromotionLock(PathBuf);
+
+impl PromotionLock {
+    fn take(root: &Path) -> Result<Self, String> {
+        let path = root.join("dist/evidence/.macos-promotion.lock");
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| {
+                format!("another macOS promotion holds {} ({error})", path.display())
+            })?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for PromotionLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// The attempt `request` names, checked to be a successful `workflow_dispatch` run of the
+/// macOS release workflow file; returns its head commit.
+fn checked_attempt(root: &Path, request: &Request<'_>) -> Result<String, String> {
     let attempt_json = gh(
         root,
         &[
@@ -209,6 +235,11 @@ pub(crate) fn promote(root: &Path, request: &Request<'_>) -> Result<String, Stri
     if attempt.field("run_attempt")?.unsigned()? != request.attempt {
         return Err("GitHub answered for another attempt".to_owned());
     }
+    workflow::verify_origin(
+        &attempt,
+        ".github/workflows/release-macos.yml",
+        "workflow_dispatch",
+    )?;
     let head = attempt.field("head_sha")?.string()?.to_owned();
     workflow::verify_named_run(
         &head,
@@ -217,6 +248,17 @@ pub(crate) fn promote(root: &Path, request: &Request<'_>) -> Result<String, Stri
         attempt.field("name")?.string()?,
         Platform::MacOsArm64.workflow(),
     )?;
+    Ok(head.to_ascii_lowercase())
+}
+
+/// The whole promotion, serialized by a lock. The new set is downloaded, checked and staged in a
+/// private directory first; only then is the old candidate retired and kept aside, the new one
+/// moved into place, the reuse record (if any) written, and the receipt written last. Any failure
+/// on the way puts the old candidate, receipt and record back.
+pub(crate) fn promote(root: &Path, request: &Request<'_>) -> Result<String, String> {
+    check_release(root, request.release)?;
+    let _lock = PromotionLock::take(root)?;
+    let head = checked_attempt(root, request)?;
     let listing = gh(
         root,
         &[
@@ -261,87 +303,190 @@ pub(crate) fn promote(root: &Path, request: &Request<'_>) -> Result<String, Stri
         artifact,
         request.release,
     )?;
-    if receipt.facts.source_commit != head.to_ascii_lowercase() {
+    if receipt.facts.source_commit != head {
         return Err(format!(
             "the package names source {}, the run head is {head}",
             receipt.facts.source_commit
         ));
     }
-    // The user's copy must be the same bytes, file by file.
+    // The user's copy: the very ZIP they name, and its two companions beside it.
+    let user_zip_name = request
+        .zip
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("the ZIP path has no file name")?;
+    if user_zip_name != receipt.zip_name {
+        return Err(format!("{user_zip_name} is not {}", receipt.zip_name));
+    }
     let user = request.zip.parent().ok_or("the ZIP has no directory")?;
-    for name in [
-        &receipt.zip_name,
-        &Platform::MacOsArm64.checksum_file().to_owned(),
-        &Platform::MacOsArm64.sbom_file().to_owned(),
+    for (copy, name) in [
+        (request.zip.to_owned(), receipt.zip_name.clone()),
+        (
+            user.join(Platform::MacOsArm64.checksum_file()),
+            Platform::MacOsArm64.checksum_file().to_owned(),
+        ),
+        (
+            user.join(Platform::MacOsArm64.sbom_file()),
+            Platform::MacOsArm64.sbom_file().to_owned(),
+        ),
     ] {
-        if integrity::sha256(&user.join(name))? != integrity::sha256(&set.join(name))? {
-            return Err(format!("{name} differs from the workflow artifact"));
+        if integrity::sha256(&copy)? != integrity::sha256(&set.join(&name))? {
+            return Err(format!(
+                "{} differs from the workflow artifact",
+                copy.display()
+            ));
         }
     }
-    stage(root, &set, &receipt)?;
+    let staged = prepare(root, &set, &receipt)?;
     let json = receipt.json();
-    atomic_evidence::write(&root.join(RECEIPT), json.as_bytes())?;
-    if let Reuse::Ancestor { fingerprint } = &reuse {
-        let record = format!(
+    let record = match &reuse {
+        Reuse::Ancestor { fingerprint } => Some(format!(
             "{{\"schema_version\":1,\"platform\":\"macos-arm64\",\"build_source\":\"{}\",\"release_source\":\"{}\",\"build_inputs\":\"{}\",\"release_inputs\":\"{fingerprint}\",\"algorithm\":\"v1\",\"candidate_receipt_sha256\":\"{}\"}}\n",
             receipt.source,
             request.release.to_ascii_lowercase(),
             receipt.build_inputs,
             integrity::sha256_bytes(json.as_bytes())?
-        );
-        atomic_evidence::write(&root.join(REUSE_RECORD), record.as_bytes())?;
-    }
+        )),
+        Reuse::SameCommit => None,
+    };
+    install(root, &staged, record.as_deref(), &json)?;
     download.close()?;
     Ok(json)
 }
 
-fn stage(root: &Path, set: &Path, receipt: &Receipt) -> Result<(), String> {
+/// Copies the checked set into a private directory under `dist/` with the bundle extracted, and
+/// checks the staged bundle is the one the receipt describes.
+fn prepare(root: &Path, set: &Path, receipt: &Receipt) -> Result<PathBuf, String> {
     let staging = root.join(format!(
-        "dist/.exact-candidate-macos-{}",
+        "dist/.exact-candidate-macos-new-{}",
         std::process::id()
     ));
     if staging.exists() {
         fs::remove_dir_all(&staging).map_err(|error| error.to_string())?;
     }
     fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
-    for entry in fs::read_dir(set).map_err(|error| error.to_string())? {
-        let path = entry.map_err(|error| error.to_string())?.path();
-        let name = path.file_name().ok_or("a file has no name")?;
-        fs::copy(&path, staging.join(name)).map_err(|error| error.to_string())?;
-    }
-    run(
-        "/usr/bin/ditto",
-        &[
-            "-x".as_ref(),
-            "-k".as_ref(),
-            staging.join(&receipt.zip_name).as_os_str(),
-            staging.as_os_str(),
-        ],
-    )?;
-    for evidence in [RECEIPT, REUSE_RECORD] {
-        match fs::remove_file(root.join(evidence)) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("cannot retire {evidence}: {error}")),
+    let prepared = (|| {
+        for entry in fs::read_dir(set).map_err(|error| error.to_string())? {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            let name = path.file_name().ok_or("a file has no name")?;
+            fs::copy(&path, staging.join(name)).map_err(|error| error.to_string())?;
         }
+        run(
+            "/usr/bin/ditto",
+            &[
+                "-x".as_ref(),
+                "-k".as_ref(),
+                staging.join(&receipt.zip_name).as_os_str(),
+                staging.as_os_str(),
+            ],
+        )?;
+        let app = staging.join(content::APP);
+        if crate::mac_common::fixture::bundle_hash(&app)? != receipt.facts.bundle_sha256 {
+            return Err("the staged bundle differs from the checked one".to_owned());
+        }
+        Ok(())
+    })();
+    if let Err(error) = prepared {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
     }
-    let target = root.join(STAGING);
-    if target.exists() {
-        fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
-    }
-    fs::rename(&staging, &target).map_err(|error| error.to_string())
+    Ok(staging)
 }
 
-/// The staged candidate the artifact-bound macOS runners use: the receipt, the staged files and
-/// the extracted bundle must agree, and the build source must still be reusable on `release`.
+/// Swaps the prepared candidate in. The old candidate directory, receipt and record are kept
+/// until the new receipt is written, and restored if any step fails.
+fn install(root: &Path, staged: &Path, record: Option<&str>, receipt: &str) -> Result<(), String> {
+    let target = root.join(STAGING);
+    let receipt_path = root.join(RECEIPT);
+    let record_path = root.join(REUSE_RECORD);
+    let old_receipt = fs::read(&receipt_path).ok();
+    let old_record = fs::read(&record_path).ok();
+    let aside = root.join(format!(
+        "dist/.exact-candidate-macos-old-{}",
+        std::process::id()
+    ));
+    let restore = |moved_old: bool| {
+        let _ = fs::remove_file(&receipt_path);
+        let _ = fs::remove_file(&record_path);
+        if moved_old {
+            let _ = fs::remove_dir_all(&target);
+            let _ = fs::rename(&aside, &target);
+        }
+        if let Some(bytes) = &old_receipt {
+            let _ = atomic_evidence::write(&receipt_path, bytes);
+        }
+        if let Some(bytes) = &old_record {
+            let _ = atomic_evidence::write(&record_path, bytes);
+        }
+    };
+    // Retire the receipt first: from here on a missing receipt makes the resolver refuse.
+    for path in [&receipt_path, &record_path] {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                restore(false);
+                let _ = fs::remove_dir_all(staged);
+                return Err(format!("cannot retire {}: {error}", path.display()));
+            }
+        }
+    }
+    let moved_old = target.exists();
+    if moved_old && let Err(error) = fs::rename(&target, &aside) {
+        restore(false);
+        let _ = fs::remove_dir_all(staged);
+        return Err(format!("cannot set the old candidate aside: {error}"));
+    }
+    let installed = fs::rename(staged, &target)
+        .map_err(|error| format!("cannot move the candidate into place: {error}"))
+        .and_then(|()| match record {
+            Some(record) => atomic_evidence::write(&record_path, record.as_bytes()),
+            None => Ok(()),
+        })
+        .and_then(|()| atomic_evidence::write(&receipt_path, receipt.as_bytes()));
+    if let Err(error) = installed {
+        restore(moved_old);
+        let _ = fs::remove_dir_all(staged);
+        return Err(error);
+    }
+    if moved_old {
+        fs::remove_dir_all(&aside)
+            .map_err(|error| format!("the old candidate stays at {}: {error}", aside.display()))?;
+    }
+    Ok(())
+}
+
+/// The staged candidate the artifact-bound macOS runners use. The receipt must be complete; the
+/// staged files, the bundle and the executable must match it; the staged ZIP's README must name
+/// its build source, whose fingerprint must match it; and that source must be reusable on
+/// `release`, with the reuse record matching when it is not `release` itself.
 pub(crate) fn resolve(root: &Path, release: &str) -> Result<PathBuf, String> {
-    let text = fs::read_to_string(root.join(RECEIPT))
+    let bytes = fs::read(root.join(RECEIPT))
         .map_err(|error| format!("no macOS candidate receipt: {error}"))?;
-    let receipt = json::parse(&text)?;
+    let receipt =
+        json::parse(std::str::from_utf8(&bytes).map_err(|_| "the receipt is not UTF-8")?)?;
     let field =
         |name: &str| -> Result<String, String> { Ok(receipt.field(name)?.string()?.to_owned()) };
+    if receipt.field("schema_version")?.unsigned()? != 1
+        || field("platform")? != "macos-arm64"
+        || field("origin")? != "GITHUB_WORKFLOW_ARTIFACT"
+        || field("build_inputs_algorithm")? != "v1"
+        || field("target")? != "aarch64-apple-darwin"
+        || field("signing")? != "AD_HOC"
+    {
+        return Err("the macOS candidate receipt is not a complete schema 1 receipt".to_owned());
+    }
+    for name in ["workflow_run_id", "workflow_attempt", "artifact_id"] {
+        receipt.field(name)?.unsigned()?;
+    }
+    field("artifact_name")?;
     let staging = root.join(STAGING);
     let zip_name = field("zip_name")?;
+    if zip_name != Platform::MacOsArm64.archive_name(&repository::workspace_version(root)?) {
+        return Err(format!(
+            "the receipt names {zip_name}, not this version's package"
+        ));
+    }
     for (name, key) in [
         (zip_name.clone(), "zip_sha256"),
         (
@@ -361,19 +506,108 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<PathBuf, String> {
     if integrity::sha256(&app.join("Contents/MacOS/StickyMD"))? != field("app_executable_sha256")? {
         return Err("the staged executable does not match the receipt".to_owned());
     }
+    let source = field("source_commit")?;
+    if super::listing::verify_archive(&staging.join(&zip_name))? != source {
+        return Err("the staged package names another build source than the receipt".to_owned());
+    }
+    if fingerprint(root, Platform::MacOsArm64, &source)? != field("build_inputs")? {
+        return Err("the build source's inputs differ from the receipt".to_owned());
+    }
     check_release(root, release)?;
-    verify_reuse(
-        root,
-        Platform::MacOsArm64,
-        &field("source_commit")?,
-        release,
-    )?;
+    if let Reuse::Ancestor { fingerprint } =
+        verify_reuse(root, Platform::MacOsArm64, &source, release)?
+    {
+        let record = fs::read(root.join(REUSE_RECORD))
+            .map_err(|error| format!("no reuse record for {source} on {release}: {error}"))?;
+        let record = json::parse(std::str::from_utf8(&record).map_err(|_| "not UTF-8")?)?;
+        let matches = record.field("build_source")?.string()? == source
+            && record.field("release_source")?.string()? == release.to_ascii_lowercase()
+            && record.field("release_inputs")?.string()? == fingerprint
+            && record.field("candidate_receipt_sha256")?.string()?
+                == integrity::sha256_bytes(&bytes)?;
+        if !matches {
+            return Err(format!(
+                "the reuse record does not cover {source} on {release}"
+            ));
+        }
+    }
     Ok(app)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tree(root: &Path, candidate: &str, receipt: &str, record: Option<&str>) {
+        fs::create_dir_all(root.join(STAGING)).unwrap();
+        fs::write(root.join(STAGING).join("marker"), candidate).unwrap();
+        fs::create_dir_all(root.join("dist/evidence")).unwrap();
+        fs::write(root.join(RECEIPT), receipt).unwrap();
+        if let Some(record) = record {
+            fs::write(root.join(REUSE_RECORD), record).unwrap();
+        }
+    }
+
+    fn read(root: &Path) -> (String, String, Option<String>) {
+        (
+            fs::read_to_string(root.join(STAGING).join("marker")).unwrap(),
+            fs::read_to_string(root.join(RECEIPT)).unwrap(),
+            fs::read_to_string(root.join(REUSE_RECORD)).ok(),
+        )
+    }
+
+    #[test]
+    fn install_swaps_the_candidate_and_writes_the_receipt_last() {
+        let scratch = TemporaryDirectory::new("macos-install").unwrap();
+        let root = scratch.path();
+        tree(root, "old", "old receipt", Some("old record"));
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(&staged).unwrap();
+        fs::write(staged.join("marker"), "new").unwrap();
+        install(root, &staged, None, "new receipt").unwrap();
+        // Same-commit promotion: the old ancestor record must not survive beside the new receipt.
+        assert_eq!(read(root), ("new".into(), "new receipt".into(), None));
+        assert!(!staged.exists());
+        let leftovers = fs::read_dir(root.join("dist"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.starts_with(".exact-candidate-macos"))
+            .collect::<Vec<_>>();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn a_failed_install_puts_the_old_candidate_receipt_and_record_back() {
+        let scratch = TemporaryDirectory::new("macos-install-failure").unwrap();
+        let root = scratch.path();
+        tree(root, "old", "old receipt", Some("old record"));
+        // The prepared directory vanished: moving it into place fails after the old one moved.
+        let error = install(
+            root,
+            &root.join("dist/.gone"),
+            Some("new record"),
+            "new receipt",
+        )
+        .unwrap_err();
+        assert!(error.contains("into place"), "{error}");
+        assert_eq!(
+            read(root),
+            (
+                "old".into(),
+                "old receipt".into(),
+                Some("old record".into())
+            )
+        );
+    }
+
+    #[test]
+    fn a_second_promotion_waits_for_the_lock() {
+        let scratch = TemporaryDirectory::new("macos-lock").unwrap();
+        let first = PromotionLock::take(scratch.path()).unwrap();
+        assert!(PromotionLock::take(scratch.path()).is_err());
+        drop(first);
+        PromotionLock::take(scratch.path()).unwrap();
+    }
 
     #[test]
     fn the_artifact_of_exactly_the_requested_attempt_is_chosen() {

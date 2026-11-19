@@ -39,14 +39,37 @@ pub(crate) fn verify_named_run(
     Ok(())
 }
 
+/// The run was started by `event` from the workflow file `path`. A display name can be shared by
+/// two workflow files; the file cannot. GitHub may report the file with an `@<ref>` suffix.
+pub(crate) fn verify_origin(
+    document: &super::json::Value,
+    path: &str,
+    event: &str,
+) -> Result<(), String> {
+    let observed = document.field("path")?.string()?;
+    let file = observed.split_once('@').map_or(observed, |(file, _)| file);
+    if file != path {
+        return Err(format!("the run is of {observed}, expected {path}"));
+    }
+    let observed = document.field("event")?.string()?;
+    if observed != event {
+        return Err(format!(
+            "the run was triggered by {observed}, expected {event}"
+        ));
+    }
+    Ok(())
+}
+
 /// The observation of a run of `workflow` read from `input` (`-` for stdin); with `attempt`, the
 /// observation is that attempt
-/// (`/actions/runs/<id>/attempts/<n>`) and must say so.
+/// (`/actions/runs/<id>/attempts/<n>`) and must say so; with `origin`, the run must come from
+/// that workflow file and trigger.
 pub(super) fn verify_named_input(
     source: &str,
     input: &Path,
     workflow: &str,
     attempt: Option<u64>,
+    origin: Option<(&str, &str)>,
 ) -> Result<(), String> {
     integrity::validate_hex(source, 40, "approved source SHA")?;
     let text = if input == Path::new("-") {
@@ -56,6 +79,9 @@ pub(super) fn verify_named_input(
     }
     .map_err(|error| format!("cannot read workflow observation: {error}"))?;
     let document = super::json::parse(&text)?;
+    if let Some((path, event)) = origin {
+        verify_origin(&document, path, event)?;
+    }
     if let Some(attempt) = attempt {
         let observed = document.field("run_attempt")?.unsigned()?;
         if observed != attempt {
@@ -89,6 +115,31 @@ fn verify_api_json(source: &str, text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_run_must_come_from_the_named_workflow_file_and_trigger() {
+        let run = |path: &str, event: &str| {
+            super::super::json::parse(&format!(r#"{{"path":"{path}","event":"{event}"}}"#)).unwrap()
+        };
+        let file = ".github/workflows/release-macos.yml";
+        verify_origin(&run(file, "workflow_dispatch"), file, "workflow_dispatch").unwrap();
+        verify_origin(
+            &run(&format!("{file}@refs/heads/main"), "workflow_dispatch"),
+            file,
+            "workflow_dispatch",
+        )
+        .unwrap();
+        for (path, event) in [
+            (".github/workflows/copy.yml", "workflow_dispatch"),
+            (file, "push"),
+            (
+                ".github/workflows/release-macos.yml.bak",
+                "workflow_dispatch",
+            ),
+        ] {
+            assert!(verify_origin(&run(path, event), file, "workflow_dispatch").is_err());
+        }
+    }
 
     #[test]
     fn remote_identity_requires_full_matching_source_success_and_release_workflow() {

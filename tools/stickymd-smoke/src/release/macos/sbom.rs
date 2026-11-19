@@ -120,6 +120,7 @@ pub(crate) fn publish(root: &Path, zip: &Path) -> Result<Published, String> {
         ],
     )?;
     fs::remove_file(&snapshot).map_err(|error| error.to_string())?;
+    let hashes = super::content::member_hashes(&context.path().join("package"))?;
     let output = TemporaryDirectory::new("macos-sbom-output")?;
     let generated = output.path().join("sbom.json");
     let status = Command::new(&syft)
@@ -137,6 +138,7 @@ pub(crate) fn publish(root: &Path, zip: &Path) -> Result<Published, String> {
     let bytes = fs::read(&generated).map_err(|error| error.to_string())?;
     super::content::validate_sbom(
         std::str::from_utf8(&bytes).map_err(|_| "the SBOM is not UTF-8")?,
+        &hashes,
     )?;
     let sbom = directory.join(platform.sbom_file());
     atomic_evidence::write_new(&sbom, &bytes)?;

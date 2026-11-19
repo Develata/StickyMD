@@ -24,6 +24,8 @@ pub(crate) struct Facts {
     pub app_inputs: String,
     /// The signing kind observed on the extracted bundle.
     pub signing: &'static str,
+    /// The SHA-256 of each file the SBOM must describe, from the same extraction.
+    pub members: std::collections::BTreeMap<&'static str, String>,
 }
 
 impl Facts {
@@ -266,6 +268,7 @@ pub(crate) fn verify(
     let copy = snapshot.path().join("package.zip");
     fs::copy(zip, &copy).map_err(|error| format!("cannot snapshot {}: {error}", zip.display()))?;
     let zip_sha256 = integrity::sha256(&copy)?;
+    super::listing::check_archive(&copy)?;
     let extracted = snapshot.path().join("extracted");
     run(
         "/usr/bin/ditto",
@@ -305,6 +308,7 @@ pub(crate) fn verify(
         bundle_sha256: bundle_hash(&app)?,
         app_inputs,
         signing,
+        members: content::member_hashes(&extracted)?,
     };
     snapshot.close()?;
     Ok(facts)

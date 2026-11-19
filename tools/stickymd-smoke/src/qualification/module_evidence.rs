@@ -26,6 +26,10 @@ pub(super) struct Origin<'a> {
     pub(super) exe_sha256: &'a str,
     pub(super) zip_sha256: &'a str,
     pub(super) input_fingerprint: &'a str,
+    /// At registration, the HEAD the evidence must have run on (the commit whose module inputs
+    /// `input_fingerprint` describes). A lookup of a recorded success passes `None`: the run
+    /// commit then only has to be one the candidate may stand for.
+    pub(super) run_commit: Option<&'a str>,
 }
 
 /// One companion file listed by evidence: a workspace-relative path and its digest.
@@ -222,6 +226,13 @@ fn expect_run_commit(root: &Value, key: &str, origin: &Origin<'_>) -> Result<(),
         .field(key)?
         .string()
         .map_err(|error| format!("{key}: {error}"))?;
+    if let Some(head) = origin.run_commit
+        && actual != head
+    {
+        return Err(format!(
+            "STALE RECEIPT: {key} is {actual}, but this registration is for HEAD {head}"
+        ));
+    }
     super::reuse::candidate_source_matches(origin.repository, origin.source_commit, actual)
         .map(drop)
         .map_err(|error| {

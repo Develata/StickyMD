@@ -12,6 +12,8 @@ pub(crate) enum Command {
         input: PathBuf,
         workflow: String,
         attempt: Option<u64>,
+        /// The workflow file and trigger the run must report, when given.
+        origin: Option<(String, String)>,
     },
     VerifyAttachments {
         directory: PathBuf,
@@ -258,6 +260,11 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
                 .remove("--attempt")
                 .map(|value| value.parse().map_err(|_| "invalid --attempt"))
                 .transpose()?,
+            origin: match (options.remove("--workflow-path"), options.remove("--event")) {
+                (Some(path), Some(event)) => Some((path.to_owned(), event.to_owned())),
+                (None, None) => None,
+                _ => return Err("--workflow-path and --event go together".to_owned()),
+            },
         },
         "verify-attachments" => Command::VerifyAttachments {
             directory: PathBuf::from(take("--directory")?),

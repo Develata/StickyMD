@@ -55,6 +55,12 @@ env:
   GH_TOKEN: ${{ github.token }}
   GH_REPO: ${{ github.repository }}
 
+# One operation per tag at a time: a DRAFT cannot replace attachments while a PUBLISH of the same
+# tag checks them, and PUBLISH also compares the draft's release and asset ids before and after.
+concurrency:
+  group: promote-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
 jobs:
   tag:
     if: inputs.operation == 'tag'
@@ -64,18 +70,18 @@ jobs:
       actions: read
       contents: write
     steps:
+      - name: Dispatched on main
+        # plan 11: TAG is dispatched from main, and R must be on the main line.
+        shell: pwsh
+        env:
+          RUN_REF: ${{ github.ref }}
+        run: |
+          if ($env:RUN_REF -cne 'refs/heads/main') { throw "TAG must be dispatched on refs/heads/main, not $env:RUN_REF" }
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: The release commit is on main
-        shell: pwsh
-        env:
-          RELEASE_SHA: ${{ inputs.source_sha }}
-        run: |
-          git merge-base --is-ancestor $env:RELEASE_SHA origin/main
-          if ($LASTEXITCODE -ne 0) { throw 'The release commit is not contained in origin/main' }
       - uses: ./.github/actions/verify-release-candidates
         with:
           source_sha: ${{ inputs.source_sha }}
@@ -86,7 +92,7 @@ jobs:
           macos_run_attempt: ${{ inputs.macos_run_attempt }}
           macos_artifact_id: ${{ inputs.macos_artifact_id }}
           attachments: ${{ inputs.attachments }}
-      - name: Create or verify the release tag
+      - name: Create or verify exact source tag
         shell: pwsh
         env:
           APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
@@ -118,8 +124,8 @@ jobs:
           RELEASE_SHA: ${{ inputs.source_sha }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          if ($env:RUN_REF -ne "refs/tags/$env:RELEASE_TAG") { throw "DRAFT must be dispatched on refs/tags/$env:RELEASE_TAG, not $env:RUN_REF" }
-          if ($env:RUN_SHA -ne $env:RELEASE_SHA) { throw "the run's SHA $env:RUN_SHA is not the release commit $env:RELEASE_SHA" }
+          if ($env:RUN_REF -cne "refs/tags/$env:RELEASE_TAG") { throw "DRAFT must be dispatched on refs/tags/$env:RELEASE_TAG, not $env:RUN_REF" }
+          if ($env:RUN_SHA -cne $env:RELEASE_SHA) { throw "the run's SHA $env:RUN_SHA is not the release commit $env:RELEASE_SHA" }
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.source_sha }}
@@ -161,12 +167,37 @@ jobs:
         with:
           subject-path: dist/promoted/macos/StickyMD-*-macos-arm64-portable.zip
           sbom-path: dist/promoted/macos/SBOM-macos-arm64.spdx.json
-      - name: Create or update the draft with exactly the approved six files
+      - name: An existing draft holds no file outside the approved set
+        # A stale asset from an earlier draft is not removed silently; the draft is refused.
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ATTACHMENTS: ${{ inputs.attachments }}
+        run: |
+          function Get-DraftSnapshot {
+            $text = & gh api "repos/$env:GH_REPO/releases?per_page=100"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $releases = @(($text -join "`n") | ConvertFrom-Json)
+            if ($releases.Count -ge 100) { throw 'more than 99 releases: the listing would need paging' }
+            $matching = @($releases | Where-Object { $_.tag_name -ceq $env:RELEASE_TAG })
+            if ($matching.Count -eq 0) { return $null }
+            if ($matching.Count -ne 1) { throw "$($matching.Count) releases carry $env:RELEASE_TAG" }
+            $release = $matching[0]
+            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)|$($_.updated_at)" })
+            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($release.draft)|$($assets -join ';')" }
+          }
+          $draft = Get-DraftSnapshot
+          if ($null -ne $draft) {
+            if (-not $draft.draft) { throw "the release $env:RELEASE_TAG is already published" }
+            $approved = @($env:ATTACHMENTS.Split(',') | ForEach-Object { $_.Trim().Split('=')[0] })
+            $stale = @($draft.names | Where-Object { $approved -cnotcontains $_ })
+            if ($stale.Count -gt 0) { throw "the draft holds files outside the approved set: $($stale -join ', ')" }
+          }
+      - name: Create or update draft only
         shell: pwsh
         env:
           APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-          ATTACHMENTS: ${{ inputs.attachments }}
           WINDOWS_RUN_ID: ${{ inputs.windows_run_id }}
           MACOS_RUN_ID: ${{ inputs.macos_run_id }}
           MACOS_RUN_ATTEMPT: ${{ inputs.macos_run_attempt }}
@@ -174,20 +205,14 @@ jobs:
           . ./tools/release/github-observation.ps1
           $state = Get-StickyMdRemoteState -RepoRoot (Get-Location).Path -Kind draft -SourceSha $env:APPROVED_SOURCE_SHA -ReleaseTag $env:RELEASE_TAG -AllowMissing
           $tag = $env:RELEASE_TAG
-          $approved = @($env:ATTACHMENTS.Split(',') | ForEach-Object { $_.Trim().Split('=')[0] })
           $notes = Join-Path $env:RUNNER_TEMP 'release-notes.txt'
           $text = "StickyMD $tag draft: Windows x64 portable (unsigned) and macOS arm64 portable (ad-hoc signed, not notarized).`n" +
-            "Windows built from $env:WINDOWS_BUILD_SHA (release run $env:WINDOWS_RUN_ID).`n" +
+            "Windows built from $env:WINDOWS_BUILD_SHA (release run $env:WINDOWS_RUN_ID, attempt $env:WINDOWS_RUN_ATTEMPT).`n" +
             "macOS built from $env:MACOS_BUILD_SHA (release-macos run $env:MACOS_RUN_ID, attempt $env:MACOS_RUN_ATTEMPT).`n" +
             "Verify SHA256SUMS.txt, SHA256SUMS-macos-arm64.txt and the attestations before separately authorizing publish.`n"
           [IO.File]::WriteAllText($notes, $text, [Text.UTF8Encoding]::new($false))
           $assets = @(Get-ChildItem -LiteralPath dist/promoted/windows, dist/promoted/macos -File | ForEach-Object { $_.FullName })
           if ($state.exists) {
-            # A stale asset from an earlier draft is not removed silently; the draft is refused.
-            $present = @((gh release view $tag --json assets --jq '.assets[].name') -split "`n" | Where-Object { $_ })
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $stale = @($present | Where-Object { $approved -notcontains $_ })
-            if ($stale.Count -gt 0) { throw "the draft holds files outside the approved set: $($stale -join ', ')" }
             gh release edit $tag --draft --title "StickyMD $tag" --notes-file $notes
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             gh release upload $tag --clobber @assets
@@ -215,6 +240,7 @@ jobs:
       contents: write
     steps:
       - name: Dispatched on the release tag
+        # The attestations carry the dispatching run's ref and SHA, so PUBLISH runs on the tag.
         shell: pwsh
         env:
           RUN_REF: ${{ github.ref }}
@@ -222,8 +248,8 @@ jobs:
           RELEASE_SHA: ${{ inputs.source_sha }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          if ($env:RUN_REF -ne "refs/tags/$env:RELEASE_TAG") { throw "PUBLISH must be dispatched on refs/tags/$env:RELEASE_TAG, not $env:RUN_REF" }
-          if ($env:RUN_SHA -ne $env:RELEASE_SHA) { throw "the run's SHA $env:RUN_SHA is not the release commit $env:RELEASE_SHA" }
+          if ($env:RUN_REF -cne "refs/tags/$env:RELEASE_TAG") { throw "PUBLISH must be dispatched on refs/tags/$env:RELEASE_TAG, not $env:RUN_REF" }
+          if ($env:RUN_SHA -cne $env:RELEASE_SHA) { throw "the run's SHA $env:RUN_SHA is not the release commit $env:RELEASE_SHA" }
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.source_sha }}
@@ -239,12 +265,31 @@ jobs:
           macos_run_attempt: ${{ inputs.macos_run_attempt }}
           macos_artifact_id: ${{ inputs.macos_artifact_id }}
           attachments: ${{ inputs.attachments }}
-      - name: The draft still holds exactly the approved six files
+      - name: Snapshot the draft before download
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          function Get-DraftSnapshot {
+            $text = & gh api "repos/$env:GH_REPO/releases?per_page=100"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $releases = @(($text -join "`n") | ConvertFrom-Json)
+            if ($releases.Count -ge 100) { throw 'more than 99 releases: the listing would need paging' }
+            $matching = @($releases | Where-Object { $_.tag_name -ceq $env:RELEASE_TAG })
+            if ($matching.Count -eq 0) { return $null }
+            if ($matching.Count -ne 1) { throw "$($matching.Count) releases carry $env:RELEASE_TAG" }
+            $release = $matching[0]
+            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)|$($_.updated_at)" })
+            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($release.draft)|$($assets -join ';')" }
+          }
+          $draft = Get-DraftSnapshot
+          if ($null -eq $draft -or -not $draft.draft) { throw "no draft release carries $env:RELEASE_TAG" }
+          [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'draft-snapshot.txt'), $draft.text)
+      - name: Download existing draft assets
         shell: pwsh
         env:
           APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-          ATTACHMENTS: ${{ inputs.attachments }}
         run: |
           . ./tools/release/github-observation.ps1
           Get-StickyMdRemoteState -RepoRoot (Get-Location).Path -Kind draft -SourceSha $env:APPROVED_SOURCE_SHA -ReleaseTag $env:RELEASE_TAG | Out-Null
@@ -252,7 +297,33 @@ jobs:
           New-Item -ItemType Directory -Path dist/draft -Force | Out-Null
           gh release download $env:RELEASE_TAG --dir dist/draft
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: The downloaded draft is exactly the approved six files
+        shell: pwsh
+        env:
+          ATTACHMENTS: ${{ inputs.attachments }}
+        run: |
           cargo run --quiet -p stickymd-smoke --locked -- release verify-attachments --directory dist/draft --attachments $env:ATTACHMENTS
           exit $LASTEXITCODE
-      - name: Publish the existing verified draft
-        run: gh release edit '${{ inputs.release_tag }}' --draft=false
+      - name: Publish the verified draft by its release id
+        # The draft must be the very release and assets downloaded and checked above.
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          function Get-DraftSnapshot {
+            $text = & gh api "repos/$env:GH_REPO/releases?per_page=100"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $releases = @(($text -join "`n") | ConvertFrom-Json)
+            if ($releases.Count -ge 100) { throw 'more than 99 releases: the listing would need paging' }
+            $matching = @($releases | Where-Object { $_.tag_name -ceq $env:RELEASE_TAG })
+            if ($matching.Count -eq 0) { return $null }
+            if ($matching.Count -ne 1) { throw "$($matching.Count) releases carry $env:RELEASE_TAG" }
+            $release = $matching[0]
+            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)|$($_.updated_at)" })
+            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($release.draft)|$($assets -join ';')" }
+          }
+          $draft = Get-DraftSnapshot
+          $before = [IO.File]::ReadAllText((Join-Path $env:RUNNER_TEMP 'draft-snapshot.txt'))
+          if ($null -eq $draft -or $draft.text -cne $before) { throw "the draft of $env:RELEASE_TAG changed after it was checked" }
+          gh api --method PATCH "repos/$env:GH_REPO/releases/$($draft.id)" -F draft=false | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

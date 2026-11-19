@@ -25,7 +25,7 @@ pub(super) fn create(root: &Path) -> Result<SourceFreeze, String> {
     let freeze = SourceFreeze {
         source_commit: source_commit.clone(),
         version: receipt::workspace_version(root)?,
-        cargo_lock_sha256: receipt::sha256(&root.join("Cargo.lock"))?,
+        cargo_lock_sha256: committed_lock_sha256(root, &source_commit)?,
         rustc: receipt::command_text(root, "rustc", &["--version", "--verbose"])?,
         target: receipt::RELEASE_TARGET.to_owned(),
         remote_synced: receipt::upstream_commit(root)
@@ -38,6 +38,30 @@ pub(super) fn create(root: &Path) -> Result<SourceFreeze, String> {
     receipt::invalidate_promoted_candidate(root)?;
     drop(manual_store);
     Ok(freeze)
+}
+
+/// The SHA-256 of `Cargo.lock` as committed in `commit`, required to equal the worktree's bytes:
+/// a checkout that converted line endings would otherwise give the same commit another digest,
+/// and a candidate promoted under two freezes of one commit two receipts.
+fn committed_lock_sha256(root: &Path, commit: &str) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .args(["cat-file", "blob", &format!("{commit}:Cargo.lock")])
+        .output()
+        .map_err(|error| format!("cannot read the committed Cargo.lock: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("cannot read Cargo.lock at {commit}"));
+    }
+    let worktree = std::fs::read(root.join("Cargo.lock"))
+        .map_err(|error| format!("cannot read Cargo.lock: {error}"))?;
+    if worktree != output.stdout {
+        return Err(
+            "Cargo.lock in the worktree differs from the committed bytes (line endings?)"
+                .to_owned(),
+        );
+    }
+    crate::integrity::sha256_bytes(&output.stdout)
 }
 
 pub(super) fn read(root: &Path) -> Result<SourceFreeze, String> {
