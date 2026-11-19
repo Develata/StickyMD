@@ -53,9 +53,10 @@ fn in_batch(row: &str, record_batch: Option<&String>, batch: Option<&str>) -> bo
 
 /// `executable` are the rows `mac-gui` can run; `manual` the rows the USER judges by hand.
 /// For an executable row only its latest PASS recorded under exactly `identity` (product inputs,
-/// driver, image, system) is a candidate, and it is reused unless the USER revoked that PASS or a
-/// FAIL or NOT_TESTED under the identity came after it; an older PASS is never fallen back to. A
-/// receipt holds until a revocation for its row and inputs is recorded after it. For the
+/// driver, image, system) is a candidate. It is not reused when any FAIL or NOT_TESTED of the row
+/// is recorded under that identity, before or after it (wall-clock run starts cannot prove which
+/// came first, so the order is not relied on), or when the USER revoked it. A receipt holds until
+/// a revocation for its row and inputs is recorded after it. For the
 /// never-reused rows only records of `batch` count, and without a batch nothing does. `built`
 /// is the app at hand, compared for audit only. An app without inputs reuses nothing and has no
 /// confirmed manual rows.
@@ -98,9 +99,15 @@ pub(super) fn plan(
             Some((_, _, digest, _)) if revoked(records, row, digest) => {
                 Err(Some("the USER revoked its latest PASS for this identity"))
             }
-            Some((at, ..)) if records[at + 1..].iter().any(|r| same(&r)) => Err(Some(
-                "a FAIL or NOT_TESTED was recorded after its latest PASS",
-            )),
+            Some(_)
+                if records.iter().any(|r| {
+                    same(&r) && matches!(r, Record::Automated { verdict, .. } if verdict != "PASS")
+                }) =>
+            {
+                Err(Some(
+                    "a FAIL or NOT_TESTED is recorded for this identity; only a clean record is reused",
+                ))
+            }
             Some((_, evidence, digest, recorded)) => Ok(Reuse {
                 row: row.to_owned(),
                 evidence: evidence.clone(),
@@ -184,46 +191,26 @@ pub(super) fn check_system(records: &[Record]) -> Result<(), String> {
     Ok(())
 }
 
-/// The P16 rows of the Phase 16 matrix by mode, in document order. A mode outside the ladder is
-/// an error rather than a row silently left out; Windows-only rows are not macOS manual rows.
+/// The P16 rows of the Phase 16 matrix by mode, in document order, read by the same parser
+/// governance uses (`governance::phase16_modes`), so a row the governance check refuses cannot be
+/// planned or receive a receipt here. Windows-only rows are not macOS manual rows.
 pub(super) fn matrix_rows(matrix: &str) -> Result<Rows, String> {
     let mut rows = Rows::default();
-    let mut seen: Vec<&str> = Vec::new();
-    for line in matrix.lines() {
-        let cells: Vec<&str> = line
-            .trim()
-            .trim_matches('|')
-            .split('|')
-            .map(str::trim)
-            .collect();
-        // Only table rows; prose may mention a row id anywhere.
-        if !line.trim_start().starts_with('|') {
+    let mut seen: Vec<String> = Vec::new();
+    for (id, mode) in crate::governance::phase16_modes(matrix)? {
+        let Some(id) = id.strip_prefix("P16-") else {
             continue;
-        }
-        let first = cells.first().copied().unwrap_or_default();
-        if !first.contains("P16-") {
-            continue;
-        }
-        let Some(id) = first
-            .strip_prefix("P16-")
-            .filter(|id| id.len() == 3 && id.bytes().all(|b| b.is_ascii_alphanumeric()))
-        else {
-            return Err(format!("{first:?} is not a plain P16 row id"));
         };
-        if cells.len() != 5 {
-            return Err(format!("P16-{id}: a matrix row needs five cells"));
-        }
-        if seen.contains(&id) {
+        if seen.iter().any(|s| s == id) {
             return Err(format!("P16-{id} appears twice in the matrix"));
         }
-        seen.push(id);
-        match cells[2] {
+        seen.push(id.to_owned());
+        match mode.as_str() {
             "Manual" if WINDOWS_ONLY.contains(&id) => {}
             "Manual" => rows.manual.push(id.to_owned()),
             "Review" => rows.review.push(id.to_owned()),
             "Agent" => rows.agent.push(id.to_owned()),
-            "Automated" | "—" => {}
-            other => return Err(format!("P16-{id}: unknown mode {other:?}")),
+            _ => {}
         }
     }
     if rows.manual.is_empty() && rows.review.is_empty() && rows.agent.is_empty() {

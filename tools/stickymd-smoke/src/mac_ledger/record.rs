@@ -85,9 +85,10 @@ pub(super) fn system(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Lowercase hex only, so that one digest has one spelling and string equality compares digests.
+/// 64 hex digits in either case; records are read with digests lowercased (`Record::normalized`),
+/// so string equality compares digests, and new records are written lowercase.
 fn is_sha256(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 use super::options::is_batch;
@@ -312,7 +313,38 @@ impl Record {
             other => return Err(format!("unknown ledger record kind {other}")),
         };
         record.validate()?;
-        Ok(record)
+        Ok(record.normalized())
+    }
+
+    /// The record with every digest lowercased; the ledger's bytes stay as written.
+    fn normalized(mut self) -> Self {
+        let lower = |s: &mut String| s.make_ascii_lowercase();
+        match &mut self {
+            Self::Automated {
+                identity,
+                built,
+                evidence_sha256,
+                ..
+            } => {
+                identity.inputs.as_mut().map(lower);
+                lower(&mut identity.driver);
+                lower(&mut built.executable);
+                lower(&mut built.bundle);
+                lower(evidence_sha256);
+            }
+            Self::Manual {
+                inputs,
+                app_executable,
+                ..
+            } => {
+                inputs.as_mut().map(lower);
+                lower(app_executable);
+            }
+            Self::Revocation { revoked, .. } => match revoked {
+                Revoked::Evidence(digest) | Revoked::Inputs(digest) => lower(digest),
+            },
+        }
+        self
     }
 }
 
@@ -356,11 +388,9 @@ pub(super) fn read_all(text: &str) -> Result<Vec<Record>, String> {
     Ok(records)
 }
 
-/// Whether `record` may follow `earlier`: no second record of the same evidence for a row; for one
-/// row and identity, runs strictly in the order they started (a run whose start cannot be told
-/// from an earlier one, or that names no start where earlier records do, cannot follow it), so a
-/// replay of an old run, even with other bytes, cannot read as the newer result; and a revocation
-/// only of a result already in the ledger.
+/// Whether `record` may follow `earlier`: no second record of the same evidence for a row, and a
+/// revocation only of a result already in the ledger. Run order is not checked: wall-clock starts
+/// cannot prove it, so the reuse rule does not depend on it (`decide::plan`).
 pub(super) fn consistent_with(earlier: &[Record], record: &Record) -> Result<(), String> {
     match record {
         Record::Automated {
@@ -376,36 +406,6 @@ pub(super) fn consistent_with(earlier: &[Record], record: &Record) -> Result<(),
                 return Err(format!(
                     "P16-{row} from evidence {evidence_sha256} is already recorded; a replay cannot stand for a new run"
                 ));
-            }
-            let Record::Automated {
-                identity, run_unix, ..
-            } = record
-            else {
-                unreachable!("matched above")
-            };
-            for earlier_run in earlier.iter().filter_map(|r| match r {
-                Record::Automated {
-                    row: r_row,
-                    identity: r_identity,
-                    run_unix: r_run,
-                    ..
-                } if r_row == row && r_identity == identity => Some(*r_run),
-                _ => None,
-            }) {
-                match (earlier_run, run_unix) {
-                    (None, None) => {}
-                    (Some(before), Some(now)) if before < *now => {}
-                    (Some(_), Some(_)) => {
-                        return Err(format!(
-                            "P16-{row}: a run that started no earlier is already recorded for this identity; record runs in the order they started"
-                        ));
-                    }
-                    _ => {
-                        return Err(format!(
-                            "P16-{row}: records for this identity without a run start cannot be ordered against this one; rebuild the driver or app to start a new identity"
-                        ));
-                    }
-                }
             }
         }
         Record::Revocation { row, revoked, .. } => {

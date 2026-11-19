@@ -1014,7 +1014,9 @@ retrospectively: sampling continues 200ms past the deadline, the last sample is 
 rest position, and completion is the first sample from which every later one equals
 it. Being fully on screen is not completion.
 
-`mac-gui.json` is atomically checkpointed after every scenario. It records OS,
+`mac-gui.json` is atomically checkpointed after every scenario with `"finished":false`; only the
+write after the last scenario of a run that was not cut short (cancelled, or stopped after a panic
+or a failed cleanup) says `"finished":true`, and `mac-ledger record` refuses any other file. It records OS,
 VM/override/permission/display facts, fixed config, executable SHA-256, a sorted
 bundle-content manifest SHA-256 (including Info.plist; excluding xattrs), PID,
 fixture hash, timestamped requests, individual injected events, observations,
@@ -1028,8 +1030,8 @@ PASS. The acceptance matrix and qualification ledgers are never updated.
 | --- | --- | --- |
 | W01 | `lsappinfo` UIElement + Dock AX item titles | Cmd+Tab pixels remain NOT_TESTED; row remains incomplete |
 | W02 | Drag input; CG window bounds/layer/on-screen; persisted `window.dock_edge` | Main display only; 2 DIP ±0.75, top layer >24; no pixel-level strip rendering assertion |
-| W03 | Finder PID from AX remains unchanged, and StickyMD is never frontmost in any sample taken during the hover (the frontmost app is read with every window observation); short dwell cancellation; window movement onset and settled bounds | Pre-100ms observation; onset bracket within 90–170ms, sampled every 20ms; gaps >60ms or boundary overlap are NOT_TESTED; completion within earliest bracket onset +140ms +70ms |
-| W04 | Top-band point held 850ms: every sample, at most 20ms apart, expanded and StickyMD never frontmost; collapse after leaving | A collapsed sample fails even if the window expands again; a sampling gap >60ms is NOT_TESTED; leave onset bracket within 490–570ms; same resolution/completion limits as W03; no Spaces/mixed-DPI evidence |
+| W03 | Finder PID from AX remains unchanged, and StickyMD is never frontmost: from the first move onto the strip (the short early-leave dwell included) the frontmost app is read at most 20ms apart and with every window observation; short dwell cancellation; window movement onset and settled bounds | Pre-100ms observation; onset bracket within 90–170ms, sampled every 20ms; gaps >60ms or boundary overlap are NOT_TESTED; a front-app or completion sampling gap over 60ms (measured, not the 20ms target) is NOT_TESTED; completion within earliest bracket onset +140ms +70ms |
+| W04 | Top-band point held 850ms: every sample at the settled expanded bounds (±0.5pt) and StickyMD never frontmost; collapse after leaving | Samples aim at 20ms apart and are judged on measured gaps; a collapsed or partly retracted sample fails even if the window returns; a gap >60ms or a watch that cannot advance is NOT_TESTED; leave onset bracket within 490–570ms; same resolution/completion limits as W03; no Spaces/mixed-DPI evidence |
 | W07 | AX hide, `open` copied bundle; same owned PID alive, visible window and AX frontmost PID | Status item awaited in the AX tree up to 5 s, wait recorded; menu effects polled up to 2000ms, elapsed time recorded; does not prove all launch-service/translocation paths |
 | W08 | Exactly three AX menu items; show back at the same bounds and opacity, topmost layer/config, quit process and saved note | Status item awaited in the AX tree up to 5 s, wait recorded; menu effects polled up to 2000ms, elapsed time recorded; layer is a system fact, not a visual occlusion test |
 | W09 | Toolbar numeric field at layout-derived DIP offsets; CG alpha 40/70/100 and config | Alpha tolerance ±0.015; no full composited-pixel comparison |

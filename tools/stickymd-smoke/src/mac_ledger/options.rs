@@ -34,7 +34,8 @@ pub(super) const HELP: &str =
   --system is a file holding the target VM's sw_vers output, taken just before the run.
   --batch names the acceptance batch (1-64 of A-Z a-z 0-9 . _ -). I01-I03 and R03 count only
           results of the batch being planned; every other row ignores it.
-  --quote <words> refuses words that start with --; write --quote=<words> to pass them verbatim.";
+  --quote <words> refuses words that start with -- or are -h; write --quote=<words> to pass
+          such words verbatim.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Command {
@@ -140,7 +141,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
             Some(words) => words,
             None => rest
                 .next()
-                .filter(|v| !v.starts_with("--"))
+                .filter(|v| !v.starts_with("--") && v.as_str() != "-h")
                 .ok_or_else(|| format!("{key} needs a value"))?
                 .clone(),
         };

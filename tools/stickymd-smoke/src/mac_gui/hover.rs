@@ -1,6 +1,8 @@
-//! Bracketed hover/leave observations; no late sample can establish timely motion. The frontmost
-//! app is read with every observation while the pointer hovers, and the top band is watched for
-//! the whole dwell, so focus taken and given back, or a collapse undone in time, is caught.
+//! Bracketed hover/leave observations; no late sample can establish timely motion. From the first
+//! move onto the strip the frontmost app is read at most 20 ms apart (and with every window
+//! observation), and the top band is watched for the whole dwell against the settled position, so
+//! focus taken and given back, or a collapse or retraction undone in time, is caught; a measured
+//! gap over `MAX_GAP_MS` leaves the watch NOT_TESTED.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::{
     model::*,
@@ -10,18 +12,68 @@ use super::{
 /// The longest gap between two samples of a continuous watch; a longer one leaves it unobserved.
 const MAX_GAP_MS: u64 = 60;
 
-/// Whether the app became frontmost while watched: the first sample, in ms from the watch start.
+/// A bound on samples in one watch, so a backend whose clock stops cannot loop forever.
+const MAX_SAMPLES: usize = 1000;
+
+/// Whether the app became frontmost while watched: each sample is dated when the query returns,
+/// in ms from `start`; `first` is the first sample with the app in front, `max_gap` the largest
+/// measured distance between samples.
 struct Focus {
     app: u32,
+    start: u64,
     first: Option<u64>,
+    last: u64,
+    max_gap: u64,
 }
 
 impl Focus {
-    fn sample<B: Backend>(&mut self, d: &mut Driver<'_, B>, at: u64) -> Result<(), String> {
-        if self.first.is_none() && d.front()? == self.app {
+    fn new(app: u32, start: u64) -> Self {
+        Self {
+            app,
+            start,
+            first: None,
+            last: 0,
+            max_gap: 0,
+        }
+    }
+    fn sample<B: Backend>(&mut self, d: &mut Driver<'_, B>) -> Result<(), String> {
+        let front = d.front()?;
+        let at = d.backend.now() - self.start;
+        if self.first.is_none() && front == self.app {
             self.first = Some(at);
         }
+        self.max_gap = self.max_gap.max(at - self.last);
+        self.last = at;
         Ok(())
+    }
+    /// Reads the frontmost app for `ms`, waiting at most 20 ms between reads.
+    fn watch<B: Backend>(&mut self, d: &mut Driver<'_, B>, ms: u64) -> Result<(), String> {
+        let until = d.backend.now() + ms;
+        for _ in 0..MAX_SAMPLES {
+            self.sample(d)?;
+            let now = d.backend.now();
+            if now >= until {
+                return Ok(());
+            }
+            d.wait(20.min(until - now))?;
+        }
+        self.max_gap = u64::MAX;
+        Ok(())
+    }
+    fn verdict(&self) -> Verdict {
+        if self.first.is_some() {
+            Verdict::Fail
+        } else if self.max_gap > MAX_GAP_MS {
+            Verdict::NotTested
+        } else {
+            Verdict::Pass
+        }
+    }
+    fn detail(&self) -> String {
+        format!(
+            "StickyMD frontmost from {:?}ms; front read until {}ms, largest gap {}ms",
+            self.first, self.last, self.max_gap
+        )
     }
 }
 
@@ -42,8 +94,9 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
         format!("front={front}, app={}", d.pid),
     );
     let early_start = d.backend.now();
+    let mut focus = Focus::new(d.pid, early_start);
     d.op(Op::Move(strip))?;
-    d.wait(35)?;
+    focus.watch(d, 35)?;
     d.op(Op::Move(away))?;
     let early_dwell = d.backend.now() - early_start;
     if early_dwell >= 100 {
@@ -52,7 +105,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
             "scheduler delay prevented a sub-100ms dwell",
         );
     }
-    d.wait(350)?;
+    focus.watch(d, 350)?;
     let w = d.window()?;
     d.row.check(
         "early leave cancels",
@@ -61,7 +114,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
     );
     let start = d.backend.now();
     d.op(Op::Move(strip))?;
-    d.wait(70)?;
+    focus.watch(d, 70)?;
     let early = d.window()?;
     let early_elapsed = d.backend.now() - start;
     if early_elapsed < 100 {
@@ -76,10 +129,6 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
             "scheduler delay missed the observation window",
         );
     }
-    let mut focus = Focus {
-        app: d.pid,
-        first: None,
-    };
     let onset = observe_transition(
         d,
         start,
@@ -97,13 +146,16 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
         Some(&mut focus),
     )?;
     let after = d.front()?;
-    d.row.check(
+    let verdict = if !expanded(&w, s) || after != front {
+        Verdict::Fail
+    } else {
+        focus.verdict()
+    };
+    record(
+        d,
         "hover expands without focus",
-        expanded(&w, s) && after == front && focus.first.is_none(),
-        format!(
-            "front={front}->{after}; StickyMD frontmost from {:?}ms; {w:?}",
-            focus.first
-        ),
+        verdict,
+        format!("front={front}->{after}; {}; {w:?}", focus.detail()),
     );
     if band {
         let p = Point {
@@ -116,7 +168,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
             format!("{p:?}"),
         );
         d.op(Op::Move(p))?;
-        band_dwell(d, s)?;
+        band_dwell(d, w.bounds)?;
     }
     let leave = d.backend.now();
     d.op(Op::Move(away))?;
@@ -139,34 +191,42 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
     Ok(())
 }
 
-/// W04: with the pointer in the top band the window stays expanded, and never takes focus, for
-/// 850 ms, sampled at most `MAX_GAP_MS` apart; a collapse undone before the end still fails.
-fn band_dwell<B: Backend>(d: &mut Driver<'_, B>, s: Rect) -> Result<(), String> {
+/// W04: with the pointer in the top band the window stays at its settled position `rest`, and
+/// never takes focus, for 850 ms; samples are taken at most 20 ms apart and judged on their
+/// measured gaps. A collapse or a partial retraction undone before the end still fails.
+fn band_dwell<B: Backend>(d: &mut Driver<'_, B>, rest: Rect) -> Result<(), String> {
     const DWELL_MS: u64 = 850;
+    const TOLERANCE: f64 = 0.5;
     let start = d.backend.now();
-    let mut focus = Focus {
-        app: d.pid,
-        first: None,
+    let mut focus = Focus::new(d.pid, start);
+    let at_rest = |w: &Window| {
+        (w.bounds.origin.x - rest.origin.x).abs() <= TOLERANCE
+            && (w.bounds.origin.y - rest.origin.y).abs() <= TOLERANCE
+            && (w.bounds.size.width - rest.size.width).abs() <= TOLERANCE
+            && (w.bounds.size.height - rest.size.height).abs() <= TOLERANCE
     };
-    let (mut collapsed_at, mut gap, mut last, mut samples) = (None, 0, 0, 0);
-    let rest = loop {
+    let (mut moved_at, mut gap, mut last, mut samples, mut ended) = (None, 0, 0, 0, false);
+    let mut seen = None;
+    for _ in 0..MAX_SAMPLES {
         let w = d.window()?;
         let at = d.backend.now() - start;
-        focus.sample(d, at)?;
+        focus.sample(d)?;
         samples += 1;
-        if collapsed_at.is_none() && !expanded(&w, s) {
-            collapsed_at = Some(at);
+        if moved_at.is_none() && !at_rest(&w) {
+            moved_at = Some(at);
+            seen = Some(w.bounds);
         }
         gap = gap.max(at - last);
         last = at;
         if at >= DWELL_MS {
-            break w;
+            ended = true;
+            break;
         }
         d.wait(20.min(DWELL_MS - at))?;
-    };
-    let verdict = if collapsed_at.is_some() {
+    }
+    let verdict = if moved_at.is_some() {
         Verdict::Fail
-    } else if gap > MAX_GAP_MS {
+    } else if !ended || gap > MAX_GAP_MS {
         Verdict::NotTested
     } else {
         Verdict::Pass
@@ -176,13 +236,15 @@ fn band_dwell<B: Backend>(d: &mut Driver<'_, B>, s: Rect) -> Result<(), String> 
         "top band holds past 500ms",
         verdict,
         format!(
-            "{samples} samples over {last}ms, largest gap {gap}ms; collapsed from {collapsed_at:?}ms; rest {rest:?}"
+            "{samples} samples over {last}ms, largest gap {gap}ms, watch ended {ended}; left the settled {rest:?} at {moved_at:?}ms ({seen:?})"
         ),
     );
-    d.row.check(
+    let verdict = focus.verdict();
+    record(
+        d,
         "top band dwell keeps focus away",
-        focus.first.is_none(),
-        format!("StickyMD frontmost from {:?}ms", focus.first),
+        verdict,
+        focus.detail(),
     );
     Ok(())
 }
@@ -211,7 +273,7 @@ fn observe_transition<B: Backend>(
         let w = d.window()?;
         let observed = d.backend.now() - start;
         if let Some(focus) = focus.as_deref_mut() {
-            focus.sample(d, observed)?;
+            focus.sample(d)?;
         }
         if !old_state(&w) {
             let bracket = old.map(|old_ms| Bracket {
@@ -275,7 +337,7 @@ fn completion<B: Backend>(
         let w = d.window()?;
         let observed = d.backend.now() - start;
         if let Some(focus) = focus.as_deref_mut() {
-            focus.sample(d, observed)?;
+            focus.sample(d)?;
         }
         samples.push((observed, w.bounds));
         if observed >= end {
@@ -284,14 +346,23 @@ fn completion<B: Backend>(
         d.wait(20.min(end - observed))?;
     };
     let (first_at, before) = rest_from(&samples).ok_or("no completion samples")?;
-    let verdict = completion_verdict(settled(&rest), first_at, before, deadline);
+    // A PASS needs the completion watched without a long gap between window samples.
+    let gap = samples
+        .windows(2)
+        .map(|pair| pair[1].0 - pair[0].0)
+        .max()
+        .unwrap_or(0);
+    let verdict = match completion_verdict(settled(&rest), first_at, before, deadline) {
+        Verdict::Pass if gap > MAX_GAP_MS => Verdict::NotTested,
+        verdict => verdict,
+    };
     record(
         d,
         name,
         verdict,
         format!(
             "onset={onset:?}; at rest from {first_at}ms (sample before {before:?}ms); \
-             deadline={deadline}ms; {} samples; rest {rest:?}",
+             deadline={deadline}ms; {} samples, largest gap {gap}ms; rest {rest:?}",
             samples.len()
         ),
     );

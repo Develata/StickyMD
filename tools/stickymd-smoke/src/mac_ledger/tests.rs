@@ -129,10 +129,22 @@ fn the_same_inputs_reuse_a_pass_for_other_bytes_and_no_inputs_reuse_nothing() {
     assert_eq!(result.unconfirmed, ["W06"]);
 }
 
-/// A FAIL or NOT_TESTED after the latest PASS stops its reuse, with the reason; a PASS after the
-/// failure is reused; a failure under another identity changes nothing.
+fn started(row: &str, digest: char, run_unix: Option<u64>, verdict: &str) -> Record {
+    let mut record = run(row, verdict, identity(), digest);
+    if let Record::Automated {
+        run_unix: start, ..
+    } = &mut record
+    {
+        *start = run_unix;
+    }
+    record
+}
+
+/// Any FAIL or NOT_TESTED of the row under the identity, before or after the PASS, stops its
+/// reuse with the reason: wall-clock starts cannot prove the order, so it is not relied on. A
+/// failure under another identity changes nothing.
 #[test]
-fn a_later_non_pass_stops_the_reuse_of_the_latest_pass() {
+fn any_non_pass_under_the_identity_stops_reuse_whatever_the_order() {
     for later in ["FAIL", "NOT_TESTED"] {
         let records = [
             run("W02", "PASS", identity(), 'e'),
@@ -144,11 +156,15 @@ fn a_later_non_pass_stops_the_reuse_of_the_latest_pass() {
         assert_eq!(result.rerun.len(), 1);
     }
     let records = [
-        run("W02", "FAIL", identity(), 'f'),
-        run("W02", "PASS", identity(), 'e'),
+        started("W02", 'f', Some(200), "FAIL"),
+        started("W02", 'e', Some(100), "PASS"),
     ];
     let result = plan(&records, &["W02"], &[], &identity(), &built(), None);
-    assert_eq!(result.reused[0].evidence_sha256, hex('e'));
+    assert!(
+        result.reused.is_empty(),
+        "a PASS imported after a later failure is not reused"
+    );
+    assert_eq!(result.rerun.len(), 1);
     let mut other = identity();
     other.driver = hex('f');
     let records = [
@@ -302,12 +318,15 @@ fn records_survive_a_round_trip_and_bad_lines_reject_the_ledger() {
     assert!(bad("{\"kind\":\"other\"}".into()));
     assert!(bad("not json".into()));
     assert!(bad(run("W09", "BANANA", identity(), '7').line()));
+    // A digest in capitals is read, lowercased; the ledger's bytes stay as written.
     let mut upper = identity();
     upper.driver = hex('D');
-    assert!(
-        bad(run("W09", "PASS", upper, '7').line()),
-        "lowercase digests only"
-    );
+    let line = run("W09", "PASS", upper, '7').line();
+    let read = read_all(&format!("{text}{line}\n")).unwrap();
+    assert!(matches!(
+        read.last(),
+        Some(Record::Automated { identity, .. }) if identity.driver == hex('d')
+    ));
     assert!(bad(manual("W06", Some("not-a-hash".into())).line()));
     assert!(
         bad(in_batch(run("W09", "PASS", identity(), '7'), "no spaces").line()),
@@ -349,47 +368,14 @@ fn records_survive_a_round_trip_and_bad_lines_reject_the_ledger() {
     assert!(read_all(text.trim_end()).is_ok());
 }
 
-fn started(row: &str, digest: char, run_unix: Option<u64>) -> Record {
-    let mut record = run(row, "PASS", identity(), digest);
-    if let Record::Automated {
-        run_unix: start, ..
-    } = &mut record
-    {
-        *start = run_unix;
-    }
-    record
-}
-
-/// For one row and identity, runs follow in the order they started, so a replay of an old run,
-/// even rewritten into other bytes, cannot be recorded after a newer result.
+/// The ledger takes runs in any order: only the same evidence for a row twice is refused.
 #[test]
-fn runs_of_a_row_are_recorded_in_the_order_they_started() {
-    let earlier = [started("W09", 'e', Some(100))];
-    assert!(consistent_with(&earlier, &started("W09", 'f', Some(101))).is_ok());
-    assert!(
-        consistent_with(&earlier, &started("W09", 'f', Some(100))).is_err(),
-        "same start"
-    );
-    assert!(
-        consistent_with(&earlier, &started("W09", 'f', Some(99))).is_err(),
-        "older run"
-    );
-    // Two rows of one run share its start.
-    assert!(consistent_with(&earlier, &started("W02", 'e', Some(100))).is_ok());
-    // Records without a start cannot be ordered against ones with it, either way.
-    let legacy = [started("W09", 'e', None)];
-    assert!(consistent_with(&legacy, &started("W09", 'f', Some(101))).is_err());
-    assert!(consistent_with(&earlier, &started("W09", 'f', None)).is_err());
-    assert!(
-        consistent_with(&legacy, &started("W09", 'f', None)).is_ok(),
-        "history stays readable"
-    );
-    // Another identity is another sequence.
-    let mut other = started("W09", 'f', Some(50));
-    if let Record::Automated { identity, .. } = &mut other {
-        identity.driver = hex('7');
-    }
-    assert!(consistent_with(&earlier, &other).is_ok());
+fn runs_are_recorded_in_any_order_but_never_twice() {
+    let earlier = [started("W09", 'e', Some(200), "PASS")];
+    assert!(consistent_with(&earlier, &started("W09", 'f', Some(100), "FAIL")).is_ok());
+    assert!(consistent_with(&earlier, &started("W09", 'f', None, "PASS")).is_ok());
+    assert!(consistent_with(&earlier, &started("W09", 'e', Some(300), "PASS")).is_err());
+    assert!(consistent_with(&earlier, &started("W02", 'e', Some(200), "PASS")).is_ok());
 }
 
 /// A revocation recorded before its target would otherwise reach back to it.
@@ -505,13 +491,13 @@ fn one_image_digest_names_one_system_across_the_whole_ledger() {
 fn the_matrix_rows_come_from_the_mode_column() {
     let matrix = "| ID | Requirement | Mode | Evidence | Status |\n\
                   | --- | --- | --- | --- | --- |\n\
-                  | P16-W06 | a | Manual | e | MANUAL PASS |\n\
+                  | P16-W06 | a | Manual | receipt: r1 | MANUAL PASS |\n\
                   | P16-W13 | b | Automated | e | AUTOMATED PASS |\n\
                   | P16-W16 | c | — | e | USER 豁免 |\n\
                   | P16-I01 | d | Manual | e | NOT TESTED |\n\
                   | P16-V04 | f | Review | e | NOT TESTED |\n\
                   | P16-W01 | g | Agent | e | NOT TESTED |\n\
-                  | P16-V05 | h | Manual | Windows report | MANUAL PASS |\n";
+                  | P16-V05 | h | Manual | receipt: Windows report | MANUAL PASS |\n";
     assert_eq!(
         matrix_rows(matrix).unwrap(),
         Rows {
@@ -544,13 +530,27 @@ fn the_matrix_rows_come_from_the_mode_column() {
     // Prose may name a row anywhere; only table rows count.
     assert_eq!(
         matrix_rows(&format!(
-            "{matrix}Prose naming P16-W02 and `P16-R03` is not a row.\n"
+            "{matrix}\nProse naming P16-W02 and `P16-R03` is not a row.\n"
         ))
         .unwrap()
         .manual,
         strings(&["W06", "I01"])
     );
     assert!(matrix_rows("no rows").is_err());
+    // The governance parser decides what a row is: a lower-case id or a row the matrix rules
+    // refuse is an error here too.
+    assert!(
+        matrix_rows(&format!(
+            "{matrix}| P16-w03 | x | Manual | e | NOT TESTED |\n"
+        ))
+        .is_err()
+    );
+    assert!(
+        matrix_rows(&format!(
+            "{matrix}| P16-W03 | x | Manual | e | MANUAL PASS |\n"
+        ))
+        .is_err()
+    );
 }
 
 #[test]
@@ -609,6 +609,14 @@ fn each_command_requires_its_options_and_refuses_others() {
     // A separate value that looks like an option is refused, so a missing quote cannot swallow
     // the next option.
     assert!(parse(&args("revoke --rows W02 --app a.app --quote --help")).is_err());
+    assert!(parse(&args("revoke --rows W02 --app a.app --quote -h")).is_err());
+    assert_eq!(
+        parse(&args("revoke --rows W02 --app a.app --quote=-h"))
+            .unwrap()
+            .quote
+            .as_deref(),
+        Some("-h")
+    );
     assert!(
         parse(&args("receipt --app a.app --rows W06 --quote=q --quote=r")).is_err(),
         "once"

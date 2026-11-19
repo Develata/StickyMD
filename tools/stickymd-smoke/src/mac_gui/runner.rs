@@ -112,11 +112,15 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     save(&out, &environment, &hash, &rows, false)?;
     events::install_cancel()?;
     let mut input = Injection::new(Events::new());
+    // A run cut short (cancelled, or stopped after a panic or a failed cleanup) is never marked
+    // finished: its unstarted rows would read as results (plan 11 #phase-16-macos-host).
+    let mut cut_short = false;
     for (index, id) in ids.iter().enumerate() {
         let mut row = Row::new(id);
         if let Some(reason) = scenarios::skipped(id) {
             row.skip("deferred", reason);
         } else if let Err(reason) = input.require_running().and_then(|()| events::running()) {
+            cut_short = true;
             row.skip("shared stop", &reason);
         } else {
             println!("{id}: isolated VM scenario starting");
@@ -143,7 +147,13 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         rows[index] = row;
         save(&out, &environment, &hash, &rows, false)?;
     }
-    save(&out, &environment, &hash, &rows, true)?;
+    cut_short |= input.stopped.is_some() || events::running().is_err();
+    save(&out, &environment, &hash, &rows, !cut_short)?;
+    if cut_short {
+        println!(
+            "the run was cut short; its evidence is not marked finished and cannot be recorded"
+        );
+    }
     println!("Evidence: {}", out.join("mac-gui.json").display());
     let count = |verdict| {
         rows.iter()

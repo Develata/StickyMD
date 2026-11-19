@@ -128,9 +128,21 @@ const FORBIDDEN_PACKAGES: &[&str] = &[
 
 #[derive(Debug)]
 struct MatrixRow {
+    id: String,
     line: usize,
     mode: String,
     status: String,
+}
+
+/// The rows of the Phase 16 matrix as governance reads and checks them, `(id, mode)` in document
+/// order; the macOS ledger plans from these, so both read one table the same way.
+pub(crate) fn phase16_modes(content: &str) -> Result<Vec<(String, String)>, String> {
+    Ok(
+        matrix_rows(content, Path::new("docs/acceptance-cases/phase-16.md"))?
+            .into_iter()
+            .map(|row| (row.id, row.mode))
+            .collect(),
+    )
 }
 
 pub(crate) fn find_repository_root(start: &Path) -> Result<PathBuf, String> {
@@ -1222,6 +1234,7 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
             ));
         }
         rows.push(MatrixRow {
+            id: row.id.to_owned(),
             line: row.line,
             mode: mode.to_owned(),
             status: status.to_owned(),

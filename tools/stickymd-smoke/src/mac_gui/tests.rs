@@ -322,6 +322,8 @@ struct HoverBackend {
     flash_focus: Option<(u64, u64)>,
     /// Since the pointer entered: when the window collapses, then expands again.
     dip: Option<(u64, u64)>,
+    /// Where the window sits during the dip: fully collapsed, or only partly retracted.
+    dip_y: f64,
 }
 impl HoverBackend {
     fn new() -> Self {
@@ -336,6 +338,7 @@ impl HoverBackend {
             short_of_rest: 0,
             flash_focus: None,
             dip: None,
+            dip_y: -478.0,
         }
     }
     fn within(&self, range: Option<(u64, u64)>) -> bool {
@@ -361,7 +364,7 @@ impl Backend for HoverBackend {
                 Value::Unit
             }
             Op::Window => Value::Window(if self.within(self.dip) {
-                window(rect(460.0, -478.0, 520.0, 480.0), 27)
+                window(rect(460.0, self.dip_y, 520.0, 480.0), 27)
             } else if self
                 .entered
                 .is_some_and(|t| (self.expand_at..self.expand_at + 140).contains(&(self.now - t)))
@@ -462,7 +465,18 @@ fn hover_catches_focus_taken_back_and_a_collapse_undone_in_time() {
     dip.dip = Some((900, 960));
     let row = hover_row(&mut dip, "W04");
     assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
-    assert!(row.json().contains("collapsed from Some("));
+    assert!(row.json().contains("left the settled"));
+    // Focus taken during the early-leave dwell, before any window observation of the hover.
+    let mut early_flash = HoverBackend::new();
+    early_flash.flash_focus = Some((5, 30));
+    let row = hover_row(&mut early_flash, "W03");
+    assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+    // A partial retraction that never leaves the screen still leaves the settled position.
+    let mut partial = HoverBackend::new();
+    partial.dip = Some((900, 960));
+    partial.dip_y = 12.0;
+    let row = hover_row(&mut partial, "W04");
+    assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
     // The same collapse outside the dwell, in W03 which has none, changes nothing.
     let mut outside = HoverBackend::new();
     outside.dip = Some((5000, 5060));
