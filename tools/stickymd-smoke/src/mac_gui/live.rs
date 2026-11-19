@@ -109,7 +109,7 @@ impl Live<'_> {
             if ax::front().is_ok_and(|front| front == pid) {
                 self.input.chord(&[53])?;
             }
-            Value::Control(super::hold::appeared(&before, &after), text)
+            Value::Control(super::hold::appeared(&before, &after), pid, text)
         } else {
             Value::Text("the TextEdit control document was not frontmost and focused".into())
         };

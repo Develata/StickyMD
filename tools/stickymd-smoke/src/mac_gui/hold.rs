@@ -2,10 +2,11 @@
 //! A posted key is not repeated by the system, so the driver injects the repeats itself (key-downs
 //! flagged as automatic repeats; USER 2026-11-19); the repeat rate is therefore the driver's, and
 //! "repeats at the system's rate" is not shown. The same input first goes to a TextEdit control:
-//! the accent menu must appear there (a new on-screen window), or the input does not exercise the
-//! press-and-hold path and nothing about StickyMD is judged. In StickyMD no window of that owner
-//! may appear, and the note must gain only the held letter, at least twice, then the digit typed
-//! after it (a digit would pick an accent if the menu were open).
+//! the accent menu must appear there as a new on-screen window of TextEdit's own process (the menu
+//! is drawn in-process: macOS 27.2 VM), or the input does not exercise the press-and-hold path
+//! and nothing about StickyMD is judged. In StickyMD no new window of its own process may appear,
+//! and the note must gain only the held letter, at least twice, then the digit typed after it (a
+//! digit would pick an accent if the menu were open).
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::{
     model::{Row, Verdict},
@@ -38,16 +39,16 @@ fn record(row: &mut Row, name: &str, verdict: Verdict, detail: String) {
     }
 }
 
-/// The I03 checks: `control` the windows that appeared in TextEdit and its text after the hold;
-/// `product` the windows that appeared while StickyMD held the key, and `added` what the note
-/// gained (the held letter and the digit after it).
+/// The I03 checks: `control` the windows that appeared while TextEdit (PID `control.1`) held the
+/// key, and its text after; `product` the windows that appeared while StickyMD (PID `product.1`)
+/// held it; `added` what the note gained (the held letter and the digit after it).
 pub(super) fn judge(
-    control: (&[OnScreen], &str),
-    product: &[OnScreen],
+    control: (&[OnScreen], u32, &str),
+    product: (&[OnScreen], u32),
     added: &str,
     row: &mut Row,
 ) {
-    let owners: Vec<&str> = control.0.iter().map(|w| w.2.as_str()).collect();
+    let owners: Vec<&OnScreen> = control.0.iter().filter(|w| w.1 == control.1).collect();
     let checks = [
         "no accent menu while held",
         "held key repeats without stray characters",
@@ -57,21 +58,18 @@ pub(super) fn judge(
             row.skip(
                 name,
                 &format!(
-                    "the injected hold opened no accent menu in TextEdit (text {:?}): the input \
-                     does not exercise press-and-hold",
-                    control.1
+                    "the injected hold opened no accent menu in TextEdit (new windows {:?}, text \
+                     {:?}): the input does not exercise press-and-hold",
+                    control.0, control.2
                 ),
             );
         }
         return;
     }
-    let menu: Vec<_> = product
-        .iter()
-        .filter(|w| owners.contains(&w.2.as_str()))
-        .collect();
+    let menu: Vec<_> = product.0.iter().filter(|w| w.1 == product.1).collect();
     let verdict = if !menu.is_empty() {
         Verdict::Fail
-    } else if !product.is_empty() {
+    } else if !product.0.is_empty() {
         // Some other window appeared: the scene changed under the check.
         Verdict::NotTested
     } else {
@@ -82,8 +80,9 @@ pub(super) fn judge(
         checks[0],
         verdict,
         format!(
-            "TextEdit control: windows {:?}, text {:?}; StickyMD: windows {product:?}",
-            control.0, control.1
+            "TextEdit control (PID {}): menu windows {owners:?}, text {:?}; StickyMD (PID {}): new \
+             windows {:?}",
+            control.1, control.2, product.1, product.0
         ),
     );
     let held = added.trim_end_matches('2');
@@ -111,8 +110,8 @@ fn windows<B: Backend>(d: &mut Driver<'_, B>) -> Result<Vec<OnScreen>, String> {
 }
 
 pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
-    let (control, text) = match d.op(Op::Control)? {
-        Value::Control(windows, text) => (windows, text),
+    let (control, control_pid, text) = match d.op(Op::Control)? {
+        Value::Control(windows, pid, text) => (windows, pid, text),
         Value::Text(reason) => {
             d.row.skip("no accent menu while held", &reason);
             d.row
@@ -131,6 +130,12 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     d.op(Op::Chord(vec![KEY_2]))?;
     let note = d.text(Op::Note)?;
     let added = note.strip_prefix(&before_note).unwrap_or(&note).to_owned();
-    judge((&control, &text), &appeared(&before, &after), &added, d.row);
+    let pid = d.pid;
+    judge(
+        (&control, control_pid, &text),
+        (&appeared(&before, &after), pid),
+        &added,
+        d.row,
+    );
     Ok(())
 }

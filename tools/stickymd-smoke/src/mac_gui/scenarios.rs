@@ -65,7 +65,7 @@ pub(super) enum Value {
     Image(super::pixels::Image),
     Counters([u64; 4]),
     Windows(Vec<super::hold::OnScreen>),
-    Control(Vec<super::hold::OnScreen>, String),
+    Control(Vec<super::hold::OnScreen>, u32, String),
     Time(u64),
     Text(String),
     Window(Window),

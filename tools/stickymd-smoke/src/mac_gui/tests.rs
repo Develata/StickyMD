@@ -1492,26 +1492,30 @@ fn idle_counters_need_live_counters_and_quiet_snapshots() {
     );
 }
 
-/// I03: the control must show the accent menu; then a menu in StickyMD, a stray or missing
-/// character, or no repeat fails, and a foreign window cannot be judged.
+/// I03: the control must show the accent menu (a new window of TextEdit's own process); then a
+/// new window of StickyMD's own process, a stray or missing character, or no repeat fails, and a
+/// foreign window cannot be judged.
 #[test]
 fn press_and_hold_judge_refuses_bad_samples() {
     use super::hold::{appeared, judge};
-    let panel = vec![(901, 330, "TextInputMenuAgent".to_string())];
+    let (textedit, sticky) = (801, 42);
+    let panel = vec![(67, textedit, "TextEdit".to_string())];
     let verdicts = |control: &[(u32, u32, String)], product: &[(u32, u32, String)], added: &str| {
         let mut row = Row::new("I03");
-        judge((control, "aa"), product, added, &mut row);
+        judge((control, textedit, "a"), (product, sticky), added, &mut row);
         row.checks.iter().map(|c| c.verdict).collect::<Vec<_>>()
     };
     let aaa = "aaaaaaaaaaaaaaa2";
     assert_eq!(verdicts(&panel, &[], aaa), [Verdict::Pass, Verdict::Pass]);
-    // The control did not open the menu: nothing about StickyMD is judged.
+    // The control opened no menu (none, or only another process's window): nothing is judged.
     assert_eq!(
         verdicts(&[], &[], aaa),
         [Verdict::NotTested, Verdict::NotTested]
     );
-    // A menu window of the same owner in StickyMD; a foreign window; stray, missing, or no repeat.
-    let menu = vec![(902, 330, "TextInputMenuAgent".to_string())];
+    let elsewhere = vec![(68, 330, "NotificationCenter".to_string())];
+    assert_eq!(verdicts(&elsewhere, &[], aaa)[0], Verdict::NotTested);
+    // A new window of StickyMD's own process is its accent menu; another process's cannot tell.
+    let menu = vec![(902, sticky, "StickyMD".to_string())];
     assert_eq!(verdicts(&panel, &menu, aaa)[0], Verdict::Fail);
     let other = vec![(903, 77, "NotificationCenter".to_string())];
     assert_eq!(verdicts(&panel, &other, aaa)[0], Verdict::NotTested);
