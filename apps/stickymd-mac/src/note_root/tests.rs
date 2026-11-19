@@ -409,7 +409,10 @@ fn an_unwritable_application_support_keeps_the_unwritable_prefix() {
     let result = world.resolve(&executable);
     fs::set_permissions(world.support(), fs::Permissions::from_mode(0o755)).unwrap();
     let error = result.unwrap_err();
-    assert!(matches!(error, NoteRootError::NotWritable { .. }), "{error:?}");
+    assert!(
+        matches!(error, NoteRootError::NotWritable { .. }),
+        "{error:?}"
+    );
     let message = error.startup_message();
     assert!(message.starts_with("当前目录不可写："), "{message}");
     assert!(message.contains("StickyMD"), "{message}");
