@@ -1,9 +1,9 @@
 //! Headless tests of the ledger records, the reuse rule and the parser; no file is written.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::{
-    decide::{check_system, manual_rows, plan},
+    decide::{Rows, check_system, matrix_rows, plan},
     options::{Command, parse},
-    record::{Built, Identity, Record, Revoked, from_evidence, read_all},
+    record::{Built, Identity, Record, Revoked, consistent_with, from_evidence, read_all},
 };
 
 fn hex(c: char) -> String {
@@ -24,18 +24,30 @@ fn built() -> Built {
     }
 }
 fn automated(row: &str, verdict: &str, identity: Identity) -> Record {
-    built_as(row, verdict, identity, built())
+    run(row, verdict, identity, 'e')
 }
-fn built_as(row: &str, verdict: &str, identity: Identity, built: Built) -> Record {
+/// A record from the evidence whose digest is `digest` repeated.
+fn run(row: &str, verdict: &str, identity: Identity, digest: char) -> Record {
     Record::Automated {
         row: row.into(),
         verdict: verdict.into(),
         identity,
-        built,
-        evidence: format!("/runs/{row}.json"),
-        evidence_sha256: hex('e'),
+        built: built(),
+        evidence: format!("/runs/{row}-{digest}.json"),
+        evidence_sha256: hex(digest),
+        run_unix: None,
+        batch: None,
         recorded_unix: 1,
     }
+}
+fn in_batch(mut record: Record, name: &str) -> Record {
+    match &mut record {
+        Record::Automated { batch, .. } | Record::Manual { batch, .. } => {
+            *batch = Some(name.into());
+        }
+        Record::Revocation { .. } => unreachable!("a revocation has no batch"),
+    }
+    record
 }
 fn manual(row: &str, inputs: Option<String>) -> Record {
     Record::Manual {
@@ -44,8 +56,20 @@ fn manual(row: &str, inputs: Option<String>) -> Record {
         app_executable: hex('a'),
         environment: "USER desktop, recorded on macOS 27.2".into(),
         quote: "都没什么问题".into(),
+        batch: None,
         recorded_unix: 2,
     }
+}
+fn revoke(row: &str, revoked: Revoked) -> Record {
+    Record::Revocation {
+        row: row.into(),
+        revoked,
+        quote: "看录像发现不对".into(),
+        recorded_unix: 3,
+    }
+}
+fn strings(rows: &[&str]) -> Vec<String> {
+    rows.iter().map(|r| (*r).to_owned()).collect()
 }
 
 #[test]
@@ -65,13 +89,14 @@ fn only_a_pass_under_the_same_identity_is_reused() {
         automated("W11", "PASS", changed(|i| i.system = "macOS 27.3".into())),
     ];
     let rows = ["W02", "W03", "W04", "W07", "W08", "W09", "W11", "K02"];
-    let result = plan(&records, &rows, &[], &identity(), &built());
+    let result = plan(&records, &rows, &[], &identity(), &built(), None);
     assert_eq!(result.reused.len(), 1);
     assert_eq!(result.reused[0].row, "W02");
     assert_eq!(
         result.run,
         ["W03", "W04", "W07", "W08", "W09", "W11", "K02"]
     );
+    assert!(result.rerun.is_empty(), "no PASS was set aside");
 }
 
 /// The anchor is the product inputs, not the bytes (plan 11 #phase-16-macos-host): a PASS for
@@ -79,169 +104,176 @@ fn only_a_pass_under_the_same_identity_is_reused() {
 /// without inputs reuses nothing.
 #[test]
 fn the_same_inputs_reuse_a_pass_for_other_bytes_and_no_inputs_reuse_nothing() {
-    let other_bytes = Built {
-        executable: hex('9'),
-        bundle: hex('8'),
-    };
+    let mut other_bytes = automated("W02", "PASS", identity());
+    if let Record::Automated { built, .. } = &mut other_bytes {
+        built.executable = hex('9');
+    }
     let legacy = Identity {
         inputs: None,
         ..identity()
     };
-    let records = [
-        built_as("W02", "PASS", identity(), other_bytes),
-        automated("W03", "PASS", legacy.clone()),
-    ];
-    let result = plan(&records, &["W02", "W03"], &[], &identity(), &built());
+    let records = [other_bytes, automated("W03", "PASS", legacy.clone())];
+    let result = plan(&records, &["W02", "W03"], &[], &identity(), &built(), None);
     assert_eq!(result.reused.len(), 1);
-    assert_eq!(result.reused[0].row, "W02");
     assert!(result.reused[0].other_bytes);
     assert_eq!(result.run, ["W03"]);
-    let same_bytes = [automated("W02", "PASS", identity())];
-    assert!(!plan(&same_bytes, &["W02"], &[], &identity(), &built()).reused[0].other_bytes);
-    // An app built without its inputs matches nothing, a legacy record included.
     let result = plan(
         &records,
         &["W02", "W03"],
-        &["W06".into()],
+        &strings(&["W06"]),
         &legacy,
         &built(),
+        None,
     );
     assert!(result.reused.is_empty());
     assert_eq!(result.unconfirmed, ["W06"]);
 }
 
-fn revoke(row: &str, revoked: Revoked) -> Record {
-    Record::Revocation {
-        row: row.into(),
-        revoked,
-        quote: "看录像发现不对".into(),
-        recorded_unix: 3,
-    }
-}
-
-/// A FAIL or NOT_TESTED after the latest PASS stops its reuse; the row runs again and the reason
-/// is given (plan 11 #phase-16-macos-host). A PASS after the failure is reused.
+/// A FAIL or NOT_TESTED after the latest PASS stops its reuse, with the reason; a PASS after the
+/// failure is reused; a failure under another identity changes nothing.
 #[test]
 fn a_later_non_pass_stops_the_reuse_of_the_latest_pass() {
     for later in ["FAIL", "NOT_TESTED"] {
         let records = [
-            automated("W02", "PASS", identity()),
-            automated("W02", later, identity()),
+            run("W02", "PASS", identity(), 'e'),
+            run("W02", later, identity(), 'f'),
         ];
-        let result = plan(&records, &["W02"], &[], &identity(), &built());
+        let result = plan(&records, &["W02"], &[], &identity(), &built(), None);
         assert!(result.reused.is_empty(), "{later}");
         assert_eq!(result.run, ["W02"]);
         assert_eq!(result.rerun.len(), 1);
     }
     let records = [
-        automated("W02", "FAIL", identity()),
-        automated("W02", "PASS", identity()),
+        run("W02", "FAIL", identity(), 'f'),
+        run("W02", "PASS", identity(), 'e'),
     ];
-    let result = plan(&records, &["W02"], &[], &identity(), &built());
-    assert_eq!(result.reused[0].row, "W02");
-    assert!(result.run.is_empty() && result.rerun.is_empty());
-    // A non-PASS under another identity does not touch this one.
+    let result = plan(&records, &["W02"], &[], &identity(), &built(), None);
+    assert_eq!(result.reused[0].evidence_sha256, hex('e'));
     let mut other = identity();
     other.driver = hex('f');
     let records = [
-        automated("W02", "PASS", identity()),
-        automated("W02", "FAIL", other),
+        run("W02", "PASS", identity(), 'e'),
+        run("W02", "FAIL", other, 'f'),
     ];
-    assert_eq!(
-        plan(&records, &["W02"], &[], &identity(), &built())
-            .reused
-            .len(),
-        1
-    );
+    let result = plan(&records, &["W02"], &[], &identity(), &built(), None);
+    assert_eq!(result.reused.len(), 1);
 }
 
-/// A revoked PASS, and every other PASS of the row under that identity, is never reused; a
-/// revocation of another digest or row changes nothing.
+/// A revoked latest PASS is not reused and an older PASS is not fallen back to; a real rerun
+/// with other evidence after the revocation is reused again.
 #[test]
-fn a_revoked_pass_is_not_reused() {
-    let pass = automated("W02", "PASS", identity());
-    let digest = hex('e');
+fn a_revocation_withdraws_its_pass_and_a_new_run_restores_reuse() {
     let records = [
-        pass.clone(),
-        revoke("W02", Revoked::Evidence(digest.clone())),
+        run("W02", "PASS", identity(), 'c'),
+        run("W02", "PASS", identity(), 'e'),
+        revoke("W02", Revoked::Evidence(hex('e'))),
     ];
-    let result = plan(&records, &["W02"], &[], &identity(), &built());
-    assert!(result.reused.is_empty());
+    let result = plan(&records, &["W02"], &[], &identity(), &built(), None);
+    assert!(result.reused.is_empty(), "no fallback to the older PASS");
     assert_eq!(result.rerun.len(), 1);
-    let records = [
-        pass.clone(),
-        revoke("W03", Revoked::Evidence(digest)),
-        revoke("W02", Revoked::Evidence(hex('c'))),
+    let rerun = [
+        run("W02", "PASS", identity(), 'e'),
+        revoke("W02", Revoked::Evidence(hex('e'))),
+        run("W02", "PASS", identity(), 'f'),
     ];
-    assert_eq!(
-        plan(&records, &["W02"], &[], &identity(), &built())
-            .reused
-            .len(),
-        1
-    );
+    let result = plan(&rerun, &["W02"], &[], &identity(), &built(), None);
+    assert_eq!(result.reused[0].evidence_sha256, hex('f'));
+    // A revocation of another row or digest changes nothing.
+    let records = [
+        run("W02", "PASS", identity(), 'e'),
+        run("W03", "PASS", identity(), 'e'),
+        revoke("W03", Revoked::Evidence(hex('e'))),
+    ];
+    let result = plan(&records, &["W02"], &[], &identity(), &built(), None);
+    assert_eq!(result.reused.len(), 1);
 }
 
-/// I01–I03 and R03 stand for one acceptance batch: a PASS of them is never reused.
+/// The never-reused rows count only results of the batch being planned: none without a batch, a
+/// retry within the batch, and nothing from another batch under the same identity.
 #[test]
-fn the_never_reused_rows_always_run() {
+fn the_never_reused_rows_count_only_their_batch() {
     let records = [
-        automated("R03", "PASS", identity()),
-        automated("I03", "PASS", identity()),
+        in_batch(run("R03", "PASS", identity(), 'e'), "b1"),
+        in_batch(manual("I02", Some(hex('1'))), "b1"),
     ];
-    let result = plan(&records, &["R03", "I03", "K02"], &[], &identity(), &built());
+    let manual_rows = strings(&["I02"]);
+    let none = plan(
+        &records,
+        &["R03"],
+        &manual_rows,
+        &identity(),
+        &built(),
+        None,
+    );
+    assert!(none.reused.is_empty() && none.confirmed.is_empty());
+    assert_eq!(none.rerun.len(), 1, "the plan says why without a batch");
+    let same = plan(
+        &records,
+        &["R03"],
+        &manual_rows,
+        &identity(),
+        &built(),
+        Some("b1"),
+    );
+    assert_eq!(same.reused.len(), 1);
+    assert_eq!(same.confirmed.len(), 1);
+    let next = plan(
+        &records,
+        &["R03"],
+        &manual_rows,
+        &identity(),
+        &built(),
+        Some("b2"),
+    );
+    assert!(next.reused.is_empty() && next.confirmed.is_empty());
+    assert!(next.rerun.is_empty(), "nothing of b2 exists yet");
+    // An unbatched record of a never-reused row counts for no batch.
+    let unbatched = [run("I03", "PASS", identity(), 'e')];
+    let result = plan(&unbatched, &["I03"], &[], &identity(), &built(), Some("b1"));
     assert!(result.reused.is_empty());
-    assert_eq!(result.run, ["R03", "I03", "K02"]);
-    assert_eq!(result.rerun.len(), 2);
+    // Other rows ignore the batch.
+    let other = [run("W02", "PASS", identity(), 'e')];
+    let result = plan(&other, &["W02"], &[], &identity(), &built(), Some("b9"));
+    assert_eq!(result.reused.len(), 1);
 }
 
 /// A revocation withdraws the receipts recorded before it; a receipt recorded after it holds.
 #[test]
 fn a_revocation_withdraws_earlier_receipts_only() {
-    let rows: Vec<String> = vec!["W06".into()];
+    let rows = strings(&["W06"]);
     let withdrawn = [
         manual("W06", Some(hex('1'))),
         revoke("W06", Revoked::Inputs(hex('1'))),
     ];
-    let result = plan(&withdrawn, &[], &rows, &identity(), &built());
+    let result = plan(&withdrawn, &[], &rows, &identity(), &built(), None);
     assert_eq!(result.unconfirmed, ["W06"]);
     let renewed = [
         manual("W06", Some(hex('1'))),
         revoke("W06", Revoked::Inputs(hex('1'))),
         manual("W06", Some(hex('1'))),
     ];
-    assert_eq!(
-        plan(&renewed, &[], &rows, &identity(), &built())
-            .confirmed
-            .len(),
-        1
-    );
-    let elsewhere = [
-        manual("W06", Some(hex('1'))),
-        revoke("W06", Revoked::Inputs(hex('2'))),
-        revoke("W11", Revoked::Inputs(hex('1'))),
-    ];
-    assert_eq!(
-        plan(&elsewhere, &[], &rows, &identity(), &built())
-            .confirmed
-            .len(),
-        1
-    );
+    let result = plan(&renewed, &[], &rows, &identity(), &built(), None);
+    assert_eq!(result.confirmed.len(), 1);
 }
 
 #[test]
-fn a_user_receipt_holds_only_for_its_inputs_and_never_for_the_never_reused_rows() {
+fn a_user_receipt_holds_only_for_its_inputs() {
     let records = [
         manual("W06", Some(hex('1'))),
         manual("W11", Some(hex('2'))),
         manual("W12", None),
-        manual("I01", Some(hex('1'))),
-        manual("R03", Some(hex('1'))),
     ];
-    let rows: Vec<String> = ["W06", "W11", "W12", "I01", "R03"].map(String::from).into();
-    let result = plan(&records, &[], &rows, &identity(), &built());
+    let result = plan(
+        &records,
+        &[],
+        &strings(&["W06", "W11", "W12"]),
+        &identity(),
+        &built(),
+        None,
+    );
     assert_eq!(result.confirmed.len(), 1);
     assert_eq!(result.confirmed[0].0, "W06");
-    assert_eq!(result.unconfirmed, ["W11", "W12", "I01", "R03"]);
+    assert_eq!(result.unconfirmed, ["W11", "W12"]);
 }
 
 #[test]
@@ -250,14 +282,16 @@ fn records_survive_a_round_trip_and_bad_lines_reject_the_ledger() {
     if let Record::Manual { quote, .. } = &mut quoted {
         *quote = "引号\"、反斜杠\\、换行\n与制表\t都要保留 ✓".into();
     }
-    let legacy = Identity {
-        inputs: None,
-        ..identity()
-    };
+    let mut timed = run("W03", "PASS", identity(), 'c');
+    if let Record::Automated { run_unix, .. } = &mut timed {
+        *run_unix = Some(1_795_018_746);
+    }
     let records = vec![
         automated("W02", "PASS", identity()),
-        automated("W03", "PASS", legacy),
+        timed,
+        in_batch(run("R03", "FAIL", identity(), 'f'), "batch-1"),
         quoted,
+        in_batch(manual("I02", Some(hex('1'))), "batch-1"),
         manual("W11", None),
         revoke("W02", Revoked::Evidence(hex('e'))),
         revoke("W06", Revoked::Inputs(hex('1'))),
@@ -267,64 +301,120 @@ fn records_survive_a_round_trip_and_bad_lines_reject_the_ledger() {
     let bad = |line: String| read_all(&format!("{text}{line}\n")).is_err();
     assert!(bad("{\"kind\":\"other\"}".into()));
     assert!(bad("not json".into()));
-    assert!(bad(automated("W02", "BANANA", identity()).line()));
-    let mut empty_image = identity();
-    empty_image.image = " ".into();
-    assert!(bad(automated("W02", "PASS", empty_image).line()));
-    let mut short_hash = identity();
-    short_hash.driver = "abc".into();
-    assert!(bad(automated("W02", "PASS", short_hash).line()));
+    assert!(bad(run("W09", "BANANA", identity(), '7').line()));
+    let mut upper = identity();
+    upper.driver = hex('D');
+    assert!(
+        bad(run("W09", "PASS", upper, '7').line()),
+        "lowercase digests only"
+    );
     assert!(bad(manual("W06", Some("not-a-hash".into())).line()));
-    let mut bad_inputs = identity();
-    bad_inputs.inputs = Some("abc".into());
-    assert!(bad(automated("W02", "PASS", bad_inputs).line()));
+    assert!(
+        bad(in_batch(run("W09", "PASS", identity(), '7'), "no spaces").line()),
+        "a batch name is a plain token"
+    );
     assert!(
         bad(manual("W06", Some(hex('1')))
             .line()
             .replace("MANUAL PASS", "PASS")),
         "a manual record must say MANUAL PASS"
     );
-    assert!(bad(revoke("W02", Revoked::Evidence("abc".into())).line()));
+    // The same evidence twice for a row is a replay; another row of it is fine.
+    assert!(bad(automated("W02", "PASS", identity()).line()));
+    assert!(!bad(automated("W04", "PASS", identity()).line()));
+    // A revocation names a result recorded before it, exactly one target, and the USER's words.
+    assert!(bad(revoke("W07", Revoked::Evidence(hex('e'))).line()));
+    assert!(
+        bad(revoke("R03", Revoked::Evidence(hex('f'))).line()),
+        "only a PASS"
+    );
+    assert!(bad(revoke("W06", Revoked::Inputs(hex('2'))).line()));
     let both = revoke("W02", Revoked::Evidence(hex('e'))).line().replace(
         ",\"quote\"",
         &format!(",\"app_inputs\":\"{}\",\"quote\"", hex('1')),
     );
     assert!(bad(both), "a revocation names one target");
-    let neither = revoke("W02", Revoked::Evidence(hex('e')))
-        .line()
-        .replace(&format!("\"evidence_sha256\":\"{}\",", hex('e')), "");
-    assert!(bad(neither), "a revocation names a target");
     let mut silent = revoke("W02", Revoked::Evidence(hex('e')));
     if let Record::Revocation { quote, .. } = &mut silent {
         *quote = " ".into();
     }
     assert!(bad(silent.line()), "a revocation carries the USER's words");
+    // JSON Lines: no byte-order mark, no blank line; a final newline is fine.
+    assert!(read_all(&format!("\u{feff}{text}")).is_err());
+    assert!(read_all(&text.replacen('\n', "\n\n", 1)).is_err());
+    assert!(read_all(text.trim_end()).is_ok());
 }
 
+/// A revocation recorded before its target would otherwise reach back to it.
 #[test]
-fn evidence_is_recorded_from_one_read_and_must_name_its_driver() {
-    let evidence = |driver: &str| {
-        format!(
-            "{{\"environment\":{{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\nBuildVersion:\\t26B123\\n\"}},\"app_inputs\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",{driver}\"scenarios\":[{{\"id\":\"P16-W02\",\"verdict\":\"PASS\"}},{{\"id\":\"P16-W05\",\"verdict\":\"NOT_TESTED\"}}]}}",
-            hex('1'),
-            hex('a'),
-            hex('b')
-        )
-    };
-    assert!(from_evidence(evidence("").as_bytes(), "/e.json", "sha256:image", 3).is_err());
-    let bytes = evidence(&format!("\"driver_sha256\":\"{}\",", hex('d')));
-    let records = from_evidence(bytes.as_bytes(), "/e.json", "sha256:image", 3).unwrap();
+fn a_revocation_cannot_precede_its_target() {
+    let early = revoke("W02", Revoked::Evidence(hex('e')));
+    assert!(consistent_with(&[], &early).is_err());
+    let target = automated("W02", "PASS", identity());
+    assert!(consistent_with(std::slice::from_ref(&target), &early).is_ok());
+    assert!(
+        consistent_with(std::slice::from_ref(&target), &target).is_err(),
+        "a replay"
+    );
+}
+
+fn evidence(scenarios: &str, environment: &str) -> String {
+    format!(
+        "{{\"environment\":{{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\nBuildVersion:\\t26B123\\n\"{environment}}},\"app_inputs\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"driver_sha256\":\"{}\",\"scenarios\":[{scenarios}]}}",
+        hex('1'),
+        hex('a'),
+        hex('b'),
+        hex('d')
+    )
+}
+const VM: &str = ",\"hv_vmm_present\":\"1\",\"allow_host\":false,\"unix_seconds\":42";
+const PASSED: &str =
+    "{\"id\":\"P16-W02\",\"verdict\":\"PASS\",\"checks\":[{\"name\":\"a\",\"verdict\":\"PASS\"}]}";
+const WAITED: &str = "{\"id\":\"P16-W05\",\"verdict\":\"NOT_TESTED\",\"checks\":[{\"name\":\"a\",\"verdict\":\"PASS\"},{\"name\":\"b\",\"verdict\":\"NOT_TESTED\"}]}";
+
+#[test]
+fn evidence_is_recorded_from_one_read_of_a_vm_run_with_consistent_rows() {
+    let bytes = evidence(&format!("{PASSED},{WAITED}"), VM);
+    let records =
+        from_evidence(bytes.as_bytes(), "/e.json", "sha256:image", Some("b1"), 3).unwrap();
     assert_eq!(records.len(), 2);
     let expected_sha = crate::integrity::sha256_bytes(bytes.as_bytes()).unwrap();
     assert!(matches!(
         &records[0],
-        Record::Automated { row, verdict, identity: id, built: b, evidence_sha256, .. }
-            if row == "W02" && verdict == "PASS" && *id == identity() && *b == built()
-                && *evidence_sha256 == expected_sha
+        Record::Automated { row, verdict, identity: id, evidence_sha256, run_unix: Some(42), batch: Some(b), .. }
+            if row == "W02" && verdict == "PASS" && *id == identity() && *evidence_sha256 == expected_sha && b == "b1"
+    ));
+    let refused = |bytes: String| {
+        from_evidence(bytes.as_bytes(), "/e.json", "sha256:image", None, 3).is_err()
+    };
+    // Not a VM run, or one that allowed a host.
+    assert!(refused(evidence(PASSED, &VM.replace("\"1\"", "\"0\""))));
+    assert!(refused(evidence(PASSED, &VM.replace("false", "true"))));
+    assert!(refused(evidence(PASSED, "")));
+    // A row twice, or a verdict its checks do not give.
+    assert!(refused(evidence(&format!("{PASSED},{PASSED}"), VM)));
+    assert!(refused(evidence(
+        &PASSED.replace(
+            "\"verdict\":\"PASS\",\"checks\"",
+            "\"verdict\":\"PASS\",\"checks\":[],\"x\""
+        ),
+        VM
+    )));
+    assert!(refused(evidence(
+        &WAITED.replace("NOT_TESTED\",\"checks", "PASS\",\"checks"),
+        VM
+    )));
+    assert!(refused(evidence(
+        &PASSED.replace("\"verdict\":\"PASS\"}]", "\"verdict\":\"FAIL\"}]"),
+        VM
+    )));
+    // No driver named: the evidence cannot say which driver produced it.
+    assert!(refused(
+        evidence(PASSED, VM).replace(&format!("\"driver_sha256\":\"{}\",", hex('d')), "")
     ));
     // Evidence from a bundle built without its inputs is recorded, as history only.
-    let legacy = bytes.replace(&format!("\"app_inputs\":\"{}\",", hex('1')), "");
-    let records = from_evidence(legacy.as_bytes(), "/e.json", "sha256:image", 3).unwrap();
+    let legacy = evidence(PASSED, VM).replace(&format!("\"app_inputs\":\"{}\",", hex('1')), "");
+    let records = from_evidence(legacy.as_bytes(), "/e.json", "sha256:image", None, 3).unwrap();
     assert!(matches!(
         &records[0],
         Record::Automated {
@@ -354,19 +444,33 @@ fn one_image_digest_names_one_system_across_the_whole_ledger() {
 }
 
 #[test]
-fn the_manual_rows_come_from_the_matrix_mode_column() {
+fn the_matrix_rows_come_from_the_mode_column() {
     let matrix = "| ID | Requirement | Mode | Evidence | Status |\n\
                   | --- | --- | --- | --- | --- |\n\
                   | P16-W06 | a | Manual | e | MANUAL PASS |\n\
                   | P16-W13 | b | Automated | e | AUTOMATED PASS |\n\
                   | P16-W16 | c | — | e | USER 豁免 |\n\
                   | P16-I01 | d | Manual | e | NOT TESTED |\n\
-                  | P16-V04 | f | Review | e | NOT TESTED |\n";
-    assert_eq!(manual_rows(matrix).unwrap(), ["W06", "I01", "V04"]);
-    let agent = format!("{matrix}| P16-W01 | g | Agent | e | NOT TESTED |\n");
-    assert!(manual_rows(&agent).unwrap_err().contains("Agent row"));
-    assert!(manual_rows("| P16-W06 | a | Manual |\n").is_err());
-    assert!(manual_rows("no rows").is_err());
+                  | P16-V04 | f | Review | e | NOT TESTED |\n\
+                  | P16-W01 | g | Agent | e | NOT TESTED |\n\
+                  | P16-V05 | h | Manual | Windows report | MANUAL PASS |\n";
+    assert_eq!(
+        matrix_rows(matrix).unwrap(),
+        Rows {
+            manual: strings(&["W06", "I01"]),
+            review: strings(&["V04"]),
+            agent: strings(&["W01"]),
+        },
+        "V05 is judged on Windows"
+    );
+    assert!(
+        matrix_rows(&format!(
+            "{matrix}| P16-W02 | x | Reveiw | e | NOT TESTED |\n"
+        ))
+        .is_err()
+    );
+    assert!(matrix_rows("| P16-W06 | a | Manual |\n").is_err());
+    assert!(matrix_rows("no rows").is_err());
 }
 
 #[test]
@@ -377,20 +481,35 @@ fn the_real_matrix_has_manual_rows_and_mac_gui_has_executable_ones() {
             .join("docs/acceptance-cases/phase-16.md"),
     )
     .unwrap();
-    let rows = manual_rows(&matrix).unwrap();
-    assert!(rows.iter().any(|r| r == "W12") && rows.iter().any(|r| r == "I01"));
+    let rows = matrix_rows(&matrix).unwrap();
+    assert!(rows.manual.iter().any(|r| r == "W12") && rows.manual.iter().any(|r| r == "I01"));
+    assert!(!rows.manual.iter().any(|r| r == "V05"));
     let executable = crate::mac_gui::executable_ids();
     assert!(executable.contains(&"W12") && !executable.contains(&"W05"));
 }
 
 #[test]
-fn each_command_requires_its_options() {
+fn each_command_requires_its_options_and_refuses_others() {
     let args = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
     assert!(parse(&args("plan --app a.app --driver d --image i")).is_err());
-    let plan = parse(&args("plan --app a.app --driver d --image i --system s")).unwrap();
+    let plan = parse(&args(
+        "plan --app a.app --driver d --image i --system s --batch b-1",
+    ))
+    .unwrap();
     assert_eq!(plan.command, Some(Command::Plan));
+    assert_eq!(plan.batch.as_deref(), Some("b-1"));
+    assert!(
+        parse(&args(
+            "plan --app a.app --driver d --image i --system s --batch b/1"
+        ))
+        .is_err()
+    );
     assert!(parse(&args("record --evidence e.json")).is_err());
     assert!(parse(&args("record --evidence e.json --image i")).is_ok());
+    assert!(
+        parse(&args("record --evidence e.json --image i --app a.app")).is_err(),
+        "not a record option"
+    );
     assert!(parse(&args("receipt --app a.app --rows W06")).is_err());
     let receipt = parse(&[
         "receipt".into(),
@@ -399,21 +518,27 @@ fn each_command_requires_its_options() {
         "--rows".into(),
         "P16-W06,W11".into(),
         "--quote".into(),
-        "试过了".into(),
+        "--试过了，没问题".into(),
     ])
     .unwrap();
     assert_eq!(receipt.rows, ["W06", "W11"]);
+    assert_eq!(
+        receipt.quote.as_deref(),
+        Some("--试过了，没问题"),
+        "the USER's words verbatim"
+    );
     assert!(parse(&args("receipt --app a.app --rows W06,W06 --quote q")).is_err());
     let revoke = |extra: &str| {
         let mut a = args(&format!("revoke --rows W02{extra}"));
         a.extend(["--quote".into(), "撤销".into()]);
         parse(&a)
     };
+    let upper = revoke(&format!(" --evidence-sha256 {}", hex('E'))).unwrap();
+    assert_eq!(upper.command, Some(Command::Revoke));
     assert_eq!(
-        revoke(&format!(" --evidence-sha256 {}", hex('e')))
-            .unwrap()
-            .command,
-        Some(Command::Revoke)
+        upper.evidence_sha256,
+        Some(hex('e')),
+        "a digest is lowercased"
     );
     assert!(revoke(" --app a.app").is_ok());
     assert!(revoke("").is_err(), "a revocation names a target");
@@ -421,8 +546,13 @@ fn each_command_requires_its_options() {
         revoke(" --app a.app --evidence-sha256 x").is_err(),
         "one target only"
     );
+    assert!(
+        revoke(" --app a.app --evidence e.json").is_err(),
+        "not a revoke option"
+    );
     assert!(parse(&args("revoke --rows W02,W03 --app a.app --quote q")).is_err());
     assert!(parse(&args("revoke --rows W02 --app a.app")).is_err());
+    assert!(parse(&args("inputs --batch b")).is_err());
     assert!(parse(&args("frobnicate")).is_err());
     assert!(parse(&[]).unwrap().help);
 }

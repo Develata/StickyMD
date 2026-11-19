@@ -488,7 +488,7 @@
 - **Definition**：两名互相独立的 agent 依同一身份下同一次运行的证据，对 `Agent` 行给出的 PASS、FAIL 或 NOT_TESTED；两者都 PASS 时状态为 `AGENT PASS`。
 - **Authority**：`11` Phase 16 节的判定规则；USER 可撤销。
 - **Not equivalent to**：USER 收据；单一 agent 的意见；产品自测。
-- **Lifetime**：绑定产品输入指纹、驱动、镜像、系统、判定标准版本与判定者策略，任一项改变即失效。
+- **Lifetime**：绑定产品输入指纹、驱动、镜像、系统、判定标准版本、对照与判定者策略，任一项改变即失效；USER 撤销后不再复用。
 
 ### Architecture Change
 
