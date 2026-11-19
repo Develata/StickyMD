@@ -14,7 +14,7 @@ VM ONLY by default: kern.hv_vmm_present must be 1, checked before app/output acc
 --batch names the acceptance batch this run is for (1-64 of A-Z a-z 0-9 . _ -); it is written
         into mac-gui.json, and mac-ledger counts I01-I03 and R03 only for the batch named there.
 Permissions (preflight only, no prompts):
-  W01: Accessibility (Dock tree). R03: Accessibility (the prompt's text and button).
+  W01: Accessibility (Dock tree). R03: PostEvent (Return posted to the product alone).
   W02/W03/W04/W06/W07/W08/W09/W11/W12/K02/E01/F01: Accessibility + PostEvent.
   F01: Screen Recording additionally enables its optional screenshot.
 W11/W12 remove write permission from the fixture's own note directory to make the save fail,

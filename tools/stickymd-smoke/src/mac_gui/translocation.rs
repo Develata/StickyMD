@@ -3,11 +3,17 @@
 //! the browser and for the USER's first-open approval: it zips the app under test, marks the
 //! archive and every extracted file with a quarantine attribute whose user-approved bit (0x40) is
 //! set, so macOS skips its first-open confirmation (USER 2026-11-19, the acceptance ladder
-//! report); Gatekeeper assessment is off in the test VM either way, so neither path exercises it.
-//! It opens the copy through LaunchServices, as a double click does, then judges the process
-//! path, the read-only translocation mount, the prompt (AX text), the exit after its button, and
-//! the download directory before and after. A system that does not translocate, or a prompt
-//! that cannot be read, is NOT_TESTED; a FAIL needs an observed violation.
+//! report). It opens the copy through LaunchServices, as a double click does.
+//!
+//! The prompt is shown before the application has finished launching, so its Accessibility
+//! requests do not complete (macOS 27.2 VM: `kAXErrorCannotComplete`) and it owns no AX window.
+//! The prompt is therefore judged from what the system does report: a fully shown window of the
+//! process (alpha at least 0.9, at least 200×150 pt) on screen at the modal-panel level or above, and the message on its stderr, which the product
+//! writes just before showing the same text. It is answered as the manual procedure does:
+//! LaunchServices is asked to open the copy again, which activates the running instance, and
+//! Return is posted to that process alone, so no other application can receive it.
+//! A system that does not translocate, or a prompt window not seen while the process runs, is
+//! NOT_TESTED; a FAIL needs an observed violation.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::model::{Row, Verdict};
 
@@ -16,8 +22,10 @@ use super::model::{Row, Verdict};
 pub(super) const QUARANTINE_FLAGS: &str = "00c3";
 /// The start of the product's prompt in a directory it cannot write.
 pub(super) const PROMPT: &str = "当前目录不可写";
-/// The prompt's button.
-pub(super) const BUTTONS: &[&str] = &["好", "OK"];
+/// The cause the prompt carries on a read-only translocation.
+pub(super) const CAUSE: &str = "Read-only file system";
+/// `NSModalPanelWindowLevel`: an alert run modally sits at this level or above.
+pub(super) const MODAL_LEVEL: i32 = 8;
 
 /// What the live run observed.
 #[derive(Debug, Default)]
@@ -28,11 +36,13 @@ pub(super) struct Observed {
     pub path: Option<String>,
     /// The `mount` line of the bundle's translocation.
     pub mount: Option<String>,
-    /// The process ended before any prompt was read.
+    /// The process ended before a prompt window was seen.
     pub exited_early: bool,
-    /// The prompt's static texts, if the AX tree showed one with its button.
-    pub prompt: Option<String>,
-    /// After pressing the button: whether the process ended within the wait.
+    /// The on-screen modal-level window of the process, as seen.
+    pub window: Option<String>,
+    /// The process's stderr when the prompt window was seen (or when the wait ended).
+    pub stderr: String,
+    /// After Return: whether the process ended within the wait.
     pub exited: Option<bool>,
     /// The download directory's entries before the start and after the exit.
     pub before: Vec<String>,
@@ -45,6 +55,11 @@ fn record(row: &mut Row, name: &str, verdict: Verdict, detail: String) {
     } else {
         row.check(name, verdict == Verdict::Pass, detail);
     }
+}
+
+/// Whether the prompt was shown: its window seen, and the message with its cause on stderr.
+pub(super) fn prompted(o: &Observed) -> bool {
+    o.window.is_some() && o.stderr.contains(PROMPT) && o.stderr.contains(CAUSE)
 }
 
 /// The R03 checks from what was observed. Each depends on the one before it: without the
@@ -92,14 +107,14 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
         }
         return;
     }
-    let prompted = o.prompt.as_deref().is_some_and(|t| t.contains(PROMPT));
-    let verdict = if prompted {
+    let shown = prompted(o);
+    let verdict = if shown {
         Verdict::Pass
-    } else if o.exited_early || o.prompt.is_some() {
-        // Gone without a prompt, or a prompt with other words.
+    } else if o.exited_early || (o.window.is_some() && !o.stderr.contains(PROMPT)) {
+        // Gone without a prompt, or a prompt about something else.
         Verdict::Fail
     } else {
-        // Still running and no prompt in the AX tree: the prompt may be unreadable, not absent.
+        // Still running and no modal window seen: the prompt may be unobservable, not absent.
         Verdict::NotTested
     };
     record(
@@ -107,19 +122,19 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
         "prompt names the read-only directory",
         verdict,
         format!(
-            "prompt={:?}; exited before a prompt {}",
-            o.prompt, o.exited_early
+            "window={:?}; exited before a prompt {}; stderr={:?}",
+            o.window, o.exited_early, o.stderr
         ),
     );
     record(
         row,
         "exits after the prompt",
-        match (prompted, o.exited) {
+        match (shown, o.exited) {
             (true, Some(true)) => Verdict::Pass,
             (true, Some(false)) => Verdict::Fail,
             _ => Verdict::NotTested,
         },
-        format!("ended within the wait after the button: {:?}", o.exited),
+        format!("ended within the wait after Return: {:?}", o.exited),
     );
     let ended = o.exited_early || o.exited == Some(true);
     record(
@@ -141,17 +156,20 @@ pub(super) use live::run;
 
 #[cfg(target_os = "macos")]
 mod live {
-    use super::{BUTTONS, Observed, PROMPT, QUARANTINE_FLAGS, judge};
+    use super::{MODAL_LEVEL, Observed, QUARANTINE_FLAGS, judge, prompted};
     use crate::mac_gui::{
         live::command,
         model::{Row, Trace},
-        native::{accessibility as ax, events},
+        native::{events, windows},
     };
     use std::{
         fs,
         path::Path,
         time::{Instant, SystemTime, UNIX_EPOCH},
     };
+
+    /// The virtual key code of Return.
+    const RETURN: u16 = 36;
 
     fn entries(dir: &Path) -> Result<Vec<String>, String> {
         let mut names = fs::read_dir(dir)
@@ -243,6 +261,7 @@ mod live {
             ..Observed::default()
         };
         let stderr = dir.join("stderr.log");
+        let read_stderr = || fs::read_to_string(&stderr).unwrap_or_default();
         note(
             row,
             format!("open {} (quarantine {:?})", copy.display(), o.quarantine),
@@ -277,30 +296,47 @@ mod live {
                 l.contains("AppTranslocation") && l.starts_with(&format!("{} on ", copy.display()))
             })
             .map(str::to_owned);
-        // The prompt: up to 15 s, read from the AX tree.
+        // The prompt: up to 15 s for its window and its message.
         let start = Instant::now();
         while start.elapsed().as_secs() < 15 {
             if !alive()? {
                 o.exited_early = true;
                 break;
             }
-            if let Ok((texts, button)) = ax::alert(pid, BUTTONS) {
-                if button && texts.contains(PROMPT) {
-                    o.prompt = Some(texts);
-                    break;
-                }
-                if button && !texts.is_empty() {
-                    o.prompt = Some(texts);
-                }
+            o.window = windows::all(pid)?
+                .into_iter()
+                .find(|w| {
+                    // A fully shown alert, not one still fading or scaling in.
+                    w.onscreen
+                        && w.layer >= MODAL_LEVEL
+                        && w.alpha >= 0.9
+                        && w.bounds.size.width >= 200.0
+                        && w.bounds.size.height >= 150.0
+                })
+                .map(|w| format!("{w:?}"));
+            o.stderr = read_stderr();
+            if prompted(&o) {
+                break;
             }
             events::wait(200)?;
         }
+        o.stderr = read_stderr();
         note(
             row,
-            format!("prompt {:?}; exited early {}", o.prompt, o.exited_early),
+            format!("window {:?}; exited early {}", o.window, o.exited_early),
         );
-        if o.prompt.as_deref().is_some_and(|t| t.contains(PROMPT)) {
-            ax::press(pid, BUTTONS)?;
+        if prompted(&o) {
+            // Activate the running instance as the manual procedure does, then answer it.
+            command("/usr/bin/open", &[&text(&copy)])?;
+            events::wait(1500)?;
+            let others: Vec<_> = products()?.into_iter().filter(|(q, _)| *q != pid).collect();
+            if !others.is_empty() {
+                note(
+                    row,
+                    format!("reopening started another process: {others:?}"),
+                );
+            }
+            events::key_to_pid(pid, RETURN)?;
             let start = Instant::now();
             let mut ended = false;
             while start.elapsed().as_secs() < 5 {
@@ -310,15 +346,15 @@ mod live {
                 }
                 events::wait(100)?;
             }
-            o.exited = Some(ended);
+            o.exited = Some(ended && others.is_empty());
         }
         // Leave nothing running: a product that did not exit is stopped here.
-        if alive()? {
-            let _ = command("/bin/kill", &["-TERM", &pid.to_string()]);
-            events::wait(1000)?;
-            if alive()? {
-                let _ = command("/bin/kill", &["-KILL", &pid.to_string()]);
-            }
+        for (q, _) in products()? {
+            let _ = command("/bin/kill", &["-TERM", &q.to_string()]);
+        }
+        events::wait(500)?;
+        for (q, _) in products()? {
+            let _ = command("/bin/kill", &["-KILL", &q.to_string()]);
         }
         o.after = entries(&download)?;
         // macOS detaches the translocation after the process ends; wait for it before cleanup.

@@ -28,6 +28,17 @@ pub(in crate::mac_gui) fn screen() -> Rect {
     unsafe { CGDisplayBounds(CGMainDisplayID()) }
 }
 pub(in crate::mac_gui) fn window(pid: u32, id: Option<u32>) -> Result<Window, String> {
+    let windows = all(pid)?
+        .into_iter()
+        .filter(|w| w.bounds.size.width >= 220.0 && w.bounds.size.height >= 120.0)
+        .collect();
+    select_window(windows, id).map_err(|found| {
+        let scope = if id.is_some() { "" } else { " on-screen" };
+        format!("expected one PID {pid}{scope} content window (id={id:?}), found {found}")
+    })
+}
+/// Every window `pid` owns (on screen or not, desktop elements excluded), with its level.
+pub(in crate::mac_gui) fn all(pid: u32) -> Result<Vec<Window>, String> {
     // SAFETY: all windows excluding desktop, owned Create-rule array; no image capture.
     let array = Owned::take(unsafe { CGWindowListCopyWindowInfo(16, 0) })?;
     let mut windows = Vec::new();
@@ -42,9 +53,6 @@ pub(in crate::mac_gui) fn window(pid: u32, id: Option<u32>) -> Result<Window, St
         if !unsafe { CGRectMakeWithDictionaryRepresentation(b.0, &mut bounds) } {
             continue;
         }
-        if bounds.size.width < 220.0 || bounds.size.height < 120.0 {
-            continue;
-        }
         windows.push(Window {
             id: number,
             bounds,
@@ -56,10 +64,7 @@ pub(in crate::mac_gui) fn window(pid: u32, id: Option<u32>) -> Result<Window, St
                 .unwrap_or(false),
         });
     }
-    select_window(windows, id).map_err(|found| {
-        let scope = if id.is_some() { "" } else { " on-screen" };
-        format!("expected one PID {pid}{scope} content window (id={id:?}), found {found}")
-    })
+    Ok(windows)
 }
 /// The owner name of an on-screen window of `pid`, to name what covers the product in a
 /// diagnostic; no titles or image capture.

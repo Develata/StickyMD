@@ -15,6 +15,7 @@ unsafe extern "C" {
     fn CGEventSetFlags(event: Cf, flags: u64);
     fn CGEventCreateMouseEvent(source: Cf, kind: u32, at: Point, button: u32) -> Cf;
     fn CGEventPost(tap: u32, event: Cf);
+    fn CGEventPostToPid(pid: i32, event: Cf);
     fn CGEventSourceKeyState(state: i32, key: u16) -> bool;
     fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
 }
@@ -135,4 +136,19 @@ impl Sender for Events {
         }
         Ok(())
     }
+}
+
+/// One key press (down, then up) posted to `pid` alone: no other application can receive it,
+/// and it reaches that process's key window only while the process is active.
+pub(in crate::mac_gui) fn key_to_pid(pid: u32, code: u16) -> Result<(), String> {
+    let pid = i32::try_from(pid).map_err(|_| format!("PID {pid} out of range"))?;
+    for down in [true, false] {
+        // SAFETY: Create-rule keyboard event, owned and released once after posting.
+        unsafe {
+            let event = Owned::take(CGEventCreateKeyboardEvent(std::ptr::null(), code, down))?;
+            CGEventPostToPid(pid, event.0);
+        }
+        wait(40)?;
+    }
+    Ok(())
 }
