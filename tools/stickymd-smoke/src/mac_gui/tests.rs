@@ -101,7 +101,15 @@ fn vm_interlock_is_strict_and_permissions_are_per_scenario() {
         )
         .is_ok()
     );
-    assert!(permission_error(&["W05".into(), "R03".into()], Permissions::default()).is_ok());
+    assert!(permission_error(&["W05".into()], Permissions::default()).is_ok());
+    // R03 reads the prompt and presses its button through Accessibility; it injects nothing.
+    assert!(permission_error(&["R03".into()], Permissions::default()).is_err());
+    let ax_only = Permissions {
+        ax: true,
+        post: false,
+        screen: false,
+    };
+    assert!(permission_error(&["R03".into()], ax_only).is_ok());
     // F01 now switches to Preview with a real key press before reading the mapped fonts.
     assert!(permission_error(&["F01".into()], Permissions::default()).is_err());
 }
@@ -1131,5 +1139,79 @@ fn a_success_first_seen_after_the_deadline_is_late() {
             observed, met,
             "hidden at {hidden_at}, returned at {elapsed}"
         );
+    }
+}
+
+/// R03 from observations: the bad samples a check must refuse, and what it cannot tell.
+#[test]
+fn translocation_checks_refuse_bad_samples() {
+    use super::translocation::{Observed, judge};
+    let good = || {
+        Observed {
+        quarantine: Some("00c3;6afec4a5;Safari;".into()),
+        path: Some("/private/var/folders/x/T/AppTranslocation/U/d/StickyMD.app/Contents/MacOS/StickyMD".into()),
+        mount: Some("/tmp/download/StickyMD.app on /private/var/folders/x/T/AppTranslocation/U (nullfs, local, nodev, nosuid, read-only, nobrowse, mounted by admin)".into()),
+        exited_early: false,
+        prompt: Some("StickyMD\n当前目录不可写，请先用访达把 StickyMD.app 移到别处。\ncannot create a file: Read-only file system (os error 30)".into()),
+        exited: Some(true),
+        before: vec!["StickyMD.app".into(), "StickyMD.zip".into()],
+        after: vec!["StickyMD.app".into(), "StickyMD.zip".into()],
+    }
+    };
+    let verdict = |o: Observed| {
+        let mut row = Row::new("R03");
+        judge(&o, &mut row);
+        (aggregate(&row.checks), row)
+    };
+    let (v, row) = verdict(good());
+    assert_eq!(v, Verdict::Pass, "{}", row.json());
+    assert_eq!(row.checks.len(), 5);
+    // Bad samples: no prompt before exiting, other words, still running, a file written.
+    for bad in [
+        Observed {
+            prompt: None,
+            exited_early: true,
+            exited: None,
+            ..good()
+        },
+        Observed {
+            prompt: Some("Something else".into()),
+            exited: None,
+            ..good()
+        },
+        Observed {
+            exited: Some(false),
+            ..good()
+        },
+        Observed {
+            after: vec!["StickyMD.app".into(), "StickyMD.zip".into(), "note".into()],
+            ..good()
+        },
+    ] {
+        let (v, row) = verdict(bad);
+        assert_eq!(v, Verdict::Fail, "{}", row.json());
+    }
+    // Cannot tell: no preset attribute, no translocation, no readable prompt while running.
+    for unknown in [
+        Observed {
+            quarantine: Some("0083;6afec4a5;Safari;".into()),
+            ..good()
+        },
+        Observed {
+            path: Some("/tmp/download/StickyMD.app/Contents/MacOS/StickyMD".into()),
+            ..good()
+        },
+        Observed {
+            mount: None,
+            ..good()
+        },
+        Observed {
+            prompt: None,
+            exited: None,
+            ..good()
+        },
+    ] {
+        let (v, row) = verdict(unknown);
+        assert_eq!(v, Verdict::NotTested, "{}", row.json());
     }
 }

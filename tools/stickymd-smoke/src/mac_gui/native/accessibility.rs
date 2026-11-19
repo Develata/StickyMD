@@ -341,6 +341,30 @@ fn panel_tree(pid: u32) -> Result<Vec<Node>, String> {
         super::events::wait(50)?;
     }
 }
+/// The static texts of the process's windows (joined by newlines) and whether one of its buttons
+/// is labelled with one of `labels`: an alert as the AX tree shows it.
+pub(in crate::mac_gui) fn alert(pid: u32, labels: &[&str]) -> Result<(String, bool), String> {
+    let nodes = tree(app(pid)?)?;
+    let mut texts = Vec::new();
+    for node in nodes.iter().filter(|n| n.role == "AXStaticText") {
+        let value = text(&node.element, "AXValue")?;
+        if !value.is_empty() {
+            texts.push(value);
+        }
+    }
+    let button = nodes
+        .iter()
+        .any(|n| n.role == "AXButton" && labels.iter().any(|l| n.describes(l)));
+    Ok((texts.join("\n"), button))
+}
+/// Presses the one button labelled with one of `labels`.
+pub(in crate::mac_gui) fn press(pid: u32, labels: &[&str]) -> Result<(), String> {
+    let nodes = tree(app(pid)?)?;
+    let button = unique(&nodes, |n| {
+        n.role == "AXButton" && labels.iter().any(|l| n.describes(l))
+    })?;
+    action(&button.element, "AXPress")
+}
 pub(in crate::mac_gui) fn panel_open(pid: u32) -> Result<bool, String> {
     let nodes = tree(app(pid)?)?;
     Ok(nodes.iter().any(|n| {

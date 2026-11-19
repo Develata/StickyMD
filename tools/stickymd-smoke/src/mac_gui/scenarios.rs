@@ -162,10 +162,6 @@ pub(super) fn skipped(id: &str) -> Option<&'static str> {
         }
         "W05" => Some("requires Spaces/full-screen desktop orchestration"),
         "W10" => Some("requires caret visual and compositor frame instrumentation"),
-        "R03" => Some(
-            "requires a quarantined download opened through LaunchServices (App Translocation); \
-             see tools/manual/macos-r03-translocation.md",
-        ),
         "W15" => Some("requires Windows regression machine"),
         _ => None,
     }

@@ -302,6 +302,15 @@ fn one(
     let mut fault =
         super::fault::RestoreOnDrop::new(matches!(id, "W11" | "W12").then(|| session.anchor()));
     let result = (|| {
+        if id == "R03" {
+            return super::translocation::run(
+                app,
+                session.path(),
+                &hash.bundle,
+                input.backend.started,
+                row,
+            );
+        }
         let note = match id {
             "F01" => "中文字体验证\n\n`Menlo code 012345`\n",
             // Old bytes a save that truncates before it fails would destroy.

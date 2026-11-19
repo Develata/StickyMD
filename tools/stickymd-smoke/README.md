@@ -971,6 +971,7 @@ to the driver in the VM, then rerun after a refusal.
 | W01 | Accessibility (`AXIsProcessTrusted`), including Dock inspection | — |
 | W02/W03/W04/W07/W08/W09/W11/K02/E01 | Accessibility and PostEvent (`CGPreflightPostEventAccess`) | — |
 | F01 | None for stderr font selection | Screen Recording (`CGPreflightScreenCaptureAccess`) for screenshot |
+| R03 | Accessibility, to read the prompt and press its button; no event is injected | — |
 | Deferred rows | None; no app launch for those rows | — |
 
 Every runnable scenario copies the bundle into a fresh private temporary Program
@@ -1054,13 +1055,14 @@ PASS. The acceptance matrix and qualification ledgers are never updated.
 | K02 | Real Cmd keys, quiet note bytes, `pbpaste`, persisted view/zoom | ABC/US assumption; not IME evidence; save timing is not a durability/power-loss test |
 | E01 | AX native panel cancel/dismiss, folder/name/save; exact exported Markdown bytes | No managed-image export fixture in this batch |
 | F01 | `font selection` stderr names PingFang SC and Times New Roman (plan 02 defaults); optional CGWindowListCreateImage screenshot | The log does not name the code face, so Menlo and per-glyph review are NOT_TESTED; row incomplete |
+| R03 | The app under test zipped, its archive and every extracted file marked with quarantine flags `00c3` (the user-approved bit preset, USER 2026-11-19), opened through `open` (LaunchServices); the one StickyMD process runs from `/AppTranslocation/` with a read-only nullfs mount of the copy; the AX tree shows the prompt `当前目录不可写…` with its button; after AXPress on it the process ends within 5s; the download directory lists the same entries before and after | Skips the system's first-open confirmation; Gatekeeper assessment is off in the test VM, so neither path exercises it; no translocation, or a prompt the AX tree does not show while the process runs, is NOT_TESTED; the exit status is not observed (the process is not the driver's child); never reused across batches |
 
 K02 covers typing, Cmd+S/Z/Shift+Z/A/C/X/V, Cmd+arrows, find and replace,
 Cmd+1/2/3 and Cmd+=/-/0. Cmd+S polls `note/note.md` directly until 550ms after the
 last typed key-down (100ms before autosave's 650ms debounce). Only bytes observed
 by that deadline pass; a missed deadline is NOT_TESTED, with key/command/read
 timestamps, because a slow VM and a missing binding cannot be distinguished.
-Other saved-text checks retain the 1500ms wait and 1000ms quiet-byte requirement. W05/W06/W10/W12/W15, I01/I02/I03 and R03
+Other saved-text checks retain the 1500ms wait and 1000ms quiet-byte requirement. W05/W06/W10/W12/W15 and I01/I02/I03
 remain NOT_TESTED with explicit reasons. These are also documented in the module
 comment. No native GUI code is exercised by the unit tests.
 
