@@ -31,11 +31,11 @@
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | P18-P01 | 第三方声明按平台的依赖图生成：Windows 的输出与改动前相同；macOS 以 `stickymd-mac` 为根、`aarch64-apple-darwin` 为目标 | Automated | 尚未实现 | NOT TESTED |
-| P18-P02 | macOS 包：ZIP 成员白名单、`StickyMD/StickyMD.app` 与说明文件、README 的 Source commit 行、不含 `note/`；解出后签名与架构校验 | Automated | 尚未实现 | NOT TESTED |
+| P18-P02 | macOS 包：ZIP 成员白名单、`StickyMD/StickyMD.app` 与说明文件、README 的 Source commit 行与“macOS 27+、Apple Silicon、更早版本未验收”、不含 `note/`；解出后签名完整、签名方式为 ad-hoc 与架构校验 | Automated | 尚未实现 | NOT TESTED |
 | P18-P03 | macOS SBOM 与 `SHA256SUMS-macos-arm64.txt`：两行、文件名白名单、哈希与文件一致 | Automated | 尚未实现 | NOT TESTED |
 | P18-P04 | 本地晋升：按 attempt 查询结论、按 artifact id 下载、与用户副本逐字节比对；任何校验失败都不半更新 staging，也不写 receipt；receipt 不含绝对路径与发布提交 | Automated | 尚未实现 | NOT TESTED |
-| P18-P05 | Platform Build Input Fingerprint：在 Git tree 上计算；排除表逐项；未分类路径算作输入；沿用要求祖先关系与指纹相同两个条件 | Automated | 尚未实现 | NOT TESTED |
-| P18-P06 | Windows 候选接受可沿用的构建来源；同一 artifact 原样重新 Promote 得到同一 receipt | Automated | 尚未实现 | NOT TESTED |
+| P18-P05 | Platform Build Input Fingerprint：在 Git tree 上计算；排除表逐项；未分类路径与每个成员的 `Cargo.toml` 算作输入；沿用要求祖先关系与指纹相同两个条件 | Automated | 尚未实现 | NOT TESTED |
+| P18-P06 | 构建来源 S 与发布提交 R 分开核对：远端记录、Promote、resolver 与 readiness 接受可沿用的 S；同一 artifact 原样重新 Promote 得到同一 receipt，按其摘要绑定的人工日志仍可用；沿用记录写明 S、R 与两侧指纹 | Automated | 尚未实现 | NOT TESTED |
 | P18-P07 | 晋升 workflow 的附件集合比对：缺件、多件、残留旧附件、哈希不符都拒绝 | Automated | 尚未实现 | NOT TESTED |
 | P18-P08 | `release-macos` workflow 在 `xcode-27` 上选定 Xcode 27.2 构建，构建记录齐全，artifact 名带 attempt | Manual | 需要 push 与 USER 授权的 dispatch | NOT TESTED |
 | P18-P09 | 对真实候选运行晋升 workflow 的 TAG、DRAFT、PUBLISH | Manual | 需要 USER 分别授权 | NOT TESTED |
@@ -51,4 +51,4 @@
 | P18-D02 | 拖进 `~/Applications` 再打开：安装版，同一个键 | Manual | 尚未运行 | NOT TESTED |
 | P18-D03 | 把外层文件夹移到别处再打开：便携版，便签在 app 旁边 | Manual | 尚未运行 | NOT TESTED |
 | P18-D04 | 在解压原地打开：区分被 Gatekeeper 拦下、随机化后提示退出（不写文件）、未随机化而正常以便携版启动三种情形 | Manual | 尚未运行 | NOT TESTED |
-| P18-D05 | 真实下载路径：浏览器下载、访达首开时在“隐私与安全性”中“仍要打开”、保存、退出后重开；在第一个公开包的候选上做一次 | Manual | 尚未运行 | NOT TESTED |
+| P18-D05 | 真实下载路径：浏览器下载、访达首开（系统拦下时才在“隐私与安全性”中“仍要打开”，并记录是否被拦）、保存、退出后重开；在第一个公开包的候选上做一次 | Manual | 尚未运行 | NOT TESTED |

@@ -76,7 +76,7 @@ USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-de
 2. **保留 invalid canonical（恢复第 5 条）：** 无法用同一句柄校验并改名。macOS adapter `O_NOFOLLOW` 打开并哈希，`RENAME_EXCL` 移到保留名，再比对 `(dev, ino)` 并重新哈希。不符时用 `RENAME_EXCL` 移回，成功报 `Changed`；移回失败报失败并指明文件所在，拒绝本次恢复。外部程序在哈希之后替换或原地改写该文件、或流程中途崩溃，文件可能留在保留名下，内容不丢。
 3. **受管图片：** 见 `08` macOS 节。
 
-**卷要求：** 可写检查增加一次真实的 `RENAME_EXCL`；不支持（exFAT、FAT32 上为 `ENOTSUP`）时显示“当前卷不支持安全保存，请将程序移到 APFS 卷”并退出，不回退到普通 `rename`。安装版的 Note Root 在家目录所在的卷上，提示改为指明实际的 Note Root（“便签目录所在的卷不支持安全保存：<Note Root>”）。验收目标只有 APFS。
+**卷要求：** 可写检查增加一次真实的 `RENAME_EXCL`；不支持（exFAT、FAT32 上为 `ENOTSUP`）时显示“当前卷不支持安全保存，请将程序移到 APFS 卷”并退出，不回退到普通 `rename`。这一检查在已打开的 Note Root 上进行；安装版的提示改为指明实际的 Note Root（“便签目录所在的卷不支持安全保存：<Note Root>”）。验收目标只有 APFS。
 
 失败分类沿用上表的语义：读取、元数据与观察竞争为 `Unavailable`，其余为 `Failed`。macOS 存储端口没有 `Unsupported` 路径。
 
@@ -128,21 +128,22 @@ create-new、写 sentinel、flush、删除；删除失败也视为环境不可�
 > 当前目录不可写，请将程序移动到有写权限的文件夹。
 
 macOS 保留“当前目录不可写”这个前缀：`.app` 在 bundle 里的便携版后接“请先把 StickyMD.app 拖进“应用程序”，或把整个 StickyMD
-文件夹移到别处。”（下载后未移动、运行在随机化只读路径上的 app 走这一句）；安装版后接实际的 Note Root；开发构建与上句相同。
+文件夹移到别处。”（下载后未移动、运行在随机化只读路径上的 app 走这一句）；安装版后接实际的 Note Root；开发构建没有可拖动的 `.app`，沿用上面的通用提示。
 
 禁止 fallback 到 `%APPDATA%`、`%LOCALAPPDATA%`、Documents、注册表或任何用户配置目录。
 
 <a id="program-directory-identity"></a>
 ### 单实例目录身份
 
-- 实例身份 = canonical program directory：`current_exe()` → 父目录 → 解析 `.`/`..`
+- Windows：实例身份 = canonical program directory：`current_exe()` → 父目录 → 解析 `.`/`..`
   → 解析 junction/symlink/reparse point → 统一 Windows 大小写语义 → SHA-256 → 本地命名对象。
 - 同目录：第一个实例持有 named mutex；第二个实例通知第一个显示并激活，自己退出。
 - 不同目录：哈希不同，可并行运行，互不干扰。
 - 真实 canonical 路径继续用于 I/O；仅 identity key 归一化大小写，lower-case key 不得反向成为 I/O 路径。
 - macOS：Program Directory 由 `current_exe` → `canonicalize` 得出，路径形如 `<X>/*.app/Contents/MacOS/<exe>` 时为 `<X>`，否则为可执行文件的
   父目录（开发构建）；Note Root 按 #note-root 判定。实例身份不用路径字符串，用 **Note Root** 的 `(st_dev, st_ino)`：对 #note-root 打开的 Note Root
-  句柄取 `flock(LOCK_EX | LOCK_NB)`，不按路径重开；除安装版加锁前的两级空目录外不创建任何文件；取锁失败即第二实例。唤醒走
+  句柄取 `flock(LOCK_EX | LOCK_NB)`，不按路径重开；除安装版加锁前的两级空目录外不创建任何文件。只有锁已被占用（`EWOULDBLOCK`）才是第二实例；
+  其他加锁错误不能证明已有实例，提示原因后退出，不走唤醒。唤醒走
   `<DARWIN_USER_TEMP_DIR>/stickymd-<16 位十六进制>.sock`（`confstr` 取目录，不用 `$TMPDIR`；十六进制取自 Note Root `(dev, ino)` 的 SHA-256 前
   64 位）：持锁者 `unlink` 残留 socket 后 `bind` + `listen`；第二实例 `connect` 失败按 50/150/300 ms 重试，最终失败仍退出。同一 bundle 再次打开由系统投递
   reopen Apple Event，宿主转成同一唤醒信号。
@@ -159,16 +160,17 @@ USER 批准（2026-11-19，[安装版报告](../report/2026-11-19-macos-installe
    以 `O_DIRECTORY` 打开的句柄为准。
 2. **bundle 的父目录：** 以 `O_DIRECTORY` 打开 `<X>`，取它的 `(dev, ino)`；之后的便携分支直接沿用这个句柄，不再按路径打开。
 3. **比较身份：** 候选只有 `/Applications` 与 `<家目录>/Applications`。家目录取自用户数据库（`getpwuid_r` 查当前 uid），不读 `$HOME`，
-   理由与不用 `$TMPDIR` 相同：环境变量可被修改。对每个候选 `stat`，跟随符号链接与 firmlink（`/Applications` 与 `/System/Volumes/Data/Applications`
-   因此是同一个目录）。
+   理由与不用 `$TMPDIR` 相同：环境变量可被修改。`/Applications` 按路径 `stat`；个人的候选从家目录的句柄出发，以 `fstatat(<家目录>, "Applications")`
+   查询，家目录打不开视为家目录查不到。两者都跟随符号链接与 firmlink（`/Applications` 与 `/System/Volumes/Data/Applications`
+   因此是同一个目录）。这里比较的是 bundle 父目录与候选的身份；安装版确定后，实例锁与唤醒用的是最终键目录的身份。
    - 任一候选与 `<X>` 身份相同即为安装版。命中优先：另一个候选报错也不影响。
    - 候选不存在、是悬空链接或不是目录（`ENOENT`、`ENOTDIR`）视为不命中：`<X>` 确实存在，不可能等于不存在的目标。
    - 都不命中、但有候选因其他原因（如 `EACCES`）查不到，或家目录本身查不到，视为无法判定：提示原因后退出。
    - 都不命中、也没有错误，就是便携版。
    - `/System/Applications` 与子文件夹（如 `/Applications/工具/StickyMD.app`）不是候选；`<家目录>/Applications` 是指向别处的有效链接时按链接目标判定；
      家目录在外置卷上时，那里的 `Applications` 同样是候选。
-4. **键：** bundle 目录名去掉 `.app`，用实际的目录名，不读 Info.plist，做 Unicode NFC 规范化。键为空、为 `.` 或 `..`，或无法无损转成 UTF-8 时，
-   视为无法判定，提示后退出。两个副本是否共用一张便签，由最终的键目录是否是同一个目录决定，因此服从 `Application Support` 所在卷的语义：
+4. **键（只用于安装版）：** 判为安装版后，bundle 目录名去掉 `.app`，用实际的目录名，不读 Info.plist，做 Unicode NFC 规范化。键为空、为 `.` 或 `..`，
+   或无法无损转成 UTF-8 时，视为无法判定，提示后退出；便携版不取键，名字不起作用。两个副本是否共用一张便签，由最终的键目录是否是同一个目录决定，因此服从 `Application Support` 所在卷的语义：
    NFC 之后相同的名字共用一张；默认的大小写不敏感卷上只差大小写的名字共用一张，大小写敏感卷上不共用。复制或改名后，只有最终的键目录尚不存在
    时才得到一张新便签；已存在就打开那一张；改名后原来那张留在原处，程序察觉不到改名。
 5. **安装版打开 Note Root：**
@@ -181,7 +183,8 @@ USER 批准（2026-11-19，[安装版报告](../report/2026-11-19-macos-installe
 6. **共同的后续步骤：** 可写检查、卷检查、`note/` 的创建与打开，都相对已加锁的 Note Root 句柄进行；启动阶段的配置、正文与资产读取与运行期端口
    从同一个 `note/` 句柄派生（#macos-storage）。监视器仍按路径注册，只作提示（P16-S11）；相对链接仍由宿主按 Note Directory 定位；导出仍比较 fd 的身份。
 7. **运行中目录被移动、替换或删除：** 不增加新的保证，沿用 #macos-storage 与 P16-S14。
-8. **随机化：** app 实际运行在随机化的只读路径上时，按上述规则是便携版，可写检查失败，提示后退出；没有触发随机化时，作为普通便携版启动。
+8. **随机化：** app 实际运行在随机化的只读路径上时，按上述规则是便携版，可写检查失败，提示后退出。没有触发随机化时，仍按第 1–3 步判定位置：
+   在解压原地打开的 app 是普通便携版，便签写在解压出的文件夹里；拖进“应用程序”后打开的仍是安装版。
 9. **唤醒：** 同键互斥由 Note Root 句柄上的 `flock` 保证，是发布门。唤醒是尽力而为：连接失败时第二实例仍然退出；两个不同键的安装副本同时运行时，
    系统可能把 reopen Apple Event 投递给另一个进程（`09` macOS 映射），只记录观察，不作发布门。
 10. **迁移：** 便携版与安装版之间，程序不自动导入，也不删除任何东西；手工步骤写在 README，目标已有 `note/` 时就停下。

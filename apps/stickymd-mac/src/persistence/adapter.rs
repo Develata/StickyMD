@@ -133,12 +133,19 @@ pub struct MacPorts {
     pub preview_directory: DirectoryHandle,
 }
 
+/// `root` is the locked Note Root: the note's save may recreate a deleted `note/` in it.
 pub fn mac_io_ports(
+    root: &DirectoryHandle,
     note: &DirectoryHandle,
     paths: &RuntimePaths,
 ) -> Result<MacPorts, StorageFailure> {
     let directory = || note.try_clone().map_err(AssetStorageError::Directory);
-    let files = NoteFiles::in_directory(&paths.note_dir, directory()?);
+    let parent = root.try_clone().map_err(AssetStorageError::Directory)?;
+    let files = NoteFiles::in_directory(
+        &paths.note_dir,
+        directory()?,
+        Some((parent, crate::paths::NOTE_DIRECTORY.to_owned())),
+    );
     let assets = MacAssetStore::in_directory(directory()?, paths);
     let export = MacExportSink {
         directory: directory()?,

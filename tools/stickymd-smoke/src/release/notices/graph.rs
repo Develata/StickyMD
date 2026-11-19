@@ -19,7 +19,8 @@ pub(super) struct Package {
     pub manifest: PathBuf,
 }
 
-pub(super) fn runtime_packages(metadata: &str) -> Result<Vec<Package>, String> {
+/// The registry packages the package named `root` reaches over normal edges.
+pub(super) fn runtime_packages(metadata: &str, root: &str) -> Result<Vec<Package>, String> {
     let metadata = json::parse(metadata)?;
     let mut packages = BTreeMap::new();
     for package in metadata.field("packages")?.array()? {
@@ -46,11 +47,13 @@ pub(super) fn runtime_packages(metadata: &str) -> Result<Vec<Package>, String> {
     }
     let roots = packages
         .values()
-        .filter(|package| package.name == "stickymd-win")
+        .filter(|package| package.name == root)
         .map(|package| package.id.clone())
         .collect::<Vec<_>>();
     if roots.len() != 1 {
-        return Err("Cannot identify the stickymd-win package in cargo metadata".to_owned());
+        return Err(format!(
+            "Cannot identify the {root} package in cargo metadata"
+        ));
     }
     let mut nodes = BTreeMap::new();
     for node in metadata.field("resolve")?.field("nodes")?.array()? {

@@ -12,10 +12,11 @@ use crate::paths::{RuntimePaths, open_note_directory};
 use crate::platform::macos::file::DirectoryHandle;
 
 fn macos_storage(root: &Path, on_completion: Completion) -> StorageSite {
-    let note = open_note_directory(&DirectoryHandle::open(root).unwrap()).unwrap();
+    let note_root = DirectoryHandle::open(root).unwrap();
+    let note = open_note_directory(&note_root).unwrap();
     let paths = RuntimePaths::of(root);
-    let worker =
-        PersistenceWorker::start(mac_io_ports(&note, &paths).unwrap().io, on_completion).unwrap();
+    let ports = mac_io_ports(&note_root, &note, &paths).unwrap();
+    let worker = PersistenceWorker::start(ports.io, on_completion).unwrap();
     StorageSite {
         worker,
         paths: StoragePaths {

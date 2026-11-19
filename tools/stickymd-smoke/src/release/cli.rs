@@ -12,7 +12,10 @@ pub(crate) enum Command {
         input: PathBuf,
     },
     VerifyRemoteState(RemoteStateOptions),
-    Notices(PathBuf),
+    Notices {
+        destination: PathBuf,
+        platform: super::platform::Platform,
+    },
     PackageInputs(PackageInputOptions),
     BuildPackage(PackageBuildOptions),
     GenerateSbom(SbomBuildOptions),
@@ -22,6 +25,27 @@ pub(crate) enum Command {
         directory: PathBuf,
     },
     WorkspaceVersion,
+    MacosPackage {
+        app: PathBuf,
+        output: PathBuf,
+        allow_dirty: bool,
+    },
+    MacosSbom {
+        zip: PathBuf,
+    },
+    MacosVerifyPackage {
+        zip: PathBuf,
+        source: Option<String>,
+    },
+    PlatformInputs {
+        platform: super::platform::Platform,
+        commit: String,
+    },
+    VerifyReuse {
+        platform: super::platform::Platform,
+        build: String,
+        release: String,
+    },
     Checksums(ChecksumOptions),
     PublishSbom(SbomOptions),
     PrepareSbom(SbomPreparationOptions),
@@ -210,8 +234,36 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
                 .map_err(|_| "invalid query exit code")?,
             allow_missing,
         }),
-        "notices" => Command::Notices(PathBuf::from(take("--destination")?)),
+        "notices" => Command::Notices {
+            destination: PathBuf::from(take("--destination")?),
+            // Windows remains the default, so the existing packaging scripts are unchanged.
+            platform: options.remove("--platform").map_or(
+                Ok(super::platform::Platform::WindowsX64),
+                super::platform::Platform::parse,
+            )?,
+        },
         "workspace-version" => Command::WorkspaceVersion,
+        "macos-package" => Command::MacosPackage {
+            app: PathBuf::from(take("--app")?),
+            output: PathBuf::from(take("--output-directory")?),
+            allow_dirty,
+        },
+        "macos-sbom" => Command::MacosSbom {
+            zip: PathBuf::from(take("--zip")?),
+        },
+        "macos-verify-package" => Command::MacosVerifyPackage {
+            zip: PathBuf::from(take("--zip")?),
+            source: options.remove("--source-sha").map(str::to_owned),
+        },
+        "platform-inputs" => Command::PlatformInputs {
+            platform: super::platform::Platform::parse(&take("--platform")?)?,
+            commit: take("--commit")?,
+        },
+        "verify-reuse" => Command::VerifyReuse {
+            platform: super::platform::Platform::parse(&take("--platform")?)?,
+            build: take("--build-source")?,
+            release: take("--release-source")?,
+        },
         "syft-plan" => Command::SyftPlan(options.remove("--syft-path").map(PathBuf::from)),
         "syft-publish" => Command::SyftPublish {
             kind: super::syft::Kind::parse(&take("--kind")?)?,
@@ -298,6 +350,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
             command,
             Command::PackageInputs(_) | Command::PreparePackage { .. } | Command::BuildPackage(_)
         )
+        && !(allow_dirty && !exact && matches!(command, Command::MacosPackage { .. }))
     {
         return Err("package input flags require package-inputs".to_owned());
     }

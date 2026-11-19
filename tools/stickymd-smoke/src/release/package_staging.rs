@@ -58,7 +58,12 @@ pub(super) fn stage(
                 notices::normalized_license(&root.join(source))?.into_bytes()
             }
             Content::Notices => {
-                notices::generate_with_output(root, &path, &mut diagnostics)?;
+                notices::generate_with_output(
+                    root,
+                    &path,
+                    super::platform::Platform::WindowsX64,
+                    &mut diagnostics,
+                )?;
                 continue;
             }
         };

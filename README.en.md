@@ -205,10 +205,43 @@ MathScratch/
    └─ .trash/
 ```
 
-- Notes and images stay in the current program directory.
+- Notes and images stay in the current program directory (the next version's installed macOS copy is the exception; see [macOS](#macos-next)).
 - StickyMD writes neither AppData nor the Registry and requires no account.
 - There is no cloud sync, telemetry, advertising, automatic updater, or runtime network request.
 - Move or back up the whole directory to preserve the scratchpad.
+
+<a id="macos-next"></a>
+
+## macOS (next version, not yet released)
+
+From the next version, each release also carries a ZIP for macOS 27 or later on Apple silicon (arm64); earlier macOS versions
+are untested. The app is ad-hoc signed and not notarized: verify `SHA256SUMS-macos-arm64.txt` first, and if macOS blocks the
+app, choose Open Anyway in System Settings > Privacy & Security.
+
+- **Installed (recommended):** drag `StickyMD.app` into Applications (`/Applications` or `~/Applications`) and open it. The note
+  lives in `~/Library/Application Support/StickyMD/<app name>/note/`. Between versions that use this layout, replacing the app
+  with a newer one of the same name keeps the same note. A copied and renamed app gets a new note only if no note exists yet
+  under that name; the old note stays where it was.
+- **Portable:** move the whole `StickyMD/` folder elsewhere with Finder and open the app inside it; the note is the `note/`
+  beside it. The whole folder placed in Applications is still portable, and replacing that folder replaces its `note/` too.
+- **Do not open the app where it was unzipped in Downloads:** macOS may run it from a read-only random location, and StickyMD
+  then reports that the folder is not writable and quits.
+
+**Moving a note between portable and installed** (StickyMD never imports, merges or deletes notes by itself):
+
+1. Quit every StickyMD that uses the source or the target.
+2. Make sure the source is your own note. Anyone who ran an older version directly in `/Applications` has a note in
+   `/Applications/note/`, which may be shared with other users.
+3. Back up the source's whole `note/` folder.
+4. If the target already has a `note/` folder, even one holding only `.trash/` or recovery files, stop and do not copy; decide
+   which to keep, or save the target elsewhere and empty it first.
+5. Otherwise copy the source's whole `note/` folder, hidden items included. For the installed note, create
+   `StickyMD/<app name>/` in Finder first if it does not exist yet; do not start the installed app first, since it would create
+   `note/` and trigger step 4.
+6. If copying is interrupted, delete the incomplete target and start again from the backup of step 3.
+
+Whether a note can be restored from a backup depends on your backup settings, exclusions and last successful backup, in either
+mode.
 
 <a id="download"></a>
 

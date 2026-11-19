@@ -215,7 +215,7 @@ Phase 17 落地前，提示仍是现行的单一诊断文字，只画在 Source 
 <a id="single-instance"></a>
 ### 单实例唤醒
 
-同一 canonical 目录第二个实例：通知第一实例显示并激活，自己立即退出。
+Windows：同一 canonical 目录第二个实例：通知第一实例显示并激活，自己立即退出。macOS 以 Note Root 判定，第二实例尝试唤醒后退出，唤醒尽力而为（`05` #note-root）。
 
 ### 固定视觉效果（不可配置）
 

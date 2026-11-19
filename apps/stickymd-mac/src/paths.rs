@@ -14,7 +14,7 @@ use crate::note_root::{Mode, NoteRoot};
 use crate::platform::macos::child_directory::is_not_a_plain_directory;
 use crate::platform::macos::file::{DirectoryHandle, full_sync};
 
-const NOTE_DIRECTORY: &str = "note";
+pub const NOTE_DIRECTORY: &str = "note";
 const IMAGES_DIRECTORY: &str = "images";
 const TRASH_DIRECTORY: &str = ".trash";
 /// `ENOTSUP`, the answer of volumes that cannot rename without replacing.

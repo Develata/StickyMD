@@ -1,0 +1,240 @@
+//! Building and checking the macOS ZIP on a Mac: stage `StickyMD/` with the signed bundle and the
+//! notices, archive it with `ditto`, then take the archive apart again and check every file, the
+//! signature and the architecture of what came out.
+//! plan_ref: docs/plan/11_testing_and_release.md#macos-release-artifact
+
+use super::content::{self, APP, FILES, README, Source};
+use crate::mac_common::fixture::{app_inputs, bundle_hash};
+use crate::release::notices;
+use crate::release::platform::Platform;
+use crate::release::temporary::TemporaryDirectory;
+use crate::{evidence::escape_json, integrity, repository};
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// What a checked package holds, for the workflow log and the candidate receipt.
+pub(crate) struct Facts {
+    pub zip: PathBuf,
+    pub zip_sha256: String,
+    pub source_commit: String,
+    pub executable_sha256: String,
+    pub bundle_sha256: String,
+    pub app_inputs: String,
+}
+
+impl Facts {
+    pub(crate) fn json(&self) -> String {
+        format!(
+            "{{\"zip\":\"{}\",\"zip_sha256\":\"{}\",\"source_commit\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"app_inputs\":\"{}\"}}",
+            escape_json(&self.zip.display().to_string()),
+            self.zip_sha256,
+            self.source_commit,
+            self.executable_sha256,
+            self.bundle_sha256,
+            self.app_inputs
+        )
+    }
+}
+
+/// Runs a system tool and returns its trimmed stdout, or its stderr as the error.
+pub(crate) fn run(program: &str, arguments: &[&std::ffi::OsStr]) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("cannot run {program}: {error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    } else {
+        Err(format!(
+            "{program} {arguments:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// The bundle as `build-app.sh` must have made it: a valid Info.plist of this version with the
+/// product input fingerprint, an arm64-only executable and an intact ad-hoc signature.
+fn check_app(app: &Path, version: &str) -> Result<String, String> {
+    let plist = app.join("Contents/Info.plist");
+    run("/usr/bin/plutil", &["-lint".as_ref(), plist.as_os_str()])?;
+    let short_version = run(
+        "/usr/bin/plutil",
+        &[
+            "-extract".as_ref(),
+            "CFBundleShortVersionString".as_ref(),
+            "raw".as_ref(),
+            plist.as_os_str(),
+        ],
+    )?;
+    if short_version != version {
+        return Err(format!(
+            "the bundle is version {short_version}, the workspace {version}"
+        ));
+    }
+    let inputs = app_inputs(app)?.ok_or("the bundle records no product input fingerprint")?;
+    let executable = app.join("Contents/MacOS/StickyMD");
+    let architectures = run(
+        "/usr/bin/lipo",
+        &["-archs".as_ref(), executable.as_os_str()],
+    )?;
+    if architectures != "arm64" {
+        return Err(format!(
+            "expected an arm64-only executable, found {architectures}"
+        ));
+    }
+    run(
+        "/usr/bin/codesign",
+        &["--verify".as_ref(), "--strict".as_ref(), app.as_os_str()],
+    )?;
+    Ok(inputs)
+}
+
+fn commit_and_version(root: &Path, allow_dirty: bool) -> Result<(String, String), String> {
+    if !allow_dirty
+        && !repository::command_text(root, "git", &["status", "--porcelain"])?.is_empty()
+    {
+        return Err("the macOS package is built from a clean worktree".to_owned());
+    }
+    let commit =
+        repository::command_text(root, "git", &["rev-parse", "HEAD"])?.to_ascii_lowercase();
+    Ok((commit, repository::workspace_version(root)?))
+}
+
+/// Stages the package next to `output`, archives it as the platform's ZIP there and checks the
+/// archive. An existing ZIP of that name is refused, not replaced.
+pub(crate) fn build(
+    root: &Path,
+    app: &Path,
+    output: &Path,
+    allow_dirty: bool,
+) -> Result<Facts, String> {
+    let (commit, version) = commit_and_version(root, allow_dirty)?;
+    check_app(app, &version)?;
+    let zip = output.join(Platform::MacOsArm64.archive_name(&version));
+    if fs::symlink_metadata(&zip).is_ok() {
+        return Err(format!("{} already exists", zip.display()));
+    }
+    let staging = TemporaryDirectory::new("macos-package")?;
+    let directory = staging.path().join("StickyMD");
+    fs::create_dir(&directory).map_err(|error| error.to_string())?;
+    // A plain copy: no extended attributes, quarantine or resource forks travel with the bundle.
+    run(
+        "/usr/bin/ditto",
+        &[
+            "--norsrc".as_ref(),
+            "--noextattr".as_ref(),
+            "--noqtn".as_ref(),
+            app.as_os_str(),
+            staging.path().join(APP).as_os_str(),
+        ],
+    )?;
+    for (name, source) in FILES {
+        let path = staging.path().join(name);
+        fs::create_dir_all(path.parent().ok_or("a package file has no parent")?)
+            .map_err(|error| error.to_string())?;
+        match source {
+            Source::Readme => fs::write(&path, content::readme(&version, &commit, !allow_dirty))
+                .map_err(|error| error.to_string())?,
+            Source::License(relative) => {
+                fs::write(&path, notices::normalized_license(&root.join(relative))?)
+                    .map_err(|error| error.to_string())?;
+            }
+            Source::Notices => notices::generate_with_output(
+                root,
+                &path,
+                Platform::MacOsArm64,
+                &mut std::io::sink(),
+            )?,
+        }
+    }
+    run(
+        "/usr/bin/ditto",
+        &[
+            "-c".as_ref(),
+            "-k".as_ref(),
+            "--norsrc".as_ref(),
+            "--keepParent".as_ref(),
+            directory.as_os_str(),
+            zip.as_os_str(),
+        ],
+    )?;
+    staging.close()?;
+    verify(&zip, Some(&commit), &version)
+}
+
+/// Takes `zip` apart in a fresh directory and checks it holds exactly the inventory, names
+/// `expected_commit` (when given) in its README, and carries a valid arm64 ad-hoc bundle.
+pub(crate) fn verify(
+    zip: &Path,
+    expected_commit: Option<&str>,
+    version: &str,
+) -> Result<Facts, String> {
+    let extracted = TemporaryDirectory::new("macos-package-check")?;
+    run(
+        "/usr/bin/ditto",
+        &[
+            "-x".as_ref(),
+            "-k".as_ref(),
+            zip.as_os_str(),
+            extracted.path().as_os_str(),
+        ],
+    )?;
+    let mut files = BTreeSet::new();
+    collect_files(extracted.path(), extracted.path(), &mut files)?;
+    content::check_files(&files)?;
+    let readme = fs::read_to_string(extracted.path().join(README))
+        .map_err(|error| format!("cannot read the package README: {error}"))?;
+    let source_commit = content::source_commit(&readme)?;
+    if let Some(expected) = expected_commit
+        && !source_commit.eq_ignore_ascii_case(expected)
+    {
+        return Err(format!(
+            "the package names source {source_commit}, expected {expected}"
+        ));
+    }
+    if !readme.contains(&format!("\nVersion: {version}\n")) {
+        return Err(format!(
+            "the package README does not name version {version}"
+        ));
+    }
+    let app = extracted.path().join(APP);
+    let app_inputs = check_app(&app, version)?;
+    let facts = Facts {
+        zip: zip.to_owned(),
+        zip_sha256: integrity::sha256(zip)?,
+        source_commit,
+        executable_sha256: integrity::sha256(&app.join("Contents/MacOS/StickyMD"))?,
+        bundle_sha256: bundle_hash(&app)?,
+        app_inputs,
+    };
+    extracted.close()?;
+    Ok(facts)
+}
+
+/// Regular files under `directory`, relative to `root` with `/`; a link or special file fails.
+fn collect_files(root: &Path, directory: &Path, into: &mut BTreeSet<String>) -> Result<(), String> {
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        let kind = fs::symlink_metadata(&path)
+            .map_err(|error| error.to_string())?
+            .file_type();
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| error.to_string())?
+            .to_str()
+            .ok_or("a package path is not UTF-8")?
+            .to_owned();
+        if kind.is_dir() {
+            collect_files(root, &path, into)?;
+        } else if kind.is_file() {
+            into.insert(relative);
+        } else {
+            return Err(format!(
+                "the package holds a link or special file: {relative}"
+            ));
+        }
+    }
+    Ok(())
+}

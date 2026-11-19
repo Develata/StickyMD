@@ -1161,9 +1161,15 @@ fn frozen_trace_ids(content: &str, path: &Path, prefix: &str) -> Result<Vec<u16>
 }
 
 /// Whether `path` is the Phase 16 (macOS host) acceptance matrix.
+/// The macOS matrices, whose automated rows may wait as `NOT TESTED` for a run in the VM.
 fn is_macos_matrix(path: &Path) -> bool {
     path.file_name()
         .is_some_and(|name| name == "phase-16.md" || name == "phase-18.md")
+}
+
+/// Only Phase 16 keeps its historical in-matrix USER waivers; later waivers are receipts.
+fn allows_matrix_waiver(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "phase-16.md")
 }
 
 fn read_matrix_rows(path: &Path) -> Result<Vec<MatrixRow>, String> {
@@ -1191,7 +1197,7 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
             // `NOT TESTED`), so its automated rows may wait, and its one waiver has no mode.
             // Readiness still refuses a waiting automated row when `phase 16` is judged.
             "Automated" if status == "NOT TESTED" && is_macos_matrix(path) => {}
-            "—" if status == "USER 豁免" && is_macos_matrix(path) => {}
+            "—" if status == "USER 豁免" && allows_matrix_waiver(path) => {}
             _ => {
                 return Err(at(format!(
                     "invalid mode/status pair `{mode}` / `{status}`"
@@ -1605,6 +1611,10 @@ mod tests {
         let waiting = format!("{header}| P16-S06 | act | Automated | exFAT | NOT TESTED |\n");
         let waived = format!("{header}| P16-W16 | act | — | USER 2026-11-10 | USER 豁免 |\n");
         let macos = std::path::Path::new("phase-16.md");
+        // Phase 18 may wait like Phase 16 but takes no waiver in the matrix.
+        let phase18 = std::path::Path::new("phase-18.md");
+        assert!(matrix_rows(&waiting, phase18).is_ok());
+        assert!(matrix_rows(&waived, phase18).is_err());
         let other = std::path::Path::new("phase-15.md");
         for document in [&waiting, &waived] {
             assert_eq!(matrix_rows(document, macos).unwrap().len(), 1);

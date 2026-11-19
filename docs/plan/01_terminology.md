@@ -327,7 +327,7 @@
   Artifact：Windows 为 `dist/exact-candidate/`，macOS 为 `dist/exact-candidate-macos/`，两者各有 receipt，互不替换。candidate receipt
   绑定构建来源 SHA、workflow run/attempt、artifact id/name 与该平台各文件（Windows：ZIP/EXE/SBOM；macOS：ZIP/checksum 文件/SBOM、
   可执行文件与 bundle 清单）的 SHA-256，且不记录机器绝对路径与发布提交，所以同一 artifact 在沿用它的发布提交上原样重新 Promote
-  得到同一 receipt。
+  得到同一 receipt。与 Source Freeze 的对应不要求相等，而按 `11` #platform-artifact-reuse 的同一个沿用判定。
 - **Authority**：Rust qualification promotion transaction 与 canonical staging 中重新校验的字节。
 - **Not equivalent to**：Local Preflight Build、任意 downloaded ZIP、remote workflow 仅成功、source-only receipt。
 - **Lifetime**：从成功 Promote 到该平台的 Platform Build Input Fingerprint 不再允许沿用它、或该平台下一次 Promote；替换某一平台的
@@ -350,9 +350,10 @@
 
 - **Definition**：一个 GitHub Release 获准附带的完整文件集合及各文件的 SHA-256。获准的集合只有一种：Windows x64 三件加 macOS arm64 三件，
   两个平台同版发布（USER 决定 2026-11-19）。
-- **Authority**：USER 的 DRAFT 授权写明这一集合；PUBLISH 授权引用 DRAFT 已批准的同一组，晋升 workflow 逐文件比对名称与哈希。
+- **Authority**：TAG 起每个晋升 operation 都携带这一集合并据此核对候选；USER 的 DRAFT 授权固定它，PUBLISH 授权引用 DRAFT 已批准的同一组，
+  晋升 workflow 逐文件比对名称与哈希。
 - **Not equivalent to**：草稿上实际存在的文件（缺件、多件或残留的旧附件都使比对失败）；某一平台的 Release Exact Artifact。
-- **Lifetime**：从 DRAFT 授权到 PUBLISH 完成；任一文件变化即需新的授权。
+- **Lifetime**：从 TAG 前提出、DRAFT 固定，到 PUBLISH 完成；任一文件变化即需新的授权。
 
 ### Source-bound Evidence
 

@@ -92,9 +92,9 @@ Editor Session
 - 首版永远只编辑一个 canonical working note：`<note-root>/note/note.md`（Note Root 见 `01`）。
 - **一个 Note Root 就是一张便签的身份边界。** 便携版的 Note Root 是程序目录；macOS 安装版的 Note Root 由 app 的名字决定（下一节）。
 - 不提供：新建文档、打开文档、最近文件、文件树、多标签页、搜索全部笔记。
-- 需要第二张便签时，便携版复制整个程序目录到别处；macOS 安装版用另一个名字的 app 副本。
-- 同一 Note Root 只能运行一个实例（第二个实例唤醒第一个并退出）；
-  不同 Note Root 的实例完全独立，可同时运行。
+- 需要第二张便签时，便携版复制整个程序目录到别处；macOS 安装版用另一个名字的 app 副本，且只有该名字的键目录尚不存在时才是新的一张（`05` #note-root）。
+- 同一 Note Root 只能运行一个实例；不同 Note Root 的实例完全独立，可同时运行。Windows 的第二个实例唤醒第一个并退出；
+  macOS 的第二个实例尝试唤醒后退出，唤醒尽力而为（`05` #note-root 第 9 条）。
 
 <a id="portable-and-installed"></a>
 ## 便携版与安装版
@@ -113,7 +113,8 @@ Editor Session
   > 当前目录不可写，请将程序移动到有写权限的文件夹。
 
   然后退出。macOS 保留“当前目录不可写”这个前缀，后半句按情形给出移动建议（`05` #startup-sequence）。
-- **禁止按失败回退。** 位置判定、目录创建、加锁或写入任一步失败，都提示后退出，绝不因为失败换到另一个位置：
+- **禁止按失败回退。** 启动时无法确定或打开 Note Root、建立实例或通过可写检查，都提示后退出，绝不因为失败换到另一个位置；
+  运行期的写入失败按 `05` 处理（保留内存文本、报错、取消退出），同样不换位置重试：
   Windows 不使用 AppData、LocalAppData、Documents、Registry 或任何用户配置目录；macOS 的模式只由 `.app` 的位置决定，
   安装版位于 `Application Support` 是位置规则的结果，不是 fallback。按失败回退会破坏“Note Root 就是便签身份”的本体模型。
 
@@ -276,7 +277,8 @@ Initial Engineering Targets，未经实测不得对外宣传。
 
 - Note Root 不可写：明确提示后退出（不静默 fallback）。
 - 功能请求落在 Non-Goals：默认拒绝 PR，引用本章。
-- 目录身份解析失败（路径无法 canonical 化，或 macOS 的位置判定、键或家目录无法确定）：按启动失败处理，提示原因并退出。
+- 目录身份解析失败（路径无法 canonical 化）：按启动失败处理，记录并退出。
+- macOS 的位置判定、安装版的键或家目录无法确定：按启动失败处理，提示原因并退出（`05` #note-root）。
 
 ## Verification
 

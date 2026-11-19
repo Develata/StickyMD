@@ -69,7 +69,12 @@ pub(crate) fn verify(
         .map_err(|error| format!("cannot read packaged README: {error}"))?;
     identity::readme_source(&readme, &source)?;
     let expected_notices = temporary.path().join("expected-third-party-notices.txt");
-    notices::generate_with_output(root, &expected_notices, output)?;
+    notices::generate_with_output(
+        root,
+        &expected_notices,
+        super::platform::Platform::WindowsX64,
+        output,
+    )?;
     if integrity::sha256(&package.join("THIRD_PARTY_NOTICES.txt"))?
         != integrity::sha256(&expected_notices)?
     {

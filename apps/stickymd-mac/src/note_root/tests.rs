@@ -361,7 +361,7 @@ fn an_installed_note_keeps_its_directory_when_note_is_replaced() {
     let note_root = world.resolve(&world.app("system", "StickyMD")).unwrap();
     let note = open_note_directory(&note_root.handle).unwrap();
     let paths = RuntimePaths::of(&note_root.path);
-    let mut ports = mac_io_ports(&note, &paths).unwrap();
+    let mut ports = mac_io_ports(&note_root.handle, &note, &paths).unwrap();
     let moved = note_root.path.join("moved");
     fs::rename(&paths.note_dir, &moved).unwrap();
     fs::create_dir(&paths.note_dir).unwrap();

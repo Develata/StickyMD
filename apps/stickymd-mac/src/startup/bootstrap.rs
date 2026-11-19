@@ -52,7 +52,9 @@ pub fn bootstrap(
     let directory = note
         .try_clone()
         .map_err(|error| StartupError::NoteStorage(NoteStorageError::Metadata(error)))?;
-    let mut files = NoteFiles::in_directory(&paths.note_dir, directory);
+    // No root: a directory deleted during startup stops the start instead of being recreated
+    // apart from the handle the runtime ports are about to take.
+    let mut files = NoteFiles::in_directory(&paths.note_dir, directory, None);
     let canonical = files.inspect_note().map_err(StartupError::NoteStorage)?;
     let temporary = files
         .inspect_temporary()

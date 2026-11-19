@@ -48,7 +48,9 @@ pub fn bundle_of(executable: &Path) -> Option<(&Path, &OsStr)> {
     let bundle = contents.parent()?;
     let in_bundle = macos.file_name()? == "MacOS"
         && contents.file_name()? == "Contents"
-        && bundle.extension()? == "app";
+        // By the raw name, so a bundle named just `.app` (no extension to Rust) still reaches the
+        // key check, which refuses its empty key.
+        && bundle.file_name()?.as_encoded_bytes().ends_with(b".app");
     in_bundle.then(|| Some((bundle.parent()?, bundle.file_name()?)))?
 }
 
@@ -124,6 +126,10 @@ mod tests {
         assert_eq!(
             bundle_of(Path::new("/x/StickyMD.APP/Contents/MacOS/StickyMD")),
             None
+        );
+        assert_eq!(
+            bundle_of(Path::new("/x/.app/Contents/MacOS/StickyMD")),
+            Some((Path::new("/x"), OsStr::new(".app")))
         );
     }
 

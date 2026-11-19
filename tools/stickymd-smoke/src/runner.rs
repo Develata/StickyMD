@@ -687,6 +687,10 @@ fn run_task(
     if let Task::Cargo { id, .. } = task
         && let Some(refusal) = refused_on_host(*id, cfg!(target_os = "macos"))
     {
+        // Recorded as not tested where the evidence model has that state; the run still stops.
+        #[cfg(not(windows))]
+        return Ok(TaskExecution::NotTested(refusal));
+        #[cfg(windows)]
         return Err(refusal);
     }
     match task {
@@ -976,11 +980,11 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             // Planned on every host and refused off macOS (see `run_task`), so a run elsewhere
             // is NOT_TESTED rather than a green run of the stub. `all` never plans it.
             Selection::Phase(Phase::P16) => push_unique(&mut tasks, phase16_mac_tests()),
-            // The release tooling tests run on any host; the host tests are refused off macOS as
-            // for Phase 16.
+            // The release tooling tests run on any host and come first; the host tests are then
+            // refused off macOS, as for Phase 16, and the phase stays incomplete.
             Selection::Phase(Phase::P18) => {
-                push_unique(&mut tasks, phase18_mac_tests());
                 push_unique(&mut tasks, phase18_release_tests());
+                push_unique(&mut tasks, phase18_mac_tests());
             }
         }
     }

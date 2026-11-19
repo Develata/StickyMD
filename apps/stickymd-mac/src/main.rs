@@ -78,7 +78,6 @@ fn main() -> std::process::ExitCode {
         Err(error) => fatal_startup(&format!("无法创建便签目录：{error}")),
     };
     let paths = RuntimePaths::of(&note_root.path);
-    drop(note_root);
     let mut outcome = match bootstrap(&note, &paths) {
         Ok(outcome) => outcome,
         Err(error) => fatal_startup(&format!("StickyMD 无法安全启动：{error}")),
@@ -113,7 +112,7 @@ fn main() -> std::process::ExitCode {
     }) {
         fatal_startup(&format!("无法监听第二实例唤醒请求：{error}"));
     }
-    let ports = match mac_io_ports(&note, &paths) {
+    let ports = match mac_io_ports(&note_root.handle, &note, &paths) {
         Ok(ports) => ports,
         Err(error) => fatal_startup(&format!("无法打开便签目录：{error}")),
     };

@@ -5,6 +5,7 @@ mod checksums;
 mod cli;
 mod identity;
 pub(crate) mod json;
+mod macos;
 mod notices;
 mod package;
 mod package_content;
@@ -14,6 +15,8 @@ mod package_rules;
 mod package_runtime;
 mod package_staging;
 mod package_workflow;
+pub(crate) mod platform;
+pub(crate) mod platform_inputs;
 mod promoted;
 mod remote_state;
 mod sbom;
@@ -40,7 +43,10 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
         }
         Command::VerifyWorkflow { source, input } => workflow::verify_input(source, input),
         Command::VerifyRemoteState(options) => remote_state::execute(root, options),
-        Command::Notices(destination) => notices::generate(root, destination),
+        Command::Notices {
+            destination,
+            platform,
+        } => notices::generate(root, destination, *platform),
         Command::PackageInputs(options) => package_inputs::execute(root, options),
         Command::BuildPackage(options) => {
             build_package(root, options, &mut std::io::stdout().lock())
@@ -53,6 +59,40 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
             exe,
             directory,
         } => package_staging::prepare(root, inputs, exe, directory),
+        Command::PlatformInputs { platform, commit } => {
+            let fingerprint = platform_inputs::fingerprint(root, *platform, commit)?;
+            println!(
+                "{{\"platform\":\"{}\",\"commit\":\"{commit}\",\"fingerprint\":\"{fingerprint}\"}}",
+                platform.label()
+            );
+            Ok(())
+        }
+        Command::VerifyReuse {
+            platform,
+            build,
+            release,
+        } => {
+            let reuse = match platform_inputs::verify_reuse(root, *platform, build, release)? {
+                platform_inputs::Reuse::SameCommit => "same-commit".to_owned(),
+                platform_inputs::Reuse::Ancestor { fingerprint } => {
+                    format!("ancestor:{fingerprint}")
+                }
+            };
+            println!(
+                "{{\"platform\":\"{}\",\"build_source\":\"{build}\",\"release_source\":\"{release}\",\"reuse\":\"{reuse}\"}}",
+                platform.label()
+            );
+            Ok(())
+        }
+        Command::MacosPackage {
+            app,
+            output,
+            allow_dirty,
+        } => macos::package_command(root, app, output, *allow_dirty),
+        Command::MacosVerifyPackage { zip, source } => {
+            macos::verify_command(root, zip, source.as_deref())
+        }
+        Command::MacosSbom { zip } => macos::sbom_command(root, zip),
         Command::WorkspaceVersion => {
             println!("{}", crate::repository::workspace_version(root)?);
             Ok(())
@@ -80,7 +120,9 @@ fn guard_outputs(root: &Path, command: &Command) -> Result<(), String> {
     let mut files = Vec::new();
     let mut directories = Vec::new();
     match command {
-        Command::Notices(destination) => files.push(destination),
+        Command::Notices { destination, .. } => files.push(destination),
+        Command::MacosPackage { output, .. } => directories.push(output),
+        Command::MacosSbom { zip } => files.push(zip),
         Command::PreparePackage { directory, .. } | Command::SyftVerify { directory, .. } => {
             directories.push(directory);
         }
@@ -100,6 +142,9 @@ fn guard_outputs(root: &Path, command: &Command) -> Result<(), String> {
         | Command::VerifyRemoteState(_)
         | Command::PackageInputs(_)
         | Command::WorkspaceVersion
+        | Command::PlatformInputs { .. }
+        | Command::MacosVerifyPackage { .. }
+        | Command::VerifyReuse { .. }
         | Command::SyftPlan(_)
         | Command::SyftPublish { .. } => {}
     }
@@ -139,7 +184,10 @@ mod output_guard_tests {
                 sbom: None,
                 output: log.clone(),
             }),
-            Command::Notices(evidence.join("release-decisions.lock")),
+            Command::Notices {
+                destination: evidence.join("release-decisions.lock"),
+                platform: super::platform::Platform::MacOsArm64,
+            },
             Command::PublishPackage(PackagePublishOptions {
                 input: other.clone(),
                 output: other.clone(),
