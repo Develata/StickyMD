@@ -201,14 +201,20 @@ pub(super) fn caret<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
         }
         d.wait(EVERY_MS)?;
     }
+    let end = d.backend.now();
     let idle_end = snapshot(d)?;
     let name = "caret blinks in inverse colours";
-    // The longest time two consecutive frames can lie apart: from one request to the next return.
-    let widest = spans
-        .windows(2)
-        .map(|w| w[1].1 - w[0].0)
-        .max()
-        .unwrap_or(u64::MAX);
+    // The longest stretch the frames may leave unseen: from the start to the first return, from
+    // one request to the next return, and from the last request to the end of the watch.
+    let widest = match (spans.first(), spans.last()) {
+        (Some(first), Some(last)) => spans
+            .windows(2)
+            .map(|w| w[1].1 - w[0].0)
+            .chain([first.1 - start, end - last.0])
+            .max()
+            .unwrap_or(u64::MAX),
+        _ => u64::MAX,
+    };
     match broken {
         // An interrupted capture judges nothing: the frames taken so far are not the watch.
         Some(reason) => d.row.skip(name, &reason),

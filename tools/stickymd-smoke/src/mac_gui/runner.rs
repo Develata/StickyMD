@@ -366,24 +366,32 @@ fn one(
     let writable = fault.restore();
     // Capture stderr (and R03's prompt image and termination log) even on scenario failure,
     // before owned temporary-directory cleanup.
-    let log = ["stderr.log", "prompt.ppm", "system.log"]
-        .into_iter()
-        .try_for_each(|name| {
-            let target = out.join(format!("{id}-{name}"));
-            match fs::read(session.path().join(name)) {
-                Ok(bytes) => crate::atomic_evidence::write(&target, &bytes),
-                // Not made by this run: a file of an earlier run in the same --out must not pass
-                // for this run's.
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    match fs::remove_file(&target) {
-                        Ok(()) => Ok(()),
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                        Err(e) => Err(format!("{}: {e}", target.display())),
-                    }
+    let attachments: &[&str] = if id == "R03" {
+        &["stderr.log", "prompt.ppm", "system.log"]
+    } else {
+        &["stderr.log"]
+    };
+    let log = attachments.iter().try_for_each(|name| {
+        let target = out.join(format!("{id}-{name}"));
+        match fs::read(session.path().join(name)) {
+            Ok(bytes) => crate::atomic_evidence::write(&target, &bytes),
+            // An R03 attachment this run did not make: one left by an earlier run in the same
+            // --out must not pass for this run's. A removal that fails is recorded, not fatal.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if id == "R03"
+                    && let Err(e) = fs::remove_file(&target)
+                    && e.kind() != std::io::ErrorKind::NotFound
+                {
+                    row.trace.push(Trace {
+                        ms: input.backend.started.elapsed().as_millis() as u64,
+                        event: format!("stale {} not removed: {e}", target.display()),
+                    });
                 }
-                Err(e) => Err(e.to_string()),
+                Ok(())
             }
-        });
+            Err(e) => Err(e.to_string()),
+        }
+    });
     let cleanup = session.cleanup();
     row.trace.push(Trace {
         ms: input.backend.started.elapsed().as_millis() as u64,

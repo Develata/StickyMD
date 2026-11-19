@@ -60,6 +60,8 @@ pub(super) struct Observed {
     pub window: Option<String>,
     /// The process's stderr when the prompt window was seen (or when the wait ended).
     pub stderr: String,
+    /// Why the process's stderr could not be read, when it could not.
+    pub stderr_unreadable: Option<String>,
     /// Why Return was not posted, when the prompt was seen but could not be answered.
     pub unanswered: Option<String>,
     /// After Return: whether the process ended within the wait.
@@ -144,7 +146,10 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
     let translocated_advice = TRANSLOCATED_ADVICE.iter().any(|a| o.stderr.contains(a));
     let generic_advice = o.stderr.contains(GENERIC_ADVICE);
     let seen = o.window.is_some() || o.exited_early;
-    let prompt = if prompted(o) && translocated_advice {
+    let prompt = if o.stderr_unreadable.is_some() {
+        // Without the message, a seen window says nothing about the prompt's words.
+        Verdict::NotTested
+    } else if prompted(o) && translocated_advice {
         Verdict::Pass
     } else if generic_advice && seen {
         // The advice for any unwritable folder: moving the app out is not asked for.
@@ -304,7 +309,7 @@ mod live {
         o: &mut Observed,
         copy: &Path,
         dir: &Path,
-        read_stderr: &dyn Fn() -> String,
+        read_stderr: &dyn Fn() -> Result<String, String>,
         row: &mut Row,
         note: &dyn Fn(&mut Row, String),
     ) -> Result<(), String> {
@@ -368,13 +373,19 @@ mod live {
             }
             shown = windows::all(pid)?.into_iter().find(|w| modal(w));
             o.window = shown.as_ref().map(|w| format!("{w:?}"));
-            o.stderr = read_stderr();
+            match read_stderr() {
+                Ok(text) => o.stderr = text,
+                Err(e) => o.stderr_unreadable = Some(e),
+            }
             if prompted(o) {
                 break;
             }
             events::wait(200)?;
         }
-        o.stderr = read_stderr();
+        match read_stderr() {
+            Ok(text) => o.stderr = text,
+            Err(e) => o.stderr_unreadable = Some(e),
+        }
         note(
             row,
             format!("window {:?}; exited early {}", o.window, o.exited_early),
@@ -490,7 +501,13 @@ mod live {
             ..Observed::default()
         };
         let stderr = dir.join("stderr.log");
-        let read_stderr = || fs::read_to_string(&stderr).unwrap_or_default();
+        // Not yet written is empty; other read errors are kept. Bytes that are not UTF-8 are kept
+        // (lossily), so a garbled message compares unequal rather than vanishing.
+        let read_stderr = || match fs::read(&stderr) {
+            Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(e) => Err(format!("{}: {e}", stderr.display())),
+        };
         note(
             row,
             format!("open {} (quarantine {:?})", copy.display(), o.quarantine),

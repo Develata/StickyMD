@@ -413,6 +413,11 @@ fn coordinate(options: &Options) -> Result<(), String> {
         }
     };
     drop(sender);
+    // Ended by itself before the cleanup's first signal, however late: only then is its
+    // termination record its own.
+    if executed && let Some(pid) = ids.product {
+        facts.gone = fixture_processes(&fixture_exe).is_ok_and(|p| !p.contains(&pid));
+    }
     // Whatever happened, nothing of this fixture keeps running, and its directory is writable.
     let ended = end_fixture_processes(&fixture_exe);
     let restored = if options.case == "fault" {

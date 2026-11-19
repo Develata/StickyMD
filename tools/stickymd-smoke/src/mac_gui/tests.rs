@@ -1293,6 +1293,7 @@ fn translocation_checks_refuse_bad_samples() {
         stderr: "当前目录不可写，请先用访达把 StickyMD.app 移到别处。\n\ncannot create a file: \
                  Read-only file system (os error 30)\n"
             .into(),
+        stderr_unreadable: None,
         unanswered: None,
         exited: Some(true),
         termination: Some(EXIT_ONE.into()),
@@ -1387,6 +1388,12 @@ fn translocation_checks_refuse_bad_samples() {
                 "/private/var/folders/x/T/AppTranslocation/OTHER/d/StickyMD.app/Contents/MacOS/StickyMD"
                     .into(),
             ),
+            ..good()
+        },
+        // The prompt window seen but its stderr unreadable: its words are unknown.
+        Observed {
+            stderr: String::new(),
+            stderr_unreadable: Some("stderr.log: permission denied".into()),
             ..good()
         },
         // Answered and gone, but no termination record in the log.
@@ -2178,6 +2185,21 @@ fn round_8_bad_samples_for_w02_i03_and_w10() {
         p[3] = 0;
     }
     assert_eq!(strip_visible(&strip, &strip, &unread).0, Verdict::NotTested);
+    // Half the scene below read (and like the strip), half unreadable: the difference would come
+    // only from the unread half.
+    let mut half = image(1040, 4, [248, 246, 239]);
+    for (k, p) in half.rgba.chunks_exact_mut(4).enumerate() {
+        if k % 2 == 0 {
+            p.copy_from_slice(&[0, 0, 0, 0]);
+        }
+    }
+    assert_eq!(strip_visible(&strip, &strip, &half).0, Verdict::NotTested);
+    // Barely opaque pixels are not read colours either.
+    let mut faint = image(1040, 4, [40, 70, 120]);
+    for p in faint.rgba.chunks_exact_mut(4) {
+        p[3] = 1;
+    }
+    assert_eq!(strip_visible(&strip, &strip, &faint).0, Verdict::NotTested);
     assert_eq!(
         strip_visible(&strip, &strip, &image(1040, 4, [40, 70, 120])).0,
         Verdict::Pass

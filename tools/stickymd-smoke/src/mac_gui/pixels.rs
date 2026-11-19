@@ -36,14 +36,14 @@ impl Image {
         let i = (y * self.width + x) * 4;
         [self.rgba[i], self.rgba[i + 1], self.rgba[i + 2]]
     }
-    /// The fraction of pixels with any opacity. CoreGraphics returns a transparent black image
-    /// for a scene it cannot read.
+    /// The fraction of fully opaque pixels. CoreGraphics returns a transparent black image for a
+    /// scene it cannot read, and a partly transparent pixel is not a read colour either.
     pub fn opaque_share(&self) -> f64 {
         let n = self.width * self.height;
         if n == 0 {
             return 0.0;
         }
-        self.rgba.chunks_exact(4).filter(|p| p[3] > 0).count() as f64 / n as f64
+        self.rgba.chunks_exact(4).filter(|p| p[3] == 255).count() as f64 / n as f64
     }
     fn pixels(&self) -> impl Iterator<Item = [u8; 3]> + '_ {
         self.rgba.chunks_exact(4).map(|p| [p[0], p[1], p[2]])
@@ -78,12 +78,13 @@ pub(super) const TOLERANCE: u8 = 6;
 /// W02: the collapsed strip is visible when nothing covers it (the on-screen composite of the
 /// strip's rectangle equals the window alone there) and it changes the scene (the composite
 /// differs from the scene below the window). A covered strip is NOT_TESTED (the scene, e.g. a
-/// notification); a strip that changes nothing on screen fails. A scene below that is mostly
-/// transparent was not read, so the comparison with it proves nothing (NOT_TESTED).
+/// notification); a strip that changes nothing on screen fails. A scene below that is not
+/// fully opaque in at least 98% of its pixels was not read, so the comparison with it proves
+/// nothing (NOT_TESTED): the 50% difference must come from read pixels.
 pub(super) fn strip_visible(composite: &Image, alone: &Image, below: &Image) -> (Verdict, String) {
     let covered = composite.differing(alone, TOLERANCE);
     let drawn = composite.differing(below, TOLERANCE);
-    let readable = below.opaque_share() >= 0.5;
+    let readable = below.opaque_share() >= 0.98;
     let verdict = match (covered, drawn) {
         _ if !readable => Verdict::NotTested,
         (Some(c), Some(d)) if c <= 0.02 && d >= 0.5 => Verdict::Pass,
