@@ -8,7 +8,7 @@
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P15-A01 | `stickymd-app` 不含 unsafe，不依赖 winit、softbuffer 或平台 crate，源码无平台类型与 `cfg(windows)`/`target_os` | Automated | `governance.rs` `verify_shared_application_boundary` 与其回归 | AUTOMATED PASS |
+| P15-A01 | `stickymd-app` 不含 unsafe，不依赖 winit、softbuffer 或平台 crate，源码无平台类型与 `cfg(windows)`/`target_os` | Automated | 源码：`governance.rs` `verify_shared_application_boundary` 与其回归；依赖：`governance/crate_graph.rs`（清单各表的声明、解析后的本地边与传递依赖），回归 `every_listed_platform_crate_is_refused` | AUTOMATED PASS |
 | P15-A02 | 迁移的语义测试在 `stickymd-app` 下实际执行，Linux portable 选择包含该包 | Automated | `cargo test -p stickymd-app --locked`（Windows；WSL Debian 115 passed、2 个 Release 基线 ignored）；`ci` portable 选择回归 | AUTOMATED PASS |
 | P15-A03 | 按名字过滤的 `cargo test` 任务选中其测试：Windows 默认构建的实际测试清单里，任务按其模式（`--ignored`、`--lib`）至少运行所选包的一个测试，所选包之外的产品包没有它该运行的测试；各平台的近似源码核对（同样区分模式）覆盖其他平台才编译的测试；Release 或其他 profile 才编译的测试不在核对范围 | Automated | `unit_owners::verify` 的 `verify_filters`（`unit-test owner verification`，Windows 全量）；`runner::test_filters`（各平台）；`runner::filtered_tasks` 拒绝未建模的参数；G4 定向运行以通过数为 0 判失败 | AUTOMATED PASS |
 | P15-A04 | 新增路径有资格化指纹规则，旧规则无命中或产品根之外的源码即失败 | Automated | `qualification::module_ledger::fingerprint` 分类与回归 | AUTOMATED PASS |
@@ -41,7 +41,7 @@
 
 | ID | Requirement | Mode | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| P15-C01 | `stickymd-desktop` 不含 unsafe，源码无原生类型、`cfg(windows)`/`target_os`、`crate::platform`、`winit::platform::`，清单不依赖 windows、arboard、tray-icon、notify；可用其余 winit 与 softbuffer；源码树为空即失败 | Automated | `governance.rs` `verify_shared_desktop_boundary` 与其回归 `the_shared_desktop_boundary_refuses_native_code` | AUTOMATED PASS |
+| P15-C01 | `stickymd-desktop` 不含 unsafe，源码无原生类型、`cfg(windows)`/`target_os`、`crate::platform`、`winit::platform::`，清单不依赖 windows、arboard、tray-icon、notify；可用其余 winit 与 softbuffer；源码树为空即失败 | Automated | 源码：`governance.rs` `verify_shared_desktop_boundary` 与其回归 `the_shared_desktop_boundary_refuses_native_code`；依赖：`governance/crate_graph.rs`（清单各表的声明、解析后的本地边与传递依赖），回归 `every_listed_platform_crate_is_refused` | AUTOMATED PASS |
 | P15-C02 | 迁移的几何、标题、帧计划、转换与计数测试在 `stickymd-desktop` 下实际执行；留在宿主的只有两个读宿主源码的守卫 | Automated | `phase 15` 的 `cargo test -p stickymd-desktop --locked`；`shell::title::tests` | AUTOMATED PASS |
 | P15-C03 | 只有 `age == 1` 只写 damage 区；`age` 为 0、2、3 全量填充，裁剪后为空也全量；长度不匹配在每个 age 都报错 | Automated | `frame::convert::tests::{age_one_writes_only_the_damage,every_other_age_fills_the_whole_buffer,the_age_decides_before_the_damage_is_clipped,a_length_mismatch_is_an_error_at_every_age}` | AUTOMATED PASS |
 | P15-C04 | 工具栏高度只有一份，`geometry()` 的 `f32` 取整与 `ControlLayout` 的 `f64` 路径都不变 | Automated | `geometry::tests::the_toolbar_height_keeps_its_rounding_and_its_exact_widening`；`controls::tests` 现有布局测试 | AUTOMATED PASS |
