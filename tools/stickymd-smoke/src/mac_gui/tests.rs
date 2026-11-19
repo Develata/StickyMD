@@ -357,6 +357,14 @@ struct HoverBackend {
     flash_abs: Option<(u64, u64)>,
     other_abs: Option<(u64, u64)>,
     hidden_abs: Option<(u64, u64)>,
+    /// Since the pointer entered: the expanded window keeps the moving layer until this time.
+    layer_late: Option<u64>,
+    /// On the fake clock: when the expanded window sits partly retracted (y = 9).
+    retract_abs: Option<(u64, u64)>,
+    /// Since the pointer entered: from this time on, reading the frontmost app fails.
+    front_error_at: Option<u64>,
+    /// Since the pointer left: when the window is hidden in place.
+    leave_hidden: Option<(u64, u64)>,
 }
 impl HoverBackend {
     fn new() -> Self {
@@ -382,6 +390,10 @@ impl HoverBackend {
             flash_abs: None,
             other_abs: None,
             hidden_abs: None,
+            layer_late: None,
+            retract_abs: None,
+            front_error_at: None,
+            leave_hidden: None,
         }
     }
     fn at(&self, range: Option<(u64, u64)>) -> bool {
@@ -426,12 +438,24 @@ impl HoverBackend {
             (rest..rest + self.short_of_rest).contains(&(self.now - t))
         }) {
             window(rect(460.0, 12.0, 520.0, 480.0), 27)
+        } else if self.at(self.retract_abs) {
+            window(rect(460.0, 9.0, 520.0, 480.0), 0)
         } else if self.expanded() {
-            window(rect(460.0, 28.0, 520.0, 480.0), 0)
+            let level_late = self
+                .layer_late
+                .is_some_and(|until| self.entered.is_some_and(|t| self.now - t < until));
+            window(
+                rect(460.0, 28.0, 520.0, 480.0),
+                if level_late { 27 } else { 0 },
+            )
         } else {
             window(rect(460.0, -478.0, 520.0, 480.0), 27)
         };
-        w.onscreen = !self.within(self.hidden) && !self.at(self.hidden_abs);
+        let leave_hidden = self.leave_hidden.is_some_and(|(from, to)| {
+            self.left
+                .is_some_and(|t| (from..to).contains(&(self.now - t)))
+        });
+        w.onscreen = !self.within(self.hidden) && !self.at(self.hidden_abs) && !leave_hidden;
         w
     }
     fn within(&self, range: Option<(u64, u64)>) -> bool {
@@ -467,6 +491,12 @@ impl Backend for HoverBackend {
             Op::Screen => Value::Rect(rect(0.0, 0.0, 1440.0, 900.0)),
             Op::Front => {
                 self.slow(false);
+                if self
+                    .front_error_at
+                    .is_some_and(|at| self.entered.is_some_and(|t| self.now - t >= at))
+                {
+                    return Err("AX error -25204 (kAXErrorCannotComplete)".into());
+                }
                 Value::Pid(
                     if (self.steals && self.expanded())
                         || self.within(self.flash_focus)
@@ -750,6 +780,67 @@ fn hover_watch_is_one_stream_and_motion_is_any_change_of_place() {
         Verdict::NotTested
     );
     assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
+}
+
+/// Round 6 of the codex review: a level reached late, a retraction just before the leave, an
+/// unproven expansion feeding the focus check, an unreadable front app, a hidden flicker.
+#[test]
+fn hover_judges_level_seams_and_unobservable_reads() {
+    // In place on time but still at the moving level until 400 ms: the expansion is late.
+    let mut level = HoverBackend::new();
+    level.layer_late = Some(400);
+    let row = hover_row(&mut level, "W03");
+    assert_eq!(
+        check(&row, "hover expansion completion"),
+        Verdict::Fail,
+        "{}",
+        row.json()
+    );
+    // Retracted to y = 9 in the read just before the leave: the leave cannot start from it.
+    // Moves to y = 800: docking, the early leave, then the leave itself.
+    let (t, _) = query_before_move("W03", 800.0, 2);
+    let mut retract = HoverBackend::new();
+    retract.retract_abs = Some((t, t + 1));
+    let row = hover_row(&mut retract, "W03");
+    assert_eq!(
+        check(&row, "leave movement onset"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    // Moving at 220 ms, then the front read blocks to 530 ms: completion cannot tell, and the
+    // focus check must not fail on the unproven rest.
+    let mut blocked = HoverBackend::new();
+    blocked.slow_front = Some((220, 310));
+    let row = hover_row(&mut blocked, "W03");
+    assert_eq!(
+        check(&row, "hover expansion completion"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    assert_eq!(
+        check(&row, "hover expands without focus"),
+        Verdict::NotTested
+    );
+    assert_ne!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+    // The front app unreadable from 150 ms: what follows is not observed, not failed.
+    let mut unreadable = HoverBackend::new();
+    unreadable.front_error_at = Some(150);
+    let row = hover_row(&mut unreadable, "W04");
+    assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
+    // Hidden in place at 530-540 ms after leaving, the collapse starting only at 580 ms: the
+    // flicker is no onset, and the window still in place at 570 ms is late.
+    let mut flicker = HoverBackend::new();
+    flicker.leave_hidden = Some((530, 540));
+    flicker.leave_at = 580;
+    let row = hover_row(&mut flicker, "W03");
+    assert_eq!(
+        check(&row, "leave movement onset"),
+        Verdict::Fail,
+        "{}",
+        row.json()
+    );
 }
 
 #[test]

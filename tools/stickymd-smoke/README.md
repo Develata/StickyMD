@@ -1018,13 +1018,22 @@ watch: from the sample read just before the first move onto the strip until the 
 has settled, the window and the frontmost app are read together about 10ms apart (plus
 the query time), and every check reads that stream, so no stretch between phases is
 unobserved. A phase (early leave, hover, top band, leave) is a pointer move, whose
-request is the phase's zero, plus the sample read just before it; motion is any sample
-that differs from that one (bounds beyond 0.5pt, or visibility), so movement inside
-the screen counts, and the moved sample is the first completion sample. A gap is
+request is the phase's zero, plus the sample read just before it, which must also be at
+the place the previous phase established; that read closes the previous phase's checks
+(its gap and front app count there). Motion is an on-screen sample whose bounds differ
+from that read by more than 0.5pt, so movement inside the screen counts; a hidden sample
+is not motion, and a PASS after one is NOT_TESTED. The moved sample is the first
+completion sample; the rest is the first sample from which place, visibility and window
+level all stay as in the last one, and only a passed completion hands its rest to the
+next phase. The hover starts once the window has been seen on the strip, every sample in
+the strip state, for at least 100ms. An unreadable front app (an Accessibility message
+failure) stops the watch: what it no longer covers is NOT_TESTED. Limits: 0.5pt per
+bound decides motion and exact equality decides rest, so sub-point jitter could move
+either; times are whole milliseconds. A gap is
 measured from one sample's request to the next sample's return; a check covering a gap over 60ms is
 NOT_TESTED, and a FAIL needs an observed violation. For W03/W04 a completion first
 seen after the earliest-onset deadline is late only if a moving sample was requested
-after the latest-onset deadline; otherwise it is NOT_TESTED (elsewhere a success first
+at or after the latest-onset deadline; otherwise it is NOT_TESTED (elsewhere a success first
 seen after its deadline stays late).
 
 `mac-gui.json` (schema 2) is atomically checkpointed after every scenario with `"finished":false`; only the

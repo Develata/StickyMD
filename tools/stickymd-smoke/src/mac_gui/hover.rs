@@ -35,11 +35,14 @@ struct Sample {
     front: u32,
 }
 
-/// The scenario's one stream of samples. `cut` is set when the sample bound ran out.
+/// The scenario's one stream of samples. `cut` is set when it stopped early: the sample bound
+/// ran out, or the frontmost app could not be read (`unavailable`); what it no longer covers is
+/// NOT_TESTED, never a product FAIL.
 #[derive(Default)]
 struct Watch {
     samples: Vec<Sample>,
     cut: bool,
+    unavailable: Option<String>,
 }
 
 /// A pointer move: `zero` is its request; `before` indexes the sample read just before it.
@@ -50,15 +53,26 @@ struct Phase {
 }
 
 impl Watch {
-    /// Reads one sample; `None` once the sample bound is reached (the watch is then cut).
+    /// Reads one sample; `None` once the watch is cut (sample bound, or the frontmost app could
+    /// not be read: an Accessibility message failure is no observation of the product).
     fn sample<B: Backend>(&mut self, d: &mut Driver<'_, B>) -> Result<Option<usize>, String> {
+        if self.cut {
+            return Ok(None);
+        }
         if self.samples.len() >= MAX_SAMPLES {
             self.cut = true;
             return Ok(None);
         }
         let req = d.backend.now();
         let window = d.window()?;
-        let front = d.front()?;
+        let front = match d.front() {
+            Ok(front) => front,
+            Err(error) => {
+                self.cut = true;
+                self.unavailable = Some(error);
+                return Ok(None);
+            }
+        };
         let ret = d.backend.now();
         self.samples.push(Sample {
             req,
@@ -81,14 +95,26 @@ impl Watch {
             d.wait(STEP_MS.min(until - ret))?;
         }
     }
-    /// Reads the window just before the move, then moves the pointer.
-    fn move_to<B: Backend>(&mut self, d: &mut Driver<'_, B>, to: Point) -> Result<Phase, String> {
-        let before = self
-            .sample(d)?
-            .ok_or("the watch reached its sample bound")?;
+    /// Reads the window just before the move, then moves the pointer; `None` once cut.
+    fn move_to<B: Backend>(
+        &mut self,
+        d: &mut Driver<'_, B>,
+        to: Point,
+    ) -> Result<Option<Phase>, String> {
+        let Some(before) = self.sample(d)? else {
+            return Ok(None);
+        };
         let zero = d.backend.now();
         d.op(Op::Move(to))?;
-        Ok(Phase { zero, before })
+        Ok(Some(Phase { zero, before }))
+    }
+    /// Why the watch stopped early, for a NOT_TESTED detail.
+    fn why(&self) -> String {
+        match (&self.unavailable, self.cut) {
+            (Some(error), _) => format!("frontmost app unreadable: {error}"),
+            (None, true) => format!("the watch reached its bound of {MAX_SAMPLES} samples"),
+            (None, false) => "watch running".into(),
+        }
     }
     /// The longest unobserved stretch over samples `from..=to`: from one sample's request to the
     /// next one's return (the first sample of the watch: its own duration).
@@ -157,7 +183,9 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
     let mut watch = Watch::default();
     // Early leave: the pointer leaves the strip after about 35 ms and nothing may move. A dwell of
     // 100 ms or more (a late move) may legitimately expand, so it cannot test the cancellation.
-    let early = watch.move_to(d, strip)?;
+    let Some(early) = watch.move_to(d, strip)? else {
+        return skip_all(d, band, &watch.why());
+    };
     // The Finder PID the backend verified in front when docking; another app in front since then
     // changed the scene (NOT_TESTED), StickyMD in front is the product's doing.
     let front = watch.samples[early.before].front;
@@ -202,25 +230,32 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
         verdict,
         format!(
             "dwell {dwell}ms (100ms or more cannot test it); collapsed before {}; {} samples, \
-             largest gap {gap}ms; moved at {moved:?} (ms, bounds, on screen)",
+             largest gap {gap}ms; moved at {moved:?} (ms, bounds, on screen); {}",
             is_collapsed(&reference),
-            watch.last() - early.before
+            watch.last() - early.before,
+            watch.why()
         ),
     );
-    if !settle(d, &mut watch, is_collapsed)? {
+    let Some(strip_rest) = settle(d, &mut watch, is_collapsed)? else {
         return skip_all(
             d,
             band,
-            "the window did not rest on the strip after the early leave",
+            &format!(
+                "the window did not rest on the strip after the early leave; {}",
+                watch.why()
+            ),
         );
-    }
-    let hover = watch.move_to(d, strip)?;
+    };
+    let Some(hover) = watch.move_to(d, strip)? else {
+        return skip_all(d, band, &watch.why());
+    };
     let onset = observe_onset(
         d,
         &mut watch,
         hover,
         100,
         is_collapsed,
+        &strip_rest,
         "hover movement onset",
     )?;
     let rest = completion(
@@ -231,23 +266,14 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
         |w| expanded(w, s),
         "hover expansion completion",
     )?;
-    let (focus, detail) = watch.focus(d.pid, finder, early.before, watch.last());
-    let verdict = match &rest {
-        Some(rest) if !expanded(rest, s) => Verdict::Fail,
-        Some(_) => focus,
-        None if focus == Verdict::Fail => Verdict::Fail,
-        None => Verdict::NotTested,
+    let hover_end = watch.last();
+    let Some(rest) = rest else {
+        // No proven rest: only an observed StickyMD in front fails the focus check.
+        let (focus, detail) = watch.focus(d.pid, finder, early.before, hover_end);
+        record(d, "hover expands without focus", focus, detail);
+        return skip_rest(d, band, "the hover expansion was not established");
     };
-    record(
-        d,
-        "hover expands without focus",
-        verdict,
-        format!("{detail}; rest {rest:?}"),
-    );
-    let Some(rest) = rest.filter(|rest| expanded(rest, s)) else {
-        return skip_rest(d, band, "the hover did not settle expanded");
-    };
-    if band {
+    let band_before = if band {
         let p = Point {
             x: rest.bounds.center().x,
             y: s.origin.y,
@@ -257,15 +283,34 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
             top_band(p, rest.bounds, s),
             format!("{p:?}"),
         );
-        band_dwell(d, &mut watch, p, &rest, finder)?;
-    }
+        band_dwell(d, &mut watch, p, &rest)?
+    } else {
+        None
+    };
+    // The read just before the leave closes the hover (or the band): its gap, its front app and
+    // its place belong to the checks before it, and it is the leave's start.
     let leave = watch.move_to(d, away)?;
+    let end = leave.map_or(watch.last(), |l| l.before);
+    let hover_to = band_before.unwrap_or(end);
+    let (focus, detail) = watch.focus(d.pid, finder, early.before, hover_to);
+    record(d, "hover expands without focus", focus, detail);
+    if let Some(from) = band_before {
+        let (focus, detail) = watch.focus(d.pid, finder, from, end);
+        record(d, "top band dwell keeps focus away", focus, detail);
+    }
+    let Some(leave) = leave else {
+        for name in ["leave movement onset", "leave collapse completion"] {
+            d.row.skip(name, &watch.why());
+        }
+        return Ok(());
+    };
     let onset = observe_onset(
         d,
         &mut watch,
         leave,
         500,
         |w| expanded(w, s),
+        &rest,
         "leave movement onset",
     )?;
     completion(
@@ -312,46 +357,56 @@ fn skip_rest<B: Backend>(d: &mut Driver<'_, B>, band: bool, reason: &str) -> Res
     Ok(())
 }
 
-/// Samples until the window has rested in `state` for 100 ms (at most 1.5 s), so the next phase
-/// starts from a window that is not still moving through it.
+/// Samples until the window has been seen in `state`, at one place, for at least 100 ms (from
+/// the return of the first such sample to the request of the latest, every sample in between
+/// in that state and no gap over `MAX_GAP_MS`), at most 1.5 s. Returns that settled window.
 fn settle<B: Backend>(
     d: &mut Driver<'_, B>,
     watch: &mut Watch,
     state: impl Fn(&Window) -> bool,
-) -> Result<bool, String> {
+) -> Result<Option<Window>, String> {
     let limit = d.backend.now() + 1500;
     loop {
         let Some(last) = watch.sample(d)? else {
-            return Ok(false);
+            return Ok(None);
         };
         let now = watch.samples[last].window.clone();
         let mut first = last;
-        while first > 0 && same_place(&watch.samples[first - 1].window, &now) {
+        while first > 0 && {
+            let w = &watch.samples[first - 1].window;
+            state(w) && same_place(w, &now) && w.layer == now.layer
+        } {
             first -= 1;
         }
-        let steady = watch.samples[last].ret - watch.samples[first].req;
+        let steady = watch.samples[last]
+            .req
+            .saturating_sub(watch.samples[first].ret);
         if state(&now) && steady >= 100 && watch.gap(first + 1, last) <= MAX_GAP_MS {
-            return Ok(true);
+            return Ok(Some(now));
         }
         if watch.samples[last].ret >= limit {
-            return Ok(false);
+            return Ok(None);
         }
         d.wait(STEP_MS)?;
     }
 }
 
 /// W04: with the pointer in the top band the window stays visible at its settled position `rest`
-/// and never takes focus for 850 ms from the move. A collapse, a partial retraction or a hidden
-/// sample undone before the end still fails.
+/// for 850 ms from the move. A collapse, a partial retraction or a hidden sample undone before
+/// the end still fails. Returns the index of the read before the move, which starts the band's
+/// focus range (judged once the read before the leave closes it), if the band was watched.
 fn band_dwell<B: Backend>(
     d: &mut Driver<'_, B>,
     watch: &mut Watch,
     p: Point,
     rest: &Window,
-    finder: u32,
-) -> Result<(), String> {
+) -> Result<Option<usize>, String> {
     const DWELL_MS: u64 = 850;
-    let band = watch.move_to(d, p)?;
+    let Some(band) = watch.move_to(d, p)? else {
+        d.row.skip("top band holds past 500ms", &watch.why());
+        d.row.skip("top band dwell keeps focus away", &watch.why());
+        return Ok(None);
+    };
     if !same_place(&watch.samples[band.before].window, rest) {
         let reason = format!(
             "not at the settled position before the move: {:?}",
@@ -359,14 +414,14 @@ fn band_dwell<B: Backend>(
         );
         d.row.skip("top band holds past 500ms", &reason);
         d.row.skip("top band dwell keeps focus away", &reason);
-        return Ok(());
+        return Ok(None);
     }
     let ended = watch.until(d, band.zero + DWELL_MS)?;
     let left = watch.samples[band.before + 1..]
         .iter()
         .find(|x| !same_place(&x.window, rest))
         .map(|x| (x.ret - band.zero, x.window.bounds, x.window.onscreen));
-    let gap = watch.gap(band.before + 1, watch.last());
+    let gap = watch.gap(band.before, watch.last());
     let verdict = if left.is_some() {
         Verdict::Fail
     } else if !ended || gap > MAX_GAP_MS {
@@ -380,15 +435,14 @@ fn band_dwell<B: Backend>(
         verdict,
         format!(
             "{} samples over {}ms, largest gap {gap}ms, ended {ended}; left the settled {:?} at \
-             {left:?} (ms, bounds, on screen)",
+             {left:?} (ms, bounds, on screen); {}",
             watch.last() - band.before,
             watch.samples[watch.last()].ret - band.zero,
-            rest.bounds
+            rest.bounds,
+            watch.why()
         ),
     );
-    let (verdict, detail) = watch.focus(d.pid, finder, band.before, watch.last());
-    record(d, "top band dwell keeps focus away", verdict, detail);
-    Ok(())
+    Ok(Some(band.before))
 }
 
 fn record<B: Backend>(d: &mut Driver<'_, B>, name: &str, verdict: Verdict, detail: String) {
@@ -399,31 +453,40 @@ fn record<B: Backend>(d: &mut Driver<'_, B>, name: &str, verdict: Verdict, detai
     }
 }
 
-/// Samples until the window leaves the place it had before the move (`precondition` must hold
-/// there), which the contract allows from `target` - 10 ms and requires by `target` + `LATE_MS`
-/// after the move. The motion is bracketed by the request of the sample before (the move, for
-/// the first sample after it) and the return of the first moved sample, so time spent inside the
-/// queries counts against the bracket. Returns that bracket and the moved sample's index.
+/// Samples until the window, on screen, leaves the place it had before the move, which the
+/// contract allows from `target` - 10 ms and requires by `target` + `LATE_MS` after the move.
+/// The read before the move must be in the start state (`precondition`) and at `expected`, the
+/// place the previous phase established; otherwise the phase cannot be judged. A hidden sample
+/// is not motion (it may be the scene, not the product), so a PASS after one cannot be given.
+/// The motion is bracketed by the request of the sample before (the move, for the first sample
+/// after it) and the return of the first moved sample, so time spent inside the queries counts
+/// against the bracket; the gap into the read before the move counts too. Returns that bracket
+/// and the moved sample's index.
 fn observe_onset<B: Backend>(
     d: &mut Driver<'_, B>,
     watch: &mut Watch,
     phase: Phase,
     target: u64,
     precondition: impl Fn(&Window) -> bool,
+    expected: &Window,
     name: &str,
 ) -> Result<Option<(Bracket, usize)>, String> {
     let reference = watch.samples[phase.before].window.clone();
-    if !precondition(&reference) {
+    if !precondition(&reference) || !same_place(&reference, expected) {
         d.row.skip(
             name,
-            &format!("not in the start state before the move; {reference:?}"),
+            &format!(
+                "not at the established start before the move; {reference:?}, expected {:?}",
+                expected.bounds
+            ),
         );
         return Ok(None);
     }
     let lower = target - 10;
+    let mut hidden = None;
     loop {
         let Some(i) = watch.sample(d)? else {
-            d.row.skip(name, "the watch reached its sample bound");
+            d.row.skip(name, &watch.why());
             return Ok(None);
         };
         let s = &watch.samples[i];
@@ -431,7 +494,9 @@ fn observe_onset<B: Backend>(
             s.req.saturating_sub(phase.zero),
             s.ret.saturating_sub(phase.zero),
         );
-        if !same_place(&s.window, &reference) {
+        if !s.window.onscreen {
+            hidden.get_or_insert(ret);
+        } else if !same_place(&s.window, &reference) {
             let old_ms = if i - 1 == phase.before {
                 0
             } else {
@@ -441,14 +506,16 @@ fn observe_onset<B: Backend>(
                 old_ms,
                 new_ms: ret,
             };
-            let gap = watch.gap(phase.before + 1, i);
+            let gap = watch.gap(phase.before, i);
             let verdict = match transition(bracket, target) {
-                // A gap before the bracket could hide an earlier motion undone in time.
-                Verdict::Pass if gap > MAX_GAP_MS => Verdict::NotTested,
+                // A gap before the bracket could hide an earlier motion undone in time, and a
+                // hidden sample could hide one too.
+                Verdict::Pass if gap > MAX_GAP_MS || hidden.is_some() => Verdict::NotTested,
                 verdict => verdict,
             };
             let detail = format!(
-                "target={target}ms; bracket={bracket:?}; {} samples, largest gap {gap}ms; {:?}",
+                "target={target}ms; bracket={bracket:?}; {} samples, largest gap {gap}ms; hidden \
+                 at {hidden:?}ms; {:?}",
                 i - phase.before,
                 s.window
             );
@@ -458,10 +525,16 @@ fn observe_onset<B: Backend>(
         if req >= target + LATE_MS {
             let detail = format!(
                 "still in place when requested at {req}ms (returned {ret}ms); target={target}ms; \
-                 {:?}",
+                 hidden at {hidden:?}ms; {:?}",
                 s.window
             );
-            record(d, name, Verdict::Fail, detail);
+            // Seen on screen in place after the latest allowed onset: late. Hidden: cannot tell.
+            let verdict = if s.window.onscreen {
+                Verdict::Fail
+            } else {
+                Verdict::NotTested
+            };
+            record(d, name, verdict, detail);
             return Ok(None);
         }
         // Sample at the lower acceptance bound too; otherwise a perfect transition sampled
@@ -477,7 +550,9 @@ fn observe_onset<B: Backend>(
 /// Continues the watch from the moved sample until `REST_MS` past the latest completion
 /// deadline. The earliest possible onset bounds the deadline a PASS must meet, the latest one
 /// the deadline a FAIL must exceed; the moved sample is the first completion sample, so the
-/// stretch to the next one is covered. Returns the rest position, if one was established.
+/// stretch to the next one is covered. The rest is the first sample from which every later one
+/// has the last sample's place, visibility and level, so a level reached late is late. Returns
+/// the rest only when the completion passed: a later phase starts from a proven end state.
 fn completion<B: Backend>(
     d: &mut Driver<'_, B>,
     watch: &mut Watch,
@@ -496,7 +571,7 @@ fn completion<B: Backend>(
     let tail = &watch.samples[first..];
     let states: Vec<_> = tail
         .iter()
-        .map(|s| (s.window.bounds, s.window.onscreen))
+        .map(|s| (s.window.bounds, s.window.onscreen, s.window.layer))
         .collect();
     let k = rest_index(&states).ok_or("no completion samples")?;
     let rest = tail[tail.len() - 1].window.clone();
@@ -518,9 +593,10 @@ fn completion<B: Backend>(
         format!(
             "onset={onset:?}; at rest from {first_rest}ms (moving sample requested at \
              {moving:?}ms); deadlines {early}/{late}ms; {} samples, largest gap {gap}ms; rest \
-             {rest:?}",
-            tail.len()
+             {rest:?}; {}",
+            tail.len(),
+            watch.why()
         ),
     );
-    Ok(ended.then_some(rest))
+    Ok((verdict == Verdict::Pass).then_some(rest))
 }
