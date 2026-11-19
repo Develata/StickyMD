@@ -84,8 +84,11 @@ const EVERY_MS: u64 = 60;
 
 /// W10: with the editor focused and the pointer away, the caret blinks in colours inverse to what
 /// is under it, and the blinking presents no frame. One typed character first shows the counters
-/// are live; two snapshots back to back show that a snapshot presents nothing itself.
+/// are live; then snapshots 300 ms apart until two are equal (at most `QUIET_TRIES`) show the
+/// product has gone quiet after the edit and its autosave, and that a snapshot presents nothing
+/// itself. Without such a pair the idle check is NOT_TESTED.
 pub(super) fn caret<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
+    const QUIET_TRIES: usize = 6;
     d.op(Op::Focus)?;
     d.wait(500)?;
     let s = d.screen()?;
@@ -95,9 +98,18 @@ pub(super) fn caret<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     }))?;
     let before_edit = counters(d)?;
     d.type_text("x")?;
-    d.wait(600)?;
+    // Past the autosave's 650 ms debounce and its save.
+    d.wait(1500)?;
     let after_edit = counters(d)?;
-    let idle_start = counters(d)?;
+    let mut still = (after_edit, after_edit);
+    for _ in 0..QUIET_TRIES {
+        d.wait(300)?;
+        still = (still.1, counters(d)?);
+        if still.0 == still.1 {
+            break;
+        }
+    }
+    let idle_start = still.1;
     let w = d.window()?;
     // The text's first lines, below the toolbar: where the caret is after the typed character.
     let region = Rect {
@@ -133,11 +145,8 @@ pub(super) fn caret<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
             format!("{region:?}; {detail}"),
         );
     }
-    let (verdict, detail) = pixels::idle_presents_nothing(
-        (before_edit, after_edit),
-        (after_edit, idle_start),
-        (idle_start, idle_end),
-    );
+    let (verdict, detail) =
+        pixels::idle_presents_nothing((before_edit, after_edit), still, (idle_start, idle_end));
     record(d, "caret blinking presents no frame", verdict, detail);
     Ok(())
 }
