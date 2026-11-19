@@ -142,16 +142,28 @@ impl<B: Sender> Injection<B> {
     }
     /// Holds key `code` (no Unicode payload, so the input method sees the real key): one key-down,
     /// then `repeats` key-downs flagged as automatic repeats `every` ms apart, then the key-up
-    /// (always, as for every operation). I03 (USER 2026-11-19: the repeats are the driver's).
-    pub fn hold(&mut self, code: u16, repeats: usize, every: u64) -> Result<(), String> {
+    /// (always, as for every operation). `target` is checked before each repeat, so a hold whose
+    /// target lost focus stops; `during` runs after the last repeat while the key is still down.
+    /// I03 (USER 2026-11-19: the repeats are the driver's).
+    pub fn hold(
+        &mut self,
+        code: u16,
+        repeats: usize,
+        every: u64,
+        target: &mut dyn FnMut() -> Result<(), String>,
+        during: &mut dyn FnMut() -> Result<(), String>,
+    ) -> Result<(), String> {
         self.operation(|s| {
+            target()?;
             s.press(Held::Key(code, None))?;
             for _ in 0..repeats {
                 s.backend.pause(every);
+                target()?;
                 let flags = s.flags();
                 s.backend.send(Event::Repeat { code, flags })?;
             }
-            Ok(())
+            s.backend.pause(every);
+            during()
         })
     }
     pub fn text(&mut self, text: &str) -> Result<(), String> {

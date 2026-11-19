@@ -65,51 +65,78 @@ pub(super) fn command(program: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 impl Live<'_> {
-    /// I03's control: a scratch document in TextEdit, held as the product will be. Keys go only
-    /// to TextEdit while it is frontmost with that document's window focused; TextEdit is then
-    /// killed (its scratch document is never saved).
+    /// I03's control: a scratch document in a TextEdit instance of its own (`open -n`), held as
+    /// the product will be. Keys go only while that instance is frontmost with the document's
+    /// window focused. The windows are listed while the key is still down; then a real `2` must
+    /// pick an accent from the menu (the text read back). Only that instance is killed (its
+    /// scratch document is never saved).
     fn control(&mut self) -> Result<Value, String> {
-        use super::hold::{EVERY_MS, KEY_A, REPEATS};
+        use super::hold::{EVERY_MS, KEY_2, KEY_A, REPEATS};
         let path = self.session.path().join("control.txt");
         fs::write(&path, b"").map_err(|e| e.to_string())?;
+        let pids = || -> Vec<u32> {
+            command("/usr/bin/pgrep", &["-x", "TextEdit"])
+                .unwrap_or_default()
+                .split_whitespace()
+                .filter_map(|p| p.parse().ok())
+                .collect()
+        };
+        let existing = pids();
         command(
             "/usr/bin/open",
-            &["-a", "TextEdit", &path.to_string_lossy()],
+            &["-n", "-a", "TextEdit", &path.to_string_lossy()],
         )?;
+        let titled =
+            |pid: u32| ax::focused_window(pid).is_ok_and(|(title, _)| title.starts_with("control"));
         let deadline = Instant::now() + Duration::from_secs(10);
         let pid = loop {
-            let found = command("/usr/bin/pgrep", &["-x", "TextEdit"]).unwrap_or_default();
-            let pid = found
-                .split_whitespace()
-                .next()
-                .and_then(|p| p.parse::<u32>().ok());
-            if let Some(pid) = pid
-                && ax::focused_window(pid).is_ok_and(|(title, _)| title.starts_with("control"))
+            if let Some(pid) = pids()
+                .into_iter()
+                .find(|p| !existing.contains(p) && titled(*p))
             {
                 break pid;
             }
             if Instant::now() >= deadline {
                 return Ok(Value::Text(
-                    "TextEdit showed no control document within 10 s".into(),
+                    "no TextEdit instance of its own showed the control document within 10 s"
+                        .into(),
                 ));
             }
             events::wait(200)?;
         };
         ax::activate(pid)?;
         events::wait(500)?;
-        let ready = ax::front().is_ok_and(|front| front == pid)
-            && ax::focused_window(pid).is_ok_and(|(title, _)| title.starts_with("control"));
-        let result = if ready {
+        let ready = |pid: u32| ax::front().is_ok_and(|front| front == pid) && titled(pid);
+        let result = if ready(pid) {
             let before = windows::on_screen()?;
-            self.input.hold(KEY_A, REPEATS, EVERY_MS)?;
-            events::wait(300)?;
-            let after = windows::on_screen()?;
-            let text = ax::focused_element(pid).map(|(_, v)| v).unwrap_or_default();
-            // Escape closes the accent menu while TextEdit is still in front.
-            if ax::front().is_ok_and(|front| front == pid) {
-                self.input.chord(&[53])?;
+            let mut during = None;
+            let held = self.input.hold(
+                KEY_A,
+                REPEATS,
+                EVERY_MS,
+                &mut || {
+                    if ready(pid) {
+                        Ok(())
+                    } else {
+                        Err("the TextEdit control lost focus during the hold".into())
+                    }
+                },
+                &mut || {
+                    during = Some(windows::on_screen()?);
+                    Ok(())
+                },
+            );
+            match (held, during) {
+                (Ok(()), Some(during)) if ready(pid) => {
+                    // The menu answers a digit by picking that accent.
+                    self.input.chord(&[KEY_2])?;
+                    events::wait(300)?;
+                    let text = ax::focused_element(pid).map(|(_, v)| v).unwrap_or_default();
+                    Value::Control(super::hold::appeared(&before, &during), pid, text)
+                }
+                (Err(error), _) => Value::Text(format!("TextEdit control: {error}")),
+                _ => Value::Text("the TextEdit control lost focus after the hold".into()),
             }
-            Value::Control(super::hold::appeared(&before, &after), pid, text)
         } else {
             Value::Text("the TextEdit control document was not frontmost and focused".into())
         };
@@ -437,9 +464,31 @@ impl Backend for Live<'_> {
             },
             Op::Hold(code, repeats, every) => {
                 self.require_key_target(KeyTarget::Note)?;
-                self.input.hold(code, repeats, every)?;
+                let pid = self.pid;
+                let mut during = None;
+                self.input.hold(
+                    code,
+                    repeats,
+                    every,
+                    &mut || {
+                        super::observation::key_target(
+                            ax::front(),
+                            ax::focused_window(pid),
+                            pid,
+                            KeyTarget::Note,
+                        )
+                    },
+                    &mut || {
+                        during = Some(windows::on_screen());
+                        Ok(())
+                    },
+                )?;
                 events::wait(60)?;
-                Value::Unit
+                match during {
+                    Some(Ok(list)) => Value::Windows(list),
+                    Some(Err(error)) => Value::Text(format!("window list unavailable: {error}")),
+                    None => Value::Text("no window list while the key was held".into()),
+                }
             }
             Op::OnScreen => match windows::on_screen() {
                 Ok(list) => Value::Windows(list),

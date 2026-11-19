@@ -1508,7 +1508,12 @@ fn press_and_hold_judge_refuses_bad_samples() {
     let panel = vec![(67, textedit, "TextEdit".to_string())];
     let verdicts = |control: &[(u32, u32, String)], product: &[(u32, u32, String)], added: &str| {
         let mut row = Row::new("I03");
-        judge((control, textedit, "a"), (product, sticky), added, &mut row);
+        judge(
+            (control, textedit, "á"),
+            (Ok(product), sticky),
+            added,
+            &mut row,
+        );
         row.checks.iter().map(|c| c.verdict).collect::<Vec<_>>()
     };
     let aaa = "aaaaaaaaaaaaaaa2";
@@ -1525,7 +1530,30 @@ fn press_and_hold_judge_refuses_bad_samples() {
     assert_eq!(verdicts(&panel, &menu, aaa)[0], Verdict::Fail);
     let other = vec![(903, 77, "NotificationCenter".to_string())];
     assert_eq!(verdicts(&panel, &other, aaa)[0], Verdict::NotTested);
-    for bad in ["aaaá2", "aaaa", "a2", "aab2", "2", "aaa22"] {
+    // The menu seen but no accent picked by the digit: the control does not hold.
+    let mut row = Row::new("I03");
+    judge((&panel, textedit, "a2"), (Ok(&[]), sticky), aaa, &mut row);
+    assert!(row.checks.iter().all(|c| c.verdict == Verdict::NotTested));
+    // No window list while held: the menu check cannot tell.
+    let mut row = Row::new("I03");
+    judge(
+        (&panel, textedit, "á"),
+        (Err("unavailable"), sticky),
+        aaa,
+        &mut row,
+    );
+    assert_eq!(row.checks[0].verdict, Verdict::NotTested);
+    // Too few or too many held letters (one per key-down: 15 or 16 here).
+    for bad in [
+        "aaaá2",
+        "aaaa",
+        "a2",
+        "aab2",
+        "2",
+        "aaa22",
+        "aaaaaaaaaaaaa2",
+        &"a".repeat(17),
+    ] {
         assert_eq!(verdicts(&panel, &[], bad)[1], Verdict::Fail, "{bad}");
     }
     let before = vec![(1, 1, "Finder".to_string())];
