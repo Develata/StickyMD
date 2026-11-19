@@ -182,61 +182,72 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
     let is_collapsed = |w: &Window| collapsed(w, s, Edge::Top);
     let mut watch = Watch::default();
     // Early leave: the pointer leaves the strip after about 35 ms and nothing may move. A dwell of
-    // 100 ms or more (a late move) may legitimately expand, so it cannot test the cancellation.
-    let Some(early) = watch.move_to(d, strip)? else {
-        return skip_all(d, band, &watch.why());
-    };
-    // The Finder PID the backend verified in front when docking; another app in front since then
-    // changed the scene (NOT_TESTED), StickyMD in front is the product's doing.
-    let front = watch.samples[early.before].front;
-    let verdict = if front == d.pid {
-        Verdict::Fail
-    } else if front != finder {
-        Verdict::NotTested
-    } else {
-        Verdict::Pass
-    };
-    record(
-        d,
-        "Finder frontmost before hover",
-        verdict,
-        format!("front={front}, Finder={finder}, app={}", d.pid),
-    );
-    if verdict != Verdict::Pass {
-        return skip_all(d, band, "Finder was not frontmost when the hover began");
-    }
-    watch.until(d, early.zero + 35)?;
-    d.op(Op::Move(away))?;
-    let dwell = d.backend.now() - early.zero;
-    let ended = watch.until(d, early.zero + dwell + 350)?;
-    let reference = watch.samples[early.before].window.clone();
-    let moved = watch.samples[early.before + 1..]
-        .iter()
-        .find(|x| !same_place(&x.window, &reference))
-        .map(|x| (x.ret - early.zero, x.window.bounds, x.window.onscreen));
-    let gap = watch.gap(early.before + 1, watch.last());
-    let verdict = if !is_collapsed(&reference) || dwell >= 100 {
-        Verdict::NotTested
-    } else if moved.is_some() {
-        Verdict::Fail
-    } else if !ended || gap > MAX_GAP_MS {
-        Verdict::NotTested
-    } else {
-        Verdict::Pass
-    };
-    record(
-        d,
-        "early leave cancels",
-        verdict,
-        format!(
-            "dwell {dwell}ms (100ms or more cannot test it); collapsed before {}; {} samples, \
-             largest gap {gap}ms; moved at {moved:?} (ms, bounds, on screen); {}",
+    // 100 ms or more (a late move) may legitimately expand, so it cannot test the cancellation; a
+    // trial the sampling could not resolve is repeated (at most `EARLY_TRIALS`), while motion
+    // observed in any trial fails at once.
+    const EARLY_TRIALS: usize = 3;
+    let mut first = None;
+    let mut trials = Vec::new();
+    let mut strip_rest = None;
+    let mut verdict = Verdict::NotTested;
+    for trial in 1..=EARLY_TRIALS {
+        let Some(early) = watch.move_to(d, strip)? else {
+            break;
+        };
+        if first.is_none() {
+            first = Some(early.before);
+            // The Finder PID the backend verified in front when docking; another app in front
+            // since then changed the scene (NOT_TESTED), StickyMD in front is the product's doing.
+            let front = watch.samples[early.before].front;
+            let verdict = if front == d.pid {
+                Verdict::Fail
+            } else if front != finder {
+                Verdict::NotTested
+            } else {
+                Verdict::Pass
+            };
+            record(
+                d,
+                "Finder frontmost before hover",
+                verdict,
+                format!("front={front}, Finder={finder}, app={}", d.pid),
+            );
+            if verdict != Verdict::Pass {
+                return skip_all(d, band, "Finder was not frontmost when the hover began");
+            }
+        }
+        watch.until(d, early.zero + 35)?;
+        d.op(Op::Move(away))?;
+        let dwell = d.backend.now() - early.zero;
+        let ended = watch.until(d, early.zero + dwell + 350)?;
+        let reference = watch.samples[early.before].window.clone();
+        let moved = watch.samples[early.before + 1..]
+            .iter()
+            .find(|x| !same_place(&x.window, &reference))
+            .map(|x| (x.ret - early.zero, x.window.bounds, x.window.onscreen));
+        let gap = watch.gap(early.before + 1, watch.last());
+        verdict = if !is_collapsed(&reference) || dwell >= 100 {
+            Verdict::NotTested
+        } else if moved.is_some() {
+            Verdict::Fail
+        } else if !ended || gap > MAX_GAP_MS {
+            Verdict::NotTested
+        } else {
+            Verdict::Pass
+        };
+        trials.push(format!(
+            "trial {trial}: dwell {dwell}ms (100ms or more cannot test it); collapsed before {};              {} samples, largest gap {gap}ms; moved at {moved:?} (ms, bounds, on screen); {}",
             is_collapsed(&reference),
             watch.last() - early.before,
             watch.why()
-        ),
-    );
-    let Some(strip_rest) = settle(d, &mut watch, is_collapsed)? else {
+        ));
+        strip_rest = settle(d, &mut watch, is_collapsed)?;
+        if verdict != Verdict::NotTested || strip_rest.is_none() || watch.cut {
+            break;
+        }
+    }
+    record(d, "early leave cancels", verdict, trials.join("; "));
+    let (Some(start), Some(strip_rest)) = (first, strip_rest) else {
         return skip_all(
             d,
             band,
@@ -269,7 +280,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
     let hover_end = watch.last();
     let Some(rest) = rest else {
         // No proven rest: only an observed StickyMD in front fails the focus check.
-        let (focus, detail) = watch.focus(d.pid, finder, early.before, hover_end);
+        let (focus, detail) = watch.focus(d.pid, finder, start, hover_end);
         record(d, "hover expands without focus", focus, detail);
         return skip_rest(d, band, "the hover expansion was not established");
     };
@@ -292,7 +303,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
     let leave = watch.move_to(d, away)?;
     let end = leave.map_or(watch.last(), |l| l.before);
     let hover_to = band_before.unwrap_or(end);
-    let (focus, detail) = watch.focus(d.pid, finder, early.before, hover_to);
+    let (focus, detail) = watch.focus(d.pid, finder, start, hover_to);
     record(d, "hover expands without focus", focus, detail);
     if let Some(from) = band_before {
         let (focus, detail) = watch.focus(d.pid, finder, from, end);
@@ -359,7 +370,8 @@ fn skip_rest<B: Backend>(d: &mut Driver<'_, B>, band: bool, reason: &str) -> Res
 
 /// Samples until the window has been seen in `state`, at one place, for at least 100 ms (from
 /// the return of the first such sample to the request of the latest, every sample in between
-/// in that state and no gap over `MAX_GAP_MS`), at most 1.5 s. Returns that settled window.
+/// in that state; the run stops at a gap over `MAX_GAP_MS`, so an old slow read does not keep a
+/// later clean run from counting), at most 1.5 s. Returns that settled window.
 fn settle<B: Backend>(
     d: &mut Driver<'_, B>,
     watch: &mut Watch,
@@ -374,7 +386,10 @@ fn settle<B: Backend>(
         let mut first = last;
         while first > 0 && {
             let w = &watch.samples[first - 1].window;
-            state(w) && same_place(w, &now) && w.layer == now.layer
+            state(w)
+                && same_place(w, &now)
+                && w.layer == now.layer
+                && watch.gap(first, first) <= MAX_GAP_MS
         } {
             first -= 1;
         }

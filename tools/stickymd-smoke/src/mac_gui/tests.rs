@@ -365,6 +365,9 @@ struct HoverBackend {
     front_error_at: Option<u64>,
     /// Since the pointer left: when the window is hidden in place.
     leave_hidden: Option<(u64, u64)>,
+    /// In every entry onto the strip: the first window query from this time on takes this long.
+    slow_each_entry: Option<(u64, u64)>,
+    slowed_this_entry: bool,
 }
 impl HoverBackend {
     fn new() -> Self {
@@ -394,6 +397,8 @@ impl HoverBackend {
             retract_abs: None,
             front_error_at: None,
             leave_hidden: None,
+            slow_each_entry: None,
+            slowed_this_entry: false,
         }
     }
     fn at(&self, range: Option<(u64, u64)>) -> bool {
@@ -485,6 +490,13 @@ impl Backend for HoverBackend {
                     self.now += self.slow_nth.map_or(0, |(_, cost)| cost);
                 }
                 self.windows += 1;
+                if let Some((at, cost)) = self.slow_each_entry
+                    && !self.slowed_this_entry
+                    && self.entered.is_some_and(|t| self.now - t >= at)
+                {
+                    self.slowed_this_entry = true;
+                    self.now += cost;
+                }
                 self.slow(true);
                 Value::Window(self.window_now())
             }
@@ -519,6 +531,7 @@ impl Backend for HoverBackend {
                 if p.y <= 1.0 {
                     if self.entered.is_none() {
                         self.entered = Some(self.now);
+                        self.slowed_this_entry = false;
                     }
                     self.left = None;
                 } else {
@@ -680,17 +693,18 @@ fn hover_tracks_leave_no_unobserved_stretch() {
         "{}",
         row.json()
     );
-    // An early dwell of 100 ms or more may expand: the cancellation is not tested, nothing fails,
-    // and the formal hover starts from the strip again.
+    // An early dwell of 100 ms or more may expand and cannot test the cancellation: nothing
+    // fails, the trial is repeated once the window rests on the strip, and the next one passes.
     let mut long_dwell = HoverBackend::new();
     long_dwell.slow_window = Some((false, 20, 90));
     let row = hover_row(&mut long_dwell, "W03");
     assert_eq!(
         check(&row, "early leave cancels"),
-        Verdict::NotTested,
+        Verdict::Pass,
         "{}",
         row.json()
     );
+    assert!(row.json().contains("trial 2:"), "{}", row.json());
     assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
 }
 
@@ -760,7 +774,7 @@ fn hover_watch_is_one_stream_and_motion_is_any_change_of_place() {
     let row = hover_row(&mut expanded_early, "W03");
     assert_eq!(
         check(&row, "early leave cancels"),
-        Verdict::NotTested,
+        Verdict::Pass,
         "{}",
         row.json()
     );
@@ -829,6 +843,13 @@ fn hover_judges_level_seams_and_unobservable_reads() {
     unreadable.front_error_at = Some(150);
     let row = hover_row(&mut unreadable, "W04");
     assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
+    // Every early trial too slow to resolve: three trials, then NOT_TESTED, and nothing fails.
+    let mut always_slow = HoverBackend::new();
+    always_slow.slow_each_entry = Some((20, 90));
+    let row = hover_row(&mut always_slow, "W03");
+    assert_eq!(check(&row, "early leave cancels"), Verdict::NotTested);
+    assert!(row.json().contains("trial 3:"), "{}", row.json());
+    assert_ne!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
     // Hidden in place at 530-540 ms after leaving, the collapse starting only at 580 ms: the
     // flicker is no onset, and the window still in place at 570 ms is late.
     let mut flicker = HoverBackend::new();
