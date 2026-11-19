@@ -239,16 +239,20 @@ impl<'a> Graph<'a> {
             }
             // Identity holds for every kind: a local dependency is the workspace member itself.
             let member = match declaration.path {
-                Some(path) => *self
-                    .member_directories
-                    .get(Path::new(path))
-                    .ok_or_else(|| {
-                        format!(
-                            "{} declares {} from outside the workspace ({} -> {hop}, path {path}); \
-                         {OUTSIDE}",
-                            boundary.name, declaration.name, boundary.name
-                        )
-                    })?,
+                Some(path) => match self.member_directories.get(Path::new(path)) {
+                    Some(member) => *member,
+                    // Cargo may spell one directory two ways (a drive letter's case on Windows);
+                    // the resolved IDs then decide.
+                    None => self
+                        .resolves_to_member(id, declaration.name)?
+                        .ok_or_else(|| {
+                            format!(
+                                "{} declares {} from outside the workspace ({} -> {hop}, path \
+                             {path}); {OUTSIDE}",
+                                boundary.name, declaration.name, boundary.name
+                            )
+                        })?,
+                },
                 None if self.members.contains_key(declaration.name) => {
                     return Err(format!(
                         "{} declares {} without a path to the workspace member ({} -> {hop}); \
@@ -272,6 +276,22 @@ impl<'a> Graph<'a> {
             ));
         }
         Ok(())
+    }
+
+    /// The member of this name, when the crate's resolved edges to that name exist and all go to
+    /// the member's ID. A crate without a library has no resolved edge, so a declaration of one
+    /// keeps the directory test alone.
+    fn resolves_to_member(&self, id: &str, name: &str) -> Result<Option<&'a str>, String> {
+        let Some((&member, &member_id)) = self.members.get_key_value(name) else {
+            return Ok(None);
+        };
+        let mut edges = self
+            .deps(id)?
+            .iter()
+            .filter(|edge| self.name(edge.package) == name)
+            .peekable();
+        let resolved = edges.peek().is_some() && edges.all(|edge| edge.package == member_id);
+        Ok(resolved.then_some(member))
     }
 
     fn check_local_edges(&self, boundary: &Boundary, id: &str) -> Result<(), String> {

@@ -35,6 +35,8 @@ struct Fixture {
     packages: Vec<Package>,
     dependencies: Vec<Dependency>,
     without_node: Option<&'static str>,
+    /// A member whose `manifest_path` Cargo spells differently from the paths that name it.
+    respelled: Option<&'static str>,
 }
 
 impl Fixture {
@@ -45,6 +47,7 @@ impl Fixture {
             packages: Vec::new(),
             dependencies: Vec::new(),
             without_node: None,
+            respelled: None,
         };
         for name in [
             "stickymd-core",
@@ -228,7 +231,11 @@ impl Fixture {
                     id(package.key),
                     package.name,
                     text((!package.local).then_some(registry)),
-                    self.directory(package.key),
+                    if self.respelled == Some(package.key) {
+                        self.directory(package.key).replace("/repo/", "/REPO/")
+                    } else {
+                        self.directory(package.key)
+                    },
                     declarations.join(",")
                 )
             })
@@ -591,6 +598,30 @@ fn a_declaration_without_a_resolved_edge_is_still_checked() {
         let error = Fixture::allowed().declared_only(from, to, kinds).error();
         assert_mentions(&error, &[&format!("{from} declares {to}")]);
     }
+}
+
+/// A member directory spelled two ways is still the member when the resolved IDs agree; a copy
+/// outside the workspace stays refused.
+#[test]
+fn a_respelled_member_directory_falls_back_to_the_resolved_id() {
+    let mut fixture = Fixture::allowed();
+    fixture.respelled = Some("stickymd-core");
+    fixture.passes();
+    let mut fixture = Fixture::allowed()
+        .package("other-core", "stickymd-core", true, false)
+        .with("stickymd-render", "other-core", "core_copy", NORMAL);
+    fixture.respelled = Some("stickymd-core");
+    assert_mentions(
+        &fixture.error(),
+        &["stickymd-render declares stickymd-core from outside the workspace"],
+    );
+    // A library-less member has no resolved edge to fall back on.
+    let mut fixture = Fixture::allowed().declared_only("stickymd-core", "stickymd-smoke", DEV);
+    fixture.respelled = Some("stickymd-smoke");
+    assert_mentions(
+        &fixture.error(),
+        &["stickymd-core declares stickymd-smoke from outside the workspace"],
+    );
 }
 
 /// An allowed name is not enough: the package must be the workspace member.
