@@ -419,6 +419,9 @@ mod live {
             .as_secs();
         let mut session = Session::new()?;
         fixture::copy_fixture(&mut session, &app, NOTE, CONFIG, &exe_hash)?;
+        // Files written from here on are this case's: the copied bundle keeps its old times.
+        let marker = session.path().join("case-started");
+        fs::write(&marker, b"").map_err(|e| e.to_string())?;
         let dir = session.path().to_path_buf();
         let mut row = Row::new(&format!("W12-logout-{}", options.case));
         let child = Command::new(&driver)
@@ -444,7 +447,6 @@ mod live {
             Some(pid) if child.status.success() => {
                 let note = dir.join("note/note.md");
                 facts.before = read(&note);
-                let marker = dir.join("StickyMD.app/Contents/Info.plist");
                 let mut logout = Command::new("/usr/bin/osascript")
                     .args(["-e", "tell application \"loginwindow\" to «event aevtrlgo»"])
                     .stdin(Stdio::null())
