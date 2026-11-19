@@ -36,6 +36,15 @@ impl Image {
         let i = (y * self.width + x) * 4;
         [self.rgba[i], self.rgba[i + 1], self.rgba[i + 2]]
     }
+    /// The fraction of pixels with any opacity. CoreGraphics returns a transparent black image
+    /// for a scene it cannot read.
+    pub fn opaque_share(&self) -> f64 {
+        let n = self.width * self.height;
+        if n == 0 {
+            return 0.0;
+        }
+        self.rgba.chunks_exact(4).filter(|p| p[3] > 0).count() as f64 / n as f64
+    }
     fn pixels(&self) -> impl Iterator<Item = [u8; 3]> + '_ {
         self.rgba.chunks_exact(4).map(|p| [p[0], p[1], p[2]])
     }
@@ -69,11 +78,14 @@ pub(super) const TOLERANCE: u8 = 6;
 /// W02: the collapsed strip is visible when nothing covers it (the on-screen composite of the
 /// strip's rectangle equals the window alone there) and it changes the scene (the composite
 /// differs from the scene below the window). A covered strip is NOT_TESTED (the scene, e.g. a
-/// notification); a strip that changes nothing on screen fails.
+/// notification); a strip that changes nothing on screen fails. A scene below that is mostly
+/// transparent was not read, so the comparison with it proves nothing (NOT_TESTED).
 pub(super) fn strip_visible(composite: &Image, alone: &Image, below: &Image) -> (Verdict, String) {
     let covered = composite.differing(alone, TOLERANCE);
     let drawn = composite.differing(below, TOLERANCE);
+    let readable = below.opaque_share() >= 0.5;
     let verdict = match (covered, drawn) {
+        _ if !readable => Verdict::NotTested,
         (Some(c), Some(d)) if c <= 0.02 && d >= 0.5 => Verdict::Pass,
         (Some(c), Some(_)) if c <= 0.02 => Verdict::Fail,
         _ => Verdict::NotTested,
@@ -82,8 +94,10 @@ pub(super) fn strip_visible(composite: &Image, alone: &Image, below: &Image) -> 
         verdict,
         format!(
             "{}x{} px; differs from the window alone in {covered:?} and from the scene below in \
-             {drawn:?} of the pixels (tolerance {TOLERANCE})",
-            composite.width, composite.height
+             {drawn:?} of the pixels (tolerance {TOLERANCE}); scene below opaque in {:.2}",
+            composite.width,
+            composite.height,
+            below.opaque_share()
         ),
     )
 }
@@ -95,13 +109,18 @@ const HALF_PERIOD_MS: (u64, u64) = (300, 900);
 const CARET_WIDTH_PX: usize = 8;
 const CARET_HEIGHT_PX: (usize, usize) = (16, 120);
 
+/// The longest gap between two frames that still times a half period of the caret.
+pub(super) const MAX_FRAME_GAP_MS: u64 = HALF_PERIOD_MS.0 / 2;
+
 /// W10: frames of one window region at increasing times. The pixels that alternate between two
 /// states must form one caret-shaped region (at most `CARET_WIDTH_PX` wide, a line tall, mostly
 /// filled), each pixel's two states must be each other's inverse (反色), the caret must be seen
 /// shown and hidden at least twice, and each complete half period must lie in `HALF_PERIOD_MS`.
 /// A steady or absent caret, an alternating region that is not caret-shaped (a whole layer
 /// flipping), or alternation in colours that are not inverse fails; pixels that change through
-/// more than two states, or a frame gap too long to time a half period, are NOT_TESTED.
+/// more than two states, or a frame gap too long to time a half period, are NOT_TESTED; an
+/// observed non-inverse or misshapen alternation fails whatever the gaps, and a missing
+/// alternation fails only when the frames cover the watch.
 pub(super) fn caret_blinks(frames: &[(u64, Image)]) -> (Verdict, String) {
     let Some((_, first)) = frames.first() else {
         return (Verdict::NotTested, "no frames".into());
@@ -173,17 +192,11 @@ pub(super) fn caret_blinks(frames: &[(u64, Image)]) -> (Verdict, String) {
         frames.len(),
         alternating.len()
     );
-    let verdict = if alternating.is_empty() {
-        if other > 0 {
-            Verdict::NotTested
-        } else {
-            Verdict::Fail
-        }
-    } else if !caret_shaped || not_inverse > 0 {
+    let verdict = if !alternating.is_empty() && (!caret_shaped || not_inverse > 0) {
         Verdict::Fail
-    } else if other > 0 || longest > HALF_PERIOD_MS.0 / 2 {
+    } else if longest > MAX_FRAME_GAP_MS || other > 0 {
         Verdict::NotTested
-    } else if changes.len() < 4 {
+    } else if alternating.is_empty() || changes.len() < 4 {
         Verdict::Fail
     } else if halves
         .iter()

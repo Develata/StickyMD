@@ -30,6 +30,9 @@ const TOLERANCE: f64 = 0.5;
 /// `req`, both returned by `ret`.
 struct Sample {
     req: u64,
+    /// When the window read returned: the window was where `window` says no later than this,
+    /// even when the frontmost-app read after it was slow.
+    seen: u64,
     ret: u64,
     window: Window,
     front: u32,
@@ -65,6 +68,7 @@ impl Watch {
         }
         let req = d.backend.now();
         let window = d.window()?;
+        let seen = d.backend.now();
         let front = match d.front() {
             Ok(front) => front,
             Err(error) => {
@@ -76,6 +80,7 @@ impl Watch {
         let ret = d.backend.now();
         self.samples.push(Sample {
             req,
+            seen,
             ret,
             window,
             front,
@@ -226,7 +231,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
         let moved = watch.samples[early.before + 1..]
             .iter()
             .find(|x| !same_place(&x.window, &reference))
-            .map(|x| (x.ret - early.zero, x.window.bounds, x.window.onscreen));
+            .map(|x| (x.seen - early.zero, x.window.bounds, x.window.onscreen));
         let gap = watch.gap(early.before + 1, watch.last());
         // Motion already seen before 90 ms is early whatever the dwell became: a long dwell
         // only excuses motion that may have followed 100 ms on the strip.
@@ -464,7 +469,7 @@ fn band_dwell<B: Backend>(
     let left = watch.samples[band.before + 1..]
         .iter()
         .find(|x| !same_place(&x.window, rest))
-        .map(|x| (x.ret - band.zero, x.window.bounds, x.window.onscreen));
+        .map(|x| (x.seen - band.zero, x.window.bounds, x.window.onscreen));
     let gap = watch.gap(band.before, watch.last());
     let verdict = if left.is_some() {
         Verdict::Fail
@@ -536,7 +541,7 @@ fn observe_onset<B: Backend>(
         let s = &watch.samples[i];
         let (req, ret) = (
             s.req.saturating_sub(phase.zero),
-            s.ret.saturating_sub(phase.zero),
+            s.seen.saturating_sub(phase.zero),
         );
         if !s.window.onscreen {
             hidden.get_or_insert(ret);

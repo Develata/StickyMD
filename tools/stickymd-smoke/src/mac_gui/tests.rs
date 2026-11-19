@@ -1330,10 +1330,6 @@ fn translocation_checks_refuse_bad_samples() {
             ..good()
         },
         Observed {
-            exited: Some(false),
-            ..good()
-        },
-        Observed {
             termination: Some("(2, 9, 9)".into()),
             ..good()
         },
@@ -1376,6 +1372,21 @@ fn translocation_checks_refuse_bad_samples() {
             unanswered: Some("the process ended before Return was posted".into()),
             exited: None,
             termination: None,
+            ..good()
+        },
+        // Still running after Return: with no receipt of which window took the key, not a
+        // refusal to exit.
+        Observed {
+            exited: Some(false),
+            termination: None,
+            ..good()
+        },
+        // A process outside this copy's translocation mount is not the one started.
+        Observed {
+            path: Some(
+                "/private/var/folders/x/T/AppTranslocation/OTHER/d/StickyMD.app/Contents/MacOS/StickyMD"
+                    .into(),
+            ),
             ..good()
         },
         // Answered and gone, but no termination record in the log.
@@ -1656,16 +1667,19 @@ fn logout_cases_judge_the_log_and_the_note() {
     let ended = "2026-11-19 12:51:39.300215+0000  localhost runningboardd[175]: (RunningBoard) [com.apple.runningboard:ttl] [app<application.io.github.develata.stickymd.516736.516741.2DBA30AC-C083-4C8B-B538-31068C90C401(501)>:991] termination reported by launchd (0, 0, 0)";
     let other = "2026-11-19 12:51:39.100000+0000  localhost StickyMD[9991]: (AppKit) [com.apple.AppKit:Application] replyToApplicationShouldTerminate:NO";
     let early = "2026-11-19 12:51:38.000000+0000  localhost StickyMD[991]: (AppKit) [com.apple.AppKit:Application] applicationShouldTerminate: NSTerminateNow";
+    // A quit request before this run asked for the logout is not this one.
+    let old_quit = "2026-11-19 12:51:37.000000+0000  localhost StickyMD[991]: (AppKit) [com.apple.AppKit:Application] Handling Quit AppleEvent";
     let mut facts = Facts::default();
     from_log(
-        &[early, quit, later, other, yes, ended].join("\n"),
+        &[old_quit, early, quit, later, other, yes, ended].join("\n"),
         991,
+        log_time(quit).unwrap() - 1_000,
         &mut facts,
     );
     assert_eq!(
         facts.quit,
         Some(Logged {
-            line: 1,
+            line: 2,
             at: log_time(quit),
             value: String::new()
         })
@@ -1673,15 +1687,15 @@ fn logout_cases_judge_the_log_and_the_note() {
     let seen = |l: &Option<Logged>| l.as_ref().map(|l| (l.line, l.value.clone()));
     assert_eq!(
         seen(&facts.decision),
-        Some((2, "NSTerminateLater".into())),
+        Some((3, "NSTerminateLater".into())),
         "a decision before the quit event does not answer it"
     );
     assert_eq!(
         seen(&facts.reply),
-        Some((4, "YES".into())),
+        Some((5, "YES".into())),
         "another PID's reply is not ours"
     );
-    assert_eq!(seen(&facts.termination), Some((5, "(0, 0, 0)".into())));
+    assert_eq!(seen(&facts.termination), Some((6, "(0, 0, 0)".into())));
 
     let run = |case: &str, f: Facts| {
         let mut row = Row::new("W12-logout");
@@ -1698,7 +1712,7 @@ fn logout_cases_judge_the_log_and_the_note() {
     let logged = |line: usize, value: &str| {
         Some(Logged {
             line,
-            at: Some(at),
+            at: Some(at + line as i64 * 100_000),
             value: value.into(),
         })
     };
@@ -1837,6 +1851,32 @@ fn logout_cases_judge_the_log_and_the_note() {
     for (facts, verdict, why) in samples {
         assert_eq!(run("text", facts), verdict, "text: {why}");
     }
+    // Saved only after it answered YES; the barrier skipped with the answer missing; a product
+    // still running when the cleanup began (its exit may be the cleanup's).
+    let written_late = Facts {
+        after: note(TYPED, at + 350_000),
+        ..text()
+    };
+    assert_eq!(run("text", written_late), Verdict::Fail, "saved after YES");
+    let skipped = Facts {
+        decision: logged(2, "NSTerminateNow"),
+        reply: None,
+        ..text()
+    };
+    assert_eq!(
+        run("text", skipped),
+        Verdict::Fail,
+        "a seen violation beats a missing fact"
+    );
+    let lingering = Facts {
+        gone: false,
+        ..text()
+    };
+    assert_eq!(
+        run("text", lingering),
+        Verdict::NotTested,
+        "ended by the cleanup"
+    );
 
     // dialog: the request meets the open dialog, the second line is saved by it, nothing lands at
     // the aimed destination, a normal exit.
@@ -1991,6 +2031,78 @@ fn logout_cases_judge_the_log_and_the_note() {
     for (facts, verdict, why) in samples {
         assert_eq!(run("fault", facts), verdict, "fault: {why}");
     }
+    // The SIGKILL of a product the cleanup found still running may be the cleanup's own.
+    let lingering = Facts {
+        gone: false,
+        ..fault()
+    };
+    assert_eq!(
+        run("fault", lingering),
+        Verdict::NotTested,
+        "ended by the cleanup"
+    );
+}
+
+/// The facts the ladder-p8 VM run recorded for the three logout cases (driver `d347b215…`),
+/// judged again under the round-8 rules: each still passes.
+#[test]
+fn ladder_p8_logout_facts_pass_the_stricter_rules() {
+    use super::logout::check::{Facts, Logged, Note, judge};
+    let note = |text: &str, modified: i64| -> Result<Note, String> {
+        Ok(Note {
+            text: text.into(),
+            modified,
+        })
+    };
+    let logged = |line: usize, at: i64, value: &str| {
+        Some(Logged {
+            line,
+            at: Some(at),
+            value: value.into(),
+        })
+    };
+    let run = |case: &str, f: Facts| {
+        let mut row = Row::new("W12-logout");
+        judge(case, &f, &mut row);
+        (aggregate(&row.checks), row.json())
+    };
+    let text = Facts {
+        logged_out: true,
+        gone: true,
+        before: note("before logout\n", 1795104349726449),
+        after: note("typed just before logout", 1795104354804169),
+        exported: Err("not read".into()),
+        quit: logged(959, 1795104354645310, ""),
+        decision: logged(964, 1795104354645429, "NSTerminateLater"),
+        reply: logged(1346, 1795104354960946, "YES"),
+        termination: logged(2578, 1795104355104607, "(0, 0, 0)"),
+    };
+    let dialog = Facts {
+        logged_out: true,
+        gone: true,
+        before: note("saved line", 1795104427072172),
+        after: note("saved line\nunsaved line", 1795104431870127),
+        exported: Ok(false),
+        quit: logged(1420, 1795104431611969, ""),
+        decision: logged(1429, 1795104431617936, "NSTerminateCancel"),
+        reply: logged(1430, 1795104431617937, "NO"),
+        termination: logged(2172, 1795104431979765, "(0, 0, 0)"),
+    };
+    let fault = Facts {
+        logged_out: true,
+        gone: true,
+        before: note("saved line", 1795104509590180),
+        after: note("saved line", 1795104509590180),
+        exported: Err("not read".into()),
+        quit: logged(1150, 1795104513004346, ""),
+        decision: logged(1155, 1795104513004483, "NSTerminateLater"),
+        reply: logged(1169, 1795104513016993, "NO"),
+        termination: logged(3152, 1795104516405512, "(2, 9, 9)"),
+    };
+    for (case, facts) in [("text", text), ("dialog", dialog), ("fault", fault)] {
+        let (verdict, json) = run(case, facts);
+        assert_eq!(verdict, Verdict::Pass, "{case}: {json}");
+    }
 }
 
 #[test]
@@ -2051,4 +2163,38 @@ fn only_windows_that_may_paint_over_a_strip_cover_it() {
         strip,
         screen
     ));
+}
+
+/// Round 8: a scene below that CoreGraphics returned transparent (unreadable) proves nothing;
+/// the control text must hold exactly one accented `a`; a caret watch with a long gap judges a
+/// missing blink as untested, but a non-inverse blink still fails.
+#[test]
+fn round_8_bad_samples_for_w02_i03_and_w10() {
+    use super::hold::picked_accent;
+    use super::pixels::{MAX_FRAME_GAP_MS, caret_blinks, strip_visible};
+    let strip = image(1040, 4, [248, 246, 239]);
+    let mut unread = image(1040, 4, [0, 0, 0]);
+    for p in unread.rgba.chunks_exact_mut(4) {
+        p[3] = 0;
+    }
+    assert_eq!(strip_visible(&strip, &strip, &unread).0, Verdict::NotTested);
+    assert_eq!(
+        strip_visible(&strip, &strip, &image(1040, 4, [40, 70, 120])).0,
+        Verdict::Pass
+    );
+    assert!(picked_accent("á") && picked_accent("à"));
+    for bad in ["", "a", "A2", "a2", "áá", "é", "á2"] {
+        assert!(!picked_accent(bad), "{bad:?}");
+    }
+    let on = image(8, 60, [7, 9, 16]);
+    let off = image(8, 60, [248, 246, 239]);
+    // Two frames far apart: nothing alternates, but the watch did not cover the period.
+    let sparse = vec![(0, off.clone()), (MAX_FRAME_GAP_MS + 50, off.clone())];
+    assert_eq!(caret_blinks(&sparse).0, Verdict::NotTested);
+    let one = vec![(0, on.clone())];
+    assert_eq!(caret_blinks(&one).0, Verdict::NotTested);
+    // A non-inverse alternation fails whatever the gaps.
+    let tinted = image(8, 60, [200, 30, 30]);
+    let wrong = vec![(0, off.clone()), (500, tinted.clone()), (1000, off.clone())];
+    assert_eq!(caret_blinks(&wrong).0, Verdict::Fail);
 }

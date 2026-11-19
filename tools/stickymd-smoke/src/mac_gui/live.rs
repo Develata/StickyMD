@@ -479,7 +479,24 @@ impl Backend for Live<'_> {
             Op::Hold(code, repeats, every) => {
                 self.require_key_target(KeyTarget::Note)?;
                 let pid = self.pid;
-                let mut during = None;
+                // The windows seen at every repeat and once more before the release: a menu that
+                // opens mid-hold and is closed by a later repeat is still seen.
+                type Seen = (Vec<super::hold::OnScreen>, Option<String>, usize);
+                let state = std::cell::RefCell::new(Seen::default());
+                let sample = |state: &std::cell::RefCell<Seen>| {
+                    let mut s = state.borrow_mut();
+                    match windows::on_screen() {
+                        Ok(list) => {
+                            for w in list {
+                                if !s.0.contains(&w) {
+                                    s.0.push(w);
+                                }
+                            }
+                            s.2 += 1;
+                        }
+                        Err(error) => s.1 = Some(error),
+                    }
+                };
                 self.input.hold(
                     code,
                     repeats,
@@ -490,18 +507,20 @@ impl Backend for Live<'_> {
                             ax::focused_window(pid),
                             pid,
                             KeyTarget::Note,
-                        )
+                        )?;
+                        sample(&state);
+                        Ok(())
                     },
                     &mut || {
-                        during = Some(windows::on_screen());
+                        sample(&state);
                         Ok(())
                     },
                 )?;
                 events::wait(60)?;
-                match during {
-                    Some(Ok(list)) => Value::Windows(list),
-                    Some(Err(error)) => Value::Text(format!("window list unavailable: {error}")),
-                    None => Value::Text("no window list while the key was held".into()),
+                match state.into_inner() {
+                    (_, Some(error), _) => Value::Text(format!("window list unavailable: {error}")),
+                    (_, None, 0) => Value::Text("no window list while the key was held".into()),
+                    (seen, None, _) => Value::Windows(seen),
                 }
             }
             Op::OnScreen => match windows::on_screen() {

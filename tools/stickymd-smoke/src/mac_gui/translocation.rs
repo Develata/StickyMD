@@ -79,6 +79,13 @@ fn record(row: &mut Row, name: &str, verdict: Verdict, detail: String) {
     }
 }
 
+/// Where a `mount` line mounts its source: `<source> on <point> (<options>)`.
+pub(super) fn mount_point(line: &str) -> Option<&str> {
+    line.split_once(" on ")
+        .and_then(|(_, rest)| rest.split_once(" ("))
+        .map(|(point, _)| point)
+}
+
 /// Whether the prompt was shown: its window seen, and the message with its cause on stderr.
 pub(super) fn prompted(o: &Observed) -> bool {
     o.window.is_some() && o.stderr.contains(PROMPT) && o.stderr.contains(CAUSE)
@@ -102,12 +109,16 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
         format!("com.apple.quarantine={:?}", o.quarantine),
     );
     let translocated = o
-        .path
+        .mount
         .as_deref()
-        .is_some_and(|p| p.contains("/AppTranslocation/"))
-        && o.mount
-            .as_deref()
-            .is_some_and(|m| m.contains("nullfs") && m.contains("read-only"));
+        .filter(|m| m.contains("nullfs") && m.contains("read-only"))
+        .and_then(mount_point)
+        .is_some_and(|point| {
+            point.contains("/AppTranslocation/")
+                && o.path
+                    .as_deref()
+                    .is_some_and(|p| p.starts_with(&format!("{point}/")))
+        });
     // Whether macOS translocates is the system's decision; without it the row cannot be judged.
     record(
         row,
@@ -164,10 +175,11 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
         if !answered {
             Verdict::NotTested
         } else {
+            // Return goes to the process with no receipt of which window took it, so a process
+            // still running after it is not an observed refusal to exit.
             match o.exited {
                 Some(true) => Verdict::Pass,
-                Some(false) => Verdict::Fail,
-                None => Verdict::NotTested,
+                Some(false) | None => Verdict::NotTested,
             }
         },
         format!(
@@ -209,7 +221,7 @@ pub(super) use live::run;
 
 #[cfg(target_os = "macos")]
 mod live {
-    use super::{MODAL_LEVEL, Observed, QUARANTINE_FLAGS, judge, prompted};
+    use super::{MODAL_LEVEL, Observed, QUARANTINE_FLAGS, judge, mount_point, prompted};
     use crate::mac_gui::{
         live::{command, command_within},
         model::{Row, Trace, Window},
@@ -285,6 +297,139 @@ mod live {
         Ok(None)
     }
 
+    /// From `open` to the answered prompt: finds the one process started from `copy`, waits for
+    /// its prompt, keeps its image, and answers it. Errors here still leave the caller's cleanup
+    /// to run.
+    fn observe(
+        o: &mut Observed,
+        copy: &Path,
+        dir: &Path,
+        read_stderr: &dyn Fn() -> String,
+        row: &mut Row,
+        note: &dyn Fn(&mut Row, String),
+    ) -> Result<(), String> {
+        let text = |p: &Path| p.to_string_lossy().into_owned();
+        // The process started from this copy: up to 20 s for LaunchServices, AMFI and TCC. Only
+        // a process whose executable lies in this copy or in its translocated mount is it; any
+        // other StickyMD is left alone.
+        let start = Instant::now();
+        let mut pid = None;
+        while start.elapsed().as_secs() < 20 {
+            let mounts = command("/sbin/mount", &[])?;
+            o.mount = mounts
+                .lines()
+                .find(|l| l.starts_with(&format!("{} on ", copy.display())))
+                .map(str::to_owned);
+            let point = o.mount.as_deref().and_then(mount_point).map(str::to_owned);
+            let found: Vec<_> = products()?
+                .into_iter()
+                .filter(|(_, path)| {
+                    path.starts_with(&format!("{}/", text(copy)))
+                        || point
+                            .as_deref()
+                            .is_some_and(|p| path.starts_with(&format!("{p}/")))
+                })
+                .collect();
+            if let [(p, path)] = found.as_slice() {
+                pid = Some(*p);
+                o.path = Some(path.clone());
+                break;
+            }
+            if found.len() > 1 {
+                note(
+                    row,
+                    format!("more than one process from this copy: {found:?}"),
+                );
+                return Ok(());
+            }
+            events::wait(100)?;
+        }
+        let Some(pid) = pid else {
+            note(row, "no StickyMD process from this copy within 20s".into());
+            return Ok(());
+        };
+        note(row, format!("PID {pid} at {:?}", o.path));
+        let alive = || products().map(|p| p.iter().any(|(q, _)| *q == pid));
+        // The prompt: up to 15 s for its window and its message.
+        let modal = |w: &Window| {
+            // A fully shown alert, not one still fading or scaling in.
+            w.onscreen
+                && w.layer >= MODAL_LEVEL
+                && w.alpha >= 0.9
+                && w.bounds.size.width >= 200.0
+                && w.bounds.size.height >= 150.0
+        };
+        let start = Instant::now();
+        let mut shown = None;
+        while start.elapsed().as_secs() < 15 {
+            if !alive()? {
+                o.exited_early = true;
+                break;
+            }
+            shown = windows::all(pid)?.into_iter().find(|w| modal(w));
+            o.window = shown.as_ref().map(|w| format!("{w:?}"));
+            o.stderr = read_stderr();
+            if prompted(o) {
+                break;
+            }
+            events::wait(200)?;
+        }
+        o.stderr = read_stderr();
+        note(
+            row,
+            format!("window {:?}; exited early {}", o.window, o.exited_early),
+        );
+        let (true, Some(window)) = (prompted(o), &shown) else {
+            return Ok(());
+        };
+        match windows::screenshot(window) {
+            Ok(ppm) => fs::write(dir.join("prompt.ppm"), ppm).map_err(|e| e.to_string())?,
+            Err(e) => note(row, format!("prompt image not captured: {e}")),
+        }
+        // Activate the running instance as the manual procedure does, then answer it, but only
+        // while that same process still shows that same window.
+        command("/usr/bin/open", &[&text(copy)])?;
+        events::wait(1500)?;
+        let others: Vec<_> = products()?.into_iter().filter(|(q, _)| *q != pid).collect();
+        let same = windows::all(pid)
+            .map(|all| all.iter().any(|w| w.id == window.id && modal(w)))
+            .unwrap_or(false);
+        o.unanswered = if !others.is_empty() {
+            Some(format!("reopening started another process: {others:?}"))
+        } else if !alive()? {
+            Some("the process ended before Return was posted".into())
+        } else if !same {
+            Some(format!("window {} was gone before Return", window.id))
+        } else {
+            None
+        };
+        if o.unanswered.is_some() {
+            return Ok(());
+        }
+        events::key_to_pid(pid, RETURN)?;
+        let start = Instant::now();
+        let mut ended = false;
+        while start.elapsed().as_secs() < 5 {
+            if !alive()? {
+                ended = true;
+                break;
+            }
+            events::wait(100)?;
+        }
+        o.exited = Some(ended);
+        if ended {
+            // An unreadable system log leaves the exit status untested, not the run failed.
+            o.termination = match termination(pid, dir) {
+                Ok(record) => record,
+                Err(e) => {
+                    note(row, format!("termination record unreadable: {e}"));
+                    None
+                }
+            };
+        }
+        Ok(())
+    }
+
     /// Runs R03 in `dir` (the scenario's session directory) for the app under test, whose
     /// bundle manifest must be `bundle`. Leaves no process of its own running.
     pub(in crate::mac_gui) fn run(
@@ -351,112 +496,12 @@ mod live {
             format!("open {} (quarantine {:?})", copy.display(), o.quarantine),
         );
         command("/usr/bin/open", &[&text(&copy), "--stderr", &text(&stderr)])?;
-        // The process: up to 20 s for LaunchServices, AMFI and TCC.
-        let start = Instant::now();
-        let mut pid = None;
-        while start.elapsed().as_secs() < 20 {
-            let found = products()?;
-            if let [(p, path)] = found.as_slice() {
-                pid = Some(*p);
-                o.path = Some(path.clone());
-                break;
-            }
-            if found.len() > 1 {
-                return Err(format!("more than one StickyMD process: {found:?}"));
-            }
-            events::wait(100)?;
-        }
-        let Some(pid) = pid else {
-            note(row, "no StickyMD process within 20s".into());
-            judge(&o, row);
-            return Ok(());
-        };
-        note(row, format!("PID {pid} at {:?}", o.path));
-        let alive = || products().map(|p| p.iter().any(|(q, _)| *q == pid));
-        let mounts = command("/sbin/mount", &[])?;
-        o.mount = mounts
-            .lines()
-            .find(|l| {
-                l.contains("AppTranslocation") && l.starts_with(&format!("{} on ", copy.display()))
-            })
-            .map(str::to_owned);
-        // The prompt: up to 15 s for its window and its message.
-        let modal = |w: &Window| {
-            // A fully shown alert, not one still fading or scaling in.
-            w.onscreen
-                && w.layer >= MODAL_LEVEL
-                && w.alpha >= 0.9
-                && w.bounds.size.width >= 200.0
-                && w.bounds.size.height >= 150.0
-        };
-        let start = Instant::now();
-        let mut shown = None;
-        while start.elapsed().as_secs() < 15 {
-            if !alive()? {
-                o.exited_early = true;
-                break;
-            }
-            shown = windows::all(pid)?.into_iter().find(|w| modal(w));
-            o.window = shown.as_ref().map(|w| format!("{w:?}"));
-            o.stderr = read_stderr();
-            if prompted(&o) {
-                break;
-            }
-            events::wait(200)?;
-        }
-        o.stderr = read_stderr();
-        note(
-            row,
-            format!("window {:?}; exited early {}", o.window, o.exited_early),
-        );
-        if let (true, Some(window)) = (prompted(&o), &shown) {
-            match windows::screenshot(window) {
-                Ok(ppm) => fs::write(dir.join("prompt.ppm"), ppm).map_err(|e| e.to_string())?,
-                Err(e) => note(row, format!("prompt image not captured: {e}")),
-            }
-            // Activate the running instance as the manual procedure does, then answer it, but
-            // only while that same process still shows that same window.
-            command("/usr/bin/open", &[&text(&copy)])?;
-            events::wait(1500)?;
-            let others: Vec<_> = products()?.into_iter().filter(|(q, _)| *q != pid).collect();
-            let same = windows::all(pid)
-                .map(|all| all.iter().any(|w| w.id == window.id && modal(w)))
-                .unwrap_or(false);
-            o.unanswered = if !others.is_empty() {
-                Some(format!("reopening started another process: {others:?}"))
-            } else if !alive()? {
-                Some("the process ended before Return was posted".into())
-            } else if !same {
-                Some(format!("window {} was gone before Return", window.id))
-            } else {
-                None
-            };
-            if o.unanswered.is_none() {
-                events::key_to_pid(pid, RETURN)?;
-                let start = Instant::now();
-                let mut ended = false;
-                while start.elapsed().as_secs() < 5 {
-                    if !alive()? {
-                        ended = true;
-                        break;
-                    }
-                    events::wait(100)?;
-                }
-                o.exited = Some(ended);
-                if ended {
-                    o.termination = termination(pid, dir)?;
-                }
-            }
-        }
-        // Leave nothing of this run running: the PID it started and anything else started from
-        // this copy (its translocated mount or the copy itself), never another StickyMD.
-        let mountpoint = o.mount.as_deref().and_then(|m| {
-            m.split_once(" on ")
-                .and_then(|(_, rest)| rest.split_once(" ("))
-                .map(|(point, _)| point.to_owned())
-        });
+        let observed = observe(&mut o, &copy, dir, &read_stderr, row, &note);
+        // Leave nothing of this run running, on every path: only processes started from this
+        // copy (the copy itself or its translocated mount), never another StickyMD.
+        let mountpoint = o.mount.as_deref().and_then(mount_point).map(str::to_owned);
         let ours = |path: &str| {
-            path.starts_with(&text(&copy))
+            path.starts_with(&format!("{}/", text(&copy)))
                 || mountpoint
                     .as_deref()
                     .is_some_and(|point| path.starts_with(&format!("{point}/")))
@@ -464,7 +509,7 @@ mod live {
         let own = || -> Result<Vec<u32>, String> {
             Ok(products()?
                 .into_iter()
-                .filter(|(q, path)| *q == pid || ours(path))
+                .filter(|(_, path)| ours(path))
                 .map(|(q, _)| q)
                 .collect())
         };
@@ -483,6 +528,7 @@ mod live {
                 "this run's StickyMD processes did not end: {left:?}"
             ));
         }
+        observed?;
         o.after = entries(&download)?;
         // macOS detaches the translocation after the process ends; wait for it before cleanup.
         let start = Instant::now();

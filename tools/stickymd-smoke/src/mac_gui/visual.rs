@@ -97,6 +97,25 @@ pub(super) fn strip<B: Backend>(
             }
         }
     }
+    // The stacking again after the captures: a window that came in front meanwhile could have
+    // been captured as the strip.
+    match d.op(Op::Above)? {
+        Value::Covering(list) => {
+            let covering: Vec<_> = list.iter().filter(|w| covers(w, rect, screen)).collect();
+            if !covering.is_empty() {
+                d.row.skip(
+                    &name,
+                    &format!("{rect:?} was covered by {covering:?} after the captures"),
+                );
+                return Ok(());
+            }
+        }
+        Value::Text(reason) => {
+            d.row.skip(&name, &reason);
+            return Ok(());
+        }
+        v => return Err(format!("expected the windows in front, got {v:?}")),
+    }
     let (verdict, detail) = pixels::strip_visible(&images[0], &images[1], &images[2]);
     record(d, &name, verdict, format!("{rect:?}; {detail}"));
     Ok(())
@@ -165,26 +184,46 @@ pub(super) fn caret<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     };
     let start = d.backend.now();
     let mut frames = Vec::new();
+    // When each capture was asked for and when it returned: the frame was taken in between.
+    let mut spans = Vec::new();
+    let mut broken = None;
     while d.backend.now() - start < WATCH_MS {
         let at = d.backend.now();
         match capture(d, region, Shot::Alone)? {
-            Ok(image) => frames.push((at - start, image)),
+            Ok(image) => {
+                spans.push((at, d.backend.now()));
+                frames.push((at - start, image));
+            }
             Err(reason) => {
-                d.row.skip("caret blinks in inverse colours", &reason);
+                broken = Some(reason);
                 break;
             }
         }
         d.wait(EVERY_MS)?;
     }
     let idle_end = snapshot(d)?;
-    if !frames.is_empty() {
-        let (verdict, detail) = pixels::caret_blinks(&frames);
-        record(
-            d,
-            "caret blinks in inverse colours",
-            verdict,
-            format!("{region:?}; {detail}"),
-        );
+    let name = "caret blinks in inverse colours";
+    // The longest time two consecutive frames can lie apart: from one request to the next return.
+    let widest = spans
+        .windows(2)
+        .map(|w| w[1].1 - w[0].0)
+        .max()
+        .unwrap_or(u64::MAX);
+    match broken {
+        // An interrupted capture judges nothing: the frames taken so far are not the watch.
+        Some(reason) => d.row.skip(name, &reason),
+        None if widest > pixels::MAX_FRAME_GAP_MS => d.row.skip(
+            name,
+            &format!(
+                "{} frames, two of them up to {widest} ms apart (request to return), over {} ms",
+                frames.len(),
+                pixels::MAX_FRAME_GAP_MS
+            ),
+        ),
+        None => {
+            let (verdict, detail) = pixels::caret_blinks(&frames);
+            record(d, name, verdict, format!("{region:?}; {detail}"));
+        }
     }
     let (verdict, detail) = match unavailable {
         Some(reason) => (Verdict::NotTested, reason),

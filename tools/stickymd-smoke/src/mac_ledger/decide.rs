@@ -52,17 +52,22 @@ pub(super) struct Plan {
 pub(super) fn commands(gui: &[&str], logout: &[&str], batch: Option<&str>) -> Vec<String> {
     let batch = batch.map_or_else(String::new, |b| format!(" --batch {b}"));
     let mut out = Vec::new();
+    // The driver is the one whose SHA-256 is printed above; a fresh --out keeps every run's
+    // record (a retry must not replace an unrecorded one).
     if !gui.is_empty() {
         out.push(format!(
-            "run: stickymd-smoke mac-gui --app <the same app> --only {}{batch}",
+            "run: stickymd-smoke mac-gui --app <the same app> --out <a new directory> --only {}{batch}",
             gui.join(",")
         ));
     }
     for row in logout {
         out.push(format!(
-            "run: stickymd-smoke mac-logout --app <the same app> --case {}{batch} (each case in a fresh VM boot)",
+            "run: stickymd-smoke mac-logout --app <the same app> --case {}{batch}",
             row.trim_start_matches("W12-logout-")
         ));
+    }
+    if !logout.is_empty() {
+        out.push("note: each mac-logout case runs in a fresh VM boot".into());
     }
     out
 }

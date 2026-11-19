@@ -125,9 +125,11 @@ pub(in crate::mac_gui) fn log_time(line: &str) -> Option<i64> {
     Some(seconds * 1_000_000 + micros)
 }
 
-/// The facts the system log gives for `pid`: its first quit event, the first decision and reply
-/// after that event, and runningboard's termination record for the PID.
-pub(in crate::mac_gui) fn from_log(log: &str, pid: u32, facts: &mut Facts) {
+/// The facts the system log gives for `pid`: its first quit event logged no earlier than
+/// `requested` (µs since the epoch, when this run asked for the logout; an earlier quit request,
+/// or one without a time, is not this one), the first decision and reply after that event, and
+/// runningboard's termination record for the PID.
+pub(in crate::mac_gui) fn from_log(log: &str, pid: u32, requested: i64, facts: &mut Facts) {
     let own = format!("StickyMD[{pid}]");
     let theirs = format!(":{pid}] termination reported by launchd ");
     let logged = |line: usize, text: &str, value: &str| {
@@ -139,7 +141,10 @@ pub(in crate::mac_gui) fn from_log(log: &str, pid: u32, facts: &mut Facts) {
     };
     for (index, line) in log.lines().enumerate() {
         if line.contains(&own) {
-            if facts.quit.is_none() && line.contains("Handling Quit AppleEvent") {
+            if facts.quit.is_none()
+                && line.contains("Handling Quit AppleEvent")
+                && log_time(line).is_some_and(|at| at >= requested)
+            {
                 facts.quit = logged(index, line, "");
             }
             if facts.quit.is_some() {
@@ -171,29 +176,42 @@ fn record(row: &mut Row, name: &str, verdict: Verdict, detail: String) {
     }
 }
 
-/// The facts in log order and each with the expected value: PASS; one seen with another value
-/// or out of order: FAIL; one not seen: NOT_TESTED.
+/// The facts in log order and each with the expected value: PASS; one seen with another value,
+/// or out of order with one seen before it: FAIL (whatever else is missing); otherwise one not
+/// seen: NOT_TESTED.
 fn sequence(steps: &[(&Option<Logged>, &str)]) -> Verdict {
     let mut last = None;
-    let mut verdict = Verdict::Pass;
+    let mut missing = false;
     for (fact, want) in steps {
         match fact {
-            None => return Verdict::NotTested,
+            None => missing = true,
             Some(logged) => {
                 if logged.value != *want || last.is_some_and(|line| logged.line <= line) {
-                    verdict = Verdict::Fail;
+                    return Verdict::Fail;
                 }
                 last = Some(logged.line);
             }
         }
     }
-    verdict
+    if missing {
+        Verdict::NotTested
+    } else {
+        Verdict::Pass
+    }
+}
+
+/// A termination record counts only when the product had ended before the driver's cleanup
+/// began: after that, a SIGKILL or a normal exit may be the cleanup's own doing.
+fn ended_by_itself(f: &Facts, verdict: Verdict) -> Verdict {
+    if f.gone { verdict } else { Verdict::NotTested }
 }
 
 /// The note saved at the logout: the expected bytes before the request (else the precondition
 /// was lost), the expected bytes after it, written no earlier than the quit event (a clean note
-/// is not written at quit, so a later write is the request's own save).
-fn saved_at_request(f: &Facts, before: &str, after: &str) -> Verdict {
+/// is not written at quit, so a later write is the request's own save) and, when the product
+/// answers `YES`, no later than that answer: a save finishing after it was not the barrier's.
+/// The modification time shows when the file was written, not that its directory was synced.
+fn saved_at_request(f: &Facts, before: &str, after: &str, answer: Option<&Logged>) -> Verdict {
     let (Ok(b), Ok(a)) = (&f.before, &f.after) else {
         return Verdict::NotTested;
     };
@@ -201,6 +219,11 @@ fn saved_at_request(f: &Facts, before: &str, after: &str) -> Verdict {
         return Verdict::NotTested;
     }
     if a.text != after {
+        return Verdict::Fail;
+    }
+    if let Some(answered) = answer.and_then(|r| r.at)
+        && a.modified > answered
+    {
         return Verdict::Fail;
     }
     match f.quit.as_ref().and_then(|q| q.at) {
@@ -250,13 +273,16 @@ pub(in crate::mac_gui) fn judge(case: &str, f: &Facts, row: &mut Row) {
             record(
                 row,
                 "unsaved text saved at the request",
-                saved_at_request(f, NOTE, TYPED),
+                saved_at_request(f, NOTE, TYPED, f.reply.as_ref()),
                 format!("{notes}, quit {:?}", f.quit),
             );
             record(
                 row,
                 "exits normally",
-                sequence(&[(&f.reply, "YES"), (&f.termination, NORMAL_EXIT)]),
+                ended_by_itself(
+                    f,
+                    sequence(&[(&f.reply, "YES"), (&f.termination, NORMAL_EXIT)]),
+                ),
                 facts,
             );
         }
@@ -271,7 +297,7 @@ pub(in crate::mac_gui) fn judge(case: &str, f: &Facts, row: &mut Row) {
             record(
                 row,
                 "unsaved line saved at the request",
-                saved_at_request(f, SAVED, &format!("{SAVED}\n{UNSAVED}")),
+                saved_at_request(f, SAVED, &format!("{SAVED}\n{UNSAVED}"), None),
                 format!("{notes}, quit {:?}", f.quit),
             );
             record(
@@ -287,10 +313,13 @@ pub(in crate::mac_gui) fn judge(case: &str, f: &Facts, row: &mut Row) {
             record(
                 row,
                 "exits normally",
-                sequence(&[
-                    (&f.decision, "NSTerminateCancel"),
-                    (&f.termination, NORMAL_EXIT),
-                ]),
+                ended_by_itself(
+                    f,
+                    sequence(&[
+                        (&f.decision, "NSTerminateCancel"),
+                        (&f.termination, NORMAL_EXIT),
+                    ]),
+                ),
                 facts,
             );
         }
@@ -316,7 +345,7 @@ pub(in crate::mac_gui) fn judge(case: &str, f: &Facts, row: &mut Row) {
             record(
                 row,
                 "ended by the system's SIGKILL",
-                sequence(&[(&f.reply, "NO"), (&f.termination, SIGKILL)]),
+                ended_by_itself(f, sequence(&[(&f.reply, "NO"), (&f.termination, SIGKILL)])),
                 facts,
             );
         }

@@ -368,10 +368,21 @@ fn one(
     // before owned temporary-directory cleanup.
     let log = ["stderr.log", "prompt.ppm", "system.log"]
         .into_iter()
-        .try_for_each(|name| match fs::read(session.path().join(name)) {
-            Ok(bytes) => crate::atomic_evidence::write(&out.join(format!("{id}-{name}")), &bytes),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.to_string()),
+        .try_for_each(|name| {
+            let target = out.join(format!("{id}-{name}"));
+            match fs::read(session.path().join(name)) {
+                Ok(bytes) => crate::atomic_evidence::write(&target, &bytes),
+                // Not made by this run: a file of an earlier run in the same --out must not pass
+                // for this run's.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    match fs::remove_file(&target) {
+                        Ok(()) => Ok(()),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                        Err(e) => Err(format!("{}: {e}", target.display())),
+                    }
+                }
+                Err(e) => Err(e.to_string()),
+            }
         });
     let cleanup = session.cleanup();
     row.trace.push(Trace {

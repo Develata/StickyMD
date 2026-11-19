@@ -208,8 +208,16 @@ fn plan(options: &Options, existing: &[Record], rows: &Rows) -> Result<(), Strin
     );
     for reuse in &plan.reused {
         println!(
-            "reuse P16-{}: PASS in {} (sha256 {})",
-            reuse.row, reuse.evidence, reuse.evidence_sha256
+            "reuse P16-{}{}: PASS in {} (sha256 {})",
+            reuse.row,
+            // W12's own PASS is only its mac-gui part; the row's verdict is the composite.
+            if reuse.row == decide::composite().0 {
+                " (mac-gui part; the row counts only with the composite below)"
+            } else {
+                ""
+            },
+            reuse.evidence,
+            reuse.evidence_sha256
         );
         if reuse.other_bytes {
             println!(

@@ -281,7 +281,7 @@ The optional local comparison reads the checkout without starting StickyMD or wr
 qualification evidence; it is ignored by normal test runs:
 
 ```powershell
-cargo test -p stickymd-smoke --bin stickymd-smoke --locked resource_planning_profile -- --ignored --nocapture --test-threads=1
+cargo test -p stickymd-smoke --bin stickymd-smoke --locked module_planning_profile -- --ignored --nocapture --test-threads=1
 ```
 
 ## Optional startup shell details
@@ -969,8 +969,7 @@ to the driver in the VM, then rerun after a refusal.
 | Scenarios | Required permission | Optional permission |
 | --- | --- | --- |
 | W01 | Accessibility (`AXIsProcessTrusted`), including Dock inspection | — |
-| W02/W03/W04/W07/W08/W09/W10/W11/K02/E01 | Accessibility and PostEvent (`CGPreflightPostEventAccess`) | Screen Recording for the W02 strip and W10 caret captures (without it those checks are NOT_TESTED) |
-| F01 | None for stderr font selection | Screen Recording (`CGPreflightScreenCaptureAccess`) for screenshot |
+| W02/W03/W04/W06/W07/W08/W09/W10/W11/W12/K02/E01/I03/F01 | Accessibility and PostEvent (`CGPreflightPostEventAccess`) | Screen Recording for the W02 strip and W10 caret captures (without it those checks are NOT_TESTED) and for F01's screenshot (`CGPreflightScreenCaptureAccess`) |
 | R03 | PostEvent, for the Return posted to the product process alone (`CGEventPostToPid`); no Accessibility | — |
 | Deferred rows | None; no app launch for those rows | — |
 
@@ -1054,27 +1053,27 @@ PASS. The acceptance matrix and qualification ledgers are never updated.
 | Row | External oracle | Limits |
 | --- | --- | --- |
 | W01 | `lsappinfo` UIElement + Dock AX item titles | Cmd+Tab pixels remain NOT_TESTED; row remains incomplete |
-| W02 | Drag input; CG window bounds/layer/on-screen; persisted `window.dock_edge`; per edge, the strip rectangle (window ∩ screen) captured three ways after the window list shows nothing in front that meets the strip (the Dock's screen-sized overlay at the Dock level, whose only painted part is the Dock bar, is not counted): the on-screen composite must equal the window alone (nothing covers it) and differ from the scene below the window in at least half of its pixels (it changes the screen) | Main display only; 2 DIP ±0.75, top layer >24; colour tolerance 6 per channel; a covered strip is NOT_TESTED (the scene), a strip that changes nothing fails |
-| W10 | Launched with the product's input-latency diagnostic; after focus and one typed `x` (the presenter must count it) and 1.5s past the autosave, snapshots 300ms apart until two are equal (at most 6; else NOT_TESTED); then the window's first text lines are captured alone about every 60ms for 3.6s and the snapshot after must show presented, deferred and failed unchanged; the alternating pixels must be the inverse of what they cover, with each half period in 300–900ms and at least four state changes | A steady, absent or fixed-colour caret fails; any other changing pixel or a frame gap over 150ms is NOT_TESTED; the run sets `STICKYMD_DIAGNOSTIC_INPUT_LATENCY`, which the default configuration does not |
+| W02 | Drag input; CG window bounds/layer/on-screen; persisted `window.dock_edge`; per edge, the strip rectangle (window ∩ screen) captured three ways after the window list shows nothing in front that meets the strip (the Dock's screen-sized overlay at the Dock level, whose only painted part is the Dock bar, is not counted): the on-screen composite must equal the window alone (at most 2% of the pixels more than 6 apart in a channel: nothing covers it) and differ from the scene below the window in at least half of its pixels (it changes the screen) | Main display only; 2 DIP ±0.75, top layer >24; colour tolerance 6 per channel; a covered strip is NOT_TESTED (the scene), a strip that changes nothing fails |
+| W10 | Launched with the product's input-latency diagnostic; after focus and one typed `x` (the presenter must count it) and 1.5s past the autosave, snapshots 300ms apart until two are equal (at most 6; else NOT_TESTED); then the window's first text lines are captured alone about every 60ms for 3.6s and the snapshot after must show presented, deferred and failed unchanged; the alternating pixels must be the inverse of what they cover, with each half period in 300–900ms and at least four state changes | A steady or absent caret fails when the frames cover the watch; a non-inverse or misshapen alternation fails whatever the gaps; any other changing pixel, an interrupted capture, or two frames possibly over 150ms apart (one request to the next return) is NOT_TESTED. One background and one position are watched: a colour fixed to that background's inverse, or a caret drawn at another line, would not be told apart (the product draws it with `differenceBlendMode`, which is code, not this evidence); the run sets `STICKYMD_DIAGNOSTIC_INPUT_LATENCY`, which the default configuration does not |
 | W03 | Finder (the PID verified in front when docking) stays frontmost and StickyMD never is, read with every window sample from just before the first move onto the strip through the hover completion; StickyMD in front fails, another app in front is NOT_TESTED. An early leave after about 35ms moves nothing; hover onset bracket and settled bounds | Any change of place before 90ms fails; onset bracket within 90–170ms; a gap over 60ms or boundary overlap is NOT_TESTED; an early-leave trial the sampling cannot resolve (a dwell of 100ms or more, or a gap over 60ms) is repeated, at most 3 trials, and motion in any trial fails (the focus check covers the last trial and the hover; StickyMD seen in front in a repeated trial still fails); the hover starts only after the window has rested on the strip for 100ms with no gap over 60ms in that run (else the rest is NOT_TESTED); completion PASS by earliest onset +140ms +70ms, FAIL only if still moving when requested after latest onset +140ms +70ms |
 | W04 | Top-band point held 850ms from the move: the sample before the move and every sample after it on screen at the settled expanded bounds (±0.5pt), StickyMD never frontmost; collapse after leaving | A collapsed, partly retracted or hidden sample fails even if the window returns; not at the settled place just before the move is NOT_TESTED; a gap over 60ms or a cut watch is NOT_TESTED; leave onset (any change of place) within 490–570ms; same completion limits as W03; no Spaces/mixed-DPI evidence |
 | W07 | AX hide, `open` copied bundle; same owned PID alive, visible window and AX frontmost PID | Status item awaited in the AX tree up to 5 s, wait recorded; menu effects polled up to 2000ms, elapsed time recorded; does not prove all launch-service/translocation paths |
 | W08 | Exactly three AX menu items; show back at the same bounds and opacity, topmost layer/config, quit process and saved note | Status item awaited in the AX tree up to 5 s, wait recorded; menu effects polled up to 2000ms, elapsed time recorded; layer is a system fact, not a visual occlusion test |
 | W09 | Toolbar numeric field at layout-derived DIP offsets; CG alpha 40/70/100 and config | Alpha tolerance ±0.015; no full composited-pixel comparison |
-| W11 | Cmd+Q, successful child exit and unchanged clean note | Save-failure cancellation NOT_TESTED pending fault injection; row incomplete |
+| W11 | Cmd+Q with a failing save: the process keeps running, the title shows the cancelled quit and the old bytes stay; after the save succeeds the title clears and Cmd+Q exits | Fault injected by making the note directory read-only |
 | K02 | Real Cmd keys, quiet note bytes, `pbpaste`, persisted view/zoom | ABC/US assumption; not IME evidence; save timing is not a durability/power-loss test |
 | E01 | AX native panel cancel/dismiss, folder/name/save; exact exported Markdown bytes | No managed-image export fixture in this batch |
 | F01 | `font selection` stderr names PingFang SC and Times New Roman (plan 02 defaults); optional CGWindowListCreateImage screenshot | The log does not name the code face, so Menlo and per-glyph review are NOT_TESTED; row incomplete |
 | I03 | A scratch document in a TextEdit instance of its own (`open -n`) first: `a` held (one key-down, 15 key-downs flagged as automatic repeats 80ms apart, focus rechecked before each, the key-up) must open the accent menu, seen while the key is down as a new window of TextEdit's own process, and a real `2` must then pick an accented letter; only then the same hold in StickyMD must show no new window of StickyMD's process while the key is down, and after a real `2` the note must have gained 15 or 16 `a` then `2` | The repeats are injected (USER 2026-11-19), so the repeat rate is the driver's and "repeats at the system's rate" is not shown; if the control opens no menu or picks no accent, StickyMD is not held and nothing is judged (NOT_TESTED); another window appearing is NOT_TESTED; only the control's own TextEdit instance is killed, without saving; never reused across batches |
-| R03 | The app under test zipped, its archive and every extracted file marked with quarantine flags `00c3` (the user-approved bit preset, USER 2026-11-19), opened through `open` (LaunchServices); the one StickyMD process runs from `/AppTranslocation/` with a read-only nullfs mount of the copy; a fully shown window of the process (alpha ≥ 0.9, at least 200×150 pt) on screen at the modal-panel level (8) or above, and on its stderr the translocation advice `当前目录不可写，请先用访达把 StickyMD.app 移到别处` with `Read-only file system` (the generic `请将程序移动到有写权限的文件夹` fails; other wording is NOT_TESTED; a unit test holds both sentences to `apps/stickymd-mac/src/main.rs`); after `open` reactivates the instance, and only if that PID still shows that window, Return is posted to that PID alone and the process ends within 5s; runningboard's termination record for the PID is an exit with status 1; the download directory lists the same entries before and after. Cleanup ends only this run's PID and processes started from its copy or its translocated mount | Skips the system's first-open confirmation; Gatekeeper assessment is off in the test VM, so neither path exercises it. The prompt is shown before launch finishes and answers no AX request (macOS 27.2: `kAXErrorCannotComplete`), so its text is read from stderr (the product's `fatal_startup` writes the same message just before the alert), not from the window; the window's image is kept as `R03-prompt.ppm` but not inspected. No translocation, no modal window seen while the process runs, or a prompt that could not be answered is NOT_TESTED; never reused across batches |
+| R03 | The app under test zipped, its archive and every extracted file marked with quarantine flags `00c3` (the user-approved bit preset, USER 2026-11-19), opened through `open` (LaunchServices); the one StickyMD process runs from `/AppTranslocation/` with a read-only nullfs mount of the copy; a fully shown window of the process (alpha ≥ 0.9, at least 200×150 pt) on screen at the modal-panel level (8) or above, and on its stderr `当前目录不可写` with a move advice (today's `请先用访达把 StickyMD.app 移到别处` or the phrase Phase 18 keeps, `把整个 StickyMD 文件夹移到别处`) and `Read-only file system` (the generic `请将程序移动到有写权限的文件夹` fails; the prefix with neither advice is NOT_TESTED; a modal window whose stderr lacks the prefix fails; a unit test holds the phrases to `apps/stickymd-mac/src/main.rs` and `paths.rs`); the process is the one whose executable lies in this copy's translocation mount (any other StickyMD is left alone); after `open` reactivates the instance, and only if that PID still shows that window, Return is posted to that PID alone and the process ends within 5s (still running is NOT_TESTED: no receipt says which window took the key); runningboard's termination record for the PID is an exit with status 1 (an unreadable log is NOT_TESTED); the download directory lists the same top-level names before and after. Cleanup, on every path, ends only processes started from this copy or its translocated mount | Skips the system's first-open confirmation; Gatekeeper assessment is off in the test VM, so neither path exercises it. The prompt is shown before launch finishes and answers no AX request (macOS 27.2: `kAXErrorCannotComplete`), so its text is read from stderr (the product's `fatal_startup` writes the same message just before the alert), not from the window; the window's image is kept as `R03-prompt.ppm` but not inspected. No translocation, no modal window seen while the process runs, or a prompt that could not be answered is NOT_TESTED; never reused across batches |
 
 K02 covers typing, Cmd+S/Z/Shift+Z/A/C/X/V, Cmd+arrows, find and replace,
 Cmd+1/2/3 and Cmd+=/-/0. Cmd+S polls `note/note.md` directly until 550ms after the
 last typed key-down (100ms before autosave's 650ms debounce). Only bytes observed
 by that deadline pass; a missed deadline is NOT_TESTED, with key/command/read
 timestamps, because a slow VM and a missing binding cannot be distinguished.
-Other saved-text checks retain the 1500ms wait and 1000ms quiet-byte requirement. W05/W06/W12/W15 and I01/I02
-remain NOT_TESTED with explicit reasons. These are also documented in the module
+Other saved-text checks retain the 1500ms wait and 1000ms quiet-byte requirement. W05, W06's Space
+switch, W15 and I01/I02 remain NOT_TESTED with explicit reasons; W12's real logout runs in `mac-logout`. These are also documented in the module
 comment. No native GUI code is exercised by the unit tests.
 
 **`mac-logout` (W12's real logout).** A logout ends the GUI session and every process
@@ -1083,32 +1082,39 @@ connected to the window server, so `stickymd-smoke mac-logout --app <StickyMD.ap
 CoreGraphics itself: a child (`--prepare`, internal) starts the copied product through
 LaunchServices (`open -n`), prints its PID, focuses it, selects the note and types (and opens the
 export dialog with Cmd+Shift+S and aims it at `<fixture>/export.md` with the destination read
-back, or takes write permission from the note directory), prints when the last key reached the
-note, then exits. The logout sender (`osascript`, `«event aevtrlgo»` to loginwindow; no consent
-prompt) is started before the child and waits for a trigger file, so once the coordinator has
-read the note only the event is left to send. The coordinator outlives the logout and judges
-`/dev/console` owned by root, the note's bytes and modification time before and after, the aimed
-`export.md`, and the product's AppKit and runningboard lines in `log show` for its PID, in log
-order:
+back, or takes write permission from the note directory), prints when its last key into the
+note was posted (no receipt says when it arrived), then exits. The logout sender (`osascript`,
+`«event aevtrlgo»` to loginwindow; no consent prompt) is started before the child and waits up to
+10 minutes for a trigger file, so once the coordinator has read the note only the event is left
+to send; without the trigger it sends nothing, and every return path stops it. The coordinator
+outlives the logout and judges `/dev/console` owned by root, the note's bytes and modification
+time before and after, the aimed `export.md`, and the product's AppKit and runningboard lines in
+`log show` (read from 5 s before the case started, up to 120 s) for its PID, in log order, from
+the first quit event logged no earlier than the trigger:
 
 | Case | Expected (plan 09 系统终止) | Precondition (else NOT_TESTED) |
 | --- | --- | --- |
-| text | Quit event, then `NSTerminateLater`, then `YES`, then termination `(0, 0, 0)`; the note is exactly the typed text, written no earlier than the quit event | The note still held its starting bytes when the request was sent |
+| text | Quit event, then `NSTerminateLater`, then `YES`, then termination `(0, 0, 0)`; the note is exactly the typed text, written no earlier than the quit event and no later than the `YES` | The note still held its starting bytes when the request was sent |
 | dialog | `NSTerminateCancel` (only an open modal dialog makes the product cancel and quit itself), then `(0, 0, 0)`; the note is exactly both lines, the second written no earlier than the quit event; `export.md` absent (`NotFound`) | The note held only the first line when the request was sent |
 | fault | `NSTerminateLater`, then `NO`, then termination `(2, 9, 9)` only (a default SIGTERM death, `(2, 15, 15)`, fails); the note keeps the first line's bytes and modification time | The first line was on disk when the request was sent |
 
 The product writes a clean note at no quit, so a note written no earlier than the quit event
 shows the text was still unsaved when the request arrived; an autosave that wins the race leaves
-the case NOT_TESTED, never PASS. An unreadable note, destination or log is NOT_TESTED.
+the case NOT_TESTED, never PASS. The modification time shows when the file was written, not that
+its directory was synced before the answer. An unreadable note, destination or log is
+NOT_TESTED; a seen wrong decision, answer or order fails even when a later fact is missing. A
+termination record counts only when the product had ended before the driver's cleanup began
+(else the exit may be the cleanup's own, NOT_TESTED).
 
-It writes `mac-gui.json` (schema 2) with the row `P16-W12-logout-<case>`, the boot time, the
-coordinator, child and product PIDs and the last key's time, for `mac-ledger record`. The record
-is written with `finished:false` before anything starts and turns `finished:true` only after
-every process of the fixture is gone, the note directory is writable again and the fixture is
-removed. `--out` defaults to `dist/evidence/mac-logout/<case>-<unix seconds>` and must not hold a
+It writes `mac-gui.json` (schema 2) with the row `P16-W12-logout-<case>`, the boot session
+(`kern.bootsessionuuid`), the coordinator, child and product PIDs and the last key's time, for
+`mac-ledger record`. The record is written with `finished:false` before anything starts and turns
+`finished:true` only after the case ran (the GUI part finished), every process of the fixture is
+gone, the note directory is writable again and the fixture is removed. `--out` defaults to `dist/evidence/mac-logout/<case>-<unix seconds>` and must not hold a
 `mac-gui.json` yet. Run one case per fresh boot and restart the VM afterwards (it stays at the
 login window); the coordinator refuses to start without a GUI session or when a case already
-logged out in this boot (`/private/tmp/stickymd-mac-logout-boot`).
+claimed this boot session, and claims it exclusively just before the logout
+(`/private/tmp/stickymd-mac-logout-<boot session UUID>`).
 
 **VM first-run gaps:** AX status-item actions/save-panel identifiers and actual
 CGEvent routing are unverified. Missing or ambiguous AX nodes produce a bounded
@@ -1117,7 +1123,7 @@ and NoValue (-25212) mean an optional attribute is absent. Other AX errors, wron
 types, or tree budget exhaustion fail the observation; a cancel check passes only
 on a complete tree without the save panel. Invalid-element races currently FAIL
 with the AX status rather than retrying or assuming dismissal. The local SDK marks the requested
-`CGWindowListCreateImage` obsolete since macOS 15; its behavior on the target
-27.2 VM remains unverified. Capture errors are recorded, and no replacement
+`CGWindowListCreateImage` obsolete since macOS 15; in the macOS 27.2 VM it captured the W02 strips,
+the W10 caret and the R03 prompt (runs p6–p8, 2026-11-19/20). Capture errors are recorded, and no replacement
 capture framework is silently introduced. Pure tests and compilation are not
 real GUI acceptance evidence.

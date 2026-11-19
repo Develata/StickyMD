@@ -626,7 +626,9 @@ fn the_real_matrix_has_manual_rows_and_mac_gui_has_executable_ones() {
     )
     .unwrap();
     let rows = matrix_rows(&matrix).unwrap();
-    assert!(rows.manual.iter().any(|r| r == "W12") && rows.manual.iter().any(|r| r == "I01"));
+    // W05 and I01 stay with the USER; W12 became an automated row (USER 2026-11-20).
+    assert!(rows.manual.iter().any(|r| r == "W05") && rows.manual.iter().any(|r| r == "I01"));
+    assert!(!rows.manual.iter().any(|r| r == "W12"));
     assert!(!rows.manual.iter().any(|r| r == "V05"));
     let executable = crate::mac_gui::executable_ids();
     assert!(executable.contains(&"W12") && !executable.contains(&"W05"));
@@ -770,12 +772,36 @@ fn printed_commands_keep_the_batch() {
     let gui = ["I03", "R03"];
     let logout = ["W12-logout-text", "W12-logout-fault"];
     let printed = commands(&gui, &logout, Some("b1"));
-    assert_eq!(printed.len(), 3);
+    assert_eq!(printed.len(), 4);
     assert!(printed[0].contains("mac-gui") && printed[0].contains("--only I03,R03 --batch b1"));
-    assert!(printed[1].contains("--case text --batch b1"));
-    assert!(printed[2].contains("--case fault --batch b1"));
+    assert!(printed[0].contains("--out <a new directory>"));
+    // The commands end with their arguments: nothing a shell would read as more of them.
+    assert!(printed[1].ends_with("--case text --batch b1"));
+    assert!(printed[2].ends_with("--case fault --batch b1"));
+    assert!(printed[3].starts_with("note:"));
     let printed = commands(&gui, &[], None);
     assert_eq!(printed.len(), 1);
+    // Each part missing on its own leaves W12 incomplete.
+    {
+        use super::decide::{complete, composite};
+        let (parent, parts) = composite();
+        let rows: Vec<&str> = std::iter::once(parent)
+            .chain(parts.iter().map(String::as_str))
+            .collect();
+        for skip in &rows {
+            let some: Vec<Record> = rows
+                .iter()
+                .filter(|r| r != &skip)
+                .map(|row| run(row, "PASS", identity(), 'e'))
+                .collect();
+            let result = plan(&some, &rows, &[], &identity(), &built(), None);
+            assert_eq!(
+                complete(&result, parent, &parts),
+                Err(vec![skip.to_string()]),
+                "without {skip}"
+            );
+        }
+    }
     assert!(!printed[0].contains("--batch"));
     assert!(commands(&[], &[], Some("b1")).is_empty());
 }

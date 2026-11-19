@@ -52,10 +52,7 @@ pub(super) fn judge(
 ) {
     let owners: Vec<&OnScreen> = control.0.iter().filter(|w| w.1 == control.1).collect();
     // The menu must be seen and must have answered the digit with an accented letter.
-    let picked = control
-        .2
-        .chars()
-        .any(|c| !matches!(c, 'a' | '2') && c.is_alphabetic());
+    let picked = picked_accent(control.2);
     let checks = [
         "no accent menu while held",
         "held key repeats without stray characters",
@@ -108,6 +105,16 @@ pub(super) fn judge(
     );
 }
 
+/// The accented forms of `a` the press-and-hold menu offers on the ABC layout.
+const A_ACCENTS: &str = "àáâäæãåā";
+
+/// Whether the control's scratch document holds exactly one accented `a`: the key held, the
+/// menu shown, and a digit picking from it (nothing else typed, nothing left over).
+pub(super) fn picked_accent(text: &str) -> bool {
+    let mut chars = text.chars();
+    matches!((chars.next(), chars.next()), (Some(c), None) if A_ACCENTS.contains(c))
+}
+
 pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     let checks = [
         "no accent menu while held",
@@ -125,9 +132,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     };
     // Without a working control, StickyMD is not held at all.
     let menu = control.iter().any(|w| w.1 == control_pid);
-    let picked = text
-        .chars()
-        .any(|c| !matches!(c, 'a' | '2') && c.is_alphabetic());
+    let picked = picked_accent(&text);
     if !(menu && picked) {
         judge((&control, control_pid, &text), (Ok(&[]), d.pid), "", d.row);
         return Ok(());

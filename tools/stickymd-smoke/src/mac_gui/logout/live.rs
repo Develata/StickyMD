@@ -24,8 +24,10 @@ const CONFIG: &str = "version = 1\nview_mode = \"source\"\nopacity = 100\nalways
 /// starts from its own text) and `S` (Cmd+Shift+S opens the export dialog).
 const KEY_A: u16 = 0;
 const KEY_S: u16 = 1;
-/// The boot time of the last case that asked for a logout: one case per boot.
-const BOOT_MARKER: &str = "/private/tmp/stickymd-mac-logout-boot";
+/// Claimed, exclusively, by the one case of a boot session that asks for a logout; the boot
+/// session's UUID follows the prefix (`kern.bootsessionuuid`, unlike the boot time, does not move
+/// with clock adjustments).
+const BOOT_CLAIM: &str = "/private/tmp/stickymd-mac-logout-";
 
 pub(in crate::mac_gui) fn execute(options: &Options) -> Result<(), String> {
     let vm = command("/usr/sbin/sysctl", &["-n", "kern.hv_vmm_present"])?;
@@ -152,15 +154,16 @@ fn steps(
     }
 }
 
-/// The note's bytes and modification time, read through one open file.
+/// The note's bytes and modification time, read through one open file. Bytes that are not UTF-8
+/// are kept (lossily) so that they compare unequal, not as a read error.
 fn read_note(path: &Path) -> Result<Note, String> {
     let error = |e: std::io::Error| format!("{}: {e}", path.display());
     let mut file = fs::File::open(path).map_err(error)?;
     let modified = file.metadata().and_then(|m| m.modified()).map_err(error)?;
-    let mut text = String::new();
-    std::io::Read::read_to_string(&mut file, &mut text).map_err(error)?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes).map_err(error)?;
     Ok(Note {
-        text,
+        text: String::from_utf8_lossy(&bytes).into_owned(),
         modified: micros(modified)?,
     })
 }
@@ -169,19 +172,31 @@ fn console_owner() -> Result<String, String> {
     command("/usr/bin/stat", &["-f", "%Su", "/dev/console"]).map(|o| o.trim().to_owned())
 }
 
-/// `kern.boottime`'s seconds.
-fn boot_seconds() -> Result<u64, String> {
-    let text = command("/usr/sbin/sysctl", &["-n", "kern.boottime"])?;
-    text.split("sec = ")
-        .nth(1)
-        .and_then(|rest| rest.split(',').next())
-        .and_then(|sec| sec.trim().parse().ok())
-        .ok_or_else(|| format!("kern.boottime unreadable: {text:?}"))
+/// This boot session's UUID.
+fn boot_session() -> Result<String, String> {
+    let text = command("/usr/sbin/sysctl", &["-n", "kern.bootsessionuuid"])?;
+    let uuid = text.trim();
+    if uuid.len() == 36 && uuid.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        Ok(uuid.to_owned())
+    } else {
+        Err(format!("kern.bootsessionuuid unreadable: {text:?}"))
+    }
 }
 
-/// An `osascript` that waits for `trigger` to exist, then asks loginwindow to log out. Started
-/// before the GUI part, so only the event is left to send once the note holds unsaved text.
-fn armed_logout(trigger: &Path) -> Result<std::process::Child, String> {
+/// The armed logout sender; dropped, it is stopped, so no return path leaves it waiting.
+struct Sender(std::process::Child);
+
+impl Drop for Sender {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// An `osascript` that waits up to 10 minutes for `trigger` to exist, then asks loginwindow to
+/// log out; without the trigger it ends without sending anything. Started before the GUI part,
+/// so only the event is left to send once the note holds unsaved text.
+fn armed_logout(trigger: &Path) -> Result<Sender, String> {
     let path = trigger.to_str().ok_or("non UTF-8 trigger path")?;
     if path.contains(['"', '\\']) {
         return Err(format!(
@@ -193,11 +208,15 @@ fn armed_logout(trigger: &Path) -> Result<std::process::Child, String> {
             "-e",
             &format!("set trigger to POSIX file \"{path}\""),
             "-e",
-            "repeat",
+            "set fired to false",
+            "-e",
+            "repeat 30000 times",
             "-e",
             "try",
             "-e",
             "trigger as alias",
+            "-e",
+            "set fired to true",
             "-e",
             "exit repeat",
             "-e",
@@ -207,12 +226,13 @@ fn armed_logout(trigger: &Path) -> Result<std::process::Child, String> {
             "-e",
             "end repeat",
             "-e",
-            "tell application \"loginwindow\" to «event aevtrlgo»",
+            "if fired then tell application \"loginwindow\" to «event aevtrlgo»",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
+        .map(Sender)
         .map_err(|e| format!("osascript: {e}"))
 }
 
@@ -222,7 +242,7 @@ struct Ids {
     coordinator: u32,
     prepare: Option<u32>,
     product: Option<u32>,
-    boot: u64,
+    boot: String,
     last_key: Option<i64>,
 }
 
@@ -234,8 +254,9 @@ fn coordinate(options: &Options) -> Result<(), String> {
                 .into(),
         );
     }
-    let boot = boot_seconds()?;
-    if fs::read_to_string(BOOT_MARKER).is_ok_and(|b| b.trim() == boot.to_string()) {
+    let boot = boot_session()?;
+    let claim = PathBuf::from(format!("{BOOT_CLAIM}{boot}"));
+    if fs::symlink_metadata(&claim).is_ok() {
         return Err(
             "mac-logout refused: a case already logged out in this boot; restart the VM".into(),
         );
@@ -290,12 +311,12 @@ fn coordinate(options: &Options) -> Result<(), String> {
     let publish = |row: &Row, ids: &Ids, finished: bool| -> Result<(), String> {
         let optional = |v: Option<String>| v.unwrap_or_else(|| "null".into());
         let environment = format!(
-            "{{\"os\":{},\"architecture\":{},\"hv_vmm_present\":\"1\",\"allow_host\":false,\"unix_seconds\":{started},\"fixture_config\":{},\"case\":{},\"boot_seconds\":{},\"processes\":{{\"coordinator\":{},\"prepare\":{},\"product\":{}}},\"last_key_us\":{}}}",
+            "{{\"os\":{},\"architecture\":{},\"hv_vmm_present\":\"1\",\"allow_host\":false,\"unix_seconds\":{started},\"fixture_config\":{},\"case\":{},\"boot_session\":{},\"processes\":{{\"coordinator\":{},\"prepare\":{},\"product\":{}}},\"last_key_us\":{}}}",
             quote(&command("/usr/bin/sw_vers", &[])?),
             quote(std::env::consts::ARCH),
             quote(CONFIG),
             quote(&options.case),
-            ids.boot,
+            quote(&ids.boot),
             ids.coordinator,
             optional(ids.prepare.map(|p| p.to_string())),
             optional(ids.product.map(|p| p.to_string())),
@@ -321,6 +342,7 @@ fn coordinate(options: &Options) -> Result<(), String> {
     publish(&row, &ids, false)?;
     let trigger = dir.join("logout-now");
     let mut sender = armed_logout(&trigger)?;
+    let mut requested = 0;
     let child = Command::new(&driver)
         .args([
             "mac-logout",
@@ -353,7 +375,14 @@ fn coordinate(options: &Options) -> Result<(), String> {
     let executed = match ids.product {
         Some(pid) if child.status.success() => {
             facts.before = read_note(&note);
-            fs::write(BOOT_MARKER, boot.to_string()).map_err(|e| format!("{BOOT_MARKER}: {e}"))?;
+            // One case per boot session: the claim is exclusive, so a second case in this boot
+            // stops here without logging out.
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&claim)
+                .map_err(|e| format!("{}: {e}; restart the VM", claim.display()))?;
+            requested = micros(SystemTime::now())?;
             fs::write(&trigger, b"").map_err(|e| format!("logout trigger: {e}"))?;
             let alive = || fixture_processes(&fixture_exe).map_or(true, |p| p.contains(&pid));
             let start = Instant::now();
@@ -362,7 +391,7 @@ fn coordinate(options: &Options) -> Result<(), String> {
             }
             facts.gone = !alive();
             let start = Instant::now();
-            while sender.try_wait().ok().flatten().is_none()
+            while sender.0.try_wait().ok().flatten().is_none()
                 && start.elapsed() < Duration::from_secs(10)
             {
                 std::thread::sleep(Duration::from_millis(100));
@@ -383,8 +412,7 @@ fn coordinate(options: &Options) -> Result<(), String> {
             false
         }
     };
-    let _ = sender.kill();
-    let _ = sender.wait();
+    drop(sender);
     // Whatever happened, nothing of this fixture keeps running, and its directory is writable.
     let ended = end_fixture_processes(&fixture_exe);
     let restored = if options.case == "fault" {
@@ -430,7 +458,7 @@ fn coordinate(options: &Options) -> Result<(), String> {
                     log.as_bytes(),
                 )?;
                 if let Some(pid) = ids.product {
-                    from_log(log, pid, &mut facts);
+                    from_log(log, pid, requested, &mut facts);
                 }
             }
             Err(e) => row.trace.push(super::super::model::Trace {
@@ -459,7 +487,9 @@ fn coordinate(options: &Options) -> Result<(), String> {
         .and(restored)
         .and_then(|()| session.cleanup());
     // Finished only once nothing of the fixture runs and its directory is gone.
-    publish(&row, &ids, cleanup.is_ok())?;
+    // Finished only when the case ran and nothing of the fixture is left: a GUI part that did
+    // not finish is not a run of the case, and a NOT_TESTED from it would block reuse.
+    publish(&row, &ids, executed && cleanup.is_ok())?;
     let verdict = aggregate(&row.checks);
     println!("W12-logout-{}: {}", options.case, verdict.name());
     println!("Evidence: {}", out.join("mac-gui.json").display());
