@@ -1,6 +1,7 @@
 //! Ledger records: one JSON object per line, append-only. An automated record keeps the identity
 //! its PASS can be reused under; a USER receipt keeps the product inputs it holds for. Both keep
-//! the built app's hashes for audit. Every line is validated on read: a malformed or out-of-range
+//! the built app's hashes for audit. A revocation records the USER withdrawing one of them; the
+//! withdrawn result stays as history and is never reused. Every line is validated on read: a malformed or out-of-range
 //! record rejects the whole ledger. Records written before the input fingerprint (no
 //! `app_inputs`) are read as history and never reused.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
@@ -33,6 +34,14 @@ pub(super) struct Built {
     pub bundle: String,
 }
 
+/// What a revocation withdraws: an automated PASS, named by the digest of the evidence it was
+/// recorded from, or the receipts for a row, named by the product inputs they hold for.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum Revoked {
+    Evidence(String),
+    Inputs(String),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Record {
     Automated {
@@ -50,6 +59,13 @@ pub(super) enum Record {
         inputs: Option<String>,
         app_executable: String,
         environment: String,
+        quote: String,
+        recorded_unix: u64,
+    },
+    /// The USER withdrew a result after reviewing it (plan 11 #phase-16-macos-host).
+    Revocation {
+        row: String,
+        revoked: Revoked,
         quote: String,
         recorded_unix: u64,
     },
@@ -117,6 +133,22 @@ impl Record {
                 quote(environment),
                 quote(words),
             ),
+            Self::Revocation {
+                row,
+                revoked,
+                quote: words,
+                recorded_unix,
+            } => {
+                let target = match revoked {
+                    Revoked::Evidence(digest) => format!("\"evidence_sha256\":{}", quote(digest)),
+                    Revoked::Inputs(inputs) => format!("\"app_inputs\":{}", quote(inputs)),
+                };
+                format!(
+                    "{{\"kind\":\"revocation\",\"row\":{},{target},\"quote\":{},\"recorded_unix\":{recorded_unix}}}",
+                    quote(row),
+                    quote(words),
+                )
+            }
         }
     }
 
@@ -174,6 +206,19 @@ impl Record {
                 nonempty("environment", environment)?;
                 nonempty("quote", quote)
             }
+            Self::Revocation {
+                row,
+                revoked,
+                quote,
+                ..
+            } => {
+                nonempty("row", row)?;
+                match revoked {
+                    Revoked::Evidence(digest) => hash("evidence_sha256", digest)?,
+                    Revoked::Inputs(inputs) => hash("app_inputs", inputs)?,
+                }
+                nonempty("quote", quote)
+            }
         }
     }
 
@@ -209,6 +254,24 @@ impl Record {
                 quote: text("quote")?,
                 recorded_unix,
             },
+            "revocation" => {
+                let revoked = match (optional_text(&value, "evidence_sha256")?, inputs) {
+                    (Some(digest), None) => Revoked::Evidence(digest),
+                    (None, Some(inputs)) => Revoked::Inputs(inputs),
+                    _ => {
+                        return Err(
+                            "a revocation names exactly one of evidence_sha256 and app_inputs"
+                                .into(),
+                        );
+                    }
+                };
+                Self::Revocation {
+                    row: text("row")?,
+                    revoked,
+                    quote: text("quote")?,
+                    recorded_unix,
+                }
+            }
             other => return Err(format!("unknown ledger record kind {other}")),
         };
         record.validate()?;

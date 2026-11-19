@@ -476,6 +476,20 @@
 
 ## 治理
 
+### Acceptance Ladder（验收阶梯）
+
+- **Definition**：Phase 16 验收表判定一行的方式，按优先顺序为：程序断言、agent 自行操作、agent 判定截图、程序截图交 USER、程序录屏交 USER、USER 亲手验收。对应 Mode 为 `Automated`、`Agent`、`Review`、`Manual`。
+- **Authority**：`11` Phase 16 节；各行用哪一级按行经 USER 批准。
+- **Not equivalent to**：资格化 suite；Windows 的人工验收矩阵。
+- **Lifetime**：随 Phase 16 验收表存在。
+
+### Agent Judgement（agent 判定）
+
+- **Definition**：两名互相独立的 agent 依同一身份下同一次运行的证据，对 `Agent` 行给出的 PASS、FAIL 或 NOT_TESTED；两者都 PASS 时状态为 `AGENT PASS`。
+- **Authority**：`11` Phase 16 节的判定规则；USER 可撤销。
+- **Not equivalent to**：USER 收据；单一 agent 的意见；产品自测。
+- **Lifetime**：绑定产品输入指纹、驱动、镜像、系统、判定标准版本与判定者策略，任一项改变即失效。
+
 ### Architecture Change
 
 - **Definition**：对主骨架、核心边界、核心对象关系、主能力轴或关键接口结构的修改。必须先提交分析报告并获 USER 批准。

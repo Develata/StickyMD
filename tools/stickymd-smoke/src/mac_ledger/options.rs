@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 pub(super) const HELP: &str =
-    "usage: stickymd-smoke mac-ledger <inputs|plan|record|receipt> [options]
+    "usage: stickymd-smoke mac-ledger <inputs|plan|record|receipt|revoke> [options]
   inputs  [--home <dir>]
           Prints the product input fingerprint of this checkout and toolchain; build-app.sh
           writes it into the bundle's Info.plist. --home is the caller's home directory, given
@@ -16,6 +16,10 @@ pub(super) const HELP: &str =
           Appends every row of a finished run; the evidence must name its driver.
   receipt --app <StickyMD.app> --rows <ids> --quote <the USER's words>
           Appends a USER receipt per row for the app's product inputs on this desktop.
+  revoke  --rows <id> (--evidence-sha256 <digest> | --app <StickyMD.app>) --quote <the USER's words>
+          Appends the USER's withdrawal of an automated PASS (named by the digest of the evidence
+          it was recorded from) or of the row's receipts for the app's product inputs. A
+          withdrawn result stays in the ledger as history and is never reused.
   --ledger <file> defaults to dist/evidence/mac-gui-ledger/records.jsonl under the repository.
   --image is the Tart image digest the VM was cloned from (the VM cannot see it).
   --system is a file holding the target VM's sw_vers output, taken just before the run.";
@@ -26,6 +30,7 @@ pub(crate) enum Command {
     Plan,
     Record,
     Receipt,
+    Revoke,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -39,6 +44,8 @@ pub(crate) struct Options {
     pub image: Option<String>,
     pub system: Option<PathBuf>,
     pub evidence: Option<PathBuf>,
+    /// For `revoke`: the digest of the evidence an automated PASS was recorded from.
+    pub evidence_sha256: Option<String>,
     pub rows: Vec<String>,
     pub quote: Option<String>,
     pub help: bool,
@@ -52,6 +59,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
         Some("plan") => result.command = Some(Command::Plan),
         Some("record") => result.command = Some(Command::Record),
         Some("receipt") => result.command = Some(Command::Receipt),
+        Some("revoke") => result.command = Some(Command::Revoke),
         Some("--help" | "-h") | None => {
             result.help = true;
             return Ok(result);
@@ -79,6 +87,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
             "--image" => result.image = Some(value.clone()),
             "--system" => result.system = Some(value.into()),
             "--evidence" => result.evidence = Some(value.into()),
+            "--evidence-sha256" => result.evidence_sha256 = Some(value.clone()),
             "--quote" => result.quote = Some(value.clone()),
             "--rows" => {
                 for id in value.split(',') {
@@ -116,6 +125,18 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
             result.app.as_ref().ok_or_else(|| missing("--app"))?;
             if result.rows.is_empty() {
                 return Err(missing("--rows"));
+            }
+            match &result.quote {
+                Some(quote) if !quote.trim().is_empty() => {}
+                _ => return Err(missing("--quote with the USER's words")),
+            }
+        }
+        Some(Command::Revoke) => {
+            if result.rows.len() != 1 {
+                return Err(missing("--rows with exactly one row"));
+            }
+            if result.app.is_some() == result.evidence_sha256.is_some() {
+                return Err(missing("exactly one of --evidence-sha256 and --app"));
             }
             match &result.quote {
                 Some(quote) if !quote.trim().is_empty() => {}

@@ -5,7 +5,7 @@
 use super::{
     build, decide,
     options::{Command, Options},
-    record::{self, Built, Identity, Record},
+    record::{self, Built, Identity, Record, Revoked},
 };
 use crate::mac_common::fixture::{app_inputs, bundle_hash, contained_executable};
 use std::{
@@ -40,6 +40,7 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
     let new = match command {
         Command::Record => recorded(options)?,
         Command::Receipt => receipts(options, &manual)?,
+        Command::Revoke => revocation(options, &existing)?,
         Command::Plan | Command::Inputs => unreachable!("handled above"),
     };
     let all: Vec<Record> = existing.iter().chain(&new).cloned().collect();
@@ -204,15 +205,8 @@ fn plan(options: &Options, existing: &[Record], manual: &[String]) -> Result<(),
     );
     for reuse in &plan.reused {
         println!(
-            "reuse P16-{}: PASS in {} (sha256 {}){}",
-            reuse.row,
-            reuse.evidence,
-            reuse.evidence_sha256,
-            if reuse.later_non_pass {
-                "; note: a later FAIL or NOT_TESTED was recorded under the same identity"
-            } else {
-                ""
-            }
+            "reuse P16-{}: PASS in {} (sha256 {})",
+            reuse.row, reuse.evidence, reuse.evidence_sha256
         );
         if reuse.other_bytes {
             println!(
@@ -220,6 +214,9 @@ fn plan(options: &Options, existing: &[Record], manual: &[String]) -> Result<(),
                 reuse.row
             );
         }
+    }
+    for (row, reason) in &plan.rerun {
+        println!("rerun P16-{row}: {reason}");
     }
     if plan.run.is_empty() {
         println!("run: nothing; every executable row has a PASS for this identity");
@@ -285,6 +282,49 @@ fn receipts(options: &Options, manual: &[String]) -> Result<Vec<Record>, String>
         record.validate()?;
     }
     Ok(records)
+}
+
+/// The USER's withdrawal of one result that the ledger holds: an automated PASS of the row
+/// recorded from the named evidence, or the row's receipts for the app's product inputs.
+fn revocation(options: &Options, existing: &[Record]) -> Result<Vec<Record>, String> {
+    let row = options.rows.first().ok_or("--rows missing")?.clone();
+    let revoked = match (&options.evidence_sha256, &options.app) {
+        (Some(digest), None) => {
+            let held = existing.iter().any(|r| {
+                matches!(r, Record::Automated { row: r_row, verdict, evidence_sha256, .. }
+                    if *r_row == row && verdict == "PASS" && evidence_sha256 == digest)
+            });
+            if !held {
+                return Err(format!(
+                    "no automated PASS of P16-{row} was recorded from evidence {digest}"
+                ));
+            }
+            Revoked::Evidence(digest.clone())
+        }
+        (None, Some(app)) => {
+            let inputs = app_inputs(&app.canonicalize().map_err(|e| format!("app path: {e}"))?)?
+                .ok_or("this bundle carries no input fingerprint, so no receipt can name it")?;
+            let held = existing.iter().any(|r| {
+                matches!(r, Record::Manual { row: r_row, inputs: Some(held), .. }
+                    if *r_row == row && *held == inputs)
+            });
+            if !held {
+                return Err(format!(
+                    "no receipt of P16-{row} holds for product inputs {inputs}"
+                ));
+            }
+            Revoked::Inputs(inputs)
+        }
+        _ => return Err("revoke needs exactly one of --evidence-sha256 and --app".into()),
+    };
+    let record = Record::Revocation {
+        row,
+        revoked,
+        quote: options.quote.clone().ok_or("--quote missing")?,
+        recorded_unix: now()?,
+    };
+    record.validate()?;
+    Ok(vec![record])
 }
 
 #[cfg(test)]

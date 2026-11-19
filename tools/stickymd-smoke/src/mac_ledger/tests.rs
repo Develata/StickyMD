@@ -3,7 +3,7 @@
 use super::{
     decide::{check_system, manual_rows, plan},
     options::{Command, parse},
-    record::{Built, Identity, Record, from_evidence, read_all},
+    record::{Built, Identity, Record, Revoked, from_evidence, read_all},
 };
 
 fn hex(c: char) -> String {
@@ -110,19 +110,122 @@ fn the_same_inputs_reuse_a_pass_for_other_bytes_and_no_inputs_reuse_nothing() {
     assert_eq!(result.unconfirmed, ["W06"]);
 }
 
+fn revoke(row: &str, revoked: Revoked) -> Record {
+    Record::Revocation {
+        row: row.into(),
+        revoked,
+        quote: "看录像发现不对".into(),
+        recorded_unix: 3,
+    }
+}
+
+/// A FAIL or NOT_TESTED after the latest PASS stops its reuse; the row runs again and the reason
+/// is given (plan 11 #phase-16-macos-host). A PASS after the failure is reused.
 #[test]
-fn the_latest_pass_is_cited_and_a_later_non_pass_is_reported() {
+fn a_later_non_pass_stops_the_reuse_of_the_latest_pass() {
+    for later in ["FAIL", "NOT_TESTED"] {
+        let records = [
+            automated("W02", "PASS", identity()),
+            automated("W02", later, identity()),
+        ];
+        let result = plan(&records, &["W02"], &[], &identity(), &built());
+        assert!(result.reused.is_empty(), "{later}");
+        assert_eq!(result.run, ["W02"]);
+        assert_eq!(result.rerun.len(), 1);
+    }
     let records = [
-        automated("W02", "PASS", identity()),
         automated("W02", "FAIL", identity()),
+        automated("W02", "PASS", identity()),
     ];
     let result = plan(&records, &["W02"], &[], &identity(), &built());
-    assert!(result.reused[0].later_non_pass);
+    assert_eq!(result.reused[0].row, "W02");
+    assert!(result.run.is_empty() && result.rerun.is_empty());
+    // A non-PASS under another identity does not touch this one.
+    let mut other = identity();
+    other.driver = hex('f');
     let records = [
-        automated("W02", "FAIL", identity()),
         automated("W02", "PASS", identity()),
+        automated("W02", "FAIL", other),
     ];
-    assert!(!plan(&records, &["W02"], &[], &identity(), &built()).reused[0].later_non_pass);
+    assert_eq!(
+        plan(&records, &["W02"], &[], &identity(), &built())
+            .reused
+            .len(),
+        1
+    );
+}
+
+/// A revoked PASS, and every other PASS of the row under that identity, is never reused; a
+/// revocation of another digest or row changes nothing.
+#[test]
+fn a_revoked_pass_is_not_reused() {
+    let pass = automated("W02", "PASS", identity());
+    let digest = hex('e');
+    let records = [
+        pass.clone(),
+        revoke("W02", Revoked::Evidence(digest.clone())),
+    ];
+    let result = plan(&records, &["W02"], &[], &identity(), &built());
+    assert!(result.reused.is_empty());
+    assert_eq!(result.rerun.len(), 1);
+    let records = [
+        pass.clone(),
+        revoke("W03", Revoked::Evidence(digest)),
+        revoke("W02", Revoked::Evidence(hex('c'))),
+    ];
+    assert_eq!(
+        plan(&records, &["W02"], &[], &identity(), &built())
+            .reused
+            .len(),
+        1
+    );
+}
+
+/// I01–I03 and R03 stand for one acceptance batch: a PASS of them is never reused.
+#[test]
+fn the_never_reused_rows_always_run() {
+    let records = [
+        automated("R03", "PASS", identity()),
+        automated("I03", "PASS", identity()),
+    ];
+    let result = plan(&records, &["R03", "I03", "K02"], &[], &identity(), &built());
+    assert!(result.reused.is_empty());
+    assert_eq!(result.run, ["R03", "I03", "K02"]);
+    assert_eq!(result.rerun.len(), 2);
+}
+
+/// A revocation withdraws the receipts recorded before it; a receipt recorded after it holds.
+#[test]
+fn a_revocation_withdraws_earlier_receipts_only() {
+    let rows: Vec<String> = vec!["W06".into()];
+    let withdrawn = [
+        manual("W06", Some(hex('1'))),
+        revoke("W06", Revoked::Inputs(hex('1'))),
+    ];
+    let result = plan(&withdrawn, &[], &rows, &identity(), &built());
+    assert_eq!(result.unconfirmed, ["W06"]);
+    let renewed = [
+        manual("W06", Some(hex('1'))),
+        revoke("W06", Revoked::Inputs(hex('1'))),
+        manual("W06", Some(hex('1'))),
+    ];
+    assert_eq!(
+        plan(&renewed, &[], &rows, &identity(), &built())
+            .confirmed
+            .len(),
+        1
+    );
+    let elsewhere = [
+        manual("W06", Some(hex('1'))),
+        revoke("W06", Revoked::Inputs(hex('2'))),
+        revoke("W11", Revoked::Inputs(hex('1'))),
+    ];
+    assert_eq!(
+        plan(&elsewhere, &[], &rows, &identity(), &built())
+            .confirmed
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -156,6 +259,8 @@ fn records_survive_a_round_trip_and_bad_lines_reject_the_ledger() {
         automated("W03", "PASS", legacy),
         quoted,
         manual("W11", None),
+        revoke("W02", Revoked::Evidence(hex('e'))),
+        revoke("W06", Revoked::Inputs(hex('1'))),
     ];
     let text: String = records.iter().map(|r| r.line() + "\n").collect();
     assert_eq!(read_all(&text).unwrap(), records);
@@ -179,6 +284,21 @@ fn records_survive_a_round_trip_and_bad_lines_reject_the_ledger() {
             .replace("MANUAL PASS", "PASS")),
         "a manual record must say MANUAL PASS"
     );
+    assert!(bad(revoke("W02", Revoked::Evidence("abc".into())).line()));
+    let both = revoke("W02", Revoked::Evidence(hex('e'))).line().replace(
+        ",\"quote\"",
+        &format!(",\"app_inputs\":\"{}\",\"quote\"", hex('1')),
+    );
+    assert!(bad(both), "a revocation names one target");
+    let neither = revoke("W02", Revoked::Evidence(hex('e')))
+        .line()
+        .replace(&format!("\"evidence_sha256\":\"{}\",", hex('e')), "");
+    assert!(bad(neither), "a revocation names a target");
+    let mut silent = revoke("W02", Revoked::Evidence(hex('e')));
+    if let Record::Revocation { quote, .. } = &mut silent {
+        *quote = " ".into();
+    }
+    assert!(bad(silent.line()), "a revocation carries the USER's words");
 }
 
 #[test]
@@ -240,8 +360,11 @@ fn the_manual_rows_come_from_the_matrix_mode_column() {
                   | P16-W06 | a | Manual | e | MANUAL PASS |\n\
                   | P16-W13 | b | Automated | e | AUTOMATED PASS |\n\
                   | P16-W16 | c | — | e | USER 豁免 |\n\
-                  | P16-I01 | d | Manual | e | NOT TESTED |\n";
-    assert_eq!(manual_rows(matrix).unwrap(), ["W06", "I01"]);
+                  | P16-I01 | d | Manual | e | NOT TESTED |\n\
+                  | P16-V04 | f | Review | e | NOT TESTED |\n";
+    assert_eq!(manual_rows(matrix).unwrap(), ["W06", "I01", "V04"]);
+    let agent = format!("{matrix}| P16-W01 | g | Agent | e | NOT TESTED |\n");
+    assert!(manual_rows(&agent).unwrap_err().contains("Agent row"));
     assert!(manual_rows("| P16-W06 | a | Manual |\n").is_err());
     assert!(manual_rows("no rows").is_err());
 }
@@ -281,6 +404,25 @@ fn each_command_requires_its_options() {
     .unwrap();
     assert_eq!(receipt.rows, ["W06", "W11"]);
     assert!(parse(&args("receipt --app a.app --rows W06,W06 --quote q")).is_err());
+    let revoke = |extra: &str| {
+        let mut a = args(&format!("revoke --rows W02{extra}"));
+        a.extend(["--quote".into(), "撤销".into()]);
+        parse(&a)
+    };
+    assert_eq!(
+        revoke(&format!(" --evidence-sha256 {}", hex('e')))
+            .unwrap()
+            .command,
+        Some(Command::Revoke)
+    );
+    assert!(revoke(" --app a.app").is_ok());
+    assert!(revoke("").is_err(), "a revocation names a target");
+    assert!(
+        revoke(" --app a.app --evidence-sha256 x").is_err(),
+        "one target only"
+    );
+    assert!(parse(&args("revoke --rows W02,W03 --app a.app --quote q")).is_err());
+    assert!(parse(&args("revoke --rows W02 --app a.app")).is_err());
     assert!(parse(&args("frobnicate")).is_err());
     assert!(parse(&[]).unwrap().help);
 }
