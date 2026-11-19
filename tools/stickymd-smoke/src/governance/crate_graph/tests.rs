@@ -304,12 +304,10 @@ fn assert_mentions(error: &str, parts: &[&str]) {
 #[test]
 fn an_allowed_graph_passes() {
     Fixture::allowed().passes();
-    // Test builds may cross the layering, and the plan leaves stickymd-posix's use of the lower
-    // crates open, so those edges are not refused.
+    // Test builds may cross the layering.
     Fixture::allowed()
         .with("stickymd-core", "stickymd-render", "stickymd_render", DEV)
-        .with("stickymd-posix", "stickymd-core", "stickymd_core", NORMAL)
-        .with("stickymd-posix", "stickymd-app", "stickymd_app", NORMAL)
+        .with("stickymd-posix", "stickymd-core", "stickymd_core", DEV)
         .passes();
 }
 
@@ -554,6 +552,9 @@ fn local_crates_follow_the_layering() {
         ("stickymd-app", "stickymd-posix"),
         ("stickymd-desktop", "stickymd-mac"),
         ("stickymd-desktop", "stickymd-posix"),
+        ("stickymd-posix", "stickymd-core"),
+        ("stickymd-posix", "stickymd-render"),
+        ("stickymd-posix", "stickymd-app"),
         ("stickymd-posix", "stickymd-desktop"),
         ("stickymd-posix", "stickymd-mac"),
     ] {
@@ -563,13 +564,13 @@ fn local_crates_follow_the_layering() {
         assert_mentions(&error, &[&format!("{from} depends on {to}")]);
     }
     let error = Fixture::allowed()
-        .with("stickymd-posix", "stickymd-desktop", "x", NORMAL)
+        .with("stickymd-posix", "stickymd-core", "x", NORMAL)
         .error();
     assert_mentions(
         &error,
         &[
-            "lets stickymd-posix depend on no local crate (stickymd-core, stickymd-render, \
-           stickymd-app undecided",
+            "lets stickymd-posix depend on no local crate",
+            "stickymd-posix provides native primitives only",
         ],
     );
     let error = Fixture::allowed()

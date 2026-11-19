@@ -30,9 +30,9 @@ stickymd-render, stickymd-app, stickymd-desktop and stickymd-posix. Expect each 
 dependency (every table and target) to name no listed platform crate; each local dependency,
 declared or resolved, to be the workspace member itself (matched by directory and ID, not by
 name); each normal or build one to be a member the plan 03 layering allows; and no capability
-crate to be reachable through normal edges. stickymd-posix edges to core, render and app stay
-tolerated until the USER decides
-([question](../report/2026-11-19-shared-crate-dependency-questions.md)). Failure signals: a
+crate to be reachable through normal edges; stickymd-posix depends on no other StickyMD crate
+(USER 2026-11-19, [decision](../report/2026-11-19-shared-crate-dependency-questions.md)).
+Failure signals: a
 refused edge names the crate, the dependency, its path and the layer to go through; a failed
 Cargo run reports its exit status and Cargo's error; a missing shared crate, a missing resolve
 node on a walked path or an unknown dependency kind names the gap. The reach check works on the

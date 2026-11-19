@@ -42,7 +42,7 @@ use std::process::Command;
 
 use crate::release::json::{self, Value};
 
-use rules::{BOUNDARIES, Boundary, OUTSIDE, allowed_text, local_route, matches};
+use rules::{BOUNDARIES, Boundary, OUTSIDE, allowed_text, matches};
 
 pub(super) fn verify(root: &Path) -> Result<(), String> {
     let output = Command::new("cargo")
@@ -272,7 +272,7 @@ impl<'a> Graph<'a> {
                 boundary.name,
                 boundary.name,
                 allowed_text(boundary),
-                local_route(member)
+                boundary.route_to(member)
             ));
         }
         Ok(())
@@ -318,7 +318,7 @@ impl<'a> Graph<'a> {
                 boundary.name,
                 boundary.name,
                 allowed_text(boundary),
-                local_route(target.name)
+                boundary.route_to(target.name)
             ));
         }
         Ok(())

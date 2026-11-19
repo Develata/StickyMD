@@ -95,9 +95,9 @@ pub(super) struct Boundary {
     pub(super) name: &'static str,
     /// Workspace members it may depend on through a normal or build edge.
     pub(super) allowed: &'static [&'static str],
-    /// Workspace members the plan neither allows nor refuses; tolerated until the USER decides
-    /// (`docs/report/2026-11-19-shared-crate-dependency-questions.md`).
-    pub(super) undecided: &'static [&'static str],
+    /// Where this crate's refused local edges belong instead, when that depends on the crate
+    /// rather than on the target; `None` uses the target's route.
+    pub(super) route: Option<&'static str>,
     /// Neither declared nor reached through normal edges.
     pub(super) unreachable: &'static [&'static [Banned]],
     /// Not declared; a third-party crate may hold them.
@@ -107,45 +107,47 @@ pub(super) struct Boundary {
 /// The layering of plan 03 `#shared-crates`: its diagram gives a direction
 /// (core < render < app < desktop < Platform Host), not a list of the only edges, so any edge
 /// pointing down is allowed (desktop → core is in the real workspace and not drawn). Every other
-/// local crate is refused: stickymd-posix (only the macOS host uses it), the hosts (no shared
-/// crate depends on a host), stickymd-smoke (not product runtime) and any crate the plan does
-/// not name.
+/// local crate is refused: stickymd-posix (only the macOS host uses it, and it uses no other
+/// StickyMD crate), the hosts (no shared crate depends on a host), stickymd-smoke (not product
+/// runtime) and any crate the plan does not name.
 pub(super) const BOUNDARIES: &[Boundary] = &[
     Boundary {
         name: "stickymd-core",
         allowed: &[],
-        undecided: &[],
+        route: None,
         unreachable: &[WINDOW_SYSTEM, HOST_CAPABILITIES, RENDER_ENGINES],
         undeclared: &[WIN32_BINDING, WINDOW_HANDLE],
     },
     Boundary {
         name: "stickymd-render",
         allowed: &["stickymd-core"],
-        undecided: &[],
+        route: None,
         unreachable: &[WINDOW_SYSTEM, HOST_CAPABILITIES],
         undeclared: &[WIN32_BINDING, WINDOW_HANDLE],
     },
     Boundary {
         name: "stickymd-app",
         allowed: &["stickymd-core", "stickymd-render"],
-        undecided: &[],
+        route: None,
         unreachable: &[WINDOW_SYSTEM, HOST_CAPABILITIES],
         undeclared: &[WIN32_BINDING, WINDOW_HANDLE],
     },
     Boundary {
         name: "stickymd-desktop",
         allowed: &["stickymd-core", "stickymd-render", "stickymd-app"],
-        undecided: &[],
+        route: None,
         unreachable: &[HOST_CAPABILITIES],
         undeclared: &[WIN32_BINDING],
     },
-    // A native adapter in the Execution Domain: it may not reach up into the shared Shell
-    // (plan 03 forbidden relation 3) or into a host. The plan does not say whether it may use
-    // core, render or app, and names no third-party crate it may not use.
+    // A native adapter in the Execution Domain that depends on no other StickyMD crate (plan 03
+    // table, USER 2026-11-19); the plan names no third-party crate it may not use.
     Boundary {
         name: "stickymd-posix",
         allowed: &[],
-        undecided: &["stickymd-core", "stickymd-render", "stickymd-app"],
+        route: Some(
+            "stickymd-posix provides native primitives only; the macOS host wraps them into \
+             Capability Port implementations and combines them with the shared crates",
+        ),
         unreachable: &[],
         undeclared: &[],
     },
@@ -153,15 +155,20 @@ pub(super) const BOUNDARIES: &[Boundary] = &[
 
 impl Boundary {
     pub(super) fn permits(&self, member: &str) -> bool {
-        self.allowed.contains(&member) || self.undecided.contains(&member)
+        self.allowed.contains(&member)
+    }
+
+    /// Where a refused edge from this crate to `member` belongs instead.
+    pub(super) fn route_to(&self, member: &str) -> &'static str {
+        self.route.unwrap_or_else(|| local_route(member))
     }
 }
 
-pub(super) const OUTSIDE: &str = "plan 03 layers the workspace members, not copies of them; depend on the \
-                       member by path";
+pub(super) const OUTSIDE: &str =
+    "plan 03 layers the workspace members, not copies of them; depend on the member by path";
 
 /// What each local crate is, for the message that refuses an edge to it.
-pub(super) fn local_route(name: &str) -> &'static str {
+fn local_route(name: &str) -> &'static str {
     match name {
         "stickymd-core" => "stickymd-core is the lowest shared crate",
         "stickymd-render" => {
@@ -190,18 +197,11 @@ pub(super) fn local_route(name: &str) -> &'static str {
 }
 
 pub(super) fn allowed_text(boundary: &Boundary) -> String {
-    let mut text = if boundary.allowed.is_empty() {
+    if boundary.allowed.is_empty() {
         "on no local crate".to_owned()
     } else {
         format!("only on {}", boundary.allowed.join(", "))
-    };
-    if !boundary.undecided.is_empty() {
-        text.push_str(&format!(
-            " ({} undecided: docs/report/2026-11-19-shared-crate-dependency-questions.md)",
-            boundary.undecided.join(", ")
-        ));
     }
-    text
 }
 
 pub(super) fn matches(pattern: &str, name: &str) -> bool {

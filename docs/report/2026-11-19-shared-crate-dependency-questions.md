@@ -1,6 +1,6 @@
 # 共享 crate 依赖边界：计划未定的两处与已知局限
 
-日期：2026-11-19。状态：**等待 USER 决定**；决定前检查只执行计划已写明的部分。
+日期：2026-11-19。状态：问题 1 **USER 2026-11-19 选 A**，已写入 plan 03 并由检查执行；问题 2 **等待 USER 决定**。
 
 ## 背景
 
@@ -19,7 +19,6 @@
 ## 问题 1：`stickymd-posix` 可否依赖 core、render、app
 
 计划只说它“无业务逻辑”，没有说它能否用其他 StickyMD crate。现状：它不依赖任何 StickyMD crate，只用 `libc`、`sha2`、`thiserror`。
-检查暂时容忍这三条边（`undecided`），不拒绝也不批准。
 
 | 选项 | 含义 |
 | --- | --- |
@@ -27,7 +26,8 @@
 | B | 可依赖 `stickymd-core`（领域类型），不依赖 render 与 app |
 | C | 不限制 |
 
-批准 A 或 B 后：在 03 crate 表的“边界”列写明，并把检查里对应的 crate 从 `undecided` 移出。
+**决定（USER 2026-11-19）：A。** 已写入 03 crate 表“边界”列与第 97 行之后的说明；检查拒绝 `stickymd-posix` 到任何
+本地 crate 的 normal 或 build 边（dev 边只查成员身份）。
 
 ## 问题 2：原生绑定 crate 的名单
 
