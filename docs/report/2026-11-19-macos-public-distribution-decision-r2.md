@@ -549,3 +549,35 @@ USER 原话：“同意复用规则”。
 - **待验证：**
   - 晋升 workflow 在 R 上签发的来源证明，能否准确描述由 S 编译的字节。验证结果决定发布说明与证明核验命令怎么写。
   - Windows 构建输入指纹的排除表要逐项给出理由，在实施时连同测试一起审查。
+
+## Resolution：签名维持 ad-hoc，以及实验的第一段结果（2026-11-19）
+
+### USER 决定
+
+USER 原话：“维持 ad-hoc”。第二步第 5 项定为方案 A：公开 ZIP 用 ad-hoc 签名，不购买 Developer ID。`02:137` 落盘时按方案 A 改写。
+
+### 决定前的调查（已验证，除非另注）
+
+- **G0：** 一台一次性虚拟机（vanilla macOS 27.2 `26B123`）。USER 执行 `sudo spctl --global-enable` 后：
+  - `spctl --status -v` 为 `assessments enabled` / `developer id disabled`，即“仅 App Store”策略，不是普通 Mac 的默认设置；
+  - Safari 从 localhost 下载实验 ZIP（SHA-256 `385a2b5c…`），自动解压到 `~/Downloads/StickyMD/`，把 ZIP 移进废纸篓；文件夹、`.app` 与 README 都带上 `0083;…;Safari;…` 隔离标记；
+  - 在访达双击后，拦截框写“can't be opened because it was not downloaded from the App Store”，只有“好”与“在访达中显示”两个按钮；
+  - 尚未批准时，系统已为 `.app` 建好 `AppTranslocation` 只读挂载，没有 StickyMD 进程。
+  - G0 只作记录，不作决定依据。
+- **USER 本机：**
+  - Gatekeeper 为 `assessments enabled` / `developer id enabled`；
+  - `/Applications/RSS-Reader.app` 是 ad-hoc 签名，`spctl --assess` 结论为 rejected，但没有 `com.apple.quarantine`，`kMDItemWhereFroms` 为空。
+  - 它打开时没被拦，是因为没有隔离标记；标记为何不在，未查明（推断）。
+- **公开资料：**
+  - Apple 平台安全指南说 Gatekeeper 在第一次打开下载的软件前请求用户批准，必要时从随机的只读位置打开 app（[Gatekeeper and runtime protection](https://support.apple.com/guide/security/sec5599b66df)）。
+  - Apple DTS 的 App Translocation Notes 中，随机化的复现例子是从 Safari 下载、在下载文件夹里启动的 NetNewsWire，移动之后解除；文中说触发条件“not documented and has changed over time”（[forums thread 724969](https://developer.apple.com/forums/thread/724969)）。
+  - NetNewsWire 经过公证，这一点出自本文作者的了解，未核实。所以“公证不能避免随机化”是推断。
+
+### 由此得出
+
+- 选 ad-hoc 的代价是用户第一次打开时要去“隐私与安全性”点“仍要打开”，并输入密码。
+- 随机化来自“便签写在 app 旁边”，与签名方式无关（推断），README 都要写“先用访达移动文件夹”。
+- 第 4 项实验仍要做，但范围改为：
+  - **默认策略：** 在“App Store 与已知开发者”下测 G1 与 G1b，确定拦截框文字与“仍要打开”之后是否随机化；
+  - **移动方式：** G2 与 G3 测用访达移动的方式能否解除随机化；
+  - G4 可省。
