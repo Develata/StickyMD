@@ -299,3 +299,18 @@
   - Windows 的 junction 限于 `note/`、`images/`、`.trash/`；
   - 第 2 轮的 SHOULD_FIX 计数改为 5。
   审查原文在会话 scratchpad（`macdist-installed-location-r3-review-20261119-195109/review.md`）。
+
+## Resolution：USER 全部批准（2026-11-19）
+
+USER 原话：“全部批准”。
+
+- “待 USER 批准”的第 1–6 项全部批准，即：
+  - 位置与名字的规则；
+  - 加锁前的例外与逐级核验；
+  - 运行中目录变化沿用现行合同；
+  - 不自动迁移，目标已有 `note/` 就停下；
+  - 同键互斥是发布门，唤醒只记录；
+  - 安装版在第一个公开的 macOS 包之前完成。
+- 下一步按“改动范围”把规则写进 `docs/plan` 与各投影，然后实现。
+  - 合同落盘与实现都要另行提交，并经审查；本 Resolution 不改动任何合同文本。
+  - 实施时与分发报告修订版的已批准事项（独立的 macOS 发布物、两边一起发、跨提交复用、ad-hoc 签名）一并落盘。
