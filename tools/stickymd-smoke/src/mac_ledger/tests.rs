@@ -175,10 +175,11 @@ fn any_non_pass_under_the_identity_stops_reuse_whatever_the_order() {
     assert_eq!(result.reused.len(), 1);
 }
 
-/// A revoked latest PASS is not reused and an older PASS is not fallen back to; a real rerun
-/// with other evidence after the revocation is reused again.
+/// A revoked latest PASS is not reused and an older PASS is not fallen back to. Nothing recorded
+/// later restores reuse under that identity: neither the same run re-imported with other bytes
+/// nor an older run imported after the revocation can be told apart from a real rerun.
 #[test]
-fn a_revocation_withdraws_its_pass_and_a_new_run_restores_reuse() {
+fn a_revocation_stops_reuse_of_its_row_for_the_identity() {
     let records = [
         run("W02", "PASS", identity(), 'c'),
         run("W02", "PASS", identity(), 'e'),
@@ -187,13 +188,42 @@ fn a_revocation_withdraws_its_pass_and_a_new_run_restores_reuse() {
     let result = plan(&records, &["W02"], &[], &identity(), &built(), None);
     assert!(result.reused.is_empty(), "no fallback to the older PASS");
     assert_eq!(result.rerun.len(), 1);
-    let rerun = [
+    let later = [
         run("W02", "PASS", identity(), 'e'),
         revoke("W02", Revoked::Evidence(hex('e'))),
         run("W02", "PASS", identity(), 'f'),
     ];
-    let result = plan(&rerun, &["W02"], &[], &identity(), &built(), None);
+    let result = plan(&later, &["W02"], &[], &identity(), &built(), None);
+    assert!(
+        result.reused.is_empty(),
+        "a PASS recorded after the revocation"
+    );
+    assert!(result.rerun[0].1.contains("revoked"));
+    // A new identity starts clean.
+    let other = Identity {
+        driver: hex('9'),
+        ..identity()
+    };
+    let result = plan(&later, &["W02"], &[], &other, &built(), None);
+    assert!(result.reused.is_empty() && result.rerun.is_empty());
+    let moved = [
+        run("W02", "PASS", identity(), 'e'),
+        revoke("W02", Revoked::Evidence(hex('e'))),
+        run("W02", "PASS", other.clone(), 'f'),
+    ];
+    let result = plan(&moved, &["W02"], &[], &other, &built(), None);
     assert_eq!(result.reused[0].evidence_sha256, hex('f'));
+    // For a never-reused row the revocation holds in its batch; a new batch is clean.
+    let batched = [
+        in_batch(run("R03", "PASS", identity(), 'e'), "b1"),
+        revoke("R03", Revoked::Evidence(hex('e'))),
+        in_batch(run("R03", "PASS", identity(), 'f'), "b1"),
+        in_batch(run("R03", "PASS", identity(), 'c'), "b2"),
+    ];
+    let b1 = plan(&batched, &["R03"], &[], &identity(), &built(), Some("b1"));
+    assert!(b1.reused.is_empty() && b1.rerun[0].1.contains("revoked"));
+    let b2 = plan(&batched, &["R03"], &[], &identity(), &built(), Some("b2"));
+    assert_eq!(b2.reused[0].evidence_sha256, hex('c'));
     // A revocation of another row or digest changes nothing.
     let records = [
         run("W02", "PASS", identity(), 'e'),
@@ -448,6 +478,19 @@ fn evidence_is_recorded_from_one_read_of_a_vm_run_with_consistent_rows() {
     assert!(refused(evidence_marked(PASSED, VM, ",\"finished\":false")));
     assert!(refused(evidence_marked(PASSED, VM, "")));
     assert!(refused(evidence("", VM)));
+    // An older driver marked a run finished although rows were stopped or never started.
+    let stopped = "{\"id\":\"P16-W06\",\"verdict\":\"NOT_TESTED\",\"checks\":[{\"name\":\"shared stop\",\"verdict\":\"NOT_TESTED\",\"observation\":\"cancelled\"}]}";
+    assert!(refused(evidence(&format!("{PASSED},{stopped}"), VM)));
+    let unstarted = stopped
+        .replace("shared stop", "execution")
+        .replace("cancelled", "not started");
+    assert!(refused(evidence(&format!("{PASSED},{unstarted}"), VM)));
+    // Upper-case digests in the evidence are stored in lower case.
+    let upper = evidence(PASSED, VM).replace(&hex('d'), &hex('D'));
+    let records = from_evidence(upper.as_bytes(), "/e.json", "sha256:image", None, 3).unwrap();
+    assert!(
+        matches!(&records[0], Record::Automated { identity, .. } if identity.driver == hex('d'))
+    );
     assert!(refused(evidence(
         &PASSED.replace("\"verdict\":\"PASS\"}]", "\"verdict\":\"MAYBE\"}]"),
         VM

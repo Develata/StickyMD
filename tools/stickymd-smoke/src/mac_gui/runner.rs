@@ -168,6 +168,8 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     );
     if count(Verdict::Fail) > 0 {
         Err("mac-gui scenario failed; see mac-gui.json".into())
+    } else if cut_short {
+        Err("mac-gui run was cut short; see mac-gui.json".into())
     } else {
         Ok(())
     }

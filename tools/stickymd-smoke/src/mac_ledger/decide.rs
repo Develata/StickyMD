@@ -53,9 +53,11 @@ fn in_batch(row: &str, record_batch: Option<&String>, batch: Option<&str>) -> bo
 
 /// `executable` are the rows `mac-gui` can run; `manual` the rows the USER judges by hand.
 /// For an executable row only its latest PASS recorded under exactly `identity` (product inputs,
-/// driver, image, system) is a candidate. It is not reused when any FAIL or NOT_TESTED of the row
-/// is recorded under that identity, before or after it (wall-clock run starts cannot prove which
-/// came first, so the order is not relied on), or when the USER revoked it. A receipt holds until
+/// driver, image, system) is a candidate. It is not reused when any FAIL or NOT_TESTED of the row,
+/// or any PASS of it the USER revoked, is recorded under that identity, before or after it:
+/// neither wall-clock run starts nor the order of import prove which run came first, so a revoked
+/// PASS counts like a FAIL, and neither re-imported bytes of the same run nor an older run
+/// recorded after the revocation can restore reuse. A receipt holds until
 /// a revocation for its row and inputs is recorded after it. For the
 /// never-reused rows only records of `batch` count, and without a batch nothing does. `built`
 /// is the app at hand, compared for audit only. An app without inputs reuses nothing and has no
@@ -96,8 +98,16 @@ pub(super) fn plan(
                 "never reused: plan with --batch to count an acceptance batch",
             )),
             None => Err(None),
-            Some((_, _, digest, _)) if revoked(records, row, digest) => {
-                Err(Some("the USER revoked its latest PASS for this identity"))
+            Some(_)
+                if records.iter().any(|r| {
+                    same(&r)
+                        && matches!(r, Record::Automated { evidence_sha256, .. }
+                            if revoked(records, row, evidence_sha256))
+                }) =>
+            {
+                Err(Some(
+                    "the USER revoked a PASS of this row for this identity; only a clean record is reused",
+                ))
             }
             Some(_)
                 if records.iter().any(|r| {
@@ -192,19 +202,15 @@ pub(super) fn check_system(records: &[Record]) -> Result<(), String> {
 }
 
 /// The P16 rows of the Phase 16 matrix by mode, in document order, read by the same parser
-/// governance uses (`governance::phase16_modes`), so a row the governance check refuses cannot be
-/// planned or receive a receipt here. Windows-only rows are not macOS manual rows.
+/// governance uses (`governance::phase16_modes`, which refuses a repeated ID and any mode outside
+/// the acceptance ladder), so a row the governance check refuses cannot be planned or receive a
+/// receipt here. Windows-only rows are not macOS manual rows.
 pub(super) fn matrix_rows(matrix: &str) -> Result<Rows, String> {
     let mut rows = Rows::default();
-    let mut seen: Vec<String> = Vec::new();
     for (id, mode) in crate::governance::phase16_modes(matrix)? {
         let Some(id) = id.strip_prefix("P16-") else {
             continue;
         };
-        if seen.iter().any(|s| s == id) {
-            return Err(format!("P16-{id} appears twice in the matrix"));
-        }
-        seen.push(id.to_owned());
         match mode.as_str() {
             "Manual" if WINDOWS_ONLY.contains(&id) => {}
             "Manual" => rows.manual.push(id.to_owned()),

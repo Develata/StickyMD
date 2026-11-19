@@ -22,13 +22,15 @@ pub(super) const HELP: &str =
           for these inputs. It writes no ledger and launches no app.
   record  --evidence <mac-gui.json> --image <digest> [--batch <name>]
           Appends every row of a finished run in the VM. The same evidence is never recorded
-          twice, and a run older than one already recorded for the same identity is refused.
+          twice for a row. Records are not ordered by time: any FAIL, NOT_TESTED or revoked PASS
+          of a row under an identity stops reuse of that row under it.
   receipt --app <StickyMD.app> --rows <ids> --quote <the USER's words> [--batch <name>]
           Appends a USER receipt per Manual row for the app's product inputs on this desktop.
   revoke  --rows <id> (--evidence-sha256 <digest> | --app <StickyMD.app>) --quote <the USER's words>
           Appends the USER's withdrawal of an automated PASS (named by the digest of the evidence
           it was recorded from) or of the row's receipts for the app's product inputs. A
-          withdrawn result stays in the ledger as history and is never reused.
+          withdrawn result stays in the ledger as history. After a withdrawn PASS no PASS of that
+          row under the same identity is reused (for I01-I03 and R03: in the same batch).
   --ledger <file> defaults to dist/evidence/mac-gui-ledger/records.jsonl under the repository.
   --image is the Tart image digest the VM was cloned from (the VM cannot see it).
   --system is a file holding the target VM's sw_vers output, taken just before the run.

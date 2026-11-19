@@ -494,9 +494,23 @@ pub(super) fn from_evidence(
             return Err(format!("P16-{row} appears twice in the evidence"));
         }
         let verdict = field(scenario, "verdict")?;
-        let checks = scenario
-            .field("checks")?
-            .array()?
+        let checks = scenario.field("checks")?.array()?;
+        // A row stopped by the run's shared stop, or never started, means the run was cut short;
+        // an older driver could still mark such a run finished, so the rows themselves decide.
+        for check in checks {
+            let name = field(check, "name")?;
+            let unstarted = name == "execution"
+                && check
+                    .field("observation")
+                    .and_then(|o| Ok(o.string()? == "not started"))
+                    .unwrap_or(false);
+            if name == "shared stop" || unstarted {
+                return Err(format!(
+                    "P16-{row} was not run (check {name:?}); the run was cut short and cannot be recorded"
+                ));
+            }
+        }
+        let checks = checks
             .iter()
             .map(|check| field(check, "verdict"))
             .collect::<Result<Vec<_>, _>>()?;
@@ -530,7 +544,8 @@ pub(super) fn from_evidence(
             recorded_unix,
         };
         record.validate()?;
-        records.push(record);
+        // The ledger stores digests in lower case whatever case the evidence used.
+        records.push(record.normalized());
     }
     if records.is_empty() {
         return Err("the evidence has no rows".into());

@@ -2,8 +2,9 @@
 //! `2026-11-11-macos-gui-rerun-reuse`; anchored on product inputs 2026-11-17; acceptance ladder
 //! 2026-11-19). Every row of a finished `mac-gui` run, every USER receipt and every USER
 //! revocation is appended to one ledger. A later run skips a row whose latest PASS was recorded
-//! for the same product inputs, driver, VM image and system, unless a later FAIL or NOT_TESTED or
-//! a revocation stands against it; a USER receipt holds only for the product inputs it names; the
+//! for the same product inputs, driver, VM image and system, unless any FAIL, NOT_TESTED or
+//! revoked PASS of the row is recorded under them; a USER receipt holds only for the product
+//! inputs it names; the
 //! never-reused rows count only results of the batch being planned. It plans and records; it
 //! launches nothing.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host

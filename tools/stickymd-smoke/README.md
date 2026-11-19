@@ -1016,14 +1016,16 @@ it. Being fully on screen is not completion.
 
 `mac-gui.json` is atomically checkpointed after every scenario with `"finished":false`; only the
 write after the last scenario of a run that was not cut short (cancelled, or stopped after a panic
-or a failed cleanup) says `"finished":true`, and `mac-ledger record` refuses any other file. It records OS,
+or a failed cleanup) says `"finished":true`, and `mac-ledger record` refuses any other file, and
+any file with a row stopped by the shared stop or never started (an older driver could mark such a
+run finished). It records OS,
 VM/override/permission/display facts, fixed config, executable SHA-256, a sorted
 bundle-content manifest SHA-256 (including Info.plist; excluding xattrs), PID,
 fixture hash, timestamped requests, individual injected events, observations,
 checks and row verdicts. Copies are rehashed before launch. Stderr is retained as
 `<ID>-stderr.log`; F01 optionally writes `F01.ppm`. Use a new output directory per
 run to avoid confusing old screenshots/logs with the current JSON. Any FAIL exits
-1; NOT_TESTED alone exits 0. A row aggregates FAIL first, then NOT_TESTED, then
+1, and so does a run cut short; NOT_TESTED alone exits 0. A row aggregates FAIL first, then NOT_TESTED, then
 PASS. The acceptance matrix and qualification ledgers are never updated.
 
 | Row | External oracle | Limits |

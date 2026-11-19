@@ -36,7 +36,7 @@ fn desktop() -> Result<String, String> {
 }
 
 /// Every row of a finished run; the caller checks each against the ledger (`consistent_with`),
-/// which refuses a replay and a run out of order.
+/// which refuses the same evidence recorded twice for a row.
 pub(super) fn recorded(options: &Options) -> Result<Vec<Record>, String> {
     let evidence = options.evidence.as_deref().ok_or("--evidence missing")?;
     let evidence = evidence

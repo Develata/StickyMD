@@ -136,6 +136,7 @@ struct MatrixRow {
 
 /// The rows of the Phase 16 matrix as governance reads and checks them, `(id, mode)` in document
 /// order; the macOS ledger plans from these, so both read one table the same way.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn phase16_modes(content: &str) -> Result<Vec<(String, String)>, String> {
     Ok(
         matrix_rows(content, Path::new("docs/acceptance-cases/phase-16.md"))?
@@ -1203,6 +1204,18 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
         let &[_, _, mode, evidence, status] = row.cells.as_slice() else {
             return Err(at("phase matrix row must contain 5 columns".to_owned()));
         };
+        if rows.iter().any(|seen: &MatrixRow| seen.id == row.id) {
+            return Err(at(format!("{} appears twice", row.id)));
+        }
+        // The macOS matrix uses only the modes of the acceptance ladder (plan 01, Acceptance
+        // Ladder) and the dash of its waiver; other phases' modes would drop out of its plans.
+        if is_macos_matrix(path)
+            && !matches!(mode, "Automated" | "Manual" | "Agent" | "Review" | "—")
+        {
+            return Err(at(format!(
+                "mode `{mode}` is not an acceptance ladder mode of the macOS matrix"
+            )));
+        }
         match mode {
             "Automated" | "Automated local" if matches!(status, "AUTOMATED PASS" | "BLOCKED") => {}
             "Manual" if matches!(status, "MANUAL PASS" | "NOT TESTED" | "BLOCKED") => {}
@@ -1659,12 +1672,18 @@ mod tests {
             "| P16-V04 | act | Review | receipt: r1 | MANUAL PASS |",
             "| P16-V04 | act | Review | judge: j1 | AGENT PASS |",
             "| P16-W01 | act | Automated | judge: j1 | AGENT PASS |",
+            // Other phases' modes would drop out of the macOS plans (neither run nor judged).
+            "| P16-I02 | act | Guided Manual | waits | NOT TESTED |",
+            "| P16-I02 | act | Automated local | run | AUTOMATED PASS |",
+            "| P16-I02 | act | Automated exact candidate | waits | NOT TESTED |",
         ] {
             assert!(
                 matrix_rows(&format!("{header}{bad}\n"), macos).is_err(),
                 "{bad}"
             );
         }
+        let twice = format!("{ladder}| P16-W05 | act | Manual | again | NOT TESTED |\n");
+        assert!(matrix_rows(&twice, macos).is_err(), "an ID appears once");
         let root =
             std::env::temp_dir().join(format!("stickymd-macos-matrix-{}", std::process::id()));
         std::fs::create_dir_all(root.join("docs/acceptance-cases")).unwrap();
