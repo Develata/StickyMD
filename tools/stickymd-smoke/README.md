@@ -1012,7 +1012,13 @@ Polled effects count only when a sample that satisfies them returned by the dead
 a success first seen later is late. Hover animation completion (W03/W04) is dated
 retrospectively: sampling continues 200ms past the deadline, the last sample is the
 rest position, and completion is the first sample from which every later one equals
-it. Being fully on screen is not completion.
+it. Being fully on screen is not completion. Each W03/W04 phase (early leave, hover,
+top band, leave) is one track whose zero is the request of the pointer move: the
+window, and while the pointer is on the strip also the frontmost app, are sampled
+about 10ms apart (plus the query time), every check of the phase reads that stream,
+and the onset sample is the first completion sample. A gap is measured from one
+sample's request to the next sample's return; a check covering a gap over 60ms is
+NOT_TESTED, and a FAIL needs an observed violation.
 
 `mac-gui.json` is atomically checkpointed after every scenario with `"finished":false`; only the
 write after the last scenario of a run that was not cut short (cancelled, or stopped after a panic
@@ -1032,8 +1038,8 @@ PASS. The acceptance matrix and qualification ledgers are never updated.
 | --- | --- | --- |
 | W01 | `lsappinfo` UIElement + Dock AX item titles | Cmd+Tab pixels remain NOT_TESTED; row remains incomplete |
 | W02 | Drag input; CG window bounds/layer/on-screen; persisted `window.dock_edge` | Main display only; 2 DIP ±0.75, top layer >24; no pixel-level strip rendering assertion |
-| W03 | Finder PID from AX remains unchanged, and StickyMD is never frontmost: from the first move onto the strip (the short early-leave dwell included) the frontmost app is read at most 20ms apart and with every window observation; short dwell cancellation; window movement onset and settled bounds | Pre-100ms observation; onset bracket within 90–170ms, sampled every 20ms; gaps >60ms or boundary overlap are NOT_TESTED; a front-app or completion sampling gap over 60ms (measured, not the 20ms target) is NOT_TESTED; completion within earliest bracket onset +140ms +70ms |
-| W04 | Top-band point held 850ms: every sample at the settled expanded bounds (±0.5pt) and StickyMD never frontmost; collapse after leaving | Samples aim at 20ms apart and are judged on measured gaps; a collapsed or partly retracted sample fails even if the window returns; a gap >60ms or a watch that cannot advance is NOT_TESTED; leave onset bracket within 490–570ms; same resolution/completion limits as W03; no Spaces/mixed-DPI evidence |
+| W03 | Finder stays frontmost and StickyMD never is: the front app is read with every window sample from the first move onto the strip through the hover completion (the early-leave dwell included); StickyMD in front fails, another app in front is NOT_TESTED. An early leave after about 35ms moves nothing; hover onset bracket and settled bounds | Every window sample before 90ms must be collapsed; onset bracket within 90–170ms; a gap over 60ms or boundary overlap is NOT_TESTED; an early dwell of 100ms or more leaves the cancellation NOT_TESTED and the hover starts from the strip again; completion within earliest bracket onset +140ms +70ms, NOT_TESTED when the onset bracket is wider than 60ms and the rest is right but late |
+| W04 | Top-band point held 850ms from the move: every sample on screen at the settled expanded bounds (±0.5pt) and StickyMD never frontmost; collapse after leaving | A collapsed, partly retracted or hidden sample fails even if the window returns; a gap over 60ms or a watch cut short is NOT_TESTED; leave onset bracket within 490–570ms; same resolution/completion limits as W03; no Spaces/mixed-DPI evidence |
 | W07 | AX hide, `open` copied bundle; same owned PID alive, visible window and AX frontmost PID | Status item awaited in the AX tree up to 5 s, wait recorded; menu effects polled up to 2000ms, elapsed time recorded; does not prove all launch-service/translocation paths |
 | W08 | Exactly three AX menu items; show back at the same bounds and opacity, topmost layer/config, quit process and saved note | Status item awaited in the AX tree up to 5 s, wait recorded; menu effects polled up to 2000ms, elapsed time recorded; layer is a system fact, not a visual occlusion test |
 | W09 | Toolbar numeric field at layout-derived DIP offsets; CG alpha 40/70/100 and config | Alpha tolerance ±0.015; no full composited-pixel comparison |

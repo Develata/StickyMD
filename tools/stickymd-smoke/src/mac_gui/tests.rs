@@ -324,6 +324,15 @@ struct HoverBackend {
     dip: Option<(u64, u64)>,
     /// Where the window sits during the dip: fully collapsed, or only partly retracted.
     dip_y: f64,
+    /// Since the pointer entered: when the window keeps its bounds but is not on screen.
+    hidden: Option<(u64, u64)>,
+    /// Since the pointer entered: when another app (PID 77) is frontmost.
+    other_front: Option<(u64, u64)>,
+    /// Once: the first window query from this time on, since the pointer entered (or left, when
+    /// the flag is set), takes this many ms and returns the state at its end.
+    slow_window: Option<(bool, u64, u64)>,
+    /// Once: the same for a frontmost-app query, since the pointer entered.
+    slow_front: Option<(u64, u64)>,
 }
 impl HoverBackend {
     fn new() -> Self {
@@ -339,7 +348,53 @@ impl HoverBackend {
             flash_focus: None,
             dip: None,
             dip_y: -478.0,
+            hidden: None,
+            other_front: None,
+            slow_window: None,
+            slow_front: None,
         }
+    }
+    /// Spends a slow query's time when this query is the one it applies to.
+    fn slow(&mut self, window: bool) {
+        let (mark, slow) = match (window, self.slow_window, self.slow_front) {
+            (true, Some((true, at, cost)), _) => (self.left, Some((at, cost))),
+            (true, Some((false, at, cost)), _) => (self.entered, Some((at, cost))),
+            (false, _, slow) => (self.entered, slow),
+            (true, None, _) => (None, None),
+        };
+        let Some((at, cost)) = slow else { return };
+        if mark.is_some_and(|t| self.now - t >= at) {
+            if window {
+                self.slow_window = None;
+            } else {
+                self.slow_front = None;
+            }
+            self.now += cost;
+        }
+    }
+    fn window_now(&self) -> Window {
+        let mut w = if self.within(self.dip) {
+            window(rect(460.0, self.dip_y, 520.0, 480.0), 27)
+        } else if self
+            .entered
+            .is_some_and(|t| (self.expand_at..self.expand_at + 140).contains(&(self.now - t)))
+            || self
+                .left
+                .is_some_and(|t| (self.leave_at..self.leave_at + 140).contains(&(self.now - t)))
+        {
+            window(rect(460.0, -200.0, 520.0, 480.0), 27)
+        } else if self.entered.is_some_and(|t| {
+            let rest = self.expand_at + 140;
+            (rest..rest + self.short_of_rest).contains(&(self.now - t))
+        }) {
+            window(rect(460.0, 12.0, 520.0, 480.0), 27)
+        } else if self.expanded() {
+            window(rect(460.0, 28.0, 520.0, 480.0), 0)
+        } else {
+            window(rect(460.0, -478.0, 520.0, 480.0), 27)
+        };
+        w.onscreen = !self.within(self.hidden);
+        w
     }
     fn within(&self, range: Option<(u64, u64)>) -> bool {
         range.is_some_and(|(from, to)| {
@@ -363,34 +418,23 @@ impl Backend for HoverBackend {
                 self.now += ms;
                 Value::Unit
             }
-            Op::Window => Value::Window(if self.within(self.dip) {
-                window(rect(460.0, self.dip_y, 520.0, 480.0), 27)
-            } else if self
-                .entered
-                .is_some_and(|t| (self.expand_at..self.expand_at + 140).contains(&(self.now - t)))
-                || self
-                    .left
-                    .is_some_and(|t| (self.leave_at..self.leave_at + 140).contains(&(self.now - t)))
-            {
-                window(rect(460.0, -200.0, 520.0, 480.0), 27)
-            } else if self.entered.is_some_and(|t| {
-                let rest = self.expand_at + 140;
-                (rest..rest + self.short_of_rest).contains(&(self.now - t))
-            }) {
-                window(rect(460.0, 12.0, 520.0, 480.0), 27)
-            } else if self.expanded() {
-                window(rect(460.0, 28.0, 520.0, 480.0), 0)
-            } else {
-                window(rect(460.0, -478.0, 520.0, 480.0), 27)
-            }),
+            Op::Window => {
+                self.slow(true);
+                Value::Window(self.window_now())
+            }
             Op::Screen => Value::Rect(rect(0.0, 0.0, 1440.0, 900.0)),
-            Op::Front => Value::Pid(
-                if (self.steals && self.expanded()) || self.within(self.flash_focus) {
-                    42
-                } else {
-                    self.focused
-                },
-            ),
+            Op::Front => {
+                self.slow(false);
+                Value::Pid(
+                    if (self.steals && self.expanded()) || self.within(self.flash_focus) {
+                        42
+                    } else if self.within(self.other_front) {
+                        77
+                    } else {
+                        self.focused
+                    },
+                )
+            }
             Op::Finder => {
                 self.focused = 99;
                 Value::Pid(99)
@@ -460,7 +504,7 @@ fn hover_catches_focus_taken_back_and_a_collapse_undone_in_time() {
     flash.flash_focus = Some((100, 160));
     let row = hover_row(&mut flash, "W03");
     assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
-    assert!(row.json().contains("StickyMD frontmost from Some("));
+    assert!(row.json().contains("StickyMD frontmost at Some("));
     let mut dip = HoverBackend::new();
     dip.dip = Some((900, 960));
     let row = hover_row(&mut dip, "W04");
@@ -484,6 +528,95 @@ fn hover_catches_focus_taken_back_and_a_collapse_undone_in_time() {
         aggregate(&hover_row(&mut outside, "W03").checks),
         Verdict::Pass
     );
+}
+
+fn check(row: &Row, name: &str) -> Verdict {
+    row.checks
+        .iter()
+        .find(|c| c.name == name)
+        .unwrap_or_else(|| panic!("no check {name}: {}", row.json()))
+        .verdict
+}
+
+/// Round 4 of the codex review: the stretches the old checks left unobserved.
+#[test]
+fn hover_tracks_leave_no_unobserved_stretch() {
+    // Expanded at 40-60 ms after the formal move and back before the old first window read.
+    let mut flash = HoverBackend::new();
+    flash.dip = Some((40, 60));
+    flash.dip_y = 28.0;
+    let row = hover_row(&mut flash, "W03");
+    assert_eq!(
+        check(&row, "hover movement onset"),
+        Verdict::Fail,
+        "{}",
+        row.json()
+    );
+    // Hidden in the top band at its settled bounds, then shown again.
+    let mut hidden = HoverBackend::new();
+    hidden.hidden = Some((900, 960));
+    let row = hover_row(&mut hidden, "W04");
+    assert_eq!(
+        check(&row, "top band holds past 500ms"),
+        Verdict::Fail,
+        "{}",
+        row.json()
+    );
+    // Another app in front: the scene changed under the check, which cannot pass or fail.
+    let mut other = HoverBackend::new();
+    other.other_front = Some((150, 200));
+    let row = hover_row(&mut other, "W03");
+    assert_eq!(
+        check(&row, "hover expands without focus"),
+        Verdict::NotTested
+    );
+    assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
+    // The window query after the onset returns after the deadline with the window at rest: the
+    // onset sample dates it, so the sampling cannot tell, rather than a late completion.
+    let mut late_sample = HoverBackend::new();
+    late_sample.slow_window = Some((false, 105, 200));
+    let row = hover_row(&mut late_sample, "W03");
+    assert_eq!(
+        check(&row, "hover expansion completion"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    assert_ne!(aggregate(&row.checks), Verdict::Fail);
+    // The leave onset at 500 ms, the next window read 150 ms later already at rest: the stretch
+    // from the onset sample counts.
+    let mut leave_gap = HoverBackend::new();
+    leave_gap.slow_window = Some((true, 505, 150));
+    let row = hover_row(&mut leave_gap, "W03");
+    assert_eq!(
+        check(&row, "leave collapse completion"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    // A slow front read while focus is taken and given back: the gap counts.
+    let mut slow_front = HoverBackend::new();
+    slow_front.slow_front = Some((450, 80));
+    slow_front.flash_focus = Some((455, 520));
+    let row = hover_row(&mut slow_front, "W03");
+    assert_eq!(
+        check(&row, "hover expands without focus"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    // An early dwell of 100 ms or more may expand: the cancellation is not tested, nothing fails,
+    // and the formal hover starts from the strip again.
+    let mut long_dwell = HoverBackend::new();
+    long_dwell.slow_window = Some((false, 20, 90));
+    let row = hover_row(&mut long_dwell, "W03");
+    assert_eq!(
+        check(&row, "early leave cancels"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
 }
 
 #[test]
@@ -810,18 +943,10 @@ fn hover_completion_is_dated_by_the_rest_position_not_by_entering_the_screen() {
 
 #[test]
 fn rest_dating_and_completion_verdicts() {
-    use super::observation::{completion_verdict, rest_from};
-    let samples = [
-        (100, -200),
-        (120, 12),
-        (140, 28),
-        (160, 12),
-        (180, 28),
-        (200, 28),
-    ];
-    assert_eq!(rest_from(&samples), Some((180, Some(160))));
-    assert_eq!(rest_from(&[(5, 1), (25, 1)]), Some((5, None)));
-    assert_eq!(rest_from::<i32>(&[]), None);
+    use super::observation::{completion_verdict, rest_index};
+    assert_eq!(rest_index(&[-200, 12, 28, 12, 28, 28]), Some(4));
+    assert_eq!(rest_index(&[1, 1]), Some(0));
+    assert_eq!(rest_index::<i32>(&[]), None);
     assert_eq!(completion_verdict(true, 300, Some(280), 304), Verdict::Pass);
     assert_eq!(completion_verdict(true, 304, Some(284), 304), Verdict::Pass);
     assert_eq!(completion_verdict(true, 320, Some(300), 304), Verdict::Fail);

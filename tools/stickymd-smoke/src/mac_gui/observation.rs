@@ -152,17 +152,17 @@ pub(super) fn lsappinfo_type(info: &str) -> Option<&str> {
 /// How long sampling continues past a completion deadline to establish where the window rests.
 pub(super) const REST_MS: u64 = 200;
 
-/// Dates an animation's completion from `(returned_ms, bounds)` samples in time order: the first
-/// sample from which every later one equals the last, which is taken as the rest position. Being
-/// fully on screen is not being finished: a window still 18 DIP short of its rest is on screen
-/// (macOS 27.2 VM, W04). Returns that sample's time and the time of the sample before it.
-pub(super) fn rest_from<T: PartialEq>(samples: &[(u64, T)]) -> Option<(u64, Option<u64>)> {
-    let (_, rest) = samples.last()?;
-    let first = samples
-        .iter()
-        .rposition(|(_, b)| b != rest)
-        .map_or(0, |moving| moving + 1);
-    Some((samples[first].0, first.checked_sub(1).map(|i| samples[i].0)))
+/// The index of the first state from which every later one equals the last, which is taken as
+/// the rest: an animation is complete there. Being fully on screen is not being finished: a
+/// window still 18 DIP short of its rest is on screen (macOS 27.2 VM, W04).
+pub(super) fn rest_index<T: PartialEq>(states: &[T]) -> Option<usize> {
+    let rest = states.last()?;
+    Some(
+        states
+            .iter()
+            .rposition(|s| s != rest)
+            .map_or(0, |moving| moving + 1),
+    )
 }
 
 /// Completion verdict: the rest must be the expected end state, first reached by `deadline`.
