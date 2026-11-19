@@ -86,9 +86,14 @@ pub enum NoteRootError {
     NotADirectory(PathBuf),
     #[error("{} belongs to another user", .0.display())]
     ForeignOwner(PathBuf),
-    /// The level could not be created there: no permission, or a read-only volume.
-    #[error("cannot create {}: {source}", path.display())]
-    NotWritable { path: PathBuf, source: io::Error },
+    /// A level could not be created on the way to `note_root`: no permission, or a read-only
+    /// volume.
+    #[error("cannot create {}: {source}", level.display())]
+    NotWritable {
+        note_root: PathBuf,
+        level: PathBuf,
+        source: io::Error,
+    },
 }
 
 impl NoteRootError {
@@ -96,8 +101,8 @@ impl NoteRootError {
     /// with its prefix and the Note Root it was making (plan 05 startup order).
     pub fn startup_message(&self) -> String {
         match self {
-            Self::NotWritable { path, .. } => {
-                format!("当前目录不可写：{}\n\n{self}", path.display())
+            Self::NotWritable { note_root, .. } => {
+                format!("当前目录不可写：{}\n\n{self}", note_root.display())
             }
             _ => format!("无法确定便签目录：{self}"),
         }
@@ -174,9 +179,9 @@ fn open_installed(start: &Path, key: String) -> Result<NoteRoot, NoteRootError> 
         }
     })?;
     let product_path = start.join(PRODUCT_DIRECTORY);
-    let product = private_level(&support, PRODUCT_DIRECTORY, &product_path)?;
     let path = product_path.join(&key);
-    let handle = private_level(&product, &key, &path)?;
+    let product = private_level(&support, PRODUCT_DIRECTORY, &product_path, &path)?;
+    let handle = private_level(&product, &key, &path, &path)?;
     Ok(NoteRoot {
         mode: Mode::Installed { key },
         path,
@@ -191,6 +196,7 @@ fn private_level(
     parent: &DirectoryHandle,
     name: &str,
     path: &Path,
+    note_root: &Path,
 ) -> Result<DirectoryHandle, NoteRootError> {
     let handle = parent.open_or_create_child(name, true).map_err(|source| {
         if is_not_a_plain_directory(&source) {
@@ -199,7 +205,8 @@ fn private_level(
             || source.kind() == io::ErrorKind::ReadOnlyFilesystem
         {
             NoteRootError::NotWritable {
-                path: path.to_owned(),
+                note_root: note_root.to_owned(),
+                level: path.to_owned(),
                 source,
             }
         } else {

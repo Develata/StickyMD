@@ -69,12 +69,15 @@ pub fn verify_writable(root: &DirectoryHandle) -> Result<(), RuntimePathsError> 
             return Err(error);
         }
         if let Err(error) = root.rename_no_replace(&name, &renamed) {
-            let _ = root.remove_file(&name);
             // A target left by an earlier run with this process ID is not ours to remove: take
-            // the next pair of names.
+            // the next pair of names, once this run's probe is gone. A probe that cannot be
+            // removed makes the directory unreliable, as in plan 05.
             if error.kind() == std::io::ErrorKind::AlreadyExists {
+                root.remove_file(&name)
+                    .map_err(RuntimePathsError::WritableProbeCleanup)?;
                 continue;
             }
+            let _ = root.remove_file(&name);
             return Err(if error.raw_os_error() == Some(ENOTSUP) {
                 RuntimePathsError::VolumeUnsupported(error)
             } else {

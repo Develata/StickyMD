@@ -306,10 +306,13 @@ fn one_key_is_exclusive_and_another_key_runs_beside_it() {
 }
 
 /// Starts both copies (each must be the first) and counts the key directories made.
-fn count_keys(upper: &Path, lower: &Path, roots: &Roots, home: &Path) -> usize {
+/// Starts both copies (each must be the first) and counts the key directories made; then a copy
+/// of the same name in the other location must be the second instance.
+fn count_keys(upper: &Path, lower: &Path, same: &Path, roots: &Roots, home: &Path) -> usize {
     let first = NoteRoot::resolve(upper, roots).unwrap();
     let second = NoteRoot::resolve(lower, roots).unwrap();
     let guards = (primary(&first), primary(&second));
+    assert!(is_secondary(&NoteRoot::resolve(same, roots).unwrap()));
     drop(guards);
     fs::read_dir(home.join("Library/Application Support/StickyMD"))
         .unwrap()
@@ -361,7 +364,8 @@ fn on_a_case_sensitive_volume_case_makes_another_key() {
     };
     let upper = world.app("mount/system", "StickyMD");
     let lower = world.app("mount/system", "stickymd");
-    let outcome = count_keys(&upper, &lower, &roots, &home);
+    let same = world.app("mount/home/Applications", "StickyMD");
+    let outcome = count_keys(&upper, &lower, &same, &roots, &home);
     run(&["detach".as_ref(), "-quiet".as_ref(), mount.as_os_str()]);
     assert_eq!(outcome, 2);
 }
@@ -404,7 +408,7 @@ fn a_bundle_named_only_app_is_refused_with_nothing_written() {
 #[test]
 fn an_unwritable_application_support_keeps_the_unwritable_prefix() {
     let world = World::new("root-unwritable");
-    let executable = world.app("system", "StickyMD");
+    let executable = world.app("system", "Math");
     fs::set_permissions(world.support(), fs::Permissions::from_mode(0o555)).unwrap();
     let result = world.resolve(&executable);
     fs::set_permissions(world.support(), fs::Permissions::from_mode(0o755)).unwrap();
@@ -414,6 +418,9 @@ fn an_unwritable_application_support_keeps_the_unwritable_prefix() {
         "{error:?}"
     );
     let message = error.startup_message();
-    assert!(message.starts_with("当前目录不可写："), "{message}");
-    assert!(message.contains("StickyMD"), "{message}");
+    let note_root = world.support().join("StickyMD/Math");
+    assert!(
+        message.starts_with(&format!("当前目录不可写：{}\n", note_root.display())),
+        "{message}"
+    );
 }
