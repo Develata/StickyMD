@@ -116,8 +116,49 @@ fn commit_and_version(root: &Path, allow_dirty: bool) -> Result<(String, String)
     Ok((commit, repository::workspace_version(root)?))
 }
 
-/// Stages the package next to `output`, archives it as the platform's ZIP there and checks the
-/// archive. An existing ZIP of that name is refused, not replaced.
+/// The product input fingerprint of this checkout, computed the way `build-app.sh` computes it
+/// before it builds: in the repository, with only `HOME` and a fixed `PATH`.
+fn product_inputs(root: &Path) -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set")?;
+    let cargo = std::env::var_os("CARGO")
+        .map(PathBuf::from)
+        .ok_or("run through cargo, so the toolchain's cargo is known")?;
+    let cargo_dir = cargo.parent().ok_or("cargo has no directory")?;
+    let output = Command::new(&cargo)
+        .current_dir(root)
+        .env_clear()
+        .env("HOME", &home)
+        .env(
+            "PATH",
+            format!("/usr/bin:/bin:/usr/sbin:/sbin:{}", cargo_dir.display()),
+        )
+        .args([
+            "run",
+            "--quiet",
+            "--locked",
+            "-p",
+            "stickymd-smoke",
+            "--",
+            "mac-ledger",
+            "inputs",
+            "--home",
+        ])
+        .arg(&home)
+        .output()
+        .map_err(|error| format!("cannot compute the product inputs: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cannot compute the product inputs: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// Stages the package in a private directory beside `output`, archives and checks it there, and
+/// only then moves the ZIP into `output`; an existing ZIP of that name is refused, not replaced,
+/// and a failure leaves nothing behind. An exact package (`allow_dirty` false) must hold the
+/// bundle this commit builds: its recorded product inputs must equal this checkout's.
 pub(crate) fn build(
     root: &Path,
     app: &Path,
@@ -125,11 +166,45 @@ pub(crate) fn build(
     allow_dirty: bool,
 ) -> Result<Facts, String> {
     let (commit, version) = commit_and_version(root, allow_dirty)?;
-    check_app(app, &version)?;
+    let (inputs, _) = check_app(app, &version)?;
+    if !allow_dirty {
+        let expected = product_inputs(root)?;
+        if inputs != expected {
+            return Err(format!(
+                "the bundle was built from product inputs {inputs}, this commit has {expected}"
+            ));
+        }
+    }
     let zip = output.join(Platform::MacOsArm64.archive_name(&version));
     if fs::symlink_metadata(&zip).is_ok() {
         return Err(format!("{} already exists", zip.display()));
     }
+    let private = output.join(format!(".stickymd-macos-package-{}", std::process::id()));
+    fs::create_dir(&private)
+        .map_err(|error| format!("cannot create {}: {error}", private.display()))?;
+    let outcome = package_in(root, app, &private, &commit, &version, allow_dirty).and_then(
+        |(staged, mut facts)| {
+            fs::rename(&staged, &zip).map_err(|error| error.to_string())?;
+            facts.zip = zip.clone();
+            Ok(facts)
+        },
+    );
+    let cleanup = fs::remove_dir_all(&private);
+    let facts = outcome?;
+    cleanup.map_err(|error| format!("cannot remove {}: {error}", private.display()))?;
+    Ok(facts)
+}
+
+/// Builds and checks the ZIP inside `private`; returns its path there.
+fn package_in(
+    root: &Path,
+    app: &Path,
+    private: &Path,
+    commit: &str,
+    version: &str,
+    allow_dirty: bool,
+) -> Result<(PathBuf, Facts), String> {
+    let zip = private.join(Platform::MacOsArm64.archive_name(version));
     let staging = TemporaryDirectory::new("macos-package")?;
     let directory = staging.path().join("StickyMD");
     fs::create_dir(&directory).map_err(|error| error.to_string())?;
@@ -149,7 +224,7 @@ pub(crate) fn build(
         fs::create_dir_all(path.parent().ok_or("a package file has no parent")?)
             .map_err(|error| error.to_string())?;
         match source {
-            Source::Readme => fs::write(&path, content::readme(&version, &commit, !allow_dirty))
+            Source::Readme => fs::write(&path, content::readme(version, commit, !allow_dirty))
                 .map_err(|error| error.to_string())?,
             Source::License(relative) => {
                 fs::write(&path, notices::normalized_license(&root.join(relative))?)
@@ -175,7 +250,8 @@ pub(crate) fn build(
         ],
     )?;
     staging.close()?;
-    verify(&zip, Some(&commit), &version)
+    let facts = verify(&zip, Some(commit), version)?;
+    Ok((zip, facts))
 }
 
 /// Takes `zip` apart in a fresh directory and checks it holds exactly the inventory, names
@@ -185,20 +261,25 @@ pub(crate) fn verify(
     expected_commit: Option<&str>,
     version: &str,
 ) -> Result<Facts, String> {
-    let extracted = TemporaryDirectory::new("macos-package-check")?;
+    // Every fact below comes from one private copy, so a file replaced meanwhile cannot mix in.
+    let snapshot = TemporaryDirectory::new("macos-package-snapshot")?;
+    let copy = snapshot.path().join("package.zip");
+    fs::copy(zip, &copy).map_err(|error| format!("cannot snapshot {}: {error}", zip.display()))?;
+    let zip_sha256 = integrity::sha256(&copy)?;
+    let extracted = snapshot.path().join("extracted");
     run(
         "/usr/bin/ditto",
         &[
             "-x".as_ref(),
             "-k".as_ref(),
-            zip.as_os_str(),
-            extracted.path().as_os_str(),
+            copy.as_os_str(),
+            extracted.as_os_str(),
         ],
     )?;
     let mut files = BTreeSet::new();
-    collect_files(extracted.path(), extracted.path(), &mut files)?;
+    collect_files(&extracted, &extracted, &mut files)?;
     content::check_files(&files)?;
-    let readme = fs::read_to_string(extracted.path().join(README))
+    let readme = fs::read_to_string(extracted.join(README))
         .map_err(|error| format!("cannot read the package README: {error}"))?;
     let source_commit = content::source_commit(&readme)?;
     if let Some(expected) = expected_commit
@@ -208,23 +289,24 @@ pub(crate) fn verify(
             "the package names source {source_commit}, expected {expected}"
         ));
     }
-    if !readme.contains(&format!("\nVersion: {version}\n")) {
-        return Err(format!(
-            "the package README does not name version {version}"
-        ));
+    // The README is generated text: it must be exactly what this version and source give.
+    if readme != content::readme(version, &source_commit, true)
+        && readme != content::readme(version, &source_commit, false)
+    {
+        return Err("the package README is not the one this version generates".to_owned());
     }
-    let app = extracted.path().join(APP);
+    let app = extracted.join(APP);
     let (app_inputs, signing) = check_app(&app, version)?;
     let facts = Facts {
         zip: zip.to_owned(),
-        zip_sha256: integrity::sha256(zip)?,
+        zip_sha256,
         source_commit,
         executable_sha256: integrity::sha256(&app.join("Contents/MacOS/StickyMD"))?,
         bundle_sha256: bundle_hash(&app)?,
         app_inputs,
         signing,
     };
-    extracted.close()?;
+    snapshot.close()?;
     Ok(facts)
 }
 
@@ -242,6 +324,12 @@ fn collect_files(root: &Path, directory: &Path, into: &mut BTreeSet<String>) -> 
             .ok_or("a package path is not UTF-8")?
             .to_owned();
         if kind.is_dir() {
+            // An empty directory has no file to show it, so each one is checked on its own.
+            if !content::is_inventory_directory(&relative) {
+                return Err(format!(
+                    "the package holds an unexpected directory {relative}"
+                ));
+            }
             collect_files(root, &path, into)?;
         } else if kind.is_file() {
             into.insert(relative);

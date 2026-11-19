@@ -249,6 +249,18 @@ pub(crate) fn verify_reuse(
             return Err(format!("{label} must be a full commit SHA: {commit}"));
         }
     }
+    let exists = |commit: &str| {
+        Command::new("git")
+            .current_dir(root)
+            .args(["cat-file", "-e", &format!("{commit}^{{commit}}")])
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    for commit in [build, release] {
+        if !exists(commit) {
+            return Err(format!("{commit} is not a commit in this repository"));
+        }
+    }
     if build.eq_ignore_ascii_case(release) {
         return Ok(Reuse::SameCommit);
     }
@@ -454,6 +466,8 @@ mod tests {
             fingerprint(root, mac, first).unwrap()
         );
         assert!(verify_reuse(root, win, "short", first).is_err());
+        let unknown = "0".repeat(40);
+        assert!(verify_reuse(root, win, &unknown, &unknown).is_err());
         // Each host's manifest reaches the other platform: features merge, and the macOS bundle
         // records a fingerprint that reads every manifest.
         let error = verify_reuse(root, win, win_change, mac_manifest).unwrap_err();

@@ -706,7 +706,9 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
 - **规则：** 每个平台的发布物记下构建来源提交 S。发布提交 R（打 tag 的提交，即 Windows Source Freeze 的提交）可以沿用在 S 上构建的某一平台
   发布物，当且仅当 S 是 R 的祖先，且该平台的 Platform Build Input Fingerprint（`01`）在 S 与 R 上相同。两个平台对称适用：修 macOS 不重建 Windows，
   反之亦然。同一提交上一侧偶发失败时只重跑那一侧的 workflow。
-- **指纹：** 在提交的 Git tree 上，对每个输入路径取路径、文件模式与内容 SHA-256，按路径排序后连同平台名与算法版本计算 SHA-256；不读工作树。
+- **指纹（算法 v1）：** 在提交的 Git tree 上，对每个输入路径按路径字节排序，依次写入路径、文件模式、内容长度与内容本身，连同平台名与算法版本
+  计算一个 SHA-256；不读工作树。两个 SHA 只有都是本仓库中的提交时才参与判定。发布 workflow 不得调用仓库内的 action（governance 检查），
+  否则那些 action 也要计入。
 - **排除表**（逐项理由；其余路径，包括未分类的新路径，都是输入）：
   - 两个平台共同：`docs/`（文档不进入发布物，也不参与构建）；根目录的 `AGENTS.md`、`CHANGELOG.md`、`CONTRIBUTING.md`、`README.md`、
     `README.en.md`、`README.zh-CN.md`、`SECURITY.md`（包内 README.txt 由打包工具中的模板生成）；`experiments/`（不是 workspace 成员）；
@@ -1126,12 +1128,13 @@ private release lab。
    `workflow_dispatch` operation 执行对应动作。每次 dispatch 显式携带发布提交 SHA、tag、Windows 候选的 workflow run id 与 artifact id、
    macOS 候选的 workflow run id、attempt 与 artifact id，以及 Release Attachment Set（`01`）：六个文件的名称与预期 SHA-256。
    TAG 用它们核对两个候选与 R；DRAFT 的授权固定这六件；PUBLISH 引用 DRAFT 批准的同一组。
-4. 每个 operation 都确认两个 artifact id 分别属于指定的 run（macOS 还要属于指定的 attempt），按 id 下载，逐文件比对 Release Attachment Set，
+4. 每个 operation 都确认两个 artifact id 分别属于指定的 run（macOS 的 artifact 名带 attempt，再核对该 attempt 的结论；Windows 沿用现行做法，
+   核对 run 的结论与 artifact 名，按 attempt 收紧 Windows 另行决定），按 id 下载，逐文件比对 Release Attachment Set，
    并核对每个平台的构建来源等于发布提交或按 #platform-artifact-reuse 可沿用。TAG operation 只为发布提交创建 tag；DRAFT operation 为每个平台以其 checksum 文件列出的文件生成
    provenance attestation、为每个 ZIP 附 SBOM attestation，然后创建或更新 draft，并在上传后核对草稿上的附件恰为该集合；
    PUBLISH operation 重新下载草稿的全部附件，比对完整的文件名集合与哈希（缺件、多件、残留的旧附件都拒绝），再只把既有 draft 公开。
 
-任一 promotion operation 都不得重新运行 Cargo build/package。artifact run id、attempt、构建来源或 hash 不匹配必须 fail closed；
+任一 promotion operation 都不得重新运行 Cargo build/package。artifact run id、artifact id、（macOS）attempt、构建来源或 hash 不匹配必须 fail closed；
 不得自动选择“最新同 commit build”替代已验收 artifact，也不得只发布一个平台。TAG/DRAFT/PUBLISH 仍是三个独立 USER authority，
 前一项批准不授权后一项。
 

@@ -194,6 +194,11 @@ fn path_domains(path: &str) -> u64 {
     if path.starts_with("dist/evidence/") {
         return 0;
     }
+    // The manifests of the hosts take part in the workspace's feature resolution: enabling a
+    // feature of a shared dependency there changes the Windows build with Cargo.lock unchanged.
+    if HOST_MANIFESTS.contains(&path) {
+        return GLOBAL;
+    }
     if is_unqualified_host(path) {
         return 0;
     }
@@ -231,6 +236,11 @@ fn path_domains(path: &str) -> u64 {
 /// the module ledger neither reads nor records (plan 11 Phase 16). `crates/stickymd-posix/` is the
 /// native POSIX layer of the macOS (later the Debian) host and is empty on Windows.
 const UNQUALIFIED_HOSTS: &[&str] = &["apps/stickymd-mac/", "crates/stickymd-posix/"];
+/// Their manifests are the exception: see `path_domains`.
+const HOST_MANIFESTS: &[&str] = &[
+    "apps/stickymd-mac/Cargo.toml",
+    "crates/stickymd-posix/Cargo.toml",
+];
 
 fn is_unqualified_host(path: &str) -> bool {
     UNQUALIFIED_HOSTS

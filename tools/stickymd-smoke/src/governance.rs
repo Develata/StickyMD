@@ -547,7 +547,14 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         }
     }
     for (workflow, content) in [("release", &release), ("release-macos", &release_macos)] {
-        for forbidden in ["push:\n    tags:", "gh release", "actions/attest@"] {
+        // The platform build input fingerprint counts each release workflow but no local action,
+        // so a release workflow may not call one (plan 11 #platform-artifact-reuse).
+        for forbidden in [
+            "push:\n    tags:",
+            "gh release",
+            "actions/attest@",
+            "uses: ./",
+        ] {
             if content.contains(forbidden) {
                 return Err(format!(
                     "candidate workflow {workflow} must not tag, attest, or create releases: `{forbidden}`"
@@ -1204,16 +1211,17 @@ fn frozen_trace_ids(content: &str, path: &Path, prefix: &str) -> Result<Vec<u16>
     Ok(ids)
 }
 
-/// Whether `path` is the Phase 16 (macOS host) acceptance matrix.
 /// The macOS matrices, whose automated rows may wait as `NOT TESTED` for a run in the VM.
 fn is_macos_matrix(path: &Path) -> bool {
     path.file_name()
         .is_some_and(|name| name == "phase-16.md" || name == "phase-18.md")
 }
 
-/// Only Phase 16 keeps its historical in-matrix USER waivers; later waivers are receipts.
-fn allows_matrix_waiver(path: &Path) -> bool {
+/// Only the Phase 16 rows that already carry an in-matrix USER waiver keep that form; every
+/// later waiver is a receipt (plan 11 #macos-release-gate).
+fn allows_matrix_waiver(path: &Path, id: &str) -> bool {
     path.file_name().is_some_and(|name| name == "phase-16.md")
+        && matches!(id, "P16-W15" | "P16-W16")
 }
 
 fn read_matrix_rows(path: &Path) -> Result<Vec<MatrixRow>, String> {
@@ -1241,7 +1249,7 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
             // `NOT TESTED`), so its automated rows may wait, and its one waiver has no mode.
             // Readiness still refuses a waiting automated row when `phase 16` is judged.
             "Automated" if status == "NOT TESTED" && is_macos_matrix(path) => {}
-            "—" if status == "USER 豁免" && allows_matrix_waiver(path) => {}
+            "—" if status == "USER 豁免" && allows_matrix_waiver(path, row.id) => {}
             _ => {
                 return Err(at(format!(
                     "invalid mode/status pair `{mode}` / `{status}`"
@@ -1659,6 +1667,9 @@ mod tests {
         let phase18 = std::path::Path::new("phase-18.md");
         assert!(matrix_rows(&waiting, phase18).is_ok());
         assert!(matrix_rows(&waived, phase18).is_err());
+        // Nor any other Phase 16 row: R03 in particular takes no waiver.
+        let r03 = format!("{header}| P16-R03 | act | — | USER 2026-11-10 | USER 豁免 |\n");
+        assert!(matrix_rows(&r03, std::path::Path::new("phase-16.md")).is_err());
         let other = std::path::Path::new("phase-15.md");
         for document in [&waiting, &waived] {
             assert_eq!(matrix_rows(document, macos).unwrap().len(), 1);

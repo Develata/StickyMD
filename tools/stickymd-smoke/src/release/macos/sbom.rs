@@ -105,15 +105,21 @@ pub(crate) fn publish(root: &Path, zip: &Path) -> Result<Published, String> {
     for file in ["Cargo.lock", "Cargo.toml"] {
         fs::copy(root.join(file), context.path().join(file)).map_err(|error| error.to_string())?;
     }
+    // One private copy is scanned and hashed, so the SBOM and the checksum describe the same ZIP.
+    let snapshot = context.path().join("snapshot.zip");
+    fs::copy(zip, &snapshot)
+        .map_err(|error| format!("cannot snapshot {}: {error}", zip.display()))?;
+    let zip_sha256 = integrity::sha256(&snapshot)?;
     run(
         "/usr/bin/ditto",
         &[
             "-x".as_ref(),
             "-k".as_ref(),
-            zip.as_os_str(),
+            snapshot.as_os_str(),
             context.path().join("package").as_os_str(),
         ],
     )?;
+    fs::remove_file(&snapshot).map_err(|error| error.to_string())?;
     let output = TemporaryDirectory::new("macos-sbom-output")?;
     let generated = output.path().join("sbom.json");
     let status = Command::new(&syft)
@@ -135,13 +141,17 @@ pub(crate) fn publish(root: &Path, zip: &Path) -> Result<Published, String> {
     let sbom = directory.join(platform.sbom_file());
     atomic_evidence::write_new(&sbom, &bytes)?;
     let sbom_sha256 = integrity::sha256(&sbom)?;
-    let zip_sha256 = integrity::sha256(zip)?;
     let manifest = integrity::render_checksums(&[
         (zip_name, zip_sha256.as_str()),
         (platform.sbom_file(), sbom_sha256.as_str()),
     ])?;
     let checksums = directory.join(platform.checksum_file());
-    atomic_evidence::write_new(&checksums, manifest.as_bytes())?;
+    // The pair is published together: an SBOM without its checksum file is taken back, so a
+    // retry is not stopped by a half-written set.
+    if let Err(error) = atomic_evidence::write_new(&checksums, manifest.as_bytes()) {
+        let _ = fs::remove_file(&sbom);
+        return Err(error);
+    }
     context.close()?;
     output.close()?;
     Ok(Published {
