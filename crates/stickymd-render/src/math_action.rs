@@ -162,19 +162,38 @@ mod tests {
         );
     }
 
+    /// One Comrak parse of `source` with the Preview's options.
+    fn parse_once(source: &str) -> Duration {
+        let started = Instant::now();
+        let arena = Arena::new();
+        std::hint::black_box(parse_document(&arena, source, &markdown_options()));
+        started.elapsed()
+    }
+
     /// Plan 07's check: three untimed clicks, then 100 timed ones whose
     /// nearest-rank p95 (the 95th sample) stays under 50 ms. Up to five
     /// samples may exceed it, so a stall of a shared CI host that slows two or
     /// three clicks does not fail the check, while a slowdown of every click
     /// still does. Samples print in run order to show such stalls.
+    ///
+    /// A parse of the same document precedes each click, so a stall slows
+    /// both alike. The ratio of their medians, which removes the host's
+    /// speed, only prints for now: it is the baseline for a ratio check.
     #[test]
     #[ignore = "Release-only Phase 11-B math button receipt"]
     fn phase11b_performance_math_action_one_mib() {
-        let input = snapshot(&workload("plain text filler "));
+        let source = workload("plain text filler ");
+        let input = snapshot(&source);
         for _ in 0..3 {
+            parse_once(&source);
             button(&input);
         }
-        let mut samples: Vec<_> = (0..100).map(|_| button(&input)).collect();
+        let mut parses = Vec::with_capacity(100);
+        let mut samples = Vec::with_capacity(100);
+        for _ in 0..100 {
+            parses.push(parse_once(&source));
+            samples.push(button(&input));
+        }
         let in_run_order: Vec<_> = samples
             .iter()
             .map(|sample| format!("{:.1}", sample.as_secs_f64() * 1e3))
@@ -183,8 +202,13 @@ mod tests {
             "phase11b math_action_1mib_1000_math samples_ms=[{}]",
             in_run_order.join(",")
         );
+        let (parse, _, _) = summary(&mut parses);
         let (median, p95, max) = summary(&mut samples);
         eprintln!("phase11b math_action_1mib_1000_math median={median:?} p95={p95:?} max={max:?}");
+        eprintln!(
+            "phase11b math_action_1mib_1000_math parse_median={parse:?} median_over_parse={:.2}",
+            median.as_secs_f64() / parse.as_secs_f64()
+        );
         assert!(p95 < Duration::from_millis(50), "p95={p95:?}");
     }
 
@@ -198,14 +222,7 @@ mod tests {
         // shifted paragraphs would cost hundreds of parses.
         let source = workload("[r]: u\nplain text filler plain text filler\n\n");
         let input = snapshot(&source);
-        let mut parses: Vec<_> = (0..9)
-            .map(|_| {
-                let started = Instant::now();
-                let arena = Arena::new();
-                parse_document(&arena, &source, &markdown_options());
-                started.elapsed()
-            })
-            .collect();
+        let mut parses: Vec<_> = (0..9).map(|_| parse_once(&source)).collect();
         let mut samples: Vec<_> = (0..9).map(|_| button(&input)).collect();
         let (parse, _, _) = summary(&mut parses);
         let (median, p95, max) = summary(&mut samples);
