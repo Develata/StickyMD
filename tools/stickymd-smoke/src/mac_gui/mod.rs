@@ -1,6 +1,6 @@
 //! External GUI acceptance only; no app control channel or qualification authority.
-//! I01/I02 need configured real IMEs and composition assertions; I03 needs system repeat
-//! settings. W05 and W06's Space switch need Spaces/full-screen orchestration. W10 reads the
+//! I01/I02 need configured real IMEs and composition assertions. I03 injects the key repeats
+//! itself and checks them against a TextEdit control (`hold`). W05 and W06's Space switch need Spaces/full-screen orchestration. W10 reads the
 //! presenter diagnostic and captures the window (`visual`). W12's logout is not driven: it ends
 //! the VM's GUI session, and loginwindow ends this driver with it; W12 sends the product the quit request and the
 //! SIGTERM a logout brings directly instead. R03 opens a quarantined copy through LaunchServices
@@ -19,6 +19,9 @@ mod fault;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod focus;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod hold;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod hover;

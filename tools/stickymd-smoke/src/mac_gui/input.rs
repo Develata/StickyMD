@@ -20,6 +20,12 @@ pub(super) enum Event {
         down: bool,
         flags: u64,
     },
+    /// A key-down flagged as the system's automatic repeat of a held key
+    /// (`kCGKeyboardEventAutorepeat`): a posted key is not repeated by the system itself.
+    Repeat {
+        code: u16,
+        flags: u64,
+    },
     Button {
         at: Point,
         down: bool,
@@ -130,6 +136,20 @@ impl<B: Sender> Injection<B> {
             for key in keys {
                 s.press(Held::Key(*key, None))?;
                 s.backend.pause(12);
+            }
+            Ok(())
+        })
+    }
+    /// Holds key `code` (no Unicode payload, so the input method sees the real key): one key-down,
+    /// then `repeats` key-downs flagged as automatic repeats `every` ms apart, then the key-up
+    /// (always, as for every operation). I03 (USER 2026-11-19: the repeats are the driver's).
+    pub fn hold(&mut self, code: u16, repeats: usize, every: u64) -> Result<(), String> {
+        self.operation(|s| {
+            s.press(Held::Key(code, None))?;
+            for _ in 0..repeats {
+                s.backend.pause(every);
+                let flags = s.flags();
+                s.backend.send(Event::Repeat { code, flags })?;
             }
             Ok(())
         })

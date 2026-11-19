@@ -65,6 +65,58 @@ pub(super) fn command(program: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 impl Live<'_> {
+    /// I03's control: a scratch document in TextEdit, held as the product will be. Keys go only
+    /// to TextEdit while it is frontmost with that document's window focused; TextEdit is then
+    /// killed (its scratch document is never saved).
+    fn control(&mut self) -> Result<Value, String> {
+        use super::hold::{EVERY_MS, KEY_A, REPEATS};
+        let path = self.session.path().join("control.txt");
+        fs::write(&path, b"").map_err(|e| e.to_string())?;
+        command(
+            "/usr/bin/open",
+            &["-a", "TextEdit", &path.to_string_lossy()],
+        )?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let pid = loop {
+            let found = command("/usr/bin/pgrep", &["-x", "TextEdit"]).unwrap_or_default();
+            let pid = found
+                .split_whitespace()
+                .next()
+                .and_then(|p| p.parse::<u32>().ok());
+            if let Some(pid) = pid
+                && ax::focused_window(pid).is_ok_and(|(title, _)| title.starts_with("control"))
+            {
+                break pid;
+            }
+            if Instant::now() >= deadline {
+                return Ok(Value::Text(
+                    "TextEdit showed no control document within 10 s".into(),
+                ));
+            }
+            events::wait(200)?;
+        };
+        ax::activate(pid)?;
+        events::wait(500)?;
+        let ready = ax::front().is_ok_and(|front| front == pid)
+            && ax::focused_window(pid).is_ok_and(|(title, _)| title.starts_with("control"));
+        let result = if ready {
+            let before = windows::on_screen()?;
+            self.input.hold(KEY_A, REPEATS, EVERY_MS)?;
+            events::wait(300)?;
+            let after = windows::on_screen()?;
+            let text = ax::focused_element(pid).map(|(_, v)| v).unwrap_or_default();
+            // Escape closes the accent menu while TextEdit is still in front.
+            if ax::front().is_ok_and(|front| front == pid) {
+                self.input.chord(&[53])?;
+            }
+            Value::Control(super::hold::appeared(&before, &after), text)
+        } else {
+            Value::Text("the TextEdit control document was not frontmost and focused".into())
+        };
+        let _ = command("/bin/kill", &["-9", &pid.to_string()]);
+        events::wait(500)?;
+        Ok(result)
+    }
     /// Asks the product (started with the diagnostic) to publish it, waits for a new file (the
     /// product renames a fresh file over the old one) and reads the presenter counters from it.
     fn presenter(&mut self) -> Result<[u64; 4], String> {
@@ -371,6 +423,14 @@ impl Backend for Live<'_> {
                 }
             }
             Op::Presenter => Value::Counters(self.presenter()?),
+            Op::Hold(code, repeats, every) => {
+                self.require_key_target(KeyTarget::Note)?;
+                self.input.hold(code, repeats, every)?;
+                events::wait(60)?;
+                Value::Unit
+            }
+            Op::OnScreen => Value::Windows(windows::on_screen()?),
+            Op::Control => self.control()?,
             Op::Focus => {
                 // No wait here: W06 samples the window from the moment focus is asked for.
                 ax::activate(self.pid)?;

@@ -13,6 +13,7 @@ unsafe extern "C" {
     fn CGEventCreateKeyboardEvent(source: Cf, key: u16, down: bool) -> Cf;
     fn CGEventKeyboardSetUnicodeString(event: Cf, len: usize, text: *const u16);
     fn CGEventSetFlags(event: Cf, flags: u64);
+    fn CGEventSetIntegerValueField(event: Cf, field: u32, value: i64);
     fn CGEventCreateMouseEvent(source: Cf, kind: u32, at: Point, button: u32) -> Cf;
     fn CGEventPost(tap: u32, event: Cf);
     fn CGEventPostToPid(pid: i32, event: Cf);
@@ -104,6 +105,15 @@ impl Sender for Events {
                     }
                     e
                 }
+                Event::Repeat { code, flags } => {
+                    let e = CGEventCreateKeyboardEvent(std::ptr::null(), code, true);
+                    if !e.is_null() {
+                        CGEventSetFlags(e, flags);
+                        // kCGKeyboardEventAutorepeat
+                        CGEventSetIntegerValueField(e, 8, 1);
+                    }
+                    e
+                }
                 Event::Button { at, down } => {
                     CGEventCreateMouseEvent(std::ptr::null(), if down { 1 } else { 2 }, at, 0)
                 }
@@ -111,7 +121,7 @@ impl Sender for Events {
                     CGEventCreateMouseEvent(std::ptr::null(), if dragging { 6 } else { 5 }, at, 0)
                 }
             })?;
-            if matches!(event, Event::Key { down: true, .. }) {
+            if matches!(event, Event::Key { down: true, .. } | Event::Repeat { .. }) {
                 self.last_key_ms = Some(self.started.elapsed().as_millis() as u64);
             }
             CGEventPost(0, native.0);

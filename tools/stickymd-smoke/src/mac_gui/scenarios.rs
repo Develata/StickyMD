@@ -50,12 +50,22 @@ pub(super) enum Op {
     /// The product's frame presenter counters `[presented, deferred, created, failed]` from a
     /// freshly published diagnostic (the product must have been started with it).
     Presenter,
+    /// Hold a key in the product's note window: one key-down, `repeats` injected automatic
+    /// repeats `every` ms apart, the key-up.
+    Hold(u16, usize, u64),
+    /// The on-screen windows as (number, owner PID, owner name).
+    OnScreen,
+    /// I03's TextEdit control: the same hold in a scratch TextEdit document. Answers the windows
+    /// that appeared and the document's text, or `Text` with the reason the control could not run.
+    Control,
 }
 #[derive(Clone, Debug)]
 pub(super) enum Value {
     Unit,
     Image(super::pixels::Image),
     Counters([u64; 4]),
+    Windows(Vec<super::hold::OnScreen>),
+    Control(Vec<super::hold::OnScreen>, String),
     Time(u64),
     Text(String),
     Window(Window),
@@ -165,9 +175,6 @@ pub(super) fn skipped(id: &str) -> Option<&'static str> {
         "I01" | "I02" => {
             Some("requires real configured IME, candidate UI and 13 composition cases")
         }
-        "I03" => {
-            Some("requires controlled system repeat settings and sustained physical key semantics")
-        }
         "W05" => Some("requires Spaces/full-screen desktop orchestration"),
         "W15" => Some("requires Windows regression machine"),
         _ => None,
@@ -197,6 +204,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, id: &str) -> Result<(), Str
             }
         }
         "W10" => super::visual::caret(d)?,
+        "I03" => super::hold::run(d)?,
         "W03" | "W04" => super::hover::run(d, id == "W04")?,
         "W07" => {
             d.op(Op::Menu("隐藏".into()))?;

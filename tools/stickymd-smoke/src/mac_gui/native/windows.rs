@@ -67,6 +67,23 @@ pub(in crate::mac_gui) fn all(pid: u32) -> Result<Vec<Window>, String> {
     }
     Ok(windows)
 }
+/// The on-screen windows (desktop elements excluded): number, owner PID, owner name.
+pub(in crate::mac_gui) fn on_screen() -> Result<Vec<(u32, u32, String)>, String> {
+    // SAFETY: OnScreenOnly | ExcludeDesktopElements; owned Create-rule array.
+    let array = Owned::take(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
+    let mut out = Vec::new();
+    for dict in array.array()? {
+        out.push((
+            dict.get("kCGWindowNumber")?.number()? as u32,
+            dict.get("kCGWindowOwnerPID")?.number()? as u32,
+            dict.get("kCGWindowOwnerName")
+                .ok()
+                .and_then(|n| n.text())
+                .unwrap_or_default(),
+        ));
+    }
+    Ok(out)
+}
 /// The owner name of an on-screen window of `pid`, to name what covers the product in a
 /// diagnostic; no titles or image capture.
 pub(in crate::mac_gui) fn owner_name(pid: u32) -> Option<String> {
