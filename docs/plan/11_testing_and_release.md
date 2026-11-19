@@ -4,8 +4,8 @@
 
 - `Layer`: Verification
 - `Status`: Approved Contract
-- `Version`: 0.4.0
-- `Last Review`: 2026-11-14
+- `Version`: 0.5.0
+- `Last Review`: 2026-11-19
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -314,6 +314,47 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
   - macOS 在 `mac-test` 虚拟机中做视觉验收，Windows 宿主另测。
 - **落地时同步更新：** 落地时取代的现行条款、验收行与测试，列在 `phase-17.md` 的“落地时更新”一节。
 
+<a id="phase-18-macos-distribution"></a>
+### Phase 18：macOS 安装版与公开分发（下一版本）
+
+- **依据：** [分发报告（修订版）](../report/2026-11-19-macos-public-distribution-decision-r2.md)与[安装版报告（修订版）](../report/2026-11-19-macos-installed-note-location-r2.md)
+  末尾的各 Resolution，USER 批准 2026-11-19。两份初版已被取代。
+- **时机：** 与 Phase 17 同属下一版本。安装版必须在第一个公开的 macOS 包之前完成。
+- **验收：** 见 `docs/acceptance-cases/phase-18.md`；自动化由 Rust CLI 持有，`tools/smoke/phase-18.ps1` 是稳定入口。与 Phase 16 一样，Phase 18 不进入
+  Windows 的全阶段 readiness，只在点名时判定。
+- **每版的 macOS 发布证据**（候选收据、虚拟机运行、R03、下载路径、USER waiver）记在该版的候选报告与 ignored `dist/evidence/` 下，不写进验收矩阵：
+  `docs/acceptance-cases/` 下的任何改动都会使 Windows 全部资格化模块的收据失效（#module-success-ledger）。矩阵只记录 Phase 18 实现本身的验收。
+
+| 里程碑 | 交付 | 出口 |
+| --- | --- | --- |
+| M1 | 合同：`01` Note Root 与发布术语、`02` #portable-and-installed、`04`、`05` #note-root、`08`、`09`、本节与 Release 合同；投影与矩阵 | `phase 00` 通过 |
+| M2 | 安装版：位置判定纯函数、键、家目录查询、Note Root 句柄链与加锁、启动阶段与运行期共用一个 `note/` 句柄、提示文字 | 矩阵 L 系列的单元、存储与实例测试；Windows 行为不变 |
+| M3 | 发布流水线：`release-macos` workflow、darwin 依赖图的第三方声明、macOS SBOM 与 checksum、按 artifact id 的候选收据与本地晋升、晋升 workflow 的完整附件比对、Platform Build Input Fingerprint 与沿用规则 | 矩阵 P 系列的工具测试；两个 workflow 都能 dispatch（实际 dispatch 由 USER 授权） |
+| M4 | 验证 | 本机基线；`mac-test` 中的 `mac-gui`；候选包上的下载路径（矩阵 D 系列） |
+| M5 | macOS 就绪核对：按 #macos-release-gate 逐行核对候选收据、账本与 waiver 收据 | 坏样本能判出失败；下一版本发布前必须完成 |
+
+<a id="macos-release-gate"></a>
+#### macOS 发布门
+
+| 类别 | 判定 | 证据身份 | 可否 waiver |
+| --- | --- | --- | --- |
+| 包完整性：各文件哈希、ad-hoc 签名校验（`codesign --verify --strict`）、仅 arm64、Info.plist lint、ZIP 成员白名单、SBOM、第三方声明 | `release-macos` workflow 与本地晋升 | macOS 候选收据 | 不可 |
+| 同键互斥：同一个键的两个安装副本互斥（`05` #note-root 第 9 条） | 实例测试 | 源码身份 | 不可 |
+| R03：最终 ZIP 实际触发随机化后提示退出，所观察的目录不写文件；没有触发随机化为 `NOT TESTED` | R03 探针；验收阶梯获批后由程序判定 | 本次发布的 ZIP | 不可 |
+| 真实下载路径：浏览器下载、拖进“应用程序”或移动文件夹、访达首开、保存、退出后重开（安装版报告第 8 节） | 在第一个公开包的候选上做一次；签名方式或 macOS 大版本改变时重做（USER 按建议定为“只在需要时做”） | 做那次的 ZIP | 不可（需要做的那一版） |
+| Phase 16 中依赖 app 运行的行 | 各自的工具（`mac-gui`、`mac-resources`、`mac-latency`），或获批的阶梯办法；否则 USER 收据 | 本次发布的 bundle | 逐行 USER waiver |
+| Phase 16 中不依赖发布字节的行（如 S01 存储测试） | 源码测试 | 源码身份 | 按现行规则 |
+
+- **按行判定，不看退出码。** `mac-gui` 有 `NOT TESTED` 行时仍成功退出，发布门逐行检查。
+- **waiver 与收据分开。** 不可 waiver 的行必须 PASS。可 waiver 的行要么 PASS，要么保持 `NOT TESTED` 并有一份绑定本候选的 USER waiver 收据。
+  缺行、`FAIL`、身份不符都不能形成 macOS 就绪。
+- **绑定字节，不只绑定指纹。** 虚拟机运行证据中的 bundle 清单 SHA-256 与可执行文件 SHA-256，必须分别等于候选 ZIP 解出的那份 bundle；
+  账本里同指纹、不同字节的 PASS，在发布门中不算数。按 #platform-artifact-reuse 沿用的字节不变，其证据随之有效。
+- **阶梯办法的前提：** 验收阶梯中的程序与 agent 判定，要先用坏样本证明能判出失败，才能用于发布门。
+- **门不过，整个版本不发布。** 获准的附件集合只有“Windows + macOS”一种（#release-attachment-set）；不使用整版例外。
+  若 macOS 暂不可用，是否放宽这一条由 USER 另行决定。
+- macOS 就绪与 Windows readiness 是两份独立判定，发布需要两者都成立；Windows readiness 的判定标准、附件与晋升输入不因 macOS 改变。
+
 <a id="qualification-process-isolation"></a>
 ### GUI qualification process isolation
 
@@ -510,7 +551,8 @@ SHA-256、target 与 harness。Source Freeze 是 source-only evidence 和动态 
 发布字节。相同 source commit 的独立 Windows build 只有在另行证明完整 reproducible-build contract 后
 才可要求 bit-identical；v0.1.0 不作该声明。
 
-唯一 Release Exact Artifact 必须来自已批准 Source Freeze 的 GitHub `release` workflow：
+唯一的 Windows Release Exact Artifact 必须来自已批准 Source Freeze 的 GitHub `release` workflow（构建来源可以是按
+#platform-artifact-reuse 可沿用的祖先提交）；macOS 集合见本节末的 macOS 小节：
 
 ```text
 Source Freeze
@@ -605,7 +647,78 @@ ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
   由 `ver` 输出读取（按控制台代码页有损解码后只取 ASCII 版本号）；读取失败记为 `UNKNOWN` 并使收据无效，不得以
   `OS` 环境变量（`Windows_NT`）代替；
 - freeze 后 source/manifest/lock/runtime asset 或 release tooling 变化仍要求重建 Source Freeze。下游证据由
-  evidence class 决定：exact-byte evidence 必须重建；module evidence 只在其 registry 输入指纹变化时 stale。
+  evidence class 决定：exact-byte evidence 必须重建；module evidence 只在其 registry 输入指纹变化时 stale。新的 Source Freeze 上，
+  某一平台的发布物按 #platform-artifact-reuse 可以沿用时，原样重新 Promote 同一 artifact，不重新构建。
+
+<a id="macos-release-artifact"></a>
+#### macOS 发布物、候选收据与晋升（Phase 18）
+
+macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文件、SBOM、候选收据、staging 目录与 resolver。
+
+- **构建：** `release-macos` workflow 只接受 `workflow_dispatch`，运行在 `xcode-27` runner 上，候选提交必须在 `origin/main` 上。它先以
+  `xcode-select` 选定 Xcode 27.2（SDK macOS 27.2），再用 `build-app.sh` 构建并 ad-hoc 签名，并留一份构建记录：`sw_vers`、Xcode 与 SDK 版本、
+  `cargo -V`、`rustc -vV`、产品输入指纹（#phase-16-macos-host）、`codesign -dv` 的结果、架构与 `LC_BUILD_VERSION`。签名维持 ad-hoc（`02` macOS 节）。
+- **打包：** Rust CLI 生成包目录，`ditto -c -k --norsrc --keepParent` 打包：
+
+  ```text
+  StickyMD-<version>-macos-arm64-portable.zip
+  └─ StickyMD/
+     ├─ StickyMD.app
+     ├─ README.txt                第一次打开、安装版与便携版、升级与迁移步骤；含 Source commit 行
+     ├─ LICENSE.txt
+     ├─ THIRD_PARTY_NOTICES.txt   以 stickymd-mac 为根、aarch64-apple-darwin 为目标的依赖图
+     └─ licenses/
+        ├─ SIL-OFL-1.1.txt
+        └─ KaTeX-fonts-NOTICE.txt
+
+  SHA256SUMS-macos-arm64.txt      ZIP 与 SBOM 两行
+  SBOM-macos-arm64.spdx.json
+  ```
+
+  不预建 `note/`。workflow 把 ZIP 重新解出后校验：成员白名单、`codesign --verify --strict`、仅 arm64、Info.plist lint 与 `StickyMDInputs`、
+  README 的 Source commit 行；然后上传。
+- **artifact 名带 attempt：** `stickymd-macos-arm64-release-<attempt>`，每个 attempt 的 artifact 因此可以区分；候选收据记录该成功 attempt
+  实际产出的 artifact id。
+- **本地晋升（macOS 主机）：** 按 run id 与 attempt 查询该 attempt 的结论（须为 `success`，workflow 须为 `release-macos`），按 artifact id 下载，
+  与用户提供的副本逐字节比对，再校验 checksum、SBOM、包结构、签名与架构，然后原子 staging：
+
+  ```text
+  dist/exact-candidate-macos/
+  ├─ StickyMD-<version>-macos-arm64-portable.zip
+  ├─ SHA256SUMS-macos-arm64.txt
+  ├─ SBOM-macos-arm64.spdx.json
+  └─ StickyMD/StickyMD.app
+  ```
+
+  全部校验通过后才写 `dist/evidence/release-candidate-macos.json`。receipt 记录构建来源 SHA、version、`Cargo.lock` SHA-256、产品输入指纹、
+  workflow run/attempt、artifact id/name、ZIP/checksum 文件/SBOM/可执行文件/bundle 清单的 SHA-256、target 与签名方式 `AD_HOC`，
+  不记录机器绝对路径与发布提交。macOS 的 artifact-bound runner 只经这个 resolver 取得 bundle。
+- **与发布提交的关系：** Windows 的 Source Freeze 在 Windows 主机上，macOS 晋升不读它。晋升时以当前 clean HEAD 为发布提交，要求构建来源等于它
+  或按 #platform-artifact-reuse 可以沿用；macOS 就绪核对时，以发布提交再复核同一条件。
+- **失败路径：** 与 Windows 相同，fail closed：下载不完整、attempt 不是 `success`、artifact 不属于该 attempt、哈希、checksum、SBOM、签名、架构或包结构
+  不符时，既有 macOS candidate 不得被半更新，也不写 receipt；receipt 缺失时 resolver 拒绝使用 staging 目录，不从本地构建补位。
+
+<a id="platform-artifact-reuse"></a>
+#### 跨提交沿用平台发布物（USER 批准 2026-11-19）
+
+- **规则：** 每个平台的发布物记下构建来源提交 S。发布提交 R（打 tag 的提交，即 Windows Source Freeze 的提交）可以沿用在 S 上构建的某一平台
+  发布物，当且仅当 S 是 R 的祖先，且该平台的 Platform Build Input Fingerprint（`01`）在 S 与 R 上相同。两个平台对称适用：修 macOS 不重建 Windows，
+  反之亦然。同一提交上一侧偶发失败时只重跑那一侧的 workflow。
+- **指纹：** 在提交的 Git tree 上，对每个输入路径取路径、文件模式与内容 SHA-256，按路径排序后连同平台名与算法版本计算 SHA-256；不读工作树。
+- **排除表**（逐项理由；其余路径，包括未分类的新路径，都是输入）：
+  - 两个平台共同：`docs/`（文档不进入发布物，也不参与构建）；根目录的 `AGENTS.md`、`CHANGELOG.md`、`CONTRIBUTING.md`、`README.md`、
+    `README.en.md`、`README.zh-CN.md`、`SECURITY.md`（包内 README.txt 由打包工具中的模板生成）；`experiments/`（不是 workspace 成员）；
+    `tests/`（测试夹具，不进入发布物）；`tools/manual/`（人工步骤说明）；`assets/readme/`（仓库 README 的插图）；`.github/` 下除本平台发布 workflow
+    之外的文件（CI、定时任务与晋升 workflow 不构建发布物）。
+  - 仅 Windows 排除：`apps/stickymd-mac/` 与 `crates/stickymd-posix/`（只在 macOS 编译；它们的清单进入 `Cargo.lock`，而 `Cargo.lock` 仍是输入）、
+    `.github/workflows/release-macos.yml`。
+  - 仅 macOS 排除：`apps/stickymd-win/`、`.github/workflows/release.yml`、`tools/release/`（Windows 的 PowerShell 打包与校验脚本）。
+  - 版本号、`Cargo.toml`、`Cargo.lock`、`rust-toolchain.toml`、`deny.toml`、`LICENSE`、`THIRD_PARTY_NOTICES.md`、`assets/` 的其余部分按原样计入。
+    `tools/stickymd-smoke/` 整体是两个平台的打包与校验工具，算作输入：只改它的提交会让两个平台都重建，这是保守的代价。
+- **沿用后：** 字节不变，人工观察、模块证据与 exact-byte 证据随之有效。同一 artifact 在 R 的 Source Freeze 上原样重新 Promote，得到同一 candidate
+  receipt；exact-byte 门在同一份字节上重跑（本地运行，代价小）。
+- **来源：** 发布说明为每个平台写明构建来源提交、run 与 attempt。晋升 workflow 在 R 上签发的来源证明描述的是晋升这次运行，不是构建；
+  它对“由 S 编译的字节”能否准确表述，待第一次沿用时核实（未验证）。
 
 <a id="module-success-ledger"></a>
 ### Qualification Module Registry 与 last-success ledger
@@ -987,21 +1100,25 @@ private release lab。
 
 候选构建与发布晋升必须分离，禁止 tag 事件重新 build 已验收 candidate：
 
-1. `release.yml` 只接受显式 `workflow_dispatch`，从 Source Freeze 构建、测试、deny、检查 manifest、
-   native-runtime import、生成 portable ZIP/checksums/license/SBOM 并上传 workflow artifact；它不创建 tag、
-   draft 或 publish。
-2. 本地下载并 Promote 该 artifact，完成全部 artifact-bound qualification，readiness 必须为 `READY`。
+1. `release.yml`（Windows）与 `release-macos.yml`（macOS，#macos-release-artifact）只接受显式 `workflow_dispatch`，分别从
+   Source Freeze 或可沿用的构建来源提交构建、测试、deny、检查 manifest、（Windows）native-runtime import 或（macOS）签名与架构、
+   生成 portable ZIP/checksums/license/SBOM 并上传 workflow artifact；它们不创建 tag、draft 或 publish。两个平台各自 dispatch，
+   一侧失败只重跑那一侧。
+2. 两个平台分别本地下载并 Promote 各自的 artifact，完成全部 artifact-bound qualification：Windows readiness 必须为 `READY`，
+   macOS 就绪按 #macos-release-gate 成立。
 3. USER 分别授权 TAG、DRAFT-RELEASE、PUBLISH 后，`promote-release.yml` 以独立
-   `workflow_dispatch` operation 执行对应动作。每次 dispatch 显式携带 source SHA、原 candidate
-   workflow run id、预期 ZIP/SBOM SHA-256 与 tag。
-4. TAG operation 只为 exact source 创建 tag；DRAFT operation 从指定历史 workflow run 下载同一 artifact，
-   重新校验预期 hash 后生成 provenance/SBOM attestation 并创建 draft；PUBLISH operation 在重新下载并校验
-   draft assets 后只把既有 draft 公开。
+   `workflow_dispatch` operation 执行对应动作。每次 dispatch 显式携带发布提交 SHA、tag、Windows 候选的 workflow run id、
+   macOS 候选的 workflow run id 与 attempt，以及 Release Attachment Set（`01`）：六个文件的名称与预期 SHA-256。
+4. 每个 operation 都从指定的 run 下载两个平台的 artifact，逐文件比对 Release Attachment Set，并核对每个平台的构建来源等于发布提交或按
+   #platform-artifact-reuse 可沿用。TAG operation 只为发布提交创建 tag；DRAFT operation 为每个平台以其 checksum 文件列出的文件生成
+   provenance attestation、为每个 ZIP 附 SBOM attestation，然后创建或更新 draft，并在上传后核对草稿上的附件恰为该集合；
+   PUBLISH operation 重新下载草稿的全部附件，比对完整的文件名集合与哈希（缺件、多件、残留的旧附件都拒绝），再只把既有 draft 公开。
 
-任一 promotion operation 都不得重新运行 Cargo build/package。artifact run id 或 hash 不匹配必须 fail closed；
-不得自动选择“最新同 commit build”替代已验收 artifact。TAG/DRAFT/PUBLISH 仍是三个独立 USER authority，
+任一 promotion operation 都不得重新运行 Cargo build/package。artifact run id、attempt、构建来源或 hash 不匹配必须 fail closed；
+不得自动选择“最新同 commit build”替代已验收 artifact，也不得只发布一个平台。TAG/DRAFT/PUBLISH 仍是三个独立 USER authority，
 前一项批准不授权后一项。
 
+<a id="release-attachment-set"></a>
 ### 发布物
 
 ```text
@@ -1019,11 +1136,15 @@ SHA256SUMS.txt
 SBOM.spdx.json
 ```
 
+下一版本起（Phase 18），同一个 Release 还附 macOS 集合（#macos-release-artifact）：`StickyMD-<version>-macos-arm64-portable.zip`、
+`SHA256SUMS-macos-arm64.txt` 与 `SBOM-macos-arm64.spdx.json`。Windows 三件的文件名与字节不变，Scoop 读取的清单因此也不变。
+获准的附件集合只有这六件一种（#release-attachment-set）。
+
 - v0.1.0 不发布独立 symbols ZIP；若未来版本新增调试符号资产，必须先更新本合同、打包
   allowlist 与 exact-artifact 校验，不能把未生成的文件列为强制发布物。
 - 不预创建用户 `note/`（首次运行创建）。
 - v1 不提供：MSI、MSIX、Microsoft Store、自动更新器、管理员安装、
-  Program Files 安装。代码签名可后续加入，不阻塞开源 v1。
+  Program Files 安装，macOS 的 pkg 安装器、DMG 与 Mac App Store。Windows 代码签名可后续加入，不阻塞开源 v1；macOS 维持 ad-hoc 签名（`02`）。
 - License：MIT；数学字体为 OFL 1.1，release 必须附带相应声明。
 
 ### unsafe 边界合同
@@ -1044,6 +1165,8 @@ SBOM.spdx.json
 ## Failure Paths
 
 - release gate 未过（测试/内存/体积）：不发布。
+- 任一平台的发布门未过（Windows readiness 不是 `READY`，或 macOS 就绪不成立）：整个版本不发布，不只发布另一个平台。
+- 草稿上的附件与 Release Attachment Set 不一致（缺件、多件、残留旧附件或哈希不符）：拒绝 DRAFT 或 PUBLISH。
 - 依赖 advisory：按 scheduled 报告处理，不静默忽略。
 - 手工验收未完成的 draft release：不得公开。
 - Phase smoke 入口缺失、矩阵缺失或矩阵声称无可重复证据的 PASS：阶段 gate 失败。
@@ -1078,4 +1201,4 @@ Rust smoke CLI 的 task 实现、fuzz 引擎、golden 容差策略。CLI 可整�
 
 ## Non-Goals
 
-自动更新、遥测上报、在线 CI 缓存之外的云服务、多平台发布。
+自动更新、遥测上报、在线 CI 缓存之外的云服务、Windows x64 与 macOS arm64 之外的平台发布（Debian 交付形态另行批准）。

@@ -4,8 +4,8 @@
 
 - `Layer`: Foundation
 - `Status`: Governing Rule
-- `Version`: 0.3.0
-- `Last Review`: 2026-11-10
+- `Version`: 0.4.0
+- `Last Review`: 2026-11-19
 - `Scope`: 固定 StickyMD 核心术语的定义、权威来源、等价性边界与生命周期；全仓库文档与代码命名必须使用本表术语
 
 每个术语包含四个字段：
@@ -21,28 +21,36 @@
 
 ### StickyMD
 
-- **Definition**：一个以 Rust 为主体、无 WebView 的便携式 Markdown 桌面草稿纸程序。一个程序目录即一张便签。当前交付形态为 Windows 11 x64；共享实现面向 Windows、Debian、macOS（`02` 平台节），非 Windows 交付形态须另行批准。
+- **Definition**：一个以 Rust 为主体、无 WebView 的 Markdown 桌面草稿纸程序。一个 Note Root 即一张便签。当前交付形态为 Windows 11 x64 便携版与 macOS 27+ arm64（便携版与安装版，`02` 平台节）；共享实现面向 Windows、Debian、macOS，Debian 交付形态须另行批准。
 - **Authority**：`docs/plan/02_positioning_and_scope.md` 的本体定义。
 - **Not equivalent to**：Markdown IDE、通用 Markdown 编辑器、知识管理工具、文档管理器。
-- **Lifetime**：进程启动至退出；其数据身份持久于程序目录。
+- **Lifetime**：进程启动至退出；其数据身份持久于 Note Root。
 
 ### Program Directory
 
-- **Definition**：包含 `StickyMD.exe` 的目录（canonical 化后的真实路径）。它是便签的身份边界与单实例判定单位。
-- **Authority**：文件系统本身（canonical 路径哈希用于实例互斥）。
-- **Not equivalent to**：进程名、EXE 文件名、当前工作目录（CWD）。
-- **Lifetime**：持久。复制整个目录即产生一张新便签。
+- **Definition**：Windows 为包含 `StickyMD.exe` 的目录；macOS 为包含 `StickyMD.app` 的目录，开发构建（可执行文件不在 bundle 里）为可执行文件的父目录。均取 canonical 化后的真实路径。便携形态下它同时是 Note Root。
+- **Authority**：文件系统本身（Windows 以 canonical 路径哈希做实例互斥；macOS 以 Note Root 句柄加锁，`05` #program-directory-identity）。
+- **Not equivalent to**：进程名、EXE 文件名、当前工作目录（CWD）；macOS 安装版的 Note Root。
+- **Lifetime**：持久。便携形态下复制整个目录即产生一张新便签。
+
+<a id="note-root"></a>
+### Note Root
+
+- **Definition**：包含 `note/` 的目录，是便签的身份边界与单实例判定单位。Windows 与 macOS 便携版的 Note Root 是 Program Directory；macOS 安装版（`.app` 直接位于 `/Applications` 或 `<家目录>/Applications`）的 Note Root 是 `<家目录>/Library/Application Support/StickyMD/<键>/`，键由 bundle 的目录名得出（`05` #note-root）。
+- **Authority**：启动时的位置判定（`05` #note-root），一次进程只判定一次；macOS 宿主持有它的目录句柄，实例锁与 Note Directory 都从这个句柄得出。
+- **Not equivalent to**：路径字符串；Note Directory；用户自选的数据目录；按失败换用的备用位置（`02` 禁止任何 fallback）。
+- **Lifetime**：持久。运行中被移动、替换或删除时按 `05` 现行合同处理，程序不自动迁移便签。
 
 ### Note Directory
 
-- **Definition**：`<program-dir>/note/`，包含 `note.md`、`config.toml`、`images/`、`.trash/` 的运行时数据目录。
+- **Definition**：`<note-root>/note/`，包含 `note.md`、`config.toml`、`images/`、`.trash/` 的运行时数据目录。
 - **Authority**：文件系统；程序启动时若不存在则创建。
-- **Not equivalent to**：Program Directory；也不是任何用户自定义的任意文件夹。
-- **Lifetime**：首次运行时创建，随目录持久存在。
+- **Not equivalent to**：Note Root、Program Directory；也不是任何用户自定义的任意文件夹。
+- **Lifetime**：首次运行时创建，随 Note Root 持久存在。
 
 ### Canonical Note
 
-- **Definition**：`<program-dir>/note/note.md`，唯一的持久工作文档。
+- **Definition**：`<note-root>/note/note.md`，唯一的持久工作文档。
 - **Authority**：程序未运行时，磁盘上的 `note.md` 是 durable canonical representation；程序运行时，DocumentState 是唯一权威工作状态，`note.md` 是其 durable projection。
 - **Not equivalent to**：Preview、导出副本、临时文件 `note.md.tmp`。
 - **Lifetime**：首次保存/创建后持久存在；外部删除时可由内存内容原子恢复。
@@ -304,24 +312,47 @@
 
 ### Release Exact Artifact
 
-- **Definition**：由批准 Source Freeze 的 GitHub `release` workflow 构建、校验并上传的单一 Windows x64
-  artifact 集合，包含 portable ZIP、`SHA256SUMS.txt` 与 `SBOM.spdx.json`。它是拟发布字节的唯一来源。
+- **Definition**：某一平台的 GitHub 发布 workflow 构建、校验并上传的该平台 artifact 集合，是该平台拟发布字节的唯一来源：
+  Windows x64 由 `release` workflow 产出 portable ZIP、`SHA256SUMS.txt` 与 `SBOM.spdx.json`；macOS arm64 由 `release-macos`
+  workflow 产出 portable ZIP、`SHA256SUMS-macos-arm64.txt` 与 `SBOM-macos-arm64.spdx.json`（`11` #release-artifact-authority）。
+  构建来源提交是批准的 Source Freeze 的提交，或按 Platform Build Input Fingerprint 可以沿用的祖先提交（`11` #platform-artifact-reuse）。
 - **Authority**：成功 workflow run/attempt 的 artifact id，加上下载后对 checksum、SBOM、包结构、portable
   runtime 与成员 hash 的重新验证。
-- **Not equivalent to**：同 commit 的本地 build、source equivalence、可复现构建证明、tag/draft/publish。
+- **Not equivalent to**：同 commit 的本地 build、source equivalence、可复现构建证明、tag/draft/publish；另一平台的 artifact 集合。
 - **Lifetime**：workflow artifact 产生后存在；只有经 Promote 后才能成为本地 exact qualification 的输入。
 
 ### Promoted Candidate
 
-- **Definition**：已下载并通过完整 artifact 自校验后，被原子复制到 ignored canonical staging
-  `dist/exact-candidate/` 的 Release Exact Artifact。candidate receipt 绑定 source SHA、workflow run/attempt、
-  artifact id/name、ZIP/EXE/SBOM SHA-256，且不记录机器绝对路径。
+- **Definition**：已下载并通过完整 artifact 自校验后，被原子复制到该平台 ignored canonical staging 的 Release Exact
+  Artifact：Windows 为 `dist/exact-candidate/`，macOS 为 `dist/exact-candidate-macos/`，两者各有 receipt，互不替换。candidate receipt
+  绑定构建来源 SHA、workflow run/attempt、artifact id/name 与该平台各文件（Windows：ZIP/EXE/SBOM；macOS：ZIP/checksum 文件/SBOM、
+  可执行文件与 bundle 清单）的 SHA-256，且不记录机器绝对路径与发布提交，所以同一 artifact 在沿用它的发布提交上原样重新 Promote
+  得到同一 receipt。
 - **Authority**：Rust qualification promotion transaction 与 canonical staging 中重新校验的字节。
 - **Not equivalent to**：Local Preflight Build、任意 downloaded ZIP、remote workflow 仅成功、source-only receipt。
-- **Lifetime**：从成功 Promote 到任何 source/manifest/lock/release tooling 变化或下一次 Promote；替换 candidate
-  会使所有旧 artifact-bound receipt stale。同一 Release Exact Artifact（相同 workflow run/attempt/artifact id 与字节）
+- **Lifetime**：从成功 Promote 到该平台的 Platform Build Input Fingerprint 不再允许沿用它、或该平台下一次 Promote；替换某一平台的
+  candidate 会使该平台所有旧 artifact-bound receipt stale，另一平台不受影响。同一 Release Exact Artifact（相同 workflow run/attempt/artifact id 与字节）
   原样重新 Promote 得到同一 candidate receipt；按其摘要绑定的人工观察日志因此仍然有效，exact-byte evidence 仍须
   每次 Promote 重验。
+
+<a id="platform-build-input-fingerprint"></a>
+### Platform Build Input Fingerprint
+
+- **Definition**：某一平台（Windows x64 或 macOS arm64）能进入该平台发布物的全部 tracked 文件，加上该平台的构建、打包与校验工具，
+  在某个提交的 Git tree 上按排序计算的 SHA-256 内容身份。版本号与 `Cargo.lock` 按原样计入；排除表只列可证明不进入该平台发布物、
+  也不参与其构建与校验的路径，未分类的路径一律算作输入（`11` #platform-artifact-reuse）。
+- **Authority**：`stickymd-smoke` 的平台输入分类表与提交的 tree 内容；不读工作树。
+- **Not equivalent to**：Qualification Module Fingerprint；macOS 账本的产品输入指纹（后者规范化版本号、包含构建身份、读工作树）；source commit。
+- **Lifetime**：随提交存在；同一平台在两个提交上相同，是跨提交沿用该平台发布物的必要条件。
+
+<a id="release-attachment-set"></a>
+### Release Attachment Set
+
+- **Definition**：一个 GitHub Release 获准附带的完整文件集合及各文件的 SHA-256。获准的集合只有一种：Windows x64 三件加 macOS arm64 三件，
+  两个平台同版发布（USER 决定 2026-11-19）。
+- **Authority**：USER 的 DRAFT 授权写明这一集合；PUBLISH 授权引用 DRAFT 已批准的同一组，晋升 workflow 逐文件比对名称与哈希。
+- **Not equivalent to**：草稿上实际存在的文件（缺件、多件或残留的旧附件都使比对失败）；某一平台的 Release Exact Artifact。
+- **Lifetime**：从 DRAFT 授权到 PUBLISH 完成；任一文件变化即需新的授权。
 
 ### Source-bound Evidence
 

@@ -13,9 +13,11 @@
 
 StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown 临时草稿纸。
 
-- 一个程序目录就是一张便签的身份边界。
-- 首版永远只编辑一个 canonical working note：`<program-dir>/note/note.md`。
-- 纯 portable：解压即用，无安装器，不写 AppData / Registry。
+- 一个 Note Root 就是一张便签的身份边界：Windows 与 macOS 便携版的 Note Root 是程序目录；macOS 安装版（`StickyMD.app`
+  直接在“应用程序”里）的 Note Root 是 `~/Library/Application Support/StickyMD/<app 名>/`（`docs/plan/05` #note-root）。
+- 首版永远只编辑一个 canonical working note：`<note-root>/note/note.md`。
+- 无安装器：Windows 纯 portable，解压即用，不写 AppData / Registry；macOS 拖进“应用程序”即为安装版，放在别处即为便携版，
+  模式只由位置决定，任何失败都不回退到别的位置。
 - 核心本体对象只有：Note、Document Text、Preview、Managed Image Asset、Runtime Config、Window Placement、Editor Session。
 
 当前仓库状态：**`v0.2.0` 已从 exact source
@@ -34,6 +36,10 @@ macOS 版从本版本源码本机构建、不提供下载，0.2.0 构建的验�
 `v0.1.0` 仍为 `64690ab8f86f63f3cbfeabbb0961276978c8f26d`；历史报告与
 ignored evidence 保留各自资格化身份。各版本的 tag 和既有资产都不得被后续 `main`
 文档或维护提交冒充为已重建，后续提交不自动继承 exact-artifact 身份或任何当版发布特例。
+
+下一版本起（Phase 18，USER 批准 2026-11-19），一个 Release 同时附 Windows x64 与 macOS arm64 两个平台的集合，两边一起发；
+“exact source”改为每个平台各记一个构建来源提交：某一平台的发布物在其 Platform Build Input Fingerprint 不变时可以沿用祖先提交上的构建
+（`docs/plan/11_testing_and_release.md#platform-artifact-reuse`），tag 指向发布提交，发布说明为每个平台写明构建来源。
 
 产品 runtime 继续维持 v1 冻结边界：StickyMD 是一张 Markdown 草稿，不进入通用编辑器、知识管理、
 插件、云、AI 或网络服务方向。外部 Issue 与 Pull Request 已开放，但代码贡献必须先讨论并确认范围；

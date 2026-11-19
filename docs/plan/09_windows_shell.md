@@ -4,8 +4,8 @@
 
 - `Layer`: Capability
 - `Status`: Approved Contract
-- `Version`: 0.4.0
-- `Last Review`: 2026-11-14
+- `Version`: 0.4.1
+- `Last Review`: 2026-11-19
 - `Scope`: 窗口生命周期、托盘、置顶、透明度、主题、dock 状态机、多显示器、DPI、单实例唤醒；Windows 实现细节与核心行为契约分离
 
 ---
@@ -287,8 +287,8 @@ USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-de
 | Top 收起 | 窗口保持原尺寸，上移到**屏幕顶边**外露出 2 DIP，层级在菜单栏之上（`mainMenu + 3`）；展开动画结束后降回。其余两边与 Windows 相同 |
 | Top 悬停 | 展开窗口在菜单栏下方，与感应条隔着菜单栏高度。悬停展开期间（含展开动画），窗口上方到屏幕顶边的区域算作窗口内，用 `NSEvent` 全局监听判断，不轮询 |
 | 托盘 | `tray-icon` 在事件循环启动后（`NewEvents(Init)`）于主线程创建 |
-| 唤醒 | 第二实例经 socket；再次打开 bundle 经 reopen Apple Event（winit 不上报，宿主注册）；`focus_window` |
-| 单实例 | 目录 fd 的 `flock`（`05` 程序目录身份） |
+| 唤醒 | 第二实例经 socket；再次打开 bundle 经 reopen Apple Event（winit 不上报，宿主注册）；`focus_window`。唤醒尽力而为：两个不同键的安装副本同时运行时，系统可能把 reopen 投递给另一个进程，显示的是另一张便签的窗口；这一项只记录观察，不作发布门（`05` #note-root） |
+| 单实例 | Note Root 句柄的 `flock`（`05` #program-directory-identity） |
 | 光标闪烁 | `CaretOverlay` 实现为 `CALayer` sublayer，闪烁不产生帧；普通帧由下行的 IOSurface 呈现器提交。显示时给图层挂离散的不透明度关键帧动画（亮、灭各 550 ms，无限循环），由系统合成器播放，app 不按闪烁周期唤醒；每次显示从“亮”重新开始（USER 批准 2026-11-10） |
 | 文件剪贴板 | `NSPasteboard`（`08` macOS 节） |
 | 保存对话框 | `NSSavePanel.runModal`，主线程阻塞 |
@@ -339,8 +339,8 @@ detach、2 DIP sensor 与 100/700/500/140 ms 时间常量为固定内部参数�
 
 ## Lifecycle
 
-启动：解析 canonical Program Directory → 单实例 → Writable check → 载入 config →
-恢复检查/载入 note → reconcile → 窗口+托盘。第二实例在任何 durable bootstrap 前退出。
+启动：解析 canonical Program Directory（macOS 再判定 Note Root，`05` #note-root）→ 单实例 → Writable check → 载入 config →
+恢复检查/载入 note → reconcile → 窗口+托盘。第二实例在任何 durable bootstrap 前退出（macOS 安装版加锁前的空目录例外见 `05`）。
 运行：Close→HiddenToTray；Tray Show→恢复；Tray Quit→清理退出。
 
 ## Extension / Replacement Points

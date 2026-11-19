@@ -16,6 +16,21 @@
 需要第二张便签：把整个程序文件夹复制到别处再运行；两张便签互不干扰。
 同一个文件夹双击两次只会唤醒已打开的那一张。
 
+<a id="macos-first-run"></a>
+### macOS：安装版与便携版（下一版本，Phase 18）
+
+从 GitHub Release 下载 `StickyMD-<version>-macos-arm64-portable.zip`，解压得到 `StickyMD/` 文件夹。
+
+- **安装版（推荐）：** 把 `StickyMD.app` 拖进“应用程序”（`/Applications` 或个人的 `~/Applications`）再打开。便签存在
+  `~/Library/Application Support/StickyMD/StickyMD/note/`；用同名的新版本替换 app，打开的仍是原来那张便签。
+- **便携版：** 用访达把整个 `StickyMD/` 文件夹移到别处再打开，便签在 app 旁边的 `note/`，和 Windows 一样复制整个文件夹得到第二张便签。
+- **第一次打开：** 程序是 ad-hoc 签名，macOS 会先拦下；到“系统设置 → 隐私与安全性”点“仍要打开”并输入登录密码。确切的对话框与步骤
+  以 Phase 18 的下载路径验收为准。
+- 在解压出的原地直接打开时，系统可能把 app 放到只读的随机位置运行；这时程序提示“当前目录不可写，请先把 StickyMD.app 拖进“应用程序”，
+  或把整个 StickyMD 文件夹移到别处。”并退出，不写任何文件。
+- 安装版的另一张便签：复制 app 并改成另一个名字（例如 `StickyMD 数学.app`）。名字决定是哪一张：只差大小写的名字在默认的卷上是同一张。
+- 便携版与安装版之间不自动搬运便签；README 写明手工迁移步骤，目标已经有 `note/` 时就停下。
+
 ## 输入 Markdown
 
 - 所见即源码：你看到并编辑的就是 Markdown 原文。

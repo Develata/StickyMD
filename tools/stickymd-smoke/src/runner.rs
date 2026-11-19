@@ -71,6 +71,8 @@ enum TaskId {
     Phase15DesktopTests,
     Phase15BaselineTests,
     Phase16MacTests,
+    Phase18MacTests,
+    Phase18ReleaseTests,
     FormatCheck,
     ClippyCheck,
     DependencyPolicy,
@@ -719,7 +721,7 @@ fn run_task(
 /// Off macOS the host crate compiles to a stub with no tests, so cargo would pass without testing
 /// anything; the task is refused there as NOT_TESTED instead.
 fn refused_on_host(id: TaskId, macos: bool) -> Option<String> {
-    (id == TaskId::Phase16MacTests && !macos)
+    (matches!(id, TaskId::Phase16MacTests | TaskId::Phase18MacTests) && !macos)
         .then(|| "NOT_TESTED: the macOS host tests require a macOS host".to_owned())
 }
 
@@ -974,6 +976,12 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             // Planned on every host and refused off macOS (see `run_task`), so a run elsewhere
             // is NOT_TESTED rather than a green run of the stub. `all` never plans it.
             Selection::Phase(Phase::P16) => push_unique(&mut tasks, phase16_mac_tests()),
+            // The release tooling tests run on any host; the host tests are refused off macOS as
+            // for Phase 16.
+            Selection::Phase(Phase::P18) => {
+                push_unique(&mut tasks, phase18_mac_tests());
+                push_unique(&mut tasks, phase18_release_tests());
+            }
         }
     }
 
@@ -1078,7 +1086,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                     push_unique(&mut tasks, phase14_search_performance());
                 }
                 // The macOS measurements (P16-R01, P16-R02) are not automated yet.
-                Phase::P16 => {}
+                Phase::P16 | Phase::P18 => {}
             }
         }
     }
@@ -1137,7 +1145,9 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 push_unique(&mut tasks, runtime_assets());
                 push_unique(&mut tasks, runtime_window_shell());
             }
-            Selection::Phase(Phase::P00 | Phase::P01 | Phase::P02 | Phase::P15 | Phase::P16) => {
+            Selection::Phase(
+                Phase::P00 | Phase::P01 | Phase::P02 | Phase::P15 | Phase::P16 | Phase::P18,
+            ) => {
                 return Err("selected phase has no runtime smoke".to_owned());
             }
         }
@@ -1425,6 +1435,32 @@ fn phase16_mac_tests() -> Task {
             "stickymd-mac",
             "--locked",
         ],
+    )
+}
+
+/// The installed-note location (plan 05 #note-root) lives in the macOS host and the POSIX layer.
+fn phase18_mac_tests() -> Task {
+    cargo(
+        TaskId::Phase18MacTests,
+        "Phase 18 macOS host tests",
+        &[
+            "test",
+            "-p",
+            "stickymd-posix",
+            "-p",
+            "stickymd-mac",
+            "--locked",
+        ],
+    )
+}
+
+/// The release tooling of plan 11 #macos-release-artifact and #platform-artifact-reuse, with the
+/// rest of the verification CLI it is built into.
+fn phase18_release_tests() -> Task {
+    cargo(
+        TaskId::Phase18ReleaseTests,
+        "Phase 18 release tooling tests",
+        &["test", "-p", "stickymd-smoke", "--locked"],
     )
 }
 

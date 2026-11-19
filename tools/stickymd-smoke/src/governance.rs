@@ -858,7 +858,7 @@ pub(crate) fn verify_ready_status(root: &Path, selection: Selection) -> Result<(
         // judged when selected by name.
         Selection::All => Phase::ALL
             .into_iter()
-            .filter(|phase| *phase != Phase::P16)
+            .filter(|phase| !matches!(phase, Phase::P16 | Phase::P18))
             .collect(),
     };
     for phase in phases {
@@ -1162,7 +1162,8 @@ fn frozen_trace_ids(content: &str, path: &Path, prefix: &str) -> Result<Vec<u16>
 
 /// Whether `path` is the Phase 16 (macOS host) acceptance matrix.
 fn is_macos_matrix(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| name == "phase-16.md")
+    path.file_name()
+        .is_some_and(|name| name == "phase-16.md" || name == "phase-18.md")
 }
 
 fn read_matrix_rows(path: &Path) -> Result<Vec<MatrixRow>, String> {
@@ -1627,10 +1628,11 @@ mod tests {
             super::verify_ready_status(&root, crate::cli::Selection::Phase(crate::cli::Phase::P16))
                 .unwrap_err();
         assert!(error.contains("instead of `AUTOMATED PASS`"), "{error}");
-        // The unfinished macOS matrix does not gate a run of every phase.
+        // The unfinished macOS matrices do not gate a run of every phase.
         std::fs::write(root.join("docs/acceptance-cases/phase-16.md"), "garbage").unwrap();
+        std::fs::write(root.join("docs/acceptance-cases/phase-18.md"), "garbage").unwrap();
         for phase in crate::cli::Phase::ALL {
-            if phase != crate::cli::Phase::P16 {
+            if !matches!(phase, crate::cli::Phase::P16 | crate::cli::Phase::P18) {
                 std::fs::write(
                     root.join(format!("docs/acceptance-cases/phase-{}.md", phase.number())),
                     format!("{header}| X-1 | a | Automated | e | AUTOMATED PASS |\n"),
