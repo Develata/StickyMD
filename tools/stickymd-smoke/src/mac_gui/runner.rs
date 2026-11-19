@@ -109,7 +109,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             row
         })
         .collect::<Vec<_>>();
-    save(&out, &environment, &hash, &rows)?;
+    save(&out, &environment, &hash, &rows, false)?;
     events::install_cancel()?;
     let mut input = Injection::new(Events::new());
     for (index, id) in ids.iter().enumerate() {
@@ -141,8 +141,9 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         row.trace.sort_by_key(|t| t.ms);
         println!("{id}: {}", aggregate(&row.checks).name());
         rows[index] = row;
-        save(&out, &environment, &hash, &rows)?;
+        save(&out, &environment, &hash, &rows, false)?;
     }
+    save(&out, &environment, &hash, &rows, true)?;
     println!("Evidence: {}", out.join("mac-gui.json").display());
     let count = |verdict| {
         rows.iter()
@@ -225,9 +226,17 @@ fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
     }
     Ok(resolved)
 }
-fn save(out: &Path, environment: &str, hash: &AppHash, rows: &[Row]) -> Result<(), String> {
+/// Writes the evidence; `finished` is true only on the write after the last row, so a checkpoint
+/// of an interrupted run is never taken for a finished one (mac-ledger records only finished runs).
+fn save(
+    out: &Path,
+    environment: &str,
+    hash: &AppHash,
+    rows: &[Row],
+    finished: bool,
+) -> Result<(), String> {
     let json = format!(
-        "{{\"schema_version\":1,\"acceptance_status\":\"INCOMPLETE\",\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"scenarios\":[{}]}}\n",
+        "{{\"schema_version\":1,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"scenarios\":[{}]}}\n",
         hash.inputs
             .as_ref()
             .map_or_else(String::new, |inputs| format!(

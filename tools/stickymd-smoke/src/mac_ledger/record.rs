@@ -90,12 +90,7 @@ fn is_sha256(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// A batch name: 1–64 ASCII letters, digits, `.`, `_` or `-`.
-pub(super) fn is_batch(s: &str) -> bool {
-    (1..=64).contains(&s.len())
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-}
+use super::options::is_batch;
 
 fn quote(s: &str) -> String {
     format!("\"{}\"", crate::evidence::escape_json(s))
@@ -351,6 +346,9 @@ pub(super) fn read_all(text: &str) -> Result<Vec<Record>, String> {
         if line.trim().is_empty() {
             return Err(at("a blank line is not allowed".into()));
         }
+        if line.starts_with('\u{feff}') {
+            return Err(at("a byte-order mark is not allowed".into()));
+        }
         let record = Record::parse(line).map_err(at)?;
         consistent_with(&records, &record).map_err(at)?;
         records.push(record);
@@ -358,8 +356,11 @@ pub(super) fn read_all(text: &str) -> Result<Vec<Record>, String> {
     Ok(records)
 }
 
-/// Whether `record` may follow `earlier`: no second record of the same evidence for a row, and a
-/// revocation only of a result already in the ledger.
+/// Whether `record` may follow `earlier`: no second record of the same evidence for a row; for one
+/// row and identity, runs strictly in the order they started (a run whose start cannot be told
+/// from an earlier one, or that names no start where earlier records do, cannot follow it), so a
+/// replay of an old run, even with other bytes, cannot read as the newer result; and a revocation
+/// only of a result already in the ledger.
 pub(super) fn consistent_with(earlier: &[Record], record: &Record) -> Result<(), String> {
     match record {
         Record::Automated {
@@ -375,6 +376,36 @@ pub(super) fn consistent_with(earlier: &[Record], record: &Record) -> Result<(),
                 return Err(format!(
                     "P16-{row} from evidence {evidence_sha256} is already recorded; a replay cannot stand for a new run"
                 ));
+            }
+            let Record::Automated {
+                identity, run_unix, ..
+            } = record
+            else {
+                unreachable!("matched above")
+            };
+            for earlier_run in earlier.iter().filter_map(|r| match r {
+                Record::Automated {
+                    row: r_row,
+                    identity: r_identity,
+                    run_unix: r_run,
+                    ..
+                } if r_row == row && r_identity == identity => Some(*r_run),
+                _ => None,
+            }) {
+                match (earlier_run, run_unix) {
+                    (None, None) => {}
+                    (Some(before), Some(now)) if before < *now => {}
+                    (Some(_), Some(_)) => {
+                        return Err(format!(
+                            "P16-{row}: a run that started no earlier is already recorded for this identity; record runs in the order they started"
+                        ));
+                    }
+                    _ => {
+                        return Err(format!(
+                            "P16-{row}: records for this identity without a run start cannot be ordered against this one; rebuild the driver or app to start a new identity"
+                        ));
+                    }
+                }
             }
         }
         Record::Revocation { row, revoked, .. } => {
@@ -434,6 +465,13 @@ pub(super) fn from_evidence(
         return Err("the run allowed a host; it cannot be recorded".into());
     }
     let run_unix = environment.field("unix_seconds")?.unsigned()?;
+    // The driver rewrites the evidence after every row and marks it finished only after the last.
+    if !matches!(value.field("finished"), Ok(Value::Bool(true))) {
+        return Err(
+            "the run is not finished (a checkpoint or an older driver); it cannot be recorded"
+                .into(),
+        );
+    }
     let identity = Identity {
         inputs: optional_text(&value, "app_inputs")?,
         driver,
@@ -462,6 +500,11 @@ pub(super) fn from_evidence(
             .iter()
             .map(|check| field(check, "verdict"))
             .collect::<Result<Vec<_>, _>>()?;
+        if let Some(unknown) = checks.iter().find(|c| !VERDICTS.contains(&c.as_str())) {
+            return Err(format!(
+                "P16-{row} has a check with unknown verdict {unknown:?}"
+            ));
+        }
         // The driver's aggregation: FAIL first, then NOT_TESTED, then PASS; no check is not a PASS.
         let expected = if checks.iter().any(|c| c == "FAIL") {
             "FAIL"
@@ -488,6 +531,9 @@ pub(super) fn from_evidence(
         };
         record.validate()?;
         records.push(record);
+    }
+    if records.is_empty() {
+        return Err("the evidence has no rows".into());
     }
     Ok(records)
 }

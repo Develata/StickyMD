@@ -188,6 +188,7 @@ pub(super) fn check_system(records: &[Record]) -> Result<(), String> {
 /// an error rather than a row silently left out; Windows-only rows are not macOS manual rows.
 pub(super) fn matrix_rows(matrix: &str) -> Result<Rows, String> {
     let mut rows = Rows::default();
+    let mut seen: Vec<&str> = Vec::new();
     for line in matrix.lines() {
         let cells: Vec<&str> = line
             .trim()
@@ -195,12 +196,23 @@ pub(super) fn matrix_rows(matrix: &str) -> Result<Rows, String> {
             .split('|')
             .map(str::trim)
             .collect();
-        let Some(id) = cells.first().and_then(|c| c.strip_prefix("P16-")) else {
+        let first = cells.first().copied().unwrap_or_default();
+        if !first.contains("P16-") {
             continue;
+        }
+        let Some(id) = first
+            .strip_prefix("P16-")
+            .filter(|id| id.len() == 3 && id.bytes().all(|b| b.is_ascii_alphanumeric()))
+        else {
+            return Err(format!("{first:?} is not a plain P16 row id"));
         };
         if cells.len() != 5 {
             return Err(format!("P16-{id}: a matrix row needs five cells"));
         }
+        if seen.contains(&id) {
+            return Err(format!("P16-{id} appears twice in the matrix"));
+        }
+        seen.push(id);
         match cells[2] {
             "Manual" if WINDOWS_ONLY.contains(&id) => {}
             "Manual" => rows.manual.push(id.to_owned()),

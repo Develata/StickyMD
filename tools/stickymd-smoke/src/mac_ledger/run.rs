@@ -41,7 +41,7 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
     let text = read(&ledger)?;
     let existing = record::read_all(&text)?;
     let new = match command {
-        Command::Record => append::recorded(options, &existing)?,
+        Command::Record => append::recorded(options)?,
         Command::Receipt => append::receipts(options, &rows(root)?)?,
         Command::Revoke => append::revocation(options, &existing)?,
         Command::Plan | Command::Inputs => unreachable!("handled above"),

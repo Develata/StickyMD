@@ -341,8 +341,55 @@ fn records_survive_a_round_trip_and_bad_lines_reject_the_ledger() {
     assert!(bad(silent.line()), "a revocation carries the USER's words");
     // JSON Lines: no byte-order mark, no blank line; a final newline is fine.
     assert!(read_all(&format!("\u{feff}{text}")).is_err());
+    assert!(
+        read_all(&text.replacen('\n', "\n\u{feff}", 1)).is_err(),
+        "nor on a later line"
+    );
     assert!(read_all(&text.replacen('\n', "\n\n", 1)).is_err());
     assert!(read_all(text.trim_end()).is_ok());
+}
+
+fn started(row: &str, digest: char, run_unix: Option<u64>) -> Record {
+    let mut record = run(row, "PASS", identity(), digest);
+    if let Record::Automated {
+        run_unix: start, ..
+    } = &mut record
+    {
+        *start = run_unix;
+    }
+    record
+}
+
+/// For one row and identity, runs follow in the order they started, so a replay of an old run,
+/// even rewritten into other bytes, cannot be recorded after a newer result.
+#[test]
+fn runs_of_a_row_are_recorded_in_the_order_they_started() {
+    let earlier = [started("W09", 'e', Some(100))];
+    assert!(consistent_with(&earlier, &started("W09", 'f', Some(101))).is_ok());
+    assert!(
+        consistent_with(&earlier, &started("W09", 'f', Some(100))).is_err(),
+        "same start"
+    );
+    assert!(
+        consistent_with(&earlier, &started("W09", 'f', Some(99))).is_err(),
+        "older run"
+    );
+    // Two rows of one run share its start.
+    assert!(consistent_with(&earlier, &started("W02", 'e', Some(100))).is_ok());
+    // Records without a start cannot be ordered against ones with it, either way.
+    let legacy = [started("W09", 'e', None)];
+    assert!(consistent_with(&legacy, &started("W09", 'f', Some(101))).is_err());
+    assert!(consistent_with(&earlier, &started("W09", 'f', None)).is_err());
+    assert!(
+        consistent_with(&legacy, &started("W09", 'f', None)).is_ok(),
+        "history stays readable"
+    );
+    // Another identity is another sequence.
+    let mut other = started("W09", 'f', Some(50));
+    if let Record::Automated { identity, .. } = &mut other {
+        identity.driver = hex('7');
+    }
+    assert!(consistent_with(&earlier, &other).is_ok());
 }
 
 /// A revocation recorded before its target would otherwise reach back to it.
@@ -359,8 +406,11 @@ fn a_revocation_cannot_precede_its_target() {
 }
 
 fn evidence(scenarios: &str, environment: &str) -> String {
+    evidence_marked(scenarios, environment, ",\"finished\":true")
+}
+fn evidence_marked(scenarios: &str, environment: &str, finished: &str) -> String {
     format!(
-        "{{\"environment\":{{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\nBuildVersion:\\t26B123\\n\"{environment}}},\"app_inputs\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"driver_sha256\":\"{}\",\"scenarios\":[{scenarios}]}}",
+        "{{\"schema_version\":1{finished},\"environment\":{{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\nBuildVersion:\\t26B123\\n\"{environment}}},\"app_inputs\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"driver_sha256\":\"{}\",\"scenarios\":[{scenarios}]}}",
         hex('1'),
         hex('a'),
         hex('b'),
@@ -406,6 +456,14 @@ fn evidence_is_recorded_from_one_read_of_a_vm_run_with_consistent_rows() {
     )));
     assert!(refused(evidence(
         &PASSED.replace("\"verdict\":\"PASS\"}]", "\"verdict\":\"FAIL\"}]"),
+        VM
+    )));
+    // A checkpoint of an unfinished run, an older driver's evidence, an empty run, an unknown check.
+    assert!(refused(evidence_marked(PASSED, VM, ",\"finished\":false")));
+    assert!(refused(evidence_marked(PASSED, VM, "")));
+    assert!(refused(evidence("", VM)));
+    assert!(refused(evidence(
+        &PASSED.replace("\"verdict\":\"PASS\"}]", "\"verdict\":\"MAYBE\"}]"),
         VM
     )));
     // No driver named: the evidence cannot say which driver produced it.
@@ -470,6 +528,19 @@ fn the_matrix_rows_come_from_the_mode_column() {
         .is_err()
     );
     assert!(matrix_rows("| P16-W06 | a | Manual |\n").is_err());
+    assert!(
+        matrix_rows(&format!(
+            "{matrix}| P16-V04 | f | Manual | e | NOT TESTED |\n"
+        ))
+        .is_err(),
+        "a row appears once"
+    );
+    assert!(
+        matrix_rows(&format!(
+            "{matrix}| `P16-W02` | x | Manual | e | NOT TESTED |\n"
+        ))
+        .is_err()
+    );
     assert!(matrix_rows("no rows").is_err());
 }
 
@@ -517,15 +588,21 @@ fn each_command_requires_its_options_and_refuses_others() {
         "a.app".into(),
         "--rows".into(),
         "P16-W06,W11".into(),
-        "--quote".into(),
-        "--试过了，没问题".into(),
+        "--quote=--试过了，没问题".into(),
     ])
     .unwrap();
     assert_eq!(receipt.rows, ["W06", "W11"]);
     assert_eq!(
         receipt.quote.as_deref(),
         Some("--试过了，没问题"),
-        "the USER's words verbatim"
+        "the inline form is verbatim"
+    );
+    // A separate value that looks like an option is refused, so a missing quote cannot swallow
+    // the next option.
+    assert!(parse(&args("revoke --rows W02 --app a.app --quote --help")).is_err());
+    assert!(
+        parse(&args("receipt --app a.app --rows W06 --quote=q --quote=r")).is_err(),
+        "once"
     );
     assert!(parse(&args("receipt --app a.app --rows W06,W06 --quote q")).is_err());
     let revoke = |extra: &str| {

@@ -2,6 +2,14 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use std::path::PathBuf;
 
+/// A batch name: 1–64 ASCII letters, digits, `.`, `_` or `-`. Here, not in the record module,
+/// because the parser is compiled on every host.
+pub(super) fn is_batch(s: &str) -> bool {
+    (1..=64).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 pub(super) const HELP: &str =
     "usage: stickymd-smoke mac-ledger <inputs|plan|record|receipt|revoke> [options]
   inputs  [--home <dir>]
@@ -26,7 +34,7 @@ pub(super) const HELP: &str =
   --system is a file holding the target VM's sw_vers output, taken just before the run.
   --batch names the acceptance batch (1-64 of A-Z a-z 0-9 . _ -). I01-I03 and R03 count only
           results of the batch being planned; every other row ignores it.
-  --quote takes the next argument verbatim, even one that starts with --.";
+  --quote <words> refuses words that start with --; write --quote=<words> to pass them verbatim.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Command {
@@ -105,8 +113,15 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
     };
     result.command = Some(command);
     let mut seen = std::collections::BTreeSet::new();
-    while let Some(key) = rest.next() {
-        if !seen.insert(key) {
+    while let Some(argument) = rest.next() {
+        // `--quote=<words>` is the one inline form: it carries the USER's words verbatim, even
+        // words that look like an option.
+        let (key, inline) = match argument.split_once('=') {
+            Some(("--quote", words)) => ("--quote", Some(words.to_owned())),
+            _ => (argument.as_str(), None),
+        };
+        let key = &key.to_owned();
+        if !seen.insert(key.clone()) {
             return Err(format!("duplicate option: {key}"));
         }
         if matches!(key.as_str(), "--help" | "-h") {
@@ -119,11 +134,17 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
                 command.name()
             ));
         }
-        // The USER's words are taken verbatim; every other value must not look like an option.
-        let value = rest
-            .next()
-            .filter(|v| key == "--quote" || !v.starts_with("--"))
-            .ok_or_else(|| format!("{key} needs a value"))?;
+        // A separate value must not look like an option, so a missing value cannot swallow the
+        // next option; the inline `--quote=` form is taken as written.
+        let value = match inline {
+            Some(words) => words,
+            None => rest
+                .next()
+                .filter(|v| !v.starts_with("--"))
+                .ok_or_else(|| format!("{key} needs a value"))?
+                .clone(),
+        };
+        let value = &value;
         match key.as_str() {
             "--ledger" => result.ledger = Some(value.into()),
             "--app" => result.app = Some(value.into()),
@@ -134,7 +155,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
             "--evidence" => result.evidence = Some(value.into()),
             "--evidence-sha256" => result.evidence_sha256 = Some(value.to_ascii_lowercase()),
             "--batch" => {
-                if !super::record::is_batch(value) {
+                if !is_batch(value) {
                     return Err(format!("--batch {value:?} is not 1-64 of [A-Za-z0-9._-]"));
                 }
                 result.batch = Some(value.clone());

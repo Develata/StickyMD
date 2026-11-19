@@ -35,42 +35,21 @@ fn desktop() -> Result<String, String> {
     ))
 }
 
-/// Every row of a finished run. A run older than one already recorded for the same row and
-/// identity is refused: appended after it, it would read as the newer result.
-pub(super) fn recorded(options: &Options, existing: &[Record]) -> Result<Vec<Record>, String> {
+/// Every row of a finished run; the caller checks each against the ledger (`consistent_with`),
+/// which refuses a replay and a run out of order.
+pub(super) fn recorded(options: &Options) -> Result<Vec<Record>, String> {
     let evidence = options.evidence.as_deref().ok_or("--evidence missing")?;
     let evidence = evidence
         .canonicalize()
         .map_err(|e| format!("{}: {e}", evidence.display()))?;
     let bytes = fs::read(&evidence).map_err(|e| format!("{}: {e}", evidence.display()))?;
-    let new = record::from_evidence(
+    record::from_evidence(
         &bytes,
         &evidence.display().to_string(),
         options.image.as_deref().ok_or("--image missing")?,
         options.batch.as_deref(),
         now()?,
-    )?;
-    for record in &new {
-        let Record::Automated {
-            row,
-            identity,
-            run_unix: Some(run_unix),
-            ..
-        } = record
-        else {
-            continue;
-        };
-        let newer = existing.iter().any(|r| {
-            matches!(r, Record::Automated { row: r_row, identity: r_identity, run_unix: Some(other), .. }
-                if r_row == row && r_identity == identity && other > run_unix)
-        });
-        if newer {
-            return Err(format!(
-                "P16-{row}: a later run is already recorded for this identity; record runs in the order they ran"
-            ));
-        }
-    }
-    Ok(new)
+    )
 }
 
 /// Receipts for Manual rows only: a Review receipt must name the media the USER judged and an
