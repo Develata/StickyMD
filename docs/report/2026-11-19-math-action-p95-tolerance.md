@@ -89,10 +89,22 @@ cargo test -p stickymd-render --release --locked --lib phase11b_performance_ -- 
 
 最后一行说明，在快机器上，绝对门槛对约 3 倍的退化不敏感。这是改动前就有的性质，与本次容错无关。
 
+CI 的 Phase 11-B Release 基线任务执行的就是上面这条命令（`stickymd-smoke modules run render
+--mode=performance --plan` 列出），只按退出码判定，新增的 `samples_ms` 行不影响它。完整的
+`stickymd-smoke phase 11-b --performance` 要求 Windows 验收环境，本机未运行。
+
+`semantic_conversion.rs` 的 `phase11b_performance_one_mib_with_one_thousand_math_nodes` 只测第二步，仍为
+25 个样本、p95 `< 50 ms`。它不是 plan 07 这句所指的检查（那句说的是含提交前再次处理的整个按钮），
+CI 上 p95 为 2–4 ms，未改。
+
 Windows CI 上的新做法：`NOT TESTED`，以推送后第一次 CI 为准。
 
 ## 局限
 
+- 容许超出的比例几乎没变：旧做法 25 个中 1 个（4%），新做法 100 个中 5 个（5%），但计时窗口约长 4 倍
+  （CI 上约 3 s）。收益在于一次卡顿只要波及不超过 5 个样本就不再失败；3 s 内出现两次各 3 个样本的卡顿，
+  或一次超过约 150 ms 的卡顿，仍会失败。
+- 本地注入只证明计数规则（5 个通过、6 个失败），不证明 Windows 上的偶发失败会减少。
 - 如果慢样本不是成串出现，而是各自独立出现，按二项分布估算：每个样本有 2% 的概率偏慢时，旧做法约
   8.9% 的运行会失败，新做法约 1.5%；概率为 3% 时分别约 17% 与 8%。这是模型推算，不是实测。
 - 整台机器慢到中位数接近 50 ms 时仍会失败。这正是 plan 07 要抓的信号，不属于噪声。
