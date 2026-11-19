@@ -10,6 +10,7 @@ pub(super) fn run(root: &Path, capture_output: bool) -> Result<(), String> {
         zip: None,
         checksums: None,
         runtime: true,
+        build: None,
     };
     run_with_options(root, &options, capture_output)
 }
@@ -98,6 +99,7 @@ mod tests {
             zip: Some(root.join("tools/stickymd-smoke/src/release/package.rs")),
             checksums: None,
             runtime: false,
+            build: None,
         };
         let error = run_with_options(root, &options, true).unwrap_err();
         assert!(error.contains("cannot resolve"), "{error}");

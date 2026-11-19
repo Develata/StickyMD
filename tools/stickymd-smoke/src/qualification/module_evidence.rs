@@ -8,6 +8,8 @@
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#module-success-ledger
 
+use std::path::Path;
+
 use super::exact_checks::{self, DeclaredCase};
 use super::module_registry::ModuleId;
 use crate::cli::ResourceModule;
@@ -17,6 +19,8 @@ use crate::release::json::{self, Value};
 /// The identity a module's evidence must carry: the candidate it ran on and, for
 /// resource groups, the input fingerprint the measurement was planned for.
 pub(super) struct Origin<'a> {
+    /// The checkout whose Git history judges a run commit other than `source_commit`.
+    pub(super) repository: &'a Path,
     pub(super) source_commit: &'a str,
     pub(super) version: &'a str,
     pub(super) exe_sha256: &'a str,
@@ -74,7 +78,7 @@ pub(super) fn g5_companions(document: &str) -> Result<Vec<Companion>, String> {
 fn smoke(root: &Value, runtime: bool, origin: &Origin<'_>) -> Result<(), String> {
     expect_unsigned(root, "schema_version", 3)?;
     expect_string(root, "suite", "phase-14")?;
-    expect_string(root, "commit", origin.source_commit)?;
+    expect_run_commit(root, "commit", origin)?;
     expect_bool(root, "worktree_dirty", false)?;
     expect_string(root, "executable_sha256", origin.exe_sha256)?;
     let required = crate::runner::formal_task_labels(runtime)?;
@@ -114,7 +118,7 @@ fn exact<'a>(
     expect_unsigned(root, "schema_version", 2)?;
     expect_string(root, "status", "PASSED")?;
     expect_string(root, "source_commit", origin.source_commit)?;
-    expect_string(root, "harness_commit", origin.source_commit)?;
+    expect_run_commit(root, "harness_commit", origin)?;
     expect_string(root, "exe_sha256", origin.exe_sha256)?;
     expect_string(root, "zip_sha256", origin.zip_sha256)?;
     expect_string(root, "version", origin.version)?;
@@ -209,6 +213,23 @@ fn listed_companions(result: &Value) -> Result<Vec<Companion>, String> {
 
 fn passed(result: &Value) -> Result<bool, String> {
     Ok(result.field("status")?.string()? == "PASSED")
+}
+
+/// The commit of the checkout that ran the module (its HEAD): the origin's build source, or a
+/// commit the Windows artifact built on that source may stand for (plan 11 reuse rule).
+fn expect_run_commit(root: &Value, key: &str, origin: &Origin<'_>) -> Result<(), String> {
+    let actual = root
+        .field(key)?
+        .string()
+        .map_err(|error| format!("{key}: {error}"))?;
+    super::reuse::candidate_source_matches(origin.repository, origin.source_commit, actual)
+        .map(drop)
+        .map_err(|error| {
+            format!(
+                "STALE RECEIPT: {key} is {actual}, expected {} or a commit reusing it: {error}",
+                origin.source_commit
+            )
+        })
 }
 
 fn expect_string(root: &Value, key: &str, expected: &str) -> Result<(), String> {

@@ -10,6 +10,17 @@ pub(crate) fn verify_run(
     conclusion: &str,
     workflow: &str,
 ) -> Result<(), String> {
+    verify_named_run(source, head, conclusion, workflow, "release")
+}
+
+/// A run (or one attempt of it) of the workflow `expected` that succeeded on `source`.
+pub(crate) fn verify_named_run(
+    source: &str,
+    head: &str,
+    conclusion: &str,
+    workflow: &str,
+    expected: &str,
+) -> Result<(), String> {
     integrity::validate_hex(source, 40, "approved source SHA")?;
     integrity::validate_hex(head, 40, "remote run head SHA")?;
     if head != source {
@@ -20,15 +31,23 @@ pub(crate) fn verify_run(
     if conclusion != "success" {
         return Err(format!("remote workflow conclusion is `{conclusion}`"));
     }
-    if workflow != "release" {
+    if workflow != expected {
         return Err(format!(
-            "remote workflow is `{workflow}`, expected `release`"
+            "remote workflow is `{workflow}`, expected `{expected}`"
         ));
     }
     Ok(())
 }
 
-pub(super) fn verify_input(source: &str, input: &Path) -> Result<(), String> {
+/// The observation of a run of `workflow` read from `input` (`-` for stdin); with `attempt`, the
+/// observation is that attempt
+/// (`/actions/runs/<id>/attempts/<n>`) and must say so.
+pub(super) fn verify_named_input(
+    source: &str,
+    input: &Path,
+    workflow: &str,
+    attempt: Option<u64>,
+) -> Result<(), String> {
     integrity::validate_hex(source, 40, "approved source SHA")?;
     let text = if input == Path::new("-") {
         io::read_to_string(io::stdin().lock())
@@ -36,11 +55,27 @@ pub(super) fn verify_input(source: &str, input: &Path) -> Result<(), String> {
         fs::read_to_string(input)
     }
     .map_err(|error| format!("cannot read workflow observation: {error}"))?;
-    verify_api_json(source, &text)?;
+    let document = super::json::parse(&text)?;
+    if let Some(attempt) = attempt {
+        let observed = document.field("run_attempt")?.unsigned()?;
+        if observed != attempt {
+            return Err(format!(
+                "the observation is attempt {observed}, expected {attempt}"
+            ));
+        }
+    }
+    verify_named_run(
+        source,
+        document.field("head_sha")?.string()?,
+        document.field("conclusion")?.string()?,
+        document.field("name")?.string()?,
+        workflow,
+    )?;
     println!("WORKFLOW_IDENTITY=PASS");
     Ok(())
 }
 
+#[cfg(test)]
 fn verify_api_json(source: &str, text: &str) -> Result<(), String> {
     let document = super::json::parse(text)?;
     verify_run(

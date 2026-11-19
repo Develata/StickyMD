@@ -33,6 +33,7 @@ pub(crate) mod repetition;
 pub(crate) mod reserved_paths;
 pub(crate) mod resource_diagnostics;
 pub(crate) mod resource_modules;
+mod reuse;
 pub(crate) mod smoke_scope;
 mod source_freeze;
 mod startup_attribution;

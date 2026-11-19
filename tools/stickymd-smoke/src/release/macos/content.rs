@@ -2,6 +2,7 @@
 //! on a Windows runner checks the same list the macOS packager writes.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-release-artifact
 
+use crate::release::json;
 use std::collections::BTreeSet;
 
 /// Where a file beside the app comes from.
@@ -82,6 +83,63 @@ pub(crate) fn readme(version: &str, commit: &str, exact_candidate: bool) -> Stri
     )
 }
 
+/// The SPDX document must be SPDX 2.x, list packages, and name every packaged file the notices
+/// and executable depend on, as Syft names files of a directory source (`/package/...`).
+pub(crate) fn validate_sbom(text: &str) -> Result<(), String> {
+    let document = json::parse(text)?;
+    if !document
+        .field("spdxVersion")?
+        .string()?
+        .to_ascii_uppercase()
+        .starts_with("SPDX-2.")
+    {
+        return Err("Generated document is not an SPDX 2.x JSON SBOM".to_owned());
+    }
+    if document.field("packages")?.array()?.is_empty() {
+        return Err("Generated SBOM contains no packages".to_owned());
+    }
+    let names = document
+        .field("files")?
+        .array()?
+        .iter()
+        .map(|file| file.field("fileName")?.string())
+        .collect::<Result<Vec<_>, _>>()?;
+    let required = FILES
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !name.ends_with("README.txt") && !name.ends_with("LICENSE.txt"))
+        .chain(
+            APP_FILES
+                .iter()
+                .copied()
+                .filter(|name| name.contains("/MacOS/")),
+        );
+    for member in required {
+        let required = format!("/package/{member}");
+        if !names.contains(&required.as_str()) {
+            return Err(format!(
+                "Generated SBOM does not cover packaged file {required}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The signing kind `codesign -dv` reports, checked separately from the signature's validity:
+/// ad-hoc means `Signature=adhoc`, no Team ID and no certificate authority (plan 11 macOS gate).
+pub(crate) fn ad_hoc_signature(display: &str) -> Result<&'static str, String> {
+    let lines = display.lines().map(str::trim).collect::<Vec<_>>();
+    let adhoc = lines.contains(&"Signature=adhoc");
+    let no_team = lines.contains(&"TeamIdentifier=not set");
+    let authority = lines.iter().find(|line| line.starts_with("Authority="));
+    match (adhoc, no_team, authority) {
+        (true, true, None) => Ok("AD_HOC"),
+        _ => Err(format!(
+            "the bundle is not ad-hoc signed (Signature=adhoc {adhoc}, no Team ID {no_team}, authority {authority:?})"
+        )),
+    }
+}
+
 /// The one `Source commit:` line of a package README.
 pub(crate) fn source_commit(readme: &str) -> Result<String, String> {
     let mut commits = readme
@@ -152,6 +210,18 @@ mod tests {
     }
 
     #[test]
+    fn only_an_ad_hoc_signature_passes_the_signing_check() {
+        let ad_hoc = "Format=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=49045 flags=0x2(adhoc) hashes=1526+3 location=embedded\nSignature=adhoc\nTeamIdentifier=not set\n";
+        assert_eq!(ad_hoc_signature(ad_hoc), Ok("AD_HOC"));
+        // A valid Developer ID signature is a different kind, and so is an unsigned bundle.
+        let developer_id = "Signature size=9054\nAuthority=Developer ID Application: Someone (ABCDE12345)\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTeamIdentifier=ABCDE12345\n";
+        assert!(ad_hoc_signature(developer_id).is_err());
+        assert!(ad_hoc_signature("code object is not signed at all\n").is_err());
+        let mixed = format!("{ad_hoc}Authority=Apple Root CA\n");
+        assert!(ad_hoc_signature(&mixed).is_err());
+    }
+
+    #[test]
     fn the_readme_names_its_source_once_and_the_first_open_steps() {
         let commit = "a".repeat(40);
         let text = readme("0.3.0", &commit, true);
@@ -173,5 +243,37 @@ mod tests {
         }
         assert!(source_commit(&format!("{text}Source commit: {commit}\n")).is_err());
         assert!(source_commit("Source commit: abc\n").is_err());
+    }
+
+    fn document(files: &[&str]) -> String {
+        let files = files
+            .iter()
+            .map(|name| format!("{{\"fileName\":\"{name}\"}}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"spdxVersion\":\"SPDX-2.3\",\"packages\":[{{\"name\":\"x\"}}],\"files\":[{files}]}}"
+        )
+    }
+
+    #[test]
+    fn the_sbom_must_cover_the_executable_notices_and_licenses() {
+        let covered = [
+            "/package/StickyMD/StickyMD.app/Contents/MacOS/StickyMD",
+            "/package/StickyMD/THIRD_PARTY_NOTICES.txt",
+            "/package/StickyMD/licenses/SIL-OFL-1.1.txt",
+            "/package/StickyMD/licenses/KaTeX-fonts-NOTICE.txt",
+        ];
+        validate_sbom(&document(&covered)).unwrap();
+        for missing in covered {
+            let rest = covered
+                .iter()
+                .copied()
+                .filter(|name| *name != missing)
+                .collect::<Vec<_>>();
+            let error = validate_sbom(&document(&rest)).unwrap_err();
+            assert!(error.contains(missing), "{error}");
+        }
+        assert!(validate_sbom(&document(&covered).replace("SPDX-2.3", "SPDX-3.0")).is_err());
     }
 }

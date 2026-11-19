@@ -8,7 +8,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::receipt::{self, Candidate};
-use super::{decisions, json, source_freeze};
+use super::{decisions, json, reuse, source_freeze};
 
 pub(super) const REMOTE_RECEIPT: &str = "dist/evidence/remote-workflow.json";
 pub(super) const DOWNLOADED_RECEIPT: &str = "dist/evidence/downloaded-artifact-smoke.json";
@@ -64,10 +64,13 @@ pub(super) fn record_workflow(root: &Path, run_id: u64, attempt: u64) -> Result<
     let conclusion = json::string_field(&document, "conclusion")?;
     let url = json::string_field(&document, "url")?;
     let workflow = json::string_field(&document, "workflowName")?;
-    crate::release::workflow::verify_run(&source.source_commit, &head, &conclusion, &workflow)?;
+    // The run's head is the build source: its form, conclusion and workflow are checked here,
+    // its relation to the Source Freeze commit by the reuse judgement.
+    crate::release::workflow::verify_run(&head, &head, &conclusion, &workflow)?;
+    reuse::candidate_source_matches(root, &head, &source.source_commit)?;
     let (artifact_id, artifact_name) = query_release_artifact(root, run_id)?;
     let evidence = RemoteWorkflow {
-        source_commit: source.source_commit,
+        source_commit: head,
         cargo_lock_sha256: source.cargo_lock_sha256,
         run_id,
         attempt,
@@ -83,11 +86,12 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
     let source = source_freeze::read(root)?;
     source_freeze::validate_against_repository(root, &source)?;
     let remote = read_remote(root)?;
-    if remote.source_commit != source.source_commit
-        || remote.cargo_lock_sha256 != source.cargo_lock_sha256
-    {
-        return Err("remote workflow receipt is stale for the current Source Freeze".to_owned());
+    let stale = "remote workflow receipt is stale for the current Source Freeze";
+    if remote.cargo_lock_sha256 != source.cargo_lock_sha256 {
+        return Err(stale.to_owned());
     }
+    let reuse = reuse::candidate_source_matches(root, &remote.source_commit, &source.source_commit)
+        .map_err(|error| format!("{stale}: {error}"))?;
     let supplied_zip = zip
         .canonicalize()
         .map_err(|error| format!("cannot resolve downloaded ZIP {}: {error}", zip.display()))?;
@@ -128,7 +132,7 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
     let zip_sha256 = receipt::sha256(&zip)?;
     let sbom_sha256 = receipt::sha256(&sbom)?;
     receipt::verify_checksum_manifest(parent, &zip_name, &zip_sha256, &sbom_sha256)?;
-    run_package_verifier(root, &zip)?;
+    run_package_verifier(root, &zip, &remote.source_commit)?;
 
     let temporary = unique_staging_directory(root)?;
     fs::create_dir_all(&temporary)
@@ -147,8 +151,10 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
         }
         crate::pe_dependencies::verify_portable_executable(&executable)?;
         let exe_sha256 = receipt::sha256(&executable)?;
+        // The receipt names the build source only, so re-promoting the same artifact under a
+        // later Source Freeze that reuses it writes the same bytes.
         let candidate = Candidate {
-            source_commit: source.source_commit.clone(),
+            source_commit: remote.source_commit.clone(),
             version: source.version.clone(),
             cargo_lock_sha256: source.cargo_lock_sha256.clone(),
             exe_sha256,
@@ -166,6 +172,13 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
         let manual_store = super::reserved_paths::lock_manual_store(root, true)?;
         promote_staging(root, &temporary)?;
         receipt::write_candidate(root, &candidate)?;
+        reuse::write_record(
+            root,
+            &reuse,
+            &candidate.source_commit,
+            &source.source_commit,
+            &crate::integrity::sha256_bytes(receipt::render_candidate(&candidate).as_bytes())?,
+        )?;
         write_downloaded(root, &candidate)?;
         drop(manual_store);
         println!("PROMOTED_CANDIDATE_SOURCE={}", candidate.source_commit);
@@ -444,7 +457,8 @@ fn extract_zip(zip: &Path, destination: &Path) -> Result<(), String> {
     }
 }
 
-fn run_package_verifier(root: &Path, zip: &Path) -> Result<(), String> {
+/// `build` is the run head the package names; it may be an ancestor reused on HEAD.
+fn run_package_verifier(root: &Path, zip: &Path, build: &str) -> Result<(), String> {
     let parent = zip
         .parent()
         .ok_or_else(|| "downloaded ZIP has no parent directory".to_owned())?;
@@ -455,6 +469,7 @@ fn run_package_verifier(root: &Path, zip: &Path) -> Result<(), String> {
             zip: Some(zip.to_path_buf()),
             checksums: Some(parent.join("SHA256SUMS.txt")),
             runtime: true,
+            build: Some(build.to_owned()),
         },
         &mut std::io::stdout().lock(),
     )

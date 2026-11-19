@@ -730,6 +730,8 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
   - 沿用时另写 `dist/evidence/release-reuse-<platform>.json`：平台、S、R、两侧指纹与算法版本，以及（Windows）candidate receipt 的摘要。
 - **沿用后：** 沿用只保留发布字节与候选身份。模块证据按当前 Qualification Module Fingerprint 判定，人工观察按当前人工上下文判定，
   exact-byte 门按当前规则在同一份字节上重跑。例如只改验收矩阵的提交：两侧产物都可以沿用，但 Windows 全部模块的收据失效（#module-success-ledger）。
+  沿用时模块证据记下的运行提交（Runtime、Performance 的 `commit`，G3–G5 的 `harness_commit`）是 R 而不是 S：它等于 S 或能按同一判定沿用 S，
+  就与该候选对应。readiness 还要求沿用记录在 S≠R 时存在、在 S=R 时不存在，且与 Promote 会写出的字节相同。
 - **来源证明：** 发布说明为每个平台写明构建来源提交、run 与 attempt。晋升 workflow 签发的证明来自它自己的运行（OIDC 中的 workflow ref 与 SHA），
   描述的是晋升这次运行，不是构建。DRAFT 与 PUBLISH 从 tag 触发，并核对运行的 SHA 等于 R；TAG 从 `main` 触发，核对 R 包含在 `main` 中。
   证明能否表述“这些字节由 S 编译”，在第一次跨提交 PUBLISH 前检查实际签发的 statement（未验证）。

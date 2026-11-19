@@ -62,6 +62,7 @@ impl Platform {
     }
 
     /// The release workflow that builds this platform's set, as GitHub names the run.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) const fn workflow(self) -> &'static str {
         match self {
             Self::WindowsX64 => "release",

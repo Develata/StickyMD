@@ -108,7 +108,7 @@ pub(super) fn lookup_all(root: &Path) -> Result<Snapshot, String> {
             .digests;
         let _guard = store.read_guard()?;
         for (module, current) in recorded.into_iter().zip(digests) {
-            let lookup = load(&store, module, &current)?;
+            let lookup = load(root, &store, module, &current)?;
             if let Some(entry) = modules.iter_mut().find(|(id, _)| *id == module) {
                 entry.1 = lookup;
             }
@@ -156,13 +156,18 @@ fn lookup_with(
     }
     let current = current()?;
     let _guard = store.read_guard()?;
-    load(&store, module, &current)
+    load(root, &store, module, &current)
 }
 
 /// Validate one module's record for `current` and everything it references. The caller
 /// holds the shared store lock, so no writer can replace or prune what is checked.
 /// Content problems are `Invalid`; only store-level failures are errors.
-fn load(store: &LedgerStore, module: ModuleId, current: &str) -> Result<Lookup, String> {
+fn load(
+    root: &Path,
+    store: &LedgerStore,
+    module: ModuleId,
+    current: &str,
+) -> Result<Lookup, String> {
     let path = store.module_record(module.as_str(), current)?;
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -176,13 +181,14 @@ fn load(store: &LedgerStore, module: ModuleId, current: &str) -> Result<Lookup, 
             )));
         }
     };
-    Ok(match verify(store, module, current, &text) {
+    Ok(match verify(root, store, module, current, &text) {
         Ok(success) => Lookup::Valid(success),
         Err(reason) => Lookup::Invalid(format!("ledger record {}: {reason}", path.display())),
     })
 }
 
 fn verify(
+    root: &Path,
     store: &LedgerStore,
     module: ModuleId,
     current: &str,
@@ -206,6 +212,7 @@ fn verify(
     let document =
         std::str::from_utf8(&bytes).map_err(|error| format!("evidence is not UTF-8: {error}"))?;
     let origin = Origin {
+        repository: root,
         source_commit: &record.origin_source_commit,
         version: &record.origin_version,
         exe_sha256: &record.origin_exe_sha256,
@@ -268,6 +275,7 @@ pub(super) fn record_success_for_input(
     let document = std::str::from_utf8(&bytes)
         .map_err(|error| format!("{} module evidence is not UTF-8: {error}", module.as_str()))?;
     let origin = Origin {
+        repository: root,
         source_commit: &candidate.source_commit,
         version: &candidate.version,
         exe_sha256: &candidate.exe_sha256,

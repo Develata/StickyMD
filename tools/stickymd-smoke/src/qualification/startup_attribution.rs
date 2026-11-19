@@ -23,7 +23,7 @@ pub(super) fn record(root: &Path) -> Result<(), String> {
     let candidate = receipt::read_candidate(root)?;
     receipt::validate_candidate_against_repository(root, &candidate)?;
     let performance = json::parse_object(&receipt::read_receipt(&root.join(PERFORMANCE_RECEIPT))?)?;
-    validate_identity(&performance, &candidate)?;
+    validate_identity(root, &performance, &candidate)?;
     let cold = dominant_category(&performance, "cold")?;
     let warm = dominant_category(&performance, "warm")?;
     let cold_p95 = measurement(&performance, "cold.p95")?;
@@ -86,9 +86,23 @@ pub(super) fn record(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_identity(document: &json::Value, candidate: &Candidate) -> Result<(), String> {
+/// The performance run is of this candidate: its executable, and a checkout (HEAD) that is
+/// the candidate's build source or a commit reusing it.
+fn validate_identity(
+    root: &Path,
+    document: &json::Value,
+    candidate: &Candidate,
+) -> Result<(), String> {
+    let commit = json::string_field(document, "commit")?;
+    super::reuse::candidate_source_matches(root, &candidate.source_commit, &commit).map_err(
+        |error| {
+            format!(
+                "STALE RECEIPT: performance commit is {commit}, expected {} or a commit reusing it: {error}",
+                candidate.source_commit
+            )
+        },
+    )?;
     for (field, expected) in [
-        ("commit", candidate.source_commit.as_str()),
         ("executable_sha256", candidate.exe_sha256.as_str()),
         ("suite", "phase-14"),
     ] {

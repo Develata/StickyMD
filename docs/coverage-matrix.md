@@ -7,9 +7,11 @@
   `11` `phase-18-macos-distribution`、`macos-release-gate`、`macos-release-artifact`、`platform-artifact-reuse`、`release-attachment-set`。
 - **功能投影：** 功能文档的“macOS：安装版与便携版”一节。
 - **验收：** [Phase 18](acceptance-cases/phase-18.md) 的 L、P、D 系列；每版的 macOS 发布证据记在候选报告，不写进矩阵。
-- **代码（M2 已实现；M3 为计划落点，逐项实现后更新）：** `apps/stickymd-mac`（位置判定、启动、持久化）、`crates/stickymd-posix`（家目录、Note Root 句柄链与加锁）、
-  `tools/stickymd-smoke/src/release`（macOS 打包、声明、SBOM、checksum、指纹与沿用）、`qualification`（候选收据与晋升）、
-  `.github/workflows/release-macos.yml`、`promote-release.yml`。
+- **代码：** `apps/stickymd-mac`（位置判定、启动、持久化）、`crates/stickymd-posix`（家目录、Note Root 句柄链与加锁）、
+  `tools/stickymd-smoke/src/release`（`platform`、`platform_inputs` 指纹与沿用、`attachments` 附件集合、`notices` 按平台、
+  `macos/` 打包、清单、SBOM、晋升与 resolver）、`qualification/reuse.rs`（Windows 候选接受可沿用的构建来源）、
+  `.github/workflows/release-macos.yml`、`promote-release.yml`、`.github/actions/verify-release-candidates`。
+  两个 workflow 尚未 dispatch；macOS 就绪核对（M5）尚未实现。
 - **依据：** [分发报告（修订版）](report/2026-11-19-macos-public-distribution-decision-r2.md)、[安装版报告（修订版）](report/2026-11-19-macos-installed-note-location-r2.md)。
 
 2026-11-14 Phase 17 设计（下一版本，尚未实现）：

@@ -22,18 +22,21 @@ pub(crate) struct Facts {
     pub executable_sha256: String,
     pub bundle_sha256: String,
     pub app_inputs: String,
+    /// The signing kind observed on the extracted bundle.
+    pub signing: &'static str,
 }
 
 impl Facts {
     pub(crate) fn json(&self) -> String {
         format!(
-            "{{\"zip\":\"{}\",\"zip_sha256\":\"{}\",\"source_commit\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"app_inputs\":\"{}\"}}",
+            "{{\"zip\":\"{}\",\"zip_sha256\":\"{}\",\"source_commit\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"app_inputs\":\"{}\",\"signing\":\"{}\"}}",
             escape_json(&self.zip.display().to_string()),
             self.zip_sha256,
             self.source_commit,
             self.executable_sha256,
             self.bundle_sha256,
-            self.app_inputs
+            self.app_inputs,
+            self.signing
         )
     }
 }
@@ -55,8 +58,9 @@ pub(crate) fn run(program: &str, arguments: &[&std::ffi::OsStr]) -> Result<Strin
 }
 
 /// The bundle as `build-app.sh` must have made it: a valid Info.plist of this version with the
-/// product input fingerprint, an arm64-only executable and an intact ad-hoc signature.
-fn check_app(app: &Path, version: &str) -> Result<String, String> {
+/// product input fingerprint, an arm64-only executable, an intact signature, and that signature
+/// ad-hoc, which is observed rather than assumed.
+fn check_app(app: &Path, version: &str) -> Result<(String, &'static str), String> {
     let plist = app.join("Contents/Info.plist");
     run("/usr/bin/plutil", &["-lint".as_ref(), plist.as_os_str()])?;
     let short_version = run(
@@ -88,7 +92,17 @@ fn check_app(app: &Path, version: &str) -> Result<String, String> {
         "/usr/bin/codesign",
         &["--verify".as_ref(), "--strict".as_ref(), app.as_os_str()],
     )?;
-    Ok(inputs)
+    // `codesign -dv` writes its report to stderr.
+    let display = Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=2"])
+        .arg(app)
+        .output()
+        .map_err(|error| format!("cannot run codesign: {error}"))?;
+    if !display.status.success() {
+        return Err("codesign -dv failed".to_owned());
+    }
+    let signing = content::ad_hoc_signature(&String::from_utf8_lossy(&display.stderr))?;
+    Ok((inputs, signing))
 }
 
 fn commit_and_version(root: &Path, allow_dirty: bool) -> Result<(String, String), String> {
@@ -200,7 +214,7 @@ pub(crate) fn verify(
         ));
     }
     let app = extracted.path().join(APP);
-    let app_inputs = check_app(&app, version)?;
+    let (app_inputs, signing) = check_app(&app, version)?;
     let facts = Facts {
         zip: zip.to_owned(),
         zip_sha256: integrity::sha256(zip)?,
@@ -208,6 +222,7 @@ pub(crate) fn verify(
         executable_sha256: integrity::sha256(&app.join("Contents/MacOS/StickyMD"))?,
         bundle_sha256: bundle_hash(&app)?,
         app_inputs,
+        signing,
     };
     extracted.close()?;
     Ok(facts)

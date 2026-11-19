@@ -3,10 +3,9 @@
 //! packaged files, and the checksum file is written last, over the ZIP and the SBOM.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-release-artifact
 
-use super::content::{APP_FILES, FILES};
+use crate::release::macos::package::run;
 use crate::release::platform::Platform;
 use crate::release::temporary::TemporaryDirectory;
-use crate::release::{json, macos::package::run};
 use crate::{atomic_evidence, integrity, repository};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -88,48 +87,6 @@ fn syft(root: &Path) -> Result<PathBuf, String> {
     Ok(executable)
 }
 
-/// The SPDX document must be SPDX 2.x, list packages, and name every packaged file the notices
-/// and executable depend on, as Syft names files of a directory source (`/package/...`).
-pub(crate) fn validate(text: &str) -> Result<(), String> {
-    let document = json::parse(text)?;
-    if !document
-        .field("spdxVersion")?
-        .string()?
-        .to_ascii_uppercase()
-        .starts_with("SPDX-2.")
-    {
-        return Err("Generated document is not an SPDX 2.x JSON SBOM".to_owned());
-    }
-    if document.field("packages")?.array()?.is_empty() {
-        return Err("Generated SBOM contains no packages".to_owned());
-    }
-    let names = document
-        .field("files")?
-        .array()?
-        .iter()
-        .map(|file| file.field("fileName")?.string())
-        .collect::<Result<Vec<_>, _>>()?;
-    let required = FILES
-        .iter()
-        .map(|(name, _)| *name)
-        .filter(|name| !name.ends_with("README.txt") && !name.ends_with("LICENSE.txt"))
-        .chain(
-            APP_FILES
-                .iter()
-                .copied()
-                .filter(|name| name.contains("/MacOS/")),
-        );
-    for member in required {
-        let required = format!("/package/{member}");
-        if !names.contains(&required.as_str()) {
-            return Err(format!(
-                "Generated SBOM does not cover packaged file {required}"
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Scans the package ZIP and publishes `SBOM-macos-arm64.spdx.json`, then
 /// `SHA256SUMS-macos-arm64.txt`, in the ZIP's directory; neither may exist yet.
 pub(crate) fn publish(root: &Path, zip: &Path) -> Result<Published, String> {
@@ -172,7 +129,9 @@ pub(crate) fn publish(root: &Path, zip: &Path) -> Result<Published, String> {
         return Err(format!("Syft {SYFT_VERSION} failed with {status}"));
     }
     let bytes = fs::read(&generated).map_err(|error| error.to_string())?;
-    validate(std::str::from_utf8(&bytes).map_err(|_| "the SBOM is not UTF-8")?)?;
+    super::content::validate_sbom(
+        std::str::from_utf8(&bytes).map_err(|_| "the SBOM is not UTF-8")?,
+    )?;
     let sbom = directory.join(platform.sbom_file());
     atomic_evidence::write_new(&sbom, &bytes)?;
     let sbom_sha256 = integrity::sha256(&sbom)?;
@@ -189,41 +148,4 @@ pub(crate) fn publish(root: &Path, zip: &Path) -> Result<Published, String> {
         sbom_sha256,
         checksums_sha256: integrity::sha256(&checksums)?,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn document(files: &[&str]) -> String {
-        let files = files
-            .iter()
-            .map(|name| format!("{{\"fileName\":\"{name}\"}}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        format!(
-            "{{\"spdxVersion\":\"SPDX-2.3\",\"packages\":[{{\"name\":\"x\"}}],\"files\":[{files}]}}"
-        )
-    }
-
-    #[test]
-    fn the_sbom_must_cover_the_executable_notices_and_licenses() {
-        let covered = [
-            "/package/StickyMD/StickyMD.app/Contents/MacOS/StickyMD",
-            "/package/StickyMD/THIRD_PARTY_NOTICES.txt",
-            "/package/StickyMD/licenses/SIL-OFL-1.1.txt",
-            "/package/StickyMD/licenses/KaTeX-fonts-NOTICE.txt",
-        ];
-        validate(&document(&covered)).unwrap();
-        for missing in covered {
-            let rest = covered
-                .iter()
-                .copied()
-                .filter(|name| *name != missing)
-                .collect::<Vec<_>>();
-            let error = validate(&document(&rest)).unwrap_err();
-            assert!(error.contains(missing), "{error}");
-        }
-        assert!(validate(&document(&covered).replace("SPDX-2.3", "SPDX-3.0")).is_err());
-    }
 }

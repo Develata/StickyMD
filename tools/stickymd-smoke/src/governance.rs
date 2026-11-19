@@ -478,6 +478,7 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     let mut workflows: Vec<_> = [
         ".github/workflows/ci.yml",
         ".github/workflows/release.yml",
+        ".github/workflows/release-macos.yml",
         ".github/workflows/promote-release.yml",
         ".github/workflows/scheduled.yml",
     ]
@@ -524,11 +525,34 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
             ));
         }
     }
-    for forbidden in ["push:\n    tags:", "gh release", "actions/attest@"] {
-        if release.contains(forbidden) {
+    // The macOS candidate workflow (plan 11 #macos-release-artifact): its own run, the Xcode it
+    // was approved with, the packaged and checked set, and an artifact named for the attempt.
+    let release_macos = read_text(&root.join(".github/workflows/release-macos.yml"))?;
+    for required in [
+        "permissions:\n  contents: read",
+        "workflow_dispatch:",
+        "persist-credentials: false",
+        "runs-on: xcode-27",
+        "/Applications/Xcode_27.2.app",
+        "apps/stickymd-mac/packaging/build-app.sh",
+        "release macos-package",
+        "release macos-sbom",
+        "release macos-verify-package",
+        "name: stickymd-macos-arm64-release-${{ github.run_attempt }}",
+    ] {
+        if !release_macos.contains(required) {
             return Err(format!(
-                "candidate workflow must not tag, attest, or create releases: `{forbidden}`"
+                "macOS release workflow lacks required token `{required}`"
             ));
+        }
+    }
+    for (workflow, content) in [("release", &release), ("release-macos", &release_macos)] {
+        for forbidden in ["push:\n    tags:", "gh release", "actions/attest@"] {
+            if content.contains(forbidden) {
+                return Err(format!(
+                    "candidate workflow {workflow} must not tag, attest, or create releases: `{forbidden}`"
+                ));
+            }
         }
     }
     let promotion = read_text(&root.join(".github/workflows/promote-release.yml"))?;
@@ -538,13 +562,18 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         "- draft",
         "- publish",
         "source_sha:",
-        "artifact_run_id:",
-        "expected_zip_sha256:",
-        "expected_sbom_sha256:",
-        "run-id: ${{ inputs.artifact_run_id }}",
-        "tools/release/verify-promoted-artifact.ps1",
-        "subject-checksums: dist/promoted/SHA256SUMS.txt",
-        "sbom-path: dist/promoted/SBOM.spdx.json",
+        "windows_run_id:",
+        "windows_artifact_id:",
+        "macos_run_id:",
+        "macos_run_attempt:",
+        "macos_artifact_id:",
+        "attachments:",
+        "uses: ./.github/actions/verify-release-candidates",
+        "subject-checksums: dist/promoted/windows/SHA256SUMS.txt",
+        "sbom-path: dist/promoted/windows/SBOM.spdx.json",
+        "subject-checksums: dist/promoted/macos/SHA256SUMS-macos-arm64.txt",
+        "sbom-path: dist/promoted/macos/SBOM-macos-arm64.spdx.json",
+        "release verify-attachments",
         "gh release create",
         "gh release edit",
     ] {
@@ -562,6 +591,21 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         if promotion.contains(forbidden) {
             return Err(format!(
                 "promotion workflow must reuse rather than rebuild exact artifact: `{forbidden}`"
+            ));
+        }
+    }
+    // Every promotion operation checks both candidates the same way.
+    let candidates = read_text(&root.join(".github/actions/verify-release-candidates/action.yml"))?;
+    for required in [
+        "tools/release/verify-promoted-artifact.ps1",
+        "release verify-release-set",
+        "release verify-workflow",
+        "--workflow release-macos --attempt",
+        "stickymd-macos-arm64-release-$env:MACOS_RUN_ATTEMPT",
+    ] {
+        if !candidates.contains(required) {
+            return Err(format!(
+                "the candidate check lacks exact-artifact token `{required}`"
             ));
         }
     }

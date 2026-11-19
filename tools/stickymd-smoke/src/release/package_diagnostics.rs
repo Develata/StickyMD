@@ -20,6 +20,7 @@ fn inputs(runtime: bool) -> (std::path::PathBuf, PackageOptions) {
             zip: None,
             checksums: None,
             runtime,
+            build: None,
         },
     )
 }

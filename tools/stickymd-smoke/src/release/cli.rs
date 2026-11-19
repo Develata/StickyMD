@@ -10,6 +10,19 @@ pub(crate) enum Command {
     VerifyWorkflow {
         source: String,
         input: PathBuf,
+        workflow: String,
+        attempt: Option<u64>,
+    },
+    VerifyAttachments {
+        directory: PathBuf,
+        attachments: String,
+    },
+    VerifyReleaseSet {
+        release: String,
+        tag: String,
+        attachments: String,
+        windows: PathBuf,
+        macos: PathBuf,
     },
     VerifyRemoteState(RemoteStateOptions),
     Notices {
@@ -29,6 +42,15 @@ pub(crate) enum Command {
         app: PathBuf,
         output: PathBuf,
         allow_dirty: bool,
+    },
+    MacosPromote {
+        run_id: u64,
+        attempt: u64,
+        release: String,
+        zip: PathBuf,
+    },
+    MacosCandidate {
+        release: String,
     },
     MacosSbom {
         zip: PathBuf,
@@ -132,6 +154,9 @@ pub(crate) struct SbomBuildOptions {
 pub(crate) struct PromotionOptions {
     pub directory: PathBuf,
     pub source: String,
+    /// The commit the package was built from, when it is an ancestor of `source` (plan 11
+    /// reuse rule); the package README names it.
+    pub build: Option<String>,
     pub zip_hash: String,
     pub sbom_hash: String,
     pub tag: String,
@@ -143,6 +168,9 @@ pub(crate) struct PackageOptions {
     pub zip: Option<PathBuf>,
     pub checksums: Option<PathBuf>,
     pub runtime: bool,
+    /// The commit the package was built from when it is not HEAD; it must be reusable on HEAD
+    /// (plan 11 #platform-artifact-reuse).
+    pub build: Option<String>,
 }
 
 pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
@@ -213,16 +241,34 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
             zip_hash: take("--expected-zip-sha256")?,
             sbom_hash: take("--expected-sbom-sha256")?,
             tag: take("--release-tag")?,
+            build: options.remove("--build-sha").map(str::to_owned),
         }),
         "verify-package" => Command::VerifyPackage(PackageOptions {
             directory: options.remove("--package-directory").map(PathBuf::from),
             zip: options.remove("--zip").map(PathBuf::from),
             checksums: options.remove("--checksums").map(PathBuf::from),
             runtime,
+            build: options.remove("--build-sha").map(str::to_owned),
         }),
         "verify-workflow" => Command::VerifyWorkflow {
             source: take("--source-sha")?,
             input: PathBuf::from(take("--workflow-json")?),
+            workflow: options.remove("--workflow").unwrap_or("release").to_owned(),
+            attempt: options
+                .remove("--attempt")
+                .map(|value| value.parse().map_err(|_| "invalid --attempt"))
+                .transpose()?,
+        },
+        "verify-attachments" => Command::VerifyAttachments {
+            directory: PathBuf::from(take("--directory")?),
+            attachments: take("--attachments")?,
+        },
+        "verify-release-set" => Command::VerifyReleaseSet {
+            release: take("--release-source")?,
+            tag: take("--release-tag")?,
+            attachments: take("--attachments")?,
+            windows: PathBuf::from(take("--windows-directory")?),
+            macos: PathBuf::from(take("--macos-directory")?),
         },
         "verify-remote-state" => Command::VerifyRemoteState(RemoteStateOptions {
             kind: super::remote_state::Kind::parse(&take("--kind")?)?,
@@ -247,6 +293,17 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
             app: PathBuf::from(take("--app")?),
             output: PathBuf::from(take("--output-directory")?),
             allow_dirty,
+        },
+        "macos-promote" => Command::MacosPromote {
+            run_id: take("--run-id")?.parse().map_err(|_| "invalid --run-id")?,
+            attempt: take("--attempt")?
+                .parse()
+                .map_err(|_| "invalid --attempt")?,
+            release: take("--release-source")?,
+            zip: PathBuf::from(take("--zip")?),
+        },
+        "macos-candidate" => Command::MacosCandidate {
+            release: take("--release-source")?,
         },
         "macos-sbom" => Command::MacosSbom {
             zip: PathBuf::from(take("--zip")?),

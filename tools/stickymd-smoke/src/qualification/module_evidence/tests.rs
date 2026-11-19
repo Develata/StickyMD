@@ -1,6 +1,6 @@
 //! Evidence is judged from a strict parse of the object that owns each value.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::fixtures::{checks, exact, valid_document};
 use super::{Companion, G5_SCREENSHOTS, Origin, g5_companions, validate};
@@ -49,6 +49,8 @@ const INPUT: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789a
 
 fn origin(candidate: &Candidate) -> Origin<'_> {
     Origin {
+        // No repository: a run commit other than the candidate's source cannot be judged reusable.
+        repository: Path::new("stickymd-module-evidence-no-repository"),
         source_commit: &candidate.source_commit,
         version: &candidate.version,
         exe_sha256: &candidate.exe_sha256,
@@ -224,6 +226,39 @@ fn exact_groups_need_every_case_in_order_and_the_origin_identity() {
             .is_err(),
             "{to}"
         );
+    }
+}
+
+/// A run from a later checkout (HEAD R) on a candidate built on S is the candidate's own run
+/// exactly when the Windows artifact built on S may stand for R (plan 11 reuse rule).
+#[test]
+fn a_run_commit_counts_when_the_candidate_source_is_reusable_on_it() {
+    let repository = crate::qualification::reuse::tests::repository();
+    let scratch = Scratch::new();
+    let mut candidate = candidate();
+    candidate.source_commit = repository.first.clone();
+    let origin = Origin {
+        repository: &repository.root,
+        ..origin(&candidate)
+    };
+    let exact_run = exact(&candidate, &passing_cases(G4));
+    let smoke_run = valid_document(&scratch.0, ModuleId::Runtime, &candidate, INPUT, "run");
+    for (module, document, key) in [
+        (ModuleId::G4, &exact_run, "harness_commit"),
+        (ModuleId::Runtime, &smoke_run, "commit"),
+    ] {
+        let run_on = |commit: &str| {
+            let from = format!("\"{key}\":\"{}\"", repository.first);
+            assert!(document.contains(&from), "{key}");
+            validate(
+                module,
+                &document.replacen(&from, &format!("\"{key}\":\"{commit}\""), 1),
+                &origin,
+            )
+        };
+        run_on(&repository.mac).expect("macOS-only change: reusable");
+        let error = run_on(&repository.windows).expect_err("Windows input changed");
+        assert!(error.contains("apps/stickymd-win/src/main.rs"), "{error}");
     }
 }
 

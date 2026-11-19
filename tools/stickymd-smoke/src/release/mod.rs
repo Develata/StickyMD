@@ -1,6 +1,7 @@
 //! Local release-tool checks; these commands never promote, authorize or publish.
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
+mod attachments;
 mod checksums;
 mod cli;
 mod identity;
@@ -41,7 +42,42 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
         Command::VerifyPackage(options) => {
             verify_package(root, options, &mut std::io::stdout().lock())
         }
-        Command::VerifyWorkflow { source, input } => workflow::verify_input(source, input),
+        Command::VerifyWorkflow {
+            source,
+            input,
+            workflow,
+            attempt,
+        } => workflow::verify_named_input(source, input, workflow, *attempt),
+        Command::VerifyAttachments {
+            directory,
+            attachments,
+        } => {
+            let version = crate::repository::workspace_version(root)?;
+            let approved = attachments::parse_spec(attachments, &version)?;
+            attachments::verify_directory(directory, &approved)?;
+            println!("ATTACHMENTS=PASS");
+            Ok(())
+        }
+        Command::VerifyReleaseSet {
+            release,
+            tag,
+            attachments,
+            windows,
+            macos,
+        } => {
+            let set = attachments::verify_release_set(
+                root,
+                release,
+                tag,
+                attachments,
+                &[
+                    (platform::Platform::WindowsX64, windows.clone()),
+                    (platform::Platform::MacOsArm64, macos.clone()),
+                ],
+            )?;
+            println!("{}", set.json());
+            Ok(())
+        }
         Command::VerifyRemoteState(options) => remote_state::execute(root, options),
         Command::Notices {
             destination,
@@ -93,6 +129,13 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
             macos::verify_command(root, zip, source.as_deref())
         }
         Command::MacosSbom { zip } => macos::sbom_command(root, zip),
+        Command::MacosPromote {
+            run_id,
+            attempt,
+            release,
+            zip,
+        } => macos::promote_command(root, *run_id, *attempt, release, zip),
+        Command::MacosCandidate { release } => macos::candidate_command(root, release),
         Command::WorkspaceVersion => {
             println!("{}", crate::repository::workspace_version(root)?);
             Ok(())
@@ -139,6 +182,10 @@ fn guard_outputs(root: &Path, command: &Command) -> Result<(), String> {
         Command::VerifyPromoted(_)
         | Command::VerifyPackage(_)
         | Command::VerifyWorkflow { .. }
+        | Command::VerifyAttachments { .. }
+        | Command::VerifyReleaseSet { .. }
+        | Command::MacosPromote { .. }
+        | Command::MacosCandidate { .. }
         | Command::VerifyRemoteState(_)
         | Command::PackageInputs(_)
         | Command::WorkspaceVersion
