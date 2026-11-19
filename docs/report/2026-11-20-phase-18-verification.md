@@ -66,8 +66,9 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
   clippy 只证明能通过类型检查。
 - **`0278057` 之后的产品改动只在错误路径**（`cfed863`：不可写提示带出 Note Root、探测文件名冲突时的清理），由
   `apps/stickymd-mac` 的单元测试覆盖；虚拟机证据仍是 `0278057` 的产品。重跑应在 dispatch 得到的候选 bundle 上做，那时证据身份才是发布字节。
-- **workflow：** 三个 YAML 均能解析；`concurrency` 组按 tag 串行化三个操作；PUBLISH 比对草稿 release 与 asset 的 id、名称、大小与更新时间，
-  并按 release id 发布。GitHub REST 的实际字段（发布列表、运行的 `path` 是否带 `@ref`）按文档推断，已对两种 `path` 形式都放行。
+- **workflow：** 三个 YAML 均能解析；`concurrency` 组按 tag 串行化三个操作；PUBLISH 比对草稿的 release id、`draft` 与 `tag_name`，以及
+  各 asset 的 id、名称与大小（不含更新时间；六个文件的内容另在下载后按 SHA-256 核对），并按 release id 发布。发布前后的复读只比较 tag 名，
+  不核对版本 tag 是否仍指向 R。GitHub REST 的实际字段（发布列表、运行的 `path` 是否带 `@ref`）按文档推断，已对两种 `path` 形式都放行。
 
 ## 未验证
 
