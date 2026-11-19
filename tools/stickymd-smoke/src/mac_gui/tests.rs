@@ -705,7 +705,26 @@ fn hover_tracks_leave_no_unobserved_stretch() {
         row.json()
     );
     assert!(row.json().contains("trial 2:"), "{}", row.json());
-    assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
+    // The unresolved first trial is not part of the focus claim: the row passes.
+    assert_eq!(aggregate(&row.checks), Verdict::Pass, "{}", row.json());
+    // StickyMD in front during that repeated trial still fails.
+    // Before the slowness the clock matches an undisturbed run, so this lands in trial 1 only.
+    let (t0, _) = query_before_move("W03", 1.0, 0);
+    let mut taken = HoverBackend::new();
+    taken.slow_window = Some((false, 20, 90));
+    taken.flash_abs = Some((t0 + 1, t0 + 15));
+    let row = hover_row(&mut taken, "W03");
+    assert_eq!(
+        check(&row, "hover expands without focus"),
+        Verdict::Fail,
+        "{}",
+        row.json()
+    );
+    assert!(
+        row.json().contains("in a repeated early-leave trial"),
+        "{}",
+        row.json()
+    );
 }
 
 /// The fake-clock time and the index (from 0) of the window query read just before the move

@@ -187,6 +187,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
     // observed in any trial fails at once.
     const EARLY_TRIALS: usize = 3;
     let mut first = None;
+    let mut last = 0;
     let mut trials = Vec::new();
     let mut strip_rest = None;
     let mut verdict = Verdict::NotTested;
@@ -216,6 +217,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
                 return skip_all(d, band, "Finder was not frontmost when the hover began");
             }
         }
+        last = early.before;
         watch.until(d, early.zero + 35)?;
         d.op(Op::Move(away))?;
         let dwell = d.backend.now() - early.zero;
@@ -280,7 +282,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
     let hover_end = watch.last();
     let Some(rest) = rest else {
         // No proven rest: only an observed StickyMD in front fails the focus check.
-        let (focus, detail) = watch.focus(d.pid, finder, start, hover_end);
+        let (focus, detail) = hover_focus(&watch, d.pid, finder, start, last, hover_end);
         record(d, "hover expands without focus", focus, detail);
         return skip_rest(d, band, "the hover expansion was not established");
     };
@@ -303,7 +305,7 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
     let leave = watch.move_to(d, away)?;
     let end = leave.map_or(watch.last(), |l| l.before);
     let hover_to = band_before.unwrap_or(end);
-    let (focus, detail) = watch.focus(d.pid, finder, start, hover_to);
+    let (focus, detail) = hover_focus(&watch, d.pid, finder, start, last, hover_to);
     record(d, "hover expands without focus", focus, detail);
     if let Some(from) = band_before {
         let (focus, detail) = watch.focus(d.pid, finder, from, end);
@@ -333,6 +335,30 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
         "leave collapse completion",
     )?;
     Ok(())
+}
+
+/// The hover's focus check: judged over the last early-leave trial and the hover (`last..=to`);
+/// a trial repeated because its sampling could not resolve it adds only what it observed, so
+/// StickyMD seen in front there still fails, but its gaps are not part of the claim.
+fn hover_focus(
+    watch: &Watch,
+    app: u32,
+    finder: u32,
+    start: usize,
+    last: usize,
+    to: usize,
+) -> (Verdict, String) {
+    let (verdict, detail) = watch.focus(app, finder, last, to);
+    match watch.samples[start..last].iter().find(|s| s.front == app) {
+        Some(s) => (
+            Verdict::Fail,
+            format!(
+                "StickyMD frontmost at {} in a repeated early-leave trial; {detail}",
+                s.ret
+            ),
+        ),
+        None => (verdict, detail),
+    }
 }
 
 /// The checks a hover scenario makes after the early leave, all NOT_TESTED for `reason`.
