@@ -8,21 +8,23 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::receipt::{self, Candidate};
+
+mod artifact;
 use super::{decisions, json, reuse, source_freeze};
 
 pub(super) const REMOTE_RECEIPT: &str = "dist/evidence/remote-workflow.json";
 pub(super) const DOWNLOADED_RECEIPT: &str = "dist/evidence/downloaded-artifact-smoke.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct RemoteWorkflow {
-    source_commit: String,
-    cargo_lock_sha256: String,
-    run_id: u64,
-    attempt: u64,
-    artifact_id: u64,
-    artifact_name: String,
-    workflow: String,
-    url: String,
+pub(super) struct RemoteWorkflow {
+    pub(super) source_commit: String,
+    pub(super) cargo_lock_sha256: String,
+    pub(super) run_id: u64,
+    pub(super) attempt: u64,
+    pub(super) artifact_id: u64,
+    pub(super) artifact_name: String,
+    pub(super) workflow: String,
+    pub(super) url: String,
 }
 
 pub(super) fn record_workflow(root: &Path, run_id: u64, attempt: u64) -> Result<(), String> {
@@ -119,7 +121,7 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
             "downloaded ZIP is {zip_name}, expected Source Freeze artifact {expected_zip_name}"
         ));
     }
-    let authoritative = download_recorded_artifact(root, &remote)?;
+    let authoritative = artifact::download(root, &remote)?;
     let zip = authoritative.path.join(&zip_name);
     let checksum = authoritative.path.join("SHA256SUMS.txt");
     let sbom = authoritative.path.join("SBOM.spdx.json");
@@ -196,104 +198,6 @@ pub(super) fn verify_downloaded(root: &Path, zip: &Path) -> Result<(), String> {
     } else {
         outcome
     }
-}
-
-struct DownloadedArtifact {
-    root: PathBuf,
-    path: PathBuf,
-}
-
-impl Drop for DownloadedArtifact {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-fn download_recorded_artifact(
-    root: &Path,
-    remote: &RemoteWorkflow,
-) -> Result<DownloadedArtifact, String> {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| format!("system clock precedes Unix epoch: {error}"))?
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "stickymd-recorded-artifact-{}-{nonce}",
-        std::process::id()
-    ));
-    fs::create_dir(&path)
-        .map_err(|error| format!("cannot create artifact download directory: {error}"))?;
-    let mut download = DownloadedArtifact {
-        root: path.clone(),
-        path,
-    };
-    let status = Command::new("gh")
-        .args(["run", "download", &remote.run_id.to_string(), "--name"])
-        .arg(&remote.artifact_name)
-        .arg("--dir")
-        .arg(&download.path)
-        .current_dir(root)
-        .status()
-        .map_err(|error| format!("cannot download recorded workflow artifact: {error}"))?;
-    if !status.success() {
-        return Err(format!(
-            "recorded workflow artifact download failed with {status}"
-        ));
-    }
-    let expected_zip = format!(
-        "StickyMD-{}-windows-x64-portable.zip",
-        receipt::workspace_version(root)?
-    );
-    let expected = [expected_zip.as_str(), "SHA256SUMS.txt", "SBOM.spdx.json"];
-    let nested_path = download.root.join(&remote.artifact_name);
-    let payload = if nested_path.is_dir() {
-        nested_path
-    } else {
-        download.root.clone()
-    };
-    let observed = member_set(&payload)?;
-    let expected = expected_member_set(&expected);
-    if observed != expected {
-        return Err(format!(
-            "recorded artifact member set is {observed:?}, expected {expected:?}"
-        ));
-    }
-    download.path = payload;
-    Ok(download)
-}
-
-fn member_set(directory: &Path) -> Result<Vec<String>, String> {
-    let mut observed = fs::read_dir(directory)
-        .map_err(|error| format!("cannot inspect recorded artifact: {error}"))?
-        .map(|entry| {
-            entry
-                .map_err(|error| format!("cannot inspect recorded artifact member: {error}"))
-                .and_then(|entry| {
-                    if !entry
-                        .file_type()
-                        .map_err(|error| format!("cannot inspect artifact member type: {error}"))?
-                        .is_file()
-                    {
-                        return Err("recorded artifact contains a non-file member".to_owned());
-                    }
-                    entry
-                        .file_name()
-                        .into_string()
-                        .map_err(|_| "recorded artifact member name is not UTF-8".to_owned())
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    observed.sort();
-    Ok(observed)
-}
-
-fn expected_member_set(expected: &[&str]) -> Vec<String> {
-    let mut expected = expected
-        .iter()
-        .map(|value| (*value).to_owned())
-        .collect::<Vec<_>>();
-    expected.sort();
-    expected
 }
 
 fn verify_supplied_copy(pairs: &[(&Path, &Path, &str)]) -> Result<(), String> {

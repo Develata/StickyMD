@@ -49,6 +49,11 @@ const REQUIRED_FILES: &[&str] = &[
     "assets/licenses/Boost-1.0.txt",
     "assets/licenses/HarfRust-MIT.txt",
     "assets/licenses/RaTeX-MIT.txt",
+    "assets/licenses/objc2-MIT-4fc083f.txt",
+    "assets/licenses/objc2-LICENSE-8852b42.md",
+    "assets/licenses/objc2-MIT.txt",
+    "assets/licenses/dispatch-MIT.txt",
+    "assets/licenses/fallback-provenance.md",
     "docs/release-checklist.md",
     "docs/report/phase-09-performance-final.md",
     "docs/report/phase-09-release-readiness.md",
@@ -643,19 +648,37 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     // HTTP/GraphQL facts, verifying that rejection prevents downstream remote writes.
     // Phase 12-14 routing is covered by phase_entry tests against the compiled parser.
     // PowerShell source tokens are not evidence of a gate.
+    // Promote downloads the authoritative copy itself, by the artifact id the remote receipt
+    // recorded after checking GitHub's answer for that id (plan 11), never by run and name.
     let remote_promotion =
         read_text(&root.join("tools/stickymd-smoke/src/qualification/remote.rs"))?;
-    for required in [
-        "download_recorded_artifact",
-        "Command::new(\"gh\")",
-        ".args([\"run\", \"download\"",
-        "verify_supplied_copy",
+    let recorded_artifact =
+        read_text(&root.join("tools/stickymd-smoke/src/qualification/remote/artifact.rs"))?;
+    for (source, text, required) in [
+        (
+            "remote.rs",
+            &remote_promotion,
+            "artifact::download(root, &remote)",
+        ),
+        ("remote.rs", &remote_promotion, "verify_supplied_copy"),
+        ("remote/artifact.rs", &recorded_artifact, "check_metadata("),
+        (
+            "remote/artifact.rs",
+            &recorded_artifact,
+            "actions/artifacts/{}",
+        ),
     ] {
-        if !remote_promotion.contains(required) {
+        if !text.contains(required) {
             return Err(format!(
-                "remote promotion lacks authoritative-download token `{required}`"
+                "remote promotion ({source}) lacks authoritative-download token `{required}`"
             ));
         }
+    }
+    if recorded_artifact.contains("\"run\", \"download\"") {
+        return Err(
+            "remote promotion must download the recorded artifact by id, not by run and name"
+                .to_owned(),
+        );
     }
     // Syft's fixed identity, cache hashes, and checksum manifest are owned by
     // release::syft. Its unit tests and the dual-host release wrapper tests

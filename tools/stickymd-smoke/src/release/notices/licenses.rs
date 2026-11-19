@@ -46,33 +46,46 @@ pub(super) fn select(root: &Path, package: &Package) -> Result<Vec<PathBuf>, Str
     if files.is_empty() {
         // Each fallback was reviewed for the exact versions listed; a new version is reviewed
         // again rather than inheriting the text.
-        let fallback = match (package.name.as_str(), package.version.as_str()) {
-            ("clipboard-win", "5.4.1") => "Boost-1.0.txt",
-            ("harfrust", "0.5.2") => "HarfRust-MIT.txt",
+        let fallbacks: &[&str] = match (package.name.as_str(), package.version.as_str()) {
+            ("clipboard-win", "5.4.1") => &["Boost-1.0.txt"],
+            ("harfrust", "0.5.2") => &["HarfRust-MIT.txt"],
             (
                 "ratex-font" | "ratex-font-loader" | "ratex-katex-fonts" | "ratex-layout"
                 | "ratex-lexer" | "ratex-parser" | "ratex-types" | "ratex-unicode-font",
                 "0.1.14",
-            ) => "RaTeX-MIT.txt",
-            // The macOS host's graph (reviewed 2026-11-20 against each crate's Cargo.toml).
-            // github.com/madsmtm/objc2 publishes these crates without a license file. MIT alone:
-            // objc2 0.5.2/0.6.4, objc-sys 0.3.5, objc2-encode 4.1.0, block2 0.5.1/0.6.2,
-            // objc2-foundation 0.2.2/0.3.2 and the 0.2.2 framework crates. Zlib OR Apache-2.0 OR
-            // MIT, of which MIT is taken: the 0.3.2 framework crates and dispatch2 0.3.1. The text
-            // is the repository's MIT text at tag objc2-0.5.2 ("Copyright (c) Steven Sheldon")
-            // with the holder of its current LICENSE-MIT.txt added ("Copyright 2026 Mads
-            // Marquart", main at 8a5abac).
-            ("objc2", "0.5.2" | "0.6.4")
+            ) => &["RaTeX-MIT.txt"],
+            // The macOS host's graph: github.com/madsmtm/objc2 publishes these crates without a
+            // license file. Each crate's .cargo_vcs_info.json names the upstream revision; the
+            // texts and their provenance per (crate, version) are recorded in
+            // assets/licenses/fallback-provenance.md (reviewed 2026-11-20).
+            // Revisions 4fc083f1 and e282618b: the root LICENSE.txt, MIT by Steven Sheldon.
+            ("objc2", "0.5.2")
             | ("objc-sys", "0.3.5")
+            | ("block2", "0.5.1")
+            | (
+                "objc2-foundation" | "objc2-app-kit" | "objc2-quartz-core" | "objc2-core-data"
+                | "objc2-core-image" | "objc2-metal",
+                "0.2.2",
+            ) => &["objc2-MIT-4fc083f.txt"],
+            // Revisions 8852b424, b4167b58, 8d214f54 and 7b1abfd7: only the root LICENSE.md,
+            // which says which crates are MIT alone and which Zlib OR Apache-2.0 OR MIT (MIT is
+            // taken); the MIT text beside it is reconstructed (see the provenance record).
+            ("objc2", "0.6.4")
+            | ("block2", "0.6.2")
             | ("objc2-encode", "4.1.0")
-            | ("block2", "0.5.1" | "0.6.2")
-            | ("objc2-foundation" | "objc2-app-kit" | "objc2-quartz-core", "0.2.2" | "0.3.2")
-            | ("objc2-core-data" | "objc2-core-image" | "objc2-metal", "0.2.2")
-            | ("objc2-core-foundation" | "objc2-core-graphics" | "objc2-io-surface", "0.3.2")
-            | ("dispatch2", "0.3.1") => "objc2-MIT.txt",
+            | ("dispatch2", "0.3.1")
+            | (
+                "objc2-foundation"
+                | "objc2-app-kit"
+                | "objc2-quartz-core"
+                | "objc2-core-foundation"
+                | "objc2-core-graphics"
+                | "objc2-io-surface",
+                "0.3.2",
+            ) => &["objc2-LICENSE-8852b42.md", "objc2-MIT.txt"],
             // github.com/SSheldon/rust-dispatch 0.2.0 declares MIT in Cargo.toml and ships no
             // license text; this is the MIT text with the author its Cargo.toml names.
-            ("dispatch", "0.2.0") => "dispatch-MIT.txt",
+            ("dispatch", "0.2.0") => &["dispatch-MIT.txt"],
             _ => {
                 return Err(format!(
                     "Runtime package {} {} contains no license notice and has no reviewed fallback",
@@ -80,15 +93,17 @@ pub(super) fn select(root: &Path, package: &Package) -> Result<Vec<PathBuf>, Str
                 ));
             }
         };
-        let fallback = root.join("assets/licenses").join(fallback);
-        if !fallback.is_file() {
-            return Err(format!(
-                "Reviewed license fallback is missing for {}: {}",
-                package.name,
-                fallback.display()
-            ));
+        for fallback in fallbacks {
+            let fallback = root.join("assets/licenses").join(fallback);
+            if !fallback.is_file() {
+                return Err(format!(
+                    "Reviewed license fallback is missing for {}: {}",
+                    package.name,
+                    fallback.display()
+                ));
+            }
+            files.push(fallback);
         }
-        files.push(fallback);
     }
     Ok(files)
 }

@@ -705,7 +705,15 @@ mod tests {
         let first = PromotionLock::take(scratch.path()).unwrap();
         assert!(PromotionLock::take(scratch.path()).is_err());
         drop(first);
-        PromotionLock::take(scratch.path()).unwrap();
+        // Other tests spawn processes in parallel; a child forked while the lock was held shares
+        // its open file description until it execs, so the release can take a moment to show.
+        let retaken = (0..200).any(|_| {
+            PromotionLock::take(scratch.path()).is_ok() || {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                false
+            }
+        });
+        assert!(retaken, "the lock is released when its holder is dropped");
     }
 
     #[test]

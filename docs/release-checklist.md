@@ -124,7 +124,7 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
 - [ ] 获得一次 candidate-only `release.yml` dispatch authority。
 - [ ] workflow 从批准的 exact source 构建且成功；不创建 tag 或 Release。
 - [ ] 记录唯一 run、attempt、artifact id/name，不自动选择“最新同 commit build”。
-- [ ] Rust qualification CLI 按记录的 run/name 下载 ZIP、`SHA256SUMS.txt` 与 SBOM。
+- [ ] Rust qualification CLI 核对记录的 artifact id 属于记录的 run 与 head、名称一致且未过期，再按该 id 下载 ZIP、`SHA256SUMS.txt` 与 SBOM。
 - [ ] 下载副本与用户指定副本逐字节一致。
 - [ ] checksum、SBOM、包结构、license/notices 与 source identity PASS。
 - [ ] exact EXE 的普通与 delay-load import gate PASS，无外置 developer runtime。
@@ -186,7 +186,10 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
       为两个平台生成 attestation，创建 draft；草稿上残留集合外的旧附件时拒绝；上传后草稿恰为六件。不重建产品。
 - [ ] 人工检查 draft 标题、正文（两个平台各自的构建来源）、资产数量、文件名、大小、checksums、SBOM 与 attestation。
 - [ ] 第一次跨提交沿用时，PUBLISH 前查看实际签发的 attestation statement，确认它如何表述构建来源（未验证项）。
-- [ ] **PUBLISH**：从 tag dispatch；重新下载草稿全部附件，比对完整的文件名集合与哈希，只公开该 draft，不替换资产。
+- [ ] PUBLISH 之前：仓库 ruleset 禁止更新与删除 `refs/tags/v*`；列清能写 release 的人、App、token 与 workflow，暂停本 workflow 以外的自动写入；
+  PUBLISH 运行期间不从网页或 CLI 改动草稿与 tag（`11` 发布晋升第 5 条）。
+- [ ] **PUBLISH**：从 tag dispatch；重新下载草稿全部附件，比对完整的文件名集合与哈希，公开前后按 release id 复读并核对 tag 仍指向 R，
+  只公开该 draft，不替换资产；不符时 job 失败，不自动改回草稿。
 - [ ] 公开 Release 的 tag、source、两个平台的 ZIP/SBOM/checksum hash 与已批准 identity 完全一致。
 
 ## 7. 发布后

@@ -31,7 +31,7 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
   - `cargo fmt --all --check` 通过。
   - `cargo clippy --workspace --exclude stickymd-win --all-targets --locked -- -D warnings` 通过；
     `cargo clippy -p stickymd-smoke --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings` 通过。
-  - `cargo test --workspace --exclude stickymd-win --locked`：1703 项通过，0 失败。`stickymd-win` 只在 Windows 编译，未在本机构建。
+  - `cargo test --workspace --exclude stickymd-win --locked`：1705 项通过，0 失败。`stickymd-win` 只在 Windows 编译，未在本机构建。
   - `stickymd-smoke phase 00` PASS。`stickymd-smoke phase 18` 的三个任务（governance、release tooling tests、macOS host tests）
     均 PASSED，随后按名判定就绪时报 P18-P04 等 Automated 行仍是 `NOT TESTED`，这是预期的未就绪，不是回归。
 - **第三方声明：** `release notices --platform windows-x64` 与 `--platform macos-arm64` 的输出与改动前逐字节相同
@@ -86,13 +86,16 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
    比报告批准的“改了的门在同一字节上重跑”更保守。反方向上，复审指出 `release-macos` 跑的工具测试会读 `ci.yml`、`scheduled.yml` 与本地
    cache action，它们按批准的排除表不算输入，只改它们会改变候选的测试结论而不改变指纹。两处都是“构建输入”与“候选上跑的验证”如何划界，
    需要你定：保持现状、把这些文件纳入，或明确哪些验证在 R 上独立重跑。
-2. **两份 MIT 回退文本的署名：** `assets/licenses/objc2-MIT.txt` 合并了两位版权人，`dispatch-MIT.txt` 按 Cargo.toml 的作者重建。
-   许可证选择有上游依据，署名是否完整上游也无法确认（objc2 #826）。
-3. **Windows 本地 Promote 按 run 与名字下载：** 远端记录里的 artifact id 与 attempt 没有被下载过程证明（审查发现，早于本阶段）。
-   `11` 写明 Windows 按 attempt 收紧另行决定；按 id 下载可作为单独的后续改动。
+2. **两份 MIT 回退文本的署名（已按版本处理，剩重建文本待你接受）：** 回退改为按 (crate, 版本) 取上游原文，来源逐行记在
+   `assets/licenses/fallback-provenance.md`：9 个 crate 版本照录其上游修订根目录的 MIT 原文（Steven Sheldon）；10 个较新的版本照录上游
+   `LICENSE.md`，另附重建的 `objc2-MIT.txt`（上游那些修订没有 MIT 全文）；`dispatch` 0.2.0 上游没有许可证文件，仍用重建的 `dispatch-MIT.txt`。
+   两份重建文本的署名是否完整上游无法确认（objc2 #826），`dispatch2` 还列有作者 Mary；首个公开 macOS 包之前由你决定是否接受。
+3. **Windows 本地 Promote 按 id 下载（已做）：** 先向 GitHub 核对收据记录的 artifact id 的名称、未过期、所属 run 与 head，再按该 id 下载；
+   `11` 与发布清单已同步。按 attempt 收紧 Windows 仍按 `11` 另行决定。
 4. **push 与 dispatch：** 什么时候 push 本分支，以及 `release`、`release-macos`、`promote-release` 的 dispatch，都等你授权。
-5. **发布后发现 release 不符时怎么办：** PUBLISH 现在只让 job 失败、不动 release。自动退回草稿是一次 `11` 没有写、PUBLISH 授权也未必包含的
-   远程写操作，所以没有做；要不要加，或者靠仓库权限证明只有这个 workflow 会写 release，由你决定。
+5. **PUBLISH 的写入约束（workflow 部分已做，仓库设置等你）：** 不自动改回草稿；公开前后按 release id 复读并核对版本 tag 仍指向 R，
+   不符即失败。`11` 发布晋升第 5 条与发布清单写明你在授权 PUBLISH 时的保证：仓库 ruleset 禁止更新与删除 `refs/tags/v*`（需要你在仓库设置里
+   建立），列清能写 release 的人、App、token 与 workflow 并暂停其他自动写入，PUBLISH 运行期间不手动改草稿与 tag。
 
 ## 复审与遗留
 
@@ -114,12 +117,12 @@ workflow 文件名；composite action 先把所有 id 与 attempt 校验为正�
 
 仍未处理，留给后续或你的决定：
 
-- **PUBLISH 的剩余窗口（B2，未关闭）：** GitHub 没有条件更新，发布前最后一次读取与 PATCH 之间，本 workflow 以外的写入者（例如有写权限的人
+- **PUBLISH 的剩余窗口（B2，以写入约束关闭，见“需要 Develata 决定”第 5 条；平台本身仍无法强制）：** GitHub 没有条件更新，发布前最后一次读取与 PATCH 之间，本 workflow 以外的写入者（例如有写权限的人
   手动改草稿）仍可改动。复审给的关闭条件是“约束所有写入者”或“证明本 workflow 是唯一写入者”，两者都没有做到：现在只有并发组串行化本
   workflow、governance 禁止候选 workflow 写 release，以及发布后按 id 复读、不符即失败。
 - **resolver 返回的是固定路径：** 返回之后若另一次晋升替换了它，runner 用到的就是新候选。晋升是本机的手动操作，约定不与 artifact-bound 运行并行；
   要彻底解决需要运行期间持读锁。
-- **Windows 本地 Promote 按 run 与名字下载**（见上文第 3 项），复审同意它早于本阶段、不阻断本次改动。
+- Windows 本地 Promote 原先按 run 与名字下载，已改为按记录的 artifact id 下载（见上文第 3 项）；按 attempt 收紧仍另行决定。
 - 进程内沿用判定缓存按仓库路径区分，同一路径的仓库在进程存活期间被替换不会重验；历史证据的相等 SHA 快路径不查对象是否存在
   （查找时该 S 已与当前候选比对）。
 - 并发组名按 GitHub 规则不分大小写；版本 tag 的大小写由现有 tag 校验决定，未改。

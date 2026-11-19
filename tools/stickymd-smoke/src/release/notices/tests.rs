@@ -185,3 +185,26 @@ fn the_macos_notices_name_the_macos_host_and_target() {
             .contains("Cannot identify the stickymd-win package")
     );
 }
+
+/// The fallback texts copied from upstream keep the bytes of the upstream revisions recorded in
+/// assets/licenses/fallback-provenance.md.
+#[test]
+fn upstream_license_texts_keep_their_upstream_bytes() {
+    let licenses = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/licenses");
+    for (file, upstream) in [
+        (
+            "objc2-MIT-4fc083f.txt",
+            "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5",
+        ),
+        (
+            "objc2-LICENSE-8852b42.md",
+            "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        ),
+    ] {
+        assert_eq!(
+            integrity::sha256(&licenses.join(file)).unwrap(),
+            upstream,
+            "{file}"
+        );
+    }
+}

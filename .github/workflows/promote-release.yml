@@ -365,12 +365,13 @@ jobs:
           cargo run --quiet -p stickymd-smoke --locked -- release verify-attachments --directory dist/draft --attachments $env:ATTACHMENTS
           exit $LASTEXITCODE
       - name: Publish the verified draft by its release id
-        # The draft must be the very release and assets downloaded and checked above. GitHub has
-        # no conditional update: the release is read by id just before and just after the PATCH,
-        # and a release that is not the checked one fails the job. Nothing is changed back
-        # automatically: what to do with a changed release is the USER's decision.
+        # The draft must be the very release and assets downloaded and checked above, and the
+        # version tag must still point at R. GitHub has no conditional update: both are read just
+        # before and just after the PATCH, and a mismatch fails the job. Nothing is changed back
+        # automatically: what to do with a changed release is the USER's decision (plan 11).
         shell: pwsh
         env:
+          RELEASE_SHA: ${{ inputs.source_sha }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           $before = [IO.File]::ReadAllText((Join-Path $env:RUNNER_TEMP 'draft-snapshot.txt'))
@@ -389,6 +390,16 @@ jobs:
             $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)" })
             [pscustomobject]@{ draft = [bool]$release.draft; text = "$($release.id)|$($assets -join ';')" }
           }
+          function Assert-TagOnRelease {
+            param([string]$When)
+            $text = (& gh api "repos/$env:GH_REPO/git/ref/tags/$env:RELEASE_TAG") -join "`n"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $ref = $text | ConvertFrom-Json
+            if ($ref.ref -cne "refs/tags/$env:RELEASE_TAG" -or $ref.object.type -cne 'commit' -or $ref.object.sha -cne $env:RELEASE_SHA) {
+              throw "$When publishing, refs/tags/$env:RELEASE_TAG does not point at $env:RELEASE_SHA"
+            }
+          }
+          Assert-TagOnRelease 'before'
           $draft = Get-ReleaseById
           if (-not $draft.draft -or $draft.text -cne $before) { throw "the draft of $env:RELEASE_TAG changed after it was checked" }
           gh api --method PATCH "repos/$env:GH_REPO/releases/$id" -F draft=false | Out-Null
@@ -397,3 +408,4 @@ jobs:
           if ($after.draft -or $after.text -cne $before) {
             throw "release $id of $env:RELEASE_TAG is not the checked release after publishing; it was left as it is for the USER to decide"
           }
+          Assert-TagOnRelease 'after'

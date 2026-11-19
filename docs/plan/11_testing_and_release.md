@@ -563,7 +563,7 @@ Source Freeze
 → push + CI
 → release workflow build/package/verify
 → record successful run/attempt/artifact id
-→ qualification CLI 按已记录 run/name 下载 ZIP + SHA256SUMS + SBOM
+→ qualification CLI 核对已记录 artifact id 的服务端身份（id、名称、未过期、所属 run 与 head）后按该 id 下载 ZIP + SHA256SUMS + SBOM
 → 与用户指定的 downloaded copy 逐文件 byte/hash 比对
 → verify checksum/SBOM/package/native runtime/runtime smoke
 → atomically Promote into dist/exact-candidate/
@@ -626,7 +626,8 @@ ZIP 不能解压、PE/native-runtime/runtime smoke 失败时，既有 Promoted C
 也不得写成 PASS receipt。原子 staging 成功但 receipt 写入失败时，candidate resolver 仍必须因
 缺失 receipt 而拒绝使用该目录；不得从本地 preflight 补位。
 为避免把同 source 的本地 build 误归因为 remote artifact，Promote 不得只相信调用者给出的
-ZIP 路径；qualification CLI 必须按 remote receipt 的 run/name 自行下载权威副本，确认
+ZIP 路径；qualification CLI 必须按 remote receipt 记录的 artifact id 自行下载权威副本：先向 GitHub 核对该 id 的 artifact
+名称、未过期、所属 run 与 head 均与收据一致，再按该 id 下载，确认
 ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
 
 - manual recorder 必须是交互式 human receipt recorder，逐场景只接受显式
@@ -1135,6 +1136,10 @@ private release lab。
    并核对每个平台的构建来源等于发布提交或按 #platform-artifact-reuse 可沿用。TAG operation 只为发布提交创建 tag；DRAFT operation 为每个平台以其 checksum 文件列出的文件生成
    provenance attestation、为每个 ZIP 附 SBOM attestation，然后创建或更新 draft，并在上传后核对草稿上的附件恰为该集合；
    PUBLISH operation 重新下载草稿的全部附件，比对完整的文件名集合与哈希（缺件、多件、残留的旧附件都拒绝），再只把既有 draft 公开。
+5. **PUBLISH 的写入约束：** GitHub 没有条件更新，workflow 只能缩小、不能消除“最后一次核对与公开之间被别人改动”的窗口，所以由 USER 在授权
+   PUBLISH 时一并保证：版本 tag（`refs/tags/v*`）由仓库 ruleset 禁止更新与删除；列清能写 release 的人、App、token 与 workflow，暂停其中
+   本 workflow 以外的自动写入；PUBLISH 运行期间不从网页或 CLI 手动改动草稿与 tag。workflow 自身在公开前后都按 release id 复读草稿与附件，
+   并核对版本 tag 仍指向 R；公开后发现不符时让 job 失败，**不自动改回草稿**（那是另一次远程写，不在 PUBLISH 授权之内），如何处置由 USER 决定。
 
 任一 promotion operation 都不得重新运行 Cargo build/package。artifact run id、artifact id、（macOS）attempt、构建来源或 hash 不匹配必须 fail closed；
 不得自动选择“最新同 commit build”替代已验收 artifact，也不得只发布一个平台。TAG/DRAFT/PUBLISH 仍是三个独立 USER authority，
