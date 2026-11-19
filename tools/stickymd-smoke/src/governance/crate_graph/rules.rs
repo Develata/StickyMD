@@ -17,6 +17,10 @@ const WINDOW: &str = "the window system belongs to stickymd-desktop and the Plat
                       stickymd-app";
 const WIN32: &str = "Win32 calls belong to the Windows host's adapters \
                      (apps/stickymd-win/src/platform/windows), behind a port the host implements";
+const POSIX: &str = "POSIX calls belong to stickymd-posix and the macOS host's adapters \
+                     (apps/stickymd-mac/src/platform), behind a port the host implements";
+const OBJC: &str = "Objective-C calls belong to the macOS host's adapters \
+                    (apps/stickymd-mac/src/platform), behind a port the host implements";
 const CLIPBOARD: &str = "the clipboard belongs to the Platform Host, which implements \
                          stickymd-app's ClipboardPort";
 const TRAY: &str = "the tray belongs to the Platform Host, which implements stickymd-desktop's \
@@ -56,12 +60,36 @@ const HOST_CAPABILITIES: &[Banned] = &[
     },
 ];
 
-/// The Win32 binding: hand-written native calls stay in a host's adapters (plan 03 rule 8), while a
-/// third-party backend may hold it.
-const WIN32_BINDING: &[Banned] = &[Banned {
-    pattern: "windows",
-    route: WIN32,
-}];
+/// Native bindings: hand-written native calls stay in a host's adapters or stickymd-posix, so no
+/// platform-independent shared crate declares one, while a third-party backend may hold it
+/// (plan 03 rule 8, USER 2026-11-19). A binding crate a host or stickymd-posix adopts joins this
+/// list in the same commit.
+const NATIVE_BINDINGS: &[Banned] = &[
+    Banned {
+        pattern: "windows",
+        route: WIN32,
+    },
+    Banned {
+        pattern: "windows-sys",
+        route: WIN32,
+    },
+    Banned {
+        pattern: "libc",
+        route: POSIX,
+    },
+    Banned {
+        pattern: "objc2",
+        route: OBJC,
+    },
+    Banned {
+        pattern: "objc2-*",
+        route: OBJC,
+    },
+    Banned {
+        pattern: "block2",
+        route: OBJC,
+    },
+];
 
 /// Window handles, which only the window layers declare; a third-party library may carry them.
 const WINDOW_HANDLE: &[Banned] = &[Banned {
@@ -116,28 +144,28 @@ pub(super) const BOUNDARIES: &[Boundary] = &[
         allowed: &[],
         route: None,
         unreachable: &[WINDOW_SYSTEM, HOST_CAPABILITIES, RENDER_ENGINES],
-        undeclared: &[WIN32_BINDING, WINDOW_HANDLE],
+        undeclared: &[NATIVE_BINDINGS, WINDOW_HANDLE],
     },
     Boundary {
         name: "stickymd-render",
         allowed: &["stickymd-core"],
         route: None,
         unreachable: &[WINDOW_SYSTEM, HOST_CAPABILITIES],
-        undeclared: &[WIN32_BINDING, WINDOW_HANDLE],
+        undeclared: &[NATIVE_BINDINGS, WINDOW_HANDLE],
     },
     Boundary {
         name: "stickymd-app",
         allowed: &["stickymd-core", "stickymd-render"],
         route: None,
         unreachable: &[WINDOW_SYSTEM, HOST_CAPABILITIES],
-        undeclared: &[WIN32_BINDING, WINDOW_HANDLE],
+        undeclared: &[NATIVE_BINDINGS, WINDOW_HANDLE],
     },
     Boundary {
         name: "stickymd-desktop",
         allowed: &["stickymd-core", "stickymd-render", "stickymd-app"],
         route: None,
         unreachable: &[HOST_CAPABILITIES],
-        undeclared: &[WIN32_BINDING],
+        undeclared: &[NATIVE_BINDINGS],
     },
     // A native adapter in the Execution Domain that depends on no other StickyMD crate (plan 03
     // table, USER 2026-11-19); the plan names no third-party crate it may not use.

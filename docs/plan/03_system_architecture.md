@@ -112,7 +112,7 @@ macOS 宿主依赖 `stickymd-posix`；平台无关共享 crate 不依赖它（US
 5. 文件接口覆盖完整的安全操作边界：不能由共享层先检查路径、再由平台层凭字符串删除或移动文件。
 6. 主线程限定的窗口、菜单与输入法能力不强加 `Send + Sync`；I/O worker 只获得允许跨线程传递的执行对象与不可变请求。
 7. 共享调度使用注入的单调时间或可控时钟，沿用毫秒时间与有界队列语义；Platform Host 负责唤醒，不复制 debounce 与退出顺序。
-8. 平台无关共享 crate 禁止 `unsafe`。第三方库可以持有经批准的平台后端；项目手写原生调用集中在 Platform Host 的 adapter 或 `stickymd-posix/src/`。后者属于原生 adapter，crate root 必须保留 `#![deny(unsafe_op_in_unsafe_fn)]`，每个 `unsafe` block 有 `SAFETY` 说明，每个非测试源文件有 `plan_ref`。
+8. 平台无关共享 crate 禁止 `unsafe`。第三方库可以持有经批准的平台后端；项目手写原生调用集中在 Platform Host 的 adapter 或 `stickymd-posix/src/`。后者属于原生 adapter，crate root 必须保留 `#![deny(unsafe_op_in_unsafe_fn)]`，每个 `unsafe` block 有 `SAFETY` 说明，每个非测试源文件有 `plan_ref`。因此平台无关共享 crate 不直接声明原生绑定 crate（`windows`、`windows-sys`、`libc`、`objc2` 系列、`block2`），宿主或 `stickymd-posix` 引入新的绑定 crate 时同一提交加入治理名单（USER 2026-11-19 批准，[依赖问题报告](../report/2026-11-19-shared-crate-dependency-questions.md) 问题 2）。
 9. 平台默认字体、快捷键映射与原生菜单约定属于宿主配置/翻译；Windows 现有默认值保持不变。键表由完整修饰键得出语义命令
    （撤销/重做、查找/替换、行首行尾与文首文末、缩放、视图、保存、导出、退出），共享壳只消费语义命令，不判断具体修饰键。
 

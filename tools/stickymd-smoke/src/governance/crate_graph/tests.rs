@@ -420,17 +420,44 @@ fn a_transitive_platform_crate_is_caught() {
     );
 }
 
-/// Plan 03 rule 8: a third-party backend may hold a binding a shared crate may not declare.
+/// Plan 03 rule 8: a third-party backend may hold a binding a shared crate may not declare; the
+/// native layer itself may declare it.
 #[test]
 fn bindings_may_sit_under_a_third_party_backend() {
+    // The allowed graph already holds libc, objc2 and windows-sys under third parties.
     Fixture::allowed()
         .with("walkdir", "windows", "windows", WINDOWS)
         .with("walkdir", "raw-window-handle", "raw_window_handle", NORMAL)
+        .with("winit", "block2", "block2", MACOS)
+        .with("winit", "objc2-foundation", "objc2_foundation", MACOS)
+        .with("stickymd-posix", "block2", "block2", MACOS)
         .passes();
+    for crate_name in [
+        "stickymd-core",
+        "stickymd-render",
+        "stickymd-app",
+        "stickymd-desktop",
+    ] {
+        for (binding, route) in [
+            ("windows", "apps/stickymd-win/src/platform/windows"),
+            ("windows-sys", "apps/stickymd-win/src/platform/windows"),
+            ("libc", "POSIX calls belong to stickymd-posix"),
+            ("objc2", "Objective-C calls"),
+            ("objc2-foundation", "Objective-C calls"),
+            ("block2", "Objective-C calls"),
+        ] {
+            let error = Fixture::allowed()
+                .with(crate_name, binding, "x", MACOS)
+                .error();
+            assert_mentions(
+                &error,
+                &[&format!("{crate_name} declares {binding}"), route],
+            );
+        }
+    }
     for (crate_name, binding) in [
         ("stickymd-core", "raw-window-handle"),
         ("stickymd-app", "raw-window-handle"),
-        ("stickymd-desktop", "windows"),
     ] {
         let error = Fixture::allowed()
             .with(crate_name, binding, "x", NORMAL)

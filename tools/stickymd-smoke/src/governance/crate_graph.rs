@@ -20,10 +20,10 @@
 //!   test builds may reach across.
 //! - **Platform reach**: no crate on the capability lists may be reachable through normal edges,
 //!   direct or transitive. Dev and build edges are not followed: neither enters the crate's
-//!   runtime. Third-party crates may hold platform backends (plan 03 rule 8), so bindings
-//!   (`windows`; `raw-window-handle` below stickymd-desktop) are refused only as declarations,
-//!   and `libc`, `windows-sys` and `objc2` not at all. Whether a backend is approved, and safe
-//!   native calls through a binding the lists do not name, stay with review.
+//!   runtime. Third-party crates may hold platform backends (plan 03 rule 8), so native
+//!   bindings (`windows`, `windows-sys`, `libc`, the `objc2` family, `block2`; and
+//!   `raw-window-handle` below stickymd-desktop) are refused only as declarations. Whether a
+//!   third-party backend is approved stays with review.
 //!
 //! The resolved graph unifies every workspace member's features (with `--all-features`, every
 //! feature of every member) and every target, so the reach check may over-report a path that the
