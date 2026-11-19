@@ -196,6 +196,10 @@ pub(super) fn matrix_rows(matrix: &str) -> Result<Rows, String> {
             .split('|')
             .map(str::trim)
             .collect();
+        // Only table rows; prose may mention a row id anywhere.
+        if !line.trim_start().starts_with('|') {
+            continue;
+        }
         let first = cells.first().copied().unwrap_or_default();
         if !first.contains("P16-") {
             continue;

@@ -541,6 +541,15 @@ fn the_matrix_rows_come_from_the_mode_column() {
         ))
         .is_err()
     );
+    // Prose may name a row anywhere; only table rows count.
+    assert_eq!(
+        matrix_rows(&format!(
+            "{matrix}Prose naming P16-W02 and `P16-R03` is not a row.\n"
+        ))
+        .unwrap()
+        .manual,
+        strings(&["W06", "I01"])
+    );
     assert!(matrix_rows("no rows").is_err());
 }
 
