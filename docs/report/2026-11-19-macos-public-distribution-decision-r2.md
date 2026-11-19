@@ -447,3 +447,85 @@ Windows 的 `SHA256SUMS.txt`、`SBOM.spdx.json`、文件名与字节都不变，
 - Scoop 只在 `autoupdate` 时读取 `SHA256SUMS.txt`。
 
 审查记录中“对照代码核实”只指仓库内的代码与文档。
+
+## Resolution：USER 批准第一步，并修改发布门（2026-11-19）
+
+### USER 原话
+
+- “批准第一步”
+- “macOS 一失败就会连带拒掉 Windows，我认为这是合理的，一个版本发布当然要两边一起发。但是不能 windows 已经跑成功了，macos失败了，导致 windows 再跑一遍，还是我们之前说的那种，要是windows 部分的代码都没动，就没必要浪费算力多跑一次 ci”
+
+### 批准范围
+
+- **批准的：**
+  - 方向：下一版本起附 macOS 便携 ZIP，不补 v0.2.0；
+  - 独立的 macOS 发布物；
+  - 发布门的类别与规则，下文的修改除外；
+  - 第 4 项实验。
+- **3b：** USER 没有单独表态，按建议记为甲：在实验中做一次，签名方式或 macOS 大版本改变时重做。
+- **不授权：** 第一步不授权改 `docs/plan`、workflow 或打包脚本。合同改动等第二步，与下文的复用规则一起定。
+
+### 被推翻的部分：两边必须一起发
+
+“仅 Windows”这条退路来自审查，不是 USER 提出的，现由 USER 推翻：
+
+- 一个版本必须同时发 Windows 与 macOS。获准附件集合只剩“Windows + macOS”；任一侧的门不过，整个版本不发。
+- 受影响的正文：
+  - 结论 4 的理由与结论 5；
+  - 第 2 项的“获准附件集合”；
+  - 第 4 项结果表中的“继续只发 Windows”；
+  - 第 5 项的“门不过”与“两种发布”的回归；
+  - 第 6 项，以及更正第 3 节表中的“只发 Windows”。
+- **后果：** macOS 流水线与验收建成之前，下一版本不能发布。若第二步的结论是 macOS 暂不可用（实验各路不通，又不买 Developer ID），是否放宽这条，由 USER 另行决定。
+
+### 不重复跑没改动的一侧
+
+**已有的（已验证）：**
+
+- 源码 CI：只改 macOS 宿主或 POSIX 层时，不规划任何 Windows lane（`tools/stickymd-smoke/src/ci/selection/tests.rs:89-101`）。
+- Windows 资格化模块：`apps/stickymd-mac/` 与 `crates/stickymd-posix/` 不进任何 Windows 模块的指纹（`fingerprint.rs:233-239`）。
+
+**缺口在发布候选，分两种情形。**
+
+**情形一：同一提交，一侧的构建或验收偶发失败，重试即可。**
+
+- 两侧分别 dispatch（第 2 项方案 A）时，只重跑失败的一侧，另一侧的 run、候选与人工观察都不动。
+- 保留独立 workflow 的理由因此改为这一条；原来的理由“macOS 失败不拖住 Windows 发布”已不成立。
+- 同一 workflow 内“重跑失败的 job”也许也能做到，但本地资格化按 attempt 判定结论、按整个 run 列出 artifact（`qualification/remote.rs:40-48`、`:308-312`），跨 attempt 取 artifact 的行为未验证。
+
+**情形二：为修一侧而提交了新代码。** 按现行合同：
+
+- 新提交就是新的 Source Freeze；候选必须出自 head 等于批准 source 的 release run（`release/workflow.rs:14-19`）；
+- Windows 的人工观察绑定 Promoted Candidate，不跨候选复用（`11:410-411`）。
+
+所以修 macOS 的一个提交，会让 Windows 重新构建，人工观察全部重做。人工这部分的代价比算力大。
+
+### 建议的复用规则（骨架级改动，待 USER 确认）
+
+**规则：**
+
+- 每个平台的发布物记下它的构建来源提交 S，以及该平台的**构建输入指纹**。
+- 发布提交 R（打 tag 的提交）可以沿用在 S 上构建的发布物，当且仅当：
+  - S 是 R 在 `main` 上的祖先；
+  - 该平台的构建输入指纹在 S 与 R 上相同。
+- 两个平台对称适用：修 Windows 时也不重建 macOS。
+
+**指纹的取法：**
+
+- **Windows：** 能进入 EXE 与 ZIP 的全部 tracked 文件，加上打包与校验工具。
+  - 排除表只列可证明不进入 Windows 产物的路径，如 `apps/stickymd-mac/`、`crates/stickymd-posix/`、文档；未分类的路径算作输入。
+  - 版本号与 `Cargo.lock` 按原样进入：版本号在字节里，ZIP 中的第三方声明写有 `Cargo.lock` 的 SHA-256（`release/notices/mod.rs:84`）。
+- **macOS：** 现有产品输入指纹规范化了版本号（`11:273-275`）。用于沿用发布物时，还要另加版本相等。
+
+**沿用后：**
+
+- 字节不变，所以人工观察、模块证据与 exact-byte 证据都随之有效。
+- 若 exact-byte 门的工具或规则在 S 与 R 之间改了，就在同一份字节上重跑这些门；它们在本地运行，代价小。
+
+**代价与未验证项：**
+
+- **两个来源提交：** 发布的 Windows 字节由 S 编译，tag 指向 R。`AGENTS.md` 中每版一个“exact source”的写法要改为每个平台各记一个来源提交，发布说明照写。
+- **来源证明：** 证明由晋升 workflow 在 R 上签发（`promote-release.yml:54`、`:98` 检出 `source_sha`）。它对“由 S 编译的字节”的描述是否准确，未验证。
+- **`Cargo.lock` 是全局输入：** macOS 的依赖变化会改它，Windows 因此重建，偏保守。按目标拆分依赖图可以避免，另行决定。
+
+**若不同意跨提交沿用：** 只能避免情形一的重跑；情形二仍要重建另一侧，并重做它的人工观察。
