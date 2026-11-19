@@ -8,9 +8,14 @@
 //! plan_ref: docs/plan/10_performance_reliability.md#macos-gates
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-mod model;
+pub(super) mod model;
 #[cfg(target_os = "macos")]
 mod runner;
+
+/// The product's opt-in recorder (apps/stickymd-mac/src/platform/macos/input_latency.rs); `mac-gui`
+/// W10 reads its presenter counters too.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(super) const DIAGNOSTIC_ENV: &str = "STICKYMD_DIAGNOSTIC_INPUT_LATENCY";
 
 use std::path::PathBuf;
 

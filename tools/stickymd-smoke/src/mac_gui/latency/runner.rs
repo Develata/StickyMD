@@ -22,8 +22,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// The product's opt-in recorder (apps/stickymd-mac/src/platform/macos/input_latency.rs).
-const ENV: &str = "STICKYMD_DIAGNOSTIC_INPUT_LATENCY";
+use super::DIAGNOSTIC_ENV as ENV;
 const CONFIG: &str = "version = 1\nview_mode = \"source\"\n";
 const DOWN_ARROW: u16 = 125;
 /// After the last key, before the flush: lets the last frames present.

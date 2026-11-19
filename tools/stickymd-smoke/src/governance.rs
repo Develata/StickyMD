@@ -129,9 +129,22 @@ const FORBIDDEN_PACKAGES: &[&str] = &[
 
 #[derive(Debug)]
 struct MatrixRow {
+    id: String,
     line: usize,
     mode: String,
     status: String,
+}
+
+/// The rows of the Phase 16 matrix as governance reads and checks them, `(id, mode)` in document
+/// order; the macOS ledger plans from these, so both read one table the same way.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn phase16_modes(content: &str) -> Result<Vec<(String, String)>, String> {
+    Ok(
+        matrix_rows(content, Path::new("docs/acceptance-cases/phase-16.md"))?
+            .into_iter()
+            .map(|row| (row.id, row.mode))
+            .collect(),
+    )
 }
 
 pub(crate) fn find_repository_root(start: &Path) -> Result<PathBuf, String> {
@@ -866,11 +879,21 @@ pub(crate) fn verify_ready_status(root: &Path, selection: Selection) -> Result<(
     for phase in phases {
         let path = matrix_path(root, phase);
         for row in read_matrix_rows(&path)? {
-            if row.mode == "Automated" && row.status != "AUTOMATED PASS" {
+            // The acceptance ladder of the macOS matrix (plan 11 #phase-16-macos-host): an Agent
+            // row gates readiness as an automated row does, and a Review row needs the USER's
+            // receipt, since a run already produced what the USER judges.
+            let required = match row.mode.as_str() {
+                "Automated" => "AUTOMATED PASS",
+                "Agent" => "AGENT PASS",
+                "Review" => "MANUAL PASS",
+                _ => continue,
+            };
+            if row.status != required {
                 return Err(format!(
-                    "{}:{} automated row is `{}` instead of `AUTOMATED PASS`",
+                    "{}:{} {} row is `{}` instead of `{required}`",
                     path.display(),
                     row.line,
+                    row.mode.to_lowercase(),
                     row.status
                 ));
             }
@@ -1183,6 +1206,25 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
         let &[_, _, mode, evidence, status] = row.cells.as_slice() else {
             return Err(at("phase matrix row must contain 5 columns".to_owned()));
         };
+        if rows.iter().any(|seen: &MatrixRow| seen.id == row.id) {
+            return Err(at(format!("{} appears twice", row.id)));
+        }
+        // A macOS row with another phase's prefix would be valid here yet dropped by the ledger.
+        if is_macos_matrix(path) && !row.id.starts_with("P16-") {
+            return Err(at(format!(
+                "{} in the macOS matrix must start with P16-",
+                row.id
+            )));
+        }
+        // The macOS matrix uses only the modes of the acceptance ladder (plan 01, Acceptance
+        // Ladder) and the dash of its waiver; other phases' modes would drop out of its plans.
+        if is_macos_matrix(path)
+            && !matches!(mode, "Automated" | "Manual" | "Agent" | "Review" | "—")
+        {
+            return Err(at(format!(
+                "mode `{mode}` is not an acceptance ladder mode of the macOS matrix"
+            )));
+        }
         match mode {
             "Automated" | "Automated local" if matches!(status, "AUTOMATED PASS" | "BLOCKED") => {}
             "Manual" if matches!(status, "MANUAL PASS" | "NOT TESTED" | "BLOCKED") => {}
@@ -1193,6 +1235,12 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
             // Readiness still refuses a waiting automated row when `phase 16` is judged.
             "Automated" if status == "NOT TESTED" && is_macos_matrix(path) => {}
             "—" if status == "USER 豁免" && is_macos_matrix(path) => {}
+            // The acceptance ladder of the macOS matrix (plan 11 #phase-16-macos-host): agents
+            // judge `Agent` rows; the USER judges `Review` rows from screenshots or video. Until
+            // mac-ledger keeps judge records and receipts that name the reviewed media, neither
+            // can pass: `AGENT PASS` and a Review `MANUAL PASS` are refused.
+            "Agent" if matches!(status, "NOT TESTED" | "BLOCKED") && is_macos_matrix(path) => {}
+            "Review" if matches!(status, "NOT TESTED" | "BLOCKED") && is_macos_matrix(path) => {}
             _ => {
                 return Err(at(format!(
                     "invalid mode/status pair `{mode}` / `{status}`"
@@ -1208,6 +1256,7 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
             ));
         }
         rows.push(MatrixRow {
+            id: row.id.to_owned(),
             line: row.line,
             mode: mode.to_owned(),
             status: status.to_owned(),
@@ -1568,16 +1617,44 @@ mod tests {
             assert_eq!(matrix_rows(document, macos).unwrap().len(), 1);
             assert!(matrix_rows(document, other).is_err());
         }
+        let ladder = format!(
+            "{header}| P16-W05 | act | Agent | waits | NOT TESTED |\n\
+             | P16-W06 | act | Agent | capture failed | BLOCKED |\n\
+             | P16-F01 | act | Review | waits | NOT TESTED |\n\
+             | P16-V04 | act | Review | judged a FAIL | BLOCKED |\n"
+        );
+        assert_eq!(matrix_rows(&ladder, macos).unwrap().len(), 4);
+        assert!(
+            matrix_rows(&ladder, other).is_err(),
+            "the ladder modes are macOS only"
+        );
         for bad in [
             "| P16-S06 | act | Automated | exFAT | MANUAL PASS |",
             "| P16-S06 | act | Manual | exFAT | USER 豁免 |",
             "| P16-S06 | act | — | exFAT | NOT TESTED |",
+            "| P16-W01 | act | Agent | judge: j1 | MANUAL PASS |",
+            // Not yet: mac-ledger keeps no judge records and no receipts naming reviewed media.
+            "| P16-W01 | act | Agent | judge: j1 | AGENT PASS |",
+            "| P16-V04 | act | Review | receipt: r1 | MANUAL PASS |",
+            "| P16-V04 | act | Review | judge: j1 | AGENT PASS |",
+            "| P16-W01 | act | Automated | judge: j1 | AGENT PASS |",
+            // Other phases' modes would drop out of the macOS plans (neither run nor judged).
+            "| P16-I02 | act | Guided Manual | waits | NOT TESTED |",
+            "| P16-I02 | act | Automated local | run | AUTOMATED PASS |",
+            "| P16-I02 | act | Automated exact candidate | waits | NOT TESTED |",
         ] {
             assert!(
                 matrix_rows(&format!("{header}{bad}\n"), macos).is_err(),
                 "{bad}"
             );
         }
+        let twice = format!("{ladder}| P16-W05 | act | Manual | again | NOT TESTED |\n");
+        assert!(matrix_rows(&twice, macos).is_err(), "an ID appears once");
+        let prefix = format!("{ladder}| P15-I02 | act | Manual | waits | NOT TESTED |\n");
+        assert!(
+            matrix_rows(&prefix, macos).is_err(),
+            "a macOS row is a P16 row"
+        );
         let root =
             std::env::temp_dir().join(format!("stickymd-macos-matrix-{}", std::process::id()));
         std::fs::create_dir_all(root.join("docs/acceptance-cases")).unwrap();
@@ -1586,6 +1663,41 @@ mod tests {
             super::verify_ready_status(&root, crate::cli::Selection::Phase(crate::cli::Phase::P16))
                 .unwrap_err();
         assert!(error.contains("instead of `AUTOMATED PASS`"), "{error}");
+        // An Agent or Review row that waits keeps phase 16 from being ready; a Manual row does not.
+        std::fs::write(
+            root.join("docs/acceptance-cases/phase-16.md"),
+            format!("{header}| P16-W05 | act | Agent | waits | NOT TESTED |\n"),
+        )
+        .unwrap();
+        let error =
+            super::verify_ready_status(&root, crate::cli::Selection::Phase(crate::cli::Phase::P16))
+                .unwrap_err();
+        assert!(
+            error.contains("agent row is `NOT TESTED` instead of `AGENT PASS`"),
+            "{error}"
+        );
+        std::fs::write(
+            root.join("docs/acceptance-cases/phase-16.md"),
+            format!("{header}| P16-F01 | act | Review | waits | NOT TESTED |\n"),
+        )
+        .unwrap();
+        let error =
+            super::verify_ready_status(&root, crate::cli::Selection::Phase(crate::cli::Phase::P16))
+                .unwrap_err();
+        assert!(
+            error.contains("review row is `NOT TESTED` instead of `MANUAL PASS`"),
+            "{error}"
+        );
+        std::fs::write(
+            root.join("docs/acceptance-cases/phase-16.md"),
+            format!(
+                "{header}| P16-W13 | act | Automated | test | AUTOMATED PASS |\n\
+                 | P16-I01 | act | Manual | waits | NOT TESTED |\n"
+            ),
+        )
+        .unwrap();
+        super::verify_ready_status(&root, crate::cli::Selection::Phase(crate::cli::Phase::P16))
+            .unwrap();
         // The unfinished macOS matrix does not gate a run of every phase.
         std::fs::write(root.join("docs/acceptance-cases/phase-16.md"), "garbage").unwrap();
         for phase in crate::cli::Phase::ALL {

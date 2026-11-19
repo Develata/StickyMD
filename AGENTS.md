@@ -92,7 +92,10 @@ code generation、refactor，必须依次执行：
 11. review boundary drift（是否越层、是否引入平级权威）。
 12. 每个 Phase 必须维护 `tools/smoke/phase-XX.ps1` 与
     `docs/acceptance-cases/phase-XX.md`；自动化由 Rust CLI 持有，人工未验收项保持
-    `NOT TESTED`。
+    `NOT TESTED`。新增、复审或重新确认验收行之前，**先阅读**
+    `docs/plan/11_testing_and_release.md` 的“验收矩阵”节（验收阶梯）与
+    `docs/plan/01_terminology.md` 的 Acceptance Ladder，按其中的顺序为每一行选第一个可行级，
+    并审视每个人工行能否上移；不能上移的写明原因。改一行的 Mode 须 USER 批准。
 13. 最后运行适用 baseline（fmt / clippy / tests / 相关 benchmark）。
 14. 不得 push remote，除非 USER 明确要求。
 

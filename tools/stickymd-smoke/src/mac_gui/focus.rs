@@ -19,7 +19,7 @@ const ESCAPE: u16 = 53;
 
 pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>) -> Result<(), String> {
     let edge = Edge::Right;
-    let (s, _) = dock(d, edge)?;
+    let (s, ..) = dock(d, edge)?;
     d.op(Op::Activate)?;
     let (shown, ms, met) = d.until(MOTION_MS, |w| expanded(w, s))?;
     let front = d.front()?;

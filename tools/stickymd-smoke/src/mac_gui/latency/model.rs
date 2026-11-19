@@ -4,14 +4,14 @@
 
 /// One key-down as the product saw it: the event's own timestamp and when the main thread got it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Key {
+pub(in crate::mac_gui) struct Key {
     pub event: u64,
     pub seen: u64,
 }
 
 /// One presented frame: when `present` returned and how long drawing it took.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Frame {
+pub(in crate::mac_gui) struct Frame {
     pub presented: u64,
     pub drawn: u64,
 }
@@ -23,7 +23,7 @@ impl Frame {
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(super) struct Recording {
+pub(in crate::mac_gui) struct Recording {
     pub keys: Vec<Key>,
     pub frames: Vec<Frame>,
     pub dropped_keys: u64,
@@ -35,7 +35,7 @@ pub(super) struct Recording {
 /// Reads the product's file (`stickymd-input-latency 4`, or 3 from builds before plan B).
 /// Anything else is an error, not a guess: each version has exactly one `dropped` line, version 4
 /// exactly one `presenter` line and version 3 none.
-pub(super) fn parse(text: &str) -> Result<Recording, String> {
+pub(in crate::mac_gui) fn parse(text: &str) -> Result<Recording, String> {
     let mut lines = text.lines();
     let with_presenter = match lines.next() {
         Some("stickymd-input-latency 4") => true,

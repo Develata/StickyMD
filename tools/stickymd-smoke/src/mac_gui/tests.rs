@@ -101,7 +101,15 @@ fn vm_interlock_is_strict_and_permissions_are_per_scenario() {
         )
         .is_ok()
     );
-    assert!(permission_error(&["W05".into(), "R03".into()], Permissions::default()).is_ok());
+    assert!(permission_error(&["W05".into()], Permissions::default()).is_ok());
+    // R03 answers the prompt with a Return posted to the product alone; it reads no AX.
+    assert!(permission_error(&["R03".into()], Permissions::default()).is_err());
+    let post_only = Permissions {
+        ax: false,
+        post: true,
+        screen: false,
+    };
+    assert!(permission_error(&["R03".into()], post_only).is_ok());
     // F01 now switches to Preview with a real key press before reading the mapped fonts.
     assert!(permission_error(&["F01".into()], Permissions::default()).is_err());
 }
@@ -127,11 +135,16 @@ fn standalone_parser_never_needs_an_existing_app() {
     let o = parse(&["--app", "/nonexistent.app", "--only", "P16-W01,K02"]).unwrap();
     assert_eq!(o.only, ["W01", "K02"]);
     assert!(!o.allow_host);
+    assert_eq!(o.batch, None);
+    let o = parse(&["--app", "x", "--batch", "rel-0.3.0"]).unwrap();
+    assert_eq!(o.batch.as_deref(), Some("rel-0.3.0"));
     for args in [
         vec!["--app"],
         vec!["--app", "x", "--only", "W99"],
         vec!["--app", "x", "--only", "W01,W01"],
         vec!["--allow-host", "--allow-host"],
+        vec!["--app", "x", "--batch", "no spaces"],
+        vec!["--app", "x", "--batch"],
     ] {
         assert!(parse(&args).is_err());
     }
@@ -318,6 +331,43 @@ struct HoverBackend {
     leave_at: u64,
     /// How long the window stays on screen but short of its rest after the 140 ms animation.
     short_of_rest: u64,
+    /// Since the pointer entered: when StickyMD is frontmost, then gives focus back.
+    flash_focus: Option<(u64, u64)>,
+    /// Since the pointer entered: when the window collapses, then expands again.
+    dip: Option<(u64, u64)>,
+    /// Where the window sits during the dip: fully collapsed, or only partly retracted.
+    dip_y: f64,
+    /// Since the pointer entered: when the window keeps its bounds but is not on screen.
+    hidden: Option<(u64, u64)>,
+    /// Since the pointer entered: when another app (PID 77) is frontmost.
+    other_front: Option<(u64, u64)>,
+    /// Once: the first window query from this time on, since the pointer entered (or left, when
+    /// the flag is set), takes this many ms and returns the state at its end.
+    slow_window: Option<(bool, u64, u64)>,
+    /// Once: the same for a frontmost-app query, since the pointer entered.
+    slow_front: Option<(u64, u64)>,
+    /// Since the pointer left: when the window moves inside the screen (to y = 9).
+    leave_dip: Option<(u64, u64)>,
+    /// The n-th window query of the scenario (from 0) takes this many ms.
+    slow_nth: Option<(usize, u64)>,
+    /// Window queries so far.
+    windows: usize,
+    /// On the fake clock: when StickyMD is frontmost, when another app (PID 77) is, and when
+    /// the window is not on screen.
+    flash_abs: Option<(u64, u64)>,
+    other_abs: Option<(u64, u64)>,
+    hidden_abs: Option<(u64, u64)>,
+    /// Since the pointer entered: the expanded window keeps the moving layer until this time.
+    layer_late: Option<u64>,
+    /// On the fake clock: when the expanded window sits partly retracted (y = 9).
+    retract_abs: Option<(u64, u64)>,
+    /// Since the pointer entered: from this time on, reading the frontmost app fails.
+    front_error_at: Option<u64>,
+    /// Since the pointer left: when the window is hidden in place.
+    leave_hidden: Option<(u64, u64)>,
+    /// In every entry onto the strip: the first window query from this time on takes this long.
+    slow_each_entry: Option<(u64, u64)>,
+    slowed_this_entry: bool,
 }
 impl HoverBackend {
     fn new() -> Self {
@@ -330,7 +380,94 @@ impl HoverBackend {
             expand_at: 100,
             leave_at: 500,
             short_of_rest: 0,
+            flash_focus: None,
+            dip: None,
+            dip_y: -478.0,
+            hidden: None,
+            other_front: None,
+            slow_window: None,
+            slow_front: None,
+            leave_dip: None,
+            slow_nth: None,
+            windows: 0,
+            flash_abs: None,
+            other_abs: None,
+            hidden_abs: None,
+            layer_late: None,
+            retract_abs: None,
+            front_error_at: None,
+            leave_hidden: None,
+            slow_each_entry: None,
+            slowed_this_entry: false,
         }
+    }
+    fn at(&self, range: Option<(u64, u64)>) -> bool {
+        range.is_some_and(|(from, to)| (from..to).contains(&self.now))
+    }
+    /// Spends a slow query's time when this query is the one it applies to.
+    fn slow(&mut self, window: bool) {
+        let (mark, slow) = match (window, self.slow_window, self.slow_front) {
+            (true, Some((true, at, cost)), _) => (self.left, Some((at, cost))),
+            (true, Some((false, at, cost)), _) => (self.entered, Some((at, cost))),
+            (false, _, slow) => (self.entered, slow),
+            (true, None, _) => (None, None),
+        };
+        let Some((at, cost)) = slow else { return };
+        if mark.is_some_and(|t| self.now - t >= at) {
+            if window {
+                self.slow_window = None;
+            } else {
+                self.slow_front = None;
+            }
+            self.now += cost;
+        }
+    }
+    fn window_now(&self) -> Window {
+        let mut w = if self.within(self.dip) {
+            window(rect(460.0, self.dip_y, 520.0, 480.0), 27)
+        } else if self.leave_dip.is_some_and(|(from, to)| {
+            self.left
+                .is_some_and(|t| (from..to).contains(&(self.now - t)))
+        }) {
+            window(rect(460.0, 9.0, 520.0, 480.0), 0)
+        } else if self
+            .entered
+            .is_some_and(|t| (self.expand_at..self.expand_at + 140).contains(&(self.now - t)))
+            || self
+                .left
+                .is_some_and(|t| (self.leave_at..self.leave_at + 140).contains(&(self.now - t)))
+        {
+            window(rect(460.0, -200.0, 520.0, 480.0), 27)
+        } else if self.entered.is_some_and(|t| {
+            let rest = self.expand_at + 140;
+            (rest..rest + self.short_of_rest).contains(&(self.now - t))
+        }) {
+            window(rect(460.0, 12.0, 520.0, 480.0), 27)
+        } else if self.at(self.retract_abs) {
+            window(rect(460.0, 9.0, 520.0, 480.0), 0)
+        } else if self.expanded() {
+            let level_late = self
+                .layer_late
+                .is_some_and(|until| self.entered.is_some_and(|t| self.now - t < until));
+            window(
+                rect(460.0, 28.0, 520.0, 480.0),
+                if level_late { 27 } else { 0 },
+            )
+        } else {
+            window(rect(460.0, -478.0, 520.0, 480.0), 27)
+        };
+        let leave_hidden = self.leave_hidden.is_some_and(|(from, to)| {
+            self.left
+                .is_some_and(|t| (from..to).contains(&(self.now - t)))
+        });
+        w.onscreen = !self.within(self.hidden) && !self.at(self.hidden_abs) && !leave_hidden;
+        w
+    }
+    fn within(&self, range: Option<(u64, u64)>) -> bool {
+        range.is_some_and(|(from, to)| {
+            self.entered
+                .is_some_and(|t| (from..to).contains(&(self.now - t)))
+        })
     }
     fn expanded(&self) -> bool {
         self.entered
@@ -348,31 +485,43 @@ impl Backend for HoverBackend {
                 self.now += ms;
                 Value::Unit
             }
-            Op::Window => Value::Window(
-                if self.entered.is_some_and(|t| {
-                    (self.expand_at..self.expand_at + 140).contains(&(self.now - t))
-                }) || self
-                    .left
-                    .is_some_and(|t| (self.leave_at..self.leave_at + 140).contains(&(self.now - t)))
+            Op::Window => {
+                if self.slow_nth.is_some_and(|(n, _)| n == self.windows) {
+                    self.now += self.slow_nth.map_or(0, |(_, cost)| cost);
+                }
+                self.windows += 1;
+                if let Some((at, cost)) = self.slow_each_entry
+                    && !self.slowed_this_entry
+                    && self.entered.is_some_and(|t| self.now - t >= at)
                 {
-                    window(rect(460.0, -200.0, 520.0, 480.0), 27)
-                } else if self.entered.is_some_and(|t| {
-                    let rest = self.expand_at + 140;
-                    (rest..rest + self.short_of_rest).contains(&(self.now - t))
-                }) {
-                    window(rect(460.0, 12.0, 520.0, 480.0), 27)
-                } else if self.expanded() {
-                    window(rect(460.0, 28.0, 520.0, 480.0), 0)
-                } else {
-                    window(rect(460.0, -478.0, 520.0, 480.0), 27)
-                },
-            ),
+                    self.slowed_this_entry = true;
+                    self.now += cost;
+                }
+                self.slow(true);
+                Value::Window(self.window_now())
+            }
             Op::Screen => Value::Rect(rect(0.0, 0.0, 1440.0, 900.0)),
-            Op::Front => Value::Pid(if self.steals && self.expanded() {
-                42
-            } else {
-                self.focused
-            }),
+            Op::Front => {
+                self.slow(false);
+                if self
+                    .front_error_at
+                    .is_some_and(|at| self.entered.is_some_and(|t| self.now - t >= at))
+                {
+                    return Err("AX error -25204 (kAXErrorCannotComplete)".into());
+                }
+                Value::Pid(
+                    if (self.steals && self.expanded())
+                        || self.within(self.flash_focus)
+                        || self.at(self.flash_abs)
+                    {
+                        42
+                    } else if self.within(self.other_front) || self.at(self.other_abs) {
+                        77
+                    } else {
+                        self.focused
+                    },
+                )
+            }
             Op::Finder => {
                 self.focused = 99;
                 Value::Pid(99)
@@ -382,6 +531,7 @@ impl Backend for HoverBackend {
                 if p.y <= 1.0 {
                     if self.entered.is_none() {
                         self.entered = Some(self.now);
+                        self.slowed_this_entry = false;
                     }
                     self.left = None;
                 } else {
@@ -431,6 +581,305 @@ fn hover_orchestration_checks_band_cancellation_timing_and_focus() {
     assert_eq!(
         aggregate(&hover_row(&mut early, "W03").checks),
         Verdict::Fail
+    );
+}
+
+/// Focus taken during the expansion and given back before it settles, and a collapse in the top
+/// band undone before the dwell ends: both happen between the old single checks and must fail.
+#[test]
+fn hover_catches_focus_taken_back_and_a_collapse_undone_in_time() {
+    let mut flash = HoverBackend::new();
+    flash.flash_focus = Some((100, 160));
+    let row = hover_row(&mut flash, "W03");
+    assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+    assert!(row.json().contains("StickyMD frontmost at Some("));
+    let mut dip = HoverBackend::new();
+    dip.dip = Some((900, 960));
+    let row = hover_row(&mut dip, "W04");
+    assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+    assert!(row.json().contains("left the settled"));
+    // Focus taken during the early-leave dwell, before any window observation of the hover.
+    let mut early_flash = HoverBackend::new();
+    early_flash.flash_focus = Some((5, 30));
+    let row = hover_row(&mut early_flash, "W03");
+    assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+    // A partial retraction that never leaves the screen still leaves the settled position.
+    let mut partial = HoverBackend::new();
+    partial.dip = Some((900, 960));
+    partial.dip_y = 12.0;
+    let row = hover_row(&mut partial, "W04");
+    assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+    // The same collapse outside the dwell, in W03 which has none, changes nothing.
+    let mut outside = HoverBackend::new();
+    outside.dip = Some((5000, 5060));
+    assert_eq!(
+        aggregate(&hover_row(&mut outside, "W03").checks),
+        Verdict::Pass
+    );
+}
+
+fn check(row: &Row, name: &str) -> Verdict {
+    row.checks
+        .iter()
+        .find(|c| c.name == name)
+        .unwrap_or_else(|| panic!("no check {name}: {}", row.json()))
+        .verdict
+}
+
+/// Round 4 of the codex review: the stretches the old checks left unobserved.
+#[test]
+fn hover_tracks_leave_no_unobserved_stretch() {
+    // Expanded at 40-60 ms after the formal move and back before the old first window read.
+    let mut flash = HoverBackend::new();
+    flash.dip = Some((40, 60));
+    flash.dip_y = 28.0;
+    let row = hover_row(&mut flash, "W03");
+    assert_eq!(
+        check(&row, "hover movement onset"),
+        Verdict::Fail,
+        "{}",
+        row.json()
+    );
+    // Hidden in the top band at its settled bounds, then shown again.
+    let mut hidden = HoverBackend::new();
+    hidden.hidden = Some((900, 960));
+    let row = hover_row(&mut hidden, "W04");
+    assert_eq!(
+        check(&row, "top band holds past 500ms"),
+        Verdict::Fail,
+        "{}",
+        row.json()
+    );
+    // Another app in front: the scene changed under the check, which cannot pass or fail.
+    let mut other = HoverBackend::new();
+    other.other_front = Some((150, 200));
+    let row = hover_row(&mut other, "W03");
+    assert_eq!(
+        check(&row, "hover expands without focus"),
+        Verdict::NotTested
+    );
+    assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
+    // The window query after the onset returns after the deadline with the window at rest: the
+    // onset sample dates it, so the sampling cannot tell, rather than a late completion.
+    let mut late_sample = HoverBackend::new();
+    late_sample.slow_window = Some((false, 105, 200));
+    let row = hover_row(&mut late_sample, "W03");
+    assert_eq!(
+        check(&row, "hover expansion completion"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    assert_ne!(aggregate(&row.checks), Verdict::Fail);
+    // The leave onset at 500 ms, the next window read 150 ms later already at rest: the stretch
+    // from the onset sample counts.
+    let mut leave_gap = HoverBackend::new();
+    leave_gap.slow_window = Some((true, 505, 150));
+    let row = hover_row(&mut leave_gap, "W03");
+    assert_eq!(
+        check(&row, "leave collapse completion"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    // A slow front read while focus is taken and given back: the gap counts.
+    let mut slow_front = HoverBackend::new();
+    slow_front.slow_front = Some((450, 80));
+    slow_front.flash_focus = Some((455, 520));
+    let row = hover_row(&mut slow_front, "W03");
+    assert_eq!(
+        check(&row, "hover expands without focus"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    // An early dwell of 100 ms or more may expand and cannot test the cancellation: nothing
+    // fails, the trial is repeated once the window rests on the strip, and the next one passes.
+    let mut long_dwell = HoverBackend::new();
+    long_dwell.slow_window = Some((false, 20, 90));
+    let row = hover_row(&mut long_dwell, "W03");
+    assert_eq!(
+        check(&row, "early leave cancels"),
+        Verdict::Pass,
+        "{}",
+        row.json()
+    );
+    assert!(row.json().contains("trial 2:"), "{}", row.json());
+    // The unresolved first trial is not part of the focus claim: the row passes.
+    assert_eq!(aggregate(&row.checks), Verdict::Pass, "{}", row.json());
+    // StickyMD in front during that repeated trial still fails.
+    // Before the slowness the clock matches an undisturbed run, so this lands in trial 1 only.
+    let (t0, _) = query_before_move("W03", 1.0, 0);
+    let mut taken = HoverBackend::new();
+    taken.slow_window = Some((false, 20, 90));
+    taken.flash_abs = Some((t0 + 1, t0 + 15));
+    let row = hover_row(&mut taken, "W03");
+    assert_eq!(
+        check(&row, "hover expands without focus"),
+        Verdict::Fail,
+        "{}",
+        row.json()
+    );
+    assert!(
+        row.json().contains("in a repeated early-leave trial"),
+        "{}",
+        row.json()
+    );
+}
+
+/// The fake-clock time and the index (from 0) of the window query read just before the move
+/// to `y` with the given ordinal (0 = first such move), from an undisturbed run of `id`.
+fn query_before_move(id: &str, y: f64, ordinal: usize) -> (u64, usize) {
+    let row = hover_row(&mut HoverBackend::new(), id);
+    let mut windows = 0;
+    let mut last = None;
+    let mut seen = 0;
+    for t in &row.trace {
+        if t.event == "request Window" {
+            last = Some((t.ms, windows));
+            windows += 1;
+        } else if t.event.starts_with("request Move(") && t.event.contains(&format!("y: {y:?} }}"))
+        {
+            if seen == ordinal {
+                return last.expect("a window read before the move");
+            }
+            seen += 1;
+        }
+    }
+    panic!("no move to y={y} #{ordinal} in {}", row.json());
+}
+
+/// Round 5 of the codex review: motion inside the screen, the seams between phases, the deadline
+/// boundary, a moving window passing through the strip, and the Finder precondition.
+#[test]
+fn hover_watch_is_one_stream_and_motion_is_any_change_of_place() {
+    // The leave starts inside the screen at 400 ms and crosses the edge on time: early motion.
+    let mut early_leave = HoverBackend::new();
+    early_leave.leave_dip = Some((400, 500));
+    let row = hover_row(&mut early_leave, "W03");
+    assert_eq!(
+        check(&row, "leave movement onset"),
+        Verdict::Fail,
+        "{}",
+        row.json()
+    );
+    // The read before the band move takes 120 ms while StickyMD takes focus and gives it back:
+    // the seam between hover and band is inside the watch.
+    let (t, n) = query_before_move("W04", 0.0, 0);
+    let mut seam = HoverBackend::new();
+    seam.slow_nth = Some((n, 120));
+    seam.flash_abs = Some((t + 20, t + 100));
+    let row = hover_row(&mut seam, "W04");
+    assert_eq!(
+        check(&row, "top band dwell keeps focus away"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    // Hidden in the read just before the band move: the band cannot start from the rest.
+    let mut hidden_before = HoverBackend::new();
+    hidden_before.hidden_abs = Some((t, t + 1));
+    let row = hover_row(&mut hidden_before, "W04");
+    assert_eq!(
+        check(&row, "top band holds past 500ms"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    // An early dwell long enough to expand fully: the formal hover starts only once the window
+    // has rested on the strip again, and then passes.
+    let mut expanded_early = HoverBackend::new();
+    expanded_early.slow_window = Some((false, 20, 250));
+    let row = hover_row(&mut expanded_early, "W03");
+    assert_eq!(
+        check(&row, "early leave cancels"),
+        Verdict::Pass,
+        "{}",
+        row.json()
+    );
+    for name in [
+        "hover movement onset",
+        "hover expansion completion",
+        "leave movement onset",
+    ] {
+        assert_eq!(check(&row, name), Verdict::Pass, "{name}: {}", row.json());
+    }
+    // Another app in front since docking: the scene changed, which cannot pass or fail.
+    let mut other = HoverBackend::new();
+    other.other_abs = Some((0, u64::MAX));
+    let row = hover_row(&mut other, "W03");
+    assert_eq!(
+        check(&row, "Finder frontmost before hover"),
+        Verdict::NotTested
+    );
+    assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
+}
+
+/// Round 6 of the codex review: a level reached late, a retraction just before the leave, an
+/// unproven expansion feeding the focus check, an unreadable front app, a hidden flicker.
+#[test]
+fn hover_judges_level_seams_and_unobservable_reads() {
+    // In place on time but still at the moving level until 400 ms: the expansion is late.
+    let mut level = HoverBackend::new();
+    level.layer_late = Some(400);
+    let row = hover_row(&mut level, "W03");
+    assert_eq!(
+        check(&row, "hover expansion completion"),
+        Verdict::Fail,
+        "{}",
+        row.json()
+    );
+    // Retracted to y = 9 in the read just before the leave: the leave cannot start from it.
+    // Moves to y = 800: docking, the early leave, then the leave itself.
+    let (t, _) = query_before_move("W03", 800.0, 2);
+    let mut retract = HoverBackend::new();
+    retract.retract_abs = Some((t, t + 1));
+    let row = hover_row(&mut retract, "W03");
+    assert_eq!(
+        check(&row, "leave movement onset"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    // Moving at 220 ms, then the front read blocks to 530 ms: completion cannot tell, and the
+    // focus check must not fail on the unproven rest.
+    let mut blocked = HoverBackend::new();
+    blocked.slow_front = Some((220, 310));
+    let row = hover_row(&mut blocked, "W03");
+    assert_eq!(
+        check(&row, "hover expansion completion"),
+        Verdict::NotTested,
+        "{}",
+        row.json()
+    );
+    assert_eq!(
+        check(&row, "hover expands without focus"),
+        Verdict::NotTested
+    );
+    assert_ne!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+    // The front app unreadable from 150 ms: what follows is not observed, not failed.
+    let mut unreadable = HoverBackend::new();
+    unreadable.front_error_at = Some(150);
+    let row = hover_row(&mut unreadable, "W04");
+    assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
+    // Every early trial too slow to resolve: three trials, then NOT_TESTED, and nothing fails.
+    let mut always_slow = HoverBackend::new();
+    always_slow.slow_each_entry = Some((20, 90));
+    let row = hover_row(&mut always_slow, "W03");
+    assert_eq!(check(&row, "early leave cancels"), Verdict::NotTested);
+    assert!(row.json().contains("trial 3:"), "{}", row.json());
+    assert_ne!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+    // Hidden in place at 530-540 ms after leaving, the collapse starting only at 580 ms: the
+    // flicker is no onset, and the window still in place at 570 ms is late.
+    let mut flicker = HoverBackend::new();
+    flicker.leave_hidden = Some((530, 540));
+    flicker.leave_at = 580;
+    let row = hover_row(&mut flicker, "W03");
+    assert_eq!(
+        check(&row, "leave movement onset"),
+        Verdict::Fail,
+        "{}",
+        row.json()
     );
 }
 
@@ -758,29 +1207,25 @@ fn hover_completion_is_dated_by_the_rest_position_not_by_entering_the_screen() {
 
 #[test]
 fn rest_dating_and_completion_verdicts() {
-    use super::observation::{completion_verdict, rest_from};
-    let samples = [
-        (100, -200),
-        (120, 12),
-        (140, 28),
-        (160, 12),
-        (180, 28),
-        (200, 28),
-    ];
-    assert_eq!(rest_from(&samples), Some((180, Some(160))));
-    assert_eq!(rest_from(&[(5, 1), (25, 1)]), Some((5, None)));
-    assert_eq!(rest_from::<i32>(&[]), None);
-    assert_eq!(completion_verdict(true, 300, Some(280), 304), Verdict::Pass);
-    assert_eq!(completion_verdict(true, 304, Some(284), 304), Verdict::Pass);
-    assert_eq!(completion_verdict(true, 320, Some(300), 304), Verdict::Fail);
+    use super::observation::{completion_verdict, rest_index};
+    assert_eq!(rest_index(&[-200, 12, 28, 12, 28, 28]), Some(4));
+    assert_eq!(rest_index(&[1, 1]), Some(0));
+    assert_eq!(rest_index::<i32>(&[]), None);
+    // (end state, last request, first rest return, moving request, early, late deadline)
+    let judge = |end, first, moving| completion_verdict(end, 500, first, moving, 304, 320);
+    assert_eq!(judge(true, 300, Some(280)), Verdict::Pass);
+    assert_eq!(judge(true, 304, Some(284)), Verdict::Pass);
+    // Moving at 300, at rest by 320: arriving at 303 fits both, so it cannot tell.
+    assert_eq!(judge(true, 320, Some(300)), Verdict::NotTested);
+    assert_eq!(judge(true, 380, Some(290)), Verdict::NotTested);
+    // Still moving when requested at the latest deadline or after: late.
+    assert_eq!(judge(true, 380, Some(320)), Verdict::Fail);
+    assert_eq!(judge(true, 340, None), Verdict::NotTested);
+    // A wrong rest fails only when observed at or after the latest deadline.
+    assert_eq!(judge(false, 200, Some(180)), Verdict::Fail);
     assert_eq!(
-        completion_verdict(true, 380, Some(290), 304),
+        completion_verdict(false, 310, 200, Some(180), 304, 320),
         Verdict::NotTested
-    );
-    assert_eq!(completion_verdict(true, 380, Some(310), 304), Verdict::Fail);
-    assert_eq!(
-        completion_verdict(false, 200, Some(180), 304),
-        Verdict::Fail
     );
 }
 
@@ -826,4 +1271,952 @@ fn a_success_first_seen_after_the_deadline_is_late() {
             "hidden at {hidden_at}, returned at {elapsed}"
         );
     }
+}
+
+/// R03 from observations: the bad samples a check must refuse, and what it cannot tell.
+#[test]
+fn translocation_checks_refuse_bad_samples() {
+    use super::translocation::{EXIT_ONE, GENERIC_ADVICE, Observed, TRANSLOCATED_ADVICE, judge};
+    let good = || Observed {
+        quarantine: Some("00c3;6afec4a5;Safari;".into()),
+        path: Some(
+            "/private/var/folders/x/T/AppTranslocation/U/d/StickyMD.app/Contents/MacOS/StickyMD"
+                .into(),
+        ),
+        mount: Some(
+            "/tmp/download/StickyMD.app on /private/var/folders/x/T/AppTranslocation/U \
+             (nullfs, local, nodev, nosuid, read-only, nobrowse, mounted by admin)"
+                .into(),
+        ),
+        exited_early: false,
+        window: Some("Window { id: 64, layer: 8, onscreen: true }".into()),
+        stderr: "当前目录不可写，请先用访达把 StickyMD.app 移到别处。\n\ncannot create a file: \
+                 Read-only file system (os error 30)\n"
+            .into(),
+        stderr_unreadable: None,
+        unanswered: None,
+        exited: Some(true),
+        termination: Some(EXIT_ONE.into()),
+        before: vec!["StickyMD.app".into(), "StickyMD.zip".into()],
+        after: vec!["StickyMD.app".into(), "StickyMD.zip".into()],
+    };
+    let verdict = |o: Observed| {
+        let mut row = Row::new("R03");
+        judge(&o, &mut row);
+        (aggregate(&row.checks), row)
+    };
+    let (v, row) = verdict(good());
+    assert_eq!(v, Verdict::Pass, "{}", row.json());
+    assert_eq!(row.checks.len(), 6);
+    // Bad samples: gone before a prompt, a prompt about something else, the advice for any other
+    // unwritable folder, still running after Return, another exit, a file written beside the
+    // package.
+    for bad in [
+        Observed {
+            window: None,
+            exited_early: true,
+            exited: None,
+            ..good()
+        },
+        Observed {
+            stderr: "事件循环异常结束".into(),
+            exited: None,
+            ..good()
+        },
+        Observed {
+            stderr: format!(
+                "当前目录不可写，{GENERIC_ADVICE}。\n\ncannot create a file: Read-only file system \
+                 (os error 30)\n"
+            ),
+            ..good()
+        },
+        Observed {
+            termination: Some("(2, 9, 9)".into()),
+            ..good()
+        },
+        Observed {
+            after: vec!["StickyMD.app".into(), "StickyMD.zip".into(), "note".into()],
+            ..good()
+        },
+    ] {
+        let (v, row) = verdict(bad);
+        assert_eq!(v, Verdict::Fail, "{}", row.json());
+    }
+    // Cannot tell: no preset attribute, no translocation, no prompt window while running.
+    for unknown in [
+        Observed {
+            quarantine: Some("0083;6afec4a5;Safari;".into()),
+            ..good()
+        },
+        Observed {
+            path: Some("/tmp/download/StickyMD.app/Contents/MacOS/StickyMD".into()),
+            ..good()
+        },
+        Observed {
+            mount: None,
+            ..good()
+        },
+        Observed {
+            window: None,
+            exited: None,
+            ..good()
+        },
+        // The prompt in words this driver does not know.
+        Observed {
+            stderr: "当前目录不可写，请换个地方。\n\ncannot create a file: Read-only file system \
+                     (os error 30)\n"
+                .into(),
+            ..good()
+        },
+        // Seen but not answered: the process went, or the window did, before Return.
+        Observed {
+            unanswered: Some("the process ended before Return was posted".into()),
+            exited: None,
+            termination: None,
+            ..good()
+        },
+        // Still running after Return: with no receipt of which window took the key, not a
+        // refusal to exit.
+        Observed {
+            exited: Some(false),
+            termination: None,
+            ..good()
+        },
+        // A process outside this copy's translocation mount is not the one started.
+        Observed {
+            path: Some(
+                "/private/var/folders/x/T/AppTranslocation/OTHER/d/StickyMD.app/Contents/MacOS/StickyMD"
+                    .into(),
+            ),
+            ..good()
+        },
+        // The prompt window seen but its stderr unreadable: its words are unknown.
+        Observed {
+            stderr: String::new(),
+            stderr_unreadable: Some("stderr.log: permission denied".into()),
+            ..good()
+        },
+        // Answered and gone, but no termination record in the log.
+        Observed {
+            termination: None,
+            ..good()
+        },
+    ] {
+        let (v, row) = verdict(unknown);
+        assert_eq!(v, Verdict::NotTested, "{}", row.json());
+    }
+    // The advices are the product's own words (main.rs now, paths.rs after Phase 18), and the
+    // generic one never reads as the move advice.
+    let product = [
+        include_str!("../../../../apps/stickymd-mac/src/main.rs"),
+        include_str!("../../../../apps/stickymd-mac/src/paths.rs"),
+    ]
+    .concat();
+    assert!(
+        TRANSLOCATED_ADVICE
+            .iter()
+            .any(|a| product.contains("当前目录不可写，") && product.contains(a)),
+        "the product no longer gives a known move advice; update TRANSLOCATED_ADVICE"
+    );
+    assert!(product.contains(&format!("当前目录不可写，{GENERIC_ADVICE}。")));
+    assert!(
+        TRANSLOCATED_ADVICE
+            .iter()
+            .all(|a| !GENERIC_ADVICE.contains(a))
+    );
+    // Phase 18's wording passes too.
+    let (v, row) = verdict(Observed {
+        stderr:
+            "当前目录不可写，请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，或把整个 StickyMD \
+                 文件夹移到别处。\n\ncannot create a file: Read-only file system (os error 30)\n"
+                .into(),
+        ..good()
+    });
+    assert_eq!(v, Verdict::Pass, "{}", row.json());
+}
+
+fn image(width: usize, height: usize, fill: [u8; 3]) -> super::pixels::Image {
+    super::pixels::Image {
+        width,
+        height,
+        rgba: std::iter::repeat_n([fill[0], fill[1], fill[2], 255], width * height)
+            .flatten()
+            .collect(),
+    }
+}
+fn paint(
+    mut i: super::pixels::Image,
+    xs: std::ops::Range<usize>,
+    ys: std::ops::Range<usize>,
+    c: [u8; 3],
+) -> super::pixels::Image {
+    for y in ys {
+        for x in xs.clone() {
+            let k = (y * i.width + x) * 4;
+            i.rgba[k..k + 3].copy_from_slice(&c);
+        }
+    }
+    i
+}
+
+/// W02: a strip that nothing covers and that changes the screen passes; a covered strip cannot
+/// be judged; a strip that changes nothing fails.
+#[test]
+fn strip_visibility_needs_an_uncovered_strip_that_changes_the_screen() {
+    use super::pixels::strip_visible;
+    let strip = image(1040, 4, [248, 246, 239]);
+    let desktop = image(1040, 4, [40, 70, 120]);
+    assert_eq!(strip_visible(&strip, &strip, &desktop).0, Verdict::Pass);
+    let menu_over = paint(strip.clone(), 0..1040, 0..4, [230, 230, 230]);
+    assert_eq!(
+        strip_visible(&menu_over, &strip, &desktop).0,
+        Verdict::NotTested
+    );
+    assert_eq!(strip_visible(&desktop, &desktop, &desktop).0, Verdict::Fail);
+    assert_eq!(
+        strip_visible(&strip, &image(10, 4, [0, 0, 0]), &desktop).0,
+        Verdict::NotTested
+    );
+}
+
+/// Frames every `every` ms over 3.6 s: `shown(t)` decides which image a frame at `t` is.
+fn frames_of(
+    every: u64,
+    shown: impl Fn(u64) -> super::pixels::Image,
+) -> Vec<(u64, super::pixels::Image)> {
+    (0..3600 / every)
+        .map(|k| (k * every, shown(k * every)))
+        .collect()
+}
+
+/// W10: an inverse caret alternating every ~550 ms passes; a steady caret, no caret, a caret in a
+/// fixed colour, or one blinking far too fast fails; other changes or long frame gaps cannot tell.
+#[test]
+fn caret_blink_judge_refuses_bad_samples() {
+    use super::pixels::caret_blinks;
+    let off = image(40, 60, [248, 246, 239]);
+    let on = paint(off.clone(), 4..6, 3..43, [7, 9, 16]);
+    let fixed = paint(off.clone(), 4..6, 3..43, [32, 79, 143]);
+    // A whole layer flipping to its inverse: alternating, inverse, but not a caret.
+    let flipped = paint(off.clone(), 0..40, 0..60, [7, 9, 16]);
+    let alternate = |half: u64, a: &super::pixels::Image, b: &super::pixels::Image| {
+        let (a, b) = (a.clone(), b.clone());
+        move |t: u64| {
+            if (t / half).is_multiple_of(2) {
+                a.clone()
+            } else {
+                b.clone()
+            }
+        }
+    };
+    assert_eq!(
+        caret_blinks(&frames_of(60, alternate(550, &on, &off))).0,
+        Verdict::Pass
+    );
+    // Steady, absent, fixed-colour, far too fast.
+    assert_eq!(
+        caret_blinks(&frames_of(60, |_| on.clone())).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        caret_blinks(&frames_of(60, |_| off.clone())).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        caret_blinks(&frames_of(60, alternate(550, &fixed, &off))).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        caret_blinks(&frames_of(60, alternate(550, &flipped, &off))).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        caret_blinks(&frames_of(40, alternate(120, &on, &off))).0,
+        Verdict::Fail
+    );
+    // Something else changing (three states in one pixel), or frames too far apart.
+    let blink = alternate(550, &on, &off);
+    let noisy = |t: u64| paint(blink(t), 15..16, 15..16, [((t / 60) % 3 * 100) as u8, 0, 0]);
+    assert_eq!(caret_blinks(&frames_of(60, noisy)).0, Verdict::NotTested);
+    assert_eq!(
+        caret_blinks(&frames_of(400, alternate(550, &on, &off))).0,
+        Verdict::NotTested
+    );
+}
+
+/// W10: the counters must be live (an edit presents) and a snapshot must present nothing itself
+/// before an idle stretch is judged.
+#[test]
+fn idle_counters_need_live_counters_and_quiet_snapshots() {
+    use super::pixels::idle_presents_nothing;
+    let a = [10, 2, 1, 0];
+    let b = [11, 2, 1, 0];
+    assert_eq!(
+        idle_presents_nothing((a, b), (b, b), (b, b)).0,
+        Verdict::Pass
+    );
+    assert_eq!(
+        idle_presents_nothing((a, b), (b, b), (b, [12, 2, 1, 0])).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        idle_presents_nothing((a, b), (b, b), (b, [11, 3, 1, 0])).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        idle_presents_nothing((a, b), (b, b), (b, [11, 2, 1, 1])).0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        idle_presents_nothing((a, a), (a, a), (a, a)).0,
+        Verdict::NotTested
+    );
+    assert_eq!(
+        idle_presents_nothing((a, b), (b, [12, 2, 1, 0]), (b, b)).0,
+        Verdict::NotTested
+    );
+}
+
+/// I03: the control must show the accent menu (a new window of TextEdit's own process); then a
+/// new window of StickyMD's own process, a stray or missing character, or no repeat fails, and a
+/// foreign window cannot be judged.
+#[test]
+fn press_and_hold_judge_refuses_bad_samples() {
+    use super::hold::{appeared, judge};
+    let (textedit, sticky) = (801, 42);
+    let panel = vec![(67, textedit, "TextEdit".to_string())];
+    let verdicts = |control: &[(u32, u32, String)], product: &[(u32, u32, String)], added: &str| {
+        let mut row = Row::new("I03");
+        judge(
+            (control, textedit, "á"),
+            (Ok(product), sticky),
+            added,
+            &mut row,
+        );
+        row.checks.iter().map(|c| c.verdict).collect::<Vec<_>>()
+    };
+    let aaa = "aaaaaaaaaaaaaaa2";
+    assert_eq!(verdicts(&panel, &[], aaa), [Verdict::Pass, Verdict::Pass]);
+    // The control opened no menu (none, or only another process's window): nothing is judged.
+    assert_eq!(
+        verdicts(&[], &[], aaa),
+        [Verdict::NotTested, Verdict::NotTested]
+    );
+    let elsewhere = vec![(68, 330, "NotificationCenter".to_string())];
+    assert_eq!(verdicts(&elsewhere, &[], aaa)[0], Verdict::NotTested);
+    // A new window of StickyMD's own process is its accent menu; another process's cannot tell.
+    let menu = vec![(902, sticky, "StickyMD".to_string())];
+    assert_eq!(verdicts(&panel, &menu, aaa)[0], Verdict::Fail);
+    let other = vec![(903, 77, "NotificationCenter".to_string())];
+    assert_eq!(verdicts(&panel, &other, aaa)[0], Verdict::NotTested);
+    // The menu seen but no accent picked by the digit: the control does not hold.
+    let mut row = Row::new("I03");
+    judge((&panel, textedit, "a2"), (Ok(&[]), sticky), aaa, &mut row);
+    assert!(row.checks.iter().all(|c| c.verdict == Verdict::NotTested));
+    // No window list while held: the menu check cannot tell.
+    let mut row = Row::new("I03");
+    judge(
+        (&panel, textedit, "á"),
+        (Err("unavailable"), sticky),
+        aaa,
+        &mut row,
+    );
+    assert_eq!(row.checks[0].verdict, Verdict::NotTested);
+    // Too few or too many held letters (one per key-down: 15 or 16 here).
+    for bad in [
+        "aaaá2",
+        "aaaa",
+        "a2",
+        "aab2",
+        "2",
+        "aaa22",
+        "aaaaaaaaaaaaa2",
+        &"a".repeat(17),
+    ] {
+        assert_eq!(verdicts(&panel, &[], bad)[1], Verdict::Fail, "{bad}");
+    }
+    let before = vec![(1, 1, "Finder".to_string())];
+    let after = vec![(1, 1, "Finder".to_string()), (5, 9, "X".to_string())];
+    assert_eq!(appeared(&before, &after), vec![(5, 9, "X".to_string())]);
+}
+
+/// W12's logout cases: the facts the system log gives (real lines of the p4 VM run), and each
+/// case's bad samples.
+#[test]
+fn logout_cases_judge_the_log_and_the_note() {
+    use super::logout::check::{
+        Facts, LOST, Logged, NOTE, Note, SAVED, TYPED, UNSAVED, from_log, judge, log_time,
+    };
+    assert_eq!(
+        log_time("2026-11-19 12:51:39.066088+0000  localhost x"),
+        Some(1_795_092_699_066_088)
+    );
+    assert_eq!(log_time("1970-01-01 00:00:00+0000 x"), Some(0));
+    assert_eq!(
+        log_time("2000-03-01 08:00:00.5+0800 x"),
+        Some(951_868_800_500_000)
+    );
+    assert_eq!(log_time("1969-12-31 23:59:59.999999+0000 x"), Some(-1));
+    for bad in [
+        "08:55:11.718 localhost",
+        "2026-13-01 00:00:00+0000 x",
+        "2026-11-19 24:00:00+0000 x",
+        "2026-11-19 12:51:39.066088 x",
+        "2026-11-19 12:51:39.1234567890+0000 x",
+        "2026-11-19-1 12:51:39+0000 x",
+        "",
+    ] {
+        assert_eq!(log_time(bad), None, "{bad}");
+    }
+    let quit = "2026-11-19 12:51:39.066088+0000  localhost StickyMD[991]: (AppKit) [com.apple.AppKit:Application] Handling Quit AppleEvent";
+    let later = "2026-11-19 12:51:39.066255+0000  localhost StickyMD[991]: (AppKit) [com.apple.AppKit:Application] applicationShouldTerminate: NSTerminateLater";
+    let yes = "2026-11-19 12:51:39.198758+0000  localhost StickyMD[991]: (AppKit) [com.apple.AppKit:Application] replyToApplicationShouldTerminate:YES";
+    let ended = "2026-11-19 12:51:39.300215+0000  localhost runningboardd[175]: (RunningBoard) [com.apple.runningboard:ttl] [app<application.io.github.develata.stickymd.516736.516741.2DBA30AC-C083-4C8B-B538-31068C90C401(501)>:991] termination reported by launchd (0, 0, 0)";
+    let other = "2026-11-19 12:51:39.100000+0000  localhost StickyMD[9991]: (AppKit) [com.apple.AppKit:Application] replyToApplicationShouldTerminate:NO";
+    let early = "2026-11-19 12:51:38.000000+0000  localhost StickyMD[991]: (AppKit) [com.apple.AppKit:Application] applicationShouldTerminate: NSTerminateNow";
+    // A quit request before this run asked for the logout is not this one.
+    let old_quit = "2026-11-19 12:51:37.000000+0000  localhost StickyMD[991]: (AppKit) [com.apple.AppKit:Application] Handling Quit AppleEvent";
+    let mut facts = Facts::default();
+    from_log(
+        &[old_quit, early, quit, later, other, yes, ended].join("\n"),
+        991,
+        log_time(quit).unwrap() - 1_000,
+        &mut facts,
+    );
+    assert_eq!(
+        facts.quit,
+        Some(Logged {
+            line: 2,
+            at: log_time(quit),
+            value: String::new()
+        })
+    );
+    let seen = |l: &Option<Logged>| l.as_ref().map(|l| (l.line, l.value.clone()));
+    assert_eq!(
+        seen(&facts.decision),
+        Some((3, "NSTerminateLater".into())),
+        "a decision before the quit event does not answer it"
+    );
+    assert_eq!(
+        seen(&facts.reply),
+        Some((5, "YES".into())),
+        "another PID's reply is not ours"
+    );
+    assert_eq!(seen(&facts.termination), Some((6, "(0, 0, 0)".into())));
+
+    let run = |case: &str, f: Facts| {
+        let mut row = Row::new("W12-logout");
+        judge(case, &f, &mut row);
+        aggregate(&row.checks)
+    };
+    let at = log_time(quit).unwrap();
+    let note = |text: &str, modified: i64| -> Result<Note, String> {
+        Ok(Note {
+            text: text.into(),
+            modified,
+        })
+    };
+    let logged = |line: usize, value: &str| {
+        Some(Logged {
+            line,
+            at: Some(at + line as i64 * 100_000),
+            value: value.into(),
+        })
+    };
+    let base = || Facts {
+        logged_out: true,
+        gone: true,
+        quit: logged(1, ""),
+        ..Facts::default()
+    };
+    let unread = || -> Result<Note, String> { Err("denied".into()) };
+
+    // text: unsaved at the request, saved by it, later then yes, a normal exit.
+    let text = || Facts {
+        before: note(NOTE, at - 5_000_000),
+        after: note(TYPED, at + 100_000),
+        decision: logged(2, "NSTerminateLater"),
+        reply: logged(3, "YES"),
+        termination: logged(4, "(0, 0, 0)"),
+        ..base()
+    };
+    assert_eq!(run("text", text()), Verdict::Pass);
+    let samples: Vec<(Facts, Verdict, &str)> = vec![
+        (
+            Facts {
+                after: note(TYPED, at - 1),
+                ..text()
+            },
+            Verdict::NotTested,
+            "saved before the request",
+        ),
+        (
+            Facts {
+                before: note(TYPED, at - 1),
+                ..text()
+            },
+            Verdict::NotTested,
+            "already on disk",
+        ),
+        (
+            Facts {
+                before: unread(),
+                ..text()
+            },
+            Verdict::NotTested,
+            "before unread",
+        ),
+        (
+            Facts {
+                after: unread(),
+                ..text()
+            },
+            Verdict::NotTested,
+            "after unread",
+        ),
+        (
+            Facts {
+                after: note(NOTE, at - 5_000_000),
+                ..text()
+            },
+            Verdict::Fail,
+            "not saved",
+        ),
+        (
+            Facts {
+                after: note(&format!("{TYPED}\n"), at + 1),
+                ..text()
+            },
+            Verdict::Fail,
+            "other bytes",
+        ),
+        (
+            Facts {
+                decision: logged(2, "NSTerminateNow"),
+                ..text()
+            },
+            Verdict::Fail,
+            "barrier skipped",
+        ),
+        (
+            Facts {
+                reply: logged(3, "NO"),
+                ..text()
+            },
+            Verdict::Fail,
+            "refused",
+        ),
+        (
+            Facts {
+                decision: logged(5, "NSTerminateLater"),
+                ..text()
+            },
+            Verdict::Fail,
+            "answered before the decision",
+        ),
+        (
+            Facts {
+                termination: logged(4, "(2, 9, 9)"),
+                ..text()
+            },
+            Verdict::Fail,
+            "killed",
+        ),
+        (
+            Facts {
+                termination: logged(4, "(2, 15, 15)"),
+                ..text()
+            },
+            Verdict::Fail,
+            "SIGTERM default death",
+        ),
+        (
+            Facts {
+                termination: None,
+                ..text()
+            },
+            Verdict::NotTested,
+            "no termination record",
+        ),
+        (
+            Facts {
+                quit: None,
+                ..text()
+            },
+            Verdict::NotTested,
+            "no quit event",
+        ),
+        (
+            Facts {
+                logged_out: false,
+                ..text()
+            },
+            Verdict::NotTested,
+            "no logout",
+        ),
+    ];
+    for (facts, verdict, why) in samples {
+        assert_eq!(run("text", facts), verdict, "text: {why}");
+    }
+    // Saved only after it answered YES; the barrier skipped with the answer missing; a product
+    // still running when the cleanup began (its exit may be the cleanup's).
+    let written_late = Facts {
+        after: note(TYPED, at + 350_000),
+        ..text()
+    };
+    assert_eq!(run("text", written_late), Verdict::Fail, "saved after YES");
+    let skipped = Facts {
+        decision: logged(2, "NSTerminateNow"),
+        reply: None,
+        ..text()
+    };
+    assert_eq!(
+        run("text", skipped),
+        Verdict::Fail,
+        "a seen violation beats a missing fact"
+    );
+    let lingering = Facts {
+        gone: false,
+        ..text()
+    };
+    assert_eq!(
+        run("text", lingering),
+        Verdict::NotTested,
+        "ended by the cleanup"
+    );
+
+    // dialog: the request meets the open dialog, the second line is saved by it, nothing lands at
+    // the aimed destination, a normal exit.
+    let dialog = || Facts {
+        before: note(SAVED, at - 3_000_000),
+        after: note(&format!("{SAVED}\n{UNSAVED}"), at + 200_000),
+        exported: Ok(false),
+        decision: logged(2, "NSTerminateCancel"),
+        reply: logged(3, "NO"),
+        termination: logged(4, "(0, 0, 0)"),
+        ..base()
+    };
+    assert_eq!(run("dialog", dialog()), Verdict::Pass);
+    let samples: Vec<(Facts, Verdict, &str)> = vec![
+        (
+            Facts {
+                exported: Ok(true),
+                ..dialog()
+            },
+            Verdict::Fail,
+            "exported",
+        ),
+        (
+            Facts {
+                exported: Err("denied".into()),
+                ..dialog()
+            },
+            Verdict::NotTested,
+            "destination unreadable",
+        ),
+        (
+            Facts {
+                decision: logged(2, "NSTerminateLater"),
+                ..dialog()
+            },
+            Verdict::Fail,
+            "dialog not taken",
+        ),
+        (
+            Facts {
+                after: note(SAVED, at - 3_000_000),
+                ..dialog()
+            },
+            Verdict::Fail,
+            "second line lost",
+        ),
+        (
+            Facts {
+                before: note(&format!("{SAVED}\n{UNSAVED}"), at - 1),
+                ..dialog()
+            },
+            Verdict::NotTested,
+            "second line on disk before",
+        ),
+        (
+            Facts {
+                termination: logged(4, "(2, 9, 9)"),
+                ..dialog()
+            },
+            Verdict::Fail,
+            "killed",
+        ),
+        (
+            Facts {
+                termination: None,
+                ..dialog()
+            },
+            Verdict::NotTested,
+            "no termination record",
+        ),
+    ];
+    for (facts, verdict, why) in samples {
+        assert_eq!(run("dialog", facts), verdict, "dialog: {why}");
+    }
+
+    // fault: later then no, the old bytes untouched, ended by SIGKILL only.
+    let fault = || Facts {
+        before: note(SAVED, at - 4_000_000),
+        after: note(SAVED, at - 4_000_000),
+        decision: logged(2, "NSTerminateLater"),
+        reply: logged(3, "NO"),
+        termination: logged(4, "(2, 9, 9)"),
+        ..base()
+    };
+    assert_eq!(run("fault", fault()), Verdict::Pass);
+    let samples: Vec<(Facts, Verdict, &str)> = vec![
+        (
+            Facts {
+                reply: logged(3, "YES"),
+                ..fault()
+            },
+            Verdict::Fail,
+            "accepted",
+        ),
+        (
+            Facts {
+                after: note(&format!("{SAVED}\n{LOST}"), at + 1),
+                ..fault()
+            },
+            Verdict::Fail,
+            "new bytes",
+        ),
+        (
+            Facts {
+                after: note(SAVED, at + 1),
+                ..fault()
+            },
+            Verdict::Fail,
+            "rewritten",
+        ),
+        (
+            Facts {
+                before: note(NOTE, at - 4_000_000),
+                ..fault()
+            },
+            Verdict::NotTested,
+            "saved line missing",
+        ),
+        (
+            Facts {
+                after: unread(),
+                ..fault()
+            },
+            Verdict::NotTested,
+            "after unread",
+        ),
+        (
+            Facts {
+                termination: logged(4, "(2, 15, 15)"),
+                ..fault()
+            },
+            Verdict::Fail,
+            "SIGTERM default death",
+        ),
+        (
+            Facts {
+                termination: logged(4, "(0, 0, 0)"),
+                ..fault()
+            },
+            Verdict::Fail,
+            "normal exit",
+        ),
+        (
+            Facts {
+                termination: None,
+                ..fault()
+            },
+            Verdict::NotTested,
+            "no termination record",
+        ),
+    ];
+    for (facts, verdict, why) in samples {
+        assert_eq!(run("fault", facts), verdict, "fault: {why}");
+    }
+    // The SIGKILL of a product the cleanup found still running may be the cleanup's own.
+    let lingering = Facts {
+        gone: false,
+        ..fault()
+    };
+    assert_eq!(
+        run("fault", lingering),
+        Verdict::NotTested,
+        "ended by the cleanup"
+    );
+}
+
+/// The facts the ladder-p8 VM run recorded for the three logout cases (driver `d347b215…`),
+/// judged again under the round-8 rules: each still passes.
+#[test]
+fn ladder_p8_logout_facts_pass_the_stricter_rules() {
+    use super::logout::check::{Facts, Logged, Note, judge};
+    let note = |text: &str, modified: i64| -> Result<Note, String> {
+        Ok(Note {
+            text: text.into(),
+            modified,
+        })
+    };
+    let logged = |line: usize, at: i64, value: &str| {
+        Some(Logged {
+            line,
+            at: Some(at),
+            value: value.into(),
+        })
+    };
+    let run = |case: &str, f: Facts| {
+        let mut row = Row::new("W12-logout");
+        judge(case, &f, &mut row);
+        (aggregate(&row.checks), row.json())
+    };
+    let text = Facts {
+        logged_out: true,
+        gone: true,
+        before: note("before logout\n", 1795104349726449),
+        after: note("typed just before logout", 1795104354804169),
+        exported: Err("not read".into()),
+        quit: logged(959, 1795104354645310, ""),
+        decision: logged(964, 1795104354645429, "NSTerminateLater"),
+        reply: logged(1346, 1795104354960946, "YES"),
+        termination: logged(2578, 1795104355104607, "(0, 0, 0)"),
+    };
+    let dialog = Facts {
+        logged_out: true,
+        gone: true,
+        before: note("saved line", 1795104427072172),
+        after: note("saved line\nunsaved line", 1795104431870127),
+        exported: Ok(false),
+        quit: logged(1420, 1795104431611969, ""),
+        decision: logged(1429, 1795104431617936, "NSTerminateCancel"),
+        reply: logged(1430, 1795104431617937, "NO"),
+        termination: logged(2172, 1795104431979765, "(0, 0, 0)"),
+    };
+    let fault = Facts {
+        logged_out: true,
+        gone: true,
+        before: note("saved line", 1795104509590180),
+        after: note("saved line", 1795104509590180),
+        exported: Err("not read".into()),
+        quit: logged(1150, 1795104513004346, ""),
+        decision: logged(1155, 1795104513004483, "NSTerminateLater"),
+        reply: logged(1169, 1795104513016993, "NO"),
+        termination: logged(3152, 1795104516405512, "(2, 9, 9)"),
+    };
+    for (case, facts) in [("text", text), ("dialog", dialog), ("fault", fault)] {
+        let (verdict, json) = run(case, facts);
+        assert_eq!(verdict, Verdict::Pass, "{case}: {json}");
+    }
+}
+
+#[test]
+fn mac_logout_options() {
+    use super::logout::{parse, rows};
+    let args = |s: &str| s.split_whitespace().map(str::to_owned).collect::<Vec<_>>();
+    let o = parse(&args("--app a.app --case dialog --batch b1")).unwrap();
+    assert_eq!(
+        (o.case.as_str(), o.batch.as_deref()),
+        ("dialog", Some("b1"))
+    );
+    assert_eq!(o.out, None, "one directory of its own per run unless given");
+    assert_eq!(
+        parse(&args("--app a.app --case text --out d")).unwrap().out,
+        Some("d".into())
+    );
+    assert!(parse(&args("--app a.app --case logout")).is_err());
+    assert!(parse(&args("--app a.app")).is_err());
+    assert!(parse(&args("--help")).unwrap().help);
+    assert_eq!(
+        rows(),
+        ["W12-logout-text", "W12-logout-dialog", "W12-logout-fault"]
+    );
+}
+
+/// W02: windows in front that may hide a strip; the Dock's screen-sized overlay does not count.
+#[test]
+fn only_windows_that_may_paint_over_a_strip_cover_it() {
+    use super::visual::covers;
+    let rect = |x, y, width, height| Rect {
+        origin: Point { x, y },
+        size: Size { width, height },
+    };
+    let screen = rect(0.0, 0.0, 1024.0, 768.0);
+    let strip = rect(0.0, 144.0, 2.0, 480.0);
+    assert!(!covers(&("Dock".into(), screen, 20), strip, screen));
+    // Anything else that meets the strip counts: another owner, another level, a smaller Dock
+    // window, a notification.
+    assert!(covers(&("Finder".into(), screen, 20), strip, screen));
+    assert!(covers(&("Dock".into(), screen, 21), strip, screen));
+    assert!(covers(
+        &("Dock".into(), rect(0.0, 100.0, 80.0, 600.0), 20),
+        strip,
+        screen
+    ));
+    assert!(covers(
+        &(
+            "Notification Center".into(),
+            rect(0.0, 140.0, 360.0, 80.0),
+            23
+        ),
+        strip,
+        screen
+    ));
+    // A window that does not meet the strip does not.
+    assert!(!covers(
+        &("Finder".into(), rect(100.0, 100.0, 300.0, 300.0), 0),
+        strip,
+        screen
+    ));
+}
+
+/// Round 8: a scene below that CoreGraphics returned transparent (unreadable) proves nothing;
+/// the control text must hold exactly one accented `a`; a caret watch with a long gap judges a
+/// missing blink as untested, but a non-inverse blink still fails.
+#[test]
+fn round_8_bad_samples_for_w02_i03_and_w10() {
+    use super::hold::picked_accent;
+    use super::pixels::{MAX_FRAME_GAP_MS, caret_blinks, strip_visible};
+    let strip = image(1040, 4, [248, 246, 239]);
+    let mut unread = image(1040, 4, [0, 0, 0]);
+    for p in unread.rgba.chunks_exact_mut(4) {
+        p[3] = 0;
+    }
+    assert_eq!(strip_visible(&strip, &strip, &unread).0, Verdict::NotTested);
+    // Half the scene below read (and like the strip), half unreadable: the difference would come
+    // only from the unread half.
+    let mut half = image(1040, 4, [248, 246, 239]);
+    for (k, p) in half.rgba.chunks_exact_mut(4).enumerate() {
+        if k % 2 == 0 {
+            p.copy_from_slice(&[0, 0, 0, 0]);
+        }
+    }
+    assert_eq!(strip_visible(&strip, &strip, &half).0, Verdict::NotTested);
+    // Barely opaque pixels are not read colours either.
+    let mut faint = image(1040, 4, [40, 70, 120]);
+    for p in faint.rgba.chunks_exact_mut(4) {
+        p[3] = 1;
+    }
+    assert_eq!(strip_visible(&strip, &strip, &faint).0, Verdict::NotTested);
+    assert_eq!(
+        strip_visible(&strip, &strip, &image(1040, 4, [40, 70, 120])).0,
+        Verdict::Pass
+    );
+    assert!(picked_accent("á") && picked_accent("à"));
+    for bad in ["", "a", "A2", "a2", "áá", "é", "á2"] {
+        assert!(!picked_accent(bad), "{bad:?}");
+    }
+    let on = image(8, 60, [7, 9, 16]);
+    let off = image(8, 60, [248, 246, 239]);
+    // Two frames far apart: nothing alternates, but the watch did not cover the period.
+    let sparse = vec![(0, off.clone()), (MAX_FRAME_GAP_MS + 50, off.clone())];
+    assert_eq!(caret_blinks(&sparse).0, Verdict::NotTested);
+    let one = vec![(0, on.clone())];
+    assert_eq!(caret_blinks(&one).0, Verdict::NotTested);
+    // A non-inverse alternation fails whatever the gaps.
+    let tinted = image(8, 60, [200, 30, 30]);
+    let wrong = vec![(0, off.clone()), (500, tinted.clone()), (1000, off.clone())];
+    assert_eq!(caret_blinks(&wrong).0, Verdict::Fail);
 }
