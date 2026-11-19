@@ -40,6 +40,8 @@ pub enum InstanceDisposition {
 pub struct InstanceGuard {
     _lock: DirectoryHandle,
     socket_path: Option<PathBuf>,
+    /// `(st_dev, st_ino)` of the socket this guard bound; only that entry is removed on drop.
+    bound: Option<(u64, u64)>,
     listener: Option<UnixListener>,
 }
 
@@ -61,17 +63,25 @@ impl InstanceGuard {
             }
             return Err(InstanceError::Lock(error));
         }
+        // Holding the lock proves no other copy owns this path, so a socket there is stale. Any
+        // other kind of entry is left alone, and this copy runs without the wake listener.
+        let socket_path = socket_path.filter(|path| match entry_at(path) {
+            Some((_, true)) => std::fs::remove_file(path).is_ok(),
+            Some((_, false)) => false,
+            None => true,
+        });
         let listener = match &socket_path {
-            Some(path) => {
-                // Holding the lock proves no other copy owns this path: what is there is stale.
-                let _ = std::fs::remove_file(path);
-                Some(UnixListener::bind(path).map_err(InstanceError::Socket)?)
-            }
+            Some(path) => Some(UnixListener::bind(path).map_err(InstanceError::Socket)?),
             None => None,
         };
+        let bound = socket_path
+            .as_deref()
+            .and_then(entry_at)
+            .map(|(identity, _)| identity);
         Ok(InstanceDisposition::Primary(Self {
             _lock: lock,
             socket_path,
+            bound,
             listener,
         }))
     }
@@ -101,10 +111,22 @@ impl InstanceGuard {
 
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
-        if let Some(path) = &self.socket_path {
+        if let (Some(path), Some(bound)) = (&self.socket_path, self.bound)
+            && entry_at(path) == Some((bound, true))
+        {
             let _ = std::fs::remove_file(path);
         }
     }
+}
+
+/// The entry at `path` itself (a link is not followed): its identity and whether it is a socket.
+fn entry_at(path: &Path) -> Option<((u64, u64), bool)> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    Some((
+        (metadata.dev(), metadata.ino()),
+        metadata.file_type().is_socket(),
+    ))
 }
 
 fn identity(directory: &DirectoryHandle) -> Result<[u8; 8], InstanceError> {
@@ -250,10 +272,28 @@ mod tests {
         let first = primary(&root);
         let path = first.socket_path.clone().unwrap();
         drop(first);
-        fs::write(&path, b"stale").unwrap();
+        // A socket left by a copy that ended without cleaning up.
+        drop(UnixListener::bind(&path).unwrap());
         let again = primary(&root);
         assert!(again.listener.is_some());
         drop(again);
+        assert!(!path.exists());
+        fs::remove_dir(root).unwrap();
+    }
+
+    /// Something that is not a socket at the socket's name is not this program's to delete.
+    #[test]
+    fn a_plain_file_at_the_socket_name_is_kept_and_the_copy_runs_without_wake() {
+        let root = directory("instance-plain-file");
+        let first = primary(&root);
+        let path = first.socket_path.clone().unwrap();
+        drop(first);
+        fs::write(&path, b"not ours").unwrap();
+        let again = primary(&root);
+        assert!(again.listener.is_none());
+        drop(again);
+        assert_eq!(fs::read(&path).unwrap(), b"not ours");
+        fs::remove_file(&path).unwrap();
         fs::remove_dir(root).unwrap();
     }
 }

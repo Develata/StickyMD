@@ -77,6 +77,14 @@ impl Drop for World {
     }
 }
 
+/// Whether the temporary volume the world lives on ignores case.
+fn case_insensitive(world: &World) -> bool {
+    fs::write(world.path("case-probe"), b"").unwrap();
+    let insensitive = world.path("CASE-PROBE").exists();
+    fs::remove_file(world.path("case-probe")).unwrap();
+    insensitive
+}
+
 fn installed_key(note_root: &NoteRoot) -> &str {
     match &note_root.mode {
         Mode::Installed { key } => key,
@@ -278,6 +286,11 @@ fn one_key_is_exclusive_and_another_key_runs_beside_it() {
         ("root-keys-case", "stickymd"),
     ] {
         let world = World::new(label);
+        if home_name == "stickymd" && !case_insensitive(&world) {
+            // The temporary volume decides; the case-sensitive side has its own image test.
+            eprintln!("skipped on a case-sensitive temporary volume");
+            continue;
+        }
         let system = world.resolve(&world.app("system", "StickyMD")).unwrap();
         let _guard = primary(&system);
         let home = world
@@ -368,4 +381,36 @@ fn an_installed_note_keeps_its_directory_when_note_is_replaced() {
     ports.io.config.save(&RuntimeConfig::default()).unwrap();
     assert!(moved.join("config.toml").is_file());
     assert!(!paths.note_dir.join("config.toml").exists());
+
+    // Deleted and made again: the config keeps failing instead of writing into the new one.
+    fs::remove_dir_all(&moved).unwrap();
+    ports.io.config.save(&RuntimeConfig::default()).unwrap_err();
+    assert_eq!(fs::read_dir(&paths.note_dir).unwrap().count(), 0);
+}
+
+/// A bundle named just `.app` reaches the key check from the real entry and is refused there,
+/// with nothing written anywhere.
+#[test]
+fn a_bundle_named_only_app_is_refused_with_nothing_written() {
+    let world = World::new("root-empty-key");
+    let executable = world.app("system", "");
+    let before = world.tree("");
+    let result = world.resolve(&executable);
+    assert!(matches!(result, Err(NoteRootError::Key(_))), "{result:?}");
+    assert_eq!(world.tree(""), before);
+}
+
+/// An installed level that cannot be created is reported as the unwritable case.
+#[test]
+fn an_unwritable_application_support_keeps_the_unwritable_prefix() {
+    let world = World::new("root-unwritable");
+    let executable = world.app("system", "StickyMD");
+    fs::set_permissions(world.support(), fs::Permissions::from_mode(0o555)).unwrap();
+    let result = world.resolve(&executable);
+    fs::set_permissions(world.support(), fs::Permissions::from_mode(0o755)).unwrap();
+    let error = result.unwrap_err();
+    assert!(matches!(error, NoteRootError::NotWritable { .. }), "{error:?}");
+    let message = error.startup_message();
+    assert!(message.starts_with("当前目录不可写："), "{message}");
+    assert!(message.contains("StickyMD"), "{message}");
 }

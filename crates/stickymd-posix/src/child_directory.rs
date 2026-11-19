@@ -54,6 +54,22 @@ impl DirectoryHandle {
     pub fn metadata(&self) -> io::Result<std::fs::Metadata> {
         self.directory.metadata()
     }
+
+    /// `(st_dev, st_ino)` of what `name` inside this directory names after following links
+    /// (`fstatat` without `AT_SYMLINK_NOFOLLOW`): the entry is looked up in this directory, not
+    /// in whatever a path to it names by now.
+    pub fn child_identity_following(&self, name: &str) -> io::Result<(u64, u64)> {
+        let c_name = c_string(OsStr::new(name))?;
+        // SAFETY: a zeroed stat is a valid value for fstatat to overwrite.
+        let mut status: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: the descriptor is valid while `self` lives; `c_name` and `status` outlive the
+        // call, and `status` is writable.
+        check(unsafe {
+            libc::fstatat(self.directory.as_raw_fd(), c_name.as_ptr(), &mut status, 0)
+        })?;
+        // The same conversion `MetadataExt::dev` makes, so the two identities compare.
+        Ok((status.st_dev as u64, status.st_ino))
+    }
 }
 
 /// What opening a child directory answers when the name holds a symbolic link or anything else

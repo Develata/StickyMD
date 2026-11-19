@@ -25,7 +25,8 @@ pub fn home_directory() -> io::Result<PathBuf> {
     let mut size = usize::try_from(suggested)
         .ok()
         .filter(|size| *size > 0)
-        .unwrap_or(4096);
+        .unwrap_or(4096)
+        .min(BUFFER_LIMIT);
     loop {
         let mut buffer = vec![0 as libc::c_char; size];
         // SAFETY: an all-zero passwd is a valid value for getpwuid_r to overwrite.
@@ -43,7 +44,7 @@ pub fn home_directory() -> io::Result<PathBuf> {
             )
         };
         if status == libc::ERANGE && size < BUFFER_LIMIT {
-            size *= 2;
+            size = (size * 2).min(BUFFER_LIMIT);
             continue;
         }
         if status != 0 {

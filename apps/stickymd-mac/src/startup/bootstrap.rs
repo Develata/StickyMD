@@ -281,14 +281,28 @@ mod tests {
     fn startup_reads_through_the_opened_handle() {
         let Fixture { root, paths, note } = fixture();
         fs::write(&paths.note_file, b"opened").unwrap();
+        let opened = RuntimeConfig {
+            opacity: 83,
+            ..RuntimeConfig::default()
+        };
+        save_config_in(&note, &opened).unwrap();
         let moved = unique_temp_path("bootstrap-moved");
         fs::rename(&paths.note_dir, &moved).unwrap();
         fs::create_dir(&paths.note_dir).unwrap();
         fs::write(&paths.note_file, b"replacement").unwrap();
+        let replacement = DirectoryHandle::open(&paths.note_dir).unwrap();
+        save_config_in(
+            &replacement,
+            &RuntimeConfig {
+                opacity: 50,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap();
         let outcome = bootstrap(&note, &paths).unwrap();
+        // Both the note and the config are read from the directory that was opened.
         assert_eq!(outcome.document.text(), "opened");
-        assert!(moved.join("config.toml").is_file());
-        assert!(!paths.note_dir.join("config.toml").exists());
+        assert_eq!(outcome.config, opened);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(moved).unwrap();
     }

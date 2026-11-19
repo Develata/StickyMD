@@ -62,7 +62,7 @@ fn main() -> std::process::ExitCode {
     // check in it, then `note/` opened once; everything after derives from that one handle.
     let note_root = match NoteRoot::resolve_current() {
         Ok(note_root) => note_root,
-        Err(error) => fatal_startup(&format!("无法确定便签目录：{error}")),
+        Err(error) => fatal_startup(&error.startup_message()),
     };
     let mut instance = match InstanceGuard::acquire(&note_root.handle) {
         Ok(InstanceDisposition::Primary(instance)) => instance,

@@ -86,6 +86,22 @@ pub enum NoteRootError {
     NotADirectory(PathBuf),
     #[error("{} belongs to another user", .0.display())]
     ForeignOwner(PathBuf),
+    /// The level could not be created there: no permission, or a read-only volume.
+    #[error("cannot create {}: {source}", path.display())]
+    NotWritable { path: PathBuf, source: io::Error },
+}
+
+impl NoteRootError {
+    /// What the start shows: an installed level that cannot be created is the unwritable case,
+    /// with its prefix and the Note Root it was making (plan 05 startup order).
+    pub fn startup_message(&self) -> String {
+        match self {
+            Self::NotWritable { path, .. } => {
+                format!("当前目录不可写：{}\n\n{self}", path.display())
+            }
+            _ => format!("无法确定便签目录：{self}"),
+        }
+    }
 }
 
 impl NoteRoot {
@@ -111,14 +127,16 @@ impl NoteRoot {
             source,
         })?;
         let mut candidates = vec![probe(&roots.system_applications)];
+        let mut home_unknown = roots.home.as_ref().err().cloned();
         if let Ok(home) = &roots.home {
-            candidates.push(probe(&home.join("Applications")));
+            // The personal candidate is looked up from the home directory's handle, so a home
+            // path that now names another directory cannot change the decision.
+            match DirectoryHandle::open_following(home) {
+                Ok(handle) => candidates.push(probe_in(&handle, "Applications", home)),
+                Err(error) => home_unknown = Some(format!("{}: {error}", home.display())),
+            }
         }
-        match placement(
-            identity,
-            &candidates,
-            roots.home.as_ref().err().map(String::as_str),
-        ) {
+        match placement(identity, &candidates, home_unknown.as_deref()) {
             Placement::Portable => Ok(Self {
                 mode: Mode::Portable,
                 path: parent.to_owned(),
@@ -177,6 +195,13 @@ fn private_level(
     let handle = parent.open_or_create_child(name, true).map_err(|source| {
         if is_not_a_plain_directory(&source) {
             NoteRootError::NotADirectory(path.to_owned())
+        } else if source.kind() == io::ErrorKind::PermissionDenied
+            || source.kind() == io::ErrorKind::ReadOnlyFilesystem
+        {
+            NoteRootError::NotWritable {
+                path: path.to_owned(),
+                source,
+            }
         } else {
             NoteRootError::Open {
                 path: path.to_owned(),
@@ -220,11 +245,20 @@ fn identity_of(handle: &DirectoryHandle) -> io::Result<Identity> {
 
 /// A candidate after following links and firmlinks.
 fn probe(candidate: &Path) -> Candidate {
-    match std::fs::metadata(candidate) {
-        Ok(metadata) => Candidate::Found(Identity {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        }),
+    candidate_from(
+        std::fs::metadata(candidate).map(|metadata| (metadata.dev(), metadata.ino())),
+        candidate,
+    )
+}
+
+/// The candidate `name` inside `directory`, shown as `under/name` in messages.
+fn probe_in(directory: &DirectoryHandle, name: &str, under: &Path) -> Candidate {
+    candidate_from(directory.child_identity_following(name), &under.join(name))
+}
+
+fn candidate_from(identity: io::Result<(u64, u64)>, shown: &Path) -> Candidate {
+    match identity {
+        Ok((device, inode)) => Candidate::Found(Identity { device, inode }),
         Err(error)
             if matches!(
                 error.kind(),
@@ -233,6 +267,6 @@ fn probe(candidate: &Path) -> Candidate {
         {
             Candidate::Absent
         }
-        Err(error) => Candidate::Unreadable(format!("{}: {error}", candidate.display())),
+        Err(error) => Candidate::Unreadable(format!("{}: {error}", shown.display())),
     }
 }

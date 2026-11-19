@@ -70,6 +70,11 @@ pub fn verify_writable(root: &DirectoryHandle) -> Result<(), RuntimePathsError> 
         }
         if let Err(error) = root.rename_no_replace(&name, &renamed) {
             let _ = root.remove_file(&name);
+            // A target left by an earlier run with this process ID is not ours to remove: take
+            // the next pair of names.
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                continue;
+            }
             return Err(if error.raw_os_error() == Some(ENOTSUP) {
                 RuntimePathsError::VolumeUnsupported(error)
             } else {
