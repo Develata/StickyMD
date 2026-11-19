@@ -424,3 +424,14 @@ USER 2026-11-19 决定：“允许预设”。R03 由驱动预设“已获用户
 **账本**：以上五份证据登记在 worktree 自己的账本（`dist/evidence/mac-gui-ledger/records.jsonl`，主 checkout 的账本未动）。按规则，同一身份下任何 `NOT TESTED` 都停止该行复用，所以第一次 fault 记录使 `W12-logout-fault` 在驱动 `cfb0a75c…` 下不可复用，W12 合成为 incomplete；未删除或改写该记录。`e93c8f3` 把注销的日志读取改为从本例开始前 5 s 读起、限时 120 s，R03 的终止记录读取限时 60 s。驱动身份因此改变，需在新身份下重跑完整的 `mac-gui` 与三种注销。
 
 **仍未做**：新身份下的整体复跑与登记；矩阵 Mode 变更（待 USER 决定）；codex 对第 7 轮修复的复审。
+
+
+## 虚拟机结果：新驱动身份下的整体复跑（2026-11-20 追加）
+
+驱动 `e93c8f3`（sha256 `d347b215…`），批次 `ladder-p8`，应用与镜像、系统同上一节；证据在 worktree 已忽略的 `dist/evidence/mac-vm-2026-11-19-ladder-p8/`，登记于 worktree 自己的账本。
+
+- `mac-gui` 16 行：13 PASS、0 FAIL；W01、W06、F01 的 `NOT TESTED` 为设计内的人工视觉项。
+- 注销三例各一次新开机，均一次 PASS：text 最后一键到退出事件 248 ms；dialog `NSTerminateCancel`、`export.md` 不存在；fault `Later`→`NO`→`(2, 9, 9)`，笔记字节与修改时间不变；三次日志读取都在时限内完成。
+- `mac-ledger plan --batch ladder-p8`：W02、W03、W04、W07–W12、K02、I03、E01、R03 与三个注销行均可复用；**`composite P16-W12: complete`**。
+
+**仍未做**：验收矩阵中 W02、W03、W04、W10、W12、I03、R03 的 Mode 仍为 `Manual`，规划器因此仍把它们列为待人工确认；改 Mode 与证据引用待 USER 决定。codex 对第 7 轮修复（`0ba389f..e93c8f3`）尚未复审。账本记录在 worktree，合并前不进入主 checkout 的账本。
