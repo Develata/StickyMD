@@ -202,6 +202,11 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           ATTACHMENTS: ${{ inputs.attachments }}
         run: |
+          function Get-ReleaseSnapshot {
+            param($Release)
+            $assets = @($Release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)" })
+            [pscustomobject]@{ id = "$($Release.id)"; draft = [bool]$Release.draft; names = @($Release.assets | ForEach-Object { $_.name }); text = "$($Release.id)|$($assets -join ';')" }
+          }
           function Get-DraftSnapshot {
             $text = (& gh api --paginate --slurp "repos/$env:GH_REPO/releases?per_page=100") -join "`n"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -216,9 +221,7 @@ jobs:
             $matching = @($releases | Where-Object { $_.tag_name -ceq $env:RELEASE_TAG })
             if ($matching.Count -eq 0) { return $null }
             if ($matching.Count -ne 1) { throw "$($matching.Count) releases carry $env:RELEASE_TAG" }
-            $release = $matching[0]
-            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)" })
-            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($assets -join ';')" }
+            Get-ReleaseSnapshot $matching[0]
           }
           $draft = Get-DraftSnapshot
           if ($null -ne $draft) {
@@ -318,6 +321,11 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
+          function Get-ReleaseSnapshot {
+            param($Release)
+            $assets = @($Release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)" })
+            [pscustomobject]@{ id = "$($Release.id)"; draft = [bool]$Release.draft; names = @($Release.assets | ForEach-Object { $_.name }); text = "$($Release.id)|$($assets -join ';')" }
+          }
           function Get-DraftSnapshot {
             $text = (& gh api --paginate --slurp "repos/$env:GH_REPO/releases?per_page=100") -join "`n"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -332,9 +340,7 @@ jobs:
             $matching = @($releases | Where-Object { $_.tag_name -ceq $env:RELEASE_TAG })
             if ($matching.Count -eq 0) { return $null }
             if ($matching.Count -ne 1) { throw "$($matching.Count) releases carry $env:RELEASE_TAG" }
-            $release = $matching[0]
-            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)" })
-            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($assets -join ';')" }
+            Get-ReleaseSnapshot $matching[0]
           }
           $draft = Get-DraftSnapshot
           if ($null -eq $draft -or -not $draft.draft) { throw "no draft release carries $env:RELEASE_TAG" }
@@ -359,39 +365,35 @@ jobs:
           cargo run --quiet -p stickymd-smoke --locked -- release verify-attachments --directory dist/draft --attachments $env:ATTACHMENTS
           exit $LASTEXITCODE
       - name: Publish the verified draft by its release id
-        # The draft must be the very release and assets downloaded and checked above.
+        # The draft must be the very release and assets downloaded and checked above. GitHub has
+        # no conditional update: the release is read by id just before and just after the PATCH,
+        # and a release that is not the checked one fails the job. Nothing is changed back
+        # automatically: what to do with a changed release is the USER's decision.
         shell: pwsh
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          function Get-DraftSnapshot {
-            $text = (& gh api --paginate --slurp "repos/$env:GH_REPO/releases?per_page=100") -join "`n"
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            if (-not $text.Trim()) { throw 'the release listing is empty' }
-            $releases = @($text | ConvertFrom-Json | ForEach-Object { $_ })
-            foreach ($release in $releases) {
-              foreach ($field in 'id', 'tag_name', 'draft', 'assets') { if ($release.PSObject.Properties.Name -cnotcontains $field) { throw "a listed release has no $field" } }
-              foreach ($asset in @($release.assets)) {
-                foreach ($field in 'id', 'name', 'size') { if ($asset.PSObject.Properties.Name -cnotcontains $field) { throw "an asset of release $($release.id) has no $field" } }
-              }
-            }
-            $matching = @($releases | Where-Object { $_.tag_name -ceq $env:RELEASE_TAG })
-            if ($matching.Count -eq 0) { return $null }
-            if ($matching.Count -ne 1) { throw "$($matching.Count) releases carry $env:RELEASE_TAG" }
-            $release = $matching[0]
-            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)" })
-            [pscustomobject]@{ id = "$($release.id)"; draft = [bool]$release.draft; names = @($release.assets | ForEach-Object { $_.name }); text = "$($release.id)|$($assets -join ';')" }
-          }
-          $draft = Get-DraftSnapshot
           $before = [IO.File]::ReadAllText((Join-Path $env:RUNNER_TEMP 'draft-snapshot.txt'))
-          if ($null -eq $draft -or -not $draft.draft -or $draft.text -cne $before) { throw "the draft of $env:RELEASE_TAG changed after it was checked" }
-          gh api --method PATCH "repos/$env:GH_REPO/releases/$($draft.id)" -F draft=false | Out-Null
+          $id = $before.Split('|')[0]
+          if ($id -cnotmatch '^[1-9][0-9]{0,18}$') { throw 'the recorded draft has no release id' }
+          function Get-ReleaseById {
+            $text = (& gh api "repos/$env:GH_REPO/releases/$id") -join "`n"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not $text.Trim()) { throw "release $id answered with nothing" }
+            $release = $text | ConvertFrom-Json
+            foreach ($field in 'id', 'tag_name', 'draft', 'assets') { if ($release.PSObject.Properties.Name -cnotcontains $field) { throw "release $id has no $field" } }
+            foreach ($asset in @($release.assets)) {
+              foreach ($field in 'id', 'name', 'size') { if ($asset.PSObject.Properties.Name -cnotcontains $field) { throw "an asset of release $id has no $field" } }
+            }
+            if ($release.tag_name -cne $env:RELEASE_TAG) { throw "release $id now carries $($release.tag_name)" }
+            $assets = @($release.assets | Sort-Object id | ForEach-Object { "$($_.id)|$($_.name)|$($_.size)" })
+            [pscustomobject]@{ draft = [bool]$release.draft; text = "$($release.id)|$($assets -join ';')" }
+          }
+          $draft = Get-ReleaseById
+          if (-not $draft.draft -or $draft.text -cne $before) { throw "the draft of $env:RELEASE_TAG changed after it was checked" }
+          gh api --method PATCH "repos/$env:GH_REPO/releases/$id" -F draft=false | Out-Null
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # GitHub has no conditional update, so a writer outside this workflow could still act
-          # between the check above and the PATCH. The release is read once more: if it is not the
-          # checked release and assets, it goes back to draft and the job fails.
-          $after = Get-DraftSnapshot
-          if ($null -eq $after -or $after.draft -or $after.text -cne $before) {
-            gh api --method PATCH "repos/$env:GH_REPO/releases/$($draft.id)" -F draft=true | Out-Null
-            throw "the release of $env:RELEASE_TAG changed while it was published; it was returned to draft"
+          $after = Get-ReleaseById
+          if ($after.draft -or $after.text -cne $before) {
+            throw "release $id of $env:RELEASE_TAG is not the checked release after publishing; it was left as it is for the USER to decide"
           }

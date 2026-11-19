@@ -190,8 +190,12 @@ pub(crate) fn check_set(
     Ok((receipt, reuse))
 }
 
-/// One promotion at a time: the lock file is created exclusively and removed when dropped.
-struct PromotionLock(PathBuf);
+/// One promotion at a time: an advisory lock on a file that stays in place. The operating
+/// system releases it when the holder exits, killed or not, so an interrupted promotion does
+/// not block the next one.
+struct PromotionLock {
+    _file: fs::File,
+}
 
 impl PromotionLock {
     fn take(root: &Path) -> Result<Self, String> {
@@ -199,20 +203,21 @@ impl PromotionLock {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        fs::OpenOptions::new()
+        let file = fs::OpenOptions::new()
             .write(true)
-            .create_new(true)
+            .create(true)
+            .truncate(false)
             .open(&path)
-            .map_err(|error| {
-                format!("another macOS promotion holds {} ({error})", path.display())
-            })?;
-        Ok(Self(path))
-    }
-}
-
-impl Drop for PromotionLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
+            .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+        match file.try_lock() {
+            Ok(()) => Ok(Self { _file: file }),
+            Err(fs::TryLockError::WouldBlock) => {
+                Err(format!("another macOS promotion holds {}", path.display()))
+            }
+            Err(fs::TryLockError::Error(error)) => {
+                Err(format!("cannot lock {}: {error}", path.display()))
+            }
+        }
     }
 }
 

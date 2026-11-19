@@ -20,9 +20,10 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
 | `2fb96ed`、`86d4595`、`9741289`、`adc6816`、`77314d4` | M3 发布流水线、两平台晋升、Windows 资格化沿用，及审查修正 |
 | `ecc8657` | 矩阵记下本地发布演练 |
 | `5f47c0d` | 关闭 M3 审查与 Windows 沿用审查的发现 |
-| 本报告所在提交 | 关闭 `5f47c0d` 的复审发现 |
+| `e302d8e` 及本报告所在提交 | 关闭 `5f47c0d` 的复审发现 |
 
-每个里程碑经过一次 codex-reviewer（GPT，跨模型、只读）审查，修正后再做窄范围复审；复审的处理见“复审与遗留”。
+每个里程碑经过一次 codex-reviewer（GPT，跨模型、只读）审查，修正后再做窄范围复审；复审的处理见“复审与遗留”。**复审之后的修正
+（`e302d8e` 与本报告所在提交）没有再经过跨模型审查。**
 
 ## 已验证（本轮实际运行）
 
@@ -38,7 +39,8 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
 - **SBOM 核对用真实生成物复验：** 收紧后的规则（SPDX 2.3、每个包内文件恰好一条、有 `SPDXRef-` 标识、40 位 SHA-1、SHA-256 等于包内字节，
   包括 `LICENSE.txt` 与 `README.txt`）对演练中 Syft 1.50.0 为同一 ZIP 生成的 SBOM 通过。
 - **发布 workflow 的 PowerShell 片段（pwsh 7 模拟）：** 草稿快照函数对单页、两页、无匹配、空列表、重复 tag、缺字段、空响应、tag 大小写不同
-  九种响应全部给出预期结果。
+  九种响应全部给出预期结果；PUBLISH 的最后一步对“未变、发布前已变、已公开、发布后已变、发布后仍是草稿、tag 已移走”六种响应，只在发布前核对
+  通过时发出一次 `draft=false`，任何不符都以非零退出，不再改动 release。
 - **Git 视图：** 临时仓库中，graft 让普通 `git merge-base` 把旁支提交当成祖先，沿用判定照样拒绝（`GIT_GRAFT_FILE` 指向空设备，替换对象也已禁用）。
 - **Windows 资格化登记：** 在真实提交上走生产入口，S 上运行的证据在只改文档的 R 上登记被拒，R 上运行的证据登记成功。
 - **本地发布演练（`77314d4` 的工具，scratch 克隆中构建）：** `build-app.sh` → `macos-package`（绑定 product inputs）→
@@ -57,8 +59,11 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
 
 ## 推断（有依据但未执行）
 
-- **Windows 行为不变：** 产品代码没有改动 Windows 宿主与共享层；Windows 的打包文件名、checksum 格式与 SBOM 生成器未变，第三方声明逐字节相同。
+- **Windows 产品行为不变：** 产品代码没有改动 Windows 宿主与共享层；Windows 的打包文件名、checksum 格式与 SBOM 生成器未变，第三方声明逐字节相同。
   Windows 发布字节相等没有实测：本分支没有在 Windows CI 上运行。
+- **Windows 资格化工具的行为变了，且没有在 Windows 上运行：** 模块成功只登记 HEAD 上的运行、Source Freeze 复核提交里的 `Cargo.lock`、Promote
+  最后写 candidate receipt、readiness 从首次读取到写回执都持锁、沿用判定的 Git 视图。这些在 macOS 上有单元测试与临时仓库测试，Windows 目标的
+  clippy 只证明能通过类型检查。
 - **`0278057` 之后的产品改动只在错误路径**（`cfed863`：不可写提示带出 Note Root、探测文件名冲突时的清理），由
   `apps/stickymd-mac` 的单元测试覆盖；虚拟机证据仍是 `0278057` 的产品。重跑应在 dispatch 得到的候选 bundle 上做，那时证据身份才是发布字节。
 - **workflow：** 三个 YAML 均能解析；`concurrency` 组按 tag 串行化三个操作；PUBLISH 比对草稿 release 与 asset 的 id、名称、大小与更新时间，
@@ -85,10 +90,13 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
 3. **Windows 本地 Promote 按 run 与名字下载：** 远端记录里的 artifact id 与 attempt 没有被下载过程证明（审查发现，早于本阶段）。
    `11` 写明 Windows 按 attempt 收紧另行决定；按 id 下载可作为单独的后续改动。
 4. **push 与 dispatch：** 什么时候 push 本分支，以及 `release`、`release-macos`、`promote-release` 的 dispatch，都等你授权。
+5. **发布后发现 release 不符时怎么办：** PUBLISH 现在只让 job 失败、不动 release。自动退回草稿是一次 `11` 没有写、PUBLISH 授权也未必包含的
+   远程写操作，所以没有做；要不要加，或者靠仓库权限证明只有这个 workflow 会写 release，由你决定。
 
 ## 复审与遗留
 
-`5f47c0d` 的两份复审（发布工具、Windows 资格化）给出 4 项 BLOCKER，均已在本报告所在提交处理：
+`5f47c0d` 的两份复审（发布工具、Windows 资格化）给出 5 项 BLOCKER：4 项已关闭，PUBLISH 的写入窗口（B2）只做了缓解，见下文“仍未处理”。
+已关闭的 4 项：
 
 - TAG 在确认 R 属于主线之前就运行了 R 中的 action 与工具：三个操作都在 checkout 之后、任何仓库内代码之前，用 runner 自带的 Git 核对
   `HEAD == R` 与 R 在 `origin/main` 上。
@@ -97,15 +105,17 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
 - readiness 在首次读取之后才取锁：改为一开始就持共享锁，直到回执写完。
 - graft 可让非祖先通过沿用判定：所有提交、树、blob 与祖先查询都经同一个 Git 视图，禁用替换对象并忽略 graft。
 
-其余已处理：PUBLISH 的发布列表分页并逐项检查字段，发布后再读一次，若不是核对过的 release 与附件就退回草稿并失败；resolver 要求 receipt
+其余已处理：PUBLISH 的发布列表分页并逐项检查字段，发布前后都按 release id 读取，发布后若不是核对过的 release 与附件就让 job 失败
+（不自动退回草稿）；macOS 晋升锁改为操作系统的文件锁，进程被杀也会释放，不再留下挡住下一次晋升的锁文件；resolver 要求 receipt
 字段完整、artifact 名与 attempt 对应、沿用记录与 Promote 写出的逐字节相同、S=R 时不得有沿用记录；workflow 文件路径的 `@` 后缀不能是另一个
 workflow 文件名；composite action 先把所有 id 与 attempt 校验为正整数，并核对 GitHub 回答的 artifact id；Windows 的 attempt 取自同一份已核对的
 运行观察，发布说明写明是“最新 attempt”；独立的 `platform-inputs` 命令也要求提交对象；现有 Source Freeze 复核提交里的 `Cargo.lock`。
 
 仍未处理，留给后续或你的决定：
 
-- **PUBLISH 的剩余窗口：** GitHub 没有条件更新，最后一次核对与 PATCH 之间，本 workflow 以外的写入者仍可改动；现在靠并发组串行化本 workflow、
-  governance 禁止候选 workflow 写 release，以及发布后的复读与退回草稿兜底。
+- **PUBLISH 的剩余窗口（B2，未关闭）：** GitHub 没有条件更新，发布前最后一次读取与 PATCH 之间，本 workflow 以外的写入者（例如有写权限的人
+  手动改草稿）仍可改动。复审给的关闭条件是“约束所有写入者”或“证明本 workflow 是唯一写入者”，两者都没有做到：现在只有并发组串行化本
+  workflow、governance 禁止候选 workflow 写 release，以及发布后按 id 复读、不符即失败。
 - **resolver 返回的是固定路径：** 返回之后若另一次晋升替换了它，runner 用到的就是新候选。晋升是本机的手动操作，约定不与 artifact-bound 运行并行；
   要彻底解决需要运行期间持读锁。
 - **Windows 本地 Promote 按 run 与名字下载**（见上文第 3 项），复审同意它早于本阶段、不阻断本次改动。
