@@ -198,3 +198,41 @@ USER 回复：“批准方案 A”。按本提案的建议落实“待 USER 决�
 - 不在 USER 本机用它操作 StickyMD：StickyMD 的界面是自绘的，多数控件很可能只能用物理输入操作，会打扰 USER；本机的辅助功能与屏幕录制权限目前也都没有授给它。
 - 未验证：StickyMD 有多少界面元素出现在辅助功能树里。这一点在第 0 步的探测中确认。
 
+
+## 实施记录：第 0 步（2026-11-19，部分完成）
+
+**合同与工具**（分支 `feat/macos-acceptance-ladder`）：
+
+- `02e52df` 写入 plan 11、07、01 的阶梯规则，治理检查接受 `Agent`、`Review`，账本增加撤销、更严的复用规则。
+- 经 codex（`gpt-6.2-astra`，effort high）三轮审查，修正在 `be07b02`、`6ecc3bb`：
+  - 账本：同一份证据不重复登记；同一行、同一身份的运行按开始时间严格递增，读写都校验；只登记在虚拟机中跑完的运行（驱动在最后一行之后才写 `finished`）；行结论须与检查一致；撤销只指向已有结果、只作用于被点名的那次；I01–I03、R03 按 `--batch` 计数；V05 留给 Windows；每个子命令拒绝不属于它的选项。
+  - 治理：账本记录判定与带画面的收据之前，`AGENT PASS` 与 Review 的 `MANUAL PASS` 一律拒绝；Phase 16 的就绪检查要求 `Agent`、`Review` 行通过。
+  - 第二轮发现 `be07b02` 让 Windows 上的 `stickymd-smoke` 编译失败（`options.rs` 引用只在 macOS 与测试中编译的模块），已用 `x86_64-pc-windows-msvc` 交叉检查复现并在 `6ecc3bb` 修正；该提交未推送。
+  - 有意不做：治理检查只读验收表文字，不读本机账本，撤销后矩阵的同步由提交者负责；本批是否完成由 `plan --batch` 回答。均已写入 plan 11。
+- 验证：`cargo clippy`（除 Windows 宿主）无警告，Windows 目标交叉检查通过，`stickymd-smoke` 单元测试 594 个通过，phase 00、phase 16 通过；用真实账本（279 行）试跑，复用结果与此前一致。
+
+**虚拟机一次性设置（已核实）：**
+
+- SSH 密钥登录：专用密钥 `~/.ssh/stickymd-mac-test`，虚拟机 `~/.ssh/authorized_keys` 只含这一把；主连接由 `~/.local/share/stickymd/mac-test-master.command` 打开，不再要密码。
+- USER 经屏幕共享授予 `/usr/libexec/sshd-keygen-wrapper` 屏幕录制权限，并加上系统简体拼音（输入源为 “ABC and Pinyin – Simplified”）。主显示器已有两个桌面（ID 1、13）。
+- 首次截图时系统另弹出一个框：“com.apple.sshd-session is requesting to bypass the system private window picker and directly access your screen and audio”。这是屏幕录制权限之外的另一道确认，USER 点了 Allow。弹框期间录屏命令被卡住约 100 s。
+
+**通道探测**（`~/tools/probe0.sh`，证据在已忽略的 `dist/evidence/mac-vm-2026-11-19-probe0/{a,b,c}/`）：
+
+| 轮 | 条件 | `SHA256SUMS` 的 SHA-256 |
+| --- | --- | --- |
+| a | 授权前 | `0253c6f6…840b` |
+| b | USER 点 Allow 之后 | `37a523c5…894d` |
+| c | 断开 SSH、用密钥重连之后 | `202e3641…dfe` |
+
+- **整屏截图**（`screencapture -x`）：三轮都成功；b、c 两轮没有弹框，重连后授权仍然有效。
+- **单窗截图**（`agent-desktop screenshot --app StickyMD`）：成功，1132×1452 像素，scale 2。
+- **录屏**（`screencapture -v -V 4`）：成功，Quick Look 能解出画面；b、c 两轮用时约 4 s。
+- **辅助功能树**：StickyMD 主窗口里没有任何元素（`ref_count` 为 0，界面是自绘的），窗口内的操作仍要由驱动注入真实输入；菜单栏图标的菜单（隐藏、置顶、退出）可见，agent 可以操作（`ref_count` 为 4）。
+- **通知**：`agent-desktop list-notifications` 可用，三轮都为空。运行前用它检查通知。
+- **按住按键**：`agent-desktop key-down` 在无状态模式下不可用（`ACTION_NOT_SUPPORTED`）。W01 的 Cmd+Tab 改由驱动用 CGEvent 按住。
+
+**第 0 步的出口：**
+
+- 已满足：截图、单窗截图与录屏通道可用，并在重连后复验；账本的复用、撤销、批次与登记规则已实现并有测试；判定者设计写入 plan 11。
+- 未满足，随行转换：“通道能分辨坏样本”与“判定者校准”都依赖具体的行（遮住细条、隐去候选窗、常亮光标、已知坏图）。它们作为每一行转换的前提，在第 1、2 期逐行完成；某行做不到时留在 `Manual` / `NOT TESTED`。
