@@ -1,10 +1,30 @@
-//! Bracketed hover/leave observations; no late sample can establish timely motion.
+//! Bracketed hover/leave observations; no late sample can establish timely motion. The frontmost
+//! app is read with every observation while the pointer hovers, and the top band is watched for
+//! the whole dwell, so focus taken and given back, or a collapse undone in time, is caught.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::{
     model::*,
     observation::{Bracket, LATE_MS, REST_MS, completion_verdict, rest_from, transition},
     scenarios::{Backend, Driver, Op},
 };
+/// The longest gap between two samples of a continuous watch; a longer one leaves it unobserved.
+const MAX_GAP_MS: u64 = 60;
+
+/// Whether the app became frontmost while watched: the first sample, in ms from the watch start.
+struct Focus {
+    app: u32,
+    first: Option<u64>,
+}
+
+impl Focus {
+    fn sample<B: Backend>(&mut self, d: &mut Driver<'_, B>, at: u64) -> Result<(), String> {
+        if self.first.is_none() && d.front()? == self.app {
+            self.first = Some(at);
+        }
+        Ok(())
+    }
+}
+
 pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), String> {
     let (s, w) = super::scenarios::dock(d, Edge::Top)?;
     let strip = Point {
@@ -56,12 +76,17 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
             "scheduler delay missed the observation window",
         );
     }
+    let mut focus = Focus {
+        app: d.pid,
+        first: None,
+    };
     let onset = observe_transition(
         d,
         start,
         100,
         |w| collapsed(w, s, Edge::Top),
         "hover movement onset",
+        Some(&mut focus),
     )?;
     let w = completion(
         d,
@@ -69,12 +94,16 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
         onset,
         |w| expanded(w, s),
         "hover expansion completion",
+        Some(&mut focus),
     )?;
     let after = d.front()?;
     d.row.check(
         "hover expands without focus",
-        expanded(&w, s) && after == front,
-        format!("front={front}->{after}; {w:?}"),
+        expanded(&w, s) && after == front && focus.first.is_none(),
+        format!(
+            "front={front}->{after}; StickyMD frontmost from {:?}ms; {w:?}",
+            focus.first
+        ),
     );
     if band {
         let p = Point {
@@ -87,24 +116,74 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, band: bool) -> Result<(), S
             format!("{p:?}"),
         );
         d.op(Op::Move(p))?;
-        d.wait(850)?;
-        let stay = d.window()?;
-        d.row.check(
-            "top band holds past 500ms",
-            expanded(&stay, s),
-            format!("{stay:?}"),
-        );
+        band_dwell(d, s)?;
     }
     let leave = d.backend.now();
     d.op(Op::Move(away))?;
-    let onset = observe_transition(d, leave, 500, |w| expanded(w, s), "leave movement onset")?;
+    let onset = observe_transition(
+        d,
+        leave,
+        500,
+        |w| expanded(w, s),
+        "leave movement onset",
+        None,
+    )?;
     completion(
         d,
         leave,
         onset,
         |w| collapsed(w, s, Edge::Top),
         "leave collapse completion",
+        None,
     )?;
+    Ok(())
+}
+
+/// W04: with the pointer in the top band the window stays expanded, and never takes focus, for
+/// 850 ms, sampled at most `MAX_GAP_MS` apart; a collapse undone before the end still fails.
+fn band_dwell<B: Backend>(d: &mut Driver<'_, B>, s: Rect) -> Result<(), String> {
+    const DWELL_MS: u64 = 850;
+    let start = d.backend.now();
+    let mut focus = Focus {
+        app: d.pid,
+        first: None,
+    };
+    let (mut collapsed_at, mut gap, mut last, mut samples) = (None, 0, 0, 0);
+    let rest = loop {
+        let w = d.window()?;
+        let at = d.backend.now() - start;
+        focus.sample(d, at)?;
+        samples += 1;
+        if collapsed_at.is_none() && !expanded(&w, s) {
+            collapsed_at = Some(at);
+        }
+        gap = gap.max(at - last);
+        last = at;
+        if at >= DWELL_MS {
+            break w;
+        }
+        d.wait(20.min(DWELL_MS - at))?;
+    };
+    let verdict = if collapsed_at.is_some() {
+        Verdict::Fail
+    } else if gap > MAX_GAP_MS {
+        Verdict::NotTested
+    } else {
+        Verdict::Pass
+    };
+    record(
+        d,
+        "top band holds past 500ms",
+        verdict,
+        format!(
+            "{samples} samples over {last}ms, largest gap {gap}ms; collapsed from {collapsed_at:?}ms; rest {rest:?}"
+        ),
+    );
+    d.row.check(
+        "top band dwell keeps focus away",
+        focus.first.is_none(),
+        format!("StickyMD frontmost from {:?}ms", focus.first),
+    );
     Ok(())
 }
 
@@ -122,6 +201,7 @@ fn observe_transition<B: Backend>(
     target: u64,
     old_state: impl Fn(&Window) -> bool,
     name: &str,
+    mut focus: Option<&mut Focus>,
 ) -> Result<Option<Bracket>, String> {
     let mut old = None;
     loop {
@@ -130,6 +210,9 @@ fn observe_transition<B: Backend>(
         let requested = d.backend.now() - start;
         let w = d.window()?;
         let observed = d.backend.now() - start;
+        if let Some(focus) = focus.as_deref_mut() {
+            focus.sample(d, observed)?;
+        }
         if !old_state(&w) {
             let bracket = old.map(|old_ms| Bracket {
                 old_ms,
@@ -178,6 +261,7 @@ fn completion<B: Backend>(
     onset: Option<Bracket>,
     settled: impl Fn(&Window) -> bool,
     name: &str,
+    mut focus: Option<&mut Focus>,
 ) -> Result<Window, String> {
     let Some(onset) = onset else {
         d.row.skip(name, "no observed onset bracket");
@@ -190,6 +274,9 @@ fn completion<B: Backend>(
     let rest = loop {
         let w = d.window()?;
         let observed = d.backend.now() - start;
+        if let Some(focus) = focus.as_deref_mut() {
+            focus.sample(d, observed)?;
+        }
         samples.push((observed, w.bounds));
         if observed >= end {
             break w;

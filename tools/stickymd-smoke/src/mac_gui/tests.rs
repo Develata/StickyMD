@@ -318,6 +318,10 @@ struct HoverBackend {
     leave_at: u64,
     /// How long the window stays on screen but short of its rest after the 140 ms animation.
     short_of_rest: u64,
+    /// Since the pointer entered: when StickyMD is frontmost, then gives focus back.
+    flash_focus: Option<(u64, u64)>,
+    /// Since the pointer entered: when the window collapses, then expands again.
+    dip: Option<(u64, u64)>,
 }
 impl HoverBackend {
     fn new() -> Self {
@@ -330,7 +334,15 @@ impl HoverBackend {
             expand_at: 100,
             leave_at: 500,
             short_of_rest: 0,
+            flash_focus: None,
+            dip: None,
         }
+    }
+    fn within(&self, range: Option<(u64, u64)>) -> bool {
+        range.is_some_and(|(from, to)| {
+            self.entered
+                .is_some_and(|t| (from..to).contains(&(self.now - t)))
+        })
     }
     fn expanded(&self) -> bool {
         self.entered
@@ -348,31 +360,34 @@ impl Backend for HoverBackend {
                 self.now += ms;
                 Value::Unit
             }
-            Op::Window => Value::Window(
-                if self.entered.is_some_and(|t| {
-                    (self.expand_at..self.expand_at + 140).contains(&(self.now - t))
-                }) || self
+            Op::Window => Value::Window(if self.within(self.dip) {
+                window(rect(460.0, -478.0, 520.0, 480.0), 27)
+            } else if self
+                .entered
+                .is_some_and(|t| (self.expand_at..self.expand_at + 140).contains(&(self.now - t)))
+                || self
                     .left
                     .is_some_and(|t| (self.leave_at..self.leave_at + 140).contains(&(self.now - t)))
-                {
-                    window(rect(460.0, -200.0, 520.0, 480.0), 27)
-                } else if self.entered.is_some_and(|t| {
-                    let rest = self.expand_at + 140;
-                    (rest..rest + self.short_of_rest).contains(&(self.now - t))
-                }) {
-                    window(rect(460.0, 12.0, 520.0, 480.0), 27)
-                } else if self.expanded() {
-                    window(rect(460.0, 28.0, 520.0, 480.0), 0)
+            {
+                window(rect(460.0, -200.0, 520.0, 480.0), 27)
+            } else if self.entered.is_some_and(|t| {
+                let rest = self.expand_at + 140;
+                (rest..rest + self.short_of_rest).contains(&(self.now - t))
+            }) {
+                window(rect(460.0, 12.0, 520.0, 480.0), 27)
+            } else if self.expanded() {
+                window(rect(460.0, 28.0, 520.0, 480.0), 0)
+            } else {
+                window(rect(460.0, -478.0, 520.0, 480.0), 27)
+            }),
+            Op::Screen => Value::Rect(rect(0.0, 0.0, 1440.0, 900.0)),
+            Op::Front => Value::Pid(
+                if (self.steals && self.expanded()) || self.within(self.flash_focus) {
+                    42
                 } else {
-                    window(rect(460.0, -478.0, 520.0, 480.0), 27)
+                    self.focused
                 },
             ),
-            Op::Screen => Value::Rect(rect(0.0, 0.0, 1440.0, 900.0)),
-            Op::Front => Value::Pid(if self.steals && self.expanded() {
-                42
-            } else {
-                self.focused
-            }),
             Op::Finder => {
                 self.focused = 99;
                 Value::Pid(99)
@@ -431,6 +446,29 @@ fn hover_orchestration_checks_band_cancellation_timing_and_focus() {
     assert_eq!(
         aggregate(&hover_row(&mut early, "W03").checks),
         Verdict::Fail
+    );
+}
+
+/// Focus taken during the expansion and given back before it settles, and a collapse in the top
+/// band undone before the dwell ends: both happen between the old single checks and must fail.
+#[test]
+fn hover_catches_focus_taken_back_and_a_collapse_undone_in_time() {
+    let mut flash = HoverBackend::new();
+    flash.flash_focus = Some((100, 160));
+    let row = hover_row(&mut flash, "W03");
+    assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+    assert!(row.json().contains("StickyMD frontmost from Some("));
+    let mut dip = HoverBackend::new();
+    dip.dip = Some((900, 960));
+    let row = hover_row(&mut dip, "W04");
+    assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+    assert!(row.json().contains("collapsed from Some("));
+    // The same collapse outside the dwell, in W03 which has none, changes nothing.
+    let mut outside = HoverBackend::new();
+    outside.dip = Some((5000, 5060));
+    assert_eq!(
+        aggregate(&hover_row(&mut outside, "W03").checks),
+        Verdict::Pass
     );
 }
 
