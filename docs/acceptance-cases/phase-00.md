@@ -19,10 +19,25 @@
 | P00-A11 | plan 11 shared phase entry routing, parameter availability and caller-state preservation | Automated | `phase_entry` rules + actual 00–14/11-b/all wrappers on PowerShell 5.1/7; old/new same-input mapping comparison | AUTOMATED PASS |
 | P00-A12 | plan 11 local affected-module checks using the existing CI classification and reverse dependencies | Automated | `development` Git/selection tests, shared `runner/headless/local` task plan and compiled `dev-check --plan` | AUTOMATED PASS |
 | P00-A13 | plan 11 read-only timing observations with current/history/budget scopes preserved | Automated | `timing_summary` receipt/log fixtures and compiled Unicode-path/outside-repository/error tests | AUTOMATED PASS |
+| P00-A14 | plan 03 shared-crate dependency direction and platform-crate reach on Cargo's resolved graph | Automated | [`phase-00.ps1`](../../tools/smoke/phase-00.ps1): [`crate_graph`](../../tools/stickymd-smoke/src/governance/crate_graph.rs) over `cargo metadata --locked --all-features`; [fixture tests](../../tools/stickymd-smoke/src/governance/crate_graph/tests.rs) for renamed, target-specific, transitive, library-less and same-name edges | AUTOMATED PASS |
 | P00-M01 | USER constitution semantic fidelity review | Manual | Current-commit section-by-section review receipt required | NOT TESTED |
 | P00-M02 | architecture contract judgment review | Manual | Current-commit architecture checklist receipt required | NOT TESTED |
 
 The automated rows are re-evaluated by the checked-in runner; manual judgment remains separate.
+
+P00-A14: Given `cargo metadata --locked --all-features` for the workspace, check stickymd-core,
+stickymd-render, stickymd-app, stickymd-desktop and stickymd-posix. Expect each declared
+dependency (every table and target) to name no listed platform crate; each local dependency,
+declared or resolved, to be the workspace member itself (matched by directory and ID, not by
+name); each normal or build one to be a member the plan 03 layering allows; and no capability
+crate to be reachable through normal edges. stickymd-posix edges to core, render and app stay
+tolerated until the USER decides
+([question](../report/2026-11-19-shared-crate-dependency-questions.md)). Failure signals: a
+refused edge names the crate, the dependency, its path and the layer to go through; a failed
+Cargo run reports its exit status and Cargo's error; a missing shared crate, a missing resolve
+node on a walked path or an unknown dependency kind names the gap. The reach check works on the
+workspace-unified graph and may over-report; given that graph, normal edges and the lists, it
+does not under-report.
 
 P00-A12: Given staged, unstaged, new, deleted or renamed local inputs, inspect the affected
 headless checks before execution. Expect the same path classification and reverse dependency
