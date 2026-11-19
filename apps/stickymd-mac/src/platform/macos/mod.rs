@@ -17,4 +17,4 @@ pub mod sigterm;
 pub mod tray;
 pub mod window;
 
-pub use stickymd_posix::{atomic_file, file, instance};
+pub use stickymd_posix::{atomic_file, child_directory, file, instance, user};

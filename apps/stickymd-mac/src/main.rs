@@ -19,6 +19,8 @@ mod export;
 #[cfg(target_os = "macos")]
 mod host;
 #[cfg(target_os = "macos")]
+mod note_root;
+#[cfg(target_os = "macos")]
 mod paths;
 #[cfg(target_os = "macos")]
 mod persistence;
@@ -36,7 +38,8 @@ fn main() -> std::process::ExitCode {
     use std::time::Instant;
 
     use host::MacHost;
-    use paths::{RuntimePaths, RuntimePathsError};
+    use note_root::NoteRoot;
+    use paths::{RuntimePaths, open_note_directory, unwritable_advice, verify_writable};
     use persistence::{MacAssetStore, mac_io_ports};
     use platform::macos::app::disable_press_and_hold;
     use platform::macos::clipboard::MacClipboard;
@@ -55,34 +58,33 @@ fn main() -> std::process::ExitCode {
         eprintln!("the accent popup could not be turned off; holding a key may add characters");
     }
     set_font_defaults(FontDefaults::MACOS);
-    let paths = match RuntimePaths::resolve_current() {
-        Ok(paths) => paths,
-        Err(error) => fatal_startup(&format!("无法确定程序目录：{error}")),
+    // plan 05 startup order: the Note Root and its handle, the lock on that handle, the writable
+    // check in it, then `note/` opened once; everything after derives from that one handle.
+    let note_root = match NoteRoot::resolve_current() {
+        Ok(note_root) => note_root,
+        Err(error) => fatal_startup(&format!("无法确定便签目录：{error}")),
     };
-    let mut instance = match InstanceGuard::acquire(&paths.program_dir) {
+    let mut instance = match InstanceGuard::acquire(&note_root.handle) {
         Ok(InstanceDisposition::Primary(instance)) => instance,
         Ok(InstanceDisposition::SecondarySignaled) => return std::process::ExitCode::SUCCESS,
         Err(error) => fatal_startup(&format!("无法建立单实例保护：{error}")),
     };
-    if let Err(error) = paths.verify_program_directory_writable() {
-        let advice = if matches!(error, RuntimePathsError::VolumeUnsupported(_)) {
-            "当前卷不支持安全保存，请将程序移到 APFS 卷。"
-        } else if paths.is_translocated() {
-            "当前目录不可写，请先用访达把 StickyMD.app 移到别处。"
-        } else {
-            "当前目录不可写，请将程序移动到有写权限的文件夹。"
-        };
+    if let Err(error) = verify_writable(&note_root.handle) {
+        let advice = unwritable_advice(&note_root, &error);
         fatal_startup(&format!("{advice}\n\n{error}"));
     }
-    if let Err(error) = paths.ensure_layout() {
-        fatal_startup(&format!("无法创建便签目录：{error}"));
-    }
-    let mut outcome = match bootstrap(&paths) {
+    let note = match open_note_directory(&note_root.handle) {
+        Ok(note) => note,
+        Err(error) => fatal_startup(&format!("无法创建便签目录：{error}")),
+    };
+    let paths = RuntimePaths::of(&note_root.path);
+    drop(note_root);
+    let mut outcome = match bootstrap(&note, &paths) {
         Ok(outcome) => outcome,
         Err(error) => fatal_startup(&format!("StickyMD 无法安全启动：{error}")),
     };
-    let mut startup_assets = match MacAssetStore::open(&paths) {
-        Ok(store) => store,
+    let mut startup_assets = match note.try_clone() {
+        Ok(directory) => MacAssetStore::in_directory(directory, &paths),
         Err(error) => fatal_startup(&format!("无法打开便签目录：{error}")),
     };
     if let Some(warning) = reconcile_at_startup(
@@ -111,7 +113,7 @@ fn main() -> std::process::ExitCode {
     }) {
         fatal_startup(&format!("无法监听第二实例唤醒请求：{error}"));
     }
-    let ports = match mac_io_ports(&paths) {
+    let ports = match mac_io_ports(&note, &paths) {
         Ok(ports) => ports,
         Err(error) => fatal_startup(&format!("无法打开便签目录：{error}")),
     };

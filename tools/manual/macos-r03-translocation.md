@@ -32,7 +32,7 @@ P16-R03（`docs/acceptance-cases/phase-16.md`）：从网上下载的包，在 A
 4. 等提示出现。启动约需 5 秒，期间系统在做 AMFI 与 TCC 检查。然后检查以下几项：
    - `ps -o comm= -p $(pgrep -x StickyMD)` 的路径含 `/AppTranslocation/`；
    - `mount | grep AppTranslocation` 显示一个只读的 nullfs 挂载；
-   - `stderr.log` 中有“当前目录不可写，请先用访达把 StickyMD.app 移到别处。”与 `Read-only file system`；
+   - `stderr.log` 中有“当前目录不可写，请先把 StickyMD.app 拖进“应用程序”，或把整个 StickyMD 文件夹移到别处。”与 `Read-only file system`（Phase 18 之前的版本是“当前目录不可写，请先用访达把 StickyMD.app 移到别处。”；判定只看“当前目录不可写”这个前缀与原因）；
    - 提示窗口在屏幕上（模态面板层级）。
 5. 关掉提示。从 SSH 启动时，StickyMD 不会自动成为前台程序，所以先用 `open "$D/download/StickyMD.app"` 再打开一次：系统会激活已在运行的那个实例，不会再起一个新进程。然后按回车，或点“好”。
 6. 进程应当退出，launchd 记录的状态为 `(0, 0, 256)`，即退出码 1。`ls -la "$D/download"` 应与 `before.txt` 相同：下载目录里没有新文件，也没有 `note/`。

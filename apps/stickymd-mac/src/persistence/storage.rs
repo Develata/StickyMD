@@ -77,15 +77,26 @@ fn suffixed(stem: &str, stamp: u64, suffix: u16) -> String {
 }
 
 impl NoteFiles {
+    /// Tests open the directory by path; the program hands over the descriptor it opened `note/`
+    /// with ([`Self::in_directory`]).
+    #[cfg(test)]
     pub fn open(path: &Path) -> Result<Self, NoteStorageError> {
-        Ok(Self {
-            path: path.to_owned(),
-            directory: open_directory(path)?,
-            unconfirmed_publish: None,
-        })
+        Ok(Self::in_directory(path, open_directory(path)?))
     }
 
-    /// The directory, for the storage ports that have to stay in it with the note.
+    /// `directory` is the Note Directory the program opened at start, `path` only where it was:
+    /// the path is used to recreate a deleted directory, every other operation goes through the
+    /// descriptor.
+    pub fn in_directory(path: &Path, directory: DirectoryHandle) -> Self {
+        Self {
+            path: path.to_owned(),
+            directory,
+            unconfirmed_publish: None,
+        }
+    }
+
+    /// The directory, for tests that check another port stays in it with the note.
+    #[cfg(test)]
     pub fn directory(&self) -> &DirectoryHandle {
         &self.directory
     }

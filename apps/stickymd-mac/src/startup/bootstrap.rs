@@ -1,6 +1,8 @@
-//! Startup loading after single-instance and writable-directory checks.
+//! Startup loading after single-instance and writable-directory checks, from the one `note/`
+//! handle the runtime ports are later derived from too.
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#startup-sequence
+//! plan_ref: docs/plan/05_document_persistence.md#note-root
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,9 +16,10 @@ use stickymd_app::ports::{PersistMode, PersistRequest, PersistResult};
 use stickymd_core::{DocumentState, PreserveExpectation, RecoveryCandidate};
 use thiserror::Error;
 
-use crate::config::{ConfigStorageError, load_config, save_config};
+use crate::config::{ConfigStorageError, load_config_in, save_config_in};
 use crate::paths::RuntimePaths;
 use crate::persistence::{NEW_NOTE_LINE_ENDING, NoteFiles, NoteStorageError};
+use crate::platform::macos::file::DirectoryHandle;
 
 /// The line ending of a note this host creates (plan 05).
 pub struct BootstrapOutcome {
@@ -29,23 +32,27 @@ pub struct BootstrapOutcome {
     pub warnings: Vec<String>,
 }
 
-pub fn bootstrap(paths: &RuntimePaths) -> Result<BootstrapOutcome, StartupError> {
+/// `note` is the Note Directory opened at start; the config, the note and its temporary are all
+/// read and written through it, not through `paths`, which only says where it was.
+pub fn bootstrap(
+    note: &DirectoryHandle,
+    paths: &RuntimePaths,
+) -> Result<BootstrapOutcome, StartupError> {
     let mut warnings = Vec::new();
-    let config_outcome = load_config(&paths.config_file).map_err(StartupError::Config)?;
+    let config_outcome = load_config_in(note, &paths.note_dir).map_err(StartupError::Config)?;
     if let Some(warning) = &config_outcome.warning {
         warnings.push(warning.message());
     }
     if config_outcome.should_create_default
-        && let Err(error) = save_config(
-            &paths.config_file,
-            &paths.config_tmp,
-            &config_outcome.config,
-        )
+        && let Err(error) = save_config_in(note, &config_outcome.config)
     {
         warnings.push(format!("默认配置未能保存；笔记仍可使用：{error}"));
     }
 
-    let mut files = NoteFiles::open(&paths.note_dir).map_err(StartupError::NoteStorage)?;
+    let directory = note
+        .try_clone()
+        .map_err(|error| StartupError::NoteStorage(NoteStorageError::Metadata(error)))?;
+    let mut files = NoteFiles::in_directory(&paths.note_dir, directory);
     let canonical = files.inspect_note().map_err(StartupError::NoteStorage)?;
     let temporary = files
         .inspect_temporary()
@@ -168,25 +175,33 @@ mod tests {
     use std::fs;
     use stickymd_core::LineEnding;
 
-    fn fixture() -> (PathBuf, RuntimePaths) {
+    struct Fixture {
+        root: PathBuf,
+        paths: RuntimePaths,
+        note: DirectoryHandle,
+    }
+
+    fn fixture() -> Fixture {
         let root = unique_temp_path("bootstrap");
         fs::create_dir(&root).unwrap();
-        let executable = root.join("stickymd");
-        fs::write(&executable, b"").unwrap();
-        let paths = RuntimePaths::from_executable(&executable).unwrap();
-        paths.ensure_layout().unwrap();
-        (root, paths)
+        let note =
+            crate::paths::open_note_directory(&DirectoryHandle::open(&root).unwrap()).unwrap();
+        Fixture {
+            paths: RuntimePaths::of(&root),
+            root,
+            note,
+        }
     }
 
     #[test]
     fn first_launch_creates_the_layout_and_durable_defaults() {
-        let (root, paths) = fixture();
-        let outcome = bootstrap(&paths).unwrap();
+        let Fixture { root, paths, note } = fixture();
+        let outcome = bootstrap(&note, &paths).unwrap();
         assert!(outcome.document.text().is_empty());
         assert!(!outcome.document.is_dirty());
         assert_eq!(outcome.document.line_ending(), LineEnding::Lf);
         assert!(paths.note_file.is_file());
-        assert!(paths.config_file.is_file());
+        assert!(paths.note_dir.join("config.toml").is_file());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -194,9 +209,9 @@ mod tests {
     #[test]
     fn an_existing_note_without_line_breaks_takes_lf() {
         for bytes in [&b""[..], b"one line", b"a\r\nb\nc"] {
-            let (root, paths) = fixture();
+            let Fixture { root, paths, note } = fixture();
             fs::write(&paths.note_file, bytes).unwrap();
-            let outcome = bootstrap(&paths).unwrap();
+            let outcome = bootstrap(&note, &paths).unwrap();
             assert_eq!(outcome.document.line_ending(), LineEnding::Lf, "{bytes:?}");
             fs::remove_dir_all(root).unwrap();
         }
@@ -204,9 +219,9 @@ mod tests {
 
     #[test]
     fn an_existing_crlf_note_keeps_its_line_ending() {
-        let (root, paths) = fixture();
+        let Fixture { root, paths, note } = fixture();
         fs::write(&paths.note_file, b"\xef\xbb\xbfA\r\nB").unwrap();
-        let outcome = bootstrap(&paths).unwrap();
+        let outcome = bootstrap(&note, &paths).unwrap();
         assert_eq!(outcome.document.text(), "A\nB");
         assert_eq!(outcome.document.line_ending(), LineEnding::Crlf);
         assert!(!outcome.document.is_dirty());
@@ -215,10 +230,10 @@ mod tests {
 
     #[test]
     fn an_invalid_note_blocks_startup_without_overwrite() {
-        let (root, paths) = fixture();
+        let Fixture { root, paths, note } = fixture();
         fs::write(&paths.note_file, [0xff]).unwrap();
         assert!(matches!(
-            bootstrap(&paths),
+            bootstrap(&note, &paths),
             Err(StartupError::NoteInvalidUtf8)
         ));
         assert_eq!(fs::read(&paths.note_file).unwrap(), [0xff]);
@@ -227,10 +242,10 @@ mod tests {
 
     #[test]
     fn a_different_temporary_enters_recovery_and_keeps_both_files() {
-        let (root, paths) = fixture();
+        let Fixture { root, paths, note } = fixture();
         fs::write(&paths.note_file, b"old").unwrap();
         fs::write(&paths.note_tmp, b"new").unwrap();
-        let outcome = bootstrap(&paths).unwrap();
+        let outcome = bootstrap(&note, &paths).unwrap();
         assert!(outcome.recovery.is_some());
         assert_eq!(fs::read(&paths.note_file).unwrap(), b"old");
         assert_eq!(fs::read(&paths.note_tmp).unwrap(), b"new");
@@ -239,10 +254,10 @@ mod tests {
 
     #[test]
     fn a_redundant_temporary_is_removed_after_the_note_loads() {
-        let (root, paths) = fixture();
+        let Fixture { root, paths, note } = fixture();
         fs::write(&paths.note_file, b"same").unwrap();
         fs::write(&paths.note_tmp, b"same").unwrap();
-        let outcome = bootstrap(&paths).unwrap();
+        let outcome = bootstrap(&note, &paths).unwrap();
         assert!(outcome.recovery.is_none());
         assert!(!paths.note_tmp.exists());
         fs::remove_dir_all(root).unwrap();
@@ -250,12 +265,29 @@ mod tests {
 
     #[test]
     fn invalid_temporary_evidence_is_quarantined_with_a_warning() {
-        let (root, paths) = fixture();
+        let Fixture { root, paths, note } = fixture();
         fs::write(&paths.note_file, b"note").unwrap();
         fs::write(&paths.note_tmp, [0xff]).unwrap();
-        let outcome = bootstrap(&paths).unwrap();
+        let outcome = bootstrap(&note, &paths).unwrap();
         assert!(!paths.note_tmp.exists());
         assert_eq!(outcome.warnings.len(), 1);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// P18-L07: startup reads the directory it opened, not whatever is at its path by now.
+    #[test]
+    fn startup_reads_through_the_opened_handle() {
+        let Fixture { root, paths, note } = fixture();
+        fs::write(&paths.note_file, b"opened").unwrap();
+        let moved = unique_temp_path("bootstrap-moved");
+        fs::rename(&paths.note_dir, &moved).unwrap();
+        fs::create_dir(&paths.note_dir).unwrap();
+        fs::write(&paths.note_file, b"replacement").unwrap();
+        let outcome = bootstrap(&note, &paths).unwrap();
+        assert_eq!(outcome.document.text(), "opened");
+        assert!(moved.join("config.toml").is_file());
+        assert!(!paths.note_dir.join("config.toml").exists());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(moved).unwrap();
     }
 }
