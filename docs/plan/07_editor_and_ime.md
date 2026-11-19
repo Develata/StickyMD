@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.4.0
-- `Last Review`: 2026-11-14
+- `Last Review`: 2026-11-19
 - `Scope`: Source 编辑器职责、IME preedit/commit 语义、字体 run、undo 分组、RichEdit fallback 治理
 
 ---
@@ -106,7 +106,9 @@
   内层 closer 处结束外层公式而留下新公式），整个 action 保守拒绝，同样为完整 no-op，保证
   再次点击不再改动。最坏情况下两步各 parse 两次。
 - 1 MiB / 1000 math-node Release smoke（含提交前的再次处理）的 p95 engineering check 为
-  `< 50 ms`；超过时先审计
+  `< 50 ms`：先不计时运行 3 次，再计时 100 次，取 nearest-rank p95（排序后第 95 个样本）。
+  因此最多 5 个样本可以超出，共享 CI 主机上 2–3 个样本的短暂卡顿不判失败，每次点击都变慢
+  仍会失败。超过时先审计
   重复 parse、全文 clone 与逐 formula mutation，不引入增量 Markdown parser 或后台 runtime。
 
 <a id="source-find-replace"></a>

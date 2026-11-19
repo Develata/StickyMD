@@ -143,7 +143,8 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   `phase11b_math_button_leaves_paragraphs_shifted_by_reference_definitions`。Release-only 的
   `math_action` 的 `phase11b_performance_math_action_one_mib`（1 MiB、1000 个需两步的公式，
   每个单元另含公式外的裸 `=` 行与一个段首有引用定义的段落；计时为 Flow 调用的同一函数：
-  一次处理加提交前的再次处理，不含提交；p95 `< 50 ms`）与
+  一次处理加提交前的再次处理，不含提交；不计时运行 3 次后计时 100 次，nearest-rank p95 `< 50 ms`，
+  即最多 5 个样本可超出）与
   `phase11b_performance_math_action_stays_linear_in_shifted_paragraphs`（23,717 个段首有
   引用定义的段落；整个按钮须小于同一文档单次 Comrak 解析的 12 倍）由现有 Phase 11-B
   Release 基线任务运行；实测值连同所用提交与原始

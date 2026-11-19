@@ -134,9 +134,11 @@ mod tests {
 
     fn summary(samples: &mut [Duration]) -> (Duration, Duration, Duration) {
         samples.sort_unstable();
+        // Nearest-rank p95: the ceil(0.95 n)-th smallest sample.
+        let p95_rank = (samples.len() * 95).div_ceil(100);
         (
             samples[samples.len() / 2],
-            samples[samples.len() * 95 / 100],
+            samples[p95_rank - 1],
             samples[samples.len() - 1],
         )
     }
@@ -160,11 +162,27 @@ mod tests {
         );
     }
 
+    /// Plan 07's check: three untimed clicks, then 100 timed ones whose
+    /// nearest-rank p95 (the 95th sample) stays under 50 ms. Up to five
+    /// samples may exceed it, so a stall of a shared CI host that slows two or
+    /// three clicks does not fail the check, while a slowdown of every click
+    /// still does. Samples print in run order to show such stalls.
     #[test]
     #[ignore = "Release-only Phase 11-B math button receipt"]
     fn phase11b_performance_math_action_one_mib() {
         let input = snapshot(&workload("plain text filler "));
-        let mut samples: Vec<_> = (0..25).map(|_| button(&input)).collect();
+        for _ in 0..3 {
+            button(&input);
+        }
+        let mut samples: Vec<_> = (0..100).map(|_| button(&input)).collect();
+        let in_run_order: Vec<_> = samples
+            .iter()
+            .map(|sample| format!("{:.1}", sample.as_secs_f64() * 1e3))
+            .collect();
+        eprintln!(
+            "phase11b math_action_1mib_1000_math samples_ms=[{}]",
+            in_run_order.join(",")
+        );
         let (median, p95, max) = summary(&mut samples);
         eprintln!("phase11b math_action_1mib_1000_math median={median:?} p95={p95:?} max={max:?}");
         assert!(p95 < Duration::from_millis(50), "p95={p95:?}");
