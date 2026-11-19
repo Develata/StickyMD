@@ -150,3 +150,17 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   Release 基线任务运行；实测值连同所用提交与原始
   输出记录在[报告](../report/2026-11-12-math-button-equals-first.md)末节。
 - Manual：真实按钮在 Windows 与 macOS 上仍为 `NOT TESTED`；Windows 需桌面回归。
+
+<a id="math-known-limits"></a>
+## 2026-11-19 数学按钮已知限制
+
+- Plan / feature：plan 07 `semantic-math-delimiter-conversion` 的“已知限制”（USER 2026-11-19
+  接受）→ 数学公式 `$` 按钮。行为不变，本节只锁定现状。
+- Preconditions：以孤立 `\r` 分行的文档，分别含等号行的 `\[...\]` 与 `$$...$$`、普通
+  `\(...\)`、普通 `\[...\]`。
+- Action：对整篇执行 `$` action 的同一纯函数 `run_math_action`。
+- Expected：四种输入均为完整 no-op，字节不变。
+- Failure signals：任何字节被改写；panic。
+- Automated entry：`phase11b_` selector 包含 `math_action` 的
+  `phase11b_math_action_leaves_bare_cr_documents_unchanged`。
+- Manual：不需要；文本参数内等号行被连接的行为见 plan 07，未另设用例。

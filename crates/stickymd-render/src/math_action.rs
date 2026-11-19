@@ -117,6 +117,32 @@ mod tests {
         assert_eq!(pass("\\(x\\) and \\(y\\)").change_count(), 2);
     }
 
+    /// Known limit (plan 07): plan 05 keeps an isolated `\r` as an ordinary character and the
+    /// source maps count only `\n`, while Comrak reads `\r` as a line break. Where the two
+    /// disagree both steps give up, so a document whose lines end in a bare `\r` is left
+    /// byte-identical, including its equals lines and plain formulas.
+    #[test]
+    fn phase11b_math_action_leaves_bare_cr_documents_unchanged() {
+        for text in [
+            "\\[\ra\r=\rb\r\\]\r",
+            "$$\ra\r=\rb\r$$\r",
+            "p\r\\(x\\) q\r",
+            "p\r\\[\rx\r\\]\r",
+        ] {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            let pass = super::run_math_action(&snapshot, None).unwrap();
+            assert!(
+                pass.is_none(),
+                "{text:?} changed to {:?}",
+                pass.map(|pass| pass.into_text())
+            );
+        }
+    }
+
     use std::time::{Duration, Instant};
 
     use comrak::{Arena, parse_document};
