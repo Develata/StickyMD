@@ -1077,6 +1077,26 @@ Other saved-text checks retain the 1500ms wait and 1000ms quiet-byte requirement
 remain NOT_TESTED with explicit reasons. These are also documented in the module
 comment. No native GUI code is exercised by the unit tests.
 
+**`mac-logout` (W12's real logout).** A logout ends the GUI session and every process
+connected to the window server, so `stickymd-smoke mac-logout --app <StickyMD.app> --case
+<text|dialog|fault> [--out <dir>] [--batch <name>]`, run over SSH in the test VM, never touches
+CoreGraphics itself: a child (`--prepare`, internal) starts the copied product through
+LaunchServices (`open -n`), focuses it, selects the note and types (and opens the export dialog
+with Cmd+Shift+S, or takes write permission from the note directory), then exits. The coordinator
+asks loginwindow to log out (`osascript`, `«event aevtrlgo»`; no consent prompt), outlives it,
+and judges `/dev/console` owned by root, the note before and after, `.md` files written outside
+the note, and the product's AppKit and runningboard lines in `log show` for its PID:
+
+| Case | Expected (plan 09 系统终止) |
+| --- | --- |
+| text | Quit event handled; the typed text is in the note; termination `(0, 0, 0)` |
+| dialog | `NSTerminateCancel`; both lines saved; no exported file; termination `(0, 0, 0)` |
+| fault | Reply `NO`; the note keeps its last good bytes; ended by the system (`(2, 9, 9)` or `(2, 15, 15)`) |
+
+It writes `mac-gui.json` (schema 2) with the row `P16-W12-logout-<case>` for `mac-ledger record`.
+Run one case per fresh boot and restart the VM afterwards (it stays at the login window). No
+logout without a seen termination record or a missing session end is a PASS.
+
 **VM first-run gaps:** AX status-item actions/save-panel identifiers and actual
 CGEvent routing are unverified. Missing or ambiguous AX nodes produce a bounded
 tree diagnostic rather than guessed clicks. Only AX AttributeUnsupported (-25205)

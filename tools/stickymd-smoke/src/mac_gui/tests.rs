@@ -1522,3 +1522,180 @@ fn press_and_hold_judge_refuses_bad_samples() {
     let after = vec![(1, 1, "Finder".to_string()), (5, 9, "X".to_string())];
     assert_eq!(appeared(&before, &after), vec![(5, 9, "X".to_string())]);
 }
+
+/// W12's logout cases: the facts the system log gives, and each case's bad samples.
+#[test]
+fn logout_cases_judge_the_log_and_the_note() {
+    use super::logout::check::{Facts, LOST, SAVED, TYPED, UNSAVED, from_log, judge};
+    let log = "08:55:11.718 localhost StickyMD[1242]: (AppKit) [com.apple.AppKit:Application] Handling Quit AppleEvent\n\
+               08:55:11.720 localhost StickyMD[1242]: (AppKit) [com.apple.AppKit:Application] applicationShouldTerminate: NSTerminateLater\n\
+               08:55:11.841 localhost StickyMD[1242]: (AppKit) [com.apple.AppKit:Application] replyToApplicationShouldTerminate:YES\n\
+               08:55:11.923 localhost runningboardd[176]: (RunningBoard) [app<application.io.github.develata.stickymd(501)>:1242] termination reported by launchd (0, 0, 0)\n\
+               08:55:12.000 localhost StickyMD[9999]: (AppKit) [com.apple.AppKit:Application] replyToApplicationShouldTerminate:NO\n";
+    let mut facts = Facts::default();
+    from_log(log, 1242, &mut facts);
+    assert!(facts.quit_event);
+    assert_eq!(facts.decision.as_deref(), Some("NSTerminateLater"));
+    assert_eq!(
+        facts.reply.as_deref(),
+        Some("YES"),
+        "another PID's reply is not ours"
+    );
+    assert_eq!(facts.termination.as_deref(), Some("(0, 0, 0)"));
+    let run = |case: &str, f: Facts| {
+        let mut row = Row::new("W12-logout");
+        judge(case, &f, &mut row);
+        (aggregate(&row.checks), row)
+    };
+    let base = || Facts {
+        logged_out: true,
+        gone: true,
+        quit_event: true,
+        ..Facts::default()
+    };
+    // text: saved and a normal exit; not saved, or killed, fails.
+    let text = || Facts {
+        before: "before logout\n".into(),
+        after: TYPED.into(),
+        decision: Some("NSTerminateLater".into()),
+        reply: Some("YES".into()),
+        termination: Some("(0, 0, 0)".into()),
+        ..base()
+    };
+    assert_eq!(run("text", text()).0, Verdict::Pass);
+    assert_eq!(
+        run(
+            "text",
+            Facts {
+                after: "before logout\n".into(),
+                ..text()
+            }
+        )
+        .0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        run(
+            "text",
+            Facts {
+                termination: Some("(2, 9, 9)".into()),
+                ..text()
+            }
+        )
+        .0,
+        Verdict::Fail
+    );
+    // dialog: cancelled, saved, nothing exported.
+    let dialog = || Facts {
+        after: format!("{SAVED}\n{UNSAVED}"),
+        decision: Some("NSTerminateCancel".into()),
+        termination: Some("(0, 0, 0)".into()),
+        ..base()
+    };
+    assert_eq!(run("dialog", dialog()).0, Verdict::Pass);
+    assert_eq!(
+        run(
+            "dialog",
+            Facts {
+                exported: vec!["/x.md".into()],
+                ..dialog()
+            }
+        )
+        .0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        run(
+            "dialog",
+            Facts {
+                decision: Some("NSTerminateLater".into()),
+                ..dialog()
+            }
+        )
+        .0,
+        Verdict::Fail
+    );
+    // fault: refuses, old bytes stay, killed by the system.
+    let fault = || Facts {
+        before: SAVED.into(),
+        after: SAVED.into(),
+        reply: Some("NO".into()),
+        termination: Some("(2, 9, 9)".into()),
+        ..base()
+    };
+    assert_eq!(run("fault", fault()).0, Verdict::Pass);
+    assert_eq!(
+        run(
+            "fault",
+            Facts {
+                reply: Some("YES".into()),
+                ..fault()
+            }
+        )
+        .0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        run(
+            "fault",
+            Facts {
+                after: format!("{SAVED}\n{LOST}"),
+                ..fault()
+            }
+        )
+        .0,
+        Verdict::Fail
+    );
+    assert_eq!(
+        run(
+            "fault",
+            Facts {
+                termination: Some("(0, 0, 0)".into()),
+                ..fault()
+            }
+        )
+        .0,
+        Verdict::Fail
+    );
+    // No logout, or no termination record: cannot tell.
+    assert_eq!(
+        run(
+            "text",
+            Facts {
+                logged_out: false,
+                ..text()
+            }
+        )
+        .0,
+        Verdict::NotTested
+    );
+    assert_eq!(
+        run(
+            "text",
+            Facts {
+                termination: None,
+                ..text()
+            }
+        )
+        .0,
+        Verdict::NotTested
+    );
+}
+
+#[test]
+fn mac_logout_options() {
+    use super::logout::{parse, rows};
+    let args = |s: &str| s.split_whitespace().map(str::to_owned).collect::<Vec<_>>();
+    let o = parse(&args("--app a.app --case dialog --batch b1")).unwrap();
+    assert_eq!(
+        (o.case.as_str(), o.batch.as_deref()),
+        ("dialog", Some("b1"))
+    );
+    assert!(parse(&args("--app a.app --case logout")).is_err());
+    assert!(parse(&args("--app a.app")).is_err());
+    assert!(parse(&args("--help")).unwrap().help);
+    assert_eq!(
+        rows(),
+        ["W12-logout-text", "W12-logout-dialog", "W12-logout-fault"]
+    );
+}

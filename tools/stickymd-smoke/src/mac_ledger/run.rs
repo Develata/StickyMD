@@ -181,7 +181,11 @@ fn plan(options: &Options, existing: &[Record], rows: &Rows) -> Result<(), Strin
                 .map_err(|e| format!("{}: {e}", system_file.display()))?,
         ),
     };
-    let executable = crate::mac_gui::executable_ids();
+    // W12's real logout runs one case per fresh VM boot through `mac-logout`; each case is a row
+    // of its own, and W12 counts only when they all pass with mac-gui's W12.
+    let logout = crate::mac_gui::logout::rows();
+    let mut executable = crate::mac_gui::executable_ids();
+    executable.extend(logout.iter().map(String::as_str));
     let batch = options.batch.as_deref();
     let plan = decide::plan(
         existing,
@@ -217,12 +221,25 @@ fn plan(options: &Options, existing: &[Record], rows: &Rows) -> Result<(), Strin
     for (row, reason) in &plan.rerun {
         println!("rerun P16-{row}: {reason}");
     }
+    let (logout_runs, gui_runs): (Vec<&String>, Vec<&String>) =
+        plan.run.iter().partition(|row| logout.contains(row));
     if plan.run.is_empty() {
         println!("run: nothing; every executable row has a PASS for this identity");
-    } else {
+    }
+    if !gui_runs.is_empty() {
         println!(
             "run: stickymd-smoke mac-gui --app <the same app> --only {}",
-            plan.run.join(",")
+            gui_runs
+                .iter()
+                .map(|r| r.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
+    for row in logout_runs {
+        println!(
+            "run: stickymd-smoke mac-logout --app <the same app> --case {} (each case in a fresh VM boot)",
+            row.trim_start_matches("W12-logout-")
         );
     }
     for (row, environment) in &plan.confirmed {
