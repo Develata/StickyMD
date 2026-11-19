@@ -28,6 +28,20 @@ fn capture<B: Backend>(
     }
 }
 
+/// `kCGDockWindowLevel`.
+const DOCK_LEVEL: i32 = 20;
+
+/// Whether a window in front (owner, bounds, layer) may hide part of `strip` on `screen`. The
+/// Dock keeps one screen-sized window at the Dock level in front of every application window;
+/// only the Dock bar in it is painted (macOS 27.2 VM, 2026-11-19), so it is not counted here. A
+/// Dock bar over the strip still shows in the pixels: the composite then differs from the window
+/// alone.
+pub(super) fn covers(window: &(String, Rect, i32), strip: Rect, screen: Rect) -> bool {
+    let (owner, bounds, layer) = window;
+    let dock_overlay = owner == "Dock" && *layer == DOCK_LEVEL && *bounds == screen;
+    !dock_overlay && intersect(*bounds, strip).is_some()
+}
+
 fn intersect(a: Rect, b: Rect) -> Option<Rect> {
     let x = a.origin.x.max(b.origin.x);
     let y = a.origin.y.max(b.origin.y);
@@ -60,10 +74,7 @@ pub(super) fn strip<B: Backend>(
     // the strip (a notification, or one of the same colour) covers it.
     match d.op(Op::Above)? {
         Value::Covering(list) => {
-            let covering: Vec<_> = list
-                .iter()
-                .filter(|(_, b)| intersect(*b, rect).is_some())
-                .collect();
+            let covering: Vec<_> = list.iter().filter(|w| covers(w, rect, screen)).collect();
             if !covering.is_empty() {
                 d.row
                     .skip(&name, &format!("{rect:?} is covered by {covering:?}"));

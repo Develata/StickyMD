@@ -2015,3 +2015,40 @@ fn mac_logout_options() {
         ["W12-logout-text", "W12-logout-dialog", "W12-logout-fault"]
     );
 }
+
+/// W02: windows in front that may hide a strip; the Dock's screen-sized overlay does not count.
+#[test]
+fn only_windows_that_may_paint_over_a_strip_cover_it() {
+    use super::visual::covers;
+    let rect = |x, y, width, height| Rect {
+        origin: Point { x, y },
+        size: Size { width, height },
+    };
+    let screen = rect(0.0, 0.0, 1024.0, 768.0);
+    let strip = rect(0.0, 144.0, 2.0, 480.0);
+    assert!(!covers(&("Dock".into(), screen, 20), strip, screen));
+    // Anything else that meets the strip counts: another owner, another level, a smaller Dock
+    // window, a notification.
+    assert!(covers(&("Finder".into(), screen, 20), strip, screen));
+    assert!(covers(&("Dock".into(), screen, 21), strip, screen));
+    assert!(covers(
+        &("Dock".into(), rect(0.0, 100.0, 80.0, 600.0), 20),
+        strip,
+        screen
+    ));
+    assert!(covers(
+        &(
+            "Notification Center".into(),
+            rect(0.0, 140.0, 360.0, 80.0),
+            23
+        ),
+        strip,
+        screen
+    ));
+    // A window that does not meet the strip does not.
+    assert!(!covers(
+        &("Finder".into(), rect(100.0, 100.0, 300.0, 300.0), 0),
+        strip,
+        screen
+    ));
+}

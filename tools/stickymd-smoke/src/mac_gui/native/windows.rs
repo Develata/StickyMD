@@ -69,7 +69,7 @@ pub(in crate::mac_gui) fn all(pid: u32) -> Result<Vec<Window>, String> {
 }
 /// The on-screen windows in front of window `id` (`kCGWindowListOptionOnScreenAboveWindow`,
 /// desktop elements excluded): owner name and bounds.
-pub(in crate::mac_gui) fn above(id: u32) -> Result<Vec<(String, Rect)>, String> {
+pub(in crate::mac_gui) fn above(id: u32) -> Result<Vec<(String, Rect, i32)>, String> {
     // SAFETY: OnScreenAboveWindow | ExcludeDesktopElements relative to `id`; owned array.
     let array = Owned::take(unsafe { CGWindowListCopyWindowInfo(2 | 16, id) })?;
     let mut out = Vec::new();
@@ -83,7 +83,8 @@ pub(in crate::mac_gui) fn above(id: u32) -> Result<Vec<(String, Rect)>, String> 
                 .ok()
                 .and_then(|n| n.text())
                 .unwrap_or_default();
-            out.push((name, bounds));
+            let layer = dict.get("kCGWindowLayer")?.number()? as i32;
+            out.push((name, bounds, layer));
         }
     }
     Ok(out)
