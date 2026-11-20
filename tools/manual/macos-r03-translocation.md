@@ -39,4 +39,4 @@ P16-R03（`docs/acceptance-cases/phase-16.md`）：从网上下载的包，在 A
 
 ## 记录
 
-结果与证据记在 [VM 验收报告](../../docs/report/2026-11-10-macos-vm-acceptance.md)。R03 是人工行，探针结果要经 USER 认可才能作为收据，而且每次确认只代表那一次，不复用（`mac-ledger` 的 `NEVER_REUSED`）。
+结果与证据记在 [VM 验收报告](../../docs/report/2026-11-10-macos-vm-acceptance.md)。2026-11-19 起，`mac-gui` 按 USER 的决定自动执行 R03：驱动把隔离标记设为 `00c3`（预设“已获用户批准”位，跳过上面第 2 步之后系统的首次打开确认），其余步骤与判定见 `tools/stickymd-smoke/README.md` 的 R03 行；本页的手工步骤保留作排查用。结果每批只代表那一批，不复用（`mac-ledger` 的 `NEVER_REUSED`）。

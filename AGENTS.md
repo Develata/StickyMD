@@ -98,7 +98,10 @@ code generation、refactor，必须依次执行：
 11. review boundary drift（是否越层、是否引入平级权威）。
 12. 每个 Phase 必须维护 `tools/smoke/phase-XX.ps1` 与
     `docs/acceptance-cases/phase-XX.md`；自动化由 Rust CLI 持有，人工未验收项保持
-    `NOT TESTED`。
+    `NOT TESTED`。新增、复审或重新确认验收行之前，**先阅读**
+    `docs/plan/11_testing_and_release.md` 的“验收矩阵”节（验收阶梯）与
+    `docs/plan/01_terminology.md` 的 Acceptance Ladder，按其中的顺序为每一行选第一个可行级，
+    并审视每个人工行能否上移；不能上移的写明原因。改一行的 Mode 须 USER 批准。
 13. 最后运行适用 baseline（fmt / clippy / tests / 相关 benchmark）。
 14. 不得 push remote，除非 USER 明确要求。
 
@@ -214,7 +217,7 @@ crates/stickymd-core/      ← 领域模型（文本、generation、撤销、持
 crates/stickymd-render/    ← Markdown/数学投影、排版、绘制
 crates/stickymd-app/       ← Shared Application（intent、coordinator、配置、`AppSession`、Capability Port、worker；无平台 API）
 crates/stickymd-desktop/   ← Shared Desktop（视图几何、标题投影、软件帧路径、控件、滚动条、Search 叠层、按键表、`shell/` 的 `DesktopShell<H>`；可用 winit/softbuffer，无原生 API）
-crates/stickymd-posix/     ← macOS 宿主的原生 POSIX 层（未来供 Debian 复用；可持有 `unsafe` 与原生绑定，无业务逻辑；非 macOS 为空）
+crates/stickymd-posix/     ← macOS 宿主的原生 POSIX 层（未来供 Debian 复用；可持有 `unsafe` 与原生绑定，无业务逻辑，不依赖其他 StickyMD crate；非 macOS 为空）
 apps/stickymd-win/         ← Windows 宿主（启动装配、`WinHost`、原生 adapter、存储）
 apps/stickymd-mac/         ← macOS 宿主（二进制 `stickymd`；宿主内的 `unsafe` 与原生绑定只在 `src/platform/`，POSIX 原语由 `stickymd-posix` 提供；非 macOS 编译为桩，验收见 phase-16）
 tools/stickymd-smoke/      ← std-only 阶段验证 CLI（不进入产品 runtime）

@@ -247,6 +247,7 @@ Windows：微软拼音、微信输入法。macOS：系统简体拼音、微信�
 - 宿主在本进程的参数域关闭 `ApplePressAndHoldEnabled`（优先于用户与全局设置，不写盘）：长按按系统键盘设置连发，不弹重音菜单，也就不会因替换范围丢失而多出字符；代价是没有重音弹窗。
 - 键表（语义相同，只换按键）：保存 / 导出 Cmd+S / Cmd+Shift+S；复制、剪切、粘贴、全选 Cmd+C/X/V/A；撤销 / 重做 Cmd+Z / Cmd+Shift+Z；查找 / 替换 Cmd+F / Cmd+Option+F；视图与缩放 Cmd+1/2/3、Cmd+=/-/0；行首行尾 Cmd+←/→ 与 Home/End；文首文末 Cmd+↑/↓；退出 Cmd+Q（`09`）。Ctrl 组合键不绑定，没有 Insert 别名，Windows 也没有的按词移动不做。
 
+- 验收（USER 批准 2026-11-19）：macOS 的一级输入法验收按 `11` Phase 16 的验收阶梯判定。候选窗的位置、遮挡、字体与动画在 macOS 上先由程序与 agent 判定，做不到的再交 USER 看截图或录像，最后才由 USER 亲手验收。上文“候选窗位置、遮挡、字体和动画属于视觉验收，继续由人工判定”与人工视觉矩阵对 Windows 不变。
 ---
 
 <a id="undo-grouping"></a>

@@ -44,10 +44,31 @@ pub(super) enum Op {
     Relaunch,
     /// SIGTERM to the owned product, as launchd sends it at a logout.
     Sigterm,
+    /// A capture of a rectangle (global points); a backend without Screen Recording answers
+    /// `Text` with the reason instead of an image.
+    Capture(Rect, super::pixels::Shot),
+    /// The product's frame presenter counters `[presented, deferred, created, failed]` from a
+    /// freshly published diagnostic (the product must have been started with it).
+    Presenter,
+    /// Hold a key in the product's note window: one key-down, `repeats` injected automatic
+    /// repeats `every` ms apart, the key-up.
+    Hold(u16, usize, u64),
+    /// The on-screen windows as (number, owner PID, owner name).
+    OnScreen,
+    /// The on-screen windows in front of the product window, as (owner name, bounds).
+    Above,
+    /// I03's TextEdit control: the same hold in a scratch TextEdit document. Answers the windows
+    /// that appeared and the document's text, or `Text` with the reason the control could not run.
+    Control,
 }
 #[derive(Clone, Debug)]
 pub(super) enum Value {
     Unit,
+    Image(super::pixels::Image),
+    Counters([u64; 4]),
+    Windows(Vec<super::hold::OnScreen>),
+    Covering(Vec<(String, Rect, i32)>),
+    Control(Vec<super::hold::OnScreen>, u32, String),
     Time(u64),
     Text(String),
     Window(Window),
@@ -157,15 +178,7 @@ pub(super) fn skipped(id: &str) -> Option<&'static str> {
         "I01" | "I02" => {
             Some("requires real configured IME, candidate UI and 13 composition cases")
         }
-        "I03" => {
-            Some("requires controlled system repeat settings and sustained physical key semantics")
-        }
         "W05" => Some("requires Spaces/full-screen desktop orchestration"),
-        "W10" => Some("requires caret visual and compositor frame instrumentation"),
-        "R03" => Some(
-            "requires a quarantined download opened through LaunchServices (App Translocation); \
-             see tools/manual/macos-r03-translocation.md",
-        ),
         "W15" => Some("requires Windows regression machine"),
         _ => None,
     }
@@ -189,9 +202,12 @@ pub(super) fn run<B: Backend>(d: &mut Driver<'_, B>, id: &str) -> Result<(), Str
         }
         "W02" => {
             for edge in [Edge::Left, Edge::Right, Edge::Top] {
-                dock(d, edge)?;
+                let (s, w, _) = dock(d, edge)?;
+                super::visual::strip(d, edge, s, &w)?;
             }
         }
+        "W10" => super::visual::caret(d)?,
+        "I03" => super::hold::run(d)?,
         "W03" | "W04" => super::hover::run(d, id == "W04")?,
         "W07" => {
             d.op(Op::Menu("隐藏".into()))?;
@@ -284,10 +300,12 @@ pub(super) fn exits_within<B: Backend>(
         d.wait(50)?;
     }
 }
+/// Docks the window at `edge` and makes Finder frontmost; returns the screen, the collapsed
+/// window and the Finder PID the backend verified in front.
 pub(super) fn dock<B: Backend>(
     d: &mut Driver<'_, B>,
     edge: Edge,
-) -> Result<(Rect, Window), String> {
+) -> Result<(Rect, Window, u32), String> {
     d.op(Op::Activate)?;
     d.wait(350)?;
     let w = d.window()?;
@@ -317,7 +335,10 @@ pub(super) fn dock<B: Backend>(
         x: s.right() - 20.0,
         y: s.bottom() - 100.0,
     }))?;
-    d.op(Op::Finder)?;
+    let finder = match d.op(Op::Finder)? {
+        Value::Pid(pid) => pid,
+        v => return Err(format!("expected the Finder PID, got {v:?}")),
+    };
     let (w, elapsed, met) = d.until(1800, |w| collapsed(w, s, edge))?;
     d.row.check(
         &format!("{} 2 DIP collapse", edge.name()),
@@ -325,5 +346,5 @@ pub(super) fn dock<B: Backend>(
         format!("elapsed={elapsed}ms; {w:?}; screen={s:?}"),
     );
     d.config("window", "dock_edge", &format!("\"{}\"", edge.name()))?;
-    Ok((s, w))
+    Ok((s, w, finder))
 }

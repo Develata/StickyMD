@@ -3,7 +3,8 @@
 //! read, check and publish, and rewrites the ledger atomically with the old bytes verbatim.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::{
-    build, decide,
+    append, build,
+    decide::{self, Rows},
     options::{Command, Options},
     record::{self, Built, Identity, Record},
 };
@@ -11,13 +12,19 @@ use crate::mac_common::fixture::{app_inputs, bundle_hash, contained_executable};
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 const MATRIX: &str = "docs/acceptance-cases/phase-16.md";
 
+fn rows(root: &Path) -> Result<Rows, String> {
+    decide::matrix_rows(
+        &fs::read_to_string(root.join(MATRIX)).map_err(|e| format!("{MATRIX}: {e}"))?,
+    )
+}
+
 pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
-    if options.command == Some(Command::Inputs) {
+    let command = options.command.ok_or("mac-ledger needs a command")?;
+    if command == Command::Inputs {
         println!("{}", inputs(root, options.home.as_deref())?);
         return Ok(());
     }
@@ -25,24 +32,25 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
         root.join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
             .join("records.jsonl")
     });
-    let manual = decide::manual_rows(
-        &fs::read_to_string(root.join(MATRIX)).map_err(|e| format!("{MATRIX}: {e}"))?,
-    )?;
-    let command = options.command.ok_or("mac-ledger needs a command")?;
     if command == Command::Plan {
         let existing = record::read_all(&read(&ledger)?)?;
         decide::check_system(&existing)?;
-        return plan(options, &existing, &manual);
+        return plan(options, &existing, &rows(root)?);
     }
     let _lock = lock(&ledger)?;
     let text = read(&ledger)?;
     let existing = record::read_all(&text)?;
     let new = match command {
-        Command::Record => recorded(options)?,
-        Command::Receipt => receipts(options, &manual)?,
+        Command::Record => append::recorded(options)?,
+        Command::Receipt => append::receipts(options, &rows(root)?)?,
+        Command::Revoke => append::revocation(options, &existing)?,
         Command::Plan | Command::Inputs => unreachable!("handled above"),
     };
-    let all: Vec<Record> = existing.iter().chain(&new).cloned().collect();
+    let mut all: Vec<Record> = existing;
+    for record in &new {
+        record::consistent_with(&all, record)?;
+        all.push(record.clone());
+    }
     decide::check_system(&all)?;
     let mut out = text;
     if !out.is_empty() && !out.ends_with('\n') {
@@ -54,6 +62,11 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
     }
     crate::atomic_evidence::write(&ledger, out.as_bytes())?;
     println!("recorded {} rows in {}", new.len(), ledger.display());
+    if command == Command::Revoke {
+        println!(
+            "if docs/acceptance-cases/phase-16.md cites the withdrawn result, change that row to NOT TESTED in the same commit"
+        );
+    }
     Ok(())
 }
 
@@ -154,29 +167,7 @@ fn inputs(root: &Path, home: Option<&Path>) -> Result<String, String> {
     crate::qualification::mac_app_inputs(root, &build::identity(&tools))
 }
 
-fn now() -> Result<u64, String> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs())
-}
-
-/// The machine a receipt is recorded on: this host's system name, version and build. It does
-/// not prove the USER tested here; the USER's words in the receipt say what was tested.
-fn desktop() -> Result<String, String> {
-    let output = std::process::Command::new("/usr/bin/sw_vers")
-        .output()
-        .map_err(|e| format!("sw_vers: {e}"))?;
-    if !output.status.success() {
-        return Err("sw_vers failed".into());
-    }
-    Ok(format!(
-        "USER desktop, recorded on {}",
-        record::system(&String::from_utf8_lossy(&output.stdout))
-    ))
-}
-
-fn plan(options: &Options, existing: &[Record], manual: &[String]) -> Result<(), String> {
+fn plan(options: &Options, existing: &[Record], rows: &Rows) -> Result<(), String> {
     let app = options.app.as_deref().ok_or("--app missing")?;
     let driver = options.driver.as_deref().ok_or("--driver missing")?;
     let system_file = options.system.as_deref().ok_or("--system missing")?;
@@ -190,29 +181,43 @@ fn plan(options: &Options, existing: &[Record], manual: &[String]) -> Result<(),
                 .map_err(|e| format!("{}: {e}", system_file.display()))?,
         ),
     };
-    let executable = crate::mac_gui::executable_ids();
-    let plan = decide::plan(existing, &executable, manual, &identity, &built);
+    // W12's real logout runs one case per fresh VM boot through `mac-logout`; each case is a row
+    // of its own, and W12 counts only when they all pass with mac-gui's W12.
+    let logout = crate::mac_gui::logout::rows();
+    let mut executable = crate::mac_gui::executable_ids();
+    executable.extend(logout.iter().map(String::as_str));
+    let batch = options.batch.as_deref();
+    let plan = decide::plan(
+        existing,
+        &executable,
+        &rows.manual,
+        &identity,
+        &built,
+        batch,
+    );
     println!(
-        "app inputs {}\napp executable {} (audit)\ndriver {}\nimage {}\nsystem {}",
+        "app inputs {}\napp executable {} (audit)\ndriver {}\nimage {}\nsystem {}\nbatch {}",
         identity.inputs.as_deref().unwrap_or(
             "none: this bundle was built without its input fingerprint; rebuild it with build-app.sh to reuse anything"
         ),
         built.executable,
         identity.driver,
         identity.image,
-        identity.system
+        identity.system,
+        batch.unwrap_or("none")
     );
     for reuse in &plan.reused {
         println!(
-            "reuse P16-{}: PASS in {} (sha256 {}){}",
+            "reuse P16-{}{}: PASS in {} (sha256 {})",
             reuse.row,
-            reuse.evidence,
-            reuse.evidence_sha256,
-            if reuse.later_non_pass {
-                "; note: a later FAIL or NOT_TESTED was recorded under the same identity"
+            // W12's own PASS is only its mac-gui part; the row's verdict is the composite.
+            if reuse.row == decide::composite().0 {
+                " (mac-gui part; the row counts only with the composite below)"
             } else {
                 ""
-            }
+            },
+            reuse.evidence,
+            reuse.evidence_sha256
         );
         if reuse.other_bytes {
             println!(
@@ -221,70 +226,54 @@ fn plan(options: &Options, existing: &[Record], manual: &[String]) -> Result<(),
             );
         }
     }
+    for (row, reason) in &plan.rerun {
+        println!("rerun P16-{row}: {reason}");
+    }
+    let (logout_runs, gui_runs): (Vec<&String>, Vec<&String>) =
+        plan.run.iter().partition(|row| logout.contains(row));
     if plan.run.is_empty() {
         println!("run: nothing; every executable row has a PASS for this identity");
-    } else {
-        println!(
-            "run: stickymd-smoke mac-gui --app <the same app> --only {}",
-            plan.run.join(",")
-        );
+    }
+    let gui: Vec<&str> = gui_runs.iter().map(|r| r.as_str()).collect();
+    let cases: Vec<&str> = logout_runs.iter().map(|r| r.as_str()).collect();
+    let commands = decide::commands(&gui, &cases, batch);
+    let (parent, parts) = decide::composite();
+    match decide::complete(&plan, parent, &parts) {
+        Ok(()) => println!(
+            "composite P16-{parent}: complete; {parent} and {} all have a reusable PASS",
+            parts.join(", ")
+        ),
+        Err(missing) => println!(
+            "composite P16-{parent}: incomplete; still needs {}",
+            missing.join(", ")
+        ),
+    }
+    for command in commands {
+        println!("{command}");
     }
     for (row, environment) in &plan.confirmed {
         println!("manual P16-{row}: USER receipt for these inputs ({environment})");
     }
     if !plan.unconfirmed.is_empty() {
         println!(
-            "manual rows needing the USER for these inputs: {} ({} are never carried over)",
+            "manual rows needing the USER for these inputs: {} ({} count only receipts of the batch)",
             plan.unconfirmed.join(","),
             decide::NEVER_REUSED.join(",")
         );
     }
+    if !rows.review.is_empty() {
+        println!(
+            "review rows not yet judged (receipts naming the reviewed media are not recorded yet): {}",
+            rows.review.join(",")
+        );
+    }
+    if !rows.agent.is_empty() {
+        println!(
+            "agent rows not yet judged (judge records are not kept yet): {}",
+            rows.agent.join(",")
+        );
+    }
     Ok(())
-}
-
-fn recorded(options: &Options) -> Result<Vec<Record>, String> {
-    let evidence = options.evidence.as_deref().ok_or("--evidence missing")?;
-    let evidence = evidence
-        .canonicalize()
-        .map_err(|e| format!("{}: {e}", evidence.display()))?;
-    let bytes = fs::read(&evidence).map_err(|e| format!("{}: {e}", evidence.display()))?;
-    record::from_evidence(
-        &bytes,
-        &evidence.display().to_string(),
-        options.image.as_deref().ok_or("--image missing")?,
-        now()?,
-    )
-}
-
-fn receipts(options: &Options, manual: &[String]) -> Result<Vec<Record>, String> {
-    if let Some(row) = options.rows.iter().find(|r| !manual.contains(r)) {
-        return Err(format!(
-            "P16-{row} is not a Manual row of the Phase 16 matrix"
-        ));
-    }
-    let app = options.app.as_deref().ok_or("--app missing")?;
-    let app_executable = built(app)?.executable;
-    let inputs = app_inputs(&app.canonicalize().map_err(|e| format!("app path: {e}"))?)?
-        .ok_or("this bundle carries no input fingerprint; rebuild it with build-app.sh before recording a receipt")?;
-    let environment = desktop()?;
-    let quote = options.quote.clone().ok_or("--quote missing")?;
-    let recorded_unix = now()?;
-    let records: Vec<Record> = options
-        .rows
-        .iter()
-        .map(|row| Record::Manual {
-            row: row.clone(),
-            inputs: Some(inputs.clone()),
-            app_executable: app_executable.clone(),
-            environment: environment.clone(),
-            quote: quote.clone(),
-            recorded_unix,
-        })
-        .collect();
-    for record in &records {
-        record.validate()?;
-    }
-    Ok(records)
 }
 
 #[cfg(test)]

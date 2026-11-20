@@ -508,6 +508,20 @@
 
 ## 治理
 
+### Acceptance Ladder（验收阶梯）
+
+- **Definition**：选择验收方式的优先顺序，适用于每张验收表的每一行（必要时拆为子项）：程序断言、agent 自行操作、agent 判定截图、程序截图交 USER、程序录屏交 USER、USER 亲手验收。用第一个可行的级别；可行指它的检查能拒绝事先准备的坏样本。Phase 16 验收表以 `Automated`、`Agent`、`Review`、`Manual` 四种 Mode 表达六级；其他验收表沿用各自的 Mode，这一顺序只决定自动化做到哪一步。
+- **Authority**：`11` 验收矩阵节（全部验收表，USER 2026-11-20 推广）与 Phase 16 节（判定细则）；各行改 Mode 按行经 USER 批准。
+- **Not equivalent to**：资格化 suite 的 exact-candidate 规则；正式人工矩阵的收据与就绪规则（两者不因这一顺序改变）。
+- **Lifetime**：长期；新增、复审或重新确认验收行时都按它审视。
+
+### Agent Judgement（agent 判定）
+
+- **Definition**：两名互相独立的 agent 依同一身份下同一次运行的证据，对 `Agent` 行的每个子项给出的 PASS、FAIL 或 NOT_TESTED。两者不一致的子项升级给 USER；每个子项都由两名 agent 判 PASS 或由 USER 的 Review 收据判 PASS 时，行状态为 `AGENT PASS`。
+- **Authority**：`11` Phase 16 节的判定规则；USER 可撤销。
+- **Not equivalent to**：USER 收据；单一 agent 的意见；产品自测。
+- **Lifetime**：绑定产品输入指纹、驱动、镜像、系统、判定标准版本、对照与判定者策略，任一项改变即失效；USER 撤销后不再复用。
+
 ### Architecture Change
 
 - **Definition**：对主骨架、核心边界、核心对象关系、主能力轴或关键接口结构的修改。必须先提交分析报告并获 USER 批准。
