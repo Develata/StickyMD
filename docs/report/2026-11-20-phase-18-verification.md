@@ -27,6 +27,11 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
 
 ## 已验证（本轮实际运行）
 
+- **PR CI（[Develata/StickyMD#18](https://github.com/Develata/StickyMD/pull/18)，`08fe30a`，[run 44700563739](https://github.com/Develata/StickyMD/actions/runs/44700563739)）：** 10 项检查全部通过，含 CI 计划与 governance、
+  Linux smoke（lint + tests）、依赖策略、Windows x64（format + lint）、Windows x64 headless 的完整 tests 与 performance、Windows x64 release
+  build、Linux portable-core build、macOS host（lint + tests）。Windows tests shard 的日志里 `release_workflow::actual_workflow_step_queries_once…`
+  与 `release_remote::actual_tag_and_draft_steps_reject…` 均为 ok；测试助手要求 Windows PowerShell 5.1、有 pwsh 7 时也跑，日志没有
+  “PowerShell 7 不可用”的记录，两种宿主都执行了。
 - **本机基线（本报告所在提交的工作树，macOS 27.2 arm64）：**
   - `cargo fmt --all --check` 通过。
   - `cargo clippy --workspace --exclude stickymd-win --all-targets --locked -- -D warnings` 通过；
@@ -60,10 +65,10 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
 ## 推断（有依据但未执行）
 
 - **Windows 产品行为不变：** 产品代码没有改动 Windows 宿主与共享层；Windows 的打包文件名、checksum 格式与 SBOM 生成器未变，第三方声明逐字节相同。
-  Windows 发布字节相等没有实测：本分支没有在 Windows CI 上运行。
-- **Windows 资格化工具的行为变了，且没有在 Windows 上运行：** 模块成功只登记 HEAD 上的运行、Source Freeze 复核提交里的 `Cargo.lock`、Promote
-  最后写 candidate receipt、readiness 从首次读取到写回执都持锁、沿用判定的 Git 视图。这些在 macOS 上有单元测试与临时仓库测试，Windows 目标的
-  clippy 只证明能通过类型检查。
+  Windows 发布字节相等没有实测：PR CI 构建了 release 版本并通过 native-runtime 检查，但没有产出可比对的 exact artifact。
+- **Windows 资格化工具的行为变了，只在测试中运行过：** 模块成功只登记 HEAD 上的运行、Source Freeze 复核提交里的 `Cargo.lock`、Promote
+  最后写 candidate receipt 并按 artifact id 下载、readiness 从首次读取到写回执都持锁、沿用判定的 Git 视图。它们的单元测试与临时仓库测试在
+  macOS 和 PR CI 的 Windows tests shard 上都通过；真实的 Source Freeze、Promote 与 readiness 流程没有在 Windows 主机上跑过。
 - **`0278057` 之后的产品改动只在错误路径**（`cfed863`：不可写提示带出 Note Root、探测文件名冲突时的清理），由
   `apps/stickymd-mac` 的单元测试覆盖；虚拟机证据仍是 `0278057` 的产品。重跑应在 dispatch 得到的候选 bundle 上做，那时证据身份才是发布字节。
 - **workflow：** 三个 YAML 均能解析；`concurrency` 组按 tag 串行化三个操作；PUBLISH 比对草稿的 release id、`draft` 与 `tag_name`，以及
@@ -76,7 +81,7 @@ D01–D05）都要先 push 并由 USER 分别授权。Phase 18 因此仍是 In P
 - P18-P09：真实候选上的 TAG、DRAFT、PUBLISH（各需 USER 授权）。
 - P18-P04：本地晋升的完整流程（需要一次真实的 `release-macos` 运行）。
 - P18-P06：Windows 主机上带沿用的 Promote、resolver 与 readiness 完整流程。
-- P18-P07 的 workflow 一级、Windows PowerShell 5.1 宿主上的两个 Windows 测试、本分支的 Windows CI。
+- P18-P07 的 workflow 一级（真实 dispatch）。
 - P18-D01–D05：候选包上的下载路径；R03 探针接收候选 ZIP 的部分在验收阶梯分支上。
 - M5：macOS 就绪核对（`11` #macos-release-gate）尚未实现，下一版本发布前必须完成。
 
@@ -128,7 +133,6 @@ workflow 文件名；composite action 先把所有 id 与 attempt 校验为正�
 - 进程内沿用判定缓存按仓库路径区分，同一路径的仓库在进程存活期间被替换不会重验；历史证据的相等 SHA 快路径不查对象是否存在
   （查找时该 S 已与当前候选比对）。
 - 并发组名按 GitHub 规则不分大小写；版本 tag 的大小写由现有 tag 校验决定，未改。
-- 两个 Windows 测试在 Windows PowerShell 5.1 上的实际运行。
 
 ## 合并提示
 
