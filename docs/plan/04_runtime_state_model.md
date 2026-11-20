@@ -4,8 +4,8 @@
 
 - `Layer`: Architecture
 - `Status`: Approved Contract
-- `Version`: 0.3.0
-- `Last Review`: 2026-11-14
+- `Version`: 0.3.1
+- `Last Review`: 2026-11-19
 - `Scope`: 运行时状态结构、所有权与修改权、authority 划分、generation 语义、核心 invariant
 
 ---
@@ -440,8 +440,9 @@ struct ConfigState {
 
 ## Lifecycle
 
-- 启动：解析 canonical Program Directory → 单实例 → Writable check → 载入 config →
-  载入 note.md / recovery → asset reconciliation → 窗口与托盘。第二实例在 durable bootstrap 前退出。
+- 启动：解析 canonical Program Directory → 判定 Note Root（macOS，`05` #note-root）→ 在 Note Root 上建立单实例 →
+  Writable check → 载入 config → 载入 note.md / recovery → asset reconciliation → 窗口与托盘。
+  第二实例在 durable bootstrap 前退出（macOS 安装版加锁前的空目录例外见 `05` #startup-sequence）。
 - 退出：立即保存 → 等待资产事务 → 安全 GC → 保存配置 → 释放 mutex → 清理临时文件。
 
 ## Extension / Replacement Points

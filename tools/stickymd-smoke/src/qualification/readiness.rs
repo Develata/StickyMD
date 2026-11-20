@@ -8,12 +8,21 @@ use super::manual_observation::store;
 use super::module_ledger::{self, Lookup, Snapshot};
 use super::module_registry::ModuleId;
 use super::receipt::{self, Candidate};
-use super::{automated_readiness, decisions, json, manual_readiness, remote, source_freeze};
+use super::{automated_readiness, decisions, json, manual_readiness, remote, reuse, source_freeze};
 
 const READINESS_RECEIPT: &str = "dist/evidence/release-readiness.json";
 
 pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
     let mut blockers = Vec::new();
+    // Source Freeze and Promote replace the freeze, the candidate and the reuse record under the
+    // manual store lock. Holding it (shared) from before the first read until the receipt is
+    // written makes the identity judged here the one the receipt describes. Lock order: the
+    // manual store first, then decisions; holding it while the one decision snapshot is read
+    // also pins the manual context to that moment.
+    let manual_guard = store::lock(root, false);
+    if let Err(error) = &manual_guard {
+        blockers.push(format!("mandatory manual acceptance: {error}"));
+    }
     let (source, source_current) = read_source(root, &mut blockers);
     // One read: the candidate and the digest its manual context must be bound to.
     let (candidate, candidate_digest) = match receipt::read_candidate_snapshot(root) {
@@ -28,16 +37,11 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
             (None, None)
         }
     };
-    if let (Some(source), Some(candidate)) = (&source, &candidate) {
-        check_source_identity(source, candidate, &mut blockers);
+    if let (Some(source), Some(candidate), Some(digest)) = (&source, &candidate, &candidate_digest)
+    {
+        check_source_identity(root, source, candidate, digest, &mut blockers);
     }
 
-    // Lock order: the manual store first, then decisions. Holding the manual lock while
-    // the one decision snapshot is read pins the manual context to that same moment.
-    let manual_guard = store::lock(root, false);
-    if let Err(error) = &manual_guard {
-        blockers.push(format!("mandatory manual acceptance: {error}"));
-    }
     let release_decisions = source
         .as_ref()
         .map(|source| decisions::read_consistent(root, source))
@@ -84,11 +88,12 @@ pub(super) fn evaluate(root: &Path, explain: bool) -> Result<(), String> {
             &mut blockers,
         );
     }
-    drop(manual_guard);
     manual.set_unit_owner_proof(unit_owners_proven);
     let document = render_readiness(candidate.as_ref(), &blockers, &manual);
     // The summary is printed even if the receipt cannot be written; the error follows.
     let written = receipt::write_receipt(root, READINESS_RECEIPT, &document);
+    // Held until the receipt is written: Source Freeze and Promote wait for it.
+    drop(manual_guard);
     match &snapshot {
         Ok(snapshot) => module_ledger::print_snapshot(snapshot, candidate.as_ref()),
         Err(error) => println!("Qualification module ledger: {error}"),
@@ -140,16 +145,29 @@ fn read_source(
     }
 }
 
+/// The candidate's build source is the Source Freeze commit or reusable on it, and a reuse
+/// carries its audit record for this very candidate receipt (`digest`).
 fn check_source_identity(
+    root: &Path,
     source: &source_freeze::SourceFreeze,
     candidate: &Candidate,
+    digest: &str,
     blockers: &mut Vec<String>,
 ) {
-    if source.source_commit != candidate.source_commit
-        || source.cargo_lock_sha256 != candidate.cargo_lock_sha256
+    let differs = "promoted candidate identity differs from Source Freeze";
+    if source.cargo_lock_sha256 != candidate.cargo_lock_sha256
         || source.version != candidate.version
     {
-        blockers.push("promoted candidate identity differs from Source Freeze".to_owned());
+        blockers.push(differs.to_owned());
+    }
+    let (build, release) = (&candidate.source_commit, &source.source_commit);
+    match reuse::candidate_source_matches(root, build, release) {
+        Ok(reuse) => {
+            if let Err(error) = reuse::check_record(root, &reuse, build, release, digest) {
+                blockers.push(error);
+            }
+        }
+        Err(error) => blockers.push(format!("{differs}: {error}")),
     }
 }
 
@@ -210,8 +228,10 @@ fn check_remote(
     };
     expect_u64(&document, "schema_version", 2, "remote workflow", blockers);
     expect_string(&document, "status", "PASSED", "remote workflow", blockers);
+    // The run built the candidate: its head is the candidate's build source, which
+    // `check_source_identity` relates to the Source Freeze.
     for (key, expected) in [
-        ("source_commit", source.source_commit.as_str()),
+        ("source_commit", candidate.source_commit.as_str()),
         ("cargo_lock_sha256", source.cargo_lock_sha256.as_str()),
         ("artifact_name", candidate.artifact_name.as_str()),
         ("workflow", "release"),
@@ -422,13 +442,30 @@ mod tests {
             target: candidate.target.clone(),
             remote_synced: true,
         };
+        // Never created: no repository and no reuse record, which the same commit needs neither of.
+        let root = std::env::temp_dir().join(format!(
+            "stickymd-readiness-identity-{}",
+            std::process::id()
+        ));
+        let digest = "f".repeat(64);
         let mut blockers = Vec::new();
-        check_source_identity(&source, &candidate, &mut blockers);
+        check_source_identity(&root, &source, &candidate, &digest, &mut blockers);
         assert!(blockers.is_empty(), "{blockers:?}");
 
         candidate.version = "0.1.0".to_owned();
-        check_source_identity(&source, &candidate, &mut blockers);
+        check_source_identity(&root, &source, &candidate, &digest, &mut blockers);
         assert_eq!(blockers.len(), 1, "old version must remain rejected");
+
+        // Another build source must be reusable on the frozen commit; here nothing proves it.
+        candidate.version = source.version.clone();
+        candidate.source_commit = "c".repeat(40);
+        blockers.clear();
+        check_source_identity(&root, &source, &candidate, &digest, &mut blockers);
+        assert_eq!(blockers.len(), 1, "{blockers:?}");
+        assert!(
+            blockers[0].starts_with("promoted candidate identity differs from Source Freeze"),
+            "{blockers:?}"
+        );
     }
 
     #[test]

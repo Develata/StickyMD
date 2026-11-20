@@ -124,11 +124,24 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
 - [ ] 获得一次 candidate-only `release.yml` dispatch authority。
 - [ ] workflow 从批准的 exact source 构建且成功；不创建 tag 或 Release。
 - [ ] 记录唯一 run、attempt、artifact id/name，不自动选择“最新同 commit build”。
-- [ ] Rust qualification CLI 按记录的 run/name 下载 ZIP、`SHA256SUMS.txt` 与 SBOM。
+- [ ] Rust qualification CLI 核对记录的 artifact id 属于记录的 run 与 head、名称一致且未过期，再按该 id 下载 ZIP、`SHA256SUMS.txt` 与 SBOM。
 - [ ] 下载副本与用户指定副本逐字节一致。
 - [ ] checksum、SBOM、包结构、license/notices 与 source identity PASS。
 - [ ] exact EXE 的普通与 delay-load import gate PASS，无外置 developer runtime。
 - [ ] artifact 通过验证后原子 Promote 到 `dist/exact-candidate/`；失败不半更新既有 candidate。
+- [ ] Windows 发布物沿用祖先提交 S 上的构建时（`11` #platform-artifact-reuse），`release verify-reuse --platform windows-x64
+      --build-source <S> --release-source <R>` PASS，`dist/evidence/release-reuse-windows-x64.json` 已写出。
+
+## 2M. macOS Release Exact Artifact（Phase 18 起）
+
+两个平台同版发布；macOS 门不过，整个版本不发布（`11` #macos-release-gate）。
+
+- [ ] 获得一次 candidate-only `release-macos.yml` dispatch authority；它运行在 `xcode-27`，先选定 Xcode 27.2。
+- [ ] workflow 成功；记下 run、成功的 attempt 与 artifact id（名为 `stickymd-macos-arm64-release-<attempt>`），核对 Summary 中的构建记录。
+- [ ] 本机 macOS：`release macos-promote --run-id <run> --attempt <n> --release-source <R> --zip <下载的 ZIP>` PASS，
+      `dist/exact-candidate-macos/` 与 `dist/evidence/release-candidate-macos.json` 已写出，签名方式为观察到的 `AD_HOC`。
+- [ ] `release macos-candidate --release-source <R>` PASS（staged 字节、bundle 清单与可执行文件与 receipt 一致，构建来源可沿用）。
+- [ ] macOS 就绪按 `11` #macos-release-gate 逐行成立（M5 的核对工具完成前，这一项不能勾选）。
 
 ## 3. Artifact-bound Qualification
 
@@ -166,12 +179,18 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
 
 以下是三个独立 authority，必须依次单独获得 USER 授权：
 
-- [ ] **TAG**：在 exact source 创建并验证版本 tag；不重建产品。
-- [ ] **DRAFT-RELEASE**：从指定历史 workflow run 下载同一 artifact，重新验证 hash，生成 attestation，
-      创建 draft；不重建产品。
-- [ ] 人工检查 draft 标题、正文、资产数量、文件名、大小、checksums、SBOM 与 attestation。
-- [ ] **PUBLISH**：重新下载并验证既有 draft assets，只公开该 draft，不替换资产。
-- [ ] 公开 Release 的 tag、source、ZIP/EXE/SBOM hash 与已批准 identity 完全一致。
+- [ ] 每次 dispatch 携带：发布提交 R、tag、Windows run id 与 artifact id、macOS run id、attempt 与 artifact id，以及 Release
+      Attachment Set（六个文件 `name=sha256`，逗号分隔）。
+- [ ] **TAG**：从 `main` dispatch；R 包含在 `main` 中，两个候选核对通过后创建并验证版本 tag；不重建产品。
+- [ ] **DRAFT-RELEASE**：从 tag dispatch（运行的 SHA 必须等于 R）；按 artifact id 下载两个平台的同一 artifact，核对六件，
+      为两个平台生成 attestation，创建 draft；草稿上残留集合外的旧附件时拒绝；上传后草稿恰为六件。不重建产品。
+- [ ] 人工检查 draft 标题、正文（两个平台各自的构建来源）、资产数量、文件名、大小、checksums、SBOM 与 attestation。
+- [ ] 第一次跨提交沿用时，PUBLISH 前查看实际签发的 attestation statement，确认它如何表述构建来源（未验证项）。
+- [ ] PUBLISH 之前：仓库 ruleset 禁止更新与删除 `refs/tags/v*`；列清能写 release 的人、App、token 与 workflow，暂停本 workflow 以外的自动写入；
+  PUBLISH 运行期间不从网页或 CLI 改动草稿与 tag（`11` 发布晋升第 5 条）。
+- [ ] **PUBLISH**：从 tag dispatch；重新下载草稿全部附件，比对完整的文件名集合与哈希，公开前后按 release id 复读并核对 tag 仍指向 R，
+  只公开该 draft，不替换资产；不符时 job 失败，不自动改回草稿。
+- [ ] 公开 Release 的 tag、source、两个平台的 ZIP/SBOM/checksum hash 与已批准 identity 完全一致。
 
 ## 7. 发布后
 

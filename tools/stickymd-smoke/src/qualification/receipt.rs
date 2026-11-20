@@ -185,13 +185,15 @@ pub(super) fn validate_candidate_against_repository(
     ensure_clean(root)?;
     let source = source_freeze::read(root)?;
     source_freeze::validate_against_repository(root, &source)?;
-    if source.source_commit != candidate.source_commit
-        || source.version != candidate.version
+    let stale = "STALE RECEIPT: promoted candidate does not match Source Freeze";
+    if source.version != candidate.version
         || source.cargo_lock_sha256 != candidate.cargo_lock_sha256
         || source.target != candidate.target
     {
-        return Err("STALE RECEIPT: promoted candidate does not match Source Freeze".to_owned());
+        return Err(stale.to_owned());
     }
+    super::reuse::candidate_source_matches(root, &candidate.source_commit, &source.source_commit)
+        .map_err(|error| format!("{stale}: {error}"))?;
     let executable = candidate_executable(root);
     if !executable.is_file() || sha256(&executable)? != candidate.exe_sha256 {
         return Err("STALE RECEIPT: promoted candidate EXE is missing or changed".to_owned());
@@ -258,6 +260,7 @@ pub(super) fn invalidate_promoted_candidate(root: &Path) -> Result<(), String> {
         fs::remove_file(&receipt)
             .map_err(|error| format!("cannot invalidate {}: {error}", receipt.display()))?;
     }
+    super::reuse::remove_record(root)?;
     let staging = candidate_directory(root);
     if staging.is_dir() {
         fs::remove_dir_all(&staging)

@@ -1,10 +1,11 @@
 //! The POSIX native layer a host builds its storage and single instance on: directory handles and
-//! `*at` calls, file identity, atomic publish, the `flock` instance lock and socket wake, plus the
-//! host's large-block allocator. Like a host's platform adapter directory, it holds `unsafe` and
-//! native bindings. Only the macOS implementation exists; on other targets the crate is empty.
+//! `*at` calls, file identity, atomic publish, the `flock` instance lock and socket wake, the
+//! user database, plus the host's large-block allocator. Like a host's platform adapter
+//! directory, it holds `unsafe` and native bindings. Only the macOS implementation exists; on other targets the crate is empty.
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#shared-crates
 //! plan_ref: docs/plan/05_document_persistence.md#macos-storage
+//! plan_ref: docs/plan/05_document_persistence.md#note-root
 //! plan_ref: docs/plan/10_performance_reliability.md#macos-gates
 
 #![deny(unsafe_op_in_unsafe_fn)]
@@ -14,6 +15,8 @@ pub mod allocator;
 #[cfg(target_os = "macos")]
 pub mod atomic_file;
 #[cfg(target_os = "macos")]
+pub mod child_directory;
+#[cfg(target_os = "macos")]
 pub mod file;
 #[cfg(target_os = "macos")]
 pub mod instance;
@@ -21,3 +24,5 @@ pub mod instance;
 mod sys;
 #[cfg(all(test, target_os = "macos"))]
 mod test_support;
+#[cfg(target_os = "macos")]
+pub mod user;

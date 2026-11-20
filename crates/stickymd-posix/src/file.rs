@@ -12,12 +12,12 @@ use std::path::Path;
 
 use crate::sys::{self, check};
 
-fn c_string(value: &OsStr) -> io::Result<CString> {
+pub(crate) fn c_string(value: &OsStr) -> io::Result<CString> {
     CString::new(value.as_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains a NUL byte"))
 }
 
-fn file_from(descriptor: libc::c_int) -> io::Result<File> {
+pub(crate) fn file_from(descriptor: libc::c_int) -> io::Result<File> {
     if descriptor < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -115,7 +115,7 @@ impl FileObservation {
 /// moved, the operations follow it instead of a path that now means something else.
 #[derive(Debug)]
 pub struct DirectoryHandle {
-    directory: File,
+    pub(crate) directory: File,
 }
 
 impl DirectoryHandle {

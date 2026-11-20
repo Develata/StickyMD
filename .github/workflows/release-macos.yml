@@ -1,0 +1,120 @@
+name: release-macos
+
+# The macOS Release Exact Artifact (plan 11 #macos-release-artifact). Dispatched separately from
+# `release`, so a failure on one platform is retried without rebuilding the other.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  dependency-policy:
+    name: Dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install checksum-verified cargo-deny 0.20.2
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Licenses, advisories, bans, and sources
+        run: cargo deny check
+
+  build-package:
+    name: Build and verify macOS arm64 package
+    needs: dependency-policy
+    # The preview image with macOS 27 and Xcode 27.x; macos-latest still ships the macOS 26 SDK.
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select Xcode 27.2
+        # build-app.sh builds with a clean environment, so DEVELOPER_DIR would not reach it.
+        run: sudo xcode-select --switch /Applications/Xcode_27.2.app/Contents/Developer
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - name: Validate source version and provenance
+        run: |
+          set -eu
+          cargo run --quiet -p stickymd-smoke --locked -- release workspace-version
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "Candidate commit is not contained in origin/main" >&2
+            exit 1
+          }
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Strict clippy for the macOS host
+        run: cargo clippy -p stickymd-posix -p stickymd-mac --all-targets --locked -- -D warnings
+      - name: Test the shared crates, the macOS host and the release tooling
+        run: >-
+          cargo test --locked -p stickymd-core -p stickymd-render -p stickymd-app
+          -p stickymd-desktop -p stickymd-posix -p stickymd-mac -p stickymd-smoke
+      - name: Build the ad-hoc signed bundle
+        run: apps/stickymd-mac/packaging/build-app.sh "$RUNNER_TEMP/app"
+      - name: Build record
+        run: |
+          set -eu
+          app="$RUNNER_TEMP/app/StickyMD.app"
+          # Computed first: a failing command in an assignment stops the step under `set -e`,
+          # where inside `echo "$(...)"` it would leave an empty value.
+          product_inputs=$(plutil -extract StickyMDInputs raw "$app/Contents/Info.plist")
+          platform_inputs=$(cargo run --quiet -p stickymd-smoke --locked -- release platform-inputs --platform macos-arm64 --commit "$GITHUB_SHA")
+          {
+            echo "## macOS build record"
+            echo '```text'
+            sw_vers
+            uname -m
+            xcodebuild -version
+            xcode-select -p
+            xcrun --sdk macosx --show-sdk-path
+            xcrun --sdk macosx --show-sdk-version
+            cargo -V
+            rustc -vV
+            echo "product inputs: $product_inputs"
+            echo "platform build inputs: $platform_inputs"
+            codesign -dv --verbose=2 "$app" 2>&1
+            lipo -archs "$app/Contents/MacOS/StickyMD"
+            otool -l "$app/Contents/MacOS/StickyMD" | grep -A4 LC_BUILD_VERSION
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Package
+        run: |
+          set -eu
+          mkdir -p dist
+          cargo run --quiet -p stickymd-smoke --locked -- release macos-package \
+            --app "$RUNNER_TEMP/app/StickyMD.app" --output-directory dist
+      - name: Generate verified SPDX SBOM and checksums
+        run: |
+          set -eu
+          zip=$(ls dist/StickyMD-*-macos-arm64-portable.zip)
+          cargo run --quiet -p stickymd-smoke --locked -- release macos-sbom --zip "$zip"
+      - name: Verify package
+        run: |
+          set -eu
+          zip=$(ls dist/StickyMD-*-macos-arm64-portable.zip)
+          cargo run --quiet -p stickymd-smoke --locked -- release macos-verify-package \
+            --zip "$zip" --source-sha "$GITHUB_SHA"
+      - name: Upload verified workflow artifact
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # Named for the attempt, so each attempt's artifact can be told apart by name and id.
+          name: stickymd-macos-arm64-release-${{ github.run_attempt }}
+          path: |
+            dist/StickyMD-*-macos-arm64-portable.zip
+            dist/SHA256SUMS-macos-arm64.txt
+            dist/SBOM-macos-arm64.spdx.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record the artifact id
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+        run: |
+          echo "run ${GITHUB_RUN_ID}, attempt ${GITHUB_RUN_ATTEMPT}, artifact id ${ARTIFACT_ID}" >> "$GITHUB_STEP_SUMMARY"

@@ -99,21 +99,23 @@ fn actual_workflow_step_queries_once_and_propagates_query_or_validation_failures
         repository_root,
     };
     let root = repository_root();
-    let workflow = std::fs::read_to_string(root.join(".github/workflows/promote-release.yml"))
-        .unwrap()
-        .replace("\r\n", "\n");
-    let body = workflow
+    // The step every promotion operation runs through the shared candidate check.
+    let action =
+        std::fs::read_to_string(root.join(".github/actions/verify-release-candidates/action.yml"))
+            .unwrap()
+            .replace("\r\n", "\n");
+    let body = action
         .split("- name: Verify original candidate workflow identity\n")
         .nth(1)
         .unwrap()
-        .split("        run: |\n")
+        .split("      run: |\n")
         .nth(1)
         .unwrap()
-        .split("\n      - name:")
+        .split("\n    - name:")
         .next()
         .unwrap()
         .lines()
-        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .map(|line| line.strip_prefix("        ").unwrap_or(line))
         .collect::<Vec<_>>()
         .join("\n");
     let script = format!(
@@ -134,7 +136,9 @@ function cargo {{
 "#
     );
     let source = "d".repeat(40);
-    let valid = format!(r#"{{"head_sha":"{source}","conclusion":"success","name":"release"}}"#);
+    let valid = format!(
+        r#"{{"head_sha":"{source}","conclusion":"success","name":"release","path":".github/workflows/release.yml","event":"workflow_dispatch"}}"#
+    );
     for host in HOSTS {
         let fixture = ScriptFixture::new(
             "workflow-step",
@@ -146,6 +150,7 @@ function cargo {{
         for (input, query_exit, expected_exit) in [
             (valid.clone(), "0", 0),
             (valid.replace("success", "failure"), "0", 1),
+            (valid.replace("release.yml", "copy.yml"), "0", 1),
             (valid.clone(), "23", 23),
         ] {
             std::fs::write(&observation, input).unwrap();

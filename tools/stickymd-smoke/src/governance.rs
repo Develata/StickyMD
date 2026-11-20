@@ -50,6 +50,11 @@ const REQUIRED_FILES: &[&str] = &[
     "assets/licenses/Boost-1.0.txt",
     "assets/licenses/HarfRust-MIT.txt",
     "assets/licenses/RaTeX-MIT.txt",
+    "assets/licenses/objc2-MIT-4fc083f.txt",
+    "assets/licenses/objc2-LICENSE-8852b42.md",
+    "assets/licenses/objc2-MIT.txt",
+    "assets/licenses/dispatch-MIT.txt",
+    "assets/licenses/fallback-provenance.md",
     "docs/release-checklist.md",
     "docs/report/phase-09-performance-final.md",
     "docs/report/phase-09-release-readiness.md",
@@ -493,6 +498,7 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     let mut workflows: Vec<_> = [
         ".github/workflows/ci.yml",
         ".github/workflows/release.yml",
+        ".github/workflows/release-macos.yml",
         ".github/workflows/promote-release.yml",
         ".github/workflows/scheduled.yml",
     ]
@@ -539,11 +545,41 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
             ));
         }
     }
-    for forbidden in ["push:\n    tags:", "gh release", "actions/attest@"] {
-        if release.contains(forbidden) {
+    // The macOS candidate workflow (plan 11 #macos-release-artifact): its own run, the Xcode it
+    // was approved with, the packaged and checked set, and an artifact named for the attempt.
+    let release_macos = read_text(&root.join(".github/workflows/release-macos.yml"))?;
+    for required in [
+        "permissions:\n  contents: read",
+        "workflow_dispatch:",
+        "persist-credentials: false",
+        "runs-on: xcode-27",
+        "/Applications/Xcode_27.2.app",
+        "apps/stickymd-mac/packaging/build-app.sh",
+        "release macos-package",
+        "release macos-sbom",
+        "release macos-verify-package",
+        "name: stickymd-macos-arm64-release-${{ github.run_attempt }}",
+    ] {
+        if !release_macos.contains(required) {
             return Err(format!(
-                "candidate workflow must not tag, attest, or create releases: `{forbidden}`"
+                "macOS release workflow lacks required token `{required}`"
             ));
+        }
+    }
+    for (workflow, content) in [("release", &release), ("release-macos", &release_macos)] {
+        // The platform build input fingerprint counts each release workflow but no local action,
+        // so a release workflow may not call one (plan 11 #platform-artifact-reuse).
+        for forbidden in [
+            "push:\n    tags:",
+            "gh release",
+            "actions/attest@",
+            "uses: ./",
+        ] {
+            if content.contains(forbidden) {
+                return Err(format!(
+                    "candidate workflow {workflow} must not tag, attest, or create releases: `{forbidden}`"
+                ));
+            }
         }
     }
     let promotion = read_text(&root.join(".github/workflows/promote-release.yml"))?;
@@ -553,13 +589,18 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         "- draft",
         "- publish",
         "source_sha:",
-        "artifact_run_id:",
-        "expected_zip_sha256:",
-        "expected_sbom_sha256:",
-        "run-id: ${{ inputs.artifact_run_id }}",
-        "tools/release/verify-promoted-artifact.ps1",
-        "subject-checksums: dist/promoted/SHA256SUMS.txt",
-        "sbom-path: dist/promoted/SBOM.spdx.json",
+        "windows_run_id:",
+        "windows_artifact_id:",
+        "macos_run_id:",
+        "macos_run_attempt:",
+        "macos_artifact_id:",
+        "attachments:",
+        "uses: ./.github/actions/verify-release-candidates",
+        "subject-checksums: dist/promoted/windows/SHA256SUMS.txt",
+        "sbom-path: dist/promoted/windows/SBOM.spdx.json",
+        "subject-checksums: dist/promoted/macos/SHA256SUMS-macos-arm64.txt",
+        "sbom-path: dist/promoted/macos/SBOM-macos-arm64.spdx.json",
+        "release verify-attachments",
         "gh release create",
         "gh release edit",
     ] {
@@ -577,6 +618,21 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         if promotion.contains(forbidden) {
             return Err(format!(
                 "promotion workflow must reuse rather than rebuild exact artifact: `{forbidden}`"
+            ));
+        }
+    }
+    // Every promotion operation checks both candidates the same way.
+    let candidates = read_text(&root.join(".github/actions/verify-release-candidates/action.yml"))?;
+    for required in [
+        "tools/release/verify-promoted-artifact.ps1",
+        "release verify-release-set",
+        "release verify-workflow",
+        "--workflow release-macos --attempt",
+        "stickymd-macos-arm64-release-$env:MACOS_RUN_ATTEMPT",
+    ] {
+        if !candidates.contains(required) {
+            return Err(format!(
+                "the candidate check lacks exact-artifact token `{required}`"
             ));
         }
     }
@@ -607,19 +663,37 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
     // HTTP/GraphQL facts, verifying that rejection prevents downstream remote writes.
     // Phase 12-14 routing is covered by phase_entry tests against the compiled parser.
     // PowerShell source tokens are not evidence of a gate.
+    // Promote downloads the authoritative copy itself, by the artifact id the remote receipt
+    // recorded after checking GitHub's answer for that id (plan 11), never by run and name.
     let remote_promotion =
         read_text(&root.join("tools/stickymd-smoke/src/qualification/remote.rs"))?;
-    for required in [
-        "download_recorded_artifact",
-        "Command::new(\"gh\")",
-        ".args([\"run\", \"download\"",
-        "verify_supplied_copy",
+    let recorded_artifact =
+        read_text(&root.join("tools/stickymd-smoke/src/qualification/remote/artifact.rs"))?;
+    for (source, text, required) in [
+        (
+            "remote.rs",
+            &remote_promotion,
+            "artifact::download(root, &remote)",
+        ),
+        ("remote.rs", &remote_promotion, "verify_supplied_copy"),
+        ("remote/artifact.rs", &recorded_artifact, "check_metadata("),
+        (
+            "remote/artifact.rs",
+            &recorded_artifact,
+            "actions/artifacts/{}",
+        ),
     ] {
-        if !remote_promotion.contains(required) {
+        if !text.contains(required) {
             return Err(format!(
-                "remote promotion lacks authoritative-download token `{required}`"
+                "remote promotion ({source}) lacks authoritative-download token `{required}`"
             ));
         }
+    }
+    if recorded_artifact.contains("\"run\", \"download\"") {
+        return Err(
+            "remote promotion must download the recorded artifact by id, not by run and name"
+                .to_owned(),
+        );
     }
     // Syft's fixed identity, cache hashes, and checksum manifest are owned by
     // release::syft. Its unit tests and the dual-host release wrapper tests
@@ -873,7 +947,7 @@ pub(crate) fn verify_ready_status(root: &Path, selection: Selection) -> Result<(
         // judged when selected by name.
         Selection::All => Phase::ALL
             .into_iter()
-            .filter(|phase| *phase != Phase::P16)
+            .filter(|phase| !matches!(phase, Phase::P16 | Phase::P18))
             .collect(),
     };
     for phase in phases {
@@ -1185,16 +1259,33 @@ fn frozen_trace_ids(content: &str, path: &Path, prefix: &str) -> Result<Vec<u16>
     Ok(ids)
 }
 
-/// Whether `path` is the Phase 16 (macOS host) acceptance matrix.
+/// The macOS matrices, whose automated rows may wait as `NOT TESTED` for a run in the VM.
 fn is_macos_matrix(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name == "phase-16.md" || name == "phase-18.md")
+}
+
+/// The row-ID prefix of a macOS matrix, `None` for any other file.
+fn macos_row_prefix(path: &Path) -> Option<&'static str> {
+    match path.file_name()?.to_str()? {
+        "phase-16.md" => Some("P16-"),
+        "phase-18.md" => Some("P18-"),
+        _ => None,
+    }
+}
+
+/// Only the Phase 16 rows that already carry an in-matrix USER waiver keep that form; every
+/// later waiver is a receipt (plan 11 #macos-release-gate).
+fn allows_matrix_waiver(path: &Path, id: &str) -> bool {
     path.file_name().is_some_and(|name| name == "phase-16.md")
+        && matches!(id, "P16-W15" | "P16-W16")
 }
 
 /// Whether `path` is a matrix written ahead of its code: Phase 16 (the macOS host) and Phase 17
 /// (plan 11 #phase-17-copy-and-notices: items not run stay `NOT TESTED`).
 fn written_ahead_of_code(path: &Path) -> bool {
     path.file_name()
-        .is_some_and(|name| name == "phase-16.md" || name == "phase-17.md")
+        .is_some_and(|name| name == "phase-16.md" || name == "phase-17.md" || name == "phase-18.md")
 }
 
 fn read_matrix_rows(path: &Path) -> Result<Vec<MatrixRow>, String> {
@@ -1216,10 +1307,13 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
         if rows.iter().any(|seen: &MatrixRow| seen.id == row.id) {
             return Err(at(format!("{} appears twice", row.id)));
         }
-        // A macOS row with another phase's prefix would be valid here yet dropped by the ledger.
-        if is_macos_matrix(path) && !row.id.starts_with("P16-") {
+        // A macOS row with another phase's prefix would be valid here yet dropped by the ledger:
+        // each macOS matrix carries only its own phase's rows (P16- in phase 16, P18- in phase 18).
+        if let Some(prefix) = macos_row_prefix(path)
+            && !row.id.starts_with(prefix)
+        {
             return Err(at(format!(
-                "{} in the macOS matrix must start with P16-",
+                "{} in the macOS matrix must start with {prefix}",
                 row.id
             )));
         }
@@ -1238,10 +1332,10 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
             "Guided Manual" if matches!(status, "NOT TESTED" | "BLOCKED") => {}
             "Automated exact candidate" if matches!(status, "NOT TESTED" | "BLOCKED") => {}
             // A matrix written ahead of its code may hold automated rows that wait (plan 11: items
-            // not run stay `NOT TESTED`); the macOS matrix also holds one waiver without a mode.
-            // Readiness still refuses a waiting automated row when its phase is judged.
+            // not run stay `NOT TESTED`); only Phase 16 W15/W16 keep an in-matrix waiver without a
+            // mode. Readiness still refuses a waiting automated row when its phase is judged.
             "Automated" if status == "NOT TESTED" && written_ahead_of_code(path) => {}
-            "—" if status == "USER 豁免" && is_macos_matrix(path) => {}
+            "—" if status == "USER 豁免" && allows_matrix_waiver(path, row.id) => {}
             // The acceptance ladder of the macOS matrix (plan 11 #phase-16-macos-host): agents
             // judge `Agent` rows; the USER judges `Review` rows from screenshots or video. Until
             // mac-ledger keeps judge records and receipts that name the reviewed media, neither
@@ -1609,7 +1703,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// Only the matrices written ahead of their code (Phase 16 and 17) may hold an automated row
+    /// Only the matrices written ahead of their code (Phase 16, 17 and 18) may hold an automated row
     /// that has not run, and only the macOS matrix a waiver without a mode; the same rows in any
     /// other matrix stay refused, and `phase 16` still refuses to be ready while one waits.
     #[test]
@@ -1620,6 +1714,16 @@ mod tests {
         let waived = format!("{header}| P16-W16 | act | — | USER 2026-11-10 | USER 豁免 |\n");
         let macos = std::path::Path::new("phase-16.md");
         let ahead = std::path::Path::new("phase-17.md");
+        // Phase 18 may wait like Phase 16 but takes no waiver in the matrix.
+        let phase18 = std::path::Path::new("phase-18.md");
+        assert!(matrix_rows(&waiting.replace("P16-", "P18-"), phase18).is_ok());
+        assert!(matrix_rows(&waived.replace("P16-", "P18-"), phase18).is_err());
+        // Each macOS matrix holds only its own phase's rows.
+        assert!(matrix_rows(&waiting, phase18).is_err());
+        assert!(matrix_rows(&waiting.replace("P16-", "P18-"), macos).is_err());
+        // Nor any other Phase 16 row: R03 in particular takes no waiver.
+        let r03 = format!("{header}| P16-R03 | act | — | USER 2026-11-10 | USER 豁免 |\n");
+        assert!(matrix_rows(&r03, std::path::Path::new("phase-16.md")).is_err());
         let other = std::path::Path::new("phase-15.md");
         for document in [&waiting, &waived] {
             assert_eq!(matrix_rows(document, macos).unwrap().len(), 1);
@@ -1708,10 +1812,11 @@ mod tests {
         .unwrap();
         super::verify_ready_status(&root, crate::cli::Selection::Phase(crate::cli::Phase::P16))
             .unwrap();
-        // The unfinished macOS matrix does not gate a run of every phase.
+        // The unfinished macOS matrices do not gate a run of every phase.
         std::fs::write(root.join("docs/acceptance-cases/phase-16.md"), "garbage").unwrap();
+        std::fs::write(root.join("docs/acceptance-cases/phase-18.md"), "garbage").unwrap();
         for phase in crate::cli::Phase::ALL {
-            if phase != crate::cli::Phase::P16 {
+            if !matches!(phase, crate::cli::Phase::P16 | crate::cli::Phase::P18) {
                 std::fs::write(
                     root.join(format!("docs/acceptance-cases/phase-{}.md", phase.number())),
                     format!("{header}| X-1 | a | Automated | e | AUTOMATED PASS |\n"),

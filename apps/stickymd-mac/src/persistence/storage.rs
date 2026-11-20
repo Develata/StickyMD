@@ -14,6 +14,7 @@ use stickymd_core::{
 };
 use thiserror::Error;
 
+use crate::platform::macos::child_directory::is_not_a_plain_directory;
 use crate::platform::macos::file::{DirectoryHandle, FileObservation, full_sync};
 
 pub const MAX_NOTE_LOAD: u64 = 16 * 1024 * 1024;
@@ -52,11 +53,15 @@ pub enum NoteStorageError {
     PreserveDisplaced { path: String, source: io::Error },
 }
 
-/// The note files of one program directory.
+/// The note files of one Note Root.
 #[derive(Debug)]
 pub struct NoteFiles {
+    /// Where the directory was at start; only for messages.
     path: PathBuf,
     directory: DirectoryHandle,
+    /// The locked Note Root and the directory's name in it, when a deleted Note Directory may be
+    /// recreated; `None` makes a deleted directory an error.
+    parent: Option<(DirectoryHandle, String)>,
     /// A publish whose directory flush failed. The disk holds these bytes while the document
     /// still counts as unsaved, so the next guard has to accept them as its own.
     unconfirmed_publish: Option<DiskFingerprint>,
@@ -77,37 +82,74 @@ fn suffixed(stem: &str, stamp: u64, suffix: u16) -> String {
 }
 
 impl NoteFiles {
+    /// Tests open the directory by path; the program hands over the descriptor it opened `note/`
+    /// with ([`Self::in_directory`]).
+    #[cfg(test)]
     pub fn open(path: &Path) -> Result<Self, NoteStorageError> {
-        Ok(Self {
-            path: path.to_owned(),
-            directory: open_directory(path)?,
-            unconfirmed_publish: None,
-        })
+        let parent =
+            DirectoryHandle::open(path.parent().ok_or(NoteStorageError::ObservationChanged)?)
+                .map_err(NoteStorageError::Metadata)?;
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or(NoteStorageError::ObservationChanged)?
+            .to_owned();
+        Ok(Self::in_directory(
+            path,
+            open_directory(path)?,
+            Some((parent, name)),
+        ))
     }
 
-    /// The directory, for the storage ports that have to stay in it with the note.
+    /// `directory` is the Note Directory the program opened at start, `path` only where it was,
+    /// for messages. With `parent` (the locked Note Root and the directory's name in it) a deleted
+    /// directory is recreated there, relative to the root's handle, so never in a root this
+    /// process has not locked; without it a deleted directory fails the save.
+    pub fn in_directory(
+        path: &Path,
+        directory: DirectoryHandle,
+        parent: Option<(DirectoryHandle, String)>,
+    ) -> Self {
+        Self {
+            path: path.to_owned(),
+            directory,
+            parent,
+            unconfirmed_publish: None,
+        }
+    }
+
+    /// The directory, for tests that check another port stays in it with the note.
+    #[cfg(test)]
     pub fn directory(&self) -> &DirectoryHandle {
         &self.directory
     }
 
     /// The handle stays valid when the directory moves, but a deleted directory takes no new
-    /// entries: it is recreated at its path, as a file or link there is refused.
+    /// entries: it is recreated inside the locked Note Root, as a file or link there is refused.
     ///
     /// Only the note follows: its writes are guarded, and what it finds here cannot be proved to
     /// be the directory just made. The other storage ports write without a guard, so they keep
     /// their descriptor of the deleted directory and fail until the next start.
     fn recreate_directory(&mut self) -> Result<(), NoteStorageError> {
-        match std::fs::create_dir(&self.path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(source) => {
-                return Err(NoteStorageError::CreateNoteDirectory {
+        let Some((root, name)) = &self.parent else {
+            return Err(NoteStorageError::CreateNoteDirectory {
+                path: self.path.clone(),
+                source: io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "the note directory disappeared while the program started",
+                ),
+            });
+        };
+        self.directory = root.open_or_create_child(name, false).map_err(|source| {
+            if is_not_a_plain_directory(&source) {
+                NoteStorageError::UnsafeNoteDirectory(self.path.clone())
+            } else {
+                NoteStorageError::CreateNoteDirectory {
                     path: self.path.clone(),
                     source,
-                });
+                }
             }
-        }
-        self.directory = open_directory(&self.path)?;
+        })?;
         Ok(())
     }
 
@@ -410,6 +452,7 @@ const fn symbolic_link_loop() -> i32 {
     62
 }
 
+#[cfg(test)]
 fn open_directory(path: &Path) -> Result<DirectoryHandle, NoteStorageError> {
     DirectoryHandle::open(path).map_err(|error| {
         if error.raw_os_error() == Some(symbolic_link_loop())
@@ -587,6 +630,50 @@ mod tests {
         files.persist(&request("back", NEW)).unwrap();
         assert_eq!(fs::read(root.join(NOTE_NAME)).unwrap(), b"back");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The root moved and another note now sits at its old path: the recreated directory goes
+    /// into the locked root, and the other note's files keep their bytes.
+    #[test]
+    fn a_deleted_note_directory_is_recreated_in_the_locked_root_only() {
+        let base = unique_temp_path("persist-recreate-root");
+        fs::create_dir_all(base.join("note")).unwrap();
+        let mut files = NoteFiles::in_directory(
+            &base.join("note"),
+            DirectoryHandle::open(&base.join("note")).unwrap(),
+            Some((DirectoryHandle::open(&base).unwrap(), "note".to_owned())),
+        );
+        let moved = unique_temp_path("persist-recreate-root-moved");
+        fs::rename(&base, &moved).unwrap();
+        fs::create_dir_all(base.join("note")).unwrap();
+        fs::write(base.join("note").join(NOTE_NAME), b"other").unwrap();
+        fs::remove_dir(moved.join("note")).unwrap();
+        files.persist(&request("back", NEW)).unwrap();
+        assert_eq!(
+            fs::read(moved.join("note").join(NOTE_NAME)).unwrap(),
+            b"back"
+        );
+        assert_eq!(
+            fs::read(base.join("note").join(NOTE_NAME)).unwrap(),
+            b"other"
+        );
+        assert_eq!(fs::read_dir(base.join("note")).unwrap().count(), 1);
+        fs::remove_dir_all(base).unwrap();
+        fs::remove_dir_all(moved).unwrap();
+    }
+
+    /// Startup gets no root: a directory deleted while the program starts stops the start.
+    #[test]
+    fn without_a_root_a_deleted_directory_fails_the_save() {
+        let (root, files) = fixture("persist-no-root");
+        let mut files =
+            NoteFiles::in_directory(&root, files.directory().try_clone().unwrap(), None);
+        fs::remove_dir(&root).unwrap();
+        assert!(matches!(
+            files.persist(&request("back", NEW)),
+            Err(NoteStorageError::CreateNoteDirectory { .. })
+        ));
+        assert!(!root.exists());
     }
 
     #[test]

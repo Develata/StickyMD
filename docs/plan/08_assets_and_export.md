@@ -4,8 +4,8 @@
 
 - `Layer`: Capability
 - `Status`: Approved Contract
-- `Version`: 0.3.0
-- `Last Review`: 2026-11-10
+- `Version`: 0.3.1
+- `Last Review`: 2026-11-19
 - `Scope`: managed/user 资产边界、命名、编码保留、引用追踪、.trash、undo/redo 副作用、启动 reconcile、安全 GC、remote 图片、导出
 
 ---
@@ -49,7 +49,7 @@ stickymd-<20|32|64-lowercase-hex>.<png|jpg|webp|gif>
 
 并且必须同时满足：
 
-1. 文件位于 canonical `./note/images/` 或 `./note/.trash/` 直属目录；
+1. 文件位于 canonical `<note-root>/note/images/` 或 `<note-root>/note/.trash/` 直属目录（Note Root 见 `01`；便携版即程序目录）；
 2. 目录与文件均不是 reparse point，文件是普通文件；
 3. 对文件实际 bytes 计算的完整 SHA-256 以前述文件名 hash 部分开头。
 

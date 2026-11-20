@@ -1,11 +1,13 @@
-//! Stable notices from the locked Windows normal dependency graph.
+//! Stable notices from the locked normal dependency graph of one platform's host.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
+//! plan_ref: docs/plan/11_testing_and_release.md#macos-release-artifact
 
 mod graph;
 mod licenses;
 #[cfg(test)]
 mod tests;
 
+use super::platform::Platform;
 use crate::{atomic_evidence, integrity, repository};
 use std::{fmt::Write, fs, path::Path};
 
@@ -15,13 +17,14 @@ pub(super) fn normalized_license(path: &Path) -> Result<String, String> {
         .replace('\r', "\n"))
 }
 
-pub(super) fn generate(root: &Path, destination: &Path) -> Result<(), String> {
-    generate_with_output(root, destination, &mut std::io::stdout().lock())
+pub(super) fn generate(root: &Path, destination: &Path, platform: Platform) -> Result<(), String> {
+    generate_with_output(root, destination, platform, &mut std::io::stdout().lock())
 }
 
 pub(super) fn generate_with_output(
     root: &Path,
     destination: &Path,
+    platform: Platform,
     output: &mut dyn std::io::Write,
 ) -> Result<(), String> {
     let destination = std::path::absolute(destination).map_err(|error| error.to_string())?;
@@ -35,10 +38,10 @@ pub(super) fn generate_with_output(
             "1",
             "--locked",
             "--filter-platform",
-            "x86_64-pc-windows-msvc",
+            platform.target(),
         ],
     )?;
-    let (contents, count) = render(root, &metadata)?;
+    let (contents, count) = render(root, &metadata, platform)?;
     // The preflight is only an early rejection; publication must still reject a
     // destination created while Cargo metadata and license files were being read.
     atomic_evidence::write_new(&destination, contents.as_bytes())?;
@@ -73,12 +76,19 @@ fn preflight_destination(destination: &Path) -> Result<(), String> {
     }
 }
 
-fn render(root: &Path, metadata: &str) -> Result<(String, usize), String> {
-    let packages = graph::runtime_packages(metadata)?;
+fn render(root: &Path, metadata: &str, platform: Platform) -> Result<(String, usize), String> {
+    let packages = graph::runtime_packages(metadata, platform.host_package())?;
     let mut output = licenses::text(&root.join("THIRD_PARTY_NOTICES.md"))?
         .trim_end()
         .replace("\r\n", "\n");
-    output.push_str("\n\n## Generated Rust Runtime Dependency Notices\n\nThis section is generated from the Cargo.lock-resolved normal dependency graph for\nstickymd-win on x86_64-pc-windows-msvc. Build-only and development-only packages are excluded.\n");
+    // For Windows this is byte for byte the text of earlier releases.
+    write!(
+        output,
+        "\n\n## Generated Rust Runtime Dependency Notices\n\nThis section is generated from the Cargo.lock-resolved normal dependency graph for\n{} on {}. Build-only and development-only packages are excluded.\n",
+        platform.host_package(),
+        platform.target()
+    )
+    .unwrap();
     writeln!(
         output,
         "Cargo.lock SHA-256: {}",

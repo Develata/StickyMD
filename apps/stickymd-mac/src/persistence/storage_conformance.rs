@@ -8,14 +8,15 @@ use stickymd_app::execution::PersistenceWorker;
 use stickymd_desktop::shell::storage_conformance::{Completion, StoragePaths, StorageSite};
 
 use super::mac_io_ports;
-use crate::paths::RuntimePaths;
+use crate::paths::{RuntimePaths, open_note_directory};
+use crate::platform::macos::file::DirectoryHandle;
 
 fn macos_storage(root: &Path, on_completion: Completion) -> StorageSite {
-    let executable = root.join("stickymd");
-    std::fs::write(&executable, b"").unwrap();
-    let paths = RuntimePaths::from_executable(&executable).unwrap();
-    paths.ensure_layout().unwrap();
-    let worker = PersistenceWorker::start(mac_io_ports(&paths).unwrap().io, on_completion).unwrap();
+    let note_root = DirectoryHandle::open(root).unwrap();
+    let note = open_note_directory(&note_root).unwrap();
+    let paths = RuntimePaths::of(root);
+    let ports = mac_io_ports(&note_root, &note, &paths).unwrap();
+    let worker = PersistenceWorker::start(ports.io, on_completion).unwrap();
     StorageSite {
         worker,
         paths: StoragePaths {

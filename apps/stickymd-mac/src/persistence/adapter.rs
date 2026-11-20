@@ -2,7 +2,6 @@
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#macos-storage
 
-use std::io;
 use std::path::PathBuf;
 
 use stickymd_app::config::RuntimeConfig;
@@ -22,7 +21,7 @@ use crate::platform::macos::file::DirectoryHandle;
 
 use super::{NoteFiles, NoteStorageError};
 
-/// The one canonical note of this program directory.
+/// The one canonical note of this Note Root.
 pub struct MacNoteStorage {
     files: NoteFiles,
 }
@@ -48,7 +47,7 @@ impl NoteStorage for MacNoteStorage {
     }
 }
 
-/// The managed images of this program directory.
+/// The managed images of this Note Root.
 pub struct MacAssetStore {
     directory: DirectoryHandle,
     images: PathBuf,
@@ -56,14 +55,8 @@ pub struct MacAssetStore {
 }
 
 impl MacAssetStore {
-    pub fn open(paths: &RuntimePaths) -> io::Result<Self> {
-        Ok(Self::in_directory(
-            DirectoryHandle::open(&paths.note_dir)?,
-            paths,
-        ))
-    }
-
-    fn in_directory(directory: DirectoryHandle, paths: &RuntimePaths) -> Self {
+    /// `directory` is (a duplicate of) the Note Directory handle opened at start.
+    pub fn in_directory(directory: DirectoryHandle, paths: &RuntimePaths) -> Self {
         Self {
             directory,
             images: paths.images_dir.clone(),
@@ -132,22 +125,27 @@ impl ConfigStorage for MacConfigStorage {
     }
 }
 
-/// The capabilities of this program directory: the shared I/O worker's ports and Preview's
-/// directory, all opened from one descriptor, so they name the same Note Directory even if its
-/// path is replaced while the program starts.
+/// The capabilities of this Note Root: the shared I/O worker's ports and Preview's directory,
+/// all duplicates of the one `note/` descriptor opened at start, so they name the Note Directory
+/// startup read even if its path is replaced in between.
 pub struct MacPorts {
     pub io: IoPorts<MacNoteStorage, MacAssetStore, MacExportSink, MacConfigStorage>,
     pub preview_directory: DirectoryHandle,
 }
 
-pub fn mac_io_ports(paths: &RuntimePaths) -> Result<MacPorts, StorageFailure> {
-    let files = NoteFiles::open(&paths.note_dir)?;
-    let directory = || {
-        files
-            .directory()
-            .try_clone()
-            .map_err(AssetStorageError::Directory)
-    };
+/// `root` is the locked Note Root: the note's save may recreate a deleted `note/` in it.
+pub fn mac_io_ports(
+    root: &DirectoryHandle,
+    note: &DirectoryHandle,
+    paths: &RuntimePaths,
+) -> Result<MacPorts, StorageFailure> {
+    let directory = || note.try_clone().map_err(AssetStorageError::Directory);
+    let parent = root.try_clone().map_err(AssetStorageError::Directory)?;
+    let files = NoteFiles::in_directory(
+        &paths.note_dir,
+        directory()?,
+        Some((parent, crate::paths::NOTE_DIRECTORY.to_owned())),
+    );
     let assets = MacAssetStore::in_directory(directory()?, paths);
     let export = MacExportSink {
         directory: directory()?,

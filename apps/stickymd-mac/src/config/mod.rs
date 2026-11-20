@@ -5,4 +5,4 @@
 
 mod storage;
 
-pub use storage::{ConfigStorageError, load_config, save_config, save_config_in};
+pub use storage::{ConfigStorageError, load_config_in, save_config_in};

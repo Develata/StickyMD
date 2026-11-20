@@ -52,7 +52,20 @@ pub(super) fn verify(root: &Path, options: &PromotionOptions) -> Result<(), Stri
     integrity::verify_checksum_manifest(&directory, &zip_name, &zip_hash, &sbom_hash)?;
     let names = windows::names(root, &copied_zip)?;
     let readme = readme_index(&names)?;
-    identity::readme_source(&windows::read_entry(root, &copied_zip, readme)?, &source)?;
+    // The README names the build source; a build source other than the checked-out release
+    // commit must be reusable on it.
+    let build = options
+        .build
+        .as_deref()
+        .unwrap_or(&source)
+        .to_ascii_lowercase();
+    identity::readme_source(&windows::read_entry(root, &copied_zip, readme)?, &build)?;
+    super::platform_inputs::verify_reuse(
+        root,
+        super::platform::Platform::WindowsX64,
+        &build,
+        &source,
+    )?;
     temporary.close()?;
     println!(
         "PROMOTION_INPUT=PASS\nPROMOTION_ZIP={}\nPROMOTION_ZIP_SHA256={zip_hash}\nPROMOTION_SBOM_SHA256={sbom_hash}",

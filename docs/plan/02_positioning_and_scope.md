@@ -4,8 +4,8 @@
 
 - `Layer`: Foundation
 - `Status`: Approved Contract
-- `Version`: 0.4.0
-- `Last Review`: 2026-11-14
+- `Version`: 0.5.0
+- `Last Review`: 2026-11-19
 - `Scope`: StickyMD 的存在理由、本体、便签模型、平台与 v1 范围、Non-Goals、优先级与功能拒绝标准
 
 ---
@@ -89,30 +89,40 @@ Editor Session
 
 ## 一张便签模型
 
-- 首版永远只编辑一个 canonical working note：`<program-dir>/note/note.md`。
-- **一个程序目录就是一张便签的身份边界。**
+- 首版永远只编辑一个 canonical working note：`<note-root>/note/note.md`（Note Root 见 `01`）。
+- **一个 Note Root 就是一张便签的身份边界。** 便携版的 Note Root 是程序目录；macOS 安装版的 Note Root 由 app 的名字决定（下一节）。
 - 不提供：新建文档、打开文档、最近文件、文件树、多标签页、搜索全部笔记。
-- 需要第二张便签时，用户复制整个程序目录到别处。
-- 同一程序目录只能运行一个实例（第二个实例唤醒第一个并退出）；
-  不同目录的实例完全独立，可同时运行。
+- 需要第二张便签时，便携版复制整个程序目录到别处；macOS 安装版用另一个名字的 app 副本，且只有该名字的键目录尚不存在时才是新的一张（`05` #note-root）。
+- 同一 Note Root 只能运行一个实例；不同 Note Root 的实例完全独立，可同时运行。Windows 的第二个实例唤醒第一个并退出；
+  macOS 的第二个实例尝试唤醒后退出，唤醒尽力而为（`05` #note-root 第 9 条）。
 
-## Portable 目录身份
+<a id="portable-and-installed"></a>
+## 便携版与安装版
 
-- 纯 portable：解压即用。无 MSI / MSIX / Store 安装。
-- 所有数据只存在于程序目录内：`note/note.md`、`note/config.toml`、`note/images/`、`note/.trash/`。
-- 程序目录不可写时，显示：
+- **Windows：纯 portable。** 解压即用。无 MSI / MSIX / Store 安装。所有数据只存在于程序目录内：
+  `note/note.md`、`note/config.toml`、`note/images/`、`note/.trash/`。
+- **macOS：位置决定便签放在哪里，名字决定是哪一张**（USER 批准 2026-11-19，[安装版报告](../report/2026-11-19-macos-installed-note-location-r2.md)）。
+  - **安装版：** `StickyMD.app` 直接放在 `/Applications` 或 `<家目录>/Applications` 里时，便签在
+    `<家目录>/Library/Application Support/StickyMD/<键>/note/`，键是 bundle 目录名去掉 `.app` 后的 NFC 形式。拖进“应用程序”就是安装，
+    没有安装器，也不写系统设置。
+  - **便携版：** 其他任何位置。便签在 `.app` 旁边的 `note/`，名字不起作用。
+  - 判定比较目录的文件系统身份，不比较路径字符串；判定规则见 `05` #note-root。
+  - 便携版与安装版之间不自动迁移，README 写明手工迁移步骤；目标已有 `note/` 时就停下。
+- Note Root 不可写时，显示：
 
   > 当前目录不可写，请将程序移动到有写权限的文件夹。
 
-  然后退出。
-- **禁止** fallback 到 AppData、LocalAppData、Documents、Registry 或任何用户配置目录。
-  这类 fallback 会破坏“目录就是便签身份”的本体模型。
+  然后退出。macOS 保留“当前目录不可写”这个前缀，后半句按情形给出移动建议（`05` #startup-sequence）。
+- **禁止按失败回退。** 启动时无法确定或打开 Note Root、建立实例或通过可写检查，都提示后退出，绝不因为失败换到另一个位置；
+  运行期的写入失败按 `05` 处理（保留内存文本、报错、取消退出），同样不换位置重试：
+  Windows 不使用 AppData、LocalAppData、Documents、Registry 或任何用户配置目录；macOS 的模式只由 `.app` 的位置决定，
+  安装版位于 `Application Support` 是位置规则的结果，不是 fallback。按失败回退会破坏“Note Root 就是便签身份”的本体模型。
 
 <a id="platforms"></a>
 ## 平台
 
 ```text
-交付形态：Windows 11 x64（portable ZIP）；macOS 27+ arm64（本机构建，暂不公开分发）
+交付形态：Windows 11 x64（portable ZIP）；macOS 27+ arm64（ad-hoc 签名的 ZIP，下一版本起与 Windows 同版公开发布）
 共享实现：面向 Windows、Debian、macOS
 ```
 
@@ -134,8 +144,8 @@ USER 批准（2026-11-10，[决定报告](../report/2026-11-09-macos-platform-de
 | --- | --- |
 | 版本与架构 | macOS 27 及以上，仅 `aarch64-apple-darwin`；不打 x86_64 或 universal 包 |
 | 应用身份 | `StickyMD.app`，`io.github.develata.stickymd`，`LSUIElement`，无 Dock 图标，不启用沙盒 |
-| 签名与分发 | 本机 ad-hoc 签名；公开分发需 Developer ID 与公证，另行决定 |
-| 便签目录 | 包含 `StickyMD.app` 的目录是 Program Directory，数据在 `<dir>/note/`，不进 bundle；复制整个目录得到第二张便签 |
+| 签名与分发 | ad-hoc 签名，不购买 Developer ID，不公证（USER 决定 2026-11-19，[分发报告](../report/2026-11-19-macos-public-distribution-decision-r2.md)）。GitHub Release 附 ad-hoc 签名的 ZIP，与 Windows 同版发布（`11` #release-attachment-set）；用户第一次打开时须在“系统设置 → 隐私与安全性”中允许（推断，由 Phase 18 的下载路径验收确认） |
+| 便签目录 | 便携版：包含 `StickyMD.app` 的目录是 Program Directory 与 Note Root，数据在 `<dir>/note/`，不进 bundle；复制整个目录得到第二张便签。安装版：`.app` 直接位于 `/Applications` 或 `<家目录>/Applications` 时，Note Root 为 `<家目录>/Library/Application Support/StickyMD/<键>/`（`05` #note-root） |
 | 卷要求 | 卷须支持不覆盖改名（`RENAME_EXCL`），否则提示后退出（`05` macOS 节） |
 | 默认字体 | 中文 PingFang SC；西文 Times New Roman → Georgia；代码 Menlo；数学不变 |
 | 快捷键 | Cmd 替代 Ctrl（`07` macOS 节） |
@@ -265,9 +275,10 @@ Initial Engineering Targets，未经实测不得对外宣传。
 
 ## Failure Paths
 
-- 程序目录不可写：明确提示后退出（不静默 fallback）。
+- Note Root 不可写：明确提示后退出（不静默 fallback）。
 - 功能请求落在 Non-Goals：默认拒绝 PR，引用本章。
 - 目录身份解析失败（路径无法 canonical 化）：按启动失败处理，记录并退出。
+- macOS 的位置判定、安装版的键或家目录无法确定：按启动失败处理，提示原因并退出（`05` #note-root）。
 
 ## Verification
 

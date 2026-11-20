@@ -1,9 +1,8 @@
-//! One running copy per program directory: a lock on the directory itself, and a socket through
-//! which a second start asks the first to come forward.
+//! One running copy per Note Root: a lock on the directory itself, taken on the handle the host
+//! opened it with, and a socket through which a second start asks the first to come forward.
 //!
 //! plan_ref: docs/plan/05_document_persistence.md#program-directory-identity
 
-use std::fs::File;
 use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -13,15 +12,17 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::file::DirectoryHandle;
+
 /// `sockaddr_un.sun_path` is 104 bytes on macOS, the terminator included.
 const SOCKET_PATH_LIMIT: usize = 103;
 const WAKE_RETRIES_MS: [u64; 3] = [50, 150, 300];
 
 #[derive(Debug, Error)]
 pub enum InstanceError {
-    #[error("cannot open the program directory: {0}")]
+    #[error("cannot open the note root: {0}")]
     Open(io::Error),
-    #[error("cannot lock the program directory: {0}")]
+    #[error("cannot lock the note root: {0}")]
     Lock(io::Error),
     #[error("cannot create the wake socket: {0}")]
     Socket(io::Error),
@@ -29,7 +30,7 @@ pub enum InstanceError {
 
 pub enum InstanceDisposition {
     Primary(InstanceGuard),
-    /// Another copy runs from this directory and was asked to come forward, or could not be
+    /// Another copy runs on this Note Root and was asked to come forward, or could not be
     /// reached; either way this copy must not start a second session (plan 05).
     SecondarySignaled,
 }
@@ -37,18 +38,22 @@ pub enum InstanceDisposition {
 /// Held for the life of the process. The kernel releases the lock when the process ends, however
 /// it ends.
 pub struct InstanceGuard {
-    _lock: File,
+    _lock: DirectoryHandle,
     socket_path: Option<PathBuf>,
+    /// `(st_dev, st_ino)` of the socket this guard bound; only that entry is removed on drop.
+    bound: Option<(u64, u64)>,
     listener: Option<UnixListener>,
 }
 
 impl InstanceGuard {
-    pub fn acquire(program_dir: &Path) -> Result<InstanceDisposition, InstanceError> {
-        // No file is created, so a second start leaves nothing behind (plan 05 startup order).
-        let lock = File::open(program_dir).map_err(InstanceError::Open)?;
+    /// Locks the directory `note_root` names, not a path that may by now name another one. No
+    /// file is created, so a second start leaves nothing behind (plan 05 startup order).
+    pub fn acquire(note_root: &DirectoryHandle) -> Result<InstanceDisposition, InstanceError> {
+        // A duplicate shares the open directory, so the lock lives as long as this guard.
+        let lock = note_root.try_clone().map_err(InstanceError::Open)?;
         let socket_path = socket_path_for(&identity(&lock)?);
         // SAFETY: the descriptor is valid for the lifetime of `lock`.
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        if unsafe { libc::flock(lock.directory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             let error = io::Error::last_os_error();
             if error.kind() == io::ErrorKind::WouldBlock {
                 if let Some(path) = &socket_path {
@@ -58,17 +63,25 @@ impl InstanceGuard {
             }
             return Err(InstanceError::Lock(error));
         }
+        // Holding the lock proves no other copy owns this path, so a socket there is stale. Any
+        // other kind of entry is left alone, and this copy runs without the wake listener.
+        let socket_path = socket_path.filter(|path| match entry_at(path) {
+            Some((_, true)) => std::fs::remove_file(path).is_ok(),
+            Some((_, false)) => false,
+            None => true,
+        });
         let listener = match &socket_path {
-            Some(path) => {
-                // Holding the lock proves no other copy owns this path: what is there is stale.
-                let _ = std::fs::remove_file(path);
-                Some(UnixListener::bind(path).map_err(InstanceError::Socket)?)
-            }
+            Some(path) => Some(UnixListener::bind(path).map_err(InstanceError::Socket)?),
             None => None,
         };
+        let bound = socket_path
+            .as_deref()
+            .and_then(entry_at)
+            .map(|(identity, _)| identity);
         Ok(InstanceDisposition::Primary(Self {
             _lock: lock,
             socket_path,
+            bound,
             listener,
         }))
     }
@@ -98,13 +111,25 @@ impl InstanceGuard {
 
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
-        if let Some(path) = &self.socket_path {
+        if let (Some(path), Some(bound)) = (&self.socket_path, self.bound)
+            && entry_at(path) == Some((bound, true))
+        {
             let _ = std::fs::remove_file(path);
         }
     }
 }
 
-fn identity(directory: &File) -> Result<[u8; 8], InstanceError> {
+/// The entry at `path` itself (a link is not followed): its identity and whether it is a socket.
+fn entry_at(path: &Path) -> Option<((u64, u64), bool)> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    Some((
+        (metadata.dev(), metadata.ino()),
+        metadata.file_type().is_socket(),
+    ))
+}
+
+fn identity(directory: &DirectoryHandle) -> Result<[u8; 8], InstanceError> {
     use std::os::unix::fs::MetadataExt;
     let metadata = directory.metadata().map_err(InstanceError::Open)?;
     let mut digest = Sha256::new();
@@ -148,8 +173,12 @@ mod tests {
         root
     }
 
+    fn acquire(root: &Path) -> InstanceDisposition {
+        InstanceGuard::acquire(&DirectoryHandle::open(root).unwrap()).unwrap()
+    }
+
     fn primary(root: &Path) -> InstanceGuard {
-        match InstanceGuard::acquire(root).unwrap() {
+        match acquire(root) {
             InstanceDisposition::Primary(guard) => guard,
             InstanceDisposition::SecondarySignaled => panic!("expected the first copy"),
         }
@@ -174,7 +203,7 @@ mod tests {
             })
             .unwrap();
         assert!(matches!(
-            InstanceGuard::acquire(&root).unwrap(),
+            acquire(&root),
             InstanceDisposition::SecondarySignaled
         ));
         receiver.recv_timeout(Duration::from_secs(3)).unwrap();
@@ -188,7 +217,7 @@ mod tests {
         let root = directory("instance-backlog");
         let mut first = primary(&root);
         assert!(matches!(
-            InstanceGuard::acquire(&root).unwrap(),
+            acquire(&root),
             InstanceDisposition::SecondarySignaled
         ));
         let (sender, receiver) = mpsc::channel();
@@ -200,6 +229,30 @@ mod tests {
         receiver.recv_timeout(Duration::from_secs(3)).unwrap();
         drop(first);
         fs::remove_dir(root).unwrap();
+    }
+
+    /// The lock is on the directory the handle names: after a move it goes with the directory,
+    /// and a new directory at the old path is another Note Root.
+    #[test]
+    fn the_lock_follows_the_handle_not_the_path() {
+        let root = directory("instance-handle");
+        let handle = DirectoryHandle::open(&root).unwrap();
+        let moved = unique_temp_path("instance-handle-moved");
+        fs::rename(&root, &moved).unwrap();
+        fs::create_dir(&root).unwrap();
+        let first = match InstanceGuard::acquire(&handle).unwrap() {
+            InstanceDisposition::Primary(guard) => guard,
+            InstanceDisposition::SecondarySignaled => panic!("expected the first copy"),
+        };
+        drop(handle);
+        assert!(matches!(
+            acquire(&moved),
+            InstanceDisposition::SecondarySignaled
+        ));
+        let other = primary(&root);
+        drop((first, other));
+        fs::remove_dir(root).unwrap();
+        fs::remove_dir(moved).unwrap();
     }
 
     #[test]
@@ -219,10 +272,28 @@ mod tests {
         let first = primary(&root);
         let path = first.socket_path.clone().unwrap();
         drop(first);
-        fs::write(&path, b"stale").unwrap();
+        // A socket left by a copy that ended without cleaning up.
+        drop(UnixListener::bind(&path).unwrap());
         let again = primary(&root);
         assert!(again.listener.is_some());
         drop(again);
+        assert!(!path.exists());
+        fs::remove_dir(root).unwrap();
+    }
+
+    /// Something that is not a socket at the socket's name is not this program's to delete.
+    #[test]
+    fn a_plain_file_at_the_socket_name_is_kept_and_the_copy_runs_without_wake() {
+        let root = directory("instance-plain-file");
+        let first = primary(&root);
+        let path = first.socket_path.clone().unwrap();
+        drop(first);
+        fs::write(&path, b"not ours").unwrap();
+        let again = primary(&root);
+        assert!(again.listener.is_none());
+        drop(again);
+        assert_eq!(fs::read(&path).unwrap(), b"not ours");
+        fs::remove_file(&path).unwrap();
         fs::remove_dir(root).unwrap();
     }
 }

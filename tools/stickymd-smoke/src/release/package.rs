@@ -67,9 +67,26 @@ pub(crate) fn verify(
     let package = temporary.path().join("StickyMD");
     let readme = fs::read_to_string(package.join("README.txt"))
         .map_err(|error| format!("cannot read packaged README: {error}"))?;
-    identity::readme_source(&readme, &source)?;
+    // The README names the build source; one other than HEAD must be reusable on it.
+    let build = options
+        .build
+        .as_deref()
+        .unwrap_or(&source)
+        .to_ascii_lowercase();
+    identity::readme_source(&readme, &build)?;
+    super::platform_inputs::verify_reuse(
+        root,
+        super::platform::Platform::WindowsX64,
+        &build,
+        &source,
+    )?;
     let expected_notices = temporary.path().join("expected-third-party-notices.txt");
-    notices::generate_with_output(root, &expected_notices, output)?;
+    notices::generate_with_output(
+        root,
+        &expected_notices,
+        super::platform::Platform::WindowsX64,
+        output,
+    )?;
     if integrity::sha256(&package.join("THIRD_PARTY_NOTICES.txt"))?
         != integrity::sha256(&expected_notices)?
     {

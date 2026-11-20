@@ -635,14 +635,19 @@ fn every_product_source_has_an_explicit_rule() {
 /// crate no rule knows about is still refused and the rule does not reach the Windows host.
 #[test]
 fn the_macos_host_directory_is_no_input_of_any_module() {
-    for path in [
+    // Their manifests merge features into the Windows build, so they invalidate every module.
+    for manifest in [
         "apps/stickymd-mac/Cargo.toml",
+        "crates/stickymd-posix/Cargo.toml",
+    ] {
+        assert_eq!(path_domains(manifest), super::GLOBAL, "{manifest}");
+    }
+    for path in [
         "apps/stickymd-mac/src/main.rs",
         "apps/stickymd-mac/src/platform/mod.rs",
         "apps/stickymd-mac/src/platform/a_file_added_later.rs",
         "apps/stickymd-mac/packaging/Info.plist",
         "apps/stickymd-mac/tests/pasteboard.rs",
-        "crates/stickymd-posix/Cargo.toml",
         "crates/stickymd-posix/src/lib.rs",
         "crates/stickymd-posix/src/file.rs",
         "crates/stickymd-posix/src/atomic_file.rs",

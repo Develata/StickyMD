@@ -7,13 +7,14 @@
 
 ## 一句话
 
-StickyMD 是 Windows 11 x64 上的单张 Markdown 草稿纸：
-一个程序目录 = 一张便签，永远只编辑 `note/note.md`。
+StickyMD 是 Windows 11 x64 与 macOS 27+ arm64 上的单张 Markdown 草稿纸：
+一个 Note Root = 一张便签，永远只编辑 `note/note.md`。便携版的 Note Root 是程序目录；
+macOS 安装版（app 直接在“应用程序”里）的 Note Root 是 `~/Library/Application Support/StickyMD/<app 名>/`。
 
 ## 核心模型
 
 ```text
-程序目录（身份） → note/note.md（唯一文档）
+Note Root（身份；便携版即程序目录） → note/note.md（唯一文档）
 运行时 DocumentState 是唯一权威；
 磁盘文件、Preview、UI 都是它的投影。
 ```

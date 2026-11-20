@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::status::success_status;
 use super::{
     CompatibleSuccess, Lookup, ModuleId, compatible_success, lookup, lookup_all, lookup_for_input,
-    record_path, record_success,
+    record_path, record_success_at,
 };
 use crate::qualification::module_evidence::fixtures::valid_document;
 use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
@@ -18,7 +18,8 @@ fn changed_input_requires_rerun_without_overwriting_last_success() {
     let root = fixture();
     let candidate = candidate();
     write_evidence(&root, ModuleId::G4, "first pass");
-    record_success(&root, ModuleId::G4, &candidate).expect("record first success");
+    record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit)
+        .expect("record first success");
     let record = record_path(&root, ModuleId::G4);
     let ledger_before = fs::read(&record).expect("read ledger");
     assert!(
@@ -48,7 +49,7 @@ fn precomputed_planning_input_still_verifies_archived_evidence_and_schema() {
     let root = fixture();
     let module = ModuleId::G4;
     write_evidence(&root, module, "complete pass");
-    record_success(&root, module, &candidate()).unwrap();
+    record_success_at(&root, module, &candidate(), &candidate().source_commit).unwrap();
     let input = super::fingerprint::calculate(&root, module).unwrap();
     let planned = lookup_for_input(&root, module, &input)
         .unwrap()
@@ -72,7 +73,7 @@ fn a_damaged_record_is_invalid_and_a_formal_rerun_replaces_it() {
     let root = fixture();
     let candidate = candidate();
     write_evidence(&root, ModuleId::G4, "first pass");
-    record_success(&root, ModuleId::G4, &candidate).unwrap();
+    record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit).unwrap();
     let record = record_path(&root, ModuleId::G4);
     let original = fs::read_to_string(&record).unwrap();
     for damaged in [
@@ -87,7 +88,7 @@ fn a_damaged_record_is_invalid_and_a_formal_rerun_replaces_it() {
         assert_eq!(found.rerun_reason(), "INVALID_LAST_SUCCESS", "{damaged}");
     }
     // The next registration of a passing run repairs the record in place.
-    record_success(&root, ModuleId::G4, &candidate).unwrap();
+    record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit).unwrap();
     assert!(compatible_success(&root, ModuleId::G4).unwrap().is_some());
     fs::remove_dir_all(root).unwrap();
 }
@@ -97,7 +98,7 @@ fn registration_applies_the_same_contract_as_readiness() {
     let root = fixture();
     let candidate = candidate();
     write_evidence(&root, ModuleId::G4, "passing run");
-    record_success(&root, ModuleId::G4, &candidate).unwrap();
+    record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit).unwrap();
     let evidence_before = fs::read(
         compatible_success(&root, ModuleId::G4)
             .unwrap()
@@ -123,7 +124,7 @@ fn registration_applies_the_same_contract_as_readiness() {
     for document in [decoy, incomplete, foreign] {
         receipt::write_receipt(&root, ModuleId::G4.receipt(), &document).unwrap();
         assert!(
-            record_success(&root, ModuleId::G4, &candidate).is_err(),
+            record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit).is_err(),
             "{document}"
         );
     }
@@ -312,13 +313,15 @@ fn successful_rerun_atomically_promotes_new_evidence() {
     let root = fixture();
     let candidate = candidate();
     write_evidence(&root, ModuleId::G4, "first pass");
-    record_success(&root, ModuleId::G4, &candidate).expect("record first success");
+    record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit)
+        .expect("record first success");
     let first = compatible_success(&root, ModuleId::G4)
         .expect("first compatibility")
         .expect("first success");
 
     write_evidence(&root, ModuleId::G4, "second pass");
-    record_success(&root, ModuleId::G4, &candidate).expect("record second success");
+    record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit)
+        .expect("record second success");
     let second = compatible_success(&root, ModuleId::G4)
         .expect("second compatibility")
         .expect("second success");
@@ -337,7 +340,8 @@ fn failed_result_cannot_replace_the_last_success() {
     let root = fixture();
     let candidate = candidate();
     write_evidence(&root, ModuleId::G4, "passing run");
-    record_success(&root, ModuleId::G4, &candidate).expect("record success");
+    record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit)
+        .expect("record success");
     let record = record_path(&root, ModuleId::G4);
     let ledger_before = fs::read(&record).expect("read ledger");
     let success_before = compatible_success(&root, ModuleId::G4)
@@ -350,7 +354,7 @@ fn failed_result_cannot_replace_the_last_success() {
         1,
     );
     receipt::write_receipt(&root, ModuleId::G4.receipt(), &failed).expect("write failed result");
-    assert!(record_success(&root, ModuleId::G4, &candidate).is_err());
+    assert!(record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit).is_err());
     assert_eq!(
         ledger_before,
         fs::read(&record).expect("read preserved ledger")
@@ -387,7 +391,13 @@ fn resource_failures_preserve_completed_groups_and_old_aggregate_is_not_imported
     let candidate = candidate();
     for group in [SourcePreview, Math] {
         write_resource_evidence(&root, group);
-        record_success(&root, ModuleId::Resource(group), &candidate).unwrap();
+        record_success_at(
+            &root,
+            ModuleId::Resource(group),
+            &candidate,
+            &candidate.source_commit,
+        )
+        .unwrap();
     }
     let math_record = record_path(&root, ModuleId::Resource(Math));
     let before = fs::read(&math_record).unwrap();
@@ -395,7 +405,15 @@ fn resource_failures_preserve_completed_groups_and_old_aggregate_is_not_imported
     partial.measurements.remove(0);
     let document = crate::resource_plan::tests::document(Window, &partial);
     receipt::write_receipt(&root, Window.receipt(), &document).unwrap();
-    assert!(record_success(&root, ModuleId::Resource(Window), &candidate).is_err());
+    assert!(
+        record_success_at(
+            &root,
+            ModuleId::Resource(Window),
+            &candidate,
+            &candidate.source_commit
+        )
+        .is_err()
+    );
     assert!(
         compatible_success(&root, ModuleId::Resource(Window))
             .unwrap()
@@ -428,16 +446,24 @@ fn resource_input_or_candidate_drift_cannot_promote_an_old_measurement() {
     let module = ModuleId::Resource(Window);
     let candidate = candidate();
     write_resource_evidence(&root, Window);
-    record_success(&root, module, &candidate).unwrap();
+    record_success_at(&root, module, &candidate, &candidate.source_commit).unwrap();
     let record = record_path(&root, module);
     let ledger = fs::read(&record).unwrap();
     let mut wrong_candidate = candidate.clone();
     wrong_candidate.exe_sha256 = "0".repeat(64);
-    assert!(record_success(&root, module, &wrong_candidate).is_err());
+    assert!(
+        record_success_at(
+            &root,
+            module,
+            &wrong_candidate,
+            &wrong_candidate.source_commit
+        )
+        .is_err()
+    );
     let input = root.join("tools/stickymd-smoke/src/runtime/resources/window.rs");
     fs::create_dir_all(input.parent().unwrap()).unwrap();
     fs::write(input, "modified during measurement").unwrap();
-    assert!(record_success(&root, module, &candidate).is_err());
+    assert!(record_success_at(&root, module, &candidate, &candidate.source_commit).is_err());
     assert_eq!(ledger, fs::read(&record).unwrap());
     assert!(compatible_success(&root, module).unwrap().is_none());
     fs::remove_dir_all(root).unwrap();
@@ -450,7 +476,13 @@ fn every_resource_group_needs_its_own_success() {
     let candidate = candidate();
     for group in crate::resource_plan::GROUPS {
         write_resource_evidence(&root, group);
-        record_success(&root, ModuleId::Resource(group), &candidate).unwrap();
+        record_success_at(
+            &root,
+            ModuleId::Resource(group),
+            &candidate,
+            &candidate.source_commit,
+        )
+        .unwrap();
     }
     for group in crate::resource_plan::GROUPS {
         let path = record_path(&root, ModuleId::Resource(group));

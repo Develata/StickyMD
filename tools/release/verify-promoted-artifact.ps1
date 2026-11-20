@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory = $true)][string]$SourceSha,
     [Parameter(Mandatory = $true)][string]$ExpectedZipSha256,
     [Parameter(Mandatory = $true)][string]$ExpectedSbomSha256,
-    [Parameter(Mandatory = $true)][string]$ReleaseTag
+    [Parameter(Mandatory = $true)][string]$ReleaseTag,
+    [string]$BuildSha
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,8 +14,10 @@ Set-StrictMode -Version Latest
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 . (Join-Path $PSScriptRoot 'invoke-smoke.ps1')
 $artifactRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ArtifactDirectory)
-Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments @(
+$arguments = @(
     'verify-promoted', '--artifact-directory', $artifactRoot,
     '--source-sha', $SourceSha, '--expected-zip-sha256', $ExpectedZipSha256,
     '--expected-sbom-sha256', $ExpectedSbomSha256, '--release-tag', $ReleaseTag
 )
+if ($BuildSha) { $arguments += @('--build-sha', $BuildSha) }
+Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments $arguments

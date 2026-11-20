@@ -21,10 +21,11 @@ pub(crate) enum Phase {
     P15,
     P16,
     P17,
+    P18,
 }
 
 impl Phase {
-    pub(crate) const ALL: [Self; 19] = [
+    pub(crate) const ALL: [Self; 20] = [
         Self::P00,
         Self::P01,
         Self::P02,
@@ -44,6 +45,7 @@ impl Phase {
         Self::P15,
         Self::P16,
         Self::P17,
+        Self::P18,
     ];
 
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
@@ -67,7 +69,8 @@ impl Phase {
             "15" | "phase-15" => Ok(Self::P15),
             "16" | "phase-16" => Ok(Self::P16),
             "17" | "phase-17" => Ok(Self::P17),
-            _ => Err(format!("unknown phase `{value}`; expected 00..17 or 11-b")),
+            "18" | "phase-18" => Ok(Self::P18),
+            _ => Err(format!("unknown phase `{value}`; expected 00..18 or 11-b")),
         }
     }
 
@@ -92,6 +95,7 @@ impl Phase {
             Self::P15 => "15",
             Self::P16 => "16",
             Self::P17 => "17",
+            Self::P18 => "18",
         }
     }
 }
@@ -1052,7 +1056,9 @@ impl Options {
         if options.runtime
             && matches!(
                 selection,
-                Selection::Phase(Phase::P00 | Phase::P01 | Phase::P02 | Phase::P15 | Phase::P16)
+                Selection::Phase(
+                    Phase::P00 | Phase::P01 | Phase::P02 | Phase::P15 | Phase::P16 | Phase::P18
+                )
             )
         {
             return Err(
@@ -1105,7 +1111,7 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..17|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke dev-check [--plan] [--mode=tests|performance|all]\n       stickymd-smoke timings --input <json-or-log> [--input <path> ...] [--json]\n       stickymd-smoke startup-details --trace <v2-path> --details <sidecar-path> [--json]\n       stickymd-smoke phase-entry[-plan] <00..17|11-b|all> [--Parameter=value]\n       stickymd-smoke release <build-package|generate-sbom|package-inputs|prepare-package|publish-package|workspace-version|verify-promoted|verify-package|verify-workflow|verify-remote-state|notices|checksums|prepare-sbom|publish-sbom|syft-plan|syft-publish|syft-verify> [options]; see tools/stickymd-smoke/README.md"
+        "usage: stickymd-smoke phase <00..18|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke dev-check [--plan] [--mode=tests|performance|all]\n       stickymd-smoke timings --input <json-or-log> [--input <path> ...] [--json]\n       stickymd-smoke startup-details --trace <v2-path> --details <sidecar-path> [--json]\n       stickymd-smoke phase-entry[-plan] <00..16|18|11-b|all> [--Parameter=value]\n       stickymd-smoke release <build-package|generate-sbom|package-inputs|prepare-package|publish-package|workspace-version|verify-promoted|verify-package|verify-workflow|verify-remote-state|notices|checksums|prepare-sbom|publish-sbom|syft-plan|syft-publish|syft-verify> [options]; see tools/stickymd-smoke/README.md"
     }
 }
 

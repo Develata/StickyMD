@@ -108,7 +108,7 @@ pub(super) fn lookup_all(root: &Path) -> Result<Snapshot, String> {
             .digests;
         let _guard = store.read_guard()?;
         for (module, current) in recorded.into_iter().zip(digests) {
-            let lookup = load(&store, module, &current)?;
+            let lookup = load(root, &store, module, &current)?;
             if let Some(entry) = modules.iter_mut().find(|(id, _)| *id == module) {
                 entry.1 = lookup;
             }
@@ -156,13 +156,18 @@ fn lookup_with(
     }
     let current = current()?;
     let _guard = store.read_guard()?;
-    load(&store, module, &current)
+    load(root, &store, module, &current)
 }
 
 /// Validate one module's record for `current` and everything it references. The caller
 /// holds the shared store lock, so no writer can replace or prune what is checked.
 /// Content problems are `Invalid`; only store-level failures are errors.
-fn load(store: &LedgerStore, module: ModuleId, current: &str) -> Result<Lookup, String> {
+fn load(
+    root: &Path,
+    store: &LedgerStore,
+    module: ModuleId,
+    current: &str,
+) -> Result<Lookup, String> {
     let path = store.module_record(module.as_str(), current)?;
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -176,13 +181,14 @@ fn load(store: &LedgerStore, module: ModuleId, current: &str) -> Result<Lookup, 
             )));
         }
     };
-    Ok(match verify(store, module, current, &text) {
+    Ok(match verify(root, store, module, current, &text) {
         Ok(success) => Lookup::Valid(success),
         Err(reason) => Lookup::Invalid(format!("ledger record {}: {reason}", path.display())),
     })
 }
 
 fn verify(
+    root: &Path,
     store: &LedgerStore,
     module: ModuleId,
     current: &str,
@@ -206,11 +212,13 @@ fn verify(
     let document =
         std::str::from_utf8(&bytes).map_err(|error| format!("evidence is not UTF-8: {error}"))?;
     let origin = Origin {
+        repository: root,
         source_commit: &record.origin_source_commit,
         version: &record.origin_version,
         exe_sha256: &record.origin_exe_sha256,
         zip_sha256: &record.origin_zip_sha256,
         input_fingerprint: current,
+        run_commit: None,
     };
     for companion in module_evidence::validate(module, document, &origin)? {
         let archived = store.artifact(&companion.sha256)?;
@@ -233,27 +241,48 @@ fn verify(
     })
 }
 
+/// Record the worktree receipt of `module` as the success of `candidate`, for a run on this
+/// checkout's HEAD.
 pub(super) fn record_success(
     root: &Path,
     module: ModuleId,
     candidate: &Candidate,
+) -> Result<(), String> {
+    record_success_at(root, module, candidate, &head(root)?)
+}
+
+/// [`record_success`] for a run on `run_commit`, the commit whose inputs this checkout holds.
+pub(super) fn record_success_at(
+    root: &Path,
+    module: ModuleId,
+    candidate: &Candidate,
+    run_commit: &str,
 ) -> Result<(), String> {
     record_success_for_input(
         root,
         module,
         candidate,
         &fingerprint::calculate(root, module)?,
+        run_commit,
     )
 }
 
+/// The checkout's HEAD: the commit a registered run must have run on.
+pub(super) fn head(root: &Path) -> Result<String, String> {
+    receipt::command_text(root, "git", &["rev-parse", "HEAD"])
+}
+
 /// Record the worktree receipt of `module` as the success of `candidate` for inputs
-/// `current`, a digest the caller computed after the run finished. Registration applies
-/// the same evidence contract as lookup, so an incomplete or foreign receipt fails here.
+/// `current`, a digest the caller computed after the run finished, of a run on `run_commit`.
+/// Registration applies the same evidence contract as lookup, so an incomplete or foreign
+/// receipt fails here; it also requires the evidence to be the run on `run_commit`, so an
+/// earlier run that merely reuses the same candidate cannot take these inputs' fingerprint.
 pub(super) fn record_success_for_input(
     root: &Path,
     module: ModuleId,
     candidate: &Candidate,
     current: &str,
+    run_commit: &str,
 ) -> Result<(), String> {
     // Read the receipt once: the same bytes are validated, hashed and archived, so a
     // concurrent rewrite of the worktree receipt cannot be published as this success.
@@ -268,11 +297,13 @@ pub(super) fn record_success_for_input(
     let document = std::str::from_utf8(&bytes)
         .map_err(|error| format!("{} module evidence is not UTF-8: {error}", module.as_str()))?;
     let origin = Origin {
+        repository: root,
         source_commit: &candidate.source_commit,
         version: &candidate.version,
         exe_sha256: &candidate.exe_sha256,
         zip_sha256: &candidate.zip_sha256,
         input_fingerprint: current,
+        run_commit: Some(run_commit),
     };
     let companions = module_evidence::validate(module, document, &origin)?;
     let record = LedgerRecord {
