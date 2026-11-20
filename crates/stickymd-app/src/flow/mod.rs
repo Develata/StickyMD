@@ -11,6 +11,7 @@ mod export_plan;
 mod note_guard;
 mod note_io;
 mod note_startup;
+pub mod notice;
 mod persistence;
 mod preferences;
 mod preview;
@@ -27,7 +28,7 @@ pub use asset_paste::{
     prepare_and_store_paste,
 };
 pub use clipboard::{ClipboardError, ClipboardPaste, ClipboardPort, PendingAssetPaste};
-pub use editor::{AppEffect, EditorCoordinator, EditorFlowError};
+pub use editor::{AppEffect, ChangeCount, EditorCoordinator, EditorFlowError};
 pub use export::{
     CopyFailure, EXPORT_ASSET_DIRECTORY_LIMIT, ExportError, copy_hashing,
     export_asset_directory_leaf, export_staging_name, export_temporary_name,
@@ -40,7 +41,7 @@ pub use note_startup::{
     OversizedTemporary, document_from_fact, invalid_temporary_warning, oversized_temporary_warning,
     plan_note_startup,
 };
-pub use persistence::{PersistenceCoordinator, ReconciliationAction};
+pub use persistence::{PersistenceCoordinator, ReconciliationAction, SaveFault, SaveFaultKind};
 pub use preferences::{WindowPreferenceEffect, coordinate_window_preference};
 pub use preview::{
     PreviewAction, PreviewAdmission, PreviewCoordinator, PreviewEffect, PreviewFlowError,

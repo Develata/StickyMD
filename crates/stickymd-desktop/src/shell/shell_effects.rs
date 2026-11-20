@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/03_system_architecture.md#shared-crates
 
+use stickymd_app::flow::notice::Notice;
 use stickymd_app::instruction::AppIntent;
 
 use super::DesktopShell;
@@ -72,7 +73,6 @@ impl<H: Host> DesktopShell<H> {
             ShellEffect::Preference(effect) => self.show_window_preference(effect),
             ShellEffect::TitleDirty => self.update_window_title(),
             ShellEffect::RedrawNeeded => self.request_redraw(),
-            ShellEffect::Diagnostic(message) => self.diagnostic = Some(message),
             ShellEffect::StartWatcher => self.start_watcher(),
             ShellEffect::FocusLost => self.end_view_focus(),
             ShellEffect::Exit => {
@@ -96,9 +96,9 @@ impl<H: Host> DesktopShell<H> {
                     );
                     let snapshot = self.app.snapshot();
                     if let Err(resync_error) = projection.resync(&snapshot) {
-                        self.diagnostic = Some(format!(
+                        self.app.notify(Notice::RenderFailed(format!(
                             "projection update failed: {error}; resync failed: {resync_error}"
-                        ));
+                        )));
                     }
                 }
             }

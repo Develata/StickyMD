@@ -9,6 +9,7 @@ use stickymd_core::{
 use super::{
     AutosaveAction, AutosaveScheduler, ExternalDecision, SaveTrigger, decide_external_change,
 };
+use crate::ports::FailureKind;
 
 pub const EXTERNAL_DEBOUNCE_MS: u64 = 150;
 
@@ -18,6 +19,33 @@ pub enum ReconciliationAction {
     RecreateMissing,
     ReloadClean(ExternalFileFact),
     ConflictChanged,
+}
+
+/// The coarse kind of an unresolved save failure (plan 04 `SaveState.unresolved_failure`):
+/// the port's `FailureKind`, plus a stopped persistence worker. Finer causes live in the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveFaultKind {
+    Failed,
+    Unavailable,
+    Unsupported,
+    WorkerUnavailable,
+}
+
+impl From<FailureKind> for SaveFaultKind {
+    fn from(kind: FailureKind) -> Self {
+        match kind {
+            FailureKind::Failed => Self::Failed,
+            FailureKind::Unavailable => Self::Unavailable,
+            FailureKind::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+/// A save failure that no later save has resolved yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveFault {
+    pub kind: SaveFaultKind,
+    pub text: String,
 }
 
 #[derive(Debug, Default)]
@@ -31,9 +59,77 @@ pub struct PersistenceCoordinator {
     durability_required: bool,
     /// "Keep local" was chosen and its forced write has not finished.
     keep_local_in_progress: bool,
+    /// Set by any failed save and by a stopped worker; only a later successful save clears it.
+    unresolved_failure: Option<SaveFault>,
+    /// The generation a manual save (Ctrl+S) asked for. The worker coalesces note writes and a
+    /// follow-up is resubmitted as a debounce, so the trigger cannot ride on the receipt; the
+    /// first successful save reaching this generation completes it.
+    manual_save: Option<Generation>,
+    /// The persistence worker stopped: nothing submitted to it will ever report back.
+    worker_stopped: bool,
 }
 
 impl PersistenceCoordinator {
+    /// Records a failed save. Returns whether a new segment of the fault display starts: the
+    /// failure is new, or its kind changed. The text is always the latest one.
+    pub fn record_save_failure(&mut self, kind: SaveFaultKind, text: String) -> bool {
+        let new_segment = self
+            .unresolved_failure
+            .as_ref()
+            .is_none_or(|fault| fault.kind != kind);
+        self.unresolved_failure = Some(SaveFault { kind, text });
+        self.manual_save = None;
+        new_segment
+    }
+
+    /// A save succeeded: returns whether this resolved a save failure.
+    pub fn resolve_save_failure(&mut self) -> bool {
+        self.unresolved_failure.take().is_some()
+    }
+
+    pub fn unresolved_failure(&self) -> Option<&SaveFault> {
+        self.unresolved_failure.as_ref()
+    }
+
+    /// Ctrl+S submitted a save of `generation`.
+    pub fn begin_manual_save(&mut self, generation: Generation) {
+        self.manual_save = Some(generation);
+    }
+
+    /// A save of `generation` succeeded: returns whether it completes the manual save.
+    pub fn complete_manual_save(&mut self, generation: Generation) -> bool {
+        if self.manual_save.is_some_and(|wanted| generation >= wanted) {
+            self.manual_save = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The manual save ended without saving (a conflict answered it).
+    pub fn cancel_manual_save(&mut self) {
+        self.manual_save = None;
+    }
+
+    pub const fn manual_save(&self) -> Option<Generation> {
+        self.manual_save
+    }
+
+    /// The worker stopped. Every persistence operation still waiting for it ends: the "keep
+    /// local" write and the manual save. Returns whether a new segment of the fault display
+    /// starts.
+    pub fn worker_stopped(&mut self, text: String) -> bool {
+        self.worker_stopped = true;
+        self.keep_local_in_progress = false;
+        self.note_save_in_flight = false;
+        self.required_write_in_flight = false;
+        self.record_save_failure(SaveFaultKind::WorkerUnavailable, text)
+    }
+
+    pub const fn worker_available(&self) -> bool {
+        !self.worker_stopped
+    }
+
     pub fn on_document_changed(&mut self, now_ms: u64, generation: Generation) {
         if self.conflict.is_none() {
             self.autosave.on_document_changed(now_ms, generation);
@@ -236,6 +332,69 @@ mod tests {
         assert!(!flow.external_observation_current(old, new, 10));
         assert!(!flow.external_observation_current(None, new, 10));
         assert_eq!(flow.external_deadline(), Some(10 + EXTERNAL_DEBOUNCE_MS));
+    }
+
+    /// P17-N06 and P17-N17: a failed save sets the unresolved failure; another failure of the
+    /// same kind, though its text differs, does not start a new segment; only a later successful
+    /// save clears it, and a retry being submitted does not.
+    #[test]
+    fn a_save_failure_stays_until_a_later_save_succeeds() {
+        let mut flow = PersistenceCoordinator::default();
+        assert!(flow.record_save_failure(SaveFaultKind::Failed, "建目录失败".into()));
+        assert!(!flow.record_save_failure(SaveFaultKind::Failed, "发布失败".into()));
+        assert_eq!(
+            flow.unresolved_failure().map(|fault| fault.text.as_str()),
+            Some("发布失败")
+        );
+        flow.note_save_submitted(SaveTrigger::Manual);
+        assert!(flow.unresolved_failure().is_some(), "a retry keeps it");
+        assert!(flow.resolve_save_failure());
+        assert!(flow.unresolved_failure().is_none());
+        assert!(!flow.resolve_save_failure());
+    }
+
+    /// P17-N14: a failure that changes kind starts a new segment of the fault display.
+    #[test]
+    fn a_failure_that_changes_kind_starts_a_new_segment() {
+        let mut flow = PersistenceCoordinator::default();
+        assert!(flow.record_save_failure(SaveFaultKind::Failed, "x".into()));
+        assert!(flow.worker_stopped("worker stopped".into()));
+        assert_eq!(
+            flow.unresolved_failure().map(|fault| fault.kind),
+            Some(SaveFaultKind::WorkerUnavailable)
+        );
+        assert!(flow.record_save_failure(SaveFaultKind::Unavailable, "y".into()));
+    }
+
+    /// P17-N20: a stopped worker ends the operations waiting on it.
+    #[test]
+    fn a_stopped_worker_ends_what_waits_on_it() {
+        let mut flow = PersistenceCoordinator::default();
+        flow.begin_keep_local();
+        flow.note_save_submitted(SaveTrigger::KeepLocal);
+        flow.begin_manual_save(Generation::initial());
+        assert!(flow.worker_available());
+        assert!(flow.worker_stopped("stopped".into()));
+        assert!(!flow.worker_available());
+        assert!(!flow.keep_local_in_progress());
+        assert!(!flow.note_save_in_flight());
+        assert_eq!(flow.manual_save(), None);
+    }
+
+    /// The manual save completes with the first success that reaches its generation.
+    #[test]
+    fn a_manual_save_completes_when_a_save_reaches_its_generation() {
+        let mut flow = PersistenceCoordinator::default();
+        let first = Generation::initial();
+        let second = first.checked_next().unwrap();
+        flow.begin_manual_save(second);
+        assert!(!flow.complete_manual_save(first));
+        assert_eq!(flow.manual_save(), Some(second));
+        assert!(flow.complete_manual_save(second));
+        assert_eq!(flow.manual_save(), None);
+        flow.begin_manual_save(first);
+        flow.record_save_failure(SaveFaultKind::Failed, "x".into());
+        assert_eq!(flow.manual_save(), None, "a failure ends it");
     }
 
     #[test]

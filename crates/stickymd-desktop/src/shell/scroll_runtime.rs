@@ -42,7 +42,7 @@ impl<H: Host> DesktopShell<H> {
             .preview
             .and(self.preview_frame.as_ref())
             .map(|frame| PreviewFacts {
-                document_height: frame.document_height(),
+                end: frame.end(),
                 scroll_y: self.preview_scroll_y,
                 current: preview_current,
             });

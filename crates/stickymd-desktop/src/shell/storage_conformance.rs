@@ -65,6 +65,8 @@ macro_rules! storage_conformance {
 pub(super) const GUARDED: PersistMode = PersistMode::Guarded { expected: None };
 pub(super) const FORCED: PersistMode = PersistMode::ForceOverwrite;
 const RECOVERY_DONE: &str = "恢复选择已完成；正在核对受管图片后启用编辑。";
+/// "Keep local" in progress, as the derived layer shows it.
+pub(super) const KEEPING_LOCAL: &str = "正在用内存文本执行“保留本地”…";
 const RECEIPT_WAIT: Duration = Duration::from_secs(10);
 
 /// What a row pins: the status line, the saves this step handed to the worker, and the facts the
@@ -92,18 +94,11 @@ pub(super) fn settled(diagnostic: impl Into<String>) -> Outcome {
     }
 }
 
-pub(super) fn saving(app: &HeadlessApp) -> String {
-    format!(
-        "正在保存 generation {}…",
-        app.app.coordinator.view().generation.value()
-    )
-}
-
 fn step(app: &mut HeadlessApp, action: impl FnOnce(&mut HeadlessApp)) -> Outcome {
     let before = saves(app);
     action(app);
     Outcome {
-        diagnostic: app.diagnostic.clone(),
+        diagnostic: app.notice_text(),
         saves: saves(app) - before,
         recovery_pending: app.app.recovery.is_pending(),
         operation_pending: app.app.recovery.operation_pending(),
@@ -181,7 +176,7 @@ pub fn restoring_publishes_the_temporary_and_then_removes_the_evidence(storage: 
             expected: Some(hash_bytes(b"disk"))
         }
     );
-    let diagnostic = app.diagnostic.clone();
+    let diagnostic = app.notice_text();
     let outcome = deliver(&mut app, save);
     assert_eq!(outcome.diagnostic, diagnostic);
     assert!(outcome.recovery_pending);
@@ -281,7 +276,6 @@ pub fn keeping_local_forces_the_save_and_refuses_a_second_choice(storage: Storag
     fs::write(&app.paths.note_file, "outside").unwrap();
     type_letter(&mut app);
     enter_conflict(&mut app);
-    let expected = saving(&app);
     assert_eq!(
         press(&mut app, false),
         Outcome {
@@ -289,7 +283,7 @@ pub fn keeping_local_forces_the_save_and_refuses_a_second_choice(storage: Storag
             conflict: true,
             dirty: true,
             keep_local: true,
-            ..settled(expected)
+            ..settled(KEEPING_LOCAL)
         }
     );
     let save = next(&receipts);
@@ -303,9 +297,11 @@ pub fn keeping_local_forces_the_save_and_refuses_a_second_choice(storage: Storag
             ..settled("正在保存本地内容，请稍候。")
         }
     );
+    // The refusal of the second choice still shows: the success does not cover it (plan 04
+    // push rule), and the conflict is over.
     assert_eq!(
         deliver(&mut app, save),
-        settled("已保留本地内容并覆盖外部文件。")
+        settled("正在保存本地内容，请稍候。")
     );
     assert_eq!(
         fs::read(&app.paths.note_file).unwrap(),

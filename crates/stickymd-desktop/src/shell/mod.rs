@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 use std::time::Instant;
+use stickymd_app::flow::notice::Notice;
 
 use stickymd_render::preview::{PreviewFrame, PreviewSelection, SpanAction};
 use stickymd_render::source::SourceProjection;
@@ -53,6 +54,9 @@ mod host_presenter_tests;
 mod hot_path_tests;
 mod input;
 mod lifecycle;
+#[cfg(test)]
+mod notice_bar_tests;
+mod notice_runtime;
 mod opacity_field;
 mod persistence_runtime;
 #[cfg(test)]
@@ -65,6 +69,11 @@ mod phase15_session_tests;
 mod phase15_worker_receipt_tests;
 mod pointer;
 mod presentation;
+mod preview_copy_rail;
+#[cfg(test)]
+mod preview_copy_rail_tests;
+#[cfg(test)]
+mod preview_copy_tests;
 mod preview_horizontal;
 mod preview_input;
 mod preview_runtime;
@@ -114,6 +123,7 @@ pub struct DesktopShell<H: Host> {
     preview_drag_moved: bool,
     preview_press_position: Option<PhysicalPosition<f64>>,
     preview_press_action: Option<SpanAction>,
+    copy_rail: preview_copy_rail::CopyRailInteraction,
     app: AppSession,
     /// The output of session steps, reused from event to event (`shell_effects.rs`).
     effects: ShellEffects,
@@ -135,6 +145,9 @@ pub struct DesktopShell<H: Host> {
     /// See `press_probe!`.
     #[cfg(test)]
     press_probe: shell_pins_tests::PressProbe,
+    /// How many times `refresh_cursor` set the cursor: a windowless shell has none to read.
+    #[cfg(test)]
+    cursor_refreshes: std::cell::Cell<usize>,
     modifiers: ModifiersState,
     cursor_position: PhysicalPosition<f64>,
     pointer_inside_window: bool,
@@ -145,7 +158,6 @@ pub struct DesktopShell<H: Host> {
     native_caret_failed: bool,
     /// The host's overlay blinks by itself (`CaretOverlay::blinks_itself`).
     overlay_blinks: bool,
-    diagnostic: Option<String>,
     system_theme: Theme,
     controls: ControlState,
     /// The one layout paint, hover and press read (`sync_control_layout`).
@@ -178,7 +190,7 @@ impl<H: Host> DesktopShell<H> {
         session: AppSession,
         sink: EventSink,
         clock_origin: Instant,
-        diagnostic: Option<String>,
+        startup_warnings: Vec<String>,
     ) -> Self {
         let config = session.config().current();
         let preview_focused = config.view_mode == ViewMode::Preview;
@@ -208,6 +220,7 @@ impl<H: Host> DesktopShell<H> {
             preview_drag_moved: false,
             preview_press_position: None,
             preview_press_action: None,
+            copy_rail: preview_copy_rail::CopyRailInteraction::default(),
             app: session,
             effects: ShellEffects::default(),
             host,
@@ -222,6 +235,8 @@ impl<H: Host> DesktopShell<H> {
             headless_window_gesture: None,
             #[cfg(test)]
             press_probe: Default::default(),
+            #[cfg(test)]
+            cursor_refreshes: Default::default(),
             modifiers: ModifiersState::default(),
             cursor_position: PhysicalPosition::new(0.0, 0.0),
             pointer_inside_window: false,
@@ -230,7 +245,6 @@ impl<H: Host> DesktopShell<H> {
             native_caret_overlay: None,
             native_caret_failed: caret_in_frame,
             overlay_blinks,
-            diagnostic,
             system_theme: Theme::Light,
             controls: ControlState::new(opacity),
             control_layout: None,
@@ -245,16 +259,23 @@ impl<H: Host> DesktopShell<H> {
             display_recovery_due: false,
             zoom_wheel: pointer::ZoomWheelAccumulator::default(),
         };
-        if app.app.recovery().is_pending() {
-            app.diagnostic =
-                Some("发现未完成保存的内容  |  [F6 恢复临时内容]  [F7 使用当前文件]".into());
-        } else {
+        // Every startup warning shows; a waiting recovery shows below them in the derived layer.
+        for warning in startup_warnings {
+            app.app.notify(Notice::StartupWarning(warning));
+        }
+        if !app.app.recovery().is_pending() {
             app.start_watcher();
         }
         app
     }
 
     /// The client size and DPI input and paint are laid out for; `None` without a window.
+    /// The text the notice bar shows now (tests read what the user would read).
+    #[cfg(any(test, feature = "testing"))]
+    pub(super) fn notice_text(&self) -> Option<String> {
+        self.app.notice_view().map(|view| view.text.into_owned())
+    }
+
     fn shell_view(&self) -> Option<(winit::dpi::PhysicalSize<u32>, f64)> {
         #[cfg(test)]
         if let Some(view) = self.headless_view {
@@ -600,7 +621,6 @@ mod tests {
                     selection,
                     true,
                     true,
-                    None,
                     stickymd_render::source::SourceTheme::Light,
                 )
                 .unwrap();
@@ -660,7 +680,6 @@ mod tests {
                 selection,
                 true,
                 true,
-                None,
                 stickymd_render::source::SourceTheme::Light,
             )
             .unwrap();
@@ -790,7 +809,6 @@ mod tests {
                     Selection::caret(0),
                     true,
                     true,
-                    None,
                     stickymd_render::source::SourceTheme::Light,
                 )
                 .unwrap();

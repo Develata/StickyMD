@@ -80,7 +80,7 @@ fn a_changed_canonical_becomes_a_conflict_and_the_retry_uses_the_new_expectation
     }));
     assert!(app.app.recovery.is_pending());
     assert_eq!(app.app.recovery.operation_id(), None);
-    assert!(app.diagnostic.as_deref().unwrap().contains("已变化"));
+    assert!(app.notice_text().as_deref().unwrap().contains("已变化"));
     let plan = app.app.recovery.begin_restore().unwrap();
     assert_eq!(
         plan.preserve_canonical,
@@ -103,7 +103,7 @@ fn an_unverifiable_canonical_ends_the_operation_without_a_save() {
     assert_eq!(saves(&app), before);
     assert!(app.app.recovery.is_pending());
     assert_eq!(app.app.recovery.operation_id(), None);
-    assert!(app.diagnostic.as_deref().unwrap().contains("过大"));
+    assert!(app.notice_text().as_deref().unwrap().contains("过大"));
 }
 
 /// An observation requested before the known fingerprint changed is not applied, and a fresh

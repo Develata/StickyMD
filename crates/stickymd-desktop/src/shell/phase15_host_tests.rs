@@ -127,7 +127,7 @@ fn phase15_a_rejected_show_changes_nothing_but_the_status_line() {
             "{kind}"
         );
         assert_eq!(
-            app.diagnostic.as_deref(),
+            app.notice_text().as_deref(),
             Some(format!("窗口未能显示（{kind}）。").as_str())
         );
     }
@@ -163,7 +163,10 @@ fn phase15_a_focus_request_on_a_visible_window_reports_a_bad_read_back() {
         app.host.take_calls(),
         [HostCall::Focus, HostCall::ReassertIdentity]
     );
-    assert_eq!(app.diagnostic.as_deref(), Some("窗口未能显示（Failed）。"));
+    assert_eq!(
+        app.notice_text().as_deref(),
+        Some("窗口未能显示（Failed）。")
+    );
     assert!(app.shell_input_enabled);
 }
 
@@ -214,7 +217,7 @@ fn phase15_a_drag_is_saved_once_the_window_is_observed_there() {
         app.app.config.current().window.dock_edge,
         stickymd_app::config::DockEdge::Left
     );
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
 }
 
 fn wrong_frame() -> Result<FrameFact, FailureKind> {
@@ -251,7 +254,7 @@ fn phase15_a_timed_out_placement_is_reported_and_writes_nothing() {
     assert_eq!(observations(&mut app), 1, "the read after the request");
     assert!(pending_placement(&app).is_some());
     assert_eq!(config_dock(&app), DockEdgeConfig::None);
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
 
     let deadline = 50 + PLACEMENT_CONFIRM_TIMEOUT_MS;
     clock.set(deadline - 1);
@@ -266,7 +269,7 @@ fn phase15_a_timed_out_placement_is_reported_and_writes_nothing() {
     assert_eq!(pending_placement(&app), None);
     assert_eq!(config_dock(&app), DockEdgeConfig::None);
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("窗口未能到达目标位置（Failed）。")
     );
     let order: Vec<_> = app
@@ -308,14 +311,14 @@ fn phase15_moved_and_resized_events_can_confirm_after_a_mismatch() {
     assert_eq!(observations(&mut app), 1);
     assert!(pending_placement(&app).is_some());
     assert_eq!(config_dock(&app), DockEdgeConfig::None);
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
 
     let resized = WindowEvent::Resized(PhysicalSize::new(780, 900));
     app.on_window_geometry(geometry_event(&resized).unwrap());
     assert_eq!(observations(&mut app), 1);
     assert_eq!(pending_placement(&app), None);
     assert_eq!(config_dock(&app), DockEdgeConfig::Left);
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
 
     app.on_window_geometry(geometry_event(&moved).unwrap());
     assert_eq!(
@@ -453,7 +456,7 @@ fn phase15_a_collapse_due_at_the_placement_deadline_reads_nothing() {
     app.settle_event_pass(both_due);
     assert_eq!(observations(&mut app), 0);
     assert_eq!(pending_placement(&app), None);
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
 }
 
 /// The startup applies the configured value and only a host error is reported; a read-back of any
@@ -463,12 +466,12 @@ fn phase15_the_startup_topmost_ignores_the_read_back() {
     let mut app = fixture("start");
     app.host.topmost_result = Some(Ok(TopmostFact { topmost: None }));
     app.apply_startup_topmost();
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
 
     app.host.topmost_result = Some(Err(failure("z-order refused")));
     app.apply_startup_topmost();
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("无法应用窗口置顶状态：z-order refused")
     );
 
@@ -476,7 +479,7 @@ fn phase15_the_startup_topmost_ignores_the_read_back() {
     app.host.topmost_result = Some(Ok(TopmostFact { topmost: None }));
     app.dispatch_window_preference_intent(WindowPreferenceIntent::SetAlwaysOnTop(true));
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("无法应用窗口置顶状态（Unsupported）。")
     );
     assert!(!app.app.config.current().always_on_top);
@@ -522,7 +525,7 @@ fn phase15_a_topology_change_during_a_drag_reports_nothing() {
     for now_ms in [10_000, 10_001] {
         app.dispatch_window_intent(WindowIntent::Tick { now_ms });
     }
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
     assert_eq!(
         app.app.config.current().window.dock_edge,
         stickymd_app::config::DockEdge::None
@@ -531,7 +534,7 @@ fn phase15_a_topology_change_during_a_drag_reports_nothing() {
     app.complete_window_drag();
     assert!(!app.move_resize_active);
     dock_drag(&mut app);
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
     assert_eq!(
         app.app.config.current().window.dock_edge,
         stickymd_app::config::DockEdge::Left
@@ -555,7 +558,7 @@ fn phase15_a_topology_change_during_a_drag_reports_nothing() {
         app.dispatch_window_intent(WindowIntent::Tick { now_ms });
     }
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("窗口未能到达目标位置（Failed）。")
     );
 }
@@ -568,15 +571,15 @@ fn phase15_a_native_drag_reads_nothing_and_a_failed_placement_can_be_retried() {
     app.host.frame_result = Err(FailureKind::Failed);
     dock_drag(&mut app);
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("窗口未能到达目标位置（Failed）。")
     );
     let flow = app.app.window_flow.as_ref().unwrap();
     assert_eq!(flow.state().pending_placement_id(), None);
     app.host.frame_result = Ok(());
-    app.diagnostic = None;
+    app.app.clear_timed_notices();
     dock_drag(&mut app);
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
     assert_eq!(
         app.app.config.current().window.dock_edge,
         stickymd_app::config::DockEdge::Left
@@ -622,7 +625,7 @@ fn phase15_a_lost_identity_restores_the_taskbar_entry_and_says_so() {
         ]
     );
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("无法保持工具窗口身份；已恢复任务栏入口以避免窗口不可达：style refused")
     );
 }
@@ -641,12 +644,12 @@ fn phase15_topmost_and_its_failure_reach_the_host_and_the_tray() {
             }),
         ]
     );
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
 
     app.host.topmost_result = Some(Err(failure("z-order refused")));
     app.dispatch_window_preference_intent(WindowPreferenceIntent::SetAlwaysOnTop(false));
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("无法应用窗口置顶状态：z-order refused")
     );
 }
@@ -681,7 +684,7 @@ fn phase15_a_rejected_topmost_writes_nothing_and_can_be_retried() {
             [HostCall::SetTopmost(true), HostCall::SetTopmost(false)],
             "a failure asks for the confirmed bit again, once"
         );
-        assert_eq!(app.diagnostic.as_deref(), Some(diagnostic));
+        assert_eq!(app.notice_text().as_deref(), Some(diagnostic));
 
         app.dispatch_window_preference_intent(WindowPreferenceIntent::SetAlwaysOnTop(true));
         assert!(app.app.config.current().always_on_top, "{diagnostic}");
@@ -715,7 +718,7 @@ fn phase15_a_sensor_topmost_stays_out_of_the_configuration() {
     }));
     app.dispatch_window_intent(WindowIntent::ManualCollapse { now_ms: 10 });
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("无法应用窗口置顶状态（Failed）。")
     );
 }
@@ -734,7 +737,7 @@ fn phase15_opacity_and_its_failure_reach_the_host() {
     app.host.opacity_result = Err(failure("alpha refused"));
     app.dispatch_window_preference_intent(WindowPreferenceIntent::PreviewOpacity(70));
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("无法预览透明度：alpha refused")
     );
 }
@@ -807,7 +810,7 @@ fn phase15_watch_signals_reach_the_host() {
     assert_eq!(app.host.take_calls(), [HostCall::StopWatch]);
     assert!(!app.host.watching);
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("外部文件自动检测已停止；安全保存仍受指纹校验保护：cause")
     );
 }
@@ -821,7 +824,7 @@ fn phase15_a_watch_that_cannot_start_is_reported_and_the_note_stays_open() {
     let app = fixture_on(host, "start");
     assert!(!app.started_watcher);
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("外部文件自动检测不可用；安全保存仍受指纹校验保护：no watcher")
     );
 }
@@ -835,13 +838,13 @@ fn phase15_an_export_goes_where_the_picker_says() {
         !app.app.export_in_flight,
         "a cancelled dialog exports nothing"
     );
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
 
     app.host.export_result = Err(failure("no dialog"));
     app.request_export();
     assert!(!app.app.export_in_flight);
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("无法打开导出位置选择器：no dialog")
     );
 
@@ -867,11 +870,11 @@ fn phase15_a_link_goes_to_the_launcher_and_its_failure_to_the_status_line() {
             LinkKind::Https
         )]
     );
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
 
     app.host.open_result = Err(failure("refused"));
     app.dispatch_preview_intent(link());
-    assert_eq!(app.diagnostic.as_deref(), Some("refused"));
+    assert_eq!(app.notice_text().as_deref(), Some("refused"));
 }
 
 const CARET: PhysicalRect = PhysicalRect::new(10, 20, 2, 18);
@@ -901,7 +904,7 @@ fn phase15_a_failed_overlay_falls_back_to_the_frame() {
     assert!(app.native_caret_failed);
     assert_eq!(app.native_caret_overlay, None);
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("caret overlay unavailable: no device context")
     );
 
@@ -920,7 +923,7 @@ fn phase15_a_host_without_an_overlay_draws_the_caret_in_the_frame() {
     assert!(app.native_caret_failed);
     app.advance_caret_blink();
     assert!(app.host.take_calls().is_empty());
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
 }
 
 /// An overlay that blinks by itself takes the blink off the shell: no wake and no toggle per blink

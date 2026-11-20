@@ -4,6 +4,7 @@
 
 use super::DesktopShell;
 use crate::host::Host;
+use stickymd_app::flow::notice::Notice;
 
 impl<H: Host> DesktopShell<H> {
     pub(super) fn request_export(&mut self) {
@@ -16,8 +17,7 @@ impl<H: Host> DesktopShell<H> {
             Ok(Some(target)) => target,
             Ok(None) => return,
             Err(error) => {
-                self.diagnostic = Some(format!("无法打开导出位置选择器：{error}"));
-                self.request_redraw();
+                self.notify(Notice::ExportPickerFailed(error.to_string()));
                 return;
             }
         };

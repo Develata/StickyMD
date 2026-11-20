@@ -144,6 +144,25 @@ impl ConvertContext<'_> {
         self.source_map.range(self.source, position)
     }
 
+    /// Comrak 0.59 can hand over a list item whose end column is 0, for example an item whose last
+    /// child is a nested list followed by a blank line (`2:1-4:0` for the second item of
+    /// `- one\n- two\n  - deep\n\n1. x`), even though it repairs zero end columns of list
+    /// descendants (`fix_zero_end_columns`). Such an item ends where its last child block ends,
+    /// which is what that repair assigns (`deepest_last_end`).
+    fn zero_end_item_range<'arena>(
+        &self,
+        item: &'arena AstNode<'arena>,
+        blocks: &[BlockNode],
+    ) -> Option<SourceRange> {
+        let mut position = item.data.borrow().sourcepos;
+        if position.end.column != 0 {
+            return None;
+        }
+        position.end = position.start;
+        let start = self.source_map.range(self.source, position)?.start;
+        SourceRange::new(start, blocks.last()?.source_range()?.end)
+    }
+
     fn convert_blocks<'arena>(
         &mut self,
         parent: &'arena AstNode<'arena>,
@@ -199,10 +218,14 @@ impl ConvertContext<'_> {
                         NodeValue::Item(_) => None,
                         _ => None,
                     };
+                    let blocks = self.convert_blocks(item, depth + 1)?;
+                    let source_range = self
+                        .source_range(item)
+                        .or_else(|| self.zero_end_item_range(item, &blocks));
                     items.push(ListItem {
                         checked,
-                        blocks: self.convert_blocks(item, depth + 1)?,
-                        source_range: self.source_range(item),
+                        blocks,
+                        source_range,
                     });
                 }
                 output.push(BlockNode::List(ListNode {
@@ -217,6 +240,7 @@ impl ConvertContext<'_> {
                 literal: code.literal,
                 info: code.info,
                 fenced: code.fenced,
+                closed: code.closed,
                 source_range,
             })),
             NodeValue::HtmlBlock(html) => output.push(BlockNode::HtmlLiteral {
@@ -546,6 +570,25 @@ mod tests {
     use stickymd_core::{DocumentSnapshot, Generation, LineEnding};
 
     use super::*;
+
+    /// The raw Comrak position of the second list item has end column 0, and the parser repairs
+    /// it to end with that item's last child block.
+    #[test]
+    fn a_list_item_comrak_ends_at_column_zero_ends_with_its_last_block() {
+        let source = "- one\n- two\n  - deep\n\n1. x\n";
+        let arena = Arena::new();
+        let root = parse_document(&arena, source, &markdown_options());
+        let list = root.first_child().unwrap();
+        let second = list.children().nth(1).unwrap();
+        assert_eq!(second.data.borrow().sourcepos.end.column, 0);
+
+        let tree = PreviewParser.parse(&snapshot(source)).unwrap();
+        let BlockNode::List(list) = &tree.blocks[0] else {
+            panic!("expected a list");
+        };
+        let range = list.items[1].source_range.expect("repaired item range");
+        assert_eq!(range.text(source), Some("- two\n  - deep"));
+    }
 
     fn snapshot(source: &str) -> DocumentSnapshot {
         DocumentSnapshot {

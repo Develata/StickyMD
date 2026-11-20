@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#source-find-replace
 
+use stickymd_app::flow::notice::Notice;
 use winit::event::{ElementState, Ime, MouseButton};
 use winit::keyboard::KeyCode;
 
@@ -105,7 +106,7 @@ impl<H: Host> DesktopShell<H> {
                     search.insert(&inserted, text, generation);
                 }
                 Ok(None) => {}
-                Err(error) => self.diagnostic = Some(error.to_string()),
+                Err(error) => self.app.notify(Notice::editor_failure(&error)),
             },
             _ if !shortcut
                 && !self.modifiers.alt_key()

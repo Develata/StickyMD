@@ -123,6 +123,12 @@ impl RecoveryCoordinator {
         self.restore_guard.take()
     }
 
+    /// Whether the current note.md can be used (F7); an invalid or too large one that a restore
+    /// must preserve first leaves only F6.
+    pub const fn canonical_usable(&self) -> bool {
+        self.canonical_to_preserve.is_none()
+    }
+
     pub fn operation(&self) -> Option<RecoveryOperation> {
         self.operation
     }

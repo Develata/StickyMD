@@ -5,7 +5,8 @@
 use stickymd_core::{DiskFingerprint, Generation};
 
 use super::{NoteEffect, NoteEffects, NoteIo};
-use crate::flow::{ClipboardPort, RecoveryOperation, SaveTrigger};
+use crate::flow::notice::Notice;
+use crate::flow::{ClipboardPort, RecoveryOperation, SaveFaultKind, SaveTrigger};
 use crate::ports::{PersistMode, PersistRequest, TemporaryCleanup};
 
 impl<C: ClipboardPort> NoteIo<'_, C> {
@@ -55,19 +56,36 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
         if self.recovery.is_pending() && trigger != SaveTrigger::KeepLocal {
             return;
         }
+        if !self.persistence.worker_available() {
+            // Nothing reaches a stopped worker. A save the user asked for is refused aloud (the
+            // fault display already tells why), and a hide or quit waiting on this save ends now
+            // instead of never.
+            if trigger == SaveTrigger::Manual {
+                effects.notice(Notice::PersistenceUnavailable);
+                effects.push(NoteEffect::Redraw);
+            }
+            if matches!(trigger, SaveTrigger::HideToTray | SaveTrigger::Shutdown) {
+                effects.push(NoteEffect::NoteBarriers { succeeded: false });
+            }
+            return;
+        }
         let snapshot = self.editor.snapshot();
         let mode = override_mode.unwrap_or(PersistMode::Guarded {
             expected: self.editor.view().base_disk_hash,
         });
         self.persistence.note_save_submitted(trigger);
         let generation = snapshot.generation;
+        if trigger == SaveTrigger::Manual {
+            self.persistence.begin_manual_save(generation);
+        }
         effects.push(NoteEffect::SubmitSave(PersistRequest {
             generation,
             text: snapshot.text,
             line_ending: snapshot.line_ending,
             mode,
         }));
-        effects.diagnostic(format!("正在保存 generation {}…", generation.value()));
+        // Routine autosaves show no progress (plan 09 #notices); a manual save and the
+        // persistence choices show theirs in the derived layer.
         effects.push(NoteEffect::Redraw);
     }
 
@@ -84,12 +102,21 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
             self.persistence.note_save_finished(false);
             self.recovery.fail_operation();
             self.persistence.end_keep_local();
-            effects.diagnostic(format!("保存回执无效：{error}"));
+            self.save_failed(
+                SaveFaultKind::Failed,
+                format!("保存回执无效：{error}"),
+                effects,
+            );
             effects.push(NoteEffect::NoteBarriers { succeeded: false });
             effects.push(NoteEffect::Redraw);
             return;
         }
         let completed_required = self.persistence.note_save_finished(true);
+        // The failure is resolved before this save's own notice (plan 04 #notice-state).
+        if self.persistence.resolve_save_failure() {
+            effects.push(NoteEffect::FaultResolved);
+        }
+        let manual_completed = self.persistence.complete_manual_save(generation);
         if let (
             Some(RecoveryOperation::Restoring | RecoveryOperation::UsingCanonical),
             Some(operation),
@@ -101,9 +128,9 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
         } else if self.persistence.keep_local_in_progress() && mode == PersistMode::ForceOverwrite {
             self.persistence.end_keep_local();
             self.persistence.clear_conflict();
-            effects.diagnostic("已保留本地内容并覆盖外部文件。");
-        } else {
-            effects.diagnostic("已保存");
+            effects.notice(Notice::KeptLocal);
+        } else if manual_completed {
+            effects.notice(Notice::Saved);
         }
         let keep_local_resubmitted = self.resubmit_keep_local(mode, effects);
         if keep_local_resubmitted {
@@ -133,7 +160,6 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
             self.persistence.conflict().is_some(),
             completed_mode,
         ) {
-            effects.diagnostic("旧保存任务已完成；正在用最新内存文本执行“保留本地”…");
             self.submit(
                 SaveTrigger::KeepLocal,
                 Some(PersistMode::ForceOverwrite),

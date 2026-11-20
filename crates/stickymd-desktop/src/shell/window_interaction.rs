@@ -101,7 +101,10 @@ impl<H: Host> DesktopShell<H> {
                             }
                         }
                     }
-                    Some(ControlHit::DragWindow) => {
+                    Some(ControlHit::FaultMarker) if self.app.save_fault_marked() => {
+                        self.show_save_fault();
+                    }
+                    Some(ControlHit::FaultMarker | ControlHit::DragWindow) => {
                         return self
                             .dispatch_window_platform_intent(WindowPlatformIntent::RequestDrag);
                     }
@@ -158,6 +161,8 @@ impl<H: Host> DesktopShell<H> {
             ControlHit::Popup(_) | ControlHit::SplitSync | ControlHit::Button(_) => {
                 Some(CursorIcon::Pointer)
             }
+            ControlHit::FaultMarker if self.app.save_fault_marked() => Some(CursorIcon::Pointer),
+            ControlHit::FaultMarker => Some(CursorIcon::Default),
             ControlHit::Resize(edge) => Some(CursorIcon::from(winit_resize_direction(edge))),
             ControlHit::DragWindow => Some(CursorIcon::Default),
         }

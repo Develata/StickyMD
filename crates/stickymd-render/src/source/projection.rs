@@ -61,8 +61,6 @@ pub struct SourceProjection {
     pub(super) swash_cache: SwashCache,
     pub(super) glyph_budget: crate::glyph_cache::GlyphCacheBudget,
     pub(super) buffer: Buffer,
-    pub(super) diagnostic_buffer: Buffer,
-    pub(super) diagnostic_text: String,
     pub(super) ui_buffer: Buffer,
     pub(super) fonts: FontSelection,
     pub(super) canonical: String,
@@ -97,9 +95,6 @@ impl SourceProjection {
         // Each buffer receives its real text before use. Buffer::new would first
         // shape an empty default-font line that is immediately discarded.
         let mut buffer = Buffer::new_empty(metrics);
-        let mut diagnostic_buffer =
-            Buffer::new_empty(Metrics::new(13.0 * scale.max(0.5), 20.0 * scale.max(0.5)));
-        diagnostic_buffer.set_wrap(Wrap::None);
         let mut ui_buffer =
             Buffer::new_empty(Metrics::new(13.0 * scale.max(0.5), 20.0 * scale.max(0.5)));
         ui_buffer.set_wrap(Wrap::None);
@@ -109,8 +104,6 @@ impl SourceProjection {
             swash_cache: SwashCache::new(),
             glyph_budget: Default::default(),
             buffer,
-            diagnostic_buffer,
-            diagnostic_text: String::new(),
             ui_buffer,
             fonts,
             canonical: String::new(),
@@ -471,11 +464,6 @@ impl SourceProjection {
             Some(self.content_width()),
             Some(self.content_height()),
         );
-        self.diagnostic_buffer.set_metrics_and_size(
-            Metrics::new(13.0 * self.scale_factor, 20.0 * self.scale_factor),
-            Some((self.width_px as f32 - 24.0 * self.scale_factor).max(1.0)),
-            Some(24.0 * self.scale_factor),
-        );
         self.buffer.shape_until_scroll(&mut self.font_system, false);
         true
     }
@@ -486,20 +474,6 @@ impl SourceProjection {
 
     pub fn preedit(&self) -> Option<&PreeditVisual> {
         self.preedit.as_ref()
-    }
-
-    /// Hit-test the generic two-action diagnostic banner.
-    /// `true` is the primary (F6) action and `false` the secondary (F7) action.
-    pub fn diagnostic_action_at(&self, x: f32, y: f32) -> Option<bool> {
-        let height = 34.0 * self.scale_factor;
-        let action_start = self.width_px as f32 * 0.58;
-        if !self.diagnostic_text.contains("[F7")
-            || y < self.height_px as f32 - height
-            || x < action_start
-        {
-            return None;
-        }
-        Some(x < action_start + (self.width_px as f32 - action_start) * 0.5)
     }
 
     fn rebuild_buffer(&mut self, snapshot: &DocumentSnapshot) {
@@ -519,11 +493,6 @@ impl SourceProjection {
             Some(self.content_height()),
         );
         self.buffer.set_wrap(Wrap::WordOrGlyph);
-        self.diagnostic_buffer.set_metrics_and_size(
-            Metrics::new(13.0 * self.scale_factor, 20.0 * self.scale_factor),
-            Some((self.width_px as f32 - 24.0 * self.scale_factor).max(1.0)),
-            Some(24.0 * self.scale_factor),
-        );
     }
 }
 
@@ -653,7 +622,6 @@ mod tests {
                 Selection::caret(0),
                 false,
                 false,
-                None,
                 crate::source::SourceTheme::Light,
             )
             .unwrap();
@@ -666,7 +634,6 @@ mod tests {
                     Selection::caret(0),
                     false,
                     false,
-                    None,
                     crate::source::SourceTheme::Light,
                 )
                 .unwrap();
@@ -784,7 +751,6 @@ mod tests {
                 Selection::caret(0),
                 false,
                 false,
-                None,
                 SourceTheme::Light,
             )
             .unwrap();
@@ -809,7 +775,6 @@ mod tests {
                 Selection::new(0, 1),
                 true,
                 true,
-                None,
                 SourceTheme::Light,
             ),
             Err(SourceProjectionError::InvalidPosition)
@@ -827,7 +792,6 @@ mod tests {
                 Selection::caret(0),
                 true,
                 false,
-                None,
                 SourceTheme::Light,
             )
             .unwrap();
@@ -886,7 +850,6 @@ mod tests {
                 Selection::new(0, 3),
                 true,
                 true,
-                None,
                 SourceTheme::Dark,
             )
             .unwrap();
@@ -998,7 +961,6 @@ mod tests {
                 Selection::caret(source.len()),
                 true,
                 false,
-                None,
                 SourceTheme::Light,
             )
             .unwrap();
@@ -1059,7 +1021,6 @@ mod tests {
                 Selection::caret(converted.len()),
                 true,
                 false,
-                None,
                 SourceTheme::Light,
             )
             .unwrap();

@@ -76,6 +76,7 @@ fn fingerprint(pipeline: &mut PreviewPipeline, document: &mut LaidOutDocument) -
             document,
             300,
             scroll,
+            0.0,
             PreviewSelection::default(),
             PreviewTheme::Light,
             &crate::preview::PreviewHorizontalOffsets::default(),

@@ -3,6 +3,8 @@
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-scheduling
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#native-preview-layout
 
+use stickymd_app::flow::PreviewFlowError;
+use stickymd_app::flow::notice::Notice;
 use stickymd_core::Generation;
 use stickymd_render::preview::{PreviewSelection, PreviewTheme};
 use tiny_skia::Pixmap;
@@ -37,14 +39,10 @@ impl<H: Host> DesktopShell<H> {
             Ok(PreviewEffect::ApplyViewMode(mode)) => self.apply_view_mode(mode),
             Ok(PreviewEffect::OpenTarget { destination, kind }) => {
                 if let Err(error) = self.host.open_target(&destination, kind) {
-                    self.diagnostic = Some(error.to_string());
-                    self.request_redraw();
+                    self.notify(Notice::OpenTargetFailed(error.to_string()));
                 }
             }
-            Err(error) => {
-                self.diagnostic = Some(error.to_string());
-                self.request_redraw();
-            }
+            Err(PreviewFlowError::BlockedScheme) => self.notify(Notice::BlockedLinkScheme),
         }
     }
 
@@ -157,10 +155,7 @@ impl<H: Host> DesktopShell<H> {
             }
             PreviewFollowUp::Relayout => self.request_preview_relayout(),
             PreviewFollowUp::Redraw => self.request_redraw(),
-            PreviewFollowUp::Report(message) => {
-                self.diagnostic = Some(message);
-                self.request_redraw();
-            }
+            PreviewFollowUp::Report(notice) => self.notify(notice),
         }
     }
 
@@ -234,7 +229,9 @@ impl<H: Host> DesktopShell<H> {
             sink.post(DesktopEvent::Preview(completion));
         }) {
             Ok(worker) => self.app.install_preview_worker(worker),
-            Err(error) => self.diagnostic = Some(format!("Preview worker unavailable: {error}")),
+            Err(error) => self
+                .app
+                .notify(Notice::PreviewWorkerUnavailable(error.to_string())),
         }
     }
 
@@ -265,6 +262,9 @@ impl<H: Host> DesktopShell<H> {
             height_px: pane.height.max(1),
             scale,
             scroll_y: self.preview_scroll_y,
+            // The bar is laid out in window DIP, whatever the Content Zoom (plan 09 #notices).
+            notice_bar_px: crate::controls::NOTICE_BAR_HEIGHT_DIP
+                * self.shell_dpi().unwrap_or(1.0) as f32,
             selection: selection_for_generation(
                 self.preview_frame.as_ref().map(|frame| frame.generation()),
                 self.app.coordinator().view().generation,

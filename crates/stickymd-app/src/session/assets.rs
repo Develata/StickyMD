@@ -2,11 +2,12 @@
 //!
 //! plan_ref: docs/plan/08_assets_and_export.md#state-changes
 
+use crate::flow::notice::Notice;
 use crate::flow::window::state::{QuitBarrier, WindowIntent};
 use crate::flow::{AssetIo, AssetStep, PendingAssetPaste, SaveTrigger};
 use crate::ports::{
     AssetPasteCompletion, AssetPasteFailure, AssetPasteRequest, AssetReconcileMode,
-    AssetReconcileReport, PersistMode, StorageFailure,
+    AssetReconcileReport, FailureKind, PersistMode, StorageFailure,
 };
 use stickymd_core::{AssetEffect, Generation};
 
@@ -20,10 +21,7 @@ impl AppSession {
 
     pub fn submit_asset_paste(&mut self, pending: PendingAssetPaste, out: &mut ShellEffects) {
         if self.assets.paste_pending {
-            out.push(ShellEffect::Diagnostic(
-                "上一批图片仍在处理中；本次粘贴未开始。".into(),
-            ));
-            out.push(ShellEffect::RedrawNeeded);
+            self.show_notice(Notice::ImagePasteBusy, out);
             return;
         }
         let request = AssetPasteRequest {
@@ -33,14 +31,12 @@ impl AppSession {
             payload: pending.payload,
         };
         if self.worker.submit_asset_paste(request) {
+            // Shown in the derived layer until the paste settles.
             self.assets.paste_pending = true;
-            out.push(ShellEffect::Diagnostic("正在准备图片…".into()));
+            out.push(ShellEffect::RedrawNeeded);
         } else {
-            out.push(ShellEffect::Diagnostic(
-                "图片工作队列暂不可用；未修改文档。".into(),
-            ));
+            self.show_notice(Notice::ImageQueueUnavailable, out);
         }
-        out.push(ShellEffect::RedrawNeeded);
     }
 
     pub fn submit_asset_sync(
@@ -94,9 +90,16 @@ impl AppSession {
         out: &mut ShellEffects,
     ) {
         match step {
+            AssetStep::SubmitSync(request) if !self.persistence.worker_available() => {
+                // Nothing reaches a stopped worker: the sync fails now, as its receipt would,
+                // so what waits on it (the hide, the quit, a paste) is settled.
+                let failure =
+                    StorageFailure::new(FailureKind::Unavailable, "persistence worker stopped");
+                self.on_asset_sync(request.request_id, Err(failure), out);
+            }
             AssetStep::SubmitSync(request) => self.worker.submit_asset_sync(request),
             AssetStep::ApplyDocument(effect) => self.apply_app_effect(effect, out),
-            AssetStep::Diagnostic(message) => out.push(ShellEffect::Diagnostic(message)),
+            AssetStep::Notice(notice) => self.show_notice(notice, out),
             AssetStep::Redraw => out.push(ShellEffect::RedrawNeeded),
             AssetStep::StartWatcher => out.push(ShellEffect::StartWatcher),
             AssetStep::RecreateNote => {

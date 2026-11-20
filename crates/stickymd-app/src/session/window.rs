@@ -3,6 +3,7 @@
 //! plan_ref: docs/plan/09_windows_shell.md#tray-lifecycle
 
 use crate::config::DockEdge as ConfigDockEdge;
+use crate::flow::notice::Notice;
 use crate::flow::window::geometry::{MonitorGeometry, PhysicalRect, WindowPlacement};
 use crate::flow::window::reducer::WindowShellCoordinator;
 use crate::flow::window::state::{
@@ -156,7 +157,7 @@ impl AppSession {
         match result {
             Ok(true) => self.submit_config_if_needed(),
             Ok(false) => {}
-            Err(error) => out.push(ShellEffect::Diagnostic(error.to_string())),
+            Err(error) => self.show_notice(Notice::ConfigFailed(error.to_string()), out),
         }
     }
 }

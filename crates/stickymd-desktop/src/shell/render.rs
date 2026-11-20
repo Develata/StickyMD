@@ -3,12 +3,14 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#frame-presentation
 
+use stickymd_app::flow::notice::Notice;
 use tiny_skia::{Paint, Pixmap, Rect, Transform};
 use winit::dpi::PhysicalSize;
 
 use super::DesktopShell;
 use super::presentation::PendingRedraw;
-use crate::controls::{ToolbarVisual, paint_toolbar};
+use crate::controls::{NoticeBarLayout, ToolbarVisual, paint_notice_bar, paint_toolbar};
+use crate::geometry::PaneRect;
 use crate::host::{Host, PRESENT_RETRY, PresentFacts, PresentOutcome};
 use crate::search::paint_search_overlay;
 use stickymd_app::config::ContentZoomPercent;
@@ -37,7 +39,6 @@ pub(super) struct SourcePaintKey {
     generation: stickymd_core::Generation,
     selection: stickymd_core::Selection,
     preedit: Option<stickymd_render::source::PreeditVisual>,
-    diagnostic: Option<String>,
     theme: stickymd_render::source::SourceTheme,
     width: u32,
     height: u32,
@@ -93,7 +94,6 @@ impl<H: Host> DesktopShell<H> {
                 generation: projection.projected_generation(),
                 selection: self.app.editor.selection,
                 preedit,
-                diagnostic: self.diagnostic.clone(),
                 theme: source_theme,
                 width: source_frame.width(),
                 height: source_frame.height(),
@@ -108,13 +108,12 @@ impl<H: Host> DesktopShell<H> {
                     self.app.editor.selection,
                     self.app.editor.focused,
                     false,
-                    self.diagnostic.as_deref(),
                     source_theme,
                 ) {
                     Ok(()) => self.source_paint_key = Some(paint_key),
                     Err(error) => {
                         self.source_paint_key = None;
-                        self.diagnostic = Some(error.to_string());
+                        self.app.notify(Notice::RenderFailed(error.to_string()));
                     }
                 }
             }
@@ -127,7 +126,7 @@ impl<H: Host> DesktopShell<H> {
             dark,
             system_theme: self.app.config().current().theme
                 == stickymd_app::config::ThemeMode::System,
-            diagnostic: self.diagnostic.is_some(),
+            fault_marker: self.app.save_fault_marked(),
             emphasized: self.app.editor.focused
                 || self.pointer_inside_window
                 || self.controls.opacity_popup_open,
@@ -139,6 +138,13 @@ impl<H: Host> DesktopShell<H> {
         let caret_animation_active = self.caret_animation_active();
         let search_layout = self.search_layout();
         let scrollbars = self.scrollbar_geometry();
+        let hovered_rail = self.copy_rail_under_pointer();
+        if hovered_rail != self.copy_rail.hovered {
+            self.copy_rail.hovered = hovered_rail;
+            // A still pointer gets no move to set the cursor when a new frame, a scroll or the
+            // notice bar puts a rail under it or takes it away.
+            self.refresh_cursor();
+        }
         let Some(surface) = &mut self.surface else {
             return false;
         };
@@ -166,26 +172,20 @@ impl<H: Host> DesktopShell<H> {
                 source_theme,
             )
         {
-            self.diagnostic = Some(error.to_string());
+            self.app.notify(Notice::RenderFailed(error.to_string()));
         }
         if let Some(pane) = geometry.preview {
             if let Some(frame) = &self.preview_frame
-                && frame.width() == pane.width
-                && frame.height() == pane.height
+                && fills_pane(frame, pane)
             {
                 surface.ledger_mut().pane_blit_preview_bytes +=
                     u64::from(pane.width) * u64::from(pane.height) * 4;
                 frame.blit_to(surface.pixmap_mut(), pane.x, pane.y);
+                // Over the frame and under everything drawn over the Preview, as if in it.
+                frame.paint_copy_rails(surface.pixmap_mut(), pane.x, pane.y, hovered_rail);
             } else {
                 paint_preview_pending(surface.pixmap_mut(), pane, dark);
             }
-        }
-        for bar in scrollbars.into_iter().flatten() {
-            bar.paint(
-                surface.pixmap_mut(),
-                self.scrollbars.emphasized(bar.pane),
-                dark,
-            );
         }
         paint_search_overlay(
             surface.pixmap_mut(),
@@ -195,6 +195,22 @@ impl<H: Host> DesktopShell<H> {
             scales.shell as f32,
             dark,
         );
+        // Over every pane and under the toolbar's popup: the bar is laid out on the frame it
+        // paints, in window DIP.
+        if let Some(view) = self.app.notice_view() {
+            let pixmap = surface.pixmap_mut();
+            let size = PhysicalSize::new(pixmap.width(), pixmap.height());
+            let layout = NoticeBarLayout::new(size, scales.shell as f32, view.choices);
+            paint_notice_bar(pixmap, &mut self.projection, &layout, &view, dark);
+        }
+        // The scrollbars stay visible and grabbable over the bar (plan 09: a resident thumb).
+        for bar in scrollbars.into_iter().flatten() {
+            bar.paint(
+                surface.pixmap_mut(),
+                self.scrollbars.emphasized(bar.pane),
+                dark,
+            );
+        }
         let surface_size = {
             let pixmap = surface.pixmap_mut();
             PhysicalSize::new(pixmap.width(), pixmap.height())
@@ -213,7 +229,7 @@ impl<H: Host> DesktopShell<H> {
         // Only a deferred frame waits for a retry; a presented or failed one ends any wait.
         self.present_retry_at = None;
         let presented = if let PresentOutcome::Failed(error) = outcome {
-            self.diagnostic = Some(error);
+            self.app.notify(Notice::RenderFailed(error));
             false
         } else if outcome == PresentOutcome::Deferred {
             // Nothing reached the window: draw the whole frame again shortly.
@@ -242,13 +258,20 @@ impl<H: Host> DesktopShell<H> {
                 && let Err(error) = self.sync_native_caret_overlay()
             {
                 self.native_caret_failed = true;
-                self.diagnostic = Some(format!("caret overlay unavailable: {error}"));
-                self.request_redraw();
+                self.notify(Notice::RenderFailed(format!(
+                    "caret overlay unavailable: {error}"
+                )));
             }
         }
         self.update_ime_area();
         presented
     }
+}
+
+/// Whether `frame` is the one drawn into `pane`: a frame of another size waits behind the pending
+/// fill until its replacement arrives. Everything that reads the Preview on screen asks this.
+pub(super) fn fills_pane(frame: &stickymd_render::preview::PreviewFrame, pane: PaneRect) -> bool {
+    frame.width() == pane.width && frame.height() == pane.height
 }
 
 fn pixmap_bytes(pixmap: &Pixmap) -> u64 {
@@ -271,7 +294,7 @@ fn blit_pixmap(source: &Pixmap, target: &mut Pixmap, origin_x: u32, origin_y: u3
     }
 }
 
-fn paint_preview_pending(pixmap: &mut Pixmap, pane: crate::geometry::PaneRect, dark: bool) {
+fn paint_preview_pending(pixmap: &mut Pixmap, pane: PaneRect, dark: bool) {
     fill_rect(
         pixmap,
         pane.x as f32,
@@ -361,7 +384,7 @@ mod tests {
                     topmost: false,
                     dark: false,
                     system_theme: false,
-                    diagnostic: false,
+                    fault_marker: false,
                     emphasized: true,
                     opacity_popup: false,
                     opacity: 96,

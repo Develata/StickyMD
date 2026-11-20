@@ -206,6 +206,7 @@ fn execute(
     image_source: Option<&dyn PreviewImageSource>,
 ) -> Result<PreviewFrame, PreviewPipelineError> {
     pipeline.set_horizontal_offsets(job.viewport().horizontal);
+    pipeline.set_notice_bar_height(job.viewport().notice_bar_px);
     match job {
         PreviewJob::Build { snapshot, viewport } => pipeline.build_with_image_source(
             &snapshot,
@@ -273,6 +274,7 @@ mod tests {
             height_px: 300,
             scale: 1.0,
             scroll_y: 0.0,
+            notice_bar_px: 0.0,
             selection: PreviewSelection::default(),
             theme: PreviewTheme::Light,
         }
@@ -375,6 +377,55 @@ mod tests {
         assert_eq!(metrics.completed, 1);
     }
 
+    /// P17-E02: a view change sends the offset with the new pane's viewport, and the frame comes
+    /// back painted at that frame's own end: the end room follows the new viewport.
+    #[test]
+    fn a_view_change_paints_at_the_new_frames_end() {
+        let (sender, receiver) = mpsc::channel();
+        let worker = PreviewWorker::start(None, move |completion| {
+            let _ = sender.send(completion);
+        })
+        .unwrap();
+        let generation = Generation::initial();
+        let text: String = "paragraph with some words\n\n".repeat(200);
+        let mut preview = viewport(600);
+        preview.height_px = 600;
+        preview.notice_bar_px = 34.0;
+        preview.scroll_y = 1_000_000.0;
+        worker.submit(PreviewJob::Build {
+            snapshot: DocumentSnapshot {
+                text: Arc::from(text.as_str()),
+                generation,
+                line_ending: LineEnding::Lf,
+            },
+            viewport: preview.clone(),
+        });
+        let first = next_completion(&receiver).result.unwrap();
+        let end = first.end();
+        assert_eq!(
+            end,
+            stickymd_render::preview::PreviewEnd::new(first.document_height(), 600.0, 34.0)
+        );
+        assert_eq!(first.scroll_y(), end.max_scroll);
+        assert!(end.max_scroll > first.document_height() - 600.0);
+        // To Split: a narrower and shorter pane, the offset carried over from the end room.
+        let mut split = preview.clone();
+        split.width_px = 290;
+        split.height_px = 400;
+        split.scroll_y = first.scroll_y();
+        worker.submit(PreviewJob::Relayout {
+            generation,
+            viewport: split,
+        });
+        let second = next_completion(&receiver).result.unwrap();
+        let end = second.end();
+        assert_eq!(
+            end,
+            stickymd_render::preview::PreviewEnd::new(second.document_height(), 400.0, 34.0)
+        );
+        assert_eq!(second.scroll_y(), end.clamp(first.scroll_y()));
+    }
+
     #[test]
     fn scrollbar_completion_preserves_requested_offset_even_after_clamping() {
         let (sender, receiver) = mpsc::channel();
@@ -438,6 +489,7 @@ mod tests {
         }
         assert!(current.same_layout(&PreviewViewport {
             scroll_y: 100.0,
+            notice_bar_px: 0.0,
             selection: PreviewSelection::caret(1),
             ..current.clone()
         }));

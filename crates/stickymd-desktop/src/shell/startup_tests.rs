@@ -118,7 +118,7 @@ fn a_healthy_startup_keeps_its_order_and_reports_nothing() {
         ),
         "{calls:?}"
     );
-    assert_eq!(app.diagnostic, None);
+    assert_eq!(app.notice_text(), None);
     assert!(!app.startup_failed());
 }
 
@@ -220,7 +220,7 @@ fn a_refused_opacity_is_reported_and_the_startup_goes_on() {
     assert_eq!(count(&calls, &HostCall::WindowFocused), 1);
     assert!(dialogs(&calls).is_empty());
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("无法应用窗口透明度：alpha refused")
     );
     assert!(!app.startup_failed());
@@ -240,7 +240,7 @@ fn a_refused_topmost_is_reported_and_can_be_retried_once() {
     assert_eq!(count(&calls, &HostCall::SetTopmost(false)), 1);
     assert!(dialogs(&calls).is_empty());
     assert_eq!(
-        app.diagnostic.as_deref(),
+        app.notice_text().as_deref(),
         Some("无法应用窗口置顶状态：z-order refused")
     );
     assert!(!app.startup_failed());
@@ -277,12 +277,14 @@ fn a_missing_tray_interrupts_once_and_the_startup_goes_on_with_a_taskbar_entry()
     assert!(position(&calls, &HostCall::RestoreOrdinaryEntry) < shown);
     assert_eq!(count(&calls, &HostCall::ReassertIdentity), 1);
     assert!(position(&calls, &HostCall::ReassertIdentity) > shown);
-    assert_eq!(app.diagnostic.as_deref(), Some(TRAY_LINE));
+    assert_eq!(app.notice_text().as_deref(), Some(TRAY_LINE));
     assert!(!app.startup_failed());
 }
 
+/// Each failure the startup survives is its own important notice: the latest shows, the others
+/// show again once it ends within their own 30 s.
 #[test]
-fn every_survived_failure_of_a_startup_has_its_place_on_the_one_status_line() {
+fn every_survived_failure_of_a_startup_is_its_own_notice() {
     let mut app = on_a_display(fixture("start"));
     app.host.tray_result = Err(failure("no tray"));
     app.host.opacity_result = Err(failure("alpha refused"));
@@ -291,52 +293,62 @@ fn every_survived_failure_of_a_startup_has_its_place_on_the_one_status_line() {
     assert_eq!(start(&mut app).0, Ok(()));
 
     assert_eq!(
-        app.diagnostic,
-        Some(format!(
-            "{TRAY_LINE}；无法应用窗口透明度：alpha refused；无法应用窗口置顶状态：z-order refused"
-        ))
+        app.app.timed_notice_texts(),
+        [
+            "无法应用窗口置顶状态：z-order refused",
+            "无法应用窗口透明度：alpha refused",
+            TRAY_LINE,
+        ]
     );
 }
 
-/// A diagnostic from before the window existed is kept, with the failure after it.
+/// A notice from before the window existed is kept under the failure after it.
 #[test]
-fn a_survived_failure_joins_what_the_status_line_already_says() {
+fn a_survived_failure_lands_over_what_was_already_said() {
     let host = FakeHost {
         watch_result: Err(failure("no watch")),
         ..FakeHost::default()
     };
     let mut app = on_a_display(fixture_on(host, "start"));
-    let earlier = app.diagnostic.clone().expect("the watcher's diagnostic");
+    let earlier = app.notice_text().expect("the watcher's notice");
     app.host.opacity_result = Err(failure("alpha refused"));
 
     assert_eq!(start(&mut app).0, Ok(()));
 
     assert_eq!(
-        app.diagnostic,
-        Some(format!("{earlier}；无法应用窗口透明度：alpha refused"))
+        app.app.timed_notice_texts(),
+        ["无法应用窗口透明度：alpha refused".to_owned(), earlier]
     );
 }
 
-/// The recovery prompt lays out its actions by position, so it takes nothing more; the reason is
-/// told in a dialog and not lost.
+/// A failure shows above the waiting recovery, which keeps its buttons (P17-N16), so no dialog
+/// is needed for it (plan 09 failure table, USER 2026-11-17).
 #[test]
-fn a_survived_failure_goes_to_a_dialog_while_the_recovery_prompt_holds_the_status_line() {
+fn a_survived_failure_shows_above_the_recovery_prompt_that_keeps_its_buttons() {
     let mut app = on_a_display(recovering_at_start());
-    let prompt = app.diagnostic.clone();
-    assert!(prompt.as_deref().is_some_and(|text| text.contains("[F7")));
+    let choices = app.app.notice_view().and_then(|view| view.choices);
+    assert_eq!(
+        choices.map(|choices| choices.iter().count()),
+        Some(2),
+        "the recovery offers F6 and F7"
+    );
     app.host.opacity_result = Err(failure("alpha refused"));
 
     let (outcome, calls) = start(&mut app);
 
     assert_eq!(outcome, Ok(()));
-    assert_eq!(dialogs(&calls), ["无法应用窗口透明度：alpha refused"]);
-    assert_eq!(app.diagnostic, prompt);
+    assert!(dialogs(&calls).is_empty());
+    assert_eq!(
+        app.notice_text().as_deref(),
+        Some("无法应用窗口透明度：alpha refused")
+    );
+    assert_eq!(app.app.notice_view().and_then(|view| view.choices), choices);
 }
 
 #[test]
-fn a_missing_tray_is_told_once_while_the_recovery_prompt_holds_the_status_line() {
+fn a_missing_tray_is_told_once_while_the_recovery_prompt_keeps_its_buttons() {
     let mut app = on_a_display(recovering_at_start());
-    let prompt = app.diagnostic.clone();
+    let choices = app.app.notice_view().and_then(|view| view.choices);
     app.host.tray_result = Err(failure("no tray"));
 
     let (outcome, calls) = start(&mut app);
@@ -348,7 +360,8 @@ fn a_missing_tray_is_told_once_while_the_recovery_prompt_holds_the_status_line()
     );
     assert_eq!(milestones(&calls), ALL_MILESTONES);
     assert_eq!(count(&calls, &HostCall::WindowFocused), 1);
-    assert_eq!(app.diagnostic, prompt);
+    assert_eq!(app.notice_text().as_deref(), Some(TRAY_LINE));
+    assert_eq!(app.app.notice_view().and_then(|view| view.choices), choices);
 }
 
 /// The event loop still delivers what it buffered after `exit`, and `ApplicationHandler` needs a

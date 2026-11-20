@@ -13,8 +13,10 @@ mod tests;
 
 use stickymd_core::{DiskFingerprint, PreserveExpectation};
 
+use super::notice::Notice;
 use super::{
     AppEffect, ClipboardPort, EditorCoordinator, PersistenceCoordinator, RecoveryCoordinator,
+    SaveFaultKind,
 };
 use crate::ports::{PersistRequest, TemporaryCleanup};
 
@@ -40,8 +42,12 @@ pub enum NoteEffect {
     NoteBarriers {
         succeeded: bool,
     },
-    /// Replaces the status line; the last one in a list is the one that stays.
-    Diagnostic(String),
+    /// A timed notice to show.
+    Notice(Notice),
+    /// The unresolved save failure began or changed kind: a new segment of the fault display.
+    FaultDisplayStarted,
+    /// A successful save resolved the save failure: every fault display goes.
+    FaultResolved,
     RefreshTitle,
     Redraw,
 }
@@ -56,8 +62,8 @@ impl NoteEffects {
         self.0.push(effect);
     }
 
-    fn diagnostic(&mut self, message: impl Into<String>) {
-        self.push(NoteEffect::Diagnostic(message.into()));
+    fn notice(&mut self, notice: Notice) {
+        self.push(NoteEffect::Notice(notice));
     }
 }
 
@@ -90,12 +96,16 @@ impl<'a, C: ClipboardPort> NoteIo<'a, C> {
     }
 
     /// Handles a conflict or recovery key. `None` means neither is waiting and the key is not
-    /// consumed.
+    /// consumed. A choice that must write or remove a file is refused once the persistence
+    /// worker has stopped; loading the external side of a conflict needs no write.
     pub fn resolve(&mut self, primary: bool) -> Option<NoteEffects> {
         let mut effects = NoteEffects::default();
         if self.recovery.is_pending() {
             if self.recovery.operation_pending() {
-                effects.diagnostic("恢复操作正在完成，请稍候。");
+                effects.notice(Notice::RecoveryChoiceRunning);
+                effects.push(NoteEffect::Redraw);
+            } else if !self.persistence.worker_available() {
+                effects.notice(Notice::PersistenceUnavailable);
                 effects.push(NoteEffect::Redraw);
             } else if primary {
                 self.restore_temporary(&mut effects);
@@ -106,15 +116,26 @@ impl<'a, C: ClipboardPort> NoteIo<'a, C> {
         }
         if self.persistence.conflict().is_some() {
             if self.persistence.keep_local_in_progress() {
-                effects.diagnostic("正在保存本地内容，请稍候。");
+                effects.notice(Notice::KeepLocalRunning);
                 effects.push(NoteEffect::Redraw);
             } else if primary {
                 self.load_external_conflict(&mut effects);
+            } else if !self.persistence.worker_available() {
+                effects.notice(Notice::PersistenceUnavailable);
+                effects.push(NoteEffect::Redraw);
             } else {
                 self.keep_local_conflict(&mut effects);
             }
             return Some(effects);
         }
         None
+    }
+
+    /// A save failed: the unresolved failure takes it, and a new segment of the fault display
+    /// starts if it is new or changed kind.
+    fn save_failed(&mut self, kind: SaveFaultKind, text: String, effects: &mut NoteEffects) {
+        if self.persistence.record_save_failure(kind, text) {
+            effects.push(NoteEffect::FaultDisplayStarted);
+        }
     }
 }

@@ -4,6 +4,7 @@
 
 use crate::config::{ConfigAck, ConfigRevision};
 use crate::execution::IoCompletion;
+use crate::flow::notice::Notice;
 use crate::flow::window::state::{QuitBarrier, WindowIntent};
 use crate::ports::{ExportCompletion, NoteReceipt, StorageFailure};
 
@@ -55,10 +56,7 @@ impl AppSession {
         let succeeded = result.is_ok();
         let acknowledgement = self.config.acknowledge(revision, succeeded);
         if let Err(error) = result {
-            out.push(ShellEffect::Diagnostic(format!(
-                "配置保存失败；笔记保存不受影响：{error}"
-            )));
-            out.push(ShellEffect::RedrawNeeded);
+            self.show_notice(Notice::ConfigSaveFailed(error.to_string()), out);
         } else if matches!(
             acknowledgement,
             ConfigAck::Applied {
@@ -85,23 +83,31 @@ impl AppSession {
         out: &mut ShellEffects,
     ) {
         self.export_in_flight = false;
-        out.push(ShellEffect::Diagnostic(match result {
-            Ok(completion) => format!(
-                "导出完成：{}（{} 个本地资源）",
-                completion.target.display(),
-                completion.copied_assets
-            ),
-            Err(error) => format!("导出失败；工作文档未改变：{error}"),
-        }));
-        out.push(ShellEffect::RedrawNeeded);
+        let notice = match result {
+            Ok(completion) => Notice::Exported {
+                target: completion.target.display().to_string(),
+                assets: completion.copied_assets,
+            },
+            Err(error) => Notice::ExportFailed(error.to_string()),
+        };
+        self.show_notice(notice, out);
     }
 
-    /// Nothing the worker was doing will ever report back: every barrier waiting on it ends.
+    /// Nothing the worker was doing will ever report back: every barrier waiting on it ends, and
+    /// so does every operation in progress on it (plan 04 #notice-state). The export is one of
+    /// them too, or "exporting" would show forever.
     fn on_worker_stopped(&mut self, view: ViewFacts, out: &mut ShellEffects) {
-        out.push(ShellEffect::Diagnostic(
-            "持久化工作线程已停止；不会假装自动保存仍可用。".into(),
-        ));
-        self.assets.worker_stopped();
+        if self
+            .persistence
+            .worker_stopped("持久化工作线程已停止；不会假装自动保存仍可用。".into())
+        {
+            self.start_fault_display(out);
+        }
+        self.recovery.fail_operation();
+        self.export_in_flight = false;
+        if self.assets.worker_stopped() {
+            out.push(ShellEffect::StartWatcher);
+        }
         self.dispatch_window_intent(
             WindowIntent::HideSaveCompleted {
                 succeeded: false,

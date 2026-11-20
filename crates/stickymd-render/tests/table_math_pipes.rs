@@ -114,7 +114,7 @@ fn absolute_value_commands_render_a_six_column_table() {
         assert_eq!(pipeline.math_counters().rasterizations, 6);
         assert!(
             frame
-                .copy_selection(frame.select_all())
+                .selected_text(frame.select_all())
                 .unwrap()
                 .contains(formula)
         );

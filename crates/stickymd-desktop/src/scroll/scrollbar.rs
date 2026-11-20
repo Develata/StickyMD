@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#vertical-scrollbars
 
+use stickymd_render::preview::PreviewEnd;
 use stickymd_render::source::SourceScrollMetrics;
 use tiny_skia::{Paint, Pixmap, Rect, Transform};
 use winit::dpi::PhysicalPosition;
@@ -206,18 +207,17 @@ pub fn pane_bars(
     ]
 }
 
-/// A Preview frame's scroll facts: its cached document height, its offset, and whether it is
-/// the current frame for the document and viewport.
+/// A Preview frame's scroll facts: its scroll end, its offset, and whether it is the current
+/// frame for the document and viewport.
 #[derive(Debug, Clone, Copy)]
 pub struct PreviewFacts {
-    pub document_height: f32,
+    pub end: PreviewEnd,
     pub scroll_y: f32,
     pub current: bool,
 }
 
 /// The bars of the panes `geometry` shows (plan 09 vertical scrollbars): the Source bar from
-/// the Source projection's metrics, the Preview bar from the frame's cached document height
-/// and offset; a pane the view does not show has no bar whatever facts are given for it.
+/// the Source projection's metrics, the Preview bar from the frame's scroll end and offset; a pane the view does not show has no bar whatever facts are given for it.
 pub fn view_bars(
     dpi: f32,
     geometry: ViewGeometry,
@@ -233,30 +233,21 @@ pub fn view_bars(
             visible: metrics.viewport_fraction,
         });
     let preview = geometry.preview.zip(preview).and_then(|(content, facts)| {
-        preview_scroll(
-            content,
-            facts.current,
-            facts.document_height,
-            facts.scroll_y,
-        )
+        preview_scroll(content, facts.current, facts.end, facts.scroll_y)
     });
     pane_bars(true, dpi, geometry.divider_x.is_some(), source, preview)
 }
 
-/// The Preview offset for a scrollbar `fraction`: 0 shows the document start, 1 its last
-/// screen.
-pub fn preview_offset_at(fraction: f64, document_height: f32, viewport_height: u32) -> f32 {
-    fraction as f32 * (document_height - viewport_height as f32).max(0.0)
+/// The Preview offset for a scrollbar `fraction`: 0 shows the document start, 1 the frame's
+/// end, with the end room below the last line.
+pub fn preview_offset_at(fraction: f64, end: PreviewEnd) -> f32 {
+    end.clamp(fraction as f32 * end.max_scroll)
 }
 
-/// The Preview offset after scrolling `pixels` from `offset`, kept within the document.
-pub fn preview_offset_by(
-    offset: f32,
-    pixels: f32,
-    document_height: f32,
-    viewport_height: u32,
-) -> f32 {
-    (offset + pixels).clamp(0.0, (document_height - viewport_height as f32).max(0.0))
+/// The Preview offset after scrolling `pixels` from `offset`, kept between the start and the
+/// frame's end.
+pub fn preview_offset_by(offset: f32, pixels: f32, end: PreviewEnd) -> f32 {
+    end.clamp(offset + pixels)
 }
 
 /// Where a pane is scrolled: `fraction` of the scrollable range, `visible` share of the content.
@@ -272,18 +263,18 @@ pub struct PaneScroll {
 pub fn preview_scroll(
     content: PaneRect,
     current: bool,
-    document_height: f32,
+    end: PreviewEnd,
     scroll_y: f32,
 ) -> Option<PaneScroll> {
     if !current {
         return None;
     }
-    let height = f64::from(document_height);
     let viewport = f64::from(content.height);
     Some(PaneScroll {
         content,
-        fraction: f64::from(scroll_y) / (height - viewport).max(1.0),
-        visible: viewport / height.max(viewport),
+        fraction: f64::from(scroll_y) / f64::from(end.max_scroll).max(1.0),
+        // A frame that does not scroll shows the whole height: no thumb (plan 09).
+        visible: viewport / f64::from(end.scrollable_height).max(viewport),
     })
 }
 
@@ -374,7 +365,7 @@ mod tests {
             viewport_fraction: 0.1,
         };
         let long_preview = PreviewFacts {
-            document_height: 5000.0,
+            end: PreviewEnd::new(5000.0, 646.0, 34.0),
             scroll_y: 1000.0,
             current: true,
         };
@@ -418,10 +409,12 @@ mod tests {
                     fraction: 0.0,
                     viewport_fraction: 1.0,
                 };
+                // P17-E01: a document that fits above the notice bar does not scroll.
                 let pane_height = view.preview.map_or(0, |pane| pane.height) as f32;
-                for document_height in [0.0, 1.0, pane_height] {
+                let bar = 34.0 * dpi;
+                for document_height in [0.0, 1.0, pane_height - bar] {
                     let short_preview = PreviewFacts {
-                        document_height,
+                        end: PreviewEnd::new(document_height, pane_height, bar),
                         scroll_y: 0.0,
                         current: true,
                     };
@@ -455,33 +448,38 @@ mod tests {
         }
     }
 
-    /// Plan 09 Preview positions: a scrollbar fraction of 0 shows the document start and 1
-    /// its last screen, linearly in between, and the bar reads the same fraction back from the
-    /// frame's cached document height; a page moves the offset within the document, stopping
-    /// at both ends; a document that fits one screen never scrolls.
+    /// Plan 09 Preview positions (P17-E02): a scrollbar fraction of 0 shows the document start
+    /// and 1 the frame's end, half a viewport past the last line, linearly in between, and the bar
+    /// reads the same fraction back from that end; its length is the viewport's share of the
+    /// document and the end room; a page moves the offset within the start and the end, stopping
+    /// at both; a document that fits above the notice bar never scrolls (P17-E01).
     #[test]
-    fn the_preview_offset_follows_the_fraction_and_pages_within_the_document() {
+    fn the_preview_offset_follows_the_fraction_and_pages_within_the_end() {
         let pane = PaneRect {
             x: 0,
             y: 34,
             width: 500,
             height: 646,
         };
+        let bar = 34.0;
         for document_height in [700.0_f32, 5000.0, 123_456.7] {
-            let range = document_height - pane.height as f32;
-            assert_eq!(preview_offset_at(0.0, document_height, pane.height), 0.0);
-            assert!((preview_offset_at(1.0, document_height, pane.height) - range).abs() < 1e-3);
+            let end = PreviewEnd::new(document_height, pane.height as f32, bar);
+            let range = end.max_scroll;
+            assert!((range - (document_height - pane.height as f32 / 2.0)).abs() < 1e-3);
+            assert_eq!(preview_offset_at(0.0, end), 0.0);
+            assert!((preview_offset_at(1.0, end) - range).abs() < 1e-3);
             for step in 0..=20 {
                 let fraction = f64::from(step) / 20.0;
-                let offset = preview_offset_at(fraction, document_height, pane.height);
+                let offset = preview_offset_at(fraction, end);
                 assert!((offset - fraction as f32 * range).abs() <= range * 1e-6 + 1e-3);
-                let scroll = preview_scroll(pane, true, document_height, offset).unwrap();
+                let scroll = preview_scroll(pane, true, end, offset).unwrap();
                 assert!(
                     (scroll.fraction - fraction).abs() < 1e-4,
                     "{document_height} {fraction}"
                 );
                 assert!(
-                    (scroll.visible - f64::from(pane.height) / f64::from(document_height)).abs()
+                    (scroll.visible - f64::from(pane.height) / f64::from(end.scrollable_height))
+                        .abs()
                         < 1e-9
                 );
             }
@@ -489,7 +487,7 @@ mod tests {
             let mut offset = 0.0;
             let mut pages = 0;
             while offset < range {
-                let next = preview_offset_by(offset, page, document_height, pane.height);
+                let next = preview_offset_by(offset, page, end);
                 assert!(next > offset && next <= range);
                 // A page moves by its pixels up to f32 rounding at this offset's magnitude.
                 let tolerance = (offset + page) * f32::EPSILON * 4.0;
@@ -498,18 +496,9 @@ mod tests {
                 pages += 1;
                 assert!(pages < 100_000);
             }
-            assert_eq!(
-                preview_offset_by(offset, page, document_height, pane.height),
-                range
-            );
-            assert_eq!(
-                preview_offset_by(0.0, -page, document_height, pane.height),
-                0.0
-            );
-            assert_eq!(
-                preview_offset_by(range, -range * 2.0, document_height, pane.height),
-                0.0
-            );
+            assert_eq!(preview_offset_by(offset, page, end), range);
+            assert_eq!(preview_offset_by(0.0, -page, end), 0.0);
+            assert_eq!(preview_offset_by(range, -range * 2.0, end), 0.0);
             // From the middle a page moves by exactly its pixels in either direction, unless an
             // end is nearer than a page.
             let middle = range / 2.0;
@@ -517,18 +506,21 @@ mod tests {
                 (page, (middle + page).min(range)),
                 (-page, (middle - page).max(0.0)),
             ] {
-                let moved = preview_offset_by(middle, pixels, document_height, pane.height);
+                let moved = preview_offset_by(middle, pixels, end);
                 assert!(
                     (moved - expected).abs() <= (middle + page) * f32::EPSILON * 4.0,
                     "{document_height}: {middle} by {pixels} gave {moved}, not {expected}"
                 );
             }
         }
-        for short in [0.0_f32, 1.0, pane.height as f32] {
+        for short in [0.0_f32, 1.0, pane.height as f32 - bar] {
+            let end = PreviewEnd::new(short, pane.height as f32, bar);
             for fraction in [0.0, 0.5, 1.0] {
-                assert_eq!(preview_offset_at(fraction, short, pane.height), 0.0);
+                assert_eq!(preview_offset_at(fraction, end), 0.0);
             }
-            assert_eq!(preview_offset_by(0.0, 500.0, short, pane.height), 0.0);
+            assert_eq!(preview_offset_by(0.0, 500.0, end), 0.0);
+            let scroll = preview_scroll(pane, true, end, 0.0).unwrap();
+            assert_eq!(scroll.visible, 1.0, "{short}: no thumb");
         }
     }
 
@@ -733,8 +725,17 @@ mod tests {
             1.0,
             true,
             Some(scroll(0.5)),
-            preview_scroll(preview_pane, true, 5000.0, 2500.0),
+            preview_scroll(preview_pane, true, end_without_room(5000.0, 646.0), 2500.0),
         )
+    }
+
+    /// An end at the last line, as before Phase 17, for tests about the thumb's geometry at a
+    /// given fraction and length rather than about where scrolling ends.
+    fn end_without_room(document: f32, viewport: f32) -> PreviewEnd {
+        PreviewEnd {
+            max_scroll: (document - viewport).max(0.0),
+            scrollable_height: document.max(viewport),
+        }
     }
 
     fn scroll(fraction: f64) -> PaneScroll {
@@ -1015,7 +1016,12 @@ mod tests {
             1.0,
             true,
             None,
-            preview_scroll(preview_pane, true, 780.0, 4.0),
+            preview_scroll(
+                preview_pane,
+                true,
+                end_without_room(780.0, preview_pane.height as f32),
+                4.0,
+            ),
         )[1]
         .unwrap();
         assert_eq!(exact_end.thumb_top + exact_end.thumb_height, 567.0);
@@ -1150,8 +1156,9 @@ mod tests {
                 .iter()
                 .all(Option::is_none)
         );
-        assert!(preview_scroll(content(), false, 5000.0, 100.0).is_none());
-        let current = preview_scroll(content(), true, 5000.0, 100.0).unwrap();
+        let end = PreviewEnd::new(5000.0, content().height as f32, 34.0);
+        assert!(preview_scroll(content(), false, end, 100.0).is_none());
+        let current = preview_scroll(content(), true, end, 100.0).unwrap();
         let [source, preview] = pane_bars(true, 1.0, true, Some(scroll(0.5)), Some(current));
         assert_eq!(source.unwrap().pane, ScrollPane::Source);
         assert_eq!(preview.unwrap().pane, ScrollPane::Preview);

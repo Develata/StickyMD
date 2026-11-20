@@ -29,13 +29,6 @@ fn edited() -> HeadlessApp {
     app
 }
 
-fn saving(app: &HeadlessApp) -> String {
-    format!(
-        "正在保存 generation {}…",
-        app.app.coordinator.view().generation.value()
-    )
-}
-
 #[test]
 fn losing_focus_saves_a_dirty_note_and_nothing_else_does() {
     let mut app = edited();
@@ -43,7 +36,8 @@ fn losing_focus_saves_a_dirty_note_and_nothing_else_does() {
     app.apply_focus_change(false);
     assert_eq!(saves(&app), before + 1);
     assert!(app.app.persistence.note_save_in_flight());
-    assert_eq!(app.diagnostic, Some(saving(&app)));
+    // A save on focus loss is routine: it shows no progress (P17-N05).
+    assert_eq!(app.notice_text(), None);
 
     // A clean note has nothing to save.
     let mut app = fixture("start");

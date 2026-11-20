@@ -71,7 +71,10 @@ fn representative_fixture_renders_at_least_fifty_native_formulas() {
             .chunks_exact(4)
             .any(|pixel| pixel[0..3] != [248, 246, 239])
     );
-    let copied = frame.index().copy(frame.index().select_all()).unwrap();
+    let copied = frame
+        .index()
+        .selected_text(frame.index().select_all())
+        .unwrap();
     assert!(copied.contains("$$\\frac{a}{b}$$"));
     assert!(copied.contains("$$\\text{中文}+x$$"));
 }
@@ -82,7 +85,10 @@ fn malformed_formula_is_atomic_and_does_not_fail_the_document() {
     let (pipeline, frame) = build(source, 1.0);
     assert_eq!(pipeline.math_counters().parse_layout_calls, 2);
     assert_eq!(pipeline.math_counters().rasterizations, 1);
-    assert_eq!(frame.index().copy(frame.index().select_all()), Some(source));
+    assert_eq!(
+        frame.index().selected_text(frame.index().select_all()),
+        Some(source)
+    );
     let atomic = frame
         .index()
         .boxes()
@@ -98,7 +104,10 @@ fn all_four_delimiters_copy_exact_source_while_code_stays_literal() {
     let source = "$a$\n\n$$b$$\n\n\\(c\\)\n\n\\[d\\]\n\n`$not_math$`";
     let (pipeline, frame) = build(source, 1.0);
     assert_eq!(pipeline.math_counters().parse_layout_calls, 4);
-    let copied = frame.index().copy(frame.index().select_all()).unwrap();
+    let copied = frame
+        .index()
+        .selected_text(frame.index().select_all())
+        .unwrap();
     for expected in ["$a$", "$$b$$", "\\(c\\)", "\\[d\\]", "$not_math$"] {
         assert!(
             copied.contains(expected),
@@ -145,11 +154,11 @@ fn formula_limit_and_source_limit_render_errors_without_aborting_preview() {
     assert_eq!(pipeline.math_counters().rasterizations, 1);
     assert_eq!(
         frame
-            .copy_selection(frame.select_all())
+            .selected_text(frame.select_all())
             .map(|text| text.matches("$$x$$").count()),
         Some(2_001)
     );
-    let maximum_scroll = (frame.document_height() - frame.height() as f32).max(0.0);
+    let maximum_scroll = frame.end().max_scroll;
     for scroll in [0.0, maximum_scroll * 0.5, maximum_scroll] {
         let viewport = pipeline
             .paint(
@@ -172,7 +181,7 @@ fn formula_limit_and_source_limit_render_errors_without_aborting_preview() {
         );
         assert_eq!(
             viewport
-                .copy_selection(viewport.select_all())
+                .selected_text(viewport.select_all())
                 .map(|text| text.matches("$$x$$").count()),
             Some(2_001)
         );
@@ -182,7 +191,7 @@ fn formula_limit_and_source_limit_render_errors_without_aborting_preview() {
     let (pipeline, frame) = build(&huge, 1.0);
     assert_eq!(pipeline.math_counters().rasterizations, 0);
     assert_eq!(
-        frame.index().copy(frame.index().select_all()),
+        frame.index().selected_text(frame.index().select_all()),
         Some(huge.as_str())
     );
 }
