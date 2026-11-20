@@ -14,13 +14,16 @@
   两个 workflow 尚未 dispatch；macOS 就绪核对（M5）尚未实现。
 - **依据：** [分发报告（修订版）](report/2026-11-19-macos-public-distribution-decision-r2.md)、[安装版报告（修订版）](report/2026-11-19-macos-installed-note-location-r2.md)。
 
-2026-11-14 Phase 17 设计（下一版本，尚未实现）：
+2026-11-14 Phase 17 设计；2026-11-16 起在分支 `feat/phase-17-copy-notices` 实现（下一版本，尚未发布）：
 
 - **Plan：** `02` `copy-what-you-see`、`04` `notice-state`、`06` `preview-copy-semantics` / `preview-copy-rail`、
   `09` `notices` / `vertical-scrollbars`（Preview 文末留白）、`07` 复制反馈、`11` `phase-17-copy-and-notices`。
 - **功能投影：** 功能文档的“下一版本（Phase 17）”一节。
-- **验收：** [Phase 17](acceptance-cases/phase-17.md) 的 N、E、C、R 系列，全部 `NOT TESTED`。
-- **代码：** 尚无实现。
+- **验收：** [Phase 17](acceptance-cases/phase-17.md) 的 N、E、C、R 系列；自动行在 macOS 本机通过，
+  人工行 P17-N12、P17-R06 仍为 `NOT TESTED`（macOS 部分已有 USER 收据，Windows 未测）；资源行 P17-C12 为 `AUTOMATED PASS`（macOS 进程内存门已测，Windows 资源运行由 USER 2026-11-18 豁免）；分支 Windows CI `44113614349` 在 `b4ccd6b` 构建并通过测试（M1–M4）。
+- **代码：** 提示条 `crates/stickymd-app/src/flow/notice/` 与 `crates/stickymd-desktop/src/controls/notice_bar.rs`；
+  文末留白 `crates/stickymd-render/src/preview/end_room.rs`；复制语义 `crates/stickymd-render/src/preview/copy/`；
+  复制侧条 `crates/stickymd-render/src/preview/copy_rail.rs` 与 `crates/stickymd-desktop/src/shell/preview_copy_rail.rs`。
 - **依据：** [提议报告](report/2026-11-14-copy-semantics-rail-notices.md)。设计于 macOS 版本发布后合入。
 
 2026-10-22 Preview 资源与宽内容改进：Plan 04 `preview-view-session`、Plan 06
@@ -72,7 +75,7 @@ Windows 与 macOS 的真实按钮仍为 `NOT TESTED`。
 | `08_assets_and_export.md` | 图片粘贴、managed GC、导出 | AC-010、AC-011、AC-012、AC-017、AC-018 | `stickymd-core/src/assets.rs`; `stickymd-render/src/{image,preview/export}.rs`; `stickymd-desktop/src/shell/export_runtime.rs`; `stickymd-win/{assets,export,platform/windows/{clipboard,export_dialog,managed_file}.rs}` | handle-bound ownership/scanner/bounded paste OCC/reversed Undo effects/durable safe-boundary GC/live-raster cache/source-preserving export、standard clipboard/native dialog/process-kill recovery/user-asset safety exact automation PASS；主观图片观感由 guided manual PASS |
 | `09_windows_shell.md` | dock、托盘、置顶/auto-hide 正交性、透明度、主题、多显示器、紧凑窗口、Tool Window | AC-019..029、AC-033..036、P11B-A06 | `stickymd-app/src/{flow/window,config}`; `stickymd-desktop/src/{controls/,shell/{handler,lifecycle,window_runtime,window_interaction,window_geometry_runtime}.rs}`; `stickymd-win/{config,host.rs,platform/windows/{tool_window,tray,monitor,native_message,window_opacity,window_topmost}.rs}`；`apps/stickymd-mac/`（macOS 宿主，验收见 [`phase-16.md`](acceptance-cases/phase-16.md)） | Pin/auto-hide、三边 Dock/timing、tray lifecycle、220×120 geometry、24-DIP nearest/tie、40% alpha、Tool Window 与 guided visual PASS；Clean VM、真实双屏/mixed DPI/拔屏采用 v0.1.0 USER waiver，RDP/物理负坐标为 Tier C NOT TESTED |
 | `10_performance_reliability.md` | 质量属性 | AC-022、AC-032、空闲/内存观察、P14-A03/A08/A15/A23/A40 | core/source/preview/math/image/export/window/zoom Release baselines；`stickymd-smoke` copied-runtime metrics/attribution；`docs/report/{phase-14-memory-attribution,phase-14-global-module-review,phase-14-global-module-rereview}.md` | v0.1.0 采用 180 preferred / 400 engineering diagnostic / 550 hard 三层 startup policy；正式 warm-cache 间隔 1000 ms，250 ms rapid-restart 仅诊断；五个独立 Release 进程的 Source/Preview/Split median PWS 为 12.98/15.50/20.89 MiB，idle CPU p95 0–0.0027% PASS；关闭 search 后释放约 2 MiB 上限匹配投影并停止 O(n) 隐式扫描；窗口压力测试须先恢复固定文档再做隐藏采样 |
-| `11_testing_and_release.md` | 逐阶段验证、结果驱动等待、可证明并发、GUI child 进程隔离、Source Freeze、remote artifact promotion、module input fingerprint、last-success ledger、exact-artifact JSON evidence、发布形态 | `phase-00.md`..`phase-16.md`、P12-A09/A11/A13/A14/A18、P14-A31..A36、P14-A67..A79、人工观察记录验证（`#manual-observation-log`；记录器与被测实例为 P14-A76，观察任务、独立记录器与整包导入为 P14-A78，人工义务映射为 P14-A79）、release 验收清单 | `tools/stickymd-smoke`; `tools/smoke/*.ps1`; `.github/workflows/{ci,release,promote-release}.yml`; `dist/evidence/*`; `dist/exact-candidate/*` | Rust task/gate/evidence authority、headless isolated shards 与 targeted module 已落地；Promoted Candidate 继续持有 exact bytes，Runtime/Performance/Resources/G3/G4/G5 按相关输入指纹从克隆级共享存储 `<git common dir>/stickymd/qualification-ledger/` 复用成功记录（发布版本号与发布文档不使其失效）；成功 evidence 与 G5 截图先归档再原子发布记录，失败/中止保留本轮诊断 JSON 但不覆盖成功账本；tag/draft/publish 必须复用已验收 artifact 且不得重建 |
+| `11_testing_and_release.md` | 逐阶段验证、结果驱动等待、可证明并发、GUI child 进程隔离、Source Freeze、remote artifact promotion、module input fingerprint、last-success ledger、exact-artifact JSON evidence、发布形态 | `phase-00.md`..`phase-17.md`、P12-A09/A11/A13/A14/A18、P14-A31..A36、P14-A67..A79、人工观察记录验证（`#manual-observation-log`；记录器与被测实例为 P14-A76，观察任务、独立记录器与整包导入为 P14-A78，人工义务映射为 P14-A79）、release 验收清单 | `tools/stickymd-smoke`; `tools/smoke/*.ps1`; `.github/workflows/{ci,release,promote-release}.yml`; `dist/evidence/*`; `dist/exact-candidate/*` | Rust task/gate/evidence authority、headless isolated shards 与 targeted module 已落地；Promoted Candidate 继续持有 exact bytes，Runtime/Performance/Resources/G3/G4/G5 按相关输入指纹从克隆级共享存储 `<git common dir>/stickymd/qualification-ledger/` 复用成功记录（发布版本号与发布文档不使其失效）；成功 evidence 与 G5 截图先归档再原子发布记录，失败/中止保留本轮诊断 JSON 但不覆盖成功账本；tag/draft/publish 必须复用已验收 artifact 且不得重建 |
 
 ---
 

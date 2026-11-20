@@ -54,6 +54,11 @@ fn begin(session: &mut AppSession, mode: ViewMode) -> (Option<PreparedViewChange
 }
 
 /// What a begun view change does to Search, or `None` when it was not allowed.
+/// The text the notice bar shows now.
+fn notice_text(session: &AppSession) -> Option<String> {
+    session.notice_view().map(|view| view.text.into_owned())
+}
+
 fn decided(prepared: &Option<PreparedViewChange>) -> Option<SearchViewChange> {
     prepared.as_ref().map(PreparedViewChange::search)
 }
@@ -79,11 +84,9 @@ fn a_composing_search_keeps_the_view_that_has_its_pane() {
     let (prepared, seen) = begin(&mut session, ViewMode::Preview);
     assert_eq!(
         (decided(&prepared), seen),
-        (
-            None,
-            vec![SEARCH_COMPOSING.to_owned(), "RedrawNeeded".to_owned()]
-        )
+        (None, vec!["RedrawNeeded".to_owned()])
     );
+    assert_eq!(notice_text(&session).as_deref(), Some(SEARCH_COMPOSING));
     assert_eq!(session.config.current().view_mode, ViewMode::Source);
     assert!(session.search.open);
 }
@@ -511,23 +514,19 @@ fn a_composition_refuses_opening_search() {
     session.search.set_preedit("zh".into(), Some((0, 2)));
     assert_eq!(
         open(&mut session, true),
-        (
-            SearchOpenStep::Done,
-            vec![SEARCH_COMPOSING.to_owned(), "RedrawNeeded".to_owned()]
-        )
+        (SearchOpenStep::Done, vec!["RedrawNeeded".to_owned()])
     );
+    assert_eq!(notice_text(&session).as_deref(), Some(SEARCH_COMPOSING));
     assert!(!session.search.replace_visible);
 
     let mut session = composing();
     assert_eq!(
         open(&mut session, false),
-        (
-            SearchOpenStep::Done,
-            vec![
-                "请先完成当前输入法组合，再打开查找。".to_owned(),
-                "RedrawNeeded".to_owned()
-            ]
-        )
+        (SearchOpenStep::Done, vec!["RedrawNeeded".to_owned()])
+    );
+    assert_eq!(
+        notice_text(&session).as_deref(),
+        Some("请先完成当前输入法组合，再打开查找。")
     );
     assert!(!session.search.open);
 }

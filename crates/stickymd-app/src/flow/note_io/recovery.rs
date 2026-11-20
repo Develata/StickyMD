@@ -5,6 +5,7 @@
 use stickymd_core::ExternalFileState;
 
 use super::{NoteEffect, NoteEffects, NoteIo};
+use crate::flow::notice::Notice;
 use crate::flow::{CanonicalRecoveryPlan, ClipboardPort, SaveTrigger};
 use crate::ports::{PersistMode, TemporaryCleanup};
 
@@ -18,7 +19,7 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
             .load_unpersisted_recovery(&plan.temporary.text, plan.temporary.line_ending)
         {
             self.recovery.fail_operation();
-            effects.diagnostic(format!("无法载入临时内容：{error}"));
+            effects.notice(Notice::TemporaryLoadFailed(error.to_string()));
             return;
         }
         effects.push(NoteEffect::ResyncProjection);
@@ -53,16 +54,14 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
                 self.editor.reset_to_missing_document(*new_note)
             }
             CanonicalRecoveryPlan::Unusable => {
-                effects.diagnostic(
-                    "当前 note.md 无法载入（不是有效 UTF-8 或过大）；只能 F6 恢复有效临时内容。",
-                );
+                effects.notice(Notice::CanonicalNotLoadable);
                 effects.push(NoteEffect::Redraw);
                 return;
             }
         };
         if let Err(error) = restore_result {
             self.recovery.fail_operation();
-            effects.diagnostic(format!("无法恢复当前 note.md 状态：{error}"));
+            effects.notice(Notice::CanonicalRestoreFailed(error.to_string()));
             effects.push(NoteEffect::Redraw);
             return;
         }
@@ -84,7 +83,6 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
         effects.push(NoteEffect::RemoveTemporary(
             TemporaryCleanup::RecoveryResolved { operation },
         ));
-        effects.diagnostic("正在确认使用当前 note.md…");
         effects.push(NoteEffect::Redraw);
     }
 
@@ -92,7 +90,6 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
         self.recovery.finish();
         self.persistence.set_recovery_pending(false);
         effects.push(NoteEffect::AssetsAfterRecovery);
-        effects.diagnostic("恢复选择已完成；正在核对受管图片后启用编辑。");
         effects.push(NoteEffect::RefreshTitle);
         effects.push(NoteEffect::Redraw);
     }
@@ -103,7 +100,7 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
         effects: &mut NoteEffects,
     ) {
         self.recovery.refresh_canonical_after_conflict(observed);
-        effects.diagnostic("恢复等待期间 note.md 已变化，未覆盖外部内容；请重新选择 F6/F7。");
+        effects.notice(Notice::RecoveryCanonicalChanged);
         effects.push(NoteEffect::RefreshTitle);
         effects.push(NoteEffect::Redraw);
     }

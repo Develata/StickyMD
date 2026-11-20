@@ -3,12 +3,14 @@
 //! plan_ref: docs/plan/09_windows_shell.md#window-geometry
 
 mod layout;
+mod notice_bar;
 mod state;
 mod toolbar_paint;
 
 pub use layout::{
     ControlHit, ControlId, ControlLayout, ControlRect, PopupHit, resize_direction, split_sync_rect,
 };
+pub use notice_bar::{NOTICE_BAR_HEIGHT_DIP, NoticeBarLayout, NoticeRect, paint_notice_bar};
 pub use state::{ControlState, OpacityField};
 pub use toolbar_paint::{ToolbarVisual, paint_toolbar};
 

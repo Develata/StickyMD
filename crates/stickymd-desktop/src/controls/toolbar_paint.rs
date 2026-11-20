@@ -15,7 +15,8 @@ pub struct ToolbarVisual {
     pub topmost: bool,
     pub dark: bool,
     pub system_theme: bool,
-    pub diagnostic: bool,
+    /// The save-failure marker shows until a later save succeeds.
+    pub fault_marker: bool,
     pub emphasized: bool,
     pub opacity_popup: bool,
     pub opacity: u8,
@@ -70,10 +71,13 @@ pub fn paint_toolbar(
         }
         paint_control_icon(pixmap, id, rect, ink, visual);
     }
-    if visual.diagnostic {
+    if visual.fault_marker {
+        // Centred in the slot every width keeps for it.
+        let slot = layout.fault_marker;
+        let x = (slot.x + slot.width / 2.0) as f32 - 2.0 * scale;
         fill_rect(
             pixmap,
-            (pixmap.width() as f32 - 10.0 * scale).max(0.0),
+            x,
             7.0 * scale,
             4.0 * scale,
             20.0 * scale,
@@ -554,7 +558,7 @@ mod tests {
                 topmost: false,
                 dark: false,
                 system_theme: false,
-                diagnostic: false,
+                fault_marker: false,
                 emphasized: true,
                 opacity_popup: false,
                 opacity: 96,
@@ -589,7 +593,7 @@ mod tests {
                 topmost: false,
                 dark: false,
                 system_theme: false,
-                diagnostic: false,
+                fault_marker: false,
                 emphasized: true,
                 opacity_popup: false,
                 opacity: 96,
@@ -610,13 +614,15 @@ mod tests {
             let border = (6.0 * scale).ceil() as u32;
             let bottom = (source.y + source.height).floor() as u32 - 1;
             let right = (source.x + source.width).floor() as u32 - 1;
+            // A compact button may start below the border; its first whole row is then its own.
+            let top = border.max(source.y.ceil() as u32);
             assert_ne!(color(right, border - 1), selected, "{size:?}: the top band");
             assert_ne!(
                 color(border - 1, bottom),
                 selected,
                 "{size:?}: the left band"
             );
-            assert_eq!(color(right, border), selected, "{size:?}: the top row left");
+            assert_eq!(color(right, top), selected, "{size:?}: the top row left");
             assert_eq!(
                 color(border, bottom),
                 selected,
@@ -656,7 +662,7 @@ mod tests {
                 topmost: false,
                 dark: false,
                 system_theme: false,
-                diagnostic: false,
+                fault_marker: false,
                 emphasized: true,
                 opacity_popup: true,
                 opacity: 95,
@@ -712,7 +718,7 @@ mod tests {
                     topmost: false,
                     dark: false,
                     system_theme: false,
-                    diagnostic: false,
+                    fault_marker: false,
                     emphasized: true,
                     opacity_popup: true,
                     opacity: state.opacity_preview,

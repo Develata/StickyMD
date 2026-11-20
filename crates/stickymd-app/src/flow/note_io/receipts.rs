@@ -5,7 +5,8 @@
 use stickymd_core::{DiskFingerprint, ExternalFileState, Generation};
 
 use super::{NoteEffect, NoteEffects, NoteIo};
-use crate::flow::{ClipboardPort, SaveTrigger};
+use crate::flow::notice::Notice;
+use crate::flow::{ClipboardPort, SaveFaultKind, SaveTrigger};
 use crate::ports::{
     NoteReceipt, PersistMode, PersistResult, PreserveOutcome, StorageFailure, TemporaryCleanup,
 };
@@ -53,16 +54,22 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
                 self.persistence.note_save_finished(false);
                 self.recovery.fail_operation();
                 self.persistence.end_keep_local();
-                effects.diagnostic(format!(
-                    "保存回执 generation 不一致：submitted={} result={}",
-                    submitted.value(),
-                    generation.value()
-                ));
+                self.save_failed(
+                    SaveFaultKind::Failed,
+                    format!(
+                        "保存回执 generation 不一致：submitted={} result={}",
+                        submitted.value(),
+                        generation.value()
+                    ),
+                    effects,
+                );
                 effects.push(NoteEffect::NoteBarriers { succeeded: false });
                 effects.push(NoteEffect::Redraw);
             }
             Ok(PersistResult::Conflict { observed, .. }) => {
                 self.persistence.note_save_finished(false);
+                // The conflict answered the save: nothing is saving any more.
+                self.persistence.cancel_manual_save();
                 if self.recovery.is_pending() {
                     self.on_recovery_conflict(observed, effects);
                 } else {
@@ -75,13 +82,19 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
             Err(error) => {
                 self.persistence.note_save_finished(false);
                 self.recovery.fail_operation();
+                // Any failed save sets the unresolved failure, even one whose "keep local"
+                // follow-up is about to try again (plan 04 `SaveState`).
+                self.save_failed(
+                    error.kind().into(),
+                    format!(
+                        "保存 generation {} 失败；内存文本仍保留。Ctrl+S 重试：{error}",
+                        submitted.value()
+                    ),
+                    effects,
+                );
                 let resubmitted = self.resubmit_keep_local(mode, effects);
                 if !resubmitted {
                     self.persistence.end_keep_local();
-                    effects.diagnostic(format!(
-                        "保存 generation {} 失败；内存文本仍保留。Ctrl+S 重试：{error}",
-                        submitted.value()
-                    ));
                 }
                 effects.push(NoteEffect::RefreshTitle);
                 if !resubmitted {
@@ -109,7 +122,7 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
         match result {
             Ok(external) => self.reconcile(external, effects),
             Err(error) => {
-                effects.diagnostic(format!("外部文件读取失败，未改变当前文本：{error}"));
+                effects.notice(Notice::ExternalReadFailed(error.to_string()));
                 effects.push(NoteEffect::Redraw);
             }
         }
@@ -128,13 +141,11 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
             (TemporaryCleanup::ConflictDiscarded, Ok(())) => {}
             (TemporaryCleanup::RecoveryResolved { .. }, Err(error)) => {
                 self.recovery.fail_operation();
-                effects.diagnostic(format!("临时恢复证据无法清理，仍保持恢复状态：{error}"));
+                effects.notice(Notice::RecoveryCleanupFailed(error.to_string()));
                 effects.push(NoteEffect::Redraw);
             }
             (TemporaryCleanup::ConflictDiscarded, Err(error)) => {
-                effects.diagnostic(format!(
-                    "外部内容已载入，但本地临时副本无法清理；下次启动可能再次提示恢复：{error}"
-                ));
+                effects.notice(Notice::ConflictCleanupFailed(error.to_string()));
                 effects.push(NoteEffect::Redraw);
             }
         }
@@ -156,16 +167,12 @@ impl<C: ClipboardPort> NoteIo<'_, C> {
                 );
             }
             Ok(PreserveOutcome::Unverifiable) => {
-                effects.diagnostic(
-                    "note.md 过大，未恢复：请结束进程，移走 note.md（保留 .tmp）后重启按 F6。",
-                );
+                effects.notice(Notice::CanonicalTooLarge);
                 self.recovery.fail_operation();
                 effects.push(NoteEffect::Redraw);
             }
             Err(error) => {
-                effects.diagnostic(format!(
-                    "无效的 canonical note.md 无法先行保留；未执行恢复覆盖：{error}"
-                ));
+                effects.notice(Notice::CanonicalPreserveFailed(error.to_string()));
                 self.recovery.fail_operation();
                 effects.push(NoteEffect::Redraw);
             }

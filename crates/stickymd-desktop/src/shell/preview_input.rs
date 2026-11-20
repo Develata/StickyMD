@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#native-preview-layout
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-link-safety
+//! plan_ref: docs/plan/06_markdown_math_rendering.md#preview-copy-semantics
 
 use stickymd_render::preview::PreviewSelection;
 use winit::dpi::PhysicalPosition;
@@ -11,6 +12,7 @@ use winit::window::CursorIcon;
 use super::DesktopShell;
 use crate::host::Host;
 use crate::preview::{pane_local, view_cursor};
+use stickymd_app::flow::notice::Notice;
 use stickymd_app::instruction::{AppIntent, PersistenceIntent, PreviewIntent, SaveReason};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,13 +50,16 @@ impl<H: Host> DesktopShell<H> {
                 }
             }
             PreviewCommand::Copy => {
-                let copied = self.preview_frame.as_ref().and_then(|frame| {
-                    frame
-                        .copy_selection(self.preview_selection)
-                        .map(str::to_owned)
-                });
-                if let Some(text) = copied {
-                    self.dispatch(AppIntent::WriteClipboard { text });
+                // The shown frame's own snapshot, even while it lags the document (plan 06
+                // #preview-copy-semantics rule 4).
+                let copied = self
+                    .preview_frame
+                    .as_ref()
+                    .map(|frame| frame.copy_text(self.preview_selection));
+                match copied {
+                    Some(Ok(text)) => self.dispatch(AppIntent::WriteClipboard { text }),
+                    Some(Err(_)) => self.notify(Notice::CopyUnmapped),
+                    None => {}
                 }
             }
             PreviewCommand::Save => {

@@ -1,4 +1,4 @@
-//! Source text, selection, caret, preedit, and diagnostic painting.
+//! Source text, selection, caret and preedit painting, and the shell's UI text lines.
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#source-editor
 
@@ -32,10 +32,6 @@ struct SourcePalette {
     selection: (u8, u8, u8, u8),
     caret: (u8, u8, u8, u8),
     preedit_text: Color,
-    diagnostic_background: (u8, u8, u8, u8),
-    diagnostic_action_primary: (u8, u8, u8, u8),
-    diagnostic_action_secondary: (u8, u8, u8, u8),
-    diagnostic_text: Color,
 }
 
 impl SourcePalette {
@@ -47,10 +43,6 @@ impl SourcePalette {
                 selection: (176, 207, 243, 210),
                 caret: (32, 79, 143, 255),
                 preedit_text: Color::rgb(27, 52, 82),
-                diagnostic_background: (246, 224, 184, 245),
-                diagnostic_action_primary: (232, 201, 145, 245),
-                diagnostic_action_secondary: (239, 211, 163, 245),
-                diagnostic_text: Color::rgb(72, 52, 20),
             },
             SourceTheme::Dark => Self {
                 background: (31, 31, 29, 255),
@@ -58,10 +50,6 @@ impl SourcePalette {
                 selection: (62, 91, 125, 230),
                 caret: (129, 179, 236, 255),
                 preedit_text: Color::rgb(205, 224, 247),
-                diagnostic_background: (78, 62, 37, 248),
-                diagnostic_action_primary: (102, 77, 38, 248),
-                diagnostic_action_secondary: (91, 69, 36, 248),
-                diagnostic_text: Color::rgb(245, 224, 184),
             },
         }
     }
@@ -77,9 +65,30 @@ impl SourceProjection {
         spec: UiTextSpec,
         theme: SourceTheme,
     ) {
+        self.paint_ui_text_color(pixmap, text, spec, SourcePalette::for_theme(theme).text);
+    }
+
+    /// `paint_ui_text` in the colour `rgb`, for a shell surface with its own palette (the notice
+    /// bar).
+    pub fn paint_ui_text_in(
+        &mut self,
+        pixmap: &mut Pixmap,
+        text: &str,
+        spec: UiTextSpec,
+        rgb: (u8, u8, u8),
+    ) {
+        self.paint_ui_text_color(pixmap, text, spec, Color::rgb(rgb.0, rgb.1, rgb.2));
+    }
+
+    fn paint_ui_text_color(
+        &mut self,
+        pixmap: &mut Pixmap,
+        text: &str,
+        spec: UiTextSpec,
+        color: Color,
+    ) {
         self.shape_ui_text(text, spec);
         let scale = spec.scale.max(0.5);
-        let color = SourcePalette::for_theme(theme).text;
         let clip = GlyphClip {
             left: spec.x.round() as i32,
             top: spec.y.round() as i32,
@@ -269,7 +278,6 @@ impl SourceProjection {
         selection: Selection,
         focused: bool,
         caret_visible: bool,
-        diagnostic: Option<&str>,
         theme: SourceTheme,
     ) -> Result<(), SourceProjectionError> {
         if !selection_valid(&self.canonical, selection) {
@@ -309,9 +317,6 @@ impl SourceProjection {
             );
         }
 
-        if let Some(message) = diagnostic {
-            self.paint_diagnostic(pixmap, message, palette);
-        }
         self.glyph_budget.after_paint(&mut self.swash_cache);
         Ok(())
     }
@@ -464,65 +469,6 @@ impl SourceProjection {
         }
         Ok(())
     }
-
-    fn paint_diagnostic(&mut self, pixmap: &mut Pixmap, message: &str, palette: SourcePalette) {
-        if message.is_empty() {
-            return;
-        }
-        let height = 34.0 * self.scale_factor;
-        rect(
-            pixmap,
-            0.0,
-            self.height_px as f32 - height,
-            self.width_px as f32,
-            height,
-            palette.diagnostic_background,
-        );
-        if message.contains("[F7") {
-            let action_start = self.width_px as f32 * 0.58;
-            let action_width = (self.width_px as f32 - action_start) * 0.5;
-            rect(
-                pixmap,
-                action_start,
-                self.height_px as f32 - height + self.scale_factor,
-                action_width - self.scale_factor,
-                height - 2.0 * self.scale_factor,
-                palette.diagnostic_action_primary,
-            );
-            rect(
-                pixmap,
-                action_start + action_width,
-                self.height_px as f32 - height + self.scale_factor,
-                action_width - self.scale_factor,
-                height - 2.0 * self.scale_factor,
-                palette.diagnostic_action_secondary,
-            );
-        }
-        if self.diagnostic_text != message {
-            self.diagnostic_text.clear();
-            self.diagnostic_text.push_str(message);
-            let attrs =
-                cosmic_text::Attrs::new().family(cosmic_text::Family::Name(self.fonts.cjk_family));
-            self.diagnostic_buffer.set_text(
-                &self.diagnostic_text,
-                &attrs,
-                cosmic_text::Shaping::Advanced,
-                Some(cosmic_text::Align::Left),
-            );
-        }
-        self.diagnostic_buffer
-            .shape_until_scroll(&mut self.font_system, false);
-        let x_offset = (12.0 * self.scale_factor) as i32;
-        let y_offset = (self.height_px as f32 - height + 7.0 * self.scale_factor) as i32;
-        self.diagnostic_buffer.draw(
-            &mut self.font_system,
-            &mut self.swash_cache,
-            palette.diagnostic_text,
-            |x, y, width, height, color| {
-                blend_glyph_rect(pixmap, x + x_offset, y + y_offset, width, height, color);
-            },
-        );
-    }
 }
 
 fn ui_text_clip(spec: UiTextSpec) -> GlyphClip {
@@ -585,7 +531,6 @@ mod tests {
                 Selection::caret(selection_start),
                 true,
                 false,
-                None,
                 SourceTheme::Light,
             )
             .expect("baseline paint");
@@ -595,14 +540,7 @@ mod tests {
         ] {
             let mut selected = Pixmap::new(600, 300).expect("selected pixmap");
             projection
-                .paint(
-                    &mut selected,
-                    selection,
-                    true,
-                    false,
-                    None,
-                    SourceTheme::Light,
-                )
+                .paint(&mut selected, selection, true, false, SourceTheme::Light)
                 .expect("selection paint");
 
             assert_eq!(

@@ -36,6 +36,7 @@ fn receipt_application_rejects_every_stale_viewport_field_without_replacing_fram
         height_px: 220,
         scale: 1.0,
         scroll_y: 420.0,
+        notice_bar_px: 0.0,
         selection: PreviewSelection {
             anchor: 2,
             active: 7,
@@ -52,6 +53,7 @@ fn receipt_application_rejects_every_stale_viewport_field_without_replacing_fram
     let stale = [
         PreviewViewport {
             scroll_y: 0.0,
+            notice_bar_px: 0.0,
             ..current.clone()
         },
         PreviewViewport {
@@ -183,6 +185,7 @@ fn horizontal_receipts_cannot_replace_a_newer_requested_offset() {
         height_px: 200,
         scale: 1.0,
         scroll_y: 0.0,
+        notice_bar_px: 0.0,
         selection: PreviewSelection::default(),
         theme: PreviewTheme::Light,
     };

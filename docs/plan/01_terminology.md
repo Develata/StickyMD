@@ -225,6 +225,53 @@
 
 ---
 
+<a id="notice-terms"></a>
+## 提示
+
+Phase 17 起生效（USER 批准 2026-11-14；术语 2026-11-17 补入）。状态模型见 `docs/plan/04_runtime_state_model.md#notice-state`，
+呈现与归类见 `docs/plan/09_windows_shell.md#notices`。
+
+### Notice Bar（提示条）
+
+- **Definition**：窗口底部高 34 窗口 DIP 的浮层，不随 Content Zoom 缩放。Source、Preview、Split 都可见，Split 下横跨两个窗格；显示当前提示与待决定的按钮。由 Shared Desktop 绘制，不参与 Source 或 Preview 的排版与重绘判断。
+- **Authority**：`09` #notices（呈现）与 `04` #notice-state（显示什么）；Shell 只读绘制，不决定类别、时长或优先级。
+- **Not equivalent to**：Phase 17 之前画在 Source 窗格底部的单一诊断文字；窗口标题；对话框。
+- **Lifetime**：有提示时绘制；所显示的状态随会话存在。
+
+### Timed Notice（定时提示）
+
+- **Definition**：带期限的提示，按类别定时长：成功 3 s、提醒 5 s、重要提醒 30 s、故障展示 30 s。期限按墙钟计，被遮挡时不暂停。定时提示放在最多 8 条的栈上，栈顶显示。
+- **Authority**：`04` #notice-state 的入栈、替换与到期规则；类别由 Shared Application 按 `09` #notices 的归类规则决定。
+- **Not equivalent to**：派生提示；Shell 自行写入的状态文字。
+- **Lifetime**：从入栈到期限到达、被替换或被移除。
+
+### Derived Notice（派生提示）
+
+- **Definition**：由权威状态即时派生、不存储的提示，分两类：
+  - 待决定：冲突与恢复候选，按可用选项给出 F6/F7 按钮，不过期；
+  - 进行中：恢复执行、“保留本地”写入、手动保存、图片准备、导出，由同一操作的结果结算。
+
+  定时栈为空时显示；待决定的按钮在任何定时提示下保留。
+- **Authority**：ConflictState、RecoveryState、SaveState、AssetState、ExportState（`04` #notice-state）。
+- **Not equivalent to**：定时提示；一条被发出的消息。
+- **Lifetime**：与派生它的状态相同。
+
+### Fault Display（故障展示）
+
+- **Definition**：显示未解决保存故障原因的定时提示，每段 30 s。它不自带文字，文字取自 `SaveState.unresolved_failure`。故障出现、故障种类改变或点击故障标记时，各开始新的一段。
+- **Authority**：`04` #notice-state（保存故障）；`SaveState.unresolved_failure` 是唯一权威。
+- **Not equivalent to**：故障本身；故障展示到期后故障仍在，由故障标记表示。
+- **Lifetime**：每段 30 s；之后某次保存成功时全部移除。
+
+### Fault Marker（故障标记）
+
+- **Definition**：存在未解决的保存故障时，工具栏右侧按钮组左边固定槽位里的标记；点击开始一段新的故障展示。槽位在任何合法窗口宽度都保留，没有故障时为空，作为工具栏拖动区。
+- **Authority**：`09` #notices；`SaveState.unresolved_failure`。
+- **Not equivalent to**：工具栏按钮；故障展示。
+- **Lifetime**：从故障出现到之后某次保存成功。
+
+---
+
 ## 窗口与显示器
 
 ### Docked

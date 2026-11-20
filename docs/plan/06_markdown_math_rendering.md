@@ -223,14 +223,12 @@ row y / height（由所在 visible row 持有）
   安全细分时遵循 Cosmic Text 的 cluster boundary/fallback，不自行猜测 GDEF、ligature caret 或
   grapheme 比例。
 - byte range → selection rectangles 与 point → byte boundary 必须消费同一份 cluster map；跨行、
-  BiDi 或不连续视觉范围允许产生多个矩形。复制只按最终 byte range 读取完整 document projection，
-  不能从蓝框、glyph 或 source AST 重新拼文本。
-- 公式和图片是 atomic selectable object：选择公式时绘制公式矩形，Ctrl+C 复制原始数学源码与
-  delimiter；选择图片时复制 alt text，不复制 bitmap。它们不得伪造成普通等宽文本 cluster。
-- `PreviewFrame` 只向 App 暴露 `hit_test`、`selection_rects`、`copy_selection`、`action_at`、
+  BiDi 或不连续视觉范围允许产生多个矩形。复制取什么文本由 #preview-copy-semantics 规定，
+  不能从蓝框或 glyph 重新拼文本。
+- 公式和图片是 atomic selectable object：选择公式时绘制公式矩形，选择图片时绘制图片矩形；
+  复制结果见 #preview-copy-semantics，图片不复制 bitmap。它们不得伪造成普通等宽文本 cluster。
+- `PreviewFrame` 只向 App 暴露 `hit_test`、`selection_rects`、`copy_text`、`action_at`、
   `tooltip_at` 等语义方法；App 不读取 cluster 数组，不依赖 Cosmic Text 类型。
-- Phase 17 起，复制取什么文本由 #preview-copy-semantics 规定：本列表中“复制只按最终 byte range 读取完整
-  document projection”与“Ctrl+C 复制原始数学源码与 delimiter”两句被取代。选择几何、命中与蓝框规则不变。
 
 生命周期与缓存：
 
@@ -256,11 +254,8 @@ row y / height（由所在 visible row 持有）
 <a id="preview-copy-semantics"></a>
 ### Preview 复制语义（Phase 17，USER 批准 2026-11-14）
 
-依据 [提议报告](../report/2026-11-14-copy-semantics-rail-notices.md) 与 `02` #copy-what-you-see。Phase 17 落地前，上文的复制条款继续有效。
-
-**本节取代：**
-- 上文“Preview 文本选择”规则中复制读取显示投影、公式复制带分隔符的两句；
-- “块内横向滚动”一节中的“复制读取完整 projection”。
+依据 [提议报告](../report/2026-11-14-copy-semantics-rail-notices.md) 与 `02` #copy-what-you-see。
+上文“Preview 文本选择”与“块内横向滚动”中原先的复制条款（复制读取显示投影、公式复制带分隔符）已按本节改写（Phase 17 M3）。
 
 **不变：** 选择几何、命中与蓝框；单独选中图片时复制 alt 文本。
 
@@ -288,12 +283,15 @@ row y / height（由所在 visible row 持有）
    - **行内结构**（强调、粗体、删除线、行内代码、行内链接与图片）：复制时把在它内部的那个端点扩到该结构的源码边界；蓝框不变。
      嵌套时重复这一步，直到没有被切开的行内结构；端点只会向外移动，并停在所在块内，所以这个过程必然终止。
      - **外扩结果须校验：** 结构的源码范围必须以它自己的闭定界符结束（链接以 `)` 或 `]` 结束，强调以与开头相同的定界符串结束）。
+       自动链接 `<…>` 以 `<` 开头、`>` 结束；裸 URL 与裸邮箱没有定界符，源码范围须恰好等于它显示的文字（USER 决定 2026-11-17）。
      - 校验失败时，端点吸附到所在块的整行范围。例如 Comrak 0.59 对 URL 与 `)` 之间有换行的链接，报出的终点停在 URL 末尾。
    - **其余结构**（缩进代码、表格、引用、列表等）：按第 2 条原样切片。
    - 用结构自己的定界符只包住选中部分（行内），不在本期，另行批准。
 4. **快照。** 复制读取该帧 generation 的源码快照，与 preview worker 的快照共享同一份 `Arc<str>`，不读当前 DocumentState。
    - 当前显示帧在新帧到达前可以落后于 DocumentState；debounce 随编辑重置，所以可以持续落后。
    - 在落后的显示帧上复制已有选区、点击复制侧条，都读该帧自己的快照。新的选区变化沿用现行规则。
+   - **显示帧**指已装入 Preview 窗格的帧（USER 决定 2026-11-17）。新帧到达即装入，选区、复制、链接与侧条随即以它为准；
+     它在下一次窗口呈现时出现在屏幕上。在此之前的点击按新帧处理：通常相隔一次事件循环，呈现被推迟时每 8 ms 重试，没有总时长上限。
    - 上文“stale generation 或不匹配 viewport key 的 frame 必须丢弃”针对与请求不符的新结果与几何，不针对当前显示帧。
 5. **全选无特例。** Ctrl+A 仍是普通选区 `[0, 全文长度]`。只含一个对象的文档，全选按第 1 条处理。
 6. **位置不可信时保守处理：**
@@ -336,7 +334,12 @@ row y / height（由所在 visible row 持有）
   - 悬停时变亮并切换光标，只在进出侧条时重绘。
   - 常显、低对比，没有图标。40% 透明度下可能不易看清，USER 接受（2026-11-14）。
 - **复制内容。** 该对象的完整内容（按上节第 1 条），结果经 `09` #notices 提示。
+  - 只按第 1 条取，不退到第 2、3 条的源码切片，所以不会带出围栏或容器前缀。
+  - 内容即 Comrak 给出的 literal：代码块含末行的换行，多行 `$$` 公式含定界符内侧的换行（Phase 17 M4 落地）。
+  - 空代码块复制空字符串，剪贴板不改动，也不提示。
 - **目标来源。** Render 每帧产出可见侧条目标，做法同横向滚动目标；侧条不加入排版，也不改变块的几何。
+  - 侧条画在显示帧之上，不画进帧的像素：悬停只重绘窗口，不重绘帧（Phase 17 M4 落地）。
+  - 命中、悬停与复制针对当前显示帧，帧落后于文档时也一样（上节第 4 条）。
 
 <a id="split-scroll-sync"></a>
 ### Split 语义滚动同步
@@ -450,7 +453,7 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
 - 横向偏移属于 Editor Session 的临时视图状态，按 generation 内的 block identity 定位；
   source、窗口宽度或有效字号变化后重置/校验，不持久化、不递增 Document generation。
 - 支持指向块内的横向滚轮与 Shift+滚轮；可见的块内滚动条提供鼠标拖动和轨道点击。
-- 渲染、selection、hit-test、link/tooltip 共用同一转换和裁剪；复制读取完整 projection。
+- 渲染、selection、hit-test、link/tooltip 共用同一转换和裁剪；复制按 #preview-copy-semantics 读取该帧的源码快照，与横向偏移无关。
   App 只消费语义滚动目标/范围，不读取 Render crate 内部行、cluster 或布局数组。
 - 视图快照和结果校验包含横向偏移；过期帧不得恢复旧偏移。普通滚动不触发全文重排。
 

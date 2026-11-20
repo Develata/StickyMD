@@ -10,6 +10,7 @@ use crate::image::DecodedImageCache;
 use crate::math::{MAX_DOCUMENT_FORMULAS, MathEngine, MathError, MathKind, MathMetrics};
 use crate::source::FontSelection;
 
+use super::copy::SelectionText;
 use super::image_requests::ImageRequests;
 use super::image_resources::LaidOutImage;
 use super::inline_text_layout::{append_text_pieces, text_piece};
@@ -43,7 +44,7 @@ pub(super) fn make_mixed_chunk(
     width: f32,
     metrics: Metrics,
     align: Align,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     formula_count: &mut usize,
     _theme: super::PreviewTheme,
     mut image_source: Option<&mut ImageRequests<'_>>,
@@ -83,7 +84,7 @@ pub(super) fn make_mixed_chunk(
                 max_text_piece_chars,
                 text_layout_cache,
             );
-            selection_text.push_str(&span.copy_text);
+            selection_text.push_span(span);
             line_breaks.push(pieces.len());
             pending_text_start = index + 1;
             continue;
@@ -280,7 +281,7 @@ fn image_piece(
     available_width: f32,
     block_y: f32,
     metrics: Metrics,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     image_source: Option<&mut ImageRequests<'_>>,
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
@@ -301,9 +302,7 @@ fn image_piece(
     )?;
     let (target_width, target_height) = (slot.width, slot.height);
     let content = LayoutContent::Image(slot);
-    let selection_start = selection_text.len();
-    selection_text.push_str(&span.copy_text);
-    let selection_end = selection_text.len();
+    let selection = selection_text.push_span(span);
     let width = target_width as f32;
     let height = target_height as f32;
     Some(InlinePiece {
@@ -314,7 +313,7 @@ fn image_piece(
             y: 0.0,
         },
         boxes: vec![PreviewTextBox {
-            selection_range: selection_start..selection_end,
+            selection_range: selection.clone(),
             source_range: span.source_range,
             rect: PreviewRect {
                 x: 0.0,
@@ -338,12 +337,10 @@ fn image_piece(
 fn formula_piece(
     span: &RenderSpan,
     mut formula: LaidOutMath,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
 ) -> InlinePiece {
-    let selection_start = selection_text.len();
-    selection_text.push_str(&span.copy_text);
-    let selection_end = selection_text.len();
-    formula.selection = selection_start..selection_end;
+    let selection = selection_text.push_span(span);
+    formula.selection = selection.clone();
     let width = formula.metrics.width as f32;
     let height = formula.metrics.height as f32;
     let baseline = formula.metrics.baseline;
@@ -355,7 +352,7 @@ fn formula_piece(
             y: 0.0,
         },
         boxes: vec![PreviewTextBox {
-            selection_range: selection_start..selection_end,
+            selection_range: selection,
             source_range: span.source_range,
             rect: PreviewRect {
                 x: 0.0,
@@ -381,12 +378,13 @@ fn error_piece(
     fonts: &FontSelection,
     span: &RenderSpan,
     metrics: Metrics,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     error: MathError,
     text_layout_cache: &mut TextLayoutCache,
 ) -> InlinePiece {
+    // The fallback keeps `math`: text shaping ignores it, and copying still knows this text is a
+    // formula whose TeX rule 1 copies (plan 06 #preview-copy-semantics).
     let mut fallback = span.clone();
-    fallback.math = None;
     fallback.style.math_placeholder = true;
     let mut piece = text_piece(
         font_system,
@@ -461,6 +459,7 @@ fn flush_line(
 
 #[cfg(test)]
 mod tests {
+    use crate::preview::copy::SelectionText;
     use cosmic_text::{Align, Metrics};
 
     use super::make_mixed_chunk;
@@ -491,7 +490,7 @@ mod tests {
         let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut math_engine = MathEngine::new();
-        let mut selection_text = String::new();
+        let mut selection_text = SelectionText::default();
         let mut formula_count = 0;
         let mut math = text_span("$x^2$", RenderStyle::default());
         math.math = Some(RenderMath {
@@ -526,7 +525,7 @@ mod tests {
         );
 
         assert_eq!(built.chunks.len(), 3);
-        assert_eq!(selection_text, "before plain$x^2$ after tail");
+        assert_eq!(selection_text.as_str(), "before plain$x^2$ after tail");
     }
 
     #[test]
@@ -534,7 +533,7 @@ mod tests {
         let mut font_system = crate::system_fonts::new_font_system();
         let fonts = FontSelection::resolve(&mut font_system);
         let mut math_engine = MathEngine::new();
-        let mut selection_text = String::new();
+        let mut selection_text = SelectionText::default();
         let mut formula_count = 0;
         let mut linked = text_span("link", RenderStyle::default());
         linked.action = Some(SpanAction::OpenLink {
@@ -572,7 +571,7 @@ mod tests {
         );
 
         assert_eq!(built.chunks.len(), 2);
-        assert_eq!(selection_text, "before link$x$");
+        assert_eq!(selection_text.as_str(), "before link$x$");
         assert!(built.chunks.iter().any(|chunk| {
             let LayoutContent::Text(layout) = &chunk.content else {
                 return false;

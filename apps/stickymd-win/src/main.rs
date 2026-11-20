@@ -118,9 +118,9 @@ fn main() -> std::process::ExitCode {
         Err(error) => fatal_startup(&format!("无法启动持久化工作线程：{error}")),
     };
     let started = Instant::now();
-    let (session, diagnostic) = bootstrap.into_session(worker, started);
+    let (session, warnings) = bootstrap.into_session(worker, started);
     let host = WinHost::new(paths, instance, startup_diagnostics);
-    let mut app = DesktopShell::new(host, session, sink, started, diagnostic);
+    let mut app = DesktopShell::new(host, session, sink, started, warnings);
     let outcome = event_loop.run_app(&mut app);
     let startup_failed = app.startup_failed();
     let diagnostic_exit_code = app.host().startup_diagnostic_exit_code();

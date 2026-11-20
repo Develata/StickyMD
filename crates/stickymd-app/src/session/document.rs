@@ -4,6 +4,8 @@
 //! plan_ref: docs/plan/03_system_architecture.md#flow-coordination
 
 use crate::flow::AppEffect;
+use crate::flow::ChangeCount;
+use crate::flow::notice::Notice;
 use crate::instruction::AppIntent;
 use crate::interaction::rules::clamp_selection;
 use stickymd_core::{DocumentSnapshot, Generation, TextDelta};
@@ -47,10 +49,7 @@ impl AppSession {
     pub fn dispatch(&mut self, intent: AppIntent, out: &mut ShellEffects) {
         match self.coordinator.dispatch(intent) {
             Ok(effect) => self.apply_app_effect(effect, out),
-            Err(error) => {
-                out.push(ShellEffect::Diagnostic(error.to_string()));
-                out.push(ShellEffect::RedrawNeeded);
-            }
+            Err(error) => self.show_notice(Notice::editor_failure(&error), out),
         }
     }
 
@@ -61,7 +60,14 @@ impl AppSession {
                 selection,
                 delta,
                 asset_effects,
+                count,
             } => {
+                // A Replace All or a conversion may change places off screen: it says how many.
+                match count {
+                    Some(ChangeCount::Replaced(count)) => self.notify(Notice::Replaced(count)),
+                    Some(ChangeCount::Converted(count)) => self.notify(Notice::Converted(count)),
+                    None => {}
+                }
                 self.persistence
                     .on_document_changed(self.now_ms(), generation);
                 out.push(ShellEffect::PreviewDocumentChanged(generation));
@@ -97,9 +103,9 @@ impl AppSession {
                     }
                 }
             }
-            // Successful copy needs no overlay or repaint. In particular, it
-            // must not cover source text or replace a pending error diagnostic.
-            AppEffect::ClipboardWritten | AppEffect::NoOp => {}
+            // A copy shows "copied" for 3 s, never over a failure (plan 07, plan 04 push rule).
+            AppEffect::ClipboardWritten => self.show_notice(Notice::Copied, out),
+            AppEffect::NoOp => {}
         }
     }
 

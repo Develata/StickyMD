@@ -415,7 +415,6 @@ mod tests {
                     Selection::caret(0),
                     false,
                     false,
-                    None,
                     SourceTheme::Light,
                 )
                 .unwrap();
@@ -450,7 +449,6 @@ mod tests {
                 Selection::caret(0),
                 false,
                 false,
-                None,
                 SourceTheme::Light,
             )
             .unwrap();
@@ -461,7 +459,6 @@ mod tests {
             Selection::caret(0),
             false,
             false,
-            None,
             SourceTheme::Light,
         )
         .unwrap();
@@ -486,7 +483,6 @@ mod tests {
                 Selection::caret(0),
                 false,
                 false,
-                None,
                 SourceTheme::Light,
             )
             .unwrap();
@@ -499,7 +495,6 @@ mod tests {
                 Selection::caret(0),
                 false,
                 false,
-                None,
                 SourceTheme::Light,
             )
             .unwrap();

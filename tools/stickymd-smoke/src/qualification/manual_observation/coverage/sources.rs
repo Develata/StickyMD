@@ -207,7 +207,7 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "plan09:scrollbars",
         8,
-        "6c0c707cc947eaab86cbe841706e33bdcfa124e55e927511d23a576d4c3f7b71",
+        "3b114a281117d3b1c37f9ab3df36989c57b817feff6609e8f999e8a48756af0e",
     ),
     (
         "plan09:opacity",
@@ -217,12 +217,12 @@ const SECTIONS: &[(&str, usize, &str)] = &[
     (
         "plan09:tray",
         7,
-        "1bdea5c4bad0a669bb65c5af0a22a5da6602e3a1b72221808ff775247cd1cf83",
+        "8ff32d916e0c8ca6d878d09fed1d6c24b78242d0148146d7e5182b3c7477c2cf",
     ),
     (
         "plan09:document",
         33,
-        "f1fbe937274f453fbc0bf598d3de5f5fbf0f9154ec79c9068a0df79a86e099d9",
+        "88634167cd296e3f8e4bcf1703cbf52668f6ea338f92472f7528ee810fffded0",
     ),
 ];
 
@@ -304,13 +304,13 @@ const CLAUSES: &[(&str, &str)] = &[
     ("plan09:scroll-5", "eb917ee6f5b45456"),
     ("plan09:scroll-6", "2fac9349e573b234"),
     ("plan09:scroll-7", "d11282587cc14247"),
-    ("plan09:scroll-8", "8bdf872e44a7810d"),
+    ("plan09:scroll-8", "dab8f4230cc5b447"),
     ("plan09:opacity-1", "a6a6078483506833"),
     ("plan09:opacity-2", "eb300362cab34743"),
     ("plan09:opacity-3", "af424a602e1d8223"),
     ("plan09:quit-1", "437b4ce76fd3b1b1"),
     ("plan09:quit-2", "7ade9c382b14821d"),
-    ("plan09:quit-3", "9a768193f2b139cb"),
+    ("plan09:quit-3", "12114d4638e64f76"),
 ];
 
 /// Compares a decomposition with the reviewed one; the error lists every current value.
@@ -395,7 +395,7 @@ fn edits_to_the_raw_markdown_are_detected() {
         (
             "a new tray clause",
             phase08.clone(),
-            insert_after(&plan09, "  因果。", "- 退出后另有要求。"),
+            insert_after(&plan09, "  自动化判定退出取消的因果", "- 退出后另有要求。"),
         ),
         (
             "a scrollbar sub-heading",

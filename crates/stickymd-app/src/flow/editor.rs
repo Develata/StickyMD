@@ -23,6 +23,8 @@ pub enum AppEffect {
         selection: Selection,
         delta: TextDelta,
         asset_effects: Vec<AssetEffect>,
+        /// What a Replace All or a delimiter conversion changed, for the notice that says so.
+        count: Option<ChangeCount>,
     },
     AssetPasteRequested(PendingAssetPaste),
     /// A durable external fact replaced canonical text. The shell must fully
@@ -33,6 +35,36 @@ pub enum AppEffect {
     },
     ClipboardWritten,
     NoOp,
+}
+
+/// How many places a Replace All or a delimiter conversion changed (plan 09 #notices: the
+/// replacement and conversion counts are success notices).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeCount {
+    Replaced(usize),
+    Converted(usize),
+}
+
+impl AppEffect {
+    /// This change with the count that reports it; any other effect is left as it is.
+    fn counted(self, count: ChangeCount) -> Self {
+        match self {
+            Self::DocumentChanged {
+                generation,
+                selection,
+                delta,
+                asset_effects,
+                ..
+            } => Self::DocumentChanged {
+                generation,
+                selection,
+                delta,
+                asset_effects,
+                count: Some(count),
+            },
+            other => other,
+        }
+    }
 }
 
 /// Borrowed, immutable observation of the canonical document.
@@ -175,6 +207,7 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
                     selection: outcome.cursor.selection,
                     delta: outcome.delta,
                     asset_effects: outcome.asset_effects,
+                    count: None,
                 })
             }
             AppIntent::Redo => {
@@ -184,6 +217,7 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
                     selection: outcome.cursor.selection,
                     delta: outcome.delta,
                     asset_effects: outcome.asset_effects,
+                    count: None,
                 })
             }
             AppIntent::CopySelection {
@@ -239,7 +273,7 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
                 timestamp_ms,
             } => {
                 self.require_generation(expected_generation)?;
-                let Some((output, _count)) =
+                let Some((output, count)) =
                     replace_all_literal(self.document.text(), &query, &replacement, options)
                 else {
                     return Ok(AppEffect::NoOp);
@@ -251,6 +285,7 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
                     EditKind::Other,
                     timestamp_ms,
                 )
+                .map(|effect| effect.counted(ChangeCount::Replaced(count)))
             }
             AppIntent::WriteClipboard { text } => {
                 if text.is_empty() {
@@ -316,6 +351,7 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
             selection: cursor_after.selection,
             delta,
             asset_effects: outcome.asset_effects,
+            count: None,
         })
     }
 
@@ -338,6 +374,7 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
             pass.map_position(selection.anchor.byte),
             pass.map_position(selection.active.byte),
         );
+        let changed = pass.change_count();
         let text = pass.into_text();
         // A result the action would change again (an unclosed `$$` pairing
         // with one step 2 wrote, or a closer step 2 left behind) is refused
@@ -370,6 +407,7 @@ impl<C: ClipboardPort> EditorCoordinator<C> {
             selection: cursor_after.selection,
             delta,
             asset_effects: outcome.asset_effects,
+            count: Some(ChangeCount::Converted(changed)),
         })
     }
 

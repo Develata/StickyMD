@@ -160,7 +160,6 @@ fn invalid_preedit_replacement_remains_failure_atomic() {
                 Selection::caret(0),
                 true,
                 true,
-                None,
                 SourceTheme::Light
             ),
             Err(SourceProjectionError::InvalidPosition)
@@ -228,7 +227,7 @@ fn preedit_reveal_paints_at_candidate_and_clips_without_mutating_source() {
             for theme in [SourceTheme::Light, SourceTheme::Dark] {
                 let mut baseline = Pixmap::new(200, 240).unwrap();
                 projection
-                    .paint(&mut baseline, replacement, true, false, None, theme)
+                    .paint(&mut baseline, replacement, true, false, theme)
                     .unwrap();
                 for composition in [
                     "long preedit text ".repeat(8),
@@ -253,7 +252,7 @@ fn preedit_reveal_paints_at_candidate_and_clips_without_mutating_source() {
                         assert!(caret.x >= origin.x && caret.x + caret.width <= 200.0);
                         let mut painted = baseline.clone();
                         projection
-                            .paint(&mut painted, replacement, true, false, None, theme)
+                            .paint(&mut painted, replacement, true, false, theme)
                             .unwrap();
                         if preedit.cursor.is_some() {
                             // Use the normal caret painter as the palette/shape
@@ -287,7 +286,7 @@ fn preedit_reveal_paints_at_candidate_and_clips_without_mutating_source() {
                             }));
                             let mut expected = baseline.clone();
                             projection
-                                .paint(&mut expected, replacement, true, false, None, theme)
+                                .paint(&mut expected, replacement, true, false, theme)
                                 .unwrap();
                             assert_ne!(expected.data(), painted.data());
                             projection
@@ -318,7 +317,7 @@ fn preedit_reveal_paints_at_candidate_and_clips_without_mutating_source() {
                         assert_eq!(projection.scroll(), scroll);
                         projection.set_preedit(None);
                         projection
-                            .paint(&mut painted, replacement, true, false, None, theme)
+                            .paint(&mut painted, replacement, true, false, theme)
                             .unwrap();
                         assert_eq!(painted.data(), baseline.data());
                     }

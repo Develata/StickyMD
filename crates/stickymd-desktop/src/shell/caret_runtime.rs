@@ -2,7 +2,9 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#windows-adapter-mapping
 
+use crate::controls::NoticeRect;
 use std::time::{Duration, Instant};
+use stickymd_app::flow::notice::Notice;
 
 use tiny_skia::Pixmap;
 
@@ -66,8 +68,11 @@ impl<H: Host> DesktopShell<H> {
         if let Err(error) = self.sync_native_caret_overlay() {
             self.native_caret_failed = true;
             self.forget_native_caret();
-            self.diagnostic = Some(format!("caret overlay unavailable: {error}"));
-            self.request_caret_redraw();
+            self.app.notify(Notice::RenderFailed(format!(
+                "caret overlay unavailable: {error}"
+            )));
+            // The notice bar needs the full frame, not the caret's damage.
+            self.request_redraw();
         }
     }
 
@@ -97,6 +102,16 @@ impl<H: Host> DesktopShell<H> {
         let Some(damage) = caret_damage_rect(pane, caret) else {
             return false;
         };
+        // The notice bar floats over the pane: repainting the caret's rows under it would paint
+        // over the bar, so that caret goes with a full frame.
+        if self.notice_bar_covers(NoticeRect {
+            x: damage.x as f32,
+            y: damage.y as f32,
+            width: damage.width as f32,
+            height: damage.height as f32,
+        }) {
+            return false;
+        }
         let (Some(source_frame), Some(surface)) = (&self.source_frame, &mut self.surface) else {
             return false;
         };
@@ -113,11 +128,11 @@ impl<H: Host> DesktopShell<H> {
                 source_theme,
             )
         {
-            self.diagnostic = Some(error.to_string());
+            self.app.notify(Notice::RenderFailed(error.to_string()));
             return false;
         }
         if let Err(error) = surface.present_damage(damage) {
-            self.diagnostic = Some(error.to_string());
+            self.app.notify(Notice::RenderFailed(error.to_string()));
             return false;
         }
         self.forget_native_caret();
@@ -139,9 +154,18 @@ impl<H: Host> DesktopShell<H> {
             .projection
             .as_ref()
             .and_then(|projection| projection.caret_rect(self.app.editor.selection.active.byte));
+        // The overlay inverts the pixels under it, the bar's too: under the bar it stays off.
         let desired_overlay = desired
             .then(|| caret_overlay_damage(pane, caret))
             .flatten()
+            .filter(|damage| {
+                !self.notice_bar_covers(NoticeRect {
+                    x: damage.x as f32,
+                    y: damage.y as f32,
+                    width: damage.width as f32,
+                    height: damage.height as f32,
+                })
+            })
             .map(caret_overlay_rect)
             .transpose()?;
         if desired_overlay == self.native_caret_overlay {

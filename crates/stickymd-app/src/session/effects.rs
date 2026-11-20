@@ -37,8 +37,6 @@ pub enum ShellEffect {
     Preference(WindowPreferenceEffect),
     TitleDirty,
     RedrawNeeded,
-    /// Replaces the status line; the last one in a list is the one that stays.
-    Diagnostic(String),
     /// Recovery no longer holds the directory watcher back.
     StartWatcher,
     /// The window lost focus: end the drags, the hover and the edit the shell owns.

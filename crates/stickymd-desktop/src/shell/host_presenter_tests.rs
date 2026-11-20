@@ -108,7 +108,7 @@ fn a_failed_frame_is_reported_and_not_retried() {
     app.pending_redraw = PendingRedraw::Full;
     assert!(!app.draw_frame(None));
     assert_eq!(frames(&app), [FULL]);
-    assert_eq!(app.diagnostic.as_deref(), Some("no surface"));
+    assert_eq!(app.notice_text().as_deref(), Some("no surface"));
     assert_eq!(app.present_retry_at, None);
 }
 
@@ -136,7 +136,7 @@ fn retry_fires(app: &mut HeadlessApp, retry: Instant) -> bool {
 fn a_failure_after_a_deferral_ends_the_wait() {
     let (mut app, retry) = deferred_then(PresentOutcome::Failed("lost".into()));
     assert!(!app.draw_frame(None));
-    assert_eq!(app.diagnostic.as_deref(), Some("lost"));
+    assert_eq!(app.notice_text().as_deref(), Some("lost"));
     assert_eq!(app.present_retry_at, None, "a failed frame is not retried");
     assert!(!retry_fires(&mut app, retry));
 }
@@ -221,7 +221,7 @@ fn a_show_whose_frame_fails_reports_it_and_waits_for_no_retry() {
         !app.frames_released,
         "the storage is back for the next draw"
     );
-    assert_eq!(app.diagnostic.as_deref(), Some("no surface"));
+    assert_eq!(app.notice_text().as_deref(), Some("no surface"));
     assert_eq!(app.present_retry_at, None);
 }
 
@@ -233,7 +233,8 @@ fn a_caret_only_redraw_goes_to_the_host_as_a_whole_frame() {
     assert!(app.draw_frame(None));
     assert_eq!(frames(&app), [FULL, REACHED]);
     assert_eq!(
-        app.diagnostic, None,
+        app.notice_text(),
+        None,
         "no softbuffer damage present was tried"
     );
 }

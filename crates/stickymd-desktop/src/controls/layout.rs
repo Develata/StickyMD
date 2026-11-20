@@ -13,10 +13,14 @@ const CONTROL_GAP_DIP: f64 = 4.0;
 const EDGE_DIP: f64 = 5.0;
 // The compact edge stays outside the 6 DIP native resize hit region. At the
 // 220 DIP minimum, removing inter-control gaps leaves nine approximately
-// 23.1 DIP hit targets instead of shrinking them below usable size.
+// 21.8 DIP hit targets beside the fault marker's slot, instead of shrinking
+// them below usable size.
 const COMPACT_EDGE_DIP: f64 = 6.0;
 const COMPACT_GAP_DIP: f64 = 0.0;
 const RESIZE_BORDER_DIP: f64 = 6.0;
+/// The save-failure marker's slot, kept left of the right-hand buttons at every width (plan 09
+/// #notices; USER 2026-11-17), so the marker is never drawn on another control.
+const FAULT_MARKER_SLOT_DIP: f64 = 12.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlId {
@@ -64,6 +68,9 @@ pub enum ControlHit {
     Resize(WindowResizeEdge),
     SplitSync,
     Button(ControlId),
+    /// The save-failure marker's slot. It is a target only while the marker shows; otherwise
+    /// the shell treats it as the toolbar.
+    FaultMarker,
     /// The toolbar outside its buttons, which moves the window.
     DragWindow,
 }
@@ -80,13 +87,21 @@ pub struct ControlLayout {
     pub opacity_input: ControlRect,
     /// In a Split, the control on the divider.
     pub split_sync: Option<ControlRect>,
+    /// Where the save-failure marker shows and is clicked: a slot left of the right-hand
+    /// buttons that every width keeps.
+    pub fault_marker: ControlRect,
 }
 
 impl ControlLayout {
     pub fn new(mode: ViewMode, size: PhysicalSize<u32>, scale: f64) -> Self {
         let scale = scale.max(0.5);
         let toolbar_height = f64::from(TOOLBAR_HEIGHT_DIP) * scale;
-        let regular_required = 2.0 * EDGE_DIP + 9.0 * CONTROL_DIP + 8.0 * CONTROL_GAP_DIP;
+        // The nine buttons and their gaps, and the marker's slot with the gap before it.
+        let regular_required = 2.0 * EDGE_DIP
+            + 9.0 * CONTROL_DIP
+            + 8.0 * CONTROL_GAP_DIP
+            + FAULT_MARKER_SLOT_DIP
+            + CONTROL_GAP_DIP;
         let compact = size.width as f64 / scale < regular_required;
         let edge = if compact { COMPACT_EDGE_DIP } else { EDGE_DIP } * scale;
         let gap = if compact {
@@ -94,7 +109,9 @@ impl ControlLayout {
         } else {
             CONTROL_GAP_DIP
         } * scale;
-        let available = (size.width as f64 - 2.0 * edge - 8.0 * gap).max(9.0 * scale);
+        let marker_width = FAULT_MARKER_SLOT_DIP * scale;
+        let available =
+            (size.width as f64 - 2.0 * edge - 8.0 * gap - marker_width - gap).max(9.0 * scale);
         let control = (available / 9.0).min(CONTROL_DIP * scale);
         let y = (toolbar_height - control) * 0.5;
         let left = [
@@ -143,6 +160,14 @@ impl ControlLayout {
                 },
             );
         }
+        // Invariant: `available` leaves the slot and its gap, so the slot never meets the left
+        // buttons: edge + 4 control + 3 gap + gap <= the slot's x.
+        let fault_marker = ControlRect {
+            x: right_origin - gap - marker_width,
+            y,
+            width: marker_width,
+            height: control,
+        };
         let popup_width = (230.0 * scale).min(size.width as f64);
         let popup_height = 58.0 * scale;
         let opacity = controls
@@ -187,6 +212,7 @@ impl ControlLayout {
             opacity_slider,
             opacity_input,
             split_sync,
+            fault_marker,
         }
     }
 
@@ -204,6 +230,9 @@ impl ControlLayout {
         }
         if let Some(id) = self.control_at(point) {
             return Some(ControlHit::Button(id));
+        }
+        if self.fault_marker.contains(point) {
+            return Some(ControlHit::FaultMarker);
         }
         self.toolbar
             .contains(point)

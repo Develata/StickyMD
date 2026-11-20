@@ -29,6 +29,7 @@ from the [release checklist](../release-checklist.md).
 - Failure signals: a persistent `Clipboard updated` overlay, a success notification hiding an error, incorrect copied text, or mutation on a failed copy.
 - Automated entry: `cargo test -p stickymd-win --locked`; existing copy/clipboard coordinator tests cover content, generation and failure atomicity. Source/Preview shortcuts converge on the same `ClipboardWritten` shell effect, which now leaves presentation unchanged on success.
 - Visual scope: the supplied screenshots reproduce the original obstruction; real desktop verification of the rebuilt application remains `NOT TESTED` until observed. The historical manual rows above are not upgraded by headless tests.
+- Phase 17 M1: the "no success banner" expectation is superseded. A successful copy shows "已复制" for 3 s in the window-bottom notice bar, never over a failure or reminder that is showing ([P17-C11](phase-17.md)). The rest stands: failures stay visible, and no copy changes the document or the selection.
 
 ## 2026-09-25 vertical scrollbar maintenance
 

@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use crate::flow::SaveTrigger;
+use crate::flow::notice::Notice;
 use crate::flow::window::state::WindowIntent;
 use crate::instruction::SaveReason;
 use crate::ports::ExportRequest;
@@ -43,8 +44,10 @@ impl AppSession {
         );
     }
 
-    /// Everything due by `now_ms`: the note, then Preview, then the debounced zoom and the window.
+    /// Everything due by `now_ms`: the shown notice's expiry, the note, then Preview, then the
+    /// debounced zoom and the window.
     pub fn settle(&mut self, now_ms: u64, out: &mut ShellEffects) {
+        self.expire_notice(now_ms, out);
         let effects = self.note_io().tick(now_ms);
         Self::queue_note(effects, out);
         out.turn(Turn::PreviewTick { now_ms });
@@ -71,8 +74,7 @@ impl AppSession {
     /// Whether an export may ask where to go; only one runs at a time.
     pub fn begin_export(&mut self, out: &mut ShellEffects) -> bool {
         if self.export_in_flight {
-            out.push(ShellEffect::Diagnostic("已有导出任务正在进行。".into()));
-            out.push(ShellEffect::RedrawNeeded);
+            self.show_notice(Notice::ExportBusy, out);
             return false;
         }
         true
@@ -84,11 +86,11 @@ impl AppSession {
             target,
         };
         if self.worker.submit_export(request) {
+            // Shown in the derived layer until the receipt settles it.
             self.export_in_flight = true;
-            out.push(ShellEffect::Diagnostic("正在导出当前快照…".into()));
+            out.push(ShellEffect::RedrawNeeded);
         } else {
-            out.push(ShellEffect::Diagnostic("导出队列暂时不可用。".into()));
+            self.show_notice(Notice::ExportQueueUnavailable, out);
         }
-        out.push(ShellEffect::RedrawNeeded);
     }
 }

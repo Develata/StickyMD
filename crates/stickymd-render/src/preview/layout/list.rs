@@ -5,6 +5,7 @@
 use cosmic_text::{Align, FontSystem, Wrap};
 
 use super::{BlockBuild, ChunkBuild, INDENT_DIP, LayoutContent, metrics_for};
+use crate::preview::copy::SelectionText;
 use crate::preview::text_layout::{TextLayoutCache, make_text_chunk};
 use crate::preview::{RenderBlock, RenderBlockKind};
 use crate::source::FontSelection;
@@ -18,7 +19,7 @@ pub(super) fn layout_marker(
     y: f32,
     content_width: f32,
     scale: f32,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     cache: &mut TextLayoutCache,
 ) -> Option<(f32, ChunkBuild)> {
     if block.list_markers.is_empty() {

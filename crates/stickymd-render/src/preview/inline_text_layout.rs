@@ -8,6 +8,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::source::FontSelection;
 
 use super::RenderSpan;
+use super::copy::SelectionText;
 use super::layout::{InlinePiece, LayoutContent};
 use super::text_layout::{TextLayoutCache, make_text_chunk};
 
@@ -19,7 +20,7 @@ pub(super) fn append_text_pieces(
     fonts: &FontSelection,
     spans: &[RenderSpan],
     metrics: Metrics,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     pieces: &mut Vec<InlinePiece>,
     coalesce_short_text: bool,
     coalesce_attributed_short_text: bool,
@@ -78,7 +79,7 @@ fn append_bounded_attributed_text_pieces(
     fonts: &FontSelection,
     spans: &[RenderSpan],
     metrics: Metrics,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     pieces: &mut Vec<InlinePiece>,
     max_chars: usize,
     text_layout_cache: &mut TextLayoutCache,
@@ -140,7 +141,7 @@ fn append_text_batch(
     fonts: &FontSelection,
     spans: &[RenderSpan],
     metrics: Metrics,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     pieces: &mut Vec<InlinePiece>,
     text_layout_cache: &mut TextLayoutCache,
 ) {
@@ -161,7 +162,7 @@ fn append_single_text_span(
     fonts: &FontSelection,
     span: &RenderSpan,
     metrics: Metrics,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     pieces: &mut Vec<InlinePiece>,
     text_layout_cache: &mut TextLayoutCache,
 ) {
@@ -230,7 +231,7 @@ pub(super) fn text_piece(
     fonts: &FontSelection,
     span: &RenderSpan,
     metrics: Metrics,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     text_layout_cache: &mut TextLayoutCache,
 ) -> InlinePiece {
     text_spans_piece(
@@ -248,7 +249,7 @@ fn text_spans_piece(
     fonts: &FontSelection,
     spans: &[RenderSpan],
     metrics: Metrics,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     text_layout_cache: &mut TextLayoutCache,
 ) -> InlinePiece {
     let mut built = make_text_chunk(

@@ -5,6 +5,7 @@
 
 use super::DesktopShell;
 use crate::host::{Host, HostSignal};
+use stickymd_app::flow::notice::Notice;
 
 impl<H: Host> DesktopShell<H> {
     pub(super) fn start_watcher(&mut self) {
@@ -12,9 +13,8 @@ impl<H: Host> DesktopShell<H> {
             return;
         }
         if let Err(error) = self.host.start_watch(&self.sink) {
-            self.diagnostic = Some(format!(
-                "外部文件自动检测不可用；安全保存仍受指纹校验保护：{error}"
-            ));
+            self.app
+                .notify(Notice::WatcherUnavailable(error.to_string()));
         }
     }
 
@@ -66,10 +66,7 @@ impl<H: Host> DesktopShell<H> {
             }
             HostSignal::WatchFailed(error) => {
                 self.host.stop_watch();
-                self.diagnostic = Some(format!(
-                    "外部文件自动检测已停止；安全保存仍受指纹校验保护：{error}"
-                ));
-                self.request_redraw();
+                self.notify(Notice::WatcherStopped(error.to_string()));
             }
             HostSignal::ShowRequested => {
                 self.dispatch_window_intent(

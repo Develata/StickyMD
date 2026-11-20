@@ -57,9 +57,8 @@ fn split_sync_uses_only_the_current_driver_and_requires_the_switch_and_current_f
                 assert_eq!(repaint, sync);
                 if sync && current {
                     let expected = frame
-                        .y_for_scroll_anchor(source.scroll_anchor())
-                        .unwrap()
-                        .clamp(0.0, frame.document_height() - frame.height() as f32);
+                        .end()
+                        .clamp(frame.y_for_scroll_anchor(source.scroll_anchor()).unwrap());
                     assert_eq!(preview_y, expected);
                     assert!(preview_y > 500.0);
                 } else {
@@ -155,12 +154,18 @@ fn pane_scroll_preserves_text_generation_selection_caret_and_preedit() {
     // only the render projections and session scroll coordinates are borrowed.
 }
 
+/// P17-E02: the wheel and the thumb end where the frame's end is, half a viewport past the last
+/// line; frames that are missing keep the existing rules.
 #[test]
-fn preview_scroll_uses_cached_document_height_and_missing_frames_keep_existing_rules() {
+fn preview_scroll_uses_the_frames_end_and_missing_frames_keep_existing_rules() {
     let (mut source, frame) = fixture();
     let mut session = EditorSession::default();
     let mut preview_y = 0.0;
-    let max = frame.document_height() - frame.height() as f32;
+    let max = frame.end().max_scroll;
+    assert_eq!(
+        max,
+        frame.document_height() + frame.height() as f32 / 2.0 - frame.height() as f32
+    );
     for (request, expected) in [
         (ScrollRequest::Fraction(1.0), max),
         (ScrollRequest::Pixels(-100.0), max - 100.0),
@@ -205,4 +210,63 @@ fn preview_scroll_uses_cached_document_height_and_missing_frames_keep_existing_r
         false,
     );
     assert_eq!(preview_y, 0.0);
+}
+
+/// P17-E03: in a Split, the Preview driven into its end room stays there and brings the Source
+/// to its own end, not past it; the Source scrolled further at its end does not move, so it pulls
+/// the Preview out of the end room no more; scrolled back up, it leads the Preview again.
+#[test]
+fn split_sync_keeps_the_end_room_and_the_source_within_its_end() {
+    let (mut source, frame) = fixture();
+    let mut session = EditorSession::default();
+    let end = frame.end();
+    assert!(end.max_scroll > frame.document_height() - frame.height() as f32);
+    let mut preview_y = 0.0;
+    let mut apply = |source: &mut SourceProjection,
+                     preview_y: &mut f32,
+                     driver: ScrollPane,
+                     request: ScrollRequest| {
+        ScrollApplication {
+            source: Some(source),
+            frame: Some(&frame),
+            preview_y,
+            session: &mut session,
+        }
+        .apply(driver, request, ViewMode::Split, true, true)
+    };
+    for (step, request) in [ScrollRequest::Fraction(1.0), ScrollRequest::Pixels(50.0)]
+        .into_iter()
+        .enumerate()
+    {
+        apply(&mut source, &mut preview_y, ScrollPane::Preview, request);
+        assert_eq!(preview_y, end.max_scroll, "step {step}");
+        let fraction = source.scroll_metrics().fraction;
+        assert!(
+            fraction > 0.99 && fraction <= 1.0,
+            "step {step}: {fraction}"
+        );
+    }
+    let source_end = source.scroll();
+    apply(
+        &mut source,
+        &mut preview_y,
+        ScrollPane::Source,
+        ScrollRequest::Pixels(50.0),
+    );
+    assert_eq!(source.scroll(), source_end, "the Source is at its end");
+    assert_eq!(
+        preview_y, end.max_scroll,
+        "the Preview stays in its end room"
+    );
+    apply(
+        &mut source,
+        &mut preview_y,
+        ScrollPane::Source,
+        ScrollRequest::Pixels(-400.0),
+    );
+    assert!(preview_y < end.max_scroll, "the Source leads again");
+    assert_eq!(
+        preview_y,
+        end.clamp(frame.y_for_scroll_anchor(source.scroll_anchor()).unwrap())
+    );
 }

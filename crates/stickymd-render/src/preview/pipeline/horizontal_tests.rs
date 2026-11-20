@@ -80,7 +80,12 @@ fn long_display_math_scrolls_to_both_ends_with_fixed_background_and_full_copy() 
             anchor,
             active: end.hit_test(end_box.rect.right() - 0.1, end_box.rect.y + 1.0),
         };
-        assert_eq!(end.copy_selection(selection), Some(formula.as_str()));
+        assert_eq!(end.selected_text(selection), Some(formula.as_str()));
+        // Copying it gives the TeX without delimiters (plan 06 #preview-copy-semantics rule 1).
+        assert_eq!(
+            end.copy_text(selection).as_deref(),
+            Ok(&formula[2..formula.len() - 2])
+        );
         assert_eq!(end.index().selection_rects(selection), vec![end_box.rect]);
         let end_target = end
             .horizontal_target_at(viewport.x + 1.0, viewport.y + 1.0)
@@ -151,7 +156,8 @@ fn fitting_display_math_stays_centered_without_a_scrollbar() {
                 .horizontal_target_at(formula.rect.x, formula.rect.y)
                 .is_none()
         );
-        assert_eq!(frame.copy_selection(frame.select_all()), Some("$$x^2$$"));
+        assert_eq!(frame.selected_text(frame.select_all()), Some("$$x^2$$"));
+        assert_eq!(frame.copy_text(frame.select_all()).as_deref(), Ok("x^2"));
     }
 }
 
@@ -177,7 +183,7 @@ fn long_code_scrolls_without_wrapping_or_changing_copy_and_hit_ranges() {
             first.index().boxes().len() < 150,
             "offscreen clusters must not be retained in the frame"
         );
-        let text_before = first.copy_selection(first.select_all()).unwrap().to_owned();
+        let text_before = first.selected_text(first.select_all()).unwrap().to_owned();
         let counters = pipeline.counters();
         pipeline.set_horizontal_offsets(
             PreviewHorizontalOffsets::default().with_offset(target, target.max_offset()),
@@ -193,7 +199,7 @@ fn long_code_scrolls_without_wrapping_or_changing_copy_and_hit_ranges() {
             .unwrap();
         assert_eq!(pipeline.counters().layouts, counters.layouts);
         assert_eq!(first.document_height(), end.document_height());
-        assert_eq!(text_before, end.copy_selection(end.select_all()).unwrap());
+        assert_eq!(text_before, end.selected_text(end.select_all()).unwrap());
         assert!(text_before.starts_with(&line));
         assert_ne!(first.rgba(), end.rgba());
         let last = end
@@ -350,7 +356,7 @@ fn phase5_preview_release_baseline_horizontal_long_line() {
             cosmic_text::Metrics::new(15.0, 23.25),
             cosmic_text::Align::Left,
             wrap,
-            &mut String::new(),
+            &mut crate::preview::copy::SelectionText::default(),
             &mut super::super::text_layout::TextLayoutCache::default(),
         );
         println!(

@@ -302,7 +302,7 @@ fn formula_pressure_keeps_live_layout_bounded_and_preserves_source() {
             PreviewTheme::Light,
         )
         .unwrap();
-    let copied = frame.copy_selection(frame.select_all()).unwrap();
+    let copied = frame.selected_text(frame.select_all()).unwrap();
     assert!(
         formulas
             .iter()

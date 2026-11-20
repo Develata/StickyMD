@@ -36,13 +36,13 @@ pub struct BootstrapOutcome {
 }
 
 impl BootstrapOutcome {
-    /// The session this startup found, with its clock at `started`, and the warning that goes on
-    /// the status line.
+    /// The session this startup found, with its clock at `started`, and its warnings: each one
+    /// shows as an important notice.
     pub fn into_session(
         self,
         worker: PersistenceWorker,
         started: Instant,
-    ) -> (AppSession, Option<String>) {
+    ) -> (AppSession, Vec<String>) {
         let session = AppSession::new(SessionParts {
             document: self.document,
             clipboard: Box::new(ArboardClipboard::new()),
@@ -53,7 +53,7 @@ impl BootstrapOutcome {
             worker,
             clock: Box::new(InstantClock::starting_at(started)),
         });
-        (session, self.warnings.last().cloned())
+        (session, self.warnings)
     }
 }
 

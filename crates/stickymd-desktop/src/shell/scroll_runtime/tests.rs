@@ -73,7 +73,7 @@ fn offset(app: &mut TestApp, pane: ScrollPane) -> f64 {
 }
 
 #[test]
-fn runtime_pointer_moves_apply_each_pane_and_cached_document_height() {
+fn runtime_pointer_moves_apply_each_pane_and_the_frames_end() {
     for pane in [ScrollPane::Source, ScrollPane::Preview] {
         let mut app = fixture(&"paragraph with content\n\n".repeat(150));
         let geometry = prepare(&mut app, ViewMode::Split);
@@ -82,6 +82,9 @@ fn runtime_pointer_moves_apply_each_pane_and_cached_document_height() {
         let document_height = app.preview_frame.as_ref().unwrap().document_height();
         let height = geometry.preview.unwrap().height as f32;
         assert!(document_height > height * 2.0);
+        // The drag ends where the frame ends: half a viewport past the last line (P17-E02).
+        let range = app.preview_frame.as_ref().unwrap().end().max_scroll;
+        assert!(range > document_height - height);
         let bar = start_drag(&mut app, geometry, pane);
         let travel = f64::from(bar.track.height) - bar.thumb_height;
         let canonical = app.app.coordinator.snapshot();
@@ -91,7 +94,7 @@ fn runtime_pointer_moves_apply_each_pane_and_cached_document_height() {
             assert!(app.move_scrollbar_at(Some(geometry), 1.0, true));
             let actual = offset(&mut app, pane);
             let expected = if pane == ScrollPane::Preview {
-                fraction * f64::from(document_height - height)
+                fraction * f64::from(range)
             } else {
                 fraction
             };
@@ -114,7 +117,7 @@ fn runtime_pointer_moves_apply_each_pane_and_cached_document_height() {
             assert!(app.move_scrollbar_at(Some(geometry), 1.0, true));
             assert!(app.scrollbars.drag.is_some());
             let expected = if pane == ScrollPane::Preview {
-                end * f64::from(document_height - height)
+                end * f64::from(range)
             } else {
                 end
             };
@@ -215,6 +218,7 @@ fn runtime_an_edit_keeps_a_source_drag_and_a_stale_preview_ends_its_own() {
             height_px: preview.height,
             scale: 1.0,
             scroll_y: app.preview_scroll_y,
+            notice_bar_px: 0.0,
             selection: PreviewSelection::default(),
             theme: PreviewTheme::Light,
         };

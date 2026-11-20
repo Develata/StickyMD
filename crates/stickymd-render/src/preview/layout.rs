@@ -12,6 +12,7 @@ use crate::source::FontSelection;
 use cosmic_text::{Align, FontSystem, Metrics, Wrap};
 use stickymd_core::Generation;
 
+use super::copy::SelectionText;
 use super::image_requests::ImageRequests;
 use super::scroll::PreviewScrollAnchor;
 use super::{PreviewRect, PreviewTextBox, RenderBlock, RenderBlockKind, RenderSpan, RenderTree};
@@ -23,6 +24,10 @@ const CODE_LINE_DIP: f32 = 23.0;
 const PADDING_DIP: f32 = 24.0;
 const BLOCK_GAP_DIP: f32 = 12.0;
 const INDENT_DIP: f32 = 16.0;
+/// How far a code or math background reaches above and below its block's text, the largest of
+/// them (code; math reaches 3). Painting culls blocks with this margin, so a background whose
+/// block lies just outside the viewport is still painted where it reaches in.
+pub(super) const BACKGROUND_OUTSET_DIP: f32 = 4.0;
 
 pub(super) struct LaidOutDocument {
     pub generation: Generation,
@@ -77,6 +82,14 @@ pub(super) enum DecorationRole {
     Rule,
     TableCell,
     TableHeader,
+}
+
+impl DecorationRole {
+    /// A code or math background: it stays fixed under horizontal scroll, and a copy rail stands
+    /// on its right edge (plan 06 #preview-copy-rail).
+    pub(super) const fn is_block_background(self) -> bool {
+        matches!(self, Self::CodeBackground | Self::MathBackground)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -142,7 +155,7 @@ pub(super) fn layout_document(
     let content_width = (width_px as f32 - padding * 2.0).max(1.0);
     let mut y = padding;
     let mut blocks = Vec::with_capacity(tree.blocks.len());
-    let mut selection_text = String::new();
+    let mut selection_text = SelectionText::default();
     let mut scroll_anchors = Vec::with_capacity(tree.blocks.len());
     let mut formula_count = 0usize;
     let mut text_layout_cache = super::text_layout::TextLayoutCache::default();
@@ -153,6 +166,7 @@ pub(super) fn layout_document(
 
     for (block_index, block) in tree.blocks.iter().enumerate() {
         let top = y;
+        selection_text.begin_leaf();
         let marker = list::layout_marker(
             font_system,
             fonts,
@@ -164,6 +178,10 @@ pub(super) fn layout_document(
             &mut selection_text,
             &mut text_layout_cache,
         );
+        selection_text.begin_content(matches!(
+            block.kind,
+            RenderBlockKind::CodeBlock { .. } | RenderBlockKind::HtmlLiteral
+        ));
         let marker_width = marker.as_ref().map_or(0.0, |(width, _)| *width);
         let block_padding = padding + marker_width;
         let block_width = (content_width - marker_width).max(1.0);
@@ -243,8 +261,9 @@ pub(super) fn layout_document(
             decorations: laid_out.decorations,
             boxes: laid_out.boxes,
         });
+        selection_text.end_leaf();
         if block_index + 1 < tree.blocks.len() {
-            selection_text.push('\n');
+            selection_text.push_generated("\n");
         }
         y += gap;
     }
@@ -259,7 +278,7 @@ pub(super) fn layout_document(
         image_slots,
         projection: Arc::new(super::selection::PreviewDocumentProjection::new(
             tree.generation,
-            selection_text,
+            selection_text.finish(Arc::clone(&tree.source), Arc::clone(&tree.outline)),
             scroll_anchors,
         )),
         scale,
@@ -285,7 +304,7 @@ fn layout_text_block(
     y: f32,
     content_width: f32,
     scale: f32,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     formula_count: &mut usize,
     theme: super::PreviewTheme,
     mut image_source: Option<&mut ImageRequests<'_>>,
@@ -372,9 +391,9 @@ fn layout_text_block(
             decorations.push(LayoutDecoration {
                 rect: PreviewRect {
                     x: x - 7.0 * scale,
-                    y: y - 4.0 * scale,
+                    y: y - BACKGROUND_OUTSET_DIP * scale,
                     width: width + 14.0 * scale,
-                    height: height + 8.0 * scale,
+                    height: height + 2.0 * BACKGROUND_OUTSET_DIP * scale,
                 },
                 role: DecorationRole::CodeBackground,
             });
@@ -425,7 +444,7 @@ pub(super) fn make_chunk(
     width: f32,
     metrics: Metrics,
     align: Align,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     formula_count: &mut usize,
     theme: super::PreviewTheme,
     image_source: Option<&mut ImageRequests<'_>>,

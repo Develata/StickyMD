@@ -71,6 +71,7 @@ enum TaskId {
     Phase15DesktopTests,
     Phase15BaselineTests,
     Phase16MacTests,
+    Phase17Tests,
     Phase18MacTests,
     Phase18ReleaseTests,
     FormatCheck,
@@ -980,6 +981,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             // Planned on every host and refused off macOS (see `run_task`), so a run elsewhere
             // is NOT_TESTED rather than a green run of the stub. `all` never plans it.
             Selection::Phase(Phase::P16) => push_unique(&mut tasks, phase16_mac_tests()),
+            Selection::Phase(Phase::P17) => push_unique(&mut tasks, phase17_tests()),
             // The release tooling tests run on any host and come first; the host tests are then
             // refused off macOS, as for Phase 16, and the phase stays incomplete.
             Selection::Phase(Phase::P18) => {
@@ -1091,6 +1093,14 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 }
                 // The macOS measurements (P16-R01, P16-R02) are not automated yet.
                 Phase::P16 | Phase::P18 => {}
+                // Phase 17 must not regress Preview frame time, Source input latency or memory
+                // (plan 11 #phase-17-copy-and-notices, every milestone).
+                Phase::P17 => {
+                    push_source_performance(&mut tasks);
+                    push_unique(&mut tasks, phase5_performance());
+                    push_unique(&mut tasks, phase6_performance());
+                    push_unique(&mut tasks, phase8_performance());
+                }
             }
         }
     }
@@ -1150,7 +1160,13 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
                 push_unique(&mut tasks, runtime_window_shell());
             }
             Selection::Phase(
-                Phase::P00 | Phase::P01 | Phase::P02 | Phase::P15 | Phase::P16 | Phase::P18,
+                Phase::P00
+                | Phase::P01
+                | Phase::P02
+                | Phase::P15
+                | Phase::P16
+                | Phase::P17
+                | Phase::P18,
             ) => {
                 return Err("selected phase has no runtime smoke".to_owned());
             }
@@ -1437,6 +1453,23 @@ fn phase16_mac_tests() -> Task {
             "stickymd-posix",
             "-p",
             "stickymd-mac",
+            "--locked",
+        ],
+    )
+}
+
+fn phase17_tests() -> Task {
+    cargo(
+        TaskId::Phase17Tests,
+        "Phase 17 notice, end room, copy and copy rail tests",
+        &[
+            "test",
+            "-p",
+            "stickymd-render",
+            "-p",
+            "stickymd-app",
+            "-p",
+            "stickymd-desktop",
             "--locked",
         ],
     )

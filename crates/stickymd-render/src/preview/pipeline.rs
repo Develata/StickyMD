@@ -84,6 +84,9 @@ pub struct PreviewPipeline {
     layout: Option<LaidOutDocument>,
     counters: PreviewPipelineCounters,
     horizontal_offsets: super::PreviewHorizontalOffsets,
+    /// The notice bar's height over the viewport's bottom: a document that fits above it does
+    /// not scroll (plan 09 #vertical-scrollbars).
+    notice_bar_px: f32,
     image_horizontal: super::PreviewHorizontalOffsets,
 }
 
@@ -96,6 +99,11 @@ impl Default for PreviewPipeline {
 impl PreviewPipeline {
     pub fn set_horizontal_offsets(&mut self, offsets: super::PreviewHorizontalOffsets) {
         self.horizontal_offsets = offsets;
+    }
+
+    /// The notice bar's height in pixels for the frames painted from now on.
+    pub fn set_notice_bar_height(&mut self, notice_bar_px: f32) {
+        self.notice_bar_px = notice_bar_px;
     }
 
     pub fn new() -> Self {
@@ -118,6 +126,7 @@ impl PreviewPipeline {
             layout: None,
             counters: PreviewPipelineCounters::default(),
             horizontal_offsets: super::PreviewHorizontalOffsets::default(),
+            notice_bar_px: 0.0,
             image_horizontal: super::PreviewHorizontalOffsets::default(),
         }
     }
@@ -334,7 +343,8 @@ impl PreviewPipeline {
         // otherwise an overscroll value can build a band beyond the document
         // while `paint_document` later clamps the visible frame to its bottom.
         let effective_scroll_y = self.layout.as_ref().map_or(scroll_y, |layout| {
-            scroll_y.clamp(0.0, (layout.height_px - height_px as f32).max(0.0))
+            super::PreviewEnd::new(layout.height_px, height_px as f32, self.notice_bar_px)
+                .clamp(scroll_y)
         });
         let image_source_available = image_source.is_some();
         let needs_image_source_refresh = self.layout_has_image_source != image_source_available;
@@ -444,6 +454,7 @@ impl PreviewPipeline {
             layout,
             height_px,
             effective_scroll_y,
+            self.notice_bar_px,
             selection,
             theme,
             &self.horizontal_offsets,
@@ -1391,7 +1402,10 @@ mod tests {
                 PreviewTheme::Light,
             )
             .unwrap();
-        let copied = frame.index().copy(frame.index().select_all()).unwrap();
+        let copied = frame
+            .index()
+            .selected_text(frame.index().select_all())
+            .unwrap();
         for expected in [
             "Heading",
             "quote",
@@ -1659,6 +1673,7 @@ mod tests {
                 &mut layout,
                 600,
                 0.0,
+                0.0,
                 PreviewSelection::default(),
                 PreviewTheme::Light,
                 &crate::preview::PreviewHorizontalOffsets::default(),
@@ -1746,6 +1761,7 @@ mod tests {
                 &mut layout,
                 700,
                 0.0,
+                0.0,
                 PreviewSelection::default(),
                 PreviewTheme::Light,
                 &crate::preview::PreviewHorizontalOffsets::default(),
@@ -1789,3 +1805,6 @@ mod tests {
 
 #[cfg(test)]
 mod horizontal_tests;
+
+#[cfg(test)]
+mod copy_rail_tests;

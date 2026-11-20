@@ -8,6 +8,7 @@ use crate::image::DecodedImageCache;
 use crate::math::MathEngine;
 use crate::source::FontSelection;
 
+use super::copy::SelectionText;
 use super::image_requests::ImageRequests;
 use super::layout::{BlockBuild, DecorationRole, LayoutDecoration, make_chunk};
 use super::{PreviewRect, RenderBlock, RenderTable, TableAlignment};
@@ -29,7 +30,7 @@ pub(super) fn layout_table(
     y: f32,
     content_width: f32,
     scale: f32,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     formula_count: &mut usize,
     theme: super::PreviewTheme,
     mut image_source: Option<&mut ImageRequests<'_>>,
@@ -56,7 +57,7 @@ pub(super) fn layout_table(
     // The widest measured line of each column, kept as measured: recovering it from the column
     // width by subtracting the padding can come out one ulp short and re-wrap the last word.
     let mut inner_widths = vec![0.0_f32; columns];
-    let mut scratch = String::new();
+    let mut scratch = SelectionText::default();
     let mut measured_formula_count = *formula_count;
     for row in &table.rows {
         for (column, spans) in row.cells.iter().enumerate() {
@@ -151,7 +152,7 @@ pub(super) fn layout_table(
             row_chunks.extend(built.chunks);
             row_decorations.extend(built.decorations);
             if column + 1 < columns {
-                selection_text.push('\t');
+                selection_text.push_generated("\t");
             }
         }
         for column in 0..columns {
@@ -172,7 +173,7 @@ pub(super) fn layout_table(
         chunks.extend(row_chunks);
         decorations.extend(row_decorations);
         if row_index + 1 < table.rows.len() {
-            selection_text.push('\n');
+            selection_text.push_generated("\n");
         }
         row_y += row_height;
     }

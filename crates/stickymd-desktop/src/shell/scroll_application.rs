@@ -36,9 +36,13 @@ impl ScrollApplication<'_> {
         sync_enabled: bool,
         preview_current: bool,
     ) -> bool {
+        // Whether the driver actually moved: a driver at its end that does not move leaves its
+        // peer where it is, so the Preview in its end room is not pulled back (plan 09).
+        let mut source_moved = false;
         match driver {
             ScrollPane::Source => {
                 if let Some(source) = &mut self.source {
+                    let before = source.scroll();
                     match request {
                         ScrollRequest::Fraction(fraction) => {
                             source.scroll_to_fraction(fraction);
@@ -47,28 +51,25 @@ impl ScrollApplication<'_> {
                             source.scroll_by(pixels);
                         }
                     }
+                    source_moved = source.scroll() != before;
                 }
             }
             ScrollPane::Preview => match request {
                 ScrollRequest::Fraction(fraction) => {
                     if let Some(frame) = self.frame {
-                        *self.preview_y =
-                            preview_offset_at(fraction, frame.document_height(), frame.height());
+                        *self.preview_y = preview_offset_at(fraction, frame.end());
                     }
                 }
                 ScrollRequest::Pixels(pixels) => {
                     *self.preview_y = self.frame.map_or(0.0, |frame| {
-                        preview_offset_by(
-                            *self.preview_y,
-                            pixels,
-                            frame.document_height(),
-                            frame.height(),
-                        )
+                        preview_offset_by(*self.preview_y, pixels, frame.end())
                     });
                 }
             },
         }
-        let sync = mode == ViewMode::Split && sync_enabled;
+        let sync = mode == ViewMode::Split
+            && sync_enabled
+            && (driver == ScrollPane::Preview || source_moved);
         if sync
             && let (Some(frame), Some(source)) =
                 (self.frame.filter(|_| preview_current), &mut self.source)
@@ -76,10 +77,7 @@ impl ScrollApplication<'_> {
             match driver {
                 ScrollPane::Source => {
                     if let Some(y) = frame.y_for_scroll_anchor(source.scroll_anchor()) {
-                        *self.preview_y = y.clamp(
-                            0.0,
-                            (frame.document_height() - frame.height() as f32).max(0.0),
-                        );
+                        *self.preview_y = frame.end().clamp(y);
                     }
                 }
                 ScrollPane::Preview => {

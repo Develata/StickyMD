@@ -3,6 +3,7 @@
 //!
 //! plan_ref: docs/plan/09_windows_shell.md#theme-opacity-and-content-zoom
 
+use crate::flow::notice::Notice;
 use crate::flow::window::state::WindowIntent;
 use crate::flow::{WindowPreferenceEffect, coordinate_window_preference};
 use crate::instruction::WindowPreferenceIntent;
@@ -50,7 +51,7 @@ impl AppSession {
         let effect = match coordinate_window_preference(&mut self.config, intent) {
             Ok(effect) => effect,
             Err(error) => {
-                out.push(ShellEffect::Diagnostic(error.to_string()));
+                self.show_notice(Notice::ConfigFailed(error.to_string()), out);
                 return;
             }
         };

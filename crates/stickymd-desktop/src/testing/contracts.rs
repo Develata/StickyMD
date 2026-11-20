@@ -89,7 +89,7 @@ pub fn local_image_source_contract<S: PreviewImageSource>(
             Some(&source),
         )
         .unwrap();
-    assert_eq!(frame.copy_selection(frame.select_all()), Some("ALT"));
+    assert_eq!(frame.copy_text(frame.select_all()).as_deref(), Ok("ALT"));
     assert_eq!(std::fs::read(root.join("数学 图.png")).unwrap(), bytes);
     std::fs::remove_dir_all(root).unwrap();
 }

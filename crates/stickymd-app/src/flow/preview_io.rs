@@ -7,6 +7,7 @@
 use stickymd_core::Generation;
 use stickymd_render::preview::{PreviewFrame, PreviewSelection};
 
+use super::notice::Notice;
 use super::{PreviewAdmission, PreviewCoordinator};
 use crate::ports::{PreviewCompletion, PreviewViewport};
 
@@ -93,8 +94,8 @@ pub enum PreviewFollowUp {
     /// Lay the current document out again for the latest viewport.
     Relayout,
     Redraw,
-    /// Show this diagnostic, then redraw.
-    Report(String),
+    /// Show this notice, then redraw.
+    Report(Notice),
 }
 
 /// The Preview state a result may change, borrowed for one step.
@@ -174,7 +175,7 @@ impl PreviewIo<'_> {
             }
             Ok(_) => PreviewFollowUp::Redraw,
             Err(error) if completion.generation == current => {
-                PreviewFollowUp::Report(format!("Preview failed: {error}"))
+                PreviewFollowUp::Report(Notice::PreviewFailed(format!("Preview failed: {error}")))
             }
             Err(_) => PreviewFollowUp::Redraw,
         }

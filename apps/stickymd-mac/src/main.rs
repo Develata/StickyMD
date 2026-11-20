@@ -125,7 +125,7 @@ fn main() -> std::process::ExitCode {
         Err(error) => fatal_startup(&format!("无法启动持久化工作线程：{error}")),
     };
     let started = Instant::now();
-    let diagnostic = outcome.warnings.last().cloned();
+    let warnings = outcome.warnings;
     let session = AppSession::new(SessionParts {
         document: outcome.document,
         clipboard: Box::new(MacClipboard),
@@ -137,7 +137,7 @@ fn main() -> std::process::ExitCode {
         clock: Box::new(InstantClock::starting_at(started)),
     });
     let host = MacHost::new(paths, note_directory, instance, sink.clone());
-    let mut app = DesktopShell::new(host, session, sink, started, diagnostic);
+    let mut app = DesktopShell::new(host, session, sink, started, warnings);
     let run = event_loop.run_app(&mut app);
     let startup_failed = app.startup_failed();
     drop(app);

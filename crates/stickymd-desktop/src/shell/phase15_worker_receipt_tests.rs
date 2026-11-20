@@ -29,8 +29,9 @@ fn generation(app: &HeadlessApp) -> Generation {
     app.app.coordinator.view().generation
 }
 
-fn diagnostic(app: &HeadlessApp) -> &str {
-    app.diagnostic.as_deref().unwrap_or_default()
+/// The text the notice bar shows now, or "" when it shows nothing.
+fn diagnostic(app: &HeadlessApp) -> String {
+    app.notice_text().unwrap_or_default()
 }
 
 fn stored_asset() -> AssetPasteRollback {

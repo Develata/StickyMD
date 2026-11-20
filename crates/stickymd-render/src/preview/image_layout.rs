@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::image::DecodedImageCache;
 
+use super::copy::SelectionText;
 use super::image_requests::ImageRequests;
 use super::image_resources::LaidOutImage;
 use super::layout::{BlockBuild, LayoutChunk, LayoutContent};
@@ -18,7 +19,7 @@ pub(super) fn layout_image_block(
     y: f32,
     width: f32,
     scale: f32,
-    selection_text: &mut String,
+    selection_text: &mut SelectionText,
     image_source: Option<&mut ImageRequests<'_>>,
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
@@ -40,9 +41,7 @@ pub(super) fn layout_image_block(
     )?;
     let (target_width, target_height) = (slot.width, slot.height);
     let content = LayoutContent::Image(slot);
-    let selection_start = selection_text.len();
-    selection_text.push_str(&span.copy_text);
-    let selection_end = selection_text.len();
+    let selection = selection_text.push_span(span);
     let rect = PreviewRect {
         x,
         y,
@@ -60,7 +59,7 @@ pub(super) fn layout_image_block(
         }],
         decorations: Vec::new(),
         boxes: vec![PreviewTextBox {
-            selection_range: selection_start..selection_end,
+            selection_range: selection.clone(),
             source_range: span.source_range,
             rect,
             action: span.action.clone().map(Arc::new),

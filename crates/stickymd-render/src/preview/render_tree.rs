@@ -10,6 +10,7 @@ use stickymd_core::Generation;
 
 use crate::math::MathKind;
 
+use super::copy::{CopyOutline, OutlineBuilder, OutlineKind};
 use super::{
     BlockNode, ImageKind, InlineNode, LinkKind, ListNode, OwnedDocumentTree, SourceRange,
     TableAlignment, TableNode,
@@ -110,6 +111,9 @@ pub struct RenderTree {
     pub generation: Generation,
     pub source: Arc<str>,
     pub blocks: Vec<RenderBlock>,
+    /// What copying needs of the structure the blocks flatten; shared by every layout of the
+    /// tree (plan 06 #preview-copy-semantics).
+    pub(crate) outline: Arc<CopyOutline>,
 }
 
 impl RenderTree {
@@ -146,14 +150,47 @@ impl RenderTree {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RenderTreeBuilder;
 
+/// Where the builder appends: the render blocks, and the outline that remembers what they flatten.
+struct Output<'a> {
+    blocks: &'a mut Vec<RenderBlock>,
+    outline: &'a mut OutlineBuilder,
+    source: &'a str,
+}
+
+impl Output<'_> {
+    /// Records the next render block as a leaf with inline content.
+    fn leaf(
+        &mut self,
+        kind: OutlineKind,
+        source_range: Option<SourceRange>,
+        content: &[InlineNode],
+    ) {
+        let leaf = self.blocks.len();
+        self.outline.leaf(kind, source_range, leaf);
+        self.outline
+            .inlines(content, leaf, source_range, self.source);
+    }
+}
+
 impl RenderTreeBuilder {
     pub fn build(&self, document: &OwnedDocumentTree) -> RenderTree {
         let mut blocks = Vec::new();
-        self.append_blocks(&document.blocks, 0, false, &mut blocks);
+        let mut outline = OutlineBuilder::default();
+        self.append_blocks(
+            &document.blocks,
+            0,
+            false,
+            &mut Output {
+                blocks: &mut blocks,
+                outline: &mut outline,
+                source: &document.source,
+            },
+        );
         RenderTree {
             generation: document.generation,
             source: Arc::clone(&document.source),
             blocks,
+            outline: Arc::new(outline.finish(document.shifted_blocks.clone())),
         }
     }
 
@@ -162,43 +199,51 @@ impl RenderTreeBuilder {
         input: &[BlockNode],
         indent: u16,
         quoted: bool,
-        output: &mut Vec<RenderBlock>,
+        output: &mut Output<'_>,
     ) {
         for block in input {
+            let leaf = output.blocks.len();
             match block {
                 BlockNode::Paragraph {
                     content,
                     source_range,
-                } => output.push(RenderBlock {
-                    kind: if quoted {
-                        RenderBlockKind::Quote
-                    } else {
-                        RenderBlockKind::Paragraph
-                    },
-                    spans: self.inline_spans(content),
-                    indent,
-                    source_range: *source_range,
-                    list_markers: Vec::new(),
-                }),
+                } => {
+                    output.leaf(OutlineKind::Paragraph, *source_range, content);
+                    output.blocks.push(RenderBlock {
+                        kind: if quoted {
+                            RenderBlockKind::Quote
+                        } else {
+                            RenderBlockKind::Paragraph
+                        },
+                        spans: self.inline_spans(content),
+                        indent,
+                        source_range: *source_range,
+                        list_markers: Vec::new(),
+                    });
+                }
                 BlockNode::Heading {
                     level,
                     content,
                     source_range,
-                } => output.push(RenderBlock {
-                    kind: RenderBlockKind::Heading(*level),
-                    spans: self.inline_spans(content),
-                    indent,
-                    source_range: *source_range,
-                    list_markers: Vec::new(),
-                }),
+                } => {
+                    output.leaf(OutlineKind::Heading, *source_range, content);
+                    output.blocks.push(RenderBlock {
+                        kind: RenderBlockKind::Heading(*level),
+                        spans: self.inline_spans(content),
+                        indent,
+                        source_range: *source_range,
+                        list_markers: Vec::new(),
+                    });
+                }
                 BlockNode::BlockQuote {
                     blocks,
                     source_range,
                 } => {
-                    let before = output.len();
+                    let quote = output.outline.open(OutlineKind::Quote, *source_range, leaf);
                     self.append_blocks(blocks, indent.saturating_add(1), true, output);
-                    if output.len() == before {
-                        output.push(RenderBlock {
+                    if output.blocks.len() == leaf {
+                        output.outline.placeholder(leaf);
+                        output.blocks.push(RenderBlock {
                             kind: RenderBlockKind::Quote,
                             spans: Vec::new(),
                             indent,
@@ -206,61 +251,94 @@ impl RenderTreeBuilder {
                             list_markers: Vec::new(),
                         });
                     }
+                    output.outline.close(quote, output.blocks.len());
                 }
                 BlockNode::List(list) => self.append_list(list, indent, quoted, output),
-                BlockNode::CodeBlock(code) => output.push(RenderBlock {
-                    kind: RenderBlockKind::CodeBlock {
-                        info: code.info.clone(),
-                    },
-                    spans: vec![span(
-                        &code.literal,
-                        &code.literal,
-                        code.source_range,
-                        RenderStyle {
-                            code: true,
-                            ..RenderStyle::default()
+                BlockNode::CodeBlock(code) => {
+                    output.outline.leaf(
+                        OutlineKind::CodeBlock {
+                            fenced: code.fenced,
+                            closed: code.closed,
                         },
-                        None,
-                    )],
-                    indent,
-                    source_range: code.source_range,
-                    list_markers: Vec::new(),
-                }),
-                BlockNode::Table(table) => output.push(RenderBlock {
-                    kind: RenderBlockKind::Table(self.table(table)),
-                    spans: Vec::new(),
-                    indent,
-                    source_range: table.source_range,
-                    list_markers: Vec::new(),
-                }),
-                BlockNode::ThematicBreak { source_range } => output.push(RenderBlock {
-                    kind: RenderBlockKind::ThematicBreak,
-                    spans: Vec::new(),
-                    indent,
-                    source_range: *source_range,
-                    list_markers: Vec::new(),
-                }),
+                        code.source_range,
+                        leaf,
+                    );
+                    output.blocks.push(RenderBlock {
+                        kind: RenderBlockKind::CodeBlock {
+                            info: code.info.clone(),
+                        },
+                        spans: vec![span(
+                            &code.literal,
+                            &code.literal,
+                            code.source_range,
+                            RenderStyle {
+                                code: true,
+                                ..RenderStyle::default()
+                            },
+                            None,
+                        )],
+                        indent,
+                        source_range: code.source_range,
+                        list_markers: Vec::new(),
+                    });
+                }
+                BlockNode::Table(table) => {
+                    output
+                        .outline
+                        .leaf(OutlineKind::Table, table.source_range, leaf);
+                    for cell in table.rows.iter().flat_map(|row| &row.cells) {
+                        output.outline.inlines(
+                            &cell.content,
+                            leaf,
+                            table.source_range,
+                            output.source,
+                        );
+                    }
+                    output.blocks.push(RenderBlock {
+                        kind: RenderBlockKind::Table(self.table(table)),
+                        spans: Vec::new(),
+                        indent,
+                        source_range: table.source_range,
+                        list_markers: Vec::new(),
+                    });
+                }
+                BlockNode::ThematicBreak { source_range } => {
+                    output.outline.leaf(OutlineKind::Other, *source_range, leaf);
+                    output.blocks.push(RenderBlock {
+                        kind: RenderBlockKind::ThematicBreak,
+                        spans: Vec::new(),
+                        indent,
+                        source_range: *source_range,
+                        list_markers: Vec::new(),
+                    });
+                }
                 BlockNode::HtmlLiteral {
                     literal,
                     source_range,
-                } => output.push(RenderBlock {
-                    kind: RenderBlockKind::HtmlLiteral,
-                    spans: vec![span(
-                        literal,
-                        literal,
-                        *source_range,
-                        RenderStyle {
-                            code: true,
-                            html_literal: true,
-                            ..RenderStyle::default()
-                        },
-                        None,
-                    )],
-                    indent,
-                    source_range: *source_range,
-                    list_markers: Vec::new(),
-                }),
+                } => {
+                    output.outline.leaf(OutlineKind::Other, *source_range, leaf);
+                    output.blocks.push(RenderBlock {
+                        kind: RenderBlockKind::HtmlLiteral,
+                        spans: vec![span(
+                            literal,
+                            literal,
+                            *source_range,
+                            RenderStyle {
+                                code: true,
+                                html_literal: true,
+                                ..RenderStyle::default()
+                            },
+                            None,
+                        )],
+                        indent,
+                        source_range: *source_range,
+                        list_markers: Vec::new(),
+                    });
+                }
                 BlockNode::DisplayMath(math) => {
+                    output
+                        .outline
+                        .leaf(OutlineKind::Other, math.source_range, leaf);
                     let mut math_span = span(
                         &math.source_literal,
                         &math.source_literal,
@@ -275,7 +353,7 @@ impl RenderTreeBuilder {
                         source: Arc::from(math.literal.as_str()),
                         kind: MathKind::Display,
                     });
-                    output.push(RenderBlock {
+                    output.blocks.push(RenderBlock {
                         kind: RenderBlockKind::DisplayMath,
                         spans: vec![math_span],
                         indent,
