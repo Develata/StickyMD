@@ -34,5 +34,7 @@
 	<false/>
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
+	<key>StickyMDInputs</key>
+	<string>@INPUTS@</string>
 </dict>
 </plist>

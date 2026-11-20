@@ -18,7 +18,39 @@ if [ -z "$version" ]; then
     exit 1
 fi
 
-cargo build --manifest-path "$repo/Cargo.toml" -p stickymd-mac --release --locked --target "$target"
+# The product input fingerprint binds acceptance evidence to what decides the app's behaviour,
+# not to its bytes (plan 11 #phase-16-macos-host). The fingerprint and the build both run in this
+# repository with a clean environment: only HOME and a fixed PATH (the system directories first,
+# so the linker driver is the system's, then the directory of the caller's cargo), so no variable
+# can change the build without changing the fingerprint. The caller's HOME is also passed as an
+# argument, which a Cargo configuration cannot rewrite. Taken again after the bundle is staged,
+# so a change to the inputs between the two is refused; a change undone in between is not
+# detected.
+cargo_path=$(command -v cargo) || {
+    echo "cargo is not on PATH" >&2
+    exit 1
+}
+cargo_dir=$(CDPATH= cd -- "$(dirname -- "$cargo_path")" && pwd)
+clean() {
+    (cd "$repo" && /usr/bin/env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin:$cargo_dir" "$@")
+}
+inputs() {
+    clean cargo run --quiet --locked -p stickymd-smoke -- mac-ledger inputs --home "$HOME"
+}
+inputs_before=$(inputs)
+case "$inputs_before" in
+    *[!0-9a-f]* | "")
+        echo "could not compute the product input fingerprint" >&2
+        exit 1
+        ;;
+esac
+if [ "${#inputs_before}" -ne 64 ]; then
+    echo "the product input fingerprint is not a SHA-256: $inputs_before" >&2
+    exit 1
+fi
+
+# The target directory is fixed, so the executable copied below is the one this build produced.
+clean cargo build -p stickymd-mac --release --locked --target "$target" --target-dir "$repo/target"
 
 mkdir -p "$output"
 bundle="$output/StickyMD.app"
@@ -26,8 +58,16 @@ staging="$output/.StickyMD.app.staging"
 rm -rf "$staging"
 mkdir -p "$staging/Contents/MacOS"
 cp "$repo/target/$target/release/stickymd-mac" "$staging/Contents/MacOS/StickyMD"
-sed "s/@VERSION@/$version/g" "$packaging_dir/Info.plist" >"$staging/Contents/Info.plist"
+sed -e "s/@VERSION@/$version/g" -e "s/@INPUTS@/$inputs_before/g" "$packaging_dir/Info.plist" >"$staging/Contents/Info.plist"
 plutil -lint "$staging/Contents/Info.plist" >/dev/null
+
+# Every input has now been read: the sources by the build, the Info.plist template just above.
+inputs_after=$(inputs)
+if [ "$inputs_after" != "$inputs_before" ]; then
+    echo "the product inputs changed during the build; build again" >&2
+    rm -rf "$staging"
+    exit 1
+fi
 
 codesign --force --sign - --timestamp=none "$staging"
 codesign --verify --strict "$staging"

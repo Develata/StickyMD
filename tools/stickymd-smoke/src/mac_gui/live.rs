@@ -30,7 +30,55 @@ pub(super) struct Live<'a> {
     /// The copied product, for a scenario that starts it again after it quit.
     pub executable: std::path::PathBuf,
 }
+/// Points the product's open save dialog at `dir/export.md` without answering it, and reads the
+/// destination back (E01, and W12's logout with the dialog open). The dialog must already be the
+/// focused key target.
+pub(super) fn aim_panel(
+    input: &mut Injection<Events>,
+    pid: u32,
+    dir: &Path,
+) -> Result<String, String> {
+    input.chord(&[CMD, SHIFT, 5])?;
+    events::wait(300)?;
+    let path = dir.to_str().ok_or("non UTF-8 export path")?.to_owned();
+    let mut log = ax::folder(pid, &path)?;
+    // Return confirms whatever has focus: only the Go to Folder path field may get it.
+    super::observation::goto_field(
+        ax::front(),
+        ax::goto_sheet_open(pid),
+        ax::focused_element(pid),
+        pid,
+        &path,
+    )?;
+    input.chord(&[36])?;
+    events::wait(400)?;
+    log.push_str(&ax::filename(pid, "export.md")?);
+    events::wait(200)?;
+    let directory = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("non UTF-8 session directory")?;
+    let (name, location, sheet) = ax::panel_destination(pid)?;
+    if name != "export.md" || location != directory || sheet {
+        return Err(format!(
+            "dialog not aimed: name={name:?}, location={location:?} (want {directory:?}), go-to \
+             sheet open={sheet}"
+        ));
+    }
+    log.push_str(&format!("\naimed at {directory}/{name}"));
+    Ok(log)
+}
 pub(super) fn command(program: &str, args: &[&str]) -> Result<String, String> {
+    command_within(program, args, Duration::from_secs(10))
+}
+
+/// `command` with its own time limit, for a helper that may take longer than 10 s (a `log show`
+/// over the system log: the VM's W12 fault case once needed more, run p7).
+pub(super) fn command_within(
+    program: &str,
+    args: &[&str],
+    limit: Duration,
+) -> Result<String, String> {
     // Reuse the same owned child/timeout/identity cleanup for helper processes too.
     let mut session = Session::new()?;
     let stdout = session.path().join("stdout");
@@ -53,8 +101,8 @@ pub(super) fn command(program: &str, args: &[&str]) -> Result<String, String> {
             .stderr(err),
     )?;
     let status = session
-        .wait_until(Instant::now() + Duration::from_secs(10))?
-        .ok_or_else(|| format!("{program} timed out"))?;
+        .wait_until(Instant::now() + limit)?
+        .ok_or_else(|| format!("{program} timed out after {} s", limit.as_secs()))?;
     let text = fs::read_to_string(stdout).map_err(|e| e.to_string())?;
     let error = fs::read_to_string(stderr).map_err(|e| e.to_string())?;
     session.cleanup()?;
@@ -65,6 +113,108 @@ pub(super) fn command(program: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 impl Live<'_> {
+    /// I03's control: a scratch document in a TextEdit instance of its own (`open -n`), held as
+    /// the product will be. Keys go only while that instance is frontmost with the document's
+    /// window focused. The windows are listed while the key is still down; then a real `2` must
+    /// pick an accent from the menu (the text read back). Only that instance is killed (its
+    /// scratch document is never saved).
+    fn control(&mut self) -> Result<Value, String> {
+        use super::hold::{EVERY_MS, KEY_2, KEY_A, REPEATS};
+        let path = self.session.path().join("control.txt");
+        fs::write(&path, b"").map_err(|e| e.to_string())?;
+        let pids = || -> Vec<u32> {
+            command("/usr/bin/pgrep", &["-x", "TextEdit"])
+                .unwrap_or_default()
+                .split_whitespace()
+                .filter_map(|p| p.parse().ok())
+                .collect()
+        };
+        let existing = pids();
+        command(
+            "/usr/bin/open",
+            &["-n", "-a", "TextEdit", &path.to_string_lossy()],
+        )?;
+        let titled =
+            |pid: u32| ax::focused_window(pid).is_ok_and(|(title, _)| title.starts_with("control"));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let pid = loop {
+            if let Some(pid) = pids()
+                .into_iter()
+                .find(|p| !existing.contains(p) && titled(*p))
+            {
+                break pid;
+            }
+            if Instant::now() >= deadline {
+                return Ok(Value::Text(
+                    "no TextEdit instance of its own showed the control document within 10 s"
+                        .into(),
+                ));
+            }
+            events::wait(200)?;
+        };
+        ax::activate(pid)?;
+        events::wait(500)?;
+        let ready = |pid: u32| ax::front().is_ok_and(|front| front == pid) && titled(pid);
+        let result = if ready(pid) {
+            let before = windows::on_screen()?;
+            let mut during = None;
+            let held = self.input.hold(
+                KEY_A,
+                REPEATS,
+                EVERY_MS,
+                &mut || {
+                    if ready(pid) {
+                        Ok(())
+                    } else {
+                        Err("the TextEdit control lost focus during the hold".into())
+                    }
+                },
+                &mut || {
+                    during = Some(windows::on_screen()?);
+                    Ok(())
+                },
+            );
+            match (held, during) {
+                (Ok(()), Some(during)) if ready(pid) => {
+                    // The menu answers a digit by picking that accent.
+                    self.input.chord(&[KEY_2])?;
+                    events::wait(300)?;
+                    let text = ax::focused_element(pid).map(|(_, v)| v).unwrap_or_default();
+                    Value::Control(super::hold::appeared(&before, &during), pid, text)
+                }
+                (Err(error), _) => Value::Text(format!("TextEdit control: {error}")),
+                _ => Value::Text("the TextEdit control lost focus after the hold".into()),
+            }
+        } else {
+            Value::Text("the TextEdit control document was not frontmost and focused".into())
+        };
+        let _ = command("/bin/kill", &["-9", &pid.to_string()]);
+        events::wait(500)?;
+        Ok(result)
+    }
+    /// Asks the product (started with the diagnostic) to publish it, waits for a new file (the
+    /// product renames a fresh file over the old one) and reads the presenter counters from it.
+    fn presenter(&mut self) -> Result<[u64; 4], String> {
+        use std::os::unix::fs::MetadataExt;
+        let path = self.session.path().join(super::runner::DIAGNOSTIC);
+        let before = fs::metadata(&path).ok().map(|m| (m.ino(), m.mtime_nsec()));
+        self.session.signal_flush()?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let now = fs::metadata(&path).ok().map(|m| (m.ino(), m.mtime_nsec()));
+            if now.is_some() && now != before {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("the product published no new diagnostic within 5 s".into());
+            }
+            events::wait(20)?;
+        }
+        let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        super::latency::model::parse(&text)?
+            .presenter
+            .ok_or_else(|| "the diagnostic has no presenter counters".into())
+    }
     fn read(&self, path: &str) -> Result<String, String> {
         fs::read_to_string(self.session.path().join(path)).map_err(|e| format!("{path}: {e}"))
     }
@@ -116,42 +266,8 @@ impl Live<'_> {
     /// directory, and the Go to Folder sheet is gone. Anything else is an error, not an aim.
     fn target_panel(&mut self) -> Result<String, String> {
         self.require_key_target(KeyTarget::Dialog)?;
-        self.input.chord(&[CMD, SHIFT, 5])?;
-        events::wait(300)?;
-        let path = self
-            .session
-            .path()
-            .to_str()
-            .ok_or("non UTF-8 export path")?
-            .to_owned();
-        let mut log = ax::folder(self.pid, &path)?;
-        // Return confirms whatever has focus: only the Go to Folder path field may get it.
-        super::observation::goto_field(
-            ax::front(),
-            ax::goto_sheet_open(self.pid),
-            ax::focused_element(self.pid),
-            self.pid,
-            &path,
-        )?;
-        self.input.chord(&[36])?;
-        events::wait(400)?;
-        log.push_str(&ax::filename(self.pid, "export.md")?);
-        events::wait(200)?;
-        let directory = self
-            .session
-            .path()
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or("non UTF-8 session directory")?;
-        let (name, location, sheet) = ax::panel_destination(self.pid)?;
-        if name != "export.md" || location != directory || sheet {
-            return Err(format!(
-                "dialog not aimed: name={name:?}, location={location:?} (want {directory:?}), \
-                 go-to sheet open={sheet}"
-            ));
-        }
-        log.push_str(&format!("\naimed at {directory}/{name}"));
-        Ok(log)
+        let dir = self.session.path().to_path_buf();
+        aim_panel(self.input, self.pid, &dir)
     }
     fn open(&mut self) -> Result<String, String> {
         self.session.open_bundle(|bundle| {
@@ -326,7 +442,8 @@ impl Backend for Live<'_> {
                     None => return Err("refused relaunch: the product is still running".into()),
                 }
                 self.session.stop()?;
-                let (pid, window) = super::runner::launch(self.session, &self.executable, true)?;
+                let (pid, window) =
+                    super::runner::launch(self.session, &self.executable, true, false)?;
                 self.pid = pid;
                 self.window_id = window.id;
                 Value::Pid(pid)
@@ -337,6 +454,80 @@ impl Backend for Live<'_> {
                 self.session.signal_terminate()?;
                 Value::Unit
             }
+            // An observation that fails is no observation of the product: the checks that need
+            // it are NOT_TESTED (the reason travels as `Text`), never an execution FAIL.
+            Op::Capture(rect, shot) => {
+                if self.permissions.screen {
+                    match windows::capture(rect, shot, self.window_id) {
+                        Ok(image) => Value::Image(image),
+                        Err(error) => Value::Text(format!("capture failed: {error}")),
+                    }
+                } else {
+                    Value::Text(
+                        "Screen Recording (CGPreflightScreenCaptureAccess) not granted".into(),
+                    )
+                }
+            }
+            Op::Presenter => match self.presenter() {
+                Ok(counters) => Value::Counters(counters),
+                Err(error) => Value::Text(format!("presenter diagnostic unavailable: {error}")),
+            },
+            Op::Above => match windows::above(self.window_id) {
+                Ok(list) => Value::Covering(list),
+                Err(error) => Value::Text(format!("window list unavailable: {error}")),
+            },
+            Op::Hold(code, repeats, every) => {
+                self.require_key_target(KeyTarget::Note)?;
+                let pid = self.pid;
+                // The windows seen at every repeat and once more before the release: a menu that
+                // opens mid-hold and is closed by a later repeat is still seen.
+                type Seen = (Vec<super::hold::OnScreen>, Option<String>, usize);
+                let state = std::cell::RefCell::new(Seen::default());
+                let sample = |state: &std::cell::RefCell<Seen>| {
+                    let mut s = state.borrow_mut();
+                    match windows::on_screen() {
+                        Ok(list) => {
+                            for w in list {
+                                if !s.0.contains(&w) {
+                                    s.0.push(w);
+                                }
+                            }
+                            s.2 += 1;
+                        }
+                        Err(error) => s.1 = Some(error),
+                    }
+                };
+                self.input.hold(
+                    code,
+                    repeats,
+                    every,
+                    &mut || {
+                        super::observation::key_target(
+                            ax::front(),
+                            ax::focused_window(pid),
+                            pid,
+                            KeyTarget::Note,
+                        )?;
+                        sample(&state);
+                        Ok(())
+                    },
+                    &mut || {
+                        sample(&state);
+                        Ok(())
+                    },
+                )?;
+                events::wait(60)?;
+                match state.into_inner() {
+                    (_, Some(error), _) => Value::Text(format!("window list unavailable: {error}")),
+                    (_, None, 0) => Value::Text("no window list while the key was held".into()),
+                    (seen, None, _) => Value::Windows(seen),
+                }
+            }
+            Op::OnScreen => match windows::on_screen() {
+                Ok(list) => Value::Windows(list),
+                Err(error) => Value::Text(format!("window list unavailable: {error}")),
+            },
+            Op::Control => self.control()?,
             Op::Focus => {
                 // No wait here: W06 samples the window from the moment focus is asked for.
                 ax::activate(self.pid)?;

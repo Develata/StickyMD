@@ -5,7 +5,7 @@
 - `Layer`: Capability
 - `Status`: Approved Contract
 - `Version`: 0.4.0
-- `Last Review`: 2026-11-14
+- `Last Review`: 2026-11-19
 - `Scope`: Source 编辑器职责、IME preedit/commit 语义、字体 run、undo 分组、RichEdit fallback 治理
 
 ---
@@ -104,8 +104,14 @@
   完整处理；若仍会改变文本（例如未闭合的 `$$` 与第二步写出的 `$$` 重新配对，或第二步在
   内层 closer 处结束外层公式而留下新公式），整个 action 保守拒绝，同样为完整 no-op，保证
   再次点击不再改动。最坏情况下两步各 parse 两次。
-- 1 MiB / 1000 math-node Release smoke（含提交前的再次处理）的 p95 engineering check 为
-  `< 50 ms`；超过时先审计
+- 1 MiB / 1000 math-node Release smoke（含提交前的再次处理）有两项 engineering check。先不计时
+  运行 3 轮，再计时 100 轮；每轮先计时一次同一文档的单次 Comrak 解析，再计时一次按钮，使主机
+  的短暂卡顿同时影响两者：
+  - 防退化：按钮中位数不超过解析中位数的 10 倍。比值去掉了机器快慢，快机器上同样能发现浪费；
+  - 流畅上界：按钮的 nearest-rank p95（排序后第 95 个样本）`< 100 ms`。最多 5 个样本可以超出，
+    共享 CI 主机上 2–3 个样本的短暂卡顿不判失败。
+
+  任一项超过时先审计
   重复 parse、全文 clone 与逐 formula mutation，不引入增量 Markdown parser 或后台 runtime。
 
 <a id="source-find-replace"></a>
@@ -240,6 +246,7 @@ Windows：微软拼音、微信输入法。macOS：系统简体拼音、微信�
 - 宿主在本进程的参数域关闭 `ApplePressAndHoldEnabled`（优先于用户与全局设置，不写盘）：长按按系统键盘设置连发，不弹重音菜单，也就不会因替换范围丢失而多出字符；代价是没有重音弹窗。
 - 键表（语义相同，只换按键）：保存 / 导出 Cmd+S / Cmd+Shift+S；复制、剪切、粘贴、全选 Cmd+C/X/V/A；撤销 / 重做 Cmd+Z / Cmd+Shift+Z；查找 / 替换 Cmd+F / Cmd+Option+F；视图与缩放 Cmd+1/2/3、Cmd+=/-/0；行首行尾 Cmd+←/→ 与 Home/End；文首文末 Cmd+↑/↓；退出 Cmd+Q（`09`）。Ctrl 组合键不绑定，没有 Insert 别名，Windows 也没有的按词移动不做。
 
+- 验收（USER 批准 2026-11-19）：macOS 的一级输入法验收按 `11` Phase 16 的验收阶梯判定。候选窗的位置、遮挡、字体与动画在 macOS 上先由程序与 agent 判定，做不到的再交 USER 看截图或录像，最后才由 USER 亲手验收。上文“候选窗位置、遮挡、字体和动画属于视觉验收，继续由人工判定”与人工视觉矩阵对 Windows 不变。
 ---
 
 <a id="undo-grouping"></a>

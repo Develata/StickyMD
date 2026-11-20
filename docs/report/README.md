@@ -25,6 +25,8 @@
 
 ## 发布政策
 
+- [macOS 验收证据改按产品输入指纹锚定](2026-11-17-macos-evidence-anchoring.md)：证据身份由可执行文件哈希改为产品输入指纹，USER 批准（2026-11-17），已写入 plan 11 并实现。
+- [macOS 验收按六级阶梯判定](2026-11-19-macos-acceptance-ladder.md)：程序、agent 自行操作、agent 截图、程序截图交 USER、录屏交 USER、人工；先修账本与截图通道，再逐行转换；USER 批准方案 A（2026-11-19），第 0 步部分完成，第 1 期进行中（R03 按 USER 决定预设隔离标记）。取代同日的[人工行缩减提案](2026-11-19-macos-manual-rows-reduction.md)（codex 审查后暂缓）。
 - [Phase 15 E 设计](2026-11-09-phase-15-e-shared-startup-logic.md)：把不依赖文件语义的启动、配置、粘贴与导出裁决移到共享层，存储事务留在宿主。
 - [Debian 13 平台决定](2026-11-09-debian-platform-decision.md)：能力矩阵、后端方案、缺能力时的规则与实测探针，等待 USER 批准。
 - [窗口启动失败路径](2026-11-09-startup-failure-paths.md)：现状、方案对比与建议的合同，等待 USER 批准。
@@ -33,6 +35,11 @@
 - [Phase 15 C/D 设计](2026-11-07-phase-15-c-design.md)：`stickymd-desktop`、`AppSession` 与宿主端口的拆分方案和批次，USER 批准（2026-11-07）。
 - [Phase 15 B 的待决项](2026-11-07-phase-15-b-decisions.md)：失败分类、恢复文件名、异常保存回执、性能证据与窗口回执的结论（USER 决定 2026-11-07）。
 - [需要额外硬件的人工项改为可选](2026-10-31-optional-hardware-manual-items.md)：`previous` 角色、Clean VM、多屏、RDP 与负坐标不再阻断发布（USER 决定 2026-10-31）。
+
+## v0.2.0 候选准备
+
+- [本次候选准备](2026-11-17-v0.2.0-candidate-preparation.md)：发布范围、USER 授权与其适用条件、macOS 与 Windows 会话的分工、macOS 构建的验收身份。
+- [发布说明](../release-notes/0.2.0.md)：本版本累计改动；冻结前写成，验收结果发布时补全。
 
 ## v0.1.3 候选准备
 
@@ -146,6 +153,7 @@
 
 ## 跨阶段验证与风险
 
+- [公式按钮性能检查的采样容错](2026-11-19-math-action-p95-tolerance.md)：14 次 CI 的实测；USER 决定改为与同一文档解析之比不超过 10 倍（防退化）加 p95 < 100 ms（流畅上界，100 个样本中最多 5 个可超出），已写入 plan 07。
 - [表格公式源码范围](2026-09-08-table-math-source-ranges.md)：GFM 分列与公式复制/导出坐标。
 - [运行时审查](2026-09-07-runtime-audit.md)、[垂直滚动条维护](2026-09-25-vertical-scrollbars.md)：按日期记录实现与复审。
 - [发布规则迁移](2026-09-22-release-cli-migration.md)、[输出收尾](2026-09-25-release-output-finalization.md)：Rust 规则权威与 PowerShell 适配。

@@ -57,8 +57,26 @@ Markdown 与数学公式，也可以贴在屏幕边缘，在需要时迅速出�
 3. 把快捷方式移动到打开的“启动”文件夹。下次登录 Windows 时，StickyMD 就会自动打开。
 
 这是完全由 Windows 管理的可选设置，StickyMD 不会自行写入注册表或注册开机任务。移动程序目录
-后需要重新创建快捷方式。本地 Release 测试中，常见视图稳定常驻约 20 MB，适合作为轻量桌面
+后需要重新创建快捷方式。用 Scoop 安装时，快捷方式应指向
+`scoop\apps\stickymd\current\StickyMD.exe`，升级后才不会失效。本地 Release 测试中，常见视图稳定常驻约 20 MB，适合作为轻量桌面
 草稿；实际占用会随视图、文档、图片和系统环境变化。
+
+### 可选：用 Scoop 安装
+
+已经在用 [Scoop](https://scoop.sh) 时：
+
+```pwsh
+scoop bucket add develata https://github.com/Develata/scoop-bucket
+scoop install develata/stickymd
+```
+
+从开始菜单的 `StickyMD` 启动。安装的是同一个 portable ZIP，草稿仍在程序旁的 `note/` 中。Scoop
+每个版本一个目录，因此 `scoop update` 与 `scoop uninstall` 会先把 `note/` 复制到
+`scoop\persist\stickymd\note`（再上一份留在 `note.previous`），安装新版本时再复制回来。
+
+- 升级或卸载前先从托盘菜单退出 StickyMD；它仍在运行时，复制会拒绝执行。
+- 升级后只从开始菜单启动；直接运行旧版本目录里的 `StickyMD.exe` 所做的修改不会被带走。
+- `scoop uninstall --purge stickymd` 会同时删除这份保存的副本。
 
 <a id="use-cases"></a>
 

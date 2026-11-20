@@ -3,6 +3,7 @@ name = "stickymd-win"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "StickyMD Windows executable: Interaction Shell + Windows platform adapters"
 
 [package.metadata.winresource]
@@ -12,9 +13,9 @@ OriginalFilename = "StickyMD.exe"
 LegalCopyright = "Copyright (c) 2026 Develata"
 
 [dependencies]
-stickymd-core = { path = "../../crates/stickymd-core", version = "0.1.0" }
-stickymd-render = { path = "../../crates/stickymd-render", version = "0.1.0" }
-stickymd-app = { path = "../../crates/stickymd-app", version = "0.1.0" }
+stickymd-core = { path = "../../crates/stickymd-core" }
+stickymd-render = { path = "../../crates/stickymd-render" }
+stickymd-app = { path = "../../crates/stickymd-app" }
 thiserror.workspace = true
 sha2.workspace = true
 
@@ -22,10 +23,10 @@ sha2.workspace = true
 cosmic-text.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]
-stickymd-desktop = { path = "../../crates/stickymd-desktop", version = "0.1.0", features = ["testing"] }
+stickymd-desktop = { path = "../../crates/stickymd-desktop", features = ["testing"] }
 
 [target.'cfg(windows)'.dependencies]
-stickymd-desktop = { path = "../../crates/stickymd-desktop", version = "0.1.0" }
+stickymd-desktop = { path = "../../crates/stickymd-desktop" }
 arboard.workspace = true
 raw-window-handle.workspace = true
 winit.workspace = true

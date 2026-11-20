@@ -18,20 +18,22 @@ StickyMD 是一个极致轻量、常驻 Windows 11 桌面的便携式 Markdown �
 - 纯 portable：解压即用，无安装器，不写 AppData / Registry。
 - 核心本体对象只有：Note、Document Text、Preview、Managed Image Asset、Runtime Config、Window Placement、Editor Session。
 
-当前仓库状态：**`v0.1.3` 已从 exact source
-`1d943497b91b704a34e32b3150a923d5113a5f9d` 正式发布**（2026-10-23）。公开 portable ZIP、checksum
-与 SBOM 来自候选 run `39848983265` 的同一份 artifact，经 TAG、DRAFT、PUBLISH 三次晋升
-workflow 与来源证明校验，未重新构建。另一 Windows 环境、多屏/混合 DPI、干净 VM 等仍为未测，
-正式人工目标声明与逐场景记录未齐；发布依据是仅限本版本的 USER 例外，原技术 readiness
-仍为 `NOT_READY`，不得表述为完整验收通过。详见
-[`v0.1.3` 候选与发布记录](docs/report/2026-10-22-v0.1.3-candidate-preparation.md)。
+当前仓库状态：**`v0.2.0` 已从 exact source
+`fc97e83adfc6dcd3d29b42f924d9476a120647ac` 正式发布**（2026-11-18）。公开 portable ZIP、checksum
+与 SBOM 来自候选 run `44046334056` 的同一份 artifact，经 TAG、DRAFT、PUBLISH 晋升 workflow
+与来源证明校验，未重新构建。发布 readiness 为 `READY`（Windows 11 25H2）：P12-M05 与 Tier B
+单屏 DPI 组为 USER 逐项豁免，上一版 Windows、Tier O 与 Tier C 保持未测，没有使用整版例外。
+macOS 版从本版本源码本机构建、不提供下载，0.2.0 构建的验收没有重跑。详见
+[`v0.2.0` 候选与发布记录](docs/report/2026-11-17-v0.2.0-candidate-preparation.md)。
 
+`v0.1.3` 的 exact source 仍为 `1d943497b91b704a34e32b3150a923d5113a5f9d`（采用仅限当版的 USER 发布例外，
+技术 readiness 为 `NOT_READY`，见 [`v0.1.3` 候选与发布记录](docs/report/2026-10-22-v0.1.3-candidate-preparation.md)），
 `v0.1.2` 的 exact source 仍为 `e36e61d65536c0cbaa84ee4004f1a289fbcb91dd`（同样采用当版 USER 发布特例，
 见 [`v0.1.2` 发布决定](docs/report/2026-10-02-v0.1.2-release-preparation.md)），
 `v0.1.1` 的 exact source 仍为 `9a0a00a1fe143cf25fa4208a54ec5dfea7f3e7c9`，
 `v0.1.0` 仍为 `64690ab8f86f63f3cbfeabbb0961276978c8f26d`；历史报告与
 ignored evidence 保留各自资格化身份。各版本的 tag 和既有资产都不得被后续 `main`
-文档或维护提交冒充为已重建，后续提交不自动继承 exact-artifact 身份或本次发布特例。
+文档或维护提交冒充为已重建，后续提交不自动继承 exact-artifact 身份或任何当版发布特例。
 
 产品 runtime 继续维持 v1 冻结边界：StickyMD 是一张 Markdown 草稿，不进入通用编辑器、知识管理、
 插件、云、AI 或网络服务方向。外部 Issue 与 Pull Request 已开放，但代码贡献必须先讨论并确认范围；
@@ -90,7 +92,10 @@ code generation、refactor，必须依次执行：
 11. review boundary drift（是否越层、是否引入平级权威）。
 12. 每个 Phase 必须维护 `tools/smoke/phase-XX.ps1` 与
     `docs/acceptance-cases/phase-XX.md`；自动化由 Rust CLI 持有，人工未验收项保持
-    `NOT TESTED`。
+    `NOT TESTED`。新增、复审或重新确认验收行之前，**先阅读**
+    `docs/plan/11_testing_and_release.md` 的“验收矩阵”节（验收阶梯）与
+    `docs/plan/01_terminology.md` 的 Acceptance Ladder，按其中的顺序为每一行选第一个可行级，
+    并审视每个人工行能否上移；不能上移的写明原因。改一行的 Mode 须 USER 批准。
 13. 最后运行适用 baseline（fmt / clippy / tests / 相关 benchmark）。
 14. 不得 push remote，除非 USER 明确要求。
 
@@ -206,7 +211,7 @@ crates/stickymd-core/      ← 领域模型（文本、generation、撤销、持
 crates/stickymd-render/    ← Markdown/数学投影、排版、绘制
 crates/stickymd-app/       ← Shared Application（intent、coordinator、配置、`AppSession`、Capability Port、worker；无平台 API）
 crates/stickymd-desktop/   ← Shared Desktop（视图几何、标题投影、软件帧路径、控件、滚动条、Search 叠层、按键表、`shell/` 的 `DesktopShell<H>`；可用 winit/softbuffer，无原生 API）
-crates/stickymd-posix/     ← macOS 宿主的原生 POSIX 层（未来供 Debian 复用；可持有 `unsafe` 与原生绑定，无业务逻辑；非 macOS 为空）
+crates/stickymd-posix/     ← macOS 宿主的原生 POSIX 层（未来供 Debian 复用；可持有 `unsafe` 与原生绑定，无业务逻辑，不依赖其他 StickyMD crate；非 macOS 为空）
 apps/stickymd-win/         ← Windows 宿主（启动装配、`WinHost`、原生 adapter、存储）
 apps/stickymd-mac/         ← macOS 宿主（二进制 `stickymd`；宿主内的 `unsafe` 与原生绑定只在 `src/platform/`，POSIX 原语由 `stickymd-posix` 提供；非 macOS 编译为桩，验收见 phase-16）
 tools/stickymd-smoke/      ← std-only 阶段验证 CLI（不进入产品 runtime）

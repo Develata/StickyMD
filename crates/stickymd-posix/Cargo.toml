@@ -3,6 +3,7 @@ name = "stickymd-posix"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "StickyMD POSIX native layer: directory handles, atomic publish, single instance (macOS now, Debian later)"
 
 [target.'cfg(target_os = "macos")'.dependencies]

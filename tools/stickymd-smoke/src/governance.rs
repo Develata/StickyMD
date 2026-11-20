@@ -1,6 +1,7 @@
 //! Repository-contract validation used by every phase smoke.
 
 mod actions;
+mod crate_graph;
 mod input_injection;
 mod mac_host;
 mod mac_resources;
@@ -128,9 +129,22 @@ const FORBIDDEN_PACKAGES: &[&str] = &[
 
 #[derive(Debug)]
 struct MatrixRow {
+    id: String,
     line: usize,
     mode: String,
     status: String,
+}
+
+/// The rows of the Phase 16 matrix as governance reads and checks them, `(id, mode)` in document
+/// order; the macOS ledger plans from these, so both read one table the same way.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn phase16_modes(content: &str) -> Result<Vec<(String, String)>, String> {
+    Ok(
+        matrix_rows(content, Path::new("docs/acceptance-cases/phase-16.md"))?
+            .into_iter()
+            .map(|row| (row.id, row.mode))
+            .collect(),
+    )
 }
 
 pub(crate) fn find_repository_root(start: &Path) -> Result<PathBuf, String> {
@@ -165,6 +179,7 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     crate::qualification::verify_product_classification(root)?;
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
+    crate_graph::verify(root)?;
     verify_test_harnesses(root)?;
     input_injection::verify(root)?;
     Ok(())
@@ -864,11 +879,21 @@ pub(crate) fn verify_ready_status(root: &Path, selection: Selection) -> Result<(
     for phase in phases {
         let path = matrix_path(root, phase);
         for row in read_matrix_rows(&path)? {
-            if row.mode == "Automated" && row.status != "AUTOMATED PASS" {
+            // The acceptance ladder of the macOS matrix (plan 11 #phase-16-macos-host): an Agent
+            // row gates readiness as an automated row does, and a Review row needs the USER's
+            // receipt, since a run already produced what the USER judges.
+            let required = match row.mode.as_str() {
+                "Automated" => "AUTOMATED PASS",
+                "Agent" => "AGENT PASS",
+                "Review" => "MANUAL PASS",
+                _ => continue,
+            };
+            if row.status != required {
                 return Err(format!(
-                    "{}:{} automated row is `{}` instead of `AUTOMATED PASS`",
+                    "{}:{} {} row is `{}` instead of `{required}`",
                     path.display(),
                     row.line,
+                    row.mode.to_lowercase(),
                     row.status
                 ));
             }
@@ -1188,6 +1213,25 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
         let &[_, _, mode, evidence, status] = row.cells.as_slice() else {
             return Err(at("phase matrix row must contain 5 columns".to_owned()));
         };
+        if rows.iter().any(|seen: &MatrixRow| seen.id == row.id) {
+            return Err(at(format!("{} appears twice", row.id)));
+        }
+        // A macOS row with another phase's prefix would be valid here yet dropped by the ledger.
+        if is_macos_matrix(path) && !row.id.starts_with("P16-") {
+            return Err(at(format!(
+                "{} in the macOS matrix must start with P16-",
+                row.id
+            )));
+        }
+        // The macOS matrix uses only the modes of the acceptance ladder (plan 01, Acceptance
+        // Ladder) and the dash of its waiver; other phases' modes would drop out of its plans.
+        if is_macos_matrix(path)
+            && !matches!(mode, "Automated" | "Manual" | "Agent" | "Review" | "—")
+        {
+            return Err(at(format!(
+                "mode `{mode}` is not an acceptance ladder mode of the macOS matrix"
+            )));
+        }
         match mode {
             "Automated" | "Automated local" if matches!(status, "AUTOMATED PASS" | "BLOCKED") => {}
             "Manual" if matches!(status, "MANUAL PASS" | "NOT TESTED" | "BLOCKED") => {}
@@ -1198,6 +1242,12 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
             // Readiness still refuses a waiting automated row when its phase is judged.
             "Automated" if status == "NOT TESTED" && written_ahead_of_code(path) => {}
             "—" if status == "USER 豁免" && is_macos_matrix(path) => {}
+            // The acceptance ladder of the macOS matrix (plan 11 #phase-16-macos-host): agents
+            // judge `Agent` rows; the USER judges `Review` rows from screenshots or video. Until
+            // mac-ledger keeps judge records and receipts that name the reviewed media, neither
+            // can pass: `AGENT PASS` and a Review `MANUAL PASS` are refused.
+            "Agent" if matches!(status, "NOT TESTED" | "BLOCKED") && is_macos_matrix(path) => {}
+            "Review" if matches!(status, "NOT TESTED" | "BLOCKED") && is_macos_matrix(path) => {}
             _ => {
                 return Err(at(format!(
                     "invalid mode/status pair `{mode}` / `{status}`"
@@ -1213,6 +1263,7 @@ fn matrix_rows(content: &str, path: &Path) -> Result<Vec<MatrixRow>, String> {
             ));
         }
         rows.push(MatrixRow {
+            id: row.id.to_owned(),
             line: row.line,
             mode: mode.to_owned(),
             status: status.to_owned(),
@@ -1378,14 +1429,14 @@ fn verify_forbidden_packages(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// One crate's boundary: no listed text in its sources, no listed dependency in its manifest. The
-/// crate must exist: a scan of nothing proves nothing.
+/// One crate's source boundary: no listed text in its sources. The crate must exist: a scan of
+/// nothing proves nothing. Its dependencies are checked on Cargo's resolved graph
+/// (`crate_graph`), which sees renamed, target-specific and transitive edges.
 fn verify_crate_boundary(
     root: &Path,
     crate_name: &str,
     layer: &str,
     forbidden_source: &[&str],
-    forbidden_dependencies: &[&str],
 ) -> Result<(), String> {
     let directory = format!("crates/{crate_name}");
     let mut sources = Vec::new();
@@ -1404,20 +1455,11 @@ fn verify_crate_boundary(
             }
         }
     }
-    let manifest = read_text(&root.join(&directory).join("Cargo.toml"))?;
-    for line in manifest.lines().map(str::trim_start) {
-        let name = line.split(['=', '.', ' ']).next().unwrap_or_default();
-        if forbidden_dependencies.contains(&name) {
-            return Err(format!(
-                "{directory}/Cargo.toml depends on platform crate `{name}`"
-            ));
-        }
-    }
     Ok(())
 }
 
-/// The Shared Application stays free of platform types, platform conditionals and platform
-/// dependencies (plan 03 `#shared-crates`).
+/// The Shared Application's sources stay free of platform types and platform conditionals
+/// (plan 03 `#shared-crates`); `crate_graph` keeps platform crates out of its dependencies.
 fn verify_shared_application_boundary(root: &Path) -> Result<(), String> {
     verify_crate_boundary(
         root,
@@ -1432,21 +1474,13 @@ fn verify_shared_application_boundary(root: &Path) -> Result<(), String> {
             "cfg(windows)",
             "target_os",
         ],
-        &[
-            "winit",
-            "windows",
-            "softbuffer",
-            "raw-window-handle",
-            "arboard",
-            "tray-icon",
-            "notify",
-        ],
     )
 }
 
 /// The Shared Desktop may use winit and softbuffer but nothing native (plan 03 `#shared-crates`):
-/// no platform type, no platform conditional, no winit platform extension, no reach into a host's
-/// adapters. Per-target backend features are the one exception, and they live in its manifest.
+/// its sources hold no platform type, no platform conditional, no winit platform extension and no
+/// reach into a host's adapters. Per-target backend features are the one exception, and they live
+/// in its manifest; `crate_graph` keeps the native crates out of its dependencies.
 fn verify_shared_desktop_boundary(root: &Path) -> Result<(), String> {
     verify_crate_boundary(
         root,
@@ -1461,7 +1495,6 @@ fn verify_shared_desktop_boundary(root: &Path) -> Result<(), String> {
             "crate::platform",
             "winit::platform::",
         ],
-        &["windows", "arboard", "tray-icon", "notify"],
     )
 }
 
@@ -1508,8 +1541,9 @@ mod tests {
         verify_shared_application_boundary, verify_shared_desktop_boundary,
     };
 
-    /// The real crate passes; a platform type, a platform conditional or a platform dependency
-    /// fails; a missing source tree fails rather than passing on nothing.
+    /// The real crate passes; a platform type or a platform conditional fails; a missing source
+    /// tree fails rather than passing on nothing. Platform dependencies are refused on the
+    /// resolved graph (`crate_graph::tests::every_listed_platform_crate_is_refused`).
     #[test]
     fn the_shared_application_boundary_refuses_platform_code() {
         let repository = crate::governance::find_repository_root(std::path::Path::new(env!(
@@ -1522,8 +1556,6 @@ mod tests {
             std::env::temp_dir().join(format!("stickymd-governance-app-{}", std::process::id()));
         let source = root.join("crates/stickymd-app/src/lib.rs");
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
-        let manifest = root.join("crates/stickymd-app/Cargo.toml");
-        std::fs::write(&manifest, "[dependencies]\nserde.workspace = true\n").unwrap();
         std::fs::write(&source, "pub struct Clean;\n").unwrap();
         verify_shared_application_boundary(&root).unwrap();
         for bad in [
@@ -1534,23 +1566,15 @@ mod tests {
             std::fs::write(&source, bad).unwrap();
             assert!(verify_shared_application_boundary(&root).is_err(), "{bad}");
         }
-        std::fs::write(&source, "pub struct Clean;\n").unwrap();
-        for bad in [
-            "winit.workspace = true",
-            "softbuffer = \"0.4\"",
-            "windows = { version = \"1\" }",
-        ] {
-            std::fs::write(&manifest, format!("[dependencies]\n{bad}\n")).unwrap();
-            assert!(verify_shared_application_boundary(&root).is_err(), "{bad}");
-        }
         std::fs::remove_file(&source).unwrap();
         assert!(verify_shared_application_boundary(&root).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
     /// The real crate passes; winit and softbuffer are allowed; a native type, a platform
-    /// conditional, a winit platform extension, a reach into a host's adapters or a platform
-    /// dependency fails; a missing source tree fails rather than passing on nothing.
+    /// conditional, a winit platform extension or a reach into a host's adapters fails; a missing
+    /// source tree fails rather than passing on nothing. Platform dependencies are refused on the
+    /// resolved graph (`crate_graph::tests::every_listed_platform_crate_is_refused`).
     #[test]
     fn the_shared_desktop_boundary_refuses_native_code() {
         let repository = crate::governance::find_repository_root(std::path::Path::new(env!(
@@ -1565,11 +1589,6 @@ mod tests {
         ));
         let source = root.join("crates/stickymd-desktop/src/lib.rs");
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
-        let manifest = root.join("crates/stickymd-desktop/Cargo.toml");
-        let clean_manifest = "[dependencies]\nwinit.workspace = true\nsoftbuffer.workspace = true\n\n\
-                              [target.'cfg(all(unix, not(target_os = \"macos\")))'.dependencies]\n\
-                              winit = { workspace = true, features = [\"x11\"] }\n";
-        std::fs::write(&manifest, clean_manifest).unwrap();
         let clean = "use softbuffer::Surface;\nuse winit::window::Window;\n";
         std::fs::write(&source, clean).unwrap();
         verify_shared_desktop_boundary(&root).unwrap();
@@ -1583,17 +1602,6 @@ mod tests {
             "use winit::platform::windows::WindowExtWindows;",
         ] {
             std::fs::write(&source, bad).unwrap();
-            assert!(verify_shared_desktop_boundary(&root).is_err(), "{bad}");
-        }
-        std::fs::write(&source, clean).unwrap();
-        for bad in [
-            "windows = { version = \"1\" }",
-            "windows.workspace = true",
-            "arboard.workspace = true",
-            "tray-icon.workspace = true",
-            "notify = \"8\"",
-        ] {
-            std::fs::write(&manifest, format!("[dependencies]\n{bad}\n")).unwrap();
             assert!(verify_shared_desktop_boundary(&root).is_err(), "{bad}");
         }
         std::fs::remove_file(&source).unwrap();
@@ -1619,16 +1627,44 @@ mod tests {
         }
         assert_eq!(matrix_rows(&waiting, ahead).unwrap().len(), 1);
         assert!(matrix_rows(&waived, ahead).is_err());
+        let ladder = format!(
+            "{header}| P16-W05 | act | Agent | waits | NOT TESTED |\n\
+             | P16-W06 | act | Agent | capture failed | BLOCKED |\n\
+             | P16-F01 | act | Review | waits | NOT TESTED |\n\
+             | P16-V04 | act | Review | judged a FAIL | BLOCKED |\n"
+        );
+        assert_eq!(matrix_rows(&ladder, macos).unwrap().len(), 4);
+        assert!(
+            matrix_rows(&ladder, other).is_err(),
+            "the ladder modes are macOS only"
+        );
         for bad in [
             "| P16-S06 | act | Automated | exFAT | MANUAL PASS |",
             "| P16-S06 | act | Manual | exFAT | USER 豁免 |",
             "| P16-S06 | act | — | exFAT | NOT TESTED |",
+            "| P16-W01 | act | Agent | judge: j1 | MANUAL PASS |",
+            // Not yet: mac-ledger keeps no judge records and no receipts naming reviewed media.
+            "| P16-W01 | act | Agent | judge: j1 | AGENT PASS |",
+            "| P16-V04 | act | Review | receipt: r1 | MANUAL PASS |",
+            "| P16-V04 | act | Review | judge: j1 | AGENT PASS |",
+            "| P16-W01 | act | Automated | judge: j1 | AGENT PASS |",
+            // Other phases' modes would drop out of the macOS plans (neither run nor judged).
+            "| P16-I02 | act | Guided Manual | waits | NOT TESTED |",
+            "| P16-I02 | act | Automated local | run | AUTOMATED PASS |",
+            "| P16-I02 | act | Automated exact candidate | waits | NOT TESTED |",
         ] {
             assert!(
                 matrix_rows(&format!("{header}{bad}\n"), macos).is_err(),
                 "{bad}"
             );
         }
+        let twice = format!("{ladder}| P16-W05 | act | Manual | again | NOT TESTED |\n");
+        assert!(matrix_rows(&twice, macos).is_err(), "an ID appears once");
+        let prefix = format!("{ladder}| P15-I02 | act | Manual | waits | NOT TESTED |\n");
+        assert!(
+            matrix_rows(&prefix, macos).is_err(),
+            "a macOS row is a P16 row"
+        );
         let root =
             std::env::temp_dir().join(format!("stickymd-macos-matrix-{}", std::process::id()));
         std::fs::create_dir_all(root.join("docs/acceptance-cases")).unwrap();
@@ -1637,6 +1673,41 @@ mod tests {
             super::verify_ready_status(&root, crate::cli::Selection::Phase(crate::cli::Phase::P16))
                 .unwrap_err();
         assert!(error.contains("instead of `AUTOMATED PASS`"), "{error}");
+        // An Agent or Review row that waits keeps phase 16 from being ready; a Manual row does not.
+        std::fs::write(
+            root.join("docs/acceptance-cases/phase-16.md"),
+            format!("{header}| P16-W05 | act | Agent | waits | NOT TESTED |\n"),
+        )
+        .unwrap();
+        let error =
+            super::verify_ready_status(&root, crate::cli::Selection::Phase(crate::cli::Phase::P16))
+                .unwrap_err();
+        assert!(
+            error.contains("agent row is `NOT TESTED` instead of `AGENT PASS`"),
+            "{error}"
+        );
+        std::fs::write(
+            root.join("docs/acceptance-cases/phase-16.md"),
+            format!("{header}| P16-F01 | act | Review | waits | NOT TESTED |\n"),
+        )
+        .unwrap();
+        let error =
+            super::verify_ready_status(&root, crate::cli::Selection::Phase(crate::cli::Phase::P16))
+                .unwrap_err();
+        assert!(
+            error.contains("review row is `NOT TESTED` instead of `MANUAL PASS`"),
+            "{error}"
+        );
+        std::fs::write(
+            root.join("docs/acceptance-cases/phase-16.md"),
+            format!(
+                "{header}| P16-W13 | act | Automated | test | AUTOMATED PASS |\n\
+                 | P16-I01 | act | Manual | waits | NOT TESTED |\n"
+            ),
+        )
+        .unwrap();
+        super::verify_ready_status(&root, crate::cli::Selection::Phase(crate::cli::Phase::P16))
+            .unwrap();
         // The unfinished macOS matrix does not gate a run of every phase.
         std::fs::write(root.join("docs/acceptance-cases/phase-16.md"), "garbage").unwrap();
         for phase in crate::cli::Phase::ALL {

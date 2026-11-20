@@ -252,7 +252,7 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 | --- | --- | --- |
 | M0 | 基线：macOS 移除没有 `head` 表的字体 | 四个共享 crate 的测试在 macOS 全部通过 |
 | M1 | 建立 `apps/stickymd-mac` 与原生 POSIX 层 `crates/stickymd-posix`，同时登记 `unsafe` 治理、CI 选择与指纹归属；存储、单实例、监视、启动 | 真实存储通过 `storage_conformance!`；`05` macOS 节的失败路径有测试；macOS 测试与 clippy 显式包含两个 crate |
-| M2 | 窗口、托盘、唤醒、光标图层、系统终止；共享层 S2、S4、S6、S7、S8 | Windows 现有断言不变（S7、S8 按批准的新行为更新）；验收表中 Mode 为 `Manual` 的真实桌面项人工确认，Mode 为 `Automated` 的由虚拟机中的 `mac-gui` 判定（见下文账本的“自动化行”） |
+| M2 | 窗口、托盘、唤醒、光标图层、系统终止；共享层 S2、S4、S6、S7、S8 | Windows 现有断言不变（S7、S8 按批准的新行为更新）；验收表各行按下文的验收阶梯判定：`Automated` 由各行写明的程序判定（虚拟机中的 `mac-gui` 或单元测试），`Agent` 由两名 agent 判定，`Review` 与 `Manual` 由 USER 判定 |
 | M3 | 输入、剪贴板、导出；共享层 S3 | `08` macOS 节的格式验证；基线测量 |
 | M4 | `.app` 打包脚本、ad-hoc 签名、人工验收清单 | 未运行项保持 `NOT TESTED` |
 
@@ -264,15 +264,45 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
   - 宿主呈现路径的共享层测试：三种结果、暂缓重试、光标降级、隐藏释放与再显示；
   - 呈现器的单元测试：缓冲选择、BGRA 写入与行跨度、创建失败不崩溃；
   - 虚拟机里同一批次基线与新包交替跑 `mac-latency` 与 `mac-resources`，以及 `mac-gui`。
-- **人工：** USER 把新包与正式包并排目视比较颜色、方向和撕裂。
+- **人工（V04）：** USER 把新包与正式包并排目视比较颜色、方向和撕裂。按下文的验收阶梯转换后改为：颜色与方向由程序比对像素；新包与基线包用同一脚本录屏，USER 看打字、滚动、拖动缩放、切换视图时的闪白、残影与错帧（第 5 级）；扫描线级的撕裂在合成后的录像里看不出，列为未测。转换完成之前仍按前一句做。
 - **Windows：** 共享层 `render.rs`、`frame/surface.rs` 的改动需要 Windows 桌面回归。
 
 `mac-gui` 的结果按行记入账本 `dist/evidence/mac-gui-ledger/records.jsonl`，由 `stickymd-smoke mac-ledger` 管理（USER 批准 2026-11-12，[复用提案](../report/2026-11-11-macos-gui-rerun-reuse.md)）。
+证据的锚点是**产品输入指纹**，不是 app 的字节（USER 批准 2026-11-17，[锚定提案](../report/2026-11-17-macos-evidence-anchoring.md)）：
 
-- **记录**：账本只追加。每次追加都在排他锁下读取、校验，再原子发布，公共证据写入口不得写入账本目录。`record` 从同一次读取的证据字节中，记下一次运行的每一行，连同以下身份：app 可执行文件与 bundle 清单的 SHA-256、驱动的 SHA-256（由 `mac-gui` 写进证据；运行期间不得替换驱动）、虚拟机的 `sw_vers`，以及运行者传入的镜像 digest。一个 digest 只能对应一个系统版本。
-- **复用**：`plan` 只读账本，不启动被测程序，需要传入目标虚拟机运行前的 `sw_vers`。某行在账本里已有 PASS，且 app、bundle、驱动、镜像、系统五项与当前完全一致时，复用这次 PASS；如果同一身份下后来又记过非 PASS，一并提示。其余行列入要运行的 `--only` 清单。FAIL 与 NOT_TESTED 从不复用。
-- **人工收据**：`receipt` 按行记录 USER 的确认，绑定 app 可执行文件的 SHA-256。app 变了，收据不再成立，`plan` 会列出待重新确认的人工行。I01–I03 与 R03 从不沿用收据。
-- **自动化行**：验收表中 Mode 为 `Automated`、由 `mac-gui` 执行的行，只认账本里与当前 app、bundle、驱动、镜像、系统五项一致的 PASS，不需要人工收据。app 变了，这些行要在新身份下重新运行（`plan` 会列出）；还没有这样的 PASS 时状态为 `NOT TESTED`。哪些行改为 `Automated`，只限断言与显示硬件无关的行，按行经 USER 批准（2026-11-12，[提案](../report/2026-11-12-macos-manual-rows-automation.md)）。
+- **产品输入指纹**：`stickymd-smoke mac-ledger inputs` 在仓库根目录对能进入 `build-app.sh` 所建 app 的全部 tracked 文件计算，与功能模块指纹共用同一算法，
+  根 `Cargo.toml` 与 `Cargo.lock` 的发布版本同样规范化。除列为不能进入 app 的目录与文件（Windows 宿主、`tools/`、`docs/`、`.github/`、`experiments/`、
+  根 `tests/`、`assets/`、`dist/`、根目录的说明文档与 `deny.toml`）外，任何文件都是输入；新文件只会导致重跑，不会导致误复用。
+- **构建身份**：指纹最后接上目标 `aarch64-apple-darwin`、`--release --locked`、`cargo -V`、`rustc -vV`、`xcode-select -p`、SDK 路径与版本、
+  `clang --version`、`ld -v`。
+- **干净的构建环境**：`build-app.sh` 在仓库根目录、以只含 `HOME` 与固定 `PATH`（先系统目录，链接驱动因此是系统的 `cc`，再接调用者 `cargo` 所在目录）的环境
+  计算指纹并构建，所以调用者的其他环境变量进不了构建。仓库之外存在 Cargo 会合并的配置文件（各级祖先目录与 Cargo home 中的 `config`/`config.toml`）时，
+  `inputs` 拒绝；Cargo home 按脚本以参数传入的 `HOME` 定位，Cargo 配置的 `[env]` 改不了它。需要非空的 `HOME`；
+  直接调用 `inputs` 时，`RUSTFLAGS`、`RUSTC` 与各种 wrapper、`CARGO_PROFILE_*`、`CARGO_BUILD_*`、`CARGO_TARGET_*`、`CARGO_RESOLVER_*`、
+  `MACOSX_DEPLOYMENT_TARGET`、`SDKROOT`、C 工具链的 `CC`/`CFLAGS`/`LDFLAGS` 等变量也会被拒绝。
+- **信任假设（不进指纹的输入）**：
+  - 仓库内被跟踪的 Cargo 配置若 `include` 仓库外的文件，或指向仓库外的程序、lockfile 与路径依赖，这些外部内容的变化不进指纹（现有配置只有 Windows 的 rustflags）；
+  - 保留下来的 `HOME`（rustup 的 `settings.toml` 与工具链目录、`~/.cargo` 中的依赖缓存）与调用者 `cargo` 所在目录：工具版本输出相同、内容不同的工具链或标准库不会被发现；
+  - Xcode 选中的开发目录中，同路径、同版本的工具被替换不会被发现；
+  - 依赖的 build script 读取仓库外文件、系统工具读取用户目录下配置的情况，没有穷尽核查。
+- **写入 bundle**：`build-app.sh` 先算指纹，以固定的 `--target-dir` 构建并从同一目录复制可执行文件，生成 Info.plist（指纹写进 `StickyMDInputs`）后再算一次，
+  两次不同即拒绝，相同才签名。两次检查之间被改动又改回的输入无法发现。
+
+- **记录**：账本只追加。每次追加都在排他锁下读取、校验，再原子发布，公共证据写入口不得写入账本目录。`record` 从同一次读取的证据字节中，记下一次运行的每一行，连同以下身份：app 的产品输入指纹（`mac-gui` 从 bundle 读出写进证据）、驱动的 SHA-256（由 `mac-gui` 写进证据；运行期间不得替换驱动）、虚拟机的 `sw_vers`，以及运行者传入的镜像 digest；app 可执行文件与 bundle 清单的 SHA-256 一并记下，只供审计。一个 digest 只能对应一个系统版本。`record` 只登记在虚拟机中跑完的运行（证据为 schema 2，且 `finished` 为真：驱动在最后一行结束后才写 `true`，检查点与被取消、因异常或清理失败而中止的运行都写 `false`；更早的证据不能登记，要重跑，不得手工补写；`hv_vmm_present` 为 1，且未用 `--allow-host`），每行的结论须与它的各项检查一致（有 FAIL 即 FAIL，否则有未测或没有检查即 NOT_TESTED，全部通过才 PASS）；同一份证据的同一行不登记两次。墙钟的开始时间不能证明两次运行的先后（会被校时改变），所以账本不按时间排序，复用规则也不依赖先后（见下条）。账本里的摘要按不区分大小写读取。
+- **复用**：`plan` 只读账本，不启动被测程序，需要传入目标虚拟机运行前的 `sw_vers`。某行在账本里已有 PASS，且产品输入指纹、驱动、镜像、系统四项与当前完全一致时，复用这次 PASS；只看最近的一次 PASS：同一身份下这一行记过任何 FAIL 或 NOT_TESTED，或有任何一次 PASS 被 USER 撤销（都不论先后）时，不复用，该行列入要运行的清单，也不回退去复用更早的 PASS。被撤销的 PASS 与 FAIL 同样处理：导入顺序和墙钟都不能证明哪次运行在撤销之后，所以重新导入同一次运行改写过字节的证据、或撤销之后才登记的较早运行，都不能恢复复用。因此同一身份下失败过或被撤销过的行，直到身份改变之前每次都重跑（I01–I03 与 R03 只看本批，在新批次重跑）；历史记录保留；这次 PASS 记录的 app 字节与当前不同时，作为审计信息列出。没有产品输入指纹的 app 或记录（指纹引入之前的）不参与复用。其余行列入要运行的 `--only` 清单。FAIL 与 NOT_TESTED 从不复用。
+- **人工收据**：`receipt` 按行记录 USER 的确认，绑定 app 的产品输入指纹（app 可执行文件的 SHA-256 只供审计）；没有指纹的 app 不能记收据。指纹变了，收据不再成立，`plan` 会列出待重新确认的人工行。Mode 为 `Review` 的行同样以收据记录 USER 的判定，收据与 Agent 的判定记录绑定相同的字段（同一次运行的证据摘要、行与子项、所看画面的角色与哈希、判定标准的版本、对照）；账本记录这种收据之前，`receipt` 拒绝 Review 行，Review 行不能为 `MANUAL PASS`。I01–I03 与 R03 从不沿用：收据、运行结果与判定都只代表这一批验收。批次由 `--batch` 命名：运行的批次由 `mac-gui --batch` 在运行开始时写进证据，`record` 从证据读取，不能在登记时指定（旧运行因此不能被算作新一批）；收据的批次在 `receipt` 时指定。只有本批的结果计数：同批次内的补跑可以沿用，下一批即使四项身份相同也要重做；不给批次时这四行一律待做。V05 是 Windows 回归，收据在 Windows 回归报告里，不用 `mac-ledger receipt`。
+- **自动化行**：验收表中 Mode 为 `Automated`、由 `mac-gui` 执行的行，只认账本里与当前产品输入指纹、驱动、镜像、系统四项一致的 PASS，不需要人工收据。P16-W12 的真实注销会结束图形会话，由 `mac-logout` 经 SSH 执行，未保存文本、导出对话框打开、保存失败三种情况各在一次新开机的虚拟机中运行，分别记为账本行 `W12-logout-text`、`W12-logout-dialog`、`W12-logout-fault`（USER 2026-11-19）；这三行与 `mac-gui` 的 W12 在同一身份下都有可复用的 PASS 时，W12 才算通过。指纹变了，这些行要在新身份下重新运行（`plan` 会列出）；还没有这样的 PASS 时状态为 `NOT TESTED`。
+- **验收阶梯**（USER 批准 2026-11-19，[提案](../report/2026-11-19-macos-acceptance-ladder.md)）：每一行（必要时拆为子项）用下列第一个可行的方式判定。可行指它的检查能拒绝事先准备的坏样本；做不到的行留在 `Manual` / `NOT TESTED`，不硬转。
+  1. 程序断言（`Automated`）；
+  2. agent 在虚拟机里自行操作，依据辅助功能树、日志、文件与进程状态判定（`Agent`）；
+  3. agent 判定程序截下的图（`Agent`）；
+  4. 程序截图，USER 判定（`Review`）；
+  5. 程序录屏，USER 判定效果（`Review`）；
+  6. USER 亲手操作并判定（`Manual`）。
+  整行要求每个必需子项都在各自级别上通过；任一子项 FAIL 即 FAIL，缺证据为 `NOT TESTED`。改一行的 Mode 仍按行经 USER 批准。
+- **Agent 行**：两名判定者独立判定，一名是不带父会话历史的同模型 subagent，一名是 codex；互不可见，不告知对照与正确答案，对照顺序打乱。每名判定者对每个子项给出 PASS、FAIL 或 NOT_TESTED（缺证据或无法辨认）。子项结论：两者都 PASS 为 PASS，两者都 FAIL 为 FAIL；证据本身缺失（截图或录像没有取得）为 `NOT TESTED`，重跑后再判；其余组合都升级为第 4 级，交 USER 看同一组画面，子项在 USER 的 Review 收据之前为 `NOT TESTED`，USER 的结论为准。整行的 Mode 不因升级而改变：仍为 `Agent` 的行，当每个子项都有两名 agent 的 PASS 或 USER 对该子项的 Review 收据 PASS 时为 `AGENT PASS`，矩阵同时引用这些判定与收据；有子项 FAIL 时为 `BLOCKED`；其余为 `NOT TESTED`。账本记录判定之前，`Agent` 行不能为 `AGENT PASS`。每条判定标准启用前先用已知坏样本校准。判定记录引用同一次运行的证据摘要、行与子项、所用画面的角色与哈希、判定标准的版本、对照、判定者与实际模型，以及虚拟机中 agent 工具的 SHA-256；判定标准、对照或判定者策略一变，旧判定不再复用。
+- **撤销**：USER 抽查推翻某个 PASS 或判定时，`revoke` 追加一条撤销记录。撤销自动化 PASS（按证据摘要指名）之后，这一行在同一身份下（I01–I03 与 R03 限同一批次）不再复用任何 PASS（见上条）。撤销人工收据（按 app 的产品输入指纹指名）作用于这一行在该指纹下此前登记的全部收据，不分批次；之后 USER 重新确认而登记的收据有效（收据由 USER 当场登记，账本中的先后就是确认的先后）。撤销只能指向账本里已有的结果（读账本时同样校验）。验收表引用了被撤销的结果时，在同一提交把该行改为 `NOT TESTED`。治理检查只读验收表文字，不读本机账本（CI 没有账本），所以这一同步由提交者负责，`revoke` 成功后会提示；同理，I01–I03 与 R03 是否已在本批完成，由 `plan --batch` 回答，Phase 16 的就绪检查不判断。
+- **虚拟机中的 agent 工具**：第 2、3 级的操作与截图在 `mac-test` 中进行，不在 USER 桌面上运行；工具以单个可执行文件复制进虚拟机，不在虚拟机里安装运行时。
 - **范围**：不按产品模块复用，这一级留待 Windows RC3-B 解决之后。这一节不改变 Phase 16 不是资格化 suite 的性质。
 
 <a id="phase-17-copy-and-notices"></a>
@@ -352,13 +382,31 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 每个 `phase-XX.md` 必须逐项列出：稳定 ID、映射的 plan/AC、验证模式、仓库内入口、
 当前状态与剩余证据。矩阵是 `docs/plan` 与全局 AC 的验证投影，不得发明或放宽需求。
 
+**验收方式按验收阶梯选择**（USER 2026-11-19 提出，2026-11-20 推广到全部验收表）：每一行（必要时拆为
+子项）用下列第一个可行的方式验证：
+
+1. 程序断言；
+2. agent 自行操作，依可观察的状态（辅助功能树、日志、文件、进程）判定；
+3. agent 判定程序截下的图；
+4. 程序截图，USER 判定；
+5. 程序录屏，USER 判定效果；
+6. USER 亲手操作并判定。
+
+可行指它的检查能拒绝事先准备的坏样本；做不到就留在较低一级，不硬转。新增、复审或重新确认验收行时
+先按这一顺序审视：每个人工行或人工子项要么上移，要么在矩阵或报告中写明不能上移的原因。Phase 16 以
+`Automated`、`Agent`、`Review`、`Manual` 四种 Mode 表达六级，判定细则见 Phase 16 节；其他验收表
+沿用现有 Mode、状态词与就绪规则，这一顺序只决定自动化做到哪一步，不引入新 Mode。改一行的 Mode
+仍按行经 USER 批准；资格化 suite 的 exact-candidate 规则与正式人工矩阵的收据规则不因此改变。
+
 状态词固定为：
 
 ```text
 AUTOMATED PASS   当前提交上的仓库内可重复入口已经通过
 MANUAL PASS      当前候选上的正式人工矩阵已执行：每个目标环境角色的全部必需场景均有有效 PASS 观察，
                  并引用完整环境/步骤/结果收据
-NOT TESTED       人工项尚未完成，或只有一次性/不可重复记录
+AGENT PASS       仅限 Phase 16 矩阵：两名 agent 依同一身份下同一次运行的证据独立判定通过，意见不一致的子项
+                 以 USER 的 Review 收据为准（见 Phase 16 的验收阶梯）
+NOT TESTED       人工项或 Agent 行尚未完成，或只有一次性/不可重复记录
 BLOCKED          自动化或人工验证已知失败，或环境阻止执行
 ```
 
@@ -367,7 +415,7 @@ BLOCKED          自动化或人工验证已知失败，或环境阻止执行
 
 ### Phase 12 发布资格状态
 
-Source-controlled Phase matrix 继续只使用上述四个状态。Phase 12 的 ignored exact-artifact
+Source-controlled Phase matrix 使用上述四个通用状态；`AGENT PASS` 只用于 Phase 16 矩阵。Phase 12 的 ignored exact-artifact
 release receipts 另有两种 USER authority 投影，二者不得混用：
 
 ```text
@@ -617,6 +665,8 @@ core），以及任何编辑或偏好变化之后的持久化（autosave、自�
 `dependencies` 的重复；dotted/inline key、多行字符串、未知表、member 缺失或重复、带版本的 member 依赖引用、
 lock 与 manifest 版本不一致、lock 未被跟踪），两份文件都回退为原始字节；只有与判定时逐字节相同的内容才使用
 规范化形式。规范化算法版本写入指纹头；Source Freeze、workspace-tests identity 与 exact-byte 门始终使用原始字节。
+工作区内部 crate 互相只按 `path` 引用、不写版本要求，并设 `publish = false`（cargo-deny 以 `allow-wildcard-paths` 放行；USER 批准 2026-11-17），
+所以升发布版本只改上述两个文件，member manifest 不变。
 发布说明、README/CHANGELOG/CONTRIBUTING/SECURITY、AGENTS 指南、coverage matrix、release checklist、
 `docs/{adr,overview,features}/`、README 图片与许可证文本，以及人工验收代码（记录器、人工项注册表、观察存储、归约
 与 readiness 人工汇总）和 `tools/manual/` 指南，不是任何功能模块执行或读取的输入，不使功能模块失效（workspace

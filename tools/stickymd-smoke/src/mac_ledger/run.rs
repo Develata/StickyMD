@@ -3,42 +3,54 @@
 //! read, check and publish, and rewrites the ledger atomically with the old bytes verbatim.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::{
-    decide,
+    append, build,
+    decide::{self, Rows},
     options::{Command, Options},
-    record::{self, Identity, Record},
+    record::{self, Built, Identity, Record},
 };
-use crate::mac_common::fixture::{bundle_hash, contained_executable};
+use crate::mac_common::fixture::{app_inputs, bundle_hash, contained_executable};
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 const MATRIX: &str = "docs/acceptance-cases/phase-16.md";
 
+fn rows(root: &Path) -> Result<Rows, String> {
+    decide::matrix_rows(
+        &fs::read_to_string(root.join(MATRIX)).map_err(|e| format!("{MATRIX}: {e}"))?,
+    )
+}
+
 pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
+    let command = options.command.ok_or("mac-ledger needs a command")?;
+    if command == Command::Inputs {
+        println!("{}", inputs(root, options.home.as_deref())?);
+        return Ok(());
+    }
     let ledger = options.ledger.clone().unwrap_or_else(|| {
         root.join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
             .join("records.jsonl")
     });
-    let manual = decide::manual_rows(
-        &fs::read_to_string(root.join(MATRIX)).map_err(|e| format!("{MATRIX}: {e}"))?,
-    )?;
-    let command = options.command.ok_or("mac-ledger needs a command")?;
     if command == Command::Plan {
         let existing = record::read_all(&read(&ledger)?)?;
         decide::check_system(&existing)?;
-        return plan(options, &existing, &manual);
+        return plan(options, &existing, &rows(root)?);
     }
     let _lock = lock(&ledger)?;
     let text = read(&ledger)?;
     let existing = record::read_all(&text)?;
     let new = match command {
-        Command::Record => recorded(options)?,
-        Command::Receipt => receipts(options, &manual)?,
-        Command::Plan => unreachable!("planned above"),
+        Command::Record => append::recorded(options)?,
+        Command::Receipt => append::receipts(options, &rows(root)?)?,
+        Command::Revoke => append::revocation(options, &existing)?,
+        Command::Plan | Command::Inputs => unreachable!("handled above"),
     };
-    let all: Vec<Record> = existing.iter().chain(&new).cloned().collect();
+    let mut all: Vec<Record> = existing;
+    for record in &new {
+        record::consistent_with(&all, record)?;
+        all.push(record.clone());
+    }
     decide::check_system(&all)?;
     let mut out = text;
     if !out.is_empty() && !out.ends_with('\n') {
@@ -50,6 +62,11 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
     }
     crate::atomic_evidence::write(&ledger, out.as_bytes())?;
     println!("recorded {} rows in {}", new.len(), ledger.display());
+    if command == Command::Revoke {
+        println!(
+            "if docs/acceptance-cases/phase-16.md cites the withdrawn result, change that row to NOT TESTED in the same commit"
+        );
+    }
     Ok(())
 }
 
@@ -81,44 +98,82 @@ fn lock(ledger: &Path) -> Result<fs::File, String> {
     Ok(file)
 }
 
-fn app_hashes(app: &Path) -> Result<(String, String), String> {
+fn built(app: &Path) -> Result<Built, String> {
     let app = app.canonicalize().map_err(|e| format!("app path: {e}"))?;
-    Ok((
-        crate::integrity::sha256(&contained_executable(&app)?)?,
-        bundle_hash(&app)?,
-    ))
+    Ok(Built {
+        executable: crate::integrity::sha256(&contained_executable(&app)?)?,
+        bundle: bundle_hash(&app)?,
+    })
 }
 
-fn now() -> Result<u64, String> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs())
-}
-
-/// The machine a receipt is recorded on: this host's system name, version and build. It does
-/// not prove the USER tested here; the USER's words in the receipt say what was tested.
-fn desktop() -> Result<String, String> {
-    let output = std::process::Command::new("/usr/bin/sw_vers")
-        .output()
-        .map_err(|e| format!("sw_vers: {e}"))?;
-    if !output.status.success() {
-        return Err("sw_vers failed".into());
+/// The product input fingerprint of this checkout as `build-app.sh` builds it: the tracked inputs
+/// of the macOS app, then the build identity (the Cargo and Rust toolchain, the Xcode tools). A
+/// variable or a Cargo configuration outside the repository that could change the build
+/// unrecorded is refused; `build-app.sh` runs this with a clean environment.
+fn inputs(root: &Path, home: Option<&Path>) -> Result<String, String> {
+    let refused = build::refused(std::env::vars());
+    if !refused.is_empty() {
+        return Err(format!(
+            "unset {}: they change the app's build but are not part of its input fingerprint",
+            refused.join(", ")
+        ));
     }
-    Ok(format!(
-        "USER desktop, recorded on {}",
-        record::system(&String::from_utf8_lossy(&output.stdout))
-    ))
+    // Both streams: `ld -v` reports its version on stderr.
+    let output = |program: &str, args: &[&str]| -> Result<String, String> {
+        let output = std::process::Command::new(program)
+            .args(args)
+            .current_dir(root)
+            .output()
+            .map_err(|e| format!("{program}: {e}"))?;
+        if !output.status.success() {
+            return Err(format!("{program} {} failed", args.join(" ")));
+        }
+        let mut text = String::from_utf8(output.stdout).map_err(|e| format!("{program}: {e}"))?;
+        text.push_str(&String::from_utf8(output.stderr).map_err(|e| format!("{program}: {e}"))?);
+        Ok(text)
+    };
+    let xcrun = "/usr/bin/xcrun";
+    // A home given by the caller wins over this process's environment, which a Cargo
+    // configuration's `[env]` can rewrite before this program starts.
+    let cargo_home = match home {
+        Some(home) => home.join(".cargo"),
+        None => build::cargo_home(
+            std::env::var_os("CARGO_HOME"),
+            std::env::var_os("HOME"),
+            &std::env::current_dir().map_err(|e| format!("current directory: {e}"))?,
+        )
+        .ok_or("neither CARGO_HOME nor a non-empty HOME is set")?,
+    };
+    let outside = build::outside_cargo_configs(root, &cargo_home);
+    if !outside.is_empty() {
+        return Err(format!(
+            "remove or move {}: Cargo configuration outside the repository can change the build but is not part of its input fingerprint",
+            outside
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    let tools = [
+        ("cargo -V", output("cargo", &["-V"])?),
+        ("rustc -vV", output("rustc", &["-vV"])?),
+        ("xcode-select -p", output("/usr/bin/xcode-select", &["-p"])?),
+        ("sdk path", output(xcrun, &["--show-sdk-path"])?),
+        ("sdk version", output(xcrun, &["--show-sdk-version"])?),
+        ("clang --version", output(xcrun, &["clang", "--version"])?),
+        ("ld -v", output(xcrun, &["ld", "-v"])?),
+    ];
+    crate::qualification::mac_app_inputs(root, &build::identity(&tools))
 }
 
-fn plan(options: &Options, existing: &[Record], manual: &[String]) -> Result<(), String> {
+fn plan(options: &Options, existing: &[Record], rows: &Rows) -> Result<(), String> {
     let app = options.app.as_deref().ok_or("--app missing")?;
     let driver = options.driver.as_deref().ok_or("--driver missing")?;
     let system_file = options.system.as_deref().ok_or("--system missing")?;
-    let (app_executable, app_bundle) = app_hashes(app)?;
+    let built = built(app)?;
     let identity = Identity {
-        app_executable,
-        app_bundle,
+        inputs: app_inputs(&app.canonicalize().map_err(|e| format!("app path: {e}"))?)?,
         driver: crate::integrity::sha256(driver)?,
         image: options.image.clone().ok_or("--image missing")?,
         system: record::system(
@@ -126,85 +181,99 @@ fn plan(options: &Options, existing: &[Record], manual: &[String]) -> Result<(),
                 .map_err(|e| format!("{}: {e}", system_file.display()))?,
         ),
     };
-    let executable = crate::mac_gui::executable_ids();
-    let plan = decide::plan(existing, &executable, manual, &identity);
+    // W12's real logout runs one case per fresh VM boot through `mac-logout`; each case is a row
+    // of its own, and W12 counts only when they all pass with mac-gui's W12.
+    let logout = crate::mac_gui::logout::rows();
+    let mut executable = crate::mac_gui::executable_ids();
+    executable.extend(logout.iter().map(String::as_str));
+    let batch = options.batch.as_deref();
+    let plan = decide::plan(
+        existing,
+        &executable,
+        &rows.manual,
+        &identity,
+        &built,
+        batch,
+    );
     println!(
-        "app executable {}\ndriver {}\nimage {}\nsystem {}",
-        identity.app_executable, identity.driver, identity.image, identity.system
+        "app inputs {}\napp executable {} (audit)\ndriver {}\nimage {}\nsystem {}\nbatch {}",
+        identity.inputs.as_deref().unwrap_or(
+            "none: this bundle was built without its input fingerprint; rebuild it with build-app.sh to reuse anything"
+        ),
+        built.executable,
+        identity.driver,
+        identity.image,
+        identity.system,
+        batch.unwrap_or("none")
     );
     for reuse in &plan.reused {
         println!(
-            "reuse P16-{}: PASS in {} (sha256 {}){}",
+            "reuse P16-{}{}: PASS in {} (sha256 {})",
             reuse.row,
-            reuse.evidence,
-            reuse.evidence_sha256,
-            if reuse.later_non_pass {
-                "; note: a later FAIL or NOT_TESTED was recorded under the same identity"
+            // W12's own PASS is only its mac-gui part; the row's verdict is the composite.
+            if reuse.row == decide::composite().0 {
+                " (mac-gui part; the row counts only with the composite below)"
             } else {
                 ""
-            }
+            },
+            reuse.evidence,
+            reuse.evidence_sha256
         );
+        if reuse.other_bytes {
+            println!(
+                "  audit P16-{}: that PASS was recorded for other app bytes built from the same inputs",
+                reuse.row
+            );
+        }
     }
+    for (row, reason) in &plan.rerun {
+        println!("rerun P16-{row}: {reason}");
+    }
+    let (logout_runs, gui_runs): (Vec<&String>, Vec<&String>) =
+        plan.run.iter().partition(|row| logout.contains(row));
     if plan.run.is_empty() {
         println!("run: nothing; every executable row has a PASS for this identity");
-    } else {
-        println!(
-            "run: stickymd-smoke mac-gui --app <the same app> --only {}",
-            plan.run.join(",")
-        );
+    }
+    let gui: Vec<&str> = gui_runs.iter().map(|r| r.as_str()).collect();
+    let cases: Vec<&str> = logout_runs.iter().map(|r| r.as_str()).collect();
+    let commands = decide::commands(&gui, &cases, batch);
+    let (parent, parts) = decide::composite();
+    match decide::complete(&plan, parent, &parts) {
+        Ok(()) => println!(
+            "composite P16-{parent}: complete; {parent} and {} all have a reusable PASS",
+            parts.join(", ")
+        ),
+        Err(missing) => println!(
+            "composite P16-{parent}: incomplete; still needs {}",
+            missing.join(", ")
+        ),
+    }
+    for command in commands {
+        println!("{command}");
     }
     for (row, environment) in &plan.confirmed {
-        println!("manual P16-{row}: USER receipt for this app ({environment})");
+        println!("manual P16-{row}: USER receipt for these inputs ({environment})");
     }
     if !plan.unconfirmed.is_empty() {
         println!(
-            "manual rows needing the USER for this app: {} ({} are never carried over)",
+            "manual rows needing the USER for these inputs: {} ({} count only receipts of the batch)",
             plan.unconfirmed.join(","),
             decide::NEVER_REUSED.join(",")
         );
     }
+    if !rows.review.is_empty() {
+        println!(
+            "review rows not yet judged (receipts naming the reviewed media are not recorded yet): {}",
+            rows.review.join(",")
+        );
+    }
+    if !rows.agent.is_empty() {
+        println!(
+            "agent rows not yet judged (judge records are not kept yet): {}",
+            rows.agent.join(",")
+        );
+    }
     Ok(())
-}
-
-fn recorded(options: &Options) -> Result<Vec<Record>, String> {
-    let evidence = options.evidence.as_deref().ok_or("--evidence missing")?;
-    let evidence = evidence
-        .canonicalize()
-        .map_err(|e| format!("{}: {e}", evidence.display()))?;
-    let bytes = fs::read(&evidence).map_err(|e| format!("{}: {e}", evidence.display()))?;
-    record::from_evidence(
-        &bytes,
-        &evidence.display().to_string(),
-        options.image.as_deref().ok_or("--image missing")?,
-        now()?,
-    )
-}
-
-fn receipts(options: &Options, manual: &[String]) -> Result<Vec<Record>, String> {
-    if let Some(row) = options.rows.iter().find(|r| !manual.contains(r)) {
-        return Err(format!(
-            "P16-{row} is not a Manual row of the Phase 16 matrix"
-        ));
-    }
-    let (app_executable, _) = app_hashes(options.app.as_deref().ok_or("--app missing")?)?;
-    let environment = desktop()?;
-    let quote = options.quote.clone().ok_or("--quote missing")?;
-    let recorded_unix = now()?;
-    let records: Vec<Record> = options
-        .rows
-        .iter()
-        .map(|row| Record::Manual {
-            row: row.clone(),
-            app_executable: app_executable.clone(),
-            environment: environment.clone(),
-            quote: quote.clone(),
-            recorded_unix,
-        })
-        .collect();
-    for record in &records {
-        record.validate()?;
-    }
-    Ok(records)
 }
 
 #[cfg(test)]

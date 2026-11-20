@@ -26,6 +26,8 @@ const CONFIG: &str = "version = 1\nview_mode = \"source\"\nopacity = 100\nalways
 struct AppHash {
     executable: String,
     bundle: String,
+    /// The product inputs the bundle was built from, when `build-app.sh` recorded them.
+    inputs: Option<String>,
     /// This driver's own executable, so the ledger can tell which driver produced the evidence.
     driver: String,
 }
@@ -70,6 +72,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             &std::env::current_exe().map_err(|e| format!("driver path: {e}"))?,
         )?,
         bundle: bundle_hash(&app)?,
+        inputs: crate::mac_common::fixture::app_inputs(&app)?,
     };
     // Prevent output from ever targeting the supplied bundle or its canonical note directory.
     let out = output_path(&options.out)?;
@@ -106,14 +109,25 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             row
         })
         .collect::<Vec<_>>();
-    save(&out, &environment, &hash, &rows)?;
+    save(
+        &out,
+        &environment,
+        &hash,
+        &rows,
+        false,
+        options.batch.as_deref(),
+    )?;
     events::install_cancel()?;
     let mut input = Injection::new(Events::new());
+    // A run cut short (cancelled, or stopped after a panic or a failed cleanup) is never marked
+    // finished: its unstarted rows would read as results (plan 11 #phase-16-macos-host).
+    let mut cut_short = false;
     for (index, id) in ids.iter().enumerate() {
         let mut row = Row::new(id);
         if let Some(reason) = scenarios::skipped(id) {
             row.skip("deferred", reason);
         } else if let Err(reason) = input.require_running().and_then(|()| events::running()) {
+            cut_short = true;
             row.skip("shared stop", &reason);
         } else {
             println!("{id}: isolated VM scenario starting");
@@ -138,7 +152,28 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         row.trace.sort_by_key(|t| t.ms);
         println!("{id}: {}", aggregate(&row.checks).name());
         rows[index] = row;
-        save(&out, &environment, &hash, &rows)?;
+        save(
+            &out,
+            &environment,
+            &hash,
+            &rows,
+            false,
+            options.batch.as_deref(),
+        )?;
+    }
+    cut_short |= input.stopped.is_some() || events::running().is_err();
+    save(
+        &out,
+        &environment,
+        &hash,
+        &rows,
+        !cut_short,
+        options.batch.as_deref(),
+    )?;
+    if cut_short {
+        println!(
+            "the run was cut short; its evidence is not marked finished and cannot be recorded"
+        );
     }
     println!("Evidence: {}", out.join("mac-gui.json").display());
     let count = |verdict| {
@@ -154,16 +189,23 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     );
     if count(Verdict::Fail) > 0 {
         Err("mac-gui scenario failed; see mac-gui.json".into())
+    } else if cut_short {
+        Err("mac-gui run was cut short; see mac-gui.json".into())
     } else {
         Ok(())
     }
 }
+/// The product's input-latency diagnostic file in the session directory (W10 reads its
+/// presenter counters).
+pub(super) const DIAGNOSTIC: &str = "latency.txt";
 /// Starts the copied product in the session directory and waits for its one on-screen window.
-/// The first launch creates `stderr.log`; a relaunch appends to it.
+/// The first launch creates `stderr.log`; a relaunch appends to it. With `diagnostic` the
+/// product records frames and publishes them to `DIAGNOSTIC` on SIGUSR1.
 pub(super) fn launch(
     session: &mut Session,
     executable: &Path,
     relaunch: bool,
+    diagnostic: bool,
 ) -> Result<(u32, Window), String> {
     let stderr = fs::OpenOptions::new()
         .append(relaunch)
@@ -171,8 +213,15 @@ pub(super) fn launch(
         .create_new(!relaunch)
         .open(session.path().join("stderr.log"))
         .map_err(|e| e.to_string())?;
+    let mut command = Command::new(executable);
+    if diagnostic {
+        command.env(
+            super::latency::DIAGNOSTIC_ENV,
+            session.path().join(DIAGNOSTIC),
+        );
+    }
     session.spawn(
-        Command::new(executable)
+        command
             .current_dir(session.path())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -197,7 +246,9 @@ pub(super) fn launch(
     events::wait(500)?;
     Ok((pid, window))
 }
-fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
+/// `path` made absolute with its existing part canonical; `..` is refused. W12's logout cases use
+/// it too.
+pub(super) fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
     let absolute = std::path::absolute(path).map_err(|e| e.to_string())?;
     if absolute
         .components()
@@ -222,9 +273,27 @@ fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
     }
     Ok(resolved)
 }
-fn save(out: &Path, environment: &str, hash: &AppHash, rows: &[Row]) -> Result<(), String> {
+/// Writes the evidence; `finished` is true only on the write after the last row, so a checkpoint
+/// of an interrupted run is never taken for a finished one (mac-ledger records only finished runs).
+/// Schema 2 is the first whose `finished` only this driver's rules set, and the first that names
+/// the batch the run was started for; mac-ledger records no older schema.
+fn save(
+    out: &Path,
+    environment: &str,
+    hash: &AppHash,
+    rows: &[Row],
+    finished: bool,
+    batch: Option<&str>,
+) -> Result<(), String> {
+    let batch = batch.map_or_else(String::new, |b| format!(",\"batch\":{}", quote(b)));
     let json = format!(
-        "{{\"schema_version\":1,\"acceptance_status\":\"INCOMPLETE\",\"environment\":{environment},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"scenarios\":[{}]}}\n",
+        "{{\"schema_version\":2,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished}{batch},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"scenarios\":[{}]}}\n",
+        hash.inputs
+            .as_ref()
+            .map_or_else(String::new, |inputs| format!(
+                ",\"app_inputs\":{}",
+                quote(inputs)
+            )),
         quote(&hash.executable),
         quote(&hash.bundle),
         quote(&hash.driver),
@@ -247,6 +316,15 @@ fn one(
     let mut fault =
         super::fault::RestoreOnDrop::new(matches!(id, "W11" | "W12").then(|| session.anchor()));
     let result = (|| {
+        if id == "R03" {
+            return super::translocation::run(
+                app,
+                session.path(),
+                &hash.bundle,
+                input.backend.started,
+                row,
+            );
+        }
         let note = match id {
             "F01" => "中文字体验证\n\n`Menlo code 012345`\n",
             // Old bytes a save that truncates before it fails would destroy.
@@ -257,7 +335,7 @@ fn one(
         if bundle_hash(&session.path().join("StickyMD.app"))? != hash.bundle {
             return Err("copied bundle manifest changed; refused before launch".into());
         }
-        let (pid, window) = launch(&mut session, &executable, false)?;
+        let (pid, window) = launch(&mut session, &executable, false, id == "W10")?;
         row.trace.push(Trace {
             ms: input.backend.started.elapsed().as_millis() as u64,
             event: format!(
@@ -286,12 +364,34 @@ fn one(
     })();
     let release = input.release();
     let writable = fault.restore();
-    // Capture stderr even on scenario failure, before owned temporary-directory cleanup.
-    let log = match fs::read(session.path().join("stderr.log")) {
-        Ok(bytes) => crate::atomic_evidence::write(&out.join(format!("{id}-stderr.log")), &bytes),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.to_string()),
+    // Capture stderr (and R03's prompt image and termination log) even on scenario failure,
+    // before owned temporary-directory cleanup.
+    let attachments: &[&str] = if id == "R03" {
+        &["stderr.log", "prompt.ppm", "system.log"]
+    } else {
+        &["stderr.log"]
     };
+    let log = attachments.iter().try_for_each(|name| {
+        let target = out.join(format!("{id}-{name}"));
+        match fs::read(session.path().join(name)) {
+            Ok(bytes) => crate::atomic_evidence::write(&target, &bytes),
+            // An R03 attachment this run did not make: one left by an earlier run in the same
+            // --out must not pass for this run's. A removal that fails is recorded, not fatal.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if id == "R03"
+                    && let Err(e) = fs::remove_file(&target)
+                    && e.kind() != std::io::ErrorKind::NotFound
+                {
+                    row.trace.push(Trace {
+                        ms: input.backend.started.elapsed().as_millis() as u64,
+                        event: format!("stale {} not removed: {e}", target.display()),
+                    });
+                }
+                Ok(())
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    });
     let cleanup = session.cleanup();
     row.trace.push(Trace {
         ms: input.backend.started.elapsed().as_millis() as u64,

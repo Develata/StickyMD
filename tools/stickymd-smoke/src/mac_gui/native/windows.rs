@@ -1,6 +1,7 @@
 //! CoreGraphics window facts and optional normalized PPM screenshot, never product state.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::super::model::{Rect, Window, select_window};
+use super::super::pixels::{Image, Shot};
 use super::cf::{Cf, Owned};
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -28,6 +29,17 @@ pub(in crate::mac_gui) fn screen() -> Rect {
     unsafe { CGDisplayBounds(CGMainDisplayID()) }
 }
 pub(in crate::mac_gui) fn window(pid: u32, id: Option<u32>) -> Result<Window, String> {
+    let windows = all(pid)?
+        .into_iter()
+        .filter(|w| w.bounds.size.width >= 220.0 && w.bounds.size.height >= 120.0)
+        .collect();
+    select_window(windows, id).map_err(|found| {
+        let scope = if id.is_some() { "" } else { " on-screen" };
+        format!("expected one PID {pid}{scope} content window (id={id:?}), found {found}")
+    })
+}
+/// Every window `pid` owns (on screen or not, desktop elements excluded), with its level.
+pub(in crate::mac_gui) fn all(pid: u32) -> Result<Vec<Window>, String> {
     // SAFETY: all windows excluding desktop, owned Create-rule array; no image capture.
     let array = Owned::take(unsafe { CGWindowListCopyWindowInfo(16, 0) })?;
     let mut windows = Vec::new();
@@ -42,9 +54,6 @@ pub(in crate::mac_gui) fn window(pid: u32, id: Option<u32>) -> Result<Window, St
         if !unsafe { CGRectMakeWithDictionaryRepresentation(b.0, &mut bounds) } {
             continue;
         }
-        if bounds.size.width < 220.0 || bounds.size.height < 120.0 {
-            continue;
-        }
         windows.push(Window {
             id: number,
             bounds,
@@ -56,10 +65,46 @@ pub(in crate::mac_gui) fn window(pid: u32, id: Option<u32>) -> Result<Window, St
                 .unwrap_or(false),
         });
     }
-    select_window(windows, id).map_err(|found| {
-        let scope = if id.is_some() { "" } else { " on-screen" };
-        format!("expected one PID {pid}{scope} content window (id={id:?}), found {found}")
-    })
+    Ok(windows)
+}
+/// The on-screen windows in front of window `id` (`kCGWindowListOptionOnScreenAboveWindow`,
+/// desktop elements excluded): owner name and bounds.
+pub(in crate::mac_gui) fn above(id: u32) -> Result<Vec<(String, Rect, i32)>, String> {
+    // SAFETY: OnScreenAboveWindow | ExcludeDesktopElements relative to `id`; owned array.
+    let array = Owned::take(unsafe { CGWindowListCopyWindowInfo(2 | 16, id) })?;
+    let mut out = Vec::new();
+    for dict in array.array()? {
+        let mut bounds = Rect::default();
+        let b = dict.get("kCGWindowBounds")?;
+        // SAFETY: SDK output storage matches CGRect; b is a live bounds dictionary.
+        if unsafe { CGRectMakeWithDictionaryRepresentation(b.0, &mut bounds) } {
+            let name = dict
+                .get("kCGWindowOwnerName")
+                .ok()
+                .and_then(|n| n.text())
+                .unwrap_or_default();
+            let layer = dict.get("kCGWindowLayer")?.number()? as i32;
+            out.push((name, bounds, layer));
+        }
+    }
+    Ok(out)
+}
+/// The on-screen windows (desktop elements excluded): number, owner PID, owner name.
+pub(in crate::mac_gui) fn on_screen() -> Result<Vec<(u32, u32, String)>, String> {
+    // SAFETY: OnScreenOnly | ExcludeDesktopElements; owned Create-rule array.
+    let array = Owned::take(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
+    let mut out = Vec::new();
+    for dict in array.array()? {
+        out.push((
+            dict.get("kCGWindowNumber")?.number()? as u32,
+            dict.get("kCGWindowOwnerPID")?.number()? as u32,
+            dict.get("kCGWindowOwnerName")
+                .ok()
+                .and_then(|n| n.text())
+                .unwrap_or_default(),
+        ));
+    }
+    Ok(out)
 }
 /// The owner name of an on-screen window of `pid`, to name what covers the product in a
 /// diagnostic; no titles or image capture.
@@ -73,18 +118,27 @@ pub(in crate::mac_gui) fn owner_name(pid: u32) -> Option<String> {
             .flatten()
     })
 }
-pub(in crate::mac_gui) fn screenshot(w: &Window) -> Result<Vec<u8>, String> {
-    // SAFETY: caller has preflighted capture permission. IncludingWindow=8 restricts capture
-    // to this PID-owned window ID. Create-rule image/context/space are each released once.
+/// Captures `rect` for the window `id` as RGBA rows from top to bottom; window shadows are
+/// excluded (`kCGWindowImageBoundsIgnoreFraming`). The bitmap context's memory holds the top row
+/// first, so no row is reversed (the F01 captures written with reversed rows were upside down).
+pub(in crate::mac_gui) fn capture(rect: Rect, shot: Shot, id: u32) -> Result<Image, String> {
+    let (list, window) = match shot {
+        Shot::Alone => (8, id),
+        Shot::Composite => (1, 0),
+        // kCGWindowListOptionOnScreenBelowWindow is 1 << 2 (1 << 1 is the scene above).
+        Shot::Below => (4, id),
+    };
+    // SAFETY: caller has preflighted capture permission. Create-rule image/context/space are each
+    // released once; the context writes only into `rgba`, which outlives it.
     unsafe {
-        let image = Owned::take(CGWindowListCreateImage(w.bounds, 8, w.id, 1))?;
+        let image = Owned::take(CGWindowListCreateImage(rect, list, window, 1))?;
         let width = CGImageGetWidth(image.0);
         let height = CGImageGetHeight(image.0);
         let len = width
             .checked_mul(height)
             .and_then(|n| n.checked_mul(4))
             .filter(|n| *n > 0 && *n <= 128 * 1024 * 1024)
-            .ok_or("invalid screenshot dimensions")?;
+            .ok_or("invalid capture dimensions")?;
         let mut rgba = vec![0_u8; len];
         let space = Owned::take(CGColorSpaceCreateDeviceRGB())?;
         let context = Owned::take(CGBitmapContextCreate(
@@ -101,12 +155,19 @@ pub(in crate::mac_gui) fn screenshot(w: &Window) -> Result<Vec<u8>, String> {
         bounds.size.height = height as f64;
         CGContextDrawImage(context.0, bounds, image.0);
         drop(context);
-        let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
-        for row in rgba.chunks_exact(width * 4).rev() {
-            for pixel in row.chunks_exact(4) {
-                ppm.extend_from_slice(&pixel[..3]);
-            }
-        }
-        Ok(ppm)
+        Ok(Image {
+            width,
+            height,
+            rgba,
+        })
     }
+}
+/// The window alone, as a binary PPM (F01's optional evidence).
+pub(in crate::mac_gui) fn screenshot(w: &Window) -> Result<Vec<u8>, String> {
+    let image = capture(w.bounds, Shot::Alone, w.id)?;
+    let mut ppm = format!("P6\n{} {}\n255\n", image.width, image.height).into_bytes();
+    for pixel in image.rgba.chunks_exact(4) {
+        ppm.extend_from_slice(&pixel[..3]);
+    }
+    Ok(ppm)
 }

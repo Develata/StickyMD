@@ -340,14 +340,16 @@ fn without_ax_titles_the_title_checks_are_not_tested_not_passed() {
 }
 
 #[test]
-fn w12_covers_the_refused_and_the_modal_termination_but_not_logout() {
+fn w12_covers_the_refused_and_the_modal_termination_and_can_pass() {
     let row = run(&mut Quitting::new(), "W12");
     assert!(
         row.checks.iter().all(|c| c.verdict != Verdict::Fail),
         "{}",
         row.json()
     );
-    assert_eq!(verdict(&row, "logout"), Some(Verdict::NotTested));
+    // The real logout is mac-logout's (W12-logout-*); mac-gui's W12 no longer carries it.
+    assert_eq!(verdict(&row, "logout"), None);
+    assert_eq!(aggregate(&row.checks), Verdict::Pass, "{}", row.json());
     assert_eq!(
         verdict(&row, "termination: the quit exits once the dialog is gone"),
         Some(Verdict::Pass)
@@ -796,7 +798,7 @@ fn w12_drives_sigterm_like_a_termination_request() {
             row.json()
         );
     }
-    assert_eq!(verdict(&row, "logout"), Some(Verdict::NotTested));
+    assert_eq!(verdict(&row, "logout"), None);
 }
 
 #[test]
