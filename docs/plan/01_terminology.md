@@ -5,7 +5,7 @@
 - `Layer`: Foundation
 - `Status`: Governing Rule
 - `Version`: 0.4.0
-- `Last Review`: 2026-11-19
+- `Last Review`: 2026-11-21
 - `Scope`: 固定 StickyMD 核心术语的定义、权威来源、等价性边界与生命周期；全仓库文档与代码命名必须使用本表术语
 
 每个术语包含四个字段：
@@ -385,10 +385,11 @@ Phase 17 起生效（USER 批准 2026-11-14；术语 2026-11-17 补入）。状�
 <a id="platform-build-input-fingerprint"></a>
 ### Platform Build Input Fingerprint
 
-- **Definition**：某一平台（Windows x64 或 macOS arm64）能进入该平台发布物的全部 tracked 文件，加上该平台的构建、打包与校验工具，
-  在某个提交的 Git tree 上按排序计算的 SHA-256 内容身份。版本号与 `Cargo.lock` 按原样计入；排除表只列可证明不进入该平台发布物、
-  也不参与其构建与校验的路径，未分类的路径一律算作输入（`11` #platform-artifact-reuse）。
-- **Authority**：`stickymd-smoke` 的平台输入分类表与提交的 tree 内容；不读工作树。
+- **Definition**：某一平台（Windows x64 或 macOS arm64）能进入该平台发布物的全部 tracked 文件，加上产出该平台发布字节的构建与打包工具
+  （打包 crate `tools/stickymd-package/`、该平台的发布 workflow 与它调用的脚本），在某个提交的 Git tree 上按排序计算的 SHA-256 内容身份。
+  版本号与 `Cargo.lock` 按原样计入；排除表只列可证明不进入该平台发布物、也不产出其字节的路径，未分类的路径一律算作输入。验证工具
+  `stickymd-smoke` 除其清单外不计入：它在构建来源上的运行只是自检，发布证据只认发布提交上的运行（`11` #platform-artifact-reuse）。
+- **Authority**：`stickymd-smoke` 的平台输入分类表（含算法版本）与提交的 tree 内容；不读工作树。
 - **Not equivalent to**：Qualification Module Fingerprint；macOS 账本的产品输入指纹（后者规范化版本号、包含构建身份、读工作树）；source commit。
 - **Lifetime**：随提交存在；同一平台在两个提交上相同，是跨提交沿用该平台发布物的必要条件。
 

@@ -220,6 +220,7 @@ crates/stickymd-desktop/   ← Shared Desktop（视图几何、标题投影、�
 crates/stickymd-posix/     ← macOS 宿主的原生 POSIX 层（未来供 Debian 复用；可持有 `unsafe` 与原生绑定，无业务逻辑，不依赖其他 StickyMD crate；非 macOS 为空）
 apps/stickymd-win/         ← Windows 宿主（启动装配、`WinHost`、原生 adapter、存储）
 apps/stickymd-mac/         ← macOS 宿主（二进制 `stickymd`；宿主内的 `unsafe` 与原生绑定只在 `src/platform/`，POSIX 原语由 `stickymd-posix` 提供；非 macOS 编译为桩，验收见 phase-16）
-tools/stickymd-smoke/      ← std-only 阶段验证 CLI（不进入产品 runtime）
+tools/stickymd-package/    ← std-only 发布打包工具（两平台的包、README、第三方声明、SBOM、checksum 与 macOS 产品输入指纹；不依赖 stickymd-smoke；整体计入两个平台的构建输入）
+tools/stickymd-smoke/      ← std-only 阶段验证 CLI（不进入产品 runtime；依赖 stickymd-package；除清单外不计入平台构建输入）
 tools/smoke/               ← 稳定的逐 Phase PowerShell 薄入口
 ```
