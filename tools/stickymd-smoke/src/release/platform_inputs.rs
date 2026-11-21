@@ -50,7 +50,8 @@ const MACOS_EXCLUDED_PREFIXES: &[&str] = &["apps/stickymd-win/", "tools/release/
 ///   the bundle reads every member's manifest;
 /// - every member's build script: Cargo finds `build.rs` without a manifest entry and runs it when
 ///   it compiles the member, which the Windows workspace build does for every member (governance
-///   refuses a `build` key, so no other file can be one);
+///   checks with Cargo metadata that a member's build script can only be the `build.rs` beside its
+///   manifest, and that it is self-contained);
 /// - this classifier: the exclusion table and the serialization are the reuse rule itself, so a
 ///   change to them is never "only the verification tool".
 ///

@@ -144,11 +144,20 @@ pub(crate) struct CheckedSet {
 pub(crate) fn verify_set(root: &Path, directory: &Path) -> Result<CheckedSet, String> {
     let version = repository::workspace_version(root)?;
     let [zip_name, checksums_name, sbom_name] = platform_files(Platform::MacOsArm64, &version);
-    let mut names = fs::read_dir(directory)
-        .map_err(|error| error.to_string())?
-        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
+    let mut names = Vec::new();
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // Only plain files: a link would let the set borrow bytes from outside the directory.
+        if !entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_file()
+        {
+            return Err(format!("the artifact's {name} is not a plain file"));
+        }
+        names.push(name);
+    }
     names.sort();
     let mut expected = vec![zip_name.clone(), checksums_name.clone(), sbom_name.clone()];
     expected.sort();
@@ -650,6 +659,33 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    /// The downloaded set holds exactly the three plain files: a missing one, an extra one and a
+    /// link are refused before any of them is read.
+    #[test]
+    fn the_set_check_refuses_missing_extra_and_linked_files() {
+        let root =
+            crate::governance::find_repository_root(&std::env::current_dir().unwrap()).unwrap();
+        let version = crate::repository::workspace_version(&root).unwrap();
+        let [zip, checksums, sbom] = super::platform_files(super::Platform::MacOsArm64, &version);
+        let directory = super::TemporaryDirectory::new("macos-set").unwrap();
+        let path = directory.path();
+        for name in [&zip, &checksums] {
+            std::fs::write(path.join(name), b"x").unwrap();
+        }
+        let error = super::verify_set(&root, path).err().unwrap();
+        assert!(error.contains("the artifact holds"), "{error}");
+        std::fs::write(path.join("extra.txt"), b"x").unwrap();
+        std::fs::write(path.join(&sbom), b"x").unwrap();
+        let error = super::verify_set(&root, path).err().unwrap();
+        assert!(error.contains("the artifact holds"), "{error}");
+        std::fs::remove_file(path.join("extra.txt")).unwrap();
+        std::fs::remove_file(path.join(&sbom)).unwrap();
+        std::os::unix::fs::symlink(path.join(&zip), path.join(&sbom)).unwrap();
+        let error = super::verify_set(&root, path).err().unwrap();
+        assert!(error.contains("not a plain file"), "{error}");
+        directory.close().unwrap();
+    }
+
     use super::*;
 
     fn tree(root: &Path, candidate: &str, receipt: &str, record: Option<&str>) {

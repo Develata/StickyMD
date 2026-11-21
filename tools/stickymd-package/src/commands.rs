@@ -18,7 +18,22 @@ pub fn execute(root: &Path, command: &Command) -> Result<(), String> {
         } => notices::generate(root, destination, *platform),
         Command::PackageInputs(options) => package_inputs::execute(root, options),
         Command::BuildPackage(options) => {
-            package_workflow::build(root, options, &mut std::io::stdout().lock())
+            // The directory is checked before the plan is made, so a refused directory is the
+            // error even when the plan would fail; the plan's own files are checked after, and
+            // the writer gets that same plan.
+            let directory = options
+                .directory
+                .clone()
+                .unwrap_or_else(|| root.join("dist"));
+            let guard = output_guard::Guard::new(root)?;
+            guard.check_directory(&directory)?;
+            package_workflow::release_executable(root, options)?;
+            let inputs = package_inputs::resolve(root, &options.inputs)?;
+            guard.check_file(&directory.join(&inputs.archive))?;
+            guard.check_file(
+                &directory.join(crate::platform::Platform::WindowsX64.checksum_file()),
+            )?;
+            package_workflow::build_planned(root, options, &inputs, &mut std::io::stdout().lock())
         }
         Command::GenerateSbom(options) => {
             sbom_workflow::generate(root, options, &mut std::io::stdout().lock())
@@ -103,13 +118,8 @@ fn guard_outputs(root: &Path, command: &Command) -> Result<(), String> {
             files.extend([options.output.clone(), options.checksums.clone()]);
         }
         Command::PrepareSbom(options) => directories.push(options.directory.clone()),
-        Command::BuildPackage(options) => {
-            let directory = options.directory.clone().unwrap_or(default_directory);
-            let inputs = crate::package_inputs::resolve(root, &options.inputs)?;
-            files.push(directory.join(&inputs.archive));
-            files.push(directory.join(Platform::WindowsX64.checksum_file()));
-            directories.push(directory);
-        }
+        // Checked by its own arm with the plan it packages.
+        Command::BuildPackage(_) => {}
         Command::GenerateSbom(options) => {
             let directory = options.directory.clone().unwrap_or(default_directory);
             files.push(
@@ -128,6 +138,9 @@ fn guard_outputs(root: &Path, command: &Command) -> Result<(), String> {
         | Command::AppInputs { .. }
         | Command::SyftPlan(_)
         | Command::SyftPublish { .. } => {}
+    }
+    if files.is_empty() && directories.is_empty() {
+        return Ok(());
     }
     let guard = output_guard::Guard::new(root)?;
     for file in &files {

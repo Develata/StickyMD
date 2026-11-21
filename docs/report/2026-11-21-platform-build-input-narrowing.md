@@ -148,8 +148,29 @@ artifact 并在它上面校验。`11` #platform-artifact-reuse、`release_workfl
   `verify-artifact` 在摘要中写平台指纹；workflow 与合同写明重试从 `build-package` 起。
 - **按合同修订而非改代码：** 合同原写“拒绝成员清单中的 `build` 键”，实际需要的不变量是“构建脚本只能是清单旁的 `build.rs`”，已改为以 Cargo
   metadata 判定（`build = false` 或显式 `build = "build.rs"` 都满足它）。
-- **算法版本不再升：** 本分支内的分类器改动（例外改为大小写不敏感、`build.rs` 与分类器计入）都发生在 v2 合入之前，此时还没有任何 v2 值被记录，
-  所以 v2 指合入时的分类器。合入之后再改分类器或序列化，按合同升版本。
-- **未改：** Windows `build-package` 仍以 `cargo build --workspace` 构建，与已资格化版本的 feature 合并方式相同；被排除成员在构建时能运行的代码只剩
-  构建脚本（计入、自成一体），二进制名由 metadata 保证唯一。改为只构建 `stickymd-win` 会改变 feature 合并，属于 Windows 行为变化，不在本次范围。
+- **算法版本不再升：** 本分支内的分类器改动（例外改为大小写不敏感、`build.rs` 与分类器计入）都发生在 v2 合入之前；本仓库与本机的 ignored
+  证据中未发现记录了 v2 值的候选收据或沿用记录（其他机器上的 ignored 目录无法从 Git 证明），所以 v2 指合入时的分类器。合入之后再改分类器或序列化，按合同升版本。
+- **未改：** Windows `build-package` 仍以 `cargo build --workspace` 构建，与已资格化版本的 feature 合并方式相同；被排除成员在构建时能运行的代码，
+  由 Cargo metadata 与边界检查限于各成员计入且自成一体的 `build.rs`（workspace 中没有过程宏成员，二进制名唯一）。只构建 `stickymd-win` 是否会实际改变
+  产品的 feature 图没有比对，按 Cargo 规则可能改变。改为只构建 `stickymd-win` 会改变 feature 合并，属于 Windows 行为变化，不在本次范围。
+
+## 第三轮窄范围复审（`69f0f41`）的处理（2026-11-21）
+
+用户要求“再审一轮”。复审判为不通过，两项 BLOCKER，均已修：
+
+- **打包 crate 内非 `.rs` 片段失去递归检查（`69f0f41` 引入的回归）：** 边界检查改为按队列逐个检查 `include!` 与 `#[path]` 引入的文件，任何扩展名，
+  去重；引入的片段不得声明外部模块。
+- **构建脚本的外部模块漏检（`mod r#type;`）：** 宏、属性与 `mod` 声明改为在去掉字面量内容的 token 上按标识符识别（含 raw identifier），内联模块允许，
+  合同措辞随之改为“不声明外部模块文件”。
+
+SHOULD_FIX 已修：Git 索引改用 `git ls-files --cached`（不含未跟踪文件）；`include_str !(…)`、`# [ path = … ]` 这类带空白的写法与 `std::` 前缀都能识别，
+自定义宏 `my_include_str!` 不算；`cfg_attr` 按配对括号解析，跳过谓词，检查后续属性与嵌套的 `cfg_attr`；打包 crate 启动的脚本取自词法器记录的字符串
+字面量，带目录的脚本名被拒；PowerShell 引用只在绑定到 `Join-Path $PSScriptRoot '<名>'`、`$PSScriptRoot/<名>` 或仓库路径时成立，`build-app.sh` 返回的
+引用也被跟进；下载步骤只认步骤自身的 `uses`（块标量中的文字不算）；守卫遇到解析不了的链接（悬空、环）即拒绝，保留根本身是链接时计入其目标，
+不写文件的命令不再遍历证据树；Windows 打包只解析一次包计划，守卫与 writer 用同一份，受保护目录的错误先于计划错误；Info.plist 读一次到私有副本，
+以 `plutil -n` 取值并逐字节比对（首尾空白不再被接受）；macOS 集合检查只接受普通文件（新增缺件、多件与链接的负例）；合同中的重试规则限定为
+macOS（Windows artifact 名不带 attempt）；workspace 中出现过程宏成员即拒绝；报告中“没有任何 v2 值”“只剩构建脚本”两句收窄到可证明的范围。
+
+保持不变：顶层同名键在原始 XML 中出现两次即拒绝（注释或嵌套字典中的重名也会被拒，偏保守；`build-app.sh` 的模板没有这种写法）；未结束的 raw string
+现在报错（不再退化为普通字符串）。
 

@@ -62,14 +62,21 @@ pub const INPUTS_KEY: &str = "StickyMDInputs";
 /// `None` for a bundle built before `build-app.sh` recorded it. A key present with anything but
 /// one SHA-256 is an error, not an absent fingerprint.
 pub fn app_inputs(app: &Path) -> Result<Option<String>, String> {
-    plist_inputs(&app.join("Contents/Info.plist"))
+    let plist = app.join("Contents/Info.plist");
+    let bytes = std::fs::read(&plist).map_err(|e| format!("{}: {e}", plist.display()))?;
+    inputs_in_plist_bytes(&bytes)
 }
 
 /// [`app_inputs`] of a property list given as text.
 pub fn inputs_in_plist(text: &str) -> Result<Option<String>, String> {
+    inputs_in_plist_bytes(text.as_bytes())
+}
+
+/// Every reading below is of one private copy, so the file cannot change between them.
+fn inputs_in_plist_bytes(bytes: &[u8]) -> Result<Option<String>, String> {
     let directory = crate::temporary::TemporaryDirectory::new("info-plist")?;
     let path = directory.path().join("Info.plist");
-    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     let value = plist_inputs(&path);
     directory.close()?;
     value
@@ -94,8 +101,9 @@ fn plist_inputs(path: &Path) -> Result<Option<String>, String> {
     if !plutil(&["-lint", "-s"])?.status.success() {
         return Err(format!("{} is not a valid property list", path.display()));
     }
+    // `-n`: no newline after the value, so it is compared exactly as stored.
     let typed = plutil(&[
-        "-extract", INPUTS_KEY, "raw", "-expect", "string", "-o", "-",
+        "-extract", INPUTS_KEY, "raw", "-expect", "string", "-n", "-o", "-",
     ])?;
     if !typed.status.success() {
         return if plutil(&["-extract", INPUTS_KEY, "raw", "-o", "-"])?
@@ -107,7 +115,8 @@ fn plist_inputs(path: &Path) -> Result<Option<String>, String> {
             Ok(None)
         };
     }
-    let value = String::from_utf8_lossy(&typed.stdout).trim().to_owned();
+    let value = String::from_utf8(typed.stdout)
+        .map_err(|_| format!("Info.plist {INPUTS_KEY} is not UTF-8"))?;
     if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         Ok(Some(value.to_ascii_lowercase()))
     } else {
@@ -175,6 +184,8 @@ mod tests {
                 .is_err()
         );
         assert!(super::inputs_in_plist("not a property list").is_err());
+        // The value as stored: padding around a digest is not a digest.
+        assert!(super::inputs_in_plist(&plist(&format!(" {digest} "))).is_err());
         let twice = document(&format!(
             "<dict><key>StickyMDInputs</key><string>{digest}</string><key>StickyMDInputs</key><string>{digest}</string></dict>"
         ));

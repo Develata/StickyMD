@@ -29,8 +29,27 @@ impl<'a> Guard<'a> {
     /// holds no link; any other error reading them refuses, since the walk would be incomplete.
     pub fn new(root: &'a Path) -> Result<Self, String> {
         let mut link_targets = Vec::new();
+        let resolved = |path: &Path| {
+            fs::canonicalize(path).map(|_| normalize(path)).map_err(|error| {
+                format!(
+                    "{} is a link that does not resolve ({error}); release outputs cannot be guarded around it",
+                    path.display()
+                )
+            })
+        };
         for reserved in [EVIDENCE, RESOURCE_DIAGNOSTICS] {
-            let mut pending = vec![root.join(reserved)];
+            let top_path = root.join(reserved);
+            match fs::symlink_metadata(&top_path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(format!("cannot inspect {}: {error}", top_path.display()));
+                }
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    link_targets.push(resolved(&top_path)?);
+                }
+                Ok(_) => {}
+            }
+            let mut pending = vec![top_path];
             let mut top = true;
             while let Some(directory) = pending.pop() {
                 let entries = match fs::read_dir(&directory) {
@@ -51,7 +70,7 @@ impl<'a> Guard<'a> {
                         format!("cannot inspect {}: {error}", entry.path().display())
                     })?;
                     if kind.is_symlink() {
-                        link_targets.push(normalize(&entry.path()));
+                        link_targets.push(resolved(&entry.path())?);
                     } else if kind.is_dir() {
                         pending.push(entry.path());
                     }

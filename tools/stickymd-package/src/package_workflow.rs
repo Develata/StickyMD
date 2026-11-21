@@ -15,6 +15,17 @@ pub fn build(
     options: &PackageBuildOptions,
     log: &mut dyn Write,
 ) -> Result<(), String> {
+    release_executable(root, options)?;
+    let inputs = package_inputs::resolve(root, &options.inputs)?;
+    build_planned(root, options, &inputs, log)
+}
+
+/// The executable to package: the given one or the workspace's release build, which must exist.
+/// Checked before the package plan, so a missing executable is the error a run reports first.
+pub fn release_executable(
+    root: &Path,
+    options: &PackageBuildOptions,
+) -> Result<std::path::PathBuf, String> {
     let exe = options
         .exe
         .clone()
@@ -25,6 +36,18 @@ pub fn build(
             exe.display()
         ));
     }
+    Ok(exe)
+}
+
+/// [`build`] with the package plan already made, so a caller that checked where the plan writes
+/// packages exactly that plan.
+pub fn build_planned(
+    root: &Path,
+    options: &PackageBuildOptions,
+    inputs: &package_inputs::Inputs,
+    log: &mut dyn Write,
+) -> Result<(), String> {
+    let exe = release_executable(root, options)?;
     let directory = std::path::absolute(
         options
             .directory
@@ -32,10 +55,9 @@ pub fn build(
             .unwrap_or_else(|| root.join("dist")),
     )
     .map_err(|e| e.to_string())?;
-    let inputs = package_inputs::resolve(root, &options.inputs)?;
     let temporary = TemporaryDirectory::new("package")?;
     let staging = temporary.path().join("contents");
-    let diagnostics = package_staging::stage(root, &exe, &staging, &inputs)?;
+    let diagnostics = package_staging::stage(root, &exe, &staging, inputs)?;
     log.write_all(diagnostics.as_bytes())
         .map_err(|e| e.to_string())?;
     fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
