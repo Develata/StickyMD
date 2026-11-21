@@ -1,7 +1,9 @@
 //! StickyMD checked-in phase verification CLI.
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use stickymd_package::{atomic as atomic_evidence, integrity, package_path, repository};
+use stickymd_package::{
+    atomic as atomic_evidence, integrity, package_path, pe_dependencies, repository,
+};
 mod ci;
 mod cli;
 mod development;
@@ -17,7 +19,6 @@ mod mac_ledger;
 mod mac_resources;
 #[cfg(windows)]
 mod managed_process;
-mod pe_dependencies;
 mod phase_entry;
 #[cfg(windows)]
 mod process_metrics;

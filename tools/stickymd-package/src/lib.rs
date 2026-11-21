@@ -28,6 +28,7 @@ pub mod package_publish;
 pub mod package_staging;
 pub mod package_workflow;
 pub mod path_identity;
+pub mod pe_dependencies;
 pub mod platform;
 pub mod repository;
 pub mod sbom;

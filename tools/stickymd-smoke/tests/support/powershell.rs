@@ -93,7 +93,15 @@ fn package_executable() -> &'static Path {
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
         let output = Command::new(cargo)
             .current_dir(repository_root())
-            .args(["build", "--quiet", "--locked", "-p", "stickymd-package"])
+            .args([
+                "build",
+                "--locked",
+                "-p",
+                "stickymd-package",
+                "--bin",
+                "stickymd-package",
+                "--message-format=json",
+            ])
             .arg("--target-dir")
             .arg(&target)
             .output()
@@ -103,7 +111,34 @@ fn package_executable() -> &'static Path {
             "packaging build: {}",
             diagnostic(&output)
         );
-        target.join("debug/stickymd-package.exe")
+        // The executable Cargo reports for this build, wherever a configured target puts it.
+        let executables = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| stickymd_package::json::parse(line).ok())
+            .filter(|message| {
+                message.field("reason").and_then(|r| r.string()).ok() == Some("compiler-artifact")
+                    && message
+                        .field("target")
+                        .and_then(|t| t.field("name"))
+                        .and_then(|n| n.string())
+                        .ok()
+                        == Some("stickymd-package")
+            })
+            .filter_map(|message| {
+                message
+                    .field("executable")
+                    .and_then(|e| e.optional_string())
+                    .ok()
+                    .flatten()
+                    .map(std::path::PathBuf::from)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            executables.len(),
+            1,
+            "the packaging build reported {executables:?}"
+        );
+        executables.into_iter().next().unwrap()
     })
 }
 

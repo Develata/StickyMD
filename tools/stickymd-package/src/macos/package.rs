@@ -157,20 +157,24 @@ fn product_inputs(root: &Path) -> Result<String, String> {
 }
 
 /// Stages the package in a private directory beside `output`, archives and checks it there, and
-/// only then moves the ZIP into `output`; an existing ZIP of that name is refused, not replaced,
-/// and a failure leaves nothing behind. An exact package (`allow_dirty` false) must hold the
-/// bundle this commit builds: its recorded product inputs must equal this checkout's.
+/// only then links the ZIP into `output`; an existing ZIP of that name is refused, not replaced
+/// (the link fails if the name exists, so two packagers cannot both publish), and a failure leaves
+/// nothing behind. An exact package (`allow_dirty` false) must hold the bundle this commit builds:
+/// the product inputs recorded in the archived bundle must equal this checkout's.
 pub fn build(root: &Path, app: &Path, output: &Path, allow_dirty: bool) -> Result<Facts, String> {
     let (commit, version) = commit_and_version(root, allow_dirty)?;
     let (inputs, _) = check_app(app, &version)?;
-    if !allow_dirty {
+    let expected = if allow_dirty {
+        None
+    } else {
         let expected = product_inputs(root)?;
         if inputs != expected {
             return Err(format!(
                 "the bundle was built from product inputs {inputs}, this commit has {expected}"
             ));
         }
-    }
+        Some(expected)
+    };
     let zip = output.join(Platform::MacOsArm64.archive_name(&version));
     if fs::symlink_metadata(&zip).is_ok() {
         return Err(format!("{} already exists", zip.display()));
@@ -180,7 +184,17 @@ pub fn build(root: &Path, app: &Path, output: &Path, allow_dirty: bool) -> Resul
         .map_err(|error| format!("cannot create {}: {error}", private.display()))?;
     let outcome = package_in(root, app, &private, &commit, &version, allow_dirty).and_then(
         |(staged, mut facts)| {
-            fs::rename(&staged, &zip).map_err(|error| error.to_string())?;
+            // The bundle may have been replaced after the first check: the archived one decides.
+            if let Some(expected) = &expected
+                && facts.app_inputs != *expected
+            {
+                return Err(format!(
+                    "the archived bundle was built from product inputs {}, this commit has {expected}",
+                    facts.app_inputs
+                ));
+            }
+            fs::hard_link(&staged, &zip)
+                .map_err(|error| format!("cannot publish {}: {error}", zip.display()))?;
             facts.zip = zip.clone();
             Ok(facts)
         },

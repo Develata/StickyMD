@@ -33,12 +33,12 @@ struct PeImage<'a> {
 
 /// Describes the DLL imports declared by one PE32+ executable.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct NativeDependencyReport {
-    pub(crate) imports: Vec<String>,
+pub struct NativeDependencyReport {
+    pub imports: Vec<String>,
 }
 
 /// Parses normal and delay-load imports and rejects redistributable/developer runtimes.
-pub(crate) fn verify_portable_executable(path: &Path) -> Result<NativeDependencyReport, String> {
+pub fn verify_portable_executable(path: &Path) -> Result<NativeDependencyReport, String> {
     let bytes = fs::read(path).map_err(|error| {
         format!(
             "cannot read portable executable `{}`: {error}",
@@ -84,7 +84,7 @@ fn inspect_bytes(bytes: &[u8]) -> Result<NativeDependencyReport, String> {
 }
 
 /// Package resource checks share the PE header parser with the import gate.
-pub(crate) fn verify_package_image(path: &Path) -> Result<(), String> {
+pub fn verify_package_image(path: &Path) -> Result<(), String> {
     let bytes =
         fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     verify_package_bytes(&bytes)
@@ -361,7 +361,9 @@ fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, String> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
+    use super::test_support::{put_u16, synthetic_pe};
+
     use super::{inspect_bytes, is_developer_runtime, is_windows_inbox_dependency};
 
     #[test]
@@ -427,8 +429,13 @@ pub(crate) mod tests {
         let error = inspect_bytes(b"not a PE image").expect_err("malformed image must fail");
         assert!(error.contains("MZ"));
     }
+}
 
-    pub(crate) fn synthetic_pe(standard: Option<&str>, delayed: Option<&str>) -> Vec<u8> {
+/// A minimal x64 PE image with the given standard and delay-load imports, for tests here and in
+/// `stickymd-smoke`; never used to build release bytes.
+#[doc(hidden)]
+pub mod test_support {
+    pub fn synthetic_pe(standard: Option<&str>, delayed: Option<&str>) -> Vec<u8> {
         let mut bytes = vec![0_u8; 0x500];
         bytes[0..2].copy_from_slice(b"MZ");
         put_u32(&mut bytes, 0x3c, 0x80);
@@ -465,20 +472,20 @@ pub(crate) mod tests {
         bytes
     }
 
-    fn put_c_string(bytes: &mut [u8], offset: usize, value: &str) {
+    pub(crate) fn put_c_string(bytes: &mut [u8], offset: usize, value: &str) {
         bytes[offset..offset + value.len()].copy_from_slice(value.as_bytes());
         bytes[offset + value.len()] = 0;
     }
 
-    fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
+    pub(crate) fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
         bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
     }
 
-    fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
+    pub(crate) fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
         bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
 
-    fn put_u64(bytes: &mut [u8], offset: usize, value: u64) {
+    pub(crate) fn put_u64(bytes: &mut [u8], offset: usize, value: u64) {
         bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
     }
 }

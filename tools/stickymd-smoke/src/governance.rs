@@ -528,7 +528,8 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         "tools/release/package.ps1 -ExactCandidate",
         "tools/release/generate-sbom.ps1",
         "tools/release/verify-package.ps1",
-        "qualification native-runtime --exe=target/release/stickymd-win.exe",
+        "-p stickymd-package --locked -- native-runtime --exe target/release/stickymd-win.exe",
+        "uses: actions/download-artifact@",
         "name: stickymd-windows-x64-release",
     ] {
         if !release.contains(required) {
@@ -549,6 +550,7 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         "apps/stickymd-mac/packaging/build-app.sh",
         "-p stickymd-package --locked -- macos-package",
         "-p stickymd-package --locked -- macos-sbom",
+        "-p stickymd-package --locked -- macos-verify-package",
         "release macos-verify-package",
         "name: stickymd-macos-arm64-release-${{ github.run_attempt }}",
     ] {

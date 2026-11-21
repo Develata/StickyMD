@@ -68,12 +68,23 @@ pub fn app_inputs(app: &Path) -> Result<Option<String>, String> {
 }
 
 /// The value of `INPUTS_KEY` in an XML property list as `build-app.sh` writes it: the key element
-/// followed, after whitespace, by one `<string>` element.
+/// of the top-level dictionary followed, after whitespace, by one `<string>` element. A property
+/// list with a comment is refused (a commented key would read as present), and so is the key in a
+/// nested dictionary.
 pub fn inputs_in_plist(text: &str) -> Result<Option<String>, String> {
+    if text.contains("<!--") {
+        return Err("Info.plist holds an XML comment; the bundle's plist has none".to_owned());
+    }
     let key = format!("<key>{INPUTS_KEY}</key>");
     let Some(at) = text.find(&key) else {
         return Ok(None);
     };
+    let before = &text[..at];
+    if before.matches("<dict>").count() != before.matches("</dict>").count() + 1 {
+        return Err(format!(
+            "Info.plist names {INPUTS_KEY} outside its top-level dictionary"
+        ));
+    }
     if text[at + key.len()..].contains(&key) {
         return Err(format!("Info.plist names {INPUTS_KEY} twice"));
     }
@@ -139,6 +150,14 @@ mod tests {
         assert!(super::inputs_in_plist(&plist(&"a".repeat(63))).is_err());
         let twice = plist(&digest) + &plist(&digest);
         assert!(super::inputs_in_plist(&twice).is_err());
-        assert!(super::inputs_in_plist("<key>StickyMDInputs</key><true/>").is_err());
+        assert!(super::inputs_in_plist("<dict><key>StickyMDInputs</key><true/></dict>").is_err());
+        // A commented-out pair, and the key in a nested dictionary, are not the bundle's value.
+        let commented =
+            format!("<dict>\n<!-- <key>StickyMDInputs</key><string>{digest}</string> -->\n</dict>");
+        assert!(super::inputs_in_plist(&commented).is_err());
+        let nested = format!(
+            "<dict><key>Other</key><dict><key>StickyMDInputs</key><string>{digest}</string></dict></dict>"
+        );
+        assert!(super::inputs_in_plist(&nested).is_err());
     }
 }

@@ -12,17 +12,7 @@ pub(crate) mod promote;
 
 use std::path::Path;
 
-#[cfg(target_os = "macos")]
-pub(super) fn verify_command(root: &Path, zip: &Path, source: Option<&str>) -> Result<(), String> {
-    let version = crate::repository::workspace_version(root)?;
-    println!("{}", package::verify(zip, source, &version)?.json());
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(super) fn verify_command(_: &Path, _: &Path, _: Option<&str>) -> Result<(), String> {
-    Err("the macOS package is checked on macOS".to_owned())
-}
+pub(super) use stickymd_package::macos::verify_command;
 
 #[cfg(target_os = "macos")]
 pub(super) fn promote_command(

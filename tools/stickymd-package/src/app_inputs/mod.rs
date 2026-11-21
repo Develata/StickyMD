@@ -48,9 +48,14 @@ pub fn tracked_files(root: &Path) -> Result<Vec<String>, String> {
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
         .map(|path| {
-            String::from_utf8(path.to_vec())
-                .map(|path| path.replace('\\', "/"))
-                .map_err(|error| format!("tracked path is not UTF-8: {error}"))
+            let path = String::from_utf8(path.to_vec())
+                .map_err(|error| format!("tracked path is not UTF-8: {error}"))?;
+            // Git separates with `/` on every platform; a backslash is part of a name, which
+            // Windows would read as a separator, so such a path has no portable meaning.
+            if path.contains('\\') {
+                return Err(format!("tracked path {path:?} contains a backslash"));
+            }
+            Ok(path)
         })
         .collect::<Result<Vec<_>, _>>()?;
     files.sort();

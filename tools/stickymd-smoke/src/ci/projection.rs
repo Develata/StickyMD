@@ -70,6 +70,8 @@ pub(super) fn json(head: &str, base: Option<&str>, dirty: bool, selection: &Sele
         Module::Desktop,
         Module::Posix,
         Module::Mac,
+        // Its macOS packager and bundle code compile only on macOS.
+        Module::Package,
     ] {
         if selection.full
             || selection.modules.contains(&module)
@@ -235,8 +237,27 @@ mod tests {
         );
         assert!(full.contains("\"mac_needed\":true"));
         assert!(full.contains(
-            "\"mac_test_args\":[\"test\",\"--locked\",\"-p\",\"stickymd-core\",\"-p\",\"stickymd-render\",\"-p\",\"stickymd-app\",\"-p\",\"stickymd-desktop\",\"-p\",\"stickymd-posix\",\"-p\",\"stickymd-mac\"]"
+            "\"mac_test_args\":[\"test\",\"--locked\",\"-p\",\"stickymd-core\",\"-p\",\"stickymd-render\",\"-p\",\"stickymd-app\",\"-p\",\"stickymd-desktop\",\"-p\",\"stickymd-posix\",\"-p\",\"stickymd-mac\",\"-p\",\"stickymd-package\"]"
         ));
+    }
+
+    /// The packaging crate's macOS packager compiles only on macOS, so a change there runs the
+    /// macOS lane with the packaging crate's tests.
+    #[test]
+    fn a_packaging_change_runs_the_macos_lane_with_the_packaging_tests() {
+        let plan = json(
+            &"a".repeat(40),
+            Some(&"b".repeat(40)),
+            false,
+            &super::super::selection::select(&[
+                "tools/stickymd-package/src/macos/sbom.rs".to_owned()
+            ]),
+        );
+        assert!(plan.contains("\"mac_needed\":true"), "{plan}");
+        assert!(
+            plan.contains("\"mac_test_args\":[\"test\",\"--locked\",\"-p\",\"stickymd-package\"]"),
+            "{plan}"
+        );
     }
 
     #[test]

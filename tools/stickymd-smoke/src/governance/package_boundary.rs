@@ -3,22 +3,28 @@
 //! only while no release byte can depend on verification code. The crate dependency makes the
 //! compiler refuse any reference from the packaging crate to this one; this check covers the edges
 //! the compiler cannot see:
-//! - the packaging crate's manifest declares no dependency and no build script;
-//! - every `include_str!`, `include_bytes!`, `include!` and `#[path]` in it names a plain string
-//!   literal that resolves, from its file's directory, to a path inside the repository that the
-//!   fingerprint counts for both platforms;
-//! - no workspace member's manifest names a build script (Cargo then runs only `build.rs`, which
-//!   the fingerprint counts), and no member's `build.rs` names the verification tool;
-//! - its code (comments aside) never names the verification tool, its package or its directory,
-//!   so it can neither spawn it nor read its files;
-//! - the scripts it launches, and the byte-producing scripts and steps of the release workflows
-//!   (with every script they dot-source), call the packaging tool and never the verification
-//!   tool.
+//! - Cargo's own view of the workspace (`cargo metadata`): the packaging crate declares no
+//!   dependency and no build script, and every member's build script is its `build.rs`, which the
+//!   fingerprint counts;
+//! - every `include!`, `include_str!`, `include_bytes!` and `#[path]` reached from the packaging
+//!   crate names a plain string literal that resolves, from its file's directory, to a path the
+//!   fingerprint counts for both platforms; a Rust file reached that way is checked in turn;
+//! - that code and every member's `build.rs` (comments aside, read with string and character
+//!   literals told apart from comments) never names the verification tool, its package or its
+//!   directory, so it can neither spawn it nor read its files;
+//! - the scripts the packaging crate launches and the Windows scripts that build bytes, with every
+//!   script they reference, and `build-app.sh`, never call the verification tool; a dot-source
+//!   this check cannot read is refused rather than skipped;
+//! - each release workflow has the three jobs of plan 11 (`self-check`, then `build-package`,
+//!   then `verify-artifact` on the uploaded artifact), and the `build-package` job, with every
+//!   script it runs, never calls the verification tool.
 //!
 //! The checks are lexical. Code built to evade them (a name assembled at run time, say) is left to
 //! review; what they catch is the ordinary way such an edge is written.
 //! plan_ref: docs/plan/11_testing_and_release.md#platform-artifact-reuse
 
+use crate::release::json::{self, Value};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 const CRATE: &str = "tools/stickymd-package";
@@ -30,77 +36,46 @@ const BYTE_SCRIPTS: &[&str] = &[
     "generate-third-party-notices.ps1",
     "invoke-package.ps1",
 ];
-/// The steps of each release workflow that build release bytes, by name.
-const BYTE_STEPS: &[(&str, &[&str])] = &[
-    (
-        ".github/workflows/release.yml",
-        &["Package", "Generate verified SPDX SBOM and checksums"],
-    ),
-    (
-        ".github/workflows/release-macos.yml",
-        &[
-            "Build the ad-hoc signed bundle",
-            "Package",
-            "Generate verified SPDX SBOM and checksums",
-        ],
-    ),
+const RELEASE_WORKFLOWS: &[&str] = &[
+    ".github/workflows/release.yml",
+    ".github/workflows/release-macos.yml",
 ];
-/// How code names the verification tool: its package, its crate and its directory.
+/// How Rust code names the verification tool: its package, its crate and its directory.
 const TOOL_NAMES: &[&str] = &[
     "\"stickymd-smoke\"",
     "-p stickymd-smoke",
     "stickymd_smoke",
     "stickymd-smoke/",
 ];
+/// How a script or a workflow step reaches the verification tool: by name, through its
+/// PowerShell wrapper, or through its per-phase entry points.
+const SCRIPT_TOOL_NAMES: &[&str] = &[
+    "stickymd-smoke",
+    "invoke-smoke.ps1",
+    "Invoke-StickyMdReleaseTool",
+    "tools/smoke/",
+];
 
 pub(super) fn verify(root: &Path) -> Result<(), String> {
-    let manifest_path = format!("{CRATE}/Cargo.toml");
-    check_manifest(&read(root, &manifest_path)?).map_err(|e| format!("{manifest_path}: {e}"))?;
-    if root.join(CRATE).join("build.rs").exists() {
-        return Err(format!(
-            "{CRATE}/build.rs: the packaging crate has no build script"
-        ));
-    }
+    check_metadata(&cargo_metadata(root)?)?;
     let mut sources = Vec::new();
-    collect_rust(&root.join(CRATE), &mut sources)?;
+    collect_rust(root, &root.join(CRATE), &mut sources)?;
     if sources.is_empty() {
         return Err(format!(
             "{CRATE} has no Rust sources; a check of nothing proves nothing"
         ));
     }
-    let mut launched = Vec::new();
-    for path in &sources {
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|e| e.to_string())?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let text = std::fs::read_to_string(path).map_err(|e| format!("{relative}: {e}"))?;
-        check_source(&relative, &text).map_err(|e| format!("{relative}: {e}"))?;
-        launched.extend(scripts_named(&text));
-    }
+    let launched = check_rust_tree(root, sources)?;
     let mut scripts: Vec<String> = BYTE_SCRIPTS.iter().map(|name| (*name).to_owned()).collect();
     scripts.extend(launched);
-    let mut checked = std::collections::BTreeSet::new();
-    while let Some(name) = scripts.pop() {
-        if !checked.insert(name.clone()) {
-            continue;
-        }
-        let relative = format!("{SCRIPTS}/{name}");
-        let text = read(root, &relative)?;
-        check_script(&text).map_err(|e| format!("{relative}: {e}"))?;
-        scripts.extend(dot_sourced(&text));
-    }
+    check_scripts(root, scripts)?;
     check_build_scripts(root)?;
     let build_app = "apps/stickymd-mac/packaging/build-app.sh";
     check_script(&read(root, build_app)?).map_err(|e| format!("{build_app}: {e}"))?;
-    for (workflow, steps) in BYTE_STEPS {
-        let text = read(root, workflow)?;
-        for step in *steps {
-            let body = step_body(&text, step)
-                .ok_or_else(|| format!("{workflow} has no step named `{step}`"))?;
-            check_script(body).map_err(|e| format!("{workflow} step `{step}`: {e}"))?;
-        }
+    for workflow in RELEASE_WORKFLOWS {
+        let referenced =
+            check_workflow(&read(root, workflow)?).map_err(|e| format!("{workflow}: {e}"))?;
+        check_scripts(root, referenced)?;
     }
     Ok(())
 }
@@ -109,80 +84,247 @@ fn read(root: &Path, relative: &str) -> Result<String, String> {
     std::fs::read_to_string(root.join(relative)).map_err(|e| format!("{relative}: {e}"))
 }
 
-fn collect_rust(directory: &Path, into: &mut Vec<std::path::PathBuf>) -> Result<(), String> {
+/// The repository-relative paths of the Rust files below `directory`.
+fn collect_rust(root: &Path, directory: &Path, into: &mut Vec<String>) -> Result<(), String> {
     for entry in
         std::fs::read_dir(directory).map_err(|e| format!("{}: {e}", directory.display()))?
     {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.is_dir() {
-            collect_rust(&path, into)?;
+            collect_rust(root, &path, into)?;
         } else if path.extension().is_some_and(|extension| extension == "rs") {
-            into.push(path);
+            let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
+            into.push(relative.to_string_lossy().replace('\\', "/"));
         }
     }
     into.sort();
     Ok(())
 }
 
-/// Every table whose name ends in `dependencies` (plain, dev, build, or per target) is empty, and
-/// `[package]` names no build script.
-fn check_manifest(text: &str) -> Result<(), String> {
-    let mut table = String::new();
-    for (index, line) in text.lines().enumerate() {
-        let line = line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
+fn cargo_metadata(root: &Path) -> Result<Value, String> {
+    let output = std::process::Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps", "--locked"])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("cannot start `cargo metadata`: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "`cargo metadata --no-deps --locked` failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8(output.stdout)
+        .map_err(|error| format!("`cargo metadata` output is not UTF-8: {error}"))?;
+    json::parse(&text)
+}
+
+/// Cargo's decoded view, so no TOML spelling (a quoted table or key) can hide a dependency or a
+/// build script: the packaging crate has neither, and every member's build script is the
+/// `build.rs` beside its manifest.
+fn check_metadata(metadata: &Value) -> Result<(), String> {
+    let mut found = false;
+    for package in metadata.field("packages")?.array()? {
+        let name = package.field("name")?.string()?;
+        let manifest = package.field("manifest_path")?.string()?.replace('\\', "/");
+        let directory = manifest
+            .strip_suffix("/Cargo.toml")
+            .ok_or_else(|| format!("{name}: manifest path {manifest} is not a Cargo.toml"))?;
+        if name == "stickymd-package" {
+            found = true;
+            if !package.field("dependencies")?.array()?.is_empty() {
+                return Err(
+                    "stickymd-package declares a dependency; the packaging crate is std-only"
+                        .to_owned(),
+                );
+            }
+        }
+        for target in package.field("targets")?.array()? {
+            let custom_build = target
+                .field("kind")?
+                .array()?
+                .iter()
+                .any(|kind| kind.string() == Ok("custom-build"));
+            if !custom_build {
+                continue;
+            }
+            if name == "stickymd-package" {
+                return Err("stickymd-package has a build script".to_owned());
+            }
+            let source = target.field("src_path")?.string()?.replace('\\', "/");
+            if source != format!("{directory}/build.rs") {
+                return Err(format!(
+                    "{name}'s build script is {source}; only the build.rs beside a member's manifest is counted"
+                ));
+            }
+        }
+    }
+    if found {
+        Ok(())
+    } else {
+        Err("cargo metadata lists no stickymd-package".to_owned())
+    }
+}
+
+/// Checks the Rust files `files` and every Rust file their `include!` and `#[path]` reach, and
+/// returns the PowerShell scripts their code names.
+fn check_rust_tree(root: &Path, mut files: Vec<String>) -> Result<Vec<String>, String> {
+    let mut seen = BTreeSet::new();
+    let mut launched = Vec::new();
+    while let Some(file) = files.pop() {
+        if !seen.insert(file.clone()) {
             continue;
         }
-        if let Some(name) = line.strip_prefix('[') {
-            table = name
-                .trim_matches(|c| c == '[' || c == ']')
-                .trim()
-                .to_owned();
-            if table.ends_with("dependencies") || table.contains("dependencies.") {
-                // An inline table header such as `[dependencies.x]` declares a dependency itself.
-                if table.contains("dependencies.") {
-                    return Err(format!("line {}: declares a dependency", index + 1));
+        let code = strip_comments(&read(root, &file)?).map_err(|e| format!("{file}: {e}"))?;
+        check_names(&code).map_err(|e| format!("{file}: {e}"))?;
+        for (marker, target) in includes(&file, &code).map_err(|e| format!("{file}: {e}"))? {
+            if marker != "include_str!" && marker != "include_bytes!" {
+                // Rust source: its own includes and names are checked too.
+                files.push(target);
+            }
+        }
+        launched.extend(ps1_references(&code));
+    }
+    Ok(launched)
+}
+
+/// `text` with every comment replaced by spaces (newlines kept, so line numbers hold), string
+/// and character literals kept as written. An unterminated string or block comment is an error.
+fn strip_comments(text: &str) -> Result<String, String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    let blank = |c: char| if c == '\n' { '\n' } else { ' ' };
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        if c == '/' && next == Some('/') {
+            while i < chars.len() && chars[i] != '\n' {
+                out.push(' ');
+                i += 1;
+            }
+        } else if c == '/' && next == Some('*') {
+            let mut depth = 0;
+            loop {
+                if i >= chars.len() {
+                    return Err("unterminated block comment".to_owned());
+                }
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    out.push_str("  ");
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    out.push_str("  ");
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    out.push(blank(chars[i]));
+                    i += 1;
                 }
             }
-            if table == "patch" || table.starts_with("patch.") || table == "replace" {
-                return Err(format!("line {}: overrides a dependency", index + 1));
-            }
-            continue;
-        }
-        if table.ends_with("dependencies") {
-            return Err(format!(
-                "line {}: declares a dependency; the packaging crate is std-only",
-                index + 1
-            ));
-        }
-        if table == "package"
-            && line
-                .split('=')
-                .next()
-                .is_some_and(|key| key.trim() == "build")
+        } else if c == 'r'
+            && matches!(next, Some('"' | '#'))
+            && !i
+                .checked_sub(1)
+                .and_then(|p| chars.get(p))
+                .is_some_and(|p| p.is_alphanumeric() || *p == '_')
         {
-            return Err(format!("line {}: names a build script", index + 1));
+            // A raw string: r"...", r#"..."#; a `b` before it stays plain code.
+            let mut hashes = 0;
+            let mut j = i + 1;
+            while chars.get(j) == Some(&'#') {
+                hashes += 1;
+                j += 1;
+            }
+            if chars.get(j) != Some(&'"') {
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            let close: Vec<char> = std::iter::once('"')
+                .chain(std::iter::repeat_n('#', hashes))
+                .collect();
+            let mut k = j + 1;
+            loop {
+                if k + close.len() > chars.len() {
+                    return Err("unterminated raw string".to_owned());
+                }
+                if chars[k..k + close.len()] == close[..] {
+                    break;
+                }
+                k += 1;
+            }
+            let end = k + close.len();
+            out.extend(&chars[i..end]);
+            i = end;
+        } else if c == '"' {
+            out.push(c);
+            i += 1;
+            loop {
+                let Some(&s) = chars.get(i) else {
+                    return Err("unterminated string literal".to_owned());
+                };
+                out.push(s);
+                i += 1;
+                if s == '\\' {
+                    if let Some(&escaped) = chars.get(i) {
+                        out.push(escaped);
+                        i += 1;
+                    }
+                } else if s == '"' {
+                    break;
+                }
+            }
+        } else if c == '\'' {
+            // A character literal ('x', '\n', '\'', '"'), or a lifetime, which stays code.
+            let literal_end = if next == Some('\\') {
+                (i + 3..chars.len().min(i + 12)).find(|&k| chars[k] == '\'')
+            } else if chars.get(i + 2) == Some(&'\'') {
+                Some(i + 2)
+            } else {
+                None
+            };
+            match literal_end {
+                Some(end) => {
+                    out.extend(&chars[i..=end]);
+                    i = end + 1;
+                }
+                None => {
+                    out.push(c);
+                    i += 1;
+                }
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    Ok(out)
+}
+
+/// Refuses code that names the verification tool.
+fn check_names(code: &str) -> Result<(), String> {
+    for (index, line) in code.lines().enumerate() {
+        for name in TOOL_NAMES {
+            if line.contains(name) {
+                return Err(format!(
+                    "line {} names the verification tool (`{name}`); release bytes may not depend on it",
+                    index + 1
+                ));
+            }
         }
     }
     Ok(())
 }
 
-/// The code of `text` with `//` comments removed (a `//` inside a string literal ends the line
-/// early, which can only hide code from the name check, never add a false include).
-fn code_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
-    text.lines().enumerate().map(|(index, line)| {
-        let code = line.find("//").map_or(line, |at| &line[..at]);
-        (index + 1, code)
-    })
-}
-
-/// Names of the verification tool are refused in code; `include_*!` and `#[path]` must name a
-/// plain literal that resolves, from the directory of `file` (repository-relative), to a path the
-/// fingerprint counts for both platforms.
-fn check_source(file: &str, text: &str) -> Result<(), String> {
-    check_names(text)?;
+/// Every include and `#[path]` in `code` (comments removed) with its target, resolved from the
+/// directory of `file`; each must be a plain literal naming a path both platforms count.
+fn includes(file: &str, code: &str) -> Result<Vec<(&'static str, String)>, String> {
     let directory = file.rsplit_once('/').map_or("", |(directory, _)| directory);
-    for (number, line) in text.lines().enumerate() {
+    let mut found = Vec::new();
+    for (number, line) in code.lines().enumerate() {
         for marker in ["include_str!", "include_bytes!", "include!", "#[path"] {
             let mut rest = line;
             while let Some(at) = rest.find(marker) {
@@ -198,40 +340,30 @@ fn check_source(file: &str, text: &str) -> Result<(), String> {
                             number + 1
                         )
                     })?;
-                let resolved = resolve(directory, argument).filter(|path| {
-                    use crate::release::platform::Platform;
-                    use crate::release::platform_inputs::is_input;
-                    is_input(Platform::WindowsX64, path) && is_input(Platform::MacOsArm64, path)
-                });
-                if resolved.is_none() {
-                    return Err(format!(
-                        "line {}: `{marker}` reaches `{argument}`, which is not a build input of both platforms",
-                        number + 1
-                    ));
-                }
+                let resolved = resolve(directory, argument)
+                    .filter(|path| counted_by_both(path))
+                    .ok_or_else(|| {
+                        format!(
+                            "line {}: `{marker}` reaches `{argument}`, which is not a build input of both platforms",
+                            number + 1
+                        )
+                    })?;
+                found.push((marker, resolved));
                 rest = after;
             }
         }
     }
-    Ok(())
+    Ok(found)
 }
 
-/// Refuses code (comments aside) that names the verification tool.
-fn check_names(text: &str) -> Result<(), String> {
-    for (number, line) in code_lines(text) {
-        for name in TOOL_NAMES {
-            if line.contains(name) {
-                return Err(format!(
-                    "line {number} names the verification tool (`{name}`); release bytes may not depend on it"
-                ));
-            }
-        }
-    }
-    Ok(())
+fn counted_by_both(path: &str) -> bool {
+    use crate::release::platform::Platform;
+    use crate::release::platform_inputs::is_input;
+    is_input(Platform::WindowsX64, path) && is_input(Platform::MacOsArm64, path)
 }
 
 /// `relative` joined to the repository directory `directory` and normalized, or `None` when it
-/// is absolute, uses `\\`, or climbs out of the repository.
+/// is absolute, uses a backslash or a drive, or climbs out of the repository.
 fn resolve(directory: &str, relative: &str) -> Option<String> {
     if relative.starts_with('/') || relative.contains('\\') || relative.contains(':') {
         return None;
@@ -252,83 +384,77 @@ fn resolve(directory: &str, relative: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-/// No workspace member's manifest names a build script, so Cargo runs only an auto-discovered
-/// `build.rs`, which the fingerprint counts; and no member's `build.rs` names the verification
-/// tool, so a build script cannot read its files.
+/// No member's `build.rs` (all of them run in the Windows workspace build) names the
+/// verification tool, so a build script cannot read its files.
 fn check_build_scripts(root: &Path) -> Result<(), String> {
     for module in crate::headless::Module::ALL {
         if module.package().is_none() {
             continue;
         }
-        let manifest = format!("{}Cargo.toml", module.root());
-        let mut table = String::new();
-        for (index, line) in read(root, &manifest)?.lines().enumerate() {
-            let line = line.split('#').next().unwrap_or("").trim();
-            if let Some(name) = line.strip_prefix('[') {
-                table = name
-                    .trim_matches(|c| c == '[' || c == ']')
-                    .trim()
-                    .to_owned();
-            } else if table == "package"
-                && line
-                    .split('=')
-                    .next()
-                    .is_some_and(|key| key.trim() == "build")
-            {
-                return Err(format!(
-                    "{manifest}:{}: names a build script; only an auto-discovered build.rs is counted",
-                    index + 1
-                ));
-            }
-        }
         let script = format!("{}build.rs", module.root());
         if root.join(&script).is_file() {
-            check_names(&read(root, &script)?).map_err(|e| format!("{script}: {e}"))?;
+            let code =
+                strip_comments(&read(root, &script)?).map_err(|e| format!("{script}: {e}"))?;
+            check_names(&code).map_err(|e| format!("{script}: {e}"))?;
         }
     }
     Ok(())
 }
 
-/// The PowerShell script names the code passes as string literals.
-fn scripts_named(text: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    for (_, line) in code_lines(text) {
-        for piece in line.split('"').skip(1).step_by(2) {
-            if piece.ends_with(".ps1")
-                && !piece.is_empty()
-                && piece
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
-            {
-                names.push(piece.to_owned());
-            }
+/// Checks each named script of `tools/release` and every script it references, transitively.
+fn check_scripts(root: &Path, mut scripts: Vec<String>) -> Result<(), String> {
+    let mut checked = BTreeSet::new();
+    while let Some(name) = scripts.pop() {
+        if !checked.insert(name.clone()) {
+            continue;
         }
+        let relative = format!("{SCRIPTS}/{name}");
+        if !root.join(&relative).is_file() {
+            return Err(format!(
+                "a script that builds release bytes references {name}, which is not in {SCRIPTS}"
+            ));
+        }
+        let text = read(root, &relative)?;
+        check_script(&text).map_err(|e| format!("{relative}: {e}"))?;
+        scripts.extend(ps1_references(&text));
     }
-    names
+    Ok(())
 }
 
-/// The scripts `text` dot-sources from its own directory.
-fn dot_sourced(text: &str) -> Vec<String> {
-    text.lines()
-        .filter(|line| line.trim_start().starts_with(". "))
-        .filter_map(|line| {
-            let quoted = line.split('\'').nth(1)?;
-            quoted.ends_with(".ps1").then(|| quoted.to_owned())
+/// The PowerShell script file names `text` mentions: every `*.ps1` token, quoted or not, by its
+/// last path component.
+fn ps1_references(text: &str) -> Vec<String> {
+    text.split(|c: char| c.is_whitespace() || matches!(c, '\'' | '"' | '(' | ')' | ',' | ';'))
+        .filter_map(|token| {
+            let name = token.rsplit(['/', '\\']).next()?;
+            (name.len() > 4
+                && name.ends_with(".ps1")
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')))
+            .then(|| name.to_owned())
         })
         .collect()
 }
 
+/// A script or workflow job that builds release bytes: no call to the verification tool, and
+/// every dot-source names a script this check can follow.
 fn check_script(text: &str) -> Result<(), String> {
+    let mut block_comment = false;
     for (index, line) in text.lines().enumerate() {
         let code = line.trim_start();
+        if block_comment {
+            block_comment = !code.contains("#>");
+            continue;
+        }
+        if code.starts_with("<#") {
+            block_comment = !code.contains("#>");
+            continue;
+        }
         if code.starts_with('#') {
             continue;
         }
-        for name in [
-            "stickymd-smoke",
-            "invoke-smoke.ps1",
-            "Invoke-StickyMdReleaseTool",
-        ] {
+        for name in SCRIPT_TOOL_NAMES {
             if code.contains(name) {
                 return Err(format!(
                     "line {} calls the verification tool (`{name}`); building release bytes calls stickymd-package",
@@ -336,137 +462,90 @@ fn check_script(text: &str) -> Result<(), String> {
                 ));
             }
         }
+        if code.starts_with(". ") && ps1_references(code).is_empty() {
+            return Err(format!(
+                "line {}: a dot-source this check cannot follow; name the script literally",
+                index + 1
+            ));
+        }
     }
     Ok(())
 }
 
-/// The lines of the workflow step named `name`: from its `- name:` line up to the next step.
-fn step_body<'a>(workflow: &'a str, name: &str) -> Option<&'a str> {
-    let header = format!("- name: {name}\n");
-    let start = workflow.find(&header)?;
-    let indent = workflow[..start].rsplit('\n').next()?.len();
-    let body_start = start + header.len();
-    let rest = &workflow[body_start..];
-    let mut end = rest.len();
-    let mut offset = 0;
-    for line in rest.split_inclusive('\n') {
+/// The release workflow's three jobs in order, the `build-package` job free of the verification
+/// tool; returns the scripts that job runs, to be checked in turn.
+fn check_workflow(text: &str) -> Result<Vec<String>, String> {
+    let jobs = jobs(text)?;
+    let job = |name: &str| {
+        jobs.iter()
+            .find(|(job, _)| job == name)
+            .map(|(_, body)| body.as_str())
+            .ok_or_else(|| format!("has no `{name}` job"))
+    };
+    for (name, needs) in [
+        ("self-check", "dependency-policy"),
+        ("build-package", "self-check"),
+        ("verify-artifact", "build-package"),
+    ] {
+        if !job(name)?
+            .lines()
+            .any(|line| line.trim() == format!("needs: {needs}"))
+        {
+            return Err(format!("job `{name}` must have `needs: {needs}`"));
+        }
+    }
+    if !job("verify-artifact")?.contains("uses: actions/download-artifact@") {
+        return Err("job `verify-artifact` must download the uploaded artifact".to_owned());
+    }
+    let build = job("build-package")?;
+    check_script(build).map_err(|e| format!("job `build-package`: {e}"))?;
+    Ok(ps1_references(build))
+}
+
+/// The jobs of a workflow: each `  <name>:` header directly under `jobs:` with the lines up to the
+/// next header. Blank and comment lines belong to the job they sit in, whatever their indent; any
+/// other line indented less than a job ends the jobs. A job name given twice is an error.
+fn jobs(text: &str) -> Result<Vec<(String, String)>, String> {
+    let mut lines = text.lines().skip_while(|line| *line != "jobs:");
+    if lines.next().is_none() {
+        return Err("has no `jobs:` section".to_owned());
+    }
+    let mut jobs: Vec<(String, String)> = Vec::new();
+    for line in lines {
         let trimmed = line.trim_start();
-        let line_indent = line.len() - trimmed.len();
-        if !trimmed.trim().is_empty() && line_indent <= indent {
-            end = offset;
+        let indent = line.len() - trimmed.len();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            if let Some((_, body)) = jobs.last_mut() {
+                body.push_str(line);
+                body.push('\n');
+            }
+            continue;
+        }
+        if indent < 2 {
             break;
         }
-        offset += line.len();
+        if indent == 2 {
+            let name = trimmed
+                .strip_suffix(':')
+                .filter(|name| {
+                    name.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+                })
+                .ok_or_else(|| format!("unexpected line under `jobs:`: {trimmed}"))?;
+            if jobs.iter().any(|(job, _)| job == name) {
+                return Err(format!("job `{name}` is defined twice"));
+            }
+            jobs.push((name.to_owned(), String::new()));
+            continue;
+        }
+        let (_, body) = jobs
+            .last_mut()
+            .ok_or_else(|| "a step before the first job".to_owned())?;
+        body.push_str(line);
+        body.push('\n');
     }
-    Some(&rest[..end])
+    Ok(jobs)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_real_packaging_crate_keeps_its_boundary() {
-        let root =
-            crate::governance::find_repository_root(&std::env::current_dir().unwrap()).unwrap();
-        verify(&root).unwrap();
-    }
-
-    #[test]
-    fn any_dependency_or_build_script_in_the_manifest_is_refused() {
-        let clean = "[package]\nname = \"stickymd-package\"\n\n[dependencies]\n# none\n\n[lib]\npath = \"src/lib.rs\"\n";
-        check_manifest(clean).unwrap();
-        for bad in [
-            "[dependencies]\nstickymd-smoke = { path = \"../stickymd-smoke\" }\n",
-            "[dev-dependencies]\nx = \"1\"\n",
-            "[build-dependencies]\nx = \"1\"\n",
-            "[target.'cfg(windows)'.dependencies]\nx = \"1\"\n",
-            "[dependencies.stickymd-smoke]\npath = \"../stickymd-smoke\"\n",
-            "[patch.crates-io]\nx = { path = \"x\" }\n",
-            "[package]\nname = \"x\"\nbuild = \"build.rs\"\n",
-        ] {
-            assert!(check_manifest(bad).is_err(), "{bad}");
-        }
-    }
-
-    #[test]
-    fn includes_must_reach_counted_inputs_and_the_tool_is_never_named() {
-        let file = "tools/stickymd-package/src/package_content.rs";
-        check_source(
-            file,
-            "const README: &str = include_str!(\"package_readme.txt\");\n",
-        )
-        .unwrap();
-        // A counted shared file outside the crate is fine.
-        check_source(
-            "tools/stickymd-package/src/notices/licenses.rs",
-            "include_str!(\"../../../../assets/licenses/SIL-OFL-1.1.txt\")",
-        )
-        .unwrap();
-        check_source(
-            file,
-            "// stickymd-smoke calls this crate; a comment may say so\n",
-        )
-        .unwrap();
-        check_source(
-            file,
-            "Err(\"belongs to stickymd-smoke release verify-package\")\n",
-        )
-        .unwrap();
-        for bad in [
-            "include_str!(\"../../stickymd-smoke/src/x.txt\")",
-            "include_bytes!(\"../../../docs/plan/11_testing_and_release.md\")",
-            "include_bytes!(\"/etc/x\")",
-            "include_str!(\"../../../../../outside.txt\")",
-            "include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/x.rs\"))",
-            "#[path = \"../../stickymd-smoke/src/release/package.rs\"]\nmod x;",
-            "#[path = \"sub\\\\..\\\\..\\\\x.rs\"]\nmod x;",
-            "Command::new(\"cargo\").args([\"run\", \"-p\", \"stickymd-smoke\"])",
-            "let x = \"cargo run -p stickymd-smoke -- release\";",
-            "use stickymd_smoke::release;",
-            // A helper that reads the verification tool's fixtures at run time.
-            "fs::read(root.join(\"tools/stickymd-smoke/tests/fixtures/notice.txt\"))",
-        ] {
-            assert!(check_source(file, bad).is_err(), "{bad}");
-        }
-        assert_eq!(resolve("a/b", "../c/./d.txt").as_deref(), Some("a/c/d.txt"));
-        assert_eq!(resolve("a", "../../x"), None);
-    }
-
-    /// A build script Cargo discovers by itself runs in the Windows workspace build: one that
-    /// names the verification tool is refused here, and one added anywhere is counted by the
-    /// fingerprint (`platform_inputs` tests).
-    #[test]
-    fn a_build_script_may_not_name_the_verification_tool() {
-        check_names("fn main() { println!(\"cargo:rerun-if-changed=app.manifest\"); }").unwrap();
-        assert!(
-            check_names("fn main() { let _ = std::fs::read(\"../../tools/stickymd-smoke/x\"); }")
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn scripts_and_steps_that_build_bytes_never_call_the_verification_tool() {
-        check_script("# invoke-smoke.ps1 is for verification\n. (Join-Path $PSScriptRoot 'invoke-package.ps1')\n").unwrap();
-        for bad in [
-            ". (Join-Path $PSScriptRoot 'invoke-smoke.ps1')\n",
-            "Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments @('notices')\n",
-            "cargo run --quiet -p stickymd-smoke --locked -- release macos-package\n",
-        ] {
-            assert!(check_script(bad).is_err(), "{bad}");
-        }
-        assert_eq!(
-            dot_sourced(". (Join-Path $PSScriptRoot 'invoke-package.ps1')\n$x = 1\n"),
-            ["invoke-package.ps1"]
-        );
-        assert_eq!(
-            scripts_named("windows::operation(root, shell, \"package-archive.ps1\", &[])"),
-            ["package-archive.ps1"]
-        );
-        let workflow = "    steps:\n      - name: Package\n        run: |\n          cargo run -p stickymd-smoke -- release macos-package\n      - name: Verify package\n        run: cargo run -p stickymd-smoke -- release macos-verify-package\n";
-        let body = step_body(workflow, "Package").unwrap();
-        assert!(body.contains("macos-package") && !body.contains("verify-package"));
-        assert!(check_script(body).is_err());
-        assert!(step_body(workflow, "Missing").is_none());
-    }
-}
+mod tests;

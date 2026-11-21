@@ -100,3 +100,13 @@ M5 的“R 上的源码测试”只写进了合同，核对程序未实现。
 - **C：保持现状，信任假设写进合同（当前文本）。** 不改 workflow；审查判为 BLOCKER。
 
 A 与 B 都要再改 `11` #platform-artifact-reuse 的“构建 workflow 中的验证只是自检”一条；A 不改其他已批准的门。
+
+## Resolution（2026-11-21）：构建 job 中的验证代码
+
+USER 的回复（原话，经主会话转达）：
+
+> A：拆三个 job
+
+按方案 A 实施：每个发布 workflow 拆成 `self-check` → `build-package` → `verify-artifact` 三个 job；`build-package` 只运行计入指纹的代码；
+PE import 门（`pe_dependencies.rs`）迁入打包 crate，打包二进制增加 `native-runtime` 与 `macos-verify-package` 命令；`verify-artifact` 下载刚上传的
+artifact 并在它上面校验。`11` #platform-artifact-reuse、`release_workflow` 测试与 governance 的 workflow 检查随之修改。

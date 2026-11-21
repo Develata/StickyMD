@@ -2,6 +2,11 @@ name: release-macos
 
 # The macOS Release Exact Artifact (plan 11 #macos-release-artifact). Dispatched separately from
 # `release`, so a failure on one platform is retried without rebuilding the other.
+#
+# Three jobs on separate runners (plan 11 #platform-artifact-reuse). The job that builds the
+# release bytes runs only code the Platform Build Input Fingerprint counts; the verification tool
+# runs before it (self-check) and on the uploaded artifact after it (verify-artifact). The run
+# succeeds only when every job does.
 on:
   workflow_dispatch:
 
@@ -24,8 +29,8 @@ jobs:
       - name: Licenses, advisories, bans, and sources
         run: cargo deny check
 
-  build-package:
-    name: Build and verify macOS arm64 package
+  self-check:
+    name: Self-check macOS arm64 sources
     needs: dependency-policy
     # The preview image with macOS 27 and Xcode 27.x; macos-latest still ships the macOS 26 SDK.
     runs-on: xcode-27
@@ -36,7 +41,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Select Xcode 27.2
-        # build-app.sh builds with a clean environment, so DEVELOPER_DIR would not reach it.
         run: sudo xcode-select --switch /Applications/Xcode_27.2.app/Contents/Developer
       - name: Install pinned Rust toolchain
         run: rustup show
@@ -58,6 +62,29 @@ jobs:
         run: >-
           cargo test --locked -p stickymd-core -p stickymd-render -p stickymd-app
           -p stickymd-desktop -p stickymd-posix -p stickymd-mac -p stickymd-package -p stickymd-smoke
+
+  build-package:
+    name: Build and package macOS arm64
+    needs: self-check
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select Xcode 27.2
+        # build-app.sh builds with a clean environment, so DEVELOPER_DIR would not reach it.
+        run: sudo xcode-select --switch /Applications/Xcode_27.2.app/Contents/Developer
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - name: Validate provenance
+        run: |
+          set -eu
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "Candidate commit is not contained in origin/main" >&2
+            exit 1
+          }
       - name: Build the ad-hoc signed bundle
         run: apps/stickymd-mac/packaging/build-app.sh "$RUNNER_TEMP/app"
       - name: Build record
@@ -67,7 +94,6 @@ jobs:
           # Computed first: a failing command in an assignment stops the step under `set -e`,
           # where inside `echo "$(...)"` it would leave an empty value.
           product_inputs=$(plutil -extract StickyMDInputs raw "$app/Contents/Info.plist")
-          platform_inputs=$(cargo run --quiet -p stickymd-smoke --locked -- release platform-inputs --platform macos-arm64 --commit "$GITHUB_SHA")
           {
             echo "## macOS build record"
             echo '```text'
@@ -80,7 +106,6 @@ jobs:
             cargo -V
             rustc -vV
             echo "product inputs: $product_inputs"
-            echo "platform build inputs: $platform_inputs"
             codesign -dv --verbose=2 "$app" 2>&1
             lipo -archs "$app/Contents/MacOS/StickyMD"
             otool -l "$app/Contents/MacOS/StickyMD" | grep -A4 LC_BUILD_VERSION
@@ -101,7 +126,7 @@ jobs:
         run: |
           set -eu
           zip=$(ls dist/StickyMD-*-macos-arm64-portable.zip)
-          cargo run --quiet -p stickymd-smoke --locked -- release macos-verify-package \
+          cargo run --quiet -p stickymd-package --locked -- macos-verify-package \
             --zip "$zip" --source-sha "$GITHUB_SHA"
       - name: Upload verified workflow artifact
         id: upload
@@ -120,3 +145,34 @@ jobs:
           ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
         run: |
           echo "run ${GITHUB_RUN_ID}, attempt ${GITHUB_RUN_ATTEMPT}, artifact id ${ARTIFACT_ID}" >> "$GITHUB_STEP_SUMMARY"
+
+  verify-artifact:
+    name: Verify the uploaded macOS arm64 artifact
+    needs: build-package
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select Xcode 27.2
+        run: sudo xcode-select --switch /Applications/Xcode_27.2.app/Contents/Developer
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - name: Download the uploaded artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: stickymd-macos-arm64-release-${{ github.run_attempt }}
+          path: dist
+      - name: Verify package
+        run: |
+          set -eu
+          zip=$(ls dist/StickyMD-*-macos-arm64-portable.zip)
+          cargo run --quiet -p stickymd-smoke --locked -- release macos-verify-package \
+            --zip "$zip" --source-sha "$GITHUB_SHA"
+      - name: Record the platform build input fingerprint
+        run: |
+          set -eu
+          platform_inputs=$(cargo run --quiet -p stickymd-smoke --locked -- release platform-inputs --platform macos-arm64 --commit "$GITHUB_SHA")
+          echo "platform build inputs: $platform_inputs" >> "$GITHUB_STEP_SUMMARY"

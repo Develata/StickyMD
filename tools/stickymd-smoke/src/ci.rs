@@ -95,7 +95,11 @@ impl Checks {
                         Module::Core | Module::Render | Module::App | Module::Desktop
                     )
                 }),
-            mac: full || modules.iter().any(|module| module.needs_macos()),
+            // The packaging crate holds the macOS packager, which compiles only on macOS.
+            mac: full
+                || modules
+                    .iter()
+                    .any(|module| module.needs_macos() || *module == Module::Package),
         }
     }
 }

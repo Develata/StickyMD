@@ -41,6 +41,8 @@ fn check(root: &Path, path: &Path) -> Result<(), String> {
     if reaches(root, path, EVIDENCE)
         || is_within(root, path, RESOURCE_DIAGNOSTICS)
         || is_ledger_store(root, path)
+        || reaches_a_link_target(root, path, EVIDENCE)
+        || reaches_a_link_target(root, path, RESOURCE_DIAGNOSTICS)
     {
         return Err(format!(
             "{} is coordinator-owned qualification storage; release outputs go elsewhere",
@@ -48,6 +50,38 @@ fn check(root: &Path, path: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Whether `path` lies in what a link (a symbolic link or a Windows junction) inside `reserved`
+/// points at: a coordinator-owned directory of the evidence tree may live elsewhere, and the
+/// caller may name it by its real location. Links are found without following them.
+fn reaches_a_link_target(root: &Path, path: &Path, reserved: &str) -> bool {
+    let target = normalize(&root.join(path));
+    let mut pending = vec![root.join(reserved)];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let entry = entry.path();
+            if kind.is_symlink() {
+                let linked = normalize(&entry);
+                if target == linked
+                    || target
+                        .strip_prefix(&linked)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+                {
+                    return true;
+                }
+            } else if kind.is_dir() {
+                pending.push(entry);
+            }
+        }
+    }
+    false
 }
 
 /// The store always lives at `<git common dir>/stickymd/qualification-ledger`. Matching

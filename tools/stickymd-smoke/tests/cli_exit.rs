@@ -259,17 +259,6 @@ fn malformed_release_requests_never_emit_a_success_marker() {
         vec!["release", "verify-package", "--exact-candidate"],
         vec!["release", "verify-remote-state", "--kind", "tag"],
         vec!["release", "workspace-version", "--allow-missing"],
-        // The packaging commands moved to stickymd-package; their own argument checks are in
-        // tools/stickymd-package/tests/cli_exit.rs.
-        vec!["release", "notices", "--destination", "x"],
-        vec![
-            "release",
-            "macos-package",
-            "--app",
-            "a",
-            "--output-directory",
-            "o",
-        ],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
             .args(args)
@@ -278,6 +267,44 @@ fn malformed_release_requests_never_emit_a_success_marker() {
             .unwrap();
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stdout.is_empty());
+    }
+}
+
+/// The packaging commands moved to stickymd-package (plan 11 #platform-artifact-reuse); their
+/// own argument checks are in tools/stickymd-package/tests/cli_exit.rs. Naming one here, or the
+/// former `mac-ledger inputs`, fails and says which command replaced it.
+#[test]
+fn moved_packaging_commands_name_their_replacement() {
+    for (args, replacement) in [
+        (
+            vec!["release", "notices", "--destination", "x"],
+            "stickymd-package -- notices",
+        ),
+        (
+            vec![
+                "release",
+                "macos-package",
+                "--app",
+                "a",
+                "--output-directory",
+                "o",
+            ],
+            "stickymd-package -- macos-package",
+        ),
+        (
+            vec!["mac-ledger", "inputs", "--home", "/h"],
+            "stickymd-package -- app-inputs",
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
+            .args(&args)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(replacement), "{args:?}: {stderr}");
     }
 }
 

@@ -33,6 +33,20 @@ pub fn package_command(_: &Path, _: &Path, _: &Path, _: bool) -> Result<(), Stri
     Err("the macOS package is built on macOS".to_owned())
 }
 
+/// The package check on `zip`: what the workflow runs before upload, and what promotion and
+/// `stickymd-smoke release macos-verify-package` run on the same bytes later.
+#[cfg(target_os = "macos")]
+pub fn verify_command(root: &Path, zip: &Path, source: Option<&str>) -> Result<(), String> {
+    let version = crate::repository::workspace_version(root)?;
+    println!("{}", package::verify(zip, source, &version)?.json());
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn verify_command(_: &Path, _: &Path, _: Option<&str>) -> Result<(), String> {
+    Err("the macOS package is checked on macOS".to_owned())
+}
+
 #[cfg(target_os = "macos")]
 pub fn sbom_command(root: &Path, zip: &Path) -> Result<(), String> {
     let published = sbom::publish(root, zip)?;

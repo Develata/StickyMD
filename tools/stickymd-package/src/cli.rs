@@ -29,6 +29,16 @@ pub enum Command {
     MacosSbom {
         zip: PathBuf,
     },
+    /// The PE import gate on the release executable, before packaging (plan 11
+    /// #portable-windows-runtime).
+    NativeRuntime {
+        exe: PathBuf,
+    },
+    /// The macOS package check on a built ZIP, before upload (plan 11 #macos-release-artifact).
+    MacosVerifyPackage {
+        zip: PathBuf,
+        source: Option<String>,
+    },
     /// The macOS product input fingerprint of the checkout (plan 11 #phase-16-macos-host).
     AppInputs {
         home: Option<PathBuf>,
@@ -196,6 +206,13 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "macos-sbom" => Command::MacosSbom {
             zip: PathBuf::from(tokens.take("--zip")?),
         },
+        "native-runtime" => Command::NativeRuntime {
+            exe: PathBuf::from(tokens.take("--exe")?),
+        },
+        "macos-verify-package" => Command::MacosVerifyPackage {
+            zip: PathBuf::from(tokens.take("--zip")?),
+            source: tokens.optional("--source-sha"),
+        },
         "app-inputs" => Command::AppInputs {
             home: tokens.optional("--home").map(PathBuf::from),
         },
@@ -289,4 +306,4 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     Ok(parsed)
 }
 
-pub const USAGE: &str = "usage: stickymd-package <build-package|generate-sbom|package-inputs|prepare-package|publish-package|notices|checksums|prepare-sbom|publish-sbom|syft-plan|syft-publish|syft-verify|macos-package|macos-sbom|app-inputs> [options]; see tools/stickymd-package/README.md";
+pub const USAGE: &str = "usage: stickymd-package <build-package|generate-sbom|package-inputs|prepare-package|publish-package|notices|checksums|prepare-sbom|publish-sbom|syft-plan|syft-publish|syft-verify|native-runtime|macos-package|macos-sbom|macos-verify-package|app-inputs> [options]; see tools/stickymd-package/README.md";

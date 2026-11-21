@@ -137,7 +137,7 @@ impl Fixture {
         fs::create_dir_all(executable.parent().unwrap()).unwrap();
         fs::write(
             &executable,
-            crate::pe_dependencies::tests::synthetic_pe(None, None),
+            crate::pe_dependencies::test_support::synthetic_pe(None, None),
         )
         .unwrap();
         let zip_name = "StickyMD-0.1.1-windows-x64-portable.zip";

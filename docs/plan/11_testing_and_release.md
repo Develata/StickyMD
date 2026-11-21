@@ -762,22 +762,31 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
   - 版本号、`Cargo.toml`、`Cargo.lock`、`rust-toolchain.toml`、`deny.toml`、`LICENSE`、`THIRD_PARTY_NOTICES.md`、`assets/` 的其余部分按原样计入。
   - **打包 crate `tools/stickymd-package/` 整体计入两个平台**（USER 批准 2026-11-21）：发布字节中由仓库工具产出的部分都出自它——Windows 与 macOS 的
     包目录与 ZIP、包内 README 与第三方声明、SBOM 与 checksum，以及 `build-app.sh` 写进 macOS bundle 的产品输入指纹（#phase-16-macos-host），
-    连同它们依赖的公共代码（JSON、哈希、原子写入、临时目录、路径身份与输出守卫）。它只依赖标准库，不依赖 `stickymd-smoke`；`stickymd-smoke`
+    打包前的门（Windows 的 PE import 门，#portable-windows-runtime；macOS 的包检查，#macos-release-artifact），连同它们依赖的公共代码（JSON、哈希、
+    原子写入、临时目录、路径身份与输出守卫）。它只依赖标准库，不依赖 `stickymd-smoke`；`stickymd-smoke`
     依赖它。产出字节的调用点——`build-app.sh`、Windows 的打包与 SBOM 脚本及 `release` 中调用它们的步骤、`release-macos` 的打包与 SBOM
-    步骤——只调用 `stickymd-package` 的二进制，不经过 `stickymd-smoke` 的命令行。
+    步骤与打包前的门——只调用 `stickymd-package` 的二进制，不经过 `stickymd-smoke` 的命令行。`stickymd-smoke` 的晋升、资格化与校验调用同一份库代码。
   - **边界的证明：** crate 依赖由编译器保证打包代码引用不到验证代码，这是放宽的前提。编译器看不到的边，即生产链中不经过 Rust 依赖的输入，由
     governance 测试检查：打包 crate 的清单没有依赖、没有构建脚本；它源码中的 `include!`、`include_str!`、`include_bytes!` 与 `#[path]` 都是普通字面量，
     从所在文件的目录解析后落在两个平台都计入的路径上；它的代码（注释除外）、它启动的脚本、Windows 产出字节的脚本及其 dot-source 的脚本、
-    `build-app.sh`、两个发布 workflow 中产出字节的步骤与各成员的 `build.rs` 都不以包名、crate 名或目录名点到 `stickymd-smoke`，因此既不运行它，
-    也不读它的文件。检查是词法的：在运行时拼出名字这类有意绕开的写法由代码审查承担。
+    `build-app.sh`、两个发布 workflow 的 `build-package` job 与各成员的 `build.rs` 都不以包名、crate 名或目录名点到 `stickymd-smoke`，因此既不运行它，
+    也不读它计入范围之外的文件（版本规范化按根清单的成员表读取每个成员的清单，其中的 `tools/stickymd-smoke/Cargo.toml` 是计入的输入）。
+    检查是词法的：在运行时拼出名字这类有意绕开的写法由代码审查承担。
   - **只改验证工具时：** 即 `tools/stickymd-smoke/` 中上文三个例外以外的文件。两个平台都可以沿用，不重新构建；按下文“沿用后”，受影响的门用
     R 的工具在同一份字节上重跑。
-  - **构建 workflow 中的验证只是自检：** 发布 workflow 在 S 上运行的版本读取、fmt 与 Clippy、构建前测试与构建后校验，其通过结论都不是发布证据；
-    源码测试与受影响的门的通过结论只认 R 上的运行：Windows 是绑定 Source Freeze 的本地 headless CI 收据与 Promote 的重新校验，macOS 是
-    #macos-release-gate 的“R 上的源码测试”与晋升的重新校验。构建本身的事实仍绑定 S，不能在 R 上重现：成功的 run 与 attempt、artifact id、
-    构建来源，以及构建记录中的 SDK、工具链与签名观察。`ci.yml`、`scheduled.yml` 与本地 cache action 仍不计入。这些验证与构建在同一个 job 中运行，改不了打包代码；
-    它们运行时写入被忽略目录（例如 `target/`）的影响不在指纹之内，由代码审查与 R 上对同一份字节的重新校验承担（打包要求工作树干净，
-    所以改动 tracked 文件会让打包失败）。
+  - **产出字节的 job 只运行计入指纹的代码（USER 决定 2026-11-21，方案 A）：** 每个发布 workflow 分为三个 job，各在自己的 runner 上运行：
+    1. `self-check`：版本读取、fmt、Clippy 与源码测试（Windows 为 `tools/smoke/all.ps1 -Ci`，macOS 为共享 crate、宿主与两个工具 crate 的测试），会运行
+       `stickymd-smoke`；
+    2. `build-package`（`needs: self-check`）：只运行计入本平台指纹的代码：祖先关系核对（Git）、产品构建、打包前的门（Windows 的 PE import 门、
+       macOS 的包检查，都在打包 crate 中）、打包、SBOM、构建记录，然后上传 artifact；
+    3. `verify-artifact`（`needs: build-package`）：下载刚上传的 artifact，用 `stickymd-smoke` 在这份字节上校验，并在摘要中写下构建来源的平台指纹。
+
+    run 的结论要求三个 job 都成功，晋升与 TAG、DRAFT、PUBLISH 照旧只认成功的 run 与它上传的 artifact。被排除的代码因此不与产出字节的步骤共用
+    文件系统或环境；governance 检查 `build-package` job 中没有步骤调用 `stickymd-smoke`，且三个 job 的 `needs` 如上。
+  - **自检与校验的证据地位：** S 上 `self-check` 与 `verify-artifact` 的通过结论不是发布证据；源码测试与受影响的门的通过结论只认 R 上的运行：
+    Windows 是绑定 Source Freeze 的本地 headless CI 收据与 Promote 的重新校验，macOS 是 #macos-release-gate 的“R 上的源码测试”与晋升的重新校验。
+    构建本身的事实仍绑定 S，不能在 R 上重现：成功的 run 与 attempt、artifact id、构建来源，以及构建记录中的 SDK、工具链与签名观察。
+    `ci.yml`、`scheduled.yml` 与本地 cache action 仍不计入。
 - **构建来源 S 与发布提交 R 的核对对象：**
   - 绑定 S：构建 run 的 head、包内 README 的 `Source commit`、两个平台 candidate receipt 中的构建来源。
   - 绑定 R：Windows Source Freeze、tag、TAG/DRAFT/PUBLISH 的授权、晋升 workflow 检出与签发证明的提交。
@@ -1159,7 +1168,7 @@ private release lab。
   Redistributable 的原生 Windows 11 上启动；只允许依赖该系统自带的 Win32 DLL 与 API set。
 - `x86_64-pc-windows-msvc` 通过仓库级 target 配置静态链接 MSVC CRT。该配置只是构建输入，
   不能单独作为 artifact 自包含性的证据。
-- std-only `stickymd-smoke` 必须解析 exact Release PE32+ 的普通 import table 与 delay-load
+- std-only 打包 crate `stickymd-package` 必须解析 exact Release PE32+ 的普通 import table 与 delay-load
   import table，并拒绝 `VCRUNTIME*`、`MSVCP*`、版本化 `MSVCR*`、`CONCRT*`、debug UCRT 以及
   GNU C/C++ runtime DLL。Release/package task graph 与 GitHub Release workflow 都必须在打包前
   执行该 gate。
@@ -1175,7 +1184,8 @@ private release lab。
 
 1. `release.yml`（Windows）与 `release-macos.yml`（macOS，#macos-release-artifact）只接受显式 `workflow_dispatch`，分别从
    Source Freeze 或可沿用的构建来源提交构建、测试、deny、检查 manifest、（Windows）native-runtime import 或（macOS）签名与架构、
-   生成 portable ZIP/checksums/license/SBOM 并上传 workflow artifact；它们不创建 tag、draft 或 publish。两个平台各自 dispatch，
+   生成 portable ZIP/checksums/license/SBOM 并上传 workflow artifact，按 #platform-artifact-reuse 分为 `self-check`、`build-package`、`verify-artifact`
+   三个 job；它们不创建 tag、draft 或 publish。两个平台各自 dispatch，
    一侧失败只重跑那一侧。
 2. 两个平台分别本地下载并 Promote 各自的 artifact，完成全部 artifact-bound qualification：Windows readiness 必须为 `READY`，
    macOS 就绪按 #macos-release-gate 成立。

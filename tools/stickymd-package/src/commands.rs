@@ -34,6 +34,10 @@ pub fn execute(root: &Path, command: &Command) -> Result<(), String> {
             allow_dirty,
         } => macos::package_command(root, app, output, *allow_dirty),
         Command::MacosSbom { zip } => macos::sbom_command(root, zip),
+        Command::NativeRuntime { exe } => native_runtime(root, exe),
+        Command::MacosVerifyPackage { zip, source } => {
+            macos::verify_command(root, zip, source.as_deref())
+        }
         Command::AppInputs { home } => {
             println!("{}", app_inputs::compute(root, home.as_deref())?);
             Ok(())
@@ -52,12 +56,28 @@ pub fn execute(root: &Path, command: &Command) -> Result<(), String> {
     }
 }
 
+/// The PE import gate: the release executable imports no developer runtime. A relative path is
+/// the repository's.
+pub fn native_runtime(root: &Path, exe: &Path) -> Result<(), String> {
+    let exe = if exe.is_absolute() {
+        exe.to_path_buf()
+    } else {
+        root.join(exe)
+    };
+    let report = crate::pe_dependencies::verify_portable_executable(&exe)?;
+    println!("PORTABLE_NATIVE_DEPENDENCIES={}", report.imports.join(","));
+    println!("DEVELOPER_RUNTIME_IMPORTS=none");
+    Ok(())
+}
+
 /// Packaging commands write where the caller says, never into qualification storage (the
 /// last-success ledger, the manual observation store, release decisions), which only the
 /// coordinators of `stickymd-smoke` replace under their locks.
 fn guard_outputs(root: &Path, command: &Command) -> Result<(), String> {
     let mut files = Vec::new();
     let mut directories = Vec::new();
+    // Where the commands write when no directory is given.
+    let default_directory = root.join("dist");
     match command {
         Command::Notices { destination, .. } => files.push(destination),
         Command::MacosPackage { output, .. } => directories.push(output),
@@ -69,13 +89,17 @@ fn guard_outputs(root: &Path, command: &Command) -> Result<(), String> {
         Command::PublishSbom(options) => files.extend([&options.output, &options.checksums]),
         Command::PublishPackage(options) => files.extend([&options.output, &options.checksums]),
         Command::PrepareSbom(options) => directories.push(&options.directory),
-        Command::BuildPackage(options) => directories.extend(options.directory.as_ref()),
+        Command::BuildPackage(options) => {
+            directories.push(options.directory.as_ref().unwrap_or(&default_directory));
+        }
         Command::GenerateSbom(options) => {
-            directories.extend(options.directory.as_ref());
+            directories.push(options.directory.as_ref().unwrap_or(&default_directory));
             files.extend(options.output.as_ref());
         }
         // No caller-chosen output: fixed tool caches or no files.
         Command::PackageInputs(_)
+        | Command::NativeRuntime { .. }
+        | Command::MacosVerifyPackage { .. }
         | Command::AppInputs { .. }
         | Command::SyftPlan(_)
         | Command::SyftPublish { .. } => {}
