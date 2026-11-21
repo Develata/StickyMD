@@ -772,40 +772,47 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
   - **边界的证明（闭合世界，USER 决定 2026-11-22）：** crate 依赖由编译器保证打包代码引用不到验证代码，这是放宽的前提。编译器看不到的边，
     即生产链中不经过 Rust 依赖的输入，由 governance 测试按清单检查。每条规则只用四类可判定的事实：与 `stickymd-smoke` 中固定清单或固定副本的
     逐字比较（行尾统一为 LF 后）、对文件全文的原样搜索、Cargo 与 rustc 自己报告的事实、Git 索引中的路径与文件模式（检查在被检提交的干净检出上
-    运行）。检查不解析 Rust、PowerShell 或 YAML 的语法，清单之外一律拒绝。
-    - **Cargo metadata：** 打包 crate 没有依赖、没有构建脚本，它构建发布字节的 target（lib 与 bin；测试、bench、example 不进入发布字节）的源文件都在
-      下一条“编译器读过的文件”之中；workspace 中没有过程宏成员（它们在编译器里运行），二进制名（不分大小写）不重复（被排除的成员无法在
-      workspace 构建的输出中顶替产品）；每个成员的清单两个平台都计入（落在排除区的新成员须先改分类器）；workspace 的构建脚本恰为清单：
-      `apps/stickymd-win/build.rs`。
-    - **编译器读过的文件：** 固定的 workflow 以 dev profile（`cargo run`）运行打包工具，Windows 的发布 job 还以 release profile 构建 workspace。governance 在运行它的平台上
-      对打包 crate 的 lib 与 bin target 按这两个 profile 各运行一次 `cargo check`（使用独立的 target 目录），读取 rustc 为每个编译单元写出的 dep-info
-      （`deps/` 下，路径相对 workspace 根）。其中登记的本地源文件与文件依赖都在 `tools/stickymd-package/` 内，在 Git 索引中是普通文件（不是符号链接），
-      按索引中的原样拼写（因此不含 `..` 与绝对路径），且两个平台都计入；需要反转义的路径（含空格或 `$`）被拒。dep-info 中不得有环境读取
-      （`# env-dep:`）：由环境变量在编译期选择的文件（例如以 `env!` 拼出的 include 路径）在 `self-check` 与 `build-package` 中可能不同，self-check
-      的那次编译证明不了发布 job 的那次。模块文件、`#[path]` 与三个 include
-      宏读入的文件，无论怎么写、经过别名还是宏展开，都由 rustc 登记。这只证明 Rust 前端登记的输入：标准库来自固定的 Rust 工具链（`rust-toolchain.toml`，
-      计入）；原生链接器、SDK 与导入库（如 Windows 打包代码链接的 `Bcrypt.lib`）属于平台构建环境（runner 镜像），不由本检查证明。两个平台的 `self-check` 都运行这项检查（Windows 经 `tools/smoke/all.ps1 -Ci` 中的 governance，macOS 经
-      `stickymd-smoke` 的测试），各自覆盖本平台 `cfg` 下编译的文件。
+    运行）。检查不解析 Rust、PowerShell 或 YAML 的语法，清单之外一律拒绝。路径只在 Windows 上把 `\` 视为分隔符，其他平台上含 `\` 的路径被拒。
+    - **Cargo metadata：** 打包 crate 没有依赖、没有构建脚本、没有 feature；workspace 中没有过程宏成员（它们在编译器里运行），二进制名（按 Unicode
+      小写比较）不重复（被排除的成员无法在 workspace 构建的输出中顶替产品）；每个成员的清单在 Git 索引中是普通文件，按索引中的路径两个平台都
+      计入（落在排除区的新成员须先改分类器）；workspace 的构建脚本恰为清单（成员与路径成对）：`stickymd-win` 的 `apps/stickymd-win/build.rs`，
+      且没有成员声明依赖 `stickymd-win`。
+    - **编译器读过的文件：** 固定的 workflow 以 dev profile（`cargo run`）运行打包工具，Windows 的发布 job 还以 release profile 构建 workspace。
+      governance 在运行它的平台上，为每次检查新建私有目录（同时作为 Cargo 的 target 与 build 目录），对打包 crate 的 lib 与 bin target 按这两个
+      profile 各运行一次 `cargo check`。在每个 profile 中，打包 crate 的每个 lib 与 bin target 恰有一个新编译（`fresh: false`）的编译单元，它的
+      dep-info 登记它自己的入口文件；dep-info 的规则行与逐文件行列出同一组文件，否则拒绝。这些 dep-info 登记的本地源文件与文件依赖都在
+      `tools/stickymd-package/` 内，在 Git 索引中是普通文件（不是符号链接），按索引中的原样拼写（因此不含 `..` 与绝对路径），且两个平台都计入；
+      需要反转义的路径（含空格或 `$`）被拒。dep-info 中不得有环境读取（`# env-dep:`）：由环境变量在编译期选择的文件（例如以 `env!` 拼出的
+      include 路径）在 `self-check` 与 `build-package` 中可能不同。模块文件、`#[path]` 与三个 include 宏读入的文件，无论怎么写、经过别名还是宏展开，
+      都由 rustc 登记。这只证明 Rust 前端登记的输入：标准库来自固定的 Rust 工具链（`rust-toolchain.toml`，计入）；原生链接器、SDK 与导入库（如
+      Windows 打包代码链接的 `Bcrypt.lib`）属于平台构建环境（runner 镜像），不由本检查证明。两个平台的 `self-check` 都运行这项检查（Windows 经
+      `tools/smoke/all.ps1 -Ci` 中的 governance，macOS 经 `stickymd-smoke` 的测试），各自覆盖本平台 `cfg` 下编译的文件。
     - **构建脚本：** 清单中的构建脚本的全文中没有 `../`、`..\` 与 `".."`。固定的 Windows 发布 job 以 workspace 构建，会运行它；固定的 macOS 发布构建
-      只选择 `stickymd-package`（`cargo run`）与 `stickymd-mac`（`build-app.sh`），二者的依赖都不含 `stickymd-win`，所以它只在 Windows 构建中运行，
+      只选择 `stickymd-package`（`cargo run`）与 `stickymd-mac`（`build-app.sh`），而没有成员依赖 `stickymd-win`，所以它只在 Windows 构建中运行，
       它所在的成员目录计入 Windows 指纹。它自己声明的模块与引入的文件不在 dep-info 检查之内，归入下文“剩余”；名字搜索覆盖其中位于
       `apps/` 与 `crates/` 下的跟踪文件。
     - **脚本：** Windows 产出字节的脚本按保守清单检查：`tools/release/` 下的 `package.ps1`、`generate-sbom.ps1`、`invoke-package.ps1`、
       `package-archive.ps1`、`syft-fetch.ps1`、`syft-execute.ps1`（从固定的 `build-package` job 可达），以及保守纳入的 `generate-third-party-notices.ps1`
       （独立入口，经包装函数启动打包工具）与 `archive-facts.ps1`（打包库直接启动，供校验与晋升使用）。每个都按此拼写在 Git 索引中是普通文件，
-      并计入 Windows 指纹。这些脚本与打包 crate 中编译器读过的文件里，每处 `.ps1`（不分大小写）紧前的文件名（字母、数字、`.`、`_`、`-` 组成的
-      最长串）都在清单中，且文件名前一个字符不是 `/` 或 `\`；`build-app.sh` 中没有 `.ps1`。
-    - **workflow：** 每个发布 workflow 的全文等于 `stickymd-smoke` 中的固定副本；副本经审查具有上文 `dependency-policy` 与三个发布 job 的结构，改动
-      workflow 须同时改副本。
+      计入 Windows 指纹，且是合法的 UTF-8（其他编码中名字的字节可能不连续）。这些脚本与打包 crate 中编译器读过的文件里，每处 `.ps1`（不分
+      大小写）紧前的文件名（ASCII 字母、数字、`.`、`_`、`-` 组成的最长串）都在清单中，文件名前一个字节是 ASCII 且不是 `/` 或 `\`；
+      `build-app.sh` 中没有 `.ps1`。
+    - **workflow：** 每个发布 workflow 的全文等于 `stickymd-smoke` 中的固定副本；副本恰为分类器计入的 `.github/` 文件（两个发布 workflow），副本经审查
+      具有上文 `dependency-policy` 与三个发布 job 的结构，改动 workflow 须同时改副本。
+    - **清单与合同：** 代码中的脚本清单、构建脚本清单与 profile 恰为本条所列；测试按本条原文核对，改清单须同时改合同。
     - **名字：** 在打包 crate 中编译器读过的文件、清单中的脚本、`build-app.sh`、`crates/` 与 `apps/` 下被 Git 跟踪的全部文件（产品 crate 与构建脚本，
       含构建脚本可能声明的模块），以及每个固定副本中从 `  build-package:` 行到 `  verify-artifact:` 行之间的文本里原样搜索（不分大小写，注释也算）：
       不出现 `stickymd-smoke`、`stickymd_smoke`、`invoke-smoke.ps1`、`Invoke-StickyMdReleaseTool` 与 `tools/smoke/`（两种分隔符）。
 
+    **前提：** `self-check` 与 `build-package` 运行同一份固定 workflow、同一 runner 标签、同一检出与工具链；两者的有效编译配置（runner 环境中的
+    `RUSTFLAGS`、`CARGO_BUILD_TARGET`、Cargo home 中的配置）相同。检查只能观察本 job 的编译，这一前提不由它证明；固定 workflow 不设置这些变量，
+    仓库内的 `.cargo/config.toml` 计入指纹。打包 crate 没有依赖与 feature，workspace 的 feature 合并改变不了它。
+
     **剩余：** 以下不能由这些事实证明，由代码审查承担：清单中的文件在运行时做什么，例如运行时拼出的名字或路径（`Join-Path` 的目录参数）、不含
-    上述名字的命令，以及已审文件在运行时选择读取的被排除文件（之后只改被读文件时，指纹不变）；清单中构建脚本自己的模块与引入的文件读什么，以及它们引入的、位于 `apps/` 与 `crates/` 之外的文件；
-    产品 crate 读取其他被排除区域（如 `docs/`）的文件，这不属于本边界。检查器与固定副本本身位于被排除的验证工具中，它们的改动由代码审查与
-    R 上的重新校验承担。在这些前提下，产出字节的代码既不运行验证工具，也不读它计入范围之外的文件（版本规范化按根清单的成员表读取每个成员的
-    清单，其中的 `tools/stickymd-smoke/Cargo.toml` 是计入的输入）。
+    上述名字的命令，以及已审文件在运行时选择读取的被排除文件（之后只改被读文件时，指纹不变）；清单中构建脚本自己的模块与引入的文件读什么，
+    以及它们引入的、位于 `apps/` 与 `crates/` 之外的文件；产品 crate 读取其他被排除区域（如 `docs/`）的文件，这不属于本边界。检查器与固定副本本身
+    位于被排除的验证工具中，它们的改动由代码审查与 R 上的重新校验承担。在这些前提下，产出字节的代码既不运行验证工具，也不读它计入范围之外的
+    文件（版本规范化按根清单的成员表读取每个成员的清单，其中的 `tools/stickymd-smoke/Cargo.toml` 是计入的输入）。
   - **只改验证工具时：** 即 `tools/stickymd-smoke/` 中上文三个例外以外的文件。两个平台都可以沿用，不重新构建；按下文“沿用后”，受影响的门用
     R 的工具在同一份字节上重跑。
   - **产出字节的 job 只运行计入指纹的代码（USER 决定 2026-11-21，方案 A）：** 每个发布 workflow 在依赖策略 job（`dependency-policy`，

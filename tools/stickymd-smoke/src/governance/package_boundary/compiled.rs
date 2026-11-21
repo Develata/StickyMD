@@ -1,44 +1,75 @@
-//! The files rustc reads compiling a package's lib and bin targets, as rustc itself lists them in
-//! the dep-info it writes: source modules, `#[path]` files and everything `include!`,
+//! The files rustc registers compiling a package's lib and bin targets, as rustc itself lists them
+//! in the dep-info it writes: source modules, `#[path]` files and everything `include!`,
 //! `include_str!` and `include_bytes!` read, however the code spells, renames or expands them.
-//! The paths are kept exactly as written there (relative to the workspace root, `/`-separated),
-//! so a `..` or an absolute path stays visible to the caller's rules.
+//! Each check compiles afresh in a private directory, in every profile the pinned workflows use,
+//! and proves one fresh unit per expected target whose dep-info names that target's own entry.
+//! Paths are kept as written (relative to the workspace root), so a `..` or an absolute path
+//! stays visible to the caller's rules; only Windows reads `\` as a separator.
 //! plan_ref: docs/plan/11_testing_and_release.md#platform-artifact-reuse
 
-use crate::release::json;
-use std::path::{Path, PathBuf};
-
-/// The Cargo that runs this tool when there is one (Cargo sets `CARGO` for what it runs), else the
-/// one on `PATH`.
-pub(super) fn cargo() -> std::ffi::OsString {
-    std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into())
-}
+use crate::release::json::{self, Value};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 /// The profiles the pinned release workflows compile the packaging crate in: `cargo run` (dev)
 /// runs it, the Windows workspace build (release) builds it too.
-const PROFILES: &[&str] = &["dev", "release"];
+pub(super) const PROFILES: &[&str] = &["dev", "release"];
 
-/// Checks `package`'s lib and bin targets for the host in the workspace at `root`, in each of
-/// [`PROFILES`], with its own `target_dir` so that it never waits on the build directory of a
-/// caller's Cargo, and returns the union of their dep-info paths, sorted.
-pub(super) fn files(root: &Path, package: &str, target_dir: &Path) -> Result<Vec<String>, String> {
-    let mut files = Vec::new();
-    for profile in PROFILES {
-        files.extend(files_in(root, package, target_dir, profile)?);
-    }
-    files.sort();
-    files.dedup();
-    Ok(files)
+/// A lib or bin target the compilation must produce a unit for.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct Target {
+    /// `lib` or `bin`.
+    pub(super) kind: String,
+    pub(super) name: String,
+    /// The entry file, relative to the workspace root.
+    pub(super) source: String,
 }
 
-fn files_in(
+/// Cargo from `PATH`: through rustup it is the toolchain `rust-toolchain.toml` pins. An inherited
+/// `CARGO` could name any executable.
+pub(super) fn cargo() -> std::process::Command {
+    std::process::Command::new("cargo")
+}
+
+/// A path as rustc or Cargo wrote it, with `/` as the separator: on Windows `\` is one too; on
+/// other hosts a `\` is a character of the name, which no tracked input of this repository uses,
+/// so such a path is refused rather than read as another file.
+pub(super) fn normalize(path: &str) -> Result<String, String> {
+    if cfg!(windows) {
+        Ok(path.replace('\\', "/"))
+    } else if path.contains('\\') {
+        Err(format!(
+            "{path:?} holds a backslash, which names no tracked input here"
+        ))
+    } else {
+        Ok(path.to_owned())
+    }
+}
+
+/// Checks `package` in the workspace at `root` in each of [`PROFILES`], in a new private
+/// directory, and returns the union of the files the expected targets' units registered.
+pub(super) fn files(root: &Path, package: &str, targets: &[Target]) -> Result<Vec<String>, String> {
+    let directory = stickymd_package::temporary::TemporaryDirectory::new("package-boundary")?;
+    let mut files = BTreeSet::new();
+    for profile in PROFILES {
+        files.extend(files_in(root, package, targets, directory.path(), profile)?);
+    }
+    directory.close()?;
+    Ok(files.into_iter().collect())
+}
+
+pub(super) fn files_in(
     root: &Path,
     package: &str,
-    target_dir: &Path,
+    targets: &[Target],
+    directory: &Path,
     profile: &str,
 ) -> Result<Vec<String>, String> {
-    let output = std::process::Command::new(cargo())
+    // The build directory holds the units and their dep-info; pinning it to the private directory
+    // too keeps an inherited `CARGO_BUILD_BUILD_DIR` from pointing at a shared, older one.
+    let output = cargo()
         .current_dir(root)
+        .env("CARGO_BUILD_BUILD_DIR", directory.join("build"))
         .args([
             "check",
             "--locked",
@@ -52,25 +83,45 @@ fn files_in(
             profile,
         ])
         .arg("--target-dir")
-        .arg(target_dir)
+        .arg(directory.join("target"))
         .output()
         .map_err(|error| format!("cannot start `cargo check`: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "`cargo check -p {package} --profile {profile}` failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
     let stdout = String::from_utf8(output.stdout)
         .map_err(|_| "`cargo check` output is not UTF-8".to_owned())?;
-    let mut files = Vec::new();
-    let mut artifacts = 0;
-    for line in stdout.lines() {
-        let Ok(message) = json::parse(line) else {
-            continue;
-        };
+    let messages: Vec<Value> = stdout
+        .lines()
+        .map(json::parse)
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("`cargo check` wrote a line that is not JSON: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "`cargo check -p {package} --profile {profile}` failed: {}{}",
+            String::from_utf8_lossy(&output.stderr).trim(),
+            compiler_errors(&messages)
+        ));
+    }
+    let mut units: BTreeMap<Target, Vec<String>> = BTreeMap::new();
+    for message in &messages {
         if message.field("reason").and_then(|r| r.string()).ok() != Some("compiler-artifact") {
             continue;
+        }
+        let target = message.field("target")?;
+        let kinds = target.field("kind")?.array()?;
+        let kind = ["lib", "bin"]
+            .into_iter()
+            .find(|wanted| kinds.iter().any(|kind| kind.string() == Ok(*wanted)))
+            .ok_or_else(|| format!("`cargo check` built an unexpected unit: {kinds:?}"))?;
+        let name = target.field("name")?.string()?.to_owned();
+        let expected = targets
+            .iter()
+            .find(|t| t.kind == kind && t.name == name)
+            .ok_or_else(|| {
+                format!("`cargo check` built the {kind} `{name}`, which metadata does not list")
+            })?;
+        if !matches!(message.field("fresh")?, Value::Bool(false)) {
+            return Err(format!(
+                "the {kind} `{name}` ({profile}) was not compiled afresh; its dep-info could be from another source state"
+            ));
         }
         let rmeta = message
             .field("filenames")?
@@ -78,24 +129,53 @@ fn files_in(
             .iter()
             .filter_map(|name| name.string().ok())
             .find(|name| name.ends_with(".rmeta"))
-            .ok_or_else(|| format!("a `cargo check` artifact of {package} has no .rmeta"))?
-            .to_owned();
-        let dep_info = dep_info_path(Path::new(&rmeta))?;
+            .ok_or_else(|| format!("the {kind} `{name}` ({profile}) has no .rmeta"))?;
+        let dep_info = dep_info_path(Path::new(rmeta))?;
         let text = std::fs::read_to_string(&dep_info)
             .map_err(|e| format!("{}: {e}", dep_info.display()))?;
-        files.extend(parse(&text).map_err(|e| format!("{}: {e}", dep_info.display()))?);
-        artifacts += 1;
+        let paths = parse(&text).map_err(|e| format!("{}: {e}", dep_info.display()))?;
+        if !paths.contains(&expected.source) {
+            return Err(format!(
+                "the dep-info of the {kind} `{name}` ({profile}) does not name its entry {}",
+                expected.source
+            ));
+        }
+        if units.insert(expected.clone(), paths).is_some() {
+            return Err(format!(
+                "`cargo check` reported the {kind} `{name}` ({profile}) twice"
+            ));
+        }
     }
-    if artifacts == 0 || files.is_empty() {
-        return Err(format!(
-            "`cargo check -p {package} --profile {profile}` reported no compiled files; a check of nothing proves nothing"
-        ));
+    for target in targets {
+        if !units.contains_key(target) {
+            return Err(format!(
+                "`cargo check --profile {profile}` compiled no unit for the {} `{}`",
+                target.kind, target.name
+            ));
+        }
     }
-    Ok(files)
+    Ok(units.into_values().flatten().collect())
+}
+
+/// The rendered error diagnostics among Cargo's messages, at most a few, for a failed check.
+fn compiler_errors(messages: &[Value]) -> String {
+    let errors: Vec<&str> = messages
+        .iter()
+        .filter(|m| m.field("reason").and_then(|r| r.string()).ok() == Some("compiler-message"))
+        .filter_map(|m| m.field("message").ok())
+        .filter(|m| m.field("level").and_then(|l| l.string()).ok() == Some("error"))
+        .filter_map(|m| m.field("rendered").and_then(|r| r.string()).ok())
+        .take(3)
+        .collect();
+    if errors.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", errors.join("\n"))
+    }
 }
 
 /// `deps/libNAME-HASH.rmeta` → `deps/NAME-HASH.d`, where rustc writes the dep-info.
-fn dep_info_path(rmeta: &Path) -> Result<PathBuf, String> {
+fn dep_info_path(rmeta: &Path) -> Result<std::path::PathBuf, String> {
     let stem = rmeta
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -104,28 +184,52 @@ fn dep_info_path(rmeta: &Path) -> Result<PathBuf, String> {
     Ok(rmeta.with_file_name(format!("{stem}.d")))
 }
 
-/// The dependencies of a Makefile-style dep-info: rustc writes one `path:` line per file it read
-/// (besides the rules that list them all). An environment read (`# env-dep:NAME`) is refused: a
-/// file chosen through `env!` at compile time can differ between the check and the release job.
-/// An escaped space or a `$` is refused rather than unescaped; repository paths have neither.
+/// The files of a Makefile-style dep-info as rustc writes it: one rule per output
+/// (`OUTPUT: FILE FILE …`) and one `FILE:` line per file. Every rule and the file lines must name
+/// the same set, so no file can be dropped by a line the reader skips. An environment read
+/// (`# env-dep:NAME`) is refused, since a file chosen through `env!` at compile time can differ
+/// between the check and the release job; an escaped space or a `$` is refused rather than
+/// unescaped (repository paths have neither); any other line is refused.
 pub(super) fn parse(text: &str) -> Result<Vec<String>, String> {
-    let mut paths = Vec::new();
+    let mut rules: Vec<BTreeSet<String>> = Vec::new();
+    let mut files = BTreeSet::new();
     for line in text.lines() {
-        if let Some(variable) = line.strip_prefix("# env-dep:") {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(read) = line.strip_prefix("# env-dep:") {
+            let variable = read.split('=').next().unwrap_or(read);
             return Err(format!(
                 "the compilation reads the environment variable {variable}; plan 11 admits no environment read"
             ));
         }
-        if line.is_empty() || line.starts_with('#') || line.contains(": ") {
-            continue;
+        if line.contains("\\ ") || line.contains('$') {
+            return Err(format!("dep-info line {line:?} needs unescaping"));
         }
-        let Some(path) = line.strip_suffix(':') else {
+        if let Some((output, inputs)) = line.split_once(": ") {
+            if !(output.ends_with(".d") || output.ends_with(".rmeta")) {
+                return Err(format!("unexpected dep-info rule for {output:?}"));
+            }
+            rules.push(
+                inputs
+                    .split(' ')
+                    .filter(|input| !input.is_empty())
+                    .map(normalize)
+                    .collect::<Result<_, _>>()?,
+            );
+        } else if let Some(file) = line.strip_suffix(':') {
+            files.insert(normalize(file)?);
+        } else {
             return Err(format!("unexpected dep-info line {line:?}"));
-        };
-        if path.contains("\\ ") || path.contains('$') || path.is_empty() {
-            return Err(format!("dep-info path {path:?} needs unescaping"));
         }
-        paths.push(path.replace('\\', "/"));
     }
-    Ok(paths)
+    if rules.is_empty() || files.is_empty() {
+        return Err("dep-info without a rule or a file".to_owned());
+    }
+    if let Some(rule) = rules.iter().find(|rule| **rule != files) {
+        return Err(format!(
+            "a dep-info rule lists {rule:?}, the file lines {files:?}"
+        ));
+    }
+    Ok(files.into_iter().collect())
 }

@@ -17,6 +17,27 @@ pub(super) const RELEASE_WORKFLOWS: &[(&str, &str)] = &[
     ),
 ];
 
+/// The pinned workflows are exactly the `.github/` files of the index that a platform's
+/// fingerprint counts: dropping a pin, or a platform counting another workflow, is refused.
+pub(super) fn check_pinned_set(
+    index: &std::collections::BTreeMap<String, String>,
+    counted_by_a_platform: &dyn Fn(&str) -> bool,
+) -> Result<(), String> {
+    let counted: Vec<&str> = index
+        .keys()
+        .map(String::as_str)
+        .filter(|path| path.starts_with(".github/") && counted_by_a_platform(path))
+        .collect();
+    let mut pinned: Vec<&str> = RELEASE_WORKFLOWS.iter().map(|(path, _)| *path).collect();
+    pinned.sort_unstable();
+    if counted != pinned {
+        return Err(format!(
+            "the fingerprint counts the workflows {counted:?}, but stickymd-smoke pins {pinned:?}"
+        ));
+    }
+    Ok(())
+}
+
 const BUILD_PACKAGE: &str = "  build-package:";
 const AFTER_BUILD_PACKAGE: &str = "  verify-artifact:";
 

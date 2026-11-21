@@ -9,6 +9,13 @@ fn the_real_repository_keeps_the_boundary() {
     verify(&root).unwrap();
 }
 
+fn index_of(entries: &[(&str, &str)]) -> Index {
+    entries
+        .iter()
+        .map(|(path, mode)| ((*path).to_owned(), (*mode).to_owned()))
+        .collect()
+}
+
 fn metadata(packages: &str) -> Value {
     json::parse(&format!(
         r#"{{"workspace_root":"/r","packages":[{packages}]}}"#
@@ -16,51 +23,130 @@ fn metadata(packages: &str) -> Value {
     .unwrap()
 }
 
-const PACKAGING: &str = r#"{"name":"stickymd-package","manifest_path":"/r/tools/stickymd-package/Cargo.toml","dependencies":[],"targets":[{"kind":["lib"],"name":"stickymd_package","src_path":"/r/tools/stickymd-package/src/lib.rs"},{"kind":["bin"],"name":"stickymd-package","src_path":"/r/tools/stickymd-package/src/main.rs"}]}"#;
+const PACKAGING: &str = r#"{"name":"stickymd-package","manifest_path":"/r/tools/stickymd-package/Cargo.toml","dependencies":[],"features":{},"targets":[{"kind":["lib"],"name":"stickymd_package","src_path":"/r/tools/stickymd-package/src/lib.rs"},{"kind":["bin"],"name":"stickymd-package","src_path":"/r/tools/stickymd-package/src/main.rs"}]}"#;
 const WIN: &str = r#"{"name":"stickymd-win","manifest_path":"/r/apps/stickymd-win/Cargo.toml","dependencies":[],"targets":[{"kind":["bin"],"name":"stickymd-win","src_path":"/r/apps/stickymd-win/src/main.rs"},{"kind":["custom-build"],"name":"build-script-build","src_path":"/r/apps/stickymd-win/build.rs"}]}"#;
+
+fn member(name: &str, directory: &str, targets: &str, dependencies: &str) -> String {
+    format!(
+        r#"{{"name":"{name}","manifest_path":"/r/{directory}Cargo.toml","dependencies":[{dependencies}],"targets":[{targets}]}}"#
+    )
+}
 
 /// Cargo's decoded metadata decides, whatever the TOML spelling.
 #[test]
 fn the_workspace_is_read_from_cargo_metadata() {
-    let counted = |_: &str| true;
-    let check = |packages: &str| check_metadata(&metadata(packages), &counted);
+    let index = index_of(&[
+        ("Cargo.toml", "100644"),
+        ("tools/stickymd-package/Cargo.toml", "100644"),
+        ("apps/stickymd-win/Cargo.toml", "100644"),
+        ("crates/helper/Cargo.toml", "100644"),
+        ("crates/other/Cargo.toml", "100644"),
+        ("tools/stickymd-smoke/Cargo.toml", "100644"),
+        ("docs/helper/Cargo.toml", "100644"),
+    ]);
+    let check = |packages: &str| check_metadata(&metadata(packages), &index, &|_| true);
     // A test target ships nothing and is not among the targets returned.
     let with_test = PACKAGING.replace(
         r#"]}"#,
         r#",{"kind":["test"],"name":"cli_exit","src_path":"/r/tools/stickymd-package/tests/cli_exit.rs"}]}"#,
     );
+    let targets = check(&format!("{with_test},{WIN}")).unwrap();
     assert_eq!(
-        check(&format!("{with_test},{WIN}")).unwrap(),
+        targets
+            .iter()
+            .map(|t| (t.kind.as_str(), t.name.as_str(), t.source.as_str()))
+            .collect::<Vec<_>>(),
         [
-            "tools/stickymd-package/src/lib.rs",
-            "tools/stickymd-package/src/main.rs"
+            (
+                "lib",
+                "stickymd_package",
+                "tools/stickymd-package/src/lib.rs"
+            ),
+            (
+                "bin",
+                "stickymd-package",
+                "tools/stickymd-package/src/main.rs"
+            )
         ]
     );
     // A root package (manifest `Cargo.toml`) without a build script is an ordinary member.
-    let root_package = r#"{"name":"root","manifest_path":"/r/Cargo.toml","dependencies":[],"targets":[{"kind":["lib"],"name":"root","src_path":"/r/src/lib.rs"}]}"#;
+    let root_package = member(
+        "root",
+        "",
+        r#"{"kind":["lib"],"name":"root","src_path":"/r/src/lib.rs"}"#,
+        "",
+    );
     check(&format!("{PACKAGING},{WIN},{root_package}")).unwrap();
-    // A member whose manifest a platform does not count.
     let error = check_metadata(
         &metadata(&format!("{PACKAGING},{WIN},{root_package}")),
+        &index,
         &|path| path != "Cargo.toml",
     )
     .unwrap_err();
-    assert!(error.contains("not counted by both platforms"), "{error}");
+    assert!(error.contains("counted by both platforms"), "{error}");
+
     let dependency = PACKAGING.replace(
         r#""dependencies":[]"#,
         r#""dependencies":[{"name":"stickymd-smoke"}]"#,
     );
+    let feature = PACKAGING.replace(r#""features":{}"#, r#""features":{"extra":[]}"#);
     let packaging_script = PACKAGING.replace(r#""kind":["lib"]"#, r#""kind":["custom-build"]"#);
-    let macro_member = r#"{"name":"helper","manifest_path":"/r/crates/helper/Cargo.toml","dependencies":[],"targets":[{"kind":["proc-macro"],"name":"helper","src_path":"/r/crates/helper/src/lib.rs"}]}"#;
-    let impostor = r#"{"name":"other","manifest_path":"/r/crates/other/Cargo.toml","dependencies":[],"targets":[{"kind":["bin"],"name":"StickyMD-Win","src_path":"/r/crates/other/src/main.rs"}]}"#;
-    let smoke_script = r#"{"name":"stickymd-smoke","manifest_path":"/r/tools/stickymd-smoke/Cargo.toml","dependencies":[],"targets":[{"kind":["custom-build"],"name":"build-script-build","src_path":"/r/tools/stickymd-smoke/build.rs"}]}"#;
+    let macro_member = member(
+        "helper",
+        "crates/helper/",
+        r#"{"kind":["proc-macro"],"name":"helper","src_path":"/r/crates/helper/src/lib.rs"}"#,
+        "",
+    );
+    let impostor = member(
+        "other",
+        "crates/other/",
+        r#"{"kind":["bin"],"name":"StickyMD-Win","src_path":"/r/crates/other/src/main.rs"}"#,
+        "",
+    );
+    let unicode = |name: &str, directory: &str| {
+        member(
+            name,
+            directory,
+            &format!(
+                r#"{{"kind":["bin"],"name":"{name}","src_path":"/r/{directory}src/main.rs"}}"#
+            ),
+            "",
+        )
+    };
+    let smoke_script = member(
+        "stickymd-smoke",
+        "tools/stickymd-smoke/",
+        r#"{"kind":["custom-build"],"name":"build-script-build","src_path":"/r/tools/stickymd-smoke/build.rs"}"#,
+        "",
+    );
     let moved = WIN.replace(
         "apps/stickymd-win/build.rs",
         "apps/stickymd-win/tools/build.rs",
     );
     let unlisted = WIN.replace(r#""kind":["custom-build"]"#, r#""kind":["example"]"#);
+    // The same script path, claimed by another member.
+    let other_owner = member(
+        "other",
+        "crates/other/",
+        r#"{"kind":["custom-build"],"name":"build-script-build","src_path":"/r/apps/stickymd-win/build.rs"}"#,
+        "",
+    );
+    let depends_on_win = member(
+        "helper",
+        "crates/helper/",
+        r#"{"kind":["lib"],"name":"helper","src_path":"/r/crates/helper/src/lib.rs"}"#,
+        r#"{"name":"stickymd-win"}"#,
+    );
+    // Cargo's spelling of a manifest that Git records in another case.
+    let case_variant = member(
+        "helper",
+        "Docs/helper/",
+        r#"{"kind":["lib"],"name":"helper","src_path":"/r/Docs/helper/src/lib.rs"}"#,
+        "",
+    );
     for (packages, reason) in [
         (format!("{dependency},{WIN}"), "declares a dependency"),
+        (format!("{feature},{WIN}"), "declares a feature"),
         (
             format!("{packaging_script},{WIN}"),
             "stickymd-package has a build script",
@@ -74,11 +160,31 @@ fn the_workspace_is_read_from_cargo_metadata() {
             "two workspace targets build the binary",
         ),
         (
+            format!(
+                "{PACKAGING},{WIN},{},{}",
+                unicode("Édit", "crates/helper/"),
+                unicode("édit", "crates/other/")
+            ),
+            "two workspace targets build the binary",
+        ),
+        (
             format!("{PACKAGING},{WIN},{smoke_script}"),
             "plan 11 lists exactly",
         ),
         (format!("{PACKAGING},{moved}"), "plan 11 lists exactly"),
         (format!("{PACKAGING},{unlisted}"), "plan 11 lists exactly"),
+        (
+            format!("{PACKAGING},{unlisted},{other_owner}"),
+            "plan 11 lists exactly",
+        ),
+        (
+            format!("{PACKAGING},{WIN},{depends_on_win}"),
+            "depends on stickymd-win",
+        ),
+        (
+            format!("{PACKAGING},{WIN},{case_variant}"),
+            "not a regular tracked file",
+        ),
         (WIN.to_owned(), "lists no stickymd-package"),
     ] {
         let error = check(&packages).unwrap_err();
@@ -116,11 +222,8 @@ fn the_git_index_records_paths_with_their_modes() {
     directory.close().unwrap();
 }
 
-/// rustc registers, in its dep-info, the local files it reads: an out-of-line module, a `#[path]`
-/// file, `include!`, a renamed `include_str!`, an include inside a macro, and an `include_bytes!`
-/// that leaves the crate, written as the code wrote it.
-#[test]
-fn rustc_registers_the_files_it_reads() {
+/// A scratch workspace with one lib and one bin, whose lib reads files every way rustc can.
+fn probe() -> (stickymd_package::temporary::TemporaryDirectory, Vec<Target>) {
     let directory = stickymd_package::temporary::TemporaryDirectory::new("boundary-probe").unwrap();
     let workspace = directory.path().join("ws");
     std::fs::create_dir_all(workspace.join("src")).unwrap();
@@ -136,59 +239,134 @@ fn rustc_registers_the_files_it_reads() {
     );
     write(
         "src/lib.rs",
-        "mod a;\n#[path = \"b.in\"]\nmod b;\ninclude!(\"c.in\");\nuse core::include_str as renamed;\npub const D: &str = renamed!(\"d.txt\");\nmacro_rules! m { () => { include_str!(\"f.txt\") } }\npub const F: &str = m!();\npub const E: &[u8] = include_bytes!(\"../../outside/e.bin\");\n",
+        "mod a;\n#[path = \"b.in\"]\nmod b;\ninclude!(\"c.in\");\nuse core::include_str as renamed;\npub const D: &str = renamed!(\"d.txt\");\nmacro_rules! m { () => { include_str!(\"f.txt\") } }\npub const F: &str = m!();\npub const E: &[u8] = include_bytes!(\"../../outside/e.bin\");\n#[cfg(debug_assertions)]\npub const P: &str = include_str!(\"dev.txt\");\n#[cfg(not(debug_assertions))]\npub const P: &str = include_str!(\"release.txt\");\n",
     );
+    write("src/main.rs", "fn main() {}\n");
     write("src/a.rs", "pub fn a() {}\n");
     write("src/b.in", "pub fn b() {}\n");
     write("src/c.in", "pub fn c() {}\n");
-    write("src/d.txt", "d");
-    write("src/f.txt", "f");
+    for file in ["d.txt", "f.txt", "dev.txt", "release.txt"] {
+        write(&format!("src/{file}"), "x");
+    }
     std::fs::write(directory.path().join("outside/e.bin"), "e").unwrap();
-    let files = compiled::files(&workspace, "probe", &workspace.join("target")).unwrap();
+    let target = |kind: &str, source: &str| Target {
+        kind: kind.to_owned(),
+        name: "probe".to_owned(),
+        source: source.to_owned(),
+    };
+    (
+        directory,
+        vec![target("lib", "src/lib.rs"), target("bin", "src/main.rs")],
+    )
+}
+
+/// rustc registers, in its dep-info, the local files it reads: an out-of-line module, a `#[path]`
+/// file, `include!`, a renamed `include_str!`, an include inside a macro, an `include_bytes!` that
+/// leaves the crate (written as the code wrote it), and a file only one profile reads.
+#[test]
+fn rustc_registers_the_files_it_reads_in_each_profile() {
+    let (directory, targets) = probe();
+    let workspace = directory.path().join("ws");
+    let files = compiled::files(&workspace, "probe", &targets).unwrap();
     for expected in [
         "src/lib.rs",
+        "src/main.rs",
         "src/a.rs",
         "src/b.in",
         "src/c.in",
         "src/d.txt",
         "src/f.txt",
         "src/../../outside/e.bin",
+        "src/dev.txt",
+        "src/release.txt",
     ] {
         assert!(
             files.iter().any(|file| file == expected),
             "{expected}: {files:?}"
         );
     }
+    assert_eq!(compiled::PROFILES, ["dev", "release"]);
+    directory.close().unwrap();
+}
+
+/// Every expected target needs one fresh unit per profile: a target metadata lists but the check
+/// skips, a unit metadata does not list, and a unit reused from an earlier compilation are refused.
+#[test]
+fn each_profile_has_one_fresh_unit_per_target() {
+    let (directory, targets) = probe();
+    let workspace = directory.path().join("ws");
+    let mut ghost = targets.clone();
+    ghost.push(Target {
+        kind: "bin".to_owned(),
+        name: "ghost".to_owned(),
+        source: "src/ghost.rs".to_owned(),
+    });
+    let first = directory.path().join("first");
+    let error = compiled::files_in(&workspace, "probe", &ghost, &first, "dev").unwrap_err();
+    assert!(
+        error.contains("compiled no unit for the bin `ghost`"),
+        "{error}"
+    );
+    let second = directory.path().join("second");
+    let error = compiled::files_in(&workspace, "probe", &targets[..1], &second, "dev").unwrap_err();
+    assert!(error.contains("which metadata does not list"), "{error}");
+    // The same private directory again: the units are fresh, so their dep-info is old.
+    let error = compiled::files_in(&workspace, "probe", &targets, &first, "dev").unwrap_err();
+    assert!(error.contains("not compiled afresh"), "{error}");
     directory.close().unwrap();
 }
 
 #[test]
-fn dep_info_is_read_line_by_line_without_unescaping() {
-    let text = "/t/deps/x-1.d: a/lib.rs a/b.txt\n\n/t/deps/libx-1.rmeta: a/lib.rs a/b.txt\n\na/lib.rs:\na\\b.txt:\n";
-    assert_eq!(compiled::parse(text).unwrap(), ["a/lib.rs", "a/b.txt"]);
+fn dep_info_rules_and_file_lines_must_agree() {
+    let good =
+        "/t/x-1.d: a/lib.rs a/b.txt\n\n/t/libx-1.rmeta: a/lib.rs a/b.txt\n\na/lib.rs:\na/b.txt:\n";
+    assert_eq!(compiled::parse(good).unwrap(), ["a/b.txt", "a/lib.rs"]);
     for (bad, reason) in [
-        ("a\\ b.rs:\n", "needs unescaping"),
-        ("a$$b.rs:\n", "needs unescaping"),
-        ("a/lib.rs\n", "unexpected dep-info line"),
-        // `env!("GITHUB_JOB")` in an include path: the job decides the file.
         (
-            "a/lib.rs:\n\n# env-dep:GITHUB_JOB=self-check\n",
-            "environment variable GITHUB_JOB",
+            "/t/x-1.d: a/lib.rs\n\na/lib.rs:\n#asset.txt:\n",
+            "a dep-info rule lists",
         ),
+        (
+            "/t/x-1.d: a/lib.rs extra.txt\n\na/lib.rs:\n",
+            "a dep-info rule lists",
+        ),
+        (
+            "/t/x-1.d: a/lib.rs\n\na/lib.rs:\nstray line\n",
+            "unexpected dep-info line",
+        ),
+        (
+            "/t/x-1.o: a/lib.rs\n\na/lib.rs:\n",
+            "unexpected dep-info rule",
+        ),
+        ("a/lib.rs:\n", "without a rule or a file"),
+        ("/t/x-1.d: a\\ b.rs\n\na\\ b.rs:\n", "needs unescaping"),
+        ("/t/x-1.d: a$$b.rs\n\na$$b.rs:\n", "needs unescaping"),
     ] {
         let error = compiled::parse(bad).unwrap_err();
         assert!(error.contains(reason), "{bad}: {error}");
     }
+    // `env!("GITHUB_JOB")` in an include path: the job decides the file. The value stays out of
+    // the diagnostic.
+    let error = compiled::parse("/t/x-1.d: a/lib.rs\n\na/lib.rs:\n\n# env-dep:GITHUB_JOB=secret\n")
+        .unwrap_err();
+    assert!(
+        error.contains("environment variable GITHUB_JOB") && !error.contains("secret"),
+        "{error}"
+    );
+    // `\` separates paths only on Windows; elsewhere it is part of a name, refused.
+    let backslash = "/t/x-1.d: a\\b.txt\n\na\\b.txt:\n";
+    if cfg!(windows) {
+        assert_eq!(compiled::parse(backslash).unwrap(), ["a/b.txt"]);
+    } else {
+        assert!(
+            compiled::parse(backslash)
+                .unwrap_err()
+                .contains("backslash")
+        );
+    }
 }
 
 const LIB: &str = "tools/stickymd-package/src/lib.rs";
-
-fn index_of(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
-    entries
-        .iter()
-        .map(|(path, mode)| ((*path).to_owned(), (*mode).to_owned()))
-        .collect()
-}
 
 #[test]
 fn compiled_files_are_regular_counted_files_of_the_crate_spelled_as_git_records_them() {
@@ -221,17 +399,6 @@ fn compiled_files_are_regular_counted_files_of_the_crate_spelled_as_git_records_
     }
     let error = check_compiled(&[LIB.to_owned()], &index, &|_| false).unwrap_err();
     assert!(error.contains("does not count"), "{error}");
-}
-
-#[test]
-fn every_packaging_target_is_a_compiled_file() {
-    check_targets(&[LIB.to_owned()], &[LIB.to_owned()]).unwrap();
-    let error = check_targets(
-        &["tools/stickymd-package/src/entry.in".to_owned()],
-        &[LIB.to_owned()],
-    )
-    .unwrap_err();
-    assert!(error.contains("not among the files rustc read"), "{error}");
 }
 
 #[test]
@@ -278,6 +445,11 @@ fn every_ps1_name_is_a_listed_script_named_bare() {
             "not one of the listed",
         ),
         (b"$name.ps1", "not one of the listed"),
+        // `\xc3\xa9` is `é`: a letter of a longer name the ASCII run does not see.
+        (
+            b"& (Join-Path $PSScriptRoot '\xc3\xa9package.ps1')",
+            "after a non-ASCII byte",
+        ),
     ] {
         let error = check_ps1_names(text, &allowed).unwrap_err();
         assert!(
@@ -303,7 +475,6 @@ fn a_build_script_names_no_parent_directory() {
             String::from_utf8_lossy(text)
         );
     }
-    assert!(contains(b"run X.PS1", b".ps1"));
 }
 
 #[test]
@@ -348,7 +519,11 @@ fn a_release_workflow_equals_its_pin_whole() {
         "      - run: ./tools/release/package.ps1\n      - run: cargo test -p stickymd-smoke\n",
     );
     let section = workflow::check(&smoke, &smoke).unwrap();
-    assert!(check_names(section.as_bytes()).is_err());
+    assert!(
+        check_names(section.as_bytes())
+            .unwrap_err()
+            .contains("names the verification tool")
+    );
     for (pin, reason) in [
         (
             WORKFLOW.replace("  build-package:\n", ""),
@@ -374,7 +549,29 @@ fn a_release_workflow_equals_its_pin_whole() {
     }
 }
 
-/// The real pins are the release workflows of plan 11: the dependency policy and the three
+/// The pins are exactly the workflows the classifier counts: dropping one, or the classifier
+/// counting another, is refused.
+#[test]
+fn the_pins_are_exactly_the_counted_workflows() {
+    let counted =
+        |path: &str| is_input(Platform::WindowsX64, path) || is_input(Platform::MacOsArm64, path);
+    let index = index_of(&[
+        (".github/workflows/ci.yml", "100644"),
+        (".github/workflows/promote-release.yml", "100644"),
+        (".github/workflows/release-macos.yml", "100644"),
+        (".github/workflows/release.yml", "100644"),
+    ]);
+    workflow::check_pinned_set(&index, &counted).unwrap();
+    let error =
+        workflow::check_pinned_set(&index, &|path| counted(path) || path.ends_with("ci.yml"))
+            .unwrap_err();
+    assert!(error.contains("but stickymd-smoke pins"), "{error}");
+    let error =
+        workflow::check_pinned_set(&index, &|path| path.ends_with("/release.yml")).unwrap_err();
+    assert!(error.contains("but stickymd-smoke pins"), "{error}");
+}
+
+/// The real pins hold the release workflows of plan 11: the dependency policy and the three
 /// release jobs, in order, each needing the one before.
 #[test]
 fn the_pins_hold_the_jobs_of_plan_11() {
@@ -401,4 +598,37 @@ fn the_pins_hold_the_jobs_of_plan_11() {
             "{path}: {order:?}"
         );
     }
+}
+
+/// The lists in the code are the lists plan 11 states: shrinking or growing one means changing
+/// the contract too.
+#[test]
+fn the_lists_are_the_contract_s() {
+    let root = crate::governance::find_repository_root(&std::env::current_dir().unwrap()).unwrap();
+    let plan = std::fs::read_to_string(root.join("docs/plan/11_testing_and_release.md")).unwrap();
+    let start = plan.find("**边界的证明（闭合世界").unwrap();
+    let end = start + plan[start..].find("**前提：**").unwrap();
+    let bullet = &plan[start..end];
+    let scripts_at = bullet.find("**脚本：**").unwrap();
+    let scripts =
+        &bullet[scripts_at..scripts_at + bullet[scripts_at..].find("**workflow：**").unwrap()];
+    let mut named: Vec<&str> = scripts
+        .split('`')
+        .filter(|piece| {
+            piece.len() > 4 && piece.ends_with(".ps1") && !piece.contains(['/', ' ', '$'])
+        })
+        .collect();
+    named.sort_unstable();
+    named.dedup();
+    let mut listed = BYTE_SCRIPTS.to_vec();
+    listed.sort_unstable();
+    assert_eq!(named, listed);
+    for (member, script) in BUILD_SCRIPTS {
+        assert!(
+            bullet.contains(&format!("`{member}` 的 `{script}`")),
+            "{member} {script}"
+        );
+    }
+    assert!(bullet.contains("dev profile") && bullet.contains("release profile"));
+    assert_eq!(compiled::PROFILES, ["dev", "release"]);
 }
