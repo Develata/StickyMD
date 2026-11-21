@@ -103,6 +103,9 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
         Command::MacosVerifyPackage { zip, source } => {
             macos::verify_command(root, zip, source.as_deref())
         }
+        Command::MacosVerifyArtifact { directory, source } => {
+            macos::verify_artifact_command(root, directory, source)
+        }
         Command::MacosPromote {
             run_id,
             attempt,

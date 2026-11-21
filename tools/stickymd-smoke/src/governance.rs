@@ -551,7 +551,7 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         "-p stickymd-package --locked -- macos-package",
         "-p stickymd-package --locked -- macos-sbom",
         "-p stickymd-package --locked -- macos-verify-package",
-        "release macos-verify-package",
+        "release macos-verify-artifact --directory dist",
         "name: stickymd-macos-arm64-release-${{ github.run_attempt }}",
     ] {
         if !release_macos.contains(required) {

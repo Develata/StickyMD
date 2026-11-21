@@ -41,6 +41,10 @@ pub(crate) enum Command {
         zip: PathBuf,
         source: Option<String>,
     },
+    MacosVerifyArtifact {
+        directory: PathBuf,
+        source: String,
+    },
     PlatformInputs {
         platform: super::platform::Platform,
         commit: String,
@@ -194,6 +198,10 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
         "macos-verify-package" => Command::MacosVerifyPackage {
             zip: PathBuf::from(tokens.take("--zip")?),
             source: tokens.optional("--source-sha"),
+        },
+        "macos-verify-artifact" => Command::MacosVerifyArtifact {
+            directory: PathBuf::from(tokens.take("--directory")?),
+            source: tokens.take("--source-sha")?,
         },
         "platform-inputs" => Command::PlatformInputs {
             platform: super::platform::Platform::parse(&tokens.take("--platform")?)?,

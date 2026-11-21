@@ -108,3 +108,9 @@ jobs:
       - name: Verify package
         shell: pwsh
         run: ./tools/release/verify-package.ps1
+      - name: Record the platform build input fingerprint
+        shell: pwsh
+        run: |
+          $inputs = cargo run --quiet -p stickymd-smoke --locked -- release platform-inputs --platform windows-x64 --commit $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "platform build inputs: $inputs" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

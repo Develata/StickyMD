@@ -128,13 +128,20 @@ fn check_release(root: &Path, release: &str) -> Result<(), String> {
 
 /// Checks a downloaded set (the artifact's three files in `directory`) and the bundle inside,
 /// and returns the receipt; nothing is staged here.
-pub(crate) fn check_set(
-    root: &Path,
-    directory: &Path,
-    request_attempt: (u64, u64),
-    artifact: (u64, String),
-    release: &str,
-) -> Result<(Receipt, Reuse), String> {
+/// What [`verify_set`] establishes about a downloaded macOS set.
+pub(crate) struct CheckedSet {
+    pub version: String,
+    pub zip_name: String,
+    pub checksums_name: String,
+    pub zip_sha256: String,
+    pub sbom_sha256: String,
+    pub facts: package::Facts,
+}
+
+/// The three files of the macOS set in `directory` and nothing else: the ZIP passes the package
+/// check, the checksum file lists exactly the ZIP and the SBOM with their hashes, and the SBOM
+/// describes this very package. Writes nothing.
+pub(crate) fn verify_set(root: &Path, directory: &Path) -> Result<CheckedSet, String> {
     let version = repository::workspace_version(root)?;
     let [zip_name, checksums_name, sbom_name] = platform_files(Platform::MacOsArm64, &version);
     let mut names = fs::read_dir(directory)
@@ -164,6 +171,31 @@ pub(crate) fn check_set(
     let sbom = fs::read_to_string(directory.join(&sbom_name)).map_err(|error| error.to_string())?;
     // The SBOM must describe the bytes of this very package, not only its file names.
     content::validate_sbom(&sbom, &facts.members)?;
+    Ok(CheckedSet {
+        version,
+        zip_name,
+        checksums_name,
+        zip_sha256,
+        sbom_sha256,
+        facts,
+    })
+}
+
+pub(crate) fn check_set(
+    root: &Path,
+    directory: &Path,
+    request_attempt: (u64, u64),
+    artifact: (u64, String),
+    release: &str,
+) -> Result<(Receipt, Reuse), String> {
+    let CheckedSet {
+        version,
+        zip_name,
+        checksums_name,
+        zip_sha256,
+        sbom_sha256,
+        facts,
+    } = verify_set(root, directory)?;
     let source = facts.source_commit.clone();
     let reuse = verify_reuse(root, Platform::MacOsArm64, &source, release)?;
     let lock = crate::release::platform_inputs::git(root)

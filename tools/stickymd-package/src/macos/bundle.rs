@@ -62,38 +62,52 @@ pub const INPUTS_KEY: &str = "StickyMDInputs";
 /// `None` for a bundle built before `build-app.sh` recorded it. A key present with anything but
 /// one SHA-256 is an error, not an absent fingerprint.
 pub fn app_inputs(app: &Path) -> Result<Option<String>, String> {
-    let plist = app.join("Contents/Info.plist");
-    let text = std::fs::read_to_string(&plist).map_err(|e| format!("{}: {e}", plist.display()))?;
-    inputs_in_plist(&text)
+    plist_inputs(&app.join("Contents/Info.plist"))
 }
 
-/// The value of `INPUTS_KEY` in an XML property list as `build-app.sh` writes it: the key element
-/// of the top-level dictionary followed, after whitespace, by one `<string>` element. A property
-/// list with a comment is refused (a commented key would read as present), and so is the key in a
-/// nested dictionary.
+/// [`app_inputs`] of a property list given as text.
 pub fn inputs_in_plist(text: &str) -> Result<Option<String>, String> {
-    if text.contains("<!--") {
-        return Err("Info.plist holds an XML comment; the bundle's plist has none".to_owned());
-    }
-    let key = format!("<key>{INPUTS_KEY}</key>");
-    let Some(at) = text.find(&key) else {
-        return Ok(None);
-    };
-    let before = &text[..at];
-    if before.matches("<dict>").count() != before.matches("</dict>").count() + 1 {
-        return Err(format!(
-            "Info.plist names {INPUTS_KEY} outside its top-level dictionary"
-        ));
-    }
-    if text[at + key.len()..].contains(&key) {
+    let directory = crate::temporary::TemporaryDirectory::new("info-plist")?;
+    let path = directory.path().join("Info.plist");
+    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let value = plist_inputs(&path);
+    directory.close()?;
+    value
+}
+
+/// The value of `INPUTS_KEY` in the top-level dictionary of the property list at `path`, read the
+/// way the system reads it (`plutil`): a commented-out key or one in a nested dictionary is not
+/// the bundle's value. A list `plutil` cannot lint, the key element written twice anywhere, or a
+/// value that is not one SHA-256 string is an error.
+fn plist_inputs(path: &Path) -> Result<Option<String>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if text.matches(&format!("<key>{INPUTS_KEY}</key>")).count() > 1 {
         return Err(format!("Info.plist names {INPUTS_KEY} twice"));
     }
-    let value = text[at + key.len()..]
-        .trim_start()
-        .strip_prefix("<string>")
-        .and_then(|rest| rest.split_once("</string>"))
-        .map(|(value, _)| value)
-        .ok_or_else(|| format!("Info.plist {INPUTS_KEY} is not followed by a string"))?;
+    let plutil = |arguments: &[&str]| {
+        std::process::Command::new("/usr/bin/plutil")
+            .args(arguments)
+            .arg(path)
+            .output()
+            .map_err(|error| format!("cannot run plutil: {error}"))
+    };
+    if !plutil(&["-lint", "-s"])?.status.success() {
+        return Err(format!("{} is not a valid property list", path.display()));
+    }
+    let typed = plutil(&[
+        "-extract", INPUTS_KEY, "raw", "-expect", "string", "-o", "-",
+    ])?;
+    if !typed.status.success() {
+        return if plutil(&["-extract", INPUTS_KEY, "raw", "-o", "-"])?
+            .status
+            .success()
+        {
+            Err(format!("Info.plist {INPUTS_KEY} is not a string"))
+        } else {
+            Ok(None)
+        };
+    }
+    let value = String::from_utf8_lossy(&typed.stdout).trim().to_owned();
     if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         Ok(Some(value.to_ascii_lowercase()))
     } else {
@@ -133,31 +147,47 @@ mod tests {
     #[test]
     fn the_input_fingerprint_is_read_from_the_info_plist_or_absent() {
         let digest = "A".repeat(64);
-        let plist = |value: &str| {
+        let document = |dict: &str| {
             format!(
-                "<dict>\n\t<key>CFBundleVersion</key>\n\t<string>0.2.0</string>\n\t<key>StickyMDInputs</key>\n\t<string>{value}</string>\n</dict>"
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n{dict}\n</plist>\n"
             )
+        };
+        let plist = |value: &str| {
+            document(&format!(
+                "<dict>\n\t<key>CFBundleVersion</key>\n\t<string>0.2.0</string>\n\t<key>StickyMDInputs</key>\n\t<string>{value}</string>\n</dict>"
+            ))
         };
         assert_eq!(
             super::inputs_in_plist(&plist(&digest)).unwrap(),
             Some("a".repeat(64))
         );
         assert_eq!(
-            super::inputs_in_plist("<dict><key>CFBundleVersion</key></dict>").unwrap(),
+            super::inputs_in_plist(&document(
+                "<dict><key>CFBundleVersion</key><string>1</string></dict>"
+            ))
+            .unwrap(),
             None
         );
         assert!(super::inputs_in_plist(&plist("@INPUTS@")).is_err());
         assert!(super::inputs_in_plist(&plist(&"a".repeat(63))).is_err());
-        let twice = plist(&digest) + &plist(&digest);
-        assert!(super::inputs_in_plist(&twice).is_err());
-        assert!(super::inputs_in_plist("<dict><key>StickyMDInputs</key><true/></dict>").is_err());
-        // A commented-out pair, and the key in a nested dictionary, are not the bundle's value.
-        let commented =
-            format!("<dict>\n<!-- <key>StickyMDInputs</key><string>{digest}</string> -->\n</dict>");
-        assert!(super::inputs_in_plist(&commented).is_err());
-        let nested = format!(
-            "<dict><key>Other</key><dict><key>StickyMDInputs</key><string>{digest}</string></dict></dict>"
+        assert!(
+            super::inputs_in_plist(&document("<dict><key>StickyMDInputs</key><true/></dict>"))
+                .is_err()
         );
-        assert!(super::inputs_in_plist(&nested).is_err());
+        assert!(super::inputs_in_plist("not a property list").is_err());
+        let twice = document(&format!(
+            "<dict><key>StickyMDInputs</key><string>{digest}</string><key>StickyMDInputs</key><string>{digest}</string></dict>"
+        ));
+        assert!(super::inputs_in_plist(&twice).is_err());
+        // A commented-out pair, and the key in a nested dictionary (written `<dict >` too), are not
+        // the bundle's value: the system reads none at the top level.
+        let commented = document(&format!(
+            "<dict>\n<!-- <key>StickyMDInputs</key><string>{digest}</string> -->\n</dict>"
+        ));
+        assert_eq!(super::inputs_in_plist(&commented).unwrap(), None);
+        let nested = document(&format!(
+            "<dict><key>Other</key><dict ><key>StickyMDInputs</key><string>{digest}</string></dict></dict>"
+        ));
+        assert_eq!(super::inputs_in_plist(&nested).unwrap(), None);
     }
 }

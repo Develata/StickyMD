@@ -4,20 +4,24 @@
 //! compiler refuse any reference from the packaging crate to this one; this check covers the edges
 //! the compiler cannot see:
 //! - Cargo's own view of the workspace (`cargo metadata`): the packaging crate declares no
-//!   dependency and no build script, and every member's build script is its `build.rs`, which the
-//!   fingerprint counts;
-//! - every `include!`, `include_str!`, `include_bytes!` and `#[path]` reached from the packaging
-//!   crate names a plain string literal that resolves, from its file's directory, to a path the
-//!   fingerprint counts for both platforms; a Rust file reached that way is checked in turn;
-//! - that code and every member's `build.rs` (comments aside, read with string and character
-//!   literals told apart from comments) never names the verification tool, its package or its
-//!   directory, so it can neither spawn it nor read its files;
-//! - the scripts the packaging crate launches and the Windows scripts that build bytes, with every
-//!   script they reference, and `build-app.sh`, never call the verification tool; a dot-source
-//!   this check cannot read is refused rather than skipped;
+//!   dependency and no build script, every member's build script is the `build.rs` beside its
+//!   manifest (which the fingerprint counts), and no two targets share a binary name, so no
+//!   excluded binary can take the place of the product in the workspace build's output;
+//! - the packaging crate's Rust files: `include!` and `#[path]` stay inside the crate, and
+//!   `include_str!`/`include_bytes!` name, from the file's directory, a path that is in the Git
+//!   index exactly as spelled and is counted for both platforms; `cfg_attr` cannot carry a path;
+//! - every member's `build.rs` is self-contained (no `mod`, `include!` or `#[path]`) and includes
+//!   data only from such counted paths;
+//! - that code (comments aside, read by a lexer that tells strings, raw strings and characters
+//!   from comments) never names the verification tool, its package or its directory, so it can
+//!   neither spawn it nor read its files;
+//! - the scripts the packaging crate launches, the Windows scripts that build bytes, every script
+//!   they reference (resolved through `$PSScriptRoot` or a repository path into `tools/release`;
+//!   anything else is refused) and `build-app.sh` never call the verification tool, and a
+//!   dot-source this check cannot resolve is refused;
 //! - each release workflow has the three jobs of plan 11 (`self-check`, then `build-package`,
-//!   then `verify-artifact` on the uploaded artifact), and the `build-package` job, with every
-//!   script it runs, never calls the verification tool.
+//!   then `verify-artifact`, which downloads the uploaded artifact), read from the jobs' own
+//!   fields, and the `build-package` job, with every script it runs, never calls the tool.
 //!
 //! The checks are lexical. Code built to evade them (a name assembled at run time, say) is left to
 //! review; what they catch is the ordinary way such an edge is written.
@@ -58,20 +62,41 @@ const SCRIPT_TOOL_NAMES: &[&str] = &[
 
 pub(super) fn verify(root: &Path) -> Result<(), String> {
     check_metadata(&cargo_metadata(root)?)?;
+    let tracked: BTreeSet<String> = stickymd_package::app_inputs::tracked_files(root)?
+        .into_iter()
+        .collect();
+    let is_tracked = |path: &str| tracked.contains(path);
     let mut sources = Vec::new();
     collect_rust(root, &root.join(CRATE), &mut sources)?;
+    sources.sort();
     if sources.is_empty() {
         return Err(format!(
             "{CRATE} has no Rust sources; a check of nothing proves nothing"
         ));
     }
-    let launched = check_rust_tree(root, sources)?;
     let mut scripts: Vec<String> = BYTE_SCRIPTS.iter().map(|name| (*name).to_owned()).collect();
-    scripts.extend(launched);
+    for file in &sources {
+        let lexed = Lexed::read(root, file)?;
+        check_names(&lexed.code).map_err(|e| format!("{file}: {e}"))?;
+        check_includes(file, &lexed, Source::Packaging, &is_tracked)
+            .map_err(|e| format!("{file}: {e}"))?;
+        scripts.extend(scripts_launched(&lexed.code));
+    }
+    for module in crate::headless::Module::ALL {
+        if module.package().is_none() {
+            continue;
+        }
+        let script = format!("{}build.rs", module.root());
+        if root.join(&script).is_file() {
+            let lexed = Lexed::read(root, &script)?;
+            check_names(&lexed.code).map_err(|e| format!("{script}: {e}"))?;
+            check_includes(&script, &lexed, Source::BuildScript, &is_tracked)
+                .map_err(|e| format!("{script}: {e}"))?;
+        }
+    }
     check_scripts(root, scripts)?;
-    check_build_scripts(root)?;
     let build_app = "apps/stickymd-mac/packaging/build-app.sh";
-    check_script(&read(root, build_app)?).map_err(|e| format!("{build_app}: {e}"))?;
+    check_script(&read(root, build_app)?, build_app).map_err(|e| format!("{build_app}: {e}"))?;
     for workflow in RELEASE_WORKFLOWS {
         let referenced =
             check_workflow(&read(root, workflow)?).map_err(|e| format!("{workflow}: {e}"))?;
@@ -84,20 +109,28 @@ fn read(root: &Path, relative: &str) -> Result<String, String> {
     std::fs::read_to_string(root.join(relative)).map_err(|e| format!("{relative}: {e}"))
 }
 
-/// The repository-relative paths of the Rust files below `directory`.
+/// The repository-relative paths of the Rust files below `directory`, without following links:
+/// a linked directory inside the packaging crate is refused.
 fn collect_rust(root: &Path, directory: &Path, into: &mut Vec<String>) -> Result<(), String> {
     for entry in
         std::fs::read_dir(directory).map_err(|e| format!("{}: {e}", directory.display()))?
     {
-        let path = entry.map_err(|e| e.to_string())?.path();
-        if path.is_dir() {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if kind.is_symlink() {
+            return Err(format!(
+                "{} is a link; the packaging crate holds only plain files",
+                path.display()
+            ));
+        }
+        if kind.is_dir() {
             collect_rust(root, &path, into)?;
         } else if path.extension().is_some_and(|extension| extension == "rs") {
             let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
             into.push(relative.to_string_lossy().replace('\\', "/"));
         }
     }
-    into.sort();
     Ok(())
 }
 
@@ -119,10 +152,11 @@ fn cargo_metadata(root: &Path) -> Result<Value, String> {
 }
 
 /// Cargo's decoded view, so no TOML spelling (a quoted table or key) can hide a dependency or a
-/// build script: the packaging crate has neither, and every member's build script is the
-/// `build.rs` beside its manifest.
+/// build script: the packaging crate has neither, every member's build script is the `build.rs`
+/// beside its manifest, and binary names are unique in the workspace.
 fn check_metadata(metadata: &Value) -> Result<(), String> {
     let mut found = false;
+    let mut binaries = BTreeSet::new();
     for package in metadata.field("packages")?.array()? {
         let name = package.field("name")?.string()?;
         let manifest = package.field("manifest_path")?.string()?.replace('\\', "/");
@@ -139,12 +173,17 @@ fn check_metadata(metadata: &Value) -> Result<(), String> {
             }
         }
         for target in package.field("targets")?.array()? {
-            let custom_build = target
-                .field("kind")?
-                .array()?
-                .iter()
-                .any(|kind| kind.string() == Ok("custom-build"));
-            if !custom_build {
+            let kinds = target.field("kind")?.array()?;
+            let is = |wanted: &str| kinds.iter().any(|kind| kind.string() == Ok(wanted));
+            if is("bin") {
+                let binary = target.field("name")?.string()?;
+                if !binaries.insert(binary.to_ascii_lowercase()) {
+                    return Err(format!(
+                        "two workspace targets build the binary {binary}; one could take the other's place in the build output"
+                    ));
+                }
+            }
+            if !is("custom-build") {
                 continue;
             }
             if name == "stickymd-package" {
@@ -165,41 +204,56 @@ fn check_metadata(metadata: &Value) -> Result<(), String> {
     }
 }
 
-/// Checks the Rust files `files` and every Rust file their `include!` and `#[path]` reach, and
-/// returns the PowerShell scripts their code names.
-fn check_rust_tree(root: &Path, mut files: Vec<String>) -> Result<Vec<String>, String> {
-    let mut seen = BTreeSet::new();
-    let mut launched = Vec::new();
-    while let Some(file) = files.pop() {
-        if !seen.insert(file.clone()) {
-            continue;
-        }
-        let code = strip_comments(&read(root, &file)?).map_err(|e| format!("{file}: {e}"))?;
-        check_names(&code).map_err(|e| format!("{file}: {e}"))?;
-        for (marker, target) in includes(&file, &code).map_err(|e| format!("{file}: {e}"))? {
-            if marker != "include_str!" && marker != "include_bytes!" {
-                // Rust source: its own includes and names are checked too.
-                files.push(target);
-            }
-        }
-        launched.extend(ps1_references(&code));
-    }
-    Ok(launched)
+/// A Rust file with its comments removed (`code`: literals kept) and, byte for byte aligned with
+/// it, the same text with the contents of every string and character literal masked (`tokens`).
+struct Lexed {
+    code: String,
+    tokens: String,
 }
 
-/// `text` with every comment replaced by spaces (newlines kept, so line numbers hold), string
-/// and character literals kept as written. An unterminated string or block comment is an error.
-fn strip_comments(text: &str) -> Result<String, String> {
+impl Lexed {
+    fn read(root: &Path, file: &str) -> Result<Self, String> {
+        lex(&read(root, file)?).map_err(|e| format!("{file}: {e}"))
+    }
+}
+
+/// Lexes Rust source: comments (line, nested block) become spaces with newlines kept, string
+/// literals (plain, byte, C, raw in any of those forms) and character literals are kept in `code`
+/// and masked in `tokens`, a lifetime stays code. An unterminated literal or comment is an error.
+fn lex(text: &str) -> Result<Lexed, String> {
     let chars: Vec<char> = text.chars().collect();
-    let mut out = String::with_capacity(text.len());
+    let mut code = String::with_capacity(text.len());
+    let mut tokens = String::with_capacity(text.len());
+    let push_code = |code: &mut String, tokens: &mut String, c: char| {
+        code.push(c);
+        tokens.push(c);
+    };
+    let mask = |tokens: &mut String, c: char| {
+        if c == '\n' {
+            tokens.push('\n');
+        } else {
+            tokens.extend(std::iter::repeat_n('_', c.len_utf8()));
+        }
+    };
+    let blank = |code: &mut String, tokens: &mut String, c: char| {
+        let filler = if c == '\n' { '\n' } else { ' ' };
+        for _ in 0..c.len_utf8() {
+            code.push(filler);
+            tokens.push(filler);
+            if filler == '\n' {
+                break;
+            }
+        }
+    };
+    let identifier = |c: char| c.is_alphanumeric() || c == '_';
     let mut i = 0;
-    let blank = |c: char| if c == '\n' { '\n' } else { ' ' };
     while i < chars.len() {
         let c = chars[i];
         let next = chars.get(i + 1).copied();
+        let previous = i.checked_sub(1).map(|p| chars[p]);
         if c == '/' && next == Some('/') {
             while i < chars.len() && chars[i] != '\n' {
-                out.push(' ');
+                blank(&mut code, &mut tokens, chars[i]);
                 i += 1;
             }
         } else if c == '/' && next == Some('*') {
@@ -210,75 +264,71 @@ fn strip_comments(text: &str) -> Result<String, String> {
                 }
                 if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
                     depth += 1;
-                    out.push_str("  ");
+                    blank(&mut code, &mut tokens, '/');
+                    blank(&mut code, &mut tokens, '*');
                     i += 2;
                 } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
                     depth -= 1;
-                    out.push_str("  ");
+                    blank(&mut code, &mut tokens, '*');
+                    blank(&mut code, &mut tokens, '/');
                     i += 2;
                     if depth == 0 {
                         break;
                     }
                 } else {
-                    out.push(blank(chars[i]));
+                    blank(&mut code, &mut tokens, chars[i]);
                     i += 1;
                 }
             }
-        } else if c == 'r'
-            && matches!(next, Some('"' | '#'))
-            && !i
-                .checked_sub(1)
-                .and_then(|p| chars.get(p))
-                .is_some_and(|p| p.is_alphanumeric() || *p == '_')
+        } else if let Some(end) =
+            raw_string_end(&chars, i).filter(|_| !previous.is_some_and(identifier))
         {
-            // A raw string: r"...", r#"..."#; a `b` before it stays plain code.
-            let mut hashes = 0;
-            let mut j = i + 1;
-            while chars.get(j) == Some(&'#') {
-                hashes += 1;
-                j += 1;
+            let open = chars[i..end].iter().position(|ch| *ch == '"').unwrap() + i;
+            for ch in &chars[i..=open] {
+                push_code(&mut code, &mut tokens, *ch);
             }
-            if chars.get(j) != Some(&'"') {
-                out.push(c);
-                i += 1;
-                continue;
+            let close_len = chars[open + 1..end]
+                .iter()
+                .rev()
+                .take_while(|ch| **ch == '#')
+                .count()
+                + 1;
+            for ch in &chars[open + 1..end - close_len] {
+                code.push(*ch);
+                mask(&mut tokens, *ch);
             }
-            let close: Vec<char> = std::iter::once('"')
-                .chain(std::iter::repeat_n('#', hashes))
-                .collect();
-            let mut k = j + 1;
-            loop {
-                if k + close.len() > chars.len() {
-                    return Err("unterminated raw string".to_owned());
-                }
-                if chars[k..k + close.len()] == close[..] {
-                    break;
-                }
-                k += 1;
+            for ch in &chars[end - close_len..end] {
+                push_code(&mut code, &mut tokens, *ch);
             }
-            let end = k + close.len();
-            out.extend(&chars[i..end]);
             i = end;
         } else if c == '"' {
-            out.push(c);
+            push_code(&mut code, &mut tokens, c);
             i += 1;
             loop {
                 let Some(&s) = chars.get(i) else {
                     return Err("unterminated string literal".to_owned());
                 };
-                out.push(s);
                 i += 1;
-                if s == '\\' {
-                    if let Some(&escaped) = chars.get(i) {
-                        out.push(escaped);
-                        i += 1;
-                    }
-                } else if s == '"' {
+                if s == '"' {
+                    push_code(&mut code, &mut tokens, s);
                     break;
                 }
+                code.push(s);
+                mask(&mut tokens, s);
+                if s == '\\'
+                    && let Some(&escaped) = chars.get(i)
+                {
+                    code.push(escaped);
+                    mask(&mut tokens, escaped);
+                    i += 1;
+                }
             }
-        } else if c == '\'' {
-            // A character literal ('x', '\n', '\'', '"'), or a lifetime, which stays code.
+        } else if c == '\''
+            && (!previous.is_some_and(identifier)
+                || (previous == Some('b')
+                    && !i.checked_sub(2).map(|p| chars[p]).is_some_and(identifier)))
+        {
+            // A character literal ('x', '\n', '\'', '"', b'x'), or a lifetime, which stays code.
             let literal_end = if next == Some('\\') {
                 (i + 3..chars.len().min(i + 12)).find(|&k| chars[k] == '\'')
             } else if chars.get(i + 2) == Some(&'\'') {
@@ -288,20 +338,63 @@ fn strip_comments(text: &str) -> Result<String, String> {
             };
             match literal_end {
                 Some(end) => {
-                    out.extend(&chars[i..=end]);
+                    push_code(&mut code, &mut tokens, c);
+                    for ch in &chars[i + 1..end] {
+                        code.push(*ch);
+                        mask(&mut tokens, *ch);
+                    }
+                    push_code(&mut code, &mut tokens, '\'');
                     i = end + 1;
                 }
                 None => {
-                    out.push(c);
+                    push_code(&mut code, &mut tokens, c);
                     i += 1;
                 }
             }
         } else {
-            out.push(c);
+            push_code(&mut code, &mut tokens, c);
             i += 1;
         }
     }
-    Ok(out)
+    Ok(Lexed { code, tokens })
+}
+
+/// The end (exclusive) of a raw string literal starting at `i` (`r`, `br` or `cr`, any number of
+/// `#`), or `None` when none starts there. An unterminated one ends at the text's end, which the
+/// caller then treats like any other code; `None` keeps the lexer moving.
+fn raw_string_end(chars: &[char], i: usize) -> Option<usize> {
+    let mut j = i;
+    if matches!(chars.get(j), Some('b' | 'c')) {
+        j += 1;
+    }
+    if chars.get(j) != Some(&'r') {
+        return None;
+    }
+    j += 1;
+    let mut hashes = 0;
+    while chars.get(j) == Some(&'#') {
+        hashes += 1;
+        j += 1;
+    }
+    if chars.get(j) != Some(&'"') {
+        return None;
+    }
+    let mut k = j + 1;
+    while k < chars.len() {
+        if chars[k] == '"'
+            && chars[k + 1..]
+                .iter()
+                .take(hashes)
+                .filter(|c| **c == '#')
+                .count()
+                == hashes
+            && chars.len() >= k + 1 + hashes
+        {
+            return Some(k + 1 + hashes);
+        }
+        k += 1;
+    }
+    None
 }
 
 /// Refuses code that names the verification tool.
@@ -319,41 +412,134 @@ fn check_names(code: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Every include and `#[path]` in `code` (comments removed) with its target, resolved from the
-/// directory of `file`; each must be a plain literal naming a path both platforms count.
-fn includes(file: &str, code: &str) -> Result<Vec<(&'static str, String)>, String> {
+#[derive(Clone, Copy, PartialEq)]
+enum Source {
+    /// A file of the packaging crate: Rust includes stay in the crate.
+    Packaging,
+    /// A member's `build.rs`: self-contained, data includes only.
+    BuildScript,
+}
+
+/// Every include and `#[path]` of `file` (found in the masked tokens, read from the code), each
+/// checked: a Rust include or `#[path]` stays inside the packaging crate (and a build script has
+/// none, nor any `mod` declaration); a data include names a path in the Git index exactly as
+/// spelled that both platforms count; `cfg_attr` cannot carry a path.
+fn check_includes(
+    file: &str,
+    lexed: &Lexed,
+    source: Source,
+    is_tracked: &dyn Fn(&str) -> bool,
+) -> Result<(), String> {
     let directory = file.rsplit_once('/').map_or("", |(directory, _)| directory);
-    let mut found = Vec::new();
-    for (number, line) in code.lines().enumerate() {
-        for marker in ["include_str!", "include_bytes!", "include!", "#[path"] {
-            let mut rest = line;
-            while let Some(at) = rest.find(marker) {
-                let after = &rest[at + marker.len()..];
-                let argument = after
-                    .trim_start_matches(['(', ' ', '='])
-                    .strip_prefix('"')
-                    .and_then(|value| value.split_once('"'))
-                    .map(|(value, _)| value)
-                    .ok_or_else(|| {
-                        format!(
-                            "line {}: `{marker}` takes a plain string literal here",
-                            number + 1
-                        )
-                    })?;
-                let resolved = resolve(directory, argument)
-                    .filter(|path| counted_by_both(path))
-                    .ok_or_else(|| {
-                        format!(
-                            "line {}: `{marker}` reaches `{argument}`, which is not a build input of both platforms",
-                            number + 1
-                        )
-                    })?;
-                found.push((marker, resolved));
-                rest = after;
+    let line_of = |at: usize| lexed.tokens[..at].matches('\n').count() + 1;
+    if let Some(at) = find_cfg_attr_path(&lexed.tokens) {
+        return Err(format!(
+            "line {}: `cfg_attr` carries a `path`; name modules plainly",
+            line_of(at)
+        ));
+    }
+    if source == Source::BuildScript
+        && let Some(at) = find_mod_declaration(&lexed.tokens)
+    {
+        return Err(format!(
+            "line {}: a build script declares a module; keep it in build.rs",
+            line_of(at)
+        ));
+    }
+    for marker in ["include_str!", "include_bytes!", "include!", "#[path"] {
+        let mut from = 0;
+        while let Some(found) = lexed.tokens[from..].find(marker) {
+            let at = from + found;
+            from = at + marker.len();
+            let after = &lexed.code[from..];
+            let argument = after
+                .trim_start_matches(['(', ' ', '=', '\n', '\r', '\t'])
+                .strip_prefix('"')
+                .and_then(|value| value.split_once('"'))
+                .map(|(value, _)| value)
+                .ok_or_else(|| {
+                    format!(
+                        "line {}: `{marker}` takes a plain string literal here",
+                        line_of(at)
+                    )
+                })?;
+            let rust = matches!(marker, "include!" | "#[path");
+            if rust && source == Source::BuildScript {
+                return Err(format!(
+                    "line {}: a build script uses `{marker}`; keep it in build.rs",
+                    line_of(at)
+                ));
+            }
+            let resolved = resolve(directory, argument).ok_or_else(|| {
+                format!(
+                    "line {}: `{marker}` reaches `{argument}` outside the repository",
+                    line_of(at)
+                )
+            })?;
+            let allowed = if rust {
+                resolved.starts_with(&format!("{CRATE}/")) && is_tracked(&resolved)
+            } else {
+                is_tracked(&resolved) && counted_by_both(&resolved)
+            };
+            if !allowed {
+                return Err(format!(
+                    "line {}: `{marker}` reaches `{argument}`, which is not {}",
+                    line_of(at),
+                    if rust {
+                        "a tracked file of the packaging crate"
+                    } else {
+                        "a tracked build input of both platforms, spelled as Git records it"
+                    }
+                ));
             }
         }
     }
-    Ok(found)
+    Ok(())
+}
+
+/// The position of a `cfg_attr(...)` whose arguments include `path =`.
+fn find_cfg_attr_path(tokens: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(found) = tokens[from..].find("cfg_attr") {
+        let at = from + found;
+        from = at + "cfg_attr".len();
+        let rest = &tokens[from..];
+        let end = rest.find(']').unwrap_or(rest.len());
+        let inside = &rest[..end];
+        if inside
+            .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '='))
+            .any(|word| word == "path" || word.starts_with("path="))
+            || inside.contains("path =")
+        {
+            return Some(at);
+        }
+    }
+    None
+}
+
+/// The position of an out-of-line `mod name;` declaration.
+fn find_mod_declaration(tokens: &str) -> Option<usize> {
+    let bytes = tokens.as_bytes();
+    let mut from = 0;
+    while let Some(found) = tokens[from..].find("mod") {
+        let at = from + found;
+        from = at + 3;
+        let before_ok =
+            at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
+        let rest = &tokens[from..];
+        if !before_ok || !rest.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let rest = rest.trim_start();
+        let name_len = rest
+            .bytes()
+            .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+            .count();
+        if name_len > 0 && rest[name_len..].trim_start().starts_with(';') {
+            return Some(at);
+        }
+    }
+    None
 }
 
 fn counted_by_both(path: &str) -> bool {
@@ -384,21 +570,23 @@ fn resolve(directory: &str, relative: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-/// No member's `build.rs` (all of them run in the Windows workspace build) names the
-/// verification tool, so a build script cannot read its files.
-fn check_build_scripts(root: &Path) -> Result<(), String> {
-    for module in crate::headless::Module::ALL {
-        if module.package().is_none() {
-            continue;
-        }
-        let script = format!("{}build.rs", module.root());
-        if root.join(&script).is_file() {
-            let code =
-                strip_comments(&read(root, &script)?).map_err(|e| format!("{script}: {e}"))?;
-            check_names(&code).map_err(|e| format!("{script}: {e}"))?;
-        }
-    }
-    Ok(())
+/// The PowerShell scripts the packaging crate launches: bare `*.ps1` names in string literals,
+/// which its Windows adapter resolves in `tools/release`.
+fn scripts_launched(code: &str) -> Vec<String> {
+    code.split('"')
+        .skip(1)
+        .step_by(2)
+        .filter(|piece| is_script_name(piece))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn is_script_name(name: &str) -> bool {
+    name.len() > 4
+        && name.ends_with(".ps1")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
 /// Checks each named script of `tools/release` and every script it references, transitively.
@@ -411,35 +599,29 @@ fn check_scripts(root: &Path, mut scripts: Vec<String>) -> Result<(), String> {
         let relative = format!("{SCRIPTS}/{name}");
         if !root.join(&relative).is_file() {
             return Err(format!(
-                "a script that builds release bytes references {name}, which is not in {SCRIPTS}"
+                "a script that builds release bytes references {relative}, which does not exist"
             ));
         }
         let text = read(root, &relative)?;
-        check_script(&text).map_err(|e| format!("{relative}: {e}"))?;
-        scripts.extend(ps1_references(&text));
+        scripts.extend(check_script(&text, &relative).map_err(|e| format!("{relative}: {e}"))?);
     }
     Ok(())
 }
 
-/// The PowerShell script file names `text` mentions: every `*.ps1` token, quoted or not, by its
-/// last path component.
-fn ps1_references(text: &str) -> Vec<String> {
-    text.split(|c: char| c.is_whitespace() || matches!(c, '\'' | '"' | '(' | ')' | ',' | ';'))
-        .filter_map(|token| {
-            let name = token.rsplit(['/', '\\']).next()?;
-            (name.len() > 4
-                && name.ends_with(".ps1")
-                && name
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')))
-            .then(|| name.to_owned())
-        })
-        .collect()
+/// The `*.ps1` tokens of a line, as written (with any directory).
+fn ps1_tokens(line: &str) -> impl Iterator<Item = &str> {
+    line.split(|c: char| c.is_whitespace() || matches!(c, '\'' | '"' | '(' | ')' | ',' | ';'))
+        .filter(|token| token.ends_with(".ps1"))
 }
 
-/// A script or workflow job that builds release bytes: no call to the verification tool, and
-/// every dot-source names a script this check can follow.
-fn check_script(text: &str) -> Result<(), String> {
+/// A script, `build-app.sh` or a workflow job that builds release bytes: no call to the
+/// verification tool, and every script reference resolved into `tools/release` (returned by file
+/// name). A reference is resolved when it names `$PSScriptRoot` on its line (in a script of
+/// `tools/release`) or is a repository path into `tools/release`; any other reference, and a
+/// dot-source with no reference, is refused. Comment lines are skipped.
+fn check_script(text: &str, origin: &str) -> Result<Vec<String>, String> {
+    let in_release = origin.starts_with(&format!("{SCRIPTS}/"));
+    let mut references = Vec::new();
     let mut block_comment = false;
     for (index, line) in text.lines().enumerate() {
         let code = line.trim_start();
@@ -462,18 +644,46 @@ fn check_script(text: &str) -> Result<(), String> {
                 ));
             }
         }
-        if code.starts_with(". ") && ps1_references(code).is_empty() {
+        let mut found = false;
+        for token in ps1_tokens(code) {
+            let relative = token.strip_prefix("./").unwrap_or(token);
+            let name = if let Some(name) = relative.strip_prefix(&format!("{SCRIPTS}/")) {
+                name
+            } else if let Some(name) = token
+                .strip_prefix("$PSScriptRoot/")
+                .or_else(|| token.strip_prefix("$PSScriptRoot\\"))
+            {
+                name
+            } else if in_release && code.contains("$PSScriptRoot") && is_script_name(token) {
+                token
+            } else {
+                return Err(format!(
+                    "line {}: references {token}, which this check cannot resolve into {SCRIPTS}",
+                    index + 1
+                ));
+            };
+            if !is_script_name(name) {
+                return Err(format!(
+                    "line {}: references {token}, which this check cannot resolve into {SCRIPTS}",
+                    index + 1
+                ));
+            }
+            references.push(name.to_owned());
+            found = true;
+        }
+        if code.starts_with(". ") && !found {
             return Err(format!(
                 "line {}: a dot-source this check cannot follow; name the script literally",
                 index + 1
             ));
         }
     }
-    Ok(())
+    Ok(references)
 }
 
 /// The release workflow's three jobs in order, the `build-package` job free of the verification
-/// tool; returns the scripts that job runs, to be checked in turn.
+/// tool; returns the scripts that job runs, to be checked in turn. `needs` is read from the job's
+/// own fields and the download from a real step, never from comments or step bodies.
 fn check_workflow(text: &str) -> Result<Vec<String>, String> {
     let jobs = jobs(text)?;
     let job = |name: &str| {
@@ -487,24 +697,44 @@ fn check_workflow(text: &str) -> Result<Vec<String>, String> {
         ("build-package", "self-check"),
         ("verify-artifact", "build-package"),
     ] {
-        if !job(name)?
+        let declared = job(name)?
             .lines()
-            .any(|line| line.trim() == format!("needs: {needs}"))
-        {
+            .filter_map(|line| {
+                let field = line.strip_prefix("    ")?;
+                (!field.starts_with(' ')).then(|| without_comment(field).trim())
+            })
+            .any(|field| field == format!("needs: {needs}"));
+        if !declared {
             return Err(format!("job `{name}` must have `needs: {needs}`"));
         }
     }
-    if !job("verify-artifact")?.contains("uses: actions/download-artifact@") {
+    let downloads = job("verify-artifact")?.lines().any(|line| {
+        let step = without_comment(line).trim_start();
+        let step = step.strip_prefix("- ").unwrap_or(step);
+        step.starts_with("uses: actions/download-artifact@")
+    });
+    if !downloads {
         return Err("job `verify-artifact` must download the uploaded artifact".to_owned());
     }
     let build = job("build-package")?;
-    check_script(build).map_err(|e| format!("job `build-package`: {e}"))?;
-    Ok(ps1_references(build))
+    check_script(build, "build-package").map_err(|e| format!("job `build-package`: {e}"))
 }
 
-/// The jobs of a workflow: each `  <name>:` header directly under `jobs:` with the lines up to the
-/// next header. Blank and comment lines belong to the job they sit in, whatever their indent; any
-/// other line indented less than a job ends the jobs. A job name given twice is an error.
+/// A YAML line without a trailing `#` comment (one preceded by whitespace or at the start).
+fn without_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (at, byte) in bytes.iter().enumerate() {
+        if *byte == b'#' && (at == 0 || bytes[at - 1].is_ascii_whitespace()) {
+            return &line[..at];
+        }
+    }
+    line
+}
+
+/// The jobs of a workflow: each `  <name>:` header directly under `jobs:` (a trailing comment
+/// allowed) with the lines up to the next header. Blank and comment lines belong to the job they
+/// sit in, whatever their indent; any other line indented less than a job ends the jobs. A job
+/// name given twice is an error.
 fn jobs(text: &str) -> Result<Vec<(String, String)>, String> {
     let mut lines = text.lines().skip_while(|line| *line != "jobs:");
     if lines.next().is_none() {
@@ -525,11 +755,14 @@ fn jobs(text: &str) -> Result<Vec<(String, String)>, String> {
             break;
         }
         if indent == 2 {
-            let name = trimmed
+            let name = without_comment(trimmed)
+                .trim_end()
                 .strip_suffix(':')
                 .filter(|name| {
-                    name.bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+                    !name.is_empty()
+                        && name
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
                 })
                 .ok_or_else(|| format!("unexpected line under `jobs:`: {trimmed}"))?;
             if jobs.iter().any(|(job, _)| job == name) {

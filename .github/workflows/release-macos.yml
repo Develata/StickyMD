@@ -6,7 +6,9 @@ name: release-macos
 # Three jobs on separate runners (plan 11 #platform-artifact-reuse). The job that builds the
 # release bytes runs only code the Platform Build Input Fingerprint counts; the verification tool
 # runs before it (self-check) and on the uploaded artifact after it (verify-artifact). The run
-# succeeds only when every job does.
+# succeeds only when every job does. The artifact is named for the attempt that built it, so a
+# retry reruns from build-package (or the whole workflow): rerunning verify-artifact alone finds
+# no artifact of its attempt and fails.
 on:
   workflow_dispatch:
 
@@ -165,12 +167,9 @@ jobs:
         with:
           name: stickymd-macos-arm64-release-${{ github.run_attempt }}
           path: dist
-      - name: Verify package
-        run: |
-          set -eu
-          zip=$(ls dist/StickyMD-*-macos-arm64-portable.zip)
-          cargo run --quiet -p stickymd-smoke --locked -- release macos-verify-package \
-            --zip "$zip" --source-sha "$GITHUB_SHA"
+      - name: Verify the downloaded set
+        # Exactly the ZIP, its checksum file and its SBOM, consistent with each other.
+        run: cargo run --quiet -p stickymd-smoke --locked -- release macos-verify-artifact --directory dist --source-sha "$GITHUB_SHA"
       - name: Record the platform build input fingerprint
         run: |
           set -eu

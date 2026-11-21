@@ -193,15 +193,30 @@ pub fn build(root: &Path, app: &Path, output: &Path, allow_dirty: bool) -> Resul
                     facts.app_inputs
                 ));
             }
-            fs::hard_link(&staged, &zip)
-                .map_err(|error| format!("cannot publish {}: {error}", zip.display()))?;
+            // A hard link fails when the name exists, so no packager replaces another's ZIP.
+            // It needs a volume with hard links (APFS, HFS+; not exFAT), which the output
+            // directory is required to be.
+            fs::hard_link(&staged, &zip).map_err(|error| {
+                format!(
+                    "cannot publish {} (the output volume must support hard links): {error}",
+                    zip.display()
+                )
+            })?;
             facts.zip = zip.clone();
             Ok(facts)
         },
     );
     let cleanup = fs::remove_dir_all(&private);
     let facts = outcome?;
-    cleanup.map_err(|error| format!("cannot remove {}: {error}", private.display()))?;
+    // The published link is the commit point: the package exists, so a leftover private
+    // directory is reported, not turned into a failure that a retry would meet as "exists".
+    if let Err(error) = cleanup {
+        eprintln!(
+            "warning: published {}, but cannot remove {}: {error}",
+            facts.zip.display(),
+            private.display()
+        );
+    }
     Ok(facts)
 }
 

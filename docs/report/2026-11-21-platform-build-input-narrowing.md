@@ -135,3 +135,21 @@ artifact 并在它上面校验。`11` #platform-artifact-reuse、`release_workfl
   0 失败；`phase 00` PASS。第三方声明在 `fc6fc09` 的 tree 上新旧逐字节相同：Windows `360d0993…`、macOS `8c7875b2…`（SHA-256 前 16 位）。
 - **未验证：** 三个 job 的真实 dispatch（包括 `download-artifact` 取回的路径布局）、Windows 上的 PowerShell 包装测试与 CNG、Windows 打包字节在
   同一 Windows 环境下新旧比对。
+
+## 窄范围复审（`09145d5`、`b6f8f1d`）的处理（2026-11-21）
+
+- **已修：** 各成员的构建脚本必须自成一体（不声明模块、不 `include!` Rust 代码），workspace 中二进制名唯一（Cargo metadata）；打包 crate 的
+  `include!`/`#[path]` 留在 crate 内，数据 include 按 Git 索引中的原样拼写核对（同一文件的大小写变体不算计入），`cfg_attr` 携带 `path` 被拒；
+  词法器识别 `br`/`cr` 原始字符串与 `b'"'`，include 只在去掉字面量内容的 token 中查找，跨行参数可读；脚本引用按 `$PSScriptRoot` 或仓库路径解析到
+  `tools/release`，同名异目录与解析不了的引用被拒，注释行不收集；workflow 的 `needs` 只读 job 直属字段，下载只认真实步骤，job 头可带注释；
+  Rust 源码收集不跟随目录链接；输出守卫对每条命令只取一次链接快照，读取失败即拒绝，并核对命令实际发布的每个文件（含由默认目录派生的
+  ZIP、checksum 与 SBOM）；Info.plist 改由 `plutil` 读取顶层键（注释与嵌套字典中的键不算）；macOS ZIP 的硬链接即提交点，之后的清理失败只警告，
+  输出卷须支持硬链接；macOS `verify-artifact` 改为校验下载的完整三件套（新命令 `release macos-verify-artifact`，复用晋升的集合检查）；Windows
+  `verify-artifact` 在摘要中写平台指纹；workflow 与合同写明重试从 `build-package` 起。
+- **按合同修订而非改代码：** 合同原写“拒绝成员清单中的 `build` 键”，实际需要的不变量是“构建脚本只能是清单旁的 `build.rs`”，已改为以 Cargo
+  metadata 判定（`build = false` 或显式 `build = "build.rs"` 都满足它）。
+- **算法版本不再升：** 本分支内的分类器改动（例外改为大小写不敏感、`build.rs` 与分类器计入）都发生在 v2 合入之前，此时还没有任何 v2 值被记录，
+  所以 v2 指合入时的分类器。合入之后再改分类器或序列化，按合同升版本。
+- **未改：** Windows `build-package` 仍以 `cargo build --workspace` 构建，与已资格化版本的 feature 合并方式相同；被排除成员在构建时能运行的代码只剩
+  构建脚本（计入、自成一体），二进制名由 metadata 保证唯一。改为只构建 `stickymd-win` 会改变 feature 合并，属于 Windows 行为变化，不在本次范围。
+

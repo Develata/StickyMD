@@ -16,72 +16,103 @@ const EVIDENCE: &str = "dist/evidence";
 /// The internally owned resource diagnostics cache.
 const RESOURCE_DIAGNOSTICS: &str = "target/resource-diagnostics";
 
-/// Refuses `path` (resolved against the working directory, as the writers resolve it) as a file
-/// a release command writes: the writer's spelling rules first, so no parent is created for a
-/// path the writer would refuse, then the reserved storage.
-pub fn check_file(root: &Path, path: &Path) -> Result<(), String> {
-    let path = resolve(path)?;
-    crate::atomic::check_spelling(&path)?;
-    #[cfg(windows)]
-    crate::path_identity::validate_output_spelling(&path)?;
-    check(root, &path)
+/// The links (symbolic links, Windows junctions) found inside the reserved directories, by their
+/// resolved targets: a coordinator-owned directory of the evidence tree may live elsewhere, and a
+/// caller may name it by its real location. Taken once per command.
+pub struct Guard<'a> {
+    root: &'a Path,
+    link_targets: Vec<String>,
 }
 
-/// Refuses `directory` as a directory a release command writes into.
+impl<'a> Guard<'a> {
+    /// Walks the reserved directories without following links. An absent reserved directory
+    /// holds no link; any other error reading them refuses, since the walk would be incomplete.
+    pub fn new(root: &'a Path) -> Result<Self, String> {
+        let mut link_targets = Vec::new();
+        for reserved in [EVIDENCE, RESOURCE_DIAGNOSTICS] {
+            let mut pending = vec![root.join(reserved)];
+            let mut top = true;
+            while let Some(directory) = pending.pop() {
+                let entries = match fs::read_dir(&directory) {
+                    Ok(entries) => entries,
+                    Err(error) if top && error.kind() == std::io::ErrorKind::NotFound => break,
+                    Err(error) => {
+                        return Err(format!(
+                            "cannot read {} to guard release outputs: {error}",
+                            directory.display()
+                        ));
+                    }
+                };
+                top = false;
+                for entry in entries {
+                    let entry = entry
+                        .map_err(|error| format!("cannot read {}: {error}", directory.display()))?;
+                    let kind = entry.file_type().map_err(|error| {
+                        format!("cannot inspect {}: {error}", entry.path().display())
+                    })?;
+                    if kind.is_symlink() {
+                        link_targets.push(normalize(&entry.path()));
+                    } else if kind.is_dir() {
+                        pending.push(entry.path());
+                    }
+                }
+            }
+        }
+        Ok(Self { root, link_targets })
+    }
+
+    /// Refuses `path` (resolved against the working directory, as the writers resolve it) as a
+    /// file a release command writes: the writer's spelling rules first, so no parent is created
+    /// for a path the writer would refuse, then the reserved storage.
+    pub fn check_file(&self, path: &Path) -> Result<(), String> {
+        let path = resolve(path)?;
+        crate::atomic::check_spelling(&path)?;
+        #[cfg(windows)]
+        crate::path_identity::validate_output_spelling(&path)?;
+        self.check(&path)
+    }
+
+    /// Refuses `directory` as a directory a release command writes into.
+    pub fn check_directory(&self, directory: &Path) -> Result<(), String> {
+        self.check(&resolve(directory)?)
+    }
+
+    fn check(&self, path: &Path) -> Result<(), String> {
+        let root = self.root;
+        let target = normalize(&root.join(path));
+        let in_link = self.link_targets.iter().any(|linked| {
+            target == *linked
+                || target
+                    .strip_prefix(linked.as_str())
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        });
+        if in_link
+            || reaches(root, path, EVIDENCE)
+            || is_within(root, path, RESOURCE_DIAGNOSTICS)
+            || is_ledger_store(root, path)
+        {
+            return Err(format!(
+                "{} is coordinator-owned qualification storage; release outputs go elsewhere",
+                path.display()
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// [`Guard::check_file`] with a fresh snapshot.
+pub fn check_file(root: &Path, path: &Path) -> Result<(), String> {
+    Guard::new(root)?.check_file(path)
+}
+
+/// [`Guard::check_directory`] with a fresh snapshot.
 pub fn check_directory(root: &Path, directory: &Path) -> Result<(), String> {
-    check(root, &resolve(directory)?)
+    Guard::new(root)?.check_directory(directory)
 }
 
 fn resolve(path: &Path) -> Result<PathBuf, String> {
     std::path::absolute(path)
         .map_err(|error| format!("cannot resolve output {}: {error}", path.display()))
-}
-
-fn check(root: &Path, path: &Path) -> Result<(), String> {
-    if reaches(root, path, EVIDENCE)
-        || is_within(root, path, RESOURCE_DIAGNOSTICS)
-        || is_ledger_store(root, path)
-        || reaches_a_link_target(root, path, EVIDENCE)
-        || reaches_a_link_target(root, path, RESOURCE_DIAGNOSTICS)
-    {
-        return Err(format!(
-            "{} is coordinator-owned qualification storage; release outputs go elsewhere",
-            path.display()
-        ));
-    }
-    Ok(())
-}
-
-/// Whether `path` lies in what a link (a symbolic link or a Windows junction) inside `reserved`
-/// points at: a coordinator-owned directory of the evidence tree may live elsewhere, and the
-/// caller may name it by its real location. Links are found without following them.
-fn reaches_a_link_target(root: &Path, path: &Path, reserved: &str) -> bool {
-    let target = normalize(&root.join(path));
-    let mut pending = vec![root.join(reserved)];
-    while let Some(directory) = pending.pop() {
-        let Ok(entries) = fs::read_dir(&directory) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            let entry = entry.path();
-            if kind.is_symlink() {
-                let linked = normalize(&entry);
-                if target == linked
-                    || target
-                        .strip_prefix(&linked)
-                        .is_some_and(|suffix| suffix.starts_with('/'))
-                {
-                    return true;
-                }
-            } else if kind.is_dir() {
-                pending.push(entry);
-            }
-        }
-    }
-    false
 }
 
 /// The store always lives at `<git common dir>/stickymd/qualification-ledger`. Matching

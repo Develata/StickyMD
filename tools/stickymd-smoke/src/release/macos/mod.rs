@@ -14,6 +14,36 @@ use std::path::Path;
 
 pub(super) use stickymd_package::macos::verify_command;
 
+/// The downloaded macOS set of the workflow's `verify-artifact` job: exactly the three files,
+/// consistent with each other, built from `source` (plan 11 #platform-artifact-reuse).
+#[cfg(target_os = "macos")]
+pub(super) fn verify_artifact_command(
+    root: &Path,
+    directory: &Path,
+    source: &str,
+) -> Result<(), String> {
+    let set = promote::verify_set(root, directory)?;
+    if set.facts.source_commit != source {
+        return Err(format!(
+            "the package names source commit {}, expected {source}",
+            set.facts.source_commit
+        ));
+    }
+    println!(
+        "{{\"zip\":\"{}\",\"zip_sha256\":\"{}\",\"sbom_sha256\":\"{}\",\"source_commit\":\"{}\"}}",
+        crate::evidence::escape_json(&set.zip_name),
+        set.zip_sha256,
+        set.sbom_sha256,
+        set.facts.source_commit
+    );
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn verify_artifact_command(_: &Path, _: &Path, _: &str) -> Result<(), String> {
+    Err("the macOS artifact is checked on macOS".to_owned())
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn promote_command(
     root: &Path,

@@ -7,7 +7,7 @@ use crate::{
     app_inputs, checksums, macos, notices, output_guard, package_inputs, package_publish,
     package_staging, package_workflow, sbom, sbom_preparation, sbom_workflow, syft,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn execute(root: &Path, command: &Command) -> Result<(), String> {
     guard_outputs(root, command)?;
@@ -74,27 +74,52 @@ pub fn native_runtime(root: &Path, exe: &Path) -> Result<(), String> {
 /// last-success ledger, the manual observation store, release decisions), which only the
 /// coordinators of `stickymd-smoke` replace under their locks.
 fn guard_outputs(root: &Path, command: &Command) -> Result<(), String> {
-    let mut files = Vec::new();
-    let mut directories = Vec::new();
+    use crate::platform::Platform;
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut directories: Vec<PathBuf> = Vec::new();
     // Where the commands write when no directory is given.
     let default_directory = root.join("dist");
+    let version = || crate::repository::workspace_version(root);
     match command {
-        Command::Notices { destination, .. } => files.push(destination),
-        Command::MacosPackage { output, .. } => directories.push(output),
-        Command::MacosSbom { zip } => files.push(zip),
+        Command::Notices { destination, .. } => files.push(destination.clone()),
+        Command::MacosPackage { output, .. } => {
+            directories.push(output.clone());
+            files.push(output.join(Platform::MacOsArm64.archive_name(&version()?)));
+        }
+        Command::MacosSbom { zip } => {
+            let directory = zip.parent().map(Path::to_path_buf).unwrap_or_default();
+            files.push(zip.clone());
+            files.push(directory.join(Platform::MacOsArm64.checksum_file()));
+            files.push(directory.join(Platform::MacOsArm64.sbom_file()));
+        }
         Command::PreparePackage { directory, .. } | Command::SyftVerify { directory, .. } => {
+            directories.push(directory.clone());
+        }
+        Command::Checksums(options) => files.push(options.output.clone()),
+        Command::PublishSbom(options) => {
+            files.extend([options.output.clone(), options.checksums.clone()]);
+        }
+        Command::PublishPackage(options) => {
+            files.extend([options.output.clone(), options.checksums.clone()]);
+        }
+        Command::PrepareSbom(options) => directories.push(options.directory.clone()),
+        Command::BuildPackage(options) => {
+            let directory = options.directory.clone().unwrap_or(default_directory);
+            let inputs = crate::package_inputs::resolve(root, &options.inputs)?;
+            files.push(directory.join(&inputs.archive));
+            files.push(directory.join(Platform::WindowsX64.checksum_file()));
             directories.push(directory);
         }
-        Command::Checksums(options) => files.push(&options.output),
-        Command::PublishSbom(options) => files.extend([&options.output, &options.checksums]),
-        Command::PublishPackage(options) => files.extend([&options.output, &options.checksums]),
-        Command::PrepareSbom(options) => directories.push(&options.directory),
-        Command::BuildPackage(options) => {
-            directories.push(options.directory.as_ref().unwrap_or(&default_directory));
-        }
         Command::GenerateSbom(options) => {
-            directories.push(options.directory.as_ref().unwrap_or(&default_directory));
-            files.extend(options.output.as_ref());
+            let directory = options.directory.clone().unwrap_or(default_directory);
+            files.push(
+                options
+                    .output
+                    .clone()
+                    .unwrap_or_else(|| directory.join(Platform::WindowsX64.sbom_file())),
+            );
+            files.push(directory.join(Platform::WindowsX64.checksum_file()));
+            directories.push(directory);
         }
         // No caller-chosen output: fixed tool caches or no files.
         Command::PackageInputs(_)
@@ -104,11 +129,12 @@ fn guard_outputs(root: &Path, command: &Command) -> Result<(), String> {
         | Command::SyftPlan(_)
         | Command::SyftPublish { .. } => {}
     }
-    for file in files {
-        output_guard::check_file(root, file)?;
+    let guard = output_guard::Guard::new(root)?;
+    for file in &files {
+        guard.check_file(file)?;
     }
-    for directory in directories {
-        output_guard::check_directory(root, directory)?;
+    for directory in &directories {
+        guard.check_directory(directory)?;
     }
     Ok(())
 }
