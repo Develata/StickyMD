@@ -166,7 +166,12 @@ USER 对主会话建议的回复（原话）：
 
 - `build-app.sh` 写进 bundle（`Info.plist` 的 `StickyMDInputs`）的产品输入指纹由 `stickymd-smoke mac-ledger inputs` 计算，它也产出发布字节，
   所以连同构建身份与环境检查一并迁入打包 crate，命令改为 `stickymd-package app-inputs`。
-- 排除表改变后，同一 tree 的指纹值随之改变，Platform Build Input Fingerprint 升为算法 v2。目前还没有任何候选收据，没有 v1 记录需要迁移。
+- 排除表改变后，同一 tree 的指纹值随之改变，Platform Build Input Fingerprint 升为算法 v2。截至 2026-11-21，Phase 18 还没有产生任何候选收据与
+  v1 沿用记录，没有需要迁移的；更早版本的 Windows 候选与发布收据保留各自原来的身份，不受影响。
 
-影响：改 `11` 与验收矩阵会使 Windows 全部资格化模块的收据失效（#module-success-ledger），下一版本本来就要整体重新资格化。根 `Cargo.toml`
-的成员表与 `Cargo.lock` 因新 crate 改变，macOS 产品输入指纹也随之改变，账本中的 PASS 不再复用；这些行本来就要在候选 bundle 上重跑。
+影响分两步：
+
+- 只改合同的提交：改 `11` 会使 Windows 全部资格化模块的收据失效（#module-success-ledger），下一版本本来就要整体重新资格化。
+- 拆分落地的提交：新成员、`Cargo.lock` 与打包代码都是两个平台的输入，两个平台的指纹都变，都要在其后的提交上重新构建；`Cargo.lock` 的
+  SHA-256 还写进了两个平台包内的第三方声明。根 `Cargo.toml` 的成员表与 `Cargo.lock` 改变，macOS 产品输入指纹也随之改变，账本中的 PASS 不再复用；
+  这些行本来就要在候选 bundle 上重跑。
