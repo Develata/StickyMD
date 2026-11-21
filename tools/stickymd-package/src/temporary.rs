@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub(super) struct TemporaryDirectory {
+pub struct TemporaryDirectory {
     path: PathBuf,
     closed: bool,
 }

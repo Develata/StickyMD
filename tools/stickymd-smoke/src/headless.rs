@@ -12,13 +12,14 @@ pub(crate) enum Module {
     Posix,
     Windows,
     Mac,
+    Package,
     Smoke,
     MarkdownMath,
     Persistence,
 }
 
 impl Module {
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 11] = [
         Self::Core,
         Self::Render,
         Self::App,
@@ -26,6 +27,7 @@ impl Module {
         Self::Posix,
         Self::Windows,
         Self::Mac,
+        Self::Package,
         Self::Smoke,
         Self::MarkdownMath,
         Self::Persistence,
@@ -40,6 +42,7 @@ impl Module {
             Self::Posix => "posix",
             Self::Windows => "windows",
             Self::Mac => "mac",
+            Self::Package => "package",
             Self::Smoke => "smoke",
             Self::MarkdownMath => "phase1-markdown-math",
             Self::Persistence => "phase1-persistence",
@@ -55,6 +58,7 @@ impl Module {
             Self::Posix => Some("stickymd-posix"),
             Self::Windows => Some("stickymd-win"),
             Self::Mac => Some("stickymd-mac"),
+            Self::Package => Some("stickymd-package"),
             Self::Smoke => Some("stickymd-smoke"),
             Self::MarkdownMath | Self::Persistence => None,
         }
@@ -77,6 +81,7 @@ impl Module {
             Self::Posix => "crates/stickymd-posix/",
             Self::Windows => "apps/stickymd-win/",
             Self::Mac => "apps/stickymd-mac/",
+            Self::Package => "tools/stickymd-package/",
             Self::Smoke => "tools/stickymd-smoke/",
             Self::MarkdownMath => "experiments/phase-01/markdown-math/",
             Self::Persistence => "experiments/phase-01/persistence/",
@@ -106,6 +111,8 @@ impl Module {
                 Self::Desktop,
                 Self::Posix,
             ],
+            // The verification tool checks what the packaging crate builds.
+            Self::Smoke => &[Self::Package],
             _ => &[],
         }
     }

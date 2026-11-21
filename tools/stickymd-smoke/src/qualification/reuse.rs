@@ -19,7 +19,7 @@ use crate::release::platform_inputs::{Reuse, verify_reuse};
 pub(super) const REUSE_RECORD: &str = "dist/evidence/release-reuse-windows-x64.json";
 const PLATFORM: Platform = Platform::WindowsX64;
 /// The version `platform_inputs::fingerprint` writes into its stream header.
-const ALGORITHM: &str = "v1";
+use crate::release::platform_inputs::ALGORITHM;
 
 /// Whether the Windows artifact built on `build_source` (S) may stand for `release_source` (R).
 /// Both must be full lowercase commit ids, so one commit is never spelled two ways in the

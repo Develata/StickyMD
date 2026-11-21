@@ -12,3 +12,5 @@ name = "headless"
 path = "tests/headless.rs"
 
 [dependencies]
+# The packaging crate (plan 11 #platform-artifact-reuse): this crate verifies the bytes it builds.
+stickymd-package = { path = "../stickymd-package" }

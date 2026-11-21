@@ -12,14 +12,14 @@ use std::borrow::Cow;
 use std::fs;
 use std::path::Path;
 
-pub(super) const ROOT_MANIFEST: &str = "Cargo.toml";
-pub(super) const LOCKFILE: &str = "Cargo.lock";
+pub const ROOT_MANIFEST: &str = "Cargo.toml";
+pub const LOCKFILE: &str = "Cargo.lock";
 
 /// The normalized forms of the root manifest and the lockfile, decided once per
 /// planning pass for the whole set: either every manifest and the lockfile are inside
 /// the grammar and agree on the workspace version, or nothing is normalized.
 #[derive(Debug, Eq, PartialEq)]
-pub(super) struct VersionNormalizer {
+pub struct VersionNormalizer {
     root: Normalized,
     lock: Normalized,
 }
@@ -35,7 +35,7 @@ impl VersionNormalizer {
     /// `None` unless the root manifest, every workspace member manifest and the tracked
     /// lockfile are all inside the grammar, every member inherits one quoted workspace
     /// version, and the lockfile records exactly that version for each member.
-    pub(super) fn read(root: &Path, tracked: &[String]) -> Option<Self> {
+    pub fn read(root: &Path, tracked: &[String]) -> Option<Self> {
         let is_tracked = |relative: &str| tracked.iter().any(|path| path == relative);
         if !is_tracked(ROOT_MANIFEST) || !is_tracked(LOCKFILE) {
             return None;
@@ -72,13 +72,13 @@ impl VersionNormalizer {
         })
     }
 
-    pub(super) fn applies_to(path: &str) -> bool {
+    pub fn applies_to(path: &str) -> bool {
         path == ROOT_MANIFEST || path == LOCKFILE
     }
 
     /// The normalized form of `bytes`, provided they are exactly the bytes judged during
     /// planning; anything else (including a file rewritten since) stays raw.
-    pub(super) fn normalize<'a>(&'a self, path: &str, bytes: &'a [u8]) -> Cow<'a, [u8]> {
+    pub fn normalize<'a>(&'a self, path: &str, bytes: &'a [u8]) -> Cow<'a, [u8]> {
         let file = match path {
             ROOT_MANIFEST => &self.root,
             LOCKFILE => &self.lock,

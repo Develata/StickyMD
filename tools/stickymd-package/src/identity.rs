@@ -4,18 +4,13 @@
 use crate::{integrity, repository};
 use std::path::Path;
 
-pub(super) fn source(root: &Path) -> Result<String, String> {
+pub fn source(root: &Path) -> Result<String, String> {
     let source = repository::command_text(root, "git", &["rev-parse", "HEAD"])?;
     integrity::validate_hex(&source, 40, "source commit")?;
     Ok(source.to_ascii_lowercase())
 }
 
-pub(super) fn approved_source(
-    head: &str,
-    approved: &str,
-    version: &str,
-    tag: &str,
-) -> Result<(), String> {
+pub fn approved_source(head: &str, approved: &str, version: &str, tag: &str) -> Result<(), String> {
     integrity::validate_hex(approved, 40, "SourceSha")?;
     if !head.eq_ignore_ascii_case(approved) {
         return Err(format!(
@@ -25,14 +20,14 @@ pub(super) fn approved_source(
     release_tag(version, tag)
 }
 
-pub(super) fn release_tag(version: &str, tag: &str) -> Result<(), String> {
+pub fn release_tag(version: &str, tag: &str) -> Result<(), String> {
     if !tag.eq_ignore_ascii_case(&format!("v{version}")) {
         return Err(format!("Release tag {tag} does not match v{version}"));
     }
     Ok(())
 }
 
-pub(crate) fn readme_source(text: &str, source: &str) -> Result<(), String> {
+pub fn readme_source(text: &str, source: &str) -> Result<(), String> {
     integrity::validate_hex(source, 40, "source commit")?;
     let bindings = text
         .trim_start_matches('\u{feff}')

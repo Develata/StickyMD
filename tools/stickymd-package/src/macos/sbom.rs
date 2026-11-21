@@ -3,10 +3,10 @@
 //! packaged files, and the checksum file is written last, over the ZIP and the SBOM.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-release-artifact
 
-use crate::release::macos::package::run;
-use crate::release::platform::Platform;
-use crate::release::temporary::TemporaryDirectory;
-use crate::{atomic_evidence, integrity, repository};
+use crate::macos::package::run;
+use crate::platform::Platform;
+use crate::temporary::TemporaryDirectory;
+use crate::{atomic, integrity, repository};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -17,7 +17,7 @@ const CHECKSUMS_SHA256: &str = "bb8824a06c27c625fc103db5d7e9d7131ba2cc6e7c7a7931
 /// `syft_1.50.0_darwin_arm64.tar.gz` as that manifest lists it (read 2026-11-19).
 const ARCHIVE_SHA256: &str = "e32fdb9d47823fa633748a1efca2528fd77c37469ea93c9e40ab835da44e4cce";
 
-pub(crate) struct Published {
+pub struct Published {
     pub sbom_sha256: String,
     pub checksums_sha256: String,
 }
@@ -89,7 +89,7 @@ fn syft(root: &Path) -> Result<PathBuf, String> {
 
 /// Scans the package ZIP and publishes `SBOM-macos-arm64.spdx.json`, then
 /// `SHA256SUMS-macos-arm64.txt`, in the ZIP's directory; neither may exist yet.
-pub(crate) fn publish(root: &Path, zip: &Path) -> Result<Published, String> {
+pub fn publish(root: &Path, zip: &Path) -> Result<Published, String> {
     let platform = Platform::MacOsArm64;
     let directory = zip.parent().ok_or("the ZIP has no directory")?;
     let zip_name = zip
@@ -141,7 +141,7 @@ pub(crate) fn publish(root: &Path, zip: &Path) -> Result<Published, String> {
         &hashes,
     )?;
     let sbom = directory.join(platform.sbom_file());
-    atomic_evidence::write_new(&sbom, &bytes)?;
+    atomic::write_new(&sbom, &bytes)?;
     let sbom_sha256 = integrity::sha256(&sbom)?;
     let manifest = integrity::render_checksums(&[
         (zip_name, zip_sha256.as_str()),
@@ -150,7 +150,7 @@ pub(crate) fn publish(root: &Path, zip: &Path) -> Result<Published, String> {
     let checksums = directory.join(platform.checksum_file());
     // The pair is published together: an SBOM without its checksum file is taken back, so a
     // retry is not stopped by a half-written set.
-    if let Err(error) = atomic_evidence::write_new(&checksums, manifest.as_bytes()) {
+    if let Err(error) = atomic::write_new(&checksums, manifest.as_bytes()) {
         let _ = fs::remove_file(&sbom);
         return Err(error);
     }

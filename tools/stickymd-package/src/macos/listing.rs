@@ -25,7 +25,7 @@ fn tar(arguments: &[&std::ffi::OsStr]) -> Result<Vec<u8>, String> {
 }
 
 /// Checks a `tar -tf` listing: every entry an inventory file or one of its parent directories.
-pub(crate) fn check_listing(listing: &str) -> Result<(), String> {
+pub fn check_listing(listing: &str) -> Result<(), String> {
     let mut files = BTreeSet::new();
     for entry in listing.lines().filter(|line| !line.is_empty()) {
         if entry.ends_with('/') {
@@ -43,13 +43,13 @@ pub(crate) fn check_listing(listing: &str) -> Result<(), String> {
 
 /// Checks the archive's own member list (before anything is extracted, so a name stored twice
 /// cannot hide behind one extracted file).
-pub(crate) fn check_archive(zip: &Path) -> Result<(), String> {
+pub fn check_archive(zip: &Path) -> Result<(), String> {
     let listing = tar(&["-tf".as_ref(), zip.as_os_str()])?;
     check_listing(std::str::from_utf8(&listing).map_err(|_| "the ZIP listing is not UTF-8")?)
 }
 
 /// The archive's inventory and the source commit its README names.
-pub(crate) fn verify_archive(zip: &Path) -> Result<String, String> {
+pub fn verify_archive(zip: &Path) -> Result<String, String> {
     check_archive(zip)?;
     let readme = tar(&["-xOf".as_ref(), zip.as_os_str(), README.as_ref()])?;
     content::source_commit(std::str::from_utf8(&readme).map_err(|_| "the README is not UTF-8")?)
@@ -58,7 +58,7 @@ pub(crate) fn verify_archive(zip: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::release::macos::content::{APP_FILES, FILES};
+    use crate::macos::content::{APP_FILES, FILES};
 
     fn listing(extra: &[&str]) -> String {
         let mut lines = vec!["StickyMD/", "StickyMD/StickyMD.app/", "StickyMD/licenses/"];

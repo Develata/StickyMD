@@ -11,7 +11,12 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-/// Paths no platform's artifact, build, packaging or verification reads.
+/// The algorithm version: it names the serialization and this exclusion table, so a change to
+/// either bumps it and values of two versions are never compared (plan 11
+/// #platform-artifact-reuse). v2 stopped counting the verification tool.
+pub(crate) const ALGORITHM: &str = "v2";
+
+/// Paths that neither enter any platform's artifact nor produce its bytes.
 const COMMON_EXCLUDED_PREFIXES: &[&str] = &[
     // Documentation: the package README is generated from a template in the tool.
     "docs/",
@@ -21,6 +26,9 @@ const COMMON_EXCLUDED_PREFIXES: &[&str] = &[
     "tools/manual/",
     // Pictures in the repository README.
     "assets/readme/",
+    // The verification tool. The release bytes come from `tools/stickymd-package`, which it
+    // depends on and which cannot depend on it; its manifest stays an input (see below).
+    "tools/stickymd-smoke/",
 ];
 const COMMON_EXCLUDED_FILES: &[&str] = &[
     "AGENTS.md",
@@ -36,13 +44,27 @@ const COMMON_EXCLUDED_FILES: &[&str] = &[
 const WINDOWS_EXCLUDED_PREFIXES: &[&str] = &["apps/stickymd-mac/", "crates/stickymd-posix/"];
 /// The Windows host and its PowerShell packaging scripts.
 const MACOS_EXCLUDED_PREFIXES: &[&str] = &["apps/stickymd-win/", "tools/release/"];
-/// Every workspace member's manifest is an input of both platforms: another host's manifest can
-/// change the feature set Cargo merges without changing `Cargo.lock`, and the macOS product input
-/// fingerprint written into the bundle reads every member's manifest.
-const MEMBER_MANIFESTS: &[&str] = &[
+/// Files under excluded directories that are inputs of both platforms anyway:
+/// - every workspace member's manifest: another member's manifest can change the feature set Cargo
+///   merges without changing `Cargo.lock`, and the macOS product input fingerprint written into
+///   the bundle reads every member's manifest;
+/// - every member's build script: Cargo finds `build.rs` without a manifest entry and runs it when
+///   it compiles the member, which the Windows workspace build does for every member (governance
+///   refuses a `build` key, so no other file can be one);
+/// - this classifier: the exclusion table and the serialization are the reuse rule itself, so a
+///   change to them is never "only the verification tool".
+///
+/// The other members' manifests and build scripts are inputs anyway.
+const COUNTED_DESPITE_EXCLUSION: &[&str] = &[
     "apps/stickymd-mac/Cargo.toml",
+    "apps/stickymd-mac/build.rs",
     "apps/stickymd-win/Cargo.toml",
+    "apps/stickymd-win/build.rs",
     "crates/stickymd-posix/Cargo.toml",
+    "crates/stickymd-posix/build.rs",
+    "tools/stickymd-smoke/Cargo.toml",
+    "tools/stickymd-smoke/build.rs",
+    "tools/stickymd-smoke/src/release/platform_inputs.rs",
 ];
 
 /// Whether `path` (repository-relative, `/`-separated) is an input of `platform`'s artifact.
@@ -64,7 +86,7 @@ fn is_input_path(platform: Platform, path: &[u8]) -> bool {
             .iter()
             .any(|prefix| path.starts_with(prefix.as_bytes()))
     };
-    if listed(MEMBER_MANIFESTS) {
+    if listed(COUNTED_DESPITE_EXCLUSION) {
         return true;
     }
     if listed(COMMON_EXCLUDED_FILES) || under(COMMON_EXCLUDED_PREFIXES) {
@@ -198,7 +220,7 @@ pub(crate) fn fingerprint(root: &Path, platform: Platform, commit: &str) -> Resu
     );
     let io = |error: std::io::Error| format!("cannot write the input stream: {error}");
     stream
-        .write_all(b"StickyMD platform build inputs v1\0")
+        .write_all(format!("StickyMD platform build inputs {ALGORITHM}\0").as_bytes())
         .map_err(io)?;
     stream.write_all(platform.label().as_bytes()).map_err(io)?;
     stream.write_all(b"\0").map_err(io)?;
@@ -372,6 +394,10 @@ mod tests {
             ".github/workflows/ci.yml",
             ".github/workflows/promote-release.yml",
             ".github/actions/rust-cache/action.yml",
+            "tools/stickymd-smoke/src/main.rs",
+            "tools/stickymd-smoke/src/release/platform.rs",
+            "tools/stickymd-smoke/tests/release_workflow.rs",
+            "tools/stickymd-smoke/README.md",
         ] {
             assert!(!is_input(Win, path) && !is_input(Mac, path), "{path}");
         }
@@ -384,7 +410,14 @@ mod tests {
             "THIRD_PARTY_NOTICES.md",
             "assets/licenses/SIL-OFL-1.1.txt",
             "crates/stickymd-app/src/lib.rs",
-            "tools/stickymd-smoke/src/main.rs",
+            "tools/stickymd-package/src/main.rs",
+            "tools/stickymd-package/src/macos/package_readme.txt",
+            "tools/stickymd-package/Cargo.toml",
+            "tools/stickymd-smoke/Cargo.toml",
+            "tools/stickymd-smoke/build.rs",
+            "tools/stickymd-smoke/src/release/platform_inputs.rs",
+            "apps/stickymd-win/build.rs",
+            "tools/smoke/all.ps1",
             "a-new-top-level-file",
             ".gitattributes",
             "tests/fixtures/a.md",
@@ -395,6 +428,10 @@ mod tests {
             assert!(is_input(Win, path) && is_input(Mac, path), "{path}");
         }
         assert!(!is_input(Win, "apps/stickymd-mac/src/main.rs"));
+        // A build script Cargo would discover runs in the Windows workspace build.
+        assert!(is_input(Win, "apps/stickymd-mac/build.rs"));
+        assert!(is_input(Win, "crates/stickymd-posix/build.rs"));
+        assert!(is_input(Mac, "apps/stickymd-win/build.rs"));
         assert!(!is_input(Win, "crates/stickymd-posix/src/lib.rs"));
         assert!(!is_input(Win, ".github/workflows/release-macos.yml"));
         assert!(is_input(Win, ".github/workflows/release.yml"));
@@ -545,6 +582,81 @@ mod tests {
         assert!(error.contains("apps/stickymd-mac/Cargo.toml"), "{error}");
         let error = verify_reuse(root, mac, mac_manifest, win_manifest).unwrap_err();
         assert!(error.contains("apps/stickymd-win/Cargo.toml"), "{error}");
+    }
+
+    /// The crate boundary of plan 11: a change to the verification tool alone leaves both
+    /// platforms' fingerprints, and so their artifacts, as they were; a change to the packaging
+    /// crate, to the verification tool's manifest (it joins Cargo's feature resolution) or build
+    /// script (Cargo runs it), or to this classifier (the reuse rule itself) changes both.
+    #[test]
+    fn only_the_packaging_crate_and_the_counted_tool_files_reach_the_fingerprints() {
+        let directory = TemporaryDirectory::new("platform-inputs-tools").unwrap();
+        let root = directory.path();
+        git(root, &["init", "-q", "-b", "main"]);
+        let commit = |files: &[(&str, &str)]| {
+            for (path, text) in files {
+                let path = root.join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, text).unwrap();
+            }
+            git(root, &["add", "-A"]);
+            git(root, &["commit", "-q", "-m", "c"]);
+            git(root, &["rev-parse", "HEAD"])
+        };
+        let base = commit(&[
+            ("Cargo.toml", "[workspace]\n"),
+            ("tools/stickymd-package/Cargo.toml", "[package]\n"),
+            ("tools/stickymd-package/src/lib.rs", "package 1"),
+            ("tools/stickymd-smoke/Cargo.toml", "[package]\n"),
+            ("tools/stickymd-smoke/src/main.rs", "smoke 1"),
+            ("tools/stickymd-smoke/tests/release_workflow.rs", "test 1"),
+        ]);
+        let verification = commit(&[
+            ("tools/stickymd-smoke/src/main.rs", "smoke 2"),
+            ("tools/stickymd-smoke/src/release/new_gate.rs", "a new gate"),
+            ("tools/stickymd-smoke/tests/release_workflow.rs", "test 2"),
+        ]);
+        let packaging = commit(&[("tools/stickymd-package/src/lib.rs", "package 2")]);
+        let after_packaging = commit(&[("tools/stickymd-smoke/src/main.rs", "smoke 3")]);
+        let manifest = commit(&[(
+            "tools/stickymd-smoke/Cargo.toml",
+            "[package]\n[dependencies]\n",
+        )]);
+        // Cargo runs a build script it finds without a manifest entry; the classifier is the rule.
+        let build_script = commit(&[("tools/stickymd-smoke/build.rs", "fn main() {}")]);
+        let classifier = commit(&[(
+            "tools/stickymd-smoke/src/release/platform_inputs.rs",
+            "a changed table",
+        )]);
+        for platform in [Platform::WindowsX64, Platform::MacOsArm64] {
+            let value = |commit: &str| fingerprint(root, platform, commit).unwrap();
+            assert_eq!(value(&base), value(&verification), "{}", platform.label());
+            assert_eq!(
+                verify_reuse(root, platform, &base, &verification),
+                Ok(Reuse::Ancestor {
+                    fingerprint: value(&base)
+                })
+            );
+            assert_ne!(
+                value(&verification),
+                value(&packaging),
+                "{}",
+                platform.label()
+            );
+            let error = verify_reuse(root, platform, &verification, &packaging).unwrap_err();
+            assert!(
+                error.contains("tools/stickymd-package/src/lib.rs"),
+                "{error}"
+            );
+            assert!(verify_reuse(root, platform, &packaging, &after_packaging).is_ok());
+            let error = verify_reuse(root, platform, &after_packaging, &manifest).unwrap_err();
+            assert!(error.contains("tools/stickymd-smoke/Cargo.toml"), "{error}");
+            let error = verify_reuse(root, platform, &manifest, &build_script).unwrap_err();
+            assert!(error.contains("tools/stickymd-smoke/build.rs"), "{error}");
+            let error = verify_reuse(root, platform, &build_script, &classifier).unwrap_err();
+            assert!(error.contains("src/release/platform_inputs.rs"), "{error}");
+        }
+        directory.close().unwrap();
     }
 
     #[cfg(unix)]

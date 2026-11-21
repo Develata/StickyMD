@@ -4,18 +4,18 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-release-artifact
 
 use super::content::{self, APP, FILES, README, Source};
-use crate::mac_common::fixture::{app_inputs, bundle_hash};
-use crate::release::notices;
-use crate::release::platform::Platform;
-use crate::release::temporary::TemporaryDirectory;
-use crate::{evidence::escape_json, integrity, repository};
+use crate::macos::bundle::{app_inputs, bundle_hash};
+use crate::notices;
+use crate::platform::Platform;
+use crate::temporary::TemporaryDirectory;
+use crate::{integrity, json::escape as escape_json, repository};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// What a checked package holds, for the workflow log and the candidate receipt.
-pub(crate) struct Facts {
+pub struct Facts {
     pub zip: PathBuf,
     pub zip_sha256: String,
     pub source_commit: String,
@@ -29,7 +29,7 @@ pub(crate) struct Facts {
 }
 
 impl Facts {
-    pub(crate) fn json(&self) -> String {
+    pub fn json(&self) -> String {
         format!(
             "{{\"zip\":\"{}\",\"zip_sha256\":\"{}\",\"source_commit\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"app_inputs\":\"{}\",\"signing\":\"{}\"}}",
             escape_json(&self.zip.display().to_string()),
@@ -44,7 +44,7 @@ impl Facts {
 }
 
 /// Runs a system tool and returns its trimmed stdout, or its stderr as the error.
-pub(crate) fn run(program: &str, arguments: &[&std::ffi::OsStr]) -> Result<String, String> {
+pub fn run(program: &str, arguments: &[&std::ffi::OsStr]) -> Result<String, String> {
     let output = Command::new(program)
         .args(arguments)
         .output()
@@ -139,10 +139,9 @@ fn product_inputs(root: &Path) -> Result<String, String> {
             "--quiet",
             "--locked",
             "-p",
-            "stickymd-smoke",
+            "stickymd-package",
             "--",
-            "mac-ledger",
-            "inputs",
+            "app-inputs",
             "--home",
         ])
         .arg(&home)
@@ -161,12 +160,7 @@ fn product_inputs(root: &Path) -> Result<String, String> {
 /// only then moves the ZIP into `output`; an existing ZIP of that name is refused, not replaced,
 /// and a failure leaves nothing behind. An exact package (`allow_dirty` false) must hold the
 /// bundle this commit builds: its recorded product inputs must equal this checkout's.
-pub(crate) fn build(
-    root: &Path,
-    app: &Path,
-    output: &Path,
-    allow_dirty: bool,
-) -> Result<Facts, String> {
+pub fn build(root: &Path, app: &Path, output: &Path, allow_dirty: bool) -> Result<Facts, String> {
     let (commit, version) = commit_and_version(root, allow_dirty)?;
     let (inputs, _) = check_app(app, &version)?;
     if !allow_dirty {
@@ -258,11 +252,7 @@ fn package_in(
 
 /// Takes `zip` apart in a fresh directory and checks it holds exactly the inventory, names
 /// `expected_commit` (when given) in its README, and carries a valid arm64 ad-hoc bundle.
-pub(crate) fn verify(
-    zip: &Path,
-    expected_commit: Option<&str>,
-    version: &str,
-) -> Result<Facts, String> {
+pub fn verify(zip: &Path, expected_commit: Option<&str>, version: &str) -> Result<Facts, String> {
     // Every fact below comes from one private copy, so a file replaced meanwhile cannot mix in.
     let snapshot = TemporaryDirectory::new("macos-package-snapshot")?;
     let copy = snapshot.path().join("package.zip");

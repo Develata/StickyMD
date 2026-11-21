@@ -3,21 +3,21 @@
 
 use super::package_inputs::Inputs;
 
-pub(super) enum Content {
+pub enum Content {
     Executable,
     Readme,
     Notices,
     License(&'static str),
 }
 
-pub(super) struct Member {
+pub struct Member {
     pub name: &'static str,
     pub content: Content,
     pub sbom_required: bool,
 }
 
 // Keep the existing validation diagnostic order; ZIP entries use ordered_members().
-pub(super) const MEMBERS: &[Member] = &[
+pub const MEMBERS: &[Member] = &[
     Member {
         name: "StickyMD/StickyMD.exe",
         content: Content::Executable,
@@ -50,13 +50,13 @@ pub(super) const MEMBERS: &[Member] = &[
     },
 ];
 
-pub(super) fn ordered_members() -> Vec<&'static Member> {
+pub fn ordered_members() -> Vec<&'static Member> {
     let mut members = MEMBERS.iter().collect::<Vec<_>>();
     members.sort_by_key(|member| member.name);
     members
 }
 
-pub(super) fn readme(inputs: &Inputs) -> Result<String, String> {
+pub fn readme(inputs: &Inputs) -> Result<String, String> {
     let title = match inputs.state {
         "TAGGED_RELEASE" => "StickyMD portable release for Windows 11 x64",
         "EXACT_WORKFLOW_CANDIDATE" => "StickyMD exact workflow candidate for Windows 11 x64",

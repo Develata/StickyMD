@@ -2,7 +2,7 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 use super::{Kind, Pin};
-use crate::{atomic_evidence, integrity, release::temporary::TemporaryDirectory};
+use crate::{atomic, integrity, temporary::TemporaryDirectory};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -37,7 +37,7 @@ pub(super) fn publish(root: &Path, kind: Kind, input: &Path, pin: &Pin<'_>) -> R
     let bytes = fs::read(&snapshot).map_err(|error| error.to_string())?;
     temporary.close()?;
     // Cache replacement is atomic; failed downloads/checks never replace old bytes.
-    atomic_evidence::write(&pin.path(root, kind), &bytes)
+    atomic::write(&pin.path(root, kind), &bytes)
 }
 
 pub(super) fn snapshot(

@@ -7,16 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::repository::{command_text, workspace_version};
 
-pub(crate) fn parse(arguments: &[String]) -> Result<PathBuf, String> {
-    match arguments {
-        [flag, directory] if flag == "--directory" && !directory.is_empty() => {
-            Ok(PathBuf::from(directory))
-        }
-        _ => Err("usage: stickymd-smoke package-path --directory <directory>".to_owned()),
-    }
-}
-
-pub(crate) fn resolve(root: &Path, directory: &Path) -> Result<PathBuf, String> {
+pub fn resolve(root: &Path, directory: &Path) -> Result<PathBuf, String> {
     let directory = std::path::absolute(directory).map_err(|error| {
         format!(
             "cannot resolve package directory {}: {error}",
@@ -63,11 +54,7 @@ pub(crate) fn resolve(root: &Path, directory: &Path) -> Result<PathBuf, String> 
         })
 }
 
-pub(crate) fn local_archive_name(
-    version: &str,
-    commit: &str,
-    dirty: bool,
-) -> Result<String, String> {
+pub fn local_archive_name(version: &str, commit: &str, dirty: bool) -> Result<String, String> {
     crate::integrity::validate_hex(commit, 40, "portable package Git commit SHA")?;
     let short = commit[..12].to_ascii_lowercase();
     let qualifier = if dirty {

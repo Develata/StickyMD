@@ -7,7 +7,7 @@ use std::{
     path::Path,
 };
 
-pub(crate) fn artifact_name(name: &str) -> Result<(), String> {
+pub fn artifact_name(name: &str) -> Result<(), String> {
     if name.is_empty()
         || matches!(name, "." | "..")
         || name.contains(['/', '\\', ':'])
@@ -19,7 +19,7 @@ pub(crate) fn artifact_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn parse_checksums(manifest: &str) -> Result<BTreeMap<String, String>, String> {
+pub fn parse_checksums(manifest: &str) -> Result<BTreeMap<String, String>, String> {
     let mut entries = BTreeMap::new();
     for line in manifest
         .trim_start_matches('\u{feff}')
@@ -41,10 +41,7 @@ pub(crate) fn parse_checksums(manifest: &str) -> Result<BTreeMap<String, String>
     Ok(entries)
 }
 
-pub(crate) fn verify_manifest_text(
-    manifest: &str,
-    expected: &[(&str, &str)],
-) -> Result<(), String> {
+pub fn verify_manifest_text(manifest: &str, expected: &[(&str, &str)]) -> Result<(), String> {
     let entries = parse_checksums(manifest)?;
     if entries.len() != expected.len() {
         return Err(format!(
@@ -69,7 +66,7 @@ pub(crate) fn verify_manifest_text(
 }
 
 /// Generation and verification share the same name, digest and duplicate rules.
-pub(crate) fn render_checksums(artifacts: &[(&str, &str)]) -> Result<String, String> {
+pub fn render_checksums(artifacts: &[(&str, &str)]) -> Result<String, String> {
     let text = artifacts
         .iter()
         .map(|(name, hash)| format!("{} *{name}\n", hash.to_ascii_lowercase()))
@@ -78,7 +75,7 @@ pub(crate) fn render_checksums(artifacts: &[(&str, &str)]) -> Result<String, Str
     Ok(text)
 }
 
-pub(crate) fn verify_checksum_manifest(
+pub fn verify_checksum_manifest(
     directory: &Path,
     zip_name: &str,
     zip_hash: &str,
@@ -92,7 +89,7 @@ pub(crate) fn verify_checksum_manifest(
     )
 }
 
-pub(crate) fn verify_manifest_file(
+pub fn verify_manifest_file(
     path: &Path,
     zip_name: &str,
     zip_hash: &str,
@@ -111,7 +108,7 @@ mod portable;
 #[cfg(windows)]
 mod windows;
 
-pub(crate) fn sha256(path: &Path) -> Result<String, String> {
+pub fn sha256(path: &Path) -> Result<String, String> {
     let path = std::path::absolute(path)
         .map_err(|error| format!("cannot resolve hash input {}: {error}", path.display()))?;
     #[cfg(windows)]
@@ -125,7 +122,7 @@ pub(crate) fn sha256(path: &Path) -> Result<String, String> {
 }
 /// SHA-256 of bytes already in memory; callers that validate and archive the same
 /// bytes use this instead of re-reading a file that another process may replace.
-pub(crate) fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
+pub fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
     #[cfg(windows)]
     {
         windows::sha256_bytes(bytes)
@@ -136,11 +133,11 @@ pub(crate) fn sha256_bytes(bytes: &[u8]) -> Result<String, String> {
     }
 }
 
-pub(crate) fn validate_sha256(value: &str, label: &str) -> Result<(), String> {
+pub fn validate_sha256(value: &str, label: &str) -> Result<(), String> {
     validate_hex(value, 64, label)
 }
 
-pub(crate) fn validate_hex(value: &str, length: usize, label: &str) -> Result<(), String> {
+pub fn validate_hex(value: &str, length: usize, label: &str) -> Result<(), String> {
     if value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         Ok(())
     } else {

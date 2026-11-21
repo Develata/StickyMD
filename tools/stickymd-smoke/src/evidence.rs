@@ -369,24 +369,7 @@ fn environment_json(environment: Option<&QualificationEnvironment>) -> String {
     )
 }
 
-pub(crate) fn escape_json(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for character in value.chars() {
-        match character {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            character if character.is_control() => {
-                use std::fmt::Write as _;
-                let _ = write!(escaped, "\\u{:04x}", character as u32);
-            }
-            character => escaped.push(character),
-        }
-    }
-    escaped
-}
+pub(crate) use stickymd_package::json::escape as escape_json;
 
 #[cfg(test)]
 mod tests {

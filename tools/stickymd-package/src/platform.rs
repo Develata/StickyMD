@@ -3,15 +3,15 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#release-attachment-set
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(crate) enum Platform {
+pub enum Platform {
     WindowsX64,
     MacOsArm64,
 }
 
 impl Platform {
-    pub(crate) const ALL: [Self; 2] = [Self::WindowsX64, Self::MacOsArm64];
+    pub const ALL: [Self; 2] = [Self::WindowsX64, Self::MacOsArm64];
 
-    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+    pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "windows-x64" => Ok(Self::WindowsX64),
             "macos-arm64" => Ok(Self::MacOsArm64),
@@ -21,7 +21,7 @@ impl Platform {
         }
     }
 
-    pub(crate) const fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Self::WindowsX64 => "windows-x64",
             Self::MacOsArm64 => "macos-arm64",
@@ -29,32 +29,32 @@ impl Platform {
     }
 
     /// The host crate whose normal dependency graph the package's notices list.
-    pub(crate) const fn host_package(self) -> &'static str {
+    pub const fn host_package(self) -> &'static str {
         match self {
             Self::WindowsX64 => "stickymd-win",
             Self::MacOsArm64 => "stickymd-mac",
         }
     }
 
-    pub(crate) const fn target(self) -> &'static str {
+    pub const fn target(self) -> &'static str {
         match self {
             Self::WindowsX64 => "x86_64-pc-windows-msvc",
             Self::MacOsArm64 => "aarch64-apple-darwin",
         }
     }
 
-    pub(crate) fn archive_name(self, version: &str) -> String {
+    pub fn archive_name(self, version: &str) -> String {
         format!("StickyMD-{version}-{}-portable.zip", self.label())
     }
 
-    pub(crate) const fn checksum_file(self) -> &'static str {
+    pub const fn checksum_file(self) -> &'static str {
         match self {
             Self::WindowsX64 => "SHA256SUMS.txt",
             Self::MacOsArm64 => "SHA256SUMS-macos-arm64.txt",
         }
     }
 
-    pub(crate) const fn sbom_file(self) -> &'static str {
+    pub const fn sbom_file(self) -> &'static str {
         match self {
             Self::WindowsX64 => "SBOM.spdx.json",
             Self::MacOsArm64 => "SBOM-macos-arm64.spdx.json",
@@ -63,7 +63,7 @@ impl Platform {
 
     /// The release workflow that builds this platform's set, as GitHub names the run.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) const fn workflow(self) -> &'static str {
+    pub const fn workflow(self) -> &'static str {
         match self {
             Self::WindowsX64 => "release",
             Self::MacOsArm64 => "release-macos",

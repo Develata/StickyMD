@@ -16,9 +16,10 @@ fn powershell_7_preserves_release_interfaces_utf8_exit_codes_and_caller_state() 
 }
 
 fn check_release_wrappers(host: Host) {
-    // Both cases read the repository and the same prebuilt CLI. Fixture/package writes
-    // stay in distinct edition directories, even with identical clock values. Cargo owns
-    // dependency metadata/cache access; neither case starts a Cargo build.
+    // Both cases read the repository and the same prebuilt CLIs (the packaging one is built
+    // once per process, before either case starts PowerShell). Fixture/package writes stay in
+    // distinct edition directories, even with identical clock values. Cargo owns dependency
+    // metadata/cache access; no case starts a Cargo build of its own.
     let fixture = ScriptFixture::new(
         "release-wrappers",
         &format!("{}-中文 {} [with spaces]", host.edition, "a".repeat(64)),

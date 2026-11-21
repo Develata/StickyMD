@@ -53,9 +53,13 @@ fn ci_workflow_wires_all_selected_lanes_and_fails_closed_at_the_aggregate_gate()
     assert!(!plan.contains("cargo test"));
     let smoke = job(&workflow, "linux-smoke");
     assert!(smoke.contains("lane: linux-smoke"));
-    assert!(smoke.contains("cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings"));
+    assert!(smoke.contains(
+        "cargo clippy -p stickymd-package -p stickymd-smoke --all-targets --locked -- -D warnings"
+    ));
     assert!(smoke.contains("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"));
-    assert!(smoke.contains("cargo test -p stickymd-smoke --locked\n          exit $LASTEXITCODE"));
+    assert!(smoke.contains(
+        "cargo test -p stickymd-package -p stickymd-smoke --locked\n          exit $LASTEXITCODE"
+    ));
     let mac = job(&workflow, "macos-host");
     assert!(mac.contains("runs-on: macos-latest"));
     assert!(mac.contains("lane: macos-host"));

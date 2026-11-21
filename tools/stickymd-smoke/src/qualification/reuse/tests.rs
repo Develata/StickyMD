@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{REUSE_RECORD, candidate_source_matches, check_record, remove_record, write_record};
-use crate::release::platform_inputs::Reuse;
+use crate::release::platform_inputs::{ALGORITHM, Reuse};
 
 /// A throwaway repository: a first commit, then one changing only a document, one only the
 /// macOS host (neither a Windows input), and one the Windows host.
@@ -155,7 +155,7 @@ fn the_reuse_record_follows_the_judgement_and_the_candidate_receipt() {
     assert_eq!(
         text,
         format!(
-            "{{\"schema_version\":1,\"platform\":\"windows-x64\",\"build_source\":\"{build}\",\"release_source\":\"{release}\",\"build_inputs\":\"{fingerprint}\",\"release_inputs\":\"{fingerprint}\",\"algorithm\":\"v1\",\"candidate_receipt_sha256\":\"{digest}\"}}\n"
+            "{{\"schema_version\":1,\"platform\":\"windows-x64\",\"build_source\":\"{build}\",\"release_source\":\"{release}\",\"build_inputs\":\"{fingerprint}\",\"release_inputs\":\"{fingerprint}\",\"algorithm\":\"{ALGORITHM}\",\"candidate_receipt_sha256\":\"{digest}\"}}\n"
         )
     );
     crate::qualification::json::parse_object(&text).expect("strict JSON");

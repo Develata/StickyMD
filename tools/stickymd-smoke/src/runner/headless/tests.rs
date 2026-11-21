@@ -409,7 +409,7 @@ fn the_posix_module_narrows_tests_to_its_package() {
 
 #[test]
 fn workspace_membership_drift_fails_closed() {
-    let listing = "stickymd-core v0.1.0 (path with spaces)\n\nstickymd-render v0.1.0\n\nstickymd-app v0.1.0\n\nstickymd-desktop v0.1.0\n\nstickymd-win v0.1.0\n\nstickymd-mac v0.1.0\n\nstickymd-posix v0.1.0\n\nstickymd-smoke v0.1.0\n";
+    let listing = "stickymd-core v0.1.0 (path with spaces)\n\nstickymd-render v0.1.0\n\nstickymd-app v0.1.0\n\nstickymd-desktop v0.1.0\n\nstickymd-win v0.1.0\n\nstickymd-mac v0.1.0\n\nstickymd-posix v0.1.0\n\nstickymd-package v0.1.0\n\nstickymd-smoke v0.1.0\n";
     assert!(verify_workspace_listing(listing).is_ok());
     assert!(verify_workspace_listing("").is_err());
     assert!(verify_workspace_listing(&listing.replace("stickymd-core", "renamed-core")).is_err());

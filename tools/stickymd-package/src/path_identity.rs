@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-pub(super) fn matches_receipt(root: &Path, path: &Path, expected: &str) -> bool {
+pub fn matches_receipt(root: &Path, path: &Path, expected: &str) -> bool {
     normalize(&root.join(path)) == normalize(&root.join(expected))
 }
 
@@ -14,7 +14,7 @@ pub(super) fn matches_receipt(root: &Path, path: &Path, expected: &str) -> bool 
 /// the way elsewhere (`reserved/../x`). Every lexical ancestor is compared after alias
 /// resolution and before `..` collapses, because creating the parents of `path` would
 /// create `reserved`.
-pub(super) fn reaches(root: &Path, path: &Path, reserved: &str) -> bool {
+pub fn reaches(root: &Path, path: &Path, reserved: &str) -> bool {
     let reserved_path = root.join(reserved);
     let reserved = normalize(&reserved_path);
     root.join(path)
@@ -23,7 +23,7 @@ pub(super) fn reaches(root: &Path, path: &Path, reserved: &str) -> bool {
         || is_within(root, path, &reserved_path.to_string_lossy())
 }
 
-pub(super) fn is_within(root: &Path, path: &Path, directory: &str) -> bool {
+pub fn is_within(root: &Path, path: &Path, directory: &str) -> bool {
     let path = normalize(&root.join(path));
     let directory = normalize(&root.join(directory));
     path == directory
@@ -32,7 +32,7 @@ pub(super) fn is_within(root: &Path, path: &Path, directory: &str) -> bool {
             .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
-pub(super) fn normalize(path: &Path) -> String {
+pub fn normalize(path: &Path) -> String {
     #[cfg(windows)]
     let win32_path = win32_spelling(path);
     #[cfg(windows)]
@@ -96,7 +96,7 @@ fn is_verbatim(path: &Path) -> bool {
 }
 
 #[cfg(windows)]
-pub(super) fn validate_output_spelling(path: &Path) -> Result<(), String> {
+pub fn validate_output_spelling(path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     // The evidence writer refuses this too: `/` is no separator in a verbatim path, but
     // joining the name would make it one.

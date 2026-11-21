@@ -7,10 +7,10 @@ use super::{
     temporary::TemporaryDirectory,
     windows,
 };
-use crate::atomic_evidence;
+use crate::atomic;
 use std::{fs, io::Write, path::Path};
 
-pub(crate) fn build(
+pub fn build(
     root: &Path,
     options: &PackageBuildOptions,
     log: &mut dyn Write,
@@ -45,7 +45,7 @@ pub(crate) fn build(
         .collect::<Vec<_>>()
         .join(",");
     let inventory = temporary.path().join("members.json");
-    atomic_evidence::write_new(&inventory, format!("[{members}]").as_bytes())?;
+    atomic::write_new(&inventory, format!("[{members}]").as_bytes())?;
     let archive = temporary.path().join("completed.zip");
     let text = |path: &Path| path.to_string_lossy().into_owned();
     windows::operation(

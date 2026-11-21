@@ -4,12 +4,7 @@
 use super::json::{self, Value};
 use std::{path::Path, process::Command};
 
-pub(super) fn archive(
-    root: &Path,
-    operation: &str,
-    zip: &Path,
-    extra: &[&str],
-) -> Result<Value, String> {
+pub fn archive(root: &Path, operation: &str, zip: &Path, extra: &[&str]) -> Result<Value, String> {
     let mut arguments = vec![
         "-Operation",
         operation,
@@ -20,7 +15,7 @@ pub(super) fn archive(
     json::parse(&script(root, "archive-facts.ps1", &arguments)?)
 }
 
-pub(super) fn script(root: &Path, script: &str, arguments: &[&str]) -> Result<String, String> {
+pub fn script(root: &Path, script: &str, arguments: &[&str]) -> Result<String, String> {
     let mut output = Vec::new();
     operation(
         root,
@@ -33,7 +28,7 @@ pub(super) fn script(root: &Path, script: &str, arguments: &[&str]) -> Result<St
         .map_err(|error| format!("Windows adapter facts are not UTF-8: {error}"))
 }
 
-pub(super) fn operation(
+pub fn operation(
     root: &Path,
     shell: &Path,
     script: &str,
@@ -69,7 +64,7 @@ pub(super) fn operation(
     Ok(())
 }
 
-pub(super) fn names(root: &Path, zip: &Path) -> Result<Vec<String>, String> {
+pub fn names(root: &Path, zip: &Path) -> Result<Vec<String>, String> {
     archive(root, "List", zip, &[])?
         .array()?
         .iter()
@@ -77,7 +72,7 @@ pub(super) fn names(root: &Path, zip: &Path) -> Result<Vec<String>, String> {
         .collect()
 }
 
-pub(super) fn read_entry(root: &Path, zip: &Path, index: usize) -> Result<String, String> {
+pub fn read_entry(root: &Path, zip: &Path, index: usize) -> Result<String, String> {
     archive(root, "Read", zip, &["-EntryIndex", &index.to_string()])?
         .string()
         .map(str::to_owned)

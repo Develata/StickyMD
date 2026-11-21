@@ -8,10 +8,10 @@ use super::{
     package_inputs,
     temporary::TemporaryDirectory,
 };
-use crate::{atomic_evidence, evidence::escape_json};
+use crate::{atomic, json::escape as escape_json};
 use std::{fs, path::Path};
 
-pub(super) fn prepare(
+pub fn prepare(
     root: &Path,
     options: &PackageInputOptions,
     exe: &Path,
@@ -36,7 +36,7 @@ pub(super) fn prepare(
     Ok(())
 }
 
-pub(super) fn stage(
+pub fn stage(
     root: &Path,
     exe: &Path,
     directory: &Path,
@@ -67,7 +67,7 @@ pub(super) fn stage(
                 continue;
             }
         };
-        atomic_evidence::write_new(&path, &bytes)?;
+        atomic::write_new(&path, &bytes)?;
     }
     let diagnostics = String::from_utf8(diagnostics).map_err(|error| error.to_string())?;
     staging.keep();

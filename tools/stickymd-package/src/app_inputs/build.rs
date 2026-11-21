@@ -43,7 +43,7 @@ const REFUSED_PREFIXES: &[&str] = &[
 ];
 
 /// The names among `variables` that a build to be fingerprinted must not have set, sorted.
-pub(super) fn refused(variables: impl IntoIterator<Item = (String, String)>) -> Vec<String> {
+pub fn refused(variables: impl IntoIterator<Item = (String, String)>) -> Vec<String> {
     let mut names: Vec<String> = variables
         .into_iter()
         .map(|(name, _)| name)
@@ -61,7 +61,7 @@ pub(super) fn refused(variables: impl IntoIterator<Item = (String, String)>) -> 
 /// The Cargo configuration files Cargo would merge into a build run in `root` that are not tracked
 /// there: those of `root`'s ancestors and of `cargo_home`. Their effect (includes, compilers,
 /// wrappers, linkers, lockfile paths) cannot be recorded, so any of them refuses the fingerprint.
-pub(super) fn outside_cargo_configs(root: &Path, cargo_home: &Path) -> Vec<PathBuf> {
+pub fn outside_cargo_configs(root: &Path, cargo_home: &Path) -> Vec<PathBuf> {
     let mut directories: Vec<PathBuf> = root
         .ancestors()
         .skip(1)
@@ -82,7 +82,7 @@ pub(super) fn outside_cargo_configs(root: &Path, cargo_home: &Path) -> Vec<PathB
 
 /// The bytes appended to the tracked inputs: each recorded tool output as a length-prefixed label
 /// and value, after the fixed target and profile.
-pub(super) fn identity(tools: &[(&str, String)]) -> Vec<u8> {
+pub fn identity(tools: &[(&str, String)]) -> Vec<u8> {
     let mut bytes = Vec::new();
     let mut field = |label: &[u8], value: &[u8]| {
         bytes.extend_from_slice(&(label.len() as u64).to_le_bytes());
@@ -100,7 +100,7 @@ pub(super) fn identity(tools: &[(&str, String)]) -> Vec<u8> {
 
 /// Cargo's home as Cargo resolves it: `CARGO_HOME` when set and non-empty (relative to `cwd`),
 /// otherwise `.cargo` in the home directory.
-pub(super) fn cargo_home(
+pub fn cargo_home(
     cargo_home: Option<std::ffi::OsString>,
     home: Option<std::ffi::OsString>,
     cwd: &Path,

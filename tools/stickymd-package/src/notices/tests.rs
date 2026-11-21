@@ -1,6 +1,6 @@
 use super::*;
-use crate::release::platform::Platform;
-use crate::{evidence::escape_json, release::temporary::TemporaryDirectory};
+use crate::platform::Platform;
+use crate::{json::escape as escape_json, temporary::TemporaryDirectory};
 use std::fs;
 
 #[test]

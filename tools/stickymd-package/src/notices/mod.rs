@@ -8,20 +8,20 @@ mod licenses;
 mod tests;
 
 use super::platform::Platform;
-use crate::{atomic_evidence, integrity, repository};
+use crate::{atomic, integrity, repository};
 use std::{fmt::Write, fs, path::Path};
 
-pub(super) fn normalized_license(path: &Path) -> Result<String, String> {
+pub fn normalized_license(path: &Path) -> Result<String, String> {
     Ok(licenses::text(path)?
         .replace("\r\n", "\n")
         .replace('\r', "\n"))
 }
 
-pub(super) fn generate(root: &Path, destination: &Path, platform: Platform) -> Result<(), String> {
+pub fn generate(root: &Path, destination: &Path, platform: Platform) -> Result<(), String> {
     generate_with_output(root, destination, platform, &mut std::io::stdout().lock())
 }
 
-pub(super) fn generate_with_output(
+pub fn generate_with_output(
     root: &Path,
     destination: &Path,
     platform: Platform,
@@ -44,7 +44,7 @@ pub(super) fn generate_with_output(
     let (contents, count) = render(root, &metadata, platform)?;
     // The preflight is only an early rejection; publication must still reject a
     // destination created while Cargo metadata and license files were being read.
-    atomic_evidence::write_new(&destination, contents.as_bytes())?;
+    atomic::write_new(&destination, contents.as_bytes())?;
     writeln!(
         output,
         "THIRD_PARTY_NOTICES={}\nRUNTIME_DEPENDENCY_COUNT={count}",

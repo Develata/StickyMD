@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::super::mac_app_inputs;
+use super::fingerprint as mac_app_inputs;
 
 const BUILD: &[u8] = b"rustc 1.97.1\nsdk 27.2\n";
 
@@ -22,15 +22,19 @@ fn lockfile(version: &str) -> String {
     )
 }
 
-struct Repository(PathBuf);
+/// The fixture repository and the temporary directory that owns it (removed on drop).
+struct Repository(
+    PathBuf,
+    #[allow(dead_code)] crate::temporary::TemporaryDirectory,
+);
 
 impl Repository {
     fn new() -> Self {
-        let root = super::super::temporary_path()
-            .expect("fixture path")
-            .with_extension("mac-fixture");
+        let directory =
+            crate::temporary::TemporaryDirectory::new("mac-fixture").expect("fixture directory");
+        let root = directory.path().join("repository");
         fs::create_dir(&root).expect("exclusive fixture directory");
-        let repository = Self(root);
+        let repository = Self(root, directory);
         repository.write("Cargo.toml", &root_manifest("0.1.3"));
         repository.write("Cargo.lock", &lockfile("0.1.3"));
         repository.write(
@@ -46,7 +50,7 @@ impl Repository {
             "apps/stickymd-mac/src/main.rs",
             "apps/stickymd-mac/packaging/Info.plist",
             "apps/stickymd-win/src/main.rs",
-            "tools/stickymd-smoke/src/main.rs",
+            "tools/verification-tool/src/main.rs",
             "docs/plan/02_positioning_and_scope.md",
             "tests/fixtures/performance/typical-note-seed.md",
             "README.md",
@@ -81,12 +85,6 @@ impl Repository {
     }
 }
 
-impl Drop for Repository {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
 #[test]
 fn a_release_version_documents_the_windows_host_and_tooling_leave_it_unchanged() {
     let repository = Repository::new();
@@ -97,7 +95,7 @@ fn a_release_version_documents_the_windows_host_and_tooling_leave_it_unchanged()
     assert_eq!(repository.inputs(), before, "a release version alone");
     for path in [
         "apps/stickymd-win/src/main.rs",
-        "tools/stickymd-smoke/src/main.rs",
+        "tools/verification-tool/src/main.rs",
         "docs/plan/02_positioning_and_scope.md",
         "tests/fixtures/performance/typical-note-seed.md",
         "README.md",

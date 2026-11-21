@@ -1,5 +1,15 @@
 # coverage-matrix.md - 契约覆盖矩阵
 
+2026-11-21 平台构建输入收窄为打包 crate（USER 决定 2026-11-21，[验证报告](report/2026-11-20-phase-18-verification.md)末尾的 Resolution）：
+
+- **Plan：** `11` `platform-artifact-reuse`（排除表、打包 crate、边界的证明、只改验证工具时、构建 workflow 中的验证只是自检，算法 v2）、
+  `macos-release-gate`（R 上的源码测试，M5 核对）、`phase-16-macos-host`（产品输入指纹改由 `stickymd-package app-inputs` 计算）；
+  `01` Platform Build Input Fingerprint。
+- **验收：** [Phase 18](acceptance-cases/phase-18.md) P18-P05（指纹与沿用）、P18-P10（打包 crate 的边界）。
+- **代码：** `tools/stickymd-package`（产出发布字节的全部代码与其公共代码，二进制 `stickymd-package`）；
+  `tools/stickymd-smoke/src/release/platform_inputs.rs`（排除表 v2）、`governance/package_boundary.rs`（编译器看不到的边）；
+  `tools/release/invoke-package.ps1`、`build-app.sh`、`release-macos.yml` 的打包与 SBOM 步骤改调打包工具。M5 的核对程序尚未实现。
+
 2026-11-19 Phase 18 macOS 安装版与公开分发（下一版本）：
 
 - **Plan：** `01` Note Root、Platform Build Input Fingerprint、Release Attachment Set；`02` `portable-and-installed` 与 macOS 节；
@@ -8,8 +18,8 @@
 - **功能投影：** 功能文档的“macOS：安装版与便携版”一节。
 - **验收：** [Phase 18](acceptance-cases/phase-18.md) 的 L、P、D 系列；每版的 macOS 发布证据记在候选报告，不写进矩阵。
 - **代码：** `apps/stickymd-mac`（位置判定、启动、持久化）、`crates/stickymd-posix`（家目录、Note Root 句柄链与加锁）、
-  `tools/stickymd-smoke/src/release`（`platform`、`platform_inputs` 指纹与沿用、`attachments` 附件集合、`notices` 按平台、
-  `macos/` 打包、清单、SBOM、晋升与 resolver）、`qualification/reuse.rs`（Windows 候选接受可沿用的构建来源）、
+  `tools/stickymd-smoke/src/release`（`platform_inputs` 指纹与沿用、`attachments` 附件集合、`macos/` 晋升与 resolver）与
+  `tools/stickymd-package`（2026-11-21 起：`platform`、`notices` 按平台、`macos/` 打包、清单与 SBOM）、`qualification/reuse.rs`（Windows 候选接受可沿用的构建来源）、
   `.github/workflows/release-macos.yml`、`promote-release.yml`、`.github/actions/verify-release-candidates`。
   两个 workflow 尚未 dispatch；macOS 就绪核对（M5）尚未实现。
 - **依据：** [分发报告（修订版）](report/2026-11-19-macos-public-distribution-decision-r2.md)、[安装版报告（修订版）](report/2026-11-19-macos-installed-note-location-r2.md)。
@@ -150,7 +160,7 @@ plan 11 `phase-verification-harness` / `modular-headless-ci` → P00-A09/A10 与
 [集成测试合并报告](report/2026-09-29-headless-integration-consolidation.md)。
 
 发布声明输出维护：plan 11 `phase-verification-harness` → REL-CLI-05 →
-`tools/stickymd-smoke/src/release/notices/`。无效目标在读取依赖前拒绝，最终原子
+`tools/stickymd-package/src/notices/`。无效目标在读取依赖前拒绝，最终原子
 no-replace 发布仍持有防覆盖责任；无 manifest 的失败路径回归、两版 PowerShell 兼容性与
 分项耗时见[输出预检报告](report/2026-09-29-notices-preflight-optimization.md)。
 
@@ -204,7 +214,7 @@ no-replace 发布仍持有防覆盖责任；无 manifest 的失败路径回归�
 | --- | --- | --- | --- | --- |
 | `11_testing_and_release.md#phase-verification-harness` | 开发工具；不增加产品功能 | P00-A06 | `stickymd-smoke/src/{headless.rs,runner/headless.rs}` | 显式单/多模块入口、完整并集、共享命令去重、既有 Release 参数保留与未知目标拒绝 |
 | `11_testing_and_release.md#modular-headless-ci` | 开发工具；普通 CI 与候选资格化分离 | P00-A08/A09 | `stickymd-smoke/src/ci/*`; `.github/workflows/{ci,scheduled}.yml`; `.github/actions/rust-cache/action.yml` | 已批准日常选测、反向依赖及全量回退；Git/分类/聚合/工作流本地回归；远程执行及耗时尚未验证 |
-| `11_testing_and_release.md#release-artifact-authority` | 开发工具；不改变发布资产身份 | P00-A07 | `stickymd-smoke/src/{package_path.rs,repository.rs}`; `tools/release/package-path.ps1` | 包路径判断迁入 Rust；单包、多包、clean/dirty、错误路径和 Windows PowerShell 5.1 中文路径兼容回归 |
+| `11_testing_and_release.md#release-artifact-authority` | 开发工具；不改变发布资产身份 | P00-A07 | `stickymd-package/src/{package_path.rs,repository.rs}`（2026-11-21 前在 `stickymd-smoke`）; `tools/release/package-path.ps1` | 包路径判断迁入 Rust；单包、多包、clean/dirty、错误路径和 Windows PowerShell 5.1 中文路径兼容回归 |
 
 这些维护验证不继承 `v0.1.0` exact artifact 身份；新 CI 选测规则的批准记录见
 [模块化 CI 影响分析](report/RISK-2026-09-08-modular-ci.md)。
@@ -213,9 +223,9 @@ no-replace 发布仍持有防覆盖责任；无 manifest 的失败路径回归�
 
 | Plan / existing acceptance mapping | Maintenance projection | Authoritative implementation / verification |
 | --- | --- | --- |
-| 11 release-artifact-authority / P14-A32/A34 | Phase 14 REL-CLI-01/02 | `stickymd-smoke/src/integrity.rs`、`release/identity.rs`、`release/promoted.rs`；candidate receipts 共用 checksum 实现 |
+| 11 release-artifact-authority / P14-A32/A34 | Phase 14 REL-CLI-01/02 | `stickymd-package/src/{integrity.rs,identity.rs}`、`stickymd-smoke/src/release/promoted.rs`；candidate receipts 共用 checksum 实现 |
 | 10 ZIP hard gate + 11 portable-windows-runtime / P09-D066..D082、P14-A19 | Phase 14 REL-CLI-03/06 | `release/package*.rs`、现有 PE parser/ChildGuard；ZIP/资源事实仍由 PowerShell 采集 |
-| 11 dependency/release contract / P09-D061 | Phase 14 REL-CLI-04/05 | `release/notices/`；锁定 metadata、许可证失败路径、同输入字节比较、PowerShell 双版本测试 |
+| 11 dependency/release contract / P09-D061 | Phase 14 REL-CLI-04/05 | `stickymd-package/src/notices/`；锁定 metadata、许可证失败路径、同输入字节比较、PowerShell 双版本测试 |
 | 11 phase-verification-harness / package selection and staging | Phase 14 REL-CLI-07 | `release/package_inputs.rs`、`package_path.rs`、`repository.rs`；现有阶段入口和选测继续复用 |
 
 工具修改与验证细节见 [2026-09-22 migration](report/2026-09-22-release-cli-migration.md)。

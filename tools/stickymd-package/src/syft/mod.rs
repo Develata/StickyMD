@@ -3,11 +3,11 @@
 
 mod cache;
 mod plan;
-pub(super) use plan::{DOWNLOAD_ATTEMPTS, Download, Plan};
+pub use plan::{DOWNLOAD_ATTEMPTS, Download, Plan};
 #[cfg(test)]
 mod tests;
 
-use crate::evidence::escape_json;
+use crate::json::escape as escape_json;
 use std::path::{Path, PathBuf};
 
 struct Pin<'a> {
@@ -24,7 +24,7 @@ const PIN: Pin<'static> = Pin {
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Kind {
+pub enum Kind {
     Archive,
     Checksums,
 }
@@ -43,7 +43,7 @@ impl Kind {
             Self::Checksums => "checksums",
         }
     }
-    pub(super) fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Self::Archive => "Syft archive",
             Self::Checksums => "Syft checksum manifest",
@@ -72,7 +72,7 @@ impl Pin<'_> {
     }
 }
 
-pub(super) fn plan(root: &Path, provided: Option<&Path>) -> Result<(), String> {
+pub fn plan(root: &Path, provided: Option<&Path>) -> Result<(), String> {
     println!("{}", plan_json(root, provided, &PIN)?);
     Ok(())
 }
@@ -101,7 +101,7 @@ fn pending(root: &Path, provided: Option<&Path>, pin: &Pin<'_>) -> Result<Vec<Ki
     }
 }
 
-pub(super) fn prepare(
+pub fn prepare(
     root: &Path,
     provided: Option<&Path>,
     directory: &Path,
@@ -130,25 +130,21 @@ fn prepare_with_pin(
     Ok((plan, verified))
 }
 
-pub(super) fn publish(root: &Path, kind: Kind, input: &Path) -> Result<(), String> {
+pub fn publish(root: &Path, kind: Kind, input: &Path) -> Result<(), String> {
     publish_cached(root, kind, input)?;
     println!("SYFT_CACHE=VERIFIED");
     Ok(())
 }
 
-pub(super) fn publish_cached(root: &Path, kind: Kind, input: &Path) -> Result<(), String> {
+pub fn publish_cached(root: &Path, kind: Kind, input: &Path) -> Result<(), String> {
     cache::publish(root, kind, input, &PIN)
 }
 
-pub(super) fn snapshot(
-    archive: &Path,
-    checksums: &Path,
-    directory: &Path,
-) -> Result<PathBuf, String> {
+pub fn snapshot(archive: &Path, checksums: &Path, directory: &Path) -> Result<PathBuf, String> {
     cache::snapshot(archive, checksums, directory, &PIN)
 }
 
-pub(super) fn verify(archive: &Path, checksums: &Path, directory: &Path) -> Result<(), String> {
+pub fn verify(archive: &Path, checksums: &Path, directory: &Path) -> Result<(), String> {
     let path = snapshot(archive, checksums, directory)?;
     println!(
         "{{\"archive_path\":\"{}\"}}",

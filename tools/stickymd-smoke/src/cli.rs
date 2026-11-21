@@ -451,7 +451,7 @@ impl CommandLine {
             Some("phase-entry") => crate::phase_entry::parse(&args[1..], false),
             Some("phase-entry-plan") => crate::phase_entry::parse(&args[1..], true),
             Some("release") => crate::release::parse(&args[1..]).map(Self::Release),
-            Some("package-path") => crate::package_path::parse(&args[1..]).map(Self::PackagePath),
+            Some("package-path") => package_path_directory(&args[1..]).map(Self::PackagePath),
             Some("modules") => crate::headless::Command::parse(&args[1..]).map(Self::Modules),
             Some("ci") => crate::ci::Command::parse(&args[1..]).map(Self::Ci),
             Some("dev-check") => crate::development::Command::parse(&args[1..]).map(Self::Development),
@@ -1115,6 +1115,16 @@ impl Options {
     }
 }
 
+/// The directory of `package-path --directory <directory>`.
+fn package_path_directory(arguments: &[String]) -> Result<PathBuf, String> {
+    match arguments {
+        [flag, directory] if flag == "--directory" && !directory.is_empty() => {
+            Ok(PathBuf::from(directory))
+        }
+        _ => Err("usage: stickymd-smoke package-path --directory <directory>".to_owned()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1740,5 +1750,29 @@ mod tests {
             options.evidence_file.as_deref(),
             Some(std::path::Path::new("docs/report/evidence/phase-11.json"))
         );
+    }
+
+    #[test]
+    fn command_line_preserves_spaces_and_rejects_missing_or_extra_arguments() {
+        let args = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            CommandLine::parse(args(&["package-path", "--directory", "folder with spaces"]))
+                .unwrap(),
+            CommandLine::PackagePath(std::path::PathBuf::from("folder with spaces")),
+        );
+        for input in [
+            vec!["package-path"],
+            vec!["package-path", "--directory"],
+            vec!["package-path", "--directory", ""],
+            vec!["package-path", "--directory", "path", "extra"],
+            vec!["package-path", "--unknown", "path"],
+        ] {
+            assert!(CommandLine::parse(args(&input)).is_err());
+        }
     }
 }

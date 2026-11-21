@@ -242,7 +242,8 @@ mod tests {
     #[test]
     fn linux_smoke_lane_is_selected_only_for_tooling_changes() {
         for (path, needed) in [
-            ("tools/stickymd-smoke/src/package_path.rs", true),
+            ("tools/stickymd-smoke/src/release/platform_inputs.rs", true),
+            ("tools/stickymd-package/src/package_path.rs", true),
             ("crates/stickymd-core/src/lib.rs", false),
             ("docs/report/ci-measurement.md", false),
         ] {

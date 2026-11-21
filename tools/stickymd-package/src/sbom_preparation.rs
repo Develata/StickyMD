@@ -2,17 +2,17 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 use super::cli::SbomPreparationOptions;
-use crate::{evidence::escape_json, package_path, repository};
+use crate::{json::escape as escape_json, package_path, repository};
 use std::path::{Path, PathBuf};
 
-pub(super) struct Prepared {
+pub struct Prepared {
     pub version: String,
     pub zip: PathBuf,
     pub syft: super::syft::Plan,
     pub verified: Option<PathBuf>,
 }
 
-pub(super) fn execute(root: &Path, options: &SbomPreparationOptions) -> Result<(), String> {
+pub fn execute(root: &Path, options: &SbomPreparationOptions) -> Result<(), String> {
     let Prepared {
         version,
         zip,
@@ -32,7 +32,7 @@ pub(super) fn execute(root: &Path, options: &SbomPreparationOptions) -> Result<(
     Ok(())
 }
 
-pub(super) fn prepare(root: &Path, options: &SbomPreparationOptions) -> Result<Prepared, String> {
+pub fn prepare(root: &Path, options: &SbomPreparationOptions) -> Result<Prepared, String> {
     let version = repository::workspace_version(root)?;
     let zip = match &options.zip {
         Some(path) => std::path::absolute(path).map_err(|error| error.to_string())?,

@@ -35,9 +35,6 @@ const OUTSIDE_FILES: &[&str] = &[
     "deny.toml",
 ];
 
-pub(super) fn is_input(path: &str) -> bool {
+pub fn is_input(path: &str) -> bool {
     !OUTSIDE.iter().any(|directory| path.starts_with(directory)) && !OUTSIDE_FILES.contains(&path)
 }
-
-#[cfg(test)]
-mod tests;

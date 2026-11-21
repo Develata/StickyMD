@@ -2,10 +2,10 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 use super::{checksums, cli::SbomOptions, json, temporary::TemporaryDirectory};
-use crate::{atomic_evidence, integrity};
+use crate::{atomic, integrity};
 use std::{fs, path::Path};
 
-pub(super) fn validate(text: &str) -> Result<(), String> {
+pub fn validate(text: &str) -> Result<(), String> {
     let document = json::parse(text)?;
     if !document
         .field("spdxVersion")?
@@ -41,18 +41,18 @@ pub(super) fn validate(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn validate_file(path: &Path) -> Result<(), String> {
+pub fn validate_file(path: &Path) -> Result<(), String> {
     validate(
         &fs::read_to_string(path)
             .map_err(|error| format!("cannot read SBOM {}: {error}", path.display()))?,
     )
 }
 
-pub(super) fn publish(options: &SbomOptions) -> Result<(), String> {
+pub fn publish(options: &SbomOptions) -> Result<(), String> {
     publish_with_output(options, &mut std::io::stdout().lock())
 }
 
-pub(super) fn publish_with_output(
+pub fn publish_with_output(
     options: &SbomOptions,
     output_log: &mut dyn std::io::Write,
 ) -> Result<(), String> {
@@ -72,8 +72,8 @@ pub(super) fn publish_with_output(
     temp.close()?;
     // Each file is atomically replaced. Publish the manifest last; a partial pair cannot verify.
     // This is not a multi-file transaction and does not write qualification evidence.
-    atomic_evidence::write(&output, &bytes)?;
-    atomic_evidence::write(&checksum, manifest.as_bytes())?;
+    atomic::write(&output, &bytes)?;
+    atomic::write(&checksum, manifest.as_bytes())?;
     writeln!(
         output_log,
         "SBOM_PATH={}\nSBOM_SHA256={sbom_hash}",

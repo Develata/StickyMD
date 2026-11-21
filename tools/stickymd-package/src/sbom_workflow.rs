@@ -9,7 +9,7 @@ use super::{
 };
 use std::{fs, io::Write, path::Path, time::Duration};
 
-pub(crate) fn generate(
+pub fn generate(
     root: &Path,
     options: &SbomBuildOptions,
     log: &mut dyn Write,
@@ -49,7 +49,7 @@ pub(crate) fn generate(
     fs::create_dir(&context).map_err(|e| e.to_string())?;
     for name in ["Cargo.lock", "Cargo.toml"] {
         let bytes = fs::read(root.join(name)).map_err(|e| e.to_string())?;
-        crate::atomic_evidence::write_new(&context.join(name), &bytes)?;
+        crate::atomic::write_new(&context.join(name), &bytes)?;
     }
     let output = temporary.path().join("generated.spdx.json");
     let mut arguments = vec![

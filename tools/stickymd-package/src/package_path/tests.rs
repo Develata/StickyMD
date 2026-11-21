@@ -1,5 +1,4 @@
 use super::*;
-use crate::cli::CommandLine;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct Fixture(PathBuf);
@@ -118,28 +117,5 @@ fn local_archive_names_require_a_full_commit_and_normalize_sha_case() {
     );
     for invalid in ["abc", &"z".repeat(40), &"中".repeat(14)] {
         assert!(local_archive_name("0.1.0", invalid, false).is_err());
-    }
-}
-
-#[test]
-fn command_line_preserves_spaces_and_rejects_missing_or_extra_arguments() {
-    let args = |values: &[&str]| {
-        values
-            .iter()
-            .map(|value| (*value).to_owned())
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        CommandLine::parse(args(&["package-path", "--directory", "folder with spaces"])).unwrap(),
-        CommandLine::PackagePath(PathBuf::from("folder with spaces")),
-    );
-    for input in [
-        vec!["package-path"],
-        vec!["package-path", "--directory"],
-        vec!["package-path", "--directory", ""],
-        vec!["package-path", "--directory", "path", "extra"],
-        vec!["package-path", "--unknown", "path"],
-    ] {
-        assert!(CommandLine::parse(args(&input)).is_err());
     }
 }

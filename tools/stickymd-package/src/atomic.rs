@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(crate) fn write(path: &Path, contents: &[u8]) -> Result<(), String> {
+pub fn write(path: &Path, contents: &[u8]) -> Result<(), String> {
     check_spelling(path)?;
     let parent = path
         .parent()
@@ -50,7 +50,7 @@ fn temporary_path_at(target: &Path, nonce: u128) -> Result<PathBuf, String> {
 }
 
 /// Atomically create a new complete file; preserve the old CreateNew no-overwrite interface.
-pub(crate) fn write_new(path: &Path, contents: &[u8]) -> Result<(), String> {
+pub fn write_new(path: &Path, contents: &[u8]) -> Result<(), String> {
     check_spelling(path)?;
     let parent = path.parent().ok_or("new file path has no parent")?;
     if !parent.is_dir() {
@@ -114,7 +114,7 @@ fn publish_new(temporary: &Path, target: &Path) -> Result<(), String> {
 /// Public output guards call this too, so a refused spelling never gets as far as creating
 /// a parent directory.
 #[cfg(windows)]
-pub(crate) fn check_spelling(path: &Path) -> Result<(), String> {
+pub fn check_spelling(path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     let units = path.as_os_str().encode_wide().collect::<Vec<_>>();
     let verbatim = units.starts_with(&[0x5C, 0x5C, 0x3F, 0x5C]);
@@ -141,7 +141,7 @@ pub(crate) fn check_spelling(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-pub(crate) fn check_spelling(_: &Path) -> Result<(), String> {
+pub fn check_spelling(_: &Path) -> Result<(), String> {
     Ok(())
 }
 
@@ -395,7 +395,7 @@ mod tests {
             for attempt in [write(&path, b"x"), super::write_new(&path, b"x")] {
                 assert!(attempt.is_err(), "{name}");
             }
-            let guarded = crate::qualification::validate_public_evidence_path(&ordinary, &path);
+            let guarded = crate::output_guard::check_file(&ordinary, &path);
             assert!(guarded.is_err(), "{name}");
         }
         assert!(

@@ -6,11 +6,20 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-pub(crate) fn command_text(
-    root: &Path,
-    program: &str,
-    arguments: &[&str],
-) -> Result<String, String> {
+/// The nearest ancestor of `start` (itself included) holding both `Cargo.toml` and `AGENTS.md`.
+pub fn find_root(start: &Path) -> Result<std::path::PathBuf, String> {
+    for candidate in start.ancestors() {
+        if candidate.join("Cargo.toml").is_file() && candidate.join("AGENTS.md").is_file() {
+            return Ok(candidate.to_path_buf());
+        }
+    }
+    Err(format!(
+        "cannot locate repository root above {}",
+        start.display()
+    ))
+}
+
+pub fn command_text(root: &Path, program: &str, arguments: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
         .args(arguments)
         .current_dir(root)
@@ -24,7 +33,7 @@ pub(crate) fn command_text(
         .map_err(|error| format!("`{program}` output is not UTF-8: {error}"))
 }
 
-pub(crate) fn workspace_version(root: &Path) -> Result<String, String> {
+pub fn workspace_version(root: &Path) -> Result<String, String> {
     let manifest = fs::read_to_string(root.join("Cargo.toml"))
         .map_err(|error| format!("cannot read Cargo.toml: {error}"))?;
     workspace_version_in(&manifest)

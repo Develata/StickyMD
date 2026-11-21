@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum Value {
+pub enum Value {
     Null,
     Bool(bool),
     Number(String),
@@ -51,7 +51,7 @@ impl Value {
     }
 }
 
-pub(crate) fn parse(text: &str) -> Result<Value, String> {
+pub fn parse(text: &str) -> Result<Value, String> {
     let mut parser = Parser {
         text: text.trim_start_matches('\u{feff}'),
         offset: 0,
@@ -250,6 +250,26 @@ impl Parser<'_> {
         }
         Ok(result)
     }
+}
+
+/// `value` as the contents of a JSON string literal.
+pub fn escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            character if character.is_control() => {
+                use std::fmt::Write as _;
+                let _ = write!(escaped, "\\u{:04x}", character as u32);
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]

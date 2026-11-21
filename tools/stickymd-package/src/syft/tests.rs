@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    integrity,
-    release::{json, temporary::TemporaryDirectory},
-};
+use crate::{integrity, json, temporary::TemporaryDirectory};
 use std::fs;
 
 #[test]

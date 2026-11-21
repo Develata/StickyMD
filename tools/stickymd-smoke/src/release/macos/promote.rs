@@ -10,7 +10,7 @@ use super::package::{self, run};
 use crate::evidence::escape_json;
 use crate::release::attachments::platform_files;
 use crate::release::platform::Platform;
-use crate::release::platform_inputs::{Reuse, fingerprint, verify_reuse};
+use crate::release::platform_inputs::{ALGORITHM, Reuse, fingerprint, verify_reuse};
 use crate::release::temporary::TemporaryDirectory;
 use crate::release::{json, workflow};
 use crate::{atomic_evidence, integrity, repository};
@@ -88,11 +88,12 @@ pub(crate) struct Receipt {
 impl Receipt {
     pub(crate) fn json(&self) -> String {
         format!(
-            "{{\"schema_version\":1,\"origin\":\"GITHUB_WORKFLOW_ARTIFACT\",\"platform\":\"macos-arm64\",\"source_commit\":\"{}\",\"version\":\"{}\",\"cargo_lock_sha256\":\"{}\",\"build_inputs\":\"{}\",\"build_inputs_algorithm\":\"v1\",\"app_inputs\":\"{}\",\"workflow_run_id\":{},\"workflow_attempt\":{},\"artifact_id\":{},\"artifact_name\":\"{}\",\"zip_name\":\"{}\",\"zip_sha256\":\"{}\",\"checksums_sha256\":\"{}\",\"sbom_sha256\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"target\":\"aarch64-apple-darwin\",\"signing\":\"{}\"}}\n",
+            "{{\"schema_version\":1,\"origin\":\"GITHUB_WORKFLOW_ARTIFACT\",\"platform\":\"macos-arm64\",\"source_commit\":\"{}\",\"version\":\"{}\",\"cargo_lock_sha256\":\"{}\",\"build_inputs\":\"{}\",\"build_inputs_algorithm\":\"{}\",\"app_inputs\":\"{}\",\"workflow_run_id\":{},\"workflow_attempt\":{},\"artifact_id\":{},\"artifact_name\":\"{}\",\"zip_name\":\"{}\",\"zip_sha256\":\"{}\",\"checksums_sha256\":\"{}\",\"sbom_sha256\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"target\":\"aarch64-apple-darwin\",\"signing\":\"{}\"}}\n",
             self.source,
             escape_json(&self.version),
             self.cargo_lock_sha256,
             self.build_inputs,
+            ALGORITHM,
             self.facts.app_inputs,
             self.run_id,
             self.attempt,
@@ -368,7 +369,7 @@ fn reuse_record(
     receipt_sha256: &str,
 ) -> String {
     format!(
-        "{{\"schema_version\":1,\"platform\":\"macos-arm64\",\"build_source\":\"{build}\",\"release_source\":\"{}\",\"build_inputs\":\"{build_inputs}\",\"release_inputs\":\"{release_inputs}\",\"algorithm\":\"v1\",\"candidate_receipt_sha256\":\"{receipt_sha256}\"}}\n",
+        "{{\"schema_version\":1,\"platform\":\"macos-arm64\",\"build_source\":\"{build}\",\"release_source\":\"{}\",\"build_inputs\":\"{build_inputs}\",\"release_inputs\":\"{release_inputs}\",\"algorithm\":\"{ALGORITHM}\",\"candidate_receipt_sha256\":\"{receipt_sha256}\"}}\n",
         release.to_ascii_lowercase(),
     )
 }
@@ -519,7 +520,7 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<PathBuf, String> {
     if receipt.field("schema_version")?.unsigned()? != 1
         || field("platform")? != "macos-arm64"
         || field("origin")? != "GITHUB_WORKFLOW_ARTIFACT"
-        || field("build_inputs_algorithm")? != "v1"
+        || field("build_inputs_algorithm")? != ALGORITHM
         || field("target")? != "aarch64-apple-darwin"
         || field("signing")? != "AD_HOC"
     {

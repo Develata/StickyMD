@@ -52,10 +52,12 @@ jobs:
         run: cargo fmt --all --check
       - name: Strict clippy for the macOS host
         run: cargo clippy -p stickymd-posix -p stickymd-mac --all-targets --locked -- -D warnings
+      # A self-check on the build source S; release evidence is the run on the release commit R
+      # (plan 11 #platform-artifact-reuse, #macos-release-gate).
       - name: Test the shared crates, the macOS host and the release tooling
         run: >-
           cargo test --locked -p stickymd-core -p stickymd-render -p stickymd-app
-          -p stickymd-desktop -p stickymd-posix -p stickymd-mac -p stickymd-smoke
+          -p stickymd-desktop -p stickymd-posix -p stickymd-mac -p stickymd-package -p stickymd-smoke
       - name: Build the ad-hoc signed bundle
         run: apps/stickymd-mac/packaging/build-app.sh "$RUNNER_TEMP/app"
       - name: Build record
@@ -88,13 +90,13 @@ jobs:
         run: |
           set -eu
           mkdir -p dist
-          cargo run --quiet -p stickymd-smoke --locked -- release macos-package \
+          cargo run --quiet -p stickymd-package --locked -- macos-package \
             --app "$RUNNER_TEMP/app/StickyMD.app" --output-directory dist
       - name: Generate verified SPDX SBOM and checksums
         run: |
           set -eu
           zip=$(ls dist/StickyMD-*-macos-arm64-portable.zip)
-          cargo run --quiet -p stickymd-smoke --locked -- release macos-sbom --zip "$zip"
+          cargo run --quiet -p stickymd-package --locked -- macos-sbom --zip "$zip"
       - name: Verify package
         run: |
           set -eu

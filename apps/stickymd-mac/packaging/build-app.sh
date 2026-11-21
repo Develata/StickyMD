@@ -35,7 +35,7 @@ clean() {
     (cd "$repo" && /usr/bin/env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin:$cargo_dir" "$@")
 }
 inputs() {
-    clean cargo run --quiet --locked -p stickymd-smoke -- mac-ledger inputs --home "$HOME"
+    clean cargo run --quiet --locked -p stickymd-package -- app-inputs --home "$HOME"
 }
 inputs_before=$(inputs)
 case "$inputs_before" in

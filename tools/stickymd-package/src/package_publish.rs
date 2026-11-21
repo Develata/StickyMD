@@ -2,16 +2,16 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 use super::{checksums, cli::PackagePublishOptions, temporary::TemporaryDirectory};
-use crate::{atomic_evidence, integrity};
+use crate::{atomic, integrity};
 use std::{fs, path::Path};
 
-pub(super) fn execute(options: &PackagePublishOptions) -> Result<(), String> {
+pub fn execute(options: &PackagePublishOptions) -> Result<(), String> {
     let hash = publish(options)?;
     println!("{{\"zip_sha256\":\"{hash}\",\"sbom_sha256\":null}}");
     Ok(())
 }
 
-pub(super) fn publish(options: &PackagePublishOptions) -> Result<String, String> {
+pub fn publish(options: &PackagePublishOptions) -> Result<String, String> {
     let output = checksums::destination(&options.output)?;
     let manifest = checksums::destination(&options.checksums)?;
     checksums::distinct_paths(&[&options.input, &output, &manifest])?;
@@ -23,7 +23,7 @@ pub(super) fn publish(options: &PackagePublishOptions) -> Result<String, String>
     let text = checksums::manifest(&output, &hash, None)?;
     if !matches_existing(&output, &hash)? {
         let bytes = fs::read(&snapshot).map_err(|error| error.to_string())?;
-        if let Err(error) = atomic_evidence::write_new(&output, &bytes) {
+        if let Err(error) = atomic::write_new(&output, &bytes) {
             // Another producer may have won CreateNew. Accept only identical complete bytes.
             if !matches_existing(&output, &hash)? {
                 return Err(error);
@@ -45,7 +45,7 @@ fn write_manifest(manifest: &Path, text: &[u8]) -> Result<(), String> {
     let mut delay = std::time::Duration::from_millis(10);
     let mut last_error = String::new();
     for _ in 0..5 {
-        match atomic_evidence::write(manifest, text) {
+        match atomic::write(manifest, text) {
             Ok(()) => return Ok(()),
             Err(error) => last_error = error,
         }

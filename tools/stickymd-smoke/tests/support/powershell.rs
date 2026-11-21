@@ -54,7 +54,7 @@ impl ScriptFixture {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let mut command = Command::new(host.executable);
         // Console, environment and writes belong to this child/fixture. The prebuilt
-        // CLI is shared read-only; no case starts Cargo or refreshes the shared Git index.
+        // CLIs are shared read-only; no case starts Cargo or refreshes the shared Git index.
         command
             .creation_flags(CREATE_NO_WINDOW)
             .args([
@@ -69,6 +69,7 @@ impl ScriptFixture {
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("STICKYMD_TEST_ROOT", repository_root())
             .env("STICKYMD_TEST_EXE", env!("CARGO_BIN_EXE_stickymd-smoke"))
+            .env("STICKYMD_TEST_PACKAGE_EXE", package_executable())
             .env("STICKYMD_TEST_DIRECTORY", self.path());
         configure(&mut command);
         match command.output() {
@@ -80,6 +81,30 @@ impl ScriptFixture {
             Err(error) => panic!("start {} compatibility check: {error}", host.executable),
         }
     }
+}
+
+/// The packaging CLI, built once per test process from the current sources into a private target
+/// directory. Cargo builds only this package's binaries for its tests, so the packaging binary is
+/// built here rather than taken from a shared target directory, where it could be stale.
+fn package_executable() -> &'static Path {
+    static EXECUTABLE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    EXECUTABLE.get_or_init(|| {
+        let target = repository_root().join("target/package-wrapper-tests");
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let output = Command::new(cargo)
+            .current_dir(repository_root())
+            .args(["build", "--quiet", "--locked", "-p", "stickymd-package"])
+            .arg("--target-dir")
+            .arg(&target)
+            .output()
+            .expect("start the packaging build");
+        assert!(
+            output.status.success(),
+            "packaging build: {}",
+            diagnostic(&output)
+        );
+        target.join("debug/stickymd-package.exe")
+    })
 }
 
 pub fn assert_pass(host: Host, output: &Output, markers: &[&str]) {

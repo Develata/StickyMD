@@ -2,15 +2,15 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 use super::cli::PackageInputOptions;
-use crate::{evidence::escape_json, integrity, package_path, repository};
+use crate::{integrity, json::escape as escape_json, package_path, repository};
 use std::path::Path;
 
-pub(super) fn execute(root: &Path, options: &PackageInputOptions) -> Result<(), String> {
+pub fn execute(root: &Path, options: &PackageInputOptions) -> Result<(), String> {
     println!("{}", resolve(root, options)?.json());
     Ok(())
 }
 
-pub(super) struct Inputs {
+pub struct Inputs {
     pub version: String,
     pub commit: String,
     pub archive: String,
@@ -29,7 +29,7 @@ impl Inputs {
     }
 }
 
-pub(super) fn resolve(root: &Path, options: &PackageInputOptions) -> Result<Inputs, String> {
+pub fn resolve(root: &Path, options: &PackageInputOptions) -> Result<Inputs, String> {
     let version = options
         .version
         .clone()

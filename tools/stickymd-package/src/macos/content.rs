@@ -3,12 +3,12 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-release-artifact
 
 use crate::integrity;
-use crate::release::json;
+use crate::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Where a file beside the app comes from.
-pub(crate) enum Source {
+pub enum Source {
     Readme,
     Notices,
     /// A repository file, line endings normalized to LF.
@@ -16,7 +16,7 @@ pub(crate) enum Source {
 }
 
 /// The files beside the app.
-pub(crate) const FILES: &[(&str, Source)] = &[
+pub const FILES: &[(&str, Source)] = &[
     ("StickyMD/README.txt", Source::Readme),
     ("StickyMD/LICENSE.txt", Source::License("LICENSE")),
     ("StickyMD/THIRD_PARTY_NOTICES.txt", Source::Notices),
@@ -30,11 +30,11 @@ pub(crate) const FILES: &[(&str, Source)] = &[
     ),
 ];
 
-pub(crate) const APP: &str = "StickyMD/StickyMD.app";
-pub(crate) const README: &str = "StickyMD/README.txt";
+pub const APP: &str = "StickyMD/StickyMD.app";
+pub const README: &str = "StickyMD/README.txt";
 
 /// The files of the ad-hoc signed bundle `build-app.sh` makes, and nothing else.
-pub(crate) const APP_FILES: &[&str] = &[
+pub const APP_FILES: &[&str] = &[
     "StickyMD/StickyMD.app/Contents/Info.plist",
     "StickyMD/StickyMD.app/Contents/MacOS/StickyMD",
     "StickyMD/StickyMD.app/Contents/_CodeSignature/CodeResources",
@@ -42,7 +42,7 @@ pub(crate) const APP_FILES: &[&str] = &[
 
 /// Checks the regular files found in the archive (paths with `/`, directories left out) against
 /// the inventory: nothing missing, nothing extra — no `note/`, no `__MACOSX/`, no `.DS_Store`.
-pub(crate) fn check_files(found: &BTreeSet<String>) -> Result<(), String> {
+pub fn check_files(found: &BTreeSet<String>) -> Result<(), String> {
     let expected = FILES
         .iter()
         .map(|(name, _)| *name)
@@ -61,7 +61,7 @@ pub(crate) fn check_files(found: &BTreeSet<String>) -> Result<(), String> {
 }
 
 /// Every directory a listing may also name: the parents of the inventory's files.
-pub(crate) fn is_inventory_directory(path: &str) -> bool {
+pub fn is_inventory_directory(path: &str) -> bool {
     let path = path.trim_end_matches('/');
     FILES
         .iter()
@@ -73,7 +73,7 @@ pub(crate) fn is_inventory_directory(path: &str) -> bool {
         })
 }
 
-pub(crate) fn readme(version: &str, commit: &str, exact_candidate: bool) -> String {
+pub fn readme(version: &str, commit: &str, exact_candidate: bool) -> String {
     let title = if exact_candidate {
         "StickyMD exact workflow candidate for macOS 27+ arm64"
     } else {
@@ -86,7 +86,7 @@ pub(crate) fn readme(version: &str, commit: &str, exact_candidate: bool) -> Stri
 }
 
 /// The packaged files an SBOM must describe: every regular file of the package.
-pub(crate) fn sbom_members() -> Vec<&'static str> {
+pub fn sbom_members() -> Vec<&'static str> {
     FILES
         .iter()
         .map(|(name, _)| *name)
@@ -95,7 +95,7 @@ pub(crate) fn sbom_members() -> Vec<&'static str> {
 }
 
 /// The SHA-256 of each SBOM member under `extracted` (an extracted package root).
-pub(crate) fn member_hashes(extracted: &Path) -> Result<BTreeMap<&'static str, String>, String> {
+pub fn member_hashes(extracted: &Path) -> Result<BTreeMap<&'static str, String>, String> {
     sbom_members()
         .into_iter()
         .map(|member| Ok((member, integrity::sha256(&extracted.join(member))?)))
@@ -111,10 +111,7 @@ const SPDX_VERSION: &str = "SPDX-2.3";
 /// SHA-1), with the SHA-256 of the bytes actually packaged (`hashes`). Syft 1.50.0 on macOS
 /// names a directory source's files relative to it (`package/...`, observed 2026-11-19); a
 /// leading `/` is accepted as the same name.
-pub(crate) fn validate_sbom(
-    text: &str,
-    hashes: &BTreeMap<&'static str, String>,
-) -> Result<(), String> {
+pub fn validate_sbom(text: &str, hashes: &BTreeMap<&'static str, String>) -> Result<(), String> {
     let document = json::parse(text)?;
     let version = document.field("spdxVersion")?.string()?;
     if version != SPDX_VERSION {
@@ -185,7 +182,7 @@ pub(crate) fn validate_sbom(
 
 /// The signing kind `codesign -dv` reports, checked separately from the signature's validity:
 /// ad-hoc means `Signature=adhoc`, no Team ID and no certificate authority (plan 11 macOS gate).
-pub(crate) fn ad_hoc_signature(display: &str) -> Result<&'static str, String> {
+pub fn ad_hoc_signature(display: &str) -> Result<&'static str, String> {
     let lines = display.lines().map(str::trim).collect::<Vec<_>>();
     let adhoc = lines.contains(&"Signature=adhoc");
     let no_team = lines.contains(&"TeamIdentifier=not set");
@@ -199,7 +196,7 @@ pub(crate) fn ad_hoc_signature(display: &str) -> Result<&'static str, String> {
 }
 
 /// The one `Source commit:` line of a package README.
-pub(crate) fn source_commit(readme: &str) -> Result<String, String> {
+pub fn source_commit(readme: &str) -> Result<String, String> {
     let mut commits = readme
         .lines()
         .filter_map(|line| line.strip_prefix("Source commit: "));

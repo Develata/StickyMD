@@ -12,9 +12,6 @@
 mod append;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-mod build;
-#[cfg(any(target_os = "macos", test))]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod decide;
 mod options;
 #[cfg(any(target_os = "macos", test))]

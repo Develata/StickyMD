@@ -2,18 +2,18 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 use super::{Kind, Pin};
-use crate::evidence::escape_json;
+use crate::json::escape as escape_json;
 use std::path::{Path, PathBuf};
 
-pub(in crate::release) const DOWNLOAD_ATTEMPTS: u32 = 3;
+pub const DOWNLOAD_ATTEMPTS: u32 = 3;
 
-pub(in crate::release) struct Download {
+pub struct Download {
     pub kind: Kind,
     pub path: PathBuf,
     pub uri: String,
 }
 
-pub(in crate::release) struct Plan {
+pub struct Plan {
     pub version: String,
     pub archive: PathBuf,
     pub checksums: PathBuf,
@@ -43,7 +43,7 @@ impl Plan {
         }
     }
 
-    pub(in crate::release) fn json(&self) -> String {
+    pub fn json(&self) -> String {
         let downloads = self
             .downloads
             .iter()

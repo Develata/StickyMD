@@ -2,14 +2,14 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 use super::cli::ChecksumOptions;
-use crate::{atomic_evidence, integrity};
+use crate::{atomic, integrity};
 use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
 
-pub(super) fn generate(options: &ChecksumOptions) -> Result<(), String> {
+pub fn generate(options: &ChecksumOptions) -> Result<(), String> {
     let output = destination(&options.output)?;
     let mut paths = vec![options.zip.as_path(), output.as_path()];
     if let Some(sbom) = &options.sbom {
@@ -23,7 +23,7 @@ pub(super) fn generate(options: &ChecksumOptions) -> Result<(), String> {
         &zip_hash,
         options.sbom.as_deref().zip(sbom_hash.as_deref()),
     )?;
-    atomic_evidence::write(&output, text.as_bytes())?;
+    atomic::write(&output, text.as_bytes())?;
     // The PowerShell staging adapter keeps its existing KEY=value output interface.
     println!(
         "{{\"zip_sha256\":\"{zip_hash}\",\"sbom_sha256\":{}}}",
@@ -32,11 +32,7 @@ pub(super) fn generate(options: &ChecksumOptions) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn manifest(
-    zip: &Path,
-    zip_hash: &str,
-    sbom: Option<(&Path, &str)>,
-) -> Result<String, String> {
+pub fn manifest(zip: &Path, zip_hash: &str, sbom: Option<(&Path, &str)>) -> Result<String, String> {
     let mut artifacts = vec![(basename(zip)?, zip_hash)];
     if let Some((path, hash)) = sbom {
         artifacts.push((basename(path)?, hash));
@@ -53,7 +49,7 @@ fn basename(path: &Path) -> Result<&str, String> {
     Ok(name)
 }
 
-pub(super) fn destination(path: &Path) -> Result<PathBuf, String> {
+pub fn destination(path: &Path) -> Result<PathBuf, String> {
     // Windows absolute-path normalization can erase a trailing dot/space alias.
     // Validate the caller's spelling with the shared name rule before normalizing it.
     basename(path)?;
@@ -79,7 +75,7 @@ pub(super) fn destination(path: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-pub(super) fn distinct_paths(paths: &[&Path]) -> Result<(), String> {
+pub fn distinct_paths(paths: &[&Path]) -> Result<(), String> {
     let mut seen = BTreeSet::new();
     for path in paths {
         let absolute = std::path::absolute(path).map_err(|error| error.to_string())?;
@@ -106,7 +102,7 @@ pub(super) fn distinct_paths(paths: &[&Path]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::release::temporary::TemporaryDirectory;
+    use crate::temporary::TemporaryDirectory;
 
     #[test]
     fn generation_preserves_old_manifest_on_missing_inputs_or_path_aliases() {
