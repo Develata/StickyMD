@@ -1,6 +1,6 @@
 //! The macOS release set: package inventory and README (portable), the bundle identity, and the
 //! packager and SBOM generator that need macOS tools. The package check lives here too, beside the
-//! packager whose output it checks; `stickymd-smoke` calls it on the workflow's and on the
+//! packager whose output it checks; the verification tool calls it on the workflow's and on the
 //! promoted bytes.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-release-artifact
 
@@ -34,7 +34,7 @@ pub fn package_command(_: &Path, _: &Path, _: &Path, _: bool) -> Result<(), Stri
 }
 
 /// The package check on `zip`: what the workflow runs before upload, and what promotion and
-/// `stickymd-smoke release macos-verify-package` run on the same bytes later.
+/// the verification tool's `release macos-verify-package` run on the same bytes later.
 #[cfg(target_os = "macos")]
 pub fn verify_command(root: &Path, zip: &Path, source: Option<&str>) -> Result<(), String> {
     let version = crate::repository::workspace_version(root)?;

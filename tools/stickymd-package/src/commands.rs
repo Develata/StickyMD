@@ -87,7 +87,7 @@ pub fn native_runtime(root: &Path, exe: &Path) -> Result<(), String> {
 
 /// Packaging commands write where the caller says, never into qualification storage (the
 /// last-success ledger, the manual observation store, release decisions), which only the
-/// coordinators of `stickymd-smoke` replace under their locks.
+/// coordinators of the verification tool replace under their locks.
 fn guard_outputs(root: &Path, command: &Command) -> Result<(), String> {
     use crate::platform::Platform;
     let mut files: Vec<PathBuf> = Vec::new();

@@ -432,7 +432,7 @@ mod tests {
 }
 
 /// A minimal x64 PE image with the given standard and delay-load imports, for tests here and in
-/// `stickymd-smoke`; never used to build release bytes.
+/// the verification tool; never used to build release bytes.
 #[doc(hidden)]
 pub mod test_support {
     pub fn synthetic_pe(standard: Option<&str>, delayed: Option<&str>) -> Vec<u8> {

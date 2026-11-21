@@ -1,5 +1,5 @@
 //! Where release writers may not write: the coordinator-owned qualification storage of
-//! `stickymd-smoke` (plan 11 #module-success-ledger, #manual-observation-log). Release commands
+//! the verification tool (plan 11 #module-success-ledger, #manual-observation-log). Release commands
 //! write where their caller says; a release output never belongs in that storage, so the guard
 //! refuses the whole evidence directory rather than naming each coordinator-owned file in it,
 //! which this crate does not know. Paths are compared by filesystem identity (aliases resolved,

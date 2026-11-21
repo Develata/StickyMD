@@ -2,7 +2,7 @@
 //! that can reach the app `build-app.sh` builds, with the release version normalized as for the
 //! functional qualification modules, followed by the build identity (toolchain, SDK, target,
 //! profile). `build-app.sh` writes it into the bundle's Info.plist, so it is part of the release
-//! bytes and lives in this crate; `stickymd-smoke` reads and compares it through the same code.
+//! bytes and lives in this crate; the verification tool reads and compares it through the same code.
 //!
 //! The stream is the v1 macOS app stream the functional module fingerprints also use: a header
 //! with the algorithm version and the name `mac-app`, then for every input in sorted order its

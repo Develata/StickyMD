@@ -4,7 +4,7 @@
 //! bundle, with the shared code they need (JSON, hashing, atomic writes, temporary directories,
 //! path identity and the output guard).
 //!
-//! The crate depends on the standard library only and never on `stickymd-smoke`, which depends on
+//! The crate depends on the standard library only and never on the verification tool, which depends on
 //! it: the compiler then guarantees that no verification code reaches the bytes, which is why plan
 //! 11 counts this crate, and not the verification tool, as a build input of both platforms.
 //! plan_ref: docs/plan/11_testing_and_release.md#platform-artifact-reuse

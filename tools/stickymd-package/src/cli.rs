@@ -1,5 +1,5 @@
 //! Parsing only; packaging rules live in the corresponding responsibility modules. The option
-//! syntax is shared with `stickymd-smoke release`, which parses its verification commands with
+//! syntax is shared with the verification tool's `release`, which parses its verification commands with
 //! [`tokenize`].
 //! plan_ref: docs/plan/11_testing_and_release.md#platform-artifact-reuse
 
