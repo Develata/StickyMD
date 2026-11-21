@@ -241,6 +241,7 @@ fn a_build_script_is_self_contained() {
     let ok = |code: &str| check(file, code, Source::BuildScript, &tracked).unwrap();
     ok("mod helper { pub fn run() {} } fn main() { fs::read(\"StickyMD.manifest\"); }");
     ok("fn main() { let r#mod = 1; }");
+    ok("fn main() { println!(\"cargo:rerun-if-changed=StickyMD.manifest\"); let r = \"a..b\"; }");
     // Both platforms count every member's build.rs, so what it includes must be counted by both:
     // a shared crate's own data is, the Windows host's manifest is not.
     check(
@@ -255,7 +256,7 @@ fn a_build_script_is_self_contained() {
             "fn main() { include_str!(\"StickyMD.manifest\"); }",
             "not a tracked build input",
         ),
-        // Counted for Windows, but outside the member: refused before the include rule.
+        // Counted by both platforms, but outside the member: the path rule refuses it.
         (
             "fn main() { include_str!(\"../../assets/licenses/SIL-OFL-1.1.txt\"); }",
             "leaves the member's directory",
@@ -281,6 +282,23 @@ fn a_build_script_is_self_contained() {
         ),
         (
             "fn main() { fs::read(\"src\\\\..\\\\..\\\\x\"); }",
+            "leaves the member's directory",
+        ),
+        // A `..` after `=` or `:`, and absolute paths in either separator style.
+        (
+            "fn main() { println!(\"cargo:rerun-if-changed=../x\"); }",
+            "leaves the member's directory",
+        ),
+        (
+            "fn main() { fs::read(\"/etc/x\"); }",
+            "leaves the member's directory",
+        ),
+        (
+            "fn main() { fs::read(\"C:\\\\x\"); }",
+            "leaves the member's directory",
+        ),
+        (
+            "fn main() { println!(\"cargo:rustc-env=X=C:/x\"); }",
             "leaves the member's directory",
         ),
     ] {

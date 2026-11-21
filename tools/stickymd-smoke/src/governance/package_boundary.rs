@@ -13,7 +13,8 @@
 //!   path; data includes name a path in the Git index exactly as spelled that both platforms
 //!   count (`rust` module);
 //! - every member's build script keeps its code in itself, names no path that leaves its member
-//!   and includes data only from paths that every platform counting the script counts;
+//!   (no `..` component, no absolute path) and includes data only from paths both platforms
+//!   count;
 //! - that code (comments aside) never names the verification tool's package or crate, in a
 //!   literal or out of one;
 //! - the scripts the packaging crate launches, the Windows scripts that build bytes and every
@@ -32,15 +33,20 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#platform-artifact-reuse
 
 mod rust;
+mod scripts;
+mod workflow;
 
 use crate::release::json::{self, Value};
 use crate::release::platform::Platform;
 use rust::{Lexed, Source, check_includes, check_names, lex, scripts_launched};
+#[cfg(test)]
+use scripts::SCRIPTS;
+use scripts::{check_script, check_scripts};
 use std::collections::BTreeSet;
 use std::path::Path;
+use workflow::check_workflow;
 
 const CRATE: &str = "tools/stickymd-package";
-const SCRIPTS: &str = "tools/release";
 /// The Windows scripts that build release bytes, called by `release` or by other scripts.
 const BYTE_SCRIPTS: &[&str] = &[
     "package.ps1",
@@ -53,14 +59,6 @@ const RELEASE_WORKFLOWS: &[(&str, Platform)] = &[
     (".github/workflows/release-macos.yml", Platform::MacOsArm64),
 ];
 const BUILD_APP: &str = "apps/stickymd-mac/packaging/build-app.sh";
-/// How a script or a workflow step reaches the verification tool: by name, through its
-/// PowerShell wrapper, or through its per-phase entry points.
-const SCRIPT_TOOL_NAMES: &[&str] = &[
-    "stickymd-smoke",
-    "invoke-smoke.ps1",
-    "Invoke-StickyMdReleaseTool",
-    "tools/smoke/",
-];
 
 pub(super) fn verify(root: &Path) -> Result<(), String> {
     let tracked = git_index(root)?;
@@ -280,14 +278,12 @@ fn check_metadata(metadata: &Value) -> Result<Workspace, String> {
     }
 }
 
-/// Whether every platform that counts `file` also counts `path`: what `file` brings into a build
-/// is then an input of each build that compiles `file`. For a file of the packaging crate, which
-/// both platforms count, this is "counted by both".
-pub(super) fn counted_like(file: &str, path: &str) -> bool {
+/// Whether both platforms count `path`. Both count every file that may include data (the
+/// packaging crate and every member's `build.rs`), so what such a file brings in must be counted
+/// by both too.
+pub(super) fn counted_by_both(path: &str) -> bool {
     use crate::release::platform_inputs::is_input;
-    [Platform::WindowsX64, Platform::MacOsArm64]
-        .into_iter()
-        .all(|platform| !is_input(platform, file) || is_input(platform, path))
+    is_input(Platform::WindowsX64, path) && is_input(Platform::MacOsArm64, path)
 }
 
 /// `relative` joined to the repository directory `directory` and normalized, or `None` when it
@@ -310,325 +306,6 @@ pub(super) fn resolve(directory: &str, relative: &str) -> Option<String> {
         }
     }
     (!parts.is_empty()).then(|| parts.join("/"))
-}
-
-pub(super) fn is_script_name(name: &str) -> bool {
-    name.len() > 4
-        && name.ends_with(".ps1")
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
-}
-
-/// Checks each named script of `tools/release`, called on `platform`'s build, and every script
-/// it references, transitively: each is tracked exactly as named and counted for `platform`.
-fn check_scripts(
-    root: &Path,
-    is_tracked: &dyn Fn(&str) -> bool,
-    platform: Platform,
-    mut scripts: Vec<String>,
-) -> Result<(), String> {
-    let mut checked = BTreeSet::new();
-    while let Some(name) = scripts.pop() {
-        if !checked.insert(name.clone()) {
-            continue;
-        }
-        let relative = format!("{SCRIPTS}/{name}");
-        if !is_tracked(&relative) {
-            return Err(format!(
-                "a script that builds release bytes references {relative}, which Git does not track under that spelling"
-            ));
-        }
-        if !crate::release::platform_inputs::is_input(platform, &relative) {
-            return Err(format!(
-                "the {} build references {relative}, which its fingerprint does not count",
-                platform.label()
-            ));
-        }
-        let text = read(root, &relative)?;
-        scripts.extend(check_script(&text, &relative).map_err(|e| format!("{relative}: {e}"))?);
-    }
-    Ok(())
-}
-
-/// The script a `*.ps1` occurrence at `start..end` of `line` names in `tools/release`, when the
-/// line binds it there: `Join-Path $PSScriptRoot '<name>'` (in a script of `tools/release`),
-/// `$PSScriptRoot/<name>` or `$PSScriptRoot\<name>` (likewise), or a repository path
-/// `tools/release/<name>` (optionally `./`, either separator).
-fn bound_reference(line: &str, start: usize, end: usize, in_release: bool) -> Option<String> {
-    let token = &line[start..end];
-    let repository = token
-        .strip_prefix("./")
-        .or_else(|| token.strip_prefix(".\\"))
-        .unwrap_or(token)
-        .replace('\\', "/");
-    if let Some(name) = repository.strip_prefix(&format!("{SCRIPTS}/")) {
-        return is_script_name(name).then(|| name.to_owned());
-    }
-    if !in_release {
-        return None;
-    }
-    if let Some(name) = token
-        .strip_prefix("$PSScriptRoot/")
-        .or_else(|| token.strip_prefix("$PSScriptRoot\\"))
-    {
-        return is_script_name(name).then(|| name.to_owned());
-    }
-    // `Join-Path $PSScriptRoot '<name>'`: the quoted name is the second argument.
-    let quote = line[..start].chars().next_back()?;
-    if !matches!(quote, '\'' | '"') {
-        return None;
-    }
-    let before = &line[..start - 1];
-    let bound =
-        before.trim_end().ends_with("Join-Path $PSScriptRoot") && line[end..].starts_with(quote);
-    (bound && is_script_name(token)).then(|| token.to_owned())
-}
-
-/// The `*.ps1` occurrences of a line, in any letter case, as (start, end) of their whole token.
-fn ps1_tokens(line: &str) -> Vec<(usize, usize)> {
-    let delimiter = |c: char| c.is_whitespace() || matches!(c, '\'' | '"' | '(' | ')' | ',' | ';');
-    let lower = line.to_ascii_lowercase();
-    let mut found = Vec::new();
-    let mut from = 0;
-    while let Some(offset) = lower[from..].find(".ps1") {
-        let end = from + offset + ".ps1".len();
-        let start = line[..end]
-            .char_indices()
-            .rev()
-            .find(|(_, c)| delimiter(*c))
-            .map_or(0, |(at, c)| at + c.len_utf8());
-        if line[end..].chars().next().is_none_or(delimiter) {
-            found.push((start, end));
-        }
-        from = end;
-    }
-    found
-}
-
-/// The code of a PowerShell line: `<# … #>` comments removed (`in_block` carries one across
-/// lines) and a `#` comment ended at the line's end; quotes are respected for the latter.
-fn script_code(line: &str, in_block: &mut bool) -> String {
-    let mut code = String::new();
-    let mut rest = line;
-    loop {
-        if *in_block {
-            match rest.find("#>") {
-                Some(at) => {
-                    rest = &rest[at + 2..];
-                    *in_block = false;
-                }
-                None => return code,
-            }
-        }
-        match rest.find("<#") {
-            Some(at) => {
-                code.push_str(&rest[..at]);
-                rest = &rest[at + 2..];
-                *in_block = true;
-            }
-            None => {
-                code.push_str(rest);
-                break;
-            }
-        }
-    }
-    let mut quote = None;
-    for (at, c) in code.char_indices() {
-        match (quote, c) {
-            (None, '\'' | '"') => quote = Some(c),
-            (Some(open), c) if c == open => quote = None,
-            (None, '#') if at == 0 || code[..at].ends_with(char::is_whitespace) => {
-                return code[..at].to_owned();
-            }
-            _ => {}
-        }
-    }
-    code
-}
-
-/// A script, `build-app.sh` or a workflow job that builds release bytes: no call to the
-/// verification tool, and every script reference bound to `tools/release` (returned by file
-/// name). An unbound reference, and a dot-source whose own target is not bound, is refused.
-fn check_script(text: &str, origin: &str) -> Result<Vec<String>, String> {
-    let in_release = origin.starts_with(&format!("{SCRIPTS}/"));
-    let mut references = Vec::new();
-    let mut in_block = false;
-    for (index, line) in text.lines().enumerate() {
-        let code = script_code(line, &mut in_block);
-        let code = code.trim_start();
-        if code.is_empty() {
-            continue;
-        }
-        for name in SCRIPT_TOOL_NAMES {
-            if code.contains(name) {
-                return Err(format!(
-                    "line {} calls the verification tool (`{name}`); building release bytes calls stickymd-package",
-                    index + 1
-                ));
-            }
-        }
-        for (start, end) in ps1_tokens(code) {
-            let name = bound_reference(code, start, end, in_release).ok_or_else(|| {
-                format!(
-                    "line {}: references {}, which this check cannot bind to {SCRIPTS}",
-                    index + 1,
-                    &code[start..end]
-                )
-            })?;
-            references.push(name);
-        }
-        if let Some(target) = code.strip_prefix(". ") {
-            let target = target.trim_start();
-            let bound = [
-                "(Join-Path $PSScriptRoot",
-                "\"$PSScriptRoot",
-                "$PSScriptRoot",
-            ]
-            .iter()
-            .any(|form| target.starts_with(form))
-                && !ps1_tokens(target).is_empty();
-            if !bound {
-                return Err(format!(
-                    "line {}: a dot-source this check cannot follow; name the script through $PSScriptRoot",
-                    index + 1
-                ));
-            }
-        }
-    }
-    Ok(references)
-}
-
-/// The release workflow's jobs in order, the `build-package` job free of the verification tool;
-/// returns the scripts that job runs, to be checked in turn. `needs` is read from the job's own
-/// fields and the download from a step's own `uses`, never from comments, scalars or step bodies.
-fn check_workflow(text: &str) -> Result<Vec<String>, String> {
-    let jobs = jobs(text)?;
-    let job = |name: &str| {
-        jobs.iter()
-            .find(|(job, _)| job == name)
-            .map(|(_, body)| body.as_str())
-            .ok_or_else(|| format!("has no `{name}` job"))
-    };
-    job("dependency-policy")?;
-    for (name, needs) in [
-        ("self-check", "dependency-policy"),
-        ("build-package", "self-check"),
-        ("verify-artifact", "build-package"),
-    ] {
-        let declared = fields_at(job(name)?, 4).any(|field| field == format!("needs: {needs}"));
-        if !declared {
-            return Err(format!("job `{name}` must have `needs: {needs}`"));
-        }
-    }
-    let downloads = step_fields(job("verify-artifact")?)
-        .iter()
-        .any(|field| field.starts_with("uses: actions/download-artifact@"));
-    if !downloads {
-        return Err("job `verify-artifact` must download the uploaded artifact".to_owned());
-    }
-    let build = job("build-package")?;
-    check_script(build, "build-package").map_err(|e| format!("job `build-package`: {e}"))
-}
-
-/// The direct fields of a job's steps: the field on each `- ` item line (indent 6) and the lines
-/// at indent 8 below it, inside the job's `steps:` (indent 4). A block scalar's lines are indented
-/// more than its key, so none of them is read as a field.
-fn step_fields(body: &str) -> Vec<String> {
-    let mut fields = Vec::new();
-    let mut in_steps = false;
-    for line in body.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let indent = line.len() - trimmed.len();
-        if indent <= 4 {
-            in_steps = indent == 4 && without_comment(trimmed).trim() == "steps:";
-            continue;
-        }
-        if !in_steps {
-            continue;
-        }
-        let field = without_comment(trimmed).trim();
-        if indent == 6 {
-            if let Some(first) = field.strip_prefix("- ") {
-                fields.push(first.trim().to_owned());
-            }
-        } else if indent == 8 {
-            fields.push(field.to_owned());
-        }
-    }
-    fields
-}
-
-/// The lines of `body` indented by exactly `indent` spaces, comments removed and trimmed.
-fn fields_at(body: &str, indent: usize) -> impl Iterator<Item = &str> {
-    body.lines().filter_map(move |line| {
-        let field = line.get(indent..)?;
-        (line[..indent].bytes().all(|b| b == b' ') && !field.starts_with(' '))
-            .then(|| without_comment(field).trim())
-    })
-}
-
-/// A YAML line without a trailing `#` comment (one preceded by whitespace or at the start).
-fn without_comment(line: &str) -> &str {
-    let bytes = line.as_bytes();
-    for (at, byte) in bytes.iter().enumerate() {
-        if *byte == b'#' && (at == 0 || bytes[at - 1].is_ascii_whitespace()) {
-            return &line[..at];
-        }
-    }
-    line
-}
-
-/// The jobs of a workflow: each `  <name>:` header directly under `jobs:` (a trailing comment
-/// allowed) with the lines up to the next header. Blank and comment lines belong to the job they
-/// sit in, whatever their indent; any other line indented less than a job ends the jobs. A job
-/// name given twice is an error.
-fn jobs(text: &str) -> Result<Vec<(String, String)>, String> {
-    let mut lines = text.lines().skip_while(|line| *line != "jobs:");
-    if lines.next().is_none() {
-        return Err("has no `jobs:` section".to_owned());
-    }
-    let mut jobs: Vec<(String, String)> = Vec::new();
-    for line in lines {
-        let trimmed = line.trim_start();
-        let indent = line.len() - trimmed.len();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            if let Some((_, body)) = jobs.last_mut() {
-                body.push_str(line);
-                body.push('\n');
-            }
-            continue;
-        }
-        if indent < 2 {
-            break;
-        }
-        if indent == 2 {
-            let name = without_comment(trimmed)
-                .trim_end()
-                .strip_suffix(':')
-                .filter(|name| {
-                    !name.is_empty()
-                        && name
-                            .bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-                })
-                .ok_or_else(|| format!("unexpected line under `jobs:`: {trimmed}"))?;
-            if jobs.iter().any(|(job, _)| job == name) {
-                return Err(format!("job `{name}` is defined twice"));
-            }
-            jobs.push((name.to_owned(), String::new()));
-            continue;
-        }
-        let (_, body) = jobs
-            .last_mut()
-            .ok_or_else(|| "a step before the first job".to_owned())?;
-        body.push_str(line);
-        body.push('\n');
-    }
-    Ok(jobs)
 }
 
 #[cfg(test)]

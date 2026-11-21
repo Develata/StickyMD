@@ -757,7 +757,8 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
   - 每个 workspace 成员的 `Cargo.toml` 对两个平台都是输入：另一宿主的清单可以在 `Cargo.lock` 不变时改变 feature 合并，macOS 的产品输入指纹
     （写进 Info.plist）也读取每个成员的清单。每个成员的 `build.rs` 同样是两个平台的输入：Cargo 不需要清单条目就会发现并在编译该成员时运行它，
     Windows 的 workspace 构建会编译每个成员。governance 以 Cargo metadata 核对：成员的构建脚本只能是清单旁的 `build.rs`（也可以没有），所在目录计入 Windows 指纹，
-    且构建脚本自成一体（见下文“边界的证明”）。这些文件名按 ASCII 大小写不敏感匹配：在大小写不敏感的卷上，Cargo 会把
+    且构建脚本自成一体（见下文“边界的证明”）；Windows 不计入的成员目录（`apps/stickymd-mac/`、`crates/stickymd-posix/`、`tools/stickymd-smoke/`）
+    因此不能有构建脚本。分类器仍把这些位置的 `build.rs` 计入两个平台，是有意的：governance 失守时，出现的构建脚本仍会改变两个平台的指纹。这些文件名按 ASCII 大小写不敏感匹配：在大小写不敏感的卷上，Cargo 会把
     `Build.rs` 当作 `build.rs`。
   - 分类器 `tools/stickymd-smoke/src/release/platform_inputs.rs`（排除表与序列化）对两个平台都是输入：它就是沿用规则本身，它的改变是沿用规则的
     改变，不属于“只改验证工具”。
@@ -775,7 +776,7 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
       `build.rs`，且该目录计入 Windows 指纹（Windows 以 workspace 构建，会运行每个成员的构建脚本）。
     - **Rust 代码：** 打包 crate 的 Rust 就是它自己的 `.rs` 文件：任何写法的 `include!`、`#[path]` 与带 `path` 的 `cfg_attr` 都被拒绝；`include_str!` 与
       `include_bytes!` 是普通字面量，从所在文件的目录解析后按 Git 索引中的原样拼写命中两个平台都计入的路径。构建脚本自成一体：不声明外部模块文件、
-      不以 `include!` 或 `#[path]` 引入代码（内联模块可以），字符串字面量中没有 `..` 路径分量，引入的数据被计入该构建脚本的每个平台计入。宏、属性与
+      不以 `include!` 或 `#[path]` 引入代码（内联模块可以），字符串字面量中没有 `..` 路径分量与绝对路径，引入的数据须两个平台都计入（两个平台都计入每个成员的 `build.rs`）。宏、属性与
       模块声明在去掉字面量内容的 token 上按标识符识别（含 raw identifier 与路径前缀）。打包 crate 与各成员 `build.rs` 的代码（注释除外，词法区分注释与
       字符串、原始字符串、字节与 C 字符串、字符字面量）任何位置都不出现验证工具的包名或 crate 名；打包 crate 启动的脚本只以文件名指名。
     - **脚本：** 打包 crate 启动的脚本、Windows 产出字节的脚本与发布 workflow `build-package` job 运行的脚本，以及它们引用的脚本，引用须绑定到

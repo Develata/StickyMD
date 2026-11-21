@@ -87,8 +87,15 @@ fn inputs_in_plist_bytes(bytes: &[u8]) -> Result<Option<String>, String> {
 /// the bundle's value. A list `plutil` cannot lint, the key element written twice anywhere, or a
 /// value that is not one SHA-256 string is an error.
 fn plist_inputs(path: &Path) -> Result<Option<String>, String> {
-    // Bytes, not text: a binary or non-UTF-8 property list is plutil's to judge.
+    // Only the form `build-app.sh` writes, UTF-8 XML: in another encoding or the binary form a
+    // repeated key could not be seen below, and plutil would pick one of the values.
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !bytes.starts_with(b"<?xml") || std::str::from_utf8(&bytes).is_err() {
+        return Err(format!(
+            "{} is not an XML property list in UTF-8, the form build-app.sh writes",
+            path.display()
+        ));
+    }
     let key = format!("<key>{INPUTS_KEY}</key>");
     if bytes
         .windows(key.len())
@@ -207,5 +214,15 @@ mod tests {
             "<dict><key>Other</key><dict ><key>StickyMDInputs</key><string>{digest}</string></dict></dict>"
         ));
         assert_eq!(super::inputs_in_plist(&nested).unwrap(), None);
+        // Only the UTF-8 XML that build-app.sh writes: in UTF-16 or the binary form a repeated
+        // key would go unseen.
+        let utf16: Vec<u8> = twice.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let error = super::inputs_in_plist_bytes(&utf16).unwrap_err();
+        assert!(error.contains("UTF-8"), "{error}");
+        let error = super::inputs_in_plist_bytes(b"bplist00\x00").unwrap_err();
+        assert!(error.contains("UTF-8"), "{error}");
+        let mut latin1 = plist(&digest).into_bytes();
+        latin1.extend_from_slice(b"<!-- \xe9 -->");
+        assert!(super::inputs_in_plist_bytes(&latin1).is_err());
     }
 }

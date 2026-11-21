@@ -3,7 +3,7 @@
 //! module declarations.
 //! plan_ref: docs/plan/11_testing_and_release.md#platform-artifact-reuse
 
-use super::{counted_like, resolve};
+use super::{counted_by_both, resolve};
 
 /// The verification tool's package and crate names: neither may appear in code (comments aside),
 /// in a literal or out of one.
@@ -253,10 +253,9 @@ fn is_attribute(tokens: &str, start: usize) -> bool {
 /// - no `include!` and no `#[path]`: the packaging crate's Rust is its own `.rs` files, which the
 ///   check enumerates, and a build script keeps its code in itself;
 /// - `include_str!` and `include_bytes!` take a plain string literal naming a path in the Git
-///   index exactly as spelled that every platform counting `file` counts (both, for the
-///   packaging crate);
+///   index exactly as spelled that both platforms count;
 /// - `cfg_attr` carries no `path`;
-/// - a build script declares no out-of-line module and names no path with a `..` component.
+/// - a build script declares no out-of-line module and names no path that leaves its member.
 ///
 /// Macro and attribute names are read as identifiers, a raw identifier (`r#include_str`) by its
 /// name, under any path prefix (`core::include_str!`).
@@ -329,9 +328,9 @@ pub(super) fn check_includes(
                         line_of(start)
                     )
                 })?;
-                if !(is_tracked(&resolved) && counted_like(file, &resolved)) {
+                if !(is_tracked(&resolved) && counted_by_both(&resolved)) {
                     return Err(format!(
-                        "line {}: `{marker}` reaches `{argument}`, which is not a tracked build input of every platform that builds this file, spelled as Git records it",
+                        "line {}: `{marker}` reaches `{argument}`, which is not a tracked build input of both platforms, spelled as Git records it",
                         line_of(start)
                     ));
                 }
@@ -340,16 +339,32 @@ pub(super) fn check_includes(
         }
     }
     if source == Source::BuildScript
-        && let Some(literal) = lexed
-            .strings
-            .iter()
-            .find(|literal| literal.split(['/', '\\']).any(|part| part == ".."))
+        && let Some(literal) = lexed.strings.iter().find(|literal| leaves_member(literal))
     {
         return Err(format!(
             "names the path {literal:?}, which leaves the member's directory; a build script reads only its own member's files"
         ));
     }
     Ok(())
+}
+
+/// Whether a build script's string literal names a path outside its member: a `..` component
+/// anywhere, also after `=` or `:` (`cargo:rerun-if-changed=../x`), or an absolute path (`/x`,
+/// `\x`, `C:\x`, `C:/x`) at the start or after `=`. A path assembled at run time is left to
+/// review.
+fn leaves_member(literal: &str) -> bool {
+    let parent = literal
+        .split(|c: char| !(c.is_alphanumeric() || matches!(c, '.' | '_' | '-')))
+        .any(|part| part == "..");
+    let absolute = |piece: &str| {
+        let bytes = piece.as_bytes();
+        piece.starts_with(['/', '\\'])
+            || (bytes.len() > 2
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && matches!(bytes[2], b'/' | b'\\'))
+    };
+    parent || literal.split('=').any(absolute)
 }
 
 /// Where a `cfg_attr(predicate, attribute, …)` starting after `after` carries a `path = …`
@@ -410,7 +425,7 @@ pub(super) fn scripts_launched(lexed: &Lexed) -> Result<Vec<String>, String> {
         .iter()
         .filter(|literal| literal.to_ascii_lowercase().contains(".ps1"))
     {
-        if !super::is_script_name(literal) {
+        if !super::scripts::is_script_name(literal) {
             return Err(format!(
                 "names the script {literal:?} other than by its file name; the packaging crate launches scripts of tools/release by file name"
             ));

@@ -175,7 +175,7 @@ macOS（Windows artifact 名不带 attempt）；workspace 中出现过程宏成�
 现在报错（不再退化为普通字符串）。
 
 
-已验证（`5da88fe` 的工作树，macOS 27.2 arm64）：fmt、Clippy（workspace 的 macOS 目标与两个工具 crate 的 Windows 目标）通过；workspace 测试 1850 项通过，
+已验证（`5da88fe` 的工作树，macOS 27.2 arm64）：fmt、Clippy（workspace 的 macOS 目标与两个工具 crate 的 Windows 目标）通过；workspace 测试（不含在 macOS 上不编译的 Windows 宿主 `stickymd-win`）1850 项通过，
 0 失败；`phase 00` PASS。`5da88fe` 本身尚未经过跨模型复审。
 
 ## 第四轮窄范围复审（`5da88fe`）的处理（2026-11-21）
@@ -198,6 +198,21 @@ macOS（Windows artifact 名不带 attempt）；workspace 中出现过程宏成�
 
 合同、P18-P10 的描述与锚点、本报告中关于 feature 合并的一句（原先前后矛盾）随之更新。
 
+提交 `326f01a` 之后的自查又改了四处（同一轮，另行提交）：
 
-已验证（本轮提交的工作树，macOS 27.2 arm64）：fmt、Clippy（workspace 除 Windows 宿主外的 macOS 目标；两个工具 crate 的 Windows 目标）通过；workspace 测试
-1853 项通过，0 失败；`phase 00` PASS。未验证：Windows 上的 PowerShell 包装测试、真实 dispatch。本轮修改尚未经过跨模型复审。
+- `governance/package_boundary.rs` 达到 635 行，超过 `AGENTS.md` 的 500 行审视线，按职责拆出 `package_boundary/scripts.rs`（PowerShell 引用）与
+  `package_boundary/workflow.rs`（job 与步骤），代码未改，测试文件不动。
+- 构建脚本引入数据的条件一度写成“计入该脚本的每个平台都计入”；两个平台都计入每个成员的 `build.rs`，这与“两个平台都计入”等价，改回后者。
+- 构建脚本字面量中的 `..` 原先只按 `/`、`\` 切分，`cargo:rerun-if-changed=../x` 会漏过；改为按非路径字符切分，并拒绝开头或 `=` 之后的绝对路径。
+- Info.plist 只接受 `build-app.sh` 写出的 UTF-8 XML：UTF-16 或二进制形式中重复的键看不出来，plutil 会取其中一个值；新增 UTF-16、二进制与非 UTF-8
+  字节的负例。
+
+**本轮收紧的合同（需要 Develata 确认）：** 这些规则写进了 `docs/plan/11`，影响范围超出打包 crate 本身：Windows 不计入的成员目录
+（`apps/stickymd-mac/`、`crates/stickymd-posix/`、`tools/stickymd-smoke/`）不能有构建脚本；Windows 宿主的 `build.rs` 不能引入自己目录中的数据，
+也不能指名 `assets/` 等成员之外的路径；打包 crate 永远不能使用 `include!` 与 `#[path]`。目前的代码都满足（这三个目录没有 `build.rs`，
+`apps/stickymd-win/build.rs` 在运行时读 `StickyMD.manifest`，不 include），将来需要时按合同修改的流程放宽。
+
+
+已验证（本次提交的工作树，macOS 27.2 arm64）：fmt、Clippy（workspace 除 `stickymd-win` 外的 macOS 目标；两个工具 crate 的 Windows 目标）通过；
+workspace 测试（不含 `stickymd-win`，它在 macOS 上不编译）1853 项通过，0 失败；`phase 00` PASS。未验证：Windows 上的编译与 PowerShell 包装测试、
+真实 dispatch。`326f01a` 与本次提交都未经过跨模型复审。
