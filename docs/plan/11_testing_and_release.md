@@ -770,35 +770,39 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
     依赖它。产出字节的调用点——`build-app.sh`、Windows 的打包与 SBOM 脚本及 `release` 中调用它们的步骤、`release-macos` 的打包与 SBOM
     步骤与打包前的门——只调用 `stickymd-package` 的二进制，不经过 `stickymd-smoke` 的命令行。`stickymd-smoke` 的晋升、资格化与校验调用同一份库代码。
   - **边界的证明（闭合世界，USER 决定 2026-11-22）：** crate 依赖由编译器保证打包代码引用不到验证代码，这是放宽的前提。编译器看不到的边，
-    即生产链中不经过 Rust 依赖的输入，由 governance 测试按清单检查。每条规则只用三类可判定的事实：与 `stickymd-smoke` 中固定清单或固定副本的
-    逐字比较（行尾统一为 LF 后）、对文件全文的原样搜索、Cargo 与 rustc 自己报告的事实。检查不解析 Rust、PowerShell 或 YAML 的语法，清单之外一律拒绝。
-    - **Cargo metadata：** 打包 crate 没有依赖、没有构建脚本，每个 target 的源文件都在下一条“编译器读过的文件”之中；workspace 中没有过程宏成员
-      （它们在编译器里运行），二进制名（不分大小写）不重复（被排除的成员无法在 workspace 构建的输出中顶替产品）；workspace 的构建脚本恰为清单：
+    即生产链中不经过 Rust 依赖的输入，由 governance 测试按清单检查。每条规则只用四类可判定的事实：与 `stickymd-smoke` 中固定清单或固定副本的
+    逐字比较（行尾统一为 LF 后）、对文件全文的原样搜索、Cargo 与 rustc 自己报告的事实、Git 索引中的路径与文件模式（检查在被检提交的干净检出上
+    运行）。检查不解析 Rust、PowerShell 或 YAML 的语法，清单之外一律拒绝。
+    - **Cargo metadata：** 打包 crate 没有依赖、没有构建脚本，它构建发布字节的 target（lib 与 bin；测试、bench、example 不进入发布字节）的源文件都在
+      下一条“编译器读过的文件”之中；workspace 中没有过程宏成员（它们在编译器里运行），二进制名（不分大小写）不重复（被排除的成员无法在
+      workspace 构建的输出中顶替产品）；每个成员的清单两个平台都计入（落在排除区的新成员须先改分类器）；workspace 的构建脚本恰为清单：
       `apps/stickymd-win/build.rs`。
-    - **编译器读过的文件：** governance 在运行它的平台上以 `cargo check` 编译打包 crate 的 lib 与 bin target（使用独立的 target 目录），读取 rustc 写出
-      的 dep-info：其中列出的每个文件都在 `tools/stickymd-package/` 内，被 Git 跟踪，按 Git 索引中的原样拼写（因此不含 `..` 与绝对路径），且两个平台
-      都计入。模块文件、`#[path]` 与三个 include 宏读入的文件，无论怎么写、经过别名还是宏展开，都由编译器自己列出。两个平台的 `self-check` 都运行
-      这项检查，各自覆盖本平台 `cfg` 下编译的文件。
-    - **构建脚本：** 清单中的构建脚本只在 Windows 的 workspace 构建中运行（`build-app.sh` 只构建 `stickymd-mac`），它所在的成员目录计入 Windows
-      指纹；它的全文中没有 `../`、`..\` 与 `".."`。
-    - **脚本：** Windows 产出字节的脚本恰为清单：`tools/release/` 下的 `package.ps1`、`generate-sbom.ps1`、`generate-third-party-notices.ps1`、
-      `invoke-package.ps1`、`package-archive.ps1`、`archive-facts.ps1`、`syft-fetch.ps1`、`syft-execute.ps1`，每个都按此拼写被 Git 跟踪并计入 Windows
-      指纹。这些脚本与打包 crate 中编译器读过的文件里，每处 `.ps1`（不分大小写）紧前的文件名（字母、数字、`.`、`_`、`-` 组成的最长串）都在清单中，
-      且文件名前一个字符不是 `/` 或 `\`；`build-app.sh` 中没有 `.ps1`。
-    - **workflow：** 每个发布 workflow 中，`jobs:` 之前的全部文本（触发、权限、workflow 级 `env`，注释也算）与 `build-package` job 的全文（从它的 job 头
-      到下一个 job 头）都等于 `stickymd-smoke` 中的固定副本；全文没有 YAML 的锚点、别名与合并键；`jobs:` 只出现一次，之后除空行与注释行外每行都以
-      两个空格开头，恰好两格缩进的行恰为 `dependency-policy`、`self-check`、`build-package`、`verify-artifact` 四个 job 头，各一次；在 `self-check` 与
-      `verify-artifact` 中，去掉缩进后以 `needs` 开头的行分别恰为一行 `    needs: dependency-policy` 与 `    needs: build-package`（`build-package` 的
-      `needs: self-check` 在固定副本中）；`verify-artifact` 中有一行恰为固定的下载 action
-      （`        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0`）。这一行证明下载步骤存在，不证明它的执行条件。改动
-      `build-package` job 或 workflow 头部须同时改固定副本。
-    - **名字：** 在打包 crate 中编译器读过的文件、清单中的脚本与构建脚本、`build-app.sh`、两个 `build-package` job 的全文中原样搜索（不分大小写，
-      注释也算）：不出现 `stickymd-smoke`、`stickymd_smoke`、`invoke-smoke.ps1`、`Invoke-StickyMdReleaseTool` 与 `tools/smoke/`（两种分隔符）。
+    - **编译器读过的文件：** 固定的 workflow 以 dev profile（`cargo run`）运行打包工具，并以 release profile 构建 workspace。governance 在运行它的平台上
+      对打包 crate 的 lib 与 bin target 按这两个 profile 各运行一次 `cargo check`（使用独立的 target 目录），读取 rustc 为每个编译单元写出的 dep-info
+      （`deps/` 下，路径相对 workspace 根）。其中登记的本地源文件与文件依赖都在 `tools/stickymd-package/` 内，在 Git 索引中是普通文件（不是符号链接），
+      按索引中的原样拼写（因此不含 `..` 与绝对路径），且两个平台都计入；需要反转义的路径（含空格或 `$`）被拒。模块文件、`#[path]` 与三个 include
+      宏读入的文件，无论怎么写、经过别名还是宏展开，都由 rustc 登记。这只证明 Rust 前端登记的输入；标准库与链接阶段的输入来自工具链
+      （`rust-toolchain.toml` 固定，计入）。两个平台的 `self-check` 都运行这项检查（Windows 经 `tools/smoke/all.ps1 -Ci` 中的 governance，macOS 经
+      `stickymd-smoke` 的测试），各自覆盖本平台 `cfg` 下编译的文件。
+    - **构建脚本：** 清单中的构建脚本的全文中没有 `../`、`..\` 与 `".."`。固定的 Windows 发布 job 以 workspace 构建，会运行它；固定的 macOS 发布构建
+      只选择 `stickymd-package`（`cargo run`）与 `stickymd-mac`（`build-app.sh`），二者的依赖都不含 `stickymd-win`，所以它只在 Windows 构建中运行，
+      它所在的成员目录计入 Windows 指纹。它自己声明的模块与引入的文件不在 dep-info 检查之内，归入下文“剩余”（名字搜索覆盖它们所在的目录）。
+    - **脚本：** Windows 产出字节的脚本按保守清单检查：`tools/release/` 下的 `package.ps1`、`generate-sbom.ps1`、`invoke-package.ps1`、
+      `package-archive.ps1`、`syft-fetch.ps1`、`syft-execute.ps1`（从固定的 `build-package` job 可达），以及 `generate-third-party-notices.ps1`（独立入口）
+      与 `archive-facts.ps1`（打包库为校验与晋升启动它）；打包 crate 指名后两者，所以它们受同样的约束。每个都按此拼写在 Git 索引中是普通文件，
+      并计入 Windows 指纹。这些脚本与打包 crate 中编译器读过的文件里，每处 `.ps1`（不分大小写）紧前的文件名（字母、数字、`.`、`_`、`-` 组成的
+      最长串）都在清单中，且文件名前一个字符不是 `/` 或 `\`；`build-app.sh` 中没有 `.ps1`。
+    - **workflow：** 每个发布 workflow 的全文等于 `stickymd-smoke` 中的固定副本；副本经审查具有上文 `dependency-policy` 与三个发布 job 的结构，改动
+      workflow 须同时改副本。
+    - **名字：** 在打包 crate 中编译器读过的文件、清单中的脚本、`build-app.sh`、`crates/` 与 `apps/` 下被 Git 跟踪的全部文件（产品 crate 与构建脚本，
+      含构建脚本可能声明的模块），以及每个固定副本中从 `  build-package:` 行到 `  verify-artifact:` 行之间的文本里原样搜索（不分大小写，注释也算）：
+      不出现 `stickymd-smoke`、`stickymd_smoke`、`invoke-smoke.ps1`、`Invoke-StickyMdReleaseTool` 与 `tools/smoke/`（两种分隔符）。
 
-    **剩余：** 清单中的文件在运行时做什么不能静态证明，例如运行时拼出的名字或路径（`Join-Path` 的目录参数）、不含上述名字的命令。名字搜索是对
-    常见写法的守卫，固定副本使构建 job 不会悄悄改变，其余由对这些计入文件的代码审查承担；它们的任何改动都会改变相应平台的指纹，触发重建。
-    在这一前提下，产出字节的代码既不运行验证工具，也不读它计入范围之外的文件（版本规范化按根清单的成员表读取每个成员的清单，其中的
-    `tools/stickymd-smoke/Cargo.toml` 是计入的输入）。
+    **剩余：** 以下不能由这些事实证明，由代码审查承担：清单中的文件在运行时做什么，例如运行时拼出的名字或路径（`Join-Path` 的目录参数）、不含
+    上述名字的命令，以及已审文件在运行时选择读取的被排除文件（之后只改被读文件时，指纹不变）；清单中构建脚本自己的模块与引入的文件读什么；
+    产品 crate 读取其他被排除区域（如 `docs/`）的文件，这不属于本边界。检查器与固定副本本身位于被排除的验证工具中，它们的改动由代码审查与
+    R 上的重新校验承担。在这些前提下，产出字节的代码既不运行验证工具，也不读它计入范围之外的文件（版本规范化按根清单的成员表读取每个成员的
+    清单，其中的 `tools/stickymd-smoke/Cargo.toml` 是计入的输入）。
   - **只改验证工具时：** 即 `tools/stickymd-smoke/` 中上文三个例外以外的文件。两个平台都可以沿用，不重新构建；按下文“沿用后”，受影响的门用
     R 的工具在同一份字节上重跑。
   - **产出字节的 job 只运行计入指纹的代码（USER 决定 2026-11-21，方案 A）：** 每个发布 workflow 在依赖策略 job（`dependency-policy`，

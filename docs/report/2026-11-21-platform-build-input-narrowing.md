@@ -271,23 +271,46 @@ workspace 测试（不含 `stickymd-win`）1856 项通过，0 失败；`phase 00
 Develata 的回复：“改成闭合世界”。
 
 合同 `11` #platform-artifact-reuse 的“边界的证明”据此重写为清单，每条规则只用与固定清单或固定副本的逐字比较、对全文的原样搜索、Cargo 与 rustc
-自己报告的事实；不再解析 Rust、PowerShell 或 YAML 的语法，旧的 Rust 词法器、PowerShell 注释与绑定规则、按缩进取字段的 YAML 读取一并删除。
+自己报告的事实、Git 索引中的路径与模式；不再解析 Rust、PowerShell 或 YAML 的语法，旧的 Rust 词法器、PowerShell 注释与绑定规则、按缩进取字段的 YAML 读取一并删除。
 写合同前核实的事实：
 
-- rustc 的 dep-info 列出编译读入的每个文件：在一个临时 crate 上，外部模块、`#[path]`、`include!`、经 `use core::include_str as inc` 起别名的
+- rustc 的 dep-info 登记编译单元的本地源文件与文件依赖（不逐项列出标准库等二进制依赖）：在一个临时 crate 上，外部模块、`#[path]`、`include!`、经 `use core::include_str as inc` 起别名的
   `inc!`、宏展开中的 `include_str!` 与 `include_bytes!("../../outside/e.bin")` 都出现在 dep-info 中，后者按原样写为 `src/../../outside/e.bin`。
   打包 crate 本身的 dep-info 是 workspace 相对路径，非 `.rs` 的只有两个 `package_readme.txt`。
-- `build-app.sh` 只构建 `stickymd-mac`，所以 Windows 宿主的构建脚本只在 Windows 的 workspace 构建中运行。
-- Windows 产出字节的脚本按引用闭包是 8 个；它们、`build-app.sh` 与 `apps/stickymd-win/build.rs` 中不分大小写都没有验证工具的名字。打包 crate 中
+- 固定的 macOS 发布构建只选择 `stickymd-package`（`build-app.sh` 与 workflow 中的 `cargo run`）与 `stickymd-mac`（`build-app.sh` 的 `cargo build`），
+  二者的依赖都不含 `stickymd-win`，所以 Windows 宿主的构建脚本只在 Windows 的 workspace 构建中运行。
+- Windows 产出字节的脚本取 8 个的保守清单：6 个从固定的 `build-package` job 可达，`generate-third-party-notices.ps1` 是独立入口，
+  `archive-facts.ps1` 由打包库为校验与晋升启动；它们、`build-app.sh` 与 `apps/stickymd-win/build.rs` 中不分大小写都没有验证工具的名字。打包 crate 中
   编译器读过的文件里有 8 处注释提到验证工具，实现时改写。
 - 两个发布 workflow 都没有 YAML 锚点或别名；`build-package` job 不使用本地 action，只受 workflow 头部（含 workflow 级 `env`）与它自身文本影响。
 
 第四轮写入合同、一并待确认的三项收紧，在闭合世界下的去向（不是逐项批准，而是被新规则取代）：
 
 - “Windows 不计入的成员目录不能有构建脚本”变为清单成员资格：workspace 的构建脚本恰为 `apps/stickymd-win/build.rs`，要加一个须先改清单。
-- “Windows 宿主的 `build.rs` 不能引入自己目录中的数据”取消：它只在 Windows 构建中运行，成员目录计入 Windows 指纹，只保留全文中没有 `..`。
+- “Windows 宿主的 `build.rs` 不能引入自己目录中的数据”取消：它只在 Windows 构建中运行，成员目录计入 Windows 指纹，只保留全文中没有
+  `../`、`..\` 与 `".."` 三个字面量（`0..SIDE` 这类范围写法不受影响）；它自己的模块与引入的文件读什么归入剩余责任。
 - “打包 crate 永远不能使用 `include!` 与 `#[path]`”取消：编译器读入的文件由 dep-info 列出，只要都在打包 crate 内、被跟踪且两平台都计入即可。
 
 剩余责任写进合同：清单中的文件在运行时做什么不能静态证明，名字搜索是守卫，其余由代码审查承担。复审标准随之改为：合同中写明的规则没有执行、
 清单可以不被察觉地漂移、在真实仓库上失败，才是 BLOCKER。
+
+### 合同复审（`4e1ad43`）的处理
+
+跨模型复审判为不通过，十项 BLOCKER。处理：
+
+- 测试 target 不在 lib 与 bin 的 dep-info 中（1）：规则只覆盖构建发布字节的 target，测试、bench、example 不进入发布字节。
+- dep-info 的范围（2）与 profile（3）：结论收窄为“rustc 登记的本地源文件与文件依赖”，只证明 Rust 前端的输入；检查按固定 workflow 实际使用的
+  dev 与 release 两个 profile 各运行一次；标准库与链接阶段的输入来自固定的工具链。
+- 构建脚本（4、5）：报告与合同统一为三个字面量；构建脚本自己的模块与引入的文件归入剩余，名字搜索扩大到 `crates/` 与 `apps/` 下的全部跟踪文件，
+  覆盖它们所在的目录；“只构建 `stickymd-mac`”改为按固定 job 实际选择的包陈述。
+- 脚本清单（6）：写明是保守清单，6 个可达，另 2 个因打包 crate 指名而同样受约束。
+- workflow（7、8）：逐行与锚点规则不能证明 YAML 节点归属，改为每个发布 workflow 的全文等于固定副本；名字搜索覆盖副本中 `build-package` 一段。
+- Git 索引（9）：列为第四类事实，检查在被检提交的干净检出上运行。
+- 新成员落在排除区（10）：每个 workspace 成员的清单须两个平台都计入。
+- SHOULD_FIX：剩余责任补上“已审文件在运行时选择读取的被排除文件”“检查器与固定副本本身在验证工具中”；复审标准补上“规则与它声称证明的性质
+  不等价”。分类器注释与 P18-P10 随实现更新。
+
+产品 crate 读取 `docs/` 等其他被排除区域的文件不属于本边界（`docs/` 的排除早于本次改动，来自 Phase 18 的分类器），在合同的剩余中写明，留给后续。
+
+复审标准（补充）：合同中写明的规则没有执行、清单可以不被察觉地漂移、规则与它声称证明的性质不等价、在真实仓库上失败，才是 BLOCKER。
 
