@@ -265,3 +265,29 @@ Rust 特有空白（A B4）；`use` 给 include 宏起别名、宏展开处与�
 已验证（本次提交的工作树，macOS 27.2 arm64）：fmt、Clippy（workspace 除 `stickymd-win` 外的 macOS 目标；两个工具 crate 的 Windows 目标）通过；
 workspace 测试（不含 `stickymd-win`）1856 项通过，0 失败；`phase 00` PASS。未验证：Windows 上的编译与 PowerShell 包装测试、真实 dispatch。
 本次提交未经跨模型复审；在上面的决定作出之前不再发起复审。
+
+## Resolution（2026-11-22）：闭合世界
+
+Develata 的回复：“改成闭合世界”。
+
+合同 `11` #platform-artifact-reuse 的“边界的证明”据此重写为清单，每条规则只用与固定清单或固定副本的逐字比较、对全文的原样搜索、Cargo 与 rustc
+自己报告的事实；不再解析 Rust、PowerShell 或 YAML 的语法，旧的 Rust 词法器、PowerShell 注释与绑定规则、按缩进取字段的 YAML 读取一并删除。
+写合同前核实的事实：
+
+- rustc 的 dep-info 列出编译读入的每个文件：在一个临时 crate 上，外部模块、`#[path]`、`include!`、经 `use core::include_str as inc` 起别名的
+  `inc!`、宏展开中的 `include_str!` 与 `include_bytes!("../../outside/e.bin")` 都出现在 dep-info 中，后者按原样写为 `src/../../outside/e.bin`。
+  打包 crate 本身的 dep-info 是 workspace 相对路径，非 `.rs` 的只有两个 `package_readme.txt`。
+- `build-app.sh` 只构建 `stickymd-mac`，所以 Windows 宿主的构建脚本只在 Windows 的 workspace 构建中运行。
+- Windows 产出字节的脚本按引用闭包是 8 个；它们、`build-app.sh` 与 `apps/stickymd-win/build.rs` 中不分大小写都没有验证工具的名字。打包 crate 中
+  编译器读过的文件里有 8 处注释提到验证工具，实现时改写。
+- 两个发布 workflow 都没有 YAML 锚点或别名；`build-package` job 不使用本地 action，只受 workflow 头部（含 workflow 级 `env`）与它自身文本影响。
+
+第四轮写入合同、一并待确认的三项收紧，在闭合世界下的去向（不是逐项批准，而是被新规则取代）：
+
+- “Windows 不计入的成员目录不能有构建脚本”变为清单成员资格：workspace 的构建脚本恰为 `apps/stickymd-win/build.rs`，要加一个须先改清单。
+- “Windows 宿主的 `build.rs` 不能引入自己目录中的数据”取消：它只在 Windows 构建中运行，成员目录计入 Windows 指纹，只保留全文中没有 `..`。
+- “打包 crate 永远不能使用 `include!` 与 `#[path]`”取消：编译器读入的文件由 dep-info 列出，只要都在打包 crate 内、被跟踪且两平台都计入即可。
+
+剩余责任写进合同：清单中的文件在运行时做什么不能静态证明，名字搜索是守卫，其余由代码审查承担。复审标准随之改为：合同中写明的规则没有执行、
+清单可以不被察觉地漂移、在真实仓库上失败，才是 BLOCKER。
+
