@@ -105,11 +105,17 @@ fn dep_info_path(rmeta: &Path) -> Result<PathBuf, String> {
 }
 
 /// The dependencies of a Makefile-style dep-info: rustc writes one `path:` line per file it read
-/// (besides the rules that list them all). `#` lines (`# env-dep:`) are environment reads. An
-/// escaped space or a `$` is refused rather than unescaped; repository paths have neither.
+/// (besides the rules that list them all). An environment read (`# env-dep:NAME`) is refused: a
+/// file chosen through `env!` at compile time can differ between the check and the release job.
+/// An escaped space or a `$` is refused rather than unescaped; repository paths have neither.
 pub(super) fn parse(text: &str) -> Result<Vec<String>, String> {
     let mut paths = Vec::new();
     for line in text.lines() {
+        if let Some(variable) = line.strip_prefix("# env-dep:") {
+            return Err(format!(
+                "the compilation reads the environment variable {variable}; plan 11 admits no environment read"
+            ));
+        }
         if line.is_empty() || line.starts_with('#') || line.contains(": ") {
             continue;
         }

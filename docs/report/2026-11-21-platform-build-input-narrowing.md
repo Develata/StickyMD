@@ -281,7 +281,7 @@ Develata 的回复：“改成闭合世界”。
   二者的依赖都不含 `stickymd-win`，所以 Windows 宿主的构建脚本只在 Windows 的 workspace 构建中运行。
 - Windows 产出字节的脚本取 8 个的保守清单：6 个从固定的 `build-package` job 可达，`generate-third-party-notices.ps1` 是独立入口，
   `archive-facts.ps1` 由打包库为校验与晋升启动；它们、`build-app.sh` 与 `apps/stickymd-win/build.rs` 中不分大小写都没有验证工具的名字。打包 crate 中
-  编译器读过的文件里有 8 处注释提到验证工具，实现时改写。
+  编译器读过的文件里有 8 处注释提到验证工具（按 `4e1ad43` 计数），已在 `33c3b50` 中改写。
 - 两个发布 workflow 都没有 YAML 锚点或别名；`build-package` job 不使用本地 action，只受 workflow 头部（含 workflow 级 `env`）与它自身文本影响。
 
 第四轮写入合同、一并待确认的三项收紧，在闭合世界下的去向（不是逐项批准，而是被新规则取代）：
@@ -303,7 +303,7 @@ Develata 的回复：“改成闭合世界”。
   dev 与 release 两个 profile 各运行一次；标准库与链接阶段的输入来自固定的工具链。
 - 构建脚本（4、5）：报告与合同统一为三个字面量；构建脚本自己的模块与引入的文件归入剩余，名字搜索扩大到 `crates/` 与 `apps/` 下的全部跟踪文件，
   覆盖它们所在的目录；“只构建 `stickymd-mac`”改为按固定 job 实际选择的包陈述。
-- 脚本清单（6）：写明是保守清单，6 个可达，另 2 个因打包 crate 指名而同样受约束。
+- 脚本清单（6）：写明是保守清单，6 个可达，另 2 个保守纳入：`generate-third-party-notices.ps1` 是独立入口，`archive-facts.ps1` 由打包库直接启动。
 - workflow（7、8）：逐行与锚点规则不能证明 YAML 节点归属，改为每个发布 workflow 的全文等于固定副本；名字搜索覆盖副本中 `build-package` 一段。
 - Git 索引（9）：列为第四类事实，检查在被检提交的干净检出上运行。
 - 新成员落在排除区（10）：每个 workspace 成员的清单须两个平台都计入。
@@ -313,4 +313,16 @@ Develata 的回复：“改成闭合世界”。
 产品 crate 读取 `docs/` 等其他被排除区域的文件不属于本边界（`docs/` 的排除早于本次改动，来自 Phase 18 的分类器），在合同的剩余中写明，留给后续。
 
 复审标准（补充）：合同中写明的规则没有执行、清单可以不被察觉地漂移、规则与它声称证明的性质不等价、在真实仓库上失败，才是 BLOCKER。
+
+### 合同复审（`cdd2ff6`）的处理
+
+窄范围复审判为不通过，五项 BLOCKER。其中两项针对 `cdd2ff6` 时尚未落地的实现，已在 `b69f5b1` 中完成：`crates/` 与 `apps/` 下两处提到验证工具的
+注释已改写；双 profile、整份 workflow 副本、产品目录扫描与成员清单分类都已接入。另三项改合同：
+
+- 编译期由环境变量选择文件（`include!(concat!(env!("GITHUB_JOB"), ".rs"))`）：dep-info 中不得有环境读取（`# env-dep:`）；打包 crate 现在没有。
+- 链接输入：标准库归固定的 Rust 工具链，原生链接器、SDK 与导入库（`Bcrypt.lib`）归平台构建环境，不由本检查证明。
+- 构建脚本模块引入的、位于 `apps/` 与 `crates/` 之外的文件：名字搜索只覆盖这两个目录，其余归入剩余。三个字面量不扩大到整个成员目录：
+  `apps/stickymd-win/` 中有 4 个文件合法地含 `../`（清单中的路径依赖与产品代码）。
+
+SHOULD_FIX 与 NICE_TO_HAVE 已改：两个保守纳入脚本的调用方向分别写明；“8 处注释”标明计数所在的提交。
 

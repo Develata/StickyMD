@@ -164,10 +164,20 @@ fn rustc_registers_the_files_it_reads() {
 
 #[test]
 fn dep_info_is_read_line_by_line_without_unescaping() {
-    let text = "/t/deps/x-1.d: a/lib.rs a/b.txt\n\n/t/deps/libx-1.rmeta: a/lib.rs a/b.txt\n\na/lib.rs:\na\\b.txt:\n\n# env-dep:CARGO_PKG_NAME=x\n";
+    let text = "/t/deps/x-1.d: a/lib.rs a/b.txt\n\n/t/deps/libx-1.rmeta: a/lib.rs a/b.txt\n\na/lib.rs:\na\\b.txt:\n";
     assert_eq!(compiled::parse(text).unwrap(), ["a/lib.rs", "a/b.txt"]);
-    for bad in ["a\\ b.rs:\n", "a$$b.rs:\n", "a/lib.rs\n"] {
-        assert!(compiled::parse(bad).is_err(), "{bad}");
+    for (bad, reason) in [
+        ("a\\ b.rs:\n", "needs unescaping"),
+        ("a$$b.rs:\n", "needs unescaping"),
+        ("a/lib.rs\n", "unexpected dep-info line"),
+        // `env!("GITHUB_JOB")` in an include path: the job decides the file.
+        (
+            "a/lib.rs:\n\n# env-dep:GITHUB_JOB=self-check\n",
+            "environment variable GITHUB_JOB",
+        ),
+    ] {
+        let error = compiled::parse(bad).unwrap_err();
+        assert!(error.contains(reason), "{bad}: {error}");
     }
 }
 
