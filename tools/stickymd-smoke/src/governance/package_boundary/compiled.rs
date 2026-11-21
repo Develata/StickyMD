@@ -25,6 +25,22 @@ pub(super) struct Target {
     pub(super) source: String,
 }
 
+/// `lib` for any library kind Cargo reports (`lib`, `rlib`, `dylib`, `cdylib`, `staticlib`),
+/// `bin` for a binary, `None` for anything else (a procedural macro is refused elsewhere).
+pub(super) fn lib_or_bin(kinds: &[Value]) -> Option<&'static str> {
+    let is = |wanted: &str| kinds.iter().any(|kind| kind.string() == Ok(wanted));
+    if ["lib", "rlib", "dylib", "cdylib", "staticlib"]
+        .iter()
+        .any(|kind| is(kind))
+    {
+        Some("lib")
+    } else if is("bin") {
+        Some("bin")
+    } else {
+        None
+    }
+}
+
 /// Cargo from `PATH`: through rustup it is the toolchain `rust-toolchain.toml` pins. An inherited
 /// `CARGO` could name any executable.
 pub(super) fn cargo() -> std::process::Command {
@@ -86,20 +102,21 @@ pub(super) fn files_in(
         .arg(directory.join("target"))
         .output()
         .map_err(|error| format!("cannot start `cargo check`: {error}"))?;
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| "`cargo check` output is not UTF-8".to_owned())?;
-    let messages: Vec<Value> = stdout
-        .lines()
-        .map(json::parse)
-        .collect::<Result<_, _>>()
-        .map_err(|e| format!("`cargo check` wrote a line that is not JSON: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
     if !output.status.success() {
+        // Whatever Cargo said, the JSON lines among it included.
+        let messages: Vec<Value> = stdout.lines().filter_map(|l| json::parse(l).ok()).collect();
         return Err(format!(
             "`cargo check -p {package} --profile {profile}` failed: {}{}",
             String::from_utf8_lossy(&output.stderr).trim(),
             compiler_errors(&messages)
         ));
     }
+    let messages: Vec<Value> = stdout
+        .lines()
+        .map(json::parse)
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("`cargo check` wrote a line that is not JSON: {e}"))?;
     let mut units: BTreeMap<Target, Vec<String>> = BTreeMap::new();
     for message in &messages {
         if message.field("reason").and_then(|r| r.string()).ok() != Some("compiler-artifact") {
@@ -107,9 +124,7 @@ pub(super) fn files_in(
         }
         let target = message.field("target")?;
         let kinds = target.field("kind")?.array()?;
-        let kind = ["lib", "bin"]
-            .into_iter()
-            .find(|wanted| kinds.iter().any(|kind| kind.string() == Ok(*wanted)))
+        let kind = lib_or_bin(kinds)
             .ok_or_else(|| format!("`cargo check` built an unexpected unit: {kinds:?}"))?;
         let name = target.field("name")?.string()?.to_owned();
         let expected = targets
@@ -191,17 +206,21 @@ fn dep_info_path(rmeta: &Path) -> Result<std::path::PathBuf, String> {
 /// between the check and the release job; an escaped space or a `$` is refused rather than
 /// unescaped (repository paths have neither); any other line is refused.
 pub(super) fn parse(text: &str) -> Result<Vec<String>, String> {
+    // First, so that no other diagnostic (which may quote a path built from the value) runs.
+    if let Some(read) = text
+        .lines()
+        .find_map(|line| line.strip_prefix("# env-dep:"))
+    {
+        let variable = read.split('=').next().unwrap_or(read);
+        return Err(format!(
+            "the compilation reads the environment variable {variable}; plan 11 admits no environment read"
+        ));
+    }
     let mut rules: Vec<BTreeSet<String>> = Vec::new();
     let mut files = BTreeSet::new();
     for line in text.lines() {
         if line.is_empty() {
             continue;
-        }
-        if let Some(read) = line.strip_prefix("# env-dep:") {
-            let variable = read.split('=').next().unwrap_or(read);
-            return Err(format!(
-                "the compilation reads the environment variable {variable}; plan 11 admits no environment read"
-            ));
         }
         if line.contains("\\ ") || line.contains('$') {
             return Err(format!("dep-info line {line:?} needs unescaping"));

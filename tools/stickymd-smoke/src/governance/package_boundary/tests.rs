@@ -131,12 +131,6 @@ fn the_workspace_is_read_from_cargo_metadata() {
         r#"{"kind":["custom-build"],"name":"build-script-build","src_path":"/r/apps/stickymd-win/build.rs"}"#,
         "",
     );
-    let depends_on_win = member(
-        "helper",
-        "crates/helper/",
-        r#"{"kind":["lib"],"name":"helper","src_path":"/r/crates/helper/src/lib.rs"}"#,
-        r#"{"name":"stickymd-win"}"#,
-    );
     // Cargo's spelling of a manifest that Git records in another case.
     let case_variant = member(
         "helper",
@@ -159,13 +153,10 @@ fn the_workspace_is_read_from_cargo_metadata() {
             format!("{PACKAGING},{WIN},{impostor}"),
             "two workspace targets build the binary",
         ),
+        // Windows compares names by its own upcase table: only ASCII names are admitted.
         (
-            format!(
-                "{PACKAGING},{WIN},{},{}",
-                unicode("Édit", "crates/helper/"),
-                unicode("édit", "crates/other/")
-            ),
-            "two workspace targets build the binary",
+            format!("{PACKAGING},{WIN},{}", unicode("Édit", "crates/helper/")),
+            "is not ASCII letters",
         ),
         (
             format!("{PACKAGING},{WIN},{smoke_script}"),
@@ -176,10 +167,6 @@ fn the_workspace_is_read_from_cargo_metadata() {
         (
             format!("{PACKAGING},{unlisted},{other_owner}"),
             "plan 11 lists exactly",
-        ),
-        (
-            format!("{PACKAGING},{WIN},{depends_on_win}"),
-            "depends on stickymd-win",
         ),
         (
             format!("{PACKAGING},{WIN},{case_variant}"),
@@ -600,38 +587,95 @@ fn the_pins_hold_the_jobs_of_plan_11() {
     }
 }
 
-/// The lists in the code are the lists plan 11 states: shrinking or growing one means changing
-/// the contract too.
+/// The lists in the code are the lists plan 11 states, both ways: adding, dropping or changing an
+/// entry on one side alone fails.
 #[test]
 fn the_lists_are_the_contract_s() {
     let root = crate::governance::find_repository_root(&std::env::current_dir().unwrap()).unwrap();
     let plan = std::fs::read_to_string(root.join("docs/plan/11_testing_and_release.md")).unwrap();
-    let start = plan.find("**边界的证明（闭合世界").unwrap();
-    let end = start + plan[start..].find("**前提：**").unwrap();
-    let bullet = &plan[start..end];
-    let scripts_at = bullet.find("**脚本：**").unwrap();
-    let scripts =
-        &bullet[scripts_at..scripts_at + bullet[scripts_at..].find("**workflow：**").unwrap()];
-    let mut named: Vec<&str> = scripts
-        .split('`')
-        .filter(|piece| {
-            piece.len() > 4 && piece.ends_with(".ps1") && !piece.contains(['/', ' ', '$'])
+    let section = |from: &str, to: &str| -> String {
+        assert_eq!(plan.matches(from).count(), 1, "{from}");
+        let start = plan.find(from).unwrap();
+        let end = start + plan[start..].find(to).unwrap();
+        plan[start..end].to_owned()
+    };
+    let ticked = |text: &str| -> Vec<String> {
+        text.split('`')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_owned)
+            .collect()
+    };
+    let sorted = |mut items: Vec<String>| {
+        items.sort();
+        items.dedup();
+        items
+    };
+    // Scripts: every `*.ps1` name of the scripts sub-bullet.
+    let scripts = section("**脚本：**", "**workflow：**");
+    let named = sorted(
+        ticked(&scripts)
+            .into_iter()
+            .filter(|piece| piece.len() > 4 && piece.ends_with(".ps1"))
+            .collect(),
+    );
+    assert_eq!(
+        named,
+        sorted(BYTE_SCRIPTS.iter().map(|s| (*s).to_owned()).collect())
+    );
+    // Build scripts: every "`member` 的 `path`" pair of the metadata sub-bullet.
+    let metadata = section("**Cargo metadata：**", "**编译器读过的文件：**");
+    let pieces = ticked(&metadata);
+    let pairs: Vec<String> = metadata
+        .match_indices("` 的 `")
+        .map(|(at, _)| {
+            let member = metadata[..at].rsplit('`').next().unwrap();
+            let script = metadata[at + "` 的 `".len()..].split('`').next().unwrap();
+            format!("{member} {script}")
         })
         .collect();
-    named.sort_unstable();
-    named.dedup();
-    let mut listed = BYTE_SCRIPTS.to_vec();
-    listed.sort_unstable();
-    assert_eq!(named, listed);
-    for (member, script) in BUILD_SCRIPTS {
-        assert!(
-            bullet.contains(&format!("`{member}` 的 `{script}`")),
-            "{member} {script}"
-        );
-    }
-    assert!(bullet.contains("dev profile") && bullet.contains("release profile"));
-    assert_eq!(compiled::PROFILES, ["dev", "release"]);
+    assert!(pieces.iter().any(|p| p == "apps/stickymd-win/build.rs"));
+    assert_eq!(
+        sorted(pairs),
+        sorted(
+            BUILD_SCRIPTS
+                .iter()
+                .map(|(m, s)| format!("{m} {s}"))
+                .collect()
+        )
+    );
+    // Profiles: every "<name> profile" of the compiled-files sub-bullet.
+    let compiled_text = section("**编译器读过的文件：**", "**构建脚本：**");
+    let profiles = sorted(
+        compiled_text
+            .match_indices(" profile")
+            .map(|(at, _)| {
+                compiled_text[..at]
+                    .rsplit(|c: char| !c.is_ascii_alphanumeric())
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            })
+            .filter(|name| !name.is_empty())
+            .collect(),
+    );
+    assert_eq!(
+        profiles,
+        sorted(compiled::PROFILES.iter().map(|p| (*p).to_owned()).collect())
+    );
+    // Compile variables: every literal of the premise's parenthesis.
+    let premise = section("固定副本不含下列字面串（", "），仓库内的");
+    assert_eq!(
+        sorted(ticked(&premise)),
+        sorted(
+            workflow::COMPILE_VARIABLES
+                .iter()
+                .map(|v| (*v).to_owned())
+                .collect()
+        )
+    );
 }
+
 /// The premise that self-check and build-package compile alike: a pinned workflow sets none of the
 /// variables that change a compilation, in any letter case; naming the compiler in a command is
 /// fine.
@@ -669,4 +713,98 @@ fn the_pins_set_no_compile_variables() {
             .unwrap_err()
             .contains("env:RUSTC")
     );
+}
+
+#[test]
+fn a_backslash_in_a_tracked_path_is_refused() {
+    let error =
+        parse_index(b"100644 0000000000000000000000000000000000000000 0\tapps/example/a\\b.txt\0")
+            .unwrap_err();
+    assert!(error.contains("holds a backslash"), "{error}");
+}
+
+/// Nothing in the resolved graph may depend on a member with a listed build script.
+#[test]
+fn cargo_lock_names_a_build_script_owner_only_as_itself() {
+    let lock = "[[package]]\nname = \"stickymd-mac\"\nversion = \"0.2.0\"\n\n[[package]]\nname = \"stickymd-win\"\nversion = \"0.2.0\"\n";
+    check_lock(lock).unwrap();
+    for bad in [
+        // A member, or a package outside the workspace, depending on it.
+        lock.replace(
+            "version = \"0.2.0\"\n\n",
+            "version = \"0.2.0\"\ndependencies = [\n \"stickymd-win\",\n]\n\n",
+        ),
+        lock.replace("name = \"stickymd-win\"", "name = \"other\""),
+    ] {
+        let error = check_lock(&bad).unwrap_err();
+        assert!(error.contains("nothing may depend on it"), "{error}");
+    }
+}
+
+#[test]
+fn a_listed_script_is_utf8_text() {
+    check_script_encoding(b"param()\n& (Join-Path $PSScriptRoot 'package.ps1')\n").unwrap();
+    let utf16: Vec<u8> = "& 'package.ps1'"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    for bytes in [
+        [&[0xFF, 0xFE][..], &utf16].concat(),
+        // Without its mark, ASCII in UTF-16 is valid UTF-8 with NULs between the letters.
+        utf16.clone(),
+        b"\xff\xfe".to_vec(),
+    ] {
+        let error = check_script_encoding(&bytes).unwrap_err();
+        assert!(error.contains("is not UTF-8 text"), "{error}");
+    }
+}
+
+#[test]
+fn a_listed_name_may_start_the_file() {
+    check_ps1_names(b"package.ps1 -ExactCandidate", &["package.ps1"]).unwrap();
+}
+
+#[test]
+fn library_kinds_count_as_lib() {
+    let kinds = |text: &str| json::parse(text).unwrap();
+    for kind in [r#"["lib"]"#, r#"["rlib"]"#, r#"["rlib","cdylib"]"#] {
+        assert_eq!(
+            compiled::lib_or_bin(kinds(kind).array().unwrap()),
+            Some("lib"),
+            "{kind}"
+        );
+    }
+    assert_eq!(
+        compiled::lib_or_bin(kinds(r#"["bin"]"#).array().unwrap()),
+        Some("bin")
+    );
+    assert_eq!(
+        compiled::lib_or_bin(kinds(r#"["test"]"#).array().unwrap()),
+        None
+    );
+}
+
+/// An environment read is reported first and by name only, even when its value also shaped a
+/// path that would fail another rule.
+#[test]
+fn an_environment_read_is_reported_first_without_its_value() {
+    let text = "/t/x-1.d: my$secret.txt\n\nmy$secret.txt:\n\n# env-dep:SECRET_NAME=my$secret\n";
+    let error = compiled::parse(text).unwrap_err();
+    assert!(
+        error.contains("SECRET_NAME") && !error.contains("secret.txt"),
+        "{error}"
+    );
+}
+
+#[test]
+fn every_listed_rustc_spelling_is_refused() {
+    let with = |run: &str| WORKFLOW.replace("./tools/release/package.ps1", run);
+    for (run, literal) in [
+        ("RUSTC=/opt/compiler cargo check", "RUSTC="),
+        ("$env:RUSTC = 'x'; cargo build", "env:RUSTC"),
+    ] {
+        let text = with(run);
+        let error = workflow::check(&text, &text).unwrap_err();
+        assert!(error.contains(literal), "{run}: {error}");
+    }
 }

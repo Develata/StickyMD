@@ -75,6 +75,7 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
     let counted_by_both =
         |file: &str| is_input(Platform::WindowsX64, file) && is_input(Platform::MacOsArm64, file);
     let targets = check_metadata(&cargo_metadata(root)?, &index, &counted_by_both)?;
+    check_lock(&String::from_utf8_lossy(&read(root, "Cargo.lock")?))?;
     let compiled = compiled::files(root, PACKAGE, &targets)?;
     check_compiled(&compiled, &index, &counted_by_both)?;
     check_byte_scripts(SCRIPTS, BYTE_SCRIPTS, &index, Platform::WindowsX64)?;
@@ -92,11 +93,7 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
     for name in BYTE_SCRIPTS {
         let path = format!("{SCRIPTS}{name}");
         let bytes = read(root, &path)?;
-        if std::str::from_utf8(&bytes).is_err() {
-            return Err(format!(
-                "{path} is not UTF-8; in another encoding a name's bytes need not be contiguous"
-            ));
-        }
+        check_script_encoding(&bytes).map_err(|e| format!("{path}: {e}"))?;
         check_ps1_names(&bytes, BYTE_SCRIPTS).map_err(|e| format!("{path}: {e}"))?;
         searched.push((path, bytes));
     }
@@ -170,6 +167,11 @@ fn parse_index(stdout: &[u8]) -> Result<Index, String> {
         let (fields, path) = record
             .split_once('\t')
             .ok_or_else(|| format!("unexpected git ls-files record {record:?}"))?;
+        // Git separates with `/`; a `\` is part of a name, which a Windows checkout cannot hold
+        // and another host would read as a different file than the rules compare.
+        if path.contains('\\') {
+            return Err(format!("the tracked path {path:?} holds a backslash"));
+        }
         let mode = fields
             .split(' ')
             .next()
@@ -217,7 +219,6 @@ fn check_metadata(
     let mut binaries = std::collections::BTreeSet::new();
     let mut build_scripts = Vec::new();
     let mut targets = Vec::new();
-    let mut dependencies = Vec::new();
     for package in metadata.field("packages")?.array()? {
         let name = package.field("name")?.string()?;
         // Another member's manifest can change the features Cargo merges into the product.
@@ -226,9 +227,6 @@ fn check_metadata(
             return Err(format!(
                 "{name}'s manifest {manifest} is not a regular tracked file counted by both platforms; a member in an excluded tree needs the classifier changed first"
             ));
-        }
-        for dependency in package.field("dependencies")?.array()? {
-            dependencies.push((name, dependency.field("name")?.string()?));
         }
         let packaging = name == PACKAGE;
         if packaging {
@@ -255,10 +253,22 @@ fn check_metadata(
                     "{name} is a procedural macro, which runs inside the compiler; plan 11 admits no such member"
                 ));
             }
-            if is("bin") && !binaries.insert(target_name.to_lowercase()) {
-                return Err(format!(
-                    "two workspace targets build the binary {target_name}; one could take the other's place in the build output"
-                ));
+            if is("bin") {
+                // Windows compares file names by its own upcase table; ASCII names compared
+                // without case cannot collide there, whatever the table.
+                if !target_name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+                {
+                    return Err(format!(
+                        "the binary name {target_name:?} is not ASCII letters, digits, `_` and `-`"
+                    ));
+                }
+                if !binaries.insert(target_name.to_ascii_lowercase()) {
+                    return Err(format!(
+                        "two workspace targets build the binary {target_name}; one could take the other's place in the build output"
+                    ));
+                }
             }
             if is("custom-build") {
                 if packaging {
@@ -267,14 +277,12 @@ fn check_metadata(
                 build_scripts.push((name.to_owned(), source));
             } else if packaging {
                 // Tests, benches and examples ship nothing; `cargo check --lib --bins` skips them.
-                for kind in ["lib", "bin"] {
-                    if is(kind) {
-                        targets.push(Target {
-                            kind: kind.to_owned(),
-                            name: target_name.to_owned(),
-                            source: source.clone(),
-                        });
-                    }
+                if let Some(kind) = compiled::lib_or_bin(kinds) {
+                    targets.push(Target {
+                        kind: kind.to_owned(),
+                        name: target_name.to_owned(),
+                        source: source.clone(),
+                    });
                 }
             }
         }
@@ -292,15 +300,35 @@ fn check_metadata(
             "the workspace's build scripts are {build_scripts:?}; plan 11 lists exactly {listed:?}"
         ));
     }
-    if let Some((member, dependency)) = dependencies
-        .iter()
-        .find(|(_, dependency)| BUILD_SCRIPTS.iter().any(|(owner, _)| owner == dependency))
-    {
-        return Err(format!(
-            "{member} depends on {dependency}, whose build script plan 11 lets run only in the Windows workspace build"
-        ));
-    }
     Ok(targets)
+}
+
+/// No workspace member, nor anything outside the workspace, depends on a member that has a listed
+/// build script: `Cargo.lock` holds every package and dependency edge of the resolved graph, so
+/// the owner's name appears there only as its own `name = "…"` line.
+fn check_lock(lock: &str) -> Result<(), String> {
+    for (owner, _) in BUILD_SCRIPTS {
+        let own = format!("name = \"{owner}\"");
+        let lines: Vec<&str> = lock.lines().filter(|line| line.contains(owner)).collect();
+        if lines != [own.as_str()] {
+            return Err(format!(
+                "Cargo.lock names {owner} on {lines:?}; plan 11 lets its build script run only in the Windows workspace build, so nothing may depend on it"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A listed script is UTF-8: in another encoding (UTF-16 with or without its mark) a name's bytes
+/// need not be contiguous, and the raw searches would miss it.
+fn check_script_encoding(bytes: &[u8]) -> Result<(), String> {
+    if std::str::from_utf8(bytes).is_err() || bytes.contains(&0) {
+        return Err(
+            "is not UTF-8 text; in another encoding a name's bytes need not be contiguous"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 /// Each file rustc registered compiling the packaging crate is a regular file of the Git index
@@ -363,8 +391,9 @@ fn check_byte_scripts(
 }
 
 /// Every `.ps1`, in any letter case, ends a file name (the longest run of ASCII letters, digits,
-/// `.`, `_` and `-` before it) that is on the list, spelled as listed; the byte before the name is
-/// ASCII and not a path separator, so neither a directory nor a non-ASCII letter can extend it.
+/// `.`, `_` and `-` before it) that is on the list, spelled as listed; the name starts the file or
+/// follows an ASCII byte that is not a path separator, so neither a directory nor a non-ASCII
+/// letter can extend it.
 fn check_ps1_names(bytes: &[u8], allowed: &[&str]) -> Result<(), String> {
     let name_byte = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-');
     let mut from = 0;

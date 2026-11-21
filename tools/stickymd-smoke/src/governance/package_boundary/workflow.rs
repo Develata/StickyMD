@@ -41,7 +41,7 @@ pub(super) fn check_pinned_set(
 const BUILD_PACKAGE: &str = "  build-package:";
 const AFTER_BUILD_PACKAGE: &str = "  verify-artifact:";
 /// Environment variables that change what Cargo and rustc compile, or with which toolchain.
-const COMPILE_VARIABLES: &[&str] = &[
+pub(super) const COMPILE_VARIABLES: &[&str] = &[
     "RUSTFLAGS",
     "CARGO_ENCODED_RUSTFLAGS",
     "RUSTC_WRAPPER",

@@ -772,14 +772,15 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
   - **边界的证明（闭合世界，USER 决定 2026-11-22）：** crate 依赖由编译器保证打包代码引用不到验证代码，这是放宽的前提。编译器看不到的边，
     即生产链中不经过 Rust 依赖的输入，由 governance 测试按清单检查。每条规则只用四类可判定的事实：与 `stickymd-smoke` 中固定清单或固定副本的
     逐字比较（行尾统一为 LF 后）、对文件全文的原样搜索、Cargo 与 rustc 自己报告的事实、Git 索引中的路径与文件模式（检查在被检提交的干净检出上
-    运行）。检查不解析 Rust、PowerShell 或 YAML 的语法，清单之外一律拒绝。路径只在 Windows 上把 `\` 视为分隔符，其他平台上含 `\` 的路径被拒。
-    - **Cargo metadata：** 打包 crate 没有依赖、没有构建脚本、没有 feature；workspace 中没有过程宏成员（它们在编译器里运行），二进制名（按 Unicode
-      小写比较）不重复（被排除的成员无法在 workspace 构建的输出中顶替产品）；每个成员的清单在 Git 索引中是普通文件，按索引中的路径两个平台都
-      计入（落在排除区的新成员须先改分类器）；workspace 的构建脚本恰为清单（成员与路径成对）：`stickymd-win` 的 `apps/stickymd-win/build.rs`，
-      且没有成员声明依赖 `stickymd-win`。
+    运行）。检查不解析 Rust、PowerShell 或 YAML 的语法，清单之外一律拒绝。Git 索引中的路径不得含 `\`；Cargo 与 rustc 报告的路径只在 Windows 上
+    把 `\` 视为分隔符，其他平台上含 `\` 的路径被拒。
+    - **Cargo metadata：** 打包 crate 没有依赖、没有构建脚本、没有 feature；workspace 中没有过程宏成员（它们在编译器里运行），二进制名只用 ASCII
+      字母、数字、`_` 与 `-`，不分大小写不重复（被排除的成员无法在 workspace 构建的输出中顶替产品）；每个成员的清单在 Git 索引中是普通文件，按索引中的路径两个平台都
+      计入（落在排除区的新成员须先改分类器）；workspace 的构建脚本恰为清单（成员与路径成对）：`stickymd-win` 的 `apps/stickymd-win/build.rs`；
+      `Cargo.lock` 中含所属成员名的行恰为它自己的 `name = "stickymd-win"`，即解析图中没有任何包（含 workspace 之外的包）依赖它。
     - **编译器读过的文件：** 固定的 workflow 以 dev profile（`cargo run`）运行打包工具，Windows 的发布 job 还以 release profile 构建 workspace。
-      governance 在运行它的平台上，为每次检查新建私有目录（同时作为 Cargo 的 target 与 build 目录），对打包 crate 的 lib 与 bin target 按这两个
-      profile 各运行一次 `cargo check`。在每个 profile 中，打包 crate 的每个 lib 与 bin target 恰有一个新编译（`fresh: false`）的编译单元，它的
+      governance 在运行它的平台上，为每次检查新建私有目录（同时作为 Cargo 的 target 与 build 目录），对打包 crate 的 lib 与 bin target（库的各种 crate-type 都算 lib）
+      按这两个 profile 各运行一次 `cargo check`。在每个 profile 中，打包 crate 的每个 lib 与 bin target 恰有一个新编译（`fresh: false`）的编译单元，它的
       dep-info 登记它自己的入口文件；dep-info 的规则行与逐文件行列出同一组文件，否则拒绝。这些 dep-info 登记的本地源文件与文件依赖都在
       `tools/stickymd-package/` 内，在 Git 索引中是普通文件（不是符号链接），按索引中的原样拼写（因此不含 `..` 与绝对路径），且两个平台都计入；
       需要反转义的路径（含空格或 `$`）被拒。dep-info 中不得有环境读取（`# env-dep:`）：由环境变量在编译期选择的文件（例如以 `env!` 拼出的
@@ -788,14 +789,15 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
       Windows 打包代码链接的 `Bcrypt.lib`）属于平台构建环境（runner 镜像），不由本检查证明。两个平台的 `self-check` 都运行这项检查（Windows 经
       `tools/smoke/all.ps1 -Ci` 中的 governance，macOS 经 `stickymd-smoke` 的测试），各自覆盖本平台 `cfg` 下编译的文件。
     - **构建脚本：** 清单中的构建脚本的全文中没有 `../`、`..\` 与 `".."`。固定的 Windows 发布 job 以 workspace 构建，会运行它；固定的 macOS 发布构建
-      只选择 `stickymd-package`（`cargo run`）与 `stickymd-mac`（`build-app.sh`），而没有成员依赖 `stickymd-win`，所以它只在 Windows 构建中运行，
+      只选择 `stickymd-package`（`cargo run`）与 `stickymd-mac`（`build-app.sh`），而 `Cargo.lock` 中没有包依赖 `stickymd-win`，所以它只在 Windows
+      构建中运行，
       它所在的成员目录计入 Windows 指纹。它自己声明的模块与引入的文件不在 dep-info 检查之内，归入下文“剩余”；名字搜索覆盖其中位于
       `apps/` 与 `crates/` 下的跟踪文件。
     - **脚本：** Windows 产出字节的脚本按保守清单检查：`tools/release/` 下的 `package.ps1`、`generate-sbom.ps1`、`invoke-package.ps1`、
       `package-archive.ps1`、`syft-fetch.ps1`、`syft-execute.ps1`（从固定的 `build-package` job 可达），以及保守纳入的 `generate-third-party-notices.ps1`
       （独立入口，经包装函数启动打包工具）与 `archive-facts.ps1`（打包库直接启动，供校验与晋升使用）。每个都按此拼写在 Git 索引中是普通文件，
-      计入 Windows 指纹，且是合法的 UTF-8（其他编码中名字的字节可能不连续）。这些脚本与打包 crate 中编译器读过的文件里，每处 `.ps1`（不分
-      大小写）紧前的文件名（ASCII 字母、数字、`.`、`_`、`-` 组成的最长串）都在清单中，文件名前一个字节是 ASCII 且不是 `/` 或 `\`；
+      计入 Windows 指纹，且是不含 NUL 的合法 UTF-8（其他编码中名字的字节可能不连续）。这些脚本与打包 crate 中编译器读过的文件里，每处 `.ps1`（不分
+      大小写）紧前的文件名（ASCII 字母、数字、`.`、`_`、`-` 组成的最长串）都在清单中，且文件名位于文件起点，或前一个字节是 ASCII 且不是 `/` 或 `\`；
       `build-app.sh` 中没有 `.ps1`。
     - **workflow：** 每个发布 workflow 的全文等于 `stickymd-smoke` 中的固定副本；副本恰为分类器计入的 `.github/` 文件（两个发布 workflow），副本经审查
       具有上文 `dependency-policy` 与三个发布 job 的结构，改动 workflow 须同时改副本。
@@ -805,10 +807,11 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
       不出现 `stickymd-smoke`、`stickymd_smoke`、`invoke-smoke.ps1`、`Invoke-StickyMdReleaseTool` 与 `tools/smoke/`（两种分隔符）。
 
     **前提：** `self-check` 与 `build-package` 运行同一份固定 workflow、同一 runner 标签、同一检出与工具链；两者的有效编译配置（runner 环境中的
-    `RUSTFLAGS`、`CARGO_BUILD_TARGET`、Cargo home 中的配置）相同。检查只能观察本 job 的编译，这一前提不由它证明。固定副本中不出现改变编译的变量（原样搜索、不分
-    大小写：`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`CARGO_BUILD_TARGET`、`CARGO_BUILD_BUILD_DIR`、
-    `CARGO_TARGET_DIR`、`RUSTUP_TOOLCHAIN`，以及 `RUSTC:`、`RUSTC=`、`env:RUSTC`），仓库内的 `.cargo/config.toml` 计入指纹；runner 镜像与 Cargo home
-    的配置仍属前提。打包 crate 没有依赖与 feature，workspace 的 feature 合并改变不了它。
+    `RUSTFLAGS`、`CARGO_BUILD_TARGET`、Cargo home 中的配置）相同。检查只能观察本 job 的编译，这一前提不由它证明。能检查的只有一部分：固定副本不含下列字面串（原样
+    搜索、不分大小写：`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`CARGO_BUILD_TARGET`、
+    `CARGO_BUILD_BUILD_DIR`、`CARGO_TARGET_DIR`、`RUSTUP_TOOLCHAIN`、`RUSTC:`、`RUSTC=`、`env:RUSTC`），仓库内的 `.cargo/config.toml` 计入指纹。
+    其他拼写与其他改变编译的变量（如 `CARGO_PROFILE_*`）、runner 镜像与 Cargo home 的配置，以及各调用点对环境的处理（例如 `build-app.sh` 以
+    `env -i` 清空环境后再运行打包工具，而检查器与 workflow 中的其他调用继承环境）仍属前提。打包 crate 没有依赖与 feature，workspace 的 feature 合并改变不了它。
 
     **剩余：** 以下不能由这些事实证明，由代码审查承担：清单中的文件在运行时做什么，例如运行时拼出的名字或路径（`Join-Path` 的目录参数）、不含
     上述名字的命令，以及已审文件在运行时选择读取的被排除文件（之后只改被读文件时，指纹不变）；清单中构建脚本自己的模块与引入的文件读什么，
